@@ -43,6 +43,7 @@ package imgcache
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -349,25 +350,46 @@ func webpStillReader(alph, pic []byte, lossless bool, w, h int) io.Reader {
 // decodePicture within the picture's budget. maxPixels/maxSide are the
 // caller's decoded-size limit (Decode passes MaxPixels/MaxSide;
 // DecodeWithin a larger one), which bounds the picture and so its budget.
-func decodeWebP(data []byte, maxPixels, maxSide int) (image.Image, error) {
+// ctx cancels the wait for a share of the process decode cap (decMem).
+func decodeWebP(ctx context.Context, data []byte, maxPixels, maxSide int) (image.Image, error) {
 	alph, pic, lossless, w, h, err := stillWebP(data, maxPixels, maxSide)
 	if err != nil {
 		return nil, err
 	}
-	return decodePicture(webpStillReader(alph, pic, lossless, w, h), w, h)
+	return decodePicture(ctx, webpStillReader(alph, pic, lossless, w, h), w, h)
 }
 
-// decodePicture decodes a still WebP r of a w×h picture, every allocation
-// charged first to webpBudget(w, h) (internal/webp, internal/vp8l). One
-// that would go past it fails the decode, before it's made, with an error
-// that is ErrTooBig: the same bytes always need the same memory.
-func decodePicture(r io.Reader, w, h int) (image.Image, error) {
-	m, err := webp.Decode(r, vp8l.NewBudget(webpBudget(w, h)))
+// decodePicture decodes a still WebP r of a w×h picture. It first reserves
+// decodeBudget(w, h) of the process-wide decode cap (decMem), waiting its
+// turn so concurrent decodes together stay under the cap, and charges
+// every allocation to a vp8l.Budget of that same size: one that would go
+// past it fails the decode, before it's made, with an error that is
+// ErrTooBig (the same bytes always need the same memory). The budget is
+// clamped to the cap, so a picture whose uncapped budget would exceed the
+// whole process cap fails within it instead of allocating out of bounds.
+func decodePicture(ctx context.Context, r io.Reader, w, h int) (image.Image, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	budget := decodeBudget(w, h)
+	if err := decMem.acquire(ctx, budget); err != nil {
+		return nil, decAcquireErr(err)
+	}
+	defer decMem.release(budget)
+	m, err := webp.Decode(r, vp8l.NewBudget(budget))
 	if errors.Is(err, vp8l.ErrBudget) {
 		return nil, fmt.Errorf("%w: %w", ErrTooBig, err)
 	}
 	return m, err
 }
+
+// decodeBudget is the memory a w×h WebP picture's decode may reserve and
+// allocate: webpBudget, clamped to the process decode cap (decCap). A
+// picture whose uncapped budget is larger (DecodeWithin at a large
+// maxPixels, e.g. the composer's 80 MP) is decoded within the cap and
+// fails with ErrTooBig if it genuinely needs more, rather than being given
+// a budget bigger than the whole process may hold.
+func decodeBudget(w, h int) int64 { return min(webpBudget(w, h), decCap) }
 
 // webpBudget is the most decoding a w×h WebP picture may allocate in all:
 // webpPixelBytes for what's proportional to its pixels, and webpCodeBytes
@@ -419,11 +441,13 @@ func webpFrameBytes(ix *gifIndex) int {
 }
 
 // webpDecodeBytes is what a player reserves for decoding a w×h frame
-// (webpFrameBytes): its pixel-proportional working set, webpPixelBytes.
-// The frame's prefix codes, which webpBudget bounds too, are freed as
-// soon as the frame is decoded and are small for real pictures, so they
-// aren't reserved for the player's life.
-func webpDecodeBytes(w, h int) int { return int(webpPixelBytes(w, h)) }
+// (webpFrameBytes): the whole decodeBudget — its pixel-proportional
+// working set (webpPixelBytes) and its prefix-code allowance
+// (webpCodeBytes). A frame decode charges that budget to the process cap
+// (decodePicture) while it runs, so the player's own reservation must
+// cover it too, or a run of players would reserve less than they decode.
+// It is the capped budget, so the reservation never exceeds the cap.
+func webpDecodeBytes(w, h int) int { return int(decodeBudget(w, h)) }
 
 // drawWebP decodes WebP frame f and composes it on the canvas: blended
 // over what's there, or replacing its rectangle. A frame that doesn't
@@ -446,7 +470,7 @@ func (d *gifDecoder) drawWebP(f *gifFrame) {
 		return
 	}
 	d.wfile = webpStill(d.wfile, alph, pic, lossless, w, h)
-	m, err := decodePicture(bytes.NewReader(d.wfile), w, h)
+	m, err := decodePicture(d.ctx, bytes.NewReader(d.wfile), w, h)
 	if err != nil {
 		d.werr = err
 		return

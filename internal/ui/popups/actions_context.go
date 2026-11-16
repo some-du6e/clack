@@ -203,12 +203,16 @@ func CopyImage(h Host, src string, proxy bool, ok string) {
 		if err != nil {
 			return struct{}{}, err
 		}
-		// imgcache.Decode is the shared safe decoder: it size-gates the
-		// header and bounds a lossless WebP's Huffman-group allocation by the
-		// canvas, so an untrusted emoji or image returns an error here (run's
+		// imgcache.DecodeClipboard is the shared safe decoder for Copy
+		// Image: it bounds a lossless WebP's Huffman-group allocation by the
+		// canvas and reserves every decode's memory from the process decode
+		// cap, so an untrusted emoji or image returns an error here (run's
 		// callback toasts it) instead of OOM-crashing — this overlay has no
-		// recover.
-		img, err := imgcache.Decode(data)
+		// recover. Unlike the cache's own Decode it still copies a real
+		// large photo (a 48 MP phone JPEG, a wide panorama) that the cache's
+		// 40 MP ceiling would refuse, as Copy Image did before the budget
+		// work; ctx stops the decode's wait if the overlay closes first.
+		img, err := imgcache.DecodeClipboard(ctx, data)
 		if err != nil {
 			return struct{}{}, err
 		}

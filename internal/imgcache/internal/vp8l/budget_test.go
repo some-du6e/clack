@@ -7,9 +7,20 @@ package vp8l
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"testing"
 	"unsafe"
 )
+
+// readerOnly hides a reader's ReadByte, so decodeHeader sees a plain
+// io.Reader (not an io.ByteReader) and must wrap it in a bufio.Reader —
+// the path production takes, where the VP8L chunk arrives through a riff
+// chunk reader that has only Read. bytes.Reader has ReadByte, so passing
+// one directly would skip this path.
+type readerOnly struct{ r io.Reader }
+
+func (x readerOnly) Read(p []byte) (int, error) { return x.r.Read(p) }
 
 func TestChargedSizes(t *testing.T) {
 	if got := unsafe.Sizeof(hNode{}); int(got) != hNodeBytes {
@@ -58,16 +69,31 @@ func TestBudgetCharge(t *testing.T) {
 }
 
 // TestDecodeConfigBudget: DecodeConfig reads the header under its own small
-// budget and never needs the caller's; it works on a one-tile meta image
-// whose full decode would be refused by a tiny budget.
+// budget, which must cover the bufio.Reader it wraps a non-io.ByteReader
+// in — the production path, where the VP8L chunk comes through a riff chunk
+// reader that has only Read. The reader here hides ReadByte so that path is
+// taken (a bytes.Reader would skip it, which is why the old test, passing
+// one, still passed when the budget dropped readerBytes).
 func TestDecodeConfigBudget(t *testing.T) {
-	// a 4×4 solid green VP8L bitstream, header + one group, no meta codes
-	stream := solidVP8L(4, 4, 0x11, 0x22, 0x33)
-	cfg, err := DecodeConfig(bytes.NewReader(stream))
+	stream := solidVP8L(4, 4, 0x11, 0x22, 0x33) // header + one group, no meta
+	cfg, err := DecodeConfig(readerOnly{bytes.NewReader(stream)})
 	if err != nil {
-		t.Fatalf("DecodeConfig: %v", err)
+		t.Fatalf("DecodeConfig on a non-ByteReader: %v", err)
 	}
 	if cfg.Width != 4 || cfg.Height != 4 {
 		t.Errorf("DecodeConfig %dx%d, want 4x4", cfg.Width, cfg.Height)
+	}
+	// Pin the budget size for the non-ByteReader path: fixedBytes alone can't
+	// cover the bufio.Reader (readerBytes), so decodeHeader must be given
+	// fixedBytes+readerBytes, which is what DecodeConfig allots.
+	if _, _, _, err := decodeHeader(readerOnly{bytes.NewReader(stream)}, NewBudget(fixedBytes)); !errors.Is(err, ErrBudget) {
+		t.Errorf("decodeHeader on a non-ByteReader under a fixedBytes-only budget: %v, want ErrBudget", err)
+	}
+	if _, _, _, err := decodeHeader(readerOnly{bytes.NewReader(stream)}, NewBudget(fixedBytes+readerBytes)); err != nil {
+		t.Errorf("decodeHeader on a non-ByteReader under fixedBytes+readerBytes: %v, want success", err)
+	}
+	// a bytes.Reader is an io.ByteReader, so no bufio wrap and fixedBytes alone suffices
+	if _, _, _, err := decodeHeader(bytes.NewReader(stream), NewBudget(fixedBytes)); err != nil {
+		t.Errorf("decodeHeader on an io.ByteReader under fixedBytes: %v, want success", err)
 	}
 }

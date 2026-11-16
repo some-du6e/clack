@@ -1027,7 +1027,14 @@ var ErrTooBig = errors.New("imgcache: image dimensions too large")
 // overlay or popup with no recover shows a failure instead of crashing the
 // app.
 func Decode(data []byte) (image.Image, error) {
-	return DecodeWithin(data, MaxPixels, MaxSide)
+	return DecodeCtx(context.Background(), data)
+}
+
+// DecodeCtx is Decode with a context that cancels the decode's wait for a
+// share of the process decode cap (decMem), so a surface that no longer
+// needs the image (an overlay closed, the request cancelled) stops waiting.
+func DecodeCtx(ctx context.Context, data []byte) (image.Image, error) {
+	return DecodeWithinCtx(ctx, data, MaxPixels, MaxSide)
 }
 
 // DecodeWithin is Decode with the caller's own decoded-size budget, for a
@@ -1037,28 +1044,87 @@ func Decode(data []byte) (image.Image, error) {
 // for a lossless or alpha WebP too, the same as for PNG, JPEG and lossy
 // WebP.
 func DecodeWithin(data []byte, maxPixels, maxSide int) (image.Image, error) {
-	if err := checkSizeWithin(data, maxPixels, maxSide); err != nil {
+	return DecodeWithinCtx(context.Background(), data, maxPixels, maxSide)
+}
+
+// DecodeWithinCtx is DecodeWithin with a cancellable context (DecodeCtx).
+// Every decode reserves its memory from the process-wide cap (decMem)
+// before it allocates: a WebP its clamped webpBudget (decodePicture), a
+// PNG/JPEG/GIF its natural decoded size (image.Decode allocates the whole
+// image by the header before reading the pixels), so however many decodes
+// run at once their reservations stay under the cap, and one too big for
+// the cap fails with ErrTooBig rather than an out-of-memory.
+func DecodeWithinCtx(ctx context.Context, data []byte, maxPixels, maxSide int) (image.Image, error) {
+	cfg, err := decodeConfigWithin(data, maxPixels, maxSide)
+	if err != nil {
 		return nil, err
 	}
 	if isWebP(data) {
-		return decodeWebP(data, maxPixels, maxSide)
+		return decodeWebP(ctx, data, maxPixels, maxSide)
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	weight := stdDecodeBytes(cfg)
+	if err := decMem.acquire(ctx, weight); err != nil {
+		return nil, decAcquireErr(err)
+	}
+	defer decMem.release(weight)
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
 }
+
+// stdDecodeBytes is the memory a PNG, JPEG, GIF or BMP decode reserves
+// from the process cap: four bytes a pixel, the premultiplied-RGBA/NRGBA
+// worst case for the 8-bit images the UI actually copies and thumbnails
+// (YCbCr, grey and paletted decodes allocate less; a rare 16-bit PNG would
+// use twice this, which the soft memoryLimit absorbs). cfg is already
+// bounded by decodeConfigWithin, so this can't overflow.
+func stdDecodeBytes(cfg image.Config) int64 { return 4 * int64(cfg.Width) * int64(cfg.Height) }
+
+// DecodeClipboard decodes data for Copy Image (actions_context.go). A PNG,
+// JPEG or GIF may be as large as the process decode cap allows (about
+// 64 MP at four bytes a pixel) — a real 48 MP phone photo or a wide
+// panorama copies, where the cache's 40 MP / 16384 px ceiling would refuse
+// it — charged to the cap like any decode, so a bomb too big for the cap
+// still fails (within the cap, never an OOM). WebP keeps the cache's
+// tighter ceiling and its Huffman budget: a crafted WebP is the memory
+// risk, a photo isn't.
+func DecodeClipboard(ctx context.Context, data []byte) (image.Image, error) {
+	if isWebP(data) {
+		return DecodeWithinCtx(ctx, data, MaxPixels, MaxSide)
+	}
+	return DecodeWithinCtx(ctx, data, photoMaxPixels, photoMaxSide)
+}
+
+// photoMaxPixels and photoMaxSide bound a PNG/JPEG/GIF Copy Image decode
+// (DecodeClipboard): four bytes a pixel fills the whole decode cap at
+// photoMaxPixels, and photoMaxSide still admits a wide panorama.
+const (
+	photoMaxPixels = decCap / 4
+	photoMaxSide   = 1 << 15
+)
 
 // checkSize reads the header's dimensions only, against the cache budget.
 func checkSize(data []byte) error { return checkSizeWithin(data, MaxPixels, MaxSide) }
 
 func checkSizeWithin(data []byte, maxPixels, maxSide int) error {
+	_, err := decodeConfigWithin(data, maxPixels, maxSide)
+	return err
+}
+
+// decodeConfigWithin reads the header's dimensions and rejects (ErrTooBig)
+// anything past the caller's size limits, returning the config so the
+// caller can size its memory reservation from it.
+func decodeConfigWithin(data []byte, maxPixels, maxSide int) (image.Config, error) {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return err
+		return image.Config{}, err
 	}
 	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxSide || cfg.Height > maxSide || cfg.Width*cfg.Height > maxPixels {
-		return ErrTooBig
+		return image.Config{}, ErrTooBig
 	}
-	return nil
+	return cfg, nil
 }
 
 // raw returns the encoded bytes from disk (DiskOK URLs only: avatars and

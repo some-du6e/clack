@@ -18,6 +18,7 @@ package imgcache
 
 import (
 	"compress/lzw"
+	"context"
 	"errors"
 	"image"
 	"image/gif"
@@ -271,6 +272,10 @@ type gifDecoder struct {
 	// WebP of their own, and why the last frame drawn didn't decode
 	wfile []byte
 	werr  error
+	// ctx cancels a WebP frame decode's wait for the process decode cap
+	// (decodePicture); nil means context.Background (the cache's own loads
+	// and players, which aren't cancelled per decode).
+	ctx context.Context
 }
 
 func newGIFDecoder(ix *gifIndex, data []byte) *gifDecoder {

@@ -295,6 +295,117 @@ func VP8LManyGroupsFull(w, h, hBits, nGroups int) []byte {
 	return b.bytes()
 }
 
+// VP8LMetaGapped is a complete w×h VP8L bitstream using meta prefix codes
+// whose tiles name only some of the Huffman groups the stream defines, so a
+// decoder that keeps only the groups tiles use must still read, check and
+// drop the rest. tile i (row-major, 1<<hBits-pixel tiles) names group
+// tileGroup[i]; a named group g is a solid colour[g] (one-symbol codes, so
+// its tiles' pixels are predictable), and every index up to max(tileGroup)
+// that no tile names is a full flat-byte-code group — the most a group's
+// trees can cost — written in index order, which the vendored decoder reads
+// into reused scratch and drops. So a bug that built every group (not only
+// the used ones) or charged each dropped group's trees shows as a much
+// larger charge, and a bug that let a dropped group's codes corrupt a kept
+// group's tree shows as wrong pixels. w×h must give at least len(tileGroup)
+// tiles.
+func VP8LMetaGapped(w, h, hBits int, tileGroup []int, colour []color.NRGBA) []byte {
+	var b bits
+	b.put(0x2f, 8)
+	b.put(uint32(w-1), 14)
+	b.put(uint32(h-1), 14)
+	b.put(0, 1) // alpha hint
+	b.put(0, 3) // version
+	b.put(0, 1) // no transform
+	b.put(0, 1) // no colour cache (top level)
+	b.put(1, 1) // use meta prefix codes
+	b.put(uint32(hBits-2), 3)
+	mw, mh := (w+(1<<hBits)-1)>>hBits, (h+(1<<hBits)-1)>>hBits
+	named := map[int]bool{}
+	maxIdx := 0
+	pix := make([]byte, 4*mw*mh)
+	for i := 0; i < mw*mh; i++ {
+		g := tileGroup[i]
+		named[g] = true
+		if g > maxIdx {
+			maxIdx = g
+		}
+		pix[4*i+0] = byte(g >> 8) // red: index high byte
+		pix[4*i+1] = byte(g)      // green: index low byte
+	}
+	b.put(0, 1) // the meta image uses no colour cache
+	b.vp8lLiteralGroup(0)
+	b.vp8lLiteralPixels(pix)
+	// a body for every index 0..maxIdx, in order: a named one is a solid
+	// colour (predictable pixels), an unnamed one a full byte code (read and
+	// dropped — the most a dropped group can cost)
+	for g := 0; g <= maxIdx; g++ {
+		if named[g] {
+			c := color.NRGBA{}
+			if g < len(colour) {
+				c = colour[g]
+			}
+			for _, sym := range []uint8{c.G, c.R, c.B, c.A, 0} {
+				b.vp8lSimpleTree(sym)
+			}
+		} else {
+			b.vp8lLiteralGroup(0) // a full byte code: no tile uses it
+		}
+	}
+	// the top-level pixels take zero bits (every named group is one-symbol)
+	return b.bytes()
+}
+
+// VP8LIndexed is a complete w×h VP8L bitstream using a colour-indexing
+// transform with a 2-colour palette, so indices pack 8 to a byte (bits=3)
+// and the decoder, inverting the transform, unpacks them into a fresh
+// 4·w·h buffer — the pixel-proportional allocation this lets a test
+// measure. Every pixel is palette index 0 (colour c; the second palette
+// entry is a zero delta, so it is c too). Varying h changes only the
+// packed main image (4·⌈w/8⌉·h) and the unpack buffer (4·w·h), so two
+// heights isolate the unpack-buffer charge.
+func VP8LIndexed(w, h int, c color.NRGBA) []byte {
+	var b bits
+	b.put(0x2f, 8)
+	b.put(uint32(w-1), 14)
+	b.put(uint32(h-1), 14)
+	b.put(0, 1) // alpha hint
+	b.put(0, 3) // version
+	// one transform: colour indexing with two colours (bits=3, 8 pixels a byte)
+	b.put(1, 1) // a transform follows
+	b.put(3, 2) // transformType = colorIndexing
+	b.put(1, 8) // nColors-1 = 1 → two colours
+	// the palette, a 2×1 sub-image of literal pixels (stored as deltas; the
+	// second entry is a zero delta, so both palette colours are c)
+	b.put(0, 1) // the palette sub-image uses no colour cache
+	b.vp8lLiteralGroup(0)
+	b.vp8lLiteralPixels([]byte{c.R, c.G, c.B, c.A, 0, 0, 0, 0})
+	b.put(0, 1) // no more transforms
+	// the main image: ⌈w/8⌉ packed bytes a row, every index 0
+	rw := (w + 7) / 8
+	b.put(0, 1) // no colour cache (top level)
+	b.put(0, 1) // no meta prefix codes
+	b.vp8lLiteralGroup(0)
+	b.vp8lLiteralPixels(make([]byte, 4*rw*h))
+	return b.bytes()
+}
+
+// VP8LSolidBody is VP8LSolid without the 5-byte VP8L header, for a
+// compression-1 ALPH alpha plane: x/image's readAlpha synthesizes the
+// header from the picture's size and prepends it, so the stored bytes start
+// at the body. A solid picture takes zero pixel bits, so one body serves a
+// plane of any size; green is the alpha value readAlpha extracts (it reads
+// the decoded picture's green channel as the alpha plane).
+func VP8LSolidBody(green uint8) []byte {
+	var b bits
+	b.put(0, 1)                                      // no transform
+	b.put(0, 1)                                      // no colour cache
+	b.put(0, 1)                                      // no meta prefix codes
+	for _, sym := range []uint8{green, 0, 0, 0, 0} { // green=alpha; red, blue, alpha, distance unused
+		b.vp8lSimpleTree(sym)
+	}
+	return b.bytes()
+}
+
 // vp8lSimpleTree writes a one-symbol VP8L prefix code (simple, 8-bit
 // symbol): the symbol then decodes with zero bits, as VP8LSolid relies on.
 func (w *bits) vp8lSimpleTree(symbol uint8) {

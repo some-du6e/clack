@@ -242,17 +242,33 @@ func TestWebPMetaGroupsRenumber(t *testing.T) {
 	}
 }
 
-// TestWebPConfigRegistered: dropping x/image/webp's init (its unbudgeted
-// decoder) must not stop image.DecodeConfig reading a WebP header — the
-// composer, emoji add and profile edit size-gate attachments with it.
-// imgcache registers the vendored header reader in its place.
-func TestWebPConfigRegistered(t *testing.T) {
-	data := webptest.Simple(webptest.Chunk("VP8L", webptest.VP8LLiteral(12, 9, make([]byte, 4*12*9))))
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("image.DecodeConfig on a WebP: %v", err)
+// (TestWebPConfigRegistered moved to internal/imgcache/webpreg: in this
+// package the test binary links golang.org/x/image/webp — the other test
+// files decode reference images with it — whose init registers "webp"
+// first, so image.DecodeConfig here runs x/image's reader whether or not
+// imgcache registers its own, and the test couldn't fail. webpreg links
+// only the vendored decoder, so it can.)
+
+// TestWebPBudgetCeilings pins the two ceilings that keep a WebP decode's
+// memory bounded however large the picture claims to be: webpCodeBytes is
+// capped at 96 MiB (so a lossless picture's prefix-code allowance can't
+// grow without bound), and decodeBudget never exceeds the process decode
+// cap (so one decode is never handed a budget bigger than the whole
+// process may hold — a per-decode budget that outran the cap was how an
+// 80 MP composer thumbnail got a ~0.94 GB budget). Remove either ceiling
+// and this fails.
+func TestWebPBudgetCeilings(t *testing.T) {
+	// webpCodeBytes grows 40 bytes a pixel but is capped: a 4096×4096 canvas
+	// uncapped would be 4 MiB + 40·16.8 M ≈ 670 MiB.
+	if got := webpCodeBytes(4096, 4096); got != 96<<20 {
+		t.Errorf("webpCodeBytes(4096,4096) = %d, want the 96 MiB ceiling %d", got, 96<<20)
 	}
-	if format != "webp" || cfg.Width != 12 || cfg.Height != 9 {
-		t.Errorf("DecodeConfig got %q %dx%d, want webp 12x9", format, cfg.Width, cfg.Height)
+	// decodeBudget clamps webpBudget to the process cap, so at MaxSide² (and
+	// hence at any size the gates admit) it is exactly the cap, never more.
+	if got := decodeBudget(MaxSide, MaxSide); got != decCap {
+		t.Errorf("decodeBudget(%d,%d) = %d, want it clamped to the cap %d", MaxSide, MaxSide, got, decCap)
+	}
+	if got := decodeBudget(MaxSide, MaxSide); got > decCap {
+		t.Errorf("decodeBudget over the cap: %d > %d", got, decCap)
 	}
 }
