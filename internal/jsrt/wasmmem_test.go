@@ -235,6 +235,36 @@ func TestWasmReservationClosed(t *testing.T) {
 	}
 }
 
+// An engine whose instantiation fails after its memory was made frees
+// the memory: when the module's own start function traps (or its data
+// doesn't fit), wazero drops the module without closing it, and a
+// reservation isn't the collector's to free. (A trap in _initialize, the
+// start function newEngine names, wazero closes the module for.)
+func TestWasmReservationFailedInstantiate(t *testing.T) {
+	// (memory 1) (func unreachable) (export "_initialize" (func 0)) (start 0)
+	bad := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type: func () -> ()
+		0x03, 0x02, 0x01, 0x00, // function 0 of type 0
+		0x05, 0x03, 0x01, 0x00, 0x01, // memory: min 1 page
+		0x07, 0x0f, 0x01, 0x0b, '_', 'i', 'n', 'i', 't', 'i', 'a', 'l', 'i', 'z', 'e', 0x00, 0x00, // export
+		0x08, 0x01, 0x00, // start: function 0
+		0x0a, 0x05, 0x01, 0x03, 0x00, 0x00, 0x0b, // code: unreachable
+	}
+	old := engineWasm
+	engineWasm = func() []byte { return bad }
+	defer func() { engineWasm = old }()
+	r := &Runtime{opts: Options{MemoryLimit: 64 << 20, Log: func(level, msg string) { t.Logf("js %s: %s", level, msg) }}}
+	e, err := newEngine(r)
+	if err == nil {
+		e.close()
+		t.Fatal("an engine whose start function traps instantiated")
+	}
+	t.Logf("wasmmem: the failed instantiation: %v", err)
+	if n := r.wasmMem.reserved.Load(); n != 0 {
+		t.Fatalf("the failed instantiation left %d bytes reserved", n)
+	}
+}
+
 // The address space really goes back to the OS: 4096 reservations of 128
 // GiB, each touched and released, are 512 TiB, more than a 64-bit
 // process's address space (128 TiB on x86-64, Windows and macOS), so

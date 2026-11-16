@@ -164,6 +164,7 @@ func newEngine(r *Runtime) (*engine, error) {
 	alloc := &wasmAllocator{stats: &r.wasmMem, heap: r.opts.heapWasmMemory || os.Getenv("CLACK_JSRT_HEAP_MEMORY") != ""}
 	mod, err := wrt.InstantiateModule(experimental.WithMemoryAllocator(ctx, alloc), cm, mc)
 	if err != nil {
+		alloc.free() // a failed instantiation leaves wazero nothing to free it with
 		return nil, fmt.Errorf("jsrt: instantiate engine: %w", err)
 	}
 	if alloc.err != nil {

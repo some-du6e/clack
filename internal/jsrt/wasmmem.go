@@ -61,8 +61,9 @@ type wasmMemStats struct {
 // wazero (through the instantiation context). An engine has one memory.
 type wasmAllocator struct {
 	stats *wasmMemStats
-	heap  bool  // a Go slice, as wazero's own (tests measuring the difference)
-	err   error // why no reservation was made (the memory is a Go slice)
+	heap  bool                      // a Go slice, as wazero's own (tests measuring the difference)
+	err   error                     // why no reservation was made (the memory is a Go slice)
+	mem   experimental.LinearMemory // the memory it made
 }
 
 func (a *wasmAllocator) Allocate(capacity, max uint64) experimental.LinearMemory {
@@ -72,7 +73,8 @@ func (a *wasmAllocator) Allocate(capacity, max uint64) experimental.LinearMemory
 			reservedWasm.Add(int64(len(buf)))
 			reservations.Add(1)
 			a.stats.reserved.Store(uint64(len(buf)))
-			return &reservedMemory{buf: buf, stats: a.stats}
+			a.mem = &reservedMemory{buf: buf, stats: a.stats}
+			return a.mem
 		}
 		a.err = fmt.Errorf("reserving %d MiB of address space: %w", max>>20, err)
 	}
@@ -82,7 +84,18 @@ func (a *wasmAllocator) Allocate(capacity, max uint64) experimental.LinearMemory
 	if capacity > math.MaxInt {
 		capacity = 0
 	}
-	return &heapMemory{buf: make([]byte, 0, capacity), stats: a.stats}
+	a.mem = &heapMemory{buf: make([]byte, 0, capacity), stats: a.stats}
+	return a.mem
+}
+
+// free frees the memory after an instantiation that failed: wazero frees
+// a memory only with its module (Close), and a module whose start function
+// trapped (or whose data didn't fit) is dropped without one. Free twice is
+// fine.
+func (a *wasmAllocator) free() {
+	if a.mem != nil {
+		a.mem.Free()
+	}
 }
 
 // reservedMemory is a wasm memory in address space reserved outside the Go
