@@ -215,13 +215,16 @@ func (a *App) focusAfterNavigate(prev, r Route) {
 	if a.data == nil || a.data.core == nil {
 		return // no workspace (a shell under test): nothing to mount
 	}
-	for _, o := range a.overlays {
-		if !o.Dismissed() {
-			return
-		}
+	if a.overlayOpen() {
+		return
 	}
 	c := a.convoFor(ch, "")
-	if a.footerFor(c) != footNone {
+	switch a.footerFor(c) {
+	case footNone:
+	case footPending: // the input mounts once membership is known (layoutConvo)
+		c.focusKnown = true
+		return
+	default:
 		return
 	}
 	switch {
@@ -230,6 +233,16 @@ func (a *App) focusAfterNavigate(prev, r Route) {
 	case c.comp != nil:
 		c.comp.Focus()
 	}
+}
+
+// overlayOpen reports an overlay still up (n7.ZV: no focus move then).
+func (a *App) overlayOpen() bool {
+	for _, o := range a.overlays {
+		if !o.Dismissed() {
+			return true
+		}
+	}
+	return false
 }
 
 // ApplyCoreEvent shows a core event in the message views now, on the UI
