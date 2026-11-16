@@ -28,6 +28,9 @@ package ui
 //	                      plugin the Library turns on by default
 //	                      (default "taut:@default,slick:MessageLogger")
 //	PERF_PLUGIN_OUT       where the JSON result goes
+//	PERF_PLUGIN_PROF      a path prefix: a CPU profile per pass
+//	                      (<prefix>-<pass>.cpu.pprof) and the mutex and
+//	                      block profiles over all passes
 //
 // Synthetic data only; nothing reaches Slack. It uses nothing newer than
 // the plugin bench, so the perf workflow runs this same file on the
@@ -43,6 +46,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"sort"
 	"strings"
 	"sync"
@@ -55,6 +59,9 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
+
+// perfProfPrefix is PERF_PLUGIN_PROF while the passes run.
+var perfProfPrefix string
 
 // perfPass is one measured pass.
 type perfPass struct {
@@ -188,6 +195,16 @@ func TestPerfPluginScroll(t *testing.T) {
 	res.Messages = e.loadedMessages(fakeslack.BenchChannelID)
 	t.Logf("%d messages loaded", res.Messages)
 
+	prof := os.Getenv("PERF_PLUGIN_PROF")
+	if prof != "" {
+		runtime.SetMutexProfileFraction(5)
+		runtime.SetBlockProfileRate(20000) // one sample per 20 µs blocked
+		defer func() {
+			runtime.SetMutexProfileFraction(0)
+			runtime.SetBlockProfileRate(0)
+		}()
+	}
+	perfProfPrefix = prof
 	res.Passes = append(res.Passes, e.perfScroll("channel", e.listPoint, nil))
 	live := &perfTraffic{e: e, ch: fakeslack.BenchChannelID}
 	res.Passes = append(res.Passes, e.perfScroll("channel-live", e.listPoint, live))
@@ -208,6 +225,14 @@ func TestPerfPluginScroll(t *testing.T) {
 	thLive := &perfTraffic{e: e, ch: thCh, thread: thRoot}
 	res.Passes = append(res.Passes, e.perfScroll("thread-live", thPoint, thLive))
 
+	if prof != "" {
+		for _, k := range []string{"mutex", "block"} {
+			if f, err := os.Create(prof + "." + k + ".pprof"); err == nil {
+				_ = pprof.Lookup(k).WriteTo(f, 0)
+				f.Close()
+			}
+		}
+	}
 	for _, p := range res.Passes {
 		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, events %d, trees %d, renders %d",
 			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Events, p.Trees, p.Renders)
@@ -280,6 +305,18 @@ func perfInstall(ctx context.Context, e *benchEnv, page *libraryPage, entry plug
 func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfTraffic) perfPass {
 	runtime.GC()
 	trees0, calls0 := e.delivered(), e.calls.snapshot()
+	if perfProfPrefix != "" {
+		if f, err := os.Create(perfProfPrefix + "-" + name + ".cpu.pprof"); err == nil {
+			if pprof.StartCPUProfile(f) == nil {
+				defer func() {
+					pprof.StopCPUProfile()
+					f.Close()
+				}()
+			} else {
+				f.Close()
+			}
+		}
+	}
 	c0 := procCPU()
 	if traffic != nil {
 		traffic.start()

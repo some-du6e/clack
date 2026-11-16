@@ -519,9 +519,26 @@ jobs:
             for s in base head; do
               [ -x perf-out/$s.test ] || continue
               echo "::group::$s round $r"
-              PERF_PLUGIN_OUT="$PWD/perf-out/$s-$r.json" xvfb-run -a perf-out/$s.test -test.run '^TestPerfPluginScroll$' -test.v -test.count 1 -test.timeout 25m > perf-out/$s-$r.log 2>&1 || echo "::warning::$s round $r failed"
+              PERF_PLUGIN_OUT="$PWD/perf-out/$s-$r.json" PERF_PLUGIN_PROF="$PWD/perf-out/$s-$r" xvfb-run -a perf-out/$s.test -test.run '^TestPerfPluginScroll$' -test.v -test.count 1 -test.timeout 25m > perf-out/$s-$r.log 2>&1 || echo "::warning::$s round $r failed"
               grep -E 'pass |running [0-9]+ plugins|messages loaded|--- |panic|FAIL' perf-out/$s-$r.log || true
               echo "::endgroup::"
+            done
+          done
+      - name: profiles (round 1; CPU per pass, then mutex and block waits)
+        if: ${{ !cancelled() }}
+        run: |
+          for s in base head; do
+            [ -x perf-out/$s.test ] || continue
+            for f in perf-out/$s-1-*.cpu.pprof; do
+              [ -f "$f" ] || continue
+              echo "::group::$f flat"; go tool pprof -top -nodecount 45 perf-out/$s.test "$f" 2>&1 | head -60; echo "::endgroup::"
+              echo "::group::$f cumulative"; go tool pprof -top -cum -nodecount 70 perf-out/$s.test "$f" 2>&1 | head -85; echo "::endgroup::"
+            done
+            for k in mutex block; do
+              f=perf-out/$s-1.$k.pprof
+              [ -f "$f" ] || continue
+              echo "::group::$f"; go tool pprof -top -nodecount 30 perf-out/$s.test "$f" 2>&1 | head -45; echo "::endgroup::"
+              echo "::group::$f cumulative"; go tool pprof -top -cum -nodecount 40 perf-out/$s.test "$f" 2>&1 | head -55; echo "::endgroup::"
             done
           done
       - name: report
@@ -537,3 +554,4 @@ jobs:
           path: |
             perf-out/*.json
             perf-out/*.log
+            perf-out/*.pprof
