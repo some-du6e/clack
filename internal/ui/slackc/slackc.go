@@ -315,8 +315,8 @@ type inst struct {
 	root  uint64
 	name  string
 	key   instKey
-	sent  uint64 // hash of the props last sent to JS
-	used  time.Time
+	sent  uint64    // hash of the props last sent to JS
+	draws []drawRec // each window's latest draw (frame.go)
 	slots map[string]int64
 	view  *View
 	tree  atomic.Pointer[[]*Node]
@@ -333,8 +333,7 @@ var (
 	roots   = map[uint64]*inst{}
 
 	// insts is the UI goroutine's lookup by component identity.
-	insts     = map[instKey]*inst{}
-	lastSweep time.Time
+	insts = map[instKey]*inst{}
 )
 
 func newRoot() uint64 { return rootSeq.Add(1) &^ (1 << 63) }
@@ -363,7 +362,6 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	}
 	pump()
 	t := now(gtx)
-	sweep(t)
 
 	h := hashProps(props)
 	k := instKey{name: name}
@@ -388,7 +386,7 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 		roots[in.root] = in
 		rootsMu.Unlock()
 	}
-	in.used = t
+	in.drawn(t)
 	if h != in.sent {
 		in.sent = h
 		if nb, ok := b.(NestedBridge); ok && k.parent != 0 {
@@ -462,21 +460,6 @@ func keyString(v any) string {
 		return strconv.FormatFloat(v, 'g', -1, 64)
 	}
 	return string(appendValue(nil, v, nil, ""))
-}
-
-// sweep unmounts instances not drawn for a while (scrolled away, closed).
-func sweep(t time.Time) {
-	if t.Sub(lastSweep) < 2*time.Second {
-		return
-	}
-	lastSweep = t
-	b := bridge()
-	for k, in := range insts {
-		if t.Sub(in.used) > 5*time.Second {
-			delete(insts, k)
-			dropRoot(in, b)
-		}
-	}
 }
 
 func dropRoot(in *inst, b Bridge) {
@@ -600,10 +583,13 @@ var lastViewport struct {
 }
 
 // Frame is the ui root's per-frame hook, called before laying out the
-// shell: it records the window size (vw/vh, fixed positioning), runs
-// queued JS→Go calls and reports viewport changes to JS. Free when no
-// plugin runtime is attached.
+// shell: it starts the main window's frame (its patched roots the last
+// frames left undrawn unmount: frame.go), records the window size (vw/vh,
+// fixed positioning), runs queued JS→Go calls and reports viewport
+// changes to JS. Free when no plugin runtime is attached.
 func Frame(gtx layout.Context) {
+	curClock = &mainClock
+	mainClock.begin(now(gtx))
 	windowSize = gtx.Constraints.Max
 	pushDocument()
 	b := bridge()

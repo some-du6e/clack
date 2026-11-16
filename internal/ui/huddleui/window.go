@@ -170,12 +170,14 @@ func (w *window) run() {
 	// going, the captions' fade), like Slack's, which draws nothing in a
 	// still call.
 	var ops op.Ops
-	var caption captionState // Windows: the caption takes the window's colour (caption.go)
+	var caption captionState   // Windows: the caption takes the window's colour (caption.go)
+	var patch slackc.SubWindow // its plugin patch points' roots (slackc)
 	for {
 		ev := ww.Event()
 		caption.sync(ev, ww, hudCaption)
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			patch.Close()
 			if w.popout != "" {
 				w.c.popoutGone(w)
 				return
@@ -193,7 +195,7 @@ func (w *window) run() {
 			// Slack's huddle components here are plugin patch points
 			// (slackc), shared with the main window: one frame at a time.
 			slackc.LockFrame()
-			restore := slackc.SubFrameBg(gtx, "p-multi_view_window p-huddle_window", hudWhite, hudFrame)
+			restore := patch.FrameBg(gtx, "p-multi_view_window p-huddle_window", hudWhite, hudFrame)
 			w.layout(gtx)
 			restore()
 			slackc.UnlockFrame()

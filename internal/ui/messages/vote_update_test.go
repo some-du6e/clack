@@ -123,10 +123,11 @@ return PassThrough`)
 }
 
 // votePane is one view (channel or thread pane) over a router. The panes
-// share one clock (now), as the views of one window do: on clocks of
-// their own, the pane that clicked more ran seconds ahead and its frames
-// swept the other pane's patched roots as undrawn (slackc unmounts a root
-// not drawn for 5 s).
+// share one clock (now), as the views of one window do. (On clocks of
+// their own, the pane that clicked more ran seconds ahead, and slackc's
+// sweep, which then compared every root's last draw with whichever frame
+// ran, unmounted the other pane's roots; it counts each window's own
+// frames now: slackc/frame.go.)
 type votePane struct {
 	name string
 	s    *listState
