@@ -10,8 +10,11 @@ package messages
 // (bk-agent-shots.yml).
 
 import (
+	"context"
 	"fmt"
 	"image"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -46,17 +49,8 @@ func planApp(t *testing.T, slim bool) (*core.App, *fakeslack.Server, map[string]
 	s.TeamID, s.TeamName = fakeslack.TeamID, "Fake Club"
 	s.Unlock()
 	self := slack.User{ID: fakeslack.SelfID, TeamID: fakeslack.TeamID, Name: "me", Profile: slack.Profile{DisplayName: "me"}}
-	bot := slack.User{ID: fakeslack.AppPlanUserID, TeamID: fakeslack.TeamID, Name: "eth", IsBot: true,
-		Profile: slack.Profile{DisplayName: "eth"}}
-	s.PutUsers([]slack.User{self, bot})
-	s.PutBot(fakeslack.AppPlanBotID, store.BotInfo{Name: fakeslack.AppPlanBotName, AppID: fakeslack.AppPlanAppID})
-	s.PutConv(slack.Conversation{ID: fakeslack.AppPlanChannelID, Name: "plans", IsChannel: true, IsMember: true, NumMembers: 2})
-	msgs, names := fakeslack.AppPlanMessages()
-	ts := map[string]string{}
-	for i, n := range names {
-		ts[n] = msgs[i].TS
-	}
-	s.SetLatest(fakeslack.AppPlanChannelID, msgs, false)
+	s.PutUsers([]slack.User{self})
+	ts := planSeed(s)
 	app := core.New(c, s)
 	app.S.Self = self
 	app.ServeOffline()
@@ -66,6 +60,22 @@ func planApp(t *testing.T, slim bool) (*core.App, *fakeslack.Server, map[string]
 	}
 	app.SetExperimentGroup("agent_streaming_slimmer_task_cards", group)
 	return app, fs, ts
+}
+
+// planSeed puts the app, its channel and AppPlanMessages in s and
+// returns each post's ts by name.
+func planSeed(s *store.Store) map[string]string {
+	bot := slack.User{ID: fakeslack.AppPlanUserID, TeamID: fakeslack.TeamID, Name: "eth", IsBot: true, Profile: slack.Profile{DisplayName: "eth"}}
+	s.PutUsers([]slack.User{bot})
+	s.PutBot(fakeslack.AppPlanBotID, store.BotInfo{Name: fakeslack.AppPlanBotName, AppID: fakeslack.AppPlanAppID})
+	s.PutConv(slack.Conversation{ID: fakeslack.AppPlanChannelID, Name: "plans", IsChannel: true, IsMember: true, NumMembers: 2})
+	msgs, names := fakeslack.AppPlanMessages()
+	ts := map[string]string{}
+	for i, n := range names {
+		ts[n] = msgs[i].TS
+	}
+	s.SetLatest(fakeslack.AppPlanChannelID, msgs, false)
+	return ts
 }
 
 func docKinds(d richtext.Doc) string {
@@ -154,4 +164,107 @@ func TestAppPlanRows(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Every Slick plugin, installed alone, over the same posts: none may
+// leave a plan post blank under its sender (ui-slick.yml; a plugin
+// that doesn't start is skipped).
+func TestSlickViewAppPlanEveryPlugin(t *testing.T) {
+	dir := slickDir(t)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, e := range ents {
+		n := e.Name()
+		if strings.HasSuffix(n, ".js") && !strings.HasSuffix(n, ".main.js") {
+			ids = append(ids, strings.TrimSuffix(n, ".js"))
+		}
+	}
+	if len(ids) == 0 {
+		t.Fatal("no plugins built")
+	}
+	for _, slim := range []bool{true, false} {
+		for _, id := range ids {
+			look := map[bool]string{true: "slim", false: "cards"}[slim]
+			t.Run(look+"/"+id, func(t *testing.T) {
+				var ts map[string]string
+				e := newSlickEnv(t, func(s *store.Store) { ts = planSeed(s) })
+				group := "off"
+				if slim {
+					group = "on"
+				}
+				e.app.SetExperimentGroup("agent_streaming_slimmer_task_cards", group)
+				if !e.tryInstall(t, id) {
+					t.Skipf("%s doesn't start here", id)
+				}
+				v := NewChannelView(e.h, fakeslack.AppPlanChannelID)
+				v.Preview = true
+				f := frameFn(v)
+				drawn := func() bool {
+					for _, k := range ts {
+						if rw := v.s.rows[k]; rw == nil || rw.rv == nil {
+							return false
+						}
+					}
+					return true
+				}
+				for dl := time.Now().Add(8 * time.Second); time.Now().Before(dl) && !drawn(); {
+					f()
+					time.Sleep(15 * time.Millisecond)
+				}
+				for i := 0; i < 20; i++ {
+					f()
+					time.Sleep(10 * time.Millisecond)
+				}
+				for _, name := range []string{"plan", "mixed"} {
+					rw := v.s.rows[ts[name]]
+					if rw == nil {
+						t.Logf("%s: %s not drawn (hidden by the plugin?)", id, name)
+						continue
+					}
+					slots := rw.rv.ElementSlots()
+					if len(slots) != 1 || slots[0].Dy() < 19 || rw.bodyRect.Dy() < 19 {
+						t.Errorf("%s: %s blank: body %v slots %v doc [%s] elements %v", id, name, rw.bodyRect, slots,
+							docKinds(rw.m.Doc), rw.rv.Options().Elements != nil)
+					}
+				}
+			})
+		}
+	}
+}
+
+// tryInstall is install that reports a plugin that fails to import or
+// start instead of failing the test.
+func (e *slickEnv) tryInstall(t *testing.T, id string) bool {
+	t.Helper()
+	dir := slickDir(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, f := range []string{id + ".js", id + ".main.js"} {
+		code, err := os.ReadFile(filepath.Join(dir, f))
+		if err != nil {
+			if f == id+".js" {
+				return false
+			}
+			continue
+		}
+		if _, err := e.s.Import(ctx, code); err != nil {
+			t.Logf("import %s: %v", f, err)
+			return false
+		}
+	}
+	if err := e.s.SetEnabled(ctx, id, true); err != nil {
+		t.Logf("enable %s: %v", id, err)
+		return false
+	}
+	for _, p := range e.s.Settings().Plugins {
+		if p.ID == id && (!p.Running || p.StartError != "") {
+			t.Logf("%s: running=%v error=%q", id, p.Running, p.StartError)
+			return false
+		}
+	}
+	time.Sleep(150 * time.Millisecond)
+	return true
 }
