@@ -1050,6 +1050,15 @@ func (tr *idleTraffic) prepare() {
 	if tr.dm.ID != "" {
 		tr.sender = tr.dm.ID
 	}
+	// ch unread on both sides: marked before the fake's latest message.
+	// The fake's client.counts doesn't see the messages PostQuiet adds, so
+	// the counts refresh that thread and badge events bring would read a
+	// channel only those made unread again (a change on screen)
+	if tr.ch != "" {
+		if _, err := e.a.data.core.Mark(context.Background(), tr.ch, "1762400000.000000"); err != nil {
+			e.tb.Logf("marking %s unread: %v", tr.ch, err)
+		}
+	}
 	tr.round(true)
 }
 

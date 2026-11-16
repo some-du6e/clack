@@ -99,8 +99,8 @@ func TestIdleTrafficFrames(t *testing.T) {
 		if blinks > maxBlinks {
 			t.Errorf("%s: %d caret frames in %v, want at most %d", name, blinks, d, maxBlinks)
 		}
-		if other := res.Count() - blinks - frames; other > 1 { // a clock-minute tick
-			t.Errorf("%s: %d timer frames besides the caret's", name, other)
+		if other := res.Count() - blinks - frames; other > 2 { // a clock-minute tick or two (relative times)
+			t.Errorf("%s: %d timer frames besides the caret's, want at most 2", name, other)
 		}
 	}
 	run("channel, composer focused", true)
