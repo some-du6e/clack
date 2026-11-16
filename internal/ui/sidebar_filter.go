@@ -148,11 +148,18 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 			}
 		}
 	}
-	focused := gtx.Focused(&f.ed)
-	if focused && !f.focused {
-		a.sidebarFilterFocused()
+	// focus edges only from a pass that delivers input: under a plugin
+	// patching ChannelSidebar slackc also measures the sidebar
+	// (gtx.Disabled(), nothing focused), and every relayout looked like a
+	// blur and a new focus (onFocus's DM fetch again)
+	focused := f.focused
+	if gtx.Source.Enabled() {
+		focused = gtx.Focused(&f.ed)
+		if focused && !f.focused {
+			a.sidebarFilterFocused()
+		}
+		f.focused = focused
 	}
-	f.focused = focused
 	if f.reset.Clicked(gtx) { // handleResetButtonClick + onReset: clear, keep the focus
 		f.clear()
 		gtx.Execute(key.FocusCmd{Tag: &f.ed})
