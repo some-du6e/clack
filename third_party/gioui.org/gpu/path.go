@@ -96,7 +96,14 @@ type fboSet struct {
 type FBO struct {
 	size image.Point
 	tex  driver.Texture
+	// idle counts the frames in a row this texture was more than twice
+	// the size its page needed, or wasn't needed (Clack patch 40)
+	idle int
 }
+
+// fboIdleFrames is how long a texture may stay much bigger than needed, or
+// unused, before it is made again to size or let go (Clack patch 40).
+const fboIdleFrames = 60
 
 type pathData struct {
 	ncurves int
@@ -258,11 +265,20 @@ func (s *fboSet) resize(ctx driver.Device, format driver.TextureFormat, sizes []
 	for i, sz := range sizes {
 		f := &s.fbos[i]
 		// Resizing or recreating FBOs can introduce rendering stalls.
-		// Avoid if the space waste is not too high.
-		resize := sz.X > f.size.X || sz.Y > f.size.Y
-		waste := float32(sz.X*sz.Y) / float32(f.size.X*f.size.Y)
-		resize = resize || waste > 1.2
+		// Clack patch 40: the waste check here could never trip (needed
+		// over current is at most 1 when it fits), so an atlas page kept
+		// its biggest size for good, and every frame cleared and stored
+		// all of it. A texture more than twice what its page needs for
+		// fboIdleFrames in a row is made again to size.
+		resize := f.tex == nil || sz.X > f.size.X || sz.Y > f.size.Y
+		if !resize && f.size.X*f.size.Y > 2*sz.X*sz.Y {
+			f.idle++
+			resize = f.idle >= fboIdleFrames
+		} else {
+			f.idle = 0
+		}
 		if resize {
+			f.idle = 0
 			if f.tex != nil {
 				f.tex.Release()
 			}
@@ -284,8 +300,18 @@ func (s *fboSet) resize(ctx driver.Device, format driver.TextureFormat, sizes []
 			f.tex = tex
 		}
 	}
-	// Delete extra fbos.
-	s.delete(ctx, len(sizes))
+	// Delete extra fbos: the ones this frame didn't need, once they
+	// weren't needed for fboIdleFrames (Clack patch 40; a page count going
+	// down and up, as when an opacity layer fades in, made and released
+	// textures each time).
+	n := len(s.fbos)
+	for i := len(sizes); i < n; i++ {
+		s.fbos[i].idle++
+	}
+	for n > len(sizes) && s.fbos[n-1].idle >= fboIdleFrames {
+		n--
+	}
+	s.delete(ctx, n)
 }
 
 func (s *fboSet) delete(ctx driver.Device, idx int) {

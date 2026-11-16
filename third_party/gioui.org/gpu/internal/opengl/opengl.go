@@ -45,6 +45,10 @@ type Backend struct {
 	// vertArray is bound during a frame. We don't need it, but
 	// core desktop OpenGL profile 3.3 requires some array bound.
 	vertArray gl.VertexArray
+
+	// skipped counts the calls Clack patch 37 left out: vertex attribute
+	// pointers and uniforms set to what they are already (patch 36).
+	skipped int64
 }
 
 // State tracking.
@@ -154,6 +158,11 @@ type uniformLocation struct {
 	offset  int
 	typ     shader.DataType
 	size    int
+	// last is the value the program has, bit for bit (Clack patch 37): a
+	// program's uniforms keep their values, so setting the same again is
+	// left out
+	last [4]uint32
+	set  bool
 }
 
 // textureTriple holds the type settings for
@@ -410,9 +419,14 @@ func (s *glState) setVertexAttribArray(f *gl.Functions, idx int, enabled bool) {
 	}
 }
 
-func (s *glState) vertexAttribPointer(f *gl.Functions, buf gl.Buffer, idx, size int, typ gl.Enum, normalized bool, stride, offset int) {
-	s.bindBuffer(f, gl.ARRAY_BUFFER, buf)
+// vertexAttribPointer points attribute idx into buf, unless it points
+// there already (Clack patch 37); it reports whether it called OpenGL.
+func (s *glState) vertexAttribPointer(f *gl.Functions, buf gl.Buffer, idx, size int, typ gl.Enum, normalized bool, stride, offset int) bool {
 	a := &s.vertAttribs[idx]
+	if !a.obj.Equal(gl.Buffer{}) && a.obj.Equal(buf) && a.size == size && a.typ == typ && a.normalized == normalized && a.stride == stride && a.offset == uintptr(offset) {
+		return false
+	}
+	s.bindBuffer(f, gl.ARRAY_BUFFER, buf)
 	a.obj = buf
 	a.size = size
 	a.typ = typ
@@ -420,6 +434,7 @@ func (s *glState) vertexAttribPointer(f *gl.Functions, buf gl.Buffer, idx, size 
 	a.stride = stride
 	a.offset = uintptr(offset)
 	f.VertexAttribPointer(gl.Attrib(idx), a.size, a.typ, a.normalized, a.stride, int(a.offset))
+	return true
 }
 
 func (s *glState) activeTexture(f *gl.Functions, unit gl.Enum) {
@@ -456,6 +471,13 @@ func (s *glState) deleteFramebuffer(f *gl.Functions, fbo gl.Framebuffer) {
 
 func (s *glState) deleteBuffer(f *gl.Functions, b gl.Buffer) {
 	f.DeleteBuffer(b)
+	// the attributes pointing into b point nowhere now; the next buffer
+	// may get its name (Clack patch 37)
+	for i := range s.vertAttribs {
+		if b.Equal(s.vertAttribs[i].obj) {
+			s.vertAttribs[i].obj = gl.Buffer{}
+		}
+	}
 	if b.Equal(s.arrayBuf) {
 		s.arrayBuf = gl.Buffer{}
 	}
@@ -989,8 +1011,14 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 	if bf.typ&driver.BufferBindingUniforms == 0 {
 		panic("not a uniform buffer")
 	}
-	b.state.pipeline.prog.vertUniforms.update(b.funcs, bf)
-	b.state.pipeline.prog.fragUniforms.update(b.funcs, bf)
+	b.skipped += b.state.pipeline.prog.vertUniforms.update(b.funcs, bf)
+	b.skipped += b.state.pipeline.prog.fragUniforms.update(b.funcs, bf)
+}
+
+// ClackCalls implements driver.CallCounter (Clack patch 36): the calls into
+// OpenGL.
+func (b *Backend) ClackCalls() driver.Calls {
+	return driver.Calls{API: b.funcs.Calls, Skipped: b.skipped}
 }
 
 func (b *Backend) BindProgram(prog driver.Program) {
@@ -1015,16 +1043,28 @@ func (u *uniforms) setup(funcs *gl.Functions, p gl.Program, uniformSize int, uni
 	u.size = uniformSize
 }
 
-func (p *uniforms) update(funcs *gl.Functions, buf *buffer) {
+// update sets the program's uniforms from buf, the ones that changed
+// (Clack patch 37); it returns how many it left alone.
+func (p *uniforms) update(funcs *gl.Functions, buf *buffer) (skipped int64) {
 	if buf.size < p.size {
 		panic(fmt.Errorf("uniform buffer too small, got %d need %d", buf.size, p.size))
 	}
 	data := buf.data
-	for _, u := range p.locs {
+	for i := range p.locs {
+		u := &p.locs[i]
 		if !u.uniform.Valid() {
 			continue
 		}
 		data := data[u.offset:]
+		if u.typ == shader.DataTypeFloat && u.size >= 1 && u.size <= 4 {
+			var v [4]uint32
+			copy(v[:u.size], unsafe.Slice((*uint32)(unsafe.Pointer(unsafe.SliceData(data))), u.size))
+			if u.set && v == u.last {
+				skipped++
+				continue
+			}
+			u.last, u.set = v, true
+		}
 		switch {
 		case u.typ == shader.DataTypeFloat && u.size == 1:
 			data := data[:4]
@@ -1046,6 +1086,7 @@ func (p *uniforms) update(funcs *gl.Functions, buf *buffer) {
 			panic("unsupported uniform data type or size")
 		}
 	}
+	return skipped
 }
 
 func (b *buffer) Upload(data []byte) {
@@ -1128,7 +1169,9 @@ func (b *Backend) setupVertexArrays() {
 			panic("unsupported data type")
 		}
 		enabled[inp.Location] = true
-		b.glstate.vertexAttribPointer(b.funcs, buf.obj, inp.Location, l.Size, gltyp, false, p.layout.Stride, buf.offset+l.Offset)
+		if !b.glstate.vertexAttribPointer(b.funcs, buf.obj, inp.Location, l.Size, gltyp, false, p.layout.Stride, buf.offset+l.Offset) {
+			b.skipped++
+		}
 	}
 	for i := range max {
 		b.glstate.setVertexAttribArray(b.funcs, i, enabled[i])

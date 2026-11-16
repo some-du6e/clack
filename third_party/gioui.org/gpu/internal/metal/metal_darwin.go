@@ -131,6 +131,13 @@ static void renderEncSetVertexBuffer(CFTypeRef renderEncRef, CFTypeRef bufRef, N
 	}
 }
 
+static void renderEncSetVertexBufferOffset(CFTypeRef renderEncRef, NSUInteger idx, NSUInteger offset) {
+	@autoreleasepool {
+		id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)renderEncRef;
+		[enc setVertexBufferOffset:offset atIndex:idx];
+	}
+}
+
 static void renderEncSetFragmentBuffer(CFTypeRef renderEncRef, CFTypeRef bufRef, NSUInteger idx, NSUInteger offset) {
 	@autoreleasepool {
 		id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)renderEncRef;
@@ -443,6 +450,60 @@ type Backend struct {
 	// that spirv-cross generates for emulating buffer.length expressions in
 	// shaders.
 	bufSizes []uint32
+
+	// Clack patch 37: the open render encoder's state, and one sampler
+	// state per filter for all textures.
+	enc      encState
+	samplers map[samplerKey]C.CFTypeRef
+	// Clack patch 36: the cgo calls made into Metal, and the ones enc
+	// left out.
+	calls driver.Calls
+}
+
+// encState is what the open render encoder was last given (Clack patch
+// 37). Gio binds the pipeline, the quad, the textures, the uniforms and
+// the viewport again for every op; each was a cgo call into Metal under
+// an autorelease pool of its own, ~11,400 a frame on a busy window. A
+// bind of what the encoder already has is left out. A new encoder starts
+// with nothing bound.
+type encState struct {
+	pipeline *Pipeline
+	// the attribute buffer: a Metal buffer at an offset, or a Go one's
+	// bytes as of its upload generation
+	vert struct {
+		buf *Buffer
+		off int
+		gen uint64
+	}
+	// the uniform bytes each stage was last sent (setVertexBytes,
+	// setFragmentBytes), or the Metal buffer bound for them
+	vertUniforms, fragUniforms uniformBinding
+	tex                        [texUnits]C.CFTypeRef
+	sampler                    [texUnits]C.CFTypeRef
+	viewport                   C.MTLViewport
+	hasViewport                bool
+}
+
+type uniformBinding struct {
+	buf   C.CFTypeRef // a Metal buffer, or 0 for bytes
+	bytes []byte
+	set   bool
+}
+
+// same reports whether the stage, reading the bytes in r of data, would
+// see what it was last sent.
+func (u *uniformBinding) same(data []byte, r [2]int) bool {
+	return u.set && u.buf == 0 && len(u.bytes) >= r[1] && len(data) >= r[1] && string(u.bytes[r[0]:r[1]]) == string(data[r[0]:r[1]])
+}
+
+func (u *uniformBinding) sent(data []byte) {
+	u.buf, u.set = 0, true
+	u.bytes = append(u.bytes[:0], data...)
+}
+
+type samplerKey struct {
+	min, mag C.MTLSamplerMinMagFilter
+	mip      C.MTLSamplerMipFilter
 }
 
 type Texture struct {
@@ -458,6 +519,25 @@ type Texture struct {
 type Shader struct {
 	function C.CFTypeRef
 	inputs   []shader.InputLocation
+	uniforms shader.UniformsReflection
+}
+
+// uniformRange is the bytes of the uniform buffer a shader reads; zero for
+// none (Clack patch 37).
+func (s *Shader) uniformRange() [2]int {
+	r := [2]int{-1, 0}
+	for _, l := range s.uniforms.Locations {
+		if r[0] < 0 || l.Offset < r[0] {
+			r[0] = l.Offset
+		}
+		if e := l.Offset + 4*l.Size; e > r[1] {
+			r[1] = e
+		}
+	}
+	if r[0] < 0 {
+		return [2]int{}
+	}
+	return r
 }
 
 type Program struct {
@@ -468,6 +548,9 @@ type Program struct {
 type Pipeline struct {
 	pipeline C.CFTypeRef
 	topology C.MTLPrimitiveType
+	// the uniform bytes each stage reads (Clack patch 37): a stage that
+	// reads none isn't sent any
+	vertUniforms, fragUniforms [2]int
 }
 
 type Buffer struct {
@@ -477,6 +560,9 @@ type Buffer struct {
 
 	// store is the buffer contents for buffers not allocated on the GPU.
 	store []byte
+	// gen counts store's uploads: bytes sent to an encoder are still its
+	// contents while gen is unchanged (Clack patch 37)
+	gen uint64
 }
 
 const (
@@ -512,6 +598,7 @@ func newMetalDevice(api driver.Metal) (driver.Device, error) {
 func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport image.Point) driver.Texture {
 	if b.lastCmdBuffer != 0 {
 		C.cmdBufferWaitUntilCompleted(b.lastCmdBuffer)
+		b.calls.API++
 		b.stagingOff = 0
 	}
 	if target == nil {
@@ -535,6 +622,7 @@ func (b *Backend) startBlit() C.CFTypeRef {
 	b.endEncoder()
 	b.ensureCmdBuffer()
 	b.blitEnc = C.cmdBufferBlitEncoder(b.cmdBuffer)
+	b.calls.API++
 	if b.blitEnc == 0 {
 		panic("metal: [MTLCommandBuffer blitCommandEncoder:] failed")
 	}
@@ -576,11 +664,14 @@ func (b *Backend) endCmdBuffer(wait bool) {
 		return
 	}
 	C.cmdBufferCommit(b.cmdBuffer)
+	b.calls.API++
 	if wait {
 		C.cmdBufferWaitUntilCompleted(b.cmdBuffer)
+		b.calls.API++
 	}
 	if b.lastCmdBuffer != 0 {
 		C.CFRelease(b.lastCmdBuffer)
+		b.calls.API++
 	}
 	b.lastCmdBuffer = b.cmdBuffer
 	b.cmdBuffer = 0
@@ -611,9 +702,38 @@ func (b *Backend) Release() {
 	if b.stagingBuf != 0 {
 		C.CFRelease(b.stagingBuf)
 	}
+	for _, s := range b.samplers {
+		C.CFRelease(s)
+	}
 	C.CFRelease(b.queue)
 	C.CFRelease(b.dev)
 	*b = Backend{}
+}
+
+// ClackCalls implements driver.CallCounter (Clack patch 36): the cgo
+// calls into Metal.
+func (b *Backend) ClackCalls() driver.Calls {
+	return b.calls
+}
+
+// sampler is the sampler state for a filter, shared by the textures that
+// use it (Clack patch 37): a bind of another texture with the same filter
+// keeps the sampler bound.
+func (b *Backend) sampler(min, mag C.MTLSamplerMinMagFilter, mip C.MTLSamplerMipFilter) C.CFTypeRef {
+	k := samplerKey{min, mag, mip}
+	if s, ok := b.samplers[k]; ok {
+		return s
+	}
+	s := C.newSampler(b.dev, min, mag, mip)
+	b.calls.API++
+	if s == 0 {
+		return 0
+	}
+	if b.samplers == nil {
+		b.samplers = make(map[samplerKey]C.CFTypeRef)
+	}
+	b.samplers[k] = s
+	return s
 }
 
 func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, minFilter, magFilter driver.TextureFilter, bindings driver.BufferBinding) (driver.Texture, error) {
@@ -636,10 +756,11 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 		mipmapped = 1
 	}
 	tex := C.newTexture(b.dev, C.NSUInteger(width), C.NSUInteger(height), mformat, usage, mipmapped)
+	b.calls.API++
 	if tex == 0 {
 		return nil, errors.New("metal: [MTLDevice newTextureWithDescriptor:] failed")
 	}
-	s := C.newSampler(b.dev, min, max, mip)
+	s := b.sampler(min, max, mip)
 	if s == 0 {
 		C.CFRelease(tex)
 		return nil, errors.New("metal: [MTLDevice newSamplerStateWithDescriptor:] failed")
@@ -698,7 +819,7 @@ func (b *Backend) NewPipeline(desc driver.PipelineDesc) (driver.Pipeline, error)
 	if err != nil {
 		return nil, fmt.Errorf("metal: pipeline construction failed: %w", err)
 	}
-	return &Pipeline{pipeline: pipe, topology: primitiveFor(desc.Topology)}, nil
+	return &Pipeline{pipeline: pipe, topology: primitiveFor(desc.Topology), vertUniforms: vsh.uniformRange(), fragUniforms: fsh.uniformRange()}, nil
 }
 
 func blendFactorFor(f driver.BlendFactor) C.MTLBlendFactor {
@@ -812,7 +933,7 @@ func (b *Backend) newShader(src shader.Sources) (*Shader, error) {
 	if f == 0 {
 		return nil, fmt.Errorf("metal: main function not found in %q", src.Name)
 	}
-	return &Shader{function: f, inputs: src.Inputs}, nil
+	return &Shader{function: f, inputs: src.Inputs, uniforms: src.Uniforms}, nil
 }
 
 func (b *Backend) Viewport(x, y, width, height int) {
@@ -820,14 +941,21 @@ func (b *Backend) Viewport(x, y, width, height int) {
 	if enc == 0 {
 		panic("no active render pass")
 	}
-	C.renderEncViewport(enc, C.MTLViewport{
+	v := C.MTLViewport{
 		originX: C.double(x),
 		originY: C.double(y),
 		width:   C.double(width),
 		height:  C.double(height),
 		znear:   0.0,
 		zfar:    1.0,
-	})
+	}
+	if b.enc.hasViewport && b.enc.viewport == v {
+		b.calls.Skipped++
+		return
+	}
+	b.enc.viewport, b.enc.hasViewport = v, true
+	C.renderEncViewport(enc, v)
+	b.calls.API++
 }
 
 func (b *Backend) DrawArrays(off, count int) {
@@ -836,6 +964,7 @@ func (b *Backend) DrawArrays(off, count int) {
 		panic("no active render pass")
 	}
 	C.renderEncDrawPrimitives(enc, b.topology, C.NSUInteger(off), C.NSUInteger(count))
+	b.calls.API++
 }
 
 func (b *Backend) DrawElements(off, count int) {
@@ -844,6 +973,7 @@ func (b *Backend) DrawElements(off, count int) {
 		panic("no active render pass")
 	}
 	C.renderEncDrawIndexedPrimitives(enc, b.topology, b.indexBuf.buffer, C.NSUInteger(off), C.NSUInteger(count))
+	b.calls.API++
 }
 
 func primitiveFor(mode driver.Topology) C.MTLPrimitiveType {
@@ -945,8 +1075,10 @@ func (t *Texture) Upload(offset, size image.Point, pixels []byte, stride int) {
 		depth:  1,
 	}
 	C.blitEncCopyBufferToTexture(enc, buf, t.texture, C.NSUInteger(off), C.NSUInteger(dstStride), C.NSUInteger(len(store)), msize, orig)
+	t.backend.calls.API++
 	if t.mipmap {
 		C.blitEncGenerateMipmapsForTexture(enc, t.texture)
+		t.backend.calls.API++
 	}
 }
 
@@ -955,7 +1087,7 @@ func (t *Texture) Release() {
 		panic("metal: release of external texture")
 	}
 	C.CFRelease(t.texture)
-	C.CFRelease(t.sampler)
+	// the sampler is the backend's, shared (Clack patch 37)
 	*t = Texture{}
 }
 
@@ -969,8 +1101,20 @@ func (b *Backend) PrepareTexture(tex driver.Texture) {}
 func (b *Backend) BindTexture(unit int, tex driver.Texture) {
 	t := tex.(*Texture)
 	if enc := b.renderEnc; enc != 0 {
-		C.renderEncSetFragmentTexture(enc, C.NSUInteger(unit), t.texture)
-		C.renderEncSetFragmentSamplerState(enc, C.NSUInteger(unit), t.sampler)
+		if b.enc.tex[unit] == t.texture {
+			b.calls.Skipped++
+		} else {
+			b.enc.tex[unit] = t.texture
+			C.renderEncSetFragmentTexture(enc, C.NSUInteger(unit), t.texture)
+			b.calls.API++
+		}
+		if b.enc.sampler[unit] == t.sampler {
+			b.calls.Skipped++
+		} else {
+			b.enc.sampler[unit] = t.sampler
+			C.renderEncSetFragmentSamplerState(enc, C.NSUInteger(unit), t.sampler)
+			b.calls.API++
+		}
 	} else if enc := b.computeEnc; enc != 0 {
 		C.computeEncSetTexture(enc, C.NSUInteger(unit), t.texture)
 	} else {
@@ -983,6 +1127,7 @@ func (b *Backend) ensureCmdBuffer() {
 		return
 	}
 	b.cmdBuffer = C.queueNewBuffer(b.queue)
+	b.calls.API++
 	if b.cmdBuffer == 0 {
 		panic("metal: [MTLCommandQueue cmdBuffer] failed")
 	}
@@ -994,8 +1139,14 @@ func (b *Backend) BindPipeline(pipe driver.Pipeline) {
 	if enc == 0 {
 		panic("no active render pass")
 	}
-	C.renderEncSetRenderPipelineState(enc, p.pipeline)
 	b.topology = p.topology
+	if b.enc.pipeline == p {
+		b.calls.Skipped++
+		return
+	}
+	b.enc.pipeline = p
+	C.renderEncSetRenderPipelineState(enc, p.pipeline)
+	b.calls.API++
 }
 
 func (b *Backend) BindProgram(prog driver.Program) {
@@ -1032,31 +1183,97 @@ func (b *Backend) BindStorageBuffer(binding int, buffer driver.Buffer) {
 	}
 }
 
+// BindUniforms sends the uniforms to the stages of the bound pipeline that
+// read them, unless a stage would see the bytes it was last sent (Clack
+// patch 37). Shaders that read no uniforms (the stencil and intersection
+// fragment shaders, the texture materials') aren't sent any.
 func (b *Backend) BindUniforms(buf driver.Buffer) {
 	bf := buf.(*Buffer)
 	enc := b.renderEnc
 	if enc == 0 {
 		panic("no active render pass")
 	}
+	p := b.enc.pipeline
+	vert, frag := true, true
+	if p != nil {
+		vert, frag = p.vertUniforms[1] > 0, p.fragUniforms[1] > 0
+	}
 	if bf.buffer != 0 {
-		C.renderEncSetVertexBuffer(enc, bf.buffer, uniformBufferIndex, 0)
-		C.renderEncSetFragmentBuffer(enc, bf.buffer, uniformBufferIndex, 0)
+		if vert {
+			if u := &b.enc.vertUniforms; u.set && u.buf == bf.buffer {
+				b.calls.Skipped++
+			} else {
+				C.renderEncSetVertexBuffer(enc, bf.buffer, uniformBufferIndex, 0)
+				b.calls.API++
+				u.buf, u.set = bf.buffer, true
+			}
+		}
+		if frag {
+			if u := &b.enc.fragUniforms; u.set && u.buf == bf.buffer {
+				b.calls.Skipped++
+			} else {
+				C.renderEncSetFragmentBuffer(enc, bf.buffer, uniformBufferIndex, 0)
+				b.calls.API++
+				u.buf, u.set = bf.buffer, true
+			}
+		}
 	} else if bf.size > 0 {
-		C.renderEncSetVertexBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
-		C.renderEncSetFragmentBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
+		data := bf.store[:bf.size]
+		if vert {
+			if p != nil && b.enc.vertUniforms.same(data, p.vertUniforms) {
+				b.calls.Skipped++
+			} else {
+				C.renderEncSetVertexBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
+				b.calls.API++
+				b.enc.vertUniforms.sent(data)
+			}
+		} else {
+			b.calls.Skipped++
+		}
+		if frag {
+			if p != nil && b.enc.fragUniforms.same(data, p.fragUniforms) {
+				b.calls.Skipped++
+			} else {
+				C.renderEncSetFragmentBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
+				b.calls.API++
+				b.enc.fragUniforms.sent(data)
+			}
+		} else {
+			b.calls.Skipped++
+		}
 	}
 }
 
+// BindVertexBuffer binds the attribute buffer, unless the encoder has it
+// (Clack patch 37): the same Metal buffer at the same offset, or the same
+// Go buffer's bytes not uploaded again since.
 func (b *Backend) BindVertexBuffer(buf driver.Buffer, offset int) {
 	bf := buf.(*Buffer)
 	enc := b.renderEnc
 	if enc == 0 {
 		panic("no active render pass")
 	}
+	v := &b.enc.vert
 	if bf.buffer != 0 {
-		C.renderEncSetVertexBuffer(enc, bf.buffer, attributeBufferIndex, C.NSUInteger(offset))
+		switch {
+		case v.buf == bf && v.off == offset:
+			b.calls.Skipped++
+		case v.buf == bf:
+			C.renderEncSetVertexBufferOffset(enc, attributeBufferIndex, C.NSUInteger(offset))
+			b.calls.API++
+		default:
+			C.renderEncSetVertexBuffer(enc, bf.buffer, attributeBufferIndex, C.NSUInteger(offset))
+			b.calls.API++
+		}
+		v.buf, v.off = bf, offset
 	} else if n := bf.size - offset; n > 0 {
+		if v.buf == bf && v.off == offset && v.gen == bf.gen {
+			b.calls.Skipped++
+			return
+		}
 		C.renderEncSetVertexBytes(enc, unsafe.Pointer(&bf.store[offset]), C.NSUInteger(n), attributeBufferIndex)
+		b.calls.API++
+		v.buf, v.off, v.gen = bf, offset, bf.gen
 	}
 }
 
@@ -1083,6 +1300,7 @@ func (b *Buffer) Upload(data []byte) {
 	}
 	if b.buffer == 0 {
 		copy(b.store, data)
+		b.gen++
 		return
 	}
 	buf, off := b.backend.stagingBuffer(len(data))
@@ -1090,6 +1308,7 @@ func (b *Buffer) Upload(data []byte) {
 	copy(store, data)
 	enc := b.backend.startBlit()
 	C.blitEncCopyBufferToBuffer(enc, buf, b.buffer, C.NSUInteger(off), 0, C.NSUInteger(len(store)))
+	b.backend.calls.API++
 }
 
 func bufferStore(buf C.CFTypeRef) []byte {
@@ -1156,9 +1375,12 @@ func (b *Backend) BeginRenderPass(tex driver.Texture, d driver.LoadDesc) {
 		act = C.MTLLoadActionDontCare
 	}
 	b.renderEnc = C.cmdBufferRenderEncoder(b.cmdBuffer, f.texture, act, C.float(col.R), C.float(col.G), C.float(col.B), C.float(col.A))
+	b.calls.API++
 	if b.renderEnc == 0 {
 		panic("metal: [MTLCommandBuffer renderCommandEncoderWithDescriptor:] failed")
 	}
+	// a new encoder has nothing bound (Clack patch 37)
+	b.enc.reset()
 }
 
 func (b *Backend) EndRenderPass() {
@@ -1167,7 +1389,15 @@ func (b *Backend) EndRenderPass() {
 	}
 	C.renderEncEnd(b.renderEnc)
 	C.CFRelease(b.renderEnc)
+	b.calls.API += 2
 	b.renderEnc = 0
+	b.enc.reset()
+}
+
+func (e *encState) reset() {
+	vb, fb := e.vertUniforms.bytes[:0], e.fragUniforms.bytes[:0]
+	*e = encState{}
+	e.vertUniforms.bytes, e.fragUniforms.bytes = vb, fb
 }
 
 func (b *Backend) endEncoder() {
@@ -1180,6 +1410,7 @@ func (b *Backend) endEncoder() {
 	if b.blitEnc != 0 {
 		C.blitEncEnd(b.blitEnc)
 		C.CFRelease(b.blitEnc)
+		b.calls.API += 2
 		b.blitEnc = 0
 	}
 }

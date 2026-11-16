@@ -11,14 +11,17 @@ import (
 	"testing"
 
 	"gioui.org/f32"
+	"gioui.org/gpu"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 )
 
-// Clack: how exactly the GPU reproduces a path's coverage when only its
-// stencil region (the atlas placement) changes. Logs, never fails: the
-// numbers decide how the frame-cost patches are checked.
+// Clack patches 36-40: how exactly each GPU backend repeats a path's
+// coverage when only its stencil region (the atlas placement) changes,
+// and what the frame-cost patches change against the ops Clack drew
+// before them. Logs, never fails; CLACK_GPU_COST_PROBE turns it on
+// (flake-check's gpu-cost job).
 func TestClackPlacementNoise(t *testing.T) {
 	if os.Getenv("CLACK_GPU_COST_PROBE") == "" {
 		t.Skip("CLACK_GPU_COST_PROBE not set")
@@ -29,7 +32,8 @@ func TestClackPlacementNoise(t *testing.T) {
 		t.Skipf("no headless GPU: %v", err)
 	}
 	defer win.Release()
-	shot := func(draw func(o *op.Ops)) *image.RGBA {
+	win.ClackStatsDetail(true)
+	shot := func(draw func(o *op.Ops)) (*image.RGBA, gpu.FrameStats) {
 		var o op.Ops
 		draw(&o)
 		if err := win.Frame(&o); err != nil {
@@ -39,22 +43,32 @@ func TestClackPlacementNoise(t *testing.T) {
 		if err := win.Screenshot(img); err != nil {
 			t.Fatal(err)
 		}
-		return img
+		// a second frame of the same ops: its stats are the steady
+		// state's (paths built the frame before)
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		return img, win.ClackFrameStats()
 	}
+	all := image.Rect(0, 0, w, h)
 	bg := noiseGradient(w, h)
 	ws := image.Rect(80, 60, w-30, h-30)
 	rings := make([]clip.PathSpec, 15)
-	ringOps := make([]*op.Ops, 15)
 	for i := 1; i <= 14; i++ {
 		ri := ws.Inset(-i)
-		ringOps[i] = new(op.Ops)
-		rings[i] = clip.UniformRRect(image.Rectangle{Max: ri.Size()}, 12+i).Path(ringOps[i])
+		rings[i] = clip.UniformRRect(image.Rectangle{Max: ri.Size()}, 12+i).Path(new(op.Ops))
 	}
 	alpha := func(i int) uint8 {
 		f := float32(17-i) / 16
 		return uint8(49 * f * f)
 	}
-	// the workspace shadow as Clack draws it today: 14 full rings
+	ring := func(o *op.Ops, i int, c color.NRGBA) {
+		ri := ws.Inset(-i)
+		st := op.Offset(ri.Min).Push(o)
+		paint.FillShape(o, c, clip.Stroke{Path: rings[i], Width: 1.5}.Op())
+		st.Pop()
+	}
+	// the workspace shadow as Clack drew it: 14 full rings
 	full := func(o *op.Ops, dummy bool) {
 		bg(o)
 		if dummy {
@@ -62,42 +76,65 @@ func TestClackPlacementNoise(t *testing.T) {
 			paint.FillShape(o, color.NRGBA{R: 1, A: 1}, clip.Ellipse(image.Rect(3, 3, 41, 37)).Op(o))
 		}
 		for i := 1; i <= 14; i++ {
-			ri := ws.Inset(-i)
-			st := op.Offset(ri.Min).Push(o)
-			paint.FillShape(o, color.NRGBA{A: alpha(i)}, clip.Stroke{Path: rings[i], Width: 1.5}.Op())
-			st.Pop()
+			ring(o, i, color.NRGBA{A: alpha(i)})
 		}
 	}
-	// the same rings, each stenciled in four bands around its stroke
+	// the same rings, each stenciled in the bands around it (theme's
+	// ringBands)
 	bands := func(o *op.Ops) {
 		bg(o)
 		for i := 1; i <= 14; i++ {
 			ri := ws.Inset(-i)
 			for _, b := range ringBandsProbe(ri, 12+i, 1) {
 				c := clip.Rect(b).Push(o)
-				st := op.Offset(ri.Min).Push(o)
-				paint.FillShape(o, color.NRGBA{A: alpha(i)}, clip.Stroke{Path: rings[i], Width: 1.5}.Op())
-				st.Pop()
+				ring(o, i, color.NRGBA{A: alpha(i)})
 				c.Pop()
 			}
 		}
 	}
-	a := shot(func(o *op.Ops) { full(o, false) })
-	a2 := shot(func(o *op.Ops) { full(o, false) })
-	b := shot(func(o *op.Ops) { full(o, true) })
-	c := shot(bands)
-	t.Logf("rings, same ops twice: %s", diffStats(a, a2, image.Rect(0, 0, w, h)))
+	a, sa := shot(func(o *op.Ops) { full(o, false) })
+	a2, _ := shot(func(o *op.Ops) { full(o, false) })
+	b, _ := shot(func(o *op.Ops) { full(o, true) })
+	c, sc := shot(bands)
+	t.Logf("rings, same ops twice: %s", diffStats(a, a2, all))
 	t.Logf("rings after a dummy path (atlas shifted): %s", diffStats(a, b, image.Rect(45, 45, w, h)))
-	t.Logf("rings in four bands each: %s", diffStats(a, c, image.Rect(0, 0, w, h)))
+	t.Logf("rings in bands: %s", diffStats(a, c, all))
+	t.Logf("rings, full: %s", statLine(sa))
+	t.Logf("rings, in bands: %s", statLine(sc))
+
+	// a nine-slice image of the same shadow, at best: its alpha read back
+	// from the rings themselves over white, rounded to 8 bits, then one
+	// blend over the background
+	white, _ := shot(func(o *op.Ops) {
+		paint.Fill(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff})
+		paint.FillShape(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect(all).Op())
+		for i := 1; i <= 14; i++ {
+			ring(o, i, color.NRGBA{A: alpha(i)})
+		}
+	})
+	mask := image.NewNRGBA(all)
+	for i := 0; i < len(white.Pix); i += 4 {
+		a := 1 - srgbToLinear(white.Pix[i])
+		mask.Pix[i+3] = uint8(math.Round(a * 255))
+	}
+	maskOp := paint.NewImageOp(mask)
+	maskOp.Filter = paint.FilterNearest
+	d, _ := shot(func(o *op.Ops) {
+		bg(o)
+		maskOp.Add(o)
+		paint.PaintOp{}.Add(o)
+	})
+	t.Logf("an 8-bit image of the rings (one blend) instead: %s", diffStats(a, d, all))
 
 	// content in a rounded panel: glyph-like paths clipped by the panel's
-	// RRect (an intersection each) against the same paths unclipped, in
-	// the panel's interior
+	// RRect (with its interior, Clack patch 38) against the same clip as a
+	// plain path (no interior: an intersection each, as before)
 	panel := image.Rect(300, 80, w-60, h-60)
+	rr := clip.RRect{Rect: panel, NE: 24, SE: 24}
 	glyphs := func(o *op.Ops) {
 		for k := 0; k < 300; k++ {
-			x := 310 + (k%20)*50
-			y := 100 + (k/20)*48
+			x := 302 + (k%20)*52
+			y := 82 + (k/20)*48
 			r := image.Rect(x, y, x+9+k%7, y+11+k%5)
 			paint.FillShape(o, color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff}, clip.Ellipse(r).Op(o))
 			var p clip.Path
@@ -109,60 +146,105 @@ func TestClackPlacementNoise(t *testing.T) {
 			paint.FillShape(o, color.NRGBA{R: 0x61, G: 0x60, B: 0x61, A: 0xff}, clip.Outline{Path: p.End()}.Op())
 		}
 	}
-	clipped := func(o *op.Ops) {
+	white1 := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	panelOld := func(o *op.Ops) {
 		bg(o)
-		st := clip.RRect{Rect: panel, NE: 24, SE: 24}.Push(o)
-		paint.FillShape(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect(panel).Op())
+		st := clip.Outline{Path: plainRRect(o, rr)}.Op().Push(o)
+		paint.FillShape(o, white1, clip.Rect(panel).Op())
 		glyphs(o)
 		st.Pop()
 	}
-	unclipped := func(o *op.Ops) {
+	panelNew := func(o *op.Ops) {
 		bg(o)
-		st := clip.RRect{Rect: panel, NE: 24, SE: 24}.Push(o)
-		paint.FillShape(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect(panel).Op())
-		st.Pop()
+		st := rr.Push(o)
+		in := rr.Interior()
+		r := rr.Rect
+		for _, f := range []image.Rectangle{in,
+			image.Rect(r.Min.X, r.Min.Y, in.Min.X, r.Max.Y),
+			image.Rect(in.Max.X, r.Min.Y, r.Max.X, r.Max.Y),
+			image.Rect(in.Min.X, r.Min.Y, in.Max.X, in.Min.Y),
+			image.Rect(in.Min.X, in.Max.Y, in.Max.X, r.Max.Y)} {
+			paint.FillShape(o, white1, clip.Rect(f).Op())
+		}
 		glyphs(o)
+		st.Pop()
 	}
-	d := shot(clipped)
-	e := shot(unclipped)
-	inner := image.Rect(panel.Min.X+1, panel.Min.Y+1, panel.Max.X-25, panel.Max.Y-1)
-	t.Logf("panel content clipped vs not, interior: %s", diffStats(d, e, inner))
-	t.Logf("panel content clipped vs not, whole window: %s", diffStats(d, e, image.Rect(0, 0, w, h)))
+	e, se := shot(panelOld)
+	f, sf := shot(panelNew)
+	t.Logf("panel, its clip dropped inside (patch 38) and stenciled in regions (39): %s", diffStats(e, f, all))
+	t.Logf("panel, before: %s", statLine(se))
+	t.Logf("panel, after: %s", statLine(sf))
 
-	// the panel's corners when its RRect is stenciled over the whole panel
-	// (an op spans it) against stenciled in the corner bands only
-	corner := func(o *op.Ops, wide bool) {
+	// rounded rects drawn where they are against cached at the origin and
+	// translated (theme.RRect, Circle)
+	shapes := func(o *op.Ops, cached bool) {
 		bg(o)
-		rr := clip.RRect{Rect: panel, NE: 24, SE: 24}
-		spec := rr.Path(o)
-		for _, r := range []image.Rectangle{
-			image.Rect(panel.Max.X-25, panel.Min.Y, panel.Max.X, panel.Max.Y),
-		} {
-			c := clip.Rect(r).Push(o)
-			paint.FillShape(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Outline{Path: spec}.Op())
-			c.Pop()
-		}
-		if wide {
-			c := clip.Rect(image.Rect(panel.Min.X, panel.Min.Y, panel.Max.X-25, panel.Max.Y)).Push(o)
-			paint.FillShape(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Outline{Path: spec}.Op())
-			c.Pop()
+		for k := 0; k < 400; k++ {
+			x := 7 + (k*37)%(w-60)
+			y := 5 + (k*53)%(h-60)
+			r := image.Rect(x, y, x+12+k%40, y+12+k%30)
+			rad := 2 + k%9
+			col := color.NRGBA{R: uint8(k * 7), G: 0xcc, B: uint8(255 - k), A: 0xff}
+			if !cached {
+				paint.FillShape(o, col, clip.UniformRRect(r, rad).Op(o))
+				continue
+			}
+			st := op.Offset(r.Min).Push(o)
+			paint.FillShape(o, col, clip.UniformRRect(image.Rectangle{Max: r.Size()}, rad).Op(o))
+			st.Pop()
 		}
 	}
-	f := shot(func(o *op.Ops) { corner(o, true) })
-	g := shot(func(o *op.Ops) { corner(o, false) })
-	strip := image.Rect(panel.Max.X-25, panel.Min.Y, panel.Max.X, panel.Max.Y)
-	t.Logf("panel corners, stencil region whole panel vs the strip: %s", diffStats(f, g, strip))
+	g, _ := shot(func(o *op.Ops) { shapes(o, false) })
+	g2, _ := shot(func(o *op.Ops) { shapes(o, true) })
+	t.Logf("rounded rects at their place vs at the origin, translated: %s", diffStats(g, g2, all))
 }
 
-// ringBandsProbe is the four bands around a ring stroked on r (radius
-// rad, half width at most hw) that hold all of its coverage: the top and
-// bottom with the corners, the sides between.
-func ringBandsProbe(r image.Rectangle, rad, hw int) []image.Rectangle {
+// plainRRect is rr's path built as a plain path: the same curves, no
+// interior.
+func plainRRect(o *op.Ops, rr clip.RRect) clip.PathSpec {
+	const q = 4 * (math.Sqrt2 - 1) / 3
+	const iq = 1 - q
+	se, sw, nw, ne := float32(rr.SE), float32(rr.SW), float32(rr.NW), float32(rr.NE)
+	w, n, e, s := float32(rr.Rect.Min.X), float32(rr.Rect.Min.Y), float32(rr.Rect.Max.X), float32(rr.Rect.Max.Y)
+	var p clip.Path
+	p.Begin(o)
+	p.MoveTo(f32.Point{X: w + nw, Y: n})
+	p.LineTo(f32.Point{X: e - ne, Y: n})
+	p.CubeTo(f32.Point{X: e - ne*iq, Y: n}, f32.Point{X: e, Y: n + ne*iq}, f32.Point{X: e, Y: n + ne})
+	p.LineTo(f32.Point{X: e, Y: s - se})
+	p.CubeTo(f32.Point{X: e, Y: s - se*iq}, f32.Point{X: e - se*iq, Y: s}, f32.Point{X: e - se, Y: s})
+	p.LineTo(f32.Point{X: w + sw, Y: s})
+	p.CubeTo(f32.Point{X: w + sw*iq, Y: s}, f32.Point{X: w, Y: s - sw*iq}, f32.Point{X: w, Y: s - sw})
+	p.LineTo(f32.Point{X: w, Y: n + nw})
+	p.CubeTo(f32.Point{X: w, Y: n + nw*iq}, f32.Point{X: w + nw*iq, Y: n}, f32.Point{X: w + nw, Y: n})
+	return p.End()
+}
+
+func statLine(s gpu.FrameStats) string {
+	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d left out), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
+		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
+		float64(s.StencilPx)/1e6, float64(s.CoverPx)/1e6, float64(s.BlitPx)/1e6, float64(s.IntersectPx)/1e6, float64(s.ClearPx)/1e6, float64(s.AtlasPx)/1e6)
+}
+
+func srgbToLinear(v uint8) float64 {
+	c := float64(v) / 255
+	if c <= 0.04045 {
+		return c / 12.92
+	}
+	return math.Pow((c+0.055)/1.055, 2.4)
+}
+
+// ringBandsProbe is theme's ringBands for a ring stroked on r (radius
+// rad, bounds grown by m): the top and bottom with the corners, the
+// sides as wide as the corners.
+func ringBandsProbe(r image.Rectangle, rad, m int) []image.Rectangle {
+	e := max(rad, m) + 1
+	box := r.Inset(-m)
 	return []image.Rectangle{
-		image.Rect(r.Min.X-hw, r.Min.Y-hw, r.Max.X+hw, r.Min.Y+rad),
-		image.Rect(r.Min.X-hw, r.Min.Y+rad, r.Min.X+hw, r.Max.Y-rad),
-		image.Rect(r.Max.X-hw, r.Min.Y+rad, r.Max.X+hw, r.Max.Y-rad),
-		image.Rect(r.Min.X-hw, r.Max.Y-rad, r.Max.X+hw, r.Max.Y+hw),
+		image.Rect(box.Min.X, box.Min.Y, box.Max.X, r.Min.Y+e),
+		image.Rect(box.Min.X, r.Min.Y+e, r.Min.X+e, r.Max.Y-e),
+		image.Rect(r.Max.X-e, r.Min.Y+e, box.Max.X, r.Max.Y-e),
+		image.Rect(box.Min.X, r.Max.Y-e, box.Max.X, box.Max.Y),
 	}
 }
 

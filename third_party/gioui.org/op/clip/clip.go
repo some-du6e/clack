@@ -91,6 +91,17 @@ func (p Op) add(o *op.Ops) {
 		bo.PutUint32(data[1:], math.Float32bits(p.width))
 	}
 
+	if in := path.interior; p.outline && p.width == 0 && hasSegments && !in.Empty() {
+		// Clack patch 38: where the outline covers every pixel; the
+		// renderer drops this clip for what's drawn inside it
+		data := ops.Write(&o.Internal, ops.TypeClipInteriorLen)
+		data[0] = byte(ops.TypeClipInterior)
+		bo.PutUint32(data[1:], uint32(in.Min.X))
+		bo.PutUint32(data[5:], uint32(in.Min.Y))
+		bo.PutUint32(data[9:], uint32(in.Max.X))
+		bo.PutUint32(data[13:], uint32(in.Max.Y))
+	}
+
 	data := ops.Write(&o.Internal, ops.TypeClipLen)
 	data[0] = byte(ops.TypeClip)
 	bo.PutUint32(data[1:], uint32(bounds.Min.X))
@@ -116,6 +127,9 @@ type PathSpec struct {
 	bounds      image.Rectangle
 	shape       ops.Shape
 	hash        uint64
+	// interior is where the path, filled, covers every pixel fully, in
+	// the path's coordinates; empty if not known (Clack patch 38)
+	interior image.Rectangle
 }
 
 // Path constructs a Op clip path described by lines and

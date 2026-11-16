@@ -107,7 +107,25 @@ func (rr RRect) Path(ops *op.Ops) PathSpec {
 		f32.Point{X: w + nw*iq, Y: n},
 		f32.Point{X: w + nw, Y: n})
 
-	return p.End()
+	spec := p.End()
+	spec.interior = rr.Interior()
+	return spec
+}
+
+// Interior is where the rounded rectangle, as a clip, covers every pixel
+// fully as Gio's renderer computes coverage (Clack patch 38): the columns
+// between the corners' arcs, a pixel in from every edge. The stencil adds
+// up the curves above a pixel; under the arcs that is a sum of slivers
+// rounded to half floats, so those columns are left out, and a pixel next
+// to an edge can come out a rounding short of full. The renderer draws
+// what lies inside it as if the clip weren't there.
+func (rr RRect) Interior() image.Rectangle {
+	r := rr.Rect
+	in := image.Rect(r.Min.X+max(rr.NW, rr.SW)+1, r.Min.Y+1, r.Max.X-max(rr.NE, rr.SE)-1, r.Max.Y-1)
+	if in.Empty() || rr.NW < 0 || rr.SW < 0 || rr.NE < 0 || rr.SE < 0 {
+		return image.Rectangle{}
+	}
+	return in
 }
 
 // Ellipse represents the largest axis-aligned ellipse that

@@ -885,8 +885,9 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 		nw, sw = rad, rad
 	}
 	func() {
-		defer clip.RRect{Rect: primary, NW: nw, SW: sw, NE: rad, SE: rad}.Push(gtx.Ops).Pop()
-		theme.Fill(gtx, primary, a.th.C.Bg)
+		rr := clip.RRect{Rect: primary, NW: nw, SW: sw, NE: rad, SE: rad}
+		defer rr.Push(gtx.Ops).Pop()
+		fillPanel(gtx, rr, a.th.C.Bg)
 		atExact(gtx, primary.Min, primary.Size(), a.layoutPrimary)
 	}()
 	if sbW > 0 {
@@ -906,6 +907,26 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 		a.split.col, a.split.card = image.Rectangle{}, image.Rectangle{}
 	}
 	return primary
+}
+
+// fillPanel fills the rounded panel rr, whose clip is pushed, with c: its
+// interior, where Gio leaves the panel's clip out (clip.RRect.Interior),
+// as a plain fill, and the edges around it each on its own. One fill of
+// the whole panel had the clip stenciled over all of it every frame, and
+// left every op inside that touches an edge sharing that region; the
+// strips get regions of their own (Gio patch 39). Each pixel is filled
+// once, with the coverage it had.
+func fillPanel(gtx layout.Context, rr clip.RRect, c color.NRGBA) {
+	r, in := rr.Rect, rr.Interior()
+	if in.Empty() {
+		theme.Fill(gtx, r, c)
+		return
+	}
+	theme.Fill(gtx, in, c)
+	theme.Fill(gtx, image.Rect(r.Min.X, r.Min.Y, in.Min.X, r.Max.Y), c)
+	theme.Fill(gtx, image.Rect(in.Max.X, r.Min.Y, r.Max.X, r.Max.Y), c)
+	theme.Fill(gtx, image.Rect(in.Min.X, r.Min.Y, in.Max.X, in.Min.Y), c)
+	theme.Fill(gtx, image.Rect(in.Min.X, in.Max.Y, in.Max.X, r.Max.Y), c)
 }
 
 // ---- primary panel ----

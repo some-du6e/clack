@@ -177,7 +177,15 @@ func (d *displayLink) run(dl C.CFTypeRef) {
 	}
 }
 
+// Start starts the display link. One that runs with no stop pending is
+// left alone (Clack patch 41): a draw restarts the animation every frame,
+// and the unbuffered send waited each time for the link's goroutine,
+// which needs a P to take it. Start and Stop come from the main thread,
+// and running only drops to 0 when a Stop is sent.
 func (d *displayLink) Start() {
+	if atomic.LoadUint32(&d.running) != 0 {
+		return
+	}
 	d.states <- true
 }
 

@@ -217,6 +217,10 @@ var (
 )
 
 type Functions struct {
+	// Calls is the count of calls into OpenGL (Clack patch 36); not kept
+	// on Windows.
+	Calls int64
+
 	// Query caches.
 	int32s   [100]int32
 	float32s [100]float32

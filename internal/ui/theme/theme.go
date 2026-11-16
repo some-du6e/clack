@@ -389,10 +389,71 @@ func RRect(gtx layout.Context, r image.Rectangle, radius int, c color.NRGBA) {
 
 // Border strokes a rounded rectangle outline of width w px.
 func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA) {
-	// a cached path at the origin, translated: stable op identity, so Gio
-	// tessellates the stroke once instead of every frame (see PathPen)
-	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: RRectPath(r.Dx(), r.Dy(), radius), Width: float32(w)}.Op())
+	strokeRRect(gtx, r, radius, float32(w), c)
+}
+
+// strokeRRect strokes the w px outline of the rounded rectangle r.
+//
+// The path is cached at the origin and translated: a stable op identity,
+// so Gio tessellates the stroke once instead of every frame (see PathPen).
+// A big outline is drawn in the four bands around it that hold all its
+// coverage (ringBands). Gio stencils a path over its whole bounding box:
+// each curve's quad reaches down to the bottom of its contour, so a ring's
+// top edges cover the box twice, and the cover pass shades the box again.
+// For the window-sized workspace shadow that was 14 rings at about 3× the
+// workspace each, every frame. Every band draws the same path, so each
+// pixel's coverage adds up from the same curves as before; only the hole
+// in the middle, where the coverage is exactly zero, isn't touched.
+func strokeRRect(gtx layout.Context, r image.Rectangle, radius int, w float32, c color.NRGBA) {
+	path := RRectPath(r.Dx(), r.Dy(), radius)
+	bands, n := ringBands(r, radius, w)
+	if n == 0 {
+		defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: path, Width: w}.Op())
+		return
+	}
+	for _, b := range bands[:n] {
+		cl := clip.Rect(b).Push(gtx.Ops)
+		t := op.Offset(r.Min).Push(gtx.Ops)
+		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: path, Width: w}.Op())
+		t.Pop()
+		cl.Pop()
+	}
+}
+
+// ringBands are the bands around the w px stroke of the rounded rectangle
+// r that hold every pixel the stroke can touch: the top and bottom with
+// the corners, and the sides between them as wide as the corners (the
+// columns under a corner's arc add up its curves too). They tile the
+// stroke's bounds, which Gio grows by w/2 rounded (clip.Op), minus the
+// middle of the ring. n is 0 when the ring is too small for the bands to
+// cost less than one cover of its box.
+func ringBands(r image.Rectangle, radius int, w float32) (bands [4]image.Rectangle, n int) {
+	m := int(w*.5 + .5) // as clip.Op grows a stroke's bounds
+	e := max(radius, m) + 1
+	box := r.Inset(-m)
+	if r.Dx() < 2*e || r.Dy() < 2*e {
+		return bands, 0
+	}
+	bands = [4]image.Rectangle{
+		image.Rect(box.Min.X, box.Min.Y, box.Max.X, r.Min.Y+e),
+		image.Rect(box.Min.X, r.Min.Y+e, r.Min.X+e, r.Max.Y-e),
+		image.Rect(r.Max.X-e, r.Min.Y+e, box.Max.X, r.Max.Y-e),
+		image.Rect(box.Min.X, r.Max.Y-e, box.Max.X, box.Max.Y),
+	}
+	n = 4
+	if bands[1].Empty() { // the sides meet: top and bottom are all of it
+		bands[1] = bands[3]
+		n = 2
+	}
+	var sum int
+	for _, b := range bands[:n] {
+		sum += b.Dx() * b.Dy()
+	}
+	if full := box.Dx() * box.Dy(); full < 32768 || full < 4*sum {
+		return bands, 0
+	}
+	return bands, n
 }
 
 // Circle fills a circle with the given center and diameter.
@@ -430,8 +491,9 @@ func (t *Theme) Placeholder(gtx layout.Context, size image.Point, radius int) la
 }
 
 // Shadow draws a soft drop shadow around r as concentric 1px rings of
-// decreasing alpha (cheap: only the perimeter is touched, which matters on
-// software GL). The area under r itself is not painted; draw r on top.
+// decreasing alpha, each stroked in the bands around it (strokeRRect), so
+// only the perimeter is touched. The area under r itself is not painted;
+// draw r on top.
 func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c color.NRGBA) {
 	if spread < 1 {
 		return
@@ -443,12 +505,7 @@ func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c col
 		if a == 0 {
 			continue
 		}
-		// cached ring path at the origin (stable op identity: Gio
-		// tessellates each ring once, not every frame; see PathPen)
-		ri := r.Inset(-i)
-		t := op.Offset(ri.Min).Push(gtx.Ops)
-		paint.FillShape(gtx.Ops, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}, clip.Stroke{Path: RRectPath(ri.Dx(), ri.Dy(), radius+i), Width: 1.5}.Op())
-		t.Pop()
+		strokeRRect(gtx, r.Inset(-i), radius+i, 1.5, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a})
 	}
 }
 

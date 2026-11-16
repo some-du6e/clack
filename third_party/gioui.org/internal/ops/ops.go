@@ -77,6 +77,9 @@ const (
 	TypeSemanticSelected
 	TypeSemanticEnabled
 	TypeActionInput
+	// TypeClipInterior (Clack patch 38) comes right before the TypeClip of
+	// an outline it knows the fully covered interior of.
+	TypeClipInterior
 )
 
 type StackID struct {
@@ -153,7 +156,23 @@ const (
 	TypeSemanticSelectedLen = 2
 	TypeSemanticEnabledLen  = 2
 	TypeActionInputLen      = 1 + 1
+	TypeClipInteriorLen     = 1 + 4*4
 )
+
+// DecodeClipInterior decodes a TypeClipInterior op: the rectangle where
+// the next clip's outline covers every pixel fully (Clack patch 38).
+func DecodeClipInterior(data []byte) image.Rectangle {
+	if len(data) < TypeClipInteriorLen || OpType(data[0]) != TypeClipInterior {
+		panic("invalid op")
+	}
+	bo := binary.LittleEndian
+	return image.Rect(
+		int(int32(bo.Uint32(data[1:]))),
+		int(int32(bo.Uint32(data[5:]))),
+		int(int32(bo.Uint32(data[9:]))),
+		int(int32(bo.Uint32(data[13:]))),
+	)
+}
 
 func (op *ClipOp) Decode(data []byte) {
 	if len(data) < TypeClipLen || OpType(data[0]) != TypeClip {
@@ -426,6 +445,7 @@ var opProps = [0x100]opProp{
 	TypeSemanticSelected: {Size: TypeSemanticSelectedLen, NumRefs: 0},
 	TypeSemanticEnabled:  {Size: TypeSemanticEnabledLen, NumRefs: 0},
 	TypeActionInput:      {Size: TypeActionInputLen, NumRefs: 0},
+	TypeClipInterior:     {Size: TypeClipInteriorLen, NumRefs: 0},
 }
 
 func (t OpType) props() (size, numRefs uint32) {
@@ -491,6 +511,8 @@ func (t OpType) String() string {
 		return "Stroke"
 	case TypeSemanticLabel:
 		return "SemanticDescription"
+	case TypeClipInterior:
+		return "ClipInterior"
 	default:
 		panic("unknown OpType")
 	}
