@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui"
 )
 
 func init() { startTrim = trimMemory }
@@ -54,14 +55,14 @@ func trimMemory() {
 	// idle snapshot)
 	core.AfterEvict = func(n int) {
 		if n >= evictCollect {
-			time.AfterFunc(2*time.Second, debug.FreeOSMemory)
+			time.AfterFunc(2*time.Second, collectWhenQuiet)
 		}
 	}
 	// a members pass (Slack's members cache: down to 500 once 700 are
 	// held) that let thousands go after an hour of scrolling: the same
 	core.AfterMembersEvict = func(n int) {
 		if n >= membersCollect {
-			time.AfterFunc(2*time.Second, debug.FreeOSMemory)
+			time.AfterFunc(2*time.Second, collectWhenQuiet)
 		}
 	}
 	go func() {
@@ -82,8 +83,22 @@ func trimMemory() {
 			// the window idles (a message cache pass let go of 200 MB)
 			garbage := m.HeapAlloc > m.NextGC/2+64<<20 && time.Since(time.Unix(0, int64(m.LastGC))) > time.Minute
 			if m.HeapIdle-m.HeapReleased > 16<<20 || garbage {
-				debug.FreeOSMemory()
+				collectWhenQuiet()
 			}
 		}
 	}()
+}
+
+// collectWhenQuiet runs FreeOSMemory once the window hasn't drawn for 2 s
+// (a minute at most): a forced collection while someone scrolls or types
+// stopped the UI goroutine with every other one (its stop-the-world
+// phases last until the plugin runtime's JS task, compiled wasm the Go
+// runtime can't preempt, reaches a call into Go) and then scavenged all
+// free memory under the heap lock new allocations need. Two of Karim's
+// freeze reports of 2026-11-15 (4.2 s and 10.1 s) caught one in progress.
+func collectWhenQuiet() {
+	for dl := time.Now().Add(time.Minute); ui.FrameWithin(2*time.Second) && time.Now().Before(dl); {
+		time.Sleep(500 * time.Millisecond)
+	}
+	debug.FreeOSMemory()
 }
