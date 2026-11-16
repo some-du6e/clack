@@ -336,6 +336,13 @@ jobs:
       - name: awake clock (QueryUnbiasedInterruptTime)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/awake
+      # the plugin engine's wasm memory in address space reserved with
+      # VirtualAlloc, committed as it grows, released on Close
+      # (internal/jsrt/wasmmem_windows.go; jsrt.yml's platforms job runs
+      # the whole package)
+      - name: jsrt wasm memory (VirtualAlloc reservation)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestWasm|TestReserv' ./internal/jsrt
       - name: huddle OS hooks (WTS lock events, RegisterHotKey Ctrl+Shift+Space)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
@@ -934,6 +941,19 @@ jobs:
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
+      # the plugin engine's wasm memory in address space reserved with mmap,
+      # committed with mprotect as it grows, released on Close
+      # (internal/jsrt/wasmmem_unix.go): arm64, and amd64 (Intel Macs) under
+      # Rosetta 2 (jsrt.yml's platforms job runs the whole package on both)
+      - name: jsrt wasm memory (mmap reservation; arm64, then amd64 under Rosetta)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=1 -v -run 'TestWasm|TestReserv' ./internal/jsrt
+          if /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            GOARCH=amd64 go test -count=1 -v -run 'TestWasm|TestReserv' ./internal/jsrt
+          else
+            echo "::warning::no Rosetta 2 on this runner: the amd64 run is jsrt.yml's (macos-15-intel)"
+          fi
       # The introduction's preview renderer as a release runs it: clack
       # in a Clack.app made and ad-hoc signed as release.yml makes it,
       # started as `intro-preview` from Contents/MacOS by
