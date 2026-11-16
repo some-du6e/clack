@@ -58,12 +58,16 @@ type FrameEvent struct {
 	// Source is the interface between the window and widgets.
 	Source input.Source
 	// Asked reports whether the window's own frames asked for this frame
-	// or a later one (Clack patch 35): input a handler takes, an
-	// op.InvalidateCmd, a change of options. AskedAt is when (the zero
-	// time: at once); a frame at or past it is one they asked for. An
-	// Invalidate alone asks nothing: a frame that only it brings may show
-	// the last frame's ops again, and executes op.InvalidateCmd{At:
-	// AskedAt} to keep a later one asked for.
+	// or a later one since the last FrameEvent (Clack patch 35): an
+	// op.InvalidateCmd, input or a focus change a handler took, a key
+	// press kept for Source.KeyPresses, a change of options, a frame that
+	// found nothing to draw into. AskedAt is the earliest such time (the
+	// zero time: at once); a frame at or past it is one they asked for.
+	// Window.Invalidate asks for a frame without asking anything here: a
+	// frame that only Invalidates brought has Asked false (its client
+	// knows why it invalidated, and may show its last frame's ops again).
+	// A frame that shows the last ops again executes op.InvalidateCmd{At:
+	// AskedAt} to keep a later wake-up asked for, as the frame takes it.
 	Asked   bool
 	AskedAt time.Time
 }

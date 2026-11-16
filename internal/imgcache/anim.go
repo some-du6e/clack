@@ -186,8 +186,9 @@ const animResync = 5 * time.Minute
 // late skips to the frame due now. Two exceptions, as there: behind at the
 // end of the first pass (it started late), the timeline starts over from
 // the first frame now, so every frame shows once more rather than being
-// skipped; and more than animResync behind, the frame showing starts
-// again now.
+// skipped, and the loop count starts over with it (that first pass
+// doesn't count); and more than animResync behind, the frame showing
+// starts again now.
 //
 // A streaming player decodes each frame once the one before is up, in
 // order (a frame draws over the last), so it can't skip: a late frame
@@ -246,9 +247,10 @@ func (p *player) advance(now time.Time) time.Time {
 		}
 		s.steps++
 		if wrap && s.reps == 1 && !due.Add(p.ix.frames[0].delay).After(now) {
-			// behind at the end of the first pass: the first frame, now
-			s.cur, s.shown, s.reps = 0, now, 0
-			s.passes++
+			// behind at the end of the first pass: the first frame, now,
+			// and the passes counted from here (Chromium sets
+			// repetitions_completed, its loop count too, back to 0)
+			s.cur, s.shown, s.reps, s.passes = 0, now, 0, 0
 			first = s.steps - 1
 			continue
 		}
@@ -391,7 +393,13 @@ func (c *Cache) startPlay(k key, forced bool) {
 		return
 	}
 	ix := src.ix
-	sz := scaledSize(ix.w, ix.h, k.size)
+	// the frames at the still's size: a size derived from another size's
+	// still (deriveLocked) can be a pixel off the original's scaled size,
+	// and its live op draws its frames in the still's place (SetLiveOps)
+	sz := e.size
+	if sz.X <= 0 || sz.Y <= 0 {
+		sz = scaledSize(ix.w, ix.h, k.size)
+	}
 	fb := 4 * sz.X * sz.Y
 	p := &player{ix: ix, size: sz, forced: forced, front: -1, next: -1, curOp: e.op, s: &schedule{shown: now}}
 	// the decoder and its scaler: a streaming player's for as long as it
@@ -629,8 +637,15 @@ func (c *Cache) endLocked(e *entry, p *player) {
 	}
 }
 
-// releaseLocked stops e's player: e draws its still again.
+// releaseLocked stops e's player: e draws its still again, its live
+// images too, so the frame one gave last (a streaming player's buffer, the
+// size of a frame) is no longer held where neither budget counts it.
 func (c *Cache) releaseLocked(e *entry) {
+	for _, l := range e.lives {
+		if l != nil {
+			l.last = e.op
+		}
+	}
 	p := e.play
 	if p == nil {
 		return
@@ -724,25 +739,30 @@ func (c *Cache) Animating() bool {
 // draws the frame due when it draws the window's frame, and a frame drawn
 // again from the ops it was drawn with (ui's quiet frames) plays it on. The
 // GPU's ask counts as a draw, as a Get does, and only the paints a frame
-// shows ask. Off (the default), Get returns the frame due at the Get.
+// shows ask. Off (the default), Get returns the frame due at the Get. A
+// build on stock Gio, which has no live images, stays off
+// (gio_patch35_stock.go).
 func (c *Cache) SetLiveOps(on bool) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
-	c.liveOps = on
+	c.liveOps = on && liveOpsSupported
 	c.mu.Unlock()
 }
 
 // live is an animated entry's paint.LiveImage (SetLiveOps): the frame due
-// when the GPU asks, as Get draws it. Once the entry is gone it stays on
-// the last frame it gave.
+// when the GPU asks, as Get draws it. A released player leaves it on the
+// still (releaseLocked). An entry that's gone while a frame still draws it
+// (the last frame's ops, drawn again) stays on the still, and asks once
+// for a frame that lays out, whose Get loads it again.
 type live struct {
 	c      *Cache
 	k      key
 	forced bool
 	making bool          // NewLiveImageOp asks while liveOpLocked holds mu
 	last   paint.ImageOp // under mu
+	gone   bool          // under mu: the entry went, a repaint was asked for
 }
 
 func (l *live) Image() paint.ImageOp {
@@ -753,26 +773,35 @@ func (l *live) Image() paint.ImageOp {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if el, ok := c.entries[l.k]; ok {
-		e := el.Value.(*entry)
-		e.used = now.UnixMilli()
-		c.drawnAt = e.used
-		if op := c.frameLocked(e, now, l.forced); op.Size() == l.last.Size() {
-			l.last = op
+	el, ok := c.entries[l.k]
+	if !ok {
+		if !l.gone {
+			l.gone = true
+			c.wakeLocked(now) // not inline: the GPU asks on the macOS main thread
 		}
+		return l.last
+	}
+	e := el.Value.(*entry)
+	e.used = now.UnixMilli()
+	c.drawnAt = e.used
+	if op := c.frameLocked(e, now, l.forced); op.Size() == l.last.Size() {
+		l.last = op
 	}
 	return l.last
 }
 
-// liveOpLocked is e's live ImageOp (made once; op is its frame now).
-func (c *Cache) liveOpLocked(e *entry, forced bool, op paint.ImageOp) paint.ImageOp {
+// liveOpLocked is e's live ImageOp, made once from its still: the GPU
+// draws its frame due in the still's place, of the still's size (the
+// player's frames are, startPlay).
+func (c *Cache) liveOpLocked(e *entry, forced bool) paint.ImageOp {
 	i := 0
 	if forced {
 		i = 1
 	}
-	if e.live[i].Size() == (image.Point{}) {
-		l := &live{c: c, k: e.k, forced: forced, making: true, last: op}
+	if e.lives[i] == nil {
+		l := &live{c: c, k: e.k, forced: forced, making: true, last: e.op}
 		e.live[i] = newLiveImageOp(l) // gio_patch35.go
+		e.lives[i] = l
 		l.making = false
 	}
 	return e.live[i]
@@ -791,8 +820,8 @@ func (c *Cache) ReplayLive() {
 	defer c.mu.Unlock()
 	for el := c.lru.Front(); el != nil; el = el.Next() {
 		e := el.Value.(*entry)
-		for i := range e.live {
-			if e.live[i].Size() != (image.Point{}) && now.Sub(e.seenAt) <= animGrace {
+		for i := range e.lives {
+			if e.lives[i] != nil && now.Sub(e.seenAt) <= animGrace {
 				e.used = now.UnixMilli()
 				c.drawnAt = e.used
 				c.frameLocked(e, now, i == 1)

@@ -312,11 +312,8 @@ type App struct {
 	// was drawn for, and how many frames were quiet
 	layoutDue, animDue atomic.Bool
 	quiet              quietState
-	quietFrames        uint64
-	animHeld           atomic.Bool  // an animation repaint waits out a slow frame (animHold)
-	lastLayout         atomic.Int64 // the last frame's layout (ns; 0 for a quiet one)
-	lastFrameEnd       atomic.Int64 // when it was submitted (unix ns)
-	quietWhy           string       // why the last frame wasn't quiet ("" when it was; tests, the perf job)
+	quietFrames        atomic.Uint64 // QuietFrames
+	quietWhy           string        // why the last frame wasn't quiet ("" when it was; tests, the perf job)
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow
@@ -563,11 +560,14 @@ func (a *App) Run() error {
 			if a.closeToTray() {
 				e.Abort()
 			}
-			a.drainIdle() // Gio counts every event as the wake-up (below)
+			a.layoutDue.Store(true) // UI work between frames: not a quiet frame next (quiet.go)
+			a.drainIdle()           // Gio counts every event as the wake-up (below)
 		case app.FileDropEvent: // files dragged from the OS (Gio patch 11, drop_overlay.go)
 			a.fileDrop(e)
+			a.layoutDue.Store(true)
 			a.drainIdle()
 		case app.ConfigEvent:
+			a.layoutDue.Store(true)
 			a.winMode = e.Config.Mode
 			a.noteWindowPlace(e.Config) // mainWindowSettings (winbounds.go)
 			if e.Config.Focused && !a.focused {
@@ -617,16 +617,14 @@ func (a *App) Run() error {
 			}
 			// patch points (slackc) are shared with the huddle call window
 			slackc.LockFrame()
-			if a.quietFrame(e.Now, e.Size, e.Metric, e.Insets, e.Asked, e.AskedAt) {
+			if a.tryQuietFrame(e.Now, e.Size, e.Metric, e.Insets, e.Asked, e.AskedAt, e.Source) {
 				// only an animation asked for this frame: the last one's
 				// ops again, the GPU drawing each animation's frame now
 				// (quiet.go)
-				a.replayFrame(e.Source, e.Asked, e.AskedAt, e.Now)
 				slackc.UnlockFrame()
 				wd.next(&stageSubmit)
 				e.Frame(&ops)
 				a.frameStats.addQuiet(time.Since(t0))
-				a.noteFrameCost(0)
 				break
 			}
 			wd.next(&stagePosted)
@@ -635,6 +633,7 @@ func (a *App) Run() error {
 			wd.notePage(a.router.Current().Page())
 			gtx := a.newContext(&ops, e)
 			before := a.router.Current()
+			a.beginFullFrame()
 			a.frame(gtx)
 			if a.router.Current() != before {
 				// A click navigated mid-frame (after the sidebar/panel split
@@ -642,6 +641,7 @@ func (a *App) Run() error {
 				// one frame with the old layout. Layout is ~2 ms.
 				ops.Reset()
 				gtx = a.newContext(&ops, e)
+				a.beginFullFrame()
 				a.frame(gtx)
 			}
 			covered := a.revealFrame()
@@ -667,7 +667,6 @@ func (a *App) Run() error {
 				a.timing("first GPU submit", tl)
 			}
 			a.frameStats.add(time.Since(t0), tl.Sub(t0))
-			a.noteFrameCost(tl.Sub(t0))
 			if frameLog {
 				log.Printf("frame: layout %.2fms total %.1fms", float64(tl.Sub(t0).Microseconds())/1000, float64(time.Since(t0).Microseconds())/1000)
 			}

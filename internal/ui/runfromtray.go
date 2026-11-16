@@ -222,5 +222,9 @@ func (a *App) drainIdle() {
 	slackc.LockFrame()
 	a.wd.next(&stagePosted) // the freeze report's stage: posted work, not the event
 	a.drain()
+	// the work may have changed what the last frame drew (postLazy's
+	// doesn't Invalidate): the next frame is laid out, not shown again
+	// from the last one's ops (quiet.go)
+	a.layoutDue.Store(true)
 	slackc.UnlockFrame()
 }

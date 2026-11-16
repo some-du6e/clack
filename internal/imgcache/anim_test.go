@@ -493,19 +493,80 @@ func TestGIFBurstStaysInBudget(t *testing.T) {
 }
 
 // TestGIFLoopCount: NETSCAPE2.0's count is honoured (1: two passes), a
-// GIF without one plays once, and the last frame then stays.
+// GIF without one plays once, and the last frame then stays. Behind at the
+// end of the first pass (a frame stuck across it), the timeline starts over
+// from the first frame and so does the count, as Chromium's
+// (repetitions_completed back to 0): a GIF that plays twice then shows two
+// whole passes after the one cut short. The schedule's state is checked,
+// and the frames drawn only for being its decoded frames, so late draws
+// (which pass over frames, or start a first pass over, by design) can't
+// fail it.
 func TestGIFLoopCount(t *testing.T) {
-	once, twice := "https://example.com/once.gif", "https://example.com/twice.gif"
-	c, _ := gifCache(t, map[string][]byte{once: bigGIF(t, 40, 40, 4, 2, -1), twice: bigGIF(t, 40, 40, 4, 2, 1)})
-	for u, passes := range map[string]int{once: 1, twice: 2} {
+	once, twice, stalled := "https://example.com/once.gif", "https://example.com/twice.gif", "https://example.com/stalled.gif"
+	c, _ := gifCache(t, map[string][]byte{once: bigGIF(t, 40, 40, 4, 10, -1), twice: bigGIF(t, 40, 40, 4, 10, 1), stalled: bigGIF(t, 40, 40, 4, 10, 1)})
+	// play draws u every 4 ms until its player ends, checking that every
+	// frame it draws is one of its player's, and returns the wraps it saw
+	// (a lower frame after a higher one)
+	play := func(u string, frames map[paint.ImageOp]int, last int) int {
+		t.Helper()
+		passes := 0
+		for dl := time.Now().Add(15 * time.Second); ; time.Sleep(4 * time.Millisecond) {
+			if time.Now().After(dl) {
+				t.Fatalf("%s never ended", u)
+			}
+			op, _ := c.Get(u, 40)
+			i, ok := frames[op]
+			if !ok || i < 0 {
+				t.Fatalf("%s drew a frame its player never decoded, or its still", u)
+			}
+			if i < last {
+				passes++
+			}
+			last = i
+			if p := playerOf(c, u, 40); p != nil && p.s.ended {
+				return passes
+			}
+		}
+	}
+	for u, want := range map[string]int{once: 0, twice: 1} {
 		readyEntry(t, c, u, 40)
-		seen := drawFor(c, u, 40, 800*time.Millisecond) // 80 ms a pass
-		if len(seen) != 4*passes {
-			t.Errorf("%s: %d frames shown, want %d", u, len(seen), 4*passes)
+		frames := playing(t, c, u, 40)
+		seen := play(u, frames, 0)
+		p := playerOf(c, u, 40)
+		if p == nil || p.s.cur != 3 || p.s.passes != want {
+			t.Errorf("%s: ended on frame %d after %d wraps (%d seen), want frame 3 after %d", u, p.s.cur, p.s.passes, seen, want)
 		}
-		if p := playerOf(c, u, 40); p == nil || !p.s.ended || p.s.cur != 3 {
-			t.Errorf("%s: player %+v, want ended on the last frame", u, p)
+	}
+
+	// the first pass's last frame began long before the draw after it
+	readyEntry(t, c, stalled, 40)
+	frames := playing(t, c, stalled, 40)
+	for dl := time.Now().Add(5 * time.Second); ; time.Sleep(4 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("the stalled GIF never reached its first pass's last frame")
 		}
+		c.Get(stalled, 40)
+		c.mu.Lock()
+		p := playerOfLocked(c, stalled, 40)
+		at := p != nil && p.s.cur == 3 && p.s.passes == 0 && p.s.reps == 1
+		if at { // a draw that came 300 ms (two frames) after it was over
+			p.s.shown = time.Now().Add(-(p.ix.frames[3].delay + p.ix.frames[0].delay + 300*time.Millisecond))
+		}
+		c.mu.Unlock()
+		if at {
+			break
+		}
+	}
+	c.Get(stalled, 40)
+	c.mu.Lock()
+	p := playerOfLocked(c, stalled, 40)
+	cur, passes := p.s.cur, p.s.passes
+	c.mu.Unlock()
+	if cur != 0 || passes != 0 {
+		t.Fatalf("behind at the end of the first pass: frame %d after %d passes, want the first frame, the count started over", cur, passes)
+	}
+	if seen := play(stalled, frames, 0); p.s.cur != 3 || p.s.passes != 1 {
+		t.Errorf("after the start over: ended on frame %d after %d wraps (%d seen), want two whole passes", p.s.cur, p.s.passes, seen)
 	}
 }
 

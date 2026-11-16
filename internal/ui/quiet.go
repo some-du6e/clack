@@ -29,16 +29,27 @@ import (
 // draws the window, so the same ops show an animation where it is now. A
 // frame is quiet when the image cache's animation repaint
 // (SetAnimInvalidate: a next frame due, a player started) is all that
-// asked for it: no Invalidate from anything else (data, posted work, a
-// load that landed, a timer), nothing the window's own frames asked for
-// that's due (input a handler takes, an op.InvalidateCmd: FrameEvent.Asked,
-// Gio patch 35), the same size, scale, insets and zoom as the last frame,
-// which was the main window's own full frame (not under the boot cover or
-// the inspect tool, and no other window drew patch points since: slackc
-// Views can be shared). A quiet frame submits that frame's ops again, the
-// router keeping the event filters its widgets asked for (Source.Replay:
-// the focus stays where it is), and asks for any later wake-up the last
-// full frame asked for, which a frame takes from the window. Everything
+// asked for it:
+//
+//   - no App.Invalidate since the last frame (data, posted work, a load
+//     that landed, a plugin's tree, a timer), nor posted work waiting, nor
+//     UI-goroutine work between the frames (drainIdle's posted work, a
+//     window event Run handles: they set layoutDue);
+//   - nothing the window's own frames asked for that's due:
+//     FrameEvent.Asked/AskedAt (Gio patch 35) are the router's wake-ups
+//     (an op.InvalidateCmd: a caret's blink, a transition), input or a
+//     focus change a handler took, a key press the key log kept, an
+//     Option, but not Window.Invalidate, which every one of Clack's
+//     repaints goes through (the invalidator);
+//   - the same size, scale, insets and zoom as the last frame, which was
+//     the main window's own full frame (not under the boot cover, sign-in
+//     or the inspect tool), and no other window drew patch points since.
+//
+// A quiet frame submits that frame's ops again, the router keeping the
+// event filters its widgets asked for and the key log (Source.Replay), the
+// image cache counting that frame's images as drawn now (FrameRedrawn: the
+// idle sweep, the LRU, the hot queue), and asks again for a later wake-up
+// that frame asked for, which a frame takes from the window. Everything
 // else is laid out as before.
 
 // quietState is what the last full frame was drawn for.
@@ -62,19 +73,10 @@ func (a *App) wireQuietFrames() {
 }
 
 // animReady is the image cache's repaint for animations alone (any
-// goroutine): a frame only it asks for may be a quiet one. After a slow
-// frame it waits (animHold).
+// goroutine): a frame only it asks for may be a quiet one. The huddle
+// windows draw the cache's images too, and get it as imagesReady's.
 func (a *App) animReady() {
 	a.animDue.Store(true)
-	if d := a.animHold(time.Now()); d > 0 {
-		if a.animHeld.CompareAndSwap(false, true) {
-			time.AfterFunc(d, func() {
-				a.animHeld.Store(false)
-				a.animReady()
-			})
-		}
-		return
-	}
 	if h := invalidateHook; h != nil {
 		h(a)
 	}
@@ -89,8 +91,9 @@ func (a *App) animReady() {
 
 // quietFrame reports whether the frame for now (the window's size, metric
 // and insets; asked, askedAt: FrameEvent.Asked/AskedAt) may show the last
-// frame's ops again. It takes the frame's reasons (Invalidate's and
-// animReady's), so call it once per frame. UI goroutine, frame lock held.
+// frame's ops again, and notes why not (quietWhy). It takes the frame's
+// reasons (Invalidate's and animReady's), so call it once per frame. UI
+// goroutine, frame lock held.
 func (a *App) quietFrame(now time.Time, size image.Point, m unit.Metric, insets app.Insets, asked bool, askedAt time.Time) bool {
 	layout := a.layoutDue.Swap(false)
 	anim := a.animDue.Swap(false)
@@ -98,42 +101,69 @@ func (a *App) quietFrame(now time.Time, size image.Point, m unit.Metric, insets 
 	a.quietWhy = ""
 	switch {
 	case layout:
-		a.quietWhy = "an Invalidate"
+		a.quietWhy = whyInvalidate
 	case !anim:
-		a.quietWhy = "no animation asked"
+		a.quietWhy = whyNoAnimation
 	case !q.ok:
-		a.quietWhy = "the last frame can't be shown again"
+		a.quietWhy = whyNotShowable
 	case asked && !askedAt.After(now):
-		a.quietWhy = "the window's frames asked" // input, an op.InvalidateCmd
+		a.quietWhy = whyWindowAsked // input, an op.InvalidateCmd
 	case size != q.size || m != q.metric || insets != q.insets || a.zoomFactor() != q.zoom:
-		a.quietWhy = "another size or scale"
+		a.quietWhy = whyResized
 	case slackc.SubFrames() != q.subs:
-		a.quietWhy = "another window drew"
+		a.quietWhy = whyOtherWindow
 	case a.login != nil || a.insp != nil:
-		a.quietWhy = "sign-in or the inspect tool"
+		a.quietWhy = whySignInInspect
 	default:
 		a.mu.Lock()
 		if len(a.pending) > 0 { // postLazy's work waits for a frame
-			a.quietWhy = "posted work"
+			a.quietWhy = whyPosted
 		}
 		a.mu.Unlock()
 	}
 	return a.quietWhy == ""
 }
 
-// replayFrame is a quiet frame's work before its ops go out again: the
-// router keeps the event filters the last full frame's widgets asked for
-// (Source.Replay, Gio patch 35: none ask in this one, and without it the
-// focused composer lost the focus at every quiet frame and got it back at
-// the next full one, a blur and a focus for plugins each time), and the
-// wake-up the last full frame asked for, which isn't due yet, is asked for
-// again (the window takes it with every frame).
-func (a *App) replayFrame(src input.Source, asked bool, askedAt, now time.Time) {
+// Why a frame wasn't quiet (quietWhy).
+const (
+	whyInvalidate    = "an Invalidate"
+	whyNoAnimation   = "no animation asked"
+	whyNotShowable   = "the last frame can't be shown again"
+	whyWindowAsked   = "the window's frames asked"
+	whyResized       = "another size or scale"
+	whyOtherWindow   = "another window drew"
+	whySignInInspect = "sign-in or the inspect tool"
+	whyPosted        = "posted work"
+)
+
+// tryQuietFrame is App.Run's quiet frame: if only an animation asked for
+// the frame (quietFrame), it does a quiet frame's work before its ops go out
+// again and reports true; the caller then submits the last full frame's ops
+// as they are. The work: the router keeps the event filters and the key log
+// the last full frame's widgets left (Source.Replay, Gio patch 35: none ask
+// in this one, and without it the focused composer lost the focus at every
+// quiet frame and got it back at the next full one, a blur and a focus for
+// plugins each time); the image cache counts that frame's images as drawn
+// now (FrameRedrawn); and a wake-up it asked for that isn't due yet is
+// asked for again (the window takes it with every frame). UI goroutine,
+// frame lock held.
+func (a *App) tryQuietFrame(now time.Time, size image.Point, m unit.Metric, insets app.Insets, asked bool, askedAt time.Time, src input.Source) bool {
+	if !a.quietFrame(now, size, m, insets, asked, askedAt) {
+		return false
+	}
 	src.Replay()
 	if asked && askedAt.After(now) {
 		src.Execute(op.InvalidateCmd{At: askedAt})
 	}
-	a.quietFrames++
+	a.images.FrameRedrawn()
+	a.quietFrames.Add(1)
+	return true
+}
+
+// beginFullFrame says a full frame's layout starts: the images it Gets are
+// the ones a quiet frame draws again (imgcache.FrameBegin).
+func (a *App) beginFullFrame() {
+	a.images.FrameBegin()
 }
 
 // noteFullFrame records what a full frame was drawn for; covered: only the
@@ -143,23 +173,6 @@ func (a *App) noteFullFrame(size image.Point, m unit.Metric, insets app.Insets, 
 		zoom: a.zoomFactor(), subs: slackc.SubFrames()}
 }
 
-// animHold is how long an animation's repaint waits after a slow frame. A
-// frame whose layout took over a display frame (16 ms: a scroll, a
-// plugin's render) is followed by as long again without a frame for
-// animations alone, so they take at most half of the UI goroutine and input
-// keeps its turn; the animations keep to their timelines meanwhile (a frame
-// drawn late skips to the one due). A quiet frame lays nothing out, so
-// after one nothing waits.
-func (a *App) animHold(now time.Time) time.Duration {
-	cost := time.Duration(a.lastLayout.Load())
-	if cost < 16*time.Millisecond {
-		return 0
-	}
-	return max(time.Unix(0, a.lastFrameEnd.Load()).Add(cost).Sub(now), 0)
-}
-
-// noteFrameCost records a submitted frame's layout time (0: quiet).
-func (a *App) noteFrameCost(layout time.Duration) {
-	a.lastLayout.Store(int64(layout))
-	a.lastFrameEnd.Store(time.Now().UnixNano())
-}
+// QuietFrames counts the frames drawn again from the last full frame's ops
+// so far (any goroutine; tests, CLACK_FRAMESTATS).
+func (a *App) QuietFrames() uint64 { return a.quietFrames.Load() }

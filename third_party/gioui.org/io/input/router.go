@@ -367,7 +367,16 @@ func (q *Router) collapseState(idx int) {
 // handlers from the frame argument. Remaining events are discarded,
 // unless they were deferred by a command.
 func (q *Router) Frame(frame *op.Ops) {
-	q.frameKeyLog() // Clack patch 28
+	// Clack patch 35: a replayed frame (Source.Replay) is the last frame's
+	// ops again, with no layout: nothing asked for events or read the key
+	// log in it, so the handlers keep their filters (below) and the key log
+	// carries on as the last laid-out frame left it (patch 28: it logs
+	// while a Source reads it every frame, and a replayed frame reads none)
+	replay := q.replay
+	q.replay = false
+	if !replay {
+		q.frameKeyLog() // Clack patch 28
+	}
 	var remaining []event.Event
 	if n := len(q.changes); n > 0 {
 		if q.deferring {
@@ -394,8 +403,6 @@ func (q *Router) Frame(frame *op.Ops) {
 	q.deferring = false
 	// Clack patch 35: a replayed frame's handlers asked for nothing (no
 	// layout ran): they keep the filters they asked for in the last frame
-	replay := q.replay
-	q.replay = false
 	for _, h := range q.handlers {
 		if !replay {
 			h.filter, h.nextFilter = h.nextFilter, h.filter

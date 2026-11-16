@@ -130,6 +130,12 @@ type Cache struct {
 	// latest frame. An idle window draws none, and what it showed last is
 	// on screen still.
 	drawnAt int64
+	// the frame being laid out (FrameBegin) and what its Gets drew: the
+	// entries and the waiting loads a frame drawn again from its ops
+	// (FrameRedrawn) draws again
+	gen      uint32
+	genEls   []*list.Element
+	genLoads []key
 
 	// the next repaints (anim.go wakeLocked): wake for a load's retry, a
 	// layout's worth (invalidate); animWake for an animation's next frame
@@ -296,8 +302,12 @@ type entry struct {
 	// seenFrom..seenAt: the stretch Get has drawn it without a gap of
 	// animGrace (a player starts once it's animSettle long)
 	seenFrom, seenAt time.Time
-	// live: its live ImageOps (SetLiveOps), for Get and GetPlaying
-	live [2]paint.ImageOp
+	// live: its live ImageOps (SetLiveOps), for Get and GetPlaying, and
+	// their LiveImages
+	live  [2]paint.ImageOp
+	lives [2]*live
+	// gen: the frame (FrameBegin) whose Gets drew it last
+	gen uint32
 }
 
 // IdleAfter: images not asked for in this long are dropped by a sweep every
@@ -568,6 +578,11 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 		e := c.deriveLocked(k)
 		if e == nil {
 			c.startLocked(k, true)
+			if w, ok := c.waiting[k]; ok && w.gen != c.gen { // this frame's (FrameRedrawn)
+				w.gen = c.gen
+				c.waiting[k] = w
+				c.genLoads = append(c.genLoads, k)
+			}
 			return paint.ImageOp{}, false
 		}
 		// the exact decode replaces it: always for a standard emoji's own
@@ -585,11 +600,66 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	}
 	e := el.Value.(*entry)
 	e.used = now.UnixMilli()
+	if e.gen != c.gen { // this frame's (FrameRedrawn)
+		e.gen = c.gen
+		c.genEls = append(c.genEls, el)
+	}
 	op := c.frameLocked(e, now, forced)
 	if c.liveOps && e.frames > 1 && (c.animate || forced) {
-		return c.liveOpLocked(e, forced, op), true
+		return c.liveOpLocked(e, forced), true
 	}
 	return op, true
+}
+
+// FrameBegin says a window's frame is being laid out: what Get draws from
+// now until the next FrameBegin is that frame's images, which
+// FrameRedrawn draws again (any goroutine).
+func (c *Cache) FrameBegin() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.gen++
+	clear(c.genEls)
+	c.genEls = c.genEls[:0]
+	clear(c.genLoads)
+	c.genLoads = c.genLoads[:0]
+	c.mu.Unlock()
+}
+
+// FrameRedrawn says the frame laid out since FrameBegin was drawn again
+// from its ops, with no Get (ui's quiet frames): its images count as drawn
+// now, as that frame's Gets drew them. They're used now (the idle sweep
+// drops what wasn't drawn in IdleAfter, and room is made from what wasn't
+// drawn in animGrace first), they come first in the LRU, and the loads
+// they wait for stay hot. Without it a minute of quiet frames dropped
+// every still on screen while the GPU kept drawing them from the old ops,
+// and the next layout showed placeholders while they loaded again. Its
+// animated images are asked for their frames by the GPU (SetLiveOps), which
+// counts as their draw (any goroutine).
+func (c *Cache) FrameRedrawn() {
+	if c == nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := len(c.genEls) - 1; i >= 0; i-- { // the first drawn ends up first
+		el := c.genEls[i]
+		e := el.Value.(*entry)
+		if c.entries[e.k] != el { // gone since
+			continue
+		}
+		e.used = now
+		c.lru.MoveToFront(el)
+	}
+	for _, k := range c.genLoads {
+		if w, ok := c.waiting[k]; ok {
+			w.asked = now
+			c.waiting[k] = w
+		}
+	}
+	c.drawnAt = now
 }
 
 // Loaded reports whether some size of url is decoded.
@@ -722,6 +792,7 @@ func (c *Cache) startLocked(k key, drawn bool) {
 type queued struct {
 	asked int64 // unix milliseconds
 	hot   bool
+	gen   uint32 // the frame that last asked (FrameRedrawn)
 }
 
 // The fetch lanes (Cache.queue) and how many loads each runs at once.
@@ -1043,7 +1114,8 @@ func (c *Cache) dropGIFLocked(e *entry) {
 	e.gif = nil
 }
 
-// dropLocked removes entry el.
+// dropLocked removes entry el. Its live images (a last frame's ops may
+// still draw them) are left on its still, which those ops hold already.
 func (c *Cache) dropLocked(el *list.Element) {
 	e := el.Value.(*entry)
 	c.releaseLocked(e)

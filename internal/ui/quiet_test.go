@@ -126,16 +126,24 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	e.frame()
 	askedAt, asked := e.r.WakeupTime()
 
-	// the ticks: a frame each time the image cache's animation repaint
-	// fires (as the window's loop draws one), for 1.5 s
+	// the ticks, for 1.5 s: a frame whenever something asks for one, as the
+	// window's loop draws them: a repaint (the image cache's animation
+	// repaint or an Invalidate), or a wake-up the window's frames asked
+	// for falling due; none when nothing asks
 	laid0, adv0 := e.a.FrameSeq(), e.a.images.Stats().Advances
 	record.Store(true)
 	quiet, full, lost := 0, 0, 0
-	why := map[string]int{} // the laid-out frames, by what else asked for them
+	why := map[string]int{} // the laid-out frames, by why they weren't quiet
 	for dl := time.Now().Add(1500 * time.Millisecond); time.Now().Before(dl); {
+		var due <-chan time.Time
+		if asked {
+			due = time.After(max(time.Until(askedAt), 0))
+		}
 		select {
 		case <-wake:
-		case <-time.After(200 * time.Millisecond):
+		case <-due:
+		case <-time.After(time.Until(dl)):
+			continue // the end; nothing asked
 		}
 		if e.quietFrame(asked, askedAt) {
 			quiet++
@@ -159,8 +167,15 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	if quiet < 15 {
 		t.Errorf("%d ticks were quiet and %d laid the window out (%d layouts): an animation tick should lay nothing out", quiet, full, laid)
 	}
-	if n := why[""]; n > 0 {
-		t.Errorf("%d frames were laid out with nothing but an animation asking", n)
+	// a frame is laid out only because something besides an animation
+	// asked (an Invalidate, posted work, a due wake-up of the window's,
+	// or nothing at all: a repaint whose reasons the frame before took);
+	// never for one of the conditions that mean the last frame can't be
+	// shown again, none of which holds here
+	for _, r := range []string{whyNotShowable, whyResized, whyOtherWindow, whySignInInspect} {
+		if n := why[r]; n > 0 {
+			t.Errorf("%d frames laid out because %q: none should be here", n, r)
+		}
 	}
 	if lost > 0 {
 		t.Errorf("the composer wasn't focused after %d of %d frames: a frame drawn again dropped the focus", lost, quiet+full)
