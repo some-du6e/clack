@@ -440,9 +440,11 @@ func TestLayerOpenedFromAClosedOneGivesItsFocusBack(t *testing.T) {
 // A field a hold keeps focusable after its layer went (composer.KeepFocus
 // draws a focused editor that wasn't drawn this frame at the window's
 // root, after the frame's layout) doesn't keep the focus: the layer gives
-// it back before the hold, in the frame it stopped drawing. Also after a
-// frame in which the layer missed the field and the hold bridged it (the
-// field's area is the root's then).
+// it back in the frame it stopped drawing (Gio runs that FocusCmd as the
+// frame ends, the opener having read its focus events already: the hold
+// has that frame, and no other). Also after a frame in which the layer
+// missed the field and the hold bridged it (the field's area is the
+// root's then).
 func TestClosedLayerFieldKeepsNoFocus(t *testing.T) {
 	for _, glitch := range []bool{false, true} {
 		w := newLayerWin(t)
@@ -476,10 +478,15 @@ func TestClosedLayerFieldKeepsNoFocus(t *testing.T) {
 			}
 		}
 		w.layers = nil
-		held = 0
 		w.frames(1)
+		if !w.focused(&opener) {
+			t.Errorf("glitch %v: the layer closed with its field focused: the focus is on %v; want the opener, as that frame ended",
+				glitch, w.r.Source().FocusTag())
+		}
+		held = 0
+		w.frames(3)
 		if !w.focused(&opener) || held != 0 {
-			t.Errorf("glitch %v: the layer closed with its field focused: the focus is on %v (held %d frames); want the opener, never held",
+			t.Errorf("glitch %v: frames after the layer closed the focus is on %v and the hold kept the field %d frames; want the opener, none",
 				glitch, w.r.Source().FocusTag(), held)
 		}
 	}
