@@ -25,8 +25,11 @@
     if (name.length > 2 && name[0] === 'o' && name[1] === 'n' && name[2] >= 'A' && name[2] <= 'Z') {
       const h = el._h || (el._h = Object.create(null));
       const k = eventKey(name);
+      const had = typeof h[k] === 'function';
       if (typeof v === 'function') h[k] = v; else delete h[k];
-      jr.markDirty(el);
+      // a new closure for the same handler (most renders make one) is no
+      // change: the tree lists handled types, and events call h[k] as it is
+      if (had !== (typeof v === 'function')) jr.markDirty(el);
       return;
     }
     switch (name) {
@@ -75,6 +78,20 @@
     }
   };
   const rootHost = { svg: HTML };
+  // same keys, same values (Object.is): a native's props that serialize
+  // the same, as long as nothing in them was mutated in place (a plugin
+  // passes new props to change them, as React wants; a mutated object
+  // under the same reference shows on the next real change). A new object
+  // equal to the old one is a change here: it serializes again, and its
+  // root sends a tree that is the same (Go drops it)
+  const sameProps = (a, b) => {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    let n = 0;
+    for (const k in a) { if (!hasOwn.call(b, k) || !Object.is(a[k], b[k])) return false; n++; }
+    for (const k in b) n--;
+    return n === 0;
+  };
 
   // ---- update priority from the event being dispatched ----
   let curEvent = null;
@@ -139,8 +156,11 @@
     commitUpdate(el, type, prev, next, fiber) {
       el.__reactProps$clack = next;
       el.__reactFiber$clack = fiber;
-      if (type[0] === '@') { el._np = next.__np || null; jr.markDirty(el); return; }
-      if (type === '#slot') { el._slot = String(next.name); jr.markDirty(el); return; }
+      // a native or a slot rendered again with the very values it had is
+      // no change: its root delivers nothing (a parent that rendered again
+      // for nothing, a portal mounted under it)
+      if (type[0] === '@') { const np = next.__np || null; if (!sameProps(el._np, np)) jr.markDirty(el); el._np = np; return; }
+      if (type === '#slot') { const name = String(next.name); if (el._slot !== name) { el._slot = name; jr.markDirty(el); } return; }
       applyProps(el, prev, next, el._svg, false);
     },
     commitTextUpdate: (t, old, next) => { t.data = next; },
@@ -160,7 +180,15 @@
       if (jr.activeElement() === node) jr.focusElement(null);
     },
     prepareForCommit: () => null,
-    resetAfterCommit: (container) => jr.markDirty(container),
+    // A commit of JS's own updates sends the root's tree only if a host
+    // node changed: every mutation marks its node dirty. React commits a
+    // root whenever any update ran in it (a plugin's usePatchVersion after
+    // api.redux.refresh, which Message Logger calls on every edit and
+    // delete it logs; a store subscription whose output didn't change),
+    // and marking every commit's container sent the same tree again, 650
+    // to 4,000 times in a perf pass. What Go renders always answers
+    // (__clack.render, __clack.portalInto).
+    resetAfterCommit: () => {},
     preparePortalMount: () => {},
     hideInstance: (el) => { el._hidden = true; el._styleSet('display', 'none'); },
     unhideInstance: (el, props) => { el._hidden = false; const d = props.style && props.style.display; if (d != null && d !== '') el._styleSet('display', d); else el._styleDel('display'); },
@@ -256,6 +284,7 @@
     const r = ensureRoot(id);
     R.updateContainerSync(element === undefined ? null : element, r.fiberRoot, null, null);
     R.flushSyncWork();
+    jr.markDirty(r.container); // it answers with the root's tree, an empty one too (Go drops one it has)
   };
   __clack.unmount = (id) => {
     if (portalRootK.has(id)) { removePortal(id); return; }
@@ -303,6 +332,9 @@
     portalRootK.set(id, k);
     notifyPortal(k);
     R.flushSyncWork();
+    // it answers with the portal's tree, an empty one too: now if the
+    // native it goes into is mounted, else once it mounts (its layout effect)
+    if (portalSubs.has(k)) jr.markDirty(portalBoxes.get(id));
   };
   __clack.portalCount = () => portalRootK.size;
 
@@ -331,7 +363,13 @@
         let subs = portalSubs.get(hk);
         if (!subs) portalSubs.set(hk, (subs = new Set()));
         subs.add(rerender);
-        if (portalsByK.has(hk)) rerender();
+        const pm = portalsByK.get(hk);
+        if (pm) {
+          // portals Go rendered before this native drew (or while it was
+          // hidden) answer now, an empty one too (__clack.portalInto)
+          rerender();
+          for (const id of pm.keys()) { const box = portalBoxes.get(id); if (box) jr.markDirty(box); }
+        }
         return () => { subs.delete(rerender); if (!subs.size) portalSubs.delete(hk); };
       }, []);
       const hk = ref.current && ref.current._k;

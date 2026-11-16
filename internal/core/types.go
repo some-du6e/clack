@@ -59,6 +59,8 @@ type Message struct {
 	Reactions       []Reaction
 	Huddle          json.RawMessage
 	Doc             richtext.Doc
+	// Refs are the members and conversations Doc was built from (msg_refs.go)
+	Refs MsgRefs
 	// Raw Slack data for plugins (Taut): memory only, never written to disk.
 	Blocks      json.RawMessage // Block Kit blocks as sent
 	Attachments json.RawMessage // legacy attachments / unfurls as sent
@@ -372,7 +374,18 @@ type Event struct {
 	// Prev (user): the member as the store held them before this change;
 	// nil when it didn't (CardOnly tells a change only a profile card
 	// shows)
-	Prev     *User
+	Prev *User
+	// SameNames (user, conv, conv_removed, tabs): the change left alone
+	// what message Docs read of the member or conversation (its names
+	// and picture; a channel's name, kind, membership and tabs): a
+	// status, a huddle, a topic, a bookmark (msg_refs.go)
+	SameNames bool
+	// NamePrefs (prefs): how messages name people changed
+	// (display_real_names, hidden_users)
+	NamePrefs bool
+	// DocPrefs (prefs): a pref every message's Doc reads changed (the
+	// highlight words, emoji_mode)
+	DocPrefs bool
 	Presence string // presence: active | away
 	Users    []string
 	Prefs    *Prefs

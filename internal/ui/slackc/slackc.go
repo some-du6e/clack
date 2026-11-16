@@ -301,7 +301,35 @@ type instKey struct {
 	hash    uint64
 	parent  uint64 // enclosing patched root (0 = top level)
 	parentK int64  // the "@" node in it whose native drew this one
+	// the pane that drew it (Pane) and that pane's window: "" and nil
+	// outside a pane
+	pane string
+	win  *frameClock
 }
+
+// curPane is the pane being drawn ("" outside one; UI goroutine, frame
+// lock).
+var curPane string
+
+// Pane keys the patched component instances drawn until EndPane by the
+// pane id and by the window drawing the pane: each pane gets roots of its
+// own, even where two of them draw the same component with the same
+// "$key", as each of Slack's panes is a React subtree with components of
+// its own. A reply also sent to the channel is drawn by the channel's
+// list and by its thread pane (Slack: BaseMessageList's MessageWrapper
+// and ThreadsFlexpane's ThreadReply, two components): sharing one root,
+// the two panes sent JS their own props in turn and the root rendered
+// again every frame. The inner of nested panes keys. One assignment, so
+// free when nothing is patched:
+//
+//	defer slackc.EndPane(slackc.Pane(id))
+func Pane(id string) (outer string) {
+	outer, curPane = curPane, id
+	return outer
+}
+
+// EndPane ends the pane Pane started; outer is what Pane returned.
+func EndPane(outer string) { curPane = outer }
 
 // ResultBridge is implemented by bridges that report what JS did with an
 // event: done gets, on any goroutine, whether a listener stopped its
@@ -393,6 +421,9 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	t := now(gtx)
 
 	k := instKey{name: name}
+	if curPane != "" {
+		k.pane, k.win = curPane, curClock
+	}
 	// Drawn by a native inside another patched component's tree (a row's
 	// <Original> calling MessageText): the child root belongs under that
 	// "@" node, so JS can mount it inside the parent's React tree and
@@ -686,7 +717,7 @@ var lastViewport struct {
 // fixed positioning), runs queued JS→Go calls and reports viewport
 // changes to JS. Free when no plugin runtime is attached.
 func Frame(gtx layout.Context) {
-	curClock = &mainClock
+	curClock, curPane = &mainClock, ""
 	mainClock.begin(now(gtx))
 	mainClock.layers.begin(gtx)
 	windowSize = gtx.Constraints.Max
