@@ -627,7 +627,7 @@ func (r *srACRanker) rank(q string, remote map[string]core.User, people, channel
 				LastRead: srTSF(cnt.LastRead), Latest: srTSF(cnt.Latest), History: r.hist[id]})
 			items = append(items, srACItem{kind: srAIChannel, id: id, label: name, private: kind == "private"})
 		}
-		for _, cv := range r.c.Snapshot().Convs {
+		for _, cv := range r.c.RecentSnapshot().Convs { // per keystroke
 			if cv.File { // a canvas's or list's conversation (core/sidebar_docs.go)
 				continue
 			}
@@ -724,7 +724,7 @@ func (r *srACRanker) mpims(q string) []srACItem {
 	mo := acrank.MatcherOpts{FuzzyLimit: 3, FuzzyJumpLimit: 20, FuzzyCJK: true}
 	qq := strings.TrimSpace(acrank.SearcherQuery(q))
 	subs := srSubQueries(qq)
-	for _, cv := range r.c.Snapshot().Convs {
+	for _, cv := range r.c.RecentSnapshot().Convs { // per keystroke
 		if cv.Kind != "mpim" || cv.IsArchived {
 			continue
 		}
@@ -806,7 +806,7 @@ func (r *srACRanker) user(id string) (core.User, bool) {
 func (r *srACRanker) teams(q string) []srACItem {
 	qq := strings.TrimSpace(acrank.SearcherQuery(q))
 	m := acrank.NewMatcher(qq, acrank.MatcherOpts{FuzzyLimit: 3, FuzzyJumpLimit: 20, FuzzyCJK: true})
-	snap := r.c.Snapshot()
+	snap := r.c.RecentSnapshot() // per keystroke
 	var out []srACItem
 	for _, id := range r.c.EnterpriseTeams() {
 		name, ic := "", ""

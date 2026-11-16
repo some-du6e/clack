@@ -309,6 +309,7 @@ func (b *backend) stop() <-chan struct{} {
 // resnapshot rebuilds the model off the UI goroutine (sidebar_changed,
 // resync), coalescing bursts.
 func (b *backend) resnapshot(a *App) {
+	b.core.InvalidateSnapshot() // RecentSnapshot's readers (the huddle channels, a draft) see it too
 	b.snapMu.Lock()
 	if b.snapPending {
 		b.snapMu.Unlock()

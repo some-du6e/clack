@@ -704,7 +704,7 @@ func (v *Activity) suggestions() (activity, sections []actSuggestion) {
 		acts = append(acts, sug{name: nsActivity.T("VIP"), icon: "vip", st: actState{vip: true}})
 	}
 	var secs []sug
-	for _, s := range c.Snapshot().Sections {
+	for _, s := range c.RecentSnapshot().Sections { // per frame while the menu is open
 		if s.Type != "standard" && s.Type != "stars" || len(secs) == 10 {
 			continue
 		}
@@ -820,16 +820,24 @@ func (v *Activity) plusClick() {
 	v.openViewModal(actCreateTab, core.ActivityView{})
 }
 
-// plusClicks runs the "+" menu's clicked row.
+// plusClicks runs the "+" menu's clicked row. It runs every frame, so the
+// items (the sidebar's sections among them) are only built once a row was
+// clicked: plusMenu lays out a row's Clickable only where the item has a do.
 func (v *Activity) plusClicks(gtx C) {
-	items := v.plusItems()
-	if len(v.plusC) < len(items) {
-		v.plusC = append(v.plusC, make([]widget.Clickable, len(items)-len(v.plusC))...)
+	var clicked []int
+	for i := range v.plusC {
+		if v.plusC[i].Clicked(gtx) {
+			clicked = append(clicked, i)
+		}
 	}
-	for i, it := range items {
-		if it.do != nil && v.plusC[i].Clicked(gtx) {
+	if len(clicked) == 0 {
+		return
+	}
+	items := v.plusItems()
+	for _, i := range clicked {
+		if i < len(items) && items[i].do != nil {
 			v.menu = actMenuNone
-			it.do()
+			items[i].do()
 		}
 	}
 }

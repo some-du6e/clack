@@ -162,6 +162,7 @@ func TestActivityCustomViewsLikeSlack(t *testing.T) {
 	st.Lock()
 	st.Sections = []slack.Section{{ID: "L0FAKE00", Name: "Starred", Type: "stars"}, {ID: "L0FAKE01", Name: "Synthetic projects", Type: "standard"}}
 	st.Unlock()
+	v.h.Core().InvalidateSnapshot() // as the sidebar_changed event a real change brings
 	acts, secs := v.suggestions()
 	var names []string
 	for _, g := range acts {
