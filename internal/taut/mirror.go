@@ -404,7 +404,7 @@ func (m *mirror) onEvent(ev core.Event) {
 // that way, a thread's broadcasts included); for a member or a channel
 // (a profile change, a channel's name, icon, membership or tabs) the
 // messages whose conversion read it (core.RefsChanged,
-// viewCache.bumpRefs: a file's uploader, a huddle's sentence, a message
+// viewCache.bumpChange: a file's uploader, a huddle's sentence, a message
 // slug, a work object, a channel mention, a tab slug); for anything else
 // that core.App.message reads (names lookups resolved, prefs and
 // highlight words, emoji, experiment groups, a resync) every message.
@@ -428,8 +428,17 @@ func (m *mirror) noteConv(ev core.Event) {
 		// sender, so the frame that drew the row never read them).
 		// ("names" stays every message's: its ids are bots', canvases'
 		// and list records' too, which conversions don't record.)
-		members, channels := core.RefsChanged(ev)
-		m.t.ui.views.bumpRefs(append(members, channels...))
+		m.t.ui.views.bumpChange(core.RefsChanged(ev))
+		return
+	case "prefs":
+		// the highlight words or emoji_mode: every conversion read them;
+		// display_real_names, hidden_users: those that named a member;
+		// any other pref: none
+		if ev.DocPrefs {
+			m.t.ui.views.bumpConv("", "")
+		} else {
+			m.t.ui.views.bumpChange(core.RefsChanged(ev))
+		}
 		return
 	}
 	ts := ev.TS

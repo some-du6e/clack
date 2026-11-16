@@ -879,7 +879,7 @@ func (t *Taut) MessageViewChanged(ch, ts string) (core.Message, bool) {
 // MessageViewConv is MessageView (fresh: MessageViewChanged) with the
 // serial of the conversion it returns, which changes whenever the view is
 // converted again: when its value changed, or what the conversion read (a
-// member's name, a channel's tabs: bumpRefs) did, though nothing else a
+// member's name, a channel's tabs: bumpChange) did, though nothing else a
 // caller compares may have.
 func (t *Taut) MessageViewConv(ch, ts string, fresh bool) (core.Message, uint64, bool) {
 	if !t.SlicePatched("messages") {
@@ -1136,11 +1136,14 @@ type viewCache struct {
 	gseq   uint64
 	global uint64
 	msgGen map[viewSK]uint64 // channel, ts → gseq
-	// what each conversion read (core.Message.Refs): member or
-	// conversation id → the messages whose conversion read it, and back
-	// (gmu), so a change to one converts just those again (bumpRefs)
-	refBy map[string]map[viewSK]struct{}
-	refOf map[viewSK][]string
+	// what each conversion read (core.Message.Refs): member,
+	// conversation or file id → the messages whose conversion read it,
+	// and back (gmu), so a change to one converts just those again
+	// (bumpChange). refSeq is each id's last change (gseq): a conversion
+	// that was under way as it changed converts again (indexRefs).
+	refBy  map[string]map[viewSK]struct{}
+	refOf  map[viewSK]core.MsgRefs
+	refSeq map[string]uint64
 }
 
 // maxConvKeys bounds the per-message generations and the conversions'
@@ -1156,7 +1159,8 @@ func (v *viewCache) init(t *Taut) {
 	v.flying = map[viewKey]bool{}
 	v.msgGen = map[viewSK]uint64{}
 	v.refBy = map[string]map[viewSK]struct{}{}
-	v.refOf = map[viewSK][]string{}
+	v.refOf = map[viewSK]core.MsgRefs{}
+	v.refSeq = map[string]uint64{}
 	v.maxSubs = 20000
 	v.maxBytes = 64 << 20
 }
@@ -1277,6 +1281,10 @@ func (v *viewCache) work() {
 			v.n, v.bytes = 0, 0
 			v.seq++
 			v.allVer = v.seq
+			v.gmu.Lock() // no conversion is left: nothing they read is anyone's
+			clear(v.refOf)
+			clear(v.refBy)
+			v.gmu.Unlock()
 		}
 		changed := false
 		var retry []viewKey
@@ -1385,6 +1393,18 @@ func (v *viewCache) dropGroupLocked(sk viewSK, g *viewGroup) {
 	}
 	delete(v.groups, sk)
 	v.sliceN[sk.slice]--
+	if sk.slice == "messages" { // its conversions went: what they read is no one's
+		var keys []viewSK
+		for ts, e := range g.subs {
+			if ts != "" {
+				keys = append(keys, viewSK{sk.key, ts})
+			}
+			for i := range e.inj {
+				keys = append(keys, viewSK{sk.key, e.inj[i].ts})
+			}
+		}
+		v.unindex(keys) // gmu inside mu, as everywhere
+	}
 }
 
 // dropEvicted forgets the views of ch's messages core's cache pass let go
@@ -1420,13 +1440,24 @@ func (v *viewCache) dropEvicted(ch string) {
 	if g == nil {
 		return
 	}
+	injected := map[string]bool{} // what the bucket's injected list still converts
+	if b := g.subs[""]; b != nil {
+		for i := range b.inj {
+			injected[b.inj[i].ts] = true
+		}
+	}
+	var keys []viewSK
 	for _, ts := range gone {
 		if e := g.subs[ts]; e != nil {
 			delete(g.subs, ts)
 			v.n--
 			v.bytes -= e.size
+			if !injected[ts] {
+				keys = append(keys, viewSK{ch, ts})
+			}
 		}
 	}
+	v.unindex(keys)
 }
 
 // fetch asks JS for keys and decodes what comes back: one JS read per
@@ -1582,88 +1613,184 @@ func (v *viewCache) convert(slot *atomic.Pointer[viewConv], ch string, sm *slack
 
 // conv is convert's conversion itself.
 func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Message, fresh bool) *viewConv {
-	gen := v.convGen(ch, sm.TS)
+	gen, at := v.convGenAt(ch, sm.TS)
 	if c := slot.Load(); c != nil && !fresh && c.gen == gen {
 		return c
 	}
 	m := *sm
 	c := &viewConv{gen: gen, id: convSerial.Add(1), msg: v.t.app.MessageFromSlack(ch, &m)}
 	slot.Store(c)
-	v.indexRefs(viewSK{ch, sm.TS}, &c.msg.Refs)
+	if v.indexRefs(viewSK{ch, sm.TS}, c.msg.Refs, at) {
+		// something it read changed while it was being made (bumpChange
+		// came before it was indexed): the next read makes it again
+		if f := v.t.opts.UI.Invalidate; f != nil {
+			f()
+		}
+	}
 	return c
 }
 
-// indexRefs records the members and conversations the conversion of ch/ts
-// read, in place of what its last conversion read.
-func (v *viewCache) indexRefs(k viewSK, r *core.MsgRefs) {
-	n := len(r.Members) + len(r.Channels)
+// convGenAt is convGen, and the sequence then (indexRefs' at).
+func (v *viewCache) convGenAt(ch, ts string) (gen, at uint64) {
 	v.gmu.Lock()
 	defer v.gmu.Unlock()
-	old, had := v.refOf[k]
-	if n == 0 && !had {
-		return
-	}
-	for _, id := range old {
-		if set := v.refBy[id]; set != nil {
-			delete(set, k)
-			if len(set) == 0 {
-				delete(v.refBy, id)
+	return max(v.global, v.msgGen[viewSK{ch, ts}]), v.gseq
+}
+
+// indexRefs records what the conversion of k read, in place of what its
+// last conversion read. A conversion begun at sequence at that read
+// something bumpChange changed since is stale at once: it reports true
+// with k's generation moved on.
+func (v *viewCache) indexRefs(k viewSK, r core.MsgRefs, at uint64) (stale bool) {
+	v.gmu.Lock()
+	defer v.gmu.Unlock()
+	for _, l := range [][]string{r.Members, r.Channels, r.Files} {
+		for _, id := range l {
+			if v.refSeq[id] > at {
+				stale = true
 			}
 		}
 	}
+	if len(r.Members) > 0 && v.refSeq[anyMember] > at {
+		stale = true
+	}
+	if stale {
+		v.gseq++
+		v.msgGen[k] = v.gseq
+	}
+	old, had := v.refOf[k]
+	n := len(r.Members) + len(r.Channels) + len(r.Files)
+	if n == 0 && !had {
+		return stale
+	}
+	v.unindexLocked(k, old)
 	if n == 0 {
-		delete(v.refOf, k)
-		return
+		return stale
 	}
 	if !had && len(v.refOf) >= maxConvKeys {
 		// start over: every conversion is made (and indexed) again
 		clear(v.refOf)
 		clear(v.refBy)
+		clear(v.refSeq)
 		clear(v.msgGen)
 		v.gseq++
 		v.global = v.gseq
 	}
-	ids := make([]string, 0, n)
-	ids = append(append(ids, r.Members...), r.Channels...)
-	v.refOf[k] = ids
-	for _, id := range ids {
-		set := v.refBy[id]
-		if set == nil {
-			set = map[viewSK]struct{}{}
-			v.refBy[id] = set
+	v.refOf[k] = r
+	for _, l := range [][]string{r.Members, r.Channels, r.Files} {
+		for _, id := range l {
+			set := v.refBy[id]
+			if set == nil {
+				set = map[viewSK]struct{}{}
+				v.refBy[id] = set
+			}
+			set[k] = struct{}{}
 		}
-		set[k] = struct{}{}
 	}
+	return stale
 }
 
-// bumpRefs makes the conversions that read any of ids (member and
-// conversation ids) be made again, and only those, and redraws when there
-// were any: a profile change converted every message again, or none.
-func (v *viewCache) bumpRefs(ids []string) {
-	v.gmu.Lock()
-	n := 0
-	for _, id := range ids {
-		n += len(v.refBy[id])
-	}
-	if n == 0 {
-		v.gmu.Unlock()
-		return
-	}
-	v.gseq++
-	if len(v.msgGen)+n >= maxConvKeys {
-		clear(v.msgGen)
-		v.global = v.gseq
-	} else {
-		for _, id := range ids {
-			for k := range v.refBy[id] {
-				v.msgGen[k] = v.gseq
+// unindexLocked forgets that k's conversion read refs (gmu held).
+func (v *viewCache) unindexLocked(k viewSK, refs core.MsgRefs) {
+	for _, l := range [][]string{refs.Members, refs.Channels, refs.Files} {
+		for _, id := range l {
+			if set := v.refBy[id]; set != nil {
+				delete(set, k)
+				if len(set) == 0 {
+					delete(v.refBy, id)
+				}
 			}
 		}
 	}
+	delete(v.refOf, k)
+}
+
+// unindex forgets the conversions of keys (their views went).
+func (v *viewCache) unindex(keys []viewSK) {
+	if len(keys) == 0 {
+		return
+	}
+	v.gmu.Lock()
+	for _, k := range keys {
+		if refs, ok := v.refOf[k]; ok {
+			v.unindexLocked(k, refs)
+		}
+	}
 	v.gmu.Unlock()
-	if f := v.t.opts.UI.Invalidate; f != nil {
+}
+
+// anyMember is refSeq's key for a change to every member's names
+// (RefChange.AnyMember): a conversion that read a member while it came is
+// stale (indexRefs).
+const anyMember = "*"
+
+// bumpChange makes the conversions that read what c changed be made
+// again, and only those: a profile change converted every message again,
+// or none. It redraws only when one of them is still cached (a view's
+// conversion that went keeps nothing on screen), and forgets the others.
+func (v *viewCache) bumpChange(c core.RefChange) {
+	if c.Empty() {
+		return
+	}
+	ids := c.IDs()
+	if c.AnyMember {
+		ids = append(ids, anyMember)
+	}
+	v.gmu.Lock()
+	v.gseq++
+	seq := v.gseq
+	if len(v.refSeq)+len(ids) > maxConvKeys {
+		clear(v.refSeq)
+	}
+	for _, id := range ids {
+		v.refSeq[id] = seq
+	}
+	var keys []viewSK
+	for _, id := range ids {
+		for k := range v.refBy[id] {
+			keys = append(keys, k)
+		}
+	}
+	if c.AnyMember {
+		for k, refs := range v.refOf {
+			if len(refs.Members) > 0 {
+				keys = append(keys, k)
+			}
+		}
+	}
+	if len(keys) == 0 {
+		v.gmu.Unlock()
+		return
+	}
+	if len(v.msgGen)+len(keys) >= maxConvKeys {
+		clear(v.msgGen)
+		v.global = seq
+	} else {
+		for _, k := range keys {
+			v.msgGen[k] = seq
+		}
+	}
+	v.gmu.Unlock()
+	cached, gone := v.cachedKeys(keys)
+	v.unindex(gone)
+	if f := v.t.opts.UI.Invalidate; cached && f != nil {
 		f()
 	}
+}
+
+// cachedKeys reports whether any of keys has a conversion cached, and
+// lists those that have none.
+func (v *viewCache) cachedKeys(keys []viewSK) (cached bool, gone []viewSK) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, k := range keys {
+		if v.convCachedLocked(k.slice, k.key) {
+			cached = true
+		} else {
+			gone = append(gone, k)
+		}
+	}
+	return cached, gone
 }
 
 // convGen is the generation of what converting ch/ts reads.
@@ -1702,6 +1829,10 @@ func (v *viewCache) bumpConv(ch, ts string) {
 func (v *viewCache) convCached(ch, ts string) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	return v.convCachedLocked(ch, ts)
+}
+
+func (v *viewCache) convCachedLocked(ch, ts string) bool {
 	if ch == "" {
 		return v.sliceN["messages"] > 0
 	}
