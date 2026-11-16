@@ -31,6 +31,10 @@ type Snapshot struct {
 	Yields     uint64        // native-loop yields (host_yield)
 	Interrupts uint64        // interrupt polls that stopped a task past its deadline
 	Abandoned  bool          // the watchdog gave up on it, but its JS thread is still running
+	// The engine's wasm linear memory (QuickJS's heap, its stack, buffers):
+	// how big it is, and the address space reserved for it outside the Go
+	// heap (0: it's a Go slice, counted in the Go heap's figures).
+	WasmMemory, WasmReserved uint64
 }
 
 // Snapshots describes every live Runtime. Any goroutine; atomics only, so
@@ -47,11 +51,13 @@ func Snapshots() []Snapshot {
 
 func (r *Runtime) snapshot(now int64) Snapshot {
 	s := Snapshot{
-		LastGC:     time.Duration(r.gcLast.Load()),
-		GCObjects:  r.gcObjects.Load(),
-		GCs:        r.gcs.Load(),
-		Yields:     r.yields.Load(),
-		Interrupts: r.interrupts.Load(),
+		LastGC:       time.Duration(r.gcLast.Load()),
+		GCObjects:    r.gcObjects.Load(),
+		GCs:          r.gcs.Load(),
+		Yields:       r.yields.Load(),
+		Interrupts:   r.interrupts.Load(),
+		WasmMemory:   r.wasmMem.size.Load(),
+		WasmReserved: r.wasmMem.reserved.Load(),
 	}
 	h := r.heap.Load()
 	s.Heap, s.Allocs = h>>32, uint32(h)
@@ -97,6 +103,12 @@ func (s Snapshot) String() string {
 	}
 	out += fmt.Sprintf("; JS heap %s in %d allocations; %d collections, the last %v over %d objects; %d yields, %d interrupts",
 		mib(s.Heap), s.Allocs, s.GCs, s.LastGC.Round(time.Millisecond), s.GCObjects, s.Yields, s.Interrupts)
+	switch {
+	case s.WasmReserved > 0:
+		out += fmt.Sprintf("; wasm memory %s, outside the Go heap (%s reserved)", mib(s.WasmMemory), mib(s.WasmReserved))
+	case s.WasmMemory > 0:
+		out += fmt.Sprintf("; wasm memory %s, on the Go heap", mib(s.WasmMemory))
+	}
 	return out
 }
 

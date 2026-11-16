@@ -13,6 +13,7 @@ import (
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 )
 
@@ -156,9 +157,17 @@ func newEngine(r *Runtime) (*engine, error) {
 		WithStartFunctions("_initialize").
 		WithSysWalltime().WithSysNanotime().WithSysNanosleep().
 		WithRandSource(cryptoRand{})
-	mod, err := wrt.InstantiateModule(ctx, cm, mc)
+	// the linear memory in address space reserved outside the Go heap,
+	// grown in place (wasmmem.go); wazero reads the allocator from the
+	// instantiation's context only. CLACK_JSRT_HEAP_MEMORY=1 puts it back
+	// in a Go slice (for comparing).
+	alloc := &wasmAllocator{stats: &r.wasmMem, heap: r.opts.heapWasmMemory || os.Getenv("CLACK_JSRT_HEAP_MEMORY") != ""}
+	mod, err := wrt.InstantiateModule(experimental.WithMemoryAllocator(ctx, alloc), cm, mc)
 	if err != nil {
 		return nil, fmt.Errorf("jsrt: instantiate engine: %w", err)
+	}
+	if alloc.err != nil {
+		r.opts.Log("warn", fmt.Sprintf("jsrt: the engine's wasm memory is on the Go heap (growing it copies all of it): %v", alloc.err))
 	}
 	e.mod = mod
 	e.mem = mod.Memory()
@@ -203,6 +212,10 @@ func memoryLimitPages(heap int) uint32 {
 	return uint32(n)
 }
 
+// close frees the engine, its wasm memory's reservation included (JS
+// thread, once it has left the wasm for good). Nothing may read the memory
+// afterwards: wazero's api.Memory still holds a slice of the released
+// address space, so e.mem goes too.
 func (e *engine) close() {
 	if e.mod != nil {
 		_ = e.mod.Close(e.ctx)
@@ -212,6 +225,7 @@ func (e *engine) close() {
 		_ = e.wrt.Close(e.ctx)
 		e.wrt = nil
 	}
+	e.mem = nil
 }
 
 // call invokes an export. Panics from wazero (traps) become Go panics with
