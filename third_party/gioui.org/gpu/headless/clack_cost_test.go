@@ -92,10 +92,28 @@ func TestClackPlacementNoise(t *testing.T) {
 			}
 		}
 	}
+	// the bands with the sides only as wide as the stroke (the columns
+	// under the corners' arcs left out)
+	narrow := func(o *op.Ops) {
+		bg(o)
+		for i := 1; i <= 14; i++ {
+			ri := ws.Inset(-i)
+			bs := ringBandsProbe(ri, 12+i, 1)
+			bs[1].Max.X = ri.Min.X + 1
+			bs[2].Min.X = ri.Max.X - 1
+			for _, b := range bs {
+				c := clip.Rect(b).Push(o)
+				ring(o, i, color.NRGBA{A: alpha(i)})
+				c.Pop()
+			}
+		}
+	}
 	a, sa := shot(func(o *op.Ops) { full(o, false) })
 	a2, _ := shot(func(o *op.Ops) { full(o, false) })
 	b, _ := shot(func(o *op.Ops) { full(o, true) })
 	c, sc := shot(bands)
+	cn, scn := shot(narrow)
+	t.Logf("rings in bands, narrow sides: %s; %s", diffStats(a, cn, all), statLine(scn))
 	t.Logf("rings, same ops twice: %s", diffStats(a, a2, all))
 	t.Logf("rings after a dummy path (atlas shifted): %s", diffStats(a, b, image.Rect(45, 45, w, h)))
 	t.Logf("rings in bands: %s", diffStats(a, c, all))
@@ -147,8 +165,12 @@ func TestClackPlacementNoise(t *testing.T) {
 		}
 	}
 	white1 := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+	dummyFirst := false
 	panelOld := func(o *op.Ops) {
 		bg(o)
+		if dummyFirst {
+			paint.FillShape(o, color.NRGBA{R: 1, A: 1}, clip.Ellipse(image.Rect(3, 3, 41, 37)).Op(o))
+		}
 		st := clip.Outline{Path: plainRRect(o, rr)}.Op().Push(o)
 		paint.FillShape(o, white1, clip.Rect(panel).Op())
 		glyphs(o)
@@ -170,8 +192,19 @@ func TestClackPlacementNoise(t *testing.T) {
 		st.Pop()
 	}
 	e, se := shot(panelOld)
+	dummyFirst = true
+	e2, _ := shot(panelOld)
+	dummyFirst = false
 	f, sf := shot(panelNew)
+	gpu.ClackLegacyClips(true)
+	f2, _ := shot(panelNew)
+	gpu.ClackLegacyClips(false)
+	inner := rr.Interior()
+	t.Logf("panel, before, after a dummy path (atlas shifted): %s", diffStats(e, e2, all))
 	t.Logf("panel, its clip dropped inside (patch 38) and stenciled in regions (39): %s", diffStats(e, f, all))
+	t.Logf("  in the interior: %s", diffStats(e, f, inner))
+	t.Logf("  biggest: %s", worstPixels(e, f, all, 6))
+	t.Logf("panel, split fill only (patches 38, 39 off): %s", diffStats(e, f2, all))
 	t.Logf("panel, before: %s", statLine(se))
 	t.Logf("panel, after: %s", statLine(sf))
 
@@ -218,6 +251,44 @@ func plainRRect(o *op.Ops, rr clip.RRect) clip.PathSpec {
 	p.LineTo(f32.Point{X: w, Y: n + nw})
 	p.CubeTo(f32.Point{X: w, Y: n + nw*iq}, f32.Point{X: w + nw*iq, Y: n}, f32.Point{X: w + nw, Y: n})
 	return p.End()
+}
+
+// worstPixels lists the n pixels of r that differ most between a and b.
+func worstPixels(a, b *image.RGBA, r image.Rectangle, n int) string {
+	type px struct {
+		p    image.Point
+		d    int
+		a, b color.RGBA
+	}
+	var top []px
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			ca, cb := a.RGBAAt(x, y), b.RGBAAt(x, y)
+			d := max(absDiff(ca.R, cb.R), absDiff(ca.G, cb.G), absDiff(ca.B, cb.B), absDiff(ca.A, cb.A))
+			if d == 0 || (len(top) == n && d <= top[n-1].d) {
+				continue
+			}
+			top = append(top, px{image.Pt(x, y), d, ca, cb})
+			for i := len(top) - 1; i > 0 && top[i].d > top[i-1].d; i-- {
+				top[i], top[i-1] = top[i-1], top[i]
+			}
+			if len(top) > n {
+				top = top[:n]
+			}
+		}
+	}
+	s := ""
+	for _, t := range top {
+		s += fmt.Sprintf(" %v by %d (%v vs %v);", t.p, t.d, t.a, t.b)
+	}
+	return s
+}
+
+func absDiff(a, b uint8) int {
+	if a > b {
+		return int(a - b)
+	}
+	return int(b - a)
 }
 
 func statLine(s gpu.FrameStats) string {

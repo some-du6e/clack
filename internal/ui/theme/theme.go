@@ -407,7 +407,7 @@ func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA)
 func strokeRRect(gtx layout.Context, r image.Rectangle, radius int, w float32, c color.NRGBA) {
 	path := RRectPath(r.Dx(), r.Dy(), radius)
 	bands, n := ringBands(r, radius, w)
-	if n == 0 {
+	if n == 0 || legacyFrameCost {
 		defer op.Offset(r.Min).Push(gtx.Ops).Pop()
 		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: path, Width: w}.Op())
 		return
@@ -455,6 +455,34 @@ func ringBands(r image.Rectangle, radius int, w float32) (bands [4]image.Rectang
 	}
 	return bands, n
 }
+
+// FillPanel fills the rounded rectangle rr, whose clip the caller pushed,
+// with c: its interior, where Gio leaves the clip off what's drawn
+// (clip.RRect.Interior, Gio patch 38), as a plain fill, and the edges
+// around it each on its own. One fill of the whole panel had the clip
+// stenciled over all of it every frame, and every op inside that touches
+// an edge shared that one region; the edges get regions of their own
+// (Gio patch 39). Each pixel is filled once, with the coverage it had.
+func FillPanel(gtx layout.Context, rr clip.RRect, c color.NRGBA) {
+	r, in := rr.Rect, rrInterior(rr)
+	if in.Empty() || legacyFrameCost {
+		Fill(gtx, r, c)
+		return
+	}
+	Fill(gtx, in, c)
+	Fill(gtx, image.Rect(r.Min.X, r.Min.Y, in.Min.X, r.Max.Y), c)
+	Fill(gtx, image.Rect(in.Max.X, r.Min.Y, r.Max.X, r.Max.Y), c)
+	Fill(gtx, image.Rect(in.Min.X, r.Min.Y, in.Max.X, in.Min.Y), c)
+	Fill(gtx, image.Rect(in.Min.X, in.Max.Y, in.Max.X, r.Max.Y), c)
+}
+
+// legacyFrameCost draws rings in one piece and panels in one fill, as
+// before the frame-cost work (2026-11-16), for tests that compare the two.
+var legacyFrameCost bool
+
+// SetLegacyFrameCost turns the old way of drawing rings and panels on or
+// off, for before/after comparisons in tests. Use on the UI goroutine.
+func SetLegacyFrameCost(on bool) { legacyFrameCost = on }
 
 // Circle fills a circle with the given center and diameter.
 func Circle(gtx layout.Context, center image.Point, d int, c color.NRGBA) {

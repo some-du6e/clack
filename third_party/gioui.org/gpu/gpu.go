@@ -178,6 +178,10 @@ func (p *pathOp) addRegion(r image.Rectangle) {
 		p.clip = r
 		return
 	}
+	if clackLegacyClips {
+		p.clip = p.clip.Union(r)
+		return
+	}
 	best, bestWaste := -1, int64(-1)
 	for i := -1; i < len(p.more); i++ {
 		c := p.clip
@@ -223,8 +227,17 @@ func (p *pathOp) region(r image.Rectangle) (image.Rectangle, placement) {
 // a text run inside a rounded panel is one path instead of an
 // intersection of two, and p isn't stenciled for it.
 func (p *pathOp) covers(r image.Rectangle) bool {
-	return p.path && !p.interior.Empty() && r.In(p.interior)
+	return p.path && !p.interior.Empty() && r.In(p.interior) && !clackLegacyClips
 }
+
+// clackLegacyClips keeps every clip path on every op it clips and
+// stencils it over one region, as Gio did before Clack patches 38 and 39.
+var clackLegacyClips bool
+
+// ClackLegacyClips turns the renderer's clip handling from before Clack
+// patches 38 and 39 on or off, for tests comparing the two. Call it
+// between frames.
+func ClackLegacyClips(on bool) { clackLegacyClips = on }
 
 type imageOp struct {
 	path     *pathOp
