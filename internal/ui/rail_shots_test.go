@@ -56,6 +56,10 @@ func TestRailShots(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { fs.Close() })
+		// the classic Activity badge (no activity inbox in the fake) reads
+		// client.counts' channel_badges, as Slack's 3x6A does: the server's
+		// count for #unreads-launch's one mention of the viewer
+		fs.SetChannelBadges(map[string]int{"channels": 1})
 		e := startEnv(t, fs, t.TempDir())
 		if e.gpu == nil {
 			t.Fatal("no GPU renderer")
