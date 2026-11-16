@@ -3,9 +3,11 @@ package ui
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -186,6 +188,18 @@ func (w *watchdog) report(start time.Time) (string, error) {
 	if p := w.page.Load(); p != nil {
 		fmt.Fprintf(&b, "page: %s\n", *p)
 	}
+	// the collector's state: near the memory limit it runs nearly
+	// nonstop, and the UI goroutine's allocations pay for it in assists
+	// (every part of a frame slows down at once, as in the 2026-11-15
+	// reports where the stuck frame was somewhere different every time)
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	limit := "none"
+	if l := debug.SetMemoryLimit(-1); l < math.MaxInt64 {
+		limit = fmt.Sprintf("%d MB", l>>20)
+	}
+	fmt.Fprintf(&b, "memory: heap %d MB, goal %d MB, limit %s, from the OS %d MB; %d collections, %.1f%% of CPU in GC, last pause %v\n",
+		ms.HeapAlloc>>20, ms.NextGC>>20, limit, ms.Sys>>20, ms.NumGC, ms.GCCPUFraction*100, time.Duration(ms.PauseNs[(ms.NumGC+255)%256]))
 	if ui, err := os.ReadFile(w.ui); err == nil && len(ui) < 64<<10 {
 		fmt.Fprintf(&b, "\nui.json:\n%s\n", strings.TrimSpace(string(ui)))
 	}
