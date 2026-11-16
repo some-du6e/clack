@@ -15,13 +15,26 @@ import (
 // and a listener added again. A commit of JS's own updates now sends one
 // only when what the tree holds changed; what Go renders always answers.
 
-// quiet fails if rec gets a commit within d.
+// quiet fails if rec gets commits within d (it takes them all, so the
+// next check starts clean).
 func quiet(t *testing.T, rec *treeRecv, d time.Duration, what string) {
 	t.Helper()
-	select {
-	case ns := <-rec.ch:
-		t.Errorf("%s: a commit of the same tree reached Go: %+v", what, ns)
-	case <-time.After(d):
+	n := 0
+	var first []node
+	for end := time.After(d); ; {
+		select {
+		case ns := <-rec.ch:
+			if n == 0 {
+				first = ns
+			}
+			n++
+			continue
+		case <-end:
+		}
+		break
+	}
+	if n > 0 {
+		t.Errorf("%s: %d commits of the same tree reached Go, the first: %+v", what, n, first)
 	}
 }
 
