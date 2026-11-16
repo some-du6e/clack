@@ -22,15 +22,17 @@ import (
 // fields other than the composer, grabbed drags and popovers reading as
 // idle when only root handlers and the composer noted input.
 
-// rootFrame lays out the App's root input handling (as navFrame.frame)
-// around body, which registers its own handlers.
+// rootFrame lays out the App's root input handling in App.Layout's order
+// around body, which registers its own handlers: the root pointer reader
+// and the shortcut area first (under everything), the window-wide
+// pass-through tracker last (over everything).
 func rootFrame(f *navFrame, body func(gtx layout.Context)) {
 	f.ops.Reset()
 	gtx := layout.Context{Ops: &f.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Exact(image.Pt(800, 600)), Source: f.r.Source(), Now: time.Now()}
 	f.a.readRootPointer(gtx)
-	body(gtx)
 	f.a.keys.process(gtx, f.a)
+	body(gtx)
 	f.a.rootPointer(gtx)
 	f.r.Frame(&f.ops)
 }
@@ -149,12 +151,17 @@ func TestInputIdleSeesGrabbedDrag(t *testing.T) {
 	rootFrame(f, body)
 	time.Sleep(30 * time.Millisecond)
 	t0 := time.Now()
+	before := f.a.ptrWin
 	for i := 1; i <= 5; i++ {
-		f.r.Queue(pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(100+float32(20*i), 100)})
+		// a move with the button held: the router makes it a Drag
+		f.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(100+float32(20*i), 100)})
 		rootFrame(f, body)
 	}
 	if drags == 0 {
 		t.Fatal("the grabbing widget got no drags")
+	}
+	if f.a.ptrWin != before {
+		t.Fatalf("the root tracker followed the grabbed drag (%v to %v), so this no longer tests input only the router sees", before, f.a.ptrWin)
 	}
 	if !noted(t0) {
 		t.Errorf("a grabbed drag didn't count as input (the last input %v ago)", inputidle.Since())
