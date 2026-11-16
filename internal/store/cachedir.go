@@ -116,6 +116,7 @@ func (s *Store) CacheDir() string { return s.cacheDir }
 var cacheFiles = []string{"meta.json", "meta.json.tmp", "sidebar.json", "boot.json", "history.json",
 	BootDataFile, HeadersFile, // the warm boot's (bootdata.go)
 	"code_channel_reopen.json", "code_channel_reopen.json.tmp", // core's codeChannelReopen (codechannel_close.go)
+	"code_channel_closed.json", "code_channel_closed.json.tmp", // core's closed code channels (codechannel_close.go)
 	"channel_managers.json"} // core's channel managers store (channel_managers.go)
 
 // StopSaving makes every later save a no-op (sign-out), at once and

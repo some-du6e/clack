@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -177,4 +178,71 @@ func frameStrings(e *perfEnv) map[string]bool {
 	mu.Lock()
 	defer mu.Unlock()
 	return set
+}
+
+// Closed DMs aren't sidebar rows, so nothing reads their people: boot asks
+// users/info for the open DMs' partners only, and neither core's
+// snapshots nor the backend's group DM names (backend.apply) look up a
+// closed DM's partner or a closed group DM's members, before or after a
+// members pass. Karim's log (2026-11-15): every hourly pass dropped ~580
+// DM partners and the next snapshot asked users/info for all of them,
+// because it read every DM's partner through getMemberById. The open DMs'
+// people come back after the pass.
+func TestMembersPassAsksNoClosedDMPeople(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	const closed, mpA, mpB = "U0CLOSEDUI1", "U0CLOSEDUI2", "U0CLOSEDUI3" // not in the fake's directory
+	fs.AddClosedDM("D0CLOSEDUI1", closed)
+	fs.AddClosedMPDM("G0CLOSEDUI1", "mpdm-closed-ui-1", []string{fakeslack.SelfID, mpA, mpB})
+	var mu sync.Mutex
+	asked := map[string]int{}
+	fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
+		if method == "edge/users/info" {
+			var up map[string]int
+			_ = json.Unmarshal(body["updated_ids"], &up)
+			mu.Lock()
+			for id := range up {
+				asked[id]++
+			}
+			mu.Unlock()
+		}
+		return nil, false
+	})
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	e.settle(time.Second)
+	c := e.a.Core()
+	if !c.SidebarDMsKnown() {
+		t.Fatal("sidebar.dms didn't answer")
+	}
+	partner := ""
+	for _, cv := range e.a.model().Convs {
+		if cv.Kind == "im" && cv.User != fakeslack.SelfID && cv.ID != "D0CLOSEDUI1" {
+			partner = cv.User
+			break
+		}
+	}
+	if partner == "" {
+		t.Fatal("no open DM")
+	}
+	// a pass that lets every member go but the viewer (Slack's
+	// cacheEviction debug hook), and the snapshots after it
+	c.S.SetMembersSizeForDebug(1, 1)
+	c.EvictMembers()
+	c.S.SetMembersSizeForDebug(-1, -1)
+	e.until("the open DM's partner back", 20*time.Second, func() bool { _, ok := c.S.RawUser(partner); return ok })
+	e.settle(time.Second)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, id := range []string{closed, mpA, mpB} {
+		if n := asked[id]; n > 0 {
+			t.Errorf("users/info was asked for %s %d time(s), a closed DM's person", id, n)
+		}
+	}
+	if asked[partner] == 0 {
+		t.Errorf("the open DM's partner %s came back without users/info", partner)
+	}
 }
