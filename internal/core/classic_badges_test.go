@@ -25,6 +25,7 @@ func classicApp(t *testing.T) *App {
 
 func TestClassicActivityBadgeLikeSlack(t *testing.T) {
 	a := classicApp(t)
+	a.SetExperimentGroup("lists_monster_step", "") // not assigned (the account's default is on): the to-dos come below
 	a.mergeChannelBadges(map[string]int{"channels": 5, "thread_mentions": 1, "app_dms": 2, "thread_unreads": 4, "dms": 9})
 	a.resetAlerts(map[string]int{"external_channel_invite": 1, "quietly_added_to_channel": 3, "lists_todo_notification": 2,
 		"lists_approval_request": 1, "prejoin_dm_welcome_party_alert": 1, "not_an_alert_type": 7})

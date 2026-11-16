@@ -220,4 +220,7 @@ func init() {
 	experimentReads["thread_badging_home_sidebar"] = on
 	experimentReads["lists_monster_step"] = on
 	experimentReads["approvals_in_todos"] = on
+	// the account's group (2026-11-13) before experiments.getByUser
+	// answers; it isn't in the others (TestDefaultExperimentsMatchAccount)
+	defaultExperimentGroups["lists_monster_step"] = "on"
 }
