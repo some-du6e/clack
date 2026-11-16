@@ -113,13 +113,29 @@ func newEngine(r *Runtime) (*engine, error) {
 	hb := wrt.NewHostModuleBuilder("jr")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(e.hostCall), []api.ValueType{i32, i32, i32, i32, i32}, []api.ValueType{i32}).Export("host_call")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, st []uint64) {
-		if r.interrupted() {
+		now := monoNow()
+		r.lastExit.Store(now)
+		if d := r.deadline.Load(); d != 0 && now > d {
 			r.interrupts.Add(1)
 			st[0] = 1
 		} else {
 			st[0] = 0
 		}
 	}), nil, []api.ValueType{i32}).Export("host_interrupt")
+	// QuickJS's C loops call host_yield every ~10k steps
+	// (csrc/quickjs-yield.patch). Go can't stop a goroutine inside wasm
+	// code, so a stop-the-world (every GC cycle, ReadMemStats,
+	// runtime.Stack) waits for this call; it does nothing else.
+	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, _ []uint64) {
+		r.yields.Add(1)
+		r.lastExit.Store(monoNow())
+	}), nil, nil).Export("host_yield")
+	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, st []uint64) {
+		// QuickJS's cycle collector started (phase 0) or ended (1): objects
+		// scanned, heap bytes. Called from inside the collector: must not
+		// re-enter JS.
+		r.gcEvent(int32(st[0]), uint32(st[1]), uint32(st[2]))
+	}), []api.ValueType{i32, i32, i32}, nil).Export("host_gc")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(e.hostModule), []api.ValueType{i32, i32}, []api.ValueType{i64}).Export("host_module")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(e.hostRejection), []api.ValueType{i32, i32, i32}, nil).Export("host_rejection")
 	hb.NewFunctionBuilder().WithGoModuleFunction(api.GoModuleFunc(func(_ context.Context, _ api.Module, st []uint64) {
@@ -161,7 +177,7 @@ func newEngine(r *Runtime) (*engine, error) {
 		e.fns[name] = f
 	}
 	// optional exports (older engine builds lack them)
-	for _, name := range []string{"jr_compile", "jr_free_js", "jr_eval_bytecode", "jr_set_gc_threshold", "jr_gc_threshold"} {
+	for _, name := range []string{"jr_compile", "jr_free_js", "jr_eval_bytecode", "jr_set_gc_threshold", "jr_gc_threshold", "jr_heap", "jr_set_yield"} {
 		if f := mod.ExportedFunction(name); f != nil {
 			e.fns[name] = f
 		}

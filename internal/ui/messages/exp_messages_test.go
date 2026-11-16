@@ -347,8 +347,11 @@ func TestUnreadBannerLikeSlack(t *testing.T) {
 	if d := (all.Min.X - 16) - (900 - 16 - all.Max.X); all.Min.Y != 14 || all.Dy() != 28 || d < -1 || d > 1 {
 		t.Errorf("banner at %v, want 28px tall, 14 under the pane, centred between 16px insets", all)
 	}
-	if ub.closeR.Dx() != 4+20+8 {
-		t.Errorf("✕ is %dpx wide, want 32 (padding 0 8 0 4 round the 20px icon)", ub.closeR.Dx())
+	if ub.closeR.Dx() != 4+13+8 {
+		t.Errorf("✕ is %dpx wide, want 25 (padding 0 8 0 4 round the 13px svg.is-inline)", ub.closeR.Dx())
+	}
+	if want := 12 + 13 + 4 + measure(layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Ops: new(op.Ops)}, theme.New(false), textStyle{size: 13, weight: theme.Bold, lineH: 28}, ub.text).X + 12; ub.msgR.Dx() != want {
+		t.Errorf("text button is %dpx wide, want %d (padding 0 12, the 13px arrow and its 4px margin, 13px bold text)", ub.msgR.Dx(), want)
 	}
 	rt.press(centre(ub.msgR), true)
 	until(t, 3*time.Second, "conversations.mark", rt.frame, func() bool { return fs.CallCount("conversations.mark") > 0 })

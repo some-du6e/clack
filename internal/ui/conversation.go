@@ -133,6 +133,10 @@ type convo struct {
 	// it has its height); rebuiltAt when it was last replaced for that
 	// (composer_guard.go).
 	zeroSince, rebuiltAt time.Time
+	// focusKnown: a navigation here wanted the composer focused while the
+	// channel's membership was unknown (footPending); the first frame that
+	// knows it gives the composer the focus, if it has one
+	focusKnown bool
 }
 
 func (a *App) convoFor(ch, ts string) *convo {
@@ -214,7 +218,20 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	compH := 0
 	var call op.CallOp
 	foot := a.footerFor(c)
-	if foot != footNone {
+	if foot != footPending && c.focusKnown {
+		// the navigation's focus, held while membership was unknown
+		// (focusAfterNavigate): MessagePaneInput's onFocusTransition once
+		// the input mounts
+		c.focusKnown = false
+		if foot == footNone && c.comp != nil && c.edit == nil && a.router.Current().Channel() == c.ch && !a.overlayOpen() {
+			c.comp.Focus()
+		}
+	}
+	switch foot {
+	case footNone:
+	case footPending:
+		comp = nil // membership unknown: neither the composer nor a footer yet
+	default:
 		// a preview or an archived channel: Slack's footer, no composer
 		comp = nil
 		m := op.Record(gtx.Ops)
@@ -302,7 +319,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
 		return c.list.Layout(gtx)
 	})
-	if comp != nil || foot != footNone {
+	if comp != nil || (foot != footNone && foot != footPending) {
 		t := op.Offset(image.Pt(0, listH)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()

@@ -911,6 +911,19 @@ func (s *Server) generate() {
 	}
 }
 
+// AddOtherChannel adds a public channel the viewer isn't in (someone
+// else made it): conversations.info answers it with is_member false and
+// conversations.join moves it to the viewer's.
+func (s *Server) AddOtherChannel(c slack.Conversation) {
+	c.IsChannel, c.IsMember = true, false
+	if c.ContextTeamID == "" {
+		c.ContextTeamID = TeamID
+	}
+	s.convMu.Lock()
+	s.others = append(s.others, c)
+	s.convMu.Unlock()
+}
+
 // conv finds a conversation by id: the viewer's, then the others.
 func (s *Server) conv(id string) (slack.Conversation, bool) {
 	s.convMu.Lock()

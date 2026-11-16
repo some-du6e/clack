@@ -13,7 +13,7 @@ var clackNotes = map[string]map[string]string{
 		"optimizeResize":          "In Clack: plugins' resize listeners and ResizeObservers wait until the drag ends, then run once. Clack's own layout is native and keeps up with the window.",
 		"optimizeSelectors":       "In Clack this does nothing: Clack's style engine already indexes those :is() selectors under each class, which is what the rewrite gets Chromium.",
 		"ignoreGpuBlocklist":      "In Clack: on Linux with X11 the window tries Vulkan before OpenGL ES (Gio never uses Vulkan on X11, because of NVIDIA driver bugs). Wayland, macOS and Windows have no blocklist, so nothing changes there.",
-		"disableCrashReporter":    "In Clack: no crash.log, so a crash's trace isn't copied into Clack's log at the next start.",
+		"disableCrashReporter":    "In Clack this does nothing: Clack never uploads crash reports, and its local crash.log keeps working.",
 		"disableSpellcheck":       "In Clack: Clack's composers stop spellchecking, whatever the spellcheck preference says.",
 	},
 }

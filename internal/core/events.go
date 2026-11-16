@@ -458,12 +458,44 @@ func (a *App) refreshConv(ctx context.Context, id string) {
 	if err != nil {
 		return
 	}
-	a.S.PutConv(*c)
+	if c.ID == "" {
+		c.ID = id
+	}
+	a.putInfo(c)
 	if c.IsIM {
 		a.EnsureUsers(ctx, []string{c.User})
 	}
 	v := a.conv(c)
 	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
+}
+
+// putInfo stores a conversations.info answer. Its is_member is the
+// membership (Slack's store keeps the object as fetched, and Opi6
+// isPreview reads is_member off it): a channel the viewer isn't in stays
+// out of the member set, a known non-member (PutExtConv) like
+// ResolveConv's. refreshConv runs on events every member of the team
+// gets (channel_created, channel_rename, channel_unarchive) and on a
+// message in a channel outside the member set; storing those answers with
+// PutConv made the channel a member's: a sidebar row, the composer in
+// place of JoinChannelPane, and not_in_channel on send (Karim, α.90,
+// #僕のゴミ). A conversation already in the member set stays there
+// (PutConv keeps its is_member; leaving is channel_left's
+// dropMembership), and DMs carry no is_member.
+func (a *App) putInfo(c *slack.Conversation) {
+	if _, member := a.S.Conv(c.ID); member || c.IsMember || c.IsIM || c.IsMPIM {
+		a.S.PutConv(*c)
+		return
+	}
+	a.S.PutExtConv(*c)
+}
+
+// knownNonMember reports a channel known from conversations.info as one
+// the viewer isn't in (putInfo, ResolveConv): its messages (a preview's)
+// need no new lookup each. A DM outside the member set still gets one, so
+// a new message brings it in.
+func (a *App) knownNonMember(ch string) bool {
+	c, ok := a.S.ExtConv(ch)
+	return ok && c.Name != "" && !c.IsIM && !c.IsMPIM && !c.IsMember
 }
 
 func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
@@ -602,7 +634,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
 	}
-	if _, known := a.S.Conv(ch); !known {
+	if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
 		a.refreshConv(ctx, ch)
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {

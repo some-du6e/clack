@@ -170,18 +170,14 @@ func main() {
 	applog.StartTimeline(started)
 	// Go panics nothing recovers and the runtime's fatal errors go to fd 2
 	// only; the runtime also writes them to crash.log next to clack.log,
-	// and the next start copies the trace, redacted, into clack.log.
+	// and the next start copies the trace, redacted, into clack.log. That
+	// capture is always on: see captureCrashes.
 	//
 	// Slick main halves' Chromium switches for this start work Clack's own
-	// knobs (internal/slick/switches.go): Snappy's "Disable crash reporter"
-	// turns that crash capture off, its "Ignore GPU blocklist" lets an X11
-	// window use Vulkan.
+	// knobs (internal/slick/switches.go): Snappy's "Ignore GPU blocklist"
+	// lets an X11 window use Vulkan.
 	sw := slick.StartupSwitches("")
-	if slices.Contains(sw, slick.SwitchDisableCrashpad) || slices.Contains(sw, slick.SwitchDisableCrashReporter) {
-		log.Printf("slick: crash reporter disabled by a plugin's switches (%s): no crash.log this run", strings.Join(sw, " "))
-	} else {
-		logs.CaptureCrashes(fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), time.Now().Format(time.RFC3339)))
-	}
+	crashNote := captureCrashes(logs.CaptureCrashes, sw, fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), time.Now().Format(time.RFC3339)))
 	if slices.Contains(sw, slick.SwitchIgnoreGPUBlocklist) {
 		app.IgnoreGPUBlocklist()
 	}
@@ -249,6 +245,9 @@ func main() {
 	}
 
 	log.Printf("clack %s starting (%s/%s, %s)", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+	if crashNote != "" {
+		log.Print(crashNote)
+	}
 	cfg := configDir()
 	// One Clack per user (and config dir): a second launch, or the OS
 	// running `clack slack://…` for a link, hands it to the running one.
@@ -641,4 +640,22 @@ func linkKind(u string) string {
 		return "sign-in link"
 	}
 	return "link"
+}
+
+// captureCrashes turns on crash capture (capture is
+// applog.Logger.CaptureCrashes) whatever a Slick plugin's switches say,
+// and returns the line to log after "clack … starting" when they asked
+// for no crash reporter ("" otherwise). Snappy's "Disable crash reporter"
+// (default on) appends Chromium's disable-crashpad and
+// disable-crash-reporter: in Electron they stop the crashpad handler and
+// its minidump upload to Slack. Clack has no crashpad and uploads nothing;
+// crash.log is a local file, imported redacted into clack.log at the next
+// start, so there's nothing for the switches to turn off. Honouring them
+// cost every run's crash evidence from 11-13 to 11-15.
+func captureCrashes(capture func(header string), sw []string, header string) string {
+	capture(header)
+	if slices.Contains(sw, slick.SwitchDisableCrashpad) || slices.Contains(sw, slick.SwitchDisableCrashReporter) {
+		return "slick: disable-crashpad/disable-crash-reporter kept for Chromium; Clack uploads no crash reports, so crash.log stays on"
+	}
+	return ""
 }

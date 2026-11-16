@@ -4,13 +4,20 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 CC="$WASI_SDK/bin/clang"
-# quickjs.c with csrc/quickjs-interrupt.patch applied (a copy; $QJS stays
-# untouched): generic array methods poll the interrupt handler, so a plugin
-# looping over {length: 2**53 - 1} is stopped by the task deadline.
+# quickjs.c with Clack's patches applied, in this order (a copy; $QJS stays
+# untouched):
+#   quickjs-interrupt.patch  generic array methods poll the interrupt
+#                            handler, so a plugin looping over
+#                            {length: 2**53 - 1} is stopped by the task deadline
+#   quickjs-yield.patch      the cycle collector, the allocator, JSON, joins
+#                            and sorts call the host every ~10k steps, so a Go
+#                            stop-the-world never waits long on the JS thread
 patched="$here/.build"
 rm -rf "$patched" && mkdir -p "$patched"
 cp "$QJS/quickjs.c" "$patched/quickjs.c"
-patch -s -p1 -d "$patched" < "$here/quickjs-interrupt.patch"
+for p in quickjs-interrupt.patch quickjs-yield.patch; do
+	patch -s -p1 -d "$patched" < "$here/$p"
+done
 "$CC" --target=wasm32-wasip1 --sysroot="$WASI_SDK/share/wasi-sysroot" \
 	-O2 -flto -D_GNU_SOURCE -DNDEBUG -D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS \
 	-I"$QJS" -mexec-model=reactor \
