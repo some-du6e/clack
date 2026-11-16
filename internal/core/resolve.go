@@ -304,7 +304,9 @@ func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 		return c, true
 	}
 	var c *slack.Conversation
-	err := a.once("ci:"+id, func() error {
+	// onceCtx: a caller joining another's lookup (History's side read on
+	// a popup's) waits only while its own ctx lasts
+	err := a.onceCtx(ctx, "ci:"+id, func() error {
 		var err error
 		c, err = a.C.ConversationInfo(ctx, id)
 		return err
