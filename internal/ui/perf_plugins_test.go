@@ -1069,30 +1069,57 @@ func (l *perfRenderLog) note(root uint64, name string, props []byte) {
 	defer l.mu.Unlock()
 	l.names[name]++
 	if old, ok := l.last[root]; ok {
-		for k, v := range m {
-			if string(old[k]) == string(v) {
-				continue
-			}
-			if k == "msg" { // which of the message's fields
-				var a, b map[string]json.RawMessage
-				_ = json.Unmarshal(old[k], &a)
-				_ = json.Unmarshal(v, &b)
-				for mk, mv := range b {
-					if string(a[mk]) != string(mv) {
-						l.keys[name+".msg."+mk]++
-					}
-				}
-				continue
-			}
-			l.keys[name+"."+k]++
-		}
-		for k := range old {
-			if _, ok := m[k]; !ok {
-				l.keys[name+"."+k+" (gone)"]++
-			}
+		for _, path := range perfJSONDiff(name, mustJSON(old), props, 16) {
+			l.keys[path]++
 		}
 	}
 	l.last[root] = m
+}
+
+func mustJSON(m map[string]json.RawMessage) []byte {
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// perfJSONDiff lists the paths under which a and b (JSON) differ, down to
+// depth levels: the leaves that changed, with the old and new values of a
+// short one (synthetic data only).
+func perfJSONDiff(path string, a, b []byte, depth int) []string {
+	if string(a) == string(b) {
+		return nil
+	}
+	var ma, mb map[string]json.RawMessage
+	if depth > 0 && json.Unmarshal(a, &ma) == nil && json.Unmarshal(b, &mb) == nil {
+		var out []string
+		for k, v := range mb {
+			if w, ok := ma[k]; !ok {
+				out = append(out, path+"."+k+" (new)")
+			} else {
+				out = append(out, perfJSONDiff(path+"."+k, w, v, depth-1)...)
+			}
+		}
+		for k := range ma {
+			if _, ok := mb[k]; !ok {
+				out = append(out, path+"."+k+" (gone)")
+			}
+		}
+		return out
+	}
+	var la, lb []json.RawMessage
+	if depth > 0 && json.Unmarshal(a, &la) == nil && json.Unmarshal(b, &lb) == nil {
+		if len(la) != len(lb) {
+			return []string{fmt.Sprintf("%s (%d → %d items)", path, len(la), len(lb))}
+		}
+		var out []string
+		for i := range lb {
+			out = append(out, perfJSONDiff(fmt.Sprintf("%s.%d", path, i), la[i], lb[i], depth-1)...)
+		}
+		return out
+	}
+	if len(a) <= 40 && len(b) <= 40 {
+		return []string{fmt.Sprintf("%s: %s → %s", path, a, b)}
+	}
+	return []string{path}
 }
 
 // top lists the components rendered most and the props that changed most.
@@ -1114,7 +1141,7 @@ func (l *perfRenderLog) top() string {
 		sort.Slice(s, func(i, j int) bool { return s[i].n > s[j].n || s[i].n == s[j].n && s[i].k < s[j].k })
 		var b strings.Builder
 		for i, x := range s {
-			if i == 8 {
+			if i == 12 {
 				break
 			}
 			fmt.Fprintf(&b, " %s×%d", x.k, x.n)
