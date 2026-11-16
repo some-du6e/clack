@@ -43,6 +43,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"log"
 	"math"
 	"slices"
 	"strings"
@@ -314,15 +315,18 @@ func (st *agentState) isOpen(k string, def bool) bool {
 }
 
 // agentBlock finds the agent block bt names in the message (or its
-// attachments): by block_id, else the first of its type without one.
+// attachments): by block_id, else the first of its type.
 func (me *Message) agentBlock(bt *richtext.Button) *AgentBlock {
 	st := me.agentState()
-	var raw json.RawMessage
+	var raw, first json.RawMessage
 	look := func(bs []Block) bool {
 		for i := range bs {
 			b := &bs[i]
 			if b.Type != bt.Kind {
 				continue
+			}
+			if first == nil {
+				first = b.Raw
 			}
 			if b.BlockID == bt.BlockID {
 				raw = b.Raw
@@ -339,18 +343,45 @@ func (me *Message) agentBlock(bt *richtext.Button) *AgentBlock {
 		}
 	}
 	if raw == nil {
-		return nil
+		// the body's copy of the blocks isn't the host's (a plugin's
+		// msg.blocks): the first block of the type
+		raw = first
 	}
 	key := bt.Kind + "\x00" + bt.BlockID
+	if raw == nil {
+		me.agentMiss(key, "not in the message's blocks")
+		return nil
+	}
 	if p := st.parsed[key]; p != nil && bytes.Equal(p.raw, raw) {
 		return p.b
 	}
 	b, ok := ParseAgentBlock(raw)
 	if !ok {
+		me.agentMiss(key, "doesn't parse")
 		return nil
 	}
 	st.parsed[key] = &agentParsed{raw: append([]byte(nil), raw...), b: b}
 	return b
+}
+
+var (
+	agentMissMu sync.Mutex
+	agentMissed = map[string]bool{}
+)
+
+// agentMiss logs, once per message and block, an agent block the host
+// can't draw (richview then draws the block's text fallback).
+func (me *Message) agentMiss(key, why string) {
+	k := me.m.Channel + "/" + me.m.TS + "/" + key
+	agentMissMu.Lock()
+	seen := agentMissed[k]
+	if !seen && len(agentMissed) < 200 {
+		agentMissed[k] = true
+	}
+	agentMissMu.Unlock()
+	if !seen {
+		log.Printf("blockkit: agent block %q in %s/%s %s (%d blocks)", strings.ReplaceAll(key, "\x00", " "), me.m.Channel, me.m.TS, why, len(me.blocks))
+	}
 }
 
 // ---- colours ----
