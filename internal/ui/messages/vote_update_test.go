@@ -163,19 +163,27 @@ func (p *votePane) buttons(ts string, bids ...string) (map[string]image.Rectangl
 	return nil, nil, false
 }
 
-// click clicks at's centre, a second and more after the pane's last
-// frame: a button stays disabled for one after each click (ButtonElement's
-// isProcessingClick).
-func (p *votePane) click(at image.Rectangle) {
+// hover moves the pointer to at's centre, a second and more after the
+// pane's last click (a button stays disabled for one after each:
+// ButtonElement's isProcessingClick), and lets the hover's frames (and any
+// JS render they cause) settle.
+func (p *votePane) hover(at image.Rectangle) {
 	p.now = p.now.Add(1100 * time.Millisecond)
 	p.clock += 600 * time.Millisecond
 	c := at.Min.Add(at.Max).Div(2)
+	p.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(c.X), float32(c.Y)), Time: p.clock})
+	p.settle(10)
+}
+
+// click presses and releases at at's centre, a frame apart.
+func (p *votePane) click(at image.Rectangle) {
+	c := at.Min.Add(at.Max).Div(2)
 	pt := f32.Pt(float32(c.X), float32(c.Y))
-	p.r.Queue(
-		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt, Time: p.clock},
-		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt, Time: p.clock + time.Millisecond},
-		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt, Time: p.clock + 2*time.Millisecond},
-	)
+	p.clock += 50 * time.Millisecond
+	p.r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt, Time: p.clock})
+	p.frame()
+	p.clock += 50 * time.Millisecond
+	p.r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt, Time: p.clock})
 	for k := 0; k < 4; k++ {
 		p.frame()
 	}
@@ -277,21 +285,35 @@ func checkVoteButtons(t *testing.T, patch []string) {
 	vote := func(what string, x *votePane, ts string, n int, kind string) {
 		t.Helper()
 		bid := fmt.Sprintf("%s%d", kind, n)
-		bs, _, ok := x.buttons(ts, fmt.Sprintf("u%d", n), fmt.Sprintf("d%d", n))
+		u, d := fmt.Sprintf("u%d", n), fmt.Sprintf("d%d", n)
+		bs, _, ok := x.buttons(ts, u, d)
 		if !ok {
 			t.Fatalf("%s, %s: no %s button to click", what, x.name, bid)
+		}
+		x.hover(bs[bid])
+		if bs, _, ok = x.buttons(ts, u, d); !ok {
+			t.Fatalf("%s, %s: the %s button went away under the pointer", what, x.name, bid)
 		}
 		sent := len(fs.BlockActionCalls())
 		x.click(bs[bid])
 		var c fakeslack.BlockActionCall
-		until(t, 5*time.Second, what+": blocks.actions", x.frame, func() bool {
-			cs := fs.BlockActionCalls()
-			if len(cs) > sent {
+		for dl := time.Now().Add(5 * time.Second); ; {
+			if cs := fs.BlockActionCalls(); len(cs) > sent {
 				c = cs[len(cs)-1]
-				return true
+				break
 			}
-			return false
-		})
+			if time.Now().After(dl) {
+				now, el, ok := x.buttons(ts, u, d)
+				st := ""
+				if el != nil {
+					l, f := el.Status(bid)
+					st = fmt.Sprintf("loading %v failed %v", l, f)
+				}
+				t.Fatalf("%s, %s: clicking %s at %v sent no blocks.actions (buttons now %v, drawn %v, %s)", what, x.name, bid, bs[bid], now, ok, st)
+			}
+			x.frame()
+			time.Sleep(15 * time.Millisecond)
+		}
 		if len(c.Actions) != 1 || c.Actions[0]["block_id"] != bid || c.Container["message_ts"] != ts {
 			t.Errorf("%s, %s: blocks.actions %v in %v; want block %s of %s", what, x.name, c.Actions, c.Container, bid, ts)
 		}
