@@ -11,6 +11,38 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 )
 
+// VisitMessages calls f with each of ch's cached messages in place, under
+// the read lock: the timeline in order, then each cached thread by root
+// ts, thread(root) before its messages. f must not keep a message or call
+// into the store. (The plugin mirror fingerprints every channel it
+// watches this way every 750 ms; copying each timeline and its threads
+// out, as Timeline and ThreadsIn do, made megabytes of garbage a sweep in
+// a long session.)
+func (s *Store) VisitMessages(ch string, thread func(root string), f func(m *slack.Message)) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if t := s.timelines[ch]; t != nil {
+		for i := range t.Msgs {
+			f(&t.Msgs[i])
+		}
+	}
+	prefix := ch + "/"
+	var keys []string
+	for k := range s.threads {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys) // one prefix: the roots' order
+	for _, k := range keys {
+		thread(k[len(prefix):])
+		th := s.threads[k]
+		for i := range th {
+			f(&th[i])
+		}
+	}
+}
+
 // ThreadsIn returns copies of the cached threads of conversation ch, keyed
 // by root ts (replies ascending, the root included when Slack sent it).
 func (s *Store) ThreadsIn(ch string) map[string][]slack.Message {
