@@ -569,10 +569,12 @@ void cocoatest_post_workspace(int note) {
 	}
 }
 
-uintptr_t cocoatest_hold_drawables(uintptr_t viewRef, int *n, int *timeout) {
+uintptr_t cocoatest_hold_drawables(uintptr_t viewRef, int *n, int *timeout, int *end, double *lastMs) {
 	@autoreleasepool {
 		*n = -1;
 		*timeout = 0;
+		*end = 0;
+		*lastMs = 0;
 		NSView *view = (__bridge NSView *)(void *)viewRef;
 		if (![view.layer isKindOfClass:[CAMetalLayer class]]) {
 			return 0;
@@ -585,9 +587,23 @@ uintptr_t cocoatest_hold_drawables(uintptr_t viewRef, int *n, int *timeout) {
 			// gives nil a second later instead of waiting for one
 			layer.allowsNextDrawableTimeout = YES;
 			NSMutableArray *held = [NSMutableArray array];
+			*end = 3; // as many as the loop takes
 			for (int i = 0; i < 8; i++) {
+				NSTimeInterval t0 = [NSProcessInfo processInfo].systemUptime;
 				id<CAMetalDrawable> d = [layer nextDrawable];
+				*lastMs = ([NSProcessInfo processInfo].systemUptime - t0) * 1000;
 				if (d == nil) {
+					*end = 0; // nil: none left
+					break;
+				}
+				if ([held indexOfObjectIdenticalTo:d] != NSNotFound) {
+					*end = 1; // the same drawable again
+					break;
+				}
+				// a drawable is in use once its texture is (as Gio's
+				// RenderTarget takes it at once)
+				if (d.texture == nil) {
+					*end = 2;
 					break;
 				}
 				[held addObject:d];

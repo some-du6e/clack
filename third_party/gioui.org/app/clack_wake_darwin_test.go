@@ -186,26 +186,24 @@ func TestNoDrawableSkipsFrameMac(t *testing.T) {
 	h := newMacTestWindowWith(t, func() bool { return false })
 	defer h.destroy(t)
 	var (
-		held     uintptr
-		n        int
-		timeout  bool
+		held     cocoatest.Drawables
 		released bool
 	)
-	cocoatest.OnMain(func() { held, n, timeout = cocoatest.HoldDrawables(h.view) })
+	cocoatest.OnMain(func() { held = cocoatest.HoldDrawables(h.view) })
 	// from this goroutine: without the timeout the main thread waits in
 	// nextDrawable until the drawables come back
 	release := func() {
 		if !released {
 			released = true
-			cocoatest.Release(held)
+			cocoatest.Release(held.Held)
 		}
 	}
 	defer release()
-	t.Logf("holding %d drawables; the layer's allowsNextDrawableTimeout %v", n, timeout)
-	if n <= 0 {
-		t.Fatalf("HoldDrawables got %d drawables", n)
+	t.Logf("holding %d drawables (ended: %s, the last call %v); the layer's allowsNextDrawableTimeout %v", held.N, held.End, held.LastWait.Round(time.Millisecond), held.Timeout)
+	if held.N <= 0 || held.End != "nil" {
+		t.Fatalf("HoldDrawables left the layer drawables to give: %+v", held)
 	}
-	if !timeout {
+	if !held.Timeout {
 		t.Error("allowsNextDrawableTimeout is NO: nextDrawable waits on the main thread for as long as the compositor keeps the drawables")
 	}
 
