@@ -837,14 +837,19 @@ func (e *benchEnv) perfIdlePasses(t *testing.T) []perfIdlePass {
 	}
 	focus()
 	e.settle(2 * time.Second)
+	var out []perfIdlePass
+	// the quiet pass's frames are the caret's: each also goes through the
+	// GPU renderer, for a blink's whole cost. Not under traffic: llvmpipe's
+	// ~130 ms frame would cap the frames a second it counts
 	if w, err := pixeltest.NewWindow(e.size.X, e.size.Y); err == nil {
 		e.gpu = w
-		defer func() { w.Release(); e.gpu = nil }()
+		out = append(out, e.perfIdle(t, "idle", 10*time.Second, nil))
+		w.Release()
+		e.gpu = nil
 	} else {
-		t.Logf("no GPU renderer for the idle passes (%v): layout only", err)
+		t.Logf("no GPU renderer for the quiet idle pass (%v): layout only", err)
+		out = append(out, e.perfIdle(t, "idle", 10*time.Second, nil))
 	}
-	var out []perfIdlePass
-	out = append(out, e.perfIdle(t, "idle", 10*time.Second, nil))
 	tr := newIdleTraffic(e.perfEnv, func(raw map[string]any) { injectRaw(e.a.data.core, raw) })
 	tr.prepare()
 	focus()
