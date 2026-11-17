@@ -217,8 +217,15 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 		base := a.chromeBase(org.Add(image.Pt(cs/2, cs/2)))
 		var bgT, fgT color.NRGBA
 		switch {
-		case active: // --active: base-pry, content-ter
-			bgT, fgT = c.Bg, c.FgSubtle
+		case active || f.btn.Pressed():
+			// --active (focus mode on) and :active: the rail scope's
+			// theme-base-pry with theme-content-ter; hovered, :hover's
+			// blended surf-inv-pry-hover layer stays over the base-pry
+			// (the rule sets only color and background-color)
+			bgT, fgT = c.ChromeBasePry, c.ChromeContentTer
+			if hov {
+				bgT = c.ChromeBasePryHover
+			}
 		case hov: // :hover: content-inv-pry over surf-inv-pry and its blended -hover layer
 			bgT, fgT = theme.Over(c.ChromeHoverTint, theme.Over(c.ChromeActive, base)), c.ChromeText
 		default: // surf-inv-pry, content-inv-sec

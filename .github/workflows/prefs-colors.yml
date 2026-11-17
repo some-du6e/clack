@@ -16,6 +16,11 @@ on:
       - "internal/ui/taut_prefs.go"
       - "internal/ui/theme_tokens_test.go"
       - "internal/ui/theme_contrast*_test.go"
+      - "internal/ui/appmenu.go"
+      - "internal/ui/create_button.go"
+      - "internal/ui/focus_peek.go"
+      - "internal/ui/sidebar.go"
+      - "internal/ui/sidebar_filter.go"
       - "internal/ui/theme/palette.go"
       - "internal/ui/theme/account.go"
       - "internal/ui/theme/native.go"
@@ -48,7 +53,14 @@ jobs:
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -p 1 -count=1 -v -run 'TestPrefsColors|TestNativeCheckPixels|TestThemeTokens|TestThemeOverlayRulesReachNatives|TestPrefsPagesMatchSlack|TestAccountTheme' ./internal/ui/
+        run: xvfb-run -a go test -p 1 -count=1 -v -run 'TestPrefsColors|TestNativeCheckPixels|TestThemeTokens|TestThemeOverlayRulesReachNatives|TestPrefsPagesMatchSlack|TestAccountTheme(FromPrefs|UnderStylesheets|WriteBack|WriteFails)' ./internal/ui/
+      - name: the account theme's draw sites (sidebar lines, filter box, app menu, control strip), drawn and sampled
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 15m -run '^(TestAccountThemeDrawSites|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen)$' ./internal/ui/
       - name: Preferences colour screenshots
         env:
           PREFS_COLOR_SHOTS_DIR: ${{ github.workspace }}/dist/shots

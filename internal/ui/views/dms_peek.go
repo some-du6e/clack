@@ -50,9 +50,6 @@ func dmsCardColors(th *theme.Theme) dmsPal {
 		if g := th.C.Presence; g.A > 0 {
 			c.green = g
 		}
-		if b := th.C.Badge; b.A > 0 && th.Dark {
-			c.pillBg, c.pillFg = b, th.C.BadgeText
-		}
 	}
 	return c
 }
@@ -152,3 +149,6 @@ func (d *DMs) PeekFirst() string {
 
 // Unreads reports the Unreads filter (the tab's and the peek's).
 func (d *DMs) Unreads() bool { return d.unreads.Value }
+
+// ShowAllDMs is "Show all DMs" (setDmsFilter ALL): the Unreads filter off.
+func (d *DMs) ShowAllDMs() { d.unreads.Value = false }

@@ -504,7 +504,7 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		nw += es + gtx.Dp(6)
 	}
 	if e.suffix != "" && nw+gtx.Dp(8) < tw {
-		sc := theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0xa3), a.sbBase) // rgba(249,237,255,.6)
+		sc := theme.Over(a.th.C.SidebarTextTer, a.sbBase) // .p-channel_sidebar__member_label: theme-content-inv-ter
 		if e.sel {
 			sc = theme.Over(theme.WithAlpha(c.SidebarActiveText, 0x99), c.SidebarActive)
 		}

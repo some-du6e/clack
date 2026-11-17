@@ -25,6 +25,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 type railShotBtn struct {
@@ -37,15 +38,18 @@ type railShotBtn struct {
 	Active bool   `json:"active"` // drawn selected
 	Top    int    `json:"top"`    // px, the crop's top above the button
 	H      int    `json:"h"`      // px, the button's height
+	Y      int    `json:"y"`      // px, the crop's top in the window
 }
 
 type railShot struct {
 	Scale float32           `json:"scale"`
 	Dark  bool              `json:"dark"`
-	W     int               `json:"w"` // px, the crop's width (the rail)
+	W     int               `json:"w"`   // px, the crop's width (the rail)
+	Win   [2]int            `json:"win"` // px, the window (Slack's side draws .p-theme_background over it)
 	Btns  []railShotBtn     `json:"btns"`
 	Vars  map[string]string `json:"vars,omitempty"`
-	Theme string            `json:"theme,omitempty"` // a theme-oracle.json case ("" Slack's default theme)
+	Theme string            `json:"theme,omitempty"`    // a theme-oracle.json case ("" Slack's default theme)
+	IA    string            `json:"ia_theme,omitempty"` // the account theme every crop was taken under
 }
 
 // railShotThemes are the account themes the rail is shot under too:
@@ -60,6 +64,8 @@ var railShotThemes = []struct {
 }{
 	{"karim picker", `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":2,"sidebarInverted":false,"useCustomHex":true}`, []bool{false, true}},
 	{"karim import", `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highlight1":{"palette":"aubergine","custom":"#611F69"},"highlight2":{"palette":"jade","custom":"#2EB67D"},"important":{"palette":"aubergine","custom":"#E01E5A"},"brightness":6,"sidebarInverted":false,"useCustomHex":true}`, []bool{false}},
+	// the same Import saved from a light client: sidebarInverted kept (Slack's setIaThemePrefByApi)
+	{"karim import light save", `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highlight1":{"palette":"aubergine","custom":"#611F69"},"highlight2":{"palette":"jade","custom":"#2EB67D"},"important":{"palette":"aubergine","custom":"#E01E5A"},"brightness":6,"sidebarInverted":true,"useCustomHex":true}`, []bool{false}},
 	{"dark custom", `{"primary":{"palette":"aubergine","custom":"#4A154B"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":5,"sidebarInverted":true,"useCustomHex":true}`, []bool{false}},
 }
 
@@ -110,7 +116,8 @@ func TestRailShots(t *testing.T) {
 			if themeName != "" {
 				mode = strings.ReplaceAll(themeName, " ", "-") + "-" + mode
 			}
-			sh := railShot{Scale: scale, Dark: dark, W: e.context().Dp(70), Vars: e.a.scopeVars, Theme: themeName}
+			sh := railShot{Scale: scale, Dark: dark, W: e.context().Dp(70), Win: [2]int{e.size.X, e.size.Y}, Vars: e.a.scopeVars, Theme: themeName, IA: ia}
+			want, set := theme.ParseIATheme(ia)
 			for _, key := range []string{"home", "dms", "activity", "browse", "platform"} {
 				e.openChannel(ch)
 				e.settle(200 * time.Millisecond)
@@ -137,17 +144,25 @@ func TestRailShots(t *testing.T) {
 					mid := image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y+e.context().Dp(26))
 					switch state {
 					case "hover":
+						// shot within the peeks' 300 ms trigger delay
+						// (rail_tab_peek.go, rail_peek.go): the Activity
+						// peek or the More menu would cover the crop's edge
 						e.movePtr(mid)
+						e.settle(120 * time.Millisecond)
 					case "clicked":
 						// a mouse click, then the pointer leaves: what the
 						// click leaves behind (Slack: no focus ring)
 						e.click(mid)
 						e.frame()
 						away()
+						e.settle(400 * time.Millisecond)
 					default:
 						away()
+						e.settle(400 * time.Millisecond)
 					}
-					e.settle(400 * time.Millisecond)
+					if e.a.acct.set != set || e.a.acct.t != want {
+						t.Fatalf("%s %s %s: the account theme isn't %q any more (core's users.prefs answer?)", mode, key, state, ia)
+					}
 					r = e.a.railRects[key]
 					img := image.NewRGBA(image.Rectangle{Max: e.size})
 					if err := e.gpu.Screenshot(img); err != nil {
@@ -170,7 +185,7 @@ func TestRailShots(t *testing.T) {
 						active = false
 					}
 					sh.Btns = append(sh.Btns, railShotBtn{Key: key, Label: e.a.railTabFor(railID(e.a, key)).label, State: state, File: name,
-						Badge: n, Dot: dot, Active: active, Top: top, H: r.Dy()})
+						Badge: n, Dot: dot, Active: active, Top: top, H: r.Dy(), Y: r.Min.Y - top})
 				}
 			}
 			closeAll()

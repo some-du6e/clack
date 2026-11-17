@@ -194,7 +194,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		col := c.ChromeText
 		disabled := (i == 0 && !a.router.CanBack()) || (i == 1 && !a.router.CanForward())
 		if disabled { // [aria-disabled=true]: opacity .45, and no :hover tile
-			col = theme.WithAlpha(col, 0x70)
+			col = theme.WithAlpha(col, 0x73)
 		}
 		org := image.Pt(x, y)
 		at(gtx, org, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
@@ -605,38 +605,16 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			}
 			continue
 		}
-		icon := "plus"
 		org := image.Pt(x0, by-lift)
 		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
-			btn := a.clicks.get(k)
-			// .p-control_strip__circle_button: theme-surf-inv-pry with
-			// theme-content-inv-sec; :hover adds the blended
-			// surf-inv-pry-hover layer and takes theme-content-inv-pry
-			bg, ink := c.ChromeActive, c.ChromeTextDim
-			var tint color.NRGBA
-			if btn.Hovered() {
-				tint, ink = c.ChromeHoverTint, c.ChromeText
-			}
-			return clickArea(gtx, btn, func(gtx layout.Context, sz image.Point, hovered bool) {
-				if tint.A > 0 {
-					a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, bg, tint)
-					return
-				}
-				a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, bg)
-			}, func(gtx layout.Context) layout.Dimensions {
-				off := (cs - gtx.Dp(20)) / 2
-				fg := theme.Over(ink, theme.Over(tint, theme.Over(bg, a.chromeBase(org.Add(image.Pt(cs/2, cs/2))))))
-				at(gtx, image.Pt(off, off), image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get(icon)(gtx, 20, fg)
-				})
-				return layout.Dimensions{Size: image.Pt(cs, cs)}
-			})
+			return a.createButton(gtx, org, cs)
 		})
 		by += gtx.Dp(52)
 	}
 	if clicked(a.clicks.get("rail.new")) {
 		org := image.Pt(x0, newY) // the + button (first in the strip)
 		a.openCreateMenu(image.Rectangle{Min: org, Max: org.Add(image.Pt(cs, cs))})
+		gtx.Execute(op.InvalidateCmd{}) // --active: the plus turns
 	}
 	if tshow { // under the avatar (.c-avatar is positioned and comes later)
 		a.railStatusTabDraw(gtx, image.Pt(x0, by), cs, te)
@@ -650,10 +628,13 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			// presence ring: 20px circle at the bottom-right, chrome-colored ring.
 			pc := image.Pt(cs-gtx.Dp(4), cs-gtx.Dp(4))
 			theme.Circle(gtx, pc, gtx.Dp(14), c.ChromeB)
+			// .p-control_strip .c-presence--active: theme-base-inv-hgl-2;
+			// away is currentColor, .c-avatar__presence's
+			// theme-content-inv-pry
 			if a.selfActive() {
 				theme.Circle(gtx, pc, gtx.Dp(10), c.Presence)
 			} else {
-				theme.Circle(gtx, pc, gtx.Dp(10), c.ChromeTextDim)
+				theme.Circle(gtx, pc, gtx.Dp(10), c.ChromeText)
 				theme.Circle(gtx, pc, gtx.Dp(5), c.ChromeB)
 			}
 			return layout.Dimensions{Size: image.Pt(cs, cs+lift)}

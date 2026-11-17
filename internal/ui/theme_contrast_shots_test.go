@@ -17,6 +17,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // TestThemeContrastShots screenshots the whole window, the top nav, the
@@ -34,7 +35,8 @@ func TestThemeContrastShots(t *testing.T) {
 		t.Skip("PREFS_COLOR_SHOTS_DIR unset (the prefs-colors workflow)")
 	}
 	sz := fakeslack.Small
-	sz.Unreads = true
+	// the sidebar's unread rows, the Activity inbox's feed, client.dms
+	sz.Unreads, sz.Views, sz.DMsTab = true, true, true
 	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
@@ -51,8 +53,25 @@ func TestThemeContrastShots(t *testing.T) {
 		e.gpu = w
 	}
 	e.waitReady()
+	// Karim's Activity: the inbox with the entry layout revisions
+	on := "on"
+	e.a.Core().SetExperimentGroups(map[string]*string{"activity_inbox": &on, "activity_entry_layout_revisions_2": &on})
+	var cur struct {
+		ia   string
+		dark bool
+	}
 	shot := func(name string) *image.RGBA {
 		e.settle(400 * time.Millisecond)
+		// the theme the shot is labelled with is the one it was taken
+		// under: core's own users.prefs answer can put fakeslack's back
+		if want, set := theme.ParseIATheme(cur.ia); e.a.acct.set != set || e.a.acct.t != want {
+			t.Logf("%s: the account theme moved off %q; applied again", name, cur.ia)
+			e.useAccountTheme(cur.ia, cur.dark)
+			e.settle(400 * time.Millisecond)
+			if e.a.acct.set != set || e.a.acct.t != want {
+				t.Fatalf("%s: shot under %+v, not %q", name, e.a.acct.t, cur.ia)
+			}
+		}
 		img := image.NewRGBA(image.Rectangle{Max: e.size})
 		if err := e.gpu.Screenshot(img); err != nil {
 			t.Fatalf("screenshot: %v", err)
@@ -77,6 +96,7 @@ func TestThemeContrastShots(t *testing.T) {
 	}
 	for _, v := range vs {
 		for _, dark := range v.modes {
+			cur.ia, cur.dark = v.ia, dark
 			e.useAccountTheme(v.ia, dark)
 			mode := "light"
 			if dark {
@@ -93,14 +113,45 @@ func TestThemeContrastShots(t *testing.T) {
 			rail := image.Rect(0, gtx.Dp(theme.TopNavH), gtx.Dp(theme.RailW), e.size.Y)
 			bg, ink := contrastSample(img, rail)
 			c := &e.a.th.C
-			t.Logf("%s: rail (the inspect tool's sample) bg %s ink %s; palette rail ink %s, search pill %s + %s, sidebar text %s / unread %s",
-				pre, bg, ink, contrastHex(c.ChromeText), contrastHex(c.SearchBg), contrastHex(c.ChromeHoverTint),
-				contrastHex(c.SidebarText), contrastHex(c.SidebarTextUnread))
+			t.Logf("%s (ia_theme %s): rail (the inspect tool's sample) bg %s ink %s; palette rail ink %s, search pill %s + %s, sidebar text %s / unread %s, Activity badges %s on %s",
+				pre, e.a.acct.t.JSON(), bg, ink, contrastHex(c.ChromeText), contrastHex(c.SearchBg), contrastHex(c.ChromeHoverTint),
+				contrastHex(c.SidebarText), contrastHex(c.SidebarTextUnread), contrastHex(c.ThemeImpText), contrastHex(c.ThemeImp))
 			e.movePtr(e.listPoint())
+			// Direct messages with its rows (the Unreads filter off), one
+			// opened (--selected) and the pointer on another (:hover, a
+			// tile only in light mode)
 			e.a.Navigate("dms")
+			e.settle(300 * time.Millisecond)
+			if d, ok := e.a.views[Route("dms")].(*views.DMs); ok {
+				d.ShowAllDMs()
+				e.until("the DMs list's rows", 15*time.Second, func() bool { ids, _, ok := d.Listed(); return ok && len(ids) > 1 })
+				col := e.a.sidebar.origin.X + e.context().Dp(120)
+				for y := e.a.primaryOrigin.Y + e.context().Dp(110); y < e.size.Y-80 && d.Selected() == ""; y += e.context().Dp(30) {
+					e.click(image.Pt(col, y))
+					e.settle(150 * time.Millisecond)
+				}
+				if d.Selected() == "" {
+					t.Logf("%s: no DM opened (the shot shows the list only)", pre)
+				}
+				e.movePtr(image.Pt(col, e.a.primaryOrigin.Y+e.context().Dp(260)))
+			}
 			shot(pre + "-dms")
+			// Activity's inbox: its rows, one opened beside it (the
+			// grouped list's --selected) and the pointer on another
+			e.movePtr(e.listPoint())
 			e.a.Navigate("activity")
+			e.settle(800 * time.Millisecond)
+			x := e.a.primaryOrigin.X + e.context().Dp(200)
+			for y := e.a.primaryOrigin.Y + e.context().Dp(150); y < e.size.Y-60 && !e.a.secondary.open(); y += e.context().Dp(30) {
+				e.click(image.Pt(x, y))
+				e.settle(200 * time.Millisecond)
+			}
+			if !e.a.secondary.open() {
+				t.Logf("%s: no Activity row opened", pre)
+			}
+			e.movePtr(image.Pt(x, e.a.primaryOrigin.Y+e.context().Dp(320)))
 			shot(pre + "-activity")
+			e.a.CloseSecondary()
 		}
 	}
 	e.a.applyAccountPrefs(core.Prefs{})

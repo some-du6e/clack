@@ -35,11 +35,17 @@ darker than both the tile and the rail (a ring in the rail colour drawn
 over the tile reads as a border), and ink, the label's pixel farthest from
 the rail colour.
 
-Shots with a "theme" (TestRailShots' railShotThemes: Karim's #FED4BE and a
-dark custom colour) draw Slack's side with that account theme's tokens as
-Slack's own code computes them, internal/ui/testdata/theme-oracle.json (the
-root scope's --dt_color-theme-*, and the inverted scope's when
-useInvertedTheme puts the rail there), not with Clack's.
+Slack's side is drawn from Slack's own numbers only: every shot takes its
+account theme's tokens (Slack's default theme for the shots without one;
+TestRailShots' railShotThemes: Karim's #FED4BE and a dark custom colour)
+as Slack's code computes them, internal/ui/testdata/theme-oracle.json: the
+root scope's --dt_color-theme-*, the inverted scope's when useInvertedTheme
+puts the rail there, and .p-theme_background's radial + conic gradient over
+the case's stops, sized to the window and cut at each crop's window y, so
+the rail colour under a button is Slack's, not Clack's sampled one. The
+rightmost 8px of a crop are left out of the measures (a peek card's edge
+can reach them), and "fill" is sampled inside the tile, clear of its
+corners and the icon.
 
 usage: rail_ref.py <shots dir> <slack css> <slackvars.go> <icons.json> <chrome> <platform>
 """
@@ -147,21 +153,31 @@ def button(b, state):
 
 def page(shot, cells, bg, rules):
     dark = shot["dark"]
+    scale = shot["scale"]
     t = tokens("slackVarsDark" if dark else "slackVarsLight")
     inv, scope = "", ""
-    if shot.get("theme"):
-        # Slack's tokens for this account theme, from its own code
-        oc = oracle_case(shot["theme"], dark)
-        t.update(oc["tokens"]["dark" if dark else "light"])
-        if oc["scopes"]["tabRail"] == "inverted":
-            inv = ".sk-client-theme--light-inverted-sidebar{%s}" % ";".join("%s:%s" % kv for kv in oc["tokens"]["inverted"].items())
-            scope = " sk-client-theme--light-inverted-sidebar"
-    elif not dark and shot.get("vars"):
-        inv = ".sk-client-theme--light-inverted-sidebar{%s}" % ";".join("%s:%s" % kv for kv in shot["vars"].items())
+    # Slack's tokens for the shot's account theme, from its own code
+    oc = oracle_case(shot.get("theme") or "default", dark)
+    t.update(oc["tokens"]["dark" if dark else "light"])
+    if oc["scopes"]["tabRail"] == "inverted":
+        inv = ".sk-client-theme--light-inverted-sidebar{%s}" % ";".join("%s:%s" % kv for kv in oc["tokens"]["inverted"].items())
         scope = " sk-client-theme--light-inverted-sidebar"
     root = ";".join("%s:%s" % kv for kv in t.items())
-    body = "".join('<div class="p-tab_rail%s" style="position:absolute;left:0;top:%dpx;width:70px;padding-top:0;overflow:visible">%s</div>'
-                   % (scope, i * 120 + 6, button(b, st)) for i, (b, st) in enumerate(cells))
+    # .p-theme_background (getConicGradient: primary at the centre and 25/75%,
+    # highlight1 at 0/50/100%) over the whole window
+    st = oc["background"]
+    P, Hl = st[0], st[1] if len(st) > 1 else st[0]
+    grad = ("radial-gradient(circle at 50%% 50%%, %s 20%%, transparent 80%%), conic-gradient(from 45deg at 50%% 50%%, %s 0%%, %s 25%%, %s 50%%, %s 75%%, %s 100%%)"
+            % (P, Hl, P, Hl, P, Hl))
+    win = shot.get("win") or [70, 1000]
+    ww, wh = win[0] / scale, win[1] / scale
+
+    def cell(i, b, st):
+        # the crop: top px above the button, its window y = b["y"]
+        return ('<div class="p-tab_rail%s" style="position:absolute;left:0;top:%dpx;width:70px;padding-top:%gpx;overflow:visible;'
+                'background:%s;background-size:%gpx %gpx;background-position:0px %gpx">%s</div>'
+                % (scope, i * 120, b["top"] / scale, grad, ww, wh, -b.get("y", 0) / scale, button(b, st)))
+    body = "".join(cell(i, b, st) for i, (b, st) in enumerate(cells))
     return ("<!doctype html><html><head><meta charset=utf-8><link rel=stylesheet href='%s'>"
             "<style>:root{%s;color-scheme:%s}%s%s html,body{margin:0;background:%s;font-family:Singer-Lato,Lato,sans-serif;"
             "font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}</style></head>"
@@ -192,9 +208,10 @@ def measure(im, scale, top, has_badge):
     S = lambda v: int(round(v * scale))
     bx0, by0 = S(9), top
     tile = [None] * 4
-    fillpt = (bx0 + S(10), by0 + S(10))  # inside the tile, clear of the icon and badge
+    fillpt = (bx0 + S(12), by0 + S(24))  # inside the tile, clear of its corners, the icon and the badge
     fill = im.getpixel(fillpt)[:3]
     strong, ink = [], set()
+    w = max(1, w - S(8))  # a peek card's edge can reach the crop's right edge
     for y in range(h):
         for x in range(w):
             p = im.getpixel((x, y))[:3]
@@ -269,6 +286,8 @@ for shot in spec:
     open(hp, "w", encoding="utf-8").write(page(shot, cells, bg, rules))
     sp = os.path.join(shots, "slack-rail-%s.png" % name)
     screenshot(hp, 70, 120 * len(cells) + 20, scale, sp)
+    print("%s: Slack's side drawn with theme-oracle.json's %s %s case under %s" % (
+        name, shot.get("theme") or "default", "dark" if shot["dark"] else "light", shot.get("ia_theme") or "no ia_theme"))
     slack = Image.open(sp).convert("RGB")
     k, gap, lab = 4, 6, 16
     W = shot["w"]
@@ -277,7 +296,7 @@ for shot in spec:
     for i, (b, st) in enumerate(cells):
         top = b["top"]
         ch = crops[i].height if i < len(crops) else b["h"] + top + int(round(2 * scale))
-        sy = int(round((i * 120 + 6) * scale)) - top
+        sy = int(round(i * 120 * scale))  # the cell's top: top px above its button, as Clack's crop
         s = slack.crop((0, sy, W, sy + ch))
         sm, _ = measure(s, scale, top, b["badge"] > 0)
         entry = {"shot": name, "platform": platform, "key": b["key"], "state": st, "slack": sm}

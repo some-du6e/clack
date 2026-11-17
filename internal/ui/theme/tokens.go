@@ -107,6 +107,12 @@ var paletteTokens = []struct {
 	{func(p *Palette) *color.NRGBA { return &p.ChromeActive }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.25)", "var(--dt_color-theme-surf-inv-pry)"}},
 	{func(p *Palette) *color.NRGBA { return &p.SearchBg }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.25)", "var(--dt_color-theme-surf-inv-pry)"}},
 	{func(p *Palette) *color.NRGBA { return &p.SearchText }, Tok{"", "var(--dt_color-theme-content-inv-pry)"}},
+	// .p-ia4_history_buttons__button and .p-top_nav__help :hover / :active
+	{func(p *Palette) *color.NRGBA { return &p.ChromeHover }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.25)", "var(--dt_color-theme-surf-inv-pry)"}},
+	{func(p *Palette) *color.NRGBA { return &p.ChromePressed }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.11)", "var(--dt_color-theme-surf-inv-sec)"}},
+	// .p-control_strip__circle_button:active / --active
+	{func(p *Palette) *color.NRGBA { return &p.ChromeBasePry }, Tok{"rgb(var(--dt_color-plt-aubergine-0))", "var(--dt_color-theme-base-pry)"}},
+	{func(p *Palette) *color.NRGBA { return &p.ChromeContentTer }, Tok{"rgb(var(--dt_color-plt-aubergine-100))", "var(--dt_color-theme-content-ter)"}},
 
 	// sidebar: .p-view_contents--sidebar, .p-channel_sidebar__channel…
 	{func(p *Palette) *color.NRGBA { return &p.SidebarBg }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.11)", "var(--dt_color-theme-surf-inv-sec)"}},
@@ -117,6 +123,7 @@ var paletteTokens = []struct {
 	{func(p *Palette) *color.NRGBA { return &p.SidebarActiveText }, Tok{"rgb(var(--dt_color-plt-aubergine-100))", "var(--dt_color-theme-content-hgl-1)"}},
 	{func(p *Palette) *color.NRGBA { return &p.SidebarDivider }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.22)", "var(--dt_color-theme-otl-inv-pry)"}},
 	{func(p *Palette) *color.NRGBA { return &p.SidebarButton }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.25)", "var(--dt_color-theme-surf-inv-pry)"}},
+	{func(p *Palette) *color.NRGBA { return &p.SidebarTextTer }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.6)", "var(--dt_color-theme-content-inv-ter)"}},
 	{func(p *Palette) *color.NRGBA { return &p.WorkspaceBorder }, Tok{"", "var(--dt_color-otl-ter)"}},
 	// mention badge (.c-badge--themed)
 	{func(p *Palette) *color.NRGBA { return &p.Badge }, Tok{"rgb(var(--dt_color-plt-aubergine-20))", "var(--dt_color-theme-base-imp)"}},
@@ -167,8 +174,30 @@ func ApplyTokens(p *Palette, t Tokens, dark bool) {
 	if t == nil || !t.Overridden() {
 		return
 	}
+	bg, bp := p.SearchBg, p.ChromeBasePry
 	for _, f := range paletteTokens {
 		SetTok(t, f.f(p), f.tok, dark)
+	}
+	rehover(p, t, dark, bg, bp)
+}
+
+// tokSurfInvPryHover is the hover layer's token (the default theme's
+// inverted scope: aubergine-70 at .08).
+var tokSurfInvPryHover = Tok{"rgba(var(--dt_color-plt-aubergine-70),0.08)", "var(--dt_color-theme-surf-inv-pry-hover)"}
+
+// rehover recomputes the pre-blended hover layers when a stylesheet moved
+// the tokens under them: ChromeHoverTint over SearchBg (theme-surf-inv-pry)
+// and ChromeBasePryHover over ChromeBasePry, with the sheet's
+// surf-inv-pry-hover, else the old layer's colour. bg and bp are the
+// fields before the sheets.
+func rehover(p *Palette, t Tokens, dark bool, bg, bp color.NRGBA) {
+	hov := p.ChromeHoverTint
+	own := SetTok(t, &hov, tokSurfInvPryHover, dark)
+	if own || p.SearchBg != bg {
+		p.ChromeHoverTint = layerTint(hov, p.SearchBg, float64(p.SearchBg.A)/255, dark)
+	}
+	if own || p.ChromeBasePry != bp {
+		p.ChromeBasePryHover = layerOver(hov, float64(hov.A)/255, p.ChromeBasePry, dark)
 	}
 }
 
@@ -184,7 +213,7 @@ func ApplySidebarTokens(p *Palette, t Tokens) {
 	for _, f := range paletteTokens {
 		switch f.f(p) {
 		case &p.SidebarBg, &p.SidebarText, &p.SidebarTextUnread, &p.SidebarHover, &p.SidebarActive,
-			&p.SidebarActiveText, &p.SidebarDivider, &p.SidebarButton, &p.Badge, &p.BadgeText:
+			&p.SidebarActiveText, &p.SidebarDivider, &p.SidebarButton, &p.SidebarTextTer, &p.Badge, &p.BadgeText:
 			SetTok(t, f.f(p), f.tok, true)
 		}
 	}

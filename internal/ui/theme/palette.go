@@ -20,6 +20,12 @@ type Palette struct {
 	ChromeHoverTint color.NRGBA
 	SearchBg        color.NRGBA
 	SearchText      color.NRGBA
+	// ChromeBasePry and ChromeContentTer are the control strip buttons'
+	// :active and --active fill and ink (theme-base-pry and
+	// theme-content-ter in the rail's scope: the focus button while focus
+	// mode is on, + while the Create menu is open), ChromeBasePryHover the
+	// fill with :hover's blended surf-inv-pry-hover layer over it.
+	ChromeBasePry, ChromeContentTer, ChromeBasePryHover color.NRGBA
 
 	// Sidebar (translucent over the chrome gradient).
 	SidebarBg         color.NRGBA
@@ -30,6 +36,8 @@ type Palette struct {
 	SidebarActiveText color.NRGBA
 	SidebarDivider    color.NRGBA
 	SidebarButton     color.NRGBA // compose button tile
+	SidebarTextTer    color.NRGBA // theme-content-inv-ter: muted rows, org captions, "(you)"
+	SidebarRule       color.NRGBA // rgba(var(--sk_foreground_low), .13) in the sidebar's scope
 	WorkspaceBorder   color.NRGBA // dark mode: 1px outline around sidebar+panel
 
 	// Badges.
@@ -114,6 +122,10 @@ var LightPalette = Palette{
 	SearchBg:        rgba(0xf9edff, 0x40),
 	SearchText:      rgb(0xffffff),
 
+	ChromeBasePry:      rgb(0xf9edff), // the inverted scope's aubergine-0
+	ChromeContentTer:   rgb(0x39063a), // aubergine-100
+	ChromeBasePryHover: rgb(0xefdef6), // aubergine-70 at .08 multiplied over it
+
 	SidebarBg:         rgba(0xf9edff, 0x1c),
 	SidebarText:       rgba(0xf6e4ff, 0xe6),
 	SidebarTextUnread: rgb(0xffffff),
@@ -122,6 +134,8 @@ var LightPalette = Palette{
 	SidebarActiveText: rgb(0x39063a),
 	SidebarDivider:    rgba(0xf9edff, 0x38),
 	SidebarButton:     rgba(0xf9edff, 0x40),
+	SidebarTextTer:    rgba(0xf9edff, 0x99),
+	SidebarRule:       rgba(0xe8e8e8, 0x21),
 
 	Badge:         rgb(0xeabdfb),
 	BadgeText:     rgb(0x39063a),
@@ -185,6 +199,10 @@ var DarkPalette = Palette{
 	SearchBg:        rgba(0xefe1f5, 0x40),
 	SearchText:      rgb(0xf8f8f8),
 
+	ChromeBasePry:      rgb(0xe3ceeb), // aubergine-90
+	ChromeContentTer:   rgb(0x200221), // aubergine-0
+	ChromeBasePryHover: rgb(0xe4d0ec), // aubergine-100 at .08, lighten over it
+
 	SidebarBg:         rgba(0x101214, 0x99),
 	SidebarText:       rgba(0xe3ceeb, 0xcc),
 	SidebarTextUnread: rgb(0xf8f8f8), // --dt_color-theme-content-inv-pry: gray-100 (sidebar-rows side-by-sides)
@@ -193,6 +211,8 @@ var DarkPalette = Palette{
 	SidebarActiveText: rgb(0xefe1f5),
 	SidebarDivider:    rgba(0xefe1f5, 0x38),
 	SidebarButton:     rgba(0xefe1f5, 0x40),
+	SidebarTextTer:    rgba(0xe3ceeb, 0x99),
+	SidebarRule:       rgba(0xe8e8e8, 0x21),
 	WorkspaceBorder:   rgba(0xefe1f5, 0x26),
 
 	Badge:         rgb(0xcfa1de), // theme-base-imp: aubergine-70
@@ -214,7 +234,7 @@ var DarkPalette = Palette{
 	PanelShadow:  rgba(0x000000, 0x60),
 
 	Link:               rgb(0x1d9bd1),
-	Accent:             rgb(0xd29bd6),
+	Accent:             rgb(0xe3ceeb), // theme-base-pry: aubergine-90
 	Mention:            rgb(0x1d9bd1),
 	MentionBg:          rgba(0x1d9bd1, 0x1a),
 	SelfMention:        rgba(0xf2c744, 0x33),
@@ -229,7 +249,7 @@ var DarkPalette = Palette{
 	SendText:           rgb(0xffffff),
 	Danger:             rgb(0xe01e5a),
 	Warning:            rgb(0xecb22e),
-	Presence:           rgb(0x20a271),
+	Presence:           rgb(0x3daa7c), // theme-base-inv-hgl-2: jade-60
 	PresenceAway:       rgb(0x9a9b9e),
 	Reaction:           rgba(0xd1d2d3, 0x14),
 	ReactionSelf:       rgba(0x1d9bd1, 0x26),

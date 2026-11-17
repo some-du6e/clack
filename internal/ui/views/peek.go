@@ -37,8 +37,11 @@ type peekPal struct {
 	maxSolid color.NRGBA // rgb(var(--sk_foreground_max_solid))
 }
 
-// peekPalOf is the card's tokens in th's mode (kit.css and 858H / 7uI9
-// defaults, a stylesheet's overrides through th.Tokens).
+// peekPalOf is the card's tokens in th's mode (kit.css and the 858H /
+// qmPJ defaults: the high-contrast dark set 7uI9 is only Slack's for
+// highContrast; the account theme's root-scope theme-base-imp and
+// -content-imp, ThemeImp, when it changes them; a stylesheet's overrides
+// through th.Tokens).
 func peekPalOf(th *theme.Theme) peekPal {
 	dark := th != nil && th.Dark
 	var p peekPal
@@ -46,14 +49,14 @@ func peekPalOf(th *theme.Theme) peekPal {
 		p = peekPal{
 			bg:       rgb(0x212428),
 			hover:    flatten(argb(0x14f8f8f8), rgb(0x1a1d21)),
-			rule:     argb(0x80efe1f5),
+			rule:     argb(0x38efe1f5),
 			line:     argb(0x21d1d2d3),
 			fg:       rgb(0xf8f8f8),
 			sec:      rgb(0xb9babd),
 			ter:      rgb(0x9a9b9e),
-			invPry:   rgb(0xffffff),
-			invSec:   rgb(0xefe1f5),
-			baseImp:  rgb(0xd8bae1),
+			invPry:   rgb(0xf8f8f8),
+			invSec:   argb(0xcce3ceeb),
+			baseImp:  rgb(0xcfa1de),
 			contImp:  rgb(0x200221),
 			skel:     rgb(0x212428),
 			otlTer:   argb(0x4d797c81),
@@ -81,6 +84,12 @@ func peekPalOf(th *theme.Theme) peekPal {
 	}
 	if th == nil {
 		return p
+	}
+	if th.C.ThemeImp.A != 0 { // the account theme's important colour (theme.IATheme.Fields)
+		p.baseImp = th.C.ThemeImp
+		if th.C.ThemeImpText.A != 0 {
+			p.contImp = th.C.ThemeImpText
+		}
 	}
 	tk := th.Tokens
 	set := func(dst *color.NRGBA, expr string) { theme.SetTok(tk, dst, theme.Both(expr), dark) }
