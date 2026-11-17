@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/store"
 )
 
@@ -400,4 +401,79 @@ func TestHistoryAfterLongGap(t *testing.T) {
 			}
 		}
 	})
+}
+
+// While the catch-up after a wake is out, the list doesn't draw what the
+// socket brought since straight after what it held before the gap: Slack
+// renders the newest slice alone after resetReachedEnd, and loads back
+// from its start. The list drew yesterday's last message directly above
+// today's, with the gap between them unmarked, until the catch-up landed
+// (or for good, if it failed).
+func TestNoHoleWhileCatchingUp(t *testing.T) {
+	e := newLatEnv(t, latEnvOpts{})
+	ids := e.fs.ChannelIDs()
+	ch, probe := ids[16], ids[len(ids)-2]
+	e.openAtLatest(ch)
+	list := e.listTS(ch)
+	if len(list) == 0 {
+		t.Fatal("an empty list")
+	}
+	pre := list[len(list)-1] // the newest message before the gap
+	var missed []string
+	for i := 0; i < 5; i++ {
+		ts, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", fmt.Sprintf("%d: while asleep", 43200+i))
+		missed = append(missed, ts)
+	}
+	read := historyInFlight(e.fs, ch, 3*time.Second) // the catch-up's read is slow
+	landed := e.countsProbe(probe)
+	e.reconnectSlow(t, 0)
+	next := owlPost(e, ch, 43210) // the socket brings one after the wake
+	if !e.untilSoft(10*time.Second, func() bool { return e.rowDrawn(ch, next) && read() }) {
+		t.Fatalf("the post-gap message drew %v, the catch-up's read is out %v", e.rowDrawn(ch, next), read())
+	}
+	e.settle(300 * time.Millisecond)
+	if e.rowDrawn(ch, pre) {
+		t.Errorf("while the catch-up was out the list drew the pre-gap %s straight above the post-gap %s", pre, next)
+	}
+	if !e.untilSoft(20*time.Second, func() bool { return landed() && e.rowDrawn(ch, missed[len(missed)-1]) }) {
+		t.Fatal("the catch-up never brought the missed messages")
+	}
+	e.settle(400 * time.Millisecond)
+	noHole(t, "after the catch-up", e.listTS(ch), missed)
+}
+
+// An older page out when the window starts over belongs to the old one:
+// the list drops it instead of putting it on top of the new page, and
+// loads back from the new page's start. It drew the stale page above the
+// catch-up, with the overnight messages missing between them.
+func TestOlderPageAcrossRestartInList(t *testing.T) {
+	e := newLatEnv(t, latEnvOpts{})
+	ids := e.fs.ChannelIDs()
+	ch, probe := ids[17], ids[len(ids)-2]
+	for i := 0; i < 160; i++ {
+		e.fs.PostQuiet(ch, e.fs.UserIDs()[2+i%5], fmt.Sprintf("earlier %d", i))
+	}
+	e.openAtLatest(ch)
+	e.fs.SetChannelFault("conversations.history", ch, fakeslack.Fault{ReplyDelay: 2500 * time.Millisecond, Times: 1})
+	n := e.fs.HistoryReads(ch)
+	if !e.untilSoft(10*time.Second, func() bool {
+		e.scroll(e.listPoint(), -3000) // the reader scrolls back
+		e.settle(40 * time.Millisecond)
+		return e.fs.HistoryReads(ch) > n
+	}) {
+		t.Fatal("scrolling back never asked for an older page")
+	}
+	var missed []string
+	for i := 0; i < 60; i++ {
+		ts, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", fmt.Sprintf("%d: missed overnight", 43300+i))
+		missed = append(missed, ts)
+	}
+	e.fs.SetCountLatest(ch, missed[len(missed)-1])
+	landed := e.countsProbe(probe)
+	e.reconnectSlow(t, 0)
+	if !e.untilSoft(20*time.Second, func() bool { return landed() && e.rowDrawn(ch, missed[len(missed)-1]) }) {
+		t.Fatal("the catch-up never drew the newest missed message")
+	}
+	e.settle(3 * time.Second) // the old window's older page lands
+	noHole(t, "after the old window's older page landed", e.listTS(ch), missed)
 }

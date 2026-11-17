@@ -158,6 +158,18 @@ func (s *Server) PostQuiet(ch, user, text string) (ts string, ev map[string]any)
 		"client_msg_id": m.ClientMsgID}
 }
 
+// PostQuietCID is PostQuiet with the message's client_msg_id: an own send
+// Slack stored whose reply never came back.
+func (s *Server) PostQuietCID(ch, user, text, cid string) string {
+	ts, _ := s.PostQuiet(ch, user, text)
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	if h := s.hist[ch]; len(h) > 0 && h[0].TS == ts {
+		h[0].ClientMsgID = cid
+	}
+	return ts
+}
+
 // PostBotQuiet adds a user-less bot message (subtype bot_message, the
 // bot's id and the username it posted under) to ch's history (newest)
 // and returns its ts, unpushed.

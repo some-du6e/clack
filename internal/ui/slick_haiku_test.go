@@ -113,7 +113,8 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	if !ok {
 		t.Fatalf("the composer is a %T", cv.comp)
 	}
-	cb.InsertText("an old silent pond a frog jumps into the pond splash silence again")
+	const haiku = "an old silent pond a frog jumps into the pond splash silence again"
+	cb.InsertText(haiku)
 	for i := 0; i < 4; i++ {
 		e.frame()
 	}
@@ -164,5 +165,14 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 		t.Error("the send check didn't settle after Escape")
 	} else if r := probe(`return __scLog[0].r ?? null`); r != "false" {
 		t.Errorf("the send check settled %s after Escape (Keep editing), want false", r)
+	}
+	// and the haiku stayed unsent: a send puts its pending copy in at once
+	time.Sleep(200 * time.Millisecond)
+	if tl := e.ca.S.Timeline(ttGen); tl != nil {
+		for _, m := range tl.Msgs {
+			if m.Text == haiku {
+				t.Errorf("the haiku went out after Keep editing (ts %s)", m.TS)
+			}
+		}
 	}
 }
