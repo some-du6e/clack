@@ -153,7 +153,13 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	if !closed {
 		t.Fatal("Escape didn't close the dialog")
 	}
-	settled := e.wait(5*time.Second, func() bool { return probe(`return !!__scLog[0]?.t1`) == "true" })
+	// no frames from here: the held-back haiku goes back into the composer
+	// at its next layout and becomes #general's draft, which the next
+	// subtest's composer would start with
+	settled := false
+	for dl := time.Now().Add(5 * time.Second); !settled && time.Now().Before(dl); time.Sleep(20 * time.Millisecond) {
+		settled = probe(`return !!__scLog[0]?.t1`) == "true"
+	}
 	if !settled {
 		t.Error("the send check didn't settle after Escape")
 	} else if r := probe(`return __scLog[0].r ?? null`); r != "false" {
