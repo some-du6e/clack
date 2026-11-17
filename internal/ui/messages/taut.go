@@ -258,9 +258,8 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	mv, conv, ok := t.MessageViewConv(r.src.Channel, r.src.TS, changed)
 	if !ok {
 		if r.viewed {
-			r.viewed = false
-			r.m = r.src
-			r.setDoc()
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
 		}
 		r.viewConv = 0
 		return
@@ -278,25 +277,24 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// sent its components new props, after each "names").
 	again := r.viewConv != 0 && conv != r.viewConv
 	r.viewConv = conv
-	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text && (!again && !changed || reflect.DeepEqual(r.m.Doc, mv.Doc)) {
+	// compared with the view the row draws over (vmsg), not with what it
+	// draws: that has the components' overrides laid over it (recompose)
+	if r.viewed && r.vmsg != nil && sameView(r.vmsg, &mv) && r.vmsg.Text == mv.Text && (!again && !changed || reflect.DeepEqual(r.vmsg.Doc, mv.Doc)) {
 		return
 	}
 	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text {
 		return
 	}
-	r.viewed = true
-	r.m = mv
-	r.msg = nil
-	r.setDoc()
+	r.viewed, r.vmsg = true, &mv
+	r.recompose()
 }
 
 // clearViews drops patched views once no plugin patches messages.
 func (s *listState) clearViews() {
 	for _, r := range s.rows {
 		if r.viewed {
-			r.viewed = false
-			r.m = r.src
-			r.setDoc()
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
 		}
 	}
 }

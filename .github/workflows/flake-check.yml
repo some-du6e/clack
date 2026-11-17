@@ -1239,11 +1239,11 @@ jobs:
           go test -count=$COUNT -v -run '^(TestRefreshSendsNoSameTree|TestUserEventsForUndrawnMembersCostNothing|TestChangeDuringFirstConversion|TestIndexRefsStaleness|TestConvBumpRedraws|TestOffScreenViewsDrawNothing|TestMemberChangesOnlyForWhatJSHolds|TestInvalidationsJoinTheQueuedTask|TestRawEventsConvertNothing|TestUnconvertedMessagesKeepNoGeneration|TestRefetchDecodesOnlyWhatChanged|TestInjectedMessagesOneStorePass)$' ./internal/taut || rc=1
           go test -count=$COUNT -run '^(TestMessageRefs|TestMessageRefsBotsAndEmoji|TestDocFingerprints|TestStoredMessageReadsNoMember|TestEventsMarkDocChanges|TestUserEventAfterSilentRename|TestPrefsBaselineFollowsInstalls|TestRenamedCanvasTitle)$' ./internal/core || rc=1
           exit $rc
-      - name: "messages + composer + ui: every list's roots, renames and prefs re-convert, loads, views under the throttle, thread replies, composers' panes, 3 runs"
+      - name: "messages + composer + ui: every list's roots, renames and prefs re-convert, loads, views under the throttle, thread replies, a patched root's updates, composers' panes, 3 runs"
         if: ${{ !cancelled() }}
         run: |
           rc=0
-          go test -count=3 -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions|TestDocPrefsConvertLoadedMessages|TestPatchedRowTakesChangeWithoutAnotherFrame|TestBroadcastPreambleReadsMentionsAsItDraws|TestMessagePatchGetsWrappersExactMsg)$' ./internal/ui/messages || rc=1
+          go test -count=3 -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions|TestDocPrefsConvertLoadedMessages|TestPatchedRowTakesChangeWithoutAnotherFrame|TestBroadcastPreambleReadsMentionsAsItDraws|TestMessagePatchGetsWrappersExactMsg|TestPatchedRootSurvivesUpdates|TestVoteButtonsSurviveUpdates)$' ./internal/ui/messages || rc=1
           go test -count=3 -v -timeout 10m -run '^TestComposersForOneThreadSendTheirOwn$' ./internal/ui/composer || rc=1
           go test -count=3 -v -timeout 20m -run '^(TestComposersDrawInTheirListsPanes|TestPatchedViewShowsUnderQuietFrames)$' ./internal/ui || rc=1
           exit $rc

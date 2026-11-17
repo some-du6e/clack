@@ -146,6 +146,7 @@ type row struct {
 	viewAt           time.Time
 	viewRev          uint32
 	viewed           bool
+	vmsg             *core.Message // the view itself (viewed): what the overrides lay over
 	viewConv         uint64
 	viewEpoch        uint64       // taut's ViewEpoch when it last read the view (applyView)
 	col              image.Point  // body column origin, row-local
@@ -154,8 +155,13 @@ type row struct {
 	srcMsg, msg      slackc.Props // slackMessage of src and of m, built lazily
 	reactAs          string       // ReactionBar's currentUser override ("" = the viewer)
 
-	msgOv           uintptr      // Message / ThreadReplyGeneric msg override applied
-	wrapMsg         slackc.Props // MessageWrapper's override (what msgOv falls back to; wrapped)
+	msgOv   uintptr      // Message / ThreadReplyGeneric msg override applied
+	inMsg   slackc.Props // its msg (nil = none)
+	wrapMsg slackc.Props // MessageWrapper's override (what msgOv falls back to; wrapped)
+	// the sources of the revisions before this one, newest first (at most
+	// 3, none until an update): what an override from a tree JS hasn't
+	// drawn again since was made from
+	prev            []core.Message
 	textOv          slackc.Props // MessageText's msg override (nil = none)
 	filesOv, attsOv slackc.Props // MessageFiles / MessageKitAttachments msg overrides
 	tailOv          [2]uintptr   // file / attachment filters applied (propsIDs)
@@ -312,12 +318,114 @@ func newListRow(e *entry, thread bool) *row {
 }
 
 func (r *row) set(e *entry) {
+	if r.rev != 0 && r.rev != e.rev {
+		if len(r.prev) < 3 {
+			r.prev = append(r.prev, core.Message{})
+		}
+		copy(r.prev[1:], r.prev[:len(r.prev)-1])
+		r.prev[0] = r.src
+	}
 	r.rev = e.rev
-	r.src, r.m = e.m, e.m
+	r.src = e.m
 	r.wrapOv, r.blocksOv, r.srcMsg, r.msg = 0, 0, nil, nil
-	r.msgOv, r.wrapMsg, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil
+	r.msgOv, r.inMsg, r.wrapMsg, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil, nil
+	// a row drawing the plugins' view of its message keeps drawing it, at
+	// its height, until the view of the new revision comes (applyView), as
+	// Slack's one commit of the store's patched message never shows it
+	// without the patches; the rest draw the new source at once
+	r.m = *r.base()
 	r.setDoc()
 	r.growPills()
+}
+
+// base is what the row's message draws over: the plugins' view of it
+// (applyView), or its source.
+func (r *row) base() *core.Message {
+	if r.viewed && r.vmsg != nil {
+		return r.vmsg
+	}
+	return &r.src
+}
+
+// recompose draws the base with the innermost override a patched
+// component's tree handed back (Message's or ThreadReplyGeneric's, else
+// MessageWrapper's): what its plugin changed in the msg the row sent, laid
+// over the plugins' view of the message. Laid over the source, every tree
+// JS delivered (a msg parsed afresh, never the map the row sent) left the
+// row drawing the message without the view until it read the view again,
+// up to 250 ms later: Karim's vote message, a thread root, "stripped and
+// pushed down" at every vote.
+func (r *row) recompose() {
+	ov := r.wrapMsg
+	if r.msgOv != 0 && r.inMsg != nil {
+		ov = r.inMsg
+	}
+	if ov == nil {
+		r.m = *r.base()
+	} else {
+		r.m = r.overlay(ov)
+	}
+	r.msg = nil
+	r.setDoc()
+	r.growPills()
+}
+
+// overlay is the base with what a plugin changed in msg, a msg the row
+// sent its component and the plugin passed on to <Original>: the sender,
+// the text, the blocks and attachments where they differ from what was
+// sent. A tree JS hasn't drawn again since an update hands back the msg
+// of the revision before (sentFor): against that one, an unchanged msg
+// changes nothing, rather than bring the old text and blocks back.
+func (r *row) overlay(msg slackc.Props) core.Message {
+	var app *core.App
+	if r.rc != nil && r.rc.h != nil {
+		app = r.rc.h.Core()
+	}
+	sent := r.sentFor(msg)
+	a := applySlackMessage(app, sent, msg)
+	base := r.base()
+	if base == sent {
+		return a
+	}
+	m := *base
+	if a.User != sent.User || a.BotID != sent.BotID || a.Subtype != sent.Subtype || a.Username != sent.Username ||
+		!core.SameIcons(a.Icons, sent.Icons) || a.Name != sent.Name || a.Avatar != sent.Avatar || a.IsBot != sent.IsBot {
+		m.User, m.BotID, m.Subtype, m.Username, m.Icons = a.User, a.BotID, a.Subtype, a.Username, a.Icons
+		m.Name, m.Avatar, m.IsBot = a.Name, a.Avatar, a.IsBot
+	}
+	if a.Text != sent.Text {
+		m.Text = a.Text
+	}
+	if !sameSlice(a.Doc.Blocks, sent.Doc.Blocks) {
+		m.Doc.Blocks, m.Blocks = a.Doc.Blocks, a.Blocks
+	}
+	return m
+}
+
+// sentFor is the source msg was made from: the row's, or a revision's
+// before it whose text and blocks msg still has (its tree from before the
+// update); the row's when none has them (a plugin changed them).
+func (r *row) sentFor(msg slackc.Props) *core.Message {
+	if sameContent(msg, &r.src) {
+		return &r.src
+	}
+	for i := range r.prev {
+		if sameContent(msg, &r.prev[i]) {
+			return &r.prev[i]
+		}
+	}
+	return &r.src
+}
+
+// sameContent reports whether msg's text and blocks are m's.
+func sameContent(msg slackc.Props, m *core.Message) bool {
+	if msg.StrOr("text", "") != m.Text {
+		return false
+	}
+	if list, ok := msg["blocks"].([]any); ok {
+		return sameBlocks(list, m.Blocks)
+	}
+	return rawBlocks(m.Blocks) == nil
 }
 
 // setDoc shows r.m's body (after set or a msg override).
@@ -544,11 +652,8 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 func (r *row) unwrapped(rc *rowCtx) {
 	if r.wrapOv != 0 {
 		r.wrapOv, r.wrapMsg = 0, nil
-		r.m = r.src
-		r.msgOv = 0 // the inner override re-applies over the new base
-		r.msg = nil
-		r.setDoc()
-		r.growPills()
+		r.msgOv, r.inMsg = 0, nil // the inner override re-applies over the new base
+		r.recompose()
 	}
 	r.resolve(rc)
 	r.customResponse(rc)
@@ -890,16 +995,11 @@ func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimension
 			r.wrapOv = 0
 		}
 		r.wrapMsg = nil
-		if r.wrapOv == 0 {
-			r.m = r.src
-		} else {
+		if r.wrapOv != 0 {
 			r.wrapMsg = msg // what Message gets (wrapped)
-			r.m = applySlackMessage(rc.h.Core(), &r.src, msg)
 		}
-		r.msgOv = 0 // the inner override re-applies over the new base
-		r.msg = nil
-		r.setDoc()
-		r.growPills()
+		r.msgOv, r.inMsg = 0, nil // the inner override re-applies over the new base
+		r.recompose()
 	}
 	r.resolve(rc)
 	r.customResponse(rc)
@@ -923,18 +1023,11 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 			id = 0
 		}
 		if id != r.msgOv {
-			r.msgOv = id
-			switch {
-			case id != 0:
-				r.m = applySlackMessage(rc.h.Core(), &r.src, msg)
-			case r.wrapMsg != nil:
-				r.m = applySlackMessage(rc.h.Core(), &r.src, r.wrapMsg)
-			default:
-				r.m = r.src
+			r.msgOv, r.inMsg = id, nil
+			if id != 0 {
+				r.inMsg = msg
 			}
-			r.msg = nil
-			r.setDoc()
-			r.growPills()
+			r.recompose() // its msg, else the wrapper's, over the base
 			r.resolve(rc)
 		}
 	}
