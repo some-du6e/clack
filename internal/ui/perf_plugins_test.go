@@ -171,6 +171,28 @@ func perfJSTasks(e *benchEnv) int64 {
 	return 0
 }
 
+// perfQuiesce draws frames until no list is loading and no Go→JS render
+// and no JS tree has come for still, at most d.
+func (e *benchEnv) perfQuiesce(d, still time.Duration) {
+	count := func() int64 { return e.calls.render.Load() + e.calls.renderIn.Load() + int64(e.delivered()) }
+	loading := func() bool {
+		for _, c := range e.a.convos {
+			if l, ok := c.list.(interface{ Loading() bool }); ok && l.Loading() {
+				return true
+			}
+		}
+		return false
+	}
+	prev, last := count(), time.Now()
+	for dl := time.Now().Add(d); time.Now().Before(dl) && (time.Since(last) < still || loading()); {
+		e.frame()
+		time.Sleep(5 * time.Millisecond)
+		if n := count(); n != prev {
+			prev, last = n, time.Now()
+		}
+	}
+}
+
 // perfViewStats are how often taut's view epoch moved and how many
 // batches its view cache fetched from JS, so far (read by reflection).
 func perfViewStats(e *benchEnv) (epoch, fetches uint64) {
@@ -515,6 +537,15 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.openBench()
 	e.toBottom()
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)}) // off the window
+	// The live passes' edits, reactions and deletions were events the fake
+	// server never saw, so the list's background refresh (every 30 s while
+	// it draws: hub.ensureLoaded) brings back its history without them, and
+	// the rows they changed go back: a burst of renders wherever it lands
+	// (440 in one tree's idle-busy, 50 in its idle in another run, as the
+	// passes before took longer or shorter). Refresh now and let what it
+	// changed draw, so the next refresh falls due after the idle passes.
+	e.a.refreshVisible()
+	e.perfQuiesce(20*time.Second, 1500*time.Millisecond)
 	e.settle(2 * time.Second)
 	res.Passes = append(res.Passes, e.perfIdle("idle", 5*time.Second, false, nil))
 	// nothing on screen changes for 10 s while the workspace goes on

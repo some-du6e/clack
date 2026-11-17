@@ -1212,14 +1212,17 @@ func (v *viewCache) visibleLocked(g *viewGroup) bool {
 	return g != nil && g.readAt >= v.lastRead-v.onScreen
 }
 
-// ViewEpoch moves with every change to what the views hand out
+// ViewEpoch moves with every change to what the views on screen hand out
 // (MessageView, InjectedMessages, MemberView…: a value fetched, one marked
-// stale, a conversion to be made again): a list or a row re-reads its
-// views when it moved since it last read, rather than after viewRefresh.
-// The one frame a change asks for came and went inside a row's 250 ms,
-// and with nothing else laying the window out (an idle window, or one
-// whose only frames are an animated emoji's quiet ones) the row kept the
-// old view.
+// stale, a conversion to be made again, of a view read within
+// viewOnScreen): a list or a row re-reads its views when it moved since
+// it last read, rather than after viewRefresh. The one frame a change
+// asks for came and went inside a row's 250 ms, and with nothing else
+// laying the window out (an idle window, or one whose only frames are an
+// animated emoji's quiet ones) the row kept the old view. A change to
+// views off screen doesn't move it: with it every event in any channel,
+// every profile change, had every row on screen read all its views again
+// in the next frame.
 func (t *Taut) ViewEpoch() uint64 {
 	if t == nil {
 		return 0
@@ -1321,12 +1324,16 @@ func (v *viewCache) staleAll() {
 // stale marks the cached views of slice (key "" = all) stale, reporting
 // whether one of them is on screen (visibleLocked): those the UI reads
 // again soon; the rest are fetched again when next read.
-func (v *viewCache) stale(slice, key string) bool {
+func (v *viewCache) stale(slice, key string) (onScreen bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.sliceN[slice] > 0 { // the UI reads views of it: they read again (ViewEpoch)
-		v.epoch.Add(1)
-	}
+	// what's on screen reads again at once (ViewEpoch); the rest when
+	// next read, whose fetch the mark makes
+	defer func() {
+		if onScreen {
+			v.epoch.Add(1)
+		}
+	}()
 	v.seq++
 	if key == "" {
 		v.sliceVer[slice] = v.seq
@@ -1370,7 +1377,9 @@ func (v *viewCache) work() {
 		v.fetches.Add(1)
 
 		v.mu.Lock()
+		dropped := false // every group went: the ones read again are new, never read
 		if v.n > v.maxSubs || len(v.groups) > v.maxSubs || v.bytes > v.maxBytes {
+			dropped = true
 			// bounded: drop everything (what's on screen comes back), and
 			// count what's in flight as stale
 			clear(v.groups)
@@ -1383,7 +1392,7 @@ func (v *viewCache) work() {
 			clear(v.refBy)
 			v.gmu.Unlock()
 		}
-		changed := false
+		changed := false // a value on screen changed (visibleLocked)
 		var retry []viewKey
 		for _, k := range keys {
 			delete(v.flying, k)
@@ -1424,7 +1433,7 @@ func (v *viewCache) work() {
 				// its injected list, which may have come back as it was
 				// (the same messages, kept decoded and converted)
 				bucket := k.slice == "messages" && k.key != "" && k.sub == ""
-				if !bucket || cur == nil || !sameInj(cur.inj, e.inj) {
+				if (!bucket || cur == nil || !sameInj(cur.inj, e.inj)) && (dropped || v.visibleLocked(g)) {
 					changed = true
 					v.epoch.Add(1)
 				}
@@ -2028,11 +2037,11 @@ func (v *viewCache) bumpChange(c core.RefChange) {
 	}
 	v.gmu.Unlock()
 	v.mu.Unlock()
-	if len(keys) == 0 {
-		return
+	if !redraw {
+		return // nothing on screen read it: a view read later converts again then
 	}
 	v.epoch.Add(1)
-	if f := v.t.opts.UI.Invalidate; redraw && f != nil {
+	if f := v.t.opts.UI.Invalidate; f != nil {
 		f()
 	}
 }
@@ -2077,8 +2086,11 @@ func (v *viewCache) bumpConv(ch, ts string) {
 	}
 	v.gmu.Unlock()
 	v.mu.Unlock()
+	if !redraw {
+		return
+	}
 	v.epoch.Add(1)
-	if f := v.t.opts.UI.Invalidate; f != nil && redraw {
+	if f := v.t.opts.UI.Invalidate; f != nil {
 		f()
 	}
 }

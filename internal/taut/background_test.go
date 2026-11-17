@@ -51,7 +51,7 @@ func TestOffScreenViewsDrawNothing(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	time.Sleep(100 * time.Millisecond) // the worker done with them
-	n0 := h.ui.invalidations.Load()
+	n0, ep0 := h.ui.invalidations.Load(), h.tt.ViewEpoch()
 	h.tt.mirror.onEvent(core.Event{Type: "update", Channel: chGen, TS: genTS})
 	h.tt.mirror.onEvent(core.Event{Type: "message", Channel: chGen, TS: "1700000099.000100"})
 	h.tt.mirror.onEvent(core.Event{Type: "delete", Channel: chGen, TS: "1700000003.000300"})
@@ -59,9 +59,18 @@ func TestOffScreenViewsDrawNothing(t *testing.T) {
 	if n := h.ui.invalidations.Load() - n0; n != 0 {
 		t.Errorf("events in a channel no row reads now redrew the window %d times", n)
 	}
-	// the DM, on screen: its change redraws
+	// nor do the rows on screen read their views again for them
+	// (ViewEpoch): every event in any channel had every row read all its
+	// views again in the next frame
+	if ep := h.tt.ViewEpoch(); ep != ep0 {
+		t.Errorf("events in a channel no row reads now moved the view epoch %d times", ep-ep0)
+	}
+	// the DM, on screen: its change redraws, and its rows read again
 	h.tt.mirror.onEvent(core.Event{Type: "update", Channel: dmAlice, TS: dmTS})
 	eventually(t, 2*time.Second, "a redraw for the DM the UI reads", func() bool { return h.ui.invalidations.Load() > n0 })
+	if h.tt.ViewEpoch() == ep0 {
+		t.Error("a change to the DM on screen left the view epoch: its rows would wait out their 250 ms")
+	}
 	// the left channel's view is stale all the same: read again, it's
 	// fetched again
 	f0 := h.tt.ui.views.fetches.Load()
