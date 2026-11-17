@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -283,9 +284,87 @@ type Error struct {
 	// Body is the whole response (memory only): some errors carry details,
 	// e.g. views.submit's validation errors or blocks.actions' message.
 	Body json.RawMessage
+	// Status is the HTTP status the answer came with (Slack answers
+	// {"ok":false} with 200); 0 when it isn't known.
+	Status int
 }
 
 func (e *Error) Error() string { return "slack " + e.Method + ": " + e.Code }
+
+// HTTPError is a request answered with an HTTP error status (a Web API
+// call's 4xx or 5xx, a download's non-200). Its text is the one the client
+// has always reported.
+type HTTPError struct {
+	Method string // the Web API method; "" for a download
+	Status int
+	text   string
+}
+
+func (e *HTTPError) Error() string { return e.text }
+
+// NewHTTPError is an HTTPError with text, for a download made outside this
+// package (core.Fetch).
+func NewHTTPError(status int, text string) *HTTPError {
+	return &HTTPError{Status: status, text: text}
+}
+
+// FailureDetail describes a failed call for the log, with nothing the call
+// sent or got back beyond its outcome: Slack's error code and the HTTP
+// status for an {"ok":false} answer, the status for an HTTP error, else
+// what went wrong before an answer came (timeout, network error, refused,
+// …). Never a URL, a token or a body.
+func FailureDetail(err error) string {
+	var se *Error
+	var he *HTTPError
+	var ne net.Error
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.As(err, &se):
+		d := "error=" + logCode(se.Code)
+		if se.Status != 0 {
+			d += " http=" + strconv.Itoa(se.Status)
+		}
+		return d
+	case errors.As(err, &he):
+		return "http=" + strconv.Itoa(he.Status)
+	case errors.Is(err, RateLimited):
+		return "http=429 (rate limited)"
+	case errors.Is(err, ErrSignedOut):
+		return "signed out"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, ErrTooLarge):
+		return "response too large"
+	case errors.Is(err, ErrUntrustedHost), errors.Is(err, ErrNotAFile), errors.Is(err, ErrBlockedAddr):
+		return "refused (not a host Clack loads from)"
+	case errors.Is(err, ErrNotAllowed), errors.Is(err, ErrForbiddenMethod):
+		return "not allowed"
+	case errors.As(err, &ne) && ne.Timeout():
+		return "timeout"
+	case errors.As(err, &ne):
+		return "network error"
+	}
+	return "failed"
+}
+
+// logCode is a Slack error code as FailureDetail logs it: codes are
+// snake_case words, so anything else in one (it's the server's text) is
+// dropped, and it's cut at 64 bytes.
+func logCode(code string) string {
+	b := make([]byte, 0, min(len(code), 64))
+	for i := 0; i < len(code) && len(b) < 64; i++ {
+		if c := code[i]; c == '_' || c == '.' || c == '-' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+			b = append(b, c)
+		}
+	}
+	if len(b) == 0 {
+		return "?"
+	}
+	return string(b)
+}
 
 // RateLimited is returned when Slack answers 429 too many times in a row.
 var RateLimited = errors.New("slack: rate limited")
@@ -394,23 +473,44 @@ func (c *Client) callOn(ctx context.Context, method string, ent bool, params url
 }
 
 // CallMultipart invokes a Web API method with a multipart body: fields
-// plus one file part (fileField, filename, data). Routing and the
-// team/enterprise fallback are the same as Call.
+// plus one file part (fileField, filename, data; Content-Type
+// application/octet-stream). Routing and the team/enterprise fallback are
+// the same as Call.
 func (c *Client) CallMultipart(ctx context.Context, method string, fields url.Values, fileField, filename string, data []byte, out any) error {
+	return c.CallMultipartFile(ctx, method, fields, MultipartFile{Field: fileField, Name: filename, Data: data}, out)
+}
+
+// MultipartFile is CallMultipartFile's file part.
+type MultipartFile struct {
+	Field, Name string
+	// Type is the part's Content-Type, as a browser's FormData sends a
+	// File's type ("" is application/octet-stream).
+	Type string
+	Data []byte
+}
+
+// CallMultipartFile is CallMultipart with the file part's Content-Type.
+// A typed part's filename is escaped the way a browser's FormData escapes
+// it (", CR and LF percent-encoded).
+func (c *Client) CallMultipartFile(ctx context.Context, method string, fields url.Values, f MultipartFile, out any) error {
 	ent := c.useEnt(method)
-	err := c.multipartOn(ctx, method, ent, fields, fileField, filename, data, out)
+	err := c.multipartOn(ctx, method, ent, fields, f, out)
 	var se *Error
 	if c.Creds.EnterpriseToken != "" && errors.As(err, &se) &&
 		((!ent && se.Code == "team_is_restricted") || (ent && se.Code == "enterprise_is_restricted")) {
 		c.routeMu.Lock()
 		c.learned[method] = !ent
 		c.routeMu.Unlock()
-		err = c.multipartOn(ctx, method, !ent, fields, fileField, filename, data, out)
+		err = c.multipartOn(ctx, method, !ent, fields, f, out)
 	}
 	return err
 }
 
-func (c *Client) multipartOn(ctx context.Context, method string, ent bool, fields url.Values, fileField, filename string, data []byte, out any) error {
+// formDataName is a FormData filename as browsers write it (the HTML
+// multipart/form-data encoding: ", CR and LF percent-encoded).
+var formDataName = strings.NewReplacer(`"`, "%22", "\r", "%0D", "\n", "%0A")
+
+func (c *Client) multipartOn(ctx context.Context, method string, ent bool, fields url.Values, f MultipartFile, out any) error {
 	if refusedMethod(method) {
 		return ErrForbiddenMethod
 	}
@@ -426,11 +526,20 @@ func (c *Client) multipartOn(ctx context.Context, method string, ent bool, field
 			_ = mw.WriteField(k, v)
 		}
 	}
-	fw, err := mw.CreateFormFile(fileField, filename)
+	var fw io.Writer
+	var err error
+	if f.Type == "" {
+		fw, err = mw.CreateFormFile(f.Field, f.Name)
+	} else {
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", `form-data; name="`+formDataName.Replace(f.Field)+`"; filename="`+formDataName.Replace(f.Name)+`"`)
+		h.Set("Content-Type", f.Type)
+		fw, err = mw.CreatePart(h)
+	}
 	if err != nil {
 		return err
 	}
-	if _, err := fw.Write(data); err != nil {
+	if _, err := fw.Write(f.Data); err != nil {
 		return err
 	}
 	if err := mw.Close(); err != nil {
@@ -561,7 +670,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 			return scrubErr(err)
 		}
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
-			return fmt.Errorf("slack %s: http %d", method, resp.StatusCode)
+			return &HTTPError{Method: method, Status: resp.StatusCode, text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		// {"ok":true…: no need to parse the whole body (7 MB for
 		// emoji.list) just to read "ok"; the decode below validates it
@@ -574,7 +683,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 				return fmt.Errorf("slack %s: bad json: %w", method, err)
 			}
 			if head.OK != nil && !*head.OK {
-				return &Error{Method: method, Code: head.Error, Body: data}
+				return &Error{Method: method, Code: head.Error, Body: data, Status: resp.StatusCode}
 			}
 		}
 		if out == nil {
