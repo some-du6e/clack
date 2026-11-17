@@ -400,7 +400,10 @@ func TestSlickViewChannelListTyping(t *testing.T) {
 // the channel (handleDeepLink → Clack route) as a second tab.
 func TestSlickViewChatTabs(t *testing.T) {
 	e := newSV(t)
-	e.install("ChatTabs", nil)
+	// thread tabs as "Channel and thread pane" (a slack:// deep link): its
+	// default, "Thread only", dispatches Slack's navigate thunk to draw the
+	// thread in the primary view, which Clack has neither of
+	e.install("ChatTabs", map[string]any{"threadView": "channel"})
 	e.until(5*time.Second, "ChatTabs' patches", func() bool {
 		return slackc.Patched("ClientPrimaryView") && slackc.Patched("ConnectedChannel") &&
 			slackc.Patched("ChannelContextMenu") && slackc.Patched("ContextMenuTriggerWithKeyboardFocus")

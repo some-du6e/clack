@@ -109,6 +109,16 @@ func (b slBridge) Render(root uint64, name string, props []byte) {
 	b.Bridge.Render(root, name, props)
 }
 
+// RenderIn records a patched component a native draws inside another
+// patched root (mounted there as a portal: MAMenu's Menu inside
+// MessageActionsMenu's tree).
+func (b slBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	b.rec.mu.Lock()
+	b.rec.names[root] = name
+	b.rec.mu.Unlock()
+	b.Bridge.RenderIn(root, parent, parentK, name, props)
+}
+
 // rendered reports whether a boundary named name was mounted.
 func (r *slRec) rendered(name string) bool {
 	r.mu.Lock()
@@ -612,8 +622,11 @@ func TestSlickViewMessageLogger(t *testing.T) {
 	msg := core.Message{Channel: slGen, TS: slMsgTS, User: slBob, Text: "a synthetic message"}
 	m := NewMessageMenu(e.h, image.Pt(900, 200), msg)
 	if !actions {
+		// its Menu patch reads the rows its MessageActionsMenu patch puts in
+		// a context: Menu draws inside MAMenu inside MessageActionsMenu's
+		// tree (a portal there), so the context reaches it
 		slUntil(t, 15*time.Second, "Accept deletion in the message's ⋮ menu", slFrame(m), func() bool {
-			d := e.rec.dump("MessageActionsMenu")
+			d := e.rec.dump("Menu")
 			return strings.Contains(d, "Accept deletion") && strings.Contains(d, "[data-qa=slick_ml_accept_delete]") && slIndex(m.items, "plugin-row") >= 0
 		})
 		if i := slIndex(m.items, "plugin-row"); i < len(m.items)-1 {

@@ -14,7 +14,7 @@ package popups
 //
 // Clack's message menus (the More actions menu, the message context menu,
 // a search result's More actions) draw MAMenu as a boundary inside
-// MessageActionsMenu. Its actions are the native rows as Slack's
+// MessageActionsMenu, and Menu inside it. Its actions are the native rows as Slack's
 // descriptors ({id, name, icon, "data-qa", shortcut, disabled, danger,
 // submenuActions on the rows Slack gives them}), and the actions a patch
 // hands its <Original> are what the menu draws: groups reordered, renamed,
@@ -194,10 +194,13 @@ func (m *Menu) maProps() slackc.Props {
 }
 
 // layoutMAMenu is MAMenu's native: it draws the actions the patch passed
-// (p nil: the native rows) through MenuFromTemplate, as every Clack menu.
+// (p nil: the native rows) in Slack's Menu, as MAMenu renders <Menu
+// menuClassNames="p-message_actions_menu">{groups}</Menu> itself (no
+// MenuFromTemplate in a message menu: MenuFromTemplate patches don't
+// reach it in Slack either).
 func (m *Menu) layoutMAMenu(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	m.maApply(p)
-	return slackc.RenderLazy(gtx, "MenuFromTemplate", m.mftProps, m.layoutTemplate)
+	return slackc.RenderLazy(gtx, "Menu", m.menuProps, m.layoutMenu)
 }
 
 // maApply takes the actions a patched MAMenu rendered with as the menu's
@@ -234,7 +237,7 @@ func (m *Menu) maApply(p slackc.Props) {
 	m.maSet(trimSeps(out))
 }
 
-// maSet makes items the rows the menu's MenuFromTemplate gets.
+// maSet makes items the menu's rows (its Menu's children).
 func (m *Menu) maSet(items []MenuItem) {
 	m.orig, m.tplFrom = items, nil
 	m.setItems(items)

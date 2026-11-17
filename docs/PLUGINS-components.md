@@ -965,9 +965,11 @@ From the `slick` workflow's acceptance run over Slick @ f52d55d (53 plugins, bui
 | LocalTimeRow | LocalTime | pop |
 | MemberProfileBaseEntity | LocalTime | pop |
 | MemberSlug | MentionProfiles | msgs |
+| MAMenu | BetterMessageMenu, ChatTabs before #473 (by a filter on its source); Slick's own for `api.menu.addMessageActions` | pop |
 | Menu | AccountSwitcher, MessageLogger | pop |
 | Message | BetterBlock | msgs |
 | MessageActionsMenu | MessageLogger | pop |
+| OrganizeMessageActionsSubmenu | BetterMessageMenu (a context its submenu's MAMenu reads; Clack's Organize submenu is the `submenuActions` the root's MAMenu hands back, the same rows) | pop |
 | MessageAttachmentYouTube | DeArrow | msgs |
 | MessageFile | BetterBlock, MessageLogger | msgs |
 | MessageFiles | BetterBlock, MessageLogger | msgs |
@@ -1000,7 +1002,7 @@ Every name in §9 is a `slackc` boundary. "Empty" means Clack has no such surfac
 |---|---|---|
 | messages, richview | Message, ThreadReplyGeneric (row.go `layoutMessage`); BaseMessageAvatar (between MessageAvatar and ConnectedBaseAvatar, as child slots); MessageText (wraps MessageBlocks → Blocks); MessageFiles, MessageKitAttachments (`tailParts`, filter the body by id); MessageFile (richview `compFile`); ThreadReplies, ReplyBarAvatar (thread bar); MemberSlug (MemberLink's child slot); MessageAttachmentYouTube → AttachmentTitle (YouTube unfurls); MessageKitGutter, UnstyledButton (already wired) | BaseVisuallyHiddenMessageText, CodeChannelEntityCard |
 | composer | TextyAutocomplete, TextyInput (the `isTextyInput` filter target, shaped like Slack's class in taut's 04_react.js, fed by composer/plugins.js), SendButton, MultiFileUploadItem (pending files in `pendingFileUploads`; AnonymiseFileNames' toggle renames them through `updatePendingFile`/`maybePersistPendingFileData`); `currentUserEndedTyping` dispatched | FileFieldset, EditFileDialogTitle |
-| popups | ProfileHoverCard, MemberProfileBaseEntity, Presence, LocalTimeRow, Menu (inside MenuFromTemplate), MessageActionsMenu, ContextMenuTriggerWithKeyboardFocus (channel menu inside ChannelContextMenu), BaseSearch, SearchInputBox, SearchAutocomplete, GifListItem, GifPicker (real-source markers for `isGifPicker`), Content, AppDetailsOverflow; `openEditProfileModal` dispatched | EditProfileFormPane (mounted briefly on Edit profile), AboutPage |
+| popups | ProfileHoverCard, MemberProfileBaseEntity, Presence, LocalTimeRow, Menu (inside MenuFromTemplate), MessageActionsMenu > MAMenu (every message menu, actions_mamenu.go), ContextMenuTriggerWithKeyboardFocus (channel menu inside ChannelContextMenu), BaseSearch, SearchInputBox, SearchAutocomplete, GifListItem, GifPicker (real-source markers for `isGifPicker`), Content, AppDetailsOverflow; `openEditProfileModal` dispatched | EditProfileFormPane (mounted briefly on Edit profile), AboutPage |
 | views | ActivityThread, ActivityDM, ActivityRowContentMultiLine/SingleLine/Detailed/Dense, DmsList, DmsListItem, DmsChannel, PeopleGrid, HuddleInviteWindowWithPreviewContent (a live huddle's Join on the Huddles page); `startHuddle` dispatched (its native is Clack's native huddle) | — |
 | huddleui | HuddleMvaWindowTitle (the call window's title), HuddleBottomBarContent → HuddleRecordingIndicator (the call controls; the indicator at their left), BaseDrawRenderer (over a shared screen), HuddleMiniPanel (the sidebar's huddle bar). taut's `clientHuddles` slice and Slack's `ClientStoreContext` export carry the live call (CallTimer) | HuddleRecordingIndicator (Clack doesn't record), BaseDrawRenderer (Clack draws no annotations) |
 | shell (ui root) | ChannelSidebar, ConnectedChannel → Channel (the sidebar row; real-source marker for `isSidebarChannel`) → ChannelContextMenu → ContextMenuTriggerWithKeyboardFocus → ListChannelEntity + BaseChannelSuffix, ClientPrimaryView → RenderedViewContents (see below) | ProgressiveDisclosureSuccessCoachmarkWrapper |
