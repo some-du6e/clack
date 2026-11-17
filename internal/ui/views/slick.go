@@ -198,7 +198,7 @@ func (r *actRow) threadMsg(ts string) *core.Message {
 	if it.Root != nil && it.Root.TS == ts {
 		return it.Root
 	}
-	if m, src := r.v.msgFor(actMsgKey{it.Channel, ts}, nil); src != 0 {
+	if m, src := r.v.msgFor(actMsgKey{it.Channel, ts}, nil, 0); src != 0 {
 		return m
 	}
 	if r.tm != nil && r.tm.TS == ts && r.tm.Channel == it.Channel {

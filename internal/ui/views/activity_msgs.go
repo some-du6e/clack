@@ -400,21 +400,23 @@ func (v *Activity) unbuildMsg(k actMsgKey) {
 }
 
 // msgFor is the copy of k a row draws in this frame, and where it's from
-// (actRow.liSrc): a list's on screen, else the newest Activity holds
-// (nil: deleted, or none exists), else item's own (feed, 0).
-func (v *Activity) msgFor(k actMsgKey, feed *core.Message) (*core.Message, uint64) {
+// (actRow.liSrc): a list's on screen, else the newest by core's order of
+// the copies Activity holds and the item's own (feed, current as of
+// change seq: source 0); nil when deleted, or none exists. Another
+// item's copy or a change's takes the item's place only when newer.
+func (v *Activity) msgFor(k actMsgKey, feed *core.Message, seq uint64) (*core.Message, uint64) {
 	m := &v.msgs
 	if h, ok := m.hub[k]; ok && h.frame.Equal(m.last) {
 		return h.m, h.rev
 	}
-	f, fok := m.feed[k]
-	if o, ok := m.own[k]; ok && o.seq > f.seq {
+	best, bestSeq, src := feed, seq, uint64(0)
+	if f, ok := m.feed[k]; ok && f.seq > seq && f.m != feed && (f.m != nil || f.gone) {
+		best, bestSeq, src = f.m, f.seq, actFeedSrc|f.seq
+	}
+	if o, ok := m.own[k]; ok && o.seq > bestSeq {
 		return o.m, actOwnSrc | o.seq
 	}
-	if fok && f.m != feed && (f.m != nil || f.gone) {
-		return f.m, actFeedSrc | f.seq
-	}
-	return feed, 0
+	return best, src
 }
 
 // rowItem is it as row r shows it (getMessageFromActivityItem): its
@@ -429,11 +431,11 @@ func (v *Activity) rowItem(r *actRow, it *core.ActivityItem) *core.ActivityItem 
 	}
 	msg, root := it.Msg, it.Root
 	if k, _, ok := actMsgRef(it); ok {
-		msg, r.liSrc[0] = v.msgFor(k, it.Msg)
+		msg, r.liSrc[0] = v.msgFor(k, it.Msg, it.MsgSeq)
 		r.msgGone = msg == nil && (r.liSrc[0] != 0 || it.MsgGone)
 	}
 	if k, ok := actRootRef(it); ok {
-		root, r.liSrc[1] = v.msgFor(k, it.Root)
+		root, r.liSrc[1] = v.msgFor(k, it.Root, it.MsgSeq)
 	}
 	if r.liSrc == [2]uint64{} {
 		return it
