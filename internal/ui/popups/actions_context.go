@@ -65,17 +65,23 @@ func NewMessageContextMenu(h Host, at image.Point, m core.Message, where Message
 		wrap["threadTs"] = m.ThreadTS
 	}
 	return NewMenuOpts(h, items, MenuOpts{Anchor: a, Within: "MessageActionsMenu", WithinProps: p,
-		Wraps: []MenuWrap{{Name: "MessageActionsContextMenu", Props: wrap}}})
+		Wraps:  []MenuWrap{{Name: "MessageActionsContextMenu", Props: wrap}},
+		MAMenu: MessageActionsProps(p, "context")})
 }
 
+// ctxContainer is Slack's messageContainerType for a message menu's
+// container (client-boot ipGw: MESSAGE_PANE "Channel", THREAD "Thread",
+// THREADS_VIEW "Threads"; SEARCH "search" is newSearchResultMenu's), what
+// a message action provider sees in MAMenu's props and onSelectAction's
+// context.
 func ctxContainer(where MessageContext) string {
 	switch where {
 	case InThread:
-		return "thread"
+		return "Thread"
 	case InThreadsView:
-		return "threads_view"
+		return "Threads"
 	}
-	return "message_pane"
+	return "Channel"
 }
 
 // ctxHoverItems is the context menu's first group (kctM for "context"):
@@ -88,7 +94,7 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// a comment thread's root takes none in its thread (ThreadRootCanvas)
 	react := !m.System && (h.Core() == nil || h.Core().CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
 	if react {
-		items = append(items, MenuItem{Label: "Add reaction…", Icon: "add-reaction", Hint: nsMessage.T("R"), Keys: KeyReact, Do: func() {
+		items = append(items, MenuItem{Action: "add_reaction", Label: "Add reaction…", Icon: "add-reaction", Hint: nsMessage.T("R"), Keys: KeyReact, Do: func() {
 			h.ShowOverlay(NewReactionPicker(h, at, ch, ts, m.ThreadTS, nil))
 		}}.In(nsMessage))
 	}
@@ -101,7 +107,7 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 		case m.ReplyCount > 0 || isReply:
 			label = "Reply to thread"
 		}
-		items = append(items, MenuItem{Label: label, Icon: "threads", Hint: nsMessage.T("T"), Keys: KeyComment, Do: func() {
+		items = append(items, MenuItem{Action: "comment", Label: label, Icon: "threads", Hint: nsMessage.T("T"), Keys: KeyComment, Do: func() {
 			if o.OnReply != nil {
 				o.OnReply()
 				return
@@ -117,14 +123,16 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 	// toolbar's label, its F or S hint, and no row when Slack has none;
 	// its id is share_message whatever the label (lq1n)
 	if sa, ok := ShareAction(h.Core(), &m, where == InThread); ok {
-		items = append(items, MenuItem{Key: "share_message", Label: sa.Label, Icon: "forward-msg", Hint: nsMessage.T(sa.Hint), Keys: KeyShare, Do: func() {
+		items = append(items, MenuItem{Key: "share_message", Action: "share_message", Label: sa.Label, Icon: "forward-msg", Hint: nsMessage.T(sa.Hint), Keys: KeyShare, Do: func() {
 			h.ShowOverlay(NewForwardModal(h, m))
 		}}.In(nsMessage))
 	}
 	// the to-do action (Yoyn, actions_todo.go): "Complete to-do" on a
-	// to-do, else "Add to-do"
+	// to-do, else "Add to-do", one action id for both (boot-shared:
+	// `{id: addToLaterTodos, name: S ? "Complete to-do" : "Add to-do"}`;
+	// clear_later_todo is Slack's separate, danger "Clear to-do")
 	ta := TodoActionFor(h.Core(), &m)
-	todo := MenuItem{Label: ta.Label, Icon: ta.MenuIcon, Hint: nsSaved.T("A"), Keys: KeyLaterTodos}.In(nsSaved)
+	todo := MenuItem{Action: "add_to_later_todos", Label: ta.Label, Icon: ta.MenuIcon, Hint: nsSaved.T("A"), Keys: KeyLaterTodos}.In(nsSaved)
 	todo.Do = func() {
 		if o.OnTodo != nil {
 			o.OnTodo()

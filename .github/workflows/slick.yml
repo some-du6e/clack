@@ -27,8 +27,15 @@ on:
 
 # Slick is third-party code (GPLv3) built and run here: by default CI uses the
 # reviewed commit SLICK_PIN; dispatch with ref=main (or any ref) to test upstream.
+# b6392ab (2026-11-17, Slick #473 and #472) reviewed from f52d55d: new npm
+# registry deps only (lockfile integrity hashes, installed with
+# --ignore-scripts), the build's new step runs `git tag` / `git show` on the
+# clone (scripts/lib/changelog.ts), and the new main halves run in Clack's
+# MainCtx, which has no node:http, child_process or fs writes: SlickMCP's
+# local HTTP server can't start there (its main half fails, and says so),
+# and SelfCare's badge and audio muting are accepted and change nothing.
 env:
-  SLICK_PIN: f52d55dbd458feb0d6cd77136c6ab07c4a727a5a
+  SLICK_PIN: b6392ababb7ad5206ed0f9e44feebfe729d0aa8e
 
 permissions:
   contents: read

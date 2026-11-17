@@ -100,6 +100,7 @@ type testUI struct {
 	panes     []string
 	attached  *Bridge
 	prefsOpen []string
+	links     []string // slack:// links UIHooks.DeepLink opened
 	// invalidations counts UIHooks.Invalidate calls (a redraw asked for)
 	invalidations atomic.Int64
 }
@@ -134,6 +135,7 @@ func (u *testUI) hooks() UIHooks {
 			u.mu.Unlock()
 		},
 		OpenPreferences: func(tab string) { u.mu.Lock(); u.prefsOpen = append(u.prefsOpen, tab); u.mu.Unlock() },
+		DeepLink:        func(uri string) bool { u.mu.Lock(); u.links = append(u.links, uri); u.mu.Unlock(); return true },
 		ThreadPane: func(op, ch, ts, arg string) any {
 			u.mu.Lock()
 			u.panes = append(u.panes, op+":"+ch+"/"+ts+":"+arg)

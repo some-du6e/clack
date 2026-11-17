@@ -115,8 +115,9 @@ type Slick struct {
 	userCSS string
 	themes  map[string]Theme
 	queues  map[string]*sync.Mutex
-	rt      *jsrt.Runtime // the runtime the prelude is in (nil until a plugin needs JS)
-	route   [2]string     // team, channel the UI shows
+	rt      *jsrt.Runtime   // the runtime the prelude is in (nil until a plugin needs JS)
+	panels  map[string]bool // api.settings.panel: the plugins with a panel (slick_panels)
+	route   [3]string       // team, channel, thread the UI shows
 	dark    atomic.Bool
 	styled  string // the theme CSS last handed to the UI
 
@@ -266,11 +267,11 @@ func (s *Slick) js() (*jsrt.Runtime, error) {
 		for _, p := range s.plugins {
 			p.inJS, p.mainInJS = false, false
 		}
-		team, ch := s.route[0], s.route[1]
+		team, ch, th := s.route[0], s.route[1], s.route[2]
 		s.mu.Unlock()
 		s.setPage(rt)
 		if team != "" {
-			s.post(rt, "setRoute", team, ch)
+			s.post(rt, "setRoute", team, ch, th)
 		}
 		return rt, nil
 	}
@@ -304,6 +305,7 @@ func (s *Slick) ready(rt *jsrt.Runtime, restarted bool) {
 		p.running, p.mainRunning = false, false
 	}
 	s.rt = nil
+	s.panels = nil // the panels were the old runtime's; restarted plugins set theirs again
 	s.mu.Unlock()
 	if len(restart) > 0 {
 		log.Printf("slick: the JS runtime restarted; restarting %d plugins", len(restart))
@@ -313,6 +315,32 @@ func (s *Slick) ready(rt *jsrt.Runtime, restarted bool) {
 		s.reconcile(ctx, id)
 		cancel()
 	}
+}
+
+// setPanels records which plugins have an api.settings.panel (slick_panels).
+func (s *Slick) setPanels(m map[string]bool) {
+	s.mu.Lock()
+	same := len(m) == len(s.panels)
+	for id := range m {
+		if !s.panels[id] {
+			same = false
+		}
+	}
+	s.panels = m
+	s.mu.Unlock()
+	if !same {
+		s.changed()
+	}
+}
+
+// RenderPanel mounts plugin id's api.settings.panel into slackc root, once
+// per plugin: its Preferences > Slick page draws it in a "Customize" card
+// after its settings while PluginInfo.Panel says it has one, as Slick's
+// settings.tsx does. The root follows the plugin setting a new panel and
+// renders it again when plugins start, stop or change settings, as
+// Slick's page does, keeping its React state.
+func (s *Slick) RenderPanel(root uint64, id string) {
+	s.t.Bridge().Mount(root, "slickPanelElement", id)
 }
 
 // call runs __slick.<fn>(args…) and decodes its result into out.
@@ -337,19 +365,21 @@ func (s *Slick) post(rt *jsrt.Runtime, fn string, args ...any) {
 	}()
 }
 
-// SetRoute tells plugins which workspace and conversation the window shows
-// (location.pathname /client/<team>/<channel>: channels.getCurrentChannelId,
-// the active team). Cheap when no plugin runs.
-func (s *Slick) SetRoute(team, channel string) {
+// SetRoute tells plugins which workspace, conversation and thread the
+// window shows (location.pathname /client/<team>/<channel>:
+// channels.getCurrentChannelId, the active team; Slack's view state for
+// the thread: Taut's setView). Cheap when no plugin runs.
+func (s *Slick) SetRoute(team, channel, thread string) {
 	s.mu.Lock()
-	changed := s.route != [2]string{team, channel}
-	s.route = [2]string{team, channel}
+	moved := s.route[0] != team || s.route[1] != channel
+	changed := s.route != [3]string{team, channel, thread}
+	s.route = [3]string{team, channel, thread}
 	rt := s.rt
 	s.mu.Unlock()
 	if changed && rt != nil {
-		s.post(rt, "setRoute", team, channel)
+		s.post(rt, "setRoute", team, channel, thread)
 	}
-	if changed {
+	if moved {
 		go s.reconcileAll(context.Background()) // workspace restrictions
 	}
 }

@@ -70,7 +70,28 @@ func (f JSFunc) CallEvent(ev Props, done func(stopped bool)) {
 	}
 }
 
+// CallTruthy calls the JS function with args as Slack calls a handler
+// whose return value decides what runs next (TruthyBridge): done hears, on
+// any goroutine, whether it returned something truthy or threw, and err
+// when no runtime answered (ErrNoRuntime without a TruthyBridge). The
+// window is invalidated after.
+func (f JSFunc) CallTruthy(done func(truthy, threw bool, err error), args ...any) {
+	b := bridge()
+	tb, ok := b.(TruthyBridge)
+	if f.ID == 0 || b == nil || !ok {
+		done(false, false, errNoBridge)
+		return
+	}
+	tb.CallTruthy(f.ID, encodeArgs(args), func(truthy, threw bool, err error) {
+		done(truthy, threw, err)
+		invalidate()
+	})
+}
+
 var errNoBridge = errors.New("slackc: no plugin runtime")
+
+// ErrNoRuntime is what a call hears when no plugin runtime can answer.
+var ErrNoRuntime = errNoBridge
 
 // Element is a React element passed as a prop ({"$el":[…]}), e.g. a
 // Tooltip's tip; lay it out with Host.Element.

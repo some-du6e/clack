@@ -323,7 +323,7 @@ func TestMainHalfSender(t *testing.T) {
 	if err := h.s.SetEnabled(h.ctx(), "SenderProbe", true); err != nil {
 		t.Fatal(err)
 	}
-	h.s.SetRoute(teamID, chGen)
+	h.s.SetRoute(teamID, chGen, "")
 	eventually(t, 3*time.Second, "route", func() bool { return h.jsBool(`return location.pathname.endsWith('/` + chGen + `')`) })
 	var r struct {
 		Probe struct {
@@ -458,7 +458,7 @@ func TestThemeBeforeUserCSS(t *testing.T) {
 
 func TestLocalConfigAndRoute(t *testing.T) {
 	h := newHarness(t)
-	h.s.SetRoute(teamID, chGen)
+	h.s.SetRoute(teamID, chGen, "")
 	var r struct {
 		Team    string `json:"team"`
 		User    string `json:"user"`
@@ -584,8 +584,10 @@ return ReduxProbe;
 `
 
 // Slick's redux.ts (THUNK_WAIT_MS): dispatching a thunk Slack never defines
-// rejects after 30 s instead of hanging (QuickJoin's joinCodeChannel
-// fallback stuck on "Joining…", ChatTabs' navigate).
+// rejects after 30 s instead of hanging. Clack defines every thunk it has
+// when its runtime starts, so one it doesn't have rejects at once, with
+// Slick's error (ChatTabs' tab bar sat locked for the 30 s; QuickJoin's
+// joinCodeChannel fallback stuck on "Joining…"). navigate is Clack's now.
 func TestDispatchThunkTimesOutLikeSlick(t *testing.T) {
 	h := newHarness(t)
 	mustImport(t, h, reduxPlugin)
@@ -596,33 +598,35 @@ func TestDispatchThunkTimesOutLikeSlick(t *testing.T) {
 		Default  int
 		Dispatch string
 		Wait     string
-		Late     any
+		Ms       int
 		Known    string
+		Navigate string
 	}
 	h.jsInto(`
 		const r = globalThis.__probeRedux
 		const out = { Default: S.thunkWaitMs }
-		S.thunkWaitMs = 50
+		const t0 = Date.now()
 		try { await r.dispatchThunk('joinCodeChannel', { channelId: 'C1' }); out.Dispatch = 'resolved' } catch (e) { out.Dispatch = e.message }
-		try { await r.waitForThunkCreator('navigate'); out.Wait = 'resolved' } catch (e) { out.Wait = e.message }
-		// a thunk defined while waiting still resolves, and its timer doesn't fire later
-		S.thunkWaitMs = 5000
-		const late = r.dispatchThunk('slickProbeLate', 6)
-		T.defineThunk('slickProbeLate', ([n]) => n + 1)
-		out.Late = await late
+		try { await r.waitForThunkCreator('openInSlackbotView'); out.Wait = 'resolved' } catch (e) { out.Wait = e.message }
+		out.Ms = Date.now() - t0
 		out.Known = typeof (await r.waitForThunkCreator('joinChannel'))
-		S.thunkWaitMs = 30000
+		out.Navigate = typeof (await r.waitForThunkCreator('navigate'))
 		return out`, &got)
 	if got.Default != 30000 {
 		t.Errorf("default wait %d ms, Slick's is 30000", got.Default)
 	}
-	if got.Dispatch != "[slick] timed out waiting for Slack thunk: joinCodeChannel" {
+	// a thunk Clack doesn't define fails at once, saying so (Slick's
+	// "timed out" is for a wait that ran out)
+	if got.Dispatch != "[slick] Clack has no Slack thunk joinCodeChannel" {
 		t.Errorf("dispatchThunk: %q", got.Dispatch)
 	}
-	if got.Wait != "[slick] timed out waiting for Slack thunk: navigate" {
+	if got.Wait != "[slick] Clack has no Slack thunk openInSlackbotView" {
 		t.Errorf("waitForThunkCreator: %q", got.Wait)
 	}
-	if got.Late != float64(7) || got.Known != "function" {
-		t.Errorf("late %v, known %q", got.Late, got.Known)
+	if got.Ms > 2000 {
+		t.Errorf("an unknown thunk took %d ms to reject: it waited", got.Ms)
+	}
+	if got.Known != "function" || got.Navigate != "function" {
+		t.Errorf("known %q, navigate %q", got.Known, got.Navigate)
 	}
 }
