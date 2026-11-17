@@ -179,8 +179,13 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+gtx.Dp(1), ring)
 		theme.RRect(gtx, r, rad, bg)
 	} else {
-		theme.RRect(gtx, r, rad, bg)
-		theme.Border(gtx, r, rad, max(1, gtx.Dp(1)), line)
+		// the border inside the box (box-sizing: border-box), the box's
+		// background under it (background-clip's border-box): its band,
+		// then the background within it at radius 8 - 1, where
+		// theme.Border would stroke across the edge, half outside
+		w := max(1, gtx.Dp(1))
+		theme.RRect(gtx, r, rad, line)
+		theme.RRect(gtx, r.Inset(w), rad-w, bg)
 	}
 	// the box focuses the input (handleClick); the editor, laid out on
 	// top, takes the presses over the text itself
@@ -231,11 +236,13 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 
 // sbFilterBox is the box's fill and border: .c-filter_input--themed in
 // the sidebar's scope, theme-surf-inv-sec over the sidebar and a
-// theme-otl-inv-pry border, the account theme's sidebar fields (lilac in
-// the default inverted scope, white and the primary's ramp in a light
+// theme-otl-inv-pry border over that fill (the border's band has the
+// box's background under it), the account theme's sidebar fields (lilac
+// in the default inverted scope, white and the primary's ramp in a light
 // one, the gray-0 tint and the primary's dark ramp in dark mode).
 func (a *App) sbFilterBox() (bg, line color.NRGBA) {
-	return theme.Over(a.th.C.SidebarBg, a.sbBase), theme.Over(a.th.C.SidebarDivider, a.sbBase)
+	bg = theme.Over(a.th.C.SidebarBg, a.sbBase)
+	return bg, theme.Over(a.th.C.SidebarDivider, bg)
 }
 
 // sidebarFilterFocused is the input's onFocus: with m2 on and sidebar.dms

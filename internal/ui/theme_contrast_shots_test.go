@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -158,12 +159,21 @@ func TestThemeContrastShots(t *testing.T) {
 }
 
 // useAccountTheme puts ia_theme ia ("" none) and the mode in place and
-// waits until the palette has the theme's colours: core's own
-// users.prefs answer can land after the test's and put fakeslack's
-// (no theme) back, and a custom colour's fields are computed off the UI
-// goroutine (theme.FieldsAsync), so it applies them again until both hold.
+// waits until the palette has the theme's colours. It saves ia to the
+// account first (core's SetPref, users.prefs.set as Preferences writes
+// it): every snapshot core builds applies the account's prefs again
+// (backend.apply), and fakeslack's own ia_theme, Slack's default, came
+// back with the next one. A custom colour's fields are computed off the
+// UI goroutine (theme.FieldsAsync), so it applies the theme until both
+// hold.
 func (e *perfEnv) useAccountTheme(ia string, dark bool) {
 	want, set := theme.ParseIATheme(ia)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := e.a.Core().SetPref(ctx, "ia_theme", ia)
+	cancel()
+	if err != nil {
+		e.tb.Fatalf("users.prefs.set ia_theme: %v", err)
+	}
 	e.setDark(dark)
 	e.until("the account theme's colours", 20*time.Second, func() bool {
 		if e.a.acct.set != set || e.a.acct.t != want {

@@ -80,7 +80,9 @@ func (e *perfEnv) tcShot(t *testing.T) *image.RGBA {
 // sidebar's pagesDivider (rgba(var(--sk_foreground_low), .13), Slack Kit's
 // 232,232,232 under .sk-client-theme--dark and --light-inverted-sidebar,
 // 29,28,29 at a light root), the sidebar filter box (.c-filter_input--themed:
-// theme-surf-inv-sec over the sidebar, a theme-otl-inv-pry border) and the
+// theme-surf-inv-sec over the sidebar; its 1px theme-otl-inv-pry border
+// inside the 28px box, over that fill, so the box's top row is the
+// border's colour) and the
 // app menu button (Slack desktop's window-chrome-app-menu: white at .15 on
 // :hover and .2 on :active in every theme, not the history buttons'
 // theme-surf-inv-pry / -inv-sec tiles). Karim's #FED4BE as Slack's picker
@@ -142,8 +144,15 @@ func TestAccountThemeDrawSites(t *testing.T) {
 				if got, want := img.RGBAAt(bx+gtx.Dp(100), by+gtx.Dp(3)), theme.Over(c.boxBg, a.sbBase); !tcNear(got, want, 2) {
 					t.Errorf("filter box fill %s; Slack theme-surf-inv-sec %v over the sidebar = %s", tcHex(tcNRGBA(got)), c.boxBg, tcHex(want))
 				}
-				if got, want := img.RGBAAt(bx+gtx.Dp(100), by), theme.Over(c.boxEdg, a.sbBase); !tcNear(got, want, 3) {
-					t.Errorf("filter box border %s; Slack theme-otl-inv-pry %v over the sidebar = %s", tcHex(tcNRGBA(got)), c.boxEdg, tcHex(want))
+				fill := theme.Over(c.boxBg, a.sbBase)
+				if got, want := img.RGBAAt(bx+gtx.Dp(100), by), theme.Over(c.boxEdg, fill); !tcNear(got, want, 2) {
+					t.Errorf("filter box border (its top row) %s; Slack theme-otl-inv-pry %v over the box's fill %s = %s", tcHex(tcNRGBA(got)), c.boxEdg, tcHex(fill), tcHex(want))
+				}
+				// the row above is the sidebar's, as the one above that (the
+				// gradient moves less than a level in 2px): no half of a
+				// stroke across the edge
+				if got, sb := img.RGBAAt(bx+gtx.Dp(100), by-1), img.RGBAAt(bx+gtx.Dp(100), by-3); !tcNear(got, tcNRGBA(sb), 2) {
+					t.Errorf("above the filter box %s; Slack's border stays inside the box: the sidebar %s", tcHex(tcNRGBA(got)), tcHex(tcNRGBA(sb)))
 				}
 			} else {
 				t.Log("sidebar_text_filter off for the fake account: no filter box")
