@@ -120,8 +120,15 @@ func TestCollectStrokeHole(t *testing.T) {
 			defer op.Affine(tr).Push(o).Pop()
 			ring(o)
 		})
-		if len(d.pathOps) != 1 || !d.pathOps[0].hole.Empty() || len(d.imageOps) != 1 {
-			t.Errorf("under %v: paths %v, %d ops, want one path with no hole, one op", tr, d.pathOps, len(d.imageOps))
+		// (the paint gets a clip path of its own there too, Gio's
+		// transformed rectangle)
+		for _, p := range d.pathOps {
+			if !p.hole.Empty() {
+				t.Errorf("under %v: a path has the hole %v", tr, p.hole)
+			}
+		}
+		if len(d.imageOps) != 1 {
+			t.Errorf("under %v: the ring drawn in %d ops, want 1", tr, len(d.imageOps))
 		}
 	}
 }
