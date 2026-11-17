@@ -276,6 +276,11 @@ type latPass struct {
 	// before each own send, d of work queued on the plugin runtime's JS
 	// thread (busyJS tasks), as when plugins re-render rows
 	busyJS func(d time.Duration)
+	// pluginSend: plugins check and wrap the send in JS (OwlMode's send
+	// check and prepareAndSendMessage patch), and patch the composer, whose
+	// re-render after Enter the JS thread may be busy with when the send's
+	// calls come: an own message may take one frame more
+	pluginSend bool
 }
 
 // run draws frames as the window does while the pass's messages go out
@@ -520,16 +525,20 @@ func latReport(t *testing.T, ps latPass, ws []*latWait, enforce bool) map[string
 		// the Enter key, whatever plugins check it first (a frame the
 		// socket's traffic asks for in between counts too, so only the
 		// quiet passes)
+		maxFrames, median := 2, latMedianBudget
+		if kind == "own" && ps.pluginSend {
+			maxFrames, median = 3, latMedianBudget+idleprobe.Vsync
+		}
 		if kind == "own" && !ps.busy {
 			for n, k := range st.Frames {
-				if n > 2 {
-					t.Errorf("%s, own: %d sends drew their pending copy %d frames after the one that took the Enter key, want 1", ps.name, k, n-1)
+				if n > maxFrames {
+					t.Errorf("%s, own: %d sends drew their pending copy %d frames after the one that took the Enter key, want at most %d", ps.name, k, n-1, maxFrames-1)
 				}
 			}
 		}
-		if st.Median > ms(latMedianBudget) || st.P90 > ms(latP90Budget) || st.Max > ms(latMaxBudget) {
+		if st.Median > ms(median) || st.P90 > ms(latP90Budget) || st.Max > ms(latMaxBudget) {
 			t.Errorf("%s, %s: event to row median %.1f ms, p90 %.1f ms, max %.1f ms; Slack draws it the next frame (budget: median %.0f, p90 %.0f, max %.0f ms)",
-				ps.name, kind, st.Median, st.P90, st.Max, ms(latMedianBudget), ms(latP90Budget), ms(latMaxBudget))
+				ps.name, kind, st.Median, st.P90, st.Max, ms(median), ms(latP90Budget), ms(latMaxBudget))
 		}
 	}
 	return out

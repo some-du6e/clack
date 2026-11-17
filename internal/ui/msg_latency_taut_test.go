@@ -102,6 +102,7 @@ return LatencySendCheck
 		}
 	}})
 	for _, ps := range passes {
+		ps.pluginSend = true
 		res[ps.name] = latReport(t, ps, p.run(ps), true)
 	}
 	latWrite(t, "TestTautMessageLatency", res)

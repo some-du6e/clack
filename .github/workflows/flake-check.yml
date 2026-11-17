@@ -1271,7 +1271,7 @@ jobs:
           go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestHistoryCatchesUpWithLatest)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^TestSetLatestSinceKeepsLiveMessages$' ./internal/store || rc=1
           go test -count=$COUNT -v -run '^TestUserBlockingRunsFirst$' ./internal/jsrt || rc=1
-          go test -count=$COUNT -v -run '^TestSendCheckAheadOfJSBacklog$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -run '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame)$' ./internal/ui/composer || rc=1
           exit $rc
       - name: "ui: event to row, without plugins; a new sender's notification names them; an app's message stays in the list"
         if: ${{ !cancelled() }}
