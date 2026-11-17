@@ -131,6 +131,20 @@ func (r *slRec) rendered(name string) bool {
 	return false
 }
 
+// raw is the trees delivered for roots rendering name, as JS sent them.
+func (r *slRec) raw(name string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var b strings.Builder
+	for root, n := range r.names {
+		if n == name {
+			b.Write(r.trees[root])
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
 // trees returns the host trees delivered for roots rendering name.
 func (r *slRec) treesOf(name string) [][]*slackc.Node {
 	r.mu.Lock()

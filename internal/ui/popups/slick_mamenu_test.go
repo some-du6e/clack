@@ -122,7 +122,7 @@ func TestMessageMenuAddedActions(t *testing.T) {
 			t.Errorf("native row %s gone: %s", k, maKeys(m.items))
 		}
 	}
-	if !e.rec.rendered("MAMenu") || !strings.Contains(e.rec.dump("MAMenu"), "Act one") {
+	if !strings.Contains(e.rec.raw("MAMenu"), `"name":"Act one"`) {
 		t.Error("MAMenu's tree doesn't carry the action")
 	}
 
