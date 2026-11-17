@@ -30,12 +30,15 @@ import (
 // clip path on every op over one stencil region or not
 // (gpu.ClackLegacyClips, Gio patches 38 and 39). The same frame (state,
 // time) is laid out each way and drawn, light and dark, at 1x and 2x, a
-// channel and a channel with its thread open, and in Karim's window
-// (costKarim). It logs the draw calls, the graphics API calls (and those
-// the backend's state cache left out, Gio patch 37), the paths built,
-// the stencil, cover and cleared pixels, the frame's time to the end of
-// its rasterization, and the pixels that differ. CLACK_GPU_COST=1
-// (flake-check's gpu-cost job, on each OS's GPU backend).
+// channel and a channel with its thread open, and at Karim's window size
+// with Slack's default theme and with his (costKarim). It logs the draw
+// calls, the graphics API calls (and those the backend's state cache left
+// out, Gio patch 37), the paths built, the stencil, cover and cleared
+// pixels, the frame's time from layout to the end of its rasterization,
+// and the pixels that differ: new against old, each half alone against
+// old, and the old way against itself with every path moved in the atlas
+// (its noise floor). CLACK_GPU_COST=1 (flake-check's gpu-cost job, on each
+// OS's GPU backend).
 func TestFrameCostWindow(t *testing.T) {
 	if os.Getenv("CLACK_GPU_COST") == "" {
 		t.Skip("CLACK_GPU_COST not set (flake-check's gpu-cost job runs this)")
@@ -52,15 +55,18 @@ func TestFrameCostWindow(t *testing.T) {
 		fs.PostReplyQuiet(ch, root, users[1+i%3], fmt.Sprintf("reply %d, long enough to wrap the thread pane's line at least once or twice", i))
 	}
 	for _, c := range []struct {
-		name  string
-		scale float32
-		dp    image.Point
-		modes []bool // dark
-		theme string // the account's ia_theme ("": fakeslack's)
+		name    string
+		scale   float32
+		dp      image.Point
+		modes   []bool // dark
+		threads []bool
+		theme   string // the account's ia_theme ("": fakeslack's)
 	}{
-		{"1x", 1, image.Pt(1280, 800), []bool{false, true}, ""},
-		{"2x", 2, image.Pt(1280, 800), []bool{false, true}, ""},
-		{"karim 1x", 1, image.Pt(1918, 1080), []bool{false}, costKarim},
+		{"1x", 1, image.Pt(1280, 800), []bool{false, true}, []bool{false, true}, ""},
+		{"2x", 2, image.Pt(1280, 800), []bool{false, true}, []bool{false, true}, ""},
+		// Karim's window size with Slack's default theme, then his theme
+		{"1918 1x", 1, image.Pt(1918, 1080), []bool{false}, []bool{false}, ""},
+		{"karim 1x", 1, image.Pt(1918, 1080), []bool{false}, []bool{false, true}, costKarim},
 	} {
 		if c.theme != "" {
 			fs.SetPrefs(map[string]any{"ia_theme": c.theme})
@@ -79,7 +85,7 @@ func TestFrameCostWindow(t *testing.T) {
 		for _, dark := range c.modes {
 			e.a.setDark(dark)
 			e.settle(2 * time.Second)
-			for _, thread := range []bool{false, true} {
+			for _, thread := range c.threads {
 				if thread {
 					e.a.OpenThread(ch, root)
 					e.until("the thread pane", 20*time.Second, func() bool { return e.a.secondary.kind == secThread })
@@ -91,8 +97,8 @@ func TestFrameCostWindow(t *testing.T) {
 				}
 				e.costSettle(t, name)
 				now := time.Now()
-				old, so, to := e.costFrame(t, true, 0, now, true)
-				cur, sn, tn := e.costFrame(t, false, 0, now, true)
+				old, so, to := e.costFrame(t, costOld, 0, now, true)
+				cur, sn, tn := e.costFrame(t, costNew, 0, now, true)
 				t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
 				t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
 				// the noise floor: the old way with every path moved in
@@ -100,7 +106,7 @@ func TestFrameCostWindow(t *testing.T) {
 				var worst *image.RGBA
 				var floorN, floorMax int
 				for sh := 1; sh <= 3; sh++ {
-					moved, _, _ := e.costFrame(t, true, sh, now, false)
+					moved, _, _ := e.costFrame(t, costOld, sh, now, false)
 					n, m := costCount(old, moved)
 					t.Logf("%s, the old way after a transparent %v path first: %s", name, costShift(sh, e.size).Size(), costDiff(old, moved))
 					if n > floorN {
@@ -108,12 +114,23 @@ func TestFrameCostWindow(t *testing.T) {
 					}
 					floorMax = max(floorMax, m)
 				}
-				moved, _, _ := e.costFrame(t, false, 3, now, false)
+				moved, _, _ := e.costFrame(t, costNew, 3, now, false)
 				t.Logf("%s, the new way after a transparent %v path first: %s", name, costShift(3, e.size).Size(), costDiff(cur, moved))
 				n, m := costCount(old, cur)
 				t.Logf("%s, new against old: %s; the old way's own floor: up to %d px, max %d", name, costDiff(old, cur), floorN, floorMax)
 				if n > 0 && m > floorMax {
 					t.Logf("%s: new against old differs by %d levels, more than the %d the old way's floor shows", name, m, floorMax)
+				}
+				// which half makes the difference: the theme's drawing
+				// (rings, panel fill, cached shapes) or Gio's clips
+				// (patches 38 and 39)
+				themeOnly, _, _ := e.costFrame(t, costMode{clips: true}, 0, now, false)
+				clipsOnly, _, _ := e.costFrame(t, costMode{theme: true}, 0, now, false)
+				t.Logf("%s, the new theme drawing alone against old: %s", name, costDiff(old, themeOnly))
+				t.Logf("%s, Gio's new clips alone against old: %s", name, costDiff(old, clipsOnly))
+				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" && m > floorMax {
+					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-clips", old, clipsOnly)
+					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-theme", old, themeOnly)
 				}
 				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
 					costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)
@@ -148,10 +165,10 @@ const costKarim = `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highli
 // and stats: its paths built are the ones the frame before didn't leave
 // in Gio's path cache. If timed, it also returns the median time of 5
 // more frames from layout to the end of their rasterization (else 0).
-func (e *perfEnv) costFrame(t *testing.T, legacy bool, shift int, now time.Time, timed bool) (*image.RGBA, gpu.FrameStats, float64) {
+func (e *perfEnv) costFrame(t *testing.T, mode costMode, shift int, now time.Time, timed bool) (*image.RGBA, gpu.FrameStats, float64) {
 	t.Helper()
-	theme.SetLegacyFrameCost(legacy)
-	gpu.ClackLegacyClips(legacy)
+	theme.SetLegacyFrameCost(mode.theme)
+	gpu.ClackLegacyClips(mode.clips)
 	defer theme.SetLegacyFrameCost(false)
 	defer gpu.ClackLegacyClips(false)
 	w := e.gpu
@@ -202,6 +219,16 @@ func (e *perfEnv) costFrame(t *testing.T, legacy bool, shift int, now time.Time,
 	return img, st, ms[len(ms)/2]
 }
 
+// costMode says which halves costFrame draws the old way: the theme's
+// rings, panel fill and shapes (theme.SetLegacyFrameCost), Gio's clips
+// (gpu.ClackLegacyClips).
+type costMode struct{ theme, clips bool }
+
+var (
+	costOld = costMode{theme: true, clips: true}
+	costNew = costMode{}
+)
+
 // costShift is the transparent path costFrame draws first: none, a tiny
 // one, a third of the window and nearly all of it, all of odd sizes, so
 // the paths after it move by odd amounts too.
@@ -222,11 +249,14 @@ func costShift(shift int, size image.Point) image.Rectangle {
 // (images, replies and members load in the background).
 func (e *perfEnv) costSettle(t *testing.T, name string) {
 	t.Helper()
+	// nothing hovered: a hover's delay runs on the wall clock, and a slow
+	// frame (llvmpipe at 2x) gives it time to fire mid-measurement
+	e.movePtr(image.Pt(-10, -10))
 	for try := 0; try < 6; try++ {
 		at := time.Now()
-		a, _, _ := e.costFrame(t, false, 0, at, false)
+		a, _, _ := e.costFrame(t, costNew, 0, at, false)
 		e.settle(time.Second)
-		b, _, _ := e.costFrame(t, false, 0, at, false)
+		b, _, _ := e.costFrame(t, costNew, 0, at, false)
 		if string(a.Pix) == string(b.Pix) {
 			return
 		}

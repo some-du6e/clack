@@ -269,6 +269,66 @@ func TestClackPlacementNoise(t *testing.T) {
 	g2, sg2 := twice(true)
 	t.Logf("400 rounded rects at their place vs cached at the origin, translated: %s", diffStats(g, g2, all))
 	t.Logf("  the second frame built %d paths (%d KB) recorded where drawn, %d (%d KB) cached", sg.PathsBuilt, sg.PathBytes/1024, sg2.PathsBuilt, sg2.PathBytes/1024)
+
+	// thin strokes (icons) inside a big rounded clip: the old way (an
+	// intersection with the clip's path each), the new way (the clip left
+	// off inside its interior, patch 38), each against the same strokes
+	// with no clip at all; that frame again after one more path drawn
+	// first is the floor
+	icons := func(o *op.Ops) {
+		col := color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff}
+		for k := 0; k < 200; k++ {
+			x := 320 + (k%20)*50
+			y := 100 + (k/20)*70
+			paint.FillShape(o, col, clip.Stroke{Path: clip.Ellipse(image.Rect(x, y, x+14+k%5, y+14+k%5)).Path(o), Width: 1.5}.Op())
+			paint.FillShape(o, col, clip.Stroke{Path: clip.UniformRRect(image.Rect(x+20, y, x+36, y+16), 3).Path(o), Width: 1.5}.Op())
+			var p clip.Path
+			p.Begin(o)
+			cx, cy := float32(x)+8.3, float32(y)+32.6
+			for i := 0; i <= 16; i++ {
+				a := float64(i) * math.Pi / 8
+				r := float32(7)
+				if i%2 == 1 {
+					r = 5
+				}
+				pt := f32.Pt(cx+r*float32(math.Cos(a)), cy+r*float32(math.Sin(a)))
+				if i == 0 {
+					p.MoveTo(pt)
+				} else {
+					p.LineTo(pt)
+				}
+			}
+			p.Close()
+			paint.FillShape(o, col, clip.Stroke{Path: p.End(), Width: 1.5}.Op())
+		}
+	}
+	irr := clip.UniformRRect(image.Rect(300, 80, w-60, h-60), 24)
+	iconScene := func(clipped, dummy bool) func(o *op.Ops) {
+		return func(o *op.Ops) {
+			bg(o)
+			if dummy {
+				paint.FillShape(o, color.NRGBA{}, clip.Ellipse(image.Rect(1, 1, 427, 301)).Op(o))
+			}
+			paint.FillShape(o, white1, clip.Rect(irr.Rect).Op())
+			if clipped {
+				st := irr.Push(o)
+				icons(o)
+				st.Pop()
+				return
+			}
+			icons(o)
+		}
+	}
+	gpu.ClackLegacyClips(true)
+	iOld, _ := shot(iconScene(true, false))
+	iRef, _ := shot(iconScene(false, false))
+	iRef2, _ := shot(iconScene(false, true))
+	gpu.ClackLegacyClips(false)
+	iNew, _ := shot(iconScene(true, false))
+	t.Logf("icons in a rounded clip, the old way (an intersection each) against no clip: %s", diffStats(iRef, iOld, all))
+	t.Logf("  the new way (the clip left off inside) against no clip: %s", diffStats(iRef, iNew, all))
+	t.Logf("  no clip after one more path first (the floor): %s", diffStats(iRef, iRef2, all))
+	t.Logf("  the old way's worst: %s", worstPixels(iRef, iOld, all, 4))
 }
 
 // plainRRect is rr's path built as a plain path: the same curves, no
