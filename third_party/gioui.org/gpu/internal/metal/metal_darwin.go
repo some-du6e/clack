@@ -661,9 +661,10 @@ type uniformBinding struct {
 }
 
 // same reports whether the stage, reading the bytes in r of data, would
-// see what it was last sent.
+// see what it was last sent, and the bytes bound are as long as data (the
+// shader's argument struct may reach past the last member it reads).
 func (u *uniformBinding) same(data []byte, r [2]int) bool {
-	return u.set && u.buf == 0 && len(u.bytes) >= r[1] && len(data) >= r[1] && string(u.bytes[r[0]:r[1]]) == string(data[r[0]:r[1]])
+	return u.set && u.buf == 0 && len(u.bytes) >= len(data) && len(data) >= r[1] && string(u.bytes[r[0]:r[1]]) == string(data[r[0]:r[1]])
 }
 
 func (u *uniformBinding) sent(data []byte) {
@@ -1120,7 +1121,7 @@ func (b *Backend) Viewport(x, y, width, height int) {
 		znear:   0.0,
 		zfar:    1.0,
 	}
-	if b.enc.hasViewport && b.enc.viewport == v {
+	if driver.ClackStateCache && b.enc.hasViewport && b.enc.viewport == v {
 		b.calls.Skipped++
 		return
 	}
@@ -1288,7 +1289,7 @@ func (b *Backend) PrepareTexture(tex driver.Texture) {}
 func (b *Backend) BindTexture(unit int, tex driver.Texture) {
 	t := tex.(*Texture)
 	if enc := b.renderEnc; enc != 0 {
-		if b.enc.tex[unit] == t.texture {
+		if driver.ClackStateCache && b.enc.tex[unit] == t.texture {
 			b.calls.Skipped++
 		} else {
 			b.enc.tex[unit] = t.texture
@@ -1300,7 +1301,7 @@ func (b *Backend) BindTexture(unit int, tex driver.Texture) {
 				b.calls.Crossings++
 			}
 		}
-		if b.enc.sampler[unit] == t.sampler {
+		if driver.ClackStateCache && b.enc.sampler[unit] == t.sampler {
 			b.calls.Skipped++
 		} else {
 			b.enc.sampler[unit] = t.sampler
@@ -1337,7 +1338,7 @@ func (b *Backend) BindPipeline(pipe driver.Pipeline) {
 		panic("no active render pass")
 	}
 	b.topology = p.topology
-	if b.enc.pipeline == p {
+	if driver.ClackStateCache && b.enc.pipeline == p {
 		b.calls.Skipped++
 		return
 	}
@@ -1397,12 +1398,13 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 	}
 	p := b.enc.pipeline
 	vert, frag := true, true
-	if p != nil {
+	cache := driver.ClackStateCache
+	if p != nil && cache {
 		vert, frag = p.vertUniforms[1] > 0, p.fragUniforms[1] > 0
 	}
 	if bf.buffer != 0 {
 		if vert {
-			if u := &b.enc.vertUniforms; u.set && u.buf == bf.buffer {
+			if u := &b.enc.vertUniforms; cache && u.set && u.buf == bf.buffer {
 				b.calls.Skipped++
 			} else {
 				b.calls.API++
@@ -1416,7 +1418,7 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 			}
 		}
 		if frag {
-			if u := &b.enc.fragUniforms; u.set && u.buf == bf.buffer {
+			if u := &b.enc.fragUniforms; cache && u.set && u.buf == bf.buffer {
 				b.calls.Skipped++
 			} else {
 				b.calls.API++
@@ -1432,7 +1434,7 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 	} else if bf.size > 0 {
 		data := bf.store[:bf.size]
 		if vert {
-			if p != nil && b.enc.vertUniforms.same(data, p.vertUniforms) {
+			if cache && p != nil && b.enc.vertUniforms.same(data, p.vertUniforms) {
 				b.calls.Skipped++
 			} else {
 				b.calls.API++
@@ -1448,7 +1450,7 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 			b.calls.Skipped++
 		}
 		if frag {
-			if p != nil && b.enc.fragUniforms.same(data, p.fragUniforms) {
+			if cache && p != nil && b.enc.fragUniforms.same(data, p.fragUniforms) {
 				b.calls.Skipped++
 			} else {
 				b.calls.API++
@@ -1476,11 +1478,12 @@ func (b *Backend) BindVertexBuffer(buf driver.Buffer, offset int) {
 		panic("no active render pass")
 	}
 	v := &b.enc.vert
+	cache := driver.ClackStateCache
 	if bf.buffer != 0 {
 		switch {
-		case v.buf == bf && v.off == offset:
+		case cache && v.buf == bf && v.off == offset:
 			b.calls.Skipped++
-		case v.buf == bf:
+		case cache && v.buf == bf:
 			b.calls.API++
 			if b.batch {
 				b.record(cmdVertBufferOffset, attributeBufferIndex, uint64(offset))
@@ -1499,7 +1502,7 @@ func (b *Backend) BindVertexBuffer(buf driver.Buffer, offset int) {
 		}
 		v.buf, v.off = bf, offset
 	} else if n := bf.size - offset; n > 0 {
-		if v.buf == bf && v.off == offset && v.gen == bf.gen {
+		if cache && v.buf == bf && v.off == offset && v.gen == bf.gen {
 			b.calls.Skipped++
 			return
 		}

@@ -97,8 +97,9 @@ type FBO struct {
 	size image.Point
 	tex  driver.Texture
 	// idle counts the frames in a row this texture was more than twice
-	// the size its page needed, or wasn't needed (Clack patch 40)
-	idle int
+	// the size its page needed, unused the frames in a row its page
+	// wasn't needed at all (Clack patch 40)
+	idle, unused int
 }
 
 // fboIdleFrames is how long a texture may stay much bigger than needed, or
@@ -264,6 +265,7 @@ func (s *fboSet) resize(ctx driver.Device, format driver.TextureFormat, sizes []
 	// Resize fbos.
 	for i, sz := range sizes {
 		f := &s.fbos[i]
+		f.unused = 0
 		// Resizing or recreating FBOs can introduce rendering stalls.
 		// Clack patch 40: the waste check here could never trip (needed
 		// over current is at most 1 when it fits), so an atlas page kept
@@ -306,9 +308,10 @@ func (s *fboSet) resize(ctx driver.Device, format driver.TextureFormat, sizes []
 	// textures each time).
 	n := len(s.fbos)
 	for i := len(sizes); i < n; i++ {
-		s.fbos[i].idle++
+		s.fbos[i].unused++
+		s.fbos[i].idle = 0
 	}
-	for n > len(sizes) && s.fbos[n-1].idle >= fboIdleFrames {
+	for n > len(sizes) && s.fbos[n-1].unused >= fboIdleFrames {
 		n--
 	}
 	s.delete(ctx, n)

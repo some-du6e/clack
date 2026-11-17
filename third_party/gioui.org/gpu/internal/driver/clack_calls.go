@@ -24,3 +24,10 @@ type Calls struct {
 // commands and run them in one cgo call when the pass ends (Clack patch
 // 37). Tests turn it off to compare; set it between frames.
 var ClackBatchCommands = true
+
+// ClackStateCache makes the Metal, Direct3D 11 and OpenGL backends leave
+// out a call that sets state the API has already (Clack patch 37). Off,
+// they make every call Gio made: the same draws in the same order, so a
+// frame must come out the same either way, which tests check. The state
+// is kept either way, so it can be set between any two frames.
+var ClackStateCache = true

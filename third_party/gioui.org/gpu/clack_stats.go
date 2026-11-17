@@ -41,8 +41,11 @@ type FrameStats struct {
 	// IntersectPx the fragments of the intersection passes, ClearPx the
 	// atlas and layer pixels cleared for their passes.
 	StencilPx, CoverPx, BlitPx, IntersectPx, ClearPx int64
-	// AtlasPx is the size of the coverage and intersection atlases.
-	AtlasPx int64
+	// AtlasPx is the size of the coverage and intersection atlases,
+	// LayerPx of the opacity layers' pages; LayerPages are the layer
+	// pages the frame drew into.
+	AtlasPx, LayerPx int64
+	LayerPages       int
 }
 
 // ClackStats reports the last frame's stats.
@@ -54,6 +57,14 @@ type ClackStats interface {
 }
 
 func (g *gpu) ClackFrameStats() FrameStats { return g.stats }
+
+// ClackStateCaches turns the backends' state caches and Metal's command
+// batching (Clack patch 37) on or off, for tests checking that they leave
+// every pixel as it is. Call it between frames.
+func ClackStateCaches(on bool) {
+	driver.ClackStateCache = on
+	driver.ClackBatchCommands = on
+}
 
 func (g *gpu) ClackStatsDetail(on bool) {
 	if g.drawOps.statsDetail == on {
@@ -91,6 +102,10 @@ func (g *gpu) statsEnd() {
 	for _, f := range r.pather.stenciler.intersections.fbos {
 		st.AtlasPx += int64(f.size.X * f.size.Y)
 	}
+	for _, f := range r.layerFBOs.fbos {
+		st.LayerPx += int64(f.size.X * f.size.Y)
+	}
+	st.LayerPages = len(r.layers.sizes)
 	g.stats = st
 }
 

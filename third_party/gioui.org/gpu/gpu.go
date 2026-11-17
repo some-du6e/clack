@@ -145,6 +145,9 @@ type pathOp struct {
 	// interior is where the path covers every pixel fully, in window
 	// coordinates; empty if not known (Clack patch 38)
 	interior image.Rectangle
+	// hole is where the path, a stroke, covers no pixel, in window
+	// coordinates; empty if not known (Clack patch 42)
+	hole image.Rectangle
 	// more are the path's other stencil regions (Clack patch 39): clip
 	// and place are its first.
 	more []pathRegion
@@ -178,7 +181,7 @@ func (p *pathOp) addRegion(r image.Rectangle) {
 		p.clip = r
 		return
 	}
-	if clackLegacyClips {
+	if clackLegacy.regions {
 		p.clip = p.clip.Union(r)
 		return
 	}
@@ -227,17 +230,85 @@ func (p *pathOp) region(r image.Rectangle) (image.Rectangle, placement) {
 // a text run inside a rounded panel is one path instead of an
 // intersection of two, and p isn't stenciled for it.
 func (p *pathOp) covers(r image.Rectangle) bool {
-	return p.path && !p.interior.Empty() && r.In(p.interior) && !clackLegacyClips
+	return p.path && !p.interior.Empty() && r.In(p.interior) && !clackLegacy.interiors
 }
 
-// clackLegacyClips keeps every clip path on every op it clips and
-// stencils it over one region, as Gio did before Clack patches 38 and 39.
-var clackLegacyClips bool
+// clackLegacy turns parts of Clack's renderer changes off, so tests can
+// compare the old way and the new: interiors keeps every clip path on
+// every op it clips (patch 38), regions stencils a path in one region
+// around all its ops (39), splits draws every op in one piece (42),
+// layers gives every nested opacity layer a page of its own (40).
+var clackLegacy struct{ interiors, regions, splits, layers bool }
 
 // ClackLegacyClips turns the renderer's clip handling from before Clack
-// patches 38 and 39 on or off, for tests comparing the two. Call it
+// patches 38, 39 and 42 on or off, for tests comparing the two. Call it
 // between frames.
-func ClackLegacyClips(on bool) { clackLegacyClips = on }
+func ClackLegacyClips(on bool) { ClackLegacyParts(on, on, on) }
+
+// ClackLegacyParts sets the old way of patches 38 (interiors), 39
+// (regions) and 42 (splits) each on its own. Call it between frames.
+func ClackLegacyParts(interiors, regions, splits bool) {
+	clackLegacy.interiors, clackLegacy.regions, clackLegacy.splits = interiors, regions, splits
+}
+
+// ClackLegacyLayers turns patch 40's sharing of atlas pages by the
+// opacity layers of one depth off (on: every nested layer gets a page of
+// its own, as before). Call it between frames.
+func ClackLegacyLayers(on bool) { clackLegacy.layers = on }
+
+// splitMin is how many pixels a split must leave out of a stencil or
+// draw unclipped to be worth the ops it adds (Clack patch 42).
+const splitMin = 32 << 10
+
+// splitOp is the parts an op drawn in b through the clip path p should be
+// drawn in (Clack patch 42), if any: around p's hole, where a stroke
+// covers nothing, without what's inside it, or around and inside p's
+// interior, which patch 38 then draws with p left off. The parts are
+// whole pixels in window space and tile b (minus the hole), so every
+// pixel is drawn once with the coverage it had: a split made of clips
+// would blend twice where two parts' antialiased edges meet, under any
+// transform but an integer offset, and only there do paths have a hole or
+// an interior. Only a uniform colour can be drawn in parts as it is.
+func splitOp(p *pathOp, b image.Rectangle, m materialType) (parts [5]image.Rectangle, n int) {
+	if clackLegacy.splits || m != materialColor {
+		return parts, 0
+	}
+	if p != nil && p.path && !p.hole.Empty() {
+		if h := p.hole.Intersect(b); area(h) >= splitMin {
+			return around(b, h)
+		}
+	}
+	for ; p != nil; p = p.parent {
+		if !p.path || p.interior.Empty() {
+			continue
+		}
+		in := p.interior.Intersect(b)
+		if in == b || area(in) < splitMin {
+			return parts, 0
+		}
+		parts, n = around(b, in)
+		parts[n] = in
+		return parts, n + 1
+	}
+	return parts, 0
+}
+
+// around is the parts of b outside h, which lies in b: the rows above and
+// below h, the width of b, and the columns left and right of h, its height.
+func around(b, h image.Rectangle) (parts [5]image.Rectangle, n int) {
+	for _, r := range [...]image.Rectangle{
+		{Min: b.Min, Max: image.Pt(b.Max.X, h.Min.Y)},
+		{Min: image.Pt(b.Min.X, h.Min.Y), Max: image.Pt(h.Min.X, h.Max.Y)},
+		{Min: image.Pt(h.Max.X, h.Min.Y), Max: image.Pt(b.Max.X, h.Max.Y)},
+		{Min: image.Pt(b.Min.X, h.Max.Y), Max: b.Max},
+	} {
+		if !r.Empty() {
+			parts[n] = r
+			n++
+		}
+	}
+	return parts, n
+}
 
 type imageOp struct {
 	path     *pathOp
@@ -261,14 +332,20 @@ func decodeStrokeOp(data []byte) float32 {
 type quadsOp struct {
 	key opKey
 	aux []byte
-	// interior is the next clip's (Clack patch 38)
-	interior image.Rectangle
+	// interior is the next clip's (Clack patch 38), hole its stroke's
+	// (42)
+	interior, hole image.Rectangle
 }
 
 type opKey struct {
 	outline        bool
 	strokeWidth    float32
 	sx, hx, sy, hy float32
+	// ox, oy are the fraction of a pixel the offset leaves after
+	// transformOffset takes its whole pixels: built into the vertices, so
+	// a path at another fraction is built again (Clack patch 42; Gio
+	// reused the vertices of the first fraction it drew a path at)
+	ox, oy float32
 	ops.Key
 }
 
@@ -795,11 +872,13 @@ func createColorPrograms(b driver.Device, vsSrc shader.Sources, fsSrc [3]shader.
 }
 
 func (r *renderer) stencilClips(pathCache *opCache, ops []*pathOp) {
+	// the pages are sized, and aged, even in a frame that needs none
+	// (Clack patch 40: an idle page goes after fboIdleFrames)
+	r.pather.begin(r.packer.sizes)
 	if len(r.packer.sizes) == 0 {
 		return
 	}
 	fbo := -1
-	r.pather.begin(r.packer.sizes)
 	for _, p := range ops {
 		v, _ := pathCache.get(p.pathKey)
 		// the path in each of its regions (Clack patch 39), in the order
@@ -849,11 +928,11 @@ func (r *renderer) prepareIntersections(ops []imageOp) {
 }
 
 func (r *renderer) intersect(ops []imageOp) {
+	r.pather.stenciler.beginIntersect(r.intersections.sizes) // aged too (patch 40)
 	if len(r.intersections.sizes) == 0 {
 		return
 	}
 	fbo := -1
-	r.pather.stenciler.beginIntersect(r.intersections.sizes)
 	for _, img := range ops {
 		if img.clipType != clipTypeIntersection {
 			continue
@@ -992,7 +1071,9 @@ func (r *renderer) packLayers(layers []opacityLayer) []opacityLayer {
 			r.layers.newPage()
 			// Clack patch 40: depth stayed 0, so every nested layer got a
 			// page (an FBO and a render pass) of its own
-			depth = l.depth
+			if !clackLegacy.layers {
+				depth = l.depth
+			}
 		}
 		place, ok := r.layers.add(l.clip.Size())
 		if !ok {
@@ -1006,11 +1087,11 @@ func (r *renderer) packLayers(layers []opacityLayer) []opacityLayer {
 }
 
 func (r *renderer) drawLayers(layers []opacityLayer, ops []imageOp) {
+	r.layerFBOs.resize(r.ctx, driver.TextureFormatSRGBA, r.layers.sizes) // aged too (patch 40)
 	if len(r.layers.sizes) == 0 {
 		return
 	}
 	fbo := -1
-	r.layerFBOs.resize(r.ctx, driver.TextureFormatSRGBA, r.layers.sizes)
 	for _, l := range slices.Backward(layers) {
 
 		if l.opStart >= l.opEnd || l.opEnd > len(ops) {
@@ -1115,7 +1196,7 @@ func (d *drawOps) newPathOp() *pathOp {
 	return &d.pathOpCache[len(d.pathOpCache)-1]
 }
 
-func (d *drawOps) addClipPath(state *drawState, aux []byte, auxKey opKey, bounds f32.Rectangle, off f32.Point, interior image.Rectangle) {
+func (d *drawOps) addClipPath(state *drawState, aux []byte, auxKey opKey, bounds f32.Rectangle, off f32.Point, interior, hole image.Rectangle) {
 	npath := d.newPathOp()
 	*npath = pathOp{
 		parent:    state.cpath,
@@ -1124,6 +1205,7 @@ func (d *drawOps) addClipPath(state *drawState, aux []byte, auxKey opKey, bounds
 		intersect: bounds.Add(off),
 		rect:      true,
 		interior:  interior,
+		hole:      hole,
 	}
 	if npath.parent != nil {
 		npath.rect = npath.parent.rect
@@ -1149,11 +1231,12 @@ func (d *drawOps) save(id int, state f32.Affine2D) {
 }
 
 func (k opKey) SetTransform(t f32.Affine2D) opKey {
-	sx, hx, _, hy, sy, _ := t.Elems()
+	sx, hx, ox, hy, sy, oy := t.Elems()
 	k.sx = sx
 	k.hx = hx
 	k.hy = hy
 	k.sy = sy
+	k.ox, k.oy = ox, oy
 	return k
 }
 
@@ -1217,17 +1300,25 @@ loop:
 
 		case ops.TypeClipInterior:
 			quads.interior = ops.DecodeClipInterior(encOp.Data)
+		case ops.TypeClipHole:
+			quads.hole = ops.DecodeClipHole(encOp.Data)
 		case ops.TypeClip:
 			var op ops.ClipOp
 			op.Decode(encOp.Data)
 			quads.key.outline = op.Outline
 			bounds := f32.FRect(op.Bounds)
 			trans, off := transformOffset(state.t)
-			// the interior holds under an integer offset only (Clack
-			// patch 38)
-			var interior image.Rectangle
-			if !quads.interior.Empty() && len(quads.aux) > 0 && trans == f32.AffineId() {
-				interior = quads.interior.Add(image.Pt(int(off.X), int(off.Y)))
+			// the interior and the hole hold under an integer offset
+			// only (Clack patches 38, 42)
+			var interior, hole image.Rectangle
+			if len(quads.aux) > 0 && trans == f32.AffineId() {
+				o := image.Pt(int(off.X), int(off.Y))
+				if !quads.interior.Empty() {
+					interior = quads.interior.Add(o)
+				}
+				if !quads.hole.Empty() {
+					hole = quads.hole.Add(o)
+				}
 			}
 			if len(quads.aux) > 0 {
 				// There is a clipping path, build the gpu data and update the
@@ -1253,7 +1344,7 @@ loop:
 				quads.key = opKey{Key: encOp.Key}
 				quads.key = quads.key.SetTransform(trans)
 			}
-			d.addClipPath(&state, quads.aux, quads.key, bounds, off, interior)
+			d.addClipPath(&state, quads.aux, quads.key, bounds, off, interior, hole)
 			quads = quadsOp{}
 		case ops.TypePopClip:
 			state.cpath = state.cpath.parent
@@ -1298,7 +1389,7 @@ loop:
 				// this transformed rectangle.
 				k := opKey{Key: encOp.Key}
 				k = k.SetTransform(t)
-				d.addClipPath(&state, clipData, k, bnd, off, image.Rectangle{})
+				d.addClipPath(&state, clipData, k, bnd, off, image.Rectangle{}, image.Rectangle{})
 			}
 
 			bounds := cl.Round()
@@ -1334,7 +1425,16 @@ loop:
 				}
 			}
 
-			d.imageOps = append(d.imageOps, img)
+			if parts, n := splitOp(img.path, img.clip, mat.material); n > 0 {
+				// in whole-pixel parts (Clack patch 42)
+				for _, c := range parts[:n] {
+					part := img
+					part.clip = c
+					d.imageOps = append(d.imageOps, part)
+				}
+			} else {
+				d.imageOps = append(d.imageOps, img)
+			}
 			if clipData != nil {
 				// we added a clip path that should not remain
 				state.cpath = state.cpath.parent

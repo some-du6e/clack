@@ -55,17 +55,9 @@ type Backend struct {
 type glState struct {
 	drawFBO     gl.Framebuffer
 	readFBO     gl.Framebuffer
-	vertAttribs [5]struct {
-		obj        gl.Buffer
-		enabled    bool
-		size       int
-		typ        gl.Enum
-		normalized bool
-		stride     int
-		offset     uintptr
-	}
-	prog     gl.Program
-	texUnits struct {
+	vertAttribs [5]vertAttrib
+	prog        gl.Program
+	texUnits    struct {
 		active gl.Enum
 		binds  [2]gl.Texture
 	}
@@ -358,14 +350,7 @@ func (b *Backend) queryState() glState {
 	}
 	s.activeTexture(b.funcs, active)
 	for i := range s.vertAttribs {
-		a := &s.vertAttribs[i]
-		a.enabled = b.funcs.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_ENABLED) != gl.FALSE
-		a.obj = gl.Buffer(b.funcs.GetVertexAttribBinding(i, gl.VERTEX_ATTRIB_ARRAY_ENABLED))
-		a.size = b.funcs.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_SIZE)
-		a.typ = gl.Enum(b.funcs.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_TYPE))
-		a.normalized = b.funcs.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_NORMALIZED) != gl.FALSE
-		a.stride = b.funcs.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_STRIDE)
-		a.offset = b.funcs.GetVertexAttribPointer(i, gl.VERTEX_ATTRIB_ARRAY_POINTER)
+		s.vertAttribs[i] = queryVertAttrib(b.funcs, i)
 	}
 	return s
 }
@@ -423,7 +408,7 @@ func (s *glState) setVertexAttribArray(f *gl.Functions, idx int, enabled bool) {
 // there already (Clack patch 37); it reports whether it called OpenGL.
 func (s *glState) vertexAttribPointer(f *gl.Functions, buf gl.Buffer, idx, size int, typ gl.Enum, normalized bool, stride, offset int) bool {
 	a := &s.vertAttribs[idx]
-	if !a.obj.Equal(gl.Buffer{}) && a.obj.Equal(buf) && a.size == size && a.typ == typ && a.normalized == normalized && a.stride == stride && a.offset == uintptr(offset) {
+	if driver.ClackStateCache && a.points(buf, size, typ, normalized, stride, offset) {
 		return false
 	}
 	s.bindBuffer(f, gl.ARRAY_BUFFER, buf)
@@ -467,6 +452,47 @@ func (s *glState) deleteFramebuffer(f *gl.Functions, fbo gl.Framebuffer) {
 	if fbo.Equal(s.readFBO) {
 		s.readFBO = gl.Framebuffer{}
 	}
+}
+
+// vertAttrib is a vertex attribute's state.
+type vertAttrib struct {
+	obj        gl.Buffer
+	enabled    bool
+	size       int
+	typ        gl.Enum
+	normalized bool
+	stride     int
+	offset     uintptr
+}
+
+// attribQuerier reads vertex attributes' state (*gl.Functions does).
+type attribQuerier interface {
+	GetVertexAttrib(index int, pname gl.Enum) int
+	GetVertexAttribBinding(index int, pname gl.Enum) gl.Object
+	GetVertexAttribPointer(index int, pname gl.Enum) uintptr
+}
+
+// queryVertAttrib is attribute i's state as OpenGL has it. The buffer it
+// points into is VERTEX_ATTRIB_ARRAY_BUFFER_BINDING's: Gio read
+// VERTEX_ATTRIB_ARRAY_ENABLED there, so an enabled attribute seemed to
+// point into buffer 1, and Clack patch 37 trusts the buffer to leave a
+// call out.
+func queryVertAttrib(q attribQuerier, i int) vertAttrib {
+	return vertAttrib{
+		enabled:    q.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_ENABLED) != gl.FALSE,
+		obj:        gl.Buffer(q.GetVertexAttribBinding(i, gl.VERTEX_ATTRIB_ARRAY_BUFFER_BINDING)),
+		size:       q.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_SIZE),
+		typ:        gl.Enum(q.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_TYPE)),
+		normalized: q.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_NORMALIZED) != gl.FALSE,
+		stride:     q.GetVertexAttrib(i, gl.VERTEX_ATTRIB_ARRAY_STRIDE),
+		offset:     q.GetVertexAttribPointer(i, gl.VERTEX_ATTRIB_ARRAY_POINTER),
+	}
+}
+
+// points reports whether the attribute points into buf as given already:
+// a buffer it points into (none is unknown) and the same format.
+func (a *vertAttrib) points(buf gl.Buffer, size int, typ gl.Enum, normalized bool, stride, offset int) bool {
+	return !a.obj.Equal(gl.Buffer{}) && a.obj.Equal(buf) && a.size == size && a.typ == typ && a.normalized == normalized && a.stride == stride && a.offset == uintptr(offset)
 }
 
 func (s *glState) deleteBuffer(f *gl.Functions, b gl.Buffer) {
@@ -1059,7 +1085,7 @@ func (p *uniforms) update(funcs *gl.Functions, buf *buffer) (skipped int64) {
 		if u.typ == shader.DataTypeFloat && u.size >= 1 && u.size <= 4 {
 			var v [4]uint32
 			copy(v[:u.size], unsafe.Slice((*uint32)(unsafe.Pointer(unsafe.SliceData(data))), u.size))
-			if u.set && v == u.last {
+			if driver.ClackStateCache && u.set && v == u.last {
 				skipped++
 				continue
 			}

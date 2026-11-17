@@ -611,7 +611,7 @@ func (b *Backend) Viewport(x, y, width, height int) {
 		MinDepth: 0.0,
 		MaxDepth: 1.0,
 	}
-	if b.set.hasViewport && b.set.viewport == v {
+	if driver.ClackStateCache && b.set.hasViewport && b.set.viewport == v {
 		b.calls.Skipped++
 		return
 	}
@@ -641,28 +641,29 @@ func (b *Backend) prepareDraw() {
 		return
 	}
 	s := &b.set
-	if s.vs != p.vert {
+	c := driver.ClackStateCache
+	if !c || s.vs != p.vert {
 		b.ctx.VSSetShader(p.vert)
 		s.vs = p.vert
 		b.calls.API++
 	} else {
 		b.calls.Skipped++
 	}
-	if s.ps != p.frag {
+	if !c || s.ps != p.frag {
 		b.ctx.PSSetShader(p.frag)
 		s.ps = p.frag
 		b.calls.API++
 	} else {
 		b.calls.Skipped++
 	}
-	if p.layout == nil || s.layout != p.layout {
+	if !c || p.layout == nil || s.layout != p.layout {
 		b.ctx.IASetInputLayout(p.layout)
 		s.layout = p.layout
 		b.calls.API++
 	} else {
 		b.calls.Skipped++
 	}
-	if s.blend != p.blend {
+	if !c || s.blend != p.blend {
 		b.ctx.OMSetBlendState(p.blend, nil, 0xffffffff)
 		s.blend = p.blend
 		b.calls.API++
@@ -671,7 +672,7 @@ func (b *Backend) prepareDraw() {
 	}
 	if vb := b.vert.buffer; vb != nil {
 		stride, off := uint32(p.stride), uint32(b.vert.offset)
-		if s.vbuf != vb.buf || s.vstride != stride || s.voff != off {
+		if !c || s.vbuf != vb.buf || s.vstride != stride || s.voff != off {
 			b.ctx.IASetVertexBuffers(vb.buf, stride, off)
 			s.vbuf, s.vstride, s.voff = vb.buf, stride, off
 			b.calls.API++
@@ -688,7 +689,7 @@ func (b *Backend) prepareDraw() {
 	default:
 		panic("unsupported draw mode")
 	}
-	if s.topology != topology {
+	if !c || s.topology != topology {
 		b.ctx.IASetPrimitiveTopology(topology)
 		s.topology = topology
 		b.calls.API++
@@ -765,14 +766,14 @@ func (b *Backend) BindTexture(unit int, tex driver.Texture) {
 		b.calls.API += 2
 		return
 	}
-	if s := &b.set.samplers[unit]; *s != t.sampler {
+	if s := &b.set.samplers[unit]; !driver.ClackStateCache || *s != t.sampler {
 		b.ctx.PSSetSamplers(uint32(unit), t.sampler)
 		*s = t.sampler
 		b.calls.API++
 	} else {
 		b.calls.Skipped++
 	}
-	if r := &b.set.srvs[unit]; *r != t.resView {
+	if r := &b.set.srvs[unit]; !driver.ClackStateCache || *r != t.resView {
 		b.ctx.PSSetShaderResources(uint32(unit), t.resView)
 		*r = t.resView
 		b.calls.API++
@@ -828,14 +829,15 @@ func (b *Backend) BindStorageBuffer(binding int, buffer driver.Buffer) {
 // pixel shader if it reads it, unless bound already (Clack patch 37).
 func (b *Backend) BindUniforms(buffer driver.Buffer) {
 	buf := buffer.(*Buffer)
-	if b.set.vsCB != buf.buf {
+	c := driver.ClackStateCache
+	if !c || b.set.vsCB != buf.buf {
 		b.ctx.VSSetConstantBuffers(buf.buf)
 		b.set.vsCB = buf.buf
 		b.calls.API++
 	} else {
 		b.calls.Skipped++
 	}
-	if p := b.pipeline; p != nil && !p.fragUniforms || b.set.psCB == buf.buf {
+	if p := b.pipeline; c && (p != nil && !p.fragUniforms || b.set.psCB == buf.buf) {
 		b.calls.Skipped++
 		return
 	}
@@ -851,7 +853,7 @@ func (b *Backend) BindVertexBuffer(buf driver.Buffer, offset int) {
 
 func (b *Backend) BindIndexBuffer(buf driver.Buffer) {
 	bf := buf.(*Buffer).buf
-	if b.set.ibuf == bf {
+	if driver.ClackStateCache && b.set.ibuf == bf {
 		b.calls.Skipped++
 		return
 	}
@@ -876,7 +878,7 @@ func (b *Buffer) Upload(data []byte) {
 	if b.bind&d3d11.BIND_CONSTANT_BUFFER != 0 {
 		// a constant buffer given the bytes it has is left alone (Clack
 		// patch 37)
-		if string(b.last) == string(data) {
+		if driver.ClackStateCache && string(b.last) == string(data) {
 			b.backend.calls.Skipped++
 			return
 		}

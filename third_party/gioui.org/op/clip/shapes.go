@@ -109,7 +109,31 @@ func (rr RRect) Path(ops *op.Ops) PathSpec {
 
 	spec := p.End()
 	spec.interior = rr.Interior()
+	spec.rrect, spec.hasRRect = rr, true
 	return spec
+}
+
+// StrokeHole is where a stroke of width w along the rounded rectangle
+// covers no pixel as Gio's renderer computes coverage (Clack patch 42):
+// the rows between the top corners' arcs and the bottom ones', a pixel
+// past them and past the top and bottom edges' strokes, and the columns
+// more than w/2 and a pixel in from the straight sides. A pixel's coverage
+// adds up the curves above it in its column; in the hole the top edges'
+// cancel. Empty if the rectangle has no such hole.
+func (rr RRect) StrokeHole(w float32) image.Rectangle {
+	if !(w > 0) || rr.NW < 0 || rr.NE < 0 || rr.SE < 0 || rr.SW < 0 {
+		return image.Rectangle{}
+	}
+	m := int(math.Ceil(float64(w) / 2))
+	r := rr.Rect
+	h := image.Rectangle{
+		Min: image.Pt(r.Min.X+m+1, r.Min.Y+max(rr.NW, rr.NE, m)+1),
+		Max: image.Pt(r.Max.X-m-1, r.Max.Y-max(rr.SW, rr.SE, m)-1),
+	}
+	if h.Empty() {
+		return image.Rectangle{}
+	}
+	return h
 }
 
 // Interior is where the rounded rectangle, as a clip, covers every pixel

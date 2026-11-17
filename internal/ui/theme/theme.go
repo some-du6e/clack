@@ -409,122 +409,44 @@ func rrClip(ops *op.Ops, size image.Point, radius int) clip.Op {
 }
 
 // Border strokes a rounded rectangle outline of width w px.
-func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA) {
-	strokeRRect(gtx, r, radius, float32(w), c)
-}
-
-// strokeRRect strokes the w px outline of the rounded rectangle r.
 //
-// The path is cached at the origin and translated: a stable op identity,
-// so Gio tessellates the stroke once instead of every frame (see PathPen).
-// A big outline is drawn in the four bands around it that hold all its
-// coverage (ringBands). Gio stencils a path over its whole bounding box:
-// each curve's quad reaches down to the bottom of its contour, so a ring's
-// top edges cover the box twice, and the cover pass shades the box again.
-// For the window-sized workspace shadow that was 14 rings at about 3× the
-// workspace each, every frame. Every band draws the same path, so each
-// pixel's coverage adds up from the same curves as before; only the hole
-// in the middle, where the coverage is exactly zero, isn't touched.
-func strokeRRect(gtx layout.Context, r image.Rectangle, radius int, w float32, c color.NRGBA) {
-	path := RRectPath(r.Dx(), r.Dy(), radius)
-	bands, n := ringBands(r, radius, w)
-	if n == 0 || legacyRings {
-		defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: path, Width: w}.Op())
-		return
-	}
-	for _, b := range bands[:n] {
-		cl := clip.Rect(b).Push(gtx.Ops)
-		t := op.Offset(r.Min).Push(gtx.Ops)
-		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: path, Width: w}.Op())
-		t.Pop()
-		cl.Pop()
-	}
+// A big outline's middle isn't touched: Gio draws a stroke of a rounded
+// rectangle in the bands around its hole, where it covers nothing (Gio
+// patch 42, clip.RRect.StrokeHole), when it draws at a whole-pixel offset.
+func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA) {
+	// a cached path at the origin, translated: stable op identity, so Gio
+	// tessellates the stroke once instead of every frame (see PathPen)
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: RRectPath(r.Dx(), r.Dy(), radius), Width: float32(w)}.Op())
 }
 
-// ringBands are the bands around the w px stroke of the rounded rectangle
-// r that hold every pixel the stroke can touch: the top and bottom with
-// the corners, and between them the sides, as wide as the straight
-// stroke and a pixel more. A pixel's coverage adds up every curve above it
-// in its column, so a side band's pixels under a corner's arc get the
-// arc's curves as before; the rest of the columns under the arcs, inside
-// the ring, are zero and aren't stenciled (each arc's quads reach down to
-// the bottom of the contour, so wide sides stenciled mostly zeros). The
-// bands lie in the stroke's bounds, which Gio grows by w/2 rounded
-// (clip.Op). n is 0 when the ring is too small for the bands to cost less
-// than one cover of its box.
-func ringBands(r image.Rectangle, radius int, w float32) (bands [4]image.Rectangle, n int) {
-	m := int(w*.5 + .5) // as clip.Op grows a stroke's bounds
-	e := max(radius, m) + 1
-	box := r.Inset(-m)
-	if r.Dx() < 2*e || r.Dy() < 2*e {
-		return bands, 0
-	}
-	bands = [4]image.Rectangle{
-		image.Rect(box.Min.X, box.Min.Y, box.Max.X, r.Min.Y+e),
-		image.Rect(box.Min.X, r.Min.Y+e, r.Min.X+m+1, r.Max.Y-e),
-		image.Rect(r.Max.X-m-1, r.Min.Y+e, box.Max.X, r.Max.Y-e),
-		image.Rect(box.Min.X, r.Max.Y-e, box.Max.X, box.Max.Y),
-	}
-	n = 4
-	if bands[1].Empty() { // the sides meet: top and bottom are all of it
-		bands[1] = bands[3]
-		n = 2
-	}
-	var sum int
-	for _, b := range bands[:n] {
-		sum += b.Dx() * b.Dy()
-	}
-	if full := box.Dx() * box.Dy(); full < 32768 || full < 4*sum {
-		return bands, 0
-	}
-	return bands, n
-}
+// legacyShapes records rounded rects, circles and rounded image clips
+// where they're drawn, as before the frame-cost work (2026-11-16), for
+// tests that compare.
+var legacyShapes bool
 
-// FillPanel fills the rounded rectangle rr, whose clip the caller pushed,
-// with c: its interior, where Gio leaves the clip off what's drawn
-// (clip.RRect.Interior, Gio patch 38), as a plain fill, and the edges
-// around it each on its own. One fill of the whole panel had the clip
-// stenciled over all of it every frame, and every op inside that touches
-// an edge shared that one region; the edges get regions of their own
-// (Gio patch 39). Each pixel is filled once, with the coverage it had.
-func FillPanel(gtx layout.Context, rr clip.RRect, c color.NRGBA) {
-	r, in := rr.Rect, rrInterior(rr)
-	if in.Empty() || legacyPanel {
-		Fill(gtx, r, c)
-		return
-	}
-	Fill(gtx, in, c)
-	Fill(gtx, image.Rect(r.Min.X, r.Min.Y, in.Min.X, r.Max.Y), c)
-	Fill(gtx, image.Rect(in.Max.X, r.Min.Y, r.Max.X, r.Max.Y), c)
-	Fill(gtx, image.Rect(in.Min.X, r.Min.Y, in.Max.X, in.Min.Y), c)
-	Fill(gtx, image.Rect(in.Min.X, in.Max.Y, in.Max.X, r.Max.Y), c)
-}
+// SetLegacyFrameCost turns the old way of drawing rounded rects, circles
+// and rounded image clips (recorded where drawn, not cached at the origin)
+// on or off, for before/after comparisons in tests. Gio's own changes have
+// gpu.ClackLegacyClips. Use on the UI goroutine.
+func SetLegacyFrameCost(on bool) { legacyShapes = on }
 
-// The old ways of drawing, from before the frame-cost work (2026-11-16),
-// for tests that compare: rings in one piece, panels in one fill, rounded
-// rects and circles recorded where they're drawn.
-var legacyRings, legacyPanel, legacyShapes bool
-
-// SetLegacyFrameCost turns the old way of drawing rings, panels and
-// shapes on or off, for before/after comparisons in tests. Use on the UI
-// goroutine.
-func SetLegacyFrameCost(on bool) { SetLegacyFrameCostParts(on, on, on) }
-
-// SetLegacyFrameCostParts sets the old way for each part on its own.
-func SetLegacyFrameCostParts(rings, panel, shapes bool) {
-	legacyRings, legacyPanel, legacyShapes = rings, panel, shapes
-}
-
-// frameCostProbe is a transparent ellipse Shadow draws after its rings
-// (SetFrameCostProbe).
+// frameCostProbe is a transparent ellipse FrameCostProbe draws.
 var frameCostProbe image.Rectangle
 
-// SetFrameCostProbe makes Shadow draw a transparent ellipse r after its
-// rings (empty: none), for tests measuring what moving every later path
-// in Gio's coverage atlas changes, and nothing else does: the pixels stay
-// as they are. Use on the UI goroutine.
+// SetFrameCostProbe makes FrameCostProbe draw a transparent ellipse r
+// (empty: none), for tests measuring what moving every later path in
+// Gio's coverage atlas changes, when nothing else does: the pixels stay as
+// they are. Use on the UI goroutine.
 func SetFrameCostProbe(r image.Rectangle) { frameCostProbe = r }
+
+// FrameCostProbe draws SetFrameCostProbe's ellipse, if any; the window
+// calls it after the workspace's shadow.
+func FrameCostProbe(gtx layout.Context) {
+	if !frameCostProbe.Empty() {
+		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(frameCostProbe).Op(gtx.Ops))
+	}
+}
 
 // Circle fills a circle with the given center and diameter, from a path
 // cached at the origin by size (see RRect).
@@ -567,9 +489,10 @@ func (t *Theme) Placeholder(gtx layout.Context, size image.Point, radius int) la
 }
 
 // Shadow draws a soft drop shadow around r as concentric 1px rings of
-// decreasing alpha, each stroked in the bands around it (strokeRRect), so
-// only the perimeter is touched. The area under r itself is not painted;
-// draw r on top.
+// decreasing alpha, spread of them. Only the perimeter is touched: Gio
+// draws a stroked rounded rectangle in the bands around its hole (Gio
+// patch 42), so a ring the size of the window costs its outline, not its
+// box. The area under r itself is not painted; draw r on top.
 func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c color.NRGBA) {
 	if spread < 1 {
 		return
@@ -581,10 +504,12 @@ func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c col
 		if a == 0 {
 			continue
 		}
-		strokeRRect(gtx, r.Inset(-i), radius+i, 1.5, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a})
-	}
-	if !frameCostProbe.Empty() {
-		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(frameCostProbe).Op(gtx.Ops))
+		// cached ring path at the origin (stable op identity: Gio
+		// tessellates each ring once, not every frame; see PathPen)
+		ri := r.Inset(-i)
+		t := op.Offset(ri.Min).Push(gtx.Ops)
+		paint.FillShape(gtx.Ops, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a}, clip.Stroke{Path: RRectPath(ri.Dx(), ri.Dy(), radius+i), Width: 1.5}.Op())
+		t.Pop()
 	}
 }
 

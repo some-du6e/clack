@@ -23,22 +23,25 @@ import (
 
 // TestFrameCostWindow draws Clack's whole window over internal/fakeslack
 // (synthetic data; nothing reaches Slack) the old way and the new, and
-// says what one frame costs each: the workspace shadow's rings in one
-// piece or in bands, the panel's fill in one piece or around its
-// interior, rounded rects and circles recorded where they're drawn or
-// cached at the origin (theme.SetLegacyFrameCost), and Gio keeping every
-// clip path on every op over one stencil region or not
-// (gpu.ClackLegacyClips, Gio patches 38 and 39). The same frame (state,
-// time) is laid out each way and drawn, light and dark, at 1x and 2x, a
-// channel and a channel with its thread open, and at Karim's window size
-// with Slack's default theme and with his (costKarim). It logs the draw
-// calls, the graphics API calls (and those the backend's state cache left
-// out, Gio patch 37), the paths built, the stencil, cover and cleared
-// pixels, the frame's time from layout to the end of its rasterization,
-// and the pixels that differ: new against old, each half alone against
-// old, and the old way against itself with every path moved in the atlas
-// (its noise floor). CLACK_GPU_COST=1 (flake-check's gpu-cost job, on each
-// OS's GPU backend).
+// says what one frame costs each: rounded rects and circles recorded
+// where they're drawn or cached at the origin (theme.SetLegacyFrameCost),
+// Gio keeping every clip path on every op over one stencil region and
+// drawing every op in one piece or not (gpu.ClackLegacyParts: patches
+// 38, 39 and 42; the workspace shadow's rings around their holes, the
+// panel's fill around its interior), and nested opacity layers on shared
+// pages or not (gpu.ClackLegacyLayers, 40). The same frame (state, time) is
+// laid out each way and drawn, light and dark, at 1x and 2x, a channel
+// and a channel with its thread open, and at Karim's window size with
+// Slack's default theme and with his (costKarim). It logs the draw calls,
+// the graphics API calls (and those the backend's state cache left out,
+// Gio patch 37), the paths built, the stencil, cover and cleared pixels,
+// the frame's time from layout to the end of its rasterization, and the
+// pixels that differ: new against old, each part alone against old, and
+// the old way against itself with every path moved in the atlas (its
+// floor). It fails when new against old goes past the floor, or the
+// state caches change a pixel (costScene); a scene whose window changes
+// while it's measured is measured again, then left unchecked.
+// CLACK_GPU_COST=1 (flake-check's gpu-cost job, on each OS's GPU backend).
 func TestFrameCostWindow(t *testing.T) {
 	if os.Getenv("CLACK_GPU_COST") == "" {
 		t.Skip("CLACK_GPU_COST not set (flake-check's gpu-cost job runs this)")
@@ -95,67 +98,13 @@ func TestFrameCostWindow(t *testing.T) {
 				if c.theme != "" && !e.a.acct.t.UseCustomHex {
 					t.Fatalf("%s: the account theme %s didn't apply", name, c.theme)
 				}
-				e.costSettle(t, name)
-				now := time.Now()
-				old, so, to := e.costFrame(t, costOld, 0, now, true)
-				cur, sn, tn := e.costFrame(t, costNew, 0, now, true)
-				t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
-				t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
-				// the noise floor: the old way with every path moved in
-				// the atlas, by a transparent path drawn first, or (light:
-				// the paths after the workspace shadow) after its rings
-				var worst *image.RGBA
-				var floorN, floorMax int
-				for sh := 1; sh <= 6; sh++ {
-					if sh > 3 && dark {
-						break // no shadow
-					}
-					moved, _, _ := e.costFrame(t, costOld, sh, now, false)
-					n, m := costCount(old, moved)
-					where := "first"
-					if sh > 3 {
-						where = "after the shadow's rings"
-					}
-					t.Logf("%s, the old way with a transparent %v path %s: %s", name, costShift(sh, e.size).Size(), where, costDiff(old, moved))
-					if n > floorN {
-						floorN, worst = n, moved
-					}
-					floorMax = max(floorMax, m)
+				settled := false
+				for try := 0; try < 2 && !settled; try++ {
+					e.costSettle(t, name)
+					settled = e.costScene(t, name)
 				}
-				moved, _, _ := e.costFrame(t, costNew, 3, now, false)
-				t.Logf("%s, the new way after a transparent %v path first: %s", name, costShift(3, e.size).Size(), costDiff(cur, moved))
-				n, m := costCount(old, cur)
-				t.Logf("%s, new against old: %s; the old way's own floor: up to %d px, max %d", name, costDiff(old, cur), floorN, floorMax)
-				if n > 0 && m > floorMax {
-					t.Logf("%s: new against old differs by %d levels, more than the %d the old way's floor shows", name, m, floorMax)
-				}
-				// which half makes the difference: the theme's drawing
-				// (rings, panel fill, cached shapes) or Gio's clips
-				// (patches 38 and 39)
-				themeOnly, _, _ := e.costFrame(t, costMode{clips: true}, 0, now, false)
-				clipsOnly, _, _ := e.costFrame(t, costMode{rings: true, panel: true, shapes: true}, 0, now, false)
-				t.Logf("%s, the new theme drawing alone against old: %s", name, costDiff(old, themeOnly))
-				t.Logf("%s, Gio's new clips alone against old: %s", name, costDiff(old, clipsOnly))
-				for _, part := range []struct {
-					what string
-					mode costMode
-				}{
-					{"the rings in bands", costMode{panel: true, shapes: true, clips: true}},
-					{"the panel's split fill", costMode{rings: true, shapes: true, clips: true}},
-					{"the cached shapes", costMode{rings: true, panel: true, clips: true}},
-				} {
-					one, _, _ := e.costFrame(t, part.mode, 0, now, false)
-					t.Logf("%s, %s alone against old: %s", name, part.what, costDiff(old, one))
-				}
-				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" && m > floorMax {
-					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-clips", old, clipsOnly)
-					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-theme", old, themeOnly)
-				}
-				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
-					costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)
-					if worst != nil {
-						costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-floor", old, worst)
-					}
+				if !settled {
+					t.Logf("%s: the window changed while it was measured, twice; not checked", name)
 				}
 				if thread {
 					e.a.CloseSecondary()
@@ -169,11 +118,82 @@ func TestFrameCostWindow(t *testing.T) {
 	}
 }
 
+// costScene measures one scene: the old way and the new, their costs,
+// the old way's floor (every path moved in the atlas by a transparent
+// path drawn first or right after the workspace shadow), each part of the
+// new way alone, and the new way with the backends' state caches off. It
+// checks new against old within the floor (1.5× its pixels and 1024, its
+// levels and 2) and the caches off against on exactly, unless the old way
+// came out differently at the end than at the start: then the window
+// changed meanwhile and it reports the scene unsettled.
+func (e *perfEnv) costScene(t *testing.T, name string) (settled bool) {
+	t.Helper()
+	now := time.Now()
+	old, so, to := e.costFrame(t, costOld, 0, now, true)
+	cur, sn, tn := e.costFrame(t, costNew, 0, now, true)
+	t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
+	t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
+	var worst *image.RGBA
+	var floorN, floorMax int
+	for sh := 1; sh <= 6; sh++ {
+		moved, _, _ := e.costFrame(t, costOld, sh, now, false)
+		n, m := costCount(old, moved)
+		where := "first"
+		if sh > 3 {
+			where = "after the workspace shadow"
+		}
+		t.Logf("%s, the old way with a transparent %v path %s: %s", name, costShift(sh, e.size).Size(), where, costDiff(old, moved))
+		if n > floorN {
+			floorN, worst = n, moved
+		}
+		floorMax = max(floorMax, m)
+	}
+	n, m := costCount(old, cur)
+	t.Logf("%s, new against old: %s; the old way's floor: up to %d px, max %d", name, costDiff(old, cur), floorN, floorMax)
+	for _, part := range []struct {
+		what string
+		mode costMode
+	}{
+		{"Gio's interiors (38)", costMode{shapes: true, regions: true, splits: true, layers: true}},
+		{"Gio's regions (39)", costMode{shapes: true, interiors: true, splits: true, layers: true}},
+		{"Gio's splits (42)", costMode{shapes: true, interiors: true, regions: true, layers: true}},
+		{"Gio's shared layer pages (40)", costMode{shapes: true, interiors: true, regions: true, splits: true}},
+		{"the cached shapes", costMode{interiors: true, regions: true, splits: true, layers: true}},
+	} {
+		one, _, _ := e.costFrame(t, part.mode, 0, now, false)
+		t.Logf("%s, %s alone against old: %s", name, part.what, costDiff(old, one))
+	}
+	gpu.ClackStateCaches(false)
+	uncached, _, _ := e.costFrame(t, costNew, 0, now, false)
+	gpu.ClackStateCaches(true)
+	again, _, _ := e.costFrame(t, costOld, 0, now, false)
+	if dn, dm := costCount(old, again); dn > 0 {
+		t.Logf("%s: the old way came out differently at the end (%d px, by up to %d): the window changed meanwhile", name, dn, dm)
+		return false
+	}
+	if un, um := costCount(cur, uncached); un > 0 {
+		t.Errorf("%s: with the backends' state caches off %d px differ, by up to %d levels: %s", name, un, um, costDiff(cur, uncached))
+	}
+	if lim := floorN*3/2 + 1024; n > lim {
+		t.Errorf("%s: new against old %d px differ, more than %d (1.5× the %d the floor moves, and 1024)", name, n, lim, floorN)
+	}
+	if m > floorMax+2 {
+		t.Errorf("%s: new against old a pixel differs by %d levels, more than the floor's %d and 2", name, m, floorMax)
+	}
+	if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
+		costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)
+		if worst != nil {
+			costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-floor", old, worst)
+		}
+	}
+	return true
+}
+
 // costKarim approximates Karim's account theme as his inspect report of
 // 2026-11-17 has it (Clack α.102 on windows/amd64: light mode, a custom
 // theme #FED4BE, a 1918×1080 dp window at 1x): the custom colour as the
 // primary, Slack's defaults for the rest. Light mode is the case with the
-// workspace shadow's 14 rings.
+// workspace shadow's rings (8 at 1x, theme.Shadow's gtx.Dp(8)).
 const costKarim = `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":false,"useCustomHex":true}`
 
 // costFrame lays the window out at now the old way (legacy) or the new,
@@ -186,14 +206,16 @@ const costKarim = `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highli
 // more frames from layout to the end of their rasterization (else 0).
 func (e *perfEnv) costFrame(t *testing.T, mode costMode, shift int, now time.Time, timed bool) (*image.RGBA, gpu.FrameStats, float64) {
 	t.Helper()
-	theme.SetLegacyFrameCostParts(mode.rings, mode.panel, mode.shapes)
-	gpu.ClackLegacyClips(mode.clips)
+	theme.SetLegacyFrameCost(mode.shapes)
+	gpu.ClackLegacyParts(mode.interiors, mode.regions, mode.splits)
+	gpu.ClackLegacyLayers(mode.layers)
 	if shift > 3 {
 		theme.SetFrameCostProbe(costShift(shift, e.size))
 		defer theme.SetFrameCostProbe(image.Rectangle{})
 	}
 	defer theme.SetLegacyFrameCost(false)
 	defer gpu.ClackLegacyClips(false)
+	defer gpu.ClackLegacyLayers(false)
 	w := e.gpu
 	lay := func() {
 		e.now = now
@@ -242,18 +264,20 @@ func (e *perfEnv) costFrame(t *testing.T, mode costMode, shift int, now time.Tim
 	return img, st, ms[len(ms)/2]
 }
 
-// costMode says which parts costFrame draws the old way: the theme's
-// rings, panel fill and shapes (theme.SetLegacyFrameCostParts), Gio's
-// clips (gpu.ClackLegacyClips).
-type costMode struct{ rings, panel, shapes, clips bool }
+// costMode says which parts costFrame draws the old way: theme's cached
+// shapes (theme.SetLegacyFrameCost), Gio's interiors, regions and splits
+// (gpu.ClackLegacyParts, patches 38, 39, 42) and shared layer pages
+// (gpu.ClackLegacyLayers, 40).
+type costMode struct{ shapes, interiors, regions, splits, layers bool }
 
 var (
-	costOld = costMode{rings: true, panel: true, shapes: true, clips: true}
+	costOld = costMode{shapes: true, interiors: true, regions: true, splits: true, layers: true}
 	costNew = costMode{}
 )
 
 // costShift is the transparent path costFrame draws first (1-3) or right
-// after the workspace shadow's rings (4-6, theme.SetFrameCostProbe): none,
+// after the workspace's shadow (4-6, theme.SetFrameCostProbe; in dark mode
+// where it would be): none,
 // a tiny one, a third of the window and nearly all of it, all of odd
 // sizes, so the paths after it move by odd amounts too.
 func costShift(shift int, size image.Point) image.Rectangle {

@@ -80,6 +80,9 @@ const (
 	// TypeClipInterior (Clack patch 38) comes right before the TypeClip of
 	// an outline it knows the fully covered interior of.
 	TypeClipInterior
+	// TypeClipHole (Clack patch 42) comes right before the TypeClip of a
+	// stroke it knows covers nothing inside a rectangle.
+	TypeClipHole
 )
 
 type StackID struct {
@@ -157,6 +160,7 @@ const (
 	TypeSemanticEnabledLen  = 2
 	TypeActionInputLen      = 1 + 1
 	TypeClipInteriorLen     = 1 + 4*4
+	TypeClipHoleLen         = 1 + 4*4
 )
 
 // DecodeClipInterior decodes a TypeClipInterior op: the rectangle where
@@ -165,13 +169,25 @@ func DecodeClipInterior(data []byte) image.Rectangle {
 	if len(data) < TypeClipInteriorLen || OpType(data[0]) != TypeClipInterior {
 		panic("invalid op")
 	}
+	return decodeRect(data)
+}
+
+// DecodeClipHole decodes a TypeClipHole op: the rectangle where the next
+// clip's stroke covers no pixel (Clack patch 42).
+func DecodeClipHole(data []byte) image.Rectangle {
+	if len(data) < TypeClipHoleLen || OpType(data[0]) != TypeClipHole {
+		panic("invalid op")
+	}
+	return decodeRect(data)
+}
+
+func decodeRect(data []byte) image.Rectangle {
 	bo := binary.LittleEndian
-	return image.Rect(
-		int(int32(bo.Uint32(data[1:]))),
-		int(int32(bo.Uint32(data[5:]))),
-		int(int32(bo.Uint32(data[9:]))),
-		int(int32(bo.Uint32(data[13:]))),
-	)
+	// not image.Rect, which would swap the corners of an empty rectangle
+	return image.Rectangle{
+		Min: image.Pt(int(int32(bo.Uint32(data[1:]))), int(int32(bo.Uint32(data[5:])))),
+		Max: image.Pt(int(int32(bo.Uint32(data[9:]))), int(int32(bo.Uint32(data[13:])))),
+	}
 }
 
 func (op *ClipOp) Decode(data []byte) {
@@ -446,6 +462,7 @@ var opProps = [0x100]opProp{
 	TypeSemanticEnabled:  {Size: TypeSemanticEnabledLen, NumRefs: 0},
 	TypeActionInput:      {Size: TypeActionInputLen, NumRefs: 0},
 	TypeClipInterior:     {Size: TypeClipInteriorLen, NumRefs: 0},
+	TypeClipHole:         {Size: TypeClipHoleLen, NumRefs: 0},
 }
 
 func (t OpType) props() (size, numRefs uint32) {
@@ -513,6 +530,8 @@ func (t OpType) String() string {
 		return "SemanticDescription"
 	case TypeClipInterior:
 		return "ClipInterior"
+	case TypeClipHole:
+		return "ClipHole"
 	default:
 		panic("unknown OpType")
 	}
