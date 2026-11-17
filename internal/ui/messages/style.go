@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -324,6 +325,15 @@ func measure(gtx layout.Context, th *theme.Theme, s textStyle, txt string) image
 	d := label(g, th, s, txt)
 	m.Stop()
 	return d.Size
+}
+
+// pointerCursor sets the hand cursor over r, a hand-drawn button's area.
+// Call it inside the button's Clickable.Layout, so the area exists only
+// while the button is drawn.
+func pointerCursor(gtx layout.Context, r image.Rectangle) {
+	t := clip.Rect(r).Push(gtx.Ops)
+	pointer.CursorPointer.Add(gtx.Ops)
+	t.Pop()
 }
 
 // at runs w at offset (x, y) and returns its dims.
