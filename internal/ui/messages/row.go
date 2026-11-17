@@ -127,7 +127,8 @@ type row struct {
 	// snapshot
 	rootPrev    string
 	rootRev     uint64
-	rootURev    uint64 // the users revision rootPrev read its mentions at
+	rootURev    uint64   // the users revision rootPrev read its mentions at
+	rootIDs     []string // the members rootPrev names (touched as it draws)
 	rootChecked bool
 
 	// geometry of the last layout (row-local), for overlays
@@ -2357,11 +2358,23 @@ func (r *row) rootPreview(rc *rowCtx) string {
 		rev = rc.list.snap.rev
 	}
 	// the root's mentions read as they draw (richview.MentionText): again
-	// when a member's name may have changed (usersRev)
+	// when a member's name may have changed (usersRev). The members it
+	// names count as drawn while it draws (as rows touch their senders),
+	// so a profile change of one only the preview names moves usersRev:
+	// read once and kept, a rename of a member nothing else on screen
+	// named left the old @name there
+	if rc.h != nil {
+		if app := rc.h.Core(); app != nil && app.S != nil {
+			for _, id := range r.rootIDs {
+				app.S.TouchMember(id)
+			}
+		}
+	}
 	if r.rootChecked && r.rootRev == rev && r.rootURev == rc.usersRev {
 		return r.rootPrev
 	}
 	r.rootChecked, r.rootRev, r.rootURev, r.rootPrev = true, rev, rc.usersRev, ""
+	r.rootIDs = r.rootIDs[:0]
 	ts := r.m.ThreadTS
 	var doc *richtext.Doc
 	if rc.list != nil {
@@ -2378,7 +2391,13 @@ func (r *row) rootPreview(rc *rowCtx) string {
 		}
 	}
 	if doc != nil {
-		r.rootPrev = strings.Join(strings.Fields(richtext.PlainTextWith(*doc, richview.MentionText)), " ")
+		text := func(sp richtext.Span) (string, bool) {
+			if sp.Kind == richtext.User && sp.ID != "" {
+				r.rootIDs = append(r.rootIDs, sp.ID)
+			}
+			return richview.MentionText(sp)
+		}
+		r.rootPrev = strings.Join(strings.Fields(richtext.PlainTextWith(*doc, text)), " ")
 	}
 	return r.rootPrev
 }

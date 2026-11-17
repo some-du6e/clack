@@ -469,7 +469,6 @@ func (c *Composer) prepareSend(d *Doc) *Doc {
 // and the prepareAndSendMessage a plugin wraps called back the composer
 // drawn last: a reply sent from the other was lost.
 func (c *Composer) LayoutIn(gtx layout.Context, pane string) layout.Dimensions {
-	c.pane = pane
 	defer slackc.EndPane(slackc.Pane(pane))
 	return c.Layout(gtx)
 }
@@ -480,6 +479,9 @@ func (c *Composer) LayoutIn(gtx layout.Context, pane string) layout.Dimensions {
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	runRestores()
 	c.drawnAt = gtx.Now
+	// the pane its roots are keyed in (vanish.go remounts those): LayoutIn's,
+	// or the list's an edit composer or a Block Kit field is drawn inside
+	c.pane = slackc.CurrentPane()
 	c.maybeRestoreServerDraft()
 	syncHooks()
 	th := c.h.Theme()

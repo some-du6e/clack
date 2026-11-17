@@ -539,14 +539,21 @@ func (m *mirror) noteConv(ev core.Event) {
 	case "resync", "booted", "hydrated":
 		m.t.ui.views.bumpConv("", "")
 		return
+	case "message", "update", "delete", "sent", "saved", "thread_subscription", "evicted":
+		// what changes the message a conversion reads, or core's state of
+		// it a conversion draws (Later, a followed thread)
+		ts := ev.TS
+		if ts == "" && ev.Msg != nil {
+			ts = ev.Msg.TS
+		}
+		if ev.Channel != "" && ts != "" {
+			m.t.ui.views.bumpConv(ev.Channel, ts)
+		}
 	}
-	ts := ev.TS
-	if ts == "" && ev.Msg != nil {
-		ts = ev.Msg.TS
-	}
-	if ev.Channel != "" && ts != "" {
-		m.t.ui.views.bumpConv(ev.Channel, ts)
-	}
+	// the rest name a message with nothing in it a conversion reads: a
+	// mark (each read of the open channel's newest message, then Slack's
+	// channel_marked echo, had it converted again and the window redrawn),
+	// typing, a draft, counts
 }
 
 func typingKey(ch, thread, user string) string { return ch + "|" + thread + "|" + user }

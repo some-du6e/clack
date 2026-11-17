@@ -140,10 +140,14 @@ func RefsChanged(ev Event) RefChange {
 			return RefChange{Channels: []string{id}}
 		}
 	case "emoji_changed":
-		if ev.Name == "" {
-			return RefChange{All: true} // a removal of several: any message's emoji
+		names := ev.Users // a removal's
+		if ev.Name != "" {
+			names = append(names[:len(names):len(names)], ev.Name)
 		}
-		return RefChange{Emoji: []string{ev.Name}}
+		if len(names) == 0 {
+			return RefChange{All: true} // a removal that named none: any message's emoji
+		}
+		return RefChange{Emoji: names}
 	case "canvas", "list", "list_record_info":
 		if ev.ID != "" {
 			return RefChange{Files: []string{ev.ID}}

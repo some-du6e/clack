@@ -87,6 +87,9 @@ func TestMessageRefs(t *testing.T) {
 		{Event{Type: "names"}, RefChange{All: true}}, // the viewer's user groups
 		{Event{Type: "emoji_changed", Name: "partyparrot"}, RefChange{Emoji: []string{"partyparrot"}}},
 		{Event{Type: "emoji_changed"}, RefChange{All: true}},
+		// a removal names what it removed (Slack's names): the messages
+		// that drew those, not every loaded one
+		{Event{Type: "emoji_changed", Users: []string{"partyparrot", "blobdance"}}, RefChange{Emoji: []string{"partyparrot", "blobdance"}}},
 		{Event{Type: "canvas", ID: "F0RUNBOOK"}, RefChange{Files: []string{"F0RUNBOOK"}}},
 		{Event{Type: "list", ID: "F0TODO001"}, RefChange{Files: []string{"F0TODO001"}}},
 		{Event{Type: "experiments"}, RefChange{All: true}},
@@ -231,6 +234,13 @@ func TestUserEventAfterSilentRename(t *testing.T) {
 	if ev := userChange("kit", "back"); !ev.SameNames {
 		t.Error("a status change with names as the last event left them was not SameNames")
 	}
+	// the other order: an older answer (an autocomplete asked before the
+	// rename) stored after the last event puts the old name back, and the
+	// next event, with the new name the baseline has, isn't SameNames
+	a.S.PutUsers([]slack.User{{ID: "U0CARA001", Name: "cara", Profile: slack.Profile{DisplayName: "cara", StatusText: "back"}}})
+	if ev := userChange("kit", "in a meeting"); ev.SameNames {
+		t.Error("the event after an older profile was stored silently was SameNames: Docs converted with the old name keep it")
+	}
 }
 
 // Prefs installed without an event (users.prefs.get on a cold start, the
@@ -295,13 +305,13 @@ func TestRenamedCanvasTitle(t *testing.T) {
 		select {
 		case ev := <-evs:
 			if ev.Type == "names" && slices.Contains(ev.Users, "F0RUNBOOK") {
-				if r, _ := a.S.PeekCanvasRef("F0RUNBOOK"); r.Title != "Playbook" {
+				if r, _ := a.S.KnownCanvasRef("F0RUNBOOK"); r.Title != "Playbook" {
 					t.Errorf("the canvas's title after file_change: %q", r.Title)
 				}
 				return
 			}
 		case <-deadline:
-			r, _ := a.S.PeekCanvasRef("F0RUNBOOK")
+			r, _ := a.S.KnownCanvasRef("F0RUNBOOK")
 			t.Fatalf("no names event for the renamed canvas (its title: %q)", r.Title)
 		}
 	}

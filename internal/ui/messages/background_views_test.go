@@ -7,6 +7,7 @@ package messages
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -168,4 +169,47 @@ func TestBroadcastPreambleReadsMentionsAsItDraws(t *testing.T) {
 	if got := r.rootPreview(rc); got != "@kit.l can you review?" {
 		t.Errorf("after the rename the preamble's preview is %q; want the name as the mention draws it now", got)
 	}
+}
+
+// Through the hub, with nothing else on screen naming her: the broadcast's
+// root (in the thread, not the channel) mentions Cara, and she renames
+// herself. The preview reads her name once and keeps it, so it touches her
+// as it draws (as rows touch their senders): her profile change counts as
+// drawn, the users revision moves, and the preview reads her new name.
+// Before, nothing drew her in the latest frame, usersRev stayed, and the
+// old @name stayed until the channel reloaded.
+func TestBroadcastPreambleFollowsARename(t *testing.T) {
+	app, _, _ := shotsApp(t)
+	const ch, cara = "C0PREAMB01", "UCARA0001"
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "launch", IsChannel: true, IsMember: true, NumMembers: 9})
+	app.S.PutUsers([]slack.User{{ID: cara, Name: "cara", Profile: slack.Profile{DisplayName: "cara", RealName: "Cara Lee"}}})
+	base := time.Now().Add(-2 * time.Hour).Unix()
+	rootTS, bTS := fmt.Sprintf("%d.000100", base), fmt.Sprintf("%d.000300", base+600)
+	mention := json.RawMessage(`[{"type":"rich_text","block_id":"r","elements":[{"type":"rich_text_section","elements":[` +
+		`{"type":"user","user_id":"` + cara + `"},{"type":"text","text":" can you review?"}]}]}]`)
+	root := slack.Message{Type: "message", TS: rootTS, User: "UANA00001", Text: "<@" + cara + "> can you review?", Blocks: mention}
+	root.ThreadTS, root.ReplyCount, root.LatestReply = rootTS, 1, bTS
+	bcast := slack.Message{Type: "message", Subtype: "thread_broadcast", TS: bTS, ThreadTS: rootTS, User: "UBEN00001",
+		Text: "on it", Blocks: shotRich(shotSection("on it"))}
+	rootCopy := root
+	bcast.Root = &rootCopy
+	app.S.SetLatest(ch, []slack.Message{bcast}, false) // the root isn't in the channel's history: only the thread has it
+	app.S.SetThread(ch, rootTS, []slack.Message{root, bcast})
+	v := NewChannelView(coreHost{app: app, th: theme.New(false)}, ch)
+	frame := frameFn(v)
+	preview := func() string {
+		if r := v.s.rows[bTS]; r != nil {
+			return r.rootPrev
+		}
+		return ""
+	}
+	until(t, 5*time.Second, "the broadcast's preview naming Cara", frame, func() bool { return strings.Contains(preview(), "@cara") })
+	for i := 0; i < 5; i++ {
+		frame()
+		time.Sleep(10 * time.Millisecond)
+	}
+	u := map[string]any{"id": cara, "name": "cara", "profile": map[string]any{"display_name": "kit.l", "real_name": "Cara Lee"}}
+	raw, _ := json.Marshal(map[string]any{"type": "user_change", "user": u})
+	app.Inject(slack.Event{Type: "user_change", Raw: raw})
+	until(t, 5*time.Second, "the preview with her new name", frame, func() bool { return strings.Contains(preview(), "@kit.l") })
 }

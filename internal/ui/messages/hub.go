@@ -861,6 +861,10 @@ func (hb *hub) reconvert(ev core.Event) bool {
 // StoredMessage's, whose reads don't count as a view's: a message
 // converted again for a name in it touched the members it names, so their
 // next profile change looked drawn (drawsMember) and every list redrew.
+// reconvRead, tests only, runs after reconvertIn read a message from the
+// store and before it writes the conversion to the model.
+var reconvRead atomic.Pointer[func(m *model, ts string)]
+
 func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 	hb.reconvMu.Lock()
 	defer hb.reconvMu.Unlock()
@@ -872,18 +876,22 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 		if m.loading || m.older {
 			m.reconv = mergeRefChange(m.reconv, c) // its answer may be older than c
 		}
-		var stale []string
+		type staleEnt struct {
+			ts  string
+			rev uint32 // the entry's, when it was found to read c
+		}
+		var stale []staleEnt
 		for i := range m.msgs {
 			if m.msgs[i].m.Refs.Reads(c) {
-				stale = append(stale, m.msgs[i].m.TS)
+				stale = append(stale, staleEnt{m.msgs[i].m.TS, m.msgs[i].rev})
 			}
 		}
 		m.mu.Unlock()
-		for _, ts := range stale {
-			k := key{m.ch, ts}
+		for _, st := range stale {
+			k := key{m.ch, st.ts}
 			f, seen := fresh[k]
 			if !seen {
-				if v, ok := hb.app.StoredMessage(m.ch, ts); ok {
+				if v, ok := hb.app.StoredMessage(m.ch, st.ts); ok {
 					f = &v
 				}
 				if fresh == nil {
@@ -894,8 +902,15 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 			if f == nil {
 				continue // the store let it go: the next load converts it
 			}
+			if hook := reconvRead.Load(); hook != nil {
+				(*hook)(m, st.ts)
+			}
 			m.mu.Lock()
-			if i := m.find(ts); i >= 0 {
+			// an entry hub.run replaced meanwhile (an update converted with
+			// what is there now) keeps what it got: this conversion read
+			// the store before it, and wrote the revision before's Doc over
+			// the update (a vote's count going back)
+			if i := m.find(st.ts); i >= 0 && m.msgs[i].rev == st.rev {
 				msg := m.msgs[i].m
 				if takeConverted(&msg, f) {
 					m.msgs[i] = entry{m: msg, rev: m.bump()}

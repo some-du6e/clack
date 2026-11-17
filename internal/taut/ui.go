@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,6 +176,9 @@ func (u *uiState) setComposerHooks(h composerHooks) {
 
 func (u *uiState) setStatePatched(s statePatchInfo) {
 	u.mu.Lock()
+	// which slices plugins patch changed (a patch added or gone): the UI
+	// starts or stops reading views of them, which it does only in a frame
+	moved := u.state.All != s.All || !slices.Equal(u.state.Slices, s.Slices)
 	u.state = s
 	u.mu.Unlock()
 	if !s.All && len(s.Slices) == 0 {
@@ -183,6 +187,9 @@ func (u *uiState) setStatePatched(s statePatchInfo) {
 		u.patchedSlices.Store(&s)
 	}
 	u.views.staleAll()
+	if f := u.views.t.opts.UI.Invalidate; moved && f != nil {
+		f()
+	}
 }
 
 func (u *uiState) setRTMTypes(types []string) {
@@ -1328,13 +1335,30 @@ func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {
 	return e.raw, true
 }
 
+// staleAll marks every view stale (what plugins patch changed: a patch
+// added or gone, api.redux.refresh, Message Logger's on every edit and
+// delete it logs) and asks JS again for those on screen now. The ones
+// that come back changed move the epoch and redraw (work); the rest draw
+// nothing. It used to ask for a frame, every time and for changes
+// anywhere, which the rows on screen then skipped: inside their 250 ms,
+// with the epoch where it was, none read again.
 func (v *viewCache) staleAll() {
 	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.seq++
 	v.allVer = v.seq
-	v.mu.Unlock()
-	if f := v.t.opts.UI.Invalidate; f != nil {
-		f()
+	for sk, g := range v.groups {
+		if !v.visibleLocked(g) {
+			continue // fetched again when next read
+		}
+		for sub := range g.subs {
+			if k := (viewKey{sk.slice, sk.key, sub}); !v.flying[k] { // one in flight is asked again when it lands
+				v.want[k] = true
+			}
+		}
+	}
+	if len(v.want) > 0 {
+		v.kickLocked()
 	}
 }
 
@@ -2034,20 +2058,25 @@ func (v *viewCache) bumpChange(c core.RefChange) {
 	}
 	redraw := false
 	if len(keys) > 0 {
-		if len(v.msgGen)+len(keys) >= maxConvKeys {
+		global := len(v.msgGen)+len(keys) >= maxConvKeys
+		if global {
 			clear(v.msgGen)
 			v.global = seq
-		} else {
-			for _, k := range keys {
-				v.msgGen[k] = seq
-			}
 		}
 		for _, k := range keys {
 			if !v.convCachedLocked(k.slice, k.key) {
+				// a conversion that went: forgotten, and no generation kept
+				// for it unless one is being made (bumpConv's rule)
 				if refs, ok := v.refOf[k]; ok {
 					v.unindexLocked(k, refs)
 				}
+				if v.inflight[k] > 0 && !global {
+					v.msgGen[k] = seq
+				}
 				continue
+			}
+			if !global {
+				v.msgGen[k] = seq
 			}
 			redraw = redraw || v.visibleLocked(v.groups[viewSK{"messages", k.slice}])
 		}

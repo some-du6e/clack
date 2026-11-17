@@ -892,9 +892,12 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 	a.S.SetUsergroups(gs)
 	// updateUserGroups: the viewer's groups (usergroups.membership), what
 	// a group mention's highlight follows (UserGroup fg3x isUserInGroup)
-	if mine, err := a.C.UsergroupMembership(ctx); err == nil {
-		a.S.SetMyUsergroups(mine)
-		a.emit(Event{Type: "names"}) // the visible messages re-read their mentions
+	if mine, err := a.C.UsergroupMembership(ctx); err == nil && a.S.SetMyUsergroups(mine) {
+		// the visible messages re-read their group mentions. Only when the
+		// viewer's groups moved: a names{} converts every loaded message
+		// again, and with no groups every Usergroups call (the composer's
+		// first "@", a directory search) loaded them again
+		a.emit(Event{Type: "names"})
 	}
 	return nil
 }

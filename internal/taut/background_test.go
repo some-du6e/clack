@@ -78,6 +78,38 @@ func TestOffScreenViewsDrawNothing(t *testing.T) {
 	eventually(t, 2*time.Second, "the left channel's view fetched again", func() bool { return h.tt.ui.views.fetches.Load() > f0 })
 }
 
+// api.redux.refresh (Message Logger's, on every edit and delete it logs,
+// in any channel) asks JS again for the views on screen; only one that
+// comes back changed moves the epoch and redraws. It asked for a frame
+// every time, which the rows on screen then skipped (inside their 250 ms,
+// the epoch where it was): the window drew for nothing, and a view the
+// refresh did change stayed as it was until something else redrew.
+func TestRefreshRedrawsOnlyChanges(t *testing.T) {
+	h := newHarness(t)
+	h.js(`globalThis.__mark = ''; globalThis.__un = api.messages.patchMessageText((t) => t + globalThis.__mark); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	const ts = "1700000001.000100"
+	eventually(t, 3*time.Second, "the view", func() bool { _, ok := h.tt.MessageView(chGen, ts); return ok })
+	time.Sleep(100 * time.Millisecond) // the worker done
+	v := &h.tt.ui.views
+	n0, ep0, f0 := h.ui.invalidations.Load(), h.tt.ViewEpoch(), v.fetches.Load()
+	h.js(`api.redux.refresh(); return 1`)
+	eventually(t, 2*time.Second, "the refresh asking JS again", func() bool { return v.fetches.Load() > f0 })
+	time.Sleep(80 * time.Millisecond)
+	if n := h.ui.invalidations.Load() - n0; n != 0 {
+		t.Errorf("a refresh that changed nothing on screen redrew the window %d times", n)
+	}
+	if h.tt.ViewEpoch() != ep0 {
+		t.Error("a refresh that changed nothing on screen moved the view epoch")
+	}
+	// one that changes what the view says: a redraw, and the epoch moves
+	h.js(`globalThis.__mark = ' (refreshed)'; api.redux.refresh(); return 1`)
+	eventually(t, 3*time.Second, "the refreshed view, a redraw and the epoch moved", func() bool {
+		m, ok := h.tt.MessageView(chGen, ts)
+		return ok && strings.HasSuffix(m.Text, " (refreshed)") && h.ui.invalidations.Load() > n0 && h.tt.ViewEpoch() != ep0
+	})
+}
+
 // jsInvalidations wraps __taut.invalidate to record, in JS, each call's
 // changes.
 func jsInvalidations(t *testing.T, h *harness) func() [][]change {
@@ -131,6 +163,15 @@ func TestMemberChangesOnlyForWhatJSHolds(t *testing.T) {
 	if got := members(); len(got) != n {
 		t.Errorf("Bob's second change, before JS read him again, went to JS: %v", got)
 	}
+	// JS reads him again: his next change is news again
+	h.jsInto(`return api.redux.getRawState().members['UBOB']?.id ?? ''`, &id)
+	h.tt.mirror.onEvent(core.Event{Type: "user", UserID: "UBOB"})
+	eventually(t, 2*time.Second, "Bob's change after JS read him again", func() bool { return len(members()) > n })
+	// JS lists the members: it may hold any of them, so every change goes
+	var keys int
+	h.jsInto(`return Object.keys(api.redux.getRawState().members).length`, &keys)
+	h.tt.mirror.onEvent(core.Event{Type: "user", UserID: "UALICE"})
+	eventually(t, 2*time.Second, "Alice's change once JS listed the members", func() bool { return slices.Contains(members(), "UALICE") })
 }
 
 // While an invalidate task waits behind a busy runtime, later batches join
@@ -192,6 +233,10 @@ func TestRawEventsConvertNothing(t *testing.T) {
 		{Type: "prefs"}, // a pref no conversion reads (core marks neither NamePrefs nor DocPrefs)
 		{Type: "names", Users: []string{"UCAROL"}}, // a member no conversion read
 		{Type: "emoji_changed", Name: "partyparrot"},
+		// a mark of the open channel's newest message (core.Mark, then
+		// Slack's channel_marked echo): nothing a conversion reads
+		{Type: "marked", Channel: chGen, TS: genTS}, {Type: "marked", Channel: chGen, TS: reactedTS},
+		{Type: "draft", Channel: chGen, TS: genTS}, {Type: "typing", Channel: chGen, TS: genTS},
 	} {
 		h.tt.mirror.onEvent(ev)
 	}

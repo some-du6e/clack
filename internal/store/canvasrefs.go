@@ -88,16 +88,6 @@ func (s *Store) PutCanvasPreview(fileID string, b []richtext.Block) {
 }
 
 // PutCanvasRef records what files.info said about a canvas.
-// PeekCanvasRef is CanvasRef without noting a miss: whether the store
-// has a canvas or list's title at all (core refreshes one on file_change).
-func (s *Store) PeekCanvasRef(fileID string) (richtext.CanvasRef, bool) {
-	c := s.canvasRefs()
-	c.mu.Lock()
-	r, ok := c.refs[fileID]
-	c.mu.Unlock()
-	return r, ok
-}
-
 func (s *Store) PutCanvasRef(fileID string, r richtext.CanvasRef) {
 	c := s.canvasRefs()
 	c.mu.Lock()

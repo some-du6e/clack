@@ -331,6 +331,10 @@ func Pane(id string) (outer string) {
 // EndPane ends the pane Pane started; outer is what Pane returned.
 func EndPane(outer string) { curPane = outer }
 
+// CurrentPane is the pane being drawn ("" outside one): what the
+// instances drawn now are keyed by (RemountKeyedIn). UI goroutine.
+func CurrentPane() string { return curPane }
+
 // ResultBridge is implemented by bridges that report what JS did with an
 // event: done gets, on any goroutine, whether a listener stopped its
 // propagation. A focused plugin element's Escape keydown goes on to the

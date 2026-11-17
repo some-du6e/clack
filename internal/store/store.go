@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -1737,14 +1738,19 @@ func (s *Store) HasCachedPrefs() bool {
 // SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
 // SetMyUsergroups replaces the viewer's user groups
 // (bulkSetUserGroupMembership).
-func (s *Store) SetMyUsergroups(ids []string) {
+func (s *Store) SetMyUsergroups(ids []string) (changed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.MyGroups = make(map[string]bool, len(ids))
+	next := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		s.MyGroups[id] = true
+		next[id] = true
 	}
+	if s.MyGroups != nil && maps.Equal(next, s.MyGroups) {
+		return false // the usual answer: nothing a message reads moved
+	}
+	s.MyGroups = next
 	s.gen.Add(1)
+	return true
 }
 
 // SetMyUsergroup records the viewer joining or leaving group id
