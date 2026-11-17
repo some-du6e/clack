@@ -154,7 +154,14 @@ func (r *runtime) call(ctx context.Context, fn string, out any, args ...any) err
 
 // post runs __taut.<fn>(args…) without waiting (events, invalidations).
 func (r *runtime) post(fn string, args ...any) {
+	r.postWith(fn, func() []any { return args })
+}
+
+// postWith is post with the arguments taken when the task runs, on the
+// JS thread (postInvalidate gathers what came meanwhile).
+func (r *runtime) postWith(fn string, argsAt func() []any) {
 	r.rt.Post(func(js *jsrt.Ctx) {
+		args := argsAt()
 		f := js.Global().Get("__taut").Get(fn)
 		if !f.IsFunction() {
 			r.t.logf("taut: __taut.%s is not a function", fn)

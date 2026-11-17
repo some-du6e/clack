@@ -15,6 +15,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // UIHooks connect plugins to Clack's native UI. The ui root fills them in
@@ -913,10 +914,17 @@ func (t *Taut) InjectedMessages(ch string) []core.Message {
 	// (swapped for the confirmed message since) or a message core already
 	// has under another ts must not come back as "injected" (the message
 	// showed twice after every send with Message Logger on).
-	var out []core.Message
+	// One pass over the store for all of them (Holds for each scanned the
+	// timeline and every cached thread once per message, 4 times a
+	// second per open list).
+	keys := make([]store.MsgKey, len(e.inj))
 	for i := range e.inj {
-		in := &e.inj[i]
-		if t.app.S.Holds(ch, in.ts, in.cid) {
+		keys[i] = store.MsgKey{TS: e.inj[i].ts, CID: e.inj[i].cid}
+	}
+	held := t.app.S.Held(ch, keys)
+	var out []core.Message
+	for i, in := range e.inj {
+		if held[i] {
 			continue
 		}
 		if _, local := t.app.LocalTS(in.ts); local {
@@ -1078,17 +1086,33 @@ type viewEntry struct {
 
 	// decoded by the worker, read-only once installed
 	sm    *slack.Message // a message (slice messages, sub ts)
-	inj   []viewInj      // a channel's bucket (messages, key ch, sub ""): what core didn't have
+	inj   []*viewInj     // a channel's bucket (messages, key ch, sub ""): what core didn't have
 	mem   *MemberFields  // a member (members)
 	ch    *ChannelFields // a channel (channels)
 	restr *restrFields   // readOnlyChannels / threadOnlyChannels
 
 	conv atomic.Pointer[viewConv] // sm converted (MessageView)
+
+	// A message's or a bucket's (messages slice): the bytes of the bucket
+	// it was decoded from (a refetch of the same bytes decodes nothing;
+	// work updates them, mu) and, for a bucket, its messages' keys then.
+	bsum  uint64
+	blen  int
+	bkeys []store.MsgKey
+
+	// same: the fetch found the value the installed entry it was handed
+	// holds, and decoded nothing (work keeps that entry, taking bsum and
+	// blen)
+	same bool
 }
 
-// viewInj is a message of a bucket that core didn't have.
+// viewInj is a message of a bucket that core didn't have; sum and rawLen
+// tell its bytes, so a refetch keeps it (decoded and converted) when
+// they didn't change.
 type viewInj struct {
 	ts, cid string
+	sum     uint64
+	rawLen  int
 	sm      *slack.Message
 	conv    atomic.Pointer[viewConv]
 }
@@ -1105,8 +1129,9 @@ var convSerial atomic.Uint64
 // viewGroup is the cached values under one (slice, key): a message bucket's
 // messages share theirs.
 type viewGroup struct {
-	ver  uint64 // seq of its last invalidation
-	subs map[string]*viewEntry
+	ver    uint64 // seq of its last invalidation
+	readAt int64  // when the UI last read one of them (viewNow; mu)
+	subs   map[string]*viewEntry
 }
 
 type viewCache struct {
@@ -1128,6 +1153,21 @@ type viewCache struct {
 	maxBytes int              // bytes before everything is dropped (64 MiB)
 	failN    int              // fetches that failed in a row (retry backoff)
 
+	// What the UI reads, and when (entry, viewNow): the latest read of
+	// all, and of each slice. A change to values the UI hasn't read
+	// within viewOnScreen of its latest read is off screen (a channel
+	// left, a member no row draws now): it's marked stale, so the next
+	// read fetches it, and draws nothing. Every message, update and
+	// delete in any channel opened this session redrew the window, and
+	// every profile change of a member a row once drew.
+	lastRead  int64
+	sliceRead map[string]int64
+
+	// epoch moves with every change to what a message view shows (a new
+	// value, a conversion made again): lists re-read their rows' views
+	// when it moved, not 250 ms later (ViewEpoch)
+	epoch atomic.Uint64
+
 	// conversion generations (MessageView): the mirror bumps a message's
 	// on core's events about it or about a member or conversation its
 	// conversion read (refBy), and the global one on events about prefs,
@@ -1144,6 +1184,38 @@ type viewCache struct {
 	refBy  map[string]map[viewSK]struct{}
 	refOf  map[viewSK]core.MsgRefs
 	refSeq map[string]uint64
+	// inflight counts the conversions of each message under way (conv),
+	// so a change to one being made isn't lost (bumpConv)
+	inflight map[viewSK]int
+}
+
+// viewOnScreen is how recently, before the UI's latest read, values must
+// have been read to be on screen: rows re-read their views at least every
+// viewRefresh (250 ms) while frames draw, and a window drawing nothing
+// read everything on screen in its last frame.
+const viewOnScreen = int64(time.Second)
+
+var viewBase = time.Now()
+
+// viewNow is the time on viewBase's monotonic clock (ns).
+func viewNow() int64 { return int64(time.Since(viewBase)) }
+
+// visibleLocked reports whether g was read within viewOnScreen of the
+// UI's latest read (mu held).
+func (v *viewCache) visibleLocked(g *viewGroup) bool {
+	return g != nil && g.readAt >= v.lastRead-viewOnScreen
+}
+
+// ViewEpoch moves with every change to what MessageView or
+// InjectedMessages hand out (a value fetched, a conversion to be made
+// again): a list re-reads its rows' views when it moved since they
+// last read, rather than after viewRefresh (an idle window's only frame
+// for a change came and went within it, and the row kept the old view).
+func (t *Taut) ViewEpoch() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.ui.views.epoch.Load()
 }
 
 // maxConvKeys bounds the per-message generations and the conversions'
@@ -1161,6 +1233,8 @@ func (v *viewCache) init(t *Taut) {
 	v.refBy = map[string]map[viewSK]struct{}{}
 	v.refOf = map[viewSK]core.MsgRefs{}
 	v.refSeq = map[string]uint64{}
+	v.inflight = map[viewSK]int{}
+	v.sliceRead = map[string]int64{}
 	v.maxSubs = 20000
 	v.maxBytes = 64 << 20
 }
@@ -1201,8 +1275,10 @@ func (v *viewCache) staleLocked(e *viewEntry, g *viewGroup, slice string) bool {
 // arrives), queueing a fetch when it's missing or stale. Never waits on JS.
 func (v *viewCache) entry(slice, key, sub string) *viewEntry {
 	k := viewKey{slice, key, sub}
+	now := viewNow()
 	v.mu.Lock()
 	g := v.groupLocked(viewSK{slice, key})
+	g.readAt, v.lastRead, v.sliceRead[slice] = now, max(v.lastRead, now), now
 	e := g.subs[sub]
 	// a key in flight isn't asked twice: if it was invalidated meanwhile,
 	// the worker asks again when it lands (work)
@@ -1233,21 +1309,25 @@ func (v *viewCache) staleAll() {
 }
 
 // stale marks the cached views of slice (key "" = all) stale, reporting
-// whether it held any.
+// whether one of them is on screen (visibleLocked): those the UI reads
+// again soon; the rest are fetched again when next read.
 func (v *viewCache) stale(slice, key string) bool {
+	if slice == "messages" {
+		defer v.epoch.Add(1)
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.seq++
 	if key == "" {
 		v.sliceVer[slice] = v.seq
-		return v.sliceN[slice] > 0
+		return v.sliceN[slice] > 0 && v.sliceRead[slice] >= v.lastRead-viewOnScreen
 	}
 	g := v.groups[viewSK{slice, key}]
 	if g == nil {
 		return false
 	}
 	g.ver = v.seq
-	return len(g.subs) > 0
+	return len(g.subs) > 0 && v.visibleLocked(g)
 }
 
 // work is the fetch worker: one batch at a time until nothing is wanted,
@@ -1261,15 +1341,22 @@ func (v *viewCache) work() {
 			return
 		}
 		keys := make([]viewKey, 0, len(v.want))
+		// what's installed for them now: the fetch decodes only what changed
+		have := make(map[viewKey]*viewEntry, len(v.want))
 		for k := range v.want {
 			keys = append(keys, k)
 			v.flying[k] = true
+			if g := v.groups[viewSK{k.slice, k.key}]; g != nil {
+				if e := g.subs[k.sub]; e != nil {
+					have[k] = e
+				}
+			}
 		}
 		clear(v.want)
 		ver := v.seq
 		v.mu.Unlock()
 
-		got, failed := v.fetch(keys) // JS and decoding, mu released
+		got, failed := v.fetch(keys, have) // JS and decoding, mu released
 		v.fetches.Add(1)
 
 		v.mu.Lock()
@@ -1299,12 +1386,22 @@ func (v *viewCache) work() {
 			}
 			g := v.groupLocked(viewSK{k.slice, k.key})
 			cur := g.subs[k.sub]
-			if cur != nil && cur.inj == nil && e.inj == nil && cur.sameValue(e) {
-				// the same value: keep what was decoded and converted (not
-				// a bucket's injected list, which also depends on what core
-				// had when it came: a message core deleted since that a
-				// logger keeps is injected now)
+			if e.same && cur != have[k] {
+				// it matched an entry that went meanwhile (dropped,
+				// replaced): nothing was decoded, so ask again
+				v.want[k] = true
+				continue
+			}
+			if e.same || cur != nil && cur.inj == nil && e.inj == nil && cur.sameValue(e) {
+				// the same value: keep what was decoded and converted (a
+				// bucket's injected list also depends on what core had
+				// when it came: fetch keeps it only when that's the same
+				// too, a message core deleted since that a logger keeps
+				// being injected now)
 				cur.ver = ver
+				if e.blen > 0 {
+					cur.bsum, cur.blen = e.bsum, e.blen
+				}
 			} else {
 				if cur == nil {
 					v.n++
@@ -1313,9 +1410,18 @@ func (v *viewCache) work() {
 				}
 				v.bytes += e.size
 				e.ver = ver
+				// what the UI sees changed; a channel's bucket shows only
+				// its injected list, which may have come back as it was
+				// (the same messages, kept decoded and converted)
+				bucket := k.slice == "messages" && k.key != "" && k.sub == ""
+				if !bucket || cur == nil || !sameInj(cur.inj, e.inj) {
+					changed = true
+					if k.slice == "messages" {
+						v.epoch.Add(1)
+					}
+				}
 				g.subs[k.sub] = e
 				cur = e
-				changed = true
 			}
 			// Invalidated while JS answered (the mirror marks a change again
 			// once it has posted it to JS, behind this call): the value may
@@ -1460,11 +1566,16 @@ func (v *viewCache) dropEvicted(ch string) {
 	v.unindex(keys)
 }
 
-// fetch asks JS for keys and decodes what comes back: one JS read per
-// (slice, key), each message bucket decoded once for all of its messages
-// asked for. failed: a call to JS failed (the keys it didn't answer are
-// worth asking again); with no runtime nothing is asked or failed.
-func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bool) {
+// fetch asks JS for keys and decodes what changed of what comes back: one
+// JS read per (slice, key), each message bucket decoded once for all of
+// its messages asked for. have are the entries installed for keys: one
+// whose bytes come back as they were comes back same, nothing decoded or
+// converted (each event in the open channel had the worker decode every
+// message asked of its bucket again, and its injected messages, to find
+// most of them unchanged). failed: a call to JS failed (the keys it
+// didn't answer are worth asking again); with no runtime nothing is asked
+// or failed.
+func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[viewKey]*viewEntry, failed bool) {
 	v.t.mu.Lock()
 	rt := v.t.rt
 	v.t.mu.Unlock()
@@ -1513,17 +1624,35 @@ func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bo
 	if err := rt.call(ctx, "views", &vals, pairs); err != nil || len(vals) != len(pairs) {
 		return out, true
 	}
-	buckets := make(map[int]map[string]json.RawMessage)
+	sums := make(map[int]uint64)
+	sum := func(i int) uint64 {
+		s, ok := sums[i]
+		if !ok {
+			s = viewSum(vals[i])
+			sums[i] = s
+		}
+		return s
+	}
+	decoded := make(map[int]map[string]json.RawMessage)
 	bucket := func(i int) map[string]json.RawMessage {
-		b, ok := buckets[i]
+		b, ok := decoded[i]
 		if !ok {
 			_ = json.Unmarshal(vals[i], &b)
-			buckets[i] = b
+			decoded[i] = b
 		}
 		return b
 	}
 	for _, k := range plain {
 		i := index[viewSK{k.slice, k.key}]
+		cur := have[k]
+		if k.slice == "messages" && k.key != "" {
+			// decoded from the very bytes this bucket has now
+			if cur != nil && cur.blen == len(vals[i]) && cur.bsum == sum(i) &&
+				(k.sub != "" && cur.sm != nil || k.sub == "" && v.sameHeld(k.key, cur.inj, cur.bkeys)) {
+				out[k] = &viewEntry{same: true, bsum: sum(i), blen: len(vals[i])}
+				continue
+			}
+		}
 		raw := vals[i]
 		if k.sub != "" {
 			raw = bucket(i)[k.sub] // one message of a bucket
@@ -1531,20 +1660,42 @@ func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bo
 		e := &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
 		switch k.slice {
 		case "messages":
+			e.bsum, e.blen = sum(i), len(vals[i])
 			if k.sub != "" {
 				// decoded and converted, the bytes aren't needed again:
 				// a hash tells a refetch of the same value
-				e.sm = decodeMessage(raw)
 				e.raw, e.sum = nil, viewSum(raw)
+				if cur != nil && cur.sm != nil && cur.sum == e.sum && cur.rawLen == e.rawLen {
+					out[k] = &viewEntry{same: true, bsum: e.bsum, blen: e.blen} // this message's bytes as they were
+					continue
+				}
+				e.sm = decodeMessage(raw)
 				e.size = 3*len(raw) + 256 // the decoded message and its conversion
 			} else if k.key != "" {
-				e.inj = v.injected(k.key, bucket(i))
-				e.size += 3 * 1024 * len(e.inj)
+				var prev []*viewInj
+				if cur != nil {
+					prev = cur.inj
+				}
+				b := bucket(i)
+				e.inj = v.injected(k.key, b, prev)
+				e.bkeys = make([]store.MsgKey, 0, len(b))
+				for ts, raw := range b {
+					e.bkeys = append(e.bkeys, store.MsgKey{TS: ts, CID: clientMsgID(raw)})
+				}
+				e.size += 3*1024*len(e.inj) + 48*len(e.bkeys)
 			}
 		case "members":
+			if cur != nil && cur.mem != nil && bytes.Equal(cur.raw, raw) {
+				out[k] = &viewEntry{same: true}
+				continue
+			}
 			e.mem = decodeMember(raw)
 			e.size += 256
 		case "channels":
+			if cur != nil && cur.ch != nil && bytes.Equal(cur.raw, raw) {
+				out[k] = &viewEntry{same: true}
+				continue
+			}
 			e.ch = decodeChannel(raw)
 			e.size += 128
 		case "readOnlyChannels", "threadOnlyChannels":
@@ -1556,6 +1707,59 @@ func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bo
 		out[k] = e
 	}
 	return out, failed
+}
+
+// sameHeld reports whether, of the bucket messages keys (what the last
+// decode of ch's bucket saw), core holds just what it did then: the
+// injected list inj is the same.
+func (v *viewCache) sameHeld(ch string, inj []*viewInj, keys []store.MsgKey) bool {
+	held := v.t.app.S.Held(ch, keys)
+	injected := make(map[string]bool, len(inj))
+	for _, in := range inj {
+		injected[in.ts] = true
+	}
+	n := 0
+	for i, k := range keys {
+		if held[i] {
+			if injected[k.TS] {
+				return false // core has one it didn't
+			}
+			continue
+		}
+		if !injected[k.TS] {
+			return false // one core had is gone (a logger keeps it): injected now
+		}
+		n++
+	}
+	return n == len(inj)
+}
+
+// clientMsgID is raw's client_msg_id, found without decoding the message.
+func clientMsgID(raw json.RawMessage) string {
+	i := bytes.Index(raw, []byte(`"client_msg_id":"`))
+	if i < 0 {
+		return ""
+	}
+	rest := raw[i+len(`"client_msg_id":"`):]
+	j := bytes.IndexByte(rest, '"')
+	if j < 0 {
+		return ""
+	}
+	return string(rest[:j])
+}
+
+// sameInj reports whether a and b are the same injected messages, kept as
+// they were.
+func sameInj(a, b []*viewInj) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // viewSum is FNV-1a of b.
@@ -1580,26 +1784,37 @@ func decodeMessage(raw json.RawMessage) *slack.Message {
 }
 
 // injected is the messages of ch's bucket that core doesn't have, by ts,
-// converted (worker goroutine).
-func (v *viewCache) injected(ch string, bucket map[string]json.RawMessage) []viewInj {
+// converted (worker goroutine). One of prev (the last list) whose bytes
+// didn't change is kept as it was, decoded and converted.
+func (v *viewCache) injected(ch string, bucket map[string]json.RawMessage, prev []*viewInj) []*viewInj {
 	if len(bucket) == 0 {
 		return nil
 	}
 	have, cids := v.t.app.S.MessageKeys(ch)
-	var out []viewInj
+	old := make(map[string]*viewInj, len(prev))
+	for _, in := range prev {
+		old[in.ts] = in
+	}
+	var out []*viewInj
 	for ts, raw := range bucket {
 		if have[ts] {
+			continue
+		}
+		if p := old[ts]; p != nil && p.rawLen == len(raw) && p.sum == viewSum(raw) {
+			if p.cid == "" || !cids[p.cid] {
+				out = append(out, p)
+			}
 			continue
 		}
 		sm := decodeMessage(raw)
 		if sm == nil || sm.ClientMsgID != "" && cids[sm.ClientMsgID] {
 			continue
 		}
-		out = append(out, viewInj{ts: ts, cid: sm.ClientMsgID, sm: sm})
+		out = append(out, &viewInj{ts: ts, cid: sm.ClientMsgID, sum: viewSum(raw), rawLen: len(raw), sm: sm})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ts < out[j].ts })
-	for i := range out {
-		v.convert(&out[i].conv, ch, out[i].sm, false)
+	for _, in := range out {
+		v.convert(&in.conv, ch, in.sm, false)
 	}
 	return out
 }
@@ -1613,16 +1828,30 @@ func (v *viewCache) convert(slot *atomic.Pointer[viewConv], ch string, sm *slack
 
 // conv is convert's conversion itself.
 func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Message, fresh bool) *viewConv {
-	gen, at := v.convGenAt(ch, sm.TS)
+	k := viewSK{ch, sm.TS}
+	v.gmu.Lock()
+	gen, at := max(v.global, v.msgGen[k]), v.gseq
 	if c := slot.Load(); c != nil && !fresh && c.gen == gen {
+		v.gmu.Unlock()
 		return c
 	}
+	v.inflight[k]++ // a bumpConv meanwhile records the message's generation
+	v.gmu.Unlock()
 	m := *sm
 	c := &viewConv{gen: gen, id: convSerial.Add(1), msg: v.t.app.MessageFromSlack(ch, &m)}
 	slot.Store(c)
-	if v.indexRefs(viewSK{ch, sm.TS}, c.msg.Refs, at) {
-		// something it read changed while it was being made (bumpChange
-		// came before it was indexed): the next read makes it again
+	stale := v.indexRefs(k, c.msg.Refs, at)
+	v.gmu.Lock()
+	if v.inflight[k]--; v.inflight[k] <= 0 {
+		delete(v.inflight, k)
+	}
+	stale = stale || max(v.global, v.msgGen[k]) != gen
+	v.gmu.Unlock()
+	if stale {
+		// something it read changed while it was being made (a bump that
+		// came before it was indexed): the next read makes it again, and
+		// lists read again at once (ViewEpoch), not after their 250 ms
+		v.epoch.Add(1)
 		if f := v.t.opts.UI.Invalidate; f != nil {
 			f()
 		}
@@ -1642,13 +1871,12 @@ func (v *viewCache) convGenAt(ch, ts string) (gen, at uint64) {
 // something bumpChange changed since is stale at once: it reports true
 // with k's generation moved on.
 func (v *viewCache) indexRefs(k viewSK, r core.MsgRefs, at uint64) (stale bool) {
+	ids := r.RefIDs()
 	v.gmu.Lock()
 	defer v.gmu.Unlock()
-	for _, l := range [][]string{r.Members, r.Channels, r.Files} {
-		for _, id := range l {
-			if v.refSeq[id] > at {
-				stale = true
-			}
+	for _, id := range ids {
+		if v.refSeq[id] > at {
+			stale = true
 		}
 	}
 	if len(r.Members) > 0 && v.refSeq[anyMember] > at {
@@ -1659,7 +1887,7 @@ func (v *viewCache) indexRefs(k viewSK, r core.MsgRefs, at uint64) (stale bool) 
 		v.msgGen[k] = v.gseq
 	}
 	old, had := v.refOf[k]
-	n := len(r.Members) + len(r.Channels) + len(r.Files)
+	n := len(ids)
 	if n == 0 && !had {
 		return stale
 	}
@@ -1677,28 +1905,24 @@ func (v *viewCache) indexRefs(k viewSK, r core.MsgRefs, at uint64) (stale bool) 
 		v.global = v.gseq
 	}
 	v.refOf[k] = r
-	for _, l := range [][]string{r.Members, r.Channels, r.Files} {
-		for _, id := range l {
-			set := v.refBy[id]
-			if set == nil {
-				set = map[viewSK]struct{}{}
-				v.refBy[id] = set
-			}
-			set[k] = struct{}{}
+	for _, id := range ids {
+		set := v.refBy[id]
+		if set == nil {
+			set = map[viewSK]struct{}{}
+			v.refBy[id] = set
 		}
+		set[k] = struct{}{}
 	}
 	return stale
 }
 
 // unindexLocked forgets that k's conversion read refs (gmu held).
 func (v *viewCache) unindexLocked(k viewSK, refs core.MsgRefs) {
-	for _, l := range [][]string{refs.Members, refs.Channels, refs.Files} {
-		for _, id := range l {
-			if set := v.refBy[id]; set != nil {
-				delete(set, k)
-				if len(set) == 0 {
-					delete(v.refBy, id)
-				}
+	for _, id := range refs.RefIDs() {
+		if set := v.refBy[id]; set != nil {
+			delete(set, k)
+			if len(set) == 0 {
+				delete(v.refBy, id)
 			}
 		}
 	}
@@ -1726,16 +1950,24 @@ const anyMember = "*"
 
 // bumpChange makes the conversions that read what c changed be made
 // again, and only those: a profile change converted every message again,
-// or none. It redraws only when one of them is still cached (a view's
-// conversion that went keeps nothing on screen), and forgets the others.
+// or none. It redraws only when one of them is still cached and on screen
+// (a view's conversion that went keeps nothing on screen, one in a
+// channel left long ago draws nothing now), and forgets those no view
+// holds. One hold of mu and gmu throughout: a conversion indexing itself
+// between a check and the unindex lost its index for good.
 func (v *viewCache) bumpChange(c core.RefChange) {
 	if c.Empty() {
+		return
+	}
+	if c.All {
+		v.bumpConv("", "")
 		return
 	}
 	ids := c.IDs()
 	if c.AnyMember {
 		ids = append(ids, anyMember)
 	}
+	v.mu.Lock()
 	v.gmu.Lock()
 	v.gseq++
 	seq := v.gseq
@@ -1758,39 +1990,35 @@ func (v *viewCache) bumpChange(c core.RefChange) {
 			}
 		}
 	}
-	if len(keys) == 0 {
-		v.gmu.Unlock()
-		return
-	}
-	if len(v.msgGen)+len(keys) >= maxConvKeys {
-		clear(v.msgGen)
-		v.global = seq
-	} else {
+	redraw := false
+	if len(keys) > 0 {
+		if len(v.msgGen)+len(keys) >= maxConvKeys {
+			clear(v.msgGen)
+			v.global = seq
+		} else {
+			for _, k := range keys {
+				v.msgGen[k] = seq
+			}
+		}
 		for _, k := range keys {
-			v.msgGen[k] = seq
+			if !v.convCachedLocked(k.slice, k.key) {
+				if refs, ok := v.refOf[k]; ok {
+					v.unindexLocked(k, refs)
+				}
+				continue
+			}
+			redraw = redraw || v.visibleLocked(v.groups[viewSK{"messages", k.slice}])
 		}
 	}
 	v.gmu.Unlock()
-	cached, gone := v.cachedKeys(keys)
-	v.unindex(gone)
-	if f := v.t.opts.UI.Invalidate; cached && f != nil {
+	v.mu.Unlock()
+	if len(keys) == 0 {
+		return
+	}
+	v.epoch.Add(1)
+	if f := v.t.opts.UI.Invalidate; redraw && f != nil {
 		f()
 	}
-}
-
-// cachedKeys reports whether any of keys has a conversion cached, and
-// lists those that have none.
-func (v *viewCache) cachedKeys(keys []viewSK) (cached bool, gone []viewSK) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	for _, k := range keys {
-		if v.convCachedLocked(k.slice, k.key) {
-			cached = true
-		} else {
-			gone = append(gone, k)
-		}
-	}
-	return cached, gone
 }
 
 // convGen is the generation of what converting ch/ts reads.
@@ -1801,25 +2029,40 @@ func (v *viewCache) convGen(ch, ts string) uint64 {
 }
 
 // bumpConv makes conversions of ch/ts (with ts "", of every message) be
-// made again, and redraws when one of them is cached: the UI hears core's
-// event on its own and may have drawn, converting with the old
-// generation, before the mirror got here (a mention resolved by "names",
-// new highlight words), and nothing else would redraw for it.
+// made again, and redraws when one of them is cached and on screen: the
+// UI hears core's event on its own and may have drawn, converting with
+// the old generation, before the mirror got here (new highlight words, a
+// thread's subscription), and nothing else would redraw for it. A
+// message's generation is kept only while it has a conversion, cached
+// or being made: every message event workspace-wide added one, and at
+// maxConvKeys they all started over with a global bump.
 func (v *viewCache) bumpConv(ch, ts string) {
+	global := ch == "" || ts == ""
+	redraw := false
+	v.mu.Lock()
 	v.gmu.Lock()
 	v.gseq++
-	global := ch == "" || ts == "" || len(v.msgGen) >= maxConvKeys
 	if global {
 		clear(v.msgGen)
 		v.global = v.gseq
+		redraw = v.sliceN["messages"] > 0 && v.sliceRead["messages"] >= v.lastRead-viewOnScreen
 	} else {
-		v.msgGen[viewSK{ch, ts}] = v.gseq
+		k := viewSK{ch, ts}
+		cached := v.convCachedLocked(ch, ts)
+		if cached || v.inflight[k] > 0 {
+			if len(v.msgGen) >= maxConvKeys {
+				clear(v.msgGen)
+				v.global = v.gseq
+			} else {
+				v.msgGen[k] = v.gseq
+			}
+		}
+		redraw = cached && v.visibleLocked(v.groups[viewSK{"messages", ch}])
 	}
 	v.gmu.Unlock()
-	if global {
-		ch, ts = "", ""
-	}
-	if f := v.t.opts.UI.Invalidate; f != nil && v.convCached(ch, ts) {
+	v.mu.Unlock()
+	v.epoch.Add(1)
+	if f := v.t.opts.UI.Invalidate; f != nil && redraw {
 		f()
 	}
 }

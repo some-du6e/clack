@@ -81,14 +81,79 @@ type mirror struct {
 	flush   *time.Timer
 	cancel  context.CancelFunc
 	started bool
+
+	// What JS holds of the id-keyed slices whose changes come by the
+	// thousand on a busy workspace (members, presence): the ids it read
+	// since their last invalidation (jsRead), and whether it listed the
+	// slice's keys since its last whole invalidation (jsListed: then any
+	// id's change may be news). A change to an id JS doesn't hold has
+	// nothing to tell it: it reads the store as it is when it first reads
+	// the id. Every status change of anyone used to post JS a task that
+	// re-ran every store listener. jsFull: too many ids to track, so
+	// every change goes (until the next whole invalidation).
+	jsRead   map[string]map[string]struct{}
+	jsListed map[string]bool
+	jsFull   map[string]bool
+
+	// the invalidations posted to JS whose task hasn't taken them yet
+	// (postInvalidate): later batches join it rather than queue tasks of
+	// their own behind a busy runtime
+	qmu     sync.Mutex
+	queued  []change
+	qposted bool
+	qrt     *runtime
 }
+
+// jsTracked are the slices whose changes go to JS only for ids it holds.
+var jsTracked = map[string]bool{"members": true, "presence": true}
+
+// jsReadMax bounds jsRead per slice: past it every change goes.
+const jsReadMax = 50000
 
 func newMirror(t *Taut) *mirror {
 	return &mirror{
 		t: t, typing: map[string]typingRec{}, membership: map[string]map[string]membershipRec{},
 		editing: map[string]map[string]any{}, drafts: map[string]core.Draft{}, local: map[string]localDraft{}, calls: map[string]json.RawMessage{},
 		watched: map[string]map[string]uint64{},
+		jsRead:  map[string]map[string]struct{}{}, jsListed: map[string]bool{}, jsFull: map[string]bool{},
 	}
+}
+
+// noteJSRead records that JS read slice[key] (a tracked slice).
+func (m *mirror) noteJSRead(slice, key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.jsFull[slice] {
+		return
+	}
+	r := m.jsRead[slice]
+	if r == nil {
+		r = map[string]struct{}{}
+		m.jsRead[slice] = r
+	}
+	if len(r) >= jsReadMax {
+		m.jsFull[slice] = true
+		delete(m.jsRead, slice)
+		return
+	}
+	r[key] = struct{}{}
+}
+
+// jsHoldsLocked filters keys of a tracked slice to those JS holds,
+// forgetting them (their invalidation drops them in JS); mu held.
+func (m *mirror) jsHoldsLocked(slice string, keys []string) []string {
+	if m.jsListed[slice] || m.jsFull[slice] {
+		return keys
+	}
+	r := m.jsRead[slice]
+	var out []string
+	for _, k := range keys {
+		if _, ok := r[k]; ok {
+			delete(r, k)
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // start follows core's events and raw realtime frames while the runtime is up.
@@ -137,7 +202,8 @@ func (m *mirror) stop() {
 	m.mu.Unlock()
 }
 
-// invalidate queues a change for JS; changes are sent together a moment later.
+// invalidate queues a change for JS; changes are sent together a moment
+// later. Of a tracked slice (members, presence) only the ids JS holds go.
 func (m *mirror) invalidate(slice string, keys ...string) {
 	if len(keys) == 0 {
 		m.t.ui.views.stale(slice, "")
@@ -146,6 +212,16 @@ func (m *mirror) invalidate(slice string, keys ...string) {
 		m.t.ui.views.stale(slice, k)
 	}
 	m.mu.Lock()
+	if jsTracked[slice] {
+		if len(keys) == 0 {
+			delete(m.jsRead, slice)
+			delete(m.jsListed, slice)
+			delete(m.jsFull, slice)
+		} else if keys = m.jsHoldsLocked(slice, keys); len(keys) == 0 {
+			m.mu.Unlock()
+			return // nothing JS holds: nothing to tell it
+		}
+	}
 	m.pending = append(m.pending, change{Slice: slice, Keys: keys})
 	if w := m.watched[slice]; w != nil {
 		if len(keys) == 0 {
@@ -171,35 +247,12 @@ func (m *mirror) send() {
 	if len(batch) == 0 {
 		return
 	}
-	// merge per slice: an all-keys change swallows key lists
-	merged := map[string]*change{}
-	var order []string
-	for _, c := range batch {
-		cur := merged[c.Slice]
-		if cur == nil {
-			cc := c
-			merged[c.Slice] = &cc
-			order = append(order, c.Slice)
-			continue
-		}
-		if len(cur.Keys) == 0 {
-			continue
-		}
-		if len(c.Keys) == 0 {
-			cur.Keys = nil
-			continue
-		}
-		cur.Keys = append(cur.Keys, c.Keys...)
-	}
-	out := make([]change, 0, len(order))
-	for _, s := range order {
-		out = append(out, *merged[s])
-	}
+	out := mergeChanges(batch)
 	m.t.mu.Lock()
 	rt := m.t.rt
 	m.t.mu.Unlock()
 	if rt != nil {
-		rt.post("invalidate", out)
+		m.postInvalidate(rt, out)
 		// A view the UI read between invalidate and this post holds JS's
 		// old value: invalidate marked it stale before JS knew of the
 		// change, and its fetch could run first. Mark it stale again now
@@ -218,6 +271,66 @@ func (m *mirror) send() {
 			f()
 		}
 	}
+}
+
+// mergeChanges merges a batch per slice: an all-keys change swallows key
+// lists.
+func mergeChanges(batch []change) []change {
+	merged := map[string]*change{}
+	var order []string
+	for _, c := range batch {
+		cur := merged[c.Slice]
+		if cur == nil {
+			cc := c
+			cc.Keys = append([]string(nil), c.Keys...)
+			merged[c.Slice] = &cc
+			order = append(order, c.Slice)
+			continue
+		}
+		if len(cur.Keys) == 0 {
+			continue
+		}
+		if len(c.Keys) == 0 {
+			cur.Keys = nil
+			continue
+		}
+		cur.Keys = append(cur.Keys, c.Keys...)
+	}
+	out := make([]change, 0, len(order))
+	for _, s := range order {
+		out = append(out, *merged[s])
+	}
+	return out
+}
+
+// postInvalidate hands changes to JS. While one invalidate task waits in
+// the runtime's queue, later batches join it: a runtime busy for a moment
+// gets one task for what came meanwhile, not one per 8 ms batch (a
+// profile-change flood queued hundreds, Go's renders waiting behind them,
+// each re-running every store listener). Joining a task that is already
+// queued keeps the order send relies on: it runs before any read posted
+// after it.
+func (m *mirror) postInvalidate(rt *runtime, out []change) {
+	m.qmu.Lock()
+	if m.qrt != rt { // a new runtime: what the old one queued is gone with it
+		m.qrt, m.queued, m.qposted = rt, nil, false
+	}
+	m.queued = append(m.queued, out...)
+	if m.qposted {
+		m.qmu.Unlock()
+		return
+	}
+	m.qposted = true
+	m.qmu.Unlock()
+	rt.postWith("invalidate", func() []any {
+		m.qmu.Lock()
+		batch := mergeChanges(m.queued)
+		if m.qrt == rt {
+			m.queued, m.qposted = nil, false
+		}
+		m.qmu.Unlock()
+		return []any{batch}
+	})
 }
 
 // watch records what JS just read, so sweep can tell when it changes
@@ -400,45 +513,31 @@ func (m *mirror) onEvent(ev core.Event) {
 }
 
 // noteConv tells MessageView's cached conversions what ev may have
-// changed: the message it names (core announces every change to a message
-// that way, a thread's broadcasts included); for a member or a channel
-// (a profile change, a channel's name, icon, membership or tabs) the
-// messages whose conversion read it (core.RefsChanged,
+// changed of what they read: the message it names (core announces every
+// change to a message that way, a thread's broadcasts included); for a
+// member, a conversation, a bot, an emoji, a canvas or a list (a profile
+// change, a channel's name, icon, membership or tabs, names lookups
+// resolved) the messages whose conversion read it (core.RefsChanged,
 // viewCache.bumpChange: a file's uploader, a huddle's sentence, a message
-// slug, a work object, a channel mention, a tab slug); for anything else
-// that core.App.message reads (names lookups resolved, prefs and
-// highlight words, emoji, experiment groups, a resync) every message.
-// Events that change no message's conversion are skipped: read states,
-// counts and badges, a channel's member count (users/counts on a first
-// open), bookmarks, presence, typing. ("experiments" counts: a huddle
-// message's sentence and the emoji set follow experiment groups.)
+// slug, a work object, a channel mention, a tab slug); for what every
+// conversion reads (the highlight words, emoji_mode, experiment groups, a
+// resync) every message. Nothing else: raw passthrough events (badge
+// counts, a thread marked read, Slack's pref_change before the prefs
+// themselves are fetched, a followed thread's notification) re-converted
+// every message and redrew the window, a few times a minute.
 func (m *mirror) noteConv(ev core.Event) {
 	switch ev.Type {
-	case "typing", "presence", "marked", "counts", "huddle", "draft", "dnd_updated", "dnd_updated_user",
-		"connection", "realtime", "client_online", "sidebar_changed", "channel_sections_upserted",
-		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted",
-		"activity", "activity_badges", "poll", "bookmarks", "pins_tab", "channel_email", "permissions",
-		"member_count", "canvas_viewers", "megaphone", "suggested_prompts",
-		"assistant_status", "auth_failed":
-		return
-	case "user", "conv", "conv_removed", "tabs":
+	case "user", "conv", "conv_removed", "tabs", "names", "emoji_changed", "canvas", "list", "list_record_info",
+		"prefs", "experiments":
 		// a profile change comes many a second on a busy workspace's
 		// socket: it converts again only the messages that named the
-		// member, drawn or not (a file's uploader isn't the row's
-		// sender, so the frame that drew the row never read them).
-		// ("names" stays every message's: its ids are bots', canvases'
-		// and list records' too, which conversions don't record.)
+		// member, drawn or not (a file's uploader isn't the row's sender,
+		// so the frame that drew the row never read them); a status
+		// change, a topic, a bookmark, a pref no conversion reads: none
 		m.t.ui.views.bumpChange(core.RefsChanged(ev))
 		return
-	case "prefs":
-		// the highlight words or emoji_mode: every conversion read them;
-		// display_real_names, hidden_users: those that named a member;
-		// any other pref: none
-		if ev.DocPrefs {
-			m.t.ui.views.bumpConv("", "")
-		} else {
-			m.t.ui.views.bumpChange(core.RefsChanged(ev))
-		}
+	case "resync", "booted", "hydrated":
+		m.t.ui.views.bumpConv("", "")
 		return
 	}
 	ts := ev.TS
@@ -447,9 +546,7 @@ func (m *mirror) noteConv(ev core.Event) {
 	}
 	if ev.Channel != "" && ts != "" {
 		m.t.ui.views.bumpConv(ev.Channel, ts)
-		return
 	}
-	m.t.ui.views.bumpConv("", "")
 }
 
 func typingKey(ch, thread, user string) string { return ch + "|" + thread + "|" + user }
@@ -560,6 +657,9 @@ func (m *mirror) keys(slice string) []string {
 		}
 		return ids
 	case "members", "presence":
+		m.mu.Lock()
+		m.jsListed[slice] = true
+		m.mu.Unlock()
 		return a.S.UserIDs()
 	case "messages":
 		return a.S.MessageChannels()
@@ -630,6 +730,7 @@ func (m *mirror) get(slice, key string) any {
 		// getMemberById) neither counts as a hit for the members cache nor
 		// asks for a member it doesn't hold; an evicted member is gone
 		// from it as from Slack's (memberFP's change invalidates it)
+		m.noteJSRead("members", key) // read as absent too: a member arriving is news
 		u, ok := a.S.RawUser(key)
 		if !ok {
 			return nil
@@ -712,6 +813,7 @@ func (m *mirror) get(slice, key string) any {
 		}
 		return nil
 	case "presence":
+		m.noteJSRead("presence", key)
 		a.S.RLock()
 		p := a.S.Presence[key]
 		a.S.RUnlock()
