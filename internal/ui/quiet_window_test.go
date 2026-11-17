@@ -223,8 +223,11 @@ func TestRealWindowQuietFrames(t *testing.T) {
 	if n < 8 {
 		t.Fatalf("the window drew %d frames in 6 s of an animation: it isn't drawing", n)
 	}
-	if quiet < 5 || 2*quiet < n {
-		t.Errorf("%d of %d frames were quiet (%d laid out): a frame only the animation asked for is still laid out in a real window", quiet, n, laid)
+	// against the frames the window didn't ask for itself (the caret's
+	// blinks lay out at a fixed rate, so a slow software rasterizer would
+	// otherwise fail the ratio with quiet frames working)
+	if quiet < 5 || 2*quiet < n-nAsked {
+		t.Errorf("%d of %d frames were quiet (%d laid out, %d asked for by the window's frames): a frame only the animation asked for is still laid out in a real window", quiet, n, laid, nAsked)
 	}
 	if 2*adv < quiet {
 		t.Errorf("%d animation frames shown in %d quiet frames: the emoji doesn't play in them", adv, quiet)
