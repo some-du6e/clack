@@ -31,6 +31,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 
 	"github.com/some-du6e/clack/internal/slack/tlsfp"
@@ -924,6 +925,12 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 		}
 		p.card(f, "Settings", "", nil, rows)
 	}
+	if pl.Panel != 0 {
+		// Slick's PluginDetail: {panels[id] && <Card title="Customize">{panels[id]()}</Card>}
+		p.card(f, "Customize", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
+			func(gtx layout.Context, w int) layout.Dimensions { return p.panel(gtx, s, pl, w) },
+		})
+	}
 	p.card(f, "Workspaces", "", nil, p.workspaceRows(pl, st))
 	if pl.User {
 		label, desc := "Installed from a file", "ID "+pl.ID
@@ -949,6 +956,42 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 		}
 		p.card(f, "Source", "", nil, rows)
 	}
+}
+
+// panel draws a plugin's api.settings.panel, its own React on its page,
+// through the slackc tree path the other plugin UI takes: one JS root per
+// panel, mounted again when the plugin sets a new one (pl.Panel) or a new
+// runtime replaced the old one's roots.
+func (p *slickPage) panel(gtx layout.Context, s *slick.Slick, pl slick.PluginInfo, w int) layout.Dimensions {
+	if p.k.subGen != p.a.tautGen {
+		p.k.close()
+		p.k.subGen = p.a.tautGen
+	}
+	prefix := "slickpanel." + pl.ID + "."
+	k := prefix + strconv.Itoa(pl.Panel)
+	sub := p.k.subs[k]
+	if sub == nil {
+		for kk, old := range p.k.subs {
+			if strings.HasPrefix(kk, prefix) {
+				old.Close()
+				delete(p.k.subs, kk)
+			}
+		}
+		sub = slackc.NewSub()
+		p.k.subs[k] = sub
+		s.RenderPanel(sub.Root(), pl.ID)
+	}
+	if !sub.Ready() {
+		cl := p.colors()
+		pad := gtx.Dp(16)
+		d := at(gtx, image.Pt(pad, pad), image.Pt(max(1, w-2*pad), 1<<20), func(gtx layout.Context) layout.Dimensions {
+			return p.k.para(gtx, 13, 18, cl.ter, "Loading…")
+		})
+		return layout.Dimensions{Size: image.Pt(w, d.Size.Y+2*pad)}
+	}
+	gtx.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, 1<<20)}
+	d := sub.Layout(gtx)
+	return layout.Dimensions{Size: image.Pt(w, d.Size.Y)}
 }
 
 func (p *slickPage) workspaceRows(pl slick.PluginInfo, st slick.Settings) []func(gtx layout.Context, w int) layout.Dimensions {

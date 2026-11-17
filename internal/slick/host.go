@@ -91,6 +91,17 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		return true, nil
 	})
 
+	// api.settings.panel: the plugins with a panel on their Preferences
+	// page, id → a serial that changes with each new panel
+	sync("panels", func(a []json.RawMessage) (any, error) {
+		m := map[string]int{}
+		if len(a) > 0 {
+			_ = json.Unmarshal(a[0], &m)
+		}
+		s.setPanels(m)
+		return nil, nil
+	})
+
 	// Electron's session.setSpellCheckerEnabled / isSpellCheckerEnabled for
 	// main halves: Clack's composer spellcheck (Options.SpellChecker)
 	sync("spellchecker", func(a []json.RawMessage) (any, error) {

@@ -571,6 +571,15 @@ func (b *Bridge) RenderDataPanel(root uint64, pluginID string) {
 	b.mount(root, "dataPanelElement", pluginID)
 }
 
+// Mount renders into root the element globalThis.__taut[fn](args…)
+// returns. Extensions (Extension.Prelude) add their element factories to
+// __taut and mount them with this, as RenderDataPanel does Taut's: Slick's
+// plugin panels (api.settings.panel). args are JSON values; []byte is
+// parsed as JSON.
+func (b *Bridge) Mount(root uint64, fn string, args ...any) {
+	b.mount(root, fn, args...)
+}
+
 // ---- composer and message hooks (UI owners call these) ----
 
 func (t *Taut) composer() *composerHooks { return t.ui.hooks.Load() }

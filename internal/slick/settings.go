@@ -78,6 +78,10 @@ type PluginInfo struct {
 	KeepOnDisk       bool
 	Options          []OptionInfo
 	RelaunchSettings []string
+	// Panel is nonzero while the plugin shows its own React on its page
+	// (api.settings.panel): draw it in a "Customize" card after Settings
+	// with Slick.RenderPanel, mounting again when the number changes.
+	Panel int
 }
 
 // OptionInfo is one schema setting with its current value.
@@ -212,6 +216,7 @@ func (s *Slick) infoLocked(p *plugin, ws string) PluginInfo {
 	if storesMessages[p.id] {
 		info.StoresMessages, info.KeepOnDisk = true, s.prefs[keepOnDiskPref+p.id] == "on"
 	}
+	info.Panel = s.panels[p.id]
 	live, relaunch := map[string]bool{}, map[string]bool{}
 	for _, k := range m.LiveSettings {
 		live[k] = true

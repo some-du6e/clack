@@ -238,6 +238,117 @@ function elements() {
   return elementsBase
 }
 
+// ---- menu (src/app/api/menu.tsx) ----
+// api.menu.addMessageActions(provider): Slick patches Slack's MAMenu, the
+// message actions menu's renderer (boot-shared 2rcC, which Clack's More
+// actions and message context menus draw as a boundary), once, when the
+// menu integration first loads for a plugin that declares it. Each render
+// asks every provider with MAMenu's props ({channelId, ts, threadTs, …});
+// their actions (a later provider's id replaces an earlier one's, data-qa
+// defaults to the id) go in one group of their own after the menu's on the
+// root menu (autoClogProps.uiComponentName 'message_actions_menu'), unless
+// an outer patch placed them itself and says so with
+// slickMessageActionsHandled (BetterMessageMenu). Selecting one runs its
+// onSelect and closes the menu (onTriggerClose); other selections go on to
+// Slack's onSelectAction.
+const messageActions = new Set()
+
+function addMessageActions(provider) {
+  messageActions.add(provider)
+  return () => {
+    messageActions.delete(provider)
+  }
+}
+
+function getMessageActions(context) {
+  const actions = new Map()
+  for (const provider of messageActions) {
+    try {
+      for (const action of provider(context)) actions.set(action.id, { ...action, 'data-qa': action['data-qa'] ?? action.id })
+    } catch (error) {
+      console.error('[slick] message menu provider failed:', error)
+    }
+  }
+  return [...actions.values()]
+}
+
+let messageMenuPatched = false
+/** Slick's menuReady: the MAMenu patch, installed once and never removed */
+function installMessageMenu() {
+  if (messageMenuPatched) return
+  messageMenuPatched = true
+  T.patchComponent('MAMenu', (Original) => (props) => {
+    TA.redux.usePatchVersion()
+    const { slickMessageActionsHandled, ...nativeProps } = props
+    const custom = getMessageActions(props)
+    if (!custom.length || !Array.isArray(props.actions)) return G.React.createElement(Original, nativeProps)
+    const ids = new Set(props.actions.flat().flatMap((action) => [action.id, ...(action.submenuActions ?? []).map((child) => child.id)]))
+    const added =
+      slickMessageActionsHandled || props.autoClogProps?.uiComponentName !== 'message_actions_menu' ? [] : custom.filter((action) => !ids.has(action.id))
+    return G.React.createElement(Original, {
+      ...nativeProps,
+      actions: added.length ? [...props.actions, added] : props.actions,
+      onSelectAction: (event, action, ...rest) => {
+        const selected = custom.find((item) => item.id === action.id)
+        if (!selected) return props.onSelectAction?.(event, action, ...rest)
+        try {
+          selected.onSelect()
+        } finally {
+          props.onTriggerClose?.(event)
+        }
+        return true
+      },
+    })
+  })
+}
+
+const menuBase = () => ({ Menu: T.menuApi().Menu, addMessageActions, getMessageActions })
+
+// ---- settings.panel (src/app/api/settingsTabs.ts pluginPanels) ----
+// A plugin's own React on its Preferences > Slick page, in a "Customize"
+// card after its settings (Slick's settings.tsx PluginDetail). Go learns
+// which plugins have one (slick_panels: id → a number that changes with
+// each new panel, so the page mounts the new one) and mounts
+// __taut.slickPanelElement(id).
+const pluginPanels = new TA.Store({})
+const panelSerial = new Map()
+let nextPanelSerial = 0
+let panelsQueued = false
+function tellPanels() {
+  if (panelsQueued) return
+  panelsQueued = true
+  queueMicrotask(() => {
+    panelsQueued = false
+    const out = {}
+    for (const id of Object.keys(pluginPanels.get())) out[id] = panelSerial.get(id) ?? 0
+    go('panels', out)
+  })
+}
+
+function setPluginPanel(id, render) {
+  panelSerial.set(id, ++nextPanelSerial)
+  pluginPanels.update((panels) => ({ ...panels, [id]: render }))
+  tellPanels()
+  return () => {
+    pluginPanels.update((panels) => {
+      if (panels[id] !== render) return panels
+      const next = { ...panels }
+      delete next[id]
+      return next
+    })
+    tellPanels()
+  }
+}
+
+/** the panel plugin `id` set, re-rendered when it sets another */
+function PluginPanel({ id }) {
+  const render = pluginPanels.use()[id]
+  return render ? render() : null
+}
+
+/** Go → JS: the element Preferences mounts for plugin id's panel */
+T.slickPanelElement = (id) => (pluginPanels.get()[id] ? G.React.createElement(PluginPanel, { id }) : null)
+
 // onMessageSendDelta: Slack hands the composer's Delta to the send; Clack's
 // composer sends Block Kit, so the transforms run over the Delta of the
 // blocks, and only a changed Delta is turned back into blocks.
@@ -348,6 +459,9 @@ function createScopedAPI(entry, id, scope) {
     (...args) =>
       scope.track(fn(...args))
   const allowed = new Set(entry.Class.requiredAPIs ?? PLUGIN_APIS)
+  // Slick loads only the integrations a plugin declares, before its
+  // constructor; loading the menu one patches MAMenu (menuReady)
+  if (allowed.has('menu')) installMessageMenu()
   const storage = new ScopedStorage(blobStore(`plugin:${id}`))
   const fileBlob = blobStore(`plugin:${id}`)
   const integrations = {
@@ -359,7 +473,7 @@ function createScopedAPI(entry, id, scope) {
     blocks: () => blocksBase,
     files: () => ({ upload: TA.files.upload }),
     elements: () => elements(),
-    menu: () => ({ Menu: T.menuApi().Menu }),
+    menu: () => ({ ...menuBase(), addMessageActions: tracked(addMessageActions) }),
     modal: () => {
       const m = T.modalApi()
       return { openModal: m.openModal, confirm: m.confirm, alert: m.alert }
@@ -416,6 +530,7 @@ function createScopedAPI(entry, id, scope) {
     settings: {
       set: (key, value) => go('setSetting', id, key, value === undefined ? null : value),
       addTab: tracked((tab) => TA.preferences.addTab({ ...tab, id: `slick-plugin-${id}` })),
+      panel: tracked((render) => setPluginPanel(id, render)),
     },
     main: {
       call: (method, ...args) => callMain(id, method, args),

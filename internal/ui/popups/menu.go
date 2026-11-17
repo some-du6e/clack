@@ -108,6 +108,17 @@ type MenuItem struct {
 	// onContextMenuCapture under channel_tab_overflow_right_click). The
 	// menu stays open and the row stays highlighted.
 	Context func(at image.Point)
+
+	// Action is a message menu row's Slack action id (lq1n: "copy_link",
+	// "mark_unread", "organize_actions_menu"), its id in MAMenu's actions
+	// (actions_mamenu.go); "" uses Key.
+	Action string
+	// Class is the classes on the row's button besides
+	// c-menu_item__button (MAMenu's p-message_actions_menu__<id> and a
+	// descriptor's className), which plugin CSS selects: a row whose li
+	// that CSS makes an inline box with a width is laid out beside its
+	// neighbours (rowBoxes; Better Message Menu's big buttons).
+	Class string
 }
 
 // Sep is a separator row.
@@ -151,8 +162,12 @@ type MenuOpts struct {
 	// channel menu is ChannelContextMenu{id} >
 	// ContextMenuTriggerWithKeyboardFocus{getTemplate}).
 	Wraps []MenuWrap
-	// MenuClass is Slack's Menu menuClassNames.
+	// MenuClass is Slack's Menu menuClassNames, on the card (c-menu).
 	MenuClass string
+	// MAMenu, set on message menus, is Slack's MAMenu boundary inside
+	// Within (actions_mamenu.go): its props (MessageActionsProps), the
+	// rows going to JS as its actions.
+	MAMenu slackc.Props
 }
 
 // MenuWrap is a Slack component a menu is rendered inside.
@@ -197,6 +212,10 @@ type Menu struct {
 	ctxDone bool           // asked a patched getTemplate
 
 	rowCtx int // the right-click area's tag (MenuItem.Context)
+
+	ma    *maMenu           // Slack's MAMenu (MenuOpts.MAMenu)
+	boxes []image.Rectangle // rowBoxes' boxes, reused
+	tiles []menuTile        // rowBoxes' inline rows
 }
 
 // NewMenu opens a menu with its top-left corner at anchor (flipping at the
@@ -213,6 +232,12 @@ func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
 	m.wraps = o.Wraps
 	if o.Within != "" {
 		m.wraps = append(m.wraps[:len(m.wraps):len(m.wraps)], MenuWrap{Name: o.Within, Props: o.WithinProps})
+	}
+	if o.MAMenu != nil {
+		m.ma = newMAMenu(o.MAMenu, items)
+		if m.opts.MenuClass == "" {
+			m.opts.MenuClass = "p-message_actions_menu" // MAMenu's menuClassNames
+		}
 	}
 	return m
 }
@@ -386,6 +411,9 @@ func (m *Menu) openSub(i int, kbd bool) {
 		m.items[i].Tag = nil
 	}
 	s := &Menu{h: m.h, items: it.Sub, opts: MenuOpts{Width: m.opts.Width}, sel: -1, subIdx: -1, parent: m, kbd: kbd}
+	if m.root().ma != nil {
+		s.opts.MenuClass = m.root().opts.MenuClass // a message menu's submenus render MAMenu too
+	}
 	s.clicks = make([]widget.Clickable, len(it.Sub))
 	if kbd {
 		s.move(1)
@@ -534,12 +562,10 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 	}
 	w := dp(gtx, wdp)
 	pad := dp(gtx, 12)
-	hs := make([]int, len(m.items))
-	h := 2 * pad
-	for i := range m.items {
-		hs[i] = m.rowHeight(gtx, th, i, w)
-		h += hs[i]
-	}
+	// the card first: its rows' boxes depend on the CSS under it
+	st := menuClass.EnterClass(gtx, 0, 0, m.opts.MenuClass)
+	boxes, contentH := m.rowBoxes(gtx, th, w)
+	h := 2*pad + contentH
 	maxH := win.Y - 2*dp(gtx, 8)
 	if h > maxH {
 		h = maxH
@@ -573,13 +599,12 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 	if len(m.rows) != len(m.items) {
 		m.rows = make([]image.Rectangle, len(m.items))
 	}
-	st := menuClass.Enter(gtx, 0, 0)
 	if st.Hidden() {
 		st.Leave()
 		return
 	}
 	styledCard(gtx, st, cl, pos, sz, dp(gtx, 4), false, func(gtx layout.Context) {
-		m.layoutBody(gtx, th, cl, pos, w, hs)
+		m.layoutBody(gtx, th, cl, pos, boxes)
 	})
 	st.Leave()
 	if m.sub != nil && !m.done {
@@ -587,8 +612,9 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 	}
 }
 
-// layoutBody draws the card at the origin (pos is its window position).
-func (m *Menu) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, pos image.Point, w int, hs []int) {
+// layoutBody draws the card at the origin (pos is its window position),
+// each row in its box (rowBoxes, under the top padding).
+func (m *Menu) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, pos image.Point, boxes []image.Rectangle) {
 	local := image.Rectangle{Max: m.rect.Size()}
 	rad := dp(gtx, 4)
 	m.block.Layout(gtx, local)
@@ -623,18 +649,15 @@ func (m *Menu) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, pos i
 
 	cs := clipRRect(gtx, local, rad)
 	pad := dp(gtx, 12)
-	y := pad
 	for i := range m.items {
-		r := image.Rect(0, y, w, y+hs[i])
+		r := boxes[i].Add(image.Pt(0, pad))
 		m.rows[i] = r.Add(pos)
-		if y > local.Max.Y {
-			y += hs[i]
+		if r.Min.Y > local.Max.Y {
 			continue
 		}
 		at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
-			return m.row(gtx, th, cl, i, image.Pt(w, hs[i]))
+			return m.row(gtx, th, cl, i, r.Size())
 		})
-		y += hs[i]
 	}
 	cs.Pop()
 	m.rowContext(gtx, pos, local) // above the rows, passing their presses on
@@ -722,10 +745,20 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 	if it.Disabled {
 		state, mods = state|css.StateDisabled, mods|4
 	}
-	st := menuItemClass.Enter(gtx, state, mods)
+	def := menuItemClass
+	if it.Class != "" {
+		def = menuRowDefsFor(it.Class).li
+	}
+	st := def.Enter(gtx, state, mods)
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{Size: sz}
+	}
+	if i < len(m.tiles) && m.tiles[i].on && it.Widget == nil {
+		gtx.Constraints = layout.Exact(sz)
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+			return m.tileRow(gtx, th, cl, st, i, sz, hl)
+		})
 	}
 	if it.Widget != nil {
 		// widgets get the row width as Max only (Min zero), so nested text

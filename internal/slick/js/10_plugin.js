@@ -342,6 +342,9 @@ S.introspect = () => ({
   netRules: netRules.size,
   notificationFilters: notificationFilters.size,
   switches: [...switches],
+  messageActions: messageActions.size,
+  messageMenu: messageMenuPatched,
+  panels: Object.keys(pluginPanels.get()),
 })
 
 // Slick's preload bridge (app/bridge.ts getBridge), for first-party plugins

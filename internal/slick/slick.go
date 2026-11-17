@@ -115,8 +115,9 @@ type Slick struct {
 	userCSS string
 	themes  map[string]Theme
 	queues  map[string]*sync.Mutex
-	rt      *jsrt.Runtime // the runtime the prelude is in (nil until a plugin needs JS)
-	route   [2]string     // team, channel the UI shows
+	rt      *jsrt.Runtime  // the runtime the prelude is in (nil until a plugin needs JS)
+	panels  map[string]int // api.settings.panel: plugin id → its panel's serial (slick_panels)
+	route   [2]string      // team, channel the UI shows
 	dark    atomic.Bool
 	styled  string // the theme CSS last handed to the UI
 
@@ -304,6 +305,7 @@ func (s *Slick) ready(rt *jsrt.Runtime, restarted bool) {
 		p.running, p.mainRunning = false, false
 	}
 	s.rt = nil
+	s.panels = nil // the panels were the old runtime's; restarted plugins set theirs again
 	s.mu.Unlock()
 	if len(restart) > 0 {
 		log.Printf("slick: the JS runtime restarted; restarting %d plugins", len(restart))
@@ -313,6 +315,30 @@ func (s *Slick) ready(rt *jsrt.Runtime, restarted bool) {
 		s.reconcile(ctx, id)
 		cancel()
 	}
+}
+
+// setPanels records which plugins have an api.settings.panel (slick_panels).
+func (s *Slick) setPanels(m map[string]int) {
+	s.mu.Lock()
+	same := len(m) == len(s.panels)
+	for id, n := range m {
+		if s.panels[id] != n {
+			same = false
+		}
+	}
+	s.panels = m
+	s.mu.Unlock()
+	if !same {
+		s.changed()
+	}
+}
+
+// RenderPanel mounts plugin id's api.settings.panel into slackc root:
+// its Preferences > Slick page draws it in a "Customize" card after its
+// settings, as Slick's settings.tsx does (PluginInfo.Panel says there is
+// one; a new Panel number is a new panel to mount).
+func (s *Slick) RenderPanel(root uint64, id string) {
+	s.t.Bridge().Mount(root, "slickPanelElement", id)
 }
 
 // call runs __slick.<fn>(args…) and decodes its result into out.

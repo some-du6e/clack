@@ -257,7 +257,13 @@ func slPluginsDir(t *testing.T) string {
 
 func slNewEnv(t *testing.T) *slEnv {
 	t.Helper()
-	dir := slPluginsDir(t)
+	return slNewEnvIn(t, slPluginsDir(t))
+}
+
+// slNewEnvIn is slNewEnv over the built plugins in dir: "" for a test
+// that installs plugin code of its own (loadCode), which runs anywhere.
+func slNewEnvIn(t *testing.T, dir string) *slEnv {
+	t.Helper()
 	api := slNewAPI(t)
 	c := slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test", UserID: slSelf, Team: slTeam, EnterpriseID: slEnt,
 		TeamURL: api.srv.URL + "/", EnterpriseURL: api.srv.URL + "/"})
@@ -356,6 +362,38 @@ func (e *slEnv) load(t *testing.T, id string, settings map[string]any) {
 			t.Fatalf("%s didn't start: running=%v error=%q", id, p.Running, p.StartError)
 		}
 	}
+}
+
+// loadCode installs plugin code (a file as Slick's build:plugin writes
+// one) as a user does and enables it.
+func (e *slEnv) loadCode(t *testing.T, id, code string) {
+	t.Helper()
+	if _, err := e.s.Import(e.ctx(t), []byte(code)); err != nil {
+		t.Fatalf("import %s: %v", id, err)
+	}
+	if err := e.s.SetEnabled(e.ctx(t), id, true); err != nil {
+		t.Fatalf("enable %s: %v", id, err)
+	}
+	for _, p := range e.s.Settings().Plugins {
+		if p.ID == id && (!p.Running || p.StartError != "") {
+			t.Fatalf("%s didn't start: running=%v error=%q", id, p.Running, p.StartError)
+		}
+	}
+}
+
+// jsString is the string value of JS expression expr in the plugins'
+// runtime.
+func (e *slEnv) jsString(t *testing.T, expr string) string {
+	t.Helper()
+	rt, err := e.tt.JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := rt.Eval("probe.js", "String("+expr+")")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v.String()
 }
 
 func (e *slEnv) user(t *testing.T, id string) core.User {
@@ -551,35 +589,96 @@ func TestSlickViewNicknames(t *testing.T) {
 	})
 }
 
-// MessageLogger: after a message is deleted, its ⋮ menu (Menu inside
-// MessageActionsMenu) gets "Accept deletion".
+// MessageLogger: after a message is deleted, its ⋮ menu gets "Accept
+// deletion". Since Slick #473 the row is a message action
+// (api.menu.addMessageActions), drawn as a native row in a group of its
+// own at the end of the menu, and picking it forgets the deletion; a
+// build from before adds it as a child of Menu inside MessageActionsMenu.
 func TestSlickViewMessageLogger(t *testing.T) {
 	e := slNewEnv(t)
+	actions := slBuiltWith(t, e.dir, "MessageLogger", "addMessageActions")
 	e.load(t, "MessageLogger", nil)
-	slPatched(t, "MessageActionsMenu", "Menu")
+	if actions {
+		slPatched(t, "MAMenu")
+	} else {
+		slPatched(t, "MessageActionsMenu", "Menu")
+	}
 	slUntil(t, 10*time.Second, "MessageLogger listens for deletes", nil, func() bool {
 		return e.tt.Started()
 	})
 	time.Sleep(300 * time.Millisecond) // its RTM listeners
-	raw, _ := json.Marshal(map[string]any{
-		"type": "message", "subtype": "message_deleted", "hidden": true, "channel": slGen,
-		"ts": fmt.Sprintf("%d.000900", time.Now().Unix()), "deleted_ts": slMsgTS, "event_ts": fmt.Sprintf("%d.000900", time.Now().Unix()),
-		"previous_message": map[string]any{"type": "message", "user": slBob, "text": "a synthetic message", "ts": slMsgTS},
-	})
-	e.h.a.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"` + slGen + `"`), Raw: raw})
+	slDelete(e, slMsgTS, "a synthetic message")
 
 	msg := core.Message{Channel: slGen, TS: slMsgTS, User: slBob, Text: "a synthetic message"}
 	m := NewMessageMenu(e.h, image.Pt(900, 200), msg)
+	if !actions {
+		slUntil(t, 15*time.Second, "Accept deletion in the message's ⋮ menu", slFrame(m), func() bool {
+			d := e.rec.dump("MessageActionsMenu")
+			return strings.Contains(d, "Accept deletion") && strings.Contains(d, "[data-qa=slick_ml_accept_delete]") && slIndex(m.items, "plugin-row") >= 0
+		})
+		if i := slIndex(m.items, "plugin-row"); i < len(m.items)-1 {
+			t.Errorf("the plugin row isn't after the native rows: %d of %d", i, len(m.items))
+		}
+		if slIndex(m.items, "mark_unread") < 0 {
+			t.Errorf("native rows gone: %+v", m.items)
+		}
+		return
+	}
 	slUntil(t, 15*time.Second, "Accept deletion in the message's ⋮ menu", slFrame(m), func() bool {
-		d := e.rec.dump("MessageActionsMenu")
-		return strings.Contains(d, "Accept deletion") && strings.Contains(d, "[data-qa=slick_ml_accept_delete]") && slIndex(m.items, "plugin-row") >= 0
+		return slIndex(m.items, "slick_ml_accept_delete") >= 0
 	})
-	if i := slIndex(m.items, "plugin-row"); i < len(m.items)-1 {
-		t.Errorf("the plugin row isn't after the native rows: %d of %d", i, len(m.items))
+	i := slIndex(m.items, "slick_ml_accept_delete")
+	if it := m.items[i]; it.Label != "Accept deletion" || i != len(m.items)-1 || !m.items[i-1].Separator {
+		t.Errorf("Accept deletion row %+v at %d: want the last group, after the native rows: %s", it, i, maKeys(m.items))
 	}
 	if slIndex(m.items, "mark_unread") < 0 {
-		t.Errorf("native rows gone: %+v", m.items)
+		t.Errorf("native rows gone: %s", maKeys(m.items))
 	}
+	// no edits logged: no edit history rows
+	if slIndex(m.items, "slick_ml_hide_edits") >= 0 || slIndex(m.items, "slick_ml_show_edits") >= 0 {
+		t.Errorf("edit history rows without edits: %s", maKeys(m.items))
+	}
+	// picking it runs its onSelect: the deletion is forgotten, and the
+	// next menu has no row for it
+	m.activate(maGtx(), i)
+	slUntil(t, 10*time.Second, "the menu closing", nil, func() bool { return m.Dismissed() })
+	var again *Menu
+	slUntil(t, 15*time.Second, "a menu without Accept deletion", nil, func() bool {
+		again = NewMessageMenu(e.h, image.Pt(900, 200), msg)
+		f := slFrame(again)
+		for k := 0; k < 30 && again.ma.from == nil; k++ {
+			f()
+			Pump()
+			slackc.Pump()
+			time.Sleep(10 * time.Millisecond)
+		}
+		return again.ma.from != nil && slIndex(again.items, "slick_ml_accept_delete") < 0
+	})
+	if slIndex(again.items, "mark_unread") < 0 {
+		t.Errorf("native rows gone: %s", maKeys(again.items))
+	}
+}
+
+// slDelete injects a message_deleted event for ts in #general.
+func slDelete(e *slEnv, ts, text string) {
+	now := fmt.Sprintf("%d.000900", time.Now().Unix())
+	raw, _ := json.Marshal(map[string]any{
+		"type": "message", "subtype": "message_deleted", "hidden": true, "channel": slGen,
+		"ts": now, "deleted_ts": ts, "event_ts": now,
+		"previous_message": map[string]any{"type": "message", "user": slBob, "text": text, "ts": ts},
+	})
+	e.h.a.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"` + slGen + `"`), Raw: raw})
+}
+
+// slBuiltWith reports whether the built plugin id's file mentions what
+// (an API a newer Slick added): the tests check what that build does.
+func slBuiltWith(t *testing.T, dir, id, what string) bool {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, id+".js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Contains(string(b), what)
 }
 
 // AccountSwitcher: "Switch account" (with "Add another account") right
@@ -794,6 +893,48 @@ func TestSlickViewChatTabs(t *testing.T) {
 	if len(m.items) < 3 {
 		t.Errorf("native rows gone: %+v", m.items)
 	}
+
+	// "Open in new Slick tab" on a message's More actions menu: since
+	// Slick #473 a message action (api.menu.addMessageActions, the last
+	// group); before, ChatTabs patched the menu's renderer (found by a
+	// filter on its source) and put it in a group of its own first
+	actions := slBuiltWith(t, e.dir, "ChatTabs", "addMessageActions")
+	slPatched(t, "MAMenu")
+	msg := core.Message{Channel: slGen, TS: slMsgTS, User: slBob, Text: "a synthetic message"}
+	for _, mk := range []struct {
+		what string
+		m    *Menu
+	}{
+		{"More actions", NewMessageMenu(e.h, image.Pt(900, 200), msg)},
+		{"the message context menu", NewMessageContextMenu(e.h, image.Pt(400, 300), msg, InChannel, MessageMenuOpts{})},
+	} {
+		mm := mk.m
+		slUntil(t, 10*time.Second, "Open in new Slick tab in "+mk.what, slFrame(mm), func() bool {
+			return slIndex(mm.items, "slick-chat-tabs-open-thread") >= 0
+		})
+		i := slIndex(mm.items, "slick-chat-tabs-open-thread")
+		it := mm.items[i]
+		if it.Label != "Open in new Slick tab" || it.Do == nil {
+			t.Errorf("%s: row %+v", mk.what, it)
+		}
+		if actions && i != len(mm.items)-1 {
+			t.Errorf("%s: the row isn't the last group: %s", mk.what, maKeys(mm.items))
+		}
+		if slIndex(mm.items, "copy_link") < 0 {
+			t.Errorf("%s: native rows gone: %s", mk.what, maKeys(mm.items))
+		}
+		// picking it is ChatTabs': no native row runs (its tab bar isn't
+		// drawn here; internal/ui's TestSlickViewChatTabs opens the tab)
+		before := e.api.called("conversations.mark")
+		mm.activate(maGtx(), i)
+		time.Sleep(200 * time.Millisecond)
+		Pump()
+		slackc.Pump()
+		if !mm.Dismissed() || e.api.called("conversations.mark") != before {
+			t.Errorf("%s: picking it: closed=%v", mk.what, mm.Dismissed())
+		}
+	}
+
 	p := NewSearchPopover(e.h, "", image.Rectangle{})
 	slUntil(t, 15*time.Second, "ChatTabs' search wrapper", slFrame(p), func() bool {
 		d := e.rec.dump("BaseSearch")
@@ -821,6 +962,127 @@ func TestSlickViewInstalledApps(t *testing.T) {
 	if !strings.Contains(d, "@AppDetailsOverflow") {
 		t.Errorf("the app profile's tree has no AppDetailsOverflow: %s", d)
 	}
+}
+
+// BetterMessageMenu (Slick #473): the More actions menu as it
+// reorganises it (big buttons first, side by side; the rest in one
+// group; Save and Mark unread moved into Organize), its saved order and
+// hidden actions, and its editor on its settings page (api.settings.panel)
+// changing the menu.
+func TestSlickViewBetterMessageMenu(t *testing.T) {
+	e := slNewEnv(t)
+	if _, err := os.Stat(filepath.Join(e.dir, "BetterMessageMenu.js")); err != nil {
+		t.Skip("this Slick has no BetterMessageMenu (it came in #473)")
+	}
+	e.load(t, "BetterMessageMenu", nil)
+	slPatched(t, "MAMenu")
+	msg := core.Message{Channel: slGen, TS: slMsgTS, User: slBob, Text: "a synthetic message"}
+	open := func(what string) *Menu {
+		t.Helper()
+		m := NewMessageMenu(e.h, image.Pt(900, 200), msg)
+		maApplied(t, m, what)
+		return m
+	}
+
+	// the defaults on someone else's message: Copy link and Copy message
+	// as big buttons, two to a row
+	m := open("the reorganised menu")
+	if got := maIDs(m.items); got != "copy_link copy_text | remind subscribe organize_actions_menu connect_to_apps_actions_menu" {
+		t.Fatalf("rows %s (natively %s)", got, maIDs(m.ma.native))
+	}
+	if c := m.items[1]; c.Label != "Copy" || !strings.Contains(c.Class, "slick-bmm-bigaction-n2") {
+		t.Errorf("big Copy row %+v", c)
+	}
+	org := m.items[slIndex(m.items, "organize")]
+	if sub := maIDs(org.Sub); sub != "pin later mark_unread" {
+		t.Errorf("Organize submenu %s", sub)
+	}
+	f := slFrame(m)
+	f()
+	rows := m.RowRects()
+	if a, b := rows[0], rows[1]; a.Min.Y != b.Min.Y || a.Max.X != b.Min.X || a.Dx() != 150 || b.Dx() != 150 || a.Dy() <= 28 {
+		t.Errorf("big buttons %v %v: want side by side, half the card each, taller than a row", a, b)
+	}
+
+	// its saved menu: Get notified first, Add a reminder hidden, Copy link
+	// a menu item (Copy message the one big button, the whole width)
+	if err := e.s.SetEnabled(e.ctx(t), "BetterMessageMenu", false); err != nil {
+		t.Fatal(err)
+	}
+	e.tt.DataWrite("slick:plugin:BetterMessageMenu", "menu",
+		`{"order":[{"id":"subscribe"},{"id":"remind","hidden":true},{"id":"copy_link","big":false}],"followCursor":true}`)
+	if err := e.s.SetEnabled(e.ctx(t), "BetterMessageMenu", true); err != nil {
+		t.Fatal(err)
+	}
+	m = open("the saved menu")
+	if got := maIDs(m.items); got != "copy_text | subscribe copy_link organize_actions_menu connect_to_apps_actions_menu" {
+		t.Fatalf("rows %s", got)
+	}
+	f = slFrame(m)
+	f()
+	if r := m.RowRects()[0]; r.Dx() != 300 {
+		t.Errorf("the one big button is %dpx wide, want the card's 300", r.Dx())
+	}
+
+	// its editor, on its page: moving Get notified down puts it after
+	// Copy link in the menu
+	info := slPlugin(t, e, "BetterMessageMenu")
+	if info.Panel == 0 {
+		t.Fatal("no settings panel")
+	}
+	const root = uint64(1) << 40
+	e.s.RenderPanel(root, "BetterMessageMenu")
+	var nodes []*slackc.Node
+	slUntil(t, 10*time.Second, "the editor", nil, func() bool {
+		e.rec.mu.Lock()
+		raw := e.rec.trees[root]
+		e.rec.mu.Unlock()
+		nodes, _ = slackc.ParseTree(raw)
+		var b strings.Builder
+		slDumpNodes(&b, nodes)
+		d := b.String()
+		return strings.Contains(d, ".slick-bmm-editor") && strings.Contains(d, "Big buttons") && strings.Contains(d, "Organize submenu")
+	})
+	down := slAttrNode(nodes, "aria-label", "Move Turn off/on reply notifications down")
+	if down == nil {
+		t.Fatal("no move-down button for Get notified")
+	}
+	e.tt.Bridge().Dispatch(down.K, []byte(`{"type":"click","button":0,"target":{}}`))
+	slUntil(t, 10*time.Second, "the menu following the editor", nil, func() bool {
+		m := NewMessageMenu(e.h, image.Pt(900, 200), msg)
+		f := slFrame(m)
+		for k := 0; k < 30 && m.ma.from == nil; k++ {
+			f()
+			Pump()
+			slackc.Pump()
+			time.Sleep(10 * time.Millisecond)
+		}
+		return strings.HasPrefix(maIDs(m.items), "copy_text | copy_link subscribe ")
+	})
+}
+
+// slAttrNode is the first node in nodes whose attribute name is value.
+func slAttrNode(nodes []*slackc.Node, name, value string) *slackc.Node {
+	for _, n := range nodes {
+		if v, ok := n.AttrString(name); ok && v == value {
+			return n
+		}
+		if f := slAttrNode(n.C, name, value); f != nil {
+			return f
+		}
+	}
+	return nil
+}
+
+func slPlugin(t *testing.T, e *slEnv, id string) slick.PluginInfo {
+	t.Helper()
+	for _, p := range e.s.Settings().Plugins {
+		if p.ID == id {
+			return p
+		}
+	}
+	t.Fatalf("%s isn't installed", id)
+	return slick.PluginInfo{}
 }
 
 // slSlotFnGap: jsrt's nativeProps (internal/jsrt/js/dom.js) returns a

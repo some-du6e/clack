@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -459,6 +460,11 @@ type state struct {
 	NetRules       int      `json:"netRules"`
 	NotifyFilters  int      `json:"notificationFilters"`
 	Switches       []string `json:"switches"`
+	MessageActions int      `json:"messageActions"`
+	Panels         []string `json:"panels"`
+	// MessageMenu: Slick's own MAMenu patch is installed (api.menu's
+	// menuReady, once, for the first plugin declaring the menu API)
+	MessageMenu bool `json:"messageMenu"`
 }
 
 func (h *harness) state() state {
@@ -475,7 +481,15 @@ func (st state) registrations() []string {
 			out = append(out, kind+":"+x)
 		}
 	}
-	add("component", st.Components)
+	comps := st.Components
+	if st.MessageMenu {
+		// Slick's own patch, not the plugin's: it stays (a plugin's own
+		// MAMenu patch left behind still shows in components when no
+		// plugin made Slick install its)
+		comps = slices.DeleteFunc(slices.Clone(comps), func(c string) bool { return c == "MAMenu" })
+	}
+	add("component", comps)
+	add("panel", st.Panels)
 	add("thunk", st.Thunks)
 	add("rtm", st.RTM)
 	add("style", st.Styles)
@@ -497,6 +511,7 @@ func (st state) registrations() []string {
 	n("mainListener", st.MainListeners)
 	n("netRule", st.NetRules)
 	n("notifyFilter", st.NotifyFilters)
+	n("messageActions", st.MessageActions)
 	return out
 }
 

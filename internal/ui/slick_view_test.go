@@ -480,10 +480,77 @@ func TestSlickViewChatTabs(t *testing.T) {
 		}
 	}
 
+	// "Open in new Slick tab" on a message's More actions menu opens the
+	// message's thread as a third tab: since Slick #473 ChatTabs' message
+	// action (api.menu.addMessageActions), before it its patch on the
+	// menu's renderer (MAMenu, found by a filter on its source)
+	e.dismissOverlays()
+	msg := core.Message{Channel: svRandom, TS: "1700000005.000500", User: svBob, Text: "a thread to open"}
+	e.a.OpenMessageMenu(image.Pt(900, 300), msg)
+	var tab popups.MenuItem
+	e.until(8*time.Second, "Open in new Slick tab on the message's More actions", func() bool {
+		for i := len(e.a.overlays) - 1; i >= 0; i-- {
+			if m, ok := e.a.overlays[i].(*popups.Menu); ok && !m.Dismissed() {
+				it, ok := menuItem(m.Items(), "slick-chat-tabs-open-thread")
+				tab = it
+				return ok
+			}
+		}
+		return false
+	})
+	if tab.Label != "Open in new Slick tab" || tab.Do == nil {
+		t.Fatalf("message action %+v", tab)
+	}
+	tab.Do()
+	e.until(8*time.Second, "the message's thread as a third tab", func() bool {
+		return e.tree("slick-chat-tabs__tab", `data-tab-count":3`) != ""
+	})
+
 	// the rows still navigate on click while they're inside ChatTabs' tree
 	e.dismissOverlays()
 	e.click(ttGen)
 	e.until(5*time.Second, "a click on #general's row opening it", func() bool { return string(e.a.router.Current()) == "c/"+ttGen })
+}
+
+// BetterMessageMenu's editor (api.settings.panel, Slick #473) in the
+// Customize card of its Preferences > Slick page, drawn through the
+// slackc tree path the other plugin UI takes.
+func TestSlickViewBetterMessageMenuPanel(t *testing.T) {
+	e := newSV(t)
+	if _, err := os.Stat(filepath.Join(e.dir, "BetterMessageMenu.js")); err != nil {
+		t.Skip("this Slick has no BetterMessageMenu (it came in #473)")
+	}
+	e.install("BetterMessageMenu", nil)
+	p := newSlickPage(e.a)
+	defer p.close()
+	p.layoutTab("slick_plugins")
+	p.open = "BetterMessageMenu"
+	ready := func() bool {
+		for k, sub := range p.k.subs {
+			if strings.HasPrefix(k, "slickpanel.BetterMessageMenu.") && sub.Ready() {
+				return true
+			}
+		}
+		return false
+	}
+	e.until(10*time.Second, "the editor in the Customize card", func() bool {
+		gtx := ttContext(new(op.Ops), image.Pt(800, 1200))
+		e.a.slackcFrame(gtx)
+		p.layout(gtx, "slick_plugins")
+		return ready() && e.tree("slick-bmm-editor", "Big buttons", "Organize submenu", "Reset to defaults") != ""
+	})
+	// a stopped plugin has no panel to show
+	if err := e.s.SetEnabled(context.Background(), "BetterMessageMenu", false); err != nil {
+		t.Fatal(err)
+	}
+	e.until(5*time.Second, "no panel after stop", func() bool {
+		for _, pl := range e.s.Settings().Plugins {
+			if pl.ID == "BetterMessageMenu" {
+				return pl.Panel == 0
+			}
+		}
+		return false
+	})
 }
 
 // dismissOverlays closes open menus (as Esc would).

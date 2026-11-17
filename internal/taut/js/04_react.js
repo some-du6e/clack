@@ -30,6 +30,9 @@ const REAL_SOURCES = {
   GifPicker: '"gif-picker-host", e.onGifSelected, e.emojiSearchQuery',
   // Slick's ChannelListTyping: {displayName: 'Channel', filter: isSidebarChannel}
   Channel: '"getSidebarChannelUiInfo"',
+  // Slack's message actions menu renderer (boot-shared 2rcC): Slick's
+  // ChatTabs before #473 finds it with a filter on its render's source
+  MAMenu: 'renderActionGroup, dispatchMessageAction',
 }
 
 /**
@@ -222,7 +225,9 @@ const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;Sear
   'HuddleInviteWindowWithPreviewContent;HuddleMiniPanel;HuddleMvaWindowTitle;HuddleRecordingIndicator;LocalTimeRow;MemberProfileBaseEntity;' +
   'MemberSlug;Menu;Message;MessageActionsMenu;MessageAttachmentYouTube;MessageFile;MessageFiles;MessageKitAttachments;MessageText;' +
   'MultiFileUploadItem;PeopleGrid;Presence;ProfileHoverCard;ProgressiveDisclosureSuccessCoachmarkWrapper;ReplyBarAvatar;SearchAutocomplete;' +
-  'SearchInputBox;SendButton;TextyAutocomplete;ThreadReplies;ThreadReplyGeneric;MessageAvatar;MessageKitGutter').split(';')
+  'SearchInputBox;SendButton;TextyAutocomplete;ThreadReplies;ThreadReplyGeneric;MessageAvatar;MessageKitGutter;' +
+  // Slick's api.menu.addMessageActions (since #473) and BetterMessageMenu
+  'MAMenu').split(';')
 
 const rawNatives = new Map() // name → the unpatched native component
 const wrappers = new Map() // name → the patch-following component plugins get
