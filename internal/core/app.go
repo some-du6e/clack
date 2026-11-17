@@ -990,6 +990,7 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
 	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
+	known, _ := a.S.Count(ch) // the latest the page will cover (History's behindLatest)
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
@@ -998,6 +999,7 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// the socket brought or changed while the request was out stays
 	// (store/live.go)
 	a.S.SetLatestSince(ch, p.Messages, p.HasMore, live)
+	a.noteCaughtUp(ch, known.Latest)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 	for i := range p.Messages {
