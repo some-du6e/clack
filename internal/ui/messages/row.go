@@ -2597,6 +2597,7 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 	gtx.Constraints = layout.Exact(size)
 	d := r.reactExpand.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: size}
+		pointerCursor(gtx, rr)
 		rad := ph / 2
 		switch {
 		case sel:
@@ -2686,6 +2687,7 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 	ph := size.Y
 	return r.addReact.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: size}
+		pointerCursor(gtx, rr)
 		col := c.Text
 		if r.addReact.Hovered() {
 			border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
@@ -2774,6 +2776,7 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 	self := pl.reacted()
 	return pl.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: size}
+		pointerCursor(gtx, rr)
 		rad := size.Y / 2
 		hov := pl.btn.Hovered()
 		switch {
@@ -3269,6 +3272,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 		gtx.Constraints = layout.Exact(image.Pt(bw, bh))
 		return r.threadBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			rr := image.Rectangle{Max: image.Pt(bw, bh)}
+			pointerCursor(gtx, rr)
 			hov := r.threadBtn.Hovered()
 			if hov {
 				rrect(gtx.Ops, rr, dp(gtx, 6), c.ThreadBg)
