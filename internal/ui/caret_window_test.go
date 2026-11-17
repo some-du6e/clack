@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -73,8 +75,14 @@ func TestRealWindowCaretCost(t *testing.T) {
 		}
 	}}, images)
 	// a small window: Mesa's llvmpipe draws Clack's 1440×900 in about
-	// 400 ms
-	a.prefs.MainWindow = &mainWindowSettings{Size: &winSize{Width: 800, Height: 600}, Bounds: &winRect{X: 60, Y: 60, Width: 800, Height: 600}}
+	// 400 ms; CLACK_CARET_WINDOW=1440x900 measures that one
+	ww, wh := 800, 600
+	if v := os.Getenv("CLACK_CARET_WINDOW"); v != "" {
+		if _, err := fmt.Sscanf(v, "%dx%d", &ww, &wh); err != nil {
+			t.Fatalf("CLACK_CARET_WINDOW=%q: %v", v, err)
+		}
+	}
+	a.prefs.MainWindow = &mainWindowSettings{Size: &winSize{Width: ww, Height: wh}, Bounds: &winRect{X: 60, Y: 60, Width: ww, Height: wh}}
 	a.Attach(core.New(slack.New(fs.Creds()), store.New(cache)), cache)
 	done := make(chan error, 1)
 	go func() { done <- a.Run() }()
@@ -186,6 +194,7 @@ func TestRealWindowCaretCost(t *testing.T) {
 		}
 	}
 	blink := widget.CaretBlinkInterval()
+	t.Logf("a %d×%d window", ww, wh)
 	t.Logf("partial frames: %d frames drawn in 6 s (the caret blinks every %v), %d through the GPU, %d partial: median %d draws, %d API calls, %d px damaged; the process's CPU %v",
 		part.frames, blink, len(part.gpu), partials, median(part.gpu, draws), median(part.gpu, calls), median(part.gpu, px), part.cpu.Round(time.Millisecond))
 	t.Logf("whole frames: %d frames drawn in 6 s, %d through the GPU: median %d draws, %d API calls; the process's CPU %v",
@@ -199,7 +208,7 @@ func TestRealWindowCaretCost(t *testing.T) {
 		if partials*10 < len(part.gpu)*8 {
 			t.Errorf("%d of %d blink frames partial, want 80%% at least", partials, len(part.gpu))
 		}
-		if d := median(part.gpu, px); d > 800*600/200 {
+		if d := median(part.gpu, px); d > int64(ww*wh)/200 {
 			t.Errorf("a blink damages %d px (median), want the caret's few (0.5%% of the window at most)", d)
 		}
 		if dp, dw := median(part.gpu, draws), median(whole.gpu, draws); dp*10 > dw {
