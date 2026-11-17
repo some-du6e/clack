@@ -56,8 +56,9 @@ const (
 	pwRep  = "1700000952.000100" // in the thread
 )
 
-// pwRule is MentionProfiles' ::before, in solid green.
-const pwRule = `content: ''; display: inline-block; width: 1em; height: 1em; margin: 0 3px 0.2em 1px; border-radius: 50%; background: #00ff00; vertical-align: middle`
+// pwRule is MentionProfiles' ::before, in solid green (double quotes: the
+// plugin's setStyle string is single-quoted).
+const pwRule = `content: ""; display: inline-block; width: 1em; height: 1em; margin: 0 3px 0.2em 1px; border-radius: 50%; background: #00ff00; vertical-align: middle`
 
 // pwPlugin is MentionProfiles' shape (its MemberSlug patch: the original
 // slug in a span its rule selects) with pass-through patches of the

@@ -632,20 +632,26 @@ func breakAfterAtomic(items []item, j int) bool {
 	return true
 }
 
+// The line break classes below are code points (hex, not rune literals:
+// they classify text, nothing draws them).
+
 // noBreakAfter: UAX #14 OP (opening punctuation, inverted ! and ?), QU
 // and GL, WJ, ZWJ: no line break after one.
 func noBreakAfter(r rune) bool {
-	return unicode.Is(unicode.Ps, r) || r == '\u00a1' || r == '\u00bf' || isQuote(r) || isGlue(r) ||
-		r == '\u2060' || r == '\ufeff' || r == '\u200d'
+	switch r {
+	case 0xa1, 0xbf, 0x2060, 0xfeff, 0x200d:
+		return true
+	}
+	return unicode.Is(unicode.Ps, r) || isQuote(r) || isGlue(r)
 }
 
 // noBreakBefore: UAX #14 CL, CP (closing punctuation), EX, IS, SY, QU,
 // HY, BA, IN, CM and GL, WJ, ZWJ: no line break before one.
 func noBreakBefore(r rune) bool {
 	switch r {
-	case '!', '?', ',', '.', ':', ';', '/', '-', '|', '\u00ad', '\u037e', '\u0589', '\u060c', '\u060d',
-		'\u2010', '\u2012', '\u2013', '\u2024', '\u2025', '\u2026', '\u203c', '\u2044', '\u2047', '\u2048', '\u2049',
-		'\u2060', '\ufeff', '\u200d', '\uff01', '\uff0c', '\uff0e', '\uff1a', '\uff1b', '\uff1f':
+	case '!', '?', ',', '.', ':', ';', '/', '-', '|', 0xad, 0x37e, 0x589, 0x60c, 0x60d,
+		0x2010, 0x2012, 0x2013, 0x2024, 0x2025, 0x2026, 0x203c, 0x2044, 0x2047, 0x2048, 0x2049,
+		0x2060, 0xfeff, 0x200d, 0xff01, 0xff0c, 0xff0e, 0xff1a, 0xff1b, 0xff1f:
 		return true
 	}
 	return unicode.Is(unicode.Pe, r) || isQuote(r) || isGlue(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r)
@@ -653,12 +659,12 @@ func noBreakBefore(r rune) bool {
 
 // isQuote: UAX #14 QU (", ', and the initial and final quotation marks).
 func isQuote(r rune) bool {
-	return r == '"' || r == '\'' || unicode.Is(unicode.Pi, r) || unicode.Is(unicode.Pf, r)
+	return r == '"' || r == 0x27 || unicode.Is(unicode.Pi, r) || unicode.Is(unicode.Pf, r)
 }
 
 // isGlue: UAX #14 GL spaces (no-break, figure, narrow no-break) and the
 // non-breaking hyphen.
-func isGlue(r rune) bool { return r == '\u00a0' || r == '\u2007' || r == '\u202f' || r == '\u2011' }
+func isGlue(r rune) bool { return r == 0xa0 || r == 0x2007 || r == 0x202f || r == 0x2011 }
 
 // addSpans converts spans into items.
 func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {

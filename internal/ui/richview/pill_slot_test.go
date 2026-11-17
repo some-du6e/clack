@@ -109,9 +109,16 @@ func TestPillAfterAndEdges(t *testing.T) {
 		if !c.slots[0].ok || !c.slots[1].ok || len(bs) == 0 || at == nil || conn == nil {
 			t.Fatalf("w=%d: slots %+v, boxes %v", w, c.slots, bs)
 		}
+		// at the end of the pill's last box (an inline-block may go to the
+		// next line on its own, ")" and the end padding with it)
 		last := bs[len(bs)-1]
-		if sl := c.slots[1]; sl.top != float32(conn.top) || int(sl.x+6+2+0.5) != last.r.Max.X {
-			t.Errorf("w=%d: ::after's place at x=%.1f line top %v, want at the end of %v (connector's line %d)", w, sl.x, sl.top, last.r, conn.top)
+		if sl := c.slots[1]; sl.top > float32(last.r.Min.Y) || sl.bot < float32(last.r.Max.Y) || int(sl.x+6+2+0.5) != last.r.Max.X {
+			t.Errorf("w=%d: ::after's place at x=%.1f, line %v..%v, want at the end of the last box %v", w, sl.x, sl.top, sl.bot, last.r)
+		}
+		if sl := c.slots[1]; sl.top != float32(conn.top) {
+			if r := findFrag(t, &v.d, ")"); r.top != int(sl.top) || r.x < sl.x+6 {
+				t.Errorf("w=%d: ::after went to the next line, ')' at x=%.1f line %d: UAX #14 LB13 keeps it with the box", w, r.x, r.top)
+			}
 		}
 		if sl := c.slots[0]; sl.top != float32(at.top) {
 			t.Errorf("w=%d: the text ::before on line %v, @relay on %d: text stays glued", w, sl.top, at.top)
