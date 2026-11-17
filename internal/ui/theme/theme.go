@@ -387,7 +387,7 @@ func Fill(gtx layout.Context, r image.Rectangle, c color.NRGBA) {
 // Gio built and uploaded its vertices (a vertex buffer of its own) every
 // frame for every pill, button and avatar.
 func RRect(gtx layout.Context, r image.Rectangle, radius int, c color.NRGBA) {
-	if radius <= 0 || r.Empty() || legacyFrameCost {
+	if radius <= 0 || r.Empty() || legacyShapes {
 		defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
 		paint.ColorOp{Color: c}.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
@@ -402,7 +402,7 @@ func RRect(gtx layout.Context, r image.Rectangle, radius int, c color.NRGBA) {
 // radius (see RRect).
 func rrClip(ops *op.Ops, size image.Point, radius int) clip.Op {
 	rr := clip.UniformRRect(image.Rectangle{Max: size}, radius)
-	if radius <= 0 || size.X <= 0 || size.Y <= 0 || legacyFrameCost {
+	if radius <= 0 || size.X <= 0 || size.Y <= 0 || legacyShapes {
 		return rr.Op(ops)
 	}
 	return clip.Outline{Path: CachedRRect(rr)}.Op()
@@ -428,7 +428,7 @@ func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA)
 func strokeRRect(gtx layout.Context, r image.Rectangle, radius int, w float32, c color.NRGBA) {
 	path := RRectPath(r.Dx(), r.Dy(), radius)
 	bands, n := ringBands(r, radius, w)
-	if n == 0 || legacyFrameCost {
+	if n == 0 || legacyRings {
 		defer op.Offset(r.Min).Push(gtx.Ops).Pop()
 		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: path, Width: w}.Op())
 		return
@@ -490,7 +490,7 @@ func ringBands(r image.Rectangle, radius int, w float32) (bands [4]image.Rectang
 // (Gio patch 39). Each pixel is filled once, with the coverage it had.
 func FillPanel(gtx layout.Context, rr clip.RRect, c color.NRGBA) {
 	r, in := rr.Rect, rrInterior(rr)
-	if in.Empty() || legacyFrameCost {
+	if in.Empty() || legacyPanel {
 		Fill(gtx, r, c)
 		return
 	}
@@ -501,19 +501,36 @@ func FillPanel(gtx layout.Context, rr clip.RRect, c color.NRGBA) {
 	Fill(gtx, image.Rect(in.Min.X, in.Max.Y, in.Max.X, r.Max.Y), c)
 }
 
-// legacyFrameCost draws rings in one piece and panels in one fill, as
-// before the frame-cost work (2026-11-16), for tests that compare the two.
-var legacyFrameCost bool
+// The old ways of drawing, from before the frame-cost work (2026-11-16),
+// for tests that compare: rings in one piece, panels in one fill, rounded
+// rects and circles recorded where they're drawn.
+var legacyRings, legacyPanel, legacyShapes bool
 
-// SetLegacyFrameCost turns the old way of drawing rings and panels on or
-// off, for before/after comparisons in tests. Use on the UI goroutine.
-func SetLegacyFrameCost(on bool) { legacyFrameCost = on }
+// SetLegacyFrameCost turns the old way of drawing rings, panels and
+// shapes on or off, for before/after comparisons in tests. Use on the UI
+// goroutine.
+func SetLegacyFrameCost(on bool) { SetLegacyFrameCostParts(on, on, on) }
+
+// SetLegacyFrameCostParts sets the old way for each part on its own.
+func SetLegacyFrameCostParts(rings, panel, shapes bool) {
+	legacyRings, legacyPanel, legacyShapes = rings, panel, shapes
+}
+
+// frameCostProbe is a transparent ellipse Shadow draws after its rings
+// (SetFrameCostProbe).
+var frameCostProbe image.Rectangle
+
+// SetFrameCostProbe makes Shadow draw a transparent ellipse r after its
+// rings (empty: none), for tests measuring what moving every later path
+// in Gio's coverage atlas changes, and nothing else does: the pixels stay
+// as they are. Use on the UI goroutine.
+func SetFrameCostProbe(r image.Rectangle) { frameCostProbe = r }
 
 // Circle fills a circle with the given center and diameter, from a path
 // cached at the origin by size (see RRect).
 func Circle(gtx layout.Context, center image.Point, d int, c color.NRGBA) {
 	r := image.Rect(center.X-d/2, center.Y-d/2, center.X-d/2+d, center.Y-d/2+d)
-	if d <= 0 || legacyFrameCost {
+	if d <= 0 || legacyShapes {
 		defer clip.Ellipse(r).Push(gtx.Ops).Pop()
 		paint.ColorOp{Color: c}.Add(gtx.Ops)
 		paint.PaintOp{}.Add(gtx.Ops)
@@ -565,6 +582,9 @@ func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c col
 			continue
 		}
 		strokeRRect(gtx, r.Inset(-i), radius+i, 1.5, color.NRGBA{R: c.R, G: c.G, B: c.B, A: a})
+	}
+	if !frameCostProbe.Empty() {
+		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(frameCostProbe).Op(gtx.Ops))
 	}
 }
 

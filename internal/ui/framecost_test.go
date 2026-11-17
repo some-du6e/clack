@@ -102,13 +102,21 @@ func TestFrameCostWindow(t *testing.T) {
 				t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
 				t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
 				// the noise floor: the old way with every path moved in
-				// the atlas, by three paths drawn first
+				// the atlas, by a transparent path drawn first, or (light:
+				// the paths after the workspace shadow) after its rings
 				var worst *image.RGBA
 				var floorN, floorMax int
-				for sh := 1; sh <= 3; sh++ {
+				for sh := 1; sh <= 6; sh++ {
+					if sh > 3 && dark {
+						break // no shadow
+					}
 					moved, _, _ := e.costFrame(t, costOld, sh, now, false)
 					n, m := costCount(old, moved)
-					t.Logf("%s, the old way after a transparent %v path first: %s", name, costShift(sh, e.size).Size(), costDiff(old, moved))
+					where := "first"
+					if sh > 3 {
+						where = "after the shadow's rings"
+					}
+					t.Logf("%s, the old way with a transparent %v path %s: %s", name, costShift(sh, e.size).Size(), where, costDiff(old, moved))
 					if n > floorN {
 						floorN, worst = n, moved
 					}
@@ -125,9 +133,20 @@ func TestFrameCostWindow(t *testing.T) {
 				// (rings, panel fill, cached shapes) or Gio's clips
 				// (patches 38 and 39)
 				themeOnly, _, _ := e.costFrame(t, costMode{clips: true}, 0, now, false)
-				clipsOnly, _, _ := e.costFrame(t, costMode{theme: true}, 0, now, false)
+				clipsOnly, _, _ := e.costFrame(t, costMode{rings: true, panel: true, shapes: true}, 0, now, false)
 				t.Logf("%s, the new theme drawing alone against old: %s", name, costDiff(old, themeOnly))
 				t.Logf("%s, Gio's new clips alone against old: %s", name, costDiff(old, clipsOnly))
+				for _, part := range []struct {
+					what string
+					mode costMode
+				}{
+					{"the rings in bands", costMode{panel: true, shapes: true, clips: true}},
+					{"the panel's split fill", costMode{rings: true, shapes: true, clips: true}},
+					{"the cached shapes", costMode{rings: true, panel: true, clips: true}},
+				} {
+					one, _, _ := e.costFrame(t, part.mode, 0, now, false)
+					t.Logf("%s, %s alone against old: %s", name, part.what, costDiff(old, one))
+				}
 				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" && m > floorMax {
 					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-clips", old, clipsOnly)
 					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-theme", old, themeOnly)
@@ -167,15 +186,19 @@ const costKarim = `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highli
 // more frames from layout to the end of their rasterization (else 0).
 func (e *perfEnv) costFrame(t *testing.T, mode costMode, shift int, now time.Time, timed bool) (*image.RGBA, gpu.FrameStats, float64) {
 	t.Helper()
-	theme.SetLegacyFrameCost(mode.theme)
+	theme.SetLegacyFrameCostParts(mode.rings, mode.panel, mode.shapes)
 	gpu.ClackLegacyClips(mode.clips)
+	if shift > 3 {
+		theme.SetFrameCostProbe(costShift(shift, e.size))
+		defer theme.SetFrameCostProbe(image.Rectangle{})
+	}
 	defer theme.SetLegacyFrameCost(false)
 	defer gpu.ClackLegacyClips(false)
 	w := e.gpu
 	lay := func() {
 		e.now = now
 		gtx := e.context()
-		if d := costShift(shift, e.size); !d.Empty() {
+		if d := costShift(shift, e.size); !d.Empty() && shift <= 3 {
 			paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(d).Op(gtx.Ops))
 		}
 		e.a.frame(gtx)
@@ -219,20 +242,24 @@ func (e *perfEnv) costFrame(t *testing.T, mode costMode, shift int, now time.Tim
 	return img, st, ms[len(ms)/2]
 }
 
-// costMode says which halves costFrame draws the old way: the theme's
-// rings, panel fill and shapes (theme.SetLegacyFrameCost), Gio's clips
-// (gpu.ClackLegacyClips).
-type costMode struct{ theme, clips bool }
+// costMode says which parts costFrame draws the old way: the theme's
+// rings, panel fill and shapes (theme.SetLegacyFrameCostParts), Gio's
+// clips (gpu.ClackLegacyClips).
+type costMode struct{ rings, panel, shapes, clips bool }
 
 var (
-	costOld = costMode{theme: true, clips: true}
+	costOld = costMode{rings: true, panel: true, shapes: true, clips: true}
 	costNew = costMode{}
 )
 
-// costShift is the transparent path costFrame draws first: none, a tiny
-// one, a third of the window and nearly all of it, all of odd sizes, so
-// the paths after it move by odd amounts too.
+// costShift is the transparent path costFrame draws first (1-3) or right
+// after the workspace shadow's rings (4-6, theme.SetFrameCostProbe): none,
+// a tiny one, a third of the window and nearly all of it, all of odd
+// sizes, so the paths after it move by odd amounts too.
 func costShift(shift int, size image.Point) image.Rectangle {
+	if shift > 3 {
+		shift -= 3
+	}
 	switch shift {
 	case 1:
 		return image.Rect(1, 1, 8, 6)
