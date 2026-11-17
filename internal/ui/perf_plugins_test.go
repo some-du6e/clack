@@ -550,11 +550,17 @@ func TestPerfPluginScroll(t *testing.T) {
 	res.Patched = slackc.PatchedNames()
 	t.Logf("running %d plugins (%s), failed %v; patched: %s", len(res.Plugins), strings.Join(res.Plugins, " "), res.Failed, strings.Join(res.Patched, " "))
 
-	// a long session: many channels opened (the mirror watches each)
+	// a long session: many channels opened (the mirror watches each). 39,
+	// the bench channel the 40th: the messages hub keeps 40 conversations'
+	// models, and before plugin-render-3 the 41st opened kept none (its new
+	// model read as the oldest), so the bench list, opened after 40 others,
+	// took no live event in any pass, only its own 30 s refresh
+	// (TestListsPastTheModelLimitTakeLiveMessages). Under the limit both
+	// trees draw the live list.
 	chans := fs.ChannelIDs()
 	var others []string
 	for _, ch := range chans {
-		if ch == fakeslack.BenchChannelID || len(others) >= 40 {
+		if ch == fakeslack.BenchChannelID || len(others) >= 39 {
 			continue
 		}
 		e.openChannel(ch)

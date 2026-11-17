@@ -39,6 +39,8 @@ type model struct {
 	rev      uint64
 	nextRev  uint32
 	typing   map[string]typingEntry
+	// used is when a list last asked for or drew the model (the hub's mu
+	// guards it): the eviction drops the one drawn longest ago
 	used     time.Time
 	fetched  time.Time // last full refresh
 	refreshQ bool
@@ -134,14 +136,37 @@ type hub struct {
 	reconvMu sync.Mutex
 }
 
-// markDrawn notes that a list drew m in the frame at (gtx.Now).
-func (hb *hub) markDrawn(m *model, at time.Time) {
+// markDrawn notes that a list drew m in the frame at (gtx.Now) and returns
+// the model to draw: the one the hub keeps for m's conversation, which
+// core's events, polls and resyncs change. One the eviction dropped while
+// its list was off screen took none of them; drawn again, it's kept again
+// and reads core's copy (what it missed), unless another list made a new
+// model for the conversation meanwhile, which is the one to draw then.
+func (hb *hub) markDrawn(m *model, at time.Time) *model {
 	hb.mu.Lock()
 	if at.After(hb.frame) {
 		hb.frame = at
 	}
-	m.drawn = at
+	ms, k := hb.chans, m.ch
+	if m.threadTS != "" {
+		ms, k = hb.thread, m.ch+"/"+m.threadTS
+	}
+	cur, kept := ms[k]
+	if !kept {
+		cur = m
+		ms[k] = m
+	}
+	cur.used, cur.drawn = time.Now(), at
+	if !kept {
+		hb.evict(ms) // drawn now: another one goes
+	}
 	hb.mu.Unlock()
+	if !kept {
+		m.mu.Lock()
+		m.fetched = time.Time{} // the list's ensureLoaded reads core's copy now
+		m.mu.Unlock()
+	}
+	return cur
 }
 
 // onScreen reports whether a list of ch (the channel or one of its
@@ -241,7 +266,10 @@ func (hb *hub) channel(ch string) *model {
 	defer hb.mu.Unlock()
 	m, ok := hb.chans[ch]
 	if !ok {
-		m = &model{ch: ch, typing: map[string]typingEntry{}}
+		// its use set first: the eviction took a new model for the oldest
+		// (no use yet), so past maxModels every conversation opened kept
+		// none of core's events
+		m = &model{ch: ch, typing: map[string]typingEntry{}, used: time.Now()}
 		hb.chans[ch] = m
 		hb.evict(hb.chans)
 	}
@@ -255,7 +283,7 @@ func (hb *hub) threadModel(ch, ts string) *model {
 	k := ch + "/" + ts
 	m, ok := hb.thread[k]
 	if !ok {
-		m = &model{ch: ch, threadTS: ts, typing: map[string]typingEntry{}}
+		m = &model{ch: ch, threadTS: ts, typing: map[string]typingEntry{}, used: time.Now()} // as channel's
 		hb.thread[k] = m
 		hb.evict(hb.thread)
 	}

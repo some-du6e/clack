@@ -671,8 +671,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	st := styleFor(h)
 	now := time.Now()
 	lastHost = h
+	if m := s.hb.markDrawn(s.m, gtx.Now); m != s.m {
+		s.m, s.snap.rev = m, 0 // another list's model for the conversation (markDrawn)
+	}
 	s.hb.ensureLoaded(s.m)
-	s.hb.markDrawn(s.m, gtx.Now)
 	s.sync(h, now)
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
