@@ -71,6 +71,9 @@ type PluginInfo struct {
 	AppWideReason         string   // set: workspace restriction doesn't apply
 	HasMain               bool     // a privileged half is installed
 	Capabilities          []string // the main half's declared capabilities
+	// MainError: the privileged half didn't start (its ready threw); the
+	// renderer runs without it, as in Slick. Show it on the plugin's page.
+	MainError string
 	// StoresMessages: the plugin keeps message contents (MessageLogger).
 	// Show StoresMessagesNote before turning it on and in its detail view;
 	// its data stays in memory unless KeepOnDisk (SetKeepOnDisk).
@@ -78,6 +81,10 @@ type PluginInfo struct {
 	KeepOnDisk       bool
 	Options          []OptionInfo
 	RelaunchSettings []string
+	// Panel: the plugin shows its own React on its page
+	// (api.settings.panel): draw it in a "Customize" card after Settings
+	// with Slick.RenderPanel, one root per plugin.
+	Panel bool
 }
 
 // OptionInfo is one schema setting with its current value.
@@ -208,10 +215,14 @@ func (s *Slick) infoLocked(p *plugin, ws string) PluginInfo {
 	}
 	if m.Main != nil {
 		info.HasMain, info.Capabilities = true, m.Main.Capabilities
+		if p.running {
+			info.MainError = p.mainError
+		}
 	}
 	if storesMessages[p.id] {
 		info.StoresMessages, info.KeepOnDisk = true, s.prefs[keepOnDiskPref+p.id] == "on"
 	}
+	info.Panel = s.panels[p.id]
 	live, relaunch := map[string]bool{}, map[string]bool{}
 	for _, k := range m.LiveSettings {
 		live[k] = true

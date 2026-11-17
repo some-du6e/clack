@@ -136,8 +136,21 @@ const osShim = {
   platform: () => go('os', 'platform'),
   EOL: '\n',
 }
+let badgeCount = 0
 const electronShim = {
-  app: { isReady: () => true, whenReady: () => Promise.resolve(), getPath: (name) => go('os', name === 'home' ? 'home' : 'tmp'), getVersion: () => '0.0.0' },
+  app: {
+    isReady: () => true,
+    whenReady: () => Promise.resolve(),
+    getPath: (name) => go('os', name === 'home' ? 'home' : 'tmp'),
+    getVersion: () => '0.0.0',
+    // the app badge is Clack's own (dock.go): a main half's count is
+    // accepted and kept, never drawn (SelfCare clears it during a break)
+    getBadgeCount: () => badgeCount,
+    setBadgeCount: (n) => {
+      badgeCount = Number.isFinite(+n) && +n > 0 ? Math.floor(+n) : 0
+      return true
+    },
+  },
   // the session's spellchecker is Clack's composer spellcheck: off here
   // turns it off whatever webapp_spellcheck says (Snappy's "Disable
   // composer spellcheck"), on leaves it to the pref
@@ -480,6 +493,15 @@ class WebContents extends EventEmitter {
   isLoading() {
     return false
   }
+  // Clack plays its own sounds natively: a main half's mute is kept, and
+  // changes nothing (SelfCare mutes the window during a break)
+  #muted = false
+  isAudioMuted() {
+    return this.#muted
+  }
+  setAudioMuted(muted) {
+    this.#muted = !!muted
+  }
   send() {}
   async executeJavaScript(code) {
     return (0, eval)(code)
@@ -735,10 +757,32 @@ S.startMain = async (id, settings) => {
     return null
   } catch (err) {
     for (const [scheme] of main.protocols) protocols.delete(scheme)
+    dropMainHooks(id) // what it registered before it threw (SelfCare's notification filter)
+    main.settingsListeners.clear() // its next ready adds its own again
     syncFetchHook()
     console.error(`[slick] ${id} ready failed:`, err)
     return errorText(err)
   }
+}
+
+/** drops what main half id put on the shared hooks: its net rules and notification filters */
+function dropMainHooks(id) {
+  let rules = false
+  let filters = false
+  for (const r of [...netRules]) {
+    if (r.id === id) {
+      netRules.delete(r)
+      rules = true
+    }
+  }
+  for (const f of [...notificationFilters]) {
+    if (f.id === id) {
+      notificationFilters.delete(f)
+      filters = true
+    }
+  }
+  if (rules) syncFetchHook()
+  if (filters) syncNotificationPatch()
 }
 
 S.stopMain = async (id) => {
@@ -755,6 +799,7 @@ S.stopMain = async (id) => {
   main.dispose = null
   main.settingsListeners.clear()
   for (const [scheme] of main.protocols) if (protocols.get(scheme)?.id === id) protocols.delete(scheme)
+  dropMainHooks(id) // a disposer that forgot one leaves nothing behind
   syncFetchHook()
   return problem
 }

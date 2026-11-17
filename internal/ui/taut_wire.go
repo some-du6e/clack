@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/jsrt"
@@ -120,6 +121,12 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 	// UI goroutine runs that reset, and JS only resends the set on change.
 	var patchMu sync.Mutex
 	var patchedNow []string
+	// the bridge the UI goroutine bound for this runtime (Attached): its
+	// patched names reach slackc only while slackc still holds it, so the
+	// patches a detached runtime publishes as its plugins stop (sign-out,
+	// an account switch) can't leave the next session's components on the
+	// patched path, its message menus holding for a tree that never comes
+	var bound atomic.Pointer[taut.Bridge]
 	t, err := taut.New(taut.Options{
 		Dir:            a.inertPluginDir("taut"), // "": Taut's own (clackHome)
 		CredsPath:      a.inertPluginDir("creds.json"),
@@ -139,6 +146,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				a.Post(func() {
 					slackc.Reset()
 					slackc.SetBridge(br)
+					bound.Store(br)
 					patchMu.Lock()
 					slackc.SetPatched(patchedNow)
 					patchMu.Unlock()
@@ -158,7 +166,9 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 			SetPatched: func(names []string) {
 				patchMu.Lock()
 				patchedNow = names
-				slackc.SetPatched(names)
+				if br := bound.Load(); br != nil && slackc.BridgeIs(br) {
+					slackc.SetPatched(names)
+				}
 				patchMu.Unlock()
 			},
 			ThreadPane: messages.ThreadPane, // api.threads.usePane (safe off the UI goroutine)
@@ -445,7 +455,7 @@ func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel stri
 		return nil
 	}
 	s.SetDark(dark)
-	s.SetRoute(team, channel)
+	s.SetRoute(team, channel, "")
 	if envFlag("TIMING") {
 		log.Printf("timing: slick.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
@@ -496,7 +506,7 @@ func (a *App) Slick() *slick.Slick {
 // getCurrentChannelId, workspace restrictions).
 func (a *App) slickRoute(r Route) {
 	if s := a.Slick(); s != nil {
-		s.SetRoute(a.data.teamID, r.Channel())
+		s.SetRoute(a.data.teamID, r.Channel(), r.Thread())
 	}
 }
 

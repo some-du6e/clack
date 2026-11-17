@@ -3,9 +3,12 @@ package popups
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
+	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,7 +68,35 @@ func (e *mkEnv) press(n key.Name, mods key.Modifiers) {
 // menus' actions (mark unread, save, pin) run.
 func mkHost(t *testing.T) *tzHost {
 	t.Helper()
-	h := hcEnv(t)
+	return mkBoot(t, hcEnv(t))
+}
+
+// mkHostCounting is mkHost over a fake that counts the API calls each
+// method gets (calls, safe from any goroutine).
+func mkHostCounting(t *testing.T) (h *tzHost, calls func(method string) int) {
+	t.Helper()
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	var mu sync.Mutex
+	n := map[string]int{}
+	fs.SetHook(func(method string, _ url.Values) (any, bool) {
+		mu.Lock()
+		n[method]++
+		mu.Unlock()
+		return nil, false
+	})
+	return mkBoot(t, hcEnvOn(t, fs)), func(method string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n[method]
+	}
+}
+
+func mkBoot(t *testing.T, h *tzHost) *tzHost {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
@@ -301,7 +332,6 @@ func TestMenuKeysIgnored(t *testing.T) {
 		{"linux", "L", key.ModShift},
 		{"darwin", "C", key.ModCtrl},
 		{"linux", "C", key.ModSuper},
-		{"linux", "P", 0},                    // Pin is in Organize ▸; the submenu has the key
 		{"linux", key.NameDeleteForward, 0},  // not own: no Delete message…
 		{"linux", key.NameDeleteBackward, 0}, // Backspace deletes on macOS only
 		{"darwin", "E", 0},                   // not own: no Edit message
@@ -323,10 +353,12 @@ func TestMenuKeysIgnored(t *testing.T) {
 }
 
 // M opens Add a reminder ▸ with the keyboard (it's a submenu row); P
-// pins once the Organize ▸ submenu has keyboard focus.
+// pins once the Organize ▸ submenu has keyboard focus, and from the root
+// menu too: Slack's MessageActionsMenu (2rcC onMenuKeyDown) runs the keys
+// of the submenu actions it built (Organize's Pin) and closes the menu.
 func TestMenuKeysSubmenus(t *testing.T) {
 	setGOOS(t, "linux")
-	h := mkHost(t)
+	h, calls := mkHostCounting(t)
 	e, _ := mkOpen(t, h, "more", false)
 	e.press("M", 0)
 	if e.m.Dismissed() || e.m.sub == nil || !e.m.sub.kbd || e.m.items[e.m.subIdx].Label != "Add a reminder" {
@@ -358,6 +390,42 @@ func TestMenuKeysSubmenus(t *testing.T) {
 	}
 	if ts := h.toastList(); slices.Contains(ts, "Message pinned") {
 		t.Errorf("a pin toasted %q; Slack's pinMessage toasts nothing", ts)
+	}
+
+	// P from the root of the context menu and of More actions: one pin
+	// request each, counted at the fake (the store's pin seq also moves
+	// when a pin the fake refuses is reverted, after the press). Each on a
+	// message of its own: the client holds back a request identical to
+	// one that just failed (the fake refuses these pins), and a refused
+	// pin's revert lands after the press.
+	pinRequests := func() int { return calls("pins.add") + calls("pins.remove") }
+	for end := time.Now().Add(10 * time.Second); pinRequests() == 0 && time.Now().Before(end); {
+		time.Sleep(10 * time.Millisecond) // Organize ▸ P's request, at the fake before we count
+	}
+	time.Sleep(200 * time.Millisecond)
+	for i, which := range []string{"context", "more"} {
+		msg := mkMsg(false)
+		msg.TS = fmt.Sprintf("1700000000.%06d", 201+i)
+		var m *Menu
+		if which == "more" {
+			m = NewMessageMenuOpts(h, image.Pt(600, 100), msg, MessageMenuOpts{})
+		} else {
+			m = NewMessageContextMenu(h, image.Pt(200, 200), msg, InChannel, MessageMenuOpts{})
+		}
+		e := newMkEnv(t, m)
+		before := pinRequests()
+		e.press("P", 0)
+		if !e.m.Dismissed() {
+			t.Errorf("%s: P from the root left the menu open", which)
+		}
+		for end := time.Now().Add(10 * time.Second); pinRequests() == before && time.Now().Before(end); {
+			e.frame()
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(100 * time.Millisecond) // a second request would be on its way
+		if n := pinRequests() - before; n != 1 {
+			t.Errorf("%s: P from the root sent %d pin requests, want 1", which, n)
+		}
 	}
 }
 
