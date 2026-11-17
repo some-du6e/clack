@@ -121,18 +121,38 @@ func pwPNG(t *testing.T, w, h int) []byte {
 	return b.Bytes()
 }
 
+// processUpload's checks: the File's type by its extension, as Chromium
+// types a picked file (and as FormData sends it), must be GIF, PNG or JPEG;
+// then the size it loads at, at least 36 and at most 4000 px a side, the
+// minimum first.
 func TestCheckPhoto(t *testing.T) {
-	if _, err := CheckPhoto(pwPNG(t, 600, 400)); err != nil {
-		t.Errorf("600×400: %v", err)
+	for name, want := range map[string]string{
+		"me.png": "image/png", "ME.PNG": "image/png", "a.gif": "image/gif", "a.jpg": "image/jpeg",
+		"a.JPEG": "image/jpeg", "a.jfif": "image/jpeg", "a.pjpeg": "image/jpeg", "a.pjp": "image/jpeg",
+		"a.webp": "", "a.heic": "", "a.bmp": "", "noext": "", "a.png.txt": "", "dir.png/x": "",
+	} {
+		if got := PhotoFileType(name); got != want {
+			t.Errorf("PhotoFileType(%q) = %q, want %q", name, got, want)
+		}
 	}
-	if _, err := CheckPhoto(pwPNG(t, 20, 400)); err != ErrPhotoTooSmall {
-		t.Errorf("20 wide: %v", err)
+	for typ, ok := range map[string]bool{"image/png": true, "image/gif": true, "image/jpeg": true,
+		"image/webp": false, "": false, "image/x-png": false, "application/octet-stream": false} {
+		if err := CheckPhotoType(typ); (err == nil) != ok || err != nil && err != ErrPhotoType {
+			t.Errorf("CheckPhotoType(%q) = %v", typ, err)
+		}
 	}
-	if _, err := CheckPhoto(pwPNG(t, 4001, 40)); err != ErrPhotoTooBig {
-		t.Errorf("4001 wide: %v", err)
-	}
-	if _, err := CheckPhoto([]byte("not an image")); err != ErrPhotoType {
-		t.Errorf("text: %v", err)
+	for _, c := range []struct {
+		w, h int
+		want error
+	}{
+		{600, 400, nil}, {36, 36, nil}, {4000, 4000, nil},
+		{20, 400, ErrPhotoTooSmall}, {400, 35, ErrPhotoTooSmall}, {4001, 40, ErrPhotoTooBig},
+		{20, 4001, ErrPhotoTooSmall}, // the minimum is checked first
+		{36, 4001, ErrPhotoTooBig},
+	} {
+		if err := CheckPhotoSize(c.w, c.h); err != c.want {
+			t.Errorf("CheckPhotoSize(%d, %d) = %v, want %v", c.w, c.h, err, c.want)
+		}
 	}
 }
 
@@ -329,13 +349,13 @@ func TestProfilePhotoLikeSlack(t *testing.T) {
 	if a.HasCustomPhoto(fakeslack.SelfID) {
 		t.Fatal("custom photo before the upload")
 	}
-	if _, err := a.PreparePhoto(ctx, "tiny.png", pwPNG(t, 20, 20)); err != ErrPhotoTooSmall {
-		t.Fatalf("tiny: %v", err)
+	if _, err := a.PreparePhoto(ctx, "notes.txt", PhotoFileType("notes.txt"), pwPNG(t, 600, 400)); err != ErrPhotoType {
+		t.Fatalf("a .txt file: %v", err)
 	}
 	if len(calls.get("users.preparePhoto")) != 0 {
 		t.Fatal("a failed check still uploaded")
 	}
-	up, err := a.PreparePhoto(ctx, "me.png", pwPNG(t, 600, 400))
+	up, err := a.PreparePhoto(ctx, "me.png", "image/png", pwPNG(t, 600, 400))
 	if err != nil || up.ID == "" || up.Width != 600 || up.Height != 400 {
 		t.Fatalf("prepare %+v %v", up, err)
 	}
