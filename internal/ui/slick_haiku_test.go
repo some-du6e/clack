@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -86,28 +85,12 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	}
 	t.Logf("window key listeners: keydown=%v keyup=%v", e.a.Taut().Bridge().WantsEvent("keydown"), e.a.Taut().Bridge().WantsEvent("keyup"))
 
-	// what the composer asks and what JS answers
-	type scCall struct {
-		at   time.Duration
-		m    composer.SendCheck
-		done chan bool
-	}
-	var calls []*scCall
-	var callsMu sync.Mutex
-	tStart := time.Now()
+	// what JS answers: the composer's send runs the checks in one JS call
+	// with its thunk (taut's CheckThenDispatch), through __taut.sendCheck
 	e.frame() // syncHooks installs taut's check
 	if composer.SendChecks == nil {
 		t.Fatal("the composer has no send check with HaikuWarning on")
 	}
-	orig := composer.SendChecks
-	composer.SendChecks = func(m composer.SendCheck, done func(bool)) {
-		c := &scCall{at: time.Since(tStart), m: m, done: make(chan bool, 1)}
-		callsMu.Lock()
-		calls = append(calls, c)
-		callsMu.Unlock()
-		orig(m, func(ok bool) { c.done <- ok; done(ok) })
-	}
-	t.Cleanup(func() { composer.SendChecks = orig })
 	probe(`const orig = __taut.sendCheck; globalThis.__scLog = []
 		__taut.sendCheck = async (c) => {
 			const e = { t0: Date.now(), c: JSON.stringify(c).slice(0, 400) }
@@ -116,19 +99,6 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 		}`)
 	defer func() {
 		t.Logf("route %s; JS send checks: %s", e.a.router.Current(), probe(`return __scLog.map((e) => ({ ...e, ms: e.t1 ? e.t1 - e.t0 : 'pending' }))`))
-		callsMu.Lock()
-		for _, c := range calls {
-			select {
-			case ok := <-c.done:
-				t.Logf("composer send check at %v: %q -> %v", c.at, c.m.Text, ok)
-			default:
-				t.Logf("composer send check at %v: %q still pending", c.at, c.m.Text)
-			}
-		}
-		if len(calls) == 0 {
-			t.Logf("the composer never ran a send check")
-		}
-		callsMu.Unlock()
 	}()
 
 	if logKeys {
@@ -168,11 +138,8 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	if !st.Open || !st.Focused {
 		t.Errorf("the dialog: %+v; want open with its Keep editing button focused", st)
 	}
-	callsMu.Lock()
-	n := len(calls)
-	callsMu.Unlock()
-	if n != 1 {
-		t.Fatalf("the composer ran %d send checks, want 1", n)
+	if n := probe(`return String(__scLog.length)`); n != "1" {
+		t.Fatalf("the send ran %s send checks, want 1", n)
 	}
 	// the page under it is modal: Escape goes to the dialog (cancel, close),
 	// HaikuWarning settles false and the message goes back to the composer
@@ -186,13 +153,10 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	if !closed {
 		t.Fatal("Escape didn't close the dialog")
 	}
-	select {
-	case ok := <-calls[0].done:
-		if ok {
-			t.Error("Escape (Keep editing) sent the haiku")
-		}
-		calls[0].done <- ok // for the deferred report
-	case <-time.After(5 * time.Second):
+	settled := e.wait(5*time.Second, func() bool { return probe(`return String(!!__scLog[0]?.t1)`) == "true" })
+	if !settled {
 		t.Error("the send check didn't settle after Escape")
+	} else if r := probe(`return String(__scLog[0].r)`); r != "false" {
+		t.Errorf("the send check settled %s after Escape (Keep editing), want false", r)
 	}
 }
