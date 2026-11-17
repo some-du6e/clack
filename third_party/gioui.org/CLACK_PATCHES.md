@@ -1814,9 +1814,12 @@ its own. Not in `UPSTREAM.patch` yet (candidates).
 A drawing window restarts its animation every frame (`draw` calls
 `SetAnimating`), and `displayLink.Start` sent on an unbuffered channel to
 the link's goroutine each time, which had to be scheduled to take it.
-Start now returns at once while the link runs with no stop pending
-(`running` is 1; only a Stop sends 0, and both come from the main
-thread). `resizeDrawable` set the layer's `drawableSize` every frame and
+Start now returns at once when the last state the main thread sent was a
+start (`displayLink.asked`; Start and Stop come from the main thread, and
+the goroutine handles states in order). A first version read the
+goroutine's `running` instead, which drops to 0 only after Stop has
+returned: a Start right after a Stop was skipped and the window stopped
+drawing (ci's macOS key tests, 2026-11-17). `resizeDrawable` set the layer's `drawableSize` every frame and
 `displayLayer:` its `contentsScale`; each is set only when it changes.
 The window's geometry is still read every frame (`updateWindowMode`):
 caching it would have to catch every resize, move, screen and scale

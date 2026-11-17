@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"math"
 	"os"
+	"runtime"
 	"testing"
 
 	"gioui.org/f32"
@@ -27,15 +28,20 @@ import (
 // every clip on every op over one stencil region: SetLegacyFrameCost,
 // gpu.ClackLegacyClips) and the new way, and compare the pixels.
 //
-// What may differ: Gio's coverage of a path depends by a rounding on
-// where its stencil lands in the atlas (the GPU interpolates from the
-// atlas origin). Stenciling a ring in bands, or a clip in regions, moves
-// it and every path packed after it, so edge pixels can come out a level
-// or two apart, as they already do today whenever anything drawn before
-// them changes. Each scene measures that floor itself: the old way drawn
-// again after one more tiny path (the atlas shifted). The new way may
-// differ from the old by no more levels than that and in at most a few
-// times as many pixels.
+// What may differ: Gio's coverage of a path depends by a rounding on how
+// its stencil is placed (its region's size and where it lands in the
+// atlas: the GPU interpolates each curve's quad, which reaches down to
+// the bottom of its contour, across the region). Stenciling a ring in
+// bands, or a clip in regions, changes that, so edge pixels can come out
+// a level or two apart, as they already do whenever anything drawn
+// before them moves them in the atlas. Each scene measures that floor
+// itself (the old way again after one more tiny path). The new way may
+// differ from the old by 2 levels at most and in at most 0.5% of the
+// pixels the scene draws over its background, or 4× the floor and 256.
+// Windows CI's WARP is the exception for the levels: its old way is off
+// by up to 10 at the panel's corners (the clip stenciled over the whole
+// panel; (152,80) at 2x without a sidebar, fully inside the panel, came
+// out 246 instead of 255), where the new way is exact.
 
 type costScene struct {
 	name  string
@@ -67,17 +73,24 @@ func TestFrameCostPixels(t *testing.T) {
 			old, oldSt, g := sc.render(t, true, false)
 			shifted, _, _ := sc.render(t, true, true)
 			cur, curSt, _ := sc.render(t, false, false)
+			bg, _, _ := sc.background(t)
 			floor := costCompare(old, shifted, g)
 			got := costCompare(old, cur, g)
+			drawn := costCompare(old, bg, g).n
 			t.Logf("the old way after one more path (the noise floor): %s", floor)
 			t.Logf("new against old: %s", got)
+			t.Logf("%d px drawn over the background", drawn)
 			t.Logf("old: %s", costStats(oldSt))
 			t.Logf("new: %s", costStats(curSt))
-			if lim := max(floor.max, 2); got.max > lim {
-				t.Errorf("a pixel differs by %d levels, more than the %d placement alone moves one", got.max, lim)
+			lim := 2
+			if runtime.GOOS == "windows" {
+				lim = 12 // WARP's old way at the panel's corners, see above
 			}
-			if lim := 4*floor.n + 256; got.n > lim {
-				t.Errorf("%d px differ, more than %d (4× the %d placement alone moves, plus 256)", got.n, lim, floor.n)
+			if got.max > lim {
+				t.Errorf("a pixel differs by %d levels, more than %d", got.max, lim)
+			}
+			if lim := max(4*floor.n+256, drawn/200); got.n > lim {
+				t.Errorf("%d px differ, more than %d (0.5%% of the %d px drawn, or 4× the %d placement alone moves plus 256)", got.n, lim, drawn, floor.n)
 			}
 			if oldSt.StencilPx > 0 && curSt.StencilPx*2 > oldSt.StencilPx {
 				t.Errorf("stencil work %d px, not under half the old %d px", curSt.StencilPx, oldSt.StencilPx)
@@ -192,11 +205,16 @@ func (sc costScene) render(t *testing.T, legacy, shift bool) (*image.RGBA, gpu.F
 	gpu.ClackLegacyClips(legacy)
 	defer SetLegacyFrameCost(false)
 	defer gpu.ClackLegacyClips(false)
-	return sc.draw(t, shift)
+	return sc.draw(t, shift, false)
 }
 
-// draw renders the scene.
-func (sc costScene) draw(t *testing.T, shift bool) (*image.RGBA, gpu.FrameStats, costGeom) {
+// background draws only the scene's background.
+func (sc costScene) background(t *testing.T) (*image.RGBA, gpu.FrameStats, costGeom) {
+	return sc.draw(t, false, true)
+}
+
+// draw renders the scene, or only its background.
+func (sc costScene) draw(t *testing.T, shift, bgOnly bool) (*image.RGBA, gpu.FrameStats, costGeom) {
 	t.Helper()
 	sz := image.Pt(int(1100*sc.scale), int(700*sc.scale))
 	th := New(sc.dark)
@@ -229,7 +247,7 @@ func (sc costScene) draw(t *testing.T, shift bool) (*image.RGBA, gpu.FrameStats,
 	pane := image.Rect(primary.Max.X-gtx.Dp(380), primary.Min.Y, primary.Max.X, primary.Max.Y)
 	dlg := image.Rect(sz.X/2-gtx.Dp(260), sz.Y/2-gtx.Dp(180), sz.X/2+gtx.Dp(260), sz.Y/2+gtx.Dp(180))
 	g := costGeom{ws: ws, panel: primary, interior: rr.Interior(), pane: pane, dialog: dlg, spread: gtx.Dp(24)}
-	{
+	if !bgOnly {
 		// the workspace: Slack's shadow in light mode, its outline in dark
 		if !sc.dark {
 			Shadow(gtx, ws.Add(image.Pt(-gtx.Dp(2), -gtx.Dp(2))), rad, gtx.Dp(8), th.C.PanelShadow)

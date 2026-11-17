@@ -121,7 +121,12 @@ func (rr RRect) Path(ops *op.Ops) PathSpec {
 // what lies inside it as if the clip weren't there.
 func (rr RRect) Interior() image.Rectangle {
 	r := rr.Rect
-	in := image.Rect(r.Min.X+max(rr.NW, rr.SW)+1, r.Min.Y+1, r.Max.X-max(rr.NE, rr.SE)-1, r.Max.Y-1)
+	// not image.Rect: that swaps the corners of an inverted rectangle,
+	// where the arcs overlap (a circle has no interior)
+	in := image.Rectangle{
+		Min: image.Pt(r.Min.X+max(rr.NW, rr.SW)+1, r.Min.Y+1),
+		Max: image.Pt(r.Max.X-max(rr.NE, rr.SE)-1, r.Max.Y-1),
+	}
 	if in.Empty() || rr.NW < 0 || rr.SW < 0 || rr.NE < 0 || rr.SE < 0 {
 		return image.Rectangle{}
 	}
