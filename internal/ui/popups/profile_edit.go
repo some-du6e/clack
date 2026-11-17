@@ -45,10 +45,11 @@ package popups
 //     defaultCropScale 1, at least 72px) that moves and resizes from its
 //     corners, the message preview under it, Cancel (back to the form)
 //     and Save (users.setPhoto with the square in that image's pixels,
-//     back to the form; an error alert on failure, the call logged).
+//     drawn loading while it runs; back to the form; an error alert on
+//     failure, the call logged).
 //   - removePane (EditProfileRemovePane): a back arrow, "Remove profile
 //     photo", the photo and "Are you sure…", Cancel and the danger "Yes,
-//     Remove Photo" (users.deletePhoto).
+//     Remove Photo" (users.deletePhoto, drawn loading while it runs).
 //
 // The section editor (EditProfileSectionModal): "Edit {sectionLabel}"
 // (rimeto_atlas_user), the elements between two 1px lines: a text element
@@ -66,6 +67,7 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"image/draw"
 	_ "image/gif"  // decoders registered for imgcache.Decode
 	_ "image/jpeg" // decoders registered for imgcache.Decode
 	_ "image/png"  // decoders registered for imgcache.Decode
@@ -86,8 +88,10 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/exif"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -1096,19 +1100,21 @@ func newEPUpload(e *EditProfileModal, f core.UploadFile) *epUpload {
 }
 
 // The photo panes' calls aren't held to run's 15 s. Slack's API queue
-// times a request out after 60 s (P8AB), as internal/slack's client does
-// each request here; the upload pane's work as a whole (the upload, the
-// prepared image's download, its decode) gets three minutes, Save and
-// Yes, Remove Photo (the call, then the member fetched again) two.
+// times a request out after 60 s and tries it up to 3 times, waiting at
+// most 180 s between tries (P8AB, 3GCR), as internal/slack does here for
+// these calls (slack.SlackRetries; slack.SlackRetrySpan at the longest).
+// The upload pane's work also downloads and decodes the prepared image;
+// Save and Yes, Remove Photo fetch the member again after their call.
 const (
-	photoUploadWait = 3 * time.Minute
-	photoSaveWait   = 2 * time.Minute
+	photoUploadWait = slack.SlackRetrySpan + 2*time.Minute
+	photoSaveWait   = slack.SlackRetrySpan + time.Minute
 )
 
-// start is useImageUpload: processUpload (core.PreparePhoto: the checks,
-// the upload, the image it answers with loaded), that image decoded for
-// the crop pane (getLoadedImage(e.url): the pane shows it, and its square
-// is in its pixels), then the crop pane.
+// start is useImageUpload: processUpload (the File's type by its name,
+// then the size it loads at, read from its header by the decoders imgcache
+// has; core.PreparePhoto: the upload and the image it answers with,
+// loaded), that image decoded for the crop pane (getLoadedImage(e.url):
+// the pane shows it, and its square is in its pixels), then the crop pane.
 func (u *epUpload) start() {
 	a := u.e.h.Core()
 	if a == nil {
@@ -1122,7 +1128,18 @@ func (u *epUpload) start() {
 		size image.Point
 	}
 	runFor(u.e.h, photoUploadWait, func(ctx context.Context) (res, error) {
-		up, err := a.PreparePhoto(ctx, f.Name, f.Data)
+		typ := core.PhotoFileType(f.Name)
+		if err := core.CheckPhotoType(typ); err != nil {
+			return res{}, err
+		}
+		cfg, _, err := imgcache.DecodeConfig(f.Data) // getLoadedImage of the File: its catch is invalid_type
+		if err != nil {
+			return res{}, core.ErrPhotoType
+		}
+		if err := core.CheckPhotoSize(cfg.Width, cfg.Height); err != nil {
+			return res{}, err
+		}
+		up, err := a.PreparePhoto(ctx, f.Name, typ, f.Data)
 		if err != nil {
 			return res{}, err
 		}
@@ -1344,30 +1361,85 @@ func cropDisplay(size image.Point) (dw, dh float64, px image.Point) {
 // cropImage decodes an image and scales it to the crop pane's display
 // size, both under one budget from imgcache's decode memory (the pixels
 // x/image's CatmullRom.Scale draws, a band at a time): the scaled copy the
-// pane shows and the image's size. The full-size image isn't kept. The
-// profile photo's is the prepared image (users.preparePhoto's url), the
-// channel email icon's the picked file.
+// pane shows and the image's size, both as Chromium has the image in an
+// <img>, its naturalWidth and naturalHeight: a GIF is its first frame on
+// its logical screen (the screen's size, the frame at its offset), and a
+// JPEG is turned by its EXIF Orientation (exif.Source; width and height
+// trade places for 5 to 8). The full-size image isn't kept. The profile
+// photo's is the prepared image (users.preparePhoto's url), the channel
+// email icon's the picked file.
 func cropImage(ctx context.Context, data []byte) (*image.RGBA, image.Point, error) {
 	var disp *image.RGBA
 	var size image.Point
 	err := imgcache.WithBudget(ctx, func(b *imgcache.Budget) error {
+		cfg, format, err := imgcache.DecodeConfig(data)
+		if err != nil {
+			return err
+		}
 		img, err := imgcache.DecodeBudget(data, imgcache.MaxPixels, imgcache.MaxSide, b)
 		if err != nil {
 			return err
 		}
-		bd := img.Bounds()
-		size = bd.Size()
+		charge := imgcache.ChargeFunc(b)
+		src, sr := img, img.Bounds()
+		if screen := image.Rect(0, 0, cfg.Width, cfg.Height); format == "gif" && sr != screen {
+			if err := charge(4 * int64(cfg.Width) * int64(cfg.Height)); err != nil {
+				return err
+			}
+			canvas := image.NewRGBA(screen)
+			r := sr.Intersect(screen)
+			draw.Draw(canvas, r, img, r.Min, draw.Src)
+			src, sr = canvas, screen
+		}
+		o := 1
+		if format == "jpeg" {
+			o = exif.Orientation(data)
+		}
+		size = sr.Size()
+		if exif.Swaps(o) {
+			size = image.Pt(size.Y, size.X)
+		}
 		_, _, px := cropDisplay(size)
-		if err := imgcache.ChargeFunc(b)(4 * int64(px.X) * int64(px.Y)); err != nil {
+		stored := px // the display copy before it's turned
+		if exif.Swaps(o) {
+			stored = image.Pt(px.Y, px.X)
+		}
+		if err := charge(4 * int64(stored.X) * int64(stored.Y)); err != nil {
 			return err
 		}
-		disp = image.NewRGBA(image.Rectangle{Max: px})
-		return imgcache.ScaleInto(disp, img, bd, b)
+		disp = image.NewRGBA(image.Rectangle{Max: stored})
+		if err := imgcache.ScaleInto(disp, src, sr, b); err != nil {
+			return err
+		}
+		if o != 1 {
+			if err := charge(4 * int64(px.X) * int64(px.Y)); err != nil {
+				return err
+			}
+			disp = orientRGBA(disp, o)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, image.Point{}, err
 	}
 	return disp, size, nil
+}
+
+// orientRGBA is src (its Min at the origin) as EXIF Orientation o shows it.
+func orientRGBA(src *image.RGBA, o int) *image.RGBA {
+	w, h := src.Rect.Dx(), src.Rect.Dy()
+	dw, dh := w, h
+	if exif.Swaps(o) {
+		dw, dh = h, w
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
+	for y := 0; y < dh; y++ {
+		for x := 0; x < dw; x++ {
+			sx, sy := exif.Source(o, w, h, x, y)
+			copy(dst.Pix[dst.PixOffset(x, y):][:4], src.Pix[src.PixOffset(sx, sy):][:4])
+		}
+	}
+	return dst
 }
 
 // photoDecodeFailure says why cropImage failed, for the log: the decode
@@ -1401,7 +1473,7 @@ func newCropBox(h Host, disp *image.RGBA, size image.Point, minSize float64) cro
 func newEPCrop(e *EditProfileModal, up core.PhotoUpload, disp *image.RGBA, size image.Point) *epCrop {
 	c := &epCrop{e: e, up: up, cropBox: newCropBox(e.h, disp, size, core.PhotoCropMinSize)}
 	cancel := &ModalButton{Label: nsEditProfile.T("Cancel"), Kind: BtnOutline, Do: func() bool { e.switchPane("formPane"); return false }}
-	save := &ModalButton{Label: nsEditProfile.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return !c.saving }, Do: func() bool { c.Save(); return false }}
+	save := &ModalButton{Label: nsEditProfile.T("Save"), Kind: BtnPrimary, Loading: func() bool { return c.saving }, Do: func() bool { c.Save(); return false }}
 	c.m = NewModal(e.h, ModalOpts{TitleFunc: func() string { return cropTitle(e.h) }, HeadH: 65, Body: c.layout,
 		Buttons: []*ModalButton{cancel, save}, AutoFocus: save, OnClose: func() { e.done = true }})
 	return c
@@ -1639,7 +1711,7 @@ type epRemove struct {
 func newEPRemove(e *EditProfileModal) *epRemove {
 	r := &epRemove{e: e}
 	cancel := &ModalButton{Label: nsEditProfile.T("Cancel"), Kind: BtnOutline, Do: func() bool { e.switchPane("formPane"); return false }}
-	yes := &ModalButton{Label: nsEditProfile.T("Yes, Remove Photo"), Kind: BtnDanger, Enabled: func() bool { return !r.removing },
+	yes := &ModalButton{Label: nsEditProfile.T("Yes, Remove Photo"), Kind: BtnDanger, Loading: func() bool { return r.removing },
 		Do: func() bool { r.Remove(); return false }}
 	r.m = NewModal(e.h, ModalOpts{Header: r.header, Body: r.layout, Buttons: []*ModalButton{cancel, yes}, AutoFocus: yes,
 		OnClose: func() { e.done = true }})
