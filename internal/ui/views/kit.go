@@ -25,6 +25,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -326,6 +327,10 @@ type base struct {
 	addBtns map[string]*widget.Clickable
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
+	// vers caches msgVer per message copy (msgVerOf); vsrc is the copy
+	// each message's patched view was last read for (viewMsg)
+	vers map[string]verMemo
+	vsrc map[string]*core.Message
 	// rec, while a row is described (recording), notes the members it
 	// drew without a name (missing_member.go); reads (recordingReads)
 	// every member it looked up

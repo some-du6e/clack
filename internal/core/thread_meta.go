@@ -78,7 +78,7 @@ func (a *App) onMessageReplied(ctx context.Context, ch string, raw json.RawMessa
 	if json.Unmarshal(*e.Message, &m) != nil || json.Unmarshal(*e.Message, &r) != nil || m.TS == "" {
 		return
 	}
-	if stored, ok := a.S.Find(ch, m.TS); ok && staleReplied(r.latest(), &stored) {
+	if stored, ok := a.S.FindHeld(ch, m.TS); ok && staleReplied(r.latest(), &stored) { // a root fetched by id too
 		return
 	}
 	latest := m.LatestReply

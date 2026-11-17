@@ -381,7 +381,7 @@ func (a *App) mentionsViewer(m *Message, o mentionOpts) bool {
 	if m == nil || m.Subtype == "pinned_item" {
 		return false
 	}
-	self := a.Self().ID
+	self := a.S.SelfID()
 	// isReply (azCc n): a thread reply's @channel and @everyone don't count
 	o.broadcast = o.broadcast && !(m.ThreadTS != "" && m.ThreadTS != m.TS)
 	var words []string
@@ -405,9 +405,12 @@ func (a *App) mentionsViewer(m *Message, o mentionOpts) bool {
 		}
 		return len(words) > 0 && len(richtext.LocateHighlightWords(t, words, false)) > 0
 	}
-	var blocks []json.RawMessage
-	if len(m.Blocks) > 0 && json.Unmarshal(m.Blocks, &blocks) == nil && len(blocks) > 0 {
-		if a.blocksMention(blocks, self, o, words, text, false) {
+	// a message with blocks is read from its blocks alone, an empty list
+	// too (c+16: `t.blocks && checkForMentionInBlocks(…) || !t.blocks &&
+	// checkForMentionInMessageText(…)`)
+	if len(m.Blocks) > 0 && string(m.Blocks) != "null" {
+		var blocks []json.RawMessage
+		if json.Unmarshal(m.Blocks, &blocks) == nil && a.blocksMention(blocks, self, o, words, text, false) {
 			return true
 		}
 	} else if text(m.Text) {
@@ -492,14 +495,9 @@ func (a *App) blocksMention(blocks []json.RawMessage, self string, o mentionOpts
 			if a.richMention(b.Elements, self, o) {
 				return true
 			}
-			// checkForMentionInRichTextBlock's highlight words (lxEU fw):
-			// the block's text runs
-			if len(words) > 0 {
-				var sb strings.Builder
-				richTextRuns(b.Elements, &sb)
-				if len(richtext.LocateHighlightWords(sb.String(), words, true)) > 0 {
-					return true
-				}
+			// checkForMentionInRichTextBlock's highlight words (lxEU fw)
+			if len(words) > 0 && richHighlights(b.Elements, words) {
+				return true
 			}
 		case "section":
 			if mrkdwn(b.Text) {
@@ -563,29 +561,91 @@ func (a *App) richMention(els []json.RawMessage, self string, o mentionOpts) boo
 	return false
 }
 
-// richTextRuns writes the text of rich text elements' "text" runs to sb,
-// a space between runs.
-func richTextRuns(els []json.RawMessage, sb *strings.Builder) {
+// richHighlights is locateRichTextHighlightWords(block, words) finding
+// any (lxEU fw) for a rich_text block's elements. Its sections, quotes and
+// preformatted runs, and each item of its lists, become one text, a line
+// each, of what processChunk takes of their elements: a text run's text,
+// a tag's, a link's or a work object's text (else its URL), and a space
+// for any other element. The words are looked for there as in rich text
+// (no rule about <…>). A color whose value, or an emoji whose :name: (with
+// its :skin-tone-N:), is one of the words matches as well.
+func richHighlights(els []json.RawMessage, words []string) bool {
+	want := make(map[string]bool, len(words))
+	for _, w := range words {
+		if strings.TrimSpace(w) != "" {
+			want[highlightNorm(w)] = true
+		}
+	}
+	if len(want) == 0 {
+		return false
+	}
+	var sb strings.Builder
+	matched := false
+	chunk := func(raw json.RawMessage) {
+		var e struct {
+			Type     string          `json:"type"`
+			Text     string          `json:"text"`
+			URL      string          `json:"url"`
+			Value    string          `json:"value"`
+			Name     string          `json:"name"`
+			SkinTone json.RawMessage `json:"skin_tone"`
+		}
+		if json.Unmarshal(raw, &e) != nil {
+			return
+		}
+		switch e.Type {
+		case "text", "tag":
+			sb.WriteString(e.Text)
+			return
+		case "work_object_mention", "link":
+			sb.WriteString(firstNonEmpty(e.Text, e.URL))
+			return
+		case "color":
+			matched = matched || want[highlightNorm(e.Value)]
+		case "emoji":
+			name := ":" + e.Name + ":"
+			if t := strings.Trim(string(e.SkinTone), `"`); t != "" && t != "null" && t != "0" {
+				name += ":skin-tone-" + t + ":"
+			}
+			matched = matched || want[name]
+		}
+		sb.WriteByte(' ')
+	}
 	for _, raw := range els {
 		var e struct {
 			Type     string            `json:"type"`
-			Text     string            `json:"text"`
 			Elements []json.RawMessage `json:"elements"`
 		}
-		if json.Unmarshal(raw, &e) != nil {
+		if json.Unmarshal(raw, &e) != nil || len(e.Elements) == 0 {
 			continue
 		}
-		if e.Type == "text" && e.Text != "" {
-			if sb.Len() > 0 {
-				sb.WriteByte(' ')
+		if e.Type == "rich_text_list" {
+			for _, item := range e.Elements {
+				var it struct {
+					Elements []json.RawMessage `json:"elements"`
+				}
+				_ = json.Unmarshal(item, &it)
+				for _, c := range it.Elements {
+					chunk(c)
+				}
+				sb.WriteByte('\n')
 			}
-			sb.WriteString(e.Text)
+			continue
 		}
-		if len(e.Elements) > 0 {
-			richTextRuns(e.Elements, sb)
+		for _, c := range e.Elements {
+			chunk(c)
 		}
+		sb.WriteByte('\n')
 	}
+	return matched || len(richtext.LocateHighlightWords(sb.String(), words, true)) > 0
 }
+
+// highlightNorm is lxEU's normalizeText: lower case, straight quotes.
+func highlightNorm(s string) string {
+	return highlightQuotes.Replace(strings.ToLower(s))
+}
+
+var highlightQuotes = strings.NewReplacer("\u2018", "'", "\u2019", "'", "\u201c", `"`, "\u201d", `"`)
 
 // HideUser is hideUserById: the DM with user is closed if there is one,
 // then user joins the hidden_users pref.

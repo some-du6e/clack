@@ -102,5 +102,6 @@ func (s *Store) SetThreadSince(ch, ts string, msgs []slack.Message, since uint64
 		}
 	}
 	SortAsc(out)
+	s.replayAllReactsLocked(ch, out, since) // the socket's reactions meanwhile (reacts.go)
 	s.threads[ch+"/"+ts] = out
 }

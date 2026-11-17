@@ -1186,13 +1186,19 @@ jobs:
   # Activity's rows draw their messages as they are now
   # (views/activity_msgs.go; Karim's vote counts "up and down like crazy"
   # in Activity): a vote's chat.update in the frame after it lands,
-  # natively and under a pass-through plugin on Activity's components, in
-  # step with the thread pane beside the page; an edit, a deletion and a
-  # reaction to a message fetched by id for Activity alone; an edit and a
-  # deletion in the Threads view and on the Saved page. store, core:
-  # the messages fetched by id take the socket's changes, and core's log
-  # of message changes the views read as they draw. Dispatch with
-  # only=activity-live-msg.
+  # natively, under a pass-through plugin on Activity's components (its JS
+  # in lockstep, or busy through six revisions) and under a text patch of
+  # the messages slice, in step with the thread pane beside the page and
+  # kept when the pane closes; a reload after an unheard change; an edit,
+  # the removals (an edited-out mention, a tombstone, a deletion), a
+  # missing message, a reaction to a message fetched by id or held by an
+  # evicted window; an entry pushed while the page was off screen, a busy
+  # socket while it was, a removal while a load was out, the preview pane;
+  # the Threads view and the Saved page. store, core: the messages fetched
+  # by id and the reactions a fetch must not undo, core's table of message
+  # changes and Slack's removal rules. Then once more under -race (the
+  # change table is written on the event pump and read by the UI).
+  # Dispatch with only=activity-live-msg.
   activity-live-msg:
     if: ${{ !inputs.only || startsWith('activity-live-msg', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1207,17 +1213,29 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: Activity's, Threads' and Saved's live messages (one verbose run, then COUNT)"
+        env:
+          LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote)|TestSavedLive(Messages|BotUpdate))$'
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 20m -run '^(TestActivityLive|TestThreadsLiveMessages|TestSavedLiveMessages)' ./internal/ui/views || rc=1
-          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^(TestActivityLive|TestThreadsLiveMessages|TestSavedLiveMessages)' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 20m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
           exit $rc
-      - name: "store, core: messages fetched by id, the message change log, COUNT runs"
+      - name: "store, core: messages fetched by id, the message change table, COUNT runs"
         if: ${{ !cancelled() }}
         run: |
           rc=0
-          go test -count=$COUNT -v -run '^TestFetchedMessages' ./internal/store || rc=1
-          go test -count=$COUNT -v -run '^(TestMessageChangesInOrder|TestReactionReachesFetchedMessage)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^TestFetchedMessages(TakeSocketChanges|KeepReactions|Bounded)$' ./internal/store || rc=1
+          go test -count=$COUNT -v -run '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords)$' ./internal/core || rc=1
+          exit $rc
+      - name: "the same under -race, 3 runs"
+        if: ${{ !cancelled() }}
+        env:
+          LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote)|TestSavedLive(Messages|BotUpdate))$'
+        run: |
+          rc=0
+          xvfb-run -a go test -race -count=3 -timeout 50m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
+          go test -race -count=3 -run '^TestFetchedMessages(TakeSocketChanges|KeepReactions|Bounded)$' ./internal/store || rc=1
+          go test -race -count=3 -run '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords)$' ./internal/core || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost

@@ -357,7 +357,7 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 		return b.body(gtx, m.Doc, m.Text, maxLines)
 	}
 	key := m.Channel + "/" + m.TS
-	ver := msgVer(m)
+	ver := b.msgVerOf(m)
 	if m != orig {
 		ver += ":p" // a plugin's view of it: never the source's layout
 	}
@@ -485,6 +485,42 @@ func msgVer(m *core.Message) string {
 	return m.EditedTS + ":" + strconv.FormatUint(uint64(textHash(m.Text)), 36) + ":" +
 		strconv.FormatUint(uint64(bytesHash(m.Blocks)), 36) + ":" + strconv.FormatUint(uint64(bytesHash(m.Attachments)), 36) +
 		":" + strconv.Itoa(len(m.Doc.Blocks))
+}
+
+// verMemo is msgVer of one copy of a message, with what tells the copy
+// apart from another written over it (a reused buffer: a plugin's view,
+// a text override).
+type verMemo struct {
+	m              *core.Message
+	text, edited   string
+	blocks, atts   *byte // the slices' first bytes
+	nBlocks, nDocs int
+	ver            string
+}
+
+func firstByte(b []byte) *byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return &b[0]
+}
+
+// msgVerOf is msgVer(m), worked out once per copy: a view holds one copy
+// of a message until it changes, and a new revision is a new copy (the
+// rows ask every frame, two or three times each).
+func (b *base) msgVerOf(m *core.Message) string {
+	k := m.Channel + "/" + m.TS
+	if e, ok := b.vers[k]; ok && e.m == m && e.text == m.Text && e.edited == m.EditedTS && e.blocks == firstByte(m.Blocks) &&
+		e.atts == firstByte(m.Attachments) && e.nBlocks == len(m.Blocks) && e.nDocs == len(m.Doc.Blocks) {
+		return e.ver
+	}
+	ver := msgVer(m)
+	if b.vers == nil || len(b.vers) > 2000 {
+		b.vers = map[string]verMemo{}
+	}
+	b.vers[k] = verMemo{m: m, text: m.Text, edited: m.EditedTS, blocks: firstByte(m.Blocks), atts: firstByte(m.Attachments),
+		nBlocks: len(m.Blocks), nDocs: len(m.Doc.Blocks), ver: ver}
+	return ver
 }
 
 func firstNonEmpty(s ...string) string {

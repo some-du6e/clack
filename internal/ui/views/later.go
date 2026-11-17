@@ -185,7 +185,8 @@ type savedBase struct {
 	done  []laterDone
 	known map[string]bool // "channel/ts" of listed items (mu)
 
-	lv viewMsgLog // core's message changes the items took (later_live.go)
+	lv    viewMsgLog   // core's message changes the items took (later_live.go)
+	shown shownTracker // the page drew in the latest frame
 }
 
 func newSavedBase(h Host) savedBase {
@@ -202,6 +203,7 @@ func newSavedBase(h Host) savedBase {
 // begin runs at the top of update: subscribe once and report whether the
 // view is being shown again after a while (then it should reload).
 func (s *savedBase) begin(gtx C) bool {
+	s.shown.mark(s.h)
 	if !s.watching {
 		s.watching = true
 		s.w.watch(s.h, s.match)
@@ -217,8 +219,8 @@ func (s *savedBase) begin(gtx C) bool {
 
 func (s *savedBase) reload(f *savedFeed) {
 	s.seq++
-	seq, filter, from := s.seq, f.filter, s.lv.seen
 	c := s.h.Core()
+	seq, filter, from := s.seq, f.filter, c.MessageChangeSeq() // what changed after this the answer may not have
 	f.first.load(s.h, true, func(ctx context.Context) (laterResult, error) {
 		p, err := c.Saved(ctx, filter, "")
 		return laterResult{page: p, seq: seq, from: from}, err
@@ -230,9 +232,9 @@ func (s *savedBase) loadMore(f *savedFeed) {
 		return
 	}
 	s.seq++
-	seq, filter, cur, from := s.seq, f.filter, f.next, s.lv.seen
-	f.moreTried = cur
 	c := s.h.Core()
+	seq, filter, cur, from := s.seq, f.filter, f.next, c.MessageChangeSeq()
+	f.moreTried = cur
 	f.more.load(s.h, true, func(ctx context.Context) (laterResult, error) {
 		p, err := c.Saved(ctx, filter, cur)
 		return laterResult{page: p, seq: seq, cursor: cur, from: from}, err
@@ -346,11 +348,12 @@ func (s *savedBase) match(ev core.Event) bool {
 		return true
 	case "update", "delete":
 		// a listed message's edit, reaction or deletion: the next frame
-		// takes it from core's log (later_live.go), no reload
+		// takes it from core (later_live.go), no reload; off screen the
+		// next draw does
 		s.mu.Lock()
 		k := s.known[ev.Channel+"/"+ev.TS]
 		s.mu.Unlock()
-		if k {
+		if k && s.shown.shown(s.h) {
 			s.h.Invalidate()
 		}
 		return false

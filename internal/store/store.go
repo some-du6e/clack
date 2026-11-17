@@ -57,7 +57,12 @@ type Store struct {
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
 	fetched     map[string]*slack.Message  // key channel/ts: messages fetched by id (fetched.go)
-	fetchedQ    []string                   // fetched's keys, oldest put first
+	fetchedUse  map[string]fetchedUse      // fetched's last use and size (fetched.go)
+	fetchedQ    []fetchedTick              // fetched's uses, oldest first
+	fetchedN    uint64                     // fetched's uses so far
+	fetchedSize int                        // fetched's messages' size (messageSize)
+	reacts      map[string][]reactOp       // key channel/ts: realtime reactions (reacts.go)
+	reactQ      []string                   // reacts' keys, oldest first
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
 	subQ        []string                   // subs' keys, oldest first
 	subSeq      uint64                     // subscription events seen
@@ -1470,6 +1475,10 @@ func (s *Store) WithFile(id string) []MsgRef {
 		for i := range th {
 			add(ch, &th[i])
 		}
+	}
+	for k, m := range s.fetched { // messages fetched by id (fetched.go)
+		ch, _, _ := strings.Cut(k, "/")
+		add(ch, m)
 	}
 	return out
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Reactions are optimistic, like Slack's: React changes the stored message
@@ -132,7 +133,8 @@ const UpdateReactions = "reactions"
 // returns the "update" it emitted (nil: nothing changed).
 func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
 	changed := false
-	m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) { changed = applyReaction(m, name, self, add) || changed })
+	m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) { changed = store.ApplyReaction(m, name, self, add) || changed })
+	a.S.NoteReaction(ch, ts, name, self, add) // a fetch out now keeps it (store/reacts.go)
 	if !ok || !changed {
 		return nil
 	}
@@ -140,40 +142,6 @@ func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
 	ev := Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v}
 	a.emit(ev)
 	return &ev
-}
-
-// applyReaction adds or removes user's name reaction on m, counting each
-// user once. It never writes to the old slices (copies already handed to
-// subscribers share them) and reports whether m changed.
-func applyReaction(m *slack.Message, name, user string, add bool) bool {
-	for i := range m.Reactions {
-		r := m.Reactions[i]
-		if r.Name != name {
-			continue
-		}
-		has := slices.Contains(r.Users, user)
-		if add == has {
-			return false
-		}
-		rs := slices.Clone(m.Reactions)
-		if add {
-			rs[i].Users = append(slices.Clip(r.Users), user)
-			rs[i].Count++
-		} else {
-			rs[i].Users = slices.DeleteFunc(slices.Clone(r.Users), func(u string) bool { return u == user })
-			rs[i].Count--
-			if rs[i].Count <= 0 {
-				rs = slices.Delete(rs, i, i+1)
-			}
-		}
-		m.Reactions = rs
-		return true
-	}
-	if !add {
-		return false
-	}
-	m.Reactions = append(slices.Clip(m.Reactions), slack.Reaction{Name: name, Count: 1, Users: []string{user}})
-	return true
 }
 
 // overlayReactions lays the viewer's unsettled reaction changes over rs

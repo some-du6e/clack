@@ -10,7 +10,9 @@ package views
 // ActivityReaction read getMessageByTimestamp the same way). activity.feed
 // names the messages and messages.list fetched them into that store, the
 // one the channel list and the thread pane read, so the socket's changes
-// reach an open Activity page in the same commit as those:
+// reach an open Activity page in the same commit as those, and nothing
+// that happened meanwhile (the page off screen, a load in flight, a pane
+// closing) can leave a row on an older revision:
 //
 //   - message_changed (boot-render messageChanged, replaceMessages): the
 //     row draws the new copy (a vote's chat.update, an edit). A copy that
@@ -25,63 +27,94 @@ package views
 //     row that only drew it (a thread's latest reply) draws no message.
 //
 // None of them fetches the feed again. A message the store doesn't hold
-// yet is fetched by id and the row draws without it meanwhile; Clack's
-// feed answer comes hydrated, so the feed's copy is that fetch's.
+// yet is fetched by id, and the row draws the loading shimmer meanwhile
+// (isUnknown) and no body once Slack said there is none (isNonExistent:
+// the item's MsgGone). Clack's feed answer comes hydrated, so the feed's
+// copy is that fetch's.
 //
-// A row here reads the newest copy Activity has: the one a message list
-// on screen draws (the Host's LiveMessages: the thread pane or the
-// channel list beside the page, read as the row draws, so the two never
-// show two revisions in one frame), else the one the socket brought last
-// (core's "update" and "delete" of a message on the page, read from its
-// log of message changes before the frame describes and draws the rows:
-// core.MessageChanges), else the feed's.
+// Clack keeps one copy of each page message, the newest by the order core
+// changed messages in (core's MessageChangeSeq), wherever it came from:
+// the feed's (as of the item's MsgSeq), a change core made after that
+// (MessageChange, read before the frame describes and draws the rows), or
+// the store's when a message list stops drawing it. A row draws that
+// copy, except while a message list on screen draws the message (the
+// Host's LiveMessages: the thread pane or the channel list beside the
+// page, read as the row draws): then it draws the list's revision, so the
+// two never show two revisions in one frame. A list's copy going away
+// (the pane closing) leaves the newest copy, never an older one.
 
 import (
+	"encoding/json"
+	"hash/fnv"
+	"reflect"
 	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
-// actMsgs is what Activity knows of its page's messages since the feed
-// brought them.
+// actMsgs is what Activity knows of its page's messages.
 type actMsgs struct {
-	// live is the copy of a page message the socket brought last (m nil:
-	// deleted), with the order it came in
-	live map[actMsgKey]actLive
-	// hub is the copy a message list on screen holds (LiveMessages), with
-	// its revision there
+	// own is the copy of a page message core changed after the feed read
+	// it, or the store's when a list stopped drawing it, with the change
+	// it is current as of (m nil: deleted)
+	own map[actMsgKey]actCopy
+	// feed is each page message's newest copy an item brought (as of its
+	// MsgSeq)
+	feed map[actMsgKey]actCopy
+	// hub is the copy a message list on screen drew in the frame it was
+	// polled (pollLists)
 	hub map[actMsgKey]actHub
-	// feed is the page's own copy of each message
-	feed map[actMsgKey]*core.Message
-	seq  uint64 // the socket's changes applied
-	// seen is core's message change log as far as Activity has read it
-	// (core.MessageChanges), from its first load on
+	// refs are the page's messages: what each item draws (its message and
+	// its thread's root) and its messageTs (what Remove activity item
+	// matches); page is the Items they were read from
+	refs map[actMsgKey]actRef
+	page []core.ActivityItem
+	sel  string // the in-view preview's item they were read with
+	// seen is core's message changes as far as Activity has taken them
 	seen    uint64
 	started bool
 	// since is the previous frame's time and last this one's: the lists
 	// drawn since the previous frame are on screen
 	since, last time.Time
-	// keys are the page's messages, for the event goroutine (wakes)
+	// keys are refs, for the event goroutine (wakes)
 	keys atomic.Pointer[map[actMsgKey]bool]
 }
 
 // actMsgKey names a message: its channel and ts.
 type actMsgKey struct{ ch, ts string }
 
-type actLive struct {
-	m   *core.Message // nil: deleted
-	seq uint64
+// actRef is what the page does with a message: draws it (an item's
+// message or its thread's root), or removes the items it is the
+// messageTs of.
+type actRef uint8
+
+const (
+	actRefDraws actRef = 1 << iota
+	actRefRemoves
+)
+
+// actCopy is a copy of a message as of change seq; m nil when it was
+// deleted (own) or Slack said there is none (feed: gone).
+type actCopy struct {
+	m    *core.Message
+	seq  uint64
+	gone bool
 }
 
 type actHub struct {
-	m   *core.Message
-	rev uint64
+	m     *core.Message
+	rev   uint64
+	frame time.Time // the frame a list drew it in (polled)
 }
 
-// actLiveSrc tags a copy from the socket in actRow.liSrc (a list's is its
-// revision there, below this bit; the feed's 0).
-const actLiveSrc = 1 << 63
+// The sources of a row's copy in actRow.liSrc: a list's is its revision
+// there (below both bits), the feed's item's own 0.
+const (
+	actOwnSrc  = 1 << 63 // own: core's change seq, or the store's
+	actFeedSrc = 1 << 62 // another item's newer copy, by its MsgSeq
+)
 
 // actMsgRef is where it's message is and its thread (ok false for an
 // item without one): the row's message, hydrated from it.TS.
@@ -124,16 +157,9 @@ func actMessageTS(it *core.ActivityItem) string {
 	return firstNonEmpty(it.TS, it.FeedTS)
 }
 
-// actLeaves reports a copy whose entries Slack's messageChanged takes out
-// of Activity: a tombstone (R+b2 isTombstone), a moderated or
-// thread_hidden message (DRL6 isModerated).
-func actLeaves(m *core.Message) bool {
-	return m.Tombstone || m.Subtype == "tombstone" || m.Subtype == "moderated" || m.Subtype == "thread_hidden"
-}
-
 // wakes reports a change of a page message (an "update", a "delete"):
-// the event goroutine draws a frame for it, which reads it from core's
-// log (applyMsgs).
+// the event goroutine draws a frame for it, which reads it from core
+// (applyMsgs).
 func (m *actMsgs) wakes(ev core.Event) bool {
 	if ev.Type != "update" && ev.Type != "delete" || ev.Channel == "" || ev.TS == "" {
 		return false
@@ -142,8 +168,8 @@ func (m *actMsgs) wakes(ev core.Event) bool {
 	return keys != nil && (*keys)[actMsgKey{ev.Channel, ev.TS}]
 }
 
-// startMsgs begins reading core's message changes from now (the first
-// load: its answer is read after them).
+// startMsgs begins taking core's message changes from now (the first
+// load: its items are current as of then).
 func (v *Activity) startMsgs() {
 	if m := &v.msgs; !m.started {
 		if c := v.h.Core(); c != nil {
@@ -152,116 +178,194 @@ func (v *Activity) startMsgs() {
 	}
 }
 
-// applyMsgs takes core's changes to the page's messages since the last
-// frame (core.MessageChanges, in the order core made them) before this
-// frame describes and draws the rows (Layout, LayoutPeek). While a load
-// is out every change is kept: its answer may bring any message, read
-// before the change.
+// applyMsgs brings the page's messages up to date before this frame
+// describes and draws the rows (Layout, LayoutPeek): items that came
+// since the last frame (a load, a realtime entry) take what core changed
+// after they were read, and every page message what core changed since
+// the last frame, in the order core made the changes.
 func (v *Activity) applyMsgs(gtx C) {
 	m := &v.msgs
 	if !gtx.Now.Equal(m.last) {
 		m.since, m.last = m.last, gtx.Now
+		v.expireLists()
 	}
 	c := v.h.Core()
-	if c == nil || !m.started || c.MessageChangeSeq() == m.seen {
+	if c == nil || !m.started {
 		return
 	}
-	evs, now, ok := c.MessageChanges(m.seen)
+	sel := ""
+	if v.selOK {
+		sel = v.selKey
+	}
+	if page, _, _ := v.data.get(); !actSameItems(page.Items, m.page) || sel != m.sel {
+		v.landMsgs(c, &page)
+		m.sel = sel
+	}
+	if c.MessageChangeSeq() == m.seen {
+		return
+	}
+	keys, now, ok := c.MessageChangedSince(m.seen)
 	m.seen = now
 	if !ok {
-		v.rereadMsgs()
+		// further behind than core names (the page off screen through a
+		// busy while): every page message is looked up; one core forgot
+		// since its copy was read may have missed a change, and the page
+		// is read again
+		floor, stale := c.MessageChangeFloor(), false
+		for k := range m.refs {
+			if !v.takeChange(c, k, true) && v.copyOf(k).seq < floor {
+				stale = true
+			}
+		}
+		if stale && !(v.data.busy() && v.mode == actFresh) {
+			v.load(actRefresh)
+		}
 		return
 	}
-	keys := m.keys.Load()
-	for i := range evs {
-		if ev := &evs[i]; v.wasBusy || keys != nil && (*keys)[actMsgKey{ev.Channel, ev.TS}] {
-			v.applyMsg(ev)
+	for i, k := range keys {
+		if m.refs[actMsgKey{k.Channel, k.TS}] != 0 && (i == 0 || k != keys[i-1]) {
+			v.takeChange(c, actMsgKey{k.Channel, k.TS}, true)
 		}
 	}
 }
 
-// rereadMsgs reads every page message from the store again, after more
-// changes than core's log keeps went by unread (the page off screen a
-// while): the store holds them as they are now.
-func (v *Activity) rereadMsgs() {
-	c := v.h.Core()
-	m := &v.msgs
-	if m.live == nil {
-		m.live = map[actMsgKey]actLive{}
-	}
-	for k := range m.feed {
-		sm, ok := c.S.FindHeld(k.ch, k.ts)
-		if !ok {
-			continue
-		}
-		cm := c.MessageFromSlack(k.ch, &sm)
-		m.seq++
-		m.live[k] = actLive{m: &cm, seq: m.seq}
-	}
-	for _, r := range v.rows {
-		r.built, r.tm = false, nil
-	}
-	v.dirty = true
+// actSameItems reports whether a and b are the same Items slice (every
+// change to the page makes a new one).
+func actSameItems(a, b []core.ActivityItem) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
-// applyMsg is one change of a message (UI goroutine).
-func (v *Activity) applyMsg(ev *core.Event) {
+// landMsgs reads the page's messages from its items, and has each item
+// take what core changed of them after the item was read (its MsgSeq): a
+// realtime entry announced before a change the page took in a frame
+// before it was upserted, a load's answer read before a change, the
+// older pages a refresh keeps (actMerge), and the entries core's changes
+// removed meanwhile, which stay out.
+func (v *Activity) landMsgs(c *core.App, page *core.ActivityPage) {
 	m := &v.msgs
-	if m.live == nil {
-		m.live = map[actMsgKey]actLive{}
+	refs := make(map[actMsgKey]actRef, 3*len(page.Items)+3)
+	feed := make(map[actMsgKey]actCopy, 2*len(page.Items)+2)
+	newer := func(k actMsgKey, msg *core.Message, gone bool, seq uint64) {
+		refs[k] |= actRefDraws
+		f, had := feed[k]
+		known := msg != nil || gone
+		if !had || known && (seq > f.seq || f.m == nil && !f.gone) {
+			feed[k] = actCopy{m: msg, seq: seq, gone: gone}
+		}
 	}
-	k := actMsgKey{ev.Channel, ev.TS}
-	had := v.ownMsg(k)
-	m.seq++
-	if ev.Type == "delete" {
-		m.live[k] = actLive{seq: m.seq}
-		v.dropEntriesFor(ev.Channel, ev.TS)
+	note := func(it *core.ActivityItem) {
+		if k, _, ok := actMsgRef(it); ok {
+			newer(k, it.Msg, it.MsgGone, it.MsgSeq)
+		}
+		if k, ok := actRootRef(it); ok {
+			newer(k, it.Root, it.RootGone, it.MsgSeq)
+		}
+		if ts := actMessageTS(it); ts != "" && it.Channel != "" {
+			refs[actMsgKey{it.Channel, ts}] |= actRefRemoves
+		}
+	}
+	for i := range page.Items {
+		note(&page.Items[i])
+	}
+	if v.selOK {
+		note(&v.sel) // the in-view preview draws it
+	}
+	m.refs, m.feed, m.page = refs, feed, page.Items
+	keys := make(map[actMsgKey]bool, len(refs))
+	for k := range refs {
+		keys[k] = true
+	}
+	m.keys.Store(&keys)
+	for k := range m.own {
+		if refs[k] == 0 {
+			delete(m.own, k)
+		}
+	}
+	for k := range m.hub {
+		if refs[k] == 0 {
+			delete(m.hub, k)
+		}
+	}
+	// what changed after each item was read
+	removed := false
+	for i := range page.Items {
+		it := &page.Items[i]
+		if ts := actMessageTS(it); ts != "" && it.Channel != "" {
+			if ch, ok := c.MessageChange(it.Channel, ts); ok && ch.RemoveSeq > it.MsgSeq {
+				removed = true
+			}
+		}
+		if k, _, ok := actMsgRef(it); ok {
+			v.takeChange(c, k, false)
+		}
+		if k, ok := actRootRef(it); ok {
+			v.takeChange(c, k, false)
+		}
+	}
+	if removed {
+		v.dropRemoved(func(it *core.ActivityItem, ts string) bool {
+			ch, ok := c.MessageChange(it.Channel, ts)
+			return ok && ch.RemoveSeq > it.MsgSeq
+		})
+	}
+}
+
+// copyOf is the newest copy of k Activity holds: own's, else the feed's.
+func (v *Activity) copyOf(k actMsgKey) actCopy {
+	m := &v.msgs
+	f := m.feed[k]
+	if o, ok := m.own[k]; ok && o.seq > f.seq {
+		return o
+	}
+	return f
+}
+
+// takeChange takes core's latest change of k when it's newer than the
+// copy Activity holds: the copy is the change's, and with drops the
+// entries it removed go. It reports whether core knows of a change to k.
+func (v *Activity) takeChange(c *core.App, k actMsgKey, drops bool) bool {
+	ch, ok := c.MessageChange(k.ch, k.ts)
+	if !ok {
+		return false
+	}
+	m := &v.msgs
+	ref := m.refs[k]
+	if drops && ref&actRefRemoves != 0 && ch.RemoveSeq > 0 {
+		v.dropRemoved(func(it *core.ActivityItem, ts string) bool {
+			return it.Channel == k.ch && ts == k.ts && ch.RemoveSeq > it.MsgSeq
+		})
+	}
+	cur := v.copyOf(k)
+	if ref&actRefDraws == 0 || ch.Seq <= cur.seq {
+		return true
+	}
+	if m.own == nil {
+		m.own = map[actMsgKey]actCopy{}
+	}
+	if ch.Deleted {
+		m.own[k] = actCopy{seq: ch.Seq}
+	} else if msg, ok := c.ChangedMessage(k.ch, k.ts, &ch, cur.m, cur.seq); ok {
+		m.own[k] = actCopy{m: &msg, seq: ch.Seq}
 	} else {
-		c := *ev.Msg
-		if ev.Name == core.UpdateReactions && had != nil {
-			// the reactions reducer touches nothing else: the rest stays
-			// the page's copy (the event's can be another conversation's)
-			h := *had
-			h.Reactions = c.Reactions
-			c = h
-		}
-		m.live[k] = actLive{m: &c, seq: m.seq}
-		if actLeaves(&c) || ev.Name != core.UpdateReactions && v.unmentioned(had, &c) {
-			v.dropEntriesFor(ev.Channel, ev.TS)
-		}
+		return true // no copy to be had: the store let it go
 	}
 	v.unbuildMsg(k)
+	return true
 }
 
-// ownMsg is the copy of k the page had before the lists' (the socket's,
-// else the feed's): what previous_message is to messageChanged.
-func (v *Activity) ownMsg(k actMsgKey) *core.Message {
-	if l, ok := v.msgs.live[k]; ok {
-		return l.m
-	}
-	return v.msgs.feed[k]
-}
-
-// unmentioned reports an edit that took the viewer's mention out of a
-// message: checkForMentionInMessage of the copy before, and not of now.
-func (v *Activity) unmentioned(before, now *core.Message) bool {
-	c := v.h.Core()
-	return before != nil && c != nil && c.MentionsViewer(before) && !c.MentionsViewer(now)
-}
-
-// dropEntriesFor is "ActivityIA4: Remove activity item" {channelId,
+// dropRemoved is "ActivityIA4: Remove activity item" {channelId,
 // messageTs} (P0K2), which messageDeleted and messageChanged dispatch:
-// every entry about the message leaves the list (a new Items slice: a
-// load in flight may still read the old one).
-func (v *Activity) dropEntriesFor(ch, ts string) {
-	if ch == "" || ts == "" {
-		return
-	}
+// the entries gone says a change after they were read removed (given
+// each one's messageTs) leave the list (a new Items slice: a load in
+// flight may still read the old one). An entry read after the change
+// stays.
+func (v *Activity) dropRemoved(gone func(it *core.ActivityItem, messageTS string) bool) {
 	v.data.mutate(func(p *core.ActivityPage) {
 		var kept []core.ActivityItem
 		for i := range p.Items {
 			it := &p.Items[i]
-			if it.Channel == ch && actMessageTS(it) == ts {
+			ts := actMessageTS(it)
+			if ts != "" && it.Channel != "" && gone(it, ts) {
 				if kept == nil {
 					kept = append(make([]core.ActivityItem, 0, len(p.Items)), p.Items[:i]...)
 				}
@@ -295,77 +399,38 @@ func (v *Activity) unbuildMsg(k actMsgKey) {
 	}
 }
 
-// noteMsgs records the page's messages (rebuild): the keys the event
-// goroutine draws a frame for and the feed's copies; what the socket and
-// the lists brought for a message no longer on the page goes (unless a
-// load is out: its answer may bring it back).
-func (v *Activity) noteMsgs(page *core.ActivityPage) {
-	m := &v.msgs
-	keys := make(map[actMsgKey]bool, 2*len(page.Items)+2)
-	feed := make(map[actMsgKey]*core.Message, 2*len(page.Items)+2)
-	add := func(it *core.ActivityItem) {
-		if k, _, ok := actMsgRef(it); ok {
-			keys[k] = true
-			if it.Msg != nil {
-				feed[k] = it.Msg
-			}
-		}
-		if k, ok := actRootRef(it); ok {
-			keys[k] = true
-			if it.Root != nil {
-				feed[k] = it.Root
-			}
-		}
-	}
-	for i := range page.Items {
-		add(&page.Items[i])
-	}
-	if v.selOK {
-		add(&v.sel) // the in-view preview draws it
-	}
-	m.keys.Store(&keys)
-	m.feed = feed
-	if v.wasBusy {
-		return
-	}
-	for k := range m.live {
-		if !keys[k] {
-			delete(m.live, k)
-		}
-	}
-	for k := range m.hub {
-		if !keys[k] {
-			delete(m.hub, k)
-		}
-	}
-}
-
-// msgFor is the newest copy of k Activity has (a list's on screen, the
-// socket's: nil when it was deleted, else feed) and where it's from
-// (actRow.liSrc).
+// msgFor is the copy of k a row draws in this frame, and where it's from
+// (actRow.liSrc): a list's on screen, else the newest Activity holds
+// (nil: deleted, or none exists), else item's own (feed, 0).
 func (v *Activity) msgFor(k actMsgKey, feed *core.Message) (*core.Message, uint64) {
 	m := &v.msgs
-	if h, ok := m.hub[k]; ok {
+	if h, ok := m.hub[k]; ok && h.frame.Equal(m.last) {
 		return h.m, h.rev
 	}
-	if l, ok := m.live[k]; ok {
-		return l.m, actLiveSrc | l.seq
+	f, fok := m.feed[k]
+	if o, ok := m.own[k]; ok && o.seq > f.seq {
+		return o.m, actOwnSrc | o.seq
+	}
+	if fok && f.m != feed && (f.m != nil || f.gone) {
+		return f.m, actFeedSrc | f.seq
 	}
 	return feed, 0
 }
 
 // rowItem is it as row r shows it (getMessageFromActivityItem): its
-// message and thread root the newest copies Activity has (msgFor);
-// r.liSrc says which. it itself when both are the feed's.
+// message and thread root the copies msgFor has; r.liSrc says which, and
+// r.msgGone that it has no message to draw (deleted, or none exists). it
+// itself when both are its own.
 func (v *Activity) rowItem(r *actRow, it *core.ActivityItem) *core.ActivityItem {
-	r.liSrc, r.msgGone = [2]uint64{}, false
-	if len(v.msgs.live) == 0 && len(v.msgs.hub) == 0 {
+	r.liSrc, r.msgGone = [2]uint64{}, it.MsgGone
+	m := &v.msgs
+	if len(m.own) == 0 && len(m.hub) == 0 && len(m.feed) == 0 {
 		return it
 	}
 	msg, root := it.Msg, it.Root
 	if k, _, ok := actMsgRef(it); ok {
 		msg, r.liSrc[0] = v.msgFor(k, it.Msg)
-		r.msgGone = msg == nil && r.liSrc[0] != 0
+		r.msgGone = msg == nil && (r.liSrc[0] != 0 || it.MsgGone)
 	}
 	if k, ok := actRootRef(it); ok {
 		root, r.liSrc[1] = v.msgFor(k, it.Root)
@@ -403,16 +468,18 @@ func (v *Activity) pollLists(it *core.ActivityItem) bool {
 		switch {
 		case !ok:
 			if had {
-				delete(m.hub, k)
+				v.listGone(k)
 				changed = true
 			}
 		case had && rev == h.rev:
+			h.frame = m.last
+			m.hub[k] = h
 		default:
 			if m.hub == nil {
 				m.hub = map[actMsgKey]actHub{}
 			}
 			c := msg
-			m.hub[k] = actHub{m: &c, rev: rev}
+			m.hub[k] = actHub{m: &c, rev: rev, frame: m.last}
 			changed = true
 		}
 	}
@@ -425,38 +492,164 @@ func (v *Activity) pollLists(it *core.ActivityItem) bool {
 	return changed
 }
 
-// noteSent remembers the texts of the revisions of the row's message
-// drawn before this one: a patched component's tree that hands one back
-// was made from the props the row sent before (JS hasn't drawn the new
-// ones yet), not changed by a plugin (echoed).
-func (r *actRow) noteSent(m *core.Message) {
-	if m == nil {
-		return
+// expireLists lets go of the lists' copies no row polled in the previous
+// frame (their rows scrolled away, the lists closed).
+func (v *Activity) expireLists() {
+	m := &v.msgs
+	for k, h := range m.hub {
+		if h.frame.Before(m.since) {
+			v.listGone(k)
+		}
 	}
-	switch {
-	case m.Channel != r.sentKey.ch || m.TS != r.sentKey.ts:
-		r.sentKey, r.sentN = actMsgKey{m.Channel, m.TS}, 0
-	case m.Text != r.sentText:
-		copy(r.sent[1:], r.sent[:len(r.sent)-1])
-		r.sent[0] = r.sentText
-		r.sentN = min(r.sentN+1, len(r.sent))
-	}
-	r.sentText = m.Text
 }
 
-// echoed reports a tree's msg (mp) whose text is that of a revision of
-// src the row sent before src: its plugin passed the props on unchanged,
-// so the row draws src, not the revision before (row.sentFor in the
-// message lists).
-func (r *actRow) echoed(src *core.Message, mp map[string]any) bool {
-	t, ok := mp["text"].(string)
-	if !ok || src == nil || t == src.Text || r.sentKey != (actMsgKey{src.Channel, src.TS}) {
-		return false
+// listGone is a list's copy of k going (the pane closed): the store's
+// copy, which has everything the list drew, becomes Activity's, as of now
+// (a list can hold a revision no change carried: its thread read again
+// after a socket gap). Nothing older takes its place.
+func (v *Activity) listGone(k actMsgKey) {
+	m := &v.msgs
+	delete(m.hub, k)
+	c := v.h.Core()
+	if c == nil || m.refs[k]&actRefDraws == 0 {
+		return
 	}
-	for _, s := range r.sent[:r.sentN] {
-		if s == t {
+	seq := c.MessageChangeSeq()
+	if ch, ok := c.MessageChange(k.ch, k.ts); ok && ch.Deleted {
+		return // deleted: own has it
+	}
+	sm, ok := c.HeldMessage(k.ch, k.ts)
+	if !ok {
+		return
+	}
+	if m.own == nil {
+		m.own = map[actMsgKey]actCopy{}
+	}
+	m.own[k] = actCopy{m: &sm, seq: seq}
+	v.unbuildMsg(k)
+}
+
+// ---- what the row's patched components were sent ----
+
+// contentFP fingerprints what a message msg says: its text, blocks,
+// attachments and files, as a component's msg prop carries them (0 for
+// none). A tree hands its msg back parsed afresh, never the map the row
+// sent, so what the row sent is told by this, not by identity. The
+// message lists' rows tell their trees apart the same way
+// (messages.contentFP, row.sentFor).
+func contentFP(msg slackc.Props) uint64 {
+	if msg == nil {
+		return 0
+	}
+	h := fnv.New64a()
+	h.Write([]byte(msg.StrOr("text", "")))
+	for _, k := range [...]string{"blocks", "attachments", "files"} {
+		h.Write([]byte{0, k[0]})
+		if v, ok := msg[k]; ok && v != nil {
+			if b, err := json.Marshal(fpJSONable(v)); err == nil {
+				h.Write(b)
+			}
+		}
+	}
+	return h.Sum64() | 1 // never 0
+}
+
+// fpJSONable is v with what JSON can't say left out (the lists'
+// jsonable): a Props marshals as the map it is.
+func fpJSONable(v any) any {
+	switch v := v.(type) {
+	case slackc.Props:
+		return fpJSONable(map[string]any(v))
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, x := range v {
+			if j := fpJSONable(x); j != nil {
+				out[k] = j
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, x := range v {
+			if j := fpJSONable(x); j != nil {
+				out = append(out, j)
+			}
+		}
+		return out
+	case string, bool, float64, float32, int, int64, int32, uint64, nil:
+		return v
+	}
+	return nil
+}
+
+// sentFPs are the contentFPs of the msgs a row handed its patched
+// components (sentMax at most, newest first): a tree whose msg has one of
+// them changed nothing the message says, whichever revision it answers
+// (JS hasn't drawn the newer props yet). A tree of an older revision than
+// the oldest kept counts as a plugin's change.
+type sentFPs []uint64
+
+const sentMax = 16
+
+func (s sentFPs) has(fp uint64) bool {
+	for _, x := range s {
+		if x == fp {
 			return true
 		}
 	}
 	return false
+}
+
+func (s *sentFPs) add(fp uint64) {
+	if fp == 0 || len(*s) > 0 && (*s)[0] == fp {
+		return
+	}
+	for i, x := range *s {
+		if x == fp { // sent again: newest
+			copy((*s)[1:i+1], (*s)[:i])
+			(*s)[0] = fp
+			return
+		}
+	}
+	if len(*s) < sentMax {
+		*s = append(*s, 0)
+	}
+	copy((*s)[1:], (*s)[:len(*s)-1])
+	(*s)[0] = fp
+}
+
+// fpMemo is contentFP of the last map it was asked about (held, so its
+// address can't be another map's): the rows ask every frame.
+type fpMemo struct {
+	m  slackc.Props
+	fp uint64
+}
+
+func (f *fpMemo) of(msg slackc.Props) uint64 {
+	if msg == nil {
+		return 0
+	}
+	if reflect.ValueOf(f.m).Pointer() != reflect.ValueOf(msg).Pointer() {
+		f.m, f.fp = msg, contentFP(msg)
+	}
+	return f.fp
+}
+
+// sendMsg is msgProps(m) for one of the row's patched components, noting
+// what it says (echoed).
+func (r *actRow) sendMsg(m *core.Message) slackc.Props {
+	p := msgProps(m)
+	if m != nil && (m != r.sentLast || r.sentText != m.Text) {
+		r.sentLast, r.sentText = m, m.Text
+		r.sent.add(contentFP(p))
+	}
+	return p
+}
+
+// echoed reports a tree's msg (mp) that says what a msg the row sent
+// says: JS passed the props on unchanged, maybe from a revision before
+// the one the row draws now, so the row draws its own copy, not that
+// revision's text (row.overlay's sent rule in the message lists).
+func (r *actRow) echoed(mp slackc.Props) bool {
+	return mp != nil && r.sent.has(r.treeFP.of(mp))
 }

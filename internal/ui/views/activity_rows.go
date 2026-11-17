@@ -1263,7 +1263,7 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 		return b.para(gtx, 15, 22, wReg, col, maxLines, t)
 	}
 	key := "sub:" + sub + "\x00" + m.Channel + "/" + m.TS
-	ver := msgVer(m) + ":" + strconv.Itoa(len(doc.Blocks)) // the preview's own blocks
+	ver := b.msgVerOf(m) + ":" + strconv.Itoa(len(doc.Blocks)) // the preview's own blocks
 	if m != orig {
 		ver += ":p" // a plugin's view of it: never the source's layout
 	}
@@ -1282,7 +1282,7 @@ func (b *base) actPreviewDoc(m *core.Message) richtext.Doc {
 	if c == nil || len(m.Blocks) == 0 {
 		return m.Doc
 	}
-	ver := msgVer(m)
+	ver := b.msgVerOf(m)
 	k := m.Channel + "/" + m.TS
 	if e, ok := b.pv[k]; ok && e.ver == ver {
 		return e.doc

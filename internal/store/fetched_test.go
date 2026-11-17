@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -33,9 +34,7 @@ func TestFetchedMessagesTakeSocketChanges(t *testing.T) {
 		t.Error("Find reads messages fetched by id: a hydrate would never ask Slack again")
 	}
 	// a reaction reaches the kept copy, as Slack's reducer reaches its store
-	m, ok := s.Mutate(ch, "100.000001", func(m *slack.Message) {
-		m.Reactions = append(m.Reactions, slack.Reaction{Name: "tada", Count: 1, Users: []string{"U1"}})
-	})
+	m, ok := s.Mutate(ch, "100.000001", func(m *slack.Message) { ApplyReaction(m, "tada", "U1", true) })
 	if !ok || len(m.Reactions) != 1 {
 		t.Fatalf("Mutate of a fetched message: %v %+v", ok, m.Reactions)
 	}
@@ -46,22 +45,84 @@ func TestFetchedMessagesTakeSocketChanges(t *testing.T) {
 	if _, ok := s.FindHeld(ch, "100.000001"); ok {
 		t.Error("Remove left the fetched copy")
 	}
-	// a message a window holds isn't kept twice: the window's copy is the
-	// one the socket keeps current
+	// a message a window holds keeps a fetched copy too: once core evicts
+	// the window, the socket's changes still reach it
 	s.SetLatest(ch, []slack.Message{msg("400.000001", "in the window")}, false)
-	got = s.PutFetched(ch, []slack.Message{msg("400.000001", "messages.list's copy")}, s.LiveSeq())
-	if len(got) != 1 || got[0].Text != "in the window" {
-		t.Errorf("PutFetched of a held message answered %+v, want the window's copy", got)
+	s.KeepFetched(ch, []string{"400.000001"})
+	s.SetLatest(ch, []slack.Message{msg("500.000001", "the window moved on")}, false)
+	if m, ok := s.FindHeld(ch, "400.000001"); !ok || m.Text != "in the window" {
+		t.Fatalf("after the window let it go: %v %q", ok, m.Text)
 	}
-	s.mu.RLock()
-	_, twice := s.fetched[ch+"/400.000001"]
-	s.mu.RUnlock()
-	if twice {
-		t.Error("a held message was kept again as fetched")
+	if _, ok := s.Mutate(ch, "400.000001", func(m *slack.Message) { ApplyReaction(m, "eyes", "U2", true) }); !ok {
+		t.Error("a reaction no longer reaches the message the window held")
+	}
+	// a socket edit while a fetch of a held message was out keeps the
+	// copy the window has now (the edit and what came after it)
+	s.SetLatest(ch, []slack.Message{msg("600.000001", "held")}, false)
+	since = s.LiveSeq()
+	held := msg("600.000001", "held, edited")
+	s.NoteLive(ch, held.TS, &held)
+	s.Mutate(ch, held.TS, func(m *slack.Message) { *m = held; ApplyReaction(m, "tada", "U3", true) })
+	got = s.PutFetched(ch, []slack.Message{msg("600.000001", "messages.list's older copy")}, since)
+	if len(got) != 1 || got[0].Text != "held, edited" || len(got[0].Reactions) != 1 {
+		t.Errorf("PutFetched of a held message the socket changed answered %+v", got)
 	}
 }
 
-// The fetched copies are bounded: the oldest put goes first.
+// A reaction the socket brought while messages.list was out reaches the
+// answer (reacts.go), whether or not the store held the message, and one
+// the answer already counts isn't counted twice.
+func TestFetchedMessagesKeepReactions(t *testing.T) {
+	s := New("")
+	const ch, ts = "C0LIVE0003", "700.000001"
+	poll := func(users ...string) slack.Message {
+		m := slack.Message{Type: "message", TS: ts, Text: "a synthetic poll"}
+		if len(users) > 0 {
+			m.Reactions = []slack.Reaction{{Name: "+1", Count: len(users), Users: users}}
+		}
+		return m
+	}
+	react := func(user string, add bool) {
+		s.Mutate(ch, ts, func(m *slack.Message) { ApplyReaction(m, "+1", user, add) })
+		s.NoteReaction(ch, ts, "+1", user, add)
+	}
+	plusOnes := func(m slack.Message) string {
+		for _, r := range m.Reactions {
+			if r.Name == "+1" {
+				return strings.Join(r.Users, ",")
+			}
+		}
+		return ""
+	}
+	// the first fetch: nothing held for the reaction to change
+	since := s.LiveSeq()
+	react("U2", true)
+	if got := s.PutFetched(ch, []slack.Message{poll("U1")}, since); plusOnes(got[0]) != "U1,U2" {
+		t.Errorf("first fetch: +1 by %q, want U1,U2", plusOnes(got[0]))
+	}
+	// held now: U1 takes theirs back while the next fetch is out
+	since = s.LiveSeq()
+	react("U1", false)
+	if got := s.PutFetched(ch, []slack.Message{poll("U1", "U2")}, since); plusOnes(got[0]) != "U2" {
+		t.Errorf("second fetch: +1 by %q, want U2", plusOnes(got[0]))
+	}
+	// the answer already has the reaction made meanwhile
+	since = s.LiveSeq()
+	react("U3", true)
+	if got := s.PutFetched(ch, []slack.Message{poll("U2", "U3")}, since); plusOnes(got[0]) != "U2,U3" || got[0].Reactions[0].Count != 2 {
+		t.Errorf("third fetch: +1 by %q x%d, want U2,U3 x2", plusOnes(got[0]), got[0].Reactions[0].Count)
+	}
+	// a reaction from before the request is the answer's to tell
+	react("U4", true)
+	since = s.LiveSeq()
+	if got := s.PutFetched(ch, []slack.Message{poll("U2", "U3")}, since); plusOnes(got[0]) != "U2,U3" {
+		t.Errorf("a fetch after U4's reaction: +1 by %q, want the answer's U2,U3", plusOnes(got[0]))
+	}
+}
+
+// The fetched copies are bounded by count and by size, and the one used
+// longest ago goes first: a message put again (another load drawing it)
+// or kept (KeepFetched) moves to the back.
 func TestFetchedMessagesBounded(t *testing.T) {
 	s := New("")
 	const ch = "C0LIVE0002"
@@ -69,9 +130,17 @@ func TestFetchedMessagesBounded(t *testing.T) {
 	for i := 0; i < maxFetched+10; i++ {
 		msgs = append(msgs, slack.Message{Type: "message", TS: "1700000000." + pad6(i)})
 	}
-	s.PutFetched(ch, msgs, s.LiveSeq())
-	if _, ok := s.FindHeld(ch, msgs[0].TS); ok {
-		t.Error("the oldest fetched message outlived the bound")
+	s.PutFetched(ch, msgs[:1], s.LiveSeq())
+	s.PutFetched(ch, msgs[1:maxFetched], s.LiveSeq())
+	s.PutFetched(ch, msgs[:1], s.LiveSeq()) // drawn again
+	s.PutFetched(ch, msgs[maxFetched:], s.LiveSeq())
+	if _, ok := s.FindHeld(ch, msgs[0].TS); !ok {
+		t.Error("the message put again was evicted")
+	}
+	for _, i := range []int{1, 10} {
+		if _, ok := s.FindHeld(ch, msgs[i].TS); ok {
+			t.Errorf("message %d outlived the bound", i)
+		}
 	}
 	if _, ok := s.FindHeld(ch, msgs[len(msgs)-1].TS); !ok {
 		t.Error("the newest fetched message is gone")
@@ -79,8 +148,23 @@ func TestFetchedMessagesBounded(t *testing.T) {
 	s.mu.RLock()
 	n, q := len(s.fetched), len(s.fetchedQ)
 	s.mu.RUnlock()
-	if n != maxFetched || q != maxFetched {
-		t.Errorf("%d kept, %d queued; want %d", n, q, maxFetched)
+	if n != maxFetched || q > 2*n+64 {
+		t.Errorf("%d kept, %d queued; want %d, a queue at most twice that", n, q, maxFetched)
+	}
+	// by size: big messages push the oldest out
+	s2 := New("")
+	big := strings.Repeat("x", 512<<10)
+	for i := 0; i < 12; i++ {
+		s2.PutFetched(ch, []slack.Message{{Type: "message", TS: "1700000100." + pad6(i), Text: big}}, s2.LiveSeq())
+	}
+	s2.mu.RLock()
+	size, n2 := s2.fetchedSize, len(s2.fetched)
+	s2.mu.RUnlock()
+	if size > maxFetchedSize || n2 >= 12 {
+		t.Errorf("%d bytes in %d messages; want at most %d bytes", size, n2, maxFetchedSize)
+	}
+	if _, ok := s2.FindHeld(ch, "1700000100."+pad6(11)); !ok {
+		t.Error("the newest big message is gone")
 	}
 }
 

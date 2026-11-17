@@ -159,18 +159,33 @@ func (a *App) hydrate(ctx context.Context, want map[string][]string) map[string]
 // channel of want found in memory, plus those whose messages.list group
 // succeeded (slack.MessagesList). A message missing from the result is
 // gone only when its channel answered; a failed group (too_many_channels,
-// a reset connection) leaves its channels' messages unknown.
+// a reset connection) leaves its channels' messages unknown. The store
+// keeps what it read (store/fetched.go) for the views that draw the
+// socket's changes to it: Activity, Saved.
 func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[string]slack.Message, map[string]bool) {
+	return a.hydrateKeep(ctx, want, true)
+}
+
+// hydrateKeep is hydrateOK; with keep false (a page that never draws the
+// socket's changes: Sent) the store keeps none of it.
+func (a *App) hydrateKeep(ctx context.Context, want map[string][]string, keep bool) (map[string]slack.Message, map[string]bool) {
 	out := map[string]slack.Message{}
 	missing := map[string][]string{}
 	answered := map[string]bool{}
 	for ch, tss := range want {
+		var held []string
 		for _, ts := range tss {
 			if m, ok := a.S.Find(ch, ts); ok {
 				out[ch+"/"+ts] = m
+				held = append(held, ts)
 			} else {
 				missing[ch] = append(missing[ch], ts)
 			}
+		}
+		if keep {
+			// a window's or a thread's message stays where the socket's
+			// changes reach it once core evicts the window
+			a.S.KeepFetched(ch, held)
 		}
 		if len(missing[ch]) == 0 {
 			answered[ch] = true
@@ -186,10 +201,16 @@ func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[stri
 		answered[ch] = true
 	}
 	for ch, ms := range got {
+		if !keep {
+			for _, m := range ms {
+				out[ch+"/"+m.TS] = m
+			}
+			continue
+		}
 		// Slack's fetchObjectWithId puts what it fetched by id into its
 		// messages store, where the socket's changes reach it: the store
-		// keeps the answer (store/fetched.go), and what the socket
-		// changed or deleted while the request was out wins over it
+		// keeps the answer (store/fetched.go), merged with what the socket
+		// changed, deleted or reacted while the request was out
 		for _, m := range a.S.PutFetched(ch, ms, since) {
 			out[ch+"/"+m.TS] = m
 		}
@@ -753,10 +774,12 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 			NextCursor string `json:"next_cursor"`
 		} `json:"response_metadata"`
 	}
+	seq := a.MessageChangeSeq() // what changed after this the items may not have (msg_changes.go)
 	if err := a.C.Call(ctx, "activity.feed", p, &res); err != nil {
 		return ActivityPage{}, err
 	}
 	items := a.activityItems(ctx, res.Items)
+	stampItems(items, seq)
 	chans := map[string]bool{}
 	for _, it := range items {
 		chans[it.Channel] = true
@@ -791,14 +814,9 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 			MentionCount int  `json:"mention_count"`
 		} `json:"threads_state"`
 	}
+	since := a.S.LiveSeq()
 	if err := a.C.Call(ctx, "subscriptions.thread.getView", p, &res); err != nil {
 		return ThreadsPage{}, err
-	}
-	var all []slack.Message
-	for _, t := range res.Threads {
-		all = append(all, t.Root)
-		all = append(all, t.LatestReplies...)
-		all = append(all, t.UnreadReplies...)
 	}
 	// the threads' people are asked for as rows draw them (lazy_users.go)
 	out := ThreadsPage{HasMore: res.HasMore, Next: res.MaxTS, TotalUnread: res.TotalUnreadReplies}
@@ -811,7 +829,17 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 			replies = t.UnreadReplies
 		}
 		store.SortAsc(replies)
-		out.Threads = append(out.Threads, Thread{Channel: ch, Root: a.message(ch, &t.Root), Replies: a.messages(ch, replies), UnreadCount: len(t.UnreadReplies)})
+		// Slack's Threads view draws its threads from the messages store,
+		// where the socket's changes reach them (a reaction too): the
+		// store keeps what getView brought (store/fetched.go), merged with
+		// what changed while it was out; a reply deleted meanwhile stays
+		// out, and a root keeps the answer's copy (its thread is the card)
+		kept := a.S.PutFetched(ch, append([]slack.Message{t.Root}, replies...), since)
+		root := t.Root
+		if len(kept) > 0 && kept[0].TS == root.TS {
+			root, kept = kept[0], kept[1:]
+		}
+		out.Threads = append(out.Threads, Thread{Channel: ch, Root: a.message(ch, &root), Replies: a.messages(ch, kept), UnreadCount: len(t.UnreadReplies)})
 	}
 	a.S.Lock()
 	a.S.ThreadsUnread, a.S.ThreadMentions = res.State.HasUnreads, res.State.MentionCount

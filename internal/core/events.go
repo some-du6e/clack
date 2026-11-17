@@ -58,7 +58,8 @@ func (a *App) handle(ev slack.Event) {
 		_ = json.Unmarshal(ev.Raw, &e)
 		add := ev.Type == "reaction_added"
 		changed := false
-		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = applyReaction(m, e.Reaction, e.User, add) || changed })
+		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = store.ApplyReaction(m, e.Reaction, e.User, add) || changed })
+		a.S.NoteReaction(e.Item.Channel, e.Item.TS, e.Reaction, e.User, add) // a fetch out now keeps it (store/reacts.go)
 		// the reactor isn't fetched: only the reaction's tooltip names it
 		// (ReactionTip's TooltipMemberName, lazy_users.go)
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
@@ -575,6 +576,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			go a.fillFiles(ch, m.TS)
 		}
 		a.woMessageUpdated(ch, &m) // a work object's refreshed unfurl (workobjects.go)
+		if a.removesActivity(e.Previous, &m) {
+			a.removesNext(ch, m.TS) // its update says so (activity_removes.go)
+		}
 		if streamed && m.StreamingState != "in_progress" {
 			a.emitStreamDone(ch, &m)
 			return
@@ -755,7 +759,7 @@ func (a *App) fillFiles(ch, ts string) {
 				return nil
 			case <-time.After(d): // uploads take a moment to process
 			}
-			m, ok := a.S.Find(ch, ts)
+			m, ok := a.S.FindHeld(ch, ts) // a message fetched by id too (store/fetched.go)
 			if !ok {
 				return nil
 			}

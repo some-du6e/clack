@@ -36,7 +36,7 @@ func (a *App) ThreadLocked(ch, ts string) bool {
 	if ch == "" || ts == "" {
 		return false
 	}
-	m, ok := a.S.Find(ch, ts)
+	m, ok := a.S.FindHeld(ch, ts) // a root fetched by id too (store/fetched.go)
 	return ok && m.IsLocked
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -141,5 +142,121 @@ func TestSavedLiveMessages(t *testing.T) {
 	}
 	if n := fs.CallCount("saved.list") - lists; n != 0 {
 		t.Errorf("%d saved.list calls for an edit and a deletion; Slack's rows read the store", n)
+	}
+}
+
+// A followed thread whose latest reply is an app's vote: each chat.update
+// (the same length, nothing marked edited) draws in the next frame, a
+// reaction to the vote reaches its card (core keeps getView's messages
+// where the socket's changes reach them), and a refresh after the
+// server's vote moved on unheard draws the refresh's revision: a change
+// the view took earlier doesn't outrank it.
+func TestThreadsLiveVote(t *testing.T) {
+	app, fs := vaFake(t)
+	f := &lmFake{rev: 1, gone: map[string]bool{}}
+	fs.SetHook(f.hook)
+	app.S.PutConv(slack.Conversation{ID: lmChan, Name: "live-votes", IsChannel: true, IsMember: true, NumMembers: 3})
+	app.S.PutBot(lmBot, store.BotInfo{Name: "Vote Bot"})
+	v := NewThreads(&slickHost{app: app, th: theme.New(false)})
+	e := &vaEnv{size: image.Pt(1000, 1100)}
+	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+	rev := func() int { return lmRev(lvDrawn(&v.base, lmChan, lmVote)) }
+	e.until(t, "the vote drawn", func() bool { return rev() == 1 })
+	e.frame()
+	views := fs.CallCount("subscriptions.thread.getView")
+	for n := 2; n <= 4; n++ {
+		prev := lmVoteMsg(n - 1)
+		f.mu.Lock()
+		f.rev = n
+		f.mu.Unlock()
+		lvInject(app, lmChan, map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "message": lmVoteMsg(n), "previous_message": prev})
+		e.frame()
+		if got := rev(); got != n {
+			t.Fatalf("revision %d: the frame after its chat.update drew revision %d (%q)", n, got, lvDrawn(&v.base, lmChan, lmVote))
+		}
+	}
+	lvInject(app, lmChan, map[string]any{"type": "reaction_added", "user": "U0FAKE00001", "reaction": "tada",
+		"item": map[string]any{"type": "message", "channel": lmChan, "ts": lmVote}})
+	e.frame()
+	tadas := func() int {
+		d, _, _ := v.data.get()
+		for _, th := range d.items {
+			for _, r := range th.Replies {
+				if r.TS == lmVote {
+					for _, rx := range r.Reactions {
+						if rx.Name == "tada" {
+							return rx.Count
+						}
+					}
+				}
+			}
+		}
+		return 0
+	}
+	if n := tadas(); n != 1 {
+		t.Fatalf("the frame after a reaction to the vote: %d tada on its card", n)
+	}
+	if got := rev(); got != 4 {
+		t.Fatalf("the reaction took the vote to revision %d", got)
+	}
+	if n := fs.CallCount("subscriptions.thread.getView") - views; n != 0 {
+		t.Errorf("%d getView calls for chat.updates and a reaction; Slack's view reads the store", n)
+	}
+	// the server's vote moves on with no event; the view reads its
+	// threads again
+	f.mu.Lock()
+	f.rev = 6
+	f.mu.Unlock()
+	v.load(actRefresh)
+	e.until(t, "the refresh's revision 6", func() bool {
+		if got := rev(); got < 4 {
+			t.Fatalf("revision %d drawn while the refresh was out", got)
+		}
+		return rev() == 6
+	})
+	for i := 0; i < 10; i++ {
+		e.frame()
+		if got := rev(); got != 6 {
+			t.Fatalf("frame %d after the refresh drew revision %d", i, got)
+		}
+	}
+}
+
+// A saved app message's chat.update keeps its length and marks nothing
+// edited: the Saved page draws it in the next frame all the same.
+func TestSavedLiveBotUpdate(t *testing.T) {
+	const ch = lmChan
+	var mu sync.Mutex
+	n := 1
+	app, _ := vkFake(t, func(method string, f url.Values) (any, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch method {
+		case "saved.list":
+			return map[string]any{"ok": true, "saved_items": []map[string]any{{"item_id": ch, "item_type": "message", "ts": lmVote,
+				"todo_state": "saved", "date_created": time.Now().Unix() - 100}}}, true
+		case "messages.list":
+			return map[string]any{"ok": true, "messages": map[string][]slack.Message{ch: {lmVoteMsg(n)}}}, true
+		}
+		return nil, false
+	})
+	app.S.PutConv(slack.Conversation{ID: lmChan, Name: "live-votes", IsChannel: true, IsMember: true, NumMembers: 3})
+	app.S.PutBot(lmBot, store.BotInfo{Name: "Vote Bot"})
+	s := NewSaved(newKBHost(app, false))
+	e := &vaEnv{size: image.Pt(1000, 900)}
+	e.draw = func(gtx layout.Context) { s.Layout(gtx) }
+	rev := func() int { return lmRev(lvDrawn(&s.base, ch, lmVote)) }
+	e.until(t, "the saved vote drawn", func() bool { return rev() == 1 })
+	e.frame()
+	for r := 2; r <= 4; r++ {
+		mu.Lock()
+		prev := lmVoteMsg(n)
+		n = r
+		mu.Unlock()
+		lvInject(app, ch, map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "message": lmVoteMsg(r), "previous_message": prev})
+		e.frame()
+		if got := rev(); got != r {
+			t.Fatalf("revision %d: the frame after its chat.update drew revision %d (%q)", r, got, lvDrawn(&s.base, ch, lmVote))
+		}
 	}
 }

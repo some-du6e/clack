@@ -98,7 +98,10 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 			return
 		}
 		if in.Msg == nil {
-			in.Msg, in.Root = p.Items[i].Msg, p.Items[i].Root
+			// the copies it had, current as of when they were read
+			old := &p.Items[i]
+			in.Msg, in.Root, in.MsgGone, in.RootGone = old.Msg, old.Root, old.MsgGone, old.RootGone
+			in.MsgSeq = min(in.MsgSeq, old.MsgSeq)
 		}
 		items := slices.Clone(p.Items)
 		items[i] = in

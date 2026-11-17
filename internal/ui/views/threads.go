@@ -67,6 +67,9 @@ var (
 type thrItem struct {
 	key string
 	core.Thread
+	// seq is the message change (core.MessageChangeSeq) the thread's
+	// copies are current as of (threads_live.go)
+	seq uint64
 }
 
 type thrData struct {
@@ -103,6 +106,7 @@ type thrCard struct {
 	// into the card, oldest first; a fetch running; the thread's start
 	// reached (has_more false); the fetch's answer for the UI goroutine
 	older      []core.Message
+	olderSeq   uint64 // the message change older is current as of (threads_live.go)
 	olderBusy  bool
 	olderStart bool
 	olderRes   atomic.Pointer[thrOlder]
@@ -221,9 +225,9 @@ func (v *Threads) match(ev core.Event) bool {
 		return ev.Reply
 	case "update", "delete":
 		// an edit, an app's chat.update, a reaction or a deletion of a
-		// message a card shows: the next frame reads it from core's log
-		// (threads_live.go), no reload
-		if v.lv.wakes(ev) {
+		// message a card shows: the next frame reads it from core
+		// (threads_live.go), no reload; off screen the next draw does
+		if v.lv.wakes(ev) && v.lv.shown.shown(v.h) {
 			v.h.Invalidate()
 		}
 		return false
@@ -270,6 +274,7 @@ func (v *Threads) applyMarks() {
 
 // Layout draws the view.
 func (v *Threads) Layout(gtx C) D {
+	v.lv.shown.mark(v.h)
 	v.frame()
 	v.notes.drain(v.h)
 	v.w.watch(v.h, v.match)
@@ -368,7 +373,6 @@ func (v *Threads) settle() {
 	for _, c := range v.cards {
 		c.built = false
 	}
-	v.noteLiveKeys() // threads_live.go
 	if v.paging {
 		v.paging = false
 		if _, _, err := v.data.get(); err != nil {
@@ -379,7 +383,8 @@ func (v *Threads) settle() {
 
 func (v *Threads) load(mode actLoad) {
 	c := v.h.Core()
-	v.lv.log.start(c) // the messages change from here on (threads_live.go)
+	v.lv.log.start(c)            // the messages change from here on (threads_live.go)
+	from := c.MessageChangeSeq() // what changed after this the answer may not have
 	old, _, _ := v.data.get()
 	cursor := ""
 	if mode == actMore {
@@ -402,7 +407,7 @@ func (v *Threads) load(mode actLoad) {
 		if err != nil {
 			return thrData{}, err
 		}
-		fresh := thrFrom(p)
+		fresh := thrFrom(p, from)
 		switch mode {
 		case actMore:
 			return thrJoin(old, fresh), nil
@@ -416,11 +421,11 @@ func (v *Threads) load(mode actLoad) {
 	})
 }
 
-func thrFrom(p core.ThreadsPage) thrData {
+func thrFrom(p core.ThreadsPage, from uint64) thrData {
 	d := thrData{next: p.Next, hasMore: p.HasMore, convs: p.Convs}
 	d.items = make([]thrItem, 0, len(p.Threads))
 	for _, t := range p.Threads {
-		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t})
+		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t, seq: from})
 	}
 	thrSort(d.items)
 	return d
@@ -1029,9 +1034,9 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 // the reply box within it.
 func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h int)) (D, int) {
 	unread := v.unread(t)
-	// the loaded older replies, then the latest ones, as core's changes
-	// left them (threads_live.go)
-	replies := v.liveReplies(t.Channel, thrShown(t, c))
+	// the loaded older replies, then the latest ones (as core's changes
+	// left them: threads_live.go)
+	replies := thrShown(t, c)
 	unreadFrom := len(replies) - unread
 	compH, compBottom := 0, 20
 	if c.comp != nil {
@@ -1046,7 +1051,7 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h 
 	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			s := c.msg(t.Root.TS)
-			s.v, s.m, s.top = v, v.liveRoot(t), 20 // as core's changes left it (threads_live.go)
+			s.v, s.m, s.top = v, &t.Root, 20
 			return rec("root-"+t.key, slackc.Component(gtx, "ThreadRootGeneric", s, (*thrMsg).rootProps, (*thrMsg).layoutRoot))
 		}),
 		layout.Rigid(func(gtx C) D {
@@ -1454,7 +1459,7 @@ func (v *Threads) kbItems(items []thrItem) []vkItem {
 		if c := v.cards[k]; c != nil && c.moreText != "" {
 			add("load_older-"+k, thrKBRow{kind: "load_older", key: k, ch: t.Channel}, i)
 		}
-		for _, m := range v.liveReplies(t.Channel, thrShown(t, v.cards[k])) { // the replies the card draws (threads_live.go)
+		for _, m := range thrShown(t, v.cards[k]) { // the replies the card draws
 			add(k+"-"+m.TS, thrKBRow{kind: "reply", key: k, ch: t.Channel, ts: m.TS}, i)
 		}
 		add("footer-"+k, thrKBRow{kind: "footer", key: k, ch: t.Channel}, i)

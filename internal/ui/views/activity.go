@@ -211,13 +211,16 @@ type actRow struct {
 	// described from came from (dSrc).
 	li          core.ActivityItem
 	liSrc, dSrc [2]uint64
-	msgGone     bool // its message was deleted since the feed brought it
-	// the texts of the revisions of the row's message drawn before this
-	// one, newest first (noteSent, echoed)
-	sent     [3]string
-	sentN    int
-	sentKey  actMsgKey
+	// msgGone: there's no message to draw (deleted, or Slack has none:
+	// isNonExistent), so no body and no shimmer
+	msgGone bool
+	// what the row sent its patched components of its message, by
+	// content (sendMsg), and the content of the tree's msg it read last
+	// (echoed)
+	sent     sentFPs
+	sentLast *core.Message
 	sentText string
+	treeFP   fpMemo
 
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
@@ -1482,7 +1485,6 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	v.ensureLists(page)
 	v.ensureSaved(page)
 	v.ensureFileTitles(page)
-	v.noteMsgs(page) // activity_msgs.go
 	// VIP unreads on top (activity_views.go actVIPOrder): the unread VIP
 	// items under "VIP unreads", then "Everything else"; no day dividers
 	// in the first group nor on the first row after the second header
@@ -2229,8 +2231,8 @@ func (v *Activity) footer(gtx C, failed bool) D {
 func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	key := actKey(it)
 	r := v.rowFor(key)
-	// the row's message as a list on screen draws it this frame, else as
-	// the socket brought it, else the feed's (activity_msgs.go)
+	// the row's message as a list on screen draws it this frame, else the
+	// newest copy Activity has (activity_msgs.go)
 	v.pollLists(it)
 	it = v.rowItem(r, it)
 	if r.built && r.dSrc != r.liSrc {
@@ -2246,7 +2248,6 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			v.dirty = true // the search filters on the text
 		}
 	}
-	r.noteSent(it.Msg)
 	// a click on an agent entry's action button (activity_leftovers.go)
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
@@ -2440,7 +2441,7 @@ func (r *actRow) density() string {
 // itemProps: ActivityItem {activityItem, msg, className, isRead, density}.
 func (r *actRow) itemProps() slackc.Props {
 	v := r.v
-	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": msgProps(r.it.Msg),
+	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": r.sendMsg(r.it.Msg),
 		"className": "", "isRead": !r.unread, "isSelected": v.selOK && v.selKey == r.key,
 		"density": r.density(), "showAsCard": false, "inTriageMode": false, "isDmTab": v.dmOnly()}
 }
@@ -2462,9 +2463,9 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 		r.om = nil
 		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
 			// a tree JS hasn't drawn since the message changed hands back
-			// the revision before: that's the props the row sent, not the
+			// a revision before: that's the props the row sent, not the
 			// plugin's text (activity_msgs.go echoed)
-			if !r.echoed(it.Msg, mp) {
+			if !r.echoed(mp) {
 				r.om = r.textOverride(it.Msg, mp)
 			}
 			om := msgOverride(it.Msg, mp)
@@ -3511,8 +3512,9 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 	if r.msg() == nil {
 		if r.it.Channel == "" || r.msgGone {
 			// ActivityRowContentDetails draws no body for a message the
-			// store doesn't hold (deleted since: activity_msgs.go), the
-			// shimmer only for one it's still fetching (isUnknown)
+			// store doesn't have (deleted since: activity_msgs.go; or none
+			// at all: isNonExistent, MsgGone), the shimmer only for one
+			// it's still fetching (isUnknown)
 			return D{}
 		}
 		return v.shimmerLine(gtx, 240)
@@ -4047,7 +4049,7 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, msgVer(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
 }
 
 // actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue
