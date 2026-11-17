@@ -62,8 +62,8 @@ func (s *Server) authPage(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _ := json.Marshal(map[string]any{"teams": map[string]any{
 		OtherTeamID:  map[string]any{"id": OtherTeamID, "name": "Other Club", "url": AuthOtherURL, "domain": "otherclub", "token": "xoxc-fake-other"},
-		TeamID:       map[string]any{"id": TeamID, "name": "Fake Club", "url": AuthTeamURL, "domain": "fakeclub", "token": "xoxc-fake", "enterprise_api_token": "xoxc-fake-org"},
-		EnterpriseID: map[string]any{"id": EnterpriseID, "name": "Fake Org", "url": AuthOrgURL, "token": "xoxc-fake-org"},
+		TeamID:       map[string]any{"id": TeamID, "name": "Fake Club", "url": AuthTeamURL, "domain": "fakeclub", "token": TeamToken, "enterprise_api_token": OrgToken},
+		EnterpriseID: map[string]any{"id": EnterpriseID, "name": "Fake Org", "url": AuthOrgURL, "token": OrgToken},
 	}})
 	w.Write([]byte(`<html><script>(function(){ if (!window.parent) return; sessionStorage.incomingConfig = JSON.stringify(` + string(cfg) + `); window.parent.postMessage('gantry_auth_notify', "https:\/\/app.slack.com"); })();</script></html>`))
 }

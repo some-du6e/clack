@@ -780,10 +780,17 @@ func (s *Server) Close() error {
 	return s.srv.Close()
 }
 
+// The fake's tokens (Creds and the auth page's): the workspace's and the
+// org's.
+const (
+	TeamToken = "xoxc-fake"
+	OrgToken  = "xoxc-fake-org"
+)
+
 // Creds returns credentials pointing every host (team, enterprise, edge) at
 // the fake.
 func (s *Server) Creds() slack.Creds {
-	return slack.Creds{Token: "xoxc-fake", Cookie: "xoxd-fake", Team: TeamID, EnterpriseToken: "xoxc-fake-org",
+	return slack.Creds{Token: TeamToken, Cookie: "xoxd-fake", Team: TeamID, EnterpriseToken: OrgToken,
 		EnterpriseID: EnterpriseID, UserID: SelfID, TeamURL: s.URL, EnterpriseURL: s.URL}
 }
 
@@ -1310,7 +1317,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		form, _ = url.ParseQuery(string(body))
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			form = url.Values{}
-			if method == "users.preparePhoto" || method == "avatars.upload" { // profile.go, calls_email.go: the image part's size
+			switch method {
+			case "users.preparePhoto": // profile.go: the fields, and the image part's size, dimensions, name and type
+				form = photoUploadForm(r.Header.Get("Content-Type"), body)
+			case "avatars.upload": // calls_email.go: the image part's size
 				form.Set(photoBytesKey, multipartFileSize(r.Header.Get("Content-Type"), body, "image"))
 			}
 		}
