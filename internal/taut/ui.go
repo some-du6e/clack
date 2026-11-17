@@ -922,6 +922,7 @@ func (t *Taut) InjectedMessages(ch string) []core.Message {
 		keys[i] = store.MsgKey{TS: e.inj[i].ts, CID: e.inj[i].cid}
 	}
 	held := t.app.S.Held(ch, keys)
+	t.ui.views.held.Add(1)
 	var out []core.Message
 	for i, in := range e.inj {
 		if held[i] {
@@ -1126,6 +1127,9 @@ type viewConv struct {
 
 var convSerial atomic.Uint64
 
+// decodedMessages counts message decodes (tests: what a refetch costs).
+var decodedMessages atomic.Int64
+
 // viewGroup is the cached values under one (slice, key): a message bucket's
 // messages share theirs.
 type viewGroup struct {
@@ -1148,6 +1152,7 @@ type viewCache struct {
 	flying   map[viewKey]bool // asked of JS, not back yet
 	busy     bool             // the worker runs or is about to
 	fetches  atomic.Int64     // worker batches (tests)
+	held     atomic.Int64     // store passes InjectedMessages made (tests)
 	maxSubs  int              // entries before everything is dropped (20000)
 	bytes    int              // what the entries hold, about
 	maxBytes int              // bytes before everything is dropped (64 MiB)
@@ -1192,8 +1197,8 @@ type viewCache struct {
 // viewOnScreen is how recently, before the UI's latest read, values must
 // have been read to be on screen: rows re-read their views at least every
 // viewRefresh (250 ms) while frames draw, and a window drawing nothing
-// read everything on screen in its last frame.
-const viewOnScreen = int64(time.Second)
+// read everything on screen in its last frame. (A var for tests.)
+var viewOnScreen = int64(time.Second)
 
 var viewBase = time.Now()
 
@@ -1776,6 +1781,7 @@ func decodeMessage(raw json.RawMessage) *slack.Message {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
+	decodedMessages.Add(1)
 	var sm slack.Message
 	if json.Unmarshal(raw, &sm) != nil {
 		return nil
@@ -1840,6 +1846,9 @@ func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Me
 	m := *sm
 	c := &viewConv{gen: gen, id: convSerial.Add(1), msg: v.t.app.MessageFromSlack(ch, &m)}
 	slot.Store(c)
+	if convDone != nil {
+		convDone(k)
+	}
 	stale := v.indexRefs(k, c.msg.Refs, at)
 	v.gmu.Lock()
 	if v.inflight[k]--; v.inflight[k] <= 0 {
@@ -1858,6 +1867,10 @@ func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Me
 	}
 	return c
 }
+
+// convDone, tests only, runs once a conversion read the store and before
+// it's indexed (a change landing then is what indexRefs' at catches).
+var convDone func(k viewSK)
 
 // convGenAt is convGen, and the sequence then (indexRefs' at).
 func (v *viewCache) convGenAt(ch, ts string) (gen, at uint64) {

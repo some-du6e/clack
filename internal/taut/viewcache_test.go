@@ -346,9 +346,11 @@ func TestViewCacheRetriesWhatJSDidntAnswer(t *testing.T) {
 }
 
 // Conversion generations: a bump redraws when a conversion it outdates is
-// cached (the UI may have converted with the old generation first), and
-// "experiments" bumps every message (a huddle message's sentence and the
-// emoji set follow experiment groups).
+// cached and on screen (the UI may have converted with the old generation
+// first); "names" bumps the conversions that read its ids (with none, the
+// viewer's user groups: every mention's highlight), and "experiments"
+// every message (a huddle message's sentence and the emoji set follow
+// experiment groups).
 func TestConvBumpRedraws(t *testing.T) {
 	h := newHarness(t)
 	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
@@ -363,9 +365,13 @@ func TestConvBumpRedraws(t *testing.T) {
 		t.Error("no redraw after the cached conversion's message changed")
 	}
 	n1 := h.ui.invalidations.Load()
-	h.tt.mirror.onEvent(core.Event{Type: "names", Users: []string{"B0BOT"}}) // a bot's name arrived
+	h.tt.mirror.onEvent(core.Event{Type: "names", Users: []string{"B0BOT"}}) // a bot no conversion read
+	if h.ui.invalidations.Load() != n1 {
+		t.Error("the name of a bot no conversion read redrew")
+	}
+	h.tt.mirror.onEvent(core.Event{Type: "names"}) // the viewer's user groups
 	if h.ui.invalidations.Load() == n1 {
-		t.Error("no redraw after names arrived")
+		t.Error("no redraw after the viewer's user groups changed")
 	}
 	g0 := v.convGen(chGen, ts)
 	h.tt.mirror.onEvent(core.Event{Type: "experiments"})
@@ -560,10 +566,10 @@ func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
 	}
 }
 
-// A change that lands while a message's first conversion runs (before
-// it's indexed, so the bump finds nothing to bump) leaves that conversion
-// stale: the next read makes it again with the new name.
-func TestChangeDuringFirstConversion(t *testing.T) {
+// indexRefs, by itself: a conversion begun (convGenAt) before a change to
+// what it read (bumpChange) is stale when it's indexed, one begun after
+// isn't. (TestChangeDuringFirstConversion has a real conversion race it.)
+func TestIndexRefsStaleness(t *testing.T) {
 	h := newHarness(t)
 	v := &h.tt.ui.views
 	k := viewSK{chGen, "1700000009.000900"}

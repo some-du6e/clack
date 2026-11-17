@@ -1,0 +1,171 @@
+package messages
+
+// What the lists' copies and the plugins' views read changes as Slack's
+// would: prefs every Doc reads, a change taut's views took inside a row's
+// 250 ms, a mention in a broadcast's preamble. Synthetic data on
+// internal/fakeslack.
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
+)
+
+// docHas reports whether d has a span of kind (and, with style, that
+// style) whose text or id contains sub.
+func docHas(d richtext.Doc, kind richtext.SpanKind, style richtext.Style, sub string) bool {
+	var walk func(bs []richtext.Block) bool
+	walk = func(bs []richtext.Block) bool {
+		for _, b := range bs {
+			for _, sp := range b.Spans {
+				if sp.Kind == kind && (style == 0 || sp.Style&style != 0) && (strings.Contains(sp.Text, sub) || sp.ID == sub) {
+					return true
+				}
+			}
+			if walk(b.Children) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(d.Blocks)
+}
+
+// "Display emoji as plain text" and a new highlight word re-convert the
+// messages a list holds, as Slack's next render reads them; both are
+// baked into every Doc. They converted nothing: a list kept its emoji
+// images and old highlights until it loaded again.
+func TestDocPrefsConvertLoadedMessages(t *testing.T) {
+	app, _, _ := shotsApp(t)
+	app.S.PutConv(slack.Conversation{ID: refsChan, Name: "launch", IsChannel: true, IsMember: true, NumMembers: 12})
+	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Hour).Unix())
+	app.S.SetLatest(refsChan, []slack.Message{{Type: "message", TS: ts, User: "UANA00001", Text: "the launch is today :rocket:"}}, false)
+	v := NewChannelView(coreHost{app: app, th: theme.New(false)}, refsChan)
+	v.Preview = true
+	frame := frameFn(v)
+	doc := func() richtext.Doc {
+		if r := v.s.rows[ts]; r != nil {
+			return r.m.Doc
+		}
+		return richtext.Doc{}
+	}
+	until(t, 8*time.Second, "the row with its emoji", frame, func() bool { return docHas(doc(), richtext.Emoji, 0, "rocket") })
+	ctx := context.Background()
+	if err := app.SetMultiplePrefs(ctx, map[string]any{"emoji_mode": "as_text"}); err != nil {
+		t.Fatal(err)
+	}
+	until(t, 8*time.Second, "the emoji as text", frame, func() bool {
+		return !docHas(doc(), richtext.Emoji, 0, "rocket") && docHas(doc(), richtext.Text, 0, ":rocket:")
+	})
+	if err := app.SetMultiplePrefs(ctx, map[string]any{"all_notifications_prefs": `{"global":{"global_keywords":"launch"}}`}); err != nil {
+		t.Fatal(err)
+	}
+	until(t, 8*time.Second, "the highlight word highlighted", frame, func() bool { return docHas(doc(), richtext.Text, richtext.Highlight, "launch") })
+}
+
+// askingHost counts the redraws the hub asks for.
+type askingHost struct {
+	coreHost
+	asked *atomic.Int64
+}
+
+func (h askingHost) Invalidate() { h.asked.Add(1) }
+
+// A plugin's view changed inside the row's 250 ms (a rename only the
+// plugin's copy of a message reads): the frame taut asks for re-reads it
+// (ViewEpoch), and the row shows the new name with no other frame. The
+// frame came, the row's viewRefresh skipped the read, and an idle window
+// drew no other: the old name stayed.
+func TestPatchedRowTakesChangeWithoutAnotherFrame(t *testing.T) {
+	app, _, _ := shotsApp(t)
+	app.S.PutConv(slack.Conversation{ID: refsChan, Name: "launch", IsChannel: true, IsMember: true, NumMembers: 12})
+	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Hour).Unix())
+	app.S.SetLatest(refsChan, []slack.Message{{Type: "message", TS: ts, User: "UBEN00001", Text: "Notes from the sync"}}, false)
+	var asked atomic.Int64
+	u := &pluginUI{trees: map[uint64][]byte{}}
+	hooks := u.hooks()
+	hooks.Invalidate = func() { asked.Add(1) }
+	tt := newTaut(t, app, hooks)
+	SetTaut(tt)
+	slackc.SetBridge(tt.Bridge())
+	t.Cleanup(func() { SetTaut(nil); slackc.SetBridge(nil); slackc.Reset(); slackc.SetPatched(nil) })
+	notes := `{"id":"F0NOTES001","name":"notes.pdf","title":"Sync notes","mimetype":"application/pdf","filetype":"pdf","pretty_type":"PDF","mode":"hosted","user":"UCARA0001","size":1024}`
+	install(t, tt, pluginJS(`
+class ShareNotes extends TautPlugin {
+  static id = 'ShareNotes'
+  static pluginName = 'Share notes (test)'
+  static description = 'test: its copy of a message shares a file the message does not'
+  static authors = ['clack']
+  static category = 'messages'
+  static defaultConfig = { enabled: true }
+  start() {
+    const notes = `+notes+`
+    const share = (ts, m) => (ts === '`+ts+`' && m ? { ...m, files: [notes] } : m)
+    const { patchSlice, mapEntries } = this.api.redux
+    patchSlice('messages', (ch, bucket) => (ch === '`+refsChan+`' && bucket && typeof bucket === 'object' ? mapEntries(bucket, share) : bucket))
+  }
+}
+return ShareNotes`))
+	until(t, 5*time.Second, "the messages slice patched", func() {}, func() bool { return tt.SlicePatched("messages") })
+	v := NewChannelView(askingHost{coreHost{app: app, th: theme.New(false)}, &asked}, refsChan)
+	v.Preview = true
+	frame := frameFn(v)
+	text := func() string { return rowText(v.s.rows[ts]) }
+	until(t, 8*time.Second, "the plugin's file in the row", frame, func() bool { return strings.Contains(text(), "cara | ") })
+	// a frame that reads the view (past its 250 ms), then at once the rename
+	time.Sleep(viewRefresh + 20*time.Millisecond)
+	frame()
+	last := asked.Load()
+	refsUserChange(app, "kit.l")
+	for dl := time.Now().Add(3 * time.Second); time.Now().Before(dl); {
+		if n := asked.Load(); n != last { // a frame only when one is asked for
+			last = n
+			frame()
+			if strings.Contains(text(), "kit.l | ") {
+				return
+			}
+			continue
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("with frames only when asked for, the row still draws %q; want the plugin's file under kit.l", text())
+}
+
+// A broadcast's preamble ("replied to a thread: …") draws the root's
+// mentions as the store names the members now: mentions aren't
+// conversion refs, so a rename converts no root again, and the preview
+// kept the old @name.
+func TestBroadcastPreambleReadsMentionsAsItDraws(t *testing.T) {
+	names := map[string]string{"UCARA0001": "cara"}
+	richview.SetMemberRead(func(id string) (string, richview.MemberMiss) {
+		if n, ok := names[id]; ok {
+			return n, richview.MemberLoaded
+		}
+		return "", richview.MemberLoading
+	})
+	t.Cleanup(func() { richview.SetMemberRead(nil) })
+	root := core.Message{TS: "1700000001.000100", ThreadTS: "1700000001.000100", Doc: richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph,
+		Spans: []richtext.Span{{Kind: richtext.User, ID: "UCARA0001", Text: "@cara"}, {Kind: richtext.Text, Text: " can you review?"}}}}}}
+	s := &listState{}
+	s.snap.msgs = []entry{{m: root, rev: 1}}
+	r := &row{m: core.Message{TS: "1700000002.000200", ThreadTS: root.TS, Broadcast: true}}
+	rc := &rowCtx{list: s, usersRev: 1}
+	if got := r.rootPreview(rc); got != "@cara can you review?" {
+		t.Fatalf("the preamble's preview: %q", got)
+	}
+	names["UCARA0001"] = "kit.l" // she renamed herself: the users revision moves
+	rc.usersRev = 2
+	if got := r.rootPreview(rc); got != "@kit.l can you review?" {
+		t.Errorf("after the rename the preamble's preview is %q; want the name as the mention draws it now", got)
+	}
+}
