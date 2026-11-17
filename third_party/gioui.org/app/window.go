@@ -57,6 +57,11 @@ type Window struct {
 	animating    bool
 	hasNextFrame bool
 	nextFrame    time.Time
+	// asked, askedAt: what the window's own frames asked for since the last
+	// FrameEvent (Clack patch 35, FrameEvent.Asked): every frame
+	// setNextFrame asks for (askFrame) but an Invalidate's
+	asked   bool
+	askedAt time.Time
 	// viewport is the latest frame size with insets applied.
 	viewport image.Rectangle
 	// metric is the metric from the most recent frame.
@@ -199,7 +204,7 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 					// and the window asks for another frame, which the
 					// driver draws when it can.
 					w.queue.Frame(frame)
-					w.setNextFrame(time.Time{})
+					w.askFrame(time.Time{})
 					return nil
 				}
 				w.destroyGPU()
@@ -283,7 +288,7 @@ func (w *Window) updateState() {
 		w.driver.EditorStateChanged(oldState, newState)
 	}
 	if t, ok := q.WakeupTime(); ok {
-		w.setNextFrame(t)
+		w.askFrame(t)
 	}
 	w.updateAnimation()
 }
@@ -336,7 +341,7 @@ func (w *Window) Option(opts ...Option) {
 		}
 		opts = append(opts, decoHeightOpt(decoHeight))
 		w.driver.Configure(opts)
-		w.setNextFrame(time.Time{})
+		w.askFrame(time.Time{})
 		w.updateAnimation()
 	})
 }
@@ -412,6 +417,21 @@ func (w *Window) setNextFrame(at time.Time) {
 	if !w.hasNextFrame || at.Before(w.nextFrame) {
 		w.hasNextFrame = true
 		w.nextFrame = at
+	}
+}
+
+// askFrame is setNextFrame for a frame the window's own frames ask for
+// (Clack patch 35): the router's wake-ups (an op.InvalidateCmd, pending
+// events), input a handler took, a key press kept for Source.KeyPresses,
+// a focus change, options, a click focus, a frame that found nothing to
+// draw into. The next FrameEvent reports the earliest (Asked, AskedAt). An
+// Invalidate (callbacks.Invalidate) asks for a frame with setNextFrame
+// alone: from the window's point of view nothing asked for it, the client
+// knows why it invalidated.
+func (w *Window) askFrame(at time.Time) {
+	w.setNextFrame(at)
+	if !w.asked || at.Before(w.askedAt) {
+		w.asked, w.askedAt = true, at
 	}
 }
 
@@ -521,7 +541,7 @@ func (w *Window) moveFocus(dir key.FocusDirection) {
 
 func (c *callbacks) ClickFocus() {
 	c.w.queue.ClickFocus()
-	c.w.setNextFrame(time.Time{})
+	c.w.askFrame(time.Time{})
 	c.w.updateAnimation()
 }
 
@@ -579,6 +599,8 @@ func (w *Window) collectSemanticDiffs(diffs *[]input.SemanticID, n input.Semanti
 }
 
 func (c *callbacks) Invalidate() {
+	// a frame, but not one the window's frames asked for (Clack patch 35:
+	// setNextFrame, not askFrame): every Window.Invalidate comes here
 	c.w.setNextFrame(time.Time{})
 	c.w.updateAnimation()
 	// Guarantee a wakeup, even when not animating.
@@ -663,6 +685,14 @@ func (w *Window) processEvent(e event.Event) bool {
 			panic(errors.New("internal error: zero-sized Draw"))
 		}
 		w.metric = e2.Metric
+		// Clack patch 35: what the window's own frames asked for (askFrame:
+		// not an Invalidate's), and what a frame the client hasn't been
+		// handed yet was asked for
+		e2.Asked, e2.AskedAt = w.asked, w.askedAt
+		if p := w.coalesced.frame; p != nil && p.Asked && (!e2.Asked || p.AskedAt.Before(e2.AskedAt)) {
+			e2.Asked, e2.AskedAt = true, p.AskedAt
+		}
+		w.asked, w.askedAt = false, time.Time{}
 		w.hasNextFrame = false
 		e2.Frame = w.driver.Frame
 		e2.Source = w.queue.Source()
@@ -736,7 +766,7 @@ func (w *Window) processEvent(e event.Event) bool {
 		}
 		t, handled := w.queue.WakeupTime()
 		if handled {
-			w.setNextFrame(t)
+			w.askFrame(t)
 			w.updateAnimation()
 		}
 		return handled
@@ -776,7 +806,7 @@ func (w *Window) processEvent(e event.Event) bool {
 			if !handled {
 				t = time.Time{}
 			}
-			w.setNextFrame(t)
+			w.askFrame(t)
 			w.updateAnimation()
 		}
 		return handled

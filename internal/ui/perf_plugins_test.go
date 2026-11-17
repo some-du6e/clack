@@ -58,6 +58,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -76,9 +77,12 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/gpu/headless"
+	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/imgcache/webptest"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slack"
@@ -121,6 +125,14 @@ type perfPass struct {
 	Trees     int   `json:"trees"`
 	TreesSame int   `json:"trees_same"`
 	Renders   int64 `json:"renders"` // Go→JS Render/RenderIn calls
+	// the idle passes (perfIdle): how long they ran, the animation frames
+	// the image cache's players moved on to meanwhile (every size of every
+	// animated image counts), and the players playing at the end
+	Seconds    float64        `json:"seconds,omitempty"`
+	AnimFrames int            `json:"anim_frames,omitempty"`
+	Players    int            `json:"players,omitempty"`
+	Quiet      int            `json:"quiet_frames,omitempty"` // of Frames: the last frame's ops again, no layout (quiet.go)
+	Why        map[string]int `json:"not_quiet,omitempty"`    // the frames laid out, by why they weren't quiet
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
 	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
@@ -468,6 +480,21 @@ func TestPerfPluginScroll(t *testing.T) {
 		perfProfPrefix = profPrefix
 	}
 
+	// an animated custom emoji on screen (perfAnimEmoji): the channel left
+	// alone, frames drawn only when something asks for one, as the window
+	// draws them; first without the emoji (the baseline: nothing asks),
+	// then with it in new messages and reactions, then the same at 60
+	// frames a second (something else drawing meanwhile)
+	e.openBench()
+	e.toBottom()
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)}) // off the window
+	e.settle(2 * time.Second)
+	res.Passes = append(res.Passes, e.perfIdle("idle", 5*time.Second, false))
+	if e.perfAnimEmoji(t) {
+		res.Passes = append(res.Passes, e.perfIdle("emoji", 5*time.Second, false))
+		res.Passes = append(res.Passes, e.perfIdle("emoji-60hz", 5*time.Second, true))
+	}
+
 	if prof != "" {
 		for _, k := range []string{"mutex", "block"} {
 			if f, err := os.Create(prof + "." + k + ".pprof"); err == nil {
@@ -486,6 +513,11 @@ func TestPerfPluginScroll(t *testing.T) {
 			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.TreesSame, p.Renders)
 		if p.Draws > 0 {
 			t.Logf("pass %-12s per frame: %.0f draw calls, %.0f API calls (%.0f left out, %.0f crossings), %.0f paths built, %.2f Mpx covered, %.2f Mpx blitted", p.Name, p.Draws, p.APICalls, p.APISkipped, p.Crossings, p.PathsBuilt, p.CoverMpx, p.BlitMpx)
+		}
+	}
+	for _, p := range res.Passes {
+		if p.Seconds > 0 {
+			t.Logf("idle pass %-10s %d frames in %.1f s (%.1f ms of frames a second, %d quiet; laid out: %v), %d animation frames shown, %d players at the end", p.Name, p.Frames, p.Seconds, p.TotalMS/p.Seconds, p.Quiet, p.Why, p.AnimFrames, p.Players)
 		}
 	}
 	if out := os.Getenv("PERF_PLUGIN_OUT"); out != "" {
@@ -921,4 +953,395 @@ func (p *perfTraffic) run() {
 			p.inject(p.ch, "message", "message_deleted", map[string]any{"deleted_ts": ts, "ts": liveTS(), "event_ts": liveTS(), "hidden": true})
 		}
 	}
+}
+
+// perfExplodes stands in for :explodes:, a custom emoji Slack serves as an
+// animated WebP behind a .png URL (synthetic pixels; the real file's
+// shape): a 32×32 canvas with alpha, looping forever, 13 frames of 30 to
+// 70 ms, the first the whole canvas drawn without blending, the rest small
+// rectangles blended over what's there, none disposed. The real file's
+// lossy pictures are lossless here (webptest writes VP8L only); a player
+// decodes them once either way.
+func perfExplodes() []byte {
+	type fr struct{ x, y, w, h, ms int }
+	rects := []fr{{0, 0, 32, 32, 70}, {14, 14, 2, 2, 30}, {6, 6, 21, 21, 40}, {4, 8, 24, 16, 50},
+		{10, 2, 12, 28, 60}, {0, 12, 32, 8, 30}, {8, 8, 16, 16, 40}, {2, 2, 28, 28, 70},
+		{12, 0, 8, 32, 50}, {16, 16, 14, 14, 30}, {0, 0, 18, 18, 60}, {6, 20, 20, 10, 40}, {10, 10, 12, 12, 50}}
+	frames := make([]webptest.Frame, len(rects))
+	for i, r := range rects {
+		c := color.NRGBA{R: uint8(255 - 15*i), G: uint8(40 + 16*i), B: uint8(20 * (i % 4)), A: 255}
+		if i > 0 && i%3 == 0 {
+			c.A = 160 // blended over the canvas
+		}
+		frames[i] = webptest.Solid(r.x, r.y, r.w, r.h, r.ms, c)
+		frames[i].NoBlend = i == 0
+	}
+	return webptest.Anim(32, 32, 0, frames...)
+}
+
+// perfAnimEmoji serves perfExplodes as a custom emoji nothing has drawn yet
+// and puts it on screen in the open channel: in four new messages with
+// text, in two on its own (jumbomoji), and as a reaction on two of them;
+// then draws until a player plays. It reports whether one did.
+func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
+	all := e.a.data.core.CustomEmoji()
+	names := make([]string, 0, len(all))
+	for n, u := range all {
+		if strings.HasPrefix(u, e.fs.URL+"img/") && strings.HasSuffix(u, ".png") && !e.a.images.Loaded(u) {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		t.Log("emoji passes skipped: no custom emoji to stand in for :explodes:")
+		return false
+	}
+	sort.Strings(names)
+	name := names[len(names)-1]
+	path := strings.TrimPrefix(all[name], e.fs.URL+"img/")
+	data := perfExplodes()
+	var served, asked atomic.Int32
+	var seenMu sync.Mutex
+	var seen []string // what was asked for under the emoji's name (diagnostics)
+	e.fs.SetImages(func(p string) ([]byte, string, bool) {
+		if strings.Contains(p, "/"+name+"/") {
+			asked.Add(1)
+			seenMu.Lock()
+			if len(seen) < 4 {
+				seen = append(seen, p)
+			}
+			seenMu.Unlock()
+		}
+		if p == path {
+			served.Add(1)
+			return data, "image/png", true // a WebP behind a .png URL, as Slack serves it
+		}
+		return nil, "", false
+	})
+	tr := &perfTraffic{e: e}
+	ch := fakeslack.BenchChannelID
+	var posted []string
+	// in the fake's history (a history fetch keeps them) and to the client
+	// as the socket would bring them
+	for i := 0; i < 6; i++ {
+		text := fmt.Sprintf("kaboom :%s: number %d, and again :%s:", name, i, name)
+		if i >= 4 {
+			text = ":" + name + ":"
+		}
+		ts, ev := e.fs.PostQuiet(ch, e.c.Authors[i%len(e.c.Authors)], text)
+		delete(ev, "type")
+		delete(ev, "channel")
+		tr.inject(ch, "message", "", ev)
+		posted = append(posted, ts)
+	}
+	for _, ts := range posted[2:4] {
+		e.fs.ReactQuiet(ch, ts, name, e.c.Authors[0])
+		tr.inject(ch, "reaction_added", "", map[string]any{"user": e.c.Authors[0], "reaction": name, "item": map[string]any{"type": "message", "channel": ch, "ts": ts}})
+	}
+	e.toBottom()
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)})
+	ok := e.wait(15*time.Second, func() bool { return e.a.images.Stats().Players > 0 })
+	e.settle(1500 * time.Millisecond) // every size's player, the rows' plugin renders
+	s := e.a.images.Stats()
+	inTL := 0
+	if tl := e.a.data.core.S.Timeline(ch); tl != nil {
+		for _, m := range tl.Msgs {
+			for _, ts := range posted {
+				if m.TS == ts {
+					inTL++
+				}
+			}
+		}
+	}
+	seenMu.Lock()
+	t.Logf("emoji :%s: (an animated WebP behind a .png URL): %d players, %d animated images, playing %v; %d of %d messages in the timeline; its image asked for %d times (%d served: %q, want %q); loaded %v, animation at 22/32/44 px %v/%v/%v",
+		name, s.Players, s.Animated, ok, inTL, len(posted), asked.Load(), served.Load(), seen, path, e.a.images.Loaded(all[name]),
+		e.a.images.IsAnimation(all[name], 22), e.a.images.IsAnimation(all[name], 32), e.a.images.IsAnimation(all[name], 44))
+	seenMu.Unlock()
+	return ok
+}
+
+// perfQuietStart and perfQuietFrame, set by perf_quiet_test.go (trees with
+// quiet frames, quiet.go), wire an idle pass's image cache as the window
+// does (wake at its animation repaints too) and draw a frame as the
+// window's loop does (the last frame's ops again when only an animation
+// asked for it; asked, askedAt: what the last frame asked for). nil (the
+// base tree): every frame is laid out.
+var (
+	perfQuietStart func(e *benchEnv, wake func()) (stop func())
+	perfQuietFrame func(e *benchEnv, asked bool, askedAt time.Time) (quiet bool)
+	perfQuietWhy   func(e *benchEnv) string // why the last frame wasn't quiet
+)
+
+// perfIdle leaves the client alone for d, the pointer off the window, and
+// draws a frame only when something asks for one, as the window does: the
+// image cache's repaint (an animation's next frame), any other Invalidate
+// (data, a plugin's tree) or a widget's wake-up (op.InvalidateCmd), at
+// most one per 16 ms (the display's). every draws
+// one every 16 ms instead, as when something else keeps the window drawing.
+// Each frame is timed like perfScroll's.
+func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
+	wake := make(chan struct{}, 1)
+	e.a.images.SetInvalidate(func() {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	})
+	defer e.a.images.SetInvalidate(func() {})
+	// and at the window's other repaints (App.Invalidate: data, a plugin's
+	// tree, posted work), as the window draws one for each
+	prevHook := invalidateHook
+	invalidateHook = func(a *App) {
+		if prevHook != nil {
+			prevHook(a)
+		}
+		if a == e.a {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+	}
+	defer func() { invalidateHook = prevHook }()
+	// the pass's Go→JS renders by component, and for a root rendered again
+	// what in its props changed (top-level keys, msg's one level down)
+	rl := &perfRenderLog{last: map[uint64]map[string]json.RawMessage{}, names: map[string]int{}, keys: map[string]int{}}
+	slackc.SetBridge(perfRenderBridge{countingBridge{e.tt.Bridge(), &e.calls}, rl})
+	defer slackc.SetBridge(countingBridge{e.tt.Bridge(), &e.calls})
+	defer func() {
+		if top := rl.top(); top != "" {
+			e.t.Logf("pass %s: renders %s", name, top)
+		}
+	}()
+	if perfQuietStart != nil && !every {
+		defer perfQuietStart(e, func() {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		})()
+	}
+	runtime.GC()
+	treeCounts := func() (all, same int) {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.deliveries, e.same
+	}
+	trees0, same0 := treeCounts()
+	calls0 := e.calls.snapshot()
+	if perfProfPrefix != "" {
+		writeProf := func(suffix string) {
+			runtime.GC()
+			if f, err := os.Create(perfProfPrefix + "-" + name + suffix); err == nil {
+				_ = pprof.Lookup("allocs").WriteTo(f, 0)
+				f.Close()
+			}
+		}
+		writeProf(".allocs0.pprof")
+		defer writeProf(".allocs1.pprof")
+		if f, err := os.Create(perfProfPrefix + "-" + name + ".cpu.pprof"); err == nil {
+			if pprof.StartCPUProfile(f) == nil {
+				defer func() {
+					pprof.StopCPUProfile()
+					f.Close()
+				}()
+			} else {
+				f.Close()
+			}
+		}
+	}
+	st0 := e.a.images.Stats()
+	var ms0, ms1 runtime.MemStats
+	runtime.ReadMemStats(&ms0)
+	c0 := procCPU()
+	var ds []float64
+	start := time.Now()
+	end := start.Add(d)
+	var last time.Time
+	var asked bool // what the last frame asked for (the window's FrameEvent.Asked)
+	var askedAt time.Time
+	quiet := 0
+	var why map[string]int // the frames laid out, by why they weren't quiet
+	for {
+		if !last.IsZero() {
+			if every {
+				time.Sleep(time.Until(last.Add(16 * time.Millisecond)))
+			} else {
+				var timer <-chan time.Time
+				if asked {
+					timer = time.After(max(time.Until(askedAt), 0))
+				}
+				select {
+				case <-wake:
+				case <-timer:
+				case <-time.After(max(time.Until(end), 0)):
+				}
+				if since := time.Since(last); since < 16*time.Millisecond { // the next vsync
+					time.Sleep(16*time.Millisecond - since)
+				}
+			}
+		}
+		if !time.Now().Before(end) {
+			break
+		}
+		last = time.Now()
+		if perfQuietFrame != nil && !every {
+			if perfQuietFrame(e, asked, askedAt) {
+				quiet++
+			} else if perfQuietWhy != nil {
+				if why == nil {
+					why = map[string]int{}
+				}
+				why[perfQuietWhy(e)]++
+			}
+		} else {
+			e.frame()
+		}
+		ds = append(ds, float64(time.Since(last).Microseconds())/1000)
+		askedAt, asked = e.r.WakeupTime()
+	}
+	cpu := procCPU() - c0
+	runtime.ReadMemStats(&ms1)
+	trees1, same1 := treeCounts()
+	calls := e.calls.snapshot()
+	st1 := e.a.images.Stats()
+	n := float64(max(len(ds), 1))
+	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000,
+		Trees: trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
+		Allocs: math.Round(float64(ms1.Mallocs-ms0.Mallocs) / n), AllocKB: math.Round(float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n),
+		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6,
+		Seconds: time.Since(start).Seconds(), AnimFrames: int(st1.Advances - st0.Advances), Players: st1.Players, Quiet: quiet, Why: why}
+	for _, d := range ds {
+		p.TotalMS += d
+		switch {
+		case d > 250:
+			p.Over250++
+			fallthrough
+		case d > 100:
+			p.Over100++
+			fallthrough
+		case d > 50:
+			p.Over50++
+		}
+	}
+	if len(ds) > 0 {
+		sort.Float64s(ds)
+		p.MedianMS, p.P95MS, p.P99MS, p.MaxMS = ds[len(ds)/2], ds[len(ds)*95/100], ds[len(ds)*99/100], ds[len(ds)-1]
+	}
+	return p
+}
+
+// perfRenderLog is a pass's renders (perfRenderBridge): how many per
+// component, and the props that changed when a root was rendered again.
+type perfRenderLog struct {
+	mu    sync.Mutex
+	last  map[uint64]map[string]json.RawMessage
+	names map[string]int
+	keys  map[string]int
+}
+
+func (l *perfRenderLog) note(root uint64, name string, props []byte) {
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(props, &m)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.names[name]++
+	if old, ok := l.last[root]; ok {
+		for _, path := range perfJSONDiff(name, mustJSON(old), props, 16) {
+			l.keys[path]++
+		}
+	}
+	l.last[root] = m
+}
+
+func mustJSON(m map[string]json.RawMessage) []byte {
+	b, _ := json.Marshal(m)
+	return b
+}
+
+// perfJSONDiff lists the paths under which a and b (JSON) differ, down to
+// depth levels: the leaves that changed, with the old and new values of a
+// short one (synthetic data only).
+func perfJSONDiff(path string, a, b []byte, depth int) []string {
+	if string(a) == string(b) {
+		return nil
+	}
+	var ma, mb map[string]json.RawMessage
+	if depth > 0 && json.Unmarshal(a, &ma) == nil && json.Unmarshal(b, &mb) == nil {
+		var out []string
+		for k, v := range mb {
+			if w, ok := ma[k]; !ok {
+				out = append(out, path+"."+k+" (new)")
+			} else {
+				out = append(out, perfJSONDiff(path+"."+k, w, v, depth-1)...)
+			}
+		}
+		for k := range ma {
+			if _, ok := mb[k]; !ok {
+				out = append(out, path+"."+k+" (gone)")
+			}
+		}
+		return out
+	}
+	var la, lb []json.RawMessage
+	if depth > 0 && json.Unmarshal(a, &la) == nil && json.Unmarshal(b, &lb) == nil {
+		if len(la) != len(lb) {
+			return []string{fmt.Sprintf("%s (%d → %d items)", path, len(la), len(lb))}
+		}
+		var out []string
+		for i := range lb {
+			out = append(out, perfJSONDiff(fmt.Sprintf("%s.%d", path, i), la[i], lb[i], depth-1)...)
+		}
+		return out
+	}
+	if len(a) <= 40 && len(b) <= 40 {
+		return []string{fmt.Sprintf("%s: %s → %s", path, a, b)}
+	}
+	return []string{path}
+}
+
+// top lists the components rendered most and the props that changed most.
+func (l *perfRenderLog) top() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.names) == 0 {
+		return ""
+	}
+	list := func(m map[string]int) string {
+		type kv struct {
+			k string
+			n int
+		}
+		var s []kv
+		for k, n := range m {
+			s = append(s, kv{k, n})
+		}
+		sort.Slice(s, func(i, j int) bool { return s[i].n > s[j].n || s[i].n == s[j].n && s[i].k < s[j].k })
+		var b strings.Builder
+		for i, x := range s {
+			if i == 12 {
+				break
+			}
+			fmt.Fprintf(&b, " %s×%d", x.k, x.n)
+		}
+		return b.String()
+	}
+	return "by component:" + list(l.names) + "; changed props:" + list(l.keys)
+}
+
+// perfRenderBridge counts renders as countingBridge does and logs them in
+// a perfRenderLog.
+type perfRenderBridge struct {
+	countingBridge
+	log *perfRenderLog
+}
+
+func (b perfRenderBridge) Render(root uint64, name string, props []byte) {
+	b.log.note(root, name, props)
+	b.countingBridge.Render(root, name, props)
+}
+
+func (b perfRenderBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	b.log.note(root, name, props)
+	b.countingBridge.RenderIn(root, parent, parentK, name, props)
 }

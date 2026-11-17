@@ -469,3 +469,33 @@ func Anim(w, h, loop int, frames ...Frame) []byte {
 	binary.LittleEndian.PutUint32(b[4:], uint32(len(body)))
 	return b
 }
+
+// ExplodesDurations are Explodes' frame durations in milliseconds.
+var ExplodesDurations = []int{70, 30, 40, 50, 60, 30, 40, 70, 50, 30, 60, 40, 50}
+
+// explodesRects are Explodes' frame rectangles (x, y, w, h; x and y even).
+var explodesRects = [][4]int{{0, 0, 32, 32}, {14, 14, 2, 2}, {6, 6, 21, 21}, {4, 8, 24, 16},
+	{10, 2, 12, 28}, {0, 12, 32, 8}, {8, 8, 16, 16}, {2, 2, 28, 28},
+	{12, 0, 8, 32}, {16, 16, 14, 14}, {0, 0, 18, 18}, {6, 20, 20, 10}, {10, 10, 12, 12}}
+
+// Explodes is a stand-in for the :explodes: custom emoji, which Slack
+// serves as an animated WebP behind a .png URL: synthetic pixels in the
+// real file's shape. A 32×32 canvas with alpha, looping forever, of 13
+// frames of 30 to 70 ms (ExplodesDurations); the first covers the canvas
+// and replaces it (no blending), the rest are smaller rectangles (2×2,
+// 21×21, …) blended over what's there, none disposed, every third one
+// translucent. The real file's pictures are lossy (9 VP8, 4 ALPH+VP8);
+// these are lossless (VP8L, all webptest writes), which a player decodes
+// once either way.
+func Explodes() []byte {
+	frames := make([]Frame, len(explodesRects))
+	for i, r := range explodesRects {
+		c := color.NRGBA{R: uint8(255 - 15*i), G: uint8(40 + 16*i), B: uint8(20 * (i % 4)), A: 255}
+		if i > 0 && i%3 == 0 {
+			c.A = 160
+		}
+		frames[i] = Solid(r[0], r[1], r[2], r[3], ExplodesDurations[i], c)
+		frames[i].NoBlend = i == 0
+	}
+	return Anim(32, 32, 0, frames...)
+}

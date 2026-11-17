@@ -130,9 +130,14 @@ func xdndTestWindow(t *testing.T) (uintptr, <-chan FileDropEvent) {
 	}()
 	t.Cleanup(func() {
 		w.Perform(system.ActionClose)
+		// the close is an XSendEvent from this goroutine: wake the window's
+		// loop (asleep in poll) so its XPending flushes it, or every run
+		// waits out the timeout and leaks the window
+		w.Invalidate()
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
+			t.Log("the window didn't close within 10 s")
 		}
 	})
 	var win uintptr

@@ -228,6 +228,19 @@ on:
       - "internal/desktop/focusassist_windows_test.go"
       - "internal/ui/titlebar_windows_test.go"
       - "third_party/gioui.org/app/window.go"
+      # the emoji-anim job's own (its timing tests guard these)
+      - "internal/imgcache/anim.go"
+      - "internal/imgcache/imgcache.go"
+      - "internal/imgcache/anim_test.go"
+      - "internal/imgcache/explodes_test.go"
+      - "internal/imgcache/livequiet_test.go"
+      - "internal/ui/quiet.go"
+      - "internal/ui/quiet_test.go"
+      - "internal/ui/quiet_window_test.go"
+      - "internal/ui/a11y_defaults.go"
+      - "third_party/gioui.org/gpu/gpu.go"
+      - "third_party/gioui.org/op/paint/clack_live.go"
+      - "third_party/gioui.org/io/input/router.go"
       - "third_party/gioui.org/app/clack_hide_windows_test.go"
       - "third_party/gioui.org/app/clack_titlebar_windows_test.go"
       - "internal/jsrt/release_batch_test.go"
@@ -360,6 +373,58 @@ jobs:
       - name: imgcache and its budget
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestBig|TestSmallLane|TestContextEndsWaits|TestFreeGivesBack|TestHeldBytesInCacheBudget|TestBusyRetryDoesntRefetch|TestPressureEndsInALoad|TestSustainedPressureNoEndlessSpinner)' ./internal/imgcache ./internal/imgcache/internal/budget
+
+  # The animated custom emoji (:explodes:, Karim's "so choppy and laggy"
+  # on α.98; branch emoji-anim-smooth): webptest.Explodes' frames on its
+  # timeline under load (photos past the cache's budget), every size of one
+  # image on one timeline, a slow window catching up, a player that
+  # outlives a stalled frame, the loop count, live ImageOps and the images
+  # a quiet frame draws again (imgcache); an animation tick drawn as a quiet
+  # frame (the last frame's ops again, no layout) in the harness and on
+  # App.Run's real X11 window (ui, Xvfb); and Gio patch 35: what a frame was
+  # asked for (an Invalidate asks nothing; X11's window too), live images
+  # through the renderer and on a real GPU context (llvmpipe), a replayed
+  # frame's filters and key log. Every check holds however slow the runner
+  # (they're against the timeline, not the clock); the imgcache step is
+  # about 25 s a run, so 20 runs need the longer timeout. Dispatch with
+  # only=emoji-anim (count=20 is the default).
+  emoji-anim:
+    if: ${{ !inputs.only || startsWith('emoji-anim', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps, Xvfb, Mesa llvmpipe, python-xlib
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
+      - name: imgcache (timeline, budget, stalls, loop count, live ops, quiet frames)
+        run: go test -count=$COUNT -v -timeout 30m -run '^(TestExplodesPlaysOnTimeUnderLoad|TestAnimSizesShareTimeline|TestAnimCatchesUp|TestKeepingPlayerSurvivesStall|TestOffscreenGIFReleased|TestGIFLoopCount|TestAnimatedGIF|TestAnimWebPEmojiPlays|TestAnimationsOff|TestLargeGIFAnimatesAtDrawnSize|TestLiveOps|TestFrameRedrawnKeepsImagesFresh)$' ./internal/imgcache
+      - name: ui (an animation tick is a quiet frame; a new member's motion default)
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -timeout 30m -run '^(TestAnimationTickIsQuiet|TestA11yNewUserDefaultsLikeSlack)$' ./internal/ui
+      - name: ui on App.Run's real X11 window (quiet frames, Xvfb)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_REAL_WINDOW_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          n=$COUNT; [ "$n" -gt 5 ] && n=5 # an App and a window each: 5 runs at most
+          xvfb-run -a -s "-screen 0 1920x1080x24" go test -count=$n -v -timeout 30m -run '^TestRealWindowQuietFrames$' ./internal/ui
+      - name: Gio patch 35 (what a frame was asked for, on X11 too; live images, a real GPU context; replayed frames)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_X11_ASKED_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=$COUNT -v -timeout 30m -run '^(TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked|TestFrameEventAskedX11|TestReplayKeepsFilters|TestReplayKeepsKeyLog|TestLiveImageFrames)$' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input gioui.org/gpu/headless
+      - name: richview (the custom emoji draws live)
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^TestCustomEmojiAnimatedWebPDraws$' ./internal/ui/richview
 
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
