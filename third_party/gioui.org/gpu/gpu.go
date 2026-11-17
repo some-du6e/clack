@@ -1508,21 +1508,33 @@ loop:
 				// cache key such that it will be equal only if the transform is the
 				// same also. Use cached data if we have it.
 				quads.key = quads.key.SetTransform(trans)
-				if v, ok := d.pathCache.get(quads.key); ok {
+				if v, ok := d.pathCache.get(quads.key); ok && v.data.data != nil {
 					// Since the GPU data exists in the cache aux will not be used.
 					// Why is this not used for the offset shapes?
 					bounds = v.bounds
 					hash = v.hash
 				} else {
-					hash = pathHash(quads.aux, quads.key)
+					// Clack patch 45: an entry without GPU data is built
+					// again. A partial frame uploads only the paths its
+					// damage stencils, so an entry can stay without data
+					// into the next frame, and the same ops drawn again (a
+					// quiet frame) hit it: their path data then went to
+					// buildPaths as if it were vertices.
+					if ok {
+						hash = v.hash
+					} else {
+						hash = pathHash(quads.aux, quads.key)
+					}
 					var pathData []byte
 					pathData, bounds = d.buildVerts(
 						quads.aux, trans, quads.key.outline, quads.key.strokeWidth,
 					)
 					quads.aux = pathData
-					// add it to the cache, without GPU data, so the transform can be
-					// reused.
-					d.pathCache.put(quads.key, opCacheValue{bounds: bounds, hash: hash})
+					if !ok {
+						// add it to the cache, without GPU data, so the transform can be
+						// reused.
+						d.pathCache.put(quads.key, opCacheValue{bounds: bounds, hash: hash})
+					}
 				}
 			} else {
 				quads.aux, bounds, _ = d.boundsForTransformedRect(bounds, trans)
