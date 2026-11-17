@@ -1267,8 +1267,8 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core: socket events don't wait for lookups"
         run: go test -count=$COUNT -v -run '^TestSocketEventsDontWaitForLookups$' ./internal/core
-      - name: "ui: event to row, without plugins"
+      - name: "ui: event to row, without plugins; a new sender's notification names them"
         if: ${{ !cancelled() }}
         run: |
-          go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui
-          go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui
+          go test -count=1 -v -timeout 20m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople)$' ./internal/ui
+          go test -count=$COUNT -timeout 60m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople)$' ./internal/ui

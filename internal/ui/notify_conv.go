@@ -192,6 +192,16 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 // Clack's may learn it a beat later, so the notification waits for the
 // lookup instead of showing the id.
 func (b *backend) noteResolve(a *App, ids []string, then func()) {
+	b.noteResolveWith(a, ids, nil, then)
+}
+
+// noteResolveWith is noteResolve that also fetches people (users/info for
+// members the store doesn't hold), in the same wait: Slack's
+// showNotification awaits ensureModelsArePresent (gaJC) for the
+// message's sender and the people and channels it names, for at most
+// 5 s, before it builds the notification. The message itself drew
+// without them (core onMessage).
+func (b *backend) noteResolveWith(a *App, ids, people []string, then func()) {
 	parent := b.ctx
 	if parent == nil {
 		parent = context.Background()
@@ -208,7 +218,63 @@ func (b *backend) noteResolve(a *App, ids []string, then func()) {
 				c.ResolveConv(ctx, id)
 			}(id)
 		}
+		if len(people) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c.EnsureUsers(ctx, people)
+			}()
+		}
 		wg.Wait()
 		a.Post(then)
 	}()
+}
+
+// noteMembers are the members a message's notification names that the
+// store doesn't hold yet (read without asking): its sender and the
+// people its text mentions (at most noteResolveMax). Slack's
+// ensureModelsArePresent fetches them before the notification shows.
+func (b *backend) noteMembers(m *core.Message) []string {
+	if b.core == nil || m == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	want := func(id string) {
+		if id == "" || seen[id] || len(out) >= noteResolveMax || !core.LooksLikeMemberID(id) {
+			return
+		}
+		seen[id] = true
+		if _, ok := b.core.S.RawUser(id); !ok && !b.core.S.Nonexistent(id) {
+			out = append(out, id)
+		}
+	}
+	if m.Name == "" { // a bot's username or a resolved sender needs no lookup
+		want(m.User)
+	}
+	richtext.PlainTextWith(m.Doc, func(s richtext.Span) (string, bool) {
+		if s.Kind == richtext.User {
+			want(s.ID)
+		}
+		return "", false
+	})
+	return out
+}
+
+// noteFresh is ev with its message converted again from the store, once
+// the people it names are in: the mentions' names, which the conversion
+// made before users/info answered couldn't read.
+func (b *backend) noteFresh(ev core.Event) core.Event {
+	if b.core == nil || ev.Msg == nil {
+		return ev
+	}
+	if m, ok := b.core.StoredMessage(ev.Channel, ev.TS); ok {
+		msg := *ev.Msg
+		msg.Doc = m.Doc
+		if msg.Name == "" {
+			msg.Name = m.Name
+		}
+		ev.Msg = &msg
+	}
+	return ev
 }

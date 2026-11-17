@@ -77,16 +77,15 @@ func (a *App) handle(ev slack.Event) {
 			return
 		}
 		// Slack's typing line maps its typers through getMemberById as it
-		// renders (MessagePaneInput, cRQG), so only the conversation on
-		// screen asks for a typer it doesn't hold. Elsewhere the record
-		// waits with what the store has: a busy workspace types in
-		// hundreds of channels, and each fetch's "names" redrew the window
-		// for nothing on it.
+		// renders (MessagePaneInput, cRQG), and so does Clack's
+		// (composer/typing.go typers): the line on screen asks for a typer
+		// the store doesn't hold, and names them once users/info answers.
+		// The event carries what the store has now, read without a lookup.
+		// It used to ask users/info first for a typer in the open
+		// conversation, and every socket event behind the typing event
+		// waited for the answer (msg-latency).
 		name := ""
-		if a.watching(ch, e.ThreadTS) {
-			a.EnsureUsers(ctx, []string{e.User})
-			name = a.S.UserName(e.User)
-		} else if u, ok := a.S.RawUser(e.User); ok {
+		if u, ok := a.S.RawUser(e.User); ok {
 			name = store.DisplayName(u)
 		}
 		a.emit(Event{Type: "typing", Channel: ch, UserID: e.User, Name: name, ThreadTS: e.ThreadTS})
@@ -344,23 +343,31 @@ func (a *App) handle(ev slack.Event) {
 	case "draft_create", "draft_update", "draft_delete", "draft_send":
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
-		a.onActivityEvent(ctx, ev.Raw)
+		// its message and people are looked up off the pump, in order
+		// (activityLater)
+		raw := ev.Raw
+		a.activityLater(func(ctx context.Context) { a.onActivityEvent(ctx, raw) })
 	case "activity_clear_all_completed":
 		// handleActivityRTMEvent's sibling (client-boot-render
 		// activityClearAllCompleted): with an undo_key, the clear-all
-		// toast and its Undo (activity.clearAll).
+		// toast and its Undo (activity.clearAll). Behind the entries
+		// queued before it (activityLater).
 		var e struct {
 			UndoKey string `json:"undo_key"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		if e.UndoKey != "" {
-			a.emit(Event{Type: "activity", Name: ev.Type, ID: e.UndoKey, Raw: ev.Raw})
+			raw, key := ev.Raw, e.UndoKey
+			a.activityLater(func(context.Context) {
+				a.emit(Event{Type: "activity", Name: "activity_clear_all_completed", ID: key, Raw: raw})
+			})
 		}
 	case "activity_views_updated":
 		// sD/F activityViewsUpdated: the saved views changed (another
 		// client made, renamed, hid or deleted one); ActivityViewsEvent
-		// reads them
-		a.emit(Event{Type: "activity", Name: ev.Type, Raw: ev.Raw})
+		// reads them. Behind the entries queued before it.
+		raw := ev.Raw
+		a.activityLater(func(context.Context) { a.emit(Event{Type: "activity", Name: "activity_views_updated", Raw: raw}) })
 	case "bookmark_added", "bookmark_removed", "bookmark_updated", "channel_updated", "channel_tab_added", "channel_tab_removed":
 		if strings.HasPrefix(ev.Type, "bookmark_") { // the folders' bookmarks store (bookmark_folders.go)
 			if c := a.bookmarkEvent(ev.Type, ev.Raw); c != "" && ch == "" {
@@ -608,14 +615,20 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	a.S.SlurpSub(ch, &m)
 	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
 	// the DM badges read the member of the IM this makes unread (members.go
-	// readBadgePerson), before EnsureUsers below can load it unannounced
+	// readBadgePerson)
 	if m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" {
 		a.readBadgePerson(ch)
 	}
-	// the "message" event names its sender for the notification (and the
-	// mentions in its text), so the people are fetched before it goes out;
-	// not its reactions' (a new message has none) (lazy_users.go)
-	a.EnsureUsers(ctx, rowUsers([]slack.Message{m}))
+	// Nobody the message names is fetched before it goes out. Slack's
+	// messageReceived (boot-render) puts it into the store the moment it
+	// arrives; its rows ask for the people they draw (getMemberById, the
+	// unknown stub's "Loading…" until users/info answers: lazy_users.go),
+	// and only the desktop notification waits for them
+	// (showNotification's ensureModelsArePresent, at most 5 s: the UI's
+	// maybeNotify). Waiting here held this message, and every socket
+	// event behind it, for users/info's round trip, and its pending ids'
+	// retries after 0.5 s and more: messages "a second" late and in clumps
+	// on a busy Grid, while Activity already had them (Karim, α.102).
 	if needsFileInfo(&m) { // the echo of the viewer's own upload too
 		go a.fillFiles(ch, m.TS)
 	}

@@ -914,14 +914,22 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// a conversation core doesn't know was looked up for this very
 		// message (core onMessage's refreshConv); one it knows without a
 		// name, and the channels the text mentions that nobody named
-		// yet, are looked up now
+		// yet, are looked up now, and so are the sender and the people
+		// the text mentions that core doesn't hold (the message went out
+		// without them: showNotification's ensureModelsArePresent)
 		var ids []string
 		if c != nil && !named && c.Kind != "im" && c.Kind != "app" {
 			ids = append(ids, ev.Channel)
 		}
 		ids = append(ids, b.noteMentions(ev.Msg.Doc)...)
-		if len(ids) > 0 {
-			b.noteResolve(a, ids, func() { b.maybeNotifyAfter(a, ev, true) })
+		people := b.noteMembers(ev.Msg)
+		if len(ids) > 0 || len(people) > 0 {
+			b.noteResolveWith(a, ids, people, func() {
+				if len(people) > 0 {
+					ev = b.noteFresh(ev)
+				}
+				b.maybeNotifyAfter(a, ev, true)
+			})
 			return
 		}
 	}

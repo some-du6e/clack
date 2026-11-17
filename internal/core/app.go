@@ -66,6 +66,7 @@ type App struct {
 	files *fileCache
 
 	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
+	actQ    actQueue    // the Activity events' lookups, off the event pump (activity_later.go)
 
 	saves sync.WaitGroup // background disk saves (loadEmoji's meta.json)
 	side  sideReads      // History's side reads (history_side.go)
