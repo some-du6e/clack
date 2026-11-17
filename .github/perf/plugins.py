@@ -32,8 +32,9 @@ METRICS = [
     ("trees", "plugin trees that changed (during the frames)", ""),
     ("trees_same", "plugin trees re-delivered unchanged", ""),
     ("renders", "Go→JS renders", ""),
-    ("tasks", "Go→JS tasks (the sweep's unmounts not counted)", ""),
-    ("unmounts", "roots unmounted (slackc's sweep of what earlier steps drew)", ""),
+    ("tasks", "Go→JS tasks (idle passes: the sweep's unmounts not counted)", ""),
+    ("unmounts", "roots unmounted (slackc's sweep)", ""),
+    ("polls", "core's polls during the pass (each reverts injected edits)", ""),
     ("backlog_ms", "JS backlog after the frames", "ms"),
     # the gpu passes (head only: Gio's frame stats, Clack patch 36)
     ("draws", "GPU draw calls / frame", ""),

@@ -176,6 +176,7 @@ type row struct {
 	srcFP, msgFP, wrapFP uint64       // contentFP of srcMsg, msg, wrapMsg
 	inFP, textFP         uint64       // … of inMsg, textOv
 	textMemo, blocksMemo fpMemo       // the MessageText and Blocks trees' msgs
+	ovEl                 elMemo       // the element host of a plugin's msg the body draws (withElementsFor)
 	filesMemo, attsMemo  fpMemo       // the MessageFiles and MessageKitAttachments trees'
 	textOv               slackc.Props // MessageText's msg override (nil = none)
 	filesOv, attsOv      slackc.Props // MessageFiles / MessageKitAttachments msg overrides
@@ -1813,7 +1814,7 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
-	r.withElements(rc.h)
+	r.withElementsFor(rc.h, msg)
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.rv.Layout(gtx, rc.st, &r.handler) })
 	}

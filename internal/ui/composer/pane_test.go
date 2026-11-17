@@ -2,48 +2,53 @@ package composer
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
 
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/slackc"
-	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // A composer drawn with Layout inside a list's pane (an edit composer in
-// its row, a Block Kit field) keys its plugin roots in that pane, and the
-// vanish guard remounts them there. Only LayoutIn recorded a pane, so an
-// edit composer's guard looked in pane "" and found none of its roots:
-// a patched MessageInput that came back without the box was never mounted
-// again for the rest of the edit. Synthetic data.
-func TestComposerKeysItsRootsInTheListsPane(t *testing.T) {
-	app, _ := fakeslackApp(t)
-	th := theme.New(false)
-	h := &ovHost{slickHost: &slickHost{app: app, th: th}}
-	const ch = "C0PANEED1"
-	ec := NewEdit(h, core.Message{Channel: ch, TS: "1700000000.000300", Text: "edit me"}, nil)
-	t.Cleanup(ec.Close)
-	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Now: time.Now(),
-		Constraints: layout.Constraints{Max: image.Pt(700, 160)}}
-	func() {
-		defer slackc.EndPane(slackc.Pane(ch)) // the channel's list, as its row draws the edit
-		ec.Layout(gtx)
-	}()
-	if ec.pane != ch {
-		t.Errorf("the edit composer drawn in the list's pane %q records pane %q; its guard remounts there", ch, ec.pane)
+// its row, a Block Kit field in a message) keys its plugin roots in that
+// pane, and its vanish guard remounts them there. Only LayoutIn recorded a
+// pane, so the guard looked in pane "" and found none of its roots: a
+// patched input that came back without the box was never mounted again
+// while the composer was open. The guard's empty-tree case
+// (TestComposerBoxSurvivesEmptyPluginTree), drawn inside a pane.
+// Synthetic data.
+func TestComposerVanishRemountsInItsPane(t *testing.T) {
+	e := newVanishEnv(t, []string{"MessagePaneInput"})
+	const pane = "C0LISTPANE"
+	frame := func(dt time.Duration) layout.Dimensions {
+		e.now = e.now.Add(dt)
+		e.ops.Reset()
+		gtx := layout.Context{Ops: e.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Constraints{Min: image.Pt(900, 0), Max: image.Pt(900, 500)}, Now: e.now, Source: e.r.Source()}
+		slackc.Frame(gtx)
+		defer slackc.EndPane(slackc.Pane(pane)) // the list's, as its row draws an edit composer
+		d := e.c.Layout(gtx)
+		e.r.Frame(e.ops)
+		return d
 	}
-	// and LayoutIn's pane, as before
-	c := New(h, ch, "")
-	t.Cleanup(c.Close)
-	c.LayoutIn(gtx, "split:"+ch)
-	if c.pane != "split:"+ch {
-		t.Errorf("LayoutIn's composer records pane %q", c.pane)
+	e.boxDrawn("before the plugin's tree (its native draws)", frame(0))
+	first := e.render("MessagePaneInput")
+	if got := slackc.KeyedPanes("MessagePaneInput", e.c.key()); len(got) != 1 || got[0] != pane {
+		t.Fatalf("the composer's root is keyed in panes %q; want the list's %q", got, pane)
 	}
-	if slackc.CurrentPane() != "" {
-		t.Errorf("a pane outlived its composer: %q", slackc.CurrentPane())
+	e.deliver(first.root, []byte("[]")) // the plugin's tree comes back empty
+	e.boxDrawn("the plugin's tree empty", frame(16*time.Millisecond))
+	if !e.b.wasUnmounted(first.root) {
+		t.Errorf("the guard's remount didn't reach the root keyed in the list's pane (lines %q)", e.lines)
+	}
+	if len(e.lines) == 0 || !strings.Contains(e.lines[0], "remounted 1 plugin root") {
+		t.Errorf("log lines %q; want the one root remounted", e.lines)
+	}
+	e.boxDrawn("the frame after", frame(16*time.Millisecond))
+	if fresh := e.render("MessagePaneInput"); fresh.root == first.root {
+		t.Error("no fresh root mounted in the pane")
 	}
 }

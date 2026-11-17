@@ -194,9 +194,16 @@ func (r *refNames) BotName(id string) string {
 }
 
 // Emoji records the emoji's name, known or not: an emoji added later
-// ("emoji_changed") draws in the messages that used it.
+// ("emoji_changed") draws in the messages that used it. And the names an
+// alias resolves through: a change to its target (removed, its picture
+// replaced) draws in them too.
 func (r *refNames) Emoji(name string) (string, string, bool) {
 	addRef(&r.refs.Emoji, name)
+	if r.app != nil && r.app.S != nil {
+		for _, n := range r.app.S.CustomEmoji.AliasChain(name) {
+			addRef(&r.refs.Emoji, n)
+		}
+	}
 	return r.msgNames.Emoji(name)
 }
 

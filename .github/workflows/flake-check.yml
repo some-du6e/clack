@@ -1244,7 +1244,7 @@ jobs:
         run: |
           rc=0
           go test -count=$COUNT -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions|TestDocPrefsConvertLoadedMessages|TestPatchedRowTakesChangeWithoutAnotherFrame|TestBroadcastPreambleReadsMentionsAsItDraws|TestMessagePatchGetsWrappersExactMsg|TestPatchedRootSurvivesUpdates|TestVoteButtonsSurviveUpdates|TestViewedRowTakesUpdates|TestReconvertKeepsAnUpdate|TestBroadcastPreambleFollowsARename|TestUnviewedRowTakesUpdatesOnce|TestSenderRenameWhileDrawing)$' ./internal/ui/messages || rc=1
-          go test -count=$COUNT -v -timeout 10m -run '^(TestComposersForOneThreadSendTheirOwn|TestComposerKeysItsRootsInTheListsPane)$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestComposersForOneThreadSendTheirOwn|TestComposerVanishRemountsInItsPane)$' ./internal/ui/composer || rc=1
           go test -count=$COUNT -v -timeout 20m -run '^(TestComposersDrawInTheirListsPanes|TestPatchedViewShowsUnderQuietFrames)$' ./internal/ui || rc=1
           exit $rc
 

@@ -433,3 +433,42 @@ func TestEventsMarkDocChanges(t *testing.T) {
 		t.Errorf("a new highlight word marked NamePrefs %v, DocPrefs %v; want only DocPrefs (every Doc's highlights)", ev.NamePrefs, ev.DocPrefs)
 	}
 }
+
+// A removal of custom emoji goes out with the names removed (Slack's
+// names), so the messages that drew them convert again and no other; and
+// a message drawing an alias reads its target too, so a change to the
+// target converts it again.
+func TestEmojiRemovalNamesAndAliases(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.CustomEmoji.Put("partyparrot", "https://emoji.invalid/pp.gif")
+	a.S.CustomEmoji.Put("pp", "alias:partyparrot")
+	evs, stop := a.Subscribe()
+	defer stop()
+	raw, _ := json.Marshal(map[string]any{"type": "emoji_changed", "subtype": "remove", "names": []string{"partyparrot", "pp"}, "event_ts": "1700000000.000100"})
+	a.Inject(slack.Event{Type: "emoji_changed", Raw: raw})
+	for deadline := time.After(5 * time.Second); ; {
+		select {
+		case ev := <-evs:
+			if ev.Type != "emoji_changed" {
+				continue
+			}
+			if !slices.Equal(ev.Users, []string{"partyparrot", "pp"}) {
+				t.Errorf("the removal's event names %v; want the names Slack removed", ev.Users)
+			}
+			if c := RefsChanged(ev); c.All || !slices.Equal(c.Emoji, []string{"partyparrot", "pp"}) {
+				t.Errorf("RefsChanged(the removal) = %+v; want the two names, not every message", c)
+			}
+			goto aliases
+		case <-deadline:
+			t.Fatal("no emoji_changed event")
+		}
+	}
+aliases:
+	a.S.CustomEmoji.Put("partyparrot", "https://emoji.invalid/pp.gif")
+	a.S.CustomEmoji.Put("pp", "alias:partyparrot")
+	rn := refNames{msgNames: msgNames{a.S}, app: a}
+	rn.Emoji("pp")
+	if !slices.Contains(rn.refs.Emoji, "pp") || !slices.Contains(rn.refs.Emoji, "partyparrot") {
+		t.Errorf("an alias's refs %v; want it and its target", rn.refs.Emoji)
+	}
+}

@@ -236,6 +236,10 @@ func sweepRows(now time.Time) {
 		for _, r := range s.rows {
 			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
 				r.rv.Release()
+				// the trees' msgs it remembered (slackc's sweep has let
+				// their roots go): not kept alive for the row's lifetime
+				r.textMemo, r.blocksMemo, r.filesMemo, r.attsMemo = fpMemo{}, fpMemo{}, fpMemo{}, fpMemo{}
+				r.ovEl = elMemo{}
 			}
 		}
 	}
