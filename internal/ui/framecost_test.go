@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"gioui.org/gpu"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -70,13 +72,16 @@ func TestFrameCostWindow(t *testing.T) {
 				}
 				name := fmt.Sprintf("%gx %s%s", scale, map[bool]string{false: "light", true: "dark"}[dark], map[bool]string{false: "", true: " thread"}[thread])
 				now := time.Now()
-				old, so, to := e.costFrame(t, true, now)
-				cur, sn, tn := e.costFrame(t, false, now)
+				old, so, to := e.costFrame(t, true, false, now)
+				shifted, _, _ := e.costFrame(t, true, true, now)
+				cur, sn, tn := e.costFrame(t, false, false, now)
 				t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
 				t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
-				t.Logf("%s: %s", name, costDiff(old, cur))
+				t.Logf("%s, the old way after one more path first (the noise floor): %s", name, costDiff(old, shifted))
+				t.Logf("%s, new against old: %s", name, costDiff(old, cur))
 				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
 					costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)
+					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-floor", old, shifted)
 				}
 				if thread {
 					e.a.CloseSecondary()
@@ -91,10 +96,11 @@ func TestFrameCostWindow(t *testing.T) {
 }
 
 // costFrame lays the window out at now the old way (legacy) or the new,
-// draws it a few times (paths built, atlases sized) and returns its
-// pixels, the last frame's stats and the median time of 5 more frames to
-// the end of their rasterization.
-func (e *perfEnv) costFrame(t *testing.T, legacy bool, now time.Time) (*image.RGBA, gpu.FrameStats, float64) {
+// after one more tiny path if shift (every path lands elsewhere in the
+// atlas), draws it a few times (paths built, atlases sized) and returns
+// its pixels, the last frame's stats and the median time of 5 more frames
+// to the end of their rasterization.
+func (e *perfEnv) costFrame(t *testing.T, legacy, shift bool, now time.Time) (*image.RGBA, gpu.FrameStats, float64) {
 	t.Helper()
 	theme.SetLegacyFrameCost(legacy)
 	gpu.ClackLegacyClips(legacy)
@@ -102,6 +108,9 @@ func (e *perfEnv) costFrame(t *testing.T, legacy bool, now time.Time) (*image.RG
 	defer gpu.ClackLegacyClips(false)
 	e.now = now
 	gtx := e.context()
+	if shift {
+		paint.FillShape(gtx.Ops, color.NRGBA{R: 1, A: 1}, clip.Ellipse(image.Rect(1, 1, 9, 7)).Op(gtx.Ops))
+	}
 	e.a.frame(gtx)
 	e.r.Frame(&e.ops)
 	w := e.gpu
