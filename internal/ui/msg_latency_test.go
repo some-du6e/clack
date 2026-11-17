@@ -556,22 +556,17 @@ func latReport(t *testing.T, ps latPass, ws []*latWait, enforce bool) map[string
 			t.Errorf("%s, %s: %d of %d rows never drew", ps.name, kind, st.Missed, st.N)
 		}
 		// an own message's pending copy: the frame after the one that took
-		// the Enter key (Slack's sendMessage adds it in the keydown's task).
-		// With plugins the send's checks and patches run in JS first
-		// (OwlMode's check and prepareAndSendMessage patch): on the
-		// runners' QuickJS that takes 10-20 ms with the JS thread idle at
-		// Enter (Slack's V8 takes a few), so the copy can land a vsync
-		// later, and a frame the send waited for besides would make it
-		// four: three at most. With 400 ms of JS queued (busyJS) they run
-		// ahead of it but wait for the task running when they come: four
-		// at most there. A frame the socket's traffic asks for in between
-		// counts too, so only the quiet passes count frames.
+		// the Enter key (Slack's sendMessage adds it in the keydown's
+		// task), whatever plugins check and patch the send first (OwlMode's
+		// check and prepareAndSendMessage patch: their JS runs ahead of the
+		// queued work and of the composer's re-render after Enter). With
+		// 400 ms of JS queued (busyJS) the checks wait for the 10 ms task
+		// running when they come: one frame more there, never the backlog.
+		// A frame the socket's traffic asks for in between counts too, so
+		// only the quiet passes count frames.
 		maxFrames, median := 2, latMedianBudget
-		if kind == "own" && ps.pluginSend {
+		if kind == "own" && ps.pluginSend && ps.busyJS != nil {
 			maxFrames, median = 3, latMedianBudget+idleprobe.Vsync
-			if ps.busyJS != nil {
-				maxFrames = 4
-			}
 		}
 		if kind == "own" && !ps.busy {
 			for n, k := range st.Frames {

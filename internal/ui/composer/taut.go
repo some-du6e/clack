@@ -413,8 +413,11 @@ func tautSendCheck(m SendCheck, done func(ok bool)) {
 		kind = "thread"
 	}
 	c := taut.ComposerContext{Kind: kind, ChannelID: m.ChannelID, ThreadTs: m.ThreadTS, Blocks: m.Blocks, Text: m.Text}
-	// the user's: ahead of the JS work queued before it (taut.UserAction)
-	go func() { done(t.SendCheck(taut.UserAction(context.Background()), c)) }()
+	// the user's: ahead of the JS work queued before it (taut.UserAction),
+	// queued now, before this frame's layout queues the composer's
+	// re-render (SendCheckAsync); done hears the answer on another
+	// goroutine
+	t.SendCheckAsync(taut.UserAction(context.Background()), c, done)
 }
 
 // tautLinkTransform runs composer.addLinkTransform (ClearURLs) on one URL.

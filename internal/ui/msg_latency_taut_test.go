@@ -20,9 +20,10 @@ import (
 // of the test's own (the path every send takes with any plugin's
 // addSendCheck). The quiet own pass lets the plugin runtime finish its
 // work before each Enter (the patched composer's re-render after the
-// typing), so its sends are timed by their own JS work: the checks and
-// patches take the runners' QuickJS 10-20 ms, and the pending copy may land
-// a vsync after Slack's next frame, never two (latReport). The "JS busy"
+// typing), and its sends are held to Slack's next frame like ones without
+// plugins: the checks are queued at Enter ahead of the composer's
+// re-render, and the send's thunk follows them before a render starts
+// (jsrt's userGap). The "JS busy"
 // pass queues 400 ms of work on the plugin runtime, in 10 ms tasks, before
 // each own send instead: what a channel's patched rows leave it when
 // messages and profile changes come in (the perf job's plugin passes

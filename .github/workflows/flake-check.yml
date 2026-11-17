@@ -1270,7 +1270,7 @@ jobs:
           rc=0
           go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestSocketMessageAsksForNobody|TestHistoryCatchesUpWithLatest|TestHistoryRereadsAfterSlowConnect|TestHistoryCatchUpRetries|TestHistoryCountsMutations)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^(TestSetLatestSinceKeepsLiveMessages|TestSetLatestSincePageWins|TestSetLatestSinceKeepsHeldCopy)$' ./internal/store || rc=1
-          go test -count=$COUNT -v -run '^(TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations)$' ./internal/jsrt || rc=1
+          go test -count=$COUNT -v -run '^(TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations|TestUserBlockingChainHop)$' ./internal/jsrt || rc=1
           go test -count=$COUNT -v -run '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage)$' ./internal/ui/composer || rc=1
           exit $rc
       - name: "ui: event to row, without plugins; notifications name new people, in order; missed messages reach the lists"

@@ -81,8 +81,10 @@ type Runtime struct {
 	js     *Ctx
 	timers timerHeap
 	timerN int
-	// urgentTimers counts the timers in timers a user-blocking task set
+	// urgentTimers counts the timers in timers a user-blocking task set;
+	// lastUrgent is when the last user-blocking task ended (monoNow)
 	urgentTimers int
+	lastUrgent   int64
 	hosts        map[uint32]HostFunc
 	hostN        uint32
 	roots        map[uint64]*Root
@@ -366,6 +368,38 @@ func IsUserBlocking(ctx context.Context) bool {
 	return b
 }
 
+// userGap is how long, after a user-blocking task, the loop holds the
+// queued tasks back for the next hop of the user's chain: a send's check
+// answers Go, which queues the send's thunk a goroutine switch or two
+// later, and a render the loop started meanwhile (the composer's own after
+// Enter) held the thunk for its whole run: the pending copy missed the
+// next frame. In Slack the check and the dispatch run in one JS task.
+const userGap = 5 * time.Millisecond
+
+// awaitUserGap waits until userGap has passed since the last user-blocking
+// task, or another one comes (JS thread). It reports false once the
+// runtime closed.
+func (r *Runtime) awaitUserGap() bool {
+	for {
+		if r.closed.Load() {
+			return false
+		}
+		if r.urgentN.Load() > 0 {
+			return r.runUrgent()
+		}
+		d := time.Duration(r.lastUrgent + int64(userGap) - monoNow())
+		if r.lastUrgent == 0 || d <= 0 {
+			return true
+		}
+		t := time.NewTimer(d)
+		select {
+		case <-r.wake:
+		case <-t.C:
+		}
+		t.Stop()
+	}
+}
+
 // runUrgent runs the user-blocking tasks queued so far, and the
 // user-blocking timers due (JS thread). It reports false once the
 // runtime closed.
@@ -385,6 +419,9 @@ func (r *Runtime) runUrgent() bool {
 				return false
 			}
 			r.runTask(u[i])
+			if u[i].urgent {
+				r.lastUrgent = monoNow() // awaitUserGap
+			}
 		}
 	}
 	return !r.closed.Load()
@@ -454,8 +491,9 @@ func (r *Runtime) loop() {
 		r.batch, r.batchAt = q, 0
 		r.mu.Unlock()
 		for {
-			// a user-blocking task that came meanwhile goes first
-			if r.closed.Load() || !r.runUrgent() {
+			// a user-blocking task that came meanwhile goes first, and the
+			// next hop of the user's chain a moment after one (userGap)
+			if r.closed.Load() || !r.runUrgent() || !r.awaitUserGap() {
 				return
 			}
 			r.mu.Lock()

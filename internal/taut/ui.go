@@ -616,12 +616,29 @@ func (t *Taut) HasSendChecks() bool { h := t.composer(); return h != nil && h.Se
 // confirm modal); false keeps the message in the composer. Call it off the
 // UI goroutine before sending, when HasSendChecks.
 func (t *Taut) SendCheck(ctx context.Context, c ComposerContext) bool {
+	answer := make(chan bool, 1)
+	t.sendCheck(ctx, c, func(ok bool) { answer <- ok }, false)
+	return <-answer
+}
+
+// SendCheckAsync is SendCheck answering done on another goroutine. With
+// the runtime running, the checks' JS call is queued before it returns,
+// on the caller's goroutine: the composer's, at Enter, ahead of its own
+// re-render after it, which the checks waited for when they were queued a
+// goroutine switch later (a user-blocking task runs ahead of the queued
+// ones, never of the one running).
+func (t *Taut) SendCheckAsync(ctx context.Context, c ComposerContext, done func(ok bool)) {
+	t.sendCheck(ctx, c, done, true)
+}
+
+func (t *Taut) sendCheck(ctx context.Context, c ComposerContext, answer func(bool), async bool) {
 	if !t.HasSendChecks() {
-		return true
-	}
-	rt, err := t.ensureRuntime()
-	if err != nil {
-		return true
+		if async {
+			go answer(true)
+		} else {
+			answer(true)
+		}
+		return
 	}
 	type result struct {
 		ok  bool
@@ -629,41 +646,67 @@ func (t *Taut) SendCheck(ctx context.Context, c ComposerContext) bool {
 	}
 	done := make(chan result, 1)
 	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() {
-		var ok bool
-		err := rt.call(cctx, "sendCheck", &ok, c)
-		done <- result{ok, err}
-	}()
-	// A check may wait for the user as long as they take (HaikuWarning's
-	// dialog). But when the runtime's watchdog interrupts a task, QuickJS
-	// leaves the promises that task would have settled pending forever, so
-	// a check it hit (or a promise checks share, like HaikuWarning's
-	// dictionary) never answers. Once that has happened, a check that stays
-	// pending with nothing open for the user fails like a check that threw:
-	// it is ignored.
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	var idle time.Duration
-	for {
-		select {
-		case r := <-done:
-			if r.err != nil {
-				t.logf("taut: send check: %v", r.err)
-				return true
+	call := func(rt *runtime) {
+		rt.rt.CallThen(cctx, "__taut.sendCheck", func(raw json.RawMessage, err error) {
+			var ok bool
+			if err == nil && len(raw) > 0 {
+				err = json.Unmarshal(raw, &ok)
 			}
-			return r.ok
-		case <-tick.C:
-			if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
-				idle = 0
-				continue
+			done <- result{ok, err}
+		}, c)
+	}
+	rt := t.liveRuntime()
+	if rt != nil {
+		call(rt) // queued now (CallThen)
+	}
+	wait := func() {
+		defer cancel()
+		if rt == nil {
+			var err error
+			if rt, err = t.ensureRuntime(); err != nil {
+				answer(true)
+				return
 			}
-			idle += time.Second
-			if idle >= sendCheckGrace {
-				t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
-				return true
+			call(rt)
+		}
+		// A check may wait for the user as long as they take (HaikuWarning's
+		// dialog). But when the runtime's watchdog interrupts a task, QuickJS
+		// leaves the promises that task would have settled pending forever, so
+		// a check it hit (or a promise checks share, like HaikuWarning's
+		// dictionary) never answers. Once that has happened, a check that stays
+		// pending with nothing open for the user fails like a check that threw:
+		// it is ignored.
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		var idle time.Duration
+		for {
+			select {
+			case r := <-done:
+				if r.err != nil {
+					t.logf("taut: send check: %v", r.err)
+					answer(true)
+					return
+				}
+				answer(r.ok)
+				return
+			case <-tick.C:
+				if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
+					idle = 0
+					continue
+				}
+				idle += time.Second
+				if idle >= sendCheckGrace {
+					t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
+					answer(true)
+					return
+				}
 			}
 		}
+	}
+	if async {
+		go wait()
+	} else {
+		wait()
 	}
 }
 

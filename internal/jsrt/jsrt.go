@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -210,6 +211,71 @@ func (r *Runtime) ExposeAsync(name string, fn AsyncFunc) {
 // returns the result as JSON (undefined → null). Any goroutine except the
 // JS thread itself. With a UserBlocking ctx it runs ahead of the tasks
 // already queued.
+// CallThen is Call without the wait: the call is queued before CallThen
+// returns, on the caller's goroutine (a user-blocking one ahead of what
+// the caller queues after it: the composer's re-render after Enter, a
+// send's check first), and done hears its result on another goroutine.
+func (r *Runtime) CallThen(ctx context.Context, path string, done func(json.RawMessage, error), args ...any) {
+	if r.closed.Load() {
+		go done(nil, ErrClosed)
+		return
+	}
+	type res struct {
+		v   json.RawMessage
+		err error
+	}
+	ch := make(chan res, 1)
+	t := task{kind: "Call", what: path, urgent: IsUserBlocking(ctx)}
+	t.f = func() {
+		defer func() {
+			if p := recover(); p != nil {
+				ch <- res{nil, fmt.Errorf("jsrt: panic in Call: %v", p)}
+				r.afterPanic(p)
+			}
+		}()
+		js := r.js
+		fn, this, err := js.resolvePath(path)
+		if err != nil {
+			ch <- res{nil, err}
+			return
+		}
+		v, err := fn.CallThis(this, args...)
+		if err != nil {
+			ch <- res{nil, err}
+			return
+		}
+		if !v.IsPromise() {
+			b, err := v.JSON()
+			ch <- res{b, err}
+			return
+		}
+		v.Then(func(v Value, err error) {
+			if err != nil {
+				ch <- res{nil, err}
+				return
+			}
+			b, err := v.JSON()
+			ch <- res{b, err}
+		})
+	}
+	r.enqueue(t)
+	go func() {
+		select {
+		case x := <-ch:
+			done(x.v, x.err)
+		case <-ctx.Done():
+			done(nil, ctx.Err())
+		case <-r.done:
+			select {
+			case x := <-ch:
+				done(x.v, x.err)
+			default:
+				done(nil, ErrClosed)
+			}
+		}
+	}()
+}
+
 func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawMessage, error) {
 	type res struct {
 		v   json.RawMessage

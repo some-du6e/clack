@@ -324,3 +324,31 @@ func TestUserBlockingContinuations(t *testing.T) {
 		t.Errorf("ran %s, want %s: the second timer went ahead of the user's task", got, want)
 	}
 }
+
+// The next hop of the user's chain, queued from Go a moment after a
+// user-blocking task (a send's check answers Go, which queues the send's
+// thunk), runs before the queued task the loop would start meanwhile (the
+// composer's re-render after Enter): in Slack the check and the dispatch
+// run in one JS task.
+func TestUserBlockingChainHop(t *testing.T) {
+	l := newLaneRecorder(t)
+	g := l.hold("G", true)
+	l.post(l.r.Post, "render")
+	l.r.PostUserBlocking(func(*Ctx) {
+		l.note("check")
+		go func() {
+			time.Sleep(time.Millisecond) // the answer's trip through Go
+			l.post(l.r.PostUserBlocking, "thunk")
+		}()
+	})
+	close(g)
+	for dl := time.Now().Add(5 * time.Second); !strings.Contains(l.got(), "render"); time.Sleep(time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatalf("ran %s", l.got())
+		}
+	}
+	l.drain()
+	if got, want := l.got(), "G, check, thunk, render"; got != want {
+		t.Errorf("ran %s, want %s: the render started between the user's check and its thunk", got, want)
+	}
+}
