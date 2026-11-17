@@ -32,7 +32,8 @@ METRICS = [
     ("trees", "plugin trees that changed (during the frames)", ""),
     ("trees_same", "plugin trees re-delivered unchanged", ""),
     ("renders", "Go→JS renders", ""),
-    ("tasks", "Go→JS tasks", ""),
+    ("tasks", "Go→JS tasks (the sweep's unmounts not counted)", ""),
+    ("unmounts", "roots unmounted (slackc's sweep of what earlier steps drew)", ""),
     ("backlog_ms", "JS backlog after the frames", "ms"),
     ("anim_frames", "animation frames shown (every player's)", ""),
     ("players", "animations playing at the end", ""),
@@ -124,7 +125,7 @@ def main():
             continue  # in the recorder's table above
         print(f"### {name}\n")
         if name == "idle-busy":
-            print("No input for 10 s while the workspace goes on around the open channel (messages and updates in channels opened earlier, profile changes of people no row draws, badges, a pref's echo, new emoji); a frame is drawn only when something asks for one, as the window draws them. Slack draws nothing then.\n")
+            print("No input for 10 s while the workspace goes on around the open channel (messages and updates in channels opened earlier, profile changes of people no row draws, badges, a pref's echo, new emoji); a frame is drawn only when something asks for one, as the window draws them. Not a floor of nothing: each message turns a read channel's sidebar row unread (Slack repaints that too, one frame each), and most of the frames left come from ui.backend asking for one per core event (frame-wakeups' area), not from plugins or taut.\n")
         print("| | before | after | change |")
         print("|---|---|---|---|")
         for key, label, unit in METRICS:

@@ -55,9 +55,11 @@ package ui
 // baseline tree for the "before" column.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"image"
 	"image/color"
 	"math"
@@ -131,6 +133,11 @@ type perfPass struct {
 	// read as nothing having changed)
 	Tasks     int64   `json:"tasks"`
 	BacklogMS float64 `json:"backlog_ms"`
+	// Unmounts are the roots unmounted during the pass: slackc's sweep of
+	// roots the steps before it drew, 5 to 7 s after their last draw
+	// (slackc/frame.go). One Go→JS task each, left out of Tasks and
+	// TasksPS: they're cleanup of what came before, not the pass's work
+	Unmounts int64 `json:"unmounts"`
 	// the idle passes (perfIdle): how long they ran, the animation frames
 	// the image cache's players moved on to meanwhile (every size of every
 	// animated image counts), and the players playing at the end
@@ -171,10 +178,16 @@ func perfJSTasks(e *benchEnv) int64 {
 	return 0
 }
 
-// perfQuiesce draws frames until no list is loading and no Go→JS render
-// and no JS tree has come for still, at most d.
-func (e *benchEnv) perfQuiesce(d, still time.Duration) {
-	count := func() int64 { return e.calls.render.Load() + e.calls.renderIn.Load() + int64(e.delivered()) }
+// perfQuiesce draws laid-out frames for at least atLeast, then until no list
+// is loading and no Go→JS render, no JS tree and no unmount has come for
+// still, at most d. atLeast covers slackc's sweep of the roots the steps
+// before drew (staleAfter + sweepEvery after their last draw, 7 s): the
+// idle passes measured that sweep, a wave of unmounts landing in
+// whichever pass came 5 to 7 s after the last scroll.
+func (e *benchEnv) perfQuiesce(d, still, atLeast time.Duration) {
+	count := func() int64 {
+		return e.calls.render.Load() + e.calls.renderIn.Load() + e.calls.unmount.Load() + int64(e.delivered())
+	}
 	loading := func() bool {
 		for _, c := range e.a.convos {
 			if l, ok := c.list.(interface{ Loading() bool }); ok && l.Loading() {
@@ -183,8 +196,8 @@ func (e *benchEnv) perfQuiesce(d, still time.Duration) {
 		}
 		return false
 	}
-	prev, last := count(), time.Now()
-	for dl := time.Now().Add(d); time.Now().Before(dl) && (time.Since(last) < still || loading()); {
+	prev, last, start := count(), time.Now(), time.Now()
+	for dl := time.Now().Add(d); time.Now().Before(dl) && (time.Since(start) < atLeast || time.Since(last) < still || loading()); {
 		e.frame()
 		time.Sleep(5 * time.Millisecond)
 		if n := count(); n != prev {
@@ -552,8 +565,7 @@ func TestPerfPluginScroll(t *testing.T) {
 	// passes before took longer or shorter). Refresh now and let what it
 	// changed draw, so the next refresh falls due after the idle passes.
 	e.a.refreshVisible()
-	e.perfQuiesce(20*time.Second, 1500*time.Millisecond)
-	e.settle(2 * time.Second)
+	e.perfQuiesce(40*time.Second, 1500*time.Millisecond, 7500*time.Millisecond)
 	res.Passes = append(res.Passes, e.perfIdle("idle", 5*time.Second, false, nil))
 	// nothing on screen changes for 10 s while the workspace goes on
 	// around the open channel
@@ -561,6 +573,8 @@ func TestPerfPluginScroll(t *testing.T) {
 	busy.idle = true
 	res.Passes = append(res.Passes, e.perfIdle("idle-busy", 10*time.Second, false, busy))
 	if e.perfAnimEmoji(t) {
+		// its messages scrolled the rows before them away: their sweep too
+		e.perfQuiesce(40*time.Second, 1500*time.Millisecond, 7500*time.Millisecond)
 		res.Passes = append(res.Passes, e.perfIdle("emoji", 5*time.Second, false, nil))
 		res.Passes = append(res.Passes, e.perfIdle("emoji-60hz", 5*time.Second, true, nil))
 	}
@@ -660,7 +674,7 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 		return e.deliveries, e.same
 	}
 	trees0, same0 := treeCounts()
-	calls0, tasks0 := e.calls.snapshot(), perfJSTasks(e)
+	calls0, tasks0, unm0 := e.calls.snapshot(), perfJSTasks(e), e.calls.unmount.Load()
 	if perfProfPrefix != "" {
 		writeProf := func(suffix string) {
 			runtime.GC() // the allocs profile is as of the last collection
@@ -738,6 +752,8 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 		events = traffic.stop()
 	}
 	tasks := perfJSTasks(e) - tasks0
+	unm := e.calls.unmount.Load() - unm0
+	tasks -= unm            // the sweep's (Unmounts)
 	backlog := perfDrain(e) // what JS still had to answer: its trees are this pass's
 	trees1, same1 := treeCounts()
 	runtime.ReadMemStats(&ms1)
@@ -745,7 +761,7 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	cpu := procCPU() - c0
 	calls := e.calls.snapshot()
 	n := float64(len(ds))
-	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000, Events: events, Tasks: tasks,
+	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000, Events: events, Tasks: tasks, Unmounts: unm,
 		BacklogMS: float64(backlog.Microseconds()) / 1000,
 		Trees:     trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
 		Allocs: float64(ms1.Mallocs-ms0.Mallocs) / n, AllocKB: float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n,
@@ -1258,7 +1274,7 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 		}
 	}
 	st0 := e.a.images.Stats()
-	tasks0 := perfJSTasks(e)
+	tasks0, unm0 := perfJSTasks(e), e.calls.unmount.Load()
 	var ms0, ms1 runtime.MemStats
 	runtime.ReadMemStats(&ms0)
 	c0 := procCPU()
@@ -1316,6 +1332,8 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 		events = traffic.stop()
 	}
 	tasks := perfJSTasks(e) - tasks0
+	unm := e.calls.unmount.Load() - unm0
+	tasks -= unm // the sweep's (Unmounts)
 	backlog := perfDrain(e)
 	cpu := procCPU() - c0
 	runtime.ReadMemStats(&ms1)
@@ -1328,7 +1346,7 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 		Allocs: math.Round(float64(ms1.Mallocs-ms0.Mallocs) / n), AllocKB: math.Round(float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n),
 		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6,
 		Seconds: time.Since(start).Seconds(), AnimFrames: int(st1.Advances - st0.Advances), Players: st1.Players, Quiet: quiet, Why: why,
-		Events: events, Tasks: tasks, BacklogMS: float64(backlog.Microseconds()) / 1000}
+		Events: events, Tasks: tasks, Unmounts: unm, BacklogMS: float64(backlog.Microseconds()) / 1000}
 	secs := max(p.Seconds, 0.001)
 	fps, tps, rps := float64(len(ds))/secs, float64(tasks)/secs, float64(p.Renders)/secs
 	p.FPS, p.TasksPS, p.RendersPS = &fps, &tps, &rps
@@ -1396,7 +1414,8 @@ type perfRoot struct {
 	name, key, logical string
 	parent             uint64
 	parentK            int64
-	props              []byte // the last props sent (nil once unmounted)
+	hash               uint64 // of the last props sent
+	props              []byte // and the props, while a pass logs (nil otherwise: the scroll passes pay no copy)
 }
 
 func newPerfRootReg() *perfRootReg {
@@ -1405,7 +1424,7 @@ func newPerfRootReg() *perfRootReg {
 
 // propsKey is props' "$key" as JSON text, found without decoding them.
 func propsKey(props []byte) string {
-	i := strings.Index(string(props), `"$key":`)
+	i := bytes.Index(props, []byte(`"$key":`))
 	if i < 0 {
 		return ""
 	}
@@ -1424,8 +1443,9 @@ func (g *perfRootReg) note(root, parent uint64, parentK int64, name string, prop
 	r, seen := g.roots[root]
 	why := "again"
 	var prev []byte
+	var prevHash uint64
 	if seen {
-		prev = r.props
+		prev, prevHash = r.props, r.hash
 	} else {
 		logical := name + "|" + key
 		if parent != 0 {
@@ -1456,9 +1476,13 @@ func (g *perfRootReg) note(root, parent uint64, parentK int64, name string, prop
 		g.roots[root] = r
 		g.byKey[logical] = root
 	}
-	r.props = append([]byte(nil), props...)
+	hh := fnv.New64a()
+	hh.Write(props)
+	r.hash = hh.Sum64()
+	r.props = nil
 	if l := g.log; l != nil {
-		l.note(root, r, why, prev, props, time.Since(g.t0))
+		r.props = append([]byte(nil), props...)
+		l.note(root, r, why, prev, seen && prevHash == r.hash, props, time.Since(g.t0))
 	}
 }
 
@@ -1512,7 +1536,7 @@ func newPerfRenderLog(lines int) *perfRenderLog {
 
 // note logs a render of root, whose props were prev before (nil: none
 // recorded); perfRootReg's lock held.
-func (l *perfRenderLog) note(root uint64, r *perfRoot, why string, prev, props []byte, at time.Duration) {
+func (l *perfRenderLog) note(root uint64, r *perfRoot, why string, prev []byte, sameHash bool, props []byte, at time.Duration) {
 	l.nRenders++
 	l.names[r.name]++
 	var paths []string
@@ -1520,6 +1544,9 @@ func (l *perfRenderLog) note(root uint64, r *perfRoot, why string, prev, props [
 	case why != "again":
 		l.nNewRoots++
 		l.whys[why+": "+r.name]++
+	case prev == nil && sameHash: // last sent before the pass logged: only its hash kept
+		l.nAgain++
+		l.same[r.name]++
 	case prev != nil:
 		l.nAgain++
 		paths = perfJSONDiff(r.name, prev, props, 16)
