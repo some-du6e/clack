@@ -28,11 +28,13 @@ func slPanelOf(p slick.PluginInfo) bool { return p.Panel }
 
 func slRenderPanel(s *slick.Slick, root uint64, id string) { s.RenderPanel(root, id) }
 
-// maPicks are the picks (maPick) the menus showed so far, in order.
-func maPicks(h *tzHost) []*maPick {
+// maPickOverlays are the overlays the menus' picks showed (maPick), in
+// order: the driver draws them above the menu, as the App draws its
+// overlays.
+func maPickOverlays(h *tzHost) []Overlay {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var out []*maPick
+	var out []Overlay
 	for _, o := range h.shown {
 		if p, ok := o.(*maPick); ok {
 			out = append(out, p)
@@ -41,10 +43,15 @@ func maPicks(h *tzHost) []*maPick {
 	return out
 }
 
-// answered is what the plugin answered for the pick (maWaiting, maTaken,
-// maPassed).
-func (p *maPick) answered() maVerdict {
+// maLastAnswer is what the plugin answered for the last pick (maWaiting,
+// maTaken, maPassed); ok is false when no pick was shown.
+func maLastAnswer(h *tzHost) (v maVerdict, ok bool) {
+	ps := maPickOverlays(h)
+	if len(ps) == 0 {
+		return maWaiting, false
+	}
+	p := ps[len(ps)-1].(*maPick)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.verdict
+	return p.verdict, true
 }

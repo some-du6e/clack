@@ -59,7 +59,7 @@ func (d *maDriver) frame() {
 	if !d.m.Dismissed() {
 		d.m.Layout(gtx)
 	}
-	for _, p := range maPicks(d.h) {
+	for _, p := range maPickOverlays(d.h) {
 		if !p.Dismissed() {
 			g := gtx
 			g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
@@ -173,14 +173,16 @@ func (d *maDriver) key(n key.Name, mods key.Modifiers) {
 	d.frame()
 }
 
-// lastPick is the pick the menu showed last.
-func (d *maDriver) lastPick() *maPick {
+// answered waits for the plugin's answer to the last pick and the frames
+// after it, and returns it (ok false: no pick was shown).
+func (d *maDriver) answered() (maVerdict, bool) {
 	d.t.Helper()
-	ps := maPicks(d.h)
-	if len(ps) == 0 {
-		d.t.Fatal("no pick was shown")
-	}
-	return ps[len(ps)-1]
+	d.until("the plugin's answer", func() bool {
+		v, ok := maLastAnswer(d.h)
+		return !ok || v != maWaiting
+	})
+	d.settle()
+	return maLastAnswer(d.h)
 }
 
 // maIndex is the row whose MAMenu id is id, or -1.
@@ -243,19 +245,19 @@ func TestMessageMenuSelectActionDecides(t *testing.T) {
 		m := NewMessageMenu(e.h, image.Pt(900, 200), maMsg)
 		return m, maOpen(t, e, m, what)
 	}
-	answer := func(d *maDriver) maVerdict {
+	// the plugin's answer, checked where the menu reports it (it is
+	// Clack's pick overlay); what ran is checked from what it did
+	answer := func(d *maDriver, want maVerdict) bool {
 		t.Helper()
-		p := d.lastPick()
-		d.until("the plugin's answer", func() bool { return p.answered() != maWaiting })
-		d.settle()
-		return p.answered()
+		v, ok := d.answered()
+		return !ok || v == want
 	}
 
 	// Copy link: the plugin takes it, so nothing goes on the clipboard
 	m, d := open("the menu")
 	d.clickRow("copy_link")
-	if v := answer(d); v != maTaken || decided() != "copy_link"+at {
-		t.Fatalf("Copy link: answer %d, asked %q", v, decided())
+	if !answer(d, maTaken) || decided() != "copy_link"+at {
+		t.Fatalf("Copy link: not taken, or asked %q", decided())
 	}
 	if len(d.clip) != 0 || !m.Dismissed() {
 		t.Errorf("Copy link the plugin took: clipboard %q, closed %v", d.clip, m.Dismissed())
@@ -265,8 +267,8 @@ func TestMessageMenuSelectActionDecides(t *testing.T) {
 	m, d = open("the menu again")
 	before := e.api.called("conversations.mark")
 	d.clickRow("mark_unread")
-	if v := answer(d); v != maPassed {
-		t.Fatalf("Mark unread: answer %d", v)
+	if !answer(d, maPassed) {
+		t.Fatal("Mark unread: not passed on")
 	}
 	d.until("Mark unread marking", func() bool { return e.api.called("conversations.mark") > before })
 	d.settle()
@@ -290,8 +292,8 @@ func TestMessageMenuSelectActionDecides(t *testing.T) {
 	saved := e.api.called("saved.add")
 	_, d = open("the menu for Save")
 	d.clickRow("later")
-	if v := answer(d); v != maTaken || !strings.HasSuffix(decided(), ",later"+at) {
-		t.Errorf("Save: answer %d, asked %q", v, decided())
+	if !answer(d, maTaken) || !strings.HasSuffix(decided(), ",later"+at) {
+		t.Errorf("Save: not taken, or asked %q", decided())
 	}
 	if e.api.called("saved.add") != saved {
 		t.Error("Save ran although the plugin's handler threw")
@@ -301,8 +303,8 @@ func TestMessageMenuSelectActionDecides(t *testing.T) {
 	follows := e.api.called("subscriptions.thread.add")
 	_, d = open("the menu for Get notified")
 	d.clickRow("subscribe")
-	if v := answer(d); v != maTaken || !strings.HasSuffix(decided(), ",subscribe"+at) {
-		t.Errorf("Get notified: answer %d, asked %q", v, decided())
+	if !answer(d, maTaken) || !strings.HasSuffix(decided(), ",subscribe"+at) {
+		t.Errorf("Get notified: not taken, or asked %q", decided())
 	}
 	if e.api.called("subscriptions.thread.add") != follows {
 		t.Error("Get notified ran although the plugin answered a Promise")

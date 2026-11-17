@@ -57,8 +57,8 @@ func TestMainHalfBreakHooks(t *testing.T) {
 	// Preferences says the privileged half didn't start
 	h.jsString(`globalThis.__breakFails = true; return ""`)
 	enable(true)
-	if p := info(); !p.Running || p.MainError == "" {
-		t.Errorf("a failed ready: running %v, main error %q", p.Running, p.MainError)
+	if p := info(); !p.Running || mainErrorOf(p) == "" {
+		t.Errorf("a failed ready: running %v, main error %q", p.Running, mainErrorOf(p))
 	}
 	if st := h.state(); st.NotifyFilters != 0 || slices.Contains(st.Mains, "BreakProbe") {
 		t.Errorf("a failed ready left %d notification filters (mains %v)", st.NotifyFilters, st.Mains)
@@ -68,8 +68,8 @@ func TestMainHalfBreakHooks(t *testing.T) {
 	// a break: the badge and the window's mute answer as Electron's do
 	h.jsString(`globalThis.__breakFails = false; return ""`)
 	enable(true)
-	if p := info(); p.MainError != "" {
-		t.Fatalf("main error %q", p.MainError)
+	if p := info(); mainErrorOf(p) != "" {
+		t.Fatalf("main error %q", mainErrorOf(p))
 	}
 	if st := h.state(); st.NotifyFilters != 1 || !slices.Contains(st.Mains, "BreakProbe") {
 		t.Fatalf("running: %d notification filters, mains %v", st.NotifyFilters, st.Mains)

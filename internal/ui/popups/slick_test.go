@@ -974,11 +974,9 @@ func TestSlickViewChatTabs(t *testing.T) {
 		// of Clack's runs (its tab bar isn't drawn here; internal/ui's
 		// TestSlickViewChatTabs opens the tab)
 		mm.activate(maGtx(), i)
-		picks := maPicks(e.h)
-		p := picks[len(picks)-1]
-		slUntil(t, 10*time.Second, mk.what+": ChatTabs' answer", nil, func() bool { return p.answered() != maWaiting })
-		if p.answered() != maTaken || !mm.Dismissed() {
-			t.Errorf("%s: picking it: answer %d, closed=%v", mk.what, p.answered(), mm.Dismissed())
+		slUntil(t, 10*time.Second, mk.what+": ChatTabs' answer", nil, func() bool { v, ok := maLastAnswer(e.h); return !ok || v != maWaiting })
+		if v, _ := maLastAnswer(e.h); v != maTaken || !mm.Dismissed() {
+			t.Errorf("%s: picking it: answer %d, closed=%v", mk.what, v, mm.Dismissed())
 		}
 	}
 
