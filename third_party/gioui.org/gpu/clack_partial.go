@@ -43,11 +43,14 @@ import (
 //     it lands in the atlas (by a rounding), and lands where the whole
 //     frame puts it. Only the atlas texels and layer texels a damaged pixel
 //     reads are cleared (to 0, 1 for intersections) and drawn.
-//   - A frame draws into a texture that keeps its pixels: the window's
-//     frame texture (a window's buffers come back undefined, and Metal's and
-//     DXGI's flip through several), copied whole into the target after
-//     every frame, or the target itself when it's one of the device's
-//     textures (gpu/headless). A partial frame's damage starts from the
+//   - A window's frame draws into the frame texture, which keeps its
+//     pixels (a window's buffers come back undefined, and Metal's flip
+//     through several), and is copied whole into the target after every
+//     frame. A frame drawn into a texture target (gpu/headless) is drawn
+//     whole, as Gio drew it, unless a test asks for partial frames
+//     (ClackPartialTextures: into the texture itself; ClackFrameTexture:
+//     through the frame texture and its copy, as a window's). A partial
+//     frame's damage starts from the
 //     clear colour, copied in from a texture cleared to it (clearTex): a
 //     clear of the same format the whole frame's pass does, so no colour
 //     conversion can differ.
@@ -62,16 +65,22 @@ import (
 
 var clackPartial struct {
 	off      bool // ClackPartialFrames(false)
+	textures bool // ClackPartialTextures(true)
 	frameTex bool // ClackFrameTexture(true)
 }
 
-// ClackPartialFrames turns partial frames on (the default) or off. Call it
-// between frames.
+// ClackPartialFrames turns partial frames on (the default) or off for
+// every frame. Call it between frames.
 func ClackPartialFrames(on bool) { clackPartial.off = !on }
 
-// ClackFrameTexture makes frames drawn into a texture (gpu/headless) go
-// through the frame texture and a copy into it, as a window's frames do,
-// for tests. Call it between frames.
+// ClackPartialTextures makes frames drawn into a texture target
+// (gpu/headless) partial frames, drawn into the texture itself, for tests;
+// they're whole frames by default. Call it between frames.
+func ClackPartialTextures(on bool) { clackPartial.textures = on }
+
+// ClackFrameTexture makes frames drawn into a texture target go through
+// the frame texture and a copy into the target, as a window's frames do,
+// partial frames included, for tests. Call it between frames.
 func ClackFrameTexture(on bool) { clackPartial.frameTex = on }
 
 const (
@@ -299,6 +308,11 @@ func (g *gpu) partialBegin(target RenderTarget, defFBO driver.Texture, viewport 
 		return out, nil
 	}
 	tex, isTex := target.(driver.Texture)
+	if isTex && !clackPartial.textures && !clackPartial.frameTex {
+		// a texture target draws whole frames, as Gio drew them
+		g.partialRelease()
+		return out, nil
+	}
 	var key any
 	if isTex && !clackPartial.frameTex {
 		// a texture target keeps its pixels: the frame draws into it

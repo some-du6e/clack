@@ -2044,3 +2044,103 @@ Patch 40's page aging, with it (`fboSet.resize`):
   wide and tall was made again on every frame that used it, and the shrink
   above let pages used now and then fall into that too
   (`TestClackAtlasGrowKeepsSize`).
+
+## 45. gpu, app: partial frames (a frame drawn again only where it changed)
+
+`gpu/clack_partial.go` (new: `ClackPartialFrames`, `ClackPartialTextures`,
+`ClackFrameTexture`, `sigOps`, `damage`, the diff and the frame texture),
+`gpu/gpu.go` (`frame`: everything a pass draws from is decided before the
+passes; `stencilClips`, `intersect`, `drawLayers` and `drawOps` take the
+damage; `pathOp.hash`, `material.texID`, `texture.id`; `collectOps`
+hashes each clip path's geometry), `gpu/caches.go`
+(`opCacheValue.hash`, `textureCache.nextID`), `gpu/clack_stats.go`
+(`FrameStats.Partial`, `DamageRects`, `DamagePx`, `CopyPx`),
+`gpu/internal/driver/clack_partial.go` (new: `ClackPartial`), the OpenGL,
+Direct3D 11 and Metal backends (`ClackScissor`, `ClackCopyToTarget`,
+`ClackPartialOK`, `TextureFormatOutput` textures), `internal/gl`
+(`SCISSOR_TEST`, `ClackBlitFramebufferLoaded`), `internal/d3d11`
+(`RSSetScissorRects`, `RenderTargetView.GetResource`, `RECT`),
+`app/metal_darwin.go` (the layer isn't `framebufferOnly`) and
+`app/clack_gpu.go`, `app/window.go` (`SetGPUFrameHook`).
+
+Gio drew every frame whole. A caret's blink, a spinner's turn or an
+animated emoji's next frame cost the stencil, cover and API calls of a
+frame where everything changed: on llvmpipe, Clack's focused composer
+cost 55% of a core for its blinks alone (α.105, 1440×900). Chromium
+repaints only the damaged rectangle and composites cached layers. Now a
+window's frame is compared with the last, op by op, and drawn again only
+where they differ:
+
+- Every op the frame draws gets a signature (`sigOps`): a 128-bit hash
+  of everything that decides its pixels (material, colours, gradient and
+  texture transforms, the texture's image, each clip path it's drawn
+  through: the path's geometry as its vertices are built from it, its
+  offset, its stencil region and place in the atlas and the page's size,
+  an intersection's place, the opacity layers around it and their
+  places), and its clip, the only pixels its quad touches. An opacity
+  layer's composite is an entry of its own over the layer's bounds. A
+  texture's image is named by an id the cache hands out, never by its
+  address (a texture made again can come back at the same one).
+- The last frame's signatures and this one's are diffed (Myers, past
+  their common start and end, at most 128 edits). The ops one has and
+  the other doesn't are the damage: everywhere else the same ops cover
+  each pixel in the same order with the same inputs, so the pixel is
+  what the last frame left.
+- The damage, merged into at most 8 disjoint rectangles, is drawn again
+  with every pass exactly as a whole frame draws it (the same packing of
+  the atlases, the same viewports and quads), each draw scissored to the
+  damage. A scissor discards fragments and changes nothing in the ones it
+  keeps, so the result is the whole frame's pixels, bit for bit. A
+  path's stencil coverage depends by a rounding on where it lands in the
+  atlas (§39, and the memory of TestClackPlacementNoise), and it lands
+  where the whole frame puts it, since the packing is the whole frame's.
+  Only the atlas and layer texels a damaged pixel reads are cleared (a
+  fill with blending off: 0 coverage, 1 for an intersection, transparent
+  for a layer, exact in every format) and drawn; the pages are loaded,
+  not cleared.
+- A window's frame draws into the frame texture (`TextureFormatOutput`,
+  the swap chain's or the layer's own format), which keeps its pixels: a
+  window's buffers come back undefined (DXGI's blit model discards them,
+  Metal flips through several drawables, EGL's swap destroys them). It is
+  copied whole into the target after every frame, byte for byte:
+  `glBlitFramebuffer`, `CopySubresourceRegion` into the buffer behind the
+  render target view, a blit encoder's copy into the drawable (whose layer
+  therefore isn't `framebufferOnly`). A partial frame's damage starts from
+  the clear colour, copied in from a small texture a clear of the same
+  format made, so no colour conversion can differ from the whole frame's
+  load action.
+- A frame is drawn whole when there's no last frame to start from (the
+  first, a new frame texture or size, another target), the clear colour
+  changed, the damage covers more than half the viewport or needs more
+  than 128 edits, partial frames are off (`ClackPartialFrames(false)`;
+  Clack's `CLACK_FULL_FRAMES`) or the device can't scissor and copy
+  (Vulkan; an OpenGL context shared with others or without
+  `glBlitFramebuffer`). A frame drawn into a texture target
+  (gpu/headless) is drawn whole as before unless a test asks
+  (`ClackPartialTextures`: into the texture itself; `ClackFrameTexture`:
+  through the frame texture and its copy, as a window's), so screenshot
+  tests draw what they drew.
+
+What the frame still costs: the layout, collecting the ops and their
+signatures (a hash of ~150 bytes an op), packing, the atlas pages' load,
+and the frame texture's copy into the target. Placement still moves: an
+op added or dropped before other paths moves their atlas places, so their
+ops are damage too (a hover toolbar's icons appearing redraws the paths
+drawn after them).
+
+Tests: `gpu/clack_partial_test.go` (ci's linux-gio Gio frame cost step:
+`TestClackDamageEdits`, the script is valid and shortest against an LCS
+on random sequences; `TestClackDamageRects`, disjoint and covering;
+`TestClackDamage`), `gpu/headless/clack_partial_test.go` on llvmpipe,
+Metal and WARP (ci's linux-gio, macos and windows-applog jobs, and
+flake-check's gpu-cost): `TestClackPartialFrames` draws 48 frames of
+changes a window sees (a caret's blink, a spinner, an animated emoji, a
+ring's colour, a fade, ops moved, added, dropped and swapped, a path whose
+growth moves every later path, a new clear colour, a scale and a
+fraction of a pixel, then a random walk) whole, partial into the target
+and partial through the frame texture, and requires every frame's
+pixels to be the whole frame's exactly, the small changes' frames to be
+partial and the caret's to cost a tenth of the draws;
+`TestClackPartialSameOps` (the same ops again draw nothing; a live
+image's next frame damages only it); `TestClackPartialDamageRects`.
+Not in `UPSTREAM.patch`.
