@@ -24,6 +24,12 @@ package ui
 //	thread-live   a 300-reply thread in the side pane, replies and typing
 //	              arriving
 //	activity      the Activity page, scrolled, with the same traffic
+//	idle          the channel left alone for 10 s while the workspace goes on
+//	              around it (messages and updates in the channels opened
+//	              earlier, profile changes of people no row draws, badges,
+//	              a pref's echo, a new emoji): the frames the window draws
+//	              (idleprobe, as App.Run's window would) and the Go→JS
+//	              tasks a second; Slack draws nothing then
 //
 // For each it records every frame's time on the UI goroutine (drain +
 // layout; no GPU, so the sleep to the next frame isn't counted), the
@@ -75,6 +81,7 @@ import (
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/idleprobe"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -113,6 +120,22 @@ type perfPass struct {
 	Trees     int   `json:"trees"`
 	TreesSame int   `json:"trees_same"`
 	Renders   int64 `json:"renders"` // Go→JS Render/RenderIn calls
+	// Tasks are the Go→JS tasks queued over the pass (the mirror's
+	// invalidations, view fetches, renders, events), and BacklogMS how
+	// long the runtime took to get through them once the frames ended:
+	// its trees from then count for the pass (a runtime that fell behind
+	// read as nothing having changed)
+	Tasks     int64   `json:"tasks"`
+	BacklogMS float64 `json:"backlog_ms"`
+	// the idle pass (perfIdle): how long it sat, the frames it drew a
+	// second (CaretFrames of them a caret's blink), the Go→JS tasks and
+	// renders a second, and what asked for the frames, most first
+	IdleS       float64  `json:"idle_s,omitempty"`
+	FPS         float64  `json:"fps"`
+	CaretFrames int      `json:"caret_frames"`
+	TasksPS     float64  `json:"tasks_ps"`
+	RendersPS   float64  `json:"renders_ps"`
+	Causes      []string `json:"causes,omitempty"`
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
 	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
@@ -120,6 +143,100 @@ type perfPass struct {
 	// window written after the pass, as a slow frame writes it
 	TraceMB float64 `json:"trace_mb,omitempty"`
 	TraceMS float64 `json:"trace_ms,omitempty"`
+}
+
+// perfJSTasks is how many tasks Go has queued for the Taut runtime so far
+// (jsrt's enqN, read by reflection: the base tree runs this file too, and
+// its jsrt exports no count).
+func perfJSTasks(e *benchEnv) int64 {
+	rt, err := e.tt.JS()
+	if err != nil || rt == nil {
+		return 0
+	}
+	v := reflect.ValueOf(rt).Elem().FieldByName("enqN")
+	if !v.IsValid() {
+		return 0
+	}
+	if f := v.FieldByName("v"); f.IsValid() && f.CanUint() {
+		return int64(f.Uint())
+	}
+	return 0
+}
+
+// perfDrain waits for the Taut runtime to get through what's queued, and
+// returns how long that took.
+func perfDrain(e *benchEnv) time.Duration {
+	rt, err := e.tt.JS()
+	if err != nil || rt == nil {
+		return 0
+	}
+	t0 := time.Now()
+	_ = rt.Do(func(*jsrt.Ctx) error { return nil })
+	return time.Since(t0)
+}
+
+// perfIdle lets the window sit for d with no input while traffic that
+// changes nothing on screen arrives (messages and updates in channels
+// opened earlier, profile changes of people no row draws, badges, a
+// followed thread's state, Slack's pref echo, a new custom emoji), and
+// draws a frame whenever the window would (idleprobe.Run: an Invalidate
+// at the next vsync, an InvalidateCmd at its time). Slack draws nothing
+// then; every frame here is a full window's layout, encode and GPU work.
+func (e *benchEnv) perfIdle(name string, d time.Duration, traffic *perfTraffic) perfPass {
+	runtime.GC()
+	probe := idleprobe.New()
+	defer probe.Close()
+	invalidateHook = func(a *App) {
+		if a == e.a {
+			probe.Invalidated()
+		}
+	}
+	defer func() { invalidateHook = nil }()
+	treeCounts := func() (all, same int) {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.deliveries, e.same
+	}
+	trees0, same0 := treeCounts()
+	calls0, tasks0 := e.calls.snapshot(), perfJSTasks(e)
+	var ms0, ms1 runtime.MemStats
+	runtime.ReadMemStats(&ms0)
+	c0 := procCPU()
+	traffic.start()
+	res := probe.Run(name, d, &e.r, e.idleFrame)
+	events := traffic.stop()
+	tasks := perfJSTasks(e) - tasks0
+	backlog := perfDrain(e)
+	cpu := procCPU() - c0
+	runtime.ReadMemStats(&ms1)
+	calls := e.calls.snapshot()
+	trees1, same1 := treeCounts()
+	secs := d.Seconds()
+	renders := calls[0] - calls0[0] + calls[1] - calls0[1]
+	p := perfPass{Name: name, Frames: res.Count(), IdleS: secs, FPS: float64(res.Count()) / secs, CaretFrames: res.CountMatching("Editor).Layout"),
+		TasksPS: float64(tasks) / secs, RendersPS: float64(renders) / secs, Tasks: tasks, BacklogMS: float64(backlog.Microseconds()) / 1000,
+		CPUMS: float64(cpu.Microseconds()) / 1000, Events: events, Renders: renders,
+		Trees: trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0,
+		AllocKB: math.Round(float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / secs), GCs: int(ms1.NumGC - ms0.NumGC)}
+	by := map[string]int{}
+	for _, f := range res.Frames {
+		for _, c := range f.Causes {
+			by[c]++
+		}
+	}
+	for c, n := range by {
+		p.Causes = append(p.Causes, fmt.Sprintf("%d× %s", n, c))
+	}
+	sort.Slice(p.Causes, func(i, j int) bool {
+		var a, b int
+		fmt.Sscanf(p.Causes[i], "%d", &a)
+		fmt.Sscanf(p.Causes[j], "%d", &b)
+		return a > b || a == b && p.Causes[i] < p.Causes[j]
+	})
+	if len(p.Causes) > 10 {
+		p.Causes = p.Causes[:10]
+	}
+	return p
 }
 
 // perfRecorder starts the execution-trace flight recorder (flightrec.go)
@@ -389,6 +506,14 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.settle(2 * time.Second)
 	res.Passes = append(res.Passes, e.perfScroll("activity", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
 
+	// nothing on screen changes for 10 s while the workspace goes on
+	// around the open channel (perfIdle)
+	e.openBench()
+	e.settle(2 * time.Second)
+	idle := traffic(fakeslack.BenchChannelID, "")
+	idle.idle = true
+	res.Passes = append(res.Passes, e.perfIdle("idle", 10*time.Second, idle))
+
 	// what the flight recorder costs: PERF_PLUGIN_RECORDER pairs of the
 	// channel-live pass with it off and on, in turns (off-on, on-off, …),
 	// without the CPU profiler (the tracer records its samples too)
@@ -439,8 +564,13 @@ func TestPerfPluginScroll(t *testing.T) {
 		}
 	}
 	for _, p := range res.Passes {
-		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees changed %d (identical %d), renders %d",
-			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.TreesSame, p.Renders)
+		if p.IdleS > 0 {
+			t.Logf("pass %-12s %.0f s idle: %d frames (%.1f a second, %d caret blinks), %.1f Go→JS tasks and %.1f renders a second, cpu %.0f ms, %.0f KB/s, %d GCs, events %d, trees changed %d (identical %d), JS backlog %.0f ms; asked by:\n\t%s",
+				p.Name, p.IdleS, p.Frames, p.FPS, p.CaretFrames, p.TasksPS, p.RendersPS, p.CPUMS, p.AllocKB, p.GCs, p.Events, p.Trees, p.TreesSame, p.BacklogMS, strings.Join(p.Causes, "\n\t"))
+			continue
+		}
+		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees changed %d (identical %d), renders %d, JS tasks %d, JS backlog %.0f ms",
+			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.TreesSame, p.Renders, p.Tasks, p.BacklogMS)
 	}
 	if out := os.Getenv("PERF_PLUGIN_OUT"); out != "" {
 		b, _ := json.MarshalIndent(res, "", "  ")
@@ -515,7 +645,7 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 		return e.deliveries, e.same
 	}
 	trees0, same0 := treeCounts()
-	calls0 := e.calls.snapshot()
+	calls0, tasks0 := e.calls.snapshot(), perfJSTasks(e)
 	if perfProfPrefix != "" {
 		writeProf := func(suffix string) {
 			runtime.GC() // the allocs profile is as of the last collection
@@ -592,14 +722,17 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	if traffic != nil {
 		events = traffic.stop()
 	}
+	tasks := perfJSTasks(e) - tasks0
+	backlog := perfDrain(e) // what JS still had to answer: its trees are this pass's
 	trees1, same1 := treeCounts()
 	runtime.ReadMemStats(&ms1)
 	e.settle(400 * time.Millisecond) // the JS renders of rows that scrolled in
 	cpu := procCPU() - c0
 	calls := e.calls.snapshot()
 	n := float64(len(ds))
-	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000, Events: events,
-		Trees: trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
+	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000, Events: events, Tasks: tasks,
+		BacklogMS: float64(backlog.Microseconds()) / 1000,
+		Trees:     trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
 		Allocs: float64(ms1.Mallocs-ms0.Mallocs) / n, AllocKB: float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n,
 		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6, Slow: slow}
 	for _, d := range ds {
@@ -626,25 +759,33 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 // reaction every 300 ms, an edit every 1.5 s and a delete every 2.5 s
 // (Message Logger keeps deleted messages: injected ones); in the other
 // channels a message every 250 ms. Each live message mentions someone,
-// and every third shares a file someone else owns. A large workspace's
-// profile changes come too: a status (or huddle) change every 50 ms,
-// through the people the messages name, and a display name change every
-// 4 s. As realtime events through core's handler, from their own
-// goroutine like the socket's.
+// and every third shares a file someone else owns (a processed upload's
+// complete file object). A large workspace's profile changes come too,
+// as Enterprise Grid sends them: 4 a second for members no row draws (a
+// status, a huddle joined), one every 2.5 s for an author on screen,
+// and once in a pass an author's new display name; badge counts every
+// 2 s and a followed thread's state every 4 s. As realtime events
+// through core's handler, from their own goroutine like the socket's.
+//
+// idle is the idle pass's traffic: none in the open conversation, the
+// rest as above, plus Slack's pref_change echo every 10 s and a custom
+// emoji added every 3 s.
 type perfTraffic struct {
 	e          *benchEnv
 	ch, thread string
 	others     []string
+	idle       bool
 
-	quit   chan struct{}
-	done   sync.WaitGroup
-	n      atomic.Int64
-	status int
+	quit    chan struct{}
+	done    sync.WaitGroup
+	n       atomic.Int64
+	status  int
+	undrawn []string // directory members no row draws
 }
 
 // profile is a user_change for member id as the socket brings it: the
-// stored profile with a new status, and with rename its display name
-// changed too (a suffix added or taken off).
+// stored profile with a new status (and huddle state), and with rename
+// its display name changed too (a suffix added or taken off).
 func (p *perfTraffic) profile(id string, rename bool) {
 	u, ok := p.e.a.data.core.S.RawUser(id)
 	if !ok || u == nil {
@@ -653,6 +794,11 @@ func (p *perfTraffic) profile(id string, rename bool) {
 	c := *u
 	p.status++
 	c.Profile.StatusText, c.Profile.StatusEmoji = fmt.Sprintf("in a meeting (%d)", p.status), ":spiral_calendar_pad:"
+	if p.status%3 == 0 {
+		c.Profile.HuddleState = "in_a_huddle"
+	} else {
+		c.Profile.HuddleState = ""
+	}
 	if rename {
 		if n, cut := strings.CutSuffix(c.Profile.DisplayName, " (away)"); cut {
 			c.Profile.DisplayName = n
@@ -666,6 +812,16 @@ func (p *perfTraffic) profile(id string, rename bool) {
 }
 
 func (p *perfTraffic) start() {
+	authors := map[string]bool{p.e.a.data.core.S.SelfID(): true}
+	for _, a := range p.e.c.Authors {
+		authors[a] = true
+	}
+	for _, id := range p.e.a.data.core.S.UserIDs() {
+		if !authors[id] && len(p.undrawn) < 300 {
+			p.undrawn = append(p.undrawn, id)
+		}
+	}
+	sort.Strings(p.undrawn)
 	p.quit = make(chan struct{})
 	p.done.Add(1)
 	go p.run()
@@ -686,6 +842,15 @@ func (p *perfTraffic) inject(ch, typ, subtype string, raw map[string]any) {
 	b, _ := json.Marshal(raw)
 	chJSON, _ := json.Marshal(ch)
 	p.e.a.data.core.Inject(slack.Event{Type: typ, Subtype: subtype, Channel: chJSON, Raw: b})
+	p.n.Add(1)
+}
+
+// raw is a realtime event with no conversation (badges, a thread's
+// state, a pref's echo, an emoji).
+func (p *perfTraffic) raw(typ string, body map[string]any) {
+	body["type"] = typ
+	b, _ := json.Marshal(body)
+	p.e.a.data.core.Inject(slack.Event{Type: typ, Raw: b})
 	p.n.Add(1)
 }
 
@@ -710,10 +875,12 @@ func (p *perfTraffic) run() {
 			targets = append(targets, m.TS)
 		}
 	}
+	var elsewhere [][2]string // the other channels' messages (channel, ts): the idle pass's reactions and edits
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	start := time.Now()
-	var lastType, lastMsg, lastReact, lastEdit, lastDel, lastOther, lastStatus, lastRename time.Duration
+	var lastType, lastMsg, lastReact, lastEdit, lastDel, lastOther, lastUndrawn, lastDrawn, lastBadge, lastThread, lastPref, lastEmoji time.Duration
+	renamed := false
 	seq, msgs := 0, 0
 	for {
 		select {
@@ -724,6 +891,59 @@ func (p *perfTraffic) run() {
 		el := time.Since(start)
 		u := authors[seq%len(authors)]
 		seq++
+		// profile changes: mostly people no row draws
+		if len(p.undrawn) > 0 && el-lastUndrawn >= 250*time.Millisecond {
+			lastUndrawn = el
+			p.profile(p.undrawn[(seq*7)%len(p.undrawn)], false)
+		}
+		if !p.idle && el-lastDrawn >= 2500*time.Millisecond {
+			lastDrawn = el
+			p.profile(authors[(seq*3)%len(authors)], false)
+		}
+		if !p.idle && !renamed && el >= time.Second {
+			renamed = true
+			p.profile(authors[(seq*5)%len(authors)], true)
+		}
+		if el-lastBadge >= 2*time.Second {
+			lastBadge = el
+			p.raw("badge_counts_updated", map[string]any{"channels": 3, "dms": 1, "threads_mention_count": 0})
+		}
+		if el-lastThread >= 4*time.Second {
+			lastThread = el
+			p.raw("update_thread_state", map[string]any{"has_unreads": false, "mention_count": 0, "timestamp": liveTS()})
+		}
+		if p.idle && el-lastPref >= 10*time.Second {
+			lastPref = el
+			p.raw("pref_change", map[string]any{"name": "emoji_use", "value": "{}"})
+		}
+		if p.idle && el-lastEmoji >= 3*time.Second {
+			lastEmoji = el
+			name := fmt.Sprintf("perf-emoji-%d", seq)
+			p.raw("emoji_changed", map[string]any{"subtype": "add", "name": name, "value": "https://emoji.invalid/" + name + ".png", "event_ts": liveTS()})
+		}
+		if len(p.others) > 0 && el-lastOther >= 250*time.Millisecond {
+			lastOther = el
+			ts := liveTS()
+			ch := p.others[seq%len(p.others)]
+			p.inject(ch, "message", "", map[string]any{"user": u, "text": "elsewhere " + ts, "ts": ts, "event_ts": ts})
+			elsewhere = append(elsewhere, [2]string{ch, ts})
+		}
+		if p.idle {
+			// reactions and edits elsewhere: updates to messages in
+			// channels opened earlier, none on screen
+			if len(elsewhere) > 0 && el-lastReact >= 500*time.Millisecond {
+				lastReact = el
+				at := elsewhere[(seq*7)%len(elsewhere)]
+				p.inject(at[0], "reaction_added", "", map[string]any{"user": u, "reaction": "eyes", "item": map[string]any{"type": "message", "channel": at[0], "ts": at[1]}})
+			}
+			if len(elsewhere) > 0 && el-lastEdit >= 2*time.Second {
+				lastEdit = el
+				at := elsewhere[(seq*3)%len(elsewhere)]
+				msg := map[string]any{"type": "message", "user": u, "text": "edited elsewhere " + at[1], "ts": at[1], "edited": map[string]any{"user": u, "ts": liveTS()}}
+				p.inject(at[0], "message", "message_changed", map[string]any{"message": msg, "ts": liveTS(), "event_ts": liveTS(), "hidden": true})
+			}
+			continue
+		}
 		if el-lastType >= 150*time.Millisecond {
 			lastType = el
 			ev := map[string]any{"user": u}
@@ -742,27 +962,17 @@ func (p *perfTraffic) run() {
 				"blocks": []any{map[string]any{"type": "rich_text", "block_id": "live", "elements": []any{map[string]any{"type": "rich_text_section",
 					"elements": []any{map[string]any{"type": "text", "text": text}, map[string]any{"type": "user", "user_id": who}}}}}}}
 			if msgs%3 == 0 {
-				ev["files"] = []any{map[string]any{"id": fmt.Sprintf("F0LIVE%05d", msgs), "name": "notes.pdf", "title": "Notes", "mimetype": "application/pdf",
-					"filetype": "pdf", "pretty_type": "PDF", "mode": "hosted", "user": authors[(seq*3+2)%len(authors)], "size": 2048}}
+				id := fmt.Sprintf("F0LIVE%05d", msgs)
+				ev["files"] = []any{map[string]any{"id": id, "name": "notes.pdf", "title": "Notes", "mimetype": "application/pdf",
+					"filetype": "pdf", "pretty_type": "PDF", "mode": "hosted", "user": authors[(seq*3+2)%len(authors)], "size": 2048,
+					"url_private": "https://files.invalid/" + id + "/notes.pdf", "url_private_download": "https://files.invalid/" + id + "/download/notes.pdf",
+					"permalink": "https://files.invalid/" + id, "created": time.Now().Unix()}}
 			}
 			if p.thread != "" {
 				ev["thread_ts"] = p.thread
 			}
 			p.inject(p.ch, "message", "", ev)
 			targets = append(targets, ts)
-		}
-		if el-lastStatus >= 50*time.Millisecond {
-			lastStatus = el
-			p.profile(authors[(seq*7)%len(authors)], false)
-		}
-		if el-lastRename >= 4*time.Second {
-			lastRename = el
-			p.profile(authors[(seq*3)%len(authors)], true)
-		}
-		if len(p.others) > 0 && el-lastOther >= 250*time.Millisecond {
-			lastOther = el
-			ts := liveTS()
-			p.inject(p.others[seq%len(p.others)], "message", "", map[string]any{"user": u, "text": "elsewhere " + ts, "ts": ts, "event_ts": ts})
 		}
 		if len(targets) == 0 {
 			continue

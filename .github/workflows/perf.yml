@@ -461,7 +461,15 @@ jobs:
   # installs the Library's default Taut plugins and Slick's Message Logger
   # from the published `plugins` release, then scrolls the plugin bench's
   # 500-message channel (quiet, then with people typing, posting, reacting,
-  # editing and deleting) and a 300-reply thread. HEAD's test file runs on
+  # editing and deleting) and a 300-reply thread, and leaves the channel
+  # alone for 10 s (the idle pass: frames a second and Go→JS tasks a
+  # second while nothing on screen changes). The live passes' traffic is a
+  # busy Enterprise Grid's: besides the conversation's own, messages in the
+  # other channels 4 a second, profile changes 4 a second for members no
+  # row draws and one every 2.5 s for an author on screen (one rename a
+  # pass), badge counts every 2 s, a followed thread's state every 4 s; the
+  # idle pass has the background part, plus updates elsewhere, Slack's
+  # pref_change echo and new custom emoji. HEAD's test file runs on
   # the base tree too, so both columns are the same passes; the sides run
   # interleaved on one runner. Dispatch only (jobs: plugins; base: the
   # commit to compare against, default the merge base with ui).

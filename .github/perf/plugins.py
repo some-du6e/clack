@@ -31,6 +31,23 @@ METRICS = [
     ("trees", "plugin trees that changed (during the frames)", ""),
     ("trees_same", "plugin trees re-delivered unchanged", ""),
     ("renders", "Go→JS renders", ""),
+    ("tasks", "Go→JS tasks", ""),
+    ("backlog_ms", "JS backlog after the frames", "ms"),
+]
+
+# the idle pass (perfIdle): the window left alone while background
+# traffic changes nothing on screen
+IDLE_METRICS = [
+    ("fps", "frames a second (caret blinks included)", "x"),
+    ("caret_frames", "of them a caret's blink", ""),
+    ("tasks_ps", "Go→JS tasks a second", "x"),
+    ("renders_ps", "Go→JS renders a second", "x"),
+    ("cpu_ms", "process CPU", "ms"),
+    ("alloc_kb", "KB allocated a second", ""),
+    ("gcs", "collections", ""),
+    ("trees", "plugin trees that changed", ""),
+    ("events", "events injected", ""),
+    ("backlog_ms", "JS backlog at the end", "ms"),
 ]
 
 
@@ -50,6 +67,8 @@ def fmt(v, unit):
         return "—"
     if unit == "ms":
         return f"{v:.1f} ms" if v < 100 else f"{v:.0f} ms"
+    if unit == "x":
+        return f"{v:.1f}"
     return f"{v:.0f}"
 
 
@@ -110,10 +129,13 @@ def main():
     for name in names:
         if ", recorder o" in name:
             continue  # in the recorder's table above
+        idle = any(p.get("idle_s") for runs in sides.values() for r in runs for p in (r.get("passes") or []) if p["name"] == name)
         print(f"### {name}\n")
+        if idle:
+            print("No input: the window left alone while the workspace goes on around the open channel; a frame is drawn whenever the window would (an Invalidate at the next vsync, an InvalidateCmd at its time).\n")
         print("| | before | after | change |")
         print("|---|---|---|---|")
-        for key, label, unit in METRICS:
+        for key, label, unit in (IDLE_METRICS if idle else METRICS):
             cols = []
             meds = []
             for side in ("base", "head"):
@@ -132,8 +154,16 @@ def main():
                     change = f"{(meds[1] - meds[0]) / meds[0] * 100:+.0f}%"
                 elif meds[1] == 0:
                     change = "0"
+            if meds[0] is None and meds[1] is None:
+                continue  # neither side has it (the base tree's file predates it)
             print(f"| {label} | {cols[0]} | {cols[1]} | {change} |")
         print()
+        if idle:
+            for side in ("base", "head"):
+                for r in sides[side][:1]:
+                    for p in r.get("passes") or []:
+                        if p["name"] == name and p.get("causes"):
+                            print(f"What asked for the frames ({side}, round 1): " + "; ".join(p["causes"][:6]) + "\n")
 
 
 if __name__ == "__main__":
