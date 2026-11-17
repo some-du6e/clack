@@ -167,6 +167,9 @@ type listState struct {
 	laidOut   bool
 	laidPos   layout.Position
 	laidBuilt uint64
+	// preparedAt is the frame (gtx.Now) prepare synced the list for:
+	// layoutList draws that copy and doesn't sync again in that frame
+	preparedAt time.Time
 
 	rc rowCtx // this frame's row inputs (rows keep a pointer to it)
 
@@ -309,6 +312,10 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	}
 	s.list.Axis = layout.Vertical
 	s.list.ScrollToEnd = true
+	// Slack top-aligns a short thread (its reply box right under the last
+	// reply): the thread list draws from its top what doesn't fill it, and
+	// still keeps to its end once the thread outgrows it (Gio patch 45)
+	s.list.StartAligned = ts != ""
 	if len(listCache) > 2*maxModels {
 		for k := range listCache {
 			delete(listCache, k)
@@ -317,6 +324,15 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	}
 	listCache[key] = s
 	return s
+}
+
+// prepare is layoutList's load and sync, earlier in the frame at frame
+// (ThreadView.Prepare): what the ui root decides from the list before it
+// lays the list out (the reply box) is then what the list draws.
+func (s *listState) prepare(h Host, frame time.Time) {
+	s.hb.ensureLoaded(s.m)
+	s.sync(h, time.Now())
+	s.preparedAt = frame
 }
 
 // sync copies the model and rebuilds items if anything changed.
@@ -667,9 +683,11 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	st := styleFor(h)
 	now := time.Now()
 	lastHost = h
-	s.hb.ensureLoaded(s.m)
+	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
+		s.hb.ensureLoaded(s.m)
+		s.sync(h, now)
+	}
 	s.hb.markDrawn(s.m, gtx.Now)
-	s.sync(h, now)
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
 	size := gtx.Constraints.Max
@@ -831,7 +849,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.visible[1] = i + 1
 	}
 	// contentH is the total item height when every item was laid out (the
-	// thread pane top-aligns short threads with it), else 0.
+	// ui root puts a short thread's reply box under it), else 0.
 	s.contentH = 0
 	if p.First == 0 && s.visible[1] == len(s.items) {
 		s.contentH = y + p.Offset
