@@ -14,11 +14,13 @@ import (
 // every clamped card under any plugin CSS, and left on top of the next
 // block when the card was hidden.
 func TestOwnedEllipsesStayWithTheirCard(t *testing.T) {
-	long := strings.Repeat("a long attachment title that has to be clamped ", 12)
-	d := doc(rt.Block{Kind: rt.AttachmentBlock, Att: &rt.Attachment{
-		Title: []rt.Span{txt(long)},
-		Text:  []rt.Block{para(txt(long))},
-	}})
+	// a link preview (MessageAttachmentGeneric v3) clamps its title and
+	// text to two lines with a "…"
+	long := strings.Repeat("a long link preview title that has to be clamped ", 12)
+	d := embedDoc(t, "text only")
+	att := attBlock(t, d).Att
+	att.Title = []rt.Span{txt(long)}
+	att.Text = []rt.Block{para(txt(long))}
 	st := newTestStyle()
 
 	plain := layoutAt(st, d, Options{}, 320)
@@ -29,7 +31,7 @@ func TestOwnedEllipsesStayWithTheirCard(t *testing.T) {
 		}
 	}
 	if static == 0 {
-		t.Fatal("the unpatched card clamps nothing: no \"…\" to check")
+		t.Fatal("the unpatched link preview clamps nothing: no \"…\" to check")
 	}
 
 	patchAll(t)
