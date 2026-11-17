@@ -91,7 +91,8 @@ func TestPatchedViewShowsUnderQuietFrames(t *testing.T) {
 	e.toBottom()
 	e.until("the emoji playing", 20*time.Second, func() bool { return e.a.images.Stats().Players > 0 })
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)}) // off the window
-	e.blur()                                                                                          // in the background: no caret blinks, only the emoji's ticks
+	// in the background: no caret blinks, only the emoji's ticks
+	e.blur()
 	e.settle(800 * time.Millisecond)
 	e.frame()
 	askedAt, asked := e.r.WakeupTime()
