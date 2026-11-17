@@ -391,22 +391,30 @@ func TestMenuKeysSubmenus(t *testing.T) {
 		t.Errorf("a pin toasted %q; Slack's pinMessage toasts nothing", ts)
 	}
 
-	// P from the root of the context menu and of More actions: one
-	// pins.add each (counted at the fake: the store's pin seq also moves
-	// when a pin the fake refuses is reverted, a request after the press)
+	// P from the root of the context menu and of More actions: one pin
+	// request each, counted at the fake (the store's pin seq also moves
+	// when a pin the fake refuses is reverted, after the press). Pin or
+	// Un-pin, as the store has the message then: the fake refuses the
+	// earlier pin, and its revert may not have landed yet.
+	pinRequests := func() int { return calls("pins.add") + calls("pins.remove") }
+	for end := time.Now().Add(10 * time.Second); pinRequests() == 0 && time.Now().Before(end); {
+		time.Sleep(10 * time.Millisecond) // Organize ▸ P's request, at the fake before we count
+	}
+	time.Sleep(200 * time.Millisecond)
 	for _, which := range []string{"context", "more"} {
 		e, _ := mkOpen(t, h, which, false)
-		before := calls("pins.add")
+		before := pinRequests()
 		e.press("P", 0)
 		if !e.m.Dismissed() {
 			t.Errorf("%s: P from the root left the menu open", which)
 		}
-		for end := time.Now().Add(10 * time.Second); calls("pins.add") == before && time.Now().Before(end); {
+		for end := time.Now().Add(10 * time.Second); pinRequests() == before && time.Now().Before(end); {
 			e.frame()
 			time.Sleep(10 * time.Millisecond)
 		}
-		if n := calls("pins.add") - before; n != 1 {
-			t.Errorf("%s: P from the root sent %d pins.add, want 1", which, n)
+		time.Sleep(100 * time.Millisecond) // a second request would be on its way
+		if n := pinRequests() - before; n != 1 {
+			t.Errorf("%s: P from the root sent %d pin requests, want 1", which, n)
 		}
 	}
 }

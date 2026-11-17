@@ -725,11 +725,13 @@ func TestSlickViewMessageLogger(t *testing.T) {
 		t.Errorf("native rows gone: %s", maKeys(again.items))
 	}
 
-	// an edit it logged: "Hide edit history" on the message's menu, and
-	// picking it turns the row into "Show edit history"
-	const edited = "1700000001.000100"
-	slEdit(e, edited, "first", "first, edited")
-	emsg := core.Message{Channel: slGen, TS: edited, User: slAlice, Text: "first, edited"}
+	// an edit it logged (it keeps the old text of the messages the socket
+	// brings): "Hide edit history" on the message's menu, and picking it
+	// turns the row into "Show edit history"
+	const edited = "1700000009.000900"
+	slPost(e, edited, "a line to edit")
+	slEdit(e, edited, "a line to edit", "a line, edited")
+	emsg := core.Message{Channel: slGen, TS: edited, User: slAlice, Text: "a line, edited"}
 	if em := slMenuWith(t, e, emsg, "slick_ml_hide_edits", "Hide edit history on the edited message's menu"); em != nil {
 		if it := em.items[slIndex(em.items, "slick_ml_hide_edits")]; it.Label != "Hide edit history" {
 			t.Errorf("edit history row %+v", it)
@@ -755,6 +757,13 @@ func slMenuWith(t *testing.T, e *slEnv, m core.Message, id, what string) *Menu {
 		return maFrom(mm) && slIndex(mm.items, id) >= 0
 	})
 	return mm
+}
+
+// slPost injects a new message from Alice in #general, as the socket
+// brings one.
+func slPost(e *slEnv, ts, text string) {
+	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": slGen, "user": slAlice, "text": text, "ts": ts, "event_ts": ts})
+	e.h.a.Inject(slack.Event{Type: "message", Channel: json.RawMessage(`"` + slGen + `"`), Raw: raw})
 }
 
 // slEdit injects Slack's message_changed for ts in #general (the old copy

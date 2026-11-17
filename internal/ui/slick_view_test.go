@@ -693,9 +693,13 @@ func (e *svEnv) dismissOverlays() {
 // svSelectedTab is the data-tab-key of ChatTabs' tab whose button is
 // aria-selected in host tree tr ("" for none).
 func svSelectedTab(tr string) string {
-	var nodes []any
-	if json.Unmarshal([]byte(tr), &nodes) != nil {
+	var top any // a delivered tree is one node or a list of them
+	if json.Unmarshal([]byte(tr), &top) != nil {
 		return ""
+	}
+	nodes, ok := top.([]any)
+	if !ok {
+		nodes = []any{top}
 	}
 	var walk func(ns []any, key string) string
 	walk = func(ns []any, key string) string {
@@ -709,7 +713,7 @@ func svSelectedTab(tr string) string {
 			if v, ok := p["data-tab-key"].(string); ok {
 				k = v
 			}
-			if sel, _ := p["aria-selected"].(bool); sel && k != "" {
+			if sel := p["aria-selected"]; (sel == true || sel == "true") && k != "" { // a DOM attribute: the string
 				return k
 			}
 			c, _ := n["c"].([]any)

@@ -615,10 +615,12 @@ func TestDispatchThunkTimesOutLikeSlick(t *testing.T) {
 	if got.Default != 30000 {
 		t.Errorf("default wait %d ms, Slick's is 30000", got.Default)
 	}
-	if got.Dispatch != "[slick] timed out waiting for Slack thunk: joinCodeChannel" {
+	// a thunk Clack doesn't define fails at once, saying so (Slick's
+	// "timed out" is for a wait that ran out)
+	if got.Dispatch != "[slick] Clack has no Slack thunk joinCodeChannel" {
 		t.Errorf("dispatchThunk: %q", got.Dispatch)
 	}
-	if got.Wait != "[slick] timed out waiting for Slack thunk: openInSlackbotView" {
+	if got.Wait != "[slick] Clack has no Slack thunk openInSlackbotView" {
 		t.Errorf("waitForThunkCreator: %q", got.Wait)
 	}
 	if got.Ms > 2000 {
