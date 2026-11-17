@@ -803,10 +803,13 @@ func (v *View) paintText(ops *op.Ops, st *Style, i int, col color.NRGBA, css, ul
 // paintEllipses paints the clamps' "…", which go over everything on
 // their line (a component pill's box under them too): Chromium appends
 // the ellipsis to the line box after every child (PlaceEllipsisNextTo).
+// Only the static ones: a component card's or a hover layer's "…" is its
+// owner's (paintAbove draws it with the owner), so it goes when the owner
+// is hidden and isn't painted twice.
 func (v *View) paintEllipses(ops *op.Ops, st *Style) {
 	css := len(v.css.parts) > 0
 	for i := range v.d.frags {
-		if f := &v.d.frags[i]; f.ell {
+		if f := &v.d.frags[i]; staticEllipsis(f) {
 			col := f.col
 			if css && f.part != 0 {
 				col = v.textCol(f)
@@ -815,6 +818,9 @@ func (v *View) paintEllipses(ops *op.Ops, st *Style) {
 		}
 	}
 }
+
+// staticEllipsis reports a clamp's "…" no component or hover layer owns.
+func staticEllipsis(f *frag) bool { return f.ell && f.comp == 0 && f.hov == 0 }
 
 // hoverText is the hovered target whose text takes Slack's hover color
 // (hoverRecolors), -1 none.
