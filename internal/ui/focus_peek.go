@@ -219,8 +219,8 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 		switch {
 		case active: // --active: base-pry, content-ter
 			bgT, fgT = c.Bg, c.FgSubtle
-		case hov: // :hover: content-inv-pry
-			bgT, fgT = theme.Over(c.SearchHover, base), c.ChromeText
+		case hov: // :hover: content-inv-pry over surf-inv-pry and its blended -hover layer
+			bgT, fgT = theme.Over(c.ChromeHoverTint, theme.Over(c.ChromeActive, base)), c.ChromeText
 		default: // surf-inv-pry, content-inv-sec
 			bgT = theme.Over(c.ChromeActive, base) // the rail scope's surf-inv-pry
 			fgT = theme.Over(c.ChromeTextDim, bgT)

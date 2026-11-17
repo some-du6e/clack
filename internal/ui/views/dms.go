@@ -73,6 +73,28 @@ type dmsPal struct {
 	caret   color.NRGBA // input selection
 }
 
+// scope takes the colours from the sidebar's theme scope, which the list
+// sits in: Slack's .p-dms_list rows are p-activity_ia4_page__items
+// (theme-content-inv-pry names and messages, theme-surf-inv-ter :hover
+// and --selected, theme-otl-inv-pry rules), its timestamps and meta
+// theme-content-inv-sec, and its search box a themed c-filter_input
+// (theme-surf-inv-sec). The shell's sidebar fields carry those tokens in
+// the account theme's sidebar scope, so a light sidebar (a light
+// brightness, or Darker sidebars off) gets the primary's dark ink, not
+// the inverted scope's white. The read preview, the timestamps, the
+// skeleton and the caret keep their measured alphas over the token.
+func (p *dmsPal) scope(c *theme.Palette) {
+	if c.SidebarTextUnread.A == 0 {
+		return
+	}
+	p.white, p.soft = c.SidebarTextUnread, c.SidebarText
+	p.tint, p.rule, p.inputBg = c.SidebarHover, c.SidebarDivider, c.SidebarBg
+	p.preview = theme.WithAlpha(c.SidebarTextUnread, p.preview.A)
+	p.time = theme.WithAlpha(c.SidebarText, p.time.A)
+	p.skel = theme.WithAlpha(c.SidebarHover, p.skel.A)
+	p.caret = theme.WithAlpha(c.SidebarHover, p.caret.A)
+}
+
 var dmsLight = dmsPal{
 	chrome:  rgb(0x3f0e40),
 	tint:    argb(0x14f9edff),
@@ -121,6 +143,7 @@ func (d *DMs) dmsColors() {
 	if d.th.Dark {
 		d.c = dmsDark
 	}
+	d.c.scope(&d.th.C)
 	if b := d.th.C.Badge; b.A > 0 {
 		d.c.pillBg, d.c.pillFg = b, d.th.C.BadgeText
 	}

@@ -3,6 +3,7 @@ package theme
 import (
 	"encoding/json"
 	"image/color"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -462,11 +463,48 @@ func (t IATheme) contentInvPry(m themeMode) color.NRGBA {
 // sidebar/chrome tokens, per mode {light, dark, inverted} (slackvars.go's
 // --dt_color-theme-* and the inverted-sidebar scope).
 var chromeAlpha = map[string][3]uint8{
-	"content-inv-sec": {0xcc, 0xcc, 0xe6}, // .8 .8 .9
-	"surf-inv-pry":    {0x21, 0x40, 0x40}, // .13 .25 .25
-	"surf-inv-ter":    {0x21, 0x14, 0x14}, // .13 .08 .08
-	"otl-inv-pry":     {0x21, 0x38, 0x38}, // .13 .22 .22
-	"surf-inv-sec":    {0xe6, 0x99, 0x1c}, // .9 .6 .11
+	"content-inv-sec":    {0xcc, 0xcc, 0xe6}, // .8 .8 .9
+	"surf-inv-pry":       {0x21, 0x40, 0x40}, // .13 .25 .25
+	"surf-inv-ter":       {0x21, 0x14, 0x14}, // .13 .08 .08
+	"otl-inv-pry":        {0x21, 0x38, 0x38}, // .13 .22 .22
+	"surf-inv-sec":       {0xe6, 0x99, 0x1c}, // .9 .6 .11
+	"surf-inv-pry-hover": {0x38, 0x14, 0x14}, // .22 .08 .08
+}
+
+// surfInvPryAlpha is surf-inv-pry's alpha as Slack's variable sets give
+// it (858H .13, qmPJ and lYwo .25), for the hover layer's blend.
+var surfInvPryAlpha = [3]float64{.13, .25, .25}
+
+// hoverTint is the chrome scope's --dt_color-theme-surf-inv-pry-hover as
+// the layer Slack's search pill (.p-top_nav__search__container) and a
+// hovered control strip button (.p-control_strip__circle_button:hover)
+// draw over theme-surf-inv-pry: a linear-gradient background-image
+// blended with --dt_blend-mode-interaction (multiply; lighten in dark
+// mode) in the element's isolated group. The token is
+// getThemeVariableDefinitionWithInteractionStates' -hover variable: the
+// primary's ramp (its custom ramp for a custom colour) at
+// getInteractionStateShadeVariant(dark, shade): "100" in dark mode, "70"
+// for a shade under 40 (the inverted scope's 0), else "100", at the set's
+// alpha. The colour returned is the W3C blend's (1-ab)*Cs + ab*B(Cb, Cs)
+// with Cb, ab the surf-inv-pry under it, so drawn over surf-inv-pry with
+// Over it gives the group's result exactly.
+func (t IATheme) hoverTint(m themeMode) color.NRGBA {
+	v := "100"
+	if m != modeDark && atoi(themeShades["surf-inv-pry"][m]) < 40 {
+		v = "70"
+	}
+	rp := t.ramp(t.Primary, m)
+	cs, cb := rp[shadeIndex(v)], rp[shadeIndex(themeShades["surf-inv-pry"][m])]
+	ab := surfInvPryAlpha[m]
+	mix := func(s, b uint8) uint8 {
+		x, y := float64(s)/255, float64(b)/255
+		bl := x * y // multiply
+		if m == modeDark {
+			bl = math.Max(x, y) // lighten
+		}
+		return uint8(math.Round(((1-ab)*x + ab*bl) * 255))
+	}
+	return color.NRGBA{R: mix(cs.R, cb.R), G: mix(cs.G, cb.G), B: mix(cs.B, cb.B), A: chromeAlpha["surf-inv-pry-hover"][m]}
 }
 
 func withA(c color.NRGBA, a uint8) color.NRGBA { c.A = a; return c }
@@ -477,7 +515,7 @@ var accountFields = map[string]func(*Palette) *color.NRGBA{
 	"ChromeC": func(p *Palette) *color.NRGBA { return &p.ChromeC }, "ChromeText": func(p *Palette) *color.NRGBA { return &p.ChromeText },
 	"ChromeTextDim": func(p *Palette) *color.NRGBA { return &p.ChromeTextDim }, "ChromeHover": func(p *Palette) *color.NRGBA { return &p.ChromeHover },
 	"ChromeActive": func(p *Palette) *color.NRGBA { return &p.ChromeActive }, "SearchBg": func(p *Palette) *color.NRGBA { return &p.SearchBg },
-	"SearchHover": func(p *Palette) *color.NRGBA { return &p.SearchHover }, "SearchText": func(p *Palette) *color.NRGBA { return &p.SearchText },
+	"ChromeHoverTint": func(p *Palette) *color.NRGBA { return &p.ChromeHoverTint }, "SearchText": func(p *Palette) *color.NRGBA { return &p.SearchText },
 	"SidebarBg": func(p *Palette) *color.NRGBA { return &p.SidebarBg }, "SidebarText": func(p *Palette) *color.NRGBA { return &p.SidebarText },
 	"SidebarTextUnread": func(p *Palette) *color.NRGBA { return &p.SidebarTextUnread }, "SidebarHover": func(p *Palette) *color.NRGBA { return &p.SidebarHover },
 	"SidebarActive": func(p *Palette) *color.NRGBA { return &p.SidebarActive }, "SidebarActiveText": func(p *Palette) *color.NRGBA { return &p.SidebarActiveText },
@@ -575,8 +613,12 @@ func (t IATheme) scopeFields(out map[string]color.NRGBA, m themeMode, chrome boo
 	badge, badgeText := t.baseToken(t.Important, "base-imp", m), t.contentToken(t.Important, "content-imp", m)
 	if chrome {
 		out["ChromeText"], out["SearchText"], out["ChromeTextDim"] = inv, inv, sec
-		out["ChromeActive"], out["SearchBg"] = act, act
-		out["ChromeHover"], out["SearchHover"] = withA(sp, 0x26), withA(sp, 0x55)
+		// surf-inv-pry: the rail's tiles (.p-tab_rail__button__icon on
+		// :hover, :active, --active), the search pill, the control strip's
+		// buttons and the top nav buttons' :hover
+		// (.p-ia4_history_buttons__button, .p-top_nav__help)
+		out["ChromeActive"], out["SearchBg"], out["ChromeHover"] = act, act, act
+		out["ChromeHoverTint"] = t.hoverTint(m)
 		out["RailBadge"], out["RailBadgeText"] = badge, badgeText
 		return
 	}

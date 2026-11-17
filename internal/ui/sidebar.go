@@ -496,9 +496,21 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	// leaves the top (--at_scroll_top), and never with the text filter's
 	// input under it (--text_filter_visible)
 	if pos := a.sidebar.list.Position; !filterOn && (pos.First > 0 || pos.Offset > 0) {
-		theme.Fill(gtx, image.Rect(0, hh, sz.X, hh+max(1, gtx.Dp(1))), theme.Over(color.NRGBA{R: 232, G: 232, B: 232, A: 0x21}, a.sbBase))
+		theme.Fill(gtx, image.Rect(0, hh, sz.X, hh+max(1, gtx.Dp(1))), theme.Over(a.sbForegroundLow(0x21), a.sbBase))
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// sbForegroundLow is rgba(var(--sk_foreground_low), alpha) in the
+// sidebar's scope: Slack Kit's sk.base gives 232,232,232 under
+// .sk-client-theme--dark and --light-inverted-sidebar alike, and the
+// light root's 29,28,29 to a light sidebar (Darker sidebars off, or a
+// light brightness: InvertedSidebar).
+func (a *App) sbForegroundLow(alpha uint8) color.NRGBA {
+	if a.th.Dark || a.sidebarScopeMod() != 0 {
+		return color.NRGBA{R: 232, G: 232, B: 232, A: alpha}
+	}
+	return color.NRGBA{R: 29, G: 28, B: 29, A: alpha}
 }
 
 // sbRowH is --sidebar_item_height (X4Y6 getSidebarItemHeight):
@@ -544,12 +556,11 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(unit.Dp(r.gap)))}
 	case sbDivider:
 		// Slack's pagesDivider under the links (divider__QhKlG): margin
-		// 12px, border-bottom 1px rgba(var(--sk_foreground_low), .13), the
-		// var being 232,232,232 under .sk-client-theme--dark and
-		// --light-inverted-sidebar alike.
+		// 12px, border-bottom 1px rgba(var(--sk_foreground_low), .13)
+		// (sbForegroundLow).
 		h := gtx.Dp(unit.Dp(r.gap))
 		m := gtx.Dp(12)
-		theme.Fill(gtx, image.Rect(m, m, w-m, m+gtx.Dp(1)), theme.Over(color.NRGBA{R: 232, G: 232, B: 232, A: 0x21}, a.sbBase))
+		theme.Fill(gtx, image.Rect(m, m, w-m, m+gtx.Dp(1)), theme.Over(a.sbForegroundLow(0x21), a.sbBase))
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	case sbNote:
 		return a.layoutStarredBanner(gtx, r, w, pad)

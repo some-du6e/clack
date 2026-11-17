@@ -9,10 +9,16 @@ type Palette struct {
 	ChromeA, ChromeB, ChromeC color.NRGBA // conic/radial gradient stops
 	ChromeText                color.NRGBA // rail labels, top nav icons
 	ChromeTextDim             color.NRGBA
-	ChromeHover               color.NRGBA // rail icon hover / nav button hover
+	ChromeHover               color.NRGBA // top nav buttons' :hover tile (theme-surf-inv-pry)
 	ChromeActive              color.NRGBA // rail icon selected tile
-	SearchBg, SearchHover     color.NRGBA
-	SearchText                color.NRGBA
+	// ChromeHoverTint is the chrome scope's theme-surf-inv-pry-hover,
+	// the background-image layer Slack blends (--dt_blend-mode-interaction)
+	// over theme-surf-inv-pry on the search pill and a hovered control
+	// strip button, pre-blended so it composites over SearchBg or
+	// ChromeActive with Over (IATheme.hoverTint).
+	ChromeHoverTint color.NRGBA
+	SearchBg        color.NRGBA
+	SearchText      color.NRGBA
 
 	// Sidebar (translucent over the chrome gradient).
 	SidebarBg         color.NRGBA
@@ -79,9 +85,6 @@ type Palette struct {
 	ScrollThumb            color.NRGBA
 }
 
-// SearchTint is the extra rgba(131,56,138,.08) layer on Slack's search pill.
-var SearchTint = rgba(0x83388a, 0x14)
-
 func rgb(v uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
 }
@@ -93,26 +96,29 @@ func rgba(v uint32, a uint8) color.NRGBA {
 }
 
 // LightPalette is Slack's default light mode with the Aubergine chrome
-// (measured from app.slack.com, 2026-11).
+// (measured from app.slack.com, 2026-11). Its chrome and sidebar fields are
+// the default theme's tokens as Slack's code computes them
+// (theme_contrast_test.go), so a custom theme's colours and these never
+// part where Slack's don't.
 var LightPalette = Palette{
-	ChromeA:       rgb(0x4a154b), // radial center + conic light stop
-	ChromeB:       rgb(0x39063a), // conic dark stop
-	ChromeC:       rgb(0x4a154b),
-	ChromeText:    rgb(0xffffff),
-	ChromeTextDim: rgba(0xf6e4ff, 0xe6),
-	ChromeHover:   rgba(0xf9edff, 0x26),
-	ChromeActive:  rgba(0xf9edff, 0x40),
-	SearchBg:      rgba(0xf9edff, 0x40),
-	SearchHover:   rgba(0xf9edff, 0x55),
-	SearchText:    rgb(0xffffff),
+	ChromeA:         rgb(0x4a154b), // radial center + conic light stop
+	ChromeB:         rgb(0x39063a), // conic dark stop
+	ChromeC:         rgb(0x4a154b),
+	ChromeText:      rgb(0xffffff),
+	ChromeTextDim:   rgba(0xf6e4ff, 0xe6),
+	ChromeHover:     rgba(0xf9edff, 0x40),
+	ChromeActive:    rgba(0xf9edff, 0x40),
+	ChromeHoverTint: rgba(0x82378a, 0x14), // aubergine-70 at .08, multiplied over aubergine-0 at .25
+	SearchBg:        rgba(0xf9edff, 0x40),
+	SearchText:      rgb(0xffffff),
 
 	SidebarBg:         rgba(0xf9edff, 0x1c),
 	SidebarText:       rgba(0xf6e4ff, 0xe6),
 	SidebarTextUnread: rgb(0xffffff),
-	SidebarHover:      rgba(0xf9edff, 0x1a),
+	SidebarHover:      rgba(0xf9edff, 0x14),
 	SidebarActive:     rgb(0xf9edff),
 	SidebarActiveText: rgb(0x39063a),
-	SidebarDivider:    rgba(0xf9edff, 0x33),
+	SidebarDivider:    rgba(0xf9edff, 0x38),
 	SidebarButton:     rgba(0xf9edff, 0x40),
 
 	Badge:         rgb(0xeabdfb),
@@ -161,19 +167,20 @@ var LightPalette = Palette{
 	ScrollThumb:        rgba(0x1d1c1d, 0x40),
 }
 
-// DarkPalette is Slack's dark mode.
+// DarkPalette is Slack's dark mode (its chrome and sidebar fields Slack's
+// computed default tokens too).
 var DarkPalette = Palette{
 	// measured from app.slack.com in dark mode (Aubergine), 2026-11-07
-	ChromeA:       rgb(0x431349),
-	ChromeB:       rgb(0x200221),
-	ChromeC:       rgb(0x431349),
-	ChromeText:    rgb(0xffffff),
-	ChromeTextDim: rgba(0xefe1f5, 0xe6),
-	ChromeHover:   rgba(0xefe1f5, 0x26),
-	ChromeActive:  rgba(0xefe1f5, 0x40),
-	SearchBg:      rgba(0xefe1f5, 0x40),
-	SearchHover:   rgba(0xefe1f5, 0x55),
-	SearchText:    rgb(0xffffff),
+	ChromeA:         rgb(0x431349),
+	ChromeB:         rgb(0x200221),
+	ChromeC:         rgb(0x431349),
+	ChromeText:      rgb(0xf8f8f8), // theme-content-inv-pry: gray-100
+	ChromeTextDim:   rgba(0xe3ceeb, 0xcc),
+	ChromeHover:     rgba(0xefe1f5, 0x40),
+	ChromeActive:    rgba(0xefe1f5, 0x40),
+	ChromeHoverTint: rgba(0xefe1f5, 0x14), // aubergine-100 at .08, lighten over itself
+	SearchBg:        rgba(0xefe1f5, 0x40),
+	SearchText:      rgb(0xf8f8f8),
 
 	SidebarBg:         rgba(0x101214, 0x99),
 	SidebarText:       rgba(0xe3ceeb, 0xcc),
@@ -181,14 +188,14 @@ var DarkPalette = Palette{
 	SidebarHover:      rgba(0xefe1f5, 0x14),
 	SidebarActive:     rgb(0x7d3986),
 	SidebarActiveText: rgb(0xefe1f5),
-	SidebarDivider:    rgba(0xefe1f5, 0x26),
+	SidebarDivider:    rgba(0xefe1f5, 0x38),
 	SidebarButton:     rgba(0xefe1f5, 0x40),
 	WorkspaceBorder:   rgba(0xefe1f5, 0x26),
 
-	Badge:         rgb(0xeabdfb),
-	BadgeText:     rgb(0x39063a),
-	RailBadge:     rgb(0xeabdfb),
-	RailBadgeText: rgb(0x39063a),
+	Badge:         rgb(0xcfa1de), // theme-base-imp: aubergine-70
+	BadgeText:     rgb(0x200221), // theme-content-imp: aubergine-0
+	RailBadge:     rgb(0xcfa1de),
+	RailBadgeText: rgb(0x200221),
 
 	Bg:           rgb(0x1a1d21),
 	BgHover:      rgb(0x222529),

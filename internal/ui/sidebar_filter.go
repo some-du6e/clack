@@ -168,11 +168,7 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 
 	r := image.Rectangle{Max: sz}
 	rad := gtx.Dp(8)
-	lilac := color.NRGBA{R: 0xf9, G: 0xed, B: 0xff} // theme-surf-inv-sec / theme-otl-inv-pry (jmNE)
-	bg := theme.Over(theme.WithAlpha(lilac, 0x1c), a.sbBase)
-	if a.th.Dark {
-		bg = a.sbBase // dark: transparent box, outline only
-	}
+	bg, line := a.sbFilterBox()
 	if focused {
 		// .c-filter_input--active: box-shadow 0 0 0 1px
 		// --sk_focused-shadow-color, 0 0 0 5px of it at 30%; the border is
@@ -184,7 +180,7 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		theme.RRect(gtx, r, rad, bg)
 	} else {
 		theme.RRect(gtx, r, rad, bg)
-		theme.Border(gtx, r, rad, max(1, gtx.Dp(1)), theme.Over(theme.WithAlpha(lilac, 0x38), a.sbBase))
+		theme.Border(gtx, r, rad, max(1, gtx.Dp(1)), line)
 	}
 	// the box focuses the input (handleClick); the editor, laid out on
 	// top, takes the presses over the text itself
@@ -231,6 +227,15 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		})
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// sbFilterBox is the box's fill and border: .c-filter_input--themed in
+// the sidebar's scope, theme-surf-inv-sec over the sidebar and a
+// theme-otl-inv-pry border, the account theme's sidebar fields (lilac in
+// the default inverted scope, white and the primary's ramp in a light
+// one, the gray-0 tint and the primary's dark ramp in dark mode).
+func (a *App) sbFilterBox() (bg, line color.NRGBA) {
+	return theme.Over(a.th.C.SidebarBg, a.sbBase), theme.Over(a.th.C.SidebarDivider, a.sbBase)
 }
 
 // sidebarFilterFocused is the input's onFocus: with m2 on and sidebar.dms

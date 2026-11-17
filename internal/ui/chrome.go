@@ -192,7 +192,8 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		name := [...]string{"back", "forward", "history"}[i]
 		btn := a.clicks.get("nav." + name)
 		col := c.ChromeText
-		if (i == 0 && !a.router.CanBack()) || (i == 1 && !a.router.CanForward()) {
+		disabled := (i == 0 && !a.router.CanBack()) || (i == 1 && !a.router.CanForward())
+		if disabled { // [aria-disabled=true]: opacity .45, and no :hover tile
 			col = theme.WithAlpha(col, 0x70)
 		}
 		org := image.Pt(x, y)
@@ -202,7 +203,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 			} else {
 				defer insNavButton.Inspect(1<<i).End(gtx, image.Pt(b, b)) // -back, -forward
 			}
-			return a.chromeButton(gtx, org, btn, name, 26, 18, col, 4)
+			return a.chromeButtonHover(gtx, org, btn, name, 26, 18, col, 4, !disabled)
 		})
 		x -= b + gap
 	}
@@ -226,12 +227,11 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	at(gtx, sorg, image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
 		defer insSearch.Inspect(0).End(gtx, image.Pt(sw, sh))
 		d := clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
-			bg := c.SearchBg
-			if hovered {
-				bg = c.SearchHover
-			}
-			// Slack: rgba(249,237,255,.25) plus a rgba(131,56,138,.08) tint.
-			a.chrome(gtx, sorg, image.Rectangle{Max: sz}, gtx.Dp(4), bg, theme.SearchTint)
+			// .p-top_nav__search__container: theme-surf-inv-pry under the
+			// theme-surf-inv-pry-hover layer, blended (ChromeHoverTint); in
+			// the ia4 top nav the pill's :hover changes nothing (its
+			// box-shadow is none there)
+			a.chrome(gtx, sorg, image.Rectangle{Max: sz}, gtx.Dp(4), c.SearchBg, c.ChromeHoverTint)
 		}, func(gtx layout.Context) layout.Dimensions {
 			sz := image.Pt(sw, sh)
 			if a.searchBoxIcon() {
@@ -609,15 +609,23 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		org := image.Pt(x0, by-lift)
 		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 			btn := a.clicks.get(k)
-			bg := c.ChromeActive // theme-surf-inv-pry in the rail's scope
+			// .p-control_strip__circle_button: theme-surf-inv-pry with
+			// theme-content-inv-sec; :hover adds the blended
+			// surf-inv-pry-hover layer and takes theme-content-inv-pry
+			bg, ink := c.ChromeActive, c.ChromeTextDim
+			var tint color.NRGBA
 			if btn.Hovered() {
-				bg = c.SearchHover
+				tint, ink = c.ChromeHoverTint, c.ChromeText
 			}
 			return clickArea(gtx, btn, func(gtx layout.Context, sz image.Point, hovered bool) {
+				if tint.A > 0 {
+					a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, bg, tint)
+					return
+				}
 				a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, bg)
 			}, func(gtx layout.Context) layout.Dimensions {
 				off := (cs - gtx.Dp(20)) / 2
-				fg := theme.Over(c.ChromeTextDim, theme.Over(bg, a.chromeBase(org.Add(image.Pt(cs/2, cs/2)))))
+				fg := theme.Over(ink, theme.Over(tint, theme.Over(bg, a.chromeBase(org.Add(image.Pt(cs/2, cs/2))))))
 				at(gtx, image.Pt(off, off), image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(icon)(gtx, 20, fg)
 				})
@@ -659,8 +667,14 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 // chromeButton is an icon button on the chrome whose hover tile is
 // composited in sRGB. org is the button's window position.
 func (a *App) chromeButton(gtx layout.Context, org image.Point, c *widget.Clickable, name string, box, iconSz unit.Dp, col color.NRGBA, radius unit.Dp) layout.Dimensions {
+	return a.chromeButtonHover(gtx, org, c, name, box, iconSz, col, radius, true)
+}
+
+// chromeButtonHover is chromeButton with its :hover tile (ChromeHover,
+// theme-surf-inv-pry) only when hoverable.
+func (a *App) chromeButtonHover(gtx layout.Context, org image.Point, c *widget.Clickable, name string, box, iconSz unit.Dp, col color.NRGBA, radius unit.Dp, hoverable bool) layout.Dimensions {
 	return clickArea(gtx, c, func(gtx layout.Context, sz image.Point, hovered bool) {
-		if hovered {
+		if hovered && hoverable {
 			a.chrome(gtx, org, image.Rectangle{Max: sz}, gtx.Dp(radius), a.th.C.ChromeHover)
 		}
 	}, func(gtx layout.Context) layout.Dimensions {
