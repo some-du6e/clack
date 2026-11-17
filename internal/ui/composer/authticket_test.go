@@ -71,7 +71,10 @@ func TestSlackAuthTicketCommand(t *testing.T) {
 		}
 		p := cmds[before]
 		tok := p.Get("client_token")
-		if p.Get("command") != "/slackauthticket" || p.Get("disp") != "/slackauthticket" || p.Get("text") != ticket ||
+		// executeCommand: the ticket goes out as the arguments' blocks, with no text
+		tj, _ := json.Marshal(ticket)
+		wantBlocks := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":` + string(tj) + `}]}]}]`
+		if p.Get("command") != "/slackauthticket" || p.Get("disp") != "/slackauthticket" || p.Has("text") || p.Get("blocks") != wantBlocks ||
 			p.Get("channel") != tChGen || p.Get("thread_ts") != ts || !strings.HasPrefix(tok, "web-") {
 			t.Errorf("thread %q: chat.command %v", ts, p)
 		}
