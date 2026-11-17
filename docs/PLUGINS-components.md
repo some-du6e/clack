@@ -969,7 +969,7 @@ From the `slick` workflow's acceptance run over Slick @ f52d55d (53 plugins, bui
 | Menu | AccountSwitcher, MessageLogger | pop |
 | Message | BetterBlock | msgs |
 | MessageActionsMenu | MessageLogger | pop |
-| OrganizeMessageActionsSubmenu | BetterMessageMenu (a context its submenu's MAMenu reads; Clack's Organize submenu is the `submenuActions` the root's MAMenu hands back, the same rows) | pop |
+| OrganizeMessageActionsSubmenu | BetterMessageMenu (a context its submenu's MAMenu reads). Clack draws an open Organize submenu through it and the submenu's own MAMenu, nested in the root MAMenu's tree, as Slack's renderSubmenu does; ConnectToAppsMessageActionsSubmenu the same way | pop |
 | MessageAttachmentYouTube | DeArrow | msgs |
 | MessageFile | BetterBlock, MessageLogger | msgs |
 | MessageFiles | BetterBlock, MessageLogger | msgs |
