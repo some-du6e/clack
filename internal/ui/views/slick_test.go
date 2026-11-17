@@ -8,9 +8,11 @@ package views
 // API, no network) and checks what a user would see.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +34,7 @@ import (
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -307,14 +310,21 @@ func newSlickEnv(t *testing.T) *slickEnv {
 		t.Fatal(err)
 	}
 	slackc.SetBridge(tt.Bridge())
+	// the Slack components plugins render themselves (api.elements.Avatar
+	// and the rest), as the app registers them, and the theme and core
+	// they draw with (slackc_wire.go: slackc.Init before any plugin draws)
+	th := theme.New(false)
+	messages.RegisterSlackHosts()
+	slackc.Init(slackc.Env{Theme: th, Core: app, Invalidate: func() {}})
 	t.Cleanup(func() {
+		slackc.Init(slackc.Env{})
 		_ = s.Close()
 		_ = tt.Close()
 		slackc.Reset()
 		slackc.SetBridge(nil)
 		slackc.SetPatched(nil)
 	})
-	return &slickEnv{t: t, h: &slickHost{app: app, th: theme.New(false), tt: tt}, api: api, ui: ui, s: s, app: app, size: image.Pt(1200, 800)}
+	return &slickEnv{t: t, h: &slickHost{app: app, th: th, tt: tt}, api: api, ui: ui, s: s, app: app, size: image.Pt(1200, 800)}
 }
 
 func (e *slickEnv) ctx() context.Context {
@@ -584,6 +594,7 @@ func TestSlickViewBetterHuddles(t *testing.T) {
 // a native pill with no boundary).
 func TestSlickViewWhoReactedInViews(t *testing.T) {
 	e := newSlickEnv(t)
+	drew := drawnImages(t, e.app, e.h.th)
 	alice, bob := sUser(sAlice, "alice", "Alice Example"), sUser(sBob, "bob", "Bob Example")
 	alice.Profile.Image24, alice.Profile.Image48 = "https://avatars.invalid/alice-24.png", "https://avatars.invalid/alice-48.png"
 	bob.Profile.Image24, bob.Profile.Image48 = "https://avatars.invalid/bob-24.png", "https://avatars.invalid/bob-48.png"
@@ -610,8 +621,14 @@ func TestSlickViewWhoReactedInViews(t *testing.T) {
 		}
 		return false
 	}
+	// Slick #480 (97cbb8e) draws the avatars with Slack's own component,
+	// api.elements.Avatar (ConnectedBaseAvatar), where they were <img>s of
+	// image_24: the check is that the pill draws alice's picture, either
+	// way. On Activity no message list has drawn, so the avatar host finds
+	// the members through slackc's core (hostCore); it found none there and
+	// drew a placeholder.
 	e.until("the reactors' avatars in the tada pill", pills, func() bool {
-		return has("slick-wr__av") && has("alice-24.png") && has(`"data-qa":"reactji"`)
+		return has("slick-wr__av") && has(`"data-qa":"reactji"`) && drew("avatars.invalid/alice-")
 	})
 	if d.Size.X <= 0 || d.Size.Y < 24 || d.Size.Y > 32 {
 		t.Errorf("the pill row is %v, want one pill row", d.Size)
@@ -695,4 +712,40 @@ func TestSlickViewCopyReactedInViews(t *testing.T) {
 	check("threads", thr.Layout, &thr.base)
 	unr := NewUnreads(e.h)
 	check("unreads", unr.Layout, &unr.base)
+}
+
+// drawnImages gives slackc the image cache the app gives it (slackc.Init,
+// with the account's core), one that records the URLs it's asked to load
+// (each a picture a frame drew), and returns whether one containing sub
+// was. Synthetic images only.
+func drawnImages(t *testing.T, app *core.App, th *theme.Theme) func(sub string) bool {
+	t.Helper()
+	m := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for i := range m.Pix {
+		m.Pix[i] = 0x80
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, m); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var urls []string
+	imgs := imgcache.New(func(_ context.Context, url string) ([]byte, error) {
+		mu.Lock()
+		urls = append(urls, url)
+		mu.Unlock()
+		return b.Bytes(), nil
+	}, "", nil)
+	slackc.Init(slackc.Env{Theme: th, Core: app, Images: imgs, Invalidate: func() {}})
+	t.Cleanup(func() { slackc.Init(slackc.Env{}) })
+	return func(sub string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, u := range urls {
+			if strings.Contains(u, sub) {
+				return true
+			}
+		}
+		return false
+	}
 }

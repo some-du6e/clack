@@ -563,6 +563,15 @@ func sameJSON(a, b any) bool {
 // icons, icons, or the userId's profile image). def is the native's own
 // avatar for user (kept while the props name the same user).
 func avatarURL(h Host, p slackc.Props, user, def string) string {
+	var c *core.App
+	if h != nil {
+		c = h.Core()
+	}
+	return avatarURLIn(c, p, user, def)
+}
+
+// avatarURLIn is avatarURL with the members looked up in c (nil: none).
+func avatarURLIn(c *core.App, p slackc.Props, user, def string) string {
 	id := p.StrOr("userId", user)
 	if id == "" { // ConnectedBaseAvatar: icons or botProfile only without a userId
 		if u := iconURL(p.Map("icons")); u != "" {
@@ -576,10 +585,10 @@ func avatarURL(h Host, p slackc.Props, user, def string) string {
 	if id == user && def != "" {
 		return def
 	}
-	if id == "" || h == nil || h.Core() == nil {
+	if id == "" || c == nil {
 		return def
 	}
-	if u, ok := h.Core().User(id); ok {
+	if u, ok := c.User(id); ok {
 		return u.Avatar
 	}
 	return "" // asked for by the lookup
