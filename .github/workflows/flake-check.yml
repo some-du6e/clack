@@ -1246,3 +1246,29 @@ jobs:
           go test -count=3 -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions)$' ./internal/ui/messages || rc=1
           go test -count=3 -v -timeout 10m -run '^TestComposersForOneThreadSendTheirOwn$' ./internal/ui/composer || rc=1
           exit $rc
+
+  # msg-latency: a socket event to the frame that draws its row (Karim's
+  # α.102 "like a second and they come in clumped"). core: socket events
+  # reach the views without waiting for users/info or messages.list; ui:
+  # the whole client over the fake's socket, frames drawn as the window
+  # draws them, without plugins (one verbose run, then COUNT)
+  msg-latency:
+    if: ${{ !inputs.only || startsWith('msg-latency', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core: socket events don't wait for lookups"
+        run: go test -count=$COUNT -v -run '^TestSocketEventsDontWaitForLookups$' ./internal/core
+      - name: "ui: event to row, without plugins"
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui
+          go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui
