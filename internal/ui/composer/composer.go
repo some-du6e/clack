@@ -1223,9 +1223,9 @@ func (c *Composer) submit() {
 		save := c.SaveEdit
 		go func() {
 			// the edit's thunks and transforms are the user's, as a send's
-			// (taut.UserAction): ahead of the queued renders, after the
+			// (taut.UserSend): ahead of the queued renders, after the
 			// user's earlier input
-			ctx := taut.UserAction(context.Background())
+			ctx := taut.UserSend(context.Background())
 			var err error
 			if save != nil {
 				err = save(ctx, m.Channel, m.TS, text, blocks, nil)
@@ -1349,8 +1349,8 @@ func (c *Composer) startSend(o *outgoing) (run func()) {
 	job, finish := c.newSendJob(o)
 	return func() {
 		// its send transforms and thunks are the user's: ahead of the JS
-		// work queued before them (taut.UserAction)
-		finish(job.run(taut.UserAction(context.Background())))
+		// work queued before them, the chain held together (taut.UserSend)
+		finish(job.run(taut.UserSend(context.Background())))
 	}
 }
 
@@ -1583,7 +1583,7 @@ func (c *Composer) checkThenSend(o *outgoing) {
 		// the checks and the plugins' prepareAndSendMessage in one JS
 		// call (checkThenRun)
 		job, finish := c.newSendJob(o)
-		job.checkThenRun(taut.UserAction(context.Background()), currentTaut(), checkContext(m), func(sent bool, err error) {
+		job.checkThenRun(taut.UserSend(context.Background()), currentTaut(), checkContext(m), func(sent bool, err error) {
 			if !sent {
 				c.restoreSend(o) // held back (done(false)): the message goes back
 				return

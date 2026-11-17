@@ -110,13 +110,13 @@ func (e *perfEnv) reconnectSlow(t *testing.T, hold time.Duration) {
 	}
 }
 
-// historyInFlight makes the next conversations.history answer with the
+// historyInFlight makes ch's next conversations.history answer with the
 // page the fake has when the call arrives, held back for d: a message
 // posted meanwhile is newer than the page. It returns a func that
 // reports whether that page was read.
 func historyInFlight(fs *fakeslack.Server, ch string, d time.Duration) func() bool {
 	n := fs.HistoryReads(ch)
-	fs.SetFault("conversations.history", fakeslack.Fault{ReplyDelay: d, Times: 1})
+	fs.SetChannelFault("conversations.history", ch, fakeslack.Fault{ReplyDelay: d, Times: 1})
 	return func() bool { return fs.HistoryReads(ch) > n }
 }
 

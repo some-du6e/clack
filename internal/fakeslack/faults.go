@@ -43,6 +43,44 @@ func (s *Server) SetFault(method string, f Fault) {
 	s.faults[method] = &f
 }
 
+// SetChannelFault is SetFault for method's calls about conversation ch
+// (their channel argument) alone: a test's read of ch, not the reads of
+// other conversations that run meanwhile (boot's prefetch, which starts
+// at the socket's first hello). A zero Fault clears it.
+func (s *Server) SetChannelFault(method, ch string, f Fault) {
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	if s.chFaults == nil {
+		s.chFaults = map[string]*Fault{}
+	}
+	k := method + " " + ch
+	if f == (Fault{}) {
+		delete(s.chFaults, k)
+		return
+	}
+	s.chFaults[k] = &f
+}
+
+func (s *Server) takeChannelFault(method, ch string) (Fault, bool) {
+	if ch == "" {
+		return Fault{}, false
+	}
+	s.faultMu.Lock()
+	defer s.faultMu.Unlock()
+	k := method + " " + ch
+	f := s.chFaults[k]
+	if f == nil {
+		return Fault{}, false
+	}
+	out := *f
+	if f.Times > 0 {
+		if f.Times--; f.Times == 0 {
+			delete(s.chFaults, k)
+		}
+	}
+	return out, true
+}
+
 func (s *Server) takeFault(method string) (Fault, bool) {
 	if strings.HasPrefix(method, "upload/") {
 		method = "upload"

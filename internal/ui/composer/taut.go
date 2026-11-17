@@ -430,7 +430,7 @@ func tautSendCheck(m SendCheck, done func(ok bool)) {
 	// queued now, before this frame's layout queues the composer's
 	// re-render (SendCheckAsync); done hears the answer on another
 	// goroutine
-	t.SendCheckAsync(taut.UserAction(context.Background()), checkContext(m), done)
+	t.SendCheckAsync(taut.UserSend(context.Background()), checkContext(m), done)
 }
 
 // checkContext is the send checks' {kind, channelId, threadTs} and the
@@ -457,7 +457,9 @@ func tautLinkTransform(u string) string {
 	if t == nil || !tautSyncAllowed() {
 		return u
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), tautSyncTimeout)
+	// the UI goroutine waits for it: the user's lane, ahead of the queued
+	// renders (and never held back by a send's chain: jsrt.UserChain)
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), tautSyncTimeout)
 	defer cancel()
 	out := t.TransformLink(ctx, u, linkSource)
 	tautSyncDone(ctx, "link transform")
@@ -470,7 +472,7 @@ func tautInlineMarkup(line string) []MarkupSpan {
 	if t == nil || !tautSyncAllowed() {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), tautSyncTimeout)
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), tautSyncTimeout) // as tautLinkTransform
 	defer cancel()
 	spans := t.ParseInlineMarkup(ctx, line)
 	tautSyncDone(ctx, "inline markup")

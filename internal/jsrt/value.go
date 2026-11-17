@@ -519,9 +519,9 @@ func (c *Ctx) NewPromise() (p Value, resolve func(any), reject func(error)) {
 	var once onceFlag
 	// it settles on the lane of the task that made it: a user-blocking
 	// task's await of a Go function continues ahead of the queue
-	var root int64
+	var root lane
 	if c.r.onJSThread() {
-		root = c.r.chainRoot()
+		root = c.r.chainLane()
 	}
 	resolve = func(x any) {
 		if !once.take() {

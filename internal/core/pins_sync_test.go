@@ -162,7 +162,7 @@ func TestPinUnloadedChannelThenOpen(t *testing.T) {
 		ts, msg := fs.PostQuiet(ch, pinAuthor, "anchored synthetic")
 		fs.Push(msg)
 		before := fs.CallCount("conversations.history")
-		fs.SetFault("conversations.history", fakeslack.Fault{ReplyDelay: 600 * time.Millisecond, Times: 1})
+		fs.SetChannelFault("conversations.history", ch, fakeslack.Fault{ReplyDelay: 600 * time.Millisecond, Times: 1})
 		done := make(chan error, 1)
 		go func() { done <- a.loadLatest(context.Background(), ch) }()
 		dl := time.Now().Add(5 * time.Second)

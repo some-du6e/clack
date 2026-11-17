@@ -339,6 +339,9 @@ func inOrder(ctx context.Context) context.Context {
 // input.
 func (tt *thunkTable) add(ctx context.Context, native NativeFunc) int64 {
 	switch {
+	case jsrt.IsUserChain(ctx):
+		inner := native
+		native = func(c context.Context, raw []json.RawMessage) (any, error) { return inner(jsrt.UserChain(c), raw) }
 	case jsrt.IsUserBlocking(ctx):
 		inner := native
 		native = func(c context.Context, raw []json.RawMessage) (any, error) { return inner(jsrt.UserBlocking(c), raw) }

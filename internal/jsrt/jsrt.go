@@ -201,13 +201,17 @@ func (r *Runtime) ExposeAsyncSeq(name string, fn AsyncFunc, seq func(args []json
 			raw[i] = a.jsonOrNull()
 		}
 		p, resolve, reject := js.NewPromise()
+		held := r.heldAwait() // a send's chain awaiting Go (awaitUserChain)
 		run := func() {
 			v, err := fn(r.ctx, raw)
 			if err != nil {
 				reject(err)
-				return
+			} else {
+				resolve(v)
 			}
-			resolve(v)
+			if held != nil {
+				held()
+			}
 		}
 		if seq != nil && seq(raw) {
 			r.runSeq(run)
@@ -317,7 +321,7 @@ func (r *Runtime) CallThen(ctx context.Context, path string, done func(json.RawM
 // queue.
 func callTask(ctx context.Context, path string) task {
 	urgent := IsUserBlocking(ctx)
-	return task{kind: "Call", what: path, urgent: urgent, ordered: !urgent && IsInOrder(ctx)}
+	return task{kind: "Call", what: path, urgent: urgent, ordered: !urgent && IsInOrder(ctx), hold: urgent && IsUserChain(ctx)}
 }
 
 // Call calls the global function at path ("a.b.c" from globalThis; `this`

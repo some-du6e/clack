@@ -167,7 +167,7 @@ func TestHistoryCatchUpRetries(t *testing.T) {
 	}
 	missed, _ := fs.PostAppQuiet(ch, "B0CATCHUP3", "A0CATCHUP3", "Owl", "42141: Hi meta,")
 	a.socketConnected(false)
-	fs.SetFault("conversations.history", fakeslack.Fault{Error: "internal_error", Times: 1})
+	fs.SetChannelFault("conversations.history", ch, fakeslack.Fault{Error: "internal_error", Times: 1})
 	n := fs.HistoryReads(ch)
 	if p, err := a.History(ctx, ch, ""); err != nil || pageHas(p, missed) {
 		t.Fatalf("History: %v, or it has the message before any read", err)
@@ -438,7 +438,7 @@ func TestHistoryCatchUpOnceMore(t *testing.T) {
 	a.historyLanded(t, ctx, ch)
 	// a refresh goes out and is slow to answer: the fake answers from what
 	// it holds now
-	fs.SetFault("conversations.history", fakeslack.Fault{ReplyDelay: 800 * time.Millisecond, Times: 1})
+	fs.SetChannelFault("conversations.history", ch, fakeslack.Fault{ReplyDelay: 800 * time.Millisecond, Times: 1})
 	n := fs.HistoryReads(ch)
 	refreshed := make(chan error, 1)
 	go func() {

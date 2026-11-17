@@ -470,6 +470,8 @@ type Server struct {
 	shared  []SharedFiles            // files.share calls
 	faultMu sync.Mutex
 	faults  map[string]*Fault // SetFault (faults.go)
+	// chFaults: SetChannelFault's, by "method channel"
+	chFaults map[string]*Fault
 	// DuplicateEvents sends every upload event twice (the files.share
 	// echo, file_created), as a reconnecting socket can.
 	DuplicateEvents bool
@@ -1316,6 +1318,15 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(body, &edge)
 	} else {
 		form, _ = url.ParseQuery(string(body))
+		if f, ok := s.takeChannelFault(method, form.Get("channel")); ok && !faulted {
+			fault, faulted = f, true
+			if fault.Delay > 0 {
+				time.Sleep(fault.Delay)
+			}
+			if !fault.AfterHandle && s.applyFault(w, fault) {
+				return
+			}
+		}
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			form = url.Values{}
 			switch method {

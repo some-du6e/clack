@@ -550,7 +550,7 @@ var signOutMethods = map[string]bool{
 func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, body []byte) {
 	ctx, cancel := context.WithCancel(r.ctx)
 	r.fetches[id] = cancel
-	root := r.chainRoot() // its answer comes back on the lane of the task that asked
+	root := r.chainLane() // its answer comes back on the lane of the task that asked
 	fail := func(err error) {
 		r.postChain(root, func(js *Ctx) {
 			delete(r.fetches, id)

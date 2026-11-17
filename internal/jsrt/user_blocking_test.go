@@ -479,3 +479,61 @@ func TestInOrderCallBeforeLaterInput(t *testing.T) {
 		t.Errorf("ran %s, want %s", got, want)
 	}
 }
+
+// A send's chain (UserChain) goes through Go between its JS steps: its
+// patches await the native, which queues the next hop (the sendMessage
+// thunk) a moment later. While it awaits, the loop starts no queued render
+// for up to userAwaitHold, and the next hop runs first, as Slack runs a
+// send in one task. Other user-blocking work holds nothing: a render
+// queued behind a click's await of Go starts at once.
+func TestSendChainHoldsTheQueue(t *testing.T) {
+	l := newLaneRecorder(t)
+	r := l.r
+	var ctxs sync.Map // the call's ctx, for the native's next hop
+	r.ExposeAsync("native", func(_ context.Context, args []json.RawMessage) (any, error) {
+		var key string
+		_ = json.Unmarshal(args[0], &key)
+		c, _ := ctxs.Load(key)
+		time.Sleep(2 * time.Millisecond) // the native's own work, then its next JS hop
+		done := make(chan struct{})
+		r.CallThen(c.(context.Context), "chain.next", func(json.RawMessage, error) { close(done) }, key)
+		<-done
+		time.Sleep(50 * time.Millisecond) // chat.postMessage
+		return nil, nil
+	})
+	r.Expose("noteJS", func(js *Ctx, _ Value, args []Value) (any, error) {
+		l.note(args[0].String())
+		return nil, nil
+	})
+	if _, err := r.Eval("chain.js", `globalThis.chain = {
+		async send(key) { __clack.noteJS(key); await __clack.native(key); },
+		next(key) { __clack.noteJS(key + ' next') },
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{"send", UserChain(context.Background()), "G, send, send next, render"},
+		{"click", UserBlocking(context.Background()), "G, click, render, click next"},
+	} {
+		l.mu.Lock()
+		l.order = nil
+		l.mu.Unlock()
+		ctxs.Store(tc.name, tc.ctx)
+		g := l.hold("G", true)
+		l.post(r.Post, "render")
+		done := make(chan error, 1)
+		r.CallThen(tc.ctx, "chain.send", func(_ json.RawMessage, err error) { done <- err }, tc.name)
+		close(g)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		l.drain()
+		if got := l.got(); got != tc.want {
+			t.Errorf("%s: ran %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
