@@ -198,7 +198,7 @@ func TestBroadcastPermsRequest(t *testing.T) {
 func TestLocalEphemeral(t *testing.T) {
 	s := store.New("")
 	s.PutConv(slack.Conversation{ID: "C1", Name: "pub", IsChannel: true, IsMember: true})
-	s.PrependOlder("C1", []slack.Message{{Type: "message", TS: "1700000000.000100", User: "U2", Text: "synthetic"}}, false) // the open channel
+	s.SetLatest("C1", []slack.Message{{Type: "message", TS: "1700000000.000100", User: "U2", Text: "synthetic"}}, false) // the open channel
 	a := New(slack.New(slack.Creds{Token: "xoxc-test", UserID: "U1", Team: "T1"}), s)
 	evs, stop := a.Subscribe()
 	defer stop()

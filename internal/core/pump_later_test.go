@@ -13,12 +13,30 @@ import (
 // announce.
 func (a *App) laterDone(t testing.TB) {
 	t.Helper()
-	for dl := time.Now().Add(15 * time.Second); ; time.Sleep(time.Millisecond) {
-		q := &a.pumpQ
+	busy := func(q *actQueue) bool {
 		q.mu.Lock()
-		idle := !q.running && len(q.tasks) == 0
-		q.mu.Unlock()
-		if idle {
+		defer q.mu.Unlock()
+		return q.running || len(q.tasks) > 0
+	}
+	// the pump's queue, and the conversations' held messages (convLater)
+	idle := func() bool {
+		if busy(&a.pumpQ) {
+			return false
+		}
+		a.convHoldMu.Lock()
+		defer a.convHoldMu.Unlock()
+		if len(a.convHold) > 0 {
+			return false
+		}
+		for _, q := range a.convQs {
+			if busy(q) {
+				return false
+			}
+		}
+		return true
+	}
+	for dl := time.Now().Add(15 * time.Second); ; time.Sleep(time.Millisecond) {
+		if idle() {
 			return
 		}
 		if time.Now().After(dl) {

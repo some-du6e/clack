@@ -30,7 +30,7 @@ func broadcastApp(t *testing.T, perms map[string]any) (*core.App, *fakeSlack) {
 	app, fs := syntheticApp(t, func(s *store.Store) {
 		s.PutConv(slack.Conversation{ID: tChOpen, Name: "open", IsChannel: true, IsMember: true, NumMembers: 30})
 		for _, ch := range []string{tChGen, tChOpen} { // open channels: their timelines are loaded
-			s.PrependOlder(ch, []slack.Message{{Type: "message", TS: "1700000000.000100", User: "UALICE", Text: "synthetic"}}, false)
+			s.SetLatest(ch, []slack.Message{{Type: "message", TS: "1700000000.000100", User: "UALICE", Text: "synthetic"}}, false)
 		}
 	})
 	if perms != nil {
