@@ -1330,7 +1330,12 @@ type outgoing struct {
 // Attached files leave the composer at once, as in Slack (the draft is
 // gone and the placeholder message shows them while their uploads
 // finish); a failed send puts them back.
-func (c *Composer) send(o *outgoing) {
+func (c *Composer) send(o *outgoing) { go c.startSend(o)() }
+
+// startSend is send's part on the UI goroutine (the attached files leave
+// the composer, the job is built); it returns the rest, to run on any
+// goroutine but the UI's.
+func (c *Composer) startSend(o *outgoing) (run func()) {
 	batch := c.att.takeForSend()
 	hasFiles := !batch.empty()
 	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
@@ -1342,7 +1347,7 @@ func (c *Composer) send(o *outgoing) {
 			}
 		})
 	}
-	go func() {
+	return func() {
 		// its send transforms and thunks are the user's: ahead of the JS
 		// work queued before them (taut.UserAction)
 		err := job.run(taut.UserAction(context.Background()))
@@ -1369,7 +1374,7 @@ func (c *Composer) send(o *outgoing) {
 			c.unsendBy = time.Now().Add(unsendWindow)
 			c.att.dropPreviews(batch.chips...) // sent: no viewer shows them any more
 		})
-	}()
+	}
 }
 
 // unsendWindow is how long Mod+Z can unsend a message (15e3 ms).
@@ -1517,14 +1522,33 @@ func (c *Composer) checkThenSend(o *outgoing) {
 		c.send(o)
 		return
 	}
+	// A message without files goes out from the checks' answer: its UI
+	// goroutine part is done now, and the rest starts as the answer comes,
+	// so the pending copy shows in the frame after it, as Slack's
+	// prepareAndSendMessage dispatches sendMessage when its checks resolve.
+	// It waited for the next composer frame first: with any plugin's send
+	// check an own message showed three frames after Enter (msg-latency).
+	// Files stay in the composer until the checks pass (a check may ask
+	// the user first).
+	var run func()
+	if c.att.Len() == 0 {
+		run = c.startSend(o)
+	}
 	check(SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}, func(ok bool) {
-		c.later(func() {
-			if ok {
-				c.send(o)
-			} else {
-				c.restore(o.doc)
-			}
-		})
+		switch {
+		case run != nil && ok:
+			go run() // never on the caller's goroutine: a check may answer on the UI's
+		case run != nil:
+			c.restore(o.doc)
+		default:
+			c.later(func() {
+				if ok {
+					c.send(o)
+				} else {
+					c.restore(o.doc)
+				}
+			})
+		}
 	})
 }
 

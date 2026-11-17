@@ -516,6 +516,17 @@ func latReport(t *testing.T, ps latPass, ws []*latWait, enforce bool) map[string
 		if st.Missed > 0 {
 			t.Errorf("%s, %s: %d of %d rows never drew", ps.name, kind, st.Missed, st.N)
 		}
+		// an own message's pending copy: the frame after the one that took
+		// the Enter key, whatever plugins check it first (a frame the
+		// socket's traffic asks for in between counts too, so only the
+		// quiet passes)
+		if kind == "own" && !ps.busy {
+			for n, k := range st.Frames {
+				if n > 2 {
+					t.Errorf("%s, own: %d sends drew their pending copy %d frames after the one that took the Enter key, want 1", ps.name, k, n-1)
+				}
+			}
+		}
 		if st.Median > ms(latMedianBudget) || st.P90 > ms(latP90Budget) || st.Max > ms(latMaxBudget) {
 			t.Errorf("%s, %s: event to row median %.1f ms, p90 %.1f ms, max %.1f ms; Slack draws it the next frame (budget: median %.0f, p90 %.0f, max %.0f ms)",
 				ps.name, kind, st.Median, st.P90, st.Max, ms(latMedianBudget), ms(latP90Budget), ms(latMaxBudget))
