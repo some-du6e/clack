@@ -1268,12 +1268,12 @@ jobs:
       - name: "core: socket events don't wait for lookups; jsrt, composer: a send's checks run ahead of queued JS"
         run: |
           rc=0
-          go test -count=$COUNT -v -run '^TestSocketEventsDontWaitForLookups$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestHistoryCatchesUpWithLatest)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^TestUserBlockingRunsFirst$' ./internal/jsrt || rc=1
           go test -count=$COUNT -v -run '^TestSendCheckAheadOfJSBacklog$' ./internal/ui/composer || rc=1
           exit $rc
-      - name: "ui: event to row, without plugins; a new sender's notification names them"
+      - name: "ui: event to row, without plugins; a new sender's notification names them; an app's message stays in the list"
         if: ${{ !cancelled() }}
         run: |
-          go test -count=1 -v -timeout 20m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople)$' ./internal/ui
-          go test -count=$COUNT -timeout 60m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople)$' ./internal/ui
+          go test -count=1 -v -timeout 20m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestBotMessageReachesTheList)$' ./internal/ui
+          go test -count=$COUNT -timeout 60m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestBotMessageReachesTheList)$' ./internal/ui

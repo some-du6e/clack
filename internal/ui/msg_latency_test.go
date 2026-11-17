@@ -202,8 +202,14 @@ func newLatProbe(t *testing.T, e *perfEnv, ch string) *latProbe {
 	return p
 }
 
+// latMember is the n-th of fakeslack's synthetic members (SynthMemberID:
+// users/info answers any of them). Spelled out here so the perf job can
+// run this file on a base tree whose fakeslack doesn't know them: there
+// users/info answers without them, after the same round trip.
+func latMember(n int) string { return fmt.Sprintf("U0SYNTH%06d", n) }
+
 // member hands out a synthetic member the client has never seen.
-func (p *latProbe) member() string { return fakeslack.SynthMemberID(int(p.next.Add(1))) }
+func (p *latProbe) member() string { return latMember(int(p.next.Add(1))) }
 
 // known hands out n members the client holds (fetched now).
 func (p *latProbe) known(n int) []string {
@@ -443,11 +449,11 @@ func (p *latProbe) traffic(stop <-chan struct{}) {
 			if i%2 == 0 {
 				pr = "away"
 			}
-			fs.Push(map[string]any{"type": "presence_change", "user": fakeslack.SynthMemberID(i % 50), "presence": pr})
+			fs.Push(map[string]any{"type": "presence_change", "user": latMember(i % 50), "presence": pr})
 		}
 		if el-lastProf >= 60*time.Millisecond {
 			lastProf = el
-			u := fakeslack.SynthMemberID(i % 50)
+			u := latMember(i % 50)
 			fs.Push(map[string]any{"type": "user_change", "user": map[string]any{"id": u, "name": strings.ToLower(u), "real_name": "Synthetic " + u,
 				"profile": map[string]any{"display_name": strings.ToLower(u), "status_emoji": ":wave:", "status_text": fmt.Sprintf("away %d", i)}}})
 		}

@@ -23,9 +23,26 @@ func TestUserBlockingRunsFirst(t *testing.T) {
 		order = append(order, s)
 		mu.Unlock()
 	}
+	// hold runs a task that waits for release: the task running when the
+	// others come (it is running when hold returns)
+	var holds []chan struct{}
+	t.Cleanup(func() { // a failed check must not leave the JS thread held
+		for _, c := range holds {
+			select {
+			case <-c:
+			default:
+				close(c)
+			}
+		}
+	})
 	hold := func() chan struct{} {
-		c := make(chan struct{})
-		r.Post(func(*Ctx) { <-c }) // the task running when the others come
+		c, running := make(chan struct{}), make(chan struct{})
+		holds = append(holds, c)
+		r.Post(func(*Ctx) {
+			close(running)
+			<-c
+		})
+		<-running
 		return c
 	}
 	const slow, n = 20 * time.Millisecond, 10
