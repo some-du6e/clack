@@ -27,7 +27,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -157,6 +156,21 @@ func TestSlickViewMentionProfilesWrap(t *testing.T) {
 	pwPane(t, e.h, "slick", "thread")
 }
 
+// pwGreen counts the picture's (green) pixels in img and their bounds.
+func pwGreen(img *image.RGBA) (int, image.Rectangle) {
+	n, bb := 0, image.Rectangle{}
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if c := img.RGBAAt(x, y); c.G > 0xc0 && c.R < 0x60 && c.B < 0x60 {
+				n++
+				bb = bb.Union(image.Rect(x, y, x+1, y+1))
+			}
+		}
+	}
+	return n, bb
+}
+
 // pwPane sweeps the pane's width and, at the widths the mention wraps at,
 // checks where its picture is drawn.
 func pwPane(t *testing.T, h coreHost, mode, pane string) {
@@ -165,13 +179,15 @@ func pwPane(t *testing.T, h coreHost, mode, pane string) {
 		Layout(gtx layout.Context) layout.Dimensions
 		LinkRects() []LinkRect
 	}
+	var ls *listState
 	ts := pwMsg
 	if pane == "thread" {
-		v, ts = NewThreadView(h, pwChan, pwRoot), pwRep
+		tv := NewThreadView(h, pwChan, pwRoot)
+		v, ts, ls = tv, pwRep, tv.s
 	} else {
 		cv := NewChannelView(h, pwChan)
 		cv.Preview = true
-		v = cv
+		v, ls = cv, cv.s
 	}
 	name := mode + "/" + pane
 	const hgt = 560
@@ -187,14 +203,30 @@ func pwPane(t *testing.T, h coreHost, mode, pane string) {
 		return out
 	}
 	until(t, 10*time.Second, name+": the message with the mention", func() { frame(700) }, func() bool { return len(words()) >= 2 })
-	green := color.NRGBA{G: 0xff, A: 0xff}
+	// the picture is in before the sweep (Slick's loads through the image
+	// cache)
+	until(t, 15*time.Second, name+": the picture drawn", func() { frame(700) }, func() bool {
+		n, _ := pwGreen(pixeltest.Render(t, 700, hgt, ops))
+		return n >= 80
+	})
 	checked, last := 0, -100
 	for w := 280; w <= 900 && checked < 4; w += 2 {
 		for i := 0; i < 5; i++ {
 			frame(w)
 		}
 		ws := words()
-		if len(ws) < 2 || ws[0].R.Min.Y == ws[1].R.Min.Y || w-last < 30 {
+		if w%20 == 0 {
+			var body image.Rectangle
+			if r := ls.rows[ts]; r != nil {
+				body = r.bodyRect
+			}
+			var rs []image.Rectangle
+			for _, r := range ws {
+				rs = append(rs, r.R)
+			}
+			t.Logf("%s, w=%d: the row's body %v, the mention's words %v", name, w, body, rs)
+		}
+		if len(ws) < 2 || ws[0].R.Min.Y == ws[1].R.Min.Y || w-last < 16 {
 			continue
 		}
 		last = w
@@ -208,18 +240,10 @@ func pwPane(t *testing.T, h coreHost, mode, pane string) {
 			y0, y1 := max(ws[0].R.Min.Y-70, 0), min(ws[len(ws)-1].R.Max.Y+50, hgt)
 			savePNG(t, filepath.Join(dir, fmt.Sprintf("pill-wrap-%s-%s-%s.png", mode, pane, tag)), crop(img, y0, y1))
 		}
-		n, bb := 0, image.Rectangle{}
-		for y := 0; y < hgt; y++ {
-			for x := 0; x < w; x++ {
-				if c := img.RGBAAt(x, y); c.G > 0xc0 && c.R < 0x60 && c.B < 0x60 {
-					n++
-					bb = bb.Union(image.Rect(x, y, x+1, y+1))
-				}
-			}
-		}
+		n, bb := pwGreen(img)
 		first := ws[0].R
 		if n < 80 || bb.Dx() > 18 || bb.Dy() > 18 {
-			t.Errorf("%s, w=%d: %d picture px in %v, want one ~15px circle (green %v)", name, w, n, bb, green)
+			t.Errorf("%s, w=%d: %d picture px in %v, want one ~15px circle", name, w, n, bb)
 			continue
 		}
 		if bb.Min.Y < first.Min.Y || bb.Max.Y > first.Max.Y {
