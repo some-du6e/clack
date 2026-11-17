@@ -198,10 +198,13 @@ func drain() {
 // (optional: popups also keeps a pump overlay alive while work is pending).
 func Pump() { drain() }
 
-// run executes work on a goroutine (15 s timeout) and then done on the UI
-// goroutine. Must be called on the UI goroutine.
+// asyncTimeout is run's limit on its work (tests shorten it).
+var asyncTimeout = 15 * time.Second
+
+// run executes work on a goroutine (asyncTimeout: 15 s) and then done on
+// the UI goroutine. Must be called on the UI goroutine.
 func run[T any](h Host, work func(ctx context.Context) (T, error), done func(T, error)) {
-	runFor(h, 15*time.Second, work, done)
+	runFor(h, asyncTimeout, work, done)
 }
 
 // runFor is run with work's context timing out after d.

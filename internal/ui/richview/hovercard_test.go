@@ -41,8 +41,16 @@ func TestMentionHoverCard(t *testing.T) {
 	if !ok || req.UserID != "U0FAKEPROF" {
 		t.Fatalf("hovering the mention: pending=%v %+v", ok, req)
 	}
-	if want := fragRect(f); req.Anchor != want {
-		t.Errorf("anchor %v, want the mention's bounds %v", req.Anchor, want)
+	// the element's bounding rect: its words and its pill's box (its
+	// padding), all its line boxes when it wraps
+	want := fragRect(f)
+	for _, b := range hs.v.d.boxes {
+		if b.inline && b.target == f.target {
+			want = want.Union(b.r)
+		}
+	}
+	if req.Anchor != want || want == fragRect(f) {
+		t.Errorf("anchor %v, want the mention's bounds %v (its words %v and its pill)", req.Anchor, want, fragRect(f))
 	}
 	hs.frame()
 	c.Frame(t0.Add(hovercard.ShowDelay), false, false)

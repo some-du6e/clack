@@ -3,13 +3,7 @@ package fakeslack
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"image"
-	_ "image/gif"  // photoUploadForm's DecodeConfig
-	_ "image/jpeg" // photoUploadForm's DecodeConfig
-	_ "image/png"  // photoUploadForm's DecodeConfig
 	"io"
-	"math"
 	"mime"
 	"mime/multipart"
 	"net/url"
@@ -134,13 +128,11 @@ func (s *Server) profileSections(f url.Values) any {
 // ---- writes (the Edit profile modal, core/profile_write.go) ----
 
 // profileState is what the viewer's profile writes changed: section
-// element overrides (element id → the setSections element) and the
-// prepared photos. Kept beside the Server so its struct stays as it is.
+// element overrides (element id → the setSections element); the photo's
+// state is photo.go's. Kept beside the Server so its struct stays as it is.
 type profileState struct {
 	mu       sync.Mutex
 	elements map[string]map[string]json.RawMessage // user → element id → element
-	photos   map[string]image.Point                // users.preparePhoto's ids → the prepared image's size
-	nextID   int64
 }
 
 var profileStates sync.Map // *Server -> *profileState
@@ -155,7 +147,7 @@ func (s *Server) profile() *profileState {
 // field, like Slack), users.profile.setSections (the elements override
 // what getSections serves), users.preparePhoto, users.setPhoto and
 // users.deletePhoto (the viewer's pictures switch to a "custom" set and
-// back; photoWrite checks them). Synthetic only.
+// back; photo.go's photoWrite). Synthetic only.
 func (s *Server) handleProfileWrites(method string, f url.Values) (any, bool) {
 	if out, handled := s.photoWrite(method, f); handled {
 		return out, true
@@ -213,165 +205,6 @@ func (s *Server) handleProfileWrites(method string, f url.Values) (any, bool) {
 		return ok(), true
 	}
 	return nil, false
-}
-
-// The photo methods as the fake's Slack answers them. What Slack's client
-// sends (web client build 2c0d02ca130f: eNqz processUpload and
-// EditProfileCropPane, generated fetchers through apiCall):
-//
-//   - users.preparePhoto: a FormData body with the selected workspace's
-//     token (computeToken, no enterprise_token: TeamToken here) and the
-//     picked File as the "image" part, typed as the file is (processUpload
-//     lets only image/gif, image/png and image/jpeg through, 36 to 4000
-//     px a side). The fake checks the token, that there's an image part
-//     that decodes as one of those formats, and its size; it records the
-//     part's filename and Content-Type (photoNameKey, photoTypeKey) for
-//     tests to compare with what a browser sends, without refusing other
-//     types, as what Slack's server does with them isn't known. It answers
-//     {id, url}: id a number's digits (Slack's client parseInts the ids it
-//     gets back elsewhere), url the prepared image, which is the upload
-//     fitted into PreparedPhotoMax (users.setPhoto's documented limit) and
-//     served by /img/ at that size.
-//   - users.setPhoto {id, crop_x, crop_y, crop_w}: the same token; an id
-//     preparePhoto answered (not_found otherwise); the crop, when sent,
-//     whole numbers making a square inside the prepared image, which is
-//     what the crop pane picks it in (getLoadedImage(e.url)'s width and
-//     height). A crop outside it answers invalid_arguments: Slack's own
-//     answer to one has never been seen (Clack never calls the photo
-//     methods against Slack), so that's the fake's stand-in, one of the
-//     method's documented errors. No crop is the whole image.
-//   - users.deletePhoto: the same token.
-//
-// A wrong token answers like Slack does for one: the org's
-// enterprise_is_restricted (the method can't be called on the org),
-// anything else invalid_auth.
-func (s *Server) photoWrite(method string, f url.Values) (any, bool) {
-	fail := func(code string) (any, bool) { return map[string]any{"ok": false, "error": code}, true }
-	switch method {
-	case "users.preparePhoto", "users.setPhoto", "users.deletePhoto":
-		switch f.Get("token") {
-		case TeamToken:
-		case OrgToken:
-			return fail("enterprise_is_restricted")
-		default:
-			return fail("invalid_auth")
-		}
-	default:
-		return nil, false
-	}
-	ps := s.profile()
-	switch method {
-	case "users.preparePhoto":
-		if f.Get(photoBytesKey) == "" {
-			return fail("no_image")
-		}
-		var w, h int
-		if _, err := fmt.Sscanf(f.Get(photoDimsKey), "%dx%d", &w, &h); err != nil {
-			return fail("bad_image")
-		}
-		if w > 4000 || h > 4000 {
-			return fail("too_large")
-		}
-		pw, ph := PreparedPhotoSize(w, h)
-		ps.mu.Lock()
-		if ps.photos == nil {
-			ps.photos = map[string]image.Point{}
-		}
-		ps.nextID++
-		id := strconv.FormatInt(1000000000000+ps.nextID, 10)
-		ps.photos[id] = image.Pt(pw, ph)
-		ps.mu.Unlock()
-		return ok("id", id, "url", s.URL+"img/"+strconv.Itoa(pw)+"x"+strconv.Itoa(ph)+"/prepared-"+id+".png"), true
-	case "users.setPhoto":
-		ps.mu.Lock()
-		defer ps.mu.Unlock()
-		size, found := ps.photos[f.Get("id")]
-		if !found {
-			return fail("not_found")
-		}
-		if f.Has("crop_x") || f.Has("crop_y") || f.Has("crop_w") {
-			x, ex := strconv.Atoi(f.Get("crop_x"))
-			y, ey := strconv.Atoi(f.Get("crop_y"))
-			cw, ew := strconv.Atoi(f.Get("crop_w"))
-			if ex != nil || ey != nil || ew != nil || x < 0 || y < 0 || cw < 1 || x+cw > size.X || y+cw > size.Y {
-				return fail("invalid_arguments")
-			}
-		}
-		s.setSelfPhoto(true)
-		return ok("profile", s.users[0].Profile), true
-	default: // users.deletePhoto
-		ps.mu.Lock()
-		s.setSelfPhoto(false)
-		ps.mu.Unlock()
-		return ok(), true
-	}
-}
-
-// PreparedPhotoMax is the longest side of the fake's prepared photos:
-// users.setPhoto's documented limit ("a maximum size of 1024 by 1024
-// pixels").
-const PreparedPhotoMax = 1024
-
-// PreparedPhotoSize is the size the fake's users.preparePhoto answers an
-// upload of w×h with: fitted into PreparedPhotoMax, never scaled up.
-func PreparedPhotoSize(w, h int) (int, int) {
-	if w <= PreparedPhotoMax && h <= PreparedPhotoMax {
-		return w, h
-	}
-	if w >= h {
-		return PreparedPhotoMax, max(1, int(math.Round(float64(h)*PreparedPhotoMax/float64(w))))
-	}
-	return max(1, int(math.Round(float64(w)*PreparedPhotoMax/float64(h)))), PreparedPhotoMax
-}
-
-// What the fake reads from a users.preparePhoto upload's image part (the
-// multipart body isn't a form): its size in bytes, its decoded dimensions
-// ("WxH"; absent when it doesn't decode as a GIF, PNG or JPEG), its
-// filename and its Content-Type.
-const (
-	photoBytesKey = "_fake_image_bytes"
-	photoDimsKey  = "_fake_image_dims"
-	photoNameKey  = "_fake_image_filename"
-	photoTypeKey  = "_fake_image_type"
-)
-
-// The fake's form keys for a users.preparePhoto image part, for tests.
-const (
-	PhotoFilenameKey = photoNameKey
-	PhotoTypeKey     = photoTypeKey
-	PhotoBytesKey    = photoBytesKey
-)
-
-// photoUploadForm reads a users.preparePhoto multipart body: its text
-// fields (token first, as Slack's client sends it) and what photoWrite
-// checks about the image part.
-func photoUploadForm(contentType string, body []byte) url.Values {
-	form := url.Values{}
-	_, params, err := mime.ParseMediaType(contentType)
-	if err != nil || params["boundary"] == "" {
-		return form
-	}
-	mr := multipart.NewReader(bytes.NewReader(body), params["boundary"])
-	for {
-		p, err := mr.NextPart()
-		if err != nil {
-			return form
-		}
-		b, _ := io.ReadAll(p)
-		if p.FormName() != "image" {
-			form.Add(p.FormName(), string(b))
-			continue
-		}
-		if len(b) == 0 {
-			continue
-		}
-		form.Set(photoBytesKey, strconv.Itoa(len(b)))
-		form.Set(photoNameKey, p.FileName())
-		form.Set(photoTypeKey, p.Header.Get("Content-Type"))
-		if cfg, format, err := image.DecodeConfig(bytes.NewReader(b)); err == nil && (format == "gif" || format == "png" || format == "jpeg") {
-			form.Set(photoDimsKey, strconv.Itoa(cfg.Width)+"x"+strconv.Itoa(cfg.Height))
-		}
-	}
 }
 
 // setSelfPhoto switches the viewer's pictures to the uploaded ones (on)

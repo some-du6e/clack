@@ -169,7 +169,7 @@ func publicRedirect(req *http.Request, via []*http.Request) error {
 	req.Header.Del("Cookie")
 	req.Header.Del("Authorization")
 	if !PublicFetchURL(req.URL.String()) {
-		return fmt.Errorf("slack: refusing redirect to %q", req.URL.Hostname())
+		return &redirectRefused{fmt.Sprintf("slack: refusing redirect to %q", req.URL.Hostname())}
 	}
 	return nil
 }
