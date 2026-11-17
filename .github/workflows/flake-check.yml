@@ -1121,8 +1121,11 @@ jobs:
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
   # doesn't list (Slackbot's, the Slack system user's, an app's), and under
-  # the activity inbox the tab counts unread conversations (6Z4k Sm).
-  # Dispatch with only=dm-badges.
+  # the activity inbox the tab counts unread conversations (6Z4k Sm). The
+  # badges look up every unread IM's member (members.go readBadgePeople),
+  # and without the inbox the Activity tab and the app badge read
+  # channel_badges and the alerts (classic_badges.go). Dispatch with
+  # only=dm-badges.
   dm-badges:
     if: ${{ !inputs.only || startsWith('dm-badges', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1137,10 +1140,10 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core: the DM badges' rules, the DMs tab's rows, COUNT runs"
-        run: go test -count=$COUNT -v -run '^(TestDMBadgeSkips|TestDMsBadgeRule|TestSnapshotDMBadgeSkips|TestDMsTabFilters|TestHomeBadgeRule)$' ./internal/core
-      - name: "ui: the DMs tab's badge and the DMs page over fakeslack's bot DMs, COUNT runs"
+        run: go test -count=$COUNT -v -run '^(TestDMBadgeSkips|TestDMsBadgeRule|TestSnapshotDMBadgeSkips|TestDMsTabFilters|TestHomeBadgeRule|TestBadgeReadersAskForUnreadIMMembers|TestCountsAnswerAsksForUnreadIMMember|TestMarkedUnreadAsksForIMMember|TestMembersPassKeepsBadgePeople|TestClassicActivityBadgeLikeSlack|TestClassicAppBadgeLikeSlack|TestClassicBadgesUpdatesLikeSlack|TestBotDMIsDUy0G|TestMembersPassThenSnapshotAsksNoClosedDMs|TestBootAsksOpenDMPartnersOnly|TestExperimentReadsListed|TestDefaultExperimentsMatchAccount|TestFakeslackExperimentsMatchAccount)$' ./internal/core
+      - name: "ui: the DM badges, the DMs page, the classic Activity and app badges over fakeslack's DMs, COUNT runs"
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -timeout 30m -run '^TestDMsBadgeLikeSlack$' ./internal/ui
+        run: go test -count=$COUNT -v -timeout 30m -run '^(TestDMsBadgeLikeSlack|TestDMBadgesClassicLikeSlack|TestDMBadgeMemberLoadsLate|TestTitleDockTaskbarAgreeLikeSlack|TestActivityRailBadgeLikeSlack)$' ./internal/ui
 
   # plugin-render-2: a reply also sent to the channel, in the channel's list
   # and its thread pane, gets a plugin root per pane (one shared root got

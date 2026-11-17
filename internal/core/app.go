@@ -33,6 +33,7 @@ type App struct {
 	warm      warmState     // the warm boot: boot data, DataReady, the header cache (warmboot.go)
 	recent    recentSnap    // RecentSnapshot's (snapshot_recent.go)
 	sbPeople  sidebarPeople // the sidebar's DM people at the last snapshot (members.go)
+	bdPeople  sidebarPeople // the unread IMs' partners the DM badges read (members.go readBadgePeople)
 	bootErr   error
 	mu        sync.Mutex
 	connected bool
@@ -56,6 +57,7 @@ type App struct {
 	countsReread bool           // refreshCounts' next read is the one after a merged answer (it doesn't ask again)
 	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
 	actBadgesAt  uint64         // the store journal's position at their last change (setActivityBadgesSince)
+	classic      classicBadges  // channel_badges and the alerts' counts (classic_badges.go)
 	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
 	cmdCache     []slack.Command
 	cmdAt        time.Time
@@ -1010,6 +1012,7 @@ func (a *App) refreshCounts(ctx context.Context) {
 		// counts are read once more (not again after that read: a busy
 		// channel doesn't keep it asking)
 		merged := a.installCounts(c, since)
+		a.readBadgePeople() // an IM the answer made unread: its member (members.go)
 		a.mu.Lock()
 		reread := merged && !a.countsReread
 		a.countsReread = reread
@@ -1120,6 +1123,7 @@ func (a *App) snapshotNow() Snapshot {
 	self, _ := a.User(selfID)
 	secs, counts := a.sections(convs), a.Counts()
 	convs = sidebarFileConvs(convs, secs)
+	a.readBadgePeople() // getMemberById for the unread IMs the DM badges read (members.go)
 	users := a.sidebarUsers(convs, secs, selfID)
 	return Snapshot{
 		Self: self, Team: team, Convs: convs, Sections: secs, Counts: counts,
@@ -1330,6 +1334,7 @@ func (a *App) convOf(c *slack.Conversation, lookup bool) Conv {
 		}
 		u, _ := a.S.RawUser(c.User)
 		v.NoDMsBadge, v.NoDMsCount = dmBadgeSkips(c.User, u) // rail.go
+		v.BotDM = isBotDM(c.User, u)
 	case c.IsMPIM:
 		v.Kind = "mpim"
 		v.Members = c.Members

@@ -18,16 +18,21 @@ package core
 //     and Later is in the rail (5ydT b, default true; or swdb G$
 //     slack6_todo_badging), plus activity_v2's dm when DMs aren't in
 //     Activity (5Ns/ Vn). Without the inbox: the total unread highlights
-//     (ZVw+ P, the caller's highlights) plus the overdue to-dos (+Knw ay).
-//     (E0VC g_, quip's sidebar badge count, adds 0: Clack has none.)
+//     (ZVw+ P getTotalUnreadHighlights) plus the overdue to-dos (+Knw ay).
+//     ZVw+ sums the unread DMs' and group DMs' highlights except bot DMs
+//     (DUy0 G: Slackbot's, the Slack system user's, a bot's IM; the
+//     caller's highlights) and adds channel_badges' channels,
+//     thread_mentions and app_dms, with thread_unreads when threads count
+//     (classic_badges.go channelBadgeHighlights). (E0VC g_, quip's
+//     sidebar badge count, adds 0: Clack has none.)
 
-// AppBadgeCount is getAppBadgeCount; highlights is the total unread
-// highlights (getTotalUnreadHighlights: the channels' mentions and the
-// DMs'), which the inbox-off count is built from.
+// AppBadgeCount is getAppBadgeCount; highlights is the unread DMs' and
+// group DMs' highlights but the bot DMs' (getTotalUnreadHighlights' own
+// sum), which the inbox-off count is built from.
 func (a *App) AppBadgeCount(highlights int) int {
 	overdue := a.SavedOverdueCount()
 	if !a.ActivityInbox() {
-		return highlights + overdue
+		return highlights + a.channelBadgeHighlights() + overdue
 	}
 	n := a.ActivityBadgeCount()
 	if !a.GlobalNotifyBool("global_reminders_in_activity", true) {

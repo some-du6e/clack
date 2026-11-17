@@ -427,7 +427,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 			continue
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
-			NoDMsBadge: c.NoDMsBadge, NoDMsCount: c.NoDMsCount,
+			NoDMsBadge: c.NoDMsBadge, NoDMsCount: c.NoDMsCount, BotDM: c.BotDM,
 			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc),
 			Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose,
 			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName,
@@ -569,13 +569,22 @@ func (b *backend) mpimNameBy(c *core.Conv, self string, user func(string) (core.
 	return strings.Join(names, ", ")
 }
 
-// activityBadgeMoved reports whether core's Activity badge differs from
-// the rail's (recount then picks it up).
+// activityBadgeMoved reports whether a badge core keeps moved without any
+// conversation's count changing (recount then picks it up): the Activity
+// badge and its dot (activity_v2 under the inbox, channel_badges and the
+// alerts without it), Home's activity_v2 dm count and the channel_badges'
+// part of the app badge.
 func (b *backend) activityBadgeMoved() bool {
-	return b.m.Rail.ActivityInbox && b.core != nil && b.core.ActivityBadgeCount() != b.m.ActivityCount
+	if b.core == nil {
+		return false
+	}
+	m := &b.m
+	c, _ := b.core.ActivityTabCounts()
+	return b.core.ActivityBadgeCount() != m.ActivityCount || b.core.ActivityDot() != m.ActivityDot ||
+		b.core.ChannelBadgeHighlights() != m.ChannelHighlights || c[1] != m.ActivityDMs
 }
 
-// recount derives the rail badges from conv counts.
+// recount derives the rail badges from conv counts and core's badges.
 //
 // The DMs tab's are Slack's (core rail.go DMsBadge): muted conversations
 // count nowhere (siMV), an unread DM is its mention count or 1 (ZdmU), and
@@ -584,11 +593,18 @@ func (b *backend) activityBadgeMoved() bool {
 // Clack summed every unread DM into the tab, so the Slack system user's
 // DM (USLACK, "Slack") and Slackbot's drew a count the DMs page had no
 // row for (Karim, 2026-11-16). They still make something unread
-// (DMUnread) and stay in the app badge's highlights (HomeCount).
+// (DMUnread). The app badge's own highlights (HomeCount) leave the bot
+// DMs out too (ZVw+ getTotalUnreadHighlights skips DUy0 G's; an app's DM
+// comes back only through the server's channel_badges app_dms, which core
+// adds without the inbox: AppBadgeCount).
+//
+// The Activity tab's count is core's (ActivityBadgeCount): activity_v2
+// under the inbox, channel_badges and the alerts without it (3x6A
+// getActivityBadgeCount), not the channels' mentions.
 func (b *backend) recount() {
 	m := &b.m
-	m.DMUnread, m.DMHighlights, m.DMUnreadConvs, m.HomeCount, m.HomeUnread, m.ActivityCount = false, 0, 0, 0, false, 0
-	dms := 0
+	m.DMUnread, m.DMHighlights, m.DMUnreadConvs, m.HomeCount, m.HomeUnread = false, 0, 0, 0, false
+	m.ActivityCount, m.ActivityDot, m.ActivityDMs, m.ChannelHighlights = 0, false, 0, 0
 	for _, c := range m.Convs {
 		if c.Muted {
 			continue
@@ -598,7 +614,9 @@ func (b *backend) recount() {
 			if c.Unread || c.Mentions > 0 {
 				n := max(c.Mentions, 1)
 				m.DMUnread = true
-				dms += n
+				if !c.BotDM {
+					m.HomeCount += n
+				}
 				if !c.NoDMsBadge {
 					m.DMHighlights += n
 				}
@@ -607,19 +625,17 @@ func (b *backend) recount() {
 				}
 			}
 		default:
-			m.HomeCount += c.Mentions
-			m.ActivityCount += c.Mentions
 			if c.Unread {
 				m.HomeUnread = true
 			}
 		}
 	}
-	m.HomeCount += dms
-	if m.Rail.ActivityInbox && b.core != nil {
-		// Slack's rail reads activity_v2 under activity_inbox, not the
-		// channels' mentions: thread replies and @channel count there too
-		// (core ActivityBadgeCount)
+	if b.core != nil {
 		m.ActivityCount = b.core.ActivityBadgeCount()
+		m.ActivityDot = b.core.ActivityDot()
+		m.ChannelHighlights = b.core.ChannelBadgeHighlights()
+		c, _ := b.core.ActivityTabCounts()
+		m.ActivityDMs = c[1]
 	}
 	if b.app != nil {
 		b.app.updateDock()

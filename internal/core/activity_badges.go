@@ -52,12 +52,19 @@ func (a *App) setActivityBadgesSince(m map[string]int, since uint64) bool {
 	return true
 }
 
-// onActivityBadges takes badge_counts_updated's activity_v2. Under
-// activity_inbox Slack applies it as it is and stops there (render 37DU
-// handleBadgeCountsUpdatedRTMEvent: updateActivityV2BadgeCounts, no
-// client.counts), so the rail's badge moves with the event; the UI hears
-// "activity_badges".
+// onActivityBadges takes badge_counts_updated (boot-render VxbD
+// handleBadgeCountsUpdatedRTMEvent). Under activity_inbox Slack applies
+// its activity_v2 as it is and stops there (updateActivityV2BadgeCounts,
+// no client.counts), so the rail's badge moves with the event. Without
+// the inbox it reads the event's counts and alerts instead
+// (classic_badges.go onClassicBadges). The UI hears "activity_badges".
 func (a *App) onActivityBadges(raw json.RawMessage) {
+	if !a.ActivityInbox() {
+		if a.onClassicBadges(raw) {
+			a.emit(Event{Type: "activity_badges"})
+		}
+		return
+	}
 	var e struct {
 		ActivityV2 map[string]int `json:"activity_v2"`
 	}
@@ -99,13 +106,18 @@ func (a *App) decActivityBadges(items []ActivityItem) {
 	}
 }
 
-// ActivityBadgeCount is the rail's Activity badge under activity_inbox:
-// 3x6A getActivityBadgeCount, which with the inbox on (5Ns/ Lh) is H, the
+// ActivityBadgeCount is the rail's Activity badge: 3x6A
+// getActivityBadgeCount, which with the inbox on (5Ns/ Lh) is H, the
 // activity_v2 counts of the badged entry types summed without
-// message_reaction (the All tab's count). yEMG hands it to the rail's
-// Activity tab (ActivityTabContent, InjD useGetMentions); 0 before
-// client.counts answered (unreadActivityV2BadgeCounts starts {}).
+// message_reaction (the All tab's count). Without the inbox it is
+// channel_badges' and the alerts' (classic_badges.go). yEMG hands it to
+// the rail's Activity tab (ActivityTabContent, InjD useGetMentions); 0
+// before client.counts answered (unreadActivityV2BadgeCounts starts {}).
 func (a *App) ActivityBadgeCount() int {
+	if !a.ActivityInbox() {
+		n, _ := a.classicActivityBadge()
+		return n
+	}
 	c, _ := a.ActivityTabCounts()
 	return c[0]
 }
