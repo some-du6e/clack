@@ -1234,7 +1234,7 @@ jobs:
       - name: "slackc + jsrt + taut + core: panes, same-output commits, refresh, conversion refs, COUNT runs"
         run: |
           rc=0
-          go test -count=$COUNT -run '^TestPanesHaveRootsOfTheirOwn$' ./internal/ui/slackc || rc=1
+          go test -count=$COUNT -run '^(TestPanesHaveRootsOfTheirOwn|TestRemountKeyedInPane)$' ./internal/ui/slackc || rc=1
           go test -count=$COUNT -run '^(TestSameOutputSendsNoTree|TestPortalUnderHiddenNativeAnswers)$' ./internal/jsrt || rc=1
           go test -count=$COUNT -v -run '^(TestRefreshSendsNoSameTree|TestUserEventsForUndrawnMembersCostNothing|TestChangeDuringFirstConversion|TestIndexRefsStaleness|TestConvBumpRedraws|TestOffScreenViewsDrawNothing|TestMemberChangesOnlyForWhatJSHolds|TestInvalidationsJoinTheQueuedTask|TestRawEventsConvertNothing|TestUnconvertedMessagesKeepNoGeneration|TestRefetchDecodesOnlyWhatChanged|TestInjectedMessagesOneStorePass)$' ./internal/taut || rc=1
           go test -count=$COUNT -run '^(TestMessageRefs|TestMessageRefsBotsAndEmoji|TestDocFingerprints|TestStoredMessageReadsNoMember|TestEventsMarkDocChanges|TestUserEventAfterSilentRename|TestPrefsBaselineFollowsInstalls|TestRenamedCanvasTitle)$' ./internal/core || rc=1
