@@ -309,7 +309,11 @@ func (s *fboSet) resize(ctx driver.Device, format driver.TextureFormat, sizes []
 	n := len(s.fbos)
 	for i := len(sizes); i < n; i++ {
 		s.fbos[i].unused++
-		s.fbos[i].idle = 0
+		// a frame that doesn't use the page needs none of it, so it
+		// counts toward the page's oversized frames; resetting them
+		// here kept a page used only every other frame at its biggest
+		// size for good
+		s.fbos[i].idle++
 	}
 	for n > len(sizes) && s.fbos[n-1].unused >= fboIdleFrames {
 		n--

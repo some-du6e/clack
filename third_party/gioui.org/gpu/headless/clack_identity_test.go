@@ -218,3 +218,45 @@ func TestClackAtlasShrinks(t *testing.T) {
 		t.Errorf("after 60 frames with one layer the pages are %d px, want less than %d: the second page stays", s.LayerPx, two.LayerPx)
 	}
 }
+
+// Clack patch 40 with 44: a page whose set only some frames use shrinks as
+// well. A frame that doesn't use the page needs none of it and counts
+// toward its 60 frames; such frames used to reset the count, so a page
+// drawn into every other frame kept its biggest size for good.
+func TestClackAtlasShrinksUsedNowAndThen(t *testing.T) {
+	const w, h = 1000, 800
+	win := clackWindow(t, w, h)
+	defer win.Release()
+	red := color.NRGBA{R: 0xff, A: 0xff}
+	frame := func(big, path bool) gpu.FrameStats {
+		var o op.Ops
+		r := image.Rect(10, 10, 60, 40)
+		if big {
+			r = image.Rect(0, 0, w, h)
+		}
+		if path {
+			paint.FillShape(&o, red, clip.UniformRRect(r, 8).Op(&o))
+		} else {
+			paint.FillShape(&o, red, clip.Rect(r).Op())
+		}
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		return win.ClackFrameStats()
+	}
+	big := frame(true, true).AtlasPx
+	shrunk := 0
+	for i := 1; i <= 120; i++ {
+		// a small path every other frame, nothing to stencil in between
+		if px := frame(false, i%2 == 0).AtlasPx; px*4 <= big && px > 0 {
+			shrunk = i
+			break
+		}
+	}
+	if shrunk == 0 {
+		t.Fatalf("after 120 frames drawing a small path every other frame the atlas still holds the big frame's %d px", big)
+	}
+	if shrunk < 60 {
+		t.Errorf("the atlas shrank after %d frames, before the 60th", shrunk)
+	}
+}

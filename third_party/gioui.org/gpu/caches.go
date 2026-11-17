@@ -141,7 +141,16 @@ func (r *opCache) frame() {
 			v.data.release()
 			r.cache[i].data.data = nil
 		}
-		delete(r.index, v.key)
+		// Clack: drop the index entry only while it still names this
+		// slot, and clear the slot. A freed slot used to keep its key,
+		// and put hands freed slots out again, so a key that came back
+		// into another slot had its live entry deleted by its old slot at
+		// every frame's end: a path that left the screen and returned was
+		// built and uploaded again every frame it stayed.
+		if r.index[v.key] == i+1 {
+			delete(r.index, v.key)
+		}
+		r.cache[i] = opCacheValue{}
 		r.freelist = append(r.freelist, i)
 	}
 }

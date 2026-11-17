@@ -2017,3 +2017,25 @@ shots drew every same-sized avatar clip at the first one's fraction. The
 fraction is in the key now: whole-pixel offsets still share one entry,
 and a path at another fraction is built there (`TestCollectSubPixelKey`,
 `TestClackSubPixelCache`). Not in `UPSTREAM.patch` yet (a candidate).
+
+## 44. gpu: the path cache frees a slot without dropping another slot's entry
+
+`gpu/caches.go` (`opCache.frame`).
+
+`frame` frees every slot no frame used, and freed slots kept their key;
+`put` hands freed slots out again. A key that left the screen for a frame
+and came back into another slot then had its live index entry deleted by
+its old slot at every frame's end, so `get` missed and the path was
+tessellated, uploaded and released again every frame it stayed on screen
+(open and close a menu, then scroll: the hover toolbar's icons, pills,
+borders, avatar clips and text runs that come back). That gave back the
+saving of patch 36's origin caching wherever paths come and go. `frame`
+now deletes an entry only while it names the slot, and clears the slot
+(`TestClackOpCacheReturningPathHits`). Upstream Gio v0.10.3's own bug: a
+candidate for `UPSTREAM.patch`.
+
+Patch 40's page aging, with it: a frame that doesn't use a page counts
+toward the page's oversized frames (`fboSet.resize`), so a page whose set
+only some frames use shrinks too (`TestClackAtlasShrinksUsedNowAndThen`).
+Round 2 reset the count in such frames, and a page used every other frame
+kept its biggest size for good.

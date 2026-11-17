@@ -136,14 +136,23 @@ func TestFrameCostPixels(t *testing.T) {
 			t.Logf("%d px drawn over the background", drawn)
 			t.Logf("old: %s", costStats(oldSt))
 			t.Logf("new: %s", costStats(curSt))
-			lim := max(6, floor.max+2)
+			least := 6
+			if runtime.GOOS == "windows" {
+				// WARP moves a cached shape's own corner pixels by up to 6
+				// levels where only its stencil changed (light-2x-peach's
+				// shadow corner reads exactly 6 in ci's windows-applog), so
+				// it gets two levels of headroom too; the seams and bands
+				// this holds off were 12 to 35 levels
+				least = 8
+			}
+			lim := max(least, floor.max+2)
 			for part, m := range got.partMax {
 				l := lim
 				if part == "panel edge" && runtime.GOOS == "windows" {
 					l = max(l, 12) // WARP's old way at the panel's corners, see above
 				}
 				if m > l {
-					t.Errorf("a pixel of the %s differs by %d levels, more than %d (the floor's %d + 2, at least 6)", part, m, l, floor.max)
+					t.Errorf("a pixel of the %s differs by %d levels, more than %d (the floor's %d + 2, at least %d)", part, m, l, floor.max, least)
 				}
 			}
 			if lim := max(4*floor.n+256, drawn/200); got.n > lim {
@@ -153,9 +162,15 @@ func TestFrameCostPixels(t *testing.T) {
 				t.Errorf("stencil work %d px, not under half the old %d px", curSt.StencilPx, oldSt.StencilPx)
 			}
 			// the backends' state caches (Gio patch 37) change no pixel
-			gpu.ClackStateCaches(false)
-			uncached, uncachedSt, _ := sc.draw(t, costNew, costProbe{}, false)
-			gpu.ClackStateCaches(true)
+			var uncached *image.RGBA
+			var uncachedSt gpu.FrameStats
+			func() {
+				gpu.ClackStateCaches(false)
+				// a failing render (t.Fatal) mustn't leave the caches off
+				// for the rest of the test binary
+				defer gpu.ClackStateCaches(true)
+				uncached, uncachedSt, _ = sc.draw(t, costNew, costProbe{}, false)
+			}()
 			if c := costCompare(uncached, cur, g); c.n > 0 {
 				t.Errorf("with the state caches on %d px differ from them off: %s", c.n, c)
 			}
