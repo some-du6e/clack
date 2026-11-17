@@ -505,7 +505,8 @@ func (fm *FontMap) resolveForLang(candidates []int, lang LangID) *font.Face {
 //	4 - All fonts matching the current script (set by [FontMap.SetScript]) are tried,
 //		ignoring [Query.Aspect]
 //
-// If no fonts match after these steps, an arbitrary face will be returned.
+// If no fonts match after these steps, the first face of step 1 that loads
+// is returned (it draws the rune's .notdef), else an arbitrary face.
 // This face will be nil only if the underlying font database is empty,
 // or if the file system is broken; otherwise the returned [font.Face] is always valid.
 func (fm *FontMap) ResolveFace(r rune) (face *font.Face) {
@@ -548,6 +549,20 @@ func (fm *FontMap) ResolveFace(r rune) (face *font.Face) {
 	}
 
 	fm.logger.Printf("No font matched for script %s and rune %U (%c) -> returning arbitrary face", fm.script, r, r)
+	// Clack patch 4: the query's best match draws the .notdef, as Blink's
+	// first candidate does (FontFallbackIterator's
+	// kFirstCandidateForNotdefGlyph): the first family's face at the
+	// asked weight and style, not whichever face was added first. (Blink
+	// skips a family whose unicode-range misses the rune; Slack-Lato's
+	// holds the BMP but U+F8FF, so astral runes still differ.)
+	for _, footprintIndex := range fm.candidates.withoutFallback {
+		face, err := fm.loadFont(fm.database[footprintIndex])
+		if err != nil { // very unlikely; try the next family
+			fm.logger.Printf("failed loading face: %v", err)
+			continue
+		}
+		return face
+	}
 	// return an arbitrary face
 	if fm.firstFace == nil && len(fm.database) > 0 {
 		for _, fp := range fm.database {

@@ -27,6 +27,11 @@ type List struct {
 	// false draws its content with the last item at the bottom of the list
 	// area.
 	ScrollToEnd bool
+	// StartAligned lays out content shorter than the list from the list's
+	// start even when ScrollToEnd is set, where it would be end aligned.
+	// The list still stays at the far end once the content outgrows it
+	// (Clack patch 45).
+	StartAligned bool
 	// Alignment is the cross axis alignment of list elements.
 	Alignment Alignment
 	// ScrollAnyAxis allows any scroll axis to scroll the list, not just the main axis.
@@ -310,8 +315,8 @@ func (l *List) layout(ops *op.Ops, macro op.MacroOp) Dimensions {
 	}
 	l.Position.Count = len(children)
 	l.Position.OffsetLast = mainMax - size
-	// ScrollToEnd lists are end aligned.
-	if space := l.Position.OffsetLast; l.ScrollToEnd && space > 0 {
+	// ScrollToEnd lists are end aligned (unless StartAligned).
+	if space := l.Position.OffsetLast; l.ScrollToEnd && !l.StartAligned && space > 0 {
 		l.Position.Offset -= space
 	}
 	pos := -l.Position.Offset

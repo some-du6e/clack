@@ -199,11 +199,25 @@ func (a *App) attachComposer(c *convo) {
 // layoutConvo draws the list with the composer under it. fallback is the
 // widget's window origin when known from layout (primary panel), used until
 // the origin tracker has seen the pointer.
+//
+// The composer (or the footer in its place) lays out first, and the list
+// gets the height it leaves. Slack top-aligns a short thread, its reply box
+// right under the last reply instead of at the pane's bottom: where that is
+// is known once the list has laid out in this frame, so the box goes there
+// after the list, which is clipped to the thread it drew. Every decision
+// is this frame's: a decision from the last frame's list left a thread's
+// reply box out of the frame that drew its replies, and with nothing else
+// to draw, the window drew no other frame until some input came.
 func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	origin := c.org.get(fallback)
 	c.org.track(gtx, a)
 
+	// the list's copy of the conversation for this frame, the one it then
+	// draws (messages.ThreadView.Prepare): the reply box goes with it
+	if p, ok := c.list.(interface{ Prepare(layout.Context) }); ok {
+		p.Prepare(gtx)
+	}
 	comp := c.comp
 	if c.edit != nil {
 		if c.edit.Done() {
@@ -217,18 +231,18 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	}
 	// ThreadsError is the thread pane's only content: no reply input
 	// (messages.ThreadView.HidesComposer)
-	if hc, ok := c.list.(interface{ HidesComposer() bool }); ok && hc.HidesComposer() {
+	hc, _ := c.list.(interface{ HidesComposer() bool })
+	if hc != nil && hc.HidesComposer() {
 		comp = nil
 	}
-	// Slack top-aligns a short thread: the reply composer sits right under
-	// the last reply instead of at the pane's bottom (last frame's height).
-	fit := 0
-	if ch, ok := c.list.(interface{ ContentHeight() int }); ok && c.ts != "" {
-		if h := ch.ContentHeight(); h > 0 && h < sz.Y-c.compH {
-			fit = h
-		}
+	// the composer's (or footer's) window origin while it lays out (its
+	// popups, rects): where the last frame put it; the list says where it
+	// goes in this frame
+	guess := sz.Y - c.compH
+	if c.fitH > 0 {
+		guess = c.fitH
 	}
-	compH := 0
+	compH, mx, bannerH := 0, 0, 0
 	var call op.CallOp
 	foot := a.footerFor(c)
 	if foot != footPending && c.focusKnown {
@@ -250,11 +264,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		m := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X, sz.Y*6/10)}
-		compY := sz.Y - c.compH
-		if fit > 0 {
-			compY = fit
-		}
-		d := a.layoutFooter(g, c, foot, origin.Add(image.Pt(0, compY)))
+		d := a.layoutFooter(g, c, foot, origin.Add(image.Pt(0, guess)))
 		call = m.Stop()
 		compH = d.Size.Y
 		c.compH = compH
@@ -262,7 +272,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	if comp != nil {
 		// Edit composers draw just the box: give them the same side and
 		// bottom margins as the normal composer (20px channel, 16px thread).
-		mx, mb := 0, 0
+		mb := 0
 		if comp == c.edit {
 			mx = gtx.Dp(20)
 			if c.ts != "" {
@@ -270,11 +280,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			}
 			mb = gtx.Dp(24)
 		}
-		compY := sz.Y - c.compH
-		if fit > 0 {
-			compY = fit
-		}
-		comp.SetOrigin(origin.Add(image.Pt(mx, compY)))
+		comp.SetOrigin(origin.Add(image.Pt(mx, guess)))
 		a.composerRoadblock(c, comp)
 		m := op.Record(gtx.Ops)
 		g := gtx
@@ -289,7 +295,7 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		d := layoutComposerIn(comp, g, pane)
 		if a.composerHeight(gtx, g, c, comp, d.Size.Y) { // no height: a new composer (composer_guard.go)
 			comp = c.comp
-			comp.SetOrigin(origin.Add(image.Pt(mx, compY)))
+			comp.SetOrigin(origin.Add(image.Pt(mx, guess)))
 			a.composerRoadblock(c, comp)
 			d = layoutComposerIn(comp, g, pane)
 		}
@@ -297,16 +303,11 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		call = m.Stop()
 		compH = d.Size.Y + mb
 		c.compH = compH
-		compY = sz.Y - compH
-		if fit > 0 && fit < compY {
-			compY = fit
-		}
-		top := origin.Add(image.Pt(0, compY))
-		c.compRect = image.Rectangle{Min: top, Max: top.Add(image.Pt(sz.X, compH))}
 		// the channel join banner sits over the composer (message pane
-		// input chrome); the list gives up its height
+		// input chrome); the list gives up its height. Channels only, so
+		// no short thread moves it.
 		bm := op.Record(gtx.Ops)
-		bd := a.layoutJoinBanner(gtx, c, origin.Add(image.Pt(0, compY-c.bannerH)))
+		bd := a.layoutJoinBanner(gtx, c, origin.Add(image.Pt(0, sz.Y-compH-c.bannerH)))
 		bcall := bm.Stop()
 		if bd.Size.Y > 0 {
 			inner := call
@@ -318,30 +319,56 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			call = m.Stop()
 			compH += bd.Size.Y
 		}
+		bannerH = bd.Size.Y
 		if c.bannerH != bd.Size.Y {
 			c.bannerH = bd.Size.Y
 			a.Invalidate()
 		}
 	}
-	listH := sz.Y - compH
-	if fit > 0 && fit < listH {
-		listH = fit
-	}
-	if fit != c.fitH { // the thread grew or shrank: settle on the next frame
-		c.fitH = fit
-		a.Invalidate()
-	}
+	// the list in what the composer leaves
+	availH := sz.Y - compH
 	if s, ok := c.list.(originSetter); ok {
 		s.SetOrigin(origin)
 	}
-	atExact(gtx, image.Point{}, image.Pt(sz.X, listH), func(gtx layout.Context) layout.Dimensions {
-		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-		return c.list.Layout(gtx)
-	})
-	if comp != nil || (foot != footNone && foot != footPending) {
+	lm := op.Record(gtx.Ops)
+	atExact(gtx, image.Point{}, image.Pt(sz.X, availH), c.list.Layout)
+	lcall := lm.Stop()
+	// a thread that fits over its box ends where the list drew its last
+	// reply in this frame (messages.ThreadView.ContentHeight): the list is
+	// clipped there and the box goes under it
+	fit := 0
+	if ch, ok := c.list.(interface{ ContentHeight() int }); ok && c.ts != "" {
+		if h := ch.ContentHeight(); h > 0 && h < availH {
+			fit = h
+		}
+	}
+	c.fitH = fit
+	listH := availH
+	if fit > 0 {
+		listH = fit
+	}
+	cl := clip.Rect{Max: image.Pt(sz.X, listH)}.Push(gtx.Ops)
+	lcall.Add(gtx.Ops)
+	cl.Pop()
+	compY := listH + bannerH // the composer's top (the footer's: no banner)
+	if comp != nil {
+		comp.SetOrigin(origin.Add(image.Pt(mx, compY))) // BoxRect, popups
+		top := origin.Add(image.Pt(0, compY))
+		c.compRect = image.Rectangle{Min: top, Max: top.Add(image.Pt(sz.X, compH-bannerH))}
+	}
+	switch {
+	case comp != nil || (foot != footNone && foot != footPending):
 		t := op.Offset(image.Pt(0, listH)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()
+		if compY != guess {
+			// it laid out where it was (the thread loaded, grew or shrank,
+			// the composer's height changed): again, so what it anchors
+			// in window coordinates is where it is
+			a.Invalidate()
+		}
+	case foot == footNone && c.comp != nil && hc != nil && !hc.HidesComposer():
+		a.Invalidate() // the thread's box shows now (its list changed under the decision)
 	}
 	// Slack's FileDragDrop around the pane: its drop zone, and the drop
 	// overlay over list and composer while files hover it (drop_overlay.go)
