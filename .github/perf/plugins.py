@@ -34,9 +34,10 @@ METRICS = [
     ("renders", "Go→JS renders", ""),
     ("tasks", "Go→JS tasks (idle passes: the sweep's unmounts not counted)", ""),
     ("unmounts", "roots unmounted (slackc's sweep)", ""),
-    ("polls", "core's polls during the pass (each reverts injected edits)", ""),
+    ("polls", "core's polls during the frames (each reverts injected edits)", ""),
+    ("polls_cpu", "core's polls during the measured CPU (the frames, then the JS drain)", ""),
     ("backlog_ms", "JS backlog after the frames", "ms"),
-    # the gpu passes (head only: Gio's frame stats, Clack patch 36)
+    # the gpu passes (Gio's frame stats, Clack patch 36, on trees that have it)
     ("draws", "GPU draw calls / frame", ""),
     ("api_calls", "graphics API calls / frame", ""),
     ("api_skipped", "API calls the state cache left out / frame", ""),
@@ -77,6 +78,47 @@ def fmt(v, unit):
     return f"{v:.0f}"
 
 
+# what the gpu passes don't measure (perfGPUScroll): no row for them
+GPU_UNMEASURED = {"polls", "polls_cpu", "tasks", "unmounts", "backlog_ms", "renders", "trees", "trees_same"}
+
+# the idle passes: per-frame allocations read backwards when the frames
+# fell, so they're given for the whole pass
+IDLE_PER_PASS = {"allocs": "allocations (the whole pass)", "alloc_kb": "KB allocated (the whole pass)"}
+
+
+def is_idle(p):
+    return p.get("seconds") is not None or p.get("fps") is not None
+
+
+def latency(sides):
+    """Update to screen: edits of a message on screen, event to frame."""
+    rows = []
+    for side in ("base", "head"):
+        vals, viewed = [], []
+        for r in sides[side]:
+            vals += [v for v in (r.get("edit_latency_ms") or [])]
+            viewed += [bool(v) for v in (r.get("edit_viewed") or [])]
+        rows.append((side, vals, viewed))
+    if not any(v for _, v, _ in rows):
+        return
+    print("### Update to screen: an edit of a message on screen\n")
+    print("Edits of a message in the bench channel (after a first edit: Message Logger keeps an edited message's history, so the row draws the plugins' view from then on), each timed from its event to the first frame that draws it, frames drawn back to back. A row drawing the plugins' view keeps the revision before until JS's copy of the new one is ready; \"never\" is an edit not drawn in 10 s.\n")
+    print("| | edits | median | max | the row on the view |")
+    print("|---|---|---|---|---|")
+    for side, vals, viewed in rows:
+        if not vals:
+            print(f"| {side} | — | — | — | — |")
+            continue
+        drawn = [v for v in vals if v >= 0]
+        never = len(vals) - len(drawn)
+        med = f"{statistics.median(drawn):.0f} ms" if drawn else "—"
+        mx = f"{max(drawn):.0f} ms" if drawn else "—"
+        if never:
+            mx += f", {never} never"
+        print(f"| {side} | {len(vals)} | {med} | {mx} | {sum(viewed)} of {len(viewed)} |")
+    print()
+
+
 def recorder(runs):
     """The flight recorder's cost: head's channel-live passes with it off
     and on, in turns on one runner (PERF_PLUGIN_RECORDER)."""
@@ -114,8 +156,9 @@ def main():
     print(f"## Scroll frames under a plugin set like Karim's\n")
     print(f"Before: `{base_label}` ({len(sides['base'])} rounds). After: `{head_label}` ({len(sides['head'])} rounds).")
     print("Each scroll pass is 300 frames at 60 a second, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU. The idle passes (idle, emoji) leave the channel alone for 5 s and draw a frame only when something asks for one, as the window does (emoji: an animated custom emoji on screen); emoji-60hz draws one every 16 ms. Allocations and collections are the whole process's, per frame.")
-    print("The gpu passes are the channel scrolled with Gio's GPU renderer drawing every frame (Mesa llvmpipe, which rasterizes on the CPU), each frame timed from its input to the end of its rasterization; their draw and API call counts are head's only (Gio's frame stats).")
+    print("The gpu passes are the channel scrolled with Gio's GPU renderer drawing every frame (Mesa llvmpipe, which rasterizes on the CPU), each frame timed from its input to the end of its rasterization; their draw and API call counts are Gio's frame stats, where the tree has them.")
     print("Values are the median over the rounds, the rounds in brackets.\n")
+    print("Not comparable with runs before 78375754 (plugin-render-3, 2026-11-17): the bench channel was the 41st conversation opened, and the messages hub of every tree before that commit kept no model for it, so the live passes drew a list that took no live event (only its own 30 s refresh); they draw a live list on both trees now (each pass's list_live). Scroll-pass tasks count unmounts too since round 5.\n")
     ref = (sides["head"] or sides["base"] or [{}])[0]
     if ref:
         print(f"Plugins running: {', '.join(ref.get('plugins') or []) or 'none'}" +
@@ -131,20 +174,47 @@ def main():
             for p in r.get("passes") or []:
                 if p["name"] not in names:
                     names.append(p["name"])
+    # a list that took no live event, or a poll in an idle pass: the
+    # numbers beside it aren't what the pass means to measure
+    for side in ("base", "head"):
+        for r in sides[side]:
+            for p in r.get("passes") or []:
+                if p.get("list_live") == "dropped":
+                    print(f"**Warning:** {side}'s {p['name']} drew a bench list the messages hub had dropped: it took no live event.\n")
+                if is_idle(p) and (p.get("polls") or p.get("polls_cpu")):
+                    print(f"**Warning:** {side}'s {p['name']} had {p.get('polls_cpu') or p.get('polls')} of core's polls in it (the alignment didn't hold).\n")
     recorder(sides["head"])
+    latency(sides)
     for name in names:
         if ", recorder o" in name:
             continue  # in the recorder's table above
         print(f"### {name}\n")
         if name == "idle-busy":
-            print("No input for 10 s while the workspace goes on around the open channel (messages and updates in channels opened earlier, profile changes of people no row draws, badges, a pref's echo, new emoji); a frame is drawn only when something asks for one, as the window draws them. Not a floor of nothing: each message turns a read channel's sidebar row unread (Slack repaints that too, one frame each), and most of the frames left come from ui.backend asking for one per core event (frame-wakeups' area), not from plugins or taut.\n")
+            print("No input for 10 s while the workspace goes on around the open channel (messages and updates in channels opened earlier, profile changes of people no row draws, badges, a pref's echo, new emoji); a frame is drawn only when something asks for one, as the window draws them. Who asked for the frames, each side's first round:\n")
+            for side in ("base", "head"):
+                for r in sides[side][:1]:
+                    for p in r.get("passes") or []:
+                        if p["name"] == name and p.get("sources"):
+                            top = sorted(p["sources"].items(), key=lambda kv: -kv[1])[:5]
+                            print(f"- {side}: " + "; ".join(f"{n}× {k}" for k, n in top))
+            print()
+        if name == "channel-live, past 40":
+            print("channel-live after 41 more conversations were drawn (the 38 others again, three new): on a tree with 78375754 the hub lets the bench's model go, drawn longest ago, and takes it back as the channel shows; before it, the bench's model stays and each new one is dropped as it's made.\n")
         print("| | before | after | change |")
         print("|---|---|---|---|")
+        gpu = name.startswith("gpu ")
         for key, label, unit in METRICS:
+            if gpu and key in GPU_UNMEASURED:
+                continue
             cols = []
             meds = []
             for side in ("base", "head"):
-                vals = [p.get(key) for r in sides[side] for p in (r.get("passes") or []) if p["name"] == name]
+                ps = [p for r in sides[side] for p in (r.get("passes") or []) if p["name"] == name]
+                if key in IDLE_PER_PASS and ps and is_idle(ps[0]):
+                    label = IDLE_PER_PASS[key]
+                    vals = [p[key] * p.get("frames", 0) for p in ps if p.get(key) is not None]
+                else:
+                    vals = [p.get(key) for p in ps]
                 vals = [v for v in vals if v is not None]
                 if not vals:
                     cols.append("—")
