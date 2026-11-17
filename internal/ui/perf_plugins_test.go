@@ -94,6 +94,7 @@ import (
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -1358,21 +1359,90 @@ func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
 		e.fs.ReactQuiet(ch, ts, name, e.c.Authors[0])
 		tr.inject(ch, "reaction_added", "", map[string]any{"user": e.c.Authors[0], "reaction": name, "item": map[string]any{"type": "message", "channel": ch, "ts": ts}})
 	}
-	e.toBottom()
-	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)})
-	ok := e.wait(15*time.Second, func() bool { return e.a.images.Stats().Players > 0 })
-	e.settle(1500 * time.Millisecond) // every size's player, the rows' plugin renders
-	s := e.a.images.Stats()
-	inTL := 0
-	if tl := e.a.data.core.S.Timeline(ch); tl != nil {
-		for _, m := range tl.Msgs {
-			for _, ts := range posted {
-				if m.TS == ts {
-					inTL++
+	inTimeline := func() int {
+		n := 0
+		if tl := e.a.data.core.S.Timeline(ch); tl != nil {
+			for _, m := range tl.Msgs {
+				for _, ts := range posted {
+					if m.TS == ts {
+						n++
+					}
 				}
 			}
 		}
+		return n
 	}
+	// what the list drew of them, for a pass whose image is never asked
+	// for: the rows on screen, the image queue, core's polls meanwhile
+	polls0 := perfPollCount()
+	state := func() string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "route %q", e.a.router.Current().Channel())
+		if c := e.a.convos[ch+"/"]; c == nil {
+			b.WriteString(", no list for the channel")
+		} else {
+			if l, ok := c.list.(interface{ AtBottom() bool }); ok {
+				fmt.Fprintf(&b, ", at the bottom %v", l.AtBottom())
+			}
+			if l, ok := c.list.(interface {
+				LayoutSig() (int, bool, uint64)
+			}); ok {
+				n, loaded, _ := l.LayoutSig()
+				fmt.Fprintf(&b, ", %d messages in the list (loaded %v)", n, loaded)
+			}
+			if l, ok := c.list.(interface{ VisibleRows() []messages.RowY }); ok {
+				rows := l.VisibleRows()
+				mine, last := 0, ""
+				for _, r := range rows {
+					for _, ts := range posted {
+						if strings.TrimPrefix(r.Key, "g") == ts {
+							mine++
+						}
+					}
+					last = r.Key
+				}
+				fmt.Fprintf(&b, ", %d rows on screen (%d of these, the last %s)", len(rows), mine, last)
+			}
+			if l, ok := c.list.(interface{ RowText(string) string }); ok {
+				fmt.Fprintf(&b, ", the newest drew %q", l.RowText(posted[len(posted)-1]))
+			}
+		}
+		fmt.Fprintf(&b, "; %d of %d in core's timeline, %d images loading, its image asked for %d times, %d polls since the posts",
+			inTimeline(), len(posted), e.a.images.Pending(), asked.Load(), perfPollCount()-polls0)
+		if u := e.a.data.core.CustomEmoji()[name]; u != all[name] {
+			fmt.Fprintf(&b, ", its URL now %q", u)
+		}
+		return b.String()
+	}
+	playing := func() bool { return e.a.images.Stats().Players > 0 }
+	e.toBottom()
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)})
+	t.Logf("emoji: posted and at the bottom: %s", state())
+	polled := false
+	ok := e.wait(15*time.Second, func() bool {
+		if !polled && perfPollCount() > polls0 {
+			polled = true
+			t.Logf("emoji: at core's poll: %s", state())
+		}
+		return playing()
+	})
+	if !ok {
+		// to the bottom again, then the list refreshed: the one that
+		// brings the image says what kept it away
+		t.Logf("emoji: no player in 15 s: %s", state())
+		e.toBottom()
+		if ok = e.wait(5*time.Second, playing); ok {
+			t.Logf("emoji: playing after a second scroll to the bottom: %s", state())
+		} else {
+			e.a.refreshVisible()
+			if ok = e.wait(5*time.Second, playing); ok {
+				t.Logf("emoji: playing after the list's refresh: %s", state())
+			}
+		}
+	}
+	e.settle(1500 * time.Millisecond) // every size's player, the rows' plugin renders
+	s := e.a.images.Stats()
+	inTL := inTimeline()
 	seenMu.Lock()
 	t.Logf("emoji :%s: (an animated WebP behind a .png URL): %d players, %d animated images, playing %v; %d of %d messages in the timeline; its image asked for %d times (%d served: %q, want %q); loaded %v, animation at 22/32/44 px %v/%v/%v",
 		name, s.Players, s.Animated, ok, inTL, len(posted), asked.Load(), served.Load(), seen, path, e.a.images.Loaded(all[name]),
