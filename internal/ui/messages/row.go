@@ -519,7 +519,31 @@ func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	if rc.parent {
 		return slackc.Component(gtx, "ThreadRootGeneric", r, (*row).wrapperProps, (*row).layoutWrapper)
 	}
+	if rc.thread {
+		// Slack's thread pane renders a reply as ThreadReply →
+		// ThreadReplyGeneric (modern.vendor), with no MessageWrapper:
+		// that's BaseMessageList's alone (boot-shared EXGU), so a patch of
+		// it (ShowRealUser's) never reached a thread's replies in Slack
+		r.unwrapped(rc)
+		return slackc.Component(gtx, "ThreadReplyGeneric", r, (*row).replyProps, (*row).layoutMessage)
+	}
 	return slackc.Component(gtx, "MessageWrapper", r, (*row).wrapperProps, (*row).layoutWrapper)
+}
+
+// unwrapped is what layoutWrapper does ahead of its child, for a row
+// drawn with no MessageWrapper (a thread pane's reply): it has no wrapper
+// override, and it resolves its sender and custom response.
+func (r *row) unwrapped(rc *rowCtx) {
+	if r.wrapOv != 0 {
+		r.wrapOv, r.wrapMsg = 0, nil
+		r.m = r.src
+		r.msgOv = 0 // the inner override re-applies over the new base
+		r.msg = nil
+		r.setDoc()
+		r.growPills()
+	}
+	r.resolve(rc)
+	r.customResponse(rc)
 }
 
 // ---- props (patched path only) ----
@@ -594,17 +618,38 @@ func (r *row) messageProps() slackc.Props {
 	return r.pane(slackc.Props{"$key": r.ts, "msg": r.wrapped(), "channelId": r.src.Channel, "viewContext": r.viewContext()})
 }
 
-// replyProps are ThreadReplyGeneric's (a reply in the thread pane).
+// replyProps are ThreadReplyGeneric's (a reply in the thread pane): what
+// Slack's ThreadReply hands it (modern.vendor ThreadReply, build
+// 2c0d02ca130f) in the thread flexpane: messageContainerType THREAD
+// ("Thread", 8L29 View.Thread), blocks in the "thread" context, a single
+// thread, adjacent only under the Clean theme ("light"), its className
+// (c-message_kit__message c-message_kit__thread_message, …--pending for
+// a send on its way), and its no-op handlers.
 func (r *row) replyProps() slackc.Props {
-	return r.pane(slackc.Props{"$key": r.ts, "msg": r.wrapped(), "channelId": r.src.Channel, "parentId": r.src.ThreadTS,
-		"adjacent": !r.rc.header, "className": "c-message_kit__background c-message_kit__message c-message_kit__thread_message",
-		"blocksContainerContext": "message", "messageContainerType": "thread", "viewContext": r.viewContext(),
-		"highlight": r.rc.highlight > 0, "focused": false, "isCompact": false, "isInView": true, "isSingleThread": false,
-		"hasContextMenu": true})
+	cls := "c-message_kit__message c-message_kit__thread_message"
+	if r.m.Pending {
+		cls += " c-message_kit__thread_message--pending"
+	}
+	return r.pane(slackc.Props{"$key": r.ts, "msg": r.sourceMessage(), "parentId": r.src.ThreadTS,
+		"isMessagingMaxWidthEnabled": false, "isCompact": false, "isSingleThread": true, "messageContainerType": "Thread",
+		"blocksContainerContext": "thread", "adjacent": !r.rc.header && !r.rc.dense, "className": cls,
+		"focused": false, "isInView": true, "highlight": r.rc.highlight > 0, "hasContextMenu": true, "renderActionsOffscreen": false,
+		"clearHighlight": replyNoop, "onBackgroundClick": replyNoop, "onMediaPlaybackInProgressChanged": replyNoop,
+		"groupSenderAndBodyInIndent": false, "showShareButton": true, "hideAgentforceMessageActionButtons": false,
+		"useCurrentUserMessageBubble": false, "useStandaloneMessagePresentation": false})
 }
+
+// replyNoop is ThreadReply's e_.noop for the handlers its list doesn't
+// pass (clearHighlight, onMediaPlaybackInProgressChanged) and stands in
+// for onBackgroundClick (its Alt-click Mark unread): one func, so the
+// props hash the same each frame.
+var replyNoop = func(...any) {}
 
 func (r *row) backgroundProps() slackc.Props {
 	cls := "c-message_kit__background c-message_kit__message"
+	if r.rc.thread && !r.rc.parent {
+		cls += " c-message_kit__thread_message" // ThreadReplyGeneric's className
+	}
 	if r.rc.hovered {
 		cls += " c-message_kit__background--hovered"
 	}
