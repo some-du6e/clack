@@ -217,7 +217,14 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 	app.S.SetLatest(voteChan, []slack.Message{root}, false)
 	app.S.SetThread(voteChan, rootTS, thread)
 
-	renders, step := patchedEnv(t, app, rootPatchJS(c), "ThreadRootGeneric", "MessageWrapper", "Blocks", "MessageText")
+	patched := []string{"ThreadRootGeneric", "MessageWrapper"}
+	if !c.noBody {
+		patched = append(patched, "Blocks", "MessageText")
+	}
+	if c.reply {
+		patched = append(patched, "ThreadReplyGeneric")
+	}
+	renders, step := patchedEnv(t, app, rootPatchJS(c), patched...)
 	if !lockstep {
 		step = nil
 	}
@@ -253,9 +260,18 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 	var labels []string
 	labelHook = func(txt string, _ textStyle) { labMu.Lock(); labels = append(labels, txt); labMu.Unlock() }
 	t.Cleanup(func() { labelHook = nil })
+	// each pane's frame, with the labels it drew (paneLabels)
+	paneLabels := make([][]string, len(panes))
 	all := func() {
-		for _, p := range panes {
+		for i, p := range panes {
+			labMu.Lock()
+			labels = nil
+			labMu.Unlock()
 			p.frame()
+			labMu.Lock()
+			paneLabels[i] = labels
+			labels = nil
+			labMu.Unlock()
 		}
 	}
 	// what a pane draws of the vote message: its height; the revision and
@@ -337,18 +353,17 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 	}
 	check := func(when string) {
 		frames++
-		labMu.Lock()
-		drawnLabels := labels
-		labels = nil
-		labMu.Unlock()
 		for i, p := range panes {
+			labMu.Lock()
+			drawnLabels := paneLabels[i]
+			labMu.Unlock()
 			l := lookAt(i)
 			var why []string
 			if c.rewrite && strings.Contains(l.body, "Upvotes:") {
 				why = append(why, fmt.Sprintf("drew %q without MessageText's rewrite", l.body))
 			}
-			if c.sender && i == 0 && slices.Contains(drawnLabels, "Vote Bot") {
-				why = append(why, "drew the bot's name, not the plugin's person")
+			if c.sender && slices.Contains(drawnLabels, "Vote Bot") {
+				why = append(why, fmt.Sprintf("drew the bot's name, not the plugin's person (the row's %q, %q; labels %q)", l.name, l.user, drawnLabels))
 			}
 			if c.held && !held && l.rev != l.modelRev {
 				why = append(why, fmt.Sprintf("drew revision %d, the row's message is %d", l.rev, l.modelRev))

@@ -255,7 +255,10 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	if changed {
 		r.viewConv = 0 // a new revision: compared afresh
 	}
-	mv, conv, stale, ok := t.MessageViewState(r.src.Channel, r.src.TS, changed)
+	if changed && !r.viewed {
+		r.viewWait = true // the new source, until JS's copy is of it (ready)
+	}
+	mv, conv, ready, ok := t.MessageViewState(r.src.Channel, r.src.TS, changed)
 	if !ok {
 		if r.viewed {
 			r.viewed, r.vmsg = false, nil
@@ -289,19 +292,33 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		if !again && !changed || sameDrawn(r.vmsg, &mv) {
 			return
 		}
+		if ready && sameView(&r.src, &mv) && r.src.Text == mv.Text && reflect.DeepEqual(r.src.Doc.Blocks, mv.Doc.Blocks) {
+			// JS's copy of this very revision draws as its source: the
+			// plugins leave it as it is now, and the row draws its source,
+			// so its next update draws at once
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
+			return
+		}
 		r.vmsg = &mv
 		r.recompose()
 		return
 	}
 	if sameView(&r.src, &mv) && r.src.Text == mv.Text {
+		if ready {
+			r.viewWait = false
+		}
 		return
 	}
-	if changed && stale {
-		// JS's copy from before the update (its new one is asked for): the
-		// row draws the new source until it comes, not the revision before
-		// as a view it then kept
+	if r.viewWait && !ready {
+		// JS's copy may be from before the row's update (asked again, or a
+		// change to it still queued for JS): the row draws its new source
+		// until JS's copy of it comes, on every read, not the revision
+		// before. On the read after the update only, a first reaction
+		// showed, went, and came back; a vote's count went N, N-1, N
 		return
 	}
+	r.viewWait = false
 	r.viewed, r.vmsg = true, &mv
 	r.recompose()
 }

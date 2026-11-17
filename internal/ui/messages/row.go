@@ -128,7 +128,8 @@ type row struct {
 	rootPrev    string
 	rootRev     uint64
 	rootURev    uint64   // the users revision rootPrev read its mentions at
-	rootIDs     []string // the members rootPrev names (touched as it draws)
+	rootIDs     []string // the members rootPrev names
+	rootNames   []string // and how each drew then (richview.MentionText)
 	rootChecked bool
 
 	// geometry of the last layout (row-local), for overlays
@@ -148,6 +149,7 @@ type row struct {
 	viewRev          uint32
 	viewed           bool
 	vmsg             *core.Message // the view itself (viewed): what the overrides lay over
+	viewWait         bool          // unviewed, a new revision: its source until JS's copy of it is ready
 	viewConv         uint64
 	viewEpoch        uint64       // taut's ViewEpoch when it last read the view (applyView)
 	col              image.Point  // body column origin, row-local
@@ -165,21 +167,26 @@ type row struct {
 	// wrapped gives, the parts inside them message(). A tree whose msg says
 	// one of those changed nothing the message says, whichever revision it
 	// answers; only its sender is a plugin's.
-	outSent, inSent, bodySent sentFPs
-	srcFP, msgFP, wrapFP      uint64       // contentFP of srcMsg, msg, wrapMsg
-	inFP, textFP              uint64       // … of inMsg, textOv
-	textMemo, blocksMemo      fpMemo       // the MessageText and Blocks trees' msgs
-	filesMemo, attsMemo       fpMemo       // the MessageFiles and MessageKitAttachments trees'
-	textOv                    slackc.Props // MessageText's msg override (nil = none)
-	filesOv, attsOv           slackc.Props // MessageFiles / MessageKitAttachments msg overrides
-	tailOv                    [2]uintptr   // file / attachment filters applied (propsIDs)
-	hasFiles                  bool         // the body has file cards (MessageFiles)
-	hasAtts                   bool         // … attachment cards (MessageKitAttachments)
-	chans                     []chanCard   // CodeChannelEntityCard per channel mentioned, while patched
-	chansDoc                  bool         // chans is for the current doc
-	replyAvs                  []replyAv    // the reply bar's ReplyBarAvatars
-	replyN                    int          // … drawn in the last frame
-	replyLink                 string       // … its count link's text (getLinkTextWithScheduledDrafts), last frame
+	outSent, inSent, msgSent sentFPs
+	// … and what the parts inside MessageText got (bodyMessage: its
+	// override, a plugin's, or message()): a MessageText tree is judged
+	// against msgSent only, or its plugin's rewrite, once handed on below
+	// it, counted as the row's own and lasted one frame
+	bodySent             sentFPs
+	srcFP, msgFP, wrapFP uint64       // contentFP of srcMsg, msg, wrapMsg
+	inFP, textFP         uint64       // … of inMsg, textOv
+	textMemo, blocksMemo fpMemo       // the MessageText and Blocks trees' msgs
+	filesMemo, attsMemo  fpMemo       // the MessageFiles and MessageKitAttachments trees'
+	textOv               slackc.Props // MessageText's msg override (nil = none)
+	filesOv, attsOv      slackc.Props // MessageFiles / MessageKitAttachments msg overrides
+	tailOv               [2]uintptr   // file / attachment filters applied (propsIDs)
+	hasFiles             bool         // the body has file cards (MessageFiles)
+	hasAtts              bool         // … attachment cards (MessageKitAttachments)
+	chans                []chanCard   // CodeChannelEntityCard per channel mentioned, while patched
+	chansDoc             bool         // chans is for the current doc
+	replyAvs             []replyAv    // the reply bar's ReplyBarAvatars
+	replyN               int          // … drawn in the last frame
+	replyLink            string       // … its count link's text (getLinkTextWithScheduledDrafts), last frame
 	// the thread's draft and scheduled replies (reply_bar.go threadDrafts)
 	draftGen            uint64
 	draftSeen, hasDraft bool
@@ -393,11 +400,20 @@ func (r *row) overlay(base *core.Message, msg slackc.Props, fp uint64, sent sent
 		m.Name, m.Avatar, m.IsBot = a.Name, a.Avatar, a.IsBot
 	}
 	if !sent.has(fp) {
-		if a.Text != src.Text {
-			m.Text = a.Text
+		// what the plugin changed, laid over the base: blocks the msg left
+		// as the row sent them keep the base's (the view's: Censorship's
+		// masks under ShowRealUser's rewrite of a forwarded message's
+		// author), the rest are the plugin's
+		if txt, ok := msg.Str("text"); ok && txt != src.Text {
+			m.Text = txt
 		}
-		if !sameSlice(a.Doc.Blocks, src.Doc.Blocks) {
-			m.Doc.Blocks, m.Blocks = a.Doc.Blocks, a.Blocks
+		if blocks := docBlocks(app, base.Doc.Blocks, src.Blocks, msg); !sameSlice(blocks, base.Doc.Blocks) {
+			m.Doc.Blocks = blocks
+			if list, ok := msg["blocks"].([]any); ok && len(src.Blocks) > 0 && !sameBlocks(list, src.Blocks) {
+				if b, err := json.Marshal(jsonable(list)); err == nil {
+					m.Blocks = b // the parts inside get the plugin's blocks (Slack's msg.blocks)
+				}
+			}
 		}
 	}
 	return m
@@ -655,14 +671,14 @@ func (r *row) viewContext() string {
 func (r *row) message() slackc.Props {
 	if r.wrapOv == 0 && r.msgOv == 0 && !(r.viewed && r.vmsg != nil) {
 		p := r.sourceMessage()
-		r.bodySent.add(r.srcFP)
+		r.msgSent.add(r.srcFP)
 		return p
 	}
 	if r.msg == nil {
 		r.msg = slackMessage(&r.m)
 		r.msgFP = contentFP(r.msg)
 	}
-	r.bodySent.add(r.msgFP)
+	r.msgSent.add(r.msgFP)
 	return r.msg
 }
 
@@ -882,7 +898,13 @@ func (r *row) bodyMessage() slackc.Props {
 		r.bodySent.add(r.textFP)
 		return r.textOv
 	}
-	return r.message()
+	p := r.message()
+	if propsID(p) == propsID(r.srcMsg) {
+		r.bodySent.add(r.srcFP)
+	} else {
+		r.bodySent.add(r.msgFP)
+	}
+	return p
 }
 
 func (r *row) blocksProps() slackc.Props {
@@ -1592,7 +1614,7 @@ func (r *row) layoutMessageText(gtx layout.Context, p slackc.Props) layout.Dimen
 	// while JS hasn't drawn the new one) changes nothing; one that says
 	// something else is the plugin's
 	if msg := p.Map("msg"); !r.ownMsg(msg) {
-		if fp := r.textMemo.of(msg); !r.bodySent.has(fp) {
+		if fp := r.textMemo.of(msg); !r.msgSent.has(fp) {
 			r.textOv, r.textFP = msg, fp
 		}
 	}
@@ -1636,7 +1658,7 @@ func (r *row) layoutMessageAttachments(gtx layout.Context, p slackc.Props) layou
 
 func (r *row) tailOverride(gtx layout.Context, ov *slackc.Props, memo *fpMemo, p slackc.Props) {
 	msg := p.Map("msg")
-	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) || r.bodySent.has(memo.of(msg)) {
+	if fp := memo.of(msg); r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) || r.bodySent.has(fp) || r.msgSent.has(fp) {
 		msg = nil
 	}
 	if propsID(msg) != propsID(*ov) {
@@ -1763,7 +1785,7 @@ func (r *row) layoutMessageBlocks(gtx layout.Context, _ slackc.Props) layout.Dim
 func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	rc := r.rc
 	msg := p.Map("msg")
-	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) || r.bodySent.has(r.blocksMemo.of(msg)) {
+	if fp := r.blocksMemo.of(msg); r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) || r.bodySent.has(fp) || r.msgSent.has(fp) {
 		// what the row sent (now, or before an update while JS hasn't drawn
 		// the new one): MessageText's override, if any, else r.m's own body
 		msg = r.textOv
@@ -2358,23 +2380,18 @@ func (r *row) rootPreview(rc *rowCtx) string {
 		rev = rc.list.snap.rev
 	}
 	// the root's mentions read as they draw (richview.MentionText): again
-	// when a member's name may have changed (usersRev). The members it
-	// names count as drawn while it draws (as rows touch their senders),
-	// so a profile change of one only the preview names moves usersRev:
-	// read once and kept, a rename of a member nothing else on screen
-	// named left the old @name there
-	if rc.h != nil {
-		if app := rc.h.Core(); app != nil && app.S != nil {
-			for _, id := range r.rootIDs {
-				app.S.TouchMember(id)
-			}
-		}
-	}
-	if r.rootChecked && r.rootRev == rev && r.rootURev == rc.usersRev {
+	// when the users revision moved, or when a mention it drew reads
+	// otherwise now (a rename, a plugin's nickname), checked each frame as
+	// Slack's mentions read their members on every render. The users
+	// revision moves only for a member the hub thinks a list drew, and
+	// the preview's members, read once and kept, often aren't (the old
+	// @name stayed); touching them as it drew moved it for their every
+	// status and huddle change too, redrawing every list
+	if r.rootChecked && r.rootRev == rev && r.rootURev == rc.usersRev && !r.rootNamesMoved() {
 		return r.rootPrev
 	}
 	r.rootChecked, r.rootRev, r.rootURev, r.rootPrev = true, rev, rc.usersRev, ""
-	r.rootIDs = r.rootIDs[:0]
+	r.rootIDs, r.rootNames = r.rootIDs[:0], r.rootNames[:0]
 	ts := r.m.ThreadTS
 	var doc *richtext.Doc
 	if rc.list != nil {
@@ -2392,14 +2409,26 @@ func (r *row) rootPreview(rc *rowCtx) string {
 	}
 	if doc != nil {
 		text := func(sp richtext.Span) (string, bool) {
+			t, ok := richview.MentionText(sp)
 			if sp.Kind == richtext.User && sp.ID != "" {
-				r.rootIDs = append(r.rootIDs, sp.ID)
+				r.rootIDs, r.rootNames = append(r.rootIDs, sp.ID), append(r.rootNames, t)
 			}
-			return richview.MentionText(sp)
+			return t, ok
 		}
 		r.rootPrev = strings.Join(strings.Fields(richtext.PlainTextWith(*doc, text)), " ")
 	}
 	return r.rootPrev
+}
+
+// rootNamesMoved reports whether a member the root preview names draws
+// otherwise now than when it read them.
+func (r *row) rootNamesMoved() bool {
+	for i, id := range r.rootIDs {
+		if t, _ := richview.MentionText(richtext.Span{Kind: richtext.User, ID: id}); t != r.rootNames[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // reactionBar lays out the ReactionBar at pos (origin is pos's frame in

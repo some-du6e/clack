@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,5 +61,34 @@ func TestReconvertKeepsAnUpdate(t *testing.T) {
 	m.mu.Unlock()
 	if !reflect.DeepEqual(got.Doc, updated) {
 		t.Errorf("the re-conversion wrote the revision before's Doc over the update: %q", richtext.PlainText(got.Doc))
+	}
+
+	// a reaction in that window, though, moves the entry but not its Doc:
+	// the conversion still lands (skipped, the old name stayed for good)
+	m.mu.Lock()
+	i := m.find(ts)
+	old := m.msgs[i].m
+	old.Doc = richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: "converted with an old name"}}}}}
+	m.msgs[i] = entry{m: old, rev: m.bump()}
+	m.mu.Unlock()
+	react := func(mm *model, at string) {
+		mm.mu.Lock()
+		defer mm.mu.Unlock()
+		if i := mm.find(at); i >= 0 {
+			upd := mm.msgs[i].m
+			upd.Reactions = append(upd.Reactions[:len(upd.Reactions):len(upd.Reactions)], core.Reaction{Name: "eyes", Count: 1})
+			mm.msgs[i] = entry{m: upd, rev: mm.bump()}
+		}
+	}
+	reconvRead.Store(&react)
+	v.s.hb.reconvertIn([]*model{m}, c)
+	m.mu.Lock()
+	got = m.msgs[m.find(ts)].m
+	m.mu.Unlock()
+	if strings.Contains(richtext.PlainText(got.Doc), "old name") {
+		t.Error("a reaction between the conversion's store read and its write dropped the conversion: the Doc keeps the old name")
+	}
+	if len(got.Reactions) == 0 {
+		t.Error("the conversion's write lost the reaction")
 	}
 }

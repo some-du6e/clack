@@ -895,19 +895,20 @@ func (t *Taut) MessageViewConv(ch, ts string, fresh bool) (core.Message, uint64,
 }
 
 // MessageViewState is MessageViewConv, and whether the value it converted
-// is one JS gave before a change since marked it stale (its fetch is
-// asked): the plugins' copy of the revision before an update, while JS
-// hasn't answered for the new one.
-func (t *Taut) MessageViewState(ch, ts string, fresh bool) (m core.Message, conv uint64, stale, ok bool) {
+// is ready: one JS gave after every change marked so far was posted to
+// it (not stale, none queued). One that isn't may be the plugins' copy of
+// the revision before an update, while JS hasn't answered for the new
+// one.
+func (t *Taut) MessageViewState(ch, ts string, fresh bool) (m core.Message, conv uint64, ready, ok bool) {
 	if !t.SlicePatched("messages") {
 		return core.Message{}, 0, false, false
 	}
-	e, stale := t.ui.views.entryState("messages", ch, ts)
+	e, ready := t.ui.views.entryState("messages", ch, ts)
 	if e == nil || e.sm == nil {
 		return core.Message{}, 0, false, false
 	}
 	c := t.ui.views.conv(&e.conv, ch, e.sm, fresh)
-	return c.msg, c.id, stale, true
+	return c.msg, c.id, ready, true
 }
 
 // InjectedMessages lists messages plugins added to ch (injectMessages)
@@ -1209,6 +1210,11 @@ type viewCache struct {
 	// inflight counts the conversions of each message under way (conv),
 	// so a change to one being made isn't lost (bumpConv)
 	inflight map[viewSK]int
+	// the changes queued for JS and not posted yet (mirror.invalidate to
+	// send), per key and per whole slice: a value JS gives meanwhile is
+	// from before them, whatever its sequence says
+	pend    map[viewSK]int
+	pendAll map[string]int
 }
 
 // viewOnScreen is how recently, before the UI's latest read, values must
@@ -1307,8 +1313,9 @@ func (v *viewCache) entry(slice, key, sub string) *viewEntry {
 	return e
 }
 
-// entryState is entry, and whether the entry is stale (its value from
-// before a change it was marked for; asked of JS again).
+// entryState is entry, and whether its value is ready: fetched after the
+// changes marked for it (not stale) and with none queued for JS that it
+// may be from before (pending).
 func (v *viewCache) entryState(slice, key, sub string) (*viewEntry, bool) {
 	k := viewKey{slice, key, sub}
 	now := viewNow()
@@ -1323,8 +1330,31 @@ func (v *viewCache) entryState(slice, key, sub string) (*viewEntry, bool) {
 		v.want[k] = true
 		v.kickLocked()
 	}
+	ready := e != nil && !stale && v.pend[viewSK{slice, key}] == 0 && v.pendAll[slice] == 0
 	v.mu.Unlock()
-	return e, stale
+	return e, ready
+}
+
+// pendingAdd counts changes to slice's keys (all of it with none) queued
+// for JS (d 1) or posted to it (d -1).
+func (v *viewCache) pendingAdd(slice string, keys []string, d int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.pend == nil {
+		v.pend, v.pendAll = map[viewSK]int{}, map[string]int{}
+	}
+	if len(keys) == 0 {
+		if v.pendAll[slice] += d; v.pendAll[slice] <= 0 {
+			delete(v.pendAll, slice)
+		}
+		return
+	}
+	for _, k := range keys {
+		sk := viewSK{slice, k}
+		if v.pend[sk] += d; v.pend[sk] <= 0 {
+			delete(v.pend, sk)
+		}
+	}
 }
 
 func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {

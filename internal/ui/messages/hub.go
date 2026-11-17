@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // entry is one message in a model, with a revision that bumps whenever the
@@ -163,14 +164,27 @@ func (hb *hub) onScreen(ch string) bool {
 // about in the latest frame a list drew: every row reads its sender and
 // every mention its member as it draws (store.MemberAccessed, which the
 // event carries from before the change: core.Event.Seen).
+//
+// Or by a frame drawn since: the event's access is from before the
+// change, and a frame drawn between the change and the hub hearing of it
+// is newer than that; a member still on screen was read again by it
+// (store.MemberAccessed now). Judged by the event's alone, a rename while
+// the window drew frame after frame looked undrawn, and the row kept the
+// old name.
 func (hb *hub) drawsMember(ev core.Event) bool {
-	if ev.Seen.IsZero() {
+	seen := ev.Seen
+	if id := ev.UserID; id != "" && hb.app != nil && hb.app.S != nil {
+		if at := hb.app.S.MemberAccessed(id); at.After(seen) {
+			seen = at
+		}
+	}
+	if seen.IsZero() {
 		return false
 	}
 	hb.mu.Lock()
 	frame := hb.frame
 	hb.mu.Unlock()
-	return frame.IsZero() || ev.Seen.UnixMilli() >= frame.UnixMilli()
+	return frame.IsZero() || seen.UnixMilli() >= frame.UnixMilli()
 }
 
 // redraws reports whether ev's change to the models shows: a
@@ -877,13 +891,13 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 			m.reconv = mergeRefChange(m.reconv, c) // its answer may be older than c
 		}
 		type staleEnt struct {
-			ts  string
-			rev uint32 // the entry's, when it was found to read c
+			ts     string
+			blocks []richtext.Block // the entry's Doc when it was found to read c
 		}
 		var stale []staleEnt
 		for i := range m.msgs {
 			if m.msgs[i].m.Refs.Reads(c) {
-				stale = append(stale, staleEnt{m.msgs[i].m.TS, m.msgs[i].rev})
+				stale = append(stale, staleEnt{m.msgs[i].m.TS, m.msgs[i].m.Doc.Blocks})
 			}
 		}
 		m.mu.Unlock()
@@ -906,11 +920,13 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 				(*hook)(m, st.ts)
 			}
 			m.mu.Lock()
-			// an entry hub.run replaced meanwhile (an update converted with
-			// what is there now) keeps what it got: this conversion read
-			// the store before it, and wrote the revision before's Doc over
-			// the update (a vote's count going back)
-			if i := m.find(st.ts); i >= 0 && m.msgs[i].rev == st.rev {
+			// an entry whose Doc hub.run replaced meanwhile (an update,
+			// converted with what is there now) keeps what it got: this
+			// conversion read the store before it, and wrote the revision
+			// before's Doc over the update (a vote's count going back). One
+			// that only moved otherwise (a reaction) takes it: skipped, its
+			// Doc kept the old name for good
+			if i := m.find(st.ts); i >= 0 && sameSlice(m.msgs[i].m.Doc.Blocks, st.blocks) {
 				msg := m.msgs[i].m
 				if takeConverted(&msg, f) {
 					m.msgs[i] = entry{m: msg, rev: m.bump()}

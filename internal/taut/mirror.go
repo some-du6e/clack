@@ -205,6 +205,11 @@ func (m *mirror) stop() {
 // invalidate queues a change for JS; changes are sent together a moment
 // later. Of a tracked slice (members, presence) only the ids JS holds go.
 func (m *mirror) invalidate(slice string, keys ...string) {
+	if !jsTracked[slice] {
+		// queued for JS from now until send posts it: a view JS gives
+		// meanwhile is from before it (MessageViewState's ready)
+		m.t.ui.views.pendingAdd(slice, keys, 1)
+	}
 	if len(keys) == 0 {
 		m.t.ui.views.stale(slice, "")
 	}
@@ -247,6 +252,13 @@ func (m *mirror) send() {
 	if len(batch) == 0 {
 		return
 	}
+	defer func() {
+		for _, c := range batch { // posted (behind any later read), or no runtime to post to
+			if !jsTracked[c.Slice] {
+				m.t.ui.views.pendingAdd(c.Slice, c.Keys, -1)
+			}
+		}
+	}()
 	out := mergeChanges(batch)
 	m.t.mu.Lock()
 	rt := m.t.rt
