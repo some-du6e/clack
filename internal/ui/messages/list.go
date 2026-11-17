@@ -1639,6 +1639,13 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			}
 		case tbMore:
 			mm := m
+			// the kebab in window px (its targetBounds): the pointer less
+			// where in the button it pressed
+			var trigger image.Rectangle
+			if ps := btn.History(); len(ps) > 0 {
+				o := anchor.Sub(ps[len(ps)-1].Position)
+				trigger = image.Rectangle{Min: o, Max: o.Add(image.Pt(gtx.Constraints.Max.X, gtx.Constraints.Max.X))}
+			}
 			// Slack's menu top sits 32px above the kebab's centre (16 above
 			// the button), its right edge 3px left of the centre.
 			anchor = anchor.Add(image.Pt(-dp(gtx, 2), -dp(gtx, 32)))
@@ -1651,6 +1658,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
 				Where:   where,
+				Trigger: trigger,
 			}))
 		}
 	}
@@ -1682,6 +1690,7 @@ func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int
 	bs := gtx.Constraints.Max.X
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: image.Pt(bs, bs)}
+		pointerCursor(gtx, rr)
 		hov := btn.Hovered()
 		move, paint := s.tilt.step(gtx, &s.tilt.tb[i], hov || gtx.Focused(btn), hov, tiltDur)
 		if paint > 0 { // from transparent: the card's colour

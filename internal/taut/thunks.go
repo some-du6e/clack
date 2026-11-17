@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -85,6 +86,7 @@ var ThunkCatalogue = []ThunkSpec{
 	{"apiCallExpedited", "{method, args}", "taut", "a Slack API call"},
 	// used by Slick's plugins (docs/PLUGINS-slick.md)
 	{"handleDeepLink", "{uri}", "ui (shell)", "opening a slack:// deep link (UIHooks.DeepLink)"},
+	{"navigate", "{id, viewType, params?, uiState?, options?}", "ui (shell)", "Slack's multi-view navigation: a Channel, Thread or Profile view through its deep link (UIHooks.DeepLink); resolves undefined, as Slack's"},
 	{"currentUserEndedTyping", "{channelId, threadTs?}", "ui/composer", "the typing indicator ending (Clack sends none)"},
 	{"openEditProfileModal", "{}", "ui/popups (profile)", "opening the edit-profile dialog"},
 	{"showSavedItemNotification", "{message, …}", "ui (notifications)", "a saved-item reminder notification"},
@@ -149,6 +151,12 @@ func (t *Taut) RegisterThunk(name string, fn NativeFunc) {
 	t.thunks.mu.Lock()
 	t.thunks.natives[name] = fn
 	t.thunks.mu.Unlock()
+	// a runtime that started first defined its creators already (T.init):
+	// define this one now, so its waiters resolve and a dispatch finds it
+	// (JS rejects a thunk it doesn't know at once)
+	if r := t.liveRuntime(); r != nil {
+		r.post("nativeThunk", name)
+	}
 }
 
 func (tt *thunkTable) native(name string) NativeFunc {
@@ -272,6 +280,42 @@ func (tt *thunkTable) runThunk(ctx context.Context, name string, args []json.Raw
 // ---- default native implementations, over core ----
 
 type obj map[string]json.RawMessage
+
+// navigateLink is the slack:// deep link of navigate's view (o is its
+// {id, viewType, params}), "" for a view Clack doesn't route to.
+func navigateLink(o obj) string {
+	var params struct {
+		ThreadID string `json:"threadId"`
+	}
+	_ = json.Unmarshal(o["params"], &params)
+	id := o.str("id")
+	q := url.Values{}
+	switch o.str("viewType") {
+	case "Channel":
+		if id == "" {
+			return ""
+		}
+		q.Set("id", id)
+		return "slack://channel?" + q.Encode()
+	case "Thread":
+		// threadId is "<channel>-<thread ts>" (ChatTabs' splitProps, Slack's
+		// thread views)
+		i := strings.LastIndex(params.ThreadID, "-")
+		if i <= 0 || i == len(params.ThreadID)-1 {
+			return ""
+		}
+		q.Set("id", params.ThreadID[:i])
+		q.Set("thread_ts", params.ThreadID[i+1:])
+		return "slack://channel?" + q.Encode()
+	case "Profile":
+		if id == "" {
+			return ""
+		}
+		q.Set("id", id)
+		return "slack://user?" + q.Encode()
+	}
+	return ""
+}
 
 func argObj(args []json.RawMessage) obj {
 	o := obj{}
@@ -447,6 +491,21 @@ func (tt *thunkTable) installDefaults() {
 			return f(argObj(a).str("uri")), nil
 		}
 		return false, nil
+	}
+	// Slack's navigate thunk (client-boot pf/G): navigateInMainWindow
+	// (qBXZ) for the main window, whose promise resolves undefined whether
+	// the view set was committed or the middleware terminated it. Clack
+	// opens the views it has through the deep links they share (ChatTabs'
+	// thread tabs: {id: "thread", viewType: "Thread", params: {threadId:
+	// "C…-ts"}} opens the thread beside its channel, where Slack's
+	// forceRenderInPrimary draws it alone); others navigate nowhere.
+	n["navigate"] = func(ctx context.Context, a []json.RawMessage) (any, error) {
+		if f := t.opts.UI.DeepLink; f != nil {
+			if uri := navigateLink(argObj(a)); uri != "" {
+				f(uri)
+			}
+		}
+		return nil, nil
 	}
 	// the transcription fetchers reach the native huddle (huddle.go)
 	n["roomsStartTranscriptionFetcher"] = func(ctx context.Context, a []json.RawMessage) (any, error) {

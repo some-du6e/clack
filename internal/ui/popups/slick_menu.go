@@ -42,8 +42,8 @@ func (m *Menu) menuProps() slackc.Props {
 		"isMainWindow":            true,
 		"isChildWindow":           false,
 		"windowId":                "main",
-		"onClose":                 m.closeAll,
-		"onTriggerClose":          m.closeAll,
+		"onClose":                 m.root().closeAll,
+		"onTriggerClose":          m.root().closeAll,
 		"children":                kids,
 	}
 }
@@ -69,6 +69,11 @@ func (m *Menu) layoutMenu(gtx layout.Context, p slackc.Props) layout.Dimensions 
 		items := append(base[:len(base):len(base)], extra...)
 		m.setItems(items)
 		m.nExtra = len(extra)
+	}
+	if m.ma != nil && m.ma.holding(gtx) {
+		// the plugin's layout of the rows is on its way: draw the card once,
+		// with it (maHold); a submenu's waits for its own MAMenu's
+		return layout.Dimensions{Size: m.win}
 	}
 	m.layoutCard(gtx, m.win)
 	return layout.Dimensions{Size: m.win}

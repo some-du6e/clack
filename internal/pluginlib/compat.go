@@ -32,6 +32,8 @@ var compat = map[string]Compat{
 	Slick + "/AccountSwitcher":      partial("switching accounts goes through Clack's sign-in"),
 	Slick + "/AnonymiseFileNames":   partial("renames uploads, but not in the edit-file dialog"),
 	Slick + "/BetterHuddles":        broken("needs browser WebRTC"),
+	Slick + "/BetterMessageMenu":    partial("no Vim keys; big buttons stay on top above the cursor"),
+	Slick + "/ChatTabs":             partial("thread tabs open beside their channel"),
 	Slick + "/ClearURLs":            partial("cleans links when you send, not when you paste"),
 	Slick + "/Click2Load":           broken("Clack shows no iframes for it to hold back"),
 	Slick + "/CustomFonts":          broken("Clack can't load web fonts"),
@@ -43,7 +45,9 @@ var compat = map[string]Compat{
 	Slick + "/OnlineCount":          broken("needs Slack's presence query"),
 	Slick + "/PrivateChannelMapper": partial("the missing-channel pill never shows"),
 	Slick + "/QuietSpotify":         broken("Clack has no Spotify players to quiet"),
+	Slick + "/SelfCare":             partial("a break pauses notifications, not the app badge"),
 	Slick + "/ShowRealUser":         partial("forwarded copies aren't matched"),
+	Slick + "/SlickMCP":             broken("its MCP server needs Node's http module"),
 	// docs/PLUGINS-live-taut.md
 	Taut + "/BrowserPopouts":      broken("needs pop-out windows"),
 	Taut + "/ClickToLoad":         partial("Load shows Clack's media box, not a player"),

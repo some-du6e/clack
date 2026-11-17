@@ -142,6 +142,15 @@ func bridge() Bridge {
 	return nil
 }
 
+// BridgeIs reports whether b is the bridge installed now (any goroutine):
+// a runtime the UI detached, or one a newer runtime replaced, keeps
+// publishing what its plugins patch as they stop, and must not touch the
+// patched set of the session after it.
+func BridgeIs(b Bridge) bool {
+	cur := bridge()
+	return b != nil && cur != nil && cur == b
+}
+
 // SetPatched replaces the set of component names that have a live patch.
 // Called from JS whenever patchComponent registers or a plugin stops.
 func SetPatched(names []string) {
@@ -348,6 +357,16 @@ type ResultBridge interface {
 // (JSFunc.CallEvent). In order with Dispatch's events.
 type EventBridge interface {
 	CallEvent(fn int64, args []byte, done func(stopped bool))
+}
+
+// TruthyBridge is implemented by bridges that call a JS function prop the
+// way Slack calls a handler whose return value decides what runs next
+// (MAMenu's dispatchMessageAction: `onSelectAction(…) || native(…)`):
+// done hears, on any goroutine, whether it returned something truthy as
+// JS sees it, right away (a returned Promise is truthy and isn't awaited),
+// or threw; err when no runtime answered (none, or it went away first).
+type TruthyBridge interface {
+	CallTruthy(fn int64, args []byte, done func(truthy, threw bool, err error))
 }
 
 // NestedBridge is implemented by bridges that can mount a root inside
