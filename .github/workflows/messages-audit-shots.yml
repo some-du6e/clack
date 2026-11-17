@@ -144,8 +144,13 @@ jobs:
           # pill's box over the space it broke at, round where it broke)
           cp internal/ui/richview/pill_wrap_test.go before-ui/internal/ui/richview/
           cp internal/ui/messages/pill_wrap_test.go before-ui/internal/ui/messages/
-          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedPill|TestPillPadding' ./internal/ui/richview 2>&1 | tee "$RUNNER_TEMP/pill-wrap-before.log" | grep -E '^\s*--- (PASS|FAIL)|^(ok|FAIL)\b|pill_wrap_test.go' | head -80) || true
-          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedMentionPictureInRows' ./internal/ui/messages 2>&1 | tee -a "$RUNNER_TEMP/pill-wrap-before.log" | grep -E '^\s*--- (PASS|FAIL)|^(ok|FAIL)\b|pill_wrap_test.go' | head -80) || true
+          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedPill|TestPillPadding' ./internal/ui/richview > "$MESSAGES_AUDIT_SHOTS_DIR/pill-wrap-before-richview.log" 2>&1) || true
+          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedMentionPictureInRows' ./internal/ui/messages > "$MESSAGES_AUDIT_SHOTS_DIR/pill-wrap-before-messages.log" 2>&1) || true
+          for f in "$MESSAGES_AUDIT_SHOTS_DIR"/pill-wrap-before-*.log; do
+            echo "== $f (ui): results, then the first report of each failing check"
+            grep -E '^\s*--- (PASS|FAIL)|^(ok|FAIL)\b' "$f" || true
+            grep -E 'pill_wrap_test.go:[0-9]+: ' "$f" | grep -v "row's body" | awk -F': ' '!seen[$1]++' | head -40 || true
+          done
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

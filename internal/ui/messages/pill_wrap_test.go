@@ -215,22 +215,20 @@ func pwPane(t *testing.T, h coreHost, mode, pane string) {
 			frame(w)
 		}
 		ws := words()
-		if w%20 == 0 {
-			var body image.Rectangle
-			if r := ls.rows[ts]; r != nil {
-				body = r.bodyRect
-			}
-			var rs []image.Rectangle
-			for _, r := range ws {
-				rs = append(rs, r.R)
-			}
-			t.Logf("%s, w=%d: the row's body %v, the mention's words %v", name, w, body, rs)
-		}
 		if len(ws) < 2 || ws[0].R.Min.Y == ws[1].R.Min.Y || w-last < 16 {
 			continue
 		}
 		last = w
 		checked++
+		var rs []image.Rectangle
+		for _, r := range ws {
+			rs = append(rs, r.R)
+		}
+		var body image.Rectangle // its content's box: the widest line
+		if r := ls.rows[ts]; r != nil {
+			body = r.bodyRect
+		}
+		t.Logf("%s, w=%d: the row's body %v, the mention's words %v", name, w, body, rs)
 		img := pixeltest.Render(t, w, hgt, ops)
 		if dir := os.Getenv("MESSAGES_AUDIT_SHOTS_DIR"); dir != "" && checked == 1 {
 			tag := os.Getenv("PILL_WRAP_SHOTS_TAG")
