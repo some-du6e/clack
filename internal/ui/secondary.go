@@ -102,7 +102,7 @@ func (a *App) OpenThread(channel, ts string) {
 		}
 	}
 	if a.router.Current().Channel() == channel {
-		a.router.Replace(Route("c/" + channel + "/t/" + ts))
+		a.replaceRoute(Route("c/" + channel + "/t/" + ts))
 	}
 	a.Invalidate()
 }
@@ -178,7 +178,7 @@ func (a *App) OpenUserProfile(userID string) {
 // CloseSecondary does.
 func (a *App) leaveThreadRoute(ch, ts string) {
 	if r := a.router.Current(); r.Channel() == ch && r.Thread() == ts {
-		a.router.Replace(Route("c/" + ch))
+		a.replaceRoute(Route("c/" + ch))
 	}
 }
 
@@ -197,7 +197,7 @@ func (a *App) GoSecondaryBack() {
 	a.secondary = *p
 	a.secondary.width = w
 	if s := &a.secondary; s.kind == secThread && a.router.Current().Channel() == s.channel {
-		a.router.Replace(Route("c/" + s.channel + "/t/" + s.ts))
+		a.replaceRoute(Route("c/" + s.channel + "/t/" + s.ts))
 	}
 	a.Invalidate()
 }
@@ -246,7 +246,7 @@ func (a *App) CloseSecondary() {
 	was := a.secondary.kind
 	if was == secThread {
 		if ch := a.router.Current().Channel(); ch != "" {
-			a.router.Replace(Route("c/" + ch))
+			a.replaceRoute(Route("c/" + ch))
 		}
 	}
 	w := a.secondary.width
@@ -448,4 +448,12 @@ func (a *App) secondaryResizeEvents(gtx layout.Context, panel int) {
 // pane's left edge in the panel, h its height.
 func (a *App) layoutSecondaryResize(gtx layout.Context, x, h int) {
 	a.secondary.rz.area(gtx, image.Rect(x-gtx.Dp(4), 0, x+gtx.Dp(4), h), x)
+}
+
+// replaceRoute replaces the current route (a thread pane opened or closed
+// beside its channel) and tells Slick, whose view state follows the thread
+// the window shows (Taut's setView: ChatTabs' current tab).
+func (a *App) replaceRoute(r Route) {
+	a.router.Replace(r)
+	a.slickRoute(a.router.Current())
 }

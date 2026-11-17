@@ -32,11 +32,18 @@ on:
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb
 
+# Slick main is third-party code (GPLv3) built and run here unreviewed:
+# read-only token, not kept in the checkout, and a Go cache of its own
+permissions:
+  contents: read
+
 jobs:
   ui-slick:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
@@ -51,9 +58,12 @@ jobs:
           for i in 1 2 3; do npm install -g bun@1.4.4 && break; sleep 15; done
           bun --version
       - name: clone slick
+        env:
+          SLICK_REF: ${{ inputs.ref || 'main' }}
         run: |
           git clone -q https://github.com/3kh0/slick /tmp/slick
-          git -C /tmp/slick checkout -q "${{ inputs.ref || 'main' }}"
+          case "$SLICK_REF" in -*|"") echo "bad slick ref: $SLICK_REF" >&2; exit 1;; esac
+          git -C /tmp/slick checkout -q "$SLICK_REF"
           git -C /tmp/slick log --oneline -1
       - name: "install slick deps (no scripts)"
         working-directory: /tmp/slick
@@ -67,7 +77,7 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false # this job runs third-party code; never share its Go cache
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: Slick acceptance through the native views

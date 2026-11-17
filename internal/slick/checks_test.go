@@ -236,7 +236,7 @@ func init() {
 	}
 	// main half: getURL, before-input-event on the rpc sender (Ctrl+W closes a tab)
 	checks["ChatTabs"] = func(t *testing.T, h *harness) {
-		h.s.SetRoute(teamID, chGen)
+		h.s.SetRoute(teamID, chGen, "")
 		eventually(t, 3*time.Second, "route", func() bool { return h.jsBool(`return location.pathname.endsWith('/` + chGen + `')`) })
 		var r struct {
 			Prevented bool `json:"prevented"`

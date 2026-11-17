@@ -104,14 +104,22 @@ func (m *Menu) keyFilters() []event.Filter {
 		m key.Modifiers
 	}
 	seen := map[nm]bool{}
+	add := func(id string) {
+		n, mods, ok := shortcut.Filter(id)
+		if !ok || seen[nm{n, mods}] {
+			return
+		}
+		seen[nm{n, mods}] = true
+		fs = append(fs, key.Filter{Focus: m, Name: n, Required: mods})
+	}
 	for s := m; s != nil; s = s.sub {
 		for id := range s.shortcutMap() {
-			n, mods, ok := shortcut.Filter(id)
-			if !ok || seen[nm{n, mods}] {
-				continue
-			}
-			seen[nm{n, mods}] = true
-			fs = append(fs, key.Filter{Focus: m, Name: n, Required: mods})
+			add(id)
+		}
+	}
+	if m.ma != nil && m.parent == nil {
+		for id := range m.ma.subKeys() {
+			add(id)
 		}
 	}
 	if MenuTypeAhead {

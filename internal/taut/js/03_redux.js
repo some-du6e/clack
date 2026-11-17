@@ -584,6 +584,15 @@ const nativeArgs = (name, args) => (NATIVE_ARGS[name] ? NATIVE_ARGS[name](args) 
 
 /** a thunk whose work is Clack's native implementation, run in Go */
 function nativeThunk(name) {
+  if (name === 'navigate') {
+    // Slack's navigate resolves undefined (navigateInMainWindow), whatever
+    // Go answered; what it shows is Slack's view state too (setView)
+    return defineThunk(name, async (args) => {
+      notePrimaryThread(args[0])
+      await go('thunk', name, await encodeAsync(nativeArgs(name, args)))
+      return undefined
+    })
+  }
   const changes = THUNK_CHANGES[name]
   if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(nativeArgs(name, args)))))
   return defineThunk(name, async (args) => {
@@ -593,6 +602,37 @@ function nativeThunk(name) {
       T.invalidate(changes.map((slice) => ({ slice })))
     }
   })
+}
+
+// ---- Slack's view state (window, view) ----
+// The main window's active tab and its primary view, for plugins that read
+// them (ChatTabs' current tab: state.window.main.activeTab and
+// state.view['v2::main::<tab>::primary']). Clack's route (setView) is a
+// Channel view; a thread Slack's navigate thunk asked for in the primary
+// view (options.forceRenderInPrimary: ChatTabs' "Thread only" tabs) is that
+// Thread view while Clack shows it, beside its channel. No secondary pane
+// is mirrored: after such a navigate ChatTabs closes the one it reads
+// (closeFlexpane), which in Clack is the thread it just opened.
+let primaryThread = null // {id: 'C…-ts', shown}
+function notePrimaryThread(nav) {
+  const id = nav?.params?.threadId
+  primaryThread = nav?.viewType === 'Thread' && nav?.options?.forceRenderInPrimary && typeof id === 'string' ? { id, shown: false } : null
+}
+/** Go → JS (Slick's setRoute): the conversation and thread the window shows */
+T.setView = (channel, thread) => {
+  const id = channel && thread ? `${channel}-${thread}` : ''
+  if (primaryThread) {
+    if (primaryThread.id === id) primaryThread.shown = true
+    else if (primaryThread.shown) primaryThread = null // moved on from it
+  }
+  const primary =
+    primaryThread?.shown && primaryThread.id === id
+      ? { id: 'thread', viewType: 'Thread', params: { threadId: id } }
+      : channel
+        ? { id: channel, viewType: 'Channel' }
+        : undefined
+  setLocalSlice('window', { main: { activeTab: 'home' } })
+  setLocalSlice('view', primary ? { 'v2::main::home::primary': primary } : {})
 }
 
 const getThunkCreator = (name) => thunkCreators.get(name)
@@ -605,10 +645,27 @@ function waitForThunkCreator(name) {
     w.add(resolve)
   })
 }
-/** waitForThunkCreator that rejects with `message` after `ms` and drops its waiter (Slick gives up after 30 s; Taut waits) */
-function waitForThunkWithin(name, ms, message) {
+/**
+ * every thunk Clack defines is defined by T.init (its natives, from
+ * go('thunkNames')) or as Go registers it later (Taut.RegisterThunk
+ * defines its creator at once): Slack loads thunks with its chunks, Clack
+ * has no chunks to bring one
+ */
+let thunksComplete = false
+T.thunksDefined = () => {
+  thunksComplete = true
+}
+/**
+ * waitForThunkCreator that rejects with `message` after `ms` and drops its
+ * waiter (Slick gives up after 30 s; Taut waits). A name Clack doesn't
+ * define rejects at once, with `unknown`: no chunk will bring it, so the
+ * wait could only end in the same error (ChatTabs' tab bar sat locked for
+ * the 30 s).
+ */
+function waitForThunkWithin(name, ms, message, unknown = message) {
   const known = thunkCreators.get(name)
   if (known) return Promise.resolve(known)
+  if (thunksComplete) return Promise.reject(new Error(unknown))
   return new Promise((resolve, reject) => {
     let w = thunkWaiters.get(name)
     if (!w) thunkWaiters.set(name, (w = new Set()))

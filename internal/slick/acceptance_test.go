@@ -59,6 +59,13 @@ var checks = map[string]pluginCheck{}
 // what they do instead.
 var quiet = map[string]string{}
 
+// mainFails are the plugins whose privileged half can't start in Clack,
+// and why (compat.go and docs/PLUGINS-live-slick.md say so too); every
+// other main half must start.
+var mainFails = map[string]string{
+	"SlickMCP": "its MCP server needs Node's async_hooks and http, which main halves don't have in Clack",
+}
+
 func TestAcceptance(t *testing.T) {
 	dir := pluginsDir(t)
 	ids := builtPlugins(t, dir)
@@ -84,11 +91,13 @@ func acceptOne(t *testing.T, dir, id string) {
 	}
 	base := h.state().registrations()
 	h.importFile(filepath.Join(dir, id+".js"))
+	hasMain := false
 	if _, err := os.Stat(filepath.Join(dir, id+".main.js")); err == nil {
 		h.importFile(filepath.Join(dir, id+".main.js"))
 		if !h.plugin(id).HasMain {
 			t.Fatal("main half not recorded")
 		}
+		hasMain = true
 	}
 	for k, v := range enableWith[id] {
 		if err := h.s.SetOption(h.ctx(), id, k, v); err != nil {
@@ -105,6 +114,17 @@ func acceptOne(t *testing.T, dir, id string) {
 	// let start's background work settle (lazy discovery, storage loads)
 	time.Sleep(150 * time.Millisecond)
 	started := h.state()
+	if hasMain {
+		why, expected := mainFails[id]
+		switch info := h.plugin(id); {
+		case expected && info.MainError == "":
+			t.Errorf("its main half should fail in Clack (%s), yet nothing says so", why)
+		case expected:
+			t.Logf("its main half can't run in Clack (%s): %s", why, info.MainError)
+		case !has(started.Mains, id):
+			t.Errorf("its main half didn't start: %q", info.MainError)
+		}
+	}
 	added := diff(started.registrations(), base)
 	t.Logf("registered: %s", strings.Join(added, " "))
 	if len(added) == 0 && quiet[id] == "" && !has(started.Mains, id) {

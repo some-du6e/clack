@@ -235,6 +235,7 @@ S.start = async (id, settings) => {
     }
     entry.running = true
     console.log(`[slick] started ${id}`)
+    panelPage.update((n) => n + 1)
     return null
   } catch (err) {
     console.error(`[slick] ${id} failed to start:`, err)
@@ -254,6 +255,7 @@ S.stop = async (id) => {
   entry.scope = null
   entry.running = false
   scope?.dispose()
+  panelPage.update((n) => n + 1)
   if (!instance) return null
   try {
     await withTimeout(id, 'stop', Promise.resolve().then(() => instance.stop()))
@@ -277,6 +279,7 @@ S.live = async (id, settings, changed) => {
   } catch (err) {
     console.error(`[slick] ${id} onSettingsChange failed:`, err)
   }
+  panelPage.update((n) => n + 1)
   mainSettingsChanged(id, settings)
   return null
 }
@@ -322,14 +325,19 @@ S.setPage = (href, css) => {
   }
 }
 
-/** Go → JS: route the UI shows, for location-based lookups (getCurrentChannelId, the active team) */
-S.setRoute = (team, channel) => {
+/**
+ * Go → JS: route the UI shows, for location-based lookups
+ * (getCurrentChannelId, the active team) and Slack's view state
+ * (Taut's setView: ChatTabs' current tab)
+ */
+S.setRoute = (team, channel, thread) => {
   const path = team ? `/client/${team}${channel ? '/' + channel : ''}` : '/client'
   try {
     if (G.location?.pathname !== path) G.history?.replaceState?.(G.history.state ?? null, '', path)
   } catch (err) {
     console.warn('[slick] could not set the route', err)
   }
+  T.setView?.(channel || '', thread || '')
 }
 
 S.introspect = () => ({
@@ -342,6 +350,9 @@ S.introspect = () => ({
   netRules: netRules.size,
   notificationFilters: notificationFilters.size,
   switches: [...switches],
+  messageActions: messageActions.size,
+  messageMenu: uninstallMessageMenu !== null,
+  panels: Object.keys(pluginPanels.get()),
 })
 
 // Slick's preload bridge (app/bridge.ts getBridge), for first-party plugins
