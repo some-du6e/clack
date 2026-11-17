@@ -36,6 +36,10 @@ static void setupLayer(CFTypeRef layerRef, CFTypeRef devRef) {
 		layer.device = dev;
 		// Package gpu assumes an sRGB-encoded framebuffer.
 		layer.pixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
+		// Clack patch (CLACK_PATCHES.md §45): the GPU keeps each frame in a
+		// texture of its own and copies it into the drawable with a blit
+		// encoder, which a framebufferOnly drawable refuses.
+		layer.framebufferOnly = NO;
 		if (@available(iOS 11.0, *)) {
 			// Clack patch (CLACK_PATCHES.md §32): nextDrawable waits a second
 			// at most (CAMetalLayer's default) and gives nil when no drawable

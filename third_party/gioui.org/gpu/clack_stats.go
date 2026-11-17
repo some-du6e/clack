@@ -46,6 +46,14 @@ type FrameStats struct {
 	// pages the frame drew into.
 	AtlasPx, LayerPx int64
 	LayerPages       int
+	// Partial is whether the frame was drawn only where it differs from
+	// the last (Clack patch 45), in DamageRects rectangles of DamagePx
+	// pixels; CopyPx are the pixels copied: the frame texture into the
+	// window's target, the clear colour into a partial frame's damage.
+	Partial     bool
+	DamageRects int
+	DamagePx    int64
+	CopyPx      int64
 }
 
 // ClackStats reports the last frame's stats.
