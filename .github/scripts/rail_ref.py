@@ -32,7 +32,14 @@ Each crop is measured against the rail colour at its left edge: the tile
 (any change over 10), the icon and label (strong ink), the badge's box (ink
 in the badge's corner) and ring_px, pixels in a 3px band around the badge
 darker than both the tile and the rail (a ring in the rail colour drawn
-over the tile reads as a border).
+over the tile reads as a border), and ink, the label's pixel farthest from
+the rail colour.
+
+Shots with a "theme" (TestRailShots' railShotThemes: Karim's #FED4BE and a
+dark custom colour) draw Slack's side with that account theme's tokens as
+Slack's own code computes them, internal/ui/testdata/theme-oracle.json (the
+root scope's --dt_color-theme-*, and the inverted scope's when
+useInvertedTheme puts the rail there), not with Clack's.
 
 usage: rail_ref.py <shots dir> <slack css> <slackvars.go> <icons.json> <chrome> <platform>
 """
@@ -50,6 +57,16 @@ shots, css_path, vars_path, icons_path, chrome, platform = sys.argv[1:7]
 icons = json.load(open(icons_path))["icons"]
 spec = json.load(open(os.path.join(shots, "rail.json")))
 E = html.escape
+ORACLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "internal", "ui", "testdata", "theme-oracle.json")
+oracle = json.load(open(ORACLE, encoding="utf-8"))["cases"] if os.path.exists(ORACLE) else []
+
+
+def oracle_case(theme, dark):
+    mode = "dark" if dark else "light"
+    for c in oracle:
+        if c["name"] == theme and c["mode"] == mode:
+            return c
+    raise SystemExit("theme-oracle.json has no %s %s case" % (theme, mode))
 
 # Slack's icon per tab (inactive, active)
 ICON = {
@@ -131,11 +148,18 @@ def button(b, state):
 def page(shot, cells, bg, rules):
     dark = shot["dark"]
     t = tokens("slackVarsDark" if dark else "slackVarsLight")
-    root = ";".join("%s:%s" % kv for kv in t.items())
     inv, scope = "", ""
-    if not dark and shot.get("vars"):
+    if shot.get("theme"):
+        # Slack's tokens for this account theme, from its own code
+        oc = oracle_case(shot["theme"], dark)
+        t.update(oc["tokens"]["dark" if dark else "light"])
+        if oc["scopes"]["tabRail"] == "inverted":
+            inv = ".sk-client-theme--light-inverted-sidebar{%s}" % ";".join("%s:%s" % kv for kv in oc["tokens"]["inverted"].items())
+            scope = " sk-client-theme--light-inverted-sidebar"
+    elif not dark and shot.get("vars"):
         inv = ".sk-client-theme--light-inverted-sidebar{%s}" % ";".join("%s:%s" % kv for kv in shot["vars"].items())
         scope = " sk-client-theme--light-inverted-sidebar"
+    root = ";".join("%s:%s" % kv for kv in t.items())
     body = "".join('<div class="p-tab_rail%s" style="position:absolute;left:0;top:%dpx;width:70px;padding-top:0;overflow:visible">%s</div>'
                    % (scope, i * 120 + 6, button(b, st)) for i, (b, st) in enumerate(cells))
     return ("<!doctype html><html><head><meta charset=utf-8><link rel=stylesheet href='%s'>"
@@ -189,8 +213,16 @@ def measure(im, scale, top, has_badge):
 
     icon = [p for p in strong if S(16) <= p[0] - bx0 <= S(38) and S(14) <= p[1] - by0 <= S(39)]
     label = [p for p in strong if p[1] - by0 >= S(46)]
+    # the label's ink: its pixel farthest from the rail colour
+    inkc, far = None, -1
+    for y in range(min(h, by0 + S(46)), h):
+        for x in range(w):
+            p = im.getpixel((x, y))[:3]
+            if dist(p, bg) > far:
+                inkc, far = p, dist(p, bg)
     badge = [p for p in strong if has_badge and p[1] - by0 < S(24) and (p[0] - bx0 > S(38) or p[1] - by0 < S(14))]
-    out = {"bg": "#%02x%02x%02x" % bg, "fill": "#%02x%02x%02x" % fill, "icon": box(icon), "label": box(label), "badge": box(badge)}
+    out = {"bg": "#%02x%02x%02x" % bg, "fill": "#%02x%02x%02x" % fill, "icon": box(icon), "label": box(label), "badge": box(badge),
+           "ink": "#%02x%02x%02x" % inkc if inkc else None}
     if tile[0] is not None:
         out["tile"] = {"x0": tile[0] - bx0, "y0": tile[1] - by0, "x1": tile[2] - bx0, "y1": tile[3] - by0}
     ring = 0
@@ -218,6 +250,8 @@ report, bad = [], []
 for shot in spec:
     scale = shot["scale"]
     mode = "dark" if shot["dark"] else "light"
+    if shot.get("theme"):
+        mode = shot["theme"].replace(" ", "-") + "-" + mode
     name = "%s-%gx" % (mode, scale)
     crops = [Image.open(os.path.join(shots, b["file"])).convert("RGB") for b in shot["btns"]]
     if not crops:
@@ -274,12 +308,13 @@ for shot in spec:
     print("saved", out)
 
 json.dump(report, open(os.path.join(shots, "rail-compare.json"), "w"), indent=1)
-print("%-10s %-9s %-9s %-22s %-22s %-22s %-8s %s" % ("shot", "tab", "state", "tile dx0 dy0 dx1 dy1", "icon", "badge", "ring", "fill clack/slack"))
+print("%-24s %-9s %-9s %-22s %-22s %-22s %-8s %-16s %s" % ("shot", "tab", "state", "tile dx0 dy0 dx1 dy1", "icon", "badge", "ring", "fill clack/slack", "label ink clack/slack (rail)"))
 for e in report:
     if "clack" not in e:
         continue
     f = lambda p: " ".join("%+d" % e["diff"][p][kk] for kk in ("x0", "y0", "x1", "y1")) if p in e["diff"] else "-"
-    print("%-10s %-9s %-9s %-22s %-22s %-22s %3d/%-4d %s/%s" % (e["shot"], e["key"], e["state"], f("tile"), f("icon"), f("badge"),
-                                                           e["clack"]["ring_px"], e["slack"]["ring_px"], e["clack"]["fill"], e["slack"]["fill"]))
+    print("%-24s %-9s %-9s %-22s %-22s %-22s %3d/%-4d %s/%s %s/%s (%s)" % (e["shot"], e["key"], e["state"], f("tile"), f("icon"), f("badge"),
+                                                                       e["clack"]["ring_px"], e["slack"]["ring_px"], e["clack"]["fill"], e["slack"]["fill"],
+                                                                       e["clack"]["ink"], e["slack"]["ink"], e["clack"]["bg"]))
 if bad:
     print("\nmore than 1px from Slack, or a ring Slack doesn't draw:\n  " + "\n  ".join(bad))
