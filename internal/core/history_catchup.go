@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,8 +39,11 @@ import (
 //   - Clack's own: counts naming a latest message newer than the window
 //     (windowBehind), for a latest that moved after the window was read.
 //
-// A catch-up that fails is tried again after catchUpRetry, at the next
-// read.
+// A catch-up runs in the background: History and Replies return what core
+// holds at once, as Slack renders the cached slice while it refetches
+// (B0mF getPotentiallyOutdatedTimestamps), and a "history_caught_up" event
+// tells the lists when the page lands. One that fails is tried again
+// after catchUpRetry, a few times.
 
 // catchUpRetry is how long a failed catch-up of a window or thread waits
 // before a read tries it again (a var for the tests).
@@ -68,6 +73,16 @@ type histReads struct {
 	// countsApplied is the socket store's countsAreApplied: counts were
 	// applied since the socket's last connect
 	countsApplied bool
+	// gapSeq is the store's LiveSeq at the socket's last slow connect:
+	// what the socket brought after it may come after a gap a page
+	// doesn't reach (store.LatestOpts.GapSeq)
+	gapSeq uint64
+	// bg: the catch-ups running in the background (key as gen's)
+	bg map[string]bool
+	// older: the windows whose catch-up reads their scrollback again too
+	// (refreshOlder): a mutation timestamp the socket never told marked
+	// them
+	older map[string]bool
 }
 
 type mutTimes struct{ historyInvalid, updated string }
@@ -81,7 +96,7 @@ type readMark struct {
 func (h *histReads) init() {
 	if h.gen == nil {
 		h.gen, h.latest, h.stale = map[string]int64{}, map[string]string{}, map[string]uint64{}
-		h.retry, h.muts = map[string]time.Time{}, map[string]mutTimes{}
+		h.retry, h.muts, h.bg, h.older = map[string]time.Time{}, map[string]mutTimes{}, map[string]bool{}, map[string]bool{}
 	}
 }
 
@@ -194,12 +209,22 @@ func (a *App) windowBehind(ch string, t *store.Timeline) bool {
 }
 
 // applyMutationTimes is applyCountsToChannels' part for the channel
-// mutation timestamps: for a conversation core holds a window of, a
-// history_invalid past the one last applied purges its history and
-// threads, else an updated past it marks the history stale
-// (maybePurgeChannelHistoryAfterMutations); then the answer's timestamps
-// are kept (bulkAddOrUpdateChannelMutationTimestamps). Only entries with
-// both set count, as in Slack.
+// mutation timestamps (maybePurgeChannelHistoryAfterMutations): for a
+// conversation core holds a window of, a history_invalid past the one last
+// applied purges its history and threads, else an updated past it marks
+// them stale; then the answer's timestamps are kept
+// (bulkAddOrUpdateChannelMutationTimestamps). Only entries with both set
+// count, as in Slack.
+//
+// Two departures. A conversation's first answer of a launch is the
+// baseline: Slack persists the last session's timestamps
+// (channelMutationTimestamps), Clack doesn't, and every window read before
+// boot's counts answered was purged or re-read. And the conversation on
+// screen (watched) is read again instead of reset, so its list keeps the
+// messages the user reads: on an updated always, on a history_invalid
+// with no socket too (realtime off or down: nothing advances the
+// timestamps, so every deletion would reset it; the poll's page drops what
+// is gone from its range).
 func (a *App) applyMutationTimes(c *slack.Counts) {
 	type change struct {
 		ch    string
@@ -215,32 +240,227 @@ func (a *App) applyMutationTimes(c *slack.Counts) {
 			if e.Updated == "" || e.HistoryInvalid == "" {
 				continue
 			}
-			old := h.muts[e.ID]
-			if a.S.Timeline(e.ID) != nil {
-				switch {
-				case e.HistoryInvalid != zeroTS && (old.historyInvalid == "" || store.TSLess(old.historyInvalid, e.HistoryInvalid)):
-					changes = append(changes, change{e.ID, true})
-				case e.Updated != zeroTS && (old.updated == "" || store.TSLess(old.updated, e.Updated)):
-					h.seq++
-					h.stale[e.ID] = h.seq
-					delete(h.retry, e.ID)
-					changes = append(changes, change{e.ID, false})
-				}
-			}
+			old, had := h.muts[e.ID]
 			h.muts[e.ID] = mutTimes{historyInvalid: e.HistoryInvalid, updated: e.Updated}
+			if !had {
+				continue // the baseline
+			}
+			purge := e.HistoryInvalid != zeroTS && (old.historyInvalid == "" || store.TSLess(old.historyInvalid, e.HistoryInvalid))
+			if purge || e.Updated != zeroTS && (old.updated == "" || store.TSLess(old.updated, e.Updated)) {
+				changes = append(changes, change{e.ID, purge})
+			}
 		}
 	}
 	if connected {
 		h.countsApplied = true
 	}
 	h.mu.Unlock()
+	if len(changes) == 0 {
+		return
+	}
+	watched := a.watchedConv()
 	for _, x := range changes {
-		if x.purge {
-			a.purgeHistory(x.ch)
-		} else {
+		if !a.S.HasTimeline(x.ch) { // Slack's channels with history
+			continue
+		}
+		if x.ch == watched && (!x.purge || !connected) {
+			a.markStale(x.ch)
+			a.hist.mu.Lock()
+			a.hist.older[x.ch] = true // the change may be in the scrollback the list shows
+			a.hist.mu.Unlock()
 			a.emit(Event{Type: "history_stale", Channel: x.ch})
+			continue
+		}
+		// an updated off screen too: its older pages and threads read
+		// Slack again when shown
+		a.purgeHistory(x.ch)
+	}
+}
+
+// markStale makes ch's window and cached threads read Slack again at their
+// next read (markObjectsAsStale over the channel's timestamps).
+func (a *App) markStale(ch string) {
+	threads := a.S.ThreadTSs(ch)
+	h := &a.hist
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	h.seq++
+	h.stale[ch] = h.seq
+	delete(h.retry, ch)
+	for _, ts := range threads {
+		h.stale[ch+"/"+ts] = h.seq
+		delete(h.retry, ch+"/"+ts)
+	}
+}
+
+// watchedConv is the conversation the UI shows (watch).
+func (a *App) watchedConv() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.watchCh
+}
+
+// catchUpLater reads key's window (key: the conversation) or cached thread
+// (conversation/thread ts) from Slack again in the background, at most
+// one at a time per key, and tells the lists when it lands
+// ("history_caught_up"): History and Replies returned what core holds. A
+// read joined that began before a slow connect counts for nothing: once
+// more. A failure is tried again after catchUpRetry, a few times.
+func (a *App) catchUpLater(key string) {
+	h := &a.hist
+	h.mu.Lock()
+	h.init()
+	if h.bg[key] {
+		h.mu.Unlock()
+		return
+	}
+	h.bg[key] = true
+	h.mu.Unlock()
+	ch, ts, thread := strings.Cut(key, "/")
+	go func() {
+		defer func() {
+			h.mu.Lock()
+			delete(h.bg, key)
+			h.mu.Unlock()
+		}()
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				select {
+				case <-a.bg.Done():
+					return
+				case <-time.After(catchUpRetry):
+				}
+			}
+			ctx, cancel := context.WithTimeout(a.bg, 45*time.Second)
+			err := a.catchUpOnce(ctx, ch, ts, thread)
+			cancel()
+			if err == nil {
+				ev := Event{Type: "history_caught_up", Channel: ch}
+				if thread {
+					ev.ThreadTS = ts
+				}
+				a.emit(ev)
+				return
+			}
+			a.readFailed(key)
+			if a.bg.Err() != nil {
+				return
+			}
+		}
+	}()
+}
+
+// catchUpOnce is catchUpLater's read: twice at most, when the first joined
+// a read from before the mark that asked for it.
+func (a *App) catchUpOnce(ctx context.Context, ch, ts string, thread bool) error {
+	if thread {
+		for try := 0; try < 2; try++ {
+			if err := a.fetchThread(ctx, ch, ts); err != nil {
+				return err
+			}
+			if !a.threadBehind(ch, ts) {
+				return nil
+			}
+		}
+		return nil
+	}
+	for try := 0; try < 2; try++ {
+		if err := a.loadLatest(ctx, ch); err != nil {
+			return err
+		}
+		if t := a.S.Timeline(ch); t == nil || !a.windowBehind(ch, t) {
+			break
 		}
 	}
+	return a.refreshOlder(ctx, ch)
+}
+
+// refreshPages bounds the older pages (100 messages each) a catch-up
+// reads again (refreshOlder): the scrollback a user reads, not a long
+// history loaded hours ago.
+const refreshPages = 4
+
+// refreshOlder reads the scrollback of ch's window from Slack again, when
+// a mutation timestamp the socket never told marked it (h.older): an
+// edit, a deletion or a reaction there. A stale mark re-reads the newest
+// page and the cached threads; the older messages the list shows kept what
+// the socket missed. Page by page from below the newest page back to the
+// window's oldest message, at most refreshPages, each merged as the
+// newest page is (store.RefreshRange). A failure leaves the mark for the
+// next try.
+func (a *App) refreshOlder(ctx context.Context, ch string) error {
+	h := &a.hist
+	h.mu.Lock()
+	want := h.older[ch]
+	delete(h.older, ch)
+	h.mu.Unlock()
+	t := a.S.Timeline(ch)
+	if !want || t == nil {
+		return nil
+	}
+	pending := map[string]bool{}
+	for _, m := range a.pendingCopies(ch, "") {
+		pending[m.TS] = true
+	}
+	oldest := ""
+	for i := range t.Msgs {
+		if m := &t.Msgs[i]; !m.IsEphemeral && !pending[m.TS] {
+			oldest = m.TS
+			break
+		}
+	}
+	cursor := t.PageOldest
+	for i := 0; i < refreshPages && cursor != "" && oldest != "" && store.TSLess(oldest, cursor); i++ {
+		live := a.S.LiveSeq()
+		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: cursor, Limit: 100})
+		if err != nil {
+			h.mu.Lock()
+			h.older[ch] = true
+			h.mu.Unlock()
+			return err
+		}
+		lo := ""
+		if p.HasMore {
+			for _, m := range p.Messages {
+				if lo == "" || store.TSLess(m.TS, lo) {
+					lo = m.TS
+				}
+			}
+		}
+		a.S.RefreshRange(ch, p.Messages, lo, cursor, store.LatestOpts{Since: live, Pending: a.pendingCopies(ch, "")})
+		if lo == "" {
+			break
+		}
+		cursor = lo
+	}
+	return nil
+}
+
+// catchingUp reports whether a background catch-up of key is out (tests).
+func (a *App) catchingUp(key string) bool {
+	h := &a.hist
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.bg[key]
+}
+
+// gapSeqNow is the store's LiveSeq at the socket's last slow connect.
+func (a *App) gapSeqNow() uint64 {
+	h := &a.hist
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.gapSeq
+}
+
+// noteSlowConnect records where the socket's last slow connect sits in
+// the store's live records (gapSeq).
+func (a *App) noteSlowConnect() {
+	seq := a.S.LiveSeq()
+	h := &a.hist
+	h.mu.Lock()
+	h.gapSeq = seq
+	h.mu.Unlock()
 }
 
 // purgeHistory is purgeChannelHistory with its threads: ch's window and
@@ -299,28 +519,25 @@ func (a *App) socketDown() {
 	h.mu.Unlock()
 }
 
-// pendingIn is the local ts of ch's sends Slack hasn't confirmed (pending
-// or failed) in thread ("": the channel's own messages), which a page
-// can't show and must leave (store.SetLatestSince, SetThreadSince).
-func (a *App) pendingIn(ch, thread string) map[string]bool {
+// pendingCopies are the local copies of ch's sends Slack hasn't
+// confirmed (pending or failed) in thread ("": the channel's own
+// messages), which no page holds and every merge keeps
+// (store.LatestOpts.Pending, ThreadOpts.Pending).
+func (a *App) pendingCopies(ch, thread string) []slack.Message {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	var out map[string]bool
+	var out []slack.Message
 	for _, p := range a.pending {
-		if p.confirmed || p.opts.Channel != ch {
+		if p.confirmed || p.opts.Channel != ch || p.local.TS == "" {
 			continue
 		}
 		in := p.opts.ThreadTS == thread
 		if thread == "" {
 			in = p.opts.ThreadTS == "" || p.opts.Broadcast
 		}
-		if !in {
-			continue
+		if in {
+			out = append(out, p.local)
 		}
-		if out == nil {
-			out = map[string]bool{}
-		}
-		out[p.ts] = true
 	}
 	return out
 }

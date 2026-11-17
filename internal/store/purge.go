@@ -20,3 +20,16 @@ func (s *Store) PurgeHistory(ch string) []string {
 	}
 	return out
 }
+
+// ThreadTSs are the thread ts of ch's cached threads.
+func (s *Store) ThreadTSs(ch string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for k := range s.threads {
+		if ts, ok := strings.CutPrefix(k, ch+"/"); ok {
+			out = append(out, ts)
+		}
+	}
+	return out
+}

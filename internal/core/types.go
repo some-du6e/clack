@@ -340,6 +340,11 @@ type Page struct {
 	HasMore  bool      // older messages exist
 	LastRead string
 	Conv     *Conv
+	// Epoch is the window's (store.Timeline.Epoch): it changes when the
+	// window starts over at a newest page that doesn't reach what it had
+	// (a gap of more than a page), and a list holding older messages from
+	// before takes the page whole, as Slack renders the newest slice
+	Epoch uint64
 }
 
 // Event is a realtime change. Type is one of: message, update, delete,

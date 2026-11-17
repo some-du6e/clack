@@ -186,35 +186,71 @@ func (r *Runtime) ExposeJSON(name string, fn JSONFunc) {
 
 // ExposeAsync exposes fn as a JS function returning a Promise; fn runs on
 // its own goroutine.
-func (r *Runtime) ExposeAsync(name string, fn AsyncFunc) {
+func (r *Runtime) ExposeAsync(name string, fn AsyncFunc) { r.ExposeAsyncSeq(name, fn, nil) }
+
+// ExposeAsyncSeq is ExposeAsync with the calls seq picks (it sees their
+// args, on the JS thread) run in the order JS made them: fn runs for them
+// one call after another on one goroutine, where a goroutine each could
+// run two in reverse. For calls that never wait long (a slow one holds
+// the ones after it): a notification's native, which Slack runs in its one
+// JS thread in the order the notifications' patches call it.
+func (r *Runtime) ExposeAsyncSeq(name string, fn AsyncFunc, seq func(args []json.RawMessage) bool) {
 	r.Expose(name, func(js *Ctx, _ Value, args []Value) (any, error) {
 		raw := make([]json.RawMessage, len(args))
 		for i, a := range args {
 			raw[i] = a.jsonOrNull()
 		}
 		p, resolve, reject := js.NewPromise()
-		go func() {
+		run := func() {
 			v, err := fn(r.ctx, raw)
 			if err != nil {
 				reject(err)
 				return
 			}
 			resolve(v)
-		}()
+		}
+		if seq != nil && seq(raw) {
+			r.runSeq(run)
+		} else {
+			go run()
+		}
 		return p, nil
 	})
 }
 
-// Call calls the global function at path ("a.b.c" from globalThis; `this`
-// is the object holding the last segment) with args converted by
-// Ctx.Value, waits for a returned Promise to settle (or ctx to end), and
-// returns the result as JSON (undefined → null). Any goroutine except the
-// JS thread itself. With a UserBlocking ctx it runs ahead of the tasks
-// already queued.
+// runSeq runs f after every f queued before it, on a goroutine of its own
+// (ExposeAsyncSeq).
+func (r *Runtime) runSeq(f func()) {
+	r.seqMu.Lock()
+	r.seq = append(r.seq, f)
+	start := !r.seqOn
+	r.seqOn = true
+	r.seqMu.Unlock()
+	if !start {
+		return
+	}
+	go func() {
+		for {
+			r.seqMu.Lock()
+			if len(r.seq) == 0 {
+				r.seqOn, r.seq = false, nil
+				r.seqMu.Unlock()
+				return
+			}
+			f := r.seq[0]
+			r.seq[0] = nil
+			r.seq = r.seq[1:]
+			r.seqMu.Unlock()
+			f()
+		}
+	}()
+}
+
 // CallThen is Call without the wait: the call is queued before CallThen
 // returns, on the caller's goroutine (a user-blocking one ahead of what
 // the caller queues after it: the composer's re-render after Enter, a
-// send's check first), and done hears its result on another goroutine.
+// send's check first; an in-order one ahead of the user's later input),
+// and done hears its result on another goroutine.
 func (r *Runtime) CallThen(ctx context.Context, path string, done func(json.RawMessage, error), args ...any) {
 	if r.closed.Load() {
 		go done(nil, ErrClosed)
@@ -225,7 +261,7 @@ func (r *Runtime) CallThen(ctx context.Context, path string, done func(json.RawM
 		err error
 	}
 	ch := make(chan res, 1)
-	t := task{kind: "Call", what: path, urgent: IsUserBlocking(ctx)}
+	t := callTask(ctx, path)
 	t.f = func() {
 		defer func() {
 			if p := recover(); p != nil {
@@ -276,6 +312,20 @@ func (r *Runtime) CallThen(ctx context.Context, path string, done func(json.RawM
 	}()
 }
 
+// callTask is a Call's task, on the lane ctx names: the user's
+// (UserBlocking), in order with the user's later work (InOrder), or the
+// queue.
+func callTask(ctx context.Context, path string) task {
+	urgent := IsUserBlocking(ctx)
+	return task{kind: "Call", what: path, urgent: urgent, ordered: !urgent && IsInOrder(ctx)}
+}
+
+// Call calls the global function at path ("a.b.c" from globalThis; `this`
+// is the object holding the last segment) with args converted by
+// Ctx.Value, waits for a returned Promise to settle (or ctx to end), and
+// returns the result as JSON (undefined → null). Any goroutine except the
+// JS thread itself. With a UserBlocking ctx it runs ahead of the tasks
+// already queued; with an InOrder one, ahead of the user's later work.
 func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawMessage, error) {
 	type res struct {
 		v   json.RawMessage
@@ -283,7 +333,7 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 	}
 	ch := make(chan res, 1)
 	onJS := r.onJSThread()
-	err := r.do(task{kind: "Call", what: path, urgent: IsUserBlocking(ctx)}, func(js *Ctx) error {
+	err := r.do(callTask(ctx, path), func(js *Ctx) error {
 		fn, this, err := js.resolvePath(path)
 		if err != nil {
 			return err

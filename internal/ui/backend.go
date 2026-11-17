@@ -946,12 +946,22 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		}
 		return nil, nil
 	}
-	// in the order the messages came (notify_conv.go noteOrder)
-	t := a.Taut()
-	b.notes.inSequence(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := taut.Dispatch(ctx, t, "showNotification", args, native); err != nil {
+	a.showNotification(args, native)
+}
+
+// showNotification dispatches Slack's showNotification thunk for one
+// notification (UI goroutine): plugins may change or drop it, and native
+// shows it. Each goes out as it comes, in that order, without waiting for
+// the ones before, as Slack's messageReceived dispatches it for every
+// message: its JS call queued now, and the natives run in the order the
+// plugins' patches call them (taut.DispatchSeq). They went one after
+// another, each after the last one's two JS round trips: the third of a
+// burst of DMs came five backlogs late.
+func (a *App) showNotification(args map[string]any, native func(context.Context, map[string]any) (any, error)) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	taut.DispatchSeq(ctx, a.Taut(), "showNotification", args, native, func(_ any, err error) {
+		cancel()
+		if err != nil {
 			log.Printf("ui: showNotification: %v", err)
 		}
 	})

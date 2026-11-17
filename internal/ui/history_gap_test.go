@@ -231,14 +231,18 @@ func TestHistoryAfterSocketGap(t *testing.T) {
 		}
 	})
 
-	// a counts answer that names a newer latest while the list's load is
-	// out still reaches the list: core's History reads once more when the
-	// latest moved while it read (the hub's again, for a load the
-	// connection event came during, is TestBotMessageReachesTheList's
-	// "open, the socket down when it came")
-	t.Run("open, counts while its load is out", func(t *testing.T) {
+	// a counts answer that names a newer latest while the catch-up's read
+	// is out still reaches the list, through one more read in that
+	// catch-up (core's catchUpOnce): two reads. Without it the catch-up
+	// lands with the held page, and the list's reload starts another
+	// (three), which a list waiting for the first would miss until its
+	// next load. (The hub's again, for a load the connection event came
+	// during, is TestBotMessageReachesTheList's "open, the socket down when
+	// it came".)
+	t.Run("open, counts while its catch-up is out", func(t *testing.T) {
 		ch := ids[13]
 		e.openAtLatest(ch)
+		reads := e.fs.HistoryReads(ch)
 		first, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", "42130: Hi meta,")
 		e.fs.SetCountLatest(ch, first)
 		read := historyInFlight(e.fs, ch, 4*time.Second)
@@ -256,6 +260,10 @@ func TestHistoryAfterSocketGap(t *testing.T) {
 		}
 		if !e.untilSoft(10*time.Second, func() bool { return e.rowDrawn(ch, first) && e.rowDrawn(ch, second) }) {
 			t.Fatalf("the open list draws the first %v and the second %v", e.rowDrawn(ch, first), e.rowDrawn(ch, second))
+		}
+		e.settle(500 * time.Millisecond)
+		if got := e.fs.HistoryReads(ch) - reads; got != 2 {
+			t.Errorf("%d history reads, want 2: the held page, then the catch-up's one more", got)
 		}
 	})
 }

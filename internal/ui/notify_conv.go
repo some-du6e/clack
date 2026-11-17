@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // What a notification names, as Slack's web client reads it (CDN build
@@ -145,10 +146,23 @@ func (b *backend) channelToText(id, text string) string {
 // noteSpanText writes a notification's channel mentions (channelToText);
 // the other spans keep their text.
 func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
-	if s.Kind != richtext.Channel || s.ID == "" || b.core == nil {
+	if s.ID == "" || b.core == nil {
 		return "", false
 	}
-	return b.channelToText(s.ID, s.Text), true
+	switch s.Kind {
+	case richtext.Channel:
+		return b.channelToText(s.ID, s.Text), true
+	case richtext.User:
+		// the member's name as the store has it now: the doc may come from
+		// the socket's copy, converted before their lookup answered (a
+		// message no window holds: noteFresh), and showed the raw id
+		if u, ok := b.core.S.RawUser(s.ID); ok {
+			if name := store.DisplayName(u); name != "" {
+				return "@" + strings.TrimPrefix(name, "@"), true
+			}
+		}
+	}
+	return "", false
 }
 
 // noteChannelKnown reports whether channelToText has what it needs for
@@ -241,39 +255,6 @@ func (b *backend) noteResolveWith(a *App, ids, people []string, then func()) {
 type noteOrder struct {
 	mu    sync.Mutex
 	waits []*noteWait
-	// seq: the notifications' showNotification dispatches, one after
-	// another in the order they were built (a dispatch of its own each
-	// could show them in reverse order); seqOn: a goroutine runs them
-	seq   []func()
-	seqOn bool
-}
-
-// inSequence runs f after every f queued before it, off the caller's
-// goroutine.
-func (o *noteOrder) inSequence(f func()) {
-	o.mu.Lock()
-	o.seq = append(o.seq, f)
-	start := !o.seqOn
-	o.seqOn = true
-	o.mu.Unlock()
-	if !start {
-		return
-	}
-	go func() {
-		for {
-			o.mu.Lock()
-			if len(o.seq) == 0 {
-				o.seqOn, o.seq = false, nil
-				o.mu.Unlock()
-				return
-			}
-			f := o.seq[0]
-			o.seq[0] = nil
-			o.seq = o.seq[1:]
-			o.mu.Unlock()
-			f()
-		}
-	}()
 }
 
 type noteWait struct {

@@ -499,7 +499,7 @@ func (a *App) startPlaceholder(ctx context.Context, o UploadOpts, raws []*Pendin
 	local = ph.messageLocked(local)
 	ph.mu.Unlock()
 	a.mu.Lock()
-	a.pending[cid] = &pendingSend{opts: SendOpts{Channel: o.Channel, ThreadTS: o.ThreadTS}, ts: ph.ts, files: true, release: ph.release}
+	a.pending[cid] = &pendingSend{opts: SendOpts{Channel: o.Channel, ThreadTS: o.ThreadTS}, ts: ph.ts, local: local, files: true, release: ph.release}
 	a.mu.Unlock()
 	a.putLocal(o.Channel, local)
 	a.S.NoteLive(o.Channel, local.TS, &local) // a page read before it keeps it (store/live.go)

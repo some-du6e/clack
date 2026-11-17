@@ -197,7 +197,8 @@ func React(h Host, ch, ts, name string, add bool) {
 		if t == nil {
 			return struct{}{}, call(ctx)
 		}
-		_, err := taut.Dispatch(ctx, t, "submitAddOrRemoveReaction", args, native)
+		// the user's pick: on the user's lane, in order with their clicks
+		_, err := taut.Dispatch(taut.UserAction(ctx), t, "submitAddOrRemoveReaction", args, native)
 		return struct{}{}, tautErr(err)
 	}, func(_ struct{}, err error) {
 		if err != nil {

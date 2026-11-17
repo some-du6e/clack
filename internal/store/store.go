@@ -33,6 +33,14 @@ type Timeline struct {
 	Msgs    []slack.Message // ascending by ts
 	HasMore bool            // older messages exist beyond Msgs[0]
 	Loaded  bool
+	// Epoch changes when the window starts over (made, or replaced by a
+	// newest page that doesn't reach it: SetLatestSince): a list holding
+	// older messages from before then takes the window whole
+	Epoch uint64
+	// PageOldest is the oldest message of the newest page last read from
+	// Slack: a re-read of the scrollback starts below it (core's
+	// refreshOlder)
+	PageOldest string
 }
 
 type Store struct {
@@ -54,6 +62,7 @@ type Store struct {
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
+	epochN      uint64                     // the last Timeline.Epoch handed out
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
@@ -1240,6 +1249,14 @@ func (s *Store) Timeline(ch string) *Timeline {
 	return &cp
 }
 
+// HasTimeline reports whether ch has a cached newest window, copying
+// nothing.
+func (s *Store) HasTimeline(ch string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.timelines[ch] != nil
+}
+
 // TimelineIDs lists the conversations with a cached newest window.
 func (s *Store) TimelineIDs() []string {
 	s.mu.RLock()
@@ -1251,22 +1268,30 @@ func (s *Store) TimelineIDs() []string {
 	return ids
 }
 
-// SetLatest replaces the newest window (from a fresh history fetch).
+// SetLatest replaces the newest window (from a fresh history fetch): it
+// starts over (a new Epoch).
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
-	s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+	s.epochN++
+	t := &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, Epoch: s.epochN}
+	if len(msgs) > 0 {
+		t.PageOldest = msgs[0].TS
+	}
+	s.timelines[ch] = t
 	s.mu.Unlock()
 }
 
-// PrependOlder adds an older page to the front.
+// PrependOlder adds an older page to the front. With no window (evicted
+// or purged while the page was out) it keeps nothing: an older page alone
+// isn't the conversation's newest window, and the next newest read
+// fetches one.
 func (s *Store) PrependOlder(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t := s.timelines[ch]
 	if t == nil {
-		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
 		return
 	}
 	merged := append(append([]slack.Message(nil), msgs...), t.Msgs...)

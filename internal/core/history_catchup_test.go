@@ -17,9 +17,10 @@ import (
 // event came while a page read before it was on its way) would otherwise
 // stay missing from every list for the session, as Owl's did from Karim's
 // #meta (α.102) while Activity, which fetches its own items, showed it.
-// Slack's views refetch the histories a slow reconnect reset
-// (fetchAndApplyReconnectCounts, resetChannelsWithFetchedHistory) and
-// merge every page into the store by timestamp. Once per latest: a latest
+// Slack resets its histories' reachedEnd on a connect that wasn't fast
+// (CFM onConnected, resetReachedEnd), so a view reads the newest page
+// again when it shows, and merges every page into its store by timestamp
+// (1qrw addTimestamps). Once per latest: a latest
 // the newest page can't show (a reply's, a deleted message's) costs one
 // read, not one per frame.
 func TestHistoryCatchesUpWithLatest(t *testing.T) {
@@ -36,10 +37,7 @@ func TestHistoryCatchesUpWithLatest(t *testing.T) {
 	// the counts read after the reconnect name it the latest
 	ts, _ := fs.PostAppQuiet(ch, "B0CATCHUP1", "A0CATCHUP1", "Owl", "42110: Hi meta,")
 	a.S.NoteMessage(ch, &slack.Message{TS: ts, BotID: "B0CATCHUP1"}, false)
-	p, err := a.History(ctx, ch, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	p := a.historyLanded(t, ctx, ch)
 	has := func(p Page) bool {
 		for _, m := range p.Messages {
 			if m.TS == ts {
@@ -56,16 +54,12 @@ func TestHistoryCatchesUpWithLatest(t *testing.T) {
 	}
 	// up to date now: cached again
 	n1 := reads()
-	if _, err := a.History(ctx, ch, ""); err != nil {
-		t.Fatal(err)
-	}
+	a.historyLanded(t, ctx, ch)
 	// a latest the page can't show (a thread reply's, say): one read, then
 	// the cache
 	a.S.NoteMessage(ch, &slack.Message{TS: tsAfter(ts)}, false)
 	for i := 0; i < 3; i++ {
-		if _, err := a.History(ctx, ch, ""); err != nil {
-			t.Fatal(err)
-		}
+		a.historyLanded(t, ctx, ch)
 	}
 	if got := reads() - n1; got != 1 {
 		t.Errorf("%d conversations.history reads for an up-to-date window and then a latest no page holds, want 1", got)
@@ -120,10 +114,11 @@ func TestHistoryRereadsAfterSlowConnect(t *testing.T) {
 		t.Fatalf("the counts' latest is %s, want the socket's %s", l.Latest, nextTS)
 	}
 	reads := fs.HistoryReads(ch)
-	p, err := a.History(ctx, ch, "")
-	if err != nil {
-		t.Fatal(err)
+	// the cached window shows at once, the catch-up lands after
+	if p, err := a.History(ctx, ch, ""); err != nil || pageHas(p, missed) {
+		t.Fatalf("History waited for the catch-up (%v)", err)
 	}
+	p := a.historyLanded(t, ctx, ch)
 	if !pageHas(p, missed) || !pageHas(p, nextTS) {
 		t.Errorf("after the slow connect the window has the missed message %v and the next one %v", pageHas(p, missed), pageHas(p, nextTS))
 	}
@@ -131,16 +126,11 @@ func TestHistoryRereadsAfterSlowConnect(t *testing.T) {
 		t.Errorf("%d conversations.history reads after the slow connect, want 1", got)
 	}
 	// read once: cached until the next slow connect
-	if _, err := a.History(ctx, ch, ""); err != nil {
-		t.Fatal(err)
-	}
+	a.historyLanded(t, ctx, ch)
 	if got := fs.HistoryReads(ch) - reads; got != 1 {
 		t.Errorf("%d conversations.history reads after a second History, want 1", got)
 	}
-	rs, err := a.Replies(ctx, ch, rootTS)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rs := a.repliesLanded(t, ctx, ch, rootTS)
 	has := func(ts string) bool {
 		for _, m := range rs {
 			if m.TS == ts {
@@ -154,23 +144,21 @@ func TestHistoryRereadsAfterSlowConnect(t *testing.T) {
 	}
 	// a fast connect (reconnect_url) misses nothing: no read
 	a.socketConnected(true)
-	if _, err := a.History(ctx, ch, ""); err != nil {
-		t.Fatal(err)
-	}
+	a.historyLanded(t, ctx, ch)
 	if got := fs.HistoryReads(ch) - reads; got != 1 {
 		t.Errorf("%d conversations.history reads after a fast connect, want 1", got)
 	}
 }
 
-// A catch-up that fails shows the cached window and is tried again at a
-// read after catchUpRetry; one that succeeds isn't tried again. (The
-// client holds an identical failed request back for slack.BackoffBase,
-// 1 s; catchUpRetry is 5 s.)
+// A catch-up that fails shows the cached window and is tried again by
+// itself after catchUpRetry (not at the list's next 30 s reload); one that
+// succeeds isn't tried again. (The client holds an identical failed
+// request back for slack.BackoffBase, 1 s; catchUpRetry is 5 s.)
 func TestHistoryCatchUpRetries(t *testing.T) {
 	old := catchUpRetry
 	catchUpRetry = slack.BackoffBase + 500*time.Millisecond
 	t.Cleanup(func() { catchUpRetry = old })
-	a, fs, _ := rtApp(t)
+	a, fs, l := rtApp(t)
 	ch := fs.ChannelIDs()[4]
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -180,18 +168,29 @@ func TestHistoryCatchUpRetries(t *testing.T) {
 	missed, _ := fs.PostAppQuiet(ch, "B0CATCHUP3", "A0CATCHUP3", "Owl", "42141: Hi meta,")
 	a.socketConnected(false)
 	fs.SetFault("conversations.history", fakeslack.Fault{Error: "internal_error", Times: 1})
-	p, err := a.History(ctx, ch, "")
-	if err != nil {
-		t.Fatalf("a failed catch-up failed the read: %v", err)
+	n := fs.HistoryReads(ch)
+	if p, err := a.History(ctx, ch, ""); err != nil || pageHas(p, missed) {
+		t.Fatalf("History: %v, or it has the message before any read", err)
 	}
-	if pageHas(p, missed) {
+	for dl := time.Now().Add(10 * time.Second); fs.HistoryReads(ch) == n; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("no catch-up read")
+		}
+	}
+	time.Sleep(200 * time.Millisecond)
+	if p, _ := a.History(ctx, ch, ""); pageHas(p, missed) {
 		t.Fatal("the failed catch-up's page has the message")
 	}
-	if p, _ = a.History(ctx, ch, ""); pageHas(p, missed) {
-		t.Error("read again before catchUpRetry")
-	}
-	time.Sleep(catchUpRetry + 100*time.Millisecond)
-	if p, _ = a.History(ctx, ch, ""); !pageHas(p, missed) {
+	// nothing reads History again: the retry comes by itself and says so
+	l.wait(t, "the retried catch-up's history_caught_up", func(evs []Event) bool {
+		for _, e := range evs {
+			if e.Type == "history_caught_up" && e.Channel == ch {
+				return true
+			}
+		}
+		return false
+	})
+	if p, _ := a.History(ctx, ch, ""); !pageHas(p, missed) {
 		t.Error("the catch-up wasn't tried again after catchUpRetry")
 	}
 }
@@ -210,28 +209,21 @@ func TestHistoryCountsMutations(t *testing.T) {
 	counts := func(hi, up string) {
 		a.applyMutationTimes(&slack.Counts{Channels: []slack.CountEntry{{ID: ch, HistoryInvalid: hi, Updated: up}}})
 	}
-	counts("1794000000.000100", "1794000000.000100") // applied before any window
-	if _, err := a.History(ctx, ch, ""); err != nil {
-		t.Fatal(err)
-	}
+	counts("1794000000.000100", "1794000000.000100") // applied before any window: the baseline
+	a.watch(ch, "")                                  // on screen: an updated reads it again, a history_invalid purges it
+	a.historyLanded(t, ctx, ch)
 	reads := fs.HistoryReads(ch)
 	// the socket told of a reaction: its event_ts moves updated first
 	a.advanceMutation(ch, "1794000001.000100", false)
 	counts("1794000000.000100", "1794000001.000100")
-	if _, err := a.History(ctx, ch, ""); err != nil {
-		t.Fatal(err)
-	}
+	a.historyLanded(t, ctx, ch)
 	if got := fs.HistoryReads(ch) - reads; got != 0 {
 		t.Errorf("%d reads for a change the socket told, want 0", got)
 	}
 	// an edit it never told
 	counts("1794000000.000100", "1794000002.000100")
-	if _, err := a.History(ctx, ch, ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.History(ctx, ch, ""); err != nil {
-		t.Fatal(err)
-	}
+	a.historyLanded(t, ctx, ch)
+	a.historyLanded(t, ctx, ch)
 	if got := fs.HistoryReads(ch) - reads; got != 1 {
 		t.Errorf("%d reads for an updated past the one applied, want 1", got)
 	}
@@ -297,21 +289,7 @@ func TestFailedSendSurvivesCatchUp(t *testing.T) {
 	// History started has landed
 	read := func(ch string) Page {
 		t.Helper()
-		n := fs.HistoryReads(ch)
-		p, err := a.History(ctx, ch, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(20 * time.Millisecond) {
-			if fs.HistoryReads(ch) > n {
-				break
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-		if p, err = a.History(ctx, ch, ""); err != nil {
-			t.Fatal(err)
-		}
-		return p
+		return a.historyLanded(t, ctx, ch)
 	}
 	sendFailed := func(ch string) {
 		t.Helper()
@@ -353,4 +331,137 @@ func TestFailedSendSurvivesCatchUp(t *testing.T) {
 			t.Error("the failed send went with the purged history")
 		}
 	})
+}
+
+// What the socket tells moves the counts' mutation timestamps (Slack's
+// maybeAdvanceChannelUpdatedTimestamp and
+// maybeAdvanceChannelHistoryInvalidTimestamp, from its reaction, edit and
+// deletion handlers): the next counts, which carry each event's
+// timestamp, read nothing and purge nothing for them. A change the socket
+// never told still reads the window again.
+func TestSocketEventsAdvanceMutations(t *testing.T) {
+	a, fs, _ := rtApp(t)
+	ch := fs.ChannelIDs()[9]
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	counts := func(hi, up string) {
+		a.applyMutationTimes(&slack.Counts{Channels: []slack.CountEntry{{ID: ch, HistoryInvalid: hi, Updated: up}}})
+	}
+	counts("1794000000.000100", "1794000000.000100") // the baseline, the socket up (countsApplied)
+	a.watch(ch, "")
+	p := a.historyLanded(t, ctx, ch)
+	if len(p.Messages) < 2 {
+		t.Fatalf("the window has %d messages", len(p.Messages))
+	}
+	first, last := p.Messages[0], p.Messages[len(p.Messages)-1]
+	reads := fs.HistoryReads(ch)
+	inject := func(v map[string]any) {
+		raw, _ := json.Marshal(v)
+		chRaw, _ := json.Marshal(ch)
+		a.Inject(slack.Event{Type: v["type"].(string), Channel: chRaw, Raw: raw})
+	}
+	inject(map[string]any{"type": "reaction_added", "user": fs.UserIDs()[1], "reaction": "eyes", "event_ts": "1794000001.000100",
+		"item": map[string]any{"type": "message", "channel": ch, "ts": last.TS}})
+	counts("1794000000.000100", "1794000001.000100")
+	inject(map[string]any{"type": "message", "subtype": "message_changed", "channel": ch, "event_ts": "1794000002.000100",
+		"message": map[string]any{"type": "message", "ts": last.TS, "user": last.User, "text": "edited, and the socket said so"}})
+	counts("1794000000.000100", "1794000002.000100")
+	inject(map[string]any{"type": "message", "subtype": "message_deleted", "channel": ch, "event_ts": "1794000003.000100", "deleted_ts": first.TS})
+	counts("1794000003.000100", "1794000002.000100")
+	if a.S.Timeline(ch) == nil {
+		t.Fatal("a deletion the socket told purged the window")
+	}
+	a.historyLanded(t, ctx, ch)
+	if got := fs.HistoryReads(ch) - reads; got != 0 {
+		t.Errorf("%d reads for changes the socket told, want 0", got)
+	}
+	// control: an updated past what the socket told
+	counts("1794000003.000100", "1794000004.000100")
+	a.historyLanded(t, ctx, ch)
+	if got := fs.HistoryReads(ch) - reads; got != 1 {
+		t.Errorf("%d reads for an updated the socket never told, want 1", got)
+	}
+}
+
+// An updated the socket never told reads the open conversation's
+// scrollback again too, not only its newest page and threads: an edit in
+// the older messages the list shows kept the copy from before it
+// (refreshOlder).
+func TestHistoryRefreshesScrollback(t *testing.T) {
+	a, fs, _ := rtApp(t)
+	ch := fs.ChannelIDs()[10]
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	counts := func(hi, up string) {
+		a.applyMutationTimes(&slack.Counts{Channels: []slack.CountEntry{{ID: ch, HistoryInvalid: hi, Updated: up}}})
+	}
+	counts("1794000000.000100", "1794000000.000100")
+	a.watch(ch, "")
+	p := a.historyLanded(t, ctx, ch)
+	if !p.HasMore || len(p.Messages) == 0 {
+		t.Fatalf("the newest page: %d messages, HasMore %v", len(p.Messages), p.HasMore)
+	}
+	older, err := a.History(ctx, ch, p.Messages[0].TS) // the user scrolls back
+	if err != nil || len(older.Messages) < 2 {
+		t.Fatalf("the older page: %v, %d messages", err, len(older.Messages))
+	}
+	edited := older.Messages[len(older.Messages)/2].TS
+	fs.EditQuiet(ch, edited, "edited where the user reads")
+	counts("1794000000.000100", "1794000001.000100")
+	p = a.historyLanded(t, ctx, ch)
+	found := false
+	for _, m := range p.Messages {
+		if m.TS == edited {
+			found = true
+			if m.Text != "edited where the user reads" {
+				t.Errorf("the scrollback's message reads %q: the edit Slack has didn't show", m.Text)
+			}
+		}
+	}
+	if !found {
+		t.Error("the scrollback's message is gone from the window")
+	}
+}
+
+// A catch-up that joins a read begun before the mark that asked for it
+// reads once more: the joined page predates what the mark covers.
+func TestHistoryCatchUpOnceMore(t *testing.T) {
+	a, fs, _ := rtApp(t)
+	ch := fs.ChannelIDs()[11]
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	counts := func(hi, up string) {
+		a.applyMutationTimes(&slack.Counts{Channels: []slack.CountEntry{{ID: ch, HistoryInvalid: hi, Updated: up}}})
+	}
+	counts("1794000000.000100", "1794000000.000100")
+	a.watch(ch, "")
+	a.historyLanded(t, ctx, ch)
+	// a refresh goes out and is slow to answer: the fake answers from what
+	// it holds now
+	fs.SetFault("conversations.history", fakeslack.Fault{ReplyDelay: 800 * time.Millisecond, Times: 1})
+	n := fs.HistoryReads(ch)
+	refreshed := make(chan error, 1)
+	go func() {
+		_, err := a.Refresh(ctx, ch)
+		refreshed <- err
+	}()
+	for dl := time.Now().Add(5 * time.Second); fs.HistoryReads(ch) == n; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("the refresh never reached the fake")
+		}
+	}
+	ts, _ := fs.PostQuiet(ch, fs.UserIDs()[1], "posted after the refresh went out")
+	counts("1794000000.000100", "1794000001.000100") // the counts say the history changed
+	select {
+	case err := <-refreshed:
+		t.Fatalf("the slow refresh answered (%v) before the catch-up could join it", err)
+	default:
+	}
+	p := a.historyLanded(t, ctx, ch)
+	if err := <-refreshed; err != nil {
+		t.Fatal(err)
+	}
+	if !pageHas(p, ts) {
+		t.Error("the catch-up ended with the page it joined, read before the change the counts named")
+	}
 }

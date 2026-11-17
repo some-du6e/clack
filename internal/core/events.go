@@ -64,16 +64,25 @@ func (a *App) handle(ev slack.Event) {
 		// the reactor isn't fetched: only the reaction's tooltip names it
 		// (ReactionTip's TooltipMemberName, lazy_users.go)
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
+			// a page or replies read out meanwhile keeps the reaction
+			// (store/live.go: the held copy wins)
+			a.S.NoteLive(e.Item.Channel, m.TS, &m)
 			v := a.message(e.Item.Channel, &m)
 			a.emit(Event{Type: "update", Name: UpdateReactions, Channel: e.Item.Channel, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
 		}
 	case "channel_history_changed", "group_history_changed", "im_history_changed", "mpim_history_changed":
-		// channelHistoryChanged: the counts' history_invalid moves to the
-		// event's (history_catchup.go)
+		// channelHistoryChanged: the cached history before the change goes
+		// (Slack truncates it before the event's latest; Clack's windows
+		// read it again), then the counts' history_invalid moves to the
+		// event's, so the next counts read nothing for it
+		// (history_catchup.go)
 		var e struct {
 			EventTS string `json:"event_ts"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		if a.S.HasTimeline(ch) || len(a.S.ThreadTSs(ch)) > 0 {
+			a.purgeHistory(ch)
+		}
 		a.advanceMutation(ch, e.EventTS, true)
 	case "ai_assistant_status", "ai_assistant_threads_suggested_prompts":
 		a.onAssistant(ctx, ev) // agent.go
@@ -709,7 +718,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	// same conversation wait behind it in order (pump_later.go)
 	if a.holdForConv(ch) {
 		mm := m
-		a.pumpLater(func(ctx context.Context) {
+		a.convLater(ch, func(ctx context.Context) {
 			defer a.releaseConv(ch)
 			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
 				a.refreshConv(ctx, ch)

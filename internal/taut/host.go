@@ -218,12 +218,18 @@ func (t *Taut) installHost(r *runtime) {
 		jsonArg(a, 1, &args)
 		return t.thunks.callNative(context.Background(), id, args)
 	})
-	async("callNative", func(ctx context.Context, a []json.RawMessage) (any, error) {
+	// a dispatch's native on a goroutine of its own, or, for DispatchSeq's,
+	// one after another in the order JS calls them
+	rt.ExposeAsyncSeq("taut_callNative", func(ctx context.Context, a []json.RawMessage) (any, error) {
 		var id int64
 		jsonArg(a, 0, &id)
 		var args []json.RawMessage
 		jsonArg(a, 1, &args)
 		return t.thunks.callNative(ctx, id, args)
+	}, func(a []json.RawMessage) bool {
+		var id int64
+		jsonArg(a, 0, &id)
+		return t.thunks.inSeq(id)
 	})
 
 	// ---- network ----

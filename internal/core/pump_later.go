@@ -21,6 +21,24 @@ import (
 // after 15 s, as the pump's).
 func (a *App) pumpLater(f func(ctx context.Context)) { a.inOrder(&a.pumpQ, f) }
 
+// convLater runs f after the earlier held messages of ch, off the caller's
+// goroutine: each conversation's held messages wait for its own lookup,
+// not for the other socket events' (pumpLater's queue: a users.prefs, a
+// sections read).
+func (a *App) convLater(ch string, f func(ctx context.Context)) {
+	a.convHoldMu.Lock()
+	if a.convQs == nil {
+		a.convQs = map[string]*actQueue{}
+	}
+	q := a.convQs[ch]
+	if q == nil {
+		q = &actQueue{}
+		a.convQs[ch] = q
+	}
+	a.convHoldMu.Unlock()
+	a.inOrder(q, f)
+}
+
 // holdForConv reports whether a message of ch waits for a lookup of its
 // conversation (one core doesn't know), or for earlier messages of ch
 // that do: they go out in order (releaseConv after each).
@@ -44,6 +62,14 @@ func (a *App) releaseConv(ch string) {
 	a.convHoldMu.Lock()
 	if a.convHold[ch]--; a.convHold[ch] <= 0 {
 		delete(a.convHold, ch)
+		if q := a.convQs[ch]; q != nil {
+			q.mu.Lock()
+			idle := len(q.tasks) == 0
+			q.mu.Unlock()
+			if idle {
+				delete(a.convQs, ch) // its worker ends with its last task
+			}
+		}
 	}
 	a.convHoldMu.Unlock()
 }

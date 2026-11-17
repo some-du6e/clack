@@ -862,8 +862,7 @@ func (c *Composer) changed() {
 	} else if time.Since(c.lastTyping) > 3*time.Second {
 		c.lastTyping = time.Now()
 		c.typingOn = true
-		api, ch, ts := c.api, c.ch, c.ts
-		go sendTyping(api, ch, ts)
+		startTyping(c.api, c.ch, c.ts) // queued now, ahead of an Enter after it
 	}
 }
 
@@ -1347,9 +1346,21 @@ func (c *Composer) send(o *outgoing) { go c.startSend(o)() }
 // the composer, the job is built); it returns the rest, to run on any
 // goroutine but the UI's.
 func (c *Composer) startSend(o *outgoing) (run func()) {
+	job, finish := c.newSendJob(o)
+	return func() {
+		// its send transforms and thunks are the user's: ahead of the JS
+		// work queued before them (taut.UserAction)
+		finish(job.run(taut.UserAction(context.Background())))
+	}
+}
+
+// newSendJob is startSend's part on the UI goroutine: the attached files
+// leave the composer and the job is built. finish takes the send's
+// outcome, on any goroutine.
+func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 	batch := c.att.takeForSend()
 	hasFiles := !batch.empty()
-	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
+	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
 		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
 	job.sent = func(cid string, files bool) {
 		c.later(func() {
@@ -1358,15 +1369,12 @@ func (c *Composer) startSend(o *outgoing) (run func()) {
 			}
 		})
 	}
-	return func() {
-		// its send transforms and thunks are the user's: ahead of the JS
-		// work queued before them (taut.UserAction)
-		err := job.run(taut.UserAction(context.Background()))
+	return job, func(err error) {
 		if hasFiles && err != nil {
 			c.later(func() {
 				// the placeholder is gone and nothing was posted: the
-				// message (restore, below) and its files go back into the
-				// draft, and Slack's FileUploadErrorDialog says so (a
+				// message (restoreSend, below) and its files go back into
+				// the draft, and Slack's FileUploadErrorDialog says so (a
 				// dismissed warning or Slackbot's answer needs no dialog)
 				c.att.putBack(batch.chips)
 				if !isQuietSendStop(err) {
@@ -1377,8 +1385,7 @@ func (c *Composer) startSend(o *outgoing) (run func()) {
 			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
 		}
 		if err != nil {
-			c.restore(o.doc)
-			c.later(func() { c.att.putBackGifs(o.gifs) })
+			c.restoreSend(o)
 			return
 		}
 		c.later(func() {
@@ -1488,23 +1495,53 @@ type sendJob struct {
 }
 
 func (j *sendJob) run(ctx context.Context) error {
+	args := j.args()
+	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
+		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, j.patchArgs(args), j.native)
+		return err
+	}
+	return j.prepareAndSend(ctx, args)
+}
+
+// checkThenRun is run behind the plugins' send checks c, in one JS call
+// with the prepareAndSendMessage patches (taut.CheckThenDispatch), queued
+// before it returns (UI goroutine), ahead of the composer's re-render:
+// Slack's prepareAndSendMessage awaits its checks and dispatches
+// sendMessage in one task, and the pending copy shows in the frame after
+// they ran. The checks' answer went through Go to dispatch the thunk, and
+// a render the loop started between the two held the send. done hears,
+// on another goroutine, whether the checks let the message go, and the
+// send's error.
+func (j *sendJob) checkThenRun(ctx context.Context, t *taut.Taut, c taut.ComposerContext, done func(sent bool, err error)) {
+	taut.CheckThenDispatch(ctx, t, c, thPrepareAndSend, j.patchArgs(j.args()), j.native, func(sent bool, _ any, err error) {
+		done(sent, err)
+	})
+}
+
+// args are prepareAndSendMessage's options for the job.
+func (j *sendJob) args() prepareSendArgs {
 	delta := j.o.delta
 	if delta == nil {
 		delta = j.o.doc.Delta()
 	}
-	args := prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
+	return prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
 		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view,
 		IncludeBroadcastKeywordWarning: j.warn}
-	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
-		for _, p := range j.prepared {
-			args.FileIDs = append(args.FileIDs, p.ID)
-		}
-		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, args, func(ctx context.Context, a prepareSendArgs) (any, error) {
-			return nil, j.prepareAndSend(ctx, a) // broadcast.go
-		})
-		return err
+}
+
+// patchArgs are args as the plugins' patches see them: with the files'
+// ids.
+func (j *sendJob) patchArgs(args prepareSendArgs) prepareSendArgs {
+	for _, p := range j.prepared {
+		args.FileIDs = append(args.FileIDs, p.ID)
 	}
-	return j.prepareAndSend(ctx, args)
+	return args
+}
+
+// native is prepareAndSendMessage's native core, where the patches call
+// the original.
+func (j *sendJob) native(ctx context.Context, a prepareSendArgs) (any, error) {
+	return nil, j.prepareAndSend(ctx, a) // broadcast.go
 }
 
 // deliver is prepareAndSendMessage's native: share the files with the
@@ -1541,25 +1578,36 @@ func (c *Composer) checkThenSend(o *outgoing) {
 	// check an own message showed three frames after Enter (msg-latency).
 	// Files stay in the composer until the checks pass (a check may ask
 	// the user first).
+	m := SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}
+	if c.att.Len() == 0 && checkThenSendInJS() {
+		// the checks and the plugins' prepareAndSendMessage in one JS
+		// call (checkThenRun)
+		job, finish := c.newSendJob(o)
+		job.checkThenRun(taut.UserAction(context.Background()), currentTaut(), checkContext(m), func(sent bool, err error) {
+			if !sent {
+				c.restoreSend(o) // held back (done(false)): the message goes back
+				return
+			}
+			finish(err)
+		})
+		return
+	}
 	var run func()
 	if c.att.Len() == 0 {
 		run = c.startSend(o)
 	}
-	check(SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}, func(ok bool) {
+	check(m, func(ok bool) {
 		switch {
 		case run != nil && ok:
 			go run() // never on the caller's goroutine: a check may answer on the UI's
 		case run != nil:
-			// held back (done(false)): the message goes back, its GIFs too
-			c.restore(o.doc)
-			c.later(func() { c.att.putBackGifs(o.gifs) })
+			c.restoreSend(o) // held back (done(false)): the message goes back
 		default:
 			c.later(func() {
 				if ok {
 					c.send(o)
 				} else {
-					c.restore(o.doc)
-					c.att.putBackGifs(o.gifs)
+					c.restoreSend(o)
 				}
 			})
 		}
@@ -1594,10 +1642,11 @@ func (c *Composer) sendViaJS(o *outgoing) {
 		opts["replyToTs"] = c.ts
 	}
 	c.sendJS.CallResult(func(_ any, err error) {
-		c.takePending(o.viaJS) // a plugin sent it itself, or held it back
-		if err != nil {
-			c.restore(o.doc)
-			c.att.putBackGifs(o.gifs)
+		// still pending: the plugin sent it itself, or held it back; a
+		// message its call already passed on (prepareAndSend) is on its
+		// way, and an error after that leaves it there
+		if c.takePending(o.viaJS) != nil && err != nil {
+			c.restoreSend(o)
 		}
 	}, opts)
 }
@@ -1656,11 +1705,25 @@ func (c *Composer) clearAfterSend() {
 }
 
 // restore puts an unsent message back if the user hasn't typed since.
-func (c *Composer) restore(d *Doc) {
+func (c *Composer) restore(d *Doc) { c.restoreWith(d, nil) }
+
+// restoreSend puts an unsent message back with its GIFs, if the user
+// hasn't typed since: the GIFs went back into a composer the user had
+// typed a new message in, and went out with it.
+func (c *Composer) restoreSend(o *outgoing) {
+	c.restoreWith(o.doc, func() { c.att.putBackGifs(o.gifs) })
+}
+
+// restoreWith is restore, running also (UI goroutine) once the message
+// is back.
+func (c *Composer) restoreWith(d *Doc, also func()) {
 	c.later(func() {
 		if c.ed.Empty() {
 			c.ed.SetDoc(d)
 			c.lastVer = c.ed.Version()
+			if also != nil {
+				also()
+			}
 			c.saveDraft()
 		}
 	})

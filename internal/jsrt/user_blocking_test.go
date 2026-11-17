@@ -325,30 +325,157 @@ func TestUserBlockingContinuations(t *testing.T) {
 	}
 }
 
-// The next hop of the user's chain, queued from Go a moment after a
-// user-blocking task (a send's check answers Go, which queues the send's
-// thunk), runs before the queued task the loop would start meanwhile (the
-// composer's re-render after Enter): in Slack the check and the dispatch
-// run in one JS task.
-func TestUserBlockingChainHop(t *testing.T) {
+// What a user-blocking task starts keeps the user's lane only while the
+// chain lasts (userChain from the user's action), counted when it settles
+// or fires: a Go answer, a timer due past it, or one the busy loop fires
+// past it, waits its turn like any queued work. They kept the lane however
+// late they came, background work included.
+func TestUserBlockingChainEnds(t *testing.T) {
+	old := userChain
+	userChain = 100 * time.Millisecond
+	t.Cleanup(func() { userChain = old })
 	l := newLaneRecorder(t)
-	g := l.hold("G", true)
-	l.post(l.r.Post, "render")
-	l.r.PostUserBlocking(func(*Ctx) {
-		l.note("check")
-		go func() {
-			time.Sleep(time.Millisecond) // the answer's trip through Go
-			l.post(l.r.PostUserBlocking, "thunk")
-		}()
+	r := l.r
+	called, settle := make(chan struct{}), make(chan struct{})
+	r.ExposeAsync("answerWhenTold", func(ctx context.Context, _ []json.RawMessage) (any, error) {
+		close(called)
+		<-settle
+		return 1, nil
 	})
-	close(g)
+	r.Expose("noteJS", func(js *Ctx, _ Value, args []Value) (any, error) {
+		l.note(args[0].String())
+		return nil, nil
+	})
+	if _, err := r.Eval("chain.js", `globalThis.chain = {
+		async awaitGo() { await __clack.answerWhenTold(); __clack.noteJS('settled'); },
+		timers() {
+			setTimeout(() => __clack.noteJS('timer 60'), 60);
+			setTimeout(() => __clack.noteJS('timer 150'), 150);
+		},
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	queued := func(n int) {
+		t.Helper()
+		for dl := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+			r.mu.Lock()
+			got := len(r.queue) + len(r.urgent)
+			r.mu.Unlock()
+			if got >= n {
+				return
+			}
+			if time.Now().After(dl) {
+				t.Fatalf("%d tasks queued, want %d", got, n)
+			}
+		}
+	}
+
+	t.Run("a Go answer", func(t *testing.T) {
+		done := make(chan error, 1)
+		go func() {
+			_, err := r.Call(UserBlocking(context.Background()), "chain.awaitGo")
+			done <- err
+		}()
+		<-called
+		time.Sleep(userChain + 20*time.Millisecond) // the chain ends
+		g := l.hold("G", true)
+		l.post(r.Post, "render")
+		close(settle) // the answer comes while G runs
+		queued(2)
+		close(g)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		l.drain()
+		if got, want := l.got(), "G, render, settled"; got != want {
+			t.Errorf("ran %s, want %s: an answer past the chain kept the user's lane", got, want)
+		}
+	})
+
+	t.Run("timers", func(t *testing.T) {
+		l.mu.Lock()
+		l.order = nil
+		l.mu.Unlock()
+		t0 := time.Now()
+		// timer 60 is set within the chain, timer 150 comes due past it
+		if _, err := r.Call(UserBlocking(context.Background()), "chain.timers"); err != nil {
+			t.Fatal(err)
+		}
+		h := l.hold("H", true)
+		g := l.hold("G", false) // G and render go in one batch, after H
+		l.post(r.Post, "render")
+		close(h)
+		time.Sleep(time.Until(t0.Add(200 * time.Millisecond))) // G holds the loop past both timers and the chain
+		close(g)
+		for dl := time.Now().Add(5 * time.Second); !strings.Contains(l.got(), "timer 150"); time.Sleep(time.Millisecond) {
+			if time.Now().After(dl) {
+				t.Fatalf("ran %s", l.got())
+			}
+		}
+		l.drain()
+		if got, want := l.got(), "H, G, render, timer 60, timer 150"; got != want {
+			t.Errorf("ran %s, want %s: a timer fired past the chain kept the user's lane", got, want)
+		}
+	})
+}
+
+// A user-blocking timer runs after the in-order tasks queued before it
+// came due, as every piece of the user's work runs after the input before
+// it (PostInOrder), and ahead of the queued renders. It used to skip them.
+func TestUserTimerAfterInOrderTasks(t *testing.T) {
+	l := newLaneRecorder(t)
+	r := l.r
+	r.Expose("noteJS", func(js *Ctx, _ Value, args []Value) (any, error) {
+		l.note(args[0].String())
+		return nil, nil
+	})
+	if _, err := r.Eval("timer.js", `globalThis.lane = { timer() { setTimeout(() => __clack.noteJS('timer'), 30); } }`); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Now()
+	if _, err := r.Call(UserBlocking(context.Background()), "lane.timer"); err != nil {
+		t.Fatal(err)
+	}
+	h := l.hold("H", true)
+	l.post(r.Post, "render")
+	l.post(r.PostInOrder, "store")
+	time.Sleep(time.Until(t0.Add(60 * time.Millisecond))) // the timer comes due while H runs
+	close(h)
 	for dl := time.Now().Add(5 * time.Second); !strings.Contains(l.got(), "render"); time.Sleep(time.Millisecond) {
 		if time.Now().After(dl) {
 			t.Fatalf("ran %s", l.got())
 		}
 	}
 	l.drain()
-	if got, want := l.got(), "G, check, thunk, render"; got != want {
-		t.Errorf("ran %s, want %s: the render started between the user's check and its thunk", got, want)
+	if got, want := l.got(), "H, store, timer, render"; got != want {
+		t.Errorf("ran %s, want %s", got, want)
+	}
+}
+
+// A call marked InOrder (the native UI's dispatch: a reaction, a draft
+// sync) runs before the user's later input, as a browser runs the user's
+// actions in order; a plain one waits behind it.
+func TestInOrderCallBeforeLaterInput(t *testing.T) {
+	l := newLaneRecorder(t)
+	r := l.r
+	r.Expose("noteJS", func(js *Ctx, _ Value, args []Value) (any, error) {
+		l.note(args[0].String())
+		return nil, nil
+	})
+	if _, err := r.Eval("note.js", `globalThis.lane = { note(s) { __clack.noteJS(s) } }`); err != nil {
+		t.Fatal(err)
+	}
+	g := l.hold("G", true)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	r.CallThen(context.Background(), "lane.note", func(json.RawMessage, error) { wg.Done() }, "plain")
+	r.CallThen(InOrder(context.Background()), "lane.note", func(json.RawMessage, error) { wg.Done() }, "reaction")
+	l.post(r.Post, "render")
+	l.post(r.PostUserBlocking, "click")
+	close(g)
+	wg.Wait()
+	l.drain()
+	if got, want := l.got(), "G, reaction, click, plain, render"; got != want {
+		t.Errorf("ran %s, want %s", got, want)
 	}
 }

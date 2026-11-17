@@ -97,6 +97,7 @@ func (a *App) onMessageReplied(ctx context.Context, ch string, raw json.RawMessa
 	}
 	// the reply bar asks for its avatars' people as it draws (lazy_users.go)
 	if upd, ok := a.S.Mutate(ch, m.TS, apply); ok {
+		a.S.NoteLive(ch, upd.TS, &upd) // a page read out meanwhile keeps the reply count (store/live.go)
 		a.emitUpdate(ch, &upd)
 	}
 	// the broadcasts' root copies are Slack's stored root when the parent

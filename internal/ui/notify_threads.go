@@ -116,7 +116,8 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	}
 	body := e.Content
 	note := a.messageNote(e.Channel, e.TS, e.ThreadTS) // the toast's payload (notify.go)
-	a.dispatch("showNotification", map[string]any{"title": title, "message": body, "body": body, "channelId": e.Channel, "ts": e.TS},
+	// in order with the other notifications (backend.go showNotification)
+	a.showNotification(map[string]any{"title": title, "message": body, "body": body, "channelId": e.Channel, "ts": e.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
 			if t, bd, ok := notificationText(args, nil, body); ok {
 				a.notifyMessage(t, bd, note)

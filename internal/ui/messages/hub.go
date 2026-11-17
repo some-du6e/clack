@@ -69,10 +69,10 @@ type model struct {
 	// was out (catchUp, hub_catchup.go): it loads again once that lands
 	again bool
 	// caughtUp: the latest catchUp last loaded the model again for;
-	// purged: the counts purged the history, and the next load takes the
-	// newest page whole (historyChanged)
+	// epoch: the core window's Epoch its newest messages came from
+	// (takeNewest)
 	caughtUp string
-	purged   bool
+	epoch    uint64
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -370,6 +370,12 @@ func (hb *hub) loadOlder(m *model) {
 	}
 	m.older = true
 	before := m.msgs[0].m.TS
+	for i := range m.msgs { // where Slack's history starts: not at a local copy (hub_catchup.go)
+		if !local(&m.msgs[i].m) {
+			before = m.msgs[i].m.TS
+			break
+		}
+	}
 	m.rev++
 	m.mu.Unlock()
 	hb.invalidate()
@@ -436,10 +442,19 @@ func (m *model) mergeNewest(page []core.Message, hasMore bool) {
 		m.hasMore = hasMore
 		return
 	}
-	first := page[0].TS
+	// the page starts at its oldest message from Slack: an old failed
+	// send, kept whatever the range, is no boundary
+	first := ""
+	inPage := make(map[string]bool, len(page))
+	for i := range page {
+		inPage[page[i].TS] = true
+		if first == "" && !local(&page[i]) {
+			first = page[i].TS
+		}
+	}
 	var keep []core.Message
 	for _, e := range m.msgs {
-		if tsLess(e.m.TS, first) {
+		if !inPage[e.m.TS] && (first == "" && !local(&e.m) || first != "" && tsLess(e.m.TS, first)) {
 			keep = append(keep, e.m)
 		}
 	}
@@ -790,9 +805,9 @@ func (hb *hub) apply(ev core.Event) bool {
 		// list on screen behind its conversation's latest reads it again
 		// (hub_catchup.go)
 		return hb.catchUp()
-	case "history_stale", "history_purged":
-		// the counts said a history changed unheard: its lists load
-		// again (hub_catchup.go)
+	case "history_stale", "history_purged", "history_caught_up":
+		// the counts said a history changed unheard, or a background
+		// catch-up landed: its lists load again (hub_catchup.go)
 		return hb.historyChanged(ev)
 	case "auth_failed":
 		// core: the session is gone (signed out, token revoked). Stop

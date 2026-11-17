@@ -194,42 +194,42 @@ func (s *listState) reactGroup(h Host, r *row, base, self string) {
 		return
 	}
 	key := reactionKey(&r.src)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		_, err := taut.Dispatch(ctx, tautOf(), "changeReactionFromUserAction",
-			rxnUserArgs{Key: key, Name: base, ActionSource: reactionToggleButton, UseDefaultSkinToneForMultiSkinToneEmoji: true},
-			func(ctx context.Context, a rxnUserArgs) (any, error) {
-				if a.Add != nil || a.ActionSource != reactionToggleButton {
-					// a plugin turned it into a plain toggle of one name
-					on := !s.hasOwnReaction(a.Key, a.Name)
-					if a.Add != nil {
-						on = *a.Add
-					}
-					if on && !a.SkipFrecencyRecord {
-						app.RecordEmojiFrecency(a.Name, "")
-					}
-					return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
+	// the click's: queued now, on the user's lane (react's rule)
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 20*time.Second)
+	taut.DispatchThen(ctx, tautOf(), "changeReactionFromUserAction",
+		rxnUserArgs{Key: key, Name: base, ActionSource: reactionToggleButton, UseDefaultSkinToneForMultiSkinToneEmoji: true},
+		func(ctx context.Context, a rxnUserArgs) (any, error) {
+			if a.Add != nil || a.ActionSource != reactionToggleButton {
+				// a plugin turned it into a plain toggle of one name
+				on := !s.hasOwnReaction(a.Key, a.Name)
+				if a.Add != nil {
+					on = *a.Add
 				}
-				add, remove := toggleTargets(s.reactionsOf(a.Key), a.Name, self, app.Prefs().SkinTone)
-				if add != "" {
-					if !a.SkipFrecencyRecord {
-						app.RecordEmojiFrecency(add, "") // recordEmojiFrecencyEvent {emojiName, text: ""}
-					}
-					return s.submitReaction(ctx, h, app, a.Key, add, true, self)
+				if on && !a.SkipFrecencyRecord {
+					app.RecordEmojiFrecency(a.Name, "")
 				}
-				var first error
-				for _, name := range remove {
-					if _, err := s.submitReaction(ctx, h, app, a.Key, name, false, self); err != nil && first == nil {
-						first = err
-					}
+				return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
+			}
+			add, remove := toggleTargets(s.reactionsOf(a.Key), a.Name, self, app.Prefs().SkinTone)
+			if add != "" {
+				if !a.SkipFrecencyRecord {
+					app.RecordEmojiFrecency(add, "") // recordEmojiFrecencyEvent {emojiName, text: ""}
 				}
-				return nil, first
-			})
-		if err != nil {
-			h.Toast("Couldn't update reaction")
-		}
-	}()
+				return s.submitReaction(ctx, h, app, a.Key, add, true, self)
+			}
+			var first error
+			for _, name := range remove {
+				if _, err := s.submitReaction(ctx, h, app, a.Key, name, false, self); err != nil && first == nil {
+					first = err
+				}
+			}
+			return nil, first
+		}, func(_ any, err error) {
+			cancel()
+			if err != nil {
+				h.Toast("Couldn't update reaction")
+			}
+		})
 }
 
 // reactionsOf is a copy of the reactions on the message with Slack

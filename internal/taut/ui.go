@@ -491,15 +491,38 @@ func (b *Bridge) withAnswer(done func(bool), f func(r *runtime, answer func(bool
 	}()
 }
 
-// Call calls a JS function prop; done (optional) gets its JSON result.
-// The props Go calls are the user's: a control's onClick, onChange,
-// onSelect, a menu item, a plugin's prepareAndSendMessage. They run on the
-// user-blocking lane, in order with the user's other input and sends
-// (jsrt UserBlocking): a send after a click sees what the click did
-// (OwlMode's mode toggle, then Enter).
+// Call calls a JS function prop; done (optional) gets its JSON result, on
+// another goroutine. The props Go calls are the user's: a control's
+// onClick, onChange, onSelect, a menu item, a plugin's
+// prepareAndSendMessage. They run on the user-blocking lane, in order with
+// the user's other input and sends (jsrt UserBlocking): a send after a
+// click sees what the click did (OwlMode's mode toggle, then Enter). With
+// the runtime running the call is queued before Call returns, on the
+// caller's goroutine, whatever the function and done: a menu item's Taut
+// function and a call with done went through a goroutine of their own
+// first, and a click after them could go ahead.
 func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)) {
 	if done == nil && !IsTautFn(fn) {
 		b.with(func(r *runtime) { r.rt.CallFnUserBlocking(int(fn), args) })
+		return
+	}
+	var a json.RawMessage = args
+	if len(a) == 0 {
+		a = json.RawMessage("[]")
+	}
+	path := "__taut.callHostFn"
+	if IsTautFn(fn) {
+		path = "__taut.callFn"
+	}
+	call := func(r *runtime) {
+		r.rt.CallThen(UserAction(context.Background()), path, func(res json.RawMessage, err error) {
+			if done != nil {
+				done(res, err)
+			}
+		}, float64(fn), a)
+	}
+	if r := b.t.liveRuntime(); r != nil {
+		call(r)
 		return
 	}
 	go func() {
@@ -510,18 +533,7 @@ func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)
 			}
 			return
 		}
-		var a json.RawMessage = args
-		if len(a) == 0 {
-			a = json.RawMessage("[]")
-		}
-		path := "__taut.callHostFn"
-		if IsTautFn(fn) {
-			path = "__taut.callFn"
-		}
-		res, err := r.rt.Call(UserAction(context.Background()), path, float64(fn), a)
-		if done != nil {
-			done(res, err)
-		}
+		call(r)
 	}()
 }
 

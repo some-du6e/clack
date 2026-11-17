@@ -44,22 +44,19 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	}
 	var msgs []slack.Message
 	var hasMore bool
+	var epoch uint64
 	if before == "" {
 		t := a.S.Timeline(ch)
 		// a window read before the last slow connect, one the counts
 		// marked stale, or one ending before the conversation's latest
 		// message (history_catchup.go): its newest page is read from Slack
-		// now, merged with what the socket brought meanwhile. A read
-		// joined that began before the mark counts for nothing: once more.
-		// On a failure the cached window shows, and the next read after
-		// catchUpRetry tries again.
-		for try := 0; try < 2 && t != nil && a.windowBehind(ch, t); try++ {
-			source = "catch-up"
-			if err := a.loadLatest(ctx, ch); err != nil {
-				a.readFailed(ch)
-				break
-			}
-			t = a.S.Timeline(ch)
+		// in the background, merged with what the socket brought
+		// meanwhile, and the lists load again when it lands
+		// ("history_caught_up"); the window core holds shows now, as Slack
+		// renders its cached slice while it refetches
+		if t != nil && a.windowBehind(ch, t) {
+			source = "cache, catching up"
+			a.catchUpLater(ch)
 		}
 		if t == nil {
 			source = "fetch"
@@ -72,7 +69,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 			waitSide(conv)
 		}
 		if t != nil {
-			msgs, hasMore = t.Msgs, t.HasMore
+			msgs, hasMore, epoch = t.Msgs, t.HasMore, t.Epoch
 		}
 	} else {
 		source = "older"
@@ -87,7 +84,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		msgs, hasMore = p.Messages, p.HasMore
 		store.SortAsc(msgs)
 	}
-	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
+	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore, Epoch: epoch}
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
 	}
@@ -111,14 +108,11 @@ func (a *App) Replies(ctx context.Context, ch, ts string) ([]Message, error) {
 	a.watch(ch, ts)
 	a.noteAccess(ch + "/" + ts)
 	msgs, ok := a.S.Thread(ch, ts)
-	// a thread read before the last slow connect is read again, as its
-	// channel's window is (history_catchup.go); a failure shows the cache
-	for try := 0; try < 2 && ok && a.threadBehind(ch, ts); try++ {
-		if err := a.fetchThread(ctx, ch, ts); err != nil {
-			a.readFailed(ch + "/" + ts)
-			break
-		}
-		msgs, ok = a.S.Thread(ch, ts)
+	// a thread read before the last slow connect (or marked stale) is read
+	// again in the background, as its channel's window is
+	// (history_catchup.go); the cached one shows now
+	if ok && a.threadBehind(ch, ts) {
+		a.catchUpLater(ch + "/" + ts)
 	}
 	if !ok {
 		if err := a.fetchThread(ctx, ch, ts); err != nil {
@@ -162,7 +156,7 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		// a reply changed, deleted or posted while the request was out
 		// keeps the socket's copy (store/live.go)
 		a.keepPageFiles(ch, all) // the processed files the thread has of the answer's stubs
-		a.S.SetThreadSince(ch, ts, all, live, a.pendingIn(ch, ts))
+		a.S.SetThreadSince(ch, ts, all, store.ThreadOpts{Since: live, Pending: a.pendingCopies(ch, ts)})
 		a.noteRead(ch+"/"+ts, rm)
 		all, _ = a.S.Thread(ch, ts)
 		a.S.SyncPins(ch, pins, all)

@@ -192,20 +192,38 @@ type uploadFilesArgs struct {
 // ---- typing ----
 
 // sendTyping reports typing (currentUserStartedTyping; SilentTyping and
-// OwlMode swallow it). Call off the UI goroutine. It is the user's
-// keystroke's (taut.UserAction): the send after it can't overtake it, or
-// the typing would go out after the message ("is typing…" under a sent
-// message for 6 s), as Slack's InputContainer dispatches it from the
-// change handler, before any send.
+// OwlMode swallow it) and waits for it. Call off the UI goroutine. It is
+// the user's keystroke's (taut.UserAction): the send after it can't
+// overtake it, or the typing would go out after the message ("is
+// typing…" under a sent message for 6 s), as Slack's InputContainer
+// dispatches it from the change handler, before any send.
 func sendTyping(api coreAPI, ch, ts string) {
 	if t := currentTaut(); t.ThunkPatched(thTyping) {
-		_, _ = taut.Dispatch(taut.UserAction(context.Background()), t, thTyping, typingArgs{ChannelID: ch, ThreadTs: ts},
-			func(_ context.Context, a typingArgs) (any, error) {
-				return nil, typingNative(api, a.ChannelID, a.ThreadTs)
-			})
+		_, _ = taut.Dispatch(taut.UserAction(context.Background()), t, thTyping, typingArgs{ChannelID: ch, ThreadTs: ts}, typingThunkNative(api))
 		return
 	}
 	_ = typingNative(api, ch, ts)
+}
+
+// startTyping is sendTyping for the composer's keystroke, on the UI
+// goroutine, without the wait: a plugin's patch has its JS call queued
+// before startTyping returns (taut.DispatchThen), so Enter right after the
+// keystroke comes after it; it went through a goroutine of its own first,
+// and the message could go ahead. Unpatched, the native runs on a
+// goroutine.
+func startTyping(api coreAPI, ch, ts string) {
+	if t := currentTaut(); t.ThunkPatched(thTyping) {
+		taut.DispatchThen(taut.UserAction(context.Background()), t, thTyping, typingArgs{ChannelID: ch, ThreadTs: ts}, typingThunkNative(api), nil)
+		return
+	}
+	go func() { _ = typingNative(api, ch, ts) }()
+}
+
+// typingThunkNative is currentUserStartedTyping's native core.
+func typingThunkNative(api coreAPI) func(context.Context, typingArgs) (any, error) {
+	return func(_ context.Context, a typingArgs) (any, error) {
+		return nil, typingNative(api, a.ChannelID, a.ThreadTs)
+	}
 }
 
 // typingNative is currentUserStartedTyping's native (core.Typing over the
@@ -408,16 +426,29 @@ func tautSendCheck(m SendCheck, done func(ok bool)) {
 		done(true)
 		return
 	}
-	kind := "channel"
-	if m.ThreadTS != "" {
-		kind = "thread"
-	}
-	c := taut.ComposerContext{Kind: kind, ChannelID: m.ChannelID, ThreadTs: m.ThreadTS, Blocks: m.Blocks, Text: m.Text}
 	// the user's: ahead of the JS work queued before it (taut.UserAction),
 	// queued now, before this frame's layout queues the composer's
 	// re-render (SendCheckAsync); done hears the answer on another
 	// goroutine
-	t.SendCheckAsync(taut.UserAction(context.Background()), c, done)
+	t.SendCheckAsync(taut.UserAction(context.Background()), checkContext(m), done)
+}
+
+// checkContext is the send checks' {kind, channelId, threadTs} and the
+// message.
+func checkContext(m SendCheck) taut.ComposerContext {
+	kind := "channel"
+	if m.ThreadTS != "" {
+		kind = "thread"
+	}
+	return taut.ComposerContext{Kind: kind, ChannelID: m.ChannelID, ThreadTs: m.ThreadTS, Blocks: m.Blocks, Text: m.Text}
+}
+
+// checkThenSendInJS reports whether a message without files goes through
+// the plugins' send checks and prepareAndSendMessage patches in one JS
+// call (sendJob.checkThenRun): Taut's checks are the hook, and a plugin
+// patches the thunk (UI goroutine).
+func checkThenSendInJS() bool {
+	return installed.send && currentTaut().ThunkPatched(thPrepareAndSend)
 }
 
 // tautLinkTransform runs composer.addLinkTransform (ClearURLs) on one URL.

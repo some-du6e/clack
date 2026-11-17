@@ -108,7 +108,9 @@ type Rect struct{ X, Y, W, H float32 }
 // A discrete event (a click, a key, a change: React's
 // DiscreteEventPriority) is the user's input and runs on the user-blocking
 // lane, in order with the user's other input and the sends after it
-// (UserBlocking); a continuous one (a mouse move, a scroll) waits its turn.
+// (UserBlocking); a continuous one (a mouse move, a scroll) waits its
+// turn, though never behind a later discrete one (PostInOrder: a browser
+// dispatches input in order).
 func (r *Runtime) DispatchEvent(target int, ev []byte) {
 	r.post(discreteEvent(ev), func(js *Ctx) { _, _ = js.dispatch(target, ev) })
 }
@@ -211,10 +213,12 @@ func (r *Runtime) callFn(urgent bool, id int, args []byte) {
 }
 
 // SetRects reports laid-out boxes of host nodes by "k" (feeds
-// getBoundingClientRect, offsetWidth & co. and ResizeObserver). Async.
+// getBoundingClientRect, offsetWidth & co. and ResizeObserver). Async; in
+// order with the user's input (PostInOrder): a click's handler reads the
+// layout the click was made on, as in a browser.
 func (r *Runtime) SetRects(rects map[int]Rect) {
 	b, _ := json.Marshal(rectsJSON(rects))
-	r.Post(func(js *Ctx) {
+	r.PostInOrder(func(js *Ctx) {
 		fn := js.Global().Get("__clack").Get("setRects")
 		v, err := js.ParseJSON(b)
 		if err == nil {
@@ -232,9 +236,10 @@ func rectsJSON(rects map[int]Rect) map[int][4]float32 {
 }
 
 // SetViewport sets window.innerWidth/innerHeight, devicePixelRatio and
-// prefers-color-scheme (dark); fires resize / matchMedia change. Async.
+// prefers-color-scheme (dark); fires resize / matchMedia change. Async; in
+// order with the user's input (PostInOrder).
 func (r *Runtime) SetViewport(w, h, dpr float32, dark bool) {
-	r.Post(func(js *Ctx) {
+	r.PostInOrder(func(js *Ctx) {
 		fn := js.Global().Get("__clack").Get("setViewport")
 		_, _ = fn.Call(w, h, dpr, dark)
 	})
@@ -285,9 +290,11 @@ func (r *Runtime) flushRender() {
 }
 
 // SetHidden reports window visibility / focus (document.hidden,
-// visibilitychange, window focus/blur). Async.
+// visibilitychange, window focus/blur). Async; in order with the user's
+// input (PostInOrder): a key after the window gained focus comes after
+// its focus event.
 func (r *Runtime) SetHidden(hidden bool) {
-	r.Post(func(js *Ctx) {
+	r.PostInOrder(func(js *Ctx) {
 		_, _ = js.Global().Get("__clack").Get("setHidden").Call(hidden)
 	})
 }

@@ -68,6 +68,13 @@ type App struct {
 	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
 	actQ    actQueue    // the Activity events' lookups, off the event pump (activity_later.go)
 	pumpQ   actQueue    // the other socket events' lookups, off the event pump (pump_later.go)
+	// firstUp is closed at the socket's first connect (Boot's prefetch
+	// waits for it)
+	firstUp     chan struct{}
+	firstUpOnce sync.Once
+	// convQs order the messages held for their conversation's lookup, one
+	// queue per conversation (pump_later.go holdForConv)
+	convQs map[string]*actQueue
 	// convHold counts, per conversation core didn't know, the messages
 	// waiting for its lookup (pump_later.go holdForConv)
 	convHoldMu sync.Mutex
@@ -174,10 +181,14 @@ func New(c *slack.Client, s *store.Store) *App {
 	a.bg, a.stopBG = context.WithCancel(context.Background())
 	c.OnAuthFailed(a.onAuthFailed)
 	a.RTM = c.NewRTM()
+	a.firstUp = make(chan struct{})
 	a.RTM.OnState = func(up bool) {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
+		if up {
+			a.firstUpOnce.Do(func() { close(a.firstUp) })
+		}
 		// a slow connect's count moves before the lists hear of it: the
 		// ones on screen load again at the event, and read Slack again
 		// (history_catchup.go)
@@ -791,7 +802,21 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.evictLoop(a.bg)             // Slack's message cache budget (evict.go)
 	go a.codeChannelCloserLoop(a.bg) // code_channels_auto_close (codechannel_close.go)
 	go a.pump()
-	go a.prefetch(a.bg)
+	// with realtime on, the prefetch starts once the socket is up: a page
+	// read before its first hello is from before the connect, read again
+	// when shown (history_catchup.go), and what comes after it the socket
+	// brings
+	go func() {
+		if a.Realtime() {
+			select {
+			case <-a.firstUp:
+			case <-time.After(15 * time.Second):
+			case <-a.bg.Done():
+				return
+			}
+		}
+		a.prefetch(a.bg)
+	}()
 	go a.resolveLoop(a.bg) // unresolved channel/bot names
 	go a.memberLoop(a.bg)  // members lookups missed (members.go)
 	go a.membersLoop(a.bg) // the members cache's pass (members.go)
@@ -924,7 +949,7 @@ func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 		return
 	}
 	done := make(chan struct{})
-	var mine []string
+	var mine, waited []string
 	var others []chan struct{}
 	a.usersOutMu.Lock()
 	if a.usersOut == nil {
@@ -933,6 +958,7 @@ func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 	for _, id := range miss {
 		if c, ok := a.usersOut[id]; ok {
 			others = append(others, c)
+			waited = append(waited, id)
 			continue
 		}
 		a.usersOut[id] = done
@@ -955,12 +981,21 @@ func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 		a.usersOutMu.Unlock()
 		close(done)
 	}
+	if len(others) == 0 {
+		return
+	}
 	for _, c := range others {
 		select {
 		case <-c:
 		case <-ctx.Done():
 			return
 		}
+	}
+	// the shared fetch can end without a member (its caller's deadline
+	// cancelled it, the request failed): what is still missing is asked for
+	// again, under this call's own deadline
+	if again := a.S.MissingUsers(waited); len(again) > 0 && ctx.Err() == nil {
+		a.EnsureUsers(ctx, again)
 	}
 }
 
@@ -1052,7 +1087,7 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// (store/live.go), and so do the processed files the window has of
 	// the page's stubs (keepPageFiles)
 	a.keepPageFiles(ch, p.Messages)
-	a.S.SetLatestSince(ch, p.Messages, p.HasMore, live, a.pendingIn(ch, ""))
+	a.S.SetLatestSince(ch, p.Messages, p.HasMore, store.LatestOpts{Since: live, Pending: a.pendingCopies(ch, ""), GapSeq: a.gapSeqNow()})
 	a.noteWindowRead(ch, rm, known.Latest)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)

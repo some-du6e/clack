@@ -164,6 +164,7 @@ func (a *App) socketConnected(fast bool) {
 	if fast {
 		return
 	}
+	a.noteSlowConnect() // what the socket brings from now on may be past a gap (history_catchup.go)
 	a.slowConnectionCount().Add(1)
 	v, ok := pinsTabs.Load(a)
 	if !ok {

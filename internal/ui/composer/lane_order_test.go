@@ -180,13 +180,17 @@ func TestTypingGoesOutBeforeTheMessage(t *testing.T) {
 	t.Cleanup(func() { typingNative = old })
 	api := coreAPI{c.api.a}
 	sendTyping(api, tChGen, "") // warm
+	waitFor(t, 10*time.Second, "the warm typing report", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(typed) > 0
+	})
 	mu.Lock()
 	typed = nil
 	mu.Unlock()
 	posts := len(fs.called("chat.postMessage"))
 	jsBacklog(rt, 400*time.Millisecond)
-	go sendTyping(api, tChGen, "") // the first keystroke (composer.go's)
-	time.Sleep(50 * time.Millisecond)
+	startTyping(api, tChGen, "") // the first keystroke, as composer.go starts it on the UI goroutine, then Enter at once
 	d := NewDoc()
 	d.Insert(0, "ok", Attr{})
 	c.ed.SetDoc(d)

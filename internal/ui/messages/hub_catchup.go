@@ -56,29 +56,29 @@ func (hb *hub) catchUp() bool {
 	return behind
 }
 
-// historyChanged is core's history_stale and history_purged: the counts
-// said ch's history changed in a way the socket never told
-// (core/history_catchup.go). Its models load again, the lists on screen
-// at the next frame and the others when next shown, and core's History
-// and Replies read Slack for them. After a purge a list on screen takes
-// the newest page whole at that load (its older messages go too, as
-// Slack's purge drops them) while it keeps drawing what it has until
-// then; a model not on screen starts over. It reports whether a list on
-// screen loads.
+// historyChanged is core's history_stale, history_purged and
+// history_caught_up (core/history_catchup.go): the counts said ch's
+// history changed in a way the socket never told, or a background
+// catch-up landed. Its models load again, the lists on screen at the next
+// frame and the others when next shown. A purge starts a model not on
+// screen over; one on screen keeps drawing what it has until its load
+// lands, and takes the page whole then (its window's Epoch changed:
+// takeNewest). A caught-up thread names its thread (ThreadTS); a stale
+// mark or a purge covers the channel's threads too. It reports whether a
+// list on screen loads.
 func (hb *hub) historyChanged(ev core.Event) bool {
 	purge := ev.Type == "history_purged"
+	threads := ev.Type != "history_caught_up"
 	hb.mu.Lock()
 	var ms []*model
 	var shown []bool
 	on := func(m *model) bool { return !hb.frame.IsZero() && m.drawn.Equal(hb.frame) }
-	if m := hb.chans[ev.Channel]; m != nil {
+	if m := hb.chans[ev.Channel]; m != nil && ev.ThreadTS == "" {
 		ms, shown = append(ms, m), append(shown, on(m))
 	}
-	if purge {
-		for _, m := range hb.thread {
-			if m.ch == ev.Channel {
-				ms, shown = append(ms, m), append(shown, on(m))
-			}
+	for _, m := range hb.thread {
+		if m.ch == ev.Channel && (threads || m.threadTS == ev.ThreadTS && ev.ThreadTS != "") {
+			ms, shown = append(ms, m), append(shown, on(m))
 		}
 	}
 	hb.mu.Unlock()
@@ -90,15 +90,12 @@ func (hb *hub) historyChanged(ev core.Event) bool {
 			m.evict("")
 		case !shown[i]:
 			m.fetched = time.Time{}
+		case m.loading:
+			m.again = true // its answer was read before the change (afterLoad)
 		default:
-			m.purged = m.purged || purge && m.threadTS == ""
-			if m.loading {
-				m.again = true // its answer was read before the change (afterLoad)
-			} else {
-				m.fetched = time.Time{}
-				m.rev++
-				redraw = true
-			}
+			m.fetched = time.Time{}
+			m.rev++
+			redraw = true
 		}
 		m.mu.Unlock()
 	}
@@ -106,14 +103,23 @@ func (hb *hub) historyChanged(ev core.Event) bool {
 }
 
 // takeNewest puts a History answer into a channel model: merged over the
-// newest messages it has, or the whole list after a purge (historyChanged)
-// once a load read after it lands. The caller holds m.mu.
+// newest messages it has while core's window is the same one (its Epoch),
+// or the whole list once it started over (a newest page that didn't reach
+// what the window had: a gap of more than a page, a purge), as Slack
+// renders the newest slice and loads back from its start. The caller holds
+// m.mu.
 func (m *model) takeNewest(p core.Page) {
-	if m.purged && !m.again {
-		m.purged = false
+	if m.loaded && p.Epoch != m.epoch {
 		m.setAll(p.Messages)
 		m.hasMore = p.HasMore
-		return
+	} else {
+		m.mergeNewest(p.Messages, p.HasMore)
 	}
-	m.mergeNewest(p.Messages, p.HasMore)
+	m.epoch = p.Epoch
 }
+
+// local reports whether msg is a copy no history page holds: the viewer's
+// send Slack hasn't confirmed (pending or failed), an ephemeral message.
+// Where a page starts, and where the next older page reads from, go by
+// the others.
+func local(msg *core.Message) bool { return msg.Pending || msg.Failed || msg.Ephemeral }

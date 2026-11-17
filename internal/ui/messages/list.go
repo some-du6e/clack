@@ -928,28 +928,30 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 		s.reactNow(h, app, key, name, add, self)
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		// Slack: the reaction button dispatches changeReactionFromUserAction,
-		// whose native submits submitAddOrRemoveReaction (plugins may wrap
-		// either; with none this is just core.React).
-		_, err := taut.Dispatch(ctx, tautOf(), "changeReactionFromUserAction", rxnUserArgs{Key: key, Name: name, Add: &add},
-			func(ctx context.Context, a rxnUserArgs) (any, error) {
-				on := !s.hasOwnReaction(a.Key, a.Name)
-				if a.Add != nil {
-					on = *a.Add
-				}
-				if on && !a.SkipFrecencyRecord {
-					// recordEmojiFrecencyEvent {emojiName, text: ""}
-					app.RecordEmojiFrecency(a.Name, "")
-				}
-				return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
-			})
-		if err != nil {
-			h.Toast("Couldn't update reaction")
-		}
-	}()
+	// Slack: the reaction button dispatches changeReactionFromUserAction,
+	// whose native submits submitAddOrRemoveReaction (plugins may wrap
+	// either; with none this is just core.React). The click's: its JS
+	// call is queued now, on the UI goroutine, on the user's lane
+	// (UserAction, DispatchThen), so a plugin click after it can't go
+	// ahead (OwlMode reads its mode in the reaction's patch).
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 20*time.Second)
+	taut.DispatchThen(ctx, tautOf(), "changeReactionFromUserAction", rxnUserArgs{Key: key, Name: name, Add: &add},
+		func(ctx context.Context, a rxnUserArgs) (any, error) {
+			on := !s.hasOwnReaction(a.Key, a.Name)
+			if a.Add != nil {
+				on = *a.Add
+			}
+			if on && !a.SkipFrecencyRecord {
+				// recordEmojiFrecencyEvent {emojiName, text: ""}
+				app.RecordEmojiFrecency(a.Name, "")
+			}
+			return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
+		}, func(_ any, err error) {
+			cancel()
+			if err != nil {
+				h.Toast("Couldn't update reaction")
+			}
+		})
 }
 
 // reactNow is a pill's click with neither reaction thunk wrapped:

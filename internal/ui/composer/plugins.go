@@ -81,17 +81,17 @@ func (c *Composer) typingStopped() {
 	}
 	c.typingOn = false
 	if t := currentTaut(); t.ThunkPatched(thTypingEnded) {
-		api, ch, ts := c.api, c.ch, c.ts
-		go sendTypingEnded(t, api, ch, ts)
+		sendTypingEnded(t, c.api, c.ch, c.ts)
 	}
 }
 
+// sendTypingEnded is currentUserEndedTyping, queued now, in order with the
+// keystrokes and the send (sendTyping's rule; UI goroutine).
 func sendTypingEnded(t *taut.Taut, api coreAPI, ch, ts string) {
-	// in order with the keystrokes and the send (sendTyping)
-	_, _ = taut.Dispatch(taut.UserAction(context.Background()), t, thTypingEnded, typingArgs{ChannelID: ch, ThreadTs: ts},
+	taut.DispatchThen(taut.UserAction(context.Background()), t, thTypingEnded, typingArgs{ChannelID: ch, ThreadTs: ts},
 		func(_ context.Context, a typingArgs) (any, error) {
 			return nil, typingEndedNative(api, a.ChannelID, a.ThreadTs)
-		})
+		}, nil)
 }
 
 // typingEndedNative is currentUserEndedTyping's native: Slack's realtime

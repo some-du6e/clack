@@ -26,8 +26,9 @@ import (
 
 type pendingSend struct {
 	opts      SendOpts
-	ts        string // local ts of the pending copy
-	realTS    string // set once confirmed
+	ts        string        // local ts of the pending copy
+	local     slack.Message // that copy, as put in (a purge drops the window: the next read puts it back)
+	realTS    string        // set once confirmed
 	failed    bool
 	confirmed bool
 	// files: a file message's placeholder (Upload): never Failed (Slack
@@ -108,6 +109,7 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 	p := &pendingSend{opts: o, ts: a.pendingTS(o.Channel, o.ThreadTS)}
 	local := slack.Message{Type: "message", TS: p.ts, User: a.S.SelfID(), Text: o.Text, ThreadTS: o.ThreadTS,
 		ClientMsgID: cid, Blocks: o.Blocks, ReplyBroadcast: o.Broadcast && o.ThreadTS != ""}
+	p.local = local
 	a.mu.Lock()
 	a.pending[cid] = p
 	a.mu.Unlock()
