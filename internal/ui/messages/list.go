@@ -1682,6 +1682,7 @@ func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int
 	bs := gtx.Constraints.Max.X
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: image.Pt(bs, bs)}
+		pointerCursor(gtx, rr)
 		hov := btn.Hovered()
 		move, paint := s.tilt.step(gtx, &s.tilt.tb[i], hov || gtx.Focused(btn), hov, tiltDur)
 		if paint > 0 { // from transparent: the card's colour

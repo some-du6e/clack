@@ -116,6 +116,7 @@ func (s *listState) quickButton(gtx layout.Context, i int) layout.Dimensions {
 	bs := gtx.Constraints.Max.X
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: image.Pt(bs, bs)}
+		pointerCursor(gtx, rr)
 		hov := btn.Hovered()
 		// the emoji is the button's <img>: scale(1.2) rotate(4deg) over
 		// 80 ms; the plain button's background has no transition
