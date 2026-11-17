@@ -605,10 +605,25 @@ function waitForThunkCreator(name) {
     w.add(resolve)
   })
 }
-/** waitForThunkCreator that rejects with `message` after `ms` and drops its waiter (Slick gives up after 30 s; Taut waits) */
+/**
+ * every thunk Clack defines is defined once T.init has run (its natives,
+ * from go('thunkNames')): Slack loads thunks with its chunks, Clack never
+ * defines one later
+ */
+let thunksComplete = false
+T.thunksDefined = () => {
+  thunksComplete = true
+}
+/**
+ * waitForThunkCreator that rejects with `message` after `ms` and drops its
+ * waiter (Slick gives up after 30 s; Taut waits). A name Clack doesn't
+ * define rejects at once: no chunk will bring it, so the wait could only
+ * end in the same error (ChatTabs' tab bar sat locked for the 30 s).
+ */
 function waitForThunkWithin(name, ms, message) {
   const known = thunkCreators.get(name)
   if (known) return Promise.resolve(known)
+  if (thunksComplete) return Promise.reject(new Error(message))
   return new Promise((resolve, reject) => {
     let w = thunkWaiters.get(name)
     if (!w) thunkWaiters.set(name, (w = new Set()))

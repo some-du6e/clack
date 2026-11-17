@@ -518,7 +518,32 @@ T.callHostFn = (id, args) => {
   if (events) return T.eventAnswer(events)
   return Promise.resolve(r).then(encode)
 }
+/**
+ * Go → JS: calls a function prop the way Slack calls a handler whose
+ * return value decides what runs next (MAMenu's dispatchMessageAction:
+ * `onSelectAction(…) || native(…)`): whether it returned something truthy,
+ * right away (a returned Promise is truthy and isn't awaited), or threw
+ * (then nothing else runs, as when Slack's handler throws)
+ */
+function truthyCall(fn, args) {
+  if (typeof fn !== 'function') return { gone: true } // released with its tree: no handler to decide
+  const [a] = T.decodeArgs(args)
+  try {
+    return { truthy: !!fn(...a) }
+  } catch (err) {
+    error('a handler threw', err)
+    return { truthy: false, threw: true }
+  }
+}
+T.callHostFnTruthy = (id, args) => truthyCall(typeof host.fnById === 'function' ? host.fnById(id) : null, args)
+T.callFnTruthy = (id, args) => truthyCall(jsFns.get(id), args)
 T.patchedComponents = () => [...patchedNames]
+/** component name → how many patches match it (introspection: which patches a plugin left behind) */
+T.patchCounts = () => {
+  const out = {}
+  for (const name of patchedNames) out[name] = matchers(name).length
+  return out
+}
 
 // ---- lookups (getComponent, lazyComponent, …) ----
 
