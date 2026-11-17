@@ -3,9 +3,11 @@
 package metal
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
+	"math"
 	"unsafe"
 
 	"gioui.org/gpu/internal/driver"
@@ -18,6 +20,8 @@ import (
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <Metal/Metal.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct {
 	void *addr;
@@ -135,6 +139,114 @@ static void renderEncSetVertexBufferOffset(CFTypeRef renderEncRef, NSUInteger id
 	@autoreleasepool {
 		id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)renderEncRef;
 		[enc setVertexBufferOffset:offset atIndex:idx];
+	}
+}
+
+// Clack patch 37: a render pass's commands as the backend recorded them
+// (Backend.rec), run in one cgo call under one autorelease pool instead of
+// one each. Every word is 8 bytes; bytes are padded to 8.
+enum {
+	cmdViewport = 1,
+	cmdPipeline,
+	cmdFragTexture,
+	cmdFragSampler,
+	cmdVertBuffer,
+	cmdVertBufferOffset,
+	cmdFragBuffer,
+	cmdVertBytes,
+	cmdFragBytes,
+	cmdDraw,
+	cmdDrawIndexed,
+};
+
+static uint64_t cmdWord(const uint8_t **p) {
+	uint64_t v;
+	memcpy(&v, *p, 8);
+	*p += 8;
+	return v;
+}
+
+static void renderEncReplay(CFTypeRef renderEncRef, const void *cmds, NSUInteger n) {
+	@autoreleasepool {
+		id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)renderEncRef;
+		const uint8_t *p = (const uint8_t *)cmds;
+		const uint8_t *end = p + n;
+		while (p < end) {
+			uint64_t op = cmdWord(&p);
+			switch (op) {
+			case cmdViewport: {
+				MTLViewport v;
+				memcpy(&v, p, sizeof(v));
+				p += sizeof(v);
+				[enc setViewport:v];
+				break;
+			}
+			case cmdPipeline: {
+				CFTypeRef o = (CFTypeRef)(uintptr_t)cmdWord(&p);
+				[enc setRenderPipelineState:(__bridge id<MTLRenderPipelineState>)o];
+				break;
+			}
+			case cmdFragTexture: {
+				NSUInteger idx = (NSUInteger)cmdWord(&p);
+				CFTypeRef o = (CFTypeRef)(uintptr_t)cmdWord(&p);
+				[enc setFragmentTexture:(__bridge id<MTLTexture>)o atIndex:idx];
+				break;
+			}
+			case cmdFragSampler: {
+				NSUInteger idx = (NSUInteger)cmdWord(&p);
+				CFTypeRef o = (CFTypeRef)(uintptr_t)cmdWord(&p);
+				[enc setFragmentSamplerState:(__bridge id<MTLSamplerState>)o atIndex:idx];
+				break;
+			}
+			case cmdVertBuffer:
+			case cmdFragBuffer: {
+				NSUInteger idx = (NSUInteger)cmdWord(&p);
+				CFTypeRef o = (CFTypeRef)(uintptr_t)cmdWord(&p);
+				NSUInteger off = (NSUInteger)cmdWord(&p);
+				if (op == cmdVertBuffer) {
+					[enc setVertexBuffer:(__bridge id<MTLBuffer>)o offset:off atIndex:idx];
+				} else {
+					[enc setFragmentBuffer:(__bridge id<MTLBuffer>)o offset:off atIndex:idx];
+				}
+				break;
+			}
+			case cmdVertBufferOffset: {
+				NSUInteger idx = (NSUInteger)cmdWord(&p);
+				NSUInteger off = (NSUInteger)cmdWord(&p);
+				[enc setVertexBufferOffset:off atIndex:idx];
+				break;
+			}
+			case cmdVertBytes:
+			case cmdFragBytes: {
+				NSUInteger idx = (NSUInteger)cmdWord(&p);
+				NSUInteger len = (NSUInteger)cmdWord(&p);
+				if (op == cmdVertBytes) {
+					[enc setVertexBytes:p length:len atIndex:idx];
+				} else {
+					[enc setFragmentBytes:p length:len atIndex:idx];
+				}
+				p += (len + 7) & ~(NSUInteger)7;
+				break;
+			}
+			case cmdDraw: {
+				MTLPrimitiveType t = (MTLPrimitiveType)cmdWord(&p);
+				NSUInteger start = (NSUInteger)cmdWord(&p);
+				NSUInteger count = (NSUInteger)cmdWord(&p);
+				[enc drawPrimitives:t vertexStart:start vertexCount:count];
+				break;
+			}
+			case cmdDrawIndexed: {
+				MTLPrimitiveType t = (MTLPrimitiveType)cmdWord(&p);
+				NSUInteger count = (NSUInteger)cmdWord(&p);
+				CFTypeRef o = (CFTypeRef)(uintptr_t)cmdWord(&p);
+				NSUInteger off = (NSUInteger)cmdWord(&p);
+				[enc drawIndexedPrimitives:t indexCount:count indexType:MTLIndexTypeUInt16 indexBuffer:(__bridge id<MTLBuffer>)o indexBufferOffset:off];
+				break;
+			}
+			default:
+				abort();
+			}
+		}
 	}
 }
 
@@ -458,6 +570,64 @@ type Backend struct {
 	// Clack patch 36: the cgo calls made into Metal, and the ones enc
 	// left out.
 	calls driver.Calls
+	// rec is the open render pass's commands while batch is on (Clack
+	// patch 37, driver.ClackBatchCommands): run in one cgo call
+	// (renderEncReplay) when the pass ends.
+	rec   []byte
+	batch bool
+}
+
+// The render commands' opcodes, as renderEncReplay's enum.
+const (
+	cmdViewport = 1 + iota
+	cmdPipeline
+	cmdFragTexture
+	cmdFragSampler
+	cmdVertBuffer
+	cmdVertBufferOffset
+	cmdFragBuffer
+	cmdVertBytes
+	cmdFragBytes
+	cmdDraw
+	cmdDrawIndexed
+)
+
+// recMax is how big rec may grow before it is run, mid-pass.
+const recMax = 1 << 20
+
+// record adds a render command (op and its words) to rec.
+func (b *Backend) record(op uint64, words ...uint64) {
+	b.rec = binary.NativeEndian.AppendUint64(b.rec, op)
+	for _, w := range words {
+		b.rec = binary.NativeEndian.AppendUint64(b.rec, w)
+	}
+	if len(b.rec) >= recMax {
+		b.runRecorded()
+	}
+}
+
+// recordBytes adds a command sending data to a stage's buffer index.
+func (b *Backend) recordBytes(op uint64, index int, data []byte) {
+	b.rec = binary.NativeEndian.AppendUint64(b.rec, op)
+	b.rec = binary.NativeEndian.AppendUint64(b.rec, uint64(index))
+	b.rec = binary.NativeEndian.AppendUint64(b.rec, uint64(len(data)))
+	b.rec = append(b.rec, data...)
+	for len(b.rec)%8 != 0 {
+		b.rec = append(b.rec, 0)
+	}
+	if len(b.rec) >= recMax {
+		b.runRecorded()
+	}
+}
+
+// runRecorded runs the recorded commands on the render encoder.
+func (b *Backend) runRecorded() {
+	if len(b.rec) == 0 {
+		return
+	}
+	C.renderEncReplay(b.renderEnc, unsafe.Pointer(unsafe.SliceData(b.rec)), C.NSUInteger(len(b.rec)))
+	b.calls.Crossings++
+	b.rec = b.rec[:0]
 }
 
 // encState is what the open render encoder was last given (Clack patch
@@ -598,7 +768,7 @@ func newMetalDevice(api driver.Metal) (driver.Device, error) {
 func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport image.Point) driver.Texture {
 	if b.lastCmdBuffer != 0 {
 		C.cmdBufferWaitUntilCompleted(b.lastCmdBuffer)
-		b.calls.API++
+		b.apiCall()
 		b.stagingOff = 0
 	}
 	if target == nil {
@@ -622,7 +792,7 @@ func (b *Backend) startBlit() C.CFTypeRef {
 	b.endEncoder()
 	b.ensureCmdBuffer()
 	b.blitEnc = C.cmdBufferBlitEncoder(b.cmdBuffer)
-	b.calls.API++
+	b.apiCall()
 	if b.blitEnc == 0 {
 		panic("metal: [MTLCommandBuffer blitCommandEncoder:] failed")
 	}
@@ -664,14 +834,14 @@ func (b *Backend) endCmdBuffer(wait bool) {
 		return
 	}
 	C.cmdBufferCommit(b.cmdBuffer)
-	b.calls.API++
+	b.apiCall()
 	if wait {
 		C.cmdBufferWaitUntilCompleted(b.cmdBuffer)
-		b.calls.API++
+		b.apiCall()
 	}
 	if b.lastCmdBuffer != 0 {
 		C.CFRelease(b.lastCmdBuffer)
-		b.calls.API++
+		b.apiCall()
 	}
 	b.lastCmdBuffer = b.cmdBuffer
 	b.cmdBuffer = 0
@@ -725,7 +895,7 @@ func (b *Backend) sampler(min, mag C.MTLSamplerMinMagFilter, mip C.MTLSamplerMip
 		return s
 	}
 	s := C.newSampler(b.dev, min, mag, mip)
-	b.calls.API++
+	b.apiCall()
 	if s == 0 {
 		return 0
 	}
@@ -756,7 +926,7 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 		mipmapped = 1
 	}
 	tex := C.newTexture(b.dev, C.NSUInteger(width), C.NSUInteger(height), mformat, usage, mipmapped)
-	b.calls.API++
+	b.apiCall()
 	if tex == 0 {
 		return nil, errors.New("metal: [MTLDevice newTextureWithDescriptor:] failed")
 	}
@@ -954,8 +1124,14 @@ func (b *Backend) Viewport(x, y, width, height int) {
 		return
 	}
 	b.enc.viewport, b.enc.hasViewport = v, true
-	C.renderEncViewport(enc, v)
 	b.calls.API++
+	if b.batch {
+		f := math.Float64bits
+		b.record(cmdViewport, f(float64(v.originX)), f(float64(v.originY)), f(float64(v.width)), f(float64(v.height)), f(float64(v.znear)), f(float64(v.zfar)))
+		return
+	}
+	C.renderEncViewport(enc, v)
+	b.calls.Crossings++
 }
 
 func (b *Backend) DrawArrays(off, count int) {
@@ -963,8 +1139,13 @@ func (b *Backend) DrawArrays(off, count int) {
 	if enc == 0 {
 		panic("no active render pass")
 	}
-	C.renderEncDrawPrimitives(enc, b.topology, C.NSUInteger(off), C.NSUInteger(count))
 	b.calls.API++
+	if b.batch {
+		b.record(cmdDraw, uint64(b.topology), uint64(off), uint64(count))
+		return
+	}
+	C.renderEncDrawPrimitives(enc, b.topology, C.NSUInteger(off), C.NSUInteger(count))
+	b.calls.Crossings++
 }
 
 func (b *Backend) DrawElements(off, count int) {
@@ -972,8 +1153,13 @@ func (b *Backend) DrawElements(off, count int) {
 	if enc == 0 {
 		panic("no active render pass")
 	}
-	C.renderEncDrawIndexedPrimitives(enc, b.topology, b.indexBuf.buffer, C.NSUInteger(off), C.NSUInteger(count))
 	b.calls.API++
+	if b.batch {
+		b.record(cmdDrawIndexed, uint64(b.topology), uint64(count), uint64(b.indexBuf.buffer), uint64(off))
+		return
+	}
+	C.renderEncDrawIndexedPrimitives(enc, b.topology, b.indexBuf.buffer, C.NSUInteger(off), C.NSUInteger(count))
+	b.calls.Crossings++
 }
 
 func primitiveFor(mode driver.Topology) C.MTLPrimitiveType {
@@ -1075,10 +1261,10 @@ func (t *Texture) Upload(offset, size image.Point, pixels []byte, stride int) {
 		depth:  1,
 	}
 	C.blitEncCopyBufferToTexture(enc, buf, t.texture, C.NSUInteger(off), C.NSUInteger(dstStride), C.NSUInteger(len(store)), msize, orig)
-	t.backend.calls.API++
+	t.backend.apiCall()
 	if t.mipmap {
 		C.blitEncGenerateMipmapsForTexture(enc, t.texture)
-		t.backend.calls.API++
+		t.backend.apiCall()
 	}
 }
 
@@ -1105,15 +1291,25 @@ func (b *Backend) BindTexture(unit int, tex driver.Texture) {
 			b.calls.Skipped++
 		} else {
 			b.enc.tex[unit] = t.texture
-			C.renderEncSetFragmentTexture(enc, C.NSUInteger(unit), t.texture)
 			b.calls.API++
+			if b.batch {
+				b.record(cmdFragTexture, uint64(unit), uint64(t.texture))
+			} else {
+				C.renderEncSetFragmentTexture(enc, C.NSUInteger(unit), t.texture)
+				b.calls.Crossings++
+			}
 		}
 		if b.enc.sampler[unit] == t.sampler {
 			b.calls.Skipped++
 		} else {
 			b.enc.sampler[unit] = t.sampler
-			C.renderEncSetFragmentSamplerState(enc, C.NSUInteger(unit), t.sampler)
 			b.calls.API++
+			if b.batch {
+				b.record(cmdFragSampler, uint64(unit), uint64(t.sampler))
+			} else {
+				C.renderEncSetFragmentSamplerState(enc, C.NSUInteger(unit), t.sampler)
+				b.calls.Crossings++
+			}
 		}
 	} else if enc := b.computeEnc; enc != 0 {
 		C.computeEncSetTexture(enc, C.NSUInteger(unit), t.texture)
@@ -1127,7 +1323,7 @@ func (b *Backend) ensureCmdBuffer() {
 		return
 	}
 	b.cmdBuffer = C.queueNewBuffer(b.queue)
-	b.calls.API++
+	b.apiCall()
 	if b.cmdBuffer == 0 {
 		panic("metal: [MTLCommandQueue cmdBuffer] failed")
 	}
@@ -1145,8 +1341,13 @@ func (b *Backend) BindPipeline(pipe driver.Pipeline) {
 		return
 	}
 	b.enc.pipeline = p
-	C.renderEncSetRenderPipelineState(enc, p.pipeline)
 	b.calls.API++
+	if b.batch {
+		b.record(cmdPipeline, uint64(p.pipeline))
+		return
+	}
+	C.renderEncSetRenderPipelineState(enc, p.pipeline)
+	b.calls.Crossings++
 }
 
 func (b *Backend) BindProgram(prog driver.Program) {
@@ -1203,8 +1404,13 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 			if u := &b.enc.vertUniforms; u.set && u.buf == bf.buffer {
 				b.calls.Skipped++
 			} else {
-				C.renderEncSetVertexBuffer(enc, bf.buffer, uniformBufferIndex, 0)
 				b.calls.API++
+				if b.batch {
+					b.record(cmdVertBuffer, uniformBufferIndex, uint64(bf.buffer), 0)
+				} else {
+					C.renderEncSetVertexBuffer(enc, bf.buffer, uniformBufferIndex, 0)
+					b.calls.Crossings++
+				}
 				u.buf, u.set = bf.buffer, true
 			}
 		}
@@ -1212,8 +1418,13 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 			if u := &b.enc.fragUniforms; u.set && u.buf == bf.buffer {
 				b.calls.Skipped++
 			} else {
-				C.renderEncSetFragmentBuffer(enc, bf.buffer, uniformBufferIndex, 0)
 				b.calls.API++
+				if b.batch {
+					b.record(cmdFragBuffer, uniformBufferIndex, uint64(bf.buffer), 0)
+				} else {
+					C.renderEncSetFragmentBuffer(enc, bf.buffer, uniformBufferIndex, 0)
+					b.calls.Crossings++
+				}
 				u.buf, u.set = bf.buffer, true
 			}
 		}
@@ -1223,8 +1434,13 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 			if p != nil && b.enc.vertUniforms.same(data, p.vertUniforms) {
 				b.calls.Skipped++
 			} else {
-				C.renderEncSetVertexBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
 				b.calls.API++
+				if b.batch {
+					b.recordBytes(cmdVertBytes, uniformBufferIndex, data)
+				} else {
+					C.renderEncSetVertexBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
+					b.calls.Crossings++
+				}
 				b.enc.vertUniforms.sent(data)
 			}
 		} else {
@@ -1234,8 +1450,13 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 			if p != nil && b.enc.fragUniforms.same(data, p.fragUniforms) {
 				b.calls.Skipped++
 			} else {
-				C.renderEncSetFragmentBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
 				b.calls.API++
+				if b.batch {
+					b.recordBytes(cmdFragBytes, uniformBufferIndex, data)
+				} else {
+					C.renderEncSetFragmentBytes(enc, unsafe.Pointer(unsafe.SliceData(bf.store)), C.NSUInteger(bf.size), uniformBufferIndex)
+					b.calls.Crossings++
+				}
 				b.enc.fragUniforms.sent(data)
 			}
 		} else {
@@ -1259,11 +1480,21 @@ func (b *Backend) BindVertexBuffer(buf driver.Buffer, offset int) {
 		case v.buf == bf && v.off == offset:
 			b.calls.Skipped++
 		case v.buf == bf:
-			C.renderEncSetVertexBufferOffset(enc, attributeBufferIndex, C.NSUInteger(offset))
 			b.calls.API++
+			if b.batch {
+				b.record(cmdVertBufferOffset, attributeBufferIndex, uint64(offset))
+			} else {
+				C.renderEncSetVertexBufferOffset(enc, attributeBufferIndex, C.NSUInteger(offset))
+				b.calls.Crossings++
+			}
 		default:
-			C.renderEncSetVertexBuffer(enc, bf.buffer, attributeBufferIndex, C.NSUInteger(offset))
 			b.calls.API++
+			if b.batch {
+				b.record(cmdVertBuffer, attributeBufferIndex, uint64(bf.buffer), uint64(offset))
+			} else {
+				C.renderEncSetVertexBuffer(enc, bf.buffer, attributeBufferIndex, C.NSUInteger(offset))
+				b.calls.Crossings++
+			}
 		}
 		v.buf, v.off = bf, offset
 	} else if n := bf.size - offset; n > 0 {
@@ -1271,8 +1502,13 @@ func (b *Backend) BindVertexBuffer(buf driver.Buffer, offset int) {
 			b.calls.Skipped++
 			return
 		}
-		C.renderEncSetVertexBytes(enc, unsafe.Pointer(&bf.store[offset]), C.NSUInteger(n), attributeBufferIndex)
 		b.calls.API++
+		if b.batch {
+			b.recordBytes(cmdVertBytes, attributeBufferIndex, bf.store[offset:bf.size])
+		} else {
+			C.renderEncSetVertexBytes(enc, unsafe.Pointer(&bf.store[offset]), C.NSUInteger(n), attributeBufferIndex)
+			b.calls.Crossings++
+		}
 		v.buf, v.off, v.gen = bf, offset, bf.gen
 	}
 }
@@ -1308,7 +1544,7 @@ func (b *Buffer) Upload(data []byte) {
 	copy(store, data)
 	enc := b.backend.startBlit()
 	C.blitEncCopyBufferToBuffer(enc, buf, b.buffer, C.NSUInteger(off), 0, C.NSUInteger(len(store)))
-	b.backend.calls.API++
+	b.backend.apiCall()
 }
 
 func bufferStore(buf C.CFTypeRef) []byte {
@@ -1375,23 +1611,35 @@ func (b *Backend) BeginRenderPass(tex driver.Texture, d driver.LoadDesc) {
 		act = C.MTLLoadActionDontCare
 	}
 	b.renderEnc = C.cmdBufferRenderEncoder(b.cmdBuffer, f.texture, act, C.float(col.R), C.float(col.G), C.float(col.B), C.float(col.A))
-	b.calls.API++
+	b.apiCall()
 	if b.renderEnc == 0 {
 		panic("metal: [MTLCommandBuffer renderCommandEncoderWithDescriptor:] failed")
 	}
-	// a new encoder has nothing bound (Clack patch 37)
+	// a new encoder has nothing bound; its commands are recorded and run
+	// in one cgo call when it ends (Clack patch 37)
 	b.enc.reset()
+	b.batch = driver.ClackBatchCommands
+	b.rec = b.rec[:0]
 }
 
 func (b *Backend) EndRenderPass() {
 	if b.renderEnc == 0 {
 		panic("no active render pass")
 	}
+	b.runRecorded()
 	C.renderEncEnd(b.renderEnc)
 	C.CFRelease(b.renderEnc)
-	b.calls.API += 2
+	b.apiCall()
+	b.apiCall()
 	b.renderEnc = 0
 	b.enc.reset()
+	b.batch = false
+}
+
+// apiCall counts a call into Metal that is a cgo call of its own.
+func (b *Backend) apiCall() {
+	b.calls.API++
+	b.calls.Crossings++
 }
 
 func (e *encState) reset() {
@@ -1410,7 +1658,8 @@ func (b *Backend) endEncoder() {
 	if b.blitEnc != 0 {
 		C.blitEncEnd(b.blitEnc)
 		C.CFRelease(b.blitEnc)
-		b.calls.API += 2
+		b.apiCall()
+		b.apiCall()
 		b.blitEnc = 0
 	}
 }

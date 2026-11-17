@@ -134,14 +134,15 @@ type perfPass struct {
 	Draws      float64 `json:"draws,omitempty"`
 	APICalls   float64 `json:"api_calls,omitempty"`
 	APISkipped float64 `json:"api_skipped,omitempty"`
+	Crossings  float64 `json:"crossings,omitempty"` // calls from Go into C or the system
 	CoverMpx   float64 `json:"cover_mpx,omitempty"`
 	BlitMpx    float64 `json:"blit_mpx,omitempty"`
 }
 
 // perfGPUFrame is what the GPU renderer did for a frame.
 type perfGPUFrame struct {
-	Draws, APICalls, Skipped int64
-	CoverPx, BlitPx          int64
+	Draws, APICalls, Skipped, Crossings int64
+	CoverPx, BlitPx                     int64
 }
 
 // perfGPUStats reads the last frame's from the GPU window; trees with
@@ -482,7 +483,7 @@ func TestPerfPluginScroll(t *testing.T) {
 		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees changed %d (identical %d), renders %d",
 			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.TreesSame, p.Renders)
 		if p.Draws > 0 {
-			t.Logf("pass %-12s per frame: %.0f draw calls, %.0f API calls (%.0f left out), %.2f Mpx covered, %.2f Mpx blitted", p.Name, p.Draws, p.APICalls, p.APISkipped, p.CoverMpx, p.BlitMpx)
+			t.Logf("pass %-12s per frame: %.0f draw calls, %.0f API calls (%.0f left out, %.0f crossings), %.2f Mpx covered, %.2f Mpx blitted", p.Name, p.Draws, p.APICalls, p.APISkipped, p.Crossings, p.CoverMpx, p.BlitMpx)
 		}
 	}
 	if out := os.Getenv("PERF_PLUGIN_OUT"); out != "" {
@@ -713,6 +714,7 @@ func (e *benchEnv) perfGPUScroll(dark bool, n int) perfPass {
 			sum.Draws += f.Draws
 			sum.APICalls += f.APICalls
 			sum.Skipped += f.Skipped
+			sum.Crossings += f.Crossings
 			sum.CoverPx += f.CoverPx
 			sum.BlitPx += f.BlitPx
 			counted++
@@ -728,7 +730,7 @@ func (e *benchEnv) perfGPUScroll(dark bool, n int) perfPass {
 		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6}
 	if counted > 0 {
 		k := float64(counted)
-		p.Draws, p.APICalls, p.APISkipped = math.Round(float64(sum.Draws)/k), math.Round(float64(sum.APICalls)/k), math.Round(float64(sum.Skipped)/k)
+		p.Draws, p.APICalls, p.APISkipped, p.Crossings = math.Round(float64(sum.Draws)/k), math.Round(float64(sum.APICalls)/k), math.Round(float64(sum.Skipped)/k), math.Round(float64(sum.Crossings)/k)
 		p.CoverMpx, p.BlitMpx = float64(sum.CoverPx)/k/1e6, float64(sum.BlitPx)/k/1e6
 	}
 	for _, d := range ds {

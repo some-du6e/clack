@@ -12,6 +12,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/gpu"
+	"gioui.org/gpu/internal/driver"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -205,6 +206,14 @@ func TestClackPlacementNoise(t *testing.T) {
 	t.Logf("  in the interior: %s", diffStats(e, f, inner))
 	t.Logf("  biggest: %s", worstPixels(e, f, all, 6))
 	t.Logf("panel, split fill only (patches 38, 39 off): %s", diffStats(e, f2, all))
+	// Metal's render commands run one at a time instead of batched (patch
+	// 37): the same commands, so the same pixels
+	driver.ClackBatchCommands = false
+	f3, sf3 := shot(panelNew)
+	c3, _ := shot(bands)
+	driver.ClackBatchCommands = true
+	t.Logf("panel, commands one by one instead of batched: %s; %s", diffStats(f, f3, all), statLine(sf3))
+	t.Logf("rings in bands, commands one by one: %s", diffStats(c, c3, all))
 	t.Logf("panel, before: %s", statLine(se))
 	t.Logf("panel, after: %s", statLine(sf))
 
@@ -292,8 +301,8 @@ func absDiff(a, b uint8) int {
 }
 
 func statLine(s gpu.FrameStats) string {
-	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d left out), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
-		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
+	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d left out, %d crossings), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
+		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
 		float64(s.StencilPx)/1e6, float64(s.CoverPx)/1e6, float64(s.BlitPx)/1e6, float64(s.IntersectPx)/1e6, float64(s.ClearPx)/1e6, float64(s.AtlasPx)/1e6)
 }
 

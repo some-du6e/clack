@@ -35,6 +35,7 @@ METRICS = [
     ("draws", "GPU draw calls / frame", ""),
     ("api_calls", "graphics API calls / frame", ""),
     ("api_skipped", "API calls the state cache left out / frame", ""),
+    ("crossings", "calls from Go into C or the system / frame", ""),
     ("cover_mpx", "Mpx covered through a path / frame", "mpx"),
     ("blit_mpx", "Mpx blitted / frame", "mpx"),
 ]

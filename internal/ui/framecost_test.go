@@ -126,8 +126,8 @@ func (e *perfEnv) costFrame(t *testing.T, legacy bool, now time.Time) (*image.RG
 }
 
 func costLine(s gpu.FrameStats) string {
-	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d more without the state cache), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
-		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
+	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d more without the state cache; %d crossings into C or the system), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
+		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
 		float64(s.StencilPx)/1e6, float64(s.CoverPx)/1e6, float64(s.BlitPx)/1e6, float64(s.IntersectPx)/1e6, float64(s.ClearPx)/1e6, float64(s.AtlasPx)/1e6)
 }
 

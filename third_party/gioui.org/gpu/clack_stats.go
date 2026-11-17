@@ -23,10 +23,12 @@ type FrameStats struct {
 	StencilPaths int
 	// Draws are the draw calls, Passes the render passes.
 	Draws, Passes int
-	// APICalls are the calls into the graphics API (cgo calls into Metal,
-	// COM calls into Direct3D 11, calls into OpenGL), Skipped the binds
-	// its state cache left out; both -1 where the backend doesn't count.
-	APICalls, Skipped int64
+	// APICalls are the calls into the graphics API (Metal's render
+	// commands and other calls, COM calls into Direct3D 11, calls into
+	// OpenGL), Skipped the binds its state cache left out, Crossings the
+	// calls from Go into C or the system they took (Metal runs a render
+	// pass's commands in one); all -1 where the backend doesn't count.
+	APICalls, Skipped, Crossings int64
 	// Pixels: StencilPx the stencil fragments (from the quads of each path,
 	// in its stencil region; with ClackStatsDetail only, else -1), CoverPx
 	// the pixels covered through a path, BlitPx the pixels blitted,
@@ -60,7 +62,7 @@ func (g *gpu) ClackStatsDetail(on bool) {
 // statsBegin starts counting a frame.
 func (g *gpu) statsBegin() {
 	r := g.renderer
-	r.stats = FrameStats{StencilPx: -1, APICalls: -1, Skipped: -1}
+	r.stats = FrameStats{StencilPx: -1, APICalls: -1, Skipped: -1, Crossings: -1}
 	if g.drawOps.statsDetail {
 		r.stats.StencilPx = 0
 	}
@@ -75,7 +77,7 @@ func (g *gpu) statsEnd() {
 	st := r.stats
 	if c, ok := g.ctx.(driver.CallCounter); ok {
 		c1 := c.ClackCalls()
-		st.APICalls, st.Skipped = c1.API-r.calls0.API, c1.Skipped-r.calls0.Skipped
+		st.APICalls, st.Skipped, st.Crossings = c1.API-r.calls0.API, c1.Skipped-r.calls0.Skipped, c1.Crossings-r.calls0.Crossings
 	}
 	for _, f := range r.pather.stenciler.fbos.fbos {
 		st.AtlasPx += int64(f.size.X * f.size.Y)

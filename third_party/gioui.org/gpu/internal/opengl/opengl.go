@@ -1018,7 +1018,7 @@ func (b *Backend) BindUniforms(buf driver.Buffer) {
 // ClackCalls implements driver.CallCounter (Clack patch 36): the calls into
 // OpenGL.
 func (b *Backend) ClackCalls() driver.Calls {
-	return driver.Calls{API: b.funcs.Calls, Skipped: b.skipped}
+	return driver.Calls{API: b.funcs.Calls, Skipped: b.skipped, Crossings: b.funcs.Calls}
 }
 
 func (b *Backend) BindProgram(prog driver.Program) {

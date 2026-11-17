@@ -213,7 +213,9 @@ func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport im
 // ClackCalls implements driver.CallCounter (Clack patch 36): the COM
 // calls into the device context.
 func (b *Backend) ClackCalls() driver.Calls {
-	return b.calls
+	c := b.calls
+	c.Crossings = c.API // each a syscall
+	return c
 }
 
 func (b *Backend) CopyTexture(dstTex driver.Texture, dstOrigin image.Point, srcTex driver.Texture, srcRect image.Rectangle) {

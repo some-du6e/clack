@@ -12,7 +12,15 @@ type CallCounter interface {
 	ClackCalls() Calls
 }
 
-// Calls are a device's running counts.
+// Calls are a device's running counts. Crossings are the calls from Go
+// into C (cgo) or the system (syscall) it took: Metal's render commands
+// are batched into one per render pass (Clack patch 37); elsewhere each
+// API call is one.
 type Calls struct {
-	API, Skipped int64
+	API, Skipped, Crossings int64
 }
+
+// ClackBatchCommands makes the Metal backend record a render pass's
+// commands and run them in one cgo call when the pass ends (Clack patch
+// 37). Tests turn it off to compare; set it between frames.
+var ClackBatchCommands = true

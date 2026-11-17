@@ -302,7 +302,7 @@ func costShot(t *testing.T, sz image.Point, ops *op.Ops) (*image.RGBA, gpu.Frame
 }
 
 func costStats(s gpu.FrameStats) string {
-	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d left out), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
-		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
+	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d left out, %d crossings), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
+		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
 		float64(s.StencilPx)/1e6, float64(s.CoverPx)/1e6, float64(s.IntersectPx)/1e6, float64(s.ClearPx)/1e6, float64(s.AtlasPx)/1e6)
 }
