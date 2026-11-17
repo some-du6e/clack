@@ -18,7 +18,11 @@ name: messages-audit-shots
 # the tooltip's delay and fade, frame by frame), drawn by this branch
 # ("after") and by a checkout of ui ("before"), and the pane's
 # UnreadBanner pill (unread_banner_shots_test.go: text and icons centred
-# on Slack's 28px line, light and dark)
+# on Slack's 28px line, light and dark), and a mention pill that wraps
+# with MentionProfiles' picture in it and a rule's background on it
+# (richview and messages pill_wrap_test.go: pill-wrap-*-after.png from this
+# branch, pill-wrap-*-before.png from ui, whose run of the same checks
+# fails)
 # (messages-audit-shots artifact). Nothing here talks to Slack.
 on:
   push:
@@ -37,6 +41,15 @@ on:
       - "internal/ui/richview/tooltip.go"
       - "internal/ui/richview/msgcard.go"
       - "internal/ui/richview/decoration_test.go"
+      - "internal/ui/richview/flow.go"
+      - "internal/ui/richview/comps.go"
+      - "internal/ui/richview/pill_*_test.go"
+      - "internal/ui/richview/paint.go"
+      - "internal/ui/richview/view.go"
+      - "internal/ui/slackc/class.go"
+      - "internal/ui/slackc/paint.go"
+      - "internal/ui/slackc/wrap.go"
+      - "internal/ui/messages/pill_wrap_test.go"
       - "internal/ui/messages/links_shots_test.go"
       - "internal/richtext/msgmention.go"
       - "internal/richtext/canvasslug*.go"
@@ -115,8 +128,8 @@ jobs:
           go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard|TestCanvasSlug|TestListSlug|TestFileChannelSlugs' ./internal/richtext
           go test -count=1 -v -run 'TestMemberName' ./internal/store
           go test -count=1 -v -run 'TestMessageKeepsEditor|TestSavedMeta|TestToggleTodoLikeSlack|TestUserHiddenLikeSlack|TestMentionsViewerDirectly|TestMentionsViewerInReply' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined|TestCanvasSlugClick|TestCanvasAnchorCard|TestCanvasFileCard|TestFileCardSection|TestNewlineGapsLikeSlack|TestNewlineGapShots' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots|TestHiddenSender|TestHiddenMessageMentionContents|TestHiddenSystem|TestHiddenJoinsSummaryLikeSlack|TestTombstoneColumnLikeSlack|TestCanvasLinkShots|TestCanvasFileShots|TestListSlugShots|TestUnknownSenderDrawsBar|TestReactionTipMissingToken|TestMissingMemberShots|TestUnreadBannerShots|TestUnreadBannerLikeSlack|TestLatestMessagesBanner' ./internal/ui/messages
+          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined|TestCanvasSlugClick|TestCanvasAnchorCard|TestCanvasFileCard|TestFileCardSection|TestNewlineGapsLikeSlack|TestNewlineGapShots|TestWrappedPill|TestPillPadding|TestPillPictureSlot|TestPillAfterAndEdges|TestPillEllipsisAfterPicture|TestPillBoundsHoldPictureLine|TestPillPictureInAlignedTable|TestCodeChip|TestColorSwatchAfterValue|TestMissingMemberBarBreaks|TestPillClampOpenEnd|TestTableCellWidthPerLine|TestPillClickRectHoldsPictureLine|TestPillEllipsisDrawsOverPill' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots|TestHiddenSender|TestHiddenMessageMentionContents|TestHiddenSystem|TestHiddenJoinsSummaryLikeSlack|TestTombstoneColumnLikeSlack|TestCanvasLinkShots|TestCanvasFileShots|TestListSlugShots|TestUnknownSenderDrawsBar|TestReactionTipMissingToken|TestMissingMemberShots|TestUnreadBannerShots|TestUnreadBannerLikeSlack|TestLatestMessagesBanner|TestWrappedMentionPictureInRows' ./internal/ui/messages
           # the to-do and reminder rows (gap-w7)
           xvfb-run -a go test -count=1 -v -run 'TestTodoAndReminderLabelsLikeSlack|TestTodoActionClickToasts|TestTodoToastText|TestSaveRowLikeSlack|TestMessageContextMenuThreadAction' ./internal/ui/popups
           # work object cards and their flexpane (docs/MESSAGES-AUDIT.md, Work objects)
@@ -130,6 +143,33 @@ jobs:
           xvfb-run -a go test -count=1 -v -run 'TestCSSTransitionLikeSlack|TestTiltAffine|TestToolbarButtonColorsLikeSlack|TestToolbarHoverLikeSlack|TestToolbarTipTimingLikeSlack|TestToolbarWheelScrollsList|TestToolbarWheelNotchLikeRow|TestPersistActionsWheelScrollsList|TestToolbarHoverShots' ./internal/ui/messages
           cp internal/ui/messages/toolbar_hover_shots_test.go before-ui/internal/ui/messages/
           (cd before-ui && git log -1 --format='before = ui at %H' && TOOLBAR_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestToolbarHoverShots' ./internal/ui/messages)
+          # wrapped mention pills: the same checks and shots on ui, where
+          # they fail (the picture at the line start between the lines, the
+          # pill's box over the space it broke at, round where it broke, no
+          # break before or after the picture, the swatch before its value,
+          # code's border closed where it broke, a clamp's "…" after whole
+          # words only, no break before MissingText's bar, a hovered pill's
+          # text not in the hover color). Until ui has the fix (its
+          # flow keeps pseudo-element places: addPseudoSlot), a ui run that
+          # fails none of them fails this step: the comparison is the
+          # evidence.
+          cp internal/ui/richview/pill_wrap_test.go before-ui/internal/ui/richview/
+          cp internal/ui/messages/pill_wrap_test.go before-ui/internal/ui/messages/
+          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedPill|TestPillPadding|TestCodeChipWrapBorders|TestColorSwatchAfterValue|TestMissingMemberBarBreaks' ./internal/ui/richview > "$MESSAGES_AUDIT_SHOTS_DIR/pill-wrap-before-richview.log" 2>&1) || true
+          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedMentionPictureInRows' ./internal/ui/messages > "$MESSAGES_AUDIT_SHOTS_DIR/pill-wrap-before-messages.log" 2>&1) || true
+          fixed=0
+          grep -q 'func (l \*lay) addPseudoSlot' before-ui/internal/ui/richview/flow.go && fixed=1
+          bad=0
+          for f in "$MESSAGES_AUDIT_SHOTS_DIR"/pill-wrap-before-*.log; do
+            echo "== $f (ui): results, then one report per failing check (numbers folded)"
+            grep -E '^\s*--- (PASS|FAIL)|^(ok|FAIL)\b' "$f" || true
+            grep -E '_test.go:[0-9]+: ' "$f" | grep -v "row's body" | awk '{k=$0; sub(/^[^:]*:[0-9]+: /, "", k); gsub(/[0-9]+(\.[0-9]+)?/, "#", k); if (!seen[k]++) print}' | head -60 || true
+            if [ "$fixed" = 0 ] && ! grep -q -- '--- FAIL' "$f"; then
+              echo "::error::$f: ui passed every copied pill check (or didn't build): the before/after comparison shows nothing"
+              bad=1
+            fi
+          done
+          [ "$bad" = 0 ]
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
