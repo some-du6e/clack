@@ -306,27 +306,26 @@ const menuBase = () => ({ Menu: T.menuApi().Menu, addMessageActions, getMessageA
 
 // ---- settings.panel (src/app/api/settingsTabs.ts pluginPanels) ----
 // A plugin's own React on its Preferences > Slick page, in a "Customize"
-// card after its settings (Slick's settings.tsx PluginDetail). Go learns
-// which plugins have one (slick_panels: id → a number that changes with
-// each new panel, so the page mounts the new one) and mounts
-// __taut.slickPanelElement(id).
+// card after its settings. Slick's PluginDetail calls `panels[id]()` as it
+// renders, so a new panel (a restart, a second settings.panel call) keeps
+// the React state of what it returns, and the panel renders again with
+// the page: when the panels change and when plugins' status or settings
+// change. Go learns which plugins have one (slick_panels) and mounts
+// __taut.slickPanelElement(id) once per plugin, which follows both.
 const pluginPanels = new TA.Store({})
-const panelSerial = new Map()
-let nextPanelSerial = 0
+/** bumps when a plugin starts, stops or applies live settings (what re-renders Slick's PluginDetail) */
+const panelPage = new TA.Store(0)
 let panelsQueued = false
 function tellPanels() {
   if (panelsQueued) return
   panelsQueued = true
   queueMicrotask(() => {
     panelsQueued = false
-    const out = {}
-    for (const id of Object.keys(pluginPanels.get())) out[id] = panelSerial.get(id) ?? 0
-    go('panels', out)
+    go('panels', Object.keys(pluginPanels.get()))
   })
 }
 
 function setPluginPanel(id, render) {
-  panelSerial.set(id, ++nextPanelSerial)
   pluginPanels.update((panels) => ({ ...panels, [id]: render }))
   tellPanels()
   return () => {
@@ -340,14 +339,15 @@ function setPluginPanel(id, render) {
   }
 }
 
-/** the panel plugin `id` set, re-rendered when it sets another */
+/** the panel plugin `id` set, rendered again as Slick's page renders it again */
 function PluginPanel({ id }) {
   const render = pluginPanels.use()[id]
+  panelPage.use()
   return render ? render() : null
 }
 
 /** Go → JS: the element Preferences mounts for plugin id's panel */
-T.slickPanelElement = (id) => (pluginPanels.get()[id] ? G.React.createElement(PluginPanel, { id }) : null)
+T.slickPanelElement = (id) => G.React.createElement(PluginPanel, { id })
 
 // onMessageSendDelta: Slack hands the composer's Delta to the send; Clack's
 // composer sends Block Kit, so the transforms run over the Delta of the

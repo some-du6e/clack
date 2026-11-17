@@ -235,6 +235,7 @@ S.start = async (id, settings) => {
     }
     entry.running = true
     console.log(`[slick] started ${id}`)
+    panelPage.update((n) => n + 1)
     return null
   } catch (err) {
     console.error(`[slick] ${id} failed to start:`, err)
@@ -254,6 +255,7 @@ S.stop = async (id) => {
   entry.scope = null
   entry.running = false
   scope?.dispose()
+  panelPage.update((n) => n + 1)
   if (!instance) return null
   try {
     await withTimeout(id, 'stop', Promise.resolve().then(() => instance.stop()))
@@ -277,6 +279,7 @@ S.live = async (id, settings, changed) => {
   } catch (err) {
     console.error(`[slick] ${id} onSettingsChange failed:`, err)
   }
+  panelPage.update((n) => n + 1)
   mainSettingsChanged(id, settings)
   return null
 }

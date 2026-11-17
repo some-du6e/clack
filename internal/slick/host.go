@@ -91,12 +91,15 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		return true, nil
 	})
 
-	// api.settings.panel: the plugins with a panel on their Preferences
-	// page, id → a serial that changes with each new panel
+	// api.settings.panel: the plugins with a panel on their Preferences page
 	sync("panels", func(a []json.RawMessage) (any, error) {
-		m := map[string]int{}
+		var ids []string
 		if len(a) > 0 {
-			_ = json.Unmarshal(a[0], &m)
+			_ = json.Unmarshal(a[0], &ids)
+		}
+		m := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			m[id] = true
 		}
 		s.setPanels(m)
 		return nil, nil

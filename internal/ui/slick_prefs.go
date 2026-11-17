@@ -899,6 +899,9 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 		}
 		p.notice(f, prob, isErr)
 	}
+	if pl.MainError != "" {
+		p.notice(f, "Its privileged half didn't start, so what it does there doesn't happen: "+pl.MainError, true)
+	}
 	if pl.StoresMessages {
 		p.notice(f, slick.StoresMessagesNote, true)
 		p.card(f, "Storage", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
@@ -925,7 +928,7 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 		}
 		p.card(f, "Settings", "", nil, rows)
 	}
-	if pl.Panel != 0 {
+	if pl.Panel {
 		// Slick's PluginDetail: {panels[id] && <Card title="Customize">{panels[id]()}</Card>}
 		p.card(f, "Customize", "", nil, []func(gtx layout.Context, w int) layout.Dimensions{
 			func(gtx layout.Context, w int) layout.Dimensions { return p.panel(gtx, s, pl, w) },
@@ -960,23 +963,17 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 
 // panel draws a plugin's api.settings.panel, its own React on its page,
 // through the slackc tree path the other plugin UI takes: one JS root per
-// panel, mounted again when the plugin sets a new one (pl.Panel) or a new
-// runtime replaced the old one's roots.
+// plugin, which follows the plugin's panel (a restart keeps the React
+// state, as Slick's page does), mounted again only when a new runtime
+// replaced the old one's roots.
 func (p *slickPage) panel(gtx layout.Context, s *slick.Slick, pl slick.PluginInfo, w int) layout.Dimensions {
 	if p.k.subGen != p.a.tautGen {
 		p.k.close()
 		p.k.subGen = p.a.tautGen
 	}
-	prefix := "slickpanel." + pl.ID + "."
-	k := prefix + strconv.Itoa(pl.Panel)
+	k := "slickpanel." + pl.ID
 	sub := p.k.subs[k]
 	if sub == nil {
-		for kk, old := range p.k.subs {
-			if strings.HasPrefix(kk, prefix) {
-				old.Close()
-				delete(p.k.subs, kk)
-			}
-		}
 		sub = slackc.NewSub()
 		p.k.subs[k] = sub
 		s.RenderPanel(sub.Root(), pl.ID)

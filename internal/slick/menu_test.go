@@ -46,6 +46,7 @@ var actsPlugin = pluginSource("ActsSlick", `["menu"]`, `
       { id: "acts_one", name: "Act one", onSelect: () => globalThis.__actsPicked.push("one") },
       { id: "acts_two", name: "Act two", "data-qa": "acts-two", icon: "threads", onSelect: () => globalThis.__actsPicked.push("two") },
       { id: "copy_link", name: "Their copy link", onSelect: () => globalThis.__actsPicked.push("dup") },
+      { id: "acts_boom", name: "Act boom", onSelect: () => { globalThis.__actsPicked.push("boom"); throw new Error("boom"); } },
     ] : []);
     this.api.menu.addMessageActions(() => undefined);
     this.api.menu.addMessageActions(() => { throw new Error("no actions here"); });
@@ -57,6 +58,8 @@ var actsPlugin = pluginSource("ActsSlick", `["menu"]`, `
 func maProps(ts string, root bool) map[string]any {
 	p := map[string]any{
 		"channelId": chGen, "ts": ts, "messageContainerType": "message_pane",
+		// Go's menu close (a Go func crossing into JS), counted by the harness
+		"onTriggerClose": map[string]any{"$gofn": triggerCloseFn},
 		"actions": []any{
 			[]any{map[string]any{"id": "mark_unread", "name": "Mark unread", "data-qa": "mark_unread"}},
 			[]any{map[string]any{"id": "copy_link", "name": "Copy link", "data-qa": "copy_link"},
@@ -69,6 +72,9 @@ func maProps(ts string, root bool) map[string]any {
 	}
 	return p
 }
+
+// triggerCloseFn is the id of the Go func maProps passes as onTriggerClose.
+const triggerCloseFn = 424242
 
 // maRendered renders MAMenu with props and returns the props its native
 // (Clack's menu) got.
@@ -159,7 +165,7 @@ func TestMessageActions(t *testing.T) {
 	// one whose id the menu has left out, data-qa defaulting to the id
 	p := h.maRendered(1, maProps("1700000002.000200", true))
 	ids := actionIDs(p)
-	if len(ids) != 3 || !slices.Equal(ids[2], []string{"acts_one", "acts_two"}) || !slices.Equal(ids[0], []string{"mark_unread"}) {
+	if len(ids) != 3 || !slices.Equal(ids[2], []string{"acts_one", "acts_two", "acts_boom"}) || !slices.Equal(ids[0], []string{"mark_unread"}) {
 		t.Fatalf("groups %v", ids)
 	}
 	added := p["actions"].([]any)[2].([]any)
@@ -167,19 +173,27 @@ func TestMessageActions(t *testing.T) {
 	if one["name"] != "Act one" || one["data-qa"] != "acts_one" || two["data-qa"] != "acts-two" || two["icon"] != "threads" {
 		t.Errorf("added actions %v %v", one, two)
 	}
-	// selecting one runs its onSelect and answers true; the menu's own
-	// actions go on to Slack's onSelectAction (none here: undefined)
+	// selecting one runs its onSelect, then the menu's onTriggerClose, and
+	// answers true; the menu's own actions go on to Slack's onSelectAction
+	// (none here: undefined) and don't close it
 	sel := p["onSelectAction"]
 	if got := h.callFn(sel, `[{"type":"click"},{"id":"acts_two"},{}]`); got != "true" {
 		t.Errorf("onSelectAction(acts_two) = %s, want true", got)
 	}
+	eventually(t, 3*time.Second, "onTriggerClose after acts_two", func() bool { return h.ui.called(triggerCloseFn) == 1 })
 	if got := h.callFn(sel, `[{"type":"click"},{"id":"mark_unread"},{}]`); got != "null" {
 		t.Errorf("onSelectAction(mark_unread) = %s, want Slack's (none)", got)
 	}
 	if got := h.callFn(sel, `[{"type":"click"},{"id":"copy_link"},{}]`); got != "true" {
 		t.Errorf("onSelectAction(copy_link) = %s: a provider's action with the menu's id still selects (custom.find)", got)
 	}
-	if picked := h.jsString(`return globalThis.__actsPicked.join(",")`); picked != "two,dup" {
+	// an onSelect that throws still closes the menu (try/finally), and the
+	// throw reaches the caller
+	if got := h.callFn(sel, `[{"type":"click"},{"id":"acts_boom"},{}]`); !strings.Contains(got, "boom") {
+		t.Errorf("onSelectAction(acts_boom) = %s, want its throw", got)
+	}
+	eventually(t, 3*time.Second, "onTriggerClose after copy_link and acts_boom", func() bool { return h.ui.called(triggerCloseFn) == 3 })
+	if picked := h.jsString(`return globalThis.__actsPicked.join(",")`); picked != "two,dup,boom" {
 		t.Errorf("picked %q", picked)
 	}
 
@@ -228,18 +242,33 @@ func TestMessageActions(t *testing.T) {
 	}
 }
 
-// A plugin that doesn't declare the menu API can't reach it, and doesn't
-// make Slick patch MAMenu.
+// A plugin that doesn't declare the menu API can't reach it; one that
+// starts without it doesn't make Slick patch MAMenu, so Clack's message
+// menus stay native with no plugin runtime in them (Slick loads the menu
+// integration only for plugins that declare it).
 func TestMessageActionsNeedTheMenuAPI(t *testing.T) {
 	h := newHarness(t)
 	mustImport(t, h, pluginSource("NoMenuSlick", `["redux"]`, `
-  start() { this.api.menu.addMessageActions(() => []); }`))
-	_ = h.s.SetEnabled(h.ctx(), "NoMenuSlick", true)
-	if info := h.plugin("NoMenuSlick"); info.Running || !strings.Contains(info.StartError, "Plugin must declare requiredAPIs: menu") {
-		t.Fatalf("running=%v error=%q", info.Running, info.StartError)
+  start() { globalThis.__noMenuStarted = true; }`))
+	if err := h.s.SetEnabled(h.ctx(), "NoMenuSlick", true); err != nil {
+		t.Fatal(err)
+	}
+	if info := h.plugin("NoMenuSlick"); !info.Running {
+		t.Fatalf("didn't start: %q", info.StartError)
 	}
 	if h.patched("MAMenu") {
 		t.Error("MAMenu patched for a plugin without the menu API")
+	}
+	// touching api.menu without declaring it throws Slick's error, and
+	// still patches nothing
+	mustImport(t, h, pluginSource("TouchMenuSlick", `["redux"]`, `
+  start() { this.api.menu.addMessageActions(() => []); }`))
+	_ = h.s.SetEnabled(h.ctx(), "TouchMenuSlick", true)
+	if info := h.plugin("TouchMenuSlick"); info.Running || !strings.Contains(info.StartError, "Plugin must declare requiredAPIs: menu") {
+		t.Fatalf("running=%v error=%q", info.Running, info.StartError)
+	}
+	if h.patched("MAMenu") {
+		t.Error("MAMenu patched by a plugin that only touched api.menu")
 	}
 }
 
@@ -265,7 +294,7 @@ func TestMessageActionsPlacedByAnotherPatch(t *testing.T) {
 	}
 	p := h.maRendered(1, maProps("1700000002.000200", true))
 	ids := actionIDs(p)
-	if len(ids) != 3 || !slices.Equal(ids[0], []string{"acts_one", "acts_two"}) {
+	if len(ids) != 3 || !slices.Equal(ids[0], []string{"acts_one", "acts_two", "acts_boom"}) {
 		t.Fatalf("groups %v: the placed actions first, none added at the end", ids)
 	}
 	if got := h.callFn(p["onSelectAction"], `[{"type":"click"},{"id":"acts_one"},{}]`); got != "true" {
@@ -325,69 +354,69 @@ func TestOldMessageMenuPatch(t *testing.T) {
 }
 
 // api.settings.panel: the plugin's own React for its Preferences page,
-// mounted through Slick.RenderPanel, gone when the plugin stops.
+// mounted through Slick.RenderPanel once per plugin. As Slick's
+// PluginDetail calls `panels[id]()` while it renders, the panel renders
+// again in the same root when a live setting changes (no remount: its
+// React state stays) and when the plugin sets another panel; it's gone
+// when the plugin stops.
 func TestSettingsPanel(t *testing.T) {
 	h := newHarness(t)
 	mustImport(t, h, pluginSource("PanelSlick", `[]`, `
   static liveSettings = ["word"];
   static settings = { word: { type: "text", label: "Word", default: "Pick" } };
-  start() { this.show(); }
-  onSettingsChange() { this.show(); }
-  show() {
-    const word = this.config.word;
-    this.api.settings.panel(() => React.createElement("div", { className: "panel-slick" }, word + " your actions"));
+  start() {
+    globalThis.__panelMounts = globalThis.__panelMounts ?? 0;
+    const plugin = this;
+    function Panel() {
+      React.useEffect(() => { globalThis.__panelMounts++; }, []);
+      return React.createElement("div", { className: "panel-slick" }, plugin.config.word + " your actions");
+    }
+    this.api.settings.panel(() => React.createElement(Panel));
   }`))
-	if panelOf(h.plugin("PanelSlick")) != 0 {
+	if panelOf(h.plugin("PanelSlick")) {
 		t.Fatal("a panel before the plugin ran")
 	}
 	if err := h.s.SetEnabled(h.ctx(), "PanelSlick", true); err != nil {
 		t.Fatal(err)
 	}
-	var first int
-	eventually(t, 5*time.Second, "the plugin's panel in its info", func() bool {
-		first = panelOf(h.plugin("PanelSlick"))
-		return first != 0
-	})
-	if text := h.panelText(7, "PanelSlick"); text != "Pick your actions" {
-		t.Errorf("panel %q", text)
-	}
-	// a new panel is a new Panel number (Preferences mounts it again)
+	eventually(t, 5*time.Second, "the plugin's panel in its info", func() bool { return panelOf(h.plugin("PanelSlick")) })
+	const root = 7
+	renderPanel(h.s, root, "PanelSlick")
+	eventually(t, 5*time.Second, "the panel", func() bool { return h.rootText(root) == "Pick your actions" })
+	// a live setting (this.config changes in place): the same root renders
+	// it, without mounting the panel again
 	if err := h.s.SetOption(h.ctx(), "PanelSlick", "word", "Sort"); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, 5*time.Second, "the new panel", func() bool {
-		p := panelOf(h.plugin("PanelSlick"))
-		return p != 0 && p != first
-	})
-	if text := h.panelText(8, "PanelSlick"); text != "Sort your actions" {
-		t.Errorf("panel %q", text)
+	eventually(t, 5*time.Second, "the panel after the live setting", func() bool { return h.rootText(root) == "Sort your actions" })
+	if n := h.jsString(`return String(globalThis.__panelMounts)`); n != "1" {
+		t.Errorf("the panel mounted %s times, want once", n)
 	}
 	if err := h.s.SetEnabled(h.ctx(), "PanelSlick", false); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, 5*time.Second, "no panel after stop", func() bool { return panelOf(h.plugin("PanelSlick")) == 0 })
+	eventually(t, 5*time.Second, "no panel after stop", func() bool { return !panelOf(h.plugin("PanelSlick")) && h.rootText(root) == "" })
 	if left := h.state().Panels; len(left) != 0 {
 		t.Errorf("panels left: %v", left)
 	}
+	// on again: the same root shows the new instance's panel
+	if err := h.s.SetEnabled(h.ctx(), "PanelSlick", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 5*time.Second, "the panel after a restart", func() bool { return h.rootText(root) == "Sort your actions" })
 }
 
-// panelText mounts plugin id's panel into root and returns its text.
-func (h *harness) panelText(root uint64, id string) string {
-	h.t.Helper()
+// rootText is the text of the tree last delivered for root ("" before).
+func (h *harness) rootText(root uint64) string {
 	h.ui.mu.Lock()
-	delete(h.ui.trees, root)
+	tree := h.ui.trees[root]
 	h.ui.mu.Unlock()
-	renderPanel(h.s, root, id)
-	var tree []byte
-	eventually(h.t, 5*time.Second, "the panel's tree", func() bool {
-		h.ui.mu.Lock()
-		defer h.ui.mu.Unlock()
-		tree = h.ui.trees[root]
-		return tree != nil
-	})
+	if tree == nil {
+		return ""
+	}
 	var nodes []any
 	if err := json.Unmarshal(tree, &nodes); err != nil {
-		h.t.Fatalf("tree: %v", err)
+		return ""
 	}
 	return treeText(nodes)
 }
