@@ -25,8 +25,13 @@ scope's, from rail.json):
 .p-tab_rail__button:hover or .c-button--focus-visible:focus are copied with
 those replaced by classes. "clicked" is Slack after a mouse click: the
 button is active and has no c-button--focus-visible (a mouse focus shows no
-ring). "focus" (keyboard focus, :focus-visible) is drawn for Slack only:
-Clack's rail takes no keyboard focus.
+ring). More's click opens its menu (BrowsePeekTrigger's forceOpenOnClick),
+and while it shows PeekTrigger's .p-peek_trigger--is-peek-visible, the
+div between the tab menu and the button, keeps the hover look (the tile,
+content-inv-pry, the icon at 1.15), Slack's stylesheet drawing it; the
+menu's own edge, 6px right of the button, falls in the 8px the measures
+leave out. "focus" (keyboard focus, :focus-visible) is drawn for Slack
+only: Clack's rail takes no keyboard focus.
 
 Each crop is measured against the rail colour at its left edge: the tile
 (any change over 10), the icon and label (strong ink), the badge's box (ink
@@ -42,7 +47,9 @@ as Slack's code computes them, internal/ui/testdata/theme-oracle.json: the
 root scope's --dt_color-theme-*, the inverted scope's when useInvertedTheme
 puts the rail there, and .p-theme_background's radial + conic gradient over
 the case's stops, sized to the window and cut at each crop's window y, so
-the rail colour under a button is Slack's, not Clack's sampled one. The
+the rail colour under a button is Slack's, not Clack's sampled one (each
+cell's gradient fills its whole 120px slot, past the crop's bottom, and the
+page under the cells is the primary stop). The
 rightmost 8px of a crop are left out of the measures (a peek card's edge
 can reach them), and "fill" is sampled inside the tile, clear of its
 corners and the icon.
@@ -144,14 +151,16 @@ def button(b, state):
             " c-badge--max" if n > 99 else "", "99+" if n > 99 else n)
     elif b["dot"]:
         badge = '<span class="p-unread_dot"></span>'
-    return ('<div role="tablist" class="c-tabs__tab_menu c-tabs__tab_menu--vertical p-tab_rail__tab_menu">'
-            '<button class="%s" role="tab" aria-selected="%s"><span class="c-tabs__tab_content">'
-            '<div class="p-tab_rail__button__icon"><div class="p-tab_rail__button__icon_inner">%s</div></div>%s'
-            '<div class="p-tab_rail__button__label">%s</div></span></button></div>'
-            % (" ".join(cls), "true" if active else "false", svg(ICON[b["key"]][1 if active else 0]), badge, E(b["label"])))
+    btn = ('<button class="%s" role="tab" aria-selected="%s"><span class="c-tabs__tab_content">'
+           '<div class="p-tab_rail__button__icon"><div class="p-tab_rail__button__icon_inner">%s</div></div>%s'
+           '<div class="p-tab_rail__button__label">%s</div></span></button>'
+           % (" ".join(cls), "true" if active else "false", svg(ICON[b["key"]][1 if active else 0]), badge, E(b["label"])))
+    if b["key"] == "browse" and state == "clicked":  # More's menu open (the module doc)
+        btn = '<div class="p-peek_trigger p-peek_trigger--is-peek-visible">%s</div>' % btn
+    return '<div role="tablist" class="c-tabs__tab_menu c-tabs__tab_menu--vertical p-tab_rail__tab_menu">%s</div>' % btn
 
 
-def page(shot, cells, bg, rules):
+def page(shot, cells, rules):
     dark = shot["dark"]
     scale = shot["scale"]
     t = tokens("slackVarsDark" if dark else "slackVarsLight")
@@ -174,7 +183,7 @@ def page(shot, cells, bg, rules):
 
     def cell(i, b, st):
         # the crop: top px above the button, its window y = b["y"]
-        return ('<div class="p-tab_rail%s" style="position:absolute;left:0;top:%dpx;width:70px;padding-top:%gpx;overflow:visible;'
+        return ('<div class="p-tab_rail%s" style="position:absolute;left:0;top:%dpx;width:70px;height:120px;padding-top:%gpx;overflow:visible;'
                 'background:%s;background-size:%gpx %gpx;background-position:0px %gpx">%s</div>'
                 % (scope, i * 120, b["top"] / scale, grad, ww, wh, -b.get("y", 0) / scale, button(b, st)))
     body = "".join(cell(i, b, st) for i, (b, st) in enumerate(cells))
@@ -182,7 +191,7 @@ def page(shot, cells, bg, rules):
             "<style>:root{%s;color-scheme:%s}%s%s html,body{margin:0;background:%s;font-family:Singer-Lato,Lato,sans-serif;"
             "font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}</style></head>"
             "<body class='%s'>%s</body></html>"
-            % (file_url(css_path), root, "dark" if dark else "light", inv, rules, bg, "sk-client-theme--dark" if dark else "", body))
+            % (file_url(css_path), root, "dark" if dark else "light", inv, rules, P, "sk-client-theme--dark" if dark else "", body))
 
 
 def file_url(p):
@@ -273,7 +282,6 @@ for shot in spec:
     crops = [Image.open(os.path.join(shots, b["file"])).convert("RGB") for b in shot["btns"]]
     if not crops:
         continue
-    bg = "#%02x%02x%02x" % crops[0].getpixel((1, crops[0].height // 2))[:3]
     cells = [(b, b["state"]) for b in shot["btns"]]
     # keyboard focus, Slack only: each button once, active where it can be
     seen = []
@@ -283,7 +291,7 @@ for shot in spec:
             fb = dict(b, state="focus", active=b["key"] in ("home", "dms", "activity"))
             cells.append((fb, "focus"))
     hp = os.path.join(shots, "slack-rail-%s.html" % name)
-    open(hp, "w", encoding="utf-8").write(page(shot, cells, bg, rules))
+    open(hp, "w", encoding="utf-8").write(page(shot, cells, rules))
     sp = os.path.join(shots, "slack-rail-%s.png" % name)
     screenshot(hp, 70, 120 * len(cells) + 20, scale, sp)
     print("%s: Slack's side drawn with theme-oracle.json's %s %s case under %s" % (
