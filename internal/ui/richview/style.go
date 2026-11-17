@@ -89,6 +89,7 @@ type Palette struct {
 	MentionText, MentionBg         color.NRGBA
 	MentionHoverBg                 color.NRGBA
 	SlugHoverText                  color.NRGBA // a hovered message_mention pill's text (0: unchanged)
+	HexBorder                      color.NRGBA // a colour element's swatch border (.c-mrkdwn__hex)
 	SelfMentionText, SelfMentionBg color.NRGBA
 	// SelfLinkText is a mention of the viewer or of a group they're in
 	// (c-member_slug--link / c-mrkdwn__user_group--link with --mention):
@@ -180,6 +181,7 @@ func LightPalette() Palette {
 		FooterSep:        rgb(0xcb, 0xcc, 0xcf),
 		HuddleJoinBorder: rgb(116, 219, 175),
 		Missing:          rgb(234, 234, 234), MissingLine: rgb(221, 221, 221),
+		HexBorder: rgb(97, 96, 97), // rgba(var(--sk_foreground_max_solid,97, 96, 97), 1)
 	}.flat()
 }
 
@@ -193,7 +195,8 @@ func DarkPalette() Palette {
 	// content-hgl-1 #2ba5ce on surf-hgl-1 #03669640; a mention of you
 	// content-hgl-3 #dea700 on surf-hgl-3 #a073002e
 	p.MentionText, p.MentionBg, p.MentionHoverBg = rgb(43, 165, 206), rgba(3, 102, 150, 0x40/255.0), rgba(29, 155, 209, 0.2)
-	p.SlugHoverText = color.NRGBA{} // the dark theme's hover color isn't in the async CSS chunks: keep the pill's own
+	p.SlugHoverText = color.NRGBA{}  // the dark theme's hover color isn't in the async CSS chunks: keep the pill's own
+	p.HexBorder = rgb(171, 171, 173) // --sk_foreground_max_solid
 	p.SelfMentionText, p.SelfMentionBg, p.SelfLinkText = rgb(222, 167, 0), rgba(160, 115, 0, 0x2e/255.0), rgb(222, 167, 0)
 	p.CodeText, p.CodeBg, p.CodeBorder = rgb(232, 145, 45), rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13)
 	p.PreBg, p.PreBorder = rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13)

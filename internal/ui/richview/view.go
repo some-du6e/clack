@@ -45,7 +45,11 @@ type View struct {
 	ops      op.Ops
 	call     op.CallOp // the recording under the images it doesn't hold (liveImgs)
 	callTop  op.CallOp // … and over them
+	callEll  op.CallOp // a clamp's "…", over the components too
 	recorded bool
+	// recHover is the hovered target whose text the recording drew in
+	// Slack's hover color (a pill's: hoverText), -1 none
+	recHover int16
 	pending  []int32 // imgs (>=0) or ^frag index of images not yet decoded
 	live     []int32 // frags of animated emoji: drawn every frame, not recorded
 	liveImgs []int32 // imgs of animated GIFs (animated.go): drawn every frame, not recorded
@@ -173,7 +177,7 @@ func (v *View) LineAt(off int32) (int32, int32) {
 
 // New returns a View for doc.
 func New(doc richtext.Doc, o Options) *View {
-	v := &View{hover: -1, press: -1, tipFrag: -1}
+	v := &View{hover: -1, press: -1, tipFrag: -1, recHover: -1}
 	v.Set(doc, o)
 	return v
 }
@@ -229,7 +233,7 @@ func (v *View) Release() {
 	}
 	v.d = display{}
 	v.ops = op.Ops{}
-	v.call, v.callTop = op.CallOp{}, op.CallOp{}
+	v.call, v.callTop, v.callEll = op.CallOp{}, op.CallOp{}, op.CallOp{}
 	v.recorded = false
 	v.pending, v.liveImgs = nil, nil
 	v.dirty = true
@@ -328,12 +332,21 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.opts.Dim {
 		opac = paint.PushOpacity(gtx.Ops, 0.5)
 	}
-	// Hover backgrounds for pills, buttons and cards draw under the content.
+	if h := v.hoverText(st); h != v.recHover {
+		// a pill's text takes the hover color in the recording, not
+		// painted again over it
+		if v.staticText(h) || v.staticText(v.recHover) {
+			v.record(st)
+		} else {
+			v.recHover = h
+		}
+	}
+	// Hover backgrounds for buttons and cards draw under the content.
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
 			b := &v.d.boxes[i]
-			if b.hov != 0 {
-				continue // a hover layer's: drawn with its layer (drawHoverLayers)
+			if b.hov != 0 || b.hoverOver {
+				continue // a hover layer's: drawn with its layer (drawHoverLayers); a pill's: over its fill
 			}
 			if (b.target == v.hover || b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) && b.hover.A > 0 {
 				switch b.kind {
@@ -341,7 +354,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 					// Card hover: stronger border on top.
 					strokeRRect(gtx.Ops, b.r, b.radius, b.bw, b.hover)
 				default:
-					paint.FillShape(gtx.Ops, b.hover, clip.UniformRRect(b.r, b.radius).Op(gtx.Ops))
+					fillRadii(gtx.Ops, b.r, b.radii(), b.hover) // a wrapped pill's lines: square where it broke
 				}
 			}
 		}
@@ -349,6 +362,16 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.call.Add(gtx.Ops)
 	for _, i := range v.liveImgs { // animated GIFs: their frame now, over what's under them
 		v.drawImg(gtx.Ops, st, int(i), false)
+	}
+	// A hovered pill's background takes its fill's place, on each line
+	// it runs on (.c-member_slug--link:hover, .p-rich_text_slug:hover):
+	// over the recorded fill, under its text. Components draw their own.
+	if v.hover >= 0 {
+		for i := range v.d.boxes {
+			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
+				fillRadii(gtx.Ops, b.r, b.radii(), b.hover)
+			}
+		}
 	}
 	// The selection over the backgrounds, under the text: Chromium paints
 	// ::selection with the text (the text fragment's selection rect, then
@@ -380,28 +403,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if len(v.d.comps) > 0 {
 		v.layoutComps(gtx, st)
 	}
-	// a hovered message_mention pill's text and icon take Slack's hover
-	// color (.p-rich_text_slug:hover), over the recorded ones
-	if v.hover >= 0 && int(v.hover) < len(v.d.targets) && v.d.targets[v.hover].slug && st.Palette.SlugHoverText.A > 0 {
-		col := st.Palette.SlugHoverText
-		for i := range v.d.frags {
-			f := &v.d.frags[i]
-			if f.target != v.hover {
-				continue
-			}
-			switch f.kind {
-			case fText:
-				if f.sh != nil && len(f.sh.glyphs) > 0 {
-					v.paintGlyphs(gtx.Ops, st, f, col)
-				}
-			case fImage:
-				if name, ok := strings.CutPrefix(f.url, iconURL); ok {
-					g := *f
-					g.col = col
-					paintIcon(gtx.Ops, name, &g)
-				}
-			}
-		}
+	if v.d.ells > 0 {
+		v.callEll.Add(gtx.Ops)
 	}
 	if v.hover >= 0 && int(v.hover) < len(v.d.targets) {
 		switch tg := &v.d.targets[v.hover]; {
@@ -642,9 +645,15 @@ func (v *View) record(st *Style) {
 	m := op.Record(ops)
 	v.paintBelow(ops, st, 0)
 	v.call = m.Stop()
+	v.recHover = v.hoverText(st)
 	m = op.Record(ops)
 	v.paintAbove(ops, st, 0, nil)
 	v.callTop = m.Stop()
+	m = op.Record(ops)
+	if v.d.ells > 0 {
+		v.paintEllipses(ops, st)
+	}
+	v.callEll = m.Stop()
 	v.recorded = true
 }
 
@@ -666,7 +675,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
-				fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.hover)
+				fillRadii(ops, b.r, b.radii(), b.hover)
 			}
 		}
 	}
@@ -705,12 +714,18 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	ul := uipref.Get().UnderlineLinks
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.comp != comp || f.hov != hp {
-			continue
+		if f.comp != comp || f.hov != hp || f.ell && static {
+			continue // a clamp's "…" is recorded on its own (paintEllipses)
 		}
 		switch f.kind {
 		case fImage:
 			if name, ok := strings.CutPrefix(f.url, iconURL); ok { // a vector icon (pills)
+				if f.target >= 0 && f.target == v.recHover {
+					g := *f
+					g.col = st.Palette.SlugHoverText
+					paintIcon(ops, name, &g)
+					continue
+				}
 				paintIcon(ops, name, f)
 				continue
 			}
@@ -738,32 +753,19 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			}
 			drawImage(ops, img, r, [4]int{}, false)
 		case fText:
-			if f.sh == nil || len(f.sh.glyphs) == 0 {
-				continue
-			}
 			col := f.col
-			if fg != nil {
+			if f.target >= 0 && f.target == v.recHover {
+				// a hovered pill's text in Slack's hover color
+				// (.p-rich_text_slug:hover, .c-member_slug--link:hover and
+				// the channel and group links': --sk_highlight_hover),
+				// painted once
+				col = st.Palette.SlugHoverText
+			} else if fg != nil {
 				col = *fg
 			} else if css && f.part != 0 {
 				col = v.textCol(f)
 			}
-			v.paintGlyphs(ops, st, f, col)
-			if f.style&(richtext.Strike|richtext.Underline) != 0 {
-				thick := max(1, f.size/14)
-				w := f.w + f.ulU // over the spaces of the same style
-				if f.style&richtext.Strike != 0 {
-					y := f.y - int(float32(f.size)*0.3+0.5)
-					paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+w+0.5), y+thick)).Op())
-				}
-				if f.style&richtext.Underline != 0 {
-					underline(ops, f, w, col)
-				}
-			} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].website {
-				underline(ops, f, f.w+f.ulT, col) // Accessibility > "Underline links to websites"
-			}
-			if css && f.part != 0 {
-				v.partDeco(ops, i, col)
-			}
+			v.paintText(ops, st, i, col, css, ul)
 		}
 	}
 	for i := range v.d.boxes {
@@ -773,8 +775,134 @@ func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	}
 }
 
+// paintText paints text frag i in col with its decorations.
+func (v *View) paintText(ops *op.Ops, st *Style, i int, col color.NRGBA, css, ul bool) {
+	f := &v.d.frags[i]
+	if f.sh == nil || len(f.sh.glyphs) == 0 {
+		return
+	}
+	v.paintGlyphs(ops, st, f, col)
+	if f.style&(richtext.Strike|richtext.Underline) != 0 {
+		thick := max(1, f.size/14)
+		w := f.w + f.ulU // over the spaces of the same style
+		if f.style&richtext.Strike != 0 {
+			y := f.y - int(float32(f.size)*0.3+0.5)
+			paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+w+0.5), y+thick)).Op())
+		}
+		if f.style&richtext.Underline != 0 {
+			underline(ops, f, w, col)
+		}
+	} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].website {
+		underline(ops, f, f.w+f.ulT, col) // Accessibility > "Underline links to websites"
+	}
+	if css && f.part != 0 {
+		v.partDeco(ops, i, col)
+	}
+}
+
+// paintEllipses paints the clamps' "…", which go over everything on
+// their line (a component pill's box under them too): Chromium appends
+// the ellipsis to the line box after every child (PlaceEllipsisNextTo).
+// Only the static ones: a component card's or a hover layer's "…" is its
+// owner's (paintAbove draws it with the owner), so it goes when the owner
+// is hidden and isn't painted twice.
+func (v *View) paintEllipses(ops *op.Ops, st *Style) {
+	css := len(v.css.parts) > 0
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; staticEllipsis(f) {
+			col := f.col
+			if css && f.part != 0 {
+				col = v.textCol(f)
+			}
+			v.paintText(ops, st, i, col, css, false)
+		}
+	}
+}
+
+// staticEllipsis reports a clamp's "…" no component or hover layer owns.
+func staticEllipsis(f *frag) bool { return f.ell && f.comp == 0 && f.hov == 0 }
+
+// hoverText is the hovered target whose text takes Slack's hover color
+// (hoverRecolors), -1 none.
+func (v *View) hoverText(st *Style) int16 {
+	if v.hover >= 0 && int(v.hover) < len(v.d.targets) && st.Palette.SlugHoverText.A > 0 && v.hoverRecolors(v.hover) {
+		return v.hover
+	}
+	return -1
+}
+
+// staticText reports that target t has text or an icon in the recording.
+func (v *View) staticText(t int16) bool {
+	if t < 0 {
+		return false
+	}
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.target == t && f.comp == 0 && f.hov == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// pillHoverFill reports that b's own hover fill shows: no rule gives the
+// pill a background of its own (its component's WrapInline paints that).
+func (v *View) pillHoverFill(b *box) bool {
+	if b.part == 0 || len(v.css.parts) == 0 {
+		return true
+	}
+	ps := v.css.get(b.part)
+	return ps == nil || !ps.hasBg
+}
+
+// hoverRecolors reports that target t's text takes the hover color: a
+// message or link slug, or a member, channel or group pill (a system
+// message's names underline instead; a chip that only opens a card
+// doesn't change).
+func (v *View) hoverRecolors(t int16) bool {
+	tg := &v.d.targets[t]
+	if tg.slug {
+		return true
+	}
+	if tg.underline || tg.cardOnly || tg.kind != tUser && tg.kind != tChannel && tg.kind != tUsergroup {
+		return false
+	}
+	for i := range v.d.boxes {
+		if b := &v.d.boxes[i]; b.target == t && b.inline {
+			return true // it's a pill
+		}
+	}
+	return false
+}
+
+// targetBounds is target t's box: its words and images and its line
+// boxes (a pill's, also one holding only its picture where it wrapped
+// after it), the element's bounding rect an anchored card or a plugin's
+// click sees.
+func (v *View) targetBounds(t int16) image.Rectangle {
+	var r image.Rectangle
+	for i := range v.d.frags {
+		if f := &v.d.frags[i]; f.target == t {
+			r = r.Union(fragRect(f))
+		}
+	}
+	for i := range v.d.boxes {
+		if b := &v.d.boxes[i]; b.target == t && b.inline {
+			r = r.Union(b.r)
+		}
+	}
+	return r
+}
+
 // drawBox draws b, with its CSS part's fill when it has one.
 func (v *View) drawBox(ops *op.Ops, b *box, css bool) {
+	if b.hoverOver && b.comp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
+		// a component pill, drawn each frame: hovered, its hover fill in
+		// place of its fill
+		bb := *b
+		bb.fill = b.hover
+		drawBox(ops, &bb)
+		return
+	}
 	if !css || b.part == 0 {
 		drawBox(ops, b)
 		return
@@ -1343,12 +1471,7 @@ func (v *View) hoverCard(st *Style, h Handler) {
 	if !on {
 		return
 	}
-	var r image.Rectangle
-	for i := range v.d.frags {
-		if f := &v.d.frags[i]; f.target == t {
-			r = r.Union(fragRect(f))
-		}
-	}
+	r := v.targetBounds(t)
 	if urlCard {
 		c.ReportURL(k, v.d.targets[t].url, r, v.ptr) // UrlHoverCardTrigger: UrlHoverCard, position "top"
 		return
@@ -1425,13 +1548,7 @@ func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e poin
 	default:
 		return false
 	}
-	var r image.Rectangle
-	for i := range v.d.frags {
-		if f := &v.d.frags[i]; f.target == t {
-			r = r.Union(fragRect(f))
-		}
-	}
-	l.Rect = r.Add(v.Origin)
+	l.Rect = v.targetBounds(t).Add(v.Origin)
 	l.Text = text
 	l.Key = fmt.Sprintf("%p/%d/%s%s", v, t, tg.id, tg.url)
 	// the click count Slack's event carries (detail)
