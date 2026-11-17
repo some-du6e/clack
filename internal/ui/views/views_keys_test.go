@@ -463,12 +463,12 @@ func TestThreadsReloadLikeSlack(t *testing.T) {
 			c.older, c.olderStart = []core.Message{{TS: "1762500000.000100"}}, true
 		}
 		tc.reopen()
+		e.frame() // a mount happens in the view's next frame
 		for k, c := range v.cards {
 			if len(c.older) > 0 || c.olderStart {
 				t.Errorf("%s: %s keeps its older replies", tc.name, k)
 			}
 		}
-		e.frame()
 		if p := v.list.Position; p.First != 0 || p.Offset != 0 {
 			t.Errorf("%s: the list at %+v, want its top", tc.name, p)
 		}
