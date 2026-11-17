@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -144,17 +145,13 @@ func (a *App) handle(ev slack.Event) {
 			// most of a large workspace's profile changes are. The event is
 			// read without a lookup, which would count as a view's.
 			seen := a.S.MemberAccessed(e.User.ID)
-			// what message Docs read of the member, before and after
-			// (a status or huddle change converts no message again)
-			var before slack.User
-			old, had := a.S.RawUser(e.User.ID)
-			if had && old != nil {
-				before = *old
-			}
+			// what message Docs read of the member, against the last
+			// event's (a status or huddle change converts no message
+			// again; a name stored anew since without one does, now)
 			a.S.PutUsers([]slack.User{e.User})
 			if su, ok := a.S.RawUser(e.User.ID); ok {
 				u := a.userOf(su)
-				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: had && old != nil && sameUserNames(&before, su)})
+				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: a.noteUserDoc(su)})
 			}
 		}
 	case "team_icon_change":
@@ -821,6 +818,20 @@ func (a *App) onFileChange(ev slack.Event) {
 	id := canvasEventFile(ev)
 	if id == "" {
 		return
+	}
+	// a canvas or list that titles tab slugs and links (its CanvasRef,
+	// asked for once): its title as files.info has it now, and the
+	// messages whose conversion read it (Message.Refs) converted again.
+	// Slack's useTabLabel reads the files store, which file_change
+	// updates; Clack kept a renamed canvas's first title for the session.
+	if old, ok := a.S.PeekCanvasRef(id); ok {
+		ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
+		if a.resolveCanvasRef(ctx, id) {
+			if now, _ := a.S.PeekCanvasRef(id); !reflect.DeepEqual(now, old) {
+				a.emit(Event{Type: "names", Users: []string{id}})
+			}
+		}
+		cancel()
 	}
 	refs := a.S.WithFile(id)
 	if len(refs) == 0 {

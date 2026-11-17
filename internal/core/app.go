@@ -179,9 +179,10 @@ func New(c *slack.Client, s *store.Store) *App {
 	appsByStore.Store(s, a)
 	store.ExperimentGroup = experimentForStore
 	a.followEmojiSet() // the defaults' set until the account's groups are in
-	// what of the prefs conversions read as they start (a prefs event
-	// that changes it converts again what reads it: msg_refs.go)
-	a.docs.prefs, a.docs.docPrefs, a.docs.prefsInit = a.namePrefsKey(), a.docPrefsKey(), true
+	// what of the prefs conversions read as they start; every install
+	// after notes what it moved, and the next prefs event converts again
+	// what reads it (msg_refs.go)
+	a.docs.prefs, a.docs.docPrefs = a.namePrefsKey(), a.docPrefsKey()
 	return a
 }
 
@@ -523,6 +524,7 @@ func (a *App) Boot(ctx context.Context) error {
 	go func() {
 		s := time.Now()
 		a.S.LoadCache()
+		a.notePrefsInstalled()       // the cached prefs (msg_refs.go)
 		a.installCachedExperiments() // Slack's persisted experiments store (experiments.go)
 		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
@@ -669,7 +671,9 @@ func (a *App) Boot(ctx context.Context) error {
 			a.installPrefs(raw)
 			// set_tz_automatically keeps tz in step (timezone.go)
 			go func() { _, _ = a.MaybeUpdateTimezone(a.bg) }()
-			if a.S.HasCachedPrefs() { // the first frame drew the cached copy
+			// the first frame drew the cached copy; or, without one, what
+			// was converted before this install read the defaults
+			if a.S.HasCachedPrefs() || a.prefsMoved() {
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}
@@ -1497,6 +1501,14 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	rn := refNames{msgNames: msgNames{a.S}, app: a, peek: peek}
 	v.Doc = richtext.FromMessageIn(&rn, m, ch)
 	v.Refs = rn.refs
+	// what senderOf and the reactions read besides: the sending bot's
+	// name, the reactions' emoji
+	if m.User == "" && m.BotID != "" {
+		addRef(&v.Refs.Bots, m.BotID)
+	}
+	for _, re := range m.Reactions {
+		addRef(&v.Refs.Emoji, re.Name)
+	}
 	return v
 }
 

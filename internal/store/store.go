@@ -1428,6 +1428,54 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	return ts, cids
 }
 
+// MsgKey is a message by ts or client_msg_id (Held).
+type MsgKey struct{ TS, CID string }
+
+// Held reports, for each key, whether the store caches a message of ch
+// with its ts (or client_msg_id) in the timeline or a thread: Holds for
+// many at once, one pass over the store under one read lock (Holds per
+// message scanned the timeline and every cached thread once each).
+func (s *Store) Held(ch string, keys []MsgKey) []bool {
+	out := make([]bool, len(keys))
+	if len(keys) == 0 {
+		return out
+	}
+	byTS := make(map[string][]int, len(keys))
+	byCID := map[string][]int{}
+	for i, k := range keys {
+		byTS[k.TS] = append(byTS[k.TS], i)
+		if k.CID != "" {
+			byCID[k.CID] = append(byCID[k.CID], i)
+		}
+	}
+	mark := func(m *slack.Message) {
+		for _, i := range byTS[m.TS] {
+			out[i] = true
+		}
+		if m.ClientMsgID != "" {
+			for _, i := range byCID[m.ClientMsgID] {
+				out[i] = true
+			}
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if t := s.timelines[ch]; t != nil {
+		for i := range t.Msgs {
+			mark(&t.Msgs[i])
+		}
+	}
+	pre := ch + "/"
+	for k, th := range s.threads {
+		if strings.HasPrefix(k, pre) {
+			for i := range th {
+				mark(&th[i])
+			}
+		}
+	}
+	return out
+}
+
 // MsgRef names a cached message.
 type MsgRef struct{ Channel, TS string }
 
