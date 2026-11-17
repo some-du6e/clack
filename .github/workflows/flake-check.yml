@@ -1234,9 +1234,16 @@ jobs:
         env:
           CLACK_GPU_COST: "1"
           CLACK_PIXEL_TESTS: "1"
+          CLACK_GPU_COST_SHOTS: ${{ runner.temp }}/gpu-cost-shots
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
+          mkdir -p "$CLACK_GPU_COST_SHOTS"
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
           "${x[@]}" go test -count=1 -v -timeout 25m -run '^TestFrameCostWindow$' ./internal/ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: gpu-cost-shots-${{ runner.os }}
+          path: ${{ runner.temp }}/gpu-cost-shots

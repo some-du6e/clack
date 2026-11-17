@@ -3,8 +3,12 @@ package ui
 import (
 	"fmt"
 	"image"
+	"image/color"
+	"image/png"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +75,9 @@ func TestFrameCostWindow(t *testing.T) {
 				t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
 				t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
 				t.Logf("%s: %s", name, costDiff(old, cur))
+				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
+					costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)
+				}
 				if thread {
 					e.a.CloseSecondary()
 					e.settle(500 * time.Millisecond)
@@ -154,4 +161,81 @@ func costDiff(a, b *image.RGBA) string {
 		return fmt.Sprintf("identical (%d px)", r.Dx()*r.Dy())
 	}
 	return fmt.Sprintf("%d of %d px differ, max %d (by 1: %d, by 2: %d, by 3 or more: %d)", n, r.Dx()*r.Dy(), maxd, by[1], by[2], by[3])
+}
+
+// costCrops writes the places where a and b differ most: for each of up
+// to four, 40×40 px of a, of b and of their difference (×10), side by
+// side and 6× larger, to dir/<name>-<n>.png, and logs where they are.
+func costCrops(t *testing.T, dir, name string, a, b *image.RGBA) {
+	type spot struct {
+		p image.Point
+		d int
+	}
+	var spots []spot
+	r := a.Bounds()
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			i := a.PixOffset(x, y)
+			d := 0
+			for k := 0; k < 3; k++ {
+				v := int(a.Pix[i+k]) - int(b.Pix[i+k])
+				d = max(d, v, -v)
+			}
+			if d < 2 {
+				continue
+			}
+			near := false
+			for j := range spots {
+				q := spots[j].p.Sub(image.Pt(x, y))
+				if q.X*q.X+q.Y*q.Y < 24*24 {
+					near = true
+					if d > spots[j].d {
+						spots[j] = spot{image.Pt(x, y), d}
+					}
+					break
+				}
+			}
+			if !near {
+				spots = append(spots, spot{image.Pt(x, y), d})
+			}
+		}
+	}
+	sort.Slice(spots, func(i, j int) bool { return spots[i].d > spots[j].d })
+	if len(spots) > 4 {
+		spots = spots[:4]
+	}
+	const c, z = 40, 6
+	for n, sp := range spots {
+		out := image.NewRGBA(image.Rect(0, 0, 3*c*z+2*z, c*z))
+		for y := 0; y < c; y++ {
+			for x := 0; x < c; x++ {
+				px, py := sp.p.X-c/2+x, sp.p.Y-c/2+y
+				var ca, cb color.RGBA
+				if image.Pt(px, py).In(r) {
+					ca, cb = a.RGBAAt(px, py), b.RGBAAt(px, py)
+				}
+				diff := func(u, v uint8) uint8 {
+					d := (int(u) - int(v)) * 10
+					return uint8(min(255, max(d, -d)))
+				}
+				cd := color.RGBA{diff(ca.R, cb.R), diff(ca.G, cb.G), diff(ca.B, cb.B), 0xff}
+				for k, col := range []color.RGBA{ca, cb, cd} {
+					for dy := 0; dy < z; dy++ {
+						for dx := 0; dx < z; dx++ {
+							out.SetRGBA(k*(c*z+z)+x*z+dx, y*z+dy, col)
+						}
+					}
+				}
+			}
+		}
+		f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%s-%d.png", name, n)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(f, out); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		t.Logf("%s: crop %d at %v, by %d: %v vs %v", name, n, sp.p, sp.d, a.RGBAAt(sp.p.X, sp.p.Y), b.RGBAAt(sp.p.X, sp.p.Y))
+	}
 }
