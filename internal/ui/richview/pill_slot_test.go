@@ -11,11 +11,15 @@ package richview
 // a line the picture starts the next of, and "@relay" can start the line
 // after the picture. Under a line clamp the "…" goes where Chromium's
 // LineTruncator puts it: after the picture when both fit, else the
-// picture goes. Synthetic text.
+// picture is hidden, and the pill's box stays under the "…". Synthetic
+// text.
 
 import (
+	"encoding/json"
+	"image"
 	"math"
 	"testing"
+	"time"
 
 	"gioui.org/op"
 
@@ -160,12 +164,16 @@ func TestPillAfterAndEdges(t *testing.T) {
 	}
 }
 
-// A line clamp that ends a line with the picture (the break after it):
-// the "…" goes right after the picture when both fit, as Chromium's
-// LineTruncator places it after the last child that fits, and the pill's
-// box there ends with the picture, square (the pill goes on); when the
-// picture doesn't fit with it, the picture goes and "…" follows "(" with
-// no piece of the pill after it.
+// A line clamp that ends a line with the picture (the line breaks after
+// it, "@relay" starts the next): the "…" goes after the picture when both
+// fit, 1px past its margin box (PlaceEllipsisNextTo: the picture's border
+// box offset, past its 1px left margin, plus its margin box's width), in
+// the pill's color (an inline-block's "…" takes its style:
+// LayoutObject::SlowEffectiveStyle); when they don't, the picture is
+// hidden and "…" follows "(" in the text's color. Either way the pill's
+// 21px piece (its padding and the picture's place) keeps its box,
+// rounded at its start and square at its end (the pill goes on past the
+// clamp), as TruncateLine changes no inline box.
 func TestPillEllipsisAfterPicture(t *testing.T) {
 	slackc.SetStyle("test:pill-clamp", pwPictureRule)
 	t.Cleanup(func() { slackc.RemoveStyle("test:pill-clamp") })
@@ -173,56 +181,116 @@ func TestPillEllipsisAfterPicture(t *testing.T) {
 	bg := st.Palette.MentionBg
 	kept, hidden := 0, 0
 	for w := 140; w <= 340; w++ {
+		full := pwSettle(st, pwDoc(), w)
+		fsl, at := full.d.comps[0].slots[0], pwFrag(&full.d, "@relay")
+		if !fsl.ok || at == nil || int(fsl.top) != full.d.lines[0].top || at.line == 0 {
+			continue // not the layout that ends the first line with the picture
+		}
 		v := pwSettleOpts(st, pwDoc(), Options{MaxLines: 1}, w)
-		if len(v.d.lines) != 1 {
-			t.Fatalf("w=%d: %d lines under a 1-line clamp", w, len(v.d.lines))
+		ell, lp := pwEll(&v.d), findFrag(t, &v.d, "(")
+		bs, fb := pwBoxes(&v.d, bg), pwBoxes(&full.d, bg)
+		if ell == nil || len(v.d.lines) != 1 {
+			t.Fatalf("w=%d: %d lines, \"…\" %v under a 1-line clamp", w, len(v.d.lines), ell)
 		}
-		var ell *frag
-		for i := range v.d.frags {
-			if f := &v.d.frags[i]; f.kind == fText && f.sh != nil && f.sh.str == "…" {
-				ell = f
-			}
+		if len(bs) != 1 || len(fb) == 0 || bs[0].r != fb[0].r || bs[0].r.Dx() != 21 || pwCorners(bs[0]) != [4]int{3, 0, 0, 3} {
+			t.Errorf("w=%d: the clamped pill's boxes %v (unclamped %v), want its first line's 21px box, rounded at its start, square at its end", w, bs, fb)
 		}
-		if ell == nil {
-			continue // it all fit
-		}
-		bs := pwBoxes(&v.d, bg)
-		for _, b := range bs {
-			if float32(b.r.Max.X) > ell.x+0.6 {
-				t.Errorf("w=%d: a pill box %v runs past the \"…\" at %.1f", w, b.r, ell.x)
-			}
-		}
-		if pwFrag(&v.d, "@relay") != nil {
-			continue
-		}
-		sl := v.d.comps[0].slots[0]
-		var lp *frag
-		for i := range v.d.frags {
-			if f := &v.d.frags[i]; f.kind == fText && f.sh != nil && f.sh.str == "(" {
-				lp = f
-			}
-		}
-		if lp == nil {
-			continue // the clamp came before "("
-		}
-		switch {
+		switch sl := v.d.comps[0].slots[0]; {
 		case sl.ok && sl.at:
 			kept++
-			if math.Abs(float64(ell.x-(sl.x+19))) > 0.6 {
-				t.Errorf("w=%d: \"…\" at %.1f, the picture's place %.1f..%.1f: want it right after the picture", w, ell.x, sl.x, sl.x+19)
+			if math.Abs(float64(ell.x-(sl.x+20))) > 0.6 || ell.col != st.Palette.MentionText {
+				t.Errorf("w=%d: \"…\" at %.1f in %v, the picture's place %.1f..%.1f: want it 1px past the place, in the pill's %v", w, ell.x, ell.col, sl.x, sl.x+19, st.Palette.MentionText)
 			}
-			if len(bs) != 1 || pwCorners(bs[0]) != [4]int{3, 0, 0, 3} || bs[0].r.Max.X != int(sl.x+19+0.5) {
-				t.Errorf("w=%d: the clamped pill's box %v, want its padding and picture, square at its end", w, bs)
+			if ell.x+ell.w > float32(w)+0.01 {
+				t.Errorf("w=%d: \"…\" at %.1f..%.1f past the line's end", w, ell.x, ell.x+ell.w)
 			}
 		default:
 			hidden++
-			if len(bs) != 0 || math.Abs(float64(ell.x-(lp.x+lp.w))) > 0.6 {
-				t.Errorf("w=%d: the picture hidden, but pill boxes %v and \"…\" at %.1f (\"(\" ends at %.1f)", w, bs, ell.x, lp.x+lp.w)
+			if math.Abs(float64(ell.x-(lp.x+lp.w))) > 0.6 || ell.col != st.Palette.Text {
+				t.Errorf("w=%d: the picture hidden, \"…\" at %.1f in %v, \"(\" ends at %.1f: want it right after, in the text's %v", w, ell.x, ell.col, lp.x+lp.w, st.Palette.Text)
+			}
+			if fsl.x+20+ell.w <= float32(w) {
+				t.Errorf("w=%d: the picture hidden, but it and \"…\" fit (to %.1f)", w, fsl.x+20+ell.w)
 			}
 		}
 	}
 	if kept == 0 || hidden == 0 {
 		t.Errorf("the clamp ended the line with the picture kept at %d widths, hidden at %d: want both", kept, hidden)
+	}
+}
+
+// A pill that goes on past a line clamp has no end edge on its last line
+// shown, for a rule's border, corners and shadow too: its component's
+// WrapInline gets each box's cut sides (compRef.lines), as Chromium paints
+// a fragment that isn't the inline box's last. A pill that ends on the
+// clamped line keeps its end edge.
+func TestPillClampOpenEnd(t *testing.T) {
+	slackc.SetStyle("test:pill-clamp-end", pwPictureRule)
+	t.Cleanup(func() { slackc.RemoveStyle("test:pill-clamp-end") })
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	open, closed := 0, 0
+	for w := 140; w <= 420; w++ {
+		v := pwSettleOpts(st, pwDoc(), Options{MaxLines: 1}, w)
+		if pwEll(&v.d) == nil {
+			continue
+		}
+		fr := (&compRef{v: v, i: 0, st: st}).lines(nil)
+		if len(fr) == 0 {
+			continue // the pill starts past the clamp
+		}
+		full := pwSettle(st, pwDoc(), w)
+		goesOn := len(pwBoxes(&full.d, st.Palette.MentionBg)) > 1
+		if l := fr[len(fr)-1]; l.CutEnd != goesOn || l.CutStart {
+			t.Errorf("w=%d: the clamped pill's last fragment %+v, want an open end %v (it goes on past the clamp)", w, l, goesOn)
+		}
+		if goesOn {
+			open++
+		} else {
+			closed++
+		}
+	}
+	if open == 0 || closed == 0 {
+		t.Errorf("the pill went on past the clamp at %d widths and ended before it at %d: want both", open, closed)
+	}
+}
+
+// A table column's natural width is its widest cell's max-content width:
+// a cell's widest hard line, each line with its own pills (one on another
+// line doesn't widen it), a pill with its padding and its component's
+// ::before. A member the store can't name before a pill (MissingText's
+// 120px bar, no component) doesn't shift which component's state a later
+// pill is measured with, so the pill doesn't wrap in its cell.
+func TestTableCellWidthPerLine(t *testing.T) {
+	slackc.SetStyle("test:pill-table-width", pwPictureRule)
+	t.Cleanup(func() { slackc.RemoveStyle("test:pill-table-width") })
+	const gone = "U0GONE0001"
+	SetMemberRead(func(id string) (string, MemberMiss) {
+		if id == gone {
+			return "", MemberGone
+		}
+		return "", MemberLoaded
+	})
+	t.Cleanup(func() { SetMemberRead(nil) })
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	d := doc(rt.Block{Kind: rt.Table, Rows: [][][]rt.Span{
+		{{txt("Notes")}, {txt("Who")}},
+		{{txt("a much longer description of it"), {Kind: rt.Break}, {Kind: rt.User, ID: "U0ANA00001", Text: "@ana"}}, {{Kind: rt.User, ID: gone, Text: "@ghost"}}},
+		{{txt("intake")}, {{Kind: rt.User, ID: pwApp, Text: "@relay connector"}}},
+	}})
+	v := pwSettle(st, d, 900)
+	desc, who := findFrag(t, &v.d, "a"), findFrag(t, &v.d, "Who")
+	it := findFrag(t, &v.d, "it")
+	at, conn := pwFrag(&v.d, "@relay"), pwFrag(&v.d, "connector")
+	if len(v.d.comps) != 2 || at == nil || conn == nil {
+		t.Fatalf("comps %d, words %q", len(v.d.comps), fragStrings(&v.d))
+	}
+	// the first column: its 12px paddings around its widest line, the
+	// description (@ana's line, 23px wider than its text, is narrower)
+	if col0, want := who.x-desc.x-2*12-1, it.x+it.w-desc.x; math.Abs(float64(col0-want)) > 1.5 {
+		t.Errorf("the first column's content is %.1fpx wide, its widest line %.1fpx: want that line's width", col0, want)
+	}
+	if sl := v.d.comps[1].slots[0]; at.line != conn.line || !sl.ok || int(sl.top) != at.top {
+		t.Errorf("@relay connector wrapped in its cell (@relay on line %d, connector on %d, its picture's place %+v): the column was measured without its picture", at.line, conn.line, sl)
 	}
 }
 
@@ -244,6 +312,67 @@ func TestPillBoundsHoldPictureLine(t *testing.T) {
 		seen++
 		if r := v.targetBounds(at.target); !bs[0].r.In(r) || !fragRect(at).In(r) {
 			t.Errorf("w=%d: the mention's bounds %v leave out its first line's box %v or @relay %v", w, r, bs[0].r, fragRect(at))
+		}
+	}
+	if seen == 0 {
+		t.Fatal("the line never broke after the picture")
+	}
+}
+
+// clickBridge is a JS side that listens for clicks on the document and
+// keeps the events Clack dispatches at a link's stand-in element
+// (slackc.ClickLink).
+type clickBridge struct{ evs [][]byte }
+
+func (b *clickBridge) Render(uint64, string, []byte)               {}
+func (b *clickBridge) RenderFn(uint64, int64, []byte)              {}
+func (b *clickBridge) Unmount(uint64)                              {}
+func (b *clickBridge) Dispatch(_ int64, ev []byte)                 { b.evs = append(b.evs, append([]byte(nil), ev...)) }
+func (b *clickBridge) Call(int64, []byte, func([]byte, error))     {}
+func (b *clickBridge) SetRects(map[int64][4]float32)               {}
+func (b *clickBridge) SetViewport(float32, float32, float32, bool) {}
+func (b *clickBridge) WantsEvent(typ string) bool                  { return typ == "click" }
+
+// A click on a mention whose line broke after its picture goes to a plugin
+// listening for clicks with the element's bounding rect (clickLink), which
+// holds the first line's piece too: the picture and the padding before it.
+func TestPillClickRectHoldsPictureLine(t *testing.T) {
+	slackc.SetStyle("test:pill-click", pwPictureRule)
+	t.Cleanup(func() { slackc.RemoveStyle("test:pill-click") })
+	b := &clickBridge{}
+	slackc.SetBridge(b)
+	t.Cleanup(func() { slackc.SetBridge(nil) })
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	seen := 0
+	for w := 150; w <= 520 && seen < 3; w++ {
+		hs := &harness{st: st, v: New(pwDoc(), Options{}), h: &recHandler{}, w: w}
+		for i := 0; i < 4; i++ {
+			hs.frame()
+		}
+		at := pwFrag(&hs.v.d, "@relay")
+		bs := pwBoxes(&hs.v.d, st.Palette.MentionBg)
+		if at == nil || len(bs) < 2 || bs[0].r.Max.Y > at.top {
+			continue
+		}
+		seen++
+		b.evs = b.evs[:0]
+		p := center(at)
+		hs.send(press(p, time.Duration(seen)*time.Second), release(p, time.Duration(seen)*time.Second+20*time.Millisecond))
+		if len(b.evs) != 1 {
+			t.Fatalf("w=%d: %d click events dispatched, want 1", w, len(b.evs))
+		}
+		var ev struct {
+			Native struct {
+				Rect [4]float32 `json:"rect"`
+			} `json:"native"`
+		}
+		if err := json.Unmarshal(b.evs[0], &ev); err != nil {
+			t.Fatalf("w=%d: %v in %s", w, err, b.evs[0])
+		}
+		r := ev.Native.Rect
+		got := image.Rect(int(r[0]), int(r[1]), int(r[0]+r[2]+0.5), int(r[1]+r[3]+0.5))
+		if !bs[0].r.In(got) || !fragRect(at).In(got) {
+			t.Errorf("w=%d: the click's rect %v leaves out the picture's line box %v or @relay %v", w, got, bs[0].r, fragRect(at))
 		}
 	}
 	if seen == 0 {

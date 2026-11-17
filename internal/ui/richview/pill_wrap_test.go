@@ -28,7 +28,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -111,6 +113,22 @@ func pwCount(img *image.RGBA, col color.NRGBA) (int, image.Rectangle) {
 		}
 	}
 	return n, bb
+}
+
+// pwMaxDiff is the largest channel difference between a and b in r, and
+// where.
+func pwMaxDiff(a, b *image.RGBA, r image.Rectangle) (int, image.Point) {
+	d, at := 0, r.Min
+	r = r.Intersect(a.Bounds()).Intersect(b.Bounds())
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			ca, cb := a.RGBAAt(x, y), b.RGBAAt(x, y)
+			if m := max(absDiff(ca.R, cb.R), absDiff(ca.G, cb.G), absDiff(ca.B, cb.B)); m > d {
+				d, at = m, image.Pt(x, y)
+			}
+		}
+	}
+	return d, at
 }
 
 func absDiff(a, b uint8) int {
@@ -540,6 +558,29 @@ func TestWrappedPillHover(t *testing.T) {
 			if n, was := pixeltest.Count(hov, txt, pal.SlugHoverText, 10), pixeltest.Count(plain, txt, pal.SlugHoverText, 10); n < 10 || n < 3*was {
 				t.Errorf("%s, w=%d: %d px of @relay in the hover text color (%d unhovered)", mode, w, n, was)
 			}
+			// painted once: hovered, the text is what a pill whose own text
+			// color is the hover color draws hovered (painted over its
+			// normal color, its glyphs' edges would blend with that one and
+			// come out heavier)
+			palH := pal
+			palH.MentionText = pal.SlugHoverText
+			stH := NewStyle(themeShaper(), noImages{}, palH)
+			vh := New(pwDoc(), Options{})
+			var opsH op.Ops
+			for i := 0; i < 4; i++ {
+				pwFrame(vh, stH, w, h, &opsH)
+			}
+			opsH.Reset()
+			paint.FillShape(&opsH, palH.Panel, clip.Rect{Max: image.Pt(w, h)}.Op())
+			vh.hover = at.target
+			vh.draw(testGtx(&opsH, w), stH)
+			ref := pixeltest.Render(t, w, h, &opsH)
+			for _, f := range []*frag{at, conn} {
+				r := image.Rect(int(f.x)-1, f.top, int(f.x+f.w)+2, f.bot)
+				if d, p := pwMaxDiff(hov, ref, r); d > 2 {
+					t.Errorf("%s, w=%d: hovered, %s differs by %d at %v (%v, want %v) from its text painted once in the hover color", mode, w, f.sh.str, d, p, hov.RGBAAt(p.X, p.Y), ref.RGBAAt(p.X, p.Y))
+				}
+			}
 		}
 		if mode == "component" {
 			slackc.RemoveStyle("test:pill-hover")
@@ -604,7 +645,12 @@ func TestCodeChipWrapBorders(t *testing.T) {
 // swatch, div.c-mrkdwn__hex: 13px square plus a 1px border in
 // --sk_foreground_max_solid (97,96,97), 2px after the value, its bottom
 // 1px under the baseline; an atomic inline, which can start the next line
-// alone.
+// alone. A line it holds alone (the colour last in its paragraph) is a
+// full line box, the strut's 22px with the swatch on its baseline, as
+// Chromium makes a line box with an inline-block in it. A code-styled
+// colour has the swatch inside its code chip (WithFormattingStyles wraps
+// both of Color's children in the code element), before the chip's 3px
+// end padding.
 func TestColorSwatchAfterValue(t *testing.T) {
 	st := NewStyle(themeShaper(), noImages{}, LightPalette())
 	d := doc(para(txt("brand colour "), rt.Span{Kind: rt.ColorSwatch, Text: "#1D9BD1"}, txt(" ok")))
@@ -646,5 +692,263 @@ func TestColorSwatchAfterValue(t *testing.T) {
 	}
 	if alone == 0 {
 		t.Error("the swatch never went to the next line on its own: it's an atomic inline")
+	}
+
+	swatchOf := func(v *View) *box {
+		for i := range v.d.boxes {
+			if b := &v.d.boxes[i]; b.kind == bBorder && b.fill == swatch {
+				return b
+			}
+		}
+		return nil
+	}
+	last := doc(para(txt("the brand colour is "), rt.Span{Kind: rt.ColorSwatch, Text: "#1D9BD1"}))
+	lone := 0
+	for w := 120; w <= 320; w++ {
+		v := layoutAt(st, last, Options{}, w)
+		sw, val := swatchOf(v), findFrag(t, &v.d, "#1D9BD1")
+		if sw == nil {
+			t.Fatalf("last: w=%d: no swatch", w)
+		}
+		if n := len(v.d.lines); v.d.size.Y != 22*n {
+			t.Errorf("last: w=%d: %d lines %dpx tall, want 22px each (a line holding the swatch is a full line box)", w, n, v.d.size.Y)
+		}
+		if sw.r.Min.Y < val.bot {
+			continue
+		}
+		lone++
+		ln := v.d.lines[len(v.d.lines)-1]
+		if sw.r.Min.X != 2 || sw.r.Min.Y < ln.top || sw.r.Max.Y-ln.top != val.y+1-val.top {
+			t.Errorf("last: w=%d: the swatch alone at %v on the line %d..%d, want x=2 and its bottom 1px under the baseline (%d into the line)", w, sw.r, ln.top, ln.bot, val.y+1-val.top)
+		}
+	}
+	if lone == 0 {
+		t.Error("last: the swatch never went to a line of its own")
+	}
+
+	code := doc(para(txt("brand "), rt.Span{Kind: rt.ColorSwatch, Text: "#1D9BD1", Style: rt.Code}, txt(" ok")))
+	v := layoutAt(st, code, Options{}, 400)
+	sw := swatchOf(v)
+	var chip *box
+	for i := range v.d.boxes {
+		if b := &v.d.boxes[i]; b.kind == bBorder && b.fill == st.Palette.CodeBg {
+			chip = b
+		}
+	}
+	if sw == nil || chip == nil {
+		t.Fatalf("code: swatch %v, chip %v", sw, chip)
+	}
+	if sw.r.Min.X <= chip.r.Min.X || chip.r.Max.X != sw.r.Max.X+3 {
+		t.Errorf("code: the chip %v, the swatch %v: want the swatch inside the chip, 3px before its end", chip.r, sw.r)
+	}
+}
+
+// pwEll is a clamp's "…" frag in d, nil when the doc fit.
+func pwEll(d *display) *frag {
+	for i := range d.frags {
+		if f := &d.frags[i]; f.kind == fText && f.sh != nil && f.sh.str == "…" {
+			return f
+		}
+	}
+	return nil
+}
+
+// pwLineBoxes are d's inline boxes of fills (pills, code chips,
+// highlights) on the line from top to bot, in layout order.
+func pwLineBoxes(d *display, top, bot int, fills ...color.NRGBA) []box {
+	var out []box
+	for _, b := range d.boxes {
+		if cy := (b.r.Min.Y + b.r.Max.Y) / 2; (b.kind != bFill && b.kind != bBorder) || cy < top || cy >= bot {
+			continue
+		}
+		for _, f := range fills {
+			if b.fill == f {
+				out = append(out, b)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// A line clamp's "…" goes over the inline boxes of its line, which keep
+// the extent they were laid out with: Chromium's InlineLayoutAlgorithm::
+// CreateLine computes the boxes' rects (ComputeInlinePositions) before
+// LineTruncator::TruncateLine, which only hides children and appends the
+// "…" after them, and CreateBoxFragments uses those rects. So under a
+// 1-line clamp the first line's pill, code and highlight boxes are those
+// of the unclamped layout: one the "…" cuts runs on to its end (square
+// where it goes on), padding and border kept. Synthetic text.
+func TestWrappedPillClampKeepsBoxes(t *testing.T) {
+	pal := LightPalette()
+	st := NewStyle(themeShaper(), noImages{}, pal)
+	docs := []struct {
+		name string
+		d    rt.Doc
+	}{
+		{"pill", doc(para(txt("please ask "), rt.Span{Kind: rt.User, ID: pwApp, Text: "@relay connector"}, txt(" about it today")))},
+		{"code", doc(para(txt("then run "), rt.Span{Kind: rt.Text, Text: "npm install --save-dev", Style: rt.Code}, txt(" again here")))},
+		{"highlight", doc(para(txt("the "), rt.Span{Kind: rt.Text, Text: "highlighted words in it", Style: rt.Highlight}, txt(" and more after")))},
+	}
+	fills := []color.NRGBA{pal.MentionBg, pal.CodeBg, pal.Highlight}
+	for _, c := range docs {
+		under := 0
+		for w := 90; w <= 360; w++ {
+			full := layoutAt(st, c.d, Options{}, w)
+			v := layoutAt(st, c.d, Options{MaxLines: 1}, w)
+			ell := pwEll(&v.d)
+			if ell == nil || len(full.d.lines) < 2 {
+				continue
+			}
+			ln := full.d.lines[0]
+			want, got := pwLineBoxes(&full.d, ln.top, ln.bot, fills...), pwLineBoxes(&v.d, ln.top, ln.bot, fills...)
+			if len(got) != len(want) {
+				t.Errorf("%s, w=%d: %d boxes on the clamped line, %d unclamped: %v, want %v", c.name, w, len(got), len(want), got, want)
+				continue
+			}
+			for i := range want {
+				if float32(want[i].r.Max.X) > ell.x+0.5 {
+					under++
+				}
+				if got[i].r != want[i].r || pwCorners(got[i]) != pwCorners(want[i]) {
+					t.Errorf("%s, w=%d: under the clamp box %d is %v (corners %v), unclamped %v (corners %v): the \"…\" at %.1f goes over the laid-out box",
+						c.name, w, i, got[i].r, pwCorners(got[i]), want[i].r, pwCorners(want[i]), ell.x)
+				}
+			}
+		}
+		if under == 0 {
+			t.Errorf("%s: no box ran under or past the \"…\" at any width", c.name)
+		}
+	}
+}
+
+// Under a line clamp the "…" follows as much of its line's text as fits
+// with it, cut mid-word: Chromium's TruncateChild cuts the last text child
+// that doesn't fit at its OffsetToFit, after any character (a run of text
+// is one child, a space in it one of its characters), and keeps the
+// line's first character at least. One more character (or the space after
+// a whole word) would leave no room for the "…". Plain text, and a pill's
+// text (its box goes on under the "…"). Synthetic text.
+func TestWrappedPillClampCutsMidWord(t *testing.T) {
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	docs := []struct {
+		name string
+		d    rt.Doc
+	}{
+		{"text", doc(para(txt("Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod")))},
+		{"pill", doc(para(txt("aaa bbb "), rt.Span{Kind: rt.User, ID: pwApp, Text: "@relay connector"}, txt(" ccc ddd eee")))},
+	}
+	for _, c := range docs {
+		mid := 0
+		for w := 60; w <= 360; w++ {
+			full := layoutAt(st, c.d, Options{}, w)
+			v := layoutAt(st, c.d, Options{MaxLines: 1}, w)
+			ell := pwEll(&v.d)
+			if ell == nil || len(full.d.lines) < 2 {
+				continue
+			}
+			var u, k []*frag // the first line's words: unclamped, and kept before the "…"
+			for i := range full.d.frags {
+				if f := &full.d.frags[i]; f.kind == fText && f.sh != nil && f.line == 0 {
+					u = append(u, f)
+				}
+			}
+			for i := range v.d.frags {
+				if f := &v.d.frags[i]; f.kind == fText && f.sh != nil && f.line == 0 && f != ell {
+					k = append(k, f)
+				}
+			}
+			if len(k) == 0 || len(k) > len(u) {
+				t.Errorf("%s, w=%d: kept %q of the line %q", c.name, w, fragStrings(&v.d), fragStrings(&full.d))
+				continue
+			}
+			m := len(k) - 1
+			bad := false
+			for i := 0; i < m; i++ {
+				if k[i].sh.str != u[i].sh.str || k[i].x != u[i].x {
+					bad = true
+				}
+			}
+			kl, ul := k[m], u[m]
+			if bad || kl.x != ul.x || !strings.HasPrefix(ul.sh.str, kl.sh.str) {
+				t.Errorf("%s, w=%d: kept %q, the line was %q: want a prefix of it", c.name, w, fragStrings(&v.d), fragStrings(&full.d))
+				continue
+			}
+			fits := func(x float32) bool { return x+ell.w <= float32(w)+0.01 }
+			if !fits(ell.x) && !(m == 0 && utf8.RuneCountInString(kl.sh.str) == 1) {
+				t.Errorf("%s, w=%d: the \"…\" at %.1f..%.1f runs past the line's end", c.name, w, ell.x, ell.x+ell.w)
+			}
+			next := float32(-1) // where the "…" would start after one more character
+			switch {
+			case kl.sh.str != ul.sh.str: // cut mid-word
+				mid++
+				if math.Abs(float64(ell.x-(kl.x+kl.w))) > 0.6 {
+					t.Errorf("%s, w=%d: \"…\" at %.1f, the cut word %q ends at %.1f", c.name, w, ell.x, kl.sh.str, kl.x+kl.w)
+				}
+				next = ul.x + ul.sh.caretX(utf8.RuneCountInString(kl.sh.str)+1)
+			case m+1 < len(u):
+				nx := u[m+1]
+				same := nx.target == ul.target && nx.style == ul.style && nx.x-(ul.x+ul.w) < 6 // the space between is the run's
+				switch {
+				case math.Abs(float64(ell.x-(ul.x+ul.w))) <= 0.6:
+					if same {
+						next = nx.x // the space after it
+					}
+				case ell.x > ul.x+ul.w && ell.x <= nx.x+0.6:
+					next = nx.x + nx.sh.caretX(1) // after the space: the next word's first character
+				default:
+					t.Errorf("%s, w=%d: \"…\" at %.1f after %q (%.1f..%.1f), the next word at %.1f", c.name, w, ell.x, ul.sh.str, ul.x, ul.x+ul.w, nx.x)
+				}
+			}
+			if next >= 0 && fits(next) {
+				t.Errorf("%s, w=%d: \"…\" after %q at %.1f, but with one more character (to %.1f) it fits in %d (%.1f px wide)", c.name, w, kl.sh.str, ell.x, next, w, ell.w)
+			}
+		}
+		if mid == 0 {
+			t.Errorf("%s: the clamp cut no word mid-word", c.name)
+		}
+	}
+}
+
+// MissingText's bar (BaseMissingMember, for a member the store can't
+// name) is an inline-block, an atomic inline: Chromium's LineBreaker breaks
+// before it and after it, so "(" can end the line the bar starts the next
+// of, and a line holding only it is a full 22px line box.
+func TestMissingMemberBarBreaks(t *testing.T) {
+	const gone = "U0GONE0001"
+	SetMemberRead(func(id string) (string, MemberMiss) {
+		if id == gone {
+			return "", MemberGone
+		}
+		return "", MemberLoaded
+	})
+	t.Cleanup(func() { SetMemberRead(nil) })
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	d := doc(para(txt("Fields relay connector ("), rt.Span{Kind: rt.User, ID: gone, Text: "@ghost"}, txt(") Contact")))
+	broke := 0
+	for w := 150; w <= 420; w++ {
+		v := layoutAt(st, d, Options{}, w)
+		var bar *box
+		for i := range v.d.boxes {
+			if b := &v.d.boxes[i]; b.r.Dx() == 120 && b.r.Dy() == 8 {
+				bar = b
+			}
+		}
+		lp := findFrag(t, &v.d, "(")
+		if bar == nil {
+			t.Fatalf("w=%d: no 120x8 bar in %v", w, v.d.boxes)
+		}
+		if bar.r.Min.Y >= lp.bot {
+			broke++
+			if bar.r.Min.X != 0 {
+				t.Errorf("w=%d: after \"(\" ended its line the bar starts at x=%d, want the line start", w, bar.r.Min.X)
+			}
+		}
+		if n := len(v.d.lines); v.d.size.Y != 22*n {
+			t.Errorf("w=%d: %d lines %dpx tall, want 22px each", w, n, v.d.size.Y)
+		}
+	}
+	if broke == 0 {
+		t.Error("the bar never started a line after \"(\": Chromium breaks before every atomic inline")
 	}
 }

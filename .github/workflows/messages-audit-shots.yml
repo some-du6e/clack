@@ -128,7 +128,7 @@ jobs:
           go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard|TestCanvasSlug|TestListSlug|TestFileChannelSlugs' ./internal/richtext
           go test -count=1 -v -run 'TestMemberName' ./internal/store
           go test -count=1 -v -run 'TestMessageKeepsEditor|TestSavedMeta|TestToggleTodoLikeSlack|TestUserHiddenLikeSlack|TestMentionsViewerDirectly|TestMentionsViewerInReply' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined|TestCanvasSlugClick|TestCanvasAnchorCard|TestCanvasFileCard|TestFileCardSection|TestNewlineGapsLikeSlack|TestNewlineGapShots|TestWrappedPill|TestPillPadding|TestPillPictureSlot|TestPillAfterAndEdges|TestPillEllipsisAfterPicture|TestPillBoundsHoldPictureLine|TestPillPictureInAlignedTable|TestCodeChip|TestColorSwatchAfterValue' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined|TestCanvasSlugClick|TestCanvasAnchorCard|TestCanvasFileCard|TestFileCardSection|TestNewlineGapsLikeSlack|TestNewlineGapShots|TestWrappedPill|TestPillPadding|TestPillPictureSlot|TestPillAfterAndEdges|TestPillEllipsisAfterPicture|TestPillBoundsHoldPictureLine|TestPillPictureInAlignedTable|TestCodeChip|TestColorSwatchAfterValue|TestMissingMemberBarBreaks|TestPillClampOpenEnd|TestTableCellWidthPerLine|TestPillClickRectHoldsPictureLine' ./internal/ui/richview
           xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots|TestHiddenSender|TestHiddenMessageMentionContents|TestHiddenSystem|TestHiddenJoinsSummaryLikeSlack|TestTombstoneColumnLikeSlack|TestCanvasLinkShots|TestCanvasFileShots|TestListSlugShots|TestUnknownSenderDrawsBar|TestReactionTipMissingToken|TestMissingMemberShots|TestUnreadBannerShots|TestUnreadBannerLikeSlack|TestLatestMessagesBanner|TestWrappedMentionPictureInRows' ./internal/ui/messages
           # the to-do and reminder rows (gap-w7)
           xvfb-run -a go test -count=1 -v -run 'TestTodoAndReminderLabelsLikeSlack|TestTodoActionClickToasts|TestTodoToastText|TestSaveRowLikeSlack|TestMessageContextMenuThreadAction' ./internal/ui/popups
@@ -147,13 +147,15 @@ jobs:
           # they fail (the picture at the line start between the lines, the
           # pill's box over the space it broke at, round where it broke, no
           # break before or after the picture, the swatch before its value,
-          # code's border closed where it broke). Until ui has the fix (its
+          # code's border closed where it broke, a clamp's "…" after whole
+          # words only, no break before MissingText's bar, a hovered pill's
+          # text not in the hover color). Until ui has the fix (its
           # flow keeps pseudo-element places: addPseudoSlot), a ui run that
           # fails none of them fails this step: the comparison is the
           # evidence.
           cp internal/ui/richview/pill_wrap_test.go before-ui/internal/ui/richview/
           cp internal/ui/messages/pill_wrap_test.go before-ui/internal/ui/messages/
-          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedPill|TestPillPadding|TestCodeChipWrapBorders|TestColorSwatchAfterValue' ./internal/ui/richview > "$MESSAGES_AUDIT_SHOTS_DIR/pill-wrap-before-richview.log" 2>&1) || true
+          (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedPill|TestPillPadding|TestCodeChipWrapBorders|TestColorSwatchAfterValue|TestMissingMemberBarBreaks' ./internal/ui/richview > "$MESSAGES_AUDIT_SHOTS_DIR/pill-wrap-before-richview.log" 2>&1) || true
           (cd before-ui && PILL_WRAP_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestWrappedMentionPictureInRows' ./internal/ui/messages > "$MESSAGES_AUDIT_SHOTS_DIR/pill-wrap-before-messages.log" 2>&1) || true
           fixed=0
           grep -q 'func (l \*lay) addPseudoSlot' before-ui/internal/ui/richview/flow.go && fixed=1

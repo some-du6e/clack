@@ -171,6 +171,26 @@ func pwGreen(img *image.RGBA) (int, image.Rectangle) {
 	return n, bb
 }
 
+// pwInk counts img's dark pixels in r (text: the message's and the pill's
+// glyphs; luma under 150) and where the first is.
+func pwInk(img *image.RGBA, r image.Rectangle) (int, image.Point) {
+	n := 0
+	var at image.Point
+	r = r.Intersect(img.Bounds())
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			c := img.RGBAAt(x, y)
+			if 299*int(c.R)+587*int(c.G)+114*int(c.B) < 150*1000 {
+				if n == 0 {
+					at = image.Pt(x, y)
+				}
+				n++
+			}
+		}
+	}
+	return n, at
+}
+
 // pwPane sweeps the pane's width and checks where the mention's picture
 // is drawn at each layout the mention takes there (a new one whenever its
 // words move): one circle, over none of its words, in the pill's first
@@ -277,6 +297,13 @@ func pwPane(t *testing.T, h coreHost, mode, pane string) {
 		case cy >= first.Min.Y-lineH && cy < first.Min.Y:
 			if kind != "after" {
 				t.Errorf("%s, w=%d (%s): the picture at %v is on the line above @relay at %v, which doesn't start its line (x=%d)", name, w, kind, bb, first, left)
+			}
+			// it ends that line: nothing is drawn after it there (its 3px
+			// margin and the pill's 2px padding, then the line's end), so
+			// it isn't drawn over the line's words (at its start, as Karim
+			// saw it)
+			if n, at := pwInk(img, image.Rect(bb.Max.X+6, bb.Min.Y, w-16, bb.Max.Y)); n > 0 {
+				t.Errorf("%s, w=%d (%s): %d px of text after the picture at %v on its line (the first at %v): the picture doesn't end its line", name, w, kind, n, bb, at)
 			}
 		default:
 			t.Errorf("%s, w=%d (%s): the picture at %v is on neither @relay's line %v nor the one above", name, w, kind, bb, first)
