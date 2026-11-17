@@ -201,17 +201,14 @@ func (r *Runtime) ExposeAsyncSeq(name string, fn AsyncFunc, seq func(args []json
 			raw[i] = a.jsonOrNull()
 		}
 		p, resolve, reject := js.NewPromise()
-		held := r.heldAwait() // a send's chain awaiting Go (awaitUserChain)
+		r.heldAwait() // a send's chain awaiting Go (awaitUserChain)
 		run := func() {
 			v, err := fn(r.ctx, raw)
 			if err != nil {
 				reject(err)
-			} else {
-				resolve(v)
+				return
 			}
-			if held != nil {
-				held()
-			}
+			resolve(v)
 		}
 		if seq != nil && seq(raw) {
 			r.runSeq(run)

@@ -89,21 +89,19 @@ type Runtime struct {
 	timerN int
 	// urgentTimers counts the timers in timers a user-blocking task set
 	urgentTimers int
-	// userAwaits counts the async Go functions a send's chain awaits now,
-	// and userAwaitAt is when the last of them began (monoNow):
+	// holdUntil is when the hold a send's chain armed ends (monoNow):
 	// awaitUserChain
-	userAwaits  atomic.Int32
-	userAwaitAt atomic.Int64
-	hosts       map[uint32]HostFunc
-	hostN       uint32
-	roots       map[uint64]*Root
-	onDoc       func(body []byte, css []string)
-	onDocProps  func(html, body []byte)
-	onCommit    func(id uint64, tree []byte)
-	fetches     map[int]context.CancelFunc
-	opens       []time.Time // recent external opens (allowOpen)
-	openWarned  bool
-	start       time.Time
+	holdUntil  int64
+	hosts      map[uint32]HostFunc
+	hostN      uint32
+	roots      map[uint64]*Root
+	onDoc      func(body []byte, css []string)
+	onDocProps func(html, body []byte)
+	onCommit   func(id uint64, tree []byte)
+	fetches    map[int]context.CancelFunc
+	opens      []time.Time // recent external opens (allowOpen)
+	openWarned bool
+	start      time.Time
 
 	kvs      map[string]KV
 	builtins map[string]string
@@ -407,12 +405,13 @@ func IsInOrder(ctx context.Context) bool {
 type userChainKey struct{}
 
 // UserChain is UserBlocking for a send, whose chain goes through Go
-// between its JS steps: its checks and patches call the native, which
-// queues the next hops (the send transforms, the sendMessage thunk) a
-// goroutine switch later. While such a chain awaits an async Go function
-// (ExposeAsync) the loop starts no queued task for a moment
+// between its JS steps: its checks answer Go, which dispatches the send's
+// thunk, and its patches call the native, which queues the next hops (the
+// send transforms, the sendMessage thunk) a goroutine switch later. When
+// one of its tasks returns to Go, and while it awaits an async Go function
+// (ExposeAsync), the loop starts no queued task for a moment
 // (awaitUserChain), as Slack runs a whole send in one JS task: a render
-// the loop started meanwhile held the next hop for its whole run, and the
+// the loop started there held the next hop for its whole run, and the
 // pending copy missed its frame. Other user-blocking work (a key, a
 // click, a reaction) holds nothing.
 func UserChain(ctx context.Context) context.Context {
@@ -438,31 +437,38 @@ func IsUserBlocking(ctx context.Context) bool {
 	return b
 }
 
-// userAwaitHold bounds how long the loop holds its queued tasks back while
-// a send's chain awaits Go (awaitUserChain), from that await's start: the
-// native queues the chain's next JS hop a goroutine switch or two later,
-// then waits for chat.postMessage, which renders mustn't wait out.
-const userAwaitHold = 30 * time.Millisecond
+// userChainHold is how long the loop holds its queued tasks back after a
+// send's chain went to Go (awaitUserChain): Go goes on with the chain a
+// goroutine switch or two later (the thunk after the check, the native's
+// transforms and sendMessage thunk), then waits for chat.postMessage,
+// which renders mustn't wait out. Each hop arms it again.
+const userChainHold = 30 * time.Millisecond
+
+// armHold starts or extends the hold a send's chain asks for (JS thread).
+func (r *Runtime) armHold() {
+	if at := monoNow() + int64(userChainHold); at > r.holdUntil {
+		r.holdUntil = at
+	}
+}
 
 // awaitUserChain holds the queued tasks (and the queue's timers) back
-// while a send's chain awaits an async Go function (UserChain), for at
-// most userAwaitHold from each await's start, running the user-blocking
-// tasks and the user's timers as they come (JS thread). It reports false
-// once the runtime closed.
+// while a send's chain is in Go (UserChain: armHold), for userChainHold
+// from its last hop, running the user-blocking tasks and the user's timers
+// as they come (JS thread). It reports false once the runtime closed.
 func (r *Runtime) awaitUserChain() bool {
-	for r.userAwaits.Load() > 0 {
+	for {
 		if r.closed.Load() {
 			return false
+		}
+		d := time.Duration(r.holdUntil - monoNow())
+		if d <= 0 {
+			return true
 		}
 		if r.urgentN.Load() > 0 || r.dueUrgentTimer() {
 			if !r.runUrgent() {
 				return false
 			}
 			continue
-		}
-		d := time.Duration(r.userAwaitAt.Load() + int64(userAwaitHold) - monoNow())
-		if d <= 0 {
-			return true
 		}
 		if at, ok := r.nextUrgentTimer(); ok {
 			d = min(d, max(time.Until(at), 0))
@@ -474,22 +480,13 @@ func (r *Runtime) awaitUserChain() bool {
 		}
 		t.Stop()
 	}
-	return !r.closed.Load()
 }
 
-// heldAwait is, on the JS thread, whether an async Go function the task
-// running now calls is a send's chain's await (UserChain), counted in
-// userAwaits until done is called (any goroutine, after the answer is
-// queued).
-func (r *Runtime) heldAwait() (done func()) {
-	if !r.chainLane().hold {
-		return nil
-	}
-	r.userAwaits.Add(1)
-	r.userAwaitAt.Store(monoNow())
-	return func() {
-		r.userAwaits.Add(-1)
-		r.signal()
+// heldAwait arms the hold when the task running now, a send's chain's
+// (UserChain), calls an async Go function (JS thread).
+func (r *Runtime) heldAwait() {
+	if r.chainLane().hold {
+		r.armHold()
 	}
 }
 
@@ -702,6 +699,9 @@ func (r *Runtime) runTask(t task) {
 	r.deadline.Store(start + int64(r.opts.Timeout))
 	t.f()
 	r.checkpoint()
+	if t.hold && monoNow()-t.root <= int64(userChain) {
+		r.armHold() // a send's chain goes on in Go
+	}
 }
 
 // task is one macrotask on the JS thread, and what the timeout lines say

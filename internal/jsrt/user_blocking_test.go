@@ -482,10 +482,11 @@ func TestInOrderCallBeforeLaterInput(t *testing.T) {
 
 // A send's chain (UserChain) goes through Go between its JS steps: its
 // patches await the native, which queues the next hop (the sendMessage
-// thunk) a moment later. While it awaits, the loop starts no queued render
-// for up to userAwaitHold, and the next hop runs first, as Slack runs a
-// send in one task. Other user-blocking work holds nothing: a render
-// queued behind a click's await of Go starts at once.
+// thunk) a moment later, and its check answers Go, which dispatches the
+// thunk. While it is in Go the loop starts no queued render for
+// userChainHold from its last hop, and the next hop runs first, as Slack
+// runs a send in one task. Other user-blocking work holds nothing: a
+// render queued behind a click's await of Go starts at once.
 func TestSendChainHoldsTheQueue(t *testing.T) {
 	l := newLaneRecorder(t)
 	r := l.r
@@ -511,6 +512,32 @@ func TestSendChainHoldsTheQueue(t *testing.T) {
 	}`); err != nil {
 		t.Fatal(err)
 	}
+	// the check answers Go, which dispatches the thunk 2 ms later
+	t.Run("check, then the thunk", func(t *testing.T) {
+		l.mu.Lock()
+		l.order = nil
+		l.mu.Unlock()
+		ctx := UserChain(context.Background())
+		g := l.hold("G", true)
+		l.post(r.Post, "render")
+		done := make(chan error, 1)
+		r.CallThen(ctx, "__clack.noteJS", func(_ json.RawMessage, err error) {
+			if err != nil {
+				done <- err
+				return
+			}
+			time.Sleep(2 * time.Millisecond)
+			r.CallThen(ctx, "__clack.noteJS", func(_ json.RawMessage, err error) { done <- err }, "thunk")
+		}, "check")
+		close(g)
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		l.drain()
+		if got, want := l.got(), "G, check, thunk, render"; got != want {
+			t.Errorf("ran %s, want %s", got, want)
+		}
+	})
 	for _, tc := range []struct {
 		name string
 		ctx  context.Context
