@@ -7,7 +7,9 @@ import (
 	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
@@ -39,10 +41,6 @@ func wrapBox(ns *nativeStyle) *box {
 	return b
 }
 
-func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dimensions {
-	return wrapNativeX(gtx, ns, w, false)
-}
-
 // wrapView is the View wrapNative measures and paints with.
 func wrapView(gtx layout.Context) *View {
 	if wrapState.v == nil {
@@ -52,9 +50,7 @@ func wrapView(gtx layout.Context) *View {
 	return wrapState.v
 }
 
-// wrapNativeX is wrapNative; ownPseudo leaves box pseudo-elements to the
-// native (Styled.WrapOwnPseudo).
-func wrapNativeX(gtx layout.Context, ns *nativeStyle, w layout.Widget, ownPseudo bool) layout.Dimensions {
+func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dimensions {
 	v := wrapView(gtx)
 	b := wrapBox(ns)
 	b.v = v
@@ -80,18 +76,14 @@ func wrapNativeX(gtx layout.Context, ns *nativeStyle, w layout.Widget, ownPseudo
 	if ns.before != nil && ns.before.Content != "" {
 		bsh = word(v.face(ns.before), ns.before.Content)
 		bw = bsh.adv
-	} else if !ownPseudo {
-		if bbox = wrapPseudo(v, ns.before, cbW); bbox != nil {
-			bw = bbox.m[3] + bbox.w + bbox.m[1]
-		}
+	} else if bbox = wrapPseudo(v, ns.before, cbW); bbox != nil {
+		bw = bbox.m[3] + bbox.w + bbox.m[1]
 	}
 	if ns.after != nil && ns.after.Content != "" {
 		ash = word(v.face(ns.after), ns.after.Content)
 		aw = ash.adv
-	} else if !ownPseudo {
-		if abox = wrapPseudo(v, ns.after, cbW); abox != nil {
-			aw = abox.m[3] + abox.w + abox.m[1]
-		}
+	} else if abox = wrapPseudo(v, ns.after, cbW); abox != nil {
+		aw = abox.m[3] + abox.w + abox.m[1]
 	}
 
 	inner := cs
@@ -201,6 +193,120 @@ func wrapNativeX(gtx layout.Context, ns *nativeStyle, w layout.Widget, ownPseudo
 		out.Baseline = dims.Baseline + ceilI(mb+b.bd[2])
 	}
 	return out
+}
+
+// wrapInline is Styled.WrapInline: the rule's box effects on each of
+// frags (padding boxes, in order), sliced where the element goes on.
+func wrapInline(gtx layout.Context, ns *nativeStyle, frags []InlineFrag, radius unit.Dp, ownRadius bool, w layout.Widget) layout.Dimensions {
+	v := wrapView(gtx)
+	b := wrapBox(ns)
+	b.v = v
+	st := &b.st
+	v.edges(b, float32(gtx.Constraints.Max.X))
+	if !ownRadius { // the native's corners, as WrapRounded keeps them
+		old := st.Radius
+		for i := range st.Radius {
+			st.Radius[i] = css.Px(float32(radius))
+		}
+		defer func() { st.Radius = old }()
+	}
+	bd := b.bd
+	defer func() { b.bd = bd }()
+	// fragment i's border box and corners; b's border loses the sides
+	// where its line broke
+	frag := func(i int) (rectF, [4]float32) {
+		first, last := !frags[i].CutStart, !frags[i].CutEnd
+		f := frags[i].R
+		r := rectF{float32(f.Min.X), float32(f.Min.Y) - bd[0], float32(f.Max.X), float32(f.Max.Y) + bd[2]}
+		b.bd = bd
+		if first {
+			r.x0 -= bd[3]
+		} else {
+			b.bd[3] = 0
+		}
+		if last {
+			r.x1 += bd[1]
+		} else {
+			b.bd[1] = 0
+		}
+		b.w, b.h = r.x1-r.x0, r.y1-r.y0
+		rad := v.radii(b, b.w, b.h)
+		if !first {
+			rad[0], rad[3] = 0, 0
+		}
+		if !last {
+			rad[1], rad[2] = 0, 0
+		}
+		return r, rad
+	}
+	var os paint.OpacityStack
+	if st.Opacity < 1 {
+		os = paint.PushOpacity(gtx.Ops, st.Opacity)
+	}
+	p := painter{v: v, ops: gtx.Ops, clip: noClip}
+	rec := op.Record(gtx.Ops)
+	vis := st.Visibility == css.Visible
+	if vis {
+		// a gradient or an image covers the strip of the fragments laid
+		// end to end, each showing its part of it, as Chromium paints a
+		// sliced inline box's background
+		var strip float32
+		for i := range frags {
+			r, _ := frag(i)
+			strip += r.x1 - r.x0
+		}
+		var before float32
+		for i := range frags {
+			r, rad := frag(i)
+			noLeft, noRight := frags[i].CutStart, frags[i].CutEnd
+			p.shadowsSliced(b, r, rad, false, noLeft, noRight)
+			p.stripBackground(b, r, rad, before, strip)
+			p.border(b, r, rad)
+			p.shadowsSliced(b, r, rad, true, noLeft, noRight)
+			before += r.x1 - r.x0
+		}
+	}
+	dims := w(gtx)
+	if vis {
+		for i := range frags {
+			r, rad := frag(i)
+			p.outline(b, r, rad)
+		}
+	}
+	content := rec.Stop()
+	if st.Filter.Blur > 0.3 {
+		p.blurCall(content, st.Filter.Blur*v.dp)
+	} else {
+		content.Add(gtx.Ops)
+	}
+	if st.Opacity < 1 {
+		os.Pop()
+	}
+	return dims
+}
+
+// stripBackground paints b's background on r, one fragment of an inline
+// box: its color there, a gradient or an image over the strip the box's
+// fragments make laid end to end (before px of it come before r; strip is
+// its width), clipped to r.
+func (p *painter) stripBackground(b *box, r rectF, rad [4]float32, before, strip float32) {
+	bg := &b.st.Background
+	if bg.Color.A > 0 {
+		p.fillRR(r, rad, bg.Color)
+	}
+	grad := bg.Gradient != nil && len(bg.Gradient.Stops) > 0
+	if !grad && bg.Image == "" {
+		return
+	}
+	sr := rectF{r.x0 - before, r.y0, r.x0 - before + strip, r.y1}
+	cs := clip.Outline{Path: rrectPath(p.ops, r, rad, false)}.Op().Push(p.ops)
+	if grad {
+		p.gradient(bg.Gradient, sr, [4]float32{})
+	}
+	if bg.Image != "" {
+		p.bgImage(b, sr, [4]float32{})
+	}
+	cs.Pop()
 }
 
 // wrapPseudo is a native's ::before or ::after that generates no text but

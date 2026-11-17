@@ -330,6 +330,10 @@ func (v *View) metrics(st *css.Style) (asc, desc, fasc, fdesc float32) {
 
 const inf = float32(1e7)
 
+// xHeightRatio is a font's x-height over its ascent, for vertical-align:
+// middle (Lato's 1013 over 1974 units is 0.513).
+const xHeightRatio = 0.52
+
 // layoutIFC breaks a run into lines at width avail (content box). It
 // returns the used width (longest line) and height.
 func (v *View) layoutIFC(f *ifc, owner *box, boxes []*box, avail, cbH float32, measure bool) (float32, float32) {
@@ -519,7 +523,7 @@ func (v *View) layoutIFC(f *ifc, owner *box, boxes []*box, avail, cbH float32, m
 
 	// Vertical metrics and placement.
 	sasc, sdesc, xasc, _ := v.metrics(ost)
-	xh := xasc * 0.52
+	xh := xasc * xHeightRatio
 	for li := range f.lines {
 		ln := &f.lines[li]
 		if ln.phantom {

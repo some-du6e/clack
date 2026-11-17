@@ -191,7 +191,7 @@ func New(c Creds) *Client {
 		}
 		rt = &desktopTransport{base: rt, c: cl}
 	}
-	cl.HTTP = &http.Client{Transport: rt, Timeout: 60 * time.Second, CheckRedirect: cl.checkRedirect}
+	cl.HTTP = &http.Client{Transport: rt, Timeout: RequestTimeout, CheckRedirect: cl.checkRedirect}
 	if isLoopback(base) {
 		cl.EdgeURL = base + "edge/" // a local fake (internal/fakeslack) serves the edge API too
 	}
@@ -254,7 +254,7 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 		req.Header.Del("Cookie")
 		req.Header.Del("Authorization")
 		if !slackOwnedURL(req.URL) {
-			return fmt.Errorf("slack: refusing redirect off Slack to %q", req.URL.Hostname())
+			return &redirectRefused{fmt.Sprintf("slack: refusing redirect off Slack to %q", req.URL.Hostname())}
 		}
 	}
 	// A file download redirected to a Slack page (sign-in, /ssb/…): stop.
@@ -297,10 +297,25 @@ func (e *Error) Error() string { return "slack " + e.Method + ": " + e.Code }
 type HTTPError struct {
 	Method string // the Web API method; "" for a download
 	Status int
-	text   string
+	// RetryAfter is the answer's Retry-After in whole seconds (0: none or
+	// not a number), as Slack's BaseRequest reads it.
+	RetryAfter int
+	text       string
 }
 
 func (e *HTTPError) Error() string { return e.text }
+
+// ErrRedirectRefused is a redirect Clack won't follow: off Slack's hosts
+// from a request with the session's credentials, or, for a fetch without
+// them, to a URL it doesn't load directly.
+var ErrRedirectRefused = errors.New("slack: redirect refused")
+
+// redirectRefused is ErrRedirectRefused with the text the client has
+// always given it.
+type redirectRefused struct{ text string }
+
+func (e *redirectRefused) Error() string        { return e.text }
+func (e *redirectRefused) Is(target error) bool { return target == ErrRedirectRefused }
 
 // NewHTTPError is an HTTPError with text, for a download made outside this
 // package (core.Fetch).
@@ -311,12 +326,16 @@ func NewHTTPError(status int, text string) *HTTPError {
 // FailureDetail describes a failed call for the log, with nothing the call
 // sent or got back beyond its outcome: Slack's error code and the HTTP
 // status for an {"ok":false} answer, the status for an HTTP error, else
-// what went wrong before an answer came (timeout, network error, refused,
-// …). Never a URL, a token or a body.
+// what went wrong before an answer came (timeout, network error, a Slack
+// page where a file was asked for, a refused redirect or host, an answer
+// that isn't the JSON asked for, …). Never a URL, a token or a body.
 func FailureDetail(err error) string {
 	var se *Error
 	var he *HTTPError
 	var ne net.Error
+	var te *transportError
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
 	switch {
 	case err == nil:
 		return "ok"
@@ -332,19 +351,25 @@ func FailureDetail(err error) string {
 		return "http=429 (rate limited)"
 	case errors.Is(err, ErrSignedOut):
 		return "signed out"
+	case errors.Is(err, ErrNotAFile):
+		return "answered with a Slack page, not a file"
+	case errors.Is(err, ErrRedirectRefused):
+		return "redirect off Slack refused"
+	case errors.Is(err, ErrUntrustedHost), errors.Is(err, ErrBlockedAddr):
+		return "refused (not a host Clack loads from)"
+	case errors.Is(err, ErrNotAllowed), errors.Is(err, ErrForbiddenMethod):
+		return "not allowed"
+	case errors.Is(err, ErrTooLarge):
+		return "response too large"
+	case errors.As(err, &syn), errors.As(err, &typ):
+		return "unexpected answer"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
-	case errors.Is(err, ErrTooLarge):
-		return "response too large"
-	case errors.Is(err, ErrUntrustedHost), errors.Is(err, ErrNotAFile), errors.Is(err, ErrBlockedAddr):
-		return "refused (not a host Clack loads from)"
-	case errors.Is(err, ErrNotAllowed), errors.Is(err, ErrForbiddenMethod):
-		return "not allowed"
 	case errors.As(err, &ne) && ne.Timeout():
 		return "timeout"
-	case errors.As(err, &ne):
+	case errors.As(err, &ne), errors.As(err, &te):
 		return "network error"
 	}
 	return "failed"
@@ -600,6 +625,9 @@ func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte,
 		}
 	}
 	err := c.doPost(ctx, method, u, ctype, body, out)
+	if err != nil && slackRetrying(ctx) {
+		err = c.retrySlack(ctx, method, err, func() error { return c.doPost(ctx, method, u, ctype, body, out) })
+	}
 	if ctx.Err() != nil && err != nil { // cancelled by the caller: not a server failure
 		return err
 	}
@@ -645,7 +673,12 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		HonestHeaders(req.Header) // no Origin, no client hints (ua.go)
 		resp, err := c.do(req, method, body)
 		if err != nil {
-			return scrubErr(err)
+			return &transportError{scrubErr(err)}
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && slackRetrying(ctx) {
+			resp.Body.Close() // Slack's queue's schedule, in post
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			resp.Body.Close()
@@ -667,10 +700,11 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			return scrubErr(err)
+			return &transportError{scrubErr(err)}
 		}
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
-			return &HTTPError{Method: method, Status: resp.StatusCode, text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		// {"ok":true…: no need to parse the whole body (7 MB for
 		// emoji.list) just to read "ok"; the decode below validates it
@@ -703,13 +737,15 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 // local address (connretry.go). httptrace only observes the connection;
 // the request leaves exactly as before, headers and all. The retry is
 // built from body like the first attempt (desktop sessions sign a fresh
-// DPoP proof for it in their transport).
+// DPoP proof for it in their transport). A SlackRetries call is sent once
+// more whatever its method, as Chromium resends any request whose reused
+// socket was dead (apiq.go).
 func (c *Client) do(req *http.Request, method string, body []byte) (*http.Response, error) {
 	var reused bool
 	trace := &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) { reused = i.Reused }}
 	ctx := req.Context()
 	resp, err := c.HTTP.Do(req.WithContext(httptrace.WithClientTrace(ctx, trace)))
-	if err == nil || !reused || !connReset(err) || !readOnlyMethod(method) || ctx.Err() != nil || c.SignedOut() {
+	if err == nil || !reused || !connReset(err) || !(readOnlyMethod(method) || slackRetrying(ctx)) || ctx.Err() != nil || c.SignedOut() {
 		return resp, err
 	}
 	log.Printf("slack: %s: pooled connection was dead (%v), retrying on a new one", method, scrubErr(err))
