@@ -1066,17 +1066,50 @@ overflowed the 256-entry log the page read. Now:
   answer (store/reacts.go), each person counted once.
 - A patched component's tree that JS hasn't drawn since the message
   changed hands back an older revision's props. The row tells them apart
-  by content: the fingerprints of the last 16 msgs it sent (actRow.sent,
-  as the message lists' row.sentFor does). Under a text patch of the
-  messages slice (Message Logger's kind), the row draws the plugins'
-  view as the lists do, read again when the row's copy changes: it
-  follows within a JS round trip, never drawing the text without the
-  patch.
+  by content: the fingerprints of the last 16 msgs it sent each level
+  (actRow.itemSent for ActivityItem, threadSent for ActivityThread, as
+  the message lists' row.sentFor keeps a set per level). A plugin's
+  rewrite in ActivityItem (Slick Censorship's mask) is then never taken
+  for props the row sent, also when another plugin patches the components
+  inside it (BetterBlock). Under a text patch of the messages slice
+  (Message Logger's kind), the row draws the plugins' view as the lists
+  do, converted again only for a new revision of the message: it follows
+  within a JS round trip, never drawing the text without the patch.
 - The Threads view and the Saved page take each change into their data
   once (threads_live.go, later_live.go), with no per-frame copies, and a
-  load that lands takes what changed after its request went out. While
-  they're off screen a change draws no frame.
-- msgVer is worked out once per message copy (msgVerOf).
+  load that lands takes what changed after its request went out. A
+  thread's stamp is the point its load was current at, and each message
+  the batch names takes its latest change against it, so a later change
+  to one message never hides an earlier change to another. While they're
+  off screen a change draws no frame.
+- msgVer is worked out once per message copy (msgVerOf), and a Threads
+  card's older and latest replies stay one slice until they change.
+
+Round 3 (2026-11-17) closed what was left of Slack's single store:
+
+- Every read writes one revision for all copies (store/read_revisions.go,
+  core/read_changes.go). A window page, a replies answer, messages.list
+  or a card's older replies that bring a revision of a message the store
+  held another of give it to the window's, the cached threads' and the
+  fetched copies, and core announces it as an "update". After a socket
+  gap a thread read for the first time had its root's new revision while
+  the window kept the old one, and closing the pane put an Activity row
+  back on it; now the change table has the read's revision too.
+- Activity describes a row from the list copy it will draw (the last
+  frame's until it polls), and a search redraws only when a row's text
+  changed: with search open and an item beside the page, the window no
+  longer drew every frame.
+- A reaction and its note for the fetches are one write
+  (ApplyReactionNoted), and a deletion is noted before the copies go.
+  Window pages replay the reactions the socket brought while they were
+  out. The replay and the reducer follow Slack's (8o8l, 6Dm2): a person a
+  reaction doesn't list changes nothing (a big reaction's answer lists
+  only some), and a reaction goes once nobody it lists is left.
+- A failed messages.list group leaves its messages as the store has them,
+  and an item with no copy no longer outranks one Activity holds. Drawn
+  messages count as uses in the fetched store, a change whose copy the
+  store let go is fetched again by id, and past the change table's floor
+  Activity takes the store's copies on every page.
 
 Slack's Saved rows read `Ld` too (LaterItemRow), and its Threads view
 draws its threads with the thread pane's components over the same store.
@@ -1091,9 +1124,13 @@ Clack still asks messages.list again for a message it holds only as a
 fetched copy, where Slack never fetches a message its store has; without
 the socket nothing else would bring the change.
 
-**Tests.** TestActivityLiveVoteCounts (native, patched, patched in
-lockstep, then a reload after an unheard change), TestActivityLiveVoteJSHeld,
-TestActivityLiveEditsJSHeld,
+**Tests.** TestActivityLiveVoteCounts (native, patched with a text-preview
+vote, patched in lockstep, patched blocks, then a reload after an unheard
+change), TestActivityLiveVoteJSHeld, TestActivityLiveEditsJSHeld,
+TestActivityLiveThreadEditsJSHeld, TestActivityLiveMaskedWithInnerPatches,
+TestActivityLiveSlicePatchNoReconvert, TestActivityLiveRootVoteAfterGap,
+TestActivityLiveSearchIdle, TestActivityLiveFailedGroup,
+TestActivityLiveEvictedRefetch,
 TestActivityLiveVoteSlicePatch, TestActivityLiveVoteBesideThread (in step,
 then the pane closing), TestActivityLiveEdit (the edit, and the removals:
 an edited-out mention, @channel, @here, a tombstone, moderated,
@@ -1101,13 +1138,17 @@ thread_hidden), TestActivityLiveDelete, TestActivityLiveMissingMessage,
 TestActivityLiveReaction, TestActivityLiveWindowEvicted,
 TestActivityLiveEntryWhileHidden, TestActivityLiveManyChangesHidden,
 TestActivityLiveRemovedDuringLoad, TestActivityLivePreview,
-TestThreadsLiveMessages, TestThreadsLiveVote, TestSavedLiveMessages and
-TestSavedLiveBotUpdate (views, fakeslack); TestFetchedMessagesTakeSocketChanges,
-TestFetchedMessagesKeepReactions and TestFetchedMessagesBounded (store);
+TestThreadsLiveMessages, TestThreadsLiveVote, TestThreadsLiveBatch,
+TestSavedLiveMessages and TestSavedLiveBotUpdate (views, fakeslack);
+TestFetchedMessagesTakeSocketChanges, TestFetchedMessagesKeepReactions,
+TestFetchedMessagesBounded, TestFetchedReplayTruncatedUsers,
+TestApplyReactionLastListed and TestFetchedSizeAfterMutate (store);
 TestMessageChangeTable, TestMessageChangeTableForgets,
 TestReactionReachesFetchedMessage, TestHydrateKeepsReactionsDuringFetch,
-TestMessageChangedRemoves, TestMentionsViewerRichKeywords and
-TestFetchedRootAnnounced (core).
+TestMessageChangedRemoves, TestMentionsViewerRichKeywords,
+TestFetchedRootAnnounced, TestReadRevisionAnnounced,
+TestWindowReadKeepsReactions, TestOlderRepliesStored and
+TestRemovesNotTakenByReactions (core).
 flake-check's activity-live-msg job runs them COUNT times, then three
 times under -race.
 
