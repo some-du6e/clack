@@ -270,6 +270,22 @@ func TestMessageActionsNeedTheMenuAPI(t *testing.T) {
 	if h.patched("MAMenu") {
 		t.Error("MAMenu patched by a plugin that only touched api.menu")
 	}
+	// declaring it is enough: Slick's plugin manager loads every declared
+	// API as the plugin starts (createAPILoader), and the menu API's
+	// menuReady installs Slick's MAMenu patch, which a plugin reaches
+	// through api.menu.getMessageActions
+	mustImport(t, h, pluginSource("MenuOnlySlick", `["menu"]`, `
+  start() { globalThis.__menuOnly = typeof this.api.menu.getMessageActions; }`))
+	if err := h.s.SetEnabled(h.ctx(), "MenuOnlySlick", true); err != nil {
+		t.Fatal(err)
+	}
+	if info := h.plugin("MenuOnlySlick"); !info.Running {
+		t.Fatalf("MenuOnlySlick didn't start: %q", info.StartError)
+	}
+	eventually(t, 3*time.Second, "Slick's MAMenu patch", func() bool { return h.patched("MAMenu") && h.state().MessageMenu })
+	if got := h.jsString(`return globalThis.__menuOnly`); got != "function" {
+		t.Errorf("api.menu.getMessageActions is %s", got)
+	}
 }
 
 // BetterMessageMenu's way: an outer MAMenu patch reads the providers'

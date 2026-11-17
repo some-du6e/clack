@@ -511,9 +511,9 @@ func TestMessageMenuOldMenuRows(t *testing.T) {
 		d.until(what+": the old row's click", func() bool {
 			return strings.Count(e.jsString(t, "globalThis.__oldRows.join(' ')"), "old_accept_delete") == n+1
 		})
-		if !m.Dismissed() {
-			t.Errorf("%s: the menu stayed open", what)
-		}
+		// its close (MessageActionsMenu's onTriggerClose) comes back as a
+		// queued Go call
+		d.until(what+": onTriggerClose closing the menu", m.Dismissed)
 	}
 	check("the old row in the More actions menu", false)
 	// with a #473 plugin's actions in the same menu (Slick's MAMenu patch)
