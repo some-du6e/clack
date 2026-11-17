@@ -524,9 +524,15 @@ func checkActivityVoteBeside(t *testing.T, patch []string) {
 		e.vote(n)
 		inStep(n, fmt.Sprintf("the chat.update to revision %d", n))
 	}
-	// no event: the server's revision moves, and the pane's next read
-	// (a socket gap's resync) brings it
+	// no event: the server's revision moves, the thread is read again (a
+	// socket gap's), and the pane's list reloads it; core's log never
+	// hears of revision 6, only the list on screen has it
 	e.setRev(6)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := e.app.RefreshReplies(ctx, lmChan, lmRoot); err != nil {
+		t.Fatal(err)
+	}
 	messages.ApplyEvent(e.app, core.Event{Type: "resync"})
 	inStep(6, "the pane reading its thread again")
 }

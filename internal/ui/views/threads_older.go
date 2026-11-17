@@ -112,6 +112,7 @@ func (v *Threads) applyOlder(t *thrItem, c *thrCard) {
 		add = add[len(add)-thrOlderLimit:]
 	}
 	c.older = append(add, c.older...)
+	v.noteLiveKeys() // their changes reach the card (threads_live.go)
 	if !r.more || len(add) == 0 {
 		c.olderStart = true // reachedStart
 	}

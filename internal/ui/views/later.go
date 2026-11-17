@@ -128,6 +128,7 @@ type laterResult struct {
 	page   core.SavedPage
 	seq    int
 	cursor string
+	from   uint64 // core's message change log when the request went out (later_live.go)
 }
 
 // savedFeed is one saved.list filter, paged.
@@ -183,6 +184,8 @@ type savedBase struct {
 	mu    sync.Mutex
 	done  []laterDone
 	known map[string]bool // "channel/ts" of listed items (mu)
+
+	lv viewMsgLog // core's message changes the items took (later_live.go)
 }
 
 func newSavedBase(h Host) savedBase {
@@ -202,6 +205,7 @@ func (s *savedBase) begin(gtx C) bool {
 	if !s.watching {
 		s.watching = true
 		s.w.watch(s.h, s.match)
+		s.lv.start(s.h.Core()) // the messages change from here on (later_live.go)
 	}
 	again := !s.last.IsZero() && gtx.Now.Sub(s.last) > 10*time.Second
 	s.last = gtx.Now
@@ -213,11 +217,11 @@ func (s *savedBase) begin(gtx C) bool {
 
 func (s *savedBase) reload(f *savedFeed) {
 	s.seq++
-	seq, filter := s.seq, f.filter
+	seq, filter, from := s.seq, f.filter, s.lv.seen
 	c := s.h.Core()
 	f.first.load(s.h, true, func(ctx context.Context) (laterResult, error) {
 		p, err := c.Saved(ctx, filter, "")
-		return laterResult{page: p, seq: seq}, err
+		return laterResult{page: p, seq: seq, from: from}, err
 	})
 }
 
@@ -226,12 +230,12 @@ func (s *savedBase) loadMore(f *savedFeed) {
 		return
 	}
 	s.seq++
-	seq, filter, cur := s.seq, f.filter, f.next
+	seq, filter, cur, from := s.seq, f.filter, f.next, s.lv.seen
 	f.moreTried = cur
 	c := s.h.Core()
 	f.more.load(s.h, true, func(ctx context.Context) (laterResult, error) {
 		p, err := c.Saved(ctx, filter, cur)
-		return laterResult{page: p, seq: seq, cursor: cur}, err
+		return laterResult{page: p, seq: seq, cursor: cur, from: from}, err
 	})
 }
 
@@ -243,6 +247,7 @@ func (s *savedBase) applyFeeds() {
 			changed = true
 		}
 	}
+	s.applyLive() // later_live.go
 	if !changed {
 		return
 	}
@@ -286,6 +291,7 @@ func (s *savedBase) applyFeed(f *savedFeed) bool {
 		for id, r := range v.page.Convs {
 			s.convs[id] = r
 		}
+		s.landed(f, v.from) // what changed while the request was out (later_live.go)
 		changed = true
 	}
 	if v, ok, _ := f.more.get(); ok && v.seq != 0 && v.seq != f.moreApplied {
@@ -304,6 +310,7 @@ func (s *savedBase) applyFeed(f *savedFeed) bool {
 			for id, r := range v.page.Convs {
 				s.convs[id] = r
 			}
+			s.landed(f, v.from) // later_live.go
 			f.next = v.page.Next
 			f.pages++
 			changed = true
@@ -338,10 +345,15 @@ func (s *savedBase) match(ev core.Event) bool {
 	case "resync", "saved":
 		return true
 	case "update", "delete":
+		// a listed message's edit, reaction or deletion: the next frame
+		// takes it from core's log (later_live.go), no reload
 		s.mu.Lock()
 		k := s.known[ev.Channel+"/"+ev.TS]
 		s.mu.Unlock()
-		return k
+		if k {
+			s.h.Invalidate()
+		}
+		return false
 	}
 	return false
 }

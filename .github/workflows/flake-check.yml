@@ -1188,7 +1188,8 @@ jobs:
   # in Activity): a vote's chat.update in the frame after it lands,
   # natively and under a pass-through plugin on Activity's components, in
   # step with the thread pane beside the page; an edit, a deletion and a
-  # reaction to a message fetched by id for Activity alone. store, core:
+  # reaction to a message fetched by id for Activity alone; an edit and a
+  # deletion in the Threads view and on the Saved page. store, core:
   # the messages fetched by id take the socket's changes, and core's log
   # of message changes the views read as they draw. Dispatch with
   # only=activity-live-msg.
@@ -1205,11 +1206,11 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "views: Activity's live messages (one verbose run, then COUNT)"
+      - name: "views: Activity's, Threads' and Saved's live messages (one verbose run, then COUNT)"
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestActivityLive' ./internal/ui/views || rc=1
-          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestActivityLive' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^(TestActivityLive|TestThreadsLiveMessages|TestSavedLiveMessages)' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^(TestActivityLive|TestThreadsLiveMessages|TestSavedLiveMessages)' ./internal/ui/views || rc=1
           exit $rc
       - name: "store, core: messages fetched by id, the message change log, COUNT runs"
         if: ${{ !cancelled() }}

@@ -1048,18 +1048,24 @@ counts. Now:
 - The cached body layouts in Activity, Threads, Saved and the preview
   pane key on the text, blocks and attachments themselves (msgVer).
 
-Slack's Saved rows read `Ld` too (LaterItemRow). Clack's Saved page
-reloads 2 s after an update to a listed message, and the reload now
-carries the socket's copy. Search results keep the search answer's body,
-as Slack's do: SearchResult draws the result's text and reads only its
-actions and reactions from the store.
+Slack's Saved rows read `Ld` too (LaterItemRow), and its Threads view
+draws its threads with the thread pane's components over the same store.
+Clack's Saved and To-dos pages read saved.list again 2 s after an update
+to a listed message, and its Threads view changed only when a new reply
+reloaded it. Both take core's changes in the next frame now, with no
+reload (views/later_live.go, views/threads_live.go). A deleted saved
+message draws Later's "no longer available", and a deleted reply leaves
+its card. Search results keep the search answer's body, as Slack's do:
+SearchResult draws the result's text and reads only its actions and
+reactions from the store.
 
 **Tests.** TestActivityLiveVoteCounts (native, patched, patched in
 lockstep), TestActivityLiveVoteBesideThread, TestActivityLiveEdit,
-TestActivityLiveDelete and TestActivityLiveReaction (views, fakeslack);
-TestFetchedMessagesTakeSocketChanges and TestFetchedMessagesBounded
-(store); TestMessageChangesInOrder and TestReactionReachesFetchedMessage
-(core). flake-check's activity-live-msg job runs them COUNT times.
+TestActivityLiveDelete, TestActivityLiveReaction, TestThreadsLiveMessages
+and TestSavedLiveMessages (views, fakeslack); TestFetchedMessagesTakeSocketChanges
+and TestFetchedMessagesBounded (store); TestMessageChangesInOrder and
+TestReactionReachesFetchedMessage (core). flake-check's activity-live-msg
+job runs them COUNT times.
 
 ## Not done
 

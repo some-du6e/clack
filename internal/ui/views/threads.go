@@ -166,6 +166,10 @@ type Threads struct {
 	// (threadMarked patches the thread in place: no reload).
 	mu    sync.Mutex
 	marks map[string]string
+
+	// lv is the cards' messages as core's changes left them
+	// (threads_live.go)
+	lv thrLive
 }
 
 // MessageFocuser is optionally implemented by the Host: transitionFocusTo
@@ -215,6 +219,14 @@ func (v *Threads) match(ev core.Event) bool {
 		return false
 	case "message":
 		return ev.Reply
+	case "update", "delete":
+		// an edit, an app's chat.update, a reaction or a deletion of a
+		// message a card shows: the next frame reads it from core's log
+		// (threads_live.go), no reload
+		if v.lv.wakes(ev) {
+			v.h.Invalidate()
+		}
+		return false
 	case "thread_subscription":
 		return ev.Name == "follow"
 	case "thread_marked":
@@ -262,6 +274,7 @@ func (v *Threads) Layout(gtx C) D {
 	v.notes.drain(v.h)
 	v.w.watch(v.h, v.match)
 	v.applyMarks()
+	v.applyLive() // threads_live.go
 	if !v.data.started() {
 		v.load(actFresh)
 	}
@@ -355,6 +368,7 @@ func (v *Threads) settle() {
 	for _, c := range v.cards {
 		c.built = false
 	}
+	v.noteLiveKeys() // threads_live.go
 	if v.paging {
 		v.paging = false
 		if _, _, err := v.data.get(); err != nil {
@@ -365,6 +379,7 @@ func (v *Threads) settle() {
 
 func (v *Threads) load(mode actLoad) {
 	c := v.h.Core()
+	v.lv.log.start(c) // the messages change from here on (threads_live.go)
 	old, _, _ := v.data.get()
 	cursor := ""
 	if mode == actMore {
@@ -1014,7 +1029,9 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 // the reply box within it.
 func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h int)) (D, int) {
 	unread := v.unread(t)
-	replies := thrShown(t, c) // the loaded older replies, then the latest ones
+	// the loaded older replies, then the latest ones, as core's changes
+	// left them (threads_live.go)
+	replies := v.liveReplies(t.Channel, thrShown(t, c))
 	unreadFrom := len(replies) - unread
 	compH, compBottom := 0, 20
 	if c.comp != nil {
@@ -1029,7 +1046,7 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h 
 	d := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
 			s := c.msg(t.Root.TS)
-			s.v, s.m, s.top = v, &t.Root, 20
+			s.v, s.m, s.top = v, v.liveRoot(t), 20 // as core's changes left it (threads_live.go)
 			return rec("root-"+t.key, slackc.Component(gtx, "ThreadRootGeneric", s, (*thrMsg).rootProps, (*thrMsg).layoutRoot))
 		}),
 		layout.Rigid(func(gtx C) D {
@@ -1437,7 +1454,7 @@ func (v *Threads) kbItems(items []thrItem) []vkItem {
 		if c := v.cards[k]; c != nil && c.moreText != "" {
 			add("load_older-"+k, thrKBRow{kind: "load_older", key: k, ch: t.Channel}, i)
 		}
-		for _, m := range thrShown(t, v.cards[k]) {
+		for _, m := range v.liveReplies(t.Channel, thrShown(t, v.cards[k])) { // the replies the card draws (threads_live.go)
 			add(k+"-"+m.TS, thrKBRow{kind: "reply", key: k, ch: t.Channel, ts: m.TS}, i)
 		}
 		add("footer-"+k, thrKBRow{kind: "footer", key: k, ch: t.Channel}, i)
