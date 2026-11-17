@@ -179,11 +179,12 @@ type compState struct {
 	thumb   string // … and thumbUrl
 	noAt    bool   // MemberSlug: the plugin's supressMentionAtSymbol
 	// pseudo is the px a pill's ::before and ::after take inside it
-	// (MentionProfiles' picture; Styled.Pseudo), 0 for none, and pbox
-	// whether each is a box (an inline-block) rather than text; edge is
-	// the px a rule's margin and border take before and after its box
-	// (Styled.InlineEdges)
+	// (MentionProfiles' picture; Styled.Pseudo), 0 for none, pml a box's
+	// left margin in it, and pbox whether each is a box (an inline-block)
+	// rather than text; edge is the px a rule's margin and border take
+	// before and after its box (Styled.InlineEdges)
 	pseudo [2]float32
+	pml    [2]float32
 	pbox   [2]bool
 	edge   [2]float32
 }
@@ -523,17 +524,17 @@ func (c *compRef) layoutSlug(gtx layout.Context, p slackc.Props) layout.Dimensio
 // set, is the element the pill's text is in (a channel's name), drawn
 // under its own Wrap.
 func (c *compRef) pill(gtx layout.Context, s slackc.Styled, inner *slackc.Styled) layout.Dimensions {
-	var ps [2]float32
+	var ps, ml [2]float32
 	var pb [2]bool
 	var edge [2]float32
 	if !s.Hidden() {
 		for i := range ps {
-			ps[i], pb[i], _ = s.Pseudo(gtx, i == 1, c.box().em)
+			ps[i], ml[i], pb[i], _ = s.Pseudo(gtx, i == 1, c.box().em)
 		}
 		edge[0], edge[1] = s.InlineEdges(gtx)
 	}
-	if cs := &c.v.cs[c.i]; ps != cs.pseudo || pb != cs.pbox || edge != cs.edge {
-		cs.pseudo, cs.pbox, cs.edge = ps, pb, edge
+	if cs := &c.v.cs[c.i]; ps != cs.pseudo || ml != cs.pml || pb != cs.pbox || edge != cs.edge {
+		cs.pseudo, cs.pml, cs.pbox, cs.edge = ps, ml, pb, edge
 		c.v.dirty = true
 	}
 	if c.v.dirty {
@@ -553,7 +554,7 @@ func (c *compRef) pill(gtx layout.Context, s slackc.Styled, inner *slackc.Styled
 	if !s.Active() {
 		return body(gtx)
 	}
-	var buf [8]image.Rectangle
+	var buf [8]slackc.InlineFrag
 	return s.WrapInline(gtx, c.lines(buf[:0]), unit.Dp(3), func(gtx layout.Context) layout.Dimensions {
 		d := body(gtx)
 		b := c.box()
@@ -569,13 +570,14 @@ func (c *compRef) pill(gtx layout.Context, s slackc.Styled, inner *slackc.Styled
 }
 
 // lines appends a pill's boxes to out, one per line it runs on, in its
-// component's coordinates.
-func (c *compRef) lines(out []image.Rectangle) []image.Rectangle {
+// component's coordinates, with the sides where it goes on (the flow's
+// slices: a line break, a clamp it runs on past).
+func (c *compRef) lines(out []slackc.InlineFrag) []slackc.InlineFrag {
 	o := c.box().origin().Min
 	tag := int16(c.i + 1)
 	for i := range c.v.d.boxes {
 		if b := &c.v.d.boxes[i]; b.comp == tag && b.kind == bFill {
-			out = append(out, b.r.Sub(o))
+			out = append(out, slackc.InlineFrag{R: b.r.Sub(o), CutStart: b.cut&cutStart != 0, CutEnd: b.cut&cutEnd != 0})
 		}
 	}
 	return out

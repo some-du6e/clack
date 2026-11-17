@@ -1452,7 +1452,7 @@ func (l *lay) ellipsize(ln *lineInfo, line, x0 int, maxW float32, fs *flowStyle,
 		}
 	}
 	ex, col := float32(x0), fs.col
-	keep := -1 // kids[:keep+1] stay; -1: none
+	keep := -1     // kids[:keep+1] stay; -1: none
 	var cutF *frag // a word cut to fit, its head and the head's bytes
 	var cutSh *shaped
 	var cutNb int

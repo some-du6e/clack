@@ -868,22 +868,33 @@ func (s Styled) Wrap(gtx layout.Context, w layout.Widget) layout.Dimensions {
 	return wrapNative(gtx, s.s, w)
 }
 
+// InlineFrag is one line's fragment of an inline native (WrapInline): R
+// its padding box in the native's coordinates; CutStart and CutEnd the
+// sides where the element goes on, on the line before (it isn't the
+// element's first fragment) and after (not its last; also where it goes
+// on past a line clamp), which have no border, corners or shadow there.
+type InlineFrag struct {
+	R                image.Rectangle
+	CutStart, CutEnd bool
+}
+
 // WrapInline is Wrap for an inline native laid out over line fragments:
 // a mention pill is a box on each line it runs on, and Chromium paints a
 // non-replaced inline element that way (box-decoration-break: slice,
 // which Slack never changes for pills). A rule's background, border,
 // box-shadow and outline go on each fragment, the first with the box's
 // start edge (its left border and corners), the last with its end edge,
-// and the edges where a line broke with neither. frags are the
-// fragments' padding boxes in the native's coordinates, in order; the
-// border lies outside them. radius is the native's own corner radius
-// (Slack's pill: 3px), kept unless a rule sets border-radius. Opacity and
-// filters apply to the whole; margins, sizes and transforms don't apply
-// to an inline box. The native keeps the places of its ::before and
-// ::after and of a rule's margin and border itself (Pseudo, InlineEdges)
-// and draws the pseudo-elements there (DrawPseudoInline); its content
-// isn't moved. With the zero Styled it is exactly w(gtx).
-func (s Styled) WrapInline(gtx layout.Context, frags []image.Rectangle, radius unit.Dp, w layout.Widget) layout.Dimensions {
+// and the edges where a line broke with neither (each fragment's
+// CutStart and CutEnd say which it has: a pill that goes on past a line
+// clamp has no end edge on its last line shown). frags are in order; the
+// border lies outside their boxes. radius is the native's own corner
+// radius (Slack's pill: 3px), kept unless a rule sets border-radius.
+// Opacity and filters apply to the whole; margins, sizes and transforms
+// don't apply to an inline box. The native keeps the places of its
+// ::before and ::after and of a rule's margin and border itself (Pseudo,
+// InlineEdges) and draws the pseudo-elements there (DrawPseudoInline);
+// its content isn't moved. With the zero Styled it is exactly w(gtx).
+func (s Styled) WrapInline(gtx layout.Context, frags []InlineFrag, radius unit.Dp, w layout.Widget) layout.Dimensions {
 	if s.s == nil || !s.Active() {
 		return w(gtx)
 	}
@@ -919,23 +930,25 @@ func (s Styled) InlineEdges(gtx layout.Context) (start, end float32) {
 // inline layout to keep a place for: a box (content set to an empty
 // string, with a size or a background, an inline-block: MentionProfiles'
 // 1em picture), its margins included, or generated text in its own font.
-// box tells which; ok is false when there's none. em, when > 0, is the
-// native's own font size in px, which em lengths in the pseudo-element
-// follow as they do in the browser.
-func (s Styled) Pseudo(gtx layout.Context, after bool, em float32) (w float32, box, ok bool) {
+// box tells which, and left is a box's left margin (part of w: a line
+// clamp's "…" after the box goes that far past its margin box, as
+// Chromium places it); ok is false when there's none. em, when > 0, is
+// the native's own font size in px, which em lengths in the
+// pseudo-element follow as they do in the browser.
+func (s Styled) Pseudo(gtx layout.Context, after bool, em float32) (w, left float32, box, ok bool) {
 	st := s.pseudoStyle(gtx, after, em)
 	if st == nil {
-		return 0, false, false
+		return 0, 0, false, false
 	}
 	v := wrapView(gtx)
 	if st.Content != "" {
-		return word(v.face(st), st.Content).adv, false, true
+		return word(v.face(st), st.Content).adv, 0, false, true
 	}
 	pb := wrapPseudo(v, st, float32(gtx.Constraints.Max.X))
 	if pb == nil {
-		return 0, false, false
+		return 0, 0, false, false
 	}
-	return pb.m[3] + pb.w + pb.m[1], true, true
+	return pb.m[3] + pb.w + pb.m[1], pb.m[3], true, true
 }
 
 // InlineSlot is the place a native's inline layout kept for its ::before

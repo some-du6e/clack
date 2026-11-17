@@ -1025,28 +1025,93 @@ func flattenBreaks(bs []richtext.Block) []richtext.Span {
 	return out
 }
 
-// pillsExtra is how much wider than their text a cell's pills lay out
-// (its max-content width counts them, as a browser's does): each pill's
-// 2px paddings and, laid out as a component, its ::before and ::after and a
-// rule's edges, from the state of the component it will be (comp0 plus
-// *next, counted on as the cells' flows add them).
-func (l *lay) pillsExtra(cell []richtext.Span, comp0 int, next *int) float32 {
-	var ex float32
+// cellWidth is a table cell's max-content width (its column's natural
+// width, as a browser measures it): its widest hard line, each with its
+// text and what its pills lay out wider than their text. That is a pill's
+// 2px paddings (none in code) and, laid out as a component, its ::before
+// and ::after, a rule's edges and the plugin's extra width, from the
+// state of the component it will be: comp0 plus *next, counted on where
+// addSpans makes one (not for a member the store can't name, which is
+// MissingText's 120px bar, nor in a system message's plain names). A
+// mention shows its member's name and a plugin's channel name as
+// addSpans lays them out.
+func (l *lay) cellWidth(cell []richtext.Span, k faceKey, comp0 int, next *int) float32 {
+	var w, line float32
+	pills := l.mode&modePills != 0 && !l.inAtt
 	for i := range cell {
 		sp := &cell[i]
-		switch sp.Kind {
-		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast, richtext.MessageMention, richtext.Canvas, richtext.ChannelTab:
-			ex += 2 * l.dpf(2)
+		txt := sp.Text
+		var ex float32
+		pad := l.dpf(2)
+		if sp.Style&richtext.Code != 0 {
+			pad = 0
 		}
-		if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User && !sp.Hidden || sp.Kind == richtext.Channel && !(sp.Off && sp.Lock)) {
+		switch sp.Kind {
+		case richtext.Break:
+			w, line = max(w, line), 0
+			continue
+		case richtext.InlineImage:
+			continue // decorative: no text
+		case richtext.User:
+			if sp.Hidden {
+				ex += 2 * pad
+				break
+			}
+			if t, miss, _, _ := mentionShown(sp.ID, txt); miss != MemberLoaded && !l.opts.Muted {
+				line += l.dpf(120)
+				continue
+			} else {
+				txt = t
+			}
+			if l.opts.Muted {
+				txt = strings.TrimPrefix(txt, "@") // a system message's name: plain text
+				break
+			}
+			ex += 2 * pad
+			if pills {
+				if c := comp0 + *next; l.cs != nil && c < len(*l.cs) {
+					cs := &(*l.cs)[c]
+					ex += cs.pseudo[0] + cs.pseudo[1] + cs.edge[0] + cs.edge[1] + float32(cs.extra)
+					if cs.noAt {
+						txt = strings.TrimPrefix(txt, "@")
+					}
+				}
+				*next++
+			}
+		case richtext.Channel:
+			ex += 2 * pad
+			if sp.Off && sp.Lock {
+				break // BaseMissingChannel's chip
+			}
+			if sp.Lock {
+				ex += float32(int(k.size>>6) + 2*l.dp(1)) // lock-filled before the name
+			}
+			if !pills {
+				break
+			}
 			if c := comp0 + *next; l.cs != nil && c < len(*l.cs) {
 				cs := &(*l.cs)[c]
-				ex += cs.pseudo[0] + cs.pseudo[1] + cs.edge[0] + cs.edge[1]
+				ex += cs.pseudo[0] + cs.pseudo[1] + cs.edge[0] + cs.edge[1] + float32(cs.extra)
+				if cs.name != "" {
+					txt = cs.name
+					if !sp.Lock {
+						txt = "#" + cs.name
+					}
+				}
 			}
 			*next++
+		case richtext.Usergroup, richtext.Broadcast, richtext.MessageMention, richtext.Canvas, richtext.ChannelTab:
+			ex += 2 * pad
 		}
+		for j, part := range strings.Split(txt, "\n") {
+			if j > 0 {
+				w, line = max(w, line), 0
+			}
+			line += l.measure(part, k)
+		}
+		line += ex
 	}
-	return ex
+	return max(w, line)
 }
 
 // naturalWidth is the max-content width of pending flow items: their
@@ -1316,11 +1381,7 @@ func (l *lay) table(b *richtext.Block, x, y, w int) int {
 			if ri == 0 {
 				kk = kb
 			}
-			cw := 0
-			for _, line := range strings.Split(richtext.SpansText(cell), "\n") {
-				cw = max(cw, int(l.measure(line, kk)+0.999))
-			}
-			cw += int(l.pillsExtra(cell, comp0, &pills) + 0.999)
+			cw := int(l.cellWidth(cell, kk, comp0, &pills) + 0.999)
 			nat[ci] = max(nat[ci], min(cw, l.dp(400))+2*padX)
 		}
 	}

@@ -196,8 +196,8 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 }
 
 // wrapInline is Styled.WrapInline: the rule's box effects on each of
-// frags (padding boxes, in order), sliced where the lines broke.
-func wrapInline(gtx layout.Context, ns *nativeStyle, frags []image.Rectangle, radius unit.Dp, ownRadius bool, w layout.Widget) layout.Dimensions {
+// frags (padding boxes, in order), sliced where the element goes on.
+func wrapInline(gtx layout.Context, ns *nativeStyle, frags []InlineFrag, radius unit.Dp, ownRadius bool, w layout.Widget) layout.Dimensions {
 	v := wrapView(gtx)
 	b := wrapBox(ns)
 	b.v = v
@@ -215,8 +215,8 @@ func wrapInline(gtx layout.Context, ns *nativeStyle, frags []image.Rectangle, ra
 	// fragment i's border box and corners; b's border loses the sides
 	// where its line broke
 	frag := func(i int) (rectF, [4]float32) {
-		first, last := i == 0, i == len(frags)-1
-		f := frags[i]
+		first, last := !frags[i].CutStart, !frags[i].CutEnd
+		f := frags[i].R
 		r := rectF{float32(f.Min.X), float32(f.Min.Y) - bd[0], float32(f.Max.X), float32(f.Max.Y) + bd[2]}
 		b.bd = bd
 		if first {
@@ -258,7 +258,7 @@ func wrapInline(gtx layout.Context, ns *nativeStyle, frags []image.Rectangle, ra
 		var before float32
 		for i := range frags {
 			r, rad := frag(i)
-			noLeft, noRight := i > 0, i < len(frags)-1
+			noLeft, noRight := frags[i].CutStart, frags[i].CutEnd
 			p.shadowsSliced(b, r, rad, false, noLeft, noRight)
 			p.stripBackground(b, r, rad, before, strip)
 			p.border(b, r, rad)
