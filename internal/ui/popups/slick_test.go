@@ -654,7 +654,7 @@ func TestSlickViewMessageLogger(t *testing.T) {
 		// (MessageActionsMenu's onTriggerClose)
 		d := newMADriver(t, e.h, m)
 		d.until("the old row laid out", func() bool { return laidOut(m) && slIndex(m.items, "plugin-row") >= 0 })
-		d.click(m.RowRects()[slIndex(m.items, "plugin-row")])
+		d.clickLabel(m.RowRects()[slIndex(m.items, "plugin-row")])
 		d.until("the menu closing", m.Dismissed)
 		slUntil(t, 15*time.Second, "a menu without Accept deletion", nil, func() bool {
 			again := NewMessageMenu(e.h, image.Pt(900, 200), msg)

@@ -301,7 +301,6 @@ func TestMenuKeysIgnored(t *testing.T) {
 		{"linux", "L", key.ModShift},
 		{"darwin", "C", key.ModCtrl},
 		{"linux", "C", key.ModSuper},
-		{"linux", "P", 0},                    // Pin is in Organize ▸; the submenu has the key
 		{"linux", key.NameDeleteForward, 0},  // not own: no Delete message…
 		{"linux", key.NameDeleteBackward, 0}, // Backspace deletes on macOS only
 		{"darwin", "E", 0},                   // not own: no Edit message
@@ -323,7 +322,9 @@ func TestMenuKeysIgnored(t *testing.T) {
 }
 
 // M opens Add a reminder ▸ with the keyboard (it's a submenu row); P
-// pins once the Organize ▸ submenu has keyboard focus.
+// pins once the Organize ▸ submenu has keyboard focus, and from the root
+// menu too: Slack's MessageActionsMenu (2rcC onMenuKeyDown) runs the keys
+// of the submenu actions it built (Organize's Pin) and closes the menu.
 func TestMenuKeysSubmenus(t *testing.T) {
 	setGOOS(t, "linux")
 	h := mkHost(t)
@@ -358,6 +359,23 @@ func TestMenuKeysSubmenus(t *testing.T) {
 	}
 	if ts := h.toastList(); slices.Contains(ts, "Message pinned") {
 		t.Errorf("a pin toasted %q; Slack's pinMessage toasts nothing", ts)
+	}
+
+	// P from the root of the context menu and of More actions
+	for _, which := range []string{"context", "more"} {
+		e, _ := mkOpen(t, h, which, false)
+		seq := h.a.S.PinSeq()
+		e.press("P", 0)
+		if !e.m.Dismissed() {
+			t.Errorf("%s: P from the root left the menu open", which)
+		}
+		for end := time.Now().Add(10 * time.Second); h.a.S.PinSeq() == seq && time.Now().Before(end); {
+			e.frame()
+			time.Sleep(10 * time.Millisecond)
+		}
+		if h.a.S.PinSeq() == seq {
+			t.Errorf("%s: P from the root didn't pin", which)
+		}
 	}
 }
 

@@ -103,7 +103,23 @@ func (d *maDriver) click(r image.Rectangle) {
 	if r.Empty() {
 		d.t.Fatal("clicking an empty rectangle: the row wasn't laid out")
 	}
-	c := r.Min.Add(r.Max).Div(2)
+	d.clickAt(r.Min.Add(r.Max).Div(2))
+}
+
+// clickLabel clicks row r's label: where a row a plugin drew as Slack's
+// MenuItem markup has its button (no Slack stylesheet here makes it the
+// row's width).
+func (d *maDriver) clickLabel(r image.Rectangle) {
+	d.t.Helper()
+	if r.Empty() {
+		d.t.Fatal("clicking an empty rectangle: the row wasn't laid out")
+	}
+	d.clickAt(image.Pt(r.Min.X+24+12, (r.Min.Y+r.Max.Y)/2))
+}
+
+// clickAt clicks window point c with the primary button.
+func (d *maDriver) clickAt(c image.Point) {
+	d.t.Helper()
 	p := f32.Pt(float32(c.X), float32(c.Y))
 	d.clock += time.Second
 	d.r.Queue(
@@ -489,7 +505,7 @@ func TestMessageMenuOldMenuRows(t *testing.T) {
 			t.Errorf("%s: the #473 actions after the old row: %s", what, maKeys(m.items))
 		}
 		n := strings.Count(e.jsString(t, "globalThis.__oldRows.join(' ')"), "old_accept_delete")
-		d.click(m.RowRects()[i])
+		d.clickLabel(m.RowRects()[i])
 		d.until(what+": the old row's click", func() bool {
 			return strings.Count(e.jsString(t, "globalThis.__oldRows.join(' ')"), "old_accept_delete") == n+1
 		})
