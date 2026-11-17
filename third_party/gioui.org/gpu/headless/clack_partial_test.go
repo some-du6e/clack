@@ -20,7 +20,11 @@ import (
 // Clack patch 45: a partial frame (drawn again only where it differs from
 // the last, scissored) is the whole frame's pixels, bit for bit, on every
 // backend (ci's linux-gio, macos and windows-applog jobs;
-// CLACK_PIXEL_TESTS).
+// CLACK_PIXEL_TESTS). The whole frame is the one the same GPU draws at
+// that point (gpu.ClackPartialWhole): with partial frames the atlas
+// places stick from frame to frame, and a path's coverage depends on its
+// place by a rounding, so the frame Gio would draw afresh can differ from
+// both by that rounding (TestClackPlacementNoise's floor).
 
 // partialVars are what a frame of partialScene changes against its base.
 type partialVars struct {
@@ -236,19 +240,20 @@ func partialRun(t *testing.T, win *Window, scene func(o *op.Ops, tr f32.Affine2D
 // TestClackPartialFrames draws a sequence of frames, each a change a real
 // window sees (a caret's blink, a spinner's turn, an animated emoji's next
 // frame, a hover's colour, a fade, an op moved, added, dropped or drawn in
-// another order, a path whose atlas place moves every later one, a new
-// clear colour, a transform), three ways: whole, partial into the texture
-// target, and partial through the frame texture and its copy into the
-// target (a window's way). Every frame must have the whole frame's pixels
-// exactly; the frames a small change made must be partial, with a small
-// damage, and cost a fraction of the whole frame.
+// another order, a path that grows before every other, a new clear
+// colour, a transform), three ways from the same start: whole
+// (gpu.ClackPartialWhole), partial into the texture target, and partial
+// through the frame texture and its copy into the target (a window's
+// way). Every frame must have the whole frame's pixels exactly; the
+// frames a small change made must be partial, with a small damage, and
+// cost a fraction of the whole frame.
 func TestClackPartialFrames(t *testing.T) {
 	const w, h = 800, 600
 	win := clackWindow(t, w, h)
 	defer win.Release()
-	defer gpu.ClackPartialFrames(true)
 	defer gpu.ClackPartialTextures(false)
 	defer gpu.ClackFrameTexture(false)
+	defer gpu.ClackPartialWhole(false)
 	scene := partialScene(w, h)
 	id := f32.Affine2D{}
 	scaled := f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(1.37, 1.37))
@@ -267,10 +272,10 @@ func TestClackPartialFrames(t *testing.T) {
 		{"an op before all others", id, partialVars{spinner: 3, emoji: 2, first: true}, 1, -1, false},
 		{"an ellipse moves", id, partialVars{spinner: 3, emoji: 2, moved: 3}, 1, -1, false},
 		{"two ops change places", id, partialVars{spinner: 3, emoji: 2, moved: 3, swap: true}, 1, -1, false},
-		// every path after it lands elsewhere in the atlas: damage
-		// everywhere they're drawn, maybe the whole frame
-		{"a path drops out", id, partialVars{spinner: 3, emoji: 2, moved: 3, swap: true, drop: true}, 0, -1, false},
-		{"the first path grows", id, partialVars{grow: 9}, 0, -1, false},
+		// the paths after it keep their atlas places (sticky): only its
+		// own ops are damage
+		{"a path drops out", id, partialVars{spinner: 3, emoji: 2, moved: 3, swap: true, drop: true}, 1, 2000, false},
+		{"the first path grows", id, partialVars{grow: 9}, 1, -1, false},
 		{"a new clear colour", id, partialVars{clearWhite: true}, 2, -1, false},
 		{"the caret, on that clear colour", id, partialVars{clearWhite: true, caret: true}, 1, 64, true},
 		{"scaled", scaled, partialVars{}, 2, -1, false},
@@ -306,14 +311,17 @@ func TestClackPartialFrames(t *testing.T) {
 		steps = append(steps, partialStep{fmt.Sprintf("random step %d", i), id, v, 0, -1, false})
 	}
 
-	gpu.ClackPartialFrames(false)
+	// the whole frames: partial frames' state, every frame drawn whole
+	gpu.ClackPartialTextures(true)
+	gpu.ClackPartialWhole(true)
+	gpu.ClackPartialReset()
 	whole, ws := partialRun(t, win, scene, steps)
+	gpu.ClackPartialWhole(false)
 	for i, st := range ws {
 		if st.Partial {
-			t.Fatalf("%s: a partial frame with partial frames off", steps[i].name)
+			t.Fatalf("%s: a partial frame drawn whole", steps[i].name)
 		}
 	}
-	gpu.ClackPartialFrames(true)
 	for _, mode := range []struct {
 		name                 string
 		textures, frameTexes bool
@@ -323,6 +331,7 @@ func TestClackPartialFrames(t *testing.T) {
 	} {
 		gpu.ClackPartialTextures(mode.textures)
 		gpu.ClackFrameTexture(mode.frameTexes)
+		gpu.ClackPartialReset()
 		imgs, sts := partialRun(t, win, scene, steps)
 		partials := 0
 		for i, img := range imgs {
@@ -373,6 +382,8 @@ func TestClackPartialSameOps(t *testing.T) {
 	win := clackWindow(t, w, h)
 	defer win.Release()
 	defer gpu.ClackPartialTextures(false)
+	defer gpu.ClackPartialWhole(false)
+	gpu.ClackPartialTextures(true)
 	scene := partialScene(w, h)
 	var o op.Ops
 	shot := func(v partialVars, record bool) (*image.RGBA, gpu.FrameStats) {
@@ -390,10 +401,16 @@ func TestClackPartialSameOps(t *testing.T) {
 		}
 		return img, win.ClackFrameStats()
 	}
-	// the whole frames: the emoji at frames 0 and 1
-	ref0, _ := shot(partialVars{caret: true}, true)
-	ref1, _ := shot(partialVars{caret: true, emoji: 1}, true)
-	gpu.ClackPartialTextures(true)
+	// the whole frames, as the partial ones go below: the frame, the same
+	// ops again, the emoji's next frame
+	gpu.ClackPartialWhole(true)
+	gpu.ClackPartialReset()
+	shot(partialVars{caret: true}, true)
+	ref0, _ := shot(partialVars{caret: true}, false)
+	scene(&op.Ops{}, f32.Affine2D{}, partialVars{caret: true, emoji: 1})
+	ref1, _ := shot(partialVars{}, false)
+	gpu.ClackPartialWhole(false)
+	gpu.ClackPartialReset()
 	shot(partialVars{caret: true}, true)
 	again, st := shot(partialVars{caret: true}, false)
 	if !st.Partial || st.DamagePx != 0 || st.Draws != 0 {

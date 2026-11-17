@@ -70,7 +70,19 @@ var clackPartial struct {
 	off      atomic.Bool // ClackPartialFrames(false)
 	textures atomic.Bool // ClackPartialTextures(true)
 	frameTex atomic.Bool // ClackFrameTexture(true)
+	whole    atomic.Bool // ClackPartialWhole(true)
+	epoch    atomic.Uint64
 }
+
+// ClackPartialWhole has frames drawn whole while what partial frames keep
+// (the atlas places, the ops' signatures) goes on as it would: the whole
+// frame a partial frame must equal, for tests. Unlike the other switches
+// it doesn't start partial frames afresh.
+func ClackPartialWhole(on bool) { clackPartial.whole.Store(on) }
+
+// ClackPartialReset has every GPU's next frame start afresh: no last frame
+// to compare with, the atlas packed anew. For tests.
+func ClackPartialReset() { clackPartial.epoch.Add(1) }
 
 // ClackPartialFrames turns partial frames on (the default) or off for
 // every frame. Safe from any goroutine; it applies from the next frame.
@@ -101,8 +113,16 @@ const (
 	clearTexDim = 512
 )
 
+// partialMode is the texture targets' switches a frame was drawn with.
+type partialMode struct{ textures, frameTex bool }
+
 // partialFrames is what the GPU keeps between frames for partial frames.
 type partialFrames struct {
+	// the switches and ClackPartialReset's epoch the state is from
+	mode  partialMode
+	epoch uint64
+	// atlas is the coverage atlas's sticky places (clack_sticky.go)
+	atlas stickyAtlas
 	// frameTex keeps a window's frames (frameSize); nil until one needs it
 	frameTex  driver.Texture
 	frameSize image.Point
@@ -299,26 +319,37 @@ type partialTarget struct {
 	copy bool
 }
 
+// partialOn reports whether the frame may be partial (Clack patch 45):
+// partial frames are on, the device can draw them, and the target is a
+// window's or a test asked for texture targets'. Its paths are then packed
+// sticky. A switch changed (or ClackPartialReset) starts afresh. Call it
+// before the frame is packed.
+func (g *gpu) partialOn(target RenderTarget, viewport image.Point) bool {
+	p := &g.partial
+	dev, ok := g.ctx.(clackPartialDevice)
+	_, isTex := target.(driver.Texture)
+	mode := partialMode{textures: clackPartial.textures.Load(), frameTex: clackPartial.frameTex.Load()}
+	on := !clackPartial.off.Load() && ok && dev.ClackPartialOK() && viewport.X > 0 && viewport.Y > 0 &&
+		(!isTex || mode.textures || mode.frameTex)
+	if ep := clackPartial.epoch.Load(); !on || p.mode != mode || p.epoch != ep {
+		g.partialRelease()
+		p.mode, p.epoch = mode, ep
+	}
+	return on
+}
+
 // partialBegin decides where the frame draws and whether whole (dmg nil)
 // or only in its damage (Clack patch 45). Call it once the frame is
 // packed, its pages sized and its textures uploaded.
-func (g *gpu) partialBegin(target RenderTarget, defFBO driver.Texture, viewport image.Point) (out partialTarget, dmg []image.Rectangle) {
+func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, viewport image.Point) (out partialTarget, dmg []image.Rectangle) {
 	p := &g.partial
 	out = partialTarget{pass: defFBO}
-	dev, ok := g.ctx.(clackPartialDevice)
-	if clackPartial.off.Load() || !ok || !dev.ClackPartialOK() || viewport.X <= 0 || viewport.Y <= 0 {
-		g.partialRelease()
+	if !on {
 		return out, nil
 	}
 	tex, isTex := target.(driver.Texture)
-	frameTex := clackPartial.frameTex.Load()
-	if isTex && !clackPartial.textures.Load() && !frameTex {
-		// a texture target draws whole frames, as Gio drew them
-		g.partialRelease()
-		return out, nil
-	}
 	var key any
-	if isTex && !frameTex {
+	if isTex && !p.mode.frameTex {
 		// a texture target keeps its pixels: the frame draws into it
 		g.releaseFrameTex()
 		out.tex, key = tex, target
@@ -331,7 +362,8 @@ func (g *gpu) partialBegin(target RenderTarget, defFBO driver.Texture, viewport 
 		out = partialTarget{pass: ft, tex: ft, copy: true}
 		key = ft
 	}
-	full := !p.valid || p.key != key || p.viewport != viewport || !g.drawOps.clear || p.color != g.drawOps.clearColor
+	full := !p.valid || p.key != key || p.viewport != viewport || !g.drawOps.clear || p.color != g.drawOps.clearColor ||
+		clackPartial.whole.Load()
 	p.cur = g.sigOps(p.cur[:0])
 	if !full {
 		var ok bool
@@ -406,6 +438,7 @@ func (g *gpu) partialRelease() {
 	}
 	p.valid = false
 	p.sigs, p.cur = p.sigs[:0], p.cur[:0]
+	p.atlas.reset()
 }
 
 // partialClear sets the damage of out's texture to the clear colour, as

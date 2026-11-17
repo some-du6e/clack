@@ -104,9 +104,12 @@ func TestFrameCostDamage(t *testing.T) {
 			t.Fatalf("%s: the caret doesn't blink (%v)", c.name, blink)
 		}
 		// the caret: shown in one of two layouts a blink apart
-		e.layInto(&a, now, nil)
-		e.layInto(&b, now.Add(blink), nil)
-		damageScene(t, w, c.name+", the caret's blink", fmt.Sprintf("every %v", blink), &a, &b, true, damageLimits{rects: 1, frac: 0.002})
+		caret := func() {
+			e.layInto(&a, now, nil)
+			e.layInto(&b, now.Add(blink), nil)
+		}
+		caret()
+		damageScene(t, w, c.name+", the caret's blink", fmt.Sprintf("every %v", blink), &a, &b, caret, true, damageLimits{rects: 1, frac: 0.002})
 		// a spinner's turn over the sidebar, 33 ms apart
 		sp := func(at time.Time) func(gtx layout.Context) {
 			return func(gtx layout.Context) {
@@ -115,9 +118,12 @@ func TestFrameCostDamage(t *testing.T) {
 				codeSpinner(gtx, int(16*e.pxPerDp()), color.NRGBA{R: 0xd1, G: 0xd2, B: 0xd3, A: 0xff})
 			}
 		}
-		e.layInto(&a, now, sp(now))
-		e.layInto(&b, now, sp(now.Add(33*time.Millisecond)))
-		damageScene(t, w, c.name+", a spinner's turn", "every 33 ms (an agent's; the LoadingButton's every 16 ms)", &a, &b, true, damageLimits{frac: 0.01})
+		spin := func() {
+			e.layInto(&a, now, sp(now))
+			e.layInto(&b, now, sp(now.Add(33*time.Millisecond)))
+		}
+		spin()
+		damageScene(t, w, c.name+", a spinner's turn", "every 33 ms (an agent's; the LoadingButton's every 16 ms)", &a, &b, spin, true, damageLimits{frac: 0.01})
 		// the typing indicator appears
 		e.layInto(&a, now, nil)
 		raw, _ := json.Marshal(map[string]any{"type": "user_typing", "channel": ch, "user": users[1]})
@@ -135,7 +141,7 @@ func TestFrameCostDamage(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 		e.layInto(&b, now, nil)
-		damageScene(t, w, c.name+", the typing indicator ("+comp.TypingLine()+")", "at each user_typing event", &a, &b, true, damageLimits{frac: 0.05})
+		damageScene(t, w, c.name+", the typing indicator ("+comp.TypingLine()+")", "at each user_typing event", &a, &b, nil, true, damageLimits{frac: 0.05})
 		// the animated emoji: a message with it, at the bottom
 		self := e.a.Core().Self().ID
 		ts, ev := fs.PostQuiet(ch, self, "boom :"+name+": boom")
@@ -240,9 +246,24 @@ func damageMeasure(t *testing.T, w *headless.Window, a, b *op.Ops) (gpu.FrameSta
 
 // damageScene measures the frame b after a: whole, then partial into the
 // window, then partial through the frame texture. Partial frames must have
-// the whole frame's pixels and, when cheap, cost a small part of it.
-func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.Ops, cheap bool, lim damageLimits) {
+// the whole frame's pixels (the whole frame the same GPU draws then) and,
+// when cheap, cost a small part of a whole frame. relay lays a and b out
+// again: when something else changed between them (a load landing on a
+// slow runner), the damage is more than the change's, and the scene is
+// laid out again, up to three times.
+func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.Ops, relay func(), cheap bool, lim damageLimits) {
 	t.Helper()
+	vp0 := int64(w.Size().X * w.Size().Y)
+	for try := 0; relay != nil && try < 3; try++ {
+		damageModes(true, false)
+		damageDraw(t, w, a)
+		st, _ := damageDraw(t, w, b)
+		if _, _, px := damageOf(st); float64(px) <= lim.frac*float64(vp0) {
+			break
+		}
+		t.Logf("%s: %s between the two layouts; laid out again", name, damagePart(st))
+		relay()
+	}
 	damageModes(false, false)
 	ws, wms, whole := damageMeasure(t, w, a, b)
 	t.Logf("%s (%s), whole: %s; %.1f ms a frame", name, rate, costLine(ws), wms)
@@ -256,6 +277,11 @@ func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.O
 	} {
 		damageModes(m.partial, m.frameTex)
 		ps, pms, img := damageMeasure(t, w, a, b)
+		// the whole frame the same GPU draws for b now
+		damageWhole(true)
+		damageDraw(t, w, b)
+		whole := damageShot(t, w)
+		damageWhole(false)
 		damageModes(false, false)
 		dmg := damagePart(ps)
 		t.Logf("%s, %s: %s, %s; %.1f ms a frame (%.0f%% of the whole frame's)", name, m.name, dmg, costLine(ps), pms, 100*pms/max(wms, 0.001))

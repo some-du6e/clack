@@ -1503,6 +1503,7 @@ func newWindow(win *callbacks, options []Option) {
 	<-launched
 	res := make(chan struct{})
 	runOnMain(func() {
+		setCaretBlinkFromOS() // Clack patch (CLACK_PATCHES.md §46)
 		w := &window{
 			redraw: make(chan struct{}, 1),
 			w:      win,

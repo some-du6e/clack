@@ -610,14 +610,19 @@ func (g *gpu) frame(target RenderTarget) error {
 	// nil: the whole frame), into a texture that keeps its pixels (out).
 	// The pages are sized, and aged (patch 40), even in a frame that
 	// needs none.
-	r.packStencils(&g.drawOps.pathOps)
+	on := g.partialOn(target, viewport)
+	var sticky *stickyAtlas
+	if on {
+		sticky = &g.partial.atlas
+	}
+	r.packStencils(&g.drawOps.pathOps, sticky)
 	r.packIntersections(g.drawOps.imageOps)
 	r.uploadImages(g.cache, g.drawOps.imageOps)
 	g.drawOps.layers = r.packLayers(g.drawOps.layers)
 	r.pather.begin(r.packer.sizes)
 	r.pather.stenciler.beginIntersect(r.intersections.sizes)
 	r.layerFBOs.resize(r.ctx, driver.TextureFormatSRGBA, r.layers.sizes)
-	out, dmg := g.partialBegin(target, defFBO, viewport)
+	out, dmg := g.partialBegin(on, target, defFBO, viewport)
 	// the paths the frame stencils: a partial frame's are the ones in its
 	// damage
 	r.stats.PathsBuilt, r.stats.PathBytes = g.drawOps.buildPaths(g.ctx, dmg)
@@ -920,60 +925,66 @@ func createColorPrograms(b driver.Device, vsSrc shader.Sources, fsSrc [3]shader.
 // the place the whole frame does, and clears just those texels first.
 // The pages are sized before (frame).
 func (r *renderer) stencilClips(pathCache *opCache, ops []*pathOp, dmg []image.Rectangle) {
-	if len(r.packer.sizes) == 0 {
-		return
-	}
-	fbo := -1
-	page := func(idx int) {
-		if fbo == idx {
-			return
-		}
-		if fbo != -1 {
-			r.ctx.EndRenderPass()
-		}
-		fbo = idx
-		f := r.pather.stenciler.cover(fbo)
-		d := driver.LoadDesc{Action: driver.LoadActionClear}
-		if dmg != nil {
-			d.Action = driver.LoadActionKeep // only the damage's texels are read
-		} else {
-			r.stats.ClearPx += int64(f.size.X * f.size.Y)
-		}
-		r.ctx.BeginRenderPass(f.tex, d)
-		r.stats.Passes++
-		r.ctx.BindPipeline(r.pather.stenciler.pipeline.pipeline.pipeline)
-		r.ctx.BindIndexBuffer(r.pather.stenciler.indexBuf)
-	}
-	for _, p := range ops {
-		v, _ := pathCache.get(p.pathKey)
-		// the path in each of its regions (Clack patch 39), in the order
-		// packStencils placed them
-		for i := -1; i < len(p.more); i++ {
-			clip, place := p.clip, p.place
-			if i >= 0 {
-				clip, place = p.more[i].clip, p.more[i].place
+	// page by page: with sticky places (Clack patch 45) a page's regions
+	// aren't together in the ops' order, and a page begun again would be
+	// cleared again
+	for page := range r.packer.sizes {
+		begun := false
+		begin := func() {
+			if begun {
+				return
 			}
-			if dmg == nil {
-				page(place.Idx)
-				r.stencil(p, v, clip, place, clip)
-				continue
+			begun = true
+			f := r.pather.stenciler.cover(page)
+			d := driver.LoadDesc{Action: driver.LoadActionClear}
+			if dmg != nil {
+				d.Action = driver.LoadActionKeep // only the damage's texels are read
+			} else {
+				r.stats.ClearPx += int64(f.size.X * f.size.Y)
 			}
-			for _, d := range dmg {
-				sc := passScissor(d, clip, place.Pos)
-				if sc.Empty() {
+			r.ctx.BeginRenderPass(f.tex, d)
+			r.stats.Passes++
+			r.ctx.BindPipeline(r.pather.stenciler.pipeline.pipeline.pipeline)
+			r.ctx.BindIndexBuffer(r.pather.stenciler.indexBuf)
+		}
+		for _, p := range ops {
+			var v opCacheValue
+			got := false
+			// the path in each of its regions (Clack patch 39)
+			for i := -1; i < len(p.more); i++ {
+				clip, place := p.clip, p.place
+				if i >= 0 {
+					clip, place = p.more[i].clip, p.more[i].place
+				}
+				if place.Idx != page {
 					continue
 				}
-				page(place.Idx)
-				r.fill(driver.TextureFormatFloat, place.Pos, clip.Size(), sc, f32color.RGBA{})
-				r.ctx.BindPipeline(r.pather.stenciler.pipeline.pipeline.pipeline)
-				r.ctx.BindIndexBuffer(r.pather.stenciler.indexBuf)
-				r.scissor(sc)
-				r.stencil(p, v, clip, place, d.Intersect(clip))
+				if !got {
+					v, _ = pathCache.get(p.pathKey)
+					got = true
+				}
+				if dmg == nil {
+					begin()
+					r.stencil(p, v, clip, place, clip)
+					continue
+				}
+				for _, d := range dmg {
+					sc := passScissor(d, clip, place.Pos)
+					if sc.Empty() {
+						continue
+					}
+					begin()
+					r.fill(driver.TextureFormatFloat, place.Pos, clip.Size(), sc, f32color.RGBA{})
+					r.ctx.BindPipeline(r.pather.stenciler.pipeline.pipeline.pipeline)
+					r.ctx.BindIndexBuffer(r.pather.stenciler.indexBuf)
+					r.scissor(sc)
+					r.stencil(p, v, clip, place, d.Intersect(clip))
+				}
 			}
 		}
-	}
-	if fbo != -1 {
-		r.ctx.EndRenderPass()
+		if begun {
+			r.ctx.EndRenderPass()
+		}
 	}
 }
 
@@ -1123,9 +1134,27 @@ func (r *renderer) packIntersections(ops []imageOp) {
 	}
 }
 
-func (r *renderer) packStencils(pops *[]*pathOp) {
+// packStencils places the paths' stencil regions in the coverage atlas;
+// with sticky (partial frames, Clack patch 45) a region that was in the
+// last frame keeps its place.
+func (r *renderer) packStencils(pops *[]*pathOp, sticky *stickyAtlas) {
 	r.packer.clear()
 	ops := *pops
+	if sticky != nil {
+		// the paths with a region, in order
+		k := 0
+		for _, p := range ops {
+			if !p.clip.Empty() {
+				ops[k] = p
+				k++
+			}
+		}
+		clear(ops[k:])
+		ops = ops[:k]
+		sticky.pack(&r.packer, ops)
+		*pops = ops
+		return
+	}
 	// Allocate atlas space for cover textures.
 	var i int
 	for i < len(ops) {

@@ -16,11 +16,17 @@ type imgStats = imgcache.Stats
 
 // damageModes sets how a headless window draws: whole frames, partial
 // frames into it, or partial frames through the frame texture and its copy
-// (a window's way).
+// (a window's way), each mode from a fresh start.
 func damageModes(partial, frameTex bool) {
 	gpu.ClackPartialTextures(partial)
 	gpu.ClackFrameTexture(frameTex)
+	gpu.ClackPartialReset()
 }
+
+// damageWhole draws the frames whole while partial frames' state (the atlas
+// places, the signatures) goes on: the whole frame a partial one must
+// equal.
+func damageWhole(on bool) { gpu.ClackPartialWhole(on) }
 
 // damageOf is what a frame's stats say of its damage: whether it was
 // partial, in how many rectangles, how many pixels.
