@@ -67,6 +67,9 @@ type App struct {
 
 	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
 	actQ    actQueue    // the Activity events' lookups, off the event pump (activity_later.go)
+	// caughtUp is, per conversation, the latest message a catch-up read
+	// of its newest page was made for (History's behindLatest), under mu
+	caughtUp map[string]string
 
 	saves sync.WaitGroup // background disk saves (loadEmoji's meta.json)
 	side  sideReads      // History's side reads (history_side.go)
@@ -986,13 +989,15 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// message cache budget: Slack resets a quiet conversation's history
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
-	pins, subs := a.S.PinSeq(), a.S.SubSeq()
+	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
 	}
-	// its people are asked for as rows draw them (lazy_users.go)
-	a.S.SetLatest(ch, p.Messages, p.HasMore)
+	// its people are asked for as rows draw them (lazy_users.go); what
+	// the socket brought or changed while the request was out stays
+	// (store/live.go)
+	a.S.SetLatestSince(ch, p.Messages, p.HasMore, live)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 	for i := range p.Messages {

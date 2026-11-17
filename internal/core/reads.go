@@ -46,6 +46,17 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	var hasMore bool
 	if before == "" {
 		t := a.S.Timeline(ch)
+		if t != nil && a.behindLatest(ch, t) {
+			// the window ends before the conversation's latest message:
+			// one the socket never brought (it was down; counts read after
+			// the reconnect name it) is read from Slack now, merged with
+			// what the socket brought meanwhile; on a failure the cached
+			// window shows
+			source = "catch-up"
+			if err := a.loadLatest(ctx, ch); err == nil {
+				t = a.S.Timeline(ch)
+			}
+		}
 		if t == nil {
 			source = "fetch"
 			if err := a.loadLatestIfMissing(ctx, ch); err != nil {

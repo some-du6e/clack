@@ -65,6 +65,74 @@ func (s *Store) NoteLive(ch, ts string, m *slack.Message) {
 	s.live[k] = r
 }
 
+// SetLatestSince is SetLatest for a newest-page fetch of ch whose request
+// began at LiveSeq since, as Slack's history pages merge into its message
+// store by timestamp (addMessagesFromHistory) and never take out what the
+// socket brought: a message the socket changed after that keeps the
+// socket's copy, one it deleted stays out, and a top-level message (or a
+// broadcast) it brought that the page predates goes in, as does a message
+// the window held that is newer than the whole page (a pending send, one
+// Upsert put in while the request was out). A page read before a socket
+// message and stored after it used to drop that message for the session:
+// every list re-reads its conversation from here (Owl's message missing
+// from Karim's #meta while Activity showed it, α.102).
+func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, since uint64) {
+	SortAsc(msgs)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	newer := func(t string) (liveRec, bool) {
+		r, ok := s.live[ch+"/"+t]
+		return r, ok && r.seq > since
+	}
+	topLevel := func(m *slack.Message) bool {
+		return m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" || m.ReplyBroadcast
+	}
+	out := make([]slack.Message, 0, len(msgs)+4)
+	have := make(map[string]bool, len(msgs))
+	for _, m := range msgs {
+		if r, ok := newer(m.TS); ok {
+			if r.gone {
+				continue
+			}
+			mm := *r.msg
+			s.keepPinLocked(ch, &mm, &m)
+			m = mm
+		}
+		have[m.TS] = true
+		out = append(out, m)
+	}
+	oldest := ""
+	if len(msgs) > 0 {
+		oldest = msgs[0].TS
+	}
+	// what the socket brought while the request was out, within the page's
+	// range or newer (an edit of an older message stays out of the window)
+	for k, r := range s.live {
+		if r.seq <= since || r.gone || r.msg == nil || len(k) <= len(ch) || k[:len(ch)+1] != ch+"/" {
+			continue
+		}
+		if m := r.msg; !have[m.TS] && topLevel(m) && (oldest == "" || !TSLess(m.TS, oldest)) {
+			have[m.TS] = true
+			out = append(out, *m)
+		}
+	}
+	// and what the window held newer than the whole page
+	if t := s.timelines[ch]; t != nil && len(msgs) > 0 {
+		newest := msgs[len(msgs)-1].TS
+		for _, m := range t.Msgs {
+			if !have[m.TS] && TSLess(newest, m.TS) {
+				if r, ok := newer(m.TS); ok && r.gone {
+					continue
+				}
+				have[m.TS] = true
+				out = append(out, m)
+			}
+		}
+	}
+	SortAsc(out)
+	s.timelines[ch] = &Timeline{Msgs: out, HasMore: hasMore, Loaded: true}
+}
+
 // SetThreadSince is SetThread for a replies fetch of ch/ts whose request
 // began at LiveSeq since: a message the socket changed after that keeps
 // the socket's copy, one it deleted stays out, and a reply it brought that

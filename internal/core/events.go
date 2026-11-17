@@ -656,6 +656,12 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)
+		if !isReply {
+			// a newest page whose request was out when it came keeps it
+			// (store.SetLatestSince): the store dropped it when no page
+			// was in yet, and a page read before it replaced the window
+			a.S.NoteLive(ch, m.TS, &m)
+		}
 	}
 	self := a.S.SelfID()
 	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))

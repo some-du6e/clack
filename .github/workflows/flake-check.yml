@@ -1269,6 +1269,7 @@ jobs:
         run: |
           rc=0
           go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestHistoryCatchesUpWithLatest)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^TestSetLatestSinceKeepsLiveMessages$' ./internal/store || rc=1
           go test -count=$COUNT -v -run '^TestUserBlockingRunsFirst$' ./internal/jsrt || rc=1
           go test -count=$COUNT -v -run '^TestSendCheckAheadOfJSBacklog$' ./internal/ui/composer || rc=1
           exit $rc
