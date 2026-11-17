@@ -205,6 +205,20 @@ type actRow struct {
 	ovText string
 	ovMsg  core.Message
 
+	// The item as the row draws it (activity_msgs.go rowItem): its
+	// message and thread root the newest copies Activity has, where they
+	// came from (liSrc: 0 the feed's), and where the copies d was
+	// described from came from (dSrc).
+	li          core.ActivityItem
+	liSrc, dSrc [2]uint64
+	msgGone     bool // its message was deleted since the feed brought it
+	// the texts of the revisions of the row's message drawn before this
+	// one, newest first (noteSent, echoed)
+	sent     [3]string
+	sentN    int
+	sentKey  actMsgKey
+	sentText string
+
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
 	nameHov hovercard.Trigger
@@ -324,6 +338,9 @@ type Activity struct {
 	// "New activity" banner announces.
 	newUnreadTS string
 	bannerNew   widget.Clickable
+	// msgs are the page's messages as the socket and the message lists
+	// on screen have them now (activity_msgs.go)
+	msgs actMsgs
 
 	unread    toggle
 	filterBtn widget.Clickable
@@ -417,6 +434,8 @@ type Activity struct {
 	showAll      widget.Clickable
 
 	sel      core.ActivityItem
+	selLive  actRow // liveCopy's buffers: sel's (previewBody), the focused row's (focusedItem)
+	keyLive  actRow
 	selKey   string
 	selOK    bool
 	selSec   bool // the item opened in the app's secondary column (activity_panel.go)
@@ -478,6 +497,16 @@ func (v *Activity) watchItems() {
 				// the status column's typing indicator (rZx3 z8), for the
 				// rows on screen
 				if v.typing.apply(ev, v.h.Core().Self().ID) && v.shown.shown(v.h) {
+					v.h.Invalidate()
+				}
+				continue
+			}
+			if v.msgs.wakes(ev) {
+				// a message on the page changed (an edit, a vote's
+				// chat.update, a reaction, a deletion): the next frame
+				// reads it from core's log, no feed reload
+				// (activity_msgs.go)
+				if v.shown.shown(v.h) {
 					v.h.Invalidate()
 				}
 				continue
@@ -666,6 +695,7 @@ func (v *Activity) Layout(gtx C) D {
 	}
 	v.notes.drain(v.h)
 	v.applyPatches()
+	v.applyMsgs(gtx) // activity_msgs.go
 	if v.viewsLoaded {
 		v.syncTabs()
 	}
@@ -928,6 +958,7 @@ func (v *Activity) settle() {
 
 func (v *Activity) load(mode actLoad) {
 	c := v.h.Core()
+	v.startMsgs() // the page's messages change from here on (activity_msgs.go)
 	types, none := v.types()
 	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Archived: v.showCleared, Limit: actLimit,
 		Priority: v.vip, SectionIDs: v.sections, ChannelIDs: v.channels, Mode: v.feedMode(),
@@ -1451,6 +1482,7 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	v.ensureLists(page)
 	v.ensureSaved(page)
 	v.ensureFileTitles(page)
+	v.noteMsgs(page) // activity_msgs.go
 	// VIP unreads on top (activity_views.go actVIPOrder): the unread VIP
 	// items under "VIP unreads", then "Everything else"; no day dividers
 	// in the first group nor on the first row after the second header
@@ -1491,16 +1523,18 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		it := &page.Items[i]
 		key := actKey(it)
 		r := v.rowFor(key)
-		if !r.built || r.gen != i18n.Gen() || patchedViews {
-			r.d, r.built, r.gen = v.describe(it, page.Convs), true, i18n.Gen()
+		// the row's message as it is now (activity_msgs.go)
+		li := v.rowItem(r, it)
+		if !r.built || r.gen != i18n.Gen() || patchedViews || r.dSrc != r.liSrc {
+			r.d, r.built, r.gen, r.dSrc = v.describe(li, page.Convs), true, i18n.Gen(), r.liSrc
 			if v.selOK && key == v.selKey {
 				v.selDesc = r.d // the preview's header names the channel too
 			}
 		}
 		// the store-backed marks (drafts, your replies and reactions,
 		// the reminder's saved item) follow every rebuild
-		r.mark, r.markOK = v.readMark(it)
-		r.agent, r.agentUntil = c.ActivityAgentStatus(it, now) // activity_rows.go agentStatus
+		r.mark, r.markOK = v.readMark(li)
+		r.agent, r.agentUntil = c.ActivityAgentStatus(li, now) // activity_rows.go agentStatus
 		// cleared: true = cleared here (hide from the inbox), false =
 		// restored here (hide from the archive).
 		if c, ok := v.cleared[key]; ok && c != v.showCleared {
@@ -2195,6 +2229,24 @@ func (v *Activity) footer(gtx C, failed bool) D {
 func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	key := actKey(it)
 	r := v.rowFor(key)
+	// the row's message as a list on screen draws it this frame, else as
+	// the socket brought it, else the feed's (activity_msgs.go)
+	v.pollLists(it)
+	it = v.rowItem(r, it)
+	if r.built && r.dSrc != r.liSrc {
+		// a newer copy than the row was described from: its text and
+		// marks follow in this frame
+		page, _, _ := v.data.get()
+		r.d, r.gen, r.dSrc = v.describe(it, page.Convs), i18n.Gen(), r.liSrc
+		r.mark, r.markOK = v.readMark(it)
+		if v.selOK && v.selKey == key {
+			v.selDesc = r.d
+		}
+		if v.searchOn && v.query.text() != "" {
+			v.dirty = true // the search filters on the text
+		}
+	}
+	r.noteSent(it.Msg)
 	// a click on an agent entry's action button (activity_leftovers.go)
 	// marks the row read and doesn't open it (ControlledClick skips a
 	// BUTTON target)
@@ -2409,7 +2461,12 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 		mods = classMods(p.StrOr("className", ""), actItemMods)
 		r.om = nil
 		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
-			r.om = r.textOverride(it.Msg, mp)
+			// a tree JS hasn't drawn since the message changed hands back
+			// the revision before: that's the props the row sent, not the
+			// plugin's text (activity_msgs.go echoed)
+			if !r.echoed(it.Msg, mp) {
+				r.om = r.textOverride(it.Msg, mp)
+			}
 			om := msgOverride(it.Msg, mp)
 			r.pd = r.d
 			if n, av := v.authorOf(&om); n != "" {
@@ -3452,7 +3509,10 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		return v.para(gtx, 15, 22, wReg, col, lines, d.body)
 	}
 	if r.msg() == nil {
-		if r.it.Channel == "" {
+		if r.it.Channel == "" || r.msgGone {
+			// ActivityRowContentDetails draws no body for a message the
+			// store doesn't hold (deleted since: activity_msgs.go), the
+			// shimmer only for one it's still fetching (isUnknown)
 			return D{}
 		}
 		return v.shimmerLine(gtx, 240)
@@ -3712,7 +3772,7 @@ func (v *Activity) previewHead(gtx C) D {
 }
 
 func (v *Activity) previewBody(gtx C) D {
-	d, it := &v.selDesc, &v.sel
+	d, it := &v.selDesc, v.liveCopy(&v.sel, &v.selLive) // its message as it is now (activity_msgs.go)
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return v.scrollList(gtx, &v.prevList, 5, func(gtx C, i int) D {
 		switch i {
@@ -3987,8 +4047,7 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
-	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, ver, m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, msgVer(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
 }
 
 // actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue

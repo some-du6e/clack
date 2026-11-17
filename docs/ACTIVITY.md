@@ -996,6 +996,71 @@ activity-create-view-in-suggestions, activity-tabs-more / -menu /
 `-light` and `-dark`, plus activity-bulk-tooltip-light and
 activity-plus-tooltip-light.
 
+## Live messages (2026-11-17, branch `activity-live-msg`)
+
+Slack's Activity rows keep no copy of their message. Each row reads it
+from the messages store as it renders: getMessageFromActivityItem
+(boot-shared Gjwd `uU`) calls getMessageByTimestamp (client-boot iR00
+`Ld`) with the entry's channel and feed_ts, a reaction's message_ts or a
+reminder's message, and ActivityThread, ActivityDM, ActivityMention and
+ActivityReaction call `Ld` the same way. activity.feed only names the
+messages. messages.list fetches them by id into that store
+(fetchObjectWithId), the store the channel list and the thread pane read,
+so a socket change shows in all three in one commit. Nothing fetches the
+feed again for it.
+
+- message_changed (boot-render messageChanged, replaceMessages) replaces
+  the copy. When the new copy is a tombstone, a moderated or a
+  thread_hidden message, messageChanged removes the entries about it
+  ("ActivityIA4: Remove activity item" {channelId, messageTs} in P0K2). An
+  edit that takes the viewer's mention out does the same
+  (checkForMentionInMessage, c+16, on previous_message and the new copy).
+- reaction_added and reaction_removed change the stored message's
+  reactions.
+- message_deleted removes the message and dispatches the same Remove
+  activity item. A row about another message that only drew this one (a
+  thread's latest reply) keeps its header and draws no body:
+  ActivityRowContentDetails draws nothing for a missing message and the
+  shimmer only while one is still being fetched.
+
+Clack kept the copy the feed was hydrated with until the next load. It
+also cached a row's body layout on the text's length, and an app's
+chat.update keeps the length, so a reloaded vote could still show its old
+counts. Now:
+
+- core keeps what messages.list fetched for Activity, Saved and Sent in
+  the store (store/fetched.go). The socket's edits, reactions and
+  deletions reach those copies, and a fetch keeps what the socket changed
+  while it was out. Find leaves them out, so every load still asks Slack.
+  Without the socket nothing else would update them.
+- core logs every "update" and "delete" it emits (msg_changes.go).
+  Activity reads the log at the start of each frame
+  (views/activity_msgs.go), so a change draws in the frame after core
+  made it. A row reads the copy a message list on screen draws (the
+  thread pane or channel beside the page, through the Host's
+  LiveMessages), else the socket's, else the feed's. With its message
+  open in the pane, a row never draws a revision the pane hasn't.
+- A patched component's tree that JS hasn't drawn since the message
+  changed hands back the old revision's text. The row reads that as the
+  props it sent and draws the new message (actRow.echoed, after the
+  message lists' row.sentFor). Before, it took it for a plugin's text
+  override and drew the old counts until JS answered.
+- The cached body layouts in Activity, Threads, Saved and the preview
+  pane key on the text, blocks and attachments themselves (msgVer).
+
+Slack's Saved rows read `Ld` too (LaterItemRow). Clack's Saved page
+reloads 2 s after an update to a listed message, and the reload now
+carries the socket's copy. Search results keep the search answer's body,
+as Slack's do: SearchResult draws the result's text and reads only its
+actions and reactions from the store.
+
+**Tests.** TestActivityLiveVoteCounts (native, patched, patched in
+lockstep), TestActivityLiveVoteBesideThread, TestActivityLiveEdit,
+TestActivityLiveDelete and TestActivityLiveReaction (views, fakeslack);
+TestFetchedMessagesTakeSocketChanges and TestFetchedMessagesBounded
+(store); TestMessageChangesInOrder and TestReactionReachesFetchedMessage
+(core). flake-check's activity-live-msg job runs them COUNT times.
+
 ## Not done
 
 - The channel accept's other workspaces, start-trial modal and other

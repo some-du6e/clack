@@ -380,7 +380,7 @@ func (a *App) YouRepliedTS(it *ActivityItem) string {
 			return ""
 		}
 		if it.LatestTS != "" && it.FeedTS != it.LatestTS {
-			if m, ok := a.S.Find(it.Channel, it.LatestTS); ok && m.User == self {
+			if m, ok := a.S.FindHeld(it.Channel, it.LatestTS); ok && m.User == self { // a copy fetched by id too (store/fetched.go)
 				return it.LatestTS
 			}
 		}
@@ -415,7 +415,10 @@ func (a *App) YouReacted(it *ActivityItem) []string {
 	if it.FeedTS == "" || it.Channel == "" {
 		return nil
 	}
-	m, ok := a.S.Find(it.Channel, it.FeedTS)
+	// Slack's store holds what activity.feed's messages were fetched into:
+	// a copy fetched by id is read too (store/fetched.go), and the socket's
+	// reactions reach it
+	m, ok := a.S.FindHeld(it.Channel, it.FeedTS)
 	if !ok {
 		return nil
 	}

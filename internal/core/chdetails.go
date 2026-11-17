@@ -32,6 +32,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -342,25 +343,51 @@ var usergroupMentionRe = regexp.MustCompile(`<!subteam\^(S[A-Za-z0-9]{8,})(\|[^<
 // and a mention of a user group they're in do. A message with blocks is
 // read from its blocks, else from its text; then its attachments that
 // aren't link previews or forwards. pinned_item messages never mention.
-func (a *App) MentionsViewerDirectly(m *Message) bool { return a.mentionsViewer(m, false) }
+func (a *App) MentionsViewerDirectly(m *Message) bool { return a.mentionsViewer(m, mentionOpts{}) }
 
 // MentionsViewerInReply is checkForMentionInMessage as
 // shouldShowNotificationForChannelMessage (client-boot gMhK) asks it of a
 // reply, with only ignoreHighlightWords: the viewer's own mention, a user
 // group they're in (userGroupMembership, 3HzN nc) and @here count;
 // @channel and @everyone don't, because the message isReply (azCc n).
-func (a *App) MentionsViewerInReply(m *Message) bool { return a.mentionsViewer(m, true) }
+func (a *App) MentionsViewerInReply(m *Message) bool {
+	return a.mentionsViewer(m, mentionOpts{here: true})
+}
 
-// hereMentionRe is @here in mrkdwn (client-boot p6HR $2).
-var hereMentionRe = regexp.MustCompile(`<!here\b`)
+// MentionsViewer is checkForMentionInMessage with its default options, as
+// messageChanged (boot-render) asks it of an edited message's previous
+// and new copies: the viewer's own mention, a user group they're in,
+// @here, @channel, @everyone and @group (none of the last three in a
+// reply: azCc isReply) and the viewer's highlight words.
+func (a *App) MentionsViewer(m *Message) bool {
+	return a.mentionsViewer(m, mentionOpts{here: true, broadcast: true, keywords: true})
+}
+
+// mentionOpts are the checkForMentionInMessage options the callers tell
+// apart: here counts @here; broadcast @channel, @everyone and @group
+// (never in a reply); keywords the viewer's highlight words.
+type mentionOpts struct{ here, broadcast, keywords bool }
+
+// hereMentionRe is @here in mrkdwn (client-boot p6HR $2), and
+// broadcastMentionRe @everyone, @channel and @group (K0, Oh, y7).
+var (
+	hereMentionRe      = regexp.MustCompile(`<!here\b`)
+	broadcastMentionRe = regexp.MustCompile(`<!(everyone|channel|group)\b`)
+)
 
 // mentionsViewer is checkForMentionInMessage over the viewer's mention
-// and their user groups, plus @here when here is set.
-func (a *App) mentionsViewer(m *Message, here bool) bool {
+// and their user groups, plus what o turns on.
+func (a *App) mentionsViewer(m *Message, o mentionOpts) bool {
 	if m == nil || m.Subtype == "pinned_item" {
 		return false
 	}
 	self := a.Self().ID
+	// isReply (azCc n): a thread reply's @channel and @everyone don't count
+	o.broadcast = o.broadcast && !(m.ThreadTS != "" && m.ThreadTS != m.TS)
+	var words []string
+	if o.keywords {
+		words = a.S.HighlightWords()
+	}
 	text := func(t string) bool {
 		if t == "" {
 			return false
@@ -368,7 +395,7 @@ func (a *App) mentionsViewer(m *Message, here bool) bool {
 		if self != "" && mentionsMember(t, self) {
 			return true
 		}
-		if here && hereMentionRe.MatchString(t) {
+		if o.here && hereMentionRe.MatchString(t) || o.broadcast && broadcastMentionRe.MatchString(t) {
 			return true
 		}
 		for _, g := range usergroupMentionRe.FindAllStringSubmatch(t, -1) {
@@ -376,11 +403,11 @@ func (a *App) mentionsViewer(m *Message, here bool) bool {
 				return true
 			}
 		}
-		return false
+		return len(words) > 0 && len(richtext.LocateHighlightWords(t, words, false)) > 0
 	}
 	var blocks []json.RawMessage
 	if len(m.Blocks) > 0 && json.Unmarshal(m.Blocks, &blocks) == nil && len(blocks) > 0 {
-		if a.blocksMention(blocks, self, here, text, false) {
+		if a.blocksMention(blocks, self, o, words, text, false) {
 			return true
 		}
 	} else if text(m.Text) {
@@ -405,7 +432,7 @@ func (a *App) mentionsViewer(m *Message, here bool) bool {
 		if at.FromURL != "" || at.IsForwarded {
 			continue
 		}
-		if text(at.Title) || text(at.Pretext) || text(at.Text) || text(at.Footer) || a.blocksMention(at.Blocks, self, here, text, true) {
+		if text(at.Title) || text(at.Pretext) || text(at.Text) || text(at.Footer) || a.blocksMention(at.Blocks, self, o, words, text, true) {
 			return true
 		}
 		for _, f := range at.Fields {
@@ -438,10 +465,10 @@ func isWordByte(c byte) bool {
 }
 
 // blocksMention is checkForMentionInBlocks: a rich_text block's user and
-// usergroup elements (and its "here" broadcast with here set; unless
+// usergroup elements (with o, its broadcasts and highlight words; unless
 // noRich: an attachment's blocks), a section's mrkdwn text and fields, a
 // header's text and a context's elements when they are mrkdwn.
-func (a *App) blocksMention(blocks []json.RawMessage, self string, here bool, text func(string) bool, noRich bool) bool {
+func (a *App) blocksMention(blocks []json.RawMessage, self string, o mentionOpts, words []string, text func(string) bool, noRich bool) bool {
 	type textObj struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -459,8 +486,20 @@ func (a *App) blocksMention(blocks []json.RawMessage, self string, here bool, te
 		}
 		switch b.Type {
 		case "rich_text":
-			if !noRich && a.richMention(b.Elements, self, here) {
+			if noRich {
+				continue
+			}
+			if a.richMention(b.Elements, self, o) {
 				return true
+			}
+			// checkForMentionInRichTextBlock's highlight words (lxEU fw):
+			// the block's text runs
+			if len(words) > 0 {
+				var sb strings.Builder
+				richTextRuns(b.Elements, &sb)
+				if len(richtext.LocateHighlightWords(sb.String(), words, true)) > 0 {
+					return true
+				}
 			}
 		case "section":
 			if mrkdwn(b.Text) {
@@ -489,9 +528,9 @@ func (a *App) blocksMention(blocks []json.RawMessage, self string, here bool, te
 
 // richMention walks rich text elements (getEntitiesFromBlocks, YHGi nK)
 // for a user element naming the viewer, a usergroup element of a group
-// they're in or, with here set, a broadcast element whose range is
-// "here" (checkForMentionInRichTextBlock's broadcasts.has("here")).
-func (a *App) richMention(els []json.RawMessage, self string, here bool) bool {
+// they're in or a broadcast element whose range o counts ("here" with
+// o.here; "channel" and "everyone" with o.broadcast).
+func (a *App) richMention(els []json.RawMessage, self string, o mentionOpts) bool {
 	for _, raw := range els {
 		var e struct {
 			Type        string            `json:"type"`
@@ -513,15 +552,39 @@ func (a *App) richMention(els []json.RawMessage, self string, here bool) bool {
 				return true
 			}
 		case "broadcast":
-			if here && e.Range == "here" {
+			if o.here && e.Range == "here" || o.broadcast && (e.Range == "channel" || e.Range == "everyone") {
 				return true
 			}
 		}
-		if len(e.Elements) > 0 && a.richMention(e.Elements, self, here) {
+		if len(e.Elements) > 0 && a.richMention(e.Elements, self, o) {
 			return true
 		}
 	}
 	return false
+}
+
+// richTextRuns writes the text of rich text elements' "text" runs to sb,
+// a space between runs.
+func richTextRuns(els []json.RawMessage, sb *strings.Builder) {
+	for _, raw := range els {
+		var e struct {
+			Type     string            `json:"type"`
+			Text     string            `json:"text"`
+			Elements []json.RawMessage `json:"elements"`
+		}
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		if e.Type == "text" && e.Text != "" {
+			if sb.Len() > 0 {
+				sb.WriteByte(' ')
+			}
+			sb.WriteString(e.Text)
+		}
+		if len(e.Elements) > 0 {
+			richTextRuns(e.Elements, sb)
+		}
+	}
 }
 
 // HideUser is hideUserById: the DM with user is closed if there is one,

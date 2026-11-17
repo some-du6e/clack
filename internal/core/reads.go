@@ -180,12 +180,17 @@ func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[stri
 		return out, answered
 	}
 	// a failed group is logged with its channels in MessagesList
+	since := a.S.LiveSeq()
 	got, asked, _ := a.C.MessagesList(ctx, missing)
 	for ch := range asked {
 		answered[ch] = true
 	}
 	for ch, ms := range got {
-		for _, m := range ms {
+		// Slack's fetchObjectWithId puts what it fetched by id into its
+		// messages store, where the socket's changes reach it: the store
+		// keeps the answer (store/fetched.go), and what the socket
+		// changed or deleted while the request was out wins over it
+		for _, m := range a.S.PutFetched(ch, ms, since) {
 			out[ch+"/"+m.TS] = m
 		}
 	}

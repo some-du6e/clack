@@ -96,8 +96,12 @@ func (r *actRow) threadOverride(p slackc.Props) {
 			src, r.pm = m, m
 		}
 	}
-	if om := r.textOverride(src, mp); om != nil {
-		r.pm = om
+	// the revision before, from a tree JS hasn't drawn since the message
+	// changed, is the props the row sent, not a plugin's text (echoed)
+	if src != it.Msg || !r.echoed(src, mp) {
+		if om := r.textOverride(src, mp); om != nil {
+			r.pm = om
+		}
 	}
 	om := msgOverride(src, mp)
 	r.pd = *r.cur
@@ -186,17 +190,22 @@ func (r *actRow) layoutDetailed(gtx C, _ slackc.Props) D { return r.v.detailedCo
 func (r *actRow) layoutDense(gtx C, _ slackc.Props) D    { return r.v.denseContent(gtx, r) }
 
 // threadMsg is the thread message ts an ActivityThread override points
-// at: the root, or a cached reply (converted once, kept on the row).
+// at: the root, a copy the socket or a list on screen brought
+// (activity_msgs.go), or a cached reply (converted once, kept on the row
+// until the row is described again).
 func (r *actRow) threadMsg(ts string) *core.Message {
 	it := r.it
 	if it.Root != nil && it.Root.TS == ts {
 		return it.Root
 	}
+	if m, src := r.v.msgFor(actMsgKey{it.Channel, ts}, nil); src != 0 {
+		return m
+	}
 	if r.tm != nil && r.tm.TS == ts && r.tm.Channel == it.Channel {
 		return r.tm
 	}
 	a := r.v.h.Core()
-	sm, ok := a.S.Find(it.Channel, ts)
+	sm, ok := a.S.FindHeld(it.Channel, ts)
 	if !ok {
 		return nil
 	}

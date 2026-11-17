@@ -46,6 +46,8 @@ type App struct {
 
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
+	msgLog msgChanges // the latest message changes, for the views that read them as they draw (msg_changes.go)
+
 	// prefsMu orders every change to the raw prefs: a change copies them,
 	// sets its keys and installs the copy, and two at once lost one of
 	// them (mergePrefs, installPrefs).
@@ -471,6 +473,7 @@ func (a *App) emit(ev Event) {
 	a.pinsTabSee(ev) // the Pins tab's message copies (channel_pins.go)
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
+	a.noteMsgChange(&ev) // in the subscribers' order (msg_changes.go)
 	for s := range a.subs {
 		if s.lagged {
 			select {

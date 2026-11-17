@@ -535,7 +535,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		// seen in a thread that isn't cached (Slack's store keeps every
 		// message the socket brings)
 		streamed := a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
-		if old, ok := a.S.Find(ch, m.TS); ok {
+		if old, ok := a.S.FindHeld(ch, m.TS); ok { // a copy fetched by id too (store/fetched.go)
 			keepFiles(&m, &old)
 			streamed = streamed || old.StreamingState == "in_progress"
 			// Slack's store keeps a thread's replies apart from the
@@ -557,7 +557,11 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		}
 		a.S.SlurpSub(ch, &m)
 		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this keeps it (store/live.go)
-		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
+		// every stored copy takes it, a copy fetched by id included (an
+		// Activity entry's message from a conversation nobody opened:
+		// store/fetched.go); a window or a cached thread that holds none
+		// gets it as before
+		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found || !a.S.Holds(ch, m.TS, "") {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
 		if m.ThreadTS == "" || m.ThreadTS == m.TS {
@@ -583,7 +587,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		thread := ""
 		if e.Previous != nil && e.Previous.ThreadTS != e.DeletedTS {
 			thread = e.Previous.ThreadTS
-		} else if old, ok := a.S.Find(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
+		} else if old, ok := a.S.FindHeld(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
 			thread = old.ThreadTS
 		}
 		a.S.Remove(ch, e.DeletedTS)

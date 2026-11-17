@@ -27,6 +27,9 @@ type model struct {
 	mu       sync.Mutex
 	ch       string
 	threadTS string // "" for a channel timeline
+	// id tells the hub's models apart (live.go: a revision of a message
+	// is its model's and its entry's); set once, when made
+	id uint32
 
 	msgs     []entry // ascending
 	hasMore  bool
@@ -119,6 +122,7 @@ type hub struct {
 	mu     sync.Mutex
 	chans  map[string]*model
 	thread map[string]*model // key ch + "/" + ts
+	nextID uint32            // the last model's id (guarded by mu)
 	userRv uint64            // bumps on profile, name, pref and members-cache events
 	// authFailed stops every load after core's auth_failed (or an auth
 	// error) until the connection comes back or the user hits Retry.
@@ -222,7 +226,8 @@ func (hb *hub) channel(ch string) *model {
 	defer hb.mu.Unlock()
 	m, ok := hb.chans[ch]
 	if !ok {
-		m = &model{ch: ch, typing: map[string]typingEntry{}}
+		hb.nextID++
+		m = &model{ch: ch, id: hb.nextID, typing: map[string]typingEntry{}}
 		hb.chans[ch] = m
 		hb.evict(hb.chans)
 	}
@@ -236,7 +241,8 @@ func (hb *hub) threadModel(ch, ts string) *model {
 	k := ch + "/" + ts
 	m, ok := hb.thread[k]
 	if !ok {
-		m = &model{ch: ch, threadTS: ts, typing: map[string]typingEntry{}}
+		hb.nextID++
+		m = &model{ch: ch, threadTS: ts, id: hb.nextID, typing: map[string]typingEntry{}}
 		hb.thread[k] = m
 		hb.evict(hb.thread)
 	}

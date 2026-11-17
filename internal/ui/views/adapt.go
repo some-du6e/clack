@@ -357,10 +357,9 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 		return b.body(gtx, m.Doc, m.Text, maxLines)
 	}
 	key := m.Channel + "/" + m.TS
-	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
+	ver := msgVer(m)
 	if m != orig {
-		// a plugin's text patch can keep the length: key on the text
-		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
+		ver += ":p" // a plugin's view of it: never the source's layout
 	}
 	// muted (read Activity rows) only dims the body: mentions keep their
 	// pills like Slack; Muted is for system messages.
@@ -464,6 +463,28 @@ func textHash(s string) uint32 {
 		h *= 16777619
 	}
 	return h
+}
+
+// bytesHash is textHash of b, without copying it into a string.
+func bytesHash(b []byte) uint32 {
+	h := uint32(2166136261)
+	for _, c := range b {
+		h ^= uint32(c)
+		h *= 16777619
+	}
+	return h
+}
+
+// msgVer is what a message body's cached layout (richDoc, keyed by its
+// channel/ts) is made again on: its edit, text, blocks and attachments
+// themselves, and the blocks drawn. Lengths alone kept an app's
+// chat.update on screen as the revision before it: a vote count's digit,
+// new block_ids, an unfurl's text change none of them (Karim's vote
+// counts in Activity).
+func msgVer(m *core.Message) string {
+	return m.EditedTS + ":" + strconv.FormatUint(uint64(textHash(m.Text)), 36) + ":" +
+		strconv.FormatUint(uint64(bytesHash(m.Blocks)), 36) + ":" + strconv.FormatUint(uint64(bytesHash(m.Attachments)), 36) +
+		":" + strconv.Itoa(len(m.Doc.Blocks))
 }
 
 func firstNonEmpty(s ...string) string {

@@ -56,6 +56,8 @@ type Store struct {
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
+	fetched     map[string]*slack.Message  // key channel/ts: messages fetched by id (fetched.go)
+	fetchedQ    []string                   // fetched's keys, oldest put first
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
 	subQ        []string                   // subs' keys, oldest first
 	subSeq      uint64                     // subscription events seen
@@ -1329,6 +1331,14 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			}
 		}
 	}
+	// a message fetched by id (fetched.go): the socket's changes reach
+	// it as Slack's reach every message of its store
+	if m := s.fetched[ch+"/"+ts]; m != nil {
+		f(m)
+		if !found {
+			out, found = *m, true
+		}
+	}
 	return out, found
 }
 
@@ -1354,6 +1364,7 @@ func (s *Store) Remove(ch, ts string) {
 			}
 		}
 	}
+	s.dropFetchedLocked(ch + "/" + ts) // fetched.go
 }
 
 func (s *Store) Find(ch, ts string) (slack.Message, bool) {
