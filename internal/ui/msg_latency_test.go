@@ -27,7 +27,6 @@ package ui
 // Synthetic data only.
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -211,15 +210,30 @@ func latMember(n int) string { return fmt.Sprintf("U0SYNTH%06d", n) }
 // member hands out a synthetic member the client has never seen.
 func (p *latProbe) member() string { return latMember(int(p.next.Add(1))) }
 
-// known hands out n members the client holds (fetched now).
+// known hands out n members the client holds: each comes over the socket
+// as a user_change, which every core stores without a lookup, so the
+// perf job's base tree holds them too (its fakeslack may not answer
+// users/info for synthetic members, and a sender it doesn't hold would
+// time the base's lookups instead).
 func (p *latProbe) known(n int) []string {
 	ids := make([]string, n)
 	for i := range ids {
 		ids[i] = p.member()
+		name := strings.ToLower(ids[i])
+		p.e.fs.Push(map[string]any{"type": "user_change", "user": map[string]any{"id": ids[i], "team_id": fakeslack.TeamID, "name": name,
+			"real_name": "Synthetic " + ids[i], "profile": map[string]any{"display_name": name, "real_name": "Synthetic " + ids[i]}}})
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	p.e.a.data.core.EnsureUsers(ctx, ids)
+	held := func() bool {
+		for _, id := range ids {
+			if _, ok := p.e.a.data.core.S.RawUser(id); !ok {
+				return false
+			}
+		}
+		return true
+	}
+	if !p.e.untilSoft(10*time.Second, held) {
+		p.t.Fatal("the senders the pass holds aren't held: their user_change never landed")
+	}
 	return ids
 }
 
@@ -276,10 +290,12 @@ type latPass struct {
 	// before each own send, d of work queued on the plugin runtime's JS
 	// thread (busyJS tasks), as when plugins re-render rows
 	busyJS func(d time.Duration)
+	// drainJS, before each Enter: the plugin runtime's JS thread idle (its
+	// re-render of the patched composer after the typing done), so a quiet
+	// own send with plugins is held to Slack's next frame like one without
+	drainJS func()
 	// pluginSend: plugins check and wrap the send in JS (OwlMode's send
-	// check and prepareAndSendMessage patch), and patch the composer, whose
-	// re-render after Enter the JS thread may be busy with when the send's
-	// calls come: an own message may take one frame more
+	// check and prepareAndSendMessage patch)
 	pluginSend bool
 }
 
@@ -358,6 +374,9 @@ func (p *latProbe) run(ps latPass) []*latWait {
 					e.typeText(typed)
 					nextOwn = now // Enter after the frame that takes the text
 				} else {
+					if ps.drainJS != nil {
+						ps.drainJS()
+					}
 					e.key(key.NameReturn, 0)
 					p.mu.Lock()
 					p.waits = append(p.waits, &latWait{kind: "own", text: typed, t0: time.Now(), frame0: p.frames})
@@ -522,11 +541,15 @@ func latReport(t *testing.T, ps latPass, ws []*latWait, enforce bool) map[string
 			t.Errorf("%s, %s: %d of %d rows never drew", ps.name, kind, st.Missed, st.N)
 		}
 		// an own message's pending copy: the frame after the one that took
-		// the Enter key, whatever plugins check it first (a frame the
+		// the Enter key (Slack's sendMessage adds it in the keydown's task),
+		// whatever plugins check it first, when the plugins' JS thread is
+		// idle as Enter comes. With 400 ms of JS queued (busyJS) the send's
+		// checks and transforms run ahead of it but wait for the task
+		// running when they come, one frame more at most. A frame the
 		// socket's traffic asks for in between counts too, so only the
-		// quiet passes)
+		// quiet passes count frames.
 		maxFrames, median := 2, latMedianBudget
-		if kind == "own" && ps.pluginSend {
+		if kind == "own" && ps.pluginSend && ps.busyJS != nil {
 			maxFrames, median = 3, latMedianBudget+idleprobe.Vsync
 		}
 		if kind == "own" && !ps.busy {
@@ -572,13 +595,51 @@ func latPasses() []latPass {
 	}
 }
 
-// TestMessageLatency: without plugins.
+// TestMessageLatency: without plugins. Its millisecond budgets want a
+// runner to itself, as TestIdleFrames's frame counts do: ci's linux-idle
+// job and the flake-check workflow set CLACK_LATENCY_TESTS.
 func TestMessageLatency(t *testing.T) {
+	if os.Getenv("CLACK_LATENCY_TESTS") == "" {
+		t.Skip("CLACK_LATENCY_TESTS not set")
+	}
 	e := newLatEnv(t, latEnvOpts{rtt: latRTT})
 	p := newLatProbe(t, e, e.fs.ChannelIDs()[0])
 	res := map[string]map[string]latStats{}
 	for _, ps := range latPasses() {
-		res[ps.name] = latReport(t, ps, p.run(ps), true)
+		res[ps.name] = p.measure(t, ps, true)
 	}
 	latWrite(t, "TestMessageLatency", res)
+}
+
+// measure runs ps and reports it (latReport); then every own send is one
+// chat.postMessage and one row in core's window, its pending copy
+// swapped for the confirmed one.
+func (p *latProbe) measure(t *testing.T, ps latPass, enforce bool) map[string]latStats {
+	t.Helper()
+	posts := p.e.fs.CallCount("chat.postMessage")
+	ws := p.run(ps)
+	res := latReport(t, ps, ws, enforce)
+	if got := p.e.fs.CallCount("chat.postMessage") - posts; enforce && got != int64(ps.own) {
+		t.Errorf("%s: %d chat.postMessage calls for %d sends", ps.name, got, ps.own)
+	}
+	if !enforce {
+		return res
+	}
+	for _, w := range ws {
+		if w.kind != "own" {
+			continue
+		}
+		var n int
+		if tl := p.e.a.data.core.S.Timeline(p.ch); tl != nil {
+			for _, m := range tl.Msgs {
+				if m.Text == w.text {
+					n++
+				}
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s: %q is %d rows in the window, want 1", ps.name, w.text, n)
+		}
+	}
+	return res
 }

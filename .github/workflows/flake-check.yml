@@ -1265,16 +1265,18 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "core: socket events don't wait for lookups; jsrt, composer: a send's checks run ahead of queued JS"
+      - name: "core: socket events don't wait for lookups, catch-ups after a gap; jsrt, composer: the user's lane, in order"
         run: |
           rc=0
-          go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestHistoryCatchesUpWithLatest)$' ./internal/core || rc=1
-          go test -count=$COUNT -v -run '^TestSetLatestSinceKeepsLiveMessages$' ./internal/store || rc=1
-          go test -count=$COUNT -v -run '^TestUserBlockingRunsFirst$' ./internal/jsrt || rc=1
-          go test -count=$COUNT -v -run '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog)$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestHistoryCatchesUpWithLatest|TestHistoryRereadsAfterSlowConnect|TestHistoryCatchUpRetries|TestHistoryCountsMutations)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestSetLatestSinceKeepsLiveMessages|TestSetLatestSincePageWins|TestSetLatestSinceKeepsHeldCopy)$' ./internal/store || rc=1
+          go test -count=$COUNT -v -run '^(TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations)$' ./internal/jsrt || rc=1
+          go test -count=$COUNT -v -run '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage)$' ./internal/ui/composer || rc=1
           exit $rc
-      - name: "ui: event to row, without plugins; a new sender's notification names them; an app's message stays in the list"
+      - name: "ui: event to row, without plugins; notifications name new people, in order; missed messages reach the lists"
         if: ${{ !cancelled() }}
+        env:
+          CLACK_LATENCY_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 20m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestBotMessageReachesTheList)$' ./internal/ui
-          go test -count=$COUNT -timeout 60m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestBotMessageReachesTheList)$' ./internal/ui
+          go test -count=1 -v -timeout 20m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestBotMessageReachesTheList|TestHistoryAfterSocketGap)$' ./internal/ui
+          go test -count=$COUNT -timeout 60m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestBotMessageReachesTheList|TestHistoryAfterSocketGap)$' ./internal/ui

@@ -16,14 +16,18 @@ import (
 // (ui-taut builds them from Taut's and Slick's sources): Taut's Show Real
 // User and OwlMode and Slick's Message Logger, so MessageWrapper,
 // MessageText, Blocks and the sender are patched on every row and
-// OwlMode's send check gates every send, plus a send check of the test's
-// own (the path every send takes with any plugin's addSendCheck). The
-// "JS busy" pass queues 400 ms of work on the plugin runtime, in 10 ms
-// tasks, before each own send: what a channel's patched rows leave it
-// when messages and profile changes come in (the perf job's plugin
-// passes measured seconds of it). A patched row draws its native at once
-// and the plugin's tree when it lands, so others' rows are timed as
-// without plugins; an own send waits for its send checks.
+// OwlMode's send check and send patch gate every send, plus a send check
+// of the test's own (the path every send takes with any plugin's
+// addSendCheck). The quiet own pass lets the plugin runtime finish its
+// work before each Enter (the patched composer's re-render after the
+// typing), and its sends are held to Slack's next frame like ones without
+// plugins. The "JS busy" pass queues 400 ms of work on the plugin runtime,
+// in 10 ms tasks, before each own send instead: what a channel's patched
+// rows leave it when messages and profile changes come in (the perf job's
+// plugin passes measured seconds of it); its sends may take one frame
+// more, never the backlog. A patched row draws its native at once and the
+// plugin's tree when it lands, so others' rows are timed as without
+// plugins.
 func TestTautMessageLatency(t *testing.T) {
 	tdir, sdir := os.Getenv("TAUT_PLUGINS_DIR"), os.Getenv("SLICK_PLUGINS_DIR")
 	if tdir == "" || sdir == "" {
@@ -43,11 +47,8 @@ func TestTautMessageLatency(t *testing.T) {
 		if err == nil {
 			err = tt.SetEnabled(ctx, id, true)
 		}
-		switch {
-		case err != nil && name == "ShowRealUser":
-			t.Fatalf("%s: %v", name, err)
-		case err != nil: // Hack Club–only plugins may refuse the fake; the test's own send check stands in
-			t.Logf("%s didn't start: %v", name, err)
+		if err != nil { // OwlMode is Hack Club's: the env has Hack Club's enterprise id
+			t.Fatalf("%s didn't start: %v", name, err)
 		}
 	}
 	check, err := tt.Import(ctx, []byte(`(() => {
@@ -101,9 +102,13 @@ return LatencySendCheck
 			rt.Post(func(*jsrt.Ctx) { time.Sleep(each) })
 		}
 	}})
+	idle := func() { _ = rt.Do(func(*jsrt.Ctx) error { return nil }) }
 	for _, ps := range passes {
 		ps.pluginSend = true
-		res[ps.name] = latReport(t, ps, p.run(ps), true)
+		if ps.busyJS == nil && ps.own > 0 && !ps.busy {
+			ps.drainJS = idle
+		}
+		res[ps.name] = p.measure(t, ps, true)
 	}
 	latWrite(t, "TestTautMessageLatency", res)
 }

@@ -488,8 +488,6 @@ jobs:
           sha=$(git rev-parse -q --verify "$BASE^{commit}" || git rev-parse -q --verify "origin/$BASE^{commit}") || { echo "::error::base $BASE not found"; exit 1; }
           git worktree add -q --detach "$RUNNER_TEMP/base-tree" "$sha"
           cp internal/ui/perf_plugins_test.go "$RUNNER_TEMP/base-tree/internal/ui/"
-          # the message latency passes run on both trees too
-          cp internal/ui/msg_latency_test.go internal/ui/perf_latency_test.go "$RUNNER_TEMP/base-tree/internal/ui/"
           echo "label=$(git rev-parse --short "$sha")" >> "$GITHUB_OUTPUT"
           echo "base: $(git log --oneline -1 "$sha")"
           echo "head: $(git log --oneline -1 HEAD)"
@@ -512,6 +510,12 @@ jobs:
           mkdir -p perf-out
           go test -c -o perf-out/head.test ./internal/ui
           (cd "$RUNNER_TEMP/base-tree" && go test -c -o "$GITHUB_WORKSPACE/perf-out/base.test" ./internal/ui) || echo "::warning::the base tree's ui tests didn't build; head numbers only"
+          # the message latency passes run on the base tree too, built on
+          # their own: a base before the latency harness (2026-11-16) can't
+          # build it, and the scroll passes' base column must not go with it
+          cp internal/ui/msg_latency_test.go internal/ui/perf_latency_test.go "$RUNNER_TEMP/base-tree/internal/ui/"
+          (cd "$RUNNER_TEMP/base-tree" && go test -c -o "$GITHUB_WORKSPACE/perf-out/base-latency.test" ./internal/ui) || echo "::warning::the base tree doesn't build the latency harness; latency numbers are head only"
+          rm -f "$RUNNER_TEMP/base-tree/internal/ui/msg_latency_test.go" "$RUNNER_TEMP/base-tree/internal/ui/perf_latency_test.go"
       - name: scroll passes (base and head interleaved, 3 rounds)
         env:
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
@@ -542,8 +546,10 @@ jobs:
         run: |
           for r in 1 2; do
             for s in base head; do
-              [ -x perf-out/$s.test ] || continue
-              MSG_LATENCY_OUT="$PWD/perf-out/latency-$s.jsonl" xvfb-run -a perf-out/$s.test -test.run '^TestPerfMessageLatency$' -test.v -test.count 1 -test.timeout 15m > perf-out/latency-$s-$r.log 2>&1 || echo "::warning::$s latency round $r failed"
+              bin=perf-out/$s.test
+              [ "$s" = base ] && bin=perf-out/base-latency.test
+              [ -x "$bin" ] || continue
+              MSG_LATENCY_OUT="$PWD/perf-out/latency-$s.jsonl" xvfb-run -a "$bin" -test.run '^TestPerfMessageLatency$' -test.v -test.count 1 -test.timeout 15m > perf-out/latency-$s-$r.log 2>&1 || echo "::warning::$s latency round $r failed"
               grep -E 'latency |running [0-9]+ plugins|--- |panic' perf-out/latency-$s-$r.log || true
             done
           done

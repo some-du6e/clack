@@ -84,18 +84,40 @@ func (e *perfEnv) socketGap(t *testing.T, ch string, n int) string {
 	t.Helper()
 	ts, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", fmt.Sprintf("%d: Hi meta,", n))
 	e.fs.SetCountLatest(ch, ts)
-	e.a.data.core.RTM.Reconnect("test: the machine woke")
-	if !e.untilSoft(20*time.Second, func() bool { return e.a.data.core.Count(ch).Latest == ts && e.fs.Sockets() > 0 }) {
+	e.reconnectSlow(t, 0)
+	if !e.untilSoft(20*time.Second, func() bool { return e.a.data.core.Count(ch).Latest == ts }) {
 		t.Fatal("the counts read after the reconnect never named the missed message")
 	}
 	return ts
 }
 
+// reconnectSlow drops the socket as a Mac's wake does (RTM.Reconnect drops
+// the reconnect_url: a slow connect, with a fresh client.getWebSocketURL)
+// and waits until the new socket is up. With hold the counts core reads
+// after it answer that much later (the request is answered from the
+// fake's state when it arrives).
+func (e *perfEnv) reconnectSlow(t *testing.T, hold time.Duration) {
+	t.Helper()
+	if hold > 0 {
+		e.fs.SetFault("client.counts", fakeslack.Fault{ReplyDelay: hold, Times: 1})
+	}
+	ws := e.fs.CallCount("client.getWebSocketURL")
+	e.a.data.core.RTM.Reconnect("test: the machine woke")
+	if !e.untilSoft(20*time.Second, func() bool {
+		return e.fs.CallCount("client.getWebSocketURL") > ws && e.a.data.core.RTM.Connected() && e.fs.Sockets() > 0
+	}) {
+		t.Fatal("the socket never came back")
+	}
+}
+
 // historyInFlight makes the next conversations.history answer with the
 // page the fake has when the call arrives, held back for d: a message
-// posted meanwhile is newer than the page.
-func historyInFlight(fs *fakeslack.Server, d time.Duration) {
+// posted meanwhile is newer than the page. It returns a func that
+// reports whether that page was read.
+func historyInFlight(fs *fakeslack.Server, ch string, d time.Duration) func() bool {
+	n := fs.HistoryReads(ch)
 	fs.SetFault("conversations.history", fakeslack.Fault{ReplyDelay: d, Times: 1})
+	return func() bool { return fs.HistoryReads(ch) > n }
 }
 
 func TestBotMessageReachesTheList(t *testing.T) {
@@ -130,10 +152,12 @@ func TestBotMessageReachesTheList(t *testing.T) {
 
 	t.Run("open, its history in flight", func(t *testing.T) {
 		ch := ids[2]
-		historyInFlight(e.fs, 800*time.Millisecond)
+		read := historyInFlight(e.fs, ch, 800*time.Millisecond)
 		e.openChannel(ch)
-		e.settle(100 * time.Millisecond) // the page is read; its answer waits
-		ts := owlPost(e, ch, 42111)
+		if !e.untilSoft(10*time.Second, read) {
+			t.Fatal("the history was never read")
+		}
+		ts := owlPost(e, ch, 42111) // the page is read; its answer waits
 		if !e.untilSoft(20*time.Second, func() bool { return e.loadedMessages(ch) > 0 }) {
 			t.Fatal("no history")
 		}
@@ -184,12 +208,14 @@ func TestBotMessageReachesTheList(t *testing.T) {
 		// sidebar row's pointerdown prefetch, boot's unread prefetch) when
 		// Owl posts
 		ch := ids[4]
-		historyInFlight(e.fs, 800*time.Millisecond)
+		read := historyInFlight(e.fs, ch, 800*time.Millisecond)
 		if !e.a.data.core.PrefetchHistory(ch) {
 			t.Fatal("no prefetch started")
 		}
-		time.Sleep(150 * time.Millisecond) // the page is read; its answer waits
-		ts := owlPost(e, ch, 42113)
+		if !e.untilSoft(10*time.Second, read) {
+			t.Fatal("the prefetch never read the history")
+		}
+		ts := owlPost(e, ch, 42113) // the page is read; its answer waits
 		if !e.untilSoft(10*time.Second, func() bool { return e.loadedMessages(ch) > 0 }) {
 			t.Fatal("the prefetched page never came")
 		}

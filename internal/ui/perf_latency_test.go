@@ -102,7 +102,7 @@ func TestPerfMessageLatency(t *testing.T) {
 	}})
 	for _, ps := range passes {
 		ps.pluginSend = true
-		res[ps.name] = latReport(t, ps, p.run(ps), false)
+		res[ps.name] = p.measure(t, ps, false)
 	}
 	latWrite(t, "TestPerfMessageLatency", res)
 }
