@@ -1,6 +1,7 @@
 package jsrt
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sync/atomic"
@@ -104,18 +105,53 @@ type Rect struct{ X, Y, W, H float32 }
 // the document, for window-level keys). ev is the event JSON from
 // docs/PLUGINS.md. Capture and bubble run in JS like a browser. Async, any
 // goroutine.
+// A discrete event (a click, a key, a change: React's
+// DiscreteEventPriority) is the user's input and runs on the user-blocking
+// lane, in order with the user's other input and the sends after it
+// (UserBlocking); a continuous one (a mouse move, a scroll) waits its turn.
 func (r *Runtime) DispatchEvent(target int, ev []byte) {
-	r.Post(func(js *Ctx) { _, _ = js.dispatch(target, ev) })
+	r.post(discreteEvent(ev), func(js *Ctx) { _, _ = js.dispatch(target, ev) })
 }
 
 // DispatchEventThen is DispatchEvent telling done, on the JS goroutine,
 // what JS did with the event: whether a listener stopped its propagation
 // or prevented its default. done doesn't run if the runtime closes first.
 func (r *Runtime) DispatchEventThen(target int, ev []byte, done func(EventResult, error)) {
-	r.Post(func(js *Ctx) {
+	r.post(discreteEvent(ev), func(js *Ctx) {
 		v, err := js.dispatch(target, ev)
 		done(v, err)
 	})
+}
+
+// discreteEvents are React's DiscreteEventPriority events (ReactDOM's
+// getEventPriority): the user's input, which a browser handles in order
+// ahead of rendering.
+var discreteEvents = map[string]bool{
+	"beforetoggle": true, "cancel": true, "click": true, "close": true, "contextmenu": true, "copy": true, "cut": true,
+	"auxclick": true, "dblclick": true, "dragend": true, "dragstart": true, "drop": true, "focusin": true, "focusout": true,
+	"input": true, "invalid": true, "keydown": true, "keypress": true, "keyup": true, "mousedown": true, "mouseup": true,
+	"paste": true, "pause": true, "play": true, "pointercancel": true, "pointerdown": true, "pointerup": true,
+	"ratechange": true, "reset": true, "resize": true, "seeked": true, "submit": true, "toggle": true, "touchcancel": true,
+	"touchend": true, "touchstart": true, "volumechange": true, "change": true, "selectionchange": true, "textInput": true,
+	"compositionstart": true, "compositionend": true, "compositionupdate": true, "beforeblur": true, "afterblur": true,
+	"beforeinput": true, "blur": true, "fullscreenchange": true, "focus": true, "hashchange": true, "popstate": true,
+	"select": true, "selectstart": true,
+}
+
+// discreteEvent reports whether the event JSON's type is a discrete
+// event's.
+func discreteEvent(ev []byte) bool {
+	i := bytes.Index(ev, []byte(`"type":`))
+	if i < 0 {
+		return false
+	}
+	rest := bytes.TrimLeft(ev[i+len(`"type":`):], " ")
+	if len(rest) == 0 || rest[0] != '"' {
+		return false
+	}
+	rest = rest[1:]
+	j := bytes.IndexByte(rest, '"')
+	return j >= 0 && discreteEvents[string(rest[:j])]
 }
 
 // DispatchEventSync is DispatchEvent waiting for the result (e.g. to learn
@@ -126,7 +162,7 @@ func (r *Runtime) DispatchEventSync(ctx context.Context, target int, ev []byte) 
 		err error
 	}
 	ch := make(chan res, 1)
-	r.Post(func(js *Ctx) {
+	r.post(discreteEvent(ev), func(js *Ctx) {
 		v, err := js.dispatch(target, ev)
 		ch <- res{v, err}
 	})
@@ -157,8 +193,14 @@ func (c *Ctx) dispatch(target int, ev []byte) (EventResult, error) {
 
 // CallFn invokes a function prop that was serialized as {"$fn":id} inside a
 // native ("@") node, with JSON args. Async, any goroutine.
-func (r *Runtime) CallFn(id int, args []byte) {
-	r.Post(func(js *Ctx) {
+func (r *Runtime) CallFn(id int, args []byte) { r.callFn(false, id, args) }
+
+// CallFnUserBlocking is CallFn for the user's input (a control's onClick
+// or onChange): it runs on the user-blocking lane (PostUserBlocking).
+func (r *Runtime) CallFnUserBlocking(id int, args []byte) { r.callFn(true, id, args) }
+
+func (r *Runtime) callFn(urgent bool, id int, args []byte) {
+	r.post(urgent, func(js *Ctx) {
 		fn := js.Global().Get("__clack").Get("callFn")
 		var a Value
 		if len(args) > 0 {

@@ -2,6 +2,7 @@ package jsrt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -121,5 +122,205 @@ func TestUserBlockingRunsFirst(t *testing.T) {
 		}
 		t.Logf("user-blocking %v: answered %v after the thread was free", user, since.Round(time.Millisecond))
 		_ = r.Do(func(*Ctx) error { return nil }) // drain
+	}
+}
+
+// laneRecorder notes what ran, in order, and holds the JS thread on
+// request.
+type laneRecorder struct {
+	t     *testing.T
+	r     *Runtime
+	mu    sync.Mutex
+	order []string
+	holds []chan struct{}
+}
+
+func newLaneRecorder(t *testing.T) *laneRecorder {
+	l := &laneRecorder{t: t, r: newTest(t)}
+	t.Cleanup(func() { // a failed check must not leave the JS thread held
+		for _, c := range l.holds {
+			select {
+			case <-c:
+			default:
+				close(c)
+			}
+		}
+	})
+	return l
+}
+
+func (l *laneRecorder) note(s string) {
+	l.mu.Lock()
+	l.order = append(l.order, s)
+	l.mu.Unlock()
+}
+
+func (l *laneRecorder) got() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Join(l.order, ", ")
+}
+
+// post queues a task that notes s (Post, PostInOrder or
+// PostUserBlocking).
+func (l *laneRecorder) post(post func(func(*Ctx)), s string) {
+	post(func(*Ctx) { l.note(s) })
+}
+
+// hold queues a task that notes s, then waits for the returned channel to
+// close; with wait it returns once that task runs.
+func (l *laneRecorder) hold(s string, wait bool) chan struct{} {
+	c, running := make(chan struct{}), make(chan struct{})
+	l.holds = append(l.holds, c)
+	l.r.Post(func(*Ctx) {
+		l.note(s)
+		close(running)
+		<-c
+	})
+	if wait {
+		<-running
+	}
+	return c
+}
+
+// drain waits until every task queued so far ran.
+func (l *laneRecorder) drain() {
+	if err := l.r.Do(func(*Ctx) error { return nil }); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+// A user-blocking task that comes while the loop runs a batch it swapped
+// out goes before the rest of that batch: the real backlog case, renders
+// queued as one batch of seconds. Two keep their order.
+func TestUserBlockingPreemptsBatch(t *testing.T) {
+	l := newLaneRecorder(t)
+	g := l.hold("G", true)
+	// queued while G runs: H, then the batch behind it
+	h := l.hold("H", false)
+	for i := 0; i < 5; i++ {
+		l.post(l.r.Post, fmt.Sprint("q", i))
+	}
+	close(g)
+	for dl := time.Now().Add(5 * time.Second); !strings.HasSuffix(l.got(), "H"); time.Sleep(time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("H never ran")
+		}
+	}
+	// H runs from the batch the loop swapped out; q0… wait in it
+	l.post(l.r.PostUserBlocking, "U1")
+	l.post(l.r.PostUserBlocking, "U2")
+	close(h)
+	l.drain()
+	if got, want := l.got(), "G, H, U1, U2, q0, q1, q2, q3, q4"; got != want {
+		t.Errorf("tasks ran %s, want %s", got, want)
+	}
+}
+
+// The store's updates and the socket's events (PostInOrder) stay in order
+// with the user's work queued after them, as a browser's input handlers
+// read the store as every earlier event left it; the rendering queued
+// among them still waits for the user's task. A send must not overtake
+// the click before it (OwlMode's mode toggle) or the message it replies to.
+func TestUserBlockingAfterInOrderTasks(t *testing.T) {
+	l := newLaneRecorder(t)
+	g := l.hold("G", true)
+	l.post(l.r.Post, "render0")
+	l.post(l.r.PostInOrder, "store0")
+	h := l.hold("H", false) // the loop swaps G's queue in: store1 below waits in the queue, the rest in the batch
+	l.post(l.r.Post, "render1")
+	l.post(l.r.PostInOrder, "store1")
+	close(g)
+	for dl := time.Now().Add(5 * time.Second); !strings.HasSuffix(l.got(), "H"); time.Sleep(time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("H never ran")
+		}
+	}
+	l.post(l.r.PostInOrder, "store2")
+	l.post(l.r.PostUserBlocking, "click")
+	l.post(l.r.PostInOrder, "store3") // after the click: stays behind it
+	l.post(l.r.PostUserBlocking, "send")
+	l.post(l.r.Post, "render2")
+	close(h)
+	l.drain()
+	// render0 and store0 ran before H (they came before it); store1 and
+	// store2 go ahead of the click, store3 between the click and the send
+	if got, want := l.got(), "G, render0, store0, H, store1, store2, click, store3, send, render1, render2"; got != want {
+		t.Errorf("tasks ran %s,\nwant %s", got, want)
+	}
+}
+
+// What a user-blocking task starts continues on its lane: a promise a Go
+// function settles, and a timer it sets, run ahead of the queue; a timer
+// due behind a user-blocking task waits for it.
+func TestUserBlockingContinuations(t *testing.T) {
+	l := newLaneRecorder(t)
+	r := l.r
+	r.ExposeAsync("answerLater", func(ctx context.Context, _ []json.RawMessage) (any, error) {
+		time.Sleep(30 * time.Millisecond)
+		return 1, nil
+	})
+	if _, err := r.Eval("lane.js", `globalThis.lane = {
+		async awaitGo() { await __clack.answerLater(); return 'go'; },
+		timer() { return new Promise((res) => setTimeout(() => res('timer'), 5)); },
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	const slow, n = 20 * time.Millisecond, 10
+	for _, path := range []string{"lane.awaitGo", "lane.timer"} {
+		g := l.hold("G", true)
+		for i := 0; i < n; i++ {
+			r.Post(func(*Ctx) { time.Sleep(slow) })
+		}
+		answered := make(chan time.Duration, 1)
+		go func() {
+			t0 := time.Now()
+			if _, err := r.Call(UserBlocking(context.Background()), path); err != nil {
+				t.Error(err)
+			}
+			answered <- time.Since(t0)
+		}()
+		for dl := time.Now().Add(5 * time.Second); r.urgentN.Load() == 0; time.Sleep(time.Millisecond) {
+			if time.Now().After(dl) {
+				t.Fatal("the user-blocking call never queued")
+			}
+		}
+		close(g)
+		if d := <-answered; d > n*slow/2+100*time.Millisecond {
+			t.Errorf("%s answered %v after it was called: its continuation waited for the %d queued tasks (%v each)", path, d, n, slow)
+		} else {
+			t.Logf("%s answered in %v", path, d.Round(time.Millisecond))
+		}
+		l.drain()
+	}
+
+	// a due timer's turn comes after a user-blocking task that came while
+	// the timers before it ran
+	r.Expose("userNow", func(js *Ctx, _ Value, _ []Value) (any, error) {
+		go r.PostUserBlocking(func(*Ctx) { l.note("user") })
+		for dl := time.Now().Add(5 * time.Second); r.urgentN.Load() == 0 && time.Now().Before(dl); {
+			time.Sleep(time.Millisecond)
+		}
+		return nil, nil
+	})
+	r.Expose("noteTimer", func(js *Ctx, _ Value, args []Value) (any, error) {
+		l.note(args[0].String())
+		return nil, nil
+	})
+	l.mu.Lock()
+	l.order = nil
+	l.mu.Unlock()
+	if _, err := r.Eval("timers.js", `setTimeout(() => { __clack.noteTimer('t1'); __clack.userNow(); }, 0);
+		setTimeout(() => __clack.noteTimer('t2'), 0);`); err != nil {
+		t.Fatal(err)
+	}
+	for dl := time.Now().Add(5 * time.Second); !strings.Contains(l.got(), "t2"); time.Sleep(time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatalf("the timers never ran: %s", l.got())
+		}
+	}
+	l.drain()
+	if got, want := l.got(), "t1, user, t2"; got != want {
+		t.Errorf("ran %s, want %s: the second timer went ahead of the user's task", got, want)
 	}
 }

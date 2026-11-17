@@ -87,7 +87,8 @@ func (c *Composer) typingStopped() {
 }
 
 func sendTypingEnded(t *taut.Taut, api coreAPI, ch, ts string) {
-	_, _ = taut.Dispatch(context.Background(), t, thTypingEnded, typingArgs{ChannelID: ch, ThreadTs: ts},
+	// in order with the keystrokes and the send (sendTyping)
+	_, _ = taut.Dispatch(taut.UserAction(context.Background()), t, thTypingEnded, typingArgs{ChannelID: ch, ThreadTs: ts},
 		func(_ context.Context, a typingArgs) (any, error) {
 			return nil, typingEndedNative(api, a.ChannelID, a.ThreadTs)
 		})

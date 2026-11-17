@@ -428,7 +428,7 @@ func (b *Bridge) CallEvent(fn int64, args []byte, done func(stopped bool)) {
 		path = "callFn"
 	}
 	b.withAnswer(done, func(r *runtime, answer func(bool)) {
-		r.rt.Post(func(js *jsrt.Ctx) {
+		r.rt.PostUserBlocking(func(js *jsrt.Ctx) { // the user's key (jsrt UserBlocking)
 			stopped := false
 			defer func() { answer(stopped) }()
 			a, err := js.ParseJSON(args)
@@ -492,9 +492,14 @@ func (b *Bridge) withAnswer(done func(bool), f func(r *runtime, answer func(bool
 }
 
 // Call calls a JS function prop; done (optional) gets its JSON result.
+// The props Go calls are the user's: a control's onClick, onChange,
+// onSelect, a menu item, a plugin's prepareAndSendMessage. They run on the
+// user-blocking lane, in order with the user's other input and sends
+// (jsrt UserBlocking): a send after a click sees what the click did
+// (OwlMode's mode toggle, then Enter).
 func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)) {
 	if done == nil && !IsTautFn(fn) {
-		b.with(func(r *runtime) { r.rt.CallFn(int(fn), args) })
+		b.with(func(r *runtime) { r.rt.CallFnUserBlocking(int(fn), args) })
 		return
 	}
 	go func() {
@@ -513,7 +518,7 @@ func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)
 		if IsTautFn(fn) {
 			path = "__taut.callFn"
 		}
-		res, err := r.rt.Call(context.Background(), path, float64(fn), a)
+		res, err := r.rt.Call(UserAction(context.Background()), path, float64(fn), a)
 		if done != nil {
 			done(res, err)
 		}
@@ -674,7 +679,9 @@ func (t *Taut) sendCheckWaiting(ctx context.Context, rt *runtime) bool {
 	if len(t.Overlays()) > 0 {
 		return true
 	}
-	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	// behind the queued work, as the check's own awaits may be: a busy
+	// runtime that can't answer in time counts as waiting
+	pctx, cancel := context.WithTimeout(jsrt.Ordinary(ctx), 2*time.Second)
 	defer cancel()
 	var open bool
 	if err := rt.call(pctx, "sendCheckWaiting", &open); err != nil {

@@ -192,10 +192,14 @@ type uploadFilesArgs struct {
 // ---- typing ----
 
 // sendTyping reports typing (currentUserStartedTyping; SilentTyping and
-// OwlMode swallow it). Call off the UI goroutine.
+// OwlMode swallow it). Call off the UI goroutine. It is the user's
+// keystroke's (taut.UserAction): the send after it can't overtake it, or
+// the typing would go out after the message ("is typing…" under a sent
+// message for 6 s), as Slack's InputContainer dispatches it from the
+// change handler, before any send.
 func sendTyping(api coreAPI, ch, ts string) {
 	if t := currentTaut(); t.ThunkPatched(thTyping) {
-		_, _ = taut.Dispatch(context.Background(), t, thTyping, typingArgs{ChannelID: ch, ThreadTs: ts},
+		_, _ = taut.Dispatch(taut.UserAction(context.Background()), t, thTyping, typingArgs{ChannelID: ch, ThreadTs: ts},
 			func(_ context.Context, a typingArgs) (any, error) {
 				return nil, typingNative(api, a.ChannelID, a.ThreadTs)
 			})

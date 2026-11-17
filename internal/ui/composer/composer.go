@@ -140,7 +140,7 @@ type Composer struct {
 	cs            chromeState
 	paneP, inputP slackc.Props
 	sendJS        slackc.JSFunc // a patched prepareAndSendMessage (send checks)
-	pending       *outgoing     // the message sendJS is deciding on
+	pending       []*outgoing   // the messages sendJS is deciding on, oldest first (sendViaJS)
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
 	sbar          scheduledBar  // the scheduled-send context bar (schedule_bar.go)
@@ -1223,7 +1223,10 @@ func (c *Composer) submit() {
 		m := c.edit
 		save := c.SaveEdit
 		go func() {
-			ctx := context.Background()
+			// the edit's thunks and transforms are the user's, as a send's
+			// (taut.UserAction): ahead of the queued renders, after the
+			// user's earlier input
+			ctx := taut.UserAction(context.Background())
 			var err error
 			if save != nil {
 				err = save(ctx, m.Channel, m.TS, text, blocks, nil)
@@ -1327,6 +1330,9 @@ type outgoing struct {
 	// delta is the delta a plugin handed back to the composer's
 	// prepareAndSendMessage (bChannel's "/bchannel …"); nil: doc's
 	delta map[string]any
+	// viaJS is its id while a plugin's prepareAndSendMessage decides on
+	// it (sendViaJS)
+	viaJS int64
 }
 
 // send posts the message (with any attached files) through Slack's
@@ -1544,13 +1550,16 @@ func (c *Composer) checkThenSend(o *outgoing) {
 		case run != nil && ok:
 			go run() // never on the caller's goroutine: a check may answer on the UI's
 		case run != nil:
+			// held back (done(false)): the message goes back, its GIFs too
 			c.restore(o.doc)
+			c.later(func() { c.att.putBackGifs(o.gifs) })
 		default:
 			c.later(func() {
 				if ok {
 					c.send(o)
 				} else {
 					c.restore(o.doc)
+					c.att.putBackGifs(o.gifs)
 				}
 			})
 		}
@@ -1561,26 +1570,54 @@ func (c *Composer) checkThenSend(o *outgoing) {
 // checks wrap it on MessagePaneInput / InputContainer). It calls back
 // into prepareAndSend to really send; a thrown error or rejected promise
 // puts the message back.
+//
+// Each message waits in c.pending until the plugin's call comes back with
+// it: the opts carry the message's own id (sendViaJSKey), which a plugin
+// that passes them on keeps, and a call without one takes the oldest. One
+// slot for all of them gave a second send's call the first message, and
+// lost the first (SlimMessageBox's Hidden thread replies behind a JS
+// backlog). The call runs on the user-blocking lane like a send's checks
+// (taut's Bridge.Call).
 func (c *Composer) sendViaJS(o *outgoing) {
-	c.pending = o
+	sendViaJSN++
+	o.viaJS = sendViaJSN
+	c.pending = append(c.pending, o)
 	opts := slackc.Props{
 		"delta":           o.doc.Delta(),
 		"channelId":       c.ch,
 		"shouldBroadcast": o.broadcast,
 		"blocks":          o.blocks,
 		"text":            o.text,
+		sendViaJSKey:      float64(o.viaJS),
 	}
 	if c.ts != "" {
 		opts["replyToTs"] = c.ts
 	}
 	c.sendJS.CallResult(func(_ any, err error) {
-		if c.pending == o {
-			c.pending = nil // a plugin sent it itself, or held it back
-		}
+		c.takePending(o.viaJS) // a plugin sent it itself, or held it back
 		if err != nil {
 			c.restore(o.doc)
+			c.att.putBackGifs(o.gifs)
 		}
 	}, opts)
+}
+
+// sendViaJSKey is the opts key carrying a sendViaJS message's id.
+const sendViaJSKey = "clackSendId"
+
+// sendViaJSN numbers sendViaJS's messages (UI goroutine).
+var sendViaJSN int64
+
+// takePending removes and returns the pending message with id, or with
+// id 0 the oldest (UI goroutine).
+func (c *Composer) takePending(id int64) *outgoing {
+	for i, o := range c.pending {
+		if id == 0 || o.viaJS == id {
+			c.pending = append(c.pending[:i:i], c.pending[i+1:]...)
+			return o
+		}
+	}
+	return nil
 }
 
 // prepareAndSend is the prepareAndSendMessage({delta, channelId,
@@ -1589,8 +1626,11 @@ func (c *Composer) sendViaJS(o *outgoing) {
 // plugin's shouldBroadcast override (SlimMessageBox) and delta (bChannel
 // turns the message into its /bchannel command; sendJob runs it as one).
 func (c *Composer) prepareAndSend(opts slackc.Props) {
-	o := c.pending
-	c.pending = nil
+	var id int64
+	if v, ok := opts[sendViaJSKey].(float64); ok {
+		id = int64(v)
+	}
+	o := c.takePending(id) // its own (a plugin passed the opts on), else the oldest
 	if o == nil {
 		return
 	}
