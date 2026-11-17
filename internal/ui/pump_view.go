@@ -28,8 +28,27 @@ type pumpView struct {
 	// faces are the members the model's channels draw (their headers'
 	// facepiles: convInfo.Members): a lookup ("names") of one redraws
 	faces map[string]bool
-	inbox bool // the rail's Activity badge reads activity_v2 (Rail.ActivityInbox)
-	badge int  // the rail's Activity badge (model.ActivityCount)
+	// the badges core keeps that the rail and the app badge draw
+	// (recount: activityBadgeMoved's)
+	badges drawnBadges
+}
+
+// drawnBadges are the model's copies of core's badges: the Activity
+// tab's count and dot, the channel_badges' highlights, Home's DM count.
+type drawnBadges struct {
+	activity, chanHigh, actDMs int
+	dot                        bool
+}
+
+// coreBadges reads core's badges as recount does (any goroutine).
+func coreBadges(c *core.App) drawnBadges {
+	counts, _ := c.ActivityTabCounts()
+	return drawnBadges{activity: c.ActivityBadgeCount(), dot: c.ActivityDot(), chanHigh: c.ChannelBadgeHighlights(), actDMs: counts[1]}
+}
+
+// modelBadges are the model's badges (UI goroutine).
+func (m *model) badges() drawnBadges {
+	return drawnBadges{activity: m.ActivityCount, dot: m.ActivityDot, chanHigh: m.ChannelHighlights, actDMs: m.ActivityDMs}
 }
 
 // drawnCount is what the shell draws of a conversation's unread state
@@ -120,7 +139,7 @@ func (b *backend) syncView() {
 	v := &b.view
 	v.mu.Lock()
 	v.ready, v.counts, v.people, v.faces, v.ext = true, counts, people, faces, ext
-	v.inbox, v.badge = m.Rail.ActivityInbox, m.ActivityCount
+	v.badges = m.badges()
 	v.mu.Unlock()
 }
 
@@ -147,11 +166,11 @@ func (b *backend) viewFaces(ids []string) {
 	v.mu.Unlock()
 }
 
-// viewBadge copies the rail's Activity badge (recount; UI goroutine).
+// viewBadge copies the badges recount took from core (UI goroutine).
 func (b *backend) viewBadge() {
 	v := &b.view
 	v.mu.Lock()
-	v.inbox, v.badge = b.m.Rail.ActivityInbox, b.m.ActivityCount
+	v.badges = b.m.badges()
 	v.mu.Unlock()
 }
 
@@ -225,16 +244,16 @@ func (v *pumpView) countsMove(cs map[string]core.Count) bool {
 	return false
 }
 
-// badgeMoves reports whether core's Activity badge differs from the
-// rail's (activityBadgeMoved, from any goroutine).
+// badgeMoves reports whether a badge core keeps differs from the model's
+// (activityBadgeMoved, from any goroutine).
 func (v *pumpView) badgeMoves(c *core.App) bool {
-	v.mu.Lock()
-	inbox, badge, ready := v.inbox, v.badge, v.ready
-	v.mu.Unlock()
-	if !ready {
-		return true
+	if c == nil {
+		return false
 	}
-	return inbox && c != nil && c.ActivityBadgeCount() != badge
+	v.mu.Lock()
+	drawn, ready := v.badges, v.ready
+	v.mu.Unlock()
+	return !ready || coreBadges(c) != drawn
 }
 
 // presenceMoves reports whether a presence change moves a dot the model
