@@ -265,9 +265,9 @@ func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.O
 		relay()
 	}
 	damageModes(false, false)
-	ws, wms, whole := damageMeasure(t, w, a, b)
+	ws, wms, plain := damageMeasure(t, w, a, b)
 	t.Logf("%s (%s), whole: %s; %.1f ms a frame", name, rate, costLine(ws), wms)
-	vp := int64(whole.Bounds().Dx() * whole.Bounds().Dy())
+	vp := int64(plain.Bounds().Dx() * plain.Bounds().Dy())
 	for _, m := range []struct {
 		name              string
 		partial, frameTex bool
@@ -286,7 +286,11 @@ func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.O
 		dmg := damagePart(ps)
 		t.Logf("%s, %s: %s, %s; %.1f ms a frame (%.0f%% of the whole frame's)", name, m.name, dmg, costLine(ps), pms, 100*pms/max(wms, 0.001))
 		if n, mx := costCount(whole, img); n > 0 {
-			t.Errorf("%s, %s: %d px differ from the whole frame, by up to %d levels: %s", name, m.name, n, mx, costDiff(whole, img))
+			t.Errorf("%s, %s: %d px differ from the whole frame, by up to %d levels: %s; %s; Gio's whole frame against the partial %s, against the whole %s",
+				name, m.name, n, mx, costDiff(whole, img), damageWhere(whole, img, plain), costDiff(plain, img), costDiff(plain, whole))
+			if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
+				costCrops(t, dir, strings.NewReplacer(" ", "-", ",", "", "'", "", "(", "", ")", "").Replace(name+"-"+m.name), whole, img)
+			}
 		}
 		if !cheap {
 			continue
@@ -371,4 +375,34 @@ func damageCheck(t *testing.T, name string, ws, ps gpu.FrameStats, vp int64, lim
 	if w := drawn(ws); w > 0 && drawn(ps)*10 > w {
 		t.Errorf("%s: %d px stenciled, covered, blitted and intersected, the whole frame %d: want a tenth at most", name, drawn(ps), w)
 	}
+}
+
+// damageWhere says where a and b differ: the box around it and a few of
+// its pixels in a, b and c.
+func damageWhere(a, b, c *image.RGBA) string {
+	var box image.Rectangle
+	var samples []string
+	r := a.Bounds()
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			i := a.PixOffset(x, y)
+			same := true
+			for k := 0; k < 4; k++ {
+				same = same && a.Pix[i+k] == b.Pix[i+k]
+			}
+			if same {
+				continue
+			}
+			p := image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+1, y+1)}
+			if box.Empty() {
+				box = p
+			} else {
+				box = box.Union(p)
+			}
+			if len(samples) < 4 && (x+y)%97 == 0 {
+				samples = append(samples, fmt.Sprintf("%v: %v vs %v (Gio's %v)", image.Pt(x, y), a.RGBAAt(x, y), b.RGBAAt(x, y), c.RGBAAt(x, y)))
+			}
+		}
+	}
+	return fmt.Sprintf("in %v: %s", box, strings.Join(samples, "; "))
 }

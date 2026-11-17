@@ -131,10 +131,12 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 		sst.Pop()
 		cst.Pop()
 		ast.Pop()
-		// the animated emoji
+		// the animated emoji, in a rounded clip (a path its frames redraw)
 		est := op.Offset(image.Pt(panel.Min.X+300, panel.Min.Y+40)).Push(o)
+		ecl := clip.UniformRRect(image.Rect(0, 0, 22, 22), 5).Push(o)
 		paint.NewLiveImageOp(live).Add(o)
 		paint.PaintOp{}.Add(o)
+		ecl.Pop()
 		est.Pop()
 		// a pill across the panel's rounded corner: an intersection
 		paint.FillShape(o, color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff}, clip.UniformRRect(image.Rect(panel.Max.X-40, panel.Min.Y+2, panel.Max.X+10, panel.Min.Y+30), 8).Op(o))
@@ -376,7 +378,10 @@ func TestClackPartialFrames(t *testing.T) {
 // Clack patch 45: a frame drawn again from the same ops (the client's
 // quiet frames: an animation is all that changed) is a partial frame
 // whose damage is the live image's, and is the whole frame's pixels; the
-// same ops with nothing changed draw nothing.
+// same ops with nothing changed draw nothing; and the same ops drawn
+// whole after partial frames that built none of their paths are still the
+// whole frame (a path a partial frame didn't build was built from its
+// path data as if that were vertices, the second time its ops came).
 func TestClackPartialSameOps(t *testing.T) {
 	const w, h = 800, 600
 	win := clackWindow(t, w, h)
@@ -409,6 +414,7 @@ func TestClackPartialSameOps(t *testing.T) {
 	ref0, _ := shot(partialVars{caret: true}, false)
 	scene(&op.Ops{}, f32.Affine2D{}, partialVars{caret: true, emoji: 1})
 	ref1, _ := shot(partialVars{}, false)
+	shot(partialVars{}, false)
 	gpu.ClackPartialWhole(false)
 	gpu.ClackPartialReset()
 	shot(partialVars{caret: true}, true)
@@ -427,6 +433,14 @@ func TestClackPartialSameOps(t *testing.T) {
 	}
 	if n, m := diffCount(ref1, next); n > 0 {
 		t.Errorf("the same ops, the emoji's next frame: %d px differ from the whole frame by up to %d levels:%s", n, m, worstPixels(ref1, next, next.Bounds(), 6))
+	}
+	// the same ops once more, drawn whole: every path built, the ones the
+	// partial frames left unbuilt included
+	gpu.ClackPartialWhole(true)
+	again2, st := shot(partialVars{}, false)
+	gpu.ClackPartialWhole(false)
+	if n, m := diffCount(ref1, again2); n > 0 {
+		t.Errorf("the same ops drawn whole after partial frames: %d px differ from the whole frame by up to %d levels (%d paths built):%s", n, m, st.PathsBuilt, worstPixels(ref1, again2, again2.Bounds(), 6))
 	}
 	t.Logf("the emoji's frame: %s", statLine(st))
 }
