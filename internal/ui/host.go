@@ -39,7 +39,7 @@ func (a *App) UserAttention() bool {
 		return false
 	}
 	for _, o := range a.overlays {
-		if !o.Dismissed() {
+		if !o.Dismissed() && !invisible(o) {
 			return false
 		}
 	}
@@ -245,7 +245,21 @@ func (a *App) focusChannelComposer(ch string) {
 // overlayOpen reports an overlay still up (n7.ZV: no focus move then).
 func (a *App) overlayOpen() bool {
 	for _, o := range a.overlays {
-		if !o.Dismissed() {
+		if !o.Dismissed() && !invisible(o) {
+			return true
+		}
+	}
+	return false
+}
+
+// visibleOverlays reports whether the overlay list holds anything but
+// invisible pumps, dismissed ones included (they still draw while they
+// go). popups' runFor keeps a pump in the list while a closed modal's
+// request finishes, up to 3 minutes for a profile photo's upload, and no
+// such pump may hold the focus, the read marks or the split view.
+func (a *App) visibleOverlays() bool {
+	for _, o := range a.overlays {
+		if !invisible(o) {
 			return true
 		}
 	}
