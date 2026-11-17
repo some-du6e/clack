@@ -15,7 +15,7 @@ import (
 //   - subscriptions.thread.getView {limit, fetch_threads_state, max_ts}:
 //     two followed threads in ViewsChannel. The first has one unread
 //     reply, the second is read (the Threads view's "You're up to date"
-//     divider goes between them once the first is read).
+//     divider goes between them as soon as they load).
 //   - subscriptions.thread.mark {channel, thread_ts, ts} is recorded
 //     (ThreadMarks) and clears the unread reply.
 //   - drafts.list carries a draft, a scheduled message and a scheduled

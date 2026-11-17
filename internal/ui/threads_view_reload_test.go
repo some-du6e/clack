@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 func TestThreadsPageReloadsLikeSlack(t *testing.T) {
@@ -25,11 +26,16 @@ func TestThreadsPageReloadsLikeSlack(t *testing.T) {
 	t.Cleanup(func() { fs.Close() })
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
-	views := func() int64 { return fs.CallCount("subscriptions.thread.getView") }
+	getViews := func() int64 { return fs.CallCount("subscriptions.thread.getView") }
+	// a click while the view's load is out does nothing (Slack's
+	// this.loading), so each step waits for the view to settle
+	settled := func() bool {
+		v, ok := e.a.views[Route("threads")].(*views.Threads)
+		return ok && v.Settled()
+	}
 	e.a.Navigate("threads")
-	e.until("the Threads page's load", 15*time.Second, func() bool { return views() > 0 })
-	e.settle(300 * time.Millisecond)
-	n := views()
+	e.until("the Threads page's load", 15*time.Second, func() bool { return getViews() > 0 && settled() })
+	n := getViews()
 	for _, step := range []struct {
 		what  string
 		route string
@@ -40,9 +46,9 @@ func TestThreadsPageReloadsLikeSlack(t *testing.T) {
 		{"back on it", "threads", n + 2},
 	} {
 		e.a.sbLinkClicked(step.route)
-		e.until(step.what, 15*time.Second, func() bool { return views() >= step.want })
+		e.until(step.what, 15*time.Second, func() bool { return getViews() >= step.want && settled() })
 		e.settle(300 * time.Millisecond)
-		if got := views(); got != step.want {
+		if got := getViews(); got != step.want {
 			t.Errorf("%s: %d getView calls, want %d", step.what, got, step.want)
 		}
 	}
