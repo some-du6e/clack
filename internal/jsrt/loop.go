@@ -728,6 +728,30 @@ func (r *Runtime) runTask(t task) {
 	if t.hold && monoNow()-t.root <= int64(userChain) {
 		r.armHold() // a send's chain goes on in Go
 	}
+	if h := taskHook.Load(); h != nil {
+		(*h)(TaskRun{Name: t.name(), Urgent: t.urgent, Hold: t.hold, Start: t.start, Took: time.Since(t.start)})
+	}
+}
+
+// TaskRun is one task the JS thread ran (SetTaskHook).
+type TaskRun struct {
+	Name         string
+	Urgent, Hold bool
+	Start        time.Time
+	Took         time.Duration
+}
+
+var taskHook atomic.Pointer[func(TaskRun)]
+
+// SetTaskHook has every runtime report each task it ran to f, on the JS
+// thread, until it is set to nil (tests: what ran between a key and its
+// frame). f must not block.
+func SetTaskHook(f func(TaskRun)) {
+	if f == nil {
+		taskHook.Store(nil)
+		return
+	}
+	taskHook.Store(&f)
 }
 
 // task is one macrotask on the JS thread, and what the timeout lines say

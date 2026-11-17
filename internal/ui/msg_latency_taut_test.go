@@ -2,9 +2,11 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,12 +108,47 @@ return LatencySendCheck
 		}
 	}})
 	idle := func() { _ = rt.Do(func(*jsrt.Ctx) error { return nil }) }
+	// what the JS thread ran after each own send's Enter (the quiet
+	// passes): which task held a pending copy past its frame
+	var tasksMu sync.Mutex
+	var tasks []jsrt.TaskRun
+	jsrt.SetTaskHook(func(r jsrt.TaskRun) {
+		tasksMu.Lock()
+		tasks = append(tasks, r)
+		tasksMu.Unlock()
+	})
+	defer jsrt.SetTaskHook(nil)
 	for _, ps := range passes {
 		ps.pluginSend = true
 		if ps.busyJS == nil && ps.own > 0 && !ps.busy {
 			ps.drainJS = idle
 		}
 		res[ps.name] = p.measure(t, ps, true)
+		if ps.name != "quiet, own sends" {
+			continue
+		}
+		p.mu.Lock()
+		tasksMu.Lock()
+		for _, w := range p.waits {
+			if w.kind != "own" || !strings.HasPrefix(w.text, ps.name+" own ") {
+				continue
+			}
+			var line []string
+			for _, r := range tasks {
+				if at := r.Start.Sub(w.t0); at >= -5*time.Millisecond && at < 60*time.Millisecond {
+					lane := ""
+					if r.Hold {
+						lane = " hold"
+					} else if r.Urgent {
+						lane = " user"
+					}
+					line = append(line, fmt.Sprintf("+%.1f %s%s %.1fms", float64(at)/1e6, r.Name, lane, float64(r.Took)/1e6))
+				}
+			}
+			t.Logf("JS after own send (pending copy in %v, %d frames): %s", w.lat.Round(100*time.Microsecond), w.frames, strings.Join(line, "; "))
+		}
+		tasksMu.Unlock()
+		p.mu.Unlock()
 	}
 	latWrite(t, "TestTautMessageLatency", res)
 }
