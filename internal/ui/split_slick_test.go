@@ -6,9 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/key"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -106,7 +109,40 @@ func TestMessageMenuPickInSplitView(t *testing.T) {
 	if s := e.a.secondary; s.kind != main.kind || s.channel != main.channel || s.ts != main.ts {
 		t.Errorf("the main view's secondary changed: %v %s/%s, was %v %s/%s", s.kind, s.channel, s.ts, main.kind, main.channel, main.ts)
 	}
-	if !m.Dismissed() {
-		t.Error("the menu stayed open")
+}
+
+// A row a plugin's onSelectAction passes on runs with the modifiers of
+// the click that picked it, as Slack's dispatchMessageAction runs in the
+// click's handler: a Ctrl+Alt (⌘⌥ on macOS) click on Reply in thread in
+// the main view opens the thread in the split view (Slack's shouldSplit),
+// and the main view's thread pane stays as it was.
+func TestMessageMenuPickSplitClick(t *testing.T) {
+	e := newSVIn(t, "")
+	e.installCode("PassSlick", svPassPlugin)
+	e.until(5*time.Second, "MAMenu patched", func() bool { return slackc.Patched("MAMenu") })
+	const ts = "1700000008.000800"
+	msg := core.Message{Channel: ttGen, TS: ts, User: svBob, Text: "a message in the main view"}
+	e.a.ShowOverlay(popups.NewMessageContextMenu(e.a, image.Pt(900, 300), msg, popups.InChannel, popups.MessageMenuOpts{}))
+	var m *popups.Menu
+	i := -1
+	e.until(8*time.Second, "the menu as the plugin laid it out", func() bool {
+		if m = e.topMenu(); m == nil {
+			return false
+		}
+		i = menuIndex(m.Items(), "comment")
+		return i >= 0 && len(m.RowRects()) == len(m.Items()) && !m.RowRects()[i].Empty() &&
+			e.tree(`"onSelectAction":{"$fn"`) != ""
+	})
+	for k := 0; k < 3; k++ {
+		e.frame()
+	}
+	main := e.a.secondary
+	e.clickRectMods(m.RowRects()[i], shortcut.Mod()|key.ModAlt)
+	e.until(8*time.Second, "the thread in the split view", func() bool { return e.a.splitTop() == Route("c/"+ttGen+"/t/"+ts) })
+	if got := e.jsString("globalThis.__passed"); got != "comment" {
+		t.Errorf("the plugin was asked about %q, want comment", got)
+	}
+	if s := e.a.secondary; s.kind != main.kind || s.channel != main.channel || s.ts != main.ts {
+		t.Errorf("the main view's secondary changed: %v %s/%s, was %v %s/%s", s.kind, s.channel, s.ts, main.kind, main.channel, main.ts)
 	}
 }

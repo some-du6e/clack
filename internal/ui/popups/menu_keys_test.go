@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"image"
+	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,7 +67,35 @@ func (e *mkEnv) press(n key.Name, mods key.Modifiers) {
 // menus' actions (mark unread, save, pin) run.
 func mkHost(t *testing.T) *tzHost {
 	t.Helper()
-	h := hcEnv(t)
+	return mkBoot(t, hcEnv(t))
+}
+
+// mkHostCounting is mkHost over a fake that counts the API calls each
+// method gets (calls, safe from any goroutine).
+func mkHostCounting(t *testing.T) (h *tzHost, calls func(method string) int) {
+	t.Helper()
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	var mu sync.Mutex
+	n := map[string]int{}
+	fs.SetHook(func(method string, _ url.Values) (any, bool) {
+		mu.Lock()
+		n[method]++
+		mu.Unlock()
+		return nil, false
+	})
+	return mkBoot(t, hcEnvOn(t, fs)), func(method string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n[method]
+	}
+}
+
+func mkBoot(t *testing.T, h *tzHost) *tzHost {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	done := make(chan error, 1)
@@ -327,7 +357,7 @@ func TestMenuKeysIgnored(t *testing.T) {
 // of the submenu actions it built (Organize's Pin) and closes the menu.
 func TestMenuKeysSubmenus(t *testing.T) {
 	setGOOS(t, "linux")
-	h := mkHost(t)
+	h, calls := mkHostCounting(t)
 	e, _ := mkOpen(t, h, "more", false)
 	e.press("M", 0)
 	if e.m.Dismissed() || e.m.sub == nil || !e.m.sub.kbd || e.m.items[e.m.subIdx].Label != "Add a reminder" {
@@ -361,20 +391,22 @@ func TestMenuKeysSubmenus(t *testing.T) {
 		t.Errorf("a pin toasted %q; Slack's pinMessage toasts nothing", ts)
 	}
 
-	// P from the root of the context menu and of More actions
+	// P from the root of the context menu and of More actions: one
+	// pins.add each (counted at the fake: the store's pin seq also moves
+	// when a pin the fake refuses is reverted, a request after the press)
 	for _, which := range []string{"context", "more"} {
 		e, _ := mkOpen(t, h, which, false)
-		seq := h.a.S.PinSeq()
+		before := calls("pins.add")
 		e.press("P", 0)
 		if !e.m.Dismissed() {
 			t.Errorf("%s: P from the root left the menu open", which)
 		}
-		for end := time.Now().Add(10 * time.Second); h.a.S.PinSeq() == seq && time.Now().Before(end); {
+		for end := time.Now().Add(10 * time.Second); calls("pins.add") == before && time.Now().Before(end); {
 			e.frame()
 			time.Sleep(10 * time.Millisecond)
 		}
-		if h.a.S.PinSeq() == seq {
-			t.Errorf("%s: P from the root didn't pin", which)
+		if n := calls("pins.add") - before; n != 1 {
+			t.Errorf("%s: P from the root sent %d pins.add, want 1", which, n)
 		}
 	}
 }

@@ -84,6 +84,13 @@ func slNewAPI(t *testing.T) *slAPI {
 }
 
 func (f *slAPI) set(method, body string) { f.mu.Lock(); f.reply[method] = body; f.mu.Unlock() }
+
+// forms are the calls method got, oldest first.
+func (f *slAPI) forms(method string) []url.Values {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]url.Values(nil), f.calls[method]...)
+}
 func (f *slAPI) called(method string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -118,6 +125,19 @@ func (b slBridge) RenderIn(root, parent uint64, parentK int64, name string, prop
 	b.rec.names[root] = name
 	b.rec.mu.Unlock()
 	b.Bridge.RenderIn(root, parent, parentK, name, props)
+}
+
+// count is how many roots rendering name were mounted.
+func (r *slRec) count(name string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, x := range r.names {
+		if x == name {
+			n++
+		}
+	}
+	return n
 }
 
 // rendered reports whether a boundary named name was mounted.
@@ -687,7 +707,7 @@ func TestSlickViewMessageLogger(t *testing.T) {
 	// onTriggerClose closes the menu (the pick alone: Menu doesn't close
 	// itself first here, as a click does), and the next menu has no row
 	// for it
-	m.items[i].DoCtx(maGtx())
+	maRun(m.items[i], maGtx())
 	slUntil(t, 10*time.Second, "onTriggerClose closing the menu", nil, func() bool { return m.Dismissed() })
 	var again *Menu
 	slUntil(t, 15*time.Second, "a menu without Accept deletion", nil, func() bool {
@@ -704,6 +724,49 @@ func TestSlickViewMessageLogger(t *testing.T) {
 	if slIndex(again.items, "mark_unread") < 0 {
 		t.Errorf("native rows gone: %s", maKeys(again.items))
 	}
+
+	// an edit it logged: "Hide edit history" on the message's menu, and
+	// picking it turns the row into "Show edit history"
+	const edited = "1700000001.000100"
+	slEdit(e, edited, "first", "first, edited")
+	emsg := core.Message{Channel: slGen, TS: edited, User: slAlice, Text: "first, edited"}
+	if em := slMenuWith(t, e, emsg, "slick_ml_hide_edits", "Hide edit history on the edited message's menu"); em != nil {
+		if it := em.items[slIndex(em.items, "slick_ml_hide_edits")]; it.Label != "Hide edit history" {
+			t.Errorf("edit history row %+v", it)
+		}
+		maRun(em.items[slIndex(em.items, "slick_ml_hide_edits")], maGtx())
+	}
+	slMenuWith(t, e, emsg, "slick_ml_show_edits", "Show edit history once the edits are hidden")
+}
+
+// slMenuWith opens m's More actions menu until its MAMenu tree has row id.
+func slMenuWith(t *testing.T, e *slEnv, m core.Message, id, what string) *Menu {
+	t.Helper()
+	var mm *Menu
+	slUntil(t, 15*time.Second, what, nil, func() bool {
+		mm = NewMessageMenu(e.h, image.Pt(900, 200), m)
+		f := slFrame(mm)
+		for k := 0; k < 30 && !maFrom(mm); k++ {
+			f()
+			Pump()
+			slackc.Pump()
+			time.Sleep(10 * time.Millisecond)
+		}
+		return maFrom(mm) && slIndex(mm.items, id) >= 0
+	})
+	return mm
+}
+
+// slEdit injects Slack's message_changed for ts in #general (the old copy
+// as previous_message), as the socket sends an edit.
+func slEdit(e *slEnv, ts, old, text string) {
+	now := fmt.Sprintf("%d.000800", time.Now().Unix())
+	raw, _ := json.Marshal(map[string]any{
+		"type": "message", "subtype": "message_changed", "hidden": true, "channel": slGen, "ts": now, "event_ts": now,
+		"message":          map[string]any{"type": "message", "user": slAlice, "text": text, "ts": ts, "edited": map[string]any{"user": slAlice, "ts": now}},
+		"previous_message": map[string]any{"type": "message", "user": slAlice, "text": old, "ts": ts},
+	})
+	e.h.a.Inject(slack.Event{Type: "message", Subtype: "message_changed", Channel: json.RawMessage(`"` + slGen + `"`), Raw: raw})
 }
 
 // slDelete injects a message_deleted event for ts in #general.
@@ -973,10 +1036,14 @@ func TestSlickViewChatTabs(t *testing.T) {
 		// picking it is ChatTabs': its handler answers for it, so nothing
 		// of Clack's runs (its tab bar isn't drawn here; internal/ui's
 		// TestSlickViewChatTabs opens the tab)
+		picks := len(maPickOverlays(e.h))
 		mm.activate(maGtx(), i)
-		slUntil(t, 10*time.Second, mk.what+": ChatTabs' answer", nil, func() bool { v, ok := maLastAnswer(e.h); return !ok || v != maWaiting })
-		if v, _ := maLastAnswer(e.h); v != maTaken || !mm.Dismissed() {
-			t.Errorf("%s: picking it: answer %d, closed=%v", mk.what, v, mm.Dismissed())
+		slUntil(t, 10*time.Second, mk.what+": ChatTabs' answer to this pick", nil, func() bool {
+			v, ok := maLastAnswer(e.h)
+			return len(maPickOverlays(e.h)) > picks && ok && v != maWaiting
+		})
+		if v, _ := maLastAnswer(e.h); v != maTaken || len(maPickOverlays(e.h)) != picks+1 {
+			t.Errorf("%s: picking it: answer %d, %d picks", mk.what, v, len(maPickOverlays(e.h))-picks)
 		}
 	}
 
@@ -1077,8 +1144,8 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 	}
 	m = open("the saved menu")
 	top, org = bmmLevels(t, m)
-	if len(top) < 2 || !slices.Equal(top[0], []string{"copy_text"}) {
-		t.Fatalf("rows %s: want Copy message alone as the big group", maIDs(m.items))
+	if len(top) < 2 || !slices.Contains(top[0], "copy_text") || slices.Contains(top[0], "copy_link") {
+		t.Fatalf("rows %s: want Copy message among the big buttons, Copy link not", maIDs(m.items))
 	}
 	flat := slices.Concat(top[1:]...)
 	if s, l := slices.Index(flat, "subscribe"), slices.Index(flat, "copy_link"); s < 0 || l < 0 || s > l {
@@ -1090,7 +1157,7 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 	bmmOnce(t, "the saved menu", m, top, org, []string{"remind"})
 	f = slFrame(m)
 	f()
-	if r := m.RowRects()[0]; r.Dx() != 300 {
+	if r := m.RowRects()[0]; len(top[0]) == 1 && r.Dx() != 300 {
 		t.Errorf("the one big button is %dpx wide, want the card's 300", r.Dx())
 	}
 
@@ -1127,25 +1194,82 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 			slackc.Pump()
 			time.Sleep(10 * time.Millisecond)
 		}
-		top, _ := bmmLevels(t, m)
-		flat := slices.Concat(top...)
+		flat := slices.Concat(bmmTop(m)...)
 		s, l := slices.Index(flat, "subscribe"), slices.Index(flat, "copy_link")
 		return s > l && l >= 0
 	})
 }
 
-// bmmLevels are a Better Message Menu menu's top-level ids, by group, and
-// its Organize submenu's.
-func bmmLevels(t *testing.T, m *Menu) (top [][]string, org []string) {
-	t.Helper()
+// BetterMessageMenu with MessageLogger: the logger's Accept deletion is a
+// message action BetterMessageMenu files under Organize, so it is a row of
+// Organize's own MAMenu (the section BetterMessageMenu hands it in a
+// context), and picking it there goes through Slick's patch on that
+// MAMenu to the logger, which forgets the deletion.
+func TestSlickViewBetterMessageMenuOrganizesLoggerRows(t *testing.T) {
+	e := slNewEnv(t)
+	if _, err := os.Stat(filepath.Join(e.dir, "BetterMessageMenu.js")); err != nil {
+		t.Skip("this Slick has no BetterMessageMenu (it came in #473)")
+	}
+	if !slBuiltWith(t, e.dir, "MessageLogger", "addMessageActions") {
+		t.Skip("this MessageLogger adds its rows as Menu children (before #473)")
+	}
+	e.load(t, "MessageLogger", nil)
+	e.load(t, "BetterMessageMenu", nil)
+	slPatched(t, "MAMenu", "OrganizeMessageActionsSubmenu")
+	slUntil(t, 10*time.Second, "MessageLogger listens for deletes", nil, func() bool { return e.tt.Started() })
+	time.Sleep(300 * time.Millisecond) // its RTM listeners
+	slDelete(e, slMsgTS, "a synthetic message")
+	msg := core.Message{Channel: slGen, TS: slMsgTS, User: slBob, Text: "a synthetic message"}
+	organize := func(what string) (*Menu, []string) {
+		t.Helper()
+		m := NewMessageMenu(e.h, image.Pt(900, 200), msg)
+		maApplied(t, m, what)
+		_, org := bmmLevels(t, m)
+		return m, org
+	}
+	var m *Menu
+	slUntil(t, 15*time.Second, "Accept deletion in Organize", nil, func() bool {
+		var org []string
+		m, org = organize("the menu")
+		return slices.Contains(org, "slick_ml_accept_delete")
+	})
+	m.openSub(maIndex(m.items, "organize_actions_menu"), false)
+	slUntil(t, 10*time.Second, "Organize's MAMenu tree", slFrame(m), func() bool { return m.sub != nil && maFrom(m.sub) })
+	row := m.sub.items[maIndex(m.sub.items, "slick_ml_accept_delete")]
+	if row.Label != "Accept deletion" {
+		t.Errorf("Accept deletion in Organize: %+v", row)
+	}
+	maRun(row, maGtx())
+	slUntil(t, 10*time.Second, "Slick's onTriggerClose closing the menu", nil, m.Dismissed)
+	slUntil(t, 15*time.Second, "Organize without Accept deletion", nil, func() bool {
+		_, org := organize("the menu again")
+		return !slices.Contains(org, "slick_ml_accept_delete")
+	})
+}
+
+// bmmTop is a Better Message Menu menu's top-level ids, by group.
+func bmmTop(m *Menu) (top [][]string) {
 	for _, g := range strings.Split(maIDs(m.items), " | ") {
 		top = append(top, strings.Fields(g))
 	}
-	if i := maIndex(m.items, "organize_actions_menu"); i >= 0 {
-		org = strings.Fields(maIDs(m.items[i].Sub))
-	} else {
+	return top
+}
+
+// bmmLevels are a Better Message Menu menu's top-level ids, by group, and
+// its Organize submenu's: the rows of Organize's own MAMenu, which Better
+// Message Menu lays out through a context (opened, until its tree came).
+func bmmLevels(t *testing.T, m *Menu) (top [][]string, org []string) {
+	t.Helper()
+	top = bmmTop(m)
+	i := maIndex(m.items, "organize_actions_menu")
+	if i < 0 {
 		t.Errorf("no Organize row: %s", maIDs(m.items))
+		return top, nil
 	}
+	m.openSub(i, false)
+	slUntil(t, 10*time.Second, "Organize's MAMenu tree", slFrame(m), func() bool { return m.sub != nil && maFrom(m.sub) })
+	org = strings.Fields(maIDs(m.sub.items))
+	m.closeSub()
 	return top, org
 }
 

@@ -31,9 +31,22 @@ package popups
 // decides at once: a returned Promise counts as truthy; a throw stops the
 // pick), in the menu's view container, with the click's modifiers
 // (maPick); a row only the plugin has goes to the plugin alone.
+//
+// Slack's Organize and Connect to apps rows render submenu components
+// (OrganizeMessageActionsSubmenu, ConnectToAppsMessageActionsSubmenu)
+// whose submenus are MAMenus of their own: their own actions (Organize's
+// from the store, not the root descriptor's submenuActions), no
+// autoClogProps, and MessageActionsMenu's own onSelectAction, so a patch
+// on the root MAMenu isn't asked about their rows and one on theirs is.
+// Clack draws an open one through the same pair of boundaries, nested in
+// the root MAMenu's tree, so the context a root patch provides reaches
+// them (Better Message Menu hands Organize its section that way). Its
+// reminder presets (RemindSubmenu) pick through the root's
+// dispatchMessageAction instead, as {id: "remind"}.
 
 import (
 	"image"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +69,25 @@ type maMenu struct {
 	onSel  slackc.JSFunc        // the onSelectAction a patch passed, when it's JS's
 	selFn  func(...any)         // the native onSelectAction Go passes (dispatch runs the row natively)
 	opened time.Time            // the menu's first frame (maHold)
+	held   bool                 // this frame the card waits for the plugin's layout (Menu.Layout)
+	queued []key.Event          // the keys pressed meanwhile, for the rows it lays out (Menu.keys)
+	wrap   string               // a submenu's component (maSubmenus); "" for the root menu
+}
+
+// newSubMAMenu is the MAMenu an open message actions submenu renders:
+// its own actions (the row's native submenu, until a patch lays out
+// others), the root MAMenu's message, and MessageActionsMenu's own
+// onSelectAction (Go's: falsy, the row runs natively). Its rows are found
+// by the root's ids: Slack's handler takes any message action's id from
+// any of its MAMenus (Better Message Menu moves Save into Organize).
+func newSubMAMenu(root *maMenu, row MenuItem) *maMenu {
+	p := slackc.Props{}
+	for _, k := range []string{"triggerId", "ts", "channelId", "threadTs", "messageContainerType", "rollup"} {
+		if v, ok := root.props[k]; ok {
+			p[k] = v
+		}
+	}
+	return &maMenu{props: p, native: row.Sub, byID: root.byID, wrap: row.maSub}
 }
 
 // MessageActionsProps are MessageActionsMenu's MAMenu props for message m
@@ -86,6 +118,18 @@ func MessageActionsProps(within slackc.Props, usage string) slackc.Props {
 // actions in Slack (tk Organize, e7 Connect to apps); the reminder row's
 // submenu is drawn by its own component (a8 RemindSubmenu).
 var maSubmenuActions = map[string]bool{"organize_actions_menu": true, "connect_to_apps_actions_menu": true}
+
+// maSubmenus are the components those rows' submenus render, each with a
+// MAMenu of its own (2rcC aq, ay).
+var maSubmenus = map[string]string{
+	"organize_actions_menu":        "OrganizeMessageActionsSubmenu",
+	"connect_to_apps_actions_menu": "ConnectToAppsMessageActionsSubmenu",
+}
+
+// maRemind are the rows whose presets RemindSubmenu picks through the
+// root MAMenu's dispatchMessageAction with the row's id (krBk
+// RemindMenuItem: `u(e, {id, frecencyId, time, dateDue, uiElement})`).
+var maRemind = map[string]bool{"remind": true, "remind_later": true}
 
 // maQA is each action's data-qa where it isn't its id (Slack's selectors).
 var maQA = map[string]string{
@@ -123,6 +167,9 @@ func newMAMenu(props slackc.Props, native []MenuItem, target image.Rectangle) *m
 			id := maID(it)
 			if _, dup := ma.byID[id]; !dup {
 				ma.byID[id] = it
+			}
+			if parent == "" {
+				it.maSub = maSubmenus[id] // drawn through its submenu component, patched or not
 			}
 			walk(it.Sub, id)
 		}
@@ -212,13 +259,60 @@ func (m *Menu) maProps() slackc.Props {
 	}
 	p["$key"] = m.key + ":MAMenu"
 	p["actions"] = ma.actions()
-	if ma.selFn == nil {
-		ma.selFn = func(...any) {} // Slack's onSelectAction; answering falsy, the row runs natively
+	p["onSelectAction"] = ma.nativeSelect()
+	p["onTriggerClose"] = m.root().closeAll
+	if ma.wrap == "" {
+		p["targetBounds"] = rectProps(ma.target, m.scale) // the trigger's DOMRect, CSS px
+	} else if m.parent != nil {
+		// Submenu.renderSubmenu's own (client-boot /+Me)
+		p["isSubmenu"] = true
+		p["onCloseSubmenu"] = m.parent.closeSub
 	}
-	p["onSelectAction"] = ma.selFn
-	p["onTriggerClose"] = m.closeAll
-	p["targetBounds"] = rectProps(ma.target, m.scale) // the trigger's DOMRect, CSS px
 	return p
+}
+
+// nativeSelect is the onSelectAction Go passes: Slack's own, which
+// answering falsy runs the row natively (MessageActionsMenu's F).
+func (ma *maMenu) nativeSelect() func(...any) {
+	if ma.selFn == nil {
+		ma.selFn = func(...any) {}
+	}
+	return ma.selFn
+}
+
+// maWrapProps are an open submenu component's props
+// (OrganizeMessageActionsSubmenu's): its row's label, the message, and
+// MessageActionsMenu's onSelectAction.
+func (m *Menu) maWrapProps() slackc.Props {
+	ma := m.ma
+	p := make(slackc.Props, len(ma.props)+3)
+	for k, v := range ma.props {
+		p[k] = v
+	}
+	p["$key"] = m.key
+	if par := m.parent; par != nil && par.subIdx >= 0 && par.subIdx < len(par.items) {
+		p["label"] = par.items[par.subIdx].Label
+	}
+	p["onSelectAction"] = ma.nativeSelect()
+	return p
+}
+
+// layoutSub draws an open submenu: a message actions submenu through its
+// component and its own MAMenu (Slack's renderSubmenu), any other as is.
+// Called from the parent card's layout, so the boundaries nest in the root
+// MAMenu's tree (slackc mounts them as portals there).
+func (m *Menu) layoutSub(gtx layout.Context, win image.Point) {
+	if m.ma == nil || m.ma.wrap == "" {
+		m.layoutCard(gtx, win)
+		return
+	}
+	m.win, m.scale = win, gtx.Metric.PxPerDp
+	slackc.RenderLazy(gtx, m.ma.wrap, m.maWrapProps, m.layoutSubWrap)
+}
+
+// layoutSubWrap is a submenu component's native: its MAMenu.
+func (m *Menu) layoutSubWrap(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	return slackc.RenderLazy(gtx, "MAMenu", m.maProps, m.layoutMAMenu)
 }
 
 // maHold is how long a message menu whose MAMenu a plugin patched waits
@@ -228,25 +322,36 @@ func (m *Menu) maProps() slackc.Props {
 // card, ChatTabs' group popping in under the cursor).
 const maHold = 150 * time.Millisecond
 
-// holding reports whether the root card waits for the plugin's layout
-// (asking for a frame when the wait runs out).
+// holding reports whether the card waits for the plugin's layout
+// (asking for a frame when the wait runs out). Only while a patch can
+// change the menu: Slick's own MAMenu patch comes with the first message
+// action provider and goes with the last (20_api.js), so with none, and no
+// plugin's patch, a message menu draws in its first frame.
 func (ma *maMenu) holding(gtx layout.Context) bool {
-	if ma.from != nil || !slackc.Patched("MAMenu") {
+	now := frameNow(gtx)
+	if !ma.waiting(now) {
 		return false
-	}
-	now := gtx.Now
-	if now.IsZero() {
-		now = time.Now()
 	}
 	if ma.opened.IsZero() {
 		ma.opened = now
 	}
-	until := ma.opened.Add(maHold)
-	if !now.Before(until) {
+	gtx.Execute(op.InvalidateCmd{At: ma.opened.Add(maHold)})
+	return true
+}
+
+// waiting is holding without its bookkeeping (a card not drawn yet waits).
+func (ma *maMenu) waiting(now time.Time) bool {
+	if ma.from != nil || !slackc.Patched("MAMenu") {
 		return false
 	}
-	gtx.Execute(op.InvalidateCmd{At: until})
-	return true
+	return ma.opened.IsZero() || now.Before(ma.opened.Add(maHold))
+}
+
+func frameNow(gtx layout.Context) time.Time {
+	if gtx.Now.IsZero() {
+		return time.Now()
+	}
+	return gtx.Now
 }
 
 // layoutMAMenu is MAMenu's native: it draws the actions the patch passed
@@ -354,11 +459,21 @@ func (m *Menu) maRow(d slackc.Props) (MenuItem, bool) {
 		cls += " " + c
 	}
 	it.Class = cls
-	if d.Has("submenuActions") {
+	sub := native && maSubmenus[id] != "" && m.ma.wrap == ""
+	switch {
+	case sub:
+		// its submenu draws its own MAMenu (layoutSub): the native rows
+		// until a patch on that MAMenu lays out others, never the root
+		// descriptor's submenuActions (Slack's submenu reads the store)
+		it.maSub = maSubmenus[id]
+	case d.Has("submenuActions"):
 		it.Sub = m.maRows(d.List("submenuActions"))
 		it.SubCaret = len(it.Sub) == 0
-	} else if !native {
+	case !native:
 		it.Sub, it.SubCaret = nil, false
+	}
+	if native && maRemind[id] && m.ma.onSel.ID != 0 && len(it.Sub) > 0 {
+		it.Sub = m.maPresets(id, d["uiElement"], it.Sub)
 	}
 	if len(it.Sub) > 0 || it.SubCaret {
 		it.Do, it.DoCtx = nil, nil
@@ -376,6 +491,24 @@ func (m *Menu) maRow(d slackc.Props) (MenuItem, bool) {
 	return it, true
 }
 
+// maPresets are a reminder row's presets (Custom… too) picking as Slack's
+// RemindSubmenu does: through this MAMenu's dispatchMessageAction with
+// the row's id, so the patched onSelectAction decides and the preset
+// runs only on a falsy answer.
+func (m *Menu) maPresets(id string, uiElement any, presets []MenuItem) []MenuItem {
+	out := make([]MenuItem, len(presets))
+	for i := range presets {
+		p := presets[i]
+		out[i] = p
+		if p.Separator || p.Header != "" || p.Note != "" || p.Disabled || (p.Do == nil && p.DoCtx == nil) {
+			continue
+		}
+		nat := p
+		out[i].Do, out[i].DoCtx = nil, func(gtx layout.Context) { m.maSelect(gtx, id, uiElement, &nat) }
+	}
+	return out
+}
+
 // maSelect is MAMenu's dispatchMessageAction for row id, run from the
 // menu's Layout (activate, a template click, a key): with no JS
 // onSelectAction the native row now; else the patched onSelectAction
@@ -390,7 +523,7 @@ func (m *Menu) maSelect(gtx layout.Context, id string, uiElement any, nat *MenuI
 		return
 	}
 	mods := clickModsOf(m.h)
-	pick := &maPick{h: m.h, nat: nat, mods: mods}
+	pick := &maPick{h: m.h, id: id, nat: nat, mods: mods, at: time.Now()}
 	// shown now, from the menu's Layout: the App draws it in the menu's view
 	// container, where Slack runs the action (a split view's Reply in
 	// thread opens there)
@@ -412,7 +545,8 @@ func maEvent(mods key.Modifiers) slackc.Props {
 	}
 }
 
-// maContext is dispatchMessageAction's context (2rcC MAMenu p).
+// maContext is dispatchMessageAction's context (2rcC MAMenu p), from this
+// MAMenu's props.
 func (m *Menu) maContext() slackc.Props {
 	c := slackc.Props{}
 	for _, k := range []string{"triggerId", "ts", "threadTs", "channelId", "messageContainerType", "userId", "botId", "isOnSearchTab"} {
@@ -420,7 +554,9 @@ func (m *Menu) maContext() slackc.Props {
 			c[k] = v
 		}
 	}
-	c["targetBounds"] = rectProps(m.ma.target, m.scale)
+	if m.ma.wrap == "" {
+		c["targetBounds"] = rectProps(m.ma.target, m.scale)
+	}
 	return c
 }
 
@@ -452,12 +588,22 @@ const (
 type maPick struct {
 	base
 	h    Host
+	id   string
 	nat  *MenuItem // nil: a row only the plugin has
 	mods key.Modifiers
+	at   time.Time // the pick
 
-	mu      sync.Mutex
-	verdict maVerdict
+	mu       sync.Mutex
+	verdict  maVerdict
+	answered time.Time
 }
+
+// maStale is how long after the pick a passed-on row may still run. The
+// call waits its turn on the JS thread, where Slack's runs in the click's
+// handler while the page waits: a row that answers later, behind a busy
+// runtime, would copy over what the user copied since or open a dialog in
+// the middle of what they're doing, so it doesn't run (logged).
+var maStale = time.Second
 
 // answer is CallTruthy's done (any goroutine).
 func (p *maPick) answer(truthy, threw bool, err error) {
@@ -470,7 +616,7 @@ func (p *maPick) answer(truthy, threw bool, err error) {
 		v = maPassed
 	}
 	p.mu.Lock()
-	p.verdict = v
+	p.verdict, p.answered = v, time.Now()
 	p.mu.Unlock()
 	p.h.Invalidate()
 }
@@ -480,17 +626,22 @@ func (p *maPick) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	p.mu.Lock()
-	v := p.verdict
+	v, late := p.verdict, p.answered.Sub(p.at)
 	p.mu.Unlock()
 	switch v {
 	case maWaiting:
 		return layout.Dimensions{}
 	case maPassed:
 		p.done = true
-		if p.nat != nil {
-			nat := *p.nat
-			withClickMods(p.h, p.mods, func() { maRunNative(gtx, nat) })
+		if p.nat == nil {
+			break
 		}
+		if late > maStale {
+			log.Printf("popups: the plugin answered message menu pick %q after %v: not running it", p.id, late.Round(time.Millisecond))
+			break
+		}
+		nat := *p.nat
+		withClickMods(p.h, p.mods, func() { maRunNative(gtx, nat) })
 	default:
 		p.done = true
 	}

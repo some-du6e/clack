@@ -124,7 +124,8 @@ type MenuItem struct {
 	// neighbours (rowBoxes; Better Message Menu's big buttons).
 	Class string
 
-	maid string // MAMenu's id for a row without an Action (newMAMenu)
+	maid  string // MAMenu's id for a row without an Action (newMAMenu)
+	maSub string // the message actions submenu component its submenu renders (Organize, Connect to apps)
 }
 
 // Sep is a separator row.
@@ -424,8 +425,13 @@ func (m *Menu) openSub(i int, kbd bool) {
 		m.items[i].Tag = nil
 	}
 	s := &Menu{h: m.h, items: it.Sub, opts: MenuOpts{Width: m.opts.Width}, sel: -1, subIdx: -1, parent: m, kbd: kbd}
-	if m.root().ma != nil {
-		s.opts.MenuClass = m.root().opts.MenuClass // a message menu's submenus render MAMenu too
+	if r := m.root(); r.ma != nil {
+		s.opts.MenuClass = r.opts.MenuClass // a message menu's submenus render MAMenu too
+		if it.maSub != "" {
+			s.key = r.key + ":" + it.maSub
+			s.ma = newSubMAMenu(r.ma, it)
+			s.orig = it.Sub // its Menu's children (menuProps)
+		}
 	}
 	s.clicks = make([]widget.Clickable, len(it.Sub))
 	if kbd {
@@ -440,6 +446,19 @@ func (m *Menu) closeSub() {
 
 func (m *Menu) keys(gtx layout.Context) {
 	filters := m.keyFilters()
+	held := m.ma != nil && m.ma.held
+	if !held && m.ma != nil && len(m.ma.queued) > 0 {
+		// the keys pressed while the card waited for the plugin's layout
+		// (maHold) go to the rows it laid out, as Slack's menu, drawn from
+		// the patched MAMenu at once, would have had them
+		q := m.ma.queued
+		m.ma.queued = nil
+		for _, ke := range q {
+			if m.onKey(gtx, ke) {
+				return
+			}
+		}
+	}
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {
@@ -449,68 +468,78 @@ func (m *Menu) keys(gtx layout.Context) {
 		if !ok || ke.State != key.Press {
 			continue
 		}
-		a := m.active()
-		nav := ke.Modifiers == 0
-		switch name := ke.Name; {
-		case !nav:
-			// ⌘↑ isn't navigation, but may be an item shortcut
-		case name == key.NameUpArrow:
-			a.typeBuf = ""
-			a.move(-1)
-		case name == key.NameDownArrow:
-			a.typeBuf = ""
-			a.move(1)
-		case name == key.NameHome:
-			a.typeBuf = ""
-			a.sel = -1
-			a.move(1)
-		case name == key.NameEnd:
-			a.typeBuf = ""
-			a.sel = -1
-			a.move(-1)
-		case name == key.NameRightArrow:
-			if a.sel >= 0 && len(a.items[a.sel].Sub) > 0 {
-				a.openSub(a.sel, true)
-			}
-		case name == key.NameLeftArrow:
-			if a.parent != nil {
-				a.parent.closeSub()
-			}
-		case name == key.NameReturn, name == key.NameEnter, name == key.NameSpace:
-			a.activate(gtx, a.sel)
-		case name == key.NameEscape:
-			if a.parent != nil {
-				a.parent.closeSub()
-			} else {
-				m.closeAll()
-			}
-		default:
-			nav = false
-		}
-		if m.done {
-			return
-		}
-		// Slack's onMenuKeyDown: an item shortcut runs after navigation
-		// (a key can't be both: nav keys carry no shortcut ids here).
-		if i := a.shortcutMatch(ke); i >= 0 {
-			a.runShortcut(gtx, i)
-			if m.done {
-				return
-			}
+		if held && !(ke.Name == key.NameEscape && ke.Modifiers == 0) {
+			m.ma.queued = append(m.ma.queued, ke)
 			continue
 		}
-		// a message menu's submenu action keys (Organize's Pin P), after
-		// the rows' own (MessageActionsMenu's onMenuKeyDown)
-		if a == m && m.maSubKey(gtx, ke) {
+		if m.onKey(gtx, ke) {
 			return
 		}
-		if MenuTypeAhead && !nav {
-			a.typeAhead(gtx, ke)
-			if m.done {
-				return
-			}
+	}
+}
+
+// onKey handles one key press; it reports whether the menu is done with
+// this frame's keys (closed, or a message menu's submenu key ran).
+func (m *Menu) onKey(gtx layout.Context, ke key.Event) bool {
+	a := m.active()
+	nav := ke.Modifiers == 0
+	switch name := ke.Name; {
+	case !nav:
+		// ⌘↑ isn't navigation, but may be an item shortcut
+	case name == key.NameUpArrow:
+		a.typeBuf = ""
+		a.move(-1)
+	case name == key.NameDownArrow:
+		a.typeBuf = ""
+		a.move(1)
+	case name == key.NameHome:
+		a.typeBuf = ""
+		a.sel = -1
+		a.move(1)
+	case name == key.NameEnd:
+		a.typeBuf = ""
+		a.sel = -1
+		a.move(-1)
+	case name == key.NameRightArrow:
+		if a.sel >= 0 && len(a.items[a.sel].Sub) > 0 {
+			a.openSub(a.sel, true)
+		}
+	case name == key.NameLeftArrow:
+		if a.parent != nil {
+			a.parent.closeSub()
+		}
+	case name == key.NameReturn, name == key.NameEnter, name == key.NameSpace:
+		a.activate(gtx, a.sel)
+	case name == key.NameEscape:
+		if a.parent != nil {
+			a.parent.closeSub()
+		} else {
+			m.closeAll()
+		}
+	default:
+		nav = false
+	}
+	if m.done {
+		return true
+	}
+	// Slack's onMenuKeyDown: an item shortcut runs after navigation
+	// (a key can't be both: nav keys carry no shortcut ids here).
+	if i := a.shortcutMatch(ke); i >= 0 {
+		a.runShortcut(gtx, i)
+		return m.done
+	}
+	// a message menu's submenu action keys (Organize's Pin P), after
+	// the rows' own (MessageActionsMenu's onMenuKeyDown)
+	if a == m && m.maSubKey(gtx, ke) {
+		return true
+	}
+	if MenuTypeAhead && !nav {
+		a.typeAhead(gtx, ke)
+		if m.done {
+			return true
 		}
 	}
+	return false
 }
 
 // Labels lists the menu's rows for tests and diagnostics: each item's
@@ -546,6 +575,11 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 		if !m.focus && !m.opts.Peek {
 			gtx.Execute(key.FocusCmd{Tag: m})
 			m.focus = true
+		}
+		if m.ma != nil {
+			// a card waiting for the plugin's layout holds its keys too (the
+			// root's, or an open message actions submenu's)
+			m.ma.held = m.ma.holding(gtx) || (m.sub != nil && m.sub.ma != nil && m.sub.ma.waiting(frameNow(gtx)))
 		}
 		m.keys(gtx)
 		if m.done {
@@ -626,7 +660,7 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 	})
 	st.Leave()
 	if m.sub != nil && !m.done {
-		m.sub.layoutCard(gtx, win)
+		m.sub.layoutSub(gtx, win)
 	}
 }
 

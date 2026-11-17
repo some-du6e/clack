@@ -11,6 +11,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/op"
 
@@ -514,33 +516,40 @@ func TestSlickViewChatTabs(t *testing.T) {
 	// only tabs go there through Slack's navigate thunk ({viewType:
 	// "Thread"}), which Clack routes as the thread's deep link: the thread
 	// beside its channel (Clack draws no thread as a primary view)
-	e.dismissOverlays()
-	const threadTS = "1700000005.000500"
-	msg := core.Message{Channel: svRandom, TS: threadTS, User: svBob, Text: "a thread to open"}
-	e.a.OpenMessageMenu(image.Pt(900, 300), msg)
-	var mm *popups.Menu
-	i := -1
-	e.until(8*time.Second, "Open in new Slick tab on the message's More actions", func() bool {
-		mm = e.topMenu()
-		if mm == nil {
-			return false
+	// It's ChatTabs' current tab while Clack shows it: Taut's view state
+	// has it as the primary Thread view navigate asked for, so ChatTabs
+	// adds no tab for the thread's channel (here a DM without one).
+	openThreadTab := func(ch, ts string, tabs int) {
+		t.Helper()
+		e.dismissOverlays()
+		e.a.OpenMessageMenu(image.Pt(900, 300), core.Message{Channel: ch, TS: ts, User: svBob, Text: "a thread to open"})
+		var mm *popups.Menu
+		i := -1
+		e.until(8*time.Second, "Open in new Slick tab on the message's More actions", func() bool {
+			if mm = e.topMenu(); mm == nil {
+				return false
+			}
+			i = menuIndex(mm.Items(), "slick-chat-tabs-open-thread")
+			return i >= 0 && len(mm.RowRects()) == len(mm.Items()) && !mm.RowRects()[i].Empty()
+		})
+		if tab := mm.Items()[i]; tab.Label != "Open in new Slick tab" {
+			t.Fatalf("message action %+v", tab)
 		}
-		i = menuIndex(mm.Items(), "slick-chat-tabs-open-thread")
-		return i >= 0 && len(mm.RowRects()) == len(mm.Items()) && !mm.RowRects()[i].Empty()
-	})
-	if tab := mm.Items()[i]; tab.Label != "Open in new Slick tab" {
-		t.Fatalf("message action %+v", tab)
+		e.clickRect(mm.RowRects()[i])
+		count := fmt.Sprintf(`data-tab-count":%d`, tabs)
+		e.until(8*time.Second, "the message's thread as tab "+strconv.Itoa(tabs), func() bool { return e.tree("slick-chat-tabs__tab", count) != "" })
+		e.until(8*time.Second, "the thread's route (navigate)", func() bool { return string(e.a.router.Current()) == "c/"+ch+"/t/"+ts })
+		e.until(8*time.Second, "the thread tab current", func() bool { return svSelectedTab(e.tree("slick-chat-tabs__tab", count)) == ch+":"+ts })
+		for k := 0; k < 20; k++ { // ChatTabs' route poll and its tab tracking
+			e.frame()
+			time.Sleep(20 * time.Millisecond)
+		}
+		if e.tree("slick-chat-tabs__tab", count) == "" {
+			t.Errorf("tabs other than %d after the thread tab opened: a tab for its channel?", tabs)
+		}
 	}
-	e.clickRect(mm.RowRects()[i])
-	e.until(8*time.Second, "the message's thread as a third tab", func() bool {
-		return e.tree("slick-chat-tabs__tab", `data-tab-count":3`) != ""
-	})
-	e.until(8*time.Second, "the thread's route (navigate)", func() bool {
-		return string(e.a.router.Current()) == "c/"+svRandom+"/t/"+threadTS
-	})
-	if !mm.Dismissed() {
-		t.Error("the menu stayed open")
-	}
+	openThreadTab(svRandom, "1700000005.000500", 3)
+	openThreadTab(svDM, "1700000007.000700", 4)
 
 	// the rows still navigate on click while they're inside ChatTabs' tree
 	e.dismissOverlays()
@@ -611,11 +620,106 @@ func TestSlickViewBetterMessageMenuPanel(t *testing.T) {
 	})
 }
 
+// A plugin whose privileged half doesn't start (its ready threw: SlickMCP
+// needs Node's http server) runs its renderer half, and its Preferences
+// page says what failed and that what it does there doesn't happen.
+func TestSlickViewMainErrorNotice(t *testing.T) {
+	e := newSVIn(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for _, code := range []string{
+		`// slick-plugin {"id":"MainFailSlick"}
+(globalThis.__slickPlugins ??= []).push((require) => {
+var import_slick = require("$slick");
+class P extends import_slick.SlickPlugin {
+  static id = "MainFailSlick";
+  static pluginName = "MainFailSlick";
+  static description = "test";
+  static requiredAPIs = [];
+  start() {}
+}
+return P;
+});
+`,
+		`// slick-main {"id":"MainFailSlick"}
+(globalThis.__slickMainPlugins ??= []).push((require) => ({
+  id: "MainFailSlick",
+  capabilities: [],
+  ready() { throw new Error("its server needs node:http"); },
+}));
+`,
+	} {
+		if _, err := e.s.Import(ctx, []byte(code)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.s.SetEnabled(ctx, "MainFailSlick", true); err != nil {
+		t.Fatal(err)
+	}
+	p := newSlickPage(e.a)
+	defer p.close()
+	p.layoutTab("slick_plugins")
+	p.open = "MainFailSlick"
+	var mu sync.Mutex
+	var drawn []string
+	theme.DrawHook = func(s string) { mu.Lock(); drawn = append(drawn, s); mu.Unlock() }
+	t.Cleanup(func() { theme.DrawHook = nil })
+	want := "Its privileged half didn't start, so what it does there doesn't happen: its server needs node:http"
+	e.until(10*time.Second, "the notice on its page", func() bool {
+		mu.Lock()
+		drawn = drawn[:0]
+		mu.Unlock()
+		gtx := ttContext(new(op.Ops), image.Pt(800, 1200))
+		e.a.slackcFrame(gtx)
+		p.layout(gtx, "slick_plugins")
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.ContainsFunc(drawn, func(s string) bool { return strings.Contains(s, want) })
+	})
+	for _, pl := range e.s.Settings().Plugins {
+		if pl.ID == "MainFailSlick" && !pl.Running {
+			t.Error("the renderer half stopped with its main half")
+		}
+	}
+}
+
 // dismissOverlays closes open menus (as Esc would).
 func (e *svEnv) dismissOverlays() {
 	for e.a.dismissTop() {
 	}
 	e.frame()
+}
+
+// svSelectedTab is the data-tab-key of ChatTabs' tab whose button is
+// aria-selected in host tree tr ("" for none).
+func svSelectedTab(tr string) string {
+	var nodes []any
+	if json.Unmarshal([]byte(tr), &nodes) != nil {
+		return ""
+	}
+	var walk func(ns []any, key string) string
+	walk = func(ns []any, key string) string {
+		for _, x := range ns {
+			n, _ := x.(map[string]any)
+			if n == nil {
+				continue
+			}
+			p, _ := n["p"].(map[string]any)
+			k := key
+			if v, ok := p["data-tab-key"].(string); ok {
+				k = v
+			}
+			if sel, _ := p["aria-selected"].(bool); sel && k != "" {
+				return k
+			}
+			c, _ := n["c"].([]any)
+			if got := walk(c, k); got != "" {
+				return got
+			}
+		}
+		return ""
+	}
+	return walk(nodes, "")
 }
 
 // topMenu is the topmost open menu.
@@ -656,15 +760,18 @@ func (e *svEnv) jsString(expr string) string {
 
 // clickRect clicks the middle of window rectangle r and draws the frames
 // that handle it.
-func (e *svEnv) clickRect(r image.Rectangle) {
+func (e *svEnv) clickRect(r image.Rectangle) { e.clickRectMods(r, 0) }
+
+// clickRectMods is clickRect with modifier keys held (Slack's split click).
+func (e *svEnv) clickRectMods(r image.Rectangle, mods key.Modifiers) {
 	e.t.Helper()
 	c := r.Min.Add(r.Max).Div(2)
 	p := f32.Pt(float32(c.X), float32(c.Y))
 	e.clock += time.Second
 	e.rt.Queue(
-		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p, Time: e.clock},
-		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: p, Time: e.clock + 10*time.Millisecond},
-		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: e.clock + 60*time.Millisecond},
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p, Time: e.clock, Modifiers: mods},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: p, Time: e.clock + 10*time.Millisecond, Modifiers: mods},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: e.clock + 60*time.Millisecond, Modifiers: mods},
 	)
 	e.frame()
 	e.frame()

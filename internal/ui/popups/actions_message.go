@@ -47,6 +47,10 @@ type MessageMenuOpts struct {
 	// conversation, and "Send reply to this channel" is only in threads.
 	// NewMessageContextMenu sets it from its MessageContext.
 	Where MessageContext
+	// Trigger is the ⋮ button the menu opened from (window px): MAMenu's
+	// and MessageActionsMenu's targetBounds, Slack's DOMRect of the trigger
+	// (zero: the anchor point).
+	Trigger image.Rectangle
 }
 
 // NewMessageMenu builds the More actions menu for m. The menu's right edge
@@ -58,11 +62,15 @@ func NewMessageMenu(h Host, anchor image.Point, m core.Message) *Menu {
 // NewMessageMenuOpts is NewMessageMenu with caller hooks.
 func NewMessageMenuOpts(h Host, anchor image.Point, m core.Message, o MessageMenuOpts) *Menu {
 	a := pointRect(anchor)
-	p := actMenuProps(m, a)
+	trigger := o.Trigger
+	if trigger.Empty() {
+		trigger = a
+	}
+	p := actMenuProps(m, trigger)
 	if o.Where != InChannel {
 		p["messageContainerType"] = ctxContainer(o.Where)
 	}
-	return NewMenuOpts(h, actMessageItems(h, m, o), MenuOpts{Anchor: a, AlignRight: true,
+	return NewMenuOpts(h, actMessageItems(h, m, o), MenuOpts{Anchor: a, Trigger: trigger, AlignRight: true,
 		Within: "MessageActionsMenu", WithinProps: p, MAMenu: MessageActionsProps(p, "overflow")})
 }
 
@@ -74,7 +82,7 @@ func actMenuProps(m core.Message, anchor image.Rectangle) slackc.Props {
 		"ts":                       m.TS,
 		"userId":                   m.User,
 		"menuUsageLocation":        "message_actions_menu",
-		"messageContainerType":     "message",
+		"messageContainerType":     ctxContainer(InChannel),
 		"showJumpActionInOverflow": false,
 		"targetBounds":             rectProps(anchor, 1),
 	}

@@ -69,14 +69,19 @@ func NewMessageContextMenu(h Host, at image.Point, m core.Message, where Message
 		MAMenu: MessageActionsProps(p, "context")})
 }
 
+// ctxContainer is Slack's messageContainerType for a message menu's
+// container (client-boot ipGw: MESSAGE_PANE "Channel", THREAD "Thread",
+// THREADS_VIEW "Threads"; SEARCH "search" is newSearchResultMenu's), what
+// a message action provider sees in MAMenu's props and onSelectAction's
+// context.
 func ctxContainer(where MessageContext) string {
 	switch where {
 	case InThread:
-		return "thread"
+		return "Thread"
 	case InThreadsView:
-		return "threads_view"
+		return "Threads"
 	}
-	return "message_pane"
+	return "Channel"
 }
 
 // ctxHoverItems is the context menu's first group (kctM for "context"):
@@ -123,12 +128,11 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 		}}.In(nsMessage))
 	}
 	// the to-do action (Yoyn, actions_todo.go): "Complete to-do" on a
-	// to-do, else "Add to-do"
+	// to-do, else "Add to-do", one action id for both (boot-shared:
+	// `{id: addToLaterTodos, name: S ? "Complete to-do" : "Add to-do"}`;
+	// clear_later_todo is Slack's separate, danger "Clear to-do")
 	ta := TodoActionFor(h.Core(), &m)
 	todo := MenuItem{Action: "add_to_later_todos", Label: ta.Label, Icon: ta.MenuIcon, Hint: nsSaved.T("A"), Keys: KeyLaterTodos}.In(nsSaved)
-	if ta.Complete {
-		todo.Action = "clear_later_todo"
-	}
 	todo.Do = func() {
 		if o.OnTodo != nil {
 			o.OnTodo()
