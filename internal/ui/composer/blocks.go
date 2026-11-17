@@ -192,14 +192,14 @@ type rtOutCommandBlock struct {
 // leading whitespace trimmed (trimStart).
 func commandArgs(d *Doc) *Doc {
 	i, n := 0, d.Len()
-	word := func(want bool) {
-		for i < n && d.Attrs[i].Atom == nil && unicode.IsSpace(d.Runes[i]) != want {
+	skip := func(space bool) { // past the runes whose IsSpace is space
+		for i < n && d.Attrs[i].Atom == nil && unicode.IsSpace(d.Runes[i]) == space {
 			i++
 		}
 	}
-	word(true)  // whitespace before the command
-	word(false) // the command
-	word(true)  // whitespace after it
+	skip(true)  // whitespace before the command
+	skip(false) // the command
+	skip(true)  // whitespace after it
 	return d.Slice(i, n)
 }
 
