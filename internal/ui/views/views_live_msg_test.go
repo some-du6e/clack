@@ -260,3 +260,133 @@ func TestSavedLiveBotUpdate(t *testing.T) {
 		}
 	}
 }
+
+// thrLvEnv is the Threads view on the live fixture's followed thread.
+type thrLvEnv struct {
+	app *core.App
+	fs  *fakeslack.Server
+	f   *lmFake
+	v   *Threads
+	e   *vaEnv
+	now time.Time // the last frame's
+}
+
+func newThrLvEnv(t *testing.T, f *lmFake) *thrLvEnv {
+	t.Helper()
+	app, fs := vaFake(t)
+	fs.SetHook(f.hook)
+	app.S.PutConv(slack.Conversation{ID: lmChan, Name: "live-votes", IsChannel: true, IsMember: true, NumMembers: 3})
+	app.S.PutBot(lmBot, store.BotInfo{Name: "Vote Bot"})
+	env := &thrLvEnv{app: app, fs: fs, f: f, v: NewThreads(&slickHost{app: app, th: theme.New(false)}), e: &vaEnv{size: image.Pt(1000, 1100)}}
+	env.e.draw = func(gtx layout.Context) {
+		env.now = gtx.Now
+		env.v.Layout(gtx)
+	}
+	return env
+}
+
+// drawn is the body the card laid out for ts in the last frame ("" when
+// none).
+func (e *thrLvEnv) drawn(ts string) string {
+	if r := e.v.rich[lmChan+"/"+ts]; r != nil && r.at.Equal(e.now) {
+		return r.v.TextRange(0, r.v.PlainLen())
+	}
+	return ""
+}
+
+// changed is the socket's message_changed of ts to now.
+func (e *thrLvEnv) changed(prev, now slack.Message) {
+	lvInject(e.app, lmChan, map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "message": now, "previous_message": prev})
+}
+
+func (e *thrLvEnv) vote(n int) {
+	e.f.mu.Lock()
+	prev, now := e.f.voteLocked(n-1), e.f.voteLocked(n)
+	e.f.rev = n
+	e.f.mu.Unlock()
+	e.changed(prev, now)
+}
+
+func (e *thrLvEnv) edit(ts, text string) {
+	e.f.mu.Lock()
+	prev, _ := e.f.msgLocked(ts)
+	switch ts {
+	case lmRoot:
+		e.f.rootText = text
+	case lmLatest:
+		e.f.latestText = text
+	}
+	now, _ := e.f.msgLocked(ts)
+	e.f.mu.Unlock()
+	now.Edited = &slack.Edited{User: now.User, TS: fmt.Sprintf("%d.000001", time.Now().Unix())}
+	e.changed(prev, now)
+}
+
+func (e *thrLvEnv) del(ts string) {
+	e.f.mu.Lock()
+	prev, _ := e.f.msgLocked(ts)
+	e.f.gone[ts] = true
+	e.f.mu.Unlock()
+	lvInject(e.app, lmChan, map[string]any{"type": "message", "subtype": "message_deleted", "hidden": true, "deleted_ts": ts, "previous_message": prev})
+}
+
+// The socket changes several messages of one thread before the view's
+// next frame (a busy vote, or everything since the view was last drawn):
+// the card draws every change, whichever message changed last.
+func TestThreadsLiveBatch(t *testing.T) {
+	ready := func(t *testing.T, e *thrLvEnv) {
+		t.Helper()
+		e.e.until(t, "the thread drawn", func() bool {
+			return lmRev(e.drawn(lmVote)) == 1 && e.drawn(lmRoot) != "" && e.drawn(lmLatest) != ""
+		})
+		e.e.frame()
+	}
+	t.Run("edits", func(t *testing.T) {
+		e := newThrLvEnv(t, &lmFake{rev: 1, gone: map[string]bool{}, latest: true})
+		ready(t, e)
+		e.vote(2)
+		e.edit(lmRoot, "Proposal: move the synthetic standup to 11am")
+		e.vote(3)
+		e.edit(lmLatest, "a synthetic reply after the vote, said again")
+		e.vote(4)
+		e.e.frame()
+		if got := lmRev(e.drawn(lmVote)); got != 4 {
+			t.Errorf("the vote drawn at revision %d, want 4", got)
+		}
+		if got := e.drawn(lmRoot); !strings.Contains(got, "11am") {
+			t.Errorf("the root drew %q, not its edit", got)
+		}
+		if got := e.drawn(lmLatest); !strings.Contains(got, "said again") {
+			t.Errorf("the latest reply drew %q, not its edit", got)
+		}
+	})
+	t.Run("a deleted reply", func(t *testing.T) {
+		e := newThrLvEnv(t, &lmFake{rev: 1, gone: map[string]bool{}, latest: true})
+		ready(t, e)
+		e.vote(2)
+		e.del(lmLatest)
+		e.vote(3)
+		e.e.frame()
+		e.e.frame() // the keyboard's rows are the last frame's
+		if got := e.drawn(lmLatest); got != "" {
+			t.Errorf("the deleted reply is still drawn: %q", got)
+		}
+		if got := lmRev(e.drawn(lmVote)); got != 3 {
+			t.Errorf("the vote drawn at revision %d, want 3", got)
+		}
+	})
+	t.Run("an unread reply deleted", func(t *testing.T) {
+		e := newThrLvEnv(t, &lmFake{rev: 1, gone: map[string]bool{}, latest: true, unread: true})
+		ready(t, e)
+		d, _, _ := e.v.data.get()
+		if len(d.items) != 1 || e.v.unread(&d.items[0]) != 1 {
+			t.Fatalf("before: %d threads, %d unread", len(d.items), e.v.unread(&d.items[0]))
+		}
+		e.del(lmLatest) // the one unread reply
+		e.e.frame()
+		d, _, _ = e.v.data.get()
+		if n := e.v.unread(&d.items[0]); n != 0 {
+			t.Errorf("after its one unread reply was deleted the card counts %d unread: its New line sits on a read reply", n)
+		}
+	})
+}

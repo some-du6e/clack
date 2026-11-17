@@ -176,3 +176,57 @@ func pad6(i int) string {
 	}
 	return string(b)
 }
+
+// An answer whose reaction lists fewer people than it counts (a big
+// reaction: Slack lists some of them) may already count a reaction made
+// while it was out: the replay leaves the count alone for people the
+// answer doesn't list, as Slack's reducer only changes the people a
+// reaction lists.
+func TestFetchedReplayTruncatedUsers(t *testing.T) {
+	s := New("")
+	const ch, ts = "C0LIVE0004", "710.000001"
+	users := make([]string, 50)
+	for i := range users {
+		users[i] = "U" + pad6(i)
+	}
+	answer := slack.Message{Type: "message", TS: ts, Text: "a synthetic poll", Reactions: []slack.Reaction{{Name: "+1", Count: 60, Users: users}}}
+	since := s.LiveSeq()
+	s.NoteReaction(ch, ts, "+1", "U9NOTLISTED", true) // counted by the answer, or not: it doesn't say
+	s.NoteReaction(ch, ts, "+1", "U9GONE", false)     // the same for a removal
+	got := s.PutFetched(ch, []slack.Message{answer}, since)
+	if n := got[0].Reactions[0].Count; n != 60 {
+		t.Errorf("+1 x%d after the replay, want the answer's 60", n)
+	}
+	// a person it lists takes theirs back
+	since = s.LiveSeq()
+	s.NoteReaction(ch, ts, "+1", users[0], false)
+	got = s.PutFetched(ch, []slack.Message{answer}, since)
+	if n := got[0].Reactions[0].Count; n != 59 {
+		t.Errorf("+1 x%d after a listed person's removal, want 59", n)
+	}
+}
+
+// Slack's reducer drops a reaction once nobody it lists is left, whatever
+// its count says (6Dm2: !users.length || count < 1).
+func TestApplyReactionLastListed(t *testing.T) {
+	m := slack.Message{TS: "1.000001", Reactions: []slack.Reaction{{Name: "eyes", Count: 3, Users: []string{"U1"}}}}
+	if !ApplyReaction(&m, "eyes", "U1", false) || len(m.Reactions) != 0 {
+		t.Fatalf("after the only listed person's removal: %+v", m.Reactions)
+	}
+}
+
+// A copy the socket grows in place (an agent's answer streaming in,
+// reactions) counts at its new size against the 4 MB bound.
+func TestFetchedSizeAfterMutate(t *testing.T) {
+	s := New("")
+	const ch, ts = "C0LIVE0005", "720.000001"
+	s.PutFetched(ch, []slack.Message{{Type: "message", TS: ts, Text: "working..."}}, s.LiveSeq())
+	long := strings.Repeat("a synthetic answer ", 10000)
+	s.Mutate(ch, ts, func(m *slack.Message) { m.Text = long })
+	s.mu.RLock()
+	size, want := s.fetchedSize, messageSize(s.fetched[ch+"/"+ts])
+	s.mu.RUnlock()
+	if size != want {
+		t.Errorf("fetched size %d after the copy grew, want %d", size, want)
+	}
+}

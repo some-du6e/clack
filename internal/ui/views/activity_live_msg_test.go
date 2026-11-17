@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,18 +47,21 @@ import (
 )
 
 const (
-	lmChan        = "C0LIVE0001"
-	lmBot         = "B0LIVE0001"
-	lmApp         = "A0LIVE0001"
-	lmRoot        = "1762790000.000100" // Ada's proposal: the vote's thread
-	lmVote        = "1762790100.000100" // the vote app's message, the thread's latest reply (or first unread: lmOpts.latest)
-	lmLatest      = "1762790150.000100" // a reply after the vote (lmOpts.latest): the bundle's latest
-	lmMention     = "1762790200.000100" // Grace's mention of the viewer
-	lmMention2    = "1762790300.000100" // a mention pushed while the page is off screen
-	lmBusy        = "C0LIVE0BSY"        // a channel the socket is busy in
-	lmThreadKey   = "lm-thread"
-	lmMentionKey  = "lm-mention"
-	lmMention2Key = "lm-mention-2"
+	lmChan          = "C0LIVE0001"
+	lmBot           = "B0LIVE0001"
+	lmApp           = "A0LIVE0001"
+	lmRoot          = "1762790000.000100" // Ada's proposal: the vote's thread
+	lmVoteRoot      = "1762790050.000100" // a vote app's thread root (lmOpts.voteRoot), its channel's window open
+	lmVoteRootReply = "1762790060.000100" // the vote root's reply
+	lmVote          = "1762790100.000100" // the vote app's message, the thread's latest reply (or first unread: lmOpts.latest)
+	lmLatest        = "1762790150.000100" // a reply after the vote (lmOpts.latest): the bundle's latest
+	lmMention       = "1762790200.000100" // Grace's mention of the viewer
+	lmMention2      = "1762790300.000100" // a mention pushed while the page is off screen
+	lmBusy          = "C0LIVE0BSY"        // a channel the socket is busy in
+	lmThreadKey     = "lm-thread"
+	lmMentionKey    = "lm-mention"
+	lmMention2Key   = "lm-mention-2"
+	lmVoteRootKey   = "lm-vote-root"
 )
 
 // lmPatches are the Activity components a pass-through plugin wraps (the
@@ -69,21 +73,43 @@ var lmPatches = []string{"ActivityItem", "ActivityThread", "ActivityRowContentMu
 // (the row keeps its height).
 func lmVoteText(n int) string { return fmt.Sprintf("Upvotes: %d\nDownvotes: %d", n, 20+n) }
 
-// lmVoteMsg is the vote app's message at revision n: the counts in a
+// lmVoteBlocks is a vote app's blocks at revision n: the counts in a
 // section, then an upvote and a downvote button, block_ids new at every
-// update; an app's chat.update marks nothing edited.
-func lmVoteMsg(n int) slack.Message {
-	text := lmVoteText(n)
+// update.
+func lmVoteBlocks(n int) json.RawMessage {
 	button := func(id, label string) map[string]any {
 		return map[string]any{"type": "button", "action_id": id, "value": id, "text": map[string]any{"type": "plain_text", "text": label}}
 	}
 	blocks, _ := json.Marshal([]any{
-		map[string]any{"type": "section", "block_id": fmt.Sprintf("s%d", n), "text": map[string]any{"type": "mrkdwn", "text": text}},
+		map[string]any{"type": "section", "block_id": fmt.Sprintf("s%d", n), "text": map[string]any{"type": "mrkdwn", "text": lmVoteText(n)}},
 		map[string]any{"type": "actions", "block_id": fmt.Sprintf("u%d", n), "elements": []any{button("up", "Upvote")}},
 		map[string]any{"type": "actions", "block_id": fmt.Sprintf("d%d", n), "elements": []any{button("down", "Downvote")}},
 	})
+	return blocks
+}
+
+// lmVoteMsg is the vote app's message at revision n, the counts in its
+// blocks (an app's chat.update marks nothing edited). Its preview comes
+// from its blocks, which a plugin's text never reaches (lmVoteTextMsg).
+func lmVoteMsg(n int) slack.Message {
 	return slack.Message{Type: "message", Subtype: "bot_message", TS: lmVote, ThreadTS: lmRoot, BotID: lmBot, Username: "Vote Bot",
-		Text: text, Blocks: blocks, BotProfile: &slack.BotProfile{ID: lmBot, Name: "Vote Bot", AppID: lmApp}}
+		Text: lmVoteText(n), Blocks: lmVoteBlocks(n), BotProfile: &slack.BotProfile{ID: lmBot, Name: "Vote Bot", AppID: lmApp}}
+}
+
+// lmVoteTextMsg is the vote with its counts in its text alone: its
+// preview is its text, the part of the row a patched component's stale
+// tree can bring back (lmOpts.textVote).
+func lmVoteTextMsg(n int) slack.Message {
+	m := lmVoteMsg(n)
+	m.Blocks = nil
+	return m
+}
+
+// lmVoteRootMsg is a vote app's thread root at revision n (lmOpts.voteRoot).
+func lmVoteRootMsg(n int) slack.Message {
+	return slack.Message{Type: "message", Subtype: "bot_message", TS: lmVoteRoot, ThreadTS: lmVoteRoot, BotID: lmBot, Username: "Vote Bot",
+		Text: lmVoteText(n), Blocks: lmVoteBlocks(n), ReplyCount: 1, ReplyUsersN: 1, LatestReply: lmVoteRootReply,
+		BotProfile: &slack.BotProfile{ID: lmBot, Name: "Vote Bot", AppID: lmApp}}
 }
 
 func lmRootMsg(latest bool) slack.Message {
@@ -95,18 +121,32 @@ func lmRootMsg(latest bool) slack.Message {
 	return m
 }
 
-// lmFake is the server's side: the vote's revision, the mentions' texts
-// and the deleted messages, which activity.feed, messages.list,
+// lmFake is the server's side: the votes' revisions, the texts and the
+// deleted messages, which activity.feed, messages.list,
 // conversations.replies and subscriptions.thread.getView answer from.
 type lmFake struct {
-	mu       sync.Mutex
-	rev      int
-	mention  string
-	mention2 string
-	gone     map[string]bool
-	latest   bool   // the thread has lmLatest after the vote
-	listGone bool   // the feed still lists the mention its message went from
-	mentions string // the mention entry's type (at_user)
+	mu         sync.Mutex
+	rev        int
+	rootRev    int    // the vote root's revision (voteRoot)
+	rootText   string // the thread root's text ("": the fixture's)
+	latestText string // lmLatest's text ("": the fixture's)
+	mention    string
+	mention2   string
+	gone       map[string]bool
+	latest     bool   // the thread has lmLatest after the vote
+	unread     bool   // getView lists lmLatest as an unread reply
+	textVote   bool   // the vote's counts are its text alone
+	voteRoot   bool   // the feed lists a mention of the vote root
+	listGone   bool   // the feed still lists the mention its message went from
+	mentions   string // the mention entry's type (at_user)
+}
+
+// voteLocked is the vote at revision n, as the fixture has it.
+func (f *lmFake) voteLocked(n int) slack.Message {
+	if f.textVote {
+		return lmVoteTextMsg(n)
+	}
+	return lmVoteMsg(n)
 }
 
 func (f *lmFake) msgLocked(ts string) (slack.Message, bool) {
@@ -115,12 +155,21 @@ func (f *lmFake) msgLocked(ts string) (slack.Message, bool) {
 	}
 	switch ts {
 	case lmRoot:
-		return lmRootMsg(f.latest), true
+		m := lmRootMsg(f.latest)
+		if f.rootText != "" {
+			m.Text = f.rootText
+		}
+		return m, true
+	case lmVoteRoot:
+		return lmVoteRootMsg(f.rootRev), true
+	case lmVoteRootReply:
+		return slack.Message{Type: "message", TS: lmVoteRootReply, ThreadTS: lmVoteRoot, User: "U0FAKE00002", Text: "a synthetic reply to the vote"}, true
 	case lmVote:
-		return lmVoteMsg(f.rev), true
+		return f.voteLocked(f.rev), true
 	case lmLatest:
 		if f.latest {
-			return slack.Message{Type: "message", TS: lmLatest, ThreadTS: lmRoot, User: "U0FAKE00002", Text: "a synthetic reply after the vote"}, true
+			return slack.Message{Type: "message", TS: lmLatest, ThreadTS: lmRoot, User: "U0FAKE00002",
+				Text: firstNonEmpty(f.latestText, "a synthetic reply after the vote")}, true
 		}
 	case lmMention:
 		return slack.Message{Type: "message", TS: lmMention, User: "U0FAKE00002", Text: f.mention}, true
@@ -132,9 +181,13 @@ func (f *lmFake) msgLocked(ts string) (slack.Message, bool) {
 	return slack.Message{}, false
 }
 
-func (f *lmFake) threadLocked() []slack.Message {
-	msgs := []slack.Message{lmRootMsg(f.latest)}
-	for _, ts := range []string{lmVote, lmLatest} {
+func (f *lmFake) threadLocked(root string) []slack.Message {
+	var msgs []slack.Message
+	tss := []string{lmRoot, lmVote, lmLatest}
+	if root == lmVoteRoot {
+		tss = []string{lmVoteRoot, lmVoteRootReply}
+	}
+	for _, ts := range tss {
 		if m, ok := f.msgLocked(ts); ok {
 			msgs = append(msgs, m)
 		}
@@ -160,6 +213,10 @@ func (f *lmFake) hook(method string, form url.Values) (any, bool) {
 			items = append(items, map[string]any{"key": lmThreadKey, "feed_ts": entry["latest_ts"], "is_unread": true, "item": map[string]any{
 				"type": "thread_v2", "bundle_info": map[string]any{"payload": map[string]any{"thread_entry": entry}}}})
 		}
+		if f.voteRoot { // a mention of the viewer in the vote root
+			items = append(items, map[string]any{"key": lmVoteRootKey, "feed_ts": lmVoteRoot, "is_unread": false, "item": map[string]any{
+				"type": "at_channel", "message": map[string]any{"ts": lmVoteRoot, "channel": lmChan, "author_user_id": "U0FAKE00001"}}})
+		}
 		return map[string]any{"ok": true, "items": items, "response_metadata": map[string]any{"next_cursor": ""}}, true
 	case "messages.list":
 		var want []struct {
@@ -182,16 +239,24 @@ func (f *lmFake) hook(method string, form url.Values) (any, bool) {
 		}
 		return map[string]any{"ok": true, "messages": out}, true
 	case "conversations.replies":
-		if form.Get("channel") != lmChan || form.Get("ts") != lmRoot {
-			return nil, false
+		if root := form.Get("ts"); form.Get("channel") == lmChan && (root == lmRoot || root == lmVoteRoot) {
+			return map[string]any{"ok": true, "messages": f.threadLocked(root), "has_more": false}, true
 		}
-		return map[string]any{"ok": true, "messages": f.threadLocked(), "has_more": false}, true
+		return nil, false
 	case "subscriptions.thread.getView":
-		msgs := f.threadLocked()
+		msgs := f.threadLocked(lmRoot)
 		root := msgs[0]
 		root.Channel = lmChan
-		return map[string]any{"ok": true, "threads": []any{map[string]any{"root_msg": root, "latest_replies": msgs[1:], "unread_replies": []any{}}},
-			"has_more": false, "total_unread_replies": 0, "threads_state": map[string]any{"has_unreads": false, "mention_count": 0}}, true
+		unread := []slack.Message{}
+		if f.unread {
+			for _, m := range msgs[1:] {
+				if m.TS == lmLatest {
+					unread = append(unread, m)
+				}
+			}
+		}
+		return map[string]any{"ok": true, "threads": []any{map[string]any{"root_msg": root, "latest_replies": msgs[1:], "unread_replies": unread}},
+			"has_more": false, "total_unread_replies": len(unread), "threads_state": map[string]any{"has_unreads": len(unread) > 0, "mention_count": 0}}, true
 	}
 	return nil, false
 }
@@ -214,9 +279,12 @@ func (h *lmHost) LiveMessage(ch, ts, threadTS string, since time.Time, have uint
 type lmOpts struct {
 	pane     bool     // the thread pane beside the page
 	patch    []string // the components a pass-through plugin wraps
+	mask     []string // the components a plugin rewriting the text ("standup" as "st***up") wraps
 	lockstep bool     // JS answers every render before the next frame
 	texts    bool     // a plugin's text patch over the messages slice (patchMessageText, as Message Logger's kind)
 	latest   bool     // a reply after the vote: the bundle's latest_ts, the vote its first unread
+	textVote bool     // the vote's counts in its text alone (its preview: what a stale tree can bring back)
+	voteRoot bool     // a mention of a vote app's thread root, in a channel whose window core holds
 	setup    func(e *lmEnv)
 }
 
@@ -229,14 +297,17 @@ type lmEnv struct {
 	v   *Activity
 	tv  *messages.ThreadView // the thread pane beside the page (nil: none)
 	rt  *jsrt.Runtime        // the plugins' JS, when any
+	tt  *taut.Taut
 	e   *vaEnv
+	now time.Time // the last frame's
 }
 
 // newLmEnv is the Activity page on the fixture's feed, as o says.
 func newLmEnv(t *testing.T, o lmOpts) *lmEnv {
 	t.Helper()
 	app, fs := vaFake(t)
-	f := &lmFake{rev: 1, mention: "<@" + fakeslack.SelfID + "> please read the synthetic standup notes", gone: map[string]bool{}, latest: o.latest}
+	f := &lmFake{rev: 1, rootRev: 5, mention: "<@" + fakeslack.SelfID + "> please read the synthetic standup notes", gone: map[string]bool{},
+		latest: o.latest, textVote: o.textVote, voteRoot: o.voteRoot}
 	fs.SetHook(f.hook)
 	app.S.PutConv(slack.Conversation{ID: lmChan, Name: "live-votes", IsChannel: true, IsMember: true, NumMembers: 3})
 	app.S.PutConv(slack.Conversation{ID: lmBusy, Name: "live-busy", IsChannel: true, IsMember: true, NumMembers: 3})
@@ -244,10 +315,10 @@ func newLmEnv(t *testing.T, o lmOpts) *lmEnv {
 	sh := &slickHost{app: app, th: theme.New(false)}
 	env := &lmEnv{t: t, fs: fs, app: app, f: f, e: &vaEnv{size: image.Pt(1400, 900)}}
 	var step func()
-	if o.patch != nil || o.texts {
-		var tt *taut.Taut
-		tt, env.rt, step = lmPatch(t, app, o.patch, o.texts)
-		sh.tt = tt
+	plugins := o.patch != nil || o.mask != nil || o.texts
+	if plugins {
+		env.tt, env.rt, step = lmPlugin(t, app, o.patch, o.mask, o.texts)
+		sh.tt = env.tt
 		if !o.lockstep {
 			step = nil
 		}
@@ -261,7 +332,8 @@ func newLmEnv(t *testing.T, o lmOpts) *lmEnv {
 		env.tv = messages.NewThreadView(env.h, lmChan, lmRoot)
 	}
 	env.e.draw = func(gtx layout.Context) {
-		if o.patch != nil || o.texts {
+		env.now = gtx.Now
+		if plugins {
 			slackc.Pump() // queued JS→Go calls, as the ui root's frame runs them
 		}
 		g := gtx
@@ -280,11 +352,18 @@ func newLmEnv(t *testing.T, o lmOpts) *lmEnv {
 	return env
 }
 
-// lmPatch runs a pass-through plugin over names (with texts, a text
-// patch of the messages slice too: "Upvotes" drawn as "Ups"), as the ui
-// root runs Taut, and returns its runtime, its JS and a step that waits
-// for JS to have answered everything sent to it so far.
+// lmPatch is lmPlugin with pass-through patches alone.
 func lmPatch(t *testing.T, app *core.App, names []string, texts bool) (*taut.Taut, *jsrt.Runtime, func()) {
+	return lmPlugin(t, app, names, nil, texts)
+}
+
+// lmPlugin runs a plugin over names that changes nothing, over mask one
+// that rewrites the message's text ("standup" as "st***up", as Slick
+// Censorship masks a word), and with texts a text patch of the messages
+// slice ("Upvotes" drawn as "Ups"), as the ui root runs Taut. It returns
+// its runtime, its JS and a step that waits for JS to have answered
+// everything sent to it so far.
+func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool) (*taut.Taut, *jsrt.Runtime, func()) {
 	t.Helper()
 	ui := &slickUI{trees: map[uint64][]byte{}}
 	dir := t.TempDir()
@@ -308,7 +387,7 @@ func lmPatch(t *testing.T, app *core.App, names []string, texts bool) (*taut.Tau
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	id, err := tt.Import(ctx, lmPassThroughJS(names, texts), "")
+	id, err := tt.Import(ctx, lmPluginJS(names, mask, texts), "")
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -317,7 +396,7 @@ func lmPatch(t *testing.T, app *core.App, names []string, texts bool) (*taut.Tau
 	}
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		all := !texts || tt.SlicePatched("messages")
-		for _, n := range names {
+		for _, n := range append(slices.Clone(names), mask...) {
 			all = all && slackc.Patched(n)
 		}
 		if all {
@@ -338,14 +417,22 @@ func lmPatch(t *testing.T, app *core.App, names []string, texts bool) (*taut.Tau
 	}
 }
 
-// lmPassThroughJS patches names without changing anything: each hands
-// props.msg on to Original. With texts it also patches the messages'
-// text (patchMessageText), "Upvotes" to "Ups".
-func lmPassThroughJS(names []string, texts bool) []byte {
+// lmPluginJS patches names without changing anything (each hands
+// props.msg on to Original), and mask with the msg's text rewritten. With
+// texts it also patches the messages' text (patchMessageText), "Upvotes"
+// to "Ups".
+func lmPluginJS(names, mask []string, texts bool) []byte {
 	patches := ""
 	for _, n := range names {
 		patches += "    this.api.patchComponent('" + n + "', (Original) => (props) => {\n" +
 			"      const msg = React.useMemo(() => props.msg, [props.msg])\n" +
+			"      return React.createElement(Original, { ...props, msg })\n" +
+			"    })\n"
+	}
+	for _, n := range mask {
+		patches += "    this.api.patchComponent('" + n + "', (Original) => (props) => {\n" +
+			"      const msg = React.useMemo(() => props.msg && typeof props.msg.text === 'string' ?\n" +
+			"        { ...props.msg, text: props.msg.text.replace(/standup/g, 'st***up') } : props.msg, [props.msg])\n" +
 			"      return React.createElement(Original, { ...props, msg })\n" +
 			"    })\n"
 	}
@@ -379,15 +466,32 @@ func (e *lmEnv) holdJS() (release func()) {
 func (e *lmEnv) frame() { e.e.frame() }
 
 // drawn is the text the Activity row of the message ts laid out in the
-// last frame: its body (ActivityMessage, msgBodySub's richview).
+// last frame: its body (ActivityMessage, msgBodySub's richview); "" when
+// no body of it was laid out then.
 func (e *lmEnv) drawn(ts string) string {
 	suffix := "\x00" + lmChan + "/" + ts
 	for k, r := range e.v.rich {
-		if strings.HasPrefix(k, "sub:") && strings.HasSuffix(k, suffix) {
+		if strings.HasPrefix(k, "sub:") && strings.HasSuffix(k, suffix) && r.at.Equal(e.now) {
 			return r.v.TextRange(0, r.v.PlainLen())
 		}
 	}
 	return ""
+}
+
+// paneDrawn is the text the in-view preview laid out for ts in the last
+// frame (actPaneBody).
+func (e *lmEnv) paneDrawn(ts string) string {
+	if r := e.v.rich["pane:"+lmChan+"/"+ts]; r != nil && r.at.Equal(e.now) {
+		return r.v.TextRange(0, r.v.PlainLen())
+	}
+	return ""
+}
+
+// redraws reports whether the last frame asked for another one at once
+// (an op.InvalidateCmd for now: what keeps a window drawing).
+func (e *lmEnv) redraws() bool {
+	at, ok := e.e.r.WakeupTime()
+	return ok && !at.After(e.now)
 }
 
 var lmUpRe = regexp.MustCompile(`(?:Upvotes|Ups): (\d+)`)
@@ -406,9 +510,13 @@ func lmRev(text string) int {
 func (e *lmEnv) rev() int { return lmRev(e.drawn(lmVote)) }
 
 // paneRev is the vote revision the thread pane drew in the last frame.
-func (e *lmEnv) paneRev() int {
+func (e *lmEnv) paneRev() int { return e.paneRevOf(lmVote) }
+
+// paneRevOf is the revision of the vote ts the thread pane drew in the
+// last frame.
+func (e *lmEnv) paneRevOf(ts string) int {
 	for _, s := range e.tv.Senders() {
-		if s.TS == lmVote {
+		if s.TS == ts {
 			return lmRev(s.Text)
 		}
 	}
@@ -473,10 +581,32 @@ func (e *lmEnv) setRev(n int) {
 // vote is the app's chat.update to revision n: the server's message, then
 // the socket's message_changed.
 func (e *lmEnv) vote(n int) {
-	prev := lmVoteMsg(n - 1)
+	e.f.mu.Lock()
+	prev, now := e.f.voteLocked(n-1), e.f.voteLocked(n)
+	e.f.mu.Unlock()
 	e.setRev(n)
 	e.inject(map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "channel": lmChan,
-		"message": lmVoteMsg(n), "previous_message": prev})
+		"message": now, "previous_message": prev})
+}
+
+// setRootRev moves the server's vote root to revision n, with no event
+// (the socket was down: a laptop asleep).
+func (e *lmEnv) setRootRev(n int) {
+	e.f.mu.Lock()
+	e.f.rootRev = n
+	e.f.mu.Unlock()
+}
+
+// editLatest edits the thread's latest reply (lmOpts.latest) to text.
+func (e *lmEnv) editLatest(text string) {
+	e.f.mu.Lock()
+	prev, _ := e.f.msgLocked(lmLatest)
+	e.f.latestText = text
+	now, _ := e.f.msgLocked(lmLatest)
+	e.f.mu.Unlock()
+	now.Edited = &slack.Edited{User: "U0FAKE00002", TS: fmt.Sprintf("%d.000001", time.Now().Unix())}
+	e.inject(map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "channel": lmChan,
+		"message": now, "previous_message": prev})
 }
 
 // editMention edits the mention to text.
@@ -537,11 +667,19 @@ func (e *lmEnv) react(ch, ts, user, name string, add bool) {
 // keeps its height, and no activity.feed goes out for it. A reload after
 // the server's copy moved on with no event (a socket gap) draws the
 // reload's revision: a change the page took earlier doesn't outrank it.
+// Under the plugin the vote's counts are its text (textVote): its preview
+// then comes from the text, which a patched component's tree of the
+// revision before brings back unless the row knows it sent those props
+// (echoed). A block vote's preview comes from its blocks ("patched
+// blocks"), which no tree's text reaches.
 func TestActivityLiveVoteCounts(t *testing.T) {
 	t.Run("native", func(t *testing.T) { checkActivityLiveVotes(t, lmOpts{}) })
-	t.Run("patched", func(t *testing.T) { checkActivityLiveVotes(t, lmOpts{patch: lmPatches}) })
+	t.Run("patched", func(t *testing.T) { checkActivityLiveVotes(t, lmOpts{patch: lmPatches, textVote: true}) })
 	// JS answers every render before the next frame
-	t.Run("patched lockstep", func(t *testing.T) { checkActivityLiveVotes(t, lmOpts{patch: lmPatches, lockstep: true}) })
+	t.Run("patched lockstep", func(t *testing.T) {
+		checkActivityLiveVotes(t, lmOpts{patch: lmPatches, lockstep: true, textVote: true})
+	})
+	t.Run("patched blocks", func(t *testing.T) { checkActivityLiveVotes(t, lmOpts{patch: lmPatches}) })
 }
 
 func checkActivityLiveVotes(t *testing.T, o lmOpts) {
@@ -594,10 +732,12 @@ func checkActivityLiveVotes(t *testing.T, o lmOpts) {
 	}
 }
 
-// With the plugin's JS busy through six revisions, every tree it hands
-// back is a revision or more behind the one the row sent: each one is the
-// row's own props, not the plugin's text, so the row draws every revision
-// in the frame after it landed, and still the newest once JS answers.
+// With the plugin's JS busy through seven revisions, the patched rows
+// keep drawing: the vote's native body draws every revision in the frame
+// after it landed (no frame waits for JS), and still the newest once JS
+// answers. The trees' stale text can't show on this block vote (its
+// preview comes from its blocks); TestActivityLiveEditsJSHeld and
+// TestActivityLiveThreadEditsJSHeld check that on text previews.
 func TestActivityLiveVoteJSHeld(t *testing.T) {
 	e := newLmEnv(t, lmOpts{patch: lmPatches})
 	e.untilVote(1)
@@ -658,6 +798,212 @@ func TestActivityLiveEditsJSHeld(t *testing.T) {
 	}
 }
 
+// The same on a thread row (ActivityThread's check, whose text the row's
+// body reads first): the bundle's latest reply, its text its preview,
+// edited six times while JS is busy.
+func TestActivityLiveThreadEditsJSHeld(t *testing.T) {
+	e := newLmEnv(t, lmOpts{patch: lmPatches, latest: true})
+	e.e.until(t, "the latest reply drawn", func() bool { return strings.Contains(e.drawn(lmLatest), "a synthetic reply after the vote") })
+	for i := 0; i < 5; i++ {
+		e.frame()
+	}
+	release := e.holdJS()
+	defer release()
+	for n := 1; n <= 6; n++ {
+		e.editLatest(fmt.Sprintf("a synthetic reply after the vote, take %d", n))
+		want := fmt.Sprintf("take %d", n)
+		for i := 0; i < 4; i++ {
+			e.frame()
+			if got := e.drawn(lmLatest); !strings.Contains(got, want) {
+				t.Fatalf("edit %d, frame %d with JS busy: the thread's row drew %q", n, i, got)
+			}
+		}
+	}
+	release()
+	e.e.until(t, "JS caught up", func() bool { return strings.Contains(e.drawn(lmLatest), "take 6") })
+	for i := 0; i < 20; i++ {
+		e.frame()
+		if got := e.drawn(lmLatest); !strings.Contains(got, "take 6") {
+			t.Fatalf("frame %d after JS answered drew %q", i, got)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A plugin that rewrites a message's text in ActivityItem (Slick
+// Censorship's mask), with another wrapping the components inside it
+// (Slick BetterBlock's): the row draws the masked text in every frame once
+// JS has drawn it. The masked msg it hands the inner components is the
+// plugin's text there, not props the row sent ActivityItem.
+func TestActivityLiveMaskedWithInnerPatches(t *testing.T) {
+	e := newLmEnv(t, lmOpts{mask: []string{"ActivityItem"}, patch: lmPatches[1:]})
+	e.untilVote(1)
+	e.e.until(t, "the masked mention drawn", func() bool { return strings.Contains(e.drawn(lmMention), "st***up") })
+	for i := 0; i < 20; i++ {
+		e.frame()
+		if got := e.drawn(lmMention); !strings.Contains(got, "st***up") {
+			t.Fatalf("frame %d after the mask drew %q, without it", i, got)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Under a text patch of the messages slice with ActivityItem patched too
+// (Show Real User's shape), a row whose message doesn't change has the
+// plugins' message converted once, not again in every frame (taut's view
+// cache keeps one conversion per revision).
+func TestActivityLiveSlicePatchNoReconvert(t *testing.T) {
+	e := newLmEnv(t, lmOpts{texts: true, patch: lmPatches, setup: func(e *lmEnv) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := e.app.RefreshReplies(ctx, lmChan, lmRoot); err != nil { // the plugins' slice holds the thread
+			t.Fatal(err)
+		}
+	}})
+	e.e.until(t, "the plugin's text drawn", func() bool { return strings.Contains(e.drawn(lmVote), "Ups: 1") })
+	for i := 0; i < 10; i++ {
+		e.frame()
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, conv0, ok := e.tt.MessageViewConv(lmChan, lmVote, false)
+	if !ok {
+		t.Fatal("no plugins' view of the vote")
+	}
+	for i := 0; i < 15; i++ {
+		e.frame()
+		if _, conv, _ := e.tt.MessageViewConv(lmChan, lmVote, false); conv != conv0 {
+			t.Fatalf("frame %d converted the plugins' message again (conversion %d, then %d)", i, conv0, conv)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A vote app's thread root in a channel core holds the window of (the
+// shape of Karim's vote root), a mention of the viewer in it: its
+// revisions move while the socket is down. Opened beside the page, the
+// thread is read and the pane draws the new revision, the row too; when
+// the pane closes the row keeps it, as every copy has it (Slack's one
+// store). The thread read anywhere else (another view) reaches the row the
+// same way.
+func TestActivityLiveRootVoteAfterGap(t *testing.T) {
+	setup := func(e *lmEnv) {
+		e.f.mu.Lock()
+		m := lmVoteRootMsg(e.f.rootRev)
+		e.f.mu.Unlock()
+		e.app.S.SetLatest(lmChan, []slack.Message{m}, false) // the channel was open earlier
+	}
+	rootRev := func(e *lmEnv) int { return lmRev(e.drawn(lmVoteRoot)) }
+	t.Run("pane", func(t *testing.T) {
+		e := newLmEnv(t, lmOpts{voteRoot: true, setup: setup})
+		e.e.until(t, "the vote root drawn at revision 5", func() bool { return rootRev(e) == 5 })
+		e.setRootRev(9)
+		e.h.lists = true
+		e.tv = messages.NewThreadView(e.h, lmChan, lmVoteRoot) // never cached: read now
+		e.e.until(t, "the pane and the row at revision 9", func() bool { return e.paneRevOf(lmVoteRoot) == 9 && rootRev(e) == 9 })
+		e.h.lists, e.tv = false, nil
+		for i := 0; i < 12; i++ {
+			e.frame()
+			if got := rootRev(e); got != 9 {
+				t.Fatalf("frame %d after the pane closed drew revision %d; the thread was read at 9", i, got)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
+	t.Run("read elsewhere", func(t *testing.T) {
+		e := newLmEnv(t, lmOpts{voteRoot: true, setup: setup})
+		e.e.until(t, "the vote root drawn at revision 5", func() bool { return rootRev(e) == 5 })
+		e.setRootRev(9)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := e.app.Replies(ctx, lmChan, lmVoteRoot); err != nil {
+			t.Fatal(err)
+		}
+		e.e.until(t, "the row at the revision the thread was read at", func() bool { return rootRev(e) == 9 })
+	})
+}
+
+// With Activity's search open and its query matching the vote's row, and
+// the thread pane drawing the vote beside the page, the window stops
+// asking for frames once everything has loaded, as it does with no search.
+func TestActivityLiveSearchIdle(t *testing.T) {
+	e := newLmEnv(t, lmOpts{pane: true})
+	e.untilVote(1)
+	idle := func(what string) {
+		t.Helper()
+		for i := 0; i < 40; i++ {
+			e.frame()
+			time.Sleep(2 * time.Millisecond)
+		}
+		busy := 0
+		for i := 0; i < 30; i++ {
+			e.frame()
+			if e.redraws() {
+				busy++
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+		if busy > 2 {
+			t.Fatalf("%s: %d of 30 frames asked for the next one at once", what, busy)
+		}
+	}
+	idle("no search")
+	e.v.searchOn = true
+	e.v.query.ed.SetText("upvotes")
+	e.e.until(t, "the search listing the vote alone", func() bool { return e.shown(lmThreadKey) && !e.shown(lmMentionKey) && e.rev() == 1 })
+	idle("searching")
+}
+
+// A reload whose messages.list fails (a network blip) keeps the rows'
+// messages: the store has them, and a row never goes back to the loading
+// shimmer for a message it drew.
+func TestActivityLiveFailedGroup(t *testing.T) {
+	e := newLmEnv(t, lmOpts{})
+	e.untilVote(1)
+	e.e.until(t, "the mention drawn", func() bool { return e.drawn(lmMention) != "" })
+	shimmers := e.v.shimmers
+	e.fs.SetFault("messages.list", fakeslack.Fault{Error: "internal_error", Times: 1})
+	feeds := e.fs.CallCount("activity.feed")
+	e.invalidate()
+	e.e.until(t, "the reload landed", func() bool { return e.fs.CallCount("activity.feed") > feeds && !e.v.data.busy() && !e.v.wasBusy })
+	for i := 0; i < 10; i++ {
+		e.frame()
+		if e.drawn(lmMention) == "" || e.rev() != 1 {
+			t.Fatalf("frame %d after the reload: the mention drew %q, the vote revision %d", i, e.drawn(lmMention), e.rev())
+		}
+	}
+	if n := e.v.shimmers - shimmers; n != 0 {
+		t.Fatalf("%d loading shimmers drawn after the reload", n)
+	}
+}
+
+// A message the store let go (other views' messages pushed it out of the
+// copies fetched by id) is edited while the page is off screen, with so
+// many changes after it that core no longer keeps the edit's copy: the
+// row fetches the message again and draws the edit, as Slack's row
+// fetches a message its store doesn't hold.
+func TestActivityLiveEvictedRefetch(t *testing.T) {
+	e := newLmEnv(t, lmOpts{})
+	e.untilVote(1)
+	e.e.until(t, "the mention drawn", func() bool { return e.drawn(lmMention) != "" })
+	big := strings.Repeat("x", 512<<10)
+	var filler []slack.Message
+	for i := 0; i < 10; i++ {
+		filler = append(filler, slack.Message{Type: "message", TS: fmt.Sprintf("1762791%03d.000100", i), User: "U0FAKE00001", Text: big})
+	}
+	e.app.S.PutFetched(lmBusy, filler, e.app.S.LiveSeq())
+	if _, ok := e.app.S.FindHeld(lmChan, lmMention); ok {
+		t.Fatal("the store still holds the mention")
+	}
+	// off screen from here
+	e.editMention("<@" + fakeslack.SelfID + "> please read the synthetic notes, rewritten")
+	busy := slack.Message{Type: "message", TS: "1762790500.000100", User: "U0FAKE00001", Text: "a synthetic busy message"}
+	e.app.S.SetLatest(lmBusy, []slack.Message{busy}, false)
+	for i := 0; i < 200; i++ {
+		e.react(lmBusy, busy.TS, "U0FAKE00001", "eyes", i%2 == 0)
+	}
+	e.e.until(t, "the edit drawn", func() bool { return strings.Contains(e.drawn(lmMention), "rewritten") })
+}
+
 // Under a plugin's text patch of the messages slice (Message Logger's
 // kind of patch: patchMessageText), the row draws the plugin's text for
 // every revision, as the message lists do: within a few frames of the
@@ -698,12 +1044,12 @@ func TestActivityLiveVoteSlicePatch(t *testing.T) {
 // the pane reads its thread again). When the pane closes the row keeps
 // that revision: the store has it, and nothing older takes its place.
 func TestActivityLiveVoteBesideThread(t *testing.T) {
-	t.Run("native", func(t *testing.T) { checkActivityVoteBeside(t, nil) })
-	t.Run("patched", func(t *testing.T) { checkActivityVoteBeside(t, lmPatches) })
+	t.Run("native", func(t *testing.T) { checkActivityVoteBeside(t, lmOpts{pane: true}) })
+	t.Run("patched", func(t *testing.T) { checkActivityVoteBeside(t, lmOpts{pane: true, patch: lmPatches, textVote: true}) })
 }
 
-func checkActivityVoteBeside(t *testing.T, patch []string) {
-	e := newLmEnv(t, lmOpts{pane: true, patch: patch})
+func checkActivityVoteBeside(t *testing.T, o lmOpts) {
+	e := newLmEnv(t, o)
 	e.untilVote(1)
 	inStep := func(n int, what string) {
 		t.Helper()
@@ -846,12 +1192,18 @@ func TestActivityLiveDelete(t *testing.T) {
 		t.Fatal("the frame after its message was deleted still lists the mention")
 	}
 	e.del(lmLatest)
-	e.frame()
-	if !e.shown(lmThreadKey) {
-		t.Fatal("the thread left with its latest reply; its messageTs is the first unread one")
+	shimmers := e.v.shimmers
+	for i := 0; i < 5; i++ {
+		e.frame()
+		if !e.shown(lmThreadKey) {
+			t.Fatal("the thread left with its latest reply; its messageTs is the first unread one")
+		}
+		if got := e.drawn(lmLatest); got != "" {
+			t.Fatalf("frame %d after its latest reply was deleted, the thread's row drew %q", i, got)
+		}
 	}
-	if r := e.v.rows[lmThreadKey]; r == nil || !r.msgGone || r.msg() != nil {
-		t.Fatalf("the thread's row after its latest reply went: %+v", r)
+	if n := e.v.shimmers - shimmers; n != 0 {
+		t.Fatalf("the thread's row drew %d loading shimmers for its deleted reply; Slack draws no body", n)
 	}
 	e.del(lmVote)
 	e.frame()
@@ -872,11 +1224,16 @@ func TestActivityLiveMissingMessage(t *testing.T) {
 	e := newLmEnv(t, lmOpts{setup: func(e *lmEnv) { e.f.gone[lmMention], e.f.listGone = true, true }})
 	e.untilVote(1)
 	e.e.until(t, "the mention's row", func() bool { return e.shown(lmMentionKey) && e.v.rows[lmMentionKey] != nil })
+	e.frame()
+	shimmers := e.v.shimmers
 	for i := 0; i < 5; i++ {
 		e.frame()
+		if got := e.drawn(lmMention); got != "" {
+			t.Fatalf("frame %d: the mention whose message there is none of drew %q", i, got)
+		}
 	}
-	if r := e.v.rows[lmMentionKey]; !r.msgGone || r.msg() != nil || e.drawn(lmMention) != "" {
-		t.Fatalf("the mention whose message there is none of: gone %v, message %v, drawn %q; want no body (no shimmer)", r.msgGone, r.msg(), e.drawn(lmMention))
+	if n := e.v.shimmers - shimmers; n != 0 {
+		t.Fatalf("%d loading shimmers in 5 frames for a message there is none of; Slack draws no body", n)
 	}
 }
 
@@ -1031,16 +1388,28 @@ func TestActivityLivePreview(t *testing.T) {
 			e.v.sel, e.v.selKey, e.v.selOK = page.Items[i], lmMentionKey, true
 		}
 	}
-	pane := func() string {
-		if r := e.v.rich["pane:"+lmChan+"/"+lmMention]; r != nil {
-			return r.v.TextRange(0, r.v.PlainLen())
-		}
-		return ""
-	}
+	pane := func() string { return e.paneDrawn(lmMention) }
 	e.e.until(t, "the preview's message", func() bool { return strings.Contains(pane(), "please read the synthetic standup notes") })
 	e.editMention("<@" + fakeslack.SelfID + "> please read the new synthetic notes")
 	e.frame()
 	if got := pane(); !strings.Contains(got, "please read the new synthetic notes") {
 		t.Fatalf("the preview the frame after the edit drew %q", got)
+	}
+	// the thread's row opened instead: its vote's chat.updates keep the
+	// length and mark nothing edited
+	for i := range page.Items {
+		if actKey(&page.Items[i]) == lmThreadKey {
+			e.v.sel, e.v.selKey, e.v.selOK = page.Items[i], lmThreadKey, true
+		}
+	}
+	e.e.until(t, "the preview's vote", func() bool { return lmRev(e.paneDrawn(lmVote)) == 1 })
+	for n := 2; n <= 3; n++ {
+		e.vote(n)
+		for i := 0; i < 3; i++ {
+			e.frame()
+			if got := lmRev(e.paneDrawn(lmVote)); got != n {
+				t.Fatalf("revision %d, frame %d: the preview drew revision %d", n, i, got)
+			}
+		}
 	}
 }

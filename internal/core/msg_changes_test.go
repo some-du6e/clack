@@ -314,3 +314,107 @@ func TestFetchedRootAnnounced(t *testing.T) {
 		t.Error("the fetched root's replies turned off don't show")
 	}
 }
+
+// A read that brings a revision of a message the store held another of
+// (after a socket gap: a thread read for the first time, its root in a
+// window read before the gap) reaches every copy and goes out as a change,
+// as Slack's one store takes a replies answer: the window's copy is the
+// new one, and an "update" carries it to the views.
+func TestReadRevisionAnnounced(t *testing.T) {
+	a, f := testApp(t)
+	const ch, root, reply = "C1", "1762790600.000100", "1762790610.000100"
+	rootAt := func(text string) map[string]any {
+		return map[string]any{"type": "message", "ts": root, "thread_ts": root, "user": "U1", "text": text, "reply_count": 1, "latest_reply": reply}
+	}
+	a.S.SetLatest(ch, []slack.Message{{Type: "message", TS: root, ThreadTS: root, User: "U1", Text: "votes: 5", ReplyCount: 1, LatestReply: reply}}, false)
+	b, _ := json.Marshal(map[string]any{"ok": true, "has_more": false, "messages": []any{rootAt("votes: 9"),
+		map[string]any{"type": "message", "ts": reply, "thread_ts": root, "user": "U2", "text": "a synthetic reply"}}})
+	f.reply["conversations.replies"] = string(b)
+	evs, stop := a.Subscribe()
+	defer stop()
+	start := a.MessageChangeSeq()
+	if _, err := a.Replies(context.Background(), ch, root); err != nil { // never cached: read now
+		t.Fatal(err)
+	}
+	if m, ok := a.S.FindHeld(ch, root); !ok || m.Text != "votes: 9" {
+		t.Errorf("the store's copy of the root after the read: %q (%v)", m.Text, ok)
+	}
+	if w := a.S.Timeline(ch); w == nil || len(w.Msgs) != 1 || w.Msgs[0].Text != "votes: 9" {
+		t.Errorf("the window's copy of the root after the read: %+v", w)
+	}
+	c, ok := a.MessageChange(ch, root)
+	if !ok || c.Seq <= start || c.Msg == nil || c.Msg.Text != "votes: 9" {
+		t.Fatalf("the read left the change table with %+v (%v)", c, ok)
+	}
+	for {
+		if e := next(t, evs, "update"); e.TS == root {
+			if e.Msg.Text != "votes: 9" {
+				t.Errorf("the root's update carries %q", e.Msg.Text)
+			}
+			break
+		}
+	}
+	// read again, nothing new: nothing goes out
+	now := a.MessageChangeSeq()
+	if _, err := a.RefreshReplies(context.Background(), ch, root); err != nil {
+		t.Fatal(err)
+	}
+	if a.MessageChangeSeq() != now {
+		t.Errorf("a read with no new revision made %d changes", a.MessageChangeSeq()-now)
+	}
+}
+
+// A reaction that lands while a window's newest page is out reaches the
+// window (the page predates it), as it reaches the copies fetched by id.
+func TestWindowReadKeepsReactions(t *testing.T) {
+	a, f := testApp(t)
+	const ch, ts = "C1", "1762790700.000100"
+	f.reply["conversations.history"] = fmt.Sprintf(`{"ok":true,"has_more":false,"messages":[{"type":"message","ts":%q,"user":"U1","text":"a synthetic poll",
+		"reactions":[{"name":"+1","count":1,"users":["U1"]}]}]}`, ts)
+	f.hooks["conversations.history"] = func(url.Values) {
+		raw, _ := json.Marshal(map[string]any{"type": "reaction_added", "user": "U2", "reaction": "+1",
+			"item": map[string]any{"type": "message", "channel": ch, "ts": ts}})
+		a.Inject(slack.Event{Type: "reaction_added", Raw: raw})
+	}
+	if _, err := a.History(context.Background(), ch, ""); err != nil {
+		t.Fatal(err)
+	}
+	w := a.S.Timeline(ch)
+	if w == nil || len(w.Msgs) != 1 || len(w.Msgs[0].Reactions) != 1 || w.Msgs[0].Reactions[0].Count != 2 {
+		t.Fatalf("the window after a reaction during its read: %+v", w)
+	}
+}
+
+// The replies the Threads view loads into a card ("Show N more replies")
+// are kept where the socket's changes reach them: a reaction to one goes
+// out as a change.
+func TestOlderRepliesStored(t *testing.T) {
+	a, f := testApp(t)
+	const ch, root, old = "C1", "1762790800.000100", "1762790810.000100"
+	f.reply["conversations.replies"] = fmt.Sprintf(`{"ok":true,"has_more":false,"messages":[
+		{"type":"message","ts":%q,"thread_ts":%q,"user":"U1","text":"a synthetic root","reply_count":2},
+		{"type":"message","ts":%q,"thread_ts":%q,"user":"U2","text":"an older synthetic reply"}]}`, root, root, old, root)
+	if _, _, err := a.OlderReplies(context.Background(), ch, root, "1762790820.000100", 100); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"type": "reaction_added", "user": "U2", "reaction": "tada",
+		"item": map[string]any{"type": "message", "channel": ch, "ts": old}})
+	a.Inject(slack.Event{Type: "reaction_added", Raw: raw})
+	if c, ok := a.MessageChange(ch, old); !ok || c.Msg == nil || len(c.Msg.Reactions) != 1 {
+		t.Fatalf("a reaction to an older reply the card loaded: %+v (%v)", c, ok)
+	}
+}
+
+// The update after removesNext is the one message_changed sends: a
+// reactions update emitted in between (the viewer's own reaction, from
+// another goroutine) doesn't take its removal.
+func TestRemovesNotTakenByReactions(t *testing.T) {
+	a := New(slack.New(slack.Creds{Token: "xoxc-test"}), store.New(""))
+	const ch, ts = "C1", "1762790900.000100"
+	a.removesNext(ch, ts)
+	a.emit(Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: ts, Msg: &Message{TS: ts, Reactions: []Reaction{{Name: "tada", Count: 1}}}})
+	a.emit(Event{Type: "update", Channel: ch, TS: ts, Msg: &Message{TS: ts, Text: "the mention edited out"}})
+	if c, _ := a.MessageChange(ch, ts); c.RemoveSeq == 0 || c.RemoveSeq != c.Seq {
+		t.Fatalf("after the edit: %+v; its update removes the entries", c)
+	}
+}
