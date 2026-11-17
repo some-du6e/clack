@@ -1482,8 +1482,13 @@ func (l *lay) ellipsize(ln *lineInfo, line, x0 int, maxW float32, fs *flowStyle,
 				if f.kind != fText || f.sh == nil {
 					continue
 				}
-				if head, _, nb := l.st.split(items[s.item].face, f.sh, end-f.x); head != f.sh && head.adv <= end-f.x {
-					keep, ex, cutF, cutSh, cutNb = q, f.x+head.adv, f, head, nb
+				// measured in the word's own shape, as TruncateText keeps a
+				// view of the child's shape result (the head shaped alone can
+				// be a fraction wider)
+				if head, _, nb := l.st.split(items[s.item].face, f.sh, end-f.x); head != f.sh {
+					if hw := f.sh.caretX(utf8.RuneCountInString(head.str)); hw <= end-f.x {
+						keep, ex, cutF, cutSh, cutNb = q, f.x+hw, f, head, nb
+					}
 				}
 			}
 			if keep < 0 && j == first {
@@ -1492,9 +1497,9 @@ func (l *lay) ellipsize(ln *lineInfo, line, x0 int, maxW float32, fs *flowStyle,
 				if s := &kids[j]; s.frag >= 0 && d.frags[s.frag].kind == fText && d.frags[s.frag].sh != nil {
 					f := &d.frags[s.frag]
 					head, _, nb := l.st.split(items[s.item].face, f.sh, 0)
-					keep, ex = j, f.x+head.adv
+					keep, ex = j, f.x+f.w
 					if head != f.sh {
-						cutF, cutSh, cutNb = f, head, nb
+						keep, ex, cutF, cutSh, cutNb = j, f.x+f.sh.caretX(utf8.RuneCountInString(head.str)), f, head, nb
 					}
 				} else {
 					keep, ex = j, kids[j].x+kids[j].w
