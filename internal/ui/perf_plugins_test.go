@@ -574,7 +574,9 @@ func TestPerfPluginScroll(t *testing.T) {
 	res.Replies = replies
 
 	e.openBench()
+	t.Logf("the bench list, opened: %s", e.perfListModel(fakeslack.BenchChannelID))
 	e.loadAll()
+	t.Logf("the bench list, all loaded: %s", e.perfListModel(fakeslack.BenchChannelID))
 	res.Messages = e.loadedMessages(fakeslack.BenchChannelID)
 	runtime.GC()
 	res.HeapMB, res.WasmMB = liveHeapMB(), perfOffHeapWasmMB()
@@ -828,7 +830,7 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 		defer func() {
 			perfReg.stop()
 			_, fetch1 := perfViewStats(e)
-			e.t.Logf("pass %s: %d view fetches", name, fetch1-fetch0)
+			e.t.Logf("pass %s: %d view fetches; the bench list draws %s", name, fetch1-fetch0, e.perfListModel(fakeslack.BenchChannelID))
 			for _, line := range cl.top() {
 				e.t.Logf("pass %s: %s", name, line)
 			}
@@ -1407,8 +1409,8 @@ func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
 				fmt.Fprintf(&b, ", the newest drew %q", l.RowText(posted[len(posted)-1]))
 			}
 		}
-		fmt.Fprintf(&b, "; %d of %d in core's timeline, %d images loading, its image asked for %d times, %d polls since the posts",
-			inTimeline(), len(posted), e.a.images.Pending(), asked.Load(), perfPollCount()-polls0)
+		fmt.Fprintf(&b, "; %d of %d in core's timeline, %d images loading, its image asked for %d times, %d polls since the posts; the list draws %s",
+			inTimeline(), len(posted), e.a.images.Pending(), asked.Load(), perfPollCount()-polls0, e.perfListModel(ch))
 		if u := e.a.data.core.CustomEmoji()[name]; u != all[name] {
 			fmt.Fprintf(&b, ", its URL now %q", u)
 		}
@@ -1449,6 +1451,41 @@ func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
 		e.a.images.IsAnimation(all[name], 22), e.a.images.IsAnimation(all[name], 32), e.a.images.IsAnimation(all[name], 44))
 	seenMu.Unlock()
 	return ok
+}
+
+// perfListModel says whether ch's list draws the model the messages hub
+// keeps for ch, the one core's events and polls change (by reflection:
+// messages' listState.m against hub.chans[ch]; the hub writes chans on
+// this goroutine). A list left with another takes no live change until
+// its own 30 s refresh.
+func (e *benchEnv) perfListModel(ch string) string {
+	c := e.a.convos[ch+"/"]
+	if c == nil {
+		return "no list"
+	}
+	cl, ok := c.list.(channelList)
+	if !ok || cl.ChannelView == nil {
+		return "not a channel list"
+	}
+	s := reflect.ValueOf(cl.ChannelView).Elem().FieldByName("s")
+	if !s.IsValid() || s.IsNil() {
+		return "no list state"
+	}
+	m, hb := s.Elem().FieldByName("m"), s.Elem().FieldByName("hb")
+	if !m.IsValid() || !hb.IsValid() || hb.IsNil() {
+		return "no model"
+	}
+	chans := hb.Elem().FieldByName("chans")
+	if !chans.IsValid() {
+		return "no hub map"
+	}
+	switch got := chans.MapIndex(reflect.ValueOf(ch)); {
+	case !got.IsValid():
+		return fmt.Sprintf("a model the hub dropped (it keeps none for the channel, %d models)", chans.Len())
+	case got.Pointer() != m.Pointer():
+		return fmt.Sprintf("a model the hub dropped (it keeps another for the channel, %d models)", chans.Len())
+	}
+	return fmt.Sprintf("the hub's model (%d models)", chans.Len())
 }
 
 // perfQuietStart and perfQuietFrame, set by perf_quiet_test.go (trees with
