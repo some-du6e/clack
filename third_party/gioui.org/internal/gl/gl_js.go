@@ -9,6 +9,10 @@ import (
 )
 
 type Functions struct {
+	// Calls is the count of calls into WebGL (Clack patch 36); not kept
+	// in the browser.
+	Calls int64
+
 	Ctx                             js.Value
 	EXT_disjoint_timer_query        js.Value
 	EXT_disjoint_timer_query_webgl2 js.Value

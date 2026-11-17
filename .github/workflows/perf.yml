@@ -517,6 +517,10 @@ jobs:
           # then 3 pairs of channel-live with the execution-trace flight
           # recorder off and on (trees that have it: internal/ui/flightrec.go)
           PERF_PLUGIN_RECORDER: "3"
+          # then the channel with the GPU renderer drawing every frame,
+          # light and dark, 60 frames each (perfGPUScroll)
+          PERF_PLUGIN_GPU: "60"
+          GALLIUM_DRIVER: llvmpipe
         run: |
           for r in 1 2 3; do
             for s in base head; do

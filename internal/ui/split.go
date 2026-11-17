@@ -310,7 +310,7 @@ func (a *App) splitPointer(pe pointer.Event) {
 	case pointer.Release:
 		a.clickMods = pe.Modifiers
 	case pointer.Press:
-		if !a.splitOpen() || len(a.overlays) > 0 {
+		if !a.splitOpen() || a.visibleOverlays() {
 			return
 		}
 		p := a.ptrWin
@@ -576,7 +576,7 @@ func (a *App) layoutSplitResize(gtx layout.Context, col, card image.Rectangle) {
 		theme.Fill(gtx, image.Rect(lx-gtx.Dp(1), card.Min.Y, lx+gtx.Dp(3), card.Max.Y), a.th.C.Link)
 	}
 	s.rz.area(gtx, r, col.Min.X)
-	s.hover = a.ptrOK && a.ptrWin.In(r) && len(a.overlays) == 0
+	s.hover = a.ptrOK && a.ptrWin.In(r) && !a.visibleOverlays()
 }
 
 // ---- the split view's channel header ----

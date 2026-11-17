@@ -201,6 +201,11 @@ func Pump() { drain() }
 // run executes work on a goroutine (15 s timeout) and then done on the UI
 // goroutine. Must be called on the UI goroutine.
 func run[T any](h Host, work func(ctx context.Context) (T, error), done func(T, error)) {
+	runFor(h, 15*time.Second, work, done)
+}
+
+// runFor is run with work's context timing out after d.
+func runFor[T any](h Host, d time.Duration, work func(ctx context.Context) (T, error), done func(T, error)) {
 	asyncMu.Lock()
 	inflight++
 	p := pumpLive[h]
@@ -214,7 +219,7 @@ func run[T any](h Host, work func(ctx context.Context) (T, error), done func(T, 
 		h.ShowOverlay(p)
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), d)
 		v, err := work(ctx)
 		cancel()
 		post(h, func() {
