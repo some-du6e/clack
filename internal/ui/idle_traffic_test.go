@@ -102,6 +102,11 @@ func TestIdleTrafficFrames(t *testing.T) {
 	run := func(name string, caret bool) {
 		t.Helper()
 		e.settle(time.Second)
+		// core's deferred boot loads (the user groups' names, client
+		// extras: a.later 5 s after boot) are start-up, not traffic
+		if d := 8*time.Second - time.Since(e.a.data.booted); d > 0 {
+			e.settle(d)
+		}
 		b0 := e.a.data.core.SnapshotBuilds()
 		evMu.Lock()
 		evLog, buildStacks, t0 = nil, nil, time.Now()
