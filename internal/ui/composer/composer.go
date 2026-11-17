@@ -1259,12 +1259,17 @@ func (c *Composer) submit() {
 				app = p.AppID
 			}
 			c.cmdPick = core.Command{}
+			// executeCommand sends the arguments as blocks, so a mention
+			// goes out as its member, not as the name the chip shows
+			// (Text, the plain words, would let the server match "@karim"
+			// to someone else)
+			blocks := commandArgs(d).CommandBlocks()
 			c.clearAfterSend()
 			go func() {
 				// handleSlashCommand: the reply or the failure is
 				// Slackbot's ephemeral; the app's modal arrives as
 				// view_opened for the command's client_token
-				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts, AppID: app})
+				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), Blocks: blocks, ThreadTS: ts, AppID: app})
 				if err == nil && res.KeepInput {
 					c.restore(doc)
 				}
