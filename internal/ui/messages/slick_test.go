@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
 	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/store"
@@ -79,7 +82,14 @@ func newSlickEnv(t *testing.T, seed func(s *store.Store)) *slickEnv {
 	e.tt, e.s = tt, s
 	slackc.SetBridge(tt.Bridge())
 	SetTaut(tt)
+	// the Slack components plugins render themselves (api.elements.Avatar
+	// and the rest), as the app registers them, and the theme and core
+	// they draw with (slackc_wire.go: slackc.Init before any plugin draws)
+	th := theme.New(false)
+	RegisterSlackHosts()
+	slackc.Init(slackc.Env{Theme: th, Core: app, Invalidate: func() {}})
 	t.Cleanup(func() {
+		slackc.Init(slackc.Env{})
 		SetTaut(nil)
 		slackc.SetBridge(nil)
 		slackc.Reset() // the next env's runtime must get every root rendered again (taut_wire does this on attach)
@@ -87,7 +97,7 @@ func newSlickEnv(t *testing.T, seed func(s *store.Store)) *slickEnv {
 		_ = s.Close()
 		_ = tt.Close()
 	})
-	e.h = coreHost{app: app, th: theme.New(false)}
+	e.h = coreHost{app: app, th: th}
 	return e
 }
 
@@ -596,15 +606,61 @@ func TestSlickViewCustomSlackbot(t *testing.T) {
 
 // WhoReacted: each reaction pill lists its reactors' avatars (Reaction
 // provides them, UnstyledButton data-qa=reactji in its tree draws them).
+// WhoReacted draws the reactors' avatars in each pill. Since Slick #480
+// (97cbb8e, 2026-11-17) its avatar is Slack's own component,
+// api.elements.Avatar (ConnectedBaseAvatar {userId, size: 16}), where it was
+// an <img> of the member's image_24; Clack draws that component with its
+// own host (hostAvatar). The check is that the pill's frames draw alice's
+// picture (slackc's image cache is asked for it), which holds for either.
+// The test env had no Slack hosts registered, so the component drew
+// nothing (no native component for ConnectedBaseAvatar), and the test,
+// which looked for the image's URL in the plugin's tree, timed out.
 func TestSlickViewWhoReacted(t *testing.T) {
 	e := newSlickEnv(t, nil)
+	drew := drawnImages(t, e.app, e.h.th)
 	e.install(t, "WhoReacted", nil)
 	patched(t, "Reaction", "UnstyledButton")
 	v := NewChannelView(e.h, tGen)
 	v.Preview = true
 	e.waitFor(t, "the reactors' avatars in the tada pill", frameFn(v), func() bool {
-		return e.ui.anyTree("slick-wr__av") && e.ui.anyTree("alice-48.png")
+		return e.ui.anyTree("slick-wr__av") && drew("avatars.invalid/alice-")
 	})
+}
+
+// drawnImages gives slackc the image cache the app gives it (slackc.Init,
+// with the account's core), one that records the URLs it's asked to load
+// (each a picture a frame drew), and returns whether one containing sub
+// was. Synthetic images only.
+func drawnImages(t *testing.T, app *core.App, th *theme.Theme) func(sub string) bool {
+	t.Helper()
+	m := image.NewNRGBA(image.Rect(0, 0, 48, 48))
+	for i := range m.Pix {
+		m.Pix[i] = 0x80
+	}
+	var b bytes.Buffer
+	if err := png.Encode(&b, m); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var urls []string
+	imgs := imgcache.New(func(_ context.Context, url string) ([]byte, error) {
+		mu.Lock()
+		urls = append(urls, url)
+		mu.Unlock()
+		return b.Bytes(), nil
+	}, "", nil)
+	slackc.Init(slackc.Env{Theme: th, Core: app, Images: imgs, Invalidate: func() {}})
+	t.Cleanup(func() { slackc.Init(slackc.Env{}) })
+	return func(sub string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, u := range urls {
+			if strings.Contains(u, sub) {
+				return true
+			}
+		}
+		return false
+	}
 }
 
 // MessageLogger and threads (Karim, alpha.15): a deleted reply the logger

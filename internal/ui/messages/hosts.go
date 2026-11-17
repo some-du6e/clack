@@ -26,11 +26,18 @@ func RegisterSlackHosts() {
 	slackc.RegisterHost(hostChannel, "BaseMrkdwnChannel")
 }
 
+// hostCore is the core the host components draw with: the message
+// list's host's, else slackc's, the account's (slackc.Init). A host drawn
+// before any message list was (a plugin's avatar, mrkdwn or blocks on
+// Activity, the page Clack may open on) had none: its avatars stayed
+// placeholders and its mentions unresolved until a channel opened.
 func hostCore() *core.App {
-	if lastHost == nil {
-		return nil
+	if lastHost != nil {
+		if c := lastHost.Core(); c != nil {
+			return c
+		}
 	}
-	return lastHost.Core()
+	return slackc.CurrentEnv().Core
 }
 
 // hostAnchor is a popup anchor for a click in a host component.
@@ -48,7 +55,7 @@ func hostAvatar(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	s := gtx.Dp(unit.Dp(p.IntOr("size", 36)))
 	size := image.Pt(s, s)
 	id := p.StrOr("userId", "")
-	url := avatarURL(lastHost, p, "", "")
+	url := avatarURLIn(hostCore(), p, "", "")
 	c := colorsFor(h.Theme())
 	btn := h.State(func() any { return new(widget.Clickable) }).(*widget.Clickable)
 	if (!p.Has("isInteractive") || p.Bool("isInteractive")) && id != "" && lastHost != nil {
