@@ -93,7 +93,9 @@ func TestBotMessageReachesTheList(t *testing.T) {
 		ch := ids[1]
 		e.openAtLatest(ch)
 		ts := owlPost(e, ch, 42110)
-		e.until("Owl's message in the open list", 5*time.Second, func() bool { return e.rowDrawn(ch, ts) })
+		if !e.untilSoft(5*time.Second, func() bool { return e.rowDrawn(ch, ts) }) {
+			t.Fatalf("timed out waiting for %s", "Owl's message in the open list")
+		}
 		e.stays(t, ch, ts, "open")
 		// it becomes a thread parent: three replies come over the socket
 		for i := 0; i < 3; i++ {
@@ -117,9 +119,13 @@ func TestBotMessageReachesTheList(t *testing.T) {
 		e.openChannel(ch)
 		e.settle(100 * time.Millisecond) // the page is read; its answer waits
 		ts := owlPost(e, ch, 42111)
-		e.until(ch+"'s history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+		if !e.untilSoft(20*time.Second, func() bool { return e.loadedMessages(ch) > 0 }) {
+			t.Fatal("no history")
+		}
 		e.toLatest()
-		e.until("Owl's message in the list", 5*time.Second, func() bool { return e.rowDrawn(ch, ts) })
+		if !e.untilSoft(5*time.Second, func() bool { return e.rowDrawn(ch, ts) }) {
+			t.Fatalf("timed out waiting for %s", "Owl's message in the list")
+		}
 		e.stays(t, ch, ts, "open, its history in flight")
 	})
 
@@ -130,7 +136,9 @@ func TestBotMessageReachesTheList(t *testing.T) {
 		ts := owlPost(e, ch, 42112)
 		e.settle(300 * time.Millisecond)
 		e.openAtLatest(ch)
-		e.until("Owl's message in the reopened list", 5*time.Second, func() bool { return e.rowDrawn(ch, ts) })
+		if !e.untilSoft(5*time.Second, func() bool { return e.rowDrawn(ch, ts) }) {
+			t.Fatalf("timed out waiting for %s", "Owl's message in the reopened list")
+		}
 		e.stays(t, ch, ts, "away, then reopened")
 	})
 
@@ -145,9 +153,13 @@ func TestBotMessageReachesTheList(t *testing.T) {
 		}
 		time.Sleep(150 * time.Millisecond) // the page is read; its answer waits
 		ts := owlPost(e, ch, 42113)
-		e.until("the prefetched page", 10*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+		if !e.untilSoft(10*time.Second, func() bool { return e.loadedMessages(ch) > 0 }) {
+			t.Fatal("the prefetched page never came")
+		}
 		e.openAtLatest(ch)
-		e.until("Owl's message in the list", 5*time.Second, func() bool { return e.rowDrawn(ch, ts) })
+		if !e.untilSoft(5*time.Second, func() bool { return e.rowDrawn(ch, ts) }) {
+			t.Fatalf("timed out waiting for %s", "Owl's message in the list")
+		}
 		e.stays(t, ch, ts, "away, its history read as it came")
 	})
 }
