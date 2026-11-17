@@ -387,8 +387,10 @@ func TestPerfPluginScroll(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.settle(300 * time.Millisecond)
-	e.calls.reg = newPerfRootReg() // every root from here on, for the idle passes' log
-	slackc.SetBridge(countingBridge{e.tt.Bridge(), &e.calls})
+	// every root from here on, for the idle passes' log
+	perfReg = newPerfRootReg()
+	t.Cleanup(func() { perfReg = nil })
+	slackc.SetBridge(perfRegBridge{countingBridge{e.tt.Bridge(), &e.calls}, perfReg})
 
 	res := perfPluginResult{}
 	lib := e.a.pluginLib()
@@ -1193,14 +1195,15 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 	// the pass's Go→JS renders by component: for a root not rendered
 	// before why (perfRootReg), for one rendered again what in its props
 	// changed (top-level keys, msg's one level down)
-	if e.calls.reg == nil {
-		e.calls.reg = newPerfRootReg()
+	if perfReg == nil {
+		perfReg = newPerfRootReg()
+		slackc.SetBridge(perfRegBridge{countingBridge{e.tt.Bridge(), &e.calls}, perfReg})
 	}
 	rl := newPerfRenderLog(80)
-	e.calls.reg.start(rl)
+	perfReg.start(rl)
 	ep0, fetch0 := perfViewStats(e)
 	defer func() {
-		e.calls.reg.stop()
+		perfReg.stop()
 		ep1, fetch1 := perfViewStats(e)
 		e.t.Logf("pass %s: taut's view epoch moved %d times, %d view fetches", name, ep1-ep0, fetch1-fetch0)
 		for _, line := range rl.top() {
@@ -1344,8 +1347,34 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 	return p
 }
 
+// perfReg is the run's perfRootReg (TestPerfPluginScroll).
+var perfReg *perfRootReg
+
+// perfRegBridge is countingBridge recording in a perfRootReg too (here,
+// not in countingBridge: the perf job runs this file on the base tree
+// too, with that tree's plugin_bench_test.go).
+type perfRegBridge struct {
+	countingBridge
+	reg *perfRootReg
+}
+
+func (b perfRegBridge) Render(root uint64, name string, props []byte) {
+	b.reg.note(root, 0, 0, name, props)
+	b.countingBridge.Render(root, name, props)
+}
+
+func (b perfRegBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	b.reg.note(root, parent, parentK, name, props)
+	b.countingBridge.RenderIn(root, parent, parentK, name, props)
+}
+
+func (b perfRegBridge) Unmount(root uint64) {
+	b.reg.unmount(root)
+	b.countingBridge.Unmount(root)
+}
+
 // perfRootReg records every plugin root the run renders and unmounts
-// (countingBridge), so an idle pass can tell why a root it renders wasn't
+// (perfRegBridge), so an idle pass can tell why a root it renders wasn't
 // there before: one never drawn, or one mounted again (a root of the same
 // component and key unmounted first, its parent mounted again, or its
 // parent's tree re-keyed the "@" node it hangs under).
