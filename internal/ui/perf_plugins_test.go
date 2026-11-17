@@ -204,11 +204,16 @@ func perfViewStats(e *benchEnv) (epoch, fetches uint64) {
 	if !v.IsValid() {
 		return 0, 0
 	}
-	if f := v.FieldByName("epoch").FieldByName("v"); f.IsValid() && f.CanUint() {
-		epoch = f.Uint()
+	// either may be missing (the base tree's cache, older than the epoch)
+	if f := v.FieldByName("epoch"); f.IsValid() {
+		if f = f.FieldByName("v"); f.IsValid() && f.CanUint() {
+			epoch = f.Uint()
+		}
 	}
-	if f := v.FieldByName("fetches").FieldByName("v"); f.IsValid() && f.CanInt() {
-		fetches = uint64(f.Int())
+	if f := v.FieldByName("fetches"); f.IsValid() {
+		if f = f.FieldByName("v"); f.IsValid() && f.CanInt() {
+			fetches = uint64(f.Int())
+		}
 	}
 	return epoch, fetches
 }
