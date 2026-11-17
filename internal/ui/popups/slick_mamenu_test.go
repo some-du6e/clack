@@ -18,6 +18,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/richclip"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -126,20 +127,24 @@ func TestMessageMenuAddedActions(t *testing.T) {
 		t.Error("MAMenu's tree doesn't carry the action")
 	}
 
-	// picking it runs its onSelect, and the menu closes (onTriggerClose)
-	m.activate(maGtx(), i)
+	// picking it runs its onSelect, then onTriggerClose closes the menu
+	// (the row's pick alone, without Menu closing itself first as a click
+	// does)
+	one.DoCtx(maGtx())
 	slUntil(t, 10*time.Second, "Act one's onSelect", nil, func() bool { return e.jsString(t, "globalThis.__actsPicked") == "one" })
-	if !m.Dismissed() {
-		t.Error("the menu stayed open")
-	}
+	slUntil(t, 10*time.Second, "onTriggerClose closing the menu", nil, m.Dismissed)
 
-	// a native row goes through the plugin's onSelectAction, then runs
-	// natively: Mark unread marks
+	// a native row goes through Slick's onSelectAction, which passes it
+	// on: Mark unread marks, once
 	m = NewMessageMenu(e.h, image.Pt(900, 200), maMsg)
-	maWait(t, m, "acts_one", true, "Act one again")
+	d := maOpen(t, e, m, "Act one again")
 	before := e.api.called("conversations.mark")
-	m.activate(maGtx(), slIndex(m.items, "mark_unread"))
-	slUntil(t, 10*time.Second, "Mark unread marking the conversation", nil, func() bool { return e.api.called("conversations.mark") > before })
+	d.clickRow("mark_unread")
+	d.until("Mark unread marking the conversation", func() bool { return e.api.called("conversations.mark") > before })
+	d.settle()
+	if n := e.api.called("conversations.mark") - before; n != 1 || d.lastPick().answered() != maPassed {
+		t.Errorf("Mark unread marked %d times, want once", n)
+	}
 	if got := e.jsString(t, "globalThis.__actsPicked"); got != "one" {
 		t.Errorf("picked %q after Mark unread", got)
 	}
@@ -212,12 +217,18 @@ func TestMessageMenuOldPatch(t *testing.T) {
 	}
 	m.activate(maGtx(), 0)
 	slUntil(t, 10*time.Second, "its onSelectAction", nil, func() bool { return e.jsString(t, "globalThis.__oldPicked") == slMsgTS })
-	// the rest still go on to Clack's natives
+	picks := maPicks(e.h)
+	slUntil(t, 10*time.Second, "its answer", nil, func() bool { return picks[len(picks)-1].answered() == maTaken })
+	// the rest still go on to Clack's natives, once
 	m = NewMessageMenu(e.h, image.Pt(900, 200), maMsg)
-	maWait(t, m, "old-tabs-open-thread", true, "the old build's row again")
+	d := maOpen(t, e, m, "the old build's row again")
 	before := e.api.called("conversations.mark")
-	m.activate(maGtx(), slIndex(m.items, "mark_unread"))
-	slUntil(t, 10*time.Second, "Mark unread", nil, func() bool { return e.api.called("conversations.mark") > before })
+	d.clickRow("mark_unread")
+	d.until("Mark unread", func() bool { return e.api.called("conversations.mark") > before })
+	d.settle()
+	if n := e.api.called("conversations.mark") - before; n != 1 || e.jsString(t, "globalThis.__oldPicked") != slMsgTS {
+		t.Errorf("Mark unread marked %d times (want once), the plugin picked %q", n, e.jsString(t, "globalThis.__oldPicked"))
+	}
 }
 
 // A patch reorders, renames and hides the menu's actions, moves rows
@@ -279,8 +290,48 @@ func TestMessageMenuReorganized(t *testing.T) {
 	if sep := rows[2]; sep.Min.Y != a.Max.Y || sep.Min.X != rows[3].Min.X || sep.Dx() != 300 {
 		t.Errorf("separator %v under the big rows %v", sep, a)
 	}
-	// picking a big row still runs it (Copy link: no plugin action, native)
-	if m.items[0].Do == nil && m.items[0].DoCtx == nil {
-		t.Error("the big Copy link row does nothing")
+
+	// picking the tiles through the window's input runs them (the patch
+	// passed onSelectAction on: Clack's rows run as they are): Copy link
+	// puts the message's link on the clipboard, Copy its text
+	open := func(what string) (*Menu, *maDriver) {
+		t.Helper()
+		m := NewMessageMenu(e.h, image.Pt(900, 200), maMsg)
+		return m, maOpen(t, e, m, what)
+	}
+	m, d := open("the reorganised menu, through the router")
+	if r := m.RowRects(); r[0].Dx() != 150 || r[1].Min.X != r[0].Max.X {
+		t.Fatalf("tiles %v %v", r[0], r[1])
+	}
+	d.click(m.RowRects()[0])
+	d.until("Copy link's link on the clipboard", func() bool { return len(d.clip) > 0 })
+	if link := permalink(e.h, slGen, slMsgTS, ""); d.clip[0] != link || !m.Dismissed() {
+		t.Errorf("the Copy link tile: clipboard %q (want %q), closed %v", d.clip, link, m.Dismissed())
+	}
+	if !richclip.Supported() { // else Copy message writes the OS clipboard itself
+		m, d = open("the menu for the Copy tile")
+		d.click(m.RowRects()[1])
+		d.until("Copy's text on the clipboard", func() bool { return len(d.clip) > 0 })
+		if d.clip[0] != "a synthetic message" {
+			t.Errorf("the Copy tile: clipboard %q", d.clip)
+		}
+	}
+	// Mark unread, moved into Organize, marks
+	m, d = open("the menu for Organize")
+	d.openSub("organize_actions_menu")
+	before := e.api.called("conversations.mark")
+	d.clickSub("mark_unread")
+	d.until("Mark unread from Organize", func() bool { return e.api.called("conversations.mark") > before })
+	d.settle()
+	if n := e.api.called("conversations.mark") - before; n != 1 || !m.Dismissed() {
+		t.Errorf("Mark unread from Organize marked %d times (want once), closed %v", n, m.Dismissed())
+	}
+	// and Organize's own Pin, by its key from the root menu
+	pins := e.api.called("pins.add")
+	m, d = open("the menu for P")
+	d.key("P", 0)
+	d.until("P pinning", func() bool { return e.api.called("pins.add") > pins })
+	if !m.Dismissed() {
+		t.Error("P left the menu open")
 	}
 }

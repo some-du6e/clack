@@ -366,6 +366,9 @@ func (m *Menu) wrapProps(i int) slackc.Props {
 	if !p.Has("onTriggerClose") {
 		p["onTriggerClose"] = m.closeAll
 	}
+	if m.ma != nil && p.Has("targetBounds") {
+		p["targetBounds"] = rectProps(m.ma.target, m.scale) // the trigger's DOMRect, CSS px
+	}
 	if w.Name == "ContextMenuTriggerWithKeyboardFocus" {
 		if h := m.ctxTemplate(); h != nil {
 			p["getTemplate"] = h

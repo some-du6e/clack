@@ -70,6 +70,11 @@ func (m *Menu) layoutMenu(gtx layout.Context, p slackc.Props) layout.Dimensions 
 		m.setItems(items)
 		m.nExtra = len(extra)
 	}
+	if m.ma != nil && m.parent == nil && m.ma.holding(gtx) {
+		// the plugin's layout of the rows is on its way: draw the card once,
+		// with it (maHold)
+		return layout.Dimensions{Size: m.win}
+	}
 	m.layoutCard(gtx, m.win)
 	return layout.Dimensions{Size: m.win}
 }

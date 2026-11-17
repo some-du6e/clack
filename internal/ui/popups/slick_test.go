@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -649,6 +650,23 @@ func TestSlickViewMessageLogger(t *testing.T) {
 		if slIndex(m.items, "mark_unread") < 0 {
 			t.Errorf("native rows gone: %+v", m.items)
 		}
+		// clicking it forgets the deletion and closes the menu
+		// (MessageActionsMenu's onTriggerClose)
+		d := newMADriver(t, e.h, m)
+		d.until("the old row laid out", func() bool { return laidOut(m) && slIndex(m.items, "plugin-row") >= 0 })
+		d.click(m.RowRects()[slIndex(m.items, "plugin-row")])
+		d.until("the menu closing", m.Dismissed)
+		slUntil(t, 15*time.Second, "a menu without Accept deletion", nil, func() bool {
+			again := NewMessageMenu(e.h, image.Pt(900, 200), msg)
+			f := slFrame(again)
+			for k := 0; k < 30; k++ {
+				f()
+				Pump()
+				slackc.Pump()
+				time.Sleep(10 * time.Millisecond)
+			}
+			return slIndex(again.items, "plugin-row") < 0 && slIndex(again.items, "mark_unread") >= 0
+		})
 		return
 	}
 	slUntil(t, 15*time.Second, "Accept deletion in the message's ⋮ menu", slFrame(m), func() bool {
@@ -665,10 +683,12 @@ func TestSlickViewMessageLogger(t *testing.T) {
 	if slIndex(m.items, "slick_ml_hide_edits") >= 0 || slIndex(m.items, "slick_ml_show_edits") >= 0 {
 		t.Errorf("edit history rows without edits: %s", maKeys(m.items))
 	}
-	// picking it runs its onSelect: the deletion is forgotten, and the
-	// next menu has no row for it
-	m.activate(maGtx(), i)
-	slUntil(t, 10*time.Second, "the menu closing", nil, func() bool { return m.Dismissed() })
+	// picking it runs its onSelect: the deletion is forgotten, Slick's
+	// onTriggerClose closes the menu (the pick alone: Menu doesn't close
+	// itself first here, as a click does), and the next menu has no row
+	// for it
+	m.items[i].DoCtx(maGtx())
+	slUntil(t, 10*time.Second, "onTriggerClose closing the menu", nil, func() bool { return m.Dismissed() })
 	var again *Menu
 	slUntil(t, 15*time.Second, "a menu without Accept deletion", nil, func() bool {
 		again = NewMessageMenu(e.h, image.Pt(900, 200), msg)
@@ -941,7 +961,7 @@ func TestSlickViewChatTabs(t *testing.T) {
 		})
 		i := slIndex(mm.items, "slick-chat-tabs-open-thread")
 		it := mm.items[i]
-		if it.Label != "Open in new Slick tab" || it.Do == nil {
+		if it.Label != "Open in new Slick tab" || it.DoCtx == nil {
 			t.Errorf("%s: row %+v", mk.what, it)
 		}
 		if actions && i != len(mm.items)-1 {
@@ -950,15 +970,15 @@ func TestSlickViewChatTabs(t *testing.T) {
 		if slIndex(mm.items, "copy_link") < 0 {
 			t.Errorf("%s: native rows gone: %s", mk.what, maKeys(mm.items))
 		}
-		// picking it is ChatTabs': no native row runs (its tab bar isn't
-		// drawn here; internal/ui's TestSlickViewChatTabs opens the tab)
-		before := e.api.called("conversations.mark")
+		// picking it is ChatTabs': its handler answers for it, so nothing
+		// of Clack's runs (its tab bar isn't drawn here; internal/ui's
+		// TestSlickViewChatTabs opens the tab)
 		mm.activate(maGtx(), i)
-		time.Sleep(200 * time.Millisecond)
-		Pump()
-		slackc.Pump()
-		if !mm.Dismissed() || e.api.called("conversations.mark") != before {
-			t.Errorf("%s: picking it: closed=%v", mk.what, mm.Dismissed())
+		picks := maPicks(e.h)
+		p := picks[len(picks)-1]
+		slUntil(t, 10*time.Second, mk.what+": ChatTabs' answer", nil, func() bool { return p.answered() != maWaiting })
+		if p.answered() != maTaken || !mm.Dismissed() {
+			t.Errorf("%s: picking it: answer %d, closed=%v", mk.what, p.answered(), mm.Dismissed())
 		}
 	}
 
@@ -992,10 +1012,10 @@ func TestSlickViewInstalledApps(t *testing.T) {
 }
 
 // BetterMessageMenu (Slick #473): the More actions menu as it
-// reorganises it (big buttons first, side by side; the rest in one
-// group; Save and Mark unread moved into Organize), its saved order and
-// hidden actions, and its editor on its settings page (api.settings.panel)
-// changing the menu.
+// reorganises it (big buttons first, side by side; the other rows after
+// them, some moved into Organize), its saved order and hidden actions,
+// and its editor on its settings page (api.settings.panel) changing the
+// menu.
 func TestSlickViewBetterMessageMenu(t *testing.T) {
 	e := slNewEnv(t)
 	if _, err := os.Stat(filepath.Join(e.dir, "BetterMessageMenu.js")); err != nil {
@@ -1011,28 +1031,44 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 		return m
 	}
 
-	// the defaults on someone else's message: Copy link and Copy message
-	// as big buttons, two to a row
+	// its defaults on someone else's message: a first group of big
+	// buttons side by side, and every action of Clack's once, at the top
+	// level or in Organize (beside Organize's own Pin). Checked by shape,
+	// not by Better Message Menu's default order: ui-slick builds Slick's
+	// main, whose defaults may change.
 	m := open("the reorganised menu")
-	if got := maIDs(m.items); got != "copy_link copy_text | remind subscribe organize_actions_menu connect_to_apps_actions_menu" {
-		t.Fatalf("rows %s (natively %s)", got, maIDs(maNative(m)))
+	top, org := bmmLevels(t, m)
+	if len(top) < 2 || len(top[0]) == 0 {
+		t.Fatalf("rows %s (natively %s)", maIDs(m.items), maIDs(maNative(m)))
 	}
-	if c := m.items[1]; c.Label != "Copy" || !strings.Contains(maClass(&c), "slick-bmm-bigaction-n2") {
-		t.Errorf("big Copy row %+v", c)
+	for k := range top[0] {
+		if !strings.Contains(maClass(&m.items[k]), "slick-bmm-bigaction") {
+			t.Errorf("first group row %s isn't a big button: %q", top[0][k], maClass(&m.items[k]))
+		}
 	}
-	org := m.items[slIndex(m.items, "organize")]
-	if sub := maIDs(org.Sub); sub != "pin later mark_unread" {
-		t.Errorf("Organize submenu %s", sub)
+	for g := 1; g < len(top); g++ {
+		for _, id := range top[g] {
+			if i := maIndex(m.items, id); strings.Contains(maClass(&m.items[i]), "slick-bmm-bigaction") {
+				t.Errorf("big button %s outside the first group: %s", id, maIDs(m.items))
+			}
+		}
+	}
+	bmmOnce(t, "the defaults", m, top, org, nil)
+	if !slices.Contains(org, "pin") {
+		t.Errorf("Organize lost its Pin: %v", org)
 	}
 	f := slFrame(m)
 	f()
 	rows := m.RowRects()
-	if a, b := rows[0], rows[1]; a.Min.Y != b.Min.Y || a.Max.X != b.Min.X || a.Dx() != 150 || b.Dx() != 150 || a.Dy() <= 28 {
-		t.Errorf("big buttons %v %v: want side by side, half the card each, taller than a row", a, b)
+	if len(top[0]) >= 2 {
+		if a, b := rows[0], rows[1]; a.Min.Y != b.Min.Y || a.Max.X != b.Min.X || a.Dx() != b.Dx() || a.Dy() <= 28 {
+			t.Errorf("big buttons %v %v: want side by side, as wide as each other, taller than a row", a, b)
+		}
 	}
 
-	// its saved menu: Get notified first, Add a reminder hidden, Copy link
-	// a menu item (Copy message the one big button, the whole width)
+	// its saved menu: Get notified before Copy link, Add a reminder
+	// hidden, Copy link a menu item, so Copy message is the one big
+	// button, the card's whole width
 	if err := e.s.SetEnabled(e.ctx(t), "BetterMessageMenu", false); err != nil {
 		t.Fatal(err)
 	}
@@ -1042,9 +1078,18 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = open("the saved menu")
-	if got := maIDs(m.items); got != "copy_text | subscribe copy_link organize_actions_menu connect_to_apps_actions_menu" {
-		t.Fatalf("rows %s", got)
+	top, org = bmmLevels(t, m)
+	if len(top) < 2 || !slices.Equal(top[0], []string{"copy_text"}) {
+		t.Fatalf("rows %s: want Copy message alone as the big group", maIDs(m.items))
 	}
+	flat := slices.Concat(top[1:]...)
+	if s, l := slices.Index(flat, "subscribe"), slices.Index(flat, "copy_link"); s < 0 || l < 0 || s > l {
+		t.Errorf("rows %s: want Get notified, then Copy link", maIDs(m.items))
+	}
+	if i := maIndex(m.items, "copy_link"); strings.Contains(maClass(&m.items[i]), "slick-bmm-bigaction") {
+		t.Errorf("Copy link is still big: %q", maClass(&m.items[i]))
+	}
+	bmmOnce(t, "the saved menu", m, top, org, []string{"remind"})
 	f = slFrame(m)
 	f()
 	if r := m.RowRects()[0]; r.Dx() != 300 {
@@ -1054,7 +1099,7 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 	// its editor, on its page: moving Get notified down puts it after
 	// Copy link in the menu
 	info := slPlugin(t, e, "BetterMessageMenu")
-	if slPanelOf(info) == 0 {
+	if !slPanelOf(info) {
 		t.Fatal("no settings panel")
 	}
 	const root = uint64(1) << 40
@@ -1084,8 +1129,49 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 			slackc.Pump()
 			time.Sleep(10 * time.Millisecond)
 		}
-		return strings.HasPrefix(maIDs(m.items), "copy_text | copy_link subscribe ")
+		top, _ := bmmLevels(t, m)
+		flat := slices.Concat(top...)
+		s, l := slices.Index(flat, "subscribe"), slices.Index(flat, "copy_link")
+		return s > l && l >= 0
 	})
+}
+
+// bmmLevels are a Better Message Menu menu's top-level ids, by group, and
+// its Organize submenu's.
+func bmmLevels(t *testing.T, m *Menu) (top [][]string, org []string) {
+	t.Helper()
+	for _, g := range strings.Split(maIDs(m.items), " | ") {
+		top = append(top, strings.Fields(g))
+	}
+	if i := maIndex(m.items, "organize_actions_menu"); i >= 0 {
+		org = strings.Fields(maIDs(m.items[i].Sub))
+	} else {
+		t.Errorf("no Organize row: %s", maIDs(m.items))
+	}
+	return top, org
+}
+
+// bmmOnce checks that each of the menu's native actions, but hidden, is
+// drawn once, at the top level or in Organize, and the hidden nowhere.
+func bmmOnce(t *testing.T, what string, m *Menu, top [][]string, org, hidden []string) {
+	t.Helper()
+	seen := map[string]int{}
+	for _, id := range slices.Concat(slices.Concat(top...), org) {
+		seen[id]++
+	}
+	for _, it := range maNative(m) {
+		if it.Separator || it.Header != "" || it.Note != "" || (it.Label == "" && it.Widget != nil) {
+			continue
+		}
+		id := maRowID(&it)
+		want := 1
+		if slices.Contains(hidden, id) {
+			want = 0
+		}
+		if seen[id] != want {
+			t.Errorf("%s: %s drawn %d times, want %d: %s, Organize %v", what, id, seen[id], want, maIDs(m.items), org)
+		}
+	}
 }
 
 // slAttrNode is the first node in nodes whose attribute name is value.

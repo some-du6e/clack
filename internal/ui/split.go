@@ -302,6 +302,19 @@ func (a *App) splitClick() bool {
 // rows open their item in the split view on that click).
 func (a *App) SplitClick() bool { return a.splitClick() }
 
+// ClickMods are this frame's click's modifiers (popups: a menu row a
+// plugin's onSelectAction passed on runs a frame later, with the click it
+// was picked with).
+func (a *App) ClickMods() key.Modifiers { return a.clickMods }
+
+// WithClickMods runs f as if this frame's click had modifiers m.
+func (a *App) WithClickMods(m key.Modifiers, f func()) {
+	prev := a.clickMods
+	a.clickMods = m
+	defer func() { a.clickMods = prev }()
+	f()
+}
+
 // splitPointer sees the root pointer events (readRootPointer): the
 // modifiers of a click's release, and which container a press lands in
 // (the split view's focus; menus over the workspace don't count).

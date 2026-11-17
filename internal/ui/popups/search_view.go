@@ -2137,21 +2137,22 @@ func (v *SearchView) resultMenu(gtx layout.Context, i int) {
 	v.menuSeq++
 	seq := v.menuSeq
 	v.menuCard = i
-	v.h.ShowOverlay(newSearchResultMenu(v.h, v.msgs[i], a, func() {
+	v.h.ShowOverlay(newSearchResultMenu(v.h, v.msgs[i], a, k, func() {
 		if v.menuSeq == seq {
 			v.menuCard = -1
 		}
 	}))
 }
 
-// newSearchResultMenu is a search result's More actions menu at anchor:
-// MessageActionsOverflowMenu > MessageActionsMenu > MAMenu, as on every
-// message's (isOnSearchTab, messageContainerType search), so plugins that
-// add to the message actions menu reach it.
-func newSearchResultMenu(h Host, m core.Message, anchor image.Rectangle, onClose func()) *Menu {
-	p := actMenuProps(m, anchor)
+// newSearchResultMenu is a search result's More actions menu placed by
+// anchor, opened from the kebab at trigger (window px): MessageActions-
+// OverflowMenu > MessageActionsMenu > MAMenu, as on every message's
+// (isOnSearchTab, messageContainerType search), so plugins that add to the
+// message actions menu reach it.
+func newSearchResultMenu(h Host, m core.Message, anchor, trigger image.Rectangle, onClose func()) *Menu {
+	p := actMenuProps(m, trigger)
 	p["messageContainerType"], p["isOnSearchTab"] = "search", true
-	return NewMenuOpts(h, srResultItems(h, m), MenuOpts{Anchor: anchor, OnClose: onClose,
+	return NewMenuOpts(h, srResultItems(h, m), MenuOpts{Anchor: anchor, Trigger: trigger, OnClose: onClose,
 		Within: "MessageActionsMenu", WithinProps: p, MAMenu: MessageActionsProps(p, "overflow")})
 }
 

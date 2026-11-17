@@ -110,15 +110,21 @@ type MenuItem struct {
 	Context func(at image.Point)
 
 	// Action is a message menu row's Slack action id (lq1n: "copy_link",
-	// "mark_unread", "organize_actions_menu"), its id in MAMenu's actions
-	// (actions_mamenu.go); "" uses Key.
+	// "mark_unread", "organize_actions_menu"; an app shortcut's action id),
+	// its id in MAMenu's actions (actions_mamenu.go); without one a row is
+	// known by its key under its parent.
 	Action string
+	// QA is the row's data-qa in MAMenu's actions where it isn't Slack's
+	// for the action id (an app shortcut's app_action_<id>).
+	QA string
 	// Class is the classes on the row's button besides
 	// c-menu_item__button (MAMenu's p-message_actions_menu__<id> and a
 	// descriptor's className), which plugin CSS selects: a row whose li
 	// that CSS makes an inline box with a width is laid out beside its
 	// neighbours (rowBoxes; Better Message Menu's big buttons).
 	Class string
+
+	maid string // MAMenu's id for a row without an Action (newMAMenu)
 }
 
 // Sep is a separator row.
@@ -168,6 +174,9 @@ type MenuOpts struct {
 	// Within (actions_mamenu.go): its props (MessageActionsProps), the
 	// rows going to JS as its actions.
 	MAMenu slackc.Props
+	// Trigger is what the menu opened from, window px: its targetBounds
+	// (Slack's DOMRect of the trigger, in CSS px); empty is Anchor.
+	Trigger image.Rectangle
 }
 
 // MenuWrap is a Slack component a menu is rendered inside.
@@ -234,7 +243,11 @@ func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
 		m.wraps = append(m.wraps[:len(m.wraps):len(m.wraps)], MenuWrap{Name: o.Within, Props: o.WithinProps})
 	}
 	if o.MAMenu != nil {
-		m.ma = newMAMenu(o.MAMenu, items)
+		target := o.Trigger
+		if target == (image.Rectangle{}) {
+			target = o.Anchor
+		}
+		m.ma = newMAMenu(o.MAMenu, items, target)
 		if m.opts.MenuClass == "" {
 			m.opts.MenuClass = "p-message_actions_menu" // MAMenu's menuClassNames
 		}
@@ -485,6 +498,11 @@ func (m *Menu) keys(gtx layout.Context) {
 				return
 			}
 			continue
+		}
+		// a message menu's submenu action keys (Organize's Pin P), after
+		// the rows' own (MessageActionsMenu's onMenuKeyDown)
+		if a == m && m.maSubKey(gtx, ke) {
+			return
 		}
 		if MenuTypeAhead && !nav {
 			a.typeAhead(gtx, ke)
