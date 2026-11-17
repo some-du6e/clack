@@ -226,10 +226,10 @@ func (hb *hub) channel(ch string) *model {
 	defer hb.mu.Unlock()
 	m, ok := hb.chans[ch]
 	if !ok {
-		hb.nextID++
-		m = &model{ch: ch, id: hb.nextID, typing: map[string]typingEntry{}}
+		m = &model{ch: ch, typing: map[string]typingEntry{}}
 		hb.chans[ch] = m
 		hb.evict(hb.chans)
+		m.id = hb.newID()
 	}
 	m.used = time.Now()
 	return m
@@ -241,13 +241,19 @@ func (hb *hub) threadModel(ch, ts string) *model {
 	k := ch + "/" + ts
 	m, ok := hb.thread[k]
 	if !ok {
-		hb.nextID++
-		m = &model{ch: ch, threadTS: ts, id: hb.nextID, typing: map[string]typingEntry{}}
+		m = &model{ch: ch, threadTS: ts, typing: map[string]typingEntry{}}
 		hb.thread[k] = m
 		hb.evict(hb.thread)
+		m.id = hb.newID()
 	}
 	m.used = time.Now()
 	return m
+}
+
+// newID is a new model's id (hb.mu held).
+func (hb *hub) newID() uint32 {
+	hb.nextID++
+	return hb.nextID
 }
 
 func (hb *hub) evict(ms map[string]*model) {

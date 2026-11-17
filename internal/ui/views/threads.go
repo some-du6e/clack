@@ -278,8 +278,8 @@ func (v *Threads) Layout(gtx C) D {
 	v.frame()
 	v.notes.drain(v.h)
 	v.w.watch(v.h, v.match)
-	v.applyMarks()
 	v.applyLive() // threads_live.go
+	v.applyMarks()
 	if !v.data.started() {
 		v.load(actFresh)
 	}
@@ -383,8 +383,7 @@ func (v *Threads) settle() {
 
 func (v *Threads) load(mode actLoad) {
 	c := v.h.Core()
-	v.lv.log.start(c)            // the messages change from here on (threads_live.go)
-	from := c.MessageChangeSeq() // what changed after this the answer may not have
+	v.lv.log.start(c) // the messages change from here on (threads_live.go)
 	old, _, _ := v.data.get()
 	cursor := ""
 	if mode == actMore {
@@ -407,7 +406,7 @@ func (v *Threads) load(mode actLoad) {
 		if err != nil {
 			return thrData{}, err
 		}
-		fresh := thrFrom(p, from)
+		fresh := thrFrom(p)
 		switch mode {
 		case actMore:
 			return thrJoin(old, fresh), nil
@@ -421,11 +420,11 @@ func (v *Threads) load(mode actLoad) {
 	})
 }
 
-func thrFrom(p core.ThreadsPage, from uint64) thrData {
+func thrFrom(p core.ThreadsPage) thrData {
 	d := thrData{next: p.Next, hasMore: p.HasMore, convs: p.Convs}
 	d.items = make([]thrItem, 0, len(p.Threads))
 	for _, t := range p.Threads {
-		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t, seq: from})
+		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t, seq: p.MsgSeq})
 	}
 	thrSort(d.items)
 	return d
@@ -1034,9 +1033,7 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 // the reply box within it.
 func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h int)) (D, int) {
 	unread := v.unread(t)
-	// the loaded older replies, then the latest ones (as core's changes
-	// left them: threads_live.go)
-	replies := thrShown(t, c)
+	replies := thrShown(t, c) // the loaded older replies, then the latest ones
 	unreadFrom := len(replies) - unread
 	compH, compBottom := 0, 20
 	if c.comp != nil {
@@ -1459,7 +1456,7 @@ func (v *Threads) kbItems(items []thrItem) []vkItem {
 		if c := v.cards[k]; c != nil && c.moreText != "" {
 			add("load_older-"+k, thrKBRow{kind: "load_older", key: k, ch: t.Channel}, i)
 		}
-		for _, m := range thrShown(t, v.cards[k]) { // the replies the card draws
+		for _, m := range thrShown(t, v.cards[k]) {
 			add(k+"-"+m.TS, thrKBRow{kind: "reply", key: k, ch: t.Channel, ts: m.TS}, i)
 		}
 		add("footer-"+k, thrKBRow{kind: "footer", key: k, ch: t.Channel}, i)

@@ -725,6 +725,10 @@ type ThreadsPage struct {
 	TotalUnread int
 	State       ThreadsState
 	Convs       map[string]ConvRef
+	// MsgSeq is the MessageChangeSeq the page was read at (before its
+	// request): what core changed after it the threads may not have
+	// (msg_changes.go)
+	MsgSeq uint64
 }
 
 type SavedItem struct {

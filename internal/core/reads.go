@@ -814,12 +814,12 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 			MentionCount int  `json:"mention_count"`
 		} `json:"threads_state"`
 	}
-	since := a.S.LiveSeq()
+	seq, since := a.MessageChangeSeq(), a.S.LiveSeq()
 	if err := a.C.Call(ctx, "subscriptions.thread.getView", p, &res); err != nil {
 		return ThreadsPage{}, err
 	}
 	// the threads' people are asked for as rows draw them (lazy_users.go)
-	out := ThreadsPage{HasMore: res.HasMore, Next: res.MaxTS, TotalUnread: res.TotalUnreadReplies}
+	out := ThreadsPage{HasMore: res.HasMore, Next: res.MaxTS, TotalUnread: res.TotalUnreadReplies, MsgSeq: seq}
 	chans := map[string]bool{}
 	for _, t := range res.Threads {
 		ch := t.Root.Channel
