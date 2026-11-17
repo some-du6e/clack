@@ -217,9 +217,12 @@ func TestClackPlacementNoise(t *testing.T) {
 	t.Logf("panel, before: %s", statLine(se))
 	t.Logf("panel, after: %s", statLine(sf))
 
-	// rounded rects drawn where they are against cached at the origin and
-	// translated (theme.RRect, Circle)
-	shapes := func(o *op.Ops, cached bool) {
+	// rounded rects recorded where they're drawn against cached at the
+	// origin by size and radius and translated (theme.RRect, Circle and
+	// Image since 2026-11-17, like theme.CachedRRect)
+	var cacheOps op.Ops
+	cached := map[[3]int]clip.PathSpec{}
+	shapes := func(o *op.Ops, cache bool) {
 		bg(o)
 		for k := 0; k < 400; k++ {
 			x := 7 + (k*37)%(w-60)
@@ -227,18 +230,45 @@ func TestClackPlacementNoise(t *testing.T) {
 			r := image.Rect(x, y, x+12+k%40, y+12+k%30)
 			rad := 2 + k%9
 			col := color.NRGBA{R: uint8(k * 7), G: 0xcc, B: uint8(255 - k), A: 0xff}
-			if !cached {
+			if !cache {
 				paint.FillShape(o, col, clip.UniformRRect(r, rad).Op(o))
 				continue
 			}
+			key := [3]int{r.Dx(), r.Dy(), rad}
+			spec, ok := cached[key]
+			if !ok {
+				spec = clip.UniformRRect(image.Rectangle{Max: r.Size()}, rad).Path(&cacheOps)
+				cached[key] = spec
+			}
 			st := op.Offset(r.Min).Push(o)
-			paint.FillShape(o, col, clip.UniformRRect(image.Rectangle{Max: r.Size()}, rad).Op(o))
+			paint.FillShape(o, col, clip.Outline{Path: spec}.Op())
 			st.Pop()
 		}
 	}
-	g, _ := shot(func(o *op.Ops) { shapes(o, false) })
-	g2, _ := shot(func(o *op.Ops) { shapes(o, true) })
-	t.Logf("rounded rects at their place vs at the origin, translated: %s", diffStats(g, g2, all))
+	// each recorded twice, as two frames are: the second frame builds
+	// the paths the first didn't leave in the cache
+	twice := func(cache bool) (*image.RGBA, gpu.FrameStats) {
+		var o op.Ops
+		shapes(&o, cache)
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		o.Reset()
+		shapes(&o, cache)
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		st := win.ClackFrameStats()
+		img := image.NewRGBA(image.Rect(0, 0, w, h))
+		if err := win.Screenshot(img); err != nil {
+			t.Fatal(err)
+		}
+		return img, st
+	}
+	g, sg := twice(false)
+	g2, sg2 := twice(true)
+	t.Logf("400 rounded rects at their place vs cached at the origin, translated: %s", diffStats(g, g2, all))
+	t.Logf("  the second frame built %d paths (%d KB) recorded where drawn, %d (%d KB) cached", sg.PathsBuilt, sg.PathBytes/1024, sg2.PathsBuilt, sg2.PathBytes/1024)
 }
 
 // plainRRect is rr's path built as a plain path: the same curves, no
@@ -301,8 +331,8 @@ func absDiff(a, b uint8) int {
 }
 
 func statLine(s gpu.FrameStats) string {
-	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d left out, %d crossings), %d paths built, %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
-		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.PathsBuilt, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
+	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d left out, %d crossings), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
+		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
 		float64(s.StencilPx)/1e6, float64(s.CoverPx)/1e6, float64(s.BlitPx)/1e6, float64(s.IntersectPx)/1e6, float64(s.ClearPx)/1e6, float64(s.AtlasPx)/1e6)
 }
 

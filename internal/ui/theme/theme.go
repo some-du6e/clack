@@ -444,11 +444,15 @@ func strokeRRect(gtx layout.Context, r image.Rectangle, radius int, w float32, c
 
 // ringBands are the bands around the w px stroke of the rounded rectangle
 // r that hold every pixel the stroke can touch: the top and bottom with
-// the corners, and the sides between them as wide as the corners (the
-// columns under a corner's arc add up its curves too). They tile the
-// stroke's bounds, which Gio grows by w/2 rounded (clip.Op), minus the
-// middle of the ring. n is 0 when the ring is too small for the bands to
-// cost less than one cover of its box.
+// the corners, and between them the sides, as wide as the straight
+// stroke and a pixel more. A pixel's coverage adds up every curve above it
+// in its column, so a side band's pixels under a corner's arc get the
+// arc's curves as before; the rest of the columns under the arcs, inside
+// the ring, are zero and aren't stenciled (each arc's quads reach down to
+// the bottom of the contour, so wide sides stenciled mostly zeros). The
+// bands lie in the stroke's bounds, which Gio grows by w/2 rounded
+// (clip.Op). n is 0 when the ring is too small for the bands to cost less
+// than one cover of its box.
 func ringBands(r image.Rectangle, radius int, w float32) (bands [4]image.Rectangle, n int) {
 	m := int(w*.5 + .5) // as clip.Op grows a stroke's bounds
 	e := max(radius, m) + 1
@@ -458,8 +462,8 @@ func ringBands(r image.Rectangle, radius int, w float32) (bands [4]image.Rectang
 	}
 	bands = [4]image.Rectangle{
 		image.Rect(box.Min.X, box.Min.Y, box.Max.X, r.Min.Y+e),
-		image.Rect(box.Min.X, r.Min.Y+e, r.Min.X+e, r.Max.Y-e),
-		image.Rect(r.Max.X-e, r.Min.Y+e, box.Max.X, r.Max.Y-e),
+		image.Rect(box.Min.X, r.Min.Y+e, r.Min.X+m+1, r.Max.Y-e),
+		image.Rect(r.Max.X-m-1, r.Min.Y+e, box.Max.X, r.Max.Y-e),
 		image.Rect(box.Min.X, r.Max.Y-e, box.Max.X, box.Max.Y),
 	}
 	n = 4

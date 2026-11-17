@@ -1047,6 +1047,7 @@ func (b *Backend) NewBuffer(typ driver.BufferBinding, size int) (driver.Buffer, 
 		return &Buffer{size: size, store: make([]byte, size)}, nil
 	}
 	buf := C.newBuffer(b.dev, C.NSUInteger(size), C.MTLResourceStorageModePrivate)
+	b.apiCall()
 	return &Buffer{backend: b, size: size, buffer: buf}, nil
 }
 
@@ -1560,6 +1561,9 @@ func bufferSlice(buf C.CFTypeRef, off, len int) []byte {
 func (b *Buffer) Release() {
 	if b.buffer != 0 {
 		C.CFRelease(b.buffer)
+		if b.backend != nil {
+			b.backend.apiCall()
+		}
 	}
 	*b = Buffer{}
 }

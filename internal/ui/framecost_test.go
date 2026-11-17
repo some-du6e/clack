@@ -89,21 +89,37 @@ func TestFrameCostWindow(t *testing.T) {
 				if c.theme != "" && !e.a.acct.t.UseCustomHex {
 					t.Fatalf("%s: the account theme %s didn't apply", name, c.theme)
 				}
+				e.costSettle(t, name)
 				now := time.Now()
-				old, so, to := e.costFrame(t, true, 0, now)
-				shifted, _, _ := e.costFrame(t, true, 1, now)
-				repacked, _, _ := e.costFrame(t, true, 2, now)
-				cur, sn, tn := e.costFrame(t, false, 0, now)
-				cur2, _, _ := e.costFrame(t, false, 2, now)
+				old, so, to := e.costFrame(t, true, 0, now, true)
+				cur, sn, tn := e.costFrame(t, false, 0, now, true)
 				t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
 				t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
-				t.Logf("%s, the old way after one tiny path first: %s", name, costDiff(old, shifted))
-				t.Logf("%s, the old way after one window-sized path first (every path elsewhere in the atlas): %s", name, costDiff(old, repacked))
-				t.Logf("%s, the new way after one window-sized path first: %s", name, costDiff(cur, cur2))
-				t.Logf("%s, new against old: %s", name, costDiff(old, cur))
+				// the noise floor: the old way with every path moved in
+				// the atlas, by three paths drawn first
+				var worst *image.RGBA
+				var floorN, floorMax int
+				for sh := 1; sh <= 3; sh++ {
+					moved, _, _ := e.costFrame(t, true, sh, now, false)
+					n, m := costCount(old, moved)
+					t.Logf("%s, the old way after a transparent %v path first: %s", name, costShift(sh, e.size).Size(), costDiff(old, moved))
+					if n > floorN {
+						floorN, worst = n, moved
+					}
+					floorMax = max(floorMax, m)
+				}
+				moved, _, _ := e.costFrame(t, false, 3, now, false)
+				t.Logf("%s, the new way after a transparent %v path first: %s", name, costShift(3, e.size).Size(), costDiff(cur, moved))
+				n, m := costCount(old, cur)
+				t.Logf("%s, new against old: %s; the old way's own floor: up to %d px, max %d", name, costDiff(old, cur), floorN, floorMax)
+				if n > 0 && m > floorMax {
+					t.Logf("%s: new against old differs by %d levels, more than the %d the old way's floor shows", name, m, floorMax)
+				}
 				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
 					costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)
-					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-repacked", old, repacked)
+					if worst != nil {
+						costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-floor", old, worst)
+					}
 				}
 				if thread {
 					e.a.CloseSecondary()
@@ -125,46 +141,58 @@ func TestFrameCostWindow(t *testing.T) {
 const costKarim = `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":false,"useCustomHex":true}`
 
 // costFrame lays the window out at now the old way (legacy) or the new,
-// after one more path drawn first if shift (1: a tiny one, 2: one the
-// size of the window; transparent, so every later path lands elsewhere in
-// the atlas and nothing else changes), draws it a few times (paths built,
-// atlases sized) and returns its pixels, the last frame's stats and the
-// median time of 5 more frames to the end of their rasterization.
-func (e *perfEnv) costFrame(t *testing.T, legacy bool, shift int, now time.Time) (*image.RGBA, gpu.FrameStats, float64) {
+// twice, each into fresh ops as every frame is, after one more
+// transparent path drawn first if shift > 0 (costShift: every later path
+// lands elsewhere in the atlas and nothing else changes). It draws the
+// first layout twice and then the second, and returns that frame's pixels
+// and stats: its paths built are the ones the frame before didn't leave
+// in Gio's path cache. If timed, it also returns the median time of 5
+// more frames from layout to the end of their rasterization (else 0).
+func (e *perfEnv) costFrame(t *testing.T, legacy bool, shift int, now time.Time, timed bool) (*image.RGBA, gpu.FrameStats, float64) {
 	t.Helper()
 	theme.SetLegacyFrameCost(legacy)
 	gpu.ClackLegacyClips(legacy)
 	defer theme.SetLegacyFrameCost(false)
 	defer gpu.ClackLegacyClips(false)
-	e.now = now
-	gtx := e.context()
-	switch shift {
-	case 1:
-		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(image.Rect(1, 1, 9, 7)).Op(gtx.Ops))
-	case 2:
-		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(image.Rectangle{Max: e.size}).Op(gtx.Ops))
-	}
-	e.a.frame(gtx)
-	e.r.Frame(&e.ops)
 	w := e.gpu
-	w.ClackStatsDetail(true)
-	for range 3 {
+	lay := func() {
+		e.now = now
+		gtx := e.context()
+		if d := costShift(shift, e.size); !d.Empty() {
+			paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(d).Op(gtx.Ops))
+		}
+		e.a.frame(gtx)
+		e.r.Frame(&e.ops)
+	}
+	draw := func() {
 		if err := w.Frame(&e.ops); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// the stencil fragment counts keep every path's quads; turning them
+	// on empties the path cache, which the first layout's draws fill
+	w.ClackStatsDetail(true)
+	lay()
+	draw()
+	draw()
+	lay()
+	draw()
 	st := w.ClackFrameStats()
-	w.ClackStatsDetail(false)
 	img := image.NewRGBA(image.Rectangle{Max: e.size})
 	if err := w.Screenshot(img); err != nil {
 		t.Fatal(err)
 	}
+	w.ClackStatsDetail(false)
+	if !timed {
+		return img, st, 0
+	}
+	lay()
+	draw()
 	var ms []float64
 	for range 5 {
 		t0 := time.Now()
-		if err := w.Frame(&e.ops); err != nil {
-			t.Fatal(err)
-		}
+		lay()
+		draw()
 		if err := w.ClackSync(); err != nil {
 			t.Fatal(err)
 		}
@@ -174,10 +202,59 @@ func (e *perfEnv) costFrame(t *testing.T, legacy bool, shift int, now time.Time)
 	return img, st, ms[len(ms)/2]
 }
 
+// costShift is the transparent path costFrame draws first: none, a tiny
+// one, a third of the window and nearly all of it, all of odd sizes, so
+// the paths after it move by odd amounts too.
+func costShift(shift int, size image.Point) image.Rectangle {
+	switch shift {
+	case 1:
+		return image.Rect(1, 1, 8, 6)
+	case 2:
+		return image.Rect(1, 1, size.X/3|1, size.Y/3|1)
+	case 3:
+		return image.Rect(0, 0, size.X-1, size.Y-1)
+	}
+	return image.Rectangle{}
+}
+
+// costSettle waits until the window stops changing: the same frame (laid
+// out at the same time) a second of running apart draws the same pixels
+// (images, replies and members load in the background).
+func (e *perfEnv) costSettle(t *testing.T, name string) {
+	t.Helper()
+	for try := 0; try < 6; try++ {
+		at := time.Now()
+		a, _, _ := e.costFrame(t, false, 0, at, false)
+		e.settle(time.Second)
+		b, _, _ := e.costFrame(t, false, 0, at, false)
+		if string(a.Pix) == string(b.Pix) {
+			return
+		}
+	}
+	t.Logf("%s: the window still changes between frames, so its comparisons include that", name)
+}
+
 func costLine(s gpu.FrameStats) string {
 	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d more without the state cache; %d crossings into C or the system), %d paths built (%.0f KB), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
 		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.PathsBuilt, float64(s.PathBytes)/1024, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
 		float64(s.StencilPx)/1e6, float64(s.CoverPx)/1e6, float64(s.BlitPx)/1e6, float64(s.IntersectPx)/1e6, float64(s.ClearPx)/1e6, float64(s.AtlasPx)/1e6)
+}
+
+// costCount is how many pixels of a and b differ, and by how many
+// levels at most.
+func costCount(a, b *image.RGBA) (n, maxd int) {
+	for i := 0; i+3 < len(a.Pix); i += 4 {
+		d := 0
+		for k := 0; k < 4; k++ {
+			v := int(a.Pix[i+k]) - int(b.Pix[i+k])
+			d = max(d, v, -v)
+		}
+		if d > 0 {
+			n++
+			maxd = max(maxd, d)
+		}
+	}
+	return n, maxd
 }
 
 func costDiff(a, b *image.RGBA) string {
