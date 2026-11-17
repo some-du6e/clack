@@ -7,6 +7,7 @@ import (
 	"hash/maphash"
 	"image"
 	"math"
+	"sync/atomic"
 
 	"gioui.org/gpu/internal/driver"
 	"gioui.org/internal/byteslice"
@@ -63,25 +64,27 @@ import (
 // (driver.ClackPartial: Vulkan, a shared OpenGL context, OpenGL without
 // glBlitFramebuffer).
 
+// clackPartial are the switches; a window's GPU reads them on its own
+// goroutine.
 var clackPartial struct {
-	off      bool // ClackPartialFrames(false)
-	textures bool // ClackPartialTextures(true)
-	frameTex bool // ClackFrameTexture(true)
+	off      atomic.Bool // ClackPartialFrames(false)
+	textures atomic.Bool // ClackPartialTextures(true)
+	frameTex atomic.Bool // ClackFrameTexture(true)
 }
 
 // ClackPartialFrames turns partial frames on (the default) or off for
-// every frame. Call it between frames.
-func ClackPartialFrames(on bool) { clackPartial.off = !on }
+// every frame. Safe from any goroutine; it applies from the next frame.
+func ClackPartialFrames(on bool) { clackPartial.off.Store(!on) }
 
 // ClackPartialTextures makes frames drawn into a texture target
 // (gpu/headless) partial frames, drawn into the texture itself, for tests;
-// they're whole frames by default. Call it between frames.
-func ClackPartialTextures(on bool) { clackPartial.textures = on }
+// they're whole frames by default.
+func ClackPartialTextures(on bool) { clackPartial.textures.Store(on) }
 
 // ClackFrameTexture makes frames drawn into a texture target go through
 // the frame texture and a copy into the target, as a window's frames do,
-// partial frames included, for tests. Call it between frames.
-func ClackFrameTexture(on bool) { clackPartial.frameTex = on }
+// partial frames included, for tests.
+func ClackFrameTexture(on bool) { clackPartial.frameTex.Store(on) }
 
 const (
 	// partialMaxRects is how many disjoint rectangles the damage is kept
@@ -303,18 +306,19 @@ func (g *gpu) partialBegin(target RenderTarget, defFBO driver.Texture, viewport 
 	p := &g.partial
 	out = partialTarget{pass: defFBO}
 	dev, ok := g.ctx.(clackPartialDevice)
-	if clackPartial.off || !ok || !dev.ClackPartialOK() || viewport.X <= 0 || viewport.Y <= 0 {
+	if clackPartial.off.Load() || !ok || !dev.ClackPartialOK() || viewport.X <= 0 || viewport.Y <= 0 {
 		g.partialRelease()
 		return out, nil
 	}
 	tex, isTex := target.(driver.Texture)
-	if isTex && !clackPartial.textures && !clackPartial.frameTex {
+	frameTex := clackPartial.frameTex.Load()
+	if isTex && !clackPartial.textures.Load() && !frameTex {
 		// a texture target draws whole frames, as Gio drew them
 		g.partialRelease()
 		return out, nil
 	}
 	var key any
-	if isTex && !clackPartial.frameTex {
+	if isTex && !frameTex {
 		// a texture target keeps its pixels: the frame draws into it
 		g.releaseFrameTex()
 		out.tex, key = tex, target

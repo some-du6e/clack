@@ -600,7 +600,6 @@ func (g *gpu) frame(target RenderTarget) error {
 	defFBO := g.ctx.BeginFrame(target, g.drawOps.clear, viewport)
 	defer g.ctx.EndFrame()
 	r := g.renderer
-	r.stats.PathsBuilt, r.stats.PathBytes = g.drawOps.buildPaths(g.ctx)
 	for _, img := range g.drawOps.imageOps {
 		expandPathOp(img.path, img.clip)
 	}
@@ -619,6 +618,9 @@ func (g *gpu) frame(target RenderTarget) error {
 	r.pather.stenciler.beginIntersect(r.intersections.sizes)
 	r.layerFBOs.resize(r.ctx, driver.TextureFormatSRGBA, r.layers.sizes)
 	out, dmg := g.partialBegin(target, defFBO, viewport)
+	// the paths the frame stencils: a partial frame's are the ones in its
+	// damage
+	r.stats.PathsBuilt, r.stats.PathBytes = g.drawOps.buildPaths(g.ctx, dmg)
 	r.stencilClips(g.drawOps.pathCache, g.drawOps.pathOps, dmg)
 	r.prepareIntersections(g.drawOps.imageOps)
 	r.intersect(g.drawOps.imageOps, dmg)
@@ -1037,7 +1039,7 @@ func (r *renderer) intersect(ops []imageOp, dmg []image.Rectangle) {
 		if dmg == nil {
 			page(img.place.Idx)
 			r.ctx.Viewport(img.place.Pos.X, img.place.Pos.Y, img.clip.Dx(), img.clip.Dy())
-			r.intersectPath(img.path, img.clip)
+			r.intersectPath(img.path, img.clip, area(img.clip))
 			continue
 		}
 		for _, d := range dmg {
@@ -1051,7 +1053,7 @@ func (r *renderer) intersect(ops []imageOp, dmg []image.Rectangle) {
 			r.ctx.BindVertexBuffer(r.blitter.quadVerts, 0)
 			r.ctx.Viewport(img.place.Pos.X, img.place.Pos.Y, img.clip.Dx(), img.clip.Dy())
 			r.scissor(sc)
-			r.intersectPath(img.path, img.clip)
+			r.intersectPath(img.path, img.clip, area(sc))
 		}
 	}
 	if fbo != -1 {
@@ -1059,9 +1061,12 @@ func (r *renderer) intersect(ops []imageOp, dmg []image.Rectangle) {
 	}
 }
 
-func (r *renderer) intersectPath(p *pathOp, clip image.Rectangle) {
+// intersectPath multiplies the coverage of each path clip is clipped by
+// into the intersection atlas; px is how many of its texels are drawn
+// (the scissor's, in a partial frame).
+func (r *renderer) intersectPath(p *pathOp, clip image.Rectangle, px int64) {
 	if p.parent != nil {
-		r.intersectPath(p.parent, clip)
+		r.intersectPath(p.parent, clip, px)
 	}
 	if !p.path || p.covers(clip) {
 		return
@@ -1085,7 +1090,7 @@ func (r *renderer) intersectPath(p *pathOp, clip image.Rectangle) {
 	r.pather.stenciler.ipipeline.pipeline.UploadUniforms(r.ctx)
 	r.ctx.DrawArrays(0, 4)
 	r.stats.Draws++
-	r.stats.IntersectPx += area(clip)
+	r.stats.IntersectPx += px
 }
 
 func (r *renderer) packIntersections(ops []imageOp) {
@@ -1293,9 +1298,16 @@ func (d *drawOps) collect(root *op.Ops, viewport image.Point) {
 }
 
 // buildPaths uploads the vertices of the paths the cache doesn't hold,
-// and reports how many and their bytes (Clack patch 36).
-func (d *drawOps) buildPaths(ctx driver.Device) (n int, bytes int64) {
+// and reports how many and their bytes (Clack patch 36). A partial frame
+// (dmg not nil, Clack patch 45) uploads only the ones it stencils, in its
+// damage: a path recorded anew every frame (a new key) costs a vertex
+// buffer made and released each frame.
+func (d *drawOps) buildPaths(ctx driver.Device, dmg []image.Rectangle) (n int, bytes int64) {
 	for _, p := range d.pathOps {
+		if dmg != nil && !p.inDamage(dmg) {
+			p.pathVerts = nil
+			continue
+		}
 		if v, exists := d.pathCache.get(p.pathKey); !exists || v.data.data == nil {
 			n++
 			bytes += int64(len(p.pathVerts))
@@ -1313,6 +1325,21 @@ func (d *drawOps) buildPaths(ctx driver.Device) (n int, bytes int64) {
 		p.pathVerts = nil
 	}
 	return n, bytes
+}
+
+// inDamage reports whether a stencil region of p overlaps the damage.
+func (p *pathOp) inDamage(dmg []image.Rectangle) bool {
+	for _, d := range dmg {
+		if p.clip.Overlaps(d) {
+			return true
+		}
+		for _, m := range p.more {
+			if m.clip.Overlaps(d) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (d *drawOps) newPathOp() *pathOp {
@@ -1693,6 +1720,11 @@ func (r *renderer) drawOpsIn(isFBO bool, opOff, viewport image.Point, ops []imag
 		if only && !img.clip.Overlaps(win) {
 			continue
 		}
+		// the pixels it draws: in a partial frame, its part in the damage
+		px := area(img.clip.Add(opOff).Intersect(image.Rectangle{Max: viewport}))
+		if only {
+			px = area(img.clip.Intersect(win))
+		}
 		m := img.material
 		switch m.material {
 		case materialTexture:
@@ -1710,7 +1742,7 @@ func (r *renderer) drawOpsIn(isFBO bool, opOff, viewport image.Point, ops []imag
 		switch img.clipType {
 		case clipTypeNone:
 			r.stats.Blits++
-			r.stats.BlitPx += area(drc.Intersect(image.Rectangle{Max: viewport}))
+			r.stats.BlitPx += px
 			p := r.blitter.pipelines[fboIdx][m.material]
 			r.ctx.BindPipeline(p.pipeline)
 			r.ctx.BindVertexBuffer(r.blitter.quadVerts, 0)
@@ -1723,7 +1755,7 @@ func (r *renderer) drawOpsIn(isFBO bool, opOff, viewport image.Point, ops []imag
 			fbo = r.pather.stenciler.intersections.fbos[img.place.Idx]
 		}
 		r.stats.Covers++
-		r.stats.CoverPx += area(drc.Intersect(image.Rectangle{Max: viewport}))
+		r.stats.CoverPx += px
 		if coverTex != fbo.tex {
 			coverTex = fbo.tex
 			r.ctx.BindTexture(1, coverTex)

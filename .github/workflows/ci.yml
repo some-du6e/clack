@@ -365,9 +365,11 @@ jobs:
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       # Gio patch 35 and ui's quiet frames on App.Run's real X11 window
       # (Xvfb, Mesa's llvmpipe): a frame only an animated emoji asked for
-      # draws the last frame's ops again, without a layout; the same on
-      # Metal and Direct3D are the macos and windows-idle jobs'
-      - name: quiet frames on the real window (TestRealWindowQuietFrames, Xvfb)
+      # draws the last frame's ops again, without a layout; patch 45: a
+      # caret's blink is a partial frame of its pixels, at a fraction of a
+      # whole frame's draws and CPU; the same on Metal and Direct3D are the
+      # macos and windows-idle jobs'
+      - name: quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost, Xvfb)
         if: ${{ !cancelled() }}
         env:
           CLACK_REAL_WINDOW_TESTS: "1"
@@ -375,7 +377,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
-          xvfb-run -a -s "-screen 0 1920x1080x24" go test -count=1 -v -timeout 10m -run '^TestRealWindowQuietFrames$' ./internal/ui
+          xvfb-run -a -s "-screen 0 1920x1080x24" go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
 
   windows:
     runs-on: ubuntu-latest
@@ -1022,13 +1024,14 @@ jobs:
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       # Gio patch 35 and ui's quiet frames on App.Run's real Direct3D
       # window: a frame only an animated emoji asked for draws the last
-      # frame's ops again, without a layout
-      - name: quiet frames on the real window (TestRealWindowQuietFrames)
+      # frame's ops again, without a layout; patch 45: a caret's blink is
+      # a partial frame
+      - name: quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost)
         if: ${{ !cancelled() }}
         env:
           CGO_ENABLED: "0"
           CLACK_REAL_WINDOW_TESTS: "1"
-        run: go test -count=1 -v -timeout 10m -run '^TestRealWindowQuietFrames$' ./internal/ui
+        run: go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
 
 
   macos:
@@ -1331,6 +1334,8 @@ jobs:
           # Gio patch 35 and ui's quiet frames on Metal: a frame only an
           # animated emoji asked for draws the last frame's ops again
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
+          # Gio patch 45 on Metal: a caret's blink is a partial frame
+          CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' || rc=1
           exit $rc
       - name: build
         if: ${{ !cancelled() }}
