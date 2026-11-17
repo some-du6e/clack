@@ -1168,9 +1168,9 @@ type viewCache struct {
 	lastRead  int64
 	sliceRead map[string]int64
 
-	// epoch moves with every change to what a message view shows (a new
-	// value, a conversion made again): lists re-read their rows' views
-	// when it moved, not 250 ms later (ViewEpoch)
+	// epoch moves with every change to what a view shows (a new value, a
+	// stale mark, a conversion made again): lists and rows re-read their
+	// views when it moved, not 250 ms later (ViewEpoch)
 	epoch atomic.Uint64
 
 	// conversion generations (MessageView): the mirror bumps a message's
@@ -1211,11 +1211,14 @@ func (v *viewCache) visibleLocked(g *viewGroup) bool {
 	return g != nil && g.readAt >= v.lastRead-viewOnScreen
 }
 
-// ViewEpoch moves with every change to what MessageView or
-// InjectedMessages hand out (a value fetched, a conversion to be made
-// again): a list re-reads its rows' views when it moved since they
-// last read, rather than after viewRefresh (an idle window's only frame
-// for a change came and went within it, and the row kept the old view).
+// ViewEpoch moves with every change to what the views hand out
+// (MessageView, InjectedMessages, MemberView…: a value fetched, one marked
+// stale, a conversion to be made again): a list or a row re-reads its
+// views when it moved since it last read, rather than after viewRefresh.
+// The one frame a change asks for came and went inside a row's 250 ms,
+// and with nothing else laying the window out (an idle window, or one
+// whose only frames are an animated emoji's quiet ones) the row kept the
+// old view.
 func (t *Taut) ViewEpoch() uint64 {
 	if t == nil {
 		return 0
@@ -1317,11 +1320,11 @@ func (v *viewCache) staleAll() {
 // whether one of them is on screen (visibleLocked): those the UI reads
 // again soon; the rest are fetched again when next read.
 func (v *viewCache) stale(slice, key string) bool {
-	if slice == "messages" {
-		defer v.epoch.Add(1)
-	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.sliceN[slice] > 0 { // the UI reads views of it: they read again (ViewEpoch)
+		v.epoch.Add(1)
+	}
 	v.seq++
 	if key == "" {
 		v.sliceVer[slice] = v.seq
@@ -1421,9 +1424,7 @@ func (v *viewCache) work() {
 				bucket := k.slice == "messages" && k.key != "" && k.sub == ""
 				if !bucket || cur == nil || !sameInj(cur.inj, e.inj) {
 					changed = true
-					if k.slice == "messages" {
-						v.epoch.Add(1)
-					}
+					v.epoch.Add(1)
 				}
 				g.subs[k.sub] = e
 				cur = e

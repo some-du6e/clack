@@ -93,6 +93,7 @@ type row struct {
 	// resolved author (refreshed when users change)
 	uRev      uint64
 	memAt     time.Time // last member-view check (patchSlice('members'))
+	memEpoch  uint64    // taut's ViewEpoch at it
 	name      string
 	avatar    string
 	statusURL string
@@ -402,10 +403,17 @@ func (r *row) growPills() {
 func (r *row) resolve(rc *rowCtx) {
 	t := tautOf()
 	memPatched := t != nil && r.m.User != "" && t.SlicePatched("members")
-	if r.uRev == rc.usersRev && r.uRev != 0 && !(memPatched && rc.now.Sub(r.memAt) >= viewRefresh) {
+	// a member view: again every viewRefresh, and at once when taut's
+	// views changed since (ViewEpoch: the frame a new value asks for
+	// came inside the 250 ms, and quiet frames lay nothing out)
+	var ep uint64
+	if memPatched {
+		ep = t.ViewEpoch()
+	}
+	if r.uRev == rc.usersRev && r.uRev != 0 && !(memPatched && (rc.now.Sub(r.memAt) >= viewRefresh || r.memEpoch != ep)) {
 		return
 	}
-	r.uRev, r.memAt = rc.usersRev, rc.now
+	r.uRev, r.memAt, r.memEpoch = rc.usersRev, rc.now, ep
 	m := &r.m
 	if r.needChan {
 		doc := m.Doc
