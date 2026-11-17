@@ -554,8 +554,9 @@ func (v *Activity) watchItems() {
 					for _, id := range ids {
 						v.notes.members[id] = true
 					}
+					wake := v.namesWakeLocked(ids, conv)
 					v.notes.mu.Unlock()
-					if shown {
+					if shown && wake {
 						v.h.Invalidate()
 					}
 				}
@@ -2870,6 +2871,11 @@ type actNotes struct {
 	// a "user" or "conv" event about anything else draws on no row
 	readers, chans map[string]bool
 	describing     bool
+	// waits are the members and bots the built rows drew without a name
+	// (actDesc.waits) and loadingConv whether one draws a channel still
+	// loading: a "names" event for nothing a row waits on wakes nothing
+	waits       map[string]bool
+	loadingConv bool
 }
 
 func (n *actNotes) add(h Host, s string) {

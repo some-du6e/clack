@@ -145,14 +145,19 @@ func (v *Activity) unbuildStale() {
 // when it ends, readers is what the built rows read and chans the
 // conversations the loaded rows are about.
 func (v *Activity) describingRows(on bool) {
-	var readers, chans map[string]bool
+	var readers, chans, waits map[string]bool
+	loading := false
 	if !on {
-		readers, chans = map[string]bool{}, map[string]bool{}
+		readers, chans, waits = map[string]bool{}, map[string]bool{}, map[string]bool{}
 		for _, r := range v.rows {
 			if r.built {
 				for _, id := range r.d.reads {
 					readers[id] = true
 				}
+				for _, id := range r.d.waits {
+					waits[id] = true
+				}
+				loading = loading || r.d.entOn && r.d.ent.Loading()
 			}
 		}
 		page, _, _ := v.data.get()
@@ -166,9 +171,27 @@ func (v *Activity) describingRows(on bool) {
 	n.mu.Lock()
 	n.describing = on
 	if !on {
-		n.readers, n.chans = readers, chans
+		n.readers, n.chans, n.waits, n.loadingConv = readers, chans, waits, loading
 	}
 	n.mu.Unlock()
+}
+
+// namesWakeLocked reports whether a "names" event for ids changes a row
+// (notes.mu held): one waits on a member or bot among them, or draws a
+// channel still loading when they hold a conversation (conv), or rows
+// are being described. The member fetcher answers for every sender the
+// store didn't hold, in any channel: most draw on no row here.
+func (v *Activity) namesWakeLocked(ids []string, conv bool) bool {
+	n := &v.notes
+	if n.describing || conv && n.loadingConv {
+		return true
+	}
+	for _, id := range ids {
+		if n.waits[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // rowsAbout reports whether a loaded row is about conversation ch (any

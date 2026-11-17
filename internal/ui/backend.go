@@ -855,6 +855,9 @@ func (b *backend) wants(ev core.Event) bool {
 		return v.countsMove(b.core.Counts()) || v.badgeMoves(b.core)
 	case "activity_badges":
 		return v.badgeMoves(b.core)
+	case "names":
+		// the user groups' names (no ids) re-read everything
+		return len(ev.Users) == 0 || v.namesShown(ev.Users)
 	case "conv":
 		// a channel the viewer isn't in, looked up (channel_rename and
 		// channel_created come to every member of the team): no row, no
@@ -1327,6 +1330,7 @@ func (b *backend) applySide(c *convInfo, onlyMissing bool) {
 	}
 	if len(sd.members) > 0 && (!onlyMissing || len(c.Members) == 0) {
 		c.Members = sd.members
+		b.viewFaces(c.Members) // a lookup of one redraws (pumpView.namesShown)
 	}
 	if sd.topic != "" && (!onlyMissing || c.Topic == "") {
 		c.Topic, c.TopicSpans = sd.topic, sd.spans
@@ -1449,6 +1453,11 @@ func (b *backend) resolved(ch string) *convInfo {
 			}
 			b.applySide(ci, true) // opened()'s facepile, if it came first
 			b.ext[ch] = ci
+			for _, id := range append([]string{ci.User}, ci.Members...) { // what its header draws
+				if id != "" {
+					b.viewExt(id, true)
+				}
+			}
 			delete(b.extFailed, ch)
 			a.Invalidate()
 		})

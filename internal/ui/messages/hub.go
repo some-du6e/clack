@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -166,6 +167,49 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 	frame := hb.frame
 	hb.mu.Unlock()
 	return frame.IsZero() || ev.Seen.UnixMilli() >= frame.UnixMilli()
+}
+
+// namesOnScreen reports whether a list drawn in the latest frame shows
+// one of ids: a message's sender (or its bot), the people in its reply
+// bar, or a member, channel or file its text names (Refs). Before any
+// list drew, any might.
+func (hb *hub) namesOnScreen(ids []string) bool {
+	c := core.RefChange{Members: ids, Channels: ids, Files: ids}
+	hb.mu.Lock()
+	frame := hb.frame
+	var ms []*model
+	for _, m := range hb.chans {
+		if m.drawn.Equal(frame) {
+			ms = append(ms, m)
+		}
+	}
+	for _, m := range hb.thread {
+		if m.drawn.Equal(frame) {
+			ms = append(ms, m)
+		}
+	}
+	hb.mu.Unlock()
+	if frame.IsZero() {
+		return true
+	}
+	for _, m := range ms {
+		m.mu.Lock()
+		for i := range m.msgs {
+			e := &m.msgs[i].m
+			if slices.Contains(ids, e.User) || e.BotID != "" && slices.Contains(ids, e.BotID) || e.Refs.Reads(c) {
+				m.mu.Unlock()
+				return true
+			}
+			for _, u := range e.ReplyUsers {
+				if slices.Contains(ids, u) {
+					m.mu.Unlock()
+					return true
+				}
+			}
+		}
+		m.mu.Unlock()
+	}
+	return false
 }
 
 // redraws reports whether ev's change to the models shows: a
@@ -769,8 +813,14 @@ func (hb *hub) apply(ev core.Event) bool {
 			return re
 		}
 		hb.mu.Lock()
-		hb.userRv++
+		hb.userRv++ // rows read their people again when they next draw
 		hb.mu.Unlock()
+		// a lookup of what no list on screen shows (the member fetcher
+		// answers for every sender in any channel the store didn't hold)
+		// draws nothing now
+		if ev.Type == "names" && len(ev.Users) > 0 && !hb.namesOnScreen(ev.Users) {
+			return false
+		}
 		return true
 	case "conv", "conv_removed", "tabs":
 		// a channel's name, icon, membership or tabs: the messages whose

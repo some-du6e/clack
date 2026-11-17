@@ -216,6 +216,7 @@ func TestMacIdleCPU(t *testing.T) {
 	widget.SetCaretBlinkInterval(0)
 	still := measure("channel, caret not blinking", true)
 	widget.SetCaretBlinkInterval(-1)
+	onUI(func() {}) // a frame: the still caret asked for none, and the editor schedules its blinks as it lays out
 	reps = append(reps, still)
 	if b := reps[0].CountMatching("Editor).Layout"); b > 0 {
 		d := reps[0].CPU - still.CPU

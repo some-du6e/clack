@@ -37,3 +37,29 @@ func TestHubSkipsCardOnlyProfileChanges(t *testing.T) {
 		t.Error("a member the store didn't hold before (no Prev) didn't redraw")
 	}
 }
+
+// A lookup ("names": the member fetcher's answer, for a sender in any
+// channel) redraws the lists only when one on screen shows one of its
+// people: a sender, the reply bar's people, a member its text names.
+// Without ids (the user groups' names) every list redraws.
+func TestHubNamesRedrawOnlyWhatIsOnScreen(t *testing.T) {
+	m := &model{ch: "C1", msgs: []entry{{m: core.Message{TS: "1700000000.000100", User: "U0FAKE00001", ReplyUsers: []string{"U0FAKE00002"}}}}}
+	gone := &model{ch: "C2", msgs: []entry{{m: core.Message{TS: "1700000000.000200", User: "U0FAKE00003"}}}}
+	hb := &hub{chans: map[string]*model{"C1": m, "C2": gone}, thread: map[string]*model{}}
+	hb.markDrawn(gone, time.Now().Add(-time.Minute)) // a list left a minute ago
+	hb.markDrawn(m, time.Now())
+	for _, tc := range []struct {
+		ids  []string
+		want bool
+	}{
+		{[]string{"U0FAKE00999"}, false},
+		{[]string{"U0FAKE00003"}, false}, // only a list off screen shows them
+		{[]string{"U0FAKE00001"}, true},
+		{[]string{"U0FAKE00002"}, true},
+		{nil, true},
+	} {
+		if got := hb.apply(core.Event{Type: "names", Users: tc.ids}); got != tc.want {
+			t.Errorf("names %v: redraws %v, want %v", tc.ids, got, tc.want)
+		}
+	}
+}

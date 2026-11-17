@@ -269,3 +269,26 @@ func TestActivityIgnoresCardOnlyProfileChanges(t *testing.T) {
 		t.Error("a rename didn't reach the rows that read the member")
 	}
 }
+
+// A lookup ("names") wakes Activity only for what a row waits on: a
+// member or bot it drew without a name, a channel it draws loading. The
+// member fetcher's answers for senders elsewhere wake nothing.
+func TestActivityNamesWakeOnlyWaitingRows(t *testing.T) {
+	v, _, e, _ := vaFakeActivity(t, false)
+	e.frame()
+	n := &v.notes
+	n.mu.Lock()
+	stranger := v.namesWakeLocked([]string{"U0FAKE00999", "B0FAKE00999"}, false)
+	if n.waits == nil {
+		n.waits = map[string]bool{}
+	}
+	n.waits["U0FAKE00888"] = true // as a row that drew them unknown would
+	waiting := v.namesWakeLocked([]string{"U0FAKE00888"}, false)
+	n.mu.Unlock()
+	if stranger {
+		t.Error("a lookup of people no row waits on woke Activity")
+	}
+	if !waiting {
+		t.Error("a lookup of a member a row waits on didn't wake Activity")
+	}
+}

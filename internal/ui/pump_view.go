@@ -24,9 +24,12 @@ type pumpView struct {
 	ready  bool                    // a model was applied
 	counts map[string]drawnCount   // the model's conversations
 	people map[string]*drawnPerson // the viewer and the model's DM people
-	ext    map[string]bool         // conversations resolved outside the model (backend.ext)
-	inbox  bool                    // the rail's Activity badge reads activity_v2 (Rail.ActivityInbox)
-	badge  int                     // the rail's Activity badge (model.ActivityCount)
+	ext    map[string]bool         // conversations resolved outside the model (backend.ext), and their DM partners
+	// faces are the members the model's channels draw (their headers'
+	// facepiles: convInfo.Members): a lookup ("names") of one redraws
+	faces map[string]bool
+	inbox bool // the rail's Activity badge reads activity_v2 (Rail.ActivityInbox)
+	badge int  // the rail's Activity badge (model.ActivityCount)
 }
 
 // drawnCount is what the shell draws of a conversation's unread state
@@ -53,6 +56,7 @@ func (b *backend) syncView() {
 	m := &b.m
 	counts := make(map[string]drawnCount, len(m.Convs))
 	people := map[string]*drawnPerson{}
+	faces := map[string]bool{}
 	person := func(id string) *drawnPerson {
 		p := people[id]
 		if p == nil {
@@ -68,6 +72,10 @@ func (b *backend) syncView() {
 	for id, c := range m.Convs {
 		counts[id] = drawnCount{c.Unread, c.Mentions, c.LastRead}
 		switch c.Kind {
+		case "channel", "private":
+			for _, u := range c.Members {
+				faces[u] = true
+			}
 		case "im", "app":
 			if c.User != "" {
 				p := person(c.User)
@@ -94,9 +102,24 @@ func (b *backend) syncView() {
 			}
 		}
 	}
+	// the headers resolved outside the model (closed DMs, channels opened
+	// from search): their partner and facepile draw too
+	ext := make(map[string]bool, len(b.ext))
+	for id, ci := range b.ext {
+		ext[id] = true
+		if ci == nil {
+			continue
+		}
+		if ci.User != "" {
+			ext[ci.User] = true
+		}
+		for _, u := range ci.Members {
+			faces[u] = true
+		}
+	}
 	v := &b.view
 	v.mu.Lock()
-	v.ready, v.counts, v.people = true, counts, people
+	v.ready, v.counts, v.people, v.faces, v.ext = true, counts, people, faces, ext
 	v.inbox, v.badge = m.Rail.ActivityInbox, m.ActivityCount
 	v.mu.Unlock()
 }
@@ -107,6 +130,19 @@ func (b *backend) viewCount(c *convInfo) {
 	v.mu.Lock()
 	if v.counts != nil {
 		v.counts[c.ID] = drawnCount{c.Unread, c.Mentions, c.LastRead}
+	}
+	v.mu.Unlock()
+}
+
+// viewFaces notes members a header's facepile draws (UI goroutine).
+func (b *backend) viewFaces(ids []string) {
+	v := &b.view
+	v.mu.Lock()
+	if v.faces == nil {
+		v.faces = map[string]bool{}
+	}
+	for _, id := range ids {
+		v.faces[id] = true
 	}
 	v.mu.Unlock()
 }
@@ -244,6 +280,27 @@ func (v *pumpView) userMoves(ev core.Event) bool {
 		return true
 	}
 	return p.dm && (u.Avatar != p.avatar || u.StatusEmojiURL != p.emoji)
+}
+
+// namesShown reports whether a lookup's ids ("names": members, bots,
+// conversations core resolved in the background) name something the shell
+// draws: a person, a conversation, a facepile's member, a header resolved
+// outside the model (any goroutine). The member fetcher answers for every
+// sender the store didn't hold, in any channel (a busy workspace's
+// messages from people nobody drew), and the message lists' hub redraws
+// the rows that show them on its own.
+func (v *pumpView) namesShown(ids []string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.ready {
+		return true
+	}
+	for _, id := range ids {
+		if _, ok := v.counts[id]; ok || v.people[id] != nil || v.faces[id] || v.ext[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // holdsConv reports whether the shell draws conversation ch: a row of the

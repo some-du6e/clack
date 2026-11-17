@@ -82,6 +82,10 @@ func TestPumpPostsOnlyWhatDraws(t *testing.T) {
 		{"an Activity item (the page follows it)", core.Event{Type: "activity"}, false},
 		{"typing", core.Event{Type: "typing", Channel: "C1", UserID: "UDM"}, false},
 		{"new custom emoji", core.Event{Type: "emoji_changed", Name: "partyparrot"}, false},
+		{"a lookup of people the shell doesn't draw", core.Event{Type: "names", Users: []string{"U9", "B9"}}, false},
+		{"a lookup of a DM partner", core.Event{Type: "names", Users: []string{"U9", "UDM"}}, true},
+		{"a lookup of a sidebar conversation", core.Event{Type: "names", Users: []string{"C2"}}, true},
+		{"the user groups' names (no ids)", core.Event{Type: "names"}, true},
 		{"the connection", core.Event{Type: "connection", Connected: true}, true},
 		{"a sidebar change", core.Event{Type: "sidebar_changed"}, true},
 	} {

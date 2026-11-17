@@ -93,7 +93,7 @@ func TestIdleTrafficFrames(t *testing.T) {
 		for ev := range evs {
 			evMu.Lock()
 			if !t0.IsZero() {
-				evLog = append(evLog, coreEv{time.Since(t0), ev.Type, ev.Channel + " " + ev.UserID})
+				evLog = append(evLog, coreEv{time.Since(t0), ev.Type, ev.Channel + " " + ev.UserID + " " + strings.Join(ev.Users, ",")})
 			}
 			evMu.Unlock()
 		}
