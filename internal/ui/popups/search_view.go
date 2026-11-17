@@ -2137,11 +2137,23 @@ func (v *SearchView) resultMenu(gtx layout.Context, i int) {
 	v.menuSeq++
 	seq := v.menuSeq
 	v.menuCard = i
-	v.h.ShowOverlay(NewMenuOpts(v.h, srResultItems(v.h, v.msgs[i]), MenuOpts{Anchor: a, OnClose: func() {
+	v.h.ShowOverlay(newSearchResultMenu(v.h, v.msgs[i], a, k, func() {
 		if v.menuSeq == seq {
 			v.menuCard = -1
 		}
-	}}))
+	}))
+}
+
+// newSearchResultMenu is a search result's More actions menu placed by
+// anchor, opened from the kebab at trigger (window px): MessageActions-
+// OverflowMenu > MessageActionsMenu > MAMenu, as on every message's
+// (isOnSearchTab, messageContainerType search), so plugins that add to the
+// message actions menu reach it.
+func newSearchResultMenu(h Host, m core.Message, anchor, trigger image.Rectangle, onClose func()) *Menu {
+	p := actMenuProps(m, trigger)
+	p["messageContainerType"], p["isOnSearchTab"] = "search", true
+	return NewMenuOpts(h, srResultItems(h, m), MenuOpts{Anchor: anchor, Trigger: trigger, OnClose: onClose,
+		Within: "MessageActionsMenu", WithinProps: p, MAMenu: MessageActionsProps(p, "overflow")})
 }
 
 // srResultItems is a search result's More actions menu (search_more.png):
@@ -2166,13 +2178,13 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 		}
 	}
 	// authors and repliers follow a thread by default
-	follow := MenuItem{Label: "Get notified about new replies", Icon: "bell", Do: func() {
+	follow := MenuItem{Key: "subscribe", Action: "subscribe", Label: "Get notified about new replies", Icon: "bell", Do: func() {
 		actDo(h, "You'll be notified about new replies", func(ctx context.Context, a *core.App) error {
 			return a.SubscribeThread(ctx, ch, root, true)
 		})
 	}}.In(nsMessage)
 	if self != "" && (m.User == self || slices.Contains(m.ReplyUsers, self)) {
-		follow = MenuItem{Label: "Turn off notifications for replies", Icon: "bell-off", Do: func() {
+		follow = MenuItem{Key: "subscribe", Action: "subscribe", Label: "Turn off notifications for replies", Icon: "bell-off", Do: func() {
 			actDo(h, "You won't be notified about new replies", func(ctx context.Context, a *core.App) error {
 				return a.SubscribeThread(ctx, ch, root, false)
 			})
@@ -2183,21 +2195,21 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 	// actions_todo.go): oMi4's save row and its aSBj click, ih0g's name
 	sa := SaveActionFor(h.Core(), &m)
 	return []MenuItem{
-		MenuItem{Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
+		MenuItem{Action: "later", Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			RunSaveAction(h, m)
 		}}.In(nsSaved),
-		MenuItem{Label: ReminderLabel(h.Core(), &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: rems[:len(rems)-1]}.In(nsMessage), // no Custom… here
+		MenuItem{Action: "remind", Label: ReminderLabel(h.Core(), &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: rems[:len(rems)-1]}.In(nsMessage), // no Custom… here
 		follow,
 		Sep(),
-		MenuItem{Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
+		MenuItem{Action: "copy_link", Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, link)
 			h.Toast("Link copied")
 		}}.In(nsMessage),
-		MenuItem{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
+		MenuItem{Action: "copy_text", Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
 			copyMessage(gtx, m)
 		}}.In(nsMessage),
 		Sep(),
-		MenuItem{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}}.In(nsMessage),
+		MenuItem{Action: "connect_to_apps_actions_menu", Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}}.In(nsMessage),
 	}
 }
 

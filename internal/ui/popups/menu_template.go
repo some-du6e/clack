@@ -366,14 +366,22 @@ func (m *Menu) wrapProps(i int) slackc.Props {
 	if !p.Has("onTriggerClose") {
 		p["onTriggerClose"] = m.closeAll
 	}
+	if m.ma != nil && p.Has("targetBounds") {
+		p["targetBounds"] = rectProps(m.ma.target, m.scale) // the trigger's DOMRect, CSS px
+	}
 	if w.Name == "ContextMenuTriggerWithKeyboardFocus" {
 		if h := m.ctxTemplate(); h != nil {
 			p["getTemplate"] = h
 		}
 	}
-	if i+1 < len(m.wraps) {
+	switch {
+	case i+1 < len(m.wraps):
 		p["children"] = slackc.Child(m.wraps[i+1].Name, m.wrapProps(i+1), m.wrapNative(i+1))
-	} else {
+	case m.ma != nil:
+		sp := m.maProps()
+		delete(sp, "$key")
+		p["children"] = slackc.Child("MAMenu", sp, m.layoutMAMenu)
+	default:
 		p["children"] = slackc.Child("MenuFromTemplate", m.tplProps(), m.layoutTemplate)
 	}
 	return p
@@ -388,6 +396,9 @@ func (m *Menu) wrapNative(i int) slackc.Native {
 		}
 		if i+1 < len(m.wraps) {
 			return childrenOr(gtx, p, m.wraps[i+1].Name, func() slackc.Props { return m.wrapProps(i + 1) }, m.wrapNative(i+1))
+		}
+		if m.ma != nil {
+			return childrenOr(gtx, p, "MAMenu", m.maProps, m.layoutMAMenu)
 		}
 		return childrenOr(gtx, p, "MenuFromTemplate", m.mftProps, m.layoutTemplate)
 	}
@@ -404,6 +415,10 @@ func (m *Menu) layoutRoot(gtx layout.Context, win image.Point) {
 	}
 	if len(m.wraps) > 0 {
 		slackc.RenderLazy(gtx, m.wraps[0].Name, func() slackc.Props { return m.wrapProps(0) }, m.wrapNative(0))
+		return
+	}
+	if m.ma != nil {
+		slackc.RenderLazy(gtx, "MAMenu", m.maProps, m.layoutMAMenu)
 		return
 	}
 	slackc.RenderLazy(gtx, "MenuFromTemplate", m.mftProps, m.layoutTemplate)

@@ -379,6 +379,7 @@ T.init = () => {
   makeBaseAPI()
   // Clack's native thunks: the work happens in Go (thunks.go)
   for (const name of go('thunkNames') || []) nativeThunk(name)
+  T.thunksDefined()
   return { version: 1 }
 }
 
@@ -386,6 +387,7 @@ T.init = () => {
 T.introspect = () => ({
   running: T.running(),
   components: T.patchedComponents(),
+  componentPatches: T.patchCounts(),
   thunks: patchedThunkNames(),
   rtm: [...rtmListeners.keys()],
   buttons: composerButtons.get().map((b) => b.id),

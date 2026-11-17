@@ -455,6 +455,87 @@ func (b *Bridge) CallEvent(fn int64, args []byte, done func(stopped bool)) {
 	})
 }
 
+// ErrFnGone is CallTruthy's answer for a function JS no longer has (its
+// tree re-rendered or unmounted): no handler is there to decide.
+var ErrFnGone = errors.New("taut: the JS function is gone")
+
+// CallTruthy calls JS function prop fn with args the way Slack calls a
+// handler whose return value decides what runs next (slackc.TruthyBridge;
+// MAMenu's dispatchMessageAction: `onSelectAction(…) || native(…)`): done
+// hears, on any goroutine, whether it returned something truthy as JS
+// sees it, right away (a Promise is truthy and isn't awaited), or threw
+// (a handler the runtime interrupted, past its task timeout, counts as
+// one); err when no handler answered: no runtime could start, it shut
+// down first, or the function is gone (ErrFnGone). Like a click in
+// Slack's page, the call waits its turn on the JS thread. Args carrying
+// {"$event": fields} give the handler React's synthetic event.
+func (b *Bridge) CallTruthy(fn int64, args []byte, done func(truthy, threw bool, err error)) {
+	path := "callHostFnTruthy"
+	if IsTautFn(fn) {
+		path = "callFnTruthy"
+	}
+	var once sync.Once
+	answered := make(chan struct{})
+	answer := func(truthy, threw bool, err error) {
+		once.Do(func() {
+			close(answered)
+			done(truthy, threw, err)
+		})
+	}
+	run := func(r *runtime) {
+		go func() {
+			select {
+			case <-r.rt.Done():
+				answer(false, false, jsrt.ErrClosed)
+			case <-answered:
+			}
+		}()
+		r.rt.Post(func(js *jsrt.Ctx) {
+			a, err := js.ParseJSON(args)
+			if err != nil {
+				answer(false, false, err)
+				return
+			}
+			v, err := js.Global().Get("__taut").Get(path).Call(float64(fn), a)
+			if err != nil {
+				answer(false, true, nil) // the handler failed as it ran (interrupted): a throw
+				return
+			}
+			res, err := v.JSON()
+			if err != nil {
+				answer(false, false, err)
+				return
+			}
+			var out struct {
+				Truthy bool `json:"truthy"`
+				Threw  bool `json:"threw"`
+				Gone   bool `json:"gone"`
+			}
+			if err := json.Unmarshal(res, &out); err != nil {
+				answer(false, false, err)
+				return
+			}
+			if out.Gone {
+				answer(false, false, ErrFnGone)
+				return
+			}
+			answer(out.Truthy, out.Threw, nil)
+		})
+	}
+	if r := b.t.liveRuntime(); r != nil {
+		run(r)
+		return
+	}
+	go func() {
+		r, err := b.t.ensureRuntime()
+		if err != nil {
+			answer(false, false, err)
+			return
+		}
+		run(r)
+	}()
+}
+
 // withAnswer runs f on the live runtime (starting one if need be) with an
 // answer that reaches done once: f's, or false if the runtime shuts down
 // before f answers (its queued tasks never run) or can't start.
@@ -569,6 +650,15 @@ func (b *Bridge) RenderEditor(root uint64, pluginID, key string, value json.RawM
 // RenderDataPanel mounts a running plugin's dataPanel into root.
 func (b *Bridge) RenderDataPanel(root uint64, pluginID string) {
 	b.mount(root, "dataPanelElement", pluginID)
+}
+
+// Mount renders into root the element globalThis.__taut[fn](args…)
+// returns. Extensions (Extension.Prelude) add their element factories to
+// __taut and mount them with this, as RenderDataPanel does Taut's: Slick's
+// plugin panels (api.settings.panel). args are JSON values; []byte is
+// parsed as JSON.
+func (b *Bridge) Mount(root uint64, fn string, args ...any) {
+	b.mount(root, fn, args...)
 }
 
 // ---- composer and message hooks (UI owners call these) ----

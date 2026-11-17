@@ -48,7 +48,7 @@ func haikuWithChatTabs(t *testing.T, dir string) {
 	h.importFile(filepath.Join(dir, "ChatTabs.js"))
 	h.importFile(filepath.Join(dir, "ChatTabs.main.js"))
 	h.importFile(filepath.Join(dir, "HaikuWarning.js"))
-	h.s.SetRoute(teamID, chGen)
+	h.s.SetRoute(teamID, chGen, "")
 	for _, id := range []string{"ChatTabs", "HaikuWarning"} {
 		if err := h.s.SetEnabled(h.ctx(), id, true); err != nil {
 			t.Fatal(err)
