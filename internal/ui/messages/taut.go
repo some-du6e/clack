@@ -255,7 +255,7 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	if changed {
 		r.viewConv = 0 // a new revision: compared afresh
 	}
-	mv, conv, ok := t.MessageViewConv(r.src.Channel, r.src.TS, changed)
+	mv, conv, stale, ok := t.MessageViewState(r.src.Channel, r.src.TS, changed)
 	if !ok {
 		if r.viewed {
 			r.viewed, r.vmsg = false, nil
@@ -277,16 +277,41 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// sent its components new props, after each "names").
 	again := r.viewConv != 0 && conv != r.viewConv
 	r.viewConv = conv
-	// compared with the view the row draws over (vmsg), not with what it
-	// draws: that has the components' overrides laid over it (recompose)
-	if r.viewed && r.vmsg != nil && sameView(r.vmsg, &mv) && r.vmsg.Text == mv.Text && (!again && !changed || reflect.DeepEqual(r.vmsg.Doc, mv.Doc)) {
+	if r.viewed && r.vmsg != nil {
+		// The view it draws over (vmsg, not what it draws: that has the
+		// components' overrides laid over it), unless a conversion made
+		// since says anything else: all of it, not only what a plugin's
+		// change shows in. What core works out at each conversion (a
+		// broadcast's "View newer replies", reply users, a pin's author)
+		// changes with no change to the plugins' JSON, and a row that kept
+		// its view whenever text, blocks and the sameView fields matched
+		// never showed it.
+		if !again && !changed || sameDrawn(r.vmsg, &mv) {
+			return
+		}
+		r.vmsg = &mv
+		r.recompose()
 		return
 	}
-	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text {
+	if sameView(&r.src, &mv) && r.src.Text == mv.Text {
+		return
+	}
+	if changed && stale {
+		// JS's copy from before the update (its new one is asked for): the
+		// row draws the new source until it comes, not the revision before
+		// as a view it then kept
 		return
 	}
 	r.viewed, r.vmsg = true, &mv
 	r.recompose()
+}
+
+// sameDrawn reports whether two conversions of a message draw the same:
+// all of them but the refs a conversion read.
+func sameDrawn(a, b *core.Message) bool {
+	x, y := *a, *b
+	x.Refs, y.Refs = core.MsgRefs{}, core.MsgRefs{}
+	return reflect.DeepEqual(x, y)
 }
 
 // clearViews drops patched views once no plugin patches messages.

@@ -883,15 +883,24 @@ func (t *Taut) MessageViewChanged(ch, ts string) (core.Message, bool) {
 // member's name, a channel's tabs: bumpChange) did, though nothing else a
 // caller compares may have.
 func (t *Taut) MessageViewConv(ch, ts string, fresh bool) (core.Message, uint64, bool) {
+	m, id, _, ok := t.MessageViewState(ch, ts, fresh)
+	return m, id, ok
+}
+
+// MessageViewState is MessageViewConv, and whether the value it converted
+// is one JS gave before a change since marked it stale (its fetch is
+// asked): the plugins' copy of the revision before an update, while JS
+// hasn't answered for the new one.
+func (t *Taut) MessageViewState(ch, ts string, fresh bool) (m core.Message, conv uint64, stale, ok bool) {
 	if !t.SlicePatched("messages") {
-		return core.Message{}, 0, false
+		return core.Message{}, 0, false, false
 	}
-	e := t.ui.views.entry("messages", ch, ts)
+	e, stale := t.ui.views.entryState("messages", ch, ts)
 	if e == nil || e.sm == nil {
-		return core.Message{}, 0, false
+		return core.Message{}, 0, false, false
 	}
 	c := t.ui.views.conv(&e.conv, ch, e.sm, fresh)
-	return c.msg, c.id, true
+	return c.msg, c.id, stale, true
 }
 
 // InjectedMessages lists messages plugins added to ch (injectMessages)
@@ -1287,20 +1296,28 @@ func (v *viewCache) staleLocked(e *viewEntry, g *viewGroup, slice string) bool {
 // entry returns slice[key][sub]'s cached value (nil until the first one
 // arrives), queueing a fetch when it's missing or stale. Never waits on JS.
 func (v *viewCache) entry(slice, key, sub string) *viewEntry {
+	e, _ := v.entryState(slice, key, sub)
+	return e
+}
+
+// entryState is entry, and whether the entry is stale (its value from
+// before a change it was marked for; asked of JS again).
+func (v *viewCache) entryState(slice, key, sub string) (*viewEntry, bool) {
 	k := viewKey{slice, key, sub}
 	now := viewNow()
 	v.mu.Lock()
 	g := v.groupLocked(viewSK{slice, key})
 	g.readAt, v.lastRead, v.sliceRead[slice] = now, max(v.lastRead, now), now
 	e := g.subs[sub]
+	stale := e != nil && v.staleLocked(e, g, slice)
 	// a key in flight isn't asked twice: if it was invalidated meanwhile,
 	// the worker asks again when it lands (work)
-	if (e == nil || v.staleLocked(e, g, slice)) && !v.want[k] && !v.flying[k] {
+	if (e == nil || stale) && !v.want[k] && !v.flying[k] {
 		v.want[k] = true
 		v.kickLocked()
 	}
 	v.mu.Unlock()
-	return e
+	return e, stale
 }
 
 func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {

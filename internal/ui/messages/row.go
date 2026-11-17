@@ -158,20 +158,27 @@ type row struct {
 	msgOv   uintptr      // Message / ThreadReplyGeneric msg override applied
 	inMsg   slackc.Props // its msg (nil = none)
 	wrapMsg slackc.Props // MessageWrapper's override (what msgOv falls back to; wrapped)
-	// the sources of the revisions before this one, newest first (at most
-	// 3, none until an update): what an override from a tree JS hasn't
-	// drawn again since was made from
-	prev            []core.Message
-	textOv          slackc.Props // MessageText's msg override (nil = none)
-	filesOv, attsOv slackc.Props // MessageFiles / MessageKitAttachments msg overrides
-	tailOv          [2]uintptr   // file / attachment filters applied (propsIDs)
-	hasFiles        bool         // the body has file cards (MessageFiles)
-	hasAtts         bool         // … attachment cards (MessageKitAttachments)
-	chans           []chanCard   // CodeChannelEntityCard per channel mentioned, while patched
-	chansDoc        bool         // chans is for the current doc
-	replyAvs        []replyAv    // the reply bar's ReplyBarAvatars
-	replyN          int          // … drawn in the last frame
-	replyLink       string       // … its count link's text (getLinkTextWithScheduledDrafts), last frame
+	// what the row handed each level of its patched components, by
+	// content (contentFP), newest first: the wrapper (MessageWrapper,
+	// ThreadRootGeneric) the source, Message and ThreadReplyGeneric what
+	// wrapped gives, the parts inside them message(). A tree whose msg says
+	// one of those changed nothing the message says, whichever revision it
+	// answers; only its sender is a plugin's.
+	outSent, inSent, bodySent sentFPs
+	srcFP, msgFP, wrapFP      uint64       // contentFP of srcMsg, msg, wrapMsg
+	inFP, textFP              uint64       // … of inMsg, textOv
+	textMemo, blocksMemo      fpMemo       // the MessageText and Blocks trees' msgs
+	filesMemo, attsMemo       fpMemo       // the MessageFiles and MessageKitAttachments trees'
+	textOv                    slackc.Props // MessageText's msg override (nil = none)
+	filesOv, attsOv           slackc.Props // MessageFiles / MessageKitAttachments msg overrides
+	tailOv                    [2]uintptr   // file / attachment filters applied (propsIDs)
+	hasFiles                  bool         // the body has file cards (MessageFiles)
+	hasAtts                   bool         // … attachment cards (MessageKitAttachments)
+	chans                     []chanCard   // CodeChannelEntityCard per channel mentioned, while patched
+	chansDoc                  bool         // chans is for the current doc
+	replyAvs                  []replyAv    // the reply bar's ReplyBarAvatars
+	replyN                    int          // … drawn in the last frame
+	replyLink                 string       // … its count link's text (getLinkTextWithScheduledDrafts), last frame
 	// the thread's draft and scheduled replies (reply_bar.go threadDrafts)
 	draftGen            uint64
 	draftSeen, hasDraft bool
@@ -318,17 +325,11 @@ func newListRow(e *entry, thread bool) *row {
 }
 
 func (r *row) set(e *entry) {
-	if r.rev != 0 && r.rev != e.rev {
-		if len(r.prev) < 3 {
-			r.prev = append(r.prev, core.Message{})
-		}
-		copy(r.prev[1:], r.prev[:len(r.prev)-1])
-		r.prev[0] = r.src
-	}
 	r.rev = e.rev
 	r.src = e.m
 	r.wrapOv, r.blocksOv, r.srcMsg, r.msg = 0, 0, nil, nil
 	r.msgOv, r.inMsg, r.wrapMsg, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil, nil
+	r.srcFP, r.msgFP, r.wrapFP, r.inFP, r.textFP = 0, 0, 0, 0, 0
 	// a row drawing the plugins' view of its message keeps drawing it, at
 	// its height, until the view of the new revision comes (applyView), as
 	// Slack's one commit of the store's patched message never shows it
@@ -356,76 +357,49 @@ func (r *row) base() *core.Message {
 // up to 250 ms later: Karim's vote message, a thread root, "stripped and
 // pushed down" at every vote.
 func (r *row) recompose() {
-	ov := r.wrapMsg
-	if r.msgOv != 0 && r.inMsg != nil {
-		ov = r.inMsg
+	m := *r.base()
+	if r.wrapMsg != nil {
+		m = r.overlay(&m, r.wrapMsg, r.wrapFP, r.outSent)
 	}
-	if ov == nil {
-		r.m = *r.base()
-	} else {
-		r.m = r.overlay(ov)
+	if r.msgOv != 0 && r.inMsg != nil { // made from what wrapped gave: the wrapper's changes are in it
+		m = r.overlay(&m, r.inMsg, r.inFP, r.inSent)
 	}
-	r.msg = nil
+	r.m = m
+	r.msg, r.msgFP = nil, 0
 	r.setDoc()
 	r.growPills()
 }
 
-// overlay is the base with what a plugin changed in msg, a msg the row
-// sent its component and the plugin passed on to <Original>: the sender,
-// the text, the blocks and attachments where they differ from what was
-// sent. A tree JS hasn't drawn again since an update hands back the msg
-// of the revision before (sentFor): against that one, an unchanged msg
-// changes nothing, rather than bring the old text and blocks back.
-func (r *row) overlay(msg slackc.Props) core.Message {
+// overlay is base with what a plugin changed in msg (content fingerprint
+// fp), a msg the row sent a component and the plugin passed on to
+// <Original>. The sender is the plugin's where it isn't the source's.
+// What the message says (text, blocks, attachments, files) is the
+// plugin's only when msg says something the row never sent that level
+// (sent): a tree JS hasn't drawn again since an update hands back the
+// msg of a revision before, which changes nothing rather than bring its
+// old text and blocks back, however many revisions ago that was.
+func (r *row) overlay(base *core.Message, msg slackc.Props, fp uint64, sent sentFPs) core.Message {
 	var app *core.App
 	if r.rc != nil && r.rc.h != nil {
 		app = r.rc.h.Core()
 	}
-	sent := r.sentFor(msg)
-	a := applySlackMessage(app, sent, msg)
-	base := r.base()
-	if base == sent {
-		return a
-	}
+	src := &r.src
+	a := applySlackMessage(app, src, msg)
 	m := *base
-	if a.User != sent.User || a.BotID != sent.BotID || a.Subtype != sent.Subtype || a.Username != sent.Username ||
-		!core.SameIcons(a.Icons, sent.Icons) || a.Name != sent.Name || a.Avatar != sent.Avatar || a.IsBot != sent.IsBot {
+	if a.User != src.User || a.BotID != src.BotID || a.Subtype != src.Subtype || a.Username != src.Username ||
+		!core.SameIcons(a.Icons, src.Icons) || a.Name != src.Name || a.Avatar != src.Avatar || a.IsBot != src.IsBot {
 		m.User, m.BotID, m.Subtype, m.Username, m.Icons = a.User, a.BotID, a.Subtype, a.Username, a.Icons
 		m.Name, m.Avatar, m.IsBot = a.Name, a.Avatar, a.IsBot
 	}
-	if a.Text != sent.Text {
-		m.Text = a.Text
-	}
-	if !sameSlice(a.Doc.Blocks, sent.Doc.Blocks) {
-		m.Doc.Blocks, m.Blocks = a.Doc.Blocks, a.Blocks
-	}
-	return m
-}
-
-// sentFor is the source msg was made from: the row's, or a revision's
-// before it whose text and blocks msg still has (its tree from before the
-// update); the row's when none has them (a plugin changed them).
-func (r *row) sentFor(msg slackc.Props) *core.Message {
-	if sameContent(msg, &r.src) {
-		return &r.src
-	}
-	for i := range r.prev {
-		if sameContent(msg, &r.prev[i]) {
-			return &r.prev[i]
+	if !sent.has(fp) {
+		if a.Text != src.Text {
+			m.Text = a.Text
+		}
+		if !sameSlice(a.Doc.Blocks, src.Doc.Blocks) {
+			m.Doc.Blocks, m.Blocks = a.Doc.Blocks, a.Blocks
 		}
 	}
-	return &r.src
-}
-
-// sameContent reports whether msg's text and blocks are m's.
-func sameContent(msg slackc.Props, m *core.Message) bool {
-	if msg.StrOr("text", "") != m.Text {
-		return false
-	}
-	if list, ok := msg["blocks"].([]any); ok {
-		return sameBlocks(list, m.Blocks)
-	}
-	return rawBlocks(m.Blocks) == nil
+	return m
 }
 
 // setDoc shows r.m's body (after set or a msg override).
@@ -671,19 +645,30 @@ func (r *row) viewContext() string {
 // message is the msg prop of the parts inside Message (ThreadReplyGeneric
 // in a thread pane): the message as the wrapper's and Message's (possibly
 // overridden) msgs left it. Message's own props take wrapped instead.
+//
+// It's what the row draws whenever that isn't the source, the plugins'
+// view of the message included: a thread reply, drawn with no
+// MessageWrapper (and so no wrapper's override), handed its Blocks and
+// sender parts the source, and a pass-through Blocks patch (ShowRealUser,
+// on by default) drew Censorship's masked words unmasked.
 func (r *row) message() slackc.Props {
-	if r.wrapOv == 0 && r.msgOv == 0 {
-		return r.sourceMessage()
+	if r.wrapOv == 0 && r.msgOv == 0 && !(r.viewed && r.vmsg != nil) {
+		p := r.sourceMessage()
+		r.bodySent.add(r.srcFP)
+		return p
 	}
 	if r.msg == nil {
 		r.msg = slackMessage(&r.m)
+		r.msgFP = contentFP(r.msg)
 	}
+	r.bodySent.add(r.msgFP)
 	return r.msg
 }
 
 func (r *row) sourceMessage() slackc.Props {
 	if r.srcMsg == nil {
 		r.srcMsg = slackMessage(&r.src)
+		r.srcFP = contentFP(r.srcMsg)
 	}
 	return r.srcMsg
 }
@@ -706,13 +691,18 @@ func (r *row) sourceMessage() slackc.Props {
 // frame.
 func (r *row) wrapped() slackc.Props {
 	if r.wrapOv == 0 {
-		return r.sourceMessage()
+		p := r.sourceMessage()
+		r.inSent.add(r.srcFP)
+		return p
 	}
+	r.inSent.add(r.wrapFP)
 	return r.wrapMsg
 }
 
 func (r *row) wrapperProps() slackc.Props {
-	p := slackc.Props{"$key": r.ts, "msg": r.sourceMessage(), "channelId": r.src.Channel, "viewContext": r.viewContext()}
+	msg := r.sourceMessage()
+	r.outSent.add(r.srcFP)
+	p := slackc.Props{"$key": r.ts, "msg": msg, "channelId": r.src.Channel, "viewContext": r.viewContext()}
 	if r.rc.parent {
 		p["isSingleThread"], p["omitGutter"], p["omitSenderAndTimestamp"] = true, false, false
 	}
@@ -743,7 +733,9 @@ func (r *row) replyProps() slackc.Props {
 	if r.m.Pending {
 		cls += " c-message_kit__thread_message--pending"
 	}
-	return r.pane(slackc.Props{"$key": r.ts, "msg": r.sourceMessage(), "parentId": r.src.ThreadTS,
+	msg := r.sourceMessage()
+	r.inSent.add(r.srcFP) // ThreadReplyGeneric is the reply's Message: it gets what wrapped would
+	return r.pane(slackc.Props{"$key": r.ts, "msg": msg, "parentId": r.src.ThreadTS,
 		"isMessagingMaxWidthEnabled": false, "isCompact": false, "isSingleThread": true, "messageContainerType": "Thread",
 		"blocksContainerContext": "thread", "adjacent": !r.rc.header && !r.rc.dense, "className": cls,
 		"focused": false, "isInView": true, "highlight": r.rc.highlight > 0, "hasContextMenu": true, "renderActionsOffscreen": false,
@@ -886,6 +878,7 @@ func (r *row) timestampProps() slackc.Props {
 // or the row's.
 func (r *row) bodyMessage() slackc.Props {
 	if r.textOv != nil {
+		r.bodySent.add(r.textFP)
 		return r.textOv
 	}
 	return r.message()
@@ -994,9 +987,9 @@ func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimension
 		if r.wrapOv == propsID(r.srcMsg) { // our own props, before JS answered
 			r.wrapOv = 0
 		}
-		r.wrapMsg = nil
+		r.wrapMsg, r.wrapFP = nil, 0
 		if r.wrapOv != 0 {
-			r.wrapMsg = msg // what Message gets (wrapped)
+			r.wrapMsg, r.wrapFP = msg, contentFP(msg) // what Message gets (wrapped)
 		}
 		r.msgOv, r.inMsg = 0, nil // the inner override re-applies over the new base
 		r.recompose()
@@ -1025,7 +1018,7 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 		if id != r.msgOv {
 			r.msgOv, r.inMsg = id, nil
 			if id != 0 {
-				r.inMsg = msg
+				r.inMsg, r.inFP = msg, contentFP(msg)
 			}
 			r.recompose() // its msg, else the wrapper's, over the base
 			r.resolve(rc)
@@ -1593,9 +1586,14 @@ func (r *row) layoutNothing(gtx layout.Context, _ slackc.Props) layout.Dimension
 // layoutMessageText is MessageText around MessageBlocks: a plugin's msg
 // (BetterBlock's filtered text) is what the body draws.
 func (r *row) layoutMessageText(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	r.textOv = nil
+	r.textOv, r.textFP = nil, 0
+	// a msg the row sent (the current one or a revision's before it,
+	// while JS hasn't drawn the new one) changes nothing; one that says
+	// something else is the plugin's
 	if msg := p.Map("msg"); !r.ownMsg(msg) {
-		r.textOv = msg
+		if fp := r.textMemo.of(msg); !r.bodySent.has(fp) {
+			r.textOv, r.textFP = msg, fp
+		}
 	}
 	return slackc.Component(gtx, "MessageBlocks", r, (*row).blocksProps, (*row).layoutMessageBlocks)
 }
@@ -1624,20 +1622,20 @@ func (r *row) tailParts(gtx layout.Context, y, cw int) int {
 // layoutMessageFiles is MessageFiles: the files are the body's file
 // cards; a plugin's msg.files (BetterBlock) filters them.
 func (r *row) layoutMessageFiles(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	r.tailOverride(gtx, &r.filesOv, p)
+	r.tailOverride(gtx, &r.filesOv, &r.filesMemo, p)
 	return layout.Dimensions{}
 }
 
 // layoutMessageAttachments is MessageKitAttachments: the attachments are
 // the body's cards; a plugin's msg.attachments filters them.
 func (r *row) layoutMessageAttachments(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	r.tailOverride(gtx, &r.attsOv, p)
+	r.tailOverride(gtx, &r.attsOv, &r.attsMemo, p)
 	return layout.Dimensions{}
 }
 
-func (r *row) tailOverride(gtx layout.Context, ov *slackc.Props, p slackc.Props) {
+func (r *row) tailOverride(gtx layout.Context, ov *slackc.Props, memo *fpMemo, p slackc.Props) {
 	msg := p.Map("msg")
-	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) {
+	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) || r.bodySent.has(memo.of(msg)) {
 		msg = nil
 	}
 	if propsID(msg) != propsID(*ov) {
@@ -1764,8 +1762,10 @@ func (r *row) layoutMessageBlocks(gtx layout.Context, _ slackc.Props) layout.Dim
 func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	rc := r.rc
 	msg := p.Map("msg")
-	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) {
-		msg = r.textOv // our own props (before JS answered): MessageText's, if any
+	if r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) || r.bodySent.has(r.blocksMemo.of(msg)) {
+		// what the row sent (now, or before an update while JS hasn't drawn
+		// the new one): MessageText's override, if any, else r.m's own body
+		msg = r.textOv
 	}
 	id := propsID(msg)
 	tail := [2]uintptr{propsID(r.filesOv), propsID(r.attsOv)}

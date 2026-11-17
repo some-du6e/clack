@@ -8,6 +8,7 @@ package messages
 
 import (
 	"encoding/json"
+	"hash/fnv"
 	"reflect"
 	"strconv"
 	"strings"
@@ -524,6 +525,81 @@ func applySlackMessage(app *core.App, src *core.Message, msg slackc.Props) core.
 		}
 	}
 	return m
+}
+
+// contentFP fingerprints what a message msg says: its text, blocks,
+// attachments and files, as a component's msg prop carries them (0 for
+// none). A tree hands its msg back parsed afresh, never the map the row
+// sent, so what the row sent is told by this, not by identity.
+func contentFP(msg slackc.Props) uint64 {
+	if msg == nil {
+		return 0
+	}
+	h := fnv.New64a()
+	h.Write([]byte(msg.StrOr("text", "")))
+	for _, k := range [...]string{"blocks", "attachments", "files"} {
+		h.Write([]byte{0, k[0]})
+		if v, ok := msg[k]; ok && v != nil {
+			if b, err := json.Marshal(jsonable(v)); err == nil {
+				h.Write(b)
+			}
+		}
+	}
+	return h.Sum64() | 1 // never 0
+}
+
+// sentFPs are the contentFPs of the msgs a row handed one level of its
+// components (sentMax at most, newest first): a tree whose msg has one
+// of them changed nothing the message says, whichever revision it
+// answers. Kept by content, so reactions, reply counts and conversions
+// again take no room; a tree of an older revision than the oldest kept
+// counts as a plugin's change.
+type sentFPs []uint64
+
+const sentMax = 16
+
+func (s sentFPs) has(fp uint64) bool {
+	for _, x := range s {
+		if x == fp {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *sentFPs) add(fp uint64) {
+	if fp == 0 || len(*s) > 0 && (*s)[0] == fp {
+		return
+	}
+	for i, x := range *s {
+		if x == fp { // sent again: newest
+			copy((*s)[1:i+1], (*s)[:i])
+			(*s)[0] = fp
+			return
+		}
+	}
+	if len(*s) < sentMax {
+		*s = append(*s, 0)
+	}
+	copy((*s)[1:], (*s)[:len(*s)-1])
+	(*s)[0] = fp
+}
+
+// fpMemo is contentFP of the last map it was asked about (held, so its
+// address can't be another map's): natives ask every frame.
+type fpMemo struct {
+	m  slackc.Props
+	fp uint64
+}
+
+func (f *fpMemo) of(msg slackc.Props) uint64 {
+	if msg == nil {
+		return 0
+	}
+	if propsID(f.m) != propsID(msg) {
+		f.m, f.fp = msg, contentFP(msg)
+	}
+	return f.fp
 }
 
 // sameSlice reports whether a and b are the same slice (docBlocks returns
