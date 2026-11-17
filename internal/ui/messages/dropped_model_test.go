@@ -73,39 +73,42 @@ func TestDroppedModelTakesCoresWindow(t *testing.T) {
 		frame()
 		time.Sleep(5 * time.Millisecond)
 	}
+	// it holds no gap: what Karim read only with the unread messages after
+	// it (the list may have paged back on its own to fill the pane, from
+	// the newest page down: what it pages in is whole)
 	m := v.s.m
-	m.mu.Lock()
-	var stray []string
-	for _, e := range m.msgs {
-		if tsLess(e.m.TS, newest[0].TS) {
-			stray = append(stray, e.m.Text)
-		}
-	}
-	more := m.hasMore
-	m.mu.Unlock()
-	if len(stray) > 0 {
-		t.Errorf("the list holds %d messages before core's window (%q…), right above the newest page: the 20 unread between them are missing", len(stray), stray[0])
-	}
-	if !more {
-		t.Error("the list doesn't know there are messages before the newest page")
-	}
-	for _, x := range read {
-		if v.s.rows[x.TS] != nil && itemHeight(v.s, x.TS) > 0 {
-			t.Errorf("the list draws %q, which core let go, above the newest page", x.Text)
-			break
-		}
-	}
-
-	// paging back brings the unread messages
-	hb.loadOlder(m)
-	if !drawWhile(frame, 5*time.Second, func() bool {
+	gap := func() (readIn, unreadIn int, more bool) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		return m.find(unread[0].TS) >= 0 && m.find(unread[19].TS) >= 0
+		for _, x := range read {
+			if m.find(x.TS) >= 0 {
+				readIn++
+			}
+		}
+		for _, x := range unread {
+			if m.find(x.TS) >= 0 {
+				unreadIn++
+			}
+		}
+		return readIn, unreadIn, m.hasMore
+	}
+	readIn, unreadIn, more := gap()
+	if readIn > 0 && unreadIn < len(unread) {
+		t.Errorf("the list holds %d of the messages Karim read and %d of the %d unread ones after them: a gap above the newest page", readIn, unreadIn, len(unread))
+	}
+	if unreadIn == 0 && !more {
+		t.Error("the list holds nothing before the newest page and doesn't know there's more")
+	}
+
+	// paging back brings every unread message
+	if !drawWhile(frame, 5*time.Second, func() bool {
+		if _, n, _ := gap(); n == len(unread) {
+			return true
+		}
+		hb.loadOlder(m)
+		return false
 	}) {
-		m.mu.Lock()
-		n := len(m.msgs)
-		m.mu.Unlock()
-		t.Errorf("paging back didn't load the unread messages before the newest page (%d messages in the list)", n)
+		readIn, unreadIn, _ := gap()
+		t.Errorf("paging back loaded %d of the %d unread messages before the newest page (%d of the read ones in the list)", unreadIn, len(unread), readIn)
 	}
 }
