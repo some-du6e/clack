@@ -306,7 +306,8 @@ type latPass struct {
 	busyJS func(d time.Duration)
 	// drainJS, before each Enter: the plugin runtime's JS thread idle (its
 	// re-render of the patched composer after the typing done), so a quiet
-	// own send with plugins is held to Slack's next frame like one without
+	// own send with plugins is timed by its own JS work, not by work left
+	// from before it
 	drainJS func()
 	// pluginSend: plugins check and wrap the send in JS (OwlMode's send
 	// check and prepareAndSendMessage patch)
@@ -555,16 +556,22 @@ func latReport(t *testing.T, ps latPass, ws []*latWait, enforce bool) map[string
 			t.Errorf("%s, %s: %d of %d rows never drew", ps.name, kind, st.Missed, st.N)
 		}
 		// an own message's pending copy: the frame after the one that took
-		// the Enter key (Slack's sendMessage adds it in the keydown's task),
-		// whatever plugins check it first, when the plugins' JS thread is
-		// idle as Enter comes. With 400 ms of JS queued (busyJS) the send's
-		// checks and transforms run ahead of it but wait for the task
-		// running when they come, one frame more at most. A frame the
-		// socket's traffic asks for in between counts too, so only the
-		// quiet passes count frames.
+		// the Enter key (Slack's sendMessage adds it in the keydown's task).
+		// With plugins the send's checks and patches run in JS first
+		// (OwlMode's check and prepareAndSendMessage patch): on the
+		// runners' QuickJS that takes 10-20 ms with the JS thread idle at
+		// Enter (Slack's V8 takes a few), so the copy can land a vsync
+		// later, and a frame the send waited for besides would make it
+		// four: three at most. With 400 ms of JS queued (busyJS) they run
+		// ahead of it but wait for the task running when they come: four
+		// at most there. A frame the socket's traffic asks for in between
+		// counts too, so only the quiet passes count frames.
 		maxFrames, median := 2, latMedianBudget
-		if kind == "own" && ps.pluginSend && ps.busyJS != nil {
+		if kind == "own" && ps.pluginSend {
 			maxFrames, median = 3, latMedianBudget+idleprobe.Vsync
+			if ps.busyJS != nil {
+				maxFrames = 4
+			}
 		}
 		if kind == "own" && !ps.busy {
 			for n, k := range st.Frames {

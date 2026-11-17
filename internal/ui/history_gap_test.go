@@ -230,8 +230,10 @@ func TestHistoryAfterSocketGap(t *testing.T) {
 	})
 
 	// a counts answer that names a newer latest while the list's load is
-	// out loads it once more after that lands (the hub's again): the
-	// answer was read before the counts
+	// out still reaches the list: core's History reads once more when the
+	// latest moved while it read (the hub's again, for a load the
+	// connection event came during, is TestBotMessageReachesTheList's
+	// "open, the socket down when it came")
 	t.Run("open, counts while its load is out", func(t *testing.T) {
 		ch := ids[13]
 		e.openAtLatest(ch)

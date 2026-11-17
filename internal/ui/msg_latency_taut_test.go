@@ -20,14 +20,16 @@ import (
 // of the test's own (the path every send takes with any plugin's
 // addSendCheck). The quiet own pass lets the plugin runtime finish its
 // work before each Enter (the patched composer's re-render after the
-// typing), and its sends are held to Slack's next frame like ones without
-// plugins. The "JS busy" pass queues 400 ms of work on the plugin runtime,
-// in 10 ms tasks, before each own send instead: what a channel's patched
-// rows leave it when messages and profile changes come in (the perf job's
-// plugin passes measured seconds of it); its sends may take one frame
-// more, never the backlog. A patched row draws its native at once and the
-// plugin's tree when it lands, so others' rows are timed as without
-// plugins.
+// typing), so its sends are timed by their own JS work: the checks and
+// patches take the runners' QuickJS 10-20 ms, and the pending copy may land
+// a vsync after Slack's next frame, never two (latReport). The "JS busy"
+// pass queues 400 ms of work on the plugin runtime, in 10 ms tasks, before
+// each own send instead: what a channel's patched rows leave it when
+// messages and profile changes come in (the perf job's plugin passes
+// measured seconds of it); its sends wait for the task running when they
+// come, one frame more, never the backlog. A patched row draws its native
+// at once and the plugin's tree when it lands, so others' rows are timed
+// as without plugins.
 func TestTautMessageLatency(t *testing.T) {
 	tdir, sdir := os.Getenv("TAUT_PLUGINS_DIR"), os.Getenv("SLICK_PLUGINS_DIR")
 	if tdir == "" || sdir == "" {
