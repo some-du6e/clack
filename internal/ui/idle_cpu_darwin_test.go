@@ -229,6 +229,15 @@ func TestMacIdleCPU(t *testing.T) {
 	slow.Store(true)
 	reps = append(reps, measure("channel, frames slower than a vsync", true))
 	slow.Store(false)
+	// a busy workspace's socket about nothing on screen (idleTraffic, as
+	// TestIdleTrafficFrames sends it to the headless window): this window
+	// draws the caret's blinks and nothing an event asked for
+	tr := newIdleTraffic(&perfEnv{tb: t, fs: fs, a: a}, func(raw map[string]any) { fs.Push(raw) })
+	onUI(tr.pick)
+	tr.warm()
+	tr.start()
+	reps = append(reps, measure("channel under idle traffic", true))
+	t.Logf("idle traffic: %d events", tr.stop())
 	onUI(func() { a.OpenThread(ch, fakeslack.ThreadRootTS) })
 	focus(fakeslack.ThreadRootTS)
 	reps = append(reps, measure("thread", true))

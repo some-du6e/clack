@@ -241,6 +241,26 @@ env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
 
 jobs:
+  # TestMacIdleCPU alone on App.Run's real macOS window (Metal): its idle
+  # periods, the caret blink's cost and the channel under idle traffic
+  # (frame-wakeups). Dispatch only: only=frame-wakeups-mac.
+  frame-wakeups-mac:
+    if: ${{ inputs.only == 'frame-wakeups-mac' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: TestMacIdleCPU (the real window)
+        run: |
+          go test -c -o "$RUNNER_TEMP/ui-idle.test" ./internal/ui
+          cd internal/ui
+          CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 15m -test.run '^TestMacIdleCPU$'
+
   go:
     if: ${{ !inputs.only || startsWith('go', inputs.only) }}
     runs-on: ubuntu-latest

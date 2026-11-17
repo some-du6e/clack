@@ -1012,10 +1012,16 @@ func newIdleTraffic(e *perfEnv, emit func(map[string]any)) *idleTraffic {
 	return &idleTraffic{e: e, emit: emit}
 }
 
-// prepare picks the traffic's channels and people, makes ch unread and
-// sends each kind of event once, so the window has taken what it changes
-// before the measuring starts (UI goroutine: it reads the model).
+// prepare is pick then warm, on the UI goroutine (the tests that drive
+// frames themselves).
 func (tr *idleTraffic) prepare() {
+	tr.pick()
+	tr.warm()
+}
+
+// pick chooses the traffic's channels and people (UI goroutine: it reads
+// the model).
+func (tr *idleTraffic) pick() {
 	e := tr.e
 	m := e.a.model()
 	open := e.a.router.Current().Channel()
@@ -1055,6 +1061,12 @@ func (tr *idleTraffic) prepare() {
 	if tr.dm.ID != "" {
 		tr.sender = tr.dm.ID
 	}
+}
+
+// warm makes ch unread and sends each kind of event once, so the window
+// has taken what it changes before the measuring starts (any goroutine).
+func (tr *idleTraffic) warm() {
+	e := tr.e
 	// ch unread on both sides: marked before the fake's latest message.
 	// The fake's client.counts doesn't see the messages PostQuiet adds, so
 	// the counts refresh that thread and badge events bring would read a
