@@ -671,10 +671,16 @@ func (a *App) chromeButton(gtx layout.Context, org image.Point, c *widget.Clicka
 }
 
 // chromeButtonHover is chromeButton with its :hover tile (ChromeHover,
-// theme-surf-inv-pry) only when hoverable.
+// theme-surf-inv-pry) and its :active one (ChromePressed,
+// theme-surf-inv-sec) only when hoverable (.p-ia4_history_buttons__button
+// [aria-disabled=false]).
 func (a *App) chromeButtonHover(gtx layout.Context, org image.Point, c *widget.Clickable, name string, box, iconSz unit.Dp, col color.NRGBA, radius unit.Dp, hoverable bool) layout.Dimensions {
 	return clickArea(gtx, c, func(gtx layout.Context, sz image.Point, hovered bool) {
-		if hovered && hoverable {
+		switch {
+		case !hoverable:
+		case c.Pressed():
+			a.chrome(gtx, org, image.Rectangle{Max: sz}, gtx.Dp(radius), a.th.C.ChromePressed)
+		case hovered:
 			a.chrome(gtx, org, image.Rectangle{Max: sz}, gtx.Dp(radius), a.th.C.ChromeHover)
 		}
 	}, func(gtx layout.Context) layout.Dimensions {

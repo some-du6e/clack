@@ -10,6 +10,7 @@ type Palette struct {
 	ChromeText                color.NRGBA // rail labels, top nav icons
 	ChromeTextDim             color.NRGBA
 	ChromeHover               color.NRGBA // top nav buttons' :hover tile (theme-surf-inv-pry)
+	ChromePressed             color.NRGBA // top nav buttons' :active tile (theme-surf-inv-sec)
 	ChromeActive              color.NRGBA // rail icon selected tile
 	// ChromeHoverTint is the chrome scope's theme-surf-inv-pry-hover,
 	// the background-image layer Slack blends (--dt_blend-mode-interaction)
@@ -107,6 +108,7 @@ var LightPalette = Palette{
 	ChromeText:      rgb(0xffffff),
 	ChromeTextDim:   rgba(0xf6e4ff, 0xe6),
 	ChromeHover:     rgba(0xf9edff, 0x40),
+	ChromePressed:   rgba(0xf9edff, 0x1c),
 	ChromeActive:    rgba(0xf9edff, 0x40),
 	ChromeHoverTint: rgba(0x82378a, 0x14), // aubergine-70 at .08, multiplied over aubergine-0 at .25
 	SearchBg:        rgba(0xf9edff, 0x40),
@@ -177,6 +179,7 @@ var DarkPalette = Palette{
 	ChromeText:      rgb(0xf8f8f8), // theme-content-inv-pry: gray-100
 	ChromeTextDim:   rgba(0xe3ceeb, 0xcc),
 	ChromeHover:     rgba(0xefe1f5, 0x40),
+	ChromePressed:   rgba(0x101214, 0x99),
 	ChromeActive:    rgba(0xefe1f5, 0x40),
 	ChromeHoverTint: rgba(0xefe1f5, 0x14), // aubergine-100 at .08, lighten over itself
 	SearchBg:        rgba(0xefe1f5, 0x40),

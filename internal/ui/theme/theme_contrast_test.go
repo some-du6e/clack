@@ -21,7 +21,8 @@ import (
 // theme-content-inv-pry, the rail tiles and the search pill
 // theme-surf-inv-pry, the sidebar's rows theme-content-inv-sec /
 // -inv-pry, theme-surf-inv-ter on hover, theme-base-hgl-1 and
-// theme-content-hgl-1 selected. ChromeHoverTint is theme-surf-inv-pry-hover
+// theme-content-hgl-1 selected, the top nav buttons' :active
+// theme-surf-inv-sec (ChromePressed). ChromeHoverTint is theme-surf-inv-pry-hover
 // blended over theme-surf-inv-pry (--dt_blend-mode-interaction: multiply,
 // lighten in dark mode), the W3C blend's (1-ab)*Cs + ab*B(Cb, Cs).
 //
@@ -47,6 +48,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0x1c0901, 0xcc),
 		"ChromeActive":      hxa(0x1c0901, 0x21),
 		"ChromeHover":       hxa(0x1c0901, 0x21),
+		"ChromePressed":     hxa(0xffffff, 0xe6),
 		"SearchBg":          hxa(0x1c0901, 0x21),
 		"SearchText":        hx(0x1c0901),
 		"RailBadge":         hx(0x83388a),
@@ -70,6 +72,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xffdfcf, 0xcc),
 		"ChromeActive":      hxa(0xfff4f0, 0x40),
 		"ChromeHover":       hxa(0xfff4f0, 0x40),
+		"ChromePressed":     hxa(0x101214, 0x99),
 		"SearchBg":          hxa(0xfff4f0, 0x40),
 		"SearchText":        hx(0xf8f8f8),
 		"RailBadge":         hx(0xcfa1de),
@@ -93,6 +96,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xffdfcf, 0xe6),
 		"ChromeActive":      hxa(0xfff4f0, 0x40),
 		"ChromeHover":       hxa(0xfff4f0, 0x40),
+		"ChromePressed":     hxa(0xfff4f0, 0x1c),
 		"SearchBg":          hxa(0xfff4f0, 0x40),
 		"SearchText":        hx(0xffffff),
 		"RailBadge":         hx(0xe01e5a),
@@ -116,6 +120,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xffdfcf, 0xcc),
 		"ChromeActive":      hxa(0xfff4f0, 0x40),
 		"ChromeHover":       hxa(0xfff4f0, 0x40),
+		"ChromePressed":     hxa(0x101214, 0x99),
 		"SearchBg":          hxa(0xfff4f0, 0x40),
 		"SearchText":        hx(0xf8f8f8),
 		"RailBadge":         hx(0xe01e5a),
@@ -139,6 +144,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xffdbf8, 0xe6),
 		"ChromeActive":      hxa(0xfff3f9, 0x40),
 		"ChromeHover":       hxa(0xfff3f9, 0x40),
+		"ChromePressed":     hxa(0xfff3f9, 0x1c),
 		"SearchBg":          hxa(0xfff3f9, 0x40),
 		"SearchText":        hx(0xffffff),
 		"RailBadge":         hx(0xeabdfb),
@@ -162,6 +168,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xffdbf8, 0xcc),
 		"ChromeActive":      hxa(0xfff3f9, 0x40),
 		"ChromeHover":       hxa(0xfff3f9, 0x40),
+		"ChromePressed":     hxa(0x101214, 0x99),
 		"SearchBg":          hxa(0xfff3f9, 0x40),
 		"SearchText":        hx(0xf8f8f8),
 		"RailBadge":         hx(0xcfa1de),
@@ -185,6 +192,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xc2e6fd, 0xe6),
 		"ChromeActive":      hxa(0xe6f5fe, 0x40),
 		"ChromeHover":       hxa(0xe6f5fe, 0x40),
+		"ChromePressed":     hxa(0xe6f5fe, 0x1c),
 		"SearchBg":          hxa(0xe6f5fe, 0x40),
 		"SearchText":        hx(0xffffff),
 		"RailBadge":         hx(0x87dc9b),
@@ -208,6 +216,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xf6e4ff, 0xe6),
 		"ChromeActive":      hxa(0xf9edff, 0x40),
 		"ChromeHover":       hxa(0xf9edff, 0x40),
+		"ChromePressed":     hxa(0xf9edff, 0x1c),
 		"SearchBg":          hxa(0xf9edff, 0x40),
 		"SearchText":        hx(0xffffff),
 		"RailBadge":         hx(0xeabdfb),
@@ -231,6 +240,7 @@ var slackInkCases = []struct {
 		"ChromeTextDim":     hxa(0xe3ceeb, 0xcc),
 		"ChromeActive":      hxa(0xefe1f5, 0x40),
 		"ChromeHover":       hxa(0xefe1f5, 0x40),
+		"ChromePressed":     hxa(0x101214, 0x99),
 		"SearchBg":          hxa(0xefe1f5, 0x40),
 		"SearchText":        hx(0xf8f8f8),
 		"RailBadge":         hx(0xcfa1de),

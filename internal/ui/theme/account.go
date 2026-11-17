@@ -516,7 +516,8 @@ var accountFields = map[string]func(*Palette) *color.NRGBA{
 	"ChromeTextDim": func(p *Palette) *color.NRGBA { return &p.ChromeTextDim }, "ChromeHover": func(p *Palette) *color.NRGBA { return &p.ChromeHover },
 	"ChromeActive": func(p *Palette) *color.NRGBA { return &p.ChromeActive }, "SearchBg": func(p *Palette) *color.NRGBA { return &p.SearchBg },
 	"ChromeHoverTint": func(p *Palette) *color.NRGBA { return &p.ChromeHoverTint }, "SearchText": func(p *Palette) *color.NRGBA { return &p.SearchText },
-	"SidebarBg": func(p *Palette) *color.NRGBA { return &p.SidebarBg }, "SidebarText": func(p *Palette) *color.NRGBA { return &p.SidebarText },
+	"ChromePressed": func(p *Palette) *color.NRGBA { return &p.ChromePressed },
+	"SidebarBg":     func(p *Palette) *color.NRGBA { return &p.SidebarBg }, "SidebarText": func(p *Palette) *color.NRGBA { return &p.SidebarText },
 	"SidebarTextUnread": func(p *Palette) *color.NRGBA { return &p.SidebarTextUnread }, "SidebarHover": func(p *Palette) *color.NRGBA { return &p.SidebarHover },
 	"SidebarActive": func(p *Palette) *color.NRGBA { return &p.SidebarActive }, "SidebarActiveText": func(p *Palette) *color.NRGBA { return &p.SidebarActiveText },
 	"SidebarDivider": func(p *Palette) *color.NRGBA { return &p.SidebarDivider }, "SidebarButton": func(p *Palette) *color.NRGBA { return &p.SidebarButton },
@@ -611,6 +612,17 @@ func (t IATheme) scopeFields(out map[string]color.NRGBA, m themeMode, chrome boo
 	sp := t.token(pr, "surf-inv-pry", m)
 	act := withA(sp, al("surf-inv-pry"))
 	badge, badgeText := t.baseToken(t.Important, "base-imp", m), t.contentToken(t.Important, "content-imp", m)
+	// surf-inv-sec: the light set's own white (breakOutOfPaletteSystem),
+	// gray-0 in dark mode, the primary's shade 0 inverted
+	var surfSec color.NRGBA
+	switch m {
+	case modeLight:
+		surfSec = withA(rgb(0xffffff), al("surf-inv-sec"))
+	case modeDark:
+		surfSec = withA(namedRamp("gray", true)[0], al("surf-inv-sec"))
+	default:
+		surfSec = withA(t.token(pr, "surf-inv-sec", m), al("surf-inv-sec"))
+	}
 	if chrome {
 		out["ChromeText"], out["SearchText"], out["ChromeTextDim"] = inv, inv, sec
 		// surf-inv-pry: the rail's tiles (.p-tab_rail__button__icon on
@@ -619,18 +631,12 @@ func (t IATheme) scopeFields(out map[string]color.NRGBA, m themeMode, chrome boo
 		// (.p-ia4_history_buttons__button, .p-top_nav__help)
 		out["ChromeActive"], out["SearchBg"], out["ChromeHover"] = act, act, act
 		out["ChromeHoverTint"] = t.hoverTint(m)
+		out["ChromePressed"] = surfSec // the top nav buttons' :active
 		out["RailBadge"], out["RailBadgeText"] = badge, badgeText
 		return
 	}
 	out["SidebarTextUnread"], out["SidebarText"], out["SidebarButton"] = inv, sec, act
-	switch m {
-	case modeLight:
-		out["SidebarBg"] = withA(rgb(0xffffff), al("surf-inv-sec"))
-	case modeDark:
-		out["SidebarBg"] = withA(namedRamp("gray", true)[0], al("surf-inv-sec"))
-	default:
-		out["SidebarBg"] = withA(t.token(pr, "surf-inv-sec", m), al("surf-inv-sec"))
-	}
+	out["SidebarBg"] = surfSec
 	out["SidebarHover"] = withA(t.token(pr, "surf-inv-ter", m), al("surf-inv-ter"))
 	out["SidebarDivider"] = withA(t.token(pr, "otl-inv-pry", m), al("otl-inv-pry"))
 	out["SidebarActive"] = t.baseToken(t.Highlight1, "base-hgl-1", m)
