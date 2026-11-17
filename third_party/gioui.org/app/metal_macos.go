@@ -35,7 +35,11 @@ static void resizeDrawable(CFTypeRef viewRef, CFTypeRef layerRef) {
 		CGSize size = layer.bounds.size;
 		size.width *= layer.contentsScale;
 		size.height *= layer.contentsScale;
-		layer.drawableSize = size;
+		// every frame refreshes the context: set the size only when it
+		// changes (Clack patch 41)
+		if (!CGSizeEqualToSize(layer.drawableSize, size)) {
+			layer.drawableSize = size;
+		}
 	}
 }
 */

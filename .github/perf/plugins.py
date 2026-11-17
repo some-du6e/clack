@@ -32,6 +32,14 @@ METRICS = [
     ("trees", "plugin trees that changed (during the frames)", ""),
     ("trees_same", "plugin trees re-delivered unchanged", ""),
     ("renders", "Go→JS renders", ""),
+    # the gpu passes (head only: Gio's frame stats, Clack patch 36)
+    ("draws", "GPU draw calls / frame", ""),
+    ("api_calls", "graphics API calls / frame", ""),
+    ("api_skipped", "API calls the state cache left out / frame", ""),
+    ("crossings", "calls from Go into C or the system / frame", ""),
+    ("paths_built", "paths tessellated and uploaded / frame", ""),
+    ("cover_mpx", "Mpx covered through a path / frame", "mpx"),
+    ("blit_mpx", "Mpx blitted / frame", "mpx"),
     ("anim_frames", "animation frames shown (every player's)", ""),
     ("players", "animations playing at the end", ""),
     ("quiet_frames", "quiet frames (no layout)", ""),
@@ -52,6 +60,8 @@ def load(d, side):
 def fmt(v, unit):
     if v is None:
         return "—"
+    if unit == "mpx":
+        return f"{v:.2f}"
     if unit == "ms":
         return f"{v:.1f} ms" if v < 100 else f"{v:.0f} ms"
     return f"{v:.0f}"
@@ -94,6 +104,7 @@ def main():
     print(f"## Scroll frames under a plugin set like Karim's\n")
     print(f"Before: `{base_label}` ({len(sides['base'])} rounds). After: `{head_label}` ({len(sides['head'])} rounds).")
     print("Each scroll pass is 300 frames at 60 a second, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU. The idle passes (idle, emoji) leave the channel alone for 5 s and draw a frame only when something asks for one, as the window does (emoji: an animated custom emoji on screen); emoji-60hz draws one every 16 ms. Allocations and collections are the whole process's, per frame.")
+    print("The gpu passes are the channel scrolled with Gio's GPU renderer drawing every frame (Mesa llvmpipe, which rasterizes on the CPU), each frame timed from its input to the end of its rasterization; their draw and API call counts are head's only (Gio's frame stats).")
     print("Values are the median over the rounds, the rounds in brackets.\n")
     ref = (sides["head"] or sides["base"] or [{}])[0]
     if ref:
