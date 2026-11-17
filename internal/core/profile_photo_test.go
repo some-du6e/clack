@@ -107,9 +107,9 @@ func photoEnvOn(t *testing.T, base string) (*App, *fakeslack.Server, *pwCalls) {
 // JPEG and a 640×480 JPEG: users.preparePhoto gets the workspace token and
 // the file as an "image" part typed as Chromium types the file by its
 // name; the prepared image, on Slack's avatar CDN, loads with no cookie,
-// and its size (1024 px on its long side for the big ones) is what the
-// crop counts in, so Save's users.setPhoto crop is the largest centred
-// square of the prepared image and the photo is set.
+// and its size (the fake fits the big ones into 1024 px) is what the crop
+// counts in, so Save's users.setPhoto crop is the largest centred square
+// of the prepared image and the photo is set.
 func TestProfilePhotoRequestLikeSlack(t *testing.T) {
 	big := photoNoisePNG(t, 1500, 1000)
 	if len(big) < 1<<20 {

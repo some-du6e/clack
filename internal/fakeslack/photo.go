@@ -21,6 +21,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/exif"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
 
 // The profile photo's methods as the fake's Slack answers them, and the
@@ -41,12 +42,15 @@ import (
 //     without refusing other types, as what Slack's server does with them
 //     isn't known. It answers {id, url}: id a number's digits (Slack's
 //     client parseInts the ids it gets back elsewhere), url the prepared
-//     image. An upload that fits in PreparedPhotoMax (users.setPhoto's
-//     documented limit) as Chromium would show it is kept as uploaded,
-//     its EXIF Orientation and a GIF's frames included; a bigger one is
-//     fitted into it as a PNG. Whether Slack's server keeps or re-encodes
-//     an image it prepares isn't known; these two cases are the ones the
-//     crop pane has to get right.
+//     image. An upload that fits in PreparedPhotoMax as Chromium would
+//     show it is kept as uploaded, its EXIF Orientation and a GIF's frames
+//     included; a bigger one is fitted into it as a PNG, so the tests can
+//     tell the prepared image from the picked file. Slack's own server
+//     doesn't seem to shrink them: public avatars' _original images run
+//     past 1024 px (1584×1584 and 1081×1080 from 2023), re-encoded (JPEGs
+//     with no EXIF since then, PNGs with ImageMagick's tIME and tEXt).
+//     What its prepared image is exactly isn't known (Clack never calls the
+//     method against Slack); the crop pane measures whatever it gets.
 //   - users.setPhoto {id, crop_x, crop_y, crop_w}: the same token; an id
 //     preparePhoto answered (not_found otherwise); the crop, when sent,
 //     whole numbers making a square inside the prepared image as Chromium
@@ -69,9 +73,9 @@ import (
 // avatars.slack-edge.com is a CDN; slack-imgs.com is Slack's image proxy,
 // serving the image its url parameter names).
 
-// PreparedPhotoMax is the longest side of the fake's prepared photos:
-// users.setPhoto's documented limit ("a maximum size of 1024 by 1024
-// pixels").
+// PreparedPhotoMax is the longest side of the fake's prepared photos
+// (users.setPhoto's docs ask for "a maximum size of 1024 by 1024 pixels"
+// when the API is sent the image itself).
 const PreparedPhotoMax = 1024
 
 // The prepared images' bases for SetPhotoBase: Slack's avatar CDN, its file
@@ -311,13 +315,13 @@ func (s *Server) asSlackHost(w http.ResponseWriter, r *http.Request) bool {
 // HostsTransport sends every request to the fake: one for the fake's own
 // address as it is, any other over plain http to the fake's address with
 // the host it was for in a header, for the fake to answer as that host
-// (asSlackHost). next sends them (nil: http.DefaultTransport). Tests use it
+// (asSlackHost). next sends them (nil: tlsfp.Mixed). Tests use it
 // to load Slack's production URLs (files.slack.com, avatars.slack-edge.com,
 // slack-imgs.com) from the fake, with every rule the client applies to
 // those URLs before they go out (RouteSlackHosts).
 func (s *Server) HostsTransport(next http.RoundTripper) http.RoundTripper {
 	if next == nil {
-		next = http.DefaultTransport
+		next = tlsfp.Mixed
 	}
 	u, _ := url.Parse(s.URL)
 	return &hostsTransport{fake: u, next: next}
@@ -341,8 +345,8 @@ func (t *hostsTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // RouteSlackHosts sends c's requests, and the fetches without credentials
 // (slack.PublicHTTP), to the fake through HostsTransport, and returns the
 // undo: t.Cleanup(fs.RouteSlackHosts(a.C)). PublicHTTP's own transport
-// dials public addresses only, so its requests go out on
-// http.DefaultTransport while routed.
+// dials public addresses only, so its requests go out on tlsfp.Mixed while
+// routed.
 func (s *Server) RouteSlackHosts(c *slack.Client) func() {
 	prevC, prevPub := c.HTTP.Transport, slack.PublicHTTP.Transport
 	c.HTTP.Transport = s.HostsTransport(prevC)

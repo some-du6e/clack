@@ -142,9 +142,9 @@ func epSave(t *testing.T, m *EditProfileModal) {
 
 // Upload Photo with a 1.5 MB PNG of 1500×1000 (the report's was a 1.3 MB
 // PNG) and a 1600×1200 JPEG: the crop pane shows the image
-// users.preparePhoto answered with (1024 px on its long side, from Slack's
-// avatar CDN), its first square is that image's largest centred one, and
-// Save sets the photo and goes back to the form.
+// users.preparePhoto answered with (the fake fits big ones into 1024 px;
+// served from Slack's avatar CDN), its first square is that image's
+// largest centred one, and Save sets the photo and goes back to the form.
 func TestEditProfilePhotoLargeLikeSlack(t *testing.T) {
 	big := epNoisePNG(t, 1500, 1000)
 	if len(big) < 1<<20 {

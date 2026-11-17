@@ -712,9 +712,7 @@ var (
 // pane loads it (getLoadedImage(e.url)). That image, not the picked file,
 // is what EditProfileCropPane shows and what crop_x, crop_y and crop_w
 // count in (handleUpload's normalizeSquareCrop takes its width and
-// height). Slack's server can answer with another size than it was sent:
-// users.setPhoto's docs limit photos to 1024×1024, while the client sends
-// up to 4000 px a side.
+// height), whatever the server made of the upload.
 type PhotoUpload struct {
 	ID, URL string
 	// Width, Height are the prepared image's size (0 when core can't read
