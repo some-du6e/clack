@@ -522,6 +522,9 @@ import "C"
 type Context any
 
 type Functions struct {
+	// Calls counts the calls into OpenGL (Clack patch 36).
+	Calls int64
+
 	// Query caches.
 	uints  [100]C.GLuint
 	ints   [100]C.GLint
@@ -813,40 +816,49 @@ func (f *Functions) load(forceES bool) error {
 }
 
 func (f *Functions) ActiveTexture(texture Enum) {
+	f.Calls++
 	C.glActiveTexture(f.glActiveTexture, C.GLenum(texture))
 }
 
 func (f *Functions) AttachShader(p Program, s Shader) {
+	f.Calls++
 	C.glAttachShader(f.glAttachShader, C.GLuint(p.V), C.GLuint(s.V))
 }
 
 func (f *Functions) BeginQuery(target Enum, query Query) {
+	f.Calls++
 	C.glBeginQuery(f.glBeginQuery, C.GLenum(target), C.GLenum(query.V))
 }
 
 func (f *Functions) BindAttribLocation(p Program, a Attrib, name string) {
+	f.Calls++
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 	C.glBindAttribLocation(f.glBindAttribLocation, C.GLuint(p.V), C.GLuint(a), cname)
 }
 
 func (f *Functions) BindBufferBase(target Enum, index int, b Buffer) {
+	f.Calls++
 	C.glBindBufferBase(f.glBindBufferBase, C.GLenum(target), C.GLuint(index), C.GLuint(b.V))
 }
 
 func (f *Functions) BindBuffer(target Enum, b Buffer) {
+	f.Calls++
 	C.glBindBuffer(f.glBindBuffer, C.GLenum(target), C.GLuint(b.V))
 }
 
 func (f *Functions) BindFramebuffer(target Enum, fb Framebuffer) {
+	f.Calls++
 	C.glBindFramebuffer(f.glBindFramebuffer, C.GLenum(target), C.GLuint(fb.V))
 }
 
 func (f *Functions) BindRenderbuffer(target Enum, fb Renderbuffer) {
+	f.Calls++
 	C.glBindRenderbuffer(f.glBindRenderbuffer, C.GLenum(target), C.GLuint(fb.V))
 }
 
 func (f *Functions) BindImageTexture(unit int, t Texture, level int, layered bool, layer int, access, format Enum) {
+	f.Calls++
 	l := C.GLboolean(FALSE)
 	if layered {
 		l = TRUE
@@ -855,22 +867,27 @@ func (f *Functions) BindImageTexture(unit int, t Texture, level int, layered boo
 }
 
 func (f *Functions) BindTexture(target Enum, t Texture) {
+	f.Calls++
 	C.glBindTexture(f.glBindTexture, C.GLenum(target), C.GLuint(t.V))
 }
 
 func (f *Functions) BindVertexArray(a VertexArray) {
+	f.Calls++
 	C.glBindVertexArray(f.glBindVertexArray, C.GLuint(a.V))
 }
 
 func (f *Functions) BlendEquation(mode Enum) {
+	f.Calls++
 	C.glBlendEquation(f.glBlendEquation, C.GLenum(mode))
 }
 
 func (f *Functions) BlendFuncSeparate(srcRGB, dstRGB, srcA, dstA Enum) {
+	f.Calls++
 	C.glBlendFuncSeparate(f.glBlendFuncSeparate, C.GLenum(srcRGB), C.GLenum(dstRGB), C.GLenum(srcA), C.GLenum(dstA))
 }
 
 func (f *Functions) BlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1 int, mask Enum, filter Enum) {
+	f.Calls++
 	C.glBlitFramebuffer(f.glBlitFramebuffer,
 		C.GLint(sx0), C.GLint(sy0), C.GLint(sx1), C.GLint(sy1),
 		C.GLint(dx0), C.GLint(dy0), C.GLint(dx1), C.GLint(dy1),
@@ -879,119 +896,145 @@ func (f *Functions) BlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1 int, 
 }
 
 func (f *Functions) BufferData(target Enum, size int, usage Enum, data []byte) {
+	f.Calls++
 	C.glBufferData(f.glBufferData, C.GLenum(target), C.GLsizeiptr(size), unsafe.Pointer(unsafe.SliceData(data)), C.GLenum(usage))
 }
 
 func (f *Functions) BufferSubData(target Enum, offset int, src []byte) {
+	f.Calls++
 	C.glBufferSubData(f.glBufferSubData, C.GLenum(target), C.GLintptr(offset), C.GLsizeiptr(len(src)),
 		unsafe.Pointer(unsafe.SliceData(src)))
 }
 
 func (f *Functions) CheckFramebufferStatus(target Enum) Enum {
+	f.Calls++
 	return Enum(C.glCheckFramebufferStatus(f.glCheckFramebufferStatus, C.GLenum(target)))
 }
 
 func (f *Functions) Clear(mask Enum) {
+	f.Calls++
 	C.glClear(f.glClear, C.GLbitfield(mask))
 }
 
 func (f *Functions) ClearColor(red float32, green float32, blue float32, alpha float32) {
+	f.Calls++
 	C.glClearColor(f.glClearColor, C.GLfloat(red), C.GLfloat(green), C.GLfloat(blue), C.GLfloat(alpha))
 }
 
 func (f *Functions) ClearDepthf(d float32) {
+	f.Calls++
 	C.glClearDepthf(f.glClearDepthf, C.GLfloat(d))
 }
 
 func (f *Functions) CompileShader(s Shader) {
+	f.Calls++
 	C.glCompileShader(f.glCompileShader, C.GLuint(s.V))
 }
 
 func (f *Functions) CopyTexSubImage2D(target Enum, level, xoffset, yoffset, x, y, width, height int) {
+	f.Calls++
 	C.glCopyTexSubImage2D(f.glCopyTexSubImage2D, C.GLenum(target), C.GLint(level), C.GLint(xoffset), C.GLint(yoffset), C.GLint(x), C.GLint(y), C.GLsizei(width), C.GLsizei(height))
 }
 
 func (f *Functions) CreateBuffer() Buffer {
+	f.Calls++
 	C.glGenBuffers(f.glGenBuffers, 1, &f.uints[0])
 	return Buffer{uint(f.uints[0])}
 }
 
 func (f *Functions) CreateFramebuffer() Framebuffer {
+	f.Calls++
 	C.glGenFramebuffers(f.glGenFramebuffers, 1, &f.uints[0])
 	return Framebuffer{uint(f.uints[0])}
 }
 
 func (f *Functions) CreateProgram() Program {
+	f.Calls++
 	return Program{uint(C.glCreateProgram(f.glCreateProgram))}
 }
 
 func (f *Functions) CreateQuery() Query {
+	f.Calls++
 	C.glGenQueries(f.glGenQueries, 1, &f.uints[0])
 	return Query{uint(f.uints[0])}
 }
 
 func (f *Functions) CreateRenderbuffer() Renderbuffer {
+	f.Calls++
 	C.glGenRenderbuffers(f.glGenRenderbuffers, 1, &f.uints[0])
 	return Renderbuffer{uint(f.uints[0])}
 }
 
 func (f *Functions) CreateShader(ty Enum) Shader {
+	f.Calls++
 	return Shader{uint(C.glCreateShader(f.glCreateShader, C.GLenum(ty)))}
 }
 
 func (f *Functions) CreateTexture() Texture {
+	f.Calls++
 	C.glGenTextures(f.glGenTextures, 1, &f.uints[0])
 	return Texture{uint(f.uints[0])}
 }
 
 func (f *Functions) CreateVertexArray() VertexArray {
+	f.Calls++
 	C.glGenVertexArrays(f.glGenVertexArrays, 1, &f.uints[0])
 	return VertexArray{uint(f.uints[0])}
 }
 
 func (f *Functions) DeleteBuffer(v Buffer) {
+	f.Calls++
 	f.uints[0] = C.GLuint(v.V)
 	C.glDeleteBuffers(f.glDeleteBuffers, 1, &f.uints[0])
 }
 
 func (f *Functions) DeleteFramebuffer(v Framebuffer) {
+	f.Calls++
 	f.uints[0] = C.GLuint(v.V)
 	C.glDeleteFramebuffers(f.glDeleteFramebuffers, 1, &f.uints[0])
 }
 
 func (f *Functions) DeleteProgram(p Program) {
+	f.Calls++
 	C.glDeleteProgram(f.glDeleteProgram, C.GLuint(p.V))
 }
 
 func (f *Functions) DeleteQuery(query Query) {
+	f.Calls++
 	f.uints[0] = C.GLuint(query.V)
 	C.glDeleteQueries(f.glDeleteQueries, 1, &f.uints[0])
 }
 
 func (f *Functions) DeleteVertexArray(array VertexArray) {
+	f.Calls++
 	f.uints[0] = C.GLuint(array.V)
 	C.glDeleteVertexArrays(f.glDeleteVertexArrays, 1, &f.uints[0])
 }
 
 func (f *Functions) DeleteRenderbuffer(v Renderbuffer) {
+	f.Calls++
 	f.uints[0] = C.GLuint(v.V)
 	C.glDeleteRenderbuffers(f.glDeleteRenderbuffers, 1, &f.uints[0])
 }
 
 func (f *Functions) DeleteShader(s Shader) {
+	f.Calls++
 	C.glDeleteShader(f.glDeleteShader, C.GLuint(s.V))
 }
 
 func (f *Functions) DeleteTexture(v Texture) {
+	f.Calls++
 	f.uints[0] = C.GLuint(v.V)
 	C.glDeleteTextures(f.glDeleteTextures, 1, &f.uints[0])
 }
 
 func (f *Functions) DepthFunc(v Enum) {
+	f.Calls++
 	C.glDepthFunc(f.glDepthFunc, C.GLenum(v))
 }
 
 func (f *Functions) DepthMask(mask bool) {
+	f.Calls++
 	m := C.GLboolean(FALSE)
 	if mask {
 		m = C.GLboolean(TRUE)
@@ -1000,54 +1043,67 @@ func (f *Functions) DepthMask(mask bool) {
 }
 
 func (f *Functions) DisableVertexAttribArray(a Attrib) {
+	f.Calls++
 	C.glDisableVertexAttribArray(f.glDisableVertexAttribArray, C.GLuint(a))
 }
 
 func (f *Functions) Disable(cap Enum) {
+	f.Calls++
 	C.glDisable(f.glDisable, C.GLenum(cap))
 }
 
 func (f *Functions) DrawArrays(mode Enum, first int, count int) {
+	f.Calls++
 	C.glDrawArrays(f.glDrawArrays, C.GLenum(mode), C.GLint(first), C.GLsizei(count))
 }
 
 func (f *Functions) DrawElements(mode Enum, count int, ty Enum, offset int) {
+	f.Calls++
 	C.glDrawElements(f.glDrawElements, C.GLenum(mode), C.GLsizei(count), C.GLenum(ty), C.uintptr_t(offset))
 }
 
 func (f *Functions) DispatchCompute(x, y, z int) {
+	f.Calls++
 	C.glDispatchCompute(f.glDispatchCompute, C.GLuint(x), C.GLuint(y), C.GLuint(z))
 }
 
 func (f *Functions) Enable(cap Enum) {
+	f.Calls++
 	C.glEnable(f.glEnable, C.GLenum(cap))
 }
 
 func (f *Functions) EndQuery(target Enum) {
+	f.Calls++
 	C.glEndQuery(f.glEndQuery, C.GLenum(target))
 }
 
 func (f *Functions) EnableVertexAttribArray(a Attrib) {
+	f.Calls++
 	C.glEnableVertexAttribArray(f.glEnableVertexAttribArray, C.GLuint(a))
 }
 
 func (f *Functions) Finish() {
+	f.Calls++
 	C.glFinish(f.glFinish)
 }
 
 func (f *Functions) Flush() {
+	f.Calls++
 	C.glFlush(f.glFinish)
 }
 
 func (f *Functions) FramebufferRenderbuffer(target, attachment, renderbuffertarget Enum, renderbuffer Renderbuffer) {
+	f.Calls++
 	C.glFramebufferRenderbuffer(f.glFramebufferRenderbuffer, C.GLenum(target), C.GLenum(attachment), C.GLenum(renderbuffertarget), C.GLuint(renderbuffer.V))
 }
 
 func (f *Functions) FramebufferTexture2D(target, attachment, texTarget Enum, t Texture, level int) {
+	f.Calls++
 	C.glFramebufferTexture2D(f.glFramebufferTexture2D, C.GLenum(target), C.GLenum(attachment), C.GLenum(texTarget), C.GLuint(t.V), C.GLint(level))
 }
 
 func (f *Functions) GenerateMipmap(target Enum) {
+	f.Calls++
 	C.glGenerateMipmap(f.glGenerateMipmap, C.GLenum(target))
 }
 
@@ -1060,20 +1116,24 @@ func (c *Functions) GetBindingi(pname Enum, idx int) Object {
 }
 
 func (f *Functions) GetError() Enum {
+	f.Calls++
 	return Enum(C.glGetError(f.glGetError))
 }
 
 func (f *Functions) GetRenderbufferParameteri(target, pname Enum) int {
+	f.Calls++
 	C.glGetRenderbufferParameteriv(f.glGetRenderbufferParameteriv, C.GLenum(target), C.GLenum(pname), &f.ints[0])
 	return int(f.ints[0])
 }
 
 func (f *Functions) GetFramebufferAttachmentParameteri(target, attachment, pname Enum) int {
+	f.Calls++
 	C.glGetFramebufferAttachmentParameteriv(f.glGetFramebufferAttachmentParameteriv, C.GLenum(target), C.GLenum(attachment), C.GLenum(pname), &f.ints[0])
 	return int(f.ints[0])
 }
 
 func (f *Functions) GetFloat4(pname Enum) [4]float32 {
+	f.Calls++
 	C.glGetFloatv(f.glGetFloatv, C.GLenum(pname), &f.floats[0])
 	var r [4]float32
 	for i := range r {
@@ -1083,11 +1143,13 @@ func (f *Functions) GetFloat4(pname Enum) [4]float32 {
 }
 
 func (f *Functions) GetFloat(pname Enum) float32 {
+	f.Calls++
 	C.glGetFloatv(f.glGetFloatv, C.GLenum(pname), &f.floats[0])
 	return float32(f.floats[0])
 }
 
 func (f *Functions) GetInteger4(pname Enum) [4]int {
+	f.Calls++
 	C.glGetIntegerv(f.glGetIntegerv, C.GLenum(pname), &f.ints[0])
 	var r [4]int
 	for i := range r {
@@ -1097,21 +1159,25 @@ func (f *Functions) GetInteger4(pname Enum) [4]int {
 }
 
 func (f *Functions) GetInteger(pname Enum) int {
+	f.Calls++
 	C.glGetIntegerv(f.glGetIntegerv, C.GLenum(pname), &f.ints[0])
 	return int(f.ints[0])
 }
 
 func (f *Functions) GetIntegeri(pname Enum, idx int) int {
+	f.Calls++
 	C.glGetIntegeri_v(f.glGetIntegeri_v, C.GLenum(pname), C.GLuint(idx), &f.ints[0])
 	return int(f.ints[0])
 }
 
 func (f *Functions) GetProgrami(p Program, pname Enum) int {
+	f.Calls++
 	C.glGetProgramiv(f.glGetProgramiv, C.GLuint(p.V), C.GLenum(pname), &f.ints[0])
 	return int(f.ints[0])
 }
 
 func (f *Functions) GetProgramBinary(p Program) []byte {
+	f.Calls++
 	sz := f.GetProgrami(p, PROGRAM_BINARY_LENGTH)
 	buf := make([]byte, sz)
 	var format C.GLenum
@@ -1120,6 +1186,7 @@ func (f *Functions) GetProgramBinary(p Program) []byte {
 }
 
 func (f *Functions) GetProgramInfoLog(p Program) string {
+	f.Calls++
 	n := f.GetProgrami(p, INFO_LOG_LENGTH)
 	buf := make([]byte, n)
 	C.glGetProgramInfoLog(f.glGetProgramInfoLog, C.GLuint(p.V), C.GLsizei(len(buf)), nil, (*C.GLchar)(unsafe.Pointer(unsafe.SliceData(buf))))
@@ -1127,16 +1194,19 @@ func (f *Functions) GetProgramInfoLog(p Program) string {
 }
 
 func (f *Functions) GetQueryObjectuiv(query Query, pname Enum) uint {
+	f.Calls++
 	C.glGetQueryObjectuiv(f.glGetQueryObjectuiv, C.GLuint(query.V), C.GLenum(pname), &f.uints[0])
 	return uint(f.uints[0])
 }
 
 func (f *Functions) GetShaderi(s Shader, pname Enum) int {
+	f.Calls++
 	C.glGetShaderiv(f.glGetShaderiv, C.GLuint(s.V), C.GLenum(pname), &f.ints[0])
 	return int(f.ints[0])
 }
 
 func (f *Functions) GetShaderInfoLog(s Shader) string {
+	f.Calls++
 	n := f.GetShaderi(s, INFO_LOG_LENGTH)
 	buf := make([]byte, n)
 	C.glGetShaderInfoLog(f.glGetShaderInfoLog, C.GLuint(s.V), C.GLsizei(len(buf)), nil,
@@ -1145,6 +1215,7 @@ func (f *Functions) GetShaderInfoLog(s Shader) string {
 }
 
 func (f *Functions) getStringi(pname Enum, index int) string {
+	f.Calls++
 	str := C.glGetStringi(f.glGetStringi, C.GLenum(pname), C.GLuint(index))
 	if str == nil {
 		return ""
@@ -1153,6 +1224,7 @@ func (f *Functions) getStringi(pname Enum, index int) string {
 }
 
 func (f *Functions) GetString(pname Enum) string {
+	f.Calls++
 	switch {
 	case runtime.GOOS == "darwin" && pname == EXTENSIONS:
 		// macOS OpenGL 3 core profile doesn't support glGetString(GL_EXTENSIONS).
@@ -1171,52 +1243,63 @@ func (f *Functions) GetString(pname Enum) string {
 }
 
 func (f *Functions) GetUniformBlockIndex(p Program, name string) uint {
+	f.Calls++
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 	return uint(C.glGetUniformBlockIndex(f.glGetUniformBlockIndex, C.GLuint(p.V), cname))
 }
 
 func (f *Functions) GetUniformLocation(p Program, name string) Uniform {
+	f.Calls++
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 	return Uniform{int(C.glGetUniformLocation(f.glGetUniformLocation, C.GLuint(p.V), cname))}
 }
 
 func (f *Functions) GetVertexAttrib(index int, pname Enum) int {
+	f.Calls++
 	C.glGetVertexAttribiv(f.glGetVertexAttribiv, C.GLuint(index), C.GLenum(pname), &f.ints[0])
 	return int(f.ints[0])
 }
 
 func (f *Functions) GetVertexAttribBinding(index int, pname Enum) Object {
+	f.Calls++
 	return Object{uint(f.GetVertexAttrib(index, pname))}
 }
 
 func (f *Functions) GetVertexAttribPointer(index int, pname Enum) uintptr {
+	f.Calls++
 	ptr := C.glGetVertexAttribPointerv(f.glGetVertexAttribPointerv, C.GLuint(index), C.GLenum(pname))
 	return uintptr(ptr)
 }
 
 func (f *Functions) InvalidateFramebuffer(target, attachment Enum) {
+	f.Calls++
 	C.glInvalidateFramebuffer(f.glInvalidateFramebuffer, C.GLenum(target), C.GLenum(attachment))
 }
 
 func (f *Functions) IsEnabled(cap Enum) bool {
+	f.Calls++
 	return C.glIsEnabled(f.glIsEnabled, C.GLenum(cap)) == TRUE
 }
 
 func (f *Functions) LinkProgram(p Program) {
+	f.Calls++
 	C.glLinkProgram(f.glLinkProgram, C.GLuint(p.V))
 }
 
 func (f *Functions) PixelStorei(pname Enum, param int) {
+	f.Calls++
 	C.glPixelStorei(f.glPixelStorei, C.GLenum(pname), C.GLint(param))
 }
 
 func (f *Functions) MemoryBarrier(barriers Enum) {
+	f.Calls++
 	C.glMemoryBarrier(f.glMemoryBarrier, C.GLbitfield(barriers))
 }
 
 func (f *Functions) MapBufferRange(target Enum, offset, length int, access Enum) []byte {
+	f.Calls++
 	p := C.glMapBufferRange(f.glMapBufferRange, C.GLenum(target), C.GLintptr(offset), C.GLsizeiptr(length), C.GLbitfield(access))
 	if p == nil {
 		return nil
@@ -1225,75 +1308,92 @@ func (f *Functions) MapBufferRange(target Enum, offset, length int, access Enum)
 }
 
 func (f *Functions) Scissor(x, y, width, height int32) {
+	f.Calls++
 	C.glScissor(f.glScissor, C.GLint(x), C.GLint(y), C.GLsizei(width), C.GLsizei(height))
 }
 
 func (f *Functions) ReadPixels(x, y, width, height int, format, ty Enum, data []byte) {
+	f.Calls++
 	C.glReadPixels(f.glReadPixels, C.GLint(x), C.GLint(y), C.GLsizei(width), C.GLsizei(height), C.GLenum(format), C.GLenum(ty),
 		unsafe.Pointer(unsafe.SliceData(data)))
 }
 
 func (f *Functions) RenderbufferStorage(target, internalformat Enum, width, height int) {
+	f.Calls++
 	C.glRenderbufferStorage(f.glRenderbufferStorage, C.GLenum(target), C.GLenum(internalformat), C.GLsizei(width), C.GLsizei(height))
 }
 
 func (f *Functions) ShaderSource(s Shader, src string) {
+	f.Calls++
 	strlen := C.GLint(len(src))
 	pstr := unsafe.StringData(src)
 	C.glShaderSource(f.glShaderSource, C.GLuint(s.V), 1, (**C.GLchar)(unsafe.Pointer(&pstr)), &strlen)
 }
 
 func (f *Functions) TexImage2D(target Enum, level int, internalFormat Enum, width int, height int, format Enum, ty Enum) {
+	f.Calls++
 	C.glTexImage2D(f.glTexImage2D, C.GLenum(target), C.GLint(level), C.GLint(internalFormat), C.GLsizei(width), C.GLsizei(height), 0, C.GLenum(format), C.GLenum(ty), nil)
 }
 
 func (f *Functions) TexStorage2D(target Enum, levels int, internalFormat Enum, width, height int) {
+	f.Calls++
 	C.glTexStorage2D(f.glTexStorage2D, C.GLenum(target), C.GLsizei(levels), C.GLenum(internalFormat), C.GLsizei(width), C.GLsizei(height))
 }
 
 func (f *Functions) TexSubImage2D(target Enum, level int, x int, y int, width int, height int, format Enum, ty Enum, data []byte) {
+	f.Calls++
 	C.glTexSubImage2D(f.glTexSubImage2D, C.GLenum(target), C.GLint(level), C.GLint(x), C.GLint(y), C.GLsizei(width), C.GLsizei(height), C.GLenum(format), C.GLenum(ty),
 		unsafe.Pointer(unsafe.SliceData(data)))
 }
 
 func (f *Functions) TexParameteri(target, pname Enum, param int) {
+	f.Calls++
 	C.glTexParameteri(f.glTexParameteri, C.GLenum(target), C.GLenum(pname), C.GLint(param))
 }
 
 func (f *Functions) UniformBlockBinding(p Program, uniformBlockIndex uint, uniformBlockBinding uint) {
+	f.Calls++
 	C.glUniformBlockBinding(f.glUniformBlockBinding, C.GLuint(p.V), C.GLuint(uniformBlockIndex), C.GLuint(uniformBlockBinding))
 }
 
 func (f *Functions) Uniform1f(dst Uniform, v float32) {
+	f.Calls++
 	C.glUniform1f(f.glUniform1f, C.GLint(dst.V), C.GLfloat(v))
 }
 
 func (f *Functions) Uniform1i(dst Uniform, v int) {
+	f.Calls++
 	C.glUniform1i(f.glUniform1i, C.GLint(dst.V), C.GLint(v))
 }
 
 func (f *Functions) Uniform2f(dst Uniform, v0 float32, v1 float32) {
+	f.Calls++
 	C.glUniform2f(f.glUniform2f, C.GLint(dst.V), C.GLfloat(v0), C.GLfloat(v1))
 }
 
 func (f *Functions) Uniform3f(dst Uniform, v0 float32, v1 float32, v2 float32) {
+	f.Calls++
 	C.glUniform3f(f.glUniform3f, C.GLint(dst.V), C.GLfloat(v0), C.GLfloat(v1), C.GLfloat(v2))
 }
 
 func (f *Functions) Uniform4f(dst Uniform, v0 float32, v1 float32, v2 float32, v3 float32) {
+	f.Calls++
 	C.glUniform4f(f.glUniform4f, C.GLint(dst.V), C.GLfloat(v0), C.GLfloat(v1), C.GLfloat(v2), C.GLfloat(v3))
 }
 
 func (f *Functions) UseProgram(p Program) {
+	f.Calls++
 	C.glUseProgram(f.glUseProgram, C.GLuint(p.V))
 }
 
 func (f *Functions) UnmapBuffer(target Enum) bool {
+	f.Calls++
 	r := C.glUnmapBuffer(f.glUnmapBuffer, C.GLenum(target))
 	return r == TRUE
 }
 
 func (f *Functions) VertexAttribPointer(dst Attrib, size int, ty Enum, normalized bool, stride int, offset int) {
+	f.Calls++
 	var n C.GLboolean = FALSE
 	if normalized {
 		n = TRUE
@@ -1302,5 +1402,6 @@ func (f *Functions) VertexAttribPointer(dst Attrib, size int, ty Enum, normalize
 }
 
 func (f *Functions) Viewport(x int, y int, width int, height int) {
+	f.Calls++
 	C.glViewport(f.glViewport, C.GLint(x), C.GLint(y), C.GLsizei(width), C.GLsizei(height))
 }

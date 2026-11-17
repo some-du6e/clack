@@ -535,6 +535,10 @@ jobs:
           PERF_PLUGIN_RECORDER: "3"
           ROUNDS: ${{ inputs.plugins_rounds || '3' }}
           SIDES: ${{ inputs.plugins_sides || 'base head' }}
+          # then the channel with the GPU renderer drawing every frame,
+          # light and dark, 60 frames each (perfGPUScroll)
+          PERF_PLUGIN_GPU: "60"
+          GALLIUM_DRIVER: llvmpipe
         run: |
           for r in $(seq 1 "$ROUNDS"); do
             for s in $SIDES; do
