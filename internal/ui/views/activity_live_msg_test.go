@@ -623,6 +623,41 @@ func TestActivityLiveVoteJSHeld(t *testing.T) {
 	}
 }
 
+// The same with a message whose preview is its text (a mention, edited
+// six times while JS is busy): a tree of any revision before is the
+// row's own props, so the row never draws an older text in its place,
+// however many revisions JS is behind. (The vote's preview comes from its
+// blocks, which a text override leaves alone.)
+func TestActivityLiveEditsJSHeld(t *testing.T) {
+	e := newLmEnv(t, lmOpts{patch: lmPatches})
+	e.untilVote(1)
+	e.e.until(t, "the mention drawn", func() bool { return strings.Contains(e.drawn(lmMention), "please read the synthetic standup notes") })
+	for i := 0; i < 5; i++ {
+		e.frame()
+	}
+	release := e.holdJS()
+	defer release()
+	for n := 1; n <= 6; n++ {
+		e.editMention(fmt.Sprintf("<@%s> please read the synthetic notes, take %d", fakeslack.SelfID, n))
+		want := fmt.Sprintf("take %d", n)
+		for i := 0; i < 4; i++ {
+			e.frame()
+			if got := e.drawn(lmMention); !strings.Contains(got, want) {
+				t.Fatalf("edit %d, frame %d with JS busy: drew %q", n, i, got)
+			}
+		}
+	}
+	release()
+	e.e.until(t, "JS caught up", func() bool { return strings.Contains(e.drawn(lmMention), "take 6") })
+	for i := 0; i < 20; i++ {
+		e.frame()
+		if got := e.drawn(lmMention); !strings.Contains(got, "take 6") {
+			t.Fatalf("frame %d after JS answered drew %q", i, got)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // Under a plugin's text patch of the messages slice (Message Logger's
 // kind of patch: patchMessageText), the row draws the plugin's text for
 // every revision, as the message lists do: within a few frames of the

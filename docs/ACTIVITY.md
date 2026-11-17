@@ -1093,6 +1093,7 @@ the socket nothing else would bring the change.
 
 **Tests.** TestActivityLiveVoteCounts (native, patched, patched in
 lockstep, then a reload after an unheard change), TestActivityLiveVoteJSHeld,
+TestActivityLiveEditsJSHeld,
 TestActivityLiveVoteSlicePatch, TestActivityLiveVoteBesideThread (in step,
 then the pane closing), TestActivityLiveEdit (the edit, and the removals:
 an edited-out mention, @channel, @here, a tombstone, moderated,

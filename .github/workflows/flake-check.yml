@@ -1214,7 +1214,7 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: Activity's, Threads' and Saved's live messages (one verbose run, then COUNT)"
         env:
-          LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote)|TestSavedLive(Messages|BotUpdate))$'
+          LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|EditsJSHeld|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote)|TestSavedLive(Messages|BotUpdate))$'
         run: |
           rc=0
           xvfb-run -a go test -count=1 -v -timeout 20m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
@@ -1230,7 +1230,7 @@ jobs:
       - name: "the same under -race, 3 runs"
         if: ${{ !cancelled() }}
         env:
-          LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote)|TestSavedLive(Messages|BotUpdate))$'
+          LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|EditsJSHeld|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote)|TestSavedLive(Messages|BotUpdate))$'
         run: |
           rc=0
           xvfb-run -a go test -race -count=3 -timeout 50m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
