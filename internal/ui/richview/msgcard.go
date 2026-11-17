@@ -152,16 +152,18 @@ func (l *lay) hiddenMember(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8
 // --non-existent's 1px rgb(--sk_foreground_low_solid) (border-box). No
 // link, hover card or plain text: the id is never drawn or copied, and
 // the mention lays out again when the member arrives (namesChanged).
-// Like an atomic inline it may wrap to the next line on its own. (Not
-// ported: MissingText's tooltip, "Loading…" or "Private user info".)
-func (l *lay) missingMember(miss MemberMiss, k faceKey) {
+// An atomic inline: a line may break before and after it, and holding
+// only it a line is a full line box. col is the color it inherits (a
+// clamp's "…" after it takes it). (Not ported: MissingText's tooltip,
+// "Loading…" or "Private user info".)
+func (l *lay) missingMember(miss MemberMiss, k faceKey, col color.NRGBA) {
 	p := &l.st.Palette
 	dc := deco{kind: decoMissing, bg: p.Missing, face: k, target: -1, radius: l.dp(4)}
 	if miss == MemberGone {
 		dc.kind, dc.bg, dc.border = decoMissingGone, color.NRGBA{}, p.MissingLine
 	}
 	l.decos = append(l.decos, dc)
-	l.items = append(l.items, item{kind: itPad, w: l.dpf(120), deco: int16(len(l.decos) - 1), face: k, target: -1, part: l.curPart, brk: true})
+	l.items = append(l.items, item{kind: itPad, w: l.dpf(120), deco: -1, own: int16(len(l.decos)), face: k, col: col, target: -1, part: l.curPart, atom: true})
 	if n := len(l.d.names); n > 0 {
 		l.d.names[n-1].bar = true
 	}

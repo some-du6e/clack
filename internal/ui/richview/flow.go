@@ -45,6 +45,9 @@ type frag struct {
 	hov    int16  // hover layer (index+1 into display.hovers), 0 = none
 	part   uint8  // CSS part (css.go), 0 = none
 	boxed  bool   // its part's background is a deco box (code, pill)
+	// ell is a clamp's "…" (ellipsize): drawn over the components too, as
+	// Chromium paints it after every child of its line
+	ell    bool
 	weight font.Weight
 	tip    int16 // emoji: index+1 into display.tips (its :name: tooltip); also the "(edited)" word's
 	// ulT and ulU are how far the frag's decoration runs on past it, over
@@ -270,6 +273,8 @@ type display struct {
 	// snippets' Show more / Show less (snippet.go)
 	bars  []fileBar
 	pills []snipPill
+	// ells counts the frags that are a clamp's "…" (frag.ell)
+	ells int
 }
 
 // hoverLayer is drawn while the View's hovered target is in card..cardTo
@@ -321,6 +326,7 @@ func (d *display) reset() {
 	d.expands = d.expands[:0]
 	d.bars = d.bars[:0]
 	d.pills = d.pills[:0]
+	d.ells = 0
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -394,6 +400,10 @@ type item struct {
 	// CanBreakAfterAtomicInline; the sticky-images quirk is quirks mode's)
 	atom bool
 	alt  bool
+	// own is an atomic inline's own box, which the flow draws in its
+	// place: its deco's index+1 (the colour swatch, MissingText's bar), 0
+	// none. deco is then the element it is in (inline code's chip), -1 none
+	own int16
 	// itSlot: which pseudo-element's place it is (0 ::before, 1 ::after)
 	slot uint8
 	comp int16
@@ -610,8 +620,8 @@ func (l *lay) addClose(w float32, dc int16, k faceKey) {
 // box is a box pseudo-element (an inline-block: MentionProfiles'
 // picture), an atomic inline the line may break before and after; text
 // content flows with the text around it.
-func (l *lay) addPseudoSlot(which uint8, w float32, box bool, dc int16, k faceKey) {
-	l.items = append(l.items, item{kind: itSlot, w: w, deco: dc, face: k, target: -1, part: l.curPart, slot: which, atom: box})
+func (l *lay) addPseudoSlot(which uint8, w float32, box bool, dc int16, k faceKey, col color.NRGBA) {
+	l.items = append(l.items, item{kind: itSlot, w: w, deco: dc, face: k, col: col, target: -1, part: l.curPart, slot: which, atom: box})
 }
 
 // addSpans converts spans into items.
@@ -726,7 +736,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				// RollupName's "" in a system message (Muted)
 				var miss MemberMiss
 				if txt, miss = l.mentionText(sp.ID, txt); miss != MemberLoaded && !l.opts.Muted {
-					l.missingMember(miss, k) // msgcard.go
+					l.missingMember(miss, k, col) // msgcard.go
 					continue
 				}
 			}
@@ -827,7 +837,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			// the slug's ::before (MentionProfiles' picture) inside the pill,
 			// first in it: its place goes on the pill's first line, where
 			// the component draws it (comps.go)
-			l.addPseudoSlot(0, ps.pseudo[0], ps.pbox[0], dc, k)
+			l.addPseudoSlot(0, ps.pseudo[0], ps.pbox[0], dc, k, col)
 		}
 		if sp.Kind == richtext.Channel && sp.Lock {
 			// a private channel the viewer is in: lock-filled, then its
@@ -847,7 +857,15 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			l.addCodeRun(c0, int32(len(l.d.plain)))
 		}
 		if pill && ps.pseudo[1] > 0 && dc >= 0 {
-			l.addPseudoSlot(1, ps.pseudo[1], ps.pbox[1], dc, k) // its ::after, last in it
+			l.addPseudoSlot(1, ps.pseudo[1], ps.pbox[1], dc, k, col) // its ::after, last in it
+		}
+		if swatch.A > 0 && dc >= 0 && l.decos[dc].kind == 2 {
+			// a code-styled colour: WithFormattingStyles (UqHX) wraps
+			// Color's children, the value and its swatch, in the code
+			// element, so the swatch sits inside the chip, before its end
+			// padding
+			l.addSwatch(swatch, dc, col, k)
+			swatch = color.NRGBA{}
 		}
 		if dc >= 0 && l.decos[dc].padR > 0 {
 			l.addClose(l.decos[dc].padR, dc, k)
@@ -864,16 +882,23 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 		}
 		if swatch.A > 0 {
-			// rich text's Color (boot-shared d7OQ): the value, then
-			// div.c-mrkdwn__hex, an inline-block 13px square (content-box)
-			// in a 1px --sk_foreground_max_solid border, radius 3, margin
-			// 0 0 -1px 2px: its bottom 1px under the baseline. An atomic
-			// inline, which a line may break before and after.
-			l.decos = append(l.decos, deco{kind: 4, bg: swatch, border: p.HexBorder, face: k, target: -1, radius: l.dp(3)})
-			l.items = append(l.items, item{kind: itPad, w: l.dpf(2) + float32(l.dp(13)+2*l.dp(1)), deco: int16(len(l.decos) - 1), face: k,
-				target: -1, part: l.curPart, atom: true})
+			l.addSwatch(swatch, -1, col, k)
 		}
 	}
+}
+
+// addSwatch adds rich text's Color swatch (boot-shared d7OQ) after its
+// value, inside deco in (inline code's chip; -1 none): div.c-mrkdwn__hex,
+// an inline-block 13px square (content-box) in a 1px
+// --sk_foreground_max_solid border, radius 3, margin 0 0 -1px 2px, its
+// bottom 1px under the baseline. An atomic inline: a line may break
+// before and after it, and holding only it a line is a full line box
+// (the strut's). col is the color it inherits (a clamp's "…" after it
+// takes it).
+func (l *lay) addSwatch(c color.NRGBA, in int16, col color.NRGBA, k faceKey) {
+	l.decos = append(l.decos, deco{kind: 4, bg: c, border: l.st.Palette.HexBorder, face: k, target: -1, radius: l.dp(3)})
+	l.items = append(l.items, item{kind: itPad, w: l.dpf(2) + float32(l.dp(13)+2*l.dp(1)), deco: in, own: int16(len(l.decos)), face: k,
+		col: col, target: -1, part: l.curPart, atom: true})
 }
 
 // flow lays out l.items at (x0, y0) within maxW px. Returns the height and
@@ -930,6 +955,17 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	// Pass: chunk items into unbreakable runs separated by spaces/breaks.
 	var decoRuns []placedRun // only for items with deco >= 0
 	var slots []placedRun    // pseudo-element places (itSlot)
+	var atoms []placedRun    // atomic inlines drawn in their place (item.own)
+	// kids is what a flow that may end in "…" placed, in order (words,
+	// spaces, pads, places, images), for ellipsize to find the last line's
+	// children
+	var kids []placedRun
+	clamp := fs.ellipsis && fs.maxLines > 0
+	note := func(q, fi int, x, w float32) {
+		if clamp {
+			kids = append(kids, placedRun{item: q, frag: fi, x: x, w: w, line: len(d.lines)})
+		}
+	}
 	// cutAt is the first item a truncated flow didn't lay out (whole): a
 	// deco with items from there on goes on past the truncation
 	cutAt := len(items)
@@ -938,9 +974,11 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	// normal, as Slack's message text is), so a pill or a highlight that
 	// wraps after one ends at its last word, flush, as Chromium paints it
 	trail := -1
-	// slotLine: a pseudo-element's place is on this line, which isn't
-	// empty without a frag (a pill's picture before "@name" that went on)
-	slotLine := false
+	// atomLine: a pseudo-element's place or an atomic inline is on this
+	// line, which isn't empty without a frag (a pill's picture before
+	// "@name" that went on, a colour's swatch that wrapped after its
+	// value): a line box with an inline-block in it has the strut's height
+	atomLine := false
 	finishLine := func() {
 		last = -1 // spaces at the end of a line are never decorated
 		gapReset()
@@ -950,14 +988,14 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		}
 		// Compute this line's height: emoji may be taller.
 		lh := lineH0
-		if lineStart == len(d.frags) && !fs.pre && !leadLine && !slotLine {
+		if lineStart == len(d.frags) && !fs.pre && !leadLine && !atomLine {
 			lh = l.dp(8) // an empty line between paragraphs
 			if brH != 0 {
 				lh = brH
 			}
 		}
 		brH = 0
-		leadLine, slotLine = false, false
+		leadLine, atomLine = false, false
 		for i := lineStart; i < len(d.frags); i++ {
 			if f := &d.frags[i]; f.kind == fImage {
 				if h := f.size + l.dp(4); f.size > lineH0 && h > lh && !fs.flatEmoji {
@@ -1062,6 +1100,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 							brokeU = true
 						}
 					}
+					note(i, -1, float32(x0)+x, it.w)
 					x += it.w
 				} // else: a space that does not fit is swallowed by the wrap
 
@@ -1125,8 +1164,14 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				}
 				if it.kind == itSlot {
 					slots = append(slots, placedRun{item: q, frag: -1, x: float32(x0) + x, w: it.w, line: len(d.lines)})
-					slotLine = true
 				}
+				if it.own > 0 {
+					atoms = append(atoms, placedRun{item: q, frag: -1, x: float32(x0) + x, w: it.w, line: len(d.lines), decoI: it.own - 1})
+				}
+				if it.kind == itSlot || it.atom {
+					atomLine = true
+				}
+				note(q, -1, float32(x0)+x, it.w)
 				trail = -1
 				brokeT, brokeU = true, true // a pill's padding, an icon's margin
 				x += it.w
@@ -1142,6 +1187,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 						if it.deco >= 0 {
 							decoRuns = append(decoRuns, placedRun{item: q, frag: len(d.frags), x: float32(x0) + x, w: sh.adv, line: len(d.lines), decoI: it.deco})
 						}
+						note(q, len(d.frags), float32(x0)+x, sh.adv)
 						emit(it, sh, sh.adv, p0, it.p1)
 						break
 					}
@@ -1158,6 +1204,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 						decoRuns = append(decoRuns, placedRun{item: q, frag: len(d.frags), x: float32(x0) + x, w: head.adv, line: len(d.lines), decoI: it.deco})
 					}
 					p1 := min(p0+int32(nb), it.p1) // labels without plain text keep empty ranges
+					note(q, len(d.frags), float32(x0)+x, head.adv)
 					emit(it, head, head.adv, p0, p1)
 					p0 = p1
 					sh = tail
@@ -1174,6 +1221,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			if it.deco >= 0 {
 				decoRuns = append(decoRuns, placedRun{item: q, frag: len(d.frags), x: float32(x0) + x, w: it.w, line: len(d.lines), decoI: it.deco})
 			}
+			note(q, len(d.frags), float32(x0)+x, it.w)
 			emit(it, it.sh, it.w, it.p0, it.p1)
 		}
 		i = j
@@ -1184,22 +1232,12 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		finishLine()
 	}
 	if truncated && fs.ellipsis && len(d.lines) > 0 {
-		// what "…" hides is gone from its line: the deco runs past it
-		// (a pill's box ends where its last shown part does) and the
-		// pseudo-element places
+		// "…" hides the children after it (their frags, places and atomic
+		// inlines go); the inline boxes keep the extent they were laid out
+		// with, under it, as Chromium's TruncateLine leaves the boxes'
+		// rects (ComputeInlinePositions ran before it)
 		last := len(d.lines) - 1
-		ex := l.ellipsize(&d.lines[last], last, x0, maxWf, fs, &slots)
-		kept := decoRuns[:0]
-		for _, r := range decoRuns {
-			if r.line == last {
-				if r.x >= ex-0.5 {
-					continue
-				}
-				r.w = min(r.w, ex-r.x)
-			}
-			kept = append(kept, r)
-		}
-		decoRuns = kept
+		l.ellipsize(&d.lines[last], last, x0, maxWf, fs, items, kids, &slots, &atoms)
 	}
 
 	// Each deco's first and last line, and whether it goes on past a
@@ -1248,24 +1286,6 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			bot := bl + fm.desc + dc.padB
 			rr := image.Rect(int(r.x+0.5), int(top+0.5), int(x1+0.5), int(bot+0.5))
 			switch dc.kind {
-			case 4:
-				// the swatch: 2px in from its margin, 13px plus its border,
-				// its bottom 1px under the baseline
-				sw := l.dp(13) + 2*l.dp(1)
-				x := int(r.x+0.5) + l.dp(2)
-				bottom := int(bl+0.5) + l.dp(1)
-				rr = image.Rect(x, bottom-sw, x+sw, bottom)
-				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
-			case decoMissing, decoMissingGone:
-				// MissingText's bar (missingMember): 8px tall, its bottom
-				// on the baseline, the non-existent one outlined
-				base := int(bl + 0.5)
-				rr = image.Rect(int(r.x+0.5), base-l.dp(8), int(x1+0.5), base)
-				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: -1}
-				if dc.kind == decoMissingGone {
-					bx.kind, bx.stroke, bx.bw = bBorder, dc.border, max(1, l.dp(1))
-				}
-				d.boxes = append(d.boxes, bx)
 			case 2:
 				bx := box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1, part: dc.part, inline: true}
 				dl[r.decoI].slice(&bx, r.line, dc.radius)
@@ -1285,6 +1305,34 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			}
 		}
 		a = b
+	}
+	// The atomic inlines the flow draws in their places, over the box of
+	// the element they are in (a code chip's)
+	for _, r := range atoms {
+		if r.line >= len(d.lines) {
+			continue
+		}
+		dc := &l.decos[r.decoI]
+		ln := d.lines[r.line]
+		bl := float32(ln.top) + baseOff + float32((ln.bot-ln.top)-lineH0)/2
+		switch dc.kind {
+		case 4:
+			// the swatch: 2px in from its margin, 13px plus its border,
+			// its bottom 1px under the baseline
+			sw := l.dp(13) + 2*l.dp(1)
+			x := int(r.x+0.5) + l.dp(2)
+			bottom := int(bl+0.5) + l.dp(1)
+			d.boxes = append(d.boxes, box{kind: bBorder, r: image.Rect(x, bottom-sw, x+sw, bottom), radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1})
+		case decoMissing, decoMissingGone:
+			// MissingText's bar (missingMember): 8px tall, its bottom on
+			// the baseline, the non-existent one outlined
+			base := int(bl + 0.5)
+			bx := box{kind: bFill, r: image.Rect(int(r.x+0.5), base-l.dp(8), int(r.x+r.w+0.5), base), radius: dc.radius, fill: dc.bg, target: -1}
+			if dc.kind == decoMissingGone {
+				bx.kind, bx.stroke, bx.bw = bBorder, dc.border, max(1, l.dp(1))
+			}
+			d.boxes = append(d.boxes, bx)
+		}
 	}
 
 	// Where the pseudo-elements' places went (a pill's ::before on its
@@ -1365,66 +1413,172 @@ func (e decoSpan) slice(bx *box, line, radius int) {
 }
 
 // ellipsize ends the last line (index line) with "…" as Chromium's
-// LineTruncator::TruncateLine does for a line clamp: from the line's end, a
-// child (a word, an image, a pill's picture in its place) stays with "…"
-// right after it when both fit; a word that doesn't is cut to fit when it's
-// the line's only one; any other child that doesn't is hidden, and so is
-// everything after it. It returns where "…" starts and drops the places it
-// hid from slots.
-func (l *lay) ellipsize(ln *lineInfo, line, x0 int, maxW float32, fs *flowStyle, slots *[]placedRun) float32 {
+// LineTruncator::TruncateLine does for a line clamp (line_truncator.cc).
+// From the line's end, each child (a run of text, an image, an atomic
+// inline: a pill's picture in its place, a colour's swatch) is kept with
+// "…" right after it when both fit (EllipsizeChild). A text run that
+// doesn't is cut to the characters that fit, mid-word and spaces counted
+// (TruncateChild's OffsetToFit); an atomic child is never cut. A child
+// with nothing kept is hidden, and so is everything after the one "…"
+// follows. The line's first child keeps at least its first character, or
+// whole if atomic, with "…" after it even when they overflow. After an
+// atomic child "…" goes its left margin past the child's margin box
+// (PlaceEllipsisNextTo: its border box's offset plus its margin box's
+// width) in its color when it is a block flow (an inline-block); after
+// text it is in the line's style. The inline boxes keep their extent
+// (TruncateLine changes no box's rect), the hidden frags, places (slots)
+// and atomic inlines (atoms) go. kids is what the flow placed.
+func (l *lay) ellipsize(ln *lineInfo, line, x0 int, maxW float32, fs *flowStyle, items []item, kids []placedRun, slots, atoms *[]placedRun) {
 	d := l.d
 	k := l.faceFor(fs.face, fs.size, 0)
 	ell := l.st.word(k, "…")
 	end := float32(x0) + maxW - ell.adv // where a child must end for "…" to fit after it
-	bm := l.st.spaceOf(k)
-	ty := ln.top + int((float32(fs.lineH)-(bm.asc+bm.desc))/2+bm.asc+0.5)
-	ex := float32(x0)
-	for {
-		// the line's last child: its last frag, or a place after it
-		si := -1
-		for i := range *slots {
-			if s := &(*slots)[i]; s.line == line && (si < 0 || s.x > (*slots)[si].x) {
-				si = i
-			}
+	for len(kids) > 0 && kids[0].line < line {
+		kids = kids[1:]
+	}
+	// the spaces that end the line collapse (white-space: normal)
+	for len(kids) > 0 && items[kids[len(kids)-1].item].kind == itSpace && !fs.pre {
+		kids = kids[:len(kids)-1]
+	}
+	child := func(r *placedRun) bool {
+		it := &items[r.item]
+		return it.kind != itPad || it.own > 0 // an inline box's padding or edge isn't one
+	}
+	first := -1
+	for i := range kids {
+		if child(&kids[i]) {
+			first = i
+			break
 		}
-		var last *frag
-		if ln.f1 > ln.f0 {
-			last = &d.frags[ln.f1-1]
-		}
-		if si >= 0 && (last == nil || (*slots)[si].x >= last.x+last.w-0.5) {
-			if s := (*slots)[si]; s.x+s.w <= end {
-				ex = s.x + s.w
-				break
-			}
-			*slots = append((*slots)[:si], (*slots)[si+1:]...) // an atomic inline can't be cut
+	}
+	ex, col := float32(x0), fs.col
+	keep := -1 // kids[:keep+1] stay; -1: none
+	var cutF *frag // a word cut to fit, its head and the head's bytes
+	var cutSh *shaped
+	var cutNb int
+	for i := len(kids) - 1; i >= 0 && keep < 0; i-- {
+		r := &kids[i]
+		if !child(r) {
 			continue
 		}
-		if last == nil {
-			break
+		it := &items[r.item]
+		if it.kind == itWord || it.kind == itSpace {
+			// a run of text: its words and the spaces between them, of
+			// one element and style
+			j := i
+			for j > 0 && sameRun(&items[kids[j-1].item], it) {
+				j--
+			}
+			for q := i; q >= j && keep < 0; q-- {
+				s := &kids[q]
+				if s.x+s.w <= end {
+					keep, ex = q, s.x+s.w
+					break
+				}
+				if items[s.item].kind != itWord || s.frag < 0 {
+					continue // a space: one character, there or not
+				}
+				f := &d.frags[s.frag]
+				if f.kind != fText || f.sh == nil {
+					continue
+				}
+				if head, _, nb := l.st.split(items[s.item].face, f.sh, end-f.x); head != f.sh && head.adv <= end-f.x {
+					keep, ex, cutF, cutSh, cutNb = q, f.x+head.adv, f, head, nb
+				}
+			}
+			if keep < 0 && j == first {
+				// nothing of the line's first child fits: its first
+				// character stays, "…" after it
+				if s := &kids[j]; s.frag >= 0 && d.frags[s.frag].kind == fText && d.frags[s.frag].sh != nil {
+					f := &d.frags[s.frag]
+					head, _, nb := l.st.split(items[s.item].face, f.sh, 0)
+					keep, ex = j, f.x+head.adv
+					if head != f.sh {
+						cutF, cutSh, cutNb = f, head, nb
+					}
+				} else {
+					keep, ex = j, kids[j].x+kids[j].w
+				}
+			}
+			i = j
+			continue
 		}
-		room := end - last.x
-		if last.w <= room {
-			ex = last.x + last.w
-			break
+		// an atomic child: an image, a pseudo-element's place, a swatch,
+		// MissingText's bar
+		ml := float32(0)
+		block := it.kind == itSlot && it.atom || it.own > 0
+		switch {
+		case it.kind == itSlot && it.comp > 0 && l.cs != nil && int(it.comp) <= len(*l.cs):
+			ml = l.compState(it.comp).pml[it.slot]
+		case it.own > 0 && l.decos[it.own-1].kind == 4:
+			ml = l.dpf(2) // the swatch's margin-left
 		}
-		if last.kind == fText && last.sh != nil && room > 0 && ln.f1-1 == ln.f0 {
-			// Keep as much of a long word as fits.
-			head, _, nb := l.st.split(faceKey{f: fs.face, size: fixedPx(last.size)}, last.sh, room)
-			if head != last.sh && head.adv <= room {
-				last.sh, last.w, last.p1 = head, head.adv, last.p0+int32(nb)
-				ex = last.x + last.w
+		xe := r.x + ml + r.w
+		if it.kind == itImage && r.frag >= 0 {
+			xe = d.frags[r.frag].x + d.frags[r.frag].w
+		}
+		if xe <= end || i == first {
+			keep, ex = i, xe
+			if block {
+				col = it.col
+			}
+		}
+	}
+	// what "…" hides: the frags, places and atomic inlines after it
+	f1 := ln.f0
+	cutItem := -1
+	if keep >= 0 {
+		cutItem = kids[keep].item
+		for q := keep; q >= 0; q-- {
+			if kids[q].frag >= 0 {
+				f1 = kids[q].frag + 1
 				break
 			}
 		}
-		ln.f1--
-		d.frags = d.frags[:ln.f1]
 	}
-	if ln.f1 > ln.f0 {
-		ty = d.frags[ln.f1-1].y
+	if cutF != nil {
+		cutF.sh, cutF.w, cutF.p1 = cutSh, cutSh.adv, min(cutF.p0+int32(cutNb), cutF.p1)
 	}
-	d.frags = append(d.frags, frag{kind: fText, x: ex, w: ell.adv, size: fs.size, sh: ell, col: fs.col, target: -1, top: ln.top, bot: ln.bot, line: int32(len(d.lines) - 1), y: ty, p0: int32(len(d.plain)), p1: int32(len(d.plain)), part: l.curPart})
+	if f1 < ln.f1 {
+		d.frags = d.frags[:f1]
+		ln.f1 = f1
+	}
+	if f1 > ln.f0 {
+		// the spaces after the last word kept aren't drawn
+		if f := &d.frags[f1-1]; f.kind == fText && ex <= f.x+f.w+0.01 {
+			f.ulT, f.ulU = 0, 0
+		}
+	}
+	hide := func(rs []placedRun) []placedRun {
+		out := rs[:0]
+		for _, r := range rs {
+			if r.line != line || r.item <= cutItem {
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	*slots = hide(*slots)
+	*atoms = hide(*atoms)
+	bm := l.st.spaceOf(k)
+	ty := ln.top + int((float32(fs.lineH)-(bm.asc+bm.desc))/2+bm.asc+float32(ln.bot-ln.top-fs.lineH)/2+0.5)
+	for i := ln.f0; i < ln.f1; i++ {
+		if f := &d.frags[i]; f.kind == fText {
+			ty = f.y // the line's baseline
+			break
+		}
+	}
+	d.frags = append(d.frags, frag{kind: fText, x: ex, w: ell.adv, size: fs.size, sh: ell, col: col, target: -1, top: ln.top, bot: ln.bot, line: int32(line), y: ty,
+		p0: int32(len(d.plain)), p1: int32(len(d.plain)), part: l.curPart, ell: true})
 	ln.f1 = len(d.frags)
-	return ex
+	d.ells++
+}
+
+// sameRun reports that items a and b (words and spaces) are one text run
+// for the clamp (one Chromium text item): of one element, style and font.
+func sameRun(a, b *item) bool {
+	return (a.kind == itWord || a.kind == itSpace) && a.style == b.style && a.deco == b.deco && a.target == b.target &&
+		a.comp == b.comp && a.part == b.part && a.face == b.face && a.col == b.col
 }
 
 // textFlow is the common entry: spans laid out at (x, y) with width w.
