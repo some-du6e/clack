@@ -137,17 +137,20 @@ func TestThemeContrastShots(t *testing.T) {
 				e.movePtr(image.Pt(col, e.a.primaryOrigin.Y+e.context().Dp(260)))
 			}
 			shot(pre + "-dms")
-			// Activity's inbox: its rows, one opened beside it (the
-			// grouped list's --selected) and the pointer on another
+			// Activity's inbox: its rows, one opened (--selected, its item
+			// beside the list or in the view's own pane) and the pointer on
+			// another
 			e.movePtr(e.listPoint())
 			e.a.Navigate("activity")
 			e.settle(800 * time.Millisecond)
+			act, _ := e.a.views[Route("activity")].(*views.Activity)
+			opened := func() bool { return e.a.secondary.open() || act != nil && act.OpenedItem() != "" }
 			x := e.a.primaryOrigin.X + e.context().Dp(200)
-			for y := e.a.primaryOrigin.Y + e.context().Dp(150); y < e.size.Y-60 && !e.a.secondary.open(); y += e.context().Dp(30) {
+			for y := e.a.primaryOrigin.Y + e.context().Dp(150); y < e.size.Y-60 && !opened(); y += e.context().Dp(30) {
 				e.click(image.Pt(x, y))
 				e.settle(200 * time.Millisecond)
 			}
-			if !e.a.secondary.open() {
+			if !opened() {
 				t.Logf("%s: no Activity row opened", pre)
 			}
 			e.movePtr(image.Pt(x, e.a.primaryOrigin.Y+e.context().Dp(320)))
