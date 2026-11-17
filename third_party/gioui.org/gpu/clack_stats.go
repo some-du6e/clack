@@ -46,6 +46,11 @@ type FrameStats struct {
 	// pages the frame drew into.
 	AtlasPx, LayerPx int64
 	LayerPages       int
+	// Red evidence only: patch 45's fields, never set here.
+	Partial     bool
+	DamageRects int
+	DamagePx    int64
+	CopyPx      int64
 }
 
 // ClackStats reports the last frame's stats.
