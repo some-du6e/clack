@@ -77,6 +77,12 @@ type model struct {
 	// between them never loaded: loadOlder pages before the model's oldest)
 	dropped bool
 
+	// loadSeq is core's last event Seq when the load being taken in came
+	// back (callers hold mu): the entries it brings in or changes were
+	// written by that event or one before it (setAll), so a row waits for
+	// the mirror to have handled them, as for an event's entry
+	loadSeq uint64
+
 	// reconv is what changed of what Docs read while a load was out
 	// (reconvert): its answer may hold messages converted before it, so
 	// they're converted again once it lands (afterLoad)
@@ -351,10 +357,12 @@ func (hb *hub) ensureLoaded(m *model) {
 		defer cancel()
 		if m.threadTS != "" {
 			msgs, err := hb.app.Replies(ctx, m.ch, m.threadTS)
+			seq := hb.app.EventSeq()
 			if f := loadLanded.Load(); f != nil {
 				(*f)(m)
 			}
 			m.mu.Lock()
+			m.loadSeq = seq
 			m.loading = false
 			m.err = err
 			live := m.takeLive()
@@ -373,10 +381,12 @@ func (hb *hub) ensureLoaded(m *model) {
 			hb.afterLoad(m)
 		} else {
 			p, err := hb.app.History(ctx, m.ch, "")
+			seq := hb.app.EventSeq()
 			if f := loadLanded.Load(); f != nil {
 				(*f)(m)
 			}
 			m.mu.Lock()
+			m.loadSeq = seq
 			m.loading = false
 			m.err = err
 			live := m.takeLive()
@@ -457,10 +467,12 @@ func (hb *hub) loadOlder(m *model) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		p, err := hb.app.History(ctx, m.ch, before)
+		seq := hb.app.EventSeq()
 		if f := loadLanded.Load(); f != nil {
 			(*f)(m)
 		}
 		m.mu.Lock()
+		m.loadSeq = seq
 		m.older = false
 		if err == nil {
 			m.prepend(p.Messages, p.HasMore)
@@ -505,7 +517,7 @@ func (m *model) setAll(msgs []core.Message) {
 			out = append(out, entry{m: x, rev: o.rev, seq: o.seq})
 			continue
 		}
-		out = append(out, entry{m: x, rev: m.bump()})
+		out = append(out, entry{m: x, rev: m.bump(), seq: m.loadSeq})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return tsLess(out[i].m.TS, out[j].m.TS) })
 	m.msgs = out
