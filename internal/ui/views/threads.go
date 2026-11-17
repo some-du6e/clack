@@ -451,7 +451,7 @@ func (v *Threads) fetch(mode actLoad, keep bool) {
 	named := v.namedNow(mode) // threads_order.go
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
 	v.data.load(v.h, mode != actFresh || keep, func(ctx context.Context) (thrData, error) {
-		p, err := c.Threads(ctx, cursor, thrLimit)
+		p, err := c.Threads(thrLoadCtx(ctx, mode), cursor, thrLimit)
 		if err != nil {
 			return thrData{}, err
 		}

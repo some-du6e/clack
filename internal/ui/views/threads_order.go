@@ -8,6 +8,7 @@ package views
 // replies across a refresh, and a mount load's floating loader.
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -92,6 +94,19 @@ func (v *Threads) sortingLoad() {
 	v.mu.Lock()
 	clear(v.named)
 	v.mu.Unlock()
+}
+
+// thrLoadCtx is a load's context. A load that sorts the list is the
+// viewer's doing (the first visit, Try Again, a revisit, the row clicked
+// again) and Slack's loadThreads sends each, so it skips the client's
+// backoff of a request that just failed the same way (slack.NoBackoff),
+// which would answer a Try Again right after the failure with that failure
+// and send nothing.
+func thrLoadCtx(ctx context.Context, mode actLoad) context.Context {
+	if mode == actFresh {
+		return slack.NoBackoff(ctx)
+	}
+	return ctx
 }
 
 // noteEntries is initialLastReadByThread (getDerivedStateFromProps): the
