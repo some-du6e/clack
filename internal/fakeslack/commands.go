@@ -2,8 +2,9 @@ package fakeslack
 
 // The fake app's slash command (blockkit-gallery size): Deploy Bot's
 // /ticket, run through chat.command like Slack's chatCommandApi sends it
-// ({command, disp, text, channel, client_token, thread_ts?}). All
-// synthetic.
+// ({command, disp, blocks or text, channel, client_token, thread_ts?}). The
+// web client's executeCommand sends a command's arguments only as blocks;
+// the app gets them as text (commandText). All synthetic.
 //
 //   - /ticket [title]: the app answers the command's trigger with
 //     views.open, which reaches the client as view_opened carrying the
@@ -18,6 +19,7 @@ package fakeslack
 //   - any other command: unknown_command.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -84,7 +86,7 @@ func commandAPI(s *Server, method string, f url.Values) (any, bool) {
 	if f.Get("command") != TicketCommand {
 		return map[string]any{"ok": false, "error": "unknown_command"}, true
 	}
-	text := strings.TrimSpace(f.Get("text"))
+	text := strings.TrimSpace(commandText(f))
 	switch text {
 	case "timeout":
 		return map[string]any{"ok": false, "error": "dispatch_failed"}, true
@@ -136,4 +138,50 @@ func (s *Server) cmdEphemeral(ch, thread, text string) map[string]any {
 		m["thread_ts"] = thread
 	}
 	return m
+}
+
+// commandText is the text the server hands the app: the text param, or,
+// when the client sent the arguments as blocks (Slack's executeCommand
+// does), their rich text with mentions as Slack's escapes.
+func commandText(f url.Values) string {
+	if t := f.Get("text"); t != "" || f.Get("blocks") == "" {
+		return t
+	}
+	var blocks []struct {
+		Elements []struct {
+			Elements []map[string]any `json:"elements"`
+		} `json:"elements"`
+	}
+	if json.Unmarshal([]byte(f.Get("blocks")), &blocks) != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, bl := range blocks {
+		for _, sec := range bl.Elements {
+			for _, el := range sec.Elements {
+				str := func(k string) string { v, _ := el[k].(string); return v }
+				switch str("type") {
+				case "text":
+					b.WriteString(str("text"))
+				case "user":
+					b.WriteString("<@" + str("user_id") + ">")
+				case "channel":
+					b.WriteString("<#" + str("channel_id") + ">")
+				case "usergroup":
+					b.WriteString("<!subteam^" + str("usergroup_id") + ">")
+				case "broadcast":
+					b.WriteString("<!" + str("range") + ">")
+				case "link":
+					if t := str("text"); t != "" {
+						b.WriteString("<" + str("url") + "|" + t + ">")
+					} else {
+						b.WriteString("<" + str("url") + ">")
+					}
+				case "emoji":
+					b.WriteString(":" + str("name") + ":")
+				}
+			}
+		}
+	}
+	return b.String()
 }

@@ -136,7 +136,9 @@ func TestCommandModalAndTyping(t *testing.T) {
 	run("/ticket anchor")
 	calls := fs.CommandApp().Snapshot()
 	last := calls[len(calls)-1]
-	if last.Get("command") != fakeslack.TicketCommand || last.Get("text") != "anchor" || !strings.HasPrefix(last.Get("client_token"), "web-") {
+	// executeCommand's chatCommandApi: the arguments as blocks, no text
+	const anchorBlocks = `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"anchor"}]}]}]`
+	if last.Get("command") != fakeslack.TicketCommand || last.Has("text") || last.Get("blocks") != anchorBlocks || !strings.HasPrefix(last.Get("client_token"), "web-") {
 		t.Errorf("chat.command: %v", last)
 	}
 	var m blockkit.ModalInfo
