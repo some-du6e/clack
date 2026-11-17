@@ -138,3 +138,24 @@ func CachedRRect(rr clip.RRect) clip.PathSpec {
 	pens.paths[k] = penEntry{spec: spec, ops: ops}
 	return spec
 }
+
+// CachedEllipse is the outline of the ellipse filling a w×h box at the
+// origin (clip.Ellipse's path), recorded once per size like CachedRRect.
+func CachedEllipse(w, h int) clip.PathSpec {
+	k := uint64(penOffset)
+	for _, v := range [...]int{9, w, h} {
+		k = (k ^ uint64(v)) * penPrime
+	}
+	pens.mu.Lock()
+	defer pens.mu.Unlock()
+	if e, ok := pens.paths[k]; ok {
+		return e.spec
+	}
+	if pens.paths == nil || len(pens.paths) >= maxPenPaths {
+		pens.paths = make(map[uint64]penEntry, 256)
+	}
+	ops := new(op.Ops)
+	spec := clip.Ellipse(image.Rect(0, 0, w, h)).Path(ops)
+	pens.paths[k] = penEntry{spec: spec, ops: ops}
+	return spec
+}

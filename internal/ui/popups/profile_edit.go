@@ -39,12 +39,13 @@ package popups
 //     image", "Try another photo", "Eek" with Slack's emoji and text, and
 //     "Try a Different Image". Cancel closes.
 //   - cropPane (EditProfileCropPane): "Crop your photo" ("Add a profile
-//     photo" with any profile_photo_comp group), the image fitted
+//     photo" with any profile_photo_comp group), the image
+//     users.preparePhoto answered with (its url, getLoadedImage) fitted
 //     into 460px with a square selection (the largest that fits, centred:
 //     defaultCropScale 1, at least 72px) that moves and resizes from its
 //     corners, the message preview under it, Cancel (back to the form)
-//     and Save (users.setPhoto, back to the form; an error alert on
-//     failure).
+//     and Save (users.setPhoto with the square in that image's pixels,
+//     back to the form; an error alert on failure, the call logged).
 //   - removePane (EditProfileRemovePane): a back arrow, "Remove profile
 //     photo", the photo and "Are you sure…", Cancel and the danger "Yes,
 //     Remove Photo" (users.deletePhoto).
@@ -68,6 +69,7 @@ import (
 	_ "image/gif"  // decoders registered for imgcache.Decode
 	_ "image/jpeg" // decoders registered for imgcache.Decode
 	_ "image/png"  // decoders registered for imgcache.Decode
+	"log"
 	"math"
 	"strings"
 	"time"
@@ -1093,7 +1095,20 @@ func newEPUpload(e *EditProfileModal, f core.UploadFile) *epUpload {
 	return u
 }
 
-// start is useImageUpload: processUpload, then the crop pane.
+// The photo panes' calls aren't held to run's 15 s. Slack's API queue
+// times a request out after 60 s (P8AB), as internal/slack's client does
+// each request here; the upload pane's work as a whole (the upload, the
+// prepared image's download, its decode) gets three minutes, Save and
+// Yes, Remove Photo (the call, then the member fetched again) two.
+const (
+	photoUploadWait = 3 * time.Minute
+	photoSaveWait   = 2 * time.Minute
+)
+
+// start is useImageUpload: processUpload (core.PreparePhoto: the checks,
+// the upload, the image it answers with loaded), that image decoded for
+// the crop pane (getLoadedImage(e.url): the pane shows it, and its square
+// is in its pixels), then the crop pane.
 func (u *epUpload) start() {
 	a := u.e.h.Core()
 	if a == nil {
@@ -1106,15 +1121,18 @@ func (u *epUpload) start() {
 		disp *image.RGBA
 		size image.Point
 	}
-	run(u.e.h, func(ctx context.Context) (res, error) {
+	runFor(u.e.h, photoUploadWait, func(ctx context.Context) (res, error) {
 		up, err := a.PreparePhoto(ctx, f.Name, f.Data)
 		if err != nil {
 			return res{}, err
 		}
-		disp, size, err := cropImage(ctx, f.Data)
+		disp, size, err := cropImage(ctx, up.Image)
+		up.Image = nil
 		if err != nil {
+			log.Printf("profile photo: users.preparePhoto's image didn't decode: %s", photoDecodeFailure(err))
 			return res{}, core.ErrPhotoAPI
 		}
+		up.Width, up.Height = size.X, size.Y
 		return res{up, disp, size}, nil
 	}, func(r res, err error) {
 		if u.e.upl != u {
@@ -1323,10 +1341,12 @@ func cropDisplay(size image.Point) (dw, dh float64, px image.Point) {
 	return dw, dh, image.Pt(max(1, int(math.Round(dw))), max(1, int(math.Round(dh))))
 }
 
-// cropImage decodes a picked image and scales it to the crop pane's
-// display size, both under one budget from imgcache's decode memory (the
-// pixels x/image's CatmullRom.Scale draws, a band at a time): the scaled
-// copy the pane shows and the image's size. The full-size image isn't kept.
+// cropImage decodes an image and scales it to the crop pane's display
+// size, both under one budget from imgcache's decode memory (the pixels
+// x/image's CatmullRom.Scale draws, a band at a time): the scaled copy the
+// pane shows and the image's size. The full-size image isn't kept. The
+// profile photo's is the prepared image (users.preparePhoto's url), the
+// channel email icon's the picked file.
 func cropImage(ctx context.Context, data []byte) (*image.RGBA, image.Point, error) {
 	var disp *image.RGBA
 	var size image.Point
@@ -1348,6 +1368,21 @@ func cropImage(ctx context.Context, data []byte) (*image.RGBA, image.Point, erro
 		return nil, image.Point{}, err
 	}
 	return disp, size, nil
+}
+
+// photoDecodeFailure says why cropImage failed, for the log: the decode
+// memory busy for too long, an image past what one decode may hold, the
+// pane's time up, or bytes imgcache doesn't decode.
+func photoDecodeFailure(err error) string {
+	switch {
+	case errors.Is(err, imgcache.ErrBusy):
+		return "decode memory busy"
+	case errors.Is(err, imgcache.ErrTooBig):
+		return "too big to decode"
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "timeout"
+	}
+	return "not an image Clack decodes"
 }
 
 // newCropBox is the crop pane for an image of size, shown as disp (fitted
@@ -1414,7 +1449,7 @@ func (c *epCrop) Save() {
 	}
 	c.saving, c.failed = true, false
 	id, crop := c.up.ID, c.Crop()
-	run(c.e.h, func(ctx context.Context) (struct{}, error) {
+	runFor(c.e.h, photoSaveWait, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, a.SetPhoto(ctx, id, crop)
 	}, func(_ struct{}, err error) {
 		c.saving = false
@@ -1638,7 +1673,7 @@ func (r *epRemove) Remove() {
 		return
 	}
 	r.removing, r.failed = true, false
-	run(r.e.h, func(ctx context.Context) (struct{}, error) {
+	runFor(r.e.h, photoSaveWait, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, a.DeletePhoto(ctx)
 	}, func(_ struct{}, err error) {
 		r.removing = false

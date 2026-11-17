@@ -381,13 +381,38 @@ func Fill(gtx layout.Context, r image.Rectangle, c color.NRGBA) {
 }
 
 // RRect fills a rounded rectangle.
+//
+// The path is cached at the origin by size and radius and translated (see
+// PathPen): a path recorded where it's drawn is a new op every frame, so
+// Gio built and uploaded its vertices (a vertex buffer of its own) every
+// frame for every pill, button and avatar.
 func RRect(gtx layout.Context, r image.Rectangle, radius int, c color.NRGBA) {
-	defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
-	paint.ColorOp{Color: c}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
+	if radius <= 0 || r.Empty() || legacyShapes {
+		defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
+		paint.ColorOp{Color: c}.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+		return
+	}
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, c, clip.Outline{Path: CachedRRect(clip.UniformRRect(image.Rectangle{Max: r.Size()}, radius))}.Op())
+}
+
+// rrClip is the clip of the rounded rectangle (0,0)-size: clip.RRect's
+// own with no radius (a rect clip), else its path cached by size and
+// radius (see RRect).
+func rrClip(ops *op.Ops, size image.Point, radius int) clip.Op {
+	rr := clip.UniformRRect(image.Rectangle{Max: size}, radius)
+	if radius <= 0 || size.X <= 0 || size.Y <= 0 || legacyShapes {
+		return rr.Op(ops)
+	}
+	return clip.Outline{Path: CachedRRect(rr)}.Op()
 }
 
 // Border strokes a rounded rectangle outline of width w px.
+//
+// A big outline's middle isn't touched: Gio draws a stroke of a rounded
+// rectangle in the bands around its hole, where it covers nothing (Gio
+// patch 42, clip.RRect.StrokeHole), when it draws at a whole-pixel offset.
 func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA) {
 	// a cached path at the origin, translated: stable op identity, so Gio
 	// tessellates the stroke once instead of every frame (see PathPen)
@@ -395,17 +420,59 @@ func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA)
 	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: RRectPath(r.Dx(), r.Dy(), radius), Width: float32(w)}.Op())
 }
 
-// Circle fills a circle with the given center and diameter.
+// FillPanel fills the rounded panel rr, whose clip the caller pushed,
+// with c, in one fill: Gio draws its interior without the clip and its
+// edges through it, in whole pixels, at a whole-pixel offset (Gio
+// patches 38 and 42), and the fill whole under any other transform.
+func FillPanel(gtx layout.Context, rr clip.RRect, c color.NRGBA) {
+	Fill(gtx, rr.Rect, c)
+}
+
+// legacyShapes records rounded rects, circles and rounded image clips
+// where they're drawn, as before the frame-cost work (2026-11-16), for
+// tests that compare.
+var legacyShapes bool
+
+// SetLegacyFrameCost turns the old way of drawing rounded rects, circles
+// and rounded image clips (recorded where drawn, not cached at the origin)
+// on or off, for before/after comparisons in tests. Gio's own changes have
+// gpu.ClackLegacyClips. Use on the UI goroutine.
+func SetLegacyFrameCost(on bool) { legacyShapes = on }
+
+// frameCostProbe is a transparent ellipse FrameCostProbe draws.
+var frameCostProbe image.Rectangle
+
+// SetFrameCostProbe makes FrameCostProbe draw a transparent ellipse r
+// (empty: none), for tests measuring what moving every later path in
+// Gio's coverage atlas changes, when nothing else does: the pixels stay as
+// they are. Use on the UI goroutine.
+func SetFrameCostProbe(r image.Rectangle) { frameCostProbe = r }
+
+// FrameCostProbe draws SetFrameCostProbe's ellipse, if any; the window
+// calls it after the workspace's shadow.
+func FrameCostProbe(gtx layout.Context) {
+	if !frameCostProbe.Empty() {
+		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(frameCostProbe).Op(gtx.Ops))
+	}
+}
+
+// Circle fills a circle with the given center and diameter, from a path
+// cached at the origin by size (see RRect).
 func Circle(gtx layout.Context, center image.Point, d int, c color.NRGBA) {
 	r := image.Rect(center.X-d/2, center.Y-d/2, center.X-d/2+d, center.Y-d/2+d)
-	defer clip.Ellipse(r).Push(gtx.Ops).Pop()
-	paint.ColorOp{Color: c}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
+	if d <= 0 || legacyShapes {
+		defer clip.Ellipse(r).Push(gtx.Ops).Pop()
+		paint.ColorOp{Color: c}.Add(gtx.Ops)
+		paint.PaintOp{}.Add(gtx.Ops)
+		return
+	}
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	paint.FillShape(gtx.Ops, c, clip.Outline{Path: CachedEllipse(d, d)}.Op())
 }
 
 // Image draws img scaled to fill size (cover), clipped to a rounded rect.
 func Image(gtx layout.Context, img paint.ImageOp, size image.Point, radius int) layout.Dimensions {
-	defer clip.UniformRRect(image.Rectangle{Max: size}, radius).Push(gtx.Ops).Pop()
+	defer rrClip(gtx.Ops, size, radius).Push(gtx.Ops).Pop()
 	is := img.Size()
 	if is.X > 0 && is.Y > 0 {
 		sx := float32(size.X) / float32(is.X)
@@ -430,8 +497,10 @@ func (t *Theme) Placeholder(gtx layout.Context, size image.Point, radius int) la
 }
 
 // Shadow draws a soft drop shadow around r as concentric 1px rings of
-// decreasing alpha (cheap: only the perimeter is touched, which matters on
-// software GL). The area under r itself is not painted; draw r on top.
+// decreasing alpha, spread of them. Only the perimeter is touched: Gio
+// draws a stroked rounded rectangle in the bands around its hole (Gio
+// patch 42), so a ring the size of the window costs its outline, not its
+// box. The area under r itself is not painted; draw r on top.
 func Shadow(gtx layout.Context, r image.Rectangle, radius int, spread int, c color.NRGBA) {
 	if spread < 1 {
 		return
