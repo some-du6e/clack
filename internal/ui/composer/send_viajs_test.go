@@ -311,9 +311,21 @@ func TestRuntimePostsStayAheadOfASend(t *testing.T) {
 	})
 	send("warm")
 	before := len(seen())
-	jsBacklog(rt, 400*time.Millisecond)
-	socket("the message right before Enter") // queued behind the renders, in order
-	send("ok")
+	// the JS thread busy (a render): the event is handed to the plugin
+	// runtime, through Taut's raw reader, and waits behind it, then Enter
+	release := make(chan struct{})
+	rt.Post(func(*jsrt.Ctx) { <-release })
+	jsBacklog(rt, 200*time.Millisecond)
+	socket("the message right before Enter")
+	time.Sleep(50 * time.Millisecond) // core's raw tap reaches the runtime through a goroutine
+	n0 := len(fs.called("chat.postMessage"))
+	d := NewDoc()
+	d.Insert(0, "ok", Attr{})
+	c.ed.SetDoc(d)
+	c.submit()
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	waitFor(t, 15*time.Second, "ok posted", func() bool { return len(fs.called("chat.postMessage")) > n0 })
 	got := strings.Join(seen()[before:], ", ")
 	if want := "check saw the message right before Enter"; got != want {
 		t.Errorf("the send check saw %q, want %q: the send went ahead of the event the runtime had before it", got, want)

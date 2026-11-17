@@ -115,11 +115,47 @@ type thunkTable struct {
 	calls   map[int64]NativeFunc  // in-flight native cores of a Dispatch
 	seq     map[int64]bool        // the calls whose natives run in JS's order (DispatchSeq)
 	next    int64
-	// seqGo runs DispatchSeq's natives with no plugin in the order they
-	// came (seqOn: a goroutine runs them)
-	seqGo []func()
-	seqOn bool
+	// seqGo runs DispatchSeq's natives with no plugin, in the order they
+	// came
+	seqGo seqRunner
 }
+
+// seqRunner runs funcs one after another on a goroutine of its own, in the
+// order they came.
+type seqRunner struct {
+	mu sync.Mutex
+	q  []func()
+	on bool
+}
+
+func (s *seqRunner) run(f func()) {
+	s.mu.Lock()
+	s.q = append(s.q, f)
+	start := !s.on
+	s.on = true
+	s.mu.Unlock()
+	if !start {
+		return
+	}
+	go func() {
+		for {
+			s.mu.Lock()
+			if len(s.q) == 0 {
+				s.on, s.q = false, nil
+				s.mu.Unlock()
+				return
+			}
+			f := s.q[0]
+			s.q[0] = nil
+			s.q = s.q[1:]
+			s.mu.Unlock()
+			f()
+		}
+	}()
+}
+
+// noTautSeq is seqGo for DispatchSeq with no plugin system at all.
+var noTautSeq seqRunner
 
 func newThunkTable(t *Taut) *thunkTable {
 	tt := &thunkTable{t: t, natives: map[string]NativeFunc{}, calls: map[int64]NativeFunc{}, seq: map[int64]bool{}}
@@ -255,9 +291,12 @@ func dispatchThen[A, R any](ctx context.Context, t *Taut, name string, args A, n
 	}
 	if !t.ThunkPatched(name) {
 		run := func() { done(native(ctx, args)) }
-		if seq && t != nil {
-			t.thunks.runSeq(run)
-		} else {
+		switch {
+		case seq && t != nil:
+			t.thunks.seqGo.run(run)
+		case seq:
+			noTautSeq.run(run)
+		default:
 			go run()
 		}
 		return
@@ -372,34 +411,6 @@ func (tt *thunkTable) inSeq(id int64) bool {
 	tt.mu.Lock()
 	defer tt.mu.Unlock()
 	return tt.seq[id]
-}
-
-// runSeq runs f after the fs queued before it, on a goroutine of its own
-// (DispatchSeq with no plugin).
-func (tt *thunkTable) runSeq(f func()) {
-	tt.mu.Lock()
-	tt.seqGo = append(tt.seqGo, f)
-	start := !tt.seqOn
-	tt.seqOn = true
-	tt.mu.Unlock()
-	if !start {
-		return
-	}
-	go func() {
-		for {
-			tt.mu.Lock()
-			if len(tt.seqGo) == 0 {
-				tt.seqOn, tt.seqGo = false, nil
-				tt.mu.Unlock()
-				return
-			}
-			f := tt.seqGo[0]
-			tt.seqGo[0] = nil
-			tt.seqGo = tt.seqGo[1:]
-			tt.mu.Unlock()
-			f()
-		}
-	}()
 }
 
 // callNative runs the native core of an in-flight Dispatch (JS → Go).

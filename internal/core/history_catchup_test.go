@@ -168,13 +168,20 @@ func TestHistoryCatchUpRetries(t *testing.T) {
 	missed, _ := fs.PostAppQuiet(ch, "B0CATCHUP3", "A0CATCHUP3", "Owl", "42141: Hi meta,")
 	a.socketConnected(false)
 	fs.SetChannelFault("conversations.history", ch, fakeslack.Fault{Error: "internal_error", Times: 1})
-	n := fs.HistoryReads(ch)
 	if p, err := a.History(ctx, ch, ""); err != nil || pageHas(p, missed) {
 		t.Fatalf("History: %v, or it has the message before any read", err)
 	}
-	for dl := time.Now().Add(10 * time.Second); fs.HistoryReads(ch) == n; time.Sleep(10 * time.Millisecond) {
+	// the fault answers before the fake reads the page (HistoryReads
+	// doesn't count it): wait for core's record of the failure
+	failed := func() bool {
+		a.hist.mu.Lock()
+		defer a.hist.mu.Unlock()
+		_, ok := a.hist.retry[ch]
+		return ok
+	}
+	for dl := time.Now().Add(10 * time.Second); !failed(); time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(dl) {
-			t.Fatal("no catch-up read")
+			t.Fatal("the catch-up's read never failed")
 		}
 	}
 	time.Sleep(200 * time.Millisecond)
