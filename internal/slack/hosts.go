@@ -194,7 +194,7 @@ func GetNoCreds(ctx context.Context, raw string, max int64) ([]byte, string, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("GET %s: %s", u.Hostname(), resp.Status)
+		return nil, "", &HTTPError{Status: resp.StatusCode, text: fmt.Sprintf("GET %s: %s", u.Hostname(), resp.Status)}
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
 	if err != nil {
