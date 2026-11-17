@@ -485,19 +485,21 @@ func TestInOrderCallBeforeLaterInput(t *testing.T) {
 // thunk) a moment later, and its check answers Go, which dispatches the
 // thunk. While it is in Go the loop starts no queued render for
 // userChainHold from its last hop, and the next hop runs first, as Slack
-// runs a send in one task. Other user-blocking work holds nothing: a
-// render queued behind a click's await of Go starts at once.
+// runs a send in one task; the hop goes on with the chain the native's ctx
+// carries, so a store update queued after the send began (the drafts'
+// clear at Enter) waits behind it, not ahead. Other user-blocking work
+// holds nothing: a render queued behind a click's await of Go starts at
+// once, and the click's next hop runs after what was queued before it.
 func TestSendChainHoldsTheQueue(t *testing.T) {
 	l := newLaneRecorder(t)
 	r := l.r
-	var ctxs sync.Map // the call's ctx, for the native's next hop
-	r.ExposeAsync("native", func(_ context.Context, args []json.RawMessage) (any, error) {
+	r.ExposeAsync("native", func(ctx context.Context, args []json.RawMessage) (any, error) {
 		var key string
 		_ = json.Unmarshal(args[0], &key)
-		c, _ := ctxs.Load(key)
-		time.Sleep(2 * time.Millisecond) // the native's own work, then its next JS hop
+		time.Sleep(2 * time.Millisecond)    // the native's own work
+		l.post(r.PostInOrder, key+" store") // a store update meanwhile
 		done := make(chan struct{})
-		r.CallThen(c.(context.Context), "chain.next", func(json.RawMessage, error) { close(done) }, key)
+		r.CallThen(UserBlocking(ctx), "chain.next", func(json.RawMessage, error) { close(done) }, key)
 		<-done
 		time.Sleep(50 * time.Millisecond) // chat.postMessage
 		return nil, nil
@@ -543,13 +545,12 @@ func TestSendChainHoldsTheQueue(t *testing.T) {
 		ctx  context.Context
 		want string
 	}{
-		{"send", UserChain(context.Background()), "G, send, send next, render"},
-		{"click", UserBlocking(context.Background()), "G, click, render, click next"},
+		{"send", UserChain(context.Background()), "G, send, send next, render, send store"},
+		{"click", UserBlocking(context.Background()), "G, click, render, click store, click next"},
 	} {
 		l.mu.Lock()
 		l.order = nil
 		l.mu.Unlock()
-		ctxs.Store(tc.name, tc.ctx)
 		g := l.hold("G", true)
 		l.post(r.Post, "render")
 		done := make(chan error, 1)

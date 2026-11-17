@@ -1305,7 +1305,7 @@ func (c *Composer) submit() {
 		o.gifs = c.att.takeGifs()
 		o.attachments = gifAttachments(o.gifs, gifPickerOn(c.api.a))
 	}
-	c.clearAfterSend()
+	after := c.clearForSend()
 	switch {
 	case c.sendJS.ID != 0:
 		c.sendViaJS(o)
@@ -1314,6 +1314,7 @@ func (c *Composer) submit() {
 	default:
 		c.send(o)
 	}
+	after()
 }
 
 // outgoing is a message on its way out of the composer.
@@ -1692,16 +1693,27 @@ func (c *Composer) prepareAndSend(opts slackc.Props) {
 	c.checkThenSend(o)
 }
 
-func (c *Composer) clearAfterSend() {
+func (c *Composer) clearAfterSend() { c.clearForSend()() }
+
+// clearForSend is clearAfterSend for a message about to go out: the
+// composer clears now, and what that tells the plugins and Slack (the
+// server draft's deletion, the plugins' live draft, the typing's end) goes
+// when after is called, once the send's own JS call is queued. Queued
+// before it, that work ran first (the drafts' store update re-renders the
+// patched components) and the pending copy missed its frame; Slack's
+// Enter dispatches prepareAndSendMessage before the draft clears.
+func (c *Composer) clearForSend() (after func()) {
 	c.ed.SetDoc(NewDoc())
 	c.lastVer = c.ed.Version()
-	c.deleteServerDraft("message_sent")
-	c.clearLiveDraft()
 	c.broadcast = false
 	c.lastTyping = time.Time{}
-	c.typingStopped()
 	clearDraft(c.ch, c.ts)
 	c.h.Invalidate()
+	return func() {
+		c.deleteServerDraft("message_sent")
+		c.clearLiveDraft()
+		c.typingStopped()
+	}
 }
 
 // restore puts an unsent message back if the user hasn't typed since.

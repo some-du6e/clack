@@ -112,10 +112,11 @@ func runDraftOp(key string, op draftOp) {
 	if v, ok := serverDraftIDs.Load(key); ok {
 		cur = v.(string)
 	}
-	// the user's typing's (or send's): its thunks run on the user's lane,
-	// in order with their clicks and keys, so a plugin click after it can't
-	// go ahead (OwlMode decides in the draft's patch whether it syncs)
-	ctx := taut.UserAction(context.Background())
+	// in order with the user's input (a dispatch's default, taut's
+	// inOrder): a plugin click after it can't go ahead (OwlMode decides in
+	// the draft's patch whether it syncs), and it doesn't jump the renders
+	// or a send queued before it
+	ctx := context.Background()
 	if op.del != nil {
 		if cur == "" {
 			return

@@ -86,9 +86,9 @@ func (c *Composer) typingStopped() {
 }
 
 // sendTypingEnded is currentUserEndedTyping, queued now, in order with the
-// keystrokes and the send (sendTyping's rule; UI goroutine).
+// keystrokes and the send before it (a dispatch's default; UI goroutine).
 func sendTypingEnded(t *taut.Taut, api coreAPI, ch, ts string) {
-	taut.DispatchThen(taut.UserAction(context.Background()), t, thTypingEnded, typingArgs{ChannelID: ch, ThreadTs: ts},
+	taut.DispatchThen(context.Background(), t, thTypingEnded, typingArgs{ChannelID: ch, ThreadTs: ts},
 		func(_ context.Context, a typingArgs) (any, error) {
 			return nil, typingEndedNative(api, a.ChannelID, a.ThreadTs)
 		}, nil)

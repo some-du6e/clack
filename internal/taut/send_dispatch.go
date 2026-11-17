@@ -11,15 +11,17 @@ import (
 // CheckThenDispatch runs the plugins' send checks (SendCheck) and, when
 // they let the message go, Dispatch(name, args, native); done hears
 // whether they did (sent) and the dispatch's result, on another
-// goroutine. With the runtime running, checks to run and a patched thunk,
-// both go in one JS call (__taut.checkThenDispatch), queued before
-// CheckThenDispatch returns, on the caller's goroutine (the composer's, at
-// Enter, ahead of its own re-render): Slack's prepareAndSendMessage awaits
-// its checks and dispatches its thunks in one JS task. The checks used to
-// answer Go, which dispatched the thunk, and a render the loop started
-// between the two held the send for its whole run; the 5 ms hold that
-// bridged the trip idled the JS thread after every key and held the
-// composer's synchronous calls.
+// goroutine. With the runtime running and checks to run, both go in one JS
+// call (__taut.checkThenDispatch), queued before CheckThenDispatch
+// returns, on the caller's goroutine (the composer's, at Enter, ahead of
+// its own re-render): Slack's prepareAndSendMessage awaits its checks and
+// dispatches its thunks in one JS task. An unpatched thunk calls native
+// from there too, and what native dispatches in turn (the send
+// transforms, a patched sendMessage) goes on with that chain
+// (jsrt.UserChain). The checks used to answer Go, which dispatched the
+// thunk, and a render the loop started between the two held the send for
+// its whole run; the 5 ms hold that bridged the trip idled the JS thread
+// after every key and held the composer's synchronous calls.
 //
 // A check an interrupted task left pending forever (sendCheck's rule) is
 // ignored after sendCheckGrace with nothing open for the user: the thunk
@@ -29,7 +31,7 @@ import (
 func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext, name string, args A, native func(ctx context.Context, args A) (R, error), done func(sent bool, r R, err error)) {
 	var zero R
 	rt := t.liveRuntime()
-	if rt == nil || !t.HasSendChecks() || !t.ThunkPatched(name) {
+	if rt == nil || !t.HasSendChecks() {
 		t.SendCheckAsync(ctx, c, func(ok bool) {
 			if !ok {
 				done(false, zero, nil)

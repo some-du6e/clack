@@ -444,12 +444,10 @@ func checkContext(m SendCheck) taut.ComposerContext {
 }
 
 // checkThenSendInJS reports whether a message without files goes through
-// the plugins' send checks and prepareAndSendMessage patches in one JS
-// call (sendJob.checkThenRun): Taut's checks are the hook, and a plugin
-// patches the thunk (UI goroutine).
-func checkThenSendInJS() bool {
-	return installed.send && currentTaut().ThunkPatched(thPrepareAndSend)
-}
+// the plugins' send checks and prepareAndSendMessage (patched or not) in
+// one JS call (sendJob.checkThenRun): Taut's checks are the hook (UI
+// goroutine).
+func checkThenSendInJS() bool { return installed.send }
 
 // tautLinkTransform runs composer.addLinkTransform (ClearURLs) on one URL.
 func tautLinkTransform(u string) string {

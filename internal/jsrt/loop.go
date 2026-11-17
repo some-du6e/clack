@@ -297,16 +297,28 @@ func (r *Runtime) enqueue(t task) uint64 {
 			need += r.orderedN // the in-order tasks queued before it go first
 		}
 		if len(*q)+need <= cap(*q) {
+			now := monoNow()
+			moved := 0
 			if t.urgent && r.orderedN > 0 {
-				r.promoteOrderedLocked()
+				// the in-order tasks queued before it; a send's chain going
+				// on takes those queued before the chain began, as Slack's
+				// send is one JS task the store's later updates wait for
+				cutoff := now
+				if t.hold && t.root != 0 {
+					cutoff = t.root
+				}
+				moved = r.promoteOrderedLocked(cutoff)
 			}
 			if t.urgent && t.root == 0 {
-				t.root = monoNow() // the user's action: what it starts continues on its lane (chainLane)
+				t.root = now // the user's action: what it starts continues on its lane (chainLane)
+			}
+			if t.ordered {
+				t.queued = now
 			}
 			*q = append(*q, t) // room: no allocation
 			n := r.enqN.Add(1)
 			if t.urgent {
-				r.urgentN.Add(int32(need))
+				r.urgentN.Add(int32(1 + moved))
 			} else if t.ordered {
 				r.orderedN++
 			}
@@ -325,23 +337,26 @@ func (r *Runtime) enqueue(t task) uint64 {
 	}
 }
 
-// promoteOrderedLocked moves the in-order tasks waiting in the batch the
-// loop runs and in the queue to the end of the user-blocking queue, in
-// their order (mu held; the urgent queue has room for them). They run as
-// they were, without the user's lane for what they start: a store
-// update's renders stay behind the user's work.
-func (r *Runtime) promoteOrderedLocked() {
+// promoteOrderedLocked moves the in-order tasks queued before cutoff
+// (monoNow) waiting in the batch the loop runs and in the queue to the end
+// of the user-blocking queue, in their order (mu held; the urgent queue
+// has room for them), and returns how many. They run as they were,
+// without the user's lane for what they start: a store update's renders
+// stay behind the user's work.
+func (r *Runtime) promoteOrderedLocked(cutoff int64) int {
+	moved := 0
 	move := func(ts []task) {
 		for i := range ts {
 			if r.orderedN == 0 {
 				return
 			}
-			if ts[i].ordered && ts[i].f != nil {
+			if ts[i].ordered && ts[i].f != nil && ts[i].queued < cutoff {
 				x := ts[i]
 				x.ordered = false
 				r.urgent = append(r.urgent, x)
 				ts[i] = task{}
 				r.orderedN--
+				moved++
 			}
 		}
 	}
@@ -349,6 +364,7 @@ func (r *Runtime) promoteOrderedLocked() {
 		move(r.batch[r.batchAt:])
 	}
 	move(r.queue)
+	return moved
 }
 
 // User-blocking work. A browser runs input ahead of the tasks already
@@ -422,6 +438,16 @@ func UserChain(ctx context.Context) context.Context {
 func IsUserChain(ctx context.Context) bool {
 	b, _ := ctx.Value(userChainKey{}).(bool)
 	return b
+}
+
+type laneKey struct{}
+
+// laneOf is the chain an async Go function's ctx carries (ExposeAsync:
+// the lane of the task that called it): the user-blocking calls it makes
+// go on with that chain, a send's next hop part of the send.
+func laneOf(ctx context.Context) (lane, bool) {
+	l, ok := ctx.Value(laneKey{}).(lane)
+	return l, ok && l.root != 0 && monoNow()-l.root <= int64(userChain)
 }
 
 // Ordinary undoes UserBlocking for ctx's calls: a probe the user isn't
@@ -538,10 +564,10 @@ func (r *Runtime) promoteOrdered() bool {
 			return false
 		}
 		if len(r.urgent)+n <= cap(r.urgent) {
-			r.promoteOrderedLocked()
-			r.urgentN.Add(int32(n))
+			moved := r.promoteOrderedLocked(monoNow())
+			r.urgentN.Add(int32(moved))
 			r.mu.Unlock()
-			return true
+			return moved > 0
 		}
 		c, l := cap(r.urgent), len(r.urgent)
 		r.mu.Unlock()
@@ -722,6 +748,9 @@ type task struct {
 	// it is a send's (UserChain): chainLane
 	root int64
 	hold bool
+	// queued: when an in-order task was queued (monoNow; promotion's
+	// cutoff)
+	queued int64
 }
 
 // callerPC is the return address into the caller of the function calling
