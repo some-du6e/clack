@@ -36,9 +36,11 @@ package core
 //     it. Each is a generated fetcher (4LBW) through apiCall (n8Nf): the
 //     selected workspace's token (tZ7n computeToken, no enterprise_token)
 //     on its host (QqUK getHostForTeamId), as a FormData body (2Wpv: the
-//     image a File part, typed as the file is), timed out after 60 s
-//     (P8AB). Same in build 2c0d02ca130f's boot-shared and modern.vendor
-//     (2026-11-15) and datamine build 1a648483c79a's args (2026-11-17).
+//     image a File part, typed as Chromium types the file by its
+//     extension), each request timed out after 60 s and tried up to 3
+//     times by the API queue (P8AB, 3GCR: slack.SlackRetries). Same in
+//     build 2c0d02ca130f's boot-shared and modern.vendor (2026-11-15) and
+//     datamine build 1a648483c79a's args (2026-11-17).
 //
 // Field rules are NYcX's validators with s8g3's limits (_w), their
 // messages h+Rv's (ui_validation).
@@ -56,6 +58,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,6 +67,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/exif"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -708,9 +712,7 @@ var (
 // pane loads it (getLoadedImage(e.url)). That image, not the picked file,
 // is what EditProfileCropPane shows and what crop_x, crop_y and crop_w
 // count in (handleUpload's normalizeSquareCrop takes its width and
-// height). Slack's server can answer with another size than it was sent:
-// users.setPhoto's docs limit photos to 1024×1024, while the client sends
-// up to 4000 px a side.
+// height), whatever the server made of the upload.
 type PhotoUpload struct {
 	ID, URL string
 	// Width, Height are the prepared image's size (0 when core can't read
@@ -721,39 +723,60 @@ type PhotoUpload struct {
 	Image []byte
 }
 
-// CheckPhoto is processUpload's checks before the upload: a GIF, PNG or
-// JPEG, at least 36 and at most 4000 px a side.
-func CheckPhoto(data []byte) (image.Config, error) {
-	cfg, _, err := checkPhoto(data)
-	return cfg, err
+// PhotoFileType is the type Chromium gives a picked file by its name's
+// extension, File.type (net/base/mime_util.cc: kPrimaryMappings, which the
+// platform can't override, then kSecondaryMappings): processUpload checks
+// it, and FormData sends the File as a part of that type. Only the types
+// processUpload lets through are named (image/gif, image/png,
+// image/jpeg); "" for any other extension, a type it refuses as well.
+func PhotoFileType(name string) string {
+	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(name), ".")) {
+	case "gif":
+		return "image/gif"
+	case "png":
+		return "image/png"
+	case "jpeg", "jpg", "jfif", "pjpeg", "pjp":
+		return "image/jpeg"
+	}
+	return ""
 }
 
-// checkPhoto is CheckPhoto with the image's type as the upload sends it.
-func checkPhoto(data []byte) (image.Config, string, error) {
-	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil || (format != "gif" && format != "png" && format != "jpeg") {
-		return image.Config{}, "", ErrPhotoType
+// CheckPhotoType is processUpload's first check, before it loads the
+// file: its type is image/gif, image/png or image/jpeg.
+func CheckPhotoType(typ string) error {
+	switch typ {
+	case "image/gif", "image/png", "image/jpeg":
+		return nil
 	}
-	if cfg.Height < PhotoMinSide || cfg.Width < PhotoMinSide {
-		return cfg, "", ErrPhotoTooSmall
-	}
-	if cfg.Height > PhotoMaxSide || cfg.Width > PhotoMaxSide {
-		return cfg, "", ErrPhotoTooBig
-	}
-	return cfg, "image/" + format, nil
+	return ErrPhotoType
 }
 
-// PreparePhoto is processUpload: the checks, then users.preparePhoto
-// {image} (reason "EditProfileModal") with the image part typed as the
-// file is (image/gif, image/png or image/jpeg: what a browser's FormData
-// sends for a File processUpload let through), then the image it answers
-// with, loaded (getLoadedImage(e.url)). An answer without ok, url and id,
-// or an image that doesn't load, is ErrPhotoAPI; a failed call is logged
-// (logPhotoFailure). The upload is a click, so it skips the client's
-// backoff for repeated failures, as Slack's client sends every one.
-func (a *App) PreparePhoto(ctx context.Context, name string, data []byte) (PhotoUpload, error) {
-	_, typ, err := checkPhoto(data)
-	if err != nil {
+// CheckPhotoSize is processUpload's check of the size the file loads at
+// (getLoadedImage's width and height), minimum before maximum: at least 36
+// and at most 4000 px a side. A file that doesn't load at all is
+// ErrPhotoType (the load's catch).
+func CheckPhotoSize(w, h int) error {
+	if h < PhotoMinSide || w < PhotoMinSide {
+		return ErrPhotoTooSmall
+	}
+	if h > PhotoMaxSide || w > PhotoMaxSide {
+		return ErrPhotoTooBig
+	}
+	return nil
+}
+
+// PreparePhoto is processUpload's upload, for a file that passed its
+// checks (CheckPhotoType on typ, CheckPhotoSize on the size it loads at):
+// users.preparePhoto {image} (reason "EditProfileModal"), the image part
+// named name and typed typ as FormData sends the File, then the image the
+// answer's url names, loaded (getLoadedImage(e.url)) with its size as
+// Chromium reports it: a GIF's logical screen, a JPEG turned by its EXIF
+// Orientation. An answer without ok, url and id, or an image that doesn't
+// load, is ErrPhotoAPI; a failed call is logged (logPhotoFailure). The
+// upload is a click: Slack's queue tries it up to 3 times
+// (slack.SlackRetries), past the client's backoff for repeated failures.
+func (a *App) PreparePhoto(ctx context.Context, name, typ string, data []byte) (PhotoUpload, error) {
+	if err := CheckPhotoType(typ); err != nil {
 		return PhotoUpload{}, err
 	}
 	var r struct {
@@ -761,7 +784,7 @@ func (a *App) PreparePhoto(ctx context.Context, name string, data []byte) (Photo
 		URL string          `json:"url"`
 	}
 	f := slack.MultipartFile{Field: "image", Name: name, Type: typ, Data: data}
-	if err := a.C.CallMultipartFile(slack.NoBackoff(ctx), "users.preparePhoto", url.Values{}, f, &r); err != nil {
+	if err := a.C.CallMultipartFile(photoCall(ctx), "users.preparePhoto", url.Values{}, f, &r); err != nil {
 		logPhotoFailure("users.preparePhoto", err)
 		return PhotoUpload{}, photoAPIErr(ctx)
 	}
@@ -775,11 +798,21 @@ func (a *App) PreparePhoto(ctx context.Context, name string, data []byte) (Photo
 		logPhotoFailure("users.preparePhoto's image", err)
 		return PhotoUpload{}, photoAPIErr(ctx)
 	}
-	if cfg, _, err := image.DecodeConfig(bytes.NewReader(img)); err == nil {
+	if cfg, format, err := image.DecodeConfig(bytes.NewReader(img)); err == nil {
 		up.Width, up.Height = cfg.Width, cfg.Height
+		if format == "jpeg" && exif.Swaps(exif.Orientation(img)) {
+			up.Width, up.Height = cfg.Height, cfg.Width
+		}
 	}
 	up.Image = img
 	return up, nil
+}
+
+// photoCall is ctx for one of the photo's three calls: tried as Slack's
+// API queue tries it (up to 3 times, P8AB and 3GCR), and a click, so past
+// the client's backoff.
+func photoCall(ctx context.Context) context.Context {
+	return slack.SlackRetries(slack.NoBackoff(ctx))
 }
 
 // photoAPIErr is a failed photo call as PreparePhoto returns it: the
@@ -875,12 +908,12 @@ func DefaultPhotoCrop(dw, dh float64) (x, y, side float64) {
 
 // SetPhoto is setUserPhotoApi: users.setPhoto {id, crop_x, crop_y,
 // crop_w} (c in the prepared image's pixels), then the viewer's member is
-// fetched again for the new pictures. A click: past the client's backoff,
-// and a failure is logged.
+// fetched again for the new pictures. A click (photoCall): tried up to 3
+// times, past the client's backoff; a failure is logged.
 func (a *App) SetPhoto(ctx context.Context, id string, c PhotoCrop) error {
 	p := url.Values{"id": {id}, "crop_x": {strconv.Itoa(c.X)}, "crop_y": {strconv.Itoa(c.Y)},
 		"crop_w": {strconv.Itoa(c.Size)}}
-	if err := a.C.Call(slack.NoBackoff(ctx), "users.setPhoto", p, nil); err != nil {
+	if err := a.C.Call(photoCall(ctx), "users.setPhoto", p, nil); err != nil {
 		logPhotoFailure("users.setPhoto", err)
 		return err
 	}
@@ -889,9 +922,10 @@ func (a *App) SetPhoto(ctx context.Context, id string, c PhotoCrop) error {
 }
 
 // DeletePhoto is usersDeletePhotoFetcher (reason
-// "edit_profile_delete_photo"), then the member is fetched again.
+// "edit_profile_delete_photo"), then the member is fetched again; a click
+// (photoCall), and a failure is logged.
 func (a *App) DeletePhoto(ctx context.Context) error {
-	if err := a.C.Call(slack.NoBackoff(ctx), "users.deletePhoto", url.Values{}, nil); err != nil {
+	if err := a.C.Call(photoCall(ctx), "users.deletePhoto", url.Values{}, nil); err != nil {
 		logPhotoFailure("users.deletePhoto", err)
 		return err
 	}

@@ -245,6 +245,12 @@ func decodeConfig(data []byte) (image.Config, string, error) {
 	return cfg, f, err
 }
 
+// DecodeConfig is decodeConfig for callers outside imgcache: data's size
+// (a GIF's logical screen, not its first frame) and format, read from its
+// header by the decoder that would decode it, for PNG, JPEG, GIF, WebP and
+// BMP. Only the header is parsed, so it allocates nothing by the size.
+func DecodeConfig(data []byte) (image.Config, string, error) { return decodeConfig(data) }
+
 // decodeImage decodes data, refusing a header past maxPixels or maxSide
 // (ErrTooBig) before decoding, every allocation of the decode charged to b
 // first. A WebP decodes its picture's chunks alone (decodeWebP), within its

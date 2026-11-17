@@ -111,18 +111,27 @@ func mentionName(id string) (string, MemberMiss) {
 // exist. Each use is recorded so namesChanged can tell when to lay out
 // again.
 func (l *lay) mentionText(id, parsed string) (string, MemberMiss) {
+	txt, miss, n, read := mentionShown(id, parsed)
+	if read {
+		l.d.names = append(l.d.names, nameUse{id: id, name: n, miss: miss})
+	}
+	return txt, miss
+}
+
+// mentionShown is mentionText without noting the use (a table's column
+// measure): the text, the miss, the name read and whether one was.
+func mentionShown(id, parsed string) (txt string, miss MemberMiss, name string, read bool) {
 	if id == "" || memberLabelFn() == nil && memberReadFn() == nil {
-		return parsed, MemberLoaded
+		return parsed, MemberLoaded, "", false
 	}
 	n, miss := mentionName(id)
-	l.d.names = append(l.d.names, nameUse{id: id, name: n, miss: miss})
 	if miss != MemberLoaded {
-		return "", miss
+		return "", miss, n, true
 	}
 	if n == "" {
-		return parsed, MemberLoaded
+		return parsed, MemberLoaded, n, true
 	}
-	return "@" + n, MemberLoaded
+	return "@" + n, MemberLoaded, n, true
 }
 
 // namesChanged reports a mention the last layout drew that reads

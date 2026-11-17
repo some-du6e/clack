@@ -15,9 +15,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"io"
 	"math/rand"
 	"net"
@@ -761,8 +758,14 @@ func Serve(ln net.Listener, sz Size) *Server {
 	mux.HandleFunc("/ws", s.ws)
 	mux.HandleFunc("/files-pri/", s.filesPri) // canvas exports (canvas.go)
 	mux.HandleFunc("/auth", s.authPage)       // the token page (auth_page.go)
+	mux.HandleFunc("/photos/", s.photosPage)  // users.preparePhoto's images (photo.go)
 	mux.HandleFunc("/", s.otherPage)          // any other page: logged, not found
-	s.srv = &http.Server{Handler: mux}
+	s.srv = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.asSlackHost(w, r) { // a request HostsTransport sent for one of Slack's hosts (photo.go)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})}
 	go s.srv.Serve(ln)
 	return s
 }
@@ -774,6 +777,7 @@ func (s *Server) Close() error {
 	viewsStates.Delete(s)
 	threadsAuditStates.Delete(s)
 	agentDMStates.Delete(s)
+	photoStores.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -2052,15 +2056,7 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 		for _, c := range parts[1] {
 			seed = seed*31 + int(c)
 		}
-		im := image.NewNRGBA(image.Rect(0, 0, iw, ih))
-		for y := 0; y < ih; y++ {
-			for x := 0; x < iw; x++ {
-				im.SetNRGBA(x, y, color.NRGBA{uint8(x*255/iw + seed), uint8(y*255/ih + seed>>3), uint8(seed >> 6), 255})
-			}
-		}
-		var buf bytes.Buffer
-		_ = (&png.Encoder{CompressionLevel: png.BestSpeed}).Encode(&buf, im)
-		b = buf.Bytes()
+		b = genPNG(iw, ih, seed)
 		s.imgMu.Lock()
 		s.imgs[r.URL.Path] = b
 		s.imgMu.Unlock()
