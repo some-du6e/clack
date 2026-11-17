@@ -2240,12 +2240,13 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		// a newer copy than the row was described from: its text and
 		// marks follow in this frame
 		page, _, _ := v.data.get()
+		hay := r.d.hay
 		r.d, r.gen, r.dSrc = v.describe(it, page.Convs), i18n.Gen(), r.liSrc
 		r.mark, r.markOK = v.readMark(it)
 		if v.selOK && v.selKey == key {
 			v.selDesc = r.d
 		}
-		if v.searchOn && v.query.text() != "" {
+		if v.searchOn && v.query.text() != "" && r.d.hay != hay {
 			v.dirty = true // the search filters on the text
 		}
 	}

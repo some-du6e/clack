@@ -77,6 +77,8 @@ type msgChanges struct {
 	// removing is the message whose next update removes the Activity
 	// entries about it (removesNext)
 	removing MsgKey
+	// refetching are the messages RefetchMessages asked Slack for
+	refetching map[MsgKey]bool
 }
 
 // changeCopy is the change whose message a slot of msgChanges.copies keeps.
@@ -97,8 +99,8 @@ func (a *App) noteMsgChange(ev *Event) {
 	n := l.n.Load() + 1
 	ev.Seq = n
 	k := MsgKey{ev.Channel, ev.TS}
-	if ev.Type == "update" && l.removing == k {
-		ev.Removes, l.removing = true, MsgKey{}
+	if ev.Type == "update" && ev.Name != UpdateReactions && l.removing == k {
+		ev.Removes, l.removing = true, MsgKey{} // message_changed's, not a reaction's in between
 	}
 	if l.recs == nil {
 		l.recs = map[MsgKey]*MsgChange{}

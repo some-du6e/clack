@@ -137,6 +137,7 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		// a reply changed, deleted or posted while the request was out
 		// keeps the socket's copy (store/live.go)
 		a.S.SetThreadSince(ch, ts, all, live)
+		a.announceReads() // a revision the store held another of (read_changes.go)
 		all, _ = a.S.Thread(ch, ts)
 		a.S.SyncPins(ch, pins, all)
 		for i := range all {
@@ -200,6 +201,22 @@ func (a *App) hydrateKeep(ctx context.Context, want map[string][]string, keep bo
 	for ch := range asked {
 		answered[ch] = true
 	}
+	if keep {
+		// a group that failed (a network blip) leaves its messages as the
+		// store has them: the copies fetched by id that the socket kept
+		// current, as Slack's rows draw what its store holds and fetch
+		// only what it doesn't
+		for ch, tss := range missing {
+			if answered[ch] {
+				continue
+			}
+			for _, ts := range tss {
+				if m, ok := a.S.FindHeld(ch, ts); ok {
+					out[ch+"/"+ts] = m
+				}
+			}
+		}
+	}
 	for ch, ms := range got {
 		if !keep {
 			for _, m := range ms {
@@ -214,6 +231,9 @@ func (a *App) hydrateKeep(ctx context.Context, want map[string][]string, keep bo
 		for _, m := range a.S.PutFetched(ch, ms, since) {
 			out[ch+"/"+m.TS] = m
 		}
+	}
+	if keep {
+		a.announceReads() // read_changes.go
 	}
 	// the messages' people are asked for as rows draw them (lazy_users.go)
 	return out, answered
@@ -835,6 +855,7 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 		// what changed while it was out; a reply deleted meanwhile stays
 		// out, and a root keeps the answer's copy (its thread is the card)
 		kept := a.S.PutFetched(ch, append([]slack.Message{t.Root}, replies...), since)
+		a.announceReads() // read_changes.go
 		root := t.Root
 		if len(kept) > 0 && kept[0].TS == root.TS {
 			root, kept = kept[0], kept[1:]

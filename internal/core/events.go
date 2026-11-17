@@ -57,9 +57,9 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		add := ev.Type == "reaction_added"
-		changed := false
-		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = store.ApplyReaction(m, e.Reaction, e.User, add) || changed })
-		a.S.NoteReaction(e.Item.Channel, e.Item.TS, e.Reaction, e.User, add) // a fetch out now keeps it (store/reacts.go)
+		// every copy takes it and a fetch out now keeps it, under one lock
+		// (store/reacts.go)
+		m, ok, changed := a.S.ApplyReactionNoted(e.Item.Channel, e.Item.TS, e.Reaction, e.User, add)
 		// the reactor isn't fetched: only the reaction's tooltip names it
 		// (ReactionTip's TooltipMemberName, lazy_users.go)
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
@@ -594,8 +594,10 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		} else if old, ok := a.S.FindHeld(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
 			thread = old.ThreadTS
 		}
-		a.S.Remove(ch, e.DeletedTS)
+		// noted before the copies go: a fetch landing in between leaves it
+		// out (store/live.go)
 		a.S.NoteLive(ch, e.DeletedTS, nil)
+		a.S.Remove(ch, e.DeletedTS)
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":
@@ -732,15 +734,7 @@ func needsFileInfo(m *slack.Message) bool {
 // media_display_type "unknown", which draws as a generic "FILE" card.
 // Slack's web client refetches the file on file_change (filesChanged)
 // once processing is done.
-func fileStub(f *slack.File) bool {
-	if f.ID == "" || f.Mode == "tombstone" || f.Mode == "hidden_by_limit" {
-		return false
-	}
-	if f.FileAccess == "check_file_info" || f.URLPrivate == "" {
-		return true
-	}
-	return !f.IsExternal && f.Mimetype == "" && f.Filetype == ""
-}
+func fileStub(f *slack.File) bool { return store.FileStub(f) }
 
 // fileFillDelays are fillFiles' waits before each files.info round: Slack
 // takes a few seconds to process an upload (thumbnails, mimetype); a

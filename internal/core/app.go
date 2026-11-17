@@ -988,13 +988,17 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// message cache budget: Slack resets a quiet conversation's history
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
-	pins, subs := a.S.PinSeq(), a.S.SubSeq()
+	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
 	}
-	// its people are asked for as rows draw them (lazy_users.go)
-	a.S.SetLatest(ch, p.Messages, p.HasMore)
+	// its people are asked for as rows draw them (lazy_users.go); the
+	// reactions the socket brought while the request was out stay, and a
+	// revision the store held another of reaches every copy and the views
+	// (store/read_revisions.go, read_changes.go)
+	a.S.SetLatestRead(ch, p.Messages, p.HasMore, live)
+	a.announceReads()
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 	for i := range p.Messages {

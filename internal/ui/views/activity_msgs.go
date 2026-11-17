@@ -406,7 +406,10 @@ func (v *Activity) unbuildMsg(k actMsgKey) {
 // item's copy or a change's takes the item's place only when newer.
 func (v *Activity) msgFor(k actMsgKey, feed *core.Message, seq uint64) (*core.Message, uint64) {
 	m := &v.msgs
-	if h, ok := m.hub[k]; ok && h.frame.Equal(m.last) {
+	if h, ok := m.hub[k]; ok && (h.frame.Equal(m.last) || h.frame.Equal(m.since)) {
+		// a list on screen: this frame's copy once the row polled it,
+		// the last frame's before (rebuild describes the rows before they
+		// poll, and must describe them from what they will draw)
 		return h.m, h.rev
 	}
 	best, bestSeq, src := feed, seq, uint64(0)

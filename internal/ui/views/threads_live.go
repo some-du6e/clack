@@ -120,11 +120,18 @@ func (v *Threads) applyLive() {
 		v.landLive(c)
 		return
 	}
-	for i, k := range keys {
-		if (i == 0 || k != keys[i-1]) && v.lv.has(actMsgKey{k.Channel, k.TS}) {
-			if ch, ok := c.MessageChange(k.Channel, k.TS); ok {
-				v.patchThreads(c, actMsgKey{k.Channel, k.TS}, &ch)
-			}
+	// each message the batch names once, with its latest change: a key
+	// named again later in the batch, or changed again since, brings
+	// nothing older, and every copy older than the change takes it (the
+	// change is the same one wherever it lands)
+	done := make(map[core.MsgKey]bool, len(keys))
+	for _, k := range keys {
+		if done[k] || !v.lv.has(actMsgKey{k.Channel, k.TS}) {
+			continue
+		}
+		done[k] = true
+		if ch, ok := c.MessageChange(k.Channel, k.TS); ok {
+			v.patchThreads(c, actMsgKey{k.Channel, k.TS}, &ch)
 		}
 	}
 }
@@ -173,7 +180,7 @@ func (v *Threads) landLive(c *core.App) {
 			card.built = false
 		}
 		if out != nil {
-			card.older = out
+			card.older, card.shown = out, nil
 		}
 		card.olderSeq = now
 	}
@@ -210,6 +217,8 @@ func (v *Threads) landThread(c *core.App, t *thrItem, now uint64) {
 			out = append(out, m)
 		} else if !ch.Deleted {
 			out = append(out, *r)
+		} else {
+			thrUnreadGone(t, j)
 		}
 		v.unbuildThread(t.key)
 	}
@@ -219,12 +228,18 @@ func (v *Threads) landThread(c *core.App, t *thrItem, now uint64) {
 	t.seq = now
 }
 
-// patchThreads takes change ch of k into every thread showing k (a new
-// threads slice, the thread's replies copied once): a reply deleted
-// leaves its card; a deleted root keeps its copy (one with replies comes
-// back as a tombstone's update).
+// patchThreads takes change ch of k into every thread showing k whose
+// copies are older than it (a new threads slice, the thread's replies
+// copied once): a reply deleted leaves its card (and its unread count, so
+// the New line stays on the first unread reply); a deleted root keeps its
+// copy (one with replies comes back as a tombstone's update). A thread's
+// stamp stays the point its load was current at: other messages of it can
+// have changes older than this one still to take.
 func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 	v.data.mutate(func(d *thrData) {
+		if !thrSameItems(d.items, v.lv.items) {
+			return // a load landed: the next frame's landLive takes it all
+		}
 		var items []thrItem
 		for i := range d.items {
 			t := &d.items[i]
@@ -242,6 +257,7 @@ func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 				if m, ok := c.ChangedMessage(k.ch, k.ts, ch, &rs[j], t.seq); ok {
 					rs[j] = m
 				} else if ch.Deleted {
+					thrUnreadGone(&nt, j)
 					rs = slices.Delete(rs, j, j+1)
 				}
 				nt.Replies, changed = rs, true
@@ -249,8 +265,6 @@ func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 			if !changed {
 				continue
 			}
-			// changes come in core's order: every one before this is in
-			nt.seq = ch.Seq
 			if items == nil {
 				items = slices.Clone(d.items)
 			}
@@ -259,6 +273,7 @@ func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 		}
 		if items != nil {
 			d.items = items
+			v.lv.items = items // its own change: nothing landed
 		}
 	})
 	for key, card := range v.cards {
@@ -266,16 +281,23 @@ func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 		if j < 0 || card.olderSeq >= ch.Seq {
 			continue
 		}
-		if m, ok := c.ChangedMessage(k.ch, k.ts, ch, &card.older[j], card.olderSeq); ok {
-			card.older[j] = m
+		older := slices.Clone(card.older)
+		if m, ok := c.ChangedMessage(k.ch, k.ts, ch, &older[j], card.olderSeq); ok {
+			older[j] = m
 		} else if ch.Deleted {
-			card.older = slices.Delete(slices.Clone(card.older), j, j+1)
+			older = slices.Delete(older, j, j+1)
 		}
-		card.olderSeq = ch.Seq
+		card.older, card.shown = older, nil
 		v.unbuildThread(key)
 	}
-	d, _, _ := v.data.get()
-	v.lv.items = d.items // its own change: nothing landed
+}
+
+// thrUnreadGone is the reply at j of t's replies leaving: when it was one
+// of the unread ones (the last UnreadCount), the count drops with it.
+func thrUnreadGone(t *thrItem, j int) {
+	if t.UnreadCount > 0 && j >= len(t.Replies)-t.UnreadCount {
+		t.UnreadCount--
+	}
 }
 
 // unbuildThread makes the header of the card key again (its people, its

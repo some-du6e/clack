@@ -106,10 +106,16 @@ type thrCard struct {
 	// into the card, oldest first; a fetch running; the thread's start
 	// reached (has_more false); the fetch's answer for the UI goroutine
 	older      []core.Message
-	olderSeq   uint64 // the message change older is current as of (threads_live.go)
 	olderBusy  bool
 	olderStart bool
 	olderRes   atomic.Pointer[thrOlder]
+
+	// olderSeq is the message change older is current as of
+	// (threads_live.go); shown is thrShown's older then latest replies,
+	// kept while neither changes (shownOf: the latest replies it was made
+	// with)
+	olderSeq       uint64
+	shown, shownOf []core.Message
 }
 
 func (c *thrCard) msg(ts string) *thrMsg {

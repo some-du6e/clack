@@ -63,6 +63,7 @@ type Store struct {
 	fetchedSize int                        // fetched's messages' size (messageSize)
 	reacts      map[string][]reactOp       // key channel/ts: realtime reactions (reacts.go)
 	reactQ      []string                   // reacts' keys, oldest first
+	readRevs    []ReadRevision             // revisions reads brought, for core (read_revisions.go)
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
 	subQ        []string                   // subs' keys, oldest first
 	subSeq      uint64                     // subscription events seen
@@ -1340,6 +1341,7 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 	// it as Slack's reach every message of its store
 	if m := s.fetched[ch+"/"+ts]; m != nil {
 		f(m)
+		s.measureFetchedLocked(ch + "/" + ts)
 		if !found {
 			out, found = *m, true
 		}

@@ -7,9 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/store"
 )
 
 // Reactions are optimistic, like Slack's: React changes the stored message
@@ -132,9 +129,7 @@ const UpdateReactions = "reactions"
 // applyOwnReaction changes the stored message and tells subscribers; it
 // returns the "update" it emitted (nil: nothing changed).
 func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
-	changed := false
-	m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) { changed = store.ApplyReaction(m, name, self, add) || changed })
-	a.S.NoteReaction(ch, ts, name, self, add) // a fetch out now keeps it (store/reacts.go)
+	m, ok, changed := a.S.ApplyReactionNoted(ch, ts, name, self, add) // a fetch out now keeps it (store/reacts.go)
 	if !ok || !changed {
 		return nil
 	}

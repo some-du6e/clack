@@ -103,6 +103,7 @@ func (s *Store) PutFetched(ch string, msgs []slack.Message, since uint64) []slac
 			s.replayReactsLocked(ch, &m, since)
 			s.keepPinLocked(ch, &m, nil)
 		}
+		s.noteReadLocked(ch, s.fetched[k], &m) // read_revisions.go
 		s.putFetchedLocked(k, m)
 		out = append(out, m)
 	}
@@ -161,6 +162,31 @@ func (s *Store) putFetchedLocked(k string, m slack.Message) {
 		}
 		slices.SortFunc(q, func(a, b fetchedTick) int { return cmp.Compare(a.at, b.at) })
 		s.fetchedQ = q
+	}
+}
+
+// measureFetchedLocked counts the fetched copy under k at its size now
+// (the socket grew it in place: Mutate), then lets go of the copies used
+// longest ago past the bounds.
+func (s *Store) measureFetchedLocked(k string) {
+	m := s.fetched[k]
+	if m == nil {
+		return
+	}
+	u := s.fetchedUse[k]
+	n := messageSize(m)
+	s.fetchedSize += n - u.size
+	u.size = n
+	s.fetchedUse[k] = u
+	for len(s.fetchedQ) > 0 && s.fetchedSize > maxFetchedSize && len(s.fetched) > 1 {
+		t := s.fetchedQ[0]
+		if t.k == k && t.at == u.at {
+			break // the copy just grown is the newest use there is
+		}
+		s.fetchedQ = s.fetchedQ[1:]
+		if s.fetchedUse[t.k].at == t.at {
+			s.dropFetchedLocked(t.k)
+		}
 	}
 }
 
