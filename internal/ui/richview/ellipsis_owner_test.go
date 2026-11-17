@@ -17,7 +17,7 @@ func TestOwnedEllipsesStayWithTheirCard(t *testing.T) {
 	long := strings.Repeat("a long attachment title that has to be clamped ", 12)
 	d := doc(rt.Block{Kind: rt.AttachmentBlock, Att: &rt.Attachment{
 		Title: []rt.Span{txt(long)},
-		Text:  []rt.Span{txt(long)},
+		Text:  []rt.Block{para(txt(long))},
 	}})
 	st := newTestStyle()
 
