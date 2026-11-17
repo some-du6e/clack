@@ -282,16 +282,20 @@ func TestWrappedPillPictureDraws(t *testing.T) {
 		at := pwFrag(&v.d, "@relay")
 		lp := findFrag(t, &v.d, "(")
 		bs := pwBoxes(&v.d, st.Palette.MentionBg)
-		if at == nil || len(bs) < 2 {
-			continue // on one line
+		if at == nil || len(bs) == 0 {
+			t.Fatalf("w=%d: @relay %v, boxes %v", w, at, bs)
 		}
 		b1 := bs[0].r
-		kind, base := "space", at.y
+		kind, base := "", at.y
 		switch {
+		case b1.Min.Y >= lp.bot:
+			kind = "paren" // "(" ended its line, the pill opens the next
+		case len(bs) < 2:
+			continue // on one line
 		case b1.Max.Y <= at.top:
 			kind, base = "after", lp.y
-		case b1.Min.Y >= lp.bot:
-			kind = "paren"
+		default:
+			kind = "space"
 		}
 		if l, ok := last[kind]; done[kind] >= 2 || ok && w-l < 12 {
 			continue

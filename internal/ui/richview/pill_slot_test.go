@@ -196,7 +196,15 @@ func TestPillEllipsisAfterPicture(t *testing.T) {
 			continue
 		}
 		sl := v.d.comps[0].slots[0]
-		lp := findFrag(t, &v.d, "(")
+		var lp *frag
+		for i := range v.d.frags {
+			if f := &v.d.frags[i]; f.kind == fText && f.sh != nil && f.sh.str == "(" {
+				lp = f
+			}
+		}
+		if lp == nil {
+			continue // the clamp came before "("
+		}
 		switch {
 		case sl.ok && sl.at:
 			kept++

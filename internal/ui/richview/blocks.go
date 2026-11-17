@@ -1025,6 +1025,30 @@ func flattenBreaks(bs []richtext.Block) []richtext.Span {
 	return out
 }
 
+// pillsExtra is how much wider than their text a cell's pills lay out
+// (its max-content width counts them, as a browser's does): each pill's
+// 2px paddings and, laid out as a component, its ::before and ::after and a
+// rule's edges, from the state of the component it will be (comp0 plus
+// *next, counted on as the cells' flows add them).
+func (l *lay) pillsExtra(cell []richtext.Span, comp0 int, next *int) float32 {
+	var ex float32
+	for i := range cell {
+		sp := &cell[i]
+		switch sp.Kind {
+		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast, richtext.MessageMention, richtext.Canvas, richtext.ChannelTab:
+			ex += 2 * l.dpf(2)
+		}
+		if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User && !sp.Hidden || sp.Kind == richtext.Channel && !(sp.Off && sp.Lock)) {
+			if c := comp0 + *next; l.cs != nil && c < len(*l.cs) {
+				cs := &(*l.cs)[c]
+				ex += cs.pseudo[0] + cs.pseudo[1] + cs.edge[0] + cs.edge[1]
+			}
+			*next++
+		}
+	}
+	return ex
+}
+
 // naturalWidth is the max-content width of pending flow items: their
 // widest hard-broken line.
 func naturalWidth(items []item) int {
@@ -1285,6 +1309,7 @@ func (l *lay) table(b *richtext.Block, x, y, w int) int {
 	nat := make([]int, ncol)
 	k := l.faceFor(font.Font{Typeface: l.st.Face}, l.sp(l.st.TextSize), 0)
 	kb := l.faceFor(font.Font{Typeface: l.st.Face}, l.sp(l.st.TextSize), richtext.Bold)
+	pills, comp0 := 0, len(l.d.comps) // the components the cells' flows will add, in order
 	for ri, r := range rows {
 		for ci, cell := range r {
 			kk := k
@@ -1295,6 +1320,7 @@ func (l *lay) table(b *richtext.Block, x, y, w int) int {
 			for _, line := range strings.Split(richtext.SpansText(cell), "\n") {
 				cw = max(cw, int(l.measure(line, kk)+0.999))
 			}
+			cw += int(l.pillsExtra(cell, comp0, &pills) + 0.999)
 			nat[ci] = max(nat[ci], min(cw, l.dp(400))+2*padX)
 		}
 	}
