@@ -255,8 +255,15 @@ func (a *App) serverCommand(ctx context.Context, cmd string, o CommandOpts) (Com
 	if isKnown {
 		name = known.Name
 	}
-	p := url.Values{"command": {name}, "disp": {cmd}, "text": {o.Text}, "channel": {o.Channel},
+	p := url.Values{"command": {name}, "disp": {cmd}, "channel": {o.Channel},
 		"client_token": {a.Interactive().ClientToken()}}
+	switch {
+	case len(o.Blocks) > 0:
+		// chatCommandApi from executeCommand: blocks and no text
+		p.Set("blocks", string(o.Blocks))
+	case o.Text != "":
+		p.Set("text", o.Text)
+	}
 	if o.ThreadTS != "" {
 		p.Set("thread_ts", o.ThreadTS)
 	}
