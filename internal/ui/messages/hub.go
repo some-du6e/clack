@@ -169,6 +169,16 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 	return frame.IsZero() || ev.Seen.UnixMilli() >= frame.UnixMilli()
 }
 
+// NamesOnScreen reports whether a message list drawn in the latest frame
+// shows one of ids (any goroutine): a sender, a reply bar's people, or a
+// member, channel or file a message names. False with no list.
+func NamesOnScreen(app *core.App, ids []string) bool {
+	hubsMu.Lock()
+	hb := hubs[app]
+	hubsMu.Unlock()
+	return hb != nil && hb.namesOnScreen(ids)
+}
+
 // namesOnScreen reports whether a list drawn in the latest frame shows
 // one of ids: a message's sender (or its bot), the people in its reply
 // bar, or a member, channel or file its text names (Refs). Before any

@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -872,8 +873,10 @@ func (b *backend) wants(ev core.Event) bool {
 	case "activity_badges":
 		return v.badgeMoves(b.core)
 	case "names":
-		// the user groups' names (no ids) re-read everything
-		return len(ev.Users) == 0 || v.namesShown(ev.Users)
+		// the user groups' names (no ids) re-read everything; otherwise
+		// what the shell draws, or a message list on screen (handle
+		// re-reads the visible conversations)
+		return len(ev.Users) == 0 || v.namesShown(ev.Users) || messages.NamesOnScreen(b.core, ev.Users)
 	case "conv":
 		// a channel the viewer isn't in, looked up (channel_rename and
 		// channel_created come to every member of the team): no row, no
