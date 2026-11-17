@@ -322,6 +322,10 @@ const (
 	itImage
 	itBreak
 	itPad
+	// itSlot is the place of a pill's ::before or ::after, which its
+	// component draws (addPseudoSlot): laid out like a pad, its position
+	// noted
+	itSlot
 )
 
 // decoMissing and decoMissingGone are MissingText's bar for a user
@@ -361,11 +365,19 @@ type item struct {
 	size   int
 	p0, p1 int32
 	brk    bool // break opportunity after this item (CJK, images)
-	alt    bool
-	comp   int16
-	part   uint8
-	tip    int16
-	br     richtext.BrKind // itBreak: how it draws (richtext.BrKind)
+	// open marks a pad that opens an element (a pill's start padding): it
+	// goes to the next line with what follows it, as an inline box's
+	// start edge does
+	open bool
+	alt  bool
+	// itSlot: which pseudo-element's place it is (0 ::before, 1 ::after),
+	// and whether that is a box (an atomic inline) rather than text
+	slot uint8
+	box  bool
+	comp int16
+	part uint8
+	tip  int16
+	br   richtext.BrKind // itBreak: how it draws (richtext.BrKind)
 }
 
 // flowStyle configures one inline flow.
@@ -401,7 +413,10 @@ type lay struct {
 	lead  float32
 	items []item
 	decos []deco
-	opts  Options
+	// decoLines is each deco's first and last line in a flow (its
+	// fragments' ends, box-decoration-break: slice)
+	decoLines [][2]int
+	opts      Options
 	// noPlain is set while laying out non-selectable labels.
 	noPlain bool
 	// mode says which Slack components lay out as such (comps.go); cs is
@@ -551,6 +566,100 @@ func (l *lay) addPad(w float32, dc int16, k faceKey) {
 	l.items = append(l.items, item{kind: itPad, w: w, deco: dc, face: k, target: -1, part: l.curPart})
 }
 
+// addOpen adds a pad that opens an element (a pill's start padding, a
+// rule's margin and border before it): it stays with what follows, so a
+// line never ends with an element's start (Chromium moves an inline
+// box's open tag to the line its first content goes to).
+func (l *lay) addOpen(w float32, dc int16, k faceKey) {
+	l.items = append(l.items, item{kind: itPad, w: w, deco: dc, face: k, target: -1, part: l.curPart, open: true})
+}
+
+// addPseudoSlot keeps the place, w px wide inside deco dc, of a pill's
+// ::before (which 0) or ::after (1), which its component draws there
+// (comps.go): the flow lays it out like a pad and notes where it went.
+// box is a box pseudo-element (an inline-block: MentionProfiles'
+// picture), an atomic inline that the line may break before or after the
+// way Chromium's ICU line breaker treats U+FFFC; text stays glued.
+func (l *lay) addPseudoSlot(which uint8, w float32, box bool, dc int16, k faceKey) {
+	l.items = append(l.items, item{kind: itSlot, w: w, deco: dc, face: k, target: -1, part: l.curPart, slot: which, box: box})
+}
+
+// breakBeforeAtomic reports a break opportunity before the atomic inline
+// whose element starts at items[q] (after the pads that open it), the
+// chunk having begun at items[i]: ICU breaks before U+FFFC (UAX #14 LB20)
+// except after opening punctuation, a quotation mark or glue (LB14,
+// LB19, LB12), so "(" holds on to the pill after it. With nothing but
+// pads before it in the chunk there's nothing to break from.
+func breakBeforeAtomic(items []item, i, q int) bool {
+	for p := q - 1; p >= i; p-- {
+		switch it := &items[p]; it.kind {
+		case itPad:
+			continue
+		case itWord:
+			if it.sh == nil || it.sh.str == "" {
+				return true
+			}
+			r, _ := utf8.DecodeLastRuneInString(it.sh.str)
+			return !noBreakAfter(r)
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// breakAfterAtomic reports a break opportunity after an atomic inline
+// (and the pads that close its element) before items[j]: ICU breaks after
+// U+FFFC (UAX #14 LB20) except before closing punctuation, exclamation
+// and question marks, infix separators, a slash, quotation marks,
+// hyphens and glue (LB13, LB19, LB21, LB12a), so "@name" may go to the
+// next line without the picture before it, ")" never does.
+func breakAfterAtomic(items []item, j int) bool {
+	for ; j < len(items); j++ {
+		switch it := &items[j]; it.kind {
+		case itPad:
+			continue // the next element's opening pads
+		case itWord:
+			if it.sh == nil || it.sh.str == "" {
+				return true
+			}
+			r, _ := utf8.DecodeRuneInString(it.sh.str)
+			return !noBreakBefore(r)
+		default:
+			return true
+		}
+	}
+	return true
+}
+
+// noBreakAfter: UAX #14 OP (opening punctuation, inverted ! and ?), QU
+// and GL, WJ, ZWJ: no line break after one.
+func noBreakAfter(r rune) bool {
+	return unicode.Is(unicode.Ps, r) || r == '\u00a1' || r == '\u00bf' || isQuote(r) || isGlue(r) ||
+		r == '\u2060' || r == '\ufeff' || r == '\u200d'
+}
+
+// noBreakBefore: UAX #14 CL, CP (closing punctuation), EX, IS, SY, QU,
+// HY, BA, IN, CM and GL, WJ, ZWJ: no line break before one.
+func noBreakBefore(r rune) bool {
+	switch r {
+	case '!', '?', ',', '.', ':', ';', '/', '-', '|', '\u00ad', '\u037e', '\u0589', '\u060c', '\u060d',
+		'\u2010', '\u2012', '\u2013', '\u2024', '\u2025', '\u2026', '\u203c', '\u2044', '\u2047', '\u2048', '\u2049',
+		'\u2060', '\ufeff', '\u200d', '\uff01', '\uff0c', '\uff0e', '\uff1a', '\uff1b', '\uff1f':
+		return true
+	}
+	return unicode.Is(unicode.Pe, r) || isQuote(r) || isGlue(r) || unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r)
+}
+
+// isQuote: UAX #14 QU (", ', and the initial and final quotation marks).
+func isQuote(r rune) bool {
+	return r == '"' || r == '\'' || unicode.Is(unicode.Pi, r) || unicode.Is(unicode.Pf, r)
+}
+
+// isGlue: UAX #14 GL spaces (no-break, figure, narrow no-break) and the
+// non-breaking hyphen.
+func isGlue(r rune) bool { return r == '\u00a0' || r == '\u2007' || r == '\u202f' || r == '\u2011' }
+
 // addSpans converts spans into items.
 func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 	ctrPart := l.curPart
@@ -581,7 +690,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			k = l.partFace(k, pt)
 		}
 		noAt := false
-		var before float32 // the slug's ::before box (compState.before)
+		// a pill's component state (compState: its ::before and ::after,
+		// the margin and border a rule gives its ends); pill: it has one
+		var ps compState
+		pill := false
 		n0 := len(l.items)
 		var cmp int16 // a mention pill laid out as a Slack component
 		txt := sp.Text
@@ -627,8 +739,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			if c := parseColor(sp.Text, color.NRGBA{}); c.A > 0 && !uipref.Get().HideHexSwatch {
 				sw := l.dp(12)
 				l.decos = append(l.decos, deco{kind: 4, bg: c, border: rgba(0, 0, 0, 0.15), face: k, target: -1, radius: l.dp(3)})
-				l.addPad(float32(sw), int16(len(l.decos)-1), k)
-				l.addPad(l.dpf(4), -1, k)
+				// the swatch and its margin open the swatch-and-code run:
+				// they go to a line with the code
+				l.addOpen(float32(sw), int16(len(l.decos)-1), k)
+				l.addOpen(l.dpf(4), -1, k)
 			}
 		case richtext.Link:
 			if sp.Truncated && sp.URL != expandURL {
@@ -710,7 +824,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				if sp.Kind == richtext.Channel {
 					kind = compChannel
 				}
-				cmp = l.addComp(compBox{kind: kind, span: *sp})
+				cmp = l.addComp(compBox{kind: kind, span: *sp, em: float32(k.size) / 64})
 				l.decos[dc].comp = cmp
 				if n := l.compState(cmp).name; n != "" && kind == compChannel {
 					txt = n
@@ -721,9 +835,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				if kind == compUser && l.compState(cmp).noAt {
 					noAt = true // MemberSlug supressMentionAtSymbol
 				}
-				if kind == compUser {
-					before = l.compState(cmp).before
-				}
+				ps, pill = *l.compState(cmp), true
 			}
 		case richtext.MessageMention:
 			l.messageMention(sp, fs, k, pt)
@@ -755,11 +867,17 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)
 		}
-		if dc >= 0 && l.decos[dc].padL > 0 {
-			l.addPad(l.decos[dc].padL, dc, k)
+		if pill && ps.edge[0] != 0 {
+			l.addOpen(ps.edge[0], -1, k) // a rule's margin and border before the pill's box
 		}
-		if before > 0 && dc >= 0 { // the slug's ::before box, inside the pill
-			l.addPad(before, dc, k)
+		if dc >= 0 && l.decos[dc].padL > 0 {
+			l.addOpen(l.decos[dc].padL, dc, k)
+		}
+		if pill && ps.pseudo[0] > 0 && dc >= 0 {
+			// the slug's ::before (MentionProfiles' picture) inside the pill,
+			// first in it: its place goes on the pill's first line, where
+			// the component draws it (comps.go)
+			l.addPseudoSlot(0, ps.pseudo[0], ps.pbox[0], dc, k)
 		}
 		if sp.Kind == richtext.Channel && sp.Lock {
 			// a private channel the viewer is in: lock-filled, then its
@@ -778,8 +896,14 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		if !fs.pre && st&richtext.Code != 0 {
 			l.addCodeRun(c0, int32(len(l.d.plain)))
 		}
+		if pill && ps.pseudo[1] > 0 && dc >= 0 {
+			l.addPseudoSlot(1, ps.pseudo[1], ps.pbox[1], dc, k) // its ::after, last in it
+		}
 		if dc >= 0 && l.decos[dc].padR > 0 {
 			l.addPad(l.decos[dc].padR, dc, k)
+		}
+		if pill && ps.edge[1] != 0 {
+			l.addPad(ps.edge[1], -1, k) // a rule's border and margin after it
 		}
 		if cmp != 0 {
 			for i := n0; i < len(l.items); i++ {
@@ -842,19 +966,43 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	if paraH == 0 {
 		paraH = l.dp(8) // .c-mrkdwn__br{height:8px;display:block}
 	}
+
+	// Pass: chunk items into unbreakable runs separated by spaces/breaks.
+	type placed struct {
+		item  int
+		frag  int // frag index or -1 for pads/spaces
+		x     float32
+		w     float32
+		line  int
+		decoI int16
+	}
+	var decoRuns []placed // only for items with deco >= 0
+	var slots []placed    // pseudo-element places (itSlot)
+	// trail is where this line's last run of decorated spaces starts in
+	// decoRuns (-1: none): spaces that end a line collapse (white-space:
+	// normal, as Slack's message text is), so a pill or a highlight that
+	// wraps after one ends at its last word, flush, as Chromium paints it
+	trail := -1
+	// slotLine: a pseudo-element's place is on this line, which isn't
+	// empty without a frag (a pill's picture before "@name" that went on)
+	slotLine := false
 	finishLine := func() {
 		last = -1 // spaces at the end of a line are never decorated
 		gapReset()
+		if trail >= 0 {
+			decoRuns = decoRuns[:trail]
+			trail = -1
+		}
 		// Compute this line's height: emoji may be taller.
 		lh := lineH0
-		if lineStart == len(d.frags) && !fs.pre && !leadLine {
+		if lineStart == len(d.frags) && !fs.pre && !leadLine && !slotLine {
 			lh = l.dp(8) // an empty line between paragraphs
 			if brH != 0 {
 				lh = brH
 			}
 		}
 		brH = 0
-		leadLine = false
+		leadLine, slotLine = false, false
 		for i := lineStart; i < len(d.frags); i++ {
 			if f := &d.frags[i]; f.kind == fImage {
 				if h := f.size + l.dp(4); f.size > lineH0 && h > lh && !fs.flatEmoji {
@@ -894,6 +1042,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			}
 		}
 		gapReset()
+		trail = -1
 		last = len(d.frags)
 		if it.kind == itImage {
 			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part, col: it.col})
@@ -903,17 +1052,6 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		}
 		x += w
 	}
-
-	// Pass: chunk items into unbreakable runs separated by spaces/breaks.
-	type placed struct {
-		item  int
-		frag  int // frag index or -1 for pads/spaces
-		x     float32
-		w     float32
-		line  int
-		decoI int16
-	}
-	var decoRuns []placed // only for items with deco >= 0
 
 	i := 0
 	for i < len(items) && !truncated {
@@ -950,6 +1088,9 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			if x > 0 || fs.pre {
 				if x+it.w <= maxWf || fs.pre {
 					if it.deco >= 0 {
+						if trail < 0 && !fs.pre {
+							trail = len(decoRuns)
+						}
 						decoRuns = append(decoRuns, placed{item: i, frag: -1, x: float32(x0) + x, w: it.w, line: len(d.lines), decoI: it.deco})
 					}
 					if last >= 0 {
@@ -977,17 +1118,39 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		j := i
 		cw := float32(0)
 		for j < len(items) {
-			k := items[j].kind
-			if k == itSpace || k == itBreak {
+			it := &items[j]
+			if it.kind == itSpace || it.kind == itBreak {
 				break
 			}
-			cw += items[j].w
+			if j > i && (it.kind == itImage || it.kind == itSlot && it.box) {
+				// a break opportunity before an image (before a pill's
+				// picture unless the text before it holds on to it), where
+				// the pads opening the element it starts (a pill's padding)
+				// go to the next line with it, as an inline box's start does
+				q := j
+				for q > i && items[q-1].kind == itPad && items[q-1].open {
+					q--
+				}
+				if q > i && (it.kind == itImage || breakBeforeAtomic(items, i, q)) {
+					for p := q; p < j; p++ {
+						cw -= items[p].w
+					}
+					j = q
+					break
+				}
+			}
+			cw += it.w
 			j++
-			if items[j-1].brk {
-				break
-			}
-			if j < len(items) && items[j].kind == itImage {
-				break
+			if it.brk || it.kind == itSlot && it.box {
+				// the pads closing the element (a pill's end padding) stay
+				// on the line with what they close
+				for j < len(items) && items[j].kind == itPad && !items[j].open {
+					cw += items[j].w
+					j++
+				}
+				if it.brk || breakAfterAtomic(items, j) {
+					break
+				}
 			}
 		}
 		if x > 0 && x+cw > maxWf {
@@ -999,10 +1162,15 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		}
 		for q := i; q < j && !truncated; q++ {
 			it := &items[q]
-			if it.kind == itPad {
+			if it.kind == itPad || it.kind == itSlot {
 				if it.deco >= 0 {
 					decoRuns = append(decoRuns, placed{item: q, frag: -1, x: float32(x0) + x, w: it.w, line: len(d.lines), decoI: it.deco})
 				}
+				if it.kind == itSlot {
+					slots = append(slots, placed{item: q, frag: -1, x: float32(x0) + x, w: it.w, line: len(d.lines)})
+					slotLine = true
+				}
+				trail = -1
 				brokeT, brokeU = true, true // a pill's padding, an icon's margin
 				x += it.w
 				continue
@@ -1062,6 +1230,38 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		l.ellipsize(&d.lines[len(d.lines)-1], x0, maxWf, fs)
 	}
 
+	// Where the pseudo-elements' places went (a pill's ::before on its
+	// first line, its ::after on its last): their component draws them
+	// there (comps.go), on the line's baseline.
+	for _, sl := range slots {
+		it := &items[sl.item]
+		if it.comp <= 0 || int(it.comp) > len(d.comps) || sl.line >= len(d.lines) {
+			continue
+		}
+		ln := d.lines[sl.line]
+		fm := l.st.spaceOf(it.face)
+		base := ln.top + int(baseOff+float32((ln.bot-ln.top)-lineH0)/2+0.5)
+		d.comps[it.comp-1].slots[it.slot] = pseudoSlot{ok: true, x: sl.x, base: float32(base), top: float32(ln.top), bot: float32(ln.bot),
+			asc: fm.asc, desc: fm.desc, size: float32(it.face.size) / 64}
+	}
+
+	// Each deco's first and last line: a pill that wraps is a box per
+	// line, the start edge's rounded corners on its first, the end edge's
+	// on its last, square where it broke, as Chromium paints an inline box
+	// over lines (box-decoration-break: slice; Slack sets no clone).
+	dl := l.decoLines[:0]
+	for len(dl) < len(l.decos) {
+		dl = append(dl, [2]int{-1, -1})
+	}
+	for _, r := range decoRuns {
+		e := &dl[r.decoI]
+		if e[0] < 0 || r.line < e[0] {
+			e[0] = r.line
+		}
+		e[1] = max(e[1], r.line)
+	}
+	l.decoLines = dl
+
 	// Decoration rects: merge consecutive runs of the same deco on a line.
 	for a := 0; a < len(decoRuns); {
 		r := decoRuns[a]
@@ -1102,6 +1302,20 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target, comp: dc.comp, part: dc.part}
 				if dc.kind == 1 && !dc.self && !l.d.cardOnly(dc.target) {
 					bx.hover = l.st.Palette.MentionHoverBg
+				}
+				if e := dl[r.decoI]; dc.kind == 1 && dc.radius > 0 && e[0] != e[1] {
+					bx.perCorner = true
+					if r.line == e[0] {
+						bx.corners[0], bx.corners[3] = dc.radius, dc.radius // NW, SW
+					}
+					if r.line == e[1] {
+						bx.corners[1], bx.corners[2] = dc.radius, dc.radius // NE, SE
+					}
+				}
+				if dc.comp > 0 && int(dc.comp) <= len(d.comps) && r.line == dl[r.decoI][0] {
+					// a pill's first line: where its component is drawn from
+					c := &d.comps[dc.comp-1]
+					c.first, c.line0 = rr, int32(r.line)
 				}
 				d.boxes = append(d.boxes, bx)
 			}

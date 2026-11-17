@@ -25,6 +25,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -108,6 +109,39 @@ type compBox struct {
 	// media component's own corner radii (its box's rounded bottom)
 	media int16
 	radii [4]int
+	// first is a pill's box on its first line (line0) with its text
+	// there: a pill that wraps runs on from where it starts, as CSS lays
+	// an inline element out, so its component is drawn from there
+	// (origin); slots are where the flow put its ::before and ::after
+	// (flow.go addPseudoSlot), which it draws
+	first image.Rectangle
+	line0 int32
+	slots [2]pseudoSlot
+	// em is a pill's font size in px, its CSS em (Slack's 15px message
+	// text; Styled.Pseudo)
+	em float32
+}
+
+// pseudoSlot is the place the flow kept for a pill's ::before or ::after,
+// in View coordinates: its left edge on the line whose baseline is base
+// and box top to bot, and the pill's font's ascent, descent and size.
+type pseudoSlot struct {
+	ok              bool
+	x, base         float32
+	top, bot        float32
+	asc, desc, size float32
+}
+
+// pill reports a mention pill (MemberLink, BaseMrkdwnChannel).
+func (c *compBox) pill() bool { return c.kind == compUser || c.kind == compChannel }
+
+// origin is the box a component is drawn from: a pill's first line, a
+// card's box.
+func (c *compBox) origin() image.Rectangle {
+	if c.pill() && !c.first.Empty() {
+		return c.first
+	}
+	return c.r
 }
 
 // mediaNote is the media part of the card being laid out: its box and
@@ -139,9 +173,14 @@ type compState struct {
 	title   string // MessageAttachmentYouTube: the plugin's title
 	thumb   string // … and thumbUrl
 	noAt    bool   // MemberSlug: the plugin's supressMentionAtSymbol
-	// before is the px the slug's box ::before takes inside the pill
-	// (MentionProfiles' picture, Styled.Pseudo), 0 for none
-	before float32
+	// pseudo is the px a pill's ::before and ::after take inside it
+	// (MentionProfiles' picture; Styled.Pseudo), 0 for none, and pbox
+	// whether each is a box (an inline-block) rather than text; edge is
+	// the px a rule's margin and border take before and after its box
+	// (Styled.InlineEdges)
+	pseudo [2]float32
+	pbox   [2]bool
+	edge   [2]float32
 }
 
 // compRef is the receiver of a component's props and natives.
@@ -278,6 +317,9 @@ func (d *display) pillRects() {
 	for i := range d.frags {
 		if f := &d.frags[i]; f.comp != 0 {
 			add(f.comp, fragRect(f))
+			if c := &d.comps[f.comp-1]; c.pill() && !c.first.Empty() && f.line == c.line0 {
+				c.first = c.first.Union(fragRect(f))
+			}
 		}
 	}
 }
@@ -297,9 +339,10 @@ func (v *View) layoutComps(gtx layout.Context, st *Style) {
 		if c.kind == compTitle || c.kind == compMedia {
 			continue // drawn by its card
 		}
-		t := op.Offset(c.r.Min).Push(gtx.Ops)
+		o := c.origin()
+		t := op.Offset(o.Min).Push(gtx.Ops)
 		g := gtx
-		g.Constraints = layout.Constraints{Max: image.Pt(max(c.r.Dx(), v.laidW-c.r.Min.X), 1<<20)}
+		g.Constraints = layout.Constraints{Max: image.Pt(max(o.Dx(), v.laidW-o.Min.X), 1<<20)}
 		var d layout.Dimensions
 		switch c.kind {
 		case compUser:
@@ -317,8 +360,8 @@ func (v *View) layoutComps(gtx layout.Context, st *Style) {
 		}
 		t.Pop()
 		extra := d.Size.Y - c.r.Dy()
-		if c.kind == compUser || c.kind == compChannel {
-			extra = d.Size.X - c.r.Dx()
+		if c.pill() {
+			extra = d.Size.X - o.Dx()
 		}
 		if cs := &v.cs[i]; cs.extra != extra {
 			cs.extra = extra
@@ -340,7 +383,8 @@ func (c *compRef) paint(gtx layout.Context, s slackc.Styled) layout.Dimensions {
 		col := s.Color(color.NRGBA{})
 		fg = &col
 	}
-	t := op.Offset(b.r.Min.Mul(-1)).Push(gtx.Ops)
+	o := b.origin()
+	t := op.Offset(o.Min.Mul(-1)).Push(gtx.Ops)
 	c.v.paint(gtx.Ops, c.st, int16(c.i+1), fg)
 	t.Pop()
 	if b.media > 0 {
@@ -352,7 +396,7 @@ func (c *compRef) paint(gtx layout.Context, s slackc.Styled) layout.Dimensions {
 		slackc.Component(gtx, "ConnectedBaseAvatar", c, (*compRef).authorProps, (*compRef).layoutAuthor)
 		t.Pop()
 	}
-	return layout.Dimensions{Size: b.r.Size()}
+	return layout.Dimensions{Size: o.Size()}
 }
 
 func (c *compRef) authorProps() slackc.Props {
@@ -432,23 +476,76 @@ func (c *compRef) layoutSlug(gtx layout.Context, p slackc.Props) layout.Dimensio
 	}
 	s := memberSlugClass(c.box().span.Self, c.v.dark).Enter(gtx, 0, 0)
 	defer s.Leave()
-	// a ::before box (content '', a size: MentionProfiles' picture) sits
-	// inside the slug's pill, before the name, as CSS has it: the flow
-	// keeps its width in the pill (flow.go) and the pill draws it there
-	bw, _, ok := s.Pseudo(gtx, false)
-	if cs := &c.v.cs[c.i]; bw != cs.before {
-		cs.before = bw
+	return c.pill(gtx, s, nil)
+}
+
+// pill draws a mention pill under its element's class s, as Chromium
+// paints the inline element: a rule's box effects on each line the pill
+// runs on, square where it broke (slackc WrapInline), and its ::before
+// and ::after in the places the flow kept for them inside its box
+// (flow.go addPseudoSlot): MentionProfiles' picture (a 1em inline-block)
+// sits at the start of the pill's first line, after its 2px padding,
+// wherever the pill wraps. What they take, and a rule's margin and border
+// at the pill's ends, are measured here for the next layout. inner, when
+// set, is the element the pill's text is in (a channel's name), drawn
+// under its own Wrap.
+func (c *compRef) pill(gtx layout.Context, s slackc.Styled, inner *slackc.Styled) layout.Dimensions {
+	var ps [2]float32
+	var pb [2]bool
+	var edge [2]float32
+	if !s.Hidden() {
+		for i := range ps {
+			ps[i], pb[i], _ = s.Pseudo(gtx, i == 1, c.box().em)
+		}
+		edge[0], edge[1] = s.InlineEdges(gtx)
+	}
+	if cs := &c.v.cs[c.i]; ps != cs.pseudo || pb != cs.pbox || edge != cs.edge {
+		cs.pseudo, cs.pbox, cs.edge = ps, pb, edge
 		c.v.dirty = true
+	}
+	if c.v.dirty {
+		// every call while the layout waits: a measure pass under a
+		// plugin's tree drops the command, the live one after it keeps it
 		gtx.Execute(op.InvalidateCmd{})
 	}
-	if !ok || s.Hidden() {
-		return c.styled(gtx, s)
+	if s.Hidden() {
+		return layout.Dimensions{}
 	}
-	return s.WrapOwnPseudo(gtx, func(gtx layout.Context) layout.Dimensions {
-		d := c.paint(gtx, s)
-		s.DrawPseudo(gtx, false, float32(gtx.Dp(2)), 0, float32(d.Size.Y)) // after the pill's 2px
+	body := func(gtx layout.Context) layout.Dimensions {
+		if inner != nil {
+			return c.styled(gtx, *inner)
+		}
+		return c.paint(gtx, s)
+	}
+	if !s.Active() {
+		return body(gtx)
+	}
+	var buf [8]image.Rectangle
+	return s.WrapInline(gtx, c.lines(buf[:0]), unit.Dp(3), func(gtx layout.Context) layout.Dimensions {
+		d := body(gtx)
+		b := c.box()
+		o := layout.FPt(b.origin().Min)
+		for i := range b.slots {
+			if sl := &b.slots[i]; sl.ok {
+				s.DrawPseudoInline(gtx, i == 1, slackc.InlineSlot{X: sl.x - o.X, Base: sl.base - o.Y, Top: sl.top - o.Y, Bot: sl.bot - o.Y,
+					Asc: sl.asc, Desc: sl.desc, Size: sl.size})
+			}
+		}
 		return d
 	})
+}
+
+// lines appends a pill's boxes to out, one per line it runs on, in its
+// component's coordinates.
+func (c *compRef) lines(out []image.Rectangle) []image.Rectangle {
+	o := c.box().origin().Min
+	tag := int16(c.i + 1)
+	for i := range c.v.d.boxes {
+		if b := &c.v.d.boxes[i]; b.comp == tag && b.kind == bFill {
+			out = append(out, b.r.Sub(o))
+		}
+	}
+	return out
 }
 
 func (c *compRef) channelProps() slackc.Props {
@@ -474,15 +571,9 @@ func (c *compRef) layoutChannel(gtx layout.Context, p slackc.Props) layout.Dimen
 	}
 	s := channelClassFor(&c.box().span).Enter(gtx, 0, 0)
 	defer s.Leave()
-	if s.Hidden() {
-		return layout.Dimensions{}
-	}
 	n := channelNameClass.Enter(gtx, 0, 0)
 	defer n.Leave()
-	if s.Active() {
-		return s.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return c.styled(gtx, n) })
-	}
-	return c.styled(gtx, n)
+	return c.pill(gtx, s, &n)
 }
 
 // ---- attachment cards ----

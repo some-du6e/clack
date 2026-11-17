@@ -26,7 +26,7 @@ func (l *lay) canvasSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) 
 	pad, padV := l.dpf(2), l.dpf(1)
 	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Off, part: pt})
 	dc := int16(len(l.decos) - 1)
-	l.addPad(pad, dc, k)
+	l.addOpen(pad, dc, k)
 	icon := sp.Icon
 	if icon == "" {
 		icon = "canvas-content"
@@ -63,7 +63,7 @@ func (l *lay) channelTabSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	pad, padV := l.dpf(2), l.dpf(1)
 	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
 	dc := int16(len(l.decos) - 1)
-	l.addPad(pad, dc, k)
+	l.addOpen(pad, dc, k)
 	if sp.Icon != "" {
 		l.addIcon(sp.Icon, fs.size, k, fg, dc, tg)
 		l.addPad(l.dpf(3), dc, k) // svg margin-right 4 (the icon item ends with 1px)

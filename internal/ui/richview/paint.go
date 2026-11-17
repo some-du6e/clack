@@ -116,17 +116,21 @@ func fillRadii(ops *op.Ops, r image.Rectangle, radii [4]int, col color.NRGBA) {
 	paint.FillShape(ops, col, clip.RRect{Rect: r, NW: radii[0], NE: radii[1], SE: radii[2], SW: radii[3]}.Op(ops))
 }
 
+// radii are b's corner radii (NW NE SE SW).
+func (b *box) radii() [4]int {
+	if b.perCorner {
+		return b.corners
+	}
+	return [4]int{b.radius, b.radius, b.radius, b.radius}
+}
+
 func drawBox(ops *op.Ops, b *box) {
 	if b.r.Empty() {
 		return
 	}
 	switch b.kind {
 	case bFill:
-		if b.perCorner {
-			fillRadii(ops, b.r, b.corners, b.fill)
-		} else {
-			fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.fill)
-		}
+		fillRadii(ops, b.r, b.radii(), b.fill)
 	case bBorder:
 		fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.fill)
 		strokeRRect(ops, b.r, b.radius, b.bw, b.stroke)

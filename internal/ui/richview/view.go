@@ -341,7 +341,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 					// Card hover: stronger border on top.
 					strokeRRect(gtx.Ops, b.r, b.radius, b.bw, b.hover)
 				default:
-					paint.FillShape(gtx.Ops, b.hover, clip.UniformRRect(b.r, b.radius).Op(gtx.Ops))
+					fillRadii(gtx.Ops, b.r, b.radii(), b.hover) // a wrapped pill's lines: square where it broke
 				}
 			}
 		}
@@ -666,7 +666,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
-				fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.hover)
+				fillRadii(ops, b.r, b.radii(), b.hover)
 			}
 		}
 	}

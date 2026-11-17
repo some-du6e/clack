@@ -66,7 +66,7 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Off, part: pt})
 	dc := int16(len(l.decos) - 1)
 	ip := fs.size
-	l.addPad(pad, dc, k)
+	l.addOpen(pad, dc, k)
 	l.addIcon("message", ip, k, fg, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
 	txt := sp.Text
@@ -94,7 +94,7 @@ func (l *lay) truncatedLink(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint
 	pad, padV := l.dpf(2), l.dpf(1)
 	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
 	dc := int16(len(l.decos) - 1)
-	l.addPad(pad, dc, k)
+	l.addOpen(pad, dc, k)
 	l.addIcon("link", fs.size, k, p.MentionText, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
 	l.addText(sp.Text, fs, k, p.Link, sp.Style, dc, tg)
