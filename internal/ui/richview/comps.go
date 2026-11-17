@@ -109,27 +109,32 @@ type compBox struct {
 	// media component's own corner radii (its box's rounded bottom)
 	media int16
 	radii [4]int
-	// first is a pill's box on its first line (line0) with its text
-	// there: a pill that wraps runs on from where it starts, as CSS lays
-	// an inline element out, so its component is drawn from there
+	// first is a pill's box on its first line with its text there
+	// (pillRects): a pill that wraps runs on from where it starts, as CSS
+	// lays an inline element out, so its component is drawn from there
 	// (origin); slots are where the flow put its ::before and ::after
 	// (flow.go addPseudoSlot), which it draws
 	first image.Rectangle
-	line0 int32
 	slots [2]pseudoSlot
 	// em is a pill's font size in px, its CSS em (Slack's 15px message
 	// text; Styled.Pseudo)
 	em float32
 }
 
-// pseudoSlot is the place the flow kept for a pill's ::before or ::after,
-// in View coordinates: its left edge on the line whose baseline is base
-// and box top to bot, and the pill's font's ascent, descent and size.
+// pseudoSlot is the place the flow kept for a pill's ::before or ::after:
+// on the pill's nth line box, dx from its left, the line's baseline and
+// box dBase, dTop and dBot from its top (the flow's view; later steps may
+// move the box: a table cell's alignment, a card's centring), resolved in
+// View coordinates by pillRects into its left edge x on the line whose
+// baseline is base and box top to bot; and the pill's font's ascent,
+// descent and size.
 type pseudoSlot struct {
-	ok              bool
-	x, base         float32
-	top, bot        float32
-	asc, desc, size float32
+	ok, at                bool // the flow kept it; pillRects found its box
+	nth                   int16
+	dx, dBase, dTop, dBot float32
+	x, base               float32
+	top, bot              float32
+	asc, desc, size       float32
 }
 
 // pill reports a mention pill (MemberLink, BaseMrkdwnChannel).
@@ -309,16 +314,44 @@ func (d *display) pillRects() {
 			c.r = c.r.Union(r)
 		}
 	}
+	// a pill's line boxes in order: its first line's is where its
+	// component draws from, and its places sit on them
+	n := d.pillN[:0]
+	for range d.comps {
+		n = append(n, 0)
+	}
+	d.pillN = n
 	for i := range d.boxes {
-		if b := &d.boxes[i]; b.comp != 0 {
-			add(b.comp, b.r)
+		b := &d.boxes[i]
+		if b.comp == 0 {
+			continue
 		}
+		add(b.comp, b.r)
+		c := &d.comps[b.comp-1]
+		if !c.pill() || !b.inline {
+			continue
+		}
+		k := n[b.comp-1]
+		if k == 0 {
+			c.first = b.r
+		}
+		for j := range c.slots {
+			if sl := &c.slots[j]; sl.ok && sl.nth == k {
+				o := b.r.Min
+				sl.x, sl.base, sl.top, sl.bot = float32(o.X)+sl.dx, float32(o.Y)+sl.dBase, float32(o.Y)+sl.dTop, float32(o.Y)+sl.dBot
+				sl.at = true
+			}
+		}
+		n[b.comp-1]++
 	}
 	for i := range d.frags {
 		if f := &d.frags[i]; f.comp != 0 {
 			add(f.comp, fragRect(f))
-			if c := &d.comps[f.comp-1]; c.pill() && !c.first.Empty() && f.line == c.line0 {
-				c.first = c.first.Union(fragRect(f))
+			// the first line's words (their line box) join its box
+			if c := &d.comps[f.comp-1]; c.pill() && !c.first.Empty() {
+				if cy := (c.first.Min.Y + c.first.Max.Y) / 2; cy >= f.top && cy < f.bot {
+					c.first = c.first.Union(fragRect(f))
+				}
 			}
 		}
 	}
@@ -526,7 +559,7 @@ func (c *compRef) pill(gtx layout.Context, s slackc.Styled, inner *slackc.Styled
 		b := c.box()
 		o := layout.FPt(b.origin().Min)
 		for i := range b.slots {
-			if sl := &b.slots[i]; sl.ok {
+			if sl := &b.slots[i]; sl.ok && sl.at {
 				s.DrawPseudoInline(gtx, i == 1, slackc.InlineSlot{X: sl.x - o.X, Base: sl.base - o.Y, Top: sl.top - o.Y, Bot: sl.bot - o.Y,
 					Asc: sl.asc, Desc: sl.desc, Size: sl.size})
 			}

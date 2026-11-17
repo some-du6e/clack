@@ -76,7 +76,7 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 		txt = txt[sp.Pre:]
 	}
 	l.addText(txt, fs, k, fg, sp.Style, dc, tg)
-	l.addPad(pad, dc, k)
+	l.addClose(pad, dc, k)
 }
 
 // truncatedLink lays out a link with truncated: true, as Slack's Link
@@ -98,7 +98,7 @@ func (l *lay) truncatedLink(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint
 	l.addIcon("link", fs.size, k, p.MentionText, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
 	l.addText(sp.Text, fs, k, p.Link, sp.Style, dc, tg)
-	l.addPad(pad, dc, k)
+	l.addClose(pad, dc, k)
 }
 
 // privateChannel is BaseMissingChannel's Nonexistent chip, a channel the
@@ -122,7 +122,7 @@ func (l *lay) privateChannel(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	l.addIcon("lock", fs.size, k, fg, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // gap 4 (the icon item ends with 1px)
 	l.addText(sp.Text, fs, k, fg, sp.Style, dc, tg)
-	l.addPad(l.dpf(2), dc, k)
+	l.addClose(l.dpf(2), dc, k)
 }
 
 // hiddenMember is RollupName (boot-shared quVX) for a member the viewer
@@ -140,7 +140,7 @@ func (l *lay) hiddenMember(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8
 	dc := int16(len(l.decos) - 1)
 	l.addIcon("user-hide", fs.size, k, fg, dc, tg)
 	l.addText("\u00a0"+sp.Text, fs, k, fg, sp.Style, dc, tg)
-	l.addPad(l.dpf(2), dc, k)
+	l.addClose(l.dpf(2), dc, k)
 }
 
 // missingMember is BaseMissingMember (FToV), which MemberSlug draws

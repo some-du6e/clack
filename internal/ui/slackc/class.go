@@ -126,8 +126,10 @@ type nativeStyle struct {
 	before *css.Style
 	after  *css.Style
 	// em holds before and after computed with the element's font size set
-	// to a native's own (pseudoAt), the last size asked for
-	em [2]emPseudo
+	// to a native's own (pseudoAt), for the last few sizes asked for (a
+	// section's 15px pills and a context block's 13px ones share one)
+	em     [2][4]emPseudo
+	emNext [2]uint8
 }
 
 // emPseudo is a pseudo-element's style computed under a parent of font
@@ -146,15 +148,18 @@ func (ns *nativeStyle) pseudoAt(after bool, fs float32) *css.Style {
 	if after {
 		i, pe = 1, css.PseudoAfter
 	}
-	if c := &ns.em[i]; c.st != nil && c.fs == fs {
-		return c.st
+	for k := range ns.em[i] {
+		if c := &ns.em[i][k]; c.st != nil && c.fs == fs {
+			return c.st
+		}
 	}
 	e := cssEnv()
 	c := Styles.Cascade(ns.element(), pe, nil, e)
 	parent := ns.style
 	parent.FontSize = fs
 	st := css.Compute(&c, &parent, e)
-	ns.em[i] = emPseudo{fs: fs, st: &st}
+	k := ns.emNext[i] % uint8(len(ns.em[i]))
+	ns.em[i][k], ns.emNext[i] = emPseudo{fs: fs, st: &st}, k+1
 	return &st
 }
 
@@ -950,7 +955,9 @@ type InlineSlot struct {
 // inline-block with no line boxes in it: its bottom margin edge on the
 // baseline; middle: its margin box's middle half the x-height above the
 // baseline; top and bottom: the line box's; text-top: the font's ascent;
-// sub and super shifted from the baseline. Text sits on the baseline.
+// sub and super: the baseline lowered by a fifth of the font size plus 1px
+// and raised by a third plus 1px (inline_box_state.cc). Text sits on the
+// baseline.
 func (s Styled) DrawPseudoInline(gtx layout.Context, after bool, at InlineSlot) {
 	st := s.pseudoStyle(gtx, after, at.Size)
 	if st == nil || st.Visibility != css.Visible {
@@ -978,9 +985,9 @@ func (s Styled) DrawPseudoInline(gtx layout.Context, after bool, at InlineSlot) 
 	case css.VATextTop:
 		top = at.Base - at.Asc
 	case css.VASub:
-		top += at.Size * 0.2
+		top += at.Size/5 + v.dp
 	case css.VASuper:
-		top -= at.Size * 0.33
+		top -= at.Size/3 + v.dp
 	}
 	p.wrapPseudo(pb, at.X, top, mh)
 }

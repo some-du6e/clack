@@ -171,8 +171,13 @@ func pwGreen(img *image.RGBA) (int, image.Rectangle) {
 	return n, bb
 }
 
-// pwPane sweeps the pane's width and, at the widths the mention wraps at,
-// checks where its picture is drawn.
+// pwPane sweeps the pane's width and checks where the mention's picture
+// is drawn at each layout the mention takes there (a new one whenever its
+// words move): one circle, over none of its words, in the pill's first
+// line box right before "@relay", or ending the line above when the line
+// broke after it (then "@relay" starts its line). Chromium breaks the pill
+// at the space in it, after the picture, and after "(" before it; the
+// sweep has to see the first and one of the others.
 func pwPane(t *testing.T, h coreHost, mode, pane string) {
 	t.Helper()
 	var v interface {
@@ -209,54 +214,77 @@ func pwPane(t *testing.T, h coreHost, mode, pane string) {
 		n, _ := pwGreen(pixeltest.Render(t, 700, hgt, ops))
 		return n >= 80
 	})
-	checked, last := 0, -100
-	for w := 280; w <= 900 && checked < 4; w += 2 {
-		for i := 0; i < 5; i++ {
+	seen := map[string]int{}
+	var sig string
+	for w := 200; w <= 600; w++ {
+		for i := 0; i < 3; i++ {
 			frame(w)
 		}
 		ws := words()
-		if len(ws) < 2 || ws[0].R.Min.Y == ws[1].R.Min.Y || w-last < 16 {
+		r := ls.rows[ts]
+		if len(ws) < 2 || r == nil {
 			continue
 		}
-		last = w
-		checked++
+		left := r.bodyRect.Min.X // the body's left edge (its lines start there)
+		first := ws[0].R
+		s := fmt.Sprint(ws[0].R.Sub(image.Pt(left, 0)), ws[1].R.Sub(image.Pt(left, 0)))
+		if s == sig {
+			continue // the same layout as the last width
+		}
+		sig = s
+		kind := ""
+		switch {
+		case first.Min.Y != ws[1].R.Min.Y:
+			kind = "space" // the break at the space in the pill
+		case first.Min.X <= left+1:
+			kind = "after" // @relay starts its line: the picture ended the one above
+		case first.Min.X <= left+24:
+			kind = "paren" // the pill (padding, picture) opens its line: "(" ended the one above
+		default:
+			continue // on one line, after other words
+		}
+		seen[kind]++
 		var rs []image.Rectangle
 		for _, r := range ws {
 			rs = append(rs, r.R)
 		}
-		var body image.Rectangle // its content's box: the widest line
-		if r := ls.rows[ts]; r != nil {
-			body = r.bodyRect
-		}
-		t.Logf("%s, w=%d: the row's body %v, the mention's words %v", name, w, body, rs)
+		t.Logf("%s, w=%d (%s): the row's body from x=%d, the mention's words %v", name, w, kind, left, rs)
 		img := pixeltest.Render(t, w, hgt, ops)
-		if dir := os.Getenv("MESSAGES_AUDIT_SHOTS_DIR"); dir != "" && checked == 1 {
+		if dir := os.Getenv("MESSAGES_AUDIT_SHOTS_DIR"); dir != "" && seen[kind] == 1 {
 			tag := os.Getenv("PILL_WRAP_SHOTS_TAG")
 			if tag == "" {
 				tag = "after"
 			}
-			y0, y1 := max(ws[0].R.Min.Y-70, 0), min(ws[len(ws)-1].R.Max.Y+50, hgt)
-			savePNG(t, filepath.Join(dir, fmt.Sprintf("pill-wrap-%s-%s-%s.png", mode, pane, tag)), crop(img, y0, y1))
+			y0, y1 := max(first.Min.Y-70, 0), min(ws[len(ws)-1].R.Max.Y+50, hgt)
+			savePNG(t, filepath.Join(dir, fmt.Sprintf("pill-wrap-%s-%s-%s-%s.png", mode, pane, kind, tag)), crop(img, y0, y1))
 		}
 		n, bb := pwGreen(img)
-		first := ws[0].R
 		if n < 80 || bb.Dx() > 18 || bb.Dy() > 18 {
-			t.Errorf("%s, w=%d: %d picture px in %v, want one ~15px circle", name, w, n, bb)
+			t.Errorf("%s, w=%d (%s): %d picture px in %v, want one ~15px circle", name, w, kind, n, bb)
 			continue
-		}
-		if bb.Min.Y < first.Min.Y || bb.Max.Y > first.Max.Y {
-			t.Errorf("%s, w=%d: the picture at %v isn't on the pill's first line %v", name, w, bb, first)
-		}
-		if bb.Max.X > first.Min.X+1 || bb.Min.X < first.Min.X-22 {
-			t.Errorf("%s, w=%d: the picture at %v isn't just before @relay at %v", name, w, bb, first)
 		}
 		for _, r := range ws {
 			if r.R.Overlaps(bb) {
-				t.Errorf("%s, w=%d: the picture at %v is drawn over the mention's word at %v", name, w, bb, r.R)
+				t.Errorf("%s, w=%d (%s): the picture at %v is drawn over the mention's word at %v", name, w, kind, bb, r.R)
 			}
 		}
+		lineH := first.Dy()
+		switch cy := (bb.Min.Y + bb.Max.Y) / 2; {
+		case cy >= first.Min.Y && cy < first.Max.Y:
+			if kind == "after" || bb.Max.X > first.Min.X+1 || bb.Min.X < first.Min.X-22 {
+				t.Errorf("%s, w=%d (%s): the picture at %v isn't just before @relay at %v", name, w, kind, bb, first)
+			}
+		case cy >= first.Min.Y-lineH && cy < first.Min.Y:
+			if kind != "after" {
+				t.Errorf("%s, w=%d (%s): the picture at %v is on the line above @relay at %v, which doesn't start its line (x=%d)", name, w, kind, bb, first, left)
+			}
+		default:
+			t.Errorf("%s, w=%d (%s): the picture at %v is on neither @relay's line %v nor the one above", name, w, kind, bb, first)
+		}
 	}
-	if checked < 2 {
-		t.Fatalf("%s: the mention wrapped at %d of the widths, want a sweep", name, checked)
+	t.Logf("%s: layouts seen %v", name, seen)
+	if seen["space"] == 0 || seen["after"]+seen["paren"] == 0 {
+		t.Errorf("%s: the mention broke at the space in %d layouts, after the picture or \"(\" in %d: want both (Chromium breaks around the picture)",
+			name, seen["space"], seen["after"]+seen["paren"])
 	}
 }

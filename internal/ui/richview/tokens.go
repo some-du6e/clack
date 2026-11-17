@@ -44,6 +44,7 @@ var paletteTokens = []struct {
 	{func(p *Palette) *color.NRGBA { return &p.Danger }, theme.Both("var(--dt_color-base-inv-imp)")},
 	{func(p *Palette) *color.NRGBA { return &p.Missing }, theme.Both("var(--dt_color-base-ter)")},
 	{func(p *Palette) *color.NRGBA { return &p.MissingLine }, theme.Both("rgb(var(--sk_foreground_low_solid))")},
+	{func(p *Palette) *color.NRGBA { return &p.HexBorder }, theme.Both("rgb(var(--sk_foreground_max_solid))")},
 }
 
 // Themed is th's mode palette (LightPalette/DarkPalette) with the tokens

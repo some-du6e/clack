@@ -7,6 +7,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
@@ -246,12 +247,23 @@ func wrapInline(gtx layout.Context, ns *nativeStyle, frags []image.Rectangle, ra
 	rec := op.Record(gtx.Ops)
 	vis := st.Visibility == css.Visible
 	if vis {
+		// a gradient or an image covers the strip of the fragments laid
+		// end to end, each showing its part of it, as Chromium paints a
+		// sliced inline box's background
+		var strip float32
+		for i := range frags {
+			r, _ := frag(i)
+			strip += r.x1 - r.x0
+		}
+		var before float32
 		for i := range frags {
 			r, rad := frag(i)
-			p.shadows(b, r, rad, false)
-			p.background(b, r, rad)
+			noLeft, noRight := i > 0, i < len(frags)-1
+			p.shadowsSliced(b, r, rad, false, noLeft, noRight)
+			p.stripBackground(b, r, rad, before, strip)
 			p.border(b, r, rad)
-			p.shadows(b, r, rad, true)
+			p.shadowsSliced(b, r, rad, true, noLeft, noRight)
+			before += r.x1 - r.x0
 		}
 	}
 	dims := w(gtx)
@@ -271,6 +283,30 @@ func wrapInline(gtx layout.Context, ns *nativeStyle, frags []image.Rectangle, ra
 		os.Pop()
 	}
 	return dims
+}
+
+// stripBackground paints b's background on r, one fragment of an inline
+// box: its color there, a gradient or an image over the strip the box's
+// fragments make laid end to end (before px of it come before r; strip is
+// its width), clipped to r.
+func (p *painter) stripBackground(b *box, r rectF, rad [4]float32, before, strip float32) {
+	bg := &b.st.Background
+	if bg.Color.A > 0 {
+		p.fillRR(r, rad, bg.Color)
+	}
+	grad := bg.Gradient != nil && len(bg.Gradient.Stops) > 0
+	if !grad && bg.Image == "" {
+		return
+	}
+	sr := rectF{r.x0 - before, r.y0, r.x0 - before + strip, r.y1}
+	cs := clip.Outline{Path: rrectPath(p.ops, r, rad, false)}.Op().Push(p.ops)
+	if grad {
+		p.gradient(bg.Gradient, sr, [4]float32{})
+	}
+	if bg.Image != "" {
+		p.bgImage(b, sr, [4]float32{})
+	}
+	cs.Pop()
 }
 
 // wrapPseudo is a native's ::before or ::after that generates no text but

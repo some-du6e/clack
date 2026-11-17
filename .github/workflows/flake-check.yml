@@ -245,6 +245,12 @@ on:
       - "third_party/gioui.org/app/clack_titlebar_windows_test.go"
       - "internal/jsrt/release_batch_test.go"
       - "internal/ui/huddles_link_test.go"
+      # the pill-wrap job's own
+      - "internal/ui/richview/flow.go"
+      - "internal/ui/richview/comps.go"
+      - "internal/ui/richview/pill_*_test.go"
+      - "internal/ui/messages/pill_wrap_test.go"
+      - "internal/ui/slackc/wrap.go"
 
 permissions:
   contents: read
@@ -563,7 +569,10 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
-          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestWrappedMentionPictureInRows|TestSlickViewMentionProfilesWrap)$' ./internal/ui/messages
+          rc=0
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^(TestWrappedPill|TestPillPadding|TestPillPictureSlot|TestPillAfterAndEdges|TestPillEllipsisAfterPicture|TestPillBoundsHoldPictureLine|TestPillPictureInAlignedTable|TestCodeChip|TestColorSwatchAfterValue)' ./internal/ui/richview || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 40m -run '^(TestWrappedMentionPictureInRows|TestSlickViewMentionProfilesWrap)$' ./internal/ui/messages || rc=1
+          exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

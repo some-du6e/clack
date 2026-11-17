@@ -47,7 +47,7 @@ func (l *lay) canvasSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) 
 			l.addText(s.Text, fs, k, fg, sp.Style|s.Style, dc, tg)
 		}
 	}
-	l.addPad(pad, dc, k)
+	l.addClose(pad, dc, k)
 }
 
 // channelTabSlug lays out a resolved channel-tab slug (richtext
@@ -77,7 +77,7 @@ func (l *lay) channelTabSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	if txt != "" {
 		l.addText(txt, fs, k, fg, sp.Style, dc, tg)
 	}
-	l.addPad(pad, dc, k)
+	l.addClose(pad, dc, k)
 }
 
 // quipAnchor lays out a canvas-section unfurl (document_section):
