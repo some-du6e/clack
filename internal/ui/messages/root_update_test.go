@@ -161,6 +161,10 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 		if c.textOnly {
 			m = voteText(m)
 		}
+		// every revision edited, the first too: a plugin that makes the
+		// bot's message a person's (sender) shows "(edited)" on it, as
+		// Slack does, and each revision draws the same
+		m.Edited = &slack.Edited{User: voteBotID, TS: fmt.Sprintf("%d.%06d", time.Now().Unix(), n)}
 		return m
 	}
 	root := slack.Message{Type: "message", TS: rootTS, User: "UBEN00001", Text: "Meta vote: move standup?", Blocks: shotRich(shotSection("Meta vote: move standup?"))}

@@ -24,9 +24,11 @@ func TestReconvertKeepsAnUpdate(t *testing.T) {
 	const ch = "C0RECONV01"
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "ops", IsChannel: true, IsMember: true, NumMembers: 8})
 	ts := fmt.Sprintf("%d.000100", time.Now().Add(-time.Hour).Unix())
-	mention := json.RawMessage(`[{"type":"rich_text","block_id":"m","elements":[{"type":"rich_text_section","elements":[` +
-		`{"type":"user","user_id":"UANA00001"},{"type":"text","text":" ready? Upvotes: 1"}]}]}]`)
-	app.S.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UBEN00001", Text: "<@UANA00001> ready? Upvotes: 1", Blocks: mention}}, false)
+	// a file Ana uploaded: what a conversion reads of her (its card names her)
+	body := json.RawMessage(`[{"type":"rich_text","block_id":"m","elements":[{"type":"rich_text_section","elements":[` +
+		`{"type":"text","text":"the notes, Upvotes: 1"}]}]}]`)
+	file := slack.File{ID: "F0RECONV01", Name: "notes.pdf", Title: "Notes", Mimetype: "application/pdf", Filetype: "pdf", PrettyType: "PDF", Mode: "hosted", User: "UANA00001"}
+	app.S.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UBEN00001", Text: "the notes, Upvotes: 1", Blocks: body, Files: []slack.File{file}}}, false)
 	v := NewChannelView(coreHost{app: app, th: theme.New(false)}, ch)
 	frame := frameFn(v)
 	until(t, 5*time.Second, "the message loaded", frame, func() bool { return v.s.rows[ts] != nil })
@@ -36,7 +38,7 @@ func TestReconvertKeepsAnUpdate(t *testing.T) {
 	reads := m.find(ts) >= 0 && m.msgs[m.find(ts)].m.Refs.Reads(c)
 	m.mu.Unlock()
 	if !reads {
-		t.Fatal("the message doesn't read the member it mentions")
+		t.Fatal("the message doesn't read the member whose file it has")
 	}
 	// between the conversion's store read and its write, hub.run applies
 	// the next revision
@@ -46,7 +48,7 @@ func TestReconvertKeepsAnUpdate(t *testing.T) {
 		defer mm.mu.Unlock()
 		if i := mm.find(at); i >= 0 {
 			upd := mm.msgs[i].m
-			upd.Text, upd.Doc = "<@UANA00001> ready? Upvotes: 2", updated
+			upd.Text, upd.Doc = "the notes, Upvotes: 2", updated
 			mm.msgs[i] = entry{m: upd, rev: mm.bump()}
 		}
 	}

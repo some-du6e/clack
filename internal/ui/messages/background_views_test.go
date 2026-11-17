@@ -211,5 +211,8 @@ func TestBroadcastPreambleFollowsARename(t *testing.T) {
 	u := map[string]any{"id": cara, "name": "cara", "profile": map[string]any{"display_name": "kit.l", "real_name": "Cara Lee"}}
 	raw, _ := json.Marshal(map[string]any{"type": "user_change", "user": u})
 	app.Inject(slack.Event{Type: "user_change", Raw: raw})
+	// no frame until the hub has the event: one drawn first is newer than
+	// the last read the event carries (drawsMember)
+	time.Sleep(300 * time.Millisecond)
 	until(t, 5*time.Second, "the preview with her new name", frame, func() bool { return strings.Contains(preview(), "@kit.l") })
 }

@@ -2058,25 +2058,23 @@ func (v *viewCache) bumpChange(c core.RefChange) {
 	}
 	redraw := false
 	if len(keys) > 0 {
-		global := len(v.msgGen)+len(keys) >= maxConvKeys
-		if global {
+		// a generation for every conversion that read it, cached or not: a
+		// slot no view entry holds (an injected message's) is converted
+		// again from it when next read
+		if len(v.msgGen)+len(keys) >= maxConvKeys {
 			clear(v.msgGen)
 			v.global = seq
+		} else {
+			for _, k := range keys {
+				v.msgGen[k] = seq
+			}
 		}
 		for _, k := range keys {
 			if !v.convCachedLocked(k.slice, k.key) {
-				// a conversion that went: forgotten, and no generation kept
-				// for it unless one is being made (bumpConv's rule)
 				if refs, ok := v.refOf[k]; ok {
 					v.unindexLocked(k, refs)
 				}
-				if v.inflight[k] > 0 && !global {
-					v.msgGen[k] = seq
-				}
 				continue
-			}
-			if !global {
-				v.msgGen[k] = seq
 			}
 			redraw = redraw || v.visibleLocked(v.groups[viewSK{"messages", k.slice}])
 		}
