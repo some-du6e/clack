@@ -2021,11 +2021,13 @@ func TestColorSwatch(t *testing.T) {
 	if sw == nil {
 		t.Fatalf("no swatch box: %+v", v.d.boxes)
 	}
-	if sw.r.Dx() != 12 || sw.r.Dy() != 12 {
-		t.Errorf("swatch %v, want 12x12", sw.r)
+	// Slack's Color element (boot-shared d7OQ): the value, then
+	// div.c-mrkdwn__hex, 13px plus its 1px border, 2px after it
+	if sw.r.Dx() != 15 || sw.r.Dy() != 15 {
+		t.Errorf("swatch %v, want 15x15", sw.r)
 	}
-	if f := findFrag(t, &v.d, "#1D9BD1"); f.x < float32(sw.r.Max.X) {
-		t.Errorf("hex text at %.1f overlaps swatch %v", f.x, sw.r)
+	if f := findFrag(t, &v.d, "#1D9BD1"); f.x+f.w > float32(sw.r.Min.X) {
+		t.Errorf("hex text ends at %.1f, past the swatch %v after it", f.x+f.w, sw.r)
 	}
 }
 

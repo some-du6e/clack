@@ -73,6 +73,81 @@ func strokeRadii(ops *op.Ops, r image.Rectangle, rad [4]float32, bw int, col col
 	paint.FillShape(ops, col, clip.Stroke{Path: path, Width: float32(bw)}.Op())
 }
 
+// strokeSliced draws the border of one line's piece of an inline box that
+// wraps (inline code): no side where the box goes on (cut), as Chromium
+// paints box-decoration-break: slice. The ring is the box less its padding
+// box, which reaches the box's edge on a cut side.
+func strokeSliced(ops *op.Ops, r image.Rectangle, radii [4]int, bw int, col color.NRGBA, cut uint8) {
+	if bw <= 0 || col.A == 0 || r.Empty() {
+		return
+	}
+	or := fr(r)
+	orad := [4]float32{float32(radii[0]), float32(radii[1]), float32(radii[2]), float32(radii[3])}
+	orad, _ = cssRadii(r, orad)
+	w := float32(bw)
+	ir := f32Rect{or.x0 + w, or.y0 + w, or.x1 - w, or.y1 - w}
+	if cut&cutStart != 0 {
+		ir.x0 = or.x0
+	}
+	if cut&cutEnd != 0 {
+		ir.x1 = or.x1
+	}
+	var irad [4]float32
+	for i := range irad {
+		irad[i] = float32(math.Max(0, float64(orad[i]-w)))
+	}
+	var p clip.Path
+	p.Begin(ops)
+	addRoundRect(&p, or, orad, false)
+	addRoundRect(&p, ir, irad, true)
+	paint.FillShape(ops, col, clip.Outline{Path: p.End()}.Op())
+}
+
+// addRoundRect adds a closed rounded rectangle to p, clockwise or (ccw)
+// counter-clockwise, so a reversed one cuts a hole (non-zero winding).
+func addRoundRect(p *clip.Path, r f32Rect, rad [4]float32, ccw bool) {
+	const k = 0.5522847
+	nw, ne, se, sw := rad[0], rad[1], rad[2], rad[3]
+	if !ccw {
+		p.MoveTo(f32.Pt(r.x0+nw, r.y0))
+		p.LineTo(f32.Pt(r.x1-ne, r.y0))
+		if ne > 0 {
+			p.CubeTo(f32.Pt(r.x1-ne+ne*k, r.y0), f32.Pt(r.x1, r.y0+ne-ne*k), f32.Pt(r.x1, r.y0+ne))
+		}
+		p.LineTo(f32.Pt(r.x1, r.y1-se))
+		if se > 0 {
+			p.CubeTo(f32.Pt(r.x1, r.y1-se+se*k), f32.Pt(r.x1-se+se*k, r.y1), f32.Pt(r.x1-se, r.y1))
+		}
+		p.LineTo(f32.Pt(r.x0+sw, r.y1))
+		if sw > 0 {
+			p.CubeTo(f32.Pt(r.x0+sw-sw*k, r.y1), f32.Pt(r.x0, r.y1-sw+sw*k), f32.Pt(r.x0, r.y1-sw))
+		}
+		p.LineTo(f32.Pt(r.x0, r.y0+nw))
+		if nw > 0 {
+			p.CubeTo(f32.Pt(r.x0, r.y0+nw-nw*k), f32.Pt(r.x0+nw-nw*k, r.y0), f32.Pt(r.x0+nw, r.y0))
+		}
+		p.Close()
+		return
+	}
+	p.MoveTo(f32.Pt(r.x0+nw, r.y0))
+	if nw > 0 {
+		p.CubeTo(f32.Pt(r.x0+nw-nw*k, r.y0), f32.Pt(r.x0, r.y0+nw-nw*k), f32.Pt(r.x0, r.y0+nw))
+	}
+	p.LineTo(f32.Pt(r.x0, r.y1-sw))
+	if sw > 0 {
+		p.CubeTo(f32.Pt(r.x0, r.y1-sw+sw*k), f32.Pt(r.x0+sw-sw*k, r.y1), f32.Pt(r.x0+sw, r.y1))
+	}
+	p.LineTo(f32.Pt(r.x1-se, r.y1))
+	if se > 0 {
+		p.CubeTo(f32.Pt(r.x1-se+se*k, r.y1), f32.Pt(r.x1, r.y1-se+se*k), f32.Pt(r.x1, r.y1-se))
+	}
+	p.LineTo(f32.Pt(r.x1, r.y0+ne))
+	if ne > 0 {
+		p.CubeTo(f32.Pt(r.x1, r.y0+ne-ne*k), f32.Pt(r.x1-ne+ne*k, r.y0), f32.Pt(r.x1-ne, r.y0))
+	}
+	p.Close()
+}
+
 // cssRadii scales corner radii (NW, NE, SE, SW) the way a browser does
 // when adjacent corners don't fit along a side (CSS Backgrounds 3,
 // "Corner Curve Overlap"): every radius is multiplied by the smallest
@@ -116,20 +191,28 @@ func fillRadii(ops *op.Ops, r image.Rectangle, radii [4]int, col color.NRGBA) {
 	paint.FillShape(ops, col, clip.RRect{Rect: r, NW: radii[0], NE: radii[1], SE: radii[2], SW: radii[3]}.Op(ops))
 }
 
+// radii are b's corner radii (NW NE SE SW).
+func (b *box) radii() [4]int {
+	if b.perCorner {
+		return b.corners
+	}
+	return [4]int{b.radius, b.radius, b.radius, b.radius}
+}
+
 func drawBox(ops *op.Ops, b *box) {
 	if b.r.Empty() {
 		return
 	}
 	switch b.kind {
 	case bFill:
-		if b.perCorner {
-			fillRadii(ops, b.r, b.corners, b.fill)
-		} else {
-			fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.fill)
-		}
+		fillRadii(ops, b.r, b.radii(), b.fill)
 	case bBorder:
-		fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.fill)
-		strokeRRect(ops, b.r, b.radius, b.bw, b.stroke)
+		fillRadii(ops, b.r, b.radii(), b.fill)
+		if b.cut != 0 {
+			strokeSliced(ops, b.r, b.radii(), b.bw, b.stroke, b.cut)
+		} else {
+			strokeRRect(ops, b.r, b.radius, b.bw, b.stroke)
+		}
 	case bCircle:
 		paint.FillShape(ops, b.fill, clip.Ellipse(b.r).Op(ops))
 	case bRing:
