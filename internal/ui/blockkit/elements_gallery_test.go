@@ -887,9 +887,17 @@ func TestGalleryElementPayloads(t *testing.T) {
 	m := e.msgs["buttons"]
 	m.Blocks = json.RawMessage(strings.Replace(string(m.Blocks), "Default", "Done", 1))
 	e.msgs["buttons"] = m
+	// the new blocks' host (one per blocks: a row still drawing the old
+	// ones keeps theirs) starts idle
 	me2 := e.message()
-	if me2 != me || len(me2.errs) != 0 || len(me2.busy) != 0 {
+	if me2 == nil || len(me2.errs) != 0 || len(me2.busy) != 0 {
 		t.Errorf("replaced message kept errors %v", me2.errs)
+	}
+	if me2 == me {
+		t.Error("the replaced message's blocks share the old blocks' host")
+	}
+	if len(me.errs) == 0 {
+		t.Error("the old blocks' host, which a row may still draw, lost its state to the replacement")
 	}
 }
 
