@@ -22,7 +22,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,9 +41,11 @@ const voteLog = "logged by the test"
 // rootCase is one way Karim's vote message is drawn and patched.
 type rootCase struct {
 	sender   bool // the wrapper patches change the sender, as ShowRealUser does a relay bot's
-	reply    bool // the vote message is a reply in the thread (ThreadReplyGeneric unpatched), not its root
+	reply    bool // the vote message is a reply in the thread (ThreadReplyGeneric patched as Message Logger does), not its root
 	textOnly bool // no Block Kit blocks: text only, and the slice patch changes the text
 	held     bool // the votes come in a burst with reactions and replies while JS is held
+	rewrite  bool // MessageText's patch rewrites what the message says (BetterBlock's filter): "Upvotes:" becomes "Ups:"
+	noBody   bool // Blocks and MessageText unpatched: the body draws the row's message itself
 }
 
 // rootPatchJS patches the thread root and the channel's rows (a 14px line
@@ -60,6 +64,32 @@ func rootPatchJS(c rootCase) []byte {
 	if c.textOnly {
 		logged = `{ ...m, text: m.text + ' (` + voteLog + `)' }`
 	}
+	// the reply as Message Logger draws it (renderRow: a memo of props.msg)
+	reply := ""
+	if c.reply {
+		reply = `this.api.patchComponent('ThreadReplyGeneric', (Original) => (props) => {
+      const msg = React.useMemo(() => props.msg, [props.msg])
+      return React.createElement('div', null, React.createElement('div', { style: { height: '14px' } }, 'patched reply'),
+        React.createElement(Original, { ...props, msg }))
+    })`
+	}
+	body := `const pass = (Original) => (props) => React.createElement(Original, { ...props, msg: props.msg })
+    this.api.patchComponent('Blocks', pass)
+    this.api.patchComponent('MessageText', pass)`
+	if c.rewrite {
+		// BetterBlock's shape: MessageText hands Original a msg it rewrote
+		body = `const pass = (Original) => (props) => React.createElement(Original, { ...props, msg: props.msg })
+    this.api.patchComponent('Blocks', pass)
+    const fix = (t) => (typeof t === 'string' ? t.replace(/Upvotes:/g, 'Ups:') : t)
+    this.api.patchComponent('MessageText', (Original) => (props) => {
+      const m = props.msg
+      const blocks = (m.blocks || []).map((b) => (b.type === 'section' && b.text ? { ...b, text: { ...b.text, text: fix(b.text.text) } } : b))
+      return React.createElement(Original, { ...props, msg: { ...m, text: fix(m.text), blocks } })
+    })`
+	}
+	if c.noBody {
+		body = ""
+	}
 	return pluginJS(`
 class PatchedRoot extends TautPlugin {
   static id = 'PatchedRoot'
@@ -74,9 +104,8 @@ class PatchedRoot extends TautPlugin {
       React.createElement(Original, { ...props, msg: ` + msg + ` }))
     this.api.patchComponent('ThreadRootGeneric', line('patched root'))
     this.api.patchComponent('MessageWrapper', line('patched row'))
-    const pass = (Original) => (props) => React.createElement(Original, { ...props, msg: props.msg })
-    this.api.patchComponent('Blocks', pass)
-    this.api.patchComponent('MessageText', pass)
+    ` + reply + `
+    ` + body + `
     const log = (ts, m) => (m && m.bot_id === '` + voteBotID + `' ? ` + logged + ` : m)
     const { patchSlice, mapEntries } = this.api.redux
     patchSlice('messages', (ch, bucket) => (ch === '` + voteChan + `' && bucket && typeof bucket === 'object' ? mapEntries(bucket, log) : bucket))
@@ -126,6 +155,7 @@ func TestPatchedRootSurvivesUpdates(t *testing.T) {
 		{"root, the sender a plugin's", rootCase{sender: true}},
 		{"root, text only", rootCase{textOnly: true}},
 		{"thread reply", rootCase{reply: true}},
+		{"root, MessageText rewrites what it says", rootCase{rewrite: true}},
 	}
 	for _, x := range cases {
 		t.Run(x.name+", free-running", func(t *testing.T) { checkPatchedRoot(t, x.c, false) })
@@ -136,6 +166,9 @@ func TestPatchedRootSurvivesUpdates(t *testing.T) {
 	// collection: up to a second on Karim's plugins), so every tree on
 	// screen is many revisions behind when JS lets go
 	t.Run("root, a burst while JS is held", func(t *testing.T) { checkPatchedRoot(t, rootCase{held: true}, false) })
+	// the same with the body unpatched: what the row's message says is
+	// drawn as it is, so a revision going back shows in the text
+	t.Run("root, a burst while JS is held, the body unpatched", func(t *testing.T) { checkPatchedRoot(t, rootCase{held: true, noBody: true}, false) })
 }
 
 func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
@@ -151,12 +184,14 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 	if c.reply {
 		voteTS = r2
 	}
+	replyCount := len(replies) // the root's, as replies come (the held burst)
 	vote := func(n int) slack.Message {
 		var m slack.Message
 		if c.reply {
 			m = voteMsg(r2, rootTS, n, n, 0)
 		} else {
 			m = voteRoot(rootTS, n, replies)
+			m.ReplyCount = replyCount
 		}
 		if c.textOnly {
 			m = voteText(m)
@@ -192,15 +227,32 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 	now := time.Now()
 	panes := []*votePane{{name: "thread", s: tv.s, v: tv, size: image.Pt(520, 700), now: &now, step: step}}
 	paneIDs := []string{tv.PaneID()}
-	comps := []string{"ThreadRootGeneric"}
+	// the trees each pane's row must have from JS: its own component's and
+	// the body's
+	bodyComps := []string{"Blocks", "MessageText"}
+	if c.noBody {
+		bodyComps = nil
+	}
+	comps := [][]string{append([]string{"ThreadRootGeneric"}, bodyComps...)}
 	if c.reply {
-		comps = []string{""} // ThreadReplyGeneric: Library defaults don't patch it
+		comps = [][]string{append([]string{"ThreadReplyGeneric"}, bodyComps...)}
 	} else {
 		cv := NewChannelView(h, voteChan)
 		cv.Preview = true
 		panes = append(panes, &votePane{name: "channel", s: cv.s, v: cv, size: image.Pt(1100, 700), now: &now, step: step})
-		paneIDs, comps = append(paneIDs, cv.PaneID()), append(comps, "MessageWrapper")
+		paneIDs, comps = append(paneIDs, cv.PaneID()), append(comps, append([]string{"MessageWrapper"}, bodyComps...))
 	}
+	// what the revision reads as, drawn: the vote count after this label
+	label := "Upvotes: "
+	if c.rewrite {
+		label = "Ups: "
+	}
+	// the sender labels drawn (labelHook), to tell the plugin's person
+	// from the bot by what the header draws
+	var labMu sync.Mutex
+	var labels []string
+	labelHook = func(txt string, _ textStyle) { labMu.Lock(); labels = append(labels, txt); labMu.Unlock() }
+	t.Cleanup(func() { labelHook = nil })
 	all := func() {
 		for _, p := range panes {
 			p.frame()
@@ -216,7 +268,7 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 		trees            string
 		native           bool
 		viewed           bool
-		user, body       string
+		user, body, name string
 	}
 	lookAt := func(i int) look {
 		p := panes[i]
@@ -227,23 +279,31 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 			l.logged = strings.Contains(l.body, voteLog)
 			l.mlogged = strings.Contains(string(r.m.Blocks), voteLog) || strings.Contains(r.m.Text, voteLog)
 			l.viewed, l.user = r.viewed, r.m.User
-			if i := strings.Index(l.body, "Upvotes: "); i >= 0 {
-				fmt.Sscanf(l.body[i:], "Upvotes: %d", &l.rev)
+			if i := strings.Index(l.body, label); i >= 0 {
+				fmt.Sscanf(l.body[i+len(label):], "%d", &l.rev)
 			}
 			fmt.Sscanf(r.m.Text, "Upvotes: %d", &l.modelRev)
+			l.name = r.name
 		}
 		return l
 	}
-	wantUser := ""
+	wantUser, wantName := "", ""
 	if c.sender {
 		wantUser = "UANA00001"
+		if u, ok := app.User(wantUser); ok {
+			wantName = u.Name
+		}
 	}
 	settled := func(n int) bool {
 		for i := range panes {
 			l := lookAt(i)
-			if l.rev != n || l.modelRev != n || !l.logged || !l.mlogged || l.native || l.h <= 0 ||
-				comps[i] != "" && !strings.Contains(l.trees, comps[i]+": ") || wantUser != "" && l.user != wantUser {
+			if l.rev != n || l.modelRev != n || !l.logged || !l.mlogged || l.native || l.h <= 0 || wantUser != "" && (l.user != wantUser || l.name != wantName) {
 				return false
+			}
+			for _, comp := range comps[i] {
+				if !strings.Contains(l.trees, comp+": ") {
+					return false
+				}
 			}
 		}
 		return true
@@ -269,6 +329,7 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 	// native, the same height (each revision says as much), never an older
 	// revision than one drawn before, and the plugin's sender throughout
 	frames := 0
+	held := false                // JS held (the burst): what's drawn may be the old revision then
 	bad := map[string][]string{} // what went wrong, by pane, with the frames
 	seen := make([]int, len(panes))
 	for i := range seen {
@@ -276,9 +337,22 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 	}
 	check := func(when string) {
 		frames++
+		labMu.Lock()
+		drawnLabels := labels
+		labels = nil
+		labMu.Unlock()
 		for i, p := range panes {
 			l := lookAt(i)
 			var why []string
+			if c.rewrite && strings.Contains(l.body, "Upvotes:") {
+				why = append(why, fmt.Sprintf("drew %q without MessageText's rewrite", l.body))
+			}
+			if c.sender && i == 0 && slices.Contains(drawnLabels, "Vote Bot") {
+				why = append(why, "drew the bot's name, not the plugin's person")
+			}
+			if c.held && !held && l.rev != l.modelRev {
+				why = append(why, fmt.Sprintf("drew revision %d, the row's message is %d", l.rev, l.modelRev))
+			}
 			if !l.logged {
 				why = append(why, fmt.Sprintf("drew %q without the plugins' copy of it (viewed %v)", l.body, l.viewed))
 			}
@@ -295,8 +369,8 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 			if l.rev < seen[i] {
 				why = append(why, fmt.Sprintf("drew revision %d after %d", l.rev, seen[i]))
 			}
-			if wantUser != "" && l.user != wantUser {
-				why = append(why, fmt.Sprintf("the sender %q, not the plugin's %q", l.user, wantUser))
+			if wantUser != "" && (l.user != wantUser || l.name != wantName) {
+				why = append(why, fmt.Sprintf("the sender %q (%q), not the plugin's %q (%q)", l.user, l.name, wantUser, wantName))
 			}
 			seen[i] = max(seen[i], l.rev)
 			if len(why) > 0 && len(bad[p.name]) < 12 {
@@ -324,6 +398,7 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 		}
 		release := make(chan struct{})
 		rt.Post(func(*jsrt.Ctx) { <-release })
+		held = true
 		users := []string{"UANA00001", "UBEN00001", "UCAR00001"}
 		for v := 0; v < 5; v++ {
 			n++
@@ -333,11 +408,21 @@ func checkPatchedRoot(t *testing.T, c rootCase, lockstep bool) {
 				react([]string{"eyes", "tada", "fire"}[k], u)
 				frame(fmt.Sprintf("JS held, revision %d, a reaction", n))
 			}
+			if !c.reply {
+				// and a reply: the root's count moves, what it says doesn't
+				replyCount++
+				newTS := fmt.Sprintf("%d.%06d", time.Now().Unix(), 500+v)
+				voteInject(app, "message", "message_replied", map[string]any{"hidden": true, "ts": newTS, "message": map[string]any{
+					"type": "message", "subtype": "bot_message", "bot_id": voteBotID, "ts": rootTS, "thread_ts": rootTS,
+					"reply_count": replyCount, "latest_reply": newTS, "reply_users": []string{"UANA00001", "UBEN00001"}}})
+				frame(fmt.Sprintf("JS held, revision %d, a reply", n))
+			}
 		}
 		for k := 0; k < 10; k++ {
 			frame(fmt.Sprintf("JS held after revision %d", n))
 		}
 		close(release)
+		held = false
 	} else {
 		// votes in quick succession, some while JS is still answering the
 		// one before, then one after the views settled
