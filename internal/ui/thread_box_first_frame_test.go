@@ -18,14 +18,21 @@ package ui
 // first frame that draws the newest reply must draw the box right under it
 // (the composer starting where the list ends, the box's border 12px down),
 // with a thread that fits top-aligned under the header, and so must the
-// frame after it.
+// frame after it. That first frame laid the composer out where it wasn't
+// yet (the pane's bottom edge, its height unknown), so it must ask for
+// the frame after it, which lays the composer out where it is: what it
+// placed in window coordinates as it laid out (its popups, its plugin
+// parts) is right then, and an idle window draws that frame only if asked.
 
 import (
 	"image"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/idleprobe"
 	"github.com/some-du6e/clack/internal/ui/messages"
 )
 
@@ -45,7 +52,7 @@ func TestThreadReplyBoxWithFirstReplies(t *testing.T) {
 			e := threadsAuditEnv(t, false)
 			e.openChannel(ch)
 			e.settle(500 * time.Millisecond)
-			replyBoxFirstFrame(t, e, tc.root, tc.loading, true)
+			replyBoxFirstFrame(t, e, tc.root, tc.loading, true, 0)
 		})
 	}
 
@@ -81,7 +88,8 @@ func TestThreadReplyBoxWithFirstReplies(t *testing.T) {
 		if compH <= 0 || h+compH/2 >= pane {
 			t.Fatalf("pane %d px, thread %d px, composer %d px: can't make a smaller pane the thread fits only without its box", pane, h, compH)
 		}
-		size := image.Pt(e.size.X, e.size.Y-(pane-(h+compH/2)))
+		less := pane - (h + compH/2)
+		size := image.Pt(e.size.X, e.size.Y-less)
 		t.Logf("pane %d px, thread %d px, composer %d px: a %v window", pane, h, compH, size)
 		e.shutdown()
 
@@ -89,7 +97,7 @@ func TestThreadReplyBoxWithFirstReplies(t *testing.T) {
 		e.size = size
 		e.openChannel(ch)
 		e.settle(500 * time.Millisecond)
-		replyBoxFirstFrame(t, e, fakeslack.ThreadsAuditRead, true, false)
+		replyBoxFirstFrame(t, e, fakeslack.ThreadsAuditRead, true, false, bottom-less)
 	})
 }
 
@@ -97,10 +105,20 @@ func TestThreadReplyBoxWithFirstReplies(t *testing.T) {
 // frames, one at a time with no input, until one draws the newest reply,
 // then checks the reply box in that frame and the next. loading holds the
 // replies back so FlexpaneLoading draws first (no box with it); fits is
-// whether the thread fits over its box.
-func replyBoxFirstFrame(t *testing.T, e *perfEnv, root string, loading, fits bool) {
+// whether the thread fits over its box, and paneBottom, when it doesn't,
+// the window y of the pane's bottom edge (0: not checked).
+func replyBoxFirstFrame(t *testing.T, e *perfEnv, root string, loading, fits bool, paneBottom int) {
 	t.Helper()
 	ch := fakeslack.ThreadsAuditChannel
+	// layoutConvo's own requests for a frame (App.Invalidate's callers)
+	var asked atomic.Int32
+	app := e.a
+	invalidateHook = func(b *App) {
+		if b == app && strings.Contains(idleprobe.Caller(1), "layoutConvo") {
+			asked.Add(1)
+		}
+	}
+	t.Cleanup(func() { invalidateHook = nil })
 	if loading {
 		e.fs.SetFault("conversations.replies", fakeslack.Fault{Delay: 400 * time.Millisecond, Times: 1})
 	}
@@ -130,16 +148,21 @@ func replyBoxFirstFrame(t *testing.T, e *perfEnv, root string, loading, fits boo
 		if gap := box.Min.Y - bottom; gap != slackThreadGap {
 			t.Errorf("%s: %d px between the newest reply and the reply box, Slack %d", when, gap, slackThreadGap)
 		}
-		h := tv.ContentHeight()
-		if (h > 0) != fits {
-			t.Errorf("%s: content height %d, want a thread that fits over its box: %v", when, h, fits)
+		// what layoutConvo decided: the box under the thread (fitH, the
+		// pane's header and rows), or at the pane's bottom
+		if (c.fitH > 0) != fits {
+			t.Errorf("%s: the box %d px down under the thread (0: at the pane's bottom), want a thread that fits over its box: %v", when, c.fitH, fits)
 		}
-		if fits && bottom != tv.Origin.Y+h {
-			t.Errorf("%s: the newest reply ends at y=%d, top-aligned under the header it ends at %d", when, bottom, tv.Origin.Y+h)
+		if fits && bottom != tv.Origin.Y+c.fitH {
+			t.Errorf("%s: the newest reply ends at y=%d, top-aligned under the header it ends at %d", when, bottom, tv.Origin.Y+c.fitH)
+		}
+		if !fits && paneBottom > 0 && c.compRect.Max.Y != paneBottom {
+			t.Errorf("%s: the composer ends at y=%d, want the pane's bottom, %d", when, c.compRect.Max.Y, paneBottom)
 		}
 	}
 	spinner := 0
 	for dl := time.Now().Add(15 * time.Second); ; {
+		asked.Store(0)
 		e.frame()
 		if _, ok := tv.NewestRowBottom(); ok {
 			break
@@ -157,6 +180,18 @@ func replyBoxFirstFrame(t *testing.T, e *perfEnv, root string, loading, fits boo
 		t.Error("the replies drew in the pane's first frame: FlexpaneLoading never did")
 	}
 	check("the frame that drew the replies")
+	if asked.Load() == 0 {
+		t.Error("the frame that drew the replies laid the composer out at the pane's bottom and asked for no frame to lay it out where it is")
+	}
 	e.frame()
 	check("the frame after it")
+	settled := false
+	for i := 0; i < 5 && !settled; i++ {
+		asked.Store(0)
+		e.frame()
+		settled = asked.Load() == 0
+	}
+	if !settled {
+		t.Error("layoutConvo kept asking for frames")
+	}
 }

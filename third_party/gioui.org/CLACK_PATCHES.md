@@ -2065,8 +2065,9 @@ list starts at its start, the position stays at the start (`Offset` 0,
 `OffsetLast` the space after it), and the list still counts as at its end
 (`BeforeEnd` false), so content that outgrows it is drawn from its end
 on, as a `ScrollToEnd` list does. Clack's thread list sets it and lays
-out in the pane's full height; the ui root puts the reply box under the
-content the list measured in the same frame (`internal/ui` `layoutConvo`).
+out in the height the reply box leaves; the ui root clips it to the
+content it measured and puts the box right under it in the same frame
+(`internal/ui` `layoutConvo`).
 
 Tests: `layout/clack_list_test.go` `TestListStartAligned` (on ci's
 linux-gio job: three items in a 100px list start at 0 and stay there at

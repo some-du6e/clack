@@ -552,7 +552,9 @@ func (fm *FontMap) ResolveFace(r rune) (face *font.Face) {
 	// Clack patch 4: the query's best match draws the .notdef, as Blink's
 	// first candidate does (FontFallbackIterator's
 	// kFirstCandidateForNotdefGlyph): the first family's face at the
-	// asked weight and style, not whichever face was added first
+	// asked weight and style, not whichever face was added first. (Blink
+	// skips a family whose unicode-range misses the rune; Slack-Lato's
+	// holds the BMP but U+F8FF, so astral runes still differ.)
 	for _, footprintIndex := range fm.candidates.withoutFallback {
 		face, err := fm.loadFont(fm.database[footprintIndex])
 		if err != nil { // very unlikely; try the next family

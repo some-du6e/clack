@@ -90,6 +90,13 @@ of `candidates.withoutFallback` that loads (the query's families, each
 pruned to its best match for the aspect, in order), and the first face
 only when none does. Found using Clack (dogfood, α.104).
 
+That matches Chrome only inside Slack-Lato's unicode-range
+(`U+0-F8FE,U+F900-FFFF`): Blink's first candidate is a face whose range
+holds the rune, so for an astral rune, or U+F8FF, Chrome's `.notdef`
+comes from a later family (the generic sans-serif's system face at the
+latest) while Clack still draws Lato's. That was so before the patch
+too; following it would need per-family ranges in the query.
+
 Test: `internal/ui/theme` `TestNotdefTakesTheTextWeight` (Regular's,
 Bold's and Black's own `.notdef` for U+115F, 1063 and 1094/2000 em).
 
