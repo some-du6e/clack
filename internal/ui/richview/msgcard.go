@@ -66,7 +66,7 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Off, part: pt})
 	dc := int16(len(l.decos) - 1)
 	ip := fs.size
-	l.addPad(pad, dc, k)
+	l.addOpen(pad, dc, k)
 	l.addIcon("message", ip, k, fg, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
 	txt := sp.Text
@@ -76,7 +76,7 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 		txt = txt[sp.Pre:]
 	}
 	l.addText(txt, fs, k, fg, sp.Style, dc, tg)
-	l.addPad(pad, dc, k)
+	l.addClose(pad, dc, k)
 }
 
 // truncatedLink lays out a link with truncated: true, as Slack's Link
@@ -94,11 +94,11 @@ func (l *lay) truncatedLink(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint
 	pad, padV := l.dpf(2), l.dpf(1)
 	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
 	dc := int16(len(l.decos) - 1)
-	l.addPad(pad, dc, k)
+	l.addOpen(pad, dc, k)
 	l.addIcon("link", fs.size, k, p.MentionText, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
 	l.addText(sp.Text, fs, k, p.Link, sp.Style, dc, tg)
-	l.addPad(pad, dc, k)
+	l.addClose(pad, dc, k)
 }
 
 // privateChannel is BaseMissingChannel's Nonexistent chip, a channel the
@@ -122,7 +122,7 @@ func (l *lay) privateChannel(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	l.addIcon("lock", fs.size, k, fg, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // gap 4 (the icon item ends with 1px)
 	l.addText(sp.Text, fs, k, fg, sp.Style, dc, tg)
-	l.addPad(l.dpf(2), dc, k)
+	l.addClose(l.dpf(2), dc, k)
 }
 
 // hiddenMember is RollupName (boot-shared quVX) for a member the viewer
@@ -140,7 +140,7 @@ func (l *lay) hiddenMember(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8
 	dc := int16(len(l.decos) - 1)
 	l.addIcon("user-hide", fs.size, k, fg, dc, tg)
 	l.addText("\u00a0"+sp.Text, fs, k, fg, sp.Style, dc, tg)
-	l.addPad(l.dpf(2), dc, k)
+	l.addClose(l.dpf(2), dc, k)
 }
 
 // missingMember is BaseMissingMember (FToV), which MemberSlug draws
@@ -152,16 +152,18 @@ func (l *lay) hiddenMember(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8
 // --non-existent's 1px rgb(--sk_foreground_low_solid) (border-box). No
 // link, hover card or plain text: the id is never drawn or copied, and
 // the mention lays out again when the member arrives (namesChanged).
-// Like an atomic inline it may wrap to the next line on its own. (Not
-// ported: MissingText's tooltip, "Loading…" or "Private user info".)
-func (l *lay) missingMember(miss MemberMiss, k faceKey) {
+// An atomic inline: a line may break before and after it, and holding
+// only it a line is a full line box. col is the color it inherits (a
+// clamp's "…" after it takes it). (Not ported: MissingText's tooltip,
+// "Loading…" or "Private user info".)
+func (l *lay) missingMember(miss MemberMiss, k faceKey, col color.NRGBA) {
 	p := &l.st.Palette
 	dc := deco{kind: decoMissing, bg: p.Missing, face: k, target: -1, radius: l.dp(4)}
 	if miss == MemberGone {
 		dc.kind, dc.bg, dc.border = decoMissingGone, color.NRGBA{}, p.MissingLine
 	}
 	l.decos = append(l.decos, dc)
-	l.items = append(l.items, item{kind: itPad, w: l.dpf(120), deco: int16(len(l.decos) - 1), face: k, target: -1, part: l.curPart, brk: true})
+	l.items = append(l.items, item{kind: itPad, w: l.dpf(120), deco: -1, own: int16(len(l.decos)), face: k, col: col, target: -1, part: l.curPart, atom: true})
 	if n := len(l.d.names); n > 0 {
 		l.d.names[n-1].bar = true
 	}
