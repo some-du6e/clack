@@ -554,7 +554,7 @@ jobs:
               [ "$s" = base ] && bin=perf-out/base-latency.test
               [ -x "$bin" ] || continue
               MSG_LATENCY_OUT="$PWD/perf-out/latency-$s.jsonl" xvfb-run -a "$bin" -test.run '^TestPerfMessageLatency$' -test.v -test.count 1 -test.timeout 15m > perf-out/latency-$s-$r.log 2>&1 || echo "::warning::$s latency round $r failed"
-              grep -E 'latency |running [0-9]+ plugins|--- |panic' perf-out/latency-$s-$r.log || true
+              grep -E 'latency |lookups |running [0-9]+ plugins|--- |panic' perf-out/latency-$s-$r.log || true
             done
           done
           {
@@ -563,7 +563,7 @@ jobs:
             echo '```'
             for s in base head; do
               for r in 1 2; do
-                [ -f perf-out/latency-$s-$r.log ] && grep -h -o 'latency .*' perf-out/latency-$s-$r.log | sed "s/^latency /$s r$r: /"
+                [ -f perf-out/latency-$s-$r.log ] && grep -h -o -E '(latency|lookups) .*' perf-out/latency-$s-$r.log | sed -E "s/^(latency|lookups) /$s r$r: \1 /"
               done
             done
             echo '```'

@@ -150,11 +150,25 @@ type latProbe struct {
 	waits  []*latWait
 	frames int
 	echoes map[string]string // own send text → its confirmed ts
+
+	// names counts core's "names" events (a member lookup answered: the
+	// sidebar resnapshots, the lists on screen reload, the plugins'
+	// members are invalidated)
+	names atomic.Int64
 }
 
 func newLatProbe(t *testing.T, e *perfEnv, ch string) *latProbe {
 	p := &latProbe{e: e, t: t, ch: ch, wake: make(chan struct{}, 1), echoes: map[string]string{}}
 	p.next.Store(1000)
+	evs, stop := e.a.data.core.Subscribe()
+	t.Cleanup(stop)
+	go func() {
+		for ev := range evs {
+			if ev.Type == "names" {
+				p.names.Add(1)
+			}
+		}
+	}()
 	prev := invalidateHook
 	invalidateHook = func(a *App) {
 		if prev != nil {
@@ -616,9 +630,13 @@ func TestMessageLatency(t *testing.T) {
 // swapped for the confirmed one.
 func (p *latProbe) measure(t *testing.T, ps latPass, enforce bool) map[string]latStats {
 	t.Helper()
-	posts := p.e.fs.CallCount("chat.postMessage")
+	posts, asked, names := p.e.fs.CallCount("chat.postMessage"), p.e.fs.CallCount("edge/users/info"), p.names.Load()
 	ws := p.run(ps)
 	res := latReport(t, ps, ws, enforce)
+	// what the pass's messages cost in member lookups: a socket message
+	// asks for nobody until a row draws its people (the busy passes'
+	// senders elsewhere draw nowhere)
+	t.Logf("lookups %-34s users/info calls %d, names events %d", ps.name, p.e.fs.CallCount("edge/users/info")-asked, p.names.Load()-names)
 	if got := p.e.fs.CallCount("chat.postMessage") - posts; enforce && got != int64(ps.own) {
 		t.Errorf("%s: %d chat.postMessage calls for %d sends", ps.name, got, ps.own)
 	}

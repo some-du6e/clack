@@ -377,3 +377,50 @@ func (b *backend) noteFresh(ev core.Event) core.Event {
 	}
 	return ev
 }
+
+// noteSends hands the desktop notifications to the system in the order
+// they were made, off the caller's goroutine: a goroutine each could hand
+// two over in reverse order. One the system takes longer than noteSendCap
+// to take doesn't hold the next ones back.
+var noteSends struct {
+	mu sync.Mutex
+	q  []func()
+	on bool
+}
+
+const noteSendCap = 3 * time.Second
+
+func sendNote(f func()) {
+	s := &noteSends
+	s.mu.Lock()
+	s.q = append(s.q, f)
+	start := !s.on
+	s.on = true
+	s.mu.Unlock()
+	if !start {
+		return
+	}
+	go func() {
+		for {
+			s.mu.Lock()
+			if len(s.q) == 0 {
+				s.on, s.q = false, nil
+				s.mu.Unlock()
+				return
+			}
+			f := s.q[0]
+			s.q[0] = nil
+			s.q = s.q[1:]
+			s.mu.Unlock()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				f()
+			}()
+			select {
+			case <-done:
+			case <-time.After(noteSendCap):
+			}
+		}
+	}()
+}
