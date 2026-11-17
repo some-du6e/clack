@@ -138,7 +138,7 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	if !st.Open || !st.Focused {
 		t.Errorf("the dialog: %+v; want open with its Keep editing button focused", st)
 	}
-	if n := probe(`return String(__scLog.length)`); n != "1" {
+	if n := probe(`return __scLog.length`); n != "1" {
 		t.Fatalf("the send ran %s send checks, want 1", n)
 	}
 	// the page under it is modal: Escape goes to the dialog (cancel, close),
@@ -153,10 +153,10 @@ func haikuSend(t *testing.T, e *svEnv, logKeys bool) {
 	if !closed {
 		t.Fatal("Escape didn't close the dialog")
 	}
-	settled := e.wait(5*time.Second, func() bool { return probe(`return String(!!__scLog[0]?.t1)`) == "true" })
+	settled := e.wait(5*time.Second, func() bool { return probe(`return !!__scLog[0]?.t1`) == "true" })
 	if !settled {
 		t.Error("the send check didn't settle after Escape")
-	} else if r := probe(`return String(__scLog[0].r)`); r != "false" {
+	} else if r := probe(`return __scLog[0].r ?? null`); r != "false" {
 		t.Errorf("the send check settled %s after Escape (Keep editing), want false", r)
 	}
 }
