@@ -16,6 +16,7 @@ package richview
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	"math"
 	"testing"
@@ -25,6 +26,7 @@ import (
 
 	rt "github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // pwSettle lays a fresh View of d out at width w until the components'
@@ -217,6 +219,47 @@ func TestPillEllipsisAfterPicture(t *testing.T) {
 	if kept == 0 || hidden == 0 {
 		t.Errorf("the clamp ended the line with the picture kept at %d widths, hidden at %d: want both", kept, hidden)
 	}
+}
+
+// The "…" a clamp puts over a component pill's box (the picture hidden
+// after "(") is drawn over the box, which the component paints after the
+// static text: Chromium paints the ellipsis after every child of its line.
+func TestPillEllipsisDrawsOverPill(t *testing.T) {
+	slackc.SetStyle("test:pill-clamp-draw", pwPictureRule)
+	t.Cleanup(func() { slackc.RemoveStyle("test:pill-clamp-draw") })
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	const h = 40
+	for w := 140; w <= 340; w++ {
+		full := pwSettle(st, pwDoc(), w)
+		fsl, at := full.d.comps[0].slots[0], pwFrag(&full.d, "@relay")
+		if !fsl.ok || at == nil || int(fsl.top) != full.d.lines[0].top || at.line == 0 {
+			continue
+		}
+		v := pwSettleOpts(st, pwDoc(), Options{MaxLines: 1}, w)
+		bs := pwBoxes(&v.d, st.Palette.MentionBg)
+		ell := pwEll(&v.d)
+		if sl := v.d.comps[0].slots[0]; sl.ok || ell == nil || len(bs) != 1 {
+			continue // the picture kept
+		}
+		ops := new(op.Ops)
+		pwFrame(v, st, w, h, ops)
+		img := pixeltest.Render(t, w, h, ops)
+		pwSave(t, fmt.Sprintf("pill-wrap-richview-clamp-%d", w), img)
+		r := image.Rect(int(ell.x+1.5), bs[0].r.Min.Y, int(ell.x+ell.w), bs[0].r.Max.Y).Intersect(bs[0].r) // clear of "("
+		n := 0
+		for y := r.Min.Y; y < r.Max.Y; y++ {
+			for x := r.Min.X; x < r.Max.X; x++ {
+				if c := img.RGBAAt(x, y); 299*int(c.R)+587*int(c.G)+114*int(c.B) < 120*1000 {
+					n++
+				}
+			}
+		}
+		if n < 3 {
+			t.Errorf("w=%d: %d dark px of the \"…\" in the pill's box %v at %v: drawn under the box", w, n, bs[0].r, r)
+		}
+		return
+	}
+	t.Fatal("no width hid the picture under the clamp")
 }
 
 // A pill that goes on past a line clamp has no end edge on its last line
