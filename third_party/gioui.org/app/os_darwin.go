@@ -70,6 +70,9 @@ type displayLink struct {
 	// running tracks the desired state of the link. running is accessed
 	// with atomic.
 	running uint32
+	// asked is the state the main thread last sent on states (Clack
+	// patch 41); Start and Stop are called on the main thread only.
+	asked bool
 }
 
 // displayLinks maps CFTypeRefs to *displayLinks.
@@ -177,11 +180,25 @@ func (d *displayLink) run(dl C.CFTypeRef) {
 	}
 }
 
+// Start starts the display link. When the last state the main thread
+// sent was a start, there's nothing to send (Clack patch 41): a draw
+// restarts the animation every frame, and the unbuffered send waited
+// each time for the link's goroutine, which needs a P to take it. The
+// goroutine handles the states in the order sent, so after a start with
+// no stop since, the link runs with no stop pending. (Reading running
+// here instead raced: Stop returns once the goroutine has the false, and
+// running drops to 0 only after, so a Start right after a Stop could be
+// skipped and the link stopped for good.)
 func (d *displayLink) Start() {
+	if d.asked {
+		return
+	}
+	d.asked = true
 	d.states <- true
 }
 
 func (d *displayLink) Stop() {
+	d.asked = false
 	d.states <- false
 }
 

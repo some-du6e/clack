@@ -348,7 +348,11 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 	gio_onDraw(self.handle);
 }
 - (void)displayLayer:(CALayer *)layer {
-	layer.contentsScale = self.window.backingScaleFactor;
+	// Clack patch 41: set only when it changes
+	CGFloat scale = self.window.backingScaleFactor;
+	if (layer.contentsScale != scale) {
+		layer.contentsScale = scale;
+	}
 	gio_onDraw(self.handle);
 }
 - (CALayer *)makeBackingLayer {

@@ -43,6 +43,11 @@ package ui
 //	PERF_PLUGIN_RECORDER  n: then n pairs of channel-live passes with the
 //	                      execution-trace flight recorder off and on
 //	                      (flightrec.go; trees that have it)
+//	PERF_PLUGIN_GPU       n: then the channel scrolled n frames with the
+//	                      GPU renderer drawing each (light, then dark),
+//	                      each frame waited for to the end of its
+//	                      rasterization (Mesa llvmpipe rasterizes on the
+//	                      CPU, so what a frame costs the GPU shows as time)
 //
 // Synthetic data only; nothing reaches Slack. It uses nothing newer than
 // the plugin bench, so the perf workflow runs this same file on the
@@ -73,6 +78,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gpu/headless"
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -81,6 +87,7 @@ import (
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // perfProfPrefix is PERF_PLUGIN_PROF while the passes run.
@@ -133,7 +140,30 @@ type perfPass struct {
 	// window written after the pass, as a slow frame writes it
 	TraceMB float64 `json:"trace_mb,omitempty"`
 	TraceMS float64 `json:"trace_ms,omitempty"`
+	// the GPU passes, per frame, where the tree counts them (perfGPUStats):
+	// draw calls, calls into the graphics API and the ones its state
+	// cache left out, and the pixels covered through a path and blitted
+	Draws      float64 `json:"draws,omitempty"`
+	APICalls   float64 `json:"api_calls,omitempty"`
+	APISkipped float64 `json:"api_skipped,omitempty"`
+	Crossings  float64 `json:"crossings,omitempty"`   // calls from Go into C or the system
+	PathsBuilt float64 `json:"paths_built,omitempty"` // paths tessellated and uploaded
+	CoverMpx   float64 `json:"cover_mpx,omitempty"`
+	BlitMpx    float64 `json:"blit_mpx,omitempty"`
 }
+
+// perfGPUFrame is what the GPU renderer did for a frame.
+type perfGPUFrame struct {
+	Draws, APICalls, Skipped, Crossings int64
+	CoverPx, BlitPx                     int64
+	PathsBuilt                          int64
+}
+
+// perfGPUStats reads the last frame's from the GPU window; trees with
+// Gio's frame stats (Clack patch 36) set it in perf_gpustats_test.go. The
+// base tree runs this file without it: there the GPU passes have times
+// only.
+var perfGPUStats func(w *headless.Window) perfGPUFrame
 
 // perfRecorder starts the execution-trace flight recorder (flightrec.go)
 // and returns its stop and a function writing its window (bytes, time).
@@ -402,6 +432,18 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.settle(2 * time.Second)
 	res.Passes = append(res.Passes, e.perfScroll("activity", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
 
+	// the channel again with the GPU drawing every frame, light and dark
+	if n, _ := strconv.Atoi(os.Getenv("PERF_PLUGIN_GPU")); n > 0 {
+		e.openBench()
+		e.settle(time.Second)
+		profPrefix := perfProfPrefix
+		perfProfPrefix = ""
+		for _, dark := range []bool{false, true} {
+			res.Passes = append(res.Passes, e.perfGPUScroll(dark, n))
+		}
+		perfProfPrefix = profPrefix
+	}
+
 	// what the flight recorder costs: PERF_PLUGIN_RECORDER pairs of the
 	// channel-live pass with it off and on, in turns (off-on, on-off, …),
 	// without the CPU profiler (the tracer records its samples too)
@@ -469,6 +511,9 @@ func TestPerfPluginScroll(t *testing.T) {
 	for _, p := range res.Passes {
 		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees changed %d (identical %d), renders %d",
 			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.TreesSame, p.Renders)
+		if p.Draws > 0 {
+			t.Logf("pass %-12s per frame: %.0f draw calls, %.0f API calls (%.0f left out, %.0f crossings), %.0f paths built, %.2f Mpx covered, %.2f Mpx blitted", p.Name, p.Draws, p.APICalls, p.APISkipped, p.Crossings, p.PathsBuilt, p.CoverMpx, p.BlitMpx)
+		}
 	}
 	for _, p := range res.Passes {
 		if p.Seconds > 0 {
@@ -651,6 +696,94 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	sort.Float64s(ds)
 	p.MedianMS, p.P95MS, p.P99MS, p.MaxMS = ds[len(ds)/2], ds[len(ds)*95/100], ds[len(ds)*99/100], ds[len(ds)-1]
 	p.Allocs, p.AllocKB = math.Round(p.Allocs), math.Round(p.AllocKB)
+	return p
+}
+
+// perfGPUScroll scrolls the channel n frames (half up, half down) with
+// the GPU renderer drawing each, light or dark, and times each frame from
+// the input to the end of its rasterization (a one-pixel read back waits
+// for it): layout, collect, encode and raster, which Mesa's llvmpipe does
+// on the CPU. With perfGPUStats it records the renderer's counts too.
+func (e *benchEnv) perfGPUScroll(dark bool, n int) perfPass {
+	name := "gpu channel, light"
+	if dark {
+		name = "gpu channel, dark"
+	}
+	w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
+	if err != nil {
+		e.t.Logf("%s: no GPU renderer (%v)", name, err)
+		return perfPass{Name: name}
+	}
+	e.gpu = w
+	defer func() {
+		w.Release()
+		e.gpu = nil
+		e.a.setDark(false)
+	}()
+	e.a.setDark(dark)
+	e.settle(1500 * time.Millisecond) // llvmpipe frames are slow; tokens restyle over several
+	runtime.GC()
+	px := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	var ms0, ms1 runtime.MemStats
+	runtime.ReadMemStats(&ms0)
+	c0 := procCPU()
+	var ds []float64
+	var sum perfGPUFrame
+	counted := 0
+	for i := 0; i < n; i++ {
+		dy := float32(-260)
+		if i >= n/2 {
+			dy = 260
+		}
+		e.scroll(e.listPoint(), dy)
+		t0 := time.Now()
+		e.frame()
+		if err := w.Screenshot(px); err != nil {
+			e.t.Fatalf("%s: %v", name, err)
+		}
+		d := time.Since(t0)
+		ds = append(ds, float64(d.Microseconds())/1000)
+		if perfGPUStats != nil {
+			f := perfGPUStats(w)
+			sum.Draws += f.Draws
+			sum.APICalls += f.APICalls
+			sum.Skipped += f.Skipped
+			sum.Crossings += f.Crossings
+			sum.PathsBuilt += f.PathsBuilt
+			sum.CoverPx += f.CoverPx
+			sum.BlitPx += f.BlitPx
+			counted++
+		}
+		if d < 16*time.Millisecond {
+			time.Sleep(16*time.Millisecond - d)
+		}
+	}
+	runtime.ReadMemStats(&ms1)
+	cpu := procCPU() - c0
+	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000,
+		Allocs: math.Round(float64(ms1.Mallocs-ms0.Mallocs) / float64(len(ds))), AllocKB: math.Round(float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / float64(len(ds))),
+		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6}
+	if counted > 0 {
+		k := float64(counted)
+		p.Draws, p.APICalls, p.APISkipped, p.Crossings = math.Round(float64(sum.Draws)/k), math.Round(float64(sum.APICalls)/k), math.Round(float64(sum.Skipped)/k), math.Round(float64(sum.Crossings)/k)
+		p.CoverMpx, p.BlitMpx = float64(sum.CoverPx)/k/1e6, float64(sum.BlitPx)/k/1e6
+		p.PathsBuilt = math.Round(float64(sum.PathsBuilt) / k)
+	}
+	for _, d := range ds {
+		p.TotalMS += d
+		switch {
+		case d > 250:
+			p.Over250++
+			fallthrough
+		case d > 100:
+			p.Over100++
+			fallthrough
+		case d > 50:
+			p.Over50++
+		}
+	}
+	sort.Float64s(ds)
+	p.MedianMS, p.P95MS, p.P99MS, p.MaxMS = ds[len(ds)/2], ds[len(ds)*95/100], ds[len(ds)*99/100], ds[len(ds)-1]
 	return p
 }
 
