@@ -57,6 +57,19 @@ type FrameEvent struct {
 	Frame func(frame *op.Ops)
 	// Source is the interface between the window and widgets.
 	Source input.Source
+	// Asked reports whether the window's own frames asked for this frame
+	// or a later one since the last FrameEvent (Clack patch 35): an
+	// op.InvalidateCmd, input or a focus change a handler took, a key
+	// press kept for Source.KeyPresses, a change of options, a frame that
+	// found nothing to draw into. AskedAt is the earliest such time (the
+	// zero time: at once); a frame at or past it is one they asked for.
+	// Window.Invalidate asks for a frame without asking anything here: a
+	// frame that only Invalidates brought has Asked false (its client
+	// knows why it invalidated, and may show its last frame's ops again).
+	// A frame that shows the last ops again executes op.InvalidateCmd{At:
+	// AskedAt} to keep a later wake-up asked for, as the frame takes it.
+	Asked   bool
+	AskedAt time.Time
 }
 
 // URLEvent is generated for external requests to open a URL. Unlike window specific events,

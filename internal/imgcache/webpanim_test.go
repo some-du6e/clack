@@ -291,7 +291,7 @@ func TestUndecodableIsFinal(t *testing.T) {
 		}
 	}
 	c.mu.Lock()
-	wake := c.wakeAt
+	wake := c.wake.at
 	c.mu.Unlock()
 	if !wake.IsZero() {
 		t.Errorf("a repaint is scheduled at %v for failures that never retry", wake)

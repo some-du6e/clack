@@ -28,7 +28,11 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
 `text/clack_release_test.go`, `io/input/clack_keylog.go`,
 `io/input/clack_keylog_test.go`, `app/clack_keys_darwin_test.go`,
-`app/metal_darwin.go`, `app/clack_wake_darwin_test.go` and
+`app/metal_darwin.go`, `app/clack_wake_darwin_test.go`,
+`app/app.go`, `app/clack_asked_test.go`, `app/clack_asked_x11_test.go`, `op/paint/clack_live.go`,
+`io/input/clack_replay.go`, `io/input/clack_replay_test.go`,
+`op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
+`gpu/headless/clack_live_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -1634,3 +1638,98 @@ ci's linux-gio job. Stock Gio builds of `internal/ui/slackc` (the
 gio-layer-fix job's richview) use `gio_patch34_stock.go`. With no
 answers there, a layer neither records an opener nor sees the focus
 inside it. Not in `UPSTREAM.patch`.
+
+## 35. op/paint, gpu, app, io/input: live images, what a frame was asked for, and frames drawn again
+
+`op/paint/clack_live.go` (new: `LiveImage`, `NewLiveImageOp`),
+`gpu/gpu.go` (`resolveLive`, called by `texHandle`), `app/app.go`
+(`FrameEvent.Asked`, `FrameEvent.AskedAt`), `app/window.go` (`askFrame`,
+the `asked` and `askedAt` fields, `processEvent`'s `frameEvent`),
+`io/input/clack_replay.go` (new: `Source.Replay`) and `io/input/router.go`
+(`Frame`). Additions: nothing upstream behaves differently unless asked.
+
+Gio draws the whole window every frame, and Clack's layout of it takes
+17–23 ms on Karim's Mac with his plugins (2026-11-16). An animated custom
+emoji (`:explodes:`, 13 frames of 30–70 ms) asked for a frame every
+frame of its own, so every one of them cost the whole layout: the
+animation played slowly and the window lagged while it was on screen.
+Chromium repaints only the image's layer. Clack now shows the last frame's
+ops again when an animation is all that asked for the frame
+(`internal/ui` quiet.go), which needs three things from Gio:
+
+- A live image: `NewLiveImageOp(l)` is an `ImageOp` whose pixels are
+  `l.Image()` as it is when the GPU draws the frame, not when the ops
+  were written. Its handle is a `liveHandle`; `texHandle` asks it for the
+  image to draw (`resolveLive`) and keys the texture by that image's own
+  handle, so each of an animation's frames is its own texture, uploaded
+  when shown. The ask happens in `uploadImages`, after `collect` dropped
+  the paints outside the viewport and their clips: only the paints a frame
+  shows ask, once each. The image's size must stay the size the live op
+  was made with (the paint's bounds and texture coordinates come from it).
+  `internal/imgcache` (`SetLiveOps`) hands out its playing animations this
+  way: its `LiveImage` is the frame due at the GPU's ask, which also
+  counts as a draw for the player (it stays on screen, its next frame is
+  asked for).
+- What a frame was asked for: `FrameEvent.Asked` reports whether the
+  window's own frames asked for this one or a later one since the last
+  FrameEvent, and `FrameEvent.AskedAt` the earliest such time (the zero
+  time: at once). Every `setNextFrame` but one asks (`askFrame`, recorded
+  in `asked` and `askedAt`): `updateState`'s wake-up from the router
+  (`WakeupTime` after a frame: an `op.InvalidateCmd`, events pending),
+  input or a focus change a handler took, a key press the key log kept
+  (patch 28), `Option`, `ClickFocus`, and a frame that found nothing to
+  draw into (patch 32). The one that doesn't is `callbacks.Invalidate`,
+  where every `Window.Invalidate` comes back to the window from its
+  driver (the macOS and Windows event loops' `Wakeup`, X11's and
+  Wayland's dispatch): it sets `nextFrame` so the driver draws a frame,
+  and asks nothing, so a frame only Invalidates brought has `Asked`
+  false, and a client that knows why it invalidated can show its last
+  frame's ops again. The first version of this patch read `nextFrame`
+  itself, which every Invalidate sets: every frame said the window had
+  asked for it, and no real window ever drew a quiet frame (only the
+  tests that modelled one did). The frame takes the asks with it (they're
+  cleared at every `frameEvent`, as `hasNextFrame` is), so a client that
+  shows its last ops again executes `op.InvalidateCmd{At: AskedAt}` to
+  keep a wake-up that isn't due yet; one that lays out has its widgets
+  ask again. A wake-up's own timer brings its frame through `Invalidate`,
+  and that frame is asked for at its time. A frame that replaces one the
+  client wasn't handed yet (coalesced) keeps what that one was asked for.
+- Frames drawn again: the router builds each handler's event filters
+  from the `Event` calls of the frame's layout, and a frame that shows
+  the last frame's ops again makes none, so its `Frame` swapped in empty
+  filters. The focused editor then lost the focus (`keyQueue.Frame`
+  drops a focus whose tag asked for no focus events) and got it back from
+  Clack's KeepFocus at the next laid-out frame, a blur and a focus for the
+  plugins each time (Taut's patched MessagePaneInput rendered again on
+  every one: textyHasFocus false, true), and an event right after one had
+  no filter to be routed by. The key log (patch 28) stopped too: it logs
+  while a Source reads `KeyPresses` every frame, and a replayed frame
+  reads none, so the press after one was lost (the inspect tool's Konami
+  code couldn't be typed with an animation on screen). `Source.Replay()`
+  says the frame in progress is the last one's ops again: its `Frame`
+  keeps every handler's filters, the key filter and the key log as the
+  last laid-out frame left them.
+
+Tests, on ci's linux-gio job: `op/paint/clack_live_test.go`
+(`TestLiveImageOp`); `gpu/clack_live_test.go` (`TestDrawOpsLiveImage`:
+the renderer's own `uploadImages`/`texHandle` against a device that
+records the pixels each upload sends, the same ops uploading the live
+image's image at each frame, nothing when it's unchanged, and a paint
+outside the viewport never asking); `app/clack_asked_test.go`
+(`TestFrameEventAsked`: `Window.Invalidate` and `callbacks.Invalidate` as
+the drivers deliver them ask nothing, a router wake-up, a handled press
+and an `Option` do, an ask outlives an Invalidate but not its frame);
+`io/input/clack_replay_test.go` (`TestReplayKeepsFilters`,
+`TestReplayKeepsKeyLog`: a replayed frame keeps the focus, routes the
+next press and keeps logging keys; the same frames without Replay lose
+them); and under Xvfb, `app/clack_asked_x11_test.go`
+(`TestFrameEventAskedX11`, `CLACK_X11_ASKED_TESTS`: on a real X11 window
+an Invalidate's frames have `Asked` false, an `op.InvalidateCmd`'s next
+frame, every frame before a later wake-up and that wake-up's own frame are
+asked for, and so is the frame a real press (XTEST, python-xlib) brings)
+and `gpu/headless/clack_live_test.go` (`TestLiveImageFrames`: a real GPU
+context draws the same ops twice and shows each image). The client side
+on App.Run's real window: `internal/ui` `TestRealWindowQuietFrames`
+(linux-idle under Xvfb, macos on Metal, windows-idle on Direct3D).
+flake-check's emoji-anim job runs them all 20 times. Not in
+`UPSTREAM.patch`.

@@ -211,6 +211,15 @@ jobs:
       - name: Gio wakes the client for every Invalidate (vendored gioui.org/app)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestInvalidateWhileHandlingAWakeup' gioui.org/app
+      # Gio patch 35: a live image draws its image as it is when the frame
+      # is drawn (the renderer's uploads; only the paints a frame shows
+      # ask), a FrameEvent says whether the window's own frames asked for
+      # it (an Invalidate asks nothing), and a frame drawn again keeps the
+      # handlers' filters and the key log (ui's quiet frames); the X11
+      # window's and the real GPU's are below, under Xvfb
+      - name: Gio live images and what a frame was asked for (vendored gioui.org/op/paint, gpu, app)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked$|TestReplayKeeps' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
       # Gio patch 22: what each point of a window with a hidden title bar
       # is (the caption buttons, the top band, the caption, the client);
       # the Windows codes on real windows are windows-applog's. Patch 24:
@@ -220,16 +229,21 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption|TestTitlebarDoubleClickAction' gioui.org/app
       # the X11 path on a real X server: python-xlib plays a file manager's
-      # XDND source against a Gio window (enter, positions, drop, leave)
-      - name: XDND file drops on Xvfb (Gio patch 11)
+      # XDND source against a Gio window (enter, positions, drop, leave).
+      # Gio patch 35: on the X11 window, a frame only Window.Invalidate
+      # brought has FrameEvent.Asked false, and an op.InvalidateCmd's, its
+      # later wake-up's and a real (XTEST) press's frames are asked for
+      - name: XDND file drops and what a frame was asked for, on Xvfb (Gio patches 11, 35)
         if: ${{ !cancelled() }}
         env:
           CLACK_X11_DROP_TESTS: "1"
+          CLACK_X11_ASKED_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
           xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop' gioui.org/app
+          xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app
       - name: pixel tests (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -243,6 +257,8 @@ jobs:
           xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestSelectionOverCode|TestComposerSelectionOverCode|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots|TestTextMatchesChrome|TestSideBarEnds|TestNewlineGapShots' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/theme
           # the profile hover card's name / title / pronouns column against Slack's CSS (light + dark)
           xvfb-run -a go test -count=1 -v -run '^TestHoverCardPronounsLikeSlack$' ./internal/ui/popups
+          # Gio patch 35 on a real GPU context: the same ops drawn twice show a live image as it is at each
+          xvfb-run -a go test -count=1 -v -run '^TestLiveImageFrames$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -329,6 +345,19 @@ jobs:
         env:
           CLACK_IDLE_FRAMES: "1"
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
+      # Gio patch 35 and ui's quiet frames on App.Run's real X11 window
+      # (Xvfb, Mesa's llvmpipe): a frame only an animated emoji asked for
+      # draws the last frame's ops again, without a layout; the same on
+      # Metal and Direct3D are the macos and windows-idle jobs'
+      - name: quiet frames on the real window (TestRealWindowQuietFrames, Xvfb)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_REAL_WINDOW_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
+          xvfb-run -a -s "-screen 0 1920x1080x24" go test -count=1 -v -timeout 10m -run '^TestRealWindowQuietFrames$' ./internal/ui
 
   windows:
     runs-on: ubuntu-latest
@@ -960,6 +989,15 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_IDLE_FRAMES: "1"
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
+      # Gio patch 35 and ui's quiet frames on App.Run's real Direct3D
+      # window: a frame only an animated emoji asked for draws the last
+      # frame's ops again, without a layout
+      - name: quiet frames on the real window (TestRealWindowQuietFrames)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_REAL_WINDOW_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run '^TestRealWindowQuietFrames$' ./internal/ui
 
 
   macos:
@@ -1232,8 +1270,10 @@ jobs:
       # with Metal and the AppKit glue, signed in to the fake with realtime
       # on, left alone on each surface and then hidden; each period's
       # frames, who asked for them, its CPU and its CPU profile's top.
-      # Then TestIdleFrames headless, as linux-idle runs it.
-      - name: idle on the real window (TestMacIdleCPU) and idle frames (TestIdleFrames)
+      # Then TestIdleFrames headless, as linux-idle runs it, and the quiet
+      # frames of an animated emoji on the real window
+      # (TestRealWindowQuietFrames, Gio patch 35).
+      - name: idle on the real window (TestMacIdleCPU), idle frames (TestIdleFrames), quiet frames (TestRealWindowQuietFrames)
         if: ${{ !cancelled() }}
         run: |
           set +e
@@ -1247,6 +1287,9 @@ jobs:
             go tool pprof -top -nodecount=30 "$RUNNER_TEMP/ui-idle.test" "$f" 2>&1 | head -42
           done
           CLACK_IDLE_FRAMES=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 25m -test.run '^TestIdleFrames$' || rc=1
+          # Gio patch 35 and ui's quiet frames on Metal: a frame only an
+          # animated emoji asked for draws the last frame's ops again
+          CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
           exit $rc
       - name: build
         if: ${{ !cancelled() }}

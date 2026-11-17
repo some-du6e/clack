@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/app"
 	"gioui.org/f32"
 	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
@@ -248,11 +249,14 @@ func (e *perfEnv) frame() {
 	e.now = time.Now()
 	gtx := e.context()
 	before := a.router.Current()
+	a.beginFullFrame() // as App.Run: the images a quiet frame draws again (quiet.go)
 	a.frame(gtx)
 	if a.router.Current() != before {
 		gtx = e.context()
+		a.beginFullFrame()
 		a.frame(gtx)
 	}
+	a.noteFullFrame(e.size, gtx.Metric, app.Insets{}, false) // what quietFrame shows again
 	e.r.Frame(&e.ops)
 	if e.gpu != nil {
 		if err := e.gpu.Frame(&e.ops); err != nil {

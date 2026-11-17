@@ -52,6 +52,7 @@ func (w *SubWindow) Frame(gtx layout.Context, classes string, fg color.NRGBA) (r
 // huddle window's dark frame): translucent plugin colors composite over
 // bg (srgb.go).
 func (w *SubWindow) FrameBg(gtx layout.Context, classes string, fg, bg color.NRGBA) (restore func()) {
+	subFrames.Add(1)
 	saved, savedSize, savedBg, savedClock, savedPane := stack, windowSize, subBg, curClock, curPane
 	w.c.begin(now(gtx))
 	curClock, curPane = &w.c, ""
@@ -66,6 +67,15 @@ func (w *SubWindow) FrameBg(gtx layout.Context, classes string, fg, bg color.NRG
 		stack, windowSize, subFrame, subBg, curClock, curPane = saved, savedSize, false, savedBg, savedClock, savedPane
 	}
 }
+
+// subFrames counts the frames SubWindows began (SubFrames).
+var subFrames atomic.Uint64
+
+// SubFrames is how many frames secondary windows have begun. A window
+// that shows its last frame's ops again (ui's quiet frames) does so only
+// while it hasn't changed: those ops may call a patched root's View that
+// another window's frame drew anew since.
+func SubFrames() uint64 { return subFrames.Load() }
 
 // SetWake gives the window's frame a way to be asked for from any
 // goroutine (the huddle window's invalidate): an Escape JS passed on to

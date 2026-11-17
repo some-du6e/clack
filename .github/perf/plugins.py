@@ -22,7 +22,8 @@ METRICS = [
     ("p99_ms", "p99 frame", "ms"),
     ("p95_ms", "p95 frame", "ms"),
     ("median_ms", "median frame", "ms"),
-    ("total_ms", "sum of 300 frames", "ms"),
+    ("frames", "frames drawn", ""),
+    ("total_ms", "sum of the frames", "ms"),
     ("cpu_ms", "process CPU", "ms"),
     ("allocs", "allocations / frame", ""),
     ("alloc_kb", "KB allocated / frame", ""),
@@ -33,21 +34,13 @@ METRICS = [
     ("renders", "Go→JS renders", ""),
     ("tasks", "Go→JS tasks", ""),
     ("backlog_ms", "JS backlog after the frames", "ms"),
-]
-
-# the idle pass (perfIdle): the window left alone while background
-# traffic changes nothing on screen
-IDLE_METRICS = [
-    ("fps", "frames a second (caret blinks included)", "x"),
-    ("caret_frames", "of them a caret's blink", ""),
+    ("anim_frames", "animation frames shown (every player's)", ""),
+    ("players", "animations playing at the end", ""),
+    ("quiet_frames", "quiet frames (no layout)", ""),
+    # the idle passes, a second (none in the scroll passes)
+    ("fps", "frames drawn a second", "x"),
     ("tasks_ps", "Go→JS tasks a second", "x"),
     ("renders_ps", "Go→JS renders a second", "x"),
-    ("cpu_ms", "process CPU", "ms"),
-    ("alloc_kb", "KB allocated a second", ""),
-    ("gcs", "collections", ""),
-    ("trees", "plugin trees that changed", ""),
-    ("events", "events injected", ""),
-    ("backlog_ms", "JS backlog at the end", "ms"),
 ]
 
 
@@ -108,7 +101,7 @@ def main():
     sides = {"base": load(d, "base"), "head": load(d, "head")}
     print(f"## Scroll frames under a plugin set like Karim's\n")
     print(f"Before: `{base_label}` ({len(sides['base'])} rounds). After: `{head_label}` ({len(sides['head'])} rounds).")
-    print("Each pass is 300 frames at 60 a second, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU. Allocations and collections are the whole process's.")
+    print("Each scroll pass is 300 frames at 60 a second, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU. The idle passes (idle, emoji) leave the channel alone for 5 s and draw a frame only when something asks for one, as the window does (emoji: an animated custom emoji on screen); emoji-60hz draws one every 16 ms. Allocations and collections are the whole process's, per frame.")
     print("Values are the median over the rounds, the rounds in brackets.\n")
     ref = (sides["head"] or sides["base"] or [{}])[0]
     if ref:
@@ -129,13 +122,12 @@ def main():
     for name in names:
         if ", recorder o" in name:
             continue  # in the recorder's table above
-        idle = any(p.get("idle_s") for runs in sides.values() for r in runs for p in (r.get("passes") or []) if p["name"] == name)
         print(f"### {name}\n")
-        if idle:
-            print("No input: the window left alone while the workspace goes on around the open channel; a frame is drawn whenever the window would (an Invalidate at the next vsync, an InvalidateCmd at its time).\n")
+        if name == "idle-busy":
+            print("No input for 10 s while the workspace goes on around the open channel (messages and updates in channels opened earlier, profile changes of people no row draws, badges, a pref's echo, new emoji); a frame is drawn only when something asks for one, as the window draws them. Slack draws nothing then.\n")
         print("| | before | after | change |")
         print("|---|---|---|---|")
-        for key, label, unit in (IDLE_METRICS if idle else METRICS):
+        for key, label, unit in METRICS:
             cols = []
             meds = []
             for side in ("base", "head"):
@@ -158,12 +150,6 @@ def main():
                 continue  # neither side has it (the base tree's file predates it)
             print(f"| {label} | {cols[0]} | {cols[1]} | {change} |")
         print()
-        if idle:
-            for side in ("base", "head"):
-                for r in sides[side][:1]:
-                    for p in r.get("passes") or []:
-                        if p["name"] == name and p.get("causes"):
-                            print(f"What asked for the frames ({side}, round 1): " + "; ".join(p["causes"][:6]) + "\n")
 
 
 if __name__ == "__main__":

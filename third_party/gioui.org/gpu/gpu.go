@@ -447,7 +447,27 @@ func (g *gpu) Profile() string {
 	return g.profile
 }
 
+// liveImage is a live ImageOp's handle (paint.NewLiveImageOp, Clack patch
+// 35): the image to draw now and its texture's key.
+type liveImage interface {
+	LiveImage() (*image.RGBA, any)
+}
+
+// resolveLive is data drawing a live image's image as it is now: once a
+// paint of it is on screen (collect drops the ones outside the viewport
+// and their clips), so only what the frame shows asks. One with no image
+// now draws the image it was made with.
+func resolveLive(data imageOpData) imageOpData {
+	if l, ok := data.handle.(liveImage); ok {
+		if src, h := l.LiveImage(); src != nil && h != nil {
+			data.src, data.handle = src, h
+		}
+	}
+	return data
+}
+
 func (r *renderer) texHandle(cache *textureCache, data imageOpData) driver.Texture {
+	data = resolveLive(data)
 	key := textureCacheKey{
 		filter: data.filter,
 		handle: data.handle,

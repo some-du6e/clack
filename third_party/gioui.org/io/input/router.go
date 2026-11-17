@@ -55,6 +55,9 @@ type Router struct {
 	transfers []io.ReadCloser
 	// Clack patch 15: per-window values for gestures (Source.Value).
 	values map[any]any
+	// Clack patch 35: the frame in progress is the last one's ops again
+	// (Source.Replay): Frame keeps the handlers' filters
+	replay bool
 	// deferring is set if command execution and event delivery is deferred
 	// to the next frame.
 	deferring bool
@@ -364,7 +367,16 @@ func (q *Router) collapseState(idx int) {
 // handlers from the frame argument. Remaining events are discarded,
 // unless they were deferred by a command.
 func (q *Router) Frame(frame *op.Ops) {
-	q.frameKeyLog() // Clack patch 28
+	// Clack patch 35: a replayed frame (Source.Replay) is the last frame's
+	// ops again, with no layout: nothing asked for events or read the key
+	// log in it, so the handlers keep their filters (below) and the key log
+	// carries on as the last laid-out frame left it (patch 28: it logs
+	// while a Source reads it every frame, and a replayed frame reads none)
+	replay := q.replay
+	q.replay = false
+	if !replay {
+		q.frameKeyLog() // Clack patch 28
+	}
 	var remaining []event.Event
 	if n := len(q.changes); n > 0 {
 		if q.deferring {
@@ -389,14 +401,20 @@ func (q *Router) Frame(frame *op.Ops) {
 	}
 	q.transfers = nil
 	q.deferring = false
+	// Clack patch 35: a replayed frame's handlers asked for nothing (no
+	// layout ran): they keep the filters they asked for in the last frame
 	for _, h := range q.handlers {
-		h.filter, h.nextFilter = h.nextFilter, h.filter
+		if !replay {
+			h.filter, h.nextFilter = h.nextFilter, h.filter
+		}
 		h.nextFilter.Reset()
 		h.processedFilter.Reset()
 		h.pointer.Reset()
 		h.key.Reset()
 	}
-	q.key.filter, q.key.nextFilter = q.key.nextFilter, q.key.filter
+	if !replay {
+		q.key.filter, q.key.nextFilter = q.key.nextFilter, q.key.filter
+	}
 	clear(q.key.nextFilter) // Clack patch 18
 	q.key.nextFilter = q.key.nextFilter[:0]
 	var ops *ops.Ops
