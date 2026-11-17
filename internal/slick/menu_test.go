@@ -337,7 +337,7 @@ func TestSettingsPanel(t *testing.T) {
     const word = this.config.word;
     this.api.settings.panel(() => React.createElement("div", { className: "panel-slick" }, word + " your actions"));
   }`))
-	if h.plugin("PanelSlick").Panel != 0 {
+	if panelOf(h.plugin("PanelSlick")) != 0 {
 		t.Fatal("a panel before the plugin ran")
 	}
 	if err := h.s.SetEnabled(h.ctx(), "PanelSlick", true); err != nil {
@@ -345,7 +345,7 @@ func TestSettingsPanel(t *testing.T) {
 	}
 	var first int
 	eventually(t, 5*time.Second, "the plugin's panel in its info", func() bool {
-		first = h.plugin("PanelSlick").Panel
+		first = panelOf(h.plugin("PanelSlick"))
 		return first != 0
 	})
 	if text := h.panelText(7, "PanelSlick"); text != "Pick your actions" {
@@ -356,7 +356,7 @@ func TestSettingsPanel(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, 5*time.Second, "the new panel", func() bool {
-		p := h.plugin("PanelSlick").Panel
+		p := panelOf(h.plugin("PanelSlick"))
 		return p != 0 && p != first
 	})
 	if text := h.panelText(8, "PanelSlick"); text != "Sort your actions" {
@@ -365,7 +365,7 @@ func TestSettingsPanel(t *testing.T) {
 	if err := h.s.SetEnabled(h.ctx(), "PanelSlick", false); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, 5*time.Second, "no panel after stop", func() bool { return h.plugin("PanelSlick").Panel == 0 })
+	eventually(t, 5*time.Second, "no panel after stop", func() bool { return panelOf(h.plugin("PanelSlick")) == 0 })
 	if left := h.state().Panels; len(left) != 0 {
 		t.Errorf("panels left: %v", left)
 	}
@@ -377,7 +377,7 @@ func (h *harness) panelText(root uint64, id string) string {
 	h.ui.mu.Lock()
 	delete(h.ui.trees, root)
 	h.ui.mu.Unlock()
-	h.s.RenderPanel(root, id)
+	renderPanel(h.s, root, id)
 	var tree []byte
 	eventually(h.t, 5*time.Second, "the panel's tree", func() bool {
 		h.ui.mu.Lock()

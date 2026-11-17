@@ -83,7 +83,7 @@ func maIDs(items []MenuItem) string {
 			ks = append(ks, "|")
 			continue
 		}
-		ks = append(ks, maID(&items[i]))
+		ks = append(ks, maRowID(&items[i]))
 	}
 	return strings.Join(ks, " ")
 }
@@ -93,7 +93,7 @@ func maIDs(items []MenuItem) string {
 func maApplied(t *testing.T, m *Menu, what string) {
 	t.Helper()
 	f := slFrame(m)
-	slUntil(t, 10*time.Second, what, f, func() bool { return m.ma.from != nil })
+	slUntil(t, 10*time.Second, what, f, func() bool { return maFrom(m) })
 	for k := 0; k < 5; k++ {
 		f()
 		Pump()
@@ -114,7 +114,7 @@ func TestMessageMenuAddedActions(t *testing.T) {
 		t.Fatalf("rows %s", maKeys(m.items))
 	}
 	one, two := m.items[i], m.items[i+1]
-	if one.Label != "Act one" || one.Class != "p-message_actions_menu__acts_one" || two.Icon != "threads" {
+	if one.Label != "Act one" || maClass(&one) != "p-message_actions_menu__acts_one" || two.Icon != "threads" {
 		t.Errorf("added rows %+v %+v", one, two)
 	}
 	for _, k := range []string{"mark_unread", "copy_link", "organize"} {
@@ -151,7 +151,7 @@ func TestMessageMenuAddedActions(t *testing.T) {
 		t.Errorf("context menu rows %s", maKeys(cm.items))
 	}
 	// and a search result's More actions
-	sm := newSearchResultMenu(e.h, maMsg, image.Rect(900, 200, 900, 200), nil)
+	sm := maSearchMenu(e.h, maMsg, image.Rect(900, 200, 900, 200))
 	maWait(t, sm, "acts_one", true, "Act one in a search result's More actions")
 
 	// a provider giving nothing adds nothing
@@ -161,8 +161,8 @@ func TestMessageMenuAddedActions(t *testing.T) {
 	if slIndex(om.items, "acts_one") >= 0 || om.items[len(om.items)-1].Separator {
 		t.Errorf("rows for a message without actions: %s", maKeys(om.items))
 	}
-	if maIDs(om.items) != maIDs(om.ma.native) {
-		t.Errorf("rows %s, natively %s", maIDs(om.items), maIDs(om.ma.native))
+	if maIDs(om.items) != maIDs(maNative(om)) {
+		t.Errorf("rows %s, natively %s", maIDs(om.items), maIDs(maNative(om)))
 	}
 
 	// stopping the plugin takes its actions away (Slick's MAMenu patch stays)
@@ -247,7 +247,7 @@ func TestMessageMenuReorganized(t *testing.T) {
 	maApplied(t, m, "the reorganised menu")
 	got := maIDs(m.items)
 	if !strings.HasPrefix(got, "copy_link copy_text | organize_actions_menu subscribe connect_to_apps_actions_menu") {
-		t.Fatalf("rows %s (natively %s)", got, maIDs(m.ma.native))
+		t.Fatalf("rows %s (natively %s)", got, maIDs(maNative(m)))
 	}
 	if strings.Contains(got, "mark_unread") || strings.Contains(got, "remind") || strings.Contains(got, "later") {
 		t.Errorf("moved or hidden rows still at the top level: %s", got)
@@ -259,7 +259,7 @@ func TestMessageMenuReorganized(t *testing.T) {
 	if mu := org.Sub[1]; mu.Label != "Mark unread" || (mu.Do == nil && mu.DoCtx == nil) {
 		t.Errorf("Mark unread in Organize: %+v", mu)
 	}
-	if c := m.items[1]; c.Label != "Copy" || !strings.Contains(c.Class, "tile-big") || !strings.Contains(c.Class, "p-message_actions_menu__copy_text") {
+	if c := m.items[1]; c.Label != "Copy" || !strings.Contains(maClass(&c), "tile-big") || !strings.Contains(maClass(&c), "p-message_actions_menu__copy_text") {
 		t.Errorf("renamed row %+v", c)
 	}
 	// the two big rows side by side, half the card each, icon over label

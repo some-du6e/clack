@@ -549,7 +549,7 @@ func TestSlickViewBetterMessageMenuPanel(t *testing.T) {
 	e.until(5*time.Second, "no panel after stop", func() bool {
 		for _, pl := range e.s.Settings().Plugins {
 			if pl.ID == "BetterMessageMenu" {
-				return pl.Panel == 0
+				return svPanelOf(pl) == 0
 			}
 		}
 		return false

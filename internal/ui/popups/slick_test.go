@@ -659,13 +659,13 @@ func TestSlickViewMessageLogger(t *testing.T) {
 	slUntil(t, 15*time.Second, "a menu without Accept deletion", nil, func() bool {
 		again = NewMessageMenu(e.h, image.Pt(900, 200), msg)
 		f := slFrame(again)
-		for k := 0; k < 30 && again.ma.from == nil; k++ {
+		for k := 0; k < 30 && !maFrom(again); k++ {
 			f()
 			Pump()
 			slackc.Pump()
 			time.Sleep(10 * time.Millisecond)
 		}
-		return again.ma.from != nil && slIndex(again.items, "slick_ml_accept_delete") < 0
+		return maFrom(again) && slIndex(again.items, "slick_ml_accept_delete") < 0
 	})
 	if slIndex(again.items, "mark_unread") < 0 {
 		t.Errorf("native rows gone: %s", maKeys(again.items))
@@ -1001,9 +1001,9 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 	// as big buttons, two to a row
 	m := open("the reorganised menu")
 	if got := maIDs(m.items); got != "copy_link copy_text | remind subscribe organize_actions_menu connect_to_apps_actions_menu" {
-		t.Fatalf("rows %s (natively %s)", got, maIDs(m.ma.native))
+		t.Fatalf("rows %s (natively %s)", got, maIDs(maNative(m)))
 	}
-	if c := m.items[1]; c.Label != "Copy" || !strings.Contains(c.Class, "slick-bmm-bigaction-n2") {
+	if c := m.items[1]; c.Label != "Copy" || !strings.Contains(maClass(&c), "slick-bmm-bigaction-n2") {
 		t.Errorf("big Copy row %+v", c)
 	}
 	org := m.items[slIndex(m.items, "organize")]
@@ -1040,11 +1040,11 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 	// its editor, on its page: moving Get notified down puts it after
 	// Copy link in the menu
 	info := slPlugin(t, e, "BetterMessageMenu")
-	if info.Panel == 0 {
+	if slPanelOf(info) == 0 {
 		t.Fatal("no settings panel")
 	}
 	const root = uint64(1) << 40
-	e.s.RenderPanel(root, "BetterMessageMenu")
+	slRenderPanel(e.s, root, "BetterMessageMenu")
 	var nodes []*slackc.Node
 	slUntil(t, 10*time.Second, "the editor", nil, func() bool {
 		e.rec.mu.Lock()
@@ -1064,7 +1064,7 @@ func TestSlickViewBetterMessageMenu(t *testing.T) {
 	slUntil(t, 10*time.Second, "the menu following the editor", nil, func() bool {
 		m := NewMessageMenu(e.h, image.Pt(900, 200), msg)
 		f := slFrame(m)
-		for k := 0; k < 30 && m.ma.from == nil; k++ {
+		for k := 0; k < 30 && !maFrom(m); k++ {
 			f()
 			Pump()
 			slackc.Pump()
