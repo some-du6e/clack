@@ -241,22 +241,37 @@ function elements() {
 // ---- menu (src/app/api/menu.tsx) ----
 // api.menu.addMessageActions(provider): Slick patches Slack's MAMenu, the
 // message actions menu's renderer (boot-shared 2rcC, which Clack's More
-// actions and message context menus draw as a boundary), once, when the
-// menu integration first loads for a plugin that declares it. Each render
-// asks every provider with MAMenu's props ({channelId, ts, threadTs, …});
-// their actions (a later provider's id replaces an earlier one's, data-qa
+// actions and message context menus draw as a boundary, and their Organize
+// and Connect to apps submenus as their own). Each render asks every
+// provider with MAMenu's props ({channelId, ts, threadTs, …}); their
+// actions (a later provider's id replaces an earlier one's, data-qa
 // defaults to the id) go in one group of their own after the menu's on the
 // root menu (autoClogProps.uiComponentName 'message_actions_menu'), unless
 // an outer patch placed them itself and says so with
 // slickMessageActionsHandled (BetterMessageMenu). Selecting one runs its
 // onSelect and closes the menu (onTriggerClose); other selections go on to
 // Slack's onSelectAction.
+//
+// Slick installs the patch when the menu integration first loads (its
+// menuReady) and keeps it. Clack installs it with the first provider and
+// removes it with the last: with no provider it changes nothing but drop
+// slickMessageActionsHandled, which Clack's MAMenu ignores, so leaving it
+// out keeps every message menu native (drawn in its first frame, no JS)
+// while nothing can change it. It goes in innermost, as in Slick, where it
+// loads before the plugin whose menu API asks for it starts: every
+// plugin's MAMenu patch wraps it (BetterMessageMenu's places the actions
+// and passes slickMessageActionsHandled to it).
 const messageActions = new Set()
+let uninstallMessageMenu = null
 
 function addMessageActions(provider) {
   messageActions.add(provider)
+  if (!uninstallMessageMenu) uninstallMessageMenu = installMessageMenu()
   return () => {
-    messageActions.delete(provider)
+    if (!messageActions.delete(provider) || messageActions.size || !uninstallMessageMenu) return
+    const off = uninstallMessageMenu
+    uninstallMessageMenu = null
+    off()
   }
 }
 
@@ -272,12 +287,9 @@ function getMessageActions(context) {
   return [...actions.values()]
 }
 
-let messageMenuPatched = false
-/** Slick's menuReady: the MAMenu patch, installed once and never removed */
+/** Slick's menuReady patch on MAMenu; returns its disposer */
 function installMessageMenu() {
-  if (messageMenuPatched) return
-  messageMenuPatched = true
-  T.patchComponent('MAMenu', (Original) => (props) => {
+  return T.patchComponentInner('MAMenu', (Original) => (props) => {
     TA.redux.usePatchVersion()
     const { slickMessageActionsHandled, ...nativeProps } = props
     const custom = getMessageActions(props)
@@ -447,7 +459,7 @@ async function bridgeFetch(url, init) {
 // Slick's redux.ts: a thunk Slack never defines rejects after THUNK_WAIT_MS instead of waiting forever
 S.thunkWaitMs = 30_000
 const waitForThunkCreator = (name) =>
-  T.waitForThunkWithin(name, S.thunkWaitMs, `[slick] timed out waiting for Slack thunk: ${name}`)
+  T.waitForThunkWithin(name, S.thunkWaitMs, `[slick] timed out waiting for Slack thunk: ${name}`, `[slick] Clack has no Slack thunk ${name}`)
 async function dispatchThunk(name, ...args) {
   const creator = await waitForThunkCreator(name)
   return T.dispatch(creator(...args))
@@ -458,10 +470,10 @@ function createScopedAPI(entry, id, scope) {
     (fn) =>
     (...args) =>
       scope.track(fn(...args))
-  const allowed = new Set(entry.Class.requiredAPIs ?? PLUGIN_APIS)
   // Slick loads only the integrations a plugin declares, before its
-  // constructor; loading the menu one patches MAMenu (menuReady)
-  if (allowed.has('menu')) installMessageMenu()
+  // constructor (loading the menu one patches MAMenu: Clack waits for a
+  // provider, addMessageActions)
+  const allowed = new Set(entry.Class.requiredAPIs ?? PLUGIN_APIS)
   const storage = new ScopedStorage(blobStore(`plugin:${id}`))
   const fileBlob = blobStore(`plugin:${id}`)
   const integrations = {

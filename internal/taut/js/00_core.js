@@ -379,6 +379,9 @@ function decode(v) {
  * prevented}}, instead of its result (eventAnswer).
  */
 let decodedEvents = null
+const hide = (o, methods) => {
+  for (const [k, value] of Object.entries(methods)) Object.defineProperty(o, k, { value, writable: true, configurable: true, enumerable: false })
+}
 function syntheticEvent(fields) {
   const e = decode(fields)
   let stopped = false
@@ -390,7 +393,11 @@ function syntheticEvent(fields) {
     prevented = true
     e.defaultPrevented = true
   }
-  Object.assign(e, {
+  // non-enumerable, as on React's SyntheticEvent prototype: an event a
+  // handler passes on to Go (Slick's onSelectAction hands its own to the
+  // menu's) encodes as its fields, not five new function refs each time
+  // (encode walks with for…in, and nothing releases those)
+  hide(e, {
     stopPropagation: stop,
     preventDefault: prevent,
     isPropagationStopped: () => stopped,
@@ -398,7 +405,7 @@ function syntheticEvent(fields) {
     persist() {},
   })
   if (e.nativeEvent && typeof e.nativeEvent === 'object') {
-    Object.assign(e.nativeEvent, { stopPropagation: stop, stopImmediatePropagation: stop, preventDefault: prevent })
+    hide(e.nativeEvent, { stopPropagation: stop, stopImmediatePropagation: stop, preventDefault: prevent })
   }
   ;(decodedEvents ??= []).push(() => ({ stopped, prevented }))
   return e

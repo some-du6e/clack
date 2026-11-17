@@ -151,6 +151,12 @@ func (t *Taut) RegisterThunk(name string, fn NativeFunc) {
 	t.thunks.mu.Lock()
 	t.thunks.natives[name] = fn
 	t.thunks.mu.Unlock()
+	// a runtime that started first defined its creators already (T.init):
+	// define this one now, so its waiters resolve and a dispatch finds it
+	// (JS rejects a thunk it doesn't know at once)
+	if r := t.liveRuntime(); r != nil {
+		r.post("nativeThunk", name)
+	}
 }
 
 func (tt *thunkTable) native(name string) NativeFunc {

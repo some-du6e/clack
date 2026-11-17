@@ -143,7 +143,7 @@ func TestMessageActions(t *testing.T) {
 	h := newHarness(t)
 	mustImport(t, h, actsPlugin)
 	if h.patched("MAMenu") {
-		t.Fatal("MAMenu patched before a plugin declaring the menu API started")
+		t.Fatal("MAMenu patched before a plugin added a message action provider")
 	}
 	if err := h.s.SetEnabled(h.ctx(), "ActsSlick", true); err != nil {
 		t.Fatal(err)
@@ -154,8 +154,8 @@ func TestMessageActions(t *testing.T) {
 	if keys := h.jsString(`return globalThis.__actsMenuKeys.join(",")`); keys != "Menu,addMessageActions,getMessageActions" {
 		t.Errorf("api.menu has %s", keys)
 	}
-	if !h.patched("MAMenu") {
-		t.Fatal("Slick's MAMenu patch isn't installed")
+	if !h.patched("MAMenu") || !h.state().MessageMenu {
+		t.Fatal("Slick's MAMenu patch isn't installed with the providers")
 	}
 	if n := h.state().MessageActions; n != 3 {
 		t.Errorf("%d providers registered, want 3", n)
@@ -227,7 +227,8 @@ func TestMessageActions(t *testing.T) {
 		t.Error("onSelectAction replaced for a message without actions")
 	}
 
-	// stopping the plugin removes its providers; Slick's patch stays
+	// stopping the plugin removes its providers, and with the last one
+	// Slick's patch: message menus are Clack's own again
 	if err := h.s.SetEnabled(h.ctx(), "ActsSlick", false); err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +238,8 @@ func TestMessageActions(t *testing.T) {
 	if ids := actionIDs(h.maRendered(5, maProps("1700000002.000200", true))); len(ids) != 2 {
 		t.Errorf("actions after stop: %v", ids)
 	}
-	if !h.patched("MAMenu") {
-		t.Error("Slick's MAMenu patch went with the plugin")
+	if h.patched("MAMenu") || h.state().MessageMenu {
+		t.Error("Slick's MAMenu patch outlived its last provider")
 	}
 }
 
@@ -270,22 +271,39 @@ func TestMessageActionsNeedTheMenuAPI(t *testing.T) {
 	if h.patched("MAMenu") {
 		t.Error("MAMenu patched by a plugin that only touched api.menu")
 	}
-	// declaring it is enough: Slick's plugin manager loads every declared
-	// API as the plugin starts (createAPILoader), and the menu API's
-	// menuReady installs Slick's MAMenu patch, which a plugin reaches
-	// through api.menu.getMessageActions
+	// declaring it gives the plugin the menu API (getMessageActions,
+	// addMessageActions); Slick's MAMenu patch comes with the first
+	// provider and goes with the last (in Slick it loads with the API and
+	// stays: with no provider it changes nothing but drop
+	// slickMessageActionsHandled, so message menus stay Clack's own)
 	mustImport(t, h, pluginSource("MenuOnlySlick", `["menu"]`, `
-  start() { globalThis.__menuOnly = typeof this.api.menu.getMessageActions; }`))
+  start() {
+    globalThis.__menuOnly = typeof this.api.menu.getMessageActions + " " + typeof this.api.menu.addMessageActions;
+    globalThis.__menuOnlyAPI = this.api.menu;
+  }`))
 	if err := h.s.SetEnabled(h.ctx(), "MenuOnlySlick", true); err != nil {
 		t.Fatal(err)
 	}
 	if info := h.plugin("MenuOnlySlick"); !info.Running {
 		t.Fatalf("MenuOnlySlick didn't start: %q", info.StartError)
 	}
-	eventually(t, 3*time.Second, "Slick's MAMenu patch", func() bool { return h.patched("MAMenu") && h.state().MessageMenu })
-	if got := h.jsString(`return globalThis.__menuOnly`); got != "function" {
-		t.Errorf("api.menu.getMessageActions is %s", got)
+	if got := h.jsString(`return globalThis.__menuOnly`); got != "function function" {
+		t.Errorf("api.menu: %s", got)
 	}
+	if h.patched("MAMenu") || h.state().MessageMenu {
+		t.Error("MAMenu patched with no message action provider")
+	}
+	h.jsString(`globalThis.__menuOnlyOff = globalThis.__menuOnlyAPI.addMessageActions(() => []); return ""`)
+	eventually(t, 3*time.Second, "Slick's MAMenu patch with a provider", func() bool { return h.patched("MAMenu") && h.state().MessageMenu })
+	h.jsString(`globalThis.__menuOnlyOff(); return ""`)
+	eventually(t, 3*time.Second, "Slick's MAMenu patch gone with the last provider", func() bool { return !h.patched("MAMenu") && !h.state().MessageMenu })
+	// a stop takes a provider the plugin forgot to remove, and the patch
+	h.jsString(`globalThis.__menuOnlyAPI.addMessageActions(() => []); return ""`)
+	eventually(t, 3*time.Second, "the patch with a provider again", func() bool { return h.patched("MAMenu") })
+	if err := h.s.SetEnabled(h.ctx(), "MenuOnlySlick", false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 3*time.Second, "the patch gone with the plugin", func() bool { return !h.patched("MAMenu") && !h.state().MessageMenu })
 }
 
 // BetterMessageMenu's way: an outer MAMenu patch reads the providers'
@@ -388,6 +406,9 @@ func TestSettingsPanel(t *testing.T) {
       return React.createElement("div", { className: "panel-slick" }, plugin.config.word + " your actions");
     }
     this.api.settings.panel(() => React.createElement(Panel));
+  }
+  onSettingsChange() {
+    if (this.config.word === "Swap") this.api.settings.panel(() => React.createElement("div", null, "a second panel"));
   }`))
 	if panelOf(h.plugin("PanelSlick")) {
 		t.Fatal("a panel before the plugin ran")
@@ -408,6 +429,13 @@ func TestSettingsPanel(t *testing.T) {
 	if n := h.jsString(`return String(globalThis.__panelMounts)`); n != "1" {
 		t.Errorf("the panel mounted %s times, want once", n)
 	}
+	// a second settings.panel call (from onSettingsChange): the same root
+	// shows the new panel, as Slick's PluginDetail calls the plugin's
+	// current panels[id]() as it renders
+	if err := h.s.SetOption(h.ctx(), "PanelSlick", "word", "Swap"); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 5*time.Second, "the plugin's second panel", func() bool { return h.rootText(root) == "a second panel" })
 	if err := h.s.SetEnabled(h.ctx(), "PanelSlick", false); err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +447,7 @@ func TestSettingsPanel(t *testing.T) {
 	if err := h.s.SetEnabled(h.ctx(), "PanelSlick", true); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, 5*time.Second, "the panel after a restart", func() bool { return h.rootText(root) == "Sort your actions" })
+	eventually(t, 5*time.Second, "the panel after a restart", func() bool { return h.rootText(root) == "Swap your actions" })
 }
 
 // rootText is the text of the tree last delivered for root ("" before).

@@ -226,8 +226,9 @@ const KNOWN_COMPONENTS = ('MessageBackground;MessageWrapper;MessageListItem;Sear
   'MemberSlug;Menu;Message;MessageActionsMenu;MessageAttachmentYouTube;MessageFile;MessageFiles;MessageKitAttachments;MessageText;' +
   'MultiFileUploadItem;PeopleGrid;Presence;ProfileHoverCard;ProgressiveDisclosureSuccessCoachmarkWrapper;ReplyBarAvatar;SearchAutocomplete;' +
   'SearchInputBox;SendButton;TextyAutocomplete;ThreadReplies;ThreadReplyGeneric;MessageAvatar;MessageKitGutter;' +
-  // Slick's api.menu.addMessageActions (since #473) and BetterMessageMenu
-  'MAMenu').split(';')
+  // Slick's api.menu.addMessageActions (since #473) and BetterMessageMenu;
+  // the message actions submenus, each with a MAMenu of its own
+  'MAMenu;OrganizeMessageActionsSubmenu;ConnectToAppsMessageActionsSubmenu').split(';')
 
 const rawNatives = new Map() // name → the unpatched native component
 const wrappers = new Map() // name → the patch-following component plugins get
@@ -466,7 +467,23 @@ const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x))
 
 const patchTargetNames = new Set()
 
+/**
+ * patchComponent's patch placed innermost, next to the component itself,
+ * whenever it comes and goes: a runtime's own patch that plugins' patches
+ * wrap (Slick's MAMenu patch, which Slick loads before the plugin whose
+ * menu API asks for it starts, so every plugin's MAMenu patch sits outside
+ * it; Clack installs it only while it has a message action to add).
+ */
+function patchComponentInner(matcher, replacement) {
+  return addPatch(matcher, replacement, true)
+}
+
+/** a plugin's patch: outside the ones before it */
 function patchComponent(matcher, replacement) {
+  return addPatch(matcher, replacement, false)
+}
+
+function addPatch(matcher, replacement, inner) {
   const displayName = typeof matcher === 'string' ? matcher : matcher?.displayName
   const filter = typeof matcher === 'string' ? undefined : matcher?.filter
   const component = typeof matcher === 'string' ? undefined : matcher?.component
@@ -483,7 +500,15 @@ function patchComponent(matcher, replacement) {
   }
   // a filter-only spec matches any component its filter accepts, so offer it every one Clack draws
   if (filter) for (const n of KNOWN_COMPONENTS) nativeFor(n)
-  replacements.set(fn, replacement)
+  if (inner && replacements.size) {
+    // compose() applies patches in insertion order, the first innermost
+    const rest = [...replacements]
+    replacements.clear()
+    replacements.set(fn, replacement)
+    for (const [m, r] of rest) replacements.set(m, r)
+  } else {
+    replacements.set(fn, replacement)
+  }
   applyPatches()
   return () => {
     replacements.delete(fn)
@@ -840,4 +865,4 @@ T.preferencesTabElement = (id) => {
 }
 const preferences = { addTab }
 
-Object.assign(T, { patchComponent, slackComponent, nativeFor, feedNative, getComponent, waitForComponent, getRenderedComponent, waitForRenderedComponent, getComponentSource, componentName, lazyComponent, elementsApi, modalApi, menuApi, dialogHelpersFor, openOverlay })
+Object.assign(T, { patchComponent, patchComponentInner, slackComponent, nativeFor, feedNative, getComponent, waitForComponent, getRenderedComponent, waitForRenderedComponent, getComponentSource, componentName, lazyComponent, elementsApi, modalApi, menuApi, dialogHelpersFor, openOverlay })

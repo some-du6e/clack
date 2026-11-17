@@ -486,8 +486,8 @@ type state struct {
 	Switches         []string       `json:"switches"`
 	MessageActions   int            `json:"messageActions"`
 	Panels           []string       `json:"panels"`
-	// MessageMenu: Slick's own MAMenu patch is installed (api.menu's
-	// menuReady, once, for the first plugin declaring the menu API)
+	// MessageMenu: Slick's own MAMenu patch is installed (with the first
+	// message action provider, until the last goes)
 	MessageMenu bool `json:"messageMenu"`
 }
 
@@ -505,9 +505,9 @@ func (st state) registrations() []string {
 			out = append(out, kind+":"+x)
 		}
 	}
-	// one entry per patch, less Slick's own MAMenu patch (installed once,
-	// for the first plugin declaring the menu API, and kept): a plugin's
-	// own MAMenu patch left behind after a stop still counts
+	// one entry per patch, less Slick's own MAMenu patch while it's
+	// installed (with the providers): a plugin's own MAMenu patch left
+	// behind after a stop still counts
 	names := make([]string, 0, len(st.ComponentPatches))
 	for name := range st.ComponentPatches {
 		names = append(names, name)

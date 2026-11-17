@@ -117,7 +117,7 @@ type Slick struct {
 	queues  map[string]*sync.Mutex
 	rt      *jsrt.Runtime   // the runtime the prelude is in (nil until a plugin needs JS)
 	panels  map[string]bool // api.settings.panel: the plugins with a panel (slick_panels)
-	route   [2]string       // team, channel the UI shows
+	route   [3]string       // team, channel, thread the UI shows
 	dark    atomic.Bool
 	styled  string // the theme CSS last handed to the UI
 
@@ -267,11 +267,11 @@ func (s *Slick) js() (*jsrt.Runtime, error) {
 		for _, p := range s.plugins {
 			p.inJS, p.mainInJS = false, false
 		}
-		team, ch := s.route[0], s.route[1]
+		team, ch, th := s.route[0], s.route[1], s.route[2]
 		s.mu.Unlock()
 		s.setPage(rt)
 		if team != "" {
-			s.post(rt, "setRoute", team, ch)
+			s.post(rt, "setRoute", team, ch, th)
 		}
 		return rt, nil
 	}
@@ -365,19 +365,21 @@ func (s *Slick) post(rt *jsrt.Runtime, fn string, args ...any) {
 	}()
 }
 
-// SetRoute tells plugins which workspace and conversation the window shows
-// (location.pathname /client/<team>/<channel>: channels.getCurrentChannelId,
-// the active team). Cheap when no plugin runs.
-func (s *Slick) SetRoute(team, channel string) {
+// SetRoute tells plugins which workspace, conversation and thread the
+// window shows (location.pathname /client/<team>/<channel>:
+// channels.getCurrentChannelId, the active team; Slack's view state for
+// the thread: Taut's setView). Cheap when no plugin runs.
+func (s *Slick) SetRoute(team, channel, thread string) {
 	s.mu.Lock()
-	changed := s.route != [2]string{team, channel}
-	s.route = [2]string{team, channel}
+	moved := s.route[0] != team || s.route[1] != channel
+	changed := s.route != [3]string{team, channel, thread}
+	s.route = [3]string{team, channel, thread}
 	rt := s.rt
 	s.mu.Unlock()
 	if changed && rt != nil {
-		s.post(rt, "setRoute", team, channel)
+		s.post(rt, "setRoute", team, channel, thread)
 	}
-	if changed {
+	if moved {
 		go s.reconcileAll(context.Background()) // workspace restrictions
 	}
 }

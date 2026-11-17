@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // Bridge.CallTruthy answers the way Slack's MAMenu reads onSelectAction's
@@ -75,5 +77,41 @@ func TestCallTruthy(t *testing.T) {
 	h.jsInto(`T.releaseFns([`+strconv.FormatInt(int64(ids["no"]), 10)+`]); return null`, &none)
 	if _, _, err := call("no", "[]"); !errors.Is(err, ErrFnGone) {
 		t.Errorf("a released function: err %v, want ErrFnGone", err)
+	}
+
+	// a closed runtime: no handler can answer
+	_ = h.tt.Close()
+	if _, _, err := call("yes", "[]"); !errors.Is(err, jsrt.ErrClosed) {
+		t.Errorf("a closed runtime: err %v, want jsrt.ErrClosed", err)
+	}
+}
+
+// A handler the runtime interrupts (it ran past its task timeout) took
+// the pick, as one that threw: Slack's own handler doesn't run after it.
+// The runtime goes on.
+func TestCallTruthyInterrupted(t *testing.T) {
+	h := newHarness(t)
+	h.tt.opts.TaskTimeout = 300 * time.Millisecond // before the runtime starts
+	var ids []float64
+	h.jsInto(`return [T.encode(() => { for (;;) {} }).$fn, T.encode(() => 0).$fn]`, &ids)
+	call := func(id float64) (truthy, threw bool, err error) {
+		t.Helper()
+		done := make(chan struct{})
+		h.tt.Bridge().CallTruthy(int64(id), []byte("[]"), func(tr, th bool, e error) {
+			truthy, threw, err = tr, th, e
+			close(done)
+		})
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Fatal("no answer")
+		}
+		return truthy, threw, err
+	}
+	if tr, th, err := call(ids[0]); err != nil || tr || !th {
+		t.Errorf("an interrupted handler: truthy %v threw %v err %v, want a throw", tr, th, err)
+	}
+	if tr, th, err := call(ids[1]); err != nil || tr || th {
+		t.Errorf("a handler after it: truthy %v threw %v err %v", tr, th, err)
 	}
 }

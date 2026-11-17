@@ -758,6 +758,7 @@ S.startMain = async (id, settings) => {
   } catch (err) {
     for (const [scheme] of main.protocols) protocols.delete(scheme)
     dropMainHooks(id) // what it registered before it threw (SelfCare's notification filter)
+    main.settingsListeners.clear() // its next ready adds its own again
     syncFetchHook()
     console.error(`[slick] ${id} ready failed:`, err)
     return errorText(err)
