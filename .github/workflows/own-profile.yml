@@ -4,7 +4,8 @@ name: own-profile
 # emoji tofu scan (theme, richview, slackc and the pane), and screenshots;
 # the Edit profile modal and the section editor (popups/profile_edit.go)
 # on fakeslack's profile writes (core/profile_write.go), with their shots,
-# and the photo upload's requests, prepared image and logged failures
+# and the photo upload's requests, prepared image (its hosts, EXIF and GIF
+# sizes), retries, loading buttons and logged failures
 # (core/profile_photo_test.go, popups/profile_photo_test.go);
 # the User Group pane's editor actions (popups/usergroup_edit.go) on
 # fakeslack's editable and locked groups, for an editor and a viewer.
@@ -27,6 +28,9 @@ on:
       - "internal/core/profile_grants*.go"
       - "internal/ui/popups/slick.go"
       - "internal/fakeslack/profile.go"
+      - "internal/fakeslack/photo.go"
+      - "internal/exif/**"
+      - "internal/ui/popups/loading_button.go"
       - "internal/fakeslack/usergroups.go"
       - "internal/core/usergroup_members*.go"
       - "internal/core/usergroup_edit*.go"
@@ -64,7 +68,7 @@ jobs:
           go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
           go test -count=1 -v -run 'TestProfileSections|TestPeopleBrowseCustomFields|TestProfileActionCalls|TestVIPError|TestValidateProfileFieldLikeSlack|TestPhotoCropLikeSlack|TestCheckPhoto|TestSaveProfileForm|TestSetProfileSectionLikeSlack|TestProfilePhoto|TestUsergroupMembersByKind|TestProfileGrantsLikeSlack|TestUsergroupRightsLikeSlack|TestUsergroupWritesLikeSlack' ./internal/core
           go test -count=1 -v -run 'TestEmojiTofu' ./internal/ui/richview ./internal/ui/slackc
-          xvfb-run -a go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane|TestProfileNameIsRealName|TestProfileMoreMenu|TestProfilePresenceColor|TestProfileDate|TestProfileVIPToggle|TestProfileMenuViewFiles|TestProfileFieldLink|TestProfileOpenFullWithoutHooks|TestProfileViewAs|TestAppAddToChannel|TestUserGroupPane|TestProfilePaneBackButton|TestEditProfile' ./internal/ui/popups
+          xvfb-run -a go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane|TestProfileNameIsRealName|TestProfileMoreMenu|TestProfilePresenceColor|TestProfileDate|TestProfileVIPToggle|TestProfileMenuViewFiles|TestProfileFieldLink|TestProfileOpenFullWithoutHooks|TestProfileViewAs|TestAppAddToChannel|TestUserGroupPane|TestProfilePaneBackButton|TestEditProfile|TestCropImageLikeChromium' ./internal/ui/popups
           ls -la "$PROFILE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
