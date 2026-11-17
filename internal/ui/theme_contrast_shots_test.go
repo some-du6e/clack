@@ -76,9 +76,8 @@ func TestThemeContrastShots(t *testing.T) {
 		vs = append(vs, variant{th.name, th.ia, []bool{false, true}})
 	}
 	for _, v := range vs {
-		e.a.applyAccountPrefs(core.Prefs{IATheme: v.ia})
 		for _, dark := range v.modes {
-			e.setDark(dark)
+			e.useAccountTheme(v.ia, dark)
 			mode := "light"
 			if dark {
 				mode = "dark"
@@ -105,6 +104,33 @@ func TestThemeContrastShots(t *testing.T) {
 		}
 	}
 	e.a.applyAccountPrefs(core.Prefs{})
+}
+
+// useAccountTheme puts ia_theme ia ("" none) and the mode in place and
+// waits until the palette has the theme's colours: core's own
+// users.prefs answer can land after the test's and put fakeslack's
+// (no theme) back, and a custom colour's fields are computed off the UI
+// goroutine (theme.FieldsAsync), so it applies them again until both hold.
+func (e *perfEnv) useAccountTheme(ia string, dark bool) {
+	want, set := theme.ParseIATheme(ia)
+	e.setDark(dark)
+	e.until("the account theme's colours", 20*time.Second, func() bool {
+		if e.a.acct.set != set || e.a.acct.t != want {
+			e.a.applyAccountPrefs(core.Prefs{IATheme: ia})
+		}
+		if _, ok := theme.FieldsAsync(want, dark, true, 0, nil); !ok {
+			return false
+		}
+		e.a.th.Refresh()
+		e.frame()
+		return e.a.acct.set == set && e.a.acct.t == want
+	})
+	e.settle(300 * time.Millisecond)
+	if e.a.acct.set != set || e.a.acct.t != want { // reset again during the settle
+		e.a.applyAccountPrefs(core.Prefs{IATheme: ia})
+		e.a.th.Refresh()
+		e.settle(300 * time.Millisecond)
+	}
 }
 
 // contrastSample is the inspect tool's sampleColors over r: the most

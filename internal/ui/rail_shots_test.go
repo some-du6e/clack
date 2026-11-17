@@ -101,9 +101,8 @@ func TestRailShots(t *testing.T) {
 			e.a.overlays = nil
 			e.a.peek.menu = nil // the More peek (its menu was among the overlays)
 		}
-		shoot := func(dark bool, themeName string) {
-			e.setDark(dark)
-			e.settle(300 * time.Millisecond)
+		shoot := func(dark bool, themeName, ia string) {
+			e.useAccountTheme(ia, dark) // theme_contrast_shots_test.go
 			mode := "light"
 			if dark {
 				mode = "dark"
@@ -178,15 +177,14 @@ func TestRailShots(t *testing.T) {
 			shots = append(shots, sh)
 		}
 		for _, dark := range []bool{true, false} {
-			shoot(dark, "")
+			shoot(dark, "", "")
 		}
 		if scale != 1 {
 			continue
 		}
 		for _, th := range railShotThemes {
-			e.a.applyAccountPrefs(core.Prefs{IATheme: th.ia})
 			for _, dark := range th.modes {
-				shoot(dark, th.name)
+				shoot(dark, th.name, th.ia)
 			}
 		}
 		e.a.applyAccountPrefs(core.Prefs{})
