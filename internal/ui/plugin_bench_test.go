@@ -1420,6 +1420,10 @@ type benchCalls struct {
 
 	mu       sync.Mutex
 	unmapped map[uint64]bool // roots unmounted (ids are never reused)
+
+	// reg, when set (the perf passes), records every root rendered and
+	// unmounted, to tell a root mounted again from one rendered again
+	reg *perfRootReg
 }
 
 func (c *benchCalls) gone(root uint64) bool {
@@ -1448,11 +1452,17 @@ type countingBridge struct {
 
 func (b countingBridge) Render(root uint64, name string, props []byte) {
 	b.c.render.Add(1)
+	if r := b.c.reg; r != nil {
+		r.note(root, 0, 0, name, props)
+	}
 	b.Bridge.Render(root, name, props)
 }
 
 func (b countingBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
 	b.c.renderIn.Add(1)
+	if r := b.c.reg; r != nil {
+		r.note(root, parent, parentK, name, props)
+	}
 	b.Bridge.RenderIn(root, parent, parentK, name, props)
 }
 
@@ -1473,6 +1483,9 @@ func (b countingBridge) Dispatch(target int64, ev []byte) {
 
 func (b countingBridge) Unmount(root uint64) {
 	b.c.unmount.Add(1)
+	if r := b.c.reg; r != nil {
+		r.unmount(root)
+	}
 	b.c.mu.Lock()
 	if b.c.unmapped == nil {
 		b.c.unmapped = map[uint64]bool{}

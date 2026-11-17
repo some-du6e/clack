@@ -171,6 +171,26 @@ func perfJSTasks(e *benchEnv) int64 {
 	return 0
 }
 
+// perfViewStats are how often taut's view epoch moved and how many
+// batches its view cache fetched from JS, so far (read by reflection).
+func perfViewStats(e *benchEnv) (epoch, fetches uint64) {
+	ui := reflect.ValueOf(e.tt).Elem().FieldByName("ui")
+	if !ui.IsValid() || ui.IsNil() {
+		return 0, 0
+	}
+	v := ui.Elem().FieldByName("views")
+	if !v.IsValid() {
+		return 0, 0
+	}
+	if f := v.FieldByName("epoch").FieldByName("v"); f.IsValid() && f.CanUint() {
+		epoch = f.Uint()
+	}
+	if f := v.FieldByName("fetches").FieldByName("v"); f.IsValid() && f.CanInt() {
+		fetches = uint64(f.Int())
+	}
+	return epoch, fetches
+}
+
 // perfDrain waits for the Taut runtime to get through what's queued, and
 // returns how long that took.
 func perfDrain(e *benchEnv) time.Duration {
@@ -345,6 +365,7 @@ func TestPerfPluginScroll(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.settle(300 * time.Millisecond)
+	e.calls.reg = newPerfRootReg() // every root from here on, for the idle passes' log
 	slackc.SetBridge(countingBridge{e.tt.Bridge(), &e.calls})
 
 	res := perfPluginResult{}
@@ -1089,13 +1110,29 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 	})
 	defer e.a.images.SetInvalidate(func() {})
 	// and at the window's other repaints (App.Invalidate: data, a plugin's
-	// tree, posted work), as the window draws one for each
+	// tree, posted work), as the window draws one for each; who asked, for
+	// the log
+	var srcMu sync.Mutex
+	sources := map[string]int{}
 	prevHook := invalidateHook
 	invalidateHook = func(a *App) {
 		if prevHook != nil {
 			prevHook(a)
 		}
 		if a == e.a {
+			pcs := make([]uintptr, 16)
+			fr := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)]) // past Invalidate
+			var names []string
+			for len(names) < 4 {
+				f, more := fr.Next()
+				names = append(names, strings.TrimPrefix(f.Function, "github.com/some-du6e/clack/internal/"))
+				if !more {
+					break
+				}
+			}
+			srcMu.Lock()
+			sources[strings.Join(names, " < ")]++
+			srcMu.Unlock()
 			select {
 			case wake <- struct{}{}:
 			default:
@@ -1103,14 +1140,45 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 		}
 	}
 	defer func() { invalidateHook = prevHook }()
-	// the pass's Go→JS renders by component, and for a root rendered again
-	// what in its props changed (top-level keys, msg's one level down)
-	rl := &perfRenderLog{last: map[uint64]map[string]json.RawMessage{}, names: map[string]int{}, keys: map[string]int{}}
-	slackc.SetBridge(perfRenderBridge{countingBridge{e.tt.Bridge(), &e.calls}, rl})
-	defer slackc.SetBridge(countingBridge{e.tt.Bridge(), &e.calls})
 	defer func() {
-		if top := rl.top(); top != "" {
-			e.t.Logf("pass %s: renders %s", name, top)
+		srcMu.Lock()
+		defer srcMu.Unlock()
+		type kv struct {
+			k string
+			n int
+		}
+		var s []kv
+		for k, n := range sources {
+			s = append(s, kv{k, n})
+		}
+		sort.Slice(s, func(i, j int) bool { return s[i].n > s[j].n || s[i].n == s[j].n && s[i].k < s[j].k })
+		for i, x := range s {
+			if i == 8 {
+				break
+			}
+			e.t.Logf("pass %s: %3d× Invalidate from %s", name, x.n, x.k)
+		}
+	}()
+	// the pass's Go→JS renders by component: for a root not rendered
+	// before why (perfRootReg), for one rendered again what in its props
+	// changed (top-level keys, msg's one level down)
+	if e.calls.reg == nil {
+		e.calls.reg = newPerfRootReg()
+	}
+	rl := newPerfRenderLog(80)
+	e.calls.reg.start(rl)
+	ep0, fetch0 := perfViewStats(e)
+	defer func() {
+		e.calls.reg.stop()
+		ep1, fetch1 := perfViewStats(e)
+		e.t.Logf("pass %s: taut's view epoch moved %d times, %d view fetches", name, ep1-ep0, fetch1-fetch0)
+		for _, line := range rl.top() {
+			e.t.Logf("pass %s: %s", name, line)
+		}
+		if traffic != nil {
+			for _, line := range rl.lines {
+				e.t.Logf("pass %s render: %s", name, line)
+			}
 		}
 	}()
 	if perfQuietStart != nil && !every {
@@ -1245,33 +1313,176 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool, traffic *p
 	return p
 }
 
-// perfRenderLog is a pass's renders (perfRenderBridge): how many per
-// component, and the props that changed when a root was rendered again.
-type perfRenderLog struct {
+// perfRootReg records every plugin root the run renders and unmounts
+// (countingBridge), so an idle pass can tell why a root it renders wasn't
+// there before: one never drawn, or one mounted again (a root of the same
+// component and key unmounted first, its parent mounted again, or its
+// parent's tree re-keyed the "@" node it hangs under).
+type perfRootReg struct {
 	mu    sync.Mutex
-	last  map[uint64]map[string]json.RawMessage
-	names map[string]int
-	keys  map[string]int
+	roots map[uint64]*perfRoot
+	byKey map[string]uint64 // a root's logical key → its latest root
+	gone  map[uint64]bool
+	log   *perfRenderLog // the idle pass running, if any
+	t0    time.Time      // its start
 }
 
-func (l *perfRenderLog) note(root uint64, name string, props []byte) {
-	var m map[string]json.RawMessage
-	_ = json.Unmarshal(props, &m)
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.names[name]++
-	if old, ok := l.last[root]; ok {
-		for _, path := range perfJSONDiff(name, mustJSON(old), props, 16) {
-			l.keys[path]++
+type perfRoot struct {
+	name, key, logical string
+	parent             uint64
+	parentK            int64
+	props              []byte // the last props sent (nil once unmounted)
+}
+
+func newPerfRootReg() *perfRootReg {
+	return &perfRootReg{roots: map[uint64]*perfRoot{}, byKey: map[string]uint64{}, gone: map[uint64]bool{}}
+}
+
+// propsKey is props' "$key" as JSON text, found without decoding them.
+func propsKey(props []byte) string {
+	i := strings.Index(string(props), `"$key":`)
+	if i < 0 {
+		return ""
+	}
+	rest := props[i+len(`"$key":`):]
+	j := 0
+	for j < len(rest) && rest[j] != ',' && rest[j] != '}' {
+		j++
+	}
+	return string(rest[:j])
+}
+
+func (g *perfRootReg) note(root, parent uint64, parentK int64, name string, props []byte) {
+	key := propsKey(props)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	r, seen := g.roots[root]
+	why := "again"
+	var prev []byte
+	if seen {
+		prev = r.props
+	} else {
+		logical := name + "|" + key
+		if parent != 0 {
+			pl := "?"
+			if p := g.roots[parent]; p != nil {
+				pl = p.logical
+			}
+			logical = pl + ">" + logical
+			if key == "" {
+				logical += fmt.Sprintf("@%d", parentK)
+			}
+		}
+		r = &perfRoot{name: name, key: key, logical: logical, parent: parent, parentK: parentK}
+		why = "new"
+		if old, ok := g.byKey[logical]; ok && old != root {
+			o := g.roots[old]
+			switch {
+			case g.gone[old]:
+				why = "mounted again after its unmount"
+			case o != nil && o.parent != parent:
+				why = "mounted again: its parent was"
+			case o != nil && o.parentK != parentK:
+				why = "mounted again: its parent's tree re-keyed it"
+			default:
+				why = "mounted again: a second root"
+			}
+		}
+		g.roots[root] = r
+		g.byKey[logical] = root
+	}
+	r.props = append([]byte(nil), props...)
+	if l := g.log; l != nil {
+		l.note(root, r, why, prev, props, time.Since(g.t0))
+	}
+}
+
+func (g *perfRootReg) unmount(root uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.gone[root] = true
+	if r := g.roots[root]; r != nil {
+		r.props = nil
+		if g.log != nil {
+			g.log.unmounted(r)
 		}
 	}
-	l.last[root] = m
 }
 
-func mustJSON(m map[string]json.RawMessage) []byte {
-	b, _ := json.Marshal(m)
-	return b
+// start has the idle pass's renders logged in l; stop ends it.
+func (g *perfRootReg) start(l *perfRenderLog) {
+	g.mu.Lock()
+	g.log, g.t0 = l, time.Now()
+	g.mu.Unlock()
 }
+
+func (g *perfRootReg) stop() {
+	g.mu.Lock()
+	g.log = nil
+	g.mu.Unlock()
+}
+
+// perfRenderLog is an idle pass's renders (perfRootReg): how many per
+// component; for a root not rendered before, why (perfRootReg.note); for
+// one rendered again, what in its props changed since its last render, or
+// that nothing did; and the roots unmounted. The first renders are listed
+// one by one.
+type perfRenderLog struct {
+	names     map[string]int
+	keys      map[string]int
+	whys      map[string]int // why × component, for roots not rendered before
+	same      map[string]int // components rendered again with the very props
+	unmounts  map[string]int
+	lines     []string
+	maxLines  int
+	nRenders  int
+	nAgain    int
+	nNewRoots int
+}
+
+func newPerfRenderLog(lines int) *perfRenderLog {
+	return &perfRenderLog{names: map[string]int{}, keys: map[string]int{},
+		whys: map[string]int{}, same: map[string]int{}, unmounts: map[string]int{}, maxLines: lines}
+}
+
+// note logs a render of root, whose props were prev before (nil: none
+// recorded); perfRootReg's lock held.
+func (l *perfRenderLog) note(root uint64, r *perfRoot, why string, prev, props []byte, at time.Duration) {
+	l.nRenders++
+	l.names[r.name]++
+	var paths []string
+	switch {
+	case why != "again":
+		l.nNewRoots++
+		l.whys[why+": "+r.name]++
+	case prev != nil:
+		l.nAgain++
+		paths = perfJSONDiff(r.name, prev, props, 16)
+		if len(paths) == 0 {
+			l.same[r.name]++
+		}
+		for _, path := range paths {
+			l.keys[path]++
+		}
+	default:
+		l.whys["rendered again, props unknown: "+r.name]++
+	}
+	if len(l.lines) < l.maxLines {
+		if len(paths) > 3 {
+			paths = append(paths[:3:3], "…")
+		}
+		line := fmt.Sprintf("%6.0f ms %s %s key %s root %d", float64(at.Microseconds())/1000, r.name, why, r.key, root)
+		if r.parent != 0 {
+			line += fmt.Sprintf(" in %d@%d", r.parent, r.parentK)
+		}
+		if len(paths) > 0 {
+			line += " changed " + strings.Join(paths, ", ")
+		}
+		l.lines = append(l.lines, line)
+	}
+}
+
+func (l *perfRenderLog) unmounted(r *perfRoot) { l.unmounts[r.name]++ }
 
 // perfJSONDiff lists the paths under which a and b (JSON) differ, down to
 // depth levels: the leaves that changed, with the old and new values of a
@@ -1314,14 +1525,14 @@ func perfJSONDiff(path string, a, b []byte, depth int) []string {
 	return []string{path}
 }
 
-// top lists the components rendered most and the props that changed most.
-func (l *perfRenderLog) top() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if len(l.names) == 0 {
-		return ""
+// top lists the components rendered most, why roots weren't there before,
+// the props that changed most, the roots rendered with the very props they
+// had, and the roots unmounted.
+func (l *perfRenderLog) top() []string {
+	if l.nRenders == 0 && len(l.unmounts) == 0 {
+		return nil
 	}
-	list := func(m map[string]int) string {
+	list := func(m map[string]int, max int) string {
 		type kv struct {
 			k string
 			n int
@@ -1333,29 +1544,19 @@ func (l *perfRenderLog) top() string {
 		sort.Slice(s, func(i, j int) bool { return s[i].n > s[j].n || s[i].n == s[j].n && s[i].k < s[j].k })
 		var b strings.Builder
 		for i, x := range s {
-			if i == 12 {
+			if i == max {
+				fmt.Fprintf(&b, " (+%d more)", len(s)-max)
 				break
 			}
 			fmt.Fprintf(&b, " %s×%d", x.k, x.n)
 		}
 		return b.String()
 	}
-	return "by component:" + list(l.names) + "; changed props:" + list(l.keys)
-}
-
-// perfRenderBridge counts renders as countingBridge does and logs them in
-// a perfRenderLog.
-type perfRenderBridge struct {
-	countingBridge
-	log *perfRenderLog
-}
-
-func (b perfRenderBridge) Render(root uint64, name string, props []byte) {
-	b.log.note(root, name, props)
-	b.countingBridge.Render(root, name, props)
-}
-
-func (b perfRenderBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
-	b.log.note(root, name, props)
-	b.countingBridge.RenderIn(root, parent, parentK, name, props)
+	return []string{
+		fmt.Sprintf("%d renders: %d of roots not rendered before, %d of roots rendered before; by component:%s", l.nRenders, l.nNewRoots, l.nAgain, list(l.names, 14)),
+		"renders of roots not rendered before, why:" + list(l.whys, 16),
+		fmt.Sprintf("changed props (%d paths):%s", len(l.keys), list(l.keys, 20)),
+		"rendered again with the very props:" + list(l.same, 10),
+		"unmounted:" + list(l.unmounts, 10),
+	}
 }
