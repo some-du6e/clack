@@ -208,7 +208,8 @@ func (r *Runtime) ExposeAsync(name string, fn AsyncFunc) {
 // is the object holding the last segment) with args converted by
 // Ctx.Value, waits for a returned Promise to settle (or ctx to end), and
 // returns the result as JSON (undefined → null). Any goroutine except the
-// JS thread itself.
+// JS thread itself. With a UserBlocking ctx it runs ahead of the tasks
+// already queued.
 func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawMessage, error) {
 	type res struct {
 		v   json.RawMessage
@@ -216,7 +217,7 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 	}
 	ch := make(chan res, 1)
 	onJS := r.onJSThread()
-	err := r.do(task{kind: "Call", what: path}, func(js *Ctx) error {
+	err := r.do(task{kind: "Call", what: path, urgent: IsUserBlocking(ctx)}, func(js *Ctx) error {
 		fn, this, err := js.resolvePath(path)
 		if err != nil {
 			return err

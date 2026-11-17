@@ -24,9 +24,14 @@ type Runtime struct {
 	ctx    context.Context // cancelled by Close
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	queue    []task // waiting tasks (mu); enqueue never grows it while holding mu
-	spare    []task // the loop's last drained queue, cleared, for the next swap (mu)
+	mu    sync.Mutex
+	queue []task // waiting tasks (mu); enqueue never grows it while holding mu
+	spare []task // the loop's last drained queue, cleared, for the next swap (mu)
+	// urgent are the user-blocking tasks (UserBlocking): each runs before
+	// the next queued task, in the order they came (mu). urgentN is their
+	// count, read between tasks without the lock.
+	urgent   []task
+	urgentN  atomic.Int32
 	enqN     atomic.Uint64
 	modules  map[string]string
 	wake     chan struct{}
@@ -115,6 +120,7 @@ func New(opts Options) (*Runtime, error) {
 		modules: map[string]string{},
 		queue:   make([]task, 0, 64),
 		spare:   make([]task, 0, 64),
+		urgent:  make([]task, 0, 8),
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		roots:   map[uint64]*Root{},
@@ -200,24 +206,80 @@ func (r *Runtime) do(t task, f func(js *Ctx) error) error {
 // a long while, with everyone queued behind the lock. A full queue grows
 // outside the lock.
 func (r *Runtime) enqueue(t task) uint64 {
+	q := &r.queue
+	if t.urgent {
+		q = &r.urgent
+	}
 	for {
 		r.mu.Lock()
-		if len(r.queue) < cap(r.queue) {
-			r.queue = append(r.queue, t) // room: no allocation
+		if len(*q) < cap(*q) {
+			*q = append(*q, t) // room: no allocation
 			n := r.enqN.Add(1)
+			if t.urgent {
+				r.urgentN.Add(1)
+			}
 			r.mu.Unlock()
 			r.signal()
 			return n
 		}
-		c := cap(r.queue)
+		c := cap(*q)
 		r.mu.Unlock()
 		grown := make([]task, 0, max(2*c, 64))
 		r.mu.Lock()
-		if len(r.queue) == cap(r.queue) && len(r.queue) <= cap(grown) { // still full, and it fits
-			r.queue = append(grown, r.queue...) // a copy within capacity
+		if len(*q) == cap(*q) && len(*q) <= cap(grown) { // still full, and it fits
+			*q = append(grown, *q...) // a copy within capacity
 		}
 		r.mu.Unlock()
 	}
+}
+
+// User-blocking work. A browser runs input ahead of the tasks already
+// queued: Chromium's scheduler gives input its own high-priority queue,
+// React runs a discrete event's update synchronously, and the Scheduler
+// API names the priority 'user-blocking'. So Slack's send checks, send
+// transforms and the send thunks run the moment the user presses Enter,
+// however much rendering is pending. On Clack's JS thread every Go → JS
+// call waited its turn behind everything queued before it: plugin trees
+// to render, mirror invalidations, view fetches, the socket's events,
+// seconds of them on a busy workspace with plugins that patch every row
+// (the perf job's plugin passes reported 4–10 s of backlog), and an own
+// message waited for its send check through all of it before its pending
+// copy showed (msg-latency).
+
+type userBlockingKey struct{}
+
+// UserBlocking marks ctx's calls (Call) as the user's: each runs on the
+// JS thread right after the task running now, ahead of every task queued
+// before it (in order among themselves). For work the user is waiting on,
+// such as sending a message; anything else stays in order.
+func UserBlocking(ctx context.Context) context.Context {
+	return context.WithValue(ctx, userBlockingKey{}, true)
+}
+
+// IsUserBlocking reports whether ctx came from UserBlocking.
+func IsUserBlocking(ctx context.Context) bool {
+	b, _ := ctx.Value(userBlockingKey{}).(bool)
+	return b
+}
+
+// runUrgent runs the user-blocking tasks queued so far (JS thread). It
+// reports false once the runtime closed.
+func (r *Runtime) runUrgent() bool {
+	for r.urgentN.Load() > 0 {
+		fresh := make([]task, 0, 8) // outside the lock (enqueue's rule); u runs below
+		r.mu.Lock()
+		u := r.urgent
+		r.urgent = fresh
+		r.urgentN.Store(0)
+		r.mu.Unlock()
+		for i := range u {
+			if r.closed.Load() {
+				return false
+			}
+			r.runTask(u[i])
+		}
+	}
+	return !r.closed.Load()
 }
 
 func (r *Runtime) signal() {
@@ -272,13 +334,17 @@ func (r *Runtime) loop() {
 	idle := time.NewTimer(time.Hour)
 	defer idle.Stop()
 	for !r.closed.Load() {
+		if !r.runUrgent() {
+			return
+		}
 		// swap in the spare queue, so enqueue appends into room it has
 		r.mu.Lock()
 		q := r.queue
 		r.queue, r.spare = r.spare[:0], nil
 		r.mu.Unlock()
 		for i := range q {
-			if r.closed.Load() {
+			// a user-blocking task that came meanwhile goes first
+			if r.closed.Load() || !r.runUrgent() {
 				return
 			}
 			r.runTask(q[i])
@@ -289,12 +355,15 @@ func (r *Runtime) loop() {
 			r.spare = q[:0]
 		}
 		r.mu.Unlock()
+		if !r.runUrgent() {
+			return
+		}
 		r.fireTimers()
 		if r.closed.Load() {
 			return
 		}
 		r.mu.Lock()
-		pending := len(r.queue)
+		pending := len(r.queue) + len(r.urgent)
 		r.mu.Unlock()
 		if pending > 0 {
 			continue
@@ -351,6 +420,8 @@ type task struct {
 	pc    uintptr // who queued it (Post, Do): a return address, 0 = none
 	start time.Time
 	mono  int64 // monoNow at start
+	// urgent: user-blocking (UserBlocking), run ahead of the queue
+	urgent bool
 }
 
 // callerPC is the return address into the caller of the function calling

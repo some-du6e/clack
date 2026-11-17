@@ -1343,7 +1343,9 @@ func (c *Composer) send(o *outgoing) {
 		})
 	}
 	go func() {
-		err := job.run(context.Background())
+		// its send transforms and thunks are the user's: ahead of the JS
+		// work queued before them (taut.UserAction)
+		err := job.run(taut.UserAction(context.Background()))
 		if hasFiles && err != nil {
 			c.later(func() {
 				// the placeholder is gone and nothing was posted: the
