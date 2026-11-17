@@ -91,6 +91,20 @@ func (p Op) add(o *op.Ops) {
 		bo.PutUint32(data[1:], math.Float32bits(p.width))
 	}
 
+	if in := path.interior; p.outline && p.width == 0 && hasSegments && !in.Empty() {
+		// Clack patch 38: where the outline covers every pixel; the
+		// renderer drops this clip for what's drawn inside it
+		writeRect(o, ops.TypeClipInterior, ops.TypeClipInteriorLen, in)
+	}
+	if !p.outline && p.width > 0 && hasSegments && path.hasRRect {
+		// Clack patch 42: where a stroke of the rounded rectangle covers
+		// nothing; the renderer leaves it out of what it stencils and
+		// covers
+		if h := path.rrect.StrokeHole(p.width); !h.Empty() {
+			writeRect(o, ops.TypeClipHole, ops.TypeClipHoleLen, h)
+		}
+	}
+
 	data := ops.Write(&o.Internal, ops.TypeClipLen)
 	data[0] = byte(ops.TypeClip)
 	bo.PutUint32(data[1:], uint32(bounds.Min.X))
@@ -101,6 +115,17 @@ func (p Op) add(o *op.Ops) {
 		data[17] = byte(1)
 	}
 	data[18] = byte(path.shape)
+}
+
+// writeRect writes an op of type t carrying r.
+func writeRect(o *op.Ops, t ops.OpType, n int, r image.Rectangle) {
+	bo := binary.LittleEndian
+	data := ops.Write(&o.Internal, n)
+	data[0] = byte(t)
+	bo.PutUint32(data[1:], uint32(r.Min.X))
+	bo.PutUint32(data[5:], uint32(r.Min.Y))
+	bo.PutUint32(data[9:], uint32(r.Max.X))
+	bo.PutUint32(data[13:], uint32(r.Max.Y))
 }
 
 func (s Stack) Pop() {
@@ -116,6 +141,13 @@ type PathSpec struct {
 	bounds      image.Rectangle
 	shape       ops.Shape
 	hash        uint64
+	// interior is where the path, filled, covers every pixel fully, in
+	// the path's coordinates; empty if not known (Clack patch 38)
+	interior image.Rectangle
+	// rrect is the rounded rectangle the path is the outline of, if
+	// hasRRect: a stroke of it has a hole (Clack patch 42)
+	rrect    RRect
+	hasRRect bool
 }
 
 // Path constructs a Op clip path described by lines and

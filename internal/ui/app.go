@@ -895,6 +895,7 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	if !a.th.Dark { // dark mode uses Slack's 1px outline instead (below)
 		theme.Shadow(gtx, ws.Add(image.Pt(-gtx.Dp(2), -gtx.Dp(2))), rad, gtx.Dp(8), a.th.C.PanelShadow)
 	}
+	theme.FrameCostProbe(gtx) // tests only: moves every later path in the atlas
 	if sbW > 0 {
 		sb := image.Rect(ws.Min.X, ws.Min.Y, primary.Min.X, ws.Max.Y)
 		a.grad.draw(gtx, sz, image.Point{}, clip.RRect{Rect: sb, NW: rad, SW: rad}.Op(gtx.Ops), a.th.C.ChromeA, a.th.C.ChromeB, a.th.C.SidebarBg)
@@ -911,8 +912,9 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 		nw, sw = rad, rad
 	}
 	func() {
-		defer clip.RRect{Rect: primary, NW: nw, SW: sw, NE: rad, SE: rad}.Push(gtx.Ops).Pop()
-		theme.Fill(gtx, primary, a.th.C.Bg)
+		rr := clip.RRect{Rect: primary, NW: nw, SW: sw, NE: rad, SE: rad}
+		defer rr.Push(gtx.Ops).Pop()
+		theme.FillPanel(gtx, rr, a.th.C.Bg)
 		atExact(gtx, primary.Min, primary.Size(), a.layoutPrimary)
 	}()
 	if sbW > 0 {

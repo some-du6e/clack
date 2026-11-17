@@ -205,6 +205,18 @@ jobs:
       - name: Gio focus answers (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'FocusTagCanFocusWithin' gioui.org/io/input
+      # Gio patches 37-44: a rounded clip's interior and a stroked one's
+      # hole, ops split around them, a clip path's stencil regions, layers
+      # of one depth on one atlas page, the sub-pixel path cache key, GL's
+      # attribute query (the pixels: gpu/headless's TestClack* and theme's
+      # TestFrameCostPixels below, and the macos and windows-applog jobs'
+      # Gio frame cost steps on Metal and Direct3D 11)
+      - name: Gio frame cost (vendored gioui.org/op/clip, gpu)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=1 -v -run 'TestRRectInterior|TestRRectStrokeHole' gioui.org/op/clip
+          go test -count=1 -v -run 'TestAddRegion|TestCollectClipInterior|TestPackLayersOneDepthOnePage|TestSplitOp|TestCollectStrokeHole|TestCollectPanelSplit|TestCollectSubPixelKey|TestPackLayersLegacy|TestClackOpCacheReturningPathHits' gioui.org/gpu
+          go test -count=1 -v -run 'TestQueryVertAttribBinding' gioui.org/gpu/internal/opengl
       # Gio patch 26: an Invalidate made while the client handles a wake-up
       # gets a wake-up of its own (hidden and minimized windows draw no
       # frame to cover it); the real windows are windows-shell's
@@ -254,11 +266,15 @@ jobs:
           # -p 1: test binaries bringing up Mesa's EGL at once is what made
           # eglInitialize fail (0x3001); pixeltest.NewWindow also retries.
           # TestTextMatchesChrome: text against Chrome 156's (theme/testdata/text-render; font-shots' text-render jobs re-measure it)
-          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestSelectionOverCode|TestComposerSelectionOverCode|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots|TestTextMatchesChrome|TestSideBarEnds|TestNewlineGapShots' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/theme
+          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestSelectionOverCode|TestComposerSelectionOverCode|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots|TestTextMatchesChrome|TestSideBarEnds|TestNewlineGapShots|TestFrameCostPixels|TestFrameCostSeams' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/theme
           # the profile hover card's name / title / pronouns column against Slack's CSS (light + dark)
           xvfb-run -a go test -count=1 -v -run '^TestHoverCardPronounsLikeSlack$' ./internal/ui/popups
           # Gio patch 35 on a real GPU context: the same ops drawn twice show a live image as it is at each
           xvfb-run -a go test -count=1 -v -run '^TestLiveImageFrames$' gioui.org/gpu/headless
+          # Gio patches 37-44 in pixels: the state caches change none, shared
+          # layer pages and splits under a transform none, a cached path at
+          # a new sub-pixel offset is built there, atlas pages shrink and go
+          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -404,6 +420,19 @@ jobs:
           cache: true
       - name: applog tests
         run: go test -count=1 -v ./internal/applog
+      # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
+      # pixel, the window's drawing held to the old way (theme's
+      # TestFrameCostPixels), shared layer pages, sub-pixel paths, atlas
+      # pages; linux-gio runs them on llvmpipe, macos on Metal
+      - name: Gio frame cost on Direct3D 11 (WARP)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
       - name: awake clock (QueryUnbiasedInterruptTime)
@@ -1070,6 +1099,16 @@ jobs:
         env:
           CLACK_PIXEL_TESTS: "1"
         run: .github/scripts/gio-layer-fix.sh
+      # Gio patches 37-44 on Metal: the state caches and command batching
+      # change no pixel, the window's drawing held to the old way, shared
+      # layer pages, sub-pixel paths, atlas pages
+      - name: Gio frame cost on Metal
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
           go test -count=1 -v ./internal/ui/uiguard

@@ -1246,3 +1246,69 @@ jobs:
           go test -count=3 -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions)$' ./internal/ui/messages || rc=1
           go test -count=3 -v -timeout 10m -run '^TestComposersForOneThreadSendTheirOwn$' ./internal/ui/composer || rc=1
           exit $rc
+
+  # What one frame costs the GPU (branch gpu-frame-cost): Clack's window
+  # rendered by each backend (Mesa llvmpipe's GL on Linux, WARP's Direct3D
+  # 11 on Windows, the runner's Metal on macOS). The placement probe logs
+  # how exactly each one repeats a path's coverage when only its stencil
+  # region moves. Dispatch with only=gpu-cost.
+  gpu-cost:
+    if: ${{ !inputs.only || startsWith('gpu-cost', inputs.only) }}
+    name: "gpu-cost (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: placement probe (gioui.org/gpu/headless)
+        shell: bash
+        env:
+          CLACK_GPU_COST_PROBE: "1"
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPlacementNoise|TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+      - name: the shadows and the panel's corners, old and new (internal/ui/theme TestFrameCostPixels)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          "${x[@]}" go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
+      - name: Clack's whole window over fakeslack, old and new (internal/ui TestFrameCostWindow)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CLACK_GPU_COST: "1"
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_GPU_COST_SHOTS: ${{ runner.temp }}/gpu-cost-shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$CLACK_GPU_COST_SHOTS"
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          "${x[@]}" go test -count=1 -v -timeout 25m -run '^TestFrameCostWindow$' ./internal/ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: gpu-cost-shots-${{ runner.os }}
+          path: ${{ runner.temp }}/gpu-cost-shots
