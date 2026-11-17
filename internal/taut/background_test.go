@@ -38,10 +38,11 @@ func patchedViews(t *testing.T, h *harness) (genTS, dmTS string) {
 // redraws. Every message, update or delete in any channel opened this
 // session redrew the main window.
 func TestOffScreenViewsDrawNothing(t *testing.T) {
-	old := viewOnScreen
-	viewOnScreen = int64(100 * time.Millisecond)
-	t.Cleanup(func() { viewOnScreen = old })
 	h := newHarness(t)
+	v := &h.tt.ui.views
+	v.mu.Lock()
+	v.onScreen = int64(100 * time.Millisecond) // the window in short, for the test
+	v.mu.Unlock()
 	genTS, dmTS := patchedViews(t, h)
 	// the UI moves on to the DM: only its views are read from now on
 	time.Sleep(150 * time.Millisecond)
@@ -326,7 +327,7 @@ func TestChangeDuringFirstConversion(t *testing.T) {
 	var once sync.Once
 	var epAt uint64
 	var invAt int64
-	convDone = func(k viewSK) {
+	hook := func(k viewSK) {
 		if k != (viewSK{chAnn, fileTS}) {
 			return
 		}
@@ -338,7 +339,8 @@ func TestChangeDuringFirstConversion(t *testing.T) {
 			epAt, invAt = h.tt.ViewEpoch(), h.ui.invalidations.Load()
 		})
 	}
-	t.Cleanup(func() { convDone = nil })
+	convDone.Store(&hook)
+	t.Cleanup(func() { convDone.Store(nil) })
 	var first core.Message
 	eventually(t, 3*time.Second, "the file message's view", func() bool {
 		var ok bool

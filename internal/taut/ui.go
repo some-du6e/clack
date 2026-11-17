@@ -1167,6 +1167,7 @@ type viewCache struct {
 	// every profile change of a member a row once drew.
 	lastRead  int64
 	sliceRead map[string]int64
+	onScreen  int64 // viewOnScreen (tests set it shorter, under mu)
 
 	// epoch moves with every change to what a view shows (a new value, a
 	// stale mark, a conversion made again): lists and rows re-read their
@@ -1197,8 +1198,8 @@ type viewCache struct {
 // viewOnScreen is how recently, before the UI's latest read, values must
 // have been read to be on screen: rows re-read their views at least every
 // viewRefresh (250 ms) while frames draw, and a window drawing nothing
-// read everything on screen in its last frame. (A var for tests.)
-var viewOnScreen = int64(time.Second)
+// read everything on screen in its last frame.
+const viewOnScreen = int64(time.Second)
 
 var viewBase = time.Now()
 
@@ -1208,7 +1209,7 @@ func viewNow() int64 { return int64(time.Since(viewBase)) }
 // visibleLocked reports whether g was read within viewOnScreen of the
 // UI's latest read (mu held).
 func (v *viewCache) visibleLocked(g *viewGroup) bool {
-	return g != nil && g.readAt >= v.lastRead-viewOnScreen
+	return g != nil && g.readAt >= v.lastRead-v.onScreen
 }
 
 // ViewEpoch moves with every change to what the views hand out
@@ -1243,6 +1244,7 @@ func (v *viewCache) init(t *Taut) {
 	v.refSeq = map[string]uint64{}
 	v.inflight = map[viewSK]int{}
 	v.sliceRead = map[string]int64{}
+	v.onScreen = viewOnScreen
 	v.maxSubs = 20000
 	v.maxBytes = 64 << 20
 }
@@ -1328,7 +1330,7 @@ func (v *viewCache) stale(slice, key string) bool {
 	v.seq++
 	if key == "" {
 		v.sliceVer[slice] = v.seq
-		return v.sliceN[slice] > 0 && v.sliceRead[slice] >= v.lastRead-viewOnScreen
+		return v.sliceN[slice] > 0 && v.sliceRead[slice] >= v.lastRead-v.onScreen
 	}
 	g := v.groups[viewSK{slice, key}]
 	if g == nil {
@@ -1847,8 +1849,8 @@ func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Me
 	m := *sm
 	c := &viewConv{gen: gen, id: convSerial.Add(1), msg: v.t.app.MessageFromSlack(ch, &m)}
 	slot.Store(c)
-	if convDone != nil {
-		convDone(k)
+	if f := convDone.Load(); f != nil {
+		(*f)(k)
 	}
 	stale := v.indexRefs(k, c.msg.Refs, at)
 	v.gmu.Lock()
@@ -1871,7 +1873,7 @@ func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Me
 
 // convDone, tests only, runs once a conversion read the store and before
 // it's indexed (a change landing then is what indexRefs' at catches).
-var convDone func(k viewSK)
+var convDone atomic.Pointer[func(k viewSK)]
 
 // convGenAt is convGen, and the sequence then (indexRefs' at).
 func (v *viewCache) convGenAt(ch, ts string) (gen, at uint64) {
@@ -2059,7 +2061,7 @@ func (v *viewCache) bumpConv(ch, ts string) {
 	if global {
 		clear(v.msgGen)
 		v.global = v.gseq
-		redraw = v.sliceN["messages"] > 0 && v.sliceRead["messages"] >= v.lastRead-viewOnScreen
+		redraw = v.sliceN["messages"] > 0 && v.sliceRead["messages"] >= v.lastRead-v.onScreen
 	} else {
 		k := viewSK{ch, ts}
 		cached := v.convCachedLocked(ch, ts)

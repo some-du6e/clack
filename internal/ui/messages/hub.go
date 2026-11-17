@@ -284,8 +284,8 @@ func (hb *hub) ensureLoaded(m *model) {
 		defer cancel()
 		if m.threadTS != "" {
 			msgs, err := hb.app.Replies(ctx, m.ch, m.threadTS)
-			if loadLanded != nil {
-				loadLanded(m)
+			if f := loadLanded.Load(); f != nil {
+				(*f)(m)
 			}
 			m.mu.Lock()
 			m.loading = false
@@ -305,8 +305,8 @@ func (hb *hub) ensureLoaded(m *model) {
 			hb.afterLoad(m)
 		} else {
 			p, err := hb.app.History(ctx, m.ch, "")
-			if loadLanded != nil {
-				loadLanded(m)
+			if f := loadLanded.Load(); f != nil {
+				(*f)(m)
 			}
 			m.mu.Lock()
 			m.loading = false
@@ -335,7 +335,7 @@ func (hb *hub) ensureLoaded(m *model) {
 // loadLanded, tests only, runs on a load's goroutine when its answer is
 // in, converted, and not yet in the model (a change landing then is the
 // race afterLoad closes).
-var loadLanded func(m *model)
+var loadLanded atomic.Pointer[func(m *model)]
 
 // afterLoad converts again what of m's messages read something that
 // changed while its load was out (reconvert recorded it).
@@ -382,8 +382,8 @@ func (hb *hub) loadOlder(m *model) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		p, err := hb.app.History(ctx, m.ch, before)
-		if loadLanded != nil {
-			loadLanded(m)
+		if f := loadLanded.Load(); f != nil {
+			(*f)(m)
 		}
 		m.mu.Lock()
 		m.older = false

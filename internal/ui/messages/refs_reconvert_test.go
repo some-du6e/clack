@@ -247,7 +247,7 @@ func checkRenameDuringLoad(t *testing.T, older bool) {
 	hb := hubFor(coreHost{app: app, th: theme.New(false)})
 	m := hb.channel(refsChan)
 	var once sync.Once
-	loadLanded = func(lm *model) {
+	hook := func(lm *model) {
 		lm.mu.Lock()
 		which := lm.older
 		lm.mu.Unlock()
@@ -267,7 +267,8 @@ func checkRenameDuringLoad(t *testing.T, older bool) {
 			t.Error("the rename never reached the loading model")
 		})
 	}
-	t.Cleanup(func() { loadLanded = nil })
+	loadLanded.Store(&hook)
+	t.Cleanup(func() { loadLanded.Store(nil) })
 	owners := func() []string {
 		m.mu.Lock()
 		defer m.mu.Unlock()
