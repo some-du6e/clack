@@ -162,10 +162,12 @@ func TestHistoryRereadsAfterSlowConnect(t *testing.T) {
 }
 
 // A catch-up that fails shows the cached window and is tried again at a
-// read after catchUpRetry; one that succeeds isn't tried again.
+// read after catchUpRetry; one that succeeds isn't tried again. (The
+// client holds an identical failed request back for slack.BackoffBase,
+// 1 s; catchUpRetry is 5 s.)
 func TestHistoryCatchUpRetries(t *testing.T) {
 	old := catchUpRetry
-	catchUpRetry = 300 * time.Millisecond
+	catchUpRetry = slack.BackoffBase + 500*time.Millisecond
 	t.Cleanup(func() { catchUpRetry = old })
 	a, fs, _ := rtApp(t)
 	ch := fs.ChannelIDs()[4]
@@ -187,7 +189,7 @@ func TestHistoryCatchUpRetries(t *testing.T) {
 	if p, _ = a.History(ctx, ch, ""); pageHas(p, missed) {
 		t.Error("read again before catchUpRetry")
 	}
-	time.Sleep(catchUpRetry + 50*time.Millisecond)
+	time.Sleep(catchUpRetry + 100*time.Millisecond)
 	if p, _ = a.History(ctx, ch, ""); !pageHas(p, missed) {
 		t.Error("the catch-up wasn't tried again after catchUpRetry")
 	}

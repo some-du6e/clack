@@ -241,6 +241,39 @@ func (b *backend) noteResolveWith(a *App, ids, people []string, then func()) {
 type noteOrder struct {
 	mu    sync.Mutex
 	waits []*noteWait
+	// seq: the notifications' showNotification dispatches, one after
+	// another in the order they were built (a dispatch of its own each
+	// could show them in reverse order); seqOn: a goroutine runs them
+	seq   []func()
+	seqOn bool
+}
+
+// inSequence runs f after every f queued before it, off the caller's
+// goroutine.
+func (o *noteOrder) inSequence(f func()) {
+	o.mu.Lock()
+	o.seq = append(o.seq, f)
+	start := !o.seqOn
+	o.seqOn = true
+	o.mu.Unlock()
+	if !start {
+		return
+	}
+	go func() {
+		for {
+			o.mu.Lock()
+			if len(o.seq) == 0 {
+				o.seqOn, o.seq = false, nil
+				o.mu.Unlock()
+				return
+			}
+			f := o.seq[0]
+			o.seq[0] = nil
+			o.seq = o.seq[1:]
+			o.mu.Unlock()
+			f()
+		}
+	}()
 }
 
 type noteWait struct {

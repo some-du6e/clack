@@ -69,6 +69,7 @@ func TestNotificationWaitsForNewPeople(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			a, ca, fs, rec := noteApp(t)
+			ca.S.PutUsers([]slack.User{{ID: fakeslack.SelfID, Name: "self"}}) // the viewer, as every session holds them (a reply's mention reads it)
 			socket := noteSocket(t, a, ca)
 			fs.SetFault("edge/users/info", fakeslack.Fault{Delay: 300 * time.Millisecond})
 			sender, mentioned := fakeslack.SynthMemberID(7+10*i), fakeslack.SynthMemberID(8+10*i)

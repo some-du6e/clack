@@ -939,13 +939,22 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
 	msg := notificationMessage(a.Taut(), ev)
 	note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS) // the toast's payload (notify.go)
-	a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
-		func(ctx context.Context, args map[string]any) (any, error) {
-			if t, b, ok := notificationText(args, msg, body); ok {
-				a.notifyMessage(t, b, note)
-			}
-			return nil, nil
-		})
+	args := map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS}
+	native := func(ctx context.Context, args map[string]any) (any, error) {
+		if t, b, ok := notificationText(args, msg, body); ok {
+			a.notifyMessage(t, b, note)
+		}
+		return nil, nil
+	}
+	// in the order the messages came (notify_conv.go noteOrder)
+	t := a.Taut()
+	b.notes.inSequence(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := taut.Dispatch(ctx, t, "showNotification", args, native); err != nil {
+			log.Printf("ui: showNotification: %v", err)
+		}
+	})
 }
 
 func (b *backend) setCount(id string, cnt core.Count) bool {
