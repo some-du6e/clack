@@ -204,3 +204,77 @@ func TestTypingGoesOutBeforeTheMessage(t *testing.T) {
 	}
 	_ = rt.Do(func(*jsrt.Ctx) error { return nil })
 }
+
+// A dispatch the native UI makes (a reaction pill, the emoji picker, a
+// draft sync) stays ahead of the user's later input, as every action of
+// the user's does in a browser: a plugin click after it can't overtake
+// it. OwlMode decides a reaction's identity from its mode when the
+// reaction's patch runs, and a reaction queued behind the backlog ran
+// after a later toggle click: one meant for Owl went out under the
+// user's own name.
+func TestNativeDispatchBeforeLaterClick(t *testing.T) {
+	c, _, _ := composerEnv(t, nil)
+	tt, tree := laneTaut(t, c.api.a, `start() {
+    this.mode = 'as Owl'
+    globalThis.__laneSeen = []
+    globalThis.__laneSeenNow = () => globalThis.__laneSeen
+    this.offs = [
+      this.api.composer.addButton({ id: 'lane-toggle', placement: 'end', render: () => ({ icon: 'eye', label: 'Reply as yourself', pressed: this.mode === 'as yourself', onClick: () => { this.mode = 'as yourself' } }) }),
+      this.api.redux.patchThunk('changeReactionFromUserAction', (orig) => (...a) => { globalThis.__laneSeen.push('reaction ' + this.mode); return orig(...a) }),
+    ]
+  }
+  stop() { for (const off of this.offs ?? []) off() }`)
+	waitFor(t, 10*time.Second, "the plugin's reaction patch", func() bool { return tt.ThunkPatched("changeReactionFromUserAction") })
+	rt, err := tt.JS()
+	if err != nil || rt == nil {
+		t.Fatalf("no JS runtime: %v", err)
+	}
+	props, _ := json.Marshal(map[string]any{"placement": "end", "context": map[string]any{"kind": "channel", "channelId": tChGen}})
+	tt.Bridge().Render(9, "TautComposerButtons", props)
+	var fn float64
+	waitFor(t, 5*time.Second, "the plugin's composer button", func() bool {
+		var nodes []any
+		if json.Unmarshal(tree(9), &nodes) != nil {
+			return false
+		}
+		btn := findNode(nodes, "ComposerButton")
+		if btn == nil {
+			return false
+		}
+		p, _ := btn["p"].(map[string]any)
+		click, _ := p["onClick"].(map[string]any)
+		fn, _ = click["$fn"].(float64)
+		return fn != 0
+	})
+	seen := func() []string {
+		t.Helper()
+		raw, err := rt.Call(context.Background(), "__laneSeenNow")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		_ = json.Unmarshal(raw, &out)
+		return out
+	}
+	react := func() {
+		_, _ = taut.Dispatch(context.Background(), tt, "changeReactionFromUserAction", map[string]any{"key": "C1-1.0", "name": "eyes"},
+			func(context.Context, map[string]any) (any, error) { return nil, nil })
+	}
+	react() // warm
+	before := len(seen())
+	jsBacklog(rt, 400*time.Millisecond)
+	done := make(chan struct{})
+	go func() { defer close(done); react() }()     // the pill click, as list.go dispatches it
+	time.Sleep(50 * time.Millisecond)              // queued behind the renders
+	tt.Bridge().Call(int64(fn), []byte("[]"), nil) // then the toggle
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the reaction's dispatch never finished")
+	}
+	got := strings.Join(seen()[before:], ", ")
+	if want := "reaction as Owl"; got != want {
+		t.Errorf("the reaction's patch saw %q, want %q: the click after it overtook it", got, want)
+	}
+	_ = rt.Do(func(*jsrt.Ctx) error { return nil })
+}

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -273,4 +274,83 @@ func TestSocketMessageAsksForNobody(t *testing.T) {
 			break
 		}
 	}
+}
+
+// The viewer's failed (and unconfirmed) sends stay, with their Retry,
+// through every re-read and purge, whatever the page's range: no page
+// can hold a local copy, and Slack keeps them apart from the history
+// slices. A catch-up after a wake dropped a failed send once anyone had
+// posted after it, and a purge dropped them all.
+func TestFailedSendSurvivesCatchUp(t *testing.T) {
+	a, fs, _ := rtApp(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	failedIn := func(ch string, p Page) bool {
+		for _, m := range p.Messages {
+			if m.Text == "on it" && m.Failed {
+				return true
+			}
+		}
+		return false
+	}
+	// read reads ch's newest window as a list does, after any catch-up
+	// History started has landed
+	read := func(ch string) Page {
+		t.Helper()
+		n := fs.HistoryReads(ch)
+		p, err := a.History(ctx, ch, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(20 * time.Millisecond) {
+			if fs.HistoryReads(ch) > n {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+		if p, err = a.History(ctx, ch, ""); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	sendFailed := func(ch string) {
+		t.Helper()
+		fs.SetFault("chat.postMessage", fakeslack.Fault{Error: "internal_error", Times: 1})
+		if _, err := a.Send(ctx, SendOpts{Channel: ch, Text: "on it"}); err == nil {
+			t.Fatal("the send didn't fail")
+		}
+		other := fs.UserIDs()[2]
+		for i := 0; i < 3; i++ { // others post after it
+			_, ev := fs.PostQuiet(ch, other, fmt.Sprintf("after the failed send %d", i))
+			injectMessage(a, ev)
+		}
+	}
+
+	t.Run("a re-read after a slow connect", func(t *testing.T) {
+		ch := fs.ChannelIDs()[7]
+		if _, err := a.History(ctx, ch, ""); err != nil {
+			t.Fatal(err)
+		}
+		sendFailed(ch)
+		a.socketConnected(false)
+		if p := read(ch); !failedIn(ch, p) {
+			t.Error("the failed send left the window after the catch-up re-read")
+		}
+	})
+
+	t.Run("a purge", func(t *testing.T) {
+		ch := fs.ChannelIDs()[8]
+		counts := func(hi string) {
+			a.applyMutationTimes(&slack.Counts{Channels: []slack.CountEntry{{ID: ch, HistoryInvalid: hi, Updated: "1794000000.000100"}}})
+		}
+		counts("1794000000.000100")
+		if _, err := a.History(ctx, ch, ""); err != nil {
+			t.Fatal(err)
+		}
+		sendFailed(ch)
+		counts("1794000009.000100") // a deletion the socket missed: the history goes
+		if p := read(ch); !failedIn(ch, p) {
+			t.Error("the failed send went with the purged history")
+		}
+	})
 }

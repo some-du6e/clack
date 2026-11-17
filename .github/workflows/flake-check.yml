@@ -1268,18 +1268,18 @@ jobs:
       - name: "core: socket events don't wait for lookups, catch-ups after a gap; jsrt, composer: the user's lane, in order"
         run: |
           rc=0
-          go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestSocketMessageAsksForNobody|TestHistoryCatchesUpWithLatest|TestHistoryRereadsAfterSlowConnect|TestHistoryCatchUpRetries|TestHistoryCountsMutations)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestSocketMessageAsksForNobody|TestHistoryCatchesUpWithLatest|TestHistoryRereadsAfterSlowConnect|TestHistoryCatchUpRetries|TestHistoryCountsMutations|TestFailedSendSurvivesCatchUp)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^(TestSetLatestSinceKeepsLiveMessages|TestSetLatestSincePageWins|TestSetLatestSinceKeepsHeldCopy)$' ./internal/store || rc=1
           go test -count=$COUNT -v -run '^(TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations|TestUserBlockingChainHop)$' ./internal/jsrt || rc=1
-          go test -count=$COUNT -v -run '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage)$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -run '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage|TestNativeDispatchBeforeLaterClick)$' ./internal/ui/composer || rc=1
           exit $rc
       - name: "ui: event to row, without plugins; notifications name new people, in order; missed messages reach the lists"
         if: ${{ !cancelled() }}
         env:
           CLACK_LATENCY_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 20m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestBotMessageReachesTheList|TestHistoryAfterSocketGap)$' ./internal/ui
-          go test -count=$COUNT -timeout 60m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestBotMessageReachesTheList|TestHistoryAfterSocketGap)$' ./internal/ui
+          go test -count=1 -v -timeout 20m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestNotificationsDontWaitForEachOther|TestBotMessageReachesTheList|TestHistoryAfterSocketGap|TestHistoryAfterLongGap)$' ./internal/ui
+          go test -count=$COUNT -timeout 60m -run '^(TestMessageLatency|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestNotificationsDontWaitForEachOther|TestBotMessageReachesTheList|TestHistoryAfterSocketGap|TestHistoryAfterLongGap)$' ./internal/ui
 
   # What one frame costs the GPU (branch gpu-frame-cost): Clack's window
   # rendered by each backend (Mesa llvmpipe's GL on Linux, WARP's Direct3D

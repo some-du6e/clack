@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // rowText is the text ch's list draws for ts, and whether it drew the
@@ -254,6 +256,127 @@ func TestHistoryAfterSocketGap(t *testing.T) {
 		}
 		if !e.untilSoft(10*time.Second, func() bool { return e.rowDrawn(ch, first) && e.rowDrawn(ch, second) }) {
 			t.Fatalf("the open list draws the first %v and the second %v", e.rowDrawn(ch, first), e.rowDrawn(ch, second))
+		}
+	})
+}
+
+// listTS is what ch's list holds, oldest first.
+func (e *perfEnv) listTS(ch string) []string {
+	e.frame()
+	return e.ownSendList(ch).LoadedTS()
+}
+
+// scrollBack scrolls ch's list toward its oldest message until it holds
+// at least n messages (older pages load as it nears the top).
+func (e *perfEnv) scrollBack(t *testing.T, ch string, n int) {
+	t.Helper()
+	if !e.untilSoft(30*time.Second, func() bool {
+		e.scroll(e.listPoint(), -3000)
+		e.settle(60 * time.Millisecond)
+		return len(e.listTS(ch)) >= n
+	}) {
+		t.Fatalf("the list holds %d messages after scrolling back, want %d", len(e.listTS(ch)), n)
+	}
+}
+
+// noHole fails when the list draws a message from before the gap followed
+// by one from after it while a missed message between them is left out:
+// a catch-up page that doesn't reach the list's messages must not be
+// merged under them (Slack keeps it a slice of its own, and loads back
+// from its start).
+func noHole(t *testing.T, what string, list []string, missed []string) {
+	t.Helper()
+	held := map[string]bool{}
+	for _, ts := range list {
+		held[ts] = true
+	}
+	first := missed[0]
+	for i := 1; i < len(list); i++ {
+		a, b := list[i-1], list[i]
+		if !store.TSLess(a, first) || store.TSLess(b, first) {
+			continue // not the boundary between before and after the gap
+		}
+		for _, m := range missed {
+			if store.TSLess(a, m) && store.TSLess(m, b) && !held[m] {
+				t.Fatalf("%s: the list draws %s, then %s, without the missed %s between them", what, a, b, m)
+			}
+		}
+	}
+}
+
+// A catch-up after a gap of more than one page (an overnight sleep in a
+// busy channel) never leaves a hole in the list, and the list's
+// scrollback survives a catch-up whose page reaches it.
+func TestHistoryAfterLongGap(t *testing.T) {
+	e := newLatEnv(t, latEnvOpts{})
+	ids := e.fs.ChannelIDs()
+	probe := ids[len(ids)-2]
+
+	t.Run("open, a gap of more than a page", func(t *testing.T) {
+		ch := ids[14]
+		e.openAtLatest(ch)
+		var missed []string
+		for i := 0; i < 60; i++ {
+			ts, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", fmt.Sprintf("%d: missed overnight", 43000+i))
+			missed = append(missed, ts)
+		}
+		e.fs.SetCountLatest(ch, missed[len(missed)-1])
+		landed := e.countsProbe(probe)
+		e.reconnectSlow(t, 0)
+		if !e.untilSoft(20*time.Second, landed) {
+			t.Fatal("no counts after the reconnect")
+		}
+		newest := missed[len(missed)-1]
+		if !e.untilSoft(10*time.Second, func() bool { return e.rowDrawn(ch, newest) }) {
+			t.Fatal("the newest missed message never drew")
+		}
+		e.settle(400 * time.Millisecond)
+		noHole(t, "after the catch-up", e.listTS(ch), missed)
+		// scrolling back reaches every missed message, then what came before
+		e.scrollBack(t, ch, len(e.listTS(ch))+40)
+		list := e.listTS(ch)
+		noHole(t, "scrolled back", list, missed)
+		held := map[string]bool{}
+		for _, ts := range list {
+			held[ts] = true
+		}
+		for _, m := range missed {
+			if !held[m] && !store.TSLess(m, list[0]) {
+				t.Fatalf("scrolled back past the gap, the list never got the missed %s", m)
+			}
+		}
+	})
+
+	t.Run("open, scrolled back, then a gap", func(t *testing.T) {
+		ch := ids[15]
+		// a long history: the list holds more than one page after
+		// scrolling, and core more than the catch-up page
+		for i := 0; i < 160; i++ {
+			e.fs.PostQuiet(ch, e.fs.UserIDs()[2+i%5], fmt.Sprintf("earlier %d", i))
+		}
+		e.openAtLatest(ch)
+		e.scrollBack(t, ch, 140)
+		read := e.listTS(ch)
+		missed, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", "43100: Hi meta,")
+		e.fs.SetCountLatest(ch, missed)
+		landed := e.countsProbe(probe)
+		e.reconnectSlow(t, 0)
+		if !e.untilSoft(20*time.Second, landed) {
+			t.Fatal("no counts after the reconnect")
+		}
+		e.settle(600 * time.Millisecond)
+		// further back, then the list's own refresh (every 30 s on screen)
+		e.scrollBack(t, ch, len(e.listTS(ch))+60)
+		e.ownSendList(ch).Refresh()
+		e.settle(800 * time.Millisecond)
+		after := map[string]bool{}
+		for _, ts := range e.listTS(ch) {
+			after[ts] = true
+		}
+		for _, ts := range read {
+			if !after[ts] {
+				t.Fatalf("the list lost %s, which it held before the gap (the user was reading it)", ts)
+			}
 		}
 	})
 }
