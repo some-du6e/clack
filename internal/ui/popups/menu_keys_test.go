@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"net/url"
 	"slices"
@@ -393,16 +394,25 @@ func TestMenuKeysSubmenus(t *testing.T) {
 
 	// P from the root of the context menu and of More actions: one pin
 	// request each, counted at the fake (the store's pin seq also moves
-	// when a pin the fake refuses is reverted, after the press). Pin or
-	// Un-pin, as the store has the message then: the fake refuses the
-	// earlier pin, and its revert may not have landed yet.
+	// when a pin the fake refuses is reverted, after the press). Each on a
+	// message of its own: the client holds back a request identical to
+	// one that just failed (the fake refuses these pins), and a refused
+	// pin's revert lands after the press.
 	pinRequests := func() int { return calls("pins.add") + calls("pins.remove") }
 	for end := time.Now().Add(10 * time.Second); pinRequests() == 0 && time.Now().Before(end); {
 		time.Sleep(10 * time.Millisecond) // Organize ▸ P's request, at the fake before we count
 	}
 	time.Sleep(200 * time.Millisecond)
-	for _, which := range []string{"context", "more"} {
-		e, _ := mkOpen(t, h, which, false)
+	for i, which := range []string{"context", "more"} {
+		msg := mkMsg(false)
+		msg.TS = fmt.Sprintf("1700000000.%06d", 201+i)
+		var m *Menu
+		if which == "more" {
+			m = NewMessageMenuOpts(h, image.Pt(600, 100), msg, MessageMenuOpts{})
+		} else {
+			m = NewMessageContextMenu(h, image.Pt(200, 200), msg, InChannel, MessageMenuOpts{})
+		}
+		e := newMkEnv(t, m)
 		before := pinRequests()
 		e.press("P", 0)
 		if !e.m.Dismissed() {
