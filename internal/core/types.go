@@ -397,6 +397,12 @@ type Event struct {
 	Saved       *SavedItem    // saved: add | update | delete
 	Activity    *ActivityItem // activity: updated item (hydrated when possible)
 	Raw         json.RawMessage
+	// Seq is the event's place in the order core emitted its events (1 on),
+	// the same for every subscriber, which each gets them in this order: a
+	// view that applied the event can tell when another subscriber (taut's
+	// mirror) has handled it too. 0: a resync for a subscriber that fell
+	// behind, or an event core never emitted.
+	Seq uint64
 }
 
 // SendOpts are the options for Send.

@@ -145,12 +145,17 @@ type row struct {
 
 	// plugin view of the message (taut patchMessageText…), see applyView;
 	// viewConv: the serial of the view's conversion it last compared
-	viewAt           time.Time
-	viewRev          uint32
-	viewed           bool
-	vmsg             *core.Message // the view itself (viewed): what the overrides lay over
-	viewWait         bool          // unviewed, a new revision: its source until JS's copy of it is ready
-	viewConv         uint64
+	viewAt    time.Time
+	viewRev   uint32
+	viewed    bool
+	vmsg      *core.Message // the view itself (viewed): what the overrides lay over
+	viewWait  bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
+	viewReady bool          // the view it last read was ready (MessageViewState)
+	viewConv  uint64
+	// need is the Seq of the core event that wrote its message (entry.seq,
+	// 0: a load's): JS's copy is of this revision only once taut's mirror
+	// handled that event
+	need             uint64
 	viewEpoch        uint64       // taut's ViewEpoch when it last read the view (applyView)
 	col              image.Point  // body column origin, row-local
 	reactAt          image.Point  // reaction bar origin, row-local
@@ -334,7 +339,7 @@ func newListRow(e *entry, thread bool) *row {
 }
 
 func (r *row) set(e *entry) {
-	r.rev = e.rev
+	r.rev, r.need = e.rev, e.seq
 	r.src = e.m
 	r.wrapOv, r.blocksOv, r.srcMsg, r.msg = 0, 0, nil, nil
 	r.msgOv, r.inMsg, r.wrapMsg, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil, nil
@@ -408,7 +413,7 @@ func (r *row) overlay(base *core.Message, msg slackc.Props, fp uint64, sent sent
 		if txt, ok := msg.Str("text"); ok && txt != src.Text {
 			m.Text = txt
 		}
-		if blocks := docBlocks(app, base.Doc.Blocks, src.Blocks, msg); !sameSlice(blocks, base.Doc.Blocks) {
+		if blocks := docBlocks(app, base.Doc.Blocks, src.Blocks, overBlocks(base.Doc.Blocks, src.Doc.Blocks, src.Blocks, msg)); !sameSlice(blocks, base.Doc.Blocks) {
 			m.Doc.Blocks = blocks
 			if list, ok := msg["blocks"].([]any); ok && len(src.Blocks) > 0 && !sameBlocks(list, src.Blocks) {
 				if b, err := json.Marshal(jsonable(list)); err == nil {
@@ -1659,7 +1664,15 @@ func (r *row) layoutMessageAttachments(gtx layout.Context, p slackc.Props) layou
 
 func (r *row) tailOverride(gtx layout.Context, ov *slackc.Props, memo *fpMemo, p slackc.Props) {
 	msg := p.Map("msg")
-	if fp := memo.of(msg); r.ownMsg(msg) || propsID(msg) == propsID(r.textOv) || r.bodySent.has(fp) || r.msgSent.has(fp) {
+	switch fp := memo.of(msg); {
+	case r.textOv != nil && (propsID(msg) == propsID(r.textOv) || fp == r.textFP):
+		// MessageText's override, handed on (the parts get it as their
+		// msg, a pass-through patch hands back its copy): its files and
+		// attachments are the plugin's. bodySent holds its fingerprint,
+		// so it read as one the row sent, and the files and attachments
+		// BetterBlock's MessageText dropped stayed drawn
+		msg = r.textOv
+	case r.ownMsg(msg) || r.bodySent.has(fp) || r.msgSent.has(fp):
 		msg = nil
 	}
 	if propsID(msg) != propsID(*ov) {
@@ -2425,7 +2438,7 @@ func (r *row) rootPreview(rc *rowCtx) string {
 // otherwise now than when it read them.
 func (r *row) rootNamesMoved() bool {
 	for i, id := range r.rootIDs {
-		if t, _ := richview.MentionText(richtext.Span{Kind: richtext.User, ID: id}); t != r.rootNames[i] {
+		if t, _ := richview.MentionTextPeek(richtext.Span{Kind: richtext.User, ID: id}); t != r.rootNames[i] {
 			return true
 		}
 	}

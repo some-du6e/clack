@@ -43,6 +43,10 @@ var wholeSlices = []string{
 type change struct {
 	Slice string   `json:"slice"`
 	Keys  []string `json:"keys,omitempty"`
+	// ts: a change to that message of the bucket Keys[0] alone
+	// (invalidateMsg): JS reads the bucket again all the same, but only
+	// that message's view stops being ready
+	ts string
 }
 
 type typingRec struct {
@@ -169,6 +173,9 @@ func (m *mirror) start() {
 	m.mu.Unlock()
 
 	evs, stop := m.t.app.Subscribe()
+	// what core emitted before this is in the store, which JS reads afresh
+	// (a new runtime holds nothing): handled
+	m.t.ui.views.noteSeen(m.t.app.EventSeq())
 	raws, stopRaw := m.t.app.SubscribeRaw()
 	go func() {
 		defer stop()
@@ -184,6 +191,13 @@ func (m *mirror) start() {
 					return
 				}
 				m.onEvent(ev)
+				if ev.Type == "resync" && ev.Seq == 0 {
+					// fell behind: what it missed is in the store, and the
+					// resync invalidated everything
+					m.t.ui.views.noteSeen(m.t.app.EventSeq())
+				} else {
+					m.t.ui.views.noteSeen(ev.Seq)
+				}
 			case ev := <-raws:
 				m.t.onRaw(ev)
 				m.noteRaw(ev)
@@ -243,6 +257,29 @@ func (m *mirror) invalidate(slice string, keys ...string) {
 	m.mu.Unlock()
 }
 
+// invalidateMsg is invalidate("messages", ch) for a change to message ts
+// alone (a new message, an update, a reaction, a delete): JS reads the
+// channel's bucket again, and only ts's view stops being ready until JS's
+// answer for it comes (MessageViewState). With the channel's marks, any
+// change in a busy channel held every message's view.
+func (m *mirror) invalidateMsg(ch, ts string) {
+	if ch == "" || ts == "" {
+		m.invalidate("messages", ch)
+		return
+	}
+	m.t.ui.views.msgPending(ch, ts, 1)
+	m.t.ui.views.msgStale(ch, ts)
+	m.mu.Lock()
+	m.pending = append(m.pending, change{Slice: "messages", Keys: []string{ch}, ts: ts})
+	if w := m.watched["messages"]; w != nil {
+		delete(w, ch)
+	}
+	if m.flush == nil {
+		m.flush = time.AfterFunc(8*time.Millisecond, m.send)
+	}
+	m.mu.Unlock()
+}
+
 func (m *mirror) send() {
 	m.mu.Lock()
 	m.flush = nil
@@ -254,7 +291,10 @@ func (m *mirror) send() {
 	}
 	defer func() {
 		for _, c := range batch { // posted (behind any later read), or no runtime to post to
-			if !jsTracked[c.Slice] {
+			switch {
+			case c.ts != "":
+				m.t.ui.views.msgPending(c.Keys[0], c.ts, -1)
+			case !jsTracked[c.Slice]:
 				m.t.ui.views.pendingAdd(c.Slice, c.Keys, -1)
 			}
 		}
@@ -271,12 +311,30 @@ func (m *mirror) send() {
 		// that the change is queued ahead of any later read (the runtime
 		// runs posts and calls in order), and redraw so the UI asks.
 		marked := false
+		// a whole slice's or bucket's change marks it whole again; one
+		// message's marks that message (and its bucket's fetch)
+		whole := map[string]bool{} // messages buckets changed as a whole in this batch
+		for _, c := range batch {
+			if c.Slice == "messages" && c.ts == "" {
+				for _, k := range c.Keys {
+					whole[k] = true
+				}
+			}
+		}
 		for _, c := range out {
 			if len(c.Keys) == 0 {
 				marked = m.t.ui.views.stale(c.Slice, "") || marked
 			}
 			for _, k := range c.Keys {
+				if c.Slice == "messages" && !whole[k] {
+					continue // its messages' own marks, below
+				}
 				marked = m.t.ui.views.stale(c.Slice, k) || marked
+			}
+		}
+		for _, c := range batch {
+			if c.ts != "" && !whole[c.Keys[0]] {
+				marked = m.t.ui.views.msgStale(c.Keys[0], c.ts) || marked
 			}
 		}
 		if f := m.t.opts.UI.Invalidate; marked && f != nil {
@@ -416,7 +474,14 @@ func (m *mirror) onEvent(ev core.Event) {
 	m.noteConv(ev)
 	switch ev.Type {
 	case "message", "update", "delete", "sent":
-		m.invalidate("messages", ev.Channel)
+		ts := ev.TS
+		if ev.Msg != nil && ev.Msg.TS != "" {
+			ts = ev.Msg.TS
+		}
+		m.invalidateMsg(ev.Channel, ts)
+		if ev.Type == "sent" && ev.ReplacesTS != "" && ev.ReplacesTS != ts {
+			m.invalidateMsg(ev.Channel, ev.ReplacesTS) // the pending copy it replaces goes
+		}
 		m.invalidate("channelHistory")
 		m.invalidate("reactions")
 		if ev.Count != nil {

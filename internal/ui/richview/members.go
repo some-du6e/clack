@@ -79,6 +79,48 @@ func memberReadFn() MemberRead {
 	return nil
 }
 
+var memberPeek atomic.Pointer[MemberRead]
+
+// SetMemberPeek installs (or with nil removes) MemberRead's peek: the same
+// answer, but no access recorded and nothing asked for (Slack's
+// getRawMemberById), for a check that reads the same members every frame
+// for what may have changed (MentionTextPeek).
+func SetMemberPeek(f MemberRead) {
+	if f == nil {
+		memberPeek.Store(nil)
+		return
+	}
+	memberPeek.Store(&f)
+}
+
+// MentionTextPeek is MentionText reading the member through the peek
+// when one is installed: a preview checking every frame whether a name
+// it drew reads otherwise now (a rename, a plugin's nickname) counted as
+// drawing the member each frame, and every status or huddle change of
+// theirs redrew every list (the hub's drawsMember).
+func MentionTextPeek(sp richtext.Span) (string, bool) {
+	p := memberPeek.Load()
+	if p == nil {
+		return MentionText(sp)
+	}
+	if sp.Kind != richtext.User || sp.ID == "" {
+		return "", false
+	}
+	if f := memberLabelFn(); f != nil {
+		if n, ok := f(sp.ID); ok {
+			return "@" + n, true
+		}
+	}
+	n, miss := (*p)(sp.ID)
+	if miss != MemberLoaded {
+		return "", true
+	}
+	if n = strings.TrimPrefix(n, "@"); n == "" {
+		return "", false
+	}
+	return "@" + n, true
+}
+
 // nameUse is a user mention a layout drew and the name it used ("" for
 // the parsed text), or what the store had instead (miss) and whether the
 // mention drew BaseMissingMember's bar for it (bar).

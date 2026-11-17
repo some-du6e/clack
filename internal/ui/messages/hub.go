@@ -18,6 +18,10 @@ import (
 type entry struct {
 	m   core.Message
 	rev uint32
+	// seq is the Seq of the core event that wrote m (0: a load's, or
+	// one of ours): a row waits for the plugins' view of it until taut's
+	// mirror has handled that event (applyView)
+	seq uint64
 }
 
 // model is the shared, goroutine-safe state of one conversation (or one
@@ -63,6 +67,15 @@ type model struct {
 	// drawn is the frame (gtx.Now) a list last drew the model at; the
 	// hub's mu guards it (markDrawn, onScreen)
 	drawn time.Time
+
+	// dropped: the hub let the model go (evict) and its list kept it.
+	// Out of the hub it took none of core's events, its "evicted" ones
+	// among them: core may have trimmed or reset the conversation
+	// meanwhile (store/evict.go, the 3000-message budget), so the next
+	// load takes core's window whole (merged, the model kept what core let
+	// go before the window's newest page, and a gap of unread messages
+	// between them never loaded: loadOlder pages before the model's oldest)
+	dropped bool
 
 	// reconv is what changed of what Docs read while a load was out
 	// (reconvert): its answer may hold messages converted before it, so
@@ -127,8 +140,8 @@ type hub struct {
 	// error) until the connection comes back or the user hits Retry.
 	authFailed atomic.Bool
 	// frame is the latest frame a list drew at (markDrawn): the models
-	// drawn then are the ones on screen
-	frame time.Time
+	// drawn then are the ones on screen; prevFrame the one before it
+	frame, prevFrame time.Time
 	// reconvMu runs one reconvertIn at a time (hub.run's, a landed
 	// load's): each converts after the last one wrote, so a conversion
 	// that read the store before a change can't land after the one made
@@ -145,7 +158,7 @@ type hub struct {
 func (hb *hub) markDrawn(m *model, at time.Time) *model {
 	hb.mu.Lock()
 	if at.After(hb.frame) {
-		hb.frame = at
+		hb.prevFrame, hb.frame = hb.frame, at
 	}
 	ms, k := hb.chans, m.ch
 	if m.threadTS != "" {
@@ -206,8 +219,15 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 	if seen.IsZero() {
 		return false
 	}
+	// a read since the frame before the latest one began: a frame stamps
+	// itself (markDrawn) before its rows read their members, so a check
+	// that ran while the latest frame laid its rows out found the sender's
+	// read in the frame before, and the rename never redrew the row
 	hb.mu.Lock()
-	frame := hb.frame
+	frame := hb.prevFrame
+	if frame.IsZero() {
+		frame = hb.frame
+	}
 	hb.mu.Unlock()
 	return frame.IsZero() || seen.UnixMilli() >= frame.UnixMilli()
 }
@@ -302,6 +322,11 @@ func (hb *hub) evict(ms map[string]*model) {
 			oldest, t = k, m.used
 		}
 	}
+	if m := ms[oldest]; m != nil {
+		m.mu.Lock() // inside hb.mu, as PerfCounts takes them
+		m.dropped = true
+		m.mu.Unlock()
+	}
 	delete(ms, oldest)
 }
 
@@ -335,6 +360,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			live := m.takeLive()
 			if err == nil {
 				m.setAll(msgs)
+				m.dropped = false // setAll is core's thread whole
 				m.keepLive(live)
 				m.loaded = true
 				m.fetched = time.Now()
@@ -355,7 +381,14 @@ func (hb *hub) ensureLoaded(m *model) {
 			m.err = err
 			live := m.takeLive()
 			if err == nil {
-				m.mergeNewest(p.Messages, p.HasMore)
+				if m.dropped {
+					// core's window as it is now (dropped): setAll keeps the
+					// revisions of the messages it already had, as they were
+					m.setAll(p.Messages)
+					m.hasMore, m.dropped = p.HasMore, false
+				} else {
+					m.mergeNewest(p.Messages, p.HasMore)
+				}
 				m.keepLive(live)
 				if !m.loaded {
 					m.lastRead = p.LastRead
@@ -469,7 +502,7 @@ func (m *model) setAll(msgs []core.Message) {
 			continue
 		}
 		if o, ok := old[x.TS]; ok && sameMessage(&o.m, &x) {
-			out = append(out, entry{m: x, rev: o.rev})
+			out = append(out, entry{m: x, rev: o.rev, seq: o.seq})
 			continue
 		}
 		out = append(out, entry{m: x, rev: m.bump()})
@@ -547,7 +580,8 @@ func (m *model) find(ts string) int {
 	return -1
 }
 
-func (m *model) upsert(msg core.Message) {
+// upsert puts msg in, written by core's event seq (0: none).
+func (m *model) upsert(msg core.Message, seq uint64) {
 	if !m.visible(&msg) {
 		// a reply taken back from the conversation (removeBroadcast) leaves
 		// its list; its thread keeps it
@@ -555,14 +589,14 @@ func (m *model) upsert(msg core.Message) {
 		return
 	}
 	if i := m.find(msg.TS); i >= 0 {
-		m.msgs[i] = entry{m: msg, rev: m.bump()}
+		m.msgs[i] = entry{m: msg, rev: m.bump(), seq: seq}
 		return
 	}
 	// Replace an optimistic pending message with the same text from self.
 	i := sort.Search(len(m.msgs), func(i int) bool { return !tsLess(m.msgs[i].m.TS, msg.TS) })
 	m.msgs = append(m.msgs, entry{})
 	copy(m.msgs[i+1:], m.msgs[i:])
-	m.msgs[i] = entry{m: msg, rev: m.bump()}
+	m.msgs[i] = entry{m: msg, rev: m.bump(), seq: seq}
 }
 
 // noteLive records that an event changed (or deleted) ts while a load is
@@ -606,7 +640,7 @@ func (m *model) keepLive(live map[string]*entry) {
 		if e == nil {
 			m.remove(ts)
 		} else {
-			m.upsert(e.m)
+			m.upsert(e.m, e.seq)
 		}
 	}
 }
@@ -691,7 +725,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		if chm != nil {
 			chm.mu.Lock()
 			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
-				chm.upsert(*ev.Msg)
+				chm.upsert(*ev.Msg, ev.Seq)
 				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
 					delete(chm.typing, ev.Msg.User)
@@ -703,7 +737,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		}
 		if thm != nil {
 			thm.mu.Lock()
-			thm.upsert(*ev.Msg)
+			thm.upsert(*ev.Msg, ev.Seq)
 			thm.noteLive(ev.Msg.TS, false)
 			if ev.Type == "message" {
 				delete(thm.typing, ev.Msg.User)
@@ -716,7 +750,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		if ev.Msg.ThreadTS == "" || ev.Msg.ThreadTS == ev.Msg.TS {
 			if _, t2 := hb.models(ev.Channel, ev.Msg.TS); t2 != nil {
 				t2.mu.Lock()
-				t2.upsert(*ev.Msg)
+				t2.upsert(*ev.Msg, ev.Seq)
 				t2.noteLive(ev.Msg.TS, false)
 				t2.rev++
 				t2.mu.Unlock()
@@ -741,7 +775,7 @@ func (hb *hub) apply(ev core.Event) bool {
 				m.remove(ev.ReplacesTS)
 				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
 			}
-			m.upsert(*ev.Msg)
+			m.upsert(*ev.Msg, ev.Seq)
 			m.rev++
 			m.mu.Unlock()
 		}
@@ -957,7 +991,7 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 			if i := m.find(st.ts); i >= 0 && sameSlice(m.msgs[i].m.Doc.Blocks, st.blocks) {
 				msg := m.msgs[i].m
 				if takeConverted(&msg, f) {
-					m.msgs[i] = entry{m: msg, rev: m.bump()}
+					m.msgs[i] = entry{m: msg, rev: m.bump(), seq: m.msgs[i].seq} // converted again: the same message
 					m.rev++
 					changed = true
 				}
@@ -1031,7 +1065,7 @@ func (hb *hub) applyReactions(ev core.Event) bool {
 		if i := m.find(ts); i >= 0 {
 			msg := m.msgs[i].m
 			msg.Reactions = ev.Msg.Reactions
-			m.msgs[i] = entry{m: msg, rev: m.bump()}
+			m.msgs[i] = entry{m: msg, rev: m.bump(), seq: ev.Seq}
 			m.noteLive(ts, false)
 			m.rev++
 			changed = true

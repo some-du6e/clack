@@ -679,6 +679,77 @@ func iconURL(ic slackc.Props) string {
 	return ""
 }
 
+// overBlocks is msg, a msg the row built from sent's doc (its blocks
+// numbered "clack-i", sent[i]), made ready for docBlocks over base, the
+// doc the row draws over (the plugins' view): a block the plugin handed
+// back as the row sent it becomes base's block in its place, which
+// docBlocks keeps; one the plugin changed stays the plugin's, which
+// docBlocks parses. Matched against base itself, a text-only message's
+// blocks (from the source) differed wherever the view differed, and the
+// source's text replaced the view's: Censorship's masks went whenever
+// ShowRealUser's wrapper rewrote a forwarded message's author. msg as it
+// is when there's nothing to map (the same doc, raw blocks, none).
+func overBlocks(base, sent []richtext.Block, raw json.RawMessage, msg slackc.Props) slackc.Props {
+	list, ok := msg["blocks"].([]any)
+	if !ok || rawBlocks(raw) != nil || sameSlice(base, sent) {
+		return msg
+	}
+	emitted := func(bs []richtext.Block) []int {
+		var out []int
+		for i := range bs {
+			switch bs[i].Kind {
+			case richtext.FileBlock, richtext.AttachmentBlock, richtext.Tombstone:
+				continue
+			}
+			if slackBlock(&bs[i]) != nil {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
+	sw, bw := emitted(sent), emitted(base)
+	pos := make(map[int]int, len(sw))
+	for p, i := range sw {
+		pos[i] = p
+	}
+	out := make([]any, len(list))
+	asSent := len(list) == len(sw) // every block back as the row sent it, in order
+	for k, v := range list {
+		out[k] = v
+		b := slackc.Props(asMap(v))
+		id := b.StrOr("block_id", "")
+		i, err := strconv.Atoi(strings.TrimPrefix(id, blockIDPrefix))
+		p, isSent := pos[i]
+		if !strings.HasPrefix(id, blockIDPrefix) || err != nil || !isSent {
+			asSent = false
+			continue
+		}
+		sb := slackBlock(&sent[i])
+		sb["block_id"] = id
+		if !sameJSON(b, sb) {
+			asSent = false
+			continue // the plugin's
+		}
+		asSent = asSent && p == k
+		if len(bw) == len(sw) {
+			j := bw[p]
+			nb := slackBlock(&base[j])
+			nb["block_id"] = blockIDPrefix + strconv.Itoa(j)
+			out[k] = map[string]any(nb)
+		}
+	}
+	m := make(slackc.Props, len(msg))
+	for k, v := range msg {
+		m[k] = v
+	}
+	if asSent {
+		delete(m, "blocks") // a msg without blocks keeps base's body
+	} else {
+		m["blocks"] = out
+	}
+	return m
+}
+
 // docBlocks rebuilds a Doc's blocks from msg.blocks / msg.attachments.
 // When the msg went out with the message's real blocks (raw, as Slack
 // sent them), the same blocks back keep orig and any other list is

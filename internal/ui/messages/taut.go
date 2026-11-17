@@ -251,14 +251,26 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// when core just changed the row's message, convert it again now
 	// rather than show the old state until the mirror sees the event
 	changed := r.viewRev != 0 && r.viewRev != r.rev
+	first := r.viewRev == 0
 	r.viewAt, r.viewRev, r.viewEpoch = now, r.rev, ep
 	if changed {
 		r.viewConv = 0 // a new revision: compared afresh
 	}
-	if changed && !r.viewed {
-		r.viewWait = true // the new source, until JS's copy is of it (ready)
+	if (first || changed) && !r.viewed {
+		// the new source, until JS's copy is of it (ready): a row's first
+		// read too. A row made within a JS round trip of an update (the
+		// thread pane opened on the vote message just voted on, a list
+		// rebuilt) took JS's copy of the revision before, its pane a vote
+		// behind the channel's, and the two rows' Block Kit host held the
+		// old blocks. So what a filter plugin makes of an edit (a word
+		// Censorship masks) shows one JS round trip late, as it does for a
+		// new message; ready is the message's own, so that's one round
+		// trip however busy the rest of the channel is
+		r.viewWait = true
 	}
-	mv, conv, ready, ok := t.MessageViewState(r.src.Channel, r.src.TS, changed)
+	mv, conv, ready, ok := t.MessageViewState(r.src.Channel, r.src.TS, changed, r.need)
+	wasReady := r.viewReady
+	r.viewReady = ready && ok
 	if !ok {
 		if r.viewed {
 			r.viewed, r.vmsg = false, nil
@@ -289,7 +301,12 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		// changes with no change to the plugins' JSON, and a row that kept
 		// its view whenever text, blocks and the sameView fields matched
 		// never showed it.
-		if !again && !changed || sameDrawn(r.vmsg, &mv) {
+		// a ready read after one that wasn't is looked at whatever its
+		// conversion: JS's answer of the same bytes as the copy it took
+		// while not ready makes no new conversion, and the row stayed
+		// viewed, its next update drawn late from JS's old copy
+		turned := ready && !wasReady
+		if !again && !changed && !turned {
 			return
 		}
 		if ready && sameView(&r.src, &mv) && r.src.Text == mv.Text && reflect.DeepEqual(r.src.Doc.Blocks, mv.Doc.Blocks) {
@@ -298,6 +315,9 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 			// so its next update draws at once
 			r.viewed, r.vmsg = false, nil
 			r.recompose()
+			return
+		}
+		if sameDrawn(r.vmsg, &mv) {
 			return
 		}
 		r.vmsg = &mv

@@ -235,11 +235,18 @@ func sweepRows(now time.Time) {
 		}
 		for _, r := range s.rows {
 			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
-				r.rv.Release()
-				// the trees' msgs it remembered (slackc's sweep has let
-				// their roots go): not kept alive for the row's lifetime
+				// the trees' msgs it remembered and laid over its message
+				// (slackc's sweep has let their roots go, and a remount
+				// hands the natives none until JS draws them again): not
+				// kept alive for the row's lifetime
 				r.textMemo, r.blocksMemo, r.filesMemo, r.attsMemo = fpMemo{}, fpMemo{}, fpMemo{}, fpMemo{}
 				r.ovEl = elMemo{}
+				if r.textOv != nil || r.filesOv != nil || r.attsOv != nil || r.wrapMsg != nil || r.inMsg != nil {
+					r.textOv, r.filesOv, r.attsOv = nil, nil, nil
+					r.wrapOv, r.msgOv, r.wrapMsg, r.inMsg = 0, 0, nil, nil
+					r.recompose()
+				}
+				r.rv.Release()
 			}
 		}
 	}
@@ -672,7 +679,19 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	now := time.Now()
 	lastHost = h
 	if m := s.hb.markDrawn(s.m, gtx.Now); m != s.m {
-		s.m, s.snap.rev = m, 0 // another list's model for the conversation (markDrawn)
+		// another list's model for the conversation (markDrawn). Revisions
+		// count per model, and a model's first load numbers its messages
+		// as the dropped one's did: a row whose message changed while the
+		// model was out kept its copy (the same number), and skipped the
+		// updates whose numbers the old model had used. Every row takes the
+		// new model's entry, and evictions count from its own.
+		s.m, s.snap.rev = m, 0
+		for _, r := range s.rows {
+			r.rev = 0
+		}
+		m.mu.Lock()
+		s.evictSeen = m.evictGen
+		m.mu.Unlock()
 	}
 	s.hb.ensureLoaded(s.m)
 	s.sync(h, now)

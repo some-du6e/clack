@@ -890,20 +890,26 @@ func (t *Taut) MessageViewChanged(ch, ts string) (core.Message, bool) {
 // member's name, a channel's tabs: bumpChange) did, though nothing else a
 // caller compares may have.
 func (t *Taut) MessageViewConv(ch, ts string, fresh bool) (core.Message, uint64, bool) {
-	m, id, _, ok := t.MessageViewState(ch, ts, fresh)
+	m, id, _, ok := t.MessageViewState(ch, ts, fresh, 0)
 	return m, id, ok
 }
 
 // MessageViewState is MessageViewConv, and whether the value it converted
-// is ready: one JS gave after every change marked so far was posted to
-// it (not stale, none queued). One that isn't may be the plugins' copy of
-// the revision before an update, while JS hasn't answered for the new
-// one.
-func (t *Taut) MessageViewState(ch, ts string, fresh bool) (m core.Message, conv uint64, ready, ok bool) {
+// is ready: one JS gave after every change to this message (and every
+// change to its channel's bucket as a whole) marked so far was posted to
+// it, none queued, and after the mirror handled core's event need (the
+// Seq of the event that wrote the caller's copy; 0: none). One that isn't
+// may be the plugins' copy of the revision before an update, while JS
+// hasn't answered for the new one. A change to another message of the
+// channel doesn't hold it: round 5's ready was the channel's, and while
+// anything in it changed within each JS round trip an edit drew its
+// unpatched source (a word Censorship masks) and a viewed row never went
+// back to its source.
+func (t *Taut) MessageViewState(ch, ts string, fresh bool, need uint64) (m core.Message, conv uint64, ready, ok bool) {
 	if !t.SlicePatched("messages") {
 		return core.Message{}, 0, false, false
 	}
-	e, ready := t.ui.views.entryState("messages", ch, ts)
+	e, ready := t.ui.views.entryStateNeed("messages", ch, ts, need)
 	if e == nil || e.sm == nil {
 		return core.Message{}, 0, false, false
 	}
@@ -1215,7 +1221,28 @@ type viewCache struct {
 	// from before them, whatever its sequence says
 	pend    map[viewSK]int
 	pendAll map[string]int
+	// A message's own marks (the messages slice, channel and ts): the seq
+	// of the last change to that message alone (a new one, an update, a
+	// reaction, a delete: mirror.invalidateMsg), and how many such changes
+	// are queued for JS and not posted. Its bucket's fetch staleness stays
+	// the channel's (the group's ver: JS reads the bucket whole), but its
+	// readiness takes only these and the bucket's own marks (chanVer: the
+	// bucket changed as a whole, an eviction or a change the sweep found).
+	msgVer  map[msgKey]uint64
+	pendMsg map[msgKey]int
+	chanVer map[string]uint64
+	// mirrorSeen is the Seq of the last core event the mirror handled,
+	// its marks made: a message an event wrote isn't ready before it, as
+	// JS may not have heard of the change yet (the hub applied the event
+	// first, or the viewer's own reaction, applied in the frame)
+	mirrorSeen atomic.Uint64
 }
+
+// msgKey is a message of the messages slice (its view's readiness).
+type msgKey struct{ ch, ts string }
+
+// maxMsgMarks bounds msgVer: past it they start over with a whole mark.
+const maxMsgMarks = 50000
 
 // viewOnScreen is how recently, before the UI's latest read, values must
 // have been read to be on screen: rows re-read their views at least every
@@ -1268,6 +1295,7 @@ func (v *viewCache) init(t *Taut) {
 	v.refOf = map[viewSK]core.MsgRefs{}
 	v.refSeq = map[string]uint64{}
 	v.inflight = map[viewSK]int{}
+	v.msgVer, v.pendMsg, v.chanVer = map[msgKey]uint64{}, map[msgKey]int{}, map[string]uint64{}
 	v.sliceRead = map[string]int64{}
 	v.onScreen = viewOnScreen
 	v.maxSubs = 20000
@@ -1317,6 +1345,13 @@ func (v *viewCache) entry(slice, key, sub string) *viewEntry {
 // changes marked for it (not stale) and with none queued for JS that it
 // may be from before (pending).
 func (v *viewCache) entryState(slice, key, sub string) (*viewEntry, bool) {
+	return v.entryStateNeed(slice, key, sub, 0)
+}
+
+// entryStateNeed is entryState for a message whose copy core's event need
+// wrote (MessageViewState): its readiness is its own (msgVer, pendMsg),
+// its bucket's whole marks and the mirror's having handled need.
+func (v *viewCache) entryStateNeed(slice, key, sub string, need uint64) (*viewEntry, bool) {
 	k := viewKey{slice, key, sub}
 	now := viewNow()
 	v.mu.Lock()
@@ -1330,9 +1365,60 @@ func (v *viewCache) entryState(slice, key, sub string) (*viewEntry, bool) {
 		v.want[k] = true
 		v.kickLocked()
 	}
-	ready := e != nil && !stale && v.pend[viewSK{slice, key}] == 0 && v.pendAll[slice] == 0
+	ready := e != nil && v.pend[viewSK{slice, key}] == 0 && v.pendAll[slice] == 0
+	if ready && slice == "messages" && sub != "" {
+		mk := msgKey{key, sub}
+		ready = e.ver >= v.msgVer[mk] && e.ver >= v.chanVer[key] && e.ver >= v.sliceVer[slice] && e.ver >= v.allVer &&
+			v.pendMsg[mk] == 0 && v.mirrorSeen.Load() >= need
+	} else {
+		ready = ready && !stale
+	}
 	v.mu.Unlock()
 	return e, ready
+}
+
+// msgPending counts a change to message ch/ts queued for JS (d 1) or
+// posted to it (d -1).
+func (v *viewCache) msgPending(ch, ts string, d int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	k := msgKey{ch, ts}
+	if v.pendMsg[k] += d; v.pendMsg[k] <= 0 {
+		delete(v.pendMsg, k)
+	}
+}
+
+// msgStale marks message ch/ts's view stale: its bucket's fetch (the
+// group, as stale does) and its own readiness. Reports whether the bucket
+// is on screen (stale's).
+func (v *viewCache) msgStale(ch, ts string) (onScreen bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	defer func() {
+		if onScreen {
+			v.epoch.Add(1)
+		}
+	}()
+	v.seq++
+	if len(v.msgVer) >= maxMsgMarks {
+		clear(v.msgVer)
+		v.sliceVer["messages"] = v.seq // every message stale once: as safe as the marks let go
+	}
+	v.msgVer[msgKey{ch, ts}] = v.seq
+	g := v.groups[viewSK{"messages", ch}]
+	if g == nil {
+		return false
+	}
+	g.ver = v.seq
+	return len(g.subs) > 0 && v.visibleLocked(g)
+}
+
+// noteSeen records that the mirror handled core's event seq (its marks
+// made); events come to it in Seq order.
+func (v *viewCache) noteSeen(seq uint64) {
+	if seq > v.mirrorSeen.Load() {
+		v.mirrorSeen.Store(seq)
+	}
 }
 
 // pendingAdd counts changes to slice's keys (all of it with none) queued
@@ -1409,6 +1495,15 @@ func (v *viewCache) stale(slice, key string) (onScreen bool) {
 	if key == "" {
 		v.sliceVer[slice] = v.seq
 		return v.sliceN[slice] > 0 && v.sliceRead[slice] >= v.lastRead-v.onScreen
+	}
+	if slice == "messages" {
+		// the bucket as a whole: every message's readiness (msgStale marks
+		// one message's)
+		if len(v.chanVer) >= maxMsgMarks {
+			clear(v.chanVer)
+			v.sliceVer[slice] = v.seq
+		}
+		v.chanVer[key] = v.seq
 	}
 	g := v.groups[viewSK{slice, key}]
 	if g == nil {

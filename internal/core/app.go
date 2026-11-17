@@ -43,6 +43,7 @@ type App struct {
 
 	subMu sync.Mutex
 	subs  map[*sub]struct{}
+	evSeq uint64 // the last event's Seq (subMu)
 
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
@@ -464,7 +465,16 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 	}
 }
 
-func (a *App) emit(ev Event) {
+// EventSeq is the Seq of the last event emitted so far.
+func (a *App) EventSeq() uint64 {
+	a.subMu.Lock()
+	defer a.subMu.Unlock()
+	return a.evSeq
+}
+
+// emit sends ev to every subscriber and returns it as they get it (with
+// its Seq).
+func (a *App) emit(ev Event) Event {
 	a.noteDocChange(&ev) // what ev changed of what message Docs read (msg_refs.go)
 	if !snapshotQuietEvents[ev.Type] {
 		a.InvalidateSnapshot() // snapshot_recent.go
@@ -472,6 +482,10 @@ func (a *App) emit(ev Event) {
 	a.pinsTabSee(ev) // the Pins tab's message copies (channel_pins.go)
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
+	// numbered under the lock that orders the sends: every subscriber
+	// gets the events in Seq order
+	a.evSeq++
+	ev.Seq = a.evSeq
 	for s := range a.subs {
 		if s.lagged {
 			select {
@@ -487,6 +501,7 @@ func (a *App) emit(ev Event) {
 			s.lagged = true
 		}
 	}
+	return ev
 }
 
 // once deduplicates concurrent identical fetches (e.g. prefetch + open).
