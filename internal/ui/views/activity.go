@@ -387,6 +387,7 @@ type Activity struct {
 	// shown: whether the page or its peek drew in the latest frame; its
 	// realtime watcher redraws only then (watchItems)
 	shown    shownTracker
+	shimmers int             // the loading shimmers drawn so far (shimmerLine)
 	wmu      sync.Mutex      // serializes core activity writes
 	listsReq map[string]bool // lists asked for so list rows can name their item
 	// densityReq: the saved layout was asked for (activity.views);
@@ -3600,6 +3601,7 @@ func (v *Activity) reactPrefix(gtx C, d *actDesc, col color.NRGBA) D {
 // shimmerLine is Slack's loading placeholder (applyShimmer) for a body
 // whose message hasn't loaded: one rounded bar.
 func (v *Activity) shimmerLine(gtx C, width unit.Dp) D {
+	v.shimmers++
 	w := min(gtx.Constraints.Max.X, gtx.Dp(width))
 	h := gtx.Dp(22)
 	bar := image.Rect(0, gtx.Dp(5), w, h-gtx.Dp(5))

@@ -326,6 +326,7 @@ func (b *base) style() *richview.Style {
 type richEntry struct {
 	v   *richview.View
 	ver string
+	at  time.Time // the frame it was laid out in last (gtx.Now)
 }
 
 // richCache keeps one richview.View per message for a view.
@@ -392,6 +393,7 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 	} else {
 		e.v.SetOptions(o)
 	}
+	e.at = gtx.Now
 	if maxLines <= 0 {
 		return e.v.Layout(gtx, b.style(), hostHandler{b.h})
 	}
