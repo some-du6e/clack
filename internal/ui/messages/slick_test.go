@@ -83,9 +83,13 @@ func newSlickEnv(t *testing.T, seed func(s *store.Store)) *slickEnv {
 	slackc.SetBridge(tt.Bridge())
 	SetTaut(tt)
 	// the Slack components plugins render themselves (api.elements.Avatar
-	// and the rest), as the app registers them (slackc_wire.go)
+	// and the rest), as the app registers them, and the theme and core
+	// they draw with (slackc_wire.go: slackc.Init before any plugin draws)
+	th := theme.New(false)
 	RegisterSlackHosts()
+	slackc.Init(slackc.Env{Theme: th, Core: app, Invalidate: func() {}})
 	t.Cleanup(func() {
+		slackc.Init(slackc.Env{})
 		SetTaut(nil)
 		slackc.SetBridge(nil)
 		slackc.Reset() // the next env's runtime must get every root rendered again (taut_wire does this on attach)
@@ -93,7 +97,7 @@ func newSlickEnv(t *testing.T, seed func(s *store.Store)) *slickEnv {
 		_ = s.Close()
 		_ = tt.Close()
 	})
-	e.h = coreHost{app: app, th: theme.New(false)}
+	e.h = coreHost{app: app, th: th}
 	return e
 }
 

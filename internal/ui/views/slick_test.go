@@ -311,16 +311,20 @@ func newSlickEnv(t *testing.T) *slickEnv {
 	}
 	slackc.SetBridge(tt.Bridge())
 	// the Slack components plugins render themselves (api.elements.Avatar
-	// and the rest), as the app registers them (slackc_wire.go)
+	// and the rest), as the app registers them, and the theme and core
+	// they draw with (slackc_wire.go: slackc.Init before any plugin draws)
+	th := theme.New(false)
 	messages.RegisterSlackHosts()
+	slackc.Init(slackc.Env{Theme: th, Core: app, Invalidate: func() {}})
 	t.Cleanup(func() {
+		slackc.Init(slackc.Env{})
 		_ = s.Close()
 		_ = tt.Close()
 		slackc.Reset()
 		slackc.SetBridge(nil)
 		slackc.SetPatched(nil)
 	})
-	return &slickEnv{t: t, h: &slickHost{app: app, th: theme.New(false), tt: tt}, api: api, ui: ui, s: s, app: app, size: image.Pt(1200, 800)}
+	return &slickEnv{t: t, h: &slickHost{app: app, th: th, tt: tt}, api: api, ui: ui, s: s, app: app, size: image.Pt(1200, 800)}
 }
 
 func (e *slickEnv) ctx() context.Context {
