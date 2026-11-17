@@ -584,9 +584,18 @@ func (w *World) counts() any {
 		}
 	}
 	tu, tm := w.threadUnreadsLocked()
+	// channel_badges as Slack's server sends it: the channels' mentions and
+	// the DMs' (the classic Activity badge and the app badge read channels)
+	chMent, dmMent := 0, 0
+	for _, e := range chans {
+		chMent += e.MentionCount
+	}
+	for _, e := range append(ims[:len(ims):len(ims)], mpims...) {
+		dmMent += e.MentionCount
+	}
 	return okMap("channels", nz(chans), "ims", nz(ims), "mpims", nz(mpims),
 		"threads", map[string]any{"has_unreads": tu > 0, "mention_count": tm, "unread_count": tu},
-		"channel_badges", map[string]any{"channels": 0, "dms": 0, "app_dms": 0, "thread_mentions": tm, "thread_unreads": tu})
+		"channel_badges", map[string]any{"channels": chMent, "dms": dmMent, "app_dms": 0, "thread_mentions": tm, "thread_unreads": tu})
 }
 
 func nz(es []slack.CountEntry) []slack.CountEntry {
