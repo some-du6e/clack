@@ -40,11 +40,13 @@ import (
 // whole window. Each scene measures that floor itself, the old way again
 // with a transparent path drawn first or after the shadow's rings (every
 // path, or every later one, moved), and holds the new way to max(6, the
-// floor's levels + 2) and to 0.5% of the pixels drawn over the background
-// or 4× the floor's count and 256. The 6: llvmpipe and Metal differ by 4
-// at most; WARP by up to 6 where only a shape's own stencil changed (the
-// shadow's corner over a light chrome, drawn in regions; a dialog's
-// corner, cached at the origin), which no move in the atlas shows. Windows CI's WARP may differ by up to 12 levels on the panel's
+// floor's levels + 2), or max(8, …) on Windows, and to 0.5% of the pixels
+// drawn over the background or 4× the floor's count and 256. The 6:
+// llvmpipe and Metal differ by 4 at most. The 8: WARP differs by up to 6
+// where only a shape's own stencil changed (the shadow's corner over a
+// light chrome, drawn in regions; a dialog's corner, cached at the
+// origin), which no move in the atlas shows, so it gets the same two
+// levels of headroom; the seams and bands this guards were 12 to 35. Windows CI's WARP may differ by up to 12 levels on the panel's
 // edge only: its old way is off there (the clip stenciled over the whole
 // panel; (152,80) at 2x without a sidebar, fully inside the panel, came
 // out 246 instead of 255), where the new way is exact. With the backends'

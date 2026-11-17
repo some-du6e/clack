@@ -1934,9 +1934,9 @@ meant layers of one depth to share a page but never updated its depth,
 so every nested opacity layer got a page, an FBO and a render pass of
 its own. A set is sized, and so aged, in every frame, also one that needs
 none of it (a frame with no opacity layer, intersection or path: the
-last fade's window-sized layer page stayed for good), and a page counts
-its oversized frames and its unused ones apart, so each rule waits its 60
-frames. `ClackLegacyLayers(true)` gives every nested layer a page again,
+last fade's window-sized layer page stayed for good). A page counts its
+oversized frames and its unused ones, each rule waiting its 60 frames; since
+patch 44 a frame that doesn't use the page counts toward both. `ClackLegacyLayers(true)` gives every nested layer a page again,
 for tests: `TestClackLayerPages` draws the window's nested layers (a
 fade holding three siblings, one with a layer of its own, over a rounded
 clip) both ways and requires the same pixels in fewer pages;
@@ -2034,8 +2034,13 @@ now deletes an entry only while it names the slot, and clears the slot
 (`TestClackOpCacheReturningPathHits`). Upstream Gio v0.10.3's own bug: a
 candidate for `UPSTREAM.patch`.
 
-Patch 40's page aging, with it: a frame that doesn't use a page counts
-toward the page's oversized frames (`fboSet.resize`), so a page whose set
-only some frames use shrinks too (`TestClackAtlasShrinksUsedNowAndThen`).
-Round 2 reset the count in such frames, and a page used every other frame
-kept its biggest size for good.
+Patch 40's page aging, with it (`fboSet.resize`):
+- a frame that doesn't use a page counts toward the page's oversized
+  frames, so a page whose set only some frames use shrinks too
+  (`TestClackAtlasShrinksUsedNowAndThen`); patch 40 reset the count in such
+  frames, and a page used every other frame kept its biggest size for good;
+- a grow keeps the dimension that still fits. Upstream makes the texture
+  just the new need (padded 5%), so a page whose needs alternate between
+  wide and tall was made again on every frame that used it, and the shrink
+  above let pages used now and then fall into that too
+  (`TestClackAtlasGrowKeepsSize`).

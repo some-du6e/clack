@@ -260,3 +260,34 @@ func TestClackAtlasShrinksUsedNowAndThen(t *testing.T) {
 		t.Errorf("the atlas shrank after %d frames, before the 60th", shrunk)
 	}
 }
+
+// Clack patch 44: a page that grows keeps the dimension that still fits.
+// Gio made the texture just the new need, so a page whose needs alternate
+// between wide and tall was made again on every frame that used it: here
+// the atlas would flip between a wide page and a tall one.
+func TestClackAtlasGrowKeepsSize(t *testing.T) {
+	const w, h = 1000, 800
+	win := clackWindow(t, w, h)
+	defer win.Release()
+	red := color.NRGBA{R: 0xff, A: 0xff}
+	frame := func(r image.Rectangle) int64 {
+		var o op.Ops
+		paint.FillShape(&o, red, clip.UniformRRect(r, 8).Op(&o))
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		return win.ClackFrameStats().AtlasPx
+	}
+	wide, tall := image.Rect(0, 0, 900, 40), image.Rect(0, 0, 300, 600)
+	frame(wide)
+	both := frame(tall)
+	for i := 0; i < 8; i++ {
+		r, name := wide, "wide"
+		if i%2 == 1 {
+			r, name = tall, "tall"
+		}
+		if px := frame(r); px != both {
+			t.Fatalf("frame %d (%s): the atlas is %d px, want the %d px it grew to for both shapes: it was made again", i+3, name, px, both)
+		}
+	}
+}

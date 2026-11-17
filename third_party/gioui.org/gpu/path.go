@@ -272,7 +272,8 @@ func (s *fboSet) resize(ctx driver.Device, format driver.TextureFormat, sizes []
 		// its biggest size for good, and every frame cleared and stored
 		// all of it. A texture more than twice what its page needs for
 		// fboIdleFrames in a row is made again to size.
-		resize := f.tex == nil || sz.X > f.size.X || sz.Y > f.size.Y
+		grow := f.tex != nil && (sz.X > f.size.X || sz.Y > f.size.Y)
+		resize := f.tex == nil || grow
 		if !resize && f.size.X*f.size.Y > 2*sz.X*sz.Y {
 			f.idle++
 			resize = f.idle >= fboIdleFrames
@@ -286,6 +287,19 @@ func (s *fboSet) resize(ctx driver.Device, format driver.TextureFormat, sizes []
 			}
 			// Add 5% extra space in each dimension to minimize resizing.
 			sz = sz.Mul(105).Div(100)
+			if grow {
+				// Clack patch 44: a grow keeps the dimension that still
+				// fits. Making the texture just the new need dropped it,
+				// so a page whose needs alternate between wide and tall
+				// was made again on every frame that used it; the
+				// oversize rule above still brings it down to size.
+				if f.size.X > sz.X {
+					sz.X = f.size.X
+				}
+				if f.size.Y > sz.Y {
+					sz.Y = f.size.Y
+				}
+			}
 			max := ctx.Caps().MaxTextureSize
 			if sz.Y > max {
 				sz.Y = max
