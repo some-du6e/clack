@@ -161,6 +161,7 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		a.S.SyncSubs(ch, subs, all)
 		// a reply changed, deleted or posted while the request was out
 		// keeps the socket's copy (store/live.go)
+		a.keepPageFiles(ch, all) // the processed files the thread has of the answer's stubs
 		a.S.SetThreadSince(ch, ts, all, live, a.pendingIn(ch, ts))
 		a.noteRead(ch+"/"+ts, rm)
 		all, _ = a.S.Thread(ch, ts)

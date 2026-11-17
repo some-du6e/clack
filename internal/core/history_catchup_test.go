@@ -240,3 +240,37 @@ func TestHistoryCountsMutations(t *testing.T) {
 		t.Error("a history_invalid past the one applied left the window")
 	}
 }
+
+// A socket message from someone core doesn't hold asks for nobody (Slack's
+// messageReceived fetches nobody): its conversion reads the store without
+// asking, so no users/info goes out and no "names" event resnapshots the
+// sidebar, reloads the lists and invalidates the plugins' members for a
+// message nothing draws. The rows that draw it ask for its people
+// (lazy_users.go).
+func TestSocketMessageAsksForNobody(t *testing.T) {
+	a, fs, l := rtApp(t)
+	ch := fs.ChannelIDs()[6]
+	sender, mentioned := fakeslack.SynthMemberID(900), fakeslack.SynthMemberID(901)
+	time.Sleep(300 * time.Millisecond) // boot's own lookups and their events
+	asked, n0 := fs.CallCount("edge/users/info"), len(l.all())
+	ts, ev := fs.PostQuiet(ch, sender, "hi <@"+mentioned+">")
+	injectMessage(a, ev)
+	l.wait(t, "the message event", func(evs []Event) bool {
+		for _, e := range evs {
+			if e.Type == "message" && e.TS == ts {
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(500 * time.Millisecond) // the member fetcher's tick and batch, were anything asked
+	if got := fs.CallCount("edge/users/info") - asked; got != 0 {
+		t.Errorf("%d users/info calls for a socket message nothing draws", got)
+	}
+	for _, e := range l.all()[n0:] {
+		if e.Type == "names" {
+			t.Errorf("a %q event after a socket message nothing draws", e.Type)
+			break
+		}
+	}
+}

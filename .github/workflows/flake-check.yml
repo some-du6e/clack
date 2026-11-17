@@ -1268,7 +1268,7 @@ jobs:
       - name: "core: socket events don't wait for lookups, catch-ups after a gap; jsrt, composer: the user's lane, in order"
         run: |
           rc=0
-          go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestHistoryCatchesUpWithLatest|TestHistoryRereadsAfterSlowConnect|TestHistoryCatchUpRetries|TestHistoryCountsMutations)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestSocketEventsDontWaitForLookups|TestSocketMessageAsksForNobody|TestHistoryCatchesUpWithLatest|TestHistoryRereadsAfterSlowConnect|TestHistoryCatchUpRetries|TestHistoryCountsMutations)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^(TestSetLatestSinceKeepsLiveMessages|TestSetLatestSincePageWins|TestSetLatestSinceKeepsHeldCopy)$' ./internal/store || rc=1
           go test -count=$COUNT -v -run '^(TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations)$' ./internal/jsrt || rc=1
           go test -count=$COUNT -v -run '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage)$' ./internal/ui/composer || rc=1

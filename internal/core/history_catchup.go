@@ -324,3 +324,19 @@ func (a *App) pendingIn(ch, thread string) map[string]bool {
 	}
 	return out
 }
+
+// keepPageFiles gives a page's messages the processed files core holds of
+// their stubs (a pasted screenshot read while Slack was still processing
+// it, fillFiles done since): Slack keeps files in a store of their own,
+// which a history page's stub of a file doesn't reset, and the message
+// went back to a generic FILE card at every read of its page.
+func (a *App) keepPageFiles(ch string, msgs []slack.Message) {
+	for i := range msgs {
+		if !needsFileInfo(&msgs[i]) {
+			continue
+		}
+		if old, ok := a.S.Find(ch, msgs[i].TS); ok {
+			keepFiles(&msgs[i], &old)
+		}
+	}
+}

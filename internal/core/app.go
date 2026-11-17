@@ -1049,7 +1049,9 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	}
 	// its people are asked for as rows draw them (lazy_users.go); what
 	// the socket brought or changed while the request was out stays
-	// (store/live.go)
+	// (store/live.go), and so do the processed files the window has of
+	// the page's stubs (keepPageFiles)
+	a.keepPageFiles(ch, p.Messages)
 	a.S.SetLatestSince(ch, p.Messages, p.HasMore, live, a.pendingIn(ch, ""))
 	a.noteWindowRead(ch, rm, known.Latest)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)

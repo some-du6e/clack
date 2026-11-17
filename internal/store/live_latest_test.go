@@ -61,12 +61,12 @@ func timelineText(s *Store, ch string) string {
 	return strings.Join(got, "|")
 }
 
-// What the window held that a page read later doesn't show is gone from
-// Slack, unless the page can't know it: a send Slack hasn't confirmed (or
-// one that failed), a message the socket brought after the request went
-// out, an ephemeral message. With realtime off, or the socket down, no
-// event says a message was deleted, and the next page is all there is:
-// the window used to keep a deleted newest message for good.
+// What an earlier page put in the window that a page read later doesn't
+// show is gone from Slack, unless the page can't know it: a send Slack
+// hasn't confirmed (or one that failed), a message the socket brought, an
+// ephemeral message. With realtime off no event says a message was
+// deleted, and the next page is all there is: the window used to keep a
+// deleted newest message for good.
 func TestSetLatestSincePageWins(t *testing.T) {
 	s := New("")
 	const ch = "C0LIVE0002"
@@ -75,8 +75,12 @@ func TestSetLatestSincePageWins(t *testing.T) {
 	s.Upsert(ch, slack.Message{Type: "message", TS: "250.000001", Text: "only visible to you", IsEphemeral: true, User: "USLACKBOT"})
 	s.Upsert(ch, slack.Message{Type: "message", TS: "400.000001", Text: "failed send", ClientMsgID: "c1"})
 	s.Upsert(ch, slack.Message{Type: "message", TS: "500.000001", Text: "confirmed long ago, then deleted", ClientMsgID: "c2"})
+	// the socket brought one: a replica a moment behind can lack it
+	heard := msg("600.000001", "from the socket")
+	s.Upsert(ch, heard)
+	s.NoteLive(ch, heard.TS, &heard)
 	s.SetLatestSince(ch, []slack.Message{msg("100.000001", "a"), msg("200.000001", "b")}, true, s.LiveSeq(), map[string]bool{"400.000001": true})
-	want := "100.000001 a|200.000001 b|250.000001 only visible to you|400.000001 failed send"
+	want := "100.000001 a|200.000001 b|250.000001 only visible to you|400.000001 failed send|600.000001 from the socket"
 	if g := timelineText(s, ch); g != want {
 		t.Errorf("the window is %s,\nwant %s", g, want)
 	}

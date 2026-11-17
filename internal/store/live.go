@@ -76,11 +76,14 @@ func (s *Store) NoteLive(ch, ts string, m *slack.Message) {
 //     lacks it; one it deleted stays out;
 //   - a top-level message (or a broadcast) the socket brought after since
 //     goes in when the page predates it (core notes its own sends too);
-//   - of what the window held newer than the whole page, only keep's ts (a
-//     send Slack hasn't confirmed, or one that failed) and ephemeral
-//     messages stay: anything else the page would show, so Slack deleted
-//     it while no event could say so (realtime off, the socket down), and
-//     the page wins.
+//   - of what the window held newer than the whole page, what the socket
+//     brought (a page from a replica a moment behind it can lack a message
+//     it just sent; a deletion it missed moves the counts' history_invalid,
+//     which purges the history: core/history_catchup.go), keep's ts (a send
+//     Slack hasn't confirmed, or one that failed) and ephemeral messages
+//     stay. What an earlier page put there the page would show, so Slack
+//     deleted it while no event could say so (realtime off: the polls'
+//     pages are all there is), and the page wins.
 //
 // A page read before a socket message and stored after it used to drop
 // that message for the session: every list re-reads its conversation from
@@ -126,7 +129,9 @@ func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, si
 			if have[m.TS] {
 				continue
 			}
-			if keep[m.TS] && (newest == "" || TSLess(newest, m.TS)) || m.IsEphemeral && (oldest == "" || !TSLess(m.TS, oldest)) {
+			r, heard := s.live[ch+"/"+m.TS]
+			heard = heard && !r.gone && r.msg != nil
+			if (keep[m.TS] || heard) && (newest == "" || TSLess(newest, m.TS)) || m.IsEphemeral && (oldest == "" || !TSLess(m.TS, oldest)) {
 				have[m.TS] = true
 				out = append(out, m)
 			}

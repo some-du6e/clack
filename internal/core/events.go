@@ -477,7 +477,7 @@ func (o *openStreams) seen(ch, ts string, open bool) bool {
 // emitStreamDone is emitUpdate for the message_changed that ends a chat
 // stream, with what a message event carries for its notification.
 func (a *App) emitStreamDone(ch string, m *slack.Message) {
-	v := a.message(ch, m)
+	v := a.messageWith(ch, m, true) // asks for nobody: announceMessage's
 	self := a.S.SelfID()
 	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, StreamDone: true,
 		Reply:    m.ThreadTS != "" && m.ThreadTS != m.TS,
@@ -731,17 +731,19 @@ func (a *App) announceMessage(ch string, mp *slack.Message, isReply, mention boo
 		}
 	}
 	a.clearAssistantStatusOnMessage(ch, m.ThreadTS) // agent.go
-	v := a.message(ch, &m)
+	// converted asking for nobody (store.Peek): the store's name reads ask
+	// for a member they miss, and each answer is a "names" event that
+	// resnapshots the sidebar, reloads the lists on screen and invalidates
+	// the plugins' members, for every unknown sender in any conversation.
+	// Slack's messageReceived fetches nobody; the rows that draw the
+	// message ask for its people (lazy_users.go), and a notification for
+	// its own (notify_conv.go noteMembers). The conversion still records
+	// whom the Doc names, for "names" to convert it again.
+	v := a.messageWith(ch, &m, true)
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
 		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch)}
-	// the sender as the store holds it, read without asking (Slack's
-	// messageReceived fetches nobody): User would note a miss, and the
-	// member fetcher's answer is a "names" event that resnapshots the
-	// sidebar, reloads the lists on screen and invalidates the plugins'
-	// members, for every unknown sender in any conversation. The rows
-	// that draw the message ask for its people (lazy_users.go), and a
-	// notification for its own (notify_conv.go noteMembers).
+	// the sender as the store holds it, read without asking (as above)
 	if u, ok := a.RawUser(m.User); ok {
 		ev2.User = &u
 	}
