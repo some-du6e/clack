@@ -80,10 +80,66 @@ func TestSendCheckedMessageGoesOutWithoutAFrame(t *testing.T) {
 	}
 }
 
+// A plugin that wraps the send (OwlMode patches prepareAndSendMessage)
+// and transforms its blocks: the native JS calls back from the patched
+// thunk runs its own JS work (the transform) ahead of the queued JS too,
+// as the thunk's dispatch does. JS calls a native back with a context of
+// its own, and the send waited for the whole backlog there.
+func TestSendThunkWorkAheadOfJSBacklog(t *testing.T) {
+	c, fs, _ := composerEnv(t, nil)
+	tt := pluginTaut(t, c.api.a, `start() {
+    this.offs = [this.api.redux.patchThunk('prepareAndSendMessage', (orig) => (...a) => orig(...a)), this.api.onMessageSendBlocks((b) => b)]
+  }
+  stop() { for (const off of this.offs ?? []) off() }`)
+	waitFor(t, 10*time.Second, "the patched send thunk and the transform", func() bool {
+		return tt.ThunkPatched("prepareAndSendMessage") && tt.HasSendTransforms()
+	})
+	rt, err := tt.JS()
+	if err != nil || rt == nil {
+		t.Fatalf("no JS runtime: %v", err)
+	}
+	send := func(text string) time.Duration {
+		n := len(fs.called("chat.postMessage"))
+		d := NewDoc()
+		d.Insert(0, text, Attr{})
+		c.ed.SetDoc(d)
+		t0 := time.Now()
+		c.submit()
+		for dl := time.Now().Add(10 * time.Second); len(fs.called("chat.postMessage")) == n; time.Sleep(2 * time.Millisecond) {
+			if time.Now().After(dl) {
+				t.Fatalf("%q never went out", text)
+			}
+		}
+		return time.Since(t0)
+	}
+	send("warm") // the thunk's and the transform's first runs
+	const tasks, each = 40, 10 * time.Millisecond
+	for i := 0; i < tasks; i++ {
+		rt.Post(func(*jsrt.Ctx) { time.Sleep(each) })
+	}
+	d := send("through the wrapped send")
+	t.Logf("the wrapped send went out %v after Enter, %v of JS work queued before it", d.Round(time.Millisecond), tasks*each)
+	if d > 200*time.Millisecond {
+		t.Errorf("the wrapped send went out %v after Enter: its native's JS work waited for the %v queued before it", d.Round(time.Millisecond), tasks*each)
+	}
+	_ = rt.Do(func(*jsrt.Ctx) error { return nil })
+}
+
 // sendCheckTaut is a plugin system over app with one plugin installed and
 // running whose send check lets every message through, made the
 // composer's (withTaut).
 func sendCheckTaut(t *testing.T, app *core.App) *taut.Taut {
+	t.Helper()
+	tt := pluginTaut(t, app, `start() { this.off = this.api.composer.addSendCheck(() => true) }
+  stop() { this.off?.() }`)
+	waitFor(t, 10*time.Second, "the plugin's send check", func() bool { return tt.HasSendChecks() })
+	return tt
+}
+
+// pluginTaut is a plugin system over app, made the composer's (withTaut),
+// with one synthetic plugin installed and running: body is its class
+// body's methods (start, stop).
+func pluginTaut(t *testing.T, app *core.App, body string) *taut.Taut {
 	t.Helper()
 	dir := t.TempDir()
 	tt, err := taut.New(taut.Options{App: app, Dir: dir, CredsPath: dir + "/creds.json", CacheDir: t.TempDir(), NoAutoStart: true})
@@ -102,8 +158,7 @@ class LatencySendCheck extends TautPlugin {
   static category = 'messageBox'
   static authors = ['test']
   static defaultConfig = { enabled: false }
-  start() { this.off = this.api.composer.addSendCheck(() => true) }
-  stop() { this.off?.() }
+  `+body+`
 }
 return LatencySendCheck
 })()`), "")
@@ -118,6 +173,5 @@ return LatencySendCheck
 		SetTaut(nil)
 		syncHooks()
 	})
-	waitFor(t, 10*time.Second, "the plugin's send check", func() bool { return tt.HasSendChecks() })
 	return tt
 }

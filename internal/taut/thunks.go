@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // Slack's named thunks are where plugins hook actions: SilentTyping wraps
@@ -236,6 +237,14 @@ func (t *Taut) dispatchJS(ctx context.Context, name string, args []any, native N
 		return nil, err
 	}
 	tt := t.thunks
+	if jsrt.IsUserBlocking(ctx) {
+		// JS calls the native back with a context of its own
+		// (callNative): the native's JS work (a send's transforms, the
+		// thunks it dispatches in turn) is the user's too, ahead of the
+		// renders queued meanwhile
+		inner := native
+		native = func(c context.Context, raw []json.RawMessage) (any, error) { return inner(jsrt.UserBlocking(c), raw) }
+	}
 	tt.mu.Lock()
 	tt.next++
 	id := tt.next
