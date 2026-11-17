@@ -57,3 +57,38 @@ func (s *Server) readActivityBadge(typ string) {
 		s.actBadges[typ] = n - 1
 	}
 }
+
+// SetChannelBadges sets client.counts' channel_badges (the server's
+// highlight totals: channels, dms, app_dms, thread_mentions,
+// thread_unreads) and SetAlerts its alerts (unread counts by user alert
+// type): the classic Activity badge and the app badge read them. nil (the
+// default) leaves each out of the answer.
+func (s *Server) SetChannelBadges(m map[string]int) {
+	s.actBadgeMu.Lock()
+	defer s.actBadgeMu.Unlock()
+	s.chanBadges = copyCounts(m)
+}
+
+// SetAlerts sets client.counts' alerts (see SetChannelBadges).
+func (s *Server) SetAlerts(m map[string]int) {
+	s.actBadgeMu.Lock()
+	defer s.actBadgeMu.Unlock()
+	s.alerts = copyCounts(m)
+}
+
+func (s *Server) classicBadges() (badges, alerts map[string]int) {
+	s.actBadgeMu.Lock()
+	defer s.actBadgeMu.Unlock()
+	return copyCounts(s.chanBadges), copyCounts(s.alerts)
+}
+
+func copyCounts(m map[string]int) map[string]int {
+	if m == nil {
+		return nil
+	}
+	cp := make(map[string]int, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	return cp
+}

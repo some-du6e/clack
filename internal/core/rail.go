@@ -268,15 +268,19 @@ func OrganizeRail(r RailState, avail int, height func(tab string) int) (show, ov
 // mentions (dmCount: rHEx dmsBadgeCount, the DMs tab's highlights) only
 // when the DMs tab is not in the rail (and, with the activity inbox, only
 // when DMs are opted out of it); otherwise it shows a dot when channels
-// (not DMs) have unread messages (rHEx homeBadgeCount). Not ported: with
-// the inbox Slack's number is then activity_v2's dm count (3x6A wf), not
-// dmCount.
-func (r RailState) HomeBadge(channelsUnread bool, dmCount int) (count int, dot bool) {
+// (not DMs) have unread messages (rHEx homeBadgeCount). With the inbox
+// the badge still shows while dmCount is above 0, but its number is
+// activityDMs, activity_v2's dm count (3x6A wf getActivityV2DMsBadgeCount:
+// InjD's `E && !D && P ? 0 : !E || D || P ? n[DMs] : R`).
+func (r RailState) HomeBadge(channelsUnread bool, dmCount, activityDMs int) (count int, dot bool) {
 	badge := !r.DMsInRail && dmCount > 0
 	if r.ActivityInbox {
 		badge = badge && r.DMsOptOut
 	}
 	if badge {
+		if r.ActivityInbox {
+			return activityDMs, false
+		}
 		return dmCount, false
 	}
 	if r.ActivityInbox {

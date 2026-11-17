@@ -82,8 +82,10 @@ type Size struct {
 	// generated DMs and their latest messages, newest first.
 	DMsTab bool
 	// DMBadges adds unread DMs with Slackbot, the Slack system user
-	// (SlackUserID) and an app, and a read one with a person, and answers
-	// every other DM read (dm_badges.go): the DMs the DM badges leave out.
+	// (SlackUserID) and an app, a muted unread one, read ones with a person
+	// and a group, a closed app DM whose member nothing has asked for, and
+	// answers the generated DMs read (dm_badges.go): what the DM badges
+	// leave out and what they count.
 	DMBadges bool
 	// Embeds adds #embeds-gallery: one message per way Slack draws a
 	// link preview (embeds.go).
@@ -346,6 +348,8 @@ type Server struct {
 
 	actBadgeMu sync.Mutex
 	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
+	chanBadges map[string]int // client.counts channel_badges (SetChannelBadges)
+	alerts     map[string]int // client.counts alerts (SetAlerts)
 
 	// dmBadgeRead: Size.DMBadges' DMs and their read cursors, set before
 	// serving (dm_badges.go)
@@ -1507,10 +1511,19 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				chans = append(chans, e)
 			}
 		}
+		out := ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
 		if av := s.activityV2(); av != nil { // activity_badges.go
-			return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2}, "activity_v2", av)
+			out["activity_v2"] = av
 		}
-		return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
+		if badges, alerts := s.classicBadges(); badges != nil || alerts != nil { // SetChannelBadges, SetAlerts
+			if badges != nil {
+				out["channel_badges"] = badges
+			}
+			if alerts != nil {
+				out["alerts"] = alerts
+			}
+		}
+		return out
 	case "sidebar.dms": // every generated DM is open; AddClosedDM's aren't
 		var ims, mpdms []map[string]any
 		s.convMu.Lock()
@@ -1924,8 +1937,8 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	if s.Size.ThreadHeader && id == ThreadAppUserID { // threadheader.go
 		return s.threadHeaderApp(), true
 	}
-	if s.Size.DMBadges && id == SlackUserID { // dm_badges.go
-		return s.slackSystemUser(), true
+	if u, ok := s.dmBadgeUser(id); ok { // dm_badges.go
+		return u, true
 	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {

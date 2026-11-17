@@ -244,8 +244,11 @@ type Conv struct {
 	// the DMs tab's highlights (rHEx dmsBadgeCount: Slackbot's, the Slack
 	// system user's, a bot's, USEARCH's, the security bot's) or out of its
 	// unread conversations (6Z4k Sm: a bot member's). rail.go
-	// dmBadgeSkips, over the member the store holds (never fetched).
-	NoDMsBadge, NoDMsCount bool
+	// dmBadgeSkips, over the member the store holds (members.go
+	// readBadgePeople asks for a missing one). BotDM is DUy0 G isBotDm
+	// alone (Slackbot's, the Slack system user's, a bot's IM), which the
+	// classic app badge leaves out (ZVw+ getTotalUnreadHighlights).
+	NoDMsBadge, NoDMsCount, BotDM bool
 }
 
 // ConvRef describes a conversation that may not be in the sidebar

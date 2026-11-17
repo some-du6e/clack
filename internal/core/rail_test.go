@@ -83,19 +83,25 @@ func TestRailLabelsAndActivityVariants(t *testing.T) {
 
 func TestHomeBadgeRule(t *testing.T) {
 	inbox := RailState{ActivityInbox: true, DMsInRail: true}
-	if n, dot := inbox.HomeBadge(true, 3); n != 0 || !dot {
+	if n, dot := inbox.HomeBadge(true, 3, 5); n != 0 || !dot {
 		t.Errorf("inbox + DMs tab: count=%d dot=%v (want a dot only)", n, dot)
 	}
-	if n, dot := inbox.HomeBadge(false, 3); n != 0 || dot {
+	if n, dot := inbox.HomeBadge(false, 3, 5); n != 0 || dot {
 		t.Errorf("no channel unreads: %d %v", n, dot)
 	}
+	// DMs opted out of the inbox and no DMs tab: Home shows the DMs while
+	// dmsBadgeCount is above 0, numbered with activity_v2's dm (InjD R,
+	// 3x6A wf), not the highlights
 	optOut := RailState{ActivityInbox: true, DMsOptOut: true}
-	if n, _ := optOut.HomeBadge(false, 2); n != 2 {
-		t.Errorf("DMs opted out and no DMs tab: Home counts DMs, got %d", n)
+	if n, _ := optOut.HomeBadge(false, 2, 5); n != 5 {
+		t.Errorf("DMs opted out and no DMs tab: Home's number %d, want activity_v2's dm 5", n)
+	}
+	if n, dot := optOut.HomeBadge(false, 0, 5); n != 0 || dot {
+		t.Errorf("DMs opted out, no DM highlights: %d %v, want nothing (the badge needs dmsBadgeCount)", n, dot)
 	}
 	classic := RailState{}
-	if n, _ := classic.HomeBadge(true, 4); n != 4 {
-		t.Errorf("no inbox, no DMs tab: count %d", n)
+	if n, _ := classic.HomeBadge(true, 4, 9); n != 4 {
+		t.Errorf("no inbox, no DMs tab: count %d, want the 4 highlights", n)
 	}
 }
 

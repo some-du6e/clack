@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -155,7 +156,7 @@ var AfterMembersEvict func(members int)
 func (a *App) EvictMembers() []string {
 	t0 := time.Now()
 	before, gone := a.S.MembersStats()
-	keep := a.sidebarPeopleNow()
+	keep := slices.Concat(a.sidebarPeopleNow(), a.badgePeopleNow())
 	a.touchSidebarMembers(keep)
 	ids := a.S.RunMembersPass(t0, keep...)
 	if len(ids) > 0 || before+gone >= 700 {
@@ -202,6 +203,76 @@ func (a *App) setSidebarPeople(ids []string) {
 	a.sbPeople.mu.Lock()
 	a.sbPeople.ids = ids
 	a.sbPeople.mu.Unlock()
+}
+
+// readBadgePeople is getMemberById for the people Slack's DM badges read.
+// rHEx's DUy0 G and 6Z4k Sm look up the member of every unread, unmuted
+// IM on each store change (gIKW nv: a hit, or a miss that Gx04's
+// UnknownFetchManager fetches, in one request with the others pending:
+// memberLoop here), all but Slackbot's own IM, which needs no member.
+// Clack's sidebar reads only the DMs it lists, so an unread IM it doesn't
+// (a system user's, or a closed DM a counts answer made unread before the
+// next snapshot) kept the badge skips of a person while its member was
+// unknown: an app's DM badged the DMs tab. Clack reads them when it builds
+// a snapshot and when client.counts answers (readBadgePerson for a
+// message or a mark), so "names" follows a fetch and the next snapshot has the right
+// skips; a miss is asked once (store noteMissing), and nothing here runs
+// per frame. The ids stay through the members pass with the sidebar's
+// people (EvictMembers), as Slack's lookups keep them among the members
+// found last. Archived IMs aren't read: Slack's counts skip them (ZdmU).
+func (a *App) readBadgePeople() {
+	a.S.RLock()
+	var ids []string
+	for id, c := range a.S.Convs {
+		if !c.IsIM || c.IsArchived || c.User == "" || c.User == SlackbotUserID || a.S.Muted[id] {
+			continue
+		}
+		if e := a.S.Counts[id]; e != nil && (e.HasUnreads || e.MentionCount > 0) {
+			ids = append(ids, c.User)
+		}
+	}
+	a.S.RUnlock()
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	for _, id := range ids {
+		a.S.User(id) // a hit, or a miss memberLoop fetches
+	}
+	a.bdPeople.mu.Lock()
+	a.bdPeople.ids = ids
+	a.bdPeople.mu.Unlock()
+}
+
+// readBadgePerson is readBadgePeople's lookup for one IM: the one a
+// message is about to make unread, or one a mark from another client left
+// unread (im_marked). For a message it runs before the message's own
+// EnsureUsers, whose users/info answer would leave the member known with
+// no "names": recorded first, the miss's fetch emits "names" either way
+// (fetchUnknownMembers names what the store holds by then).
+func (a *App) readBadgePerson(ch string) {
+	a.S.RLock()
+	c, ok := a.S.Convs[ch]
+	read := ok && c.IsIM && !c.IsArchived && c.User != "" && c.User != SlackbotUserID && !a.S.Muted[ch]
+	var user string
+	if read {
+		user = c.User
+	}
+	a.S.RUnlock()
+	if !read {
+		return
+	}
+	a.S.User(user)
+	a.bdPeople.mu.Lock()
+	if !slices.Contains(a.bdPeople.ids, user) {
+		a.bdPeople.ids = append(slices.Clone(a.bdPeople.ids), user)
+	}
+	a.bdPeople.mu.Unlock()
+}
+
+// badgePeopleNow is readBadgePeople's last ids (nil before a read).
+func (a *App) badgePeopleNow() []string {
+	a.bdPeople.mu.Lock()
+	defer a.bdPeople.mu.Unlock()
+	return a.bdPeople.ids
 }
 
 // sidebarPeopleNow is the last snapshot's sidebarPeople (nil before one).
