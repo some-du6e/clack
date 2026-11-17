@@ -813,6 +813,12 @@ type Command struct {
 
 type CommandOpts struct {
 	Channel, Command, Text, ThreadTS string
+	// Blocks is the arguments as executeCommand sends them (the
+	// composer's CommandBlocks): with blocks, chat.command carries no
+	// text, as in Slack, and the server reads mentions from them. Text
+	// stays the plain words, for the local commands and for callers
+	// that have no blocks.
+	Blocks json.RawMessage
 	// AppID is executeCommand's slashCommandAppId: the app whose command
 	// a plugin turned the message into (chat.command app_id).
 	AppID string
