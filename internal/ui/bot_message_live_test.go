@@ -76,6 +76,21 @@ func (e *perfEnv) stays(t *testing.T, ch, ts, what string) {
 	}
 }
 
+// socketGap posts Owl's next confession to ch while the socket is down
+// (the fake's history has it, the socket never brings it), then the
+// socket comes back, as after a Mac sleeps, and the counts core reads
+// after the reconnect name it ch's latest message. It returns its ts.
+func (e *perfEnv) socketGap(t *testing.T, ch string, n int) string {
+	t.Helper()
+	ts, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", fmt.Sprintf("%d: Hi meta,", n))
+	e.fs.SetCountLatest(ch, ts)
+	e.a.data.core.RTM.Reconnect("test: the machine woke")
+	if !e.untilSoft(20*time.Second, func() bool { return e.a.data.core.Count(ch).Latest == ts && e.fs.Sockets() > 0 }) {
+		t.Fatal("the counts read after the reconnect never named the missed message")
+	}
+	return ts
+}
+
 // historyInFlight makes the next conversations.history answer with the
 // page the fake has when the call arrives, held back for d: a message
 // posted meanwhile is newer than the page.
@@ -140,6 +155,28 @@ func TestBotMessageReachesTheList(t *testing.T) {
 			t.Fatalf("timed out waiting for %s", "Owl's message in the reopened list")
 		}
 		e.stays(t, ch, ts, "away, then reopened")
+	})
+
+	t.Run("open, the socket down when it came", func(t *testing.T) {
+		ch := ids[5]
+		e.openAtLatest(ch)
+		ts := e.socketGap(t, ch, 42114)
+		if !e.untilSoft(8*time.Second, func() bool { return e.rowDrawn(ch, ts) }) {
+			t.Fatal("the missed message never reached the open list")
+		}
+		e.stays(t, ch, ts, "open, the socket down when it came")
+	})
+
+	t.Run("away, the socket down when it came", func(t *testing.T) {
+		ch := ids[6]
+		e.openAtLatest(ch)
+		e.openAtLatest(away)
+		ts := e.socketGap(t, ch, 42115)
+		e.openAtLatest(ch)
+		if !e.untilSoft(5*time.Second, func() bool { return e.rowDrawn(ch, ts) }) {
+			t.Fatal("the missed message isn't in the reopened list")
+		}
+		e.stays(t, ch, ts, "away, the socket down when it came")
 	})
 
 	t.Run("away, its history read as it came", func(t *testing.T) {

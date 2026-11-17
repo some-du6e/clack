@@ -1504,6 +1504,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
 			e = s.dmBadgeCount(c, e) // dm_badges.go
+			// SetCountLatest's (count_latest.go)
+			if l, ok := s.countLatest(c.ID); ok {
+				e.Latest = l
+			}
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)

@@ -774,6 +774,11 @@ func (hb *hub) apply(ev core.Event) bool {
 		// Doc names it (a channel mention, a message slug's "in #x", a
 		// tab slug) are converted again
 		return hb.reconvert(ev)
+	case "counts":
+		// client.counts answered (after a socket gap, among others): a
+		// list on screen behind its conversation's latest reads it again
+		// (hub_catchup.go)
+		return hb.catchUp()
 	case "auth_failed":
 		// core: the session is gone (signed out, token revoked). Stop
 		// loading anything until the connection is back or Retry.
