@@ -28,10 +28,14 @@ func (hb *hub) catchUp() bool {
 	for _, m := range ms {
 		latest := hb.app.Count(m.ch).Latest
 		m.mu.Lock()
-		if n := len(m.msgs); m.loaded && !m.loading && latest != "" && (n == 0 || tsLess(m.msgs[n-1].m.TS, latest)) {
-			m.fetched = time.Time{} // ensureLoaded loads it at the next frame
-			m.rev++
-			behind = true
+		if n := len(m.msgs); m.loaded && latest != "" && (n == 0 || tsLess(m.msgs[n-1].m.TS, latest)) {
+			if m.loading {
+				m.again = true // a load read before these counts is out: once more after it (afterLoad)
+			} else {
+				m.fetched = time.Time{} // ensureLoaded loads it at the next frame
+				m.rev++
+				behind = true
+			}
 		}
 		m.mu.Unlock()
 	}

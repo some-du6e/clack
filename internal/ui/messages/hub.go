@@ -65,6 +65,9 @@ type model struct {
 	// (reconvert): its answer may hold messages converted before it, so
 	// they're converted again once it lands (afterLoad)
 	reconv core.RefChange
+	// again: the conversation's latest moved past the model while a load
+	// was out (catchUp, hub_catchup.go): it loads again once that lands
+	again bool
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -330,6 +333,9 @@ func (hb *hub) afterLoad(m *model) {
 		m.reconv = core.RefChange{}
 	} else {
 		c = core.RefChange{} // another load is still out: it does this
+	}
+	if m.again && !m.loading { // its answer was read before the counts that asked (catchUp)
+		m.again, m.fetched = false, time.Time{}
 	}
 	m.mu.Unlock()
 	if !c.Empty() {
