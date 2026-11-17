@@ -87,14 +87,14 @@ func TestEditProfilePhotoLargeLikeSlack(t *testing.T) {
 			}
 			pw, ph := fakeslack.PreparedPhotoSize(c.w, c.h)
 			if m.crop.up.Width != pw || m.crop.up.Height != ph {
-				t.Fatalf("crop pane image %d×%d, want the prepared image's %d×%d (not the file's %d×%d)", m.crop.up.Width, m.crop.up.Height, pw, ph, c.w, c.h)
+				t.Errorf("crop pane image %d×%d, want the prepared image's %d×%d (not the file's %d×%d)", m.crop.up.Width, m.crop.up.Height, pw, ph, c.w, c.h)
 			}
 			if dw, dh := core.PhotoDisplaySize(float64(pw), float64(ph), core.PhotoCropMaxSize); m.crop.dw != dw || m.crop.dh != dh {
 				t.Errorf("crop pane shows %v×%v, want the prepared image fitted into 460: %v×%v", m.crop.dw, m.crop.dh, dw, dh)
 			}
 			crop := m.crop.Crop()
 			if crop.Size != min(pw, ph) || crop.X+crop.Size > pw || crop.Y+crop.Size > ph {
-				t.Fatalf("first square %+v isn't the prepared %d×%d image's largest", crop, pw, ph)
+				t.Errorf("first square %+v isn't the prepared %d×%d image's largest", crop, pw, ph)
 			}
 			m.crop.Save()
 			epUntil(t, m, "back on the form", func() bool { return m.Pane() == "formPane" || m.crop.Failed() })

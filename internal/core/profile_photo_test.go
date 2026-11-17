@@ -120,11 +120,11 @@ func TestProfilePhotoRequestLikeSlack(t *testing.T) {
 			}
 			pw, ph := fakeslack.PreparedPhotoSize(c.w, c.h)
 			if up.Width != pw || up.Height != ph {
-				t.Fatalf("crop pane image %d×%d, want the prepared image's %d×%d (not the file's %d×%d)", up.Width, up.Height, pw, ph, c.w, c.h)
+				t.Errorf("crop pane image %d×%d, want the prepared image's %d×%d (not the file's %d×%d)", up.Width, up.Height, pw, ph, c.w, c.h)
 			}
 			crop := cropPaneSquare(up.Width, up.Height)
 			if side := min(pw, ph); crop.Size != side || crop.X+crop.Size > pw || crop.Y+crop.Size > ph {
-				t.Fatalf("first square %+v isn't the prepared %d×%d image's largest", crop, pw, ph)
+				t.Errorf("first square %+v isn't the prepared %d×%d image's largest", crop, pw, ph)
 			}
 			if err := a.SetPhoto(ctx, up.ID, crop); err != nil {
 				t.Fatalf("SetPhoto %+v: %v", crop, err)
