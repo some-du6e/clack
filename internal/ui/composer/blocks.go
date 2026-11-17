@@ -180,6 +180,57 @@ type rtOutBlock struct {
 	Elements []any  `json:"elements"`
 }
 
+// rtOutCommandBlock is convertDeltaToBlocks' own block: no block_id
+// (chat.postMessage's come from the send path).
+type rtOutCommandBlock struct {
+	Type     string `json:"type"`
+	Elements []any  `json:"elements"`
+}
+
+// commandArgs is parseSlashCmdArgsFromDelta's deltaWithoutCmd (boot-shared,
+// before handleSlashCommand): the document after the command word, its
+// leading whitespace trimmed (trimStart).
+func commandArgs(d *Doc) *Doc {
+	i, n := 0, d.Len()
+	skip := func(space bool) { // past the runes whose IsSpace is space
+		for i < n && d.Attrs[i].Atom == nil && unicode.IsSpace(d.Runes[i]) == space {
+			i++
+		}
+	}
+	skip(true)  // whitespace before the command
+	skip(false) // the command
+	skip(true)  // whitespace after it
+	return d.Slice(i, n)
+}
+
+// CommandBlocks is the blocks executeCommand (boot-render 5dbN) sends to
+// chat.command for a command's arguments: convertDeltaToBlocks (boot-shared
+// VxMM) with expandTruncatedLinks and no other options. That is one
+// rich_text block without a block_id, a link slug as a bare link (url, no
+// text, no truncated), and nil when the arguments are blank (one character
+// or less after trimStart), when Slack sends no blocks. chat.command then
+// carries no text at all: the server reads the arguments, mentions
+// included, from these blocks.
+func (d *Doc) CommandBlocks() json.RawMessage {
+	e := d.Clone()
+	for i, a := range e.Attrs {
+		if at := a.Atom; at != nil && at.Kind == AtomLink && at.Text != at.ID {
+			x := *at // atoms are shared: expand a copy
+			x.Text = x.ID
+			e.Attrs[i].Atom = &x
+		}
+	}
+	ls := rtLines(e, true)
+	if !slices.ContainsFunc(ls, func(s rtSpan) bool { return !rtBlank(e, s) }) {
+		return nil
+	}
+	b, err := json.Marshal([]any{rtOutCommandBlock{Type: "rich_text", Elements: e.rtElements(ls)}})
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
 type rtOutHeaderText struct {
 	Type  string `json:"type"`
 	Text  string `json:"text"`
