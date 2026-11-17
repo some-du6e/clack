@@ -266,7 +266,7 @@ jobs:
           # -p 1: test binaries bringing up Mesa's EGL at once is what made
           # eglInitialize fail (0x3001); pixeltest.NewWindow also retries.
           # TestTextMatchesChrome: text against Chrome 156's (theme/testdata/text-render; font-shots' text-render jobs re-measure it)
-          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestSelectionOverCode|TestComposerSelectionOverCode|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots|TestTextMatchesChrome|TestSideBarEnds|TestNewlineGapShots|TestFrameCostPixels' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/theme
+          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestSelectionOverCode|TestComposerSelectionOverCode|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots|TestTextMatchesChrome|TestSideBarEnds|TestNewlineGapShots|TestFrameCostPixels|TestFrameCostSeams' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/theme
           # the profile hover card's name / title / pronouns column against Slack's CSS (light + dark)
           xvfb-run -a go test -count=1 -v -run '^TestHoverCardPronounsLikeSlack$' ./internal/ui/popups
           # Gio patch 35 on a real GPU context: the same ops drawn twice show a live image as it is at each
@@ -432,7 +432,7 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
         run: |
           go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
-          go test -count=1 -v -timeout 25m -run '^TestFrameCostPixels$' ./internal/ui/theme
+          go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
       - name: awake clock (QueryUnbiasedInterruptTime)
@@ -1108,7 +1108,7 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
         run: |
           go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
-          go test -count=1 -v -timeout 20m -run '^TestFrameCostPixels$' ./internal/ui/theme
+          go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
           go test -count=1 -v ./internal/ui/uiguard

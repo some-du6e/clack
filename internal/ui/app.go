@@ -912,10 +912,9 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 		nw, sw = rad, rad
 	}
 	func() {
-		// Gio fills the panel's interior without the clip and its edges
-		// through it (Gio patches 38, 42)
-		defer clip.RRect{Rect: primary, NW: nw, SW: sw, NE: rad, SE: rad}.Push(gtx.Ops).Pop()
-		theme.Fill(gtx, primary, a.th.C.Bg)
+		rr := clip.RRect{Rect: primary, NW: nw, SW: sw, NE: rad, SE: rad}
+		defer rr.Push(gtx.Ops).Pop()
+		theme.FillPanel(gtx, rr, a.th.C.Bg)
 		atExact(gtx, primary.Min, primary.Size(), a.layoutPrimary)
 	}()
 	if sbW > 0 {

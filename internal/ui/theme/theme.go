@@ -420,6 +420,14 @@ func Border(gtx layout.Context, r image.Rectangle, radius, w int, c color.NRGBA)
 	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: RRectPath(r.Dx(), r.Dy(), radius), Width: float32(w)}.Op())
 }
 
+// FillPanel fills the rounded panel rr, whose clip the caller pushed,
+// with c, in one fill: Gio draws its interior without the clip and its
+// edges through it, in whole pixels, at a whole-pixel offset (Gio
+// patches 38 and 42), and the fill whole under any other transform.
+func FillPanel(gtx layout.Context, rr clip.RRect, c color.NRGBA) {
+	Fill(gtx, rr.Rect, c)
+}
+
 // legacyShapes records rounded rects, circles and rounded image clips
 // where they're drawn, as before the frame-cost work (2026-11-16), for
 // tests that compare.
