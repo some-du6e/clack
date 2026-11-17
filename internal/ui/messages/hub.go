@@ -126,6 +126,11 @@ type hub struct {
 	// frame is the latest frame a list drew at (markDrawn): the models
 	// drawn then are the ones on screen
 	frame time.Time
+	// reconvMu runs one reconvertIn at a time (hub.run's, a landed
+	// load's): each converts after the last one wrote, so a conversion
+	// that read the store before a change can't land after the one made
+	// for it and put the old name back
+	reconvMu sync.Mutex
 }
 
 // markDrawn notes that a list drew m in the frame at (gtx.Now).
@@ -741,11 +746,18 @@ func (hb *hub) apply(ev core.Event) bool {
 		// the list's next sync reads it; nothing it draws shows typing
 		// (the composer's typing line has its own hub, composer/typing.go)
 		return false
-	case "presence", "emoji_changed":
-		// No row draws presence, and a row reads its emoji as it draws:
-		// redrawing every list for them drew nothing new, many times a
-		// second on a busy workspace's socket (Karim 2026-11-14)
+	case "presence":
+		// No row draws presence: redrawing every list for it drew nothing
+		// new, many times a second on a busy workspace's socket (Karim
+		// 2026-11-14)
 		return false
+	case "emoji_changed", "canvas", "list", "list_record_info", "experiments":
+		// an emoji added or removed, a canvas's or a list's content, the
+		// experiment groups (a huddle's sentence, the emoji set): the
+		// messages whose Doc read it are converted again (reconvert;
+		// Message.Refs records the emoji a message used, known or not),
+		// and only a list that changed redraws
+		return hb.reconvert(ev)
 	case "user", "prefs", "names", "members_evicted":
 		// user: a profile change, for a member a list drew in its latest
 		// frame (drawsMember); another draws nowhere now, and a row that
@@ -836,6 +848,8 @@ func (hb *hub) reconvert(ev core.Event) bool {
 // converted again for a name in it touched the members it names, so their
 // next profile change looked drawn (drawsMember) and every list redrew.
 func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
+	hb.reconvMu.Lock()
+	defer hb.reconvMu.Unlock()
 	type key struct{ ch, ts string }
 	var fresh map[key]*core.Message // converted once for every model holding it
 	changed := false
@@ -869,8 +883,7 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 			m.mu.Lock()
 			if i := m.find(ts); i >= 0 {
 				msg := m.msgs[i].m
-				if !reflect.DeepEqual(msg.Doc, f.Doc) || !reflect.DeepEqual(msg.Refs, f.Refs) {
-					msg.Doc, msg.Refs = f.Doc, f.Refs
+				if takeConverted(&msg, f) {
 					m.msgs[i] = entry{m: msg, rev: m.bump()}
 					m.rev++
 					changed = true
@@ -882,10 +895,43 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 	return changed
 }
 
+// takeConverted gives msg what a conversion of the message again made of
+// what it read: its Doc and refs, a bot sender's name and picture (the
+// bot's, resolved since), the reactions' emoji (an emoji added since);
+// the rest of msg (another conversation's copy may differ: a thread
+// pane's root) stays. It reports whether anything changed.
+func takeConverted(msg, f *core.Message) bool {
+	changed := false
+	if !reflect.DeepEqual(msg.Doc, f.Doc) || !reflect.DeepEqual(msg.Refs, f.Refs) {
+		msg.Doc, msg.Refs = f.Doc, f.Refs
+		changed = true
+	}
+	if msg.IsBot && (msg.Name != f.Name || msg.Avatar != f.Avatar) {
+		msg.Name, msg.Avatar = f.Name, f.Avatar
+		changed = true
+	}
+	copied := false
+	for i := range msg.Reactions {
+		for _, fr := range f.Reactions {
+			if fr.Name != msg.Reactions[i].Name || fr.URL == msg.Reactions[i].URL {
+				continue
+			}
+			if !copied { // not the slice other copies share
+				msg.Reactions = append([]core.Reaction(nil), msg.Reactions...)
+				copied = true
+			}
+			msg.Reactions[i].URL = fr.URL
+			changed = true
+		}
+	}
+	return changed
+}
+
 // mergeRefChange is a and b together.
 func mergeRefChange(a, b core.RefChange) core.RefChange {
 	return core.RefChange{Members: append(a.Members, b.Members...), Channels: append(a.Channels, b.Channels...),
-		Files: append(a.Files, b.Files...), AnyMember: a.AnyMember || b.AnyMember}
+		Files: append(a.Files, b.Files...), Bots: append(a.Bots, b.Bots...), Emoji: append(a.Emoji, b.Emoji...),
+		AnyMember: a.AnyMember || b.AnyMember, All: a.All || b.All}
 }
 
 // applyReactions is a reaction change: each model holding the message

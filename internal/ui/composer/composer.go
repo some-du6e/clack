@@ -140,6 +140,7 @@ type Composer struct {
 	cs            chromeState
 	paneP, inputP slackc.Props
 	sendJS        slackc.JSFunc // a patched prepareAndSendMessage (send checks)
+	pane          string        // the slackc pane LayoutIn drew it in ("" outside one)
 	pending       *outgoing     // the message sendJS is deciding on
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
@@ -468,6 +469,7 @@ func (c *Composer) prepareSend(d *Doc) *Doc {
 // and the prepareAndSendMessage a plugin wraps called back the composer
 // drawn last: a reply sent from the other was lost.
 func (c *Composer) LayoutIn(gtx layout.Context, pane string) layout.Dimensions {
+	c.pane = pane
 	defer slackc.EndPane(slackc.Pane(pane))
 	return c.Layout(gtx)
 }

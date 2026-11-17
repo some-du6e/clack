@@ -3,6 +3,8 @@ package richview
 import (
 	"strings"
 	"sync/atomic"
+
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // User mentions name the member as plugins present it. Slack's mention
@@ -123,6 +125,27 @@ func (l *lay) mentionText(id, parsed string) (string, MemberMiss) {
 		return parsed, MemberLoaded
 	}
 	return "@" + n, MemberLoaded
+}
+
+// MentionText is a user mention span's text as a message draws it now
+// (mentionText): "@" and the member's name as the store (or a plugin)
+// has it, "" while the store can't name them (the bar adds no text); ok
+// false for any other span, whose own text stays. For previews built
+// from a stored Doc (richtext.PlainTextWith), whose mentions keep the
+// name they were converted with: mentions aren't conversion refs, a
+// rename converts no message again.
+func MentionText(sp richtext.Span) (string, bool) {
+	if sp.Kind != richtext.User || sp.ID == "" || memberLabelFn() == nil && memberReadFn() == nil {
+		return "", false
+	}
+	n, miss := mentionName(sp.ID)
+	if miss != MemberLoaded {
+		return "", true
+	}
+	if n == "" {
+		return "", false
+	}
+	return "@" + n, true
 }
 
 // namesChanged reports a mention the last layout drew that reads

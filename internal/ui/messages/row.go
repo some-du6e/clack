@@ -126,6 +126,7 @@ type row struct {
 	// snapshot
 	rootPrev    string
 	rootRev     uint64
+	rootURev    uint64 // the users revision rootPrev read its mentions at
 	rootChecked bool
 
 	// geometry of the last layout (row-local), for overlays
@@ -145,6 +146,7 @@ type row struct {
 	viewRev          uint32
 	viewed           bool
 	viewConv         uint64
+	viewEpoch        uint64       // taut's ViewEpoch when it last read the view (applyView)
 	col              image.Point  // body column origin, row-local
 	reactAt          image.Point  // reaction bar origin, row-local
 	wrapOv, blocksOv uintptr      // msg overrides applied (propsID); 0 = none
@@ -2208,10 +2210,12 @@ func (r *row) rootPreview(rc *rowCtx) string {
 	if rc.list != nil {
 		rev = rc.list.snap.rev
 	}
-	if r.rootChecked && r.rootRev == rev {
+	// the root's mentions read as they draw (richview.MentionText): again
+	// when a member's name may have changed (usersRev)
+	if r.rootChecked && r.rootRev == rev && r.rootURev == rc.usersRev {
 		return r.rootPrev
 	}
-	r.rootChecked, r.rootRev, r.rootPrev = true, rev, ""
+	r.rootChecked, r.rootRev, r.rootURev, r.rootPrev = true, rev, rc.usersRev, ""
 	ts := r.m.ThreadTS
 	var doc *richtext.Doc
 	if rc.list != nil {
@@ -2228,7 +2232,7 @@ func (r *row) rootPreview(rc *rowCtx) string {
 		}
 	}
 	if doc != nil {
-		r.rootPrev = strings.Join(strings.Fields(richtext.PlainText(*doc)), " ")
+		r.rootPrev = strings.Join(strings.Fields(richtext.PlainTextWith(*doc, richview.MentionText)), " ")
 	}
 	return r.rootPrev
 }

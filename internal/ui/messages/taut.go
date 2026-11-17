@@ -239,14 +239,19 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	if r.edit != nil || r.m.Pending || r.m.Failed {
 		return // the message being edited stays as the user wrote it
 	}
-	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev {
+	// re-read when taut's views changed since (a value fetched, a
+	// conversion to be made again: ViewEpoch), else at most every
+	// viewRefresh: the frame that came for a change within 250 ms of the
+	// row's last read skipped it, and an idle window drew no other
+	ep := t.ViewEpoch()
+	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev && r.viewEpoch == ep {
 		return
 	}
 	// taut keeps each view converted until something it reads changes;
 	// when core just changed the row's message, convert it again now
 	// rather than show the old state until the mirror sees the event
 	changed := r.viewRev != 0 && r.viewRev != r.rev
-	r.viewAt, r.viewRev = now, r.rev
+	r.viewAt, r.viewRev, r.viewEpoch = now, r.rev, ep
 	if changed {
 		r.viewConv = 0 // a new revision: compared afresh
 	}
@@ -299,11 +304,12 @@ func (s *listState) clearViews() {
 // injected merges messages plugins inject (messages.injectMessages) into
 // the snapshot, re-checking at most every viewRefresh.
 type injState struct {
-	at   time.Time
-	keys string
-	msgs []core.Message
-	revs map[string]uint32 // each message's rev (refreshInjected)
-	n    uint32
+	at    time.Time
+	epoch uint64 // taut's ViewEpoch at the last check
+	keys  string
+	msgs  []core.Message
+	revs  map[string]uint32 // each message's rev (refreshInjected)
+	n     uint32
 }
 
 // rev is injected message ts's rev.
@@ -315,10 +321,11 @@ func (in *injState) rev(ts string) uint32 {
 }
 
 func (s *listState) refreshInjected(t *taut.Taut, now time.Time) (changed bool) {
-	if now.Sub(s.inj.at) < viewRefresh {
+	ep := t.ViewEpoch()
+	if now.Sub(s.inj.at) < viewRefresh && s.inj.epoch == ep {
 		return false
 	}
-	s.inj.at = now
+	s.inj.at, s.inj.epoch = now, ep
 	all := t.InjectedMessages(s.ch)
 	msgs := all[:0:0]
 	for i := range all {
