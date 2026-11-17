@@ -24,16 +24,18 @@ import (
 // TestFrameCostWindow draws Clack's whole window over internal/fakeslack
 // (synthetic data; nothing reaches Slack) the old way and the new, and
 // says what one frame costs each: the workspace shadow's rings in one
-// piece or in bands, the panel's fill in one piece or around its interior
-// (theme.SetLegacyFrameCost), and Gio keeping every clip path on every op
-// over one stencil region or not (gpu.ClackLegacyClips, Gio patches 38
-// and 39). The same frame (state, time) is laid out each way and drawn,
-// light and dark, at 1x and 2x, a channel and a channel with its thread
-// open. It logs the draw calls, the graphics API calls (and those the
-// backend's state cache left out, Gio patch 37), the stencil, cover and
-// cleared pixels, the frame's time to the end of its rasterization, and
-// the pixels that differ. CLACK_GPU_COST=1 (flake-check's gpu-cost job,
-// on each OS's GPU backend).
+// piece or in bands, the panel's fill in one piece or around its
+// interior, rounded rects and circles recorded where they're drawn or
+// cached at the origin (theme.SetLegacyFrameCost), and Gio keeping every
+// clip path on every op over one stencil region or not
+// (gpu.ClackLegacyClips, Gio patches 38 and 39). The same frame (state,
+// time) is laid out each way and drawn, light and dark, at 1x and 2x, a
+// channel and a channel with its thread open, and in Karim's window
+// (costKarim). It logs the draw calls, the graphics API calls (and those
+// the backend's state cache left out, Gio patch 37), the paths built,
+// the stencil, cover and cleared pixels, the frame's time to the end of
+// its rasterization, and the pixels that differ. CLACK_GPU_COST=1
+// (flake-check's gpu-cost job, on each OS's GPU backend).
 func TestFrameCostWindow(t *testing.T) {
 	if os.Getenv("CLACK_GPU_COST") == "" {
 		t.Skip("CLACK_GPU_COST not set (flake-check's gpu-cost job runs this)")
@@ -49,10 +51,23 @@ func TestFrameCostWindow(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		fs.PostReplyQuiet(ch, root, users[1+i%3], fmt.Sprintf("reply %d, long enough to wrap the thread pane's line at least once or twice", i))
 	}
-	for _, scale := range []float32{1, 2} {
+	for _, c := range []struct {
+		name  string
+		scale float32
+		dp    image.Point
+		modes []bool // dark
+		theme string // the account's ia_theme ("": fakeslack's)
+	}{
+		{"1x", 1, image.Pt(1280, 800), []bool{false, true}, ""},
+		{"2x", 2, image.Pt(1280, 800), []bool{false, true}, ""},
+		{"karim 1x", 1, image.Pt(1918, 1080), []bool{false}, costKarim},
+	} {
+		if c.theme != "" {
+			fs.SetPrefs(map[string]any{"ia_theme": c.theme})
+		}
 		e := startEnv(t, fs, t.TempDir())
-		e.scale = scale
-		e.size = image.Pt(int(1280*scale), int(800*scale))
+		e.scale = c.scale
+		e.size = image.Pt(int(float32(c.dp.X)*c.scale), int(float32(c.dp.Y)*c.scale))
 		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
 			t.Fatalf("headless GPU: %v", err)
@@ -61,7 +76,7 @@ func TestFrameCostWindow(t *testing.T) {
 		e.waitReady()
 		e.openChannel(ch)
 		e.settle(2 * time.Second)
-		for _, dark := range []bool{false, true} {
+		for _, dark := range c.modes {
 			e.a.setDark(dark)
 			e.settle(2 * time.Second)
 			for _, thread := range []bool{false, true} {
@@ -70,18 +85,25 @@ func TestFrameCostWindow(t *testing.T) {
 					e.until("the thread pane", 20*time.Second, func() bool { return e.a.secondary.kind == secThread })
 					e.settle(1500 * time.Millisecond)
 				}
-				name := fmt.Sprintf("%gx %s%s", scale, map[bool]string{false: "light", true: "dark"}[dark], map[bool]string{false: "", true: " thread"}[thread])
+				name := fmt.Sprintf("%s %s%s", c.name, map[bool]string{false: "light", true: "dark"}[dark], map[bool]string{false: "", true: " thread"}[thread])
+				if c.theme != "" && !e.a.acct.t.UseCustomHex {
+					t.Fatalf("%s: the account theme %s didn't apply", name, c.theme)
+				}
 				now := time.Now()
-				old, so, to := e.costFrame(t, true, false, now)
-				shifted, _, _ := e.costFrame(t, true, true, now)
-				cur, sn, tn := e.costFrame(t, false, false, now)
+				old, so, to := e.costFrame(t, true, 0, now)
+				shifted, _, _ := e.costFrame(t, true, 1, now)
+				repacked, _, _ := e.costFrame(t, true, 2, now)
+				cur, sn, tn := e.costFrame(t, false, 0, now)
+				cur2, _, _ := e.costFrame(t, false, 2, now)
 				t.Logf("%s, old: %s, %.1f ms a frame", name, costLine(so), to)
 				t.Logf("%s, new: %s, %.1f ms a frame", name, costLine(sn), tn)
-				t.Logf("%s, the old way after one more path first (the noise floor): %s", name, costDiff(old, shifted))
+				t.Logf("%s, the old way after one tiny path first: %s", name, costDiff(old, shifted))
+				t.Logf("%s, the old way after one window-sized path first (every path elsewhere in the atlas): %s", name, costDiff(old, repacked))
+				t.Logf("%s, the new way after one window-sized path first: %s", name, costDiff(cur, cur2))
 				t.Logf("%s, new against old: %s", name, costDiff(old, cur))
 				if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
 					costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)
-					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-floor", old, shifted)
+					costCrops(t, dir, strings.ReplaceAll(name, " ", "-")+"-repacked", old, repacked)
 				}
 				if thread {
 					e.a.CloseSecondary()
@@ -95,12 +117,20 @@ func TestFrameCostWindow(t *testing.T) {
 	}
 }
 
+// costKarim approximates Karim's account theme as his inspect report of
+// 2026-11-17 has it (Clack α.102 on windows/amd64: light mode, a custom
+// theme #FED4BE, a 1918×1080 dp window at 1x): the custom colour as the
+// primary, Slack's defaults for the rest. Light mode is the case with the
+// workspace shadow's 14 rings.
+const costKarim = `{"primary":{"palette":"aubergine","custom":"#FED4BE"},"highlight1":{"palette":"aubergine"},"highlight2":{"palette":"jade"},"important":{"palette":"aubergine"},"brightness":6,"sidebarInverted":false,"useCustomHex":true}`
+
 // costFrame lays the window out at now the old way (legacy) or the new,
-// after one more tiny path if shift (every path lands elsewhere in the
-// atlas), draws it a few times (paths built, atlases sized) and returns
-// its pixels, the last frame's stats and the median time of 5 more frames
-// to the end of their rasterization.
-func (e *perfEnv) costFrame(t *testing.T, legacy, shift bool, now time.Time) (*image.RGBA, gpu.FrameStats, float64) {
+// after one more path drawn first if shift (1: a tiny one, 2: one the
+// size of the window; transparent, so every later path lands elsewhere in
+// the atlas and nothing else changes), draws it a few times (paths built,
+// atlases sized) and returns its pixels, the last frame's stats and the
+// median time of 5 more frames to the end of their rasterization.
+func (e *perfEnv) costFrame(t *testing.T, legacy bool, shift int, now time.Time) (*image.RGBA, gpu.FrameStats, float64) {
 	t.Helper()
 	theme.SetLegacyFrameCost(legacy)
 	gpu.ClackLegacyClips(legacy)
@@ -108,8 +138,11 @@ func (e *perfEnv) costFrame(t *testing.T, legacy, shift bool, now time.Time) (*i
 	defer gpu.ClackLegacyClips(false)
 	e.now = now
 	gtx := e.context()
-	if shift {
-		paint.FillShape(gtx.Ops, color.NRGBA{R: 1, A: 1}, clip.Ellipse(image.Rect(1, 1, 9, 7)).Op(gtx.Ops))
+	switch shift {
+	case 1:
+		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(image.Rect(1, 1, 9, 7)).Op(gtx.Ops))
+	case 2:
+		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(image.Rectangle{Max: e.size}).Op(gtx.Ops))
 	}
 	e.a.frame(gtx)
 	e.r.Frame(&e.ops)
@@ -142,8 +175,8 @@ func (e *perfEnv) costFrame(t *testing.T, legacy, shift bool, now time.Time) (*i
 }
 
 func costLine(s gpu.FrameStats) string {
-	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d more without the state cache; %d crossings into C or the system), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
-		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
+	return fmt.Sprintf("%d draws, %d passes, %d API calls (%d more without the state cache; %d crossings into C or the system), %d paths built (%.0f KB), %d blits, %d covers, %d intersections, %d paths stenciled; stencil %.2f Mpx, cover %.2f, blit %.2f, intersect %.2f, cleared %.2f, atlas %.2f",
+		s.Draws, s.Passes, s.APICalls, s.Skipped, s.Crossings, s.PathsBuilt, float64(s.PathBytes)/1024, s.Blits, s.Covers, s.Intersections, s.StencilPaths,
 		float64(s.StencilPx)/1e6, float64(s.CoverPx)/1e6, float64(s.BlitPx)/1e6, float64(s.IntersectPx)/1e6, float64(s.ClearPx)/1e6, float64(s.AtlasPx)/1e6)
 }
 

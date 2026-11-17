@@ -1659,7 +1659,10 @@ Karim saw Clack at 10% GPU in Windows Task Manager with nothing moving
 `FrameStats` says what the renderer did for the last frame: the ops by
 kind (blits, covers, intersections), the paths stenciled, draw calls,
 render passes, the calls into the graphics API and the ones the backend's
-state cache left out (patch 37), and the pixels: stencil fragments (from
+state cache left out (patch 37), the paths whose vertices the frame
+built and uploaded (`PathsBuilt`, `PathBytes`: the path cache's misses,
+each a vertex buffer of its own; `buildPaths` returns them), and the
+pixels: stencil fragments (from
 each path's quads in its stencil region; `ClackStatsDetail` keeps the
 quads' bounds on the CPU for it), covered, blitted, intersected, cleared
 and the atlases' size. `ClackSync` reads one pixel back, so a timed frame

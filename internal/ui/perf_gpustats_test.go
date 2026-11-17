@@ -8,6 +8,6 @@ import "gioui.org/gpu/headless"
 func init() {
 	perfGPUStats = func(w *headless.Window) perfGPUFrame {
 		s := w.ClackFrameStats()
-		return perfGPUFrame{Draws: int64(s.Draws), APICalls: s.APICalls, Skipped: s.Skipped, Crossings: s.Crossings, CoverPx: s.CoverPx, BlitPx: s.BlitPx}
+		return perfGPUFrame{Draws: int64(s.Draws), APICalls: s.APICalls, Skipped: s.Skipped, Crossings: s.Crossings, CoverPx: s.CoverPx, BlitPx: s.BlitPx, PathsBuilt: int64(s.PathsBuilt)}
 	}
 }

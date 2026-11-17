@@ -21,6 +21,12 @@ type FrameStats struct {
 	Blits, Covers, Intersections int
 	// StencilPaths are the paths stenciled into the coverage atlas.
 	StencilPaths int
+	// PathsBuilt are the paths whose vertices the frame built and
+	// uploaded (a vertex buffer each), PathBytes their size: a path the
+	// cache held from the frame before (the same op, see clip.PathSpec)
+	// costs neither.
+	PathsBuilt int
+	PathBytes  int64
 	// Draws are the draw calls, Passes the render passes.
 	Draws, Passes int
 	// APICalls are the calls into the graphics API (Metal's render

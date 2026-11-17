@@ -507,7 +507,7 @@ func (g *gpu) frame(target RenderTarget) error {
 	defer g.statsEnd()
 	defFBO := g.ctx.BeginFrame(target, g.drawOps.clear, viewport)
 	defer g.ctx.EndFrame()
-	g.drawOps.buildPaths(g.ctx)
+	g.renderer.stats.PathsBuilt, g.renderer.stats.PathBytes = g.drawOps.buildPaths(g.ctx)
 	for _, img := range g.drawOps.imageOps {
 		expandPathOp(img.path, img.clip)
 	}
@@ -1068,9 +1068,13 @@ func (d *drawOps) collect(root *op.Ops, viewport image.Point) {
 	d.collectOps(&d.reader, viewf)
 }
 
-func (d *drawOps) buildPaths(ctx driver.Device) {
+// buildPaths uploads the vertices of the paths the cache doesn't hold,
+// and reports how many and their bytes (Clack patch 36).
+func (d *drawOps) buildPaths(ctx driver.Device) (n int, bytes int64) {
 	for _, p := range d.pathOps {
 		if v, exists := d.pathCache.get(p.pathKey); !exists || v.data.data == nil {
+			n++
+			bytes += int64(len(p.pathVerts))
 			data := buildPath(ctx, p.pathVerts)
 			val := opCacheValue{
 				data:   data,
@@ -1083,6 +1087,7 @@ func (d *drawOps) buildPaths(ctx driver.Device) {
 		}
 		p.pathVerts = nil
 	}
+	return n, bytes
 }
 
 func (d *drawOps) newPathOp() *pathOp {
