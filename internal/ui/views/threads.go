@@ -80,6 +80,9 @@ type thrData struct {
 	// load counts the loads that sorted the list afresh (Slack's
 	// refreshId): a realtime refresh or the next page keeps it
 	load int
+	// readKey is firstReadThreadKey as that load picked it (thrReadKey),
+	// "" when every thread had unread replies
+	readKey string
 }
 
 // thrCard is the per-thread widget state and cached header text.
@@ -159,9 +162,9 @@ type Threads struct {
 	read  map[string]string
 	sizes map[int]int // list element heights this frame (composer origins)
 	divAt int         // the item the "You’re up to date" divider sits above (-1: none)
-	// readKey is Slack's firstReadThreadKey, the thread the divider goes
-	// above: picked once per load that sorts the list (readLoad, the
-	// data's load), "" while there is none yet
+	// readKey is firstReadThreadKey when the load that sorted the list
+	// had none (every thread unread then): the first thread read since,
+	// picked once per load (readLoad, the data's load)
 	readKey  string
 	readLoad int
 	loads    int  // the loads started that sort the list afresh (thrData.load)
@@ -455,7 +458,13 @@ func (v *Threads) remount() {
 	v.data.mutate(func(d *thrData) {
 		d.items = slices.Clone(d.items) // a load still out reads the old ones
 		thrSort(d.items)
-		d.load = load
+		d.load, d.readKey = load, ""
+		for i := range d.items {
+			if v.unread(&d.items[i]) == 0 { // the store's last reads, the view's own marks in them
+				d.readKey = d.items[i].key
+				break
+			}
+		}
 	})
 	v.reload()
 }
@@ -483,7 +492,19 @@ func thrFrom(p core.ThreadsPage) thrData {
 		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t})
 	}
 	thrSort(d.items)
+	d.readKey = thrReadKey(d.items)
 	return d
+}
+
+// thrReadKey is getDerivedStateFromProps' firstReadThreadKey for threads
+// just sorted: the first one with no unread replies, "" when there is none.
+func thrReadKey(items []thrItem) string {
+	for i := range items {
+		if items[i].UnreadCount == 0 {
+			return items[i].key
+		}
+	}
+	return ""
 }
 
 // thrJoin is the next page b after the threads loaded, a: b's threads that
@@ -503,7 +524,7 @@ func thrJoin(a, b thrData) thrData {
 			items = append(items, t)
 		}
 	}
-	return thrData{items: items, next: b.next, hasMore: b.hasMore, convs: actRefs(a.convs, b.convs), unreads: b.unreads, load: a.load}
+	return thrData{items: items, next: b.next, hasMore: b.hasMore, convs: actRefs(a.convs, b.convs), unreads: b.unreads, load: a.load, readKey: a.readKey}
 }
 
 // thrRefresh is a realtime refresh's page 1, fresh, over the threads
@@ -545,7 +566,7 @@ func thrRefresh(old, fresh thrData) thrData {
 		}
 		items = append(items, t)
 	}
-	return thrData{items: items, next: old.next, hasMore: old.hasMore, convs: actRefs(old.convs, fresh.convs), unreads: fresh.unreads, load: old.load}
+	return thrData{items: items, next: old.next, hasMore: old.hasMore, convs: actRefs(old.convs, fresh.convs), unreads: fresh.unreads, load: old.load, readKey: old.readKey}
 }
 
 // latest is the newest reply ts shown for a thread (or the root's).
@@ -775,17 +796,26 @@ func (v *Threads) upToDate(gtx C) D {
 // firstRead is the index of the thread Slack puts the "You’re up to
 // date" divider before, or -1. That thread is firstReadThreadKey
 // (getDerivedStateFromProps): the first one in the order with nothing
-// unread, picked once per load that sorts the list and kept through
-// realtime refreshes (whatever they bring to that thread), looked for
-// again while there is none. The divider shows when it isn't the first
+// unread, picked by the load that sorts the list (thrData.readKey) and
+// kept through realtime refreshes and pages, whatever they bring to it.
+// While there is none, the first thread read since is picked (Slack looks
+// again while it has none). The divider shows when it isn't the first
 // thread and every thread above it has since been read.
 func (v *Threads) firstRead(items []thrItem) int {
+	key := v.readKey
+	if p, _, _ := v.data.get(); p.readKey != "" {
+		key = p.readKey
+	} else if key == "" {
+		for i := range items {
+			if v.unread(&items[i]) == 0 {
+				v.readKey, key = items[i].key, items[i].key
+				break
+			}
+		}
+	}
 	at := -1
 	for i := range items {
-		if v.readKey == "" && v.unread(&items[i]) == 0 {
-			v.readKey = items[i].key
-		}
-		if items[i].key == v.readKey {
+		if items[i].key == key && key != "" {
 			at = i
 			break
 		}

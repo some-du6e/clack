@@ -78,8 +78,8 @@ func TestThreadReplyBoxWithFirstReplies(t *testing.T) {
 		})
 		e.settle(300 * time.Millisecond)
 		pane, h, compH := bottom-tv.Origin.Y, tv.ContentHeight(), read.compH
-		if compH <= 0 || h+compH <= pane {
-			t.Fatalf("pane %d px, thread %d px, composer %d px: can't make a pane the thread fits only without its box", pane, h, compH)
+		if compH <= 0 || h+compH/2 >= pane {
+			t.Fatalf("pane %d px, thread %d px, composer %d px: can't make a smaller pane the thread fits only without its box", pane, h, compH)
 		}
 		size := image.Pt(e.size.X, e.size.Y-(pane-(h+compH/2)))
 		t.Logf("pane %d px, thread %d px, composer %d px: a %v window", pane, h, compH, size)

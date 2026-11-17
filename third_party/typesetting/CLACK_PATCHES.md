@@ -107,4 +107,5 @@ default-ignorable test). Now U+180F is hidden like the others and makes no
 face change (`shaping`'s `ignoreFaceChange`).
 
 Test: `internal/ui/theme` `TestMongolianVariationSelectorsHidden`
-(U+180B..U+180F shape to no advance).
+(between two letters U+180C..U+180F shape as FVS1 does: hidden, no
+`.notdef`, no advance).

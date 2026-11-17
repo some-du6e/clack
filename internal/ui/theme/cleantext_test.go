@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"slices"
 	"testing"
 
 	"gioui.org/font"
@@ -96,14 +97,22 @@ func TestNotdefTakesTheTextWeight(t *testing.T) {
 
 // U+180F MONGOLIAN FREE VARIATION SELECTOR FOUR (Unicode 14) is a default
 // ignorable like FVS1-3 and the vowel separator: HarfBuzz hides
-// 0x180B..0x180F (is_default_ignorable) and Chrome draws nothing for it.
-// go-text's list stopped at U+180E, so a lone FVS4 drew a .notdef box
-// (typesetting patch 5).
+// 0x180B..0x180F (is_default_ignorable), and Chrome draws nothing for it.
+// go-text's list stopped at U+180E, so FVS4 shaped as a mark with Lato's
+// .notdef glyph, a box drawn over the text (typesetting patch 5). Between
+// two letters each selector must shape as FVS1 does: hidden, no .notdef
+// and no advance.
 func TestMongolianVariationSelectorsHidden(t *testing.T) {
 	sh := text.NewShaper(text.NoSystemFonts(), text.WithCollection(FacesFor(false)))
-	for r := rune(0x180B); r <= 0x180F; r++ {
-		if gs := shapeLato(sh, Regular, 30, string(r)); runAdvance(gs) != 0 {
-			t.Errorf("U+%04X shaped as %+v; want no advance (a default ignorable)", r, gs)
+	want := shapeLato(sh, Regular, 30, "a"+string(rune(0x180B))+"b")
+	if slices.ContainsFunc(want, func(g shapedGlyph) bool { return g.gid == 0 }) {
+		t.Fatalf("FVS1 between two letters shaped as %+v, with a .notdef", want)
+	}
+	for r := rune(0x180C); r <= 0x180F; r++ {
+		gs := shapeLato(sh, Regular, 30, "a"+string(r)+"b")
+		notdef := slices.ContainsFunc(gs, func(g shapedGlyph) bool { return g.gid == 0 })
+		if notdef || !slices.Equal(gs, want) {
+			t.Errorf("U+%04X between two letters shaped as %+v; want FVS1's %+v (hidden: no .notdef, no advance)", r, gs, want)
 		}
 	}
 }
