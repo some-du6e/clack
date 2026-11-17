@@ -234,8 +234,8 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 		}
 	}
 	if ts := c.YouRepliedTS(it); ts != "" {
-		tip := nsActivity.T("You replied") // RepliedBadge
-		if m, ok := c.S.Find(it.Channel, ts); ok {
+		tip := nsActivity.T("You replied")             // RepliedBadge
+		if m, ok := c.S.FindHeld(it.Channel, ts); ok { // the reply YouRepliedTS found, a fetched copy too
 			if t := actTrunc(oneLine(m.Text), 60); t != "" {
 				tip += "\n“" + t + "”"
 			}

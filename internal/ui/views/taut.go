@@ -119,15 +119,18 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 	key := m.Channel + "/" + m.TS
 	e, hit := b.memo("m:" + key)
 	if !hit {
-		if b.vsrc[key] != m {
-			// a new copy of the message (a new revision): its view is
-			// converted again now, as the message lists' rows have it
-			// (applyView's MessageViewConv fresh), and the view follows
-			// the plugins' slice as theirs do
+		if rev := viewRevOf(m); b.vsrc[key] != rev {
+			// a new revision of the message: its view is converted again
+			// now, as the message lists' rows have it (applyView's
+			// MessageViewConv fresh), and the view follows the plugins'
+			// slice as theirs do. Told by what the copy says, not where it
+			// is: a row hands over a fresh copy every frame (authorOf's
+			// override, a root's), which converted the plugins' message
+			// in every frame.
 			if b.vsrc == nil || len(b.vsrc) > 4000 {
-				b.vsrc = map[string]*core.Message{}
+				b.vsrc = map[string]viewRev{}
 			}
-			b.vsrc[key] = m
+			b.vsrc[key] = rev
 			e.msg, e.ok = b.tt.MessageViewChanged(m.Channel, m.TS)
 		} else {
 			e.msg, e.ok = b.tt.MessageView(m.Channel, m.TS)
@@ -137,6 +140,21 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 		return m
 	}
 	return &e.msg
+}
+
+// viewRev is what tells one revision of a message from another for its
+// plugins' view (viewMsg): its text, edit, blocks and attachments, the
+// slices by their first bytes (a copy of a copy shares them; a new
+// revision brings new ones).
+type viewRev struct {
+	text, edited string
+	blocks, atts *byte
+	nb, na       int
+}
+
+func viewRevOf(m *core.Message) viewRev {
+	return viewRev{text: m.Text, edited: m.EditedTS, blocks: firstByte(m.Blocks), atts: firstByte(m.Attachments),
+		nb: len(m.Blocks), na: len(m.Attachments)}
 }
 
 // viewsPatched reports whether plugins patch any slice the views draw

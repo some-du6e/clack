@@ -211,13 +211,21 @@ func (v *Activity) applyMsgs(gtx C) {
 		// busy while): every page message is looked up; one core forgot
 		// since its copy was read may have missed a change, and the page
 		// is read again
-		floor, stale := c.MessageChangeFloor(), false
-		for k := range m.refs {
-			if !v.takeChange(c, k, true) && v.copyOf(k).seq < floor {
-				stale = true
+		floor, gone := c.MessageChangeFloor(), false
+		for k, ref := range m.refs {
+			if v.takeChange(c, k, true) || v.copyOf(k).seq >= floor {
+				continue
+			}
+			// core forgot whether it changed: the store's copy, which the
+			// socket kept current, is the message as it is now (on every
+			// page loaded, not just the first a reload reads)
+			if sm, ok := c.HeldMessage(k.ch, k.ts); ok && ref&actRefDraws != 0 {
+				v.adopt(k, &sm, c.MessageChangeSeq())
+			} else if !ok {
+				gone = true // deleted, or let go: the feed says which
 			}
 		}
-		if stale && !(v.data.busy() && v.mode == actFresh) {
+		if gone && !(v.data.busy() && v.mode == actFresh) {
 			v.load(actRefresh)
 		}
 		return
@@ -249,6 +257,9 @@ func (v *Activity) landMsgs(c *core.App, page *core.ActivityPage) {
 		refs[k] |= actRefDraws
 		f, had := feed[k]
 		known := msg != nil || gone
+		if !known {
+			seq = 0 // its fetch failed: no copy, older than any there is
+		}
 		if !had || known && (seq > f.seq || f.m == nil && !f.gone) {
 			feed[k] = actCopy{m: msg, seq: seq, gone: gone}
 		}
@@ -272,10 +283,28 @@ func (v *Activity) landMsgs(c *core.App, page *core.ActivityPage) {
 	}
 	m.refs, m.feed, m.page = refs, feed, page.Items
 	keys := make(map[actMsgKey]bool, len(refs))
-	for k := range refs {
+	drawn := map[string][]string{}
+	for k, ref := range refs {
 		keys[k] = true
+		if ref&actRefDraws == 0 {
+			continue
+		}
+		drawn[k.ch] = append(drawn[k.ch], k.ts)
+		if f := feed[k]; f.m == nil && !f.gone {
+			// an item with no copy (its fetch failed): the store's, if it
+			// has one, rather than a shimmer
+			if o, ok := m.own[k]; !ok || o.m == nil {
+				if sm, ok := c.HeldMessage(k.ch, k.ts); ok {
+					v.adopt(k, &sm, c.MessageChangeSeq())
+				}
+			}
+		}
 	}
 	m.keys.Store(&keys)
+	// the page's messages are in use: the store lets go of others first
+	for ch, tss := range drawn {
+		c.S.KeepFetched(ch, tss)
+	}
 	for k := range m.own {
 		if refs[k] == 0 {
 			delete(m.own, k)
@@ -347,10 +376,24 @@ func (v *Activity) takeChange(c *core.App, k actMsgKey, drops bool) bool {
 	} else if msg, ok := c.ChangedMessage(k.ch, k.ts, &ch, cur.m, cur.seq); ok {
 		m.own[k] = actCopy{m: &msg, seq: ch.Seq}
 	} else {
-		return true // no copy to be had: the store let it go
+		// no copy to be had (the store let it go, and core's copy of the
+		// change with it): fetched again by id, as Slack's row fetches a
+		// message its store doesn't hold; it comes back as a change
+		c.RefetchMessages(k.ch, []string{k.ts})
+		return true
 	}
 	v.unbuildMsg(k)
 	return true
+}
+
+// adopt makes msg, current as of change seq, Activity's copy of k.
+func (v *Activity) adopt(k actMsgKey, msg *core.Message, seq uint64) {
+	m := &v.msgs
+	if m.own == nil {
+		m.own = map[actMsgKey]actCopy{}
+	}
+	m.own[k] = actCopy{m: msg, seq: seq}
+	v.unbuildMsg(k)
 }
 
 // dropRemoved is "ActivityIA4: Remove activity item" {channelId,
@@ -434,11 +477,11 @@ func (v *Activity) rowItem(r *actRow, it *core.ActivityItem) *core.ActivityItem 
 	}
 	msg, root := it.Msg, it.Root
 	if k, _, ok := actMsgRef(it); ok {
-		msg, r.liSrc[0] = v.msgFor(k, it.Msg, it.MsgSeq)
+		msg, r.liSrc[0] = v.msgFor(k, it.Msg, knownSeq(it.Msg, it.MsgGone, it.MsgSeq))
 		r.msgGone = msg == nil && (r.liSrc[0] != 0 || it.MsgGone)
 	}
 	if k, ok := actRootRef(it); ok {
-		root, r.liSrc[1] = v.msgFor(k, it.Root, it.MsgSeq)
+		root, r.liSrc[1] = v.msgFor(k, it.Root, knownSeq(it.Root, it.RootGone, it.MsgSeq))
 	}
 	if r.liSrc == [2]uint64{} {
 		return it
@@ -446,6 +489,16 @@ func (v *Activity) rowItem(r *actRow, it *core.ActivityItem) *core.ActivityItem 
 	r.li = *it
 	r.li.Msg, r.li.Root = msg, root
 	return &r.li
+}
+
+// knownSeq is the change an item's copy of a message is current as of: 0
+// when it has none and doesn't know there is none (its fetch failed), so
+// any copy Activity holds outranks it.
+func knownSeq(m *core.Message, gone bool, seq uint64) uint64 {
+	if m == nil && !gone {
+		return 0
+	}
+	return seq
 }
 
 // liveCopy is rowItem for an item drawn outside a row (the in-view
@@ -640,21 +693,35 @@ func (f *fpMemo) of(msg slackc.Props) uint64 {
 	return f.fp
 }
 
-// sendMsg is msgProps(m) for one of the row's patched components, noting
-// what it says (echoed).
-func (r *actRow) sendMsg(m *core.Message) slackc.Props {
+// sentSet is what a row sent one level of its patched components of its
+// message, by content, and the content of that level's tree's msg it
+// read last. Each level is judged by its own: under Slick Censorship's
+// ActivityItem mask and BetterBlock's inner patches, the masked msg the
+// row hands ActivityThread and the RowContent components is the plugin's
+// text, and taken for props the row sent ActivityItem it undid the mask
+// from the second frame on (plugin-render-3's per-level sets in
+// messages/row.go: outSent, inSent, bodySent).
+type sentSet struct {
+	fps  sentFPs
+	last *core.Message
+	text string
+	tree fpMemo
+}
+
+// send is msgProps(m) for the level's component, noting what it says.
+func (s *sentSet) send(m *core.Message) slackc.Props {
 	p := msgProps(m)
-	if m != nil && (m != r.sentLast || r.sentText != m.Text) {
-		r.sentLast, r.sentText = m, m.Text
-		r.sent.add(contentFP(p))
+	if m != nil && (m != s.last || s.text != m.Text) {
+		s.last, s.text = m, m.Text
+		s.fps.add(contentFP(p))
 	}
 	return p
 }
 
-// echoed reports a tree's msg (mp) that says what a msg the row sent
-// says: JS passed the props on unchanged, maybe from a revision before
-// the one the row draws now, so the row draws its own copy, not that
-// revision's text (row.overlay's sent rule in the message lists).
-func (r *actRow) echoed(mp slackc.Props) bool {
-	return mp != nil && r.sent.has(r.treeFP.of(mp))
+// echoed reports a tree's msg (mp) that says what a msg the row sent this
+// level says: JS passed the props on unchanged, maybe from a revision
+// before the one the row draws now, so the row draws its own copy, not
+// that revision's text (row.overlay's sent rule in the message lists).
+func (s *sentSet) echoed(mp slackc.Props) bool {
+	return mp != nil && s.fps.has(s.tree.of(mp))
 }

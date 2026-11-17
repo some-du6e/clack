@@ -53,7 +53,7 @@ func (r *actRow) rowKind(gtx C) D {
 
 // rowBase is the props every inner activity boundary gets.
 func (r *actRow) rowBase(part string) slackc.Props {
-	return slackc.Props{"$key": r.key + "/" + part, "activityItem": r.itemShape(), "msg": r.sendMsg(r.msg()),
+	return slackc.Props{"$key": r.key + "/" + part, "activityItem": r.itemShape(), "msg": msgProps(r.msg()),
 		"density": r.density(), "isDmTab": r.v.dmOnly()}
 }
 
@@ -61,6 +61,7 @@ func (r *actRow) rowBase(part string) slackc.Props {
 // unreadCount}.
 func (r *actRow) threadProps() slackc.Props {
 	p := r.rowBase("thread")
+	p["msg"] = r.threadSent.send(r.msg()) // what ActivityThread's tree is judged by (echoed)
 	p["messageTs"] = r.it.TS
 	p["threadTs"] = r.it.ThreadTS
 	p["unreadCount"] = r.it.Count
@@ -98,7 +99,7 @@ func (r *actRow) threadOverride(p slackc.Props) {
 	}
 	// a revision before, from a tree JS hasn't drawn since the message
 	// changed, is the props the row sent, not a plugin's text (echoed)
-	if src != it.Msg || !r.echoed(mp) {
+	if src != it.Msg || !r.threadSent.echoed(mp) {
 		if om := r.textOverride(src, mp); om != nil {
 			r.pm = om
 		}

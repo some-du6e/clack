@@ -214,13 +214,11 @@ type actRow struct {
 	// msgGone: there's no message to draw (deleted, or Slack has none:
 	// isNonExistent), so no body and no shimmer
 	msgGone bool
-	// what the row sent its patched components of its message, by
-	// content (sendMsg), and the content of the tree's msg it read last
-	// (echoed)
-	sent     sentFPs
-	sentLast *core.Message
-	sentText string
-	treeFP   fpMemo
+	// what the row sent ActivityItem and ActivityThread of its message,
+	// each level apart (a plugin's rewrite in ActivityItem is what the
+	// row hands the components inside it, not props it sent ActivityItem:
+	// activity_msgs.go sentSet)
+	itemSent, threadSent sentSet
 
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
@@ -2443,7 +2441,7 @@ func (r *actRow) density() string {
 // itemProps: ActivityItem {activityItem, msg, className, isRead, density}.
 func (r *actRow) itemProps() slackc.Props {
 	v := r.v
-	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": r.sendMsg(r.it.Msg),
+	return slackc.Props{"$key": r.key, "activityItem": r.itemShape(), "msg": r.itemSent.send(r.it.Msg),
 		"className": "", "isRead": !r.unread, "isSelected": v.selOK && v.selKey == r.key,
 		"density": r.density(), "showAsCard": false, "inTriageMode": false, "isDmTab": v.dmOnly()}
 }
@@ -2467,7 +2465,7 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 			// a tree JS hasn't drawn since the message changed hands back
 			// a revision before: that's the props the row sent, not the
 			// plugin's text (activity_msgs.go echoed)
-			if !r.echoed(mp) {
+			if !r.itemSent.echoed(mp) {
 				r.om = r.textOverride(it.Msg, mp)
 			}
 			om := msgOverride(it.Msg, mp)
