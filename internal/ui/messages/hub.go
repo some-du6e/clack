@@ -68,6 +68,11 @@ type model struct {
 	// again: the conversation's latest moved past the model while a load
 	// was out (catchUp, hub_catchup.go): it loads again once that lands
 	again bool
+	// caughtUp: the latest catchUp last loaded the model again for;
+	// purged: the counts purged the history, and the next load takes the
+	// newest page whole (historyChanged)
+	caughtUp string
+	purged   bool
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -305,7 +310,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			m.err = err
 			live := m.takeLive()
 			if err == nil {
-				m.mergeNewest(p.Messages, p.HasMore)
+				m.takeNewest(p) // hub_catchup.go
 				m.keepLive(live)
 				if !m.loaded {
 					m.lastRead = p.LastRead
@@ -785,6 +790,10 @@ func (hb *hub) apply(ev core.Event) bool {
 		// list on screen behind its conversation's latest reads it again
 		// (hub_catchup.go)
 		return hb.catchUp()
+	case "history_stale", "history_purged":
+		// the counts said a history changed unheard: its lists load
+		// again (hub_catchup.go)
+		return hb.historyChanged(ev)
 	case "auth_failed":
 		// core: the session is gone (signed out, token revoked). Stop
 		// loading anything until the connection is back or Retry.
@@ -808,6 +817,12 @@ func (hb *hub) apply(ev core.Event) bool {
 			m.fetched = time.Time{}
 			if ev.Type == "connection" && ev.Connected {
 				m.fails, m.retryAt, m.olderFails, m.olderRetryAt = 0, time.Time{}, 0, time.Time{}
+			}
+			if m.loading {
+				// its answer may be from before the socket came back (or
+				// the poll): once more after it (afterLoad), when core
+				// reads Slack for a window from before a slow connect
+				m.again = true
 			}
 			m.refreshQ = true
 			m.rev++

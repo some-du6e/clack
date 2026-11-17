@@ -112,6 +112,7 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 	a.pending[cid] = p
 	a.mu.Unlock()
 	a.putLocal(o.Channel, local)
+	a.S.NoteLive(o.Channel, local.TS, &local) // a page read before it keeps it (store/live.go)
 	v := a.message(o.Channel, &local)
 	a.emit(Event{Type: "message", Channel: o.Channel, TS: p.ts, ThreadTS: o.ThreadTS, UserID: local.User, Msg: &v,
 		ClientMsgID: cid, Reply: !isTopLevel(&local), ConvKind: a.kindOf(o.Channel)})
@@ -190,6 +191,10 @@ func (a *App) confirmPending(ch string, m *slack.Message) bool {
 	})
 	a.S.Remove(ch, p.ts)
 	a.putLocal(ch, *m)
+	// a page read before Slack had it keeps the confirmed copy, and drops
+	// the local one (store/live.go)
+	a.S.NoteLive(ch, p.ts, nil)
+	a.S.NoteLive(ch, m.TS, m)
 	v := a.message(ch, m)
 	a.emit(Event{Type: "sent", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, ReplacesTS: p.ts, ClientMsgID: cid,
 		UserID: m.User, Msg: &v, Reply: !isTopLevel(m), ConvKind: a.kindOf(ch)})
@@ -223,6 +228,7 @@ func (a *App) DiscardPending(ch, clientMsgID string) {
 		defer p.release()
 	}
 	a.S.Remove(ch, p.ts)
+	a.S.NoteLive(ch, p.ts, nil) // store/live.go
 	a.emit(Event{Type: "delete", Channel: ch, TS: p.ts, ThreadTS: p.opts.ThreadTS, ClientMsgID: clientMsgID})
 }
 

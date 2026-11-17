@@ -207,6 +207,7 @@ func (b *backend) noteResolveWith(a *App, ids, people []string, then func()) {
 		parent = context.Background()
 	}
 	c := b.core
+	w := b.notes.add(append(append([]string(nil), ids...), people...), then)
 	go func() {
 		ctx, cancel := context.WithTimeout(parent, noteResolveWait)
 		defer cancel()
@@ -226,8 +227,69 @@ func (b *backend) noteResolveWith(a *App, ids, people []string, then func()) {
 			}()
 		}
 		wg.Wait()
-		a.Post(then)
+		b.notes.done(a, w)
 	}()
+}
+
+// noteOrder lets the notifications that waited for lookups go in the
+// order their messages came, among those waiting for a common member or
+// conversation: Slack's waits share the one fetch per model (core's
+// EnsureUsers shares a member's users/info the same way), and their
+// continuations run in the order they began, so two messages from a new
+// person notify in order. One that waits for nobody another waits for
+// goes as soon as its own lookups answer.
+type noteOrder struct {
+	mu    sync.Mutex
+	waits []*noteWait
+}
+
+type noteWait struct {
+	keys map[string]bool
+	done bool
+	then func()
+}
+
+func (o *noteOrder) add(keys []string, then func()) *noteWait {
+	w := &noteWait{keys: make(map[string]bool, len(keys)), then: then}
+	for _, k := range keys {
+		w.keys[k] = true
+	}
+	o.mu.Lock()
+	o.waits = append(o.waits, w)
+	o.mu.Unlock()
+	return w
+}
+
+// done marks w's lookups answered and posts, in order, every waiting
+// notification no earlier one with a key in common holds back.
+func (o *noteOrder) done(a *App, w *noteWait) {
+	o.mu.Lock()
+	w.done = true
+	var ready []func()
+	var held []*noteWait // in order: what is still waiting, or held back
+	for _, x := range o.waits {
+		if x.done && !sharesKey(x, held) {
+			ready = append(ready, x.then)
+			continue
+		}
+		held = append(held, x)
+	}
+	o.waits = held
+	o.mu.Unlock()
+	for _, f := range ready {
+		a.Post(f)
+	}
+}
+
+func sharesKey(x *noteWait, ws []*noteWait) bool {
+	for _, y := range ws {
+		for k := range x.keys {
+			if y.keys[k] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // noteMembers are the members a message's notification names that the
@@ -261,14 +323,18 @@ func (b *backend) noteMembers(m *core.Message) []string {
 	return out
 }
 
-// noteFresh is ev with its message converted again from the store, once
-// the people it names are in: the mentions' names, which the conversion
-// made before users/info answered couldn't read.
+// noteFresh is ev with its message converted again from core's copy, as
+// the notification is built (after its people came in, when it waited):
+// the mentions' names, which the conversion the socket's event made
+// before users/info answered couldn't read, or a member fetched since.
+// MessageNow falls back to the socket's own copy, as the message is in no
+// window or thread for a conversation nobody opened or a reply in a
+// thread that isn't cached: most notifications.
 func (b *backend) noteFresh(ev core.Event) core.Event {
 	if b.core == nil || ev.Msg == nil {
 		return ev
 	}
-	if m, ok := b.core.StoredMessage(ev.Channel, ev.TS); ok {
+	if m, ok := b.core.MessageNow(ev.Channel, ev.TS); ok {
 		msg := *ev.Msg
 		msg.Doc = m.Doc
 		if msg.Name == "" {

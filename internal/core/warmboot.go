@@ -222,6 +222,7 @@ func (a *App) installConvs(convs []slack.Conversation, since uint64) {
 // Slack's state, worth reading once more.
 func (a *App) installCounts(c *slack.Counts, since uint64) bool {
 	merged := a.S.SetCountsSince(c, since)
+	a.applyMutationTimes(c) // history_invalid, updated (history_catchup.go)
 	badges := c.ActivityV2 == nil || a.setActivityBadgesSince(c.ActivityV2, since)
 	a.mergeChannelBadges(c.ChannelBadges) // h1EQ: updateChannelBadgesCounts, resetAllUserAlertsUnreadCounts (classic_badges.go)
 	a.resetAlerts(c.Alerts)

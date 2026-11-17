@@ -37,25 +37,27 @@ func (a *App) handle(ev slack.Event) {
 			Value string `json:"value"`
 		}
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" {
-			_ = a.LoadFrecencyPrefs(ctx)
+			a.pumpLater(func(ctx context.Context) { _ = a.LoadFrecencyPrefs(ctx) }) // pump_later.go
 		}
 	case "search_recents": // handleSearchRecentsPrefsUpdate (search_recents.go)
 		var e struct {
 			Value string `json:"value"`
 		}
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" && a.RecentsReadEnabled() {
-			_ = a.LoadRecentsPrefs(ctx)
+			a.pumpLater(func(ctx context.Context) { _ = a.LoadRecentsPrefs(ctx) })
 		}
 	case "reaction_added", "reaction_removed":
 		var e struct {
 			User     string `json:"user"`
 			Reaction string `json:"reaction"`
+			EventTS  string `json:"event_ts"`
 			Item     struct {
 				Channel string `json:"channel"`
 				TS      string `json:"ts"`
 			} `json:"item"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		a.advanceMutation(e.Item.Channel, e.EventTS, false) // the counts' updated (history_catchup.go)
 		add := ev.Type == "reaction_added"
 		changed := false
 		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = applyReaction(m, e.Reaction, e.User, add) || changed })
@@ -65,6 +67,14 @@ func (a *App) handle(ev slack.Event) {
 			v := a.message(e.Item.Channel, &m)
 			a.emit(Event{Type: "update", Name: UpdateReactions, Channel: e.Item.Channel, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
 		}
+	case "channel_history_changed", "group_history_changed", "im_history_changed", "mpim_history_changed":
+		// channelHistoryChanged: the counts' history_invalid moves to the
+		// event's (history_catchup.go)
+		var e struct {
+			EventTS string `json:"event_ts"`
+		}
+		_ = json.Unmarshal(ev.Raw, &e)
+		a.advanceMutation(ch, e.EventTS, true)
 	case "ai_assistant_status", "ai_assistant_threads_suggested_prompts":
 		a.onAssistant(ctx, ev) // agent.go
 	case "user_typing":
@@ -197,7 +207,7 @@ func (a *App) handle(ev slack.Event) {
 		if e.User != a.S.SelfID() {
 			return
 		}
-		a.refreshConv(ctx, ch)
+		a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, ch) }) // pump_later.go
 	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename",
 		"group_rename", "channel_unarchive", "im_open", "mpim_open":
 		var e struct {
@@ -218,7 +228,7 @@ func (a *App) handle(ev slack.Event) {
 			// a code channel no longer counts (codechannel_close.go)
 			a.forgetCodeChannelClosed(id)
 		}
-		a.refreshConv(ctx, id)
+		a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, id) }) // pump_later.go
 	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
 		a.onRecordChannelClose(ch)
 	case "record_channel_open": // recordChannelOpened
@@ -257,6 +267,7 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		ch = firstNonEmpty(ch, e.ChannelID, e.Item.Channel)
+		a.advanceMutation(ch, e.EventTS, false) // the counts' updated (history_catchup.go)
 		if e.Item.Message.TS != "" {
 			// Slack's pinAdded / pinRemoved → upsertMessagePinnedStatus
 			// (boot-shared 1dqP): the message's pinned_to gains or loses the
@@ -284,7 +295,10 @@ func (a *App) handle(ev slack.Event) {
 	case "thread_marked", "update_thread_state", "dnd_updated", "dnd_updated_user", "pref_change", "badge_counts_updated",
 		"channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		if ev.Type == "dnd_updated" {
-			a.onDNDUpdated(ctx, ev.Raw) // before the UI hears of it
+			a.onDNDUpdated(nil, ev.Raw) // the event's status, before the UI hears of it
+			if raw := ev.Raw; a.dndUpdateLoads(raw) {
+				a.pumpLater(func(ctx context.Context) { _ = a.LoadDND(ctx) }) // then dnd.info (pump_later.go)
+			}
 		}
 		if ev.Type == "thread_marked" {
 			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it
@@ -296,9 +310,11 @@ func (a *App) handle(ev slack.Event) {
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 			since := a.S.Seq()
-			if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
-				a.emit(Event{Type: "sidebar_changed"})
-			}
+			a.pumpLater(func(ctx context.Context) { // pump_later.go
+				if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
+					a.emit(Event{Type: "sidebar_changed"})
+				}
+			})
 		case "thread_marked", "update_thread_state", "badge_counts_updated":
 			a.refreshCountsSoon()
 		case "pref_change":
@@ -306,7 +322,11 @@ func (a *App) handle(ev slack.Event) {
 				Name string `json:"name"`
 			}
 			_ = json.Unmarshal(ev.Raw, &pc)
-			if raw, err := a.C.Prefs(ctx); err == nil {
+			a.pumpLater(func(ctx context.Context) { // pump_later.go
+				raw, err := a.C.Prefs(ctx)
+				if err != nil {
+					return
+				}
 				a.installPrefs(raw)
 				if pc.Name == prefFrecency || pc.Name == prefEmojiUse {
 					// Slack upserts the event's value; the full map keeps
@@ -317,7 +337,7 @@ func (a *App) handle(ev slack.Event) {
 				}
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
-			}
+			})
 		}
 	case "subteam_created", "subteam_updated", "subteam_members_changed", "subteam_self_added", "subteam_self_removed":
 		var e struct {
@@ -339,7 +359,8 @@ func (a *App) handle(ev slack.Event) {
 			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
 	case "saved_added", "saved_updated", "saved_deleted":
-		a.onSavedEvent(ctx, ev.Type, ev.Raw)
+		typ, raw := ev.Type, ev.Raw
+		a.pumpLater(func(ctx context.Context) { a.onSavedEvent(ctx, typ, raw) }) // its message's lookup (pump_later.go)
 	case "draft_create", "draft_update", "draft_delete", "draft_send":
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
@@ -462,7 +483,7 @@ func (a *App) emitStreamDone(ch string, m *slack.Message) {
 		Reply:    m.ThreadTS != "" && m.ThreadTS != m.TS,
 		Mention:  mentionsSelf(m, self) || (m.User != self && keywordMention(m, a.S.HighlightWords())),
 		ConvKind: a.kindOf(ch)}
-	if u, ok := a.User(m.User); ok {
+	if u, ok := a.RawUser(m.User); ok { // read without asking, as onMessage's
 		ev.User = &u
 	}
 	a.emit(ev)
@@ -522,9 +543,19 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		Message   *slack.Message `json:"message"`
 		Previous  *slack.Message `json:"previous_message"`
 		DeletedTS string         `json:"deleted_ts"`
+		EventTS   string         `json:"event_ts"`
 	}
 	if json.Unmarshal(ev.Raw, &e) != nil {
 		return
+	}
+	// what the next counts' history_invalid and updated already cover
+	// (Slack's messageDeleted, messageChanged, messageReplied:
+	// history_catchup.go)
+	switch e.Subtype {
+	case "message_deleted":
+		a.advanceMutation(ch, e.EventTS, true)
+	case "message_changed", "message_replied":
+		a.advanceMutation(ch, e.EventTS, false)
 	}
 	switch e.Subtype {
 	case "message_changed":
@@ -671,9 +702,29 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
 	}
-	if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
-		a.refreshConv(ctx, ch)
+	// a conversation core doesn't know yet is looked up first
+	// (conversations.info), as Slack's preprocessRtmMessage fetches an
+	// unknown channel before the message: off the pump, so no other
+	// conversation's events wait for it, and the later messages of the
+	// same conversation wait behind it in order (pump_later.go)
+	if a.holdForConv(ch) {
+		mm := m
+		a.pumpLater(func(ctx context.Context) {
+			defer a.releaseConv(ch)
+			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
+				a.refreshConv(ctx, ch)
+			}
+			a.announceMessage(ch, &mm, isReply, mention)
+		})
+		return
 	}
+	a.announceMessage(ch, &m, isReply, mention)
+}
+
+// announceMessage is onMessage's last part: the message event, once the
+// conversation is known.
+func (a *App) announceMessage(ch string, mp *slack.Message, isReply, mention bool) {
+	m := *mp
 	if !isReply || m.Subtype == "thread_broadcast" {
 		if a.reopenActive() { // a new message brings a closed DM back
 			a.emit(Event{Type: "sidebar_changed"})
@@ -684,7 +735,14 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
 		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch)}
-	if u, ok := a.User(m.User); ok {
+	// the sender as the store holds it, read without asking (Slack's
+	// messageReceived fetches nobody): User would note a miss, and the
+	// member fetcher's answer is a "names" event that resnapshots the
+	// sidebar, reloads the lists on screen and invalidates the plugins'
+	// members, for every unknown sender in any conversation. The rows
+	// that draw the message ask for its people (lazy_users.go), and a
+	// notification for its own (notify_conv.go noteMembers).
+	if u, ok := a.RawUser(m.User); ok {
 		ev2.User = &u
 	}
 	a.emit(ev2)

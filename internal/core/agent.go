@@ -95,12 +95,16 @@ func (a *App) onAssistant(ctx context.Context, ev slack.Event) {
 		if json.Unmarshal(ev.Raw, &s) != nil || s.BotUserID == "" {
 			return
 		}
-		if s.Username == "" {
-			a.EnsureUsers(ctx, []string{s.BotUserID})
-		}
+		// a bot the store doesn't hold is asked for off the event pump
+		// (pump_later.go): the status shows now, and again with its name
+		// once users/info answers
+		lookup := s.Username == "" && len(a.S.MissingUsers([]string{s.BotUserID})) > 0
 		s.Name = firstNonEmpty(s.Username, a.S.UserName(s.BotUserID))
 		s.at = time.Now()
 		k := threadKey(s.Channel, s.ThreadTS)
+		if lookup && s.Status != "" {
+			defer a.pumpLater(func(ctx context.Context) { a.nameAssistantStatus(ctx, k, s) })
+		}
 		st.mu.Lock()
 		_, had := st.status[k]
 		if s.Status == "" {
@@ -250,4 +254,28 @@ func channelMemberCount(people, apps int, peopleOnly bool) int {
 		return people
 	}
 	return people + apps
+}
+
+// nameAssistantStatus fetches the bot of an assistant status that came
+// without a name and, if the status still stands, announces it again with
+// the name.
+func (a *App) nameAssistantStatus(ctx context.Context, k string, s AssistantStatus) {
+	a.EnsureUsers(ctx, []string{s.BotUserID})
+	name := a.S.UserName(s.BotUserID)
+	if name == "" {
+		return
+	}
+	st := a.assistant()
+	st.mu.Lock()
+	cur, ok := st.status[k]
+	if ok && cur.at.Equal(s.at) && cur.Name == "" {
+		cur.Name = name
+		st.status[k] = cur
+	}
+	st.mu.Unlock()
+	if !ok || !cur.at.Equal(s.at) || cur.Name != name {
+		return
+	}
+	raw, _ := json.Marshal(cur)
+	a.emit(Event{Type: "assistant_status", Channel: cur.Channel, ThreadTS: cur.ThreadTS, UserID: cur.BotUserID, Name: cur.Name, Raw: raw})
 }

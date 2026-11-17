@@ -46,16 +46,20 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	var hasMore bool
 	if before == "" {
 		t := a.S.Timeline(ch)
-		if t != nil && a.behindLatest(ch, t) {
-			// the window ends before the conversation's latest message:
-			// one the socket never brought (it was down; counts read after
-			// the reconnect name it) is read from Slack now, merged with
-			// what the socket brought meanwhile; on a failure the cached
-			// window shows
+		// a window read before the last slow connect, one the counts
+		// marked stale, or one ending before the conversation's latest
+		// message (history_catchup.go): its newest page is read from Slack
+		// now, merged with what the socket brought meanwhile. A read
+		// joined that began before the mark counts for nothing: once more.
+		// On a failure the cached window shows, and the next read after
+		// catchUpRetry tries again.
+		for try := 0; try < 2 && t != nil && a.windowBehind(ch, t); try++ {
 			source = "catch-up"
-			if err := a.loadLatest(ctx, ch); err == nil {
-				t = a.S.Timeline(ch)
+			if err := a.loadLatest(ctx, ch); err != nil {
+				a.readFailed(ch)
+				break
 			}
+			t = a.S.Timeline(ch)
 		}
 		if t == nil {
 			source = "fetch"
@@ -107,6 +111,15 @@ func (a *App) Replies(ctx context.Context, ch, ts string) ([]Message, error) {
 	a.watch(ch, ts)
 	a.noteAccess(ch + "/" + ts)
 	msgs, ok := a.S.Thread(ch, ts)
+	// a thread read before the last slow connect is read again, as its
+	// channel's window is (history_catchup.go); a failure shows the cache
+	for try := 0; try < 2 && ok && a.threadBehind(ch, ts); try++ {
+		if err := a.fetchThread(ctx, ch, ts); err != nil {
+			a.readFailed(ch + "/" + ts)
+			break
+		}
+		msgs, ok = a.S.Thread(ch, ts)
+	}
 	if !ok {
 		if err := a.fetchThread(ctx, ch, ts); err != nil {
 			return nil, err
@@ -128,6 +141,7 @@ func (a *App) RefreshReplies(ctx context.Context, ch, ts string) ([]Message, err
 func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 	return a.once("r:"+ch+"/"+ts, func() error {
 		pins, live, subs := a.S.PinSeq(), a.S.LiveSeq(), a.S.SubSeq()
+		rm := a.readStarts() // history_catchup.go
 		var all []slack.Message
 		cursor := ""
 		for {
@@ -147,7 +161,8 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		a.S.SyncSubs(ch, subs, all)
 		// a reply changed, deleted or posted while the request was out
 		// keeps the socket's copy (store/live.go)
-		a.S.SetThreadSince(ch, ts, all, live)
+		a.S.SetThreadSince(ch, ts, all, live, a.pendingIn(ch, ts))
+		a.noteRead(ch+"/"+ts, rm)
 		all, _ = a.S.Thread(ch, ts)
 		a.S.SyncPins(ch, pins, all)
 		for i := range all {

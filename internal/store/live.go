@@ -68,42 +68,45 @@ func (s *Store) NoteLive(ch, ts string, m *slack.Message) {
 // SetLatestSince is SetLatest for a newest-page fetch of ch whose request
 // began at LiveSeq since, as Slack's history pages merge into its message
 // store by timestamp (addMessagesFromHistory) and never take out what the
-// socket brought: a message the socket changed after that keeps the
-// socket's copy, one it deleted stays out, and a top-level message (or a
-// broadcast) it brought that the page predates goes in, as does a message
-// the window held that is newer than the whole page (a pending send, one
-// Upsert put in while the request was out). A page read before a socket
-// message and stored after it used to drop that message for the session:
-// every list re-reads its conversation from here (Owl's message missing
-// from Karim's #meta while Activity showed it, α.102).
-func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, since uint64) {
+// socket brought while they were out:
+//
+//   - a message the socket changed after since keeps the copy the window
+//     has now (the socket's, with every change after it: a reaction, a
+//     reply count, filled files), or the socket's own when the window
+//     lacks it; one it deleted stays out;
+//   - a top-level message (or a broadcast) the socket brought after since
+//     goes in when the page predates it (core notes its own sends too);
+//   - of what the window held newer than the whole page, only keep's ts (a
+//     send Slack hasn't confirmed, or one that failed) and ephemeral
+//     messages stay: anything else the page would show, so Slack deleted
+//     it while no event could say so (realtime off, the socket down), and
+//     the page wins.
+//
+// A page read before a socket message and stored after it used to drop
+// that message for the session: every list re-reads its conversation from
+// here (Owl's message missing from Karim's #meta while Activity showed it,
+// α.102).
+func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, since uint64, keep map[string]bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	newer := func(t string) (liveRec, bool) {
-		r, ok := s.live[ch+"/"+t]
-		return r, ok && r.seq > since
-	}
-	topLevel := func(m *slack.Message) bool {
-		return m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" || m.ReplyBroadcast
-	}
+	cur := s.liveCopiesLocked(ch, s.timelineMsgsLocked(ch))
 	out := make([]slack.Message, 0, len(msgs)+4)
 	have := make(map[string]bool, len(msgs))
 	for _, m := range msgs {
-		if r, ok := newer(m.TS); ok {
-			if r.gone {
+		if mm, gone, ok := cur(m.TS, since); ok {
+			if gone {
 				continue
 			}
-			mm := *r.msg
 			s.keepPinLocked(ch, &mm, &m)
 			m = mm
 		}
 		have[m.TS] = true
 		out = append(out, m)
 	}
-	oldest := ""
+	oldest, newest := "", ""
 	if len(msgs) > 0 {
-		oldest = msgs[0].TS
+		oldest, newest = msgs[0].TS, msgs[len(msgs)-1].TS
 	}
 	// what the socket brought while the request was out, within the page's
 	// range or newer (an edit of an older message stays out of the window)
@@ -111,19 +114,19 @@ func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, si
 		if r.seq <= since || r.gone || r.msg == nil || len(k) <= len(ch) || k[:len(ch)+1] != ch+"/" {
 			continue
 		}
-		if m := r.msg; !have[m.TS] && topLevel(m) && (oldest == "" || !TSLess(m.TS, oldest)) {
+		if m := r.msg; !have[m.TS] && liveTopLevel(m) && (oldest == "" || !TSLess(m.TS, oldest)) {
+			mm, _, _ := cur(m.TS, since)
 			have[m.TS] = true
-			out = append(out, *m)
+			out = append(out, mm)
 		}
 	}
-	// and what the window held newer than the whole page
-	if t := s.timelines[ch]; t != nil && len(msgs) > 0 {
-		newest := msgs[len(msgs)-1].TS
+	// what of the window the page can't show
+	if t := s.timelines[ch]; t != nil {
 		for _, m := range t.Msgs {
-			if !have[m.TS] && TSLess(newest, m.TS) {
-				if r, ok := newer(m.TS); ok && r.gone {
-					continue
-				}
+			if have[m.TS] {
+				continue
+			}
+			if keep[m.TS] && (newest == "" || TSLess(newest, m.TS)) || m.IsEphemeral && (oldest == "" || !TSLess(m.TS, oldest)) {
 				have[m.TS] = true
 				out = append(out, m)
 			}
@@ -133,26 +136,61 @@ func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, si
 	s.timelines[ch] = &Timeline{Msgs: out, HasMore: hasMore, Loaded: true}
 }
 
+func liveTopLevel(m *slack.Message) bool {
+	return m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" || m.ReplyBroadcast
+}
+
+// timelineMsgsLocked is ch's window, nil when none (s.mu held).
+func (s *Store) timelineMsgsLocked(ch string) []slack.Message {
+	if t := s.timelines[ch]; t != nil {
+		return t.Msgs
+	}
+	return nil
+}
+
+// liveCopiesLocked returns a func that reports, for a ts of ch the socket
+// changed after since, the copy a fetch keeps: the one held (the window's
+// or the thread's: the socket's change and every later one), else the
+// socket's own, and whether the socket deleted it. ok is false when
+// nothing changed after since (s.mu held).
+func (s *Store) liveCopiesLocked(ch string, held []slack.Message) func(ts string, since uint64) (m slack.Message, gone, ok bool) {
+	idx := make(map[string]int, len(held))
+	for i := range held {
+		idx[held[i].TS] = i
+	}
+	return func(ts string, since uint64) (slack.Message, bool, bool) {
+		r, ok := s.live[ch+"/"+ts]
+		if !ok || r.seq <= since {
+			return slack.Message{}, false, false
+		}
+		if r.gone || r.msg == nil {
+			return slack.Message{}, true, true
+		}
+		if i, ok := idx[ts]; ok {
+			return held[i], false, true
+		}
+		return *r.msg, false, true
+	}
+}
+
 // SetThreadSince is SetThread for a replies fetch of ch/ts whose request
 // began at LiveSeq since: a message the socket changed after that keeps
-// the socket's copy, one it deleted stays out, and a reply it brought that
-// the answer predates is kept.
-func (s *Store) SetThreadSince(ch, ts string, msgs []slack.Message, since uint64) {
+// the copy the thread holds now (or the socket's), one it deleted stays
+// out, a reply it brought that the answer predates is kept, and so are
+// keep's ts (the replies Slack hasn't confirmed, or that failed).
+func (s *Store) SetThreadSince(ch, ts string, msgs []slack.Message, since uint64, keep map[string]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	newer := func(t string) (liveRec, bool) {
-		r, ok := s.live[ch+"/"+t]
-		return r, ok && r.seq > since
-	}
+	held := s.threads[ch+"/"+ts]
+	cur := s.liveCopiesLocked(ch, held)
 	out := make([]slack.Message, 0, len(msgs)+1)
 	have := make(map[string]bool, len(msgs))
 	for _, m := range msgs {
 		have[m.TS] = true
-		if r, ok := newer(m.TS); ok {
-			if r.gone {
+		if mm, gone, ok := cur(m.TS, since); ok {
+			if gone {
 				continue
 			}
-			mm := *r.msg
 			s.keepPinLocked(ch, &mm, &m)
 			if mm.ThreadTS == "" { // a message_changed copy without thread_ts stays in its thread
 				mm.ThreadTS = m.ThreadTS
@@ -166,9 +204,32 @@ func (s *Store) SetThreadSince(ch, ts string, msgs []slack.Message, since uint64
 			continue
 		}
 		if m := r.msg; !have[m.TS] && m.ThreadTS == ts && m.TS != ts {
-			out = append(out, *m)
+			mm, _, _ := cur(m.TS, since)
+			have[m.TS] = true
+			out = append(out, mm)
+		}
+	}
+	for _, m := range held {
+		if !have[m.TS] && keep[m.TS] {
+			have[m.TS] = true
+			out = append(out, m)
 		}
 	}
 	SortAsc(out)
 	s.threads[ch+"/"+ts] = out
+}
+
+// LiveCopy is the socket's copy of ch/ts as its last realtime change left
+// it, for a message no window or thread holds (a conversation nobody
+// opened, a reply in a thread that isn't cached): Slack's store keeps
+// every message the socket brings. false when it was deleted or nothing
+// is noted.
+func (s *Store) LiveCopy(ch, ts string) (slack.Message, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, ok := s.live[ch+"/"+ts]
+	if !ok || r.gone || r.msg == nil {
+		return slack.Message{}, false
+	}
+	return *r.msg, true
 }

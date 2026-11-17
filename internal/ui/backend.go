@@ -45,6 +45,7 @@ type backend struct {
 	selfID string
 	domain string
 	teamID string
+	notes  noteOrder            // notifications waiting for their people, in order (notify_conv.go)
 	ext    map[string]*convInfo // ResolveConv results for convs outside the sidebar
 	// extGen counts forgetExt calls per conversation: a resolve that
 	// started before one is stale and must not land (resolved).
@@ -925,14 +926,14 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		people := b.noteMembers(ev.Msg)
 		if len(ids) > 0 || len(people) > 0 {
 			b.noteResolveWith(a, ids, people, func() {
-				if len(people) > 0 {
-					ev = b.noteFresh(ev)
-				}
 				b.maybeNotifyAfter(a, ev, true)
 			})
 			return
 		}
 	}
+	// the message converted again from core's copy, with the people now
+	// in (the socket's when no window holds it: notify_conv.go noteFresh)
+	ev = b.noteFresh(ev)
 	// through Taut's showNotification thunk: plugins may change or
 	// drop it (native: the desktop notification)
 	title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)

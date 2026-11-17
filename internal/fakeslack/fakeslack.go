@@ -770,6 +770,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 // Close stops the server.
 func (s *Server) Close() error {
 	searchLogs.Delete(s)
+	countStates.Delete(s)
 	pageLogs.Delete(s)
 	viewsStates.Delete(s)
 	threadsAuditStates.Delete(s)
@@ -1504,10 +1505,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
 			e = s.dmBadgeCount(c, e) // dm_badges.go
-			// SetCountLatest's (count_latest.go)
+			// SetCountLatest's and SetCountMutations' (count_latest.go)
 			if l, ok := s.countLatest(c.ID); ok {
 				e.Latest = l
 			}
+			s.countMutations(&e)
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1727,6 +1729,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		ws := "ws" + strings.TrimPrefix(s.URL, "http") + "ws"
 		return ok("primary_websocket_url", ws, "fallback_websocket_url", ws, "routing_context", "fake")
 	case "conversations.history":
+		defer s.noteHistoryRead(f.Get("channel")) // HistoryReads (count_latest.go)
 		return s.historyPage(f)
 	case "conversations.replies":
 		if f.Get("channel") == GalleryChannelID {

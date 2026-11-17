@@ -580,12 +580,17 @@ type Section struct {
 
 // CountEntry is a per-conversation entry from client.counts.
 type CountEntry struct {
-	ID           string `json:"id"`
-	LastRead     string `json:"last_read"`
-	Latest       string `json:"latest"`
-	Updated      string `json:"updated"`
-	MentionCount int    `json:"mention_count"`
-	HasUnreads   bool   `json:"has_unreads"`
+	ID       string `json:"id"`
+	LastRead string `json:"last_read"`
+	Latest   string `json:"latest"`
+	Updated  string `json:"updated"`
+	// HistoryInvalid is when the conversation's history last changed in a
+	// way its cached copies must be dropped for (a deletion, retention);
+	// Updated when a message last changed (a reaction, an edit, a reply).
+	// Slack's channelMutationTimestamps (core/history_catchup.go).
+	HistoryInvalid string `json:"history_invalid,omitempty"`
+	MentionCount   int    `json:"mention_count"`
+	HasUnreads     bool   `json:"has_unreads"`
 }
 
 type Counts struct {

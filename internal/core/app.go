@@ -67,9 +67,16 @@ type App struct {
 
 	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
 	actQ    actQueue    // the Activity events' lookups, off the event pump (activity_later.go)
-	// caughtUp is, per conversation, the latest message a catch-up read
-	// of its newest page was made for (History's behindLatest), under mu
-	caughtUp map[string]string
+	pumpQ   actQueue    // the other socket events' lookups, off the event pump (pump_later.go)
+	// convHold counts, per conversation core didn't know, the messages
+	// waiting for its lookup (pump_later.go holdForConv)
+	convHoldMu sync.Mutex
+	convHold   map[string]int
+	hist       histReads // when the windows and threads were read, for the catch-ups (history_catchup.go)
+	// usersOut: the members an EnsureUsers is fetching, closed when it
+	// answers (the others wait for it)
+	usersOutMu sync.Mutex
+	usersOut   map[string]chan struct{}
 
 	saves sync.WaitGroup // background disk saves (loadEmoji's meta.json)
 	side  sideReads      // History's side reads (history_side.go)
@@ -171,11 +178,18 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
+		// a slow connect's count moves before the lists hear of it: the
+		// ones on screen load again at the event, and read Slack again
+		// (history_catchup.go)
+		if up {
+			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
+		} else {
+			a.socketDown()
+		}
 		a.emit(Event{Type: "connection", Connected: up})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
-			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
-			go a.refreshCountsAfterGap(a.bg)           // what the socket missed (codechannel_close.go)
+			go a.refreshCountsAfterGap(a.bg) // what the socket missed (codechannel_close.go)
 		}
 	}
 	a.RTM.OnHello = a.onHello
@@ -250,6 +264,7 @@ func (a *App) startRealtime() {
 		a.connected = false
 		a.mu.Unlock()
 		if was {
+			a.socketDown()
 			a.emit(Event{Type: "connection", Connected: false})
 		}
 		a.rtMu.Lock()
@@ -900,17 +915,53 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 }
 
 // EnsureUsers fetches unknown users (edge cache, parallel batches of 100).
+// A member another caller is fetching already isn't asked for again: this
+// call waits for that answer (while ctx lasts), as Slack's model fetches
+// share one request per member while it is out.
 func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 	miss := a.S.MissingUsers(ids)
 	if len(miss) == 0 {
 		return
 	}
-	a.usersAsked.Add(int64(len(miss)))
-	us, err := a.C.UsersInfoParallel(ctx, miss)
-	if err != nil {
-		log.Printf("users/info: %v", err)
+	done := make(chan struct{})
+	var mine []string
+	var others []chan struct{}
+	a.usersOutMu.Lock()
+	if a.usersOut == nil {
+		a.usersOut = map[string]chan struct{}{}
 	}
-	a.S.PutUsers(us)
+	for _, id := range miss {
+		if c, ok := a.usersOut[id]; ok {
+			others = append(others, c)
+			continue
+		}
+		a.usersOut[id] = done
+		mine = append(mine, id)
+	}
+	a.usersOutMu.Unlock()
+	if len(mine) > 0 {
+		a.usersAsked.Add(int64(len(mine)))
+		us, err := a.C.UsersInfoParallel(ctx, mine)
+		if err != nil {
+			log.Printf("users/info: %v", err)
+		}
+		a.S.PutUsers(us)
+		a.usersOutMu.Lock()
+		for _, id := range mine {
+			if a.usersOut[id] == done {
+				delete(a.usersOut, id)
+			}
+		}
+		a.usersOutMu.Unlock()
+		close(done)
+	}
+	for _, c := range others {
+		select {
+		case <-c:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // prefetch warms the history of unread conversations so opening them is
@@ -990,7 +1041,8 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
 	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
-	known, _ := a.S.Count(ch) // the latest the page will cover (History's behindLatest)
+	rm := a.readStarts()      // the slow connects and counts marks the page will cover (history_catchup.go)
+	known, _ := a.S.Count(ch) // the latest it will cover (windowBehind)
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
@@ -998,8 +1050,8 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// its people are asked for as rows draw them (lazy_users.go); what
 	// the socket brought or changed while the request was out stays
 	// (store/live.go)
-	a.S.SetLatestSince(ch, p.Messages, p.HasMore, live)
-	a.noteCaughtUp(ch, known.Latest)
+	a.S.SetLatestSince(ch, p.Messages, p.HasMore, live, a.pendingIn(ch, ""))
+	a.noteWindowRead(ch, rm, known.Latest)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 	for i := range p.Messages {

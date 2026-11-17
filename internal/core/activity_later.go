@@ -31,8 +31,11 @@ type actQueue struct {
 // activityLater runs f after every Activity task queued before it, off
 // the caller's goroutine, with a context that ends with the session (or
 // after 15 s, as the pump's).
-func (a *App) activityLater(f func(ctx context.Context)) {
-	q := &a.actQ
+func (a *App) activityLater(f func(ctx context.Context)) { a.inOrder(&a.actQ, f) }
+
+// inOrder runs f after every task queued on q before it, off the caller's
+// goroutine (activityLater, pumpLater).
+func (a *App) inOrder(q *actQueue, f func(ctx context.Context)) {
 	q.mu.Lock()
 	q.tasks = append(q.tasks, f)
 	start := !q.running

@@ -502,6 +502,7 @@ func (a *App) startPlaceholder(ctx context.Context, o UploadOpts, raws []*Pendin
 	a.pending[cid] = &pendingSend{opts: SendOpts{Channel: o.Channel, ThreadTS: o.ThreadTS}, ts: ph.ts, files: true, release: ph.release}
 	a.mu.Unlock()
 	a.putLocal(o.Channel, local)
+	a.S.NoteLive(o.Channel, local.TS, &local) // a page read before it keeps it (store/live.go)
 	v := a.message(o.Channel, &local)
 	a.emit(Event{Type: "message", Channel: o.Channel, TS: ph.ts, ThreadTS: o.ThreadTS, UserID: self, Msg: &v,
 		ClientMsgID: cid, Reply: !isTopLevel(&local), ConvKind: a.kindOf(o.Channel)})

@@ -130,6 +130,22 @@ func (a *App) StoredMessage(ch, ts string) (Message, bool) {
 	return a.messageWith(ch, &m, true), true
 }
 
+// MessageNow is StoredMessage that falls back to the socket's own copy of
+// a message no window or thread holds (store.LiveCopy: a conversation
+// nobody opened, a reply in a thread that isn't cached), converted with
+// what the store holds now. A notification converts its message again
+// with it once the people it names are in (Slack's showNotification
+// reads the message from its store after ensureModelsArePresent).
+func (a *App) MessageNow(ch, ts string) (Message, bool) {
+	m, ok := a.S.Find(ch, ts)
+	if !ok {
+		if m, ok = a.S.LiveCopy(ch, ts); !ok {
+			return Message{}, false
+		}
+	}
+	return a.messageWith(ch, &m, true), true
+}
+
 // refNames is msgNames recording every member, conversation and file the
 // conversion asks about. It overrides only methods the store has, so it
 // satisfies exactly the resolver interfaces msgNames does. With peek its

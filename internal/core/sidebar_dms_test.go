@@ -110,7 +110,7 @@ func TestClosedDMReappearsOnNewMessage(t *testing.T) {
 func TestDMOpenCloseEvents(t *testing.T) {
 	a, f := dmApp(t)
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"D5","is_im":true,"user":"U5"}}`
-	a.handle(rtm("im_open", map[string]any{"channel": "D5", "user": "U5"}))
+	a.handleNow(t, rtm("im_open", map[string]any{"channel": "D5", "user": "U5"}))
 	if got := sectionsByType(a)["direct_messages"]; got != "D1,D3,D5" {
 		t.Fatalf("after im_open: %q", got)
 	}
