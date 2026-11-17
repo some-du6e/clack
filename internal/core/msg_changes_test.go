@@ -294,3 +294,23 @@ func TestMentionsViewerRichKeywords(t *testing.T) {
 		}
 	}
 }
+
+// A thread root the store holds only as a copy fetched by id (an Activity
+// entry's, from a conversation nobody opened) is one core announces and
+// reads like any other: thread_subscribed's update goes out for it, and
+// its replies turned off show (isThreadLocked).
+func TestFetchedRootAnnounced(t *testing.T) {
+	a, _ := testApp(t)
+	const ch, root = "C1", "1762790400.000100"
+	a.S.PutFetched(ch, []slack.Message{{Type: "message", TS: root, ThreadTS: root, User: "U1", Text: "a synthetic root",
+		ReplyCount: 2, IsLocked: true}}, a.S.LiveSeq())
+	evs, stop := a.Subscribe()
+	defer stop()
+	a.handle(rtm("thread_subscribed", map[string]any{"subscription": map[string]any{"type": "thread", "channel": ch, "thread_ts": root, "last_read": root}}))
+	if e := next(t, evs, "update"); e.TS != root || !e.Msg.FollowingThread {
+		t.Errorf("thread_subscribed: update of %s, following %v", e.TS, e.Msg.FollowingThread)
+	}
+	if !a.ThreadLocked(ch, root) {
+		t.Error("the fetched root's replies turned off don't show")
+	}
+}

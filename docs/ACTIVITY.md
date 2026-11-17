@@ -1106,7 +1106,8 @@ TestSavedLiveBotUpdate (views, fakeslack); TestFetchedMessagesTakeSocketChanges,
 TestFetchedMessagesKeepReactions and TestFetchedMessagesBounded (store);
 TestMessageChangeTable, TestMessageChangeTableForgets,
 TestReactionReachesFetchedMessage, TestHydrateKeepsReactionsDuringFetch,
-TestMessageChangedRemoves and TestMentionsViewerRichKeywords (core).
+TestMessageChangedRemoves, TestMentionsViewerRichKeywords and
+TestFetchedRootAnnounced (core).
 flake-check's activity-live-msg job runs them COUNT times, then three
 times under -race.
 

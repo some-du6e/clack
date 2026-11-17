@@ -1225,7 +1225,7 @@ jobs:
         run: |
           rc=0
           go test -count=$COUNT -v -run '^TestFetchedMessages(TakeSocketChanges|KeepReactions|Bounded)$' ./internal/store || rc=1
-          go test -count=$COUNT -v -run '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords|TestFetchedRootAnnounced)$' ./internal/core || rc=1
           exit $rc
       - name: "the same under -race, 3 runs"
         if: ${{ !cancelled() }}
@@ -1235,7 +1235,7 @@ jobs:
           rc=0
           xvfb-run -a go test -race -count=3 -timeout 50m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
           go test -race -count=3 -run '^TestFetchedMessages(TakeSocketChanges|KeepReactions|Bounded)$' ./internal/store || rc=1
-          go test -race -count=3 -run '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords)$' ./internal/core || rc=1
+          go test -race -count=3 -run '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords|TestFetchedRootAnnounced)$' ./internal/core || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
