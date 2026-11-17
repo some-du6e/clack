@@ -393,3 +393,38 @@ func diffStats(a, b *image.RGBA, r image.Rectangle) string {
 	}
 	return fmt.Sprintf("%d of %d px differ, max %d (by 1: %d, by 2: %d, by 3: %d, more: %d), first at %v", n, r.Dx()*r.Dy(), maxd, hist[1], hist[2], hist[3], hist[0], first)
 }
+
+// Clack patch 40: an atlas page grown for one big frame is made to size
+// again once frames have needed far less for a while.
+func TestClackAtlasShrinks(t *testing.T) {
+	const w, h = 1000, 800
+	win, err := NewWindow(w, h)
+	if err != nil {
+		if os.Getenv("CLACK_PIXEL_TESTS") != "" {
+			t.Fatalf("headless GPU: %v", err)
+		}
+		t.Skipf("no headless GPU: %v", err)
+	}
+	defer win.Release()
+	frame := func(big bool) gpu.FrameStats {
+		var o op.Ops
+		r := image.Rect(10, 10, 60, 40)
+		if big {
+			r = image.Rect(0, 0, w, h)
+		}
+		paint.FillShape(&o, color.NRGBA{R: 0xff, A: 0xff}, clip.UniformRRect(r, 8).Op(&o))
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		return win.ClackFrameStats()
+	}
+	big := frame(true).AtlasPx
+	var small gpu.FrameStats
+	for range 70 {
+		small = frame(false)
+	}
+	t.Logf("atlas %d px after the big frame, %d after 70 small ones", big, small.AtlasPx)
+	if small.AtlasPx*4 > big {
+		t.Errorf("the atlas stayed at %d px of the %d px the big frame needed", small.AtlasPx, big)
+	}
+}

@@ -1697,7 +1697,13 @@ state cache for most of it; Metal's and Direct3D's had none:
   filter for all textures (`Backend.sampler`), so switching textures
   keeps the sampler bound; `Texture.Release` leaves it to the backend.
   A buffer bound again at another offset only gets
-  `setVertexBufferOffset`.
+  `setVertexBufferOffset`. And the render commands left go into a Go
+  buffer (`Backend.rec`: an opcode and 8-byte words, bytes copied in)
+  that `renderEncReplay` runs in one cgo call under one autorelease pool
+  when the pass ends (or at 1 MB): the same Metal calls in the same
+  order, one cgo crossing a pass instead of one a call.
+  `driver.ClackBatchCommands = false` calls them one at a time, for
+  tests that compare.
 - Direct3D 11: `prepareDraw` set the vertex and pixel shaders, input
   layout, blend state, vertex buffer and topology for every draw, and
   `BindUniforms`, `BindTexture` and `BindIndexBuffer` set theirs every
@@ -1718,9 +1724,10 @@ state cache for most of it; Metal's and Direct3D's had none:
 
 Measured on flake-check's gpu-cost job with Clack's whole window
 (`TestFrameCostWindow`) and the scenes of `TestFrameCostPixels`, the
-calls these leave out are `FrameStats.Skipped`: on a light window at 1x,
-Metal 10,506 calls before, 6,056 after this patch alone; Direct3D 11
-(WARP) 22,929 and 5,559; OpenGL (llvmpipe) 15,157 and 10,154. Not in
+calls these leave out are `FrameStats.Skipped`, and `Crossings` the
+calls from Go into C or the system they took: on a light window at 1x,
+Metal 10,506 calls before, 6,056 after the state cache alone; Direct3D
+11 (WARP) 22,929 and 5,559; OpenGL (llvmpipe) 15,157 and 10,154. Not in
 `UPSTREAM.patch` yet (a candidate).
 
 ## 38. op/clip, gpu: a rounded clip is left off what's drawn inside its interior
@@ -1748,12 +1755,13 @@ the coverage it multiplied by is 1.0), and the clip isn't stenciled for
 it. Strokes get no interior. The router ignores the new op.
 
 `ClackLegacyClips(true)` turns this and patch 39 off, for tests that
-compare the two ways. The same probe on all three backends: the panel's
-content clipped through the RRect or with the clip dropped where it
-covers is the same picture (`TestClackPlacementNoise`'s "split fill only"
-line is identical; the differences in its "dropped inside" line are the
-glyphs' own coverage moving with their atlas placement, the same as one
-more path drawn first moves them). Not in `UPSTREAM.patch`.
+compare the two ways. With every path stenciled at the same place, an op
+clipped through the RRect or with the clip dropped inside its interior
+is the same picture on all three backends (`TestClackPlacementNoise`,
+2026-11-16, before patch 39 moved the clip's regions). Since 39 the
+glyphs inside land elsewhere in the atlas, and their own coverage moves
+by a rounding as it does when one more path is drawn first. Not in
+`UPSTREAM.patch`.
 
 ## 39. gpu: a clip path is stenciled in regions near the ops it clips
 
