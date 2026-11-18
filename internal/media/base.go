@@ -14,7 +14,8 @@ import (
 // it and calls Init first.
 type Base struct {
 	events chan Event
-	closed atomic.Bool
+	emitMu sync.Mutex // Emit and CloseEvents, from any goroutine
+	closed bool
 
 	mu   sync.Mutex
 	st   State
@@ -80,20 +81,26 @@ func (b *Base) SetRate(r float64) {
 // Emit sends an event of kind k with the state now; a full channel drops
 // it (NDropped), and none is sent after CloseEvents.
 func (b *Base) Emit(k EventKind) {
-	if b.closed.Load() {
+	ev := Event{Kind: k, State: b.State()}
+	b.emitMu.Lock()
+	defer b.emitMu.Unlock()
+	if b.closed {
 		return
 	}
 	select {
-	case b.events <- Event{Kind: k, State: b.State()}:
+	case b.events <- ev:
 	default:
 		b.NDropped.Add(1)
 	}
 }
 
-// CloseEvents closes the events channel: call it once, from the goroutine
-// that emits, as the player ends.
+// CloseEvents closes the events channel as the player ends; later Emits
+// send nothing.
 func (b *Base) CloseEvents() {
-	if b.closed.CompareAndSwap(false, true) {
+	b.emitMu.Lock()
+	defer b.emitMu.Unlock()
+	if !b.closed {
+		b.closed = true
 		close(b.events)
 	}
 }

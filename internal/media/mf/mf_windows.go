@@ -84,7 +84,7 @@ func (backend) Name() string { return "mediafoundation" }
 // Available is nil once mfplat.dll is loaded and MFStartup answered
 // (Windows N without the Media Feature Pack has no mfplat.dll).
 func (backend) Available() error {
-	if hr := C.clack_mf_startup(); hr != 0 {
+	if hr := C.clack_me_startup(); hr != 0 {
 		return fmt.Errorf("mf: mfplat.dll / MFStartup: %s", hrString(int32(hr)))
 	}
 	return nil
@@ -107,7 +107,7 @@ func (b backend) New(src media.Source, frameReady func()) (media.Player, error) 
 	p.rs = media.NewRangeSource(src, media.RangeOptions{})
 	p.frames = media.NewFrameHandle(p)
 	p.id = register(p)
-	p.c = C.clack_mf_new(C.uintptr_t(p.id))
+	p.c = C.clack_me_new(C.uintptr_t(p.id))
 	if p.c == nil {
 		unregister(p.id)
 		return nil, errors.New("mf: out of memory")
@@ -274,7 +274,7 @@ func (p *player) Stats() media.Stats {
 	p.askMu.Lock()
 	if p.c != nil {
 		var skips, timeouts, copies C.int64_t
-		C.clack_mf_counts(p.c, &skips, &timeouts, &copies)
+		C.clack_me_counts(p.c, &skips, &timeouts, &copies)
 		st.Skipped, st.Timeouts = int64(skips), int64(timeouts)
 	}
 	p.askMu.Unlock()
@@ -302,7 +302,7 @@ func (p *player) control(op int, v float64) {
 	if !p.opened || p.c == nil {
 		return
 	}
-	if hr := C.clack_mf_control(p.c, C.int(op), C.double(v)); hr != 0 && op != opPlay && op != opPause {
+	if hr := C.clack_me_control(p.c, C.int(op), C.double(v)); hr != 0 && op != opPlay && op != opPause {
 		log.Printf("media: %s: control %d: %s", p.src.FileID, int(op), hrString(int32(hr)))
 	}
 }
@@ -323,7 +323,7 @@ func (p *player) Texture(dev media.Device) (media.Texture, bool) {
 	var key C.uint64_t
 	var status C.int
 	var info C.clackMFInfo
-	srv := C.clack_mf_ask(p.c, C.uintptr_t(dev.Handle), &key, &status, &info)
+	srv := C.clack_me_ask(p.c, C.uintptr_t(dev.Handle), &key, &status, &info)
 	if status&1 != 0 {
 		p.gioDev = dev.Handle
 		select {
@@ -344,9 +344,9 @@ func (p *player) Texture(dev media.Device) (media.Texture, bool) {
 // run is the media thread.
 func (p *player) run() {
 	runtime.LockOSThread() // never unlocked: the thread goes with the goroutine
-	C.clack_mf_thread_init()
+	C.clack_me_thread_init()
 	defer close(p.done)
-	defer C.clack_mf_thread_done()
+	defer C.clack_me_thread_done()
 	p.seekTo = -1
 	infoCh := make(chan error, 1)
 	go func() {
@@ -421,7 +421,7 @@ func (p *player) doBind() {
 	}
 	var info C.clackMFInfo
 	p.askMu.Lock()
-	hr := C.clack_mf_bind(p.c, &info)
+	hr := C.clack_me_bind(p.c, &info)
 	p.askMu.Unlock()
 	if hr != 0 {
 		p.fail(media.ErrSrcNotFound, fmt.Sprintf("the device: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
@@ -463,7 +463,7 @@ func (p *player) maybeOpen() {
 	if p.info.Seekable {
 		seekable = 1
 	}
-	if hr := C.clack_mf_open(p.c, C.int64_t(p.info.Total), seekable, (*C.uint16_t)(unsafe.Pointer(&u16[0])), C.uint32_t(p.format), &info); hr != 0 {
+	if hr := C.clack_me_open(p.c, C.int64_t(p.info.Total), seekable, (*C.uint16_t)(unsafe.Pointer(&u16[0])), C.uint32_t(p.format), &info); hr != 0 {
 		p.fail(media.ErrSrcNotFound, fmt.Sprintf("the engine: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
 		return
 	}
@@ -495,12 +495,12 @@ func (p *player) pickFormat() uint32 {
 	p.askMu.Lock()
 	dev := p.gioDev
 	p.askMu.Unlock()
-	if dev != 0 && C.clack_mf_gio_format_ok(C.uintptr_t(dev), C.uint32_t(srgb(f))) == 0 {
+	if dev != 0 && C.clack_me_gio_format_ok(C.uintptr_t(dev), C.uint32_t(srgb(f))) == 0 {
 		other := uint32(fmtBGRA)
 		if f == fmtBGRA {
 			other = fmtRGBA
 		}
-		if C.clack_mf_gio_format_ok(C.uintptr_t(dev), C.uint32_t(srgb(other))) != 0 {
+		if C.clack_me_gio_format_ok(C.uintptr_t(dev), C.uint32_t(srgb(other))) != 0 {
 			f = other
 		}
 	}
@@ -526,7 +526,7 @@ func (p *player) makeRing() {
 	}
 	var info C.clackMFInfo
 	p.askMu.Lock()
-	hr := C.clack_mf_ring(p.c, C.uint32_t(w), C.uint32_t(h), &info)
+	hr := C.clack_me_ring(p.c, C.uint32_t(w), C.uint32_t(h), &info)
 	p.askMu.Unlock()
 	if hr != 0 {
 		p.fail(media.ErrDecode, fmt.Sprintf("the frames' textures: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
@@ -565,7 +565,7 @@ func (p *player) tick() {
 		p.refresh()
 	}
 	var hr C.int32_t
-	r := C.clack_mf_tick(p.c, &hr)
+	r := C.clack_me_tick(p.c, &hr)
 	if r == 1 && forceTransferFailures.Load() > 0 {
 		forceTransferFailures.Add(-1)
 		r, hr = -1, eFail
@@ -608,7 +608,7 @@ func (p *player) transferFailed(hr int32) {
 func (p *player) reopen(format uint32) {
 	st := p.State()
 	p.askMu.Lock()
-	C.clack_mf_close_engine(p.c)
+	C.clack_me_close_engine(p.c)
 	p.askMu.Unlock()
 	p.opened, p.ringOK, p.format, p.reopening = false, false, format, true
 	p.restoreSeek = st.Pos > 0
@@ -626,7 +626,7 @@ func (p *player) refresh() {
 	}
 	p.lastRefresh = time.Now()
 	var s C.clackMFState
-	C.clack_mf_state(p.c, &s)
+	C.clack_me_state(p.c, &s)
 	if f := float64(s.fps); f > 0 {
 		p.fps = f
 	}
@@ -749,8 +749,8 @@ func (p *player) shutdown() {
 	p.rs.Close()
 	p.askMu.Lock()
 	if p.c != nil {
-		C.clack_mf_close(p.c)
-		C.clack_mf_free(p.c)
+		C.clack_me_close(p.c)
+		C.clack_me_free(p.c)
 		p.c = nil
 	}
 	p.askMu.Unlock()
@@ -790,7 +790,7 @@ func clackMFRead(h C.uintptr_t, req unsafe.Pointer, pb unsafe.Pointer, cb C.ulon
 	p := lookup(h)
 	go func() {
 		if p == nil {
-			C.clack_mf_read_done(req, 0, eAbort)
+			C.clack_me_read_done(req, 0, eAbort)
 			return
 		}
 		if p.readLog != nil {
@@ -804,7 +804,7 @@ func clackMFRead(h C.uintptr_t, req unsafe.Pointer, pb unsafe.Pointer, cb C.ulon
 				hr = eAbort
 			}
 		}
-		C.clack_mf_read_done(req, C.int32_t(n), hr)
+		C.clack_me_read_done(req, C.int32_t(n), hr)
 	}()
 }
 
@@ -827,9 +827,9 @@ func audioEndpoint() error {
 	ch := make(chan int32)
 	go func() {
 		runtime.LockOSThread() // the thread goes with the goroutine
-		C.clack_mf_thread_init()
-		hr := C.clack_mf_audio_endpoint()
-		C.clack_mf_thread_done()
+		C.clack_me_thread_init()
+		hr := C.clack_me_audio_endpoint()
+		C.clack_me_thread_done()
 		ch <- int32(hr)
 	}()
 	if hr := <-ch; hr != 0 {
@@ -841,7 +841,7 @@ func audioEndpoint() error {
 // live is the C side's live objects by kind.
 func live() [liveN]int32 {
 	var out [liveN]C.int32_t
-	C.clack_mf_live(&out[0])
+	C.clack_me_live(&out[0])
 	var r [liveN]int32
 	for i := range out {
 		r[i] = int32(out[i])

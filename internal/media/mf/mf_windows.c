@@ -222,15 +222,15 @@ static BOOL CALLBACK startup(PINIT_ONCE once, PVOID param, PVOID *ctx) {
 	return TRUE;
 }
 
-int32_t clack_mf_startup(void) {
+int32_t clack_me_startup(void) {
 	InitOnceExecuteOnce(&startOnce, startup, NULL, NULL);
 	return (int32_t)startHR;
 }
 
-void clack_mf_thread_init(void) { CoInitializeEx(NULL, COINIT_MULTITHREADED); }
-void clack_mf_thread_done(void) { CoUninitialize(); }
+void clack_me_thread_init(void) { CoInitializeEx(NULL, COINIT_MULTITHREADED); }
+void clack_me_thread_done(void) { CoUninitialize(); }
 
-void clack_mf_live(int32_t *out) {
+void clack_me_live(int32_t *out) {
 	for (int i = 0; i < CLACK_MF_LIVE_N; i++) {
 		out[i] = (int32_t)InterlockedCompareExchange(&live[i], 0, 0);
 	}
@@ -375,7 +375,7 @@ static HRESULT STDMETHODCALLTYPE sRead(IMFByteStream *b, BYTE *pb, ULONG cb, ULO
 }
 
 // BeginRead hands the read to Go, which fills pb from memory (or once the
-// GET brings it) and calls clack_mf_read_done. The position moves on by
+// GET brings it) and calls clack_me_read_done. The position moves on by
 // cb now, so a read begun right after reads on from there; a short read
 // moves it back to where it ended.
 static HRESULT STDMETHODCALLTYPE sBeginRead(IMFByteStream *b, BYTE *pb, ULONG cb, IMFAsyncCallback *cbk, IUnknown *state) {
@@ -407,7 +407,7 @@ static HRESULT STDMETHODCALLTYPE sBeginRead(IMFByteStream *b, BYTE *pb, ULONG cb
 	return S_OK;
 }
 
-void clack_mf_read_done(void *req, int32_t n, int32_t hr) {
+void clack_me_read_done(void *req, int32_t n, int32_t hr) {
 	clackRead *r = req;
 	clackStream *s = r->s;
 	if (n < 0 || FAILED(hr)) {
@@ -631,7 +631,7 @@ struct clackMF {
 	volatile LONG64 skips, timeouts, copies;
 };
 
-clackMF *clack_mf_new(uintptr_t h) {
+clackMF *clack_me_new(uintptr_t h) {
 	clackMF *m = calloc(1, sizeof *m);
 	if (m == NULL) {
 		return NULL;
@@ -680,9 +680,9 @@ static void releaseRing(clackMF *m) {
 	InterlockedIncrement(&m->gen);
 }
 
-// clack_mf_bind makes the engine's device on the adapter of the device Gio
+// clack_me_bind makes the engine's device on the adapter of the device Gio
 // last asked with (the ask records it), or moves the engine there.
-int32_t clack_mf_bind(clackMF *m, clackMFInfo *info) {
+int32_t clack_me_bind(clackMF *m, clackMFInfo *info) {
 	if (m->gioDev == NULL) {
 		fail(info, "no device asked yet", E_UNEXPECTED);
 		return E_UNEXPECTED;
@@ -763,10 +763,10 @@ int32_t clack_mf_bind(clackMF *m, clackMFInfo *info) {
 	return S_OK;
 }
 
-// clack_mf_open makes the engine, reading the file through a byte stream
+// clack_me_open makes the engine, reading the file through a byte stream
 // of total bytes (seekable: the server answers ranges), and gives it its
 // source. url is only the demuxer's hint (clack-media://<id>.<ext>).
-int32_t clack_mf_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, clackMFInfo *info) {
+int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, clackMFInfo *info) {
 	if (m->mgr == NULL) {
 		fail(info, "no device", E_UNEXPECTED);
 		return E_UNEXPECTED;
@@ -848,9 +848,9 @@ out:
 	return hr;
 }
 
-// clack_mf_close_engine shuts the engine down and lets go of its source,
+// clack_me_close_engine shuts the engine down and lets go of its source,
 // keeping the device (a new engine follows, or Close).
-void clack_mf_close_engine(clackMF *m) {
+void clack_me_close_engine(clackMF *m) {
 	if (m->engine != NULL) {
 		m->engine->lpVtbl->Shutdown(m->engine);
 		m->engine->lpVtbl->Release(m->engine);
@@ -867,9 +867,9 @@ void clack_mf_close_engine(clackMF *m) {
 	}
 }
 
-// clack_mf_ring makes the three shared textures, w×h, of the engine's
+// clack_me_ring makes the three shared textures, w×h, of the engine's
 // format: NT handles first, the legacy shared handles where those fail.
-int32_t clack_mf_ring(clackMF *m, uint32_t w, uint32_t h, clackMFInfo *info) {
+int32_t clack_me_ring(clackMF *m, uint32_t w, uint32_t h, clackMFInfo *info) {
 	if (m->dev == NULL) {
 		fail(info, "no device", E_UNEXPECTED);
 		return E_UNEXPECTED;
@@ -942,7 +942,7 @@ int32_t clack_mf_ring(clackMF *m, uint32_t w, uint32_t h, clackMFInfo *info) {
 	return S_OK;
 }
 
-int32_t clack_mf_control(clackMF *m, int op, double v) {
+int32_t clack_me_control(clackMF *m, int op, double v) {
 	clackEngine *e = m->engine;
 	if (e == NULL) {
 		return E_UNEXPECTED;
@@ -997,7 +997,7 @@ static double readFPS(clackEngine *e) {
 	return 0;
 }
 
-void clack_mf_state(clackMF *m, clackMFState *st) {
+void clack_me_state(clackMF *m, clackMFState *st) {
 	memset(st, 0, sizeof *st);
 	clackEngine *e = m->engine;
 	if (e == NULL) {
@@ -1030,11 +1030,11 @@ void clack_mf_state(clackMF *m, clackMFState *st) {
 	st->fps = m->fps;
 }
 
-// clack_mf_tick is the media thread's poll: when the engine has a new
+// clack_me_tick is the media thread's poll: when the engine has a new
 // frame, it goes into a texture of the ring that isn't the newest (a free
 // one, else a frame Gio never took), which is then the newest. 1: a new
 // frame; 0: none (or no texture free: a skip); -1: the transfer failed.
-int clack_mf_tick(clackMF *m, int32_t *phr) {
+int clack_me_tick(clackMF *m, int32_t *phr) {
 	*phr = S_OK;
 	clackEngine *e = m->engine;
 	if (e == NULL || m->slot[0].tex == NULL) {
@@ -1075,11 +1075,11 @@ int clack_mf_tick(clackMF *m, int32_t *phr) {
 	return 1;
 }
 
-// clack_mf_ask is Gio's ask, on its render thread: the newest frame
+// clack_me_ask is Gio's ask, on its render thread: the newest frame
 // copied into Gio's own texture (an _SRGB view of the same bytes), and its
 // key. status, bits: 1, Gio asked with a device not seen before (bind to
 // it); 2, opening the ring on Gio's device failed (info says how).
-uintptr_t clack_mf_ask(clackMF *m, uintptr_t devp, uint64_t *key, int *status, clackMFInfo *info) {
+uintptr_t clack_me_ask(clackMF *m, uintptr_t devp, uint64_t *key, int *status, clackMFInfo *info) {
 	ID3D11Device *dev = (ID3D11Device *)devp;
 	*status = 0;
 	*key = 0;
@@ -1178,17 +1178,17 @@ uintptr_t clack_mf_ask(clackMF *m, uintptr_t devp, uint64_t *key, int *status, c
 	return (uintptr_t)m->srv;
 }
 
-void clack_mf_counts(clackMF *m, int64_t *skips, int64_t *timeouts, int64_t *copies) {
+void clack_me_counts(clackMF *m, int64_t *skips, int64_t *timeouts, int64_t *copies) {
 	*skips = InterlockedCompareExchange64(&m->skips, 0, 0);
 	*timeouts = InterlockedCompareExchange64(&m->timeouts, 0, 0);
 	*copies = InterlockedCompareExchange64(&m->copies, 0, 0);
 }
 
-// clack_mf_close lets go of everything: the engine, its device, the ring,
+// clack_me_close lets go of everything: the engine, its device, the ring,
 // and the textures on Gio's device (Gio's wrappers hold the view a frame
 // longer, until its texture cache drops them).
-void clack_mf_close(clackMF *m) {
-	clack_mf_close_engine(m);
+void clack_me_close(clackMF *m) {
+	clack_me_close_engine(m);
 	releaseRing(m);
 	RELEASE(IMFDXGIDeviceManager, m->mgr);
 	if (m->dev != NULL) {
@@ -1202,15 +1202,15 @@ void clack_mf_close(clackMF *m) {
 	RELEASE(ID3D11Device, m->gioDev);
 }
 
-void clack_mf_free(clackMF *m) {
+void clack_me_free(clackMF *m) {
 	free(m);
 	InterlockedDecrement(&live[CLACK_MF_LIVE_PLAYERS]);
 }
 
-// clack_mf_audio_endpoint is whether Windows has a default audio output
+// clack_me_audio_endpoint is whether Windows has a default audio output
 // (S_OK); a runner often has none (E_NOTFOUND), and then the engine plays
 // the video without its sound (MF_MEDIA_ENGINE_EVENT_STREAMRENDERINGERROR).
-int32_t clack_mf_audio_endpoint(void) {
+int32_t clack_me_audio_endpoint(void) {
 	IMMDeviceEnumerator *e = NULL;
 	HRESULT hr = CoCreateInstance(&clackCLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &clackIID_IMMDeviceEnumerator, (void **)&e);
 	if (FAILED(hr)) {
@@ -1225,9 +1225,9 @@ int32_t clack_mf_audio_endpoint(void) {
 	return hr;
 }
 
-// clack_mf_gio_format_ok is whether Gio's device samples format as a 2D
+// clack_me_gio_format_ok is whether Gio's device samples format as a 2D
 // texture.
-int clack_mf_gio_format_ok(uintptr_t devp, uint32_t format) {
+int clack_me_gio_format_ok(uintptr_t devp, uint32_t format) {
 	UINT support = 0;
 	if (FAILED(ID3D11Device_CheckFormatSupport((ID3D11Device *)devp, (DXGI_FORMAT)format, &support))) {
 		return 0;

@@ -305,6 +305,37 @@ func TestMFMoovAtEnd(t *testing.T) {
 	t.Logf("the demuxer's reads at %v; GETs at %v", reads, r.o.Stats().Offsets)
 }
 
+// A server ignoring ranges (a 200): the backend is told the file can't be
+// read by ranges. It plays it in order, or refuses it with error 4 (the
+// brief's fallback: Slack's error look); the test says which.
+func TestMFNotSeekable(t *testing.T) {
+	r := newRig(t, mediatest.GreyGreyRed, true, image.Pt(320, 180))
+	r.draw()
+	r.p.Play()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case ev := <-r.evC:
+			switch ev.Kind {
+			case media.Ended:
+				t.Logf("a file read only in order plays to its end; events %v", r.kinds())
+				return
+			case media.Error:
+				if ev.State.Err != media.ErrSrcNotFound {
+					t.Errorf("error %d, want 4 (or playing)", ev.State.Err)
+				}
+				t.Logf("a file read only in order is refused: error %d; events %v", ev.State.Err, r.kinds())
+				return
+			}
+		case <-r.readyC:
+			r.draw()
+		case <-time.After(15 * time.Millisecond):
+			r.draw()
+		}
+	}
+	t.Fatalf("neither the end nor an error in 15 s; events %v; state %+v", r.kinds(), r.p.State())
+}
+
 // The fixture with no audio track plays where the runner has no audio
 // output; the test says which case ran.
 func TestMFSilent(t *testing.T) {
