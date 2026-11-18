@@ -4,11 +4,13 @@
 // inspect_tool turns it on) starts an inspect session, like a browser's
 // inspect element: the Slack component under the pointer gets an outline
 // and a label, ↑ and ↓ pick its parent or go back, Esc ends the session,
-// and a click copies a report of the element at once. A Shift+click, or
-// a drag past dragSlop (which grabs the region dragged out instead, for
-// what the picker can't reach), shows the shot for review first
-// (review.go): rects dragged over it are blurred out of the image
-// (Redact), Enter copies it and Esc drops it. The copy is one image on the clipboard: the element as it was drawn, outlined,
+// and a click shows the element's shot for review first (review.go):
+// rects dragged over it are blurred out of the image (Redact), Enter
+// copies it and Esc drops it. A drag past dragSlop (which grabs the
+// region dragged out instead, for what the picker can't reach) is
+// reviewed the same way, and a Shift+click copies the report at once,
+// with no review (Karim, 2026-11-17: "just flip it around", so every
+// plain pick can be blurred). The copy is one image on the clipboard: the element as it was drawn, outlined,
 // with a small blurred margin and nothing else of the window (or the
 // region, as it was), over a panel with a report (which component and
 // element, its classes, its rect, the colours drawn there, the theme,
@@ -98,7 +100,7 @@ const (
 	dragging
 	// picked: the release's frame (laid out hover-only, so no widget saw
 	// the button) is shot in AfterFrame, which copies the report (a
-	// plain click) or starts the review (a Shift+click, a region).
+	// Shift+click) or starts the review (a plain click, a region).
 	picked
 	// reviewing: the shot is shown for blurring (review.go).
 	reviewing
@@ -308,7 +310,7 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 		t.state, t.pend = pressing, nil
 		if t.hover != nil {
 			t.pend = t.newCapture(gtx, t.hover)
-			t.pend.review = in.shift
+			t.pend.review = !in.shift // Shift copies at once
 		}
 		t.release0()
 	}
@@ -322,7 +324,7 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 				t.backToInspecting() // nothing under the pointer
 				break
 			}
-			t.pend.review = t.pend.review || in.shift
+			t.pend.review = t.pend.review && !in.shift // Shift at the press or the release
 			t.capture, t.pend, t.state = t.pend, nil, picked
 		case dragging:
 			r := t.dragRect(in.releaseAt)
@@ -421,7 +423,7 @@ func comboPress(f key.Filter, e key.Event) bool {
 // ptrRead is what a frame's pointer events did to a press: a primary
 // press came (at t.from), the pointer went past dragSlop from it, the
 // button came up (at releaseAt), and Shift was held at the press or the
-// release (a click to review before copying).
+// release (a click that copies at once, with no review).
 type ptrRead struct {
 	pressed, far, released bool
 	shift                  bool
@@ -781,7 +783,7 @@ func (t *Tool) drawHover(gtx layout.Context) {
 
 // The banner's hints: a session's, a drag's.
 const (
-	HintInspect = "Inspect: click to copy a report · shift-click or drag to blur first · ↑ ↓ parent · Esc to stop"
+	HintInspect = "Inspect: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · Esc to stop"
 	HintDrag    = "Inspect: release to grab this region · Esc cancels the drag"
 )
 

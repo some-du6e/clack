@@ -82,6 +82,9 @@ type Store struct {
 	// (the User Group pane watches it, as Slack's pane re-renders on its
 	// userGroups record).
 	ugGen atomic.Uint64
+	// groupsLoaded: SetUsergroups ran (the disk cache's list or
+	// usergroups.list), so a group id Usergroups lacks doesn't exist
+	groupsLoaded bool
 	// Muted is the set of muted conversation ids (from prefs).
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
@@ -1170,6 +1173,15 @@ func (s *Store) Bot(id string) (BotInfo, bool) {
 	return b, ok
 }
 
+// UsergroupsLoaded reports whether the workspace's user group list was
+// read (the disk cache's or usergroups.list): a group id UsergroupName
+// can't name after that doesn't exist.
+func (s *Store) UsergroupsLoaded() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.groupsLoaded
+}
+
 func (s *Store) UsergroupName(id string) string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1839,6 +1851,7 @@ func (s *Store) InUsergroup(id string) bool {
 func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.groupsLoaded = true
 	if s.sameGroups(gs) {
 		return // the usual refresh: nothing to install or save
 	}
