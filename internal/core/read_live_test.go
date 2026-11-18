@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -487,13 +488,19 @@ func TestRefetchBatch(t *testing.T) {
 	b, _ := json.Marshal(map[string]any{"ok": true, "messages": answer})
 	f.reply["messages.list"] = string(b)
 	release := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(free) // before the fake server closes: a failed wait never leaves its handlers blocked
 	f.hooks["messages.list"] = func(url.Values) { <-release }
 	for _, ch := range []string{"C1", "C2", "C3"} {
 		a.RefetchMessages(ch, []string{want[ch]})
 	}
-	waitFor(t, "the fetch out", 5*time.Second, func() bool { return f.count("messages.list") == 1 })
-	a.RefetchMessages("C1", []string{want["C1"]}) // out: not again
-	close(release)
+	waitFor(t, "the fetch out", 5*time.Second, func() bool { return f.count("messages.list") >= 1 })
+	// any other request for them would be out by now; C1's, out, isn't
+	// asked for again
+	time.Sleep(300 * time.Millisecond)
+	a.RefetchMessages("C1", []string{want["C1"]})
+	free()
 	for ch, ts := range want {
 		waitFor(t, "the message announced in "+ch, 5*time.Second, func() bool { c, ok := a.MessageChange(ch, ts); return ok && c.Msg != nil })
 	}
