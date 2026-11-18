@@ -19,21 +19,21 @@ Until Gio patch 29 the shortcut, then ⌥⇧⌘D, did nothing on macOS. AppKit s
 
 ## A session
 
-A banner at the top says the session is on: "Inspect: click to copy a report · shift-click or drag to blur first · ↑ ↓ parent · Esc to stop". The Slack component under the pointer gets a pink outline and a label with its name, root element and size; one of the chrome's elements (below) gets one with its selector. ↑ widens the outline to the enclosing element or component and ↓ comes back. Esc or Hyper+D again ends the session.
+A banner at the top says the session is on: "Inspect: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · Esc to stop". The Slack component under the pointer gets a pink outline and a label with its name, root element and size; one of the chrome's elements (below) gets one with its selector. ↑ widens the outline to the enclosing element or component and ↓ comes back. Esc or Hyper+D again ends the session.
 
 The window keeps working while the session runs, minus clicks and keys. Hover states still show (a message's toolbar, tooltips), lists scroll, and carets, focus rings and animations stay as they are. No button, editor or shortcut reacts. The tool alone reads the clicks and keys. Gio patch 21 (`Source.HoverOnly`, `third_party/gioui.org/CLACK_PATCHES.md`) makes that possible. The window also drops its system action areas for the session (the top nav's drag area on macOS, Linux and Windows, the Windows caption buttons): the system acts on a press there before Clack sees it, so it would move the window instead of picking or dragging.
 
 There are three ways to capture:
 
-- **Click** an element: the outlined element's report is copied and saved at once, and the session ends. There is no review. A press that moves less than 6 dp before it comes up is still a click.
-- **Shift+click** an element: the same capture, but it opens the review below first, so parts of it can be blurred out. Shift counts if it is held at the press or at the release.
+- **Click** an element: the outlined element is captured and the review below opens first, so parts of it can be blurred out before anything is copied. A press that moves less than 6 dp before it comes up is still a click.
+- **Shift+click** an element: the same capture, copied and saved at once with no review, and the session ends. Shift counts if it is held at the press or at the release. (Until 2026-11-17 these two were the other way round; Karim asked for the review on every plain pick.)
 - **Drag** a rectangle, for what the picker can't outline: once the pointer has moved 6 dp pressed, the window dims around the rectangle being dragged out and its size shows beside it. Releasing captures that region as it is and opens the review. Esc during the drag drops only the drag, and the session goes on. A region thinner than 8 dp grabs nothing.
 
 Every way, Clack renders the capture from the release's frame again through a headless GPU context (the window's own GPU can't read frames back). It draws the crop at 4 px per dp whatever the display, under a transform over the frame's ops (Gio patch 31, `Ops.Whole`). Paths and glyphs are vectors, so the element comes out as sharp as a window four times as dense, and the image stays small enough that Slack shows it near its own size. A crop whose image would pass 3200 px is drawn less dense, never below the window's own px. For a click or a Shift+click the crop is the element and 24 dp around it. That margin gets blurred past reading (a 5 dp box blur, three passes) so the neighbouring messages, channels and names are smears, and the element is outlined. For a drag the crop is the region itself, with no margin, no blur and no outline.
 
 ### Blurring before it's copied
 
-After a Shift+click or a drag nothing is copied yet. The shot is shown frozen over the dimmed window, exactly as the copy will look, under the banner "Blur: drag over anything private · ⌫ undo · Enter copy · Esc cancel":
+After a click or a drag nothing is copied yet. The shot is shown frozen over the dimmed window, exactly as the copy will look, under the banner "Blur: drag over anything private · ⌫ undo · Enter copy · Esc cancel":
 
 - drag rectangles over anything that shouldn't be shared (other people's messages, names, avatars). Each one is blurred out of the shot. Drag as many as you need, and the banner counts them.
 - ⌫, Delete or Mod+Z takes the last rectangle back. A right click takes back the newest one under the pointer.
@@ -42,7 +42,7 @@ After a Shift+click or a drag nothing is copied yet. The shot is shown frozen ov
 
 A blurred rectangle holds nothing of what was under it. It is filled from the nearest pixels outside every rectangle (on each side, level with the pixel, the nearer side weighing more), then smoothed 6 dp. It is not a blur of its own pixels, so no deblurring or sharpening can bring a name or a face back. The rectangles are painted over the shot before the margin is blurred, so the margin's smear carries nothing of them either. `TestComposeRedactKeepsNothingInside` composes two shots that differ only under a rectangle and requires the two images to be identical. The report's text says how many rectangles the reporter blurred.
 
-Then (at once for a plain click, on Enter for the review) Clack:
+Then (at once for a Shift+click, on Enter for the review) Clack:
 
 1. draws the report as a panel under the shot, on the CPU with the Go fonts. The image is as wide as the shot, or as the panel's 600 dp minimum for a small one (the shot sits centred above the panel at its own size),
 2. copies that one image to the clipboard, so a paste in #clack carries both,
@@ -75,7 +75,7 @@ The report is meant for #clack, so it holds no content. It never collects messag
 
 An id becomes a tag: its kind and the first 6 hex digits of SHA-256 over a salt and the id (`ch:3fa2b1`, `user:77ab02`, `ts:9c01de`). Each report gets a new random salt, which is never written anywhere. Within one report the same channel always has the same tag, so "the same message" and "another one" stay apparent. Across reports, and for anyone without the salt, a tag says nothing. Routes keep their page (`c/`, `dms`) and tag every other segment. A run-time attribute value (a channel id in `data-qa-channel-sidebar-channel-id`) becomes a tag unless it is an enumeration such as `data-qa=add_reaction`.
 
-The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it, or a dragged region as it was. Whatever the element or region holds (a picked message's text) is in it, unless the user blurs it out in the review. A plain click copies the element as it is; Shift+click it (or drag over it) when it shows something private, and the review comes before anything is copied or saved, so the user decides what to share.
+The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it, or a dragged region as it was. Whatever the element or region holds (a picked message's text) is in it, unless the user blurs it out in the review. A click (or a drag over it) opens the review before anything is copied or saved, so the user decides what to share; a Shift+click copies the element as it is, for when nothing in it is private.
 
 ## Coverage
 

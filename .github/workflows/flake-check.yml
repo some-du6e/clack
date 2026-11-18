@@ -1348,7 +1348,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
-          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPlacementNoise|TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPlacementNoise|TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects)$' gioui.org/gpu/headless
       - name: the shadows and the panel's corners, old and new (internal/ui/theme TestFrameCostPixels)
         if: ${{ !cancelled() }}
         shell: bash
@@ -1379,3 +1379,96 @@ jobs:
         with:
           name: gpu-cost-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-shots
+  # Gio patch 46 (partial frames): a partial frame is the whole frame's
+  # pixels (gpu/headless TestClackPartial*), what a caret's blink, the
+  # typing indicator, a spinner's turn and an animated emoji's frame cost
+  # whole and partial over Clack's window (TestFrameCostDamage), and a
+  # caret's blink on App.Run's real window (TestRealWindowCaretCost), on
+  # llvmpipe, Metal and WARP. only=gpu-cost runs it with gpu-cost;
+  # only=gpu-cost-damage alone.
+  gpu-cost-damage:
+    if: ${{ !inputs.only || startsWith('gpu-cost-damage', inputs.only) }}
+    name: "gpu-cost-damage (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: partial frames are whole frames' pixels (gioui.org/gpu, gpu/headless)
+        shell: bash
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          rc=0
+          go test -count=1 -v -run '^(TestClackDamage|TestClackSticky)' gioui.org/gpu || rc=1
+          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless || rc=1
+          exit $rc
+      # what a caret's blink, the typing indicator, a
+      # spinner's turn and an animated emoji's frame cost whole and as
+      # partial frames, with the whole frame's pixels
+      - name: small changes, whole and partial (internal/ui TestFrameCostDamage)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CLACK_GPU_COST: "1"
+          CLACK_GPU_COST_SHOTS: ${{ runner.temp }}/gpu-cost-damage-shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$CLACK_GPU_COST_SHOTS"
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          "${x[@]}" go test -count=1 -v -timeout 25m -run '^TestFrameCostDamage$' ./internal/ui
+      # and a caret's blink on App.Run's real window: partial frames of its
+      # pixels, a tenth of a whole frame's draws, half its CPU on the
+      # software rasterizers; a scroll's frames with partial frames on and
+      # off; on Xvfb the window's own pixels read back (python3-xlib).
+      # count=N runs it N times, a process each (one App per process), for
+      # its flake rate.
+      - name: a caret's blink on the real window (internal/ui TestRealWindowCaretCost)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CLACK_REAL_WINDOW_TESTS: "1"
+          CLACK_MACOS_WINDOW_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUNS: ${{ inputs.count || '1' }}
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq python3-xlib
+            x=(xvfb-run -a -s "-screen 0 1920x1080x24")
+          else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          go test -c -o "$RUNNER_TEMP/ui-caret.test" ./internal/ui
+          cd internal/ui
+          fails=0
+          for i in $(seq 1 "$RUNS"); do
+            "${x[@]}" "$RUNNER_TEMP/ui-caret.test" -test.count=1 -test.v -test.timeout 10m -test.run '^TestRealWindowCaretCost$' || fails=$((fails+1))
+          done
+          echo "TestRealWindowCaretCost: $fails of $RUNS runs failed"
+          [ "$fails" = 0 ]
+          # and at the size the orchestrator measured α.105 at (55% of a core
+          # on llvmpipe with the caret blinking)
+          CLACK_CARET_WINDOW=1440x900 "${x[@]}" "$RUNNER_TEMP/ui-caret.test" -test.count=1 -test.v -test.timeout 10m -test.run '^TestRealWindowCaretCost$'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: gpu-cost-damage-shots-${{ runner.os }}
+          path: ${{ runner.temp }}/gpu-cost-damage-shots
+          if-no-files-found: ignore

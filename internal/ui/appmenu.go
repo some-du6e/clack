@@ -2,12 +2,17 @@ package ui
 
 import (
 	"image"
+	"image/color"
+	"math"
 	"runtime"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/menubar"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The app menu on Linux and Windows. Slack desktop draws it there from the
@@ -154,14 +159,50 @@ func (a *App) appMenuButton(gtx layout.Context, h int) {
 	if !hasAppMenuButton() {
 		return
 	}
-	c := &a.th.C
 	b := gtx.Dp(26)
 	org := image.Pt(gtx.Dp(8), (h-b)/2)
 	btn := a.clicks.get("nav.appmenu")
 	at(gtx, org, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
-		return a.chromeButton(gtx, org, btn, "menu", 26, 18, c.ChromeText, 4)
+		var tile color.NRGBA
+		return clickArea(gtx, btn, func(gtx layout.Context, sz image.Point, _ bool) {
+			if tile.A > 0 {
+				a.chrome(gtx, org, image.Rectangle{Max: sz}, 0, tile)
+			}
+		}, func(gtx layout.Context) layout.Dimensions {
+			// the Clickable as this frame's events left it (clickArea's
+			// update ran; the tile draws after this): a press shows its
+			// :active tile in the frame that delivers it, and Gio asks
+			// for no other while it's held
+			var ink color.NRGBA
+			tile, ink = appMenuColors(&a.th.C, btn.Hovered(), btn.Pressed())
+			is := gtx.Dp(18)
+			off := (b - is) / 2
+			t := op.Offset(image.Pt(off, off)).Push(gtx.Ops)
+			icons.Get("menu")(gtx, 18, ink)
+			t.Pop()
+			return layout.Dimensions{Size: image.Pt(b, b)}
+		})
 	})
 	if clicked(btn) {
 		a.menu(image.Pt(org.X, org.Y+b+gtx.Dp(4)), a.appMenuItems())
 	}
+}
+
+// appMenuColors are the button's tile and ink. The button is Slack
+// desktop's own window-chrome-app-menu element (its preload's
+// window-chrome-app-menu.less, adopted into the page): opacity .8 at
+// rest, rgba(255,255,255,.15) on :hover and rgba(255,255,255,.2) on
+// :active at full opacity, in every theme, with square corners; the
+// client's stylesheet only sizes it 26x26 in the ia4 top nav
+// (.p-ia4_app_menu_button) and gives it the chrome's
+// theme-content-inv-pry. Not the history buttons' theme-surf-inv-pry and
+// theme-surf-inv-sec tiles.
+func appMenuColors(c *theme.Palette, hovered, pressed bool) (tile, ink color.NRGBA) {
+	switch {
+	case pressed:
+		return color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x33}, c.ChromeText
+	case hovered:
+		return color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x26}, c.ChromeText
+	}
+	return color.NRGBA{}, theme.WithAlpha(c.ChromeText, uint8(math.Round(float64(c.ChromeText.A)*.8)))
 }

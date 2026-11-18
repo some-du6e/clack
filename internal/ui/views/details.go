@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"io"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -1926,18 +1927,41 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 		u.Presence = p
 	}
 	c := dirClick(d.memberClk, u.ID)
-	if c.Clicked(gtx) {
-		// the members list row (ia-details-popover Rrv2):
-		// showMemberProfile, the profile pane
+	// a channel member's secondary content: the Channel Manager pill and
+	// the actions menu (details_agents_menu.go), whose button is read
+	// before the row's click (Slackbot's row has its settings button
+	// instead, which Clack doesn't draw)
+	secondary := u.ID != core.SlackbotUserID
+	var items []popups.MenuItem
+	var rm *cdRowMenu
+	took := false
+	if secondary {
+		items = d.memberRowMenuItems(u, d.memberRemoved)
+		rm = d.rowMenu(u.ID)
+		rm.takePress(gtx) // the press first: its click may come in this frame
+		if rm.btn.Clicked(gtx) {
+			took = true
+			d.openRowMenu(rm, items)
+		}
+	}
+	if c.Clicked(gtx) && !took {
+		// the members list row (ia-details-popover tf): showMemberProfile,
+		// the profile pane
 		d.h.OpenProfile(d.press.at, u.ID)
 	}
 	full, disp := cdMemberNames(u, self)
-	manager := false
-	for _, m := range d.managerIDs() {
-		manager = manager || m == u.ID
-	}
+	// IaDetailsPopoverChannelManagerIndicatorWrapper: the managers store
+	manager := secondary && slices.Contains(d.managerIDs(), u.ID)
 	return d.hoverable(gtx, c, false, 0, func(gtx C) D {
-		return layout.Inset{Top: 12, Bottom: 12, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
+		padR, pill := unit.Dp(cdPadX), func(C, image.Point) {}
+		if secondary {
+			var p func(C, image.Point)
+			padR, p = d.rowSecondary(gtx, gtx.Constraints.Max.X, manager, rm)
+			if p != nil {
+				pill = p
+			}
+		}
+		dims := layout.Inset{Top: 12, Bottom: 12, Left: cdPadX, Right: padR}.Layout(gtx, func(gtx C) D {
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D { return d.avatar(gtx, u.Avatar, 36) }),
 				hgap(12),
@@ -1983,29 +2007,46 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 						})
 					})
 				}),
-				layout.Rigid(func(gtx C) D {
-					if !manager {
-						return D{}
-					}
-					return layout.Inset{Left: 8}.Layout(gtx, d.managerPill)
-				}),
 			)
 		})
+		pill(gtx, dims.Size)
+		switch {
+		case len(items) > 0:
+			d.rowMenuButton(gtx, rm, dims.Size, c.Hovered())
+		case rm != nil: // no items, no button (the menu renders null)
+			rm.shown = false
+		}
+		return dims
 	})
 }
 
-// managerPill is Slack's p-ia_details_popover__channel_manager_indicator:
-// "Channel Manager" 13/18 regular on #1d1c1d@0.06, padding 4px 8px,
-// radius 16 (C0CFT52NEGM, 2026-11-08).
+// managerPill is Slack's p-ia_details_popover__channel_manager_indicator
+// (IaDetailsPopoverChannelManagerIndicator): "Channel Manager" 13/18
+// regular on #1d1c1d@0.06, padding 4px 8px, radius 16 (C0CFT52NEGM,
+// 2026-11-08). The row places it (rowSecondary, details_agents_menu.go).
 func (d *ChannelDetails) managerPill(gtx C) D {
 	m := op.Record(gtx.Ops)
 	td := layout.Inset{Top: 4, Bottom: 4, Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
-		return d.para(gtx, 13, 18, wReg, d.p.Text, 1, "Channel Manager")
+		return d.para(gtx, 13, 18, wReg, d.p.Text, 1, nsChannelDetails.T("Channel Manager"))
 	})
 	call := m.Stop()
 	rrect(gtx, image.Rectangle{Max: td.Size}, gtx.Dp(16), cdPillBg(&d.base))
 	call.Add(gtx.Ops)
 	return td
+}
+
+// managerPillMinContent is the pill's min-content width: its widest
+// word, as the text would wrap, and its padding.
+func (d *ChannelDetails) managerPillMinContent(gtx C) int {
+	m := op.Record(gtx.Ops)
+	defer m.Stop()
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(1<<20, 1<<20)}
+	widest := 0
+	for _, w := range strings.Fields(nsChannelDetails.T("Channel Manager")) {
+		widest = max(widest, d.para(g, 13, 18, wReg, d.p.Text, 1, w).Size.X)
+	}
+	return widest + gtx.Dp(16)
 }
 
 // cdPillBg is #1d1c1d@0.06 (light) or #d1d2d3@0.06 over the surface.
@@ -2576,14 +2617,21 @@ func (d *ChannelDetails) updateWrites(gtx C, inf core.ChannelDetails, loaded boo
 	}
 }
 
-// managerIDs is the loaded "Managed by" list (nil until loaded or when
-// the viewer can't read role assignments).
+// managerIDs is the channel's managers as the store has them once the
+// details' read (fetchAndUpsertChannelManagers) answered: Slack's
+// getChannelManagers, which About's "Managed by", the Members filter's
+// count and the rows' pills read, and which Make Channel Manager and
+// Remove from Channel Managers change (core/channel_managers_edit.go).
+// nil until the read answers.
 func (d *ChannelDetails) managerIDs() []string {
-	ids, ok, err := d.managers.get()
-	if !ok || err != nil {
+	if _, done, _ := d.managers.get(); !done {
 		return nil
 	}
-	return ids
+	c := d.h.Core()
+	if c == nil {
+		return nil
+	}
+	return c.ChannelManagerIDs(d.id)
 }
 
 // managedField: "Managed by" then the managers' names as links.
