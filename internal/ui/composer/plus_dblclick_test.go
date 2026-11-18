@@ -3,14 +3,20 @@ package composer
 import (
 	"encoding/json"
 	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -19,6 +25,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // The + button's double click (ShortcutsMenuTriggerButton onDoubleClick):
@@ -60,9 +67,17 @@ type plusEnv struct {
 	now   time.Time
 	ptr   time.Duration // the pointer events' clock (gesture.Click counts clicks by it)
 	picks int           // file choosers opened
+	scale float32       // px per dp
+	size  image.Point   // the window, px
 }
 
 func newPlusEnv(t *testing.T) *plusEnv {
+	t.Helper()
+	return newPlusEnvTheme(t, false, 1)
+}
+
+// newPlusEnvTheme is newPlusEnv in a mode at a scale (the shots' 2x).
+func newPlusEnvTheme(t *testing.T, dark bool, scale float32) *plusEnv {
 	t.Helper()
 	app, fs := syntheticApp(t, func(s *store.Store) {
 		s.PutConv(slack.Conversation{ID: tChPartner, Name: "partners", IsChannel: true, IsMember: true, IsExtShared: true})
@@ -71,10 +86,10 @@ func newPlusEnv(t *testing.T) *plusEnv {
 	})
 	stubTyping(t)
 	sh := theme.NewShaper()
-	th := theme.New(false)
+	th := theme.New(dark)
 	th.SetShapers(sh, sh)
 	e := &plusEnv{t: t, app: app, fs: fs, h: &plusHost{slickHost: &slickHost{app: app, th: th}},
-		now: time.Now(), ptr: 10 * time.Second}
+		now: time.Now(), ptr: 10 * time.Second, scale: scale, size: image.Pt(int(800*scale), int(600*scale))}
 	old := uploadFromComputer
 	uploadFromComputer = func(*attachments) { e.picks++ }
 	t.Cleanup(func() { uploadFromComputer = old })
@@ -96,17 +111,18 @@ func (e *plusEnv) use(c *Composer) *Composer {
 	return c
 }
 
-// frame lays the composer out at the bottom of an 800×600 window, then
+// frame lays the composer out at the bottom of an 800×600 dp window, then
 // the open overlays over everything, and advances both clocks 16 ms.
 func (e *plusEnv) frame() {
 	e.ops.Reset()
-	gtx := layout.Context{Ops: &e.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Source: e.r.Source(), Now: e.now,
-		Constraints: layout.Exact(image.Pt(800, 600))}
+	paint.FillShape(&e.ops, e.h.th.C.Bg, clip.Rect{Max: e.size}.Op())
+	gtx := layout.Context{Ops: &e.ops, Metric: unit.Metric{PxPerDp: e.scale, PxPerSp: e.scale}, Source: e.r.Source(), Now: e.now,
+		Constraints: layout.Exact(e.size)}
 	slackc.Frame(gtx)
-	e.c.Origin = image.Pt(0, 400)
+	e.c.Origin = image.Pt(0, int(400*e.scale))
 	st := op.Offset(e.c.Origin).Push(gtx.Ops)
 	g := gtx
-	g.Constraints = layout.Constraints{Max: image.Pt(800, 200)}
+	g.Constraints = layout.Constraints{Max: image.Pt(e.size.X, int(200*e.scale))}
 	e.c.Layout(g)
 	st.Pop()
 	live := e.h.overlays[:0]
@@ -163,9 +179,9 @@ func (e *plusEnv) dblclick(p image.Point) {
 	e.click(p)
 }
 
-// rest leaves the pointer alone past the double-click window and the
-// menu's scrim delay.
-func (e *plusEnv) rest() { e.frames(400 * time.Millisecond) }
+// rest leaves the pointer alone past the double-click window (the
+// platform's, Gio patch 48) and the menu's scrim delay.
+func (e *plusEnv) rest() { e.frames(gesture.DoubleClickTime() + 200*time.Millisecond) }
 
 // menuOpen reports whether the + menu shows.
 func (e *plusEnv) menuOpen() bool { return e.c.att.plus != nil && !e.c.att.plus.Dismissed() }
@@ -384,5 +400,213 @@ func TestPlusDoubleClickRestrictedExternalHuddle(t *testing.T) {
 	e.dblclick(e.plus())
 	if e.picks != 1 {
 		t.Errorf("external_huddles off: %d choosers, want 1", e.picks)
+	}
+}
+
+// queueAt queues a press at time at and its release held for hold, at p.
+func (e *plusEnv) queueAt(p image.Point, at, hold time.Duration) {
+	pos := f32.Pt(float32(p.X), float32(p.Y))
+	e.r.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos, Time: at},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos, Time: at},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos, Time: at + hold})
+}
+
+// A double click as people make one: each press held 100 ms, the second
+// 300 ms after the first, frames running between. That was two clicks
+// for gesture.Click's old fixed 200 ms; by the platform's rule (Gio patch
+// 48: Chromium's 500 ms here, Windows' GetDoubleClickTime) it's a double
+// click, and it lands 200 ms after the first release, while the menu's
+// scrim is still down (plusScrimDelay), as in Slack.
+func TestPlusDoubleClickAt300ms(t *testing.T) {
+	e := newPlusEnv(t)
+	e.open(tChGen, "")
+	p := e.plus()
+	t0 := e.ptr
+	e.queueAt(p, t0, 100*time.Millisecond)
+	e.frame() // the release: the menu opens
+	if !e.menuOpen() {
+		t.Fatal("the first click opened no menu")
+	}
+	e.frames(180 * time.Millisecond)
+	e.queueAt(p, t0+300*time.Millisecond, 100*time.Millisecond)
+	e.frame()
+	e.ptr = t0 + time.Second
+	if e.picks != 1 || e.menuOpen() || e.h.menus != 1 {
+		t.Fatalf("a 300 ms double click: %d choosers, menu %v, %d menus; want the chooser and the menu closed (double-click time %v)",
+			e.picks, e.menuOpen(), e.h.menus, gesture.DoubleClickTime())
+	}
+}
+
+// A double click 400 ms apart selects the word in the composer's editor
+// (Gio patch 48), where gesture.Click's old 200 ms made it two clicks.
+func TestEditorDoubleClickAt400ms(t *testing.T) {
+	e := newPlusEnv(t)
+	c := e.open(tChGen, "")
+	d := NewDoc()
+	d.Insert(0, "hello brave world", Attr{})
+	c.ed.SetDoc(d)
+	e.frame()
+	e.frame()
+	a, b := c.ed.PosRect(7), c.ed.PosRect(8) // inside "brave"
+	org := c.Origin.Add(c.ui.InputOffset()).Add(image.Pt(0, c.top))
+	p := image.Pt((a.Min.X+b.Min.X)/2, (a.Min.Y+a.Max.Y)/2).Add(org)
+	t0 := e.ptr
+	e.queueAt(p, t0, 40*time.Millisecond)
+	e.frame()
+	e.queueAt(p, t0+400*time.Millisecond, 40*time.Millisecond)
+	e.frame()
+	e.frame()
+	e.ptr = t0 + time.Second
+	if got := c.ed.SelectedText(); got != "brave" {
+		lo, hi := c.ed.Selection()
+		t.Fatalf("a double click 400 ms apart selected %q (%d..%d), want \"brave\" (double-click time %v)", got, lo, hi, gesture.DoubleClickTime())
+	}
+	// 600 ms apart: two clicks, a caret
+	e.rest()
+	t0 = e.ptr
+	e.queueAt(p, t0, 40*time.Millisecond)
+	e.frame()
+	e.queueAt(p, t0+600*time.Millisecond, 40*time.Millisecond)
+	e.frame()
+	e.frame()
+	e.ptr = t0 + time.Second
+	if got := c.ed.SelectedText(); got != "" {
+		t.Errorf("two clicks 600 ms apart selected %q, want a caret", got)
+	}
+}
+
+// The + is drawn open while its menu shows (ShortcutsMenuTriggerButton's
+// S, --composer_ia-open): turned 135° over .32s
+// cubic-bezier(.34,1.56,.64,1), overshooting on the way, and back when the
+// menu closes; a double click drops S (x(false)), so the turn reverses
+// part-way, shortened as CSS Transitions shortens a reversed one. A click
+// on the + that only toggles the menu shut leaves S set, as Slack's
+// onTrigger never calls onPopoverClose.
+func TestPlusOpenState(t *testing.T) {
+	e := newPlusEnv(t)
+	e.open(tChGen, "")
+	p := e.plus()
+	if e.c.cs.PlusOpen || e.c.ui.turn.to != 0 {
+		t.Fatal("drawn open before any click")
+	}
+
+	// one click: open, the turn runs and overshoots
+	e.click(p)
+	if !e.c.att.plusOpen {
+		t.Fatal("the menu opened, S not set")
+	}
+	e.frame() // the chrome draws the new state from this frame
+	if !e.c.cs.PlusOpen {
+		t.Fatal("not drawn open")
+	}
+	start := e.c.ui.turn.start
+	peak := 0.0
+	for range 30 {
+		e.frame()
+		if v, _ := e.c.ui.turn.value(e.now); v > peak {
+			peak = v
+		}
+	}
+	if v, running := e.c.ui.turn.value(e.now); running || v != crTurnOpen {
+		t.Fatalf("after %v: %v° (turning %v), want settled at 135°", e.now.Sub(start), v, running)
+	}
+	if peak <= crTurnOpen {
+		t.Errorf("the turn peaked at %v°: cubic-bezier(.34,1.56,.64,1) overshoots 135°", peak)
+	}
+	// closing through the scrim (onPopoverClose): back to 0
+	e.click(image.Pt(790, 10))
+	if e.menuOpen() || e.c.att.plusOpen {
+		t.Fatalf("the click outside: menu %v, S %v", e.menuOpen(), e.c.att.plusOpen)
+	}
+	e.frames(400 * time.Millisecond)
+	if v, running := e.c.ui.turn.value(e.now); running || v != 0 {
+		t.Fatalf("closed: %v° (turning %v), want 0°", v, running)
+	}
+	e.rest()
+
+	// a double click: the turn starts, then reverses shortened
+	e.click(p)
+	e.frame()
+	opened := e.c.ui.turn.start
+	e.ptr += 80 * time.Millisecond
+	e.click(p)
+	if e.picks != 1 || e.c.att.plusOpen {
+		t.Fatalf("double click: %d choosers, S %v", e.picks, e.c.att.plusOpen)
+	}
+	e.frame()
+	tr := e.c.ui.turn
+	ran := tr.start.Sub(opened)
+	want := time.Duration(float64(crTurnDur) * min(max(crTurnEase(float64(ran)/float64(crTurnDur)), 0), 1))
+	if tr.to != 0 || tr.dur != want || tr.revStart != crTurnOpen {
+		t.Errorf("the reversed turn: to %v° over %v (revStart %v), want 0° over %v (the shortening factor after %v)", tr.to, tr.dur, tr.revStart, want, ran)
+	}
+	e.rest()
+	if v, _ := e.c.ui.turn.value(e.now); v != 0 {
+		t.Errorf("after the double click: %v°, want 0°", v)
+	}
+
+	// a click on the + that only toggles the menu shut keeps S
+	e.click(p)
+	if !e.menuOpen() {
+		t.Fatal("no menu")
+	}
+	e.c.plusClick(chromeAction{Kind: caAttach, Anchor: e.c.ui.rect[crAttach], Clicks: 1})
+	if e.menuOpen() || !e.c.att.plusOpen {
+		t.Errorf("toggled shut: menu %v, S %v; want closed with S still set", e.menuOpen(), e.c.att.plusOpen)
+	}
+	// the next open and close (onPopoverClose) clear it
+	e.rest()
+	e.click(p)
+	e.rest()
+	e.click(image.Pt(790, 10))
+	if e.menuOpen() || e.c.att.plusOpen {
+		t.Errorf("closed again: menu %v, S %v", e.menuOpen(), e.c.att.plusOpen)
+	}
+}
+
+// TestPlusOpenShots draws the + with its menu open, light and dark at 2x,
+// into COMPOSER_AUDIT_SHOTS_DIR (composer-audit-shots; skipped without
+// it): composer-plus-turn-* 128 ms into the turn, composer-plus-open-*
+// settled at 135°, an ×, on sk_foreground_mid at .3. The pointer leaves
+// the + after the click, as the menu's overlay takes it in Slack.
+func TestPlusOpenShots(t *testing.T) {
+	dir := os.Getenv("COMPOSER_AUDIT_SHOTS_DIR")
+	if dir == "" {
+		t.Skip("COMPOSER_AUDIT_SHOTS_DIR not set")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	save := func(t *testing.T, e *plusEnv, name string) {
+		img := pixeltest.Render(t, e.size.X, e.size.Y, &e.ops)
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, img); err != nil {
+			t.Fatal(err)
+		}
+		deg, _ := e.c.ui.turn.value(e.now.Add(-16 * time.Millisecond)) // the last frame's
+		t.Logf("wrote %s.png (the + at %.1f°)", name, deg)
+	}
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		t.Run(mode, func(t *testing.T) {
+			e := newPlusEnvTheme(t, dark, 2)
+			e.open(tChGen, "")
+			e.click(e.plus())
+			away := f32.Pt(float32(e.size.X)-20, float32(e.size.Y)/4)
+			e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: away, Time: e.ptr})
+			e.frame() // the + drawn open from here
+			e.frames(120 * time.Millisecond)
+			save(t, e, "composer-plus-turn-"+mode)
+			e.frames(500 * time.Millisecond)
+			if v, running := e.c.ui.turn.value(e.now); running || v != crTurnOpen || !e.menuOpen() {
+				t.Fatalf("the + at %v° (turning %v), menu %v; want 135° with the menu open", v, running, e.menuOpen())
+			}
+			save(t, e, "composer-plus-open-"+mode)
+		})
 	}
 }

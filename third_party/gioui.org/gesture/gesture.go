@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/internal/clickrule"
 	"gioui.org/internal/fling"
 	"gioui.org/io/event"
 	"gioui.org/io/input"
@@ -24,9 +25,6 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 )
-
-// The duration is somewhat arbitrary.
-const doubleClickDuration = 200 * time.Millisecond
 
 // Hover detects the hover gesture for a pointer area.
 type Hover struct {
@@ -75,8 +73,15 @@ type Click struct {
 	// the last click occurred.
 	clickedAt time.Duration
 	// clicks is incremented if successive clicks
-	// are performed within a fixed duration.
+	// follow the platform's rule (clack_dblclick.go).
 	clicks int
+	// Clack patch 48: the run's last and first presses, the last one's
+	// modifiers, the rule it was counted by, and whether a move ended the
+	// run since (clickrule.Rule.MoveResets).
+	clickedPos, runPos f32.Point
+	clickedMods        key.Modifiers
+	rule               clickrule.Rule
+	runBroken          bool
 	// pressed tracks whether the pointer is pressed.
 	pressed bool
 	// hovered tracks whether the pointer is inside the gesture.
@@ -96,7 +101,8 @@ type ClickEvent struct {
 	Source    pointer.Source
 	Modifiers key.Modifiers
 	// NumClicks records successive clicks occurring
-	// within a short duration of each other.
+	// within a short duration of each other: the platform's
+	// double-click time and distance (DoubleClickTime).
 	NumClicks int
 }
 
@@ -182,10 +188,14 @@ func (c *Click) Pressed() bool {
 
 // Update state and return the next click events, if any.
 func (c *Click) Update(q input.Source) (ClickEvent, bool) {
+	kinds := pointer.Press | pointer.Release | pointer.Enter | pointer.Leave | pointer.Cancel
+	if clickrule.Base.MoveResets {
+		kinds |= pointer.Move | pointer.Drag // Clack patch 48: a move can end a run of clicks
+	}
 	for {
 		evt, ok := q.Event(pointer.Filter{
 			Target: c,
-			Kinds:  pointer.Press | pointer.Release | pointer.Enter | pointer.Leave | pointer.Cancel,
+			Kinds:  kinds,
 		})
 		if !ok {
 			break
@@ -228,14 +238,12 @@ func (c *Click) Update(q input.Source) (ClickEvent, bool) {
 			}
 			c.pid = e.PointerID
 			c.pressed = true
-			if e.Time-c.clickedAt < doubleClickDuration {
-				c.clicks++
-			} else {
-				c.clicks = 1
-			}
-			c.clickedAt = e.Time
+			c.count(e)
 			return ClickEvent{Kind: KindPress, Position: e.Position.Round(), Source: e.Source, Modifiers: e.Modifiers, NumClicks: c.clicks}, true
+		case pointer.Move, pointer.Drag:
+			c.moved(e)
 		case pointer.Leave:
+			c.moved(e)
 			if !c.pressed {
 				c.pid = e.PointerID
 			}

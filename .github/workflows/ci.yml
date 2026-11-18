@@ -240,6 +240,12 @@ jobs:
       - name: Gio hidden title bar hit test (vendored gioui.org/app)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption|TestTitlebarDoubleClickAction' gioui.org/app
+      # Gio patch 48: a run of clicks counts by the platform's rule, as
+      # Chromium's does (500 ms and 2 px here; the Windows and macOS rules
+      # with their settings stood in), not a fixed 200 ms
+      - name: Gio click counts (vendored gioui.org/gesture)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestMouseClicks|TestClackClick' gioui.org/gesture
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave).
       # Gio patch 35: on the X11 window, a frame only Window.Invalidate
@@ -483,6 +489,15 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_KEY_TESTS: "1"
         run: go test -count=1 -v -timeout 5m -run 'TestWinKeyText' gioui.org/app
+      # Gio patch 48: SendInput clicks 400 ms apart are a double click by the
+      # Mouse settings' double-click time (500 ms), two clicks once
+      # SetDoubleClickTime makes it 300 ms (read again on every press)
+      - name: double clicks by GetDoubleClickTime (SendInput)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_DBLCLICK_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
       # Karim's 2026-11-12 report came from Windows (gap-w29): the thread
       # pane's reply box 12px under the last reply, laid out with the
       # Windows build's fonts and text shaping on internal/fakeslack (no
@@ -1196,7 +1211,7 @@ jobs:
         run: |
           set +e
           sw_vers
-          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac' gioui.org/app
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestClackClickCountMac' gioui.org/app
           gio=$?
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?

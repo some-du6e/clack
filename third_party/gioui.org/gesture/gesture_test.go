@@ -42,6 +42,7 @@ func TestHover(t *testing.T) {
 }
 
 func TestMouseClicks(t *testing.T) {
+	doubleClickDuration := DoubleClickTime() // Clack patch 48: the platform's (clack_dblclick.go)
 	for _, tc := range []struct {
 		label  string
 		events []event.Event
@@ -56,7 +57,7 @@ func TestMouseClicks(t *testing.T) {
 			label: "double click",
 			events: mouseClickEvents(
 				100*time.Millisecond,
-				100*time.Millisecond+doubleClickDuration-1),
+				100*time.Millisecond+doubleClickDuration),
 			clicks: []int{1, 2},
 		},
 		{

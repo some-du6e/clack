@@ -1379,3 +1379,62 @@ jobs:
         with:
           name: gpu-cost-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-shots
+
+  # Gio patch 48 (third_party/gioui.org/CLACK_PATCHES.md): a run of clicks
+  # counts by the platform's rule, Chromium's, not a fixed 200 ms. The
+  # gesture rules everywhere; on Windows SendInput clicks 400 ms apart at
+  # SetDoubleClickTime 500 and 300; on macOS AppKit's own counts through a
+  # real window; on Linux the composer's double clicks (the +'s file
+  # chooser at 300 ms, a word at 400 ms) and the +'s open state.
+  dblclick:
+    if: ${{ !inputs.only || startsWith('dblclick', inputs.only) }}
+    name: "dblclick (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "gesture's click counts, every run counted"
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          TEST: (TestMouseClicks|TestClackClick.*)
+          PKG: gioui.org/gesture
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "TestClackDoubleClickWindows (SendInput), every run counted"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_DBLCLICK_TESTS: "1"
+          TEST: TestClackDoubleClickWindows
+          PKG: gioui.org/app
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "TestClackClickCountMac (AppKit), every run counted"
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        shell: bash
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+          TEST: TestClackClickCountMac
+          PKG: gioui.org/app
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "the composer's double clicks and open +, every run counted"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        shell: bash
+        env:
+          TEST: (TestPlusDoubleClick.*|TestEditorDoubleClickAt400ms|TestPlusOpenState)
+          PKG: ./internal/ui/composer
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"

@@ -74,7 +74,7 @@ func (r *colResizer) next(gtx layout.Context) (resizeEvent, bool) {
 			// take the pointer now, not after the touch slop: nothing else
 			// sees this gesture until the release
 			gtx.Execute(pointer.GrabCmd{Tag: &r.drag, ID: e.PointerID})
-			if !r.lastPress.IsZero() && gtx.Now.Sub(r.lastPress) < 500*time.Millisecond {
+			if !r.lastPress.IsZero() && gtx.Now.Sub(r.lastPress) <= gesture.DoubleClickTime() { // the platform's double click (Gio patch 48)
 				r.lastPress, r.reset, r.active = time.Time{}, true, false
 				return resizeEvent{kind: resizeReset}, true
 			}

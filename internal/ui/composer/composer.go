@@ -722,6 +722,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		// the button renders)
 		st.UploadBlocked = c.api.a.SlackConnectFileSharingBlocked(c.ch)
 	}
+	st.PlusOpen = c.att.plusOpen
 	if cv, ok := c.api.conv(c.ch); ok {
 		st.ChannelName = cv.Name
 		switch cv.Kind {
@@ -956,6 +957,7 @@ func (c *Composer) plusClick(a chromeAction) {
 // (core.RestrictedExternalHuddle). Its j() only resets
 // forceFileMenuOpen, which Clack's composers never set.
 func (c *Composer) plusDoubleClick() {
+	c.att.plusOpen = false // x(false)
 	if app := c.api.a; app != nil && (app.SlackConnectFileSharingBlocked(c.ch) || app.RestrictedExternalHuddle(c.ch)) {
 		return
 	}

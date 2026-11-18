@@ -3,8 +3,10 @@ package composer
 import (
 	"image"
 	"image/color"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/gesture"
@@ -107,6 +109,9 @@ type chromeState struct {
 	// UploadBlocked is the + button's N (core.SlackConnectFileSharingBlocked):
 	// no "Tip: double click to upload" under its tooltip
 	UploadBlocked bool
+	// PlusOpen is the + button's open state (ShortcutsMenuTriggerButton's
+	// S, attachments.plusOpen): p-shortcuts_menu_trigger_button--composer_ia-open
+	PlusOpen bool
 	// Invalid is WysiwygContainer's isInvalid (a Block Kit field with an
 	// error): c-basic_container--invalid
 	Invalid bool
@@ -273,7 +278,7 @@ type crPal struct {
 	bg, bar, fg, icon, iconDis             color.NRGBA
 	pressed, pressedHover, pressTint       color.NRGBA
 	sepBar, sepFoot                        color.NRGBA
-	footHover, plus, plusHover             color.NRGBA
+	footHover, plus, plusHover, plusOpen   color.NRGBA
 	border, borderFocus, line, lineFocus   color.NRGBA
 	ph, hint, typing                       color.NRGBA
 	send, sendHover, sendText, sendDiv     color.NRGBA
@@ -319,6 +324,7 @@ func crMakePal(th *theme.Theme) crPal {
 	p.sepFoot = crFade(ter, p.bg, .13)
 	p.plus = crFade(ink, p.bg, .06)
 	p.plusHover = crFade(ink, p.bg, .13)
+	p.plusOpen = crFade(ink, p.bg, .3) // :active and --composer_ia-open: sk_foreground_mid at .3
 	p.border = crFade(ink, p.bg, .13)
 	p.borderFocus = crFade(ter, p.bg, .45)
 	p.line = p.border
@@ -393,6 +399,7 @@ type chrome struct {
 	footNat int         // the footer row's own width as last laid out (a row-flex body, layoutBox)
 	sufW    int         // the submit group's width as last laid out (the toolbar's width, overflow.go)
 	more    crMore      // TextyButtonOverflow's open state (overflow.go)
+	turn    crTurn      // the + button's rotation (attachButton)
 	pxPerDp float32
 	wBox    layout.Widget
 	wFoot   [crNumBtn]layout.Widget
@@ -1305,22 +1312,102 @@ func (c *chrome) skinTone() string {
 	return a.Prefs().SkinTone
 }
 
-// attachButton is the round + (rgba(29,28,29,.06), hover .13 + dark icon).
+// attachButton is the round + (rgba(29,28,29,.06), hover .13 + dark icon;
+// pressed or open .3 of sk_foreground_mid). While its menu is open
+// (--composer_ia-open) it's turned 135°, an ×, by transform's transition
+// (crTurn).
 func (c *chrome) attachButton(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, r image.Rectangle) {
 	hov := c.btn[crAttach].Hovered()
 	bg, ic := p.plus, p.icon
 	if hov {
 		bg, ic = p.plusHover, p.fg
 	}
+	if st.PlusOpen || c.btn[crAttach].Pressed() {
+		bg = p.plusOpen // :active, --composer_ia-open (after :hover in the sheet)
+	}
 	bg, ic = c.f.btn.Background(bg), c.f.btn.Color(ic)
 	fillRRect(gtx, r, r.Dx()/2, bg)
-	// Slack's plus svg at 18px, centred (the 28px button's 5px padding).
+	now := gtx.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	deg, turning := c.turn.at(now, st.PlusOpen)
+	if turning {
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	// Slack's plus svg at 18px, centred (the 28px button's 5px padding),
+	// turned about the button's centre (transform-origin 50%)
+	if deg != 0 {
+		cen := f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
+		defer op.Affine(f32.Affine2D{}.Rotate(cen, float32(deg*math.Pi/180))).Push(gtx.Ops).Pop()
+	}
 	is := gtx.Dp(18)
 	t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
 	crInfo[crAttach].icon(gtx, 18, ic)
 	t.Pop()
 	c.hit(gtx, crAttach, r, true)
 	c.tooltip(gtx, th, st, crAttach, r)
+}
+
+// crTurn is the + button's transform transition: rotate(135deg) while
+// it's open, over .32s cubic-bezier(.34,1.56,.64,1) (it overshoots, then
+// settles) both ways, run as CSS Transitions starts one: from the angle
+// drawn when the state changes, and a change back to where a running
+// transition came from shortened by the reversing shortening factor.
+type crTurn struct {
+	set      bool
+	open     bool    // the state it goes to
+	from, to float64 // degrees: the start and end values
+	revStart float64 // the reversing-adjusted start value
+	factor   float64 // the reversing shortening factor
+	start    time.Time
+	dur      time.Duration // 0: not running
+}
+
+const (
+	crTurnDur  = 320 * time.Millisecond
+	crTurnOpen = 135.0
+)
+
+func crTurnEase(x float64) float64 { return attBezier(.34, 1.56, .64, 1, x) }
+
+// at is the angle drawn at now for state open, and whether it's turning.
+func (t *crTurn) at(now time.Time, open bool) (float64, bool) {
+	end := 0.0
+	if open {
+		end = crTurnOpen
+	}
+	if !t.set {
+		t.set, t.open, t.from, t.to, t.revStart, t.factor = true, open, end, end, end, 1
+		return end, false
+	}
+	if open != t.open {
+		t.open = open
+		cur, running := t.value(now)
+		if running && t.revStart == end {
+			// reversing: shortened by the old transition's progress
+			p := float64(now.Sub(t.start)) / float64(t.dur)
+			f := min(max(math.Abs(crTurnEase(p)*t.factor+(1-t.factor)), 0), 1)
+			t.revStart, t.factor, t.dur = t.to, f, time.Duration(float64(crTurnDur)*f)
+		} else {
+			t.revStart, t.factor, t.dur = cur, 1, crTurnDur
+		}
+		t.from, t.to, t.start = cur, end, now
+	}
+	return t.value(now)
+}
+
+// value is the running transition's angle at now.
+func (t *crTurn) value(now time.Time) (float64, bool) {
+	if t.dur <= 0 {
+		return t.to, false
+	}
+	p := float64(now.Sub(t.start)) / float64(t.dur)
+	if p >= 1 {
+		t.dur = 0
+		return t.to, false
+	}
+	return t.from + (t.to-t.from)*crTurnEase(max(p, 0)), true
 }
 
 // layoutSend draws the 60×28 split button (send 32 + chevron 28; 32×28

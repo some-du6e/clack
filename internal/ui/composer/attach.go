@@ -213,6 +213,12 @@ type attachments struct {
 	pasting atomic.Bool
 	browser *attBrowser  // UI goroutine only
 	plus    *popups.Menu // the + menu last opened (UI goroutine only)
+	// plusOpen is ShortcutsMenuTriggerButton's S, the + drawn open: set
+	// when its menu opens (onPopoverOpen), cleared when it closes
+	// (onPopoverClose) or by a double click, but not when a click on the
+	// + toggles the menu shut, which never calls onPopoverClose (so the
+	// + stays turned then, as Slack's does). UI goroutine only.
+	plusOpen, plusToggling bool
 
 	// insertLink puts text linked to url at the owning composer's caret
 	// (the + menu's Workflow row, WorkflowItem)
@@ -814,23 +820,31 @@ func (a *attachments) Menu(anchor image.Rectangle, pm plusMenu) {
 		}
 	}
 	// the shortcuts menu's template menu is 360 wide
-	o := popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 360}
+	var m *popups.Menu
+	o := popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 360, OnClose: func() {
+		if !a.plusToggling && (a.plus == nil || a.plus == m) {
+			a.plusOpen = false // onPopoverClose (D): x(false)
+		}
+	}}
 	if !pm.blocked {
 		o.ScrimAfter = plusScrimDelay
 	}
-	a.plus = popups.NewMenuOpts(a.h, items, o)
-	a.h.ShowOverlay(a.plus)
+	m = popups.NewMenuOpts(a.h, items, o)
+	a.plus, a.plusOpen = m, true // onPopoverOpen (L): x(true)
+	a.h.ShowOverlay(m)
 }
 
 // closePlusMenu closes the + menu if it's open and reports whether it
-// was (the trigger's toggle).
+// was: the trigger's toggle, which leaves plusOpen as it is.
 func (a *attachments) closePlusMenu() bool {
 	m := a.plus
 	a.plus = nil
 	if m == nil || m.Dismissed() {
 		return false
 	}
+	a.plusToggling = true
 	m.Dismiss()
+	a.plusToggling = false
 	return true
 }
 

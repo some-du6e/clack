@@ -43,7 +43,10 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/app.go`, `app/clack_asked_test.go`, `app/clack_asked_x11_test.go`, `op/paint/clack_live.go`,
 `io/input/clack_replay.go`, `io/input/clack_replay_test.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
-`gpu/headless/clack_live_test.go` and
+`gpu/headless/clack_live_test.go`, `internal/clickrule/clickrule.go`,
+`gesture/clack_dblclick*.go`, `gesture/gesture_test.go`,
+`app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
+`app/clack_titlebar_darwin_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2044,3 +2047,62 @@ Patch 40's page aging, with it (`fboSet.resize`):
   wide and tall was made again on every frame that used it, and the shrink
   above let pages used now and then fall into that too
   (`TestClackAtlasGrowKeepsSize`).
+
+## 48. gesture, io/pointer, app: a run of clicks counts by the platform's rule, as Chromium's does
+
+`internal/clickrule/clickrule.go` (new), `gesture/gesture.go` (`Click`,
+`Click.Update`), `gesture/clack_dblclick.go` (`count`, `moved`,
+`DoubleClickTime`), `io/pointer/pointer.go` (`Event.Clicks`),
+`app/os_macos.go` (`gio_onMouse`), `app/clack_dblclick_windows.go`,
+`app/internal/windows/clack_dblclick.go`, `app/clack_dblclick_macos.go`.
+
+Upstream makes a press the next click of a run (`NumClicks` 2, 3, …) when
+it comes less than a fixed 200 ms after the last press, wherever it lands.
+Chromium, Slack's desktop app, counts by the platform, and most double
+clicks are slower than 200 ms: on Windows, whose default is 500 ms, two
+clicks 300 ms apart were two single clicks in Clack. The composer's +
+opened and closed its menu instead of running the file chooser (Karim,
+2026-11-17), and a double click on a word placed the caret.
+
+`Click` now counts each press by `clickrule.Current()`, which package app
+sets for its backend in an init:
+
+- Windows: Blink's `WebMouseEventBuilder::Build`
+  (`ui/events/blink/web_input_event_builders_win.cc`), where Chrome's
+  pages get their click counts. A press no later than `GetDoubleClickTime()`
+  after the last, and within half of `SM_CXDOUBLECLK` and `SM_CYDOUBLECLK`
+  of the run's first press, counts on, with no cap. A move or a leave out
+  of that box ends the run, so on Windows `Click` also asks for `Move` and
+  `Drag`. Chromium reads both settings on every event, and so does `Read`
+  on every press: a change in the Mouse settings applies to the next click.
+- macOS: Chromium takes AppKit's count (`[event clickCount]`,
+  `components/input/web_input_event_builders_mac.mm`), so `gio_onMouse`
+  passes it on in the new `pointer.Event.Clicks` and `Click` uses it as
+  is: AppKit's own time and distance, run across widgets as Chromium's is.
+  A press without it (a test's) counts on within
+  `NSEvent.doubleClickInterval`, read on every press, and 2 px.
+- X11, Wayland and the rest: `ui::MouseEvent::GetRepeatCount` and
+  `IsRepeatedClickEvent` (`ui/events/event.cc`), which every native mouse
+  event of Chromium's Linux backends goes through (`InitializeNative`):
+  500 ms (`kDoubleClickTimeMs`; Chromium doesn't read GTK's
+  gtk-double-click-time or XSETTINGS' Net/DoubleClickTime, and neither
+  does this), 2 px either way of the last press (`kDoubleClickWidth`,
+  `kDoubleClickHeight` 4), the same flags, so a press with other
+  modifiers starts over, and a fourth quick click is a single again
+  (`SetClickCount` stops at 3 and its triple-click flag makes the next
+  press's flags differ).
+
+Presses at the same time still count on: Chromium skips those as one
+native event processed twice, but in Gio they're a test's, and upstream
+counted them. `gesture.DoubleClickTime()` is the platform's interval now,
+for code that counts clicks itself (Clack's link clicks in richview, its
+plugin DOM's dblclick in slackc, the column resizer and the composer's
+seeded click; richview and slackc have stock-Gio shims,
+`gio_patch48*.go`). Tests: `gesture` `TestMouseClicks`,
+`TestClackClickRuleDefault`, `TestClackClickRuleWindows` (the rule read
+again after the setting changes), `TestClackClickOSCount`; on real
+windows, `TestClackDoubleClickWindows` (SendInput clicks 400 ms apart at
+`SetDoubleClickTime` 500 and 300; `CLACK_WINDOWS_DBLCLICK_TESTS`, ci's
+windows-applog job) and `TestClackClickCountMac` (AppKit's counts through
+`gio_onMouse`; `CLACK_MACOS_WINDOW_TESTS`, ci's macos job, with a click
+area added to the title bar tests' window).
