@@ -42,7 +42,7 @@ After a click or a drag nothing is copied yet. The shot is shown frozen over the
 
 A blurred rectangle holds nothing of what was under it. It is filled from the nearest pixels outside every rectangle (on each side, level with the pixel, the nearer side weighing more), then smoothed 6 dp. It is not a blur of its own pixels, so no deblurring or sharpening can bring a name or a face back. The rectangles are painted over the shot before the margin is blurred, so the margin's smear carries nothing of them either. `TestComposeRedactKeepsNothingInside` composes two shots that differ only under a rectangle and requires the two images to be identical. The report's text says how many rectangles the reporter blurred.
 
-Then (at once for a plain click, on Enter for the review) Clack:
+Then (at once for a Shift+click, on Enter for the review) Clack:
 
 1. draws the report as a panel under the shot, on the CPU with the Go fonts. The image is as wide as the shot, or as the panel's 600 dp minimum for a small one (the shot sits centred above the panel at its own size),
 2. copies that one image to the clipboard, so a paste in #clack carries both,

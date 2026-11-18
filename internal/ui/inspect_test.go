@@ -3,8 +3,8 @@ package ui
 // The inspect tool (inspect_wire.go, internal/ui/inspect) on the fake
 // Slack (synthetic; nothing talks to Slack): the gated shortcut starts a
 // session, the reaction pill under the pointer is outlined as Slack's
-// UnstyledButton in Reaction, ↑ widens the pick to the Reaction, a click
-// copies one image and saves the report, whose text names the component,
+// UnstyledButton in Reaction, ↑ widens the pick to the Reaction, a
+// Shift+click copies one image at once and saves the report, whose text names the component,
 // element and rect, tags the ids and holds no content, and the click
 // never reaches the pill: after the session it takes clicks again.
 
