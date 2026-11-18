@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clack · a fast, native desktop client for Slack</title>
+<meta name="description" content="Clack is a desktop client for Slack written in Go. One native window draws everything on your GPU, with no browser engine inside. Free and open source for Windows, macOS and Linux.">
+<!--#if preview--><meta name="robots" content="noindex, nofollow">
+<!--#endif--><!--#if site--><link rel="canonical" href="{{site.canonical}}">
+<!--#endif--><meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#110e18" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Clack">
+<meta property="og:title" content="Clack · a fast, native desktop client for Slack">
+<meta property="og:description" content="One native window, no browser engine inside. Shows your workspace in about a second. Free and open source for Windows, macOS and Linux.">
+<!--#if site--><meta property="og:url" content="{{site.canonical}}">
+<meta property="og:image" content="{{site.og_image}}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Clack's main window on a made-up demo workspace">
+<!--#endif--><meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<style>{{{css}}}</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="./" aria-label="Clack, home">{{{icon.top}}}<span aria-hidden="true">Clack</span></a>
+    <nav class="nav" aria-label="Sections">
+      <ul>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#speed">Speed</a></li>
+        <li><a href="#plugins">Plugins</a></li>
+        <li><a href="#demo">Demo</a></li>
+      </ul>
+    </nav>
+    <div class="top-end">
+      <a class="gh" href="{{repo.url}}">GitHub</a>
+      <a class="btn btn-sm" href="#download">Download</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero" aria-labelledby="hero-h">
+  <div class="wrap">
+    <a class="news" href="{{release.url}}"><span class="news-tag">New in {{release.short}}</span><span class="news-text">{{release.headline}}</span></a>
+    <h1 id="hero-h">Your workspace, without the browser</h1>
+    <p class="lede">Clack is a desktop client for Slack, written in Go. There's no Chromium or Electron inside. One native window draws every pixel on your GPU, and your workspace is on screen in about a second.</p>
+    <div class="cta">
+      <a class="btn btn-lg" id="hero-dl" href="#download">Download Clack</a>
+      <a class="btn btn-lg btn-ghost" href="#demo">Try the demo</a>
+    </div>
+    <p class="fine">Free and MIT licensed · Alpha builds for Windows, macOS and Linux</p>
+  </div>
+  <figure class="shot shot-hero">
+    <div class="frame"><x-shot name="hero" eager sizes="(min-width: 1168px) 1072px, (min-width: 640px) calc(100vw - 48px), calc(100vw - 32px)" alt="Clack's window on a made-up workspace. The sidebar lists channels and sections, #sales-leaderboard shows a bar chart someone posted with reactions and replies under it, and the message box sits at the bottom."></x-shot></div>
+    <figcaption class="hero-note">Every screenshot on this page is <code>clack demo</code>, a made-up company, captured by Clack's CI.</figcaption>
+  </figure>
+</section>
+
+<section class="sec" id="features" aria-labelledby="features-h">
+  <div class="wrap">
+    <header class="sec-head">
+      <h2 id="features-h">Everything where you left it</h2>
+      <p>Clack copies the 2026 Slack desktop app's layout, so the sidebar, sections, tabs, threads and menus are where you'd look for them. It's an alpha. Where a screen isn't built yet, Clack hides its menu item instead of faking it.</p>
+    </header>
+
+    <div class="row">
+      <div class="row-text">
+        <p class="eyebrow">Channels</p>
+        <h3>Channels, with everything in them</h3>
+        <p>Grouped messages, reactions, files and link previews, with canvases, lists, pins and bookmarks in the tabs along the top. A live huddle shows in the channel and in the sidebar, along with the faces of the people in it.</p>
+      </div>
+      <figure class="shot"><div class="frame"><x-shot name="channel" sizes="(min-width: 1248px) 636px, (min-width: 1024px) calc((100vw - 112px) * 7 / 12), (min-width: 640px) calc(100vw - 48px), calc(100vw - 32px)" alt="#party-planning-crew in Clack. Messages with reactions, a saved message, a New line, and a huddle in progress with a Join Huddle button. The sidebar shows three people in the huddle."></x-shot></div></figure>
+    </div>
+
+    <div class="row row-flip">
+      <div class="row-text">
+        <p class="eyebrow">Threads</p>
+        <h3>Threads open next to the conversation</h3>
+        <p>A thread opens in a pane on the right with its own message box, so the channel stays in view. Tick "Also send to" and the reply goes to the channel too. Channel details open in the same pane.</p>
+      </div>
+      <figure class="shot"><div class="frame"><x-shot name="thread" sizes="(min-width: 1248px) 636px, (min-width: 1024px) calc((100vw - 112px) * 7 / 12), (min-width: 640px) calc(100vw - 48px), calc(100vw - 32px)" alt="#it-help with a thread open on the right. The thread starts with a photo of a jammed printer and has ten replies, and its message box has an Also send to #it-help checkbox."></x-shot></div></figure>
+    </div>
+
+    <div class="row">
+      <div class="row-text">
+        <p class="eyebrow">Activity</p>
+        <h3>One list for everything that needs you</h3>
+        <p>Mentions, thread replies, reactions, DMs and invites collect in Activity, with All, DMs, Mentions and Threads tabs and an Unreads filter. Pick an item and its conversation opens beside the list.</p>
+      </div>
+      <figure class="shot"><div class="frame"><x-shot name="activity" sizes="(min-width: 1248px) 636px, (min-width: 1024px) calc((100vw - 112px) * 7 / 12), (min-width: 640px) calc(100vw - 48px), calc(100vw - 32px)" alt="Clack's Activity view. A list of mentions and direct messages on the left, and on the right the message the selected mention points to, open in #general."></x-shot></div></figure>
+    </div>
+
+    <div class="row-themes">
+      <div class="row-text sec-head">
+        <p class="eyebrow">Themes</p>
+        <h3 class="h2">Every Slack theme, light or dark</h3>
+        <p>All 28 of Slack's theme presets, custom colours, and dark mode that can follow your system. The theme you pick is saved to your Slack account, the way Slack saves it.</p>
+      </div>
+      <ul class="themes">
+        <li><figure><div class="frame"><x-shot name="theme-jade" sizes="(min-width: 1248px) 282px, (min-width: 1024px) calc((100vw - 120px) / 4), (min-width: 640px) calc((100vw - 72px) / 2), calc((100vw - 48px) / 2)" alt="Clack in the Jade theme, light mode: a green sidebar and rail."></x-shot></div><figcaption><b>Jade</b> · light</figcaption></figure></li>
+        <li><figure><div class="frame"><x-shot name="theme-lagoon" sizes="(min-width: 1248px) 282px, (min-width: 1024px) calc((100vw - 120px) / 4), (min-width: 640px) calc((100vw - 72px) / 2), calc((100vw - 48px) / 2)" alt="Clack in the Lagoon theme, light mode: a deep blue sidebar and rail."></x-shot></div><figcaption><b>Lagoon</b> · light</figcaption></figure></li>
+        <li><figure><div class="frame"><x-shot name="theme-clementine" sizes="(min-width: 1248px) 282px, (min-width: 1024px) calc((100vw - 120px) / 4), (min-width: 640px) calc((100vw - 72px) / 2), calc((100vw - 48px) / 2)" alt="Clack in the Clementine theme, light mode: an orange sidebar and rail."></x-shot></div><figcaption><b>Clementine</b> · light</figcaption></figure></li>
+        <li><figure><div class="frame"><x-shot name="theme-mood-indigo-dark" sizes="(min-width: 1248px) 282px, (min-width: 1024px) calc((100vw - 120px) / 4), (min-width: 640px) calc((100vw - 72px) / 2), calc((100vw - 48px) / 2)" alt="Clack in the Mood Indigo theme, dark mode: dark indigo chrome around a dark message list."></x-shot></div><figcaption><b>Mood Indigo</b> · dark</figcaption></figure></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="speed" aria-labelledby="speed-h">
+  <div class="wrap">
+    <h2 id="speed-h">Quick to open, light while it runs</h2>
+    <p class="sub">Measured by Clack's own perf workflow on a synthetic workspace the size of the Hack Club Slack, on GitHub's runners with no GPU at all.</p>
+    <dl class="stats">
+      <div class="stat"><dt>from launch to Clack's first frame<sup><a href="#m1" aria-label="Note 1, how this was measured">1</a></sup></dt><dd>0.3<small> s</small></dd></div>
+      <div class="stat"><dt>until a warm start has drawn everything, images included<sup><a href="#m1" aria-label="Note 1, how this was measured">1</a></sup></dt><dd>1<small> s</small></dd></div>
+      <div class="stat"><dt>of memory on Windows after a warm start, with 32,000 users and over 65,000 custom emoji<sup><a href="#m2" aria-label="Note 2, how this was measured">2</a></sup></dt><dd>258<small> MB</small></dd></div>
+    </dl>
+    <a class="notes-link" href="#measured">How we measured these</a>
+  </div>
+</section>
+
+<section class="sec" id="plugins" aria-labelledby="plugins-h">
+  <div class="wrap plug">
+    <div class="plug-text">
+      <p class="eyebrow">Plugins</p>
+      <h2 class="h2" id="plugins-h">Bring your Taut and Slick plugins</h2>
+      <p>Taut and Slick are client mods for Slack, and Clack runs their plugins without changing them. Each one runs in a sandboxed JavaScript engine, QuickJS compiled to WebAssembly, and Clack turns its React components into native widgets.</p>
+      <p class="big"><b>{{plugins.count}}</b><span>plugins in the built-in Library<sup><a href="#m3" aria-label="Note 3, where this number comes from">3</a></sup></span></p>
+      <p>{{plugins.both}} of them come in both a Taut and a Slick version. A weekly benchmark runs every version, and Install picks the one that works better in Clack.</p>
+      <p class="credit">Taut is by Jeremy and contributors, and Slick is by 3kh0 and contributors. Their plugins are GPLv3 and belong to their authors.</p>
+    </div>
+    <div class="lib">
+      <p class="lib-head">In both Taut and Slick</p>
+      <ul class="chips">{{{plugins.chips}}}</ul>
+    </div>
+  </div>
+</section>
+
+<section class="sec sec-soft" id="more" aria-labelledby="more-h">
+  <div class="wrap">
+    <header class="sec-head">
+      <h2 id="more-h">Also in Clack</h2>
+    </header>
+    <ul class="grid">
+      <li class="card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="5" height="7" rx="2"/><rect x="16" y="14" width="5" height="7" rx="2"/></svg><h3>Huddles</h3><p>Join from the channel, from the sidebar or when someone rings you. Captions and stickers work too.</p></li>
+      <li class="card"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/></svg><h3>Canvases and lists</h3><p>Open them from a channel's tabs, file them in your sections, and save list items for later.</p></li>
+      <li class="card"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><h3>Search and Ctrl+K</h3><p>Search with Slack's filters and suggestions, or jump to any channel or person with Ctrl+K, ⌘K on a Mac.</p></li>
+      <li class="card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><h3>Notifications</h3><p>Desktop notifications on Windows, macOS and Linux. On a Mac you can reply right from the notification.</p></li>
+      <li class="card"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l3 3M14 9l2 2"/></svg><h3>Its own sign-in</h3><p>You sign in through your browser, the way the Slack app does, and Clack gets a session of its own. Nothing is copied out of your browser.</p></li>
+      <li class="card"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.6-4.5M4 4v3h3"/><path d="M4 13a8 8 0 0 0 14.6 4.5M20 20v-3h-3"/></svg><h3>Updates itself</h3><p>On all three systems Clack downloads each new release, checks it against the release's SHA256SUMS and applies it when you restart.</p></li>
+    </ul>
+  </div>
+</section>
+
+<section class="sec" id="demo" aria-labelledby="demo-h">
+  <div class="wrap demo">
+    <div>
+      <p class="eyebrow">Demo</p>
+      <h2 class="h2" id="demo-h">Try it without an account</h2>
+      <p>Run Clack with <code>demo</code> and it opens Quillfeather Paper Co., a made-up paper company. A dozen coworkers post, reply, react, run polls and start huddles while you look around.</p>
+      <p>The demo runs its own fake Slack server on your machine. Before it starts, Clack refuses every connection that isn't to your own computer, so it can't reach Slack.</p>
+    </div>
+    <pre class="term"><code><span class="c"># Linux, from the .deb or .rpm</span>
+<span class="p">$ </span>clack demo
+<span class="c"># macOS</span>
+<span class="p">$ </span>/Applications/Clack.app/Contents/MacOS/clack demo
+<span class="c"># Windows, in PowerShell</span>
+<span class="p">&gt; </span>&amp; "$env:LOCALAPPDATA\Programs\Clack\Clack.exe" demo</code></pre>
+  </div>
+</section>
+
+<section class="sec sec-soft" id="download" aria-labelledby="download-h">
+  <div class="wrap">
+    <header class="sec-head">
+      <h2 id="download-h">Download Clack</h2>
+      <p class="dl-meta">{{release.tag}} · released {{release.date}} · <a href="{{release.url}}">What's new</a></p>
+    </header>
+    <ul class="dl">
+      <li class="dl-card" data-os="win" data-name="Windows">
+        <span class="yours">Your system</span>
+        <h3>Windows</h3>
+        <p class="req">Windows 10 and 11, x64</p>
+        <a class="btn" data-primary href="{{dl.win.url}}">Download the installer</a>
+        <p class="file">{{dl.win.name}} · {{dl.win.size}}</p>
+        <p class="alt">Or a portable .zip for <a href="{{dl.win_zip.url}}">x64</a> or <a href="{{dl.win_arm.url}}">ARM64</a>.</p>
+      </li>
+      <li class="dl-card" data-os="mac" data-name="macOS">
+        <span class="yours">Your system</span>
+        <h3>macOS</h3>
+        <p class="req">macOS 11 or later, Apple silicon and Intel</p>
+        <a class="btn" data-primary href="{{dl.mac.url}}">Download the .dmg</a>
+        <p class="file">{{dl.mac.name}} · {{dl.mac.size}}</p>
+        <p class="alt">Or the same app as a <a href="{{dl.mac_zip.url}}">.zip</a>.</p>
+      </li>
+      <li class="dl-card" data-os="linux" data-name="Linux">
+        <span class="yours">Your system</span>
+        <h3>Linux</h3>
+        <p class="req">Any distro with Wayland or X11, x86_64</p>
+        <a class="btn" data-primary href="{{dl.linux.url}}">Download the AppImage</a>
+        <p class="file">{{dl.linux.name}} · {{dl.linux.size}}</p>
+        <p class="alt">Or a <a href="{{dl.deb.url}}">.deb</a> or <a href="{{dl.rpm.url}}">.rpm</a>. For ARM64: <a href="{{dl.linux_arm.url}}">AppImage</a>, <a href="{{dl.deb_arm.url}}">.deb</a>, <a href="{{dl.rpm_arm.url}}">.rpm</a>.</p>
+      </li>
+    </ul>
+    <p class="dl-note">Clack is built for the Hack Club Slack, an Enterprise Grid, and other workspaces work too. These are alpha builds, and Apple and Microsoft haven't signed them, so the first launch shows a warning. <a href="{{repo.url}}#install">The install guide</a> says what to click. Every release has a <a href="{{dl.sums.url}}">SHA256SUMS</a> file to check your download against.</p>
+  </div>
+</section>
+
+<section class="notes" id="measured" aria-labelledby="measured-h">
+  <div class="wrap">
+    <h2 id="measured-h">How we measured</h2>
+    <ol>
+      <li id="m1">Startup comes from <a href="{{repo.url}}/actions/runs/44184290543">perf run 44184290543</a> on commit 1f17ed9, 17 Nov 2026. The release binary ran on a GitHub Actions ubuntu-latest runner under Xvfb with Mesa's llvmpipe software renderer. It talked to fakeslackd, a synthetic workspace the size of the Hack Club Slack, with 150 ms added to every API call and 40 ms to every image, and with six plugins on. Over five starts the first frame came 257 to 319 ms after the process started, and the window settled, meaning nothing changed for 1.5 s, after 769 to 1,090 ms.</li>
+      <li id="m2">Memory comes from the same run's Windows job, on a windows-latest runner with no GPU, so Direct3D 11 ran on Microsoft's software renderer. The fake workspace had 65,846 custom emoji, 32,000 users, 2,006 user groups, 300 channels and 120 DMs. 258 MB is the private working set, Task Manager's Memory column, once a warm start settled. A cold start that loads all 32,000 users measured 325 MB. After scrolling through channels of 6,000 messages it peaked at 818 MB, and ten idle minutes later it was back to 527 MB. On the Linux runner the warm start used 230 MB.</li>
+      <li id="m3">The plugin count comes from the Library's index of {{plugins.generated}}, which lists {{plugins.builds}} builds of {{plugins.count}} plugins.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="cta-band" aria-labelledby="cta-h">
+  <div class="wrap">
+    <h2 id="cta-h">Your workspace in about a second</h2>
+    <div class="cta">
+      <a class="btn btn-lg btn-amber" id="cta-dl" href="#download">Download Clack</a>
+      <a class="btn btn-lg btn-line" href="{{repo.url}}">View the source on GitHub</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <a class="brand" href="./" aria-label="Clack, home">{{{icon.foot}}}<span aria-hidden="true">Clack</span></a>
+        <p class="foot-tag">A fast, native desktop client for Slack. Free and MIT licensed.</p>
+      </div>
+      <nav aria-labelledby="f1"><h2 id="f1">Clack</h2><ul><li><a href="#features">Features</a></li><li><a href="#speed">Speed</a></li><li><a href="#plugins">Plugins</a></li><li><a href="#download">Download</a></li></ul></nav>
+      <nav aria-labelledby="f2"><h2 id="f2">Project</h2><ul><li><a href="{{repo.url}}">Source code</a></li><li><a href="{{repo.url}}/releases">Releases</a></li><li><a href="{{repo.url}}/issues">Report a bug</a></li><li><a href="{{repo.url}}/blob/main/LICENSE">MIT License</a></li></ul></nav>
+      <nav aria-labelledby="f3"><h2 id="f3">Docs</h2><ul><li><a href="{{repo.url}}#install">Install guide</a></li><li><a href="{{repo.url}}#sign-in">Signing in</a></li><li><a href="{{repo.url}}/blob/main/docs/PLUGINS.md">Plugins</a></li><li><a href="{{repo.url}}/blob/main/docs/SECURITY.md">Security review</a></li></ul></nav>
+    </div>
+    <div class="foot-legal">
+      <p>Clack is an independent open-source project. Slack Technologies didn't make it and doesn't endorse or support it. Slack is a trademark of Slack Technologies, LLC.</p>
+      <p>© 2026 some-du6e and the Clack contributors.</p>
+    </div>
+  </div>
+</footer>
+<script>{{{js}}}</script>
+</body>
+</html>

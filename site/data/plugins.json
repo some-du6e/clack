@@ -1,0 +1,462 @@
+{
+  "generated": "2026-11-16T16:01:43.373Z",
+  "builds": 96,
+  "plugins": [
+    {
+      "name": "Account Switcher",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Admin Backend",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Anonymise File Names",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Anonymize Filenames",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "bChannel",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Better Blocking",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Better GIFs",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Better Huddles",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Better Typing Indicator",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Bring Back Slackbot",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Browser Pop-outs",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Call Timer",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Censorship",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Channel List Typing",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Character Counter",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Chat Tabs",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Clear URLs",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Click to Load",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Copy Reacted",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Custom Fonts",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Custom Name Recording",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Custom Slackbot",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Custom Sounds",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "DeArrow",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Experiments",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Faster Slack",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Haiku Warning",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "HCA Status",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Hide Resolved Tickets",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Huddle Activity",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Huddle Mute Detector",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Human Count",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "IDV Status",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Ignore Time",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Installed Apps",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Invisible Forward",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Last Seen",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Let Me See",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Local Time",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Mention Profiles",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Message Logger",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Native At Channel",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Nicknames",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "No Track",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "No Tracking",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Not Shit Markdown",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "NoUpsell",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Office Hours",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "oneko",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Oneko",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Online Count",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Owl Mode",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Private Channel",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Private Channel Mapper",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Quick Join",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Quiet Spotify",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Real Markdown",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Restricted Channel Warning",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Self Care",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Shinigami Eyes",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Show Real User",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Show Sending Bot",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Shut Up Slackbot",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Silent Typing",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Slack Fixes",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "Slick MCP",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Slim Message Box",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Snappy",
+      "systems": [
+        "slick"
+      ]
+    },
+    {
+      "name": "Streamer Mode",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Thread Jump",
+      "systems": [
+        "taut"
+      ]
+    },
+    {
+      "name": "User Pronouns",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    },
+    {
+      "name": "Who Reacted",
+      "systems": [
+        "slick",
+        "taut"
+      ]
+    }
+  ]
+}

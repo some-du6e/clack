@@ -1,0 +1,65 @@
+name: site-pages
+# Deploys site/ to GitHub Pages as https://getclack.club. NOT ENABLED: it has
+# no automatic trigger, Pages is off for the repository, and no custom
+# domain is set. site/README.md ("Going live") has the steps and the
+# Porkbun DNS records; nothing here runs until they're done.
+#
+# The build fetches the newest release and the plugin Library index first
+# (build.mjs --refresh), so each deploy links the current downloads, and
+# copies site/CNAME into the upload. Once Pages is on, uncomment
+# workflow_run below to redeploy after every release, and push to deploy
+# site changes that land on main.
+on:
+  workflow_dispatch:
+  # workflow_run:
+  #   workflows: [release]
+  #   types: [completed]
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - "site/**"
+  #     - "assets/icon.svg"
+  #     - ".github/workflows/site-pages.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: build (newest release, site.json's url as the canonical base)
+        working-directory: site
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node build.mjs --refresh --strict && node tools/check.mjs
+      - name: CNAME (getclack.club)
+        run: cp site/CNAME site/dist/CNAME && cat site/dist/CNAME
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

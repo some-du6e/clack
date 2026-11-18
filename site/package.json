@@ -1,0 +1,21 @@
+{
+  "name": "clack-site",
+  "private": true,
+  "type": "module",
+  "description": "Clack's website. build.mjs needs only Node; the dependencies below are CI and image tooling.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node tools/check.mjs",
+    "weigh": "node tools/weigh.mjs",
+    "images": "node tools/images.mjs"
+  },
+  "devDependencies": {
+    "@lhci/cli": "0.16.0"
+  },
+  "optionalDependencies": {
+    "sharp": "0.35.5"
+  }
+}

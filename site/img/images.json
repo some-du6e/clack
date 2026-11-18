@@ -1,0 +1,170 @@
+{
+  "hero": {
+    "width": 1440,
+    "height": 900,
+    "widths": [
+      720,
+      1080,
+      1440
+    ],
+    "files": {
+      "light": "hero-light",
+      "dark": "hero-dark"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "readme/demo-main-light.png",
+      "dark": "readme/demo-main-dark.png"
+    }
+  },
+  "channel": {
+    "width": 1440,
+    "height": 900,
+    "widths": [
+      640,
+      960,
+      1200
+    ],
+    "files": {
+      "light": "channel-light",
+      "dark": "channel-dark"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "readme/demo-huddle-light.png",
+      "dark": "readme/demo-huddle-dark.png"
+    }
+  },
+  "thread": {
+    "width": 1440,
+    "height": 900,
+    "widths": [
+      640,
+      960,
+      1200
+    ],
+    "files": {
+      "light": "thread-light",
+      "dark": "thread-dark"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "readme/demo-thread-light.png",
+      "dark": "readme/demo-thread-dark.png"
+    }
+  },
+  "activity": {
+    "width": 1440,
+    "height": 900,
+    "widths": [
+      640,
+      960,
+      1200
+    ],
+    "files": {
+      "light": "activity-light",
+      "dark": "activity-dark"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "readme/demo-activity-light.png",
+      "dark": "readme/demo-activity-dark.png"
+    }
+  },
+  "theme-jade": {
+    "width": 720,
+    "height": 450,
+    "widths": [
+      360,
+      540,
+      720
+    ],
+    "files": {
+      "light": "theme-jade"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "site/demo-theme-jade-light.png",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 720,
+        "height": 450
+      }
+    }
+  },
+  "theme-lagoon": {
+    "width": 720,
+    "height": 450,
+    "widths": [
+      360,
+      540,
+      720
+    ],
+    "files": {
+      "light": "theme-lagoon"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "site/demo-theme-lagoon-light.png",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 720,
+        "height": 450
+      }
+    }
+  },
+  "theme-clementine": {
+    "width": 720,
+    "height": 450,
+    "widths": [
+      360,
+      540,
+      720
+    ],
+    "files": {
+      "light": "theme-clementine"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "site/demo-theme-clementine-light.png",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 720,
+        "height": 450
+      }
+    }
+  },
+  "theme-mood-indigo-dark": {
+    "width": 720,
+    "height": 450,
+    "widths": [
+      360,
+      540,
+      720
+    ],
+    "files": {
+      "light": "theme-mood-indigo-dark"
+    },
+    "source": {
+      "artifact": "demo-shots",
+      "run": 44198572787,
+      "light": "site/demo-theme-mood-indigo-dark.png",
+      "crop": {
+        "left": 0,
+        "top": 0,
+        "width": 720,
+        "height": 450
+      }
+    }
+  }
+}

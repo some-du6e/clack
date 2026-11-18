@@ -1,0 +1,68 @@
+{
+  "tag": "v0.1.0-alpha.105",
+  "published": "2026-11-17T17:45:01Z",
+  "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.105",
+  "headline": "Mentions that wrap across lines draw like Slack's.",
+  "assets": [
+    {
+      "name": "Clack-0.1.0-alpha.105-aarch64.AppImage",
+      "size": 30378504,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-aarch64.AppImage"
+    },
+    {
+      "name": "Clack-0.1.0-alpha.105-macos-universal.dmg",
+      "size": 73589369,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-macos-universal.dmg"
+    },
+    {
+      "name": "Clack-0.1.0-alpha.105-macos-universal.zip",
+      "size": 66619613,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-macos-universal.zip"
+    },
+    {
+      "name": "Clack-0.1.0-alpha.105-windows-amd64-setup.exe",
+      "size": 26912615,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-windows-amd64-setup.exe"
+    },
+    {
+      "name": "Clack-0.1.0-alpha.105-windows-amd64.zip",
+      "size": 33647584,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-windows-amd64.zip"
+    },
+    {
+      "name": "Clack-0.1.0-alpha.105-windows-arm64.zip",
+      "size": 31977848,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-windows-arm64.zip"
+    },
+    {
+      "name": "Clack-0.1.0-alpha.105-x86_64.AppImage",
+      "size": 31914488,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-x86_64.AppImage"
+    },
+    {
+      "name": "clack-0.1.0-alpha.105.aarch64.rpm",
+      "size": 34235954,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack-0.1.0-alpha.105.aarch64.rpm"
+    },
+    {
+      "name": "clack-0.1.0-alpha.105.x86_64.rpm",
+      "size": 35398450,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack-0.1.0-alpha.105.x86_64.rpm"
+    },
+    {
+      "name": "clack_0.1.0-alpha.105_amd64.deb",
+      "size": 34111964,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack_0.1.0-alpha.105_amd64.deb"
+    },
+    {
+      "name": "clack_0.1.0-alpha.105_arm64.deb",
+      "size": 33043508,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack_0.1.0-alpha.105_arm64.deb"
+    },
+    {
+      "name": "SHA256SUMS",
+      "size": 1144,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/SHA256SUMS"
+    }
+  ]
+}
