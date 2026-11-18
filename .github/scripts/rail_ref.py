@@ -25,14 +25,34 @@ scope's, from rail.json):
 .p-tab_rail__button:hover or .c-button--focus-visible:focus are copied with
 those replaced by classes. "clicked" is Slack after a mouse click: the
 button is active and has no c-button--focus-visible (a mouse focus shows no
-ring). "focus" (keyboard focus, :focus-visible) is drawn for Slack only:
-Clack's rail takes no keyboard focus.
+ring). More's click opens its menu (BrowsePeekTrigger's forceOpenOnClick),
+and while it shows PeekTrigger's .p-peek_trigger--is-peek-visible, the
+div between the tab menu and the button, keeps the hover look (the tile,
+content-inv-pry, the icon at 1.15), Slack's stylesheet drawing it; the
+menu's own edge, 6px right of the button, falls in the 8px the measures
+leave out. "focus" (keyboard focus, :focus-visible) is drawn for Slack
+only: Clack's rail takes no keyboard focus.
 
 Each crop is measured against the rail colour at its left edge: the tile
 (any change over 10), the icon and label (strong ink), the badge's box (ink
 in the badge's corner) and ring_px, pixels in a 3px band around the badge
 darker than both the tile and the rail (a ring in the rail colour drawn
-over the tile reads as a border).
+over the tile reads as a border), and ink, the label's pixel farthest from
+the rail colour.
+
+Slack's side is drawn from Slack's own numbers only: every shot takes its
+account theme's tokens (Slack's default theme for the shots without one;
+TestRailShots' railShotThemes: Karim's #FED4BE and a dark custom colour)
+as Slack's code computes them, internal/ui/testdata/theme-oracle.json: the
+root scope's --dt_color-theme-*, the inverted scope's when useInvertedTheme
+puts the rail there, and .p-theme_background's radial + conic gradient over
+the case's stops, sized to the window and cut at each crop's window y, so
+the rail colour under a button is Slack's, not Clack's sampled one (each
+cell's gradient fills its whole 120px slot, past the crop's bottom, and the
+page under the cells is the primary stop). The
+rightmost 8px of a crop are left out of the measures (a peek card's edge
+can reach them), and "fill" is sampled inside the tile, clear of its
+corners and the icon.
 
 usage: rail_ref.py <shots dir> <slack css> <slackvars.go> <icons.json> <chrome> <platform>
 """
@@ -50,6 +70,16 @@ shots, css_path, vars_path, icons_path, chrome, platform = sys.argv[1:7]
 icons = json.load(open(icons_path))["icons"]
 spec = json.load(open(os.path.join(shots, "rail.json")))
 E = html.escape
+ORACLE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "internal", "ui", "testdata", "theme-oracle.json")
+oracle = json.load(open(ORACLE, encoding="utf-8"))["cases"] if os.path.exists(ORACLE) else []
+
+
+def oracle_case(theme, dark):
+    mode = "dark" if dark else "light"
+    for c in oracle:
+        if c["name"] == theme and c["mode"] == mode:
+            return c
+    raise SystemExit("theme-oracle.json has no %s %s case" % (theme, mode))
 
 # Slack's icon per tab (inactive, active)
 ICON = {
@@ -121,28 +151,47 @@ def button(b, state):
             " c-badge--max" if n > 99 else "", "99+" if n > 99 else n)
     elif b["dot"]:
         badge = '<span class="p-unread_dot"></span>'
-    return ('<div role="tablist" class="c-tabs__tab_menu c-tabs__tab_menu--vertical p-tab_rail__tab_menu">'
-            '<button class="%s" role="tab" aria-selected="%s"><span class="c-tabs__tab_content">'
-            '<div class="p-tab_rail__button__icon"><div class="p-tab_rail__button__icon_inner">%s</div></div>%s'
-            '<div class="p-tab_rail__button__label">%s</div></span></button></div>'
-            % (" ".join(cls), "true" if active else "false", svg(ICON[b["key"]][1 if active else 0]), badge, E(b["label"])))
+    btn = ('<button class="%s" role="tab" aria-selected="%s"><span class="c-tabs__tab_content">'
+           '<div class="p-tab_rail__button__icon"><div class="p-tab_rail__button__icon_inner">%s</div></div>%s'
+           '<div class="p-tab_rail__button__label">%s</div></span></button>'
+           % (" ".join(cls), "true" if active else "false", svg(ICON[b["key"]][1 if active else 0]), badge, E(b["label"])))
+    if b["key"] == "browse" and state == "clicked":  # More's menu open (the module doc)
+        btn = '<div class="p-peek_trigger p-peek_trigger--is-peek-visible">%s</div>' % btn
+    return '<div role="tablist" class="c-tabs__tab_menu c-tabs__tab_menu--vertical p-tab_rail__tab_menu">%s</div>' % btn
 
 
-def page(shot, cells, bg, rules):
+def page(shot, cells, rules):
     dark = shot["dark"]
+    scale = shot["scale"]
     t = tokens("slackVarsDark" if dark else "slackVarsLight")
-    root = ";".join("%s:%s" % kv for kv in t.items())
     inv, scope = "", ""
-    if not dark and shot.get("vars"):
-        inv = ".sk-client-theme--light-inverted-sidebar{%s}" % ";".join("%s:%s" % kv for kv in shot["vars"].items())
+    # Slack's tokens for the shot's account theme, from its own code
+    oc = oracle_case(shot.get("theme") or "default", dark)
+    t.update(oc["tokens"]["dark" if dark else "light"])
+    if oc["scopes"]["tabRail"] == "inverted":
+        inv = ".sk-client-theme--light-inverted-sidebar{%s}" % ";".join("%s:%s" % kv for kv in oc["tokens"]["inverted"].items())
         scope = " sk-client-theme--light-inverted-sidebar"
-    body = "".join('<div class="p-tab_rail%s" style="position:absolute;left:0;top:%dpx;width:70px;padding-top:0;overflow:visible">%s</div>'
-                   % (scope, i * 120 + 6, button(b, st)) for i, (b, st) in enumerate(cells))
+    root = ";".join("%s:%s" % kv for kv in t.items())
+    # .p-theme_background (getConicGradient: primary at the centre and 25/75%,
+    # highlight1 at 0/50/100%) over the whole window
+    st = oc["background"]
+    P, Hl = st[0], st[1] if len(st) > 1 else st[0]
+    grad = ("radial-gradient(circle at 50%% 50%%, %s 20%%, transparent 80%%), conic-gradient(from 45deg at 50%% 50%%, %s 0%%, %s 25%%, %s 50%%, %s 75%%, %s 100%%)"
+            % (P, Hl, P, Hl, P, Hl))
+    win = shot.get("win") or [70, 1000]
+    ww, wh = win[0] / scale, win[1] / scale
+
+    def cell(i, b, st):
+        # the crop: top px above the button, its window y = b["y"]
+        return ('<div class="p-tab_rail%s" style="position:absolute;left:0;top:%dpx;width:70px;height:120px;padding-top:%gpx;overflow:visible;'
+                'background:%s;background-size:%gpx %gpx;background-position:0px %gpx">%s</div>'
+                % (scope, i * 120, b["top"] / scale, grad, ww, wh, -b.get("y", 0) / scale, button(b, st)))
+    body = "".join(cell(i, b, st) for i, (b, st) in enumerate(cells))
     return ("<!doctype html><html><head><meta charset=utf-8><link rel=stylesheet href='%s'>"
             "<style>:root{%s;color-scheme:%s}%s%s html,body{margin:0;background:%s;font-family:Singer-Lato,Lato,sans-serif;"
             "font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}</style></head>"
             "<body class='%s'>%s</body></html>"
-            % (file_url(css_path), root, "dark" if dark else "light", inv, rules, bg, "sk-client-theme--dark" if dark else "", body))
+            % (file_url(css_path), root, "dark" if dark else "light", inv, rules, P, "sk-client-theme--dark" if dark else "", body))
 
 
 def file_url(p):
@@ -168,9 +217,10 @@ def measure(im, scale, top, has_badge):
     S = lambda v: int(round(v * scale))
     bx0, by0 = S(9), top
     tile = [None] * 4
-    fillpt = (bx0 + S(10), by0 + S(10))  # inside the tile, clear of the icon and badge
+    fillpt = (bx0 + S(12), by0 + S(24))  # inside the tile, clear of its corners, the icon and the badge
     fill = im.getpixel(fillpt)[:3]
     strong, ink = [], set()
+    w = max(1, w - S(8))  # a peek card's edge can reach the crop's right edge
     for y in range(h):
         for x in range(w):
             p = im.getpixel((x, y))[:3]
@@ -189,8 +239,16 @@ def measure(im, scale, top, has_badge):
 
     icon = [p for p in strong if S(16) <= p[0] - bx0 <= S(38) and S(14) <= p[1] - by0 <= S(39)]
     label = [p for p in strong if p[1] - by0 >= S(46)]
+    # the label's ink: its pixel farthest from the rail colour
+    inkc, far = None, -1
+    for y in range(min(h, by0 + S(46)), h):
+        for x in range(w):
+            p = im.getpixel((x, y))[:3]
+            if dist(p, bg) > far:
+                inkc, far = p, dist(p, bg)
     badge = [p for p in strong if has_badge and p[1] - by0 < S(24) and (p[0] - bx0 > S(38) or p[1] - by0 < S(14))]
-    out = {"bg": "#%02x%02x%02x" % bg, "fill": "#%02x%02x%02x" % fill, "icon": box(icon), "label": box(label), "badge": box(badge)}
+    out = {"bg": "#%02x%02x%02x" % bg, "fill": "#%02x%02x%02x" % fill, "icon": box(icon), "label": box(label), "badge": box(badge),
+           "ink": "#%02x%02x%02x" % inkc if inkc else None}
     if tile[0] is not None:
         out["tile"] = {"x0": tile[0] - bx0, "y0": tile[1] - by0, "x1": tile[2] - bx0, "y1": tile[3] - by0}
     ring = 0
@@ -218,11 +276,12 @@ report, bad = [], []
 for shot in spec:
     scale = shot["scale"]
     mode = "dark" if shot["dark"] else "light"
+    if shot.get("theme"):
+        mode = shot["theme"].replace(" ", "-") + "-" + mode
     name = "%s-%gx" % (mode, scale)
     crops = [Image.open(os.path.join(shots, b["file"])).convert("RGB") for b in shot["btns"]]
     if not crops:
         continue
-    bg = "#%02x%02x%02x" % crops[0].getpixel((1, crops[0].height // 2))[:3]
     cells = [(b, b["state"]) for b in shot["btns"]]
     # keyboard focus, Slack only: each button once, active where it can be
     seen = []
@@ -232,9 +291,11 @@ for shot in spec:
             fb = dict(b, state="focus", active=b["key"] in ("home", "dms", "activity"))
             cells.append((fb, "focus"))
     hp = os.path.join(shots, "slack-rail-%s.html" % name)
-    open(hp, "w", encoding="utf-8").write(page(shot, cells, bg, rules))
+    open(hp, "w", encoding="utf-8").write(page(shot, cells, rules))
     sp = os.path.join(shots, "slack-rail-%s.png" % name)
     screenshot(hp, 70, 120 * len(cells) + 20, scale, sp)
+    print("%s: Slack's side drawn with theme-oracle.json's %s %s case under %s" % (
+        name, shot.get("theme") or "default", "dark" if shot["dark"] else "light", shot.get("ia_theme") or "no ia_theme"))
     slack = Image.open(sp).convert("RGB")
     k, gap, lab = 4, 6, 16
     W = shot["w"]
@@ -243,7 +304,7 @@ for shot in spec:
     for i, (b, st) in enumerate(cells):
         top = b["top"]
         ch = crops[i].height if i < len(crops) else b["h"] + top + int(round(2 * scale))
-        sy = int(round((i * 120 + 6) * scale)) - top
+        sy = int(round(i * 120 * scale))  # the cell's top: top px above its button, as Clack's crop
         s = slack.crop((0, sy, W, sy + ch))
         sm, _ = measure(s, scale, top, b["badge"] > 0)
         entry = {"shot": name, "platform": platform, "key": b["key"], "state": st, "slack": sm}
@@ -274,12 +335,13 @@ for shot in spec:
     print("saved", out)
 
 json.dump(report, open(os.path.join(shots, "rail-compare.json"), "w"), indent=1)
-print("%-10s %-9s %-9s %-22s %-22s %-22s %-8s %s" % ("shot", "tab", "state", "tile dx0 dy0 dx1 dy1", "icon", "badge", "ring", "fill clack/slack"))
+print("%-24s %-9s %-9s %-22s %-22s %-22s %-8s %-16s %s" % ("shot", "tab", "state", "tile dx0 dy0 dx1 dy1", "icon", "badge", "ring", "fill clack/slack", "label ink clack/slack (rail)"))
 for e in report:
     if "clack" not in e:
         continue
     f = lambda p: " ".join("%+d" % e["diff"][p][kk] for kk in ("x0", "y0", "x1", "y1")) if p in e["diff"] else "-"
-    print("%-10s %-9s %-9s %-22s %-22s %-22s %3d/%-4d %s/%s" % (e["shot"], e["key"], e["state"], f("tile"), f("icon"), f("badge"),
-                                                           e["clack"]["ring_px"], e["slack"]["ring_px"], e["clack"]["fill"], e["slack"]["fill"]))
+    print("%-24s %-9s %-9s %-22s %-22s %-22s %3d/%-4d %s/%s %s/%s (%s)" % (e["shot"], e["key"], e["state"], f("tile"), f("icon"), f("badge"),
+                                                                       e["clack"]["ring_px"], e["slack"]["ring_px"], e["clack"]["fill"], e["slack"]["fill"],
+                                                                       e["clack"]["ink"], e["slack"]["ink"], e["clack"]["bg"]))
 if bad:
     print("\nmore than 1px from Slack, or a ring Slack doesn't draw:\n  " + "\n  ".join(bad))
