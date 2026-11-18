@@ -126,25 +126,17 @@ func (v *Threads) sortingLoad() {
 }
 
 // reconnectDue is maybeRefreshAllThreads' counter reaching ThreadsView
-// (reloadThreads) after a slow connect. Before the view's first answer
-// there is nothing to reload (Slack's this.loading); while a load that
-// sorts the list or the next page is out the reload waits for it, as that
-// answer may predate the connect.
+// after a slow connect: componentDidUpdate calls reloadThreads only when
+// it isn't loading (this.loading: before the view's first answer, or
+// while a load that sorts the list or the next page is out), and the
+// increment is spent either way.
 func (v *Threads) reconnectDue() bool {
 	v.mu.Lock()
 	due := v.reconn
-	v.mu.Unlock()
-	if !due {
-		return false
-	}
-	_, loaded, _ := v.data.get()
-	if loaded && v.data.busy() && v.mode != actRefresh {
-		return false
-	}
-	v.mu.Lock()
 	v.reconn = false
 	v.mu.Unlock()
-	return loaded
+	_, loaded, _ := v.data.get()
+	return due && loaded && !(v.data.busy() && v.mode != actRefresh)
 }
 
 // thrLoadCtx is a load's context. A load that sorts the list is the
