@@ -330,15 +330,31 @@ func magicRedirect(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("slack: refusing redirect off Slack to %q", req.URL.Hostname())
 	}
 	if bannedPage(req.URL) {
-		return errors.New("slack: Slack redirected sign-in to its /ssb/redirect page, which Clack never loads with a session cookie (docs/SIGNOUT-AUDIT.md)")
+		return errors.New("slack: Slack redirected sign-in to its /ssb/redirect page (or a path a server could read as it), which Clack never loads with a session cookie (docs/SIGNOUT-AUDIT.md)")
 	}
 	return nil
 }
 
 // bannedPage reports whether u is a team's /ssb/redirect page, which Clack
-// never loads with a session cookie, even when a redirect points there.
+// never loads with a session cookie, even when a redirect points there. The
+// path is read as a normalising server might read it: a path plainPath
+// refuses (a dot segment, an encoded dot or slash: /x/%2e%2e/ssb/redirect)
+// counts as banned, and empty segments and ";…" segment parameters are
+// dropped before the comparison (/ssb//redirect, /ssb;x/redirect).
 func bannedPage(u *url.URL) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimRight(u.Path, "/")), "/ssb/redirect")
+	if !plainPath(u) {
+		return true
+	}
+	var segs []string
+	for _, s := range strings.Split(strings.ToLower(u.Path), "/") {
+		if i := strings.IndexByte(s, ';'); i >= 0 {
+			s = s[:i]
+		}
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	return strings.HasPrefix("/"+strings.Join(segs, "/"), "/ssb/redirect")
 }
 
 func magicExchange(ctx context.Context, hc *http.Client, s MagicTokenSet, key *dpopKey) (*magicResult, error) {

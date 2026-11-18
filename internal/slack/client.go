@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/some-du6e/clack/internal/slack/tlsfp"
 )
@@ -794,33 +795,52 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 // browser can end the session everywhere (see README "Sign in").
 var ErrNotAFile = errors.New("slack: not a file URL; refusing to load a Slack page with the session cookie")
 
-// FileURL reports whether u is one of Slack's file hosts or file paths,
-// the only slack.com GETs that carry the session cookie (Download). A path
-// with dot segments or encoded separators is never one: Go sends
-// /files-pri/../ssb/redirect as written, and a server that normalises it
-// would answer the sign-out redirect to a cookie-bearing request. Slack's
-// own file URLs never have them.
+// filePaths are the path prefixes Slack serves files under, on its file
+// hosts (files.slack.com, files-origin.slack.com, …) and on a workspace's
+// own host: url_private and its downloads (/files-pri/), thumbnails
+// (/files-tmb/), video streams (/files-preview/video-stream, the
+// preview_url Slack's file viewer plays) and the safe and origin variants.
+var filePaths = []string{"/files-pri/", "/files-tmb/", "/files-pri-safe/", "/files-origin/", "/files-preview/"}
+
+// FileURL reports whether u is one of Slack's file paths, the only
+// slack.com GETs that carry the session cookie (Download). The path
+// decides on every host, the file hosts too: files.slack.com/ssb/redirect
+// is a page like any other. The prefix is matched as it goes on the wire
+// (EscapedPath, what RequestURI sends), so /%66iles-pri/… isn't one. A
+// path with dot segments or encoded separators is never one either: Go
+// sends /files-pri/../ssb/redirect as written, and a server that
+// normalises it would answer the sign-out redirect to a cookie-bearing
+// request. Slack's own file URLs never have them.
 func FileURL(u *url.URL) bool {
 	if u == nil || !plainPath(u) {
 		return false
 	}
-	h := strings.ToLower(u.Hostname())
-	if h == "files.slack.com" || (strings.HasPrefix(h, "files-") && strings.HasSuffix(h, ".slack.com")) {
-		return true
-	}
-	for _, p := range []string{"/files-pri/", "/files-tmb/", "/files-pri-safe/", "/files-origin/"} {
-		if strings.HasPrefix(u.Path, p) {
+	wire := u.EscapedPath()
+	for _, p := range filePaths {
+		if strings.HasPrefix(wire, p) {
 			return true
 		}
 	}
 	return false
 }
 
+// dotLike is "." and the characters Unicode compatibility normalisation
+// (NFKC) folds to dots: the fullwidth and small full stops and the one- and
+// two-dot leaders. Written as code points so no look-alike sits in source.
+var dotLike = "." + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0x2024)) + string(rune(0x2025))
+
 // plainPath reports whether u's path can't be read as another path by a
-// server that normalises it: no "." or ".." segment (also with a ";…"
-// parameter, as some proxies strip it), no backslash, no control byte, and
-// no percent-encoded dot, slash or backslash left in the raw path.
+// server that normalises it, however many times it decodes: the path is
+// valid UTF-8 (an overlong %c0%ae is not), no segment is made only of dots
+// or dot look-alikes (also with a ";…" parameter, as some proxies strip
+// it), there is no backslash or control byte, and no percent-encoded dot,
+// slash, backslash or NUL is left in the raw path or after one decode
+// (%252e), nor an encoded percent sign that a third decode would read
+// (%25252e).
 func plainPath(u *url.URL) bool {
+	if !utf8.ValidString(u.Path) {
+		return false
+	}
 	for _, r := range u.Path {
 		if r == '\\' || r < 0x20 || r == 0x7f {
 			return false
@@ -830,17 +850,17 @@ func plainPath(u *url.URL) bool {
 		if i := strings.IndexByte(seg, ';'); i >= 0 {
 			seg = seg[:i]
 		}
-		if seg == "." || seg == ".." {
+		if seg != "" && strings.Trim(seg, dotLike) == "" {
 			return false
 		}
 	}
-	raw := strings.ToLower(u.EscapedPath())
+	raw, once := strings.ToLower(u.EscapedPath()), strings.ToLower(u.Path)
 	for _, enc := range []string{"%2e", "%2f", "%5c", "%00"} {
-		if strings.Contains(raw, enc) {
+		if strings.Contains(raw, enc) || strings.Contains(once, enc) {
 			return false
 		}
 	}
-	return true
+	return !strings.Contains(once, "%25")
 }
 
 // UploadBytes sends file contents to an upload URL from
