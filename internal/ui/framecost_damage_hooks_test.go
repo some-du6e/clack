@@ -41,3 +41,7 @@ func damagePart(s gpu.FrameStats) string {
 	}
 	return fmt.Sprintf("partial, %d px damaged in %d rects, %d px copied", s.DamagePx, s.DamageRects, s.CopyPx)
 }
+
+// damageTessellated is how many clip paths the frame tessellated (its
+// buildVerts calls: Gio's CPU work for a path).
+func damageTessellated(s gpu.FrameStats) int { return s.PathsTessellated }

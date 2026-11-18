@@ -39,6 +39,10 @@ type partialVars struct {
 	clearWhite bool    // a full-window opaque fill first: the frame's clear colour
 	drop       bool    // one of the text-like paths missing
 	swap       bool    // two overlapping ops drawn the other way round
+	// probe: a transparent path stenciled first (1) or after the shadow
+	// rings (2), so every later path lands elsewhere in the atlas (the
+	// placement floor) and no pixel changes
+	probe int
 }
 
 // partialLive is a live image of a few frames (an animated emoji), at
@@ -88,6 +92,10 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 			paint.Fill(o, color.NRGBA{R: 0xff, G: 0xfe, B: 0xfd, A: 0xff})
 		}
 		bg(o)
+		probe := func() { paint.FillShape(o, color.NRGBA{}, clip.Ellipse(image.Rect(3, 3, 42, 37)).Op(o)) }
+		if v.probe == 1 {
+			probe()
+		}
 		if v.first {
 			paint.FillShape(o, color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff}, clip.Rect(image.Rect(2, 2, 10, 6)).Op())
 		}
@@ -102,6 +110,9 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 			rr := clip.UniformRRect(image.Rectangle{Max: ri.Size()}, 6+i)
 			paint.FillShape(o, color.NRGBA{A: a}, clip.Stroke{Path: rr.Path(o), Width: 1.5}.Op())
 			st.Pop()
+		}
+		if v.probe == 2 {
+			probe()
 		}
 		pst := clip.RRect{Rect: panel, NE: 6, SE: 6}.Push(o)
 		paint.FillShape(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Rect(panel).Op())
@@ -314,6 +325,7 @@ func TestClackPartialFrames(t *testing.T) {
 	}
 
 	// the whole frames: partial frames' state, every frame drawn whole
+	// straight into the target
 	gpu.ClackPartialTextures(true)
 	gpu.ClackPartialWhole(true)
 	gpu.ClackPartialReset()
@@ -324,6 +336,42 @@ func TestClackPartialFrames(t *testing.T) {
 			t.Fatalf("%s: a partial frame drawn whole", steps[i].name)
 		}
 	}
+	// Gio's own frames (partial frames off: every region packed afresh in
+	// the frame's order), and the same with a transparent path first and
+	// one after the shadow rings: every later path lands elsewhere in the
+	// atlas, which moves anti-aliased edges by a rounding (the placement
+	// floor). The sticky places must stay within it of Gio's own.
+	gpu.ClackPartialTextures(false)
+	fresh, fs := partialRun(t, win, scene, steps)
+	var probed [2][]*image.RGBA
+	for k := range probed {
+		ps := append([]partialStep(nil), steps...)
+		for i := range ps {
+			ps[i].v.probe = k + 1
+		}
+		probed[k], _ = partialRun(t, win, scene, ps)
+	}
+	worstN, worstM := 0, 0
+	for i := range steps {
+		if fs[i].Partial {
+			t.Fatalf("%s: a partial frame with partial frames off", steps[i].name)
+		}
+		fn, fm := 0, 0
+		for k := range probed {
+			n, m := diffCount(fresh[i], probed[k][i])
+			fn, fm = max(fn, n), max(fm, m)
+		}
+		n, m := diffCount(fresh[i], whole[i])
+		worstN, worstM = max(worstN, n), max(worstM, m)
+		if m > max(6, fm+2) || n > 2*fn+1024 {
+			t.Errorf("%s: the sticky whole frame differs from Gio's own in %d px by up to %d levels; a path moved in the atlas moves %d px by up to %d (want %d levels and %d px at most):%s",
+				steps[i].name, n, m, fn, fm, max(6, fm+2), 2*fn+1024, worstPixels(fresh[i], whole[i], whole[i].Bounds(), 6))
+		}
+		if i < 4 || i%8 == 0 || n > 0 {
+			t.Logf("%s: sticky against Gio's own: %d px by up to %d levels (the floor: %d px by up to %d)", steps[i].name, n, m, fn, fm)
+		}
+	}
+	t.Logf("sticky against Gio's own, the worst step: %d px, %d levels", worstN, worstM)
 	for _, mode := range []struct {
 		name                 string
 		textures, frameTexes bool
@@ -335,18 +383,51 @@ func TestClackPartialFrames(t *testing.T) {
 		gpu.ClackFrameTexture(mode.frameTexes)
 		gpu.ClackPartialReset()
 		imgs, sts := partialRun(t, win, scene, steps)
-		partials := 0
+		partials, copied, direct := 0, 0, 0
 		for i, img := range imgs {
 			s, st := steps[i], sts[i]
 			if n, m := diffCount(whole[i], img); n > 0 {
-				t.Errorf("%s, %s: %d px differ from the whole frame by up to %d levels (partial %v, %d rects, %d px damaged):%s",
-					mode.name, s.name, n, m, st.Partial, st.DamageRects, st.DamagePx, worstPixels(whole[i], img, img.Bounds(), 6))
+				t.Errorf("%s, %s: %d px differ from the whole frame by up to %d levels (partial %v, %d rects, %d px damaged, %d px copied):%s",
+					mode.name, s.name, n, m, st.Partial, st.DamageRects, st.DamagePx, st.CopyPx, worstPixels(whole[i], img, img.Bounds(), 6))
 			}
 			if st.Partial {
 				partials++
 			}
+			// through the frame texture: a whole frame after a whole frame
+			// (a scroll's) draws straight into the target, with no copy,
+			// and leaves the frame texture stale, so the next small change
+			// is drawn whole into it again (and the one after is partial)
+			refill := false
+			if mode.frameTexes {
+				prev := gpu.FrameStats{Partial: true}
+				if i > 0 {
+					prev = sts[i-1]
+				}
+				prevDirect := !prev.Partial && prev.CopyPx == 0
+				refill = prevDirect && !st.Partial
+				switch {
+				case st.CopyPx == int64(w*h):
+					copied++
+				case st.CopyPx == 0 && !st.Partial:
+					direct++
+				default:
+					t.Errorf("%s, %s: %d px copied (partial %v), want the frame's %d or none", mode.name, s.name, st.CopyPx, st.Partial, w*h)
+				}
+				switch {
+				case st.Partial && st.CopyPx == 0:
+					t.Errorf("%s, %s: a partial frame not copied into the target", mode.name, s.name)
+				case s.want == 2 && i > 0 && !prev.Partial && st.CopyPx != 0:
+					t.Errorf("%s, %s: a whole frame after a whole frame went through the frame texture (%d px copied), want it drawn straight into the target", mode.name, s.name, st.CopyPx)
+				case s.want == 2 && prev.Partial && st.CopyPx == 0:
+					t.Errorf("%s, %s: a whole frame after a partial one drawn straight into the target, want it through the frame texture (the next may be partial)", mode.name, s.name)
+				case refill && st.CopyPx == 0:
+					t.Errorf("%s, %s: the frame after one drawn straight into the target, drawn straight in too, want it through the frame texture", mode.name, s.name)
+				}
+			} else if st.CopyPx != 0 {
+				t.Errorf("%s, %s: %d px copied, want none (the target keeps its pixels)", mode.name, s.name, st.CopyPx)
+			}
 			switch {
-			case s.want == 1 && !st.Partial:
+			case s.want == 1 && !st.Partial && !refill:
 				t.Errorf("%s, %s: drawn whole, want a partial frame", mode.name, s.name)
 			case s.want == 2 && st.Partial:
 				t.Errorf("%s, %s: drawn partial (%d px damaged), want a whole frame", mode.name, s.name, st.DamagePx)
@@ -370,6 +451,15 @@ func TestClackPartialFrames(t *testing.T) {
 		t.Logf("%s: %d of %d frames partial", mode.name, partials, len(steps))
 		if partials < len(steps)/3 {
 			t.Errorf("%s: only %d of %d frames partial", mode.name, partials, len(steps))
+		}
+		if mode.frameTexes {
+			// every copied frame matched the one drawn straight into the
+			// target above: the copy (Metal's a draw, a blit elsewhere)
+			// is exact
+			t.Logf("%s: %d frames copied into the target, %d drawn straight into it, each the whole frame's pixels", mode.name, copied, direct)
+			if copied < len(steps)/2 || direct == 0 {
+				t.Errorf("%s: %d frames copied, %d drawn straight in; want most copied and some straight in", mode.name, copied, direct)
+			}
 		}
 	}
 	t.Logf("whole, the caret's frame: %s", statLine(ws[1]))
