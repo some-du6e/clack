@@ -116,8 +116,12 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 	a.putLocal(o.Channel, local)
 	a.S.NoteLive(o.Channel, local.TS, &local) // a page read before it keeps it (store/live.go)
 	v := a.message(o.Channel, &local)
-	a.emit(Event{Type: "message", Channel: o.Channel, TS: p.ts, ThreadTS: o.ThreadTS, UserID: local.User, Msg: &v,
-		ClientMsgID: cid, Reply: !isTopLevel(&local), ConvKind: a.kindOf(o.Channel)})
+	ev := Event{Type: "message", Channel: o.Channel, TS: p.ts, ThreadTS: o.ThreadTS, UserID: local.User, Msg: &v,
+		ClientMsgID: cid, Reply: !isTopLevel(&local), ConvKind: a.kindOf(o.Channel)}
+	if isTopLevel(&local) {
+		ev.Epoch = a.gapEpoch(o.Channel) // past a window's gap (Event.Epoch)
+	}
+	a.emit(ev)
 
 	m, err := a.C.Post(ctx, slack.PostOpts{Channel: o.Channel, Text: o.Text, ThreadTS: o.ThreadTS,
 		Broadcast: o.Broadcast, Blocks: o.Blocks, Attachments: o.Attachments, ClientMsgID: cid})

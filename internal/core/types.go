@@ -400,11 +400,17 @@ type Event struct {
 	// is ReplacesTS. message/sent/update/delete of own sends carry ClientMsgID.
 	ReplacesTS  string
 	ClientMsgID string
-	ID          string        // draft id (draft), activity key (activity)
-	Draft       *Draft        // draft: create | update | send
-	Saved       *SavedItem    // saved: add | update | delete
-	Activity    *ActivityItem // activity: updated item (hydrated when possible)
-	Raw         json.RawMessage
+	// Epoch (message: the socket's, or the viewer's local copy): with
+	// GapView set, the message is past the gap of a window behind a slow
+	// connect (its catch-up out: store PastGap), and the lists show what
+	// is past the gap alone from it on, as History's page does then
+	// (Page.Epoch); 0 otherwise
+	Epoch    uint64
+	ID       string        // draft id (draft), activity key (activity)
+	Draft    *Draft        // draft: create | update | send
+	Saved    *SavedItem    // saved: add | update | delete
+	Activity *ActivityItem // activity: updated item (hydrated when possible)
+	Raw      json.RawMessage
 }
 
 // SendOpts are the options for Send.

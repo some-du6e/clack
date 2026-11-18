@@ -118,6 +118,35 @@ func (m *model) takeNewest(p core.Page) {
 	m.epoch = p.Epoch
 }
 
+// startPastGap is the first message past the gap of a window behind a
+// slow connect (core.Event.Epoch with GapView): from it on the list shows
+// what is past the gap alone, loading back from its start, as History's
+// page does while the catch-up is out and as Slack renders the newest
+// slice after resetReachedEnd. Appended under what the list held, it drew
+// yesterday's last message straight above today's, the gap unmarked,
+// whenever the list's reload after the wake ran before the message came.
+// The viewer's local copies newer than the list's newest message from
+// Slack stay; the message itself goes in after (apply). The caller holds
+// m.mu.
+func (m *model) startPastGap(epoch uint64) {
+	newest := ""
+	for i := len(m.msgs) - 1; i >= 0; i-- {
+		if !local(&m.msgs[i].m) {
+			newest = m.msgs[i].m.TS
+			break
+		}
+	}
+	var keep []core.Message
+	for _, e := range m.msgs {
+		if local(&e.m) && (newest == "" || tsLess(newest, e.m.TS)) {
+			keep = append(keep, e.m)
+		}
+	}
+	m.setAll(keep)
+	m.hasMore = true
+	m.epoch = epoch
+}
+
 // local reports whether msg is a copy no history page holds: the viewer's
 // send Slack hasn't confirmed (pending or failed), an ephemeral message.
 // Where a page starts, and where the next older page reads from, go by

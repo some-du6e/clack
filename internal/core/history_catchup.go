@@ -460,6 +460,20 @@ func (a *App) catchingUp(key string) bool {
 // NoteSlowConnect, Timeline.Contig).
 func (a *App) noteSlowConnect() { a.S.NoteSlowConnect() }
 
+// gapEpoch is, while ch's window is behind a slow connect and holds
+// messages past its gap (store PastGap), the Epoch of its view past the
+// gap (GapView), for a message event to carry (Event.Epoch); 0 otherwise.
+// Cheap unless the window is behind.
+func (a *App) gapEpoch(ch string) uint64 {
+	if _, ok := a.S.PastGap(ch); !ok {
+		return 0
+	}
+	if t := a.S.Timeline(ch); t != nil {
+		return t.Epoch | GapView
+	}
+	return 0
+}
+
 // confirmFromPage confirms the viewer's sends whose copy a page from
 // Slack holds (by client_msg_id): one whose reply and echo were lost (a
 // Wi-Fi drop) went out after all. The page only hid the failed copy, which

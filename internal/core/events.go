@@ -802,6 +802,11 @@ func (a *App) announceMessage(ch string, mp *slack.Message, isReply, mention boo
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
 		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch)}
+	if !isReply || m.Subtype == "thread_broadcast" {
+		// past the gap of a window behind a slow connect: the lists show
+		// the slice past it alone from this message on (Event.Epoch)
+		ev2.Epoch = a.gapEpoch(ch)
+	}
 	// the sender as the store holds it, read without asking (as above)
 	if u, ok := a.RawUser(m.User); ok {
 		ev2.User = &u

@@ -303,6 +303,45 @@ func TestChannelHistoryChangedPurges(t *testing.T) {
 	}
 }
 
+// A socket message past the gap of a window behind a slow connect carries
+// the epoch of the view past the gap (Event.Epoch), the one History's page
+// has while the catch-up is out: the list switches to that slice as the
+// message comes, whether its reload after the wake ran before it or not.
+// It switched only when a reload came after the message, and drew the
+// pre-gap messages straight above it otherwise. A message with no gap
+// carries none.
+func TestPostGapMessageCarriesGapEpoch(t *testing.T) {
+	a, fs, l := rtApp(t)
+	ch := fs.ChannelIDs()[23]
+	user := fs.UserIDs()[1]
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	a.historyLanded(t, ctx, ch)
+	plain := postLive(a, fs, ch, user, "before the wake", 1)[0]
+	if ev := messageEvent(t, l, plain); ev.Epoch != 0 {
+		t.Errorf("a message with no gap carries epoch %x", ev.Epoch)
+	}
+	fs.SetChannelFault("conversations.history", ch, fakeslack.Fault{ReplyDelay: 3 * time.Second, Times: 1}) // the catch-up stays out
+	a.socketConnected(false)                                                                                // a wake
+	postQuiet(fs, ch, user, "while asleep", 3)
+	past := postLive(a, fs, ch, user, "after the wake", 1)[0]
+	ev := messageEvent(t, l, past)
+	if ev.Epoch&GapView == 0 {
+		t.Fatalf("the message past the gap carries epoch %x, no GapView", ev.Epoch)
+	}
+	p, err := a.History(ctx, ch, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Epoch != ev.Epoch {
+		t.Errorf("History's page while the catch-up is out has epoch %x, the message's event %x", p.Epoch, ev.Epoch)
+	}
+	if len(p.Messages) != 1 || p.Messages[0].TS != past {
+		t.Errorf("the page past the gap holds %d messages, want the one after the wake", len(p.Messages))
+	}
+	a.landed(t, ch)
+}
+
 func rawEventFor(ch string, v map[string]any) slack.Event {
 	raw, _ := json.Marshal(v)
 	cj, _ := json.Marshal(ch)

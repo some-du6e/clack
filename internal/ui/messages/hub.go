@@ -655,6 +655,9 @@ func (hb *hub) apply(ev core.Event) bool {
 		changed := false
 		if chm != nil {
 			chm.mu.Lock()
+			if ev.Type == "message" && ev.Epoch&core.GapView != 0 && chm.loaded && chm.epoch != ev.Epoch && chm.visible(ev.Msg) {
+				chm.startPastGap(ev.Epoch)
+			}
 			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
 				chm.upsert(*ev.Msg)
 				chm.noteLive(ev.Msg.TS, false)
