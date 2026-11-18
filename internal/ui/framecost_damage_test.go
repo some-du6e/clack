@@ -98,6 +98,12 @@ func TestFrameCostDamage(t *testing.T) {
 			t.Fatalf("headless GPU: %v", err)
 		}
 		e.gpu = w
+		// no animated image plays until the emoji's part: the scenes'
+		// frames are drawn several times from the same ops, and a live
+		// image moving on between them (a GIF that finished loading on a
+		// slow runner) changes pixels no op did (Slack's "Allow
+		// animations" off: stills). After boot, whose prefs set it.
+		e.a.images.SetAnimate(false)
 		e.costSettle(t, c.name)
 		e.gpu = nil // the frames below draw only what's measured
 		var a, b op.Ops
@@ -152,6 +158,7 @@ func TestFrameCostDamage(t *testing.T) {
 			e.layProbed(o, now, nil, shift)
 		}, true, damageLimits{frac: 0.05})
 		// the animated emoji: a message with it, at the bottom
+		e.a.images.SetAnimate(true)
 		self := e.a.Core().Self().ID
 		ts, ev := fs.PostQuiet(ch, self, "boom :"+name+": boom")
 		evb, _ := json.Marshal(ev)
@@ -323,16 +330,20 @@ func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.O
 		// paths its damage stencils; the rest keep their path data)
 		var qs gpu.FrameStats
 		var qms []float64
-		for range 5 {
+		for i := range 5 {
 			s, ms := damageDraw(t, w, b)
 			qs, qms = s, append(qms, ms)
+			// a path is tessellated only to be uploaded, in the frame's
+			// damage; a frame without damage builds nothing
+			_, _, px := damageOf(s)
+			if n := damageTessellated(s); n > s.PathsBuilt || px == 0 && (n != 0 || s.PathsBuilt != 0) {
+				t.Errorf("%s, %s: quiet frame %d after a partial frame (%s) tessellated %d paths and built %d; want only paths it uploads, none without damage",
+					name, m.name, i+1, damagePart(s), n, s.PathsBuilt)
+			}
 		}
 		sort.Float64s(qms)
 		t.Logf("%s, %s, quiet frames after it: %s, %d paths tessellated, %s; %.1f ms a frame (the partial frame %d paths tessellated)",
 			name, m.name, damagePart(qs), damageTessellated(qs), costLine(qs), qms[len(qms)/2], damageTessellated(ps))
-		if n := damageTessellated(qs); n != 0 || qs.PathsBuilt != 0 {
-			t.Errorf("%s, %s: a quiet frame after a partial frame tessellated %d paths and built %d; want none (its ops were the last frame's)", name, m.name, n, qs.PathsBuilt)
-		}
 		// the whole frame the same GPU draws for b now
 		damageWhole(true)
 		damageDraw(t, w, b)

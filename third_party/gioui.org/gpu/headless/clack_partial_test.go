@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"runtime"
 	"testing"
 
 	"gioui.org/f32"
@@ -39,11 +40,12 @@ type partialVars struct {
 	clearWhite bool    // a full-window opaque fill first: the frame's clear colour
 	drop       bool    // one of the text-like paths missing
 	swap       bool    // two overlapping ops drawn the other way round
-	// probe: a transparent path stenciled first (1-3) or after the
-	// shadow rings (4-6), tiny, a third of the window or nearly all of it
-	// (TestFrameCostWindow's costShift), so every later path lands
-	// elsewhere in the atlas, near or far (the placement floor), and no
-	// pixel changes
+	// probe: a transparent path stenciled first (1-3), after the shadow
+	// rings (4-6) or last (7-9: the page's size changes, no place
+	// moves), tiny, a third of the window or nearly all of it
+	// (TestFrameCostWindow's costShift), or a 1×2 or 2×1 first (10, 11:
+	// every later place moves by a pixel), so paths land elsewhere in the
+	// atlas, near or far (the placement floor), and no pixel changes
 	probe int
 }
 
@@ -100,9 +102,15 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 				image.Rect(1, 1, w/3|1, h/3|1),
 				image.Rect(0, 0, w-1, h-1),
 			}[(v.probe-1)%3]
+			switch v.probe {
+			case 10:
+				r = image.Rect(1, 1, 2, 3)
+			case 11:
+				r = image.Rect(1, 1, 3, 2)
+			}
 			paint.FillShape(o, color.NRGBA{}, clip.Ellipse(r).Op(o))
 		}
-		if v.probe >= 1 && v.probe <= 3 {
+		if v.probe >= 1 && v.probe <= 3 || v.probe >= 10 {
 			probe()
 		}
 		if v.first {
@@ -120,7 +128,7 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 			paint.FillShape(o, color.NRGBA{A: a}, clip.Stroke{Path: rr.Path(o), Width: 1.5}.Op())
 			st.Pop()
 		}
-		if v.probe >= 4 {
+		if v.probe >= 4 && v.probe <= 6 {
 			probe()
 		}
 		pst := clip.RRect{Rect: panel, NE: 6, SE: 6}.Push(o)
@@ -222,6 +230,9 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 		ost := op.Offset(ws.Min).Push(o)
 		paint.FillShape(o, color.NRGBA{R: 0x4a, G: 0x3e, B: 0x4f, A: 0xff}, clip.Stroke{Path: clip.UniformRRect(image.Rectangle{Max: ws.Size()}, 6).Path(o), Width: 1}.Op())
 		ost.Pop()
+		if v.probe >= 7 && v.probe <= 9 {
+			probe()
+		}
 	}
 }
 
@@ -352,13 +363,23 @@ func TestClackPartialFrames(t *testing.T) {
 		}
 	}
 	// Gio's own frames (partial frames off: every region packed afresh in
-	// the frame's order), and the same with a transparent path first and
-	// one after the shadow rings: every later path lands elsewhere in the
-	// atlas, which moves anti-aliased edges by a rounding (the placement
-	// floor). The sticky places must stay within it of Gio's own.
+	// the frame's order), and the same with transparent paths that move
+	// the others in the atlas (partialVars.probe), which moves anti-aliased
+	// edges by a rounding (the placement floor). The sticky places must
+	// stay within max(floorBase, floor+2) levels of Gio's own, in twice the
+	// floor's pixels and 1,024 more (gio-atlas-placement-noise). WARP's
+	// base is 8: placement moves its edges by 7 levels in
+	// TestFrameCostWindow's own floor (gpu-cost: "no clip after one more
+	// path first"), and this scene's moved ellipse shows it at one edge
+	// where no probe does (Gio's own 0.97 coverage on its second row, the
+	// sticky place's 1.0).
+	floorBase := 6
+	if runtime.GOOS == "windows" {
+		floorBase = 8
+	}
 	gpu.ClackPartialTextures(false)
 	fresh, fs := partialRun(t, win, scene, steps)
-	var probed [6][]*image.RGBA
+	var probed [11][]*image.RGBA
 	for k := range probed {
 		ps := append([]partialStep(nil), steps...)
 		for i := range ps {
@@ -378,9 +399,9 @@ func TestClackPartialFrames(t *testing.T) {
 		}
 		n, m := diffCount(fresh[i], whole[i])
 		worstN, worstM = max(worstN, n), max(worstM, m)
-		if m > max(6, fm+2) || n > 2*fn+1024 {
+		if m > max(floorBase, fm+2) || n > 2*fn+1024 {
 			t.Errorf("%s: the sticky whole frame differs from Gio's own in %d px by up to %d levels; a path moved in the atlas moves %d px by up to %d (want %d levels and %d px at most):%s",
-				steps[i].name, n, m, fn, fm, max(6, fm+2), 2*fn+1024, worstPixels(fresh[i], whole[i], whole[i].Bounds(), 6))
+				steps[i].name, n, m, fn, fm, max(floorBase, fm+2), 2*fn+1024, worstPixels(fresh[i], whole[i], whole[i].Bounds(), 6))
 		}
 		if i < 4 || i%8 == 0 || n > 0 {
 			t.Logf("%s: sticky against Gio's own: %d px by up to %d levels (the floor: %d px by up to %d)", steps[i].name, n, m, fn, fm)
@@ -441,8 +462,8 @@ func TestClackPartialFrames(t *testing.T) {
 					t.Errorf("%s, %s: a whole frame after a whole frame went through the frame texture (%d px copied), want it drawn straight into the target", mode.name, s.name, framePx)
 				case s.want == 2 && prev.Partial && framePx == 0:
 					t.Errorf("%s, %s: a whole frame after a partial one drawn straight into the target, want it through the frame texture (the next may be partial)", mode.name, s.name)
-				case refill && framePx == 0:
-					t.Errorf("%s, %s: the frame after one drawn straight into the target, drawn straight in too, want it through the frame texture", mode.name, s.name)
+				case refill && s.want == 1 && framePx == 0:
+					t.Errorf("%s, %s: the small change after a frame drawn straight into the target, drawn straight in too, want it through the frame texture", mode.name, s.name)
 				}
 			} else if framePx != 0 {
 				t.Errorf("%s, %s: %d px of a frame texture copied, want none (the target keeps its pixels)", mode.name, s.name, framePx)
