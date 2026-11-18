@@ -1007,6 +1007,24 @@ func (t *Taut) MessageViewState(ch, ts string, fresh bool, need uint64) (m core.
 	return c.msg, c.id, ready, true
 }
 
+// MessagesChanged tells taut that core's copies of messages tss of ch
+// changed with no event the mirror handles: a load read a newer copy
+// than the one the UI had (core's poll writes the newest page while the
+// socket is down; a reload after a resync). Their views get the marks an
+// event's change makes (mirror.invalidateMsg), so none is ready before JS
+// has the new copy, and JS reads the channel's bucket again now rather
+// than at the mirror's next sweep.
+func (t *Taut) MessagesChanged(ch string, tss []string) {
+	if t == nil || ch == "" || !t.SlicePatched("messages") {
+		return
+	}
+	for _, ts := range tss {
+		if ts != "" {
+			t.mirror.invalidateMsg(ch, ts)
+		}
+	}
+}
+
 // InjectedMessages lists messages plugins added to ch (injectMessages)
 // that core doesn't have, as UI messages. Non-blocking like MessageView,
 // and cheap: the fetch worker decodes the channel's bucket once per value
@@ -1326,6 +1344,11 @@ type viewCache struct {
 	// JS may not have heard of the change yet (the hub applied the event
 	// first, or the viewer's own reaction, applied in the frame)
 	mirrorSeen atomic.Uint64
+	// needWait is the smallest need a read found the mirror behind (0:
+	// none): noteSeen asks for a frame once the mirror passes it, as the
+	// view turned ready with nothing else changing, and a row waiting on
+	// it reads again only when asked (an idle window lays nothing out)
+	needWait atomic.Uint64
 }
 
 // msgKey is a message of the messages slice (its view's readiness).
@@ -1457,9 +1480,17 @@ func (v *viewCache) entryStateNeed(slice, key, sub string, need uint64) (*viewEn
 	}
 	ready := e != nil && v.pend[viewSK{slice, key}] == 0 && v.pendAll[slice] == 0
 	if ready && slice == "messages" && sub != "" {
+		// a message's own marks and its bucket's, not allVer: a plugin-wide
+		// refresh (api.redux.refresh, Message Logger's after every edit or
+		// delete it logs anywhere) changes no message, and an entry fetched
+		// before it is JS's copy of the same revision. Waiting on it, every
+		// row of a list built again (another pane, listCache's eviction)
+		// drew its source for a JS round trip after each refresh: the
+		// masked word in clear. allVer still makes the entry stale, so it's
+		// asked again (staleLocked).
 		mk := msgKey{key, sub}
-		ready = e.ver >= v.msgVer[mk] && e.ver >= v.chanVer[key] && e.ver >= v.sliceVer[slice] && e.ver >= v.allVer &&
-			v.pendMsg[mk] == 0 && v.mirrorSeen.Load() >= need
+		ready = e.ver >= v.msgVer[mk] && e.ver >= v.chanVer[key] && e.ver >= v.sliceVer[slice] &&
+			v.pendMsg[mk] == 0 && v.seen(need)
 	} else {
 		ready = ready && !stale
 	}
@@ -1504,11 +1535,50 @@ func (v *viewCache) msgStale(ch, ts string) (onScreen bool) {
 }
 
 // noteSeen records that the mirror handled core's event seq (its marks
-// made); events come to it in EmitSeq order.
+// made); events come to it in EmitSeq order. A read that found the
+// mirror behind is ready now if nothing else holds it, and nothing else
+// asks for the frame that draws it: the epoch moves and the UI gets one.
 func (v *viewCache) noteSeen(seq uint64) {
 	if seq > v.mirrorSeen.Load() {
 		v.mirrorSeen.Store(seq)
 	}
+	for {
+		w := v.needWait.Load()
+		if w == 0 || seq < w {
+			return
+		}
+		if v.needWait.CompareAndSwap(w, 0) {
+			break
+		}
+	}
+	v.epoch.Add(1)
+	if f := v.t.opts.UI.Invalidate; f != nil {
+		f()
+	}
+}
+
+// seen reports whether the mirror handled need. When it hasn't, the read
+// is noted (needWait) so noteSeen asks for a frame once it has; it's
+// noted before looking again, and noteSeen stores mirrorSeen before it
+// looks at needWait, so one of the two sees the other.
+func (v *viewCache) seen(need uint64) bool {
+	if v.mirrorSeen.Load() >= need {
+		return true
+	}
+	for {
+		w := v.needWait.Load()
+		if w != 0 && w <= need || v.needWait.CompareAndSwap(w, need) {
+			break
+		}
+	}
+	return v.mirrorSeen.Load() >= need
+}
+
+// msgMarksReadyLocked reports whether a view of message k (the messages
+// slice, its channel and ts) fetched at ver is past the marks of the
+// message and its bucket (mu held).
+func (v *viewCache) msgMarksReadyLocked(k viewKey, ver uint64) bool {
+	return ver >= v.msgVer[msgKey{k.key, k.sub}] && ver >= v.chanVer[k.key] && ver >= v.sliceVer["messages"]
 }
 
 // pendingAdd counts changes to slice's keys (all of it with none) queued
@@ -1673,7 +1743,21 @@ func (v *viewCache) work() {
 				// when it came: fetch keeps it only when that's the same
 				// too, a message core deleted since that a logger keeps
 				// being injected now)
+				was := cur.ver
 				cur.ver = ver
+				// A message's view this answer made ready (its marks behind
+				// it now: JS's copy taken after the change, asked again
+				// because it came from a call that ran before the change's
+				// last mark) shows nothing new, but a row waiting on it (its
+				// source drawn, or a viewed row whose plugins stopped
+				// changing it) reads it again only when the epoch moves, or
+				// a frame comes 250 ms on, which an idle window never lays
+				// out: the masked word stayed in clear until a mouse move
+				if k.slice == "messages" && k.key != "" && k.sub != "" && (dropped || v.visibleLocked(g)) &&
+					!v.msgMarksReadyLocked(k, was) && v.msgMarksReadyLocked(k, ver) {
+					changed = true
+					v.epoch.Add(1)
+				}
 				if e.blen > 0 {
 					cur.bsum, cur.blen = e.bsum, e.blen
 				}
@@ -1894,6 +1978,13 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var vals []json.RawMessage
+	// Merging msg-latency: this call goes on the runtime's in-order lane
+	// (an InOrder ctx), with the invalidate tasks. In-order tasks run
+	// ahead of the plain queue, so a plain fetch queued before an
+	// invalidate ran after it, and came back with the change's bytes at a
+	// ver below its last mark: ready only on the refetch, whose same bytes
+	// announce it (work). Guarded by
+	// TestViewedRowGoesBackWithOnlyInvalidateFrames.
 	if err := rt.call(ctx, "views", &vals, pairs); err != nil || len(vals) != len(pairs) {
 		return out, true
 	}
@@ -1919,7 +2010,10 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 		i := index[viewSK{k.slice, k.key}]
 		cur := have[k]
 		if k.slice == "messages" && k.key != "" {
-			// decoded from the very bytes this bucket has now
+			// decoded from the very bytes this bucket has now (merging
+			// msg-latency: its chunked read hands back a bucket in parts;
+			// this compares the checksum of the bucket assembled whole,
+			// which the chunked read supplies, never one part's)
 			if cur != nil && cur.blen == len(vals[i]) && cur.bsum == sum(i) &&
 				(k.sub != "" && cur.sm != nil || k.sub == "" && v.sameHeld(k.key, cur.inj, cur.bkeys)) {
 				out[k] = &viewEntry{same: true, bsum: sum(i), blen: len(vals[i])}

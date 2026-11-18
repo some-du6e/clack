@@ -424,7 +424,12 @@ func mergeChanges(batch []change) []change {
 // profile-change flood queued hundreds, Go's renders waiting behind them,
 // each re-running every store listener). Joining a task that is already
 // queued keeps the order send relies on: it runs before any read posted
-// after it.
+// after it. A view fetched in between runs after the joined change too,
+// with its bytes but a ver below send's second mark: not ready until the
+// refetch, which announces itself (viewCache.work). Merging msg-latency:
+// a send's chain pulls its task ahead of the plain queue, and a later
+// invalidation that joins it rides ahead with it; the view fetches go on
+// the same in-order lane, so none queued before the task runs after it.
 func (m *mirror) postInvalidate(rt *runtime, out []change) {
 	m.qmu.Lock()
 	if m.qrt != rt { // a new runtime: what the old one queued is gone with it

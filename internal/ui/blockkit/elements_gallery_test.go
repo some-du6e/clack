@@ -125,7 +125,7 @@ func newBKEnv(t *testing.T, dark bool, shots bool) *bkEnv {
 	}
 	// element hosts are cached per message across hosts; start clean
 	msgsMu.Lock()
-	msgs, order = map[string]*Message{}, nil
+	msgs, cur, revs = map[string]*Message{}, map[string]string{}, map[string][]string{}
 	msgsMu.Unlock()
 	h := &bkHost{a: a, th: theme.New(dark)}
 	h.img = imgcache.New(func(ctx context.Context, u string) ([]byte, error) {

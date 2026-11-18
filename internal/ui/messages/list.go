@@ -910,9 +910,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// (bounded), then sync() positions on it.
 	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older {
 		if s.snap.hasMore && len(s.snap.msgs) > 0 && tsLess(s.pendingJump, s.snap.msgs[0].m.TS) && s.jumpPages < 20 && now.Sub(s.lastOlder) > 300*time.Millisecond {
-			s.jumpPages++
-			s.lastOlder = now
-			s.hb.loadOlder(s.m)
+			// a page refused (a dropped model's reload still out) counts
+			// for nothing: the jump pages from the reloaded window
+			if s.hb.loadOlder(s.m) {
+				s.jumpPages++
+				s.lastOlder = now
+			}
 		} else if !s.snap.hasMore || s.jumpPages >= 20 {
 			s.pendingJump = "" // not in this conversation (or too far back)
 		}
@@ -925,8 +928,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
-		s.lastOlder = now
-		s.hb.loadOlder(s.m)
+		if s.hb.loadOlder(s.m) {
+			s.lastOlder = now
+		}
 	}
 	// Mark as read: mark_msgs_read_immediately marks as soon as the
 	// conversation shows; Slack's default leaves unseen messages unread,

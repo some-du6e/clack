@@ -483,7 +483,7 @@ func (a *App) emit(ev Event) Event {
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
 	// numbered under the lock that orders the sends: every subscriber
-	// gets the events in Seq order
+	// gets the events in EmitSeq order
 	a.evSeq++
 	ev.EmitSeq = a.evSeq
 	for s := range a.subs {

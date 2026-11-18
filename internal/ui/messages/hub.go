@@ -91,6 +91,12 @@ type model struct {
 	// (reconvert): its answer may hold messages converted before it, so
 	// they're converted again once it lands (afterLoad)
 	reconv core.RefChange
+
+	// loadChanged are the messages a load's answer changed (setAll: a
+	// newer copy than the model's, which no event the hub applied
+	// brought): taut marks their views as an event's would
+	// (taut.MessagesChanged) before the answer is the model's
+	loadChanged []string
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -380,6 +386,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
+			m.markLoadChanged()
 			m.rev++
 			m.mu.Unlock()
 			hb.afterLoad(m)
@@ -396,8 +403,14 @@ func (hb *hub) ensureLoaded(m *model) {
 			live := m.takeLive()
 			if err == nil {
 				if m.dropped {
-					// core's window as it is now (dropped): setAll keeps the
-					// revisions of the messages it already had, as they were
+					// core's window as it is now (dropped), whole: setAll
+					// keeps the revisions of the messages it already had, as
+					// they were. No older page was asked meanwhile (loadOlder
+					// refuses a dropped model's), and keepLive below puts back
+					// only what's in this window. (msg-latency: this branch
+					// takes the window's epoch too, m.epoch = p.Epoch, or
+					// every older page after it is turned away as another
+					// window's until the next reload.)
 					m.setAll(p.Messages)
 					m.hasMore, m.dropped = p.HasMore, false
 				} else {
@@ -413,6 +426,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
+			m.markLoadChanged()
 			m.rev++
 			m.mu.Unlock()
 			hb.afterLoad(m)
@@ -452,15 +466,21 @@ func (hb *hub) retry(m *model) {
 	hb.ensureLoaded(m)
 }
 
-// loadOlder fetches the page before the oldest loaded message.
-func (hb *hub) loadOlder(m *model) {
+// loadOlder fetches the page before the oldest loaded message, and
+// reports whether it asked for one. A dropped model's window is one core
+// may have reset since (dropped): it pages back only once its reload has
+// taken core's window. Paged back from the old window while the reload
+// was out (infinite scroll, a jump), the older page landed in front of
+// the reloaded newest one: every unread message between them was gone,
+// and paging back went on before them.
+func (hb *hub) loadOlder(m *model) bool {
 	if hb.authFailed.Load() {
-		return
+		return false
 	}
 	m.mu.Lock()
-	if m.older || !m.hasMore || len(m.msgs) == 0 || m.threadTS != "" || time.Now().Before(m.olderRetryAt) {
+	if m.older || !m.hasMore || len(m.msgs) == 0 || m.threadTS != "" || m.dropped || time.Now().Before(m.olderRetryAt) {
 		m.mu.Unlock()
-		return
+		return false
 	}
 	m.older = true
 	before := m.msgs[0].m.TS
@@ -478,18 +498,27 @@ func (hb *hub) loadOlder(m *model) {
 		m.mu.Lock()
 		m.loadSeq = seq
 		m.older = false
-		if err == nil {
+		switch {
+		case err == nil && (m.dropped || len(m.msgs) == 0 || m.msgs[0].m.TS != before):
+			// the window it was read for is gone: dropped, reset or trimmed
+			// (core's "evicted") meanwhile. In front of what's there now it
+			// leaves a gap; the list asks again from its oldest. (msg-latency
+			// also turns away a page of another window's epoch, and core's
+			// PrependOlderAt one that doesn't start at its window's oldest.)
+		case err == nil:
 			m.prepend(p.Messages, p.HasMore)
 			m.olderFails, m.olderRetryAt = 0, time.Time{}
-		} else {
+		default:
 			m.err = err
 			m.failed(hb, err, true, time.Now())
 		}
+		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
 		hb.afterLoad(m)
 		hb.invalidate()
 	}()
+	return true
 }
 
 // ---- model mutation (callers hold m.mu) ----
@@ -517,14 +546,48 @@ func (m *model) setAll(msgs []core.Message) {
 		if !m.visible(&x) {
 			continue
 		}
-		if o, ok := old[x.TS]; ok && sameMessage(&o.m, &x) {
+		o, had := old[x.TS]
+		if had && sameMessage(&o.m, &x) {
 			out = append(out, entry{m: x, rev: o.rev, seq: o.seq})
 			continue
+		}
+		if had && len(m.loadChanged) < maxLoadChanged {
+			m.loadChanged = append(m.loadChanged, x.TS)
 		}
 		out = append(out, entry{m: x, rev: m.bump(), seq: m.loadSeq})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return tsLess(out[i].m.TS, out[j].m.TS) })
 	m.msgs = out
+}
+
+// maxLoadChanged bounds a load's loadChanged: a reload past it (a whole
+// window converted again) marks only the first ones.
+const maxLoadChanged = 200
+
+// markLoadChanged gives the messages the load just taken in changed
+// (loadChanged) the marks an event's change would have made: taut's
+// views of them aren't ready until JS has core's new copy. Without them a
+// row whose read waited on the load (its need) took JS's copy from before
+// the load as ready once the mirror caught up, and drew the new copy,
+// the old, then the new again once the mirror's sweep told JS: a vote's
+// count N, N-1, N after a poll while the socket was down. Made before the
+// answer is the model's (callers hold mu), so no frame reads it first.
+func (m *model) markLoadChanged() {
+	tss := m.loadChanged
+	m.loadChanged = nil
+	if len(tss) == 0 {
+		return
+	}
+	if t := tautOf(); t != nil {
+		t.MessagesChanged(m.ch, tss)
+	}
+}
+
+// inWindow reports whether ts belongs in the model's window: not older
+// than its oldest message while there's more before it, where it would
+// sit above a gap of messages never loaded (callers hold mu).
+func (m *model) inWindow(ts string) bool {
+	return !m.hasMore || len(m.msgs) == 0 || !tsLess(ts, m.msgs[0].m.TS)
 }
 
 // mergeNewest replaces the newest window with page, keeping older loaded
@@ -651,12 +714,18 @@ func (m *model) takeLive() map[string]*entry {
 // keepLive puts back what the events changed during a load after its
 // answer replaced the list: Slack's message_changed replaces the stored
 // message at once, so an answer read before an edit (or a delete, or a
-// new reply) mustn't show the old state again (callers hold m.mu).
+// new reply) mustn't show the old state again (callers hold m.mu). A
+// change to a message before the window the answer left (a dropped
+// model's reload takes core's window whole) stays out: put back, it sat
+// above a gap of messages never loaded, and paging back started before
+// it. Each keeps the EmitSeq of the event that made it (never 0: a row
+// would take JS's copy of the revision before as ready).
 func (m *model) keepLive(live map[string]*entry) {
 	for ts, e := range live {
-		if e == nil {
+		switch {
+		case e == nil:
 			m.remove(ts)
-		} else {
+		case m.find(ts) >= 0 || m.inWindow(ts):
 			m.upsert(e.m, e.seq)
 		}
 	}
@@ -741,7 +810,10 @@ func (hb *hub) apply(ev core.Event) bool {
 		changed := false
 		if chm != nil {
 			chm.mu.Lock()
-			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
+			// an update to a message before the window (an edit to last
+			// week's, the window today's with more before it) stays out:
+			// put in, it sat above a gap (inWindow)
+			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inWindow(ev.Msg.TS) {
 				chm.upsert(*ev.Msg, ev.EmitSeq)
 				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
