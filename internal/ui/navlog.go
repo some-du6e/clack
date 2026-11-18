@@ -69,7 +69,7 @@ func (a *App) logThreadOpen(ch, ts, at, where string) {
 // (".funcN") count too.
 var routerFuncs = []string{
 	"(*App).OpenThread", "(*App).openThread", "(*App).OpenThreadAt", "(*App).openThreadAt", "(*App).openThreadAtIn",
-	"(*App).OpenThreadReply", "(*App).Navigate", "(*App).afterRoute", "(*App).jumpToMessage", "(*App).jumpViaRoutes",
+	"(*App).OpenThreadReply", "(*App).Navigate", "(*App).afterRoute", "(*App).jumpToMessage", "(*App).jumpMessage", "(*App).jumpViaRoutes",
 	"(*App).OpenPermalink", "(*App).withVia", "(*App).navVia", "(*App).logThreadOpen", "callerOutsideRouter",
 }
 

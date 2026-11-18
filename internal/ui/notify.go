@@ -332,7 +332,7 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 	if !slackTSRE.MatchString(thread) {
 		thread = ""
 	}
-	a.jumpToMessage(ch, ts, thread)
+	a.jumpMessage(ch, ts, thread, false) // the payload has a reply's thread_ts: no lookup
 }
 
 // replyFromNotification is delegate_replyToNotification (boot-render): the

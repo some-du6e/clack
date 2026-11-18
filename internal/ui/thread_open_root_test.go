@@ -28,8 +28,13 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/key"
+	"gioui.org/io/pointer"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 const digestBotID = "B0DIGEST001"
@@ -308,5 +313,47 @@ func TestFollowedThreadToastOpensParentThread(t *testing.T) {
 	}
 	if opens := logs.matching("ui: thread opened: "); len(opens) != 1 || !strings.Contains(opens[0], "a notification's click") {
 		t.Errorf("clack.log's thread opens: %q, want one, from the notification's click", opens)
+	}
+}
+
+// TestReplyPermalinkSplitClickOpensInSplit: the split modifier click
+// (⌘⌥, Ctrl+Alt) on a reply's link without thread_ts opens the parent's
+// thread in the split view once messages.list answered; the lookup
+// doesn't lose the click's container. Clack's split view showed the
+// reply as the thread's root.
+func TestReplyPermalinkSplitClickOpensInSplit(t *testing.T) {
+	e := threadHeaderEnv(t, false)
+	pub, root, reply := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS, fakeslack.ThreadReplyTS(1)
+	digest := fakeslack.ThreadPrivateID
+	link := digestLink(pub, reply, "")
+	postDigest(e.fs, digest, link)
+	e.openChannel(digest)
+	e.settle(800 * time.Millisecond)
+	p := e.linkPoint(t, digest, link)
+	pt := f32.Pt(float32(p.X), float32(p.Y))
+	mods := shortcut.Mod() | key.ModAlt
+	e.r.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt, Time: time.Second},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt, Modifiers: mods, Time: time.Second + time.Millisecond},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt, Modifiers: mods, Time: time.Second + 2*time.Millisecond},
+	)
+	want := Route("c/" + pub + "/t/" + root)
+	deadline := time.Now().Add(20 * time.Second)
+	for e.a.splitTop() != want {
+		if r := e.a.splitTop(); r == Route("c/"+pub+"/t/"+reply) {
+			t.Fatalf("the split view shows the reply as a thread's root (%q)", r)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the split click on the reply's link: split view %q, %s; want the parent thread %q", e.a.splitTop(), e.openState(), want)
+		}
+		e.frame()
+		time.Sleep(time.Millisecond)
+	}
+	if s := e.a.secondary; s.kind == secThread {
+		t.Errorf("the split click opened a thread in the secondary pane too: %s", e.openState())
+	}
+	e.settle(300 * time.Millisecond)
+	if bad := e.replyDrawnAsRoot(pub, reply); bad != "" {
+		t.Errorf("%s", bad)
 	}
 }

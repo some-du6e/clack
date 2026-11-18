@@ -38,16 +38,27 @@ import (
 //   - Neither: toChannel.
 //
 // UI goroutine; with a lookup to make, the navigation comes later.
-func (a *App) jumpToMessage(ch, ts, thread string) {
+func (a *App) jumpToMessage(ch, ts, thread string) { a.jumpMessage(ch, ts, thread, true) }
+
+// jumpMessage is jumpToMessage; resolve: a message without a thread_ts
+// is looked up. A notification's click needs no lookup
+// (notificationClicked): its payload has the message's thread_ts
+// whenever the message is a reply (messageNote reads it off the
+// message), and the message Slack's lookup finds is the one in its store
+// that the notification was for.
+func (a *App) jumpMessage(ch, ts, thread string, resolve bool) {
 	if ch == "" {
 		return
 	}
 	via := a.navVia()
-	if thread == "" && ts != "" {
+	if resolve && thread == "" && ts != "" {
 		if c := a.Core(); c != nil {
 			if t, found := c.CachedReplyThread(ch, ts); found {
 				thread = t
 			} else {
+				// the click's container goes with the lookup: a click in
+				// the split view (or a split modifier click) lands there
+				split := a.pane == paneSplit || a.splitClick()
 				go func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 					defer cancel()
@@ -56,7 +67,14 @@ func (a *App) jumpToMessage(ch, ts, thread string) {
 						if !found {
 							log.Printf("ui: jumpToMessage: %s's thread_ts wasn't found; navigating without it (%s)", logTag(ts), via)
 						}
-						a.withVia(via, func() { a.jumpViaRoutes(ch, ts, t) })
+						a.withVia(via, func() {
+							if split {
+								log.Printf("ui: jumpToMessage: %s %s thread %s in the split view (%s)", logTag(ch), logTag(ts), logTag(t), via)
+								a.OpenSplit(jumpRoute(ch, ts, t))
+								return
+							}
+							a.jumpViaRoutes(ch, ts, t)
+						})
 					})
 				}()
 				return
@@ -66,13 +84,25 @@ func (a *App) jumpToMessage(ch, ts, thread string) {
 	a.withVia(via, func() { a.jumpViaRoutes(ch, ts, thread) })
 }
 
+// jumpRoute is jumpViaRoutes' route: the thread, else the conversation at
+// the message, else the conversation.
+func jumpRoute(ch, ts, thread string) string {
+	switch {
+	case thread != "":
+		return "c/" + ch + "/t/" + thread
+	case ts != "":
+		return "c/" + ch + "/m/" + ts
+	}
+	return "c/" + ch
+}
+
 // jumpViaRoutes is jumpToMessage's navigation, its thread known (or none).
 func (a *App) jumpViaRoutes(ch, ts, thread string) {
 	log.Printf("ui: jumpToMessage: %s %s thread %s (%s)", logTag(ch), logTag(ts), logTag(thread), a.navVia())
 	prev := a.router.Current()
 	switch {
 	case thread != "":
-		a.Navigate("c/" + ch + "/t/" + thread)
+		a.Navigate(jumpRoute(ch, ts, thread))
 		if a.pane == paneSplit || a.router.Current().Channel() != ch {
 			return // the split view took it (OpenSplit): it has no reply to start at
 		}
@@ -83,10 +113,8 @@ func (a *App) jumpViaRoutes(ch, ts, thread string) {
 		if ts != "" {
 			a.openThreadAt(ch, thread, ts, prev)
 		}
-	case ts != "":
-		a.Navigate("c/" + ch + "/m/" + ts)
 	default:
-		a.Navigate("c/" + ch)
+		a.Navigate(jumpRoute(ch, ts, ""))
 	}
 }
 

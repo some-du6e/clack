@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"gioui.org/f32"
@@ -775,10 +776,13 @@ func (r *handler) OpenURL(u string) {
 	if po, ok := v.h.(interface{ OpenPermalink(string) bool }); ok && po.OpenPermalink(u) {
 		return // openPermalink: jumpToMessage, a reply in its thread (the ui root's App)
 	}
-	if ch, ts, ok := archivesLink(u); ok {
-		if ts != "" {
+	if ch, ts, thread, ok := archivesLink(u); ok {
+		switch {
+		case thread != "":
+			v.h.Navigate("c/" + ch + "/t/" + thread) // a reply's link: its thread
+		case ts != "":
 			v.h.Navigate("c/" + ch + "/m/" + ts) // the message in its conversation, never a thread's root
-		} else {
+		default:
 			v.h.Navigate("c/" + ch)
 		}
 		return
@@ -862,20 +866,28 @@ func isID(s string, first byte) bool {
 	return true
 }
 
-// archivesLink recognizes message/channel links.
-func archivesLink(raw string) (ch, ts string, ok bool) {
+// archivesLink recognizes message/channel links: the conversation, the
+// message's ts and the thread a reply's link names (?thread_ts=, only a
+// message timestamp).
+func archivesLink(raw string) (ch, ts, thread string, ok bool) {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.HasSuffix(u.Host, ".slack.com") {
-		return "", "", false
+		return "", "", "", false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "archives" {
-		return "", "", false
+		return "", "", "", false
 	}
 	ch = parts[1]
 	if len(parts) >= 3 && strings.HasPrefix(parts[2], "p") && len(parts[2]) > 7 {
 		p := parts[2][1:]
 		ts = p[:len(p)-6] + "." + p[len(p)-6:]
 	}
-	return ch, ts, true
+	if t := u.Query().Get("thread_ts"); messageTSRE.MatchString(t) && ts != "" {
+		thread = t
+	}
+	return ch, ts, thread, true
 }
+
+// messageTSRE is a message timestamp as Slack writes one.
+var messageTSRE = regexp.MustCompile(`^\d{10}\.\d{6}$`)
