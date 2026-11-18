@@ -92,7 +92,7 @@ type Host interface {
 	// Frozen says a freeze began (true: the window draws the frame on
 	// screen again, frame after frame, and holds its animated images) or
 	// ended (false: at its next frame, before anything reads input, the
-	// window starts every widget's pointer state over, Gio patch 45's
+	// window starts every widget's pointer state over, Gio patch 49's
 	// Source.ResetPointers, and lays out again).
 	Frozen(on bool)
 }

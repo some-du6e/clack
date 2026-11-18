@@ -13,7 +13,7 @@ import (
 	"gioui.org/op/clip"
 )
 
-// Clack patch 45: ResetPointers starts every handler's pointer state over
+// Clack patch 49: ResetPointers starts every handler's pointer state over
 // where the pointer is. Frames in which a and b ask for nothing (a frame
 // drawn again from its old ops, as Clack's inspect tool freezes one) let
 // the pointer go from a to b without either hearing of it: without the

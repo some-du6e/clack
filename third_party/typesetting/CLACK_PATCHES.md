@@ -5,7 +5,7 @@ module cache, its non-test Go files, `LICENSE` files, `README.md` files,
 `go.mod` and `go.sum` byte for byte (no tests, test data or `testutils`:
 Clack doesn't run go-text's tests), plus the changes below. The root
 `go.mod` points at it with `replace github.com/go-text/typesetting =>
-./third_party/typesetting`. When an upstream release has both changes,
+./third_party/typesetting`. When an upstream release has these changes,
 drop the replace and delete this directory.
 
 The changed files are `font/clack_glyf.go` (new), `font/font.go`,
@@ -13,8 +13,8 @@ The changed files are `font/clack_glyf.go` (new), `font/font.go`,
 `font/variations.go`, `font/opentype/clack_bytes.go` (new),
 `font/opentype/reader.go`, `fontscan/clack_mmap.go`,
 `fontscan/clack_mmap_unix.go`, `fontscan/clack_mmap_windows.go`,
-`fontscan/clack_mmap_other.go` (new), `fontscan/fontmap.go` and this
-file. `supply-chain.yml`'s typesetting
+`fontscan/clack_mmap_other.go` (new), `fontscan/fontmap.go`,
+`harfbuzz/unicode.go` and this file. `supply-chain.yml`'s typesetting
 job checks every other file against the module proxy's v0.3.5.
 
 Why: the memory workflow (perf.yml's scale jobs) found the fonts holding
@@ -72,3 +72,47 @@ the face in the FontMap's cache. Where mapping isn't available or fails,
 the font is read as before (`loadFromDisk`, which `assertValid` still
 uses for its one-off check). After patch 1, the copied tables of the
 fallback faces a Windows client loaded were 32 MB of its heap.
+
+## 4. fontscan: a rune no face has gets the query's own face
+
+`FontMap.ResolveFace` in `fontscan/fontmap.go`.
+
+When no face covers a rune (a Hangul filler in a channel name, with no
+system font that maps it), `ResolveFace` returned the font map's first
+face, the collection's first: Lato Regular, whatever the query's weight
+and style. The rune's `.notdef` box came out of that face, so a bold or
+black row drew Regular's box (at 15px 7.97px wide where Chrome measured
+8.20px at weight 700, and a lighter stroke). Blink draws the `.notdef`
+with the first candidate (`FontFallbackIterator`'s
+`kFirstCandidateForNotdefGlyph`): the first family's face at the
+requested weight and style. The last resort now returns the first face
+of `candidates.withoutFallback` that loads (the query's families, each
+pruned to its best match for the aspect, in order), and the first face
+only when none does. Found using Clack (dogfood, α.104).
+
+That matches Chrome only inside Slack-Lato's unicode-range
+(`U+0-F8FE,U+F900-FFFF`): Blink's first candidate is a face whose range
+holds the rune, so for an astral rune, or U+F8FF, Chrome's `.notdef`
+comes from a later family (the generic sans-serif's system face at the
+latest) while Clack still draws Lato's. That was so before the patch
+too; following it would need per-family ranges in the query.
+
+Test: `internal/ui/theme` `TestNotdefTakesTheTextWeight` (Regular's,
+Bold's and Black's own `.notdef` for U+115F, 1063 and 1094/2000 em).
+
+## 5. harfbuzz: U+180F is a default ignorable
+
+`IsDefaultIgnorable` in `harfbuzz/unicode.go`.
+
+go-text's list stopped the Mongolian range at U+180E. HarfBuzz's
+`is_default_ignorable` takes 0x180B..0x180F: U+180F MONGOLIAN FREE
+VARIATION SELECTOR FOUR (Unicode 14) is `Default_Ignorable_Code_Point`
+like FVS1-3 and the vowel separator, and Chrome draws nothing for it. A
+lone FVS4 drew a `.notdef` box, and `computeUnicodeProps`' branch that
+marks the four selectors hidden never saw it (it is inside the
+default-ignorable test). Now U+180F is hidden like the others and makes no
+face change (`shaping`'s `ignoreFaceChange`).
+
+Test: `internal/ui/theme` `TestMongolianVariationSelectorsHidden`
+(between two letters U+180C..U+180F shape as FVS1 does: hidden, no
+`.notdef`, no advance).

@@ -7,7 +7,7 @@ import (
 	"gioui.org/io/pointer"
 )
 
-// Clack patch 45 (CLACK_PATCHES.md §45): every handler's pointer state
+// Clack patch 49 (CLACK_PATCHES.md §49): every handler's pointer state
 // started over where the pointer is.
 
 // ResetPointers gives every handler a pointer.Cancel, as a window that

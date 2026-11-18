@@ -36,7 +36,7 @@ import (
 //   - FreezeKey again or Esc unfreezes (Esc again ends the session), and
 //     so does the session's end or a new window size. The window lays out
 //     again with every widget's pointer state started over where the
-//     pointer is (Host.Frozen(false), Gio patch 45's ResetPointers): no
+//     pointer is (Host.Frozen(false), Gio patch 49's ResetPointers): no
 //     widget read its events while frozen, so one the pointer left would
 //     have stayed hovered.
 //

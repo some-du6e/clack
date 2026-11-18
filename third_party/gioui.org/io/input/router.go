@@ -550,7 +550,7 @@ func (q *Router) execute(c Command) {
 			h, ok := q.handlers[e.tag]
 			immediate = immediate && (!ok || !h.processedFilter.Matches(e.event))
 		}
-		immediate = immediate || immediateCmd(c) // Clack patch 45: ResetPointers
+		immediate = immediate || immediateCmd(c) // Clack patch 49: ResetPointers
 		if immediate {
 			// Hold on to the remaining events for state replay.
 			var evts []event.Event
@@ -616,7 +616,7 @@ func (q *Router) executeCommand(c Command) stateChange {
 		state.clipboardState = q.cqueue.ProcessReadClipboard(state.clipboardState, req.Tag)
 	case pointer.GrabCmd:
 		state.pointerState, evts = q.pointer.queue.grab(state.pointerState, req)
-	case resetPointersCmd: // Clack patch 45 (clack_reset.go)
+	case resetPointersCmd: // Clack patch 49 (clack_reset.go)
 		state.pointerState, evts = q.pointer.queue.resetPointers(q.handlers, state.pointerState)
 	case op.InvalidateCmd:
 		if !q.wakeup || req.At.Before(q.wakeupTime) {

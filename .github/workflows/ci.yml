@@ -205,7 +205,7 @@ jobs:
       - name: Gio focus answers (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'FocusTagCanFocusWithin' gioui.org/io/input
-      # Gio patch 45: every handler's pointer state started over where the
+      # Gio patch 49: every handler's pointer state started over where the
       # pointer is (the inspect tool's freeze ends: no widget read its
       # events while the window drew a frame again)
       - name: Gio pointer state reset (vendored gioui.org/io/input)
@@ -223,6 +223,11 @@ jobs:
           go test -count=1 -v -run 'TestRRectInterior|TestRRectStrokeHole' gioui.org/op/clip
           go test -count=1 -v -run 'TestAddRegion|TestCollectClipInterior|TestPackLayersOneDepthOnePage|TestSplitOp|TestCollectStrokeHole|TestCollectPanelSplit|TestCollectSubPixelKey|TestPackLayersLegacy|TestClackOpCacheReturningPathHits' gioui.org/gpu
           go test -count=1 -v -run 'TestQueryVertAttribBinding' gioui.org/gpu/internal/opengl
+      # Gio patch 45: a StartAligned ScrollToEnd list lays out short content
+      # from its start and still keeps to its end (the thread pane)
+      - name: Gio start-aligned lists (vendored gioui.org/layout)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestListStartAligned' gioui.org/layout
       # Gio patch 26: an Invalidate made while the client handles a wake-up
       # gets a wake-up of its own (hidden and minimized windows draw no
       # frame to cover it); the real windows are windows-shell's

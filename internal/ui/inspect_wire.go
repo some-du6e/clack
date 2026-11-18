@@ -118,7 +118,7 @@ func (k *konami) press(e key.Event) bool {
 // returns the ops to submit for the frame, with nothing laid out (call
 // inspectAfterFrame after them), and nil when the window lays out as
 // usual. When a freeze ended (inspectHost.Frozen) it first starts every
-// widget's pointer state over where the pointer is (Gio patch 45): no
+// widget's pointer state over where the pointer is (Gio patch 49): no
 // widget read its events while the window was frozen.
 func (a *App) inspectFirst(gtx layout.Context) *op.Ops {
 	var ops *op.Ops
