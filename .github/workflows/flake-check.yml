@@ -811,7 +811,7 @@ jobs:
           - part: order
             test: (TestThreadsReloadLikeSlack|TestThreadsRefreshKeepsOldThreadsOffTopLikeSlack|TestThreadsReplyDuringReloadLikeSlack|TestThreadsOrderHeldOnReplyLikeSlack|TestThreadsPageAppendedLikeSlack|TestThreadsOrderUnreadFirstLikeSlack|TestThreadsRealtimeLikeSlack|TestThreadsKeysLikeSlack)
           - part: gaps
-            test: (TestThreadsGapOnePerCardLikeSlack|TestThreadsGapCarryFloorLikeSlack|TestThreadsGapRemountLikeSlack|TestThreadsCarriedChangeLikeSlack|TestThreadsLive)
+            test: (TestThreadsGapOnePerCardLikeSlack|TestThreadsGapCarryFloorLikeSlack|TestThreadsGapRemountLikeSlack|TestThreadsCarriedChangeLikeSlack|TestThreadsLiveMessages|TestThreadsLiveVote|TestThreadsLiveBatch|TestThreadsLiveEvictedRefetch|TestThreadsLiveFloor)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
