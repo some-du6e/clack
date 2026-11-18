@@ -199,13 +199,13 @@ func (f fakeNames) UserName(id string) string    { return f[id] }
 func (f fakeNames) ChannelName(id string) string { return f[id] }
 
 func TestMarkdownRoundTrip(t *testing.T) {
-	src := "# Title\n\nSome **bold** and _it_ with ![](@U1) and ![](#C1) :tada:\n\n- a\n  - b\n- [x] done\n- [ ] todo\n\n1. one\n2. two\n\n> quoted\n\n```\ncode  here\n```\n\n---\n\n| h1 | h2 |\n| --- | --- |\n| c1 | c2 |"
-	bs := ParseMarkdown(src, fakeNames{"U1": "ada", "C1": "general"})
+	src := "# Title\n\nSome **bold** and _it_ with ![](@U0ADA00001) and ![](#C0GEN00001) :tada:\n\n- a\n  - b\n- [x] done\n- [ ] todo\n\n1. one\n2. two\n\n> quoted\n\n```\ncode  here\n```\n\n---\n\n| h1 | h2 |\n| --- | --- |\n| c1 | c2 |"
+	bs := ParseMarkdown(src, fakeNames{"U0ADA00001": "ada", "C0GEN00001": "general"})
 	want := []Kind{Heading1, Paragraph, Bullet, Bullet, Check, Check, Numbered, Numbered, Quote, Code, Divider, Table}
 	if got := kinds(bs); !reflect.DeepEqual(got, want) {
 		t.Fatalf("kinds %v", got)
 	}
-	if bs[1].Spans[5].Kind != richtext.User || bs[1].Spans[5].Text != "@ada" || bs[1].Spans[5].ID != "U1" {
+	if bs[1].Spans[5].Kind != richtext.User || bs[1].Spans[5].Text != "@ada" || bs[1].Spans[5].ID != "U0ADA00001" {
 		t.Errorf("user %+v", bs[1].Spans)
 	}
 	if bs[3].Level != 1 || !bs[4].Checked || bs[7].Number != 2 {
@@ -225,8 +225,14 @@ func TestMarkdownRoundTrip(t *testing.T) {
 			t.Errorf("block %d: %q vs %q", i, a, b)
 		}
 	}
-	if d.Blocks[1].Text() != bs[1].Text() {
-		t.Errorf("paragraph text %q vs %q", d.Blocks[1].Text(), bs[1].Text())
+	// the export names a mention by its id, as Quip's does (the reader
+	// names it from its store), so the paragraph comes back with the same
+	// mentions by id, and the same markdown
+	if a, b := Markdown(bs[1]), Markdown(d.Blocks[1]); a != b {
+		t.Errorf("paragraph %q vs %q", a, b)
+	}
+	if s := d.Blocks[1].Spans[5]; s.Kind != richtext.User || s.ID != "U0ADA00001" || s.Text != "@U0ADA00001" {
+		t.Errorf("user after HTML %+v", s)
 	}
 	// and back to markdown, stable
 	md := DocMarkdown(d)

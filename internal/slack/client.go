@@ -795,9 +795,13 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 var ErrNotAFile = errors.New("slack: not a file URL; refusing to load a Slack page with the session cookie")
 
 // FileURL reports whether u is one of Slack's file hosts or file paths,
-// the only slack.com GETs that carry the session cookie (Download).
+// the only slack.com GETs that carry the session cookie (Download). A path
+// with dot segments or encoded separators is never one: Go sends
+// /files-pri/../ssb/redirect as written, and a server that normalises it
+// would answer the sign-out redirect to a cookie-bearing request. Slack's
+// own file URLs never have them.
 func FileURL(u *url.URL) bool {
-	if u == nil {
+	if u == nil || !plainPath(u) {
 		return false
 	}
 	h := strings.ToLower(u.Hostname())
@@ -810,6 +814,33 @@ func FileURL(u *url.URL) bool {
 		}
 	}
 	return false
+}
+
+// plainPath reports whether u's path can't be read as another path by a
+// server that normalises it: no "." or ".." segment (also with a ";…"
+// parameter, as some proxies strip it), no backslash, no control byte, and
+// no percent-encoded dot, slash or backslash left in the raw path.
+func plainPath(u *url.URL) bool {
+	for _, r := range u.Path {
+		if r == '\\' || r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	for _, seg := range strings.Split(u.Path, "/") {
+		if i := strings.IndexByte(seg, ';'); i >= 0 {
+			seg = seg[:i]
+		}
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	raw := strings.ToLower(u.EscapedPath())
+	for _, enc := range []string{"%2e", "%2f", "%5c", "%00"} {
+		if strings.Contains(raw, enc) {
+			return false
+		}
+	}
+	return true
 }
 
 // UploadBytes sends file contents to an upload URL from
