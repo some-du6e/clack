@@ -23,8 +23,21 @@ on:
       - "internal/ui/sidebar_filter.go"
       - "internal/ui/views/dms*.go"
       - "internal/ui/views/peek.go"
+      # what the drawn tests depend on: clickArea's order (content, then the
+      # tile), the chrome base, the account restyle, the kit's palette, the
+      # hover rows, the text fade and the token cascade
+      - "internal/ui/widgets.go"
+      - "internal/ui/chrome.go"
+      - "internal/ui/theme_account.go"
+      - "internal/ui/theme_tokens.go"
+      - "internal/ui/rail_peek_agents.go"
+      - "internal/ui/views/kit.go"
+      - "internal/ui/views/kit_tokens.go"
+      - "internal/ui/views/later.go"
       - "internal/ui/theme/palette.go"
       - "internal/ui/theme/account.go"
+      - "internal/ui/theme/text.go"
+      - "internal/ui/theme/tokens.go"
       - "internal/ui/theme/native.go"
       - "internal/ui/popups/prefs_availability.go"
       - "internal/ui/popups/datetime.go"
@@ -62,14 +75,14 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 15m -run '^(TestAccountThemeDrawSites|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen|TestAccountThemeControlStripPress)$' ./internal/ui/
+        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 15m -run '^(TestAccountThemeDrawSites|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen|TestAccountThemeControlStripPress|TestPeekHeaderRule)$' ./internal/ui/
       - name: the DMs rows, drawn and sampled (the peek card and the page)
         if: ${{ !cancelled() }}
         env:
           CLACK_PIXEL_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 10m -run '^(TestDMsRowsDrawn|TestDMsPeekCardTokens|TestDMsListHoverByMode)$' ./internal/ui/views/
+        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 10m -run '^(TestDMsRowsDrawn|TestDMsListChromeScope|TestDMsPeekCardTokens|TestDMsListHoverByMode|TestThemeTokensCascadePerVariable)$' ./internal/ui/views/
       - name: Preferences colour screenshots
         env:
           PREFS_COLOR_SHOTS_DIR: ${{ github.workspace }}/dist/shots
