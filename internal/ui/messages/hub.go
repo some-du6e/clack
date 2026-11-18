@@ -551,7 +551,7 @@ func (m *model) setAll(msgs []core.Message) {
 			out = append(out, entry{m: x, rev: o.rev, seq: o.seq})
 			continue
 		}
-		if had && len(m.loadChanged) < maxLoadChanged {
+		if had && len(m.loadChanged) < maxLoadChanged && !sameExceptDoc(&o.m, &x) {
 			m.loadChanged = append(m.loadChanged, x.TS)
 		}
 		out = append(out, entry{m: x, rev: m.bump(), seq: m.loadSeq})
@@ -743,6 +743,16 @@ func sameMessage(a, b *core.Message) bool {
 	// block count but another doc, and a row keeping its rev would draw
 	// the old one (wrapped differently) until something else refreshed it
 	return reflect.DeepEqual(a, b)
+}
+
+// sameExceptDoc reports whether a and b differ only in their conversion
+// (Doc, Refs: a name resolved since, a pref): JS's copy of the message is
+// the same then, and a load that brings b marks nothing (markLoadChanged).
+func sameExceptDoc(a, b *core.Message) bool {
+	x, y := *a, *b
+	x.Doc, y.Doc = richtext.Doc{}, richtext.Doc{}
+	x.Refs, y.Refs = core.MsgRefs{}, core.MsgRefs{}
+	return reflect.DeepEqual(x, y)
 }
 
 // sameView is the looser test applyView (taut.go) uses on the plugins'
