@@ -196,6 +196,7 @@ func (a *App) openStatusFromShortcut() {
 }
 
 func (a *App) signOut() {
+	a.closeInspectSession() // inspect_wire.go
 	if a.opts.SignOut != nil && a.data == nil {
 		a.opts.SignOut() // deletes the stored credentials
 	}

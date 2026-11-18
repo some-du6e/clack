@@ -236,3 +236,33 @@ func (s *listState) eachBody(f func(ts string, off image.Point, rv *richview.Vie
 		f(r.src.TS, s.origin.Add(image.Pt(r.bodyRect.Min.X, s.pos[i]+r.bodyRect.Min.Y)), r.rv)
 	}
 }
+
+// ToolbarRect is the hover toolbar (MessageActions) as the last frame drew
+// it over the hovered message, in window coordinates, and that message's
+// ts; ok false when the frame drew none.
+func (v *ChannelView) ToolbarRect() (ts string, r image.Rectangle, ok bool) {
+	return v.s.toolbarRect()
+}
+
+func (s *listState) toolbarRect() (string, image.Rectangle, bool) {
+	if s.tbFor < 0 || s.tbFor >= len(s.items) {
+		return "", image.Rectangle{}, false
+	}
+	ts := ""
+	if r := s.rows[s.items[s.tbFor].key]; r != nil {
+		ts = r.src.TS
+	}
+	return ts, s.tbRect.Add(s.origin), true
+}
+
+// BodyPointer reports whether the body of message ts counts the pointer
+// as over it (richview View.Pointer: what its hover states, tooltips and
+// hover card follow), as the last frame left it; ok false when the
+// message has no body on screen.
+func (v *ChannelView) BodyPointer(ts string) (over, ok bool) {
+	r := v.s.rows[ts]
+	if r == nil || r.rv == nil {
+		return false, false
+	}
+	return r.rv.Pointer(), true
+}

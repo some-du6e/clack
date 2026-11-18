@@ -33,15 +33,23 @@ type dragHost struct {
 	posted []func()
 	toasts []string
 	size   image.Point
+	frozen []bool // Frozen's calls
+	reset  bool   // a freeze ended: the next frame resets the pointers
 }
 
-func (h *dragHost) Theme() *theme.Theme               { return nil }
-func (h *dragHost) Describe(r *Report, red *Redactor) { r.Page = red.Route("c/C0123456789") }
-func (h *dragHost) ConvKind(string) string            { return "" }
-func (h *dragHost) CopyText(string)                   {}
-func (h *dragHost) Invalidate()                       {}
-func (h *dragHost) ConfigDir() string                 { return "" }
-func (h *dragHost) Toast(s string)                    { h.toasts = append(h.toasts, s) }
+func (h *dragHost) Theme() *theme.Theme { return nil }
+func (h *dragHost) Describer() func(*Report, *Redactor) {
+	return func(r *Report, red *Redactor) { r.Page = red.Route("c/C0123456789") }
+}
+func (h *dragHost) ConvKind(string) string { return "" }
+func (h *dragHost) CopyText(string)        {}
+func (h *dragHost) Invalidate()            {}
+func (h *dragHost) ConfigDir() string      { return "" }
+func (h *dragHost) Toast(s string)         { h.toasts = append(h.toasts, s) }
+func (h *dragHost) Frozen(on bool) {
+	h.frozen = append(h.frozen, on)
+	h.reset = h.reset || !on
+}
 func (h *dragHost) Regions() []Region {
 	return []Region{{Name: "window", Rect: image.Rectangle{Max: h.size}}, {Name: "sidebar", Rect: image.Rect(0, 0, 200, h.size.Y)}, {Name: "primary", Rect: image.Rect(200, 0, h.size.X, h.size.Y)}}
 }
@@ -84,14 +92,18 @@ type dragEnv struct {
 	shots  []image.Rectangle
 	ks     []float32
 	copied image.Image
+	// content draws the window under the tool (none: an empty window)
+	content func(gtx layout.Context)
+	// frozen: the last frame was drawn from the frozen frame (Frame)
+	frozen bool
 }
 
 func newDragEnv(t *testing.T) *dragEnv {
-	e := &dragEnv{t: t, size: image.Pt(900, 600)}
+	e := &dragEnv{t: t, size: image.Pt(900, 600), content: func(layout.Context) {}}
 	e.host = &dragHost{size: e.size}
 	e.tool = New(e.host, key.Filter{Name: "D", Required: key.ModShortcut | key.ModAlt | key.ModShift})
 	prevShoot, prevWrite := Shoot, WriteImage
-	Shoot = func(_ *op.Ops, region image.Rectangle, k float32) (*image.RGBA, error) {
+	Shoot = func(_ op.CallOp, region image.Rectangle, k float32) (*image.RGBA, error) {
 		e.shots, e.ks = append(e.shots, region), append(e.ks, k)
 		return noiseShot(ShotSize(region, k), 1), nil
 	}
@@ -103,12 +115,27 @@ func newDragEnv(t *testing.T) *dragEnv {
 	return e
 }
 
+// frame is a window frame as internal/ui's: the tool's Frame first,
+// before the ops are reset (a frozen frame is drawn from them), then the
+// pointer reset a freeze's end asked for, then the layout.
 func (e *dragEnv) frame() {
 	e.host.drain()
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source()}
+	ops := e.tool.Frame(gtx)
+	if e.host.reset {
+		e.host.reset = false
+		gtx.Source.ResetPointers()
+	}
+	e.frozen = ops != nil
+	if ops != nil {
+		e.r.Frame(ops)
+		e.tool.AfterFrame(ops, e.size)
+		return
+	}
 	e.ops.Reset()
-	gtx := layout.Context{Ops: &e.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source()}
+	gtx.Ops = &e.ops
 	g := e.tool.Begin(gtx)
-	_ = g
+	e.content(g)
 	e.tool.End(gtx)
 	e.r.Frame(&e.ops)
 	e.tool.AfterFrame(&e.ops, e.size)
@@ -424,6 +451,15 @@ func TestCaptureOpensReview(t *testing.T) {
 			e.dragTo(p.Add(f32.Pt(60, 40)))
 			e.frame()
 			e.releaseAt(p.Add(f32.Pt(60, 40)))
+		}, true},
+		{"a Shift+drag", func() { // Shift copies a pick at once, never a region
+			to := p.Add(f32.Pt(60, 40))
+			e.queue(pointer.Event{Kind: pointer.Move, Position: p, Modifiers: key.ModShift},
+				pointer.Event{Kind: pointer.Press, Buttons: pointer.ButtonPrimary, Position: p, Modifiers: key.ModShift})
+			e.frame()
+			e.queue(pointer.Event{Kind: pointer.Move, Buttons: pointer.ButtonPrimary, Position: to, Modifiers: key.ModShift})
+			e.frame()
+			e.queue(pointer.Event{Kind: pointer.Release, Position: to, Modifiers: key.ModShift})
 		}, true},
 	} {
 		n := len(e.shots)

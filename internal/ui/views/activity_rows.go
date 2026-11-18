@@ -235,7 +235,8 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 	}
 	if ts := c.YouRepliedTS(it); ts != "" {
 		tip := nsActivity.T("You replied") // RepliedBadge
-		if m, ok := c.S.Find(it.Channel, ts); ok {
+		// the reply YouRepliedTS found, a copy fetched by id too
+		if m, ok := c.S.FindHeld(it.Channel, ts); ok {
 			if t := actTrunc(oneLine(m.Text), 60); t != "" {
 				tip += "\n“" + t + "”"
 			}
@@ -1263,9 +1264,9 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 		return b.para(gtx, 15, 22, wReg, col, maxLines, t)
 	}
 	key := "sub:" + sub + "\x00" + m.Channel + "/" + m.TS
-	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Blocks)) + ":" + strconv.Itoa(len(doc.Blocks))
+	ver := b.msgVerOf(m) + ":" + strconv.Itoa(len(doc.Blocks)) // the preview's own blocks
 	if m != orig {
-		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
+		ver += ":p" // a plugin's view of it: never the source's layout
 	}
 	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true}
 	if !m.System {
@@ -1282,8 +1283,7 @@ func (b *base) actPreviewDoc(m *core.Message) richtext.Doc {
 	if c == nil || len(m.Blocks) == 0 {
 		return m.Doc
 	}
-	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Blocks)) + ":" +
-		strconv.FormatUint(uint64(textHash(string(m.Blocks))), 36)
+	ver := b.msgVerOf(m)
 	k := m.Channel + "/" + m.TS
 	if e, ok := b.pv[k]; ok && e.ver == ver {
 		return e.doc

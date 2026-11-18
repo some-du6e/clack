@@ -21,6 +21,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/idleprobe"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // TestIdleFrames lets the whole client sit for 10 s with no input on each
@@ -122,6 +123,40 @@ func TestIdleFrames(t *testing.T) {
 				e.frame()
 				e.idle(t, p, page, false)
 			}
+			// Activity on the fixture's feed with its search open on a
+			// query and the first row it lists open beside the inbox
+			// (Alt+Down): the search's rows were described again every
+			// frame once an item opened. The inbox's experiments as the
+			// account has them (fakeslack's experiments.getByUser doesn't
+			// list them: newActShellOn forces the same)
+			on := "on"
+			inbox := map[string]*string{"activity_inbox": &on, "nested_secondary_view": &on, "secondary_view_default_width": &on,
+				"activity_inbox_remove_persistent_detail_panel": &on, "activity_entry_layout_revisions_2": &on, "activity_global_settings": &on}
+			e.a.Core().SetExperimentGroups(inbox)
+			e.a.Navigate("activity")
+			e.frame()
+			e.until("the activity feed", 20*time.Second, func() bool { return e.fs.CallCount("activity.feed") > 0 })
+			e.settle(time.Second)
+			act, _ := e.a.views[Route("activity")].(*views.Activity)
+			if act == nil {
+				t.Fatal("no Activity view")
+			}
+			act.Search("e")
+			e.frame()
+			// Alt+Down until a row opens: on a slow runner the search may
+			// list nothing yet a frame after it opened
+			e.until("an Activity item open with the search open", 20*time.Second, func() bool {
+				if !e.a.secondary.open() {
+					act.StepItem(1, false)
+				}
+				return e.a.secondary.open()
+			})
+			e.idle(t, p, "activity, searching, an item open", true)
+			e.a.CloseSecondary()
+			for k := range inbox {
+				inbox[k] = nil // as experiments.getByUser had them again
+			}
+			e.a.Core().SetExperimentGroups(inbox)
 			e.a.Navigate("directories")
 			e.frame()
 			e.idle(t, p, "directories", true) // Slack focuses its search field
