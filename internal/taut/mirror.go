@@ -111,6 +111,9 @@ type mirror struct {
 	// hold, set by HoldMirror (tests), stops the loop before it handles
 	// the next core event until it's closed
 	hold atomic.Pointer[chan struct{}]
+	// handled, set by AfterMirrorEvent (tests), runs after the loop
+	// handled an event, before it notes it handled (noteSeen)
+	handled atomic.Pointer[func(ev core.Event)]
 }
 
 // HoldMirror (tests) stops taut's mirror before it handles the next core
@@ -127,6 +130,14 @@ func (t *Taut) HoldMirror() (release func()) {
 			close(ch)
 		})
 	}
+}
+
+// AfterMirrorEvent (tests) runs f on taut's mirror after it handles each
+// core event and before it notes the event handled (noteSeen): what f
+// emits is emitted while the mirror was busy with the event before.
+func (t *Taut) AfterMirrorEvent(f func(ev core.Event)) (restore func()) {
+	t.mirror.handled.Store(&f)
+	return func() { t.mirror.handled.Store(nil) }
 }
 
 // jsTracked are the slices whose changes go to JS only for ids it holds.
@@ -224,6 +235,9 @@ func (m *mirror) start() {
 					seen = m.t.app.EmitSeq()
 				}
 				m.onEvent(ev)
+				if f := m.handled.Load(); f != nil {
+					(*f)(ev) // tests: AfterMirrorEvent
+				}
 				if resync {
 					m.t.ui.views.noteSeen(seen)
 				} else {

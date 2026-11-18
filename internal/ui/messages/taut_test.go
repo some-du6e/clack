@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -386,8 +387,17 @@ func (u *pluginUI) hooks() taut.UIHooks {
 		SetStyle:    slackc.SetStyle,
 		RemoveStyle: slackc.RemoveStyle,
 		ThreadPane:  ThreadPane,
+		Invalidate: func() {
+			if f := tautInvalidate.Load(); f != nil {
+				(*f)()
+			}
+		},
 	}
 }
+
+// tautInvalidate is what taut's Invalidate calls in these tests (the
+// window's: a test that draws frames only when asked sets it).
+var tautInvalidate atomic.Pointer[func()]
 
 func (u *pluginUI) anyTree(sub string) bool {
 	u.mu.Lock()

@@ -73,42 +73,14 @@ func TestDroppedModelTakesCoresWindow(t *testing.T) {
 		frame()
 		time.Sleep(5 * time.Millisecond)
 	}
-	// it holds no gap: what Karim read only with the unread messages after
+	// it draws no gap: what Karim read only with the unread messages after
 	// it (the list may have paged back on its own to fill the pane, from
 	// the newest page down: what it pages in is whole)
-	m := v.s.m
-	gap := func() (readIn, unreadIn int, more bool) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		for _, x := range read {
-			if m.find(x.TS) >= 0 {
-				readIn++
-			}
-		}
-		for _, x := range unread {
-			if m.find(x.TS) >= 0 {
-				unreadIn++
-			}
-		}
-		return readIn, unreadIn, m.hasMore
+	if r, u := listHas(v, read), listHas(v, unread); r > 0 && u < len(unread) {
+		t.Errorf("the list draws %d of the messages Karim read and %d of the %d unread ones after them: a gap above the newest page", r, u, len(unread))
 	}
-	readIn, unreadIn, more := gap()
-	if readIn > 0 && unreadIn < len(unread) {
-		t.Errorf("the list holds %d of the messages Karim read and %d of the %d unread ones after them: a gap above the newest page", readIn, unreadIn, len(unread))
-	}
-	if unreadIn == 0 && !more {
-		t.Error("the list holds nothing before the newest page and doesn't know there's more")
-	}
-
-	// paging back brings every unread message
-	if !drawWhile(frame, 5*time.Second, func() bool {
-		if _, n, _ := gap(); n == len(unread) {
-			return true
-		}
-		hb.loadOlder(m)
-		return false
-	}) {
-		readIn, unreadIn, _ := gap()
-		t.Errorf("paging back loaded %d of the %d unread messages before the newest page (%d of the read ones in the list)", unreadIn, len(unread), readIn)
-	}
+	// scrolled up, it pages back and draws every unread message, in order
+	after := append(append([]slack.Message(nil), unread...), newest...)
+	scrollUp(v, frame, after, 5*time.Second)
+	drawnInOrder(t, v, frame, after)
 }

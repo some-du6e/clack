@@ -5,35 +5,83 @@ package messages
 // against the frame's stamp). A frame stamps itself before its rows read
 // their senders, so a check that ran while the latest frame laid out its
 // rows found the sender's read in the frame before, and a rename then
-// never redrew the row. Synthetic data.
+// never redrew the row: an idle window kept the old name. Here the
+// rename lands while a frame draws the row above the sender's, and only
+// the frames the hub asks for come after. Synthetic data on
+// internal/fakeslack.
 
 import (
+	"fmt"
+	"slices"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-func TestDrawsMemberReadInTheFrameBefore(t *testing.T) {
+func TestSenderRenameMidFrameDraws(t *testing.T) {
 	app, _, _ := shotsApp(t)
-	const cara = "UCARA0005"
-	app.S.PutUsers([]slack.User{{ID: cara, Name: "cara", Profile: slack.Profile{DisplayName: "cara"}}})
-	hb := hubFor(coreHost{app: app, th: theme.New(false)})
-	m := hb.channel("C0DRAWNMB1")
-	hb.markDrawn(m, time.Now()) // a frame begins
-	app.S.User(cara)            // and a row of it reads its sender
-	time.Sleep(3 * time.Millisecond)
-	hb.markDrawn(m, time.Now()) // the next frame begins, its rows not laid out yet
-	if !hb.drawsMember(core.Event{Type: "user", UserID: cara}) {
-		t.Error("a member the frame before read, checked before the latest frame's rows read her again, counts as undrawn: her rename redraws nothing")
+	const ch = "C0RENAMMF1"
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "lunch", IsChannel: true, IsMember: true, NumMembers: 12})
+	base := time.Now().Add(-time.Hour).Unix()
+	a, b := fmt.Sprintf("%d.000100", base), fmt.Sprintf("%d.000200", base+600)
+	app.S.SetLatest(ch, []slack.Message{
+		{Type: "message", TS: a, User: "UANA00001", Text: "lunch at noon?", Blocks: shotRich(shotSection("lunch at noon?"))},
+		{Type: "message", TS: b, User: "UCARA0001", Text: "sure", Blocks: shotRich(shotSection("sure"))},
+	}, false)
+	f := newInvFrames(t)
+	v := NewChannelView(invHost{coreHost{app: app, th: theme.New(false)}, f.invalidate}, ch)
+	frame := frameFn(v)
+	var mu sync.Mutex
+	var drawn []string
+	drew := func(name string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Contains(drawn, name)
 	}
-	time.Sleep(3 * time.Millisecond)
-	hb.markDrawn(m, time.Now())
-	time.Sleep(3 * time.Millisecond)
-	hb.markDrawn(m, time.Now())
-	if hb.drawsMember(core.Event{Type: "user", UserID: cara}) {
-		t.Error("a member no frame read for two frames counts as drawn")
+	var armed atomic.Bool
+	renamed := make(chan struct{})
+	var once sync.Once
+	hb := v.s.hb
+	labelHook = func(txt string, _ textStyle) {
+		mu.Lock()
+		drawn = append(drawn, txt)
+		mu.Unlock()
+		if txt != "ana" || !armed.Load() {
+			return
+		}
+		once.Do(func() {
+			// Cara's rename, heard by the hub while this frame lays out the
+			// rows: hers is drawn after this one
+			rv := hb.usersRev()
+			refsUserChange(app, "kit.l")
+			for dl := time.Now().Add(300 * time.Millisecond); time.Now().Before(dl) && hb.usersRev() == rv; {
+				time.Sleep(time.Millisecond)
+			}
+			time.Sleep(20 * time.Millisecond)
+			close(renamed)
+		})
+	}
+	t.Cleanup(func() { labelHook = nil })
+	if !f.run(frame, 5*time.Second, func() bool { return itemHeight(v.s, b) > 0 && drew("ana") && drew("cara") }) {
+		t.Fatal("the rows and their senders never drew")
+	}
+	for i := 0; i < 3; i++ {
+		time.Sleep(5 * time.Millisecond)
+		frame()
+	}
+	time.Sleep(5 * time.Millisecond) // the next frame starts ms after the last one read her
+	armed.Store(true)
+	frame()
+	<-renamed
+	mu.Lock()
+	drawn = nil
+	mu.Unlock()
+	// what the hub asks for, nothing else
+	if !f.wait(frame, 3*time.Second, func() bool { return drew("kit.l") }) {
+		t.Errorf("Cara's rename landed while a frame drew the list, and no frame since drew her new name (drawn: %q)", drawn)
 	}
 }
