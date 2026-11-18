@@ -2,6 +2,7 @@ package composer
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"os"
@@ -183,6 +184,19 @@ func (e *plusEnv) dblclick(p image.Point) {
 // platform's, Gio patch 48) and the menu's scrim delay.
 func (e *plusEnv) rest() { e.frames(gesture.DoubleClickTime() + 200*time.Millisecond) }
 
+// diag is the +'s state, for a failure's message: where it is, its
+// hover and press, the presses it saw (widget.Clickable's history), the
+// open state and the turn.
+func (e *plusEnv) diag() string {
+	b := &e.c.ui.btn[crAttach]
+	var hs []string
+	for _, h := range b.History() {
+		hs = append(hs, fmt.Sprintf("{at %v, %v ago, ended %v, cancelled %v}", h.Position, e.now.Sub(h.Start), !h.End.IsZero(), h.Cancelled))
+	}
+	return fmt.Sprintf("+ %v (local %v), hovered %v, pressed %v, open %v, turn %+v, presses %v",
+		e.plus(), e.c.ui.rect[crAttach], b.Hovered(), b.Pressed(), e.c.att.plusOpen, e.c.ui.turn, hs)
+}
+
 // menuOpen reports whether the + menu shows.
 func (e *plusEnv) menuOpen() bool { return e.c.att.plus != nil && !e.c.att.plus.Dismissed() }
 
@@ -268,16 +282,22 @@ func TestPlusDoubleClickOpensFileChooser(t *testing.T) {
 			}
 			e.rest()
 
-			// both clicks in one frame (a slow frame): the menu opens and
-			// closes before it draws, and the chooser opens
+			// both clicks in one frame (a slow frame): the chooser opens,
+			// and the menu the first opened is closed (Gio's router may
+			// hold the rest of a frame's events for the next, after the
+			// menu takes the focus: a second frame)
 			menus := e.h.menus
 			e.queueClick(p)
 			e.ptr += 80 * time.Millisecond
 			e.queueClick(p)
 			e.frame()
+			first := fmt.Sprintf("after one frame: %d choosers, menu %v, %s", e.picks, e.menuOpen(), e.diag())
+			e.frame()
 			if e.picks != 2 || e.menuOpen() || e.overlaysOpen() != 0 || e.h.menus != menus+1 {
-				t.Fatalf("both clicks in a frame: %d choosers, menu %v, %d overlays, %d menus", e.picks, e.menuOpen(), e.overlaysOpen(), e.h.menus-menus)
+				t.Fatalf("both clicks in a frame: %d choosers, menu %v, %d overlays, %d menus; %s; now %s",
+					e.picks, e.menuOpen(), e.overlaysOpen(), e.h.menus-menus, first, e.diag())
 			}
+			t.Logf("both clicks in a frame, %s", first)
 			e.rest()
 
 			// a triple click: the third click toggles the menu open again,
@@ -350,9 +370,12 @@ func TestPlusDoubleClickSlackConnectBlocked(t *testing.T) {
 	if e.c.cs.UploadBlocked {
 		t.Fatal("still blocked once the conversation isn't shared")
 	}
-	e.dblclick(p)
+	before := e.diag()
+	p2 := e.plus()
+	e.dblclick(p2)
+	e.frame()
 	if e.picks != 1 {
-		t.Errorf("%d choosers once uploads are allowed, want 1", e.picks)
+		t.Errorf("%d choosers once uploads are allowed, want 1 (the + was at %v before the conversation changed); before %s; after %s", e.picks, p, before, e.diag())
 	}
 }
 

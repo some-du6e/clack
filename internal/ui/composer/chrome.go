@@ -1336,15 +1336,21 @@ func (c *chrome) attachButton(gtx layout.Context, th *theme.Theme, p *crPal, st 
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	// Slack's plus svg at 18px, centred (the 28px button's 5px padding),
-	// turned about the button's centre (transform-origin 50%)
+	// turned about the button's centre (transform-origin 50%); the
+	// button's area and its tooltip don't turn (the round box looks the
+	// same turned)
+	var rot op.TransformStack
 	if deg != 0 {
 		cen := f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
-		defer op.Affine(f32.Affine2D{}.Rotate(cen, float32(deg*math.Pi/180))).Push(gtx.Ops).Pop()
+		rot = op.Affine(f32.Affine2D{}.Rotate(cen, float32(deg*math.Pi/180))).Push(gtx.Ops)
 	}
 	is := gtx.Dp(18)
 	t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
 	crInfo[crAttach].icon(gtx, 18, ic)
 	t.Pop()
+	if deg != 0 {
+		rot.Pop()
+	}
 	c.hit(gtx, crAttach, r, true)
 	c.tooltip(gtx, th, st, crAttach, r)
 }
