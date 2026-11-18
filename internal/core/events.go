@@ -557,12 +557,12 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			}
 		}
 		a.S.SlurpSub(ch, &m)
-		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this keeps it (store/live.go)
 		// every stored copy takes it, a copy fetched by id included (an
 		// Activity entry's message from a conversation nobody opened:
-		// store/fetched.go); a window or a cached thread that holds none
-		// gets it as before
-		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found || !a.S.Holds(ch, m.TS, "") {
+		// store/fetched.go), and a read out now keeps it (store/live.go),
+		// noted with the write so no read lands between; a window or a
+		// cached thread that holds none gets it as before
+		if _, found := a.S.NoteMutate(ch, m.TS, &m, func(x *slack.Message) { *x = m }); !found || !a.S.Holds(ch, m.TS, "") {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
 		if m.ThreadTS == "" || m.ThreadTS == m.TS {
@@ -594,10 +594,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		} else if old, ok := a.S.FindHeld(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
 			thread = old.ThreadTS
 		}
-		// noted before the copies go: a fetch landing in between leaves it
-		// out (store/live.go)
-		a.S.NoteLive(ch, e.DeletedTS, nil)
-		a.S.Remove(ch, e.DeletedTS)
+		// noted with the copies going: a fetch landing after leaves it out
+		// (store/live.go)
+		a.S.NoteRemove(ch, e.DeletedTS)
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":
@@ -802,7 +801,7 @@ func (a *App) setFiles(ch, ts string, files []slack.File) {
 	for _, f := range files {
 		byID[f.ID] = f
 	}
-	if upd, ok := a.S.Mutate(ch, ts, func(x *slack.Message) {
+	if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) { // a read out now keeps them
 		fs := append([]slack.File(nil), x.Files...)
 		for i := range fs {
 			if f, ok := byID[fs[i].ID]; ok {

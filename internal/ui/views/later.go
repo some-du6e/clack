@@ -187,6 +187,9 @@ type savedBase struct {
 
 	lv    viewMsgLog   // core's message changes the items took (later_live.go)
 	shown shownTracker // the page drew in the latest frame
+	// refetch are the messages a change of which this frame found no copy
+	// of, by channel (later_live.go)
+	refetch map[string][]string
 }
 
 func newSavedBase(h Host) savedBase {
@@ -256,12 +259,23 @@ func (s *savedBase) applyFeeds() {
 	s.dirty = true
 	s.mu.Lock()
 	clear(s.known)
+	byCh := map[string][]string{}
 	for _, f := range s.feeds {
 		for i := range f.items {
-			s.known[f.items[i].Channel+"/"+f.items[i].TS] = true
+			it := &f.items[i]
+			s.known[it.Channel+"/"+it.TS] = true
+			if it.ItemType == "message" && it.Channel != "" && it.TS != "" {
+				byCh[it.Channel] = append(byCh[it.Channel], it.TS)
+			}
 		}
 	}
 	s.mu.Unlock()
+	// the listed messages are in use: the store lets go of others first
+	if c := s.h.Core(); c != nil {
+		for ch, tss := range byCh {
+			c.S.KeepFetched(ch, tss)
+		}
+	}
 }
 
 func (s *savedBase) applyFeed(f *savedFeed) bool {
@@ -346,7 +360,7 @@ func (s *savedBase) match(ev core.Event) bool {
 	switch ev.Type {
 	case "resync", "saved":
 		return true
-	case "update", "delete":
+	case "update", "delete", "gone":
 		// a listed message's edit, reaction or deletion: the next frame
 		// takes it from core (later_live.go), no reload; off screen the
 		// next draw does

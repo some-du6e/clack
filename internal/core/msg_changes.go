@@ -43,8 +43,10 @@ type MsgChange struct {
 	// message out of Activity (P0K2 "Remove activity item": a deletion, or
 	// an update with Event.Removes); 0 when none did.
 	RemoveSeq uint64
-	Deleted   bool
-	ThreadTS  string // the thread a reply is in, as the latest change said
+	// Deleted: deleted, or Slack said there is no such message ("gone":
+	// RemoveSeq stays)
+	Deleted  bool
+	ThreadTS string // the thread a reply is in, as the latest change said
 	// Msg is the message as the change left it, while the table keeps its
 	// copy (the latest maxChangeCopies changes); nil otherwise, and when
 	// it was deleted. The store holds it then (HeldMessage).
@@ -78,7 +80,8 @@ type msgChanges struct {
 	// entries about it (removesNext)
 	removing MsgKey
 	// refetching are the messages RefetchMessages asked Slack for
-	refetching map[MsgKey]bool
+	// (read_changes.go)
+	refetching map[MsgKey]refetch
 }
 
 // changeCopy is the change whose message a slot of msgChanges.copies keeps.
@@ -87,10 +90,11 @@ type changeCopy struct {
 	seq uint64
 }
 
-// noteMsgChange records an "update" or a "delete" and stamps it with its
-// place in the order (emit, under subMu, before any subscriber gets it).
+// noteMsgChange records an "update", a "delete" or a "gone" and stamps
+// it with its place in the order (emit, under subMu, before any
+// subscriber gets it).
 func (a *App) noteMsgChange(ev *Event) {
-	if ev.Type != "update" && ev.Type != "delete" || ev.Channel == "" || ev.TS == "" {
+	if !msgChangeEvent(ev) {
 		return
 	}
 	l := &a.msgLog
@@ -120,6 +124,10 @@ func (a *App) noteMsgChange(ev *Event) {
 	switch {
 	case ev.Type == "delete":
 		r.FullSeq, r.RemoveSeq, r.Deleted, r.Msg = n, n, true, nil
+	case ev.Type == "gone":
+		// Slack answered a fetch by id without it (isNonExistent): no
+		// copy to draw, and no Activity entry removed for it
+		r.FullSeq, r.Deleted, r.Msg = n, true, nil
 	case ev.Name == UpdateReactions && ev.Msg != nil:
 		// the rest stays what the last full change left (the event's copy
 		// can be another conversation's: the channel's copy of a root)
@@ -146,6 +154,12 @@ func (a *App) noteMsgChange(ev *Event) {
 	if len(l.recs) > maxChangeKeys {
 		l.forgetLocked()
 	}
+}
+
+// msgChangeEvent reports an event the change table records: a message's
+// "update" or "delete", or "gone" (RefetchMessages).
+func msgChangeEvent(ev *Event) bool {
+	return (ev.Type == "update" || ev.Type == "delete" || ev.Type == "gone") && ev.Channel != "" && ev.TS != ""
 }
 
 // removesNext marks the next update of ch/ts as one that removes the

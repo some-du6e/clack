@@ -18,6 +18,14 @@ import "github.com/some-du6e/clack/internal/core"
 // again.
 func (s *savedBase) applyLive() {
 	c := s.h.Core()
+	if c != nil {
+		defer func() {
+			for ch, tss := range s.refetch {
+				c.RefetchMessages(ch, tss)
+			}
+			clear(s.refetch)
+		}()
+	}
 	keys, prev, ok := s.lv.read(c)
 	if !ok {
 		for _, f := range s.feeds {
@@ -43,7 +51,10 @@ func (s *savedBase) applyLive() {
 
 // takeChange applies change ch of k to f's items whose copy is current
 // as of have: the change's copy (a reactions change merges into the
-// item's), a deletion as Later's tombstone (Gone).
+// item's), a deletion (or Slack's "gone") as Later's tombstone (Gone). A
+// change no copy is left of (the store let the message go, and core's
+// copy of the change with it) is fetched again by id, as Slack's row
+// fetches a message its store doesn't hold: it comes back as a change.
 func (s *savedBase) takeChange(c *core.App, f *savedFeed, k core.MsgKey, ch *core.MsgChange, have uint64) {
 	for j := range f.items {
 		it := &f.items[j]
@@ -55,6 +66,10 @@ func (s *savedBase) takeChange(c *core.App, f *savedFeed, k core.MsgKey, ch *cor
 		} else if m, ok := c.ChangedMessage(k.Channel, k.TS, ch, it.Msg, have); ok {
 			it.Msg, it.Gone = &m, false
 		} else {
+			if s.refetch == nil {
+				s.refetch = map[string][]string{}
+			}
+			s.refetch[k.Channel] = append(s.refetch[k.Channel], k.TS)
 			continue
 		}
 		s.dirty = true

@@ -25,8 +25,16 @@ import (
 // view take).
 //
 // Every read that writes the store calls noteReadLocked for each message
-// it keeps: SetLatestRead, SetThreadSince, PutFetched (and, merged with
-// msg-latency, SetLatestSince and RefreshRange).
+// it keeps, after it merged its answer with what the socket changed while
+// it was out (never over the raw answer: a page read before a
+// message_changed would spread the older revision): SetLatestRead and
+// PrependOlderSince through readWindowLocked, SetThreadSince, PutFetched.
+// msg-latency's window reads take the same two calls over what they keep:
+// SetLatestSince calls s.readWindowLocked(ch, out, since) once its merge
+// has built out and before the window is replaced, and so does
+// RefreshRange over its out (store TestRefreshRangeRead, core
+// TestReadsAnnounce and TestWindowRead*); SetLatestRead goes once
+// fetchLatest calls SetLatestSince.
 
 // ReadRevision is a message a read brought a new revision of.
 type ReadRevision struct {
@@ -208,14 +216,40 @@ func FileStub(f *slack.File) bool {
 }
 
 // SetLatestRead is SetLatest for a newest-page read of ch whose request
-// began at LiveSeq since: the reactions the socket brought meanwhile are
-// replayed on the page (reacts.go), and a revision the store held another
-// of reaches every copy and core (noteReadLocked).
+// began at LiveSeq since: a message the socket changed meanwhile keeps
+// the store's copy (the socket's), one it deleted stays out
+// (liveKeepLocked), then the window read's hooks run over what it keeps
+// (readWindowLocked).
 func (s *Store) SetLatestRead(ch string, msgs []slack.Message, hasMore bool, since uint64) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.replayAllReactsLocked(ch, msgs, since)
+	out := s.liveKeepLocked(ch, msgs, since)
+	s.readWindowLocked(ch, out, since)
+	s.timelines[ch] = &Timeline{Msgs: out, HasMore: hasMore, Loaded: true}
+}
+
+// liveKeepLocked is what a read of ch's messages begun at LiveSeq since
+// keeps of them (liveReadLocked), in order, the ones the socket deleted
+// meanwhile left out (s.mu held).
+func (s *Store) liveKeepLocked(ch string, msgs []slack.Message, since uint64) []slack.Message {
+	out := make([]slack.Message, 0, len(msgs))
+	for i := range msgs {
+		if m, _, gone := s.liveReadLocked(ch, &msgs[i], since); !gone {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// readWindowLocked is a window read's hooks over out, what it keeps of
+// ch's messages (merged with what the socket changed while it was out),
+// before it writes them into the window: the reactions the socket brought
+// after since are replayed on them (reacts.go), and a revision the store
+// held another of (the window's copy, else another place's) reaches
+// every copy and core (noteReadLocked) (s.mu held).
+func (s *Store) readWindowLocked(ch string, out []slack.Message, since uint64) {
+	s.replayAllReactsLocked(ch, out, since)
 	var old map[string]*slack.Message
 	if t := s.timelines[ch]; t != nil {
 		old = make(map[string]*slack.Message, len(t.Msgs))
@@ -223,10 +257,9 @@ func (s *Store) SetLatestRead(ch string, msgs []slack.Message, hasMore bool, sin
 			old[t.Msgs[i].TS] = &t.Msgs[i]
 		}
 	}
-	for i := range msgs {
-		s.noteReadLocked(ch, old[msgs[i].TS], &msgs[i])
+	for i := range out {
+		s.noteReadLocked(ch, old[out[i].TS], &out[i])
 	}
-	s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
 }
 
 // readThreadLocked is noteReadLocked for the replies answer msgs of the

@@ -61,16 +61,19 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 	} else {
 		source = "older"
-		pins, subs := a.S.PinSeq(), a.S.SubSeq()
+		pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
 		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: before, Limit: 100})
 		if err != nil {
 			return fail(err)
 		}
-		a.S.PrependOlder(ch, p.Messages, p.HasMore)
+		// what the socket changed, deleted or reacted while it was out
+		// stays, and a revision the store held another of reaches every
+		// copy and the views (store PrependOlderSince, read_changes.go)
+		kept := a.S.PrependOlderSince(ch, p.Messages, p.HasMore, live)
+		a.announceReads()
 		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 		a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
-		msgs, hasMore = p.Messages, p.HasMore
-		store.SortAsc(msgs)
+		msgs, hasMore = kept, p.HasMore
 	}
 	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
 	if c, ok := a.Conv(ch); ok {
@@ -860,7 +863,19 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 		if len(kept) > 0 && kept[0].TS == root.TS {
 			root, kept = kept[0], kept[1:]
 		}
-		out.Threads = append(out.Threads, Thread{Channel: ch, Root: a.message(ch, &root), Replies: a.messages(ch, kept), UnreadCount: len(t.UnreadReplies)})
+		// the unread replies the card keeps: one deleted meanwhile takes
+		// its count with it, so the New line sits on an unread reply
+		have := make(map[string]bool, len(kept))
+		for i := range kept {
+			have[kept[i].TS] = true
+		}
+		unread := 0
+		for i := range t.UnreadReplies {
+			if have[t.UnreadReplies[i].TS] {
+				unread++
+			}
+		}
+		out.Threads = append(out.Threads, Thread{Channel: ch, Root: a.message(ch, &root), Replies: a.messages(ch, kept), UnreadCount: unread})
 	}
 	a.S.Lock()
 	a.S.ThreadsUnread, a.S.ThreadMentions = res.State.HasUnreads, res.State.MentionCount

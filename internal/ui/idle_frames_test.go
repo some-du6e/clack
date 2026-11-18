@@ -21,6 +21,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/idleprobe"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // TestIdleFrames lets the whole client sit for 10 s with no input on each
@@ -85,6 +86,23 @@ func TestIdleFrames(t *testing.T) {
 			e.a.Navigate("activity")
 			e.frame()
 			e.idle(t, p, "activity", false)
+			// its search open with a query, and an item open beside it (the
+			// search's rows were described again every frame once an item
+			// opened)
+			if v, ok := e.a.views[Route("activity")].(*views.Activity); ok {
+				v.Search("e")
+				e.frame()
+				for y := 200; y < e.size.Y-40 && !e.a.secondary.open(); y += 30 {
+					e.click(image.Pt(e.size.X/3, y))
+					e.frame()
+					e.frame()
+				}
+				if !e.a.secondary.open() {
+					t.Fatal("no Activity row opened with the search open")
+				}
+				e.idle(t, p, "activity, searching, an item open", true)
+				e.a.CloseSecondary()
+			}
 			e.openChannel(ch)
 			e.frame()
 			e.a.openPrefs()

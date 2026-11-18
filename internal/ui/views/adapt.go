@@ -489,11 +489,12 @@ func msgVer(m *core.Message) string {
 		":" + strconv.Itoa(len(m.Doc.Blocks))
 }
 
-// verMemo is msgVer of one copy of a message, with what tells the copy
-// apart from another written over it (a reused buffer: a plugin's view,
-// a text override).
+// verMemo is msgVer of a message as one revision has it, with what tells
+// the revision apart from another (its text, edit, the slices its blocks
+// and attachments are, its document's length) but not the copy holding
+// it: a patched row's view hands a new copy of the same revision every
+// frame.
 type verMemo struct {
-	m              *core.Message
 	text, edited   string
 	blocks, atts   *byte // the slices' first bytes
 	nBlocks, nDocs int
@@ -507,12 +508,12 @@ func firstByte(b []byte) *byte {
 	return &b[0]
 }
 
-// msgVerOf is msgVer(m), worked out once per copy: a view holds one copy
-// of a message until it changes, and a new revision is a new copy (the
-// rows ask every frame, two or three times each).
+// msgVerOf is msgVer(m), worked out once per revision: the rows ask every
+// frame, two or three times each, and a plugin's view of a message is a
+// new copy each time.
 func (b *base) msgVerOf(m *core.Message) string {
 	k := m.Channel + "/" + m.TS
-	if e, ok := b.vers[k]; ok && e.m == m && e.text == m.Text && e.edited == m.EditedTS && e.blocks == firstByte(m.Blocks) &&
+	if e, ok := b.vers[k]; ok && e.text == m.Text && e.edited == m.EditedTS && e.blocks == firstByte(m.Blocks) &&
 		e.atts == firstByte(m.Attachments) && e.nBlocks == len(m.Blocks) && e.nDocs == len(m.Doc.Blocks) {
 		return e.ver
 	}
@@ -520,7 +521,7 @@ func (b *base) msgVerOf(m *core.Message) string {
 	if b.vers == nil || len(b.vers) > 2000 {
 		b.vers = map[string]verMemo{}
 	}
-	b.vers[k] = verMemo{m: m, text: m.Text, edited: m.EditedTS, blocks: firstByte(m.Blocks), atts: firstByte(m.Attachments),
+	b.vers[k] = verMemo{text: m.Text, edited: m.EditedTS, blocks: firstByte(m.Blocks), atts: firstByte(m.Attachments),
 		nBlocks: len(m.Blocks), nDocs: len(m.Doc.Blocks), ver: ver}
 	return ver
 }

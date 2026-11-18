@@ -1267,15 +1267,28 @@ func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	s.mu.Unlock()
 }
 
-// PrependOlder adds an older page to the front.
+// PrependOlder adds an older page to the front (one no request read:
+// a test's window).
 func (s *Store) PrependOlder(ch string, msgs []slack.Message, hasMore bool) {
+	s.PrependOlderSince(ch, msgs, hasMore, ^uint64(0))
+}
+
+// PrependOlderSince is PrependOlder for an older page whose request began
+// at LiveSeq since (scrolling up), a read like the newest page's: a
+// message the socket changed meanwhile keeps the socket's copy, one it
+// deleted stays out, the reactions it brought stay, and a revision the
+// store held another of reaches every copy and core (readWindowLocked).
+// It returns what it kept of the page.
+func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool, since uint64) []slack.Message {
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	msgs = s.liveKeepLocked(ch, msgs, since)
+	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
 	if t == nil {
 		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
-		return
+		return msgs
 	}
 	merged := append(append([]slack.Message(nil), msgs...), t.Msgs...)
 	t.Msgs = dedupe(merged)
@@ -1284,6 +1297,7 @@ func (s *Store) PrependOlder(ch string, msgs []slack.Message, hasMore bool) {
 	if len(t.Msgs) > 5000 {
 		t.Msgs = t.Msgs[len(t.Msgs)-5000:]
 	}
+	return msgs
 }
 
 // Upsert inserts or replaces a top-level message in a loaded timeline.
@@ -1352,6 +1366,10 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 func (s *Store) Remove(ch, ts string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.removeLocked(ch, ts)
+}
+
+func (s *Store) removeLocked(ch, ts string) {
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			if t.Msgs[i].TS == ts {

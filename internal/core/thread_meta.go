@@ -95,8 +95,10 @@ func (a *App) onMessageReplied(ctx context.Context, ch string, raw json.RawMessa
 			x.ThreadTS = m.ThreadTS
 		}
 	}
-	// the reply bar asks for its avatars' people as it draws (lazy_users.go)
-	if upd, ok := a.S.Mutate(ch, m.TS, apply); ok {
+	// the reply bar asks for its avatars' people as it draws (lazy_users.go);
+	// a read out now (the thread's replies, a page) keeps the count
+	// (store.MutateNoted)
+	if upd, ok := a.S.MutateNoted(ch, m.TS, apply); ok {
 		a.emitUpdate(ch, &upd)
 	}
 	// the broadcasts' root copies are Slack's stored root when the parent
@@ -157,7 +159,7 @@ func (a *App) mergeBroadcastRoot(ch string, m *slack.Message, raw json.RawMessag
 			x.LatestReply = r.latest()
 		}
 	}
-	if upd, ok := a.S.Mutate(ch, pts, merge); ok {
+	if upd, ok := a.S.MutateNoted(ch, pts, merge); ok { // a read out now keeps it
 		a.emitUpdate(ch, &upd)
 	}
 	// the thread's other broadcasts read the same root (broadcast_footer.go)

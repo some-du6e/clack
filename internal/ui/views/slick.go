@@ -62,6 +62,10 @@ func (r *actRow) rowBase(part string) slackc.Props {
 func (r *actRow) threadProps() slackc.Props {
 	p := r.rowBase("thread")
 	p["msg"] = r.threadSent.send(r.msg()) // what ActivityThread's tree is judged by (echoed)
+	if r.it.TS != r.threadRevTS {
+		r.threadRev, r.threadRevTS = r.threadRev+1, r.it.TS
+	}
+	p["$rev"] = r.threadRev // which props a tree was rendered from (threadOverride)
 	p["messageTs"] = r.it.TS
 	p["threadTs"] = r.it.ThreadTS
 	p["unreadCount"] = r.it.Count
@@ -79,6 +83,14 @@ func (r *actRow) layoutThread(gtx C, p slackc.Props) D {
 }
 
 func (r *actRow) threadOverride(p slackc.Props) {
+	// a tree rendered from props before the item's (another reply was its
+	// latest: one landed while JS hadn't drawn it again) says nothing of
+	// the item now: not its projection, its count or its sender. The
+	// props' revision tells it, which a plugin passes on with the rest:
+	// BetterBlock's projection rewrites messageTs itself.
+	if rev, ok := p["$rev"].(float64); ok && int(rev) != r.threadRev {
+		return
+	}
 	if n, ok := p["unreadCount"].(float64); ok {
 		r.count = max(0, int(n))
 	} else if ai := p.Map("activityItem"); ai != nil {

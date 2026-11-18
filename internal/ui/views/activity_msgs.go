@@ -44,9 +44,6 @@ package views
 // (the pane closing) leaves the newest copy, never an older one.
 
 import (
-	"encoding/json"
-	"hash/fnv"
-	"reflect"
 	"sync/atomic"
 	"time"
 
@@ -75,6 +72,15 @@ type actMsgs struct {
 	// seen is core's message changes as far as Activity has taken them
 	seen    uint64
 	started bool
+	// stale are page messages core forgot the changes of (the page further
+	// behind than its table remembers): each takes the store's copy, as of
+	// the change, when a row first draws it (msgFor), so no frame converts
+	// and describes the whole page again
+	stale map[actMsgKey]uint64
+	// refetch are the messages this frame found no copy of, by channel:
+	// fetched again by id in one request each once the frame has read the
+	// changes (flushRefetch)
+	refetch map[string][]string
 	// since is the previous frame's time and last this one's: the lists
 	// drawn since the previous frame are on screen
 	since, last time.Time
@@ -161,7 +167,7 @@ func actMessageTS(it *core.ActivityItem) string {
 // the event goroutine draws a frame for it, which reads it from core
 // (applyMsgs).
 func (m *actMsgs) wakes(ev core.Event) bool {
-	if ev.Type != "update" && ev.Type != "delete" || ev.Channel == "" || ev.TS == "" {
+	if ev.Type != "update" && ev.Type != "delete" && ev.Type != "gone" || ev.Channel == "" || ev.TS == "" {
 		return false
 	}
 	keys := m.keys.Load()
@@ -197,6 +203,7 @@ func (v *Activity) applyMsgs(gtx C) {
 	if v.selOK {
 		sel = v.selKey
 	}
+	defer v.flushRefetch(c)
 	if page, _, _ := v.data.get(); !actSameItems(page.Items, m.page) || sel != m.sel {
 		v.landMsgs(c, &page)
 		m.sel = sel
@@ -210,19 +217,28 @@ func (v *Activity) applyMsgs(gtx C) {
 		// further behind than core names (the page off screen through a
 		// busy while): every page message is looked up; one core forgot
 		// since its copy was read may have missed a change, and the page
-		// is read again
+		// is read again when one is gone from the store
 		floor, gone := c.MessageChangeFloor(), false
 		for k, ref := range m.refs {
-			if v.takeChange(c, k, true) || v.copyOf(k).seq >= floor {
+			known, missing := v.takeChange(c, k, true, false)
+			if missing {
+				gone = true // no copy of its change: the reload reads it
+				continue
+			}
+			if known || v.copyOf(k).seq >= floor {
 				continue
 			}
 			// core forgot whether it changed: the store's copy, which the
 			// socket kept current, is the message as it is now (on every
-			// page loaded, not just the first a reload reads)
-			if sm, ok := c.HeldMessage(k.ch, k.ts); ok && ref&actRefDraws != 0 {
-				v.adopt(k, &sm, c.MessageChangeSeq())
-			} else if !ok {
+			// page loaded, not just the first a reload reads), taken when
+			// a row draws it (msgFor)
+			if _, ok := c.S.FindHeld(k.ch, k.ts); !ok {
 				gone = true // deleted, or let go: the feed says which
+			} else if ref&actRefDraws != 0 {
+				if m.stale == nil {
+					m.stale = map[actMsgKey]uint64{}
+				}
+				m.stale[k] = now
 			}
 		}
 		if gone && !(v.data.busy() && v.mode == actFresh) {
@@ -232,9 +248,30 @@ func (v *Activity) applyMsgs(gtx C) {
 	}
 	for i, k := range keys {
 		if m.refs[actMsgKey{k.Channel, k.TS}] != 0 && (i == 0 || k != keys[i-1]) {
-			v.takeChange(c, actMsgKey{k.Channel, k.TS}, true)
+			v.takeChange(c, actMsgKey{k.Channel, k.TS}, true, true)
 		}
 	}
+}
+
+// queueRefetch asks for k again by id once the frame has read core's
+// changes (flushRefetch): one messages.list per channel a frame.
+func (v *Activity) queueRefetch(k actMsgKey) {
+	m := &v.msgs
+	if m.refetch == nil {
+		m.refetch = map[string][]string{}
+	}
+	m.refetch[k.ch] = append(m.refetch[k.ch], k.ts)
+}
+
+// flushRefetch fetches again the messages the frame found no copy of
+// (core.RefetchMessages: it skips one already out or backing off after a
+// failure, and settles one Slack answers without as gone).
+func (v *Activity) flushRefetch(c *core.App) {
+	m := &v.msgs
+	for ch, tss := range m.refetch {
+		c.RefetchMessages(ch, tss)
+	}
+	clear(m.refetch)
 }
 
 // actSameItems reports whether a and b are the same Items slice (every
@@ -292,10 +329,14 @@ func (v *Activity) landMsgs(c *core.App, page *core.ActivityPage) {
 		drawn[k.ch] = append(drawn[k.ch], k.ts)
 		if f := feed[k]; f.m == nil && !f.gone {
 			// an item with no copy (its fetch failed): the store's, if it
-			// has one, rather than a shimmer
-			if o, ok := m.own[k]; !ok || o.m == nil {
+			// has one, rather than a shimmer; else it is fetched again by
+			// id, and draws what that brings, or no body once Slack says
+			// there is none (gone)
+			if _, ok := m.own[k]; !ok {
 				if sm, ok := c.HeldMessage(k.ch, k.ts); ok {
 					v.adopt(k, &sm, c.MessageChangeSeq())
+				} else {
+					v.queueRefetch(k)
 				}
 			}
 		}
@@ -315,6 +356,11 @@ func (v *Activity) landMsgs(c *core.App, page *core.ActivityPage) {
 			delete(m.hub, k)
 		}
 	}
+	for k := range m.stale {
+		if refs[k] == 0 {
+			delete(m.stale, k)
+		}
+	}
 	// what changed after each item was read
 	removed := false
 	for i := range page.Items {
@@ -325,10 +371,10 @@ func (v *Activity) landMsgs(c *core.App, page *core.ActivityPage) {
 			}
 		}
 		if k, _, ok := actMsgRef(it); ok {
-			v.takeChange(c, k, false)
+			v.takeChange(c, k, false, true)
 		}
 		if k, ok := actRootRef(it); ok {
-			v.takeChange(c, k, false)
+			v.takeChange(c, k, false, true)
 		}
 	}
 	if removed {
@@ -351,11 +397,14 @@ func (v *Activity) copyOf(k actMsgKey) actCopy {
 
 // takeChange takes core's latest change of k when it's newer than the
 // copy Activity holds: the copy is the change's, and with drops the
-// entries it removed go. It reports whether core knows of a change to k.
-func (v *Activity) takeChange(c *core.App, k actMsgKey, drops bool) bool {
+// entries it removed go. A change no copy is left of is fetched again by
+// id with refetch (else the caller reads the page again). It reports
+// whether core knows of a change to k, and whether no copy of it was to
+// be had.
+func (v *Activity) takeChange(c *core.App, k actMsgKey, drops, refetch bool) (known, missing bool) {
 	ch, ok := c.MessageChange(k.ch, k.ts)
 	if !ok {
-		return false
+		return false, false
 	}
 	m := &v.msgs
 	ref := m.refs[k]
@@ -366,7 +415,7 @@ func (v *Activity) takeChange(c *core.App, k actMsgKey, drops bool) bool {
 	}
 	cur := v.copyOf(k)
 	if ref&actRefDraws == 0 || ch.Seq <= cur.seq {
-		return true
+		return true, false
 	}
 	if m.own == nil {
 		m.own = map[actMsgKey]actCopy{}
@@ -379,11 +428,14 @@ func (v *Activity) takeChange(c *core.App, k actMsgKey, drops bool) bool {
 		// no copy to be had (the store let it go, and core's copy of the
 		// change with it): fetched again by id, as Slack's row fetches a
 		// message its store doesn't hold; it comes back as a change
-		c.RefetchMessages(k.ch, []string{k.ts})
-		return true
+		if refetch {
+			v.queueRefetch(k)
+		}
+		return true, true
 	}
+	delete(m.stale, k) // the change is newer
 	v.unbuildMsg(k)
-	return true
+	return true, false
 }
 
 // adopt makes msg, current as of change seq, Activity's copy of k.
@@ -455,6 +507,21 @@ func (v *Activity) msgFor(k actMsgKey, feed *core.Message, seq uint64) (*core.Me
 		// poll, and must describe them from what they will draw)
 		return h.m, h.rev
 	}
+	if at, ok := m.stale[k]; ok {
+		// core forgot this message's changes: the store's copy, as of the
+		// pass that found it (applyMsgs), taken now a row draws it
+		delete(m.stale, k)
+		if o, had := m.own[k]; !had || o.seq < at {
+			if c := v.h.Core(); c != nil {
+				if sm, ok := c.HeldMessage(k.ch, k.ts); ok {
+					if m.own == nil {
+						m.own = map[actMsgKey]actCopy{}
+					}
+					m.own[k] = actCopy{m: &sm, seq: at}
+				}
+			}
+		}
+	}
 	best, bestSeq, src := feed, seq, uint64(0)
 	if f, ok := m.feed[k]; ok && f.seq > seq && f.m != feed && (f.m != nil || f.gone) {
 		best, bestSeq, src = f.m, f.seq, actFeedSrc|f.seq
@@ -522,13 +589,15 @@ func (v *Activity) pollLists(it *core.ActivityItem) bool {
 	changed := false
 	poll := func(k actMsgKey, thread string) {
 		h, had := m.hub[k]
+		if had && h.frame.Equal(m.last) {
+			return // another row found it this frame: one copy a frame
+		}
 		msg, rev, ok := lm.LiveMessage(k.ch, k.ts, thread, m.since, h.rev)
 		switch {
 		case !ok:
-			if had {
-				v.listGone(k)
-				changed = true
-			}
+			// no list holds it for this lookup: the copy goes once no
+			// row's lookup finds it in a frame (expireLists), not at one
+			// that missed what another row's found
 		case had && rev == h.rev:
 			h.frame = m.last
 			m.hub[k] = h
@@ -542,6 +611,11 @@ func (v *Activity) pollLists(it *core.ActivityItem) bool {
 		}
 	}
 	if k, thread, ok := actMsgRef(it); ok {
+		// the thread the copy the row draws names: one hydrated before
+		// the message had replies names none, a change since its root's
+		if cur, _ := v.msgFor(k, it.Msg, knownSeq(it.Msg, it.MsgGone, it.MsgSeq)); cur != nil && cur.ThreadTS != "" {
+			thread = cur.ThreadTS
+		}
 		poll(k, thread)
 	}
 	if k, ok := actRootRef(it); ok {
@@ -589,110 +663,6 @@ func (v *Activity) listGone(k actMsgKey) {
 
 // ---- what the row's patched components were sent ----
 
-// contentFP fingerprints what a message msg says: its text, blocks,
-// attachments and files, as a component's msg prop carries them (0 for
-// none). A tree hands its msg back parsed afresh, never the map the row
-// sent, so what the row sent is told by this, not by identity. The
-// message lists' rows tell their trees apart the same way
-// (messages.contentFP, row.sentFor).
-func contentFP(msg slackc.Props) uint64 {
-	if msg == nil {
-		return 0
-	}
-	h := fnv.New64a()
-	h.Write([]byte(msg.StrOr("text", "")))
-	for _, k := range [...]string{"blocks", "attachments", "files"} {
-		h.Write([]byte{0, k[0]})
-		if v, ok := msg[k]; ok && v != nil {
-			if b, err := json.Marshal(fpJSONable(v)); err == nil {
-				h.Write(b)
-			}
-		}
-	}
-	return h.Sum64() | 1 // never 0
-}
-
-// fpJSONable is v with what JSON can't say left out (the lists'
-// jsonable): a Props marshals as the map it is.
-func fpJSONable(v any) any {
-	switch v := v.(type) {
-	case slackc.Props:
-		return fpJSONable(map[string]any(v))
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for k, x := range v {
-			if j := fpJSONable(x); j != nil {
-				out[k] = j
-			}
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(v))
-		for _, x := range v {
-			if j := fpJSONable(x); j != nil {
-				out = append(out, j)
-			}
-		}
-		return out
-	case string, bool, float64, float32, int, int64, int32, uint64, nil:
-		return v
-	}
-	return nil
-}
-
-// sentFPs are the contentFPs of the msgs a row handed its patched
-// components (sentMax at most, newest first): a tree whose msg has one of
-// them changed nothing the message says, whichever revision it answers
-// (JS hasn't drawn the newer props yet). A tree of an older revision than
-// the oldest kept counts as a plugin's change.
-type sentFPs []uint64
-
-const sentMax = 16
-
-func (s sentFPs) has(fp uint64) bool {
-	for _, x := range s {
-		if x == fp {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *sentFPs) add(fp uint64) {
-	if fp == 0 || len(*s) > 0 && (*s)[0] == fp {
-		return
-	}
-	for i, x := range *s {
-		if x == fp { // sent again: newest
-			copy((*s)[1:i+1], (*s)[:i])
-			(*s)[0] = fp
-			return
-		}
-	}
-	if len(*s) < sentMax {
-		*s = append(*s, 0)
-	}
-	copy((*s)[1:], (*s)[:len(*s)-1])
-	(*s)[0] = fp
-}
-
-// fpMemo is contentFP of the last map it was asked about (held, so its
-// address can't be another map's): the rows ask every frame.
-type fpMemo struct {
-	m  slackc.Props
-	fp uint64
-}
-
-func (f *fpMemo) of(msg slackc.Props) uint64 {
-	if msg == nil {
-		return 0
-	}
-	if reflect.ValueOf(f.m).Pointer() != reflect.ValueOf(msg).Pointer() {
-		f.m, f.fp = msg, contentFP(msg)
-	}
-	return f.fp
-}
-
 // sentSet is what a row sent one level of its patched components of its
 // message, by content, and the content of that level's tree's msg it
 // read last. Each level is judged by its own: under Slick Censorship's
@@ -702,10 +672,10 @@ func (f *fpMemo) of(msg slackc.Props) uint64 {
 // from the second frame on (plugin-render-3's per-level sets in
 // messages/row.go: outSent, inSent, bodySent).
 type sentSet struct {
-	fps  sentFPs
+	fps  slackc.SentFPs
 	last *core.Message
 	text string
-	tree fpMemo
+	tree slackc.FPMemo
 }
 
 // send is msgProps(m) for the level's component, noting what it says.
@@ -713,7 +683,7 @@ func (s *sentSet) send(m *core.Message) slackc.Props {
 	p := msgProps(m)
 	if m != nil && (m != s.last || s.text != m.Text) {
 		s.last, s.text = m, m.Text
-		s.fps.add(contentFP(p))
+		s.fps.Add(slackc.ContentFP(p))
 	}
 	return p
 }
@@ -723,5 +693,5 @@ func (s *sentSet) send(m *core.Message) slackc.Props {
 // before the one the row draws now, so the row draws its own copy, not
 // that revision's text (row.overlay's sent rule in the message lists).
 func (s *sentSet) echoed(mp slackc.Props) bool {
-	return mp != nil && s.fps.has(s.tree.of(mp))
+	return mp != nil && s.fps.Has(s.tree.Of(mp))
 }

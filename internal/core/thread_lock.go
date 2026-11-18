@@ -61,7 +61,7 @@ func (a *App) onMessageLocked(ch string, raw json.RawMessage) {
 		return
 	}
 	locked := *e.IsLocked
-	if upd, ok := a.S.Mutate(ch, e.ThreadTS, func(x *slack.Message) {
+	if upd, ok := a.S.MutateNoted(ch, e.ThreadTS, func(x *slack.Message) { // a read out now keeps it
 		x.IsLocked, x.LockedByTeamID = locked, e.LockedByTeamID
 	}); ok {
 		a.emitUpdate(ch, &upd)

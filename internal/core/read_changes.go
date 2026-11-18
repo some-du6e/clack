@@ -17,34 +17,105 @@ import (
 // history page lands.
 
 // announceReads emits the revisions the store's reads brought since it
-// last looked.
+// last looked, each as the store holds the message when it goes out
+// (announceHeld).
 func (a *App) announceReads() {
 	for _, r := range a.S.TakeReadRevisions() {
-		m := r.Msg
-		v := a.messageWith(r.Channel, &m, true) // asks for nobody: the rows ask as they draw
-		a.emit(Event{Type: "update", Channel: r.Channel, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
+		a.announceHeld(r.Channel, r.Msg.TS)
 	}
 }
 
+// announceHeld emits an "update" of ch/ts as the store holds it now, in
+// order with the socket's changes: a change the socket makes after the
+// store was read (a message_changed, a reaction, a deletion: each noted
+// with its write, store.LiveStamp) either goes out after this one, or is
+// in the copy this one carries, never older after newer. A message the
+// store no longer holds goes out as nothing (its deletion went out). It
+// reports whether the update went out.
+func (a *App) announceHeld(ch, ts string) bool {
+	for try := 0; try < 8; try++ {
+		m, stamp, ok := a.S.HeldStamped(ch, ts)
+		if !ok {
+			return false
+		}
+		v := a.messageWith(ch, &m, true) // asks for nobody: the rows ask as they draw
+		ev := Event{Type: "update", Channel: ch, TS: ts, ThreadTS: m.ThreadTS, Msg: &v}
+		if a.emitIf(ev, func() bool { return a.S.LiveStamp(ch, ts) == stamp }) {
+			return true
+		}
+		// changed meanwhile: its own update is out or on its way; this
+		// one carries the copy after it
+	}
+	return false
+}
+
+// refetch is a message RefetchMessages asked Slack for: out while its
+// request is, and after a failed one, not again before retry.
+type refetch struct {
+	out   bool
+	fails int
+	retry time.Time
+}
+
+const (
+	// maxRefetch bounds the messages of one conversation one call asks
+	// for (one messages.list); the rest wait for the next call
+	maxRefetch = 100
+	// maxRefetchKeys bounds the failed fetches remembered for their
+	// backoff
+	maxRefetchKeys = 4096
+)
+
+// refetchBackoff is the wait after the n-th failed fetch of a message: 2 s
+// (past the client's own refusal of an identical failed request,
+// slack/guard.go), doubling to a minute.
+func refetchBackoff(n int) time.Duration {
+	d := 2 * time.Second
+	for i := 1; i < n && d < time.Minute; i++ {
+		d *= 2
+	}
+	return min(d, time.Minute)
+}
+
 // RefetchMessages asks Slack again for the messages tss of ch by id (as
-// Slack's row fetches a message its store doesn't hold), off the caller's
-// goroutine: what comes back is kept and announced as a change. A view
-// calls it for a message core changed but no longer has a copy of (the
-// store let it go). One request per message while one is out.
+// Slack's row fetches a message its store doesn't hold), in one
+// messages.list off the caller's goroutine: what comes back is kept and
+// announced as a change; a message the channel answered without is gone
+// (Slack's isNonExistent: a "gone" change, which removes no Activity
+// entry); after a failure the message waits before it's asked for again.
+// A view calls it for the messages core changed, or it shows, that no
+// copy is left of (the store let them go). One request per message while
+// one is out.
 func (a *App) RefetchMessages(ch string, tss []string) {
+	if ch == "" {
+		return
+	}
 	l := &a.msgLog
+	now := time.Now()
 	l.mu.Lock()
 	var want []string
 	for _, ts := range tss {
 		k := MsgKey{ch, ts}
-		if ch == "" || ts == "" || l.refetching[k] {
+		r := l.refetching[k]
+		if ts == "" || r.out || now.Before(r.retry) {
 			continue
 		}
 		if l.refetching == nil {
-			l.refetching = map[MsgKey]bool{}
+			l.refetching = map[MsgKey]refetch{}
 		}
-		l.refetching[k] = true
+		r.out = true
+		l.refetching[k] = r
 		want = append(want, ts)
+		if len(want) == maxRefetch {
+			break
+		}
+	}
+	if len(l.refetching) > maxRefetchKeys {
+		for k, r := range l.refetching {
+			if !r.out && now.After(r.retry) {
+				delete(l.refetching, k)
+			}
+		}
 	}
 	l.mu.Unlock()
 	if len(want) == 0 {
@@ -53,16 +124,26 @@ func (a *App) RefetchMessages(ch string, tss []string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(a.bg, 30*time.Second)
 		defer cancel()
-		got, _ := a.hydrateKeep(ctx, map[string][]string{ch: want}, true)
+		got, answered := a.hydrateKeep(ctx, map[string][]string{ch: want}, true)
 		for _, ts := range want {
-			if m, ok := got[ch+"/"+ts]; ok {
-				v := a.messageWith(ch, &m, true)
-				a.emit(Event{Type: "update", Channel: ch, TS: ts, ThreadTS: m.ThreadTS, Msg: &v})
+			if _, ok := got[ch+"/"+ts]; ok {
+				a.announceHeld(ch, ts)
+			} else if answered[ch] {
+				a.emit(Event{Type: "gone", Channel: ch, TS: ts})
 			}
 		}
 		l.mu.Lock()
+		at := time.Now()
 		for _, ts := range want {
-			delete(l.refetching, MsgKey{ch, ts})
+			k := MsgKey{ch, ts}
+			if _, ok := got[ch+"/"+ts]; ok || answered[ch] {
+				delete(l.refetching, k)
+				continue
+			}
+			r := l.refetching[k]
+			r.out, r.fails = false, r.fails+1
+			r.retry = at.Add(refetchBackoff(r.fails))
+			l.refetching[k] = r
 		}
 		l.mu.Unlock()
 	}()

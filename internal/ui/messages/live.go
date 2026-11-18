@@ -8,8 +8,10 @@ import (
 
 // Live is ch/ts as a message list drawn at or after since holds it: the
 // thread pane's copy (threadTS names the thread a reply is in, or is the
-// root's own ts), else the channel list's (a channel message, a thread
-// root or a reply also sent to the channel), and its revision there (the model's id and the entry's rev).
+// root's own ts; with none, the pane of a thread ts may have started),
+// else the channel list's (a channel message, a thread root or a reply
+// also sent to the channel), and its revision there (the model's id and
+// the entry's rev).
 // have is the revision the caller holds: when it's that one, no copy is
 // made (m is zero). ok is false when no list drawn since then holds it,
 // or its model hasn't loaded yet.
@@ -29,18 +31,23 @@ func Live(app *core.App, ch, ts, threadTS string, since time.Time, have uint64) 
 	if hb == nil {
 		return core.Message{}, 0, false
 	}
-	var ms [2]*model
+	var ms [3]*model
 	hb.mu.Lock()
 	if threadTS != "" {
 		if tm := hb.thread[ch+"/"+threadTS]; tm != nil && !tm.drawn.Before(since) {
 			ms[0] = tm
 		}
+	} else if tm := hb.thread[ch+"/"+ts]; tm != nil && !tm.drawn.Before(since) {
+		// a message that may be a root (a copy read before its first
+		// reply names no thread): its own thread's pane, as for one that
+		// names it
+		ms[1] = tm
 	}
 	// the channel list holds its messages and thread roots, and a reply
 	// also sent to the channel (thread_broadcast): a reply looked for there
 	// that isn't one finds nothing
 	if cm := hb.chans[ch]; cm != nil && !cm.drawn.Before(since) {
-		ms[1] = cm
+		ms[2] = cm
 	}
 	hb.mu.Unlock()
 	for _, md := range ms {

@@ -80,26 +80,14 @@ func (s *Store) PutFetched(ch string, msgs []slack.Message, since uint64) []slac
 			continue
 		}
 		k := ch + "/" + m.TS
-		if r, ok := s.live[k]; ok && r.seq > since {
-			if r.gone {
-				s.dropFetchedLocked(k)
-				continue
-			}
-			var mm slack.Message
-			if held := s.heldLocked(ch, m.TS); held != nil {
-				mm = *held
-			} else if f := s.fetched[k]; f != nil {
-				mm = *f
-			} else {
-				mm = *r.msg
-				s.replayReactsLocked(ch, &mm, r.seq)
-			}
-			if mm.ThreadTS == "" { // a message_changed copy without thread_ts stays in its thread
-				mm.ThreadTS = m.ThreadTS
-			}
-			s.keepPinLocked(ch, &mm, &m)
+		mm, live, gone := s.liveReadLocked(ch, &m, since) // live.go
+		switch {
+		case gone:
+			s.dropFetchedLocked(k)
+			continue
+		case live:
 			m = mm
-		} else {
+		default:
 			s.replayReactsLocked(ch, &m, since)
 			s.keepPinLocked(ch, &m, nil)
 		}

@@ -59,6 +59,10 @@ type thrLive struct {
 	// shown: the view drew in the latest frame (a change of its messages
 	// draws one only then; off screen the next draw takes it)
 	shown shownTracker
+	// refetch are the messages a change of which this frame found no copy
+	// of, by channel: fetched again by id once the frame has read the
+	// changes (core.RefetchMessages), as Activity's
+	refetch map[string][]string
 }
 
 func (l *thrLive) has(k actMsgKey) bool {
@@ -69,31 +73,67 @@ func (l *thrLive) has(k actMsgKey) bool {
 // wakes reports a change of a message the view shows (the event
 // goroutine): the frame it draws reads it from core.
 func (l *thrLive) wakes(ev core.Event) bool {
-	if ev.Type != "update" && ev.Type != "delete" || ev.Channel == "" || ev.TS == "" {
+	if ev.Type != "update" && ev.Type != "delete" && ev.Type != "gone" || ev.Channel == "" || ev.TS == "" {
 		return false
 	}
 	return l.has(actMsgKey{ev.Channel, ev.TS})
 }
 
 // noteLiveKeys records the messages the cards show: roots, replies, the
-// older replies a card loaded.
+// older replies a card loaded. They're in use: the store lets go of
+// others first (KeepFetched), as Activity's.
 func (v *Threads) noteLiveKeys() {
 	d, _, _ := v.data.get()
 	keys := make(map[actMsgKey]bool, 4*len(d.items))
+	byCh := map[string][]string{}
+	add := func(ch, ts string) {
+		k := actMsgKey{ch, ts}
+		if !keys[k] {
+			keys[k] = true
+			byCh[ch] = append(byCh[ch], ts)
+		}
+	}
 	for i := range d.items {
 		t := &d.items[i]
-		keys[actMsgKey{t.Channel, t.Root.TS}] = true
+		add(t.Channel, t.Root.TS)
 		for j := range t.Replies {
-			keys[actMsgKey{t.Channel, t.Replies[j].TS}] = true
+			add(t.Channel, t.Replies[j].TS)
 		}
 		if c := v.cards[t.key]; c != nil {
 			for j := range c.older {
-				keys[actMsgKey{t.Channel, c.older[j].TS}] = true
+				add(t.Channel, c.older[j].TS)
 			}
 		}
 	}
 	v.lv.keys.Store(&keys)
 	v.lv.items = d.items
+	if c := v.h.Core(); c != nil {
+		for ch, tss := range byCh {
+			c.S.KeepFetched(ch, tss)
+		}
+	}
+}
+
+// refetchLater asks for ch/ts again by id once the frame has read core's
+// changes (applyLive).
+func (v *Threads) refetchLater(ch, ts string) {
+	if v.lv.refetch == nil {
+		v.lv.refetch = map[string][]string{}
+	}
+	v.lv.refetch[ch] = append(v.lv.refetch[ch], ts)
+}
+
+// changedCopy is what change ch left of m, a copy current as of seq: the
+// change's (ChangedMessage); with none to be had (the store let it go,
+// and core's copy of the change with it) m stays and the message is
+// fetched again by id, as Slack's row fetches a message its store
+// doesn't hold: it comes back as a change.
+func (v *Threads) changedCopy(c *core.App, k actMsgKey, ch *core.MsgChange, m *core.Message, seq uint64) (core.Message, bool) {
+	nm, ok := c.ChangedMessage(k.ch, k.ts, ch, m, seq)
+	if !ok && !ch.Deleted {
+		v.refetchLater(k.ch, k.ts)
+	}
+	return nm, ok
 }
 
 // applyLive brings the threads up to date before the frame draws
@@ -104,18 +144,22 @@ func (v *Threads) applyLive() {
 	if c == nil {
 		return
 	}
+	defer func() {
+		for ch, tss := range v.lv.refetch {
+			c.RefetchMessages(ch, tss)
+		}
+		clear(v.lv.refetch)
+	}()
 	if d, _, _ := v.data.get(); !thrSameItems(d.items, v.lv.items) {
 		v.landLive(c)
 	}
 	keys, prev, ok := v.lv.log.read(c)
 	if !ok {
 		// further behind than core names: every thread looks its
-		// messages up (a change core forgot means reading them again)
+		// messages up, on every page the view loaded; past what core
+		// remembers, each takes the store's copy (floorLive)
 		if c.MessageChangeFloor() > prev {
-			if !(v.data.busy() && v.mode == actFresh) {
-				v.load(actRefresh)
-			}
-			return
+			v.floorLive(c)
 		}
 		v.landLive(c)
 		return
@@ -132,6 +176,69 @@ func (v *Threads) applyLive() {
 		done[k] = true
 		if ch, ok := c.MessageChange(k.Channel, k.TS); ok {
 			v.patchThreads(c, actMsgKey{k.Channel, k.TS}, &ch)
+		}
+	}
+}
+
+// floorLive is applyLive further behind than core remembers: a message
+// core forgot the changes of whose copy is older than what it forgot
+// takes the store's copy (the socket kept it current), in every thread
+// and every card's older replies the view loaded; one the store doesn't
+// hold is fetched again by id (it comes back as a change, or gone).
+// landLive takes the changes core remembers after it.
+func (v *Threads) floorLive(c *core.App) {
+	floor := c.MessageChangeFloor()
+	held := func(ch string, m *core.Message, seq uint64) (core.Message, bool) {
+		if seq >= floor {
+			return core.Message{}, false
+		}
+		if _, ok := c.MessageChange(ch, m.TS); ok {
+			return core.Message{}, false // landLive takes it
+		}
+		if sm, ok := c.HeldMessage(ch, m.TS); ok {
+			return sm, true
+		}
+		v.refetchLater(ch, m.TS)
+		return core.Message{}, false
+	}
+	v.data.mutate(func(d *thrData) {
+		items := slices.Clone(d.items)
+		for i := range items {
+			t := &items[i]
+			if m, ok := held(t.Channel, &t.Root, t.seq); ok {
+				t.Root = m
+				v.unbuildThread(t.key)
+			}
+			var rs []core.Message
+			for j := range t.Replies {
+				if m, ok := held(t.Channel, &t.Replies[j], t.seq); ok {
+					if rs == nil {
+						rs = slices.Clone(t.Replies)
+					}
+					rs[j] = m
+				}
+			}
+			if rs != nil {
+				t.Replies = rs
+				v.unbuildThread(t.key)
+			}
+		}
+		d.items = items
+	})
+	for key, card := range v.cards {
+		var older []core.Message
+		for j := range card.older {
+			m := &card.older[j]
+			if nm, ok := held(m.Channel, m, card.olderSeq); ok {
+				if older == nil {
+					older = slices.Clone(card.older)
+				}
+				older[j] = nm
+			}
+		}
+		if older != nil {
+			card.older, card.shown = older, nil
+			v.unbuildThread(key)
 		}
 	}
 }
@@ -172,7 +279,7 @@ func (v *Threads) landLive(c *core.App) {
 			if out == nil {
 				out = append(make([]core.Message, 0, len(card.older)), card.older[:j]...)
 			}
-			if nm, ok := c.ChangedMessage(m.Channel, m.TS, &ch, m, card.olderSeq); ok {
+			if nm, ok := v.changedCopy(c, actMsgKey{m.Channel, m.TS}, &ch, m, card.olderSeq); ok {
 				out = append(out, nm)
 			} else if !ch.Deleted {
 				out = append(out, *m)
@@ -195,7 +302,7 @@ func (v *Threads) landThread(c *core.App, t *thrItem, now uint64) {
 	}
 	k := actMsgKey{t.Channel, t.Root.TS}
 	if ch, ok := c.MessageChange(k.ch, k.ts); ok && ch.Seq > t.seq && !ch.Deleted {
-		if m, ok := c.ChangedMessage(k.ch, k.ts, &ch, &t.Root, t.seq); ok {
+		if m, ok := v.changedCopy(c, k, &ch, &t.Root, t.seq); ok {
 			t.Root = m
 			v.unbuildThread(t.key)
 		}
@@ -213,7 +320,7 @@ func (v *Threads) landThread(c *core.App, t *thrItem, now uint64) {
 		if out == nil {
 			out = append(make([]core.Message, 0, len(t.Replies)), t.Replies[:j]...)
 		}
-		if m, ok := c.ChangedMessage(t.Channel, r.TS, &ch, r, t.seq); ok {
+		if m, ok := v.changedCopy(c, actMsgKey{t.Channel, r.TS}, &ch, r, t.seq); ok {
 			out = append(out, m)
 		} else if !ch.Deleted {
 			out = append(out, *r)
@@ -248,19 +355,20 @@ func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 			}
 			nt, changed := *t, false
 			if t.Root.TS == k.ts && !ch.Deleted {
-				if m, ok := c.ChangedMessage(k.ch, k.ts, ch, &t.Root, t.seq); ok {
+				if m, ok := v.changedCopy(c, k, ch, &t.Root, t.seq); ok {
 					nt.Root, changed = m, true
 				}
 			}
 			if j := slices.IndexFunc(t.Replies, func(m core.Message) bool { return m.TS == k.ts }); j >= 0 {
-				rs := slices.Clone(t.Replies)
-				if m, ok := c.ChangedMessage(k.ch, k.ts, ch, &rs[j], t.seq); ok {
+				if m, ok := v.changedCopy(c, k, ch, &t.Replies[j], t.seq); ok {
+					rs := slices.Clone(t.Replies)
 					rs[j] = m
+					nt.Replies, changed = rs, true
 				} else if ch.Deleted {
+					rs := slices.Clone(t.Replies)
 					thrUnreadGone(&nt, j)
-					rs = slices.Delete(rs, j, j+1)
+					nt.Replies, changed = slices.Delete(rs, j, j+1), true
 				}
-				nt.Replies, changed = rs, true
 			}
 			if !changed {
 				continue
@@ -281,11 +389,14 @@ func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 		if j < 0 || card.olderSeq >= ch.Seq {
 			continue
 		}
-		older := slices.Clone(card.older)
-		if m, ok := c.ChangedMessage(k.ch, k.ts, ch, &older[j], card.olderSeq); ok {
+		var older []core.Message
+		if m, ok := v.changedCopy(c, k, ch, &card.older[j], card.olderSeq); ok {
+			older = slices.Clone(card.older)
 			older[j] = m
 		} else if ch.Deleted {
-			older = slices.Delete(older, j, j+1)
+			older = slices.Delete(slices.Clone(card.older), j, j+1)
+		} else {
+			continue // fetched again: it comes back as a change
 		}
 		card.older, card.shown = older, nil
 		v.unbuildThread(key)

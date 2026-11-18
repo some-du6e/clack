@@ -465,7 +465,12 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 	}
 }
 
-func (a *App) emit(ev Event) {
+func (a *App) emit(ev Event) { a.emitIf(ev, nil) }
+
+// emitIf is emit when ok, asked under the subscribers' lock (nil: always),
+// so no event emitted after the check goes out before ev; it reports
+// whether ev went out (read_changes.go announceHeld).
+func (a *App) emitIf(ev Event, ok func() bool) bool {
 	a.noteDocChange(&ev) // what ev changed of what message Docs read (msg_refs.go)
 	if !snapshotQuietEvents[ev.Type] {
 		a.InvalidateSnapshot() // snapshot_recent.go
@@ -473,6 +478,9 @@ func (a *App) emit(ev Event) {
 	a.pinsTabSee(ev) // the Pins tab's message copies (channel_pins.go)
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
+	if ok != nil && !ok() {
+		return false
+	}
 	a.noteMsgChange(&ev) // stamps ev.Seq, in the subscribers' order (msg_changes.go)
 	for s := range a.subs {
 		if s.lagged {
@@ -489,6 +497,7 @@ func (a *App) emit(ev Event) {
 			s.lagged = true
 		}
 	}
+	return true
 }
 
 // once deduplicates concurrent identical fetches (e.g. prefetch + open).

@@ -219,6 +219,11 @@ type actRow struct {
 	// row hands the components inside it, not props it sent ActivityItem:
 	// activity_msgs.go sentSet)
 	itemSent, threadSent sentSet
+	// threadRev is the revision of the ActivityThread props, new with
+	// each messageTs (threadRevTS): a tree carrying another one was
+	// rendered from props before the item's (slick.go threadOverride)
+	threadRev   int
+	threadRevTS string
 
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
@@ -584,6 +589,17 @@ func (v *Activity) watchItems() {
 					if shown {
 						v.h.Invalidate()
 					}
+				}
+				continue
+			}
+			if ev.Type == "activity_badges" && ev.Name == core.ActivityBadgesZero {
+				// badge_counts_updated summing to 0: the unread rows are
+				// read, locally (readAllLocal)
+				v.notes.mu.Lock()
+				v.notes.fns = append(v.notes.fns, v.readAllLocal)
+				v.notes.mu.Unlock()
+				if shown {
+					v.h.Invalidate()
 				}
 				continue
 			}
@@ -2461,7 +2477,10 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	if p != nil {
 		mods = classMods(p.StrOr("className", ""), actItemMods)
 		r.om = nil
-		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
+		// a tree of another message (the item's latest reply before a new
+		// one landed, JS not having drawn it again) says nothing of this
+		// one: neither its text nor its sender
+		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil && mp.StrOr("ts", it.Msg.TS) == it.Msg.TS {
 			// a tree JS hasn't drawn since the message changed hands back
 			// a revision before: that's the props the row sent, not the
 			// plugin's text (activity_msgs.go echoed)
@@ -2713,6 +2732,45 @@ func (v *Activity) markRead(it *core.ActivityItem, key string) {
 	v.setRead(key, true, *it, "Couldn’t mark as read: ", func(ctx context.Context, c *core.App, item core.ActivityItem) error {
 		return c.MarkActivityRead(ctx, item)
 	})
+}
+
+// Search opens the list's search field with q in it, as typing q there
+// does (the ui tests' idle window with the search open).
+func (v *Activity) Search(q string) {
+	v.searchOn = true
+	v.query.ed.SetText(q)
+	v.dirty = true
+}
+
+// readAllLocal is badge_counts_updated with its activity_v2 summing to 0
+// (VxbD handleBadgeCountsUpdatedRTMEvent): each unread row of the list is
+// marked read here alone, with no activity.markRead (Japw m$ with
+// isLocalOnlyUpdate), but for the reactions' and the rows whose message
+// the store doesn't hold (m$ reads getMessageByTimestamp of the row's
+// latestTs under the inbox, else its messageTs, and stops without one).
+// The badges are the event's, already 0.
+func (v *Activity) readAllLocal() {
+	c := v.h.Core()
+	if c == nil {
+		return
+	}
+	page, _, _ := v.data.get()
+	for i := range page.Items {
+		it := &page.Items[i]
+		key := actKey(it)
+		if it.Type == "message_reaction" || !v.isUnread(it, key) {
+			continue
+		}
+		ts := firstNonEmpty(it.LatestTS, actMessageTS(it))
+		if it.Channel == "" || ts == "" {
+			continue
+		}
+		if _, ok := c.S.FindHeld(it.Channel, ts); !ok {
+			continue
+		}
+		v.override[key] = true
+		v.dirty = true
+	}
 }
 
 // markUnread is the hover bar's "Mark as unread" (activity.markUnread).

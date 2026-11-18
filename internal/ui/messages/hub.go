@@ -51,6 +51,11 @@ type model struct {
 	// live: messages an event changed (true: deleted) while a load was
 	// out; the load's answer, read before them, keeps them (keepLive)
 	live map[string]bool
+	// livePlace: updates of messages the model didn't hold while a load
+	// was out (one outside what it loaded, or anything before its first
+	// load): the answer takes each where it holds the message, and
+	// nowhere else (keepLive)
+	livePlace map[string]core.Message
 
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
@@ -430,9 +435,12 @@ func (m *model) setAll(msgs []core.Message) {
 }
 
 // mergeNewest replaces the newest window with page, keeping older loaded
-// history that precedes it.
+// history that precedes it. A model that hasn't loaded (its first load,
+// or the first after a whole eviction) has no history to keep: the page
+// is the list, and says whether older messages exist (what the events
+// left in it meanwhile comes back through keepLive).
 func (m *model) mergeNewest(page []core.Message, hasMore bool) {
-	if len(m.msgs) == 0 || len(page) == 0 {
+	if len(m.msgs) == 0 || len(page) == 0 || !m.loaded {
 		m.setAll(page)
 		m.hasMore = hasMore
 		return
@@ -526,40 +534,81 @@ func (m *model) noteLive(ts string, gone bool) {
 		m.live = map[string]bool{}
 	}
 	m.live[ts] = gone
+	delete(m.livePlace, ts) // the model's entry (or its deletion) is newer
 }
 
-// takeLive is what the events changed during the load that just answered:
-// each message's current entry, nil for one deleted (callers hold m.mu).
-func (m *model) takeLive() map[string]*entry {
-	if len(m.live) == 0 {
-		m.live = nil
-		return nil
+// notePlace records an update of msg, which the model doesn't hold, while
+// a load is out: the answer may hold the message, read before the update
+// (callers hold m.mu).
+func (m *model) notePlace(msg core.Message) {
+	if !m.loading || msg.TS == "" {
+		return
 	}
-	out := make(map[string]*entry, len(m.live))
-	for ts, gone := range m.live {
-		if i := m.find(ts); !gone && i >= 0 {
-			e := m.msgs[i]
-			out[ts] = &e
-		} else if gone {
-			out[ts] = nil
+	if m.livePlace == nil {
+		m.livePlace = map[string]core.Message{}
+	}
+	m.livePlace[msg.TS] = msg
+}
+
+// liveChanges is what the events changed during a load: at, each
+// message's entry then (nil for one deleted); place, the updates of
+// messages the model didn't hold, which go only where the answer holds
+// them.
+type liveChanges struct {
+	at    map[string]*entry
+	place map[string]core.Message
+}
+
+// takeLive is what the events changed during the load that just answered
+// (callers hold m.mu).
+func (m *model) takeLive() liveChanges {
+	var out liveChanges
+	if len(m.live) > 0 {
+		out.at = make(map[string]*entry, len(m.live))
+		for ts, gone := range m.live {
+			if i := m.find(ts); !gone && i >= 0 {
+				e := m.msgs[i]
+				out.at[ts] = &e
+			} else if gone {
+				out.at[ts] = nil
+			}
 		}
 	}
-	m.live = nil
+	out.place = m.livePlace
+	m.live, m.livePlace = nil, nil
 	return out
 }
 
 // keepLive puts back what the events changed during a load after its
 // answer replaced the list: Slack's message_changed replaces the stored
 // message at once, so an answer read before an edit (or a delete, or a
-// new reply) mustn't show the old state again (callers hold m.mu).
-func (m *model) keepLive(live map[string]*entry) {
-	for ts, e := range live {
+// new reply) mustn't show the old state again. An update of a message the
+// model didn't hold changes the answer's copy, and adds nothing (callers
+// hold m.mu).
+func (m *model) keepLive(live liveChanges) {
+	for ts, e := range live.at {
 		if e == nil {
 			m.remove(ts)
 		} else {
 			m.upsert(e.m)
 		}
 	}
+	for ts, msg := range live.place {
+		if _, ok := live.at[ts]; !ok && m.find(ts) >= 0 {
+			m.upsert(msg)
+		}
+	}
+}
+
+// inRange reports whether ts falls inside what the channel model loaded:
+// at or after its oldest message, or anywhere once it holds the whole
+// history (no hasMore). A model that hasn't loaded holds no range
+// (callers hold m.mu).
+func (m *model) inRange(ts string) bool {
+	if !m.loaded {
+		return false
+	}
+	return !m.hasMore || len(m.msgs) > 0 && !tsLess(ts, m.msgs[0].m.TS)
 }
 
 func (m *model) remove(ts string) {
@@ -641,7 +690,14 @@ func (hb *hub) apply(ev core.Event) bool {
 		changed := false
 		if chm != nil {
 			chm.mu.Lock()
-			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
+			// an update changes the list's message where it holds it, and
+			// goes in only inside what the list loaded: a revision of an
+			// old message the list never loaded (core announces a read's:
+			// an Activity row's copy, a Threads root, a refetch) taken in
+			// above the oldest loaded would skip the history between at
+			// the next load-older, whose cursor is the oldest message
+			switch {
+			case ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inRange(ev.Msg.TS):
 				chm.upsert(*ev.Msg)
 				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
@@ -649,6 +705,8 @@ func (hb *hub) apply(ev core.Event) bool {
 				}
 				chm.rev++
 				changed = true
+			case chm.visible(ev.Msg):
+				chm.notePlace(*ev.Msg) // a load out may hold it
 			}
 			chm.mu.Unlock()
 		}

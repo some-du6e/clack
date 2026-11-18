@@ -52,12 +52,22 @@ func (a *App) setActivityBadgesSince(m map[string]int, since uint64) bool {
 	return true
 }
 
+// ActivityBadgesZero is the Name of the "activity_badges" event of a
+// badge_counts_updated whose activity_v2 sums to 0: Activity marks its
+// unread rows read, locally.
+const ActivityBadgesZero = "zero"
+
 // onActivityBadges takes badge_counts_updated (boot-render VxbD
 // handleBadgeCountsUpdatedRTMEvent). Under activity_inbox Slack applies
-// its activity_v2 as it is and stops there (updateActivityV2BadgeCounts,
-// no client.counts), so the rail's badge moves with the event. Without
-// the inbox it reads the event's counts and alerts instead
-// (classic_badges.go onClassicBadges). The UI hears "activity_badges".
+// its activity_v2 as it is (updateActivityV2BadgeCounts, no
+// client.counts), so the rail's badge moves with the event, and when the
+// counts sum to 0 (activity_v2 absent sums to 0 too: `e.activity_v2 ||
+// {}`) it marks every unread row of the root list read, locally (Japw m$
+// with isLocalOnlyUpdate: no activity.markRead, and a row whose message
+// the store doesn't hold stays): the event says so (ActivityBadgesZero),
+// and Activity marks its rows. Without the inbox it reads the event's
+// counts and alerts instead (classic_badges.go onClassicBadges). The UI
+// hears "activity_badges".
 func (a *App) onActivityBadges(raw json.RawMessage) {
 	if !a.ActivityInbox() {
 		if a.onClassicBadges(raw) {
@@ -68,10 +78,21 @@ func (a *App) onActivityBadges(raw json.RawMessage) {
 	var e struct {
 		ActivityV2 map[string]int `json:"activity_v2"`
 	}
-	if json.Unmarshal(raw, &e) == nil && e.ActivityV2 != nil {
-		a.setActivityBadges(e.ActivityV2)
-		a.emit(Event{Type: "activity_badges"})
+	if json.Unmarshal(raw, &e) != nil {
+		return
 	}
+	if e.ActivityV2 != nil {
+		a.setActivityBadges(e.ActivityV2)
+	}
+	sum := 0
+	for _, n := range e.ActivityV2 {
+		sum += n
+	}
+	ev := Event{Type: "activity_badges"}
+	if sum == 0 {
+		ev.Name = ActivityBadgesZero
+	}
+	a.emit(ev)
 }
 
 // decActivityBadges is P0K2 decrementBadgeCounts after
