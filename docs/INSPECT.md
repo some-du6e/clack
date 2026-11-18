@@ -77,10 +77,13 @@ An id becomes a tag: its kind and the first 6 hex digits of SHA-256 over a salt 
 
 clack.log uses the same tags for what a report about a navigation needs (`internal/ui/navlog.go`), with one salt per run that is never written. Within one log the same message keeps its tag, and nothing in a line names a conversation or a message. No text is logged. A line is written for:
 
-- every thread pane that opens: `ui: thread opened: ch:… ts:… [at ts:…] (<source>)`. The source is what the entry point named (`a notification's click`, `a deep link`, `permalink from <caller>`), else the first caller outside the router, as `ui/views.(*Activity).update activity.go:784`;
-- every jumpToMessage, with the thread it resolved: `ui: jumpToMessage: ch:… ts:… thread ts:… (<source>)`;
-- a reply's ts that was turned into its thread: `ui: thread open: ts:… is a reply in ts:…`, or, when the pane only found out from conversations.replies, `ui: thread pane: its root ts:… is a reply in ts:…`;
-- every click, reply or button on one of Clack's notifications: `notify: clicked a notification: ch:… ts:… thread ts:… (id type "msg")`.
+- every thread pane that opens: `ui: thread opened: ch:… ts:… [at ts:…] [in the split view] (<source>)`. The source is what the entry point named (`a notification's click`, `a deep link`, `permalink from <caller>`, `message mention from <caller>`, `a message from <caller>` for a search result or Activity's Open in home, `its pane found the root was a reply`), else the first caller outside the router, as `ui/views.(*Activity).update activity.go:784`;
+- every jumpToMessage, with the thread it resolved (`-` for none): `ui: jumpToMessage: ch:… ts:… thread ts:… [in the split view] (<source>)`, and when its lookup found no message: `ui: jumpToMessage: ts:…'s thread_ts wasn't found; navigating without it (<source>)`;
+- a reply's ts that was turned into its thread (the guard for a slack://…thread_ts=<reply> link, docs/PARITY.md): `ui: jumpToMessage: its thread_ts ts:… is a reply in ts:…, whose thread opens at it (<source>)` or `ui: thread open: ts:… is a reply in ts:…, whose thread opens at it (<source>)`, or, when the pane only found out from conversations.replies, `ui: thread pane: its root ts:… is a reply in ts:…, whose thread opens at it [in the split view]`;
+- every click on or reply to one of Clack's notifications: `notify: clicked a notification: ch:… ts:… thread ts:… (id type "msg")` (`replied to` for a reply, whose text isn't logged), and a button: `notify: a notification's button 1 (a link: false)`;
+- a slack: link Clack doesn't handle, by its command only: `ui: deep link not handled: slack://<command>` (`a https link` for anything else).
+
+The reads a navigation makes tag their ids the same way: `history ch:…: 120ms (network)`, `history ch:…: around ts:… in 80ms` (a jump's window), `history ch:…: newer than ts:… in 60ms`, `history ch:…: side <what> 40ms`, `tabs ch:…: 3 tabs (1 files) in 90ms`, and a failed lookup's `messages.list: 1 channels: <error> (ch:…)`.
 
 The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it, or a dragged region as it was. Whatever the element or region holds (a picked message's text) is in it, unless the user blurs it out in the review. A plain click copies the element as it is; Shift+click it (or drag over it) when it shows something private, and the review comes before anything is copied or saved, so the user decides what to share.
 

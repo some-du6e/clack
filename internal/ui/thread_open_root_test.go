@@ -22,7 +22,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"io"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -32,8 +34,10 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
-	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
@@ -68,17 +72,7 @@ func postDigest(fs *fakeslack.Server, ch string, links ...string) string {
 // messages and returns the middle of its first line box.
 func (e *perfEnv) linkPoint(t *testing.T, ch, url string) image.Point {
 	t.Helper()
-	var r image.Rectangle
-	e.until("the link to "+url, 15*time.Second, func() bool {
-		for _, lr := range e.mcLinks(ch, "") {
-			if lr.Kind == richview.HitLink && lr.URL == url {
-				r = lr.R
-				return true
-			}
-		}
-		return false
-	})
-	return image.Pt(r.Min.X+r.Dx()/2, r.Min.Y+r.Dy()/2)
+	return e.linkPointIn(t, "", ch, url)
 }
 
 // openState describes the route and the thread pane, for failures.
@@ -98,9 +92,10 @@ func (e *perfEnv) replyDrawnAsRoot(ch, reply string) string {
 	return ""
 }
 
-// waitParentThread runs frames until the thread pane shows thread root
-// of ch at reply, failing (with what's open) when it doesn't, or when
-// any frame on the way draws reply as a thread's root.
+// waitParentThread runs frames until the thread pane draws thread root
+// of ch whole, from the root, with the reply highlighted, failing (with
+// what's open and drawn) when it doesn't, or when any frame on the way
+// draws reply as a thread's root.
 func (e *perfEnv) waitParentThread(t *testing.T, what, ch, root, reply string) {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
@@ -108,12 +103,13 @@ func (e *perfEnv) waitParentThread(t *testing.T, what, ch, root, reply string) {
 		if bad := e.replyDrawnAsRoot(ch, reply); bad != "" {
 			t.Fatalf("%s: %s (%s)", what, bad, e.openState())
 		}
-		s := e.a.secondary
-		if s.kind == secThread && s.channel == ch && s.ts == root && s.at == reply {
+		rows := e.paneRows("", ch, root)
+		if threadDrawn(rows, root) && lit(rows, reply) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("%s: %s; want the parent thread %s/%s at the reply %s (highlighted)", what, e.openState(), ch, root, reply)
+			t.Fatalf("%s: the thread %s/%s drew %s; %s; want it from its root, the reply %s highlighted",
+				what, ch, root, drawnState(rows), e.openState(), reply)
 		}
 		e.frame()
 		time.Sleep(time.Millisecond)
@@ -121,13 +117,9 @@ func (e *perfEnv) waitParentThread(t *testing.T, what, ch, root, reply string) {
 	if r := e.a.router.Current(); r != Route("c/"+ch+"/t/"+root) {
 		t.Errorf("%s: route %q, want the parent thread's c/%s/t/%s", what, r, ch, root)
 	}
-	e.until(what+": the reply placed and highlighted", 10*time.Second, func() bool {
-		if bad := e.replyDrawnAsRoot(ch, reply); bad != "" {
-			t.Fatalf("%s: %s (%s)", what, bad, e.openState())
-		}
-		tv := e.threadView(ch, root)
-		return tv != nil && tv.JumpPending() == "" && tv.Highlighted() == reply
-	})
+	if s := e.a.secondary; s.kind != secThread || s.channel != ch || s.ts != root || s.at != reply {
+		t.Errorf("%s: %s; want the secondary pane at the reply (toThread's replyTs)", what, e.openState())
+	}
 }
 
 // logLines records what the process logs while a test runs (the lines
@@ -144,16 +136,31 @@ func (l *logLines) Write(p []byte) (int, error) {
 	return l.buf.Write(p)
 }
 
+// captureLog records the log from now on; the lines still go where they
+// went (a failure's output keeps them).
 func captureLog(t *testing.T) *logLines {
 	l := &logLines{}
 	prev, flags := log.Writer(), log.Flags()
-	log.SetOutput(l)
+	log.SetOutput(io.MultiWriter(prev, l))
 	log.SetFlags(0)
 	t.Cleanup(func() {
 		log.SetOutput(prev)
 		log.SetFlags(flags)
 	})
 	return l
+}
+
+// all is every logged line.
+func (l *logLines) all() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []string
+	for _, line := range strings.Split(l.buf.String(), "\n") {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 // matching is the logged lines starting with prefix.
@@ -184,9 +191,8 @@ func TestReplyPermalinkOpensParentThread(t *testing.T) {
 	e.settle(800 * time.Millisecond)
 	e.clickAt(e.linkPoint(t, digest, link), time.Second)
 	e.waitParentThread(t, "a click on the reply's link (thread_ts)", pub, root, reply)
-	if cv := e.channelView(pub); cv == nil || cv.Highlighted() != root {
-		t.Errorf("the conversation beside the thread doesn't highlight the root (highlightRoot): %s", e.openState())
-	}
+	e.waitDrawn(t, "the root highlighted in the conversation beside the thread (highlightRoot)", 10*time.Second, "", pub, "",
+		func(rows []messages.SenderView) bool { return lit(rows, root) })
 }
 
 // TestReplyPermalinkWithoutThreadOpensParentThread is Karim's link: a
@@ -208,15 +214,23 @@ func TestReplyPermalinkWithoutThreadOpensParentThread(t *testing.T) {
 		t.Fatalf("the reply is in the session before the click: the lookup this test is about wouldn't run")
 	}
 	logs := captureLog(t)
-	asked := e.fs.CallCount("messages.list")
+	calls := e.recordCalls("messages.list")
 	e.clickAt(e.linkPoint(t, digest, link), time.Second)
 	e.waitParentThread(t, "a click on the reply's link (no thread_ts)", pub, root, reply)
-	if e.fs.CallCount("messages.list") == asked {
-		t.Errorf("the reply's thread_ts wasn't looked up with messages.list (jumpToMessage:resolveThreadTs)")
+	// jumpToMessage:resolveThreadTs: the reply, once
+	asked := calls.of("messages.list", "", "message_ids")
+	var ids []struct {
+		Channel    string   `json:"channel"`
+		Timestamps []string `json:"timestamps"`
 	}
-	if cv := e.channelView(pub); cv == nil || cv.Highlighted() != root {
-		t.Errorf("the conversation beside the thread doesn't highlight the root (highlightRoot): %s", e.openState())
+	if len(asked) == 1 {
+		_ = json.Unmarshal([]byte(strings.TrimPrefix(asked[0], "message_ids=")), &ids)
 	}
+	if len(ids) != 1 || ids[0].Channel != pub || !slices.Equal(ids[0].Timestamps, []string{reply}) {
+		t.Errorf("messages.list asked %q, want one request for the reply %s of %s (jumpToMessage:resolveThreadTs)", asked, reply, pub)
+	}
+	e.waitDrawn(t, "the root highlighted in the conversation beside the thread (highlightRoot)", 10*time.Second, "", pub, "",
+		func(rows []messages.SenderView) bool { return lit(rows, root) })
 
 	// clack.log: the jump and the open, from the link, with tags only
 	jumps, opens := logs.matching("ui: jumpToMessage: "), logs.matching("ui: thread opened: ")
@@ -228,10 +242,11 @@ func TestReplyPermalinkWithoutThreadOpensParentThread(t *testing.T) {
 		!strings.Contains(opens[0], "permalink from ui/messages.(*richHandler).OpenURL") {
 		t.Errorf("clack.log's thread opens: %q, want one, of the parent thread, from the message's link", opens)
 	}
-	for _, line := range append(jumps, opens...) {
-		for _, plain := range []string{pub, root, reply, "synthetic", "Docs are ready", "Ship it"} {
-			if strings.Contains(line, plain) {
-				t.Errorf("clack.log line %q has %q in it: ids go in as tags, text never", line, plain)
+	noRawIDs(t, logs, pub, root, reply, digest)
+	for _, line := range logs.all() {
+		for _, text := range []string{"synthetic", "Docs are ready", "Ship it"} {
+			if strings.Contains(line, text) {
+				t.Errorf("clack.log line %q has message text %q in it", line, text)
 			}
 		}
 	}
@@ -254,6 +269,37 @@ func TestThreadPaneNeverShowsReplyAsRoot(t *testing.T) {
 		e.settle(300 * time.Millisecond)
 		e.a.OpenURL("slack://channel?team=" + fakeslack.TeamID + "&id=" + pub + "&thread_ts=" + reply)
 		e.waitParentThread(t, "slack://channel?thread_ts=<a reply>", pub, root, reply)
+		// the conversation highlights the thread's root, not the reply it
+		// was asked to (a message it never holds)
+		e.waitDrawn(t, "the root highlighted in the conversation beside the thread", 10*time.Second, "", pub, "",
+			func(rows []messages.SenderView) bool { return lit(rows, root) })
+		if cv := e.channelView(pub); cv != nil && cv.JumpPending() != "" {
+			t.Errorf("the conversation still waits to jump to %s", cv.JumpPending())
+		}
+	})
+	t.Run("a deep link's thread_ts, the reply in the session", func(t *testing.T) {
+		e := threadHeaderEnv(t, false)
+		reply := fakeslack.ThreadReplyTS(1)
+		e.openChannel(pub)
+		e.a.OpenThread(pub, root)
+		e.waitDrawn(t, "the thread", 15*time.Second, "", pub, root, func(rows []messages.SenderView) bool { return threadDrawn(rows, root) })
+		e.a.CloseSecondary()
+		e.openChannel(fakeslack.ThreadPrivateID)
+		e.settle(300 * time.Millisecond)
+		logs := captureLog(t)
+		e.a.OpenURL("slack://channel?team=" + fakeslack.TeamID + "&id=" + pub + "&thread_ts=" + reply)
+		e.waitParentThread(t, "slack://channel?thread_ts=<a reply core holds>", pub, root, reply)
+		e.waitDrawn(t, "the root highlighted in the conversation beside the thread", 10*time.Second, "", pub, "",
+			func(rows []messages.SenderView) bool { return lit(rows, root) })
+		if cv := e.channelView(pub); cv != nil && cv.JumpPending() != "" {
+			t.Errorf("the conversation still waits to jump to %s", cv.JumpPending())
+		}
+		if c := e.a.convos[pub+"/"+reply]; c != nil {
+			t.Errorf("a thread pane was made for the reply %s", reply)
+		}
+		if got := logs.matching("ui: jumpToMessage: its thread_ts " + logTag(reply) + " is a reply in " + logTag(root)); len(got) != 1 {
+			t.Errorf("clack.log's guard lines %q, want one for the reply", logs.matching("ui: "))
+		}
 	})
 	t.Run("a reply the session holds", func(t *testing.T) {
 		e := threadHeaderEnv(t, false)
@@ -270,6 +316,7 @@ func TestThreadPaneNeverShowsReplyAsRoot(t *testing.T) {
 		if s := e.a.secondary; s.kind != secThread || s.ts != root || s.at != reply {
 			t.Errorf("OpenThread with a reply's ts: %s; want its thread at it", e.openState())
 		}
+		e.frame() // a pane mounts as it's laid out
 		if c := e.a.convos[pub+"/"+reply]; c != nil {
 			t.Errorf("OpenThread made a thread pane for the reply %s", reply)
 		}
@@ -302,9 +349,19 @@ func TestFollowedThreadToastOpensParentThread(t *testing.T) {
 	a.Navigate("c/" + fakeslack.ThreadPrivateID)
 	e.settle(300 * time.Millisecond)
 	storeTeam(a.Core()) // the toast's teamId
+	rec := &noteRec{}
+	a.notify = rec
+	huddleui.PlayHook = func(string) {} // the message sound: no audio device
+	t.Cleanup(func() { huddleui.PlayHook = nil })
 	logs := captureLog(t)
-	n := a.messageNote(pub, reply, root) // desktopNotificationAfter's payload for {ts, thread_ts}
-	n.Title, n.Body = "New message in #th-launch-notes", "Robin Example: synthetic"
+	// the server's event for the reply, as the socket sends it (msg, no ts)
+	raw, _ := json.Marshal(map[string]any{"type": "desktop_notification", "channel": pub, "msg": reply, "thread_ts": root,
+		"content": "Robin Example: synthetic", "title": "Thread in #th-launch-notes"})
+	a.data.desktopNotification(a, core.Event{Type: "desktop_notification", Channel: pub, Raw: raw})
+	n := rec.wait(t, a, 1)
+	if n.Title != "New message in #th-launch-notes" {
+		t.Errorf("the toast's title %q, want Slack's \"New message in #th-launch-notes\"", n.Title)
+	}
 	click(t, a, n, "toast", 0) // the toast's launch arguments, parsed back
 	e.waitParentThread(t, "a click on a followed thread's toast", pub, root, reply)
 	clicks := logs.matching("notify: clicked a notification: ")
@@ -343,6 +400,9 @@ func TestReplyPermalinkSplitClickOpensInSplit(t *testing.T) {
 		if r := e.a.splitTop(); r == Route("c/"+pub+"/t/"+reply) {
 			t.Fatalf("the split view shows the reply as a thread's root (%q)", r)
 		}
+		if rows := e.paneRows(paneSplit, pub, reply); len(rows) > 0 {
+			t.Fatalf("the split view drew the reply as a thread's root: %s", drawnState(rows))
+		}
 		if time.Now().After(deadline) {
 			t.Fatalf("the split click on the reply's link: split view %q, %s; want the parent thread %q", e.a.splitTop(), e.openState(), want)
 		}
@@ -352,8 +412,10 @@ func TestReplyPermalinkSplitClickOpensInSplit(t *testing.T) {
 	if s := e.a.secondary; s.kind == secThread {
 		t.Errorf("the split click opened a thread in the secondary pane too: %s", e.openState())
 	}
-	e.settle(300 * time.Millisecond)
-	if bad := e.replyDrawnAsRoot(pub, reply); bad != "" {
-		t.Errorf("%s", bad)
+	e.waitDrawn(t, "the split view's thread at the reply", 10*time.Second, paneSplit, pub, root, func(rows []messages.SenderView) bool {
+		return threadDrawn(rows, root) && lit(rows, reply)
+	})
+	if rows := e.paneRows(paneSplit, pub, reply); len(rows) > 0 {
+		t.Errorf("the split view drew the reply as a thread's root: %s", drawnState(rows))
 	}
 }

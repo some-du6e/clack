@@ -148,11 +148,13 @@ func (a *App) openThread(channel, ts, at string, resolved bool) {
 
 // leaveReplyRoute swaps a route naming reply ts as a thread (the history
 // entry a slack://…thread_ts=<reply> link pushed) for its thread's, as
-// the pane did: Back doesn't step onto the reply, and Slick sees the
+// the pane did: Back doesn't step onto the reply, nor onto the thread
+// again when the entry before was the thread already, and Slick sees the
 // thread the pane shows.
 func (a *App) leaveReplyRoute(ch, reply, root string) {
 	if r := a.router.Current(); r.Channel() == ch && r.Thread() == reply {
 		a.replaceRoute(Route("c/" + ch + "/t/" + root))
+		a.router.dropRepeat()
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -347,12 +348,12 @@ func (a *App) pollOnce(ctx context.Context) {
 	}
 	for _, ch := range fetch {
 		if err := a.loadLatest(ctx, ch); err != nil {
-			log.Printf("poll: history %s: %v", ch, err)
+			log.Printf("poll: history %s: %v", logtag.ID(ch), err)
 		}
 	}
 	for _, t := range threads {
 		if err := a.fetchThread(ctx, t.ch, t.ts); err != nil {
-			log.Printf("poll: thread %s: %v", t.ch, err)
+			log.Printf("poll: thread %s %s: %v", logtag.ID(t.ch), logtag.ID(t.ts), err)
 		}
 	}
 	a.emit(Event{Type: "poll"})

@@ -44,8 +44,30 @@ func (a *App) ReplyAsThreadRoot(ch, reply, root string) {
 		a.withVia("its pane found the root was a reply", func() {
 			a.openThreadAtIn(ch, root, reply, "", true) // the reply highlighted (OpenThread's guard)
 			a.leaveReplyRoute(ch, reply, root)
+			a.rootForReplyHighlight(ch, reply, root)
 		})
 	})
+}
+
+// rootForReplyHighlight: the conversation beside a handed-on pane was
+// asked to highlight the reply as a thread's root (toThread's
+// highlightRoot with the reply's ts, a message the conversation never
+// holds, so the jump would wait for it for good); it highlights the
+// thread's root, as toThread for the reply's thread does.
+func (a *App) rootForReplyHighlight(ch, reply, root string) {
+	if a.router.Current().Channel() != ch {
+		return
+	}
+	c := a.convos[ch+"/"]
+	if c == nil {
+		return
+	}
+	if h, ok := c.list.(interface {
+		JumpPending() string
+		Highlight(ts string)
+	}); ok && h.JumpPending() == reply {
+		h.Highlight(root)
+	}
 }
 
 var (

@@ -253,6 +253,15 @@ func permalink(domain, ch, ts string) string {
 // https and mailto only; see openurl.Check). A var so tests can catch it.
 var openURL = func(u string) { _ = openurl.Open(u) }
 
+// SwapOpenURL makes f what opens a message's link in the browser and
+// returns the undo (tests outside the package: a link Slack's client
+// doesn't open itself, as openPermalink's new tab).
+func SwapOpenURL(f func(u string)) (restore func()) {
+	prev := openURL
+	openURL = f
+	return func() { openURL = prev }
+}
+
 // avatarRadius is Slack's clamp(4px, min(22.222%, 12px), 12px).
 func avatarRadius(px int) int {
 	r := int(float32(px)*0.22222 + 0.5)

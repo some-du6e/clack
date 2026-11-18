@@ -65,7 +65,7 @@ var routerFuncs = []string{
 	"(*App).OpenThreadReply", "(*App).Navigate", "(*App).afterRoute", "(*App).jumpToMessage", "(*App).jumpMessage",
 	"(*App).jumpAfterLookup", "(*App).jumpViaRoutes", "(*App).jumpSplit", "(*App).jumpLatest", "(*App).JumpToMessage",
 	"(*App).OpenPermalink", "(*App).FollowLink", "(*App).withVia", "(*App).navVia", "(*App).logThreadOpen",
-	"(*App).OpenSplit", "(*App).inPane", "(*App).OpenAtMessage", "callerOutsideRouter",
+	"(*App).OpenSplit", "(*App).inPane", "(*App).OpenAtMessage", "(*App).replyAsThread", "callerOutsideRouter",
 }
 
 // callerOutsideRouter is the first caller outside the router's plumbing,

@@ -124,6 +124,7 @@ func jumpRoute(ch, ts, thread string) string {
 
 // jumpViaRoutes is jumpToMessage's navigation, its thread known (or none).
 func (a *App) jumpViaRoutes(ch, ts, thread string) {
+	ts, thread = a.replyAsThread(ch, ts, thread)
 	if (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
 		a.jumpSplit(ch, ts, thread)
 		return
@@ -146,6 +147,29 @@ func (a *App) jumpViaRoutes(ch, ts, thread string) {
 	default:
 		a.Navigate(jumpRoute(ch, ts, ""))
 	}
+}
+
+// replyAsThread is the guard for a thread_ts naming a reply core holds
+// (slack://channel?thread_ts=<a reply>, which Slack's ThreadView draws
+// with the reply as its root and its whole thread under it): the reply's
+// thread instead, at the reply, its root highlighted in the conversation
+// rather than the reply the timeline never holds. A reply core doesn't
+// hold yet is its pane's to find (ReplyAsThreadRoot). docs/PARITY.md's
+// deliberate differences.
+func (a *App) replyAsThread(ch, ts, thread string) (string, string) {
+	c := a.Core()
+	if c == nil || thread == "" {
+		return ts, thread
+	}
+	root, ok := c.ReplyParent(ch, thread)
+	if !ok {
+		return ts, thread
+	}
+	log.Printf("ui: jumpToMessage: its thread_ts %s is a reply in %s, whose thread opens at it (%s)", logTag(thread), logTag(root), a.navVia())
+	if ts == "" {
+		ts = thread
+	}
+	return ts, root
 }
 
 // jumpSplit is jumpViaRoutes in the split view: the route on its back

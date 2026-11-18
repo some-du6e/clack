@@ -177,7 +177,7 @@ func (v *ChannelView) Highlight(ts string) {
 }
 
 // Highlighted is the message the list highlights now (Highlight's flash,
-// 4 s from when the jump was placed), "" for none.
+// 3 s from when the jump was placed), "" for none.
 func (v *ChannelView) Highlighted() string {
 	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < highlightFor {
 		return s.highlight

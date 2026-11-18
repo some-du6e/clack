@@ -1380,19 +1380,26 @@ jobs:
           name: gpu-cost-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-shots
 
-  # thread-open-root (2026-11-17): a thread pane never shows a reply as its
-  # root (Karim, α.105: a link to a reply in a bot's digest of active
-  # threads opened the reply alone, as the root). A reply's permalink with
-  # and without thread_ts (the second looked up with messages.list),
-  # slack://channel links naming the reply as the message or the thread,
-  # OpenThread with a reply's ts, the pane learning it from
-  # conversations.replies, a followed thread's toast; and the log lines.
-  # One verbose run, then COUNT. Dispatch: only=thread-open-root.
+  # thread-open-root (2026-11-17, round 2 2026-11-18): a thread pane never
+  # shows a reply as its root (Karim, α.105: a link to a reply in a bot's
+  # digest of active threads opened the reply alone, as the root), and the
+  # rest of Slack's jumpToMessage: a reply's permalink with and without
+  # thread_ts, a thread parent's link (openThreadForRootMessage; not in a
+  # bot's DM), message_mention pills, the window around an old message
+  # (two conversations.history calls), the split view's back stack and
+  # reply, the reply route's history entry, one replies fetch per
+  # hand-over, thread-only and latest-reply links, slack:// links in
+  # messages, foreign workspaces, deep links, OpenThread, the pane's
+  # hand-over, a followed thread's toast, the log's tags; the pane's
+  # hand-over on each open and the highlight's keyframes (messages), row
+  # and surface links, search results and Activity's Open in home, the
+  # lookups (core). One verbose run, then COUNT. Dispatch:
+  # only=thread-open-root.
   thread-open-root:
     if: ${{ !inputs.only || startsWith('thread-open-root', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit)$'
+      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit|TestParentLinkOpensItsThread|TestMessageMentionPillOpensThread|TestPermalinkLoadsAroundOldMessage|TestSplitViewLinkKeepsBackStack|TestReplyRouteLeavesNoHistory|TestReplyRootedPaneFetchesThreadOnce|TestThreadOnlyLinksOpenTheThread|TestForeignWorkspaceLinkOpensBrowser|TestNavigationLogsTagIDs)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -1403,12 +1410,21 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: ui (a reply's link, deep link, pane and toast open its parent's thread at it)
+      - name: ui (links, deep links, panes and toasts open a message's thread as Slack's jumpToMessage does)
         run: |
-          go test -count=1 -v -timeout 20m -run "$TESTS" ./internal/ui
+          go test -count=1 -v -timeout 30m -run "$TESTS" ./internal/ui
           go test -count=$COUNT -timeout 60m -run "$TESTS" ./internal/ui
-      - name: the lookups and the log's tags (core, ui)
-        if: ${{ !cancelled() && hashFiles('internal/ui/navlog_test.go') != '' }}
+      - name: messages, views, popups, blockkit (the pane's hand-over, the highlight, row and surface links, search, Activity)
+        if: ${{ !cancelled() }}
         run: |
-          go test -count=$COUNT -run '^TestReplyThread$' ./internal/core
+          go test -count=1 -v -run '^(TestReplyRootedPaneHandsOnEachOpen|TestJumpHighlightKeyframes)$' ./internal/ui/messages
+          go test -count=$COUNT -run '^(TestReplyRootedPaneHandsOnEachOpen|TestJumpHighlightKeyframes)$' ./internal/ui/messages
+          go test -count=$COUNT -v -run '^(TestRowLinksFollowSlackLinks|TestActivityOpenInHomeOpensAtReply)$' ./internal/ui/views
+          go test -count=$COUNT -v -run '^TestSearchResultOpensReplyAtReply$' ./internal/ui/popups
+          go test -count=$COUNT -v -run '^TestSurfaceLinksFollowSlackLinks$' ./internal/ui/blockkit
+      - name: the lookups and the log's tags (core, logtag, ui)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=$COUNT -v -run '^(TestReplyThread|TestCachedSlugKeepsParentThread|TestReplyThreadOpenRoot|TestReplyThreadSingleFlight|TestHistoryAround|TestRepliesForReplyKeyedByParent|TestLatestReply)$' ./internal/core
+          go test -count=$COUNT -v -run '^TestID$' ./internal/logtag
           go test -count=$COUNT -run '^(TestDeepLinkMessage|TestNavLogTags)$' ./internal/ui
