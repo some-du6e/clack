@@ -258,8 +258,20 @@ func TestOlderPageRead(t *testing.T) {
 			"previous_message": map[string]any{"type": "message", "ts": edited, "user": "U2", "text": "a synthetic draft"}}))
 	}
 	start := a.MessageChangeSeq()
-	if _, err := a.History(context.Background(), ch, newest); err != nil {
+	p, err := a.History(context.Background(), ch, newest)
+	if err != nil {
 		t.Fatal(err)
+	}
+	// the list gets what the read kept, not the raw page
+	got := map[string]Message{}
+	for _, m := range p.Messages {
+		got[m.TS] = m
+	}
+	if m := got[old]; m.Text != "votes: 2" || len(m.Reactions) != 1 || m.Reactions[0].Count != 2 {
+		t.Errorf("the older page History hands the list: the vote %q %+v, want votes: 2 with both +1s", m.Text, m.Reactions)
+	}
+	if m := got[edited]; m.Text != "a synthetic plan, final" {
+		t.Errorf("the older page History hands the list: the edited message %q, want the socket's", m.Text)
 	}
 	w := a.S.Timeline(ch)
 	if w == nil {
@@ -324,20 +336,111 @@ func TestThreadsUnreadLeavesDeleted(t *testing.T) {
 }
 
 // Every read that writes messages into the store announces what it
-// brought (announceReads after it, in the same function): the revisions
-// a read notes wait in the store until core announces them, and a read
-// that doesn't strands them until another read's announcement. This
-// holds msg-latency's reads (SetLatestSince in fetchLatest, RefreshRange
-// in refreshOlder) to it once merged.
+// brought: an announceReads after it, in its own block or one around it,
+// before any return that follows it. The revisions a read notes wait in
+// the store until core announces them, and a read that returns first (a
+// later page failing in a loop of pages) strands them until another
+// read's announcement. This holds msg-latency's reads to it once merged:
+// SetLatestSince in fetchLatest, RefreshRange in refreshOlder,
+// PrependOlderAt in History's older pages.
 func TestReadsAnnounce(t *testing.T) {
 	reads := map[string]bool{"SetLatestRead": true, "SetLatestSince": true, "SetThreadSince": true, "PutFetched": true,
-		"PrependOlderSince": true, "RefreshRange": true}
+		"PutFetchedAsked": true, "PrependOlderSince": true, "PrependOlderAt": true, "RefreshRange": true}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fset := token.NewFileSet()
 	found := 0
+	isRead := func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		sel, ok := c.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return false
+		}
+		x, ok := sel.X.(*ast.SelectorExpr)
+		return ok && x.Sel.Name == "S" && reads[sel.Sel.Name]
+	}
+	// has reports whether n holds a call f wants, not looking into
+	// function literals (another function's body)
+	has := func(n ast.Node, f func(ast.Node) bool) bool {
+		hit := false
+		ast.Inspect(n, func(m ast.Node) bool {
+			if hit {
+				return false
+			}
+			if _, ok := m.(*ast.FuncLit); ok && m != n {
+				return false
+			}
+			if f(m) {
+				hit = true
+			}
+			return !hit
+		})
+		return hit
+	}
+	isAnnounce := func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		sel, ok := c.Fun.(*ast.SelectorExpr)
+		return ok && sel.Sel.Name == "announceReads"
+	}
+	isReturn := func(n ast.Node) bool { _, ok := n.(*ast.ReturnStmt); return ok }
+	// announced reports whether the statements after the one at i of
+	// blocks[len-1] announce before they return, else whether the blocks
+	// around it do
+	var announced func(blocks []*ast.BlockStmt, at []int) bool
+	announced = func(blocks []*ast.BlockStmt, at []int) bool {
+		if len(blocks) == 0 {
+			return false
+		}
+		b, i := blocks[len(blocks)-1], at[len(at)-1]
+		for _, st := range b.List[i+1:] {
+			if has(st, isAnnounce) {
+				return true
+			}
+			if has(st, isReturn) {
+				return false
+			}
+		}
+		return announced(blocks[:len(blocks)-1], at[:len(at)-1])
+	}
+	var walk func(body *ast.BlockStmt, name string)
+	walk = func(body *ast.BlockStmt, name string) {
+		var blocks []*ast.BlockStmt
+		var at []int
+		var visit func(n ast.Node) bool
+		visit = func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncLit:
+				walk(n.Body, name+" (a func literal)")
+				return false
+			case *ast.BlockStmt:
+				blocks, at = append(blocks, n), append(at, 0)
+				for i, st := range n.List {
+					at[len(at)-1] = i
+					ast.Inspect(st, visit)
+				}
+				blocks, at = blocks[:len(blocks)-1], at[:len(at)-1]
+				return false
+			}
+			if isRead(n) {
+				found++
+				c := n.(*ast.CallExpr)
+				if !announced(blocks, at) {
+					t.Errorf("%s: %s in %s writes a read into the store and nothing after it, before it returns, announces what it brought (announceReads)",
+						fset.Position(c.Pos()), c.Fun.(*ast.SelectorExpr).Sel.Name, name)
+				}
+			}
+			return true
+		}
+		ast.Inspect(body, visit)
+	}
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") {
 			continue
@@ -346,47 +449,9 @@ func TestReadsAnnounce(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// the innermost function around each read, and where it announces
-		var check func(body *ast.BlockStmt)
-		check = func(body *ast.BlockStmt) {
-			var calls []*ast.CallExpr
-			var announced []token.Pos
-			ast.Inspect(body, func(n ast.Node) bool {
-				switch n := n.(type) {
-				case *ast.FuncLit:
-					check(n.Body)
-					return false
-				case *ast.CallExpr:
-					sel, ok := n.Fun.(*ast.SelectorExpr)
-					if !ok {
-						return true
-					}
-					if sel.Sel.Name == "announceReads" {
-						announced = append(announced, n.Pos())
-					}
-					if x, ok := sel.X.(*ast.SelectorExpr); ok && x.Sel.Name == "S" && reads[sel.Sel.Name] {
-						calls = append(calls, n)
-					}
-				}
-				return true
-			})
-			for _, c := range calls {
-				found++
-				ok := false
-				for _, p := range announced {
-					if p > c.Pos() {
-						ok = true
-					}
-				}
-				if !ok {
-					t.Errorf("%s: %s writes a read into the store and nothing after it announces what it brought (announceReads)",
-						fset.Position(c.Pos()), c.Fun.(*ast.SelectorExpr).Sel.Name)
-				}
-			}
-		}
 		for _, d := range f.Decls {
 			if fn, ok := d.(*ast.FuncDecl); ok && fn.Body != nil {
-				check(fn.Body)
+				walk(fn.Body, fn.Name.Name)
 			}
 		}
 	}
@@ -407,31 +472,64 @@ func (f *fakeSlack) count(method string) int {
 	return n
 }
 
-// A view's messages fetched again by id go out as one messages.list for
-// the channel, and a message asked for while its fetch is out isn't
-// asked for again.
+// The messages the views fetch again by id go out together: three
+// channels asked for one after another within a moment share one
+// messages.list (its message_ids takes every channel, which the client
+// splits ten a call, two at a time: Slack's UnknownFetchManager), and a
+// message asked for while its fetch is out isn't asked for again.
 func TestRefetchBatch(t *testing.T) {
 	a, f := testApp(t)
-	const ch = "C1"
-	tss := []string{"1762791700.000100", "1762791710.000100", "1762791720.000100"}
-	var msgs []any
-	for _, ts := range tss {
-		msgs = append(msgs, map[string]any{"type": "message", "ts": ts, "user": "U1", "text": "a synthetic message " + ts})
+	want := map[string]string{"C1": "1762791700.000100", "C2": "1762791710.000100", "C3": "1762791720.000100"}
+	answer := map[string]any{}
+	for ch, ts := range want {
+		answer[ch] = []any{map[string]any{"type": "message", "ts": ts, "user": "U1", "text": "a synthetic message in " + ch}}
 	}
-	b, _ := json.Marshal(map[string]any{"ok": true, "messages": map[string]any{ch: msgs}})
+	b, _ := json.Marshal(map[string]any{"ok": true, "messages": answer})
 	f.reply["messages.list"] = string(b)
 	release := make(chan struct{})
 	f.hooks["messages.list"] = func(url.Values) { <-release }
-	a.RefetchMessages(ch, tss)
-	waitFor(t, "the fetch out", 5*time.Second, func() bool { return f.count("messages.list") == 1 })
-	a.RefetchMessages(ch, tss[:2])
-	close(release)
-	for _, ts := range tss {
-		waitFor(t, "the message announced "+ts, 5*time.Second, func() bool { c, ok := a.MessageChange(ch, ts); return ok && c.Msg != nil })
+	for _, ch := range []string{"C1", "C2", "C3"} {
+		a.RefetchMessages(ch, []string{want[ch]})
 	}
-	time.Sleep(50 * time.Millisecond)
+	waitFor(t, "the fetch out", 5*time.Second, func() bool { return f.count("messages.list") == 1 })
+	a.RefetchMessages("C1", []string{want["C1"]}) // out: not again
+	close(release)
+	for ch, ts := range want {
+		waitFor(t, "the message announced in "+ch, 5*time.Second, func() bool { c, ok := a.MessageChange(ch, ts); return ok && c.Msg != nil })
+	}
+	time.Sleep(300 * time.Millisecond)
 	if n := f.count("messages.list"); n != 1 {
-		t.Errorf("%d messages.list calls, want one for the channel's three messages", n)
+		t.Errorf("%d messages.list calls, want one for the three channels' messages", n)
+	}
+	ids := f.last("messages.list").Get("message_ids")
+	for ch := range want {
+		if !strings.Contains(ids, ch) {
+			t.Errorf("messages.list's message_ids %s lack %s", ids, ch)
+		}
+	}
+}
+
+// A failed fetch by id is asked for again by core once its backoff is
+// over, with no view asking: a page with nothing changing draws no frame
+// to ask from, and the row would shimmer until something else drew one.
+func TestRefetchRetriesByItself(t *testing.T) {
+	a, f := testApp(t)
+	const ch, ts = "C1", "1762791750.000100"
+	f.reply["messages.list"] = `{"ok":false,"error":"fatal_error"}` // not one the client retries
+	ok, _ := json.Marshal(map[string]any{"ok": true, "messages": map[string]any{ch: []any{
+		map[string]any{"type": "message", "ts": ts, "user": "U1", "text": "a synthetic message fetched again"}}}})
+	f.hooks["messages.list"] = func(url.Values) {
+		f.mu.Lock()
+		f.reply["messages.list"] = string(ok) // the next one answers
+		f.mu.Unlock()
+	}
+	a.RefetchMessages(ch, []string{ts})
+	waitFor(t, "the message after core's own retry", 8*time.Second, func() bool {
+		c, ok := a.MessageChange(ch, ts)
+		return ok && c.Msg != nil
+	})
+	if n := f.count("messages.list"); n != 2 {
+		t.Errorf("%d messages.list calls, want the failed one and core's retry", n)
 	}
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -18,6 +19,9 @@ func TestRefreshRangeRead(t *testing.T) {
 	s := New("")
 	fn := reflect.ValueOf(s).MethodByName("RefreshRange")
 	if !fn.IsValid() {
+		if reflect.ValueOf(s).MethodByName("SetLatestSince").IsValid() {
+			t.Fatal("msg-latency's SetLatestSince is here and RefreshRange isn't: renamed in the merge? Bring this test up to date")
+		}
 		t.Skip("store.RefreshRange lands with msg-latency")
 	}
 	if fn.Type().NumIn() != 5 {
@@ -71,5 +75,61 @@ func TestRefreshRangeRead(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the re-read's revisions %q lack the vote's votes: 2", revs)
+	}
+}
+
+// A newest-page read whose request went out before a message_changed
+// leaves every copy on the socket's revision, the copy fetched by id (an
+// Activity row's) included, and announces nothing older. A read that noted
+// its raw page, not what it kept, spread the older revision over the
+// fetched copy while the window kept the socket's: every view drew the
+// socket's until core let the window go, then the older one. Runs on
+// SetLatestRead, and on msg-latency's SetLatestSince once merged.
+func TestWindowReadKeepsFetchedRevision(t *testing.T) {
+	const ch, ts = "C1", "1762791600.000100"
+	vote := func(n int) slack.Message {
+		return slack.Message{Type: "message", TS: ts, User: "U1", Text: fmt.Sprintf("votes: %d", n)}
+	}
+	for _, tc := range []struct {
+		name string
+		read func(s *Store, page []slack.Message, since uint64) bool
+	}{
+		{"SetLatestRead", func(s *Store, page []slack.Message, since uint64) bool {
+			s.SetLatestRead(ch, page, false, since)
+			return true
+		}},
+		{"SetLatestSince", func(s *Store, page []slack.Message, since uint64) bool {
+			fn := reflect.ValueOf(s).MethodByName("SetLatestSince")
+			if !fn.IsValid() {
+				return false
+			}
+			opts := reflect.New(fn.Type().In(3)).Elem()
+			opts.FieldByName("Since").SetUint(since)
+			fn.Call([]reflect.Value{reflect.ValueOf(ch), reflect.ValueOf(page), reflect.ValueOf(false), opts})
+			return true
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New("")
+			s.PutFetched(ch, []slack.Message{vote(1)}, s.LiveSeq()) // Activity's copy
+			s.TakeReadRevisions()
+			since := s.LiveSeq()
+			v2 := vote(2)
+			s.NoteMutate(ch, ts, &v2, func(x *slack.Message) { *x = v2 }) // the socket's message_changed
+			if !tc.read(s, []slack.Message{vote(1)}, since) {
+				t.Skip("lands with msg-latency")
+			}
+			s.mu.RLock()
+			f := s.fetched[ch+"/"+ts]
+			s.mu.RUnlock()
+			if f == nil || f.Text != "votes: 2" {
+				t.Errorf("the fetched copy after the read: %+v, want the socket's votes: 2", f)
+			}
+			for _, r := range s.TakeReadRevisions() {
+				if r.Msg.TS == ts && r.Msg.Text != "votes: 2" {
+					t.Errorf("the read announces %q, older than the socket's", r.Msg.Text)
+				}
+			}
+		})
 	}
 }

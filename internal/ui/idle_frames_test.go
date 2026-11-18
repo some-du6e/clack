@@ -143,8 +143,14 @@ func TestIdleFrames(t *testing.T) {
 			}
 			act.Search("e")
 			e.frame()
-			act.StepItem(1, false)
-			e.until("an Activity item open with the search open", 10*time.Second, func() bool { return e.a.secondary.open() })
+			// Alt+Down until a row opens: on a slow runner the search may
+			// list nothing yet a frame after it opened
+			e.until("an Activity item open with the search open", 20*time.Second, func() bool {
+				if !e.a.secondary.open() {
+					act.StepItem(1, false)
+				}
+				return e.a.secondary.open()
+			})
 			e.idle(t, p, "activity, searching, an item open", true)
 			e.a.CloseSecondary()
 			for k := range inbox {

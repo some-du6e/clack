@@ -123,3 +123,96 @@ func TestActivityBadgesZeroReadLocally(t *testing.T) {
 		t.Errorf("%s went out for the badges' zero; Slack's update is local only", w.Method)
 	}
 }
+
+// badgesZero is badge_counts_updated with every activity_v2 count at 0.
+func badgesZero(t *testing.T, v *Activity) {
+	t.Helper()
+	zeros := map[string]int{}
+	for _, k := range []string{"at_user", "at_user_group", "at_channel", "thread_v2", "dm", "keyword", "internal_channel_invite"} {
+		zeros[k] = 0
+	}
+	raw, _ := json.Marshal(map[string]any{"type": "badge_counts_updated", "activity_v2": zeros})
+	v.h.Core().Inject(slack.Event{Type: "badge_counts_updated", Raw: raw})
+}
+
+// The badges' zero marks the rows read in the page Activity holds, as
+// Slack's local-only write marks its store's items: a load that went out
+// after it brings the server's read state, which wins (a row the server
+// says is unread again draws unread). A load already out when the zero
+// came, read before it, doesn't undo the marks.
+func TestActivityBadgesZeroThenLoad(t *testing.T) {
+	v, _, e, fs := vaFakeActivity(t, false)
+	unread := func() bool { return v.isUnread(actItem(t, v, "fa-at-user"), "fa-at-user") }
+	// a load out when the zero comes keeps the mark
+	fs.SetFault("activity.feed", fakeslack.Fault{ReplyDelay: 600 * time.Millisecond, Times: 1})
+	feeds := fs.CallCount("activity.feed")
+	v.load(actRefresh)
+	e.until(t, "the slow load out", func() bool { return fs.CallCount("activity.feed") > feeds })
+	badgesZero(t, v)
+	e.until(t, "fa-at-user read", func() bool { return !unread() })
+	e.until(t, "the slow load landed", func() bool { return !v.data.busy() && !v.wasBusy })
+	if unread() {
+		t.Fatal("a load read before the zero made the row unread again")
+	}
+	// the server still says unread (no markRead went out): a load after
+	// the zero brings that back
+	v.load(actRefresh)
+	e.until(t, "the load after the zero landed, the row unread", func() bool { return !v.data.busy() && !v.wasBusy && unread() })
+}
+
+// Realtime changes and the badges' zero apply in the order the socket sent
+// them, however many came while Activity drew nothing: a row an update made
+// unread before the zero is read after it, and one made unread after the
+// zero stays unread.
+func TestActivityBadgesZeroInSocketOrder(t *testing.T) {
+	v, _, e, _ := vaFakeActivity(t, false)
+	app := v.h.Core()
+	entry := func(key, ts string, unread bool) {
+		raw, _ := json.Marshal(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": map[string]any{
+			"key": key, "feed_ts": ts, "is_unread": unread,
+			"item": map[string]any{"type": "keyword", "message": map[string]any{"ts": ts, "channel": fakeslack.ViewsChannel, "author_user_id": "U0FAKE00002"}}}})
+		app.Inject(slack.Event{Type: "activity", Subtype: "activity_updated", Raw: raw})
+	}
+	const kw = "1762700400.000100" // fa-keyword's message, in ViewsChannel's window
+	entry("fa-keyword", kw, true)
+	for i := 0; i < 3; i++ {
+		badgesZero(t, v)
+	}
+	time.Sleep(150 * time.Millisecond) // the event goroutine queues them; no frame drawn meanwhile
+	e.frame()
+	e.frame()
+	if v.isUnread(actItem(t, v, "fa-keyword"), "fa-keyword") {
+		t.Error("an entry made unread before the zero is unread after it")
+	}
+	badgesZero(t, v)
+	entry("fa-keyword", kw, true)
+	time.Sleep(150 * time.Millisecond)
+	e.frame()
+	e.frame()
+	if !v.isUnread(actItem(t, v, "fa-keyword"), "fa-keyword") {
+		t.Error("an entry made unread after the zero is read")
+	}
+}
+
+// Without the inbox, Slack marks the All list's unread rows read locally
+// when every count and alert badge_counts_updated carries is 0 (VxbD
+// handleBadgeCountsUpdatedRTMEvent's classic branch), no activity.markRead.
+func TestActivityBadgesZeroClassic(t *testing.T) {
+	v, _, e, fs := vaFakeActivity(t, false)
+	app := v.h.Core()
+	app.SetExperimentGroup("activity_inbox", "off")
+	t.Cleanup(func() { app.ClearExperimentGroup("activity_inbox") })
+	e.frame()
+	if !v.isUnread(actItem(t, v, "fa-at-user"), "fa-at-user") {
+		t.Fatal("fa-at-user is read before the event")
+	}
+	writes := len(fs.ActivityWrites())
+	raw, _ := json.Marshal(map[string]any{"type": "badge_counts_updated",
+		"counts": map[string]int{"channels": 0, "dms": 0, "thread_unreads": 0, "thread_mentions": 0, "app_dms": 0},
+		"alerts": map[string]int{"external_channel_invite": 0, "quietly_added_to_channel": 0}})
+	app.Inject(slack.Event{Type: "badge_counts_updated", Raw: raw})
+	e.until(t, "fa-at-user read", func() bool { return !v.isUnread(actItem(t, v, "fa-at-user"), "fa-at-user") })
+	for _, w := range fs.ActivityWrites()[writes:] {
+		t.Errorf("%s went out for the badges' zero; Slack's update is local only", w.Method)
+	}
+}

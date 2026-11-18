@@ -1,10 +1,14 @@
 package messages
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // hubReadsPage is a channel's newest page: ten messages, oldest first.
@@ -131,5 +135,111 @@ func TestHubUpdateDuringFirstLoad(t *testing.T) {
 	}
 	if m.find(old.TS) >= 0 || len(m.msgs) != 10 {
 		t.Errorf("the load kept an update of a message outside its page: %v", hubTSs(m))
+	}
+}
+
+// A send that failed long ago and is kept at the top of the list (older
+// than the page from Slack: msg-latency keeps unconfirmed sends whatever
+// the page's range) doesn't widen what the list loaded: the range starts
+// at its oldest message from Slack, where load-older reads from, so an
+// update of a message between the two stays out.
+func TestHubUpdateAfterLocalCopyAtTop(t *testing.T) {
+	const ch = "C0HUBREAD4"
+	hb, m := hubReadsEnv(ch)
+	m.upsert(core.Message{TS: "1762200000.000100", Channel: ch, Text: "a synthetic send that failed", Failed: true})
+	before := hubTSs(m)
+	between := core.Message{TS: "1762300000.000100", Channel: ch, Text: "an older synthetic message, edited"}
+	hb.apply(core.Event{Type: "update", Channel: ch, TS: between.TS, Msg: &between})
+	if got := hubTSs(m); fmt.Sprint(got) != fmt.Sprint(before) {
+		t.Fatalf("the list after an update between a kept failed send and the page: %v, want %v", got, before)
+	}
+}
+
+// An answer that starts the list over (msg-latency's takeNewest, the
+// window started again at a page past a gap) takes back none of what the
+// events changed during its load that it doesn't hold and that is older
+// than its range: those messages are from before the gap. A message newer
+// than the answer goes in as before.
+func TestHubKeepLiveAfterStartOver(t *testing.T) {
+	const ch = "C0HUBREAD5"
+	_, m := hubReadsEnv(ch)
+	m.loading = true
+	pre := m.msgs[2].m
+	pre.Text += ", reacted"
+	m.upsert(pre)
+	m.noteLive(pre.TS, false)
+	late := core.Message{TS: "1762900000.000100", Channel: ch, Text: "a synthetic message posted during the load"}
+	m.upsert(late)
+	m.noteLive(late.TS, false)
+	live := m.takeLive()
+	var fresh []core.Message
+	for i := 0; i < 5; i++ {
+		fresh = append(fresh, core.Message{TS: fmt.Sprintf("1762800%03d.000100", i), Channel: ch, Text: fmt.Sprintf("after the gap %d", i)})
+	}
+	m.setAll(fresh) // takeNewest's start-over
+	m.hasMore = true
+	m.keepLive(live)
+	m.loading = false
+	if m.find(pre.TS) >= 0 {
+		t.Errorf("a pre-gap message noted during the load came back above the new page: %v", hubTSs(m))
+	}
+	if m.find(late.TS) < 0 {
+		t.Errorf("a message posted during the load stayed out: %v", hubTSs(m))
+	}
+}
+
+// A message_changed of a message older than core's window (a vote on a
+// poll 80 messages back, a root's reply count after a reply's deletion)
+// stays out of the window, so the open list, loading again from it, keeps
+// its oldest message and load-older's cursor.
+func TestHubReloadKeepsRangeAfterOldChange(t *testing.T) {
+	app, _ := newTestApp(t)
+	const ch = "C0HUBOLD01"
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "old-changes", IsChannel: true, IsMember: true, NumMembers: 3})
+	var page []slack.Message
+	for i := 0; i < 10; i++ {
+		page = append(page, slack.Message{Type: "message", TS: fmt.Sprintf("1762500%03d.000100", 10+i), User: "UALICE", Text: fmt.Sprintf("synthetic %d", i)})
+	}
+	app.S.SetLatest(ch, page, true)
+	old := slack.Message{Type: "message", TS: "1762300000.000100", User: "UBOB", Text: "votes: 1"}
+	app.S.PutFetched(ch, []slack.Message{old}, app.S.LiveSeq()) // Activity's copy
+	hb := hubFor(coreHost{app: app, th: theme.New(false)})
+	m := hb.channel(ch)
+	load := func() {
+		t.Helper()
+		m.mu.Lock()
+		m.fetched = time.Time{}
+		m.mu.Unlock()
+		hb.ensureLoaded(m)
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			m.mu.Lock()
+			done := m.loaded && !m.loading
+			m.mu.Unlock()
+			if done {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the list never loaded")
+			}
+		}
+	}
+	load()
+	m.mu.Lock()
+	first := m.msgs[0].m.TS
+	m.mu.Unlock()
+	edited := old
+	edited.Text = "votes: 2"
+	raw, _ := json.Marshal(map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "channel": ch,
+		"ts": "1762500100.000100", "message": edited, "previous_message": old})
+	app.Inject(slack.Event{Type: "message", Subtype: "message_changed", Channel: json.RawMessage(`"` + ch + `"`), Raw: raw})
+	if w := app.S.Timeline(ch); w == nil || w.Msgs[0].TS != page[0].TS {
+		t.Errorf("core's window after the change starts at %v, want %s", w.Msgs[0].TS, page[0].TS)
+	}
+	load()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.msgs[0].m.TS != first || !m.hasMore || m.find(old.TS) >= 0 {
+		t.Fatalf("the list loaded again from %s (hasMore %v, holds the old message %v); load-older would read before it, want %s",
+			m.msgs[0].m.TS, m.hasMore, m.find(old.TS) >= 0, first)
 	}
 }

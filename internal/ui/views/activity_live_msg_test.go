@@ -55,6 +55,7 @@ const (
 	lmVoteRootReply = "1762790060.000100" // the vote root's reply
 	lmVote          = "1762790100.000100" // the vote app's message, the thread's latest reply (or first unread: lmOpts.latest)
 	lmLatest        = "1762790150.000100" // a reply after the vote (lmOpts.latest): the bundle's latest
+	lmLatest2       = "1762790170.000100" // a second reply after it, by the same person (lmFake.latest2)
 	lmMention       = "1762790200.000100" // Grace's mention of the viewer
 	lmMention2      = "1762790300.000100" // a mention pushed while the page is off screen
 	lmBusy          = "C0LIVE0BSY"        // a channel the socket is busy in
@@ -113,11 +114,14 @@ func lmVoteRootMsg(n int) slack.Message {
 		BotProfile: &slack.BotProfile{ID: lmBot, Name: "Vote Bot", AppID: lmApp}}
 }
 
-func lmRootMsg(latest bool) slack.Message {
+func lmRootMsg(latest, latest2 bool) slack.Message {
 	m := slack.Message{Type: "message", TS: lmRoot, User: "U0FAKE00001", Text: "Proposal: move the synthetic standup to 10am",
 		ThreadTS: lmRoot, ReplyCount: 1, ReplyUsersN: 1, LatestReply: lmVote}
 	if latest {
 		m.ReplyCount, m.ReplyUsersN, m.LatestReply = 2, 2, lmLatest
+	}
+	if latest && latest2 {
+		m.ReplyCount, m.LatestReply = 3, lmLatest2
 	}
 	return m
 }
@@ -147,6 +151,9 @@ type lmFake struct {
 	// fewLatest: getView lists the thread's last reply alone (the others
 	// are its card's "Show N more replies")
 	fewLatest bool
+	// latest2: the thread has lmLatest2 after lmLatest (with latest), by the
+	// same person
+	latest2 bool
 }
 
 // voteLocked is the vote at revision n, as the fixture has it.
@@ -163,7 +170,7 @@ func (f *lmFake) msgLocked(ts string) (slack.Message, bool) {
 	}
 	switch ts {
 	case lmRoot:
-		m := lmRootMsg(f.latest)
+		m := lmRootMsg(f.latest, f.latest2)
 		if f.rootText != "" {
 			m.Text = f.rootText
 		}
@@ -179,6 +186,10 @@ func (f *lmFake) msgLocked(ts string) (slack.Message, bool) {
 			return slack.Message{Type: "message", TS: lmLatest, ThreadTS: lmRoot, User: "U0FAKE00002",
 				Text: firstNonEmpty(f.latestText, "a synthetic reply after the vote")}, true
 		}
+	case lmLatest2:
+		if f.latest && f.latest2 {
+			return slack.Message{Type: "message", TS: lmLatest2, ThreadTS: lmRoot, User: "U0FAKE00002", Text: "a second synthetic reply after the vote"}, true
+		}
 	case lmMention:
 		return slack.Message{Type: "message", TS: lmMention, User: "U0FAKE00002", Text: f.mention}, true
 	case lmMention2:
@@ -191,7 +202,7 @@ func (f *lmFake) msgLocked(ts string) (slack.Message, bool) {
 
 func (f *lmFake) threadLocked(root string) []slack.Message {
 	var msgs []slack.Message
-	tss := []string{lmRoot, lmVote, lmLatest}
+	tss := []string{lmRoot, lmVote, lmLatest, lmLatest2}
 	if root == lmVoteRoot {
 		tss = []string{lmVoteRoot, lmVoteRootReply}
 	}
@@ -217,6 +228,9 @@ func (f *lmFake) hook(method string, form url.Values) (any, bool) {
 			entry := map[string]any{"channel_id": lmChan, "thread_ts": lmRoot, "latest_ts": lmVote, "min_unread_ts": lmVote, "unread_msg_count": 1}
 			if f.latest {
 				entry["latest_ts"], entry["unread_msg_count"] = lmLatest, 2
+			}
+			if f.latest && f.latest2 {
+				entry["latest_ts"], entry["unread_msg_count"] = lmLatest2, 3
 			}
 			items = append(items, map[string]any{"key": lmThreadKey, "feed_ts": entry["latest_ts"], "is_unread": true, "item": map[string]any{
 				"type": "thread_v2", "bundle_info": map[string]any{"payload": map[string]any{"thread_entry": entry}}}})
@@ -305,6 +319,7 @@ type lmOpts struct {
 	latest   bool     // a reply after the vote: the bundle's latest_ts, the vote its first unread
 	textVote bool     // the vote's counts in its text alone (its preview: what a stale tree can bring back)
 	voteRoot bool     // a mention of a vote app's thread root, in a channel whose window core holds
+	project  []string // the components a plugin wraps that hides U0FAKE00002's messages, drawing the vote in their place (Slick BetterBlock's thread projection)
 	setup    func(e *lmEnv)
 }
 
@@ -335,9 +350,9 @@ func newLmEnv(t *testing.T, o lmOpts) *lmEnv {
 	sh := &slickHost{app: app, th: theme.New(false)}
 	env := &lmEnv{t: t, fs: fs, app: app, f: f, e: &vaEnv{size: image.Pt(1400, 900)}}
 	var step func()
-	plugins := o.patch != nil || o.mask != nil || o.texts
+	plugins := o.patch != nil || o.mask != nil || o.texts || o.project != nil
 	if plugins {
-		env.tt, env.rt, step = lmPlugin(t, app, o.patch, o.mask, o.texts)
+		env.tt, env.rt, step = lmPlugin(t, app, o.patch, o.mask, o.texts, o.project...)
 		sh.tt = env.tt
 		if !o.lockstep {
 			step = nil
@@ -383,7 +398,7 @@ func lmPatch(t *testing.T, app *core.App, names []string, texts bool) (*taut.Tau
 // slice ("Upvotes" drawn as "Ups"), as the ui root runs Taut. It returns
 // its runtime, its JS and a step that waits for JS to have answered
 // everything sent to it so far.
-func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool) (*taut.Taut, *jsrt.Runtime, func()) {
+func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool, project ...string) (*taut.Taut, *jsrt.Runtime, func()) {
 	t.Helper()
 	ui := &slickUI{trees: map[uint64][]byte{}}
 	dir := t.TempDir()
@@ -407,7 +422,7 @@ func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool) (*t
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	id, err := tt.Import(ctx, lmPluginJS(names, mask, texts), "")
+	id, err := tt.Import(ctx, lmPluginJS(names, mask, texts, project...), "")
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
@@ -416,7 +431,7 @@ func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool) (*t
 	}
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		all := !texts || tt.SlicePatched("messages")
-		for _, n := range append(slices.Clone(names), mask...) {
+		for _, n := range append(append(slices.Clone(names), mask...), project...) {
 			all = all && slackc.Patched(n)
 		}
 		if all {
@@ -441,7 +456,7 @@ func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool) (*t
 // props.msg on to Original), and mask with the msg's text rewritten. With
 // texts it also patches the messages' text (patchMessageText), "Upvotes"
 // to "Ups".
-func lmPluginJS(names, mask []string, texts bool) []byte {
+func lmPluginJS(names, mask []string, texts bool, project ...string) []byte {
 	patches := ""
 	for _, n := range names {
 		patches += "    this.api.patchComponent('" + n + "', (Original) => (props) => {\n" +
@@ -454,6 +469,16 @@ func lmPluginJS(names, mask []string, texts bool) []byte {
 			"      const msg = React.useMemo(() => props.msg && typeof props.msg.text === 'string' ?\n" +
 			"        { ...props.msg, text: props.msg.text.replace(/standup/g, 'st***up') } : props.msg, [props.msg])\n" +
 			"      return React.createElement(Original, { ...props, msg })\n" +
+			"    })\n"
+	}
+	for _, n := range project {
+		// BetterBlock's shape: a message of the person hidden is replaced
+		// by the thread's last one shown, messageTs rewritten with it
+		patches += "    this.api.patchComponent('" + n + "', (Original) => (props) => {\n" +
+			"      if (!props.msg || props.msg.user !== 'U0FAKE00002') return React.createElement(Original, props)\n" +
+			"      const { user, ...rest } = props.msg\n" +
+			"      const msg = { ...rest, ts: '" + lmVote + "', bot_id: '" + lmBot + "', username: 'Vote Bot', text: " + strconv.Quote(lmVoteText(1)) + " }\n" +
+			"      return React.createElement(Original, { ...props, msg, messageTs: '" + lmVote + "' })\n" +
 			"    })\n"
 	}
 	if texts {
@@ -1517,6 +1542,12 @@ func TestActivityLiveCopylessRefetch(t *testing.T) {
 	if n := e.fs.CallCount("activity.feed"); n != 1 {
 		t.Errorf("%d activity.feed calls; the rows fetch their messages, not the feed", n)
 	}
+	// the failed hydrate, then one messages.list for every row of the
+	// channel (the client may refuse the identical first one, and core
+	// asks again once the backoff is over): never one per row
+	if n := e.fs.CallCount("messages.list"); n > 2 {
+		t.Errorf("%d messages.list calls; the rows' messages go out together", n)
+	}
 }
 
 // With the plugins' JS busy, a reload brings the thread's new latest
@@ -1564,5 +1595,109 @@ func TestActivityLiveMaskedThreadWithInnerPatches(t *testing.T) {
 			t.Fatalf("frame %d after the mask drew %q, without it", i, got)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A plugin hiding a person's messages (Slick BetterBlock) draws the
+// thread's last message shown in their place: the row draws the vote for
+// the latest reply, by the person hidden. With its JS busy, another reply
+// of theirs lands: the row keeps the plugin's projection, the last one
+// its tree drew, and never draws the hidden person's reply natively (a
+// privacy-visible failure), until JS draws the new revision.
+func TestActivityLiveThreadProjectionJSHeld(t *testing.T) {
+	e := newLmEnv(t, lmOpts{latest: true, project: []string{"ActivityThread"}, patch: []string{"ActivityItem"}})
+	e.e.until(t, "the projection drawn", func() bool { return e.rev() == 1 && e.drawn(lmLatest) == "" })
+	for i := 0; i < 5; i++ {
+		e.frame()
+	}
+	release := e.holdJS()
+	defer release()
+	e.f.mu.Lock()
+	e.f.latest2 = true
+	e.f.mu.Unlock()
+	e.invalidate()
+	e.e.until(t, "the reload's new reply", func() bool {
+		for _, it := range actPage(e.v).Items {
+			if actKey(&it) == lmThreadKey {
+				return it.TS == lmLatest2
+			}
+		}
+		return false
+	})
+	for i := 0; i < 8; i++ {
+		e.frame()
+		if got := e.drawn(lmLatest2); got != "" {
+			t.Fatalf("frame %d with JS busy: the row drew the hidden person's new reply %q", i, got)
+		}
+		if r := e.v.rows[lmThreadKey]; r == nil || r.cur == nil || r.cur.name != "Vote Bot" {
+			t.Fatalf("frame %d with JS busy: the row's sender isn't the projection's", i)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	release()
+	e.e.until(t, "JS caught up", func() bool { return e.rev() == 1 && e.drawn(lmLatest2) == "" })
+}
+
+// TestActivityLiveThreadNewReplyJSHeld through a load that starts the rows
+// over (a tab switch, the Unreads toggle): slackc keeps the rows' trees a
+// few seconds, so a tree from before the new rows were made is no newer
+// than one from before the reply.
+func TestActivityLiveThreadNewReplyFreshJSHeld(t *testing.T) {
+	e := newLmEnv(t, lmOpts{patch: lmPatches, textVote: true})
+	e.untilVote(1)
+	for i := 0; i < 5; i++ {
+		e.frame()
+	}
+	release := e.holdJS()
+	defer release()
+	e.f.mu.Lock()
+	e.f.latest = true
+	e.f.mu.Unlock()
+	e.v.load(actFresh)
+	e.e.until(t, "the new reply drawn with JS busy", func() bool { return strings.Contains(e.drawn(lmLatest), "a synthetic reply after the vote") })
+	for i := 0; i < 8; i++ {
+		e.frame()
+		if got := e.drawn(lmLatest); !strings.Contains(got, "a synthetic reply after the vote") {
+			t.Fatalf("frame %d with JS busy after the fresh load: the thread's row drew %q for its latest reply (the vote: %q)", i, got, e.drawn(lmVote))
+		}
+	}
+}
+
+// Past the change table's floor (the page off screen through more message
+// changes than core remembers), each row takes the store's copy as it
+// draws: a rebuild describes the rows the list doesn't draw from the
+// copies Activity holds, converting none of them (a page-wide conversion
+// on the UI goroutine in one frame).
+func TestActivityFloorConvertsDrawnRows(t *testing.T) {
+	v, h, e, _ := vaFakeActivity(t, false)
+	app := h.Core()
+	e.size = image.Pt(1200, 360) // a few rows on screen
+	for i := 0; i < 10; i++ {
+		e.frame()
+	}
+	const busy = "C0FLOORBSY"
+	app.S.PutConv(slack.Conversation{ID: busy, Name: "floor-busy", IsChannel: true, IsMember: true, NumMembers: 3})
+	var many []slack.Message
+	for i := 0; i < 8400; i++ {
+		many = append(many, slack.Message{Type: "message", TS: fmt.Sprintf("1762600%03d.%06d", i/1000, i%1000), User: "U0FAKE00001", Text: "a synthetic busy message"})
+	}
+	app.S.SetLatest(busy, many, false)
+	for _, m := range many {
+		raw, _ := json.Marshal(map[string]any{"type": "reaction_added", "user": "U0FAKE00001", "reaction": "eyes",
+			"item": map[string]any{"type": "message", "channel": busy, "ts": m.TS}})
+		app.Inject(slack.Event{Type: "reaction_added", Raw: raw})
+	}
+	if app.MessageChangeFloor() == 0 {
+		t.Fatal("core remembers every change; this is about a page past its floor")
+	}
+	e.frame()
+	if len(v.msgs.stale) == 0 {
+		t.Fatal("no page message was left to take the store's copy as it draws")
+	}
+	v.dirty = true // a rebuild (a row described again, a page change)
+	e.frame()
+	e.frame()
+	if len(v.msgs.stale) == 0 {
+		t.Error("the rebuild converted every page message, drawn or not")
 	}
 }
