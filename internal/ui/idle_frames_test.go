@@ -126,9 +126,13 @@ func TestIdleFrames(t *testing.T) {
 			// Activity on the fixture's feed with its search open on a
 			// query and the first row it lists open beside the inbox
 			// (Alt+Down): the search's rows were described again every
-			// frame once an item opened
+			// frame once an item opened. The inbox's experiments as the
+			// account has them (fakeslack's experiments.getByUser doesn't
+			// list them: newActShellOn forces the same)
 			on := "on"
-			e.a.Core().SetExperimentGroups(map[string]*string{"activity_inbox_remove_persistent_detail_panel": &on, "nested_secondary_view": &on})
+			inbox := map[string]*string{"activity_inbox": &on, "nested_secondary_view": &on, "secondary_view_default_width": &on,
+				"activity_inbox_remove_persistent_detail_panel": &on, "activity_entry_layout_revisions_2": &on, "activity_global_settings": &on}
+			e.a.Core().SetExperimentGroups(inbox)
 			e.a.Navigate("activity")
 			e.frame()
 			e.until("the activity feed", 20*time.Second, func() bool { return e.fs.CallCount("activity.feed") > 0 })
@@ -143,6 +147,10 @@ func TestIdleFrames(t *testing.T) {
 			e.until("an Activity item open with the search open", 10*time.Second, func() bool { return e.a.secondary.open() })
 			e.idle(t, p, "activity, searching, an item open", true)
 			e.a.CloseSecondary()
+			for k := range inbox {
+				inbox[k] = nil // as experiments.getByUser had them again
+			}
+			e.a.Core().SetExperimentGroups(inbox)
 			e.a.Navigate("directories")
 			e.frame()
 			e.idle(t, p, "directories", true) // Slack focuses its search field
