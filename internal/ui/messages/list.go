@@ -115,11 +115,18 @@ type listState struct {
 	pointerIn bool
 	ctx       ctxPress // this frame's context-menu press (context.go)
 	hoverIdx  int
+	// laid is the message rows the last layout put on screen, by key:
+	// the hover is found in them (layoutList), so a rebuild that moved
+	// items to other indices since (older messages paged in above, a day
+	// divider, a joins summary forming) can't hand the hover, and its
+	// toolbar, to whatever message took the old index
+	laid []laidRow
 
 	tb           [tbCount]widget.Clickable
 	pbtn         map[string]*widget.Clickable // persistent "Message actions" buttons (persist.go)
 	tbRect       image.Rectangle
-	tbFor        int
+	tbFor        int    // the item the toolbar was drawn for this frame, -1 none
+	tbKey        string // its key, for the next frame's hover (laid)
 	jump         widget.Clickable
 	retryBtn     widget.Clickable
 	helpLink     widget.Clickable // ThreadsError's "drop us a line." (thread.go)
@@ -145,6 +152,7 @@ type listState struct {
 	openUnread  bool         // the server said "unread" when the view opened (e.g. marked unread)
 	jumpPages   int
 	origin      image.Point // view origin in window coordinates
+	size        image.Point // the list's size in the last frame
 	lastOlder   time.Time
 	highlight   string
 	highlightAt time.Time
@@ -176,6 +184,7 @@ type listState struct {
 	// hover toolbar state for its natives (MessageActions)
 	tbRow   *row
 	tbSize  image.Point
+	tbAt    int             // tbRow's MessageActions position (actionsAt)
 	tbHov   int             // hovered toolbar button, -1 none
 	tbBtns  []int           // the buttons tbRow's toolbar has, in order (actions_rules.go)
 	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
@@ -756,19 +765,25 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 
-	// hover from last frame's positions
+	// hover from last frame's rows: the message under the pointer, or the
+	// one whose toolbar it is on (Slack's toolbar is inside its row, so
+	// the row stays hovered over it), found by key in this frame's items
 	s.hoverIdx = -1
 	if s.pointerIn {
-		py := int(s.pointer.Y)
-		if s.tbFor >= 0 && image.Pt(int(s.pointer.X), py).In(s.tbRect) {
-			s.hoverIdx = s.tbFor
+		p := image.Pt(int(s.pointer.X), int(s.pointer.Y))
+		key := ""
+		if s.tbKey != "" && p.In(s.tbRect) {
+			key = s.tbKey
 		} else {
-			for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
-				if s.items[i].kind == itMsg && py >= s.pos[i] && py < s.pos[i]+s.heights[i] {
-					s.hoverIdx = i
+			for _, r := range s.laid {
+				if p.Y >= r.y && p.Y < r.y+r.h {
+					key = r.key
 					break
 				}
 			}
+		}
+		if i, ok := s.sel.keyIdx[key]; ok && key != "" {
+			s.hoverIdx = i
 		}
 	}
 	if k := s.kbIndex(); k >= 0 {
@@ -807,7 +822,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 	rc := &s.rc
 	s.activeTS = activeThreadIn(h, s.ch, s.thread)
-	s.origin = origin
+	s.origin, s.size = origin, size
 	s.tip = ""
 	ls := listClass.Enter(gtx, 0, 0)
 	defer ls.Leave()
@@ -843,8 +858,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	p := s.list.Position
 	y := -p.Offset
 	s.visible = [2]int{p.First, p.First}
+	s.laid = s.laid[:0]
 	for i := p.First; i < len(s.items) && y < size.Y; i++ {
 		s.pos[i] = y
+		if s.items[i].kind == itMsg && s.heights[i] > 0 {
+			s.laid = append(s.laid, laidRow{key: s.items[i].key, y: y, h: s.heights[i]})
+		}
 		y += s.heights[i]
 		s.visible[1] = i + 1
 	}
@@ -908,6 +927,13 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	return layout.Dimensions{Size: size}
+}
+
+// laidRow is a message row as a layout put it on screen: its item's key,
+// its top and height in the list.
+type laidRow struct {
+	key  string
+	y, h int
 }
 
 // samePos reports two list positions at the same place.
@@ -1376,11 +1402,13 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		}
 	}
 
-	// hover toolbar (the simplified layout's persistent menu instead)
-	s.tbFor = -1
+	// hover toolbar (the simplified layout's persistent menu instead), for
+	// a row this layout put on screen: one that left it took its toolbar
+	// along (Slack's is in the row)
+	s.tbFor, s.tbKey = -1, ""
 	if rc.persist {
 		s.persistentActions(gtx, h, rc, size)
-	} else if s.hoverIdx >= 0 && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
+	} else if s.hoverIdx >= s.visible[0] && s.hoverIdx < s.visible[1] && s.hoverIdx < len(s.items) && s.items[s.hoverIdx].kind == itMsg {
 		if r := s.rows[s.items[s.hoverIdx].key]; r != nil && !s.sel.dragging && r.edit == nil && len(s.items[s.hoverIdx].group) == 0 && !r.m.Pending && !r.m.Failed && !r.m.Tombstone {
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
@@ -1471,20 +1499,17 @@ func tooltipBox(gtx layout.Context, th *theme.Theme, c *colors, tip slackc.Style
 func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx int, size image.Point) {
 	c := rc.c
 	th := h.Theme()
-	// MessageActions' position: "above" (top -28) for a grouped row, and
-	// for every channel row under Compact (Message: w||a ? "above" :
-	// "default"); a thread reply's is above only when grouped
-	// (ThreadReplyGeneric: isCompact||adjacent, isCompact being the
-	// Threads view's).
-	top := mt.toolbarTop
-	if !s.items[idx].header || (rc.dense && !s.thread) {
-		top = -28
-	}
-	y := s.pos[idx] + dp(gtx, top)
-	if y < dp(gtx, 4) {
-		y = dp(gtx, 4)
-	}
-	s.tbRow, s.tbSize, s.tbHov = r, size, -1
+	// MessageActions' position (actionsAt) puts the card at the row's top
+	// plus the position's offset, and only there: Slack's card is
+	// position: absolute in the row, inside the list's scroller
+	// (.c-virtual_list, overflow-y scroll), so it moves with the row and the
+	// list clips it. A row whose top is at the list's top edge has its card
+	// cut off, one scrolled above it its card out of view; nothing moves it
+	// into view (an older Clack kept it 4px under the list's top, so a tall
+	// message scrolled up had its toolbar there, far above the pointer).
+	at := s.actionsAt(idx, rc.dense)
+	y := s.pos[idx] + dp(gtx, actionsTop[at])
+	s.tbRow, s.tbSize, s.tbHov, s.tbAt = r, size, -1, at
 	s.tilt.mount(r)
 	s.quick.prepare(h, s.ch, r)
 	s.prepareButtons(h.Core(), r)
@@ -1513,7 +1538,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	t := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	t.Pop()
-	s.tbRect, s.tbFor = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx
+	s.tbRect, s.tbFor, s.tbKey = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx, s.items[idx].key
 	// the hovered button's tooltip (the card's top is 4px over the button)
 	bs, pad := dp(gtx, mt.toolbarBtn), dp(gtx, mt.toolbarPad)
 	key, tip, cx := "", "", 0
@@ -1534,6 +1559,43 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		btn := image.Rect(cx-bs/2, y+pad, cx-bs/2+bs, y+pad+bs)
 		tooltip(gtx, th, c, tip, btn, theme.WindowBounds(s.origin), a)
 	}
+}
+
+// MessageActions' positions (actions_MessageActions' position prop: its
+// wrapper is c-message_kit__actions--{position}, the card's
+// .c-message__actions top follows it).
+const (
+	actsDefault = iota // top -16px
+	actsAbove          // .c-message_kit__actions--above: top -28px
+	actsInside         // .c-message_kit__actions--inside: top 4px
+)
+
+// actionsTop is each position's top (dp) from the row's top, and
+// actionsPos its name (the position prop).
+var (
+	actionsTop = [...]float32{actsDefault: mt.toolbarTop, actsAbove: -28, actsInside: 4}
+	actionsPos = [...]string{actsDefault: "default", actsAbove: "above", actsInside: "inside"}
+)
+
+// actionsAt is item idx's MessageActions position:
+//
+//   - the thread pane's root: "inside" (ThreadRoot: actionPosition
+//     "inside" outside the Threads view, which ThreadRootGeneric hands
+//     MessageActions), so the card sits 4px inside the root's top;
+//   - "above" for a grouped row and for every channel row under Compact
+//     (Message: w||a ? "above" : "default"); a thread reply's is above
+//     only when grouped (ThreadReplyGeneric: isCompact||adjacent,
+//     isCompact being the Threads view's);
+//   - "default" otherwise.
+func (s *listState) actionsAt(idx int, dense bool) int {
+	it := &s.items[idx]
+	switch {
+	case s.thread && it.idx < len(s.snap.msgs) && len(it.group) == 0 && s.snap.msgs[it.idx].m.TS == s.ts:
+		return actsInside
+	case !it.header || (dense && !s.thread):
+		return actsAbove
+	}
+	return actsDefault
 }
 
 // prepareButtons picks r's toolbar buttons and their labels: the thread
@@ -1571,7 +1633,7 @@ func (s *listState) prepareButtons(app *core.App, r *row) {
 func (s *listState) actionsProps() slackc.Props {
 	r := s.tbRow
 	return s.paneProps(slackc.Props{"$key": r.ts, "msg": r.message(), "ts": r.src.TS, "channelId": r.src.Channel, "hover": true,
-		"isEditing": false, "position": "default", "messageContainerType": "message", "viewContext": r.viewContext(), "windowId": "main"})
+		"isEditing": false, "position": actionsPos[s.tbAt], "messageContainerType": "message", "viewContext": r.viewContext(), "windowId": "main"})
 }
 
 func (s *listState) reactionButtonProps() slackc.Props {
@@ -1582,7 +1644,7 @@ func (s *listState) reactionButtonProps() slackc.Props {
 // layoutActions is MessageActions, the hover toolbar (the one OwlMode
 // wraps; Slack's other MessageActions wraps the whole message).
 func (s *listState) layoutActions(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	st := actionsClass.Enter(gtx, css.StateHover, 0)
+	st := actionsClass.Enter(gtx, css.StateHover, 1<<s.tbAt) // c-message_kit__actions--{position}
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}

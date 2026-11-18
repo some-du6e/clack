@@ -7,6 +7,7 @@ package app
 import (
 	"errors"
 	"log"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <CoreFoundation/CoreFoundation.h>
+#include <stdbool.h>
 
 static CFTypeRef createMetalDevice(void) {
 	@autoreleasepool {
@@ -29,13 +31,18 @@ static CFTypeRef createMetalDevice(void) {
 	}
 }
 
-static void setupLayer(CFTypeRef layerRef, CFTypeRef devRef) {
+static void setupLayer(CFTypeRef layerRef, CFTypeRef devRef, bool readable) {
 	@autoreleasepool {
 		CAMetalLayer *layer = (__bridge CAMetalLayer *)layerRef;
 		id<MTLDevice> dev = (__bridge id<MTLDevice>)devRef;
 		layer.device = dev;
 		// Package gpu assumes an sRGB-encoded framebuffer.
 		layer.pixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
+		if (readable) {
+			// Clack patch (CLACK_PATCHES.md §46), tests only: drawables a
+			// blit can read back (gpu.ClackVerifyCopy).
+			layer.framebufferOnly = NO;
+		}
 		if (@available(iOS 11.0, *)) {
 			// Clack patch (CLACK_PATCHES.md §32): nextDrawable waits a second
 			// at most (CAMetalLayer's default) and gives nil when no drawable
@@ -143,7 +150,9 @@ func newMtlContext(w *window) (*mtlContext, error) {
 		C.CFRelease(layer)
 		return nil, errors.New("metal: [MTLDevice newCommandQueue] failed")
 	}
-	C.setupLayer(layer, dev)
+	// Clack patch (CLACK_PATCHES.md §46): CLACK_METAL_READBACK makes the
+	// drawables readable, for tests that read the window back.
+	C.setupLayer(layer, dev, C.bool(os.Getenv("CLACK_METAL_READBACK") != ""))
 	c := &mtlContext{
 		dev:   dev,
 		view:  view,

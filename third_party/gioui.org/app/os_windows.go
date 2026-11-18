@@ -286,6 +286,9 @@ func (w *window) update() {
 	}
 	w.ProcessEvent(ConfigEvent{Config: w.config})
 	w.draw(true)
+	if p.IsMinimized() {
+		w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
+	}
 }
 
 func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr {
@@ -1329,7 +1332,11 @@ func (w *window) hide() bool {
 	windows.SetWindowPos(w.hwnd, 0, 0, 0, 0, 0,
 		windows.SWP_HIDEWINDOW|windows.SWP_NOACTIVATE|windows.SWP_NOMOVE|
 			windows.SWP_NOOWNERZORDER|windows.SWP_NOSIZE|windows.SWP_NOZORDER)
-	return !windows.IsWindowVisible(w.hwnd)
+	hidden := !windows.IsWindowVisible(w.hwnd)
+	if hidden {
+		w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
+	}
+	return hidden
 }
 
 // setCaretBlinkFromOS is Chromium's OsSettingsProviderWin::CaretBlinkInterval

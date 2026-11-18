@@ -111,6 +111,24 @@ static void renderEncViewport(CFTypeRef renderEncRef, MTLViewport viewport) {
 	}
 }
 
+// Clack patch 46: a drawable's size (the frame's copy stays inside it).
+static void textureSize(CFTypeRef texRef, NSUInteger *w, NSUInteger *h) {
+	@autoreleasepool {
+		id<MTLTexture> tex = (__bridge id<MTLTexture>)texRef;
+		*w = tex.width;
+		*h = tex.height;
+	}
+}
+
+// Clack patch 46: a partial frame's scissor.
+static void renderEncScissor(CFTypeRef renderEncRef, NSUInteger x, NSUInteger y, NSUInteger w, NSUInteger h) {
+	@autoreleasepool {
+		id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)renderEncRef;
+		MTLScissorRect r = {x, y, w, h};
+		[enc setScissorRect:r];
+	}
+}
+
 static void renderEncSetFragmentTexture(CFTypeRef renderEncRef, NSUInteger index, CFTypeRef texRef) {
 	@autoreleasepool {
 		id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)renderEncRef;
@@ -157,6 +175,7 @@ enum {
 	cmdFragBytes,
 	cmdDraw,
 	cmdDrawIndexed,
+	cmdScissor, // Clack patch 46
 };
 
 static uint64_t cmdWord(const uint8_t **p) {
@@ -241,6 +260,15 @@ static void renderEncReplay(CFTypeRef renderEncRef, const void *cmds, NSUInteger
 				CFTypeRef o = (CFTypeRef)(uintptr_t)cmdWord(&p);
 				NSUInteger off = (NSUInteger)cmdWord(&p);
 				[enc drawIndexedPrimitives:t indexCount:count indexType:MTLIndexTypeUInt16 indexBuffer:(__bridge id<MTLBuffer>)o indexBufferOffset:off];
+				break;
+			}
+			case cmdScissor: {
+				MTLScissorRect r;
+				r.x = (NSUInteger)cmdWord(&p);
+				r.y = (NSUInteger)cmdWord(&p);
+				r.width = (NSUInteger)cmdWord(&p);
+				r.height = (NSUInteger)cmdWord(&p);
+				[enc setScissorRect:r];
 				break;
 			}
 			default:
@@ -575,6 +603,9 @@ type Backend struct {
 	// (renderEncReplay) when the pass ends.
 	rec   []byte
 	batch bool
+	// rtSize is the open render pass's target's size, where known (Clack
+	// patch 46: the scissor stays inside it)
+	rtSize image.Point
 }
 
 // The render commands' opcodes, as renderEncReplay's enum.
@@ -590,6 +621,7 @@ const (
 	cmdFragBytes
 	cmdDraw
 	cmdDrawIndexed
+	cmdScissor // Clack patch 46
 )
 
 // recMax is how big rec may grow before it is run, mid-pass.
@@ -778,7 +810,13 @@ func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport im
 	switch t := target.(type) {
 	case driver.MetalRenderTarget:
 		texture := C.CFTypeRef(t.Texture)
-		return &Texture{texture: texture, foreign: true}
+		// its size: the frame texture's copy stays inside it (Clack patch 46)
+		var w, h C.NSUInteger
+		C.textureSize(texture, &w, &h)
+		b.apiCall()
+		// backend: ReadPixels can read it back (gpu.ClackVerifyCopy's tests
+		// make the layer's drawables readable)
+		return &Texture{backend: b, texture: texture, foreign: true, width: int(w), height: int(h)}
 	case *Texture:
 		return t
 	default:
@@ -827,6 +865,52 @@ func (b *Backend) CopyTexture(dst driver.Texture, dorig image.Point, src driver.
 
 func (b *Backend) EndFrame() {
 	b.endCmdBuffer(false)
+}
+
+// ClackPartialOK implements driver.ClackPartial (Clack patch 46).
+func (b *Backend) ClackPartialOK() bool { return true }
+
+// ClackCopyDraws implements driver.ClackPartial: the drawable is
+// framebufferOnly, so the frame is drawn into it.
+func (b *Backend) ClackCopyDraws() bool { return true }
+
+// ClackScissor implements driver.ClackPartial: the render encoder's
+// scissor rectangle, inside its target (a new encoder's is the whole
+// target).
+func (b *Backend) ClackScissor(r image.Rectangle) {
+	if b.renderEnc == 0 {
+		return
+	}
+	full := image.Rectangle{Max: b.rtSize}
+	if full.Empty() {
+		if r.Empty() {
+			return
+		}
+	} else if r.Empty() {
+		r = full
+	} else {
+		r = r.Intersect(full)
+	}
+	b.calls.API++
+	if b.batch {
+		b.record(cmdScissor, uint64(r.Min.X), uint64(r.Min.Y), uint64(r.Dx()), uint64(r.Dy()))
+		return
+	}
+	C.renderEncScissor(b.renderEnc, C.NSUInteger(r.Min.X), C.NSUInteger(r.Min.Y), C.NSUInteger(r.Dx()), C.NSUInteger(r.Dy()))
+	b.calls.Crossings++
+}
+
+// ClackCopyToTarget implements driver.ClackPartial: a blit encoder's copy
+// into the target's texture (a drawable's when the layer isn't
+// framebufferOnly, app/metal_darwin.go).
+func (b *Backend) ClackCopyToTarget(target, src driver.Texture, size image.Point) {
+	if t := target.(*Texture); t.width > 0 && t.height > 0 {
+		size.X, size.Y = min(size.X, t.width), min(size.Y, t.height)
+	}
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	b.CopyTexture(target, image.Point{}, src, image.Rectangle{Max: size})
 }
 
 func (b *Backend) endCmdBuffer(wait bool) {
@@ -908,7 +992,12 @@ func (b *Backend) sampler(min, mag C.MTLSamplerMinMagFilter, mip C.MTLSamplerMip
 }
 
 func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, minFilter, magFilter driver.TextureFilter, bindings driver.BufferBinding) (driver.Texture, error) {
-	mformat := pixelFormatFor(format)
+	var mformat C.MTLPixelFormat
+	if format == driver.TextureFormatOutput {
+		mformat = b.pixelFmt // the layer's (Clack patch 46's frame texture)
+	} else {
+		mformat = pixelFormatFor(format)
+	}
 	var usage C.MTLTextureUsage
 	if bindings&(driver.BufferBindingTexture|driver.BufferBindingShaderStorageRead) != 0 {
 		usage |= C.MTLTextureUsageShaderRead
@@ -1623,8 +1712,10 @@ func (b *Backend) BeginRenderPass(tex driver.Texture, d driver.LoadDesc) {
 		panic("metal: [MTLCommandBuffer renderCommandEncoderWithDescriptor:] failed")
 	}
 	// a new encoder has nothing bound; its commands are recorded and run
-	// in one cgo call when it ends (Clack patch 37)
+	// in one cgo call when it ends (Clack patch 37). It's unscissored
+	// (patch 46).
 	b.enc.reset()
+	b.rtSize = image.Pt(f.width, f.height)
 	b.batch = driver.ClackBatchCommands
 	b.rec = b.rec[:0]
 }
