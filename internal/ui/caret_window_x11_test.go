@@ -21,6 +21,8 @@ import (
 // it has one.
 var caretX11Window atomic.Uint64
 
+func caretReadbackSetup(*testing.T) {}
+
 func caretWindowEvent(e event.Event) {
 	if v, ok := e.(app.X11ViewEvent); ok {
 		caretX11Window.Store(uint64(v.Window))

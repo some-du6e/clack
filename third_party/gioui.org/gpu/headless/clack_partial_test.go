@@ -39,9 +39,11 @@ type partialVars struct {
 	clearWhite bool    // a full-window opaque fill first: the frame's clear colour
 	drop       bool    // one of the text-like paths missing
 	swap       bool    // two overlapping ops drawn the other way round
-	// probe: a transparent path stenciled first (1) or after the shadow
-	// rings (2), so every later path lands elsewhere in the atlas (the
-	// placement floor) and no pixel changes
+	// probe: a transparent path stenciled first (1-3) or after the
+	// shadow rings (4-6), tiny, a third of the window or nearly all of it
+	// (TestFrameCostWindow's costShift), so every later path lands
+	// elsewhere in the atlas, near or far (the placement floor), and no
+	// pixel changes
 	probe int
 }
 
@@ -92,8 +94,15 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 			paint.Fill(o, color.NRGBA{R: 0xff, G: 0xfe, B: 0xfd, A: 0xff})
 		}
 		bg(o)
-		probe := func() { paint.FillShape(o, color.NRGBA{}, clip.Ellipse(image.Rect(3, 3, 42, 37)).Op(o)) }
-		if v.probe == 1 {
+		probe := func() {
+			r := [...]image.Rectangle{
+				image.Rect(1, 1, 8, 6),
+				image.Rect(1, 1, w/3|1, h/3|1),
+				image.Rect(0, 0, w-1, h-1),
+			}[(v.probe-1)%3]
+			paint.FillShape(o, color.NRGBA{}, clip.Ellipse(r).Op(o))
+		}
+		if v.probe >= 1 && v.probe <= 3 {
 			probe()
 		}
 		if v.first {
@@ -111,7 +120,7 @@ func partialScene(w, h int) func(o *op.Ops, tr f32.Affine2D, v partialVars) {
 			paint.FillShape(o, color.NRGBA{A: a}, clip.Stroke{Path: rr.Path(o), Width: 1.5}.Op())
 			st.Pop()
 		}
-		if v.probe == 2 {
+		if v.probe >= 4 {
 			probe()
 		}
 		pst := clip.RRect{Rect: panel, NE: 6, SE: 6}.Push(o)
@@ -297,7 +306,13 @@ func TestClackPartialFrames(t *testing.T) {
 		{"at a fraction of a pixel", frac, partialVars{}, 2, -1, false},
 		{"at a fraction of a pixel, the caret", frac, partialVars{caret: true}, 0, -1, false},
 		{"back at an integer offset", id, partialVars{}, 2, -1, false},
+		// whole frames in a row (a scroll's): through the frame texture,
+		// drawn straight into the target, and the caret after them drawn
+		// whole into the frame texture again
+		{"scaled again, a whole frame after a whole one", scaled, partialVars{}, 2, -1, false},
+		{"back again, a whole frame after a whole one", id, partialVars{}, 2, -1, false},
 		{"the caret again", id, partialVars{caret: true}, 1, 64, true},
+		{"the caret hides again", id, partialVars{}, 1, 64, true},
 	}
 	// a random walk of the same changes after them
 	rng := rand.New(rand.NewSource(45))
@@ -343,7 +358,7 @@ func TestClackPartialFrames(t *testing.T) {
 	// floor). The sticky places must stay within it of Gio's own.
 	gpu.ClackPartialTextures(false)
 	fresh, fs := partialRun(t, win, scene, steps)
-	var probed [2][]*image.RGBA
+	var probed [6][]*image.RGBA
 	for k := range probed {
 		ps := append([]partialStep(nil), steps...)
 		for i := range ps {
@@ -397,6 +412,12 @@ func TestClackPartialFrames(t *testing.T) {
 			// (a scroll's) draws straight into the target, with no copy,
 			// and leaves the frame texture stale, so the next small change
 			// is drawn whole into it again (and the one after is partial)
+			// the frame texture's copy into the target: CopyPx less the clear
+			// colour a partial frame copies into its damage
+			framePx := st.CopyPx
+			if st.Partial {
+				framePx -= st.DamagePx
+			}
 			refill := false
 			if mode.frameTexes {
 				prev := gpu.FrameStats{Partial: true}
@@ -406,25 +427,25 @@ func TestClackPartialFrames(t *testing.T) {
 				prevDirect := !prev.Partial && prev.CopyPx == 0
 				refill = prevDirect && !st.Partial
 				switch {
-				case st.CopyPx == int64(w*h):
+				case framePx == int64(w*h):
 					copied++
-				case st.CopyPx == 0 && !st.Partial:
+				case framePx == 0 && !st.Partial:
 					direct++
 				default:
-					t.Errorf("%s, %s: %d px copied (partial %v), want the frame's %d or none", mode.name, s.name, st.CopyPx, st.Partial, w*h)
+					t.Errorf("%s, %s: %d px of the frame texture copied (partial %v, %d px damaged), want the frame's %d or none", mode.name, s.name, framePx, st.Partial, st.DamagePx, w*h)
 				}
 				switch {
-				case st.Partial && st.CopyPx == 0:
+				case st.Partial && framePx == 0:
 					t.Errorf("%s, %s: a partial frame not copied into the target", mode.name, s.name)
-				case s.want == 2 && i > 0 && !prev.Partial && st.CopyPx != 0:
-					t.Errorf("%s, %s: a whole frame after a whole frame went through the frame texture (%d px copied), want it drawn straight into the target", mode.name, s.name, st.CopyPx)
-				case s.want == 2 && prev.Partial && st.CopyPx == 0:
+				case s.want == 2 && i > 0 && !prev.Partial && framePx != 0:
+					t.Errorf("%s, %s: a whole frame after a whole frame went through the frame texture (%d px copied), want it drawn straight into the target", mode.name, s.name, framePx)
+				case s.want == 2 && prev.Partial && framePx == 0:
 					t.Errorf("%s, %s: a whole frame after a partial one drawn straight into the target, want it through the frame texture (the next may be partial)", mode.name, s.name)
-				case refill && st.CopyPx == 0:
+				case refill && framePx == 0:
 					t.Errorf("%s, %s: the frame after one drawn straight into the target, drawn straight in too, want it through the frame texture", mode.name, s.name)
 				}
-			} else if st.CopyPx != 0 {
-				t.Errorf("%s, %s: %d px copied, want none (the target keeps its pixels)", mode.name, s.name, st.CopyPx)
+			} else if framePx != 0 {
+				t.Errorf("%s, %s: %d px of a frame texture copied, want none (the target keeps its pixels)", mode.name, s.name, framePx)
 			}
 			switch {
 			case s.want == 1 && !st.Partial && !refill:

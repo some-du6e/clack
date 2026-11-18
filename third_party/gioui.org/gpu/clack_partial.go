@@ -72,8 +72,17 @@ var clackPartial struct {
 	textures atomic.Bool // ClackPartialTextures(true)
 	frameTex atomic.Bool // ClackFrameTexture(true)
 	whole    atomic.Bool // ClackPartialWhole(true)
+	verify   atomic.Bool // ClackVerifyCopy(true)
 	epoch    atomic.Uint64
 }
+
+// ClackVerifyCopy has a window's GPU read its target back after copying the
+// frame texture into it, and count the pixels that differ
+// (FrameStats.CopyChecked, CopyMismatchPx), for tests: the window's pixels
+// are the frame's. The target must be readable: on Metal the test makes
+// the layer's drawables so (CLACK_METAL_READBACK; a window's are
+// framebufferOnly).
+func ClackVerifyCopy(on bool) { clackPartial.verify.Store(on) }
 
 // ClackPartialWhole has frames drawn whole while what partial frames keep
 // (the atlas places, the ops' signatures) goes on as it would: the whole
@@ -447,8 +456,30 @@ func (g *gpu) partialEnd(defFBO driver.Texture, out partialTarget, viewport imag
 			dev.ClackCopyToTarget(defFBO, out.tex, viewport)
 		}
 		g.renderer.stats.CopyPx += int64(viewport.X * viewport.Y)
+		if clackPartial.verify.Load() {
+			g.verifyCopy(defFBO, out.tex, viewport)
+		}
 	}
 	g.partial.valid = true
+}
+
+// verifyCopy reads back target and the frame texture src it was copied
+// from over the viewport, and counts the pixels that differ
+// (ClackVerifyCopy).
+func (g *gpu) verifyCopy(target, src driver.Texture, viewport image.Point) {
+	n := viewport.X * viewport.Y * 4
+	a, b := make([]byte, n), make([]byte, n)
+	r := image.Rectangle{Max: viewport}
+	if target.ReadPixels(r, a, viewport.X*4) != nil || src.ReadPixels(r, b, viewport.X*4) != nil {
+		return
+	}
+	st := &g.renderer.stats
+	st.CopyChecked = true
+	for i := 0; i < n; i += 4 {
+		if a[i] != b[i] || a[i+1] != b[i+1] || a[i+2] != b[i+2] || a[i+3] != b[i+3] {
+			st.CopyMismatchPx++
+		}
+	}
 }
 
 // drawCopy draws src into target over the whole viewport (Metal's frame

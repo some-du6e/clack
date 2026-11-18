@@ -814,7 +814,9 @@ func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport im
 		var w, h C.NSUInteger
 		C.textureSize(texture, &w, &h)
 		b.apiCall()
-		return &Texture{texture: texture, foreign: true, width: int(w), height: int(h)}
+		// backend: ReadPixels can read it back (gpu.ClackVerifyCopy's tests
+		// make the layer's drawables readable)
+		return &Texture{backend: b, texture: texture, foreign: true, width: int(w), height: int(h)}
 	case *Texture:
 		return t
 	default:

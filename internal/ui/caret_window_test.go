@@ -38,13 +38,15 @@ import (
 // whole frames at most. Then it scrolls the message list (a wheel's frame
 // every 16 ms) for 6 s each way and reports what the scroll's frames cost:
 // whole frames in a row draw straight into the window, without the frame
-// texture's copy. On X11 it reads the window's pixels back (caretReadback):
-// the caret's pixels toggle between blinks and a partial frame's window is
-// the whole frame's, bit for bit. Synthetic data only.
+// texture's copy. It reads the window's pixels back (caretReadback): on
+// X11 the caret's pixels toggle between blinks and a partial frame's window
+// is the whole frame's, bit for bit; on macOS each blink's drawable is the
+// frame texture's, bit for bit. Synthetic data only.
 func TestRealWindowCaretCost(t *testing.T) {
 	if on, why := realWindowGate(); !on {
 		t.Skip(why)
 	}
+	caretReadbackSetup(t) // before the window opens
 	sz := fakeslack.Small
 	sz.Unread = 0
 	fs, err := fakeslack.Start(sz)

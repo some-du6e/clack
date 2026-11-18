@@ -61,6 +61,11 @@ type FrameStats struct {
 	PackWork                 int64
 	StickySlots, StickyHoles int
 	PathsTessellated         int
+	// CopyChecked: the window's pixels were read back after the frame
+	// texture's copy (ClackVerifyCopy); CopyMismatchPx of them differed
+	// from the frame texture's.
+	CopyChecked    bool
+	CopyMismatchPx int64
 }
 
 // ClackStats reports the last frame's stats.
