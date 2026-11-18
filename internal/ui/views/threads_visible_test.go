@@ -80,10 +80,10 @@ func TestThreadsMarkVisibleLikeSlack(t *testing.T) {
 			if at, _ := thrUnreadRowOf(v, kb); at != thrNoUnreadRow {
 				t.Errorf("a thread never read has an unread row (%d)", at)
 			}
-			for time.Since(landed) < 150*time.Millisecond {
+			for time.Since(landed) < 330*time.Millisecond {
 				e.frame()
-				if el := time.Since(landed); v.read[ka] != "" && el < 250*time.Millisecond {
-					t.Fatalf("marked %v after the load; Slack waits 350 ms", el)
+				if v.read[ka] != "" {
+					t.Fatalf("marked %v after the load; Slack waits 350 ms", time.Since(landed))
 				}
 				time.Sleep(10 * time.Millisecond)
 			}

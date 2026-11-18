@@ -805,11 +805,13 @@ jobs:
       matrix:
         include:
           - part: marks
-            test: (TestThreadsUpToDateDividerLikeSlack|TestThreadsMarkedUnreadDividerLikeSlack|TestThreadsMarkVisibleLikeSlack|TestThreadsMarkVisibleOnScrollLikeSlack|TestThreadsMarkVisibleSkipsOwnMarksLikeSlack|TestThreadsSeenReplyGuardLikeSlack|TestThreadsHiddenFirstReadLikeSlack|TestThreadsUpToDateDivider)
+            test: (TestThreadsUpToDateDividerLikeSlack|TestThreadsMarkedUnreadDividerLikeSlack|TestThreadsMarkVisibleLikeSlack|TestThreadsMarkVisibleOnScrollLikeSlack|TestThreadsMarkVisibleSkipsOwnMarksLikeSlack|TestThreadsSeenReplyGuardLikeSlack|TestThreadsHiddenFirstReadLikeSlack|TestThreadsUpToDateDivider|TestThreadsMarkVisibleFlingLikeSlack|TestThreadsUnreadRowPointLikeSlack|TestThreadsRemountNoScrollLikeSlack|TestThreadsAttentionAfterMinimizeLikeSlack|TestThreadsGhostLineDrawnLikeSlack)
           - part: loads
             test: (TestThreadsSlowReconnectLikeSlack|TestThreadsFastReconnectLikeSlack|TestThreadsRefreshGapLikeSlack|TestThreadsSettleBeforeNextLoad|TestThreadsNamedThreadWaitsLikeSlack|TestThreadsAwayIgnoresRepliesLikeSlack|TestThreadsMountLoadLikeSlack|TestThreadsFailedReloadLikeSlack)
           - part: order
             test: (TestThreadsReloadLikeSlack|TestThreadsRefreshKeepsOldThreadsOffTopLikeSlack|TestThreadsReplyDuringReloadLikeSlack|TestThreadsOrderHeldOnReplyLikeSlack|TestThreadsPageAppendedLikeSlack|TestThreadsOrderUnreadFirstLikeSlack|TestThreadsRealtimeLikeSlack|TestThreadsKeysLikeSlack)
+          - part: gaps
+            test: (TestThreadsGapOnePerCardLikeSlack|TestThreadsGapCarryFloorLikeSlack|TestThreadsGapRemountLikeSlack|TestThreadsCarriedChangeLikeSlack|TestThreadsLive)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

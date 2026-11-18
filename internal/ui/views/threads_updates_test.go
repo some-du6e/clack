@@ -9,6 +9,7 @@ package views
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"net/url"
 	"slices"
@@ -219,7 +220,17 @@ func TestThreadsFastReconnectLikeSlack(t *testing.T) {
 		c.older = []core.Message{{TS: "1762500000.000100"}}
 	}
 	fs.Push(map[string]any{"type": "reconnect_url", "url": "ws" + strings.TrimPrefix(fs.URL, "http") + "ws?fast=1"})
-	time.Sleep(150 * time.Millisecond) // the RTM takes it before the drop
+	// the RTM reads its frames in order: a typing after the reconnect_url
+	// comes out once the URL is kept
+	fs.Push(map[string]any{"type": "user_typing", "channel": ch, "user": "U0FAKE00002"})
+	for typed, deadline := false, time.After(10*time.Second); !typed; {
+		select {
+		case ev := <-evs:
+			typed = ev.Type == "typing" && ev.UserID == "U0FAKE00002"
+		case <-deadline:
+			t.Fatal("the socket's typing after the reconnect_url never came")
+		}
+	}
 	n := fs.CallCount("subscriptions.thread.getView")
 	fs.DropSockets()
 	deadline := time.After(10 * time.Second)
@@ -261,12 +272,15 @@ func TestThreadsFastReconnectLikeSlack(t *testing.T) {
 // socket's message_replied for each reply, which a live layer turns into
 // a reply_count already counting them, and when the replies straddle the
 // refresh's request. A failed fetch takes the card back to its window
-// alone, and its row then loads the rest in order. A reply deleted or
-// edited meanwhile is drawn so at once, and stays so across refreshes.
+// alone, and its row then loads the rest in order. Each gap is one
+// conversations.replies. Every reply the card draws, carried over, in
+// the window or brought by the gap's fetch, takes an edit, a reaction and
+// a deletion at once, and keeps them across refreshes.
 func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
 	const root = thrC
-	rs := []string{"1762695100.000100", "1762695200.000100", "1762695300.000100", "1762695400.000100", "1762695500.000100", "1762695600.000100"}
+	rs := []string{"1762695100.000100", "1762695200.000100", "1762695300.000100", "1762695400.000100", "1762695500.000100", "1762695600.000100",
+		"1762695700.000100"}
 	reply := func(ts string) slack.Message {
 		return slack.Message{Type: "message", Channel: ch, TS: ts, ThreadTS: root, User: "U0FAKE00002", Text: "a synthetic reply"}
 	}
@@ -283,7 +297,6 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			var state atomic.Int32 // the replies the server has
 			state.Store(2)
 			var g thrGate
-			t.Cleanup(g.open)
 			rootMsg := func(n int) slack.Message {
 				return slack.Message{Type: "message", Channel: ch, TS: root, ThreadTS: root, User: "U0FAKE00001", Text: "a synthetic root",
 					ReplyCount: n, ReplyUsers: []string{"U0FAKE00002"}, LatestReply: rs[n-1], Subscribed: true, LastRead: rs[n-1]}
@@ -291,8 +304,8 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
 				switch method {
 				case "subscriptions.thread.getView":
+					n := int(state.Load()) // the answer as of the request's arrival
 					g.wait()
-					n := int(state.Load())
 					th := map[string]any{"root_msg": rootMsg(n), "latest_replies": []slack.Message{reply(rs[n-2]), reply(rs[n-1])}, "unread_replies": []slack.Message{}}
 					return thrOrderAnswer(thrFixRead(ch, thrA, thrAReply, "U0FAKE00002", true, thrA), th), true
 				case "conversations.replies":
@@ -315,6 +328,7 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 				}
 				return nil, false
 			})
+			t.Cleanup(g.open) // before the fake's Close, which waits for a held answer
 			v := NewThreads(newKBHost(app, false))
 			e := thrViewEnv(t, v, 2)
 			e.size = image.Pt(1000, 1600)
@@ -376,6 +390,10 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			if c := v.cards[key]; c == nil || c.moreText != "" {
 				t.Errorf("a \"Show N more replies\" row (%q) with every reply shown", c.moreText)
 			}
+			// the gap's fetch, and the failed card's older replies
+			if got, want := fs.CallCount("conversations.replies"), map[bool]int64{false: 1, true: 2}[tc.fail]; got != want {
+				t.Errorf("%d conversations.replies for one gap, want %d", got, want)
+			}
 			if tc.name != "burst" {
 				return
 			}
@@ -401,11 +419,67 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 				return ""
 			}
 			e.until(t, "the delete and the edit drawn", func() bool { return slices.Equal(shown(), rs[1:5]) && text(rs[1]) == "an edited reply" })
+			// r2 came in the gap's fetch: an edit of it and a reaction to
+			// it are drawn in the frame after each
+			gap := rs[2]
+			edited := reply(gap)
+			edited.Text = "an edited gap reply"
+			edited.Edited = &slack.Edited{User: "U0FAKE00002", TS: fmt.Sprintf("%d.000002", time.Now().Unix())}
+			lvInject(app, ch, map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "message": edited, "previous_message": reply(gap)})
+			e.frame()
+			if got := lvDrawn(&v.base, ch, gap); !strings.Contains(got, "an edited gap reply") || text(gap) != "an edited gap reply" {
+				t.Fatalf("the frame after the gap reply's edit drew %q (the card's copy %q)", got, text(gap))
+			}
+			lvInject(app, ch, map[string]any{"type": "reaction_added", "user": "U0FAKE00001", "reaction": "tada",
+				"item": map[string]any{"type": "message", "channel": ch, "ts": gap}})
+			e.frame()
+			tadas := func() int {
+				p, _, _ := v.data.get()
+				for i := range p.items {
+					if p.items[i].key == key {
+						for _, m := range thrShown(&p.items[i], v.cards[key]) {
+							for _, rx := range m.Reactions {
+								if m.TS == gap && rx.Name == "tada" {
+									return rx.Count
+								}
+							}
+						}
+					}
+				}
+				return 0
+			}
+			if n := tadas(); n != 1 || text(gap) != "an edited gap reply" {
+				t.Fatalf("the frame after a reaction to the gap reply: %d tada on it (its text %q)", n, text(gap))
+			}
 			state.Store(6)
 			thrRefreshAfter(t, e, v, fs, "the refresh after r5", thrReplyEvent(ch, root, rs[5]))
 			e.frame()
-			if got := shown(); !slices.Equal(got, rs[1:6]) || text(rs[1]) != "an edited reply" {
-				t.Errorf("after the next refresh the card shows %v (r1 %q); want %v with the edit", got, text(rs[1]), rs[1:6])
+			if got := shown(); !slices.Equal(got, rs[1:6]) || text(rs[1]) != "an edited reply" || text(gap) != "an edited gap reply" || tadas() != 1 {
+				t.Errorf("after the next refresh the card shows %v (r1 %q, r2 %q with %d tada); want %v with the edits and the reaction",
+					got, text(rs[1]), text(gap), tadas(), rs[1:6])
+			}
+			if got := lvDrawn(&v.base, ch, gap); !strings.Contains(got, "an edited gap reply") {
+				t.Errorf("after the next refresh the gap reply is drawn %q", got)
+			}
+			// its deletion takes it out of the card in the frame after,
+			// and it stays out across the next refresh
+			lvInject(app, ch, map[string]any{"type": "message", "subtype": "message_deleted", "hidden": true, "deleted_ts": gap, "previous_message": edited})
+			e.frame()
+			e.frame() // the keyboard's rows are the last frame's
+			if got := shown(); slices.Contains(got, gap) {
+				t.Fatalf("the frame after the gap reply's deletion the card shows %v", got)
+			}
+			if _, ok, _ := v.kb.top(key + "-" + gap); ok {
+				t.Error("the deleted gap reply is still drawn")
+			}
+			state.Store(7)
+			thrRefreshAfter(t, e, v, fs, "the refresh after r6", thrReplyEvent(ch, root, rs[6]))
+			e.frame()
+			if got, want := shown(), []string{rs[1], rs[3], rs[4], rs[5], rs[6]}; !slices.Equal(got, want) {
+				t.Errorf("after the refresh past the deletion the card shows %v; want %v", got, want)
+			}
+			if got := fs.CallCount("conversations.replies"); got != 1 {
+				t.Errorf("%d conversations.replies after refreshes with no gap, want the one gap's", got)
 			}
 		})
 	}
