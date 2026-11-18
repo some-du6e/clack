@@ -438,7 +438,9 @@ func (p *player) run() {
 		case err := <-infoCh:
 			p.infoOK, p.infoErr, p.tInfo = true, err, time.Now()
 			if err != nil {
-				p.fail(media.ErrNetwork, "the file: "+p.rs.Detail(err))
+				// before the metadata a failed fetch is error 4, as for a file that
+				// can't be played: Chromium's MediaLoadingFailed for a src (the fake's)
+				p.fail(media.ErrSrcNotSupported, "the file: "+p.rs.Detail(err))
 			}
 		case <-audioC:
 			p.audioKnown = true

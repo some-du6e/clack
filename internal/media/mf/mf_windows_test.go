@@ -3,6 +3,7 @@
 package mf
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -98,13 +99,16 @@ type rig struct {
 
 var rigN atomic.Int64
 
-func newRig(t *testing.T, data []byte, whole bool, size image.Point) *rig {
+func newRig(t *testing.T, data []byte, whole bool, size image.Point, setup ...func(*mediatest.Opener)) *rig {
 	t.Helper()
 	need(t, backend{}.Available())
 	win, err := headless.NewWindow(size.X, size.Y)
 	need(t, err)
 	id := fmt.Sprintf("FMF%d", rigN.Add(1))
 	src, o := mediatest.Source(id, data, whole)
+	for _, f := range setup {
+		f(o)
+	}
 	hookMu.Lock()
 	born[id] = time.Now()
 	hookMu.Unlock()
@@ -441,6 +445,20 @@ func TestMFNotSeekable(t *testing.T) {
 		}
 	}
 	t.Fatalf("neither the end nor an error in 15 s; events %v; state %+v", r.kinds(), r.p.State())
+}
+
+// A file whose fetch fails before its metadata (signed out, a sign-in
+// page, a refused GET) is error 4, as Chromium's MediaLoadingFailed gives
+// a src it couldn't load, and as the fake does.
+func TestMFFetchFails(t *testing.T) {
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180), func(o *mediatest.Opener) {
+		o.Fail, o.FailStatus = errors.New("slack: not a file URL"), 200
+	})
+	r.draw()
+	r.p.Play()
+	if ev := r.wait(media.Error, 10*time.Second); ev.State.Err != media.ErrSrcNotSupported {
+		t.Errorf("error %d, want 4", ev.State.Err)
+	}
 }
 
 // The fixture with no audio track plays where the runner has no audio

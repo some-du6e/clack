@@ -4,6 +4,7 @@ package avf
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -79,7 +80,7 @@ func requestsOf(id string) []string {
 	return append([]string(nil), requests[id]...)
 }
 
-func newRig(t *testing.T, data []byte, whole bool, size, draw image.Point) *rig {
+func newRig(t *testing.T, data []byte, whole bool, size, draw image.Point, setup ...func(*mediatest.Opener)) *rig {
 	t.Helper()
 	win, err := headless.NewWindow(size.X, size.Y)
 	if err != nil {
@@ -90,6 +91,9 @@ func newRig(t *testing.T, data []byte, whole bool, size, draw image.Point) *rig 
 	}
 	id := fmt.Sprintf("FAV%d", rigN.Add(1))
 	src, o := mediatest.Source(id, data, whole)
+	for _, f := range setup {
+		f(o)
+	}
 	r := &rig{t: t, win: win, o: o, id: id, size: size, readyC: make(chan struct{}, 1), evC: make(chan media.Event, 1024)}
 	pl, err := backend{}.New(src, func() {
 		r.ready.Add(1)
@@ -331,6 +335,20 @@ func TestAVFMoovAtEnd(t *testing.T) {
 	}
 	if !got {
 		t.Errorf("no data request got to the moov (byte %d): %v", moov, requestsOf(r.id))
+	}
+}
+
+// A file whose fetch fails before its metadata (signed out, a sign-in
+// page, a refused GET) is error 4, as Chromium's MediaLoadingFailed gives
+// a src it couldn't load, and as the fake does.
+func TestAVFFetchFails(t *testing.T) {
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180), image.Pt(320, 180), func(o *mediatest.Opener) {
+		o.Fail, o.FailStatus = errors.New("slack: not a file URL"), 200
+	})
+	r.draw()
+	r.p.Play()
+	if ev := r.wait(media.Error, 10*time.Second); ev.State.Err != media.ErrSrcNotSupported {
+		t.Errorf("error %d, want 4", ev.State.Err)
 	}
 }
 

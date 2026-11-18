@@ -261,7 +261,9 @@ func (p *player) Close() {
 func (p *player) open() {
 	info, err := p.rs.Info(p.ctx)
 	if err != nil {
-		p.fail(media.ErrNetwork, "the file: "+p.rs.Detail(err))
+		// before the metadata a failed fetch is error 4, as for a file that
+		// can't be played: Chromium's MediaLoadingFailed for a src (the fake's)
+		p.fail(media.ErrSrcNotSupported, "the file: "+p.rs.Detail(err))
 		return
 	}
 	if info.Total <= 0 {
