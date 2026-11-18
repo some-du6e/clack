@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -296,11 +297,16 @@ func (f *lmFake) hook(method string, form url.Values) (any, bool) {
 }
 
 // lmHost is the views Host, with the message lists' copies when the
-// thread pane is open beside the page (the ui root's LiveMessages).
+// thread pane is open beside the page (the ui root's LiveMessages). It
+// counts the window redraws the views ask for (Invalidate), which the
+// router's wakeup doesn't see.
 type lmHost struct {
 	*vaHost
-	lists bool
+	lists       bool
+	invalidates atomic.Int64
 }
+
+func (h *lmHost) Invalidate() { h.invalidates.Add(1) }
 
 func (h *lmHost) LiveMessage(ch, ts, threadTS string, since time.Time, have uint64) (core.Message, uint64, bool) {
 	if !h.lists {
@@ -1485,7 +1491,7 @@ func TestActivityLiveRootRowsBesidePane(t *testing.T) {
 	if !ok {
 		t.Fatal("no row drew the pane's copy of the root")
 	}
-	busy := 0
+	busy, inv0 := 0, e.h.invalidates.Load()
 	for i := 0; i < 30; i++ {
 		e.frame()
 		if e.redraws() {
@@ -1498,6 +1504,9 @@ func TestActivityLiveRootRowsBesidePane(t *testing.T) {
 	}
 	if busy > 2 {
 		t.Fatalf("%d of 30 frames asked for the next one at once", busy)
+	}
+	if n := e.h.invalidates.Load() - inv0; n > 2 {
+		t.Fatalf("%d window redraws asked for over 30 idle frames", n)
 	}
 	mention, thread := e.v.rows[lmVoteRootKey], e.v.rows[lmVoteRootThKey]
 	if mention == nil || thread == nil {

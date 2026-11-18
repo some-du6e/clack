@@ -407,10 +407,15 @@ type Activity struct {
 	viewDense [len(actTabIDs)]bool
 
 	// zeroRead are the rows the badges' zero marked read (readAllLocal),
-	// each with the loads started by then: a page from a load started
-	// later (pageLoad) has the server's state, which wins
-	zeroRead        map[string]uint64
-	loads, pageLoad uint64
+	// each with the loads started by then: an answer of a load started
+	// later that lists the row has the server's state, which wins
+	// (settle); the rows it doesn't list (older pages a refresh keeps, a
+	// page after) keep the mark. fresh is the latest load's answer's keys,
+	// written by its goroutine (freshMu).
+	zeroRead map[string]uint64
+	loads    uint64
+	freshMu  sync.Mutex
+	fresh    actAnswered
 
 	// Reminder rows' saved items (saved.get), by compound key: known,
 	// non-existent, asked for; the files reminder footers name.
@@ -982,11 +987,13 @@ func (v *Activity) settle() {
 	v.wasBusy = false
 	page, _, err := v.data.get()
 	if err == nil {
-		// the page is the answer of the latest load started: marks from
-		// before it gave way to the server's state
-		v.pageLoad = v.loads
-		for k, at := range v.zeroRead {
-			if at < v.pageLoad {
+		// the rows the answer lists, from a load started after the
+		// badges' zero marked them, are as the server has them now
+		v.freshMu.Lock()
+		f := v.fresh
+		v.freshMu.Unlock()
+		for k := range f.keys {
+			if at, ok := v.zeroRead[k]; ok && f.load > at {
 				delete(v.zeroRead, k)
 			}
 		}
@@ -1043,7 +1050,8 @@ func (v *Activity) load(mode actLoad) {
 		}
 	}
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
-	v.loads++ // zeroRead: this load's answer is the server's state from now
+	v.loads++ // zeroRead: what this load's answer lists is the server's state from now
+	load := v.loads
 	v.data.load(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
 		if none {
 			return core.ActivityPage{}, nil
@@ -1052,6 +1060,7 @@ func (v *Activity) load(mode actLoad) {
 		if err != nil {
 			return p, err
 		}
+		v.noteFresh(load, p.Items)
 		switch mode {
 		case actMore:
 			return actAppend(old, p), nil
@@ -1065,6 +1074,26 @@ func (v *Activity) load(mode actLoad) {
 		}
 		return p, nil
 	})
+}
+
+// actAnswered is a load's answer's keys: the rows it read from the server.
+type actAnswered struct {
+	load uint64
+	keys map[string]bool
+}
+
+// noteFresh records the keys load's answer lists (its goroutine), for
+// settle: a later load's answer replaces an earlier one's.
+func (v *Activity) noteFresh(load uint64, items []core.ActivityItem) {
+	keys := make(map[string]bool, len(items))
+	for i := range items {
+		keys[actKey(&items[i])] = true
+	}
+	v.freshMu.Lock()
+	if load >= v.fresh.load {
+		v.fresh = actAnswered{load: load, keys: keys}
+	}
+	v.freshMu.Unlock()
 }
 
 // actAppend adds the next page after old, skipping duplicates.
@@ -1293,8 +1322,8 @@ func (v *Activity) isUnread(it *core.ActivityItem, key string) bool {
 	if read, ok := v.override[key]; ok {
 		return !read
 	}
-	if at, ok := v.zeroRead[key]; ok && v.pageLoad <= at {
-		return false // the badges' zero, newer than the load the page came from
+	if _, ok := v.zeroRead[key]; ok {
+		return false // the badges' zero, newer than the answer the row came from
 	}
 	return it.Unread
 }
