@@ -1,6 +1,7 @@
 package views
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"math"
@@ -11,9 +12,31 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
+
+// dmsFake boots a core on the views fixtures with client.dms' DMs
+// (Size.DMsTab: the DMs page's own list).
+func dmsFake(t *testing.T) *core.App {
+	t.Helper()
+	sz := fakeslack.Small
+	sz.Views, sz.DMsTab = true, true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	app := core.New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	t.Cleanup(app.Shutdown)
+	if err := app.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return app
+}
 
 // fullThemed is themed with a text shaper (theme.New), for drawing.
 func fullThemed(ia string, dark bool) *theme.Theme {
@@ -118,7 +141,7 @@ func pxHex(c color.RGBA) string { return hexA(color.NRGBA{R: c.R, G: c.G, B: c.B
 //     (#323538); the page has the theme-surf-inv-ter tile in light mode
 //     and none in dark mode (.p-dms_list--dark).
 func TestDMsRowsDrawn(t *testing.T) {
-	app, _ := vkFake(t, nil)
+	app := dmsFake(t)
 	hxa := func(v uint32, a uint8) color.NRGBA { c := rgb(v); c.A = a; return c }
 	for _, c := range []struct {
 		name, ia string
