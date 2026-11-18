@@ -1,3 +1,8 @@
+//go:build !stockgio
+
+// Gio patches 31 (Ops.Whole) and 49 (Source.ResetPointers): ci's stock-Gio
+// build of this package (gio-layer-fix.sh, -tags stockgio) leaves this out.
+
 package richview
 
 import (
