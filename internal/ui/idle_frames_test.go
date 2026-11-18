@@ -86,23 +86,6 @@ func TestIdleFrames(t *testing.T) {
 			e.a.Navigate("activity")
 			e.frame()
 			e.idle(t, p, "activity", false)
-			// its search open with a query, and an item open beside it (the
-			// search's rows were described again every frame once an item
-			// opened)
-			if v, ok := e.a.views[Route("activity")].(*views.Activity); ok {
-				v.Search("e")
-				e.frame()
-				for y := 200; y < e.size.Y-40 && !e.a.secondary.open(); y += 30 {
-					e.click(image.Pt(e.size.X/3, y))
-					e.frame()
-					e.frame()
-				}
-				if !e.a.secondary.open() {
-					t.Fatal("no Activity row opened with the search open")
-				}
-				e.idle(t, p, "activity, searching, an item open", true)
-				e.a.CloseSecondary()
-			}
 			e.openChannel(ch)
 			e.frame()
 			e.a.openPrefs()
@@ -140,6 +123,26 @@ func TestIdleFrames(t *testing.T) {
 				e.frame()
 				e.idle(t, p, page, false)
 			}
+			// Activity on the fixture's feed with its search open on a
+			// query and the first row it lists open beside the inbox
+			// (Alt+Down): the search's rows were described again every
+			// frame once an item opened
+			on := "on"
+			e.a.Core().SetExperimentGroups(map[string]*string{"activity_inbox_remove_persistent_detail_panel": &on, "nested_secondary_view": &on})
+			e.a.Navigate("activity")
+			e.frame()
+			e.until("the activity feed", 20*time.Second, func() bool { return e.fs.CallCount("activity.feed") > 0 })
+			e.settle(time.Second)
+			act, _ := e.a.views[Route("activity")].(*views.Activity)
+			if act == nil {
+				t.Fatal("no Activity view")
+			}
+			act.Search("e")
+			e.frame()
+			act.StepItem(1, false)
+			e.until("an Activity item open with the search open", 10*time.Second, func() bool { return e.a.secondary.open() })
+			e.idle(t, p, "activity, searching, an item open", true)
+			e.a.CloseSecondary()
 			e.a.Navigate("directories")
 			e.frame()
 			e.idle(t, p, "directories", true) // Slack focuses its search field
