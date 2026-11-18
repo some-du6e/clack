@@ -65,11 +65,22 @@ func TestSwitchedListWaitsForTheNewRevision(t *testing.T) {
 	nm.nextRev = oldRev - 1
 	nm.mu.Unlock()
 
+	// JS's mirror holds the channel's messages as they are before the
+	// edit: the 40 others' events may have had it let them go, and its
+	// next read after the edit would take the edited copy from core
+	until(t, 5*time.Second, "JS's copy of the message before the edit", func() {}, func() bool {
+		_, _, ready, ok := tautOf().MessageViewState(ch, msg.TS, false, 0)
+		return ok && ready
+	})
+
 	// the message is edited meanwhile, the mirror behind the edit
 	release := tautOf().HoldMirror()
 	defer release()
 	injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
 	editMsg(app, ch, msg.TS, "UANA00001", "lunch at one?")
+	if mv, ok := tautOf().MessageView(ch, msg.TS); !ok || mv.Text != msg.Text {
+		t.Fatalf("with the mirror behind the edit, JS's copy of the message is %q (ok %v): nothing stale to draw", mv.Text, ok)
+	}
 	// the main pane opens the conversation: a new model, the message
 	// numbered as the dropped one numbered it
 	main := NewChannelView(h, ch)
