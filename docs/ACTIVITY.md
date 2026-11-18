@@ -1137,10 +1137,11 @@ Karim's deleted-reply report:
   update went out first is never undone.
 - A message fetched again by id asks once per channel a frame, waits
   after a failure (2 s doubling to a minute, past the client's own refusal
-  of an identical failed request) and settles on "gone" when Slack
-  answers without it: the row draws no body (isNonExistent) and no entry
-  is removed. A row whose messages.list group failed fetches again the
-  same way instead of shimmering until the next load.
+  of an identical failed request), then core asks again by itself, up to
+  five times, and it settles on "gone" when Slack answers without it: the
+  row draws no body (isNonExistent) and no entry is removed. A row whose
+  messages.list group failed fetches again the same way instead of
+  shimmering until the next load.
 - Activity polls each message once a frame, with the thread its drawn copy
   names, and a lookup that misses doesn't let go of the copy another
   row's found (expireLists does, a frame later). A mention of a root
@@ -1229,8 +1230,8 @@ TestThreadReadKeepsSocketWrites, TestReadRevisionOrderedWithSocket,
 TestOlderPageRead, TestThreadsUnreadLeavesDeleted, TestReadsAnnounce,
 TestRefetchBatch, TestRefetchGone and TestRefetchBackoff (core).
 flake-check's activity-live-msg job runs them COUNT times, then three
-times under -race. TestIdleFrames has Activity with its search open and
-an item open beside it.
+times under -race. TestIdleFrames has Activity on the views fixtures'
+feed with its search open and an item open beside it.
 
 ## Not done
 
