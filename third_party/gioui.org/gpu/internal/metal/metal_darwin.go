@@ -575,6 +575,9 @@ type Backend struct {
 	// (renderEncReplay) when the pass ends.
 	rec   []byte
 	batch bool
+	// wrapped counts the textures ClackWrap made that aren't released yet
+	// (Clack patch 50)
+	wrapped int
 }
 
 // The render commands' opcodes, as renderEncReplay's enum.
@@ -685,6 +688,9 @@ type Texture struct {
 	height  int
 	mipmap  bool
 	foreign bool
+	// external is a texture someone else made (ClackWrap, Clack patch
+	// 50): retained until it's released
+	external bool
 }
 
 type Shader struct {
@@ -1273,6 +1279,9 @@ func (t *Texture) Upload(offset, size image.Point, pixels []byte, stride int) {
 func (t *Texture) Release() {
 	if t.foreign {
 		panic("metal: release of external texture")
+	}
+	if t.external {
+		t.backend.wrapped-- // ClackWrap's retain, released below
 	}
 	C.CFRelease(t.texture)
 	// the sampler is the backend's, shared (Clack patch 37)

@@ -72,6 +72,9 @@ type renderer struct {
 	// patch 36)
 	stats  FrameStats
 	calls0 driver.Calls
+	// clear1x1 is drawn for an external image with nothing to draw (Clack
+	// patch 50)
+	clear1x1 driver.Texture
 }
 
 type drawOps struct {
@@ -654,6 +657,16 @@ func resolveLive(data imageOpData) imageOpData {
 }
 
 func (r *renderer) texHandle(cache *textureCache, data imageOpData) driver.Texture {
+	if e, ok := data.handle.(externalImage); ok { // Clack patch 50
+		t, still, ok := r.resolveExternal(cache, e, data)
+		if ok {
+			return t
+		}
+		if still.src == nil {
+			return r.clearTexture()
+		}
+		data = still
+	}
 	data = resolveLive(data)
 	key := textureCacheKey{
 		filter: data.filter,
@@ -725,6 +738,10 @@ func (r *renderer) release() {
 	r.pather.release()
 	r.blitter.release()
 	r.layerFBOs.delete(r.ctx, 0)
+	if r.clear1x1 != nil {
+		r.clear1x1.Release()
+		r.clear1x1 = nil
+	}
 }
 
 func newBlitter(ctx driver.Device) *blitter {

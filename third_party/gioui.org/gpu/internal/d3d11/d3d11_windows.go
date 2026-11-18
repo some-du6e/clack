@@ -42,6 +42,11 @@ type Backend struct {
 	// out.
 	set   ctxState
 	calls driver.Calls
+
+	// Clack patch 50: the samplers of wrapped textures (linear, nearest),
+	// shared by all of them, and how many aren't released yet.
+	extSamplers [2]*d3d11.SamplerState
+	wrapped     int
 }
 
 // ctxState is the device context state the backend last set (Clack patch
@@ -95,6 +100,10 @@ type Texture struct {
 	height  int
 	mipmap  bool
 	foreign bool
+	// external is a shader resource view someone else made (ClackWrap,
+	// Clack patch 50): the texture holds a reference to it, and samples it
+	// with the backend's shared sampler
+	external bool
 }
 
 type VertexShader struct {
@@ -254,6 +263,11 @@ func (b *Backend) IsTimeContinuous() bool {
 }
 
 func (b *Backend) Release() {
+	for _, s := range b.extSamplers {
+		if s != nil {
+			d3d11.IUnknownRelease(unsafe.Pointer(s), s.Vtbl.Release)
+		}
+	}
 	d3d11.IUnknownRelease(unsafe.Pointer(b.ctx), b.ctx.Vtbl.Release)
 	*b = Backend{}
 }
@@ -737,6 +751,14 @@ func (t *Texture) Upload(offset, size image.Point, pixels []byte, stride int) {
 }
 
 func (t *Texture) Release() {
+	if t.external {
+		// the view's reference ClackWrap took; the sampler is the
+		// backend's (Clack patch 50)
+		d3d11.IUnknownRelease(unsafe.Pointer(t.resView), t.resView.Vtbl.Release)
+		t.backend.wrapped--
+		*t = Texture{}
+		return
+	}
 	if t.foreign {
 		panic("texture not created by NewTexture")
 	}

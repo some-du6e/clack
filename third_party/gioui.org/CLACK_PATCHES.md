@@ -43,7 +43,12 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/app.go`, `app/clack_asked_test.go`, `app/clack_asked_x11_test.go`, `op/paint/clack_live.go`,
 `io/input/clack_replay.go`, `io/input/clack_replay_test.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
-`gpu/headless/clack_live_test.go` and
+`gpu/headless/clack_live_test.go`, `op/paint/clack_external.go`,
+`gpu/clack_external.go`, `gpu/clack_external_test.go`,
+`gpu/internal/driver/clack_external.go`,
+`gpu/internal/d3d11/clack_external_windows.go`,
+`gpu/internal/metal/clack_external_darwin.go`,
+`gpu/headless/clack_external_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2044,3 +2049,75 @@ Patch 40's page aging, with it (`fboSet.resize`):
   wide and tall was made again on every frame that used it, and the shrink
   above let pages used now and then fall into that too
   (`TestClackAtlasGrowKeepsSize`).
+
+## 50. op/paint, gpu, gpu/internal: external images (a texture something else made, drawn in the frame)
+
+`op/paint/clack_external.go` (new: `ExternalImage`, `ExternalDevice`,
+`ExternalTexture`, `NewExternalImageOp`), `gpu/clack_external.go` (new:
+`resolveExternal`, `clearTexture`), `gpu/gpu.go` (`texHandle` asks an
+external image first; `renderer.clear1x1`), `gpu/clack_stats.go`
+(`FrameStats.Externals`, `ExternalWraps`),
+`gpu/internal/driver/clack_external.go` (new: `ClackExternal`,
+`ClackExternalTest`), `gpu/internal/d3d11/clack_external_windows.go` (new)
+and `d3d11_windows.go` (`Texture.external`, `Backend.extSamplers`,
+`Release`), `gpu/internal/metal/clack_external_darwin.go` (new) and
+`metal_darwin.go` (`Texture.external`, `Release`). Additions: no op that
+isn't an external image draws differently.
+
+Slack plays a message's video in place with Chromium's `<video>`, under
+its own controls. Clack plays it with the OS's decoder (Media Foundation,
+AVFoundation), whose frames are GPU textures; Gio could draw only the
+`*image.RGBA` of an `ImageOp`, and its Direct3D and Metal backends took a
+texture they didn't make only as a render target (releasing one
+panicked). Uploading every frame through the CPU, as huddle video does,
+makes each a new mipmapped texture, an upload and a mip generation.
+
+- `NewExternalImageOp(e, size, still)` is an `ImageOp` whose source is a
+  header with no pixels, `size` big: only its bounds are read, so clips,
+  opacity layers and transforms work on it as on any image. Its handle is
+  an `externalHandle`; `texHandle` asks it (`ClackExternal`, plain types,
+  as patch 35's `liveImage`) for the texture on the device drawing the
+  frame, once for each paint the frame shows (in `uploadImages`, after
+  `collect` dropped the paints outside the viewport and their clips), on
+  the goroutine drawing the frame. The device and API come from the
+  backend's `ClackDevice`; after the ask the backend forgets its state
+  cache (`ClackForgetState`: patch 37 trusts the context's state, and the
+  ask may have used the immediate context).
+- A texture is wrapped (`ClackWrap`: no upload, no mipmaps, linear or
+  nearest) and cached under its native handle and `Key`: the same key
+  draws the frame before's wrapper, a new key wraps again, and the old
+  wrapper goes at the end of the first frame that doesn't draw it
+  (`textureCache.frame`), after the GPU finished the frame that drew it
+  last (Metal's `BeginFrame` waits for the previous command buffer).
+  Direct3D 11 AddRefs the shader resource view and samples it with one of
+  the backend's two clamped samplers, releasing only the view; Metal
+  `CFRetain`s the texture and samples it with patch 37's shared sampler.
+- No texture (`ok` false, or a device that can't draw external textures:
+  OpenGL, Vulkan, which never ask) draws the still, stretched over the
+  op's size the same way; a zero or uniform still draws nothing (a 1×1
+  transparent texture the renderer keeps: every image paint needs a
+  texture to bind).
+- The texture must be of an sRGB format (`R8G8B8A8_UNORM_SRGB`,
+  `BGRA8Unorm_sRGB`): Gio samples images decoded to linear light, as the
+  textures it makes are.
+
+`FrameStats.Externals` counts the asks and `ExternalWraps` the wrappers a
+frame made. `ClackExternalTest` lets tests make a texture on the device
+and see its handle (`ClackNative`) and the wrappers held (`ClackWrapped`).
+
+Clack's callers are behind `internal/media`'s `gio_patch50.go` /
+`gio_patch50_stock.go` pair; a stock Gio build draws the still (the
+poster). Tests: `gpu/clack_external_test.go` (`TestDrawOpsExternalImage`:
+the renderer's own `uploadImages`/`texHandle` against a device that counts
+wraps, releases and forgets: one ask per paint shown and none outside the
+viewport, one wrap per key, the old wrapper released, the still without a
+texture, nothing for a zero or uniform still, no ask on a device without
+the interface), on ci's linux-gio job; `gpu/headless/clack_external_test.go`
+(`TestClackExternalImage`: a texture the device made, drawn through its
+native handle under a rounded clip, an opacity layer and a rotating,
+magnifying transform, gives every pixel of an `ImageOp` of the same image;
+`TestClackExternalKeys`: the same key wraps nothing, a new key once, new
+pixels under a new key show, no texture draws the still, a zero or uniform
+still nothing), on ci's windows-applog (Direct3D 11, WARP) and macos
+(Metal) jobs; on llvmpipe (linux-gio) they check that the op draws its
+still and never asks. Not in `UPSTREAM.patch`.

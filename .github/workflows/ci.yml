@@ -229,9 +229,13 @@ jobs:
       # it (an Invalidate asks nothing), and a frame drawn again keeps the
       # handlers' filters and the key log (ui's quiet frames); the X11
       # window's and the real GPU's are below, under Xvfb
-      - name: Gio live images and what a frame was asked for (vendored gioui.org/op/paint, gpu, app)
+      # Gio patch 50: an external image (a texture something else made, as
+      # a video decoder's frame) asks once per paint shown, wraps once per
+      # key, draws its still without one (the renderer's uploads; the real
+      # devices' pixels are windows-applog's and macos's)
+      - name: Gio live and external images and what a frame was asked for (vendored gioui.org/op/paint, gpu, app)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked$|TestReplayKeeps' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
+        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestDrawOpsExternalImage|TestFrameEventAsked$|TestReplayKeeps' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
       # Gio patch 22: what each point of a window with a hidden title bar
       # is (the caption buttons, the top band, the caption, the client);
       # the Windows codes on real windows are windows-applog's. Patch 24:
@@ -275,7 +279,7 @@ jobs:
           # Gio patches 37-44 in pixels: the state caches change none, shared
           # layer pages and splits under a transform none, a cached path at
           # a new sub-pixel offset is built there, atlas pages shrink and go
-          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackExternalImage|TestClackExternalKeys)$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -424,7 +428,9 @@ jobs:
       # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
       # pixel, the window's drawing held to the old way (theme's
       # TestFrameCostPixels), shared layer pages, sub-pixel paths, atlas
-      # pages; linux-gio runs them on llvmpipe, macos on Metal
+      # pages; patch 50: a shader resource view the device made, drawn as
+      # an external image, gives an ImageOp's pixels, wrapped once per key;
+      # linux-gio runs them on llvmpipe, macos on Metal
       - name: Gio frame cost on Direct3D 11 (WARP)
         if: ${{ !cancelled() }}
         shell: bash
@@ -432,7 +438,7 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackExternalImage|TestClackExternalKeys)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
@@ -1102,13 +1108,15 @@ jobs:
         run: .github/scripts/gio-layer-fix.sh
       # Gio patches 37-44 on Metal: the state caches and command batching
       # change no pixel, the window's drawing held to the old way, shared
-      # layer pages, sub-pixel paths, atlas pages
+      # layer pages, sub-pixel paths, atlas pages; patch 50: an MTLTexture
+      # the device made, drawn as an external image, gives an ImageOp's
+      # pixels, retained once per key
       - name: Gio frame cost on Metal
         if: ${{ !cancelled() }}
         env:
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackExternalImage|TestClackExternalKeys)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |

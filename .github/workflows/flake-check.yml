@@ -1348,7 +1348,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
-          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPlacementNoise|TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPlacementNoise|TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackExternalImage|TestClackExternalKeys)$' gioui.org/gpu/headless
       - name: the shadows and the panel's corners, old and new (internal/ui/theme TestFrameCostPixels)
         if: ${{ !cancelled() }}
         shell: bash

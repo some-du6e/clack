@@ -46,6 +46,10 @@ type FrameStats struct {
 	// pages the frame drew into.
 	AtlasPx, LayerPx int64
 	LayerPages       int
+	// Externals are the external images' paints the frame asked for their
+	// texture, ExternalWraps the textures it wrapped: an image whose key
+	// the frame before drew costs none (Clack patch 50).
+	Externals, ExternalWraps int
 }
 
 // ClackStats reports the last frame's stats.
