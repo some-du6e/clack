@@ -777,6 +777,8 @@ func (h *x11EventHandler) handleEvents() bool {
 				w.ProcessEvent(ConfigEvent{Config: w.config})
 			}
 			// redraw will be done by a later expose event
+		case C.UnmapNotify: // minimized (iconified), hidden or reparented
+			w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
 		case C.SelectionNotify:
 			cevt := (*C.XSelectionEvent)(unsafe.Pointer(xev))
 			if w.handleXdndSelection(cevt) { // Clack patch (CLACK_PATCHES.md §11)

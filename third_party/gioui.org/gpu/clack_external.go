@@ -35,29 +35,34 @@ type externalKey struct {
 const stillDepth = 4
 
 // resolveImage is the texture of a paint whose image is external or live
-// (true), or the data to upload as Gio's own (false): an external image's
-// texture or else its still, a live image's image now, each in turn. What
-// can't be uploaded (a header with no pixels, a still too deep) draws a
-// transparent texture.
-func (r *renderer) resolveImage(cache *textureCache, data imageOpData) (driver.Texture, imageOpData, bool) {
+// and its id (true), or the data to upload as Gio's own (false): an
+// external image's texture or else its still, a live image's image now,
+// each in turn. What can't be uploaded (a header with no pixels, a still
+// too deep) draws a transparent texture. The id names the texture's
+// pixels for patch 46's signatures: a wrapper's is new with each key, so
+// a new frame damages its op's rectangle and a frame drawn again none.
+func (r *renderer) resolveImage(cache *textureCache, data imageOpData) (driver.Texture, uint64, imageOpData, bool) {
 	for i := 0; i <= stillDepth; i++ {
 		switch h := data.handle.(type) {
 		case externalImage:
 			if i == stillDepth {
-				return r.clearTexture(), data, true
+				t, id := r.clearTexture()
+				return t, id, data, true
 			}
-			if t, ok := r.resolveExternal(cache, h, data); ok {
-				return t, data, true
+			if t, id, ok := r.resolveExternal(cache, h, data); ok {
+				return t, id, data, true
 			}
 			src, sh := h.ClackStill()
 			if src == nil {
-				return r.clearTexture(), data, true
+				t, id := r.clearTexture()
+				return t, id, data, true
 			}
 			data.src, data.handle = src, sh
 			continue
 		case liveImage:
 			if i == stillDepth {
-				return r.clearTexture(), data, true
+				t, id := r.clearTexture()
+				return t, id, data, true
 			}
 			src, lh := h.LiveImage()
 			if src == nil || lh == nil {
@@ -69,9 +74,10 @@ func (r *renderer) resolveImage(cache *textureCache, data imageOpData) (driver.T
 		break
 	}
 	if !uploadable(data.src) {
-		return r.clearTexture(), data, true
+		t, id := r.clearTexture()
+		return t, id, data, true
 	}
-	return nil, data, false
+	return nil, 0, data, false
 }
 
 // uploadable is whether src has the pixels its bounds say (an external
@@ -84,30 +90,31 @@ func uploadable(src *image.RGBA) bool {
 	return len(src.Pix) >= src.PixOffset(b.Max.X, b.Max.Y-1)
 }
 
-// resolveExternal is the texture drawing an external image's paint, false
-// for none (the still draws). The ask happens here, in uploadImages: once
+// resolveExternal is the texture drawing an external image's paint and its
+// id, false for none (the still draws). The ask happens here, in uploadImages: once
 // for each paint the frame shows. The ask hands out a reference: a texture
 // whose key the cache has from the frame before is drawn again as it is
 // and the reference dropped; a new key wraps the texture with it (no
 // upload, no mipmaps), and the old key's wrapper is released when a frame
 // doesn't draw it (textureCache.frame), which on Metal and Direct3D comes
 // after the GPU finished the frame that drew it last.
-func (r *renderer) resolveExternal(cache *textureCache, e externalImage, data imageOpData) (driver.Texture, bool) {
+func (r *renderer) resolveExternal(cache *textureCache, e externalImage, data imageOpData) (driver.Texture, uint64, bool) {
 	x, ok := r.ctx.(driver.ClackExternal)
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
 	api, dev := x.ClackDevice()
 	r.stats.Externals++
 	native, key, ok := e.ClackExternal(api, dev)
 	x.ClackForgetState()
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
 	k := textureCacheKey{filter: data.filter, handle: externalKey{tex: native, key: key}}
 	if t, ok := cache.get(k); ok {
 		x.ClackDrop(native)
-		return t.(*texture).tex, true
+		t := t.(*texture)
+		return t.tex, t.id, true
 	}
 	filter := driver.FilterLinear
 	if data.filter == filterNearest {
@@ -117,18 +124,22 @@ func (r *renderer) resolveExternal(cache *textureCache, e externalImage, data im
 	t, err := x.ClackWrap(native, sz.X, sz.Y, filter)
 	if err != nil {
 		x.ClackDrop(native)
-		return nil, false
+		return nil, 0, false
 	}
 	r.stats.ExternalWraps++
-	cache.put(k, &texture{src: data.src, tex: t})
-	return t, true
+	cache.nextID++
+	cache.put(k, &texture{src: data.src, tex: t, id: cache.nextID})
+	return t, cache.nextID, true
 }
 
+// clearID is the clear texture's id: textureCache counts its own from 1.
+const clearID = ^uint64(0)
+
 // clearTexture is a 1×1 transparent texture, drawn for an image with
-// nothing to draw.
-func (r *renderer) clearTexture() driver.Texture {
+// nothing to draw, and its id.
+func (r *renderer) clearTexture() (driver.Texture, uint64) {
 	if r.clear1x1 != nil {
-		return r.clear1x1
+		return r.clear1x1, clearID
 	}
 	t, err := r.ctx.NewTexture(driver.TextureFormatSRGBA, 1, 1, driver.FilterNearest, driver.FilterNearest, driver.BufferBindingTexture)
 	if err != nil {
@@ -136,5 +147,5 @@ func (r *renderer) clearTexture() driver.Texture {
 	}
 	t.Upload(image.Point{}, image.Pt(1, 1), make([]byte, 4), 4)
 	r.clear1x1 = t
-	return t
+	return t, clearID
 }

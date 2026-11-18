@@ -470,6 +470,8 @@ func mainWindowOptions() []app.Option {
 // Run opens the window and blocks until it closes.
 func (a *App) Run() error {
 	a.timing("run", a.opts.Started)
+	setFrameMode()           // partial frames, unless CLACK_FULL_FRAMES (partial_frames.go)
+	startCaretBlinkWatcher() // Linux: GTK's caret blink, as Chromium's (caretblink_linux.go)
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)

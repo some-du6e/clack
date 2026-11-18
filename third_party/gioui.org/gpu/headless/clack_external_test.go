@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"gioui.org/f32"
+	"gioui.org/gpu"
 	"gioui.org/gpu/internal/driver"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -259,5 +260,66 @@ func TestClackExternalKeys(t *testing.T) {
 	}
 	if na, nb := settleRefs(t, win, xt, a), xt.ClackRefs(b); na != baseA || nb != baseB {
 		t.Errorf("references after the wrappers went: %d and %d, before %d and %d", na, nb, baseA, baseB)
+	}
+}
+
+// Clack patch 50 under patch 46's partial frames: the same ops drawn again
+// (the client's quiet frames) with the image's key unchanged damage
+// nothing; a new key (the decoder's next frame) damages only the op's
+// rectangle, and that partial frame is the whole frame's pixels.
+func TestClackExternalPartial(t *testing.T) {
+	const w, h = 160, 120
+	win, x, xt := externalWindow(t, w, h)
+	if x == nil {
+		t.Skipf("%T has no external textures: the op draws its still", win.dev)
+	}
+	defer gpu.ClackPartialTextures(false)
+	defer gpu.ClackPartialWhole(false)
+	gpu.ClackPartialTextures(true)
+	imgA := pattern()
+	imgB := image.NewRGBA(imgA.Bounds())
+	draw.Draw(imgB, imgB.Bounds(), &image.Uniform{C: color.RGBA{R: 0x80, G: 0x10, B: 0x10, A: 0xff}}, image.Point{}, draw.Src)
+	_, natA := deviceTexture(t, win, xt, imgA)
+	_, natB := deviceTexture(t, win, xt, imgB)
+	e := &hostImage{xt: xt, tex: natA, key: 1, ok: true}
+	at := image.Rect(40, 30, 40+2*32, 30+2*24) // the image at twice its size
+	var o op.Ops
+	paint.Fill(&o, color.NRGBA{R: 0x20, G: 0x30, B: 0x40, A: 0xff})
+	tr := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(2, 2)).Offset(f32.Pt(float32(at.Min.X), float32(at.Min.Y)))).Push(&o)
+	paint.NewExternalImageOp(e, imgA.Bounds().Size(), paint.ImageOp{}).Add(&o)
+	paint.PaintOp{}.Add(&o)
+	tr.Pop()
+	shot := func() (*image.RGBA, gpu.FrameStats) {
+		t.Helper()
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		img := image.NewRGBA(image.Rectangle{Max: win.size})
+		if err := win.Screenshot(img); err != nil {
+			t.Fatal(err)
+		}
+		return img, win.ClackFrameStats()
+	}
+	gpu.ClackPartialReset()
+	shot()
+	_, st := shot()
+	if !st.Partial || st.DamagePx != 0 || st.Draws != 0 {
+		t.Errorf("the same ops, the same key: partial %v, %d px damaged in %d rects, %d draws; want a partial frame drawing nothing", st.Partial, st.DamagePx, st.DamageRects, st.Draws)
+	}
+	e.tex, e.key = natB, 2 // the decoder's next frame
+	got, st := shot()
+	if want := int64(at.Dx() * at.Dy()); !st.Partial || st.DamagePx != want {
+		t.Errorf("a new key: partial %v, %d px damaged in %d rects; want the op's %d", st.Partial, st.DamagePx, st.DamageRects, want)
+	}
+	t.Logf("a new key: %s", statLine(st))
+	gpu.ClackPartialWhole(true) // the whole frame the same GPU draws now
+	want, _ := shot()
+	gpu.ClackPartialWhole(false)
+	if n, m := diffCount(want, got); n > 0 {
+		t.Errorf("a new key's partial frame: %d px differ from the whole frame by up to %d levels:%s", n, m, worstPixels(want, got, got.Bounds(), 6))
+	}
+	near := func(a, b uint8) bool { return a-b <= 2 || b-a <= 2 }
+	if c := got.RGBAAt(at.Min.X+at.Dx()/2, at.Min.Y+at.Dy()/2); !near(c.R, 0x80) || !near(c.G, 0x10) || !near(c.B, 0x10) {
+		t.Errorf("the op's centre after the new key: %v, want the new frame's 128,16,16", c)
 	}
 }
