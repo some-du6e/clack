@@ -242,8 +242,11 @@ func TestParentLinkOpensItsThread(t *testing.T) {
 // hydrateMessageSlugData), and its click is jumpToMessage({channelId,
 // ts: message_ts, threadTs: thread_ts}) (p9lB MessageMention): a
 // parent's pill opens its thread, a reply's the thread at the reply,
-// highlighted. Clack followed the pill's link: a parent's opened the
-// conversation, no thread.
+// highlighted, with no suspicious-link check (the pill isn't a link the
+// user typed). Clack treated the pill as a plain link: the label isn't
+// the URL, so the click went no further than the link check (on
+// 1c8ea7ba it navigated nowhere), and past it a parent's link opened
+// the conversation, no thread.
 func TestMessageMentionPillOpensThread(t *testing.T) {
 	pub, root := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS
 	for _, c := range []struct{ name, ts, at string }{
