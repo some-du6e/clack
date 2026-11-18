@@ -20,7 +20,7 @@ import { parseArgs } from 'node:util';
 const site = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sharp = createRequire(join(site, 'package.json'))('sharp');
 
-const { values: { run, from } } = parseArgs({ options: { run: { type: 'string' }, from: { type: 'string' } } });
+const { values: { run, from, only } } = parseArgs({ options: { run: { type: 'string' }, from: { type: 'string' }, only: { type: 'string' } } });
 if (!run || !from) {
   console.error('usage: node tools/images.mjs --run <demo run id> --from <demo-shots dir>');
   process.exit(2);
@@ -34,7 +34,7 @@ if (!run || !from) {
 const TILE = { left: 0, top: 0, width: 720, height: 450 };
 const BAND = { left: 0, top: 0, width: 1314, height: 900 };
 const SHOTS = [
-  { name: 'hero', light: 'readme/demo-main-light.png', widths: [640, 960, 1440] },
+  { name: 'hero', light: 'readme/demo-main-light.png', widths: [640, 720, 960, 1440] },
   { name: 'band', light: 'demo-surface-light-emoji-picker.png', crop: BAND, widths: [680, 1020, 1314] },
   { name: 'channel', light: 'readme/demo-huddle-light.png', widths: [720, 1080, 1440] },
   { name: 'thread', light: 'readme/demo-thread-light.png', widths: [720, 1080, 1440] },
@@ -50,13 +50,16 @@ const WEBP = { quality: 80, effort: 6, smartSubsample: true };
 
 const img = join(site, 'img');
 mkdirSync(img, { recursive: true });
+// --only <name> redoes one picture and keeps the rest
+const todo = only ? SHOTS.filter((s) => s.name === only) : SHOTS;
+if (!todo.length) { console.error(`images: no picture named ${only}`); process.exit(2); }
 for (const f of readdirSync(img)) {
-  if (/\.(avif|webp|png|jpg)$/.test(f)) rmSync(join(img, f));
+  if (/\.(avif|webp|png|jpg)$/.test(f) && (!only || f.startsWith(`${only}-`))) rmSync(join(img, f));
 }
 
-const manifest = {};
+const manifest = only ? JSON.parse(readFileSync(join(img, 'images.json'), 'utf8')) : {};
 let total = 0;
-for (const s of SHOTS) {
+for (const s of todo) {
   const files = {};
   let size;
   for (const variant of ['light', 'dark']) {
@@ -83,11 +86,13 @@ for (const s of SHOTS) {
   };
 }
 
+if (!only) {
 // og:image, 1200x630 from the top of the light hero
 await sharp(join(from, SHOTS[0].light)).resize({ width: 1200 }).extract({ left: 0, top: 0, width: 1200, height: 630 })
   .jpeg({ quality: 86, chromaSubsampling: '4:4:4', mozjpeg: true }).toFile(join(img, 'og.jpg'));
 // home-screen icon, from the app icon
 await sharp(readFileSync(join(site, '..', 'assets', 'icon.svg'))).resize(180, 180).png().toFile(join(img, 'apple-touch-icon.png'));
+}
 
 writeFileSync(join(img, 'images.json'), JSON.stringify(manifest, null, 2) + '\n');
 console.log(`${Object.keys(manifest).length} pictures, ${(total / 1024).toFixed(0)} KB of AVIF and WebP in all`);

@@ -82,6 +82,7 @@ const ctx = {
   icon: { top: icon('top'), menu: icon('menu'), foot: icon('foot') },
 };
 const flags = { site: !!siteURL, preview: !!args.preview };
+ctx.hero = { preload: heroPreload(read('src/index.html')) };
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, 'img'), { recursive: true });
@@ -153,6 +154,18 @@ function picture({ name, sizes, alt, eager }) {
     + `<img src="img/${im.files.light}-${fallback}.webp" srcset="${set(im.files.light, 'webp')}" sizes="${sizes}"`
     + ` width="${im.width}" height="${im.height}" alt="${esc(alt)}"`
     + (eager ? ' fetchpriority="high"' : ' loading="lazy"') + ' decoding="async"></picture>';
+}
+
+// The eager (LCP) picture's AVIF, preloaded from the top of <head> so its
+// request starts before the inline CSS is parsed. Same srcset and sizes as
+// the <picture>'s AVIF source, so the browser uses one download for both.
+function heroPreload(src) {
+  const m = src.match(/<x-shot\b([^>]*\beager\b[^>]*)><\/x-shot>/);
+  if (!m) return '';
+  const { name, sizes } = attrs(m[1]);
+  const im = images[name];
+  const set = im.widths.map((w) => `img/${im.files.light}-${w}.avif ${w}w`).join(', ');
+  return `<link rel="preload" as="image" type="image/avif" imagesrcset="${set}" imagesizes="${sizes}" fetchpriority="high">`;
 }
 
 // assets/icon.svg inline, with ids made unique per copy
