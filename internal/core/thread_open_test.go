@@ -189,3 +189,27 @@ func TestLatestReply(t *testing.T) {
 		t.Errorf("LatestReply of an unknown thread %q, want the thread itself", got)
 	}
 }
+
+// TestReplyThreadForgetsChangedMessages: what a lookup found is forgotten
+// once the message changes (message_replied, message_changed), so a
+// message looked up before it had replies opens its thread after (Slack's
+// store keeps the message, and messageReplied updates it there).
+// Synthetic messages.
+func TestReplyThreadForgetsChangedMessages(t *testing.T) {
+	a, f := testApp(t)
+	const ts = "1700000300.000600"
+	f.reply["messages.list"] = `{"ok":true,"messages":{"C1":[{"ts":"` + ts + `","user":"U1"}]}}`
+	ctx := context.Background()
+	if got, found := a.ReplyThread(ctx, "C1", ts, true); !found || got != "" {
+		t.Fatalf("a message without replies: %q (%v), want no thread", got, found)
+	}
+	a.Inject(rtm("message", map[string]any{"subtype": "message_replied", "channel": "C1",
+		"message": map[string]any{"ts": ts, "thread_ts": ts, "reply_count": 1, "user": "U1", "latest_reply": "1700000400.000100"}}))
+	if got, found := a.CachedReplyThread("C1", ts, true); found && got == "" {
+		t.Errorf("the lookup is remembered after the message got replies: no thread")
+	}
+	f.reply["messages.list"] = `{"ok":true,"messages":{"C1":[{"ts":"` + ts + `","thread_ts":"` + ts + `","reply_count":1,"user":"U1"}]}}`
+	if got, found := a.ReplyThread(ctx, "C1", ts, true); !found || got != ts {
+		t.Errorf("a parent link after it got replies: %q (%v), want its thread %s", got, found, ts)
+	}
+}

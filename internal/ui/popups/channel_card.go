@@ -562,6 +562,10 @@ func topicSpans(b richtext.Block) []richtext.Span {
 
 // topicHandler routes clicks in the topic: links open, a member opens
 // their profile, a channel goes there.
+// openBrowser opens a link in the browser (the links Slack's Link opens
+// in a new tab); a var so tests catch it.
+var openBrowser = func(u string) { _ = openurl.Open(u) }
+
 type topicHandler struct{ h Host }
 
 // OpenURL is Slack's Link for a link in the topic or purpose: in the
@@ -576,7 +580,7 @@ func (t topicHandler) follow(u string, openRoot bool) {
 	if lf, ok := t.h.(LinkFollower); ok && lf.FollowLink(u, openRoot) {
 		return
 	}
-	_ = openurl.Open(u)
+	openBrowser(u)
 }
 
 func (t topicHandler) OpenUser(id string, a image.Point) { t.h.OpenProfile(a, id) }

@@ -48,6 +48,8 @@ func TestRowLinksFollowSlackLinks(t *testing.T) {
 	hh.OpenURL(deep)
 	pdf := "https://fakeclub.slack.com/files/U0FAKE00002/F0SYNTH0001/plan.pdf"
 	openFile(h, fileItem{core.File{ID: "F0SYNTH0001", Filetype: "pdf", Permalink: pdf}})
+	tab := "https://fakeclub.slack.com/archives/" + ch + "/tabs/Ct0SYNTH01" // a channel's Links tab row (LinkEntity)
+	(&ChannelFiles{base: base{h: h}}).openLink(tab)
 	if m, ok := any(hh).(interface{ OpenMrkdwnLink(url, text string) }); ok {
 		m.OpenMrkdwnLink(perma, "the launch thread")
 	} else {
@@ -60,7 +62,8 @@ func TestRowLinksFollowSlackLinks(t *testing.T) {
 	} else {
 		t.Errorf("a row's message_mention pill has no click of its own")
 	}
-	if want := []string{perma + " openRoot=false", deep + " openRoot=false", pdf + " openRoot=false", perma + " openRoot=true"}; !slices.Equal(h.follows, want) {
+	if want := []string{perma + " openRoot=false", deep + " openRoot=false", pdf + " openRoot=false", tab + " openRoot=false",
+		perma + " openRoot=true"}; !slices.Equal(h.follows, want) {
 		t.Errorf("Link clicks %q\nwant %q", h.follows, want)
 	}
 	if len(h.urls) > 0 {

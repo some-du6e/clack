@@ -75,13 +75,30 @@ func TestReplyRootedPaneHandsOnEachOpen(t *testing.T) {
 // c-message_kit__background--highlight, `animation: 3s forwards` over
 // keyframes 20% and 60% at #f2c74433 (CSS's default ease, no dark-mode
 // override): it eases in over the first 0.6 s, holds until 1.8 s, eases
-// out and is gone at 3 s, as each row painted it. Clack held it at full
-// for 2 s and faded it until 4 s, and drew it at half strength in dark
-// mode.
+// out and is gone at 3 s. The curve at fixed times (highlightAlpha), and
+// a jump's row drawn lit and then clear. Clack held it at full for 2 s
+// and faded it until 4 s, and drew it at half strength in dark mode.
 func TestJumpHighlightKeyframes(t *testing.T) {
 	want := color.NRGBA{R: 0xf2, G: 0xc7, B: 0x44, A: 0x33}
 	if lightColors.Highlight != want || darkColors.Highlight != want {
 		t.Errorf("the highlight's colour: light %v, dark %v; want #f2c74433 in both", lightColors.Highlight, darkColors.Highlight)
+	}
+	for _, c := range []struct {
+		el     time.Duration
+		lo, hi float32
+	}{
+		{0, 0, 0},
+		{300 * time.Millisecond, 0.01, 0.99}, // easing in
+		{600 * time.Millisecond, 1, 1},       // the 20% keyframe
+		{1200 * time.Millisecond, 1, 1},
+		{1800 * time.Millisecond, 1, 1},       // the 60% keyframe
+		{2400 * time.Millisecond, 0.01, 0.99}, // easing out
+		{3 * time.Second, 0, 0},
+		{3500 * time.Millisecond, 0, 0},
+	} {
+		if got := highlightAlpha(c.el); got < c.lo || got > c.hi {
+			t.Errorf("%v in: %.3f, want %.2f…%.2f", c.el, got, c.lo, c.hi)
+		}
 	}
 	app, _, ts := shotsApp(t)
 	th := theme.New(false)
@@ -90,50 +107,20 @@ func TestJumpHighlightKeyframes(t *testing.T) {
 	v := NewChannelView(coreHost{app: app, th: th}, tShots)
 	frame := frameFn(v)
 	target := ts["b1"]
-	drawn := func() (float32, bool) {
+	drawn := func() float32 {
 		for _, r := range v.Senders() {
 			if r.TS == target {
-				return r.Highlight, true
+				return r.Highlight
 			}
 		}
-		return 0, false
+		return -1
 	}
-	until(t, 10*time.Second, "the conversation", frame, func() bool { _, ok := drawn(); return ok })
+	until(t, 10*time.Second, "the conversation", frame, func() bool { return drawn() >= 0 })
 	v.Highlight(target)
-	frame() // the jump placed: the animation starts
-	t0 := time.Now()
-	type sample struct {
-		at time.Duration
-		hl float32
-	}
-	var got []sample
-	for el := time.Duration(0); el < 3300*time.Millisecond; el = time.Since(t0) {
-		frame()
-		hl, ok := drawn()
-		if !ok {
-			t.Fatalf("the highlighted message isn't drawn %v in", el)
-		}
-		got = append(got, sample{time.Since(t0), hl})
-		time.Sleep(20 * time.Millisecond)
-	}
-	var easingIn, easingOut bool
-	for _, s := range got {
-		switch {
-		case s.at > 50*time.Millisecond && s.at < 450*time.Millisecond:
-			easingIn = easingIn || s.hl > 0 && s.hl < 1
-		case s.at > 700*time.Millisecond && s.at < 1700*time.Millisecond:
-			if s.hl != 1 {
-				t.Errorf("%v in: highlight %.2f, want full between the 20%% and 60%% keyframes", s.at, s.hl)
-			}
-		case s.at > 2000*time.Millisecond && s.at < 2900*time.Millisecond:
-			easingOut = easingOut || s.hl > 0 && s.hl < 1
-		case s.at > 3050*time.Millisecond:
-			if s.hl != 0 {
-				t.Errorf("%v in: highlight %.2f, want none after 3 s", s.at, s.hl)
-			}
-		}
-	}
-	if !easingIn || !easingOut {
-		t.Errorf("the highlight eased in %v, out %v; want both (samples %v)", easingIn, easingOut, got)
+	until(t, 3*time.Second, "the jump's row lit", frame, func() bool { return drawn() > 0 })
+	time.Sleep(highlightFor + 200*time.Millisecond)
+	frame()
+	if hl := drawn(); hl != 0 {
+		t.Errorf("%.2f drawn after 3 s, want the highlight gone", hl)
 	}
 }

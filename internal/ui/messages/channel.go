@@ -205,8 +205,17 @@ func (v *ChannelView) JumpPending() string { return v.s.pendingJump }
 func (v *ChannelView) HighlightRequested() string { return v.s.highlightReq }
 
 // InWindow reports whether the list shows a window away from the
-// conversation's newest messages (and which message it was opened at).
+// conversation's newest messages.
 func (v *ChannelView) InWindow() bool { return v.s.win != nil }
+
+// LatestMessagesRect is the "Latest messages" pill (ArchivesBanner) as
+// drawn last frame, in window coordinates; empty while it isn't drawn.
+func (v *ChannelView) LatestMessagesRect() image.Rectangle {
+	if v.s.latestR.Empty() {
+		return image.Rectangle{}
+	}
+	return v.s.latestR.Add(v.s.origin)
+}
 
 // Entered is a navigation to the conversation with no message to start at
 // (a sidebar click, Back, a thread's route): Slack's determineTimestamps

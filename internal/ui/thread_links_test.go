@@ -242,21 +242,23 @@ func TestParentLinkOpensItsThread(t *testing.T) {
 // hydrateMessageSlugData), and its click is jumpToMessage({channelId,
 // ts: message_ts, threadTs: thread_ts}) (p9lB MessageMention): a
 // parent's pill opens its thread, a reply's the thread at the reply,
-// highlighted, with no suspicious-link check (the pill isn't a link the
-// user typed). Clack treated the pill as a plain link: the label isn't
-// the URL, so the click went no further than the link check (on
-// 1c8ea7ba it navigated nowhere), and past it a parent's link opened
-// the conversation, no thread.
+// highlighted, from the pill's own ids (its url, here another message's,
+// is never followed) with no lookup, and with no suspicious-link check
+// (the pill isn't a link the user typed). Clack treated the pill as a
+// plain link: the label isn't the URL, so the click went no further than
+// the link check (on 1c8ea7ba it navigated nowhere), and past it a
+// parent's link opened the conversation, no thread.
 func TestMessageMentionPillOpensThread(t *testing.T) {
 	pub, root := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS
 	for _, c := range []struct{ name, ts, at string }{
-		{"to a parent", root, ""},
+		{"to a parent", root, root},
 		{"to a reply", fakeslack.ThreadReplyTS(1), fakeslack.ThreadReplyTS(1)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := threadHeaderEnv(t, false)
 			digest := fakeslack.ThreadPrivateID
-			link := digestLink(pub, c.ts, "")
+			// the pill's url names another message: only its ids are followed
+			link := digestLink(fakeslack.ThreadDMID, root, "")
 			b, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "block_id": "pill", "elements": []any{
 				map[string]any{"type": "rich_text_section", "elements": []any{
 					map[string]any{"type": "text", "text": "synthetic: see "},
@@ -265,12 +267,16 @@ func TestMessageMentionPillOpensThread(t *testing.T) {
 			e.fs.PostBlocksQuiet(digest, e.fs.UserIDs()[3], "synthetic: see "+link, b)
 			e.openChannel(digest)
 			e.settle(800 * time.Millisecond)
+			calls := e.recordCalls("messages.list")
 			e.clickAt(e.linkPoint(t, digest, link), time.Second)
 			e.waitDrawn(t, "a click on the pill", 20*time.Second, "", pub, root, func(rows []messages.SenderView) bool {
-				return threadDrawn(rows, root) && (c.at == "" || lit(rows, c.at))
+				return threadDrawn(rows, root) && lit(rows, c.at)
 			})
 			if r := e.a.router.Current(); r != Route("c/"+pub+"/t/"+root) {
 				t.Errorf("route %q, want the pill's thread c/%s/t/%s", r, pub, root)
+			}
+			if asked := calls.of("messages.list", "", "message_ids"); len(asked) > 0 {
+				t.Errorf("the pill's message was looked up: %q (its thread_ts is given)", asked)
 			}
 		})
 	}
@@ -493,40 +499,32 @@ func TestThreadOnlyLinksOpenTheThread(t *testing.T) {
 }
 
 // TestForeignWorkspaceLinkOpensBrowser: a permalink into another
-// workspace (its subdomain isn't this one's and Clack doesn't know the
-// conversation) is jumpToMessage's "Could not find suitable target
-// workspace", which openPermalink opens in a browser tab: nothing is
-// looked up and the window stays. A conversation Clack knows opens in
-// Clack whatever the subdomain (a Slack Connect channel's link from the
-// partner's workspace). Clack asked messages.list for the foreign
-// message and navigated to a conversation it didn't have.
+// workspace is jumpToMessage's "Could not find suitable target
+// workspace", which openPermalink opens in a browser tab, and the window
+// stays. The fake is an Enterprise Grid workspace, where a link with
+// another of the org's subdomains can name any of the org's conversations
+// (wc0P finds the team by the channel): it's looked up first
+// (conversations.info), and only one the lookup can't find goes to the
+// browser; one it finds opens in the client, as does a conversation
+// Clack knows whatever the subdomain (a Slack Connect channel's link from
+// the partner's workspace). Clack asked messages.list for the foreign
+// message and navigated to a conversation it didn't have (round 1), then
+// sent every link with another subdomain to the browser (round 2).
 func TestForeignWorkspaceLinkOpensBrowser(t *testing.T) {
 	e := threadHeaderEnv(t, false)
-	var mu sync.Mutex
-	var opened []string
-	t.Cleanup(messages.SwapOpenURL(func(u string) {
-		mu.Lock()
-		opened = append(opened, u)
-		mu.Unlock()
-	}))
+	b := catchBrowser(t)
 	digest, shared, root := fakeslack.ThreadPrivateID, fakeslack.ThreadSharedID, fakeslack.ThreadRootTS
 	foreign := "https://otherco.slack.com/archives/C0FOREIGN01/p1762516060000100"
 	known := "https://partnerco.slack.com/archives/" + shared + "/p" + strings.ReplaceAll(root, ".", "")
-	postDigest(e.fs, digest, foreign, known)
+	org := "https://orgsibling.slack.com/archives/" + fakeslack.ThreadElsewhereID + "/p" + strings.ReplaceAll(root, ".", "")
+	postDigest(e.fs, digest, foreign, known, org)
 	e.openChannel(digest)
 	e.settle(800 * time.Millisecond)
-	calls := e.recordCalls("messages.list")
+	calls := e.recordCalls("messages.list", "conversations.info")
 	e.clickAt(e.linkPoint(t, digest, foreign), time.Second)
-	e.until("the browser tab", 10*time.Second, func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return len(opened) > 0
-	})
+	e.until("the browser tab", 10*time.Second, func() bool { return len(b.got()) > 0 })
 	e.settle(300 * time.Millisecond)
-	mu.Lock()
-	got := slices.Clone(opened)
-	mu.Unlock()
-	if !slices.Equal(got, []string{foreign}) {
+	if got := b.got(); !slices.Equal(got, []string{foreign}) {
 		t.Errorf("opened in the browser: %q, want the foreign link", got)
 	}
 	if r := e.a.router.Current(); r != Route("c/"+digest) {
@@ -535,16 +533,23 @@ func TestForeignWorkspaceLinkOpensBrowser(t *testing.T) {
 	if asked := calls.of("messages.list", "", "message_ids"); len(asked) > 0 {
 		t.Errorf("the foreign message was looked up: %q", asked)
 	}
+	if asked := calls.of("conversations.info", "", "channel"); !slices.Contains(asked, "channel=C0FOREIGN01") {
+		t.Errorf("conversations.info %q, want the foreign conversation looked up first (Grid)", asked)
+	}
 	// the shared channel's link from the partner's workspace: Clack's
 	e.clickAt(e.linkPoint(t, digest, known), 2*time.Second)
 	e.waitDrawn(t, "the Slack Connect channel's thread", 20*time.Second, "", shared, root, func(rows []messages.SenderView) bool {
 		return threadDrawn(rows, root)
 	})
-	mu.Lock()
-	n := len(opened)
-	mu.Unlock()
-	if n != 1 {
-		t.Errorf("the known conversation's link opened in the browser too: %q", opened)
+	// a conversation of the org's another workspace has, found by the lookup
+	e.openChannel(digest)
+	e.settle(500 * time.Millisecond)
+	e.clickAt(e.linkPoint(t, digest, org), 3*time.Second)
+	e.waitDrawn(t, "the org's conversation's thread", 20*time.Second, "", fakeslack.ThreadElsewhereID, root, func(rows []messages.SenderView) bool {
+		return threadDrawn(rows, root)
+	})
+	if got := b.got(); len(got) != 1 {
+		t.Errorf("Clack's conversations' links opened in the browser too: %q", got)
 	}
 }
 
@@ -565,7 +570,8 @@ func TestNavigationLogsTagIDs(t *testing.T) {
 	e.settle(800 * time.Millisecond)
 	logs := captureLog(t)
 	e.fs.SetHook(func(method string, _ url.Values) (any, bool) {
-		if method == "messages.list" {
+		switch method {
+		case "messages.list", "bookmarks.list", "pins.list": // the lookup's, the bookmark bar's, the pins tab's
 			return map[string]any{"ok": false, "error": "fatal_error"}, true
 		}
 		return nil, false
@@ -588,5 +594,13 @@ func TestNavigationLogsTagIDs(t *testing.T) {
 	if got := logs.matching("ui: deep link not handled: "); len(got) != 1 || got[0] != "ui: deep link not handled: slack://bogus" {
 		t.Errorf("clack.log's unhandled deep link: %q, want its command only", got)
 	}
-	noRawIDs(t, logs, pub, root, reply, digest)
+	// a team-scoped link names the workspace in its host: by tag
+	e.a.OpenURL("slack://" + fakeslack.TeamID + "/magic-login/synthetic")
+	e.until("the team-scoped link's line", 10*time.Second, func() bool {
+		return len(logs.matching("ui: deep link not handled: ")) > 1
+	})
+	if got := logs.matching("ui: deep link not handled: "); got[1] != "ui: deep link not handled: slack://"+logTag(fakeslack.TeamID) {
+		t.Errorf("clack.log's team-scoped link: %q, want its workspace's tag", got[1])
+	}
+	noRawIDs(t, logs, pub, root, reply, digest, fakeslack.TeamID)
 }

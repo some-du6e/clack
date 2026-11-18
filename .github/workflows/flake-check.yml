@@ -1492,7 +1492,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('thread-open-root', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit|TestParentLinkOpensItsThread|TestMessageMentionPillOpensThread|TestPermalinkLoadsAroundOldMessage|TestSplitViewLinkKeepsBackStack|TestReplyRouteLeavesNoHistory|TestReplyRootedPaneFetchesThreadOnce|TestThreadOnlyLinksOpenTheThread|TestForeignWorkspaceLinkOpensBrowser|TestNavigationLogsTagIDs)$'
+      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit|TestParentLinkOpensItsThread|TestMessageMentionPillOpensThread|TestPermalinkLoadsAroundOldMessage|TestSplitViewLinkKeepsBackStack|TestReplyRouteLeavesNoHistory|TestReplyRootedPaneFetchesThreadOnce|TestThreadOnlyLinksOpenTheThread|TestForeignWorkspaceLinkOpensBrowser|TestNavigationLogsTagIDs|TestJumpWindowIsTheListsOwn|TestJumpWindowPagesWithinItself|TestJumpWindowTakesLiveChanges|TestEnteringConversationAfterJump|TestColdJumpLoadsOnlyTheWindow|TestHandOverHighlightsRootAfterWindow|TestFollowLinkOpensSlackLinksInClient|TestTopicCardLinksFollowSlackLinks)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -1515,9 +1515,13 @@ jobs:
           go test -count=$COUNT -v -run '^(TestRowLinksFollowSlackLinks|TestActivityOpenInHomeOpensAtReply)$' ./internal/ui/views
           go test -count=$COUNT -v -run '^TestSearchResultOpensReplyAtReply$' ./internal/ui/popups
           go test -count=$COUNT -v -run '^TestSurfaceLinksFollowSlackLinks$' ./internal/ui/blockkit
+          go test -count=$COUNT -v -run '^(TestTopicLinksFollowSlackLinks|TestSearchCardForeignPermalinkOpensBrowser)$' ./internal/ui/popups
+          go test -count=$COUNT -v -run '^TestCanvasLinksFollowSlackLinks$' ./internal/ui/canvasview
+          go test -count=$COUNT -v -run '^TestPluginLinksFollowSlackLinks$' ./internal/ui/slackc
       - name: the lookups and the log's tags (core, logtag, ui)
         if: ${{ !cancelled() }}
         run: |
-          go test -count=$COUNT -v -run '^(TestReplyThread|TestCachedSlugKeepsParentThread|TestReplyThreadOpenRoot|TestReplyThreadSingleFlight|TestHistoryAround|TestRepliesForReplyKeyedByParent|TestLatestReply)$' ./internal/core
+          go test -count=$COUNT -v -run '^(TestReplyThread|TestCachedSlugKeepsParentThread|TestReplyThreadOpenRoot|TestReplyThreadSingleFlight|TestHistoryAround|TestRepliesForReplyKeyedByParent|TestLatestReply|TestReplyThreadForgetsChangedMessages)$' ./internal/core
+          go test -count=$COUNT -v -run '^TestWindowsAreSlices$' ./internal/store
           go test -count=$COUNT -v -run '^TestID$' ./internal/logtag
           go test -count=$COUNT -run '^(TestDeepLinkMessage|TestNavLogTags)$' ./internal/ui

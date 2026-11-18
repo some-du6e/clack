@@ -66,7 +66,6 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -1029,7 +1028,7 @@ func (a *srAttCard) open(it srAttItem) {
 				if lf.FollowLink(link, false) {
 					RecordRecentConversation(pl.ChannelID)
 				} else {
-					_ = openurl.Open(link)
+					openBrowser(link)
 				}
 				return
 			}
@@ -1046,7 +1045,7 @@ func (a *srAttCard) open(it srAttItem) {
 		if lf, ok := h.(LinkFollower); ok && lf.FollowLink(it.link, false) {
 			return
 		}
-		_ = openurl.Open(it.link)
+		openBrowser(it.link)
 	}
 }
 

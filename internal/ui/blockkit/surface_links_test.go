@@ -11,7 +11,11 @@ import (
 // which keeps permalinks and slack: links in the client.
 type surfLinkHost struct {
 	Host
-	follows []string
+	follows, jumps []string
+}
+
+func (h *surfLinkHost) JumpToMessage(ch, ts, thread string) {
+	h.jumps = append(h.jumps, ch+" "+ts+" "+thread)
 }
 
 func (h *surfLinkHost) FollowLink(u string, openRoot bool) bool {
@@ -49,5 +53,20 @@ func TestSurfaceLinksFollowSlackLinks(t *testing.T) {
 	}
 	if !slices.Equal(opened, []string{other}) {
 		t.Errorf("opened in the browser: %q, want only the link outside Slack", opened)
+	}
+	// a message_mention pill in a surface is MessageMention: its own ids,
+	// never its url
+	p, ok := any(s).(interface {
+		OpenMessageMention(ch, ts, thread, url string)
+	})
+	if !ok {
+		t.Fatalf("a surface's message_mention pill has no click of its own: it follows its url")
+	}
+	p.OpenMessageMention("C0THPUBLIC1", "1762516060.000100", "1762516000.000100", other)
+	if want := []string{"C0THPUBLIC1 1762516060.000100 1762516000.000100"}; !slices.Equal(h.jumps, want) {
+		t.Errorf("the pill's jumps %q, want %q", h.jumps, want)
+	}
+	if !slices.Equal(opened, []string{other}) || len(h.follows) != 4 {
+		t.Errorf("the pill followed its url: opened %q, Link clicks %q", opened, h.follows)
 	}
 }
