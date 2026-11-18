@@ -167,3 +167,109 @@ func TestFrameRedrawnKeepsImagesFresh(t *testing.T) {
 		t.Errorf("stats %+v after the sweep, want b alone", got)
 	}
 }
+
+// TestHoldLive: while the cache holds (HoldLive, the inspect tool's
+// freeze: a frame drawn again from its ops), a live image shows the frame
+// it showed when the hold began, even after its player is let go, and
+// asks the window for no frame; after the hold it plays on.
+func TestHoldLive(t *testing.T) {
+	const u = "https://files.slack.com/files-tmb/T1-F2-x/hold.gif"
+	c, inv := gifCache(t, map[string][]byte{u: bigGIF(t, 64, 64, 6, 5, 0)})
+	c.SetLiveOps(true)
+	e := readyEntry(t, c, u, 64)
+	for dl := time.Now().Add(5 * time.Second); playingNow(c, u, 64) == nil; time.Sleep(16 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("the GIF never played")
+		}
+		c.Get(u, 64)
+	}
+	l := e.lives[0]
+	if l == nil {
+		t.Fatal("no live image")
+	}
+	var shown paint.ImageOp
+	for dl := time.Now().Add(5 * time.Second); ; time.Sleep(4 * time.Millisecond) { // a frame past the still
+		if shown = l.Image(); shown != e.op || time.Now().After(dl) {
+			break
+		}
+	}
+	if shown == e.op {
+		t.Fatal("the live image never left its still: the hold would hold the still, which a release leaves anyway")
+	}
+	c.HoldLive(true)
+	time.Sleep(120 * time.Millisecond) // a wake armed before the hold fires
+	inv0 := inv.Load()
+	for dl := time.Now().Add(400 * time.Millisecond); time.Now().Before(dl); time.Sleep(4 * time.Millisecond) {
+		if op := l.Image(); op != shown {
+			t.Fatal("a held live image moved on")
+		}
+	}
+	if n := inv.Load() - inv0; n != 0 {
+		t.Errorf("a held live image asked for %d repaints", n)
+	}
+	c.SetAnimate(false) // lets the player go: its live image goes back to the still
+	c.SetAnimate(true)
+	if op := l.Image(); op != shown {
+		t.Error("a held live image went to its still when its player was let go")
+	}
+	c.HoldLive(false)
+	c.mu.Lock()
+	kept := l.heldOp != (paint.ImageOp{})
+	c.mu.Unlock()
+	if kept {
+		t.Error("after the hold the live image still holds the frame it held (outside the decode budget)")
+	}
+	moved := false
+	for dl := time.Now().Add(2 * time.Second); !moved && time.Now().Before(dl); time.Sleep(4 * time.Millisecond) {
+		c.Get(u, 64) // a frame that lays out starts it again
+		moved = l.Image() != shown
+	}
+	if !moved {
+		t.Error("after the hold the live image never moved on")
+	}
+}
+
+// TestHoldLiveHoldsPlayers: while the cache holds, a Get (the huddle
+// window lays out from the same cache while the main window is frozen)
+// moves no player on and asks for no repaint, so nothing plays behind
+// the frozen frame and no window draws at the GIF's rate. The hold's end
+// asks for one repaint, and the players go on.
+func TestHoldLiveHoldsPlayers(t *testing.T) {
+	const u = "https://files.slack.com/files-tmb/T1-F3-x/huddle.gif"
+	c, inv := gifCache(t, map[string][]byte{u: bigGIF(t, 64, 64, 6, 5, 0)})
+	c.SetLiveOps(true)
+	readyEntry(t, c, u, 64)
+	for dl := time.Now().Add(5 * time.Second); playingNow(c, u, 64) == nil; time.Sleep(16 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("the GIF never played")
+		}
+		c.Get(u, 64)
+	}
+	c.HoldLive(true)
+	time.Sleep(120 * time.Millisecond) // a wake armed before the hold fires
+	adv, inv0 := c.Stats().Advances, inv.Load()
+	for dl := time.Now().Add(400 * time.Millisecond); time.Now().Before(dl); time.Sleep(10 * time.Millisecond) {
+		c.Get(u, 64)
+	}
+	time.Sleep(120 * time.Millisecond)
+	if n := c.Stats().Advances - adv; n != 0 {
+		t.Errorf("held, Gets moved the player on %d frames", n)
+	}
+	if n := inv.Load() - inv0; n != 0 {
+		t.Errorf("held, Gets asked for %d repaints", n)
+	}
+	c.HoldLive(false)
+	for dl := time.Now().Add(time.Second); inv.Load() == inv0 && time.Now().Before(dl); time.Sleep(5 * time.Millisecond) {
+	}
+	if inv.Load() == inv0 {
+		t.Error("the hold's end asked for no repaint: a window with nothing else to draw stays on the held frame")
+	}
+	moved := false
+	for dl := time.Now().Add(2 * time.Second); !moved && time.Now().Before(dl); time.Sleep(10 * time.Millisecond) {
+		c.Get(u, 64)
+		moved = c.Stats().Advances > adv
+	}
+	if !moved {
+		t.Error("after the hold the player never moved on")
+	}
+}

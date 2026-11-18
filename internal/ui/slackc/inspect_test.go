@@ -161,6 +161,84 @@ func TestInspectHitsComponents(t *testing.T) {
 	}
 }
 
+// A held frame (Hold: the inspect tool's freeze draws a frame's ops
+// again instead of recording a new one) keeps each area as its own events
+// left it. Under a still pointer the areas stay hit with no new Enter,
+// a move over the frame moves the hits, the handler drawn over the message still covers it, and
+// the pointer leaving the window leaves them all. Recording the frame
+// afresh ends the hold.
+func TestInspectHeldHits(t *testing.T) {
+	var r input.Router
+	var f InspectFrame
+	var blocker int
+	ptr := f32.Point{}
+	winAt := func(time.Duration) (f32.Point, bool) { return ptr, true }
+	gtx := testGtx(400, 300)
+	gtx.Source = r.Source()
+	InspectBegin(&f, r.Source())
+	gtx.Event(pointer.Filter{Target: &blocker, Kinds: pointer.Move | pointer.Press})
+	inspectScene(gtx, &blocker)
+	InspectEnd()
+	r.Frame(gtx.Ops)
+	frozen := gtx.Ops
+	var show op.Ops
+	again := func() { // the frozen frame's ops drawn once more
+		show.Reset()
+		frozen.Whole().Add(&show)
+		r.Frame(&show)
+	}
+	move := func(x, y float32) {
+		ptr = f32.Pt(x, y)
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: ptr})
+	}
+	pill := []string{"Message", "Reaction"}
+	move(50, 75)
+	hits := f.ReadHits(r.Source(), winAt)
+	if got := names(&f, hits); !slices.Equal(got, pill) {
+		t.Fatalf("on the pill: hits %v, want %v", got, pill)
+	}
+	f.Hold(hits)
+	if !f.Held() {
+		t.Fatal("Hold didn't hold")
+	}
+	for i := range 3 {
+		again()
+		hits = f.ReadHits(r.Source(), winAt)
+		if got := names(&f, hits); !slices.Equal(got, pill) {
+			t.Fatalf("held frame %d, the pointer still: hits %v, want %v", i, got, pill)
+		}
+	}
+	if hits[1].Origin != image.Pt(40, 70) {
+		t.Errorf("the held pill's origin %v, want 40,70", hits[1].Origin)
+	}
+	move(100, 40)
+	if got := names(&f, f.ReadHits(r.Source(), winAt)); !slices.Equal(got, []string{"Message"}) {
+		t.Errorf("held, on the message beside the pill: hits %v, want Message", got)
+	}
+	again()
+	if got := names(&f, f.ReadHits(r.Source(), winAt)); !slices.Equal(got, []string{"Message"}) {
+		t.Errorf("held, still beside the pill a frame later: hits %v, want Message", got)
+	}
+	move(250, 60)
+	if got := names(&f, f.ReadHits(r.Source(), winAt)); len(got) != 0 {
+		t.Errorf("held, on the handler drawn over the message: hits %v, want none", got)
+	}
+	again()
+	move(50, 75)
+	if got := names(&f, f.ReadHits(r.Source(), winAt)); !slices.Equal(got, pill) {
+		t.Errorf("held, back on the pill a frame later: hits %v, want %v", got, pill)
+	}
+	r.Queue(pointer.Event{Kind: pointer.Leave, Source: pointer.Mouse, Position: f32.Pt(500, 75)})
+	if got := names(&f, f.ReadHits(r.Source(), winAt)); len(got) != 0 {
+		t.Errorf("held, the pointer out of the window: hits %v, want none", got)
+	}
+	InspectBegin(&f, r.Source())
+	InspectEnd()
+	if f.Held() {
+		t.Error("recording afresh left the frame held")
+	}
+}
+
 // Experiment reads go to the node drawing.
 func TestInspectNotesExperiments(t *testing.T) {
 	var r input.Router

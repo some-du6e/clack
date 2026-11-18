@@ -52,15 +52,18 @@ return PickPronouns`)
 // pickHost is the window as the tool sees it, for a view on its own.
 type pickHost struct{ th *theme.Theme }
 
-func (h pickHost) Theme() *theme.Theme                         { return h.th }
-func (h pickHost) Describe(*inspect.Report, *inspect.Redactor) {}
-func (h pickHost) ConvKind(string) string                      { return "" }
-func (h pickHost) Regions() []inspect.Region                   { return nil }
-func (h pickHost) Toast(string)                                {}
-func (h pickHost) CopyText(string)                             {}
-func (h pickHost) Post(f func())                               {}
-func (h pickHost) Invalidate()                                 {}
-func (h pickHost) ConfigDir() string                           { return "" }
+func (h pickHost) Theme() *theme.Theme { return h.th }
+func (h pickHost) Describer() func(*inspect.Report, *inspect.Redactor) {
+	return func(*inspect.Report, *inspect.Redactor) {}
+}
+func (h pickHost) ConvKind(string) string    { return "" }
+func (h pickHost) Regions() []inspect.Region { return nil }
+func (h pickHost) Toast(string)              {}
+func (h pickHost) CopyText(string)           {}
+func (h pickHost) Post(f func())             {}
+func (h pickHost) Invalidate()               {}
+func (h pickHost) ConfigDir() string         { return "" }
+func (h pickHost) Frozen(bool)               {}
 
 func TestInspectPicksPluginPronouns(t *testing.T) {
 	_, _, tt, u, h := pluginEnv(t)
