@@ -23,7 +23,7 @@ import (
 // and leaving b for a is a Leave and an Enter as usual. A pointer that
 // left the window gets no Enter.
 func TestResetPointers(t *testing.T) {
-	kinds := pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel
+	hover := pointer.Enter | pointer.Leave | pointer.Cancel // as gesture.Hover asks
 	type env struct {
 		r          *Router
 		a, b, tool *int
@@ -33,9 +33,9 @@ func TestResetPointers(t *testing.T) {
 	}
 	setup := func(t *testing.T) *env {
 		e := &env{r: new(Router), a: new(int), b: new(int), tool: new(int)}
-		e.fa = pointer.Filter{Target: e.a, Kinds: kinds}
-		e.fb = pointer.Filter{Target: e.b, Kinds: kinds}
-		e.ft = pointer.Filter{Target: e.tool, Kinds: kinds}
+		e.fa = pointer.Filter{Target: e.a, Kinds: hover}
+		e.fb = pointer.Filter{Target: e.b, Kinds: hover}
+		e.ft = pointer.Filter{Target: e.tool, Kinds: hover | pointer.Move}
 		e.read = func(f pointer.Filter) []event.Event { return events(e.r, -1, f) }
 		e.draw = func() {
 			var ops op.Ops
