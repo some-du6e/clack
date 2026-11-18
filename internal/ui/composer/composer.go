@@ -77,6 +77,10 @@ type Composer struct {
 	// (client-threads-view onDownArrowInEmptyInput, focusItemBelowInput);
 	// ThreadFooter's default and the channel's do nothing.
 	OnDownWhenEmpty func()
+	// OnFocus runs on the UI goroutine when the box takes the keyboard
+	// focus: the thread pane's onFooterInputFocus, which lets the thread
+	// go from threadsManuallyMarkedUnread (the ui root wires it).
+	OnFocus func()
 	// OnSend is called on the UI goroutine when a message from this
 	// composer goes out: the sendMessage thunk's native with the
 	// client_msg_id it posts under (files false), or sendDraftFiles for
@@ -831,6 +835,9 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 				}
 			}
 		case EvFocus:
+			if !c.focused && c.OnFocus != nil {
+				c.OnFocus()
+			}
 			c.focused = true
 		case EvBlur:
 			c.focused = false

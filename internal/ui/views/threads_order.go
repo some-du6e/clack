@@ -15,6 +15,7 @@ import (
 	"image"
 	"image/color"
 	"sort"
+	"time"
 
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -22,6 +23,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -78,30 +80,40 @@ func (v *Threads) namedNow(mode actLoad) map[string]bool {
 	return out
 }
 
+// thrSeen is a listed thread as a load left it: its newest reply and the
+// last read it had.
+type thrSeen struct{ latest, lastRead string }
+
 // landed is a load's answer in (settle): the named threads it listed go,
-// the threads whose newest reply it moved on wait for the frame that lays
-// them out (markNewReplies), and older replies a card loaded that the
-// answer's window now has go from the card (the window moved back over
-// them: a reply deleted) so none is drawn twice.
+// the event goroutine learns which threads are listed, the threads whose
+// newest reply it moved on wait for the frame that lays them out
+// (markNewReplies), and older replies a card loaded that the answer's
+// window now has go from the card (the window moved back over them: a
+// reply deleted) so none is drawn twice.
 func (v *Threads) landed(page thrData) {
-	v.mu.Lock()
+	listed := make(map[string]bool, len(page.items))
 	for i := range page.items {
-		delete(v.named, page.items[i].key)
+		listed[page.items[i].key] = true
 	}
+	v.mu.Lock()
+	for k := range listed {
+		delete(v.named, k)
+	}
+	v.listed = listed
 	v.mu.Unlock()
-	seen := make(map[string]string, len(page.items))
+	seen := make(map[string]thrSeen, len(page.items))
 	for i := range page.items {
 		t := &page.items[i]
-		cur := t.latest()
-		if prev, ok := v.maxSeen[t.key]; ok && actTSLess(prev, cur) {
+		now := thrSeen{latest: t.latest(), lastRead: v.lastRead(t)}
+		if prev, ok := v.maxSeen[t.key]; ok && actTSLess(prev.latest, now.latest) {
 			if v.grew == nil {
-				v.grew = map[string]string{}
+				v.grew = map[string]thrSeen{}
 			}
 			if _, had := v.grew[t.key]; !had {
 				v.grew[t.key] = prev
 			}
 		}
-		seen[t.key] = cur
+		seen[t.key] = now
 		if c := v.cards[t.key]; c != nil && len(c.older) > 0 && len(t.Replies) > 0 {
 			n := len(c.older)
 			for n > 0 && !actTSLess(c.older[n-1].TS, t.Replies[0].TS) {
@@ -164,14 +176,14 @@ func (v *Threads) noteEntries(page thrData) {
 	if v.initial == nil || v.initLoad != page.load {
 		v.initial, v.initLoad = map[string]string{}, page.load
 	}
-	var marked map[string]bool
+	var marked map[string]core.ThreadMarkOrigin
 	if app := v.h.Core(); app != nil {
 		marked = app.ThreadsMarkedUnread()
 	}
 	for i := range page.items {
 		t := &page.items[i]
 		if lr, seen := v.initial[t.key]; seen {
-			if marked[t.key] && lr != v.lastRead(t) {
+			if marked[t.key] != "" && lr != v.lastRead(t) {
 				v.initial[t.key] = v.lastRead(t)
 			}
 			continue
@@ -194,7 +206,8 @@ func (v *Threads) lastRead(t *thrItem) string {
 }
 
 // followed is the thread's subscription as the store has it now (Slack's
-// subscribed), else as its answer had it.
+// subscribed: core seeds it from getView's roots), else as its answer had
+// it.
 func (v *Threads) followed(t *thrItem) bool {
 	if app := v.h.Core(); app != nil {
 		if sub, ok := app.S.ThreadSub(t.Channel, t.Root.TS); ok {
@@ -215,23 +228,27 @@ func (v *Threads) attention() bool {
 
 // markNewReplies is maybeMarkNewMessageOnUpdate, after the frame that lays
 // out a load's answer (landed's grew): for each thread whose newest reply
-// moved on and is unread, not marked unread by the viewer. Seen means its
-// newest reply's row is on screen while the viewer's attention is on the
-// view. Unseen, a reply from someone else moves the thread's arrival last
-// read (initialLastReadByThread) to its last read when it had none or an
-// older one, so the divider sees the reply as new. Seen, the thread is
-// marked read (setThreadLastRead) while it is followed, when it came in
-// read, its last read had every reply before this one, or its "unread"
-// row shows. It reports whether anything changed (the next frame draws
-// it). Not ported: an unseen reply also counts when the window blurred
-// between the two updates (lastWindowBlurEvent).
+// moved on, unless the viewer marked it unread. Seen means its newest
+// reply's row is in the list's visible range while the viewer's attention
+// is on the view. Unseen, a reply from someone else moves the thread's
+// arrival last read (initialLastReadByThread) to its last read when it had
+// none or an older one, so the divider sees the reply as new. Seen, an
+// unread followed thread is marked read (setThreadLastRead) when it came
+// in read, its last read had every reply before these, or its "unread"
+// row shows. Slack checks each reply as the store takes it; a refresh
+// brings them together, so when a later reply of the viewer's own has
+// marked the thread read, the replies before it are judged against the
+// last read the thread had before them. It reports whether anything
+// changed (the next frame draws it). Not ported: an unseen reply also
+// counts when the window blurred between the two updates
+// (lastWindowBlurEvent).
 func (v *Threads) markNewReplies(page thrData) bool {
 	if len(v.grew) == 0 {
 		return false
 	}
 	grew := v.grew
 	v.grew = nil
-	var marked map[string]bool
+	var marked map[string]core.ThreadMarkOrigin
 	if app := v.h.Core(); app != nil {
 		marked = app.ThreadsMarkedUnread()
 	}
@@ -239,19 +256,21 @@ func (v *Threads) markNewReplies(page thrData) bool {
 	for i := range page.items {
 		t := &page.items[i]
 		prev, ok := grew[t.key]
-		if !ok {
+		if !ok || marked[t.key] != "" {
 			continue
 		}
 		cur, lr := t.latest(), v.lastRead(t)
-		if !actTSLess(lr, cur) || marked[t.key] {
-			continue
+		unread := actTSLess(lr, cur)
+		base := lr // the last read the new replies came over
+		if !unread {
+			base = prev.lastRead
 		}
 		a := v.initial[t.key]
-		seen := att && v.kb.inView(t.key+"-"+cur)
-		if !seen && (a == "" || actTSLess(a, lr)) && thrAuthor(t, cur) != self {
-			v.initial[t.key], changed = lr, true
+		seen := att && v.kb.overlaps(t.key+"-"+cur)
+		if !seen && (a == "" || actTSLess(a, base)) && thrOtherAfter(t, v.cards[t.key], prev.latest, base, self) {
+			v.initial[t.key], changed = base, true
 		}
-		if seen && v.followed(t) && (a == "" || !actTSLess(lr, prev) || v.unreadRowSeen(t)) {
+		if unread && seen && v.followed(t) && (a == "" || !actTSLess(lr, prev.latest) || v.unreadRowSeen(t)) {
 			v.markRead(t)
 			changed = true
 		}
@@ -259,41 +278,316 @@ func (v *Threads) markNewReplies(page thrData) bool {
 	return changed
 }
 
-// thrAuthor is the user of the thread's reply ts ("" when the card doesn't
-// have it).
-func thrAuthor(t *thrItem, ts string) string {
-	for i := len(t.Replies) - 1; i >= 0; i-- {
-		if t.Replies[i].TS == ts {
-			return t.Replies[i].User
-		}
-	}
-	return ""
-}
-
-// unreadRowSeen is the thread's "unread" row on screen: get_rows_and_keys
-// puts it before the first reply newer than the thread's arrival last read
-// (a followed thread that came in unread), and types it "unread" while
-// that is still the thread's last read. Clack's row there is the reply's.
-func (v *Threads) unreadRowSeen(t *thrItem) bool {
-	a := v.initial[t.key]
-	if a == "" || v.lastRead(t) != a {
-		return false
-	}
-	for _, m := range thrShown(t, v.cards[t.key]) {
-		if actTSLess(a, m.TS) {
-			return v.kb.inView(t.key + "-" + m.TS)
+// thrOtherAfter reports a reply of the card's newer than after and base
+// from someone other than self.
+func thrOtherAfter(t *thrItem, c *thrCard, after, base, self string) bool {
+	for _, m := range thrShown(t, c) {
+		if actTSLess(after, m.TS) && actTSLess(base, m.TS) && m.User != self {
+			return true
 		}
 	}
 	return false
+}
+
+// drawUnread is v.unread for the name's weight. In the frame that lays out
+// a landing, a thread markNewReplies has yet to judge that was read
+// before it is drawn read, as Slack decides in componentDidUpdate before
+// the browser paints: the next frame shows what was decided.
+func (v *Threads) drawUnread(t *thrItem) int {
+	if g, ok := v.grew[t.key]; ok && !actTSLess(v.lastRead(t), g.latest) {
+		return 0
+	}
+	return v.unread(t)
+}
+
+// Where a card's unread row goes (unreadRow), besides before a reply.
+const (
+	thrNoUnreadRow   = -1 // none
+	thrUnreadAtOlder = -2 // at "Show N more replies": the unread run starts among the hidden replies
+)
+
+// unreadRow is get_rows_and_keys' unread row (749-770) for a card: a
+// followed thread with an arrival last read (initialLastReadByThread) has
+// it before the first reply shown that is newer, isTempMsg replies left
+// out, or at "Show N more replies" when that last read is older than the
+// root and replies are hidden. It is "unread" while the last read is
+// still the arrival one, and "unread_marked_read" (ghost) once it moved
+// on. A thread that came in read or never read (no last read) has none,
+// whatever is unread in it.
+func (v *Threads) unreadRow(t *thrItem, c *thrCard, replies []core.Message) (at int, ghost bool) {
+	a := v.initial[t.key]
+	if a == "" || !v.followed(t) {
+		return thrNoUnreadRow, false
+	}
+	ghost = v.lastRead(t) != a
+	if actTSLess(a, t.Root.TS) && c != nil && c.moreText != "" {
+		return thrUnreadAtOlder, ghost
+	}
+	for i := range replies {
+		if actTSLess(a, replies[i].TS) && !replies[i].Pending {
+			return i, ghost
+		}
+	}
+	return thrNoUnreadRow, false
+}
+
+// unreadRowSeen is the thread's "unread" row (not the ghost) in the list's
+// visible range: getVisibleRange(void 0, true), Layout.getBounds, which
+// counts any row the viewport overlaps.
+func (v *Threads) unreadRowSeen(t *thrItem) bool {
+	c := v.cards[t.key]
+	replies := thrShown(t, c)
+	at, ghost := v.unreadRow(t, c, replies)
+	switch {
+	case at == thrNoUnreadRow || ghost:
+		return false
+	case at == thrUnreadAtOlder:
+		return v.kb.overlaps("load_older-" + t.key)
+	}
+	return v.kb.overlaps(t.key + "-" + replies[at].TS)
+}
+
+// thrMarkDelay is maybeMarkVisibleThreadAsRead's setTimeout after a load
+// and after a scroll; thrScrollWait is onListScrolledDebounce's 150 ms.
+const (
+	thrMarkDelay  = 350 * time.Millisecond
+	thrScrollWait = 150 * time.Millisecond
+)
+
+// visibleDue reports whether markVisible runs in this frame, after the
+// list's layout: a timer is due (350 ms after a load that sorts the list
+// landed, or after onListScroll, which the 150 ms debounce calls as a
+// scroll starts and once it has stopped), or the viewer's attention came
+// back since the last frame (componentDidUpdate). It asks for the frame
+// the next one is due in.
+func (v *Threads) visibleDue(gtx C) bool {
+	now := gtx.Now
+	att := v.attention()
+	due := att && !v.attWas
+	v.attWas = att
+	if p := v.list.Position; p.First != v.scrollPos.First || p.Offset != v.scrollPos.Offset {
+		if now.Sub(v.scrollAt) > thrScrollWait { // the debounce's leading call
+			v.visAt = append(v.visAt, now.Add(thrMarkDelay))
+		} else {
+			v.scrollTail = true
+		}
+		v.scrollPos, v.scrollAt = p, now
+	}
+	if v.scrollTail {
+		if at := v.scrollAt.Add(thrScrollWait); !now.Before(at) { // its trailing call
+			v.scrollTail = false
+			v.visAt = append(v.visAt, now.Add(thrMarkDelay))
+		} else {
+			gtx.Execute(op.InvalidateCmd{At: at})
+		}
+	}
+	keep := v.visAt[:0]
+	var next time.Time
+	for _, at := range v.visAt {
+		if !now.Before(at) {
+			due = true
+			continue
+		}
+		keep = append(keep, at)
+		if next.IsZero() || at.Before(next) {
+			next = at
+		}
+	}
+	v.visAt = keep
+	if !next.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: next})
+	}
+	return due
+}
+
+// markVisible is maybeMarkVisibleThreadAsRead (threads-view.js 1946-1968),
+// how Slack's Threads view clears what it shows: with the viewer's
+// attention on the view, each followed thread whose "unread" row is in the
+// visible range and that is unread is marked read at its newest reply
+// (setThreadLastRead read: true at maxMarkableTs) and leaves
+// ThreadsMarkedUnread, unless the viewer marked it unread from the Threads
+// view itself. Its row then turns ghost. It reports whether it marked any.
+func (v *Threads) markVisible(page thrData) bool {
+	if !v.attention() {
+		return false
+	}
+	var marked map[string]core.ThreadMarkOrigin
+	if app := v.h.Core(); app != nil {
+		marked = app.ThreadsMarkedUnread()
+	}
+	changed := false
+	for i := range page.items {
+		t := &page.items[i]
+		if marked[t.key] == core.MarkedInThreadsView || !v.followed(t) || !actTSLess(v.lastRead(t), t.latest()) || !v.unreadRowSeen(t) {
+			continue
+		}
+		v.markRead(t)
+		changed = true
+	}
+	return changed
+}
+
+// The Threads view's marked-read UnreadDivider (VxYf ghost:
+// div.c-message_list__unread_divider--ghost.p-threads_view__unread_divider
+// > hr.c-message_list__unread_divider__separator), for its line's
+// transition.
+var (
+	thrClsUnread    = slackc.Class("c-message_list__unread_divider c-message_list__unread_divider--unread_threads p-threads_view__unread_divider").Mods("c-message_list__unread_divider--ghost")
+	thrClsUnreadSep = slackc.Class("c-message_list__unread_divider__separator").Tag("hr")
+)
+
+// ghostLine is the ghost divider's line colour: col, then half its
+// opacity from 3 s after the row turned (opacity .1s 3s; a plugin rule
+// over the transition moves when and how fast it dims).
+func (v *Threads) ghostLine(gtx C, c *thrCard, col color.NRGBA) color.NRGBA {
+	if c.ghostAt.IsZero() {
+		c.ghostAt = gtx.Now
+	}
+	var tr slackc.Styled
+	if sc := slackc.CurrentScope(); sc.Active() {
+		tr = sc.Child(thrClsUnread, 1).Child(thrClsUnreadSep, 0)
+	}
+	dur, delay := tr.Transition("opacity", 100*time.Millisecond, 3*time.Second)
+	f, done := slackc.TransitionProgress(c.ghostAt, gtx.Now, dur, delay)
+	switch {
+	case f == 0 && !done:
+		gtx.Execute(op.InvalidateCmd{At: c.ghostAt.Add(delay)})
+		return col
+	case !done:
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	col.A = uint8(float32(col.A) * (1 - 0.5*f))
+	return col
+}
+
+// liveReply is a listed thread's reply edited, reacted to or deleted (the
+// event goroutine queued it): drawn at once, as Slack's card reads its
+// messages from the store the socket keeps. The card holds the socket's
+// word (gone, edits) over the copies a refresh carries over, until a load
+// that sorts the list brings them all afresh.
+func (v *Threads) liveReply(ev core.Event) {
+	key := ev.Channel + "/" + ev.ThreadTS
+	c := v.cards[key]
+	if c == nil {
+		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: ev.Channel + "-" + ev.ThreadTS}
+		v.cards[key] = c
+	}
+	switch {
+	case ev.Type == "delete":
+		if c.gone == nil {
+			c.gone = map[string]bool{}
+		}
+		c.gone[ev.TS] = true
+		delete(c.edits, ev.TS)
+	case ev.Msg != nil:
+		if c.edits == nil {
+			c.edits = map[string]core.Message{}
+		}
+		c.edits[ev.TS] = *ev.Msg
+	default:
+		return
+	}
+	c.built = false // its people, "Show N more replies"
+}
+
+// fillGap fetches the replies a refresh's window couldn't be joined to
+// (conversations.replies after the card's newest and before the window's
+// first, requestReplies with an oldest bound). Slack's card has every
+// reply that came, as its store takes each off the socket; a refresh here
+// has only getView's latest window, so the ones it lacks join the card
+// when they land (mid). A failure, or more than one answer of them, takes
+// the card back to its window alone, and "Show N more replies" loads the
+// rest in order.
+func (v *Threads) fillGap(page thrData, g thrGap) {
+	app := v.h.Core()
+	if app == nil {
+		return
+	}
+	var t *thrItem
+	for i := range page.items {
+		if page.items[i].key == g.key {
+			t = &page.items[i]
+			break
+		}
+	}
+	if t == nil {
+		return
+	}
+	c := v.cards[g.key]
+	if c == nil {
+		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS}
+		v.cards[g.key] = c
+	}
+	ch, root, folds := t.Channel, t.Root.TS, c.folds
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		msgs, more, err := app.RepliesBetween(ctx, ch, root, g.after, g.before, thrOlderLimit)
+		v.notes.run(v.h, func() { v.landGap(g, folds, msgs, more || err != nil) })
+	}()
+}
+
+// landGap takes a gap's fetch in (UI goroutine). One asked for before the
+// card folded lands nowhere.
+func (v *Threads) landGap(g thrGap, folds int, msgs []core.Message, failed bool) {
+	c := v.cards[g.key]
+	if c == nil || c.folds != folds {
+		return
+	}
+	if failed {
+		v.dropCarried(g.key, g.before)
+		v.fold(c)
+		return
+	}
+	var run []core.Message
+	for _, m := range msgs {
+		if actTSLess(g.after, m.TS) && actTSLess(m.TS, g.before) {
+			run = append(run, m)
+		}
+	}
+	c.mid = thrMerge(c.mid, run)
+	c.built = false
+}
+
+// dropCarried keeps only thread key's replies from ts on: the card's
+// window alone. The items are copied, as a load still out reads the old
+// ones.
+func (v *Threads) dropCarried(key, ts string) {
+	v.data.mutate(func(d *thrData) {
+		items := append([]thrItem(nil), d.items...)
+		for i := range items {
+			if items[i].key != key {
+				continue
+			}
+			var keep []core.Message
+			for _, m := range items[i].Replies {
+				if !actTSLess(m.TS, ts) {
+					keep = append(keep, m)
+				}
+			}
+			items[i].Replies = keep
+		}
+		d.items = items
+	})
+}
+
+// run queues f for the UI goroutine, the next Layout's drain.
+func (n *actNotes) run(h Host, f func()) {
+	n.mu.Lock()
+	n.fns = append(n.fns, f)
+	n.mu.Unlock()
+	h.Invalidate()
 }
 
 // shownItems is the threads mapStateToProps hands ThreadsView: it skips
 // one "in non-member public channel", which Clack's store has as a
 // conversation the viewer isn't in (a channel they left: core's
 // dropMembership). Such a thread keeps its place in the order and shows
-// again if they come back. Not ported: Slack also skips a thread whose
-// channel or root its store doesn't have; Clack's store looks
-// conversations up as rows draw them.
+// again if they come back. An archived channel's threads stay: Slack's
+// channelArchived sets only is_archived, where core's dropMembership drops
+// the membership too. Not ported: Slack also skips a thread whose channel
+// or root its store doesn't have; Clack's store looks conversations up as
+// rows draw them.
 func (v *Threads) shownItems(items []thrItem) []thrItem {
 	app := v.h.Core()
 	if app == nil {
@@ -318,14 +612,14 @@ func (v *Threads) shownItems(items []thrItem) []thrItem {
 }
 
 // thrLeftChannel reports a conversation core knows the viewer isn't in
-// (isMemberConv false): a channel left, archived or deleted, or one only
-// previewed. DMs and group DMs are always theirs.
+// (isMemberConv false) and that isn't archived: a channel left or
+// deleted, or one only previewed. DMs and group DMs are always theirs.
 func thrLeftChannel(app *core.App, ch string) bool {
 	if _, in := app.S.Conv(ch); in {
 		return false
 	}
 	c, ok := app.S.ExtConv(ch)
-	return ok && !c.IsMember && !c.IsIM && !c.IsMPIM
+	return ok && !c.IsMember && !c.IsArchived && !c.IsIM && !c.IsMPIM
 }
 
 // resort is getDerivedStateFromProps on a new refreshId (a mount, or
@@ -334,8 +628,8 @@ func thrLeftChannel(app *core.App, ch string) bool {
 // truncateThreads drops the others when the view unmounts), sorted by
 // sortThreads (8orQ) on the view's own read state (isThreadUnread reads
 // the subscription store, the view's marks in it), then newest activity,
-// with a new load number and divider thread, until the reload's answer
-// replaces them.
+// with a new load number (the divider's thread is picked from it in the
+// next frame), until the reload's answer replaces them.
 func (v *Threads) resort() {
 	app := v.h.Core()
 	v.loads++
@@ -356,13 +650,7 @@ func (v *Threads) resort() {
 			}
 			return actTSLess(items[j].sortTS(), items[i].sortTS())
 		})
-		d.items, d.load, d.readKey = items, load, ""
-		for i := range items {
-			if v.unread(&items[i]) == 0 {
-				d.readKey = items[i].key
-				break
-			}
-		}
+		d.items, d.load = items, load
 	})
 }
 
@@ -376,29 +664,21 @@ func (v *Threads) resort() {
 // could bring back. A reply the card had inside the window that the page
 // lacks is gone (deleted), so only older ones stay.
 //
-// The card's replies carry over only while the two lists join: the window
-// starts at or before the card's newest reply, or every reply since
-// (reply_count's rise) is in the window. Otherwise replies came between
-// them that neither list has (three in one refresh's 5 s over a 2-reply
-// window), and "Show N more replies", which loads before the oldest one
-// shown, would never bring them: the card takes the window alone and
-// folds (true), so the row loads the rest in order.
-func thrRefreshed(had, now thrItem) (thrItem, bool) {
+// The carried replies are the copies the card had (a live layer brings
+// them up to date: merging activity-live-msg, take each carried reply's
+// MessageChange after had.seq, dropping the deleted ones, and keep
+// now.seq; liveReply's gone and edits then go). When the window starts
+// after the card's newest reply, replies may have come between the two
+// that neither list has (three in one refresh's 5 s
+// over a 2-reply window): the card keeps both lists and reports the span
+// (thrGap) for settle to fetch (fillGap). Nothing about the counts tells:
+// reply_count moves with deletions, and on a live layer that patches the
+// root on message_replied it already counts what the window brings.
+func thrRefreshed(had, now thrItem) (thrItem, thrGap, bool) {
 	if len(had.Replies) == 0 || len(now.Replies) == 0 {
-		return now, false
+		return now, thrGap{}, false
 	}
 	first, newest := now.Replies[0].TS, had.Replies[len(had.Replies)-1].TS
-	if actTSLess(newest, first) {
-		added := 0
-		for _, m := range now.Replies {
-			if actTSLess(newest, m.TS) {
-				added++
-			}
-		}
-		if now.Root.ReplyCount-had.Root.ReplyCount != added {
-			return now, true
-		}
-	}
 	reps := make([]core.Message, 0, len(had.Replies)+len(now.Replies))
 	for _, m := range had.Replies {
 		if actTSLess(m.TS, first) {
@@ -406,12 +686,15 @@ func thrRefreshed(had, now thrItem) (thrItem, bool) {
 		}
 	}
 	if len(reps) == 0 {
-		return now, false
+		return now, thrGap{}, false
 	}
 	reps = append(reps, now.Replies...)
 	sort.SliceStable(reps, func(i, j int) bool { return actTSLess(reps[i].TS, reps[j].TS) })
 	now.Replies = reps
-	return now, false
+	if actTSLess(newest, first) {
+		return now, thrGap{key: now.key, after: newest, before: first}, true
+	}
+	return now, thrGap{}, false
 }
 
 // floatingLoader is get_rows_and_keys' "global-loading" row, the list's

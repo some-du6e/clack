@@ -169,6 +169,12 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
+		// Merging msg-latency: its OnState block (socketConnected(fast)
+		// and firstUp before the emit, socketDown on a drop) replaces this
+		// emit; keep its block and give its emit Fast: up &&
+		// a.RTM.LastConnectFast(). Without Fast every reconnect reloads
+		// the Threads view (TestThreadsFastReconnectLikeSlack); without
+		// its block slow connects miss its catch-up.
 		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {

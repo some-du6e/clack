@@ -185,6 +185,13 @@ func (k *vkList) inView(key string) bool {
 	return ok && y >= 0 && y <= k.viewH
 }
 
+// overlaps is getVisibleRange(void 0, true)'s test (Layout.getBounds): any
+// part of the item in the viewport, so a row the top edge cuts counts.
+func (k *vkList) overlaps(key string) bool {
+	y, ok, _ := k.top(key)
+	return ok && y <= k.viewH && y+k.height(key) > 0
+}
+
 // fullyInView is getVisibleRange's test: neither edge cut off (1px slack).
 func (k *vkList) fullyInView(key string) bool {
 	y, ok, _ := k.top(key)

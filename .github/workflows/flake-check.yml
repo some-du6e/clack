@@ -791,6 +791,39 @@ jobs:
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
 
+  # The Threads view's live tests (dogfood-fixes-1: its reads, marks,
+  # reconnects, gaps and reloads) under the race detector, every run
+  # counted: dispatch with -f only=threads-live -f count=10.
+  threads-live:
+    if: ${{ !inputs.only || startsWith('threads-live', inputs.only) }}
+    name: "threads-live ${{ matrix.part }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: marks
+            test: (TestThreadsUpToDateDividerLikeSlack|TestThreadsMarkedUnreadDividerLikeSlack|TestThreadsMarkVisibleLikeSlack|TestThreadsMarkVisibleOnScrollLikeSlack|TestThreadsMarkVisibleSkipsOwnMarksLikeSlack|TestThreadsSeenReplyGuardLikeSlack|TestThreadsHiddenFirstReadLikeSlack|TestThreadsUpToDateDivider)
+          - part: loads
+            test: (TestThreadsSlowReconnectLikeSlack|TestThreadsFastReconnectLikeSlack|TestThreadsRefreshGapLikeSlack|TestThreadsSettleBeforeNextLoad|TestThreadsNamedThreadWaitsLikeSlack|TestThreadsAwayIgnoresRepliesLikeSlack|TestThreadsMountLoadLikeSlack|TestThreadsFailedReloadLikeSlack)
+          - part: order
+            test: (TestThreadsReloadLikeSlack|TestThreadsRefreshKeepsOldThreadsOffTopLikeSlack|TestThreadsReplyDuringReloadLikeSlack|TestThreadsOrderHeldOnReplyLikeSlack|TestThreadsPageAppendedLikeSlack|TestThreadsOrderUnreadFirstLikeSlack|TestThreadsRealtimeLikeSlack|TestThreadsKeysLikeSlack)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "threads ${{ matrix.part }}, race detector, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ./internal/ui/views
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+
   flakes-1113:
     if: ${{ !inputs.only || startsWith('flakes-1113', inputs.only) }}
     name: "flakes-1113 ${{ matrix.test }}"

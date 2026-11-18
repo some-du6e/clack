@@ -233,7 +233,9 @@ func TestThreadsKeysLikeSlack(t *testing.T) {
 // (a refresh), as Slack's RTM-THREADS handlers do.
 func TestThreadsRealtimeLikeSlack(t *testing.T) {
 	app, fs := vkFake(t, nil)
-	v := NewThreads(newKBHost(app, false))
+	h := newKBHost(app, false)
+	h.away.Store(true) // nothing marks the unread thread read on screen (markVisible)
+	v := NewThreads(h)
 	e := &vaEnv{size: image.Pt(1000, 1100)}
 	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
 	e.until(t, "the followed threads", func() bool { p, ok, _ := v.data.get(); return ok && len(p.items) == 2 })
@@ -580,19 +582,29 @@ const (
 // A new reply from someone else in the read thread under it is
 // maybeMarkNewMessageOnUpdate's: seen (its row on screen, the window
 // focused) the thread is marked read (setThreadLastRead) and the divider
-// stays; unseen (the window unfocused) the arrival last read moves to the
-// thread's last read, the reply is new and the divider goes. A page with
-// an unread thread never read keeps it; one with an unread thread read
-// before hides it.
+// stays, and so for the next reply, the thread still followed after the
+// marks; unseen (the window unfocused, or the row below the list) the
+// arrival last read moves to the thread's last read, the reply is new and
+// the divider goes, also when the viewer's own reply after it came in the
+// same refresh. A page with an unread thread never read keeps it; one
+// with an unread thread read before hides it.
 func TestThreadsUpToDateDividerLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
 	const page2, page3 = "1762500000.000100", "1762400000.000100" // the cursors
+	const thrLate2, thrOwn = "1762800100.000100", "1762800200.000100"
 	for _, tc := range []struct {
 		name string
-		away bool // the window unfocused when the reply lands
-	}{{"seen", false}, {"unseen", true}} {
+		away bool        // the window unfocused when the reply lands
+		size image.Point // the list's size: C's reply row below it
+		own  bool        // the viewer's own reply after it, in the same refresh
+	}{
+		{"seen", false, image.Pt(1000, 1100), false},
+		{"unseen", true, image.Pt(1000, 1100), false},
+		{"off screen", false, image.Pt(1000, 300), false},
+		{"unseen, then own reply", true, image.Pt(1000, 1100), true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var replied atomic.Bool
+			var replies atomic.Int32 // the replies C got since the load
 			var marks thrMarkLog
 			app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
 				marks.note(method, f)
@@ -608,8 +620,13 @@ func TestThreadsUpToDateDividerLikeSlack(t *testing.T) {
 					return thrOrderAnswer(thrFixRead(ch, thrE, thrEReply, "U0FAKE00002", true, thrE)), true
 				}
 				c := thrFixRead(ch, thrC, thrCReply, fakeslack.SelfID, false, thrCReply)
-				if replied.Load() {
+				switch n := replies.Load(); {
+				case n == 1 && tc.own: // grace's, then the viewer's own: the server marks C read through it
+					c = thrFixReplies(ch, thrC, 3, thrOwn, thrReplyBy(thrLate, "U0FAKE00002"), thrReplyBy(thrOwn, fakeslack.SelfID))
+				case n == 1:
 					c = thrCount(thrFixRead(ch, thrC, thrLate, "U0FAKE00002", true, thrCReply), 2)
+				case n == 2:
+					c = thrFixReplies(ch, thrC, 3, thrLate, thrReplyBy(thrLate, "U0FAKE00002"), thrReplyBy(thrLate2, "U0FAKE00002"))
 				}
 				ans := thrOrderAnswer(thrFixRead(ch, thrA, thrAReply, "U0FAKE00002", true, thrA), c)
 				ans["max_ts"] = page2
@@ -618,21 +635,23 @@ func TestThreadsUpToDateDividerLikeSlack(t *testing.T) {
 			h := newKBHost(app, false)
 			v := NewThreads(h)
 			e := thrViewEnv(t, v, 2)
+			e.size = tc.size
 			e.frame()
 			if v.divAt != 1 {
 				t.Fatalf("divider at %d after the load, want 1: before the read thread, with the unread one above it", v.divAt)
 			}
 			h.away.Store(tc.away)
-			n := fs.CallCount("subscriptions.thread.getView")
-			replied.Store(true)
-			fs.Push(map[string]any{"type": "message", "channel": ch, "user": "U0FAKE00002", "text": "a synthetic late reply",
-				"ts": thrLate, "thread_ts": thrC, "event_ts": thrLate})
-			e.until(t, "the refresh after a reply", func() bool { return fs.CallCount("subscriptions.thread.getView") > n && !v.data.busy() })
-			e.frame() // the answer laid out: maybeMarkNewMessageOnUpdate
-			e.frame()
+			reply := func(what, ts string) {
+				t.Helper()
+				replies.Add(1)
+				thrRefreshAfter(t, e, v, fs, what, thrReplyEvent(ch, thrC, ts))
+				e.frame()
+			}
+			reply("the refresh after a reply", thrLate)
 			read := thrC + "@" + thrLate + " read=1"
-			if tc.away {
-				if p, _, _ := v.data.get(); v.unread(&p.items[1]) == 0 {
+			key := ch + "/" + thrC
+			if tc.away || tc.size.Y < 1000 {
+				if p, _, _ := v.data.get(); !tc.own && v.unread(&p.items[1]) == 0 {
 					t.Fatal("the read thread's new reply didn't come in")
 				}
 				if v.divAt != -1 {
@@ -650,6 +669,21 @@ func TestThreadsUpToDateDividerLikeSlack(t *testing.T) {
 			if v.divAt != 1 {
 				t.Errorf("divider at %d after a seen reply in the thread under it, want 1 (that thread came in read)", v.divAt)
 			}
+			// the server's thread_marked for the mark: C stays followed
+			fs.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ch,
+				"thread_ts": thrC, "last_read": thrLate, "active": true}, "event_ts": "1762800050.000100"})
+			e.until(t, "the thread_marked", func() bool {
+				sub, ok := app.S.ThreadSub(ch, thrC)
+				return ok && sub.LastRead == thrLate
+			})
+			if p, _, _ := v.data.get(); !v.followed(&p.items[1]) {
+				t.Fatal("C isn't followed after its marks")
+			}
+			reply("the refresh after the next reply", thrLate2)
+			e.until(t, "the next seen reply marked read", func() bool { return marks.has(thrC + "@" + thrLate2 + " read=1") })
+			if v.read[key] != thrLate2 || v.divAt != 1 {
+				t.Errorf("after the next seen reply: read to %q, divider at %d; want %s and 1", v.read[key], v.divAt, thrLate2)
+			}
 			for _, st := range []struct {
 				what    string
 				n, want int
@@ -666,6 +700,31 @@ func TestThreadsUpToDateDividerLikeSlack(t *testing.T) {
 			}
 		})
 	}
+}
+
+// thrReplyBy is a reply ts from user.
+func thrReplyBy(ts, user string) slack.Message {
+	return slack.Message{Type: "message", TS: ts, User: user, Text: "a synthetic reply"}
+}
+
+// thrFixReplies is a followed thread its viewer last read at lastRead,
+// reply_count count, whose getView window holds replies; those after
+// lastRead are its unread ones.
+func thrFixReplies(ch, root string, count int, lastRead string, replies ...slack.Message) map[string]any {
+	r := slack.Message{Type: "message", Channel: ch, TS: root, ThreadTS: root, User: "U0FAKE00001", Text: "a synthetic root",
+		ReplyCount: count, LatestReply: replies[len(replies)-1].TS, Subscribed: true, LastRead: lastRead}
+	var win, unread []slack.Message
+	for _, m := range replies {
+		m.Channel, m.ThreadTS = ch, root
+		if !slices.Contains(r.ReplyUsers, m.User) {
+			r.ReplyUsers = append(r.ReplyUsers, m.User)
+		}
+		win = append(win, m)
+		if actTSLess(lastRead, m.TS) {
+			unread = append(unread, m)
+		}
+	}
+	return map[string]any{"root_msg": r, "latest_replies": win, "unread_replies": unread}
 }
 
 // thrMarkLog records subscriptions.thread.mark calls as "thread@ts read=N".
@@ -721,6 +780,9 @@ func TestThreadsRefreshKeepsOldThreadsOffTopLikeSlack(t *testing.T) {
 		{"channel left", true, func(fs *fakeslack.Server, bch string) {
 			fs.Push(map[string]any{"type": "channel_left", "channel": bch, "event_ts": "1762620000.000100"})
 		}},
+		{"channel archived", true, func(fs *fakeslack.Server, bch string) {
+			fs.Push(map[string]any{"type": "channel_archive", "channel": bch, "user": "U0FAKE00001", "event_ts": "1762620000.000100"})
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var gone atomic.Bool
@@ -769,10 +831,10 @@ func TestThreadsRefreshKeepsOldThreadsOffTopLikeSlack(t *testing.T) {
 			if roots[0] != a.root || slices.Contains(roots, d.root) {
 				t.Fatalf("after the refresh: %v; want %s first and the old thread %s out until page 2", roots, a.root, d.root)
 			}
-			if tc.other { // mapStateToProps skips a thread in a channel the viewer isn't in
-				p, _, _ := v.data.get()
-				if slices.ContainsFunc(v.shownItems(p.items), func(it thrItem) bool { return it.Root.TS == b.root }) {
-					t.Errorf("the left channel's thread %s is still drawn", b.root)
+			if tc.other { // mapStateToProps skips a thread in a channel the viewer isn't in, not an archived one's
+				_, drawn := v.kb.idx["heading-"+bch+"/"+b.root]
+				if left := tc.name == "channel left"; drawn == left {
+					t.Errorf("%s: thread %s drawn %v, want %v", tc.name, b.root, drawn, !left)
 				}
 			}
 			v.list.Position.First = len(roots) - 1 // the list's end on screen: page 2 brings it, after the list
@@ -812,7 +874,9 @@ func TestThreadsMountLoadLikeSlack(t *testing.T) {
 			thrFixRead(ch, thrC, thrCReply, fakeslack.SelfID, false, thrCReply),
 			thrFixRead(ch, thrX, thrXReply, "U0FAKE00002", false, thrXReply)), true
 	})
-	v := NewThreads(newKBHost(app, false))
+	h := newKBHost(app, false)
+	h.away.Store(true) // the visit's reads are the test's own (no markVisible)
+	v := NewThreads(h)
 	e := thrViewEnv(t, v, 4)
 	e.frame()
 	if got := thrRoots(v); !slices.Equal(got, []string{thrA, thrB, thrC, thrX}) || v.divAt != 2 {
@@ -912,14 +976,19 @@ func TestThreadsFailedReloadLikeSlack(t *testing.T) {
 		}
 		vaShot(t, e, "threads-reload-error", false)
 		g.hold()
-		v.retry.Click() // the error view's Try Again
-		e.frame()
+		e.click(thrFind(t, e, &v.retry)) // the error view's Try Again
 		e.frame()
 		if errored() {
 			t.Errorf("%s: the error view stays after Try Again", tc.name)
 		}
-		if len(thrRoots(v)) != 2 || v.mounting != tc.mounting {
-			t.Errorf("%s: after Try Again %v (mounting %v); want the threads held, mounting %v", tc.name, thrRoots(v), v.mounting, tc.mounting)
+		p, _, _ := v.data.get()
+		for _, it := range p.items {
+			if _, ok, _ := v.kb.top("heading-" + it.key); !ok {
+				t.Errorf("%s: after Try Again %s isn't drawn; want the threads held", tc.name, it.Root.TS)
+			}
+		}
+		if v.mounting != tc.mounting {
+			t.Errorf("%s: after Try Again mounting %v, want %v", tc.name, v.mounting, tc.mounting)
 		}
 		g.open()
 		e.until(t, tc.name+": Try Again's load", func() bool { return v.Settled() && !v.mounting && len(thrRoots(v)) == 2 && !errored() })

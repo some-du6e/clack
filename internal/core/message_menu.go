@@ -23,11 +23,22 @@ import (
 // thread's read point just before it first (setSubscription {lastRead:
 // moveTimestampBackInTime(ts)}) and puts it back when the mark fails; the
 // counts follow from the server. The thread goes into ThreadsMarkedUnread
-// meanwhile, and leaves it again on a failure.
+// (from the thread pane: MarkThreadUnreadFrom names the container).
 func (a *App) MarkThreadUnread(ctx context.Context, ch, threadTS, ts string) error {
+	return a.MarkThreadUnreadFrom(ctx, ch, threadTS, ts, MarkedInThread)
+}
+
+// MarkThreadUnreadFrom is MarkThreadUnread from the container origin.
+// v4te's markThread keeps the thread's mark before this one
+// (previousManualMark) and on a failure puts that back, or takes the
+// thread out when it had none: a failed mark never undoes an earlier one
+// that worked.
+func (a *App) MarkThreadUnreadFrom(ctx context.Context, ch, threadTS, ts string, origin ThreadMarkOrigin) error {
+	key := ch + "/" + threadTS
+	prevMark := a.thrUnread.get(key)
 	var prev store.ThreadSub
 	known := false
-	a.thrUnread.set(ch+"/"+threadTS, true)
+	a.thrUnread.set(key, origin)
 	if m, ok := a.S.Find(ch, threadTS); ok {
 		prev, known = a.S.ThreadSubOf(ch, &m), true
 		a.setThreadLastRead(ch, threadTS, tsBefore(nil, ts))
@@ -36,7 +47,7 @@ func (a *App) MarkThreadUnread(ctx context.Context, ch, threadTS, ts string) err
 	if err == nil {
 		a.refreshCountsSoon()
 	} else {
-		a.thrUnread.set(ch+"/"+threadTS, false)
+		a.thrUnread.set(key, prevMark)
 		if known && prev.LastRead != "" {
 			a.setThreadLastRead(ch, threadTS, prev.LastRead)
 		}
@@ -44,49 +55,80 @@ func (a *App) MarkThreadUnread(ctx context.Context, ch, threadTS, ts string) err
 	return err
 }
 
+// ThreadMarkOrigin is where the viewer marked a thread unread: Slack's
+// markOrigin, a messageContainerType. Only the Threads view's own marks
+// keep its visible threads from being marked read again
+// (maybeMarkVisibleThreadAsRead); any mark keeps a new reply from doing
+// it (maybeMarkNewMessageOnUpdate).
+type ThreadMarkOrigin string
+
+// The origins Clack marks threads unread from.
+const (
+	MarkedInThread      ThreadMarkOrigin = "THREAD"        // the thread pane, a channel's thread
+	MarkedInThreadsView ThreadMarkOrigin = "THREADS_VIEW"  // the Threads view
+	MarkedInActivity    ThreadMarkOrigin = "ACTIVITY_PAGE" // Activity's Mark as unread
+)
+
 // threadsMarkedUnread is Slack's threadsManuallyMarkedUnread: the threads
-// ("channel/thread_ts") the viewer marked unread in this client.
+// ("channel/thread_ts") the viewer marked unread in this client, by
+// origin.
 type threadsMarkedUnread struct {
 	mu sync.Mutex
-	m  map[string]bool
+	m  map[string]ThreadMarkOrigin
 }
 
-func (t *threadsMarkedUnread) set(key string, on bool) {
+// set puts key in with origin ("": takes it out).
+func (t *threadsMarkedUnread) set(key string, origin ThreadMarkOrigin) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !on {
+	if origin == "" {
 		delete(t.m, key)
 		return
 	}
 	if t.m == nil {
-		t.m = map[string]bool{}
+		t.m = map[string]ThreadMarkOrigin{}
 	}
-	t.m[key] = true
+	t.m[key] = origin
+}
+
+func (t *threadsMarkedUnread) get(key string) ThreadMarkOrigin {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.m[key]
 }
 
 // ThreadsMarkedUnread is the threads ("channel/thread_ts") the viewer
-// marked unread in this client (MarkThreadUnread) that the Threads view
-// hasn't let go yet, nil for none: Slack's threadsManuallyMarkedUnread.
-// While a thread is in it, the Threads view's arrival last read follows
-// the thread's last read (getDerivedStateFromProps), and a new reply
-// neither marks it read nor moves that (maybeMarkNewMessageOnUpdate).
-func (a *App) ThreadsMarkedUnread() map[string]bool {
+// marked unread in this client (MarkThreadUnreadFrom, Activity's Mark as
+// unread) that no view has let go yet, with where they were marked; nil
+// for none: Slack's threadsManuallyMarkedUnread. While a thread is in it,
+// the Threads view's arrival last read follows the thread's last read
+// (getDerivedStateFromProps), a new reply neither marks it read nor moves
+// that (maybeMarkNewMessageOnUpdate), and the thread pane doesn't mark it
+// read (checkUnreads).
+func (a *App) ThreadsMarkedUnread() map[string]ThreadMarkOrigin {
 	a.thrUnread.mu.Lock()
 	defer a.thrUnread.mu.Unlock()
 	if len(a.thrUnread.m) == 0 {
 		return nil
 	}
-	out := make(map[string]bool, len(a.thrUnread.m))
-	for k := range a.thrUnread.m {
-		out[k] = true
+	out := make(map[string]ThreadMarkOrigin, len(a.thrUnread.m))
+	for k, o := range a.thrUnread.m {
+		out[k] = o
 	}
 	return out
 }
 
+// ThreadMarkedUnread is where the viewer marked ch/threadTS unread, ""
+// when it isn't in ThreadsMarkedUnread.
+func (a *App) ThreadMarkedUnread(ch, threadTS string) ThreadMarkOrigin {
+	return a.thrUnread.get(ch + "/" + threadTS)
+}
+
 // ForgetThreadMarkedUnread lets a thread go from ThreadsMarkedUnread,
-// ThreadsView's removeThreadFromManuallyMarkedUnreadArray (it marked the
-// thread read); with an empty channel every thread goes, its
-// clearThreadsFromManuallyMarkedUnreadArray (it unmounted).
+// removeThreadFromManuallyMarkedUnreadArray: the Threads view marked it
+// read, or the thread pane showed it or its reply box took the focus.
+// With an empty channel every thread goes,
+// clearThreadsFromManuallyMarkedUnreadArray (the Threads view unmounted).
 func (a *App) ForgetThreadMarkedUnread(ch, threadTS string) {
 	if ch == "" {
 		a.thrUnread.mu.Lock()
@@ -94,7 +136,7 @@ func (a *App) ForgetThreadMarkedUnread(ch, threadTS string) {
 		a.thrUnread.mu.Unlock()
 		return
 	}
-	a.thrUnread.set(ch+"/"+threadTS, false)
+	a.thrUnread.set(ch+"/"+threadTS, "")
 }
 
 // BroadcastReply is "Send reply to this channel" (broadcastMessage, thunk

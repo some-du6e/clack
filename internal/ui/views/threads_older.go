@@ -42,15 +42,55 @@ type thrOlder struct {
 	err    error
 }
 
-// thrShown is the replies the card shows: the loaded older ones, then the
-// latest ones subscriptions.thread.getView sent.
+// thrShown is the replies the card shows, oldest first: the loaded older
+// ones, then subscriptions.thread.getView's latest ones (with those a
+// refresh carried over) and the gaps filled among them, less the replies
+// the socket deleted and with the copies it edited.
 func thrShown(t *thrItem, c *thrCard) []core.Message {
-	if c == nil || len(c.older) == 0 {
+	if c == nil || len(c.older) == 0 && len(c.mid) == 0 && len(c.gone) == 0 && len(c.edits) == 0 {
 		return t.Replies
 	}
-	out := make([]core.Message, 0, len(c.older)+len(t.Replies))
+	out := make([]core.Message, 0, len(c.older)+len(c.mid)+len(t.Replies))
 	out = append(out, c.older...)
-	return append(out, t.Replies...)
+	out = append(out, thrMerge(c.mid, t.Replies)...)
+	if len(c.gone) == 0 && len(c.edits) == 0 {
+		return out
+	}
+	kept := out[:0]
+	for _, m := range out {
+		if c.gone[m.TS] {
+			continue
+		}
+		if e, ok := c.edits[m.TS]; ok {
+			m = e
+		}
+		kept = append(kept, m)
+	}
+	return kept
+}
+
+// thrMerge is a and b in ts order, each ts once (b's copy).
+func thrMerge(a, b []core.Message) []core.Message {
+	if len(a) == 0 {
+		return b
+	}
+	out := make([]core.Message, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) || j < len(b) {
+		switch {
+		case j == len(b) || i < len(a) && actTSLess(a[i].TS, b[j].TS):
+			out = append(out, a[i])
+			i++
+		case i == len(a) || actTSLess(b[j].TS, a[i].TS):
+			out = append(out, b[j])
+			j++
+		default:
+			out = append(out, b[j])
+			i++
+			j++
+		}
+	}
+	return out
 }
 
 // thrMoreText is LoadOlderMessage's label ("" for no row).
@@ -77,6 +117,9 @@ func (v *Threads) loadOlder(t *thrItem, c *thrCard) {
 		latest = sh[0].TS
 	}
 	c.olderBusy = true
+	// merging activity-live-msg: capture its from (app.MessageChangeSeq())
+	// next to folds, and store both in thrOlder; a zero folds drops every
+	// answer once a card has folded
 	ch, root, h, folds := t.Channel, t.Root.TS, v.h, c.folds
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

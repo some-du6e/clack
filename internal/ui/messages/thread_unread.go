@@ -33,7 +33,9 @@ import (
 //     "unread_marked_read" (the ghost: its line at half opacity after 3 s).
 //   - checkUnreads: while the user's attention is on the thread (window
 //     focused, no overlay) a followed thread with lastRead < maxMarkableTs
-//     is marked read 350 ms later (setThreadLastRead).
+//     is marked read 350 ms later (setThreadLastRead), unless the viewer
+//     marked it unread (threadsManuallyMarkedUnread, which the pane's
+//     mount, a thread switch and its reply box's focus empty of it).
 //   - getThreadStartPosition: a thread opens at its first unread reply
 //     (offset 100), at the reply it was last read to, or at the root.
 //   - onEsc: Esc marks the thread read when there is something to mark;
@@ -189,6 +191,12 @@ func (s *listState) checkThreadUnreads(gtx layout.Context, h Host, now time.Time
 	}
 	if ah, ok := h.(AttentionHost); ok && !ah.UserAttention() {
 		s.thr.armed = time.Time{} // Not marking …: the window isn't focused
+		return
+	}
+	if app := h.Core(); app != nil && app.ThreadMarkedUnread(s.ch, s.ts) != "" {
+		// checkUnreads marks only a thread that isn't in
+		// threadsManuallyMarkedUnread: Mark unread in the open pane holds
+		s.thr.armed = time.Time{}
 		return
 	}
 	if s.thr.armed.IsZero() {

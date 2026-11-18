@@ -550,6 +550,12 @@ func (a *App) MarkActivityUnread(ctx context.Context, items ...ActivityItem) err
 	es := make([]entry, 0, len(items))
 	for _, it := range items {
 		es = append(es, entry{Type: it.Type, Key: it.Key, TS: firstNonEmpty(it.TS, it.FeedTS), FeedTS: it.FeedTS})
+		// markActivityItemAsUnread (boot-shared 54V6): a thread's item
+		// puts its thread in threadsManuallyMarkedUnread (ACTIVITY_PAGE),
+		// and a failure doesn't take it out; reactions are never marked
+		if it.Type != "message_reaction" && it.Channel != "" && it.ThreadTS != "" {
+			a.thrUnread.set(it.Channel+"/"+it.ThreadTS, MarkedInActivity)
+		}
 	}
 	b, _ := json.Marshal(es)
 	return a.C.Call(ctx, "activity.markUnread", url.Values{"entries": {string(b)}}, nil)
@@ -776,18 +782,39 @@ func (a *App) onThreadMarked(raw json.RawMessage) {
 			Channel  string `json:"channel"`
 			ThreadTS string `json:"thread_ts"`
 			LastRead string `json:"last_read"`
+			Active   *bool  `json:"active"` // the subscription is on: the thread is followed
 		} `json:"subscription"`
 	}
 	_ = json.Unmarshal(raw, &e)
-	a.setThreadLastRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
+	a.markThreadLastRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead, e.Subscription.Active)
 }
 
 // setThreadLastRead records a thread's last read reply (Slack's
 // setSubscription {lastRead}: the subscription, which the cached root
 // copies take too) and tells the views.
 func (a *App) setThreadLastRead(ch, threadTS, lastRead string) {
+	a.markThreadLastRead(ch, threadTS, lastRead, nil)
+}
+
+// markThreadLastRead is setThreadLastRead with what the write says of the
+// subscription (thread_marked's active; nil: nothing). Slack's
+// setSubscription {lastRead} on a thread its store has no subscription
+// for leaves subscribed unset, and readers fall back to the root's own
+// copy. Clack's record has no unset, so a last read alone for a thread the
+// store knows nothing of (no subscription, no cached root) records nothing
+// rather than a thread nobody follows: the Threads view would stop marking
+// it read and drop it on a resort.
+func (a *App) markThreadLastRead(ch, threadTS, lastRead string, active *bool) {
 	if ch == "" || threadTS == "" || lastRead == "" {
 		return
+	}
+	if _, known := a.S.ThreadSub(ch, threadTS); !known {
+		if _, cached := a.S.Find(ch, threadTS); !cached {
+			if active != nil {
+				a.S.SetThreadSub(ch, threadTS, func(s *store.ThreadSub) { s.Subscribed, s.LastRead = *active, lastRead })
+			}
+			return
+		}
 	}
 	a.S.SetThreadSub(ch, threadTS, func(s *store.ThreadSub) { s.LastRead = lastRead })
 	if m, ok := a.S.Find(ch, threadTS); ok {

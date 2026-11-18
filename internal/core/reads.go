@@ -786,8 +786,16 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 			MentionCount int  `json:"mention_count"`
 		} `json:"threads_state"`
 	}
+	subs := a.S.SubSeq() // a subscription event while it is out is newer (SyncSubs)
 	if err := a.C.Call(ctx, "subscriptions.thread.getView", p, &res); err != nil {
 		return ThreadsPage{}, err
+	}
+	// processThreads runs every root through slurpThreadSubscriptions
+	// (udbq, preprocessImsgs): each listed thread's subscription is the
+	// answer's (subscribed, last_read), so a later mark or thread_marked
+	// only moves its last read (store/thread_subs.go)
+	for _, t := range res.Threads {
+		a.S.SyncSubs(t.Root.Channel, subs, []slack.Message{t.Root})
 	}
 	var all []slack.Message
 	for _, t := range res.Threads {

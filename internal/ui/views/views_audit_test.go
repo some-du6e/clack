@@ -429,7 +429,9 @@ func vaFake(t *testing.T) (*core.App, *fakeslack.Server) {
 func TestThreadsUpToDateDivider(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		app, fs := vaFake(t)
-		v := NewThreads(&slickHost{app: app, th: theme.New(dark)})
+		h := newKBHost(app, dark)
+		h.away.Store(true) // the read is the test's own (no markVisible)
+		v := NewThreads(h)
 		e := &vaEnv{size: image.Pt(1000, 1100)}
 		e.draw = func(gtx layout.Context) { v.Layout(gtx) }
 		e.until(t, "the followed threads", func() bool { p, ok, _ := v.data.get(); return ok && len(p.items) == 2 })

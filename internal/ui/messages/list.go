@@ -329,6 +329,14 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 // prepare is layoutList's load and sync, earlier in the frame at frame
 // (ThreadView.Prepare): what the ui root decides from the list before it
 // lays the list out (the reply box) is then what the list draws.
+//
+// Merging plugin-render-3: its layoutList takes the model markDrawn hands
+// back (another list's for the conversation, or an evicted one put back)
+// before ensureLoaded and sync. Factor that swap into a helper and call it
+// first here and in layoutList (markDrawn is idempotent within a frame),
+// and in layoutList run ensureLoaded and sync when the frame wasn't
+// prepared or the swap changed s.m, so a prepared frame never draws the
+// model it dropped.
 func (s *listState) prepare(h Host, frame time.Time) {
 	s.hb.ensureLoaded(s.m)
 	s.sync(h, time.Now())
