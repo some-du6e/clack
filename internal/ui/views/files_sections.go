@@ -106,9 +106,10 @@ func (f *Files) rowState(key string) *sbRowState {
 
 // sbColors are the Files sidebar's theme colours, flattened over the
 // chrome: theme-content-inv-sec (text), -pry (pry), theme-surf-inv-ter
-// (hover), the divider and the selected row's.
+// (hover), theme-otl-inv-pry (rule), the BrowseSidebarDivider's
+// rgba(var(--sk_foreground_low), .13) (divider) and the selected row's.
 type sbColors struct {
-	chrome, text, pry, hover, rule, selBg, selFg color.NRGBA
+	chrome, text, pry, hover, rule, divider, selBg, selFg color.NRGBA
 }
 
 func (f *Files) sbCol() sbColors {
@@ -121,12 +122,15 @@ func (f *Files) sbCol() sbColors {
 		chrome = flatten(c.SidebarBg, chrome)
 	}
 	s := sbColors{chrome: chrome, text: flatten(filesNavText, chrome), pry: rgb(0xffffff), hover: flatten(filesNavHover, chrome),
-		rule: flatten(filesNavRule, chrome), selBg: filesNavSelBg, selFg: filesNavSelFg}
+		rule: flatten(filesNavRule, chrome), divider: flatten(filesNavRule, chrome), selBg: filesNavSelBg, selFg: filesNavSelFg}
 	if c.SidebarText.A > 0 {
 		s.text = flatten(c.SidebarText, chrome)
 		s.hover = flatten(c.SidebarHover, chrome)
 		s.rule = flatten(c.SidebarDivider, chrome)
 		s.selBg, s.selFg = flatten(c.SidebarActive, chrome), c.SidebarActiveText
+	}
+	if c.SidebarRule.A > 0 { // .p-browse_sidebar__divider
+		s.divider = flatten(c.SidebarRule, chrome)
 	}
 	if c.SidebarTextUnread.A > 0 {
 		s.pry = flatten(c.SidebarTextUnread, chrome)
@@ -414,7 +418,7 @@ func (f *Files) sidebarRow(gtx C, r sbRow, sc sbColors) D {
 	case sbNav:
 		return f.navRow(gtx, r, sc)
 	case sbDivider:
-		return f.sidebarDivider(gtx, sc.rule)
+		return f.sidebarDivider(gtx, sc.divider)
 	case sbSpacer: // .p-browse_sidebar__spacer
 		return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(12))}
 	case sbSubHeader:
