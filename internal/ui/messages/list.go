@@ -167,6 +167,9 @@ type listState struct {
 	laidOut   bool
 	laidPos   layout.Position
 	laidBuilt uint64
+	// preparedAt is the frame (gtx.Now) prepare synced the list for:
+	// layoutList draws that copy and doesn't sync again in that frame
+	preparedAt time.Time
 
 	rc rowCtx // this frame's row inputs (rows keep a pointer to it)
 
@@ -320,6 +323,10 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	}
 	s.list.Axis = layout.Vertical
 	s.list.ScrollToEnd = true
+	// Slack top-aligns a short thread (its reply box right under the last
+	// reply): the thread list draws from its top what doesn't fill it, and
+	// still keeps to its end once the thread outgrows it (Gio patch 45)
+	s.list.StartAligned = ts != ""
 	if len(listCache) > 2*maxModels {
 		for k := range listCache {
 			delete(listCache, k)
@@ -328,6 +335,45 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	}
 	listCache[key] = s
 	return s
+}
+
+// prepare is layoutList's load and sync, earlier in the frame at frame
+// (ThreadView.Prepare): what the ui root decides from the list before it
+// lays the list out (the reply box) is then what the list draws.
+func (s *listState) prepare(h Host, frame time.Time) {
+	s.adopt(frame)
+	s.hb.ensureLoaded(s.m)
+	s.sync(h, time.Now())
+	s.preparedAt = frame
+}
+
+// adopt marks the list's model drawn in the frame at (the hub's eviction
+// keeps the conversations drawn last; a model it dropped while the list
+// was off screen is taken back here) and, when another list made the hub
+// a model for the conversation meanwhile, switches to that one: the one
+// core's events change. It runs before the frame's load and sync, in
+// prepare or in layoutList's own, so a prepared frame (ThreadView.Prepare)
+// syncs from the right model and every frame marks its model drawn.
+// Revisions count per model, and a model's first load numbers its
+// messages as the dropped one's did, so a row whose message changed while
+// the model was out kept its copy (the same number) and skipped the
+// updates whose numbers the old model had used: every row takes the new
+// model's entries again, with the caches keyed on those numbers (its view
+// read, its huddle, its hidden-sender check), and evictions count from
+// the new model's own.
+func (s *listState) adopt(at time.Time) {
+	m := s.hb.markDrawn(s.m, at)
+	if m == s.m {
+		return
+	}
+	s.m, s.snap.rev = m, 0
+	for _, r := range s.rows {
+		r.rev, r.viewRev, r.viewConv = 0, 0, 0
+		r.hmOK, r.hidChecked = false, false
+	}
+	m.mu.Lock()
+	s.evictSeen = m.evictGen
+	m.mu.Unlock()
 }
 
 // sync copies the model and rebuilds items if anything changed.
@@ -678,23 +724,11 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	st := styleFor(h)
 	now := time.Now()
 	lastHost = h
-	if m := s.hb.markDrawn(s.m, gtx.Now); m != s.m {
-		// another list's model for the conversation (markDrawn). Revisions
-		// count per model, and a model's first load numbers its messages
-		// as the dropped one's did: a row whose message changed while the
-		// model was out kept its copy (the same number), and skipped the
-		// updates whose numbers the old model had used. Every row takes the
-		// new model's entry, and evictions count from its own.
-		s.m, s.snap.rev = m, 0
-		for _, r := range s.rows {
-			r.rev = 0
-		}
-		m.mu.Lock()
-		s.evictSeen = m.evictGen
-		m.mu.Unlock()
+	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
+		s.adopt(gtx.Now)
+		s.hb.ensureLoaded(s.m)
+		s.sync(h, now)
 	}
-	s.hb.ensureLoaded(s.m)
-	s.sync(h, now)
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
 	size := gtx.Constraints.Max
@@ -856,7 +890,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.visible[1] = i + 1
 	}
 	// contentH is the total item height when every item was laid out (the
-	// thread pane top-aligns short threads with it), else 0.
+	// ui root puts a short thread's reply box under it), else 0.
 	s.contentH = 0
 	if p.First == 0 && s.visible[1] == len(s.items) {
 		s.contentH = y + p.Offset

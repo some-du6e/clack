@@ -151,7 +151,7 @@ func TestListsPastTheModelLimitTakeLiveMessages(t *testing.T) {
 			root := roots[i]
 			app.S.SetThread(ch, root.TS, []slack.Message{root})
 			v := NewThreadView(h, ch, root.TS)
-			o := opened{v: v, root: root.TS, frame: frameFn(v)}
+			o := opened{v: v, root: root.TS, frame: prepFrameFn(v)} // as the ui root draws a thread pane
 			until(t, 5*time.Second, "thread "+root.TS+" drawn", o.frame, func() bool { return itemHeight(v.s, root.TS) > 0 })
 			return o
 		}

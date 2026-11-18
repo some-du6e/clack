@@ -43,7 +43,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/app.go`, `app/clack_asked_test.go`, `app/clack_asked_x11_test.go`, `op/paint/clack_live.go`,
 `io/input/clack_replay.go`, `io/input/clack_replay_test.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
-`gpu/headless/clack_live_test.go` and
+`gpu/headless/clack_live_test.go`, `layout/list.go`,
+`layout/clack_list_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2044,3 +2045,32 @@ Patch 40's page aging, with it (`fboSet.resize`):
   wide and tall was made again on every frame that used it, and the shrink
   above let pages used now and then fall into that too
   (`TestClackAtlasGrowKeepsSize`).
+
+## 45. layout: a ScrollToEnd list can lay out short content from its start
+
+`layout/list.go` (`List.StartAligned`, `List.layout`). A feature.
+
+A `ScrollToEnd` list draws content shorter than itself at its end (the
+end alignment in `layout`). Clack's thread pane is such a list: it keeps
+to the newest reply as replies come in, but Slack top-aligns a short
+thread under the pane's header, its reply box right under the last
+reply. The pane made the list exactly as tall as the thread to get that,
+from the height the last frame measured, so the frame in which a thread's
+replies landed (or it grew, or shrank) drew it at the bottom of the pane
+or cut, and the reply box was placed from the same stale height (dogfood,
+α.104: the box missing under a thread that had just opened).
+
+`StartAligned` leaves out the end alignment: content that doesn't fill the
+list starts at its start, the position stays at the start (`Offset` 0,
+`OffsetLast` the space after it), and the list still counts as at its end
+(`BeforeEnd` false), so content that outgrows it is drawn from its end
+on, as a `ScrollToEnd` list does. Clack's thread list sets it and lays
+out in the height the reply box leaves; the ui root clips it to the
+content it measured and puts the box right under it in the same frame
+(`internal/ui` `layoutConvo`).
+
+Tests: `layout/clack_list_test.go` `TestListStartAligned` (on ci's
+linux-gio job: three items in a 100px list start at 0 and stay there at
+the list's end, fifteen end at the bottom, and without the field three are
+end aligned) and `internal/ui` `TestThreadReplyBoxWithFirstReplies`. Not
+in `UPSTREAM.patch`.

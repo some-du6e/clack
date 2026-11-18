@@ -137,6 +137,22 @@ func frameFn(v interface {
 	}
 }
 
+// prepFrameFn is frameFn for a view the ui root prepares before laying
+// it out (ThreadView.Prepare: layoutConvo calls it first in the frame), as
+// the window's frames go.
+func prepFrameFn(v interface {
+	Layout(gtx layout.Context) layout.Dimensions
+	Prepare(gtx layout.Context)
+}) func() {
+	ops := new(op.Ops)
+	return func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(900, 700)), Now: time.Now()}
+		v.Prepare(gtx)
+		v.Layout(gtx)
+	}
+}
+
 // until runs frames until cond holds.
 func until(t *testing.T, d time.Duration, what string, frame func(), cond func() bool) {
 	t.Helper()

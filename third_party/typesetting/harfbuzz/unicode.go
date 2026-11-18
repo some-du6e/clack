@@ -242,7 +242,9 @@ func IsDefaultIgnorable(ch rune) bool {
 		case 0x17:
 			return 0x17B4 <= ch && ch <= 0x17B5
 		case 0x18:
-			return 0x180B <= ch && ch <= 0x180E
+			// Clack patch 5: through U+180F MONGOLIAN FREE VARIATION
+			// SELECTOR FOUR (Unicode 14), as HarfBuzz's is_default_ignorable
+			return 0x180B <= ch && ch <= 0x180F
 		case 0x20:
 			return 0x200B <= ch && ch <= 0x200F ||
 				0x202A <= ch && ch <= 0x202E ||
