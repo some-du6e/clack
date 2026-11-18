@@ -57,8 +57,7 @@ package views
 // agent_mention_dm_user_token, which the account isn't assigned);
 // yWXb's empty-query Suggestions (agents.sunroof.get's pinned agents and
 // flannel's empty-query results, neither of which Clack loads); the
-// rows' "…" menu's Channel Manager items (details_agents_menu.go has the
-// rest of it); the native channel expert and Slackbot rows; the Members search's out-of-channel
+// native channel expert and Slackbot rows; the Members search's out-of-channel
 // results (in both groups); renderEntirelyEmptyState's Slack Connect
 // description; EtJj's private-channel history prompt; and
 // ChannelManagerRestrictedInvitesAlert ("You can only add agents and apps
@@ -663,6 +662,7 @@ func (d *ChannelDetails) agentRosterRow(gtx C, u core.User, self string, out boo
 	if secondary {
 		items = d.agentRowMenuItems(u)
 		rm = d.rowMenu(u.ID)
+		rm.takePress(gtx) // the press first: its click may come in this frame
 		if rm.btn.Clicked(gtx) {
 			took = true
 			d.openRowMenu(rm, items)
@@ -671,16 +671,20 @@ func (d *ChannelDetails) agentRosterRow(gtx C, u core.User, self string, out boo
 	if c.Clicked(gtx) && !took {
 		openProfileCard(d.h, d.press.at, u.ID)
 	}
-	padR := unit.Dp(cdPadX)
-	if secondary {
-		padR += cdRowSecondaryMargin
-	}
+	manager := secondary && slices.Contains(d.managerIDs(), u.ID) // the Channel Manager pill
 	badge := core.BadgeApp
 	if u.Agent || u.Agentforce {
 		badge = core.BadgeAgent
 	}
 	full, disp := cdMemberNames(u, self)
 	body := func(gtx C) D {
+		padR, pill := unit.Dp(cdPadX), func(C, image.Point) {}
+		if secondary {
+			var p func(C, image.Point)
+			if padR, p = d.rowSecondary(gtx, gtx.Constraints.Max.X, manager, rm); p != nil {
+				pill = p
+			}
+		}
 		m := op.Record(gtx.Ops)
 		dims := layout.Inset{Top: 12, Bottom: 12, Left: cdPadX, Right: padR}.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -738,6 +742,7 @@ func (d *ChannelDetails) agentRosterRow(gtx C, u core.User, self string, out boo
 			fill(gtx, image.Rectangle{Max: dims.Size}, d.p.ReadFill)
 		}
 		call.Add(gtx.Ops)
+		pill(gtx, dims.Size)
 		if len(items) > 0 {
 			d.rowMenuButton(gtx, rm, dims.Size, c.Hovered())
 		}

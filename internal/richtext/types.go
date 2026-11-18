@@ -100,6 +100,12 @@ type Span struct {
 	// stays one Break whatever its Br, so plain text, copy and the
 	// newline budgets count the newlines the message has.
 	Br BrKind
+
+	// Pending (User, Channel, Usergroup in a canvas): the store can't
+	// name the mention yet (its lookup is out). Slack's canvas draws such
+	// a control as Quip's slack-control-missing-content skeleton, never
+	// its id (core NameCanvasMention, richview canvasMissing).
+	Pending bool
 }
 
 // BrKind says how a Break draws. A rich_text text element's newlines go

@@ -150,8 +150,11 @@ func TestCanvasEditRoundTrip(t *testing.T) {
 	if b == nil || !b.Checked || b.Text() != check.Text() {
 		t.Errorf("checked item after edit: %+v", b)
 	}
+	// the export names the mention by its id, as Quip's does (the view
+	// names it from the store: NameCanvasMention)
 	p := cd2.Doc.Find(para.ID)
-	if p == nil || p.Text() != "Rewritten bold for @"+fakeNameOf(t, a, fs, "U0FAKE00003") {
+	if p == nil || p.Text() != "Rewritten bold for @U0FAKE00003" || p.Spans[len(p.Spans)-1].Kind != richtext.User ||
+		p.Spans[len(p.Spans)-1].ID != "U0FAKE00003" {
 		t.Errorf("paragraph after edit: %+v", p)
 	}
 	found := false
@@ -187,16 +190,6 @@ func TestCanvasEditRoundTrip(t *testing.T) {
 	if fs.CallCount("files.close") != 1 {
 		t.Error("files.close not called")
 	}
-}
-
-func fakeNameOf(t *testing.T, a *App, fs *fakeslack.Server, id string) string {
-	t.Helper()
-	a.EnsureUsers(context.Background(), []string{id})
-	u, ok := a.User(id)
-	if !ok {
-		t.Fatalf("no user %s", id)
-	}
-	return u.Handle
 }
 
 // Creating (standalone and channel canvas) and sharing.
