@@ -404,3 +404,29 @@ func TestManagerFailedNotPlaying(t *testing.T) {
 		t.Error("a handle's Events isn't nil: a reader there would take events from the coordinator")
 	}
 }
+
+// Close ends the source's GET mid-body: a big file on a slow link is
+// still being read ahead when the player closes.
+func TestFakeCloseEndsGET(t *testing.T) {
+	m := fakeManager()
+	src, o := mediatest.Source("FF11", bigFile(40*mb), false)
+	o.Delay = 5 * time.Millisecond
+	r := newRecorder()
+	h, err := m.Open(src, r.frameReady, r.onEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := o.Stats().Open; n != 1 {
+		t.Fatalf("%d bodies open before Close, want the one reading ahead", n)
+	}
+	h.Close()
+	<-h.Done()
+	deadline := time.Now().Add(2 * time.Second)
+	for o.Stats().Open != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := o.Stats().Open; n != 0 {
+		t.Errorf("%d bodies open after Close", n)
+	}
+}
