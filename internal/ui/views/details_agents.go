@@ -662,6 +662,7 @@ func (d *ChannelDetails) agentRosterRow(gtx C, u core.User, self string, out boo
 	if secondary {
 		items = d.agentRowMenuItems(u)
 		rm = d.rowMenu(u.ID)
+		rm.takePress(gtx) // the press first: its click may come in this frame
 		if rm.btn.Clicked(gtx) {
 			took = true
 			d.openRowMenu(rm, items)

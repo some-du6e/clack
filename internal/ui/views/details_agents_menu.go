@@ -80,6 +80,22 @@ type cdRowMenu struct {
 	row   image.Point
 }
 
+// takePress notes where the button was last pressed, in its own
+// coordinates. The row reads it before the button's click, so a press and
+// its release in one frame (a quick tap, a test's click) anchor the menu
+// to this press, not the one before.
+func (m *cdRowMenu) takePress(gtx C) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &m.press, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			m.local = e.Position.Round()
+		}
+	}
+}
+
 func (d *ChannelDetails) rowMenu(id string) *cdRowMenu {
 	ag := d.ag()
 	if ag.rowMenus == nil {
@@ -234,15 +250,7 @@ func (d *ChannelDetails) rowMenuButton(gtx C, m *cdRowMenu, size image.Point, ho
 	s := gtx.Dp(cdRowMenuBtn)
 	pos := image.Pt(size.X-gtx.Dp(cdRowMenuRight)-s, (size.Y-s)/2)
 	defer op.Offset(pos).Push(gtx.Ops).Pop()
-	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &m.press, Kinds: pointer.Press})
-		if !ok {
-			break
-		}
-		if e, ok := ev.(pointer.Event); ok {
-			m.local = e.Position.Round()
-		}
-	}
+	m.takePress(gtx)
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(s, s))
 	m.btn.Layout(g, func(gtx C) D {

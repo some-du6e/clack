@@ -567,11 +567,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 				if !m.o.NoClose {
 					cy := pos.Y + (titleH-dp(gtx, 36))/2
-					if heroH > 0 || titleLines > 1 {
-						cy = pos.Y + dp(gtx, 20) // c-sk-modal__close_button: top 20px (over the hero, beside a wrapped title)
-						if heroH > 0 {
-							cy = dp(gtx, 20)
-						}
+					switch {
+					case heroH > 0:
+						cy = dp(gtx, 20) // c-sk-modal__close_button: top 20px, over the hero
+					case titleLines > 1:
+						cy = pos.Y + dp(gtx, 20) // top 20px beside a wrapped title
 					}
 					at(gtx, image.Pt(w-dp(gtx, 20)-dp(gtx, 36), cy), func(gtx layout.Context) layout.Dimensions {
 						if m.ringOn(gtx, &m.close) {

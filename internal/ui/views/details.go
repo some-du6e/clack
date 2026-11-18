@@ -1935,6 +1935,7 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 	if secondary {
 		items = d.memberRowMenuItems(u, d.memberRemoved)
 		rm = d.rowMenu(u.ID)
+		rm.takePress(gtx) // the press first: its click may come in this frame
 		if rm.btn.Clicked(gtx) {
 			took = true
 			d.openRowMenu(rm, items)
