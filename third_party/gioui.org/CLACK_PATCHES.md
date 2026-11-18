@@ -2292,9 +2292,10 @@ TestFrameCostWindow's placement floor of Gio's own) and
 `TestRealWindowCaretCost` (ci's linux-idle, macos, windows-idle and
 flake-check's gpu-cost-damage, count=N runs: App.Run's real window, 6 s of
 blinks partial and whole in turns of 3 s, their draws and the process's
-CPU; 12 s of a scroll, partial frames on and off, what its frames cost
-and copied and the coverage atlas, a frame's CPU within 1.2 times
-CLACK_FULL_FRAMES' on every OS; on Xvfb the window's pixels read back with python3-xlib, the
+CPU; a scroll in four turns of 1.5 s, partial frames on and off, what
+its frames cost and copied and the coverage atlas, the median turn's CPU
+a frame within 1.25 times CLACK_FULL_FRAMES' on every OS (the Mac's ran
+110-129% a turn); on Xvfb the window's pixels read back with python3-xlib, the
 caret's toggling between blinks and a partial frame's window bit for bit
 a whole frame's; on macOS each blink's drawable read back after the frame
 texture's draw into it, bit for bit the frame texture: `ClackVerifyCopy`,
