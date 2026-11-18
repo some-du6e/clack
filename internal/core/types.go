@@ -370,7 +370,20 @@ type Event struct {
 	// message event (Slack's messageChanged shows the deferred
 	// notification then, under defer_notification_3p_streaming).
 	StreamDone bool
-	Connected  bool // connection: socket up; realtime: live updates on
+	// Seq (update, delete, gone) is the change's place in the change
+	// table: the n-th message change core made (msg_changes.go,
+	// MessageChangeSeq, MsgChange.Seq, an item's MsgSeq), consecutive over
+	// those three event types and 0 on every other event. It is not every
+	// event's emit order: plugin-render-3's counter of all events is
+	// Event.EmitSeq, and the two never stand in for each other.
+	Seq uint64
+	// Removes (update) is a message_changed that Slack's messageChanged
+	// answers with "Remove activity item" (P0K2): the new copy is a
+	// tombstone, moderated or thread_hidden, or the edit took the viewer's
+	// mention out (checkForMentionInMessage of previous_message and not
+	// of the new copy)
+	Removes   bool
+	Connected bool // connection: socket up; realtime: live updates on
 	// Seen (user): when a view last read the member before this change
 	// (store.MemberAccessed); zero: none did, or the store didn't hold them
 	Seen time.Time
@@ -614,6 +627,15 @@ type ActivityItem struct {
 	Root              *Message // thread parent, for thread items
 	Reaction          *ActivityReaction
 	Count             int // unread replies / bundled messages / posts
+	// MsgSeq is the MessageChangeSeq the item was read at (before its feed
+	// request, or its event's lookups): its entry and its copies of Msg
+	// and Root are current as of then, so a later change core made to them
+	// (MessageChange) is one they don't have (msg_changes.go).
+	MsgSeq uint64
+	// MsgGone: messages.list answered without the item's message, which
+	// Slack stores as an isNonExistent stub (UFM) and draws no body for;
+	// RootGone is the same of its thread root
+	MsgGone, RootGone bool
 
 	// Priority is the entry's priority (from a VIP; /29I isPriority:
 	// !!priority) and Archived its is_archived (a cleared item).
@@ -707,6 +729,10 @@ type ThreadsPage struct {
 	TotalUnread int
 	State       ThreadsState
 	Convs       map[string]ConvRef
+	// MsgSeq is the MessageChangeSeq the page was read at (before its
+	// request): what core changed after it the threads may not have
+	// (msg_changes.go)
+	MsgSeq uint64
 }
 
 type SavedItem struct {

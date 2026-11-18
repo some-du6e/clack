@@ -7,7 +7,10 @@ package core
 // and badge_counts_updated brings new ones (zuQH
 // handleBadgeCountsUpdatedRTMEvent). The tabs read them (cR).
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 func (a *App) setActivityBadges(m map[string]int) {
 	if m == nil {
@@ -52,26 +55,68 @@ func (a *App) setActivityBadgesSince(m map[string]int, since uint64) bool {
 	return true
 }
 
+// ActivityBadgesZero is the Name of the "activity_badges" event of a
+// badge_counts_updated whose activity_v2 sums to 0: Activity marks its
+// unread rows read, locally.
+const ActivityBadgesZero = "zero"
+
 // onActivityBadges takes badge_counts_updated (boot-render VxbD
 // handleBadgeCountsUpdatedRTMEvent). Under activity_inbox Slack applies
-// its activity_v2 as it is and stops there (updateActivityV2BadgeCounts,
-// no client.counts), so the rail's badge moves with the event. Without
-// the inbox it reads the event's counts and alerts instead
-// (classic_badges.go onClassicBadges). The UI hears "activity_badges".
+// its activity_v2 as it is (updateActivityV2BadgeCounts, no
+// client.counts), so the rail's badge moves with the event, and when the
+// counts sum to 0 (activity_v2 absent sums to 0 too: `e.activity_v2 ||
+// {}`) it marks every unread row of the root list read, locally (Japw m$
+// with isLocalOnlyUpdate: no activity.markRead, and a row whose message
+// the store doesn't hold stays): the event says so (ActivityBadgesZero),
+// and Activity marks its rows. Without the inbox it reads the event's
+// counts and alerts instead (classic_badges.go onClassicBadges), and marks
+// the All list's unread rows read the same way when the event carries at
+// least one count or alert and every one is 0 (`s.length>0 &&
+// s.every(e=>0===e)` over counts' and alerts' values). The UI hears
+// "activity_badges".
 func (a *App) onActivityBadges(raw json.RawMessage) {
 	if !a.ActivityInbox() {
-		if a.onClassicBadges(raw) {
-			a.emit(Event{Type: "activity_badges"})
+		var e struct {
+			Counts map[string]json.RawMessage `json:"counts"`
+			Alerts map[string]json.RawMessage `json:"alerts"`
+		}
+		zero := false
+		if json.Unmarshal(raw, &e) == nil && len(e.Counts)+len(e.Alerts) > 0 {
+			zero = true
+			for _, vals := range []map[string]json.RawMessage{e.Counts, e.Alerts} {
+				for _, v := range vals {
+					// a number other than 0 (or anything else) isn't 0
+					zero = zero && strings.TrimSpace(string(v)) == "0"
+				}
+			}
+		}
+		if changed := a.onClassicBadges(raw); changed || zero {
+			ev := Event{Type: "activity_badges"}
+			if zero {
+				ev.Name = ActivityBadgesZero
+			}
+			a.emit(ev)
 		}
 		return
 	}
 	var e struct {
 		ActivityV2 map[string]int `json:"activity_v2"`
 	}
-	if json.Unmarshal(raw, &e) == nil && e.ActivityV2 != nil {
-		a.setActivityBadges(e.ActivityV2)
-		a.emit(Event{Type: "activity_badges"})
+	if json.Unmarshal(raw, &e) != nil {
+		return
 	}
+	if e.ActivityV2 != nil {
+		a.setActivityBadges(e.ActivityV2)
+	}
+	sum := 0
+	for _, n := range e.ActivityV2 {
+		sum += n
+	}
+	ev := Event{Type: "activity_badges"}
+	if sum == 0 {
+		ev.Name = ActivityBadgesZero
+	}
+	a.emit(ev)
 }
 
 // decActivityBadges is P0K2 decrementBadgeCounts after

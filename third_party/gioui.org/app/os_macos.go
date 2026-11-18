@@ -755,6 +755,7 @@ func (w *window) orderOut(window C.CFTypeRef) {
 	w.setHidden(true)
 	w.displayLink.Stop()
 	C.orderOut(window)
+	w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
 }
 
 func (w *window) setHidden(hidden bool) {
@@ -810,6 +811,7 @@ func gio_onOcclusionChanged(h C.uintptr_t, visible C.int) {
 	w.occluded = occluded
 	if occluded {
 		w.displayLink.Stop()
+		w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
 		return
 	}
 	w.resume()
@@ -1503,6 +1505,7 @@ func newWindow(win *callbacks, options []Option) {
 	<-launched
 	res := make(chan struct{})
 	runOnMain(func() {
+		setCaretBlinkFromOS() // Clack patch (CLACK_PATCHES.md §47)
 		w := &window{
 			redraw: make(chan struct{}, 1),
 			w:      win,

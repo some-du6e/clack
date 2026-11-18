@@ -39,17 +39,29 @@ type thrOlder struct {
 	msgs   []core.Message
 	more   bool
 	err    error
+	from   uint64 // the message change it went out at (threads_live.go)
 }
 
 // thrShown is the replies the card shows: the loaded older ones, then the
-// latest ones subscriptions.thread.getView sent.
+// latest ones subscriptions.thread.getView sent. The slice is the card's
+// until either changes, so its copies are the same from frame to frame
+// (what a row's layout and a plugin's view are kept by).
 func thrShown(t *thrItem, c *thrCard) []core.Message {
 	if c == nil || len(c.older) == 0 {
 		return t.Replies
 	}
+	if c.shown != nil && thrSameMsgs(c.shownOf, t.Replies) {
+		return c.shown
+	}
 	out := make([]core.Message, 0, len(c.older)+len(t.Replies))
 	out = append(out, c.older...)
-	return append(out, t.Replies...)
+	c.shown, c.shownOf = append(out, t.Replies...), t.Replies
+	return c.shown
+}
+
+// thrSameMsgs reports whether a and b are the same slice.
+func thrSameMsgs(a, b []core.Message) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
 }
 
 // thrMoreText is LoadOlderMessage's label ("" for no row).
@@ -76,12 +88,12 @@ func (v *Threads) loadOlder(t *thrItem, c *thrCard) {
 		latest = sh[0].TS
 	}
 	c.olderBusy = true
-	ch, root, h := t.Channel, t.Root.TS, v.h
+	ch, root, h, from := t.Channel, t.Root.TS, v.h, app.MessageChangeSeq()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		msgs, more, err := app.OlderReplies(ctx, ch, root, latest, thrOlderLimit)
-		c.olderRes.Store(&thrOlder{latest: latest, msgs: msgs, more: more, err: err})
+		c.olderRes.Store(&thrOlder{latest: latest, msgs: msgs, more: more, err: err, from: from})
 		h.Invalidate()
 	}()
 }
@@ -111,7 +123,14 @@ func (v *Threads) applyOlder(t *thrItem, c *thrCard) {
 	if len(add) > thrOlderLimit {
 		add = add[len(add)-thrOlderLimit:]
 	}
-	c.older = append(add, c.older...)
+	c.older, c.shown = append(add, c.older...), nil
+	// what changed after the request went out reaches them in the next
+	// frame (threads_live.go landLive)
+	c.olderSeq = min(c.olderSeq, r.from)
+	if len(c.older) == len(add) {
+		c.olderSeq = r.from
+	}
+	v.lv.items = nil
 	if !r.more || len(add) == 0 {
 		c.olderStart = true // reachedStart
 	}

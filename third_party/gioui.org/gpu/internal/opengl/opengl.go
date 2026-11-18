@@ -78,6 +78,11 @@ type glState struct {
 	viewport          [4]int
 	unpack_row_length int
 	pack_row_length   int
+	// scissor is the scissor test and its box (Clack patch 46)
+	scissor struct {
+		on  bool
+		box [4]int32
+	}
 }
 
 type state struct {
@@ -288,6 +293,7 @@ func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport im
 }
 
 func (b *Backend) EndFrame() {
+	b.glstate.setScissor(b.funcs, image.Rectangle{}) // the blit below obeys it (Clack patch 46)
 	if b.sRGBFBO != nil {
 		b.glstate.bindFramebuffer(b.funcs, gl.FRAMEBUFFER, b.outputFBO)
 		if b.clear {
@@ -321,6 +327,7 @@ func (b *Backend) queryState() glState {
 		s.pack_row_length = b.funcs.GetInteger(gl.PACK_ROW_LENGTH)
 	}
 	s.blend.enable = b.funcs.IsEnabled(gl.BLEND)
+	s.scissor.on = b.funcs.IsEnabled(gl.SCISSOR_TEST)
 	s.blend.srcRGB = gl.Enum(b.funcs.GetInteger(gl.BLEND_SRC_RGB))
 	s.blend.dstRGB = gl.Enum(b.funcs.GetInteger(gl.BLEND_DST_RGB))
 	s.blend.srcA = gl.Enum(b.funcs.GetInteger(gl.BLEND_SRC_ALPHA))
@@ -365,6 +372,14 @@ func (b *Backend) restoreState(dst glState) {
 	src.bindFramebuffer(f, gl.FRAMEBUFFER, dst.drawFBO)
 	src.bindFramebuffer(f, gl.READ_FRAMEBUFFER, dst.readFBO)
 	src.set(f, gl.BLEND, dst.blend.enable)
+	if dst.scissor.on != src.scissor.on {
+		if dst.scissor.on {
+			f.Enable(gl.SCISSOR_TEST)
+		} else {
+			f.Disable(gl.SCISSOR_TEST)
+		}
+		src.scissor.on = dst.scissor.on
+	}
 	bf := dst.blend
 	src.setBlendFuncSeparate(f, bf.srcRGB, bf.dstRGB, bf.srcA, bf.dstA)
 	src.set(f, gl.FRAMEBUFFER_SRGB, dst.srgb)
@@ -657,6 +672,27 @@ func (s *glState) setClearColor(f *gl.Functions, r, g, b, a float32) {
 	}
 }
 
+// setScissor turns the scissor test on for r, or off for an empty r
+// (Clack patch 46). It's also what clears and blits obey.
+func (s *glState) setScissor(f *gl.Functions, r image.Rectangle) {
+	on := !r.Empty()
+	if on != s.scissor.on {
+		if on {
+			f.Enable(gl.SCISSOR_TEST)
+		} else {
+			f.Disable(gl.SCISSOR_TEST)
+		}
+		s.scissor.on = on
+	}
+	if on {
+		box := [4]int32{int32(r.Min.X), int32(r.Min.Y), int32(r.Dx()), int32(r.Dy())}
+		if box != s.scissor.box {
+			f.Scissor(box[0], box[1], box[2], box[3])
+			s.scissor.box = box
+		}
+	}
+}
+
 func (s *glState) setViewport(f *gl.Functions, x, y, width, height int) {
 	view := [4]int{x, y, width, height}
 	if view != s.viewport {
@@ -744,7 +780,9 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 	switch format {
 	case driver.TextureFormatFloat:
 		tex.triple = b.floatTriple
-	case driver.TextureFormatSRGBA:
+	case driver.TextureFormatSRGBA, driver.TextureFormatOutput:
+		// Output: the window's own format, sRGB (Clack patch 46's frame
+		// texture)
 		tex.triple = b.srgbaTriple
 	case driver.TextureFormatRGBA8:
 		tex.triple = textureTriple{gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE}
@@ -1267,6 +1305,9 @@ func (b *Backend) EndCompute() {
 func (b *Backend) BeginRenderPass(tex driver.Texture, desc driver.LoadDesc) {
 	fbo := tex.(*texture).ensureFBO()
 	b.glstate.bindFramebuffer(b.funcs, gl.FRAMEBUFFER, fbo)
+	// a pass starts unscissored, and glClear obeys the scissor (Clack
+	// patch 46)
+	b.glstate.setScissor(b.funcs, image.Rectangle{})
 	switch desc.Action {
 	case driver.LoadActionClear:
 		c := desc.ClearColor
@@ -1277,6 +1318,40 @@ func (b *Backend) BeginRenderPass(tex driver.Texture, desc driver.LoadDesc) {
 }
 
 func (b *Backend) EndRenderPass() {
+	b.glstate.setScissor(b.funcs, image.Rectangle{})
+}
+
+// clackBlitter is a gl.Functions with glBlitFramebuffer (OpenGL ES 3 and
+// OpenGL 3 contexts outside Windows and the web).
+type clackBlitter interface {
+	BlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1 int, mask gl.Enum, filter gl.Enum)
+	ClackBlitFramebufferLoaded() bool
+}
+
+// ClackPartialOK implements driver.ClackPartial (Clack patch 46): the
+// frame is copied into the window with glBlitFramebuffer, and a context
+// shared with others may have a scissor of its own.
+func (b *Backend) ClackPartialOK() bool {
+	bf, ok := any(b.funcs).(clackBlitter)
+	return ok && bf.ClackBlitFramebufferLoaded() && b.glver[0] >= 3 && !b.sharedCtx
+}
+
+// ClackCopyDraws implements driver.ClackPartial: a framebuffer blit.
+func (b *Backend) ClackCopyDraws() bool { return false }
+
+// ClackScissor implements driver.ClackPartial.
+func (b *Backend) ClackScissor(r image.Rectangle) {
+	b.glstate.setScissor(b.funcs, r)
+}
+
+// ClackCopyToTarget implements driver.ClackPartial: a glBlitFramebuffer
+// of the same size, NEAREST, from src's framebuffer into target's.
+func (b *Backend) ClackCopyToTarget(target, src driver.Texture, size image.Point) {
+	bf := any(b.funcs).(clackBlitter)
+	b.glstate.setScissor(b.funcs, image.Rectangle{})
+	b.glstate.bindFramebuffer(b.funcs, gl.READ_FRAMEBUFFER, src.(*texture).ensureFBO())
+	b.glstate.bindFramebuffer(b.funcs, gl.DRAW_FRAMEBUFFER, target.(*texture).ensureFBO())
+	bf.BlitFramebuffer(0, 0, size.X, size.Y, 0, 0, size.X, size.Y, gl.COLOR_BUFFER_BIT, gl.NEAREST)
 }
 
 func (f *texture) ImplementsRenderTarget() {}

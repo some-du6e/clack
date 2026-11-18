@@ -504,12 +504,9 @@ func (a *App) layoutSearchPill(gtx layout.Context, sorg image.Point, sw, sh int)
 	a.searchPill = image.Rectangle{Min: sorg, Max: sorg.Add(image.Pt(sw, sh))}
 	at(gtx, sorg, image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
 		d := clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
-			bg := c.SearchBg
-			if hovered {
-				bg = c.SearchHover
-			}
-			// Slack: rgba(249,237,255,.25) plus a rgba(131,56,138,.08) tint.
-			a.chrome(gtx, sorg, image.Rectangle{Max: sz}, gtx.Dp(4), bg, theme.SearchTint)
+			// theme-surf-inv-pry under the blended surf-inv-pry-hover layer,
+			// hovered or not (layoutTopNav's pill)
+			a.chrome(gtx, sorg, image.Rectangle{Max: sz}, gtx.Dp(4), c.SearchBg, c.ChromeHoverTint)
 		}, func(gtx layout.Context) layout.Dimensions {
 			sz := image.Pt(sw, sh)
 			if a.searchBoxIcon() {

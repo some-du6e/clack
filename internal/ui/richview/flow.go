@@ -261,6 +261,9 @@ type display struct {
 	// names are the user mentions laid out and the plugin labels they
 	// used (members.go)
 	names []nameUse
+	// pending are the ids of the canvas mentions drawn as Quip's loading
+	// skeleton (canvasMissing), in order
+	pending []string
 	// hovers are the primitives drawn only while a card is hovered (a
 	// work object card's hovered subtitle, actions bar and Refresh):
 	// those with hov == index+1
@@ -321,6 +324,7 @@ func (d *display) reset() {
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
 	d.names = d.names[:0]
+	d.pending = d.pending[:0]
 	d.hovers = d.hovers[:0]
 	d.plays = d.plays[:0]
 	d.expands = d.expands[:0]
@@ -356,10 +360,13 @@ const (
 const (
 	decoMissing     uint8 = 5
 	decoMissingGone uint8 = 6
+	// decoCanvasMissing is Quip's skeleton for a canvas mention still
+	// loading (msgcard.go canvasMissing)
+	decoCanvasMissing uint8 = 7
 )
 
 type deco struct {
-	kind   uint8 // 1 pill, 2 code, 3 highlight, 4 colour swatch, decoMissing, decoMissingGone
+	kind   uint8 // 1 pill, 2 code, 3 highlight, 4 colour swatch, decoMissing, decoMissingGone, decoCanvasMissing
 	bg     color.NRGBA
 	border color.NRGBA
 	padL   float32
@@ -720,6 +727,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				col = p.Link
 			}
 		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+			if sp.Pending && l.opts.Canvas {
+				l.canvasMissing(sp.ID, k, col) // its model is loading (msgcard.go)
+				continue
+			}
 			if sp.Kind == richtext.User && sp.Hidden {
 				l.hiddenMember(sp, fs, k, pt) // msgcard.go
 				continue
@@ -736,6 +747,12 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				// RollupName's "" in a system message (Muted)
 				var miss MemberMiss
 				if txt, miss = l.mentionText(sp.ID, txt); miss != MemberLoaded && !l.opts.Muted {
+					if l.opts.Canvas && miss == MemberLoading {
+						// a canvas's user control draws Quip's skeleton
+						// while its model loads (hu: hs)
+						l.canvasMissing(sp.ID, k, col)
+						continue
+					}
 					l.missingMember(miss, k, col) // msgcard.go
 					continue
 				}
@@ -1332,6 +1349,19 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				bx.kind, bx.stroke, bx.bw = bBorder, dc.border, max(1, l.dp(1))
 			}
 			d.boxes = append(d.boxes, bx)
+		case decoCanvasMissing:
+			// Quip's skeleton (canvasMissing): .missing-icon 5px in, then
+			// .missing-text 5px after it, both vertical-align middle, so
+			// their middles sit half the x-height over the baseline
+			// (Lato's sxHeight, 1013 of its 2000 units per em)
+			mid := bl - float32(dc.face.size)/64*1013/2000/2
+			x := r.x + l.dpf(5)
+			sq, barW, barH := l.dpf(12), l.dpf(120), l.dpf(8)
+			d.boxes = append(d.boxes, box{kind: bFill, r: image.Rect(int(x+0.5), int(mid-sq/2+0.5), int(x+sq+0.5), int(mid+sq/2+0.5)),
+				radius: l.dp(3), fill: dc.bg, target: -1})
+			x += sq + l.dpf(5)
+			d.boxes = append(d.boxes, box{kind: bFill, r: image.Rect(int(x+0.5), int(mid-barH/2+0.5), int(x+barW+0.5), int(mid+barH/2+0.5)),
+				radius: l.dp(2), fill: dc.bg, target: -1})
 		}
 	}
 

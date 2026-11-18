@@ -57,8 +57,9 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		add := ev.Type == "reaction_added"
-		changed := false
-		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = applyReaction(m, e.Reaction, e.User, add) || changed })
+		// every copy takes it and a fetch out now keeps it, under one lock
+		// (store/reacts.go)
+		m, ok, changed := a.S.ApplyReactionNoted(e.Item.Channel, e.Item.TS, e.Reaction, e.User, add)
 		// the reactor isn't fetched: only the reaction's tooltip names it
 		// (ReactionTip's TooltipMemberName, lazy_users.go)
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
@@ -535,7 +536,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		// seen in a thread that isn't cached (Slack's store keeps every
 		// message the socket brings)
 		streamed := a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
-		if old, ok := a.S.Find(ch, m.TS); ok {
+		if old, ok := a.S.FindHeld(ch, m.TS); ok { // a copy fetched by id too (store/fetched.go)
 			keepFiles(&m, &old)
 			streamed = streamed || old.StreamingState == "in_progress"
 			// Slack's store keeps a thread's replies apart from the
@@ -556,9 +557,14 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			}
 		}
 		a.S.SlurpSub(ch, &m)
-		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this keeps it (store/live.go)
-		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
-			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
+		// every stored copy takes it, a copy fetched by id included (an
+		// Activity entry's message from a conversation nobody opened:
+		// store/fetched.go), and a read out now keeps it (store/live.go),
+		// noted with the write so no read lands between; a window or a
+		// cached thread that holds none gets it inside its range
+		// (putChanged)
+		if _, found := a.S.NoteMutate(ch, m.TS, &m, func(x *slack.Message) { *x = m }); !found || !a.S.Holds(ch, m.TS, "") {
+			a.putChanged(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
 		if m.ThreadTS == "" || m.ThreadTS == m.TS {
 			// a root's copy replaces the stored root: its broadcasts'
@@ -571,6 +577,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			go a.fillFiles(ch, m.TS)
 		}
 		a.woMessageUpdated(ch, &m) // a work object's refreshed unfurl (workobjects.go)
+		if a.removesActivity(e.Previous, &m) {
+			a.removesNext(ch, m.TS) // its update says so (activity_removes.go)
+		}
 		if streamed && m.StreamingState != "in_progress" {
 			a.emitStreamDone(ch, &m)
 			return
@@ -583,11 +592,12 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		thread := ""
 		if e.Previous != nil && e.Previous.ThreadTS != e.DeletedTS {
 			thread = e.Previous.ThreadTS
-		} else if old, ok := a.S.Find(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
+		} else if old, ok := a.S.FindHeld(ch, e.DeletedTS); ok && old.ThreadTS != old.TS {
 			thread = old.ThreadTS
 		}
-		a.S.Remove(ch, e.DeletedTS)
-		a.S.NoteLive(ch, e.DeletedTS, nil)
+		// noted with the copies going: a fetch landing after leaves it out
+		// (store/live.go)
+		a.S.NoteRemove(ch, e.DeletedTS)
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":
@@ -638,8 +648,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		return
 	}
 	if isReply {
-		a.S.AddReply(ch, m)
-		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this reply keeps it (store/live.go)
+		a.S.AddReplyNoted(ch, m) // a replies answer older than this reply keeps it (store/live.go)
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)
@@ -724,15 +733,7 @@ func needsFileInfo(m *slack.Message) bool {
 // media_display_type "unknown", which draws as a generic "FILE" card.
 // Slack's web client refetches the file on file_change (filesChanged)
 // once processing is done.
-func fileStub(f *slack.File) bool {
-	if f.ID == "" || f.Mode == "tombstone" || f.Mode == "hidden_by_limit" {
-		return false
-	}
-	if f.FileAccess == "check_file_info" || f.URLPrivate == "" {
-		return true
-	}
-	return !f.IsExternal && f.Mimetype == "" && f.Filetype == ""
-}
+func fileStub(f *slack.File) bool { return store.FileStub(f) }
 
 // fileFillDelays are fillFiles' waits before each files.info round: Slack
 // takes a few seconds to process an upload (thumbnails, mimetype); a
@@ -751,7 +752,7 @@ func (a *App) fillFiles(ch, ts string) {
 				return nil
 			case <-time.After(d): // uploads take a moment to process
 			}
-			m, ok := a.S.Find(ch, ts)
+			m, ok := a.S.FindHeld(ch, ts) // a message fetched by id too (store/fetched.go)
 			if !ok {
 				return nil
 			}
@@ -800,7 +801,7 @@ func (a *App) setFiles(ch, ts string, files []slack.File) {
 	for _, f := range files {
 		byID[f.ID] = f
 	}
-	if upd, ok := a.S.Mutate(ch, ts, func(x *slack.Message) {
+	if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) { // a read out now keeps them
 		fs := append([]slack.File(nil), x.Files...)
 		for i := range fs {
 			if f, ok := byID[fs[i].ID]; ok {

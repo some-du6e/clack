@@ -70,11 +70,12 @@ func (s *listState) contextMenu(h Host, origin image.Point) {
 }
 
 // itemAt is the visible message item at p (exactly; dividers and gaps
-// get no menu), or the item whose hover toolbar is at p.
+// get no menu), or the item whose hover toolbar (the last one drawn, by
+// its message: the items may have been rebuilt since) is at p.
 func (s *listState) itemAt(p f32.Point) int {
 	pt := image.Pt(int(p.X), int(p.Y))
-	if s.tbFor >= 0 && s.tbFor < len(s.items) && pt.In(s.tbRect) {
-		return s.tbFor
+	if i, ok := s.sel.keyIdx[s.tbKey]; ok && s.tbKey != "" && pt.In(s.tbRect) {
+		return i
 	}
 	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
 		if s.items[i].kind == itMsg && s.heights[i] > 0 && pt.Y >= s.pos[i] && pt.Y < s.pos[i]+s.heights[i] {

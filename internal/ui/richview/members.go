@@ -148,6 +148,12 @@ func (v *View) namesChanged() bool {
 	return changed
 }
 
+// PendingMentions lists the ids of the canvas mentions the last layout
+// drew as Quip's loading skeleton (canvasMissing), in order (tests).
+func (v *View) PendingMentions() []string {
+	return append([]string(nil), v.d.pending...)
+}
+
 // MissingMembers lists the user mentions the last layout drew as
 // BaseMissingMember's bar (their members still loading, or not found), in
 // order (tests).

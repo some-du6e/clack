@@ -54,12 +54,13 @@ func (a *App) openCreateChannel(section string) {
 	a.ShowOverlay(mkCreateChannel(a, section))
 }
 
-func (a *App) menuAt(anchor image.Rectangle, side int, width float32, items []MenuItem) {
+func (a *App) menuAt(anchor image.Rectangle, side int, width float32, items []MenuItem) Overlay {
 	if mkMenuAt != nil {
-		a.ShowOverlay(mkMenuAt(a, anchor, side, width, items))
-		return
+		o := mkMenuAt(a, anchor, side, width, items)
+		a.ShowOverlay(o)
+		return o
 	}
-	a.menu(anchor.Min, items)
+	return a.menu(anchor.Min, items)
 }
 
 // openAddChannelsMenu is the Channels footer's "Add channels" menu.
@@ -118,7 +119,7 @@ func (a *App) openCreateMenu(anchor image.Rectangle) {
 		items = append(items, MenuItem{Divider: true},
 			MenuItem{Key: "invite", Label: "Invite people", Icon: "user-add", Do: func() { popups.OpenInviteModal(a, popups.InviteFromCreateMenu) }})
 	}
-	a.menuAt(anchor, 2, 360, items)
+	a.createStrip().menu = a.menuAt(anchor, 2, 360, items) // the + button's --active while it shows
 }
 
 // openWorkflowBuilder is the Create menu's Workflow: ThpL opens
