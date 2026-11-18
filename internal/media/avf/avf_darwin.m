@@ -203,6 +203,23 @@ static int mapError(NSError *e) {
 	[super observeValueForKeyPath:kp ofObject:o change:c context:ctx];
 }
 
+// nativeSize is the video's size: the item's presentation size, or (before
+// it's known) the video track's natural size as it's shown.
+- (CGSize)nativeSize {
+	CGSize ps = _item.presentationSize;
+	if (ps.width >= 1 && ps.height >= 1) {
+		return ps;
+	}
+	for (AVPlayerItemTrack *t in _item.tracks) {
+		AVAssetTrack *a = t.assetTrack;
+		if ([a.mediaType isEqualToString:AVMediaTypeVideo]) {
+			CGSize n = CGSizeApplyAffineTransform(a.naturalSize, a.preferredTransform);
+			return CGSizeMake(fabs(n.width), fabs(n.height));
+		}
+	}
+	return CGSizeZero;
+}
+
 - (clackAVState)state {
 	clackAVState s;
 	memset(&s, 0, sizeof s);
@@ -221,7 +238,7 @@ static int mapError(NSError *e) {
 	s.err = _err;
 	s.errCode = _errCode;
 	if (_ready) {
-		CGSize ps = _item.presentationSize;
+		CGSize ps = [self nativeSize];
 		s.w = (uint32_t)ps.width;
 		s.h = (uint32_t)ps.height;
 	}
@@ -254,6 +271,9 @@ static int mapError(NSError *e) {
 		} else if (st == AVPlayerItemStatusFailed) {
 			[self failedWith:_item.error];
 		}
+	}
+	if (_ready && _output == nil) {
+		[self makeOutput];
 	}
 	if (_ready) {
 		NSInteger tc = _player.timeControlStatus;
@@ -304,9 +324,9 @@ static int mapError(NSError *e) {
 	if (!_ready) {
 		return;
 	}
-	CGSize n = _item.presentationSize;
+	CGSize n = [self nativeSize];
 	if (n.width < 1 || n.height < 1) {
-		return;
+		return; // again from check, once the size is known
 	}
 	size_t w = (size_t)n.width, h = (size_t)n.height;
 	if (_drawW > 0 && _drawH > 0 && ((size_t)_drawW < w || (size_t)_drawH < h)) {
@@ -459,7 +479,7 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 		dispatch_source_cancel(_pull);
 		_pull = nil;
 	}
-	BOOL watch = !_closed && !_err && (!_ready || _wantPlay || _seekPending);
+	BOOL watch = !_closed && !_err && (!_ready || _output == nil || _wantPlay || _seekPending);
 	if (watch && _watch == nil) {
 		_watch = timerOn(_q, 50000000, ^{
 			[w check];
