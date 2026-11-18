@@ -53,7 +53,7 @@ func (a *App) openDeepLink(uri string) bool {
 			if user != "" {
 				a.OpenUserProfile(user)
 			} else {
-				a.Navigate(route)
+				a.withVia("a deep link", func() { a.Navigate(route) })
 			}
 		})
 	}

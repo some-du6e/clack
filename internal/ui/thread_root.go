@@ -19,8 +19,8 @@ import (
 
 // ReplyAsThreadRoot is messages.ReplyRootRedirector: the pane opened
 // with reply's ts, a reply in thread root, goes to that thread at the
-// reply, as jumpToMessage would have opened it (the split view's to the
-// thread). Posted: the pane is mid-layout.
+// reply, highlighted, as jumpToMessage would have opened it (the split
+// view's to the thread). Posted: the pane is mid-layout.
 func (a *App) ReplyAsThreadRoot(ch, reply, root string) {
 	pane := a.pane
 	a.Post(func() {
@@ -37,7 +37,7 @@ func (a *App) ReplyAsThreadRoot(ch, reply, root string) {
 			return // the pane shows something else by now
 		}
 		a.withVia("its pane found the root was a reply", func() {
-			a.openThreadAtIn(ch, root, reply, a.router.Current(), true)
+			a.openThreadAtIn(ch, root, reply, "", true) // the reply highlighted (OpenThread's guard)
 		})
 	})
 }

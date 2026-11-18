@@ -99,8 +99,10 @@ func (a *App) OpenThread(channel, ts string) { a.openThread(channel, ts, "", fal
 func (a *App) openThread(channel, ts, at string, resolved bool) {
 	if !resolved && a.data != nil && a.data.core != nil {
 		if root, found := a.data.core.CachedReplyThread(channel, ts); found && root != "" {
+			// the reply asked for, highlighted: no navigation of Slack's
+			// to take jumpToThreadReply's rule from (prev "")
 			log.Printf("ui: thread open: %s is a reply in %s, whose thread opens at it (%s)", logTag(ts), logTag(root), a.navVia())
-			a.openThreadAtIn(channel, root, ts, a.router.Current(), true)
+			a.openThreadAtIn(channel, root, ts, "", true)
 			return
 		}
 	}
