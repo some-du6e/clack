@@ -279,8 +279,8 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "ui: the toolbar at Slack's place, jumped to from Activity and in the thread pane, COUNT runs"
-        run: go test -count=$COUNT -v -timeout 30m -run '^TestHoverToolbar(JumpFromActivity|ThreadPane)$' ./internal/ui
+      - name: "ui: the toolbar at Slack's place, jumped to from Activity (with and without ChatTabs' layout) and in the thread pane, COUNT runs"
+        run: go test -count=$COUNT -v -timeout 30m -run '^TestHoverToolbar(JumpFromActivity|JumpFromActivityChatTabs|ThreadPane)$' ./internal/ui
 
   go:
     if: ${{ !inputs.only || startsWith('go', inputs.only) }}

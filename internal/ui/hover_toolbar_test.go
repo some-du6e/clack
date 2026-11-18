@@ -22,6 +22,7 @@ package ui
 // Slack), in Karim's window size.
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"strings"
@@ -33,6 +34,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // Slack's .c-message__actions tops (dp from the row's top) and right
@@ -177,6 +179,36 @@ func (e *perfEnv) checkToolbar(t *testing.T, what string, l rowsLister, ts, rowC
 // its card cut off by the list's top edge.
 func TestHoverToolbarJumpFromActivity(t *testing.T) {
 	e := hoverToolbarEnv(t)
+	e.jumpFromActivityToolbars(t, "jump from Activity")
+}
+
+// The same under a plugin of ChatTabs' shape (Slick's ChatTabs, which
+// Karim runs: ClientPrimaryView in its layout, its tab bar handed to
+// RenderedViewContents as the first child, absolute at the top, the view
+// padded under it), so the channel is drawn inside the plugin's tree,
+// measured and then drawn each frame.
+func TestHoverToolbarJumpFromActivityChatTabs(t *testing.T) {
+	t.Setenv("CLACK_HOME", t.TempDir())
+	e := hoverToolbarEnv(t)
+	e.until("Slick", 60*time.Second, func() bool { return e.a.Slick() != nil })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, err := e.a.Slick().Import(ctx, []byte(tabsShapePlugin)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.a.Slick().SetEnabled(ctx, "TabsShape", true); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the primary view in the plugin's layout", 20*time.Second, func() bool {
+		return slackc.Patched("ClientPrimaryView") && slackc.Patched("RenderedViewContents")
+	})
+	e.jumpFromActivityToolbars(t, "jump from Activity under ChatTabs' layout")
+}
+
+// jumpFromActivityToolbars is the route of TestHoverToolbarJumpFromActivity
+// and its checks.
+func (e *perfEnv) jumpFromActivityToolbars(t *testing.T, what string) {
+	t.Helper()
 	ch, root := fakeslack.ThreadsAuditChannel, fakeslack.ThreadsAuditLong
 	e.a.Navigate("activity")
 	e.settle(600 * time.Millisecond)
@@ -207,6 +239,7 @@ func TestHoverToolbarJumpFromActivity(t *testing.T) {
 		return false
 	})
 	e.settle(800 * time.Millisecond)
+	e.pointerIn(l())
 	rows := l().RowRects()
 	list := l().ListRect()
 	i := -1
@@ -216,15 +249,56 @@ func TestHoverToolbarJumpFromActivity(t *testing.T) {
 		}
 	}
 	if i < 2 || rows[i-2].R.Min.Y != list.Min.Y {
-		t.Fatalf("the jump didn't put the root two rows down from the list's top (list %v, rows %v)", list, rows)
+		t.Fatalf("%s: the jump didn't put the root two rows down from the list's top (list %v, rows %v)", what, list, rows)
 	}
 	e.inspectOn()
 	for _, k := range []int{i, i - 1, i + 1, i - 2} {
 		if k < len(rows) {
-			e.checkToolbar(t, "jump from Activity", l(), rows[k].TS, "MessageWrapper", actsTopDefault)
+			e.checkToolbar(t, what, l(), rows[k].TS, "MessageWrapper", actsTopDefault)
 		}
 	}
 }
+
+// pointerIn brings the pointer into list l, so the window coordinates it
+// reports are where it is (a list learns its window origin from the
+// pointer: under a plugin's tree the panel's is not the list's).
+func (e *perfEnv) pointerIn(l rowsLister) {
+	r := l.ListRect()
+	e.move(f32.Pt(float32(r.Min.X+r.Dx()/3), float32(r.Min.Y+r.Dy()/2)))
+	e.frame()
+	e.frame()
+}
+
+// tabsShapePlugin is ChatTabs' layout around the primary view
+// (src/plugins/ChatTabs/index.tsx: ClientPrimaryView in a display:contents
+// .slick-chat-tabs-layout, the bar handed to RenderedViewContents as its
+// first child, absolute at the top, the view padded under it), with a
+// fixed bar.
+const tabsShapePlugin = `// slick-plugin {"id":"TabsShape"}
+(globalThis.__slickPlugins ??= []).push((require) => {
+var import_slick = require("$slick");
+class P extends import_slick.SlickPlugin {
+  static id = "TabsShape";
+  static pluginName = "TabsShape";
+  static description = "test: ChatTabs' layout around the primary view";
+  static requiredAPIs = [];
+  start() {
+    this.api.setStyle(".tabs-shape-layout { display:contents; } .tabs-shape-layout .p-view_contents--primary:has(> .tabs-shape) { padding-top: 37px; } .tabs-shape { position:absolute; top:0; left:0; right:0; z-index:1; height:36px; background:#fff; border-bottom:1px solid #8885; }");
+    const Bar = React.createContext(undefined);
+    this.api.patchComponent("ClientPrimaryView", (Original) => (props) =>
+      React.createElement("div", { className: "tabs-shape-layout" },
+        React.createElement(Bar.Provider, { value: React.createElement("div", { className: "tabs-shape" }, "tabs") },
+          React.createElement(Original, props))));
+    this.api.patchComponent("RenderedViewContents", (Original) => (props) => {
+      const bar = React.useContext(Bar);
+      if (bar === undefined) return React.createElement(Original, props);
+      return React.createElement(Original, props, bar, React.createElement(Bar.Provider, { value: undefined }, props.children));
+    });
+  }
+}
+return P;
+});
+`
 
 // The thread pane opened from Activity at a reply, then read from its
 // root: the root's toolbar sits 4px inside its top (Slack's "inside"),
@@ -248,6 +322,7 @@ func TestHoverToolbarThreadPane(t *testing.T) {
 		return tl != nil && len(tl.RowRects()) > 3
 	})
 	e.settle(600 * time.Millisecond)
+	e.pointerIn(l())
 	list := l().ListRect()
 	p := image.Pt(list.Min.X+list.Dx()/2, list.Min.Y+list.Dy()/2)
 	// to the root: the top of the thread
