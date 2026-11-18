@@ -145,6 +145,7 @@ type listState struct {
 	openUnread  bool         // the server said "unread" when the view opened (e.g. marked unread)
 	jumpPages   int
 	origin      image.Point // view origin in window coordinates
+	size        image.Point // the list's size in the last frame
 	lastOlder   time.Time
 	highlight   string
 	highlightAt time.Time
@@ -807,7 +808,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 	rc := &s.rc
 	s.activeTS = activeThreadIn(h, s.ch, s.thread)
-	s.origin = origin
+	s.origin, s.size = origin, size
 	s.tip = ""
 	ls := listClass.Enter(gtx, 0, 0)
 	defer ls.Leave()
