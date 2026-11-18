@@ -53,6 +53,15 @@ func hoverToolbarEnv(t *testing.T) *perfEnv {
 	t.Helper()
 	t.Setenv("CLACK_INSPECT", "1")
 	e := threadsAuditEnv(t, false)
+	// the plugin runtimes go with the test, and their patches with them
+	// (slackc's registry is the process's: TabsShape's left
+	// ClientPrimaryView and RenderedViewContents patched for the tests
+	// after it, whose composer clicks then went nowhere)
+	t.Cleanup(func() {
+		if e.a.data != nil {
+			e.a.data.stopTaut()
+		}
+	})
 	if e.a.insp == nil {
 		t.Fatal("CLACK_INSPECT=1 but the window has no inspect tool")
 	}
