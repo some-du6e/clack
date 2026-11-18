@@ -142,15 +142,6 @@ func bridge() Bridge {
 	return nil
 }
 
-// BridgeIs reports whether b is the bridge installed now (any goroutine):
-// a runtime the UI detached, or one a newer runtime replaced, keeps
-// publishing what its plugins patch as they stop, and must not touch the
-// patched set of the session after it.
-func BridgeIs(b Bridge) bool {
-	cur := bridge()
-	return b != nil && cur != nil && cur == b
-}
-
 // SetPatched replaces the set of component names that have a live patch.
 // Called from JS whenever patchComponent registers or a plugin stops.
 func SetPatched(names []string) {
