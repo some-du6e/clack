@@ -1,6 +1,6 @@
 # Canvases
 
-How Slack's web client loads, follows and edits canvases, and what Clack does instead. Sources: Slack's web client on the public CDN (build a84662d2d135, 2026-11-08; chunks `gantry-v2-async-quip-collab-webapp`, `-quip-collab-editor`, `-client-boot-shared`, `-client-canvas-view`), the method list from IzieStratt/slack-datamine-plus, docs.slack.dev for the public `canvases.*` methods, and read-only structure probes of Hack Club canvases. The probes printed only tag names, class names and attribute names; no canvas content was printed or saved.
+How Slack's web client loads, follows and edits canvases, and what Clack does instead. Sources: Slack's web client on the public CDN (build a84662d2d135, 2026-11-08; chunks `gantry-v2-async-quip-collab-webapp`, `-quip-collab-editor`, `-client-boot-shared`, `-client-canvas-view`; build 9685e6ce144b, 2026-11-18, for "Slack's edit protocol"), the method list from IzieStratt/slack-datamine-plus, docs.slack.dev for the public `canvases.*` methods, and read-only structure probes of Hack Club canvases. The probes printed only tag names, class names and attribute names; no canvas content was printed or saved.
 
 ## What a canvas is
 
@@ -10,16 +10,16 @@ Channel canvases are channel tabs. `conversations.info` → `channel.properties.
 
 ## How Slack's web client does it
 
-**Document model.** The web client embeds Quip's collaborative editor ("quip-collab"). It talks to the team host under `/canvas`:
+**Document model.** The web client embeds Quip's collaborative editor ("quip-collab"). It talks to the top-level team's host (the enterprise host in an org) under `/canvas`:
 
 | endpoint | what |
 |---|---|
-| `POST https://<team-host>/canvas/-/load-data?_x_version_ts=…` | loads the thread and its sections. The form field `request_binary` is a Quip protobuf (`pblite`); the answer is a binary `ResponseWrapper` |
-| `POST /canvas/-/fetch-latest` | `Request{ThreadRequest{thread_id, client_thread_sequence, client_max_section_sequence}}` → the changes since that sequence (`ChangesData`) |
-| `POST /canvas/-/edit-document` | sends edit transactions (binary) |
+| `POST https://<host>/canvas/-/load-data?_x_version_ts=…` | loads the thread and its sections. The form field `request_binary` is a base64 binary protobuf (`syncer.LoadData.Request`); the answer is a binary `syncer.LoadData.ResponseWrapper` |
+| `POST /canvas/-/fetch-latest` | `FetchLatest.Request{ThreadRequest{thread_id, client_thread_sequence, client_max_section_sequence}}` → the changes since those sequences (`ChangesData`) |
+| `POST /canvas/-/edit-document` | saves sections: form fields plus `data_binary`, a base64 `syncer.DocumentData` |
 | `POST /canvas/-/save-diagnostics-report` | diagnostics |
 
-`buildCanvasTarget` puts the path on the team's host. `applyCanvasAuth` sends the token as `Authorization: Bearer` on the same origin, or as a `token=` form field cross-origin. The sections and edits are Quip's internal protobuf schema, which isn't documented and changes with Quip's builds.
+`buildCanvasTarget` puts the path on that host. `applyCanvasAuth` sends the token as `Authorization: Bearer` on the same origin, or as a `token=` form field cross-origin, which is the web client's case. The schema is Quip's own and changes with Quip's builds; "Slack's edit protocol" below has it, with the field numbers of build 9685e6ce144b.
 
 Around it, Web API methods: `files.info`, `files.open` (`{file_id, supports_read_only_check, last_updated}` → `{viewers: [{user_id, is_focused, …}], should_subscribe_and_ping}`), `files.close`, `files.ping`, `files.createCanvas` (`{title, markdown, reason}` → `{file_id}`), `quip.getControllerInitData`, `quip.thread.synchronize`, `quip.getMentions`, `quip.lookupFileId`, `quip.lookupThreadIds`, `quip.history.getVersions`/`restoreVersion`, `quip.cloneCanvas`, `canvases.listHeaders`, `canvases.getTemplates`, `canvases.notificationSections`.
 
@@ -34,9 +34,437 @@ Around it, Web API methods: `files.info`, `files.open` (`{file_id, supports_read
 
 **Header.** The canvas header toolbar has "Open in side panel" (full view), "More actions" (…), the comments button, "Ask Slackbot" and "Ask Agentforce" (both behind experiments). Strings: "Open in full view", "Open in side panel", "Open in new window", "Copy link to canvas", "Created by {name}", "Last edited", "Edited by {memberName} {date}".
 
+## Slack's edit protocol
+
+Everything here is from Slack's web client build 9685e6ce144b (captured 2026-11-18), read from the public CDN without a cookie:
+
+- `gantry-v2-async-quip-collab-webapp.8c42ff1ca93bfb04`: Quip's syncer, document model, schema;
+- `gantry-v2-async-quip-collab-editor.991e15af640943df`: the editor, one 1 MB concatenated module (`0ealK`), cited by function name;
+- `client-boot.548618a2169f2a90`, `gantry-v2-async-client-boot-shared.1ea0c0b850226339`, `-client-boot-render.9358ec6724e1b096`: Slack's side of the embed and the realtime handlers.
+
+Module ids are rspack ids in those chunks. Field numbers come from Slack's own descriptors: a node script loaded `QkBk` (the `syncer.*` messages) and `o3+F` (`proto.section.*`) and called `getDescriptor()` on every message class, so they are exact for that build. The example bytes were produced by Slack's own serializer (`p8gD.toBinary`) on made-up values. No canvas endpoint was called and no canvas was opened to write this. The scripts are in /root/clack-ops/scratch/canvas-edit/tools (`schema.cjs` dumps the schema, `vectors.cjs` the examples).
+
+### Transport
+
+Three POSTs carry an edit: `load-data`, `fetch-latest` and `edit-document`. Module `zRL+` builds them.
+
+- **URL.** `buildCanvasTarget(path, teamId)` gives `https://<host>/canvas/-/<path>?_x_version_ts=<v>`. The team is the syncer's `topLevelTeamId`, which is `XgZX.Kc`: the enterprise id when the workspace is in an org, else the team id. The host is `getHostForTeamId` (client-boot `jfry`), the host of that team's `url`. So in Hack Club the calls go to the enterprise host with the enterprise token. `<v>` is the page's `data-version-ts` (`xIyL.getVersion`), or "noversion".
+- **Auth.** The web client runs on app.slack.com, so the canvas host is cross-origin and `applyCanvasAuth` appends `token=<xoxc…>` to the form, with no Authorization header. The request is `credentials: "include"`, so the `d` cookie goes with it. (Same-origin, it would send `Authorization: Bearer`.)
+- **Body.** `application/x-www-form-urlencoded`; `encodeBody` writes each value as `encodeURIComponent(String(v))`.
+- **Requests.** load-data and fetch-latest go through `tk` and client-boot's request class (`OKwY` on `Umoo`: response type arraybuffer, 60 s timeout). edit-document is a plain `fetch` (`s3`), with `keepalive` when the page unloads.
+- **Not needed by Clack.** `/-/run-document-fixers` and `/-/save-diagnostics-report` use the same target and auth.
+
+**The bodies are binary protobuf, not pblite.** `request_binary` and `data_binary` are `p8gD.toBinaryString`: the standard protobuf wire format in standard base64 with `=` padding. `c7F4.serializeToWriter` writes fields in tag order, packs repeated numeric fields, and writes every field that was set, so an explicit 0 or an empty message is on the wire (proto2 presence). Answers are the same binary, not base64. Decoding drops unknown fields, so a client never echoes fields it doesn't know. pblite (Closure's JSON-array form, `p8gD.toPbLite`) shows up only in Slack's diagnostics (`syncer_load_data_request_pblite`) and in `call-handler`'s `request_pblite`, which canvases don't use.
+
+The Quip session token that `quip.getControllerInitData` hands out (`7yDq.setSessionToken`) is only for blob URLs (`/collab-slack-blob/…`). None of the three calls sends it.
+
+### load-data
+
+| | |
+|---|---|
+| URL | `/canvas/-/load-data`, or `/canvas/-/load-data/<user_action>/<n>` while a user-action tracer is active (`NzH8.loadData` then also sets fields 5 and 6). Without a tracer Slack sends the bare path and logs a debug warning |
+| form | `request_binary` = base64 `syncer.LoadData.Request`, `token` |
+| answer | `syncer.LoadData.ResponseWrapper` |
+
+To open a canvas, the syncer loads its thread (files.info `quip_thread_id`): the thread as an object id plus one bulk load of type THREAD (`srhK.reloadThreadBulkLoad`: `markAsThreadBulkLoad`, then `loadObject`). For thread `ABCdEfGhIjK` Slack's encoder writes `0a0b 4142…4b 1a0f 0801 120b 4142…4b`.
+
+```proto
+message syncer.LoadData.Request {
+  repeated string object_ids = 1;          // [thread id]
+  repeated string index_ids = 2;
+  repeated BulkLoad bulk_loads = 3;        // [{type: THREAD, arg0: thread id}]
+  repeated syncer.Parcel parcels = 4;
+  string user_action = 5;
+  int32 user_action_sequence = 6;
+  // 7 fragment_collection_ids, 8 secret_paths, 9 authorize_pending_ids,
+  // 10 cell_section_loads, 11 mobile, 13 object_id_and_sequences,
+  // 14 context_thread_or_slack_file_ids
+  message BulkLoad {
+    enum type = 1;                         // INBOX 0, THREAD 1, FOLDER 8, THREAD_COPY 9, ...
+    string arg0 = 2;
+    string arg1 = 3;
+    bool mobile = 4; bool minimal = 5; bool skip_sfdc_cdo_cache = 6;
+    bool is_preload = 7; bool skip_indexed_db_cache = 8;
+  }
+}
+message syncer.LoadData.ResponseWrapper {
+  string error = 1;
+  syncer.LoadData.Response response = 2;
+  syncer.LoadData.PreserializedItems preserialized_items = 3;
+}
+message syncer.LoadData.Response {
+  bool success = 1;
+  syncer.Payload objects = 2;
+  repeated Index indexes = 3;              // {string name = 1; repeated {string object_id = 1; string sort_value = 2} entries = 2;
+                                           //  bool desc = 3; bool numeric = 4; int32 deleted_entry_count = 5; bool chunked = 6}
+  syncer.LoadData.Request followup_request = 4;
+  repeated syncer.Parcel parcels = 5;
+  repeated Failure failures = 6;           // {enum reason = 1; Request request_subset = 2; repeated string organization_ids = 3}
+                                           // reason: AUTH 0, TRANSIENT 1, NOT_FOUND 2, NOT_IMPLEMENTED 3,
+                                           // AUTH_DISABLE_REQUEST_ACCESS 4, NOT_ON_ELEMENT_ALLOWLIST 5,
+                                           // INTERNAL_ERROR 6, EXCEEDS_PRELOAD_ALLOWANCE 7, UNSUPPORTED_OBJECT_TYPE 8
+  // 7 fragment_collections, 8 guest_listener_params
+  bool from_cache = 9;
+}
+message syncer.LoadData.PreserializedItems {
+  repeated Preserialized preserialized = 1; // {enum id_type = 1; repeated bytes value = 2}
+  repeated bytes crdt_sessions = 2;         // each a syncer.CrdtSessionState
+}
+message syncer.Payload {                    // the parts a canvas uses
+  repeated syncer.User users = 1;
+  repeated syncer.Thread threads = 3;       // id 1, sequence 2, deleted 3, title 6, author_id 7, document_id 10, secret_path 106
+  repeated syncer.Document documents = 6;   // id 1, sequence 2, deleted 3, thread_id 6, title 7, updated_usec 8,
+                                            // shard_chars 42, max_section_sequence 48, title_rich_text_api 69
+  repeated syncer.Section sections = 7;
+  repeated syncer.SlackChannel slack_channels = 56;
+  repeated syncer.SlackUser slack_users = 57;
+  repeated syncer.SlackEmoji slack_emojis = 58;
+  repeated syncer.SlackFile slack_files = 60;
+  repeated syncer.SlackDocument slack_documents = 62;
+  // and many more (the dump has them)
+}
+```
+
+`handleLoadDataResponseBinary_` (`NzH8`) reads the answer:
+
+- **No `response`.** The load fails with "Not found" (`g47m`).
+- **`error` set.** The load fails with that string.
+- **`preserialized_items` set.** `M455.updateResponseWithPreserialized` decodes each item: id type 2 values are `syncer.Section` bytes, appended to `response.objects.sections`, each given the `CrdtSessionState` from `crdt_sessions` with its `section_id`; id type 79 is spreadsheet cells. A decoder has to read sections from both places.
+- **HTTP failures** (class `R` in `NzH8`). Status 0 is "offline", retryable after 1 s; a status under 500 isn't retried; 5xx is retryable after 30 s.
+
+A canvas's answer, as far as the client reads it: the thread (with its `sequence` and `document_id`), the document (`id`, `sequence`, `max_section_sequence`, maybe `shard_chars`), its sections, and the index `Section/<document id>`, whose entries are `{object_id: section id, sort_value: position_path}`.
+
+### Sections
+
+A document is a flat list of `syncer.Section`s. Nesting is in fields, not in the message tree.
+
+```proto
+message syncer.Section {
+  string id = 1;                 // "temp:C:" + 3 shard chars + 25 hex (see below)
+  int64 sequence = 2;            // the server's version; 0 for a section the client just made
+  bool deleted = 3;
+  repeated int32 dirty = 4;      // field numbers; also seen in save answers
+  repeated int32 pending = 5;
+  string thread_id = 6;
+  string document_id = 7;
+  string position = 8;           // order key; new ones end in ":temp"
+  enum type = 9;                 // proto.section.Section.Type
+  enum style = 10;               // proto.section.Section.Style
+  enum section_class = 11;       // SECTION_CLASS 0, CONTROL_CLASS 1
+  proto.section.Section.Content content = 12;
+  proto.section.Section.Parents parents = 13;
+  string alt_rtml = 14;          // a control's text form (":smile:")
+  proto.section.Section.Status status = 15;   // section locks (classic Quip)
+  proto.section.Section.Attributes attributes = 16;
+  string temp_id = 17;
+  enum merged_state = 18;        // NETWORK 0, LOCAL 1, MERGED_FROM_LOCAL 2
+  bool modified = 19;
+  int64 local_sequence = 20;
+  string position_path = 21;     // ancestors' positions and its own, joined with "-"
+  bool transient = 22;
+  string copy_thread_id = 23; string copy_secret_path = 24;
+  enum content_origin = 25;      // USER_EDIT 0, NEW_DOCUMENT 1, TEMPLATE 2, COPY_DOCUMENT 3, PASTE 4, SLACK 5, ...
+  int64 created_usec = 26; int64 updated_usec = 27; string remote_editor_id = 28;
+  bool has_layout_parent = 29;   // a child of a callout/blockquote/table layout
+  string author_id = 30; repeated string edited_by_user_ids = 31; int64 display_edited_usec = 32;
+  string trace_id = 33;          // "<session>-<save sequence>"
+  bool is_antimatter_section = 34;
+  bool read_only = 35;
+  bool is_programmatic_update = 36;
+  syncer.CrdtSessionState crdt_session = 38;
+  enum activity_stack_update = 39; // ADD_SECTION_ROW 0, REMOVE_SECTION_ROW 1, ADD_CHECKBOX_ROW 2, REMOVE_CHECKBOX_ROW 3
+  // 102 root_id, 115 overlay_sequence, 200-215 table/formula fields, 300 source [default 2]
+}
+message proto.section.Section.Content {   // one of these is set
+  ContentText text = 1;                   // {string text = 1 (RTML); string language = 2}
+  ContentImage image = 2;
+  ContentControlHighlight highlight = 7;  // comment anchors
+  ContentList list = 17;                  // empty message: a list container
+  ContentLayoutTable layout_table = 30;
+  ContentControlSlackChannel slack_channel = 42; // {slack_channel_id = 1 ("sc:C…"), name = 2, is_private = 3}
+  ContentHorizontalRule horizontal_rule = 43;    // {bool as_page_break = 1}
+  ContentControlSlackUser slack_user = 44;       // {slack_user_id = 1 ("su:U…"), display_name = 2, creator_user_id = 3,
+                                                 //  profile_url = 4, slack_team_id = 5, from_same_document_paste = 6}
+  ContentControlSlackEmoji slack_emoji = 48;     // {emoji_name = 2, slack_emoji_id = 3 ("se:<name>/<team>"),
+                                                 //  custom_emoji_url = 4, emoji_size = 5, non_animated_url = 6}
+  ContentLinkUnfurlCard link_unfurl = 50;
+  ContentControlSlackFile slack_file = 52;
+  ContentTitle title = 58;                // {string text = 1 (RTML); ContentImage header_image = 2;
+                                          //  string header_image_slack_file_upload_user_id = 3; repeated SlackEmojiInfo emoji_info = 4}
+  ContentControlSlackDate slack_date = 62;      // {int64 utc_date_ms = 1; string date_format = 2}
+  ContentLayoutCallout layout_callout = 63;
+  ContentLayoutBlockquote layout_blockquote = 65; // {repeated string section_ids = 1}
+  ContentControlSlackBroadcast slack_broadcast = 68; // {string range = 1} (@here, @channel)
+  // 58 kinds in all
+}
+message proto.section.Section.Parents { repeated string ids = 1; string container_id = 2; enum container_style = 4; }
+message proto.section.Section.Attributes {  // the ones text sections use
+  int32 indentation = 1;               // list level
+  bool checked = 2;
+  string background_color = 3;
+  bool vertical_margin = 4;            // [default = true]
+  int32 list_position = 11;
+  enum default_content = 13;           // NONE 0, HIDE_ON_FOCUS 1, SELECT_ON_FOCUS 2
+  enum text_alignment = 26;
+  bool is_new_document_default_content = 34;
+  bool continue_previous_list_numbering = 47;
+  int32 restart_list_numbering_at = 48;
+  int32 paragraph_indentation = 51;
+  bool is_customized_default_content = 57;
+  // 54 fields in all (the dump has them)
+}
+```
+
+The kinds a canvas's text blocks use, from `nTyX.pW` (the type each style belongs to) and the rich-text importer `30B3`:
+
+| block | type | style | content |
+|---|---|---|---|
+| title | TITLE_TYPE 64 | TEXT_TITLE_STYLE 48 | `title` (RTML, at most 2000 code points: `trimToMaxLength_`) |
+| paragraph | TEXT_TYPE 0 | TEXT_PLAIN_STYLE 0 | `text` |
+| heading | TEXT_TYPE 0 | TEXT_H1_STYLE 1, H2 2, H3 3 (H4-H6 39-41) | `text` |
+| code block | TEXT_TYPE 0 | TEXT_CODE_STYLE 4 | `text`, lines joined with `<br>`, `language` |
+| quote paragraph | TEXT_TYPE 0 | TEXT_BLOCKQUOTE_STYLE 16 | `text` |
+| list | LIST_TYPE 1 | LIST_BULLET_STYLE 5, NUMBERED 6, CHECKLIST 7 | `list` (empty) |
+| list item | TEXT_TYPE 0 | TEXT_PLAIN_STYLE 0 | `text`; `parents {ids: [list], container_style: the list's style}`; `attributes {indentation, checked, vertical_margin: false}` |
+| divider | HORIZONTAL_RULE_TYPE 16 | HORIZONTAL_RULE_STYLE 18 | `horizontal_rule` |
+| blockquote layout | LAYOUT_BLOCKQUOTE_TYPE 71 | LAYOUT_BLOCKQUOTE_STYLE 50 | `layout_blockquote`; its children have `has_layout_parent` |
+| callout | LAYOUT_CALLOUT_TYPE 69 | LAYOUT_CALLOUT_STYLE 49 | `layout_callout` |
+| mention, emoji, @here, date | CONTROL_SLACK_USER_TYPE 50 (users and groups), CHANNEL 49, EMOJI 54, BROADCAST 73, DATE 68 | none | `slack_user`, `slack_channel`, `slack_emoji` (+ `alt_rtml` ":name:"), `slack_broadcast`, `slack_date`; `section_class` CONTROL_CLASS |
+
+Tables, images, columns (LAYOUT_FLEXBOX 26/21), unfurls and files have their own types; the full enums are in the dump.
+
+**Ids.** A new section's id is `temp:C:` + shard chars + 25 hex digits (`ZRIn.generateEntityId`; `s6aU.uuid` takes `crypto.randomUUID()` without dashes and cuts it to 25). The shard chars are the document's `shard_chars` (field 42) or the first three characters of the document id (`7DQG.shardChars`). The server keeps `temp:C:` ids as they are: they're "new section ids", not temp ids (`2U5W.isNewSectionId`, `isTempId`), and the export's `id` attributes are the same strings.
+
+**Positions.** `position` is an order key over the alphabet A-Z then a-z (`0fa5`). `generate(prev, next)` returns a key strictly between its neighbours with `:temp` appended, which marks a key the server hasn't confirmed (`stripTemp`, `isTemp`); the stored key presumably drops it. It tries, in order: `prev` incremented (the last letter that isn't z goes up one, Z to a; each trailing z becomes B), `next` decremented, `prev + "aaaa"`, and `next` minus its final B plus "Aaaaaaa"; anything else is "aaa". Slack's own outputs:
+
+| prev, next | key |
+|---|---|
+| none, none | `aaa:temp` |
+| `aaa`, none | `aab:temp` |
+| none, `aaa` | `aaZ:temp` |
+| `aaa`, `aab` | `aaaaaaa:temp` |
+| `aaz`, none | `abB:temp` |
+| `aab`, `aac` | `aabaaaa:temp` |
+| `zzz`, none | `zzzaaaa:temp` |
+| `aaa`, `aaB` (out of order) | `aaa:temp`, with a warning |
+
+`position_path` is the positions from the outermost container down to the section, joined with "-" (`EKJU.positionPath`). A control's path is its section's ancestors plus `generate(previous sibling's position, its section's position)` (`EKJU.positionPathForControl`); a control with no section is "zzzzzz-orphaned-m".
+
+**Controls.** A mention, emoji, @here or date is a section of its own (CONTROL_CLASS), and the text that shows it holds `<control id="…"></control>`. `30B3` turns a rich_text element into one: `user`/`usergroup` into CONTROL_SLACK_USER_TYPE with `slack_user_id` `su:<id>` (`2U5W.syncerIdForSlackUser`), `channel` into `sc:<id>`, `emoji` into `slack_emoji_id` `se:<name>/<topLevelTeamId>` (and `emoji_name` when that isn't a valid emoji id) with `alt_rtml` `:<name>:`, `broadcast` into `slack_broadcast {range}`. Removing a mention from the text (`eju0.remove`) only changes its section's text; the control section isn't deleted there.
+
+### RTML
+
+A text or title section's content is RTML, an HTML subset. The grammar is `W77Y.parse`:
+
+- **Tags.** `a` (`href`, `class`, `data-nolink="true"`, `data-slack-file-id`), `b`, `i`, `u`, `del`, `code`, `f` (font colour; its attributes carry it), `sub`, `sup`, `br`, `control` (`id` or `data-id`, empty), `annotation` (`id`; wraps the text a comment thread anchors to), `cl`/`cli` (cell lists). `p`, `spacer` and `input` are dropped with their contents; any other element is unwrapped.
+- **Empty elements.** A formatting element with no text and no control inside is ignored.
+- **Text.** `escapeText`: tab, CR and LF become spaces; other control characters (U+0000-U+001F, U+007F-U+009F) are removed; `&`, `<` and `>` are escaped. Quotes aren't. A line break is `<br>`. Code blocks write leading spaces and runs of two or more as `&nbsp;` (`32AJ.plainTextToCodeRtml`; the importer `30B3` turns every space into `&nbsp;`).
+- **Links.** `isSafeUri`: http, https and Quip's own schemes (`gOda.kT`), plus ftp, mailto and tel. `javascript:` and `vbscript:` are never kept.
+
+The canonical writer is the editor's `getCompactRtml({text, marks})`: it is how Slack writes RTML out of an Automerge document (`getRtmlWithMarks`), so it's what `mergeRtml` returns. `fce5.getTextAndMarks` turns RTML into text plus marks: the text keeps escaped characters, `<br>` and `<control id="…"></control>` as they are written, and each mark is `{name, value, start, end}` over that string. `getCompactRtml` applies the marks to a tree in descending `getMarkDensity` (annotation 3, `a` 2, `f` 1, the rest 0; `dHCX.sortBy` is stable, so ties keep their order), and a later mark nests inside an earlier one: annotations end up outermost, then links, then font colour, then b/i/u/del/code/sub/sup. `getAttributes` writes a link as `href="…"` with `"` as `&quot;`, then `data-nolink="true"` and `data-slack-file-id="…"` when set, and an annotation as `id="…"`. The importer (`30B3`) writes controls as `<control id=temp:C:…></control>`, unquoted; both forms parse the same.
+
+### edit-document
+
+| | |
+|---|---|
+| URL | `/canvas/-/edit-document` |
+| form (`getSavePayloadAndOptions`) | `thread` (the thread id), `document` (the document id), `retry_count` (consecutive failed saves), `session`, `sequence`, `data_binary` (base64 `syncer.DocumentData`), `title` (when `extractTitleMetadata(true)` finds one, which is always with a title section), `activity_log=false` (only when every section is a programmatic update), `token` |
+| answer | `syncer.EditDocumentResponseWrapper` |
+
+```proto
+message syncer.DocumentData {
+  repeated syncer.Section sections = 1;    // the update bundle
+  int32 omitted_deleted_entities = 2;
+  bool partial = 3;
+  string max_position_path = 4;
+  // 5-12 miniapp, annotation and paste metadata
+  repeated proto.section.SlackEmojiInfo title_slack_emoji_info = 13; // {team_id 1, display_name 2, unicode 3, display_url 4}
+  proto.threads.RichTextApi title_rich_text_api = 14;
+  string document_id = 15;
+}
+message syncer.EditDocumentResponseWrapper {
+  bool changed = 1;
+  syncer.DocumentData final_data = 2;      // the server's version of the saved sections
+  syncer.ChangesData cell_data = 3;        // spreadsheets
+  syncer.DocumentData import_sections = 4;
+  syncer.MountPoints mount_points = 5;
+  bool is_new_edit_session = 6;
+}
+message proto.threads.RichTextApi {        // rich_text as protobuf
+  string type = 1;                         // "rich_text"
+  repeated RichTextSection elements = 2;   // {string type = 1 ("rich_text_section"); repeated RichTextBlock elements = 2}
+}
+// RichTextBlock: type 1, text 2, channel_id 3, user_id 4,
+//   style 5 {highlight 1, bold 2, italic 3, strike 4, code 5, underline 6},
+//   name 6, url 7, skin_tone 8, ..., timestamp 17, ..., unicode 20, ...
+```
+
+**The counters.**
+
+- **`session`** is `7yDq.sessionId()`: 12 hex digits made at load (`tAAR.s4` three times), replaced by `InitOptions.session_id` when controller init data has one (`agks`).
+- **`sequence`** is the session's save counter (`7yDq.sessionSaveSequence`). It's module-wide, it starts at 0, and `i40t.save` bumps it right before each send (`nextSessionSaveSequence`), so the first save sends 1.
+- **`trace_id`** on each section is `<session>-<save counter>`, read while the bundle is built, before the bump: the first save's sections say `…-0`.
+- **A section's `sequence`** is the server sequence the client last saw for it (`ZRIn.toPb`: `setSequence(this.sequence_)`), 0 for a new one. The client never bumps it. `toServerSequence_` rounds a sequence down to a multiple of 1000 and 1-999 mark transient sections (`isNewlyCreatedTransient`), so saved sections presumably move in steps of 1000.
+- **A section's `local_sequence`** counts the bundles that entity has gone into (`toUpdateBundle` starts with `localSequence_ += 1`).
+
+**The update bundle.** `7DQG.createUpdateBundle` adds every entity that `shouldUpdate()` (dirty; under CRDTs, with saveable CRDT changes) as `toUpdateBundle()`, then the title's emoji and rich text. `ZRIn.toUpdateBundle` builds the full section with `toPb` and copies only these fields:
+
+- the dirty fields (field numbers of `syncer.Section`);
+- always: `id` 1, `sequence` 2, `local_sequence` 20, `modified` 19, `parents` 13, `crdt_session` 38, `activity_stack_update` 39;
+- when anything is dirty: `is_programmatic_update` 36, and `type` 9 unless only `status` is dirty;
+- `position_path` 21 when `position` is dirty;
+- `content_origin` 25 for a new section whose origin isn't USER_EDIT;
+- then `trace_id` 33.
+
+A field on the list is copied only when `toPb` set it: `is_programmatic_update` only for programmatic changes, `crdt_session` only under CRDTs, `activity_stack_update` only when one applies.
+
+`EKJU.toPb` always sets `parents`, even an empty one, and sets `style`, `position`, `attributes` and `has_layout_parent`; `ZRIn.toPb` sets `section_class`, `type`, `content`, `modified` (= dirty), `deleted`, `read_only`, `id`, `sequence`, `local_sequence`, `position_path`, `content_origin`. A new entity has every known field dirty (`setDirty(nTyX.mA)`: class, type, deleted, read_only, content, parents, style, status, attributes, has_layout_parent, overwrite_formula_user_id, position, alt_rtml). `thread_id` and `document_id` are never in a bundle; the form names them.
+
+`activity_stack_update` (`WJQ2.shouldAddToActivityStack`, text sections only) is ADD_SECTION_ROW for a new section with text or a section whose stored text was empty, REMOVE_SECTION_ROW when the text is emptied, ADD_CHECKBOX_ROW and REMOVE_CHECKBOX_ROW when `checked` flips. It compares with the section as the server last sent it.
+
+**The title.** With `updateDocumentTitle` (on for canvases), `extractTitleMetadata(true)` gives the title section's text, trimmed and cut to 255 characters (`MAX_TITLE_LENGTH`), for the `title` field; up to 10 of its emoji controls' `SlackEmojiInfo`; and `title_rich_text_api`, the section exported to HTML and converted to rich_text (`30B3.convertSectionsToRichTextApiPb`, options `maxLength 2000, flattenLists, inlineHeadings, useTextTypeForLinks, omitBreakNewlines, normalizeSpaces, escapeText`). A document with a title section sends all three with every save. Typing in the title also updates the header at once (`checkAndSendUpdatedTitle` → QuipDelegate `updateTitle`, a local store action).
+
+An edited paragraph, encoded by Slack (an existing section at sequence 7000, first save of the session, with a minimal `title_rich_text_api`):
+
+```
+0a59                                       sections, 89 bytes
+  0a21 "temp:C:ABC0123456789abcdef0123456"   id
+  10 d836                                  sequence 7000
+  48 00                                    type TEXT_TYPE, written although 0
+  62 16 0a14 0a12 "Hello <b>world</b>"     content.text.text
+  6a 00                                    parents, empty but written
+  9801 01                                  modified
+  a001 01                                  local_sequence 1
+  8a02 0e "0123456789ab-0"                 trace_id
+720b 0a09 "rich_text"                      title_rich_text_api.type
+```
+
+### One edit, as Slack saves it
+
+| the user | the bundle |
+|---|---|
+| types in a paragraph | that section: content dirty (plus `activity_stack_update` when it goes from empty to text) |
+| presses Enter at the end | a new section after it: sequence 0, every field, `position` from `generate(this, next)`, `position_path`; the old one too if its text changed |
+| deletes a block | the section with `deleted: true` (and `type`) |
+| ticks a checklist item | the item: `attributes` dirty (`checked`), ADD_CHECKBOX_ROW or REMOVE_CHECKBOX_ROW |
+| makes a paragraph a heading | the section: `style` dirty (and `type` when it changes kind) |
+| @-mentions someone | a new control section (CONTROL_CLASS, `slack_user`) and the text section whose RTML now has `<control id="…">` |
+| renames the canvas | the title section (`content.title`), and the `title` field |
+
+Every dirty entity of the document goes into one save. The background timer (`7DQG.backgroundProcess_`, `scheduleBackground`) saves 200 ms to 10 s after an edit; the defaults (`qfZ7`) are `backgroundMinDelay` 200 ms, `backgroundMaxDelay` 10 s, `backgroundSaveDelay` 3 s, `backgroundAttributeSaveDelay` 100 ms, `backgroundTitleSaveDelay` 200 ms, `backgroundNoViewersSaveDelay` 10 s, and the embed can override them. One save runs at a time: another waits, retrying every 200 ms (`i40t.shouldDeferSave_`). Editing a section also clears the "new edits" highlights and moves the canvas's read stamp to now (`EKJU` → `removeAllNewEditHighlights` → `updateFileReadTs`, QuipDelegate `updateFileReadTsBeforeSave`), and a successful save records `lastSaved` (`didSaveDoc`). Both are local store updates, not API calls.
+
+### The answer
+
+`handleEditResponseBinary` reads `changed`, `final_data`, `cell_data`, `import_sections`, `is_new_edit_session` and applies `mount_points`. On success (`i40t.successCallback_`), when `changed` is set, the client applies `final_data`'s sections as a save answer (`document.update(…, "POST response")`, flag 1), then `didApplyUpdatesForSave`: it maps `temp_id` to the real id when the server renamed a section, and updates the `Section/<document id>` index with `{id, remove: deleted, sort_value: position_path}`. `changed: false` is a success that changed nothing. `merged_state` MERGED_FROM_LOCAL is legal only in a save answer (the update pass logs "MERGED_FROM_LOCAL set outside of save response" anywhere else). The client renders such a section as a merge of its own change (`mergedFromLocal` in `EKJU.updateFromContent`) and holds it as a pending update when it still lists `dirty` fields or its `local_sequence` differs from the entity's.
+
+### Concurrent edits
+
+**Canvases merge typing with Automerge.** Slack turns CRDTs on for canvases unless the experiment `canvas_crdts_client_team` is "off" (boot-shared `11gR.isCrdtsClientEnabled`, `1E/J.isCrdtsClientEnabledForCanvas`; the collab init in `agks` then calls `f/mI.enableCrdts` and loads Automerge's wasm, `E2lw`). Each text section then carries an Automerge document of its RTML (the text and marks above) in `crdt_session`:
+
+```proto
+message syncer.CrdtSessionState {
+  string section_id = 1; int64 base_sequence = 2; int64 last_saved_sequence = 3; int64 expiration_usec = 4;
+  bytes automerge_doc = 5; repeated string processed_heads = 6; bool server_validation_failed = 7;
+  string base_head = 8; MergeInfo merge_info = 9; repeated SplitInfo split_infos = 10;
+  repeated SequenceHead sequence_heads = 11; string current_head = 12;
+}
+```
+
+The client sends it with each save (`EKJU.toPb` → `crdt.createCrdtState`) and merges the sessions others save (`ZRIn.updateCrdtState_` → `crdt.update`). Two people typing in one paragraph both keep their text.
+
+**Plain content is Slack's own fallback, and the only save Clack can make.** A text section whose Automerge document can't be read, that lacks live text, or that was saved without a session saves as plain content: `savesAsPlainContent` in the editor's CRDT class, and `EKJU.toPb` then leaves `crdt_session` out. So the server takes a text section update that has only `content.text`. When a save answer or a remote update carries a `crdt_session` without `base_sequence`, CRDT clients start a new session from its RTML (`startClientSession`) and merge their unsaved typing into it (`mergePendingSaveAnswer`). Clack has no Automerge, so every Clack save is this case.
+
+**Slack's three-way merge.** `mergeRtml(base, ours, theirs)` (editor `0ealK`) builds an Automerge document from `base` as actor "00", applies `ours` as actor "02" and `theirs` as "01", merges, and writes RTML with `getCompactRtml`. `withRtml` diffs by words first (`71JW.spliceWords`), then by characters inside a replaced run. Every insert from both sides survives and every delete applies. Two inserts at the same spot are ordered by Automerge by actor id; which comes first is best taken from running Slack's `mergeRtml` itself. `crdt.mergeIntoSaveAnswer` uses it to keep typing that happened while a save was in flight. Automerge's wasm is public too (`automerge_wasm_bg-ea55425.wasm`, `092942ae1cb66d62.module.wasm`).
+
+**Without CRDTs, sections lock.** In classic Quip, a section someone is typing in is locked for 60 s (`qFI8`, `DEFAULT_LOCK_LEASE`), renewed while they type, and sent around as transient sections; CRDT sections ignore locks marked `from_crdt`.
+
+**Remote updates while a section has unsaved changes.** The document's update pass (`7DQG.update`) holds a remote update to an entity with unsaved changes (under CRDTs, only while its save is in flight) and replays it after the save. It drops any update whose `sequence` is lower than the entity's. So in plain content, a held update older than this client's save answer is dropped when it replays, and the save answer decides what the section says.
+
+**There is no conflict state.** The client sends each section with the last server `sequence` it saw and never shows a conflict. HTTP 409 is SEQUENCE_OUT_OF_ORDER, which it counts like other failures (with a threshold of 9 instead of 2) and retries. What the server does with a stale section `sequence` under plain content (merge with the base version, keep the newest, or refuse) isn't visible from the client.
+
+### Failures and what the user sees
+
+`i40t.getSaveErrorInfo_` sorts a failed save by HTTP status:
+
+| status | error type | failures before the error state |
+|---|---|---|
+| 400 | OPERATION_NOT_PERMITTED | 2 |
+| 403 | FORBIDDEN | none: it isn't counted; `setError(1, 7, 15000)` shows the error at once (reason "Thread closed") without locking editing |
+| 409 | SEQUENCE_OUT_OF_ORDER | 9 |
+| 413 | PAYLOAD_TOO_LARGE | 2 |
+| 429 | TOO_MANY_REQUESTS | 5 |
+| 503 | SERVICE_UNAVAILABLE | 2, and the save counts as stuck |
+| anything else, and a network failure | UNKNOWN | 2 |
+
+A network failure never reaches the server's status: `s3`'s `onFetchFailure` hands the error callback a made-up `new Response(null, {statusText: <message>})`, which falls into UNKNOWN. After any failure the saved sections go from pending back to dirty (`finishSave_` → `revertFromPendingToDirty`), so nothing is lost, and the next save waits `getSaveBackoffDelay`: 10 s (`backgroundMaxDelay`) for the first five consecutive failures, then 10 s × 1.5^(n-5), at most 10 min. `retry_count` tells the server how many failed in a row. A success clears the count. Two more things start the error state: more than 25 saves attempted since the last one that succeeded (`saveIdDifferenceBeyondThreshold`), and a save still in flight after 150 deferrals, about 30 s (`setSaveStuckInProgress`). The reason the error carries follows the cause: offline when `navigator.onLine` says so ("Connection offline"), else "Server not reachable"; "Document too large" for 413; "Unknown error" for a save that threw.
+
+In the error state the document calls `updateErrorState` → `setError(1, …)`, and because Slack's platform delegate says `disableEditingDuringErrorState()` (true in `agks`), the canvas turns read-only ("cant_sync") until a save succeeds. Typing then shows nothing more (`indicateEditsDisabled` is a no-op in every delegate here). The editor's `setError` (editor `hs.setError`) hands Slack's `errorUiProvider` (QuipEmbed, boot-shared `LlXB`) a reason: "Document failed to load", "Unknown error", "Early exit due to previous failures", "Connection offline", "Server not reachable", "Document too large", "Session expired" or "Thread closed". Slack logs `[QuipSaveError] <reason>` and shows a banner: "Document too large" gives `quipDocumentTooLarge`, any other reason `quipOffline`. Clearing the error removes it.
+
+The banners are `QuipSystemMessage` (`p-quip_system_messages p-quip_system_messages--<type>`, Slack's warning banner, `isFixedPosition: false`), above the canvas:
+
+| banner | when | icon | text | close button |
+|---|---|---|---|---|
+| quipOffline | a save error state, a load that failed | cloud-offline-filled | "We’re experiencing issues saving edits to this canvas." | no |
+| quipDocumentTooLarge | 413 twice | warning-filled | "This canvas reached its size limit and can’t save edits. Copy any unsaved changes before closing it." | no |
+| offline | Slack's own connection is down (`quipSystemMessages.isOffline`) | cloud-offline-filled | "Slack is trying to connect. Edits cannot be saved right now." | no |
+| degraded | Slack's connection is degraded | cloud-offline-filled | "Your connection to Slack is unstable. Your edits will be saved, but it might take a while to show changes made by others." | yes |
+| unresolved | edits unsaved for over 2 min (`useEmbedDirtyWarning` polls `getIsDirty` every 60 s), or an unresolved document id | cloud-offline-filled | "We’re experiencing issues creating a new canvas." | no |
+| static | `files.open` said `should_subscribe_and_ping: false` | none | "This canvas is popular! Unfortunately, you can’t edit this canvas right now, and it might take a while to show changes made by others." for a writer (`vITP.isWriteable`), else "This canvas is popular! Unfortunately, it might take a while to show changes made by others." | yes |
+
+QuipEmbed's own message (a save error, else unresolved) is shown first; otherwise the first of the store's messages in `ZEA4`'s order: offline, quipDocumentTooLarge, quipOffline, static, degraded, then the rest. On unload Slack saves once more with `keepalive` (only when the form is under 64 KiB, `zRL+.Su`). A failed fetch-latest is only logged ("fetch-latest failed"), with no retry and no UI; the next `document_update` fetches again.
+
+### Following other people's edits
+
+- **`document_update {file_id, payload}`** (boot-render `documentUpdated`): Slack looks up the Quip thread and calls `onReceiveDocumentEvent(thread, payload, "update")` (`/zCZ`), which runs `fetchThreadChanges`. The payload isn't read.
+- **`document_change {channel: <file id>, payload: base64}`**: a `syncer.TransientSections` (cursors, live typing, locks), passed to `receiveTransientSections`. A client sends its own as `{type: "document_change", user, channel, payload}` (`/zCZ.sendDocumentEvent`).
+- **Opening** (boot-shared `3uCk`, the `openFile` thunk): `files.open`, then `onReceiveDocumentEvent(thread, "", "backlog")`, the same catch-up fetch. If `should_subscribe_and_ping` is false (and `XLew.s` doesn't override it), it puts the canvas in static mode (`o4o5.setReadOnly`, store key `canvasReadOnly`): the `static` banner above.
+
+`HVRg.fetchLatest_` builds the fetch:
+
+| | |
+|---|---|
+| URL | `/canvas/-/fetch-latest` |
+| form | `request_binary` = base64 `syncer.FetchLatest.Request`, `token` |
+| answer | `syncer.FetchLatest.Response` |
+
+```proto
+message syncer.FetchLatest.Request { repeated ThreadRequest requests = 1; }
+message syncer.FetchLatest.ThreadRequest {
+  string thread_id = 1;
+  int64 client_thread_sequence = 2;       // the thread's sequence (minus 1 to force)
+  int64 client_max_section_sequence = 3;  // the document's max_section_sequence
+}
+message syncer.FetchLatest.Response {
+  syncer.ChangesData changes_data = 1;
+  int32 section_consistency_hash = 2;
+}
+message syncer.ChangesData {
+  repeated string ids = 1;
+  repeated Index indexes = 2;             // {index_id 1, in_place 2, ids 3,
+                                          //  changed_entries 4 {id 1, remove 2, sort_value 3}, reload 5}
+  repeated TempId temp_ids = 3;           // {temp_id 1, real_id 2}
+  repeated TempId index_temp_ids = 4;
+  repeated string presence_ids = 5;
+  bool unread_count_changed = 6;
+  syncer.Payload data = 7;                // the changed threads, documents, sections
+  // 10 fragment_collections, 11 leveldb_write_error, 12 cell_sections
+}
+```
+
+For thread `ABCdEfGhIjK` at sequence 42000 with sections up to 41000, Slack writes `0a15 0a0b 4142…4b 1090c802 18a8c002`. The answer goes to `onChangesReceived_` → `updateWithChanges`. When `data.backlog_reload_model_data` is set, the thread is reloaded with load-data instead.
+
+### What a server answers
+
+What the client code expects of Slack's server, which is what fakeslack has to do:
+
+- **load-data.** A `ResponseWrapper` with `response.success`, the thread, the document and every section in `objects`, the `Section/<document id>` index, and HTTP 200. A thread the token can't read: `failures` (AUTH or NOT_FOUND), or no `response`.
+- **fetch-latest.** `changes_data.data`: the thread and document with their new sequences, and the sections whose `sequence` is above `client_max_section_sequence` (deleted ones with `deleted: true`); `indexes` with `Section/<document id>` changes. Nothing changed: an empty `ChangesData`.
+- **edit-document.** It applies each section's fields, gives every changed section a new sequence (above the document's `max_section_sequence`, which moves with it; presumably a multiple of 1000), drops `:temp` from new positions, and answers `changed: true` with those sections in `final_data` (full sections, with `thread_id` and `document_id`), and `is_new_edit_session` when the save starts a new editing session on the server's side (the client then logs `edit_document`; the server's rule for that is unknown). The `title` field names the thread; files.info's `title` is derived from the document (see "Title" above), so the two agree. Then it sends `document_update` to everyone with the canvas open. Errors are bare HTTP statuses (the table above); the client reads no error body. A session `sequence` that doesn't go up is, by its name, SEQUENCE_OUT_OF_ORDER (409).
+- **Unknown.** The real server's choices for a stale section `sequence`, a control that no text references any more, and section ids it doesn't know (see the open questions in docs/CANVAS-EDIT-PLAN.md).
+
 ## What Clack does
 
-Reimplementing Quip's binary sync protocol would mean reverse engineering an undocumented, versioned protobuf schema and its operational-transform rules. Clack uses the documented surface instead:
+Clack reads the HTML export and, for now, edits through Slack's documented `canvases.*` methods. That edit path doesn't work for any real account (see "Edit" below); the replacement speaks Slack's edit protocol above and is planned in [CANVAS-EDIT-PLAN.md](CANVAS-EDIT-PLAN.md).
 
 **Read.** `files.info`, then the file's `url_private`, which answers with Quip's HTML export of the document (`text/html`, starting with `<div class="quip-canvas-content">`). `slack.Client.Download` refuses every HTML answer, because a file URL answering with a page is usually a redirect to sign-in. So `slack.DownloadCanvasHTML` is the one exception, and it is narrow: the URL and every redirect hop must be a file URL (`files.slack.com`, `/files-pri/…`), the type must be `text/html`/`text/plain`, the body must contain `quip-canvas-content`, and the size is capped at 16 MiB. The export is never cached and never written to disk. Embedded images and files are resolved with `files.info` on their ids (at most 24 per canvas, 4 at a time); Clack never fetches Quip's relative blob URLs.
 
@@ -65,7 +493,7 @@ Reimplementing Quip's binary sync protocol would mean reverse engineering an und
 | `control` with text | a date |
 | `.default-content` (without `customized-default-content`) | Quip's default content the user never edited (`Block.Default`). Slack draws it transparent (`.default-content:not(.customized-default-content)>.content{opacity:0}`): the line keeps its height, no text |
 
-The `id` attributes (`temp:C:…`) are Quip section ids. They are the same ids `canvases.sections.lookup` returns and `canvases.edit` takes.
+The `id` attributes (`temp:C:…`) are Quip section ids. They are the same ids `canvases.sections.lookup` returns, `canvases.edit` takes and load-data's sections carry. The export has no control ids (a mention is `<control><a>@U…</a></control>`), so an edit that keeps a mention needs load-data's RTML, where it is `<control id="temp:C:…"></control>`.
 
 **Live.** `files.open` when a view appears, `files.close` once no view has drawn it for 6 s (the shell has no unmount hook). Core listens to the raw gateway events through `SubscribeRaw` (`document_update`, `file_change`, `file_shared`, `file_channel_canvas_reset`, and the `channel_canvas_updated` / `tabbed_canvas_updated` messages). It coalesces bursts into one `canvas` event per 400 ms, and the view re-reads the export. The header's facepile shows the other viewers: `files.open`'s `viewers`, then `file_opened` / `file_closed` (`{file: {id}, viewer: {user_id}, event_ts}`) add and remove people. Clack doesn't send `document_change`, so other people don't see a cursor from Clack. With realtime off, the view polls `files.info` every `core.PollInterval` and refetches when `edit_timestamp` moves.
 
@@ -80,6 +508,8 @@ The `id` attributes (`temp:C:…`) are Quip section ids. They are the same ids `
 | new standalone canvas | `canvases.create {title, document_content}` → `canvas_id` |
 | new channel canvas | `conversations.canvases.create {channel_id, title?, document_content?}` → `canvas_id` (adds a tab) |
 | share | `canvases.access.set {canvas_id, access_level: read|write, channel_ids: [...]}`, then the canvas's permalink is posted to each conversation (Slack unfurls it as the canvas card) |
+
+**This fails on every real account.** Slack answers `canvases.edit` with `not_allowed_token_type` for session (xoxc) tokens, on the workspace host and on the enterprise host alike (seen 2026-11-17 with this account's token), and Clack only ever has session tokens. fakeslack accepts the call, so no test noticed. So editing a block, ticking a checkbox, renaming and Remove mention all fail with a toast. Slack's own client never calls `canvases.edit`, `canvases.create`, `conversations.canvases.create` or `canvases.access.set` (none of them is in build 9685e6ce144b's boot, Quip or share-dialog chunks): it edits through edit-document, creates canvases with `files.createCanvas`, and shares with `files.updatePermission` / `files.revokePermission`. Create and share weren't tried with a session token, so whether they fail the same way is open. [CANVAS-EDIT-PLAN.md](CANVAS-EDIT-PLAN.md) replaces the edit path.
 
 Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `- [ ] `/`- [x] `, two spaces per nesting level, `> `, fenced code, `---`, pipe tables, `**bold**`, `_italic_`, `~~strike~~`, `` `code` ``, `[text](url)`, `![](@U…)` / `![](#C…)` mentions, `:emoji:`, `@here`.
 
