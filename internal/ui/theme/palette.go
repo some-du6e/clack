@@ -65,8 +65,16 @@ type Palette struct {
 	Accent color.NRGBA // focus rings, selected tab underline, blue buttons
 	// ThemeImp and ThemeImpText are --dt_color-theme-base-imp and
 	// -theme-content-imp when an account theme changes them (zero with
-	// Slack's default theme: packages keep their own default then).
+	// Slack's default theme: packages keep their own default then), and
+	// ThemeInvPry, ThemeInvSec, ThemeInvTer and ThemeOtlInvPry the root
+	// scope's --dt_color-theme-content-inv-pry / -inv-sec / -inv-ter and
+	// -otl-inv-pry, the same way: what the peek cards, a Popover at the
+	// document root, draw their toggles, timestamps and rules with.
 	ThemeImp, ThemeImpText color.NRGBA
+	ThemeInvPry            color.NRGBA
+	ThemeInvSec            color.NRGBA
+	ThemeInvTer            color.NRGBA
+	ThemeOtlInvPry         color.NRGBA
 	Mention                color.NRGBA // @user pill text
 	MentionBg              color.NRGBA
 	SelfMention            color.NRGBA // @you / @here background

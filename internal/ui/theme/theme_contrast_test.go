@@ -29,8 +29,11 @@ import (
 // The root scope's fields are the main pane's: ThemeImp / ThemeImpText
 // (theme-base-imp / -content-imp, Activity's unread dots and count
 // badges), which Slack's getThemeVariableDefinitions sets from the
-// important role only, Accent (theme-base-pry, tab underlines) and
-// Presence (theme-base-inv-hgl-2). ChromeBasePry / ChromeContentTer are
+// important role only, Accent (theme-base-pry, tab underlines),
+// Presence (theme-base-inv-hgl-2) and ThemeInvPry / -InvSec / -InvTer /
+// ThemeOtlInvPry (theme-content-inv-pry, -inv-sec, -inv-ter and
+// theme-otl-inv-pry: the peek cards' toggles, timestamps and rules).
+// ChromeBasePry / ChromeContentTer are
 // the control strip's :active and --active (theme-base-pry,
 // theme-content-ter in the rail's scope), ChromeBasePryHover the
 // surf-inv-pry-hover layer blended over that base-pry; SidebarTextTer is
@@ -90,6 +93,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0xfff4f0),
 		"ThemeImp":           hx(0x83388a),
 		"ThemeImpText":       hx(0xf9edff),
+		"ThemeInvPry":        hx(0x1c0901),
+		"ThemeInvSec":        hxa(0x1c0901, 0xcc),
+		"ThemeInvTer":        hxa(0x1c0901, 0x80),
+		"ThemeOtlInvPry":     hxa(0x41281a, 0x21),
 		"Accent":             hx(0x573c2c),
 		"Presence":           hx(0x20a271),
 		"ChromeHoverTint":    hxa(0x190801, 0x38),
@@ -123,6 +130,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x1c0901),
 		"ThemeImp":           hx(0xcfa1de),
 		"ThemeImpText":       hx(0x200221),
+		"ThemeInvPry":        hx(0xf8f8f8),
+		"ThemeInvSec":        hxa(0xffdfcf, 0xcc),
+		"ThemeInvTer":        hxa(0xffdfcf, 0x99),
+		"ThemeOtlInvPry":     hxa(0xfff4f0, 0x38),
 		"Accent":             hx(0xffdfcf),
 		"Presence":           hx(0x3daa7c),
 		"ChromeHoverTint":    hxa(0xfff4f0, 0x14),
@@ -156,6 +167,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x1c0901),
 		"ThemeImp":           hx(0xe01e5a),
 		"ThemeImpText":       hx(0xfff4f4),
+		"ThemeInvPry":        hx(0x1c0901),
+		"ThemeInvSec":        hxa(0x1c0901, 0xcc),
+		"ThemeInvTer":        hxa(0x1c0901, 0x80),
+		"ThemeOtlInvPry":     hxa(0x41281a, 0x21),
 		"Accent":             hx(0x573c2c),
 		"Presence":           hx(0x2eb67d),
 		"ChromeHoverTint":    hxa(0x573b2b, 0x14),
@@ -189,6 +204,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x1c0901),
 		"ThemeImp":           hx(0xe01e5a),
 		"ThemeImpText":       hx(0xfff4f4),
+		"ThemeInvPry":        hx(0xf8f8f8),
+		"ThemeInvSec":        hxa(0xffdfcf, 0xcc),
+		"ThemeInvTer":        hxa(0xffdfcf, 0x99),
+		"ThemeOtlInvPry":     hxa(0xfff4f0, 0x38),
 		"Accent":             hx(0xffdfcf),
 		"Presence":           hx(0x2eb67d),
 		"ChromeHoverTint":    hxa(0xfff4f0, 0x14),
@@ -222,6 +241,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x210023),
 		"ThemeImp":           hx(0x83388a),
 		"ThemeImpText":       hx(0xf9edff),
+		"ThemeInvPry":        hx(0x210023),
+		"ThemeInvSec":        hxa(0x210023, 0xcc),
+		"ThemeInvTer":        hxa(0x210023, 0x80),
+		"ThemeOtlInvPry":     hxa(0x4d184e, 0x21),
 		"Accent":             hx(0x642d63),
 		"Presence":           hx(0x20a271),
 		"ChromeHoverTint":    hxa(0x642c62, 0x14),
@@ -255,6 +278,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x210023),
 		"ThemeImp":           hx(0xcfa1de),
 		"ThemeImpText":       hx(0x200221),
+		"ThemeInvPry":        hx(0xf8f8f8),
+		"ThemeInvSec":        hxa(0xffdbf8, 0xcc),
+		"ThemeInvTer":        hxa(0xffdbf8, 0x99),
+		"ThemeOtlInvPry":     hxa(0xfff3f9, 0x38),
 		"Accent":             hx(0xffdbf8),
 		"Presence":           hx(0x3daa7c),
 		"ChromeHoverTint":    hxa(0xfff3f9, 0x14),
@@ -288,6 +315,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x1c0901),
 		"ThemeImp":           hx(0xe01e5a),
 		"ThemeImpText":       hx(0xfff4f4),
+		"ThemeInvPry":        hx(0x1c0901),
+		"ThemeInvSec":        hxa(0x1c0901, 0xcc),
+		"ThemeInvTer":        hxa(0x1c0901, 0x80),
+		"ThemeOtlInvPry":     hxa(0x41281a, 0x21),
 		"Accent":             hx(0x573c2c),
 		"Presence":           hx(0x2eb67d),
 		"ChromeHoverTint":    hxa(0x573b2b, 0x14),
@@ -321,6 +352,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x122a59),
 		"ThemeImp":           hx(0x1a8343),
 		"ThemeImpText":       hx(0xe9ffec),
+		"ThemeInvPry":        hx(0x122a59),
+		"ThemeInvSec":        hxa(0x122a59, 0xcc),
+		"ThemeInvTer":        hxa(0x122a59, 0x80),
+		"ThemeOtlInvPry":     hxa(0x0b4c8c, 0x21),
 		"Accent":             hx(0x1264a3),
 		"Presence":           hx(0x379e15),
 		"ChromeHoverTint":    hxa(0x1263a3, 0x14),
@@ -354,6 +389,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x1d1c1d),
 		"ThemeImp":           hx(0x454447),
 		"ThemeImpText":       hx(0xf8f8f8),
+		"ThemeInvPry":        hx(0x1d1c1d),
+		"ThemeInvSec":        hxa(0x1d1c1d, 0xcc),
+		"ThemeInvTer":        hxa(0x1d1c1d, 0x80),
+		"ThemeOtlInvPry":     hxa(0x333133, 0x21),
 		"Accent":             hx(0x454447),
 		"Presence":           hx(0x2fa659),
 		"ChromeHoverTint":    hxa(0x454447, 0x14),
@@ -387,6 +426,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x101214),
 		"ThemeImp":           hx(0xb9babd),
 		"ThemeImpText":       hx(0x101214),
+		"ThemeInvPry":        hx(0xf8f8f8),
+		"ThemeInvSec":        hxa(0xe0e0e0, 0xcc),
+		"ThemeInvTer":        hxa(0xe0e0e0, 0x99),
+		"ThemeOtlInvPry":     hxa(0xf8f8f8, 0x38),
 		"Accent":             hx(0xe0e0e0),
 		"Presence":           hx(0x4dad68),
 		"ChromeHoverTint":    hxa(0xf8f8f8, 0x14),
@@ -420,6 +463,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x39063a),
 		"ThemeImp":           hx(0x83388a),
 		"ThemeImpText":       hx(0xf9edff),
+		"ThemeInvPry":        hx(0x39063a),
+		"ThemeInvSec":        hxa(0x39063a, 0xcc),
+		"ThemeInvTer":        hxa(0x39063a, 0x80),
+		"ThemeOtlInvPry":     hxa(0x611f69, 0x21),
 		"Accent":             hx(0x83388a),
 		"Presence":           hx(0x20a271),
 		"ChromeHoverTint":    hxa(0x82378a, 0x14),
@@ -453,6 +500,10 @@ var slackInkCases = []struct {
 		"ChromeContentTer":   hx(0x200221),
 		"ThemeImp":           hx(0xcfa1de),
 		"ThemeImpText":       hx(0x200221),
+		"ThemeInvPry":        hx(0xf8f8f8),
+		"ThemeInvSec":        hxa(0xe3ceeb, 0xcc),
+		"ThemeInvTer":        hxa(0xe3ceeb, 0x99),
+		"ThemeOtlInvPry":     hxa(0xefe1f5, 0x38),
 		"Accent":             hx(0xe3ceeb),
 		"Presence":           hx(0x3daa7c),
 		"ChromeHoverTint":    hxa(0xefe1f5, 0x14),
@@ -512,15 +563,52 @@ func TestThemeInkMatchesSlack(t *testing.T) {
 					continue
 				}
 				got := *get(&p)
-				if got.A == 0 && (k == "ThemeImp" || k == "ThemeImpText") {
-					// unset: the default theme's value, which the views
-					// keep as their own (palette.go)
-					got = CachedFields(DefaultIATheme, c.dark, true)[k]
+				if base := LightPalette; got.A == 0 {
+					if c.dark {
+						base = DarkPalette
+					}
+					if *get(&base) == (color.NRGBA{}) {
+						// a field the palette leaves unset (ThemeImp, the
+						// root scope's ThemeInv*): the default theme's
+						// value, which the views keep as their own
+						// (palette.go)
+						got = CachedFields(DefaultIATheme, c.dark, true)[k]
+					}
 				}
 				if got != c.want[k] {
 					t.Errorf("%s = %s, Slack %s", k, inkHex(got), inkHex(c.want[k]))
 				}
 			}
 		})
+	}
+}
+
+// A stylesheet's --sk_foreground_low recolours the sidebar's rules where
+// it reaches them: in dark mode, in a light sidebar scope and declared on
+// .p-view_contents--sidebar itself. A light client's inverted scope
+// redeclares the variable, so a root override leaves its rules alone.
+func TestSidebarRuleFollowsSheets(t *testing.T) {
+	want := color.NRGBA{R: 0x80, G: 0x10, B: 0x10, A: 0x21}
+	tk := fakeTokens{"rgba(var(--sk_foreground_low),0.13)": want}
+	dark := DarkPalette
+	ApplyTokens(&dark, tk, true)
+	if dark.SidebarRule != want {
+		t.Errorf("dark: SidebarRule %s, the sheet's %s", inkHex(dark.SidebarRule), inkHex(want))
+	}
+	inverted := LightPalette // Slack's default theme: the inverted sidebar scope
+	ApplyTokens(&inverted, tk, false)
+	if inverted.SidebarRule != LightPalette.SidebarRule {
+		t.Errorf("light, inverted sidebar: SidebarRule %s; the scope's own %s", inkHex(inverted.SidebarRule), inkHex(LightPalette.SidebarRule))
+	}
+	lightSide := LightPalette
+	ApplyIATheme(&lightSide, mustTheme(t, slackInkCases[0].ia), false, true) // karim picker: a light sidebar
+	ApplyTokens(&lightSide, tk, false)
+	if lightSide.SidebarRule != want {
+		t.Errorf("light sidebar scope: SidebarRule %s, the sheet's %s", inkHex(lightSide.SidebarRule), inkHex(want))
+	}
+	own := LightPalette
+	ApplySidebarTokens(&own, tk)
+	if own.SidebarRule != want {
+		t.Errorf("declared on the sidebar: SidebarRule %s, the sheet's %s", inkHex(own.SidebarRule), inkHex(want))
 	}
 }

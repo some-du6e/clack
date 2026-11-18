@@ -178,8 +178,22 @@ func ApplyTokens(p *Palette, t Tokens, dark bool) {
 	for _, f := range paletteTokens {
 		SetTok(t, f.f(p), f.tok, dark)
 	}
+	// a root --sk_foreground_low reaches the sidebar's rules in dark mode
+	// and in a light sidebar scope; a light client's inverted scope
+	// (.sk-client-theme--light-inverted-sidebar) redeclares the variable
+	if dark || p.SidebarRule == sidebarRuleLight {
+		SetTok(t, &p.SidebarRule, tokSidebarRule, dark)
+	}
 	rehover(p, t, dark, bg, bp)
 }
+
+// tokSidebarRule is SidebarRule's token: the Home header's divider, the
+// pagesDivider and Files' dividers, rgba(var(--sk_foreground_low), .13).
+var tokSidebarRule = Both("rgba(var(--sk_foreground_low),0.13)")
+
+// sidebarRuleLight is SidebarRule in a light sidebar scope (Slack Kit's
+// light root: 29,28,29 at .13).
+var sidebarRuleLight = color.NRGBA{R: 29, G: 28, B: 29, A: 0x21}
 
 // tokSurfInvPryHover is the hover layer's token (the default theme's
 // inverted scope: aubergine-70 at .08).
@@ -217,4 +231,5 @@ func ApplySidebarTokens(p *Palette, t Tokens) {
 			SetTok(t, f.f(p), f.tok, true)
 		}
 	}
+	SetTok(t, &p.SidebarRule, tokSidebarRule, true)
 }
