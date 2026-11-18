@@ -36,6 +36,7 @@ const thrOlderLimit = 100
 // thrOlder is a finished fetch.
 type thrOlder struct {
 	latest string // the request's latest: drop answers for an older state
+	folds  int    // the card's folds when it was asked for (a fold since drops it)
 	msgs   []core.Message
 	more   bool
 	err    error
@@ -76,25 +77,27 @@ func (v *Threads) loadOlder(t *thrItem, c *thrCard) {
 		latest = sh[0].TS
 	}
 	c.olderBusy = true
-	ch, root, h := t.Channel, t.Root.TS, v.h
+	ch, root, h, folds := t.Channel, t.Root.TS, v.h, c.folds
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		msgs, more, err := app.OlderReplies(ctx, ch, root, latest, thrOlderLimit)
-		c.olderRes.Store(&thrOlder{latest: latest, msgs: msgs, more: more, err: err})
+		c.olderRes.Store(&thrOlder{latest: latest, folds: folds, msgs: msgs, more: more, err: err})
 		h.Invalidate()
 	}()
 }
 
 // applyOlder takes a finished fetch in (UI goroutine): the replies older
-// than the oldest shown go above it, the newest 100 of them.
+// than the oldest shown go above it, the newest 100 of them. One asked for
+// before the card folded (a new refreshId, a refresh that couldn't join
+// its replies) lands nowhere: it was for replies the card no longer shows.
 func (v *Threads) applyOlder(t *thrItem, c *thrCard) {
 	r := c.olderRes.Swap(nil)
 	if r == nil {
 		return
 	}
 	c.olderBusy = false
-	if r.err != nil {
+	if r.err != nil || r.folds != c.folds {
 		return
 	}
 	have := map[string]bool{}

@@ -371,6 +371,9 @@ type Event struct {
 	// notification then, under defer_notification_3p_streaming).
 	StreamDone bool
 	Connected  bool // connection: socket up; realtime: live updates on
+	// Fast (connection, up): the connect reused a reconnect_url, Slack's
+	// FAST_RECONNECTING (lastConnectWasFast); a slow one missed the gap
+	Fast bool
 	// Seen (user): when a view last read the member before this change
 	// (store.MemberAccessed); zero: none did, or the store didn't hold them
 	Seen time.Time

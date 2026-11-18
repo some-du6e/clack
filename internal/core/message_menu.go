@@ -22,10 +22,12 @@ import (
 // thread_ts, ts: the reply as clicked, read: 0}. Locally Slack moves the
 // thread's read point just before it first (setSubscription {lastRead:
 // moveTimestampBackInTime(ts)}) and puts it back when the mark fails; the
-// counts follow from the server.
+// counts follow from the server. The thread goes into ThreadsMarkedUnread
+// meanwhile, and leaves it again on a failure.
 func (a *App) MarkThreadUnread(ctx context.Context, ch, threadTS, ts string) error {
 	var prev store.ThreadSub
 	known := false
+	a.thrUnread.set(ch+"/"+threadTS, true)
 	if m, ok := a.S.Find(ch, threadTS); ok {
 		prev, known = a.S.ThreadSubOf(ch, &m), true
 		a.setThreadLastRead(ch, threadTS, tsBefore(nil, ts))
@@ -33,10 +35,66 @@ func (a *App) MarkThreadUnread(ctx context.Context, ch, threadTS, ts string) err
 	err := a.C.Call(ctx, "subscriptions.thread.mark", url.Values{"channel": {ch}, "thread_ts": {threadTS}, "ts": {ts}, "read": {"0"}}, nil)
 	if err == nil {
 		a.refreshCountsSoon()
-	} else if known && prev.LastRead != "" {
-		a.setThreadLastRead(ch, threadTS, prev.LastRead)
+	} else {
+		a.thrUnread.set(ch+"/"+threadTS, false)
+		if known && prev.LastRead != "" {
+			a.setThreadLastRead(ch, threadTS, prev.LastRead)
+		}
 	}
 	return err
+}
+
+// threadsMarkedUnread is Slack's threadsManuallyMarkedUnread: the threads
+// ("channel/thread_ts") the viewer marked unread in this client.
+type threadsMarkedUnread struct {
+	mu sync.Mutex
+	m  map[string]bool
+}
+
+func (t *threadsMarkedUnread) set(key string, on bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !on {
+		delete(t.m, key)
+		return
+	}
+	if t.m == nil {
+		t.m = map[string]bool{}
+	}
+	t.m[key] = true
+}
+
+// ThreadsMarkedUnread is the threads ("channel/thread_ts") the viewer
+// marked unread in this client (MarkThreadUnread) that the Threads view
+// hasn't let go yet, nil for none: Slack's threadsManuallyMarkedUnread.
+// While a thread is in it, the Threads view's arrival last read follows
+// the thread's last read (getDerivedStateFromProps), and a new reply
+// neither marks it read nor moves that (maybeMarkNewMessageOnUpdate).
+func (a *App) ThreadsMarkedUnread() map[string]bool {
+	a.thrUnread.mu.Lock()
+	defer a.thrUnread.mu.Unlock()
+	if len(a.thrUnread.m) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(a.thrUnread.m))
+	for k := range a.thrUnread.m {
+		out[k] = true
+	}
+	return out
+}
+
+// ForgetThreadMarkedUnread lets a thread go from ThreadsMarkedUnread,
+// ThreadsView's removeThreadFromManuallyMarkedUnreadArray (it marked the
+// thread read); with an empty channel every thread goes, its
+// clearThreadsFromManuallyMarkedUnreadArray (it unmounted).
+func (a *App) ForgetThreadMarkedUnread(ch, threadTS string) {
+	if ch == "" {
+		a.thrUnread.mu.Lock()
+		clear(a.thrUnread.m)
+		a.thrUnread.mu.Unlock()
+		return
+	}
+	a.thrUnread.set(ch+"/"+threadTS, false)
 }
 
 // BroadcastReply is "Send reply to this channel" (broadcastMessage, thunk

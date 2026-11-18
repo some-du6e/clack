@@ -46,6 +46,8 @@ type App struct {
 
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
+	thrUnread threadsMarkedUnread // ThreadsMarkedUnread (message_menu.go)
+
 	// prefsMu orders every change to the raw prefs: a change copies them,
 	// sets its keys and installs the copy, and two at once lost one of
 	// them (mergePrefs, installPrefs).
@@ -167,7 +169,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
-		a.emit(Event{Type: "connection", Connected: up})
+		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
 			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
