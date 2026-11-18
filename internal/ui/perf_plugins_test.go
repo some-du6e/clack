@@ -472,6 +472,12 @@ type perfPluginResult struct {
 	// plugins' view of the message when the edit came
 	EditLatencyMS []float64 `json:"edit_latency_ms,omitempty"`
 	EditViewed    []bool    `json:"edit_viewed,omitempty"`
+	// MaskedEditMS: the same for edits a plugin changes (a word masked in
+	// the messages slice, as Censorship does): the row draws the plugins'
+	// view on both trees, so both wait for JS's copy of each revision
+	// (perfMaskedEditLatency). MaskedEditViewed as EditViewed.
+	MaskedEditMS     []float64 `json:"masked_edit_ms,omitempty"`
+	MaskedEditViewed []bool    `json:"masked_edit_viewed,omitempty"`
 }
 
 func TestPerfPluginScroll(t *testing.T) {
@@ -630,6 +636,13 @@ func TestPerfPluginScroll(t *testing.T) {
 	// renders with it (mounted again after the sweep, or not)
 	e.toBottom()
 	e.perfQuiesce(40*time.Second, 1500*time.Millisecond, 7500*time.Millisecond)
+	// and past JS's backlog: what it still had queued from the setup came
+	// back as trees in the pass, first mounts counted as the pass's
+	// renders (a setup that left one tree's JS further behind showed more)
+	if d := perfDrain(e); d > 20*time.Millisecond {
+		t.Logf("JS's backlog before the channel pass: %.0f ms", float64(d.Microseconds())/1000)
+		e.perfQuiesce(20*time.Second, 1500*time.Millisecond, 0)
+	}
 	res.Passes = append(res.Passes, e.perfScroll("channel", e.listPoint, nil))
 	res.Passes = append(res.Passes, e.perfScroll("channel-live", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
 	func() {
@@ -747,6 +760,7 @@ func TestPerfPluginScroll(t *testing.T) {
 		t.Log("edit latency: no poll within 25 s")
 	}
 	res.EditLatencyMS, res.EditViewed = e.perfEditLatency(t, 6)
+	res.MaskedEditMS, res.MaskedEditViewed = e.perfMaskedEditLatency(t, 6)
 
 	// an animated custom emoji on screen (perfAnimEmoji): the channel left
 	// alone, frames drawn only when something asks for one, as the window
@@ -1640,72 +1654,9 @@ func (e *benchEnv) perfLoadAll() {
 // came. Read by reflection (the row's drawn text and viewed flag), as the
 // base tree's list has no accessor for them.
 func (e *benchEnv) perfEditLatency(t *testing.T, n int) (ms []float64, viewed []bool) {
-	ch := fakeslack.BenchChannelID
-	e.openBench()
-	e.toBottom()
-	e.settle(500 * time.Millisecond)
-	c := e.a.convos[ch+"/"]
-	if c == nil {
-		t.Log("edit latency: no bench list")
+	edit, drawn, row, ok := e.perfEditTarget(t, "edit latency")
+	if !ok {
 		return nil, nil
-	}
-	cl, ok := c.list.(channelList)
-	if !ok || cl.ChannelView == nil {
-		t.Log("edit latency: not a channel list")
-		return nil, nil
-	}
-	self := e.a.data.core.S.SelfID()
-	ts, user := "", ""
-	byTS := map[string]slack.Message{}
-	if tl := e.a.data.core.S.Timeline(ch); tl != nil {
-		for _, m := range tl.Msgs {
-			byTS[m.TS] = m
-		}
-	}
-	rows := cl.VisibleRows()
-	for i := len(rows) - 1; i >= 0 && ts == ""; i-- {
-		if m, ok := byTS[rows[i].Key]; ok && m.User != "" && m.User != self && m.Subtype == "" && m.BotID == "" {
-			ts, user = m.TS, m.User
-		}
-	}
-	if ts == "" {
-		t.Log("edit latency: no message of someone else's on screen")
-		return nil, nil
-	}
-	row := func() (text string, isViewed, ok bool) {
-		s := reflect.ValueOf(cl.ChannelView).Elem().FieldByName("s")
-		if !s.IsValid() || s.IsNil() {
-			return "", false, false
-		}
-		rs := s.Elem().FieldByName("rows")
-		if !rs.IsValid() {
-			return "", false, false
-		}
-		r := rs.MapIndex(reflect.ValueOf(ts))
-		if !r.IsValid() || r.IsNil() {
-			return "", false, false
-		}
-		m, v := r.Elem().FieldByName("m"), r.Elem().FieldByName("viewed")
-		if !m.IsValid() || !v.IsValid() {
-			return "", false, false
-		}
-		return m.FieldByName("Text").String(), v.Bool(), true
-	}
-	tr := &perfTraffic{e: e}
-	edit := func(text string) {
-		evTS := liveTS()
-		tr.inject(ch, "message", "message_changed", map[string]any{"hidden": true, "ts": evTS, "event_ts": evTS, "message": map[string]any{
-			"type": "message", "user": user, "ts": ts, "text": text, "edited": map[string]any{"user": user, "ts": evTS}}})
-	}
-	drawn := func(text string, d time.Duration) bool {
-		for t0 := time.Now(); time.Since(t0) < d; {
-			e.frame()
-			if txt, _, _ := row(); strings.Contains(txt, text) {
-				return true
-			}
-			time.Sleep(time.Millisecond)
-		}
-		return false
 	}
 	first := fmt.Sprintf("edited for the latency pass %d", time.Now().UnixNano())
 	edit(first)
@@ -1729,6 +1680,169 @@ func (e *benchEnv) perfEditLatency(t *testing.T, n int) (ms []float64, viewed []
 	}
 	t.Logf("edit latency (ms, the row on the view): %v %v", ms, viewed)
 	return ms, viewed
+}
+
+// perfMaskJS masks "job" in the bench channel's messages (the messages
+// slice, as Censorship does): a row whose message has the word draws the
+// plugins' view on any tree.
+var perfMaskJS = []byte(`(() => {
+const TautPlugin = globalThis.TautPlugin
+class PerfMaskJob extends TautPlugin {
+  static id = 'PerfMaskJob'
+  static pluginName = 'Mask a word (perf)'
+  static description = 'perf: masks a word in the bench channel'
+  static authors = ['clack']
+  static category = 'messages'
+  static defaultConfig = { enabled: true }
+  start() {
+    const fix = (t) => (typeof t === 'string' ? t.replace(/job/g, '***') : t)
+    const els = (list) => (Array.isArray(list) ? list.map((e) => (e && e.type === 'text' ? { ...e, text: fix(e.text) } : e && e.elements ? { ...e, elements: els(e.elements) } : e)) : list)
+    const mask = (ts, m) => (m && typeof m.text === 'string' && m.text.includes('job') ? { ...m, text: fix(m.text), blocks: els(m.blocks) } : m)
+    const { patchSlice, mapEntries } = this.api.redux
+    patchSlice('messages', (ch, bucket) => (ch === '` + fakeslack.BenchChannelID + `' && bucket && typeof bucket === 'object' ? mapEntries(bucket, mask) : bucket))
+  }
+}
+return PerfMaskJob
+})()`)
+
+// perfMaskedEditLatency is perfEditLatency for a row the plugins change:
+// a word a plugin masks (perfMaskJS, installed for the pass) is in each
+// edit, so the row draws the plugins' view on both trees, and each edit
+// is timed to the first frame that draws its masked text. perfEditLatency
+// isn't like for like across trees: where a row goes back to its source
+// once the plugins leave its message as it is, its row draws the edit at
+// once, and where it stays on the view it waits for JS.
+func (e *benchEnv) perfMaskedEditLatency(t *testing.T, n int) (ms []float64, viewed []bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	id, err := e.tt.Import(ctx, perfMaskJS, "")
+	if err == nil {
+		err = e.tt.SetEnabled(ctx, id, true)
+	}
+	if err != nil {
+		t.Logf("masked edit latency: the mask plugin: %v", err)
+		return nil, nil
+	}
+	defer func() { _ = e.tt.SetEnabled(context.Background(), id, false) }()
+	running := func() bool {
+		for _, c := range e.tt.Settings().Categories {
+			for _, p := range c.Plugins {
+				if p.ID == id {
+					return p.Running
+				}
+			}
+		}
+		return false
+	}
+	for dl := time.Now().Add(10 * time.Second); !running(); {
+		if time.Now().After(dl) {
+			t.Log("masked edit latency: the mask plugin didn't start in 10 s")
+			return nil, nil
+		}
+		e.frame()
+		time.Sleep(5 * time.Millisecond)
+	}
+	edit, drawn, row, ok := e.perfEditTarget(t, "masked edit latency")
+	if !ok {
+		return nil, nil
+	}
+	nonce := time.Now().UnixNano()
+	edit(fmt.Sprintf("the job fair of the masked pass %d", nonce))
+	if !drawn(fmt.Sprintf("the *** fair of the masked pass %d", nonce), 10*time.Second) {
+		t.Log("masked edit latency: the first edit was never drawn masked")
+		return nil, nil
+	}
+	e.settle(1500 * time.Millisecond)
+	for i := 0; i < n; i++ {
+		_, v, _ := row()
+		t0 := time.Now()
+		edit(fmt.Sprintf("the job fair %d of the masked pass %d", i, nonce))
+		ok := drawn(fmt.Sprintf("the *** fair %d of the masked pass %d", i, nonce), 10*time.Second)
+		d := float64(time.Since(t0).Microseconds()) / 1000
+		if !ok {
+			d = -1
+		}
+		ms, viewed = append(ms, d), append(viewed, v)
+		e.settle(700 * time.Millisecond)
+	}
+	t.Logf("masked edit latency (ms, the row on the view): %v %v", ms, viewed)
+	return ms, viewed
+}
+
+// perfEditTarget finds a message of someone else's on screen in the
+// bench channel and returns how to edit it (as the socket brings an
+// edit), wait until a frame draws text in its row, and read the row (its
+// drawn text and whether it draws the plugins' view).
+func (e *benchEnv) perfEditTarget(t *testing.T, what string) (edit func(text string), drawn func(text string, d time.Duration) bool,
+	row func() (text string, isViewed, ok bool), ok bool) {
+	ch := fakeslack.BenchChannelID
+	e.openBench()
+	e.toBottom()
+	e.settle(500 * time.Millisecond)
+	c := e.a.convos[ch+"/"]
+	if c == nil {
+		t.Log(what + ": no bench list")
+		return nil, nil, nil, false
+	}
+	cl, isList := c.list.(channelList)
+	if !isList || cl.ChannelView == nil {
+		t.Log(what + ": not a channel list")
+		return nil, nil, nil, false
+	}
+	self := e.a.data.core.S.SelfID()
+	ts, user := "", ""
+	byTS := map[string]slack.Message{}
+	if tl := e.a.data.core.S.Timeline(ch); tl != nil {
+		for _, m := range tl.Msgs {
+			byTS[m.TS] = m
+		}
+	}
+	rows := cl.VisibleRows()
+	for i := len(rows) - 1; i >= 0 && ts == ""; i-- {
+		if m, ok := byTS[rows[i].Key]; ok && m.User != "" && m.User != self && m.Subtype == "" && m.BotID == "" {
+			ts, user = m.TS, m.User
+		}
+	}
+	if ts == "" {
+		t.Log(what + ": no message of someone else's on screen")
+		return nil, nil, nil, false
+	}
+	row = func() (text string, isViewed, ok bool) {
+		s := reflect.ValueOf(cl.ChannelView).Elem().FieldByName("s")
+		if !s.IsValid() || s.IsNil() {
+			return "", false, false
+		}
+		rs := s.Elem().FieldByName("rows")
+		if !rs.IsValid() {
+			return "", false, false
+		}
+		r := rs.MapIndex(reflect.ValueOf(ts))
+		if !r.IsValid() || r.IsNil() {
+			return "", false, false
+		}
+		m, v := r.Elem().FieldByName("m"), r.Elem().FieldByName("viewed")
+		if !m.IsValid() || !v.IsValid() {
+			return "", false, false
+		}
+		return m.FieldByName("Text").String(), v.Bool(), true
+	}
+	tr := &perfTraffic{e: e}
+	edit = func(text string) {
+		evTS := liveTS()
+		tr.inject(ch, "message", "message_changed", map[string]any{"hidden": true, "ts": evTS, "event_ts": evTS, "message": map[string]any{
+			"type": "message", "user": user, "ts": ts, "text": text, "edited": map[string]any{"user": user, "ts": evTS}}})
+	}
+	drawn = func(text string, d time.Duration) bool {
+		for t0 := time.Now(); time.Since(t0) < d; {
+			e.frame()
+			if txt, _, _ := row(); strings.Contains(txt, text) {
+				return true
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return false
+	}
+	return edit, drawn, row, true
 }
 
 // perfQuietStart and perfQuietFrame, set by perf_quiet_test.go (trees with

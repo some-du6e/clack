@@ -92,17 +92,24 @@ def is_idle(p):
 
 def latency(sides):
     """Update to screen: edits of a message on screen, event to frame."""
+    latency_table(sides, "edit_latency_ms", "edit_viewed", "### Update to screen: an edit of a message on screen\n",
+                  "Edits of a message in the bench channel (after a first edit: Message Logger keeps an edited message's history in the messages slice), each timed from its event to the first frame that draws it, frames drawn back to back. A row drawing the plugins' view keeps the revision before until JS's copy of the new one is ready; \"never\" is an edit not drawn in 10 s. Not like for like across trees: where a row goes back to its source once the plugins leave its message as it is, the row isn't on the view here and draws the edit at once, while a tree that keeps it on the view waits for JS (see the last column). The next table is like for like.\n")
+    latency_table(sides, "masked_edit_ms", "masked_edit_viewed", "### Update to screen: an edit the plugins change\n",
+                  "The same, for edits with a word a test plugin masks in the messages slice (as Censorship does), so the row draws the plugins' view on both trees and both wait for JS's copy of each revision: timed to the first frame that draws the masked text.\n")
+
+
+def latency_table(sides, key, viewed_key, title, text):
     rows = []
     for side in ("base", "head"):
         vals, viewed = [], []
         for r in sides[side]:
-            vals += [v for v in (r.get("edit_latency_ms") or [])]
-            viewed += [bool(v) for v in (r.get("edit_viewed") or [])]
+            vals += [v for v in (r.get(key) or [])]
+            viewed += [bool(v) for v in (r.get(viewed_key) or [])]
         rows.append((side, vals, viewed))
     if not any(v for _, v, _ in rows):
         return
-    print("### Update to screen: an edit of a message on screen\n")
-    print("Edits of a message in the bench channel (after a first edit: Message Logger keeps an edited message's history, so the row draws the plugins' view from then on), each timed from its event to the first frame that draws it, frames drawn back to back. A row drawing the plugins' view keeps the revision before until JS's copy of the new one is ready; \"never\" is an edit not drawn in 10 s.\n")
+    print(title)
+    print(text)
     print("| | edits | median | max | the row on the view |")
     print("|---|---|---|---|---|")
     for side, vals, viewed in rows:
