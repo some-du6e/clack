@@ -237,7 +237,9 @@ var (
 // the ui root) over p where it changes Slack's --dt_color-theme-* tokens:
 // theme-base-pry (the selected tab's underline), theme-base-imp and
 // theme-content-imp (unread dots and count badges). With Slack's default
-// theme p is returned as is.
+// theme p is returned as is. A stylesheet that declares the token itself
+// keeps it (Slick's :root declarations beat the Theme component's
+// stylesheet in Slack, as in theme.ApplyTokens and peekPalOf).
 func accountPal(th *theme.Theme, p *pal) *pal {
 	if th == nil {
 		return p
@@ -254,13 +256,20 @@ func accountPal(th *theme.Theme, p *pal) *pal {
 	acctMu.Lock()
 	defer acctMu.Unlock()
 	if acctTh != th || acctGen != th.Gen || acctIn != p {
+		owns := func(expr string) bool { // the sheet declares the token itself
+			if th.Tokens == nil {
+				return false
+			}
+			_, own, ok := th.Tokens.Color(expr)
+			return own && ok
+		}
 		o := *p
-		if tab {
+		if tab && !owns("var(--dt_color-theme-base-pry)") {
 			o.TabLine = th.C.Accent
 		}
-		if imp {
+		if imp && !owns("var(--dt_color-theme-base-imp)") {
 			o.Accent, o.Badge = th.C.ThemeImp, th.C.ThemeImp
-			if th.C.ThemeImpText.A != 0 {
+			if th.C.ThemeImpText.A != 0 && !owns("var(--dt_color-theme-content-imp)") {
 				o.AccentText = th.C.ThemeImpText
 			}
 		}
