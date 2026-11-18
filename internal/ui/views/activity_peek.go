@@ -183,6 +183,8 @@ func (v *Activity) LayoutPeek(gtx C) D {
 	}
 	v.notes.drain(v.h)
 	v.applyPatches()
+	v.applyMsgs(gtx) // the page's messages as they are now (activity_msgs.go)
+
 	if v.unread.Value != v.pk.lastUnr { // the header's toggle: the page's reload
 		v.pk.lastUnr = v.unread.Value
 		v.endSelect()

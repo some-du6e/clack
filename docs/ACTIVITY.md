@@ -996,6 +996,327 @@ activity-create-view-in-suggestions, activity-tabs-more / -menu /
 `-light` and `-dark`, plus activity-bulk-tooltip-light and
 activity-plus-tooltip-light.
 
+## Live messages (2026-11-17, branch `activity-live-msg`)
+
+Slack's Activity rows keep no copy of their message. Each row reads it
+from the messages store as it renders: getMessageFromActivityItem
+(boot-shared Gjwd `uU`) calls getMessageByTimestamp (client-boot iR00
+`Ld`) with the entry's channel and feed_ts, a reaction's message_ts or a
+reminder's message, and ActivityThread, ActivityDM, ActivityMention and
+ActivityReaction call `Ld` the same way. activity.feed only names the
+messages. messages.list fetches them by id into that store
+(fetchObjectWithId), the store the channel list and the thread pane read,
+so a socket change shows in all three in one commit. Nothing fetches the
+feed again for it.
+
+- message_changed (boot-render messageChanged, replaceMessages) replaces
+  the copy. When the new copy is a tombstone, a moderated or a
+  thread_hidden message, messageChanged removes the entries about it
+  ("ActivityIA4: Remove activity item" {channelId, messageTs} in P0K2). An
+  edit that takes the viewer's mention out does the same
+  (checkForMentionInMessage, c+16, on previous_message and the new copy).
+- reaction_added and reaction_removed change the stored message's
+  reactions.
+- message_deleted removes the message and dispatches the same Remove
+  activity item. A row about another message that only drew this one (a
+  thread's latest reply) keeps its header and draws no body:
+  ActivityRowContentDetails draws nothing for a missing message and the
+  shimmer only while one is still being fetched.
+
+Clack kept the copy the feed was hydrated with until the next load. It
+also cached a row's body layout on the text's length, and an app's
+chat.update keeps the length, so a reloaded vote could still show its old
+counts. Round 1 drew the socket's copies, but a mix of feed, socket and
+list copies drifted from Slack's single store: closing the thread pane
+put a row back a revision (Karim's "up and down"), a reload no longer
+refreshed a row that had changed once, an entry pushed while the page was
+off screen missed the changes before it was drawn, and a busy socket
+overflowed the 256-entry log the page read. Now:
+
+- core keeps each message's latest change in a table (msg_changes.go):
+  its place in core's order of changes, whether it was deleted, and
+  whether it removed the Activity entries about it. Every "update" and
+  "delete" carries its place (Event.Seq). A view asks what changed since
+  its last frame (MessageChangedSince) and looks a message up by key
+  (MessageChange), however many changes went by. Activity items carry the
+  place they were read at (ActivityItem.MsgSeq, before the feed request
+  or the realtime entry's lookups), so an item that lands late takes what
+  changed after it was read, and an entry removed meanwhile stays out.
+- Slack's removal rules run where Slack runs them: on message_changed
+  (activity_removes.go), with c+16's default options on the event's
+  previous_message and the new copy, and on message_deleted. Rich text
+  keywords follow lxEU's processChunk (one text per section, a line per
+  list item, link text or URL, a space for other elements, color and
+  emoji matches). A message with a blocks list, even an empty one, is
+  read from its blocks alone.
+- Activity keeps one copy per message, the newest by that order:
+  the feed's, a change core made later, or the store's copy when a
+  message list stops drawing it (activity_msgs.go). While a list on
+  screen draws the message, the row draws the list's revision, so the
+  two never show two revisions in one frame. No source going away puts a
+  row on an older revision. A message messages.list doesn't have draws no
+  body and no shimmer (isNonExistent: MsgGone).
+- The store keeps what messages.list fetched for Activity and Saved, and
+  what getView brought for the Threads view (store/fetched.go), also for a
+  message a window holds, since core evicts windows Activity still
+  draws. The copies are evicted by last use, within 2048 messages and
+  4 MB. A fetch merges with what the socket changed meanwhile, the way
+  SetLatestSince merges a window: a message the socket changed keeps the
+  held copy, and the reactions the socket brought are replayed on the
+  answer (store/reacts.go), each person counted once.
+- A patched component's tree that JS hasn't drawn since the message
+  changed hands back an older revision's props. The row tells them apart
+  by content: the fingerprints of the last 16 msgs it sent each level
+  (actRow.itemSent for ActivityItem, threadSent for ActivityThread, as
+  the message lists' row.sentFor keeps a set per level). A plugin's
+  rewrite in ActivityItem (Slick Censorship's mask) is then never taken
+  for props the row sent, also when another plugin patches the components
+  inside it (BetterBlock). Under a text patch of the messages slice
+  (Message Logger's kind), the row draws the plugins' view as the lists
+  do, converted again only for a new revision of the message: it follows
+  within a JS round trip, never drawing the text without the patch.
+- The Threads view and the Saved page take each change into their data
+  once (threads_live.go, later_live.go), with no per-frame copies, and a
+  load that lands takes what changed after its request went out. A
+  thread's stamp is the point its load was current at, and each message
+  the batch names takes its latest change against it, so a later change
+  to one message never hides an earlier change to another. While they're
+  off screen a change draws no frame.
+- msgVer is worked out once per message copy (msgVerOf), and a Threads
+  card's older and latest replies stay one slice until they change.
+
+Round 3 (2026-11-17) closed what was left of Slack's single store:
+
+- Every read writes one revision for all copies (store/read_revisions.go,
+  core/read_changes.go). A window page, a replies answer, messages.list
+  or a card's older replies that bring a revision of a message the store
+  held another of give it to the window's, the cached threads' and the
+  fetched copies, and core announces it as an "update". After a socket
+  gap a thread read for the first time had its root's new revision while
+  the window kept the old one, and closing the pane put an Activity row
+  back on it; now the change table has the read's revision too.
+- Activity describes a row from the list copy it will draw (the last
+  frame's until it polls), and a search redraws only when a row's text
+  changed: with search open and an item beside the page, the window no
+  longer drew every frame.
+- A reaction and its note for the fetches are one write
+  (ApplyReactionNoted), and a deletion is noted before the copies go.
+  Window pages replay the reactions the socket brought while they were
+  out. The replay and the reducer follow Slack's (8o8l, 6Dm2): a person a
+  reaction doesn't list changes nothing (a big reaction's answer lists
+  only some), and a reaction goes once nobody it lists is left.
+- A failed messages.list group leaves its messages as the store has them,
+  and an item with no copy no longer outranks one Activity holds. Drawn
+  messages count as uses in the fetched store, a change whose copy the
+  store let go is fetched again by id, and past the change table's floor
+  Activity takes the store's copies on every page.
+
+Round 4 (2026-11-17) fixed what round 3's read announcements broke, and
+Karim's deleted-reply report:
+
+- A read's revision of a message an open channel list never loaded (an
+  Activity row's copy, a Threads root, a refetch, message_replied for a
+  root fetched by id) changes the list only where it holds the message,
+  or inside the range it loaded. Taken in above the oldest loaded
+  message, it moved load-older's cursor past the days between. A model
+  that hasn't loaded (its first load, or the first after a whole
+  eviction) keeps nothing from before it and takes hasMore from its page,
+  and an update during that load lands on the page's copy alone
+  (ui/messages/hub.go).
+- A window read keeps what the socket changed or deleted while the page
+  was out, before its hooks run (store liveReadLocked, readWindowLocked):
+  a vote's chat.update during History no longer spread the older count to
+  every copy. Older pages go through the same hooks (PrependOlderSince).
+  message_replied, a broadcast's root merge, message_locked and the
+  optimistic writes note the write under the lock that makes it
+  (store.MutateNoted), so a thread read that went out before them keeps
+  them, and message_changed and message_deleted note with theirs.
+- A read's revision goes out as the store holds the message at that
+  moment, checked against its live stamp under the subscribers' lock
+  (core announceHeld, emitIf). A later edit, reaction or deletion whose
+  update went out first is never undone.
+- A message fetched again by id asks once per channel a frame, waits
+  after a failure (2 s doubling to a minute, past the client's own refusal
+  of an identical failed request), then core asks again by itself, up to
+  five times, and it settles on "gone" when Slack answers without it: the
+  row draws no body (isNonExistent) and no entry is removed. A row whose
+  messages.list group failed fetches again the same way instead of
+  shimmering until the next load.
+- Activity polls each message once a frame, with the thread its drawn copy
+  names, and a lookup that misses doesn't let go of the copy another
+  row's found (expireLists does, a frame later). A mention of a root
+  hydrated before its first reply, beside the thread_v2 row of that
+  thread with the pane open, redrew the window every frame. Past the
+  change table's floor each row takes the store's copy when it draws.
+- An ActivityThread tree rendered from earlier props (its `$rev` prop) is
+  no projection: with JS busy a new reply drew the previous one, and its
+  sender. BetterBlock's projection rewrites messageTs, so the row tells
+  them apart by the revision of the props it sent.
+- Threads and Saved fetch again a change whose copy is gone and keep their
+  messages in the store. Past the floor Threads takes the store's copies
+  on every page it loaded, with no getView. Threads' unread count leaves
+  out a reply deleted while getView was out.
+- A reply's deletion takes out the thread_v2 entry whose messageTs it was
+  (min_unread_ts, else latest_ts: Slack's /29I), as messageDeleted's
+  "Remove activity item" does, and so does an edit that drops the
+  viewer's mention. badge_counts_updated with activity_v2 summing to 0
+  marks the loaded unread rows read here only (VxbD
+  handleBadgeCountsUpdatedRTMEvent through Japw m$ isLocalOnlyUpdate),
+  leaving a row whose message the store doesn't hold.
+- The content fingerprints moved to slackc (ContentFP, SentFPs, FPMemo)
+  for the message lists to share, and msgVer is memoed per revision, not
+  per copy.
+
+Round 5 (2026-11-18):
+
+- A message_changed of a message no window or cached thread holds (one
+  Activity, Threads or Saved fetched by id: a poll's vote 80 messages
+  back, a root's count after one of its replies is deleted) goes into the
+  window only inside the range it holds (store.UpsertInRange, core
+  putChanged): taken in above a HasMore window's oldest message, the open
+  list drew it right above the newest page at its next load, and
+  load-older read from it, skipping everything between. Slack's invH keeps
+  such a ts a slice of its own. The live note and the fetched copies keep
+  every view current all the same.
+- The hub's range starts at the list's oldest message from Slack, not at a
+  local copy (a kept failed send), and an answer that starts the list over
+  takes back only the noted changes it holds or covers (keepLive).
+- A messages.list answer that leaves out a message it was asked for drops
+  the store's fetched copy in the same write (PutFetchedAsked): an older
+  copy drew the deleted message again past the floor.
+- Refetches by id go out in rounds, one at a time across every channel,
+  200 ms apart (Slack's UnknownFetchManager), so messages.list's own split
+  (ten channels a call, two at a time) bounds them; after a rate limit the
+  next try waits its Retry-After.
+- The badges' zero marks rows read in the page Activity holds, stamped
+  with the loads started by then: the answer of a load that went out after
+  it brings the server's state for the rows it lists, which wins, while
+  rows it doesn't list (older pages a refresh keeps) and the answer of a
+  load out when the zero came keep the mark. It's queued with the realtime entries, in socket order, once
+  however many come between draws. Without the inbox, Slack's rule over
+  counts and alerts (all present and 0) marks the rows the same way.
+- A thread tree from earlier props that projected away from what the row
+  sent with its revision (BetterBlock hiding a blocked person's reply)
+  keeps its projection until JS draws the new revision; a pass-through's
+  draws the new reply at once. Revisions are unique across rows, and a
+  fresh load keeps what each row sent its components, so a tree slackc
+  kept across the reset is judged right.
+- Past the floor, a rebuild describes undrawn rows from the copies
+  Activity holds; only drawing converts (unless the search filters on
+  text). A list's copy expiring (a row scrolled away) becomes the same lazy
+  store adoption, with no conversion and no page re-describe.
+- Read revisions are announced after SyncPins and SyncSubs, a new reply is
+  added and noted under one lock (AddReplyNoted), and History hands the
+  list the older page's kept copies as the window holds them.
+
+Merging msg-latency (each with the test that fails if it's dropped):
+
+- SetLatestSince and RefreshRange call `s.readWindowLocked(ch, out,
+  since)` once their merge has built `out`, before the window is
+  replaced: msg-latency's empty `mergedLocked(ch, out, since)` hook in
+  store/live.go is that place. store TestRefreshRangeRead (fails if
+  SetLatestSince lands without RefreshRange) and
+  TestWindowReadKeepsFetchedRevision (by reflection), core
+  TestWindowReadAnnouncesRevision and TestWindowReadKeepsReactions.
+- fetchLatest and fetchThread announce (`a.announceReads()`) after
+  SetLatestSince or SetThreadSince and after SyncPins and SyncSubs;
+  refreshOlder announces after each RefreshRange, before any return: core
+  TestReadsAnnounce (its list has PrependOlderAt and RefreshRange),
+  TestReadRevisionKeepsPinDuringRead.
+- History's older pages: PrependOlderAt (msg-latency's epoch and before
+  guard) runs liveKeepLocked and readWindowLocked over the page and
+  returns what it kept, and keeps nothing without a window (msg-latency's
+  rule wins over PrependOlderSince's); History hands the list those copies
+  as the window holds them, and in the gapView case runs the same live
+  merge without writing the window: core TestOlderPageRead checks the page
+  History returns.
+- The reaction handler keeps ApplyReactionNoted alone: msg-latency's
+  NoteLive after it auto-merges and must go (a live record makes a read
+  keep the held copy, older text and all): core
+  TestWindowReadKeepsPageRevisionWithReaction, TestOlderPageRead.
+- onMessageReplied keeps MutateNoted, message_changed keeps NoteMutate and
+  putChanged (msg-latency's events.go still calls putLocal there): core
+  TestThreadReadKeepsSocketWrites, TestChangedOldMessageStaysOutOfWindow.
+- hub.go: startPastGap first, then the inRange switch; covers is
+  msg-latency's oldestFromSlack rule already, and keepLive's covers check
+  applies after takeNewest: messages TestHubUpdateAfterLocalCopyAtTop,
+  TestHubKeepLiveAfterStartOver (both by hand; landNewest's order is
+  takeLive, takeNewest, keepLive).
+- SetLatestRead goes.
+
+Merging plugin-render-3: Event.Seq is the change table's position (update,
+delete and gone only); plugin-render-3's count of every event becomes
+Event.EmitSeq. emit returns the Event, emitIf returns (Event, bool) and
+stamps EmitSeq after its check, hub.apply passes ev.EmitSeq to upsert, and
+notePlace keeps the update's EmitSeq for keepLive's place upsert (never 0).
+core TestMessageChangeTable and the build guard it.
+
+Slack's Saved rows read `Ld` too (LaterItemRow), and its Threads viewSlack's Saved rows read `Ld` too (LaterItemRow), and its Threads view
+draws its threads with the thread pane's components over the same store.
+A deleted saved message draws Later's "no longer available", and a
+deleted reply leaves its card. Search results keep the search answer's
+body, as Slack's do: SearchResult draws the result's text and reads only
+its actions and reactions from the store.
+
+Left as is: a reaction that lands before a message's first fetch is
+replayed on the answer here, where Slack's slurpReactions would lose it.
+Clack still asks messages.list again for a message it holds only as a
+fetched copy, where Slack never fetches a message its store has; without
+the socket nothing else would bring the change.
+
+**Tests.** TestActivityLiveVoteCounts (native, patched with a text-preview
+vote, patched in lockstep, patched blocks, then a reload after an unheard
+change), TestActivityLiveVoteJSHeld, TestActivityLiveEditsJSHeld,
+TestActivityLiveThreadEditsJSHeld, TestActivityLiveMaskedWithInnerPatches,
+TestActivityLiveSlicePatchNoReconvert, TestActivityLiveRootVoteAfterGap,
+TestActivityLiveSearchIdle, TestActivityLiveFailedGroup,
+TestActivityLiveEvictedRefetch,
+TestActivityLiveVoteSlicePatch, TestActivityLiveVoteBesideThread (in step,
+then the pane closing), TestActivityLiveEdit (the edit, and the removals:
+an edited-out mention, @channel, @here, a tombstone, moderated,
+thread_hidden), TestActivityLiveDelete, TestActivityLiveMissingMessage,
+TestActivityLiveReaction, TestActivityLiveWindowEvicted,
+TestActivityLiveEntryWhileHidden, TestActivityLiveManyChangesHidden,
+TestActivityLiveRemovedDuringLoad, TestActivityLivePreview,
+TestActivityLiveRootRowsBesidePane, TestActivityLiveCopylessRefetch,
+TestActivityLiveThreadNewReplyJSHeld,
+TestActivityLiveMaskedThreadWithInnerPatches,
+TestActivityThreadLeavesWithItsDeletedReply,
+TestActivityThreadLeavesWhenItsReplyDropsTheMention,
+TestActivityBadgesZeroReadLocally, TestActivityBadgesZeroThenLoad,
+TestActivityBadgesZeroInSocketOrder, TestActivityBadgesZeroClassic,
+TestActivityLiveThreadProjectionJSHeld,
+TestActivityLiveThreadNewReplyFreshJSHeld,
+TestActivityFloorConvertsDrawnRows, TestThreadsLiveMessages,
+TestThreadsLiveVote, TestThreadsLiveBatch (older replies too),
+TestThreadsLiveEvictedRefetch, TestThreadsLiveFloor,
+TestSavedLiveMessages, TestSavedLiveBotUpdate and
+TestSavedLiveEvictedRefetch (views, fakeslack);
+TestHubUpdateOutsideLoadedHistory, TestHubUpdateAfterWholeEviction,
+TestHubUpdateDuringFirstLoad, TestHubUpdateAfterLocalCopyAtTop,
+TestHubKeepLiveAfterStartOver and TestHubReloadKeepsRangeAfterOldChange
+(messages);
+TestFetchedMessagesTakeSocketChanges, TestFetchedMessagesKeepReactions,
+TestFetchedMessagesBounded, TestFetchedReplayTruncatedUsers,
+TestApplyReactionLastListed, TestFetchedSizeAfterMutate,
+TestRefreshRangeRead and TestWindowReadKeepsFetchedRevision (store); TestMessageChangeTable,
+TestMessageChangeTableForgets, TestReactionReachesFetchedMessage,
+TestHydrateKeepsReactionsDuringFetch, TestMessageChangedRemoves,
+TestMentionsViewerRichKeywords, TestFetchedRootAnnounced,
+TestReadRevisionAnnounced, TestWindowReadKeepsReactions,
+TestOlderRepliesStored, TestRemovesNotTakenByReactions,
+TestWindowReadKeepsSocketRevision, TestWindowReadAnnouncesRevision,
+TestThreadReadKeepsSocketWrites, TestReadRevisionOrderedWithSocket,
+TestOlderPageRead, TestThreadsUnreadLeavesDeleted, TestReadsAnnounce,
+TestRefetchBatch, TestRefetchGone, TestRefetchBackoff,
+TestRefetchRetriesByItself, TestChangedOldMessageStaysOutOfWindow,
+TestHydrateDropsMissingFetched, TestReadRevisionKeepsPinDuringRead,
+TestWindowReadKeepsPageRevisionWithReaction and TestClassicBadgesZero
+(core).
+flake-check's activity-live-msg job runs them COUNT times, then three
+times under -race. TestIdleFrames has Activity on the views fixtures'
+feed with its search open and an item open beside it.
+
 ## Not done
 
 - The channel accept's other workspaces, start-trial modal and other

@@ -123,7 +123,8 @@ func (v *Activity) focusedItem() (*core.ActivityItem, string) {
 		if k := actKey(&page.Items[i]); k == v.focusKey {
 			for _, j := range v.vis {
 				if j == i {
-					return &page.Items[i], k
+					// its message as the row draws it (activity_msgs.go)
+					return v.liveCopy(&page.Items[i], &v.keyLive), k
 				}
 			}
 		}

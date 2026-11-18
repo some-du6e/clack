@@ -277,6 +277,16 @@ func (a *App) ThreadPane(ch, ts string) layout.Widget {
 	}
 }
 
+// ---- views.LiveMessages: Activity's rows draw what the lists draw ----
+
+var _ views.LiveMessages = (*App)(nil)
+
+// LiveMessage is ch/ts as a message list drawn since `since` holds it
+// (messages.Live): the thread pane or the channel list beside Activity.
+func (a *App) LiveMessage(ch, ts, threadTS string, since time.Time, have uint64) (core.Message, uint64, bool) {
+	return messages.Live(a.Core(), ch, ts, threadTS, since, have)
+}
+
 // directoriesTab maps directories?tab= to the Directories tab index.
 var directoriesTab = map[string]int{"people": 0, "channels": 1, "groups": 2, "usergroups": 2, "external": 3, "invitations": 4}
 

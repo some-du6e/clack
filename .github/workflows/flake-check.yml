@@ -1250,6 +1250,68 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a go test -count=5 -v -timeout 40m -run '^TestHuddlesLinkInvites$' ./internal/ui/
 
+  # Activity's rows draw their messages as they are now
+  # (views/activity_msgs.go; Karim's vote counts "up and down like crazy"
+  # in Activity): a vote's chat.update in the frame after it lands,
+  # natively, under a pass-through plugin on Activity's components (its JS
+  # in lockstep, or busy through six revisions) and under a text patch of
+  # the messages slice, in step with the thread pane beside the page and
+  # kept when the pane closes; a reload after an unheard change; an edit,
+  # the removals (an edited-out mention, a tombstone, a deletion), a
+  # missing message, a reaction to a message fetched by id or held by an
+  # evicted window, a message fetched again by id; an entry pushed while
+  # the page was off screen, a busy socket while it was, a removal while a
+  # load was out, the preview pane; the Threads view and the Saved page; a
+  # deleted or edited reply's thread entry leaving, the badges' zero
+  # marking the rows read. store, core: the messages fetched by id and the reactions a fetch must
+  # not undo, the reads that land after the socket's writes and the order
+  # their revisions go out in, core's table of message changes and
+  # Slack's removal rules. messages: a read's revision of a message the
+  # channel list never loaded stays out of it. Then once more under -race
+  # (the change table is written on the event pump and read by the UI).
+  # Dispatch with only=activity-live-msg.
+  activity-live-msg:
+    if: ${{ !inputs.only || startsWith('activity-live-msg', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|EditsJSHeld|ThreadEditsJSHeld|ThreadNewReplyJSHeld|ThreadNewReplyFreshJSHeld|ThreadProjectionJSHeld|MaskedWithInnerPatches|MaskedThreadWithInnerPatches|SlicePatchNoReconvert|RootVoteAfterGap|RootRowsBesidePane|SearchIdle|FailedGroup|CopylessRefetch|EvictedRefetch|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote|Batch|EvictedRefetch|Floor)|TestSavedLive(Messages|BotUpdate|EvictedRefetch)|TestActivityThreadLeaves(WithItsDeletedReply|WhenItsReplyDropsTheMention)|TestActivityBadgesZero(ReadLocally|ThenLoad|InSocketOrder|Classic)|TestActivityFloorConvertsDrawnRows)$'
+      STORE_TESTS: '^(TestFetchedMessages(TakeSocketChanges|KeepReactions|Bounded)|TestFetchedReplayTruncatedUsers|TestApplyReactionLastListed|TestFetchedSizeAfterMutate|TestRefreshRangeRead|TestWindowReadKeepsFetchedRevision)$'
+      CORE_TESTS: '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords|TestFetchedRootAnnounced|TestReadRevisionAnnounced|TestWindowReadKeepsReactions|TestOlderRepliesStored|TestRemovesNotTakenByReactions|TestWindowReadKeepsSocketRevision|TestWindowReadAnnouncesRevision|TestThreadReadKeepsSocketWrites|TestReadRevisionOrderedWithSocket|TestOlderPageRead|TestThreadsUnreadLeavesDeleted|TestReadsAnnounce|TestRefetch(Batch|Gone|Backoff|RetriesByItself)|TestChangedOldMessageStaysOutOfWindow|TestHydrateDropsMissingFetched|TestReadRevisionKeepsPinDuringRead|TestWindowReadKeepsPageRevisionWithReaction|TestClassicBadgesZero)$'
+      HUB_TESTS: '^TestHub(Update(OutsideLoadedHistory|AfterWholeEviction|DuringFirstLoad|AfterLocalCopyAtTop)|KeepLiveAfterStartOver|ReloadKeepsRangeAfterOldChange)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "views: Activity's, Threads' and Saved's live messages (one verbose run, then COUNT)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
+          exit $rc
+      - name: "store, core, messages: the reads, the message change table, the hub, COUNT runs"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run "$STORE_TESTS" ./internal/store || rc=1
+          go test -count=$COUNT -v -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run "$HUB_TESTS" ./internal/ui/messages || rc=1
+          exit $rc
+      - name: "the same under -race, 3 runs"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          xvfb-run -a go test -race -count=3 -timeout 50m -run "$LIVE_TESTS" ./internal/ui/views || rc=1
+          go test -race -count=3 -run "$STORE_TESTS" ./internal/store || rc=1
+          go test -race -count=3 -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -race -count=3 -run "$HUB_TESTS" ./internal/ui/messages || rc=1
+          exit $rc
+
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
   # doesn't list (Slackbot's, the Slack system user's, an app's), and under

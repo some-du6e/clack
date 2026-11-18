@@ -46,12 +46,12 @@ func (a *App) MarkThreadUnread(ctx context.Context, ch, threadTS, ts string) err
 // message back as it was.
 func (a *App) BroadcastReply(ctx context.Context, ch, ts string) error {
 	var before slack.Message
-	if m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) { before = *m; m.Subtype = "thread_broadcast" }); ok {
+	if m, ok := a.S.MutateNoted(ch, ts, func(m *slack.Message) { before = *m; m.Subtype = "thread_broadcast" }); ok {
 		a.emitUpdate(ch, &m)
 	}
 	err := a.C.Call(ctx, "chat.update", url.Values{"channel": {ch}, "ts": {ts}, "reply_broadcast": {"true"}}, nil)
 	if err != nil && before.TS != "" {
-		if m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) { m.Subtype, m.ReplyBroadcast = before.Subtype, before.ReplyBroadcast }); ok {
+		if m, ok := a.S.MutateNoted(ch, ts, func(m *slack.Message) { m.Subtype, m.ReplyBroadcast = before.Subtype, before.ReplyBroadcast }); ok {
 			a.emitUpdate(ch, &m)
 		}
 	}
@@ -68,7 +68,7 @@ func (a *App) RemoveBroadcast(ctx context.Context, ch, ts string) error {
 	if err == nil {
 		// what the server's message_changed brings: a plain reply, which
 		// the conversation's list no longer shows
-		if m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) {
+		if m, ok := a.S.MutateNoted(ch, ts, func(m *slack.Message) {
 			if m.Subtype == "thread_broadcast" {
 				m.Subtype = ""
 			}
