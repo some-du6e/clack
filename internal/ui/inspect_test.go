@@ -3,8 +3,8 @@ package ui
 // The inspect tool (inspect_wire.go, internal/ui/inspect) on the fake
 // Slack (synthetic; nothing talks to Slack): the gated shortcut starts a
 // session, the reaction pill under the pointer is outlined as Slack's
-// UnstyledButton in Reaction, ↑ widens the pick to the Reaction, a click
-// copies one image and saves the report, whose text names the component,
+// UnstyledButton in Reaction, ↑ widens the pick to the Reaction, a
+// Shift+click copies one image at once and saves the report, whose text names the component,
 // element and rect, tags the ids and holds no content, and the click
 // never reaches the pill: after the session it takes clicks again.
 
@@ -232,22 +232,27 @@ func fakeShots(t *testing.T) (shots *int, copied *image.Image) {
 	return shots, copied
 }
 
-// pickAndCopy clicks p: the click's frame is shot and the report copied
-// at once, with no review.
+// pickAndCopy Shift+clicks p: the click's frame is shot and the report
+// copied at once, with no review (a plain click opens the review).
 func (e *inspectEnv) pickAndCopy(t *testing.T, p image.Point) {
 	t.Helper()
-	e.click(p)
+	pt := f32.Pt(float32(p.X), float32(p.Y))
+	e.r.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt, Modifiers: key.ModShift},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt, Modifiers: key.ModShift},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt, Modifiers: key.ModShift},
+	)
 	e.frame()
 	e.a.inspectAfterFrame(&e.ops, e.size)
 	if e.a.insp.Reviewing() {
-		t.Fatal("a plain click opened the review")
+		t.Fatal("a Shift+click opened the review")
 	}
 	e.a.insp.Wait()
 	e.frame()
 }
 
 // reviewAndCopy finishes the review the last frame's shot started (a
-// drag's, a Shift+click's).
+// drag's, a plain click's).
 func (e *inspectEnv) reviewAndCopy(t *testing.T) {
 	t.Helper()
 	if !e.a.insp.Reviewing() {

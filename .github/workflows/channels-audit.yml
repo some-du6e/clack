@@ -4,8 +4,9 @@ name: channels-audit
 # a preview channel's header, the Join… menu, channel details (About,
 # Members, Agents & apps, Settings; under agents_in_channels_improvements
 # the Members filter, the reworked Agents & apps tab and the invite modal
-# scoped to agents and apps, light and dark), the channel browser, and the
-# sidebar:
+# scoped to agents and apps, the member rows' "…" menu with Make Channel
+# Manager / Remove from Channel Managers / Remove from channel, light and
+# dark), the channel browser, and the sidebar:
 # its organize mode (row selection, Move to…, Leave and its confirmation),
 # its keyboard (the filter's ArrowDown, roving focus, Shift+Tab), the move
 # error toasts, temp_mute's "New" tag and the draft menu's picked draft.
@@ -24,6 +25,10 @@ on:
       - "internal/ui/agents_row_menu_test.go"
       - "internal/ui/views/details_agents_menu.go"
       - "internal/ui/popups/remove_member.go"
+      - "internal/ui/member_row_menu_test.go"
+      - "internal/ui/popups/channel_managers.go"
+      - "internal/core/channel_managers_edit.go"
+      - "internal/fakeslack/channel_managers.go"
       - "internal/fakeslack/channel_agents.go"
       - "internal/ui/views/directories.go"
       - "internal/ui/views/spanline.go"
@@ -65,7 +70,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestChannelLeaveRejoin$|TestChannelDetailsTabsShot$|TestSidebarTextFilter$|TestSidebarTextFilterFollowsExperiment$|TestTempMuteFollowsExperiment$|TestSidebarOrganizeMode$|TestSidebarKeyboard$|TestSectionMoveErrorToasts$|TestTempMuteNewBadge$|TestSidebarDraftMenuOpensPickedDraft$|TestSidebarDraftPencilMenu$|TestChannelDetailsAgentsImprovements$|TestChannelDetailsAgentsEmpty$|TestChannelDetailsAgentsOff$|TestAgentsRowMenuRemove$|TestAgentsRowMenuRemoveFails$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestChannelLeaveRejoin$|TestChannelDetailsTabsShot$|TestSidebarTextFilter$|TestSidebarTextFilterFollowsExperiment$|TestTempMuteFollowsExperiment$|TestSidebarOrganizeMode$|TestSidebarKeyboard$|TestSectionMoveErrorToasts$|TestTempMuteNewBadge$|TestSidebarDraftMenuOpensPickedDraft$|TestSidebarDraftPencilMenu$|TestChannelDetailsAgentsImprovements$|TestChannelDetailsAgentsEmpty$|TestChannelDetailsAgentsOff$|TestAgentsRowMenuRemove$|TestAgentsRowMenuRemoveFails$|TestMemberRowMenu' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

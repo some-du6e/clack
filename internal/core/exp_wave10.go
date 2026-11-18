@@ -18,7 +18,8 @@ package core
 // conversations.kick {channel, user}).
 //
 // This file is the data half: the checks and the kick. The menu and the
-// dialog are views/details_agents_menu.go and popups/remove_member.go.
+// dialog are views/details_agents_menu.go and popups/remove_member.go;
+// the menu's Channel Manager items are channel_managers_edit.go's.
 
 import (
 	"context"

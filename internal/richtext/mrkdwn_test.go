@@ -168,6 +168,7 @@ func TestFromMrkdwn(t *testing.T) {
 		{"user unknown", "<@U9>", []Block{para(user("U9", "@U9"))}},
 		{"channel", "<#C1>", []Block{para(chn("C1", "#general"))}},
 		{"channel label", "<#C2|random>", []Block{para(chn("C2", "#random"))}},
+		{"channel empty label", "<#C1|>", []Block{para(chn("C1", "#general"))}}, // the store's name, as <#C1>
 		{"usergroup", "<!subteam^S1>", []Block{para(grp("S1", "@design"))}},
 		{"usergroup label", "<!subteam^S2|@ops>", []Block{para(grp("S2", "@ops"))}},
 		{"here", "<!here>", []Block{para(bcast("here"))}},

@@ -28,7 +28,7 @@ import (
 // capture is a pick or a dragged region on its way to the clipboard:
 // the report, built when the press was read (from the frame the pointer
 // was over) or, for a region, at the release, waiting for the release's
-// frame to be shot and, for a Shift+click or a region, the review
+// frame to be shot and, for a plain click or a region, the review
 // (review.go) to finish.
 type capture struct {
 	rep    *Report
@@ -36,7 +36,7 @@ type capture struct {
 	ptr    image.Point     // px
 	scale  float32
 	region bool              // a dragged region: shot as it is, no margin, no outline
-	review bool              // a Shift+click: reviewed before it's copied (a region always is)
+	review bool              // a plain click: reviewed before it's copied (a region always is; a Shift+click never)
 	redact []image.Rectangle // the review's rects, px in the shot
 
 	// once shot: the element and the pointer in the shot (px), and the
@@ -326,8 +326,8 @@ func dpRect(r image.Rectangle, scale float32) image.Rectangle {
 }
 
 // AfterFrame shoots the frame just finished when a pick or a dragged
-// region asked for it. A plain click's report goes on its way with the
-// shot at once, the session over; a Shift+click's or a region's shot is
+// region asked for it. A Shift+click's report goes on its way with the
+// shot at once, the session over; a plain click's or a region's shot is
 // shown for review (review.go) first. With no shot the report goes on
 // its way as text at once. Call it on the UI
 // goroutine once the frame's ops are complete (after the window's frame
