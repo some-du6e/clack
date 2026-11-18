@@ -73,6 +73,9 @@ type model struct {
 	// (takeNewest)
 	caughtUp string
 	epoch    uint64
+	// pastGap counts startPastGap's switches: a newest page read before
+	// one is the view from before it (ensureLoaded reads again)
+	pastGap uint32
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -281,6 +284,7 @@ func (hb *hub) ensureLoaded(m *model) {
 		return
 	}
 	m.loading = true
+	gap0 := m.pastGap
 	m.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -306,22 +310,7 @@ func (hb *hub) ensureLoaded(m *model) {
 		} else {
 			p, err := hb.app.History(ctx, m.ch, "")
 			m.mu.Lock()
-			m.loading = false
-			m.err = err
-			live := m.takeLive()
-			if err == nil {
-				m.takeNewest(p) // hub_catchup.go
-				m.keepLive(live)
-				if !m.loaded {
-					m.lastRead = p.LastRead
-				}
-				m.loaded = true
-				m.fetched = time.Now()
-				m.fails, m.retryAt = 0, time.Time{}
-			} else {
-				m.failed(hb, err, false, time.Now())
-			}
-			m.rev++
+			m.landNewest(hb, p, err, gap0)
 			m.mu.Unlock()
 			hb.afterLoad(m)
 		}

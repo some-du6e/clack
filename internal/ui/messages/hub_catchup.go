@@ -145,6 +145,39 @@ func (m *model) startPastGap(epoch uint64) {
 	m.setAll(keep)
 	m.hasMore = true
 	m.epoch = epoch
+	m.pastGap++ // a load out now read the view from before (ensureLoaded)
+}
+
+// landNewest is a channel model's load landing (ensureLoaded): the newest
+// page p, read when startPastGap had switched it gap0 times, or the load's
+// error. A page read before a switch since is the view from before it (the
+// pre-gap messages, put back above the one past the gap whenever the load
+// landed after it): it isn't taken, and the next frame reads again. It
+// reports whether p was taken. The caller holds m.mu.
+func (m *model) landNewest(hb *hub, p core.Page, err error, gap0 uint32) bool {
+	m.loading = false
+	m.err = err
+	if err == nil && m.pastGap != gap0 {
+		m.fetched = time.Time{}
+		m.rev++
+		return false
+	}
+	live := m.takeLive()
+	if err != nil {
+		m.failed(hb, err, false, time.Now())
+		m.rev++
+		return false
+	}
+	m.takeNewest(p)
+	m.keepLive(live)
+	if !m.loaded {
+		m.lastRead = p.LastRead
+	}
+	m.loaded = true
+	m.fetched = time.Now()
+	m.fails, m.retryAt = 0, time.Time{}
+	m.rev++
+	return true
 }
 
 // local reports whether msg is a copy no history page holds: the viewer's
