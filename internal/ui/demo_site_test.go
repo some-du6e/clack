@@ -1,11 +1,14 @@
 package ui
 
-// TestDemoSiteShots takes the website's theme screenshots (site/, see
+// TestDemoSiteShots takes the website's screenshots (site/, see
 // site/README.md): `clack demo`'s made-up workspace in a 1440x900 window,
-// #general in a few of Slack's theme presets (Preferences > Appearance),
-// light and dark. CLACK_DEMO_SHOTS only; the files land in
-// $CLACK_DEMO_SHOTS/site as demo-theme-<preset>-<mode>.png. Synthetic only:
-// the demo runs fakeslack on loopback and everything in it is invented.
+// without the "Demo workspace" banner (the site says once, near the shots,
+// that the workspace is made up). Light mode: Activity, the main window
+// (#sales-leaderboard), #it-help's busiest thread, the huddle running in
+// #party-planning-crew and the emoji picker over #general; then #general in
+// a few of Slack's theme presets (Preferences > Appearance), light and dark.
+// CLACK_DEMO_SHOTS only; the files land in $CLACK_DEMO_SHOTS/site. Synthetic
+// only: the demo runs fakeslack on loopback and everything in it is invented.
 
 import (
 	"image"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/demo"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 func TestDemoSiteShots(t *testing.T) {
@@ -31,6 +35,11 @@ func TestDemoSiteShots(t *testing.T) {
 	for _, p := range theme.ThemePresets {
 		presets[p.ID] = p.Theme
 	}
+	shot := func(e *perfEnv, name string) {
+		e.movePtr(image.Pt(1250, 20))     // the empty top bar: no row hovered
+		e.settle(2500 * time.Millisecond) // avatars, emoji and pictures in
+		e.shotTo(t, dir, name)
+	}
 	for _, c := range []struct {
 		mode string
 		ids  []string
@@ -39,9 +48,50 @@ func TestDemoSiteShots(t *testing.T) {
 		{"dark", []string{"aubergine", "jade", "lagoon", "mood-indigo"}},
 	} {
 		t.Run(c.mode, func(t *testing.T) {
-			e, _ := demoEnv(t, demo.Options{Quiet: true, Speed: 40, Seed: 3})
+			e, s := demoEnvBanner(t, demo.Options{Quiet: true, Speed: 40, Seed: 3}, "")
 			e.setDark(c.mode == "dark")
 			e.until("the demo sidebar", 30*time.Second, func() bool { return e.sidebarHas(demo.GeneralID) && e.sidebarHas(demo.CodeID) })
+			if c.mode == "light" {
+				// Activity first: visiting the channels reads them
+				e.a.Navigate("activity")
+				e.until("Activity", 20*time.Second, func() bool { return e.a.views[Route("activity")] != nil })
+				e.settle(time.Second)
+				if v, ok := e.a.views[Route("activity")].(*views.Activity); ok {
+					v.StepItem(1, false) // the newest item, open beside the feed
+				}
+				shot(e, "demo-activity")
+				e.openChannel(demo.SalesID)
+				e.until("#sales-leaderboard", 20*time.Second, func() bool { return e.loadedMessages(demo.SalesID) >= 10 })
+				e.toLatest()
+				shot(e, "demo-main")
+				var parent string
+				most := 0
+				for ts, rs := range s.WS.Replies[demo.ITHelpID] {
+					if len(rs) > most || (len(rs) == most && ts > parent) {
+						parent, most = ts, len(rs)
+					}
+				}
+				e.openChannel(demo.ITHelpID)
+				e.until("#it-help", 20*time.Second, func() bool { return e.loadedMessages(demo.ITHelpID) > 0 })
+				e.toLatest()
+				e.a.OpenThread(demo.ITHelpID, parent)
+				e.until("the thread", 20*time.Second, func() bool {
+					th, _ := e.a.data.core.S.Thread(demo.ITHelpID, parent)
+					return len(th) > 1
+				})
+				shot(e, "demo-thread")
+				e.a.CloseSecondary()
+				e.openChannel(demo.LiveHuddleChannel)
+				e.until("#party-planning-crew", 20*time.Second, func() bool { return e.loadedMessages(demo.LiveHuddleChannel) > 0 })
+				e.toLatest()
+				shot(e, "demo-huddle")
+				e.openChannel(demo.GeneralID)
+				e.until("#general", 20*time.Second, func() bool { return e.loadedMessages(demo.GeneralID) >= 10 })
+				e.toLatest()
+				e.a.OpenEmojiPicker(image.Pt(700, 700), func(string) {})
+				shot(e, "demo-emoji-picker")
+				e.a.overlays = nil
+			}
 			e.openChannel(demo.GeneralID)
 			e.until("#general", 20*time.Second, func() bool { return e.loadedMessages(demo.GeneralID) >= 10 })
 			e.toLatest()
@@ -51,7 +101,7 @@ func TestDemoSiteShots(t *testing.T) {
 					t.Fatalf("no theme preset %q", id)
 				}
 				e.a.setAccountTheme(th)
-				e.movePtr(image.Pt(1000, 55))     // on the banner: no row hovered
+				e.movePtr(image.Pt(1250, 20))
 				e.settle(2500 * time.Millisecond) // the restyle, avatars, emoji and pictures in
 				if got := e.a.accountTheme(); got != th.ForSave(c.mode == "dark") {
 					t.Fatalf("%s: the account theme is %+v", id, got)

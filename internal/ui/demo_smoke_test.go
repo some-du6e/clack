@@ -30,6 +30,13 @@ const demoTestBanner = "Quillfeather Paper Co. and everyone in it are made up. N
 // demoEnv starts a demo session and the UI on it (live updates on).
 func demoEnv(t *testing.T, opts demo.Options) (*perfEnv, *demo.Session) {
 	t.Helper()
+	return demoEnvBanner(t, opts, demoTestBanner)
+}
+
+// demoEnvBanner is demoEnv with the "Demo workspace" banner's text: ""
+// leaves the banner out (the website's shots, TestDemoSiteShots).
+func demoEnvBanner(t *testing.T, opts demo.Options, banner string) (*perfEnv, *demo.Session) {
+	t.Helper()
 	s, err := demo.Start(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +51,7 @@ func demoEnv(t *testing.T, opts demo.Options) (*perfEnv, *demo.Session) {
 	}
 	e := &perfEnv{tb: t, fs: s.FS, home: home, size: image.Pt(1440, 900), now: time.Now(), start: time.Now()}
 	images := imgcache.New(s.Fetch, "", nil)
-	e.a = New(Options{ConfigDir: home, Started: e.start, Demo: demoTestBanner}, images)
+	e.a = New(Options{ConfigDir: home, Started: e.start, Demo: banner}, images)
 	c, err := s.NewClient()
 	if err != nil {
 		t.Fatal(err)
