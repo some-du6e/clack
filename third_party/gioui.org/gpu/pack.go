@@ -14,7 +14,7 @@ type packer struct {
 
 	sizes []image.Point
 	pos   image.Point
-	// work counts the free spaces tryAdd looked at (Clack patch 45,
+	// work counts the free spaces tryAdd looked at (Clack patch 46,
 	// FrameStats.PackWork)
 	work int64
 }

@@ -17,7 +17,7 @@ import (
 	"gioui.org/shader/gio"
 )
 
-// Clack patch 45: partial frames.
+// Clack patch 46: partial frames.
 //
 // Gio drew every frame whole: a caret's blink, a spinner's turn, an
 // animated emoji's next frame cost the same stencil, cover and API calls
@@ -154,7 +154,7 @@ type partialFrames struct {
 	diff  diffScratch
 }
 
-// opSig is what an op draws (Clack patch 45): h hashes all that decides
+// opSig is what an op draws (Clack patch 46): h hashes all that decides
 // its pixels except where they are, clip, the rectangle its quad covers.
 type opSig struct {
 	h    [2]uint64
@@ -325,7 +325,7 @@ type partialTarget struct {
 	copy bool
 }
 
-// partialOn reports whether the frame may be partial (Clack patch 45):
+// partialOn reports whether the frame may be partial (Clack patch 46):
 // partial frames are on, the device can draw them, and the target is a
 // window's or a test asked for texture targets'. Its paths are then packed
 // sticky. A switch changed (or ClackPartialReset) starts afresh. Call it

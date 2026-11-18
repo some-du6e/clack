@@ -7,7 +7,7 @@ import (
 	"gioui.org/gpu"
 )
 
-// The parts of TestRealWindowCaretCost that read Gio patch 45 (partial
+// The parts of TestRealWindowCaretCost that read Gio patch 46 (partial
 // frames), apart so a run on code without it can stand them in.
 
 // caretGPUFrame is what the GPU did for one of the window's frames.

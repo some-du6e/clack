@@ -40,7 +40,7 @@ import (
 //
 // each drawn whole (as Gio drew every frame), partial into the target and
 // partial through the frame texture and its copy (a window's way, Gio
-// patch 45). It logs each one's draws, API calls, pixels and time from
+// patch 46). It logs each one's draws, API calls, pixels and time from
 // submit to the end of its rasterization, and requires the partial frames'
 // pixels to be the whole frame's exactly (but the emoji's, which plays on
 // the wall clock) and their GPU work to be a small part of it.

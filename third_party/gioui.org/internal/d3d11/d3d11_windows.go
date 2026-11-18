@@ -333,7 +333,7 @@ type DeviceContext struct {
 type RenderTargetView struct {
 	Vtbl *struct {
 		_IUnknownVTbl
-		// ID3D11DeviceChild, then ID3D11View (Clack patch 45: GetResource)
+		// ID3D11DeviceChild, then ID3D11View (Clack patch 46: GetResource)
 		GetDevice               uintptr
 		GetPrivateData          uintptr
 		SetPrivateData          uintptr
@@ -593,7 +593,7 @@ type GUID struct {
 	Data4_7 uint8
 }
 
-// RECT is a D3D11_RECT (Clack patch 45: RSSetScissorRects).
+// RECT is a D3D11_RECT (Clack patch 46: RSSetScissorRects).
 type RECT struct {
 	Left, Top, Right, Bottom int32
 }
@@ -1339,7 +1339,7 @@ func (c *DeviceContext) CSSetShader(s *ComputeShader) {
 	)
 }
 
-// RSSetScissorRects sets one scissor rectangle (Clack patch 45); it applies
+// RSSetScissorRects sets one scissor rectangle (Clack patch 46); it applies
 // while the rasterizer state has ScissorEnable.
 func (c *DeviceContext) RSSetScissorRects(r *RECT) {
 	syscall.Syscall(
@@ -1352,7 +1352,7 @@ func (c *DeviceContext) RSSetScissorRects(r *RECT) {
 }
 
 // GetResource is the resource the view is of, with a reference the caller
-// releases (ID3D11View::GetResource; Clack patch 45).
+// releases (ID3D11View::GetResource; Clack patch 46).
 func (v *RenderTargetView) GetResource() *Resource {
 	var res *Resource
 	syscall.Syscall(

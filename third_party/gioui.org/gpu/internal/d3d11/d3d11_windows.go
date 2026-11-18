@@ -43,7 +43,7 @@ type Backend struct {
 	set   ctxState
 	calls driver.Calls
 	// raster are the rasterizer states without and with the scissor test,
-	// scissorOn which one is set (Clack patch 45)
+	// scissorOn which one is set (Clack patch 46)
 	raster    [2]*d3d11.RasterizerState
 	scissorOn bool
 }
@@ -182,7 +182,7 @@ func newDirect3D11Device(api driver.Direct3D11) (driver.Device, error) {
 		b.caps.Features |= driver.FeatureFloatRenderTargets
 	}
 	// Disable backface culling to match OpenGL. The second state scissors
-	// (Clack patch 45: partial frames).
+	// (Clack patch 46: partial frames).
 	for i := range b.raster {
 		state, err := dev.CreateRasterizerState(&d3d11.RASTERIZER_DESC{
 			CullMode:      d3d11.CULL_NONE,
@@ -342,7 +342,7 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 		d3dfmt = b.floatFormat
 	case driver.TextureFormatSRGBA, driver.TextureFormatOutput:
 		// Output: the swap chain's (app/d3d11_windows.go), for Clack patch
-		// 45's frame texture
+		// 46's frame texture
 		d3dfmt = d3d11.DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
 	case driver.TextureFormatRGBA8:
 		d3dfmt = d3d11.DXGI_FORMAT_R8G8B8A8_UNORM
@@ -1048,7 +1048,7 @@ func (b *Backend) EndCompute() {
 }
 
 func (b *Backend) BeginRenderPass(tex driver.Texture, d driver.LoadDesc) {
-	b.ClackScissor(image.Rectangle{}) // a pass starts unscissored (Clack patch 45)
+	b.ClackScissor(image.Rectangle{}) // a pass starts unscissored (Clack patch 46)
 	t := tex.(*Texture)
 	b.ctx.OMSetRenderTargets(t.renderTarget, nil)
 	b.calls.API++

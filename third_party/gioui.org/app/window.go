@@ -216,7 +216,7 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 		}
 		if h := clackGPUFrames.Load(); h != nil && w.gpu != nil {
 			if st, ok := w.gpu.(gpu.ClackStats); ok {
-				(*h)(st.ClackFrameStats()) // Clack patch (CLACK_PATCHES.md §45)
+				(*h)(st.ClackFrameStats()) // Clack patch (CLACK_PATCHES.md §46)
 			}
 		}
 		w.queue.Frame(frame)

@@ -887,7 +887,7 @@ func (f *Functions) BlendFuncSeparate(srcRGB, dstRGB, srcA, dstA Enum) {
 }
 
 // ClackBlitFramebufferLoaded reports whether the context has
-// glBlitFramebuffer (OpenGL ES 3, OpenGL 3): Clack patch 45's copy of a
+// glBlitFramebuffer (OpenGL ES 3, OpenGL 3): Clack patch 46's copy of a
 // frame into the window.
 func (f *Functions) ClackBlitFramebufferLoaded() bool { return f.glBlitFramebuffer != nil }
 

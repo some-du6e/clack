@@ -386,7 +386,7 @@ nothing while nothing changes.
   default, `OsSettingsProvider::kDefaultCaretBlinkInterval` (500 ms,
   `ui/native_theme/os_settings_provider.h`). Windows' `GetCaretBlinkTime`
   overrides it since patch 13 and macOS's insertion point period since
-  patch 46; on Linux Clack sets GTK's `gtk-cursor-blink-time` / 2, as
+  patch 47; on Linux Clack sets GTK's `gtk-cursor-blink-time` / 2, as
   Chromium does (`internal/ui/caretblink_linux.go`).
   When the window loses the focus Gio keeps the key focus and sends the
   editor `FocusEvent{Focus: false}`; upstream restarted the blink on it,
@@ -515,7 +515,7 @@ Tests: `internal/ui/theme` `TestLetterSpacingShaper` and
 (`IsWindowVisible`, `GetCaretBlinkTime`, `SWP_HIDEWINDOW`) and
 `widget/editor.go` (`CaretBlinkInterval`, `SetCaretBlinkInterval`, the
 caret in `Editor.Layout`). Additions: nothing hides unless the app calls
-`Hide`, and outside Windows the blink stays 500 ms (since patch 46,
+`Hide`, and outside Windows the blink stays 500 ms (since patch 47,
 macOS reads its own; Clack reads GTK's on Linux).
 
 Slack's desktop keeps running in the notification area when its window is
@@ -2047,7 +2047,7 @@ Patch 40's page aging, with it (`fboSet.resize`):
   above let pages used now and then fall into that too
   (`TestClackAtlasGrowKeepsSize`).
 
-## 45. gpu, app: partial frames (a frame drawn again only where it changed)
+## 46. gpu, app: partial frames (a frame drawn again only where it changed)
 
 `gpu/clack_partial.go` (new: `ClackPartialFrames`, `ClackPartialTextures`,
 `ClackFrameTexture`, `ClackPartialWhole`, `ClackPartialReset`, `sigOps`,
@@ -2170,7 +2170,7 @@ linux-idle, macos, windows-idle: App.Run's real window, 6 s of blinks
 partial and whole, their draws and the process's CPU). Not in
 `UPSTREAM.patch`.
 
-## 46. app: the caret's blink period from macOS
+## 47. app: the caret's blink period from macOS
 
 `app/clack_caret_macos.go`, `app/clack_caret_macos.m` (new) and
 `app/os_macos.go` (`newWindow`).

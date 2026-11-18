@@ -4,7 +4,7 @@ package driver
 
 import "image"
 
-// ClackPartial is a Device that can draw partial frames (Clack patch 45):
+// ClackPartial is a Device that can draw partial frames (Clack patch 46):
 // scissor a render pass's draws and copy a texture into the frame's target.
 type ClackPartial interface {
 	// ClackPartialOK reports whether the device can draw partial frames

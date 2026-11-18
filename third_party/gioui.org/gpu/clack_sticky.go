@@ -9,7 +9,7 @@ import (
 	"gioui.org/internal/f32"
 )
 
-// Clack patch 45: sticky atlas places for partial frames.
+// Clack patch 46: sticky atlas places for partial frames.
 //
 // A path's stencil coverage depends by a rounding on where its region
 // lands in the coverage atlas, and the packer placed every region after

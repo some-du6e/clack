@@ -8,7 +8,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache"
 )
 
-// The parts of TestFrameCostDamage that read Gio patch 45 (partial frames),
+// The parts of TestFrameCostDamage that read Gio patch 46 (partial frames),
 // apart so a run on code without it can stand them in.
 
 // imgStats is the image cache's stats.

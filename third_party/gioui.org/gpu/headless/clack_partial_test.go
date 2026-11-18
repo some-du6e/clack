@@ -17,7 +17,7 @@ import (
 	"gioui.org/op/paint"
 )
 
-// Clack patch 45: a partial frame (drawn again only where it differs from
+// Clack patch 46: a partial frame (drawn again only where it differs from
 // the last, scissored) is the whole frame's pixels, bit for bit, on every
 // backend (ci's linux-gio, macos and windows-applog jobs;
 // CLACK_PIXEL_TESTS). The whole frame is the one the same GPU draws at
@@ -375,7 +375,7 @@ func TestClackPartialFrames(t *testing.T) {
 	t.Logf("whole, the caret's frame: %s", statLine(ws[1]))
 }
 
-// Clack patch 45: a frame drawn again from the same ops (the client's
+// Clack patch 46: a frame drawn again from the same ops (the client's
 // quiet frames: an animation is all that changed) is a partial frame
 // whose damage is the live image's, and is the whole frame's pixels; the
 // same ops with nothing changed draw nothing; and the same ops drawn
@@ -537,7 +537,7 @@ func TestClackPartialSpinner(t *testing.T) {
 	}
 }
 
-// Clack patch 45: the damage of two frames is the clips of the ops one has
+// Clack patch 46: the damage of two frames is the clips of the ops one has
 // and the other doesn't (a shortest edit script), in disjoint rectangles.
 func TestClackPartialDamageRects(t *testing.T) {
 	// the frames are drawn by a real window; the damage is only Go

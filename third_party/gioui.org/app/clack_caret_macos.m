@@ -9,7 +9,7 @@
 
 #include "_cgo_export.h"
 
-// Clack patch (CLACK_PATCHES.md §46): the caret's blink period as
+// Clack patch (CLACK_PATCHES.md §47): the caret's blink period as
 // Chromium's OsSettingsProviderMac::CaretBlinkInterval has it
 // (ui/native_theme/os_settings_provider_mac.mm, main 2026-11-17): no
 // blinking when the user asked for a non-blinking insertion point (macOS

@@ -16,7 +16,7 @@ type textureCacheKey struct {
 
 type textureCache struct {
 	res map[textureCacheKey]resourceCacheValue
-	// nextID is the last texture id handed out (Clack patch 45)
+	// nextID is the last texture id handed out (Clack patch 46)
 	nextID uint64
 }
 
@@ -43,7 +43,7 @@ type opCacheValue struct {
 	// quads are the stencil quads' bounds (Clack patch 36, with
 	// ClackStatsDetail only)
 	quads []image.Rectangle
-	// hash is the path's pathHash (Clack patch 45)
+	// hash is the path's pathHash (Clack patch 46)
 	hash [2]uint64
 	// the fields below are handled by opCache
 	key  opKey

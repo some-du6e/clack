@@ -28,7 +28,7 @@ import (
 // macOS, Direct3D on Windows; ci's linux-idle, macos and windows-idle
 // jobs and flake-check's gpu-cost), signed in to internal/fakeslack, the
 // composer focused and nothing else moving. For 6 s with partial frames
-// (Gio patch 45) and 6 s with every frame whole (CLACK_FULL_FRAMES), it
+// (Gio patch 46) and 6 s with every frame whole (CLACK_FULL_FRAMES), it
 // counts the frames the window drew, what the GPU did for each
 // (app.SetGPUFrameHook) and the process's CPU time. The blinks must be
 // partial frames of the caret's few pixels, each with a tenth of a whole

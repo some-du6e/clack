@@ -25,7 +25,7 @@ import (
 var caretObserved bool
 
 // setCaretBlinkFromOS sets widget.CaretBlinkInterval to macOS's caret
-// blink period as Chromium reads it (Clack patch, CLACK_PATCHES.md §46:
+// blink period as Chromium reads it (Clack patch, CLACK_PATCHES.md §47:
 // gio_caretBlinkPeriodMs), as a window opens and on the notifications
 // Chromium reads it again on. Main thread.
 func setCaretBlinkFromOS() {

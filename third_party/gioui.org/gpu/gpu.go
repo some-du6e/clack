@@ -58,7 +58,7 @@ type gpu struct {
 	renderer                               *renderer
 	// stats are the last frame's (Clack patch 36)
 	stats FrameStats
-	// partial is what partial frames keep between frames (Clack patch 45)
+	// partial is what partial frames keep between frames (Clack patch 46)
 	partial partialFrames
 }
 
@@ -75,7 +75,7 @@ type renderer struct {
 	stats  FrameStats
 	calls0 driver.Calls
 	// fills are a partial frame's fill pipelines for coverage and layer
-	// pages, made on first use (Clack patch 45)
+	// pages, made on first use (Clack patch 46)
 	fills        [2]*pipeline
 	fillUniforms *blitColUniforms
 	// copyPipe draws the frame texture into a window's target (Metal)
@@ -380,7 +380,7 @@ type material struct {
 	data    imageOpData
 	tex     driver.Texture
 	uvTrans f32.Affine2D
-	// texID names tex's image (Clack patch 45): a texture made again, or
+	// texID names tex's image (Clack patch 46): a texture made again, or
 	// another at the same address, gets another
 	texID uint64
 }
@@ -460,7 +460,7 @@ type resource interface {
 type texture struct {
 	src *image.RGBA
 	tex driver.Texture
-	// id names the image the texture holds (Clack patch 45)
+	// id names the image the texture holds (Clack patch 46)
 	id uint64
 }
 
@@ -613,7 +613,7 @@ func (g *gpu) frame(target RenderTarget) error {
 		expandPathOp(img.path, img.clip)
 	}
 	g.stencilTimer.begin()
-	// Clack patch 45: everything the passes draw from is decided first (the
+	// Clack patch 46: everything the passes draw from is decided first (the
 	// atlases' packing and page sizes, the textures), so the frame can be
 	// compared with the last and drawn again only where it differs (dmg;
 	// nil: the whole frame), into a texture that keeps its pixels (out).
@@ -939,11 +939,11 @@ func createColorPrograms(b driver.Device, vsSrc shader.Sources, fsSrc [3]shader.
 
 // stencilClips stencils the frame's clip paths into the coverage atlas, in
 // each of their regions (Clack patch 39). A partial frame (dmg not nil,
-// Clack patch 45) stencils only the part of each region in the damage, at
+// Clack patch 46) stencils only the part of each region in the damage, at
 // the place the whole frame does, and clears just those texels first.
 // The pages are sized before (frame).
 func (r *renderer) stencilClips(pathCache *opCache, ops []*pathOp, dmg []image.Rectangle) {
-	// page by page: with sticky places (Clack patch 45) a page's regions
+	// page by page: with sticky places (Clack patch 46) a page's regions
 	// aren't together in the ops' order, and a page begun again would be
 	// cleared again
 	for page := range r.packer.sizes {
@@ -1032,7 +1032,7 @@ func (r *renderer) prepareIntersections(ops []imageOp) {
 }
 
 // intersect draws the coverage of the ops clipped by two paths or more
-// into the intersection atlas; a partial frame (Clack patch 45) only the
+// into the intersection atlas; a partial frame (Clack patch 46) only the
 // part in the damage, its texels set to 1 first. The pages are sized
 // before (frame).
 func (r *renderer) intersect(ops []imageOp, dmg []image.Rectangle) {
@@ -1153,7 +1153,7 @@ func (r *renderer) packIntersections(ops []imageOp) {
 }
 
 // packStencils places the paths' stencil regions in the coverage atlas;
-// with sticky (partial frames, Clack patch 45) a region that was in the
+// with sticky (partial frames, Clack patch 46) a region that was in the
 // last frame keeps its place.
 func (r *renderer) packStencils(pops *[]*pathOp, sticky *stickyAtlas) {
 	r.packer.clear()
@@ -1240,7 +1240,7 @@ func (r *renderer) packLayers(layers []opacityLayer) []opacityLayer {
 
 // drawLayers draws the opacity layers into their pages and replaces each
 // layer's ops with one op drawing its page; a partial frame (Clack patch
-// 45) draws only the layers in the damage and only there, their texels
+// 46) draws only the layers in the damage and only there, their texels
 // cleared first. The pages are sized before (frame).
 func (r *renderer) drawLayers(layers []opacityLayer, ops []imageOp, dmg []image.Rectangle) {
 	if len(r.layers.sizes) == 0 {
@@ -1347,7 +1347,7 @@ func (d *drawOps) collect(root *op.Ops, viewport image.Point) {
 
 // buildPaths uploads the vertices of the paths the cache doesn't hold,
 // and reports how many and their bytes (Clack patch 36). A partial frame
-// (dmg not nil, Clack patch 45) uploads only the ones it stencils, in its
+// (dmg not nil, Clack patch 46) uploads only the ones it stencils, in its
 // damage: a path recorded anew every frame (a new key) costs a vertex
 // buffer made and released each frame.
 func (d *drawOps) buildPaths(ctx driver.Device, dmg []image.Rectangle) (n int, bytes int64) {
@@ -1768,7 +1768,7 @@ func (r *renderer) prepareDrawOps(ops []imageOp) {
 }
 
 // drawOps draws ops into the open pass; with rects (a partial frame, Clack
-// patch 45) only the ops in each damage rectangle, scissored to it.
+// patch 46) only the ops in each damage rectangle, scissored to it.
 func (r *renderer) drawOps(isFBO bool, opOff, viewport image.Point, ops []imageOp, rects []passRect) {
 	if rects == nil {
 		r.drawOpsIn(isFBO, opOff, viewport, ops, image.Rectangle{}, false)

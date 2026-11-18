@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Clack patch 45: the damage between two frames, without a GPU.
+// Clack patch 46: the damage between two frames, without a GPU.
 
 // randSigs is n signatures from an alphabet of k (repeats on purpose).
 func randSigs(rng *rand.Rand, n, k int) []opSig {

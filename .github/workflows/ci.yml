@@ -275,7 +275,7 @@ jobs:
           # Gio patches 37-44 in pixels: the state caches change none, shared
           # layer pages and splits under a transform none, a cached path at
           # a new sub-pixel offset is built there, atlas pages shrink and go;
-          # patch 45: a partial frame is the whole frame's pixels, bit for bit
+          # patch 46: a partial frame is the whole frame's pixels, bit for bit
           xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects)$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
@@ -365,7 +365,7 @@ jobs:
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       # Gio patch 35 and ui's quiet frames on App.Run's real X11 window
       # (Xvfb, Mesa's llvmpipe): a frame only an animated emoji asked for
-      # draws the last frame's ops again, without a layout; patch 45: a
+      # draws the last frame's ops again, without a layout; patch 46: a
       # caret's blink is a partial frame of its pixels, at a fraction of a
       # whole frame's draws and CPU; the same on Metal and Direct3D are the
       # macos and windows-idle jobs'
@@ -1024,7 +1024,7 @@ jobs:
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       # Gio patch 35 and ui's quiet frames on App.Run's real Direct3D
       # window: a frame only an animated emoji asked for draws the last
-      # frame's ops again, without a layout; patch 45: a caret's blink is
+      # frame's ops again, without a layout; patch 46: a caret's blink is
       # a partial frame
       - name: quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost)
         if: ${{ !cancelled() }}
@@ -1334,7 +1334,7 @@ jobs:
           # Gio patch 35 and ui's quiet frames on Metal: a frame only an
           # animated emoji asked for draws the last frame's ops again
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
-          # Gio patch 45 on Metal: a caret's blink is a partial frame
+          # Gio patch 46 on Metal: a caret's blink is a partial frame
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' || rc=1
           exit $rc
       - name: build

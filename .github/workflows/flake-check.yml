@@ -1379,7 +1379,7 @@ jobs:
         with:
           name: gpu-cost-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-shots
-  # Gio patch 45 (partial frames): a partial frame is the whole frame's
+  # Gio patch 46 (partial frames): a partial frame is the whole frame's
   # pixels (gpu/headless TestClackPartial*), what a caret's blink, the
   # typing indicator, a spinner's turn and an animated emoji's frame cost
   # whole and partial over Clack's window (TestFrameCostDamage), and a

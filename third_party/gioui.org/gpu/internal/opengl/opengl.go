@@ -78,7 +78,7 @@ type glState struct {
 	viewport          [4]int
 	unpack_row_length int
 	pack_row_length   int
-	// scissor is the scissor test and its box (Clack patch 45)
+	// scissor is the scissor test and its box (Clack patch 46)
 	scissor struct {
 		on  bool
 		box [4]int32
@@ -293,7 +293,7 @@ func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport im
 }
 
 func (b *Backend) EndFrame() {
-	b.glstate.setScissor(b.funcs, image.Rectangle{}) // the blit below obeys it (Clack patch 45)
+	b.glstate.setScissor(b.funcs, image.Rectangle{}) // the blit below obeys it (Clack patch 46)
 	if b.sRGBFBO != nil {
 		b.glstate.bindFramebuffer(b.funcs, gl.FRAMEBUFFER, b.outputFBO)
 		if b.clear {
@@ -673,7 +673,7 @@ func (s *glState) setClearColor(f *gl.Functions, r, g, b, a float32) {
 }
 
 // setScissor turns the scissor test on for r, or off for an empty r
-// (Clack patch 45). It's also what clears and blits obey.
+// (Clack patch 46). It's also what clears and blits obey.
 func (s *glState) setScissor(f *gl.Functions, r image.Rectangle) {
 	on := !r.Empty()
 	if on != s.scissor.on {
@@ -781,7 +781,7 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 	case driver.TextureFormatFloat:
 		tex.triple = b.floatTriple
 	case driver.TextureFormatSRGBA, driver.TextureFormatOutput:
-		// Output: the window's own format, sRGB (Clack patch 45's frame
+		// Output: the window's own format, sRGB (Clack patch 46's frame
 		// texture)
 		tex.triple = b.srgbaTriple
 	case driver.TextureFormatRGBA8:
@@ -1306,7 +1306,7 @@ func (b *Backend) BeginRenderPass(tex driver.Texture, desc driver.LoadDesc) {
 	fbo := tex.(*texture).ensureFBO()
 	b.glstate.bindFramebuffer(b.funcs, gl.FRAMEBUFFER, fbo)
 	// a pass starts unscissored, and glClear obeys the scissor (Clack
-	// patch 45)
+	// patch 46)
 	b.glstate.setScissor(b.funcs, image.Rectangle{})
 	switch desc.Action {
 	case driver.LoadActionClear:
@@ -1328,7 +1328,7 @@ type clackBlitter interface {
 	ClackBlitFramebufferLoaded() bool
 }
 
-// ClackPartialOK implements driver.ClackPartial (Clack patch 45): the
+// ClackPartialOK implements driver.ClackPartial (Clack patch 46): the
 // frame is copied into the window with glBlitFramebuffer, and a context
 // shared with others may have a scissor of its own.
 func (b *Backend) ClackPartialOK() bool {

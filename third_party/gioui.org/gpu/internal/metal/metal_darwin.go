@@ -111,7 +111,7 @@ static void renderEncViewport(CFTypeRef renderEncRef, MTLViewport viewport) {
 	}
 }
 
-// Clack patch 45: a drawable's size (the frame's copy stays inside it).
+// Clack patch 46: a drawable's size (the frame's copy stays inside it).
 static void textureSize(CFTypeRef texRef, NSUInteger *w, NSUInteger *h) {
 	@autoreleasepool {
 		id<MTLTexture> tex = (__bridge id<MTLTexture>)texRef;
@@ -120,7 +120,7 @@ static void textureSize(CFTypeRef texRef, NSUInteger *w, NSUInteger *h) {
 	}
 }
 
-// Clack patch 45: a partial frame's scissor.
+// Clack patch 46: a partial frame's scissor.
 static void renderEncScissor(CFTypeRef renderEncRef, NSUInteger x, NSUInteger y, NSUInteger w, NSUInteger h) {
 	@autoreleasepool {
 		id<MTLRenderCommandEncoder> enc = (__bridge id<MTLRenderCommandEncoder>)renderEncRef;
@@ -175,7 +175,7 @@ enum {
 	cmdFragBytes,
 	cmdDraw,
 	cmdDrawIndexed,
-	cmdScissor, // Clack patch 45
+	cmdScissor, // Clack patch 46
 };
 
 static uint64_t cmdWord(const uint8_t **p) {
@@ -604,7 +604,7 @@ type Backend struct {
 	rec   []byte
 	batch bool
 	// rtSize is the open render pass's target's size, where known (Clack
-	// patch 45: the scissor stays inside it)
+	// patch 46: the scissor stays inside it)
 	rtSize image.Point
 }
 
@@ -621,7 +621,7 @@ const (
 	cmdFragBytes
 	cmdDraw
 	cmdDrawIndexed
-	cmdScissor // Clack patch 45
+	cmdScissor // Clack patch 46
 )
 
 // recMax is how big rec may grow before it is run, mid-pass.
@@ -810,7 +810,7 @@ func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport im
 	switch t := target.(type) {
 	case driver.MetalRenderTarget:
 		texture := C.CFTypeRef(t.Texture)
-		// its size: the frame texture's copy stays inside it (Clack patch 45)
+		// its size: the frame texture's copy stays inside it (Clack patch 46)
 		var w, h C.NSUInteger
 		C.textureSize(texture, &w, &h)
 		b.apiCall()
@@ -992,7 +992,7 @@ func (b *Backend) sampler(min, mag C.MTLSamplerMinMagFilter, mip C.MTLSamplerMip
 func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, minFilter, magFilter driver.TextureFilter, bindings driver.BufferBinding) (driver.Texture, error) {
 	var mformat C.MTLPixelFormat
 	if format == driver.TextureFormatOutput {
-		mformat = b.pixelFmt // the layer's (Clack patch 45's frame texture)
+		mformat = b.pixelFmt // the layer's (Clack patch 46's frame texture)
 	} else {
 		mformat = pixelFormatFor(format)
 	}
@@ -1711,7 +1711,7 @@ func (b *Backend) BeginRenderPass(tex driver.Texture, d driver.LoadDesc) {
 	}
 	// a new encoder has nothing bound; its commands are recorded and run
 	// in one cgo call when it ends (Clack patch 37). It's unscissored
-	// (patch 45).
+	// (patch 46).
 	b.enc.reset()
 	b.rtSize = image.Pt(f.width, f.height)
 	b.batch = driver.ClackBatchCommands
