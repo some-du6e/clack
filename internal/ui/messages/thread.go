@@ -70,9 +70,11 @@ type ThreadView struct {
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
-// parent, divider and replies) as of the last frame, or 0 when the thread is
-// taller than the pane. Slack top-aligns a short thread with its reply
-// composer right under the last reply; the ui root places the composer with it.
+// parent, divider and replies) as of its last layout, or 0 when the thread
+// is taller than the pane. Slack top-aligns a short thread with its reply
+// composer right under the last reply: the list draws a short thread from
+// its top (Gio patch 45), and the ui root reads this right after laying it
+// out to put the composer under it in the same frame.
 func (v *ThreadView) ContentHeight() int {
 	if v.s.contentH <= 0 || len(v.s.items) == 0 {
 		return 0
@@ -84,6 +86,15 @@ func (v *ThreadView) ContentHeight() int {
 // the root's) bottom edge as of the last frame, false when it wasn't on
 // screen.
 func (v *ThreadView) NewestRowBottom() (int, bool) { return v.s.newestBottom() }
+
+// Prepare brings the pane's copy of the thread up to date for the frame
+// gtx lays out, before the ui root reads it to decide on the reply box
+// (HidesComposer). The list then draws that same copy (it doesn't sync
+// again in the frame), so the frame that draws the first replies draws
+// the box under them: the replies' load wakes the window once, and a
+// decision from the last frame's copy left the box out until some other
+// input drew another frame.
+func (v *ThreadView) Prepare(gtx layout.Context) { v.s.prepare(v.h, gtx.Now) }
 
 // NewThreadView returns the thread pane for the thread rooted at ts.
 func NewThreadView(h Host, ch, ts string) *ThreadView { return NewThreadViewIn(h, ch, ts, "") }
