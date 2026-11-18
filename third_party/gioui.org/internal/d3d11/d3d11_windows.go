@@ -333,6 +333,12 @@ type DeviceContext struct {
 type RenderTargetView struct {
 	Vtbl *struct {
 		_IUnknownVTbl
+		// ID3D11DeviceChild, then ID3D11View (Clack patch 46: GetResource)
+		GetDevice               uintptr
+		GetPrivateData          uintptr
+		SetPrivateData          uintptr
+		SetPrivateDataInterface uintptr
+		GetResource             uintptr
 	}
 }
 
@@ -345,7 +351,30 @@ type Resource struct {
 type Texture2D struct {
 	Vtbl *struct {
 		_IUnknownVTbl
+		// ID3D11DeviceChild, ID3D11Resource, then GetDesc (Clack patch 46)
+		GetDevice               uintptr
+		GetPrivateData          uintptr
+		SetPrivateData          uintptr
+		SetPrivateDataInterface uintptr
+		GetType                 uintptr
+		SetEvictionPriority     uintptr
+		GetEvictionPriority     uintptr
+		GetDesc                 uintptr
 	}
+}
+
+// GetDesc is the texture's description (Clack patch 46: the size of the
+// swap chain's buffer a frame is copied into).
+func (t *Texture2D) GetDesc() TEXTURE2D_DESC {
+	var desc TEXTURE2D_DESC
+	syscall.Syscall(
+		t.Vtbl.GetDesc,
+		2,
+		uintptr(unsafe.Pointer(t)),
+		uintptr(unsafe.Pointer(&desc)),
+		0,
+	)
+	return desc
 }
 
 type Buffer struct {
@@ -562,6 +591,11 @@ type GUID struct {
 	Data4_5 uint8
 	Data4_6 uint8
 	Data4_7 uint8
+}
+
+// RECT is a D3D11_RECT (Clack patch 46: RSSetScissorRects).
+type RECT struct {
+	Left, Top, Right, Bottom int32
 }
 
 type VIEWPORT struct {
@@ -1303,6 +1337,32 @@ func (c *DeviceContext) CSSetShader(s *ComputeShader) {
 		0, // NumClassInstances
 		0, 0,
 	)
+}
+
+// RSSetScissorRects sets one scissor rectangle (Clack patch 46); it applies
+// while the rasterizer state has ScissorEnable.
+func (c *DeviceContext) RSSetScissorRects(r *RECT) {
+	syscall.Syscall(
+		c.Vtbl.RSSetScissorRects,
+		3,
+		uintptr(unsafe.Pointer(c)),
+		1, // NumRects
+		uintptr(unsafe.Pointer(r)),
+	)
+}
+
+// GetResource is the resource the view is of, with a reference the caller
+// releases (ID3D11View::GetResource; Clack patch 46).
+func (v *RenderTargetView) GetResource() *Resource {
+	var res *Resource
+	syscall.Syscall(
+		v.Vtbl.GetResource,
+		2,
+		uintptr(unsafe.Pointer(v)),
+		uintptr(unsafe.Pointer(&res)),
+		0,
+	)
+	return res
 }
 
 func (c *DeviceContext) RSSetViewports(viewport *VIEWPORT) {

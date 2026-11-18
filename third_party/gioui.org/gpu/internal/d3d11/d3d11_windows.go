@@ -42,6 +42,10 @@ type Backend struct {
 	// out.
 	set   ctxState
 	calls driver.Calls
+	// raster are the rasterizer states without and with the scissor test,
+	// scissorOn which one is set (Clack patch 46)
+	raster    [2]*d3d11.RasterizerState
+	scissorOn bool
 }
 
 // ctxState is the device context state the backend last set (Clack patch
@@ -177,17 +181,89 @@ func newDirect3D11Device(api driver.Direct3D11) (driver.Device, error) {
 		b.floatFormat = fmt
 		b.caps.Features |= driver.FeatureFloatRenderTargets
 	}
-	// Disable backface culling to match OpenGL.
-	state, err := dev.CreateRasterizerState(&d3d11.RASTERIZER_DESC{
-		CullMode: d3d11.CULL_NONE,
-		FillMode: d3d11.FILL_SOLID,
-	})
-	if err != nil {
-		return nil, err
+	// Disable backface culling to match OpenGL. The second state scissors
+	// (Clack patch 46: partial frames).
+	for i := range b.raster {
+		state, err := dev.CreateRasterizerState(&d3d11.RASTERIZER_DESC{
+			CullMode:      d3d11.CULL_NONE,
+			FillMode:      d3d11.FILL_SOLID,
+			ScissorEnable: uint32(i),
+		})
+		if err != nil {
+			b.releaseRaster()
+			return nil, err
+		}
+		b.raster[i] = state
 	}
-	defer d3d11.IUnknownRelease(unsafe.Pointer(state), state.Vtbl.Release)
-	b.ctx.RSSetState(state)
+	b.ctx.RSSetState(b.raster[0])
 	return b, nil
+}
+
+func (b *Backend) releaseRaster() {
+	for i, st := range b.raster {
+		if st != nil {
+			d3d11.IUnknownRelease(unsafe.Pointer(st), st.Vtbl.Release)
+			b.raster[i] = nil
+		}
+	}
+}
+
+// ClackPartialOK implements driver.ClackPartial (Clack patch 46).
+func (b *Backend) ClackPartialOK() bool { return b.raster[1] != nil }
+
+// ClackCopyDraws implements driver.ClackPartial: a copy into the swap
+// chain's buffer.
+func (b *Backend) ClackCopyDraws() bool { return false }
+
+// ClackScissor implements driver.ClackPartial: the scissoring rasterizer
+// state and its rectangle, or the plain state again.
+func (b *Backend) ClackScissor(r image.Rectangle) {
+	on := !r.Empty()
+	if on != b.scissorOn {
+		st := b.raster[0]
+		if on {
+			st = b.raster[1]
+		}
+		b.ctx.RSSetState(st)
+		b.calls.API++
+		b.scissorOn = on
+	}
+	if on {
+		rc := d3d11.RECT{Left: int32(r.Min.X), Top: int32(r.Min.Y), Right: int32(r.Max.X), Bottom: int32(r.Max.Y)}
+		b.ctx.RSSetScissorRects(&rc)
+		b.calls.API++
+	}
+}
+
+// ClackCopyToTarget implements driver.ClackPartial: CopySubresourceRegion
+// into the target's texture (the swap chain's buffer behind its render
+// target view).
+func (b *Backend) ClackCopyToTarget(target, src driver.Texture, size image.Point) {
+	dst := target.(*Texture)
+	var res *d3d11.Resource
+	if dst.tex != nil {
+		res = (*d3d11.Resource)(unsafe.Pointer(dst.tex))
+	} else {
+		res = dst.renderTarget.GetResource()
+		b.calls.API++
+		defer d3d11.IUnknownRelease(unsafe.Pointer(res), res.Vtbl.Release)
+		// no further than the buffer goes: a box past it drops the copy
+		if t, err := d3d11.IUnknownQueryInterface(unsafe.Pointer(res), res.Vtbl.QueryInterface, &d3d11.IID_Texture2D); err == nil {
+			desc := (*d3d11.Texture2D)(unsafe.Pointer(t)).GetDesc()
+			d3d11.IUnknownRelease(unsafe.Pointer(t), t.Vtbl.Release)
+			b.calls.API += 3
+			size.X, size.Y = min(size.X, int(desc.Width)), min(size.Y, int(desc.Height))
+		}
+	}
+	if size.X <= 0 || size.Y <= 0 {
+		return
+	}
+	b.ctx.CopySubresourceRegion(res, 0, 0, 0, 0, (*d3d11.Resource)(unsafe.Pointer(src.(*Texture).tex)), 0, &d3d11.BOX{
+		Right:  uint32(size.X),
+		Bottom: uint32(size.Y),
+		Back:   1,
+	})
+	b.calls.API++
 }
 
 func (b *Backend) BeginFrame(target driver.RenderTarget, clear bool, viewport image.Point) driver.Texture {
@@ -220,7 +296,7 @@ func (b *Backend) ClackCalls() driver.Calls {
 
 func (b *Backend) CopyTexture(dstTex driver.Texture, dstOrigin image.Point, srcTex driver.Texture, srcRect image.Rectangle) {
 	dst := (*d3d11.Resource)(unsafe.Pointer(dstTex.(*Texture).tex))
-	src := (*d3d11.Resource)(srcTex.(*Texture).tex)
+	src := (*d3d11.Resource)(unsafe.Pointer(srcTex.(*Texture).tex))
 	b.ctx.CopySubresourceRegion(
 		dst,
 		0,                                           // Destination subresource.
@@ -254,6 +330,7 @@ func (b *Backend) IsTimeContinuous() bool {
 }
 
 func (b *Backend) Release() {
+	b.releaseRaster()
 	d3d11.IUnknownRelease(unsafe.Pointer(b.ctx), b.ctx.Vtbl.Release)
 	*b = Backend{}
 }
@@ -263,7 +340,9 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 	switch format {
 	case driver.TextureFormatFloat:
 		d3dfmt = b.floatFormat
-	case driver.TextureFormatSRGBA:
+	case driver.TextureFormatSRGBA, driver.TextureFormatOutput:
+		// Output: the swap chain's (app/d3d11_windows.go), for Clack patch
+		// 46's frame texture
 		d3dfmt = d3d11.DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
 	case driver.TextureFormatRGBA8:
 		d3dfmt = d3d11.DXGI_FORMAT_R8G8B8A8_UNORM
@@ -934,7 +1013,7 @@ func (t *Texture) ReadPixels(src image.Rectangle, pixels []byte, stride int) err
 		res,
 		0,       // Destination subresource.
 		0, 0, 0, // Destination coordinates (x, y, z).
-		(*d3d11.Resource)(t.tex),
+		(*d3d11.Resource)(unsafe.Pointer(t.tex)),
 		0, // Source subresource.
 		&d3d11.BOX{
 			Left:   uint32(src.Min.X),
@@ -969,6 +1048,7 @@ func (b *Backend) EndCompute() {
 }
 
 func (b *Backend) BeginRenderPass(tex driver.Texture, d driver.LoadDesc) {
+	b.ClackScissor(image.Rectangle{}) // a pass starts unscissored (Clack patch 46)
 	t := tex.(*Texture)
 	b.ctx.OMSetRenderTargets(t.renderTarget, nil)
 	b.calls.API++
@@ -984,6 +1064,7 @@ func (b *Backend) BeginRenderPass(tex driver.Texture, d driver.LoadDesc) {
 }
 
 func (b *Backend) EndRenderPass() {
+	b.ClackScissor(image.Rectangle{})
 }
 
 func (f *Texture) ImplementsRenderTarget() {}
