@@ -68,6 +68,9 @@ type row struct {
 	rv      *richview.View
 	handler richHandler
 	drawn   time.Time // last frame the row was laid out (sweepRows)
+	// hlDrawn: the jump highlight's strength the row last painted (0..1,
+	// highlightAlpha), for SenderView
+	hlDrawn float32
 
 	// find in thread (thread_find.go): the query the body marks
 	// (findInThreadHighlightWords) and whether the row is the current
@@ -1010,6 +1013,7 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 
 func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.Point, bg color.NRGBA) layout.Dimensions {
 	fill(gtx.Ops, image.Rectangle{Max: size}, bg)
+	r.hlDrawn = r.rc.highlight
 	if hl := r.rc.highlight; hl > 0 {
 		c := r.rc.c.Highlight
 		c.A = uint8(float32(c.A) * hl)

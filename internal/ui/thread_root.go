@@ -19,16 +19,20 @@ import (
 
 // ReplyAsThreadRoot is messages.ReplyRootRedirector: the pane opened
 // with reply's ts, a reply in thread root, goes to that thread at the
-// reply, highlighted, as jumpToMessage would have opened it (the split
-// view's to the thread). Posted: the pane is mid-layout.
+// reply, highlighted, as jumpToMessage would have opened it: in the
+// split view its route is swapped on the view's stack, in the secondary
+// pane the route the reply's pushed is swapped too. Posted: the pane is
+// mid-layout. A pane that shows something else by then is left alone
+// (its list asks again when it next opens with the reply).
 func (a *App) ReplyAsThreadRoot(ch, reply, root string) {
 	pane := a.pane
 	a.Post(func() {
-		log.Printf("ui: thread pane: its root %s is a reply in %s, whose thread opens at it", logTag(reply), logTag(root))
 		if pane == paneSplit {
 			s := &a.split
 			if n := len(s.stack); n > 0 && s.stack[n-1] == Route("c/"+ch+"/t/"+reply) {
+				log.Printf("ui: thread pane: its root %s is a reply in %s, whose thread opens at it in the split view", logTag(reply), logTag(root))
 				s.stack[n-1] = Route("c/" + ch + "/t/" + root)
+				a.splitAtReply(ch, root, reply, true)
 				a.Invalidate()
 			}
 			return
@@ -36,13 +40,16 @@ func (a *App) ReplyAsThreadRoot(ch, reply, root string) {
 		if s := a.secondary; s.kind != secThread || s.channel != ch || s.ts != reply {
 			return // the pane shows something else by now
 		}
+		log.Printf("ui: thread pane: its root %s is a reply in %s, whose thread opens at it", logTag(reply), logTag(root))
 		a.withVia("its pane found the root was a reply", func() {
 			a.openThreadAtIn(ch, root, reply, "", true) // the reply highlighted (OpenThread's guard)
+			a.leaveReplyRoute(ch, reply, root)
 		})
 	})
 }
 
 var (
 	_ messages.ReplyRootRedirector = (*App)(nil)
-	_ messages.PermalinkOpener     = (*App)(nil)
+	_ messages.LinkFollower        = (*App)(nil)
+	_ messages.MessageJumper       = (*App)(nil)
 )

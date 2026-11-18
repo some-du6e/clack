@@ -6,31 +6,24 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 
-	"github.com/some-du6e/clack/internal/ui/inspect"
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 // What clack.log says about navigations a report may ask about: one line
 // per thread pane that opens (the thread, the reply it starts at, and
 // where the open came from), per jumpToMessage, and per click on a
-// notification (notify.go). The ids are docs/INSPECT.md's tags, kind and
-// six hex digits of a salted SHA-256 ("ch:3fa2b1", "ts:9c01de"), with
-// one random salt per run that is never written anywhere: within one
-// log the same message keeps its tag, so a line can show that a
-// thread's root was a reply, and nothing in it names a conversation or
-// a message. No message text is ever logged.
-
-// logRedactor tags ids for the log (one salt per run).
-var logRedactor = sync.OnceValue(inspect.NewRedactor)
+// notification (notify.go). The ids are docs/INSPECT.md's tags
+// (internal/logtag: kind and six hex digits of a salted SHA-256,
+// "ch:3fa2b1", "ts:9c01de"), with one random salt per run that is never
+// written anywhere: within one log the same message keeps its tag, so a
+// line can show that a thread's root was a reply, and the history, tab
+// and member lines a navigation writes tag theirs with the same salt, so
+// nothing names a conversation or a message. No message text is ever
+// logged.
 
 // logTag is id's tag ("-" for none).
-func logTag(id string) string {
-	if id == "" {
-		return "-"
-	}
-	return logRedactor().ID(id)
-}
+func logTag(id string) string { return logtag.ID(id) }
 
 // navVia is the source of the navigation under way: what its entry point
 // named (withVia: a notification, a link), else the first caller outside
@@ -69,8 +62,10 @@ func (a *App) logThreadOpen(ch, ts, at, where string) {
 // (".funcN") count too.
 var routerFuncs = []string{
 	"(*App).OpenThread", "(*App).openThread", "(*App).OpenThreadAt", "(*App).openThreadAt", "(*App).openThreadAtIn",
-	"(*App).OpenThreadReply", "(*App).Navigate", "(*App).afterRoute", "(*App).jumpToMessage", "(*App).jumpMessage", "(*App).jumpViaRoutes",
-	"(*App).OpenPermalink", "(*App).withVia", "(*App).navVia", "(*App).logThreadOpen", "callerOutsideRouter",
+	"(*App).OpenThreadReply", "(*App).Navigate", "(*App).afterRoute", "(*App).jumpToMessage", "(*App).jumpMessage",
+	"(*App).jumpAfterLookup", "(*App).jumpViaRoutes", "(*App).jumpSplit", "(*App).jumpLatest", "(*App).JumpToMessage",
+	"(*App).OpenPermalink", "(*App).FollowLink", "(*App).withVia", "(*App).navVia", "(*App).logThreadOpen",
+	"(*App).OpenSplit", "(*App).inPane", "(*App).OpenAtMessage", "callerOutsideRouter",
 }
 
 // callerOutsideRouter is the first caller outside the router's plumbing,

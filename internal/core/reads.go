@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 )
@@ -30,7 +31,9 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		a.watch(ch, "")
 	}
 	a.noteAccess(ch)
-	defer func() { log.Printf("history %s: %s (%s)", ch, time.Since(t0).Round(time.Millisecond), source) }()
+	defer func() {
+		log.Printf("history %s: %s (%s)", logtag.ID(ch), time.Since(t0).Round(time.Millisecond), source)
+	}()
 	var count, conv <-chan struct{}
 	if before == "" {
 		count, conv = a.historySide(ch)
@@ -91,16 +94,27 @@ func (a *App) Refresh(ctx context.Context, ch string) (Page, error) {
 }
 
 // Replies returns a thread, parent first. Cached threads are live-updated
-// from realtime events; fresh forces a refetch.
+// from realtime events; fresh forces a refetch. A reply's ts reads its
+// parent's thread (conversations.replies answers a reply's ts with it):
+// the pane opened with the reply's ts hands on to the parent's, which
+// then has it without a second fetch, and the reply is never watched,
+// polled or kept as a thread of its own.
 func (a *App) Replies(ctx context.Context, ch, ts string) ([]Message, error) {
-	a.watch(ch, ts)
-	a.noteAccess(ch + "/" + ts)
-	msgs, ok := a.S.Thread(ch, ts)
+	key := ts
+	if p, ok := a.ReplyParent(ch, ts); ok {
+		key = p
+	}
+	a.watch(ch, key)
+	a.noteAccess(ch + "/" + key)
+	msgs, ok := a.S.Thread(ch, key)
 	if !ok {
-		if err := a.fetchThread(ctx, ch, ts); err != nil {
+		if err := a.fetchThread(ctx, ch, key); err != nil {
 			return nil, err
 		}
-		msgs, _ = a.S.Thread(ch, ts)
+		if p, ok := a.ReplyParent(ch, key); ok { // the fetch found ts was a reply
+			key = p
+		}
+		msgs, _ = a.S.Thread(ch, key)
 	}
 	a.SubscribePresence(rowUsers(msgs))
 	return a.messages(ch, msgs), nil
@@ -134,10 +148,15 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		// the root's thread subscription, as the answer has it unless an
 		// event moved it meanwhile (store/thread_subs.go)
 		a.S.SyncSubs(ch, subs, all)
+		key := ts
+		if parent := replyParentIn(all, ts); parent != "" { // a reply's ts: its parent's thread
+			a.replyRooted(ch, ts, parent)
+			key = parent
+		}
 		// a reply changed, deleted or posted while the request was out
 		// keeps the socket's copy (store/live.go)
-		a.S.SetThreadSince(ch, ts, all, live)
-		all, _ = a.S.Thread(ch, ts)
+		a.S.SetThreadSince(ch, key, all, live)
+		all, _ = a.S.Thread(ch, key)
 		a.S.SyncPins(ch, pins, all)
 		for i := range all {
 			if needsFileInfo(&all[i]) {

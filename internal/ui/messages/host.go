@@ -194,7 +194,12 @@ type richHandler struct {
 	anchor func(p image.Point) image.Point
 }
 
-func (r *richHandler) OpenURL(url string) {
+func (r *richHandler) OpenURL(url string) { r.open(url, false) }
+
+// open is a link's click; openRoot: a mrkdwn or rich_text link's
+// (BaseMrkdwnLink's openThreadForRootMessage), so a link to a thread's
+// parent opens its thread.
+func (r *richHandler) open(url string, openRoot bool) {
 	if wo, ok := r.h.(WorkflowMentionOpener); ok && wo.OpenWorkflowMention(r.m, url) {
 		return
 	}
@@ -220,23 +225,36 @@ func (r *richHandler) OpenURL(url string) {
 		}
 		return
 	}
-	if po, ok := r.h.(PermalinkOpener); ok && po.OpenPermalink(url) {
+	if lf, ok := r.h.(LinkFollower); ok {
+		if !lf.FollowLink(url, openRoot) {
+			openURL(url) // openPermalink's new tab: not a link Slack opens itself
+		}
 		return
 	}
-	if route, ok := slackLinkRoute(url); ok { // a Host without openPermalink
+	if route, ok := slackLinkRoute(url); ok { // a Host without Slack's Link
 		r.h.Navigate(route)
 		return
 	}
 	openURL(url)
 }
 
-// PermalinkOpener is optional on the Host: Slack's openPermalink for a
-// link to a message or a conversation (the ui root's App.OpenPermalink):
-// jumpToMessage({channelId, ts, threadTs}), which looks a reply's thread
-// up when the link has no thread_ts, so a reply opens in its parent's
-// thread and is never a thread's root. false: not such a link.
-type PermalinkOpener interface {
-	OpenPermalink(url string) bool
+// LinkFollower is optional on the Host: Slack's Link click (jRB6, the ui
+// root's App.FollowLink) for a link in a message. A slack: link goes to
+// handleDeepLink, a link to a message or a conversation through
+// openPermalink (jumpToMessage({channelId, ts, threadTs}), which looks
+// the message's thread up when the link has none, so a reply opens in
+// its parent's thread and is never a thread's root; openRoot opens a
+// thread's parent's own). false: the caller opens it in the browser.
+type LinkFollower interface {
+	FollowLink(url string, openRoot bool) bool
+}
+
+// MessageJumper is optional on the Host: a message_mention pill's click
+// (MessageMention, p9lB): jumpToMessage({channelId, ts, threadTs}) with
+// the pill's own channel_id, message_ts and thread_ts (the ui root's
+// App.JumpToMessage).
+type MessageJumper interface {
+	JumpToMessage(ch, ts, thread string)
 }
 
 // ReplyRootRedirector is optional on the Host: a thread pane whose root
@@ -244,19 +262,43 @@ type PermalinkOpener interface {
 // was opened with the reply's ts) hands the thread on, its parent's
 // thread at the reply (the ui root's App.ReplyAsThreadRoot). Slack never
 // draws a reply as a thread's root: the pane draws its loading state
-// until the Host has moved on. Called once per pane, mid-layout.
+// until the Host has moved on. Called once each time the pane opens,
+// mid-layout.
 type ReplyRootRedirector interface {
 	ReplyAsThreadRoot(ch, reply, root string)
 }
 
-// OpenLink is a mrkdwn link's click with its text: Slack's
-// suspicious-link warning first (popups.MaybeWarnLink, unless
-// suppress_link_warning), then OpenURL.
+// OpenLink is a link's click with its text: Slack's suspicious-link
+// warning first (popups.MaybeWarnLink, unless suppress_link_warning),
+// then OpenURL.
 func (r *richHandler) OpenLink(url, text string) {
 	if ph, ok := r.h.(popups.Host); ok && popups.MaybeWarnLink(ph, text, url) {
 		return
 	}
-	r.OpenURL(url)
+	r.open(url, false)
+}
+
+// OpenMrkdwnLink is a mrkdwn or rich_text link's click (richview's
+// MrkdwnLinkHandler, Slack's BaseMrkdwnLink): OpenLink with
+// openThreadForRootMessage.
+func (r *richHandler) OpenMrkdwnLink(url, text string) {
+	if ph, ok := r.h.(popups.Host); ok && popups.MaybeWarnLink(ph, text, url) {
+		return
+	}
+	r.open(url, true)
+}
+
+// OpenMessageMention is a message_mention pill's click (richview's
+// MessageMentionHandler): MessageMention's jumpToMessage, else the pill's
+// link.
+func (r *richHandler) OpenMessageMention(ch, ts, thread, url string) {
+	if mj, ok := r.h.(MessageJumper); ok && ch != "" && ts != "" {
+		mj.JumpToMessage(ch, ts, thread)
+		return
+	}
+	if url != "" {
+		r.open(url, false)
+	}
 }
 
 // OpenBot is "Added by <app>" under a Block Kit attachment:

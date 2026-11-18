@@ -1572,7 +1572,17 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	}
 	switch tg.kind {
 	case tLink, tCard:
+		if tg.kind == tLink && tg.slug && tg.msgCh != "" && tg.id != "" {
+			if mh, ok := h.(MessageMentionHandler); ok {
+				mh.OpenMessageMention(tg.msgCh, tg.id, tg.msgThread, tg.url)
+				break
+			}
+		}
 		if tg.url == "" {
+			break
+		}
+		if mh, ok := h.(MrkdwnLinkHandler); ok && tg.kind == tLink && tg.mrkdwn {
+			mh.OpenMrkdwnLink(tg.url, text)
 			break
 		}
 		if lh, ok := h.(LinkTextHandler); ok && tg.kind == tLink {

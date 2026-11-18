@@ -118,7 +118,8 @@ func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 func (v *ThreadView) Reopen() {
 	v.closeFind(false) // ThreadSearchBar unmounts with the pane
 	v.s.thr = threadRead{}
-	v.s.snap.rev = 0 // rebuild the rows with the new marker
+	v.s.rootHandedOn = false // opened with a reply's ts again: hand on again (ReplyRootRedirector)
+	v.s.snap.rev = 0         // rebuild the rows with the new marker
 	if app := v.h.Core(); app != nil {
 		if cv, ok := app.Conv(v.ch); ok && cv.Kind == "channel" && cv.Preview {
 			v.s.positioned = false
@@ -214,7 +215,7 @@ func (v *ThreadView) JumpTo(ts string, flash bool) {
 // Highlighted is the message the pane highlights now (JumpTo's flash),
 // "" for none.
 func (v *ThreadView) Highlighted() string {
-	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < 4*time.Second {
+	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < highlightFor {
 		return s.highlight
 	}
 	return ""
@@ -490,9 +491,17 @@ func (s *listState) replyRoot() string {
 	return ""
 }
 
-// RootIsReply is the thread the pane's root turned out to be a reply in
-// ("" for a real root, or before its messages load).
-func (v *ThreadView) RootIsReply() string { return v.s.replyRoot() }
+// RootLoaded reports whether the pane's root message has loaded, and
+// whether it turned out to be a reply (the pane was opened with a reply's
+// ts and hands on to its thread): the ui root records the thread's visit
+// only for a root.
+func (v *ThreadView) RootLoaded() (isReply, loaded bool) {
+	m, ok := v.root()
+	if !ok {
+		return false, false
+	}
+	return m.ThreadTS != "" && m.ThreadTS != m.TS, true
+}
 
 // root is the thread's parent message, once loaded.
 func (v *ThreadView) root() (core.Message, bool) {

@@ -30,11 +30,11 @@ func TestReplyThread(t *testing.T) {
 	for _, c := range []struct {
 		ts, want string
 	}{{reply, root}, {broadcast, root}, {root, ""}, {plain, ""}} {
-		got, found := a.CachedReplyThread("C1", c.ts)
+		got, found := a.CachedReplyThread("C1", c.ts, false)
 		if !found || got != c.want {
 			t.Errorf("CachedReplyThread(%s) = %q %v, want %q (a reply's thread, else none)", c.ts, got, found, c.want)
 		}
-		if got, found := a.ReplyThread(ctx, "C1", c.ts); !found || got != c.want {
+		if got, found := a.ReplyThread(ctx, "C1", c.ts, false); !found || got != c.want {
 			t.Errorf("ReplyThread(%s) = %q %v, want %q", c.ts, got, found, c.want)
 		}
 	}
@@ -46,25 +46,25 @@ func TestReplyThread(t *testing.T) {
 	f.reply["messages.list"] = `{"ok":true,"messages":{"C1":[
 		{"ts":"1700000200.000500","thread_ts":"1700000180.000100","user":"U1"},
 		{"ts":"1700000300.000600","user":"U1"}]}}`
-	if got, found := a.ReplyThread(ctx, "C1", "1700000200.000500"); !found || got != "1700000180.000100" {
+	if got, found := a.ReplyThread(ctx, "C1", "1700000200.000500", false); !found || got != "1700000180.000100" {
 		t.Errorf("an uncached reply: %q %v, want its thread from messages.list", got, found)
 	}
 	if ids := formVal(f.last("messages.list"), "message_ids"); !strings.Contains(ids, "1700000200.000500") || !strings.Contains(ids, `"C1"`) {
 		t.Errorf("messages.list asked for %s, want C1's message", ids)
 	}
-	if got, found := a.ReplyThread(ctx, "C1", "1700000300.000600"); !found || got != "" {
+	if got, found := a.ReplyThread(ctx, "C1", "1700000300.000600", false); !found || got != "" {
 		t.Errorf("an uncached top-level message: %q %v, want no thread", got, found)
 	}
 	// gone, or the request failed: not found (Slack navigates without a thread)
 	f.reply["messages.list"] = `{"ok":true,"messages":{}}`
-	if got, found := a.ReplyThread(ctx, "C1", "1700000400.000700"); found || got != "" {
+	if got, found := a.ReplyThread(ctx, "C1", "1700000400.000700", false); found || got != "" {
 		t.Errorf("a message messages.list doesn't have: %q %v, want not found", got, found)
 	}
 	f.reply["messages.list"] = `{"ok":false,"error":"channel_not_found"}`
-	if _, found := a.ReplyThread(ctx, "C1", "1700000500.000800"); found {
+	if _, found := a.ReplyThread(ctx, "C1", "1700000500.000800", false); found {
 		t.Errorf("a failed messages.list found the message")
 	}
-	if _, found := a.ReplyThread(ctx, "", reply); found {
+	if _, found := a.ReplyThread(ctx, "", reply, false); found {
 		t.Errorf("no channel: found")
 	}
 }

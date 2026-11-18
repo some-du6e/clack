@@ -59,8 +59,10 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	var tg int16 = -1
 	if sp.Off {
 		bg, fg = rgba(p.Text.R, p.Text.G, p.Text.B, 0.06), p.Text
-	} else if sp.URL != "" {
-		tg = l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true})
+	} else if sp.URL != "" || sp.ChannelID != "" && sp.ID != "" {
+		// MessageMention's click: jumpToMessage with the element's own
+		// channel_id, message_ts and thread_ts (p9lB)
+		tg = l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, id: sp.ID, msgCh: sp.ChannelID, msgThread: sp.ThreadTS})
 	}
 	pad, padV := l.dpf(2), l.dpf(1)
 	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Off, part: pt})
@@ -90,7 +92,7 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 // click opens the URL.
 func (l *lay) truncatedLink(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
 	p := &l.st.Palette
-	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, urlCard: true})
+	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, urlCard: true, mrkdwn: true})
 	pad, padV := l.dpf(2), l.dpf(1)
 	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
 	dc := int16(len(l.decos) - 1)

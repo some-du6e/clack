@@ -186,6 +186,9 @@ type SenderView struct {
 	// slots (an agent block's is its whole block), as laid out.
 	Body  image.Rectangle
 	Slots []image.Rectangle
+	// Highlight is the jump highlight's strength the row painted in the
+	// last frame (0 none, 1 Slack's #f2c74433 at full)
+	Highlight float32
 }
 
 // Senders lists the senders of the visible messages as of the last frame.
@@ -204,7 +207,7 @@ func (s *listState) senders() []SenderView {
 		if r == nil {
 			continue
 		}
-		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown}
+		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown, Highlight: r.hlDrawn}
 		if sv.Name == "" {
 			sv.Missing = r.senderMiss()
 		}

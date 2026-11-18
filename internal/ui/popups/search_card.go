@@ -1022,6 +1022,9 @@ func (a *srAttCard) open(it srAttItem) {
 		}
 		if pl, ok := core.ParsePermalink(link); ok && pl.Kind == "message" {
 			RecordRecentConversation(pl.ChannelID)
+			if lf, ok := h.(LinkFollower); ok && lf.FollowLink(link, false) {
+				return // Slack's Link: openPermalink's jumpToMessage (a reply opens in its thread)
+			}
 			if pl.ThreadTS != "" {
 				h.Navigate("c/" + pl.ChannelID + "/t/" + pl.ThreadTS)
 			} else {
@@ -1031,6 +1034,9 @@ func (a *srAttCard) open(it srAttItem) {
 		}
 	}
 	if it.link != "" {
+		if lf, ok := h.(LinkFollower); ok && lf.FollowLink(it.link, false) {
+			return
+		}
 		_ = openurl.Open(it.link)
 	}
 }

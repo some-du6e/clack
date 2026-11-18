@@ -77,10 +77,11 @@ type Env struct {
 	OpenURL func(url string)
 	// Navigate follows a Clack route ("c/<id>", …) for Slack-internal links.
 	Navigate func(route string)
-	// OpenPermalink is Slack's openPermalink for a link to a message or
-	// a conversation (jumpToMessage: a reply opens in its thread); false
-	// when the link is neither.
-	OpenPermalink func(url string) bool
+	// FollowLink is Slack's Link click for a plugin-drawn href: a slack:
+	// link to handleDeepLink, a link to a message or a conversation
+	// through openPermalink (jumpToMessage: a reply opens in its thread);
+	// false for any other link (the browser's).
+	FollowLink func(href string) bool
 	// Core is the in-process Slack service (users, channels, emoji).
 	Core *core.App
 	// PointerWin is the last pointer position in window coordinates

@@ -99,6 +99,7 @@ func messageMentionSpan(r Resolver, e *bk) Span {
 	sp := Span{Kind: MessageMention, Text: label, ID: e.MessageTS, Lock: lock, Pre: pre, Off: off}
 	if !off {
 		sp.URL = SafeURL(e.URL)
+		sp.ChannelID, sp.ThreadTS = e.ChannelID, e.ThreadTS
 	}
 	return sp
 }

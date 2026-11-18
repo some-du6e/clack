@@ -5,30 +5,32 @@ import (
 	"testing"
 )
 
-// deepLinkMessage takes slack://channel links naming a message (and its
-// thread) for jumpToMessage, in formatMessageTimestamp's forms; the
-// channel alone or a thread alone stay deepLinkRoute's, and nothing that
-// doesn't look like Slack's ids gets through.
+// deepLinkMessage takes slack://channel links naming a message, a thread
+// or a thread's latest reply for jumpToMessage, in
+// formatMessageTimestamp's forms; the channel alone stays deepLinkRoute's,
+// and nothing that doesn't look like Slack's ids gets through.
 func TestDeepLinkMessage(t *testing.T) {
 	for _, c := range []struct {
 		uri, ch, ts, thread string
-		ok                  bool
+		latest, ok          bool
 	}{
-		{"slack://channel?team=T1&id=C123&message=1700000060.000200", "C123", "1700000060.000200", "", true},
-		{"slack://channel?team=T1&id=C123&message=p1700000060000200&thread_ts=1700000000000100", "C123", "1700000060.000200", "1700000000.000100", true},
-		{"slack://channel?team=T1&id=D123&message=1700000060.000200&thread_ts=1700000000.000100", "D123", "1700000060.000200", "1700000000.000100", true},
-		{"slack://channel?team=T1&id=C123", "", "", "", false},
-		{"slack://channel?team=T1&id=C123&thread_ts=1700000000.000100", "", "", "", false}, // deepLinkRoute's
-		{"slack://channel?team=T1&id=C123&message=latest&thread_ts=1700000000.000100", "", "", "", false},
-		{"slack://channel?team=T1&id=C123&message=1/x", "", "", "", false},
-		{"slack://channel?team=T1&id=C123&message=1700000060.000200&thread_ts=1/x", "", "", "", false},
-		{"slack://channel?team=T1&id=U123&message=1700000060.000200", "", "", "", false},
-		{"slack://user?team=T1&id=C123&message=1700000060.000200", "", "", "", false},
-		{"https://x.slack.com/archives/C123/p1700000060000200", "", "", "", false},
+		{"slack://channel?team=T1&id=C123&message=1700000060.000200", "C123", "1700000060.000200", "", false, true},
+		{"slack://channel?team=T1&id=C123&message=p1700000060000200&thread_ts=1700000000000100", "C123", "1700000060.000200", "1700000000.000100", false, true},
+		{"slack://channel?team=T1&id=D123&message=1700000060.000200&thread_ts=1700000000.000100", "D123", "1700000060.000200", "1700000000.000100", false, true},
+		{"slack://channel?team=T1&id=C123", "", "", "", false, false},
+		// a thread alone is toThread with highlightRoot; message=latest its latest reply
+		{"slack://channel?team=T1&id=C123&thread_ts=1700000000.000100", "C123", "", "1700000000.000100", false, true},
+		{"slack://channel?team=T1&id=C123&message=latest&thread_ts=1700000000.000100", "C123", "", "1700000000.000100", true, true},
+		{"slack://channel?team=T1&id=C123&message=latest", "", "", "", false, false},
+		{"slack://channel?team=T1&id=C123&message=1/x", "", "", "", false, false},
+		{"slack://channel?team=T1&id=C123&message=1700000060.000200&thread_ts=1/x", "", "", "", false, false},
+		{"slack://channel?team=T1&id=U123&message=1700000060.000200", "", "", "", false, false},
+		{"slack://user?team=T1&id=C123&message=1700000060.000200", "", "", "", false, false},
+		{"https://x.slack.com/archives/C123/p1700000060000200", "", "", "", false, false},
 	} {
-		ch, ts, thread, ok := deepLinkMessage(c.uri)
-		if ok != c.ok || ok && (ch != c.ch || ts != c.ts || thread != c.thread) {
-			t.Errorf("%s: %q %q %q %v, want %q %q %q %v", c.uri, ch, ts, thread, ok, c.ch, c.ts, c.thread, c.ok)
+		ch, ts, thread, latest, ok := deepLinkMessage(c.uri)
+		if ok != c.ok || ok && (ch != c.ch || ts != c.ts || thread != c.thread || latest != c.latest) {
+			t.Errorf("%s: %q %q %q %v %v, want %q %q %q %v %v", c.uri, ch, ts, thread, latest, ok, c.ch, c.ts, c.thread, c.latest, c.ok)
 		}
 	}
 	for in, want := range map[string]string{"1700000060.000200": "1700000060.000200", "p1700000060000200": "1700000060.000200",

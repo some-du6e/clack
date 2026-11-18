@@ -74,6 +74,11 @@ type Span struct {
 	Off  bool // the message or channel can't be shown ("Private message", "Private channel"): not a link
 	Pre  int  // MessageMention with Lock, ChannelTab: bytes of Text before the channel name
 
+	// ChannelID, ThreadTS (MessageMention): the element's channel_id and
+	// thread_ts (ID is its message_ts); Slack's MessageMention jumps with
+	// them.
+	ChannelID, ThreadTS string
+
 	// Canvas (canvasslug.go): the slug's icon and label (behind a
 	// pointer, so Spans stay comparable).
 	Icon  string

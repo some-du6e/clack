@@ -546,6 +546,17 @@ func findSpinner(gtx layout.Context, d int, track, arc color.NRGBA) {
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)})
 }
 
+// highlightFor is c-message_kit__background--highlight's animation, a
+// jump's highlight (client-boot-styles: 3s forwards).
+const highlightFor = 3 * time.Second
+
+// highlightAlpha is c-message_kit--highlight at el: #f2c74433 (the
+// palettes' Highlight, the same in dark mode) at its 20% and 60%
+// keyframes, eased in from none and back out, the find flash's shape.
+func highlightAlpha(el time.Duration) float32 {
+	return findFlashAlpha(time.Duration(float64(el) * float64(findFlashFor) / float64(highlightFor)))
+}
+
 // findFlashAlpha is the flash's background at el into its 3s: the
 // keyframes 20% and 60% are --dt_color-base-hgl-3, eased (CSS's default
 // ease) in from none and back out.

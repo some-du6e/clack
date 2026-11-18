@@ -142,13 +142,19 @@ func (a *App) openThreadAtIn(ch, thread, ts string, prev Route, resolved bool) {
 	}
 	split := a.pane == paneSplit || a.splitClick() // OpenThread puts it in the split view
 	a.openThread(ch, thread, ts, resolved)
+	p := prev.Page()
+	flash := !a.nestedSecondary() || p != "threads" && p != "unreads" && prev.Channel() != ch
+	if split {
+		if ts != "" { // the split view's thread at the reply too
+			a.splitAtReply(ch, thread, ts, flash)
+		}
+		return
+	}
 	s := &a.secondary
-	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
+	if ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
 		return
 	}
 	s.at = ts
-	p := prev.Page()
-	flash := !a.nestedSecondary() || p != "threads" && p != "unreads" && prev.Channel() != ch
 	if j, ok := a.convoFor(ch, thread).list.(interface{ JumpTo(ts string, flash bool) }); ok {
 		j.JumpTo(ts, flash)
 	}

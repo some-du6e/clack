@@ -550,7 +550,10 @@ func followLink(href string) {
 	e := env()
 	switch {
 	case strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") || strings.HasPrefix(href, "mailto:"):
-		if e.OpenPermalink != nil && e.OpenPermalink(href) {
+		if e.FollowLink != nil {
+			if !e.FollowLink(href) && e.OpenURL != nil {
+				e.OpenURL(href) // openPermalink's new tab: not a link Clack opens itself
+			}
 			return
 		}
 		if r := slackRoute(href); r != "" && e.Navigate != nil {
@@ -561,6 +564,9 @@ func followLink(href string) {
 			e.OpenURL(href)
 		}
 	default:
+		if e.FollowLink != nil && e.FollowLink(href) { // slack: links: handleDeepLink
+			return
+		}
 		if r := slackRoute(href); r != "" && e.Navigate != nil {
 			e.Navigate(r)
 		}

@@ -111,7 +111,7 @@ var darkColors = colors{
 	Bg: rgb(0x1a1d21), Hover: rgb(0x222529), Text: rgb(0xf8f8f8), // --dt_color-content-pry (sender names)
 	Text2: rgb(0xababad), Text3: rgb(0xd1d2d3),
 	Edited: rgb(0x868686), PinIcon: rgb(0xe8912d), Muted70: rgba(0xe8e8e8, 0.7), TimeSystem: rgb(0xababad),
-	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.1),
+	Pinned: rgba(0xf2c744, 0.1), PinnedHover: rgba(0xf2c744, 0.14), Highlight: rgba(0xf2c744, 0.2), // no dark override of #f2c74433
 	CustomTint: rgba(0x1d9bd1, 0x1a/255.0), BadgeBg: rgba(0xe8e8e8, 0.13), BadgeText: rgba(0xe8e8e8, 0.7), Important: rgb(0xde678a),
 	ReactBg: rgba(0xe8e8e8, 0.06), ReactHoverBorder: rgba(0xe8e8e8, 0.3),
 	// .sk-client-theme--dark .c-reaction--reacted: a solid base-inv-hgl-1

@@ -182,6 +182,13 @@ type target struct {
 	// slug: a message_mention pill (.p-rich_text_slug), never underlined,
 	// not even by the "underline links" preference
 	slug bool
+	// msgCh, msgThread: a message_mention pill's channel_id and thread_ts
+	// (id is its message_ts): MessageMention jumps with them (p9lB)
+	msgCh, msgThread string
+	// mrkdwn: a mrkdwn or rich_text link, which Slack draws with
+	// BaseMrkdwnLink (kQRT): its click passes openThreadForRootMessage, so
+	// a link to a thread's parent opens the thread (MrkdwnLinkHandler)
+	mrkdwn bool
 	// website: a link the "underline links" preference underlines, which
 	// in Slack are only those marked data-stringify-link (links in message
 	// text, mrkdwn and rich text: boot-shared kQRT renderDefaultLink) and
@@ -714,7 +721,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 			} else {
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true})
+				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true, mrkdwn: true})
 			}
 			if st&richtext.Code == 0 {
 				col = p.Link

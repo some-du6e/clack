@@ -349,6 +349,9 @@ var experimentReads = map[string][]string{
 	// desktop notifications (ui/notify.go, huddleui/invite.go): Slack's
 	// notification ids and groups, translated buttons, an invite's Decline
 	"desktop_notification_actions": on,
+	// a thread link to its latest reply (ui/jump.go jumpLatest, cdTA Mz):
+	// on, the thread opens at its newest reply; off, at its root
+	"thread_latest_reply_permalink": on,
 	// files
 	"file_trash_updates": on,
 	// Edit profile's photo panes (ui/popups/profile_edit.go epPhotoComp):

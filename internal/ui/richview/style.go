@@ -64,6 +64,20 @@ type LinkTextHandler interface {
 	OpenLink(url, text string)
 }
 
+// MrkdwnLinkHandler is a Handler that tells a mrkdwn or rich_text link's
+// click (Slack's BaseMrkdwnLink, which opens a thread's parent in its
+// thread: openThreadForRootMessage) from other links'.
+type MrkdwnLinkHandler interface {
+	OpenMrkdwnLink(url, text string)
+}
+
+// MessageMentionHandler is a Handler that opens a message_mention pill the
+// way Slack's MessageMention does: jumpToMessage with the element's
+// channel_id, message_ts and thread_ts (url is the pill's link).
+type MessageMentionHandler interface {
+	OpenMessageMention(ch, ts, thread, url string)
+}
+
 // Elements draws Block Kit interactive elements as live widgets
 // (internal/ui/blockkit). With Options.Elements set, every run of
 // elements (an actions block, a section accessory, an attachment's action

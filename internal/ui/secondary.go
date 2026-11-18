@@ -48,6 +48,9 @@ type secondaryState struct {
 	// keyFocus: the key focus is in the thread pane (set each frame
 	// before the shortcuts run; threadEsc)
 	keyFocus bool
+	// visitPending: the thread's visit waits for its root to load
+	// (recordThreadVisit)
+	visitPending bool
 	// findFocus: the key focus is in the thread's find bar (set each
 	// frame with keyFocus): Mod+F there is the thread's again
 	findFocus bool
@@ -98,17 +101,21 @@ func (a *App) OpenThread(channel, ts string) { a.openThread(channel, ts, "", fal
 // sent it), so it isn't looked up again.
 func (a *App) openThread(channel, ts, at string, resolved bool) {
 	if !resolved && a.data != nil && a.data.core != nil {
-		if root, found := a.data.core.CachedReplyThread(channel, ts); found && root != "" {
+		if root, found := a.data.core.CachedReplyThread(channel, ts, false); found && root != "" {
 			// the reply asked for, highlighted: no navigation of Slack's
 			// to take jumpToThreadReply's rule from (prev "")
 			log.Printf("ui: thread open: %s is a reply in %s, whose thread opens at it (%s)", logTag(ts), logTag(root), a.navVia())
 			a.openThreadAtIn(channel, root, ts, "", true)
+			a.leaveReplyRoute(channel, ts, root)
 			return
 		}
 	}
 	if a.pane == paneSplit || a.splitClick() {
-		a.logThreadOpen(channel, ts, at, "in the split view")
+		before := a.splitTop()
 		a.OpenSplit("c/" + channel + "/t/" + ts)
+		if a.splitTop() != before {
+			a.logThreadOpen(channel, ts, at, "in the split view")
+		}
 		return
 	}
 	if a.secondary.kind == secThread && a.secondary.channel == channel && a.secondary.ts == ts && !a.secondary.hidden {
@@ -119,7 +126,14 @@ func (a *App) openThread(channel, ts, at string, resolved bool) {
 	a.secondary = secondaryState{kind: secThread, channel: channel, ts: ts, width: a.secondary.width}
 	a.secondary.view = a.mountThread(channel, ts)
 	if a.data != nil && a.data.core != nil {
-		a.data.core.RecordRecentNavigation(channel, ts) // a thread visit (desktop_search_recents_write)
+		// a thread visit (desktop_search_recents_write) for a root: now
+		// when core knows it is one, else once the pane shows its root
+		// (recordThreadVisit), never for a reply the pane hands on
+		if _, known := a.data.core.CachedReplyThread(channel, ts, false); known || resolved {
+			a.data.core.RecordRecentNavigation(channel, ts)
+		} else {
+			a.secondary.visitPending = true
+		}
 	}
 	if c := a.convos[channel+"/"+ts]; c != nil { // a cached thread: Slack mounts a new pane
 		if r, ok := c.list.(interface{ Reopen() }); ok {
@@ -130,6 +144,39 @@ func (a *App) openThread(channel, ts, at string, resolved bool) {
 		a.replaceRoute(Route("c/" + channel + "/t/" + ts))
 	}
 	a.Invalidate()
+}
+
+// leaveReplyRoute swaps a route naming reply ts as a thread (the history
+// entry a slack://…thread_ts=<reply> link pushed) for its thread's, as
+// the pane did: Back doesn't step onto the reply, and Slick sees the
+// thread the pane shows.
+func (a *App) leaveReplyRoute(ch, reply, root string) {
+	if r := a.router.Current(); r.Channel() == ch && r.Thread() == reply {
+		a.replaceRoute(Route("c/" + ch + "/t/" + root))
+	}
+}
+
+// recordThreadVisit is the thread visit openThread left for the pane: once
+// its root loads, a root's visit is recorded and a reply's (the pane hands
+// it on) never is. The secondary pane's layout, each frame while pending.
+func (a *App) recordThreadVisit(ch, ts string, c *convo) {
+	s := &a.secondary
+	if !s.visitPending || s.kind != secThread || s.channel != ch || s.ts != ts || c == nil {
+		return
+	}
+	rl, ok := c.list.(interface{ RootLoaded() (isReply, loaded bool) })
+	if !ok {
+		s.visitPending = false
+		return
+	}
+	isReply, loaded := rl.RootLoaded()
+	if !loaded {
+		return
+	}
+	s.visitPending = false
+	if !isReply && a.data != nil && a.data.core != nil {
+		a.data.core.RecordRecentNavigation(ch, ts)
+	}
 }
 
 // FocusThreadComposer focuses a thread's reply composer

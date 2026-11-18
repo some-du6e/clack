@@ -130,6 +130,10 @@ type App struct {
 	pollSeen  map[string]string  // conversation -> counts latest|updated at the last poll
 	watchCh   string             // conversation last opened (History), refreshed every poll
 	watchTh   []watchedThread    // threads last opened (Replies), newest first
+	// msgThread is the thread_ts of messages looked up by ts ("ch/ts" to
+	// the message's thread_ts, "" for none): jumpToMessage's lookups and a
+	// reply's ts a thread was fetched with (reply_thread.go)
+	msgThread map[string]string
 	// accessed: when each conversation ("ch/thread_ts" for a thread) was
 	// last read, and loaded when its newest page was last fetched, for
 	// Slack's message cache budget (evict.go)
@@ -381,6 +385,20 @@ func (a *App) watch(ch, threadTS string) {
 	th := []watchedThread{{ch: ch, ts: threadTS, at: time.Now()}}
 	for _, t := range a.watchTh {
 		if (t.ch != ch || t.ts != threadTS) && len(th) < 2 {
+			th = append(th, t)
+		}
+	}
+	a.watchTh = th
+}
+
+// unwatch stops watching thread ch/threadTS: a reply's ts, whose
+// parent's thread is the one opened (reply_thread.go).
+func (a *App) unwatch(ch, threadTS string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	th := a.watchTh[:0]
+	for _, t := range a.watchTh {
+		if t.ch != ch || t.ts != threadTS {
 			th = append(th, t)
 		}
 	}

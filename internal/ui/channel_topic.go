@@ -172,7 +172,11 @@ func (a *App) layoutTopicCard(gtx layout.Context, ch string, conv *convInfo, org
 // cardHandler opens what the topic card's links point at.
 type cardHandler struct{ a *App }
 
-func (h cardHandler) OpenURL(u string)                  { h.a.OpenURL(u) }
+func (h cardHandler) OpenURL(u string) { // Slack's Link: in the client, else the browser
+	if !h.a.FollowLink(u, false) {
+		openURL(u)
+	}
+}
 func (h cardHandler) OpenUser(id string, _ image.Point) { h.a.OpenProfile(h.a.PointerPos(), id) }
 func (h cardHandler) OpenChannel(id string)             { h.a.Navigate("c/" + id) }
 func (cardHandler) OpenUsergroup(string, image.Point)   {}

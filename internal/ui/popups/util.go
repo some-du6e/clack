@@ -363,6 +363,38 @@ func containImage(gtx layout.Context, img paint.ImageOp, sz image.Point) layout.
 // msgRoute is the Navigate route that jumps to a message: "c/<id>/m/<ts>"
 // scrolls to and flashes it (ChannelView.Highlight); thread replies open
 // their thread ("c/<id>/t/<root>"), per docs/NATIVE.md.
+// LinkFollower is optional on the Host: Slack's Link click (the ui root's
+// App.FollowLink): a slack: link to handleDeepLink, a link to a message or
+// a conversation through openPermalink; false for any other link (the
+// browser's).
+type LinkFollower interface {
+	FollowLink(url string, openRoot bool) bool
+}
+
+// MessageOpener is optional on the Host: the ui root's navigation to a
+// message (App.OpenAtMessage): a reply's thread at the reply (toThread,
+// the conversation moved to the root and highlighted with
+// highlightRoot), any other message its conversation at it (toMessage).
+type MessageOpener interface {
+	OpenAtMessage(ch, ts, thread string, highlightRoot bool)
+}
+
+// openResult is messageActionsJumpAction in the SEARCH container
+// (boot-shared w0Cl): a reply opens its thread at the reply
+// (toThread({channelId, threadTs, replyTs}), no highlightRoot), any other
+// message its conversation at it (toMessage(ch, ts, ts)).
+func openResult(h Host, m core.Message) {
+	if o, ok := h.(MessageOpener); ok && m.Channel != "" {
+		thread := ""
+		if m.ThreadTS != "" && m.ThreadTS != m.TS {
+			thread = m.ThreadTS
+		}
+		o.OpenAtMessage(m.Channel, m.TS, thread, false)
+		return
+	}
+	h.Navigate(msgRoute(m))
+}
+
 func msgRoute(m core.Message) string {
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		return "c/" + m.Channel + "/t/" + m.ThreadTS

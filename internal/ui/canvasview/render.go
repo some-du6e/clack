@@ -773,8 +773,14 @@ func (r *handler) OpenURL(u string) {
 		v.act.Canvas(id)
 		return
 	}
-	if po, ok := v.h.(interface{ OpenPermalink(string) bool }); ok && po.OpenPermalink(u) {
-		return // openPermalink: jumpToMessage, a reply in its thread (the ui root's App)
+	if lf, ok := v.h.(interface{ FollowLink(string, bool) bool }); ok {
+		// Slack's Link (the ui root's App): openPermalink's jumpToMessage, a
+		// reply in its thread; a canvas's links don't open a thread's
+		// parent in its thread (no BaseMrkdwnLink here)
+		if !lf.FollowLink(u, false) && v.act.OpenURL != nil {
+			v.act.OpenURL(u)
+		}
+		return
 	}
 	if ch, ts, thread, ok := archivesLink(u); ok {
 		switch {

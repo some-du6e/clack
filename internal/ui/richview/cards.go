@@ -372,7 +372,7 @@ func (l *lay) addSpansPlain(spans []richtext.Span, fs *flowStyle) {
 	for _, sp := range spans {
 		switch sp.Kind {
 		case richtext.Link: // a mrkdwn link (data-stringify-link)
-			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true})
+			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, mrkdwn: true})
 			k := l.faceFor(fs.face, fs.size, sp.Style)
 			l.addTextPart(&sp, fs, k, tg)
 		default:

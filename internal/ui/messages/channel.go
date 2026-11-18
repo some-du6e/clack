@@ -135,6 +135,11 @@ func (v *ChannelView) JumpToOwnSend(cid string, files bool) {
 	}
 	s := v.s
 	s.sendCID, s.sendAt = cid, time.Now()
+	// sendMessage's jumpToTimestamp: a window short of the newest message
+	// gives way to the newest page, where the send goes
+	if s.snap.newestMissing {
+		s.hb.jumpToLatest(s.m)
+	}
 	// the navigation replaces the view's startTs and highlightTs: a jump
 	// still paging back is dropped and a flashing message stops
 	s.pendingJump, s.pendingDate = "", time.Time{}
@@ -160,7 +165,7 @@ func (v *ChannelView) NewestRowBottom() (int, bool) { return v.s.newestBottom() 
 func (v *ChannelView) Highlight(ts string) {
 	v.s.highlight, v.s.highlightAt = ts, time.Now()
 	v.s.positioned = true
-	v.s.jumpPages = 0
+	v.s.aroundFor = ""
 	v.s.pendingJump = ts
 	for i, it := range v.s.items {
 		if it.kind == itMsg && it.idx < len(v.s.snap.msgs) && v.s.snap.msgs[it.idx].m.TS == ts {
@@ -174,7 +179,7 @@ func (v *ChannelView) Highlight(ts string) {
 // Highlighted is the message the list highlights now (Highlight's flash,
 // 4 s from when the jump was placed), "" for none.
 func (v *ChannelView) Highlighted() string {
-	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < 4*time.Second {
+	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < highlightFor {
 		return s.highlight
 	}
 	return ""

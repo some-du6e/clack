@@ -108,7 +108,9 @@ type listState struct {
 	opened       bool
 	thr          threadRead // the thread pane's read state (thread_unread.go)
 	// rootHandedOn: the thread's root turned out to be a reply and the
-	// Host was told (ReplyRootRedirector)
+	// Host was told (ReplyRootRedirector); cleared each time the pane
+	// opens again (ThreadView.Reopen) and when the list lets go of its
+	// messages (releaseEvicted)
 	rootHandedOn bool
 	positioned   bool
 	markedTS     string
@@ -146,9 +148,11 @@ type listState struct {
 	pend        pendingEdit  // an edit waiting for taut's actionable message
 	viewsOn     bool         // rows may show plugin views
 	openUnread  bool         // the server said "unread" when the view opened (e.g. marked unread)
-	jumpPages   int
-	origin      image.Point // view origin in window coordinates
+	jumpPages   int          // pages a day pill's "Jump to…" loaded (banners.go)
+	aroundFor   string       // the jump the window around was loaded for (loadAround)
+	origin      image.Point  // view origin in window coordinates
 	lastOlder   time.Time
+	lastNewer   time.Time
 	highlight   string
 	highlightAt time.Time
 	// find in thread (thread_find.go): the highlight words (the query of
@@ -267,6 +271,7 @@ func (s *listState) releaseEvicted() bool {
 	s.snap.rev = 0
 	s.list.Position = layout.Position{}
 	s.positioned, s.laidOut = false, false
+	s.rootHandedOn = false // a reply-rooted pane hands on again when it next loads
 	return true
 }
 
@@ -883,15 +888,22 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
 
-	// jumping to a message older than what's loaded: page back until found
-	// (bounded), then sync() positions on it.
-	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older {
-		if s.snap.hasMore && len(s.snap.msgs) > 0 && tsLess(s.pendingJump, s.snap.msgs[0].m.TS) && s.jumpPages < 20 && now.Sub(s.lastOlder) > 300*time.Millisecond {
-			s.jumpPages++
-			s.lastOlder = now
-			s.hb.loadOlder(s.m)
-		} else if !s.snap.hasMore || s.jumpPages >= 20 {
-			s.pendingJump = "" // not in this conversation (or too far back)
+	// jumping to a message the window doesn't hold (older than its start,
+	// or past the end of a window short of the newest): Slack's pane opened
+	// at startTs loads the window around it, once (loadAround), and sync()
+	// places it when it's in. One the window around it lacks, or the
+	// conversation's whole history, isn't in this conversation.
+	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older && !s.snap.loading && s.snap.around == "" {
+		n := len(s.snap.msgs)
+		outside := n > 0 && (s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS) ||
+			s.snap.newestMissing && tsLess(s.snap.msgs[n-1].m.TS, s.pendingJump))
+		switch {
+		case outside && s.aroundFor != s.pendingJump:
+			s.aroundFor = s.pendingJump
+			s.hb.loadAround(s.m, s.pendingJump)
+		case s.aroundFor == s.pendingJump && s.built == s.snap.rev,
+			n > 0 && !s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS):
+			s.pendingJump = "" // not in this conversation
 		}
 	}
 	if s.pendingJump != "" && s.thread && s.snap.loaded && !s.snap.loading && s.built == s.snap.rev {
@@ -905,12 +917,21 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.lastOlder = now
 		s.hb.loadOlder(s.m)
 	}
+	// a window short of the newest message: its end in view loads the
+	// next page (requestNewer)
+	if !s.thread && s.snap.newestMissing && !s.snap.newer && s.snap.around == "" && s.snap.loaded &&
+		s.visible[1] >= len(s.items)-2 && now.Sub(s.lastNewer) > time.Second {
+		s.lastNewer = now
+		s.hb.loadNewer(s.m)
+	}
 	// Mark as read: mark_msgs_read_immediately marks as soon as the
 	// conversation shows; Slack's default leaves unseen messages unread,
 	// so the newest must be on screen and the "New" line must have been.
 	pf := uipref.Get()
 	seen := pf.MarkReadImmediately || (!p.BeforeEnd && s.unreadSeen)
-	if !s.thread && !s.noMark && s.snap.loaded && seen && len(s.snap.msgs) > 0 {
+	// a window short of the newest message never marks read: its last
+	// message isn't the conversation's
+	if !s.thread && !s.noMark && s.snap.loaded && !s.snap.newestMissing && seen && len(s.snap.msgs) > 0 {
 		latest := s.snap.msgs[len(s.snap.msgs)-1].m.TS
 		app := h.Core()
 		if latest != s.markedTS && app != nil && tsLess(app.Count(s.ch).LastRead, latest) && now.Sub(s.lastMark) > 1500*time.Millisecond {
@@ -1171,11 +1192,8 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	rc.hiddenUser, rc.unhidden = hiddenSender(h, &e.m, s.ch)
 	rc.highlight = 0
 	if s.highlight == e.m.TS {
-		if el := rc.now.Sub(s.highlightAt); el < 4*time.Second {
-			rc.highlight = 1
-			if el > 2*time.Second {
-				rc.highlight = float32(4*time.Second-el) / float32(2*time.Second)
-			}
+		if el := rc.now.Sub(s.highlightAt); el < highlightFor {
+			rc.highlight = highlightAlpha(el)
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
