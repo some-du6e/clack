@@ -312,11 +312,26 @@ func TestAVFSeekAndPause(t *testing.T) {
 	}
 }
 
-// The file with its moov after the mdat plays.
+// A file with its moov after the mdat and 4 MB before it plays; a data
+// request gets to the moov.
 func TestAVFMoovAtEnd(t *testing.T) {
-	r := newRig(t, mediatest.MoovAtEnd, false, image.Pt(320, 180), image.Pt(320, 180))
+	const pad = 4 << 20
+	moov := int64(mediatest.MoovAtEndMoov + pad)
+	r := newRig(t, mediatest.MoovAtEndPadded(pad), false, image.Pt(320, 180), image.Pt(320, 180))
 	samples, _ := r.playThrough()
 	checkColors(t, samples)
+	got := false
+	for _, q := range requestsOf(r.id) {
+		var off, n int64
+		if _, err := fmt.Sscanf(q, "%d+%d", &off, &n); err == nil {
+			got = got || off <= moov && moov < off+n
+		} else if _, err := fmt.Sscanf(q, "%d-end", &off); err == nil {
+			got = got || off <= moov
+		}
+	}
+	if !got {
+		t.Errorf("no data request got to the moov (byte %d): %v", moov, requestsOf(r.id))
+	}
 }
 
 // A server ignoring ranges (a 200): the backend is told the file can't be

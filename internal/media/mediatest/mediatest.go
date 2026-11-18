@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image/color"
@@ -46,6 +47,54 @@ const (
 	SampleEntry = "avc1"
 	Brand       = "isom"
 )
+
+// MoovAtEndPadded is MoovAtEnd with pad bytes more before its mdat: a
+// free box of pad bytes after the ftyp (and the fixture's own free box),
+// every chunk offset moved with it. Its moov starts at MoovAtEndMoov+pad,
+// past a demuxer's first reads, so a player has to seek there.
+func MoovAtEndPadded(pad int) []byte {
+	const head = 40 // ftyp (32 bytes), free (8): the mdat is next
+	if pad < 8 {
+		panic("mediatest: a box is 8 bytes at least")
+	}
+	out := make([]byte, 0, len(MoovAtEnd)+pad)
+	out = append(out, MoovAtEnd[:head]...)
+	free := make([]byte, pad)
+	binary.BigEndian.PutUint32(free, uint32(pad))
+	copy(free[4:], "free")
+	out = append(out, free...)
+	out = append(out, MoovAtEnd[head:]...)
+	if n := shiftChunks(out[MoovAtEndMoov+pad:], uint32(pad)); n != 2 {
+		panic(fmt.Sprintf("mediatest: %d chunk offset tables moved, want the two tracks'", n))
+	}
+	return out
+}
+
+// shiftChunks adds d to every chunk offset (stco) in the boxes of b, and
+// says how many tables it moved. The fixtures have no co64.
+func shiftChunks(b []byte, d uint32) int {
+	n := 0
+	for len(b) >= 8 {
+		size := int(binary.BigEndian.Uint32(b))
+		if size < 8 || size > len(b) {
+			return n
+		}
+		body := b[8:size]
+		switch string(b[4:8]) {
+		case "moov", "trak", "mdia", "minf", "stbl":
+			n += shiftChunks(body, d)
+		case "stco":
+			entries := int(binary.BigEndian.Uint32(body[4:]))
+			for i := 0; i < entries; i++ {
+				e := body[8+4*i:]
+				binary.BigEndian.PutUint32(e, binary.BigEndian.Uint32(e)+d)
+			}
+			n++
+		}
+		b = b[size:]
+	}
+	return n
+}
 
 // Matches is whether c, a frame's centre pixel at t as read back after Gio
 // drew it, is the fixture's colour there: grey 64 and 192 within 4 (a

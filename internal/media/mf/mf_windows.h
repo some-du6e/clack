@@ -43,6 +43,10 @@ enum {
 	CLACK_MF_LIVE_N
 };
 
+// clack_me_open's flags: MF_MEDIA_ENGINE_FORCEMUTE, an engine with no
+// audio renderer (no audio output to render to).
+enum { CLACK_MF_FORCEMUTE = 0x4 };
+
 // The controls (clack_me_control).
 enum { CLACK_MF_PLAY = 1, CLACK_MF_PAUSE, CLACK_MF_SEEK, CLACK_MF_VOLUME, CLACK_MF_MUTED, CLACK_MF_LOOP, CLACK_MF_RATE };
 
@@ -51,7 +55,7 @@ void clack_me_thread_init(void);
 void clack_me_thread_done(void);
 clackMF *clack_me_new(uintptr_t h);
 int32_t clack_me_bind(clackMF *m, clackMFInfo *info);
-int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, clackMFInfo *info);
+int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, uint32_t flags, uint32_t gen, clackMFInfo *info);
 void clack_me_close_engine(clackMF *m);
 int32_t clack_me_ring(clackMF *m, uint32_t w, uint32_t h, clackMFInfo *info);
 int32_t clack_me_control(clackMF *m, int op, double v);

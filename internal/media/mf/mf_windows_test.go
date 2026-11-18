@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"log"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -33,6 +35,51 @@ func need(t *testing.T, err error) {
 	t.Skip(err)
 }
 
+// read is one of the demuxer's reads: where, and the bytes it got.
+type read struct {
+	off int64
+	n   int
+}
+
+// The demuxer's reads and the engine's events by file, from the hooks
+// (the events as code@ms after the player was made).
+var (
+	hookMu sync.Mutex
+	reads  = map[string][]read{}
+	trace  = map[string][]string{}
+	born   = map[string]time.Time{}
+)
+
+func init() {
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	testRead = func(id string, off int64, n int) {
+		hookMu.Lock()
+		defer hookMu.Unlock()
+		reads[id] = append(reads[id], read{off, n})
+	}
+	testEvent = func(id string, code uint32) {
+		hookMu.Lock()
+		defer hookMu.Unlock()
+		trace[id] = append(trace[id], fmt.Sprintf("%d@%d", code, time.Since(born[id]).Milliseconds()))
+	}
+}
+
+func readsOf(id string) []read {
+	hookMu.Lock()
+	defer hookMu.Unlock()
+	return append([]read(nil), reads[id]...)
+}
+
+// traceOf is the engine's events so far, as code@ms (MF_MEDIA_ENGINE_EVENT:
+// 1 loadstart, 2 progress, 3 suspend, 7 stalled, 10 loadedmetadata, 11
+// loadeddata, 12 waiting, 13 playing, 14 canplay, 15 canplaythrough, 21
+// durationchange, 1009 first frame, 1014 a stream failed).
+func traceOf(id string) string {
+	hookMu.Lock()
+	defer hookMu.Unlock()
+	return strings.Join(trace[id], " ")
+}
+
 // rig is a player drawn into a headless Gio window on Direct3D 11, as
 // Clack's window draws it: the GPU's asks are the window's frames.
 type rig struct {
@@ -40,6 +87,7 @@ type rig struct {
 	win    *headless.Window
 	p      *player
 	o      *mediatest.Opener
+	id     string
 	size   image.Point
 	ready  atomic.Int64
 	readyC chan struct{}
@@ -55,8 +103,12 @@ func newRig(t *testing.T, data []byte, whole bool, size image.Point) *rig {
 	need(t, backend{}.Available())
 	win, err := headless.NewWindow(size.X, size.Y)
 	need(t, err)
-	src, o := mediatest.Source(fmt.Sprintf("FMF%d", rigN.Add(1)), data, whole)
-	r := &rig{t: t, win: win, o: o, size: size, readyC: make(chan struct{}, 1), evC: make(chan media.Event, 1024)}
+	id := fmt.Sprintf("FMF%d", rigN.Add(1))
+	src, o := mediatest.Source(id, data, whole)
+	hookMu.Lock()
+	born[id] = time.Now()
+	hookMu.Unlock()
+	r := &rig{t: t, win: win, o: o, id: id, size: size, readyC: make(chan struct{}, 1), evC: make(chan media.Event, 1024)}
 	pl, err := backend{}.New(src, func() {
 		r.ready.Add(1)
 		select {
@@ -82,6 +134,9 @@ func newRig(t *testing.T, data []byte, whole bool, size image.Point) *rig {
 		}
 	}()
 	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("%s: the engine's events %s; the demuxer's reads %v", id, traceOf(id), readsOf(id))
+		}
 		r.p.Close()
 		select {
 		case <-r.p.done:
@@ -127,7 +182,7 @@ func (r *rig) wait(k media.EventKind, within time.Duration) media.Event {
 			r.draw()
 		}
 	}
-	r.t.Fatalf("no %v within %v; events %v; state %+v", k, within, r.kinds(), r.p.State())
+	r.t.Fatalf("no %v within %v; events %v; state %+v; the engine's events %s", k, within, r.kinds(), r.p.State(), traceOf(r.id))
 	return media.Event{}
 }
 
@@ -189,7 +244,7 @@ func (r *rig) playThrough() ([]sample, time.Duration) {
 			samples = append(samples, sample{r.p.State().Pos, c})
 		}
 	}
-	r.t.Fatalf("no end within 15 s; events %v; state %+v; stats %+v", r.kinds(), r.p.State(), r.p.Stats())
+	r.t.Fatalf("no end within 15 s; events %v; state %+v; stats %+v; the engine's events %s", r.kinds(), r.p.State(), r.p.Stats(), traceOf(r.id))
 	return nil, 0
 }
 
@@ -219,15 +274,51 @@ func checkColors(t *testing.T, samples []sample) {
 	}
 }
 
+// The first player in the process, the fixture with its audio track:
+// its metadata within 5 s of the window being made (Media Foundation's
+// and Direct3D's start included). On the runners (no audio output)
+// engines made with an audio renderer took 2 s to their metadata, and
+// the first ones in a process didn't get there in 15 s; with no output
+// the engine is made with none.
+func TestMFColdStart(t *testing.T) {
+	t0 := time.Now()
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
+	r.draw()
+	md := r.wait(media.LoadedMetadata, 60*time.Second)
+	took := time.Since(t0)
+	t.Logf("loadedmetadata %v after the first player's window was made (audio: %s); the engine's events %s", took, r.audio(), traceOf(r.id))
+	if took > 5*time.Second {
+		t.Errorf("loadedmetadata %v after the window was made, want under 5 s", took)
+	}
+	if d := md.State.Duration; d < 2950*time.Millisecond || d > 3050*time.Millisecond {
+		t.Errorf("duration %v", d)
+	}
+}
+
+// audio is what the player found of the audio output, once it's known.
+func (r *rig) audio() string {
+	done := make(chan string, 1)
+	r.p.post(func() { done <- r.p.audio })
+	select {
+	case a := <-done:
+		return a
+	case <-time.After(5 * time.Second):
+		return "(the media thread didn't answer)"
+	}
+}
+
 // The fixture plays to its end through a headless Gio window: the
 // metadata (3 s, 320×180), the events in order, the three colours, the
-// first frame within 2 s.
+// first frame within 2 s, in BGRA frames.
 func TestMFPlaysFixture(t *testing.T) {
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	samples, first := r.playThrough()
 	checkColors(t, samples)
 	if first > 2*time.Second {
 		t.Errorf("the first frame came %v after Play, want under 2 s", first)
+	}
+	if r.p.format != fmtBGRA {
+		t.Errorf("format %s, want BGRA", formatName(r.p.format))
 	}
 	t.Logf("first frame %v after Play; %d frames drawn; stats %+v", first, len(samples), r.p.Stats())
 	got := r.kinds()
@@ -284,25 +375,26 @@ func TestMFSeekAndPause(t *testing.T) {
 	}
 }
 
-// The file with its moov after the mdat plays; the demuxer's reads jump
-// to the moov.
+// A file with its moov after the mdat and 4 MB before it plays; the
+// demuxer's reads get to the moov. (The 25 KB fixture alone came in one
+// read at 0.)
 func TestMFMoovAtEnd(t *testing.T) {
-	r := newRig(t, mediatest.MoovAtEnd, false, image.Pt(320, 180))
-	var mu sync.Mutex
-	var reads []int64
-	r.p.readLog = func(off int64, n int) { mu.Lock(); reads = append(reads, off); mu.Unlock() }
+	const pad = 4 << 20
+	moov := int64(mediatest.MoovAtEndMoov + pad)
+	r := newRig(t, mediatest.MoovAtEndPadded(pad), false, image.Pt(320, 180))
 	samples, _ := r.playThrough()
 	checkColors(t, samples)
-	mu.Lock()
-	defer mu.Unlock()
-	moov := false
-	for _, off := range reads {
-		moov = moov || off >= mediatest.MoovAtEndMoov
+	rs := readsOf(r.id)
+	got := false
+	total := 0
+	for _, rd := range rs {
+		got = got || rd.off <= moov && moov < rd.off+int64(rd.n)
+		total += rd.n
 	}
-	if !moov {
-		t.Errorf("no read at the moov (byte %d): reads at %v", mediatest.MoovAtEndMoov, reads)
+	if !got {
+		t.Errorf("no read got the moov (byte %d): reads %v", moov, rs)
 	}
-	t.Logf("the demuxer's reads at %v; GETs at %v", reads, r.o.Stats().Offsets)
+	t.Logf("the demuxer read %d bytes of %d in %d reads %v; GETs at %v", total, moov+int64(len(mediatest.MoovAtEnd)-mediatest.MoovAtEndMoov), len(rs), rs, r.o.Stats().Offsets)
 }
 
 // A server ignoring ranges (a 200): the backend is told the file can't be
@@ -375,39 +467,85 @@ func TestMFRing300(t *testing.T) {
 	}
 }
 
-// BGRA frames (CLACK_MF_FORMAT=bgra) show the same colours: red stays red.
-func TestMFBGRA(t *testing.T) {
-	t.Setenv("CLACK_MF_FORMAT", "bgra")
+// RGBA frames (CLACK_MF_FORMAT=rgba, the fallback) keep the channel
+// order: red stays red. Their greys are logged, not checked: where Media
+// Foundation converts in software it gives RGBA frames BT.709's transfer
+// curve converted to sRGB's (64 reads 79, 192 reads 198), BGRA ones not.
+func TestMFRGBA(t *testing.T) {
+	t.Setenv("CLACK_MF_FORMAT", "rgba")
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	samples, _ := r.playThrough()
-	checkColors(t, samples)
-	if r.p.format != fmtBGRA {
-		t.Errorf("format %d, want BGRA", r.p.format)
+	if r.p.format != fmtRGBA {
+		t.Errorf("format %s, want RGBA", formatName(r.p.format))
 	}
+	var grey, light, red []color.RGBA
+	for _, s := range samples {
+		switch {
+		case s.at > 300*time.Millisecond && s.at < 700*time.Millisecond:
+			grey = append(grey, s.c)
+		case s.at > 1300*time.Millisecond && s.at < 1700*time.Millisecond:
+			light = append(light, s.c)
+		case s.at > 2300*time.Millisecond && s.at < 2700*time.Millisecond:
+			red = append(red, s.c)
+		}
+	}
+	if len(grey) == 0 || len(light) == 0 || len(red) < 3 {
+		t.Fatalf("%d, %d, %d frames drawn in the three seconds", len(grey), len(light), len(red))
+	}
+	for _, c := range red {
+		if !mediatest.Matches(2500*time.Millisecond, c) {
+			t.Errorf("the third second drew %v, want %s", c, mediatest.Want(2500*time.Millisecond))
+			break
+		}
+	}
+	t.Logf("RGBA frames: grey 64 reads %v, 192 reads %v, red %v", grey[0], light[0], red[0])
 }
 
-// An engine refusing RGBA frames is made again for BGRA where it was: the
-// playback goes on to the end, the colours right, its events once.
+// An engine refusing its first frame in its format (RGBA here) is made
+// again for the other where it was: the playback goes on to the end, the
+// colours right, its events once; meanwhile it's a stall, the clock held
+// (no position runs on and comes back) and waiting, then playing, sent.
 func TestMFFormatFallback(t *testing.T) {
-	defer preferBGRA.Store(false)
-	preferBGRA.Store(false)
+	t.Setenv("CLACK_MF_FORMAT", "rgba")
+	refused.Store(0)
+	defer refused.Store(0)
 	forceTransferFailures.Store(1)
 	defer forceTransferFailures.Store(0)
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	samples, _ := r.playThrough()
 	checkColors(t, samples)
-	if !r.p.triedBGRA || r.p.format != fmtBGRA || !preferBGRA.Load() {
-		t.Errorf("tried BGRA %v, format %d, preferred %v", r.p.triedBGRA, r.p.format, preferBGRA.Load())
+	if !r.p.fellBack || r.p.format != fmtBGRA || refused.Load() != formatBit(fmtRGBA) {
+		t.Errorf("fell back %v, format %s, refused %b", r.p.fellBack, formatName(r.p.format), refused.Load())
 	}
+	for i := 1; i < len(samples); i++ {
+		if samples[i].at < samples[i-1].at-100*time.Millisecond {
+			t.Errorf("the position went back from %v to %v (frame %d of %d): it ran on while the engine was made again", samples[i-1].at, samples[i].at, i, len(samples))
+			break
+		}
+	}
+	got := r.kinds()
 	n := 0
-	for _, k := range r.kinds() {
+	for _, k := range got {
 		if k == media.LoadedMetadata {
 			n++
 		}
 	}
 	if n != 1 {
-		t.Errorf("loadedmetadata %d times (events %v), want once", n, r.kinds())
+		t.Errorf("loadedmetadata %d times (events %v), want once", n, got)
 	}
+	lastWaiting, lastPlaying := -1, -1
+	for i, k := range got {
+		switch k {
+		case media.Waiting:
+			lastWaiting = i
+		case media.Playing:
+			lastPlaying = i
+		}
+	}
+	if lastPlaying < lastWaiting || !inOrder(got, []media.EventKind{media.Playing, media.Ended}) {
+		t.Errorf("events %v, want playing after the last waiting, then ended", got)
+	}
+	t.Logf("events %v", got)
 }
 
 // Closed, every player lets go of all it held: the engines, their

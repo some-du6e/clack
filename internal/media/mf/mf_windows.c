@@ -550,6 +550,7 @@ struct clackNotify {
 	const clackNotifyVtbl *lpVtbl;
 	volatile LONG ref;
 	uintptr_t h;
+	uint32_t gen; // the engine's (Go's count of the player's engines)
 };
 
 static HRESULT STDMETHODCALLTYPE nQI(clackNotify *n, REFIID iid, void **out) {
@@ -576,12 +577,14 @@ static ULONG STDMETHODCALLTYPE nRelease(clackNotify *n) {
 	return (ULONG)r;
 }
 
-// EventNotify comes on a Media Foundation thread: Go only queues it.
+// EventNotify comes on a Media Foundation thread: Go only queues it,
+// with the engine's generation (an engine made again for another format
+// still has events queued from the one before it).
 // MF_MEDIA_ENGINE_EVENT_TIMEUPDATE (18) isn't passed on: the manager
 // times its own, as Chromium does.
 static HRESULT STDMETHODCALLTYPE nEventNotify(clackNotify *n, DWORD ev, DWORD_PTR p1, DWORD p2) {
 	if (ev != 18) {
-		clackMFEvent(n->h, (unsigned)ev, (uintptr_t)p1, (unsigned)p2);
+		clackMFEvent(n->h, n->gen, (unsigned)ev, (uintptr_t)p1, (unsigned)p2);
 	}
 	return S_OK;
 }
@@ -782,7 +785,7 @@ int32_t clack_me_bind(clackMF *m, clackMFInfo *info) {
 // clack_me_open makes the engine, reading the file through a byte stream
 // of total bytes (seekable: the server answers ranges), and gives it its
 // source. url is only the demuxer's hint (clack-media://<id>.<ext>).
-int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, clackMFInfo *info) {
+int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, uint32_t flags, uint32_t gen, clackMFInfo *info) {
 	if (m->mgr == NULL) {
 		fail(info, "no device", E_UNEXPECTED);
 		return E_UNEXPECTED;
@@ -798,6 +801,7 @@ int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *u
 	n->lpVtbl = &notifyVtbl;
 	n->ref = 1;
 	n->h = m->h;
+	n->gen = gen;
 	InterlockedIncrement(&live[CLACK_MF_LIVE_NOTIFY]);
 	clackStream *s = newStream(m->h, (QWORD)total, seekable);
 	if (s == NULL) {
@@ -821,7 +825,7 @@ int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *u
 		fail(info, "CoCreateInstance(MFMediaEngineClassFactory)", hr);
 		goto out;
 	}
-	hr = f->lpVtbl->CreateInstance(f, 0, a, &base);
+	hr = f->lpVtbl->CreateInstance(f, flags & CLACK_MF_FORCEMUTE, a, &base);
 	if (FAILED(hr)) {
 		fail(info, "IMFMediaEngineClassFactory::CreateInstance", hr);
 		goto out;
@@ -1229,8 +1233,10 @@ void clack_me_free(clackMF *m) {
 }
 
 // clack_me_audio_endpoint is whether Windows has a default audio output
-// (S_OK); a runner often has none (E_NOTFOUND), and then the engine plays
-// the video without its sound (MF_MEDIA_ENGINE_EVENT_STREAMRENDERINGERROR).
+// (S_OK). A runner has none (E_NOTFOUND); an engine made with an audio
+// renderer there took 2 s to its metadata, and the first ones in a
+// process never got there, so the player makes it with
+// MF_MEDIA_ENGINE_FORCEMUTE instead.
 int32_t clack_me_audio_endpoint(void) {
 	IMMDeviceEnumerator *e = NULL;
 	HRESULT hr = CoCreateInstance(&clackCLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &clackIID_IMMDeviceEnumerator, (void **)&e);

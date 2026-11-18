@@ -101,7 +101,7 @@ func (b backend) New(src media.Source, frameReady func()) (media.Player, error) 
 		frameReady = func() {}
 	}
 	p := &player{src: src, frameReady: frameReady, wake: make(chan struct{}, 1), mfEv: make(chan mfEvent, 256),
-		bind: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), volume: 1, rate: 1}
+		bind: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), volume: 1, rate: 1, born: time.Now()}
 	p.Init()
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.rs = media.NewRangeSource(src, media.RangeOptions{})
@@ -144,15 +144,46 @@ func lookup(h C.uintptr_t) *player {
 	return reg[uintptr(h)]
 }
 
-// preferBGRA: a player found the engine wouldn't hand out RGBA frames,
-// so the players after it ask for BGRA at once.
-var preferBGRA atomic.Bool
+// refused are the formats an engine in this process wouldn't transfer
+// its first frame in (formatBit's): the players after it start with the
+// other.
+var refused atomic.Uint32
 
-// forceTransferFailures makes the next transfers fail (tests of the BGRA
-// fallback).
+func formatBit(f uint32) uint32 {
+	if f == fmtBGRA {
+		return 2
+	}
+	return 1
+}
+
+func formatName(f uint32) string {
+	if f == fmtBGRA {
+		return "BGRA"
+	}
+	return "RGBA"
+}
+
+func otherFormat(f uint32) uint32 {
+	if f == fmtBGRA {
+		return fmtRGBA
+	}
+	return fmtBGRA
+}
+
+// forceTransferFailures makes the next transfers fail (tests of the
+// format fallback).
 var forceTransferFailures atomic.Int32
 
+// The tests' hooks, set before any player is made: each of the demuxer's
+// reads as it ends (the file's id, where, the bytes it got), and each of
+// the engine's events as it comes (codes below 1000 are HTML5's).
+var (
+	testRead  func(id string, off int64, n int)
+	testEvent func(id string, code uint32)
+)
+
 type mfEvent struct {
+	gen  uint32 // the engine's
 	code uint32
 	p1   uint64
 	p2   uint32
@@ -172,9 +203,7 @@ type player struct {
 	id         uintptr
 	ctx        context.Context
 	cancel     context.CancelFunc
-	// readLog, when set (tests, before the first ask), sees each of the
-	// demuxer's reads
-	readLog func(off int64, n int)
+	born       time.Time // when New made it
 
 	askMu  sync.Mutex
 	c      *C.clackMF // nil once closed (under askMu)
@@ -197,8 +226,11 @@ type player struct {
 	opened         bool
 	failed         bool
 	format         uint32
-	triedBGRA      bool
+	engineGen      uint32 // the engine's, as its events carry it
+	fellBack       bool   // made again for the other format (once)
+	okTransfers    int    // the frames this engine transferred
 	reopening      bool
+	reopens        int
 	ringW, ringH   uint32
 	native, draw   image.Point
 	ringOK         bool
@@ -215,6 +247,14 @@ type player struct {
 	loggedRing     bool
 	loggedAskFail  bool
 	loggedTransfer bool
+	loggedFirst    bool
+	// the default audio output: known once the check answered (or took
+	// too long); none, the engine is made with no audio renderer
+	audioKnown bool
+	noAudio    bool
+	audio      string // what the check found, for the logs
+	// when the steps to the first frame were done (the timing log)
+	tInfo, tBound, tOpened, tMeta, tData time.Time
 }
 
 func (p *player) post(f func()) {
@@ -302,9 +342,11 @@ func (p *player) control(op int, v float64) {
 	if !p.opened || p.c == nil {
 		return
 	}
-	if hr := C.clack_me_control(p.c, C.int(op), C.double(v)); hr != 0 && op != opPlay && op != opPause {
-		log.Printf("media: %s: control %d: %s", p.src.FileID, int(op), hrString(int32(hr)))
+	hr := C.clack_me_control(p.c, C.int(op), C.double(v))
+	if hr == 0 || op == opPlay || op == opPause || p.noAudio && (op == opVolume || op == opMuted) {
+		return
 	}
+	log.Printf("media: %s: control %d: %s", p.src.FileID, int(op), hrString(int32(hr)))
 }
 
 // Texture implements media.Frames: Gio's ask, on its render thread.
@@ -354,6 +396,9 @@ func (p *player) run() {
 		p.info = info // read by run only after infoCh
 		infoCh <- err
 	}()
+	audio := checkAudio()
+	audioLate := time.NewTimer(audioWait)
+	defer audioLate.Stop()
 	var tick *time.Ticker
 	defer func() {
 		if tick != nil {
@@ -365,15 +410,30 @@ func (p *player) run() {
 		if tick != nil {
 			tc = tick.C
 		}
+		var audioC <-chan struct{}
+		var lateC <-chan time.Time
+		if !p.audioKnown {
+			audioC, lateC = audio.done, audioLate.C
+		}
 		select {
 		case <-p.quit:
 			p.shutdown()
 			return
 		case err := <-infoCh:
-			p.infoOK, p.infoErr = true, err
+			p.infoOK, p.infoErr, p.tInfo = true, err, time.Now()
 			if err != nil {
 				p.fail(media.ErrNetwork, "the file: "+p.rs.Detail(err))
 			}
+		case <-audioC:
+			p.audioKnown = true
+			if p.noAudio = audio.err != nil; p.noAudio {
+				p.audio = fmt.Sprintf("no output (%v): the engine has no audio renderer", audio.err)
+			} else {
+				p.audio = "the default output"
+			}
+		case <-lateC:
+			p.audioKnown, p.noAudio = true, true
+			p.audio = fmt.Sprintf("the check of the default output didn't answer within %v: the engine has no audio renderer", audioWait)
 		case <-p.bind:
 			p.doBind()
 		case <-p.wake:
@@ -434,16 +494,17 @@ func (p *player) doBind() {
 		}
 		log.Printf("media: %s: Media Foundation on %q (vendor %#x, device %#x, feature level %s), %s", p.src.FileID,
 			C.GoString(&info.adapter[0]), uint32(info.vendor), uint32(info.device), featureLevel(uint32(info.featureLevel)), decode)
+		p.tBound = time.Now()
 	}
 	p.bound = true
 	p.ringOK = false
 	p.makeRing()
 }
 
-// maybeOpen makes the engine once the file's size is known and Gio's
-// device is bound.
+// maybeOpen makes the engine once the file's size is known, Gio's device
+// is bound and the audio output is known.
 func (p *player) maybeOpen() {
-	if p.opened || p.failed || !p.bound || !p.infoOK || p.infoErr != nil || p.c == nil {
+	if p.opened || p.failed || !p.bound || !p.infoOK || p.infoErr != nil || !p.audioKnown || p.c == nil {
 		return
 	}
 	if p.info.Total <= 0 {
@@ -467,12 +528,20 @@ func (p *player) maybeOpen() {
 	if p.info.Seekable {
 		seekable = 1
 	}
-	if hr := C.clack_me_open(p.c, C.int64_t(p.info.Total), seekable, (*C.uint16_t)(unsafe.Pointer(&u16[0])), C.uint32_t(p.format), &info); hr != 0 {
+	flags := C.uint32_t(0)
+	if p.noAudio {
+		flags |= C.CLACK_MF_FORCEMUTE
+	}
+	p.engineGen++
+	if hr := C.clack_me_open(p.c, C.int64_t(p.info.Total), seekable, (*C.uint16_t)(unsafe.Pointer(&u16[0])), C.uint32_t(p.format), flags, C.uint32_t(p.engineGen), &info); hr != 0 {
 		p.fail(media.ErrSrcNotSupported, fmt.Sprintf("the engine: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
 		return
 	}
 	runtime.KeepAlive(u16)
-	p.opened = true
+	p.opened, p.okTransfers = true, 0
+	if p.tOpened.IsZero() {
+		p.tOpened = time.Now()
+	}
 	p.control(opVolume, p.volume)
 	p.control(opMuted, b2f(p.muted))
 	p.control(opLoop, b2f(p.loop))
@@ -488,27 +557,41 @@ func (p *player) maybeOpen() {
 	}
 }
 
-// pickFormat is the frames' format: RGBA (Gio's own images' bytes), BGRA
-// once the engine refused RGBA (or CLACK_MF_FORMAT=bgra), and whichever
-// Gio's device samples as _SRGB.
+// pickFormat is the frames' format. BGRA first: the format Microsoft's
+// frame-server samples and Chromium's MediaFoundationRenderer ask for,
+// and the one whose colours came out exact where Media Foundation decodes
+// and converts in software (the runners' Basic Render Driver), where RGBA
+// frames got BT.709's transfer curve converted to sRGB's (grey 64 read
+// 79, 192 read 198). RGBA first with CLACK_MF_FORMAT=rgba. A format an
+// engine in this process refused comes last, and one Gio's device can't
+// sample as _SRGB isn't used.
 func (p *player) pickFormat() uint32 {
-	f := uint32(fmtRGBA)
-	if preferBGRA.Load() || os.Getenv("CLACK_MF_FORMAT") == "bgra" {
-		f = fmtBGRA
+	order := [2]uint32{fmtBGRA, fmtRGBA}
+	if os.Getenv("CLACK_MF_FORMAT") == "rgba" {
+		order = [2]uint32{fmtRGBA, fmtBGRA}
 	}
+	if refused.Load()&formatBit(order[0]) != 0 {
+		order[0], order[1] = order[1], order[0]
+	}
+	dev := p.gioDevice()
+	for _, f := range order {
+		if gioSamples(dev, f) {
+			return f
+		}
+	}
+	return order[0]
+}
+
+func (p *player) gioDevice() uintptr {
 	p.askMu.Lock()
-	dev := p.gioDev
-	p.askMu.Unlock()
-	if dev != 0 && C.clack_me_gio_format_ok(C.uintptr_t(dev), C.uint32_t(srgb(f))) == 0 {
-		other := uint32(fmtBGRA)
-		if f == fmtBGRA {
-			other = fmtRGBA
-		}
-		if C.clack_me_gio_format_ok(C.uintptr_t(dev), C.uint32_t(srgb(other))) != 0 {
-			f = other
-		}
-	}
-	return f
+	defer p.askMu.Unlock()
+	return p.gioDev
+}
+
+// gioSamples is whether Gio's device samples f's _SRGB format (true while
+// no device asked).
+func gioSamples(dev uintptr, f uint32) bool {
+	return dev == 0 || C.clack_me_gio_format_ok(C.uintptr_t(dev), C.uint32_t(srgb(f))) != 0
 }
 
 func srgb(f uint32) uint32 {
@@ -543,11 +626,7 @@ func (p *player) makeRing() {
 		if info.nt == 0 {
 			handles = "legacy shared"
 		}
-		name := "RGBA"
-		if p.format == fmtBGRA {
-			name = "BGRA"
-		}
-		log.Printf("media: %s: frames %d×%d (video %d×%d) %s, through %s handles", p.src.FileID, w, h, p.native.X, p.native.Y, name, handles)
+		log.Printf("media: %s: frames %d×%d (video %d×%d) %s, through %s handles", p.src.FileID, w, h, p.native.X, p.native.Y, formatName(p.format), handles)
 	}
 }
 
@@ -577,24 +656,43 @@ func (p *player) tick() {
 	switch r {
 	case 1:
 		p.transferErrs = 0
+		p.okTransfers++
 		p.wantFrame = false
 		p.NTransfers.Add(1)
 		p.NFrames.Add(1)
+		if !p.loggedFirst {
+			p.loggedFirst = true
+			p.logTiming()
+		}
 		p.frameReady()
 	case -1:
 		p.transferFailed(int32(hr))
 	}
 }
 
-// transferFailed: an engine that won't transfer RGBA frames is made again
-// for BGRA, where the playback was (once); otherwise it's logged, and ten
-// in a row end the playback with a decode error.
+// logTiming is the line saying where the time to the first frame went,
+// each step's end in seconds after the player was made.
+func (p *player) logTiming() {
+	at := func(t time.Time) string {
+		if t.IsZero() {
+			return "-"
+		}
+		return fmt.Sprintf("%.2f s", t.Sub(p.born).Seconds())
+	}
+	log.Printf("media: %s: first frame %s after the player was made (the file's head %s, the device %s, the engine %s, loadedmetadata %s, loadeddata %s); audio: %s",
+		p.src.FileID, at(time.Now()), at(p.tInfo), at(p.tBound), at(p.tOpened), at(p.tMeta), at(p.tData), p.audio)
+}
+
+// transferFailed: an engine refusing its first frame in its format is
+// made again for the other one, where the playback was (once a player,
+// and the players after it start with the other); otherwise it's logged,
+// and ten in a row end the playback with a decode error.
 func (p *player) transferFailed(hr int32) {
-	if p.format == fmtRGBA && !p.triedBGRA {
-		p.triedBGRA = true
-		preferBGRA.Store(true)
-		log.Printf("media: %s: the engine refused an RGBA frame (%s): BGRA from here on", p.src.FileID, hrString(hr))
-		p.reopen(fmtBGRA)
+	if other := otherFormat(p.format); p.okTransfers == 0 && !p.fellBack && gioSamples(p.gioDevice(), other) {
+		p.fellBack = true
+		refused.Or(formatBit(p.format))
+		log.Printf("media: %s: the engine refused a %s frame (%s): %s from here on", p.src.FileID, formatName(p.format), hrString(hr), formatName(other))
+		p.reopen(other)
 		return
 	}
 	p.transferErrs++
@@ -608,7 +706,10 @@ func (p *player) transferFailed(hr int32) {
 }
 
 // reopen makes the engine again for another format, from where it was,
-// playing if it played; its events until it's back are not passed on.
+// playing if it played; its events until it's back are not passed on. To
+// the page it's a stall: the clock holds, the last frame stays drawn,
+// and a playing player sends waiting, then playing once the new engine
+// plays.
 func (p *player) reopen(format uint32) {
 	st := p.State()
 	p.askMu.Lock()
@@ -620,8 +721,25 @@ func (p *player) reopen(format uint32) {
 		p.seekTo = st.Pos.Seconds()
 	}
 	p.wantPlay = !st.Paused
+	if p.wantPlay && !st.Waiting {
+		p.Update(func(s *media.State) { s.Waiting, s.Ready = true, min(s.Ready, media.HaveMetadata) })
+		p.Emit(media.Waiting)
+	}
+	p.reopens++
+	n := p.reopens
+	time.AfterFunc(reopenWait, func() {
+		p.post(func() {
+			if p.reopening && p.reopens == n {
+				p.fail(media.ErrDecode, fmt.Sprintf("the engine made again for %s didn't play within %v", formatName(p.format), reopenWait))
+			}
+		})
+	})
 	p.maybeOpen()
 }
+
+// reopenWait is how long an engine made again has to play where the one
+// before it was.
+const reopenWait = 15 * time.Second
 
 // refresh reads the engine's state into the snapshot.
 func (p *player) refresh() {
@@ -661,8 +779,11 @@ func secs(s float64) time.Duration {
 
 // onEvent hands on the engine's event, its state read with it.
 func (p *player) onEvent(ev mfEvent) {
-	if p.c == nil {
-		return
+	if p.c == nil || ev.gen != p.engineGen {
+		return // closed, or from the engine before this one
+	}
+	if testEvent != nil {
+		testEvent(p.src.FileID, ev.code)
 	}
 	switch ev.code {
 	case evStreamError:
@@ -677,17 +798,40 @@ func (p *player) onEvent(ev mfEvent) {
 	}
 	if p.reopening {
 		// the engine made again: its own events up to where it was aren't
-		// news
-		switch {
-		case ev.code == evError:
+		// news; it's back once it plays (or, paused, has the frame where
+		// it was), or paused there by a Pause meanwhile
+		back := false
+		switch ev.code {
+		case evError:
+			p.reopening = false // passed on
+		case evPlaying:
+			back = p.wantPlay
+		case evPause:
+			back = !p.wantPlay
+		case evSeeked:
+			back = !p.wantPlay && p.restoreSeek
+		case evLoadedData:
+			back = !p.wantPlay && !p.restoreSeek
+		}
+		if !back {
+			if p.reopening {
+				return
+			}
+		} else {
 			p.reopening = false
-		case ev.code == evPlaying && p.wantPlay, ev.code == evSeeked && !p.wantPlay && p.restoreSeek, ev.code == evLoadedData && !p.wantPlay && !p.restoreSeek:
-			p.reopening = false
+			waiting := p.State().Waiting
 			p.refresh()
 			p.makeRing()
 			p.wantFrame, p.wantUntil = true, time.Now().Add(time.Second)
-			return
-		default:
+			if waiting {
+				p.Update(func(st *media.State) { st.Waiting = false })
+				if ev.code == evPlaying {
+					p.Emit(media.Playing)
+				}
+			}
+			if ev.code == evPause {
+				p.Emit(media.Pause)
+			}
 			return
 		}
 	}
@@ -696,9 +840,15 @@ func (p *player) onEvent(ev mfEvent) {
 	switch ev.code {
 	case evLoadedMetadata:
 		k = media.LoadedMetadata
+		if p.tMeta.IsZero() {
+			p.tMeta = time.Now()
+		}
 		p.makeRing()
 	case evLoadedData:
 		k = media.LoadedData
+		if p.tData.IsZero() {
+			p.tData = time.Now()
+		}
 		p.wantFrame, p.wantUntil = true, time.Now().Add(time.Second)
 	case evPlay:
 		k = media.Play
@@ -779,10 +929,10 @@ func (p *player) readFull(b []byte, off int64) (int, error) {
 }
 
 //export clackMFEvent
-func clackMFEvent(h C.uintptr_t, ev C.uint, p1 C.uintptr_t, p2 C.uint) {
+func clackMFEvent(h C.uintptr_t, gen C.uint32_t, ev C.uint, p1 C.uintptr_t, p2 C.uint) {
 	if p := lookup(h); p != nil {
 		select {
-		case p.mfEv <- mfEvent{code: uint32(ev), p1: uint64(p1), p2: uint32(p2)}:
+		case p.mfEv <- mfEvent{gen: uint32(gen), code: uint32(ev), p1: uint64(p1), p2: uint32(p2)}:
 		default:
 			p.NDropped.Add(1)
 		}
@@ -797,10 +947,10 @@ func clackMFRead(h C.uintptr_t, req unsafe.Pointer, pb unsafe.Pointer, cb C.ulon
 			C.clack_me_read_done(req, 0, eAbort)
 			return
 		}
-		if p.readLog != nil {
-			p.readLog(int64(off), int(cb))
-		}
 		n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
+		if testRead != nil {
+			testRead(p.src.FileID, int64(off), n)
+		}
 		hr := C.int32_t(0)
 		if err != nil && n == 0 {
 			hr = eFail
@@ -819,10 +969,50 @@ func clackMFReadSync(h C.uintptr_t, pb unsafe.Pointer, cb C.ulong, off C.longlon
 		return -1
 	}
 	n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
+	if testRead != nil {
+		testRead(p.src.FileID, int64(off), n)
+	}
 	if err != nil && n == 0 {
 		return -1
 	}
 	return C.longlong(n)
+}
+
+// audioWait is how long a player waits for the check of the default
+// audio output before it makes its engine with no audio renderer.
+const audioWait = 2 * time.Second
+
+// audioCall is a check of the default audio output; players made while
+// one runs share its answer.
+type audioCall struct {
+	done chan struct{}
+	err  error // set before done closes
+}
+
+var (
+	audioMu  sync.Mutex
+	audioCur *audioCall
+)
+
+// checkAudio is the check in flight, or a new one: a device may have come
+// or gone since the last.
+func checkAudio() *audioCall {
+	audioMu.Lock()
+	defer audioMu.Unlock()
+	if c := audioCur; c != nil {
+		select {
+		case <-c.done:
+		default:
+			return c
+		}
+	}
+	c := &audioCall{done: make(chan struct{})}
+	audioCur = c
+	go func() {
+		c.err = audioEndpoint()
+		close(c.done)
+	}()
+	return c
 }
 
 // audioEndpoint is whether Windows has a default audio output, asked on a
