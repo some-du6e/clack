@@ -1,68 +1,105 @@
 {
-  "tag": "v0.1.0-alpha.105",
-  "published": "2026-11-17T17:45:01Z",
-  "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.105",
-  "headline": "Mentions that wrap across lines draw like Slack's.",
+  "tag": "v0.1.0-alpha.106",
+  "published": "2026-11-18T01:59:17Z",
+  "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.106",
+  "count": 104,
   "assets": [
     {
-      "name": "Clack-0.1.0-alpha.105-aarch64.AppImage",
-      "size": 30378504,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-aarch64.AppImage"
+      "name": "Clack-0.1.0-alpha.106-aarch64.AppImage",
+      "size": 30407176,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/Clack-0.1.0-alpha.106-aarch64.AppImage"
     },
     {
-      "name": "Clack-0.1.0-alpha.105-macos-universal.dmg",
-      "size": 73589369,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-macos-universal.dmg"
+      "name": "Clack-0.1.0-alpha.106-macos-universal.dmg",
+      "size": 73681559,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/Clack-0.1.0-alpha.106-macos-universal.dmg"
     },
     {
-      "name": "Clack-0.1.0-alpha.105-macos-universal.zip",
-      "size": 66619613,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-macos-universal.zip"
+      "name": "Clack-0.1.0-alpha.106-macos-universal.zip",
+      "size": 66710566,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/Clack-0.1.0-alpha.106-macos-universal.zip"
     },
     {
-      "name": "Clack-0.1.0-alpha.105-windows-amd64-setup.exe",
-      "size": 26912615,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-windows-amd64-setup.exe"
+      "name": "Clack-0.1.0-alpha.106-windows-amd64-setup.exe",
+      "size": 26936784,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/Clack-0.1.0-alpha.106-windows-amd64-setup.exe"
     },
     {
-      "name": "Clack-0.1.0-alpha.105-windows-amd64.zip",
-      "size": 33647584,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-windows-amd64.zip"
+      "name": "Clack-0.1.0-alpha.106-windows-amd64.zip",
+      "size": 33691530,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/Clack-0.1.0-alpha.106-windows-amd64.zip"
     },
     {
-      "name": "Clack-0.1.0-alpha.105-windows-arm64.zip",
-      "size": 31977848,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-windows-arm64.zip"
+      "name": "Clack-0.1.0-alpha.106-windows-arm64.zip",
+      "size": 32021260,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/Clack-0.1.0-alpha.106-windows-arm64.zip"
     },
     {
-      "name": "Clack-0.1.0-alpha.105-x86_64.AppImage",
-      "size": 31914488,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/Clack-0.1.0-alpha.105-x86_64.AppImage"
+      "name": "Clack-0.1.0-alpha.106-x86_64.AppImage",
+      "size": 31967736,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/Clack-0.1.0-alpha.106-x86_64.AppImage"
     },
     {
-      "name": "clack-0.1.0-alpha.105.aarch64.rpm",
-      "size": 34235954,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack-0.1.0-alpha.105.aarch64.rpm"
+      "name": "clack-0.1.0-alpha.106.aarch64.rpm",
+      "size": 34265772,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/clack-0.1.0-alpha.106.aarch64.rpm"
     },
     {
-      "name": "clack-0.1.0-alpha.105.x86_64.rpm",
-      "size": 35398450,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack-0.1.0-alpha.105.x86_64.rpm"
+      "name": "clack-0.1.0-alpha.106.x86_64.rpm",
+      "size": 35455052,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/clack-0.1.0-alpha.106.x86_64.rpm"
     },
     {
-      "name": "clack_0.1.0-alpha.105_amd64.deb",
-      "size": 34111964,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack_0.1.0-alpha.105_amd64.deb"
+      "name": "clack_0.1.0-alpha.106_amd64.deb",
+      "size": 34158810,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/clack_0.1.0-alpha.106_amd64.deb"
     },
     {
-      "name": "clack_0.1.0-alpha.105_arm64.deb",
-      "size": 33043508,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/clack_0.1.0-alpha.105_arm64.deb"
+      "name": "clack_0.1.0-alpha.106_arm64.deb",
+      "size": 33096820,
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/clack_0.1.0-alpha.106_arm64.deb"
     },
     {
       "name": "SHA256SUMS",
       "size": 1144,
-      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.105/SHA256SUMS"
+      "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/SHA256SUMS"
+    }
+  ],
+  "recent": [
+    {
+      "tag": "v0.1.0-alpha.106",
+      "published": "2026-11-18T01:59:17Z",
+      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.106",
+      "headline": "Slick plugins' message menus work again.",
+      "blurb": "Slick's newest builds add their actions to message menus through a new menu API, which Clack didn't have."
+    },
+    {
+      "tag": "v0.1.0-alpha.105",
+      "published": "2026-11-17T17:45:01Z",
+      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.105",
+      "headline": "Mentions that wrap across lines draw like Slack's.",
+      "blurb": "A wrapped mention pill now keeps its picture at the start of its first line."
+    },
+    {
+      "tag": "v0.1.0-alpha.104",
+      "published": "2026-11-17T11:40:05Z",
+      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.104",
+      "headline": "A full window is far cheaper for the GPU.",
+      "blurb": "Clack skips work the graphics API already has, batches Metal's commands, leaves a rounded clip off what's drawn inside it, and stencils clip paths only…"
+    },
+    {
+      "tag": "v0.1.0-alpha.103",
+      "published": "2026-11-17T05:23:22Z",
+      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.103",
+      "headline": "Animated emoji play smoothly, and cost almost nothing while they do.",
+      "blurb": "Animated custom emoji like :explodes: now follow Chromium's timing exactly: each frame shows for its own duration, a late frame skips ahead instead of…"
+    },
+    {
+      "tag": "v0.1.0-alpha.102",
+      "published": "2026-11-16T23:51:10Z",
+      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.102",
+      "headline": "Plugins do far less work.",
+      "blurb": "A plugin view that re-renders without changing anything no longer sends Clack the same tree again."
     }
   ]
 }

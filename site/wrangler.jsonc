@@ -1,0 +1,12 @@
+// Cloudflare Workers static assets, if getclack.club is ever served from
+// Cloudflare instead of GitHub Pages (README.md, "Or Cloudflare"). Build
+// first: node build.mjs --refresh. 404-page serves dist/404.html for
+// unknown paths, as GitHub Pages does.
+{
+  "name": "clack-site",
+  "compatibility_date": "2026-11-17",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  }
+}

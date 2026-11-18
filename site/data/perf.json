@@ -1,0 +1,11 @@
+{
+  "run": 44220175072,
+  "commit": "557993a",
+  "release": "v0.1.0-alpha.106",
+  "firstFrame": "0.2 s",
+  "settled": "0.9 s",
+  "memWarm": "267 MB",
+  "memIdle": "564 MB",
+  "note1": "Startup comes from perf run 44220175072 on commit 557993a, the commit tagged v0.1.0-alpha.106. The run builds that commit with the perfharness tag, which lets it talk to a fake Slack server on the same machine; a release build refuses to. It ran on a GitHub Actions ubuntu-latest runner under Xvfb with Mesa's llvmpipe software renderer, against a fake workspace the size of the Hack Club Slack with 150 ms added to every API call and 40 ms to every image, and with six plugins on. Over five starts the first frame came 152 to 208 ms after the process started. A warm start settled, meaning nothing changed for 1.5 s, after 769 to 936 ms; a cold start with nothing on disk settled after 943 to 961 ms.",
+  "note2": "Memory comes from the same run's Windows job, the same kind of build on a windows-latest runner with no GPU, so Direct3D 11 ran on Microsoft's software renderer. The fake workspace had 65,846 custom emoji, 32,000 users, 2,006 user groups, 300 channels and 120 DMs. 267 MB is the private working set, Task Manager's Memory column, once a warm start settled with 1,005 of the 32,000 people loaded. 564 MB is after scrolling through channels of 6,000 messages, where it peaked at 835 MB, then 40 more channels and ten idle minutes. A cold start that loads all 32,000 people used 323 MB. On the Linux runner the warm start used 231 MB and the idle figure was 607 MB."
+}

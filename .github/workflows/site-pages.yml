@@ -1,12 +1,14 @@
 name: site-pages
-# Deploys site/ to GitHub Pages as https://getclack.club. NOT ENABLED: it has
-# no automatic trigger, Pages is off for the repository, and no custom
+# Deploys site/ to GitHub Pages at the domain in site/CNAME. NOT ENABLED: it
+# has no automatic trigger, Pages is off for the repository, and no custom
 # domain is set. site/README.md ("Going live") has the steps and the
 # Porkbun DNS records; nothing here runs until they're done.
 #
-# The build fetches the newest release and the plugin Library index first
-# (build.mjs --refresh), so each deploy links the current downloads, and
-# copies site/CNAME into the upload. Once Pages is on, uncomment
+# The build job makes the page from the newest complete release and the
+# plugin Library index (build.mjs --refresh --pages, which adds site/CNAME),
+# then holds that build to the same budgets as site.yml: the static checks,
+# the headless Chrome weigh and Lighthouse. The directory those checks
+# passed is the one uploaded and deployed. Once Pages is on, uncomment
 # workflow_run below to redeploy after every release, and push to deploy
 # site changes that land on main.
 on:
@@ -19,6 +21,7 @@ on:
   #   paths:
   #     - "site/**"
   #     - "assets/icon.svg"
+  #     - "internal/pluginlib/compat.go"
   #     - ".github/workflows/site-pages.yml"
 
 permissions:
@@ -32,6 +35,9 @@ jobs:
   build:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -39,14 +45,21 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-      - name: build (newest release, site.json's url as the canonical base)
-        working-directory: site
+      - name: tools (Lighthouse CI)
+        run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
+      - name: build (newest complete release, site.json's url as the canonical base, CNAME)
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node build.mjs --refresh --strict && node tools/check.mjs
-      - name: CNAME (getclack.club)
-        run: cp site/CNAME site/dist/CNAME && cat site/dist/CNAME
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+        run: node build.mjs --refresh --strict --pages
+      - name: static checks (indexable, CNAME)
+        run: node tools/check.mjs --production --pages
+      - name: page weight in headless Chrome
+        run: node tools/weigh.mjs
+      - name: Lighthouse, mobile
+        run: ./node_modules/.bin/lhci autorun --config=lighthouserc.json
+      - name: Lighthouse, desktop
+        run: ./node_modules/.bin/lhci autorun --config=lighthouserc.desktop.json
+      # the directory every check above passed, unchanged
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/dist

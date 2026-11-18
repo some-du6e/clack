@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // Weighs the built site the way a visitor loads it. Serves site/dist on
 // 127.0.0.1 with gzip, as GitHub Pages and Cloudflare do, and opens it in
-// headless Chrome over the DevTools protocol with the cache off: a desktop
-// window at 1x and 2x and a phone, in light and dark. It reads the paint
+// headless Chrome over the DevTools protocol with the cache off: desktop
+// windows at 1x and 2x, a tablet and two phones. It reads the paint
 // timings, then scrolls to the bottom so every lazy image loads, and adds up
-// the bytes on the wire. It fails when a request goes anywhere but
-// 127.0.0.1, when the page with its CSS and JS goes over 30 KB, or when a
-// whole visit goes over 300 KB.
+// the bytes on the wire, the web font included. It fails when a request
+// goes anywhere but 127.0.0.1, when the page with its CSS and JS goes over
+// 30 KB, when a whole visit goes over 300 KB, when it loads more than one
+// font, or when the page is wider than the window (it names the elements
+// that stick out). First it checks that last test on a page that's too wide
+// on purpose, so a broken check fails the run instead of passing it.
 //
 //   node tools/weigh.mjs [dist] [--out weigh]   (CHROME_PATH picks Chrome)
 //
@@ -28,14 +31,18 @@ const dist = resolve(positionals[0] ?? join(site, 'dist'));
 const outDir = resolve(opt.out ?? join(site, 'weigh'));
 const BUDGET = { page: 300 * 1024, doc: 30 * 1024 };
 const SCENARIOS = [
-  { name: 'desktop 1440×900, light', width: 1440, height: 900, dpr: 1, mobile: false, scheme: 'light' },
-  { name: 'desktop 1440×900, dark', width: 1440, height: 900, dpr: 1, mobile: false, scheme: 'dark' },
-  { name: 'desktop 1440×900 at 2x, light', width: 1440, height: 900, dpr: 2, mobile: false, scheme: 'light' },
-  { name: 'desktop 1440×900 at 2x, dark', width: 1440, height: 900, dpr: 2, mobile: false, scheme: 'dark' },
-  { name: 'phone 412×915 at 2.625x, light', width: 412, height: 915, dpr: 2.625, mobile: true, scheme: 'light' },
-  { name: 'phone 412×915 at 2.625x, dark', width: 412, height: 915, dpr: 2.625, mobile: true, scheme: 'dark' },
-  { name: 'phone 360×780 at 3x, light', width: 360, height: 780, dpr: 3, mobile: true, scheme: 'light' },
+  { name: 'desktop 1440×900', width: 1440, height: 900, dpr: 1, mobile: false },
+  { name: 'desktop 1440×900 at 2x', width: 1440, height: 900, dpr: 2, mobile: false },
+  { name: 'laptop 1280×800 at 2x', width: 1280, height: 800, dpr: 2, mobile: false },
+  { name: 'tablet 768×1024 at 2x', width: 768, height: 1024, dpr: 2, mobile: true },
+  { name: 'phone 412×915 at 2.625x', width: 412, height: 915, dpr: 2.625, mobile: true },
+  { name: 'phone 360×780 at 3x', width: 360, height: 780, dpr: 3, mobile: true },
 ];
+// the self-test pages: one 520px-wide element, and a control that fits
+const SELF_TEST = {
+  '/__weigh-overflow.html': '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><div id="wide" style="width:520px;height:40px;background:#c00"></div>',
+  '/__weigh-fits.html': '<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><div style="max-width:100%;height:40px;background:#0a0"></div>',
+};
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml',
   '.json': 'application/json', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml',
@@ -45,6 +52,7 @@ const TYPES = {
 // ---- a static server like the hosts' ----
 const server = createServer((req, res) => {
   let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  if (SELF_TEST[p]) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end(SELF_TEST[p]); }
   if (p.endsWith('/')) p += 'index.html';
   const f = normalize(join(dist, p));
   if (!f.startsWith(dist) || !existsSync(f)) {
@@ -107,8 +115,19 @@ const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const results = [];
+const selfTest = [];
 let crashed;
 try {
+  // the sideways-scroll check, on a page that's too wide and one that fits:
+  // under phone emulation Chrome widens the layout viewport to the content,
+  // so innerWidth can't tell (it grows to 520 too); clientWidth stays at the
+  // phone's width
+  for (const sc of SCENARIOS.filter((x) => x.width <= 412)) {
+    for (const [path, want] of [['/__weigh-overflow.html', true], ['/__weigh-fits.html', false]]) {
+      const r = await visit(sc, path, false);
+      selfTest.push({ scenario: sc.name, path, want, got: r.overflow.length > 0, wide: r.overflow });
+    }
+  }
   await visit(SCENARIOS[0]); // warm-up, not counted: Chrome's first request pays for its own start-up
   for (const sc of SCENARIOS) results.push(await visit(sc));
 } catch (e) {
@@ -122,7 +141,7 @@ try {
 }
 if (crashed) die(crashed.message);
 
-async function visit(sc) {
+async function visit(sc, path = '/', scroll = true) {
   const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
   const s = (m, p) => send(m, p, sessionId);
@@ -143,8 +162,7 @@ async function visit(sc) {
   await s('Network.setCacheDisabled', { cacheDisabled: true });
   await s('Page.enable');
   await s('Emulation.setDeviceMetricsOverride', { width: sc.width, height: sc.height, deviceScaleFactor: sc.dpr, mobile: sc.mobile });
-  await s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: sc.scheme }] });
-  await s('Page.navigate', { url: `${origin}/` });
+  await s('Page.navigate', { url: `${origin}${path}` });
   for (let i = 0; !loaded && i < 300; i++) await sleep(50);
   if (!loaded) throw new Error(`${sc.name}: no load event`);
   await idle(reqs);
@@ -161,14 +179,21 @@ async function visit(sc) {
     }, 200);
   })`);
   const above = sum(reqs);
-  for (let i = 0; i < 80; i++) {
+  for (let i = 0; scroll && i < 80; i++) {
     const { y, max } = await evalJSON('JSON.stringify({ y: scrollY + innerHeight, max: document.documentElement.scrollHeight })');
     if (y >= max) break;
     await s('Runtime.evaluate', { expression: 'scrollBy(0, innerHeight * 0.9)' });
     await sleep(120);
   }
   await idle(reqs);
-  const overflow = await evalJSON('JSON.stringify(document.documentElement.scrollWidth > innerWidth)');
+  // wider than the window: the elements whose right edge passes the
+  // document's clientWidth (the window's width, also under phone emulation)
+  const overflow = await evalJSON(`JSON.stringify((() => {
+    const cw = document.documentElement.clientWidth;
+    if (document.documentElement.scrollWidth <= cw) return [];
+    return [...document.querySelectorAll('body *')].filter((e) => { const r = e.getBoundingClientRect(); return r.width && r.right > cw + 0.5; })
+      .slice(0, 8).map((e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\\s+/).join('.') : '') + ' (right ' + Math.round(e.getBoundingClientRect().right) + ' > ' + cw + ')');
+  })())`);
   listeners.delete(onEvent);
   await send('Target.closeTarget', { targetId });
 
@@ -177,7 +202,8 @@ async function visit(sc) {
   const failed = all.filter((r) => r.failed).map((r) => r.url);
   const doc = all.find((r) => r.type === 'Document')?.bytes ?? 0;
   const images = all.filter((r) => r.type === 'Image').reduce((n, r) => n + r.bytes, 0);
-  return { ...sc, requests: all.length, firstScreen: above, total: sum(reqs), doc, images, offsite, failed, overflow, timing };
+  const fonts = all.filter((r) => r.type === 'Font');
+  return { ...sc, requests: all.length, firstScreen: above, total: sum(reqs), doc, images, fonts: fonts.length, fontBytes: fonts.reduce((n, r) => n + r.bytes, 0), offsite, failed, overflow, timing };
 }
 
 function sum(reqs) { return [...reqs.values()].reduce((n, r) => n + r.bytes, 0); }
@@ -193,21 +219,27 @@ async function idle(reqs) {
 const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
 const ms = (n) => `${Math.round(n)} ms`;
 const problems = [];
+for (const t of selfTest) {
+  if (t.got !== t.want) problems.push(`self-test, ${t.scenario}: the sideways-scroll check ${t.want ? 'missed' : 'flagged'} ${t.path}${t.wide.length ? ` (${t.wide.join(', ')})` : ''}`);
+}
 for (const r of results) {
   if (r.offsite.length) problems.push(`${r.name}: requests off 127.0.0.1: ${r.offsite.join(', ')}`);
   if (r.failed.length) problems.push(`${r.name}: failed requests: ${r.failed.join(', ')}`);
   if (r.total > BUDGET.page) problems.push(`${r.name}: ${kb(r.total)} in all, over the ${kb(BUDGET.page)} budget`);
   if (r.doc > BUDGET.doc) problems.push(`${r.name}: the page is ${kb(r.doc)} on the wire, over ${kb(BUDGET.doc)}`);
-  if (r.overflow) problems.push(`${r.name}: the page scrolls sideways`);
+  if (r.overflow.length) problems.push(`${r.name}: the page scrolls sideways: ${r.overflow.join(', ')}`);
+  if (r.fonts > 1) problems.push(`${r.name}: ${r.fonts} fonts loaded, the page has one`);
 }
 const md = [
   '### Page weight (headless Chrome, local server with gzip, cache off)',
   '',
-  `Budgets: the page with its CSS and JS ≤ ${kb(BUDGET.doc)}, a whole visit scrolled to the bottom ≤ ${kb(BUDGET.page)}, every request to the site itself.`,
+  `Budgets: the page with its CSS and JS ≤ ${kb(BUDGET.doc)}, a whole visit scrolled to the bottom ≤ ${kb(BUDGET.page)} with the font, one font, every request to the site itself, nothing wider than the window.`,
   '',
-  '| visit | requests | page (HTML+CSS+JS) | first screen | whole visit | images | FCP | LCP | load |',
-  '|---|---|---|---|---|---|---|---|---|',
-  ...results.map((r) => `| ${r.name} | ${r.requests} | ${kb(r.doc)} | ${kb(r.firstScreen)} | **${kb(r.total)}** | ${kb(r.images)} | ${ms(r.timing.fcp)} | ${ms(r.timing.lcp)} | ${ms(r.timing.load)} |`),
+  '| visit | requests | page (HTML+CSS+JS) | font | first screen | whole visit | images | FCP | LCP | load | wider than the window |',
+  '|---|---|---|---|---|---|---|---|---|---|---|',
+  ...results.map((r) => `| ${r.name} | ${r.requests} | ${kb(r.doc)} | ${kb(r.fontBytes)} | ${kb(r.firstScreen)} | **${kb(r.total)}** | ${kb(r.images)} | ${ms(r.timing.fcp)} | ${ms(r.timing.lcp)} | ${ms(r.timing.load)} | ${r.overflow.length ? r.overflow.join(', ') : 'no'} |`),
+  '',
+  `Self-test of the sideways-scroll check: ${selfTest.map((t) => `${t.scenario} ${t.path.replace('/__weigh-', '').replace('.html', '')}: ${t.got ? 'flagged' : 'fits'}${t.got === t.want ? '' : ' (WRONG)'}`).join('; ')}.`,
   '',
   'Timings are unthrottled on this machine; Lighthouse gives the throttled ones.',
   '',
@@ -215,7 +247,7 @@ const md = [
   '',
 ].join('\n');
 mkdirSync(outDir, { recursive: true });
-writeFileSync(join(outDir, 'report.json'), JSON.stringify({ origin, budget: BUDGET, results }, null, 2) + '\n');
+writeFileSync(join(outDir, 'report.json'), JSON.stringify({ origin, budget: BUDGET, selfTest, results }, null, 2) + '\n');
 writeFileSync(join(outDir, 'report.md'), md);
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
 console.log(md);

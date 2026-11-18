@@ -4,458 +4,746 @@
   "plugins": [
     {
       "name": "Account Switcher",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "AccountSwitcher"
+        },
+        {
+          "system": "taut",
+          "id": "AccountSwitcher"
+        }
       ]
     },
     {
       "name": "Admin Backend",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "AdminBackend"
+        },
+        {
+          "system": "taut",
+          "id": "AdminBackend"
+        }
       ]
     },
     {
       "name": "Anonymise File Names",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "AnonymiseFileNames"
+        }
       ]
     },
     {
       "name": "Anonymize Filenames",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "AnonymizeFilenames"
+        }
       ]
     },
     {
       "name": "bChannel",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "bChannel"
+        }
       ]
     },
     {
       "name": "Better Blocking",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "BetterBlock"
+        }
       ]
     },
     {
       "name": "Better GIFs",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "BetterGifs"
+        }
       ]
     },
     {
       "name": "Better Huddles",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "BetterHuddles"
+        }
       ]
     },
     {
       "name": "Better Typing Indicator",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "BetterTypingIndicator"
+        },
+        {
+          "system": "taut",
+          "id": "BetterTypingIndicator"
+        }
       ]
     },
     {
       "name": "Bring Back Slackbot",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "BringBackSlackbot"
+        }
       ]
     },
     {
       "name": "Browser Pop-outs",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "BrowserPopouts"
+        }
       ]
     },
     {
       "name": "Call Timer",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "CallTimer"
+        }
       ]
     },
     {
       "name": "Censorship",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "Censorship"
+        },
+        {
+          "system": "taut",
+          "id": "Censorship"
+        }
       ]
     },
     {
       "name": "Channel List Typing",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "ChannelListTyping"
+        }
       ]
     },
     {
       "name": "Character Counter",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "CharacterCounter"
+        }
       ]
     },
     {
       "name": "Chat Tabs",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "ChatTabs"
+        }
       ]
     },
     {
       "name": "Clear URLs",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "ClearURLs"
+        },
+        {
+          "system": "taut",
+          "id": "ClearURLs"
+        }
       ]
     },
     {
       "name": "Click to Load",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "Click2Load"
+        },
+        {
+          "system": "taut",
+          "id": "ClickToLoad"
+        }
       ]
     },
     {
       "name": "Copy Reacted",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "CopyReacted"
+        },
+        {
+          "system": "taut",
+          "id": "CopyReacted"
+        }
       ]
     },
     {
       "name": "Custom Fonts",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "CustomFonts"
+        }
       ]
     },
     {
       "name": "Custom Name Recording",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "CustomNameRecording"
+        },
+        {
+          "system": "taut",
+          "id": "CustomNameRecording"
+        }
       ]
     },
     {
       "name": "Custom Slackbot",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "CustomSlackbot"
+        }
       ]
     },
     {
       "name": "Custom Sounds",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "CustomSounds"
+        }
       ]
     },
     {
       "name": "DeArrow",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "DeArrow"
+        }
       ]
     },
     {
       "name": "Experiments",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "Experiments"
+        },
+        {
+          "system": "taut",
+          "id": "Experiments"
+        }
       ]
     },
     {
       "name": "Faster Slack",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "FasterSlack"
+        }
       ]
     },
     {
       "name": "Haiku Warning",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "HaikuWarning"
+        },
+        {
+          "system": "taut",
+          "id": "HaikuWarning"
+        }
       ]
     },
     {
       "name": "HCA Status",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "HcaStatus"
+        }
       ]
     },
     {
       "name": "Hide Resolved Tickets",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "HideResolved"
+        }
       ]
     },
     {
       "name": "Huddle Activity",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "HuddleActivity"
+        }
       ]
     },
     {
       "name": "Huddle Mute Detector",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "HuddleMuteDetector"
+        }
       ]
     },
     {
       "name": "Human Count",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "HumanCount"
+        },
+        {
+          "system": "taut",
+          "id": "HumanCount"
+        }
       ]
     },
     {
       "name": "IDV Status",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "IdvStatus"
+        }
       ]
     },
     {
       "name": "Ignore Time",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "IgnoreTime"
+        }
       ]
     },
     {
       "name": "Installed Apps",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "InstalledApps"
+        }
       ]
     },
     {
       "name": "Invisible Forward",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "InvisibleForward"
+        }
       ]
     },
     {
       "name": "Last Seen",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "LastSeen"
+        },
+        {
+          "system": "taut",
+          "id": "LastSeen"
+        }
       ]
     },
     {
       "name": "Let Me See",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "LetMeSee"
+        }
       ]
     },
     {
       "name": "Local Time",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "LocalTime"
+        }
       ]
     },
     {
       "name": "Mention Profiles",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "MentionProfiles"
+        }
       ]
     },
     {
       "name": "Message Logger",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "MessageLogger"
+        }
       ]
     },
     {
       "name": "Native At Channel",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "NativeAtChannel"
+        }
       ]
     },
     {
       "name": "Nicknames",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "Nicknames"
+        },
+        {
+          "system": "taut",
+          "id": "Nicknames"
+        }
       ]
     },
     {
       "name": "No Track",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "NoTrack"
+        }
       ]
     },
     {
       "name": "No Tracking",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "NoTrack"
+        }
       ]
     },
     {
       "name": "Not Shit Markdown",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "NotShitMarkdown"
+        }
       ]
     },
     {
       "name": "NoUpsell",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "NoUpsell"
+        }
       ]
     },
     {
       "name": "Office Hours",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "OfficeHours"
+        },
+        {
+          "system": "taut",
+          "id": "OfficeHours"
+        }
       ]
     },
     {
       "name": "oneko",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "oneko"
+        }
       ]
     },
     {
       "name": "Oneko",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "Oneko"
+        }
       ]
     },
     {
       "name": "Online Count",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "OnlineCount"
+        }
       ]
     },
     {
       "name": "Owl Mode",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "OwlMode"
+        }
       ]
     },
     {
       "name": "Private Channel",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "PrivateChannel"
+        }
       ]
     },
     {
       "name": "Private Channel Mapper",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "PrivateChannelMapper"
+        }
       ]
     },
     {
       "name": "Quick Join",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "QuickJoin"
+        },
+        {
+          "system": "taut",
+          "id": "QuickJoin"
+        }
       ]
     },
     {
       "name": "Quiet Spotify",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "QuietSpotify"
+        }
       ]
     },
     {
       "name": "Real Markdown",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "RealMarkdown"
+        }
       ]
     },
     {
       "name": "Restricted Channel Warning",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "RestrictedChannelWarning"
+        },
+        {
+          "system": "taut",
+          "id": "RestrictedChannelWarning"
+        }
       ]
     },
     {
       "name": "Self Care",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "SelfCare"
+        }
       ]
     },
     {
       "name": "Shinigami Eyes",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "ShinigamiEyes"
+        }
       ]
     },
     {
       "name": "Show Real User",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "ShowRealUser"
+        },
+        {
+          "system": "taut",
+          "id": "ShowRealUser"
+        }
       ]
     },
     {
       "name": "Show Sending Bot",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "ShowSendingBot"
+        },
+        {
+          "system": "taut",
+          "id": "ShowSendingBot"
+        }
       ]
     },
     {
       "name": "Shut Up Slackbot",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "ShutUpSlackbot"
+        },
+        {
+          "system": "taut",
+          "id": "ShutUpSlackbot"
+        }
       ]
     },
     {
       "name": "Silent Typing",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "SilentTyping"
+        },
+        {
+          "system": "taut",
+          "id": "SilentTyping"
+        }
       ]
     },
     {
       "name": "Slack Fixes",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "SlackFixes"
+        }
       ]
     },
     {
       "name": "Slick MCP",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "SlickMCP"
+        }
       ]
     },
     {
       "name": "Slim Message Box",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "SlimMessageBox"
+        },
+        {
+          "system": "taut",
+          "id": "SlimMessageBox"
+        }
       ]
     },
     {
       "name": "Snappy",
-      "systems": [
-        "slick"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "Snappy"
+        }
       ]
     },
     {
       "name": "Streamer Mode",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "StreamerMode"
+        },
+        {
+          "system": "taut",
+          "id": "StreamerMode"
+        }
       ]
     },
     {
       "name": "Thread Jump",
-      "systems": [
-        "taut"
+      "variants": [
+        {
+          "system": "taut",
+          "id": "ThreadJump"
+        }
       ]
     },
     {
       "name": "User Pronouns",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "UserPronouns"
+        },
+        {
+          "system": "taut",
+          "id": "UserPronouns"
+        }
       ]
     },
     {
       "name": "Who Reacted",
-      "systems": [
-        "slick",
-        "taut"
+      "variants": [
+        {
+          "system": "slick",
+          "id": "WhoReacted"
+        },
+        {
+          "system": "taut",
+          "id": "WhoReacted"
+        }
       ]
     }
   ]

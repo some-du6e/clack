@@ -11,6 +11,11 @@
 //   - ids are unique, and no page hard-codes a hosting host (github.io,
 //     workers.dev, pages.dev)
 //   - CNAME names the same host as site.json's url
+//   - the one web font is the local subset, preloaded, and covers every
+//     character the headings use (fonts/clack-heading-bold.json)
+//   - with --production: indexable (no noindex, robots.txt allows, a
+//     sitemap and a canonical link); with --preview: not indexable
+//   - with --pages: CNAME is in the build
 // Node built-ins only.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -19,7 +24,9 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 const site = join(dirname(fileURLToPath(import.meta.url)), '..');
-const dist = resolve(process.argv[2] ?? join(site, 'dist'));
+const argv = process.argv.slice(2);
+const mode = { production: argv.includes('--production'), preview: argv.includes('--preview'), pages: argv.includes('--pages') };
+const dist = resolve(argv.find((a) => !a.startsWith('--')) ?? join(site, 'dist'));
 const HTML_GZIP_BUDGET = 30 * 1024;
 const errors = [];
 const err = (m) => errors.push(m);
@@ -53,7 +60,9 @@ for (const page of pages) {
   if (/@import\b/i.test(html)) err(`${page}: CSS @import`);
   if (/<script\b[^>]*\ssrc=/i.test(html)) err(`${page}: an external <script src>`);
   if (/<link\b[^>]*rel="?stylesheet/i.test(html)) err(`${page}: an external stylesheet`);
-  if (/@font-face/i.test(html)) err(`${page}: a web font (the site uses system fonts)`);
+  for (const m of html.matchAll(/@font-face\s*\{([^}]*)\}/gi)) {
+    for (const u of m[1].matchAll(/url\(\s*['"]?([^'")]+)/gi)) if (!/^\/?fonts\/[\w.-]+\.woff2$/.test(u[1])) err(`${page}: @font-face loads ${u[1]}, not a woff2 in fonts/`);
+  }
   for (const u of fetched) {
     if (!local(u)) { err(`${page}: loads ${u} from another host`); continue; }
     const p = u.split(/[?#]/)[0];
@@ -85,6 +94,37 @@ for (const page of pages) {
   for (const host of ['github.io', 'workers.dev', 'pages.dev']) if (html.includes(host)) err(`${page}: hard-codes ${host}`);
 }
 
+// the heading font covers every character the headings show
+const cover = new Set(JSON.parse(readFileSync(join(site, 'fonts', 'clack-heading-bold.json'), 'utf8')).codepoints);
+const indexHtml = readFileSync(join(dist, 'index.html'), 'utf8');
+if (!/<link rel="preload" href="fonts\/clack-heading-bold\.woff2" as="font" type="font\/woff2" crossorigin>/.test(indexHtml)) err('index.html does not preload fonts/clack-heading-bold.woff2');
+const headingText = [];
+for (const m of indexHtml.matchAll(/<(h1|h2|h3)\b[^>]*>([\s\S]*?)<\/\1>/g)) headingText.push(m[2]);
+for (const m of indexHtml.matchAll(/<(\w+)\b[^>]*class="[^"]*\b(brand|strip|pills|gstat|stat|love-left|card-art|deep-title)\b[^"]*"[^>]*>([\s\S]*?)<\/\1>/g)) headingText.push(m[3]);
+const missing = new Set();
+for (const t of headingText) {
+  const text = t.replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+  for (const ch of text) if (!/\s/.test(ch) && !cover.has(ch.codePointAt(0))) missing.add(ch);
+}
+if (missing.size) err(`the heading font lacks ${[...missing].map((c) => `"${c}" U+${c.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`).join(', ')}: add them in tools/font.py and rerun it`);
+
+// indexable in production, never in a preview
+const robots = existsSync(join(dist, 'robots.txt')) ? readFileSync(join(dist, 'robots.txt'), 'utf8') : '';
+const noindex = /<meta name="robots" content="[^"]*noindex/.test(indexHtml);
+if (mode.production) {
+  if (noindex) err('production build: index.html is noindex');
+  if (/^Disallow:\s*\/\s*$/m.test(robots)) err('production build: robots.txt disallows everything');
+  if (!existsSync(join(dist, 'sitemap.xml'))) err('production build: no sitemap.xml');
+  if (!/<link rel="canonical" href="https:\/\//.test(indexHtml)) err('production build: no canonical link');
+}
+if (mode.preview) {
+  if (!noindex) err('preview build: index.html is indexable');
+  if (!/^Disallow:\s*\/\s*$/m.test(robots)) err('preview build: robots.txt lets crawlers in');
+  if (existsSync(join(dist, 'sitemap.xml'))) err('preview build: has a sitemap.xml');
+}
+if (mode.pages && !existsSync(join(dist, 'CNAME'))) err('pages build: no CNAME');
+if (mode.pages && readFileSync(join(dist, 'CNAME'), 'utf8').trim() !== readFileSync(join(site, 'CNAME'), 'utf8').trim()) err('pages build: CNAME differs from site/CNAME');
+
 const cfg = JSON.parse(readFileSync(join(site, 'site.json'), 'utf8'));
 const cname = readFileSync(join(site, 'CNAME'), 'utf8').trim();
 if (cfg.url && new URL(cfg.url).host !== cname) err(`CNAME says ${cname}, site.json's url ${cfg.url}`);
@@ -102,7 +142,7 @@ if (errors.length) {
   console.error(errors.map((e) => `check: ${e}`).join('\n'));
   process.exit(1);
 }
-console.log(`check: ${pages.length} pages ok`);
+console.log(`check: ${pages.length} pages ok${mode.production ? ', production' : ''}${mode.preview ? ', preview' : ''}${mode.pages ? ', pages' : ''}`);
 
 function walk(dir, pre = '') {
   return readdirSync(join(dir, pre), { withFileTypes: true }).flatMap((e) =>

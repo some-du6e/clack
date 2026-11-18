@@ -1,14 +1,22 @@
 # Clack's website
 
-The marketing and download page for Clack, built to load instantly. It's one
-HTML file with its CSS and its only script inlined, system fonts, AVIF and
-WebP screenshots with `srcset`, and no requests to any other host. There's
-no framework and nothing renders on the client. The one script points the
-download buttons at the build for the visitor's system, and without it every
-button goes to the download section, which lists all three.
+The marketing and download page for Clack. It follows the layout of
+slack.com's homepage section for section, with values measured from it
+(sizes, spacing, colours, buttons and breakpoints): the nav, the hero with
+its product frame, the aubergine band, What's new, the section tabs, four
+feature sections, the stats band, the numbers, the cards and the closing
+band. The name, the logo, the screenshots and every word are Clack's own,
+and nothing on the page is copied from slack.com.
+
+It loads instantly: one HTML file with its CSS and its only script inlined,
+one 6 KB web font for the headings, AVIF and WebP screenshots with
+`srcset`, and no requests to any other host. There's no framework and
+nothing renders on the client. The script points the download buttons at
+the build for the visitor's system. Without it every button goes to the
+download section, which lists all three.
 
 Nothing here is public yet. The canonical base is https://getclack.club, but
-GitHub Pages isn't turned on and the domain still has Porkbun's parking
+GitHub Pages isn't turned on, and the domain still has Porkbun's parking
 records ([Going live](#going-live-on-github-pages-at-getclackclub)).
 
 ## Files
@@ -20,11 +28,20 @@ records ([Going live](#going-live-on-github-pages-at-getclackclub)).
 | `src/404.html` | the not-found page |
 | `build.mjs` | writes `dist/`, with Node built-ins only |
 | `site.json` | the canonical base (`url`) and the GitHub repository |
-| `CNAME` | `getclack.club`, copied into the GitHub Pages upload |
-| `data/release.json`, `data/plugins.json` | snapshots of the newest release and the plugin Library index |
-| `img/` | screenshots from CI, made by `tools/images.mjs`, with `images.json` saying where each came from |
+| `CNAME` | the domain again, for GitHub Pages; `tools/check.mjs` keeps it in step with `site.json` |
+| `data/release.json` | the newest complete release, its downloads and the five newest releases' headlines |
+| `data/plugins.json` | the plugin Library index: names, systems and ids |
+| `data/perf.json` | the numbers in the stats band and where they come from |
+| `fonts/` | the heading font, its coverage list and its licence |
+| `img/` | the screenshots, made by `tools/images.mjs`, with `images.json` saying where each came from |
 | `tools/check.mjs`, `tools/weigh.mjs`, `lighthouserc*.json` | the budgets CI holds the page to |
+| `tools/font.py` | makes the heading font from TeX Gyre Adventor |
+| `wrangler.jsonc` | for serving the site from Cloudflare instead |
 | `package.json` | Lighthouse CI for CI, and sharp for `tools/images.mjs`; the build needs neither |
+
+The plugin verdicts on the page come from `internal/pluginlib/compat.go`,
+the table Clack itself shows in Preferences, so the build reads it from the
+repository.
 
 ## Build it and look at it
 
@@ -37,55 +54,65 @@ node build.mjs --refresh           # fetch the newest release and Library index 
 python3 -m http.server -d dist 8080
 ```
 
-`--preview` makes a build for a preview host: `noindex`, and a robots.txt
-that turns every crawler away. `--strict` fails when any download is
-missing from the release.
+`--pages` adds the CNAME file for GitHub Pages. `--preview` makes a build
+for a preview host: `noindex`, and a robots.txt that turns every crawler
+away. `--strict` fails when any download is missing from the release.
 
-The download links come from the newest `v*` release that has its files
-up. Every Clack release so far is a pre-release, so GitHub's
-`/releases/latest` doesn't work and the build bakes the version into the
-links. The Pages deploy runs `--refresh` each time, so it should run after
-each release (see step 6 below).
+The download links come from the newest release, by tag version, that has
+every download up. If the newest release is missing one, an ARM build for
+example, the page stays on the last complete release. Every Clack release
+so far is a pre-release, so GitHub's `/releases/latest` doesn't work and the
+build bakes the version into the links.
 
 ## Budgets
 
 `.github/workflows/site.yml` runs on every push or pull request that
-touches `site/`, and by hand with `gh workflow run site.yml`:
+touches `site/`, `assets/icon.svg` or `compat.go`, and by hand with
+`gh workflow run site.yml`. It checks two builds: the committed snapshot,
+and a fresh `--refresh --pages` build like the one the Pages deploy makes.
+For each:
 
 - `tools/check.mjs`: `index.html`, with all of its CSS and JS, is at most
-  30 KB gzipped. Nothing loads from another host. Every local file a page
-  names exists, every image has alt text, width and height, and every
-  image but the hero is lazy.
+  30 KB gzipped. Nothing loads from another host, the only font is the
+  local subset, and it covers every character the headings use. Every local
+  file a page names exists, every image has alt text, width and height, and
+  every image but the hero is lazy. The production build is indexable, with
+  a canonical link, a sitemap and CNAME; `--preview` checks the opposite.
 - `tools/weigh.mjs`: headless Chrome loads the page from a gzip server on
-  127.0.0.1 at desktop 1x and 2x and on two phones, in light and dark. It
-  scrolls to the bottom so every lazy image loads. A whole visit has to stay
-  under 300 KB, no request may leave 127.0.0.1, and the page must not scroll
-  sideways.
-- Lighthouse CI on the home page, mobile and desktop, three runs each:
-  performance at least 99 on the median run, accessibility 100, FCP at
-  most 1 s and LCP at most 1.2 s on mobile (0.4 s and 0.5 s on desktop),
-  TBT at most 50 ms, CLS at most 0.01, the page at most 30 KB on the wire,
-  and no third-party, font, script or stylesheet requests.
+  127.0.0.1 on two desktops, a tablet and two phones, and scrolls to the
+  bottom so every lazy image loads. A whole visit has to stay under 300 KB
+  with the font, load one font, keep every request on 127.0.0.1, and fit
+  the window. Before that it loads a page that's too wide on purpose and
+  fails the run if the width check doesn't catch it.
+- Lighthouse CI on the home page and the 404 page, mobile and desktop, three
+  runs each: performance at least 99 on the median run, accessibility 100,
+  FCP at most 1 s and LCP at most 1.2 s on mobile (0.4 s and 0.5 s on
+  desktop), TBT at most 50 ms, CLS at most 0.01, the page at most 30 KB on
+  the wire, one font, and no third-party, script or stylesheet requests.
+  SEO is checked on the home page only, because the 404 page is noindex on
+  purpose.
 
-The run's summary has both tables, and the `site` artifact has the build
-and the Lighthouse reports.
+`site-pages.yml` runs the same checks on the build it deploys, and uploads
+that same directory.
 
 ## Screenshots
 
 Every picture is `clack demo`, a made-up company on a fake Slack server
 inside the app, taken by the demo workflow (`.github/workflows/demo.yml`).
-No real workspace, person or message appears on the site.
+No real workspace, person or message appears on the site. slack.com has no
+dark mode, so neither does the page, and every shot is the light theme
+except the Mood Indigo tile.
 
 | picture | file in the run's `demo-shots` artifact | test |
 |---|---|---|
-| hero | `readme/demo-main-{light,dark}.png`, #sales-leaderboard | `TestDemoReadmeShots` |
-| Channels | `readme/demo-huddle-{light,dark}.png`, #party-planning-crew with a live huddle | `TestDemoReadmeShots` |
-| Threads | `readme/demo-thread-{light,dark}.png`, #it-help's busiest thread | `TestDemoReadmeShots` |
-| Activity | `readme/demo-activity-{light,dark}.png` | `TestDemoReadmeShots` |
+| hero | `readme/demo-main-light.png`, #sales-leaderboard | `TestDemoReadmeShots` |
+| aubergine band | `demo-surface-light-emoji-picker.png`, cropped to 1314×900 | `TestDemoSurfaces` |
+| Channels | `readme/demo-huddle-light.png`, #party-planning-crew with a live huddle | `TestDemoReadmeShots` |
+| Threads | `readme/demo-thread-light.png`, #it-help's busiest thread | `TestDemoReadmeShots` |
+| Activity | `readme/demo-activity-light.png` | `TestDemoReadmeShots` |
 | Themes | `site/demo-theme-{jade,lagoon,clementine}-light.png`, `site/demo-theme-mood-indigo-dark.png`, top-left 720×450 | `TestDemoSiteShots` |
 
-The light or dark version follows the visitor's system. The current set
-is from demo run 44198572787. To take new ones:
+The current set is from demo run 44198572787. To take new ones:
 
 ```sh
 gh workflow run demo.yml --repo some-du6e/clack --ref <branch>
@@ -93,30 +120,68 @@ gh run download <run> --repo some-du6e/clack --name demo-shots --dir <dir>
 cd site && npm install && node tools/images.mjs --run <run> --from <dir>
 ```
 
+## The heading font
+
+slack.com sets its headings in a licensed Avant Garde. The page uses
+"Clack Heading", a subset of TeX Gyre Adventor Bold 2.501 from GUST's
+e-foundry, which is free under the GUST Font License (`fonts/`). On the
+page's strings its widths are within 1.4% of slack.com's, and cap height
+and x-height are the same. The subset is 107 characters with kerning,
+renamed as the licence asks of derived fonts. `@font-face` sets Avant
+Garde's vertical metrics, so baselines land where slack.com's do, and the
+fallback face is Arial Bold scaled to the same widths, so nothing moves when
+the font arrives. To rebuild it, see the top of `tools/font.py`.
+
+Body text uses the system UI font.
+
+## The numbers
+
+`data/perf.json` holds the stats and their notes, taken from one perf run
+(`.github/workflows/perf.yml`). The current ones are from run 44220175072
+on 557993a, the commit tagged v0.1.0-alpha.106. Perf builds that commit with
+the `perfharness` tag so it can talk to a local fake server, which a
+release build refuses. To update them, take a run on a release commit and
+copy its startup.md (head rows) and scale.md (Windows) figures into
+`data/perf.json`, notes included.
+
 ## The canonical base
 
-`site.json`'s `url` is the only place the domain lives. The build uses it
-for the canonical link, `og:url`, `og:image`, `sitemap.xml` and the
-sitemap line in robots.txt. `SITE_URL` or `--site-url` overrides it for one
-build, and an empty value leaves those tags out. Every other URL on the
-page is relative, so the same build works at the domain's root, on a
-preview host, or under `some-du6e.github.io/clack/` before the domain is
-attached.
+`site.json`'s `url` and `CNAME` are the only places the domain lives, and
+`tools/check.mjs` fails when they disagree. The build uses the URL for the
+canonical link, `og:url`, `og:image`, `sitemap.xml` and the sitemap line in
+robots.txt. `SITE_URL` or `--site-url` overrides it for one build, and an
+empty value leaves those tags out. Every other URL on the page is relative.
+The 404 page links to `/`, so it expects to be served at a domain's root,
+as it will be on getclack.club.
 
 ## Going live on GitHub Pages at getclack.club
 
 None of this is done yet. getclack.club is registered at Porkbun, and on
 2026-11-17 it still had Porkbun's parking records: the apex resolved to
 Porkbun's parking addresses, and every subdomain was a CNAME to
-pixie.porkbun.com.
+pixie.porkbun.com. Do the steps in this order. Pointing DNS at GitHub
+before the domain is verified and claimed would let someone else's Pages
+site claim it in the meantime, which GitHub's docs warn about.
 
-1. **Remove the parking records.** In Porkbun, open Domain Management,
-   then getclack.club, then DNS. Delete the ALIAS record on the apex and the
-   wildcard CNAME `*.getclack.club`, both of which point at
-   `pixie.porkbun.com`. GitHub warns against wildcard records, because they
-   let someone else's Pages site claim your subdomains.
+1. **Verify the domain for the account.** In github.com/settings/pages
+   (the some-du6e account's settings, not the repository's), add
+   getclack.club. GitHub shows a TXT record. Add it at Porkbun (Domain
+   Management, then getclack.club, then DNS) with Host
+   `_github-pages-challenge-some-du6e` and GitHub's code as the Answer, then
+   click Verify. After that, only some-du6e's repositories can use the
+   domain.
 
-2. **Add GitHub Pages' records.** Leave Host empty for the apex:
+2. **Turn on Pages and claim the domain for the repository.** In the
+   repository's Settings, then Pages, set Source to "GitHub Actions" and
+   Custom domain to `getclack.club`, then Save. The DNS check fails until
+   step 3; that's expected. With an Actions deploy, GitHub reads the domain
+   from this setting and ignores a CNAME file in the upload. The build adds
+   `site/CNAME` anyway, so the upload names its domain.
+
+3. **Point DNS at GitHub Pages.** At Porkbun, delete the parking records:
+   the ALIAS on the apex and the wildcard CNAME `*.getclack.club`, both
+   pointing at `pixie.porkbun.com`. GitHub warns against wildcard records.
+   Then add these, with Host empty for the apex:
 
    | Type | Host | Answer | TTL |
    |---|---|---|---|
@@ -131,34 +196,23 @@ pixie.porkbun.com.
    | CNAME | www | some-du6e.github.io | 600 |
 
    The AAAA records are optional and give IPv6 visitors a direct route.
-   With both the apex and `www` set up, GitHub redirects
-   www.getclack.club to getclack.club.
+   With both the apex and `www` set up, GitHub redirects www.getclack.club
+   to getclack.club.
 
-3. **Verify the domain for the account.** In github.com/settings/pages
-   (the some-du6e account's settings, not the repository's), add
-   getclack.club. GitHub shows a TXT record. Add it at Porkbun with Host
-   `_github-pages-challenge-some-du6e` and GitHub's code as the Answer, then
-   click Verify. After that, only some-du6e's repositories can use the
-   domain.
-
-4. **Turn on Pages for the repository.** In Settings, then Pages, set
-   Source to "GitHub Actions" and Custom domain to `getclack.club`, then
-   Save. GitHub checks the DNS. When the certificate is ready, which can
-   take a while after the DNS change, tick "Enforce HTTPS".
-
-   With an Actions deploy, GitHub reads the domain from this setting and
-   ignores a CNAME file in the upload. `site-pages.yml` copies `site/CNAME`
-   into the upload anyway, so the upload names its domain, and a deploy from
-   a branch would read it.
-
-5. **Deploy.** `site-pages.yml` has to be on `main` before it can be
+4. **Deploy.** `site-pages.yml` has to be on `main` before it can be
    dispatched. Then run
    `gh workflow run site-pages.yml --repo some-du6e/clack` and open
    https://getclack.club.
 
+5. **Turn on HTTPS.** When the certificate is ready, which can take a while
+   after the DNS change, tick "Enforce HTTPS" in the Pages settings.
+
 6. **Redeploy on releases.** Uncomment `workflow_run` in `site-pages.yml`
    so each release redeploys with its downloads, and `push` to deploy site
-   changes that land on `main`.
+   changes that land on `main`. Until then the site stays on the release it
+   was built with. The download links point into the release itself, so
+   they break for as long as a rerun of release.yml has that release back
+   in draft.
 
 ## Or Cloudflare
 
@@ -170,12 +224,15 @@ Cloudflare instead of GitHub:
    the domain's Authoritative Nameservers, replace Porkbun's four
    nameservers with the two Cloudflare gives you. Don't add GitHub's
    records from above.
-2. Deploy the build:
-   `node build.mjs --refresh && wrangler deploy ./dist --name clack-site --compatibility-date <today>`.
-3. In the Worker's Settings, then Domains & Routes, add `getclack.club`
-   and `www.getclack.club` as custom domains. Cloudflare creates the DNS
+2. Build and deploy with the config here, which serves `404.html` for
+   unknown paths: `node build.mjs --refresh && wrangler deploy`.
+3. In the Worker's Settings, then Domains & Routes, add `getclack.club` and
+   `www.getclack.club` as custom domains. Cloudflare creates the DNS
    records and the certificate.
 
-Cloudflare Pages works the same way, with a custom domain on the Pages
-project. It reads `_headers` and `_redirects` files, which this site
-doesn't need. Use one host for the apex, not both.
+Cloudflare adds Network Error Logging headers (`nel` and `report-to`) to
+its responses, so a visitor's browser can report failed loads to
+a.nel.cloudflare.com. That breaks "no requests to any other host" for those
+visitors. Remove both headers with a Response Header Transform Rule on the
+zone, or use GitHub Pages, which doesn't send them. Use one host for the
+apex, not both.

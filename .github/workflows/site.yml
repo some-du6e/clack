@@ -1,30 +1,39 @@
 name: site
-# Clack's website (site/, see site/README.md). Builds it from the committed
-# snapshots and holds it to its "loads instantly" budgets:
+# Clack's website (site/, see site/README.md). Two builds, each held to every
+# budget:
+#   - snapshot: the committed data/ (what this commit's page says)
+#   - newest: data/ fetched again from GitHub (the newest complete release,
+#     the plugin Library), built with --pages the way site-pages.yml builds
+#     what it deploys (site-pages.yml runs these same checks on its build)
+# The budgets:
 #   - tools/check.mjs: index.html, with all of its CSS and JS inlined, is at
-#     most 30 KB gzipped; nothing loads from another host; every local file
-#     the pages name exists; images have alt, width and height and are lazy
-#     below the hero
+#     most 30 KB gzipped; nothing loads from another host; the one font is
+#     the local subset and covers every heading character; every local file
+#     exists; images have alt, width and height and are lazy below the hero;
+#     the build is indexable, with a sitemap, a canonical link and CNAME
 #   - tools/weigh.mjs: headless Chrome loads the page from a gzip server on
-#     127.0.0.1 at desktop 1x and 2x and on phones, light and dark, scrolls
-#     to the bottom and adds up the bytes: at most 300 KB a visit, no
-#     request off 127.0.0.1, no sideways scroll
-#   - Lighthouse CI, mobile and desktop, three runs each: performance >= 99
-#     (median run), accessibility 100, FCP, LCP, TBT and CLS budgets, total
-#     bytes, no third-party, font, script or stylesheet requests
-# Then it rebuilds from the newest release and Library index (what the
-# Pages deploy does) and checks that too. Static pages only: nothing here
-# talks to Slack, and nothing is deployed.
+#     127.0.0.1 on desktops, a tablet and phones, scrolls to the bottom and
+#     adds up the bytes: at most 300 KB a visit with the font, one font, no
+#     request off 127.0.0.1, and nothing wider than the window (it first
+#     proves that check catches a page that's too wide)
+#   - Lighthouse CI on the home page and the 404 page, mobile and desktop,
+#     three runs each: performance >= 99 (median run), accessibility 100,
+#     FCP, LCP, TBT and CLS budgets, total bytes, no third-party, script or
+#     stylesheet requests, one font; SEO on the home page only (the 404 page
+#     is noindex on purpose)
+# Static pages only: nothing here talks to Slack or deploys anything.
 on:
   push:
     paths:
       - "site/**"
       - "assets/icon.svg"
+      - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
   pull_request:
     paths:
       - "site/**"
       - "assets/icon.svg"
+      - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 
@@ -32,12 +41,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: site-${{ github.ref }}
+  group: site-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   budget:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [snapshot, newest]
+    name: budget (${{ matrix.source }})
     defaults:
       run:
         working-directory: site
@@ -52,9 +66,13 @@ jobs:
       - name: tools (Lighthouse CI)
         run: npm ci --ignore-scripts --omit=optional --no-audit --no-fund
       - name: build
-        run: node build.mjs --strict
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE: ${{ matrix.source }}
+        run: |
+          if [ "$SOURCE" = newest ]; then node build.mjs --refresh --strict --pages; else node build.mjs --strict --pages; fi
       - name: static checks
-        run: node tools/check.mjs
+        run: node tools/check.mjs --production --pages
       - name: page weight in headless Chrome
         if: ${{ !cancelled() }}
         run: node tools/weigh.mjs
@@ -66,29 +84,27 @@ jobs:
         run: ./node_modules/.bin/lhci autorun --config=lighthouserc.desktop.json
       - name: Lighthouse scores
         if: ${{ !cancelled() }}
+        env:
+          SOURCE: ${{ matrix.source }}
         run: |
-          python3 -I - "$GITHUB_STEP_SUMMARY" <<'EOF'
+          python3 -I - "$GITHUB_STEP_SUMMARY" "$SOURCE" <<'EOF'
           import json, glob, sys
           rows = []
           for preset in ("mobile", "desktop"):
               for f in sorted(glob.glob(f"lhci/{preset}/*.report.json")):
                   r = json.load(open(f))
                   c, a = r["categories"], r["audits"]
-                  rows.append(f"| {preset} | " + " | ".join(str(round((c[k]["score"] or 0) * 100)) for k in ("performance", "accessibility", "best-practices", "seo"))
-                              + " | " + " | ".join(a[k]["displayValue"] for k in ("first-contentful-paint", "largest-contentful-paint", "total-blocking-time", "cumulative-layout-shift", "total-byte-weight")) + " |")
-          out = ["### Lighthouse", "", "| preset | perf | a11y | best practices | SEO | FCP | LCP | TBT | CLS | bytes |", "|---|---|---|---|---|---|---|---|---|---|", *rows, ""]
+                  page = r["finalDisplayedUrl"].split("/", 3)[-1] or "/"
+                  rows.append(f"| {preset} | /{page.lstrip('/')} | " + " | ".join(str(round((c[k]["score"] or 0) * 100)) for k in ("performance", "accessibility", "best-practices", "seo"))
+                              + " | " + " | ".join(a[k].get("displayValue", "") for k in ("first-contentful-paint", "largest-contentful-paint", "total-blocking-time", "cumulative-layout-shift", "total-byte-weight")) + " |")
+          out = [f"### Lighthouse ({sys.argv[2]})", "", "| preset | page | perf | a11y | best practices | SEO | FCP | LCP | TBT | CLS | bytes |", "|---|---|---|---|---|---|---|---|---|---|---|", *rows, ""]
           open(sys.argv[1], "a").write("\n".join(out) + "\n")
           print("\n".join(out))
           EOF
-      - name: build from the newest release (what the Pages deploy runs)
-        if: ${{ !cancelled() }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node build.mjs --refresh --strict --out "$RUNNER_TEMP/site-newest" && node tools/check.mjs "$RUNNER_TEMP/site-newest"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
-          name: site
+          name: site-${{ matrix.source }}
           path: |
             site/dist
             site/weigh

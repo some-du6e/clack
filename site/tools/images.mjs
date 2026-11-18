@@ -26,14 +26,19 @@ if (!run || !from) {
   process.exit(2);
 }
 
-// The window is 1440x900. The theme tiles crop its top-left 720x450: the
-// rail, the sidebar and the start of the channel, where a theme shows.
+// The window is 1440x900. slack.com has no dark mode, so neither does the
+// site: every picture is the light theme. The theme tiles crop the window's
+// top-left 720x450 (the rail, the sidebar and the start of the channel,
+// where a theme shows); the dark band's picture crops it to the 677x463
+// shape of the media slot it fills.
 const TILE = { left: 0, top: 0, width: 720, height: 450 };
+const BAND = { left: 0, top: 0, width: 1314, height: 900 };
 const SHOTS = [
-  { name: 'hero', light: 'readme/demo-main-light.png', dark: 'readme/demo-main-dark.png', widths: [720, 1080, 1440] },
-  { name: 'channel', light: 'readme/demo-huddle-light.png', dark: 'readme/demo-huddle-dark.png', widths: [640, 960, 1200] },
-  { name: 'thread', light: 'readme/demo-thread-light.png', dark: 'readme/demo-thread-dark.png', widths: [640, 960, 1200] },
-  { name: 'activity', light: 'readme/demo-activity-light.png', dark: 'readme/demo-activity-dark.png', widths: [640, 960, 1200] },
+  { name: 'hero', light: 'readme/demo-main-light.png', widths: [640, 960, 1440] },
+  { name: 'band', light: 'demo-surface-light-emoji-picker.png', crop: BAND, widths: [680, 1020, 1314] },
+  { name: 'channel', light: 'readme/demo-huddle-light.png', widths: [720, 1080, 1440] },
+  { name: 'thread', light: 'readme/demo-thread-light.png', widths: [720, 1080, 1440] },
+  { name: 'activity', light: 'readme/demo-activity-light.png', widths: [720, 1080, 1440] },
   { name: 'theme-jade', light: 'site/demo-theme-jade-light.png', crop: TILE, widths: [360, 540, 720] },
   { name: 'theme-lagoon', light: 'site/demo-theme-lagoon-light.png', crop: TILE, widths: [360, 540, 720] },
   { name: 'theme-clementine', light: 'site/demo-theme-clementine-light.png', crop: TILE, widths: [360, 540, 720] },
