@@ -1538,6 +1538,16 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	v.visN, v.dirty = len(page.Items), false
 }
 
+// OpenedItem is the opened row's key ("" while none is): the --selected
+// row, its item beside the list or in the view's own pane. (Not
+// Selected: bbm's breadcrumb reads a view's Selected as a conversation.)
+func (v *Activity) OpenedItem() string {
+	if v.selOK {
+		return v.selKey
+	}
+	return ""
+}
+
 // unreadsSel is the opened row's key while Unreads is on ("" otherwise),
 // the one read row its list keeps.
 func (v *Activity) unreadsSel() string {

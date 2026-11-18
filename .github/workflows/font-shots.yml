@@ -29,7 +29,9 @@ name: font-shots
 # run TestRailShots (internal/ui/rail_shots_test.go) and
 # .github/scripts/rail_ref.py: every tab rail button idle, hovered, selected,
 # after a mouse click (and Slack's keyboard focus) against Slack's tab rail
-# markup, with the badge's ring measured.
+# markup, with the badge's ring measured, at 1x also under account themes
+# (Karim's #FED4BE, a dark custom colour) with Slack's tokens for them
+# (internal/ui/testdata/theme-oracle.json, from Slack's own code).
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run font-shots.yml --ref <branch>)
@@ -52,6 +54,7 @@ on:
       - "internal/ui/rail_shots_test.go"
       - "internal/ui/chrome.go"
       - ".github/scripts/rail_ref.py"
+      - "internal/ui/testdata/theme-oracle.json"
       - ".github/scripts/sidebar_rows_ref.py"
       - ".github/scripts/text_render_compare.py"
       - ".github/workflows/font-shots.yml"
