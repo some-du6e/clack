@@ -154,7 +154,7 @@ func flagRow(h Host, m core.Message, conv core.Conv) (MenuItem, bool) {
 			label = "Flag channel description"
 		}
 	}
-	return MenuItem{Key: "flag_message", Label: label, Icon: "warning", DangerHighlight: true, Do: func() { OpenFlagMessageDialog(h, m) }}.In(nsMsgActionItems), true
+	return MenuItem{Key: "flag_message", Action: "flag_message", Label: label, Icon: "warning", DangerHighlight: true, Do: func() { OpenFlagMessageDialog(h, m) }}.In(nsMsgActionItems), true
 }
 
 // flagExternal is ed's n: the message comes from another org. With

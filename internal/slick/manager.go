@@ -69,6 +69,7 @@ type plugin struct {
 	running     bool
 	mainRunning bool
 	startError  string
+	mainError   string // its privileged half's ready failed (the renderer runs without it, as in Slick)
 }
 
 const (
@@ -432,11 +433,15 @@ func (s *Slick) startLocked(ctx context.Context, p *plugin, settings map[string]
 			s.fail(p, "main half: "+err.Error())
 			return
 		}
+		// Slick logs a failed ready and runs the renderer without its half
+		// (pluginHost.ts start); Clack also says so on the plugin's page
+		s.mu.Lock()
 		if problem == nil {
-			s.mu.Lock()
-			p.mainRunning = true
-			s.mu.Unlock()
+			p.mainRunning, p.mainError = true, ""
+		} else {
+			p.mainError = *problem
 		}
+		s.mu.Unlock()
 		s.refreshSwitches(ctx, rt, p, settings)
 	}
 	var problem *string

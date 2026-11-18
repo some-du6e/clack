@@ -70,10 +70,18 @@ func MessageShortcutItems(h Host, m core.Message) []popups.MenuItem {
 		}
 		s := s
 		n++
-		items = append(items, popups.MenuItem{Label: s.Name, Right: s.AppName, Do: func() { RunShortcut(h, s, m.Channel, m.TS) }})
+		// Slack's appActionToMessageAction (oyTq): the shortcut's action id,
+		// data-qa app_action_<id>
+		it := popups.MenuItem{Action: s.ActionID, Label: s.Name, Right: s.AppName, Do: func() { RunShortcut(h, s, m.Channel, m.TS) }}
+		if s.ActionID != "" {
+			it.QA = "app_action_" + s.ActionID
+		}
+		items = append(items, it)
 	}
 	ch, ts := m.Channel, m.TS
-	items = append(items, popups.MenuItem{Label: "More message shortcuts…", Icon: "lightning", Do: func() {
+	// Slack's browse_apps row (2rcC e3): app_message_actions_dialog when it
+	// opens the shortcuts dialog
+	items = append(items, popups.MenuItem{Action: "browse_apps", QA: "app_message_actions_dialog", Label: "More message shortcuts…", Icon: "lightning", Do: func() {
 		OpenShortcuts(h, pointerAt(h, image.Point{}), "message_action", ch, ts)
 	}})
 	return items

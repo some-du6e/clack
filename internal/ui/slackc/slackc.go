@@ -350,6 +350,16 @@ type EventBridge interface {
 	CallEvent(fn int64, args []byte, done func(stopped bool))
 }
 
+// TruthyBridge is implemented by bridges that call a JS function prop the
+// way Slack calls a handler whose return value decides what runs next
+// (MAMenu's dispatchMessageAction: `onSelectAction(…) || native(…)`):
+// done hears, on any goroutine, whether it returned something truthy as
+// JS sees it, right away (a returned Promise is truthy and isn't awaited),
+// or threw; err when no runtime answered (none, or it went away first).
+type TruthyBridge interface {
+	CallTruthy(fn int64, args []byte, done func(truthy, threw bool, err error))
+}
+
 // NestedBridge is implemented by bridges that can mount a root inside
 // another root's React tree (a portal under the host node parentK of
 // root parent), so React context flows from a parent patch into the
