@@ -351,7 +351,30 @@ type Resource struct {
 type Texture2D struct {
 	Vtbl *struct {
 		_IUnknownVTbl
+		// ID3D11DeviceChild, ID3D11Resource, then GetDesc (Clack patch 46)
+		GetDevice               uintptr
+		GetPrivateData          uintptr
+		SetPrivateData          uintptr
+		SetPrivateDataInterface uintptr
+		GetType                 uintptr
+		SetEvictionPriority     uintptr
+		GetEvictionPriority     uintptr
+		GetDesc                 uintptr
 	}
+}
+
+// GetDesc is the texture's description (Clack patch 46: the size of the
+// swap chain's buffer a frame is copied into).
+func (t *Texture2D) GetDesc() TEXTURE2D_DESC {
+	var desc TEXTURE2D_DESC
+	syscall.Syscall(
+		t.Vtbl.GetDesc,
+		2,
+		uintptr(unsafe.Pointer(t)),
+		uintptr(unsafe.Pointer(&desc)),
+		0,
+	)
+	return desc
 }
 
 type Buffer struct {

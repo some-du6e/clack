@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"hash/maphash"
 	"image"
+	"log"
 	"math"
 	"sync/atomic"
 
@@ -118,9 +119,11 @@ type partialMode struct{ textures, frameTex bool }
 
 // partialFrames is what the GPU keeps between frames for partial frames.
 type partialFrames struct {
-	// the switches and ClackPartialReset's epoch the state is from
-	mode  partialMode
-	epoch uint64
+	// the switches and ClackPartialReset's epoch the state is from;
+	// logged: that the device draws every frame whole
+	mode   partialMode
+	epoch  uint64
+	logged bool
 	// atlas is the coverage atlas's sticky places (clack_sticky.go)
 	atlas stickyAtlas
 	// frameTex keeps a window's frames (frameSize); nil until one needs it
@@ -332,7 +335,14 @@ func (g *gpu) partialOn(target RenderTarget, viewport image.Point) bool {
 	dev, ok := g.ctx.(clackPartialDevice)
 	_, isTex := target.(driver.Texture)
 	mode := partialMode{textures: clackPartial.textures.Load(), frameTex: clackPartial.frameTex.Load()}
-	on := !clackPartial.off.Load() && ok && dev.ClackPartialOK() && viewport.X > 0 && viewport.Y > 0 &&
+	capable := ok && dev.ClackPartialOK()
+	if !capable && !isTex && !p.logged {
+		// a window drawing every frame whole: Vulkan (X11 with the GPU
+		// blocklist ignored), a shared or old OpenGL context
+		p.logged = true
+		log.Printf("gio: this window's frames are drawn whole: its %T device can't draw partial frames", g.ctx)
+	}
+	on := !clackPartial.off.Load() && capable && viewport.X > 0 && viewport.Y > 0 &&
 		(!isTex || mode.textures || mode.frameTex)
 	if ep := clackPartial.epoch.Load(); !on || p.mode != mode || p.epoch != ep {
 		g.partialRelease()
@@ -431,10 +441,76 @@ func (g *gpu) partialEnd(defFBO driver.Texture, out partialTarget, viewport imag
 		return
 	}
 	if out.copy {
-		g.ctx.(driver.ClackPartial).ClackCopyToTarget(defFBO, out.tex, viewport)
+		if dev := g.ctx.(driver.ClackPartial); dev.ClackCopyDraws() {
+			g.renderer.drawCopy(defFBO, out.tex, viewport)
+		} else {
+			dev.ClackCopyToTarget(defFBO, out.tex, viewport)
+		}
 		g.renderer.stats.CopyPx += int64(viewport.X * viewport.Y)
 	}
 	g.partial.valid = true
+}
+
+// drawCopy draws src into target over the whole viewport (Metal's frame
+// copy: a drawable is framebufferOnly): one quad sampling src at its texel
+// centres (nearest), with blending off, through the window's transform as
+// the frame drew into src. Exact for 8-bit sRGB: decoding a texel and
+// encoding it again gives the texel back.
+func (r *renderer) drawCopy(target, src driver.Texture, viewport image.Point) {
+	pl := r.copyPipeline()
+	r.ctx.BeginRenderPass(target, driver.LoadDesc{Action: driver.LoadActionInvalidate})
+	r.stats.Passes++
+	r.ctx.Viewport(0, 0, viewport.X, viewport.Y)
+	r.ctx.BindPipeline(pl.pipeline)
+	r.ctx.BindVertexBuffer(r.blitter.quadVerts, 0)
+	r.ctx.BindTexture(0, src)
+	u := r.copyUniforms
+	u.transform = [4]float32{1, 1, 0, 0}
+	u.uvTransformR1 = [4]float32{1, 0, 0, 0}
+	u.uvTransformR2 = [4]float32{0, 1, 0, 0}
+	u.opacity = 1
+	u.fbo = 0
+	pl.UploadUniforms(r.ctx)
+	r.ctx.DrawArrays(0, 4)
+	r.stats.Draws++
+	r.ctx.EndRenderPass()
+}
+
+// copyPipeline is drawCopy's pipeline (made on first use).
+func (r *renderer) copyPipeline() *pipeline {
+	if r.copyPipe != nil {
+		return r.copyPipe
+	}
+	r.copyUniforms = new(blitTexUniforms)
+	vsh, err := r.ctx.NewVertexShader(gio.Shader_blit_vert)
+	if err != nil {
+		panic(err)
+	}
+	defer vsh.Release()
+	fsh, err := r.ctx.NewFragmentShader(gio.Shader_blit_frag[materialTexture])
+	if err != nil {
+		panic(err)
+	}
+	defer fsh.Release()
+	pipe, err := r.ctx.NewPipeline(driver.PipelineDesc{
+		VertexShader:   vsh,
+		FragmentShader: fsh,
+		BlendDesc:      driver.BlendDesc{SrcFactor: driver.BlendFactorOne, DstFactor: driver.BlendFactorZero},
+		VertexLayout: driver.VertexLayout{
+			Inputs: []driver.InputDesc{
+				{Type: shader.DataTypeFloat, Size: 2, Offset: 0},
+				{Type: shader.DataTypeFloat, Size: 2, Offset: 4 * 2},
+			},
+			Stride: 4 * 4,
+		},
+		PixelFormat: driver.TextureFormatOutput,
+		Topology:    driver.TopologyTriangleStrip,
+	})
+	if err != nil {
+		panic(err)
+	}
+	r.copyPipe = &pipeline{pipe, newUniformBuffer(r.ctx, byteslice.View(r.copyUniforms))}
+	return r.copyPipe
 }
 
 // frameTexture is the frame texture at size sz, made again for a new size

@@ -865,8 +865,12 @@ func (b *Backend) EndFrame() {
 	b.endCmdBuffer(false)
 }
 
-// ClackPartialOK implements driver.ClackPartial (Clack patch 45).
+// ClackPartialOK implements driver.ClackPartial (Clack patch 46).
 func (b *Backend) ClackPartialOK() bool { return true }
+
+// ClackCopyDraws implements driver.ClackPartial: the drawable is
+// framebufferOnly, so the frame is drawn into it.
+func (b *Backend) ClackCopyDraws() bool { return true }
 
 // ClackScissor implements driver.ClackPartial: the render encoder's
 // scissor rectangle, inside its target (a new encoder's is the whole

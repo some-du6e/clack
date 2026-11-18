@@ -78,6 +78,9 @@ type renderer struct {
 	// pages, made on first use (Clack patch 45)
 	fills        [2]*pipeline
 	fillUniforms *blitColUniforms
+	// copyPipe draws the frame texture into a window's target (Metal)
+	copyPipe     *pipeline
+	copyUniforms *blitTexUniforms
 }
 
 type drawOps struct {
@@ -784,6 +787,9 @@ func (r *renderer) release() {
 		if p != nil {
 			p.Release()
 		}
+	}
+	if r.copyPipe != nil {
+		r.copyPipe.Release()
 	}
 }
 

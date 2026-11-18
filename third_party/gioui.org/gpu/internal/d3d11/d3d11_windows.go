@@ -208,8 +208,12 @@ func (b *Backend) releaseRaster() {
 	}
 }
 
-// ClackPartialOK implements driver.ClackPartial (Clack patch 45).
+// ClackPartialOK implements driver.ClackPartial (Clack patch 46).
 func (b *Backend) ClackPartialOK() bool { return b.raster[1] != nil }
+
+// ClackCopyDraws implements driver.ClackPartial: a copy into the swap
+// chain's buffer.
+func (b *Backend) ClackCopyDraws() bool { return false }
 
 // ClackScissor implements driver.ClackPartial: the scissoring rasterizer
 // state and its rectangle, or the plain state again.
@@ -243,6 +247,16 @@ func (b *Backend) ClackCopyToTarget(target, src driver.Texture, size image.Point
 		res = dst.renderTarget.GetResource()
 		b.calls.API++
 		defer d3d11.IUnknownRelease(unsafe.Pointer(res), res.Vtbl.Release)
+		// no further than the buffer goes: a box past it drops the copy
+		if t, err := d3d11.IUnknownQueryInterface(unsafe.Pointer(res), res.Vtbl.QueryInterface, &d3d11.IID_Texture2D); err == nil {
+			desc := (*d3d11.Texture2D)(unsafe.Pointer(t)).GetDesc()
+			d3d11.IUnknownRelease(unsafe.Pointer(t), t.Vtbl.Release)
+			b.calls.API += 3
+			size.X, size.Y = min(size.X, int(desc.Width)), min(size.Y, int(desc.Height))
+		}
+	}
+	if size.X <= 0 || size.Y <= 0 {
+		return
 	}
 	b.ctx.CopySubresourceRegion(res, 0, 0, 0, 0, (*d3d11.Resource)(unsafe.Pointer(src.(*Texture).tex)), 0, &d3d11.BOX{
 		Right:  uint32(size.X),
@@ -282,7 +296,7 @@ func (b *Backend) ClackCalls() driver.Calls {
 
 func (b *Backend) CopyTexture(dstTex driver.Texture, dstOrigin image.Point, srcTex driver.Texture, srcRect image.Rectangle) {
 	dst := (*d3d11.Resource)(unsafe.Pointer(dstTex.(*Texture).tex))
-	src := (*d3d11.Resource)(srcTex.(*Texture).tex)
+	src := (*d3d11.Resource)(unsafe.Pointer(srcTex.(*Texture).tex))
 	b.ctx.CopySubresourceRegion(
 		dst,
 		0,                                           // Destination subresource.
@@ -999,7 +1013,7 @@ func (t *Texture) ReadPixels(src image.Rectangle, pixels []byte, stride int) err
 		res,
 		0,       // Destination subresource.
 		0, 0, 0, // Destination coordinates (x, y, z).
-		(*d3d11.Resource)(t.tex),
+		(*d3d11.Resource)(unsafe.Pointer(t.tex)),
 		0, // Source subresource.
 		&d3d11.BOX{
 			Left:   uint32(src.Min.X),

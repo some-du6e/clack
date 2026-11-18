@@ -20,4 +20,8 @@ type ClackPartial interface {
 	// target: byte for byte, with no blending, scissor or conversion. src
 	// has target's format (TextureFormatOutput). Outside a render pass.
 	ClackCopyToTarget(target, src Texture, size image.Point)
+	// ClackCopyDraws reports whether the frame is copied into the target
+	// with a draw instead (Metal: a drawable is framebufferOnly, which a
+	// blit can't write).
+	ClackCopyDraws() bool
 }

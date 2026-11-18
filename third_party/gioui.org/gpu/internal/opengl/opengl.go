@@ -1336,6 +1336,9 @@ func (b *Backend) ClackPartialOK() bool {
 	return ok && bf.ClackBlitFramebufferLoaded() && b.glver[0] >= 3 && !b.sharedCtx
 }
 
+// ClackCopyDraws implements driver.ClackPartial: a framebuffer blit.
+func (b *Backend) ClackCopyDraws() bool { return false }
+
 // ClackScissor implements driver.ClackPartial.
 func (b *Backend) ClackScissor(r image.Rectangle) {
 	b.glstate.setScissor(b.funcs, r)
