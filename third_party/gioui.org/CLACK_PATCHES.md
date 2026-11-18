@@ -44,7 +44,15 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_replay.go`, `io/input/clack_replay_test.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
 `gpu/headless/clack_live_test.go`, `layout/list.go`,
-`layout/clack_list_test.go` and
+`layout/clack_list_test.go`, `gpu/clack_partial.go`, `gpu/clack_sticky.go`,
+`gpu/pack.go`, `gpu/clack_partial_test.go`, `gpu/headless/clack_partial_test.go`,
+`gpu/internal/driver/clack_partial.go`, `internal/d3d11/d3d11_windows.go`,
+`internal/gl/gl.go`, `app/clack_caret_macos.go`, `app/clack_caret_macos.m`,
+`app/clack_caret_darwin_test.go`, `app/clack_xsettings_x11.go`,
+`app/clack_xsettings_nox11.go`, `app/clack_keytext_windows_test.go`,
+`gpu/clack_opcache_test.go`, `io/input/clack_focus.go`,
+`io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
+`io/input/clack_inputidle_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2086,16 +2094,20 @@ coverage atlas's sticky places), `gpu/gpu.go` (`frame`: everything the
 passes draw from is decided before them; `packStencils`, `stencilClips`,
 `intersect`, `drawLayers`, `drawOps` and `buildPaths` take the damage;
 `pathOp.hash`, `material.texID`, `texture.id`; `collectOps` hashes each
-clip path's geometry), `gpu/caches.go` (`opCacheValue.hash`,
-`textureCache.nextID`), `gpu/clack_stats.go` (`FrameStats.Partial`,
-`DamageRects`, `DamagePx`, `CopyPx`), `gpu/internal/driver/clack_partial.go`
-(new: `ClackPartial`), the OpenGL, Direct3D 11 and Metal backends
-(`ClackScissor`, `ClackCopyToTarget`, `ClackPartialOK`,
-`TextureFormatOutput` textures), `internal/gl` (`SCISSOR_TEST`,
-`ClackBlitFramebufferLoaded`), `internal/d3d11` (`RSSetScissorRects`,
-`RenderTargetView.GetResource`, `RECT`), `app/metal_darwin.go` (the layer
-isn't `framebufferOnly`) and `app/clack_gpu.go`, `app/window.go`
-(`SetGPUFrameHook`).
+clip path's geometry, and a path's tessellation waits for its upload:
+`pathOp.raw`; `renderer.drawCopy`), `gpu/caches.go` (`opCacheValue.hash`,
+`textureCache.nextID`), `gpu/pack.go` (`packer.work`), `gpu/clack_stats.go`
+(`FrameStats.Partial`, `DamageRects`, `DamagePx`, `CopyPx`, `PackWork`,
+`StickySlots`, `StickyHoles`, `PathsTessellated`),
+`gpu/internal/driver/clack_partial.go` (new: `ClackPartial`), the OpenGL,
+Direct3D 11 and Metal backends (`ClackScissor`, `ClackCopyToTarget`,
+`ClackCopyDraws`, `ClackPartialOK`, `TextureFormatOutput` textures),
+`internal/gl` (`SCISSOR_TEST`, `ClackBlitFramebufferLoaded`),
+`internal/d3d11` (`RSSetScissorRects`, `RenderTargetView.GetResource`,
+`Texture2D.GetDesc`, `RECT`), `app/clack_gpu.go` (`SetGPUFrameHook`,
+`ClackGPUIdle`), `app/window.go`, and `app/os_windows.go`,
+`app/os_macos.go`, `app/os_x11.go` (a hidden, minimized, occluded or
+unmapped window lets the frame texture go).
 
 Gio drew every frame whole. A caret's blink, a spinner's turn or an
 animated emoji's next frame cost the stencil, cover and API calls of a
@@ -2136,29 +2148,60 @@ where they differ:
   later one and the frame was all damage. With partial frames the last
   frame's packing sequence is replayed (the packer places the same sizes
   in the same order the same way): a region that was there (the same
-  geometry, region and offset) takes its own slot, a slot nobody takes is
-  a hole, new regions come after; when the holes outgrow the regions, or
-  would need another page, everything is packed afresh in the frame's
-  order. A page's regions are then not together in the ops' order, so the
-  stencil pass goes page by page.
+  geometry, region and offset) takes its own slot; a new region takes the
+  smallest slot nobody took that holds it, keeping the slot's size, so no
+  other place moves; the regions no slot holds come after, and a slot
+  nobody takes is a hole. A path that changes every frame (a working
+  agent's spinner every 33 ms, the LoadingButton's every 16 ms, a
+  huddle's speaking bars) so takes back the slots its last frames left:
+  before, each frame left its regions' old slots as holes the replay
+  packed ever after (the sequence grew from 702 slots to 4,302 in 1,800
+  spinner frames, the packer's work 55 times over, the page wider, until
+  the holes outgrew the regions minutes later). When the holes outnumber
+  the live slots or 256, cover more than the regions' area, or the
+  sequence would need another page, everything is packed afresh in the
+  frame's order (a frame drawn whole). A page's regions are then not
+  together in the ops' order, so the stencil pass goes page by page.
 - A window's frame draws into the frame texture (`TextureFormatOutput`,
   the swap chain's or the layer's own format), which keeps its pixels: a
   window's buffers come back undefined (DXGI's blit model discards them,
   Metal flips through several drawables, EGL's swap destroys them). It is
-  copied whole into the target after every frame, byte for byte:
+  copied whole into the target after the frame, byte for byte:
   `glBlitFramebuffer`, `CopySubresourceRegion` into the buffer behind the
-  render target view, a blit encoder's copy into the drawable (whose layer
-  therefore isn't `framebufferOnly`). A partial frame's damage starts from
-  the clear colour, copied in from a small texture a clear of the same
-  format made, so no colour conversion can differ from the whole frame's
-  load action.
+  render target view (no further than that buffer goes), and on Metal a
+  draw (one quad over the viewport sampling the texture at its texels'
+  centres, blending off: exact for 8-bit sRGB), so the layer stays
+  `framebufferOnly`, as Apple asks for the display's sake. A partial
+  frame's damage starts from the clear colour, copied in from a small
+  texture a clear of the same format made (made before the passes: without
+  it the frame is whole), so no colour conversion can differ from the
+  whole frame's load action.
+- Whole frames in a row (a scroll, an animation over most of the window)
+  draw straight into the target, without the frame texture or its copy,
+  and leave the frame texture stale: the first small change after them is
+  drawn whole into it, and partial frames go on from there. A frame at a
+  new size (a live resize) draws straight in too, and the frame texture
+  is made at the size the window stays at. A hidden, minimized or
+  occluded window (Windows' minimize and hide, AppKit's occlusion and
+  orderOut, X11's unmap) lets the frame texture and the clear texture go
+  (`ClackGPUIdle`); its next frame is whole. Windows has no occlusion
+  tracker yet (Chromium's NativeWindowOcclusionTrackerWin): a window
+  covered by others keeps its frame texture and draws what it's asked to.
+- A path's vertices are built (tessellated on the CPU) when the frame
+  uploads them: a partial frame uploads only the paths its damage
+  stencils, and the rest keep their path data in the cache (`raw`), so
+  the quiet frames after it (the same ops again) build nothing. Before,
+  such a path's vertices were built again every frame until a whole
+  frame, which after a cache restart could be every pen path on screen,
+  for hours of idle.
 - A frame is drawn whole when there's no last frame to start from (the
   first, a new frame texture or size, another target), the clear colour
   changed, the damage covers more than half the viewport or needs more
   than 128 edits, partial frames are off (`ClackPartialFrames(false)`;
   Clack's `CLACK_FULL_FRAMES=1`) or the device can't scissor and copy
-  (Vulkan; an OpenGL context shared with others or without
-  `glBlitFramebuffer`). A frame drawn into a texture target (gpu/headless)
+  (Vulkan, which X11 tries first when Gio's GPU blocklist is ignored, as
+  Slick's Snappy defaults do; an OpenGL context shared with others or
+  without `glBlitFramebuffer`; the window logs it once). A frame drawn into a texture target (gpu/headless)
   is drawn whole, packed as before, unless a test asks
   (`ClackPartialTextures`: into the texture itself; `ClackFrameTexture`:
   through the frame texture and its copy, as a window's), so screenshot
@@ -2174,36 +2217,61 @@ What the frame still costs: the layout, collecting the ops and their
 signatures, packing, loading the atlas pages and copying the frame
 texture into the target (on a real GPU a copy of the window's pixels; on
 llvmpipe a memcpy). `SetGPUFrameHook` reports every window frame's stats
-(partial or whole, its damage, draws and API calls), for tests.
+(partial or whole, its damage, draws and API calls), for tests. A scroll
+(whole frames in a row, drawn straight into the window) costs what it cost
+without partial frames on llvmpipe and WARP (94-100% of the CPU a frame)
+and about 0.7 ms more a frame on a Mac's GPU, the signatures and the diff
+(`TestRealWindowCaretCost`).
 
 Tests: `gpu/clack_partial_test.go` (ci's linux-gio Gio frame cost step:
 `TestClackDamageEdits`, the edit script is valid and shortest against an
 LCS on random sequences; `TestClackDamageRects`, disjoint and covering;
-`TestClackDamage`), `gpu/headless/clack_partial_test.go` on llvmpipe,
-Metal and WARP (ci's linux-gio, macos and windows-applog jobs, and
-flake-check's gpu-cost and gpu-cost-damage): `TestClackPartialFrames`
-draws 48 frames of changes a window sees (a caret's blink, a spinner, an
-animated emoji, a ring's colour, a fade, ops moved, added, dropped and
-swapped, a path growing before every other, a new clear colour, a scale
-and a fraction of a pixel, then a random walk) whole, partial into the
-target and partial through the frame texture, and requires every frame's
-pixels to be the whole frame's exactly, the small changes to be partial
-frames of small damage, and the caret's and the emoji's to take a tenth
-of the draws and a fifth of the API calls; `TestClackPartialSameOps` (the
-same ops again draw nothing; a live image's next frame damages only it);
-`TestClackPartialDamageRects`. In Clack: `internal/ui`
-`TestFrameCostDamage` (flake-check's gpu-cost-damage: the caret's blink,
-the typing indicator, a spinner's turn and an animated emoji's frame over
-Clack's window at 1440×900, Karim's 1918×1080 and 1280×800 at 2x, each
-whole and partial, pixels and costs) and `TestRealWindowCaretCost` (ci's
-linux-idle, macos, windows-idle: App.Run's real window, 6 s of blinks
-partial and whole, their draws and the process's CPU). Not in
-`UPSTREAM.patch`.
+`TestClackDamage`; `TestClackStickyNoOverlap`, sticky places never
+overlap or leave their page under random churn, and a region keeps its
+place unless the sequence is packed afresh; `TestClackStickySpinnerBounded`,
+3,000 frames of a spinner's two arcs among 700 regions keep the sequence
+within 64 slots of the regions, the packer's work within 3 times the
+first frame's, the page and no fresh packing),
+`gpu/headless/clack_partial_test.go` on llvmpipe, Metal and WARP (ci's
+linux-gio, macos and windows-applog jobs, and flake-check's gpu-cost and
+gpu-cost-damage): `TestClackPartialFrames` draws 48 frames of changes a
+window sees (a caret's blink, a spinner, an animated emoji, a ring's
+colour, a fade, ops moved, added, dropped and swapped, a path growing
+before every other, a new clear colour, a scale and a fraction of a pixel,
+then a random walk) whole, partial into the target and partial through the
+frame texture, and requires every frame's pixels to be the whole frame's
+exactly (through the frame texture: its copy, Metal's draw included, bit
+for bit the frame drawn straight into the target), the small changes to be
+partial frames of small damage, the caret's and the emoji's to take a
+tenth of the draws and a fifth of the API calls, whole frames in a row to
+draw straight into the target, and the sticky whole frames to be within
+the placement floor of Gio's own (packed afresh; the floor: the same
+frames with a transparent path first or after the shadow rings, max(6,
+floor+2) levels in twice the floor's pixels and 1,024 more);
+`TestClackPartialSameOps` (the same ops again draw nothing; a live image's
+next frame damages only it; the quiet frames after a partial frame of new
+ops tessellate and build nothing); `TestClackPartialSpinner` (3,000
+spinner frames: the sequence's holes, the packer's work, the frames
+partial, the last the whole frame's pixels); `TestClackPartialDamageRects`.
+In Clack: `internal/ui` `TestFrameCostDamage` (flake-check's
+gpu-cost-damage: the caret's blink, the typing indicator, a spinner's turn
+and an animated emoji's frame over Clack's window at 1440×900, Karim's
+1918×1080 and 1280×800 at 2x, each whole and partial, pixels and costs, the
+quiet frames after each partial frame, and the sticky whole frame within
+TestFrameCostWindow's placement floor of Gio's own) and
+`TestRealWindowCaretCost` (ci's linux-idle, macos, windows-idle and
+flake-check's gpu-cost-damage, count=N runs: App.Run's real window, 6 s of
+blinks partial and whole in turns of 3 s, their draws and the process's
+CPU; 12 s of a scroll, partial frames on and off, what its frames cost
+and copied; on Xvfb the window's pixels read back with python3-xlib, the
+caret's toggling between blinks and a partial frame's window bit for bit
+a whole frame's). Not in `UPSTREAM.patch`.
 
-## 47. app: the caret's blink period from macOS
+## 47. app: the caret's blink period from the OS (macOS's, X11's XSETTINGS)
 
-`app/clack_caret_macos.go`, `app/clack_caret_macos.m` (new) and
-`app/os_macos.go` (`newWindow`).
+`app/clack_caret_macos.go`, `app/clack_caret_macos.m` (new),
+`app/os_macos.go` (`newWindow`) and `app/clack_xsettings_x11.go`,
+`app/clack_xsettings_nox11.go` (new: `ClackXSettings`).
 
 Gio's editor blinked at 500 ms on macOS (patch 13 read the OS's interval
 on Windows only). Chromium's `OsSettingsProviderMac::CaretBlinkInterval`
@@ -2217,5 +2285,21 @@ either is set, never when the on period is over a minute, 500 ms when
 neither is set or either is negative. It reads them again when the app
 becomes active and when the accessibility preference changes. Gio now
 does the same as a window opens (`setCaretBlinkFromOS`, into
-`widget.SetCaretBlinkInterval`) and on those two notifications. Not in
+`widget.SetCaretBlinkInterval`) and on those two notifications.
+
+On Linux Chromium's caret blinks at half of GTK's gtk-cursor-blink-time,
+which GTK's X11 backend takes from the X settings manager (XSETTINGS'
+Net/CursorBlink and Net/CursorBlinkTime; gsd-xsettings, xfsettingsd).
+`ClackXSettings` reads that manager's `_XSETTINGS_SETTINGS` property on a
+display connection of its own (the server grabbed while it looks, as the
+XSETTINGS spec has clients do: the manager's window can't go between
+finding and reading it, which Xlib's default error handler would make the
+process's end); Clack parses it and does the rest
+(`internal/ui/caretblink_linux.go`).
+
+Tests: `app/clack_caret_darwin_test.go` `TestCaretBlinkFromOSMac` (ci's
+macOS window step: a window opens with the average of the two periods
+set in the process's own defaults; the app becoming active reads them
+again: one period alone, an on period over a minute, a negative one, both
+0, neither) and, for XSETTINGS, `internal/ui` `TestXSettingsBlink`. Not in
 `UPSTREAM.patch`.

@@ -208,7 +208,8 @@ jobs:
       # Gio patches 37-44: a rounded clip's interior and a stroked one's
       # hole, ops split around them, a clip path's stencil regions, layers
       # of one depth on one atlas page, the sub-pixel path cache key, GL's
-      # attribute query (the pixels: gpu/headless's TestClack* and theme's
+      # attribute query; patch 46: a frame's damage, sticky atlas places
+      # (the pixels: gpu/headless's TestClack* and theme's
       # TestFrameCostPixels below, and the macos and windows-applog jobs'
       # Gio frame cost steps on Metal and Direct3D 11)
       - name: Gio frame cost (vendored gioui.org/op/clip, gpu)
@@ -433,7 +434,9 @@ jobs:
       # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
       # pixel, the window's drawing held to the old way (theme's
       # TestFrameCostPixels), shared layer pages, sub-pixel paths, atlas
-      # pages; linux-gio runs them on llvmpipe, macos on Metal
+      # pages; patch 46: partial frames are the whole frame's pixels, the
+      # frame texture's copy included (TestClackPartial*); linux-gio runs
+      # them on llvmpipe, macos on Metal
       - name: Gio frame cost on Direct3D 11 (WARP)
         if: ${{ !cancelled() }}
         shell: bash
@@ -1112,7 +1115,9 @@ jobs:
         run: .github/scripts/gio-layer-fix.sh
       # Gio patches 37-44 on Metal: the state caches and command batching
       # change no pixel, the window's drawing held to the old way, shared
-      # layer pages, sub-pixel paths, atlas pages
+      # layer pages, sub-pixel paths, atlas pages; patch 46: partial frames
+      # are the whole frame's pixels, the frame texture's draw into the
+      # target included (TestClackPartial*)
       - name: Gio frame cost on Metal
         if: ${{ !cancelled() }}
         env:
