@@ -54,16 +54,7 @@ func TestSwitchedListWaitsForTheNewRevision(t *testing.T) {
 		t.Fatal("the hub still keeps the split list's model after 40 other conversations")
 	}
 
-	// the hub's new model for the conversation (the main pane's, below)
-	// numbers the message's next copy as the dropped one numbered the
-	// copy the row drew: what a first load does whenever nothing bumped
-	// the dropped model's number since its own (a conversion again, a
-	// reaction), set here so it doesn't hang on that
-	oldRev := row().rev
-	nm := hb.channel(ch)
-	nm.mu.Lock()
-	nm.nextRev = oldRev - 1
-	nm.mu.Unlock()
+	oldRev := row().rev // the number the dropped model gave the copy the row drew
 
 	// JS's mirror holds the channel's messages as they are before the
 	// edit: the 40 others' events may have had it let them go, and its
@@ -81,19 +72,31 @@ func TestSwitchedListWaitsForTheNewRevision(t *testing.T) {
 	if mv, ok := tautOf().MessageView(ch, msg.TS); !ok || mv.Text != msg.Text {
 		t.Fatalf("with the mirror behind the edit, JS's copy of the message is %q (ok %v): nothing stale to draw", mv.Text, ok)
 	}
-	// the main pane opens the conversation: a new model, the message
-	// numbered as the dropped one numbered it
+	// the main pane opens the conversation: a new model, which numbers the
+	// edited copy as the dropped one numbered the copy the row drew (what
+	// a first load does when nothing else bumped either count, an event
+	// before the load or a conversion again: set here so the test doesn't
+	// hang on that)
 	main := NewChannelView(h, ch)
-	until(t, 5*time.Second, "the main pane's row", frameFn(main), func() bool {
+	mframe := frameFn(main)
+	until(t, 5*time.Second, "the main pane's row", mframe, func() bool {
 		r := main.s.rows[msg.TS]
 		return r != nil && strings.Contains(rowText(r), "lunch at one?")
 	})
-	if main.s.m != nm {
-		t.Fatal("the main pane doesn't draw the hub's new model")
+	nm := main.s.m
+	nm.mu.Lock()
+	if i := nm.find(msg.TS); i >= 0 {
+		nm.msgs[i].rev = oldRev
 	}
-	if r := main.s.rows[msg.TS]; r.rev != oldRev {
-		t.Fatalf("the new model numbers the edited copy %d, the dropped one numbered the old %d: no collision to test", r.rev, oldRev)
+	if nm.nextRev < oldRev {
+		nm.nextRev = oldRev
 	}
+	nm.rev++
+	nm.mu.Unlock()
+	until(t, 5*time.Second, "the main pane on the renumbered copy", mframe, func() bool {
+		r := main.s.rows[msg.TS]
+		return r != nil && r.rev == oldRev && strings.Contains(rowText(r), "lunch at one?")
+	})
 	// the split list draws again, on the hub's model now: every frame
 	// draws the edit until JS's copy of it comes
 	for dl := time.Now().Add(600 * time.Millisecond); time.Now().Before(dl); {
