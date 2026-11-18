@@ -447,6 +447,9 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 	}
 	buf := make([]byte, 256<<10)
 	for cur := off; cur < end; {
+		if toEnd && !p.pace(ctx, cur) {
+			return // cancelled while held
+		}
 		k, err := p.rs.ReadSome(ctx, buf[:min(int64(len(buf)), end-cur)], cur)
 		if k > 0 {
 			p.objMu.RLock()
@@ -465,6 +468,27 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 		}
 	}
 	p.finish(req, false)
+}
+
+// pace holds a request to the end of the resource at media.PaceLimit:
+// AVFoundation takes every byte responded at once, so unheld it would pull
+// the whole file in as fast as the network goes. false: ctx ended.
+func (p *player) pace(ctx context.Context, cur int64) bool {
+	for {
+		info, err := p.rs.Info(ctx)
+		if err != nil {
+			return ctx.Err() == nil
+		}
+		st := p.State()
+		if lim := media.PaceLimit(info.Total, st.Pos, st.Duration); lim < 0 || cur < lim || st.Err != 0 {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (p *player) finish(req uint64, failed bool) {

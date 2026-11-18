@@ -420,3 +420,59 @@ func TestAVFCloseReleases(t *testing.T) {
 		t.Errorf("live after Close: players %d, pixel buffers %d, textures %d, data requests %d", l[0], l[1], l[2], l[3])
 	}
 }
+
+// Closed while its frames are drawn, the same ops replayed frame after
+// frame (quiet frames): an ask racing Close either hands out a texture
+// with Gio's own reference or nothing, the frames after Close draw the
+// still, and nothing is freed under Gio.
+func TestAVFCloseWhileDrawn(t *testing.T) {
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180), image.Pt(320, 180))
+	var ops op.Ops
+	r.p.Op(paint.ImageOp{}, r.size).Add(&ops)
+	paint.PaintOp{}.Add(&ops)
+	shot := func() color.RGBA {
+		t.Helper()
+		if err := r.win.Frame(&ops); err != nil {
+			t.Fatal(err)
+		}
+		img := image.NewRGBA(image.Rectangle{Max: r.size})
+		if err := r.win.Screenshot(img); err != nil {
+			t.Fatal(err)
+		}
+		return img.RGBAAt(r.size.X/2, r.size.Y/2)
+	}
+	shot()
+	r.p.Play()
+	deadline := time.Now().Add(10 * time.Second)
+	for shot().A == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("no frame in 10 s; events %v", r.kinds())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stop, done := make(chan struct{}), make(chan int)
+	go func() {
+		n := 0
+		for {
+			select {
+			case <-stop:
+				done <- n
+				return
+			default:
+			}
+			if err := r.win.Frame(&ops); err != nil {
+				t.Error(err)
+			}
+			n++
+		}
+	}()
+	time.Sleep(300 * time.Millisecond)
+	r.p.Close()
+	time.Sleep(300 * time.Millisecond)
+	close(stop)
+	n := <-done
+	if c := shot(); c.A != 0 {
+		t.Errorf("after Close the op draws %v, want its still (nothing)", c)
+	}
+	t.Logf("%d frames drawn around Close", n)
+}
