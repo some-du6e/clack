@@ -62,6 +62,7 @@ const (
 	lmMentionKey    = "lm-mention"
 	lmMention2Key   = "lm-mention-2"
 	lmVoteRootKey   = "lm-vote-root"
+	lmVoteRootThKey = "lm-vote-root-thread"
 )
 
 // lmPatches are the Activity components a pass-through plugin wraps (the
@@ -139,6 +140,13 @@ type lmFake struct {
 	voteRoot   bool   // the feed lists a mention of the vote root
 	listGone   bool   // the feed still lists the mention its message went from
 	mentions   string // the mention entry's type (at_user)
+	// rootBare: messages.list has the vote root as it was before its
+	// first reply (no thread_ts, no reply count); rootThread: the feed
+	// lists the vote root's thread (thread_v2) after its mention
+	rootBare, rootThread bool
+	// fewLatest: getView lists the thread's last reply alone (the others
+	// are its card's "Show N more replies")
+	fewLatest bool
 }
 
 // voteLocked is the vote at revision n, as the fixture has it.
@@ -217,6 +225,11 @@ func (f *lmFake) hook(method string, form url.Values) (any, bool) {
 			items = append(items, map[string]any{"key": lmVoteRootKey, "feed_ts": lmVoteRoot, "is_unread": false, "item": map[string]any{
 				"type": "at_channel", "message": map[string]any{"ts": lmVoteRoot, "channel": lmChan, "author_user_id": "U0FAKE00001"}}})
 		}
+		if f.rootThread { // the thread the vote root started
+			entry := map[string]any{"channel_id": lmChan, "thread_ts": lmVoteRoot, "latest_ts": lmVoteRootReply, "min_unread_ts": lmVoteRootReply, "unread_msg_count": 1}
+			items = append(items, map[string]any{"key": lmVoteRootThKey, "feed_ts": lmVoteRootReply, "is_unread": true, "item": map[string]any{
+				"type": "thread_v2", "bundle_info": map[string]any{"payload": map[string]any{"thread_entry": entry}}}})
+		}
 		return map[string]any{"ok": true, "items": items, "response_metadata": map[string]any{"next_cursor": ""}}, true
 	case "messages.list":
 		var want []struct {
@@ -233,6 +246,9 @@ func (f *lmFake) hook(method string, form url.Values) (any, bool) {
 			}
 			for _, ts := range w.Timestamps {
 				if m, ok := f.msgLocked(ts); ok {
+					if ts == lmVoteRoot && f.rootBare { // hydrated before its first reply
+						m.ThreadTS, m.ReplyCount, m.ReplyUsersN, m.LatestReply = "", 0, 0, ""
+					}
 					out[lmChan] = append(out[lmChan], m)
 				}
 			}
@@ -255,7 +271,11 @@ func (f *lmFake) hook(method string, form url.Values) (any, bool) {
 				}
 			}
 		}
-		return map[string]any{"ok": true, "threads": []any{map[string]any{"root_msg": root, "latest_replies": msgs[1:], "unread_replies": unread}},
+		latest := msgs[1:]
+		if f.fewLatest {
+			latest = msgs[len(msgs)-1:]
+		}
+		return map[string]any{"ok": true, "threads": []any{map[string]any{"root_msg": root, "latest_replies": latest, "unread_replies": unread}},
 			"has_more": false, "total_unread_replies": len(unread), "threads_state": map[string]any{"has_unreads": len(unread) > 0, "mention_count": 0}}, true
 	}
 	return nil, false
@@ -1333,6 +1353,9 @@ func TestActivityLiveManyChangesHidden(t *testing.T) {
 	for i := 0; i < 4500; i++ {
 		e.react(lmBusy, busy.TS, "U0FAKE00001", "eyes", i%2 == 0)
 	}
+	if _, _, ok := e.app.MessageChangedSince(e.v.msgs.seen); ok {
+		t.Fatal("core still names every change since the page's last frame; this is about a page further behind")
+	}
 	e.frame()
 	if e.shown(lmMentionKey) || e.shown(lmThreadKey) {
 		t.Fatalf("after 4500 other changes: the mention listed %v, the thread %v; Slack removed both", e.shown(lmMentionKey), e.shown(lmThreadKey))
@@ -1411,5 +1434,135 @@ func TestActivityLivePreview(t *testing.T) {
 				t.Fatalf("revision %d, frame %d: the preview drew revision %d", n, i, got)
 			}
 		}
+	}
+}
+
+// A mention of the vote root hydrated before its first reply (its copy
+// has no thread_ts), and the thread_v2 entry of the thread it then
+// started, with that thread open in the pane beside the page: both rows
+// draw the pane's revision of the root, and the window goes idle. One
+// row's list lookup that misses the pane mustn't let go of the copy the
+// other row's found: done every frame, that was a conversion, a
+// rebuild and a full-window frame at display rate.
+func TestActivityLiveRootRowsBesidePane(t *testing.T) {
+	e := newLmEnv(t, lmOpts{voteRoot: true, setup: func(e *lmEnv) { e.f.rootBare, e.f.rootThread = true, true }})
+	rootRev := func() int { return lmRev(e.drawn(lmVoteRoot)) }
+	e.e.until(t, "the vote root drawn at revision 5", func() bool { return rootRev() == 5 && e.shown(lmVoteRootThKey) })
+	e.h.lists = true
+	e.tv = messages.NewThreadView(e.h, lmChan, lmVoteRoot)
+	e.e.until(t, "the pane drawing the root", func() bool { return e.paneRevOf(lmVoteRoot) == 5 })
+	for i := 0; i < 40; i++ {
+		e.frame()
+		time.Sleep(2 * time.Millisecond)
+	}
+	k := actMsgKey{lmChan, lmVoteRoot}
+	h0, ok := e.v.msgs.hub[k]
+	if !ok {
+		t.Fatal("no row drew the pane's copy of the root")
+	}
+	busy := 0
+	for i := 0; i < 30; i++ {
+		e.frame()
+		if e.redraws() {
+			busy++
+		}
+		if h, ok := e.v.msgs.hub[k]; !ok || h.rev != h0.rev {
+			t.Fatalf("frame %d: the rows' copy of the root moved (%v, revision %x, was %x)", i, ok, h.rev, h0.rev)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if busy > 2 {
+		t.Fatalf("%d of 30 frames asked for the next one at once", busy)
+	}
+	mention, thread := e.v.rows[lmVoteRootKey], e.v.rows[lmVoteRootThKey]
+	if mention == nil || thread == nil {
+		t.Fatalf("rows: the mention's %v, the thread's %v", mention != nil, thread != nil)
+	}
+	if mention.liSrc[0] != h0.rev || thread.liSrc[1] != h0.rev {
+		t.Fatalf("the mention row draws the root from %x, the thread row from %x; the pane's is %x", mention.liSrc[0], thread.liSrc[1], h0.rev)
+	}
+	// a vote on the root: the rows draw it with the pane
+	e.f.mu.Lock()
+	prev := lmVoteRootMsg(e.f.rootRev)
+	e.f.rootRev = 6
+	now := lmVoteRootMsg(6)
+	e.f.mu.Unlock()
+	e.inject(map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "channel": lmChan, "message": now, "previous_message": prev})
+	e.e.until(t, "the pane and the row at revision 6", func() bool { return e.paneRevOf(lmVoteRoot) == 6 && rootRev() == 6 })
+}
+
+// Items whose messages.list group failed on the first load (a network
+// blip), their messages in no copy the store keeps: each row fetches its
+// message again, and draws it, or no body when Slack answered without it
+// (deleted since: Slack's isNonExistent), never the loading shimmer for
+// good.
+func TestActivityLiveCopylessRefetch(t *testing.T) {
+	e := newLmEnv(t, lmOpts{setup: func(e *lmEnv) {
+		e.fs.SetFault("messages.list", fakeslack.Fault{Error: "internal_error", Times: 1})
+		e.f.gone[lmMention], e.f.listGone = true, true // the feed lists a mention whose message went
+	}})
+	e.e.until(t, "the vote fetched again and drawn", func() bool { return e.rev() == 1 && e.shown(lmMentionKey) })
+	e.e.until(t, "the mention row settled", func() bool {
+		r := e.v.rows[lmMentionKey]
+		return r != nil && r.msgGone
+	})
+	shimmers := e.v.shimmers
+	for i := 0; i < 10; i++ {
+		e.frame()
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := e.v.shimmers - shimmers; n != 0 {
+		t.Fatalf("%d loading shimmers drawn for a message Slack said is gone", n)
+	}
+	if n := e.fs.CallCount("activity.feed"); n != 1 {
+		t.Errorf("%d activity.feed calls; the rows fetch their messages, not the feed", n)
+	}
+}
+
+// With the plugins' JS busy, a reload brings the thread's new latest
+// reply: the row draws the new reply in the frame the reload lands in,
+// not the reply the trees from before it name (a tree rendered from
+// earlier props isn't a plugin's projection of the thread).
+func TestActivityLiveThreadNewReplyJSHeld(t *testing.T) {
+	e := newLmEnv(t, lmOpts{patch: lmPatches, textVote: true})
+	e.untilVote(1)
+	for i := 0; i < 5; i++ {
+		e.frame()
+	}
+	release := e.holdJS()
+	defer release()
+	e.f.mu.Lock()
+	e.f.latest = true
+	e.f.mu.Unlock()
+	e.invalidate()
+	e.e.until(t, "the new reply drawn with JS busy", func() bool { return strings.Contains(e.drawn(lmLatest), "a synthetic reply after the vote") })
+	for i := 0; i < 8; i++ {
+		e.frame()
+		if got := e.drawn(lmLatest); !strings.Contains(got, "a synthetic reply after the vote") {
+			t.Fatalf("frame %d with JS busy: the thread's row drew %q for its latest reply (the vote: %q)", i, got, e.drawn(lmVote))
+		}
+		if r := e.v.rows[lmThreadKey]; r != nil && r.cur != nil && r.cur.name == "Vote Bot" {
+			t.Fatalf("frame %d with JS busy: the new reply is drawn as the vote's sender's", i)
+		}
+	}
+	release()
+	e.e.until(t, "JS caught up", func() bool { return strings.Contains(e.drawn(lmLatest), "a synthetic reply after the vote") })
+}
+
+// TestActivityLiveMaskedWithInnerPatches on a thread row: the mask in
+// ActivityThread (the latest reply's text, which the row's body reads),
+// ActivityItem and the row contents wrapped around and inside it. Each
+// level's sent set judges its own trees: the masked text stays.
+func TestActivityLiveMaskedThreadWithInnerPatches(t *testing.T) {
+	e := newLmEnv(t, lmOpts{latest: true, mask: []string{"ActivityThread"},
+		patch: []string{"ActivityItem", "ActivityRowContentMultiLine", "ActivityRowContentDetailed"},
+		setup: func(e *lmEnv) { e.f.latestText = "the synthetic standup moved to 10am" }})
+	e.e.until(t, "the masked reply drawn", func() bool { return strings.Contains(e.drawn(lmLatest), "st***up") })
+	for i := 0; i < 20; i++ {
+		e.frame()
+		if got := e.drawn(lmLatest); !strings.Contains(got, "st***up") {
+			t.Fatalf("frame %d after the mask drew %q, without it", i, got)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

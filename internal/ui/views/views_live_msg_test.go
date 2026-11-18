@@ -375,6 +375,33 @@ func TestThreadsLiveBatch(t *testing.T) {
 			t.Errorf("the vote drawn at revision %d, want 3", got)
 		}
 	})
+	t.Run("older replies", func(t *testing.T) {
+		// the vote is one of the card's older replies ("Show 1 more reply")
+		e := newThrLvEnv(t, &lmFake{rev: 1, gone: map[string]bool{}, latest: true, fewLatest: true})
+		e.e.until(t, "the latest reply drawn", func() bool { return e.drawn(lmLatest) != "" && e.drawn(lmRoot) != "" })
+		d, _, _ := e.v.data.get()
+		if len(d.items) != 1 || e.v.cards[d.items[0].key] == nil {
+			t.Fatalf("%d threads", len(d.items))
+		}
+		e.v.loadOlder(&d.items[0], e.v.cards[d.items[0].key])
+		e.e.until(t, "the older vote drawn", func() bool { return lmRev(e.drawn(lmVote)) == 1 })
+		e.e.frame()
+		e.vote(2)
+		e.edit(lmLatest, "a synthetic reply after the vote, said again")
+		e.vote(3)
+		e.edit(lmRoot, "Proposal: move the synthetic standup to 11am")
+		e.vote(4)
+		e.e.frame()
+		if got := lmRev(e.drawn(lmVote)); got != 4 {
+			t.Errorf("the older vote drawn at revision %d, want 4", got)
+		}
+		if got := e.drawn(lmLatest); !strings.Contains(got, "said again") {
+			t.Errorf("the latest reply drew %q, not its edit", got)
+		}
+		if got := e.drawn(lmRoot); !strings.Contains(got, "11am") {
+			t.Errorf("the root drew %q, not its edit", got)
+		}
+	})
 	t.Run("an unread reply deleted", func(t *testing.T) {
 		e := newThrLvEnv(t, &lmFake{rev: 1, gone: map[string]bool{}, latest: true, unread: true})
 		ready(t, e)
@@ -389,4 +416,124 @@ func TestThreadsLiveBatch(t *testing.T) {
 			t.Errorf("after its one unread reply was deleted the card counts %d unread: its New line sits on a read reply", n)
 		}
 	})
+}
+
+// lvFiller pushes every copy fetched by id out of the store (other
+// views' messages, half a megabyte each), and returns a busy channel's
+// message whose reactions make changes enough that core keeps no copy of
+// the ones before them.
+func lvFiller(t *testing.T, app *core.App) slack.Message {
+	t.Helper()
+	big := strings.Repeat("x", 512<<10)
+	var filler []slack.Message
+	for i := 0; i < 10; i++ {
+		filler = append(filler, slack.Message{Type: "message", TS: fmt.Sprintf("1762791%03d.000100", i), User: "U0FAKE00001", Text: big})
+	}
+	app.S.PutFetched(lmBusy, filler, app.S.LiveSeq())
+	busy := slack.Message{Type: "message", TS: "1762790500.000100", User: "U0FAKE00001", Text: "a synthetic busy message"}
+	app.S.PutConv(slack.Conversation{ID: lmBusy, Name: "live-busy", IsChannel: true, IsMember: true, NumMembers: 3})
+	app.S.SetLatest(lmBusy, []slack.Message{busy}, false)
+	return busy
+}
+
+// lvChurn is n reactions in the busy channel: changes that leave core
+// with no copy of the ones before them.
+func lvChurn(app *core.App, busy slack.Message, n int) {
+	for i := 0; i < n; i++ {
+		typ := "reaction_removed"
+		if i%2 == 0 {
+			typ = "reaction_added"
+		}
+		lvInject(app, lmBusy, map[string]any{"type": typ, "user": "U0FAKE00001", "reaction": "eyes",
+			"item": map[string]any{"type": "message", "channel": lmBusy, "ts": busy.TS}})
+	}
+}
+
+// A followed thread's vote the store let go of (other views' messages
+// pushed it out of the copies fetched by id), voted on before the view's
+// next frame with so many changes after it that core keeps no copy of
+// the vote's: the card fetches the vote again and draws it, as Slack's
+// row fetches a message its store doesn't hold.
+func TestThreadsLiveEvictedRefetch(t *testing.T) {
+	e := newThrLvEnv(t, &lmFake{rev: 1, gone: map[string]bool{}})
+	e.e.until(t, "the vote drawn", func() bool { return lmRev(e.drawn(lmVote)) == 1 })
+	e.e.frame()
+	busy := lvFiller(t, e.app)
+	if _, ok := e.app.S.FindHeld(lmChan, lmVote); ok {
+		t.Fatal("the store still holds the vote")
+	}
+	e.vote(2)
+	lvChurn(e.app, busy, 200)
+	e.e.until(t, "the vote fetched again at revision 2", func() bool { return lmRev(e.drawn(lmVote)) == 2 })
+}
+
+// The same on the Saved page.
+func TestSavedLiveEvictedRefetch(t *testing.T) {
+	const ch = lmChan
+	var mu sync.Mutex
+	n := 1
+	app, _ := vkFake(t, func(method string, f url.Values) (any, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch method {
+		case "saved.list":
+			return map[string]any{"ok": true, "saved_items": []map[string]any{{"item_id": ch, "item_type": "message", "ts": lmVote,
+				"todo_state": "saved", "date_created": time.Now().Unix() - 100}}}, true
+		case "messages.list":
+			return map[string]any{"ok": true, "messages": map[string][]slack.Message{ch: {lmVoteMsg(n)}}}, true
+		}
+		return nil, false
+	})
+	app.S.PutConv(slack.Conversation{ID: lmChan, Name: "live-votes", IsChannel: true, IsMember: true, NumMembers: 3})
+	app.S.PutBot(lmBot, store.BotInfo{Name: "Vote Bot"})
+	s := NewSaved(newKBHost(app, false))
+	e := &vaEnv{size: image.Pt(1000, 900)}
+	e.draw = func(gtx layout.Context) { s.Layout(gtx) }
+	rev := func() int { return lmRev(lvDrawn(&s.base, ch, lmVote)) }
+	e.until(t, "the saved vote drawn", func() bool { return rev() == 1 })
+	e.frame()
+	busy := lvFiller(t, app)
+	if _, ok := app.S.FindHeld(ch, lmVote); ok {
+		t.Fatal("the store still holds the vote")
+	}
+	mu.Lock()
+	prev := lmVoteMsg(n)
+	n = 2
+	mu.Unlock()
+	lvInject(app, ch, map[string]any{"type": "message", "subtype": "message_changed", "hidden": true, "message": lmVoteMsg(2), "previous_message": prev})
+	lvChurn(app, busy, 200)
+	e.until(t, "the vote fetched again at revision 2", func() bool { return rev() == 2 })
+}
+
+// The Threads view further behind than core remembers (off screen
+// through a busy while: core forgot the vote's change): each card takes
+// its messages as the store holds them now, on every page it loaded, with
+// no getView for it.
+func TestThreadsLiveFloor(t *testing.T) {
+	e := newThrLvEnv(t, &lmFake{rev: 1, gone: map[string]bool{}})
+	e.e.until(t, "the vote drawn", func() bool { return lmRev(e.drawn(lmVote)) == 1 })
+	e.e.frame()
+	views := e.fs.CallCount("subscriptions.thread.getView")
+	e.vote(2) // off screen from here
+	var many []slack.Message
+	for i := 0; i < 8400; i++ {
+		many = append(many, slack.Message{Type: "message", TS: fmt.Sprintf("1762700%03d.%06d", i/1000, i%1000), User: "U0FAKE00001", Text: "a synthetic busy message"})
+	}
+	e.app.S.PutConv(slack.Conversation{ID: lmBusy, Name: "live-busy", IsChannel: true, IsMember: true, NumMembers: 3})
+	e.app.S.SetLatest(lmBusy, many, false)
+	for _, m := range many {
+		lvInject(e.app, lmBusy, map[string]any{"type": "reaction_added", "user": "U0FAKE00001", "reaction": "eyes",
+			"item": map[string]any{"type": "message", "channel": lmBusy, "ts": m.TS}})
+	}
+	if _, ok := e.app.MessageChange(lmChan, lmVote); ok || e.app.MessageChangeFloor() == 0 {
+		t.Fatalf("core still remembers the vote's change (floor %d)", e.app.MessageChangeFloor())
+	}
+	e.e.until(t, "the vote at revision 2", func() bool { return lmRev(e.drawn(lmVote)) == 2 })
+	for i := 0; i < 10; i++ {
+		e.e.frame()
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := e.fs.CallCount("subscriptions.thread.getView") - views; n != 0 {
+		t.Errorf("%d getView calls; the store had every message of the view", n)
+	}
 }
