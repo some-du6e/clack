@@ -7,10 +7,12 @@ package app
 /*
 #cgo LDFLAGS: -framework Accessibility
 
+#include <stdbool.h>
 #include <stdint.h>
 
 __attribute__ ((visibility ("hidden"))) int64_t gio_caretBlinkPeriodMs(void);
 __attribute__ ((visibility ("hidden"))) void gio_observeCaretBlink(void);
+__attribute__ ((visibility ("hidden"))) void gio_clackCaretDefaults(bool setOn, int64_t on, bool setOff, int64_t off, bool post);
 */
 import "C"
 
@@ -47,3 +49,22 @@ func setCaretBlinkFromOS() {
 func gio_onCaretBlinkChanged() {
 	setCaretBlinkFromOS()
 }
+
+// clackCaretDefaults sets NSTextInsertionPointBlinkPeriodOn and ...Off in
+// the process's own user defaults (nil: removes it), then, if post, posts
+// NSApplicationWillBecomeActiveNotification as AppKit does when the app
+// comes to the front (tests: TestCaretBlinkFromOSMac). Main thread.
+func clackCaretDefaults(on, off *int64, post bool) {
+	var vOn, vOff int64
+	if on != nil {
+		vOn = *on
+	}
+	if off != nil {
+		vOff = *off
+	}
+	C.gio_clackCaretDefaults(C.bool(on != nil), C.int64_t(vOn), C.bool(off != nil), C.int64_t(vOff), C.bool(post))
+}
+
+// clackCaretPeriodMs is gio_caretBlinkPeriodMs: the period in ms, 0 for no
+// blinking, -1 for Chromium's default (tests).
+func clackCaretPeriodMs() int64 { return int64(C.gio_caretBlinkPeriodMs()) }

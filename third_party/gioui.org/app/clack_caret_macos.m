@@ -3,6 +3,7 @@
 //go:build darwin && !ios
 
 #import <AppKit/AppKit.h>
+#include <stdbool.h>
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
 #import <Accessibility/Accessibility.h>
 #endif
@@ -68,5 +69,27 @@ void gio_observeCaretBlink(void) {
 										 }];
 		}
 #endif
+	}
+}
+
+// gio_clackCaretDefaults sets the two periods in the process's own
+// defaults (the application domain, over NSGlobalDomain), or removes them,
+// and posts the notification the period is read again on (tests).
+void gio_clackCaretDefaults(bool setOn, int64_t on, bool setOff, int64_t off, bool post) {
+	@autoreleasepool {
+		NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
+		if (setOn) {
+			[d setInteger:(NSInteger)on forKey:@"NSTextInsertionPointBlinkPeriodOn"];
+		} else {
+			[d removeObjectForKey:@"NSTextInsertionPointBlinkPeriodOn"];
+		}
+		if (setOff) {
+			[d setInteger:(NSInteger)off forKey:@"NSTextInsertionPointBlinkPeriodOff"];
+		} else {
+			[d removeObjectForKey:@"NSTextInsertionPointBlinkPeriodOff"];
+		}
+		if (post) {
+			[[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationWillBecomeActiveNotification object:NSApp];
+		}
 	}
 }
