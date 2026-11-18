@@ -233,6 +233,7 @@ func KeyEquivalent(key string, mods int) bool {
 const (
 	KeyA      = 0x00
 	KeyD      = 0x02
+	KeyF      = 0x03
 	KeyX      = 0x07
 	KeyC      = 0x08
 	KeyB      = 0x0B

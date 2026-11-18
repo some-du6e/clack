@@ -46,14 +46,15 @@ type capture struct {
 	k       float32
 }
 
-// Shoot renders the part of a frame's ops in region (window px), each px
-// of it drawn as k: a ShotSize(region, k) image. The window's GPU can't
-// read its frames back, so the ops go once more through a headless GPU
-// context (a Metal device, D3D11, EGL), under a transform that scales
-// the region up and moves it to the origin; paths and glyph outlines are
-// vectors, so the region comes out as sharp as a window k times as dense
-// (Gio patch 31, Ops.Whole). Tests replace it.
-var Shoot = func(ops *op.Ops, region image.Rectangle, k float32) (*image.RGBA, error) {
+// Shoot renders the part of a frame in region (window px), each px of it
+// drawn as k: a ShotSize(region, k) image. frame is the frame's ops as
+// one call (Gio patch 31, Ops.Whole). The window's GPU can't read its
+// frames back, so the ops go once more through a headless GPU context (a
+// Metal device, D3D11, EGL), under a transform that scales the region up
+// and moves it to the origin; paths and glyph outlines are vectors, so
+// the region comes out as sharp as a window k times as dense. Tests
+// replace it.
+var Shoot = func(frame op.CallOp, region image.Rectangle, k float32) (*image.RGBA, error) {
 	size := ShotSize(region, k)
 	if size.X <= 0 || size.Y <= 0 {
 		return nil, errors.New("empty region")
@@ -65,7 +66,7 @@ var Shoot = func(ops *op.Ops, region image.Rectangle, k float32) (*image.RGBA, e
 	defer w.Release()
 	var o op.Ops
 	tr := op.Affine(f32.AffineId().Offset(f32.Pt(-float32(region.Min.X), -float32(region.Min.Y))).Scale(f32.Point{}, f32.Pt(k, k))).Push(&o)
-	ops.Whole().Add(&o)
+	frame.Add(&o)
 	tr.Pop()
 	if err := w.Frame(&o); err != nil {
 		return nil, err
@@ -154,7 +155,7 @@ func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
 	r := &Report{When: now, OS: goos()}
 	ptr := image.Pt(int(t.ptr.X+.5), int(t.ptr.Y+.5))
 	t.fill(r, red, p)
-	t.host.Describe(r, red)
+	t.describe(r, red)
 	r.Region = p.region
 	r.Rect = dpRect(p.rect, scale)
 	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
@@ -175,9 +176,9 @@ func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr im
 	}
 	red := NewRedactor()
 	r := &Report{When: now, OS: goos(), Capture: "dragged region"}
-	t.host.Describe(r, red)
+	t.describe(r, red)
 	var in []string
-	for _, rg := range t.host.Regions() {
+	for _, rg := range t.regions() {
 		if rg.Name != "window" && rg.Rect.Overlaps(rect) {
 			in = append(in, rg.Name)
 		}
@@ -326,19 +327,23 @@ func dpRect(r image.Rectangle, scale float32) image.Rectangle {
 }
 
 // AfterFrame shoots the frame just finished when a pick or a dragged
-// region asked for it. A Shift+click's report goes on its way with the
-// shot at once, the session over; a plain click's or a region's shot is
-// shown for review (review.go) first. With no shot the report goes on
-// its way as text at once. Call it on the UI
-// goroutine once the frame's ops are complete (after the window's frame
-// was submitted, before the ops are reset); size is the frame's size in
-// px.
+// region asked for it (frozen, the frozen frame: what the window shows
+// under the tool's drawing). A Shift+click's report goes on its way with
+// the shot at once, the session over; a plain click's or a region's shot
+// is shown for review (review.go) first. With no shot the report goes on
+// its way as text at once. Call it on the UI goroutine once the frame's
+// ops are complete (after the window's frame was submitted, before the
+// ops are reset); size is the frame's size in px.
 func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	c := t.capture
 	if c == nil {
 		return
 	}
 	t.capture = nil
+	frame := ops.Whole()
+	if fz := t.fz; fz != nil {
+		frame, size = fz.content, fz.at.size
+	}
 	crop, k := cropFor(c.rect, size, c.scale)
 	if c.region {
 		crop, k = regionCrop(c.rect, size, c.scale)
@@ -346,7 +351,7 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	var img *image.RGBA
 	err := errors.New("the element is outside the window")
 	if !crop.Empty() {
-		img, err = Shoot(ops, crop, k)
+		img, err = Shoot(frame, crop, k)
 	}
 	if err != nil {
 		log.Printf("inspect: no screenshot: %v", err)

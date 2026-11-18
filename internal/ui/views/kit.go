@@ -335,6 +335,10 @@ type base struct {
 	addBtns map[string]*widget.Clickable
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
+	// vers caches msgVer per message copy (msgVerOf); vsrc is the
+	// revision each message's patched view was last read for (viewMsg)
+	vers map[string]verMemo
+	vsrc map[string]viewRev
 	// rec, while a row is described (recording), notes the members it
 	// drew without a name (missing_member.go); reads (recordingReads)
 	// every member it looked up

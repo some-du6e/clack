@@ -326,6 +326,7 @@ func (b *base) style() *richview.Style {
 type richEntry struct {
 	v   *richview.View
 	ver string
+	at  time.Time // the frame it was laid out in last (gtx.Now)
 }
 
 // richCache keeps one richview.View per message for a view.
@@ -357,10 +358,9 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 		return b.body(gtx, m.Doc, m.Text, maxLines)
 	}
 	key := m.Channel + "/" + m.TS
-	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
+	ver := b.msgVerOf(m)
 	if m != orig {
-		// a plugin's text patch can keep the length: key on the text
-		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
+		ver += ":p" // a plugin's view of it: never the source's layout
 	}
 	// muted (read Activity rows) only dims the body: mentions keep their
 	// pills like Slack; Muted is for system messages.
@@ -393,6 +393,7 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 	} else {
 		e.v.SetOptions(o)
 	}
+	e.at = gtx.Now
 	if maxLines <= 0 {
 		return e.v.Layout(gtx, b.style(), hostHandler{b.h})
 	}
@@ -464,6 +465,65 @@ func textHash(s string) uint32 {
 		h *= 16777619
 	}
 	return h
+}
+
+// bytesHash is textHash of b, without copying it into a string.
+func bytesHash(b []byte) uint32 {
+	h := uint32(2166136261)
+	for _, c := range b {
+		h ^= uint32(c)
+		h *= 16777619
+	}
+	return h
+}
+
+// msgVer is what a message body's cached layout (richDoc, keyed by its
+// channel/ts) is made again on: its edit, text, blocks and attachments
+// themselves, and the blocks drawn. Lengths alone kept an app's
+// chat.update on screen as the revision before it: a vote count's digit,
+// new block_ids, an unfurl's text change none of them (Karim's vote
+// counts in Activity).
+func msgVer(m *core.Message) string {
+	return m.EditedTS + ":" + strconv.FormatUint(uint64(textHash(m.Text)), 36) + ":" +
+		strconv.FormatUint(uint64(bytesHash(m.Blocks)), 36) + ":" + strconv.FormatUint(uint64(bytesHash(m.Attachments)), 36) +
+		":" + strconv.Itoa(len(m.Doc.Blocks))
+}
+
+// verMemo is msgVer of a message as one revision has it, with what tells
+// the revision apart from another (its text, edit, the slices its blocks
+// and attachments are, its document's length) but not the copy holding
+// it: a patched row's view hands a new copy of the same revision every
+// frame.
+type verMemo struct {
+	text, edited   string
+	blocks, atts   *byte // the slices' first bytes
+	nBlocks, nDocs int
+	ver            string
+}
+
+func firstByte(b []byte) *byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return &b[0]
+}
+
+// msgVerOf is msgVer(m), worked out once per revision: the rows ask every
+// frame, two or three times each, and a plugin's view of a message is a
+// new copy each time.
+func (b *base) msgVerOf(m *core.Message) string {
+	k := m.Channel + "/" + m.TS
+	if e, ok := b.vers[k]; ok && e.text == m.Text && e.edited == m.EditedTS && e.blocks == firstByte(m.Blocks) &&
+		e.atts == firstByte(m.Attachments) && e.nBlocks == len(m.Blocks) && e.nDocs == len(m.Doc.Blocks) {
+		return e.ver
+	}
+	ver := msgVer(m)
+	if b.vers == nil || len(b.vers) > 2000 {
+		b.vers = map[string]verMemo{}
+	}
+	b.vers[k] = verMemo{text: m.Text, edited: m.EditedTS, blocks: firstByte(m.Blocks), atts: firstByte(m.Attachments),
+		nBlocks: len(m.Blocks), nDocs: len(m.Doc.Blocks), ver: ver}
+	return ver
 }
 
 func firstNonEmpty(s ...string) string {

@@ -45,6 +45,11 @@ func (s *Store) NoteLive(ch, ts string, m *slack.Message) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteLiveLocked(ch, ts, m)
+}
+
+// noteLiveLocked is NoteLive with s.mu held.
+func (s *Store) noteLiveLocked(ch, ts string, m *slack.Message) {
 	s.liveSeq++
 	r := liveRec{seq: s.liveSeq, gone: m == nil}
 	if m != nil {
@@ -63,6 +68,116 @@ func (s *Store) NoteLive(ch, ts string, m *slack.Message) {
 		}
 	}
 	s.live[k] = r
+}
+
+// MutateNoted is Mutate for a write a read out now must not undo, the
+// socket's or the viewer's own (message_replied's reply count, a lock, a
+// link preview taken off): f runs on every copy and the copy it leaves is
+// noted as a realtime change (NoteLive), under one lock, so no read lands
+// between the two and puts its older copy back.
+func (s *Store) MutateNoted(ch, ts string, f func(*slack.Message)) (slack.Message, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.mutateLocked(ch, ts, f)
+	if ok && ch != "" && ts != "" {
+		s.noteLiveLocked(ch, ts, &m)
+	}
+	return m, ok
+}
+
+// NoteMutate notes m, the socket's copy of ch/ts (message_changed), and
+// runs f on every copy the store holds, under one lock: a read landing
+// between the two kept the older copy, and announced it after the
+// socket's change (core's announceHeld goes by the note). It reports the
+// first copy and whether there was one.
+func (s *Store) NoteMutate(ch, ts string, m *slack.Message, f func(*slack.Message)) (slack.Message, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ch != "" && ts != "" {
+		s.noteLiveLocked(ch, ts, m)
+	}
+	return s.mutateLocked(ch, ts, f)
+}
+
+// NoteRemove notes the deletion of ch/ts and takes every copy out, under
+// one lock (NoteLive with nil, then Remove).
+func (s *Store) NoteRemove(ch, ts string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ch != "" && ts != "" {
+		s.noteLiveLocked(ch, ts, nil)
+	}
+	s.removeLocked(ch, ts)
+}
+
+// HeldStamped is FindHeld with ch/ts's live stamp (LiveStamp), read under
+// one lock.
+func (s *Store) HeldStamped(ch, ts string) (slack.Message, uint64, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	stamp := s.liveStampLocked(ch, ts)
+	if m := s.findRefLocked(ch, ts, ""); m != nil {
+		return *m, stamp, true
+	}
+	if m := s.fetched[ch+"/"+ts]; m != nil {
+		return *m, stamp, true
+	}
+	return slack.Message{}, stamp, false
+}
+
+// LiveStamp is the latest realtime change noted of ch/ts (a message, a
+// change, a deletion, a reaction: their LiveSeq), 0 for none the store
+// remembers. A copy read with one stamp is the message as it is until the
+// stamp moves.
+func (s *Store) LiveStamp(ch, ts string) uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.liveStampLocked(ch, ts)
+}
+
+func (s *Store) liveStampLocked(ch, ts string) uint64 {
+	k := ch + "/" + ts
+	var n uint64
+	if r, ok := s.live[k]; ok {
+		n = r.seq
+	}
+	if ops := s.reacts[k]; len(ops) > 0 {
+		n = max(n, ops[len(ops)-1].seq)
+	}
+	return n
+}
+
+// liveReadLocked is the copy a read keeps of m, a message of ch its
+// request (begun at LiveSeq since) brought: m itself, unless the socket
+// changed m after since (live). Then it is the copy the store holds (a
+// window's, a cached thread's, one fetched by id: it has the socket's
+// change and every one after it), else the socket's own with the
+// reactions noted after it replayed; gone when the socket deleted it
+// meanwhile (s.mu held). The reads keep what changed while they were out
+// with it (PutFetched, SetLatestRead, PrependOlderSince).
+func (s *Store) liveReadLocked(ch string, m *slack.Message, since uint64) (keep slack.Message, live, gone bool) {
+	k := ch + "/" + m.TS
+	r, ok := s.live[k]
+	if !ok || r.seq <= since {
+		return *m, false, false
+	}
+	if r.gone {
+		return slack.Message{}, true, true
+	}
+	var mm slack.Message
+	if held := s.heldLocked(ch, m.TS); held != nil {
+		mm = *held
+	} else if f := s.fetched[k]; f != nil {
+		mm = *f
+	} else {
+		mm = *r.msg
+		s.replayReactsLocked(ch, &mm, r.seq)
+	}
+	if mm.ThreadTS == "" { // a message_changed copy without thread_ts stays in its thread
+		mm.ThreadTS = m.ThreadTS
+	}
+	s.keepPinLocked(ch, &mm, m)
+	return mm, true, false
 }
 
 // SetThreadSince is SetThread for a replies fetch of ch/ts whose request
@@ -102,5 +217,7 @@ func (s *Store) SetThreadSince(ch, ts string, msgs []slack.Message, since uint64
 		}
 	}
 	SortAsc(out)
+	s.replayAllReactsLocked(ch, out, since) // the socket's reactions meanwhile (reacts.go)
+	s.readThreadLocked(ch, ts, out)         // a new revision reaches every copy, and core (read_revisions.go)
 	s.threads[ch+"/"+ts] = out
 }

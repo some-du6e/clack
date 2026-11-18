@@ -9,6 +9,7 @@ package views
 
 import (
 	"encoding/json"
+	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -52,15 +53,44 @@ func (r *actRow) rowKind(gtx C) D {
 }
 
 // rowBase is the props every inner activity boundary gets.
-func (r *actRow) rowBase(part string) slackc.Props {
-	return slackc.Props{"$key": r.key + "/" + part, "activityItem": r.itemShape(), "msg": msgProps(r.msg()),
+func (r *actRow) rowBase(part string) slackc.Props { return r.rowBaseWith(part, msgProps(r.msg())) }
+
+// rowBaseWith is rowBase with the msg props already built.
+func (r *actRow) rowBaseWith(part string, msg slackc.Props) slackc.Props {
+	return slackc.Props{"$key": r.key + "/" + part, "activityItem": r.itemShape(), "msg": msg,
 		"density": r.density(), "isDmTab": r.v.dmOnly()}
+}
+
+// actThreadRevs numbers ActivityThread's props revisions across every row:
+// a row made again (a fresh load replaces the rows) never reuses an older
+// row's number, as slackc keeps a same-$key root and its tree a few
+// seconds.
+var actThreadRevs atomic.Uint64
+
+// actRevSent is the ts of the msg a row sent ActivityThread with one of
+// its props revisions.
+type actRevSent struct {
+	rev uint64
+	ts  string
 }
 
 // threadProps: ActivityThread {activityItem, msg, messageTs, minUnreadTs,
 // unreadCount}.
 func (r *actRow) threadProps() slackc.Props {
-	p := r.rowBase("thread")
+	m := r.msg()
+	p := r.rowBaseWith("thread", r.threadSent.send(m)) // what ActivityThread's tree is judged by (echoed)
+	if r.threadRev == 0 || r.it.TS != r.threadRevTS {
+		r.threadRev, r.threadRevTS = actThreadRevs.Add(1), r.it.TS
+		ts := ""
+		if m != nil {
+			ts = m.TS
+		}
+		r.revSent = append(r.revSent, actRevSent{r.threadRev, ts})
+		if len(r.revSent) > 4 {
+			r.revSent = r.revSent[len(r.revSent)-4:]
+		}
+	}
+	p["$rev"] = int64(r.threadRev) // which props a tree was rendered from (threadOverride); props hash ints, not uint64
 	p["messageTs"] = r.it.TS
 	p["threadTs"] = r.it.ThreadTS
 	p["unreadCount"] = r.it.Count
@@ -78,6 +108,23 @@ func (r *actRow) layoutThread(gtx C, p slackc.Props) D {
 }
 
 func (r *actRow) threadOverride(p slackc.Props) {
+	// a tree rendered from props before the item's (another reply was its
+	// latest: one landed while JS hadn't drawn it again) is no plugin's
+	// projection of the item now: its count and sender are the earlier
+	// reply's. The props' revision tells it, which a plugin passes on with
+	// the rest (BetterBlock's projection rewrites messageTs itself). One
+	// that projected away from what the row sent with that revision, a
+	// plugin hiding the thread's messages at work (BetterBlock's latest
+	// visible reply for a blocked person's), keeps its projection until JS
+	// draws the new revision: drawing the item natively meanwhile would
+	// show what the plugin hides.
+	if rev, ok := p["$rev"].(float64); ok && uint64(rev) != r.threadRev {
+		mp := p.Map("msg")
+		sent, known := r.sentTSOf(uint64(rev))
+		if !known || mp == nil || mp.StrOr("ts", sent) == sent {
+			return
+		}
+	}
 	if n, ok := p["unreadCount"].(float64); ok {
 		r.count = max(0, int(n))
 	} else if ai := p.Map("activityItem"); ai != nil {
@@ -96,8 +143,12 @@ func (r *actRow) threadOverride(p slackc.Props) {
 			src, r.pm = m, m
 		}
 	}
-	if om := r.textOverride(src, mp); om != nil {
-		r.pm = om
+	// a revision before, from a tree JS hasn't drawn since the message
+	// changed, is the props the row sent, not a plugin's text (echoed)
+	if src != it.Msg || !r.threadSent.echoed(mp) {
+		if om := r.textOverride(src, mp); om != nil {
+			r.pm = om
+		}
 	}
 	om := msgOverride(src, mp)
 	r.pd = *r.cur
@@ -105,6 +156,17 @@ func (r *actRow) threadOverride(p slackc.Props) {
 		r.pd.name, r.pd.avatar = n, av
 	}
 	r.cur = &r.pd
+}
+
+// sentTSOf is the ts of the msg the row sent ActivityThread with props
+// revision rev, among its latest ones.
+func (r *actRow) sentTSOf(rev uint64) (string, bool) {
+	for _, x := range r.revSent {
+		if x.rev == rev {
+			return x.ts, true
+		}
+	}
+	return "", false
 }
 
 // textOverride is src with the text and blocks of a plugin's msg (Slick
@@ -186,17 +248,22 @@ func (r *actRow) layoutDetailed(gtx C, _ slackc.Props) D { return r.v.detailedCo
 func (r *actRow) layoutDense(gtx C, _ slackc.Props) D    { return r.v.denseContent(gtx, r) }
 
 // threadMsg is the thread message ts an ActivityThread override points
-// at: the root, or a cached reply (converted once, kept on the row).
+// at: the root, a copy the socket or a list on screen brought
+// (activity_msgs.go), or a cached reply (converted once, kept on the row
+// until the row is described again).
 func (r *actRow) threadMsg(ts string) *core.Message {
 	it := r.it
 	if it.Root != nil && it.Root.TS == ts {
 		return it.Root
 	}
+	if m, src := r.v.msgFor(actMsgKey{it.Channel, ts}, nil, 0); src != 0 {
+		return m
+	}
 	if r.tm != nil && r.tm.TS == ts && r.tm.Channel == it.Channel {
 		return r.tm
 	}
 	a := r.v.h.Core()
-	sm, ok := a.S.Find(it.Channel, ts)
+	sm, ok := a.S.FindHeld(it.Channel, ts)
 	if !ok {
 		return nil
 	}

@@ -123,7 +123,7 @@ func AgentThreadNameOf(root *Message) string {
 // the write fails). It reports whether the root had a session to change.
 func (a *App) SetAgentSessionTitle(ch, ts, title string) bool {
 	changed := false
-	upd, ok := a.S.Mutate(ch, ts, func(m *slack.Message) {
+	upd, ok := a.S.MutateNoted(ch, ts, func(m *slack.Message) { // a read out now keeps it
 		if m.AgentSession == nil {
 			return
 		}
