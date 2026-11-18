@@ -83,11 +83,11 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	if json.Unmarshal(ev.Raw, &e) != nil || e.Channel == "" {
 		return
 	}
+	ts := e.TS
+	if ts == "" {
+		ts = e.Msg
+	}
 	if !e.IsChannelInvite {
-		ts := e.TS
-		if ts == "" {
-			ts = e.Msg
-		}
 		if e.ThreadTS == "" || e.ThreadTS == ts {
 			return // not a reply (7)
 		}
@@ -115,7 +115,7 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 		title = nsGrowl.T("New message from {name}", "name", c.Name)
 	}
 	body := e.Content
-	note := a.messageNote(e.Channel, e.TS, e.ThreadTS) // the toast's payload (notify.go)
+	note := a.messageNote(e.Channel, ts, e.ThreadTS) // the toast's payload (notify.go): its click opens the thread at ts
 	a.dispatch("showNotification", map[string]any{"title": title, "message": body, "body": body, "channelId": e.Channel, "ts": e.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
 			if t, bd, ok := notificationText(args, nil, body); ok {

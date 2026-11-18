@@ -107,6 +107,9 @@ type listState struct {
 	openLastRead string // the "New" line position, fixed while open
 	opened       bool
 	thr          threadRead // the thread pane's read state (thread_unread.go)
+	// rootHandedOn: the thread's root turned out to be a reply and the
+	// Host was told (ReplyRootRedirector)
+	rootHandedOn bool
 	positioned   bool
 	markedTS     string
 	lastMark     time.Time
@@ -699,6 +702,21 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.selKeys(gtx, h)
 	s.kbKeys(gtx, h)
 	event.Op(gtx.Ops, s)
+
+	if root := s.replyRoot(); root != "" {
+		// the thread was opened with a reply's ts: never drawn as its
+		// root, the pane is handed on to the reply's thread and stays
+		// loading meanwhile (ReplyRootRedirector)
+		if !s.rootHandedOn {
+			s.rootHandedOn = true
+			if r, ok := h.(ReplyRootRedirector); ok {
+				r.ReplyAsThreadRoot(s.ch, s.ts, root)
+			}
+		}
+		s.flexpaneLoading(gtx, h, c, size)
+		area.Pop()
+		return layout.Dimensions{Size: size}
+	}
 
 	if !s.snap.loaded && len(s.snap.msgs) == 0 {
 		if s.thread && s.threadPending(gtx, h, c, size) { // FlexpaneLoading, ThreadsError (thread.go)

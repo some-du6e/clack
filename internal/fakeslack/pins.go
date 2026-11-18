@@ -170,6 +170,18 @@ func (s *Server) PostBotQuiet(ch, botID, username, text string) string {
 	return ts
 }
 
+// PostBotBlocksQuiet is PostBotQuiet for a bot message with Block Kit
+// blocks (a bot's rich_text digest).
+func (s *Server) PostBotBlocksQuiet(ch, botID, username, text string, blocks json.RawMessage) string {
+	ts := s.PostBotQuiet(ch, botID, username, text)
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	if h := s.hist[ch]; len(h) > 0 && h[0].TS == ts {
+		h[0].Blocks = blocks
+	}
+	return ts
+}
+
 // PostReplyQuiet adds a reply from user to the thread under root (a
 // message of ch's history, which gets the reply metadata) and returns its
 // ts. conversations.replies then serves the root and its replies.

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"log"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
@@ -82,8 +83,29 @@ func (a *App) ActiveThread() (channel, ts string) {
 // OpenThread shows a thread in the secondary pane. Opened from inside the
 // split view, or with Slack's split modifier click (⌘⌥, Ctrl+Alt), it
 // goes in the split view instead (split.go).
-func (a *App) OpenThread(channel, ts string) {
+//
+// ts is the thread's root. Slack never shows a reply as a thread's root:
+// its routes get a reply's thread_ts first (jumpToMessage's
+// getThreadTsToOpen, jump.go). So a reply's ts here (a route, or a
+// caller that had only the reply) opens the reply's thread at the reply,
+// as toThread({threadTs, replyTs}) does. One core doesn't hold yet is
+// caught by its pane once the thread's messages load (ReplyAsThreadRoot,
+// thread_root.go). Every open goes to clack.log (navlog.go).
+func (a *App) OpenThread(channel, ts string) { a.openThread(channel, ts, "", false) }
+
+// openThread is OpenThread; at is the reply the open starts at (the
+// log's), resolved that ts is known to be a root (OpenThread's guard
+// sent it), so it isn't looked up again.
+func (a *App) openThread(channel, ts, at string, resolved bool) {
+	if !resolved && a.data != nil && a.data.core != nil {
+		if root, found := a.data.core.CachedReplyThread(channel, ts); found && root != "" {
+			log.Printf("ui: thread open: %s is a reply in %s, whose thread opens at it (%s)", logTag(ts), logTag(root), a.navVia())
+			a.openThreadAtIn(channel, root, ts, a.router.Current(), true)
+			return
+		}
+	}
 	if a.pane == paneSplit || a.splitClick() {
+		a.logThreadOpen(channel, ts, at, "in the split view")
 		a.OpenSplit("c/" + channel + "/t/" + ts)
 		return
 	}
@@ -91,6 +113,7 @@ func (a *App) OpenThread(channel, ts string) {
 		a.secondary.at = "" // the thread itself again: no replyTs (OpenThreadAt sets it after)
 		return
 	}
+	a.logThreadOpen(channel, ts, at, "")
 	a.secondary = secondaryState{kind: secThread, channel: channel, ts: ts, width: a.secondary.width}
 	a.secondary.view = a.mountThread(channel, ts)
 	if a.data != nil && a.data.core != nil {

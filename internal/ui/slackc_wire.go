@@ -49,6 +49,7 @@ func (a *App) slackcFrame(gtx layout.Context) {
 			Toast:           a.Toast,
 			OpenURL:         openURL,
 			Navigate:        a.Navigate,
+			OpenPermalink:   a.OpenPermalink,
 			Core:            c,
 			PointerWin:      func() image.Point { return a.ptrWin },
 			OpenEmojiPicker: a.OpenEmojiPicker,

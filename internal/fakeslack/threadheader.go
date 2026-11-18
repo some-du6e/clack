@@ -171,10 +171,11 @@ func (s *Server) isThreadHeaderConv(id string) bool {
 	return false
 }
 
-// handleThreadHeader answers conversations.replies for the fixtures.
+// handleThreadHeader answers conversations.replies for the fixtures: the
+// thread, for its root's ts or a reply's (messages_list.go).
 func (s *Server) handleThreadHeader(method string, f url.Values) (any, bool) {
 	if !s.Size.ThreadHeader || method != "conversations.replies" || !s.isThreadHeaderConv(f.Get("channel")) ||
-		f.Get("ts") != ThreadRootTS {
+		!isThreadHeaderTS(f.Get("ts")) {
 		return nil, false
 	}
 	ch := f.Get("channel")

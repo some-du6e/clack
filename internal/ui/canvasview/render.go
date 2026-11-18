@@ -772,9 +772,12 @@ func (r *handler) OpenURL(u string) {
 		v.act.Canvas(id)
 		return
 	}
+	if po, ok := v.h.(interface{ OpenPermalink(string) bool }); ok && po.OpenPermalink(u) {
+		return // openPermalink: jumpToMessage, a reply in its thread (the ui root's App)
+	}
 	if ch, ts, ok := archivesLink(u); ok {
 		if ts != "" {
-			v.h.Navigate("c/" + ch + "/t/" + ts)
+			v.h.Navigate("c/" + ch + "/m/" + ts) // the message in its conversation, never a thread's root
 		} else {
 			v.h.Navigate("c/" + ch)
 		}

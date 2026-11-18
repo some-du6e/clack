@@ -461,6 +461,28 @@ func mpimMembers(app *core.App, cv core.Conv) (int, string) {
 	return n, strings.Join(names, ", ")
 }
 
+// replyRoot is the thread a thread list's root is a reply in, once its
+// messages loaded: its ts was a reply's (Slack's isReply, a thread_ts
+// that isn't its own ts). "" for a real root, or before the load.
+func (s *listState) replyRoot() string {
+	if !s.thread {
+		return ""
+	}
+	for i := range s.snap.msgs {
+		if m := &s.snap.msgs[i].m; m.TS == s.ts {
+			if m.ThreadTS != "" && m.ThreadTS != m.TS {
+				return m.ThreadTS
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// RootIsReply is the thread the pane's root turned out to be a reply in
+// ("" for a real root, or before its messages load).
+func (v *ThreadView) RootIsReply() string { return v.s.replyRoot() }
+
 // root is the thread's parent message, once loaded.
 func (v *ThreadView) root() (core.Message, bool) {
 	for i := range v.s.snap.msgs {
@@ -875,6 +897,9 @@ func (s *listState) threadLoading() bool {
 // Signed out, the list's sign-in prompt keeps the old composer.
 func (v *ThreadView) HidesComposer() bool {
 	s := v.s
+	if s.replyRoot() != "" {
+		return true // a reply as the root: loading until the Host moves on (layoutList)
+	}
 	if !s.thread || s.snap.loaded {
 		return false
 	}

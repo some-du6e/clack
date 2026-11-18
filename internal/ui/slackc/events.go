@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"image"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -549,6 +550,9 @@ func followLink(href string) {
 	e := env()
 	switch {
 	case strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") || strings.HasPrefix(href, "mailto:"):
+		if e.OpenPermalink != nil && e.OpenPermalink(href) {
+			return
+		}
 		if r := slackRoute(href); r != "" && e.Navigate != nil {
 			e.Navigate(r)
 			return
@@ -593,9 +597,13 @@ func slackRoute(href string) string {
 	if strings.HasPrefix(href, "http") && !strings.Contains(href[:i], "slack.com") {
 		return ""
 	}
-	parts := strings.Split(strings.SplitN(href[i+len("/archives/"):], "?", 2)[0], "/")
+	path, query, _ := strings.Cut(href[i+len("/archives/"):], "?")
+	parts := strings.Split(path, "/")
 	if len(parts) == 0 || parts[0] == "" {
 		return ""
+	}
+	if q, err := url.ParseQuery(query); err == nil && isMessageTS(q.Get("thread_ts")) {
+		return "c/" + parts[0] + "/t/" + q.Get("thread_ts") // a reply's link: its thread, never the reply as a root
 	}
 	if len(parts) > 1 && len(parts[1]) > 7 && parts[1][0] == 'p' {
 		ts := parts[1][1:]
@@ -605,6 +613,21 @@ func slackRoute(href string) string {
 		return "c/" + parts[0] + "/m/" + ts
 	}
 	return "c/" + parts[0]
+}
+
+// isMessageTS is a message timestamp as Slack writes one
+// ("1700000000.000100"), so a link's thread_ts can't add route segments.
+func isMessageTS(s string) bool {
+	a, b, ok := strings.Cut(s, ".")
+	if !ok || len(a) != 10 || len(b) != 6 {
+		return false
+	}
+	for _, r := range a + b {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *scope) scroll(pe *pointer.Event) {

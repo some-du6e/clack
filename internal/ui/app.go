@@ -328,6 +328,7 @@ type App struct {
 	split       splitState    // Slack's split view (split.go)
 	pane        string        // the view container being drawn or acted on: "" main, paneSplit
 	navSrc      navSource     // the main window's container being laid out (secondary.go)
+	openVia     string        // the navigation's source for clack.log ("": its caller; navlog.go)
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 

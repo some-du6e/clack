@@ -75,6 +75,13 @@ The report is meant for #clack, so it holds no content. It never collects messag
 
 An id becomes a tag: its kind and the first 6 hex digits of SHA-256 over a salt and the id (`ch:3fa2b1`, `user:77ab02`, `ts:9c01de`). Each report gets a new random salt, which is never written anywhere. Within one report the same channel always has the same tag, so "the same message" and "another one" stay apparent. Across reports, and for anyone without the salt, a tag says nothing. Routes keep their page (`c/`, `dms`) and tag every other segment. A run-time attribute value (a channel id in `data-qa-channel-sidebar-channel-id`) becomes a tag unless it is an enumeration such as `data-qa=add_reaction`.
 
+clack.log uses the same tags for what a report about a navigation needs (`internal/ui/navlog.go`), with one salt per run that is never written. Within one log the same message keeps its tag, and nothing in a line names a conversation or a message. No text is logged. A line is written for:
+
+- every thread pane that opens: `ui: thread opened: ch:… ts:… [at ts:…] (<source>)`. The source is what the entry point named (`a notification's click`, `a deep link`, `permalink from <caller>`), else the first caller outside the router, as `ui/views.(*Activity).update activity.go:784`;
+- every jumpToMessage, with the thread it resolved: `ui: jumpToMessage: ch:… ts:… thread ts:… (<source>)`;
+- a reply's ts that was turned into its thread: `ui: thread open: ts:… is a reply in ts:…`, or, when the pane only found out from conversations.replies, `ui: thread pane: its root ts:… is a reply in ts:…`;
+- every click, reply or button on one of Clack's notifications: `notify: clicked a notification: ch:… ts:… thread ts:… (id type "msg")`.
+
 The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it, or a dragged region as it was. Whatever the element or region holds (a picked message's text) is in it, unless the user blurs it out in the review. A plain click copies the element as it is; Shift+click it (or drag over it) when it shows something private, and the review comes before anything is copied or saved, so the user decides what to share.
 
 ## Coverage

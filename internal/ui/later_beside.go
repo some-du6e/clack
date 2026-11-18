@@ -131,11 +131,17 @@ func (a *App) OpenThreadAt(ch, thread, ts string) {
 //     conversation in the primary for it to move; jumpToMessage (jump.go),
 //     which puts the thread's conversation there, moves it itself.
 func (a *App) openThreadAt(ch, thread, ts string, prev Route) {
+	a.openThreadAtIn(ch, thread, ts, prev, false)
+}
+
+// openThreadAtIn is openThreadAt; resolved: thread is known to be a root
+// (OpenThread's guard found ts's thread), so it isn't looked up again.
+func (a *App) openThreadAtIn(ch, thread, ts string, prev Route, resolved bool) {
 	if ch == "" || thread == "" {
 		return
 	}
 	split := a.pane == paneSplit || a.splitClick() // OpenThread puts it in the split view
-	a.OpenThread(ch, thread)
+	a.openThread(ch, thread, ts, resolved)
 	s := &a.secondary
 	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
 		return
@@ -174,7 +180,7 @@ func (a *App) OpenThreadReply(ch, thread, ts string) {
 		return
 	}
 	split := a.pane == paneSplit || a.splitClick()
-	a.OpenThread(ch, thread)
+	a.openThread(ch, thread, ts, false)
 	s := &a.secondary
 	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
 		return

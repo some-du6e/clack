@@ -220,15 +220,33 @@ func (r *richHandler) OpenURL(url string) {
 		}
 		return
 	}
-	if ch, ts, ok := slackLink(url); ok {
-		if ts != "" {
-			r.h.Navigate("c/" + ch + "/t/" + ts)
-		} else {
-			r.h.Navigate("c/" + ch)
-		}
+	if po, ok := r.h.(PermalinkOpener); ok && po.OpenPermalink(url) {
+		return
+	}
+	if route, ok := slackLinkRoute(url); ok { // a Host without openPermalink
+		r.h.Navigate(route)
 		return
 	}
 	openURL(url)
+}
+
+// PermalinkOpener is optional on the Host: Slack's openPermalink for a
+// link to a message or a conversation (the ui root's App.OpenPermalink):
+// jumpToMessage({channelId, ts, threadTs}), which looks a reply's thread
+// up when the link has no thread_ts, so a reply opens in its parent's
+// thread and is never a thread's root. false: not such a link.
+type PermalinkOpener interface {
+	OpenPermalink(url string) bool
+}
+
+// ReplyRootRedirector is optional on the Host: a thread pane whose root
+// turned out to be a reply in thread root once its messages loaded (it
+// was opened with the reply's ts) hands the thread on, its parent's
+// thread at the reply (the ui root's App.ReplyAsThreadRoot). Slack never
+// draws a reply as a thread's root: the pane draws its loading state
+// until the Host has moved on. Called once per pane, mid-layout.
+type ReplyRootRedirector interface {
+	ReplyAsThreadRoot(ch, reply, root string)
 }
 
 // OpenLink is a mrkdwn link's click with its text: Slack's

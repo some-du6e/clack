@@ -43,6 +43,10 @@ func (a *App) openDeepLink(uri string) bool {
 		a.Post(func() { a.openChannelTab(ch, tab) })
 		return true
 	}
+	if ch, ts, thread, ok := deepLinkMessage(uri); ok { // slack://channel?id=…&message=…&thread_ts=…
+		a.Post(func() { a.withVia("a deep link", func() { a.jumpToMessage(ch, ts, thread) }) })
+		return true
+	}
 	route, user, ok := deepLinkRoute(uri)
 	if ok {
 		a.Post(func() {

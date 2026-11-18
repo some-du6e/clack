@@ -1379,3 +1379,36 @@ jobs:
         with:
           name: gpu-cost-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-shots
+
+  # thread-open-root (2026-11-17): a thread pane never shows a reply as its
+  # root (Karim, α.105: a link to a reply in a bot's digest of active
+  # threads opened the reply alone, as the root). A reply's permalink with
+  # and without thread_ts (the second looked up with messages.list),
+  # slack://channel links naming the reply as the message or the thread,
+  # OpenThread with a reply's ts, the pane learning it from
+  # conversations.replies, a followed thread's toast; and the log lines.
+  # One verbose run, then COUNT. Dispatch: only=thread-open-root.
+  thread-open-root:
+    if: ${{ !inputs.only || startsWith('thread-open-root', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (a reply's link, deep link, pane and toast open its parent's thread at it)
+        run: |
+          go test -count=1 -v -timeout 20m -run "$TESTS" ./internal/ui
+          go test -count=$COUNT -timeout 60m -run "$TESTS" ./internal/ui
+      - name: the lookups and the log's tags (core, ui)
+        if: ${{ !cancelled() && hashFiles('internal/ui/navlog_test.go') != '' }}
+        run: |
+          go test -count=$COUNT -run '^TestReplyThread$' ./internal/core
+          go test -count=$COUNT -run '^(TestDeepLinkMessage|TestNavLogTags)$' ./internal/ui

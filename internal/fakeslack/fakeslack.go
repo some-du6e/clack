@@ -1747,6 +1747,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		if msgs, found := s.quietThread(f.Get("channel"), f.Get("ts")); found {
 			return ok("messages", msgs, "has_more", false)
 		}
+		if root := s.quietRootOf(f.Get("channel"), f.Get("ts")); root != "" { // a reply's ts: its thread (messages_list.go)
+			if msgs, found := s.quietThread(f.Get("channel"), root); found {
+				return ok("messages", msgs, "has_more", false)
+			}
+		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
 		if c, found := s.conv(f.Get("channel")); found {
@@ -1913,6 +1918,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	}
 	if out, handled := s.handleChannels(method, f); handled {
 		return out
+	}
+	if method == "messages.list" { // what no fixture answered: any message the fake holds (messages_list.go)
+		return s.messagesList(f)
 	}
 	return unanswered{} // answers.go
 }
