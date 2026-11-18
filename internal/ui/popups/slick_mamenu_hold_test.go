@@ -86,7 +86,8 @@ func TestMessageMenuSubmenuDrawsAtOnceWithOnlyProviders(t *testing.T) {
 // A plugin's own MAMenu patch can change Organize's rows (Better Message
 // Menu moves rows into it), so Organize waits for its MAMenu's tree, and
 // the menu's keys with it, which then go to it; a bare Escape closes it
-// at once.
+// at once. (Opened again within the 5 s slackc keeps its tree mounted, it
+// draws that tree at once.)
 func TestMessageMenuSubmenuHoldsForPluginPatch(t *testing.T) {
 	e := slNewEnvIn(t, "")
 	e.loadCode(t, "ActsSlick", maActs)
@@ -112,12 +113,14 @@ func TestMessageMenuSubmenuHoldsForPluginPatch(t *testing.T) {
 	d.now = time.Time{}
 	d.until("Organize's tree, and the ↓ that waited for it", func() bool { return maFrom(s) && laidOut(s) && len(d.m.ma.queued) == 0 })
 
-	d.key(key.NameLeftArrow, 0) // Organize closes
+	// a fresh menu, whose Organize has no tree mounted yet (opened again
+	// within the 5 s its tree stays, it draws that at once)
+	d = maOpen(t, e, NewMessageMenu(e.h, image.Pt(900, 200), maMsg), "the menu again")
 	release = maHoldJS(t, e)
 	d.now = time.Now()
 	d.clickRow("organize_actions_menu")
 	if d.m.sub == nil || laidOut(d.m.sub) {
-		t.Fatal("Organize, opened again, didn't wait for its tree")
+		t.Fatal("a fresh menu's Organize didn't wait for its tree")
 	}
 	d.key(key.NameEscape, 0)
 	if d.m.sub != nil {
