@@ -52,7 +52,9 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_xsettings_nox11.go`, `app/clack_keytext_windows_test.go`,
 `gpu/clack_opcache_test.go`, `io/input/clack_focus.go`,
 `io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
-`io/input/clack_inputidle_test.go` and
+`io/input/clack_inputidle_test.go`,
+`io/input/clack_reset.go`, `io/input/clack_reset_test.go`,
+`gesture/clack_reset_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2307,3 +2309,80 @@ set in the process's own defaults; the app becoming active reads them
 again: one period alone, an on period over a minute, a negative one, both
 0, neither) and, for XSETTINGS, `internal/ui` `TestXSettingsBlink`. Not in
 `UPSTREAM.patch`.
+
+## 49. io/input: every handler caught up with where the pointer is
+
+`io/input/clack_reset.go` (new: `Source.ResetPointers`, its command,
+`pointerQueue.resetPointers`, `noteMouse`, `notePointerRead`),
+`io/input/pointer.go` (`pointerHandler.seen`/`seenID`, `pointerQueue.mouse`,
+`Push` notes the mouse) and `io/input/router.go` (`Event` notes what a
+handler read; `execute` runs the command at once, `executeCommand` runs
+it). An addition: nothing upstream behaves differently unless asked, and
+what's noted costs a field write per event read.
+
+Clack's inspect tool (`internal/ui/inspect` freeze.go) freezes the window
+on the frame on screen, so a hover state can be picked and captured
+after the pointer leaves it: until the freeze ends the window draws that
+frame's ops again and lays nothing out. Gio's router routes the pointer
+over the frozen frame's areas, which are still in the ops, but no widget
+asks for events in those frames (the frames' `Event` calls are the
+tool's), so nothing is routed to the widgets and nothing reads what was.
+The router's idea of what the pointer is over (`pointerInfo.entered`)
+moves on with the pointer; the widgets' stays at the freeze. When the
+freeze ended, a widget the pointer had left never got its Leave: the
+router no longer counted it as entered.
+
+The first version gave every handler a `pointer.Cancel` and the ones
+under the pointer an Enter. That left two kinds of hover stuck (the
+inspect-freeze review, 2026-11-18). Clack's message bodies (richview),
+plugin trees (slackc), the message scrollbar, Lists' rows, the canvas
+outline and the prefs reorder list clear their hover only on a Leave,
+and a Cancel to them ends only a press: a message's emoji tooltip, a
+link's underline, a plugin element's :hover stayed after the freeze. And
+the Cancel carried pointer id 0. On Windows Gio numbers the mouse 1
+(`EnableMouseInPointer`, GET_POINTERID_WPARAM), and `gesture.Hover`
+drops a Cancel or a Leave of another pointer, so every Hover there (a
+sidebar heading's ⋯ and +, the thread title's tooltip, the Activity,
+Later, Threads and Unreads rows) stayed hovered.
+
+`Source.ResetPointers()` now sends what the router would have sent had
+the widgets been reading:
+
+- every handler gets a Cancel, which ends a press, a drag or a grab;
+- a handler that last read an Enter or a Move, with no Leave or Cancel
+  read since (`notePointerRead` in `Router.Event`), and isn't under the
+  mouse gets a Leave;
+- every handler under the mouse gets an Enter and a Move there (the Move
+  for trackers that ask only for Move, as Lists' rows do), whatever filter
+  it asked for in the last frame.
+
+Each event carries the mouse's own id (the id a handler's Enter carried,
+for its Cancel and Leave), from the mouse's last event, which `Push`
+keeps after the router stops tracking it (`noteMouse`). A mouse whose
+last event was a Leave (it left the window) gets no Enter anywhere; Gio
+sends that Leave only on Windows (patch 22), so elsewhere a mouse that
+left is entered again where it was last seen in the window, as upstream
+leaves that widget hovered. Touches end with the Cancel. The router
+counts the handlers under the mouse as entered from there. It runs at
+once, before the rest of the frame reads its events, even when a handler
+already read its own in that frame (the tool read its input before the
+frame was laid out). Upstream's `execute` would defer such a command to
+the frame's end, and the frame would show the stale hovers once more.
+The inspect tool calls it first in the frame that lays out again after a
+freeze.
+
+Tests: `io/input/clack_reset_test.go` (`TestResetPointers`): three
+handlers and the tool's pass-through area over them; frames in which only
+the tool reads let the pointer go from a to b and c unheard. Without the
+reset a never gets its Leave, nor b its Enter. With it, for mouse ids 1
+and 0, after the tool read its events in that frame: a reads a Cancel and
+a Leave, b a Cancel and an Enter, c (Move and Leave only) a Move, the
+tool a Cancel, an Enter and a Move, every one with the mouse's id; no
+second Enter comes at the frame's end, and going back to a is a Leave and
+an Enter as usual. A mouse pressed over b that left the window gets b no
+Enter and a its Leave. `gesture/clack_reset_test.go`
+(`TestHoverResetPointers`): the same freeze read through two real
+`gesture.Hover`s, for mouse ids 1 and 0. In Clack: richview's
+`TestResetPointersClearsBodyHover`, slackc's `TestResetPointersLeavesTree`
+and `internal/ui`'s `TestInspectFreezeResetsHover`. On ci's linux-gio,
+windows-applog and macos jobs. Not in `UPSTREAM.patch`.

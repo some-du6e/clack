@@ -1534,3 +1534,33 @@ jobs:
           name: gpu-cost-damage-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-damage-shots
           if-no-files-found: ignore
+
+  # inspect-freeze (round 2, 2026-11-18): the inspect freeze's pointer
+  # reset (Gio patch 49) on every kind of hover Clack has, with Windows'
+  # mouse id as well as macOS' and X11's, and the freeze's edges (the
+  # sign-in screen, file drops, frozen reports, held keys, the image
+  # cache's hold). Dispatch with only=inspect-freeze.
+  inspect-freeze:
+    if: ${{ !inputs.only || startsWith('inspect-freeze', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the freeze's reset and edges, COUNT runs"
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^TestResetPointers$' gioui.org/io/input || rc=1
+          go test -count=$COUNT -v -run '^TestHoverResetPointers$' gioui.org/gesture || rc=1
+          go test -count=$COUNT -v -run '^TestResetPointersClearsBodyHover$' ./internal/ui/richview || rc=1
+          go test -count=$COUNT -v -run '^TestResetPointersLeavesTree$' ./internal/ui/slackc || rc=1
+          go test -count=$COUNT -v -run '^(TestHoldLive|TestHoldLiveHoldsPlayers)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -v -run '^(TestFreeze\w*|TestCaptureOpensReview)$' ./internal/ui/inspect || rc=1
+          go test -count=$COUNT -v -timeout 40m -run '^(TestInspectFreeze\w*|TestInspectSessionEndsAtSignIn|TestInspectFileDropsIgnored|TestInspectFrozenReportDescribesFrozenFrame|TestInspectReactionPill)$' ./internal/ui || rc=1
+          exit $rc

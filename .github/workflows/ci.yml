@@ -205,6 +205,12 @@ jobs:
       - name: Gio focus answers (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'FocusTagCanFocusWithin' gioui.org/io/input
+      # Gio patch 49: every handler's pointer state started over where the
+      # pointer is (the inspect tool's freeze ends: no widget read its
+      # events while the window drew a frame again)
+      - name: Gio pointer state reset (vendored gioui.org/io/input, gesture)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture
       # Gio patches 37-44: a rounded clip's interior and a stroked one's
       # hole, ops split around them, a clip path's stencil regions, layers
       # of one depth on one atlas page, the sub-pixel path cache key, GL's
@@ -499,6 +505,20 @@ jobs:
       # pane's reply box 12px under the last reply, laid out with the
       # Windows build's fonts and text shaping on internal/fakeslack (no
       # GPU here: the geometry, not the pixels; threads-audit has those).
+      # Gio patch 49 where Karim inspects: a freeze's end catches every
+      # widget up, the reset's events carrying the mouse's own id (1 on
+      # Windows; a gesture.Hover drops another pointer's), and the inspect
+      # tool's freeze of a message body's and a sidebar heading's hovers
+      - name: the inspect freeze's pointer reset (Gio patch 49, fakeslack)
+        if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          rc=0
+          go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture || rc=1
+          go test -count=1 -v -timeout 10m -run '^TestInspectFreezeResetsHover$' ./internal/ui || rc=1
+          exit $rc
       - name: thread reply box gap (layout, fakeslack)
         if: ${{ !cancelled() }}
         shell: bash # every go test counts (pwsh steps fail only on the last command)
@@ -1066,6 +1086,16 @@ jobs:
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
+      # Gio patch 49: the inspect freeze's end catches every widget up with
+      # the mouse (macOS leaves its id 0), and the tool's freeze of a
+      # message body's and a sidebar heading's hovers
+      - name: the inspect freeze's pointer reset (Gio patch 49, fakeslack)
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture || rc=1
+          go test -count=1 -v -timeout 10m -run '^TestInspectFreezeResetsHover$' ./internal/ui || rc=1
+          exit $rc
       # the plugin engine's wasm memory in address space reserved with mmap,
       # committed with mprotect as it grows, released on Close
       # (internal/jsrt/wasmmem_unix.go): arm64, and amd64 (Intel Macs) under
