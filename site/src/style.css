@@ -134,7 +134,7 @@ code { font: .92em/1.4 var(--mono); }
 .lede { max-width: 40rem; margin: 24px auto 0; color: var(--ink-2); font-size: clamp(1.125rem, 1rem + .45vw, 1.3125rem); line-height: 1.55; }
 .cta { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 32px; }
 .fine { margin-top: 18px; color: var(--ink-2); font-size: .9375rem; }
-.shot-hero { max-width: 1120px; margin: 56px auto 0; padding: 0 var(--gut); }
+.shot.shot-hero { max-width: 1120px; margin: 56px auto 0; padding: 0 var(--gut); }
 .shot-hero .frame { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .hero-note { padding: 14px var(--gut) 0; color: var(--ink-2); font-size: .875rem; }
 
@@ -275,7 +275,7 @@ code { font: .92em/1.4 var(--mono); }
   .hero { padding-top: 48px; }
   .hero h1 { margin-top: 22px; }
   .cta .btn { flex: 1 1 100%; }
-  .shot-hero { margin-top: 40px; }
+  .shot.shot-hero { margin-top: 40px; }
   .sec { padding: 72px 0; }
   .sec-head { margin-bottom: 44px; text-align: left; }
   .band, .cta-band { padding: 72px 0; }
