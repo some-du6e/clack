@@ -316,8 +316,9 @@ func TestRealWindowCaretCost(t *testing.T) {
 		if r.frames > 0 {
 			per = r.cpu / time.Duration(r.frames)
 		}
-		return fmt.Sprintf("%d frames in 6 s (%d whole, %d partial), %d through the frame texture's copy (%.1f Mpx copied); the process's CPU %v, %v a frame",
-			r.frames, wholeN, partN, copied, float64(copyPx)/1e6, r.cpu.Round(time.Millisecond), per.Round(10*time.Microsecond))
+		atlas := func(f caretGPUFrame) int64 { return f.atlasPx }
+		return fmt.Sprintf("%d frames in 6 s (%d whole, %d partial), %d through the frame texture's copy (%.1f Mpx copied), the coverage atlas %.2f Mpx (median); the process's CPU %v, %v a frame",
+			r.frames, wholeN, partN, copied, float64(copyPx)/1e6, float64(median(r.gpu, atlas))/1e6, r.cpu.Round(time.Millisecond), per.Round(10*time.Microsecond))
 	}
 	t.Logf("a scroll with partial frames: %s", scrollLine(sPart))
 	t.Logf("a scroll with every frame whole (CLACK_FULL_FRAMES): %s", scrollLine(sWhole))
@@ -334,9 +335,20 @@ func TestRealWindowCaretCost(t *testing.T) {
 	if wholeRun > 0 && copiedRun*5 > wholeRun {
 		t.Errorf("%d of %d scroll frames drawn whole after a whole frame went through the frame texture's copy; want them drawn straight into the window", copiedRun, wholeRun)
 	}
-	if runtime.GOOS != "darwin" && sWhole.frames > 0 && sPart.frames > 0 {
+	// a scroll's frames are whole: partial frames' signatures, diff and
+	// sticky places must cost them little (on a Mac's GPU the CPU's part
+	// of a frame is a few ms, so their share shows there most)
+	if sWhole.frames > 0 && sPart.frames > 0 {
 		pp := sPart.cpu / time.Duration(sPart.frames)
 		pw := sWhole.cpu / time.Duration(sWhole.frames)
-		t.Logf("a scroll's frame costs %v of CPU with partial frames, %v without (%.0f%%)", pp.Round(10*time.Microsecond), pw.Round(10*time.Microsecond), 100*float64(pp)/float64(max(pw, 1)))
+		ratio := float64(pp) / float64(max(pw, 1))
+		t.Logf("a scroll's frame costs %v of CPU with partial frames, %v without (%.0f%%)", pp.Round(10*time.Microsecond), pw.Round(10*time.Microsecond), 100*ratio)
+		if ratio > scrollCPUMax {
+			t.Errorf("a scroll's frame costs %v of CPU with partial frames, %v without: %.0f%%, want %.0f%% at most", pp.Round(10*time.Microsecond), pw.Round(10*time.Microsecond), 100*ratio, 100*scrollCPUMax)
+		}
 	}
 }
+
+// scrollCPUMax bounds a scroll frame's CPU with partial frames against
+// without (TestRealWindowCaretCost): what they add to whole frames.
+const scrollCPUMax = 1.20
