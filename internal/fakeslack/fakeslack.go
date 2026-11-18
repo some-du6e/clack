@@ -447,6 +447,10 @@ type Server struct {
 	// name (missing: {}, enabled). Set them before the calls.
 	TeamPrefs    map[string]any
 	ChannelPrefs map[string]map[string]any
+	// ListPrefs is conversations.listPrefs' prefs by channel (missing:
+	// {}; the composer's + reads can_upload_files in a Slack Connect
+	// conversation). Set it before the calls.
+	ListPrefs map[string]map[string]any
 	// ChannelManagers are admin.roles.entity.listAssignments' channel
 	// managers (role Rl0A) by channel (missing: none). Set it before the
 	// calls.
@@ -1699,6 +1703,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			prefs = map[string]any{}
 		}
 		return ok("prefs", prefs)
+	case "conversations.listPrefs":
+		var p any = map[string]any{}
+		if lp, found := s.ListPrefs[f.Get("channel")]; found {
+			p = lp
+		}
+		return ok("prefs", p)
 	case "channels.prefs.get":
 		ch, name := f.Get("channel_id"), f.Get("pref_name")
 		var v any = map[string]any{}

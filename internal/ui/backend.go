@@ -808,6 +808,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "pins_tab", "bookmarks": // the Pins tab's rows, the folders' bookmarks (core/channel_pins.go, bookmark_folders.go)
 		a.Invalidate()
+	case "list_prefs": // a conversation's list prefs: the composer's + reads can_upload_files (core/upload_gates.go)
+		a.Invalidate()
 	}
 	if changed {
 		b.recount()

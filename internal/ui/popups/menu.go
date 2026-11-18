@@ -156,6 +156,13 @@ type MenuOpts struct {
 	// (header kebab menus).
 	AlignRight bool
 	OnClose    func()
+	// ScrimAfter holds the window-wide scrim (the layer a click outside
+	// the menu hits, closing it) down for that long from the menu's first
+	// frame: until then a press outside the card reaches what's under it,
+	// and the menu stays. The composer's + menu does this as Slack does
+	// (ShortcutsMenuTriggerButton sets its overlay's height to 0 for
+	// 250 ms) so a double click's second click lands on the button.
+	ScrimAfter time.Duration
 
 	// Raw skips the MenuFromTemplate boundary: the items already came out
 	// of a MenuFromTemplate a plugin rendered (slackc/kit's MenuTrigger).
@@ -222,6 +229,8 @@ type Menu struct {
 	ctxDone bool           // asked a patched getTemplate
 
 	rowCtx int // the right-click area's tag (MenuItem.Context)
+
+	shownAt time.Time // the root's first frame (ScrimAfter)
 
 	ma    *maMenu           // Slack's MAMenu (MenuOpts.MAMenu)
 	boxes []image.Rectangle // rowBoxes' boxes, reused
@@ -585,7 +594,7 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 		if m.done {
 			return layout.Dimensions{}
 		}
-		if !m.opts.Peek && m.scrim.Layout(gtx) {
+		if !m.opts.Peek && m.scrimUp(gtx) && m.scrim.Layout(gtx) {
 			m.closeAll()
 			return layout.Dimensions{}
 		}
@@ -603,6 +612,25 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 		keyTarget(gtx, m, m.rect)
 	}
 	return layout.Dimensions{Size: win}
+}
+
+// scrimUp reports whether the root lays its scrim out this frame: always,
+// unless MenuOpts.ScrimAfter holds it down that long from the menu's
+// first frame (a frame is asked for when it's due).
+func (m *Menu) scrimUp(gtx layout.Context) bool {
+	d := m.opts.ScrimAfter
+	if d <= 0 {
+		return true
+	}
+	now := frameNow(gtx)
+	if m.shownAt.IsZero() {
+		m.shownAt = now
+	}
+	if due := m.shownAt.Add(d); now.Before(due) {
+		gtx.Execute(op.InvalidateCmd{At: due})
+		return false
+	}
+	return true
 }
 
 func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {

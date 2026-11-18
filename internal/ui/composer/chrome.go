@@ -76,6 +76,9 @@ type chromeAction struct {
 	// Anchor is the button's rect in composer-local pixels (composer.go
 	// adds its window Origin).
 	Anchor image.Rectangle
+	// Clicks is a pointer click's count (gesture.Click's NumClicks: 2 for
+	// the second click of a double click); caAttach reads it.
+	Clicks int
 }
 
 // chromeState is what the chrome draws this frame.
@@ -101,6 +104,9 @@ type chromeState struct {
 	// disable_file_attach_after_send): the edit composer has no + and no
 	// attachments row
 	NoEditFiles bool
+	// UploadBlocked is the + button's N (core.SlackConnectFileSharingBlocked):
+	// no "Tip: double click to upload" under its tooltip
+	UploadBlocked bool
 	// Invalid is WysiwygContainer's isInvalid (a Block Kit field with an
 	// error): c-basic_container--invalid
 	Invalid bool
@@ -496,6 +502,10 @@ func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
 		}
 	}
 	for id := crBtn(0); id < crNumBtn; id++ {
+		if id == crAttach {
+			c.plusClicks(gtx)
+			continue
+		}
 		if !c.btn[id].Clicked(gtx) || c.disabled(st, id) {
 			continue
 		}
@@ -512,6 +522,24 @@ func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
 		default:
 			c.emit(c.actionFor(id, c.rect[id]))
 		}
+	}
+}
+
+// plusClicks queues every click on the + with its count (gesture.Click:
+// a press within its double-click window of the last one counts on).
+// Each is the menu trigger's click (BasePopoverTrigger onTrigger, a
+// toggle); Chromium follows a click whose detail is 2 with a dblclick
+// (MouseEvent::DispatchEvent), the button's onDoubleClick, and a third
+// click is a plain click again. The composer does both (plusClick).
+func (c *chrome) plusClicks(gtx layout.Context) {
+	for {
+		cl, ok := c.btn[crAttach].Update(gtx)
+		if !ok {
+			return
+		}
+		a := c.actionFor(crAttach, c.rect[crAttach])
+		a.Clicks = cl.NumClicks
+		c.emit(a)
 	}
 }
 
@@ -983,6 +1011,9 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 		if st.ShowFormatting {
 			label = "Hide formatting"
 		}
+	}
+	if id == crAttach {
+		label = plusTip(st.UploadBlocked)
 	}
 	if id == crEmoji && c.f.h != nil && gifPickerOn(c.f.h.Core()) {
 		// EmojiToolbarButton: emoji_button "Add emoji and GIFs" when the
@@ -1545,6 +1576,21 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 
 // emojiButtonNS is EmojiToolbarButton's "emoji_button" I18n.
 var emojiButtonNS = i18n.NS("emoji_button")
+
+// plusNS is ShortcutsMenuTriggerButton's "app_action_picker" I18n.
+var plusNS = i18n.NS("app_action_picker")
+
+// plusTip is ShortcutsMenuTriggerButton's tip: "Attach" and, unless N
+// (blocked; or limitShortcutsMenuToFilesOnly, which Clack's composers
+// never set), "Tip: double click to upload" under it in the regular
+// weight (its div's .normal; the subtext colour rule is scoped to the
+// button, and the tip renders in a Popover, so it keeps the tip's).
+func plusTip(blocked bool) string {
+	if blocked {
+		return plusNS.T("Attach")
+	}
+	return plusNS.T("Attach") + "\n" + plusNS.T("Tip: double click to upload")
+}
 
 // msgInputNS is Slack's "msg_input" I18n: MessageInput's placeholder
 // (getPlaceholderText, txEg).

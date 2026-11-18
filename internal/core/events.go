@@ -39,6 +39,8 @@ func (a *App) handle(ev slack.Event) {
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" {
 			_ = a.LoadFrecencyPrefs(ctx)
 		}
+	case "slack_connect_pref_changed": // handleSlackConnectPrefsUpdate (upload_gates.go)
+		a.onSlackConnectPrefChanged(ev.Raw)
 	case "search_recents": // handleSearchRecentsPrefsUpdate (search_recents.go)
 		var e struct {
 			Value string `json:"value"`
@@ -240,6 +242,9 @@ func (a *App) handle(ev slack.Event) {
 		}
 		a.emit(Event{Type: "sidebar_changed"})
 	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted":
+		if ev.Type == "channel_deleted" { // channelDeleted: the list prefs are stale (upload_gates.go)
+			a.listPrefsStale(ch)
+		}
 		a.dropMembership(ch, ev.Type == "channel_archive" || ev.Type == "group_archive")
 		a.forgetCodeChannelClosed(ch) // no membership, no is_open to keep (codechannel_close.go)
 		a.emit(Event{Type: "conv_removed", Channel: ch})
