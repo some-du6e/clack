@@ -590,8 +590,14 @@ func TestInspectFileDropsIgnored(t *testing.T) {
 		}
 	}
 	e.settle(500 * time.Millisecond)
-	if got := e.called("files."); len(got) != 0 {
-		t.Errorf("drops during a session uploaded: %v", got)
+	var uploads []string
+	for _, m := range e.called("files.") { // files.info reads come from the channel's file messages
+		if strings.Contains(strings.ToLower(m), "upload") {
+			uploads = append(uploads, m)
+		}
+	}
+	if len(uploads) != 0 {
+		t.Errorf("drops during a session uploaded: %v", uploads)
 	}
 }
 
