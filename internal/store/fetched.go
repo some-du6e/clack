@@ -74,6 +74,11 @@ func (s *Store) PutFetched(ch string, msgs []slack.Message, since uint64) []slac
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.putFetchedPageLocked(ch, msgs, since)
+}
+
+// putFetchedPageLocked is PutFetched with s.mu held.
+func (s *Store) putFetchedPageLocked(ch string, msgs []slack.Message, since uint64) []slack.Message {
 	out := make([]slack.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if m.TS == "" {
@@ -94,6 +99,30 @@ func (s *Store) PutFetched(ch string, msgs []slack.Message, since uint64) []slac
 		s.noteReadLocked(ch, s.fetched[k], &m) // read_revisions.go
 		s.putFetchedLocked(k, m)
 		out = append(out, m)
+	}
+	return out
+}
+
+// PutFetchedAsked is PutFetched for a messages.list answer of ch, which
+// was asked for asked: a message asked for that the answer doesn't have is
+// gone (Slack's isNonExistent), and its fetched copy goes in the same
+// write, so the store never draws a deleted message from a copy an earlier
+// read left (the views take the item's MsgGone, or core's "gone").
+func (s *Store) PutFetchedAsked(ch string, asked []string, msgs []slack.Message, since uint64) []slack.Message {
+	if ch == "" {
+		return msgs
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.putFetchedPageLocked(ch, msgs, since)
+	have := make(map[string]bool, len(msgs))
+	for i := range msgs {
+		have[msgs[i].TS] = true
+	}
+	for _, ts := range asked {
+		if ts != "" && !have[ts] {
+			s.dropFetchedLocked(ch + "/" + ts)
+		}
 	}
 	return out
 }

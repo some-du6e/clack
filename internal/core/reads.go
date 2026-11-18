@@ -70,9 +70,15 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		// stays, and a revision the store held another of reaches every
 		// copy and the views (store PrependOlderSince, read_changes.go)
 		kept := a.S.PrependOlderSince(ch, p.Messages, p.HasMore, live)
-		a.announceReads()
 		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 		a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
+		a.announceReads()                  // after the pins and subscriptions: the copies as they are now
+		// the list takes what the read kept, as the window holds it now
+		for i := range kept {
+			if m, ok := a.S.Find(ch, kept[i].TS); ok {
+				kept[i] = m
+			}
+		}
 		msgs, hasMore = kept, p.HasMore
 	}
 	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
@@ -140,9 +146,9 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		// a reply changed, deleted or posted while the request was out
 		// keeps the socket's copy (store/live.go)
 		a.S.SetThreadSince(ch, ts, all, live)
-		a.announceReads() // a revision the store held another of (read_changes.go)
 		all, _ = a.S.Thread(ch, ts)
 		a.S.SyncPins(ch, pins, all)
+		a.announceReads() // a revision the store held another of, pinned as it is now (read_changes.go)
 		for i := range all {
 			if needsFileInfo(&all[i]) {
 				go a.fillFiles(ch, all[i].TS)
@@ -173,6 +179,13 @@ func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[stri
 // hydrateKeep is hydrateOK; with keep false (a page that never draws the
 // socket's changes: Sent) the store keeps none of it.
 func (a *App) hydrateKeep(ctx context.Context, want map[string][]string, keep bool) (map[string]slack.Message, map[string]bool) {
+	out, answered, _ := a.hydrateKeepErr(ctx, want, keep)
+	return out, answered
+}
+
+// hydrateKeepErr is hydrateKeep with the error of the groups that failed
+// (RefetchMessages waits out a rate limit).
+func (a *App) hydrateKeepErr(ctx context.Context, want map[string][]string, keep bool) (map[string]slack.Message, map[string]bool, error) {
 	out := map[string]slack.Message{}
 	missing := map[string][]string{}
 	answered := map[string]bool{}
@@ -196,11 +209,11 @@ func (a *App) hydrateKeep(ctx context.Context, want map[string][]string, keep bo
 		}
 	}
 	if len(missing) == 0 {
-		return out, answered
+		return out, answered, nil
 	}
 	// a failed group is logged with its channels in MessagesList
 	since := a.S.LiveSeq()
-	got, asked, _ := a.C.MessagesList(ctx, missing)
+	got, asked, err := a.C.MessagesList(ctx, missing)
 	for ch := range asked {
 		answered[ch] = true
 	}
@@ -220,26 +233,30 @@ func (a *App) hydrateKeep(ctx context.Context, want map[string][]string, keep bo
 			}
 		}
 	}
-	for ch, ms := range got {
-		if !keep {
+	if !keep {
+		for ch, ms := range got {
 			for _, m := range ms {
 				out[ch+"/"+m.TS] = m
 			}
+		}
+		return out, answered, err
+	}
+	// Slack's fetchObjectWithId puts what it fetched by id into its
+	// messages store, where the socket's changes reach it: the store keeps
+	// the answer (store/fetched.go), merged with what the socket changed,
+	// deleted or reacted while the request was out, and a message a
+	// channel that answered left out is gone, its fetched copy with it
+	for ch, tss := range missing {
+		if !answered[ch] {
 			continue
 		}
-		// Slack's fetchObjectWithId puts what it fetched by id into its
-		// messages store, where the socket's changes reach it: the store
-		// keeps the answer (store/fetched.go), merged with what the socket
-		// changed, deleted or reacted while the request was out
-		for _, m := range a.S.PutFetched(ch, ms, since) {
+		for _, m := range a.S.PutFetchedAsked(ch, tss, got[ch], since) {
 			out[ch+"/"+m.TS] = m
 		}
 	}
-	if keep {
-		a.announceReads() // read_changes.go
-	}
+	a.announceReads() // read_changes.go
 	// the messages' people are asked for as rows draw them (lazy_users.go)
-	return out, answered
+	return out, answered, err
 }
 
 // SlackbotCustomResponseInThread reports whether user (Slackbot) answered

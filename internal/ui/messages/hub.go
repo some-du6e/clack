@@ -582,14 +582,18 @@ func (m *model) takeLive() liveChanges {
 // keepLive puts back what the events changed during a load after its
 // answer replaced the list: Slack's message_changed replaces the stored
 // message at once, so an answer read before an edit (or a delete, or a
-// new reply) mustn't show the old state again. An update of a message the
-// model didn't hold changes the answer's copy, and adds nothing (callers
-// hold m.mu).
+// new reply) mustn't show the old state again. A change goes back where
+// the answer holds the message or inside the answer's range (covers): an
+// answer that starts the list over (msg-latency's takeNewest, past a gap)
+// takes back none of the messages from before its range, which load-older
+// would then read before. An update of a message the model didn't hold
+// changes the answer's copy, and adds nothing (callers hold m.mu).
 func (m *model) keepLive(live liveChanges) {
 	for ts, e := range live.at {
-		if e == nil {
+		switch {
+		case e == nil:
 			m.remove(ts)
-		} else {
+		case m.find(ts) >= 0 || m.covers(ts):
 			m.upsert(e.m)
 		}
 	}
@@ -601,14 +605,31 @@ func (m *model) keepLive(live liveChanges) {
 }
 
 // inRange reports whether ts falls inside what the channel model loaded:
-// at or after its oldest message, or anywhere once it holds the whole
-// history (no hasMore). A model that hasn't loaded holds no range
+// at or after its oldest message from Slack, or anywhere once it holds the
+// whole history (no hasMore). A model that hasn't loaded holds no range
 // (callers hold m.mu).
 func (m *model) inRange(ts string) bool {
-	if !m.loaded {
-		return false
+	return m.loaded && m.covers(ts)
+}
+
+// covers reports whether ts falls inside the list's range as it holds it
+// now (inRange without the loaded check: keepLive asks it of an answer
+// that just landed). The range starts at the oldest message from Slack,
+// not at a local copy (a pending or failed send, an ephemeral message: no
+// history page holds one, and msg-latency keeps them whatever the page's
+// range), which is no boundary: load-older reads from the oldest message
+// from Slack (msg-latency's oldestFromSlack), and the range is the same
+// (callers hold m.mu).
+func (m *model) covers(ts string) bool {
+	if !m.hasMore {
+		return true
 	}
-	return !m.hasMore || len(m.msgs) > 0 && !tsLess(ts, m.msgs[0].m.TS)
+	for i := range m.msgs {
+		if x := &m.msgs[i].m; !x.Pending && !x.Failed && !x.Ephemeral {
+			return !tsLess(ts, x.TS)
+		}
+	}
+	return false
 }
 
 func (m *model) remove(ts string) {

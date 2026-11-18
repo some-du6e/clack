@@ -370,8 +370,12 @@ type Event struct {
 	// message event (Slack's messageChanged shows the deferred
 	// notification then, under defer_notification_3p_streaming).
 	StreamDone bool
-	// Seq (update, delete) is the change's place in the order core
-	// changed messages in (msg_changes.go: MessageChangeSeq)
+	// Seq (update, delete, gone) is the change's place in the change
+	// table: the n-th message change core made (msg_changes.go,
+	// MessageChangeSeq, MsgChange.Seq, an item's MsgSeq), consecutive over
+	// those three event types and 0 on every other event. It is not every
+	// event's emit order: plugin-render-3's counter of all events is
+	// Event.EmitSeq, and the two never stand in for each other.
 	Seq uint64
 	// Removes (update) is a message_changed that Slack's messageChanged
 	// answers with "Remove activity item" (P0K2): the new copy is a

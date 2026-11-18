@@ -1320,6 +1320,47 @@ func (s *Store) Upsert(ch string, m slack.Message) {
 	SortAsc(t.Msgs)
 }
 
+// UpsertInRange is Upsert for a message the socket changed that no window
+// or cached thread held (a message_changed of one Activity, Threads or
+// Saved fetched by id: a poll 80 messages back, a root after one of its
+// replies is deleted): it goes into a window holding older history
+// (HasMore) only at or after the window's oldest message from Slack, as
+// the message lists take an update (ui/messages hub.go inRange). Taken in
+// above it, the window's next reader drew it right above the newest page
+// and load-older read from it, skipping the history between; Slack's invH
+// keeps such a ts as a slice of its own, which a page covering it brings.
+// An ephemeral message, a local copy, is no boundary.
+func (s *Store) UpsertInRange(ch string, m slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.timelines[ch]
+	if t == nil {
+		return
+	}
+	for i := range t.Msgs {
+		if t.Msgs[i].TS == m.TS {
+			s.keepPinLocked(ch, &m, &t.Msgs[i])
+			t.Msgs[i] = m
+			return
+		}
+	}
+	if t.HasMore {
+		oldest := ""
+		for i := range t.Msgs {
+			if !t.Msgs[i].IsEphemeral {
+				oldest = t.Msgs[i].TS
+				break
+			}
+		}
+		if oldest == "" || TSLess(m.TS, oldest) {
+			return
+		}
+	}
+	s.keepPinLocked(ch, &m, nil)
+	t.Msgs = append(t.Msgs, m)
+	SortAsc(t.Msgs)
+}
+
 // Mutate applies f to a message in the timeline and its thread cache.
 func (s *Store) Mutate(ch, ts string, f func(*slack.Message)) (slack.Message, bool) {
 	s.mu.Lock()
@@ -1548,6 +1589,22 @@ func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 func (s *Store) AddReply(ch string, m slack.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.addReplyLocked(ch, m)
+}
+
+// AddReplyNoted is AddReply and the reply's live note (NoteLive) under
+// one lock: a replies read landing between the two put an answer from
+// before the reply back over the cached thread.
+func (s *Store) AddReplyNoted(ch string, m slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addReplyLocked(ch, m)
+	if ch != "" && m.TS != "" {
+		s.noteLiveLocked(ch, m.TS, &m)
+	}
+}
+
+func (s *Store) addReplyLocked(ch string, m slack.Message) {
 	key := ch + "/" + m.ThreadTS
 	if th, ok := s.threads[key]; ok {
 		replaced := false

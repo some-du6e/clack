@@ -561,9 +561,10 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		// Activity entry's message from a conversation nobody opened:
 		// store/fetched.go), and a read out now keeps it (store/live.go),
 		// noted with the write so no read lands between; a window or a
-		// cached thread that holds none gets it as before
+		// cached thread that holds none gets it inside its range
+		// (putChanged)
 		if _, found := a.S.NoteMutate(ch, m.TS, &m, func(x *slack.Message) { *x = m }); !found || !a.S.Holds(ch, m.TS, "") {
-			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
+			a.putChanged(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
 		if m.ThreadTS == "" || m.ThreadTS == m.TS {
 			// a root's copy replaces the stored root: its broadcasts'
@@ -647,8 +648,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		return
 	}
 	if isReply {
-		a.S.AddReply(ch, m)
-		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this reply keeps it (store/live.go)
+		a.S.AddReplyNoted(ch, m) // a replies answer older than this reply keeps it (store/live.go)
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)

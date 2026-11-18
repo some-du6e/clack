@@ -220,10 +220,13 @@ type actRow struct {
 	// activity_msgs.go sentSet)
 	itemSent, threadSent sentSet
 	// threadRev is the revision of the ActivityThread props, new with
-	// each messageTs (threadRevTS): a tree carrying another one was
-	// rendered from props before the item's (slick.go threadOverride)
-	threadRev   int
+	// each messageTs (threadRevTS), unique across rows (actThreadRevs): a
+	// tree carrying another one was rendered from props before the
+	// item's; revSent is the msg ts each of the latest ones sent
+	// (slick.go threadOverride)
+	threadRev   uint64
 	threadRevTS string
+	revSent     []actRevSent
 
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
@@ -380,7 +383,8 @@ type Activity struct {
 	list     widget.List
 	pk       actPeek // the rail's Activity peek (activity_peek.go)
 	rows     map[string]*actRow
-	override map[string]bool // local read state: true = read, false = unread
+	rowsPrev map[string]*actRow // the rows before a fresh load, for what they sent (rowFor)
+	override map[string]bool    // local read state: true = read, false = unread
 	cleared  map[string]bool
 	// visSel is the opened row the latest rebuild kept under Unreads
 	// (actUnreadsHides): a new selection or none rebuilds the list.
@@ -401,6 +405,12 @@ type Activity struct {
 	// activity.views.update, except for All): views by tab, their density.
 	views     [len(actTabIDs)]core.ActivityView
 	viewDense [len(actTabIDs)]bool
+
+	// zeroRead are the rows the badges' zero marked read (readAllLocal),
+	// each with the loads started by then: a page from a load started
+	// later (pageLoad) has the server's state, which wins
+	zeroRead        map[string]uint64
+	loads, pageLoad uint64
 
 	// Reminder rows' saved items (saved.get), by compound key: known,
 	// non-existent, asked for; the files reminder footers name.
@@ -594,9 +604,13 @@ func (v *Activity) watchItems() {
 			}
 			if ev.Type == "activity_badges" && ev.Name == core.ActivityBadgesZero {
 				// badge_counts_updated summing to 0: the unread rows are
-				// read, locally (readAllLocal)
+				// read, locally (readAllLocal), in order with the
+				// realtime entries around it, and once however many come
+				// before the next draw
 				v.notes.mu.Lock()
-				v.notes.fns = append(v.notes.fns, v.readAllLocal)
+				if n := len(v.notes.items); n == 0 || !v.notes.items[n-1].zero {
+					v.notes.items = append(v.notes.items, actPatch{zero: true})
+				}
 				v.notes.mu.Unlock()
 				if shown {
 					v.h.Invalidate()
@@ -627,7 +641,7 @@ func (v *Activity) watchItems() {
 				raw := ev.Raw
 				v.notes.fns = append(v.notes.fns, func() { v.viewsEvent(raw) })
 			case ev.Activity != nil:
-				v.notes.items = append(v.notes.items, *ev.Activity)
+				v.notes.items = append(v.notes.items, actPatch{it: *ev.Activity})
 			}
 			v.notes.mu.Unlock()
 			v.h.Invalidate()
@@ -671,8 +685,9 @@ func (v *Activity) membersIn(ids []string) {
 	}
 }
 
-// applyPatches updates loaded rows from realtime activity items: the
-// server's read state replaces any local override for that row.
+// applyPatches updates loaded rows from realtime activity items, and the
+// badges' zero, in the order the socket brought them: the server's read
+// state replaces any local override for that row.
 func (v *Activity) applyPatches() {
 	v.notes.mu.Lock()
 	items, gone := v.notes.items, v.notes.gone
@@ -696,7 +711,11 @@ func (v *Activity) applyPatches() {
 			p.Items = kept
 		}
 		for _, in := range items {
-			v.liveUpsert(p, in) // activity_live.go
+			if in.zero {
+				v.readAllLocal(p)
+			} else {
+				v.liveUpsert(p, in.it) // activity_live.go
+			}
 		}
 	})
 	v.dirty = true
@@ -962,6 +981,16 @@ func (v *Activity) settle() {
 	}
 	v.wasBusy = false
 	page, _, err := v.data.get()
+	if err == nil {
+		// the page is the answer of the latest load started: marks from
+		// before it gave way to the server's state
+		v.pageLoad = v.loads
+		for k, at := range v.zeroRead {
+			if at < v.pageLoad {
+				delete(v.zeroRead, k)
+			}
+		}
+	}
 	v.unbuildChanged(v.loadedFrom, page)
 	v.loadedFrom = core.ActivityPage{}
 	v.dirty = true
@@ -996,6 +1025,10 @@ func (v *Activity) load(mode actLoad) {
 		v.pageCursor = old.Next
 	}
 	if mode == actFresh {
+		// the rows start over, what each sent its patched components
+		// aside: slackc keeps a same-$key root's tree a few seconds, and
+		// a tree from before is judged by what the row sent then (rowFor)
+		v.rowsPrev = v.rows
 		v.rows = map[string]*actRow{}
 		v.list.Position = layout.Position{}
 		v.failedCursor = ""
@@ -1010,6 +1043,7 @@ func (v *Activity) load(mode actLoad) {
 		}
 	}
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
+	v.loads++ // zeroRead: this load's answer is the server's state from now
 	v.data.load(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
 		if none {
 			return core.ActivityPage{}, nil
@@ -1245,6 +1279,11 @@ func (v *Activity) rowFor(key string) *actRow {
 	r := v.rows[key]
 	if r == nil {
 		r = &actRow{}
+		if old := v.rowsPrev[key]; old != nil { // before a fresh load (load)
+			r.itemSent, r.threadSent = old.itemSent, old.threadSent
+			r.threadRev, r.threadRevTS, r.revSent = old.threadRev, old.threadRevTS, old.revSent
+			delete(v.rowsPrev, key)
+		}
 		v.rows[key] = r
 	}
 	return r
@@ -1253,6 +1292,9 @@ func (v *Activity) rowFor(key string) *actRow {
 func (v *Activity) isUnread(it *core.ActivityItem, key string) bool {
 	if read, ok := v.override[key]; ok {
 		return !read
+	}
+	if at, ok := v.zeroRead[key]; ok && v.pageLoad <= at {
+		return false // the badges' zero, newer than the load the page came from
 	}
 	return it.Unread
 }
@@ -1540,8 +1582,10 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		it := &page.Items[i]
 		key := actKey(it)
 		r := v.rowFor(key)
-		// the row's message as it is now (activity_msgs.go)
-		li := v.rowItem(r, it)
+		// the row's message as it is now (activity_msgs.go); a store copy
+		// to take past the change table's floor waits for the row to draw,
+		// unless the search filters on the text
+		li := v.rowItemAdopt(r, it, v.searchOn && v.query.text() != "")
 		if !r.built || r.gen != i18n.Gen() || patchedViews || r.dSrc != r.liSrc {
 			r.d, r.built, r.gen, r.dSrc = v.describe(li, page.Convs), true, i18n.Gen(), r.liSrc
 			if v.selOK && key == v.selKey {
@@ -2752,33 +2796,44 @@ func (v *Activity) Search(q string) {
 	v.dirty = true
 }
 
-// readAllLocal is badge_counts_updated with its activity_v2 summing to 0
-// (VxbD handleBadgeCountsUpdatedRTMEvent): each unread row of the list is
-// marked read here alone, with no activity.markRead (Japw m$ with
-// isLocalOnlyUpdate), but for the reactions' and the rows whose message
-// the store doesn't hold (m$ reads getMessageByTimestamp of the row's
-// latestTs under the inbox, else its messageTs, and stops without one).
-// The badges are the event's, already 0.
-func (v *Activity) readAllLocal() {
+// readAllLocal is badge_counts_updated with its counts at 0 (VxbD
+// handleBadgeCountsUpdatedRTMEvent): each unread row of p is marked read
+// here alone, with no activity.markRead (Japw m$ with isLocalOnlyUpdate),
+// but for the reactions' and the rows whose message the store doesn't
+// hold (m$ reads getMessageByTimestamp of the row's latestTs under the
+// inbox, else its messageTs, and stops without one). The badges are the
+// event's, already 0. The mark is a write to the page Activity holds, as
+// Slack's is to its store's item: a load that went out after it brings
+// the server's state, which replaces it (zeroRead).
+func (v *Activity) readAllLocal(p *core.ActivityPage) {
 	c := v.h.Core()
 	if c == nil {
 		return
 	}
-	page, _, _ := v.data.get()
-	for i := range page.Items {
-		it := &page.Items[i]
+	inbox := c.ActivityInbox()
+	for i := range p.Items {
+		it := &p.Items[i]
 		key := actKey(it)
 		if it.Type == "message_reaction" || !v.isUnread(it, key) {
 			continue
 		}
-		ts := firstNonEmpty(it.LatestTS, actMessageTS(it))
+		ts := actMessageTS(it)
+		if inbox && it.LatestTS != "" {
+			ts = it.LatestTS
+		}
 		if it.Channel == "" || ts == "" {
 			continue
 		}
 		if _, ok := c.S.FindHeld(it.Channel, ts); !ok {
 			continue
 		}
-		v.override[key] = true
+		if read, ok := v.override[key]; ok && !read {
+			delete(v.override, key) // a row marked unread here: the zero is newer
+		}
+		if v.zeroRead == nil {
+			v.zeroRead = map[string]uint64{}
+		}
+		v.zeroRead[key] = v.loads
 		v.dirty = true
 	}
 }
@@ -2972,9 +3027,9 @@ func (v *Activity) undoBar(gtx C) {
 type actNotes struct {
 	mu    sync.Mutex
 	msgs  []string
-	fns   []func()            // reverts of failed writes (Activity)
-	items []core.ActivityItem // realtime activity items (Activity)
-	gone  []string            // keys of realtime activity_deleted items
+	fns   []func()   // reverts of failed writes (Activity)
+	items []actPatch // realtime activity items and the badges' zero, in socket order (Activity)
+	gone  []string   // keys of realtime activity_deleted items
 	// the realtime watcher's pending passes (Activity): one each in fns
 	// however many events come before a draw
 	dirtyQueued, namesQueued bool
@@ -2983,6 +3038,13 @@ type actNotes struct {
 	// (Activity.noteStale): members, conversations, or everything
 	staleQueued, staleAll  bool
 	staleUsers, staleConvs map[string]bool
+}
+
+// actPatch is a realtime activity item, or (zero) a badge_counts_updated
+// summing to 0 (Activity.readAllLocal).
+type actPatch struct {
+	it   core.ActivityItem
+	zero bool
 }
 
 func (n *actNotes) add(h Host, s string) {

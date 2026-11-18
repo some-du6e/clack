@@ -503,6 +503,14 @@ func (v *Activity) unbuildMsg(k actMsgKey) {
 // change seq: source 0); nil when deleted, or none exists. Another
 // item's copy or a change's takes the item's place only when newer.
 func (v *Activity) msgFor(k actMsgKey, feed *core.Message, seq uint64) (*core.Message, uint64) {
+	return v.msgForAdopt(k, feed, seq, true)
+}
+
+// msgForAdopt is msgFor; with adopt false a message core forgot the
+// changes of (stale) keeps the copy Activity holds, its store copy taken
+// only once a row draws it: a rebuild describes every row, drawn or not,
+// and converting them all there was a page-wide conversion in one frame.
+func (v *Activity) msgForAdopt(k actMsgKey, feed *core.Message, seq uint64, adopt bool) (*core.Message, uint64) {
 	m := &v.msgs
 	if h, ok := m.hub[k]; ok && (h.frame.Equal(m.last) || h.frame.Equal(m.since)) {
 		// a list on screen: this frame's copy once the row polled it,
@@ -510,7 +518,7 @@ func (v *Activity) msgFor(k actMsgKey, feed *core.Message, seq uint64) (*core.Me
 		// poll, and must describe them from what they will draw)
 		return h.m, h.rev
 	}
-	if at, ok := m.stale[k]; ok {
+	if at, ok := m.stale[k]; ok && adopt {
 		// core forgot this message's changes: the store's copy, as of the
 		// pass that found it (applyMsgs), taken now a row draws it
 		delete(m.stale, k)
@@ -540,18 +548,25 @@ func (v *Activity) msgFor(k actMsgKey, feed *core.Message, seq uint64) (*core.Me
 // r.msgGone that it has no message to draw (deleted, or none exists). it
 // itself when both are its own.
 func (v *Activity) rowItem(r *actRow, it *core.ActivityItem) *core.ActivityItem {
+	return v.rowItemAdopt(r, it, true)
+}
+
+// rowItemAdopt is rowItem; with adopt false it converts no store copy of a
+// message core forgot the changes of (msgForAdopt): the rows a rebuild
+// describes and the list doesn't draw.
+func (v *Activity) rowItemAdopt(r *actRow, it *core.ActivityItem, adopt bool) *core.ActivityItem {
 	r.liSrc, r.msgGone = [2]uint64{}, it.MsgGone
 	m := &v.msgs
-	if len(m.own) == 0 && len(m.hub) == 0 && len(m.feed) == 0 {
+	if len(m.own) == 0 && len(m.hub) == 0 && len(m.feed) == 0 && len(m.stale) == 0 {
 		return it
 	}
 	msg, root := it.Msg, it.Root
 	if k, _, ok := actMsgRef(it); ok {
-		msg, r.liSrc[0] = v.msgFor(k, it.Msg, knownSeq(it.Msg, it.MsgGone, it.MsgSeq))
+		msg, r.liSrc[0] = v.msgForAdopt(k, it.Msg, knownSeq(it.Msg, it.MsgGone, it.MsgSeq), adopt)
 		r.msgGone = msg == nil && (r.liSrc[0] != 0 || it.MsgGone)
 	}
 	if k, ok := actRootRef(it); ok {
-		root, r.liSrc[1] = v.msgFor(k, it.Root, knownSeq(it.Root, it.RootGone, it.MsgSeq))
+		root, r.liSrc[1] = v.msgForAdopt(k, it.Root, knownSeq(it.Root, it.RootGone, it.MsgSeq), adopt)
 	}
 	if r.liSrc == [2]uint64{} {
 		return it
@@ -638,10 +653,12 @@ func (v *Activity) expireLists() {
 	}
 }
 
-// listGone is a list's copy of k going (the pane closed): the store's
-// copy, which has everything the list drew, becomes Activity's, as of now
-// (a list can hold a revision no change carried: its thread read again
-// after a socket gap). Nothing older takes its place.
+// listGone is a list's copy of k going (the pane closed, the row scrolled
+// away): the store's copy, which has everything the list drew, becomes
+// Activity's, as of now (a list can hold a revision no change carried:
+// its thread read again after a socket gap), taken when a row next draws
+// it (msgFor's stale), so a row scrolling off converts nothing and
+// describes no page again. Nothing older takes its place.
 func (v *Activity) listGone(k actMsgKey) {
 	m := &v.msgs
 	delete(m.hub, k)
@@ -649,19 +666,16 @@ func (v *Activity) listGone(k actMsgKey) {
 	if c == nil || m.refs[k]&actRefDraws == 0 {
 		return
 	}
-	seq := c.MessageChangeSeq()
 	if ch, ok := c.MessageChange(k.ch, k.ts); ok && ch.Deleted {
 		return // deleted: own has it
 	}
-	sm, ok := c.HeldMessage(k.ch, k.ts)
-	if !ok {
-		return
+	if m.stale == nil {
+		m.stale = map[actMsgKey]uint64{}
 	}
-	if m.own == nil {
-		m.own = map[actMsgKey]actCopy{}
+	m.stale[k] = c.MessageChangeSeq()
+	if v.searchOn && v.query.text() != "" {
+		v.dirty = true // the search filters on the rows' text: all are described again
 	}
-	m.own[k] = actCopy{m: &sm, seq: seq}
-	v.unbuildMsg(k)
 }
 
 // ---- what the row's patched components were sent ----

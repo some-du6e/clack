@@ -1167,17 +1167,90 @@ Karim's deleted-reply report:
   for the message lists to share, and msgVer is memoed per revision, not
   per copy.
 
-Merging msg-latency: its SetLatestSince and RefreshRange call
-`s.readWindowLocked(ch, out, since)` once their merge has built `out`,
-before the window is replaced, and refreshOlder calls `a.announceReads()`
-after each RefreshRange; fetchLatest and fetchThread keep
-`a.announceReads()` after SetLatestSince and SetThreadSince, the reaction
-handler keeps ApplyReactionNoted, onMessageReplied keeps MutateNoted, and
-SetLatestRead goes. store's TestRefreshRangeRead (skipped until
-RefreshRange exists), core's TestReadsAnnounce and the TestWindowRead
-tests fail if any of that is dropped.
+Round 5 (2026-11-18):
 
-Slack's Saved rows read `Ld` too (LaterItemRow), and its Threads view
+- A message_changed of a message no window or cached thread holds (one
+  Activity, Threads or Saved fetched by id: a poll's vote 80 messages
+  back, a root's count after one of its replies is deleted) goes into the
+  window only inside the range it holds (store.UpsertInRange, core
+  putChanged): taken in above a HasMore window's oldest message, the open
+  list drew it right above the newest page at its next load, and
+  load-older read from it, skipping everything between. Slack's invH keeps
+  such a ts a slice of its own. The live note and the fetched copies keep
+  every view current all the same.
+- The hub's range starts at the list's oldest message from Slack, not at a
+  local copy (a kept failed send), and an answer that starts the list over
+  takes back only the noted changes it holds or covers (keepLive).
+- A messages.list answer that leaves out a message it was asked for drops
+  the store's fetched copy in the same write (PutFetchedAsked): an older
+  copy drew the deleted message again past the floor.
+- Refetches by id go out in rounds, one at a time across every channel,
+  200 ms apart (Slack's UnknownFetchManager), so messages.list's own split
+  (ten channels a call, two at a time) bounds them; after a rate limit the
+  next try waits its Retry-After.
+- The badges' zero marks rows read in the page Activity holds, stamped
+  with the loads started by then: a load that went out after it brings
+  the server's state, which wins, and one out when the zero came doesn't
+  undo it. It's queued with the realtime entries, in socket order, once
+  however many come between draws. Without the inbox, Slack's rule over
+  counts and alerts (all present and 0) marks the rows the same way.
+- A thread tree from earlier props that projected away from what the row
+  sent with its revision (BetterBlock hiding a blocked person's reply)
+  keeps its projection until JS draws the new revision; a pass-through's
+  draws the new reply at once. Revisions are unique across rows, and a
+  fresh load keeps what each row sent its components, so a tree slackc
+  kept across the reset is judged right.
+- Past the floor, a rebuild describes undrawn rows from the copies
+  Activity holds; only drawing converts (unless the search filters on
+  text). A list's copy expiring (a row scrolled away) becomes the same lazy
+  store adoption, with no conversion and no page re-describe.
+- Read revisions are announced after SyncPins and SyncSubs, a new reply is
+  added and noted under one lock (AddReplyNoted), and History hands the
+  list the older page's kept copies as the window holds them.
+
+Merging msg-latency (each with the test that fails if it's dropped):
+
+- SetLatestSince and RefreshRange call `s.readWindowLocked(ch, out,
+  since)` once their merge has built `out`, before the window is
+  replaced: msg-latency's empty `mergedLocked(ch, out, since)` hook in
+  store/live.go is that place. store TestRefreshRangeRead (fails if
+  SetLatestSince lands without RefreshRange) and
+  TestWindowReadKeepsFetchedRevision (by reflection), core
+  TestWindowReadAnnouncesRevision and TestWindowReadKeepsReactions.
+- fetchLatest and fetchThread announce (`a.announceReads()`) after
+  SetLatestSince or SetThreadSince and after SyncPins and SyncSubs;
+  refreshOlder announces after each RefreshRange, before any return: core
+  TestReadsAnnounce (its list has PrependOlderAt and RefreshRange),
+  TestReadRevisionKeepsPinDuringRead.
+- History's older pages: PrependOlderAt (msg-latency's epoch and before
+  guard) runs liveKeepLocked and readWindowLocked over the page and
+  returns what it kept, and keeps nothing without a window (msg-latency's
+  rule wins over PrependOlderSince's); History hands the list those copies
+  as the window holds them, and in the gapView case runs the same live
+  merge without writing the window: core TestOlderPageRead checks the page
+  History returns.
+- The reaction handler keeps ApplyReactionNoted alone: msg-latency's
+  NoteLive after it auto-merges and must go (a live record makes a read
+  keep the held copy, older text and all): core
+  TestWindowReadKeepsPageRevisionWithReaction, TestOlderPageRead.
+- onMessageReplied keeps MutateNoted, message_changed keeps NoteMutate and
+  putChanged (msg-latency's events.go still calls putLocal there): core
+  TestThreadReadKeepsSocketWrites, TestChangedOldMessageStaysOutOfWindow.
+- hub.go: startPastGap first, then the inRange switch; covers is
+  msg-latency's oldestFromSlack rule already, and keepLive's covers check
+  applies after takeNewest: messages TestHubUpdateAfterLocalCopyAtTop,
+  TestHubKeepLiveAfterStartOver (both by hand; landNewest's order is
+  takeLive, takeNewest, keepLive).
+- SetLatestRead goes.
+
+Merging plugin-render-3: Event.Seq is the change table's position (update,
+delete and gone only); plugin-render-3's count of every event becomes
+Event.EmitSeq. emit returns the Event, emitIf returns (Event, bool) and
+stamps EmitSeq after its check, hub.apply passes ev.EmitSeq to upsert, and
+notePlace keeps the update's EmitSeq for keepLive's place upsert (never 0).
+core TestMessageChangeTable and the build guard it.
+
+Slack's Saved rows read `Ld` too (LaterItemRow), and its Threads viewSlack's Saved rows read `Ld` too (LaterItemRow), and its Threads view
 draws its threads with the thread pane's components over the same store.
 A deleted saved message draws Later's "no longer available", and a
 deleted reply leaves its card. Search results keep the search answer's
@@ -1209,17 +1282,23 @@ TestActivityLiveThreadNewReplyJSHeld,
 TestActivityLiveMaskedThreadWithInnerPatches,
 TestActivityThreadLeavesWithItsDeletedReply,
 TestActivityThreadLeavesWhenItsReplyDropsTheMention,
-TestActivityBadgesZeroReadLocally, TestThreadsLiveMessages,
+TestActivityBadgesZeroReadLocally, TestActivityBadgesZeroThenLoad,
+TestActivityBadgesZeroInSocketOrder, TestActivityBadgesZeroClassic,
+TestActivityLiveThreadProjectionJSHeld,
+TestActivityLiveThreadNewReplyFreshJSHeld,
+TestActivityFloorConvertsDrawnRows, TestThreadsLiveMessages,
 TestThreadsLiveVote, TestThreadsLiveBatch (older replies too),
 TestThreadsLiveEvictedRefetch, TestThreadsLiveFloor,
 TestSavedLiveMessages, TestSavedLiveBotUpdate and
 TestSavedLiveEvictedRefetch (views, fakeslack);
-TestHubUpdateOutsideLoadedHistory, TestHubUpdateAfterWholeEviction and
-TestHubUpdateDuringFirstLoad (messages);
+TestHubUpdateOutsideLoadedHistory, TestHubUpdateAfterWholeEviction,
+TestHubUpdateDuringFirstLoad, TestHubUpdateAfterLocalCopyAtTop,
+TestHubKeepLiveAfterStartOver and TestHubReloadKeepsRangeAfterOldChange
+(messages);
 TestFetchedMessagesTakeSocketChanges, TestFetchedMessagesKeepReactions,
 TestFetchedMessagesBounded, TestFetchedReplayTruncatedUsers,
-TestApplyReactionLastListed, TestFetchedSizeAfterMutate and
-TestRefreshRangeRead (store); TestMessageChangeTable,
+TestApplyReactionLastListed, TestFetchedSizeAfterMutate,
+TestRefreshRangeRead and TestWindowReadKeepsFetchedRevision (store); TestMessageChangeTable,
 TestMessageChangeTableForgets, TestReactionReachesFetchedMessage,
 TestHydrateKeepsReactionsDuringFetch, TestMessageChangedRemoves,
 TestMentionsViewerRichKeywords, TestFetchedRootAnnounced,
@@ -1228,7 +1307,11 @@ TestOlderRepliesStored, TestRemovesNotTakenByReactions,
 TestWindowReadKeepsSocketRevision, TestWindowReadAnnouncesRevision,
 TestThreadReadKeepsSocketWrites, TestReadRevisionOrderedWithSocket,
 TestOlderPageRead, TestThreadsUnreadLeavesDeleted, TestReadsAnnounce,
-TestRefetchBatch, TestRefetchGone and TestRefetchBackoff (core).
+TestRefetchBatch, TestRefetchGone, TestRefetchBackoff,
+TestRefetchRetriesByItself, TestChangedOldMessageStaysOutOfWindow,
+TestHydrateDropsMissingFetched, TestReadRevisionKeepsPinDuringRead,
+TestWindowReadKeepsPageRevisionWithReaction and TestClassicBadgesZero
+(core).
 flake-check's activity-live-msg job runs them COUNT times, then three
 times under -race. TestIdleFrames has Activity on the views fixtures'
 feed with its search open and an item open beside it.

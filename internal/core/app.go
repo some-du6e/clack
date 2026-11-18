@@ -47,6 +47,8 @@ type App struct {
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
 	msgLog msgChanges // each message's latest change, for the views that keep copies of them (msg_changes.go)
+	// refetchQ is RefetchMessages' rounds (read_changes.go)
+	refetchQ refetchQueue
 
 	// prefsMu orders every change to the raw prefs: a change copies them,
 	// sets its keys and installs the copy, and two at once lost one of
@@ -1007,9 +1009,9 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// revision the store held another of reaches every copy and the views
 	// (store/read_revisions.go, read_changes.go)
 	a.S.SetLatestRead(ch, p.Messages, p.HasMore, live)
-	a.announceReads()
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
+	a.announceReads()                  // after the pins and subscriptions: the copies as they are now
 	for i := range p.Messages {
 		if needsFileInfo(&p.Messages[i]) {
 			go a.fillFiles(ch, p.Messages[i].TS)

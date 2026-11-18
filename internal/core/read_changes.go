@@ -2,7 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Revisions core's reads bring, announced as changes.
@@ -49,8 +53,9 @@ func (a *App) announceHeld(ch, ts string) bool {
 	return false
 }
 
-// refetch is a message RefetchMessages asked Slack for: out while its
-// request is, and after a failed one, not again before retry.
+// refetch is a message RefetchMessages asked Slack for: out while it
+// waits for its round or is in one, and after a failed one, not again
+// before retry.
 type refetch struct {
 	out   bool
 	fails int
@@ -58,16 +63,25 @@ type refetch struct {
 }
 
 const (
-	// maxRefetch bounds the messages of one conversation one call asks
-	// for (one messages.list); the rest wait for the next call
-	maxRefetch = 100
+	// maxRefetchRound bounds the messages one round asks for; the rest
+	// wait for the next
+	maxRefetchRound = 500
 	// maxRefetchKeys bounds the failed fetches remembered for their
 	// backoff
 	maxRefetchKeys = 4096
-	// refetchTries is how many times core asks for a message by itself
-	// after its fetch failed (each after its backoff); then a view's next
-	// call does
+	// refetchTries is how many rounds a message gets in all: core asks
+	// again by itself after each failure but the last (each after its
+	// backoff); then a view's next call does
 	refetchTries = 5
+	// refetchGap is Slack's UnknownFetchManager DEBOUNCE_INTERVAL: rounds
+	// start at least this far apart, so what a frame (or a burst of
+	// frames) asks for goes out together
+	refetchGap = 200 * time.Millisecond
+	// refetchHold is how long a round waits for the rest of what a frame
+	// asks for (the views ask channel by channel)
+	refetchHold = 20 * time.Millisecond
+	// refetchRateWait is the wait after a rate limit that named none
+	refetchRateWait = time.Minute
 )
 
 // refetchBackoff is the wait after the n-th failed fetch of a message: 2 s
@@ -81,16 +95,29 @@ func refetchBackoff(n int) time.Duration {
 	return min(d, time.Minute)
 }
 
+// refetchQueue is RefetchMessages' rounds, one at a time, as Slack's
+// UnknownFetchManager keeps one fetch per team in flight, 200 ms apart,
+// every pending id in one fetchMessagesByIds (which messages.list splits
+// ten channels a call, two calls at a time: slack.MessagesList).
+type refetchQueue struct {
+	mu      sync.Mutex
+	pending map[MsgKey]time.Time // what waits, and not before when
+	busy    bool                 // a round is out
+	timer   *time.Timer          // the next round
+	last    time.Time            // when the last round ended
+}
+
 // RefetchMessages asks Slack again for the messages tss of ch by id (as
-// Slack's row fetches a message its store doesn't hold), in one
-// messages.list off the caller's goroutine: what comes back is kept and
-// announced as a change; a message the channel answered without is gone
-// (Slack's isNonExistent: a "gone" change, which removes no Activity
-// entry); after a failure the message waits before it's asked for again,
-// and core asks again by itself once the wait is over, a few times (a
-// view with nothing changing draws no frame to ask from). A view calls
-// it for the messages core changed, or it shows, that no copy is left of
-// (the store let them go). One request per message while one is out.
+// Slack's row fetches a message its store doesn't hold), off the caller's
+// goroutine, with what every other caller asks for meanwhile in the same
+// round: what comes back is kept and announced as a change; a message its
+// channel answered without is gone (Slack's isNonExistent: a "gone"
+// change, which removes no Activity entry). After a failure the message
+// waits (refetchBackoff, longer after a rate limit) and core asks again
+// by itself, a few times (a view with nothing changing draws no frame to
+// ask from). A view calls it for the messages core changed, or it shows,
+// that no copy is left of (the store let them go). One request per message
+// while one is out or waiting.
 func (a *App) RefetchMessages(ch string, tss []string) {
 	if ch == "" {
 		return
@@ -98,7 +125,7 @@ func (a *App) RefetchMessages(ch string, tss []string) {
 	l := &a.msgLog
 	now := time.Now()
 	l.mu.Lock()
-	var want []string
+	var want []MsgKey
 	for _, ts := range tss {
 		k := MsgKey{ch, ts}
 		r := l.refetching[k]
@@ -110,10 +137,7 @@ func (a *App) RefetchMessages(ch string, tss []string) {
 		}
 		r.out = true
 		l.refetching[k] = r
-		want = append(want, ts)
-		if len(want) == maxRefetch {
-			break
-		}
+		want = append(want, k)
 	}
 	if len(l.refetching) > maxRefetchKeys {
 		for k, r := range l.refetching {
@@ -126,43 +150,127 @@ func (a *App) RefetchMessages(ch string, tss []string) {
 	if len(want) == 0 {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(a.bg, 30*time.Second)
-		defer cancel()
-		got, answered := a.hydrateKeep(ctx, map[string][]string{ch: want}, true)
-		for _, ts := range want {
-			if _, ok := got[ch+"/"+ts]; ok {
-				a.announceHeld(ch, ts)
-			} else if answered[ch] {
-				a.emit(Event{Type: "gone", Channel: ch, TS: ts})
-			}
+	q := &a.refetchQ
+	q.mu.Lock()
+	if q.pending == nil {
+		q.pending = map[MsgKey]time.Time{}
+	}
+	for _, k := range want {
+		q.pending[k] = time.Time{}
+	}
+	a.scheduleRefetchLocked(now)
+	q.mu.Unlock()
+}
+
+// scheduleRefetchLocked starts the timer for the next round when none is
+// out or set: refetchGap after the last round, or when the first message
+// waiting may go (q.mu held).
+func (a *App) scheduleRefetchLocked(now time.Time) {
+	q := &a.refetchQ
+	if q.busy || q.timer != nil || len(q.pending) == 0 {
+		return
+	}
+	at := q.last.Add(refetchGap)
+	if hold := now.Add(refetchHold); hold.After(at) {
+		at = hold
+	}
+	first := time.Time{}
+	for _, nb := range q.pending {
+		if first.IsZero() || nb.Before(first) {
+			first = nb
 		}
-		l.mu.Lock()
-		at := time.Now()
-		var again []string
-		wait := time.Duration(0)
-		for _, ts := range want {
-			k := MsgKey{ch, ts}
-			if _, ok := got[ch+"/"+ts]; ok || answered[ch] {
-				delete(l.refetching, k)
-				continue
-			}
-			r := l.refetching[k]
-			r.out, r.fails = false, r.fails+1
-			d := refetchBackoff(r.fails)
-			r.retry = at.Add(d)
-			l.refetching[k] = r
-			if r.fails < refetchTries {
-				again, wait = append(again, ts), max(wait, d)
-			}
+	}
+	if first.After(at) {
+		at = first
+	}
+	q.timer = time.AfterFunc(max(0, at.Sub(now)), a.refetchRound)
+}
+
+// refetchRound is one round: every message waiting that may go now, in one
+// hydrate across their channels.
+func (a *App) refetchRound() {
+	q := &a.refetchQ
+	now := time.Now()
+	q.mu.Lock()
+	q.timer = nil
+	if q.busy || a.bg.Err() != nil {
+		q.mu.Unlock()
+		return
+	}
+	want := map[string][]string{}
+	var keys []MsgKey
+	for k, nb := range q.pending {
+		if len(keys) == maxRefetchRound {
+			break
 		}
-		l.mu.Unlock()
-		if len(again) > 0 {
-			time.AfterFunc(wait, func() {
-				if a.bg.Err() == nil {
-					a.RefetchMessages(ch, again)
-				}
-			})
+		if nb.After(now) {
+			continue
 		}
-	}()
+		delete(q.pending, k)
+		want[k.Channel] = append(want[k.Channel], k.TS)
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		a.scheduleRefetchLocked(now)
+		q.mu.Unlock()
+		return
+	}
+	q.busy = true
+	q.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(a.bg, 30*time.Second)
+	got, answered, err := a.hydrateKeepErr(ctx, want, true)
+	cancel()
+	for _, k := range keys {
+		if _, ok := got[k.Channel+"/"+k.TS]; ok {
+			a.announceHeld(k.Channel, k.TS)
+		} else if answered[k.Channel] {
+			a.emit(Event{Type: "gone", Channel: k.Channel, TS: k.TS})
+		}
+	}
+	wait := refetchWaitAfter(err)
+	l := &a.msgLog
+	at := time.Now()
+	var again []MsgKey
+	var retry []time.Time
+	l.mu.Lock()
+	for _, k := range keys {
+		if _, ok := got[k.Channel+"/"+k.TS]; ok || answered[k.Channel] {
+			delete(l.refetching, k)
+			continue
+		}
+		r := l.refetching[k]
+		r.fails++
+		r.retry = at.Add(max(refetchBackoff(r.fails), wait))
+		r.out = r.fails < refetchTries // still waiting for core's own next try
+		l.refetching[k] = r
+		if r.out {
+			again, retry = append(again, k), append(retry, r.retry)
+		}
+	}
+	l.mu.Unlock()
+	q.mu.Lock()
+	for i, k := range again {
+		q.pending[k] = retry[i]
+	}
+	q.busy, q.last = false, time.Now()
+	a.scheduleRefetchLocked(q.last)
+	q.mu.Unlock()
+}
+
+// refetchWaitAfter is the least wait err asks for: a rate limit's
+// Retry-After (a minute when it names none), else nothing beyond the
+// backoff.
+func refetchWaitAfter(err error) time.Duration {
+	var he *slack.HTTPError
+	switch {
+	case errors.As(err, &he) && he.Status == 429:
+		if he.RetryAfter > 0 {
+			return time.Duration(he.RetryAfter) * time.Second
+		}
+		return refetchRateWait
+	case errors.Is(err, slack.RateLimited):
+		return refetchRateWait
+	}
+	return 0
 }

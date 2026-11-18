@@ -7,7 +7,10 @@ package core
 // and badge_counts_updated brings new ones (zuQH
 // handleBadgeCountsUpdatedRTMEvent). The tabs read them (cR).
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 func (a *App) setActivityBadges(m map[string]int) {
 	if m == nil {
@@ -66,12 +69,33 @@ const ActivityBadgesZero = "zero"
 // with isLocalOnlyUpdate: no activity.markRead, and a row whose message
 // the store doesn't hold stays): the event says so (ActivityBadgesZero),
 // and Activity marks its rows. Without the inbox it reads the event's
-// counts and alerts instead (classic_badges.go onClassicBadges). The UI
-// hears "activity_badges".
+// counts and alerts instead (classic_badges.go onClassicBadges), and marks
+// the All list's unread rows read the same way when the event carries at
+// least one count or alert and every one is 0 (`s.length>0 &&
+// s.every(e=>0===e)` over counts' and alerts' values). The UI hears
+// "activity_badges".
 func (a *App) onActivityBadges(raw json.RawMessage) {
 	if !a.ActivityInbox() {
-		if a.onClassicBadges(raw) {
-			a.emit(Event{Type: "activity_badges"})
+		var e struct {
+			Counts map[string]json.RawMessage `json:"counts"`
+			Alerts map[string]json.RawMessage `json:"alerts"`
+		}
+		zero := false
+		if json.Unmarshal(raw, &e) == nil && len(e.Counts)+len(e.Alerts) > 0 {
+			zero = true
+			for _, vals := range []map[string]json.RawMessage{e.Counts, e.Alerts} {
+				for _, v := range vals {
+					// a number other than 0 (or anything else) isn't 0
+					zero = zero && strings.TrimSpace(string(v)) == "0"
+				}
+			}
+		}
+		if changed := a.onClassicBadges(raw); changed || zero {
+			ev := Event{Type: "activity_badges"}
+			if zero {
+				ev.Name = ActivityBadgesZero
+			}
+			a.emit(ev)
 		}
 		return
 	}

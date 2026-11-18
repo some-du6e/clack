@@ -92,6 +92,7 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 			continue
 		}
 		delete(v.override, key)
+		delete(v.zeroRead, key) // the server's state, newer than the zero
 		if in.Archived != v.showCleared {
 			// activityUpdatedV2: cleared elsewhere (or restored) leaves the list
 			p.Items = slices.Delete(slices.Clone(p.Items), i, i+1)
