@@ -201,4 +201,20 @@ func TestLightTextFadeContinuous(t *testing.T) {
 			t.Errorf("light mode fades #%06x on white to alpha %.3f", v, a)
 		}
 	}
+	// an account theme's light sidebar (Karim's #FED4BE as the picker
+	// stores it: #1c0901 ink): its muted rows (#1c0901 at .5 over the
+	// near-white sidebar, y≈.52) are dark ink on light, so unfaded
+	ia := mustTheme(t, slackInkCases[0].ia)
+	lsb := New(false)
+	lsb.Restyle = func(th *Theme, p *Palette) { ApplyIATheme(p, ia, th.Dark, true) }
+	lsb.Refresh()
+	SetPrimary(lsb)
+	muted := Over(color.NRGBA{R: 0x1c, G: 0x09, B: 0x01, A: 0x80}, rgb(0xfdf7fa))
+	if a := alpha(muted, false, true); a != 1 {
+		t.Errorf("a light sidebar's muted row (%v) fades to alpha %.3f", muted, a)
+	}
+	SetPrimary(New(false)) // the default theme: its inverted sidebar is dark
+	if a := alpha(muted, false, true); a == 1 {
+		t.Errorf("the dark sidebar's grey %v (y≈.52) is unfaded", muted)
+	}
 }

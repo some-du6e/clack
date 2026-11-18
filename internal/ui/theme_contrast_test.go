@@ -277,7 +277,7 @@ func TestAccountThemeControlStripPress(t *testing.T) {
 			if k, off, peak := tcAlong(img, tcIcon, c.fill, c.ink); k < .8 || k > 1.1 || off > 16 {
 				t.Errorf("%s dark=%v: held, its icon's ink peaks at %s (%.2f of the way to Slack's theme-content-ter %s)", b.name, c.dark, tcHex(peak), k, tcHex(c.ink))
 			}
-			w.ptr(pointer.Drag, image.Pt(50, 50)) // off the button, still held
+			w.drag(image.Pt(50, 50)) // off the button, still held
 			w.run()
 			w.later(300 * time.Millisecond)
 			if got := w.shot().RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.rest, 1) {
@@ -376,10 +376,17 @@ func (w *tcWin) run() {
 // the frame that delivers it.
 func (w *tcWin) ptr(kind pointer.Kind, p image.Point) {
 	ev := pointer.Event{Kind: kind, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y))}
-	if kind == pointer.Press || kind == pointer.Drag {
+	if kind == pointer.Press {
 		ev.Buttons = pointer.ButtonPrimary
 	}
 	w.r.Queue(ev)
+	w.frame()
+}
+
+// drag moves the pointer to p with the primary button held (the router
+// makes it a Drag; a queued pointer.Drag panics) and runs that frame.
+func (w *tcWin) drag(p image.Point) {
+	w.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(float32(p.X), float32(p.Y))})
 	w.frame()
 }
 

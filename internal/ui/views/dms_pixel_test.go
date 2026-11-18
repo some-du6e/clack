@@ -155,18 +155,12 @@ func nearPx(got color.RGBA, c color.NRGBA, tol int) bool {
 
 func pxHex(c color.RGBA) string { return hexA(color.NRGBA{R: c.R, G: c.G, B: c.B, A: 0xff}) }
 
-// inkSum is the ink in r: every pixel's luminance distance from bg's
-// (linear light), so two drawings of the same text in two colours or
-// weights compare whatever their glyphs' coverage.
+// inkSum is the ink in r: every pixel's luma distance from bg's (sRGB,
+// as text_render_compare.py counts ink; linear light would squeeze dark
+// greys on white together), so two drawings of the same text in two
+// colours or weights compare whatever their glyphs' coverage.
 func inkSum(img *image.RGBA, r image.Rectangle, bg color.NRGBA) float64 {
-	lin := func(v uint8) float64 {
-		x := float64(v) / 255
-		if x <= 0.04045 {
-			return x / 12.92
-		}
-		return math.Pow((x+0.055)/1.055, 2.4)
-	}
-	lum := func(r, g, b uint8) float64 { return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b) }
+	lum := func(r, g, b uint8) float64 { return 0.2126*float64(r) + 0.7152*float64(g) + 0.0722*float64(b) }
 	b := lum(bg.R, bg.G, bg.B)
 	var sum float64
 	r = r.Intersect(img.Bounds())

@@ -86,8 +86,9 @@ func envFloat(name string, def float32) float32 {
 //     of the dark meta and body cells), and the fit continued past its
 //     data left #9a9b9e (y=.61) 6-17% light;
 //   - below y=.6 the text is light ink only on a dark background, which
-//     the text knows from the chrome scope or the primary theme's mode
-//     (as onWhite): there the fade ramps from 0 at y=.45 to y=.6's, where
+//     the text knows from the chrome scope (unless the account theme's
+//     sidebar is light) or the primary theme's mode (as onWhite): there
+//     the fade ramps from 0 at y=.45 to y=.6's, where
 //     it stopped at once before and a muted DM's timestamp (#958a9d,
 //     y=.56) came out brighter than its name (#9a9b9e, faded), the
 //     reverse of Slack. On white, darker text stays unfaded.
@@ -100,7 +101,7 @@ func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) 
 		return c
 	}
 	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
-	k := lightFadeK(y, chrome, chrome || primaryDark.Load())
+	k := lightFadeK(y, chrome, onDarkBackground(chrome))
 	if k <= 0 {
 		return c
 	}
