@@ -104,13 +104,13 @@ func TestMessageMenuSubmenuHoldsForPluginPatch(t *testing.T) {
 	if laidOut(s) {
 		t.Fatal("Organize drew before its MAMenu's tree, which a plugin's patch can change")
 	}
-	d.key(key.NameDownArrow, 0)
-	if s.sel >= 0 {
-		t.Fatalf("↓ moved Organize's selection (%d) before its tree came", s.sel)
+	d.key(key.NameDownArrow, 0) // opened by a click, as by a key: its first row selected
+	if n := len(d.m.ma.queued); n != 1 {
+		t.Fatalf("%d keys waiting while Organize waits for its tree, want the ↓", n)
 	}
 	release()
 	d.now = time.Time{}
-	d.until("Organize's tree, and the ↓ that waited for it", func() bool { return maFrom(s) && laidOut(s) && s.sel == 0 })
+	d.until("Organize's tree, and the ↓ that waited for it", func() bool { return maFrom(s) && laidOut(s) && len(d.m.ma.queued) == 0 })
 
 	d.key(key.NameLeftArrow, 0) // Organize closes
 	release = maHoldJS(t, e)
