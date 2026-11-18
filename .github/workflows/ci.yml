@@ -208,14 +208,15 @@ jobs:
       # Gio patches 37-44: a rounded clip's interior and a stroked one's
       # hole, ops split around them, a clip path's stencil regions, layers
       # of one depth on one atlas page, the sub-pixel path cache key, GL's
-      # attribute query (the pixels: gpu/headless's TestClack* and theme's
+      # attribute query; patch 46: a frame's damage, sticky atlas places
+      # (the pixels: gpu/headless's TestClack* and theme's
       # TestFrameCostPixels below, and the macos and windows-applog jobs'
       # Gio frame cost steps on Metal and Direct3D 11)
       - name: Gio frame cost (vendored gioui.org/op/clip, gpu)
         if: ${{ !cancelled() }}
         run: |
           go test -count=1 -v -run 'TestRRectInterior|TestRRectStrokeHole' gioui.org/op/clip
-          go test -count=1 -v -run 'TestAddRegion|TestCollectClipInterior|TestPackLayersOneDepthOnePage|TestSplitOp|TestCollectStrokeHole|TestCollectPanelSplit|TestCollectSubPixelKey|TestPackLayersLegacy|TestClackOpCacheReturningPathHits' gioui.org/gpu
+          go test -count=1 -v -run 'TestAddRegion|TestCollectClipInterior|TestPackLayersOneDepthOnePage|TestSplitOp|TestCollectStrokeHole|TestCollectPanelSplit|TestCollectSubPixelKey|TestPackLayersLegacy|TestClackOpCacheReturningPathHits|TestClackDamage|TestClackSticky' gioui.org/gpu
           go test -count=1 -v -run 'TestQueryVertAttribBinding' gioui.org/gpu/internal/opengl
       # Gio patch 45: a StartAligned ScrollToEnd list lays out short content
       # from its start and still keeps to its end (the thread pane)
@@ -279,8 +280,9 @@ jobs:
           xvfb-run -a go test -count=1 -v -run '^TestLiveImageFrames$' gioui.org/gpu/headless
           # Gio patches 37-44 in pixels: the state caches change none, shared
           # layer pages and splits under a transform none, a cached path at
-          # a new sub-pixel offset is built there, atlas pages shrink and go
-          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          # a new sub-pixel offset is built there, atlas pages shrink and go;
+          # patch 46: a partial frame is the whole frame's pixels, bit for bit
+          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -369,17 +371,20 @@ jobs:
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       # Gio patch 35 and ui's quiet frames on App.Run's real X11 window
       # (Xvfb, Mesa's llvmpipe): a frame only an animated emoji asked for
-      # draws the last frame's ops again, without a layout; the same on
-      # Metal and Direct3D are the macos and windows-idle jobs'
-      - name: quiet frames on the real window (TestRealWindowQuietFrames, Xvfb)
+      # draws the last frame's ops again, without a layout; patch 46: a
+      # caret's blink is a partial frame of its pixels, at a fraction of a
+      # whole frame's draws and CPU; the same on Metal and Direct3D are the
+      # macos and windows-idle jobs'
+      - name: quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost, Xvfb)
         if: ${{ !cancelled() }}
         env:
           CLACK_REAL_WINDOW_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
-          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
-          xvfb-run -a -s "-screen 0 1920x1080x24" go test -count=1 -v -timeout 10m -run '^TestRealWindowQuietFrames$' ./internal/ui
+          # python3-xlib: TestRealWindowCaretCost reads the window's pixels back
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
+          xvfb-run -a -s "-screen 0 1920x1080x24" go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
 
   windows:
     runs-on: ubuntu-latest
@@ -429,7 +434,9 @@ jobs:
       # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
       # pixel, the window's drawing held to the old way (theme's
       # TestFrameCostPixels), shared layer pages, sub-pixel paths, atlas
-      # pages; linux-gio runs them on llvmpipe, macos on Metal
+      # pages; patch 46: partial frames are the whole frame's pixels, the
+      # frame texture's copy included (TestClackPartial*); linux-gio runs
+      # them on llvmpipe, macos on Metal
       - name: Gio frame cost on Direct3D 11 (WARP)
         if: ${{ !cancelled() }}
         shell: bash
@@ -437,7 +444,7 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
@@ -1026,13 +1033,14 @@ jobs:
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       # Gio patch 35 and ui's quiet frames on App.Run's real Direct3D
       # window: a frame only an animated emoji asked for draws the last
-      # frame's ops again, without a layout
-      - name: quiet frames on the real window (TestRealWindowQuietFrames)
+      # frame's ops again, without a layout; patch 46: a caret's blink is
+      # a partial frame
+      - name: quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost)
         if: ${{ !cancelled() }}
         env:
           CGO_ENABLED: "0"
           CLACK_REAL_WINDOW_TESTS: "1"
-        run: go test -count=1 -v -timeout 10m -run '^TestRealWindowQuietFrames$' ./internal/ui
+        run: go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
 
 
   macos:
@@ -1107,13 +1115,15 @@ jobs:
         run: .github/scripts/gio-layer-fix.sh
       # Gio patches 37-44 on Metal: the state caches and command batching
       # change no pixel, the window's drawing held to the old way, shared
-      # layer pages, sub-pixel paths, atlas pages
+      # layer pages, sub-pixel paths, atlas pages; patch 46: partial frames
+      # are the whole frame's pixels, the frame texture's draw into the
+      # target included (TestClackPartial*)
       - name: Gio frame cost on Metal
         if: ${{ !cancelled() }}
         env:
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
@@ -1201,7 +1211,8 @@ jobs:
         run: |
           set +e
           sw_vers
-          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac' gioui.org/app
+          # and patch 47: the caret's blink period from the user defaults
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac' gioui.org/app
           gio=$?
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?
@@ -1335,6 +1346,8 @@ jobs:
           # Gio patch 35 and ui's quiet frames on Metal: a frame only an
           # animated emoji asked for draws the last frame's ops again
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
+          # Gio patch 46 on Metal: a caret's blink is a partial frame
+          CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' || rc=1
           exit $rc
       - name: build
         if: ${{ !cancelled() }}
