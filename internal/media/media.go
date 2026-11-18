@@ -136,6 +136,10 @@ type Stats struct {
 	Requests, BytesRead int64
 	// Dropped are events dropped because nothing read them.
 	Dropped int64
+	// Skipped are new frames the media thread had no free texture for,
+	// Timeouts the asks that couldn't take the newest frame (Windows: the
+	// shared ring's keyed mutexes, both sides waiting for neither).
+	Skipped, Timeouts int64
 }
 
 // Player is one <video>: a source, decoding on the OS's media stack.

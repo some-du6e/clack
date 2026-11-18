@@ -1039,6 +1039,15 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_REAL_WINDOW_TESTS: "1"
         run: go test -count=1 -v -timeout 10m -run '^TestRealWindowQuietFrames$' ./internal/ui
+      # Video playback's backend (internal/media/mf): the fixtures played
+      # by Media Foundation into a headless Gio window (Direct3D 11 on the
+      # Basic Render Driver), with cgo, which the steps above leave off
+      - name: video playback (Media Foundation, internal/media/...)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count=1 -v -timeout 15m ./internal/media/...
 
 
   macos:
@@ -1326,6 +1335,13 @@ jobs:
       # Then TestIdleFrames headless, as linux-idle runs it, and the quiet
       # frames of an animated emoji on the real window
       # (TestRealWindowQuietFrames, Gio patch 35).
+      # Video playback's backend (internal/media/avf): the fixtures played
+      # by AVFoundation into a headless Gio window on Metal
+      - name: video playback (AVFoundation, internal/media/...)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count=1 -v -timeout 15m ./internal/media/...
       - name: idle on the real window (TestMacIdleCPU), idle frames (TestIdleFrames), quiet frames (TestRealWindowQuietFrames)
         if: ${{ !cancelled() }}
         run: |

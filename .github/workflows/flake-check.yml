@@ -1314,6 +1314,37 @@ jobs:
           go test -count=3 -v -timeout 10m -run '^TestComposersForOneThreadSendTheirOwn$' ./internal/ui/composer || rc=1
           exit $rc
 
+  # Video playback's backends (internal/media/mf, internal/media/avf): the
+  # fixtures played by the OS's own decoder into a headless Gio window,
+  # Media Foundation on windows-latest (Direct3D 11 on the Basic Render
+  # Driver), AVFoundation on macos-latest (Metal): colours, metadata,
+  # events, seek, the paused budget, the end, close. At most 3 runs (each
+  # plays the fixture several times). Dispatch with only=video.
+  video:
+    if: ${{ !inputs.only || startsWith('video', inputs.only) }}
+    name: "video (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: the backends play the fixtures (internal/media/...)
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -count=$n -v -timeout 30m ./internal/media/...
+
   # What one frame costs the GPU (branch gpu-frame-cost): Clack's window
   # rendered by each backend (Mesa llvmpipe's GL on Linux, WARP's Direct3D
   # 11 on Windows, the runner's Metal on macOS). The placement probe logs

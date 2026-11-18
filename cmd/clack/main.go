@@ -26,6 +26,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/imgcache"
+	_ "github.com/some-du6e/clack/internal/media/mf" // video on Windows: Media Foundation (cgo builds)
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/store"
