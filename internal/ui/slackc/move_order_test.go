@@ -60,8 +60,9 @@ func TestFrameMoveBeforePress(t *testing.T) {
 		pointer.Event{Kind: pointer.Move, Position: f32.Pt(10, 20), Source: pointer.Mouse, Time: ms(10)},
 		pointer.Event{Kind: pointer.Move, Position: f32.Pt(20, 20), Source: pointer.Mouse, Time: ms(12)},
 		pointer.Event{Kind: pointer.Press, Position: f32.Pt(20, 20), Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: ms(14)},
-		pointer.Event{Kind: pointer.Drag, Position: f32.Pt(30, 20), Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: ms(16)},
-		pointer.Event{Kind: pointer.Drag, Position: f32.Pt(40, 20), Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: ms(18)},
+		// moves with the button held: the router delivers them as drags
+		pointer.Event{Kind: pointer.Move, Position: f32.Pt(30, 20), Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: ms(16)},
+		pointer.Event{Kind: pointer.Move, Position: f32.Pt(40, 20), Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Time: ms(18)},
 		pointer.Event{Kind: pointer.Release, Position: f32.Pt(40, 20), Source: pointer.Mouse, Time: ms(20)},
 		pointer.Event{Kind: pointer.Move, Position: f32.Pt(50, 20), Source: pointer.Mouse, Time: ms(22)},
 	)
