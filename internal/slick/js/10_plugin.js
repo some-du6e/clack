@@ -328,16 +328,17 @@ S.setPage = (href, css) => {
 /**
  * Go → JS: route the UI shows, for location-based lookups
  * (getCurrentChannelId, the active team) and Slack's view state
- * (Taut's setView: ChatTabs' current tab)
+ * (Taut's setView: ChatTabs' current tab; primaryThread: the thread is
+ * the primary Thread view navigate asked for)
  */
-S.setRoute = (team, channel, thread) => {
+S.setRoute = (team, channel, thread, primaryThread) => {
   const path = team ? `/client/${team}${channel ? '/' + channel : ''}` : '/client'
   try {
     if (G.location?.pathname !== path) G.history?.replaceState?.(G.history.state ?? null, '', path)
   } catch (err) {
     console.warn('[slick] could not set the route', err)
   }
-  T.setView?.(channel || '', thread || '')
+  T.setView?.(channel || '', thread || '', !!primaryThread)
 }
 
 S.introspect = () => ({

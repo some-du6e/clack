@@ -517,8 +517,9 @@ func TestSlickViewChatTabs(t *testing.T) {
 	// "Thread"}), which Clack routes as the thread's deep link: the thread
 	// beside its channel (Clack draws no thread as a primary view)
 	// It's ChatTabs' current tab while Clack shows it: Taut's view state
-	// has it as the primary Thread view navigate asked for, so ChatTabs
-	// adds no tab for the thread's channel (here a DM without one).
+	// has it as the primary Thread view navigate asked for (its history
+	// entry's bit), so ChatTabs adds no tab for the thread's channel (here
+	// a DM without one).
 	openThreadTab := func(ch, ts string, tabs int) {
 		t.Helper()
 		e.dismissOverlays()
@@ -550,6 +551,28 @@ func TestSlickViewChatTabs(t *testing.T) {
 	}
 	openThreadTab(svRandom, "1700000005.000500", 3)
 	openThreadTab(svDM, "1700000007.000700", 4)
+
+	// a thread already open beside its channel (opened by hand: not the
+	// primary view): Open in new Slick tab on it makes its new tab the
+	// current one although the route doesn't change, as Slack's navigate
+	// shows the thread view at once (the history entry is marked primary)
+	const shown = "1700000009.000900"
+	e.dismissOverlays()
+	e.a.Navigate("c/" + svRandom + "/t/" + shown)
+	e.until(8*time.Second, "the thread beside #random, by hand", func() bool {
+		return string(e.a.router.Current()) == "c/"+svRandom+"/t/"+shown && svSelectedTab(e.tree("slick-chat-tabs__tab", `data-tab-count":4`)) != svRandom+":"+shown
+	})
+	openThreadTab(svRandom, shown, 5)
+	// Back from #general to that entry: the primary thread view again
+	e.dismissOverlays()
+	e.click(ttGen)
+	e.until(8*time.Second, "#general, its tab current", func() bool {
+		return string(e.a.router.Current()) == "c/"+ttGen && svSelectedTab(e.tree("slick-chat-tabs__tab", `data-tab-count":5`)) != svRandom+":"+shown
+	})
+	e.a.Back()
+	e.until(8*time.Second, "Back: the thread tab current again", func() bool {
+		return string(e.a.router.Current()) == "c/"+svRandom+"/t/"+shown && svSelectedTab(e.tree("slick-chat-tabs__tab", `data-tab-count":5`)) == svRandom+":"+shown
+	})
 
 	// the rows still navigate on click while they're inside ChatTabs' tree
 	e.dismissOverlays()
@@ -766,7 +789,10 @@ func (e *svEnv) jsString(expr string) string {
 // that handle it.
 func (e *svEnv) clickRect(r image.Rectangle) { e.clickRectMods(r, 0) }
 
-// clickRectMods is clickRect with modifier keys held (Slack's split click).
+// clickRectMods is clickRect with modifier keys held (Slack's split click):
+// the press in one frame, the release in the next, as a user's click
+// comes, so a press a frame loses between them (a Clickable reset under a
+// plugin's tree) loses the click here too.
 func (e *svEnv) clickRectMods(r image.Rectangle, mods key.Modifiers) {
 	e.t.Helper()
 	c := r.Min.Add(r.Max).Div(2)
@@ -775,8 +801,9 @@ func (e *svEnv) clickRectMods(r image.Rectangle, mods key.Modifiers) {
 	e.rt.Queue(
 		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: p, Time: e.clock, Modifiers: mods},
 		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: p, Time: e.clock + 10*time.Millisecond, Modifiers: mods},
-		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: e.clock + 60*time.Millisecond, Modifiers: mods},
 	)
+	e.frame()
+	e.rt.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: p, Time: e.clock + 60*time.Millisecond, Modifiers: mods})
 	e.frame()
 	e.frame()
 }

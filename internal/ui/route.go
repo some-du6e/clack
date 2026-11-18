@@ -64,7 +64,11 @@ func (r Route) Query() string {
 // (the client store's "recents", which the history menus list): every
 // place shown, most recent first, with when it was shown.
 type router struct {
-	stack   []Route
+	stack []Route
+	// primary is, per entry, whether its thread is the primary Thread view
+	// Slack's navigate asked for (forceRenderInPrimary: ChatTabs' thread
+	// tabs), which Clack shows beside its channel (App.navigateTo)
+	primary []bool
 	pos     int
 	recents []visit
 	cleared time.Time // the last Clear history (the visits merge's clearedAtMs)
@@ -115,22 +119,40 @@ func (h *router) Push(r Route) {
 	}
 	if len(h.stack) > 0 {
 		h.stack = h.stack[:h.pos+1]
+		h.primary = h.primary[:h.pos+1]
 	}
 	h.stack = append(h.stack, r)
+	h.primary = append(h.primary, false)
 	if len(h.stack) > 200 {
 		h.stack = h.stack[len(h.stack)-200:]
+		h.primary = h.primary[len(h.primary)-200:]
 	}
 	h.pos = len(h.stack) - 1
 }
 
 // Replace swaps the current entry (e.g. thread open/close inside a channel).
+// A thread opened or closed by hand there isn't the primary view.
 func (h *router) Replace(r Route) {
 	if len(h.stack) == 0 {
 		h.Push(r)
 		return
 	}
+	if h.stack[h.pos] != r {
+		h.primary[h.pos] = false
+	}
 	h.stack[h.pos] = r
 	h.note(r)
+}
+
+// Primary reports whether the current entry's thread is the primary
+// Thread view Slack's navigate asked for.
+func (h *router) Primary() bool { return len(h.stack) > 0 && h.primary[h.pos] }
+
+// SetPrimary marks the current entry's thread as that primary view.
+func (h *router) SetPrimary(on bool) {
+	if len(h.stack) > 0 {
+		h.primary[h.pos] = on
+	}
 }
 
 func (h *router) CanBack() bool    { return h.pos > 0 }

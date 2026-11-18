@@ -32,3 +32,29 @@ func TestSinceInput(t *testing.T) {
 		}
 	}
 }
+
+// Clack patch 33: pointer presses, key presses and text edits count as
+// presses; moves, scrolls, releases, cancels and focus changes don't.
+func TestSinceInputPresses(t *testing.T) {
+	var r Router
+	n := Presses()
+	r.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse},
+		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse},
+		pointer.Event{Kind: pointer.Cancel},
+		key.Event{Name: key.NameDownArrow, State: key.Release},
+		key.FocusEvent{Focus: true},
+	)
+	if d := Presses() - n; d != 0 {
+		t.Fatalf("moves, scrolls, releases, a cancel and a focus change: %d presses", d)
+	}
+	r.Queue(
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary},
+		key.Event{Name: key.NameDownArrow, State: key.Press},
+		key.EditEvent{Text: "a"},
+	)
+	if d := Presses() - n; d != 3 {
+		t.Errorf("a pointer press, a key press and an edit: %d presses, want 3", d)
+	}
+}

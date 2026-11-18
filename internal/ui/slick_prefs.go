@@ -163,6 +163,11 @@ func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 	}
 	st := s.Settings()
 	p.k.gtxNow = gtx
+	shown := p.open // the plugin page drawn, whose settings panel stays mounted
+	if tab == "slick_themes" {
+		shown = ""
+	}
+	p.closePanels(shown)
 	panelList(gtx, &p.list.List, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
 		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
@@ -958,6 +963,18 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 			})
 		}
 		p.card(f, "Source", "", nil, rows)
+	}
+}
+
+// closePanels unmounts every plugin's settings panel but the one on the
+// page shown (keep; "" for none), as Slick's PluginDetail, which renders
+// the panel, unmounts it with the page: opened again, it starts afresh.
+func (p *slickPage) closePanels(keep string) {
+	for k, sub := range p.k.subs {
+		if id, ok := strings.CutPrefix(k, "slickpanel."); ok && id != keep {
+			sub.Close()
+			delete(p.k.subs, k)
+		}
 	}
 }
 

@@ -44,7 +44,9 @@ const libraryTabID = "library"
 
 var (
 	pluginLibMu sync.Mutex
-	pluginLibs  = map[string]*pluginlib.Library{} // by index URL
+	// by index URL and cache folder: each App's own (tests run many in one
+	// process, and an earlier test's library server's port may come back)
+	pluginLibs = map[string]*pluginlib.Library{}
 )
 
 // pluginLibURL is the index the Library reads: CLACK_PLUGIN_LIBRARY (a URL,
@@ -66,17 +68,18 @@ func (a *App) pluginLib() *pluginlib.Library {
 	if u == "" {
 		return nil
 	}
-	pluginLibMu.Lock()
-	defer pluginLibMu.Unlock()
-	if l := pluginLibs[u]; l != nil {
-		return l
-	}
 	dir := ""
 	if a.opts.ConfigDir != "" {
 		dir = filepath.Join(a.opts.ConfigDir, "cache", "plugin-library")
 	}
+	key := u + "\x00" + dir
+	pluginLibMu.Lock()
+	defer pluginLibMu.Unlock()
+	if l := pluginLibs[key]; l != nil {
+		return l
+	}
 	l := pluginlib.New(pluginlib.Options{IndexURL: u, CacheDir: dir})
-	pluginLibs[u] = l
+	pluginLibs[key] = l
 	return l
 }
 

@@ -374,7 +374,11 @@ func (d *Data) Sort() {
 
 // Regressions compares a new run with the committed data: a committed
 // winner that no longer loads, now keeps re-rendering, passes fewer checks
-// than it did, or lost to the other variant on correctness.
+// than it did, or lost to the other variant on correctness; and any
+// variant, winner or not, that patched components and now patches none
+// (1f17ed91 dropped every plugin's patches: eight plugins lost them all
+// with their checks still passing, and the winners' checks alone missed
+// Silent Typing's Slick variant).
 func Regressions(old, cur *Data) []string {
 	var out []string
 	for i := range old.Plugins {
@@ -387,6 +391,11 @@ func Regressions(old, cur *Data) []string {
 		}
 		if np == nil {
 			continue // no longer offered in both
+		}
+		for _, ov := range op.Variants {
+			if nv := np.Variant(ov.System); len(ov.Patched) > 0 && nv != nil && len(nv.Patched) == 0 {
+				out = append(out, fmt.Sprintf("%s: the %s variant patched %s and now patches nothing", op.Name, name(ov.System), strings.Join(ov.Patched, ", ")))
+			}
 		}
 		ow, nw := op.Variant(op.Winner), np.Variant(op.Winner)
 		if ow == nil || nw == nil {

@@ -1577,11 +1577,11 @@ tried again (run 43823092739). With it each passed 3 runs of 3 (run
 4 s, frames back about 75 ms after the window was visible or the screens
 woke. Not in `UPSTREAM.patch`.
 
-## 33. io/input: when a router was last given input
+## 33. io/input: when a router was last given input, and how many presses
 
-`io/input/clack_inputidle.go` (new: `SinceInput`) and `io/input/router.go`
-(`Queue` notes each event). An addition: nothing upstream reads the
-clock.
+`io/input/clack_inputidle.go` (new: `SinceInput`, `Presses`) and
+`io/input/router.go` (`Queue` notes each event). An addition: nothing
+upstream reads the clock or the count.
 
 Clack holds work that would stall the window for a pause in the person's
 input: cmd/clack's forced collections (`debug.FreeOSMemory`), whose
@@ -1604,9 +1604,21 @@ process has run when there was none). Focus changes, snippets and
 selections aren't input. Clack reads it through `internal/ui/inputidle`,
 whose stockgio build (`.github/scripts/gio-layer-fix.sh`) has no clock.
 
+`Presses` counts the pointer presses, key presses and `EditEvent`s
+`Queue` is given, process-wide (moves, scrolls and releases aren't
+presses). A message menu pick that a plugin's onSelectAction answers
+more than a second late runs Clack's row only if the count hasn't moved
+since the pick (`internal/ui/popups` `maPick`): Slack runs the click's
+handler before any later input, so a late row runs unless the person
+acted after it, and a retry is a press, so nothing runs twice.
+`internal/ui/inputidle.Presses` reads it; the stockgio build counts
+nothing.
+
 Tests: `io/input/clack_inputidle_test.go` (`TestSinceInput`: a cancel and
-a focus change don't count; a key, an edit and a scroll do) on ci's
-linux-gio job, `internal/ui` `TestInputIdleSeesFocusedWidgetKeys`,
+a focus change don't count; a key, an edit and a scroll do;
+`TestSinceInputPresses`: presses, key presses and edits count, moves,
+scrolls and releases don't) on ci's linux-gio job, `internal/ui/popups`
+`TestMessageMenuLatePickRunsUnlessInput`, `internal/ui` `TestInputIdleSeesFocusedWidgetKeys`,
 `TestInputIdleSeesScroll` and `TestInputIdleSeesGrabbedDrag`, and
 `cmd/clack` `TestWaitQuietOnInput`. Not in `UPSTREAM.patch`.
 

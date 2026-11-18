@@ -56,3 +56,35 @@ func TestEmbedded(t *testing.T) {
 		}
 	}
 }
+
+// A variant, winner or not, that patched components in the committed data
+// and patches none in a run is a regression, its checks passing or not.
+func TestRegressionsPatchesNothing(t *testing.T) {
+	v := func(sys string, patched ...string) Variant {
+		return Variant{System: sys, Loaded: true, IdleSeconds: 3, Checks: []Check{{Name: "a", Pass: true}}, Patched: patched}
+	}
+	old := &Data{Plugins: []Plugin{{Name: "Who Reacted", Winner: "taut", Variants: []Variant{v("taut", "Reaction"), v("slick", "Reaction", "UnstyledButton")}}}}
+	for _, c := range []struct {
+		name string
+		t, s Variant
+		want int
+	}{
+		{"both still patch", v("taut", "Reaction"), v("slick", "Reaction"), 0},
+		{"the winner patches nothing", v("taut"), v("slick", "Reaction", "UnstyledButton"), 1},
+		{"the other variant patches nothing", v("taut", "Reaction"), v("slick"), 1},
+		{"neither patches", v("taut"), v("slick"), 2},
+	} {
+		cur := &Data{Plugins: []Plugin{{Name: "Who Reacted", Variants: []Variant{c.t, c.s}}}}
+		Decide(&cur.Plugins[0])
+		if regs := Regressions(old, cur); len(regs) != c.want {
+			t.Errorf("%s: regressions %q, want %d", c.name, regs, c.want)
+		}
+	}
+	// what never patched may keep not patching
+	plain := &Data{Plugins: []Plugin{{Name: "Quick Join", Winner: "taut", Variants: []Variant{v("taut"), v("slick")}}}}
+	cur := &Data{Plugins: []Plugin{{Name: "Quick Join", Variants: []Variant{v("taut"), v("slick")}}}}
+	Decide(&cur.Plugins[0])
+	if regs := Regressions(plain, cur); len(regs) != 0 {
+		t.Errorf("a plugin that never patched: regressions %q", regs)
+	}
+}

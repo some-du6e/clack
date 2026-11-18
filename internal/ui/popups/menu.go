@@ -446,14 +446,18 @@ func (m *Menu) closeSub() {
 
 func (m *Menu) keys(gtx layout.Context) {
 	filters := m.keyFilters()
-	held := m.ma != nil && m.ma.held
-	if !held && m.ma != nil && len(m.ma.queued) > 0 {
+	if m.ma != nil && len(m.ma.queued) > 0 && !m.keysHeld(gtx) {
 		// the keys pressed while the card waited for the plugin's layout
-		// (maHold) go to the rows it laid out, as Slack's menu, drawn from
-		// the patched MAMenu at once, would have had them
+		// (maHold) go to the rows it laid out, in order, as Slack's menu,
+		// drawn from the patched MAMenu at once, would have had them; one
+		// that opens a submenu that waits in turn holds the rest again
 		q := m.ma.queued
 		m.ma.queued = nil
-		for _, ke := range q {
+		for i, ke := range q {
+			if m.keysHeld(gtx) {
+				m.ma.queued = append(m.ma.queued, q[i:]...)
+				break
+			}
 			if m.onKey(gtx, ke) {
 				return
 			}
@@ -468,14 +472,28 @@ func (m *Menu) keys(gtx layout.Context) {
 		if !ok || ke.State != key.Press {
 			continue
 		}
-		if held && !(ke.Name == key.NameEscape && ke.Modifiers == 0) {
-			m.ma.queued = append(m.ma.queued, ke)
-			continue
+		if m.ma != nil && (len(m.ma.queued) > 0 || m.keysHeld(gtx)) {
+			// a bare Escape closes at once, unless keys before it still wait
+			if bare := ke.Name == key.NameEscape && ke.Modifiers == 0; !bare || len(m.ma.queued) > 0 {
+				m.ma.queued = append(m.ma.queued, ke)
+				continue
+			}
 		}
 		if m.onKey(gtx, ke) {
 			return
 		}
 	}
+}
+
+// keysHeld reports whether the root's keys wait for a plugin's layout: its
+// own card's (held, this frame's) or an open message actions submenu's,
+// whose wait starts the first time it's asked, so one that never draws
+// its MAMenu holds them no longer than maHold.
+func (m *Menu) keysHeld(gtx layout.Context) bool {
+	if m.ma == nil {
+		return false
+	}
+	return m.ma.held || (m.sub != nil && m.sub.ma != nil && m.sub.ma.holding(gtx))
 }
 
 // onKey handles one key press; it reports whether the menu is done with
@@ -578,8 +596,8 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		if m.ma != nil {
 			// a card waiting for the plugin's layout holds its keys too (the
-			// root's, or an open message actions submenu's)
-			m.ma.held = m.ma.holding(gtx) || (m.sub != nil && m.sub.ma != nil && m.sub.ma.waiting(frameNow(gtx)))
+			// root's here; an open message actions submenu's, keysHeld)
+			m.ma.held = m.ma.holding(gtx)
 		}
 		m.keys(gtx)
 		if m.done {

@@ -50,14 +50,20 @@ func (a *App) UserAttention() bool {
 func (a *App) Images() *imgcache.Cache { return a.images }
 
 // Navigate switches the primary view and pushes history.
-func (a *App) Navigate(route string) {
+func (a *App) Navigate(route string) { a.navigateTo(route, false) }
+
+// navigateTo is Navigate; primaryThread marks the entry (the current one, if
+// it's that route already) as Slack's primary Thread view, before Slick
+// hears the route (openPrimaryThreadLink).
+func (a *App) navigateTo(route string, primaryThread bool) {
 	r := Route(route)
 	if r == "" {
 		return
 	}
 	// a conversation opened from inside the split view stays there, as one
-	// opened with Slack's split modifier click goes there (split.go)
-	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
+	// opened with Slack's split modifier click goes there (split.go); Slack
+	// renders navigate's primary thread in the main window
+	if !primaryThread && r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
 		a.OpenSplit(route)
 		return
 	}
@@ -69,6 +75,9 @@ func (a *App) Navigate(route string) {
 	}
 	prev := a.router.Current()
 	a.router.Push(r)
+	if primaryThread && r.Thread() != "" {
+		a.router.SetPrimary(true)
+	}
 	a.switchAt, a.switchTo = time.Now(), r
 	a.afterRoute(prev, r)
 }

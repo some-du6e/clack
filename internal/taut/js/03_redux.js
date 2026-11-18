@@ -588,7 +588,6 @@ function nativeThunk(name) {
     // Slack's navigate resolves undefined (navigateInMainWindow), whatever
     // Go answered; what it shows is Slack's view state too (setView)
     return defineThunk(name, async (args) => {
-      notePrimaryThread(args[0])
       await go('thunk', name, await encodeAsync(nativeArgs(name, args)))
       return undefined
     })
@@ -610,24 +609,18 @@ function nativeThunk(name) {
 // state.view['v2::main::<tab>::primary']). Clack's route (setView) is a
 // Channel view; a thread Slack's navigate thunk asked for in the primary
 // view (options.forceRenderInPrimary: ChatTabs' "Thread only" tabs) is that
-// Thread view while Clack shows it, beside its channel. No secondary pane
-// is mirrored: after such a navigate ChatTabs closes the one it reads
-// (closeFlexpane), which in Clack is the thread it just opened.
-let primaryThread = null // {id: 'C…-ts', shown}
-function notePrimaryThread(nav) {
-  const id = nav?.params?.threadId
-  primaryThread = nav?.viewType === 'Thread' && nav?.options?.forceRenderInPrimary && typeof id === 'string' ? { id, shown: false } : null
-}
-/** Go → JS (Slick's setRoute): the conversation and thread the window shows */
-T.setView = (channel, thread) => {
-  const id = channel && thread ? `${channel}-${thread}` : ''
-  if (primaryThread) {
-    if (primaryThread.id === id) primaryThread.shown = true
-    else if (primaryThread.shown) primaryThread = null // moved on from it
-  }
+// Thread view while Clack shows it, beside its channel: Go keeps that bit
+// on the route's history entry (UIHooks.DeepLinkPrimary), so the thread
+// already open beside its channel becomes it, and Back and Forward bring
+// it back. No secondary pane is mirrored, and the active tab is always
+// 'home' (docs/PLUGINS-live-slick.md: ChatTabs' Activity and automatic
+// thread tab settings): after such a navigate ChatTabs closes the pane it
+// reads (closeFlexpane), which in Clack is the thread it just opened.
+/** Go → JS (Slick's setRoute): the conversation and thread the window shows, and whether that thread is the primary view */
+T.setView = (channel, thread, primaryThread) => {
   const primary =
-    primaryThread?.shown && primaryThread.id === id
-      ? { id: 'thread', viewType: 'Thread', params: { threadId: id } }
+    channel && thread && primaryThread
+      ? { id: 'thread', viewType: 'Thread', params: { threadId: `${channel}-${thread}` } }
       : channel
         ? { id: channel, viewType: 'Channel' }
         : undefined

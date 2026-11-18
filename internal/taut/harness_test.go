@@ -101,12 +101,13 @@ type testUI struct {
 	attached  *Bridge
 	prefsOpen []string
 	links     []string // slack:// links UIHooks.DeepLink opened
+	primary   []string // the ones UIHooks.DeepLinkPrimary opened
 	// invalidations counts UIHooks.Invalidate calls (a redraw asked for)
 	invalidations atomic.Int64
 }
 
 func (u *testUI) hooks() UIHooks {
-	return UIHooks{
+	h := UIHooks{
 		Attached:   func(b *Bridge) { u.mu.Lock(); u.attached = b; u.mu.Unlock() },
 		Invalidate: func() { u.invalidations.Add(1) },
 		Deliver: func(root uint64, tree []byte) {
@@ -165,6 +166,8 @@ func (u *testUI) hooks() UIHooks {
 		SetLocalDraft: func(d json.RawMessage) { u.mu.Lock(); u.drafts = append(u.drafts, d); u.mu.Unlock() },
 		SwitchAccount: func(c slack.Creds) { u.mu.Lock(); u.switched = append(u.switched, c); u.mu.Unlock() },
 	}
+	setDeepLinkPrimary(&h, func(uri string) { u.mu.Lock(); u.primary = append(u.primary, uri); u.mu.Unlock() })
+	return h
 }
 
 type harness struct {

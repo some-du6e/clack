@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"testing"
 
 	"gioui.org/io/key"
@@ -42,6 +43,50 @@ func TestRouterHistory(t *testing.T) {
 	}
 	if got := h.Recent(5); len(got) != 3 || got[0] != "c/C" {
 		t.Fatalf("recent = %v", got)
+	}
+}
+
+// A history entry keeps whether its thread is the primary Thread view
+// Slack's navigate asked for (forceRenderInPrimary): Back and Forward
+// bring it back with the entry, a new entry starts without it, and the
+// entry's thread opened or closed by hand (Replace) drops it.
+func TestRouterPrimaryThread(t *testing.T) {
+	var h router
+	h.Push("c/A")
+	h.Push("c/A/t/1")
+	routerSetPrimary(&h, true) // navigate's primary thread
+	h.Push("c/B")
+	if routerPrimary(&h) {
+		t.Fatal("a new entry is the primary thread view")
+	}
+	if r, _ := h.Back(); r != "c/A/t/1" || !routerPrimary(&h) {
+		t.Fatalf("Back to %q: primary %v, want the primary thread again", r, routerPrimary(&h))
+	}
+	if r, _ := h.Forward(); r != "c/B" || routerPrimary(&h) {
+		t.Fatalf("Forward to %q: primary %v", r, routerPrimary(&h))
+	}
+	h.Back()
+	h.Replace("c/A/t/1") // the same view: kept
+	if !routerPrimary(&h) {
+		t.Fatal("replacing an entry with itself dropped its primary thread")
+	}
+	h.Replace("c/A") // its thread closed by hand
+	if routerPrimary(&h) {
+		t.Fatal("the entry with its thread closed is still the primary thread view")
+	}
+	h.Replace("c/A/t/1") // opened again by hand: beside its channel
+	if routerPrimary(&h) {
+		t.Fatal("a thread opened by hand is the primary thread view")
+	}
+	for i := 0; i < 300; i++ { // the stack trimmed at 200 entries keeps the flags in step
+		h.Push(Route("c/X/t/" + strconv.Itoa(i)))
+		routerSetPrimary(&h, i%2 == 0)
+	}
+	for i := 299; i > 200; i-- {
+		if got := routerPrimary(&h); got != (i%2 == 0) {
+			t.Fatalf("entry %d: primary %v", i, got)
+		}
+		h.Back()
 	}
 }
 

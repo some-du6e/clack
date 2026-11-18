@@ -73,17 +73,27 @@ return { id: "LibSlick", capabilities: [] };
 
 // libServer serves a synthetic plugins release; publish swaps its files.
 type libServer struct {
-	mu    sync.Mutex
-	files map[string][]byte
-	srv   *httptest.Server
+	mu        sync.Mutex
+	files     map[string][]byte
+	srv       *httptest.Server
+	failIndex int // the next index.json requests that answer 500
 }
 
 func newLibServer(t *testing.T) *libServer {
 	l := &libServer{files: map[string][]byte{}}
 	l.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/rel/")
 		l.mu.Lock()
-		b, ok := l.files[strings.TrimPrefix(r.URL.Path, "/rel/")]
+		b, ok := l.files[name]
+		fail := name == "index.json" && l.failIndex > 0
+		if fail {
+			l.failIndex--
+		}
 		l.mu.Unlock()
+		if fail {
+			http.Error(w, "a synthetic outage", http.StatusInternalServerError)
+			return
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return

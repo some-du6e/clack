@@ -293,9 +293,11 @@ function componentName(c) {
 // ---- patching ----
 
 const replacements = new Map() // matcher → replacer
+const innerPatches = new Set() // the matchers patchComponentInner added: a runtime's own patches
 const replacerCache = new WeakMap() // replacer → Map(original → replaced)
 const composedStores = new Map() // name → Store(composed component)
 let patchedNames = new Set()
+let ownOnlyNames = new Set() // patched names only a runtime's own patches match
 
 function applyReplacer(replacer, original) {
   let m = replacerCache.get(replacer)
@@ -331,7 +333,8 @@ function originalObject(name) {
   return o
 }
 
-function matchers(name) {
+/** the [matcher, replacer] pairs that match component `name`, innermost first */
+function matching(name) {
   const raw = nativeFor(name)
   const out = []
   for (const [m, r] of replacements) {
@@ -339,9 +342,13 @@ function matchers(name) {
     try {
       ok = m(raw, name)
     } catch {}
-    if (ok) out.push(r)
+    if (ok) out.push([m, r])
   }
   return out
+}
+
+function matchers(name) {
+  return matching(name).map(([, r]) => r)
 }
 
 function compose(name) {
@@ -450,17 +457,25 @@ function slackComponent(name) {
 
 function applyPatches() {
   const names = new Set()
+  // what only a runtime's own patch changes (Slick's MAMenu patch adds actions to the root
+  // menu alone): Go draws a message actions submenu at once then, without waiting for JS
+  const ownOnly = new Set()
   for (const name of new Set([...rawNatives.keys(), ...wrappers.keys(), ...patchTargetNames])) {
-    if (matchers(name).length) names.add(name)
+    const ms = matching(name)
+    if (ms.length) {
+      names.add(name)
+      if (ms.every(([m]) => innerPatches.has(m))) ownOnly.add(name)
+    }
     const s = composedStores.get(name)
     if (s) {
       const next = compose(name)
       if (next !== s.get()) s.set(next)
     }
   }
-  if (!sameSet(names, patchedNames)) {
+  if (!sameSet(names, patchedNames) || !sameSet(ownOnly, ownOnlyNames)) {
     patchedNames = names
-    goOr(null, 'patchedComponents', [...names])
+    ownOnlyNames = ownOnly
+    goOr(null, 'patchedComponents', [...names], [...ownOnly])
   }
 }
 const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x))
@@ -500,6 +515,7 @@ function addPatch(matcher, replacement, inner) {
   }
   // a filter-only spec matches any component its filter accepts, so offer it every one Clack draws
   if (filter) for (const n of KNOWN_COMPONENTS) nativeFor(n)
+  if (inner) innerPatches.add(fn)
   if (inner && replacements.size) {
     // compose() applies patches in insertion order, the first innermost
     const rest = [...replacements]
@@ -512,6 +528,7 @@ function addPatch(matcher, replacement, inner) {
   applyPatches()
   return () => {
     replacements.delete(fn)
+    innerPatches.delete(fn)
     applyPatches()
   }
 }

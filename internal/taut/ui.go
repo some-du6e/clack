@@ -49,6 +49,13 @@ type UIHooks struct {
 	// thunk: slack://channel?team=…&id=…, slack://user?…, slack://app?…);
 	// true if it was handled. nil: handleDeepLink resolves false.
 	DeepLink func(uri string) bool
+	// DeepLinkPrimary opens the thread deep link of Slack's navigate to a
+	// Thread view with options.forceRenderInPrimary (ChatTabs' thread
+	// tabs): Clack shows it beside its channel, and the view state Slick
+	// mirrors (its route's primary bit, Taut's setView) has it as the
+	// primary Thread view for as long as that history entry is shown. nil:
+	// DeepLink.
+	DeepLinkPrimary func(uri string)
 	// ThreadPane answers api.threads.usePane(): op loaded | topReply |
 	// jumpToReply for the pane showing ch/threadTs.
 	ThreadPane func(op, ch, threadTs, arg string) any
@@ -131,6 +138,9 @@ type uiState struct {
 	patchedSlices atomic.Pointer[statePatchInfo]
 	hooks         atomic.Pointer[composerHooks]
 	actionable    atomic.Bool
+	// ownOnly are the patched components whose every patch is a runtime's
+	// own, placed innermost (patchComponentInner: Slick's MAMenu patch)
+	ownOnly atomic.Pointer[map[string]bool]
 
 	roots   map[uint64]*jsrt.Root // slackc root → jsrt root
 	rootsMu sync.Mutex
@@ -157,11 +167,30 @@ func (u *uiState) publishPatched() {
 	}
 }
 
-func (u *uiState) setPatchedComponents(names []string) {
+func (u *uiState) setPatchedComponents(names, ownOnly []string) {
+	own := make(map[string]bool, len(ownOnly))
+	for _, n := range ownOnly {
+		own[n] = true
+	}
+	u.ownOnly.Store(&own)
 	u.mu.Lock()
 	u.components = names
 	u.mu.Unlock()
 	u.publishPatched()
+}
+
+// OnlyOwnPatch reports whether every patch on component name is a
+// runtime's own, placed innermost (patchComponentInner: Slick's MAMenu
+// patch, which comes with the first message action provider and adds
+// actions only to a menu with autoClogProps): no plugin's patch is there
+// to change what it draws otherwise. False when nothing patches it. Any
+// goroutine.
+func (t *Taut) OnlyOwnPatch(name string) bool {
+	if t == nil {
+		return false
+	}
+	own := t.ui.ownOnly.Load()
+	return own != nil && (*own)[name]
 }
 
 func (u *uiState) setComposerHooks(h composerHooks) {

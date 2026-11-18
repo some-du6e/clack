@@ -155,6 +155,19 @@ func (e *Engine) HostStyled(el Element) bool {
 // invalid for Compute (the property computes as unset).
 const NativeValue = "-clack-native"
 
+// Has reports whether a sheet is installed under key.
+func (e *Engine) Has(key string) bool {
+	im := &e.impl
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	for i := range im.sheets {
+		if im.sheets[i].key == key {
+			return true
+		}
+	}
+	return false
+}
+
 // Remove drops the sheet under key.
 func (e *Engine) Remove(key string) {
 	im := &e.impl

@@ -63,9 +63,10 @@ func (t *Taut) installHost(r *runtime) {
 		return nil, nil
 	})
 	sync("patchedComponents", func(a []json.RawMessage) (any, error) {
-		var names []string
+		var names, own []string
 		jsonArg(a, 0, &names)
-		t.ui.setPatchedComponents(names)
+		jsonArg(a, 1, &own) // the ones only a runtime's own innermost patch matches
+		t.ui.setPatchedComponents(names, own)
 		return nil, nil
 	})
 	sync("composerHooks", func(a []json.RawMessage) (any, error) {

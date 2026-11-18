@@ -49,16 +49,92 @@ var (
 	documentTap func(body []byte)
 )
 
-// tautOwner is the bridge of the runtime the UI attached last: Attached's
-// post binds it to slackc and detachTaut clears it. Only the owner's
-// patched names reach slackc, so the patches a detached runtime publishes
-// as its plugins stop (sign-out, an account switch) can't leave the next
-// session's components on the patched path, its message menus holding for
-// a tree that never comes. It isn't read off slackc's bridge: whoever
-// wraps that bridge (the plugin bench, the perf plugins job and the
+// tautOwner is the session whose runtime the UI attached last: Attached's
+// post binds its bridge to slackc, and detaching it clears it. Only the
+// owner's patched names reach slackc. It isn't read off slackc's bridge:
+// whoever wraps that bridge (the plugin bench, the perf plugins job and the
 // plugin-gap tests count calls through countingBridge once the runtime is
 // up) still talks to this runtime, and its plugins must still patch.
-var tautOwner atomic.Pointer[taut.Bridge]
+var tautOwner atomic.Pointer[tautSession]
+
+// tautSession is one buildTaut's runtimes as the UI's hooks see them.
+// Detached (the UI stopped using it: sign-out, an account switch; it never
+// got installed; a newer session attached), every hook that writes what
+// the UI keeps for the plugins does nothing: slackc's patched set, styles,
+// document and overlays, and the App's toasts, Preferences tabs and
+// navigation. Its plugins stop on a goroutine of their own, so without
+// this their removals land on what the next session set (its Slick theme
+// and plugin sheets). mu orders those writes with the detach: one that
+// checked first finishes first, none lands after it. What the session set
+// goes with it (App.detachSession).
+type tautSession struct {
+	mu       sync.Mutex
+	detached bool
+	styles   map[string]bool // the sheets it set (slackc.SetStyle)
+	document bool            // it set slackc's document body or props
+	overlays bool            // it kept plugin overlays
+	tabs     bool            // it set the Preferences tabs (UI goroutine)
+}
+
+func newTautSession() *tautSession { return &tautSession{styles: map[string]bool{}} }
+
+// write runs f (which writes UI state for the session) unless the session
+// is detached.
+func (s *tautSession) write(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.detached {
+		f()
+	}
+}
+
+// live reports whether the session isn't detached (for work posted to the
+// UI goroutine, where detaching runs: checked there, it's exact).
+func (s *tautSession) live() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.detached
+}
+
+// detach makes the session inert and reports what it had set.
+func (s *tautSession) detach() (styles map[string]bool, document, overlays bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.detached = true
+	styles, s.styles = s.styles, map[string]bool{}
+	document, overlays = s.document, s.overlays
+	s.document, s.overlays = false, false
+	return styles, document, overlays
+}
+
+// detachSession makes sess inert and takes out what it put in the UI: its
+// style sheets, document, overlays and Preferences tabs, and its roots and
+// patched set with slackc's bridge when it's the owner (UI goroutine).
+func (a *App) detachSession(sess *tautSession) {
+	if sess == nil {
+		return
+	}
+	styles, document, overlays := sess.detach()
+	for k := range styles {
+		slackc.RemoveStyle(k)
+	}
+	if document {
+		_ = slackc.SetDocument(nil, nil)
+		_ = slackc.SetDocumentProps([]byte("null"), []byte("null"))
+	}
+	if overlays {
+		slackc.KeepOverlays(nil)
+	}
+	if sess.tabs {
+		sess.tabs = false
+		a.tautTabs = nil
+		a.Invalidate()
+	}
+	if tautOwner.CompareAndSwap(sess, nil) {
+		slackc.SetBridge(nil)
+		slackc.Reset()
+	}
+}
 
 // startTaut connects Taut plugins (internal/taut) to the native UI
 // through slackc. taut.New reads the plugin config only; no JS engine
@@ -67,8 +143,8 @@ func (b *backend) startTaut(a *App) {
 	if b.core == nil || b.taut != nil || a.inert {
 		return
 	}
-	t, s := b.buildTaut(a, a.th.Dark, b.teamID, a.router.Current().Channel())
-	b.installTaut(a, t, s)
+	t, s, sess := b.buildTaut(a, a.th.Dark, b.teamID, a.router.Current().Channel())
+	b.installTaut(a, t, s, sess)
 }
 
 // startTautAsync is startTaut for boot: taut.New and slick.New read the
@@ -87,7 +163,7 @@ func (b *backend) startTautAsync(a *App) {
 	dark, ch := a.th.Dark, a.router.Current().Channel()
 	go func() {
 		t0 := time.Now()
-		t, s := b.buildTaut(a, dark, team, ch)
+		t, s, sess := b.buildTaut(a, dark, team, ch)
 		go func() { // the plugins enabled at start started (reveal.go's slots)
 			if t != nil {
 				<-t.StartDone()
@@ -105,10 +181,11 @@ func (b *backend) startTautAsync(a *App) {
 			}
 			a.startupMark("plugins", detail)
 			if a.data != b || b.taut != nil || b.cancel == nil || b.ctx.Err() != nil {
-				go closeTaut(s, t) // stopped (sign-out, quit) meanwhile
+				a.detachSession(sess) // its Slick theme, set as it started, goes too
+				go closeTaut(s, t)    // stopped (sign-out, quit) meanwhile
 				return
 			}
-			b.installTaut(a, t, s)
+			b.installTaut(a, t, s, sess)
 		})
 	}()
 }
@@ -124,17 +201,16 @@ func (a *App) inertPluginDir(name string) string {
 	return filepath.Join(a.opts.ConfigDir, name)
 }
 
-// buildTaut makes the plugin runtimes (any goroutine). nil on error.
-func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut, *slick.Slick) {
+// buildTaut makes the plugin runtimes (any goroutine), and the session
+// their hooks write the UI for. nil runtimes on error.
+func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut, *slick.Slick, *tautSession) {
 	t0 := time.Now()
+	sess := newTautSession()
 	// The runtime's patched names, kept so the reset Attached posts can't
 	// lose them: a plugin may register its patches (SetPatched) before the
 	// UI goroutine runs that reset, and JS only resends the set on change.
 	var patchMu sync.Mutex
 	var patchedNow []string
-	// the bridge the UI goroutine bound for this runtime (Attached): its
-	// patched names reach slackc only while it's tautOwner
-	var bound atomic.Pointer[taut.Bridge]
 	t, err := taut.New(taut.Options{
 		Dir:            a.inertPluginDir("taut"), // "": Taut's own (clackHome)
 		CredsPath:      a.inertPluginDir("creds.json"),
@@ -152,10 +228,14 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				patchedNow = nil // a fresh runtime starts unpatched
 				patchMu.Unlock()
 				a.Post(func() {
+					if !sess.live() {
+						return // its backend stopped first: the runtime isn't the UI's
+					}
+					if old := tautOwner.Swap(sess); old != nil && old != sess {
+						old.detach() // a newer session took over: the old one can't write
+					}
 					slackc.Reset()
 					slackc.SetBridge(br)
-					bound.Store(br)
-					tautOwner.Store(br)
 					patchMu.Lock()
 					slackc.SetPatched(patchedNow)
 					patchMu.Unlock()
@@ -164,6 +244,9 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 				})
 			},
 			Deliver: func(root uint64, tree []byte) {
+				if !sess.live() {
+					return // its roots went with it (slackc.Reset)
+				}
 				a.noteDelivery(root) // reveal waits for plugin renders to go quiet
 				if f := deliverTap; f != nil {
 					f(root, tree)
@@ -175,78 +258,121 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 			SetPatched: func(names []string) {
 				patchMu.Lock()
 				patchedNow = names
-				if br := bound.Load(); br != nil && tautOwner.Load() == br {
-					slackc.SetPatched(names)
-				}
+				sess.write(func() {
+					if tautOwner.Load() == sess {
+						slackc.SetPatched(names)
+					}
+				})
 				patchMu.Unlock()
 			},
 			ThreadPane: messages.ThreadPane, // api.threads.usePane (safe off the UI goroutine)
 			CallGo:     slackc.CallGo,
 			SetStyle: func(key, src string) {
-				if f := styleTap; f != nil {
-					f(key, src)
-				}
-				slackc.SetStyle(key, src)
+				sess.write(func() {
+					sess.styles[key] = true
+					if f := styleTap; f != nil {
+						f(key, src)
+					}
+					slackc.SetStyle(key, src)
+				})
 			},
 			RemoveStyle: func(key string) {
-				if f := styleTap; f != nil {
-					f(key, "")
-				}
-				slackc.RemoveStyle(key)
+				sess.write(func() {
+					delete(sess.styles, key)
+					if f := styleTap; f != nil {
+						f(key, "")
+					}
+					slackc.RemoveStyle(key)
+				})
 			},
 			Overlays: func(o []taut.Overlay) {
 				roots := make([]uint64, len(o))
 				for i, x := range o {
 					roots[i] = x.Root
 				}
-				slackc.KeepOverlays(roots)
+				sess.write(func() {
+					sess.overlays = len(roots) > 0
+					slackc.KeepOverlays(roots)
+				})
 			},
 			PreferencesTabs: func(tabs []taut.PreferencesTab) {
-				a.Post(func() { a.tautTabs = tabs; a.Invalidate() })
+				a.Post(func() {
+					if sess.live() {
+						sess.tabs = true
+						a.tautTabs = tabs
+						a.Invalidate()
+					}
+				})
 			},
 			Invalidate: a.Invalidate,
 			Toast: func(text, icon string, d time.Duration) {
-				a.Post(func() { a.Toast(text) })
+				a.Post(func() {
+					if sess.live() {
+						a.Toast(text)
+					}
+				})
 			},
 			OpenPreferences: func(tab string) {
-				a.Post(func() { a.showPrefs(tab) })
+				a.Post(func() {
+					if sess.live() {
+						a.showPrefs(tab)
+					}
+				})
 			},
 			SwitchAccount: func(c slack.Creds) {
-				a.Post(func() { a.switchAccount(c) })
+				a.Post(func() {
+					if sess.live() {
+						a.switchAccount(c)
+					}
+				})
 			},
 			OnDocument: func(body []byte, css []string) {
-				if f := documentTap; f != nil {
-					f(body)
-				}
-				if err := slackc.SetDocument(body, css); err != nil {
-					log.Printf("slackc: document: %v", err)
-				}
+				sess.write(func() {
+					sess.document = true
+					if f := documentTap; f != nil {
+						f(body)
+					}
+					if err := slackc.SetDocument(body, css); err != nil {
+						log.Printf("slackc: document: %v", err)
+					}
+				})
 			},
 			// slack:// links (Slack's handleDeepLink thunk) open inside Clack.
-			DeepLink: a.openDeepLink, // also OpenURL's native (desktop.go)
-			OnDocumentProps: func(html, body []byte) {
-				if err := slackc.SetDocumentProps(html, body); err != nil {
-					log.Printf("slackc: document props: %v", err)
+			DeepLink: func(uri string) bool { // also OpenURL's native (desktop.go)
+				return sess.live() && a.openDeepLink(uri)
+			},
+			DeepLinkPrimary: func(uri string) {
+				if sess.live() {
+					a.openPrimaryThreadLink(uri)
 				}
+			},
+			OnDocumentProps: func(html, body []byte) {
+				sess.write(func() {
+					sess.document = true
+					if err := slackc.SetDocumentProps(html, body); err != nil {
+						log.Printf("slackc: document props: %v", err)
+					}
+				})
 			},
 		},
 	})
 	if err != nil {
 		log.Printf("taut: %v", err)
-		return nil, nil
+		return nil, nil, sess
 	}
 	if envFlag("TIMING") {
 		log.Printf("timing: taut.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
-	return t, b.buildSlick(a, t, dark, team, channel)
+	return t, b.buildSlick(a, t, dark, team, channel), sess
 }
 
 // installTaut hooks the runtimes into the UI (UI goroutine).
-func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick) {
+func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick, sess *tautSession) {
 	if t == nil {
+		a.detachSession(sess)
 		return
 	}
-	b.taut = t
+	b.taut, b.tautSess = t, sess
 	popups.SetTaut(t)   // channel/member menus, search, reactions, delete
 	messages.SetTaut(t) // message list thunks, patched message views
 	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
@@ -283,7 +409,9 @@ func (b *backend) stopTaut() {
 	closeTaut(s, t)
 }
 
-// detachTaut unhooks the plugin runtime from the UI (UI goroutine).
+// detachTaut unhooks the plugin runtime from the UI (UI goroutine): from
+// here on its hooks write nothing, and what it put in the UI goes
+// (detachSession), before the next session's runtime starts.
 func (b *backend) detachTaut() {
 	b.slick = nil
 	if b.taut != nil {
@@ -292,9 +420,13 @@ func (b *backend) detachTaut() {
 		composer.SetTaut(nil)
 		richview.SetMemberLabel(nil)
 		b.taut = nil
-		tautOwner.Store(nil)
-		slackc.SetBridge(nil)
-		slackc.Reset()
+		if a := b.app; a != nil {
+			a.detachSession(b.tautSess)
+		} else if tautOwner.CompareAndSwap(b.tautSess, nil) {
+			slackc.SetBridge(nil)
+			slackc.Reset()
+		}
+		b.tautSess = nil
 	}
 }
 
@@ -465,7 +597,7 @@ func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel stri
 		return nil
 	}
 	s.SetDark(dark)
-	s.SetRoute(team, channel, "")
+	s.SetRoute(team, channel, "", false)
 	if envFlag("TIMING") {
 		log.Printf("timing: slick.New %v (js runtime started: %v)", time.Since(t0).Round(10*time.Microsecond), t.Started())
 	}
@@ -516,7 +648,8 @@ func (a *App) Slick() *slick.Slick {
 // getCurrentChannelId, workspace restrictions).
 func (a *App) slickRoute(r Route) {
 	if s := a.Slick(); s != nil {
-		s.SetRoute(a.data.teamID, r.Channel(), r.Thread())
+		primary := r.Thread() != "" && r == a.router.Current() && a.router.Primary()
+		s.SetRoute(a.data.teamID, r.Channel(), r.Thread(), primary)
 	}
 }
 

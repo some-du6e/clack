@@ -126,6 +126,9 @@ func publishShotLibrary(l *libServer) {
 func TestPluginsPrefsShots(t *testing.T) {
 	ls := newLibServer(t)
 	publishShotLibrary(ls)
+	ls.mu.Lock()
+	ls.failIndex = 1 // the suggestions' first fetch fails: Try again loads it
+	ls.mu.Unlock()
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
@@ -274,6 +277,14 @@ func TestPluginsPrefsShots(t *testing.T) {
 		// that do (Clear URLs and Message Links mention links), each with
 		// its Install action
 		pp.s.query.SetText("links")
+		if !dark {
+			// the index's first fetch failed (the server answered 500): the
+			// page says so, as Slick's settings do, and Try again loads it;
+			// a search alone doesn't fetch it again
+			e.until("the library's failed load", 30*time.Second, func() bool { return pp.lib.loadErr != "" && !pp.lib.loading })
+			shot("plugins-search-library-failed-" + mode)
+			pp.taut.btn("suggest.retry").Click()
+		}
 		e.until("library suggestions", 30*time.Second, func() bool {
 			return pp.lib.ix != nil && len(pp.lib.suggest([]string{"links"})) == 2
 		})

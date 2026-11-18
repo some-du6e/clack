@@ -309,11 +309,17 @@ func TestMessageActionsNeedTheMenuAPI(t *testing.T) {
 // BetterMessageMenu's way: an outer MAMenu patch reads the providers'
 // actions (api.menu.getMessageActions), places them itself and passes
 // slickMessageActionsHandled; the selection still reaches the provider
-// through Slick's patch.
+// through Slick's patch. In either start order: Clack starts plugins in
+// sorted id order, so at boot Better Message Menu's patch comes before the
+// first provider brings Slick's, which goes in innermost all the same
+// (patchComponentInner), or Slick's would sit outside the placer, never
+// see slickMessageActionsHandled and add the providers' group again.
 func TestMessageActionsPlacedByAnotherPatch(t *testing.T) {
-	h := newHarness(t)
-	mustImport(t, h, actsPlugin)
-	mustImport(t, h, pluginSource("PlacerSlick", `["menu"]`, `
+	for _, order := range [][]string{{"ActsSlick", "PlacerSlick"}, {"PlacerSlick", "ActsSlick"}} {
+		t.Run(order[0]+"First", func(t *testing.T) {
+			h := newHarness(t)
+			mustImport(t, h, actsPlugin)
+			mustImport(t, h, pluginSource("PlacerSlick", `["menu"]`, `
   start() {
     this.api.patchComponent("MAMenu", (Original) => (props) => {
       if (props.autoClogProps?.uiComponentName !== "message_actions_menu" || !Array.isArray(props.actions)) return React.createElement(Original, props);
@@ -321,21 +327,23 @@ func TestMessageActionsPlacedByAnotherPatch(t *testing.T) {
       return React.createElement(Original, { ...props, actions: [custom, ...props.actions], slickMessageActionsHandled: true });
     });
   }`))
-	for _, id := range []string{"ActsSlick", "PlacerSlick"} {
-		if err := h.s.SetEnabled(h.ctx(), id, true); err != nil {
-			t.Fatal(err)
-		}
-	}
-	p := h.maRendered(1, maProps("1700000002.000200", true))
-	ids := actionIDs(p)
-	if len(ids) != 3 || !slices.Equal(ids[0], []string{"acts_one", "acts_two", "acts_boom"}) {
-		t.Fatalf("groups %v: the placed actions first, none added at the end", ids)
-	}
-	if got := h.callFn(p["onSelectAction"], `[{"type":"click"},{"id":"acts_one"},{}]`); got != "true" {
-		t.Errorf("onSelectAction(acts_one) = %s", got)
-	}
-	if picked := h.jsString(`return globalThis.__actsPicked.join(",")`); picked != "one" {
-		t.Errorf("picked %q", picked)
+			for _, id := range order {
+				if err := h.s.SetEnabled(h.ctx(), id, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := h.maRendered(1, maProps("1700000002.000200", true))
+			ids := actionIDs(p)
+			if len(ids) != 3 || !slices.Equal(ids[0], []string{"acts_one", "acts_two", "acts_boom"}) {
+				t.Fatalf("groups %v: the placed actions first, none added at the end", ids)
+			}
+			if got := h.callFn(p["onSelectAction"], `[{"type":"click"},{"id":"acts_one"},{}]`); got != "true" {
+				t.Errorf("onSelectAction(acts_one) = %s", got)
+			}
+			if picked := h.jsString(`return globalThis.__actsPicked.join(",")`); picked != "one" {
+				t.Errorf("picked %q", picked)
+			}
+		})
 	}
 }
 

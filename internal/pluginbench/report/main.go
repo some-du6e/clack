@@ -237,7 +237,8 @@ cheaper one wins on the costs above, each compared only past a noise
 floor; a tie goes to the smaller bundle. The CI workflow
 (` + "`.github/workflows/plugin-bench.yml`" + `) re-runs the bench and fails
 when a committed winner regresses (stops loading, starts re-rendering,
-passes fewer checks, or loses on correctness).
+passes fewer checks, or loses on correctness), or when any variant that
+patched components patches none.
 
 Neither upstream repository has per-plugin screenshots of the native
 clients (Taut's and Slick's READMEs show the apps, not plugins), so

@@ -117,7 +117,7 @@ type Slick struct {
 	queues  map[string]*sync.Mutex
 	rt      *jsrt.Runtime   // the runtime the prelude is in (nil until a plugin needs JS)
 	panels  map[string]bool // api.settings.panel: the plugins with a panel (slick_panels)
-	route   [3]string       // team, channel, thread the UI shows
+	route   slickRoute      // what the UI shows (SetRoute)
 	dark    atomic.Bool
 	styled  string // the theme CSS last handed to the UI
 
@@ -267,11 +267,11 @@ func (s *Slick) js() (*jsrt.Runtime, error) {
 		for _, p := range s.plugins {
 			p.inJS, p.mainInJS = false, false
 		}
-		team, ch, th := s.route[0], s.route[1], s.route[2]
+		r := s.route
 		s.mu.Unlock()
 		s.setPage(rt)
-		if team != "" {
-			s.post(rt, "setRoute", team, ch, th)
+		if r.team != "" {
+			s.post(rt, "setRoute", r.team, r.channel, r.thread, r.primaryThread)
 		}
 		return rt, nil
 	}
@@ -365,19 +365,30 @@ func (s *Slick) post(rt *jsrt.Runtime, fn string, args ...any) {
 	}()
 }
 
+// slickRoute is what the UI shows: the workspace, conversation and thread,
+// and whether that thread is the primary Thread view Slack's navigate asked
+// for (forceRenderInPrimary: ChatTabs' thread tabs), which Clack draws
+// beside its channel.
+type slickRoute struct {
+	team, channel, thread string
+	primaryThread         bool
+}
+
 // SetRoute tells plugins which workspace, conversation and thread the
 // window shows (location.pathname /client/<team>/<channel>:
 // channels.getCurrentChannelId, the active team; Slack's view state for
-// the thread: Taut's setView). Cheap when no plugin runs.
-func (s *Slick) SetRoute(team, channel, thread string) {
+// the thread: Taut's setView, the primary Thread view when primaryThread).
+// Cheap when no plugin runs.
+func (s *Slick) SetRoute(team, channel, thread string, primaryThread bool) {
 	s.mu.Lock()
-	moved := s.route[0] != team || s.route[1] != channel
-	changed := s.route != [3]string{team, channel, thread}
-	s.route = [3]string{team, channel, thread}
+	moved := s.route.team != team || s.route.channel != channel
+	r := slickRoute{team, channel, thread, primaryThread}
+	changed := s.route != r
+	s.route = r
 	rt := s.rt
 	s.mu.Unlock()
 	if changed && rt != nil {
-		s.post(rt, "setRoute", team, channel, thread)
+		s.post(rt, "setRoute", team, channel, thread, primaryThread)
 	}
 	if moved {
 		go s.reconcileAll(context.Background()) // workspace restrictions
@@ -428,7 +439,7 @@ func (s *Slick) workspace() string {
 }
 
 func (s *Slick) workspaceLocked() string {
-	team := s.route[0]
+	team := s.route.team
 	if team != "" {
 		return team
 	}

@@ -142,14 +142,17 @@ jobs:
       - name: every action pinned to a commit SHA
         run: |
           set -euo pipefail
-          if grep -nE '^\s*-?\s*uses:' .github/workflows/*.yml | grep -vE 'uses: *[^@ ]+@[0-9a-f]{40}( |$)'; then
+          shopt -s nullglob
+          if grep -nE '^\s*-?\s*uses:' .github/workflows/*.yml .github/workflows/*.yaml | grep -vE 'uses: *[^@ ]+@[0-9a-f]{40}( |$)'; then
             echo "::error::unpinned actions above"; exit 1
           fi
       # every workflow that builds against Taut or Slick by its pin (reads
       # the variable) defines that pin itself, as a full commit SHA, and
       # every definition names the same commit: a workflow reading a pin it
       # doesn't define checks out the default branch, and a short or named
-      # ref would follow upstream
+      # ref would follow upstream. A workflow that defines a pin reads it
+      # too: one that keeps the pin but checks out another ref builds
+      # unreviewed upstream code with the pin there for show
       - name: taut/slick pins agree across workflows
         run: |
           set -euo pipefail
@@ -158,11 +161,13 @@ jobs:
           wf=(*.yml *.yaml)
           for v in TAUT_PIN SLICK_PIN; do
             defs=$( (grep -lE "^\s*$v:" "${wf[@]}" || true) | sort)
-            # $X, ${X}, env.X, env['X'] / env["X"]
-            uses=$( (grep -lE "(\\\$\{?$v\b|env\.$v\b|env\[['\"]$v['\"]\])" "${wf[@]}" || true) | sort)
+            # $X, ${X}, env.X, env['X'] / env["X"], vars.X
+            uses=$( (grep -lE "(\\\$\{?$v\b|env\.$v\b|env\[['\"]$v['\"]\]|vars\.$v\b)" "${wf[@]}" || true) | sort)
             [ -n "$defs" ] || { echo "::error::no workflow defines $v"; exit 1; }
             missing=$(comm -13 <(echo "$defs") <(echo "$uses"))
             [ -z "$missing" ] || { echo "::error::$v is read but not defined in: $missing"; exit 1; }
+            unread=$(comm -23 <(echo "$defs") <(echo "$uses"))
+            [ -z "$unread" ] || { echo "::error::$v is defined but never read in: $unread"; exit 1; }
             bad=$( (grep -nE "^\s*$v:" "${wf[@]}" || true) | grep -vE "^[^:]+:[0-9]+:\s*$v: [0-9a-f]{40}( +#.*)?$" || true)
             [ -z "$bad" ] || { echo "::error::$v must be a full commit SHA"; echo "$bad"; exit 1; }
             n=$(grep -hE "^\s*$v:" "${wf[@]}" | awk '{print $2}' | sort -u | wc -l)

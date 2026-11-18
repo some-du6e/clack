@@ -31,6 +31,7 @@ type backend struct {
 	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
 	// tautStarting: startTautAsync is building the runtimes
 	tautStarting bool
+	tautSess     *tautSession // the hooks' session of taut and slick (detachTaut)
 
 	m       model
 	started bool

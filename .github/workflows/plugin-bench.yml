@@ -6,7 +6,8 @@ name: plugin-bench
 # checks, load time, frame/CPU cost scrolling a 500-message channel, JS
 # heap and idle re-renders go to internal/pluginbench/report, which
 # writes bench.json (baked into the build: Install installs the winner)
-# and the docs table, and fails when a committed winner regressed. The
+# and the docs table, and fails when a committed winner regressed (or a
+# variant that patched components patches none). The
 # generated files are uploaded as `plugin-bench-data`; commit them to
 # update the Library's picks.
 #
@@ -25,9 +26,14 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run plugin-bench.yml --ref <branch>)
     paths:
       - "internal/pluginbench/**"
+      - "internal/pluginlib/**"
       - "internal/ui/plugin_bench*"
+      - "internal/ui/plugin_gaps_test.go" # the gaps job's tests
+      - "internal/ui/plugins_shots_test.go" # synthTaut/synthSlick: the warm-up plugins
       - "internal/ui/library_prefs.go"
       - "internal/ui/taut_wire.go"
+      - "internal/ui/popups/**" # menus, reactions and pickers the checks draw through
+      - "internal/ui/composer/**" # the composer checks (send transforms, buttons)
       - "internal/fakeslack/plugin_bench.go"
       - "internal/taut/**"
       - "internal/slick/**"
@@ -152,7 +158,7 @@ jobs:
         with:
           pattern: plugin-bench-results-*
           path: dist/results
-      - name: report (fails when a committed winner regressed)
+      - name: report (fails when a committed winner regressed, or a variant stopped patching)
         run: |
           set -o pipefail
           go run ./internal/pluginbench/report -in dist/results -check \

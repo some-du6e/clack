@@ -593,12 +593,29 @@ func (pp *pluginsPage) suggestions(f *flow, words []string) bool {
 	if v.ix == nil && !v.loading && v.loadErr == "" {
 		v.load(false) // the cached index at once, then a fresh one
 	}
+	tp := pp.taut
+	cl := tp.colors()
+	if v.ix == nil && v.loadErr != "" {
+		// the index didn't load: say so, with Try again, as Slick's settings
+		// do for a fetch that failed (its status line, What's New's Try
+		// again); searching again doesn't fetch it
+		msg := "No plugins match “" + pp.s.query.Text() + "”, and the plugin library didn't load: " + v.loadErr
+		f.gap(14) // a <p>'s margin
+		f.put(0, func(gtx layout.Context) layout.Dimensions { return tp.para(gtx, 15, 22, cl.fg2, msg) })
+		f.gap(4)
+		f.put(0, func(gtx layout.Context) layout.Dimensions {
+			d, c := tp.linkButton(gtx, "suggest.retry", "Try again", "")
+			if c {
+				v.load(false)
+			}
+			return d
+		})
+		return true
+	}
 	hits := v.suggest(words)
 	if len(hits) == 0 {
 		return false
 	}
-	tp := pp.taut
-	cl := tp.colors()
 	f.gap(14) // a <p>'s margin
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
 		return tp.para(gtx, 15, 22, cl.fg2, "You don't have anything like that installed. Maybe you're looking for:")

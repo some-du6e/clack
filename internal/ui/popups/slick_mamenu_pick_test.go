@@ -497,6 +497,14 @@ func TestMessageMenuNativeRowsThroughPlugin(t *testing.T) {
 	if d.clip[0] != link || passed() != "copy_link" {
 		t.Errorf("Copy link: clipboard %q (want %q), asked %q", d.clip, link, passed())
 	}
+	// a search result's More actions (newSearchResultMenu: its own trigger,
+	// isOnSearchTab, messageContainerType "search") picks the same way
+	d = open(maSearchMenu(e.h, maMsg, image.Rect(900, 200, 900, 200)), "a search result's menu")
+	d.clickRow("copy_link")
+	d.until("the search result's link on the clipboard", func() bool { return len(d.clip) > 0 })
+	if d.clip[0] != link || passed() != "copy_link,copy_link" {
+		t.Errorf("a search result's Copy link: clipboard %q (want %q), asked %q", d.clip, link, passed())
+	}
 	d = open(menu(), "the menu for L")
 	d.key("L", 0)
 	d.until("L putting the link on the clipboard", func() bool { return len(d.clip) > 0 })
@@ -793,34 +801,49 @@ func TestMessageMenuKeysWaitForPluginLayout(t *testing.T) {
 	d.until("U marking once the hold ran out", func() bool { return e.api.called("conversations.mark") > marks })
 }
 
-// A pick the plugin answers after maStale doesn't run its row: behind a
-// busy JS thread, Copy link would land on the clipboard long after the
-// click, over whatever the user copied since. A prompt answer still runs
-// it.
-func TestMessageMenuStalePickDoesNotRun(t *testing.T) {
+// A pick the plugin answers late (its JS thread held for 3× maStale)
+// runs its row once, as Slack's click runs once the page is free, when
+// nothing was pressed since the pick. A press in between (the user went
+// on, or retried) drops it: a late row would land on what they did next,
+// or run twice. Slack shows nothing for a pick either way.
+func TestMessageMenuLatePickRunsUnlessInput(t *testing.T) {
 	prev := maStale
 	maStale = 150 * time.Millisecond
 	t.Cleanup(func() { maStale = prev })
 	e := slNewEnvIn(t, "")
 	e.loadCode(t, "PassSlick", maPass)
 	slPatched(t, "MAMenu")
-
-	d := maOpen(t, e, NewMessageMenu(e.h, image.Pt(900, 200), maMsg), "the menu")
-	release := maHoldJS(t, e)
-	d.clickRow("copy_link")
-	time.Sleep(3 * maStale)
-	release()
-	if v, ok := d.answered(); ok && v != maPassed {
-		t.Fatalf("answer %d, want passed", v)
+	marks := func() int { return e.api.called("conversations.mark") }
+	late := func(what string, pressAfter bool) int {
+		t.Helper()
+		d := maOpen(t, e, NewMessageMenu(e.h, image.Pt(900, 200), maMsg), what)
+		m0 := marks()
+		release := maHoldJS(t, e)
+		d.clickRow("mark_unread")
+		if pressAfter { // a click away from the closed menu while JS is busy
+			at := f32.Pt(40, 700)
+			d.r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: at})
+			d.frame()
+			d.r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: at})
+			d.frame()
+		}
+		time.Sleep(3 * maStale)
+		release()
+		if v, ok := d.answered(); !ok || v != maPassed {
+			t.Fatalf("%s: answer %d (shown %v), want passed", what, v, ok)
+		}
+		if !pressAfter {
+			d.until("the late Mark unread", func() bool { return marks() > m0 })
+		}
+		d.settle()
+		return marks() - m0
 	}
-	d.settle()
-	if len(d.clip) != 0 {
-		t.Errorf("a pick answered %v late copied %q", 3*maStale, d.clip)
+	if n := late("a menu, then a press after the pick", true); n != 0 {
+		t.Errorf("a pick answered %v late, after a press, marked %d times", 3*maStale, n)
 	}
-
-	d = maOpen(t, e, NewMessageMenu(e.h, image.Pt(900, 200), maMsg), "the menu again")
-	d.clickRow("copy_link")
-	d.until("a prompt pick's link on the clipboard", func() bool { return len(d.clip) > 0 })
+	if n := late("a menu, nothing pressed after the pick", false); n != 1 {
+		t.Errorf("a pick answered %v late with nothing pressed since marked %d times, want 1", 3*maStale, n)
+	}
 }
 
 // A pick no runtime answers (none, or it closed first) passes: no plugin
@@ -870,5 +893,13 @@ func TestMessageMenuTargetBoundsCSSPx(t *testing.T) {
 	}
 	if c := m.maContext()["targetBounds"]; !reflect.DeepEqual(c, rectProps(image.Rect(880, 180, 908, 208), 2)) {
 		t.Errorf("a pick's context targetBounds %v", c)
+	}
+	// MessageActionsMenu's own, around it, the same DOMRect in CSS px
+	for i, w := range m.wraps {
+		if w.Name == "MessageActionsMenu" {
+			if c := m.wrapProps(i)["targetBounds"]; !reflect.DeepEqual(c, rectProps(image.Rect(880, 180, 908, 208), 2)) {
+				t.Errorf("MessageActionsMenu's targetBounds %v, want the trigger in CSS px", c)
+			}
+		}
 	}
 }

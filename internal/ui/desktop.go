@@ -56,6 +56,20 @@ func (a *App) openDeepLink(uri string) bool {
 	return ok
 }
 
+// openPrimaryThreadLink is UIHooks.DeepLinkPrimary: the thread Slack's
+// navigate renders as the primary view (forceRenderInPrimary: ChatTabs'
+// thread tabs). Clack opens it beside its channel and marks that history
+// entry, the current one when the thread is open already, as the primary
+// Thread view: Slick's route says so, and Back and Forward bring it back.
+func (a *App) openPrimaryThreadLink(uri string) {
+	route, user, ok := deepLinkRoute(uri)
+	if !ok || user != "" || Route(route).Thread() == "" {
+		a.openDeepLink(uri)
+		return
+	}
+	a.Post(func() { a.navigateTo(route, true) })
+}
+
 // Raise brings the window to the front (restoring it if minimized). Safe
 // from any goroutine; it doesn't wait for a frame, which a minimized window
 // may never get.

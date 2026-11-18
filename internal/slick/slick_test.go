@@ -323,7 +323,7 @@ func TestMainHalfSender(t *testing.T) {
 	if err := h.s.SetEnabled(h.ctx(), "SenderProbe", true); err != nil {
 		t.Fatal(err)
 	}
-	h.s.SetRoute(teamID, chGen, "")
+	h.s.SetRoute(teamID, chGen, "", false)
 	eventually(t, 3*time.Second, "route", func() bool { return h.jsBool(`return location.pathname.endsWith('/` + chGen + `')`) })
 	var r struct {
 		Probe struct {
@@ -458,7 +458,7 @@ func TestThemeBeforeUserCSS(t *testing.T) {
 
 func TestLocalConfigAndRoute(t *testing.T) {
 	h := newHarness(t)
-	h.s.SetRoute(teamID, chGen, "")
+	h.s.SetRoute(teamID, chGen, "", false)
 	var r struct {
 		Team    string `json:"team"`
 		User    string `json:"user"`

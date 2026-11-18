@@ -366,7 +366,7 @@ func (t *Taut) restartAfterCrash(dead *runtime) {
 	t.ui.roots = map[uint64]*jsrt.Root{}
 	t.ui.rootsMu.Unlock()
 	t.thunks.setPatched(nil)
-	t.ui.setPatchedComponents(nil)
+	t.ui.setPatchedComponents(nil, nil)
 	t.ui.setComposerHooks(composerHooks{})
 	t.ui.setStatePatched(statePatchInfo{})
 	t.ui.setOverlays(nil)

@@ -283,6 +283,16 @@ type obj map[string]json.RawMessage
 
 // navigateLink is the slack:// deep link of navigate's view (o is its
 // {id, viewType, params}), "" for a view Clack doesn't route to.
+// navigatePrimary reports whether navigate asked for its Thread view in
+// the primary view (options.forceRenderInPrimary).
+func navigatePrimary(o obj) bool {
+	var opts struct {
+		ForceRenderInPrimary bool `json:"forceRenderInPrimary"`
+	}
+	_ = json.Unmarshal(o["options"], &opts)
+	return o.str("viewType") == "Thread" && opts.ForceRenderInPrimary
+}
+
 func navigateLink(o obj) string {
 	var params struct {
 		ThreadID string `json:"threadId"`
@@ -498,12 +508,18 @@ func (tt *thunkTable) installDefaults() {
 	// opens the views it has through the deep links they share (ChatTabs'
 	// thread tabs: {id: "thread", viewType: "Thread", params: {threadId:
 	// "C…-ts"}} opens the thread beside its channel, where Slack's
-	// forceRenderInPrimary draws it alone); others navigate nowhere.
+	// forceRenderInPrimary draws it alone, and DeepLinkPrimary marks it
+	// as that primary view); others navigate nowhere.
 	n["navigate"] = func(ctx context.Context, a []json.RawMessage) (any, error) {
-		if f := t.opts.UI.DeepLink; f != nil {
-			if uri := navigateLink(argObj(a)); uri != "" {
-				f(uri)
-			}
+		o := argObj(a)
+		uri := navigateLink(o)
+		if uri == "" {
+			return nil, nil
+		}
+		if f := t.opts.UI.DeepLinkPrimary; f != nil && navigatePrimary(o) {
+			f(uri)
+		} else if f := t.opts.UI.DeepLink; f != nil {
+			f(uri)
 		}
 		return nil, nil
 	}
