@@ -57,11 +57,14 @@ func TestThreadsMarkVisibleLikeSlack(t *testing.T) {
 	}{{"focused", false}, {"unfocused", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var marks thrMarkLog
+			var answered atomic.Pointer[time.Time] // the load's answer leaving the server: the view settles it later
 			app, _ := vkFake(t, func(method string, f url.Values) (any, bool) {
 				marks.note(method, f)
 				if method != "subscriptions.thread.getView" {
 					return nil, false
 				}
+				now := time.Now()
+				answered.CompareAndSwap(nil, &now)
 				return thrOrderAnswer(thrFixRead(ch, thrA, thrAReply, "U0FAKE00002", true, thrA), // read before: an unread row
 					thrFixRead(ch, thrB, thrBReply, "U0FAKE00002", true, ""), // never read: none
 					thrFixRead(ch, thrC, thrCReply, fakeslack.SelfID, false, thrCReply)), true
@@ -70,8 +73,8 @@ func TestThreadsMarkVisibleLikeSlack(t *testing.T) {
 			h.away.Store(tc.away)
 			v := NewThreads(h)
 			e := thrViewEnv(t, v, 3)
-			landed := time.Now()
-			e.frame() // settle: loadThreads' 350 ms start
+			landed := *answered.Load()
+			e.frame() // settled: loadThreads' 350 ms start, in this frame or one thrViewEnv ran
 			ka, kb := ch+"/"+thrA, ch+"/"+thrB
 			markA, markB := thrA+"@"+thrAReply+" read=1", thrB+"@"+thrBReply+" read=1"
 			if at, ghost := thrUnreadRowOf(v, ka); at < 0 || ghost {
