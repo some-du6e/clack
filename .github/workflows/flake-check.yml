@@ -1379,3 +1379,49 @@ jobs:
         with:
           name: gpu-cost-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-shots
+
+  # theme-contrast round 4: the fade's continuity, the cascade per variable,
+  # the DMs rows drawn (activity_inbox on and off, the peek card's scope),
+  # the control strip's held press. Dispatch with only=theme-contrast-4
+  # count=3; the last step runs the GPU-free ones once under -race.
+  theme-contrast-4:
+    if: ${{ !inputs.only || startsWith('theme-contrast-4', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "theme + css, COUNT runs"
+        run: |
+          rc=0
+          go test -count=$COUNT -run '^(TestLightTextFadeContinuous|TestSidebarRuleFollowsSheets|TestThemeInkMatchesSlack)$' ./internal/ui/theme || rc=1
+          go test -count=$COUNT -run '^TestRootTokensDeclares$' ./internal/ui/slackc/css || rc=1
+          exit $rc
+      - name: "views: the DMs rows and the card, COUNT runs (Mesa llvmpipe)"
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -timeout 20m -run '^(TestDMsRowsDrawn|TestDMsListChromeScope|TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views
+      - name: "ui: the control strip and the draw sites, COUNT runs (Mesa llvmpipe)"
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -timeout 25m -run '^(TestAccountThemeControlStripPress|TestPeekHeaderRule|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen|TestAccountThemeDrawSites)$' ./internal/ui
+      - name: "-race, once: the GPU-free ones"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -race -count=1 -run '^(TestLightTextFadeContinuous|TestSidebarRuleFollowsSheets)$' ./internal/ui/theme || rc=1
+          go test -race -count=1 -run '^TestRootTokensDeclares$' ./internal/ui/slackc/css || rc=1
+          go test -race -count=1 -run '^(TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views || rc=1
+          exit $rc
