@@ -179,8 +179,14 @@ func TestCheckRedirectStripsCredentials(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer xoxc-1")
 		return req, c.checkRedirect(req, via)
 	}
-	if req, err := try("https://files-origin.slack.com/x"); err != nil || req.Header.Get("Cookie") == "" {
-		t.Errorf("slack.com hop: err %v, cookie %q (want kept)", err, req.Header.Get("Cookie"))
+	if req, err := try("https://files-origin.slack.com/files-pri/T1-F1/x.png"); err != nil || req.Header.Get("Cookie") == "" {
+		t.Errorf("slack.com file hop: err %v, cookie %q (want kept)", err, req.Header.Get("Cookie"))
+	}
+	// a file host's page is a page: the hop isn't followed
+	for _, target := range []string{"https://files-origin.slack.com/x", "https://files.slack.com/ssb/redirect", "https://files.slack.com/files-pri/%252e%252e/ssb/redirect"} {
+		if _, err := try(target); !errors.Is(err, ErrNotAFile) {
+			t.Errorf("redirect to %s: err %v, want ErrNotAFile", target, err)
+		}
 	}
 	if req, err := try("https://a.slack-edge.com/x.png"); err != nil || req.Header.Get("Cookie") != "" || req.Header.Get("Authorization") != "" {
 		t.Errorf("slack-edge hop: err %v, cookie %q (want followed, cookie dropped)", err, req.Header.Get("Cookie"))

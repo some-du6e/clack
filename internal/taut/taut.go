@@ -57,6 +57,21 @@ func honestFetch(fetch func(context.Context, *http.Request) (*http.Response, err
 	}
 }
 
+// fetchRedirect is the default fetch client's redirect policy. Go copies a
+// hand-set Cookie or Authorization header (checkAuth's d cookie, a
+// plugin's own) to a hop on the same host or a subdomain, and turns a POST
+// into a GET on 301-303. So a hop that would carry them to a Slack page
+// (an https slack.com URL that isn't a file path, such as /ssb/redirect,
+// whose load with the cookie can end the session) has them removed and
+// isn't followed, as slack.Client's own redirects aren't.
+func fetchRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	honestToSlack(req) // a hop onto Slack carries the hop's copied headers
+	return nil
+}
+
 // honestToSlack gives a request to one of Slack's hosts Clack's own
 // headers (slack.HonestHeaders). Other hosts get what the plugin set.
 func honestToSlack(req *http.Request) {
@@ -160,13 +175,7 @@ func New(o Options) (*Taut, error) {
 		o.LifecycleTimeout = 5 * time.Second
 	}
 	if o.Fetch == nil {
-		client := &http.Client{Transport: tlsfp.Mixed, Timeout: 60 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
-			}
-			honestToSlack(req) // a hop onto Slack carries the hop's copied headers
-			return nil
-		}}
+		client := &http.Client{Transport: tlsfp.Mixed, Timeout: 60 * time.Second, CheckRedirect: fetchRedirect}
 		o.Fetch = func(ctx context.Context, req *http.Request) (*http.Response, error) {
 			return client.Do(req.WithContext(ctx))
 		}

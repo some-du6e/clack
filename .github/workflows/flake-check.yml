@@ -1472,3 +1472,33 @@ jobs:
           name: gpu-cost-damage-shots-${{ runner.os }}
           path: ${{ runner.temp }}/gpu-cost-damage-shots
           if-no-files-found: ignore
+
+  # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
+  # host's pages (files.slack.com/ssb/redirect), dot segments however many
+  # times a server decodes them, look-alike and overlong dots, the sign-in
+  # client's /ssb/redirect guard (bannedPage) and Taut's fetch redirects.
+  # Dispatch with only=fileurl-dotdot.
+  fileurl-dotdot:
+    if: ${{ !inputs.only || startsWith('fileurl-dotdot', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      SLACK_TESTS: '^(TestDownloadRefusesDotSegments|TestFileHostsNeedFilePaths|TestBannedPageNormalises|TestCheckRedirectStripsCredentials)$'
+      TAUT_TESTS: '^TestFetchRedirectKeepsCredentialsOffSlackPages$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: slack, taut (one verbose run, then COUNT)
+        run: |
+          rc=0
+          go test -count=1 -v -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=1 -v -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
+          exit $rc
