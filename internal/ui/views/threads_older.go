@@ -36,37 +36,29 @@ const thrOlderLimit = 100
 // thrOlder is a finished fetch.
 type thrOlder struct {
 	latest string // the request's latest: drop answers for an older state
-	folds  int    // the card's folds when it was asked for (a fold since drops it)
+	folds  uint64 // the card's fold stamp when it was asked for (a fold since drops it)
 	msgs   []core.Message
 	more   bool
 	err    error
+	from   uint64 // the message change it went out at (threads_live.go)
 }
 
 // thrShown is the replies the card shows, oldest first: the loaded older
 // ones, then subscriptions.thread.getView's latest ones (with those a
-// refresh carried over) and the gaps filled among them, less the replies
-// the socket deleted and with the copies it edited.
+// refresh carried over) and the gaps filled among them. The slice is the
+// card's until any of them changes, so its copies are the same from
+// frame to frame (what a row's layout and a plugin's view are kept by).
 func thrShown(t *thrItem, c *thrCard) []core.Message {
-	if c == nil || len(c.older) == 0 && len(c.mid) == 0 && len(c.gone) == 0 && len(c.edits) == 0 {
+	if c == nil || len(c.older) == 0 && len(c.mid) == 0 {
 		return t.Replies
+	}
+	if c.shown != nil && thrSameMsgs(c.shownOf, t.Replies) {
+		return c.shown
 	}
 	out := make([]core.Message, 0, len(c.older)+len(c.mid)+len(t.Replies))
 	out = append(out, c.older...)
-	out = append(out, thrMerge(c.mid, t.Replies)...)
-	if len(c.gone) == 0 && len(c.edits) == 0 {
-		return out
-	}
-	kept := out[:0]
-	for _, m := range out {
-		if c.gone[m.TS] {
-			continue
-		}
-		if e, ok := c.edits[m.TS]; ok {
-			m = e
-		}
-		kept = append(kept, m)
-	}
-	return kept
+	c.shown, c.shownOf = append(out, thrMerge(c.mid, t.Replies)...), t.Replies
+	return c.shown
 }
 
 // thrMerge is a and b in ts order, each ts once (b's copy).
@@ -93,6 +85,11 @@ func thrMerge(a, b []core.Message) []core.Message {
 	return out
 }
 
+// thrSameMsgs reports whether a and b are the same slice.
+func thrSameMsgs(a, b []core.Message) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
 // thrMoreText is LoadOlderMessage's label ("" for no row).
 func thrMoreText(t *thrItem, c *thrCard) string {
 	if c != nil && c.olderStart {
@@ -117,15 +114,12 @@ func (v *Threads) loadOlder(t *thrItem, c *thrCard) {
 		latest = sh[0].TS
 	}
 	c.olderBusy = true
-	// merging activity-live-msg: capture its from (app.MessageChangeSeq())
-	// next to folds, and store both in thrOlder; a zero folds drops every
-	// answer once a card has folded
-	ch, root, h, folds := t.Channel, t.Root.TS, v.h, c.folds
+	ch, root, h, folds, from := t.Channel, t.Root.TS, v.h, c.folds, app.MessageChangeSeq()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		msgs, more, err := app.OlderReplies(ctx, ch, root, latest, thrOlderLimit)
-		c.olderRes.Store(&thrOlder{latest: latest, folds: folds, msgs: msgs, more: more, err: err})
+		c.olderRes.Store(&thrOlder{latest: latest, folds: folds, msgs: msgs, more: more, err: err, from: from})
 		h.Invalidate()
 	}()
 }
@@ -157,7 +151,14 @@ func (v *Threads) applyOlder(t *thrItem, c *thrCard) {
 	if len(add) > thrOlderLimit {
 		add = add[len(add)-thrOlderLimit:]
 	}
-	c.older = append(add, c.older...)
+	c.older, c.shown = append(add, c.older...), nil
+	// what changed after the request went out reaches them in the next
+	// frame (threads_live.go landLive)
+	c.olderSeq = min(c.olderSeq, r.from)
+	if len(c.older) == len(add) {
+		c.olderSeq = r.from
+	}
+	v.lv.items = nil
 	if !r.more || len(add) == 0 {
 		c.olderStart = true // reachedStart
 	}

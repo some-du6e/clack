@@ -14,6 +14,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"slices"
 	"sort"
 	"time"
 
@@ -85,21 +86,15 @@ func (v *Threads) namedNow(mode actLoad) map[string]bool {
 type thrSeen struct{ latest, lastRead string }
 
 // landed is a load's answer in (settle): the named threads it listed go,
-// the event goroutine learns which threads are listed, the threads whose
-// newest reply it moved on wait for the frame that lays them out
-// (markNewReplies), and older replies a card loaded that the answer's
-// window now has go from the card (the window moved back over them: a
-// reply deleted) so none is drawn twice.
+// the threads whose newest reply it moved on wait for the frame that lays
+// them out (markNewReplies), and older replies a card loaded that the
+// answer's window now has go from the card (the window moved back over
+// them: a reply deleted) so none is drawn twice.
 func (v *Threads) landed(page thrData) {
-	listed := make(map[string]bool, len(page.items))
-	for i := range page.items {
-		listed[page.items[i].key] = true
-	}
 	v.mu.Lock()
-	for k := range listed {
-		delete(v.named, k)
+	for i := range page.items {
+		delete(v.named, page.items[i].key)
 	}
-	v.listed = listed
 	v.mu.Unlock()
 	seen := make(map[string]thrSeen, len(page.items))
 	for i := range page.items {
@@ -119,7 +114,9 @@ func (v *Threads) landed(page thrData) {
 			for n > 0 && !actTSLess(c.older[n-1].TS, t.Replies[0].TS) {
 				n--
 			}
-			c.older = c.older[:n]
+			if n < len(c.older) {
+				c.older, c.shown = c.older[:n], nil
+			}
 		}
 	}
 	v.maxSeen = seen
@@ -224,6 +221,15 @@ func (v *Threads) attention() bool {
 		return ah.UserAttention()
 	}
 	return true
+}
+
+// attentionLost is the host's count of the times attention went (the
+// focus lost, an overlay opened), 0 from one that doesn't count.
+func (v *Threads) attentionLost() uint64 {
+	if ah, ok := v.h.(interface{ AttentionLost() uint64 }); ok {
+		return ah.AttentionLost()
+	}
+	return 0
 }
 
 // markNewReplies is maybeMarkNewMessageOnUpdate, after the frame that lays
@@ -332,8 +338,12 @@ func (v *Threads) unreadRow(t *thrItem, c *thrCard, replies []core.Message) (at 
 }
 
 // unreadRowSeen is the thread's "unread" row (not the ghost) in the list's
-// visible range: getVisibleRange(void 0, true), Layout.getBounds, which
-// counts any row the viewport overlaps.
+// visible range: getVisibleRange(void 0, true) over Layout.getBounds. The
+// row is the divider itself, which takes no height
+// (.c-message_list__unread_divider{height:0}), at the top of the first
+// unread reply, or of load_older when the unread run starts among the
+// hidden replies: it is in the range while that point is in the viewport,
+// however much of the reply below it shows.
 func (v *Threads) unreadRowSeen(t *thrItem) bool {
 	c := v.cards[t.key]
 	replies := thrShown(t, c)
@@ -342,9 +352,9 @@ func (v *Threads) unreadRowSeen(t *thrItem) bool {
 	case at == thrNoUnreadRow || ghost:
 		return false
 	case at == thrUnreadAtOlder:
-		return v.kb.overlaps("load_older-" + t.key)
+		return v.kb.pointIn("load_older-" + t.key)
 	}
-	return v.kb.overlaps(t.key + "-" + replies[at].TS)
+	return v.kb.pointIn(t.key + "-" + replies[at].TS)
 }
 
 // thrMarkDelay is maybeMarkVisibleThreadAsRead's setTimeout after a load
@@ -356,25 +366,22 @@ const (
 
 // visibleDue reports whether markVisible runs in this frame, after the
 // list's layout: a timer is due (350 ms after a load that sorts the list
-// landed, or after onListScroll, which the 150 ms debounce calls as a
-// scroll starts and once it has stopped), or the viewer's attention came
-// back since the frame before (componentDidUpdate; Layout tracks it in
-// every frame, and one that comes back while no list is drawn marks
-// nothing, as Slack's maybeMarkVisibleThreadAsRead returns without a
-// list). It asks for the frame the next one is due in.
+// landed, or after onListScroll), or the viewer's attention came back
+// since the frame before (componentDidUpdate; Layout tracks it in every
+// frame, and one that comes back while no list is drawn marks nothing, as
+// Slack's maybeMarkVisibleThreadAsRead returns without a list).
+// onListScroll is onListScrolledDebounce's, jp8I debounceRAF(onListScroll,
+// 150): every scroll re-arms it and it calls only once 150 ms went by
+// with none, so a fling marks nothing until it has stopped, and then only
+// what shows 350 ms on. It asks for the frame the next one is due in.
 func (v *Threads) visibleDue(gtx C) bool {
 	now := gtx.Now
 	due := v.attBack
 	if p := v.list.Position; p.First != v.scrollPos.First || p.Offset != v.scrollPos.Offset {
-		if now.Sub(v.scrollAt) > thrScrollWait { // the debounce's leading call
-			v.visAt = append(v.visAt, now.Add(thrMarkDelay))
-		} else {
-			v.scrollTail = true
-		}
-		v.scrollPos, v.scrollAt = p, now
+		v.scrollPos, v.scrollAt, v.scrollTail = p, now, true
 	}
 	if v.scrollTail {
-		if at := v.scrollAt.Add(thrScrollWait); !now.Before(at) { // its trailing call
+		if at := v.scrollAt.Add(thrScrollWait); !now.Before(at) { // the debounce's call
 			v.scrollTail = false
 			v.visAt = append(v.visAt, now.Add(thrMarkDelay))
 		} else {
@@ -398,6 +405,27 @@ func (v *Threads) visibleDue(gtx C) bool {
 		gtx.Execute(op.InvalidateCmd{At: next})
 	}
 	return due
+}
+
+// spendChecks is maybeMarkVisibleThreadAsRead's timers coming due while no
+// list is drawn (the error view, no threads): each returns without a
+// listRef, spent. Those still to come wait, with a frame at the next.
+func (v *Threads) spendChecks(gtx C) {
+	v.scrollTail = false
+	keep := v.visAt[:0]
+	var next time.Time
+	for _, at := range v.visAt {
+		if gtx.Now.Before(at) {
+			keep = append(keep, at)
+			if next.IsZero() || at.Before(next) {
+				next = at
+			}
+		}
+	}
+	v.visAt = keep
+	if !next.IsZero() {
+		gtx.Execute(op.InvalidateCmd{At: next})
+	}
 }
 
 // markVisible is maybeMarkVisibleThreadAsRead (threads-view.js 1946-1968),
@@ -436,107 +464,106 @@ var (
 	thrClsUnreadSep = slackc.Class("c-message_list__unread_divider__separator").Tag("hr")
 )
 
-// ghostLine is the ghost divider's line colour: col, then half its
-// opacity from 3 s after the row turned (opacity .1s 3s; a plugin rule
-// over the transition moves when and how fast it dims).
-func (v *Threads) ghostLine(gtx C, c *thrCard, col color.NRGBA) color.NRGBA {
-	if c.ghostAt.IsZero() {
-		c.ghostAt = gtx.Now
-	}
-	var tr slackc.Styled
+// ghostLine is the ghost divider's line colour: col at the --ghost
+// separator's opacity, .5 from its first frame. get_rows_and_keys keys the
+// row "unread", then "unread_marked_read", so React mounts a new
+// UnreadDivider with --ghost already on it and the rule's transition
+// (opacity .1s 3s) never runs; a plugin rule's opacity still sets it.
+func (v *Threads) ghostLine(col color.NRGBA) color.NRGBA {
+	op := float32(0.5)
 	if sc := slackc.CurrentScope(); sc.Active() {
-		tr = sc.Child(thrClsUnread, 1).Child(thrClsUnreadSep, 0)
+		if st := sc.Child(thrClsUnread, 1).Child(thrClsUnreadSep, 0); st.Has("opacity") {
+			op = st.Opacity()
+		}
 	}
-	dur, delay := tr.Transition("opacity", 100*time.Millisecond, 3*time.Second)
-	f, done := slackc.TransitionProgress(c.ghostAt, gtx.Now, dur, delay)
-	switch {
-	case f == 0 && !done:
-		gtx.Execute(op.InvalidateCmd{At: c.ghostAt.Add(delay)})
-		return col
-	case !done:
-		gtx.Execute(op.InvalidateCmd{})
-	}
-	col.A = uint8(float32(col.A) * (1 - 0.5*f))
+	col.A = uint8(float32(col.A) * min(max(op, 0), 1))
 	return col
 }
 
-// liveReply is a listed thread's reply edited, reacted to or deleted (the
-// event goroutine queued it): drawn at once, as Slack's card reads its
-// messages from the store the socket keeps. The card holds the socket's
-// word (gone, edits) over the copies a refresh carries over, until a load
-// that sorts the list brings them all afresh.
-func (v *Threads) liveReply(ev core.Event) {
-	key := ev.Channel + "/" + ev.ThreadTS
-	c := v.cards[key]
-	if c == nil {
-		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: ev.Channel + "-" + ev.ThreadTS}
-		v.cards[key] = c
-	}
-	switch {
-	case ev.Type == "delete":
-		if c.gone == nil {
-			c.gone = map[string]bool{}
-		}
-		c.gone[ev.TS] = true
-		delete(c.edits, ev.TS)
-	case ev.Msg != nil:
-		if c.edits == nil {
-			c.edits = map[string]core.Message{}
-		}
-		c.edits[ev.TS] = *ev.Msg
-	default:
-		return
-	}
-	c.built = false // its people, "Show N more replies"
-}
+// thrGapBackoff is how long after a failed gap fetch a card's gaps take
+// it to its window at once instead of fetching.
+const thrGapBackoff = 30 * time.Second
 
 // fillGap fetches the replies a refresh's window couldn't be joined to
 // (conversations.replies after the card's newest and before the window's
 // first, requestReplies with an oldest bound). Slack's card has every
 // reply that came, as its store takes each off the socket; a refresh here
 // has only getView's latest window, so the ones it lacks join the card
-// when they land (mid). A failure, or more than one answer of them, takes
-// the card back to its window alone, and "Show N more replies" loads the
-// rest in order.
+// when they land (mid). One fetch per card at a time: a gap that comes
+// while one is out widens the one that goes next. Shortly after a failure
+// the card goes to its window instead (cutToWindow), and "Show N more
+// replies" loads the rest in order.
 func (v *Threads) fillGap(page thrData, g thrGap) {
 	app := v.h.Core()
-	if app == nil {
+	t := thrByKey(page.items, g.key)
+	if app == nil || t == nil {
 		return
 	}
-	var t *thrItem
-	for i := range page.items {
-		if page.items[i].key == g.key {
-			t = &page.items[i]
-			break
+	c := v.cardOf(t)
+	if c.floor != "" && actTSLess(g.after, c.floor) {
+		// a failure cut the card here: only what comes after it is wanted
+		if !actTSLess(c.floor, g.before) {
+			return
 		}
+		g.after = c.floor
 	}
-	if t == nil {
+	switch {
+	case c.gapOut:
+		if c.gapNext.key == "" {
+			c.gapNext = g
+			return
+		}
+		if actTSLess(g.after, c.gapNext.after) {
+			c.gapNext.after = g.after
+		}
+		if actTSLess(c.gapNext.before, g.before) {
+			c.gapNext.before = g.before
+		}
+		return
+	case time.Now().Before(c.gapBack):
+		v.cutToWindow(c, t)
 		return
 	}
-	c := v.cards[g.key]
-	if c == nil {
-		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS}
-		v.cards[g.key] = c
-	}
-	ch, root, folds := t.Channel, t.Root.TS, c.folds
+	c.gapOut = true
+	ch, root, folds, from := t.Channel, t.Root.TS, c.folds, app.MessageChangeSeq()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		msgs, more, err := app.RepliesBetween(ctx, ch, root, g.after, g.before, thrOlderLimit)
-		v.notes.run(v.h, func() { v.landGap(g, folds, msgs, more || err != nil) })
+		v.notes.run(v.h, func() { v.landGap(g, folds, from, msgs, more || err != nil) })
 	}()
 }
 
-// landGap takes a gap's fetch in (UI goroutine). One asked for before the
-// card folded lands nowhere.
-func (v *Threads) landGap(g thrGap, folds int, msgs []core.Message, failed bool) {
+// thrByKey is the thread key among items, nil when it isn't one.
+func thrByKey(items []thrItem, key string) *thrItem {
+	for i := range items {
+		if items[i].key == key {
+			return &items[i]
+		}
+	}
+	return nil
+}
+
+// landGap takes a gap's fetch in (UI goroutine): its replies join the
+// card's (mid), current as of the change the fetch went out at, from which
+// they take what changed (threads_live.go), and the gap waiting goes out.
+// One asked for before the card folded lands nowhere. A failure (or more
+// replies than one answer holds) takes the card to its latest window,
+// and its gaps there too for a while (thrGapBackoff).
+func (v *Threads) landGap(g thrGap, folds, from uint64, msgs []core.Message, failed bool) {
 	c := v.cards[g.key]
 	if c == nil || c.folds != folds {
 		return
 	}
+	c.gapOut = false
+	d, _, _ := v.data.get()
+	t := thrByKey(d.items, g.key)
+	if t == nil {
+		return
+	}
 	if failed {
-		v.dropCarried(g.key, g.before)
-		v.fold(c)
+		v.cutToWindow(c, t)
+		c.gapBack = time.Now().Add(thrGapBackoff)
 		return
 	}
 	var run []core.Message
@@ -545,30 +572,64 @@ func (v *Threads) landGap(g thrGap, folds int, msgs []core.Message, failed bool)
 			run = append(run, m)
 		}
 	}
-	c.mid = thrMerge(c.mid, run)
-	c.built = false
+	if len(run) > 0 {
+		if len(c.mid) == 0 || from < c.midSeq {
+			c.midSeq = from
+		}
+		c.mid, c.shown, c.built = thrMerge(c.mid, run), nil, false
+		v.lv.items = nil // noteLiveKeys again, with them (threads_live.go)
+	}
+	if next := c.gapNext; next.key != "" {
+		c.gapNext = thrGap{}
+		v.fillGap(d, next)
+	}
 }
 
-// dropCarried keeps only thread key's replies from ts on: the card's
-// window alone. The items are copied, as a load still out reads the old
-// ones.
+// cutToWindow takes card c of thread t back to the replies of its latest
+// getView window (thrItem.window): the older replies it loaded, the gaps
+// it filled and the replies refreshes carried over go, with any fetch
+// still out for them (fold). A load already out read the carried replies
+// before this, so settle drops what it brings from before the window
+// (floor).
+func (v *Threads) cutToWindow(c *thrCard, t *thrItem) {
+	v.fold(c)
+	c.floor = t.window
+	v.dropCarried(t.key, t.window)
+}
+
+// dropCarried keeps only thread key's replies from ts on. The items are
+// copied, as a load still out reads the old ones.
 func (v *Threads) dropCarried(key, ts string) {
+	if ts == "" {
+		return
+	}
 	v.data.mutate(func(d *thrData) {
-		items := append([]thrItem(nil), d.items...)
-		for i := range items {
-			if items[i].key != key {
-				continue
-			}
-			var keep []core.Message
-			for _, m := range items[i].Replies {
-				if !actTSLess(m.TS, ts) {
-					keep = append(keep, m)
-				}
-			}
-			items[i].Replies = keep
+		i := slices.IndexFunc(d.items, func(t thrItem) bool { return t.key == key })
+		if i < 0 || len(d.items[i].Replies) == 0 || !actTSLess(d.items[i].Replies[0].TS, ts) {
+			return
 		}
+		items := slices.Clone(d.items)
+		var keep []core.Message
+		for _, m := range items[i].Replies {
+			if !actTSLess(m.TS, ts) {
+				keep = append(keep, m)
+			}
+		}
+		items[i].Replies = keep
 		d.items = items
 	})
+}
+
+// keepFloors drops from a load's threads the replies a refresh carried
+// over from before a card's floor (cutToWindow): the load read them
+// before the cut.
+func (v *Threads) keepFloors(page thrData) {
+	for i := range page.items {
+		t := &page.items[i]
+		if c := v.cards[t.key]; c != nil && c.floor != "" {
+			v.dropCarried(t.key, c.floor)
+		}
+	}
 }
 
 // run queues f for the UI goroutine, the next Layout's drain.
@@ -664,25 +725,30 @@ func (v *Threads) resort() {
 // could bring back. A reply the card had inside the window that the page
 // lacks is gone (deleted), so only older ones stay.
 //
-// The carried replies are the copies the card had (a live layer brings
-// them up to date: merging activity-live-msg, take each carried reply's
-// MessageChange after had.seq, dropping the deleted ones, and keep
-// now.seq; liveReply's gone and edits then go). When the window starts
-// after the card's newest reply, replies may have come between the two
-// that neither list has (three in one refresh's 5 s
-// over a 2-reply window): the card keeps both lists and reports the span
-// (thrGap) for settle to fetch (fillGap). Nothing about the counts tells:
-// reply_count moves with deletions, and on a live layer that patches the
-// root on message_replied it already counts what the window brings.
-func thrRefreshed(had, now thrItem) (thrItem, thrGap, bool) {
+// The carried replies are the copies the card had, current as of had.seq:
+// carry brings each up to date (thrCarryLive), as the thread's stamp is
+// now the page's. When the window starts after the card's newest reply,
+// replies may have come between the two that neither list has (three in
+// one refresh's 5 s over a 2-reply window): the card keeps both lists and
+// reports the span (thrGap) for settle to fetch (fillGap), and the
+// replies that brings take the live changes as the others do (thrCard.mid,
+// threads_live.go). Nothing about the counts tells: reply_count moves
+// with deletions, and the root's live copy counts what the window brings.
+func thrRefreshed(had, now thrItem, carry thrCarry) (thrItem, thrGap, bool) {
 	if len(had.Replies) == 0 || len(now.Replies) == 0 {
 		return now, thrGap{}, false
 	}
 	first, newest := now.Replies[0].TS, had.Replies[len(had.Replies)-1].TS
 	reps := make([]core.Message, 0, len(had.Replies)+len(now.Replies))
-	for _, m := range had.Replies {
-		if actTSLess(m.TS, first) {
-			reps = append(reps, m)
+	for i := range had.Replies {
+		m := &had.Replies[i]
+		if !actTSLess(m.TS, first) {
+			continue
+		}
+		if carry == nil {
+			reps = append(reps, *m)
+		} else if nm, ok := carry(had.Channel, m, had.seq, now.seq); ok {
+			reps = append(reps, nm)
 		}
 	}
 	if len(reps) == 0 {
@@ -695,6 +761,44 @@ func thrRefreshed(had, now thrItem) (thrItem, thrGap, bool) {
 		return now, thrGap{key: now.key, after: newest, before: first}, true
 	}
 	return now, thrGap{}, false
+}
+
+// thrCarry is a reply a refresh carries over, m (a copy current as of
+// message change seq), as it is now; false when it goes. now is the
+// change the refresh's copies are current as of.
+type thrCarry func(ch string, m *core.Message, seq, now uint64) (core.Message, bool)
+
+// thrCarryLive is thrCarry over core's change table (the load's
+// goroutine): a carried reply takes what core changed of it after its
+// copy, as landLive would have had it stayed. One deleted before the
+// refresh went out leaves (the page's counts have it gone); a later
+// deletion is landLive's, which takes the reply out with its unread
+// count. A copy older than what core forgot takes the store's, as in
+// floorLive, and one with no copy left is fetched again by id (it comes
+// back as a change).
+func thrCarryLive(c *core.App) thrCarry {
+	return func(ch string, m *core.Message, seq, now uint64) (core.Message, bool) {
+		chg, ok := c.MessageChange(ch, m.TS)
+		switch {
+		case !ok:
+			if c.MessageChangeFloor() > seq {
+				if sm, ok := c.HeldMessage(ch, m.TS); ok {
+					return sm, true
+				}
+				c.RefetchMessages(ch, []string{m.TS})
+			}
+			return *m, true
+		case chg.Seq <= seq:
+			return *m, true
+		case chg.Deleted:
+			return *m, chg.Seq > now
+		}
+		if nm, ok := c.ChangedMessage(ch, m.TS, &chg, m, seq); ok {
+			return nm, true
+		}
+		c.RefetchMessages(ch, []string{m.TS})
+		return *m, true
+	}
 }
 
 // floatingLoader is get_rows_and_keys' "global-loading" row, the list's

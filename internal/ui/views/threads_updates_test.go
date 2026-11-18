@@ -167,7 +167,7 @@ func TestThreadsSlowReconnectLikeSlack(t *testing.T) {
 	e.frame()
 	v.list.Position.First, v.list.Position.Offset = 1, 40
 	e.frame()
-	folds := map[string]int{}
+	folds := map[string]uint64{}
 	for k, c := range v.cards {
 		folds[k] = c.folds
 	}

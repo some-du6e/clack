@@ -739,7 +739,9 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage) {
 		return
 	}
 	if e.Entry.Key != "" || e.Entry.Item.Type != "" {
+		seq := a.MessageChangeSeq() // msg_changes.go
 		items := a.activityItems(ctx, []activityRaw{e.Entry})
+		stampItems(items, seq)
 		if len(items) == 1 {
 			ev.Activity = &items[0]
 			ev.Channel, ev.TS = items[0].Channel, items[0].TS
@@ -768,7 +770,7 @@ func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
 			s.LastRead = lr
 		}
 	})
-	if m, ok := a.S.Find(ch, ts); ok {
+	if m, ok := a.S.FindHeld(ch, ts); ok { // a root fetched by id too (store/fetched.go)
 		a.emitUpdate(ch, &m)
 	}
 	a.emit(Event{Type: "thread_subscription", Channel: ch, ThreadTS: ts, TS: ts, Name: map[bool]string{true: "follow", false: "unfollow"}[on], Raw: raw})
@@ -776,43 +778,34 @@ func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
 
 // onThreadMarked is the thread_marked event ({subscription: {channel,
 // thread_ts, last_read}}): another client (or this one) read the thread.
+// Slack's threadMarked reads those three alone (setSubscription
+// {lastRead}): the event's active says nothing Clack records.
 func (a *App) onThreadMarked(raw json.RawMessage) {
 	var e struct {
 		Subscription struct {
 			Channel  string `json:"channel"`
 			ThreadTS string `json:"thread_ts"`
 			LastRead string `json:"last_read"`
-			Active   *bool  `json:"active"` // the subscription is on: the thread is followed
 		} `json:"subscription"`
 	}
 	_ = json.Unmarshal(raw, &e)
-	a.markThreadLastRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead, e.Subscription.Active)
+	a.setThreadLastRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
 }
 
 // setThreadLastRead records a thread's last read reply (Slack's
 // setSubscription {lastRead}: the subscription, which the cached root
-// copies take too) and tells the views.
+// copies take too) and tells the views. Slack's on a thread its store has
+// no subscription for leaves subscribed unset, and readers fall back to
+// the root's own copy. Clack's record has no unset, so a last read for a
+// thread the store knows nothing of (no subscription, no cached root)
+// records nothing rather than a thread nobody follows: the Threads view
+// would stop marking it read and drop it on a resort.
 func (a *App) setThreadLastRead(ch, threadTS, lastRead string) {
-	a.markThreadLastRead(ch, threadTS, lastRead, nil)
-}
-
-// markThreadLastRead is setThreadLastRead with what the write says of the
-// subscription (thread_marked's active; nil: nothing). Slack's
-// setSubscription {lastRead} on a thread its store has no subscription
-// for leaves subscribed unset, and readers fall back to the root's own
-// copy. Clack's record has no unset, so a last read alone for a thread the
-// store knows nothing of (no subscription, no cached root) records nothing
-// rather than a thread nobody follows: the Threads view would stop marking
-// it read and drop it on a resort.
-func (a *App) markThreadLastRead(ch, threadTS, lastRead string, active *bool) {
 	if ch == "" || threadTS == "" || lastRead == "" {
 		return
 	}
 	if _, known := a.S.ThreadSub(ch, threadTS); !known {
 		if _, cached := a.S.Find(ch, threadTS); !cached {
-			if active != nil {
-				a.S.SetThreadSub(ch, threadTS, func(s *store.ThreadSub) { s.Subscribed, s.LastRead = *active, lastRead })
-			}
 			return
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -589,7 +590,7 @@ func (a *App) activityItems(ctx context.Context, raws []activityRaw) []ActivityI
 		items = append(items, it)
 	}
 	a.activityInvites(ctx, items)
-	got := a.hydrate(ctx, want)
+	got, answered := a.hydrateOK(ctx, want)
 	ids := []string{}
 	for i := range items {
 		ids = append(ids, items[i].Author, items[i].Actor)
@@ -602,12 +603,23 @@ func (a *App) activityItems(ctx context.Context, raws []activityRaw) []ActivityI
 		it := &items[i]
 		if m, ok := got[it.Channel+"/"+it.TS]; ok {
 			it.Msg = a.messagePtr(it.Channel, &m)
+		} else if answered[it.Channel] && slices.Contains(want[it.Channel], it.TS) {
+			it.MsgGone = true // isNonExistent: no body, and no shimmer
 		}
 		if it.ThreadTS != "" && it.ThreadTS != it.TS {
 			if m, ok := got[it.Channel+"/"+it.ThreadTS]; ok {
 				it.Root = a.messagePtr(it.Channel, &m)
+			} else if answered[it.Channel] {
+				it.RootGone = true
 			}
 		}
 	}
 	return items
+}
+
+// stampItems notes that items were read at MessageChangeSeq seq.
+func stampItems(items []ActivityItem, seq uint64) {
+	for i := range items {
+		items[i].MsgSeq = seq
+	}
 }

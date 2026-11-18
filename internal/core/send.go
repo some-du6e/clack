@@ -91,6 +91,20 @@ func (a *App) putLocal(ch string, m slack.Message) {
 	}
 }
 
+// putChanged is putLocal for the socket's message_changed of a message no
+// window or cached thread held: a top-level message goes into the window
+// only inside the range the window holds (store.UpsertInRange: one older
+// than a window with more history beyond it stays out, as Slack's invH
+// keeps it a slice of its own), a reply to its cached thread.
+func (a *App) putChanged(ch string, m slack.Message) {
+	if isTopLevel(&m) {
+		a.S.UpsertInRange(ch, m)
+	}
+	if m.ThreadTS != "" && m.ThreadTS != m.TS {
+		a.S.AddReply(ch, m)
+	}
+}
+
 // Send posts a message optimistically (see above). It blocks until Slack
 // answers and returns the confirmed message.
 func (a *App) Send(ctx context.Context, o SendOpts) (Message, error) {

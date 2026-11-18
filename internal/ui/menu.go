@@ -24,6 +24,9 @@ func (a *App) ShowOverlay(o Overlay) {
 		popups.StripSplitView(m, !a.SplitViewOK())
 	}
 	a.overlays = append(a.overlays, o)
+	if !invisible(o) && a.focused {
+		a.attLost++ // UserAttention goes (AttentionLost)
+	}
 	// what it does happens in the view container it was opened from
 	// (layoutOverlays; split.go)
 	a.overlayPane = append(a.overlayPane[:min(len(a.overlayPane), len(a.overlays)-1)], a.pane)

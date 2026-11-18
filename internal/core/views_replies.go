@@ -49,6 +49,7 @@ func (a *App) replies(ctx context.Context, p url.Values, latest string) ([]Messa
 		Messages []slack.Message `json:"messages"`
 		HasMore  bool            `json:"has_more"`
 	}
+	since := a.S.LiveSeq()
 	if err := a.C.Call(ctx, "conversations.replies", p, &r); err != nil {
 		return nil, false, err
 	}
@@ -58,6 +59,11 @@ func (a *App) replies(ctx context.Context, p url.Values, latest string) ([]Messa
 			out = append(out, m)
 		}
 	}
+	// Slack's requestReplies puts them in its messages store, where the
+	// socket's reactions reach them: the store keeps them, merged with
+	// what the socket changed while the request was out (store/fetched.go)
+	out = a.S.PutFetched(ch, out, since)
+	a.announceReads() // read_changes.go
 	// the replies' people are asked for as rows draw them (lazy_users.go)
 	return a.messages(ch, out), r.HasMore, nil
 }

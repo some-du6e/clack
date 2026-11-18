@@ -612,7 +612,7 @@ func (a *App) Sent(ctx context.Context, cursor string, page int) (SentPage, erro
 		refs = append(refs, sentRef{ch, ts})
 		want[ch] = append(want[ch], ts)
 	}
-	got := a.hydrate(ctx, want)
+	got, _ := a.hydrateKeep(ctx, want, false) // no live reads: nothing kept (store/fetched.go)
 	out := SentPage{Next: res.Pagination.NextCursor, Page: res.Pagination.Page, Total: res.Pagination.Total}
 	if out.Page == 0 {
 		out.Page = page

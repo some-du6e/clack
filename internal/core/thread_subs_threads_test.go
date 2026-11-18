@@ -11,8 +11,8 @@ import (
 // and a thread_marked move only the last read, and the thread stays
 // followed whether its root is cached or not. A last read alone for a
 // thread core knows nothing of records nothing (readers fall back to the
-// root's copy, as Slack's do on its unset subscribed); a thread_marked
-// records what its active says.
+// root's copy, as Slack's do on its unset subscribed), a thread_marked's
+// too: Slack's threadMarked reads no active.
 func TestThreadsSeedSubscriptionsLikeSlack(t *testing.T) {
 	a, f := testApp(t)
 	ctx := context.Background()
@@ -40,9 +40,9 @@ func TestThreadsSeedSubscriptionsLikeSlack(t *testing.T) {
 		t.Errorf("after the viewer's mark: %+v, want followed, read to the reply", sub)
 	}
 	a.handle(rtm("thread_marked", map[string]any{"subscription": map[string]any{"type": "thread", "channel": "C1",
-		"thread_ts": root, "last_read": reply, "active": true}}))
-	if sub, _ := a.S.ThreadSub("C1", root); !sub.Subscribed {
-		t.Errorf("after thread_marked: %+v, want followed", sub)
+		"thread_ts": root, "last_read": reply, "active": false}}))
+	if sub, _ := a.S.ThreadSub("C1", root); !sub.Subscribed || sub.LastRead != reply {
+		t.Errorf("after thread_marked (active false): %+v, want followed, read to the reply", sub)
 	}
 	// a thread nothing seeded and no cached root
 	if err := a.MarkThread(ctx, "C1", other, late); err != nil {
@@ -53,8 +53,8 @@ func TestThreadsSeedSubscriptionsLikeSlack(t *testing.T) {
 	}
 	a.handle(rtm("thread_marked", map[string]any{"subscription": map[string]any{"type": "thread", "channel": "C1",
 		"thread_ts": other, "last_read": late, "active": true}}))
-	if sub, ok := a.S.ThreadSub("C1", other); !ok || !sub.Subscribed || sub.LastRead != late {
-		t.Errorf("thread_marked (active) recorded %+v (known %v), want followed, read to %s", sub, ok, late)
+	if sub, ok := a.S.ThreadSub("C1", other); ok {
+		t.Errorf("thread_marked recorded an unknown thread as %+v: Slack's threadMarked sets only its last read", sub)
 	}
 }
 
