@@ -616,7 +616,11 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 
 // scrimUp reports whether the root lays its scrim out this frame: always,
 // unless MenuOpts.ScrimAfter holds it down that long from the menu's
-// first frame (a frame is asked for when it's due).
+// first frame. The frame it's due in is asked of the window, not with an
+// op.InvalidateCmd here: the rows read their events after this, and for
+// a command mid-frame the router replays the events no handler has read
+// yet, which lost clicks while the composer's + asked for its turn's
+// frames that way.
 func (m *Menu) scrimUp(gtx layout.Context) bool {
 	d := m.opts.ScrimAfter
 	if d <= 0 {
@@ -625,12 +629,9 @@ func (m *Menu) scrimUp(gtx layout.Context) bool {
 	now := frameNow(gtx)
 	if m.shownAt.IsZero() {
 		m.shownAt = now
+		time.AfterFunc(d, m.h.Invalidate)
 	}
-	if due := m.shownAt.Add(d); now.Before(due) {
-		gtx.Execute(op.InvalidateCmd{At: due})
-		return false
-	}
-	return true
+	return !now.Before(m.shownAt.Add(d))
 }
 
 func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
