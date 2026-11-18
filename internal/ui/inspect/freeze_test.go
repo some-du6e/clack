@@ -12,6 +12,7 @@ package inspect
 
 import (
 	"image"
+	"image/color"
 	"runtime"
 	"slices"
 	"strings"
@@ -26,18 +27,23 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 )
 
 // freezeEnv is a dragEnv whose window draws a widget's area and counts
 // its layouts, with the session started and the pointer in the primary
-// area.
+// area. Each layout draws a different number of ops, so two frames' ops
+// (End's call) never compare equal.
 func freezeEnv(t *testing.T) (e *dragEnv, laid *int, at f32.Point) {
 	e = newDragEnv(t)
 	laid = new(int)
 	widget := new(int)
 	e.content = func(gtx layout.Context) {
 		*laid++
+		for range *laid % 4 {
+			paint.ColorOp{Color: color.NRGBA{A: 0xff}}.Add(gtx.Ops)
+		}
 		defer clip.Rect(image.Rect(0, 0, 100, 100)).Push(gtx.Ops).Pop()
 		event.Op(gtx.Ops, widget)
 	}
@@ -69,9 +75,13 @@ func TestFreezeHoldsTheFrameOnScreen(t *testing.T) {
 		t.Errorf("the banner %q, want %q", got, HintInspect)
 	}
 	onScreen := e.tool.content
+	n := *laid
 	e.freeze()
 	if e.tool.fz.content != onScreen {
 		t.Error("the freeze holds another frame than the one on screen")
+	}
+	if !e.frozen || *laid != n {
+		t.Errorf("the F frame: drawn frozen %v, %d layouts; want it drawn from the frozen frame, none laid out", e.frozen, *laid-n)
 	}
 	if !slices.Equal(e.host.frozen, []bool{true}) {
 		t.Errorf("the host heard %v, want a freeze", e.host.frozen)
@@ -79,12 +89,11 @@ func TestFreezeHoldsTheFrameOnScreen(t *testing.T) {
 	if got := e.hint(); got != HintFrozen || !strings.Contains(got, "F or Esc unfreezes") {
 		t.Errorf("frozen, the banner %q, want %q", got, HintFrozen)
 	}
-	n := *laid
 	for range 3 {
 		e.frame()
 	}
-	if *laid != n {
-		t.Errorf("%d layouts while frozen", *laid-n)
+	if *laid != n || !e.frozen {
+		t.Errorf("%d layouts while frozen (the last frame drawn frozen %v)", *laid-n, e.frozen)
 	}
 	// the picker goes on, over the frozen frame
 	if label, _, ok := e.tool.Hovered(); !ok || label != "primary" {
@@ -258,5 +267,143 @@ func TestFreezeDragsAndEnds(t *testing.T) {
 	e.frame()
 	if e.tool.Active() || e.tool.Frozen() {
 		t.Errorf("the shortcut while frozen: session %v, frozen %v", e.tool.Active(), e.tool.Frozen())
+	}
+}
+
+// hold is a key's press alone, as a held key repeats it.
+func (e *dragEnv) hold(name key.Name) {
+	e.r.Queue(key.Event{Name: name, State: key.Press})
+}
+
+// A held F or Esc repeats its press: only the first counts, until the key
+// comes up. F held freezes once; Esc held while frozen unfreezes and
+// doesn't then end the session.
+func TestFreezeKeysIgnoreRepeats(t *testing.T) {
+	e, _, _ := freezeEnv(t)
+	e.hold(FreezeKey)
+	e.frame()
+	if !e.tool.Frozen() {
+		t.Fatal("F didn't freeze")
+	}
+	for range 3 { // the key held
+		e.hold(FreezeKey)
+		e.frame()
+	}
+	if !e.tool.Frozen() {
+		t.Fatal("F held: its repeats unfroze the window")
+	}
+	e.r.Queue(key.Event{Name: FreezeKey, State: key.Release})
+	e.key(FreezeKey, 0)
+	e.frame()
+	if e.tool.Frozen() {
+		t.Fatal("F pressed again after its release didn't unfreeze")
+	}
+	e.frame()
+	e.freeze()
+	e.hold(key.NameEscape)
+	e.frame()
+	if e.tool.Frozen() || !e.tool.Active() {
+		t.Fatalf("Esc: frozen %v, session %v", e.tool.Frozen(), e.tool.Active())
+	}
+	for range 3 {
+		e.hold(key.NameEscape)
+		e.frame()
+	}
+	if !e.tool.Active() {
+		t.Fatal("Esc held: its repeats ended the session after the unfreeze")
+	}
+	e.r.Queue(key.Event{Name: key.NameEscape, State: key.Release})
+	e.key(key.NameEscape, 0)
+	e.frame()
+	if e.tool.Active() {
+		t.Error("Esc pressed again after its release didn't end the session")
+	}
+}
+
+// Esc with the button down over the frozen frame (a press not yet a
+// drag) drops only the press, as it does a drag: frozen still, the
+// session on. The release that follows picks nothing.
+func TestFreezeEscWhilePressing(t *testing.T) {
+	e, _, at := freezeEnv(t)
+	e.freeze()
+	e.press(at)
+	e.frame()
+	e.key(key.NameEscape, 0)
+	e.frame()
+	if !e.tool.Frozen() || !e.tool.Active() {
+		t.Fatalf("Esc with the button down: frozen %v, session %v; want the press dropped only", e.tool.Frozen(), e.tool.Active())
+	}
+	e.releaseAt(at)
+	e.frame()
+	e.frame()
+	if len(e.shots) != 0 || e.tool.Reviewing() {
+		t.Errorf("the release after Esc picked: %d shots, reviewing %v", len(e.shots), e.tool.Reviewing())
+	}
+	if label, _, ok := e.tool.Hovered(); !ok || label != "primary" {
+		t.Errorf("after the dropped press: outline %q (%v), want the primary area again", label, ok)
+	}
+}
+
+// The window losing the focus while frozen (Gio sends a pointer Cancel at
+// 0,0) doesn't move the outline to the window's corner: the pointer is
+// where it was, the tool just doesn't see it until it moves.
+func TestFreezeWindowBlur(t *testing.T) {
+	e, _, at := freezeEnv(t)
+	e.freeze()
+	e.queue(pointer.Event{Kind: pointer.Cancel})
+	e.frame()
+	e.frame()
+	if label, _, ok := e.tool.Hovered(); ok && label != "primary" {
+		t.Errorf("after a blur: outline %q, want none or the primary area under the pointer", label)
+	}
+	e.queue(pointerMove(at))
+	e.frame()
+	if label, _, ok := e.tool.Hovered(); !ok || label != "primary" {
+		t.Errorf("the pointer back: outline %q (%v), want the primary area", label, ok)
+	}
+}
+
+// While frozen every key press is the tool's, so none goes unhandled
+// (macOS beeps for an unhandled key: ← → Home End and the like, which the
+// frozen frame's composer would have taken).
+func TestFreezeTakesEveryKey(t *testing.T) {
+	e, _, _ := freezeEnv(t)
+	e.freeze()
+	e.frame()
+	for _, n := range []key.Name{key.NameLeftArrow, key.NameRightArrow, key.NameHome, "X"} {
+		e.r.Queue(key.Event{Name: n, State: key.Press})
+		if _, ok := e.r.Source().Event(key.Filter{Name: n}); !ok {
+			t.Errorf("frozen, %s went unhandled", n)
+		}
+	}
+	if !e.tool.Frozen() || !e.tool.Active() {
+		t.Errorf("after the keys: frozen %v, session %v", e.tool.Frozen(), e.tool.Active())
+	}
+}
+
+// A frozen session that ends lets its frozen record's held state go with
+// it, not only its nodes.
+func TestFreezeEndReleasesHold(t *testing.T) {
+	e, _, _ := freezeEnv(t)
+	e.freeze()
+	e.frame()
+	held := false
+	for i := range e.tool.frames {
+		held = held || e.tool.frames[i].Held()
+	}
+	if !held {
+		t.Fatal("frozen, no record is held")
+	}
+	e.key(key.NameEscape, 0)
+	e.frame()
+	e.key(key.NameEscape, 0)
+	e.frame()
+	if e.tool.Active() {
+		t.Fatal("Esc twice didn't end the session")
+	}
+	for i := range e.tool.frames {
+		if e.tool.frames[i].Held() {
+			t.Errorf("after the session record %d is still held", i)
+		}
 	}
 }

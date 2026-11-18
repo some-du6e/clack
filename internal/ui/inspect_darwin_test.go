@@ -66,6 +66,17 @@ func TestMacInspectKeys(t *testing.T) {
 		ma.onUI(t, func() { n = ma.a.frameSeq.Load() })
 		return n
 	}
+	// draft is the open conversation's composer text, ok false without one
+	draft := func() (s string, ok bool) {
+		ma.onUI(t, func() {
+			if c := ma.a.convoFor(ma.a.router.Current().Channel(), ""); c != nil {
+				if cb, isBox := c.comp.(composerBox); isBox {
+					s, ok = cb.DocText(), true
+				}
+			}
+		})
+		return s, ok
+	}
 	sidebarHidden := func() (h bool) {
 		ma.onUI(t, func() { h = ma.a.sidebar.hidden })
 		return h
@@ -145,6 +156,7 @@ func TestMacInspectKeys(t *testing.T) {
 	press("F", cocoatest.KeyF, 0)
 	eventually("frozen after F", frozen)
 	seq := laidOut()
+	before, hasDraft := draft()
 	onMain(func() { cocoatest.PostKey(ma.view, cocoatest.KeyX, 0) }) // a key the tool doesn't take
 	time.Sleep(300 * time.Millisecond)
 	if n := laidOut(); n != seq {
@@ -152,6 +164,10 @@ func TestMacInspectKeys(t *testing.T) {
 	}
 	press("F", cocoatest.KeyF, 0)
 	eventually("unfrozen by F again, the session on", func() bool { return !frozen() && active() })
+	time.Sleep(300 * time.Millisecond) // frames laid out again
+	if after, ok := draft(); hasDraft && ok && after != before {
+		t.Errorf("the X typed while frozen reached the composer: %q, was %q", after, before)
+	}
 	press("F", cocoatest.KeyF, 0)
 	eventually("frozen after F", frozen)
 	press("Esc", cocoatest.KeyEscape, 0)

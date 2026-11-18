@@ -155,7 +155,7 @@ func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
 	r := &Report{When: now, OS: goos()}
 	ptr := image.Pt(int(t.ptr.X+.5), int(t.ptr.Y+.5))
 	t.fill(r, red, p)
-	t.host.Describe(r, red)
+	t.describe(r, red)
 	r.Region = p.region
 	r.Rect = dpRect(p.rect, scale)
 	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
@@ -176,7 +176,7 @@ func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr im
 	}
 	red := NewRedactor()
 	r := &Report{When: now, OS: goos(), Capture: "dragged region"}
-	t.host.Describe(r, red)
+	t.describe(r, red)
 	var in []string
 	for _, rg := range t.regions() {
 		if rg.Name != "window" && rg.Rect.Overlaps(rect) {

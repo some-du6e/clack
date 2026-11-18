@@ -754,32 +754,45 @@ func (c *Cache) SetLiveOps(on bool) {
 // HoldLive holds every live image (SetLiveOps) on the frame it showed
 // when the hold began, until HoldLive(false): the GPU's asks get that
 // frame again (a player the sweep lets go meanwhile included), count as
-// no draw and ask for no next one, so nothing plays and no animation asks
-// the window for a frame. Clack's inspect tool holds them while it
-// freezes the window on a frame (internal/ui/inspect: the frozen frame is
-// drawn again from its ops, so its emoji would play on). The huddle
-// windows draw from the same cache and hold too. Get, which only a frame
-// that lays out calls, plays them as before (any goroutine).
+// no draw and ask for no next one, and a Get of an animated image hands
+// out its live op without moving its player on, so nothing plays and no
+// animation asks any window for a frame. Clack's inspect tool holds them
+// while it freezes the window on a frame (internal/ui/inspect: the frozen
+// frame is drawn again from its ops, so its emoji would play on); the
+// huddle windows draw from the same cache and hold too. HoldLive(false)
+// lets the held frames go and asks for one repaint (any goroutine).
 func (c *Cache) HoldLive(on bool) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if on == c.liveHeld {
+		c.mu.Unlock()
 		return
 	}
 	c.liveHeld = on
-	if !on {
-		return
-	}
 	c.holdGen++
 	for el := c.lru.Front(); el != nil; el = el.Next() {
 		for _, l := range el.Value.(*entry).lives {
-			if l != nil {
+			if l == nil {
+				continue
+			}
+			if on {
 				l.heldGen, l.heldOp = c.holdGen, l.last
+			} else {
+				l.heldOp = paint.ImageOp{} // its frame goes with the hold
 			}
 		}
+	}
+	var inv func()
+	if !on {
+		// the players went on standing still: one repaint, which a window
+		// with nothing else to draw needs to play them again
+		inv = c.animInvalidateLocked()
+	}
+	c.mu.Unlock()
+	if inv != nil {
+		inv()
 	}
 }
 

@@ -337,6 +337,7 @@ func (q *Router) Event(filters ...event.Filter) (event.Event, bool) {
 				change.events = slices.Delete(change.events, j, j+1)
 				// Fast forward state to last matched.
 				q.collapseState(i)
+				q.notePointerRead(evt) // Clack patch 49
 				return evt.event, true
 			}
 		}

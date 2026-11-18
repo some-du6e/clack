@@ -72,9 +72,11 @@ type Region struct {
 type Host interface {
 	// Theme draws the session's label and banner.
 	Theme() *theme.Theme
-	// Describe fills the report's window and page fields; id-bearing
-	// fields go through red (UI goroutine).
-	Describe(r *Report, red *Redactor)
+	// Describer reads the window and the page as they are now, and
+	// returns what fills a report's window and page fields with them
+	// (id-bearing ones through red) later: a frozen capture's report
+	// describes the frozen frame (UI goroutine).
+	Describer() func(r *Report, red *Redactor)
 	// ConvKind is "public", "private", "dm", "mpdm" or "" for a channel
 	// id: what kind of conversation, never which.
 	ConvKind(id string) string
@@ -153,6 +155,8 @@ type Tool struct {
 	inAt     time.Time     // the frame whose input was read (Frame, Begin)
 	recAt    time.Time     // the frame recorded into frames[cur]
 	upKey    string        // the innermost element t.up counts from (innerKey)
+	// the last press of FreezeKey and of Esc while it's down (repeat)
+	freezeDown, escDown time.Time
 
 	// content is what the last laid-out frame drew, the tool's own
 	// drawing left out (End), and contentOK that it is the frame on
@@ -259,8 +263,7 @@ func (t *Tool) release() {
 	t.hover, t.rec = nil, false
 	core.ObserveExperiments(nil)
 	for i := range t.frames {
-		clear(t.frames[i].Nodes)
-		t.frames[i].Nodes = t.frames[i].Nodes[:0]
+		t.frames[i].Release()
 	}
 }
 
@@ -477,7 +480,49 @@ func (t *Tool) keyFilters() []event.Filter {
 		key.Filter{Name: "C", Required: key.ModShortcut},
 		key.Filter{Name: FreezeKey},
 		t.combo,
+		// frozen, no widget asks for keys: every other press is the
+		// tool's too, so none goes unhandled (macOS beeps for one)
+		t.anyKey(),
 	}
+}
+
+// anyKey is a filter for every key while frozen (a catch-all: Gio leaves
+// out the keys it moves the focus with, which the Tab filter takes), and
+// the freeze key's again otherwise, which adds nothing: in a session that
+// isn't frozen the window's widgets still ask for theirs.
+func (t *Tool) anyKey() key.Filter {
+	if t.fz == nil {
+		return key.Filter{Name: FreezeKey} // already asked for
+	}
+	return key.Filter{Optional: key.ModCtrl | key.ModCommand | key.ModShift | key.ModAlt | key.ModSuper}
+}
+
+// repeat reports a press of FreezeKey or Esc while that key is still down
+// (no release read since its last press, which came less than a second
+// ago): a held key's auto-repeat, which would toggle the freeze on every
+// repeat, or unfreeze and then end the session. It notes those two keys'
+// presses and releases.
+func (t *Tool) repeat(ke key.Event) bool {
+	var down *time.Time
+	switch ke.Name {
+	case FreezeKey:
+		down = &t.freezeDown
+	case key.NameEscape:
+		down = &t.escDown
+	default:
+		return false
+	}
+	now := t.inAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if ke.State != key.Press {
+		*down = time.Time{}
+		return false
+	}
+	held := !down.IsZero() && now.Sub(*down) < time.Second
+	*down = now
+	return held
 }
 
 // comboPress reports that e is the shortcut f: its key, its required
@@ -511,6 +556,20 @@ func (t *Tool) readPointer(gtx layout.Context) ptrRead {
 		if !ok {
 			continue
 		}
+		if pe.Kind == pointer.Cancel {
+			// the window lost the focus, or a freeze's end started the
+			// pointer state over (Gio patch 49): a Cancel has no position,
+			// so the pointer stays where it was, only not known to be over
+			// anything until it moves (the outline goes, not to 0,0)
+			t.ptrIn = false
+			if t.state == reviewing {
+				t.reviewPointer(pe)
+			} else if held || in.pressed {
+				t.backToInspecting()
+				held, in = false, ptrRead{}
+			}
+			continue
+		}
 		t.hist[t.histN%len(t.hist)] = ptrAt{pe.Time, pe.Position}
 		t.histN++
 		t.ptr = pe.Position
@@ -521,11 +580,6 @@ func (t *Tool) readPointer(gtx layout.Context) ptrRead {
 		switch pe.Kind {
 		case pointer.Leave:
 			t.ptrIn = false
-		case pointer.Cancel:
-			if held || in.pressed {
-				t.backToInspecting()
-				held, in = false, ptrRead{}
-			}
 		case pointer.Press:
 			t.ptrIn = true
 			if pe.Buttons&pointer.ButtonPrimary != 0 && t.state == inspecting && !in.pressed {
@@ -585,7 +639,7 @@ func (t *Tool) readKeys(gtx layout.Context) {
 			break
 		}
 		ke, ok := e.(key.Event)
-		if !ok || ke.State != key.Press {
+		if !ok || t.repeat(ke) || ke.State != key.Press {
 			continue
 		}
 		switch {
@@ -595,8 +649,8 @@ func (t *Tool) readKeys(gtx layout.Context) {
 			// the shot comes at this frame's end: the review takes keys
 		case comboPress(t.combo, ke):
 			t.stop()
-		case ke.Name == key.NameEscape && t.state == dragging:
-			t.backToInspecting() // only the drag; its release is ignored
+		case ke.Name == key.NameEscape && (t.state == dragging || t.state == pressing):
+			t.backToInspecting() // only the drag or the press; its release is ignored
 		case ke.Name == key.NameEscape && t.fz != nil && t.state == inspecting:
 			t.unfreeze() // the session goes on; Esc again ends it
 		case ke.Name == key.NameEscape:

@@ -122,6 +122,12 @@ func (k *konami) press(e key.Event) bool {
 // widget read its events while the window was frozen.
 func (a *App) inspectFirst(gtx layout.Context) *op.Ops {
 	var ops *op.Ops
+	if a.login != nil {
+		// the sign-in screen: no session outlives the workspace it was
+		// inspecting (showLogin, signOut and switchAccount end it; this
+		// is for any other way there)
+		a.closeInspectSession()
+	}
 	if a.insp != nil && a.insp.Active() {
 		// the frame's key presses for the Konami code, read now: a frozen
 		// frame lays out nothing (inspectBegin reads the rest)
@@ -157,6 +163,18 @@ func (a *App) konamiKeys(src *input.Source) {
 		if a.konami.press(e) {
 			a.setInspectTool(a.insp == nil)
 		}
+	}
+}
+
+// closeInspectSession ends a running session, a frozen one included, and
+// forgets the key presses read for the Konami code in it: the sign-in
+// screen is coming up (signed out, the session ended, another account),
+// and the tool would otherwise read its keys (Return, Tab, the arrows)
+// before the card with no banner drawn.
+func (a *App) closeInspectSession() {
+	a.inspPresses = nil
+	if a.insp != nil && a.insp.Active() {
+		a.insp.Close()
 	}
 }
 
@@ -288,41 +306,52 @@ func (h inspectHost) Regions() []inspect.Region {
 	return out
 }
 
-// Describe fills the report's window and page fields.
-func (h inspectHost) Describe(r *inspect.Report, red *inspect.Redactor) {
+// Describer reads the report's window and page fields now (a frozen
+// capture's report describes the frozen frame, whatever the window does
+// meanwhile) and returns what fills them in, the route through the
+// report's redactor.
+func (h inspectHost) Describer() func(r *inspect.Report, red *inspect.Redactor) {
 	a := h.a
-	r.Version = buildVersion
 	s := a.pxPerDp
 	if s <= 0 {
 		s = 1
 	}
-	r.Scale = s
-	r.Window = image.Pt(int(float32(a.winSize.X)/s+.5), int(float32(a.winSize.Y)/s+.5))
-	r.Zoom = a.prefs.Zoom
-	r.Dark = a.th.Dark
-	r.Theme = a.inspectThemeName()
-	r.Font = a.font.applied
-	if r.Font == "" {
-		r.Font = "lato"
+	window := image.Pt(int(float32(a.winSize.X)/s+.5), int(float32(a.winSize.Y)/s+.5))
+	zoom, dark, theme := a.prefs.Zoom, a.th.Dark, a.inspectThemeName()
+	font := a.font.applied
+	if font == "" {
+		font = "lato"
 	}
 	cur := a.router.Current()
-	r.Page = red.Route(string(cur))
+	kind := ""
 	if ch := cur.Channel(); ch != "" {
-		if k := h.ConvKind(ch); k != "" {
-			r.Page += " (" + k + ")"
-		}
+		kind = h.ConvKind(ch)
 	}
+	pane := ""
 	if a.secondary.open() {
-		r.Page += " · pane " + secKindName(a.secondary.kind)
+		pane = secKindName(a.secondary.kind)
 	}
-	r.Patches = slackc.PatchedNames()
+	patches := slackc.PatchedNames()
 	var open []string
 	for _, o := range a.overlays {
 		if o != nil && !o.Dismissed() {
 			open = append(open, strings.TrimPrefix(fmt.Sprintf("%T", o), "*"))
 		}
 	}
-	r.Overlays = open
+	return func(r *inspect.Report, red *inspect.Redactor) {
+		r.Version = buildVersion
+		r.Scale, r.Window, r.Zoom = s, window, zoom
+		r.Dark, r.Theme, r.Font = dark, theme, font
+		r.Page = red.Route(string(cur))
+		if kind != "" {
+			r.Page += " (" + kind + ")"
+		}
+		if pane != "" {
+			r.Page += " · pane " + pane
+		}
+		r.Patches = append([]string(nil), patches...)
+		r.Overlays = append([]string(nil), open...)
+	}
 }
 
 // inspectThemeName is the account theme as Slack names its palette

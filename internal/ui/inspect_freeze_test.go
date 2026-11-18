@@ -24,13 +24,16 @@ import (
 	"time"
 	"weak"
 
+	"gioui.org/app"
 	"gioui.org/f32"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/inspect"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // list is the channel's message list.
@@ -140,11 +143,8 @@ func TestInspectFreezeHoverToolbar(t *testing.T) {
 			t.Errorf("report row %s = %q, want %q\n%s", w.key, got, w.want, txt)
 		}
 	}
-	// the clicks never reached the window
+	// the click never reached the window: the More actions menu didn't open
 	e.settle(300 * time.Millisecond)
-	if got := e.reactions(); len(got) != 0 {
-		t.Errorf("the clicks toggled a reaction: %v", got)
-	}
 	for _, o := range e.a.overlays {
 		if o != nil && !o.Dismissed() {
 			t.Errorf("the Shift+click on the toolbar's button opened %T", o)
@@ -174,6 +174,10 @@ func TestInspectFreezeClickReviews(t *testing.T) {
 	if e.a.insp.Active() || e.a.insp.Frozen() || *copied == nil {
 		t.Fatalf("after Enter: session %v, frozen %v, copied %v", e.a.insp.Active(), e.a.insp.Frozen(), *copied != nil)
 	}
+	e.settle(300 * time.Millisecond)
+	if got := e.reactions(); len(got) != 0 {
+		t.Errorf("the plain click on the frozen pill, or the review's Enter, toggled the reaction: %v", got)
+	}
 	if rows := reportRows(func() string { s, _ := e.readReport(t); return s }()); rows["component"] != "UnstyledButton" {
 		t.Errorf("the reviewed report's component %q, want the pill's UnstyledButton", rows["component"])
 	}
@@ -195,6 +199,10 @@ func TestInspectFreezeClickReviews(t *testing.T) {
 	if e.a.insp.Active() || e.a.insp.Frozen() {
 		t.Errorf("Esc in the review: session %v, frozen %v", e.a.insp.Active(), e.a.insp.Frozen())
 	}
+	e.settle(300 * time.Millisecond)
+	if got := e.reactions(); len(got) != 0 {
+		t.Errorf("the drag across the frozen pill toggled the reaction: %v", got)
+	}
 }
 
 // F again unfreezes, and so does Esc, which again ends the session; so
@@ -210,6 +218,11 @@ func TestInspectFreezeKeys(t *testing.T) {
 	if focus == nil {
 		t.Fatal("no focus in the composer")
 	}
+	cb, ok := e.a.convos[e.ch+"/"].comp.(composerBox)
+	if !ok {
+		t.Fatalf("the composer is a %T", e.a.convos[e.ch+"/"].comp)
+	}
+	draft := cb.DocText()
 	e.startSession(t)
 	if _, ok := e.toolbar(t); !ok {
 		t.Fatal("no hover toolbar over the pill's message in the session")
@@ -222,6 +235,10 @@ func TestInspectFreezeKeys(t *testing.T) {
 		t.Error("frozen, the animated images aren't held")
 	}
 	frozenOps := weak.Make(e.a.insp.FrozenOps())
+	// what's typed while frozen goes nowhere: no text in the draft, no send
+	e.typeAt("q")
+	e.key(key.NameReturn, 0)
+	e.frame()
 	e.move(e.sidebarPoint())
 	e.frame()
 
@@ -240,6 +257,12 @@ func TestInspectFreezeKeys(t *testing.T) {
 	}
 	if got := e.r.Source().FocusTag(); got != focus {
 		t.Errorf("after the freeze the focus is on %v, want the composer's %v", got, focus)
+	}
+	if got := cb.DocText(); got != draft {
+		t.Errorf("after the freeze the draft is %q, was %q: what was typed while frozen reached it", got, draft)
+	}
+	if got := e.called("chat.postMessage"); len(got) != 0 {
+		t.Errorf("a Return while frozen sent a message: %v", got)
 	}
 	runtime.GC()
 	runtime.GC()
@@ -278,10 +301,6 @@ func TestInspectFreezeKeys(t *testing.T) {
 	}
 	// and the composer still takes what's typed
 	e.frame()
-	cb, ok := e.a.convos[e.ch+"/"].comp.(composerBox)
-	if !ok {
-		t.Fatalf("the composer is a %T", e.a.convos[e.ch+"/"].comp)
-	}
 	before := cb.DocText()
 	e.typeAt("z")
 	e.frame()
@@ -413,4 +432,196 @@ func (e *inspectEnv) freezeShots(t *testing.T, mode, dir string, save func(strin
 		t.Fatal(err)
 	}
 	time.Sleep(1100 * time.Millisecond) // the next report's file name (seconds) differs
+}
+
+// moveID moves the mouse to p as pointer id (Windows numbers its mouse 1;
+// macOS and X11 leave it 0), a frame after.
+func (e *perfEnv) moveID(p image.Point, id pointer.ID) {
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, PointerID: id, Position: f32.Pt(float32(p.X), float32(p.Y))})
+	e.frame()
+}
+
+// freezeAway hovers at with the mouse, starts a session there, freezes,
+// moves the mouse to to while frozen, unfreezes and ends the session.
+func (e *inspectEnv) freezeAway(t *testing.T, at, to image.Point, id pointer.ID) {
+	t.Helper()
+	e.moveID(at, id)
+	e.frame()
+	e.hyperD()
+	e.frame()
+	e.freezeKey()
+	if !e.a.insp.Frozen() {
+		t.Fatal("F didn't freeze")
+	}
+	e.moveID(to, id)
+	e.frame()
+	e.freezeKey()
+	if e.a.insp.Frozen() || !e.a.insp.Active() {
+		t.Fatalf("after F again: frozen %v, session %v", e.a.insp.Frozen(), e.a.insp.Active())
+	}
+	e.key(key.NameEscape, 0)
+	e.frame()
+	for range 3 {
+		e.frame()
+	}
+}
+
+// When a freeze ends the window catches up on what the pointer left while
+// frozen, whatever kind of hover it was: a message body's (richview: its
+// mention's hover and the profile card it opens, which clear only on a
+// Leave) and a gesture.Hover's (a sidebar section heading, its ⋯ and +).
+// The mouse is Windows' (PointerID 1): a gesture.Hover drops a Cancel or
+// Leave of another pointer.
+func TestInspectFreezeResetsHover(t *testing.T) {
+	fakeShots(t)
+	e := newInspectEnv(t)
+	const id = 1
+	ts := e.post(t, "ask <@"+mcPerson+"> about the notes")
+	var link image.Rectangle
+	e.until("the mention laid out", 10*time.Second, func() bool {
+		for _, lr := range e.list(t).LinkRects() {
+			if lr.TS == ts && lr.Kind == richview.HitUser && lr.ID == mcPerson {
+				link = lr.R
+				return true
+			}
+		}
+		return false
+	})
+	onLink := centre(link)
+	away := image.Pt(int(e.sidebarPoint().X), int(e.sidebarPoint().Y))
+	cardOpen := func() bool { _, _, open := e.a.hover.ctl.Open(); return open }
+
+	// a message body, hovered on its mention: its profile card opens
+	e.moveID(onLink, id)
+	if over, ok := e.list(t).BodyPointer(ts); !ok || !over {
+		t.Fatalf("the pointer on the mention: the body has it %v (%v)", over, ok)
+	}
+	e.until("the mention's profile card open", 5*time.Second, cardOpen)
+	e.freezeAway(t, onLink, away, id)
+	if over, _ := e.list(t).BodyPointer(ts); over {
+		t.Error("after the freeze the message body still counts the pointer, which left it while frozen, as over it (its link hover and tooltips stay)")
+	}
+	e.settle(time.Second) // past the card's hide delay
+	if cardOpen() {
+		t.Error("after the freeze the mention's profile card stays open, the pointer long gone from the mention")
+	}
+
+	// a sidebar section heading (gesture.Hover), its ⋯ and + up
+	var sec string
+	for _, s := range e.a.model().Sections {
+		if s.Type == "channels" {
+			sec = s.ID
+		}
+	}
+	if sec == "" {
+		t.Fatal("no Channels section")
+	}
+	head := e.sbRowPoint(t, "sectionHeading-"+sec)
+	e.moveID(head, id)
+	e.frame()
+	if e.a.sidebar.headCtl != sec {
+		t.Fatalf("the pointer on the Channels heading: its buttons aren't drawn (headCtl %q)", e.a.sidebar.headCtl)
+	}
+	e.freezeAway(t, head, onLink, id)
+	if e.a.sidebar.headCtl == sec {
+		t.Error("after the freeze the Channels heading still draws its ⋯ and +: its hover outlived the pointer, which left it while frozen")
+	}
+}
+
+// A session ends when the sign-in screen comes up (the session ended,
+// sign-out, another account): frozen or not, the tool would otherwise
+// read the sign-in card's keys before it, with no banner drawn. After
+// sessionEnded, Return in the empty link field opens the sign-in page.
+func TestInspectSessionEndsAtSignIn(t *testing.T) {
+	var opened []string
+	stubBrowser(t, &opened)
+	for _, frozen := range []bool{false, true} {
+		t.Run(map[bool]string{false: "live", true: "frozen"}[frozen], func(t *testing.T) {
+			opened = opened[:0]
+			e := newInspectEnv(t)
+			e.startSession(t)
+			if frozen {
+				e.freezeKey()
+				if !e.a.insp.Frozen() {
+					t.Fatal("F didn't freeze")
+				}
+			}
+			e.a.sessionEnded()
+			e.until("the sign-in card's link field focused", 20*time.Second, func() bool {
+				return e.a.login != nil && e.r.Source().Focused(&e.a.login.link)
+			})
+			if e.a.insp != nil && (e.a.insp.Active() || e.a.insp.Frozen()) {
+				t.Errorf("at the sign-in card: session %v, frozen %v", e.a.insp.Active(), e.a.insp.Frozen())
+			}
+			e.key(key.NameReturn, 0)
+			e.frame()
+			e.frame()
+			if len(opened) != 1 || !e.a.login.waiting {
+				t.Errorf("Return in the empty link field: opened %q, waiting %v; want the sign-in page opened", opened, e.a.login.waiting)
+			}
+		})
+	}
+}
+
+// OS file drops do nothing while a session runs: the window is the tool's,
+// and frozen it draws nothing a drop would do. A Shift+drop (Shift is
+// also the tool's copy-at-once) would share the file into the channel at
+// once.
+func TestInspectFileDropsIgnored(t *testing.T) {
+	fakeShots(t)
+	e := newInspectEnv(t)
+	f := filepath.Join(t.TempDir(), "shot.png")
+	writePNG(t, f, image.NewRGBA(image.Rect(0, 0, 4, 4)))
+	at := image.Pt(int(e.pillCenter().X), int(e.pillCenter().Y))
+	for _, frozen := range []bool{false, true} {
+		e.startSession(t)
+		if frozen {
+			e.freezeKey()
+		}
+		e.a.fileDrop(dropAt(app.FileDragEnter, at, key.ModShift, f))
+		if e.a.drop.on || e.a.drop.hover != nil {
+			t.Errorf("frozen %v: a drag over the window shows its overlay (on %v, hover %v)", frozen, e.a.drop.on, e.a.drop.hover)
+		}
+		e.a.fileDrop(dropAt(app.FileDrop, at, key.ModShift, f)) // shared at once
+		e.a.fileDrop(dropAt(app.FileDrop, at, 0, f))            // attached to the draft
+		for i := 0; i < 2 && e.a.insp.Active(); i++ {           // Esc unfreezes, then ends it
+			e.key(key.NameEscape, 0)
+			e.frame()
+		}
+	}
+	e.settle(500 * time.Millisecond)
+	if got := e.called("files."); len(got) != 0 {
+		t.Errorf("drops during a session uploaded: %v", got)
+	}
+}
+
+// A frozen capture's report describes the frozen frame, not the window as
+// it is by then: the page, the pane, the overlays and the theme are read
+// when the freeze begins. Here the window goes to the DMs and turns dark
+// while frozen, and the Shift+click on the frozen pill reports the
+// channel, light.
+func TestInspectFrozenReportDescribesFrozenFrame(t *testing.T) {
+	fakeShots(t)
+	e := newInspectEnv(t)
+	e.startSession(t)
+	e.freezeKey()
+	if !e.a.insp.Frozen() {
+		t.Fatal("F didn't freeze")
+	}
+	e.a.Navigate("dms")
+	e.a.ToggleDark()
+	e.settle(100 * time.Millisecond)
+	p := e.pillCenter()
+	e.pickAndCopy(t, image.Pt(int(p.X), int(p.Y)))
+	txt, _ := e.readReport(t)
+	rows := reportRows(txt)
+	for _, w := range []struct{ key, want string }{
+		{"component", "UnstyledButton"},
+		{"page", "c/ch:* (public)"},
+		{"window", "light · *"},
+	} {
+		if got := rows[w.key]; !globMatch(w.want, got) {
+			t.Errorf("report row %s = %q, want %q (the frozen frame's)\n%s", w.key, got, w.want, txt)
+		}
+	}
 }

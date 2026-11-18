@@ -172,6 +172,16 @@ func (f *InspectFrame) Hold(hits []InspectHit) {
 // Held reports that f is held (Hold).
 func (f *InspectFrame) Held() bool { return f.held != nil }
 
+// Release lets go of everything f recorded: its nodes (their widgets,
+// props funcs and scopes) and its hold. Recording f again starts afresh.
+func (f *InspectFrame) Release() {
+	clear(f.Nodes)
+	f.Nodes = f.Nodes[:0]
+	f.stack = f.stack[:0]
+	f.held = nil
+	f.src = input.Source{}
+}
+
 // InspectEnd stops recording.
 func InspectEnd() {
 	inspecting.Store(false)

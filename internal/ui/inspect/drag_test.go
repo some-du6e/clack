@@ -37,13 +37,15 @@ type dragHost struct {
 	reset  bool   // a freeze ended: the next frame resets the pointers
 }
 
-func (h *dragHost) Theme() *theme.Theme               { return nil }
-func (h *dragHost) Describe(r *Report, red *Redactor) { r.Page = red.Route("c/C0123456789") }
-func (h *dragHost) ConvKind(string) string            { return "" }
-func (h *dragHost) CopyText(string)                   {}
-func (h *dragHost) Invalidate()                       {}
-func (h *dragHost) ConfigDir() string                 { return "" }
-func (h *dragHost) Toast(s string)                    { h.toasts = append(h.toasts, s) }
+func (h *dragHost) Theme() *theme.Theme { return nil }
+func (h *dragHost) Describer() func(*Report, *Redactor) {
+	return func(r *Report, red *Redactor) { r.Page = red.Route("c/C0123456789") }
+}
+func (h *dragHost) ConvKind(string) string { return "" }
+func (h *dragHost) CopyText(string)        {}
+func (h *dragHost) Invalidate()            {}
+func (h *dragHost) ConfigDir() string      { return "" }
+func (h *dragHost) Toast(s string)         { h.toasts = append(h.toasts, s) }
 func (h *dragHost) Frozen(on bool) {
 	h.frozen = append(h.frozen, on)
 	h.reset = h.reset || !on
@@ -92,6 +94,8 @@ type dragEnv struct {
 	copied image.Image
 	// content draws the window under the tool (none: an empty window)
 	content func(gtx layout.Context)
+	// frozen: the last frame was drawn from the frozen frame (Frame)
+	frozen bool
 }
 
 func newDragEnv(t *testing.T) *dragEnv {
@@ -122,6 +126,7 @@ func (e *dragEnv) frame() {
 		e.host.reset = false
 		gtx.Source.ResetPointers()
 	}
+	e.frozen = ops != nil
 	if ops != nil {
 		e.r.Frame(ops)
 		e.tool.AfterFrame(ops, e.size)
@@ -446,6 +451,15 @@ func TestCaptureOpensReview(t *testing.T) {
 			e.dragTo(p.Add(f32.Pt(60, 40)))
 			e.frame()
 			e.releaseAt(p.Add(f32.Pt(60, 40)))
+		}, true},
+		{"a Shift+drag", func() { // Shift copies a pick at once, never a region
+			to := p.Add(f32.Pt(60, 40))
+			e.queue(pointer.Event{Kind: pointer.Move, Position: p, Modifiers: key.ModShift},
+				pointer.Event{Kind: pointer.Press, Buttons: pointer.ButtonPrimary, Position: p, Modifiers: key.ModShift})
+			e.frame()
+			e.queue(pointer.Event{Kind: pointer.Move, Buttons: pointer.ButtonPrimary, Position: to, Modifiers: key.ModShift})
+			e.frame()
+			e.queue(pointer.Event{Kind: pointer.Release, Position: to, Modifiers: key.ModShift})
 		}, true},
 	} {
 		n := len(e.shots)

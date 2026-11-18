@@ -607,6 +607,11 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 		e.gen = c.gen
 		c.genEls = append(c.genEls, el)
 	}
+	if c.liveHeld && c.liveOps && e.frames > 1 && (c.animate || forced) {
+		// HoldLive (anim.go): its live op shows the held frame; nothing
+		// moves on and nothing asks for a repaint, whichever window Gets
+		return c.liveOpLocked(e, forced), true
+	}
 	op := c.frameLocked(e, now, forced)
 	if c.liveOps && e.frames > 1 && (c.animate || forced) {
 		return c.liveOpLocked(e, forced), true

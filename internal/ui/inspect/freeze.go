@@ -56,8 +56,11 @@ type freeze struct {
 	show    op.Ops    // each frozen frame: content and the tool's drawing over it
 	at      frameKey  // what the frame was laid out for
 	regions []Region  // the shell's areas then
-	note    string    // a message for the banner (say), until noteEnd
-	noteEnd time.Time
+	// describe fills a report's window and page fields as they were
+	// (Host.Describer): the page, the pane, the overlays and the theme
+	describe func(r *Report, red *Redactor)
+	note     string // a message for the banner (say), until noteEnd
+	noteEnd  time.Time
 }
 
 // Frozen reports that the window is held on a frame (FreezeKey).
@@ -104,7 +107,7 @@ func (t *Tool) freeze(gtx layout.Context) bool {
 	if t.fz != nil || t.state != inspecting || !t.contentOK || !t.rec || t.contentAt != at {
 		return false
 	}
-	t.fz = &freeze{content: t.content, at: at, regions: t.host.Regions()}
+	t.fz = &freeze{content: t.content, at: at, regions: t.host.Regions(), describe: t.host.Describer()}
 	t.host.Frozen(true)
 	t.host.Invalidate()
 	return true
@@ -136,6 +139,20 @@ func keepFocus(src input.Source) {
 // NotShown says the frame End just finished didn't go to the screen (the
 // window showed its boot placeholder instead): no freeze holds it.
 func (t *Tool) NotShown() { t.contentOK = false }
+
+// describe fills a report's window and page fields: as they were when
+// the freeze began while frozen, as they are now otherwise.
+func (t *Tool) describe(r *Report, red *Redactor) {
+	if t.fz != nil {
+		t.fz.describe(r, red)
+		return
+	}
+	t.host.Describer()(r, red)
+}
+
+// Say tells the user msg about the session: in a toast ("Inspect: " and
+// msg), or while frozen in the banner (say).
+func (t *Tool) Say(msg string) { t.say(msg) }
 
 // regions are the shell's areas: the frozen frame's while frozen.
 func (t *Tool) regions() []Region {

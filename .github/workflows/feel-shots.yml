@@ -18,6 +18,13 @@ on:
       - "internal/ui/inspect_wire.go"
       - "internal/ui/inspect_test.go"
       - "internal/ui/inspect_freeze_test.go"
+      # what a frozen frame draws depends on these too
+      - "internal/ui/slackc/inspect.go"
+      - "internal/imgcache/**"
+      - "third_party/gioui.org/io/input/clack_*.go"
+      - "third_party/gioui.org/io/input/router.go"
+      - "third_party/gioui.org/io/input/pointer.go"
+      - "third_party/gioui.org/op/clack_whole.go"
       - ".github/workflows/feel-shots.yml"
   workflow_dispatch:
 

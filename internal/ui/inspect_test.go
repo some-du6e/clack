@@ -3,10 +3,11 @@ package ui
 // The inspect tool (inspect_wire.go, internal/ui/inspect) on the fake
 // Slack (synthetic; nothing talks to Slack): the gated shortcut starts a
 // session, the reaction pill under the pointer is outlined as Slack's
-// UnstyledButton in Reaction, ↑ widens the pick to the Reaction, a click
-// copies one image and saves the report, whose text names the component,
-// element and rect, tags the ids and holds no content, and the click
-// never reaches the pill: after the session it takes clicks again.
+// UnstyledButton in Reaction, ↑ widens the pick to the Reaction, a
+// Shift+click copies one image at once and saves the report, whose text
+// names the component, element and rect, tags the ids and holds no
+// content, a plain click opens the review first, and neither click
+// reaches the pill: after the session it takes clicks again.
 
 import (
 	"encoding/json"
@@ -44,6 +45,7 @@ type inspectEnv struct {
 	pill    messages.ReactionRect
 	mu      sync.Mutex
 	reacted []string
+	calls   []string // every method the fake was called with
 	names   []string // the message's sender's names (must never show)
 }
 
@@ -62,11 +64,12 @@ func newInspectEnv(t *testing.T) *inspectEnv {
 		t.Fatal("no message to react to")
 	}
 	fs.SetHook(func(method string, _ url.Values) (any, bool) {
+		ie.mu.Lock()
+		ie.calls = append(ie.calls, method)
 		if strings.HasPrefix(method, "reactions.") {
-			ie.mu.Lock()
 			ie.reacted = append(ie.reacted, method)
-			ie.mu.Unlock()
 		}
+		ie.mu.Unlock()
 		return nil, false
 	})
 	e := startEnv(t, fs, t.TempDir())
@@ -109,6 +112,20 @@ func (e *inspectEnv) reactions() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]string(nil), e.reacted...)
+}
+
+// called lists the methods the fake was called with that start with
+// prefix.
+func (e *inspectEnv) called(prefix string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []string
+	for _, m := range e.calls {
+		if strings.HasPrefix(m, prefix) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // pillCenter is the middle of the pill where the last layout drew it (a
@@ -325,8 +342,8 @@ func TestInspectReactionPill(t *testing.T) {
 		t.Errorf("↓: outline %q, want the pill's UnstyledButton again", label)
 	}
 
-	// the click picks: one shot, one image on the clipboard at once, the
-	// session over
+	// the Shift+click picks: one shot, one image on the clipboard at once,
+	// the session over
 	p := e.pillCenter()
 	e.pickAndCopy(t, image.Pt(int(p.X), int(p.Y)))
 	if e.a.insp.Active() {
@@ -396,10 +413,20 @@ func TestInspectReactionPill(t *testing.T) {
 			t.Errorf("the report holds %q:\n%s", leak, txt)
 		}
 	}
-	// the pick's click never reached the pill
+	// a plain click opens the review; Enter copies it
+	time.Sleep(1100 * time.Millisecond) // the next report's file name (seconds) differs
+	e.startSession(t)
+	e.click(image.Pt(int(p.X), int(p.Y)))
+	e.frame()
+	e.a.inspectAfterFrame(&e.ops, e.size)
+	e.reviewAndCopy(t)
+	if *shots != 2 || e.a.insp.Active() {
+		t.Fatalf("after the plain click's review: %d shots, session %v", *shots, e.a.insp.Active())
+	}
+	// neither pick's click reached the pill
 	e.settle(300 * time.Millisecond)
 	if got := e.reactions(); len(got) != 0 {
-		t.Errorf("the pick's click toggled the reaction: %v", got)
+		t.Errorf("a pick's click toggled the reaction: %v", got)
 	}
 	// and after the session the pill takes clicks again
 	e.click(image.Pt(int(p.X), int(p.Y)))

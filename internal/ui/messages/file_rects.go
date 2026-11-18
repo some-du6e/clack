@@ -254,3 +254,15 @@ func (s *listState) toolbarRect() (string, image.Rectangle, bool) {
 	}
 	return ts, s.tbRect.Add(s.origin), true
 }
+
+// BodyPointer reports whether the body of message ts counts the pointer
+// as over it (richview View.Pointer: what its hover states, tooltips and
+// hover card follow), as the last frame left it; ok false when the
+// message has no body on screen.
+func (v *ChannelView) BodyPointer(ts string) (over, ok bool) {
+	r := v.s.rows[ts]
+	if r == nil || r.rv == nil {
+		return false, false
+	}
+	return r.rv.Pointer(), true
+}
