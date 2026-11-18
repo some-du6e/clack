@@ -75,7 +75,7 @@ func (a *App) sbOrgLabel(gtx layout.Context, conv *convInfo, x, base, avail int,
 	if avail <= gap {
 		return 0
 	}
-	col := theme.Over(theme.WithAlpha(a.th.C.SidebarText, 0xa3), a.sbBase) // theme-content-inv-ter
+	col := theme.Over(a.th.C.SidebarTextTer, a.sbBase) // theme-content-inv-ter
 	if sel {
 		col = a.th.C.SidebarActiveText // theme-content-hgl-1
 	}

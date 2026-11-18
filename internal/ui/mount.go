@@ -204,12 +204,15 @@ type MenuItem struct {
 	LabelText func(gtx layout.Context, c color.NRGBA) layout.Dimensions
 }
 
-func (a *App) menu(anchor image.Point, items []MenuItem) {
+func (a *App) menu(anchor image.Point, items []MenuItem) Overlay {
+	var o Overlay
 	if mkMenu != nil {
-		a.ShowOverlay(mkMenu(a, anchor, items))
-		return
+		o = mkMenu(a, anchor, items)
+	} else {
+		o = newShellMenu(a, anchor, items)
 	}
-	a.ShowOverlay(newShellMenu(a, anchor, items))
+	a.ShowOverlay(o)
+	return o
 }
 
 func (a *App) openSwitcher() {

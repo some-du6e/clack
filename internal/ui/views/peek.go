@@ -22,6 +22,7 @@ import (
 type peekPal struct {
 	bg       color.NRGBA // --dt_color-ctr-pry
 	hover    color.NRGBA // .p-peek_card .p-activity_ia4_page__item:hover: base-pry under base-pry-hover
+	pryHover color.NRGBA // --dt_color-base-pry-hover, that hover's image layer
 	rule     color.NRGBA // --dt_color-theme-otl-inv-pry (an item's border-bottom)
 	line     color.NRGBA // rgba(var(--sk_foreground_low),.13) (.p-peek_card--dms rows, header rule)
 	fg       color.NRGBA // --dt_color-content-pry
@@ -29,6 +30,7 @@ type peekPal struct {
 	ter      color.NRGBA // --dt_color-content-ter
 	invPry   color.NRGBA // --dt_color-theme-content-inv-pry
 	invSec   color.NRGBA // --dt_color-theme-content-inv-sec
+	invTer   color.NRGBA // --dt_color-theme-content-inv-ter
 	baseImp  color.NRGBA // --dt_color-theme-base-imp
 	contImp  color.NRGBA // --dt_color-theme-content-imp
 	skel     color.NRGBA // --dt_color-base-ter
@@ -37,8 +39,12 @@ type peekPal struct {
 	maxSolid color.NRGBA // rgb(var(--sk_foreground_max_solid))
 }
 
-// peekPalOf is the card's tokens in th's mode (kit.css and 858H / 7uI9
-// defaults, a stylesheet's overrides through th.Tokens).
+// peekPalOf is the card's tokens in th's mode (kit.css and the 858H /
+// qmPJ defaults: the high-contrast dark set 7uI9 is only Slack's for
+// highContrast; the account theme's root-scope theme-base-imp and
+// -content-imp, -content-inv-pry, -inv-sec, -inv-ter and -otl-inv-pry,
+// ThemeImp and ThemeInv*, when it changes them; a stylesheet's overrides
+// through th.Tokens).
 func peekPalOf(th *theme.Theme) peekPal {
 	dark := th != nil && th.Dark
 	var p peekPal
@@ -46,14 +52,16 @@ func peekPalOf(th *theme.Theme) peekPal {
 		p = peekPal{
 			bg:       rgb(0x212428),
 			hover:    flatten(argb(0x14f8f8f8), rgb(0x1a1d21)),
-			rule:     argb(0x80efe1f5),
-			line:     argb(0x21d1d2d3),
+			pryHover: argb(0x14f8f8f8),
+			rule:     argb(0x38efe1f5),
+			line:     argb(0x21e8e8e8), // --sk_foreground_low under .sk-client-theme--dark
 			fg:       rgb(0xf8f8f8),
 			sec:      rgb(0xb9babd),
 			ter:      rgb(0x9a9b9e),
-			invPry:   rgb(0xffffff),
-			invSec:   rgb(0xefe1f5),
-			baseImp:  rgb(0xd8bae1),
+			invPry:   rgb(0xf8f8f8),
+			invSec:   argb(0xcce3ceeb),
+			invTer:   argb(0x99e3ceeb),
+			baseImp:  rgb(0xcfa1de),
 			contImp:  rgb(0x200221),
 			skel:     rgb(0x212428),
 			otlTer:   argb(0x4d797c81),
@@ -64,6 +72,7 @@ func peekPalOf(th *theme.Theme) peekPal {
 		p = peekPal{
 			bg:       rgb(0xffffff),
 			hover:    flatten(argb(0x0f454447), rgb(0xffffff)),
+			pryHover: argb(0x0f454447),
 			rule:     argb(0x21611f69),
 			line:     argb(0x211d1c1d),
 			fg:       rgb(0x1d1c1d),
@@ -71,6 +80,7 @@ func peekPalOf(th *theme.Theme) peekPal {
 			ter:      rgb(0x5e5d60),
 			invPry:   rgb(0x39063a),
 			invSec:   argb(0xcc39063a),
+			invTer:   argb(0x8039063a),
 			baseImp:  rgb(0x83388a),
 			contImp:  rgb(0xf9edff),
 			skel:     rgb(0xeaeaea),
@@ -82,6 +92,20 @@ func peekPalOf(th *theme.Theme) peekPal {
 	if th == nil {
 		return p
 	}
+	if th.C.ThemeImp.A != 0 { // the account theme's important colour (theme.IATheme.Fields)
+		p.baseImp = th.C.ThemeImp
+		if th.C.ThemeImpText.A != 0 {
+			p.contImp = th.C.ThemeImpText
+		}
+	}
+	for _, f := range []struct {
+		dst *color.NRGBA
+		v   color.NRGBA
+	}{{&p.invPry, th.C.ThemeInvPry}, {&p.invSec, th.C.ThemeInvSec}, {&p.invTer, th.C.ThemeInvTer}, {&p.rule, th.C.ThemeOtlInvPry}} {
+		if f.v.A != 0 { // the account theme's primary in the root scope
+			*f.dst = f.v
+		}
+	}
 	tk := th.Tokens
 	set := func(dst *color.NRGBA, expr string) { theme.SetTok(tk, dst, theme.Both(expr), dark) }
 	set(&p.bg, "var(--dt_color-ctr-pry)")
@@ -92,6 +116,7 @@ func peekPalOf(th *theme.Theme) peekPal {
 	set(&p.line, "rgba(var(--sk_foreground_low),0.13)")
 	set(&p.invPry, "var(--dt_color-theme-content-inv-pry)")
 	set(&p.invSec, "var(--dt_color-theme-content-inv-sec)")
+	set(&p.invTer, "var(--dt_color-theme-content-inv-ter)")
 	set(&p.baseImp, "var(--dt_color-theme-base-imp)")
 	set(&p.contImp, "var(--dt_color-theme-content-imp)")
 	set(&p.skel, "var(--dt_color-base-ter)")
@@ -110,6 +135,7 @@ func peekPalOf(th *theme.Theme) peekPal {
 	if b2 != base || h2 != hov {
 		p.hover = flatten(h2, b2)
 	}
+	p.pryHover = h2
 	return p
 }
 
