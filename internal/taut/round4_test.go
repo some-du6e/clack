@@ -69,7 +69,9 @@ func TestBucketReadBehindBacklog(t *testing.T) {
 		return 1`)
 	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
 	eventually(t, 10*time.Second, "the injected message", func() bool { return injectedText(h, chAnn) == "first" })
-	h.js(`globalThis.__injText = 'second'; return 1`)
+	// the plugin's messages change (Message Logger's log): its provider
+	// runs again at the next read (api.redux.refresh bumps patchVersion)
+	h.js(`globalThis.__injText = 'second'; api.redux.refresh(); return 1`)
 
 	const each, depth = 10 * time.Millisecond, 50
 	sustainedBacklog(t, h.rt(), each, depth)

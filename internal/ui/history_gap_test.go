@@ -15,6 +15,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -473,8 +474,10 @@ func TestOlderPageAcrossRestartInList(t *testing.T) {
 	e.fs.SetCountLatest(ch, missed[len(missed)-1])
 	landed := e.countsProbe(probe)
 	e.reconnectSlow(t, 0)
-	if !e.untilSoft(20*time.Second, func() bool { return landed() && e.rowDrawn(ch, missed[len(missed)-1]) }) {
-		t.Fatal("the catch-up never drew the newest missed message")
+	// the reader is scrolled back: the newest row is off screen, so wait
+	// for the list to hold it
+	if !e.untilSoft(20*time.Second, func() bool { return landed() && slices.Contains(e.listTS(ch), missed[len(missed)-1]) }) {
+		t.Fatal("the catch-up never brought the newest missed message to the list")
 	}
 	e.settle(3 * time.Second) // the old window's older page lands
 	noHole(t, "after the old window's older page landed", e.listTS(ch), missed)
