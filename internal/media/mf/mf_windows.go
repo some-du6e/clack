@@ -424,12 +424,16 @@ func (p *player) doBind() {
 	hr := C.clack_me_bind(p.c, &info)
 	p.askMu.Unlock()
 	if hr != 0 {
-		p.fail(media.ErrSrcNotFound, fmt.Sprintf("the device: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
+		p.fail(media.ErrSrcNotFound, fmt.Sprintf("the device on %q: %s: %s", C.GoString(&info.adapter[0]), C.GoString(&info.step[0]), hrString(int32(hr))))
 		return
 	}
 	if !p.bound {
-		log.Printf("media: %s: Media Foundation on %q (vendor %#x, device %#x, feature level %s)", p.src.FileID,
-			C.GoString(&info.adapter[0]), uint32(info.vendor), uint32(info.device), featureLevel(uint32(info.featureLevel)))
+		decode := "video support (hardware decoding)"
+		if uint32(info.flags)&0x800 == 0 { // D3D11_CREATE_DEVICE_VIDEO_SUPPORT
+			decode = "no video support (" + hrString(int32(info.videoHR)) + "): Media Foundation decodes in software"
+		}
+		log.Printf("media: %s: Media Foundation on %q (vendor %#x, device %#x, feature level %s), %s", p.src.FileID,
+			C.GoString(&info.adapter[0]), uint32(info.vendor), uint32(info.device), featureLevel(uint32(info.featureLevel)), decode)
 	}
 	p.bound = true
 	p.ringOK = false
@@ -865,6 +869,8 @@ func hrString(hr int32) string {
 		return "0x80004001 (E_NOTIMPL)"
 	case 0x887a0005:
 		return "0x887a0005 (DXGI_ERROR_DEVICE_REMOVED)"
+	case 0x887a0004:
+		return "0x887a0004 (DXGI_ERROR_UNSUPPORTED)"
 	}
 	return fmt.Sprintf("%#x", uint32(hr))
 }

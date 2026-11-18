@@ -718,10 +718,24 @@ int32_t clack_me_bind(clackMF *m, clackMFInfo *info) {
 	D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0};
 	D3D_FEATURE_LEVEL got = 0;
 	ID3D11Device *dev = NULL;
-	UINT flags = D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-	hr = D3D11CreateDevice(ad, D3D_DRIVER_TYPE_UNKNOWN, NULL, flags, levels, 4, D3D11_SDK_VERSION, &dev, &got, NULL);
-	if (hr == E_INVALIDARG) { // a runtime without 11.1
-		hr = D3D11CreateDevice(ad, D3D_DRIVER_TYPE_UNKNOWN, NULL, flags, levels + 1, 3, D3D11_SDK_VERSION, &dev, &got, NULL);
+	// video support first (hardware decoding); an adapter refusing it (a
+	// runner's Basic Render Driver answers DXGI_ERROR_UNSUPPORTED, whatever
+	// the docs say) gets a device without it, and Media Foundation decodes
+	// in software on it
+	UINT tries[] = {D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_BGRA_SUPPORT};
+	UINT flags = 0;
+	for (int i = 0; i < 2; i++) {
+		flags = tries[i];
+		hr = D3D11CreateDevice(ad, D3D_DRIVER_TYPE_UNKNOWN, NULL, flags, levels, 4, D3D11_SDK_VERSION, &dev, &got, NULL);
+		if (hr == E_INVALIDARG) { // a runtime without 11.1
+			hr = D3D11CreateDevice(ad, D3D_DRIVER_TYPE_UNKNOWN, NULL, flags, levels + 1, 3, D3D11_SDK_VERSION, &dev, &got, NULL);
+		}
+		if (SUCCEEDED(hr)) {
+			break;
+		}
+		if (info != NULL && i == 0) {
+			info->videoHR = (int32_t)hr;
+		}
 	}
 	IDXGIAdapter_Release(ad);
 	if (FAILED(hr)) {
@@ -759,6 +773,7 @@ int32_t clack_me_bind(clackMF *m, clackMFInfo *info) {
 	m->adapter = desc.AdapterLuid;
 	if (info != NULL) {
 		info->featureLevel = (uint32_t)got;
+		info->flags = flags;
 	}
 	return S_OK;
 }

@@ -26,6 +26,8 @@ typedef struct {
 	uint32_t format; // the ring's DXGI format
 	int32_t hr;      // the failing call's HRESULT
 	char step[64];   // the failing call
+	uint32_t flags;  // the engine's device's creation flags
+	int32_t videoHR; // why a device with video support wasn't made
 } clackMFInfo;
 
 // The counts of live objects (clack_me_live), for tests: all back to 0
