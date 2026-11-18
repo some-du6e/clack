@@ -495,12 +495,10 @@ func (v *ChannelFiles) open(it fileItem) {
 	openFile(v.h, it)
 }
 
-// openLink is LinkEntity's onListItemSelect: window.open(url, "_blank").
-func (v *ChannelFiles) openLink(u string) {
-	if o, ok := v.h.(interface{ OpenURL(string) }); ok {
-		o.OpenURL(u)
-	}
-}
+// openLink is LinkEntity's onListItemSelect: window.open(url, "_blank"),
+// which the desktop app opens as any link (a Slack permalink in the
+// client, the rest in the browser: hostHandler's follow).
+func (v *ChannelFiles) openLink(u string) { hostHandler{v.h}.follow(u, false) }
 
 // openFileMenu is the row's More actions: the Files view's menu (the items
 // Clack has of getFileActionsMenuItems), at FileActions' Popover.

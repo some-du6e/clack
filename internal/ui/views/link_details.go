@@ -84,9 +84,7 @@ func (v *LinkDetails) Layout(gtx C) D {
 		v.Close()
 	}
 	if v.urlBtn.Clicked(gtx) {
-		if o, ok := v.h.(interface{ OpenURL(string) }); ok {
-			o.OpenURL(v.link)
-		}
+		hostHandler{v.h}.follow(v.link, false) // Slack's Link: in the client, else the browser
 	}
 	shares, ok, _ := v.data.get()
 	for _, s := range shares {

@@ -9,6 +9,7 @@ import (
 
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -33,9 +34,10 @@ func (h *linkHost) JumpToMessage(ch, ts, thread string) {
 // items, files and the rest) is Slack's Link click: a permalink goes
 // through openPermalink (a mrkdwn link's with openThreadForRootMessage),
 // a slack: link to handleDeepLink, a message_mention pill to
-// jumpToMessage with its own ids. Clack handed every link to the
-// deep-link handler, which opened nothing for a permalink and logged its
-// path.
+// jumpToMessage with its own ids, and a file's page (a PDF in the Files
+// view) is a link like any other. Clack handed every link to the
+// deep-link handler, which opened nothing for a permalink, a help article
+// or a file's page and logged its path.
 func TestRowLinksFollowSlackLinks(t *testing.T) {
 	h := &linkHost{}
 	hh := hostHandler{h}
@@ -44,6 +46,8 @@ func TestRowLinksFollowSlackLinks(t *testing.T) {
 	deep := "slack://channel?team=T0FAKE&id=" + ch + "&message=1762516060.000100"
 	hh.OpenURL(perma)
 	hh.OpenURL(deep)
+	pdf := "https://fakeclub.slack.com/files/U0FAKE00002/F0SYNTH0001/plan.pdf"
+	openFile(h, fileItem{core.File{ID: "F0SYNTH0001", Filetype: "pdf", Permalink: pdf}})
 	if m, ok := any(hh).(interface{ OpenMrkdwnLink(url, text string) }); ok {
 		m.OpenMrkdwnLink(perma, "the launch thread")
 	} else {
@@ -56,7 +60,7 @@ func TestRowLinksFollowSlackLinks(t *testing.T) {
 	} else {
 		t.Errorf("a row's message_mention pill has no click of its own")
 	}
-	if want := []string{perma + " openRoot=false", deep + " openRoot=false", perma + " openRoot=true"}; !slices.Equal(h.follows, want) {
+	if want := []string{perma + " openRoot=false", deep + " openRoot=false", pdf + " openRoot=false", perma + " openRoot=true"}; !slices.Equal(h.follows, want) {
 		t.Errorf("Link clicks %q\nwant %q", h.follows, want)
 	}
 	if len(h.urls) > 0 {
