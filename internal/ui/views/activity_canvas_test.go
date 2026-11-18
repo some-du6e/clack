@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 
+	"gioui.org/layout"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
@@ -78,9 +80,14 @@ func (h *cmHost) OpenMessageSecondary(ch, ts string) {
 	h.mu.Unlock()
 }
 
-func (h *cmHost) SecondaryShows(ch, ts string) bool     { return false }
-func (h *cmHost) OpenDetailSecondary(string, func(C) D) {}
-func (h *cmHost) SecondaryShowsDetail(string) bool      { return false }
+// the inbox's column (ActivitySecondary: the draw is a layout.Widget, a
+// func(C) D literal would leave cmHost without the interface)
+func (h *cmHost) SecondaryShows(ch, ts string) bool         { return false }
+func (h *cmHost) OpenDetailSecondary(string, layout.Widget) {}
+func (h *cmHost) SecondaryShowsDetail(string) bool          { return false }
+
+var _ ActivitySecondary = (*cmHost)(nil)
+var _ CanvasOpener = (*cmHost)(nil)
 
 // cmOpts is one layout: Dense or Detailed, activity_entry_layout_revisions_2
 // on or off, the inbox's detail panel beside it (inbox) or the persistent
