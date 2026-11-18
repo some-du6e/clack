@@ -2265,7 +2265,11 @@ blinks partial and whole in turns of 3 s, their draws and the process's
 CPU; 12 s of a scroll, partial frames on and off, what its frames cost
 and copied; on Xvfb the window's pixels read back with python3-xlib, the
 caret's toggling between blinks and a partial frame's window bit for bit
-a whole frame's). Not in `UPSTREAM.patch`.
+a whole frame's; on macOS each blink's drawable read back after the frame
+texture's draw into it, bit for bit the frame texture: `ClackVerifyCopy`,
+`FrameStats.CopyChecked` and `CopyMismatchPx`, with the layer's drawables
+made readable by `CLACK_METAL_READBACK`, the test's only). Not in
+`UPSTREAM.patch`.
 
 ## 47. app: the caret's blink period from the OS (macOS's, X11's XSETTINGS)
 
