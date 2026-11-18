@@ -45,6 +45,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
 `gpu/headless/clack_live_test.go`, `layout/list.go`,
 `layout/clack_list_test.go`, `gpu/clack_partial.go`, `gpu/clack_sticky.go`,
+`gpu/clack_floor.go`,
 `gpu/pack.go`, `gpu/clack_partial_test.go`, `gpu/headless/clack_partial_test.go`,
 `gpu/internal/driver/clack_partial.go`, `internal/d3d11/d3d11_windows.go`,
 `internal/gl/gl.go`, `app/clack_caret_macos.go`, `app/clack_caret_macos.m`,
@@ -2268,8 +2269,22 @@ caret's toggling between blinks and a partial frame's window bit for bit
 a whole frame's; on macOS each blink's drawable read back after the frame
 texture's draw into it, bit for bit the frame texture: `ClackVerifyCopy`,
 `FrameStats.CopyChecked` and `CopyMismatchPx`, with the layer's drawables
-made readable by `CLACK_METAL_READBACK`, the test's only). Not in
-`UPSTREAM.patch`.
+made readable by `CLACK_METAL_READBACK`, the test's only).
+
+`gpu/clack_floor.go` has two switches for the pixel tests that hold a
+change in packing to Gio's own placement rounding. `ClackPackOrder` packs
+the coverage atlas in a seeded order instead of the ops' (every path's
+coverage on other texels: the noise of any packing change, where a
+transparent probe path moves only the paths after it), and
+`ClackCanaryTexels` writes coverage one half into the centre texel of a
+whole frame's largest stencil regions (pixels a renderer error gets
+wrong). internal/ui's `TestFrameCostWindow` takes its new-against-old floor
+from both kinds of move, and requires the bound to reject the new way with
+16 such texels in every scene. Its karim 1x light thread scene had fit the
+probes' floor with 2% to spare (5,260 px against 5,380, ui a3f8d0b0), and
+went past it when ui 556c6251's theme colours made one probe move 18%
+fewer pixels (5,282 against 5,116) with the difference itself unchanged.
+Not in `UPSTREAM.patch`.
 
 ## 47. app: the caret's blink period from the OS (macOS's, X11's XSETTINGS)
 

@@ -943,6 +943,10 @@ func createColorPrograms(b driver.Device, vsSrc shader.Sources, fsSrc [3]shader.
 // the place the whole frame does, and clears just those texels first.
 // The pages are sized before (frame).
 func (r *renderer) stencilClips(pathCache *opCache, ops []*pathOp, dmg []image.Rectangle) {
+	var canary map[stickyRegion]bool // ClackCanaryTexels (tests)
+	if dmg == nil {
+		canary = canaryRegions(ops, int(clackFloor.canary.Load()))
+	}
 	// page by page: with sticky places (Clack patch 46) a page's regions
 	// aren't together in the ops' order, and a page begun again would be
 	// cleared again
@@ -984,6 +988,9 @@ func (r *renderer) stencilClips(pathCache *opCache, ops []*pathOp, dmg []image.R
 				if dmg == nil {
 					begin()
 					r.stencil(p, v, clip, place, clip)
+					if canary[stickyRegion{p, i}] {
+						r.canaryTexel(clip, place)
+					}
 					continue
 				}
 				for _, d := range dmg {
@@ -1170,6 +1177,22 @@ func (r *renderer) packStencils(pops *[]*pathOp, sticky *stickyAtlas) {
 		clear(ops[k:])
 		ops = ops[:k]
 		sticky.pack(&r.packer, ops)
+		*pops = ops
+		return
+	}
+	if seed := clackFloor.packSeed.Load(); seed != 0 {
+		// Clack patch 46, tests: the regions Gio keeps, in seed's order
+		// (ClackPackOrder)
+		var i int
+		for i < len(ops) {
+			if ops[i].clip.Empty() {
+				ops[i] = ops[len(ops)-1]
+				ops = ops[:len(ops)-1]
+				continue
+			}
+			i++
+		}
+		packShuffled(&r.packer, ops, seed)
 		*pops = ops
 		return
 	}
