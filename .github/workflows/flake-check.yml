@@ -792,10 +792,12 @@ jobs:
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
 
   # The Threads view's live tests (dogfood-fixes-1: its reads, marks,
-  # reconnects, gaps and reloads) under the race detector, every run
-  # counted: dispatch with -f only=threads-live -f count=10.
+  # reconnects, gaps and reloads), every run counted, then once under the
+  # race detector. Dispatch only, never with a push's whole set (flake-check
+  # is a fifth of the account's job-minutes): -f only=threads-live
+  # -f count=3; more repeats only to characterise a failure count=3 shows.
   threads-live:
-    if: ${{ !inputs.only || startsWith('threads-live', inputs.only) }}
+    if: ${{ inputs.only != '' && startsWith('threads-live', inputs.only) }}
     name: "threads-live ${{ matrix.part }}"
     runs-on: ubuntu-latest
     strategy:
@@ -818,10 +820,17 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "threads ${{ matrix.part }}, race detector, every run counted"
+      - name: "threads ${{ matrix.part }}, every run counted"
         env:
           TEST: ${{ matrix.test }}
           PKG: ./internal/ui/views
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "threads ${{ matrix.part }}, once under the race detector"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ./internal/ui/views
+          COUNT: "1"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
 
   flakes-1113:
