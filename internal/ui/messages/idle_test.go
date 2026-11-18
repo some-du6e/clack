@@ -17,6 +17,7 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -176,8 +177,8 @@ func idleViews(t *testing.T, app *core.App, ch coreHost, trees func() bool) {
 		{"channel", cv, cv.s, len(msgs), image.Pt(1600, 1400)},
 		{"thread", tv, tv.s, 2, image.Pt(800, 1400)},
 		// the ui root's short-thread placement (conversation.go
-		// layoutConvo): the list is as tall as last frame's content
-		// height when that's shorter than the pane, the composer under it
+		// layoutConvo): the list over the composer, clipped to its
+		// content when that's shorter, the composer under it
 		{"thread-fit", &fitPane{tv: tv, comp: 200}, tv.s, 2, image.Pt(800, 1400)},
 	} {
 		t.Run(tc.name, func(t *testing.T) { idleCheck(t, tc.v, tc.s, tc.rows, tc.size, trees, &inval) })
@@ -262,23 +263,30 @@ func idleCheck(t *testing.T, v interface {
 	}
 }
 
-// fitPane is conversation.go's layoutConvo for a thread: the list sized by
-// the thread's last ContentHeight, a composer of comp px under it.
+// fitPane is conversation.go's layoutConvo for a thread: the list laid out
+// over a composer of comp px, then clipped to the content height it
+// measured when the thread is shorter (the composer goes under it).
 type fitPane struct {
 	tv   *ThreadView
 	comp int
-	fits []int // list heights given, frame by frame
+	fits []int // list heights drawn, frame by frame
 }
 
 func (f *fitPane) Layout(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
-	listH := sz.Y - f.comp
-	if h := f.tv.ContentHeight(); h > 0 && h < listH {
+	avail := sz.Y - f.comp
+	f.tv.Prepare(gtx)
+	g := gtx
+	g.Constraints = layout.Exact(image.Pt(sz.X, avail))
+	m := op.Record(gtx.Ops)
+	f.tv.Layout(g)
+	call := m.Stop()
+	listH := avail
+	if h := f.tv.ContentHeight(); h > 0 && h < avail {
 		listH = h
 	}
 	f.fits = append(f.fits, listH)
-	g := gtx
-	g.Constraints = layout.Exact(image.Pt(sz.X, listH))
-	f.tv.Layout(g)
+	defer clip.Rect{Max: image.Pt(sz.X, listH)}.Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
 	return layout.Dimensions{Size: sz}
 }
