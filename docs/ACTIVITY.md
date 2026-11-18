@@ -1189,9 +1189,10 @@ Round 5 (2026-11-18):
   (ten channels a call, two at a time) bounds them; after a rate limit the
   next try waits its Retry-After.
 - The badges' zero marks rows read in the page Activity holds, stamped
-  with the loads started by then: a load that went out after it brings
-  the server's state, which wins, and one out when the zero came doesn't
-  undo it. It's queued with the realtime entries, in socket order, once
+  with the loads started by then: the answer of a load that went out after
+  it brings the server's state for the rows it lists, which wins, while
+  rows it doesn't list (older pages a refresh keeps) and the answer of a
+  load out when the zero came keep the mark. It's queued with the realtime entries, in socket order, once
   however many come between draws. Without the inbox, Slack's rule over
   counts and alerts (all present and 0) marks the rows the same way.
 - A thread tree from earlier props that projected away from what the row
