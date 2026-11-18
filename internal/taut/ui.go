@@ -988,9 +988,9 @@ func (t *Taut) MessageViewConv(ch, ts string, fresh bool) (core.Message, uint64,
 // is ready: one JS gave after every change to this message (and every
 // change to its channel's bucket as a whole) marked so far was posted to
 // it, none queued, and after the mirror handled core's event need (the
-// Seq of the event that wrote the caller's copy; 0: none). One that isn't
-// may be the plugins' copy of the revision before an update, while JS
-// hasn't answered for the new one. A change to another message of the
+// core.Event.EmitSeq of the event that wrote the caller's copy; 0: none).
+// One that isn't may be the plugins' copy of the revision before an
+// update, while JS hasn't answered for the new one. A change to another message of the
 // channel doesn't hold it: round 5's ready was the channel's, and while
 // anything in it changed within each JS round trip an edit drew its
 // unpatched source (a word Censorship masks) and a viewed row never went
@@ -1321,7 +1321,7 @@ type viewCache struct {
 	msgVer  map[msgKey]uint64
 	pendMsg map[msgKey]int
 	chanVer map[string]uint64
-	// mirrorSeen is the Seq of the last core event the mirror handled,
+	// mirrorSeen is the EmitSeq of the last core event the mirror handled,
 	// its marks made: a message an event wrote isn't ready before it, as
 	// JS may not have heard of the change yet (the hub applied the event
 	// first, or the viewer's own reaction, applied in the frame)
@@ -1504,7 +1504,7 @@ func (v *viewCache) msgStale(ch, ts string) (onScreen bool) {
 }
 
 // noteSeen records that the mirror handled core's event seq (its marks
-// made); events come to it in Seq order.
+// made); events come to it in EmitSeq order.
 func (v *viewCache) noteSeen(seq uint64) {
 	if seq > v.mirrorSeen.Load() {
 		v.mirrorSeen.Store(seq)

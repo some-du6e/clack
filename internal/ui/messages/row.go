@@ -152,9 +152,9 @@ type row struct {
 	viewWait  bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
 	viewReady bool          // the view it last read was ready (MessageViewState)
 	viewConv  uint64
-	// need is the Seq of the core event that wrote its message (entry.seq,
-	// 0: a load's): JS's copy is of this revision only once taut's mirror
-	// handled that event
+	// need is the EmitSeq of the core event that wrote its message
+	// (entry.seq; a load's: core's EmitSeq as it came back): JS's copy is
+	// of this revision only once taut's mirror handled that event
 	need             uint64
 	viewEpoch        uint64       // taut's ViewEpoch when it last read the view (applyView)
 	col              image.Point  // body column origin, row-local

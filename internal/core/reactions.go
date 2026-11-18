@@ -138,7 +138,7 @@ func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
 	}
 	v := a.message(ch, &m)
 	ev := a.emit(Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
-	return &ev // with its Seq: the views that show it now (ApplyEvent) wait for the mirror by it
+	return &ev // with its EmitSeq: the views that show it now (ApplyEvent) wait for the mirror by it
 }
 
 // applyReaction adds or removes user's name reaction on m, counting each

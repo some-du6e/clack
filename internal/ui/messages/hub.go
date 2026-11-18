@@ -18,9 +18,13 @@ import (
 type entry struct {
 	m   core.Message
 	rev uint32
-	// seq is the Seq of the core event that wrote m (0: a load's, or
-	// one of ours): a row waits for the plugins' view of it until taut's
-	// mirror has handled that event (applyView)
+	// seq is core.Event.EmitSeq (emit order, not a message change
+	// counter) of the event that wrote m, or for a load's entries core's
+	// EmitSeq as the load came back (loadSeq); 0: none (injected and
+	// grouped entries). A row waits for the plugins' view of it until
+	// taut's mirror has handled that event (applyView). A merge that feeds
+	// it another counter (activity-live-msg's per-message change sequence)
+	// turns the wait off: TestRowWaitsForTheMirror
 	seq uint64
 }
 
@@ -77,10 +81,10 @@ type model struct {
 	// between them never loaded: loadOlder pages before the model's oldest)
 	dropped bool
 
-	// loadSeq is core's last event Seq when the load being taken in came
-	// back (callers hold mu): the entries it brings in or changes were
-	// written by that event or one before it (setAll), so a row waits for
-	// the mirror to have handled them, as for an event's entry
+	// loadSeq is core's EmitSeq (App.EmitSeq) when the load being taken
+	// in came back (callers hold mu): the entries it brings in or changes
+	// were written by that event or one before it (setAll), so a row waits
+	// for the mirror to have handled them, as for an event's entry
 	loadSeq uint64
 
 	// reconv is what changed of what Docs read while a load was out
@@ -357,7 +361,7 @@ func (hb *hub) ensureLoaded(m *model) {
 		defer cancel()
 		if m.threadTS != "" {
 			msgs, err := hb.app.Replies(ctx, m.ch, m.threadTS)
-			seq := hb.app.EventSeq()
+			seq := hb.app.EmitSeq()
 			if f := loadLanded.Load(); f != nil {
 				(*f)(m)
 			}
@@ -381,7 +385,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			hb.afterLoad(m)
 		} else {
 			p, err := hb.app.History(ctx, m.ch, "")
-			seq := hb.app.EventSeq()
+			seq := hb.app.EmitSeq()
 			if f := loadLanded.Load(); f != nil {
 				(*f)(m)
 			}
@@ -467,7 +471,7 @@ func (hb *hub) loadOlder(m *model) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		p, err := hb.app.History(ctx, m.ch, before)
-		seq := hb.app.EventSeq()
+		seq := hb.app.EmitSeq()
 		if f := loadLanded.Load(); f != nil {
 			(*f)(m)
 		}
@@ -592,7 +596,8 @@ func (m *model) find(ts string) int {
 	return -1
 }
 
-// upsert puts msg in, written by core's event seq (0: none).
+// upsert puts msg in, written by the core event whose EmitSeq is seq (0:
+// none; an update placed after a load passes its own event's, never 0).
 func (m *model) upsert(msg core.Message, seq uint64) {
 	if !m.visible(&msg) {
 		// a reply taken back from the conversation (removeBroadcast) leaves
@@ -737,7 +742,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		if chm != nil {
 			chm.mu.Lock()
 			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
-				chm.upsert(*ev.Msg, ev.Seq)
+				chm.upsert(*ev.Msg, ev.EmitSeq)
 				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
 					delete(chm.typing, ev.Msg.User)
@@ -749,7 +754,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		}
 		if thm != nil {
 			thm.mu.Lock()
-			thm.upsert(*ev.Msg, ev.Seq)
+			thm.upsert(*ev.Msg, ev.EmitSeq)
 			thm.noteLive(ev.Msg.TS, false)
 			if ev.Type == "message" {
 				delete(thm.typing, ev.Msg.User)
@@ -762,7 +767,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		if ev.Msg.ThreadTS == "" || ev.Msg.ThreadTS == ev.Msg.TS {
 			if _, t2 := hb.models(ev.Channel, ev.Msg.TS); t2 != nil {
 				t2.mu.Lock()
-				t2.upsert(*ev.Msg, ev.Seq)
+				t2.upsert(*ev.Msg, ev.EmitSeq)
 				t2.noteLive(ev.Msg.TS, false)
 				t2.rev++
 				t2.mu.Unlock()
@@ -787,7 +792,7 @@ func (hb *hub) apply(ev core.Event) bool {
 				m.remove(ev.ReplacesTS)
 				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
 			}
-			m.upsert(*ev.Msg, ev.Seq)
+			m.upsert(*ev.Msg, ev.EmitSeq)
 			m.rev++
 			m.mu.Unlock()
 		}
@@ -1077,7 +1082,7 @@ func (hb *hub) applyReactions(ev core.Event) bool {
 		if i := m.find(ts); i >= 0 {
 			msg := m.msgs[i].m
 			msg.Reactions = ev.Msg.Reactions
-			m.msgs[i] = entry{m: msg, rev: m.bump(), seq: ev.Seq}
+			m.msgs[i] = entry{m: msg, rev: m.bump(), seq: ev.EmitSeq}
 			m.noteLive(ts, false)
 			m.rev++
 			changed = true

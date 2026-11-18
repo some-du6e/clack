@@ -43,7 +43,7 @@ type App struct {
 
 	subMu sync.Mutex
 	subs  map[*sub]struct{}
-	evSeq uint64 // the last event's Seq (subMu)
+	evSeq uint64 // the last event's EmitSeq (subMu)
 
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
@@ -465,15 +465,15 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 	}
 }
 
-// EventSeq is the Seq of the last event emitted so far.
-func (a *App) EventSeq() uint64 {
+// EmitSeq is the EmitSeq of the last event emitted so far.
+func (a *App) EmitSeq() uint64 {
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
 	return a.evSeq
 }
 
 // emit sends ev to every subscriber and returns it as they get it (with
-// its Seq).
+// its EmitSeq).
 func (a *App) emit(ev Event) Event {
 	a.noteDocChange(&ev) // what ev changed of what message Docs read (msg_refs.go)
 	if !snapshotQuietEvents[ev.Type] {
@@ -485,7 +485,7 @@ func (a *App) emit(ev Event) Event {
 	// numbered under the lock that orders the sends: every subscriber
 	// gets the events in Seq order
 	a.evSeq++
-	ev.Seq = a.evSeq
+	ev.EmitSeq = a.evSeq
 	for s := range a.subs {
 		if s.lagged {
 			select {

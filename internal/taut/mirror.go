@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -106,6 +107,26 @@ type mirror struct {
 	queued  []change
 	qposted bool
 	qrt     *runtime
+
+	// hold, set by HoldMirror (tests), stops the loop before it handles
+	// the next core event until it's closed
+	hold atomic.Pointer[chan struct{}]
+}
+
+// HoldMirror (tests) stops taut's mirror before it handles the next core
+// event, and every one after, until release: a mirror that's behind (a
+// backlog of events ahead of one, a long sweep), which the views that
+// wait for it (MessageViewState's need) must wait out.
+func (t *Taut) HoldMirror() (release func()) {
+	ch := make(chan struct{})
+	t.mirror.hold.Store(&ch)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			t.mirror.hold.Store(nil)
+			close(ch)
+		})
+	}
 }
 
 // jsTracked are the slices whose changes go to JS only for ids it holds.
@@ -175,7 +196,7 @@ func (m *mirror) start() {
 	evs, stop := m.t.app.Subscribe()
 	// what core emitted before this is in the store, which JS reads afresh
 	// (a new runtime holds nothing): handled
-	m.t.ui.views.noteSeen(m.t.app.EventSeq())
+	m.t.ui.views.noteSeen(m.t.app.EmitSeq())
 	raws, stopRaw := m.t.app.SubscribeRaw()
 	go func() {
 		defer stop()
@@ -190,13 +211,23 @@ func (m *mirror) start() {
 				if !ok {
 					return
 				}
-				m.onEvent(ev)
-				if ev.Type == "resync" && ev.Seq == 0 {
+				if h := m.hold.Load(); h != nil {
+					<-*h // tests: HoldMirror
+				}
+				resync := ev.Type == "resync" && ev.EmitSeq == 0
+				var seen uint64
+				if resync {
 					// fell behind: what it missed is in the store, and the
-					// resync invalidated everything
-					m.t.ui.views.noteSeen(m.t.app.EventSeq())
+					// resync invalidates everything. Read before it: an
+					// event emitted while it runs is queued behind it, its
+					// marks not made, and read after, its need passed
+					seen = m.t.app.EmitSeq()
+				}
+				m.onEvent(ev)
+				if resync {
+					m.t.ui.views.noteSeen(seen)
 				} else {
-					m.t.ui.views.noteSeen(ev.Seq)
+					m.t.ui.views.noteSeen(ev.EmitSeq)
 				}
 			case ev := <-raws:
 				m.t.onRaw(ev)
