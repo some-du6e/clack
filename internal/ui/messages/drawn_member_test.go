@@ -26,11 +26,14 @@ func TestSenderRenameMidFrameDraws(t *testing.T) {
 	app, _, _ := shotsApp(t)
 	const ch = "C0RENAMMF1"
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "lunch", IsChannel: true, IsMember: true, NumMembers: 12})
+	// Cara's row between two of Ana's: whichever way the list lays its
+	// rows out, an "ana" label is drawn before Cara's row in a frame
 	base := time.Now().Add(-time.Hour).Unix()
-	a, b := fmt.Sprintf("%d.000100", base), fmt.Sprintf("%d.000200", base+600)
+	a, b, c := fmt.Sprintf("%d.000100", base), fmt.Sprintf("%d.000200", base+600), fmt.Sprintf("%d.000300", base+1200)
 	app.S.SetLatest(ch, []slack.Message{
 		{Type: "message", TS: a, User: "UANA00001", Text: "lunch at noon?", Blocks: shotRich(shotSection("lunch at noon?"))},
 		{Type: "message", TS: b, User: "UCARA0001", Text: "sure", Blocks: shotRich(shotSection("sure"))},
+		{Type: "message", TS: c, User: "UANA00001", Text: "booked", Blocks: shotRich(shotSection("booked"))},
 	}, false)
 	f := newInvFrames(t)
 	v := NewChannelView(invHost{coreHost{app: app, th: theme.New(false)}, f.invalidate}, ch)
@@ -50,7 +53,14 @@ func TestSenderRenameMidFrameDraws(t *testing.T) {
 		mu.Lock()
 		drawn = append(drawn, txt)
 		mu.Unlock()
-		if txt != "ana" || !armed.Load() {
+		if !armed.Load() {
+			return
+		}
+		if txt == "cara" {
+			armed.Store(false) // her row came first: no rename in this frame
+			return
+		}
+		if txt != "ana" {
 			return
 		}
 		once.Do(func() {
@@ -66,7 +76,7 @@ func TestSenderRenameMidFrameDraws(t *testing.T) {
 		})
 	}
 	t.Cleanup(func() { labelHook = nil })
-	if !f.run(frame, 5*time.Second, func() bool { return itemHeight(v.s, b) > 0 && drew("ana") && drew("cara") }) {
+	if !f.run(frame, 5*time.Second, func() bool { return itemHeight(v.s, c) > 0 && itemHeight(v.s, a) > 0 && drew("ana") && drew("cara") }) {
 		t.Fatal("the rows and their senders never drew")
 	}
 	for i := 0; i < 3; i++ {
@@ -76,7 +86,11 @@ func TestSenderRenameMidFrameDraws(t *testing.T) {
 	time.Sleep(5 * time.Millisecond) // the next frame starts ms after the last one read her
 	armed.Store(true)
 	frame()
-	<-renamed
+	select {
+	case <-renamed:
+	default:
+		t.Fatal("the frame drew no row of Ana's before Cara's: the rename didn't land mid-frame")
+	}
 	mu.Lock()
 	drawn = nil
 	mu.Unlock()

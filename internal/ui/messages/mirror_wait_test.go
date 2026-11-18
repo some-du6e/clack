@@ -179,8 +179,16 @@ func TestResyncClaimsOnlyWhatCameBefore(t *testing.T) {
 			return
 		}
 		once.Do(func() {
-			// JS has what the resync sent it
+			// JS has what the resync sent it (posted 8 ms on), and has read
+			// the channel again since: its copy of the message is the one
+			// from before the reaction
+			time.Sleep(40 * time.Millisecond)
 			_ = rt.Do(func(*jsrt.Ctx) error { return nil })
+			for dl := time.Now().Add(3 * time.Second); time.Now().Before(dl); time.Sleep(2 * time.Millisecond) {
+				if _, _, ready, ok := tautOf().MessageViewState(ch, msg.TS, false, 0); ok && ready {
+					break
+				}
+			}
 			// a reaction lands as the resync's handling ends; the mirror
 			// handles it only after the event queued before it
 			hold := tautOf().HoldMirror()
