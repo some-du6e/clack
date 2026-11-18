@@ -506,7 +506,7 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if e.suffix != "" && nw+gtx.Dp(8) < tw {
 		sc := theme.Over(a.th.C.SidebarTextTer, a.sbBase) // .p-channel_sidebar__member_label: theme-content-inv-ter
 		if e.sel {
-			sc = theme.Over(theme.WithAlpha(c.SidebarActiveText, 0x99), c.SidebarActive)
+			sc = c.SidebarActiveText // --selected's theme-content-hgl-1, opaque
 		}
 		at(gtx, image.Pt(tx+nw+gtx.Dp(6), gtx.Dp(1)), image.Pt(tw-nw-gtx.Dp(6), rowH), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {

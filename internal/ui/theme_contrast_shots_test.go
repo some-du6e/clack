@@ -114,9 +114,16 @@ func TestThemeContrastShots(t *testing.T) {
 			rail := image.Rect(0, gtx.Dp(theme.TopNavH), gtx.Dp(theme.RailW), e.size.Y)
 			bg, ink := contrastSample(img, rail)
 			c := &e.a.th.C
+			// Activity's badges: ThemeImp, or the default theme's, which
+			// the views keep as their own while it's unset
+			imp, impText := c.ThemeImp, c.ThemeImpText
+			if imp.A == 0 {
+				def := theme.CachedFields(theme.DefaultIATheme, dark, true)
+				imp, impText = def["ThemeImp"], def["ThemeImpText"]
+			}
 			t.Logf("%s (ia_theme %s): rail (the inspect tool's sample) bg %s ink %s; palette rail ink %s, search pill %s + %s, sidebar text %s / unread %s, Activity badges %s on %s",
 				pre, e.a.acct.t.JSON(), bg, ink, contrastHex(c.ChromeText), contrastHex(c.SearchBg), contrastHex(c.ChromeHoverTint),
-				contrastHex(c.SidebarText), contrastHex(c.SidebarTextUnread), contrastHex(c.ThemeImpText), contrastHex(c.ThemeImp))
+				contrastHex(c.SidebarText), contrastHex(c.SidebarTextUnread), contrastHex(impText), contrastHex(imp))
 			e.movePtr(e.listPoint())
 			// Direct messages with its rows (the Unreads filter off), one
 			// opened (--selected) and the pointer on another (:hover, a

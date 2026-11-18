@@ -60,32 +60,20 @@ func (a *App) createMenuOpen() bool {
 // createIconEase is the icon's rotation timing, cubic-bezier(.34,1.56,.64,1).
 func createIconEase(x float64) float64 { return cubicBezierY(.34, 1.56, .64, 1, x) }
 
-// createButton draws the + at org (window coordinates), cs wide.
+// createButton draws the + at org (window coordinates), cs wide. The
+// colours read the Clickable inside clickArea's content, after its
+// update, so a press shows :active in the frame that delivers it (Gio
+// asks for no other while it's held); the scale wraps the button, so it
+// takes the hover the last frame left, as the strip's other buttons do.
 func (a *App) createButton(gtx layout.Context, org image.Point, cs int) layout.Dimensions {
 	c := &a.th.C
 	st := a.createStrip()
 	btn := a.clicks.get("rail.new")
-	hov, open := btn.Hovered(), a.createMenuOpen()
-	on := open || btn.Pressed()
+	open := a.createMenuOpen()
 	base := a.chromeBase(org.Add(image.Pt(cs/2, cs/2)))
-	var bgT, fgT color.NRGBA
-	switch {
-	case on: // :active, --active
-		bgT, fgT = c.ChromeBasePry, c.ChromeContentTer
-		if hov {
-			bgT = c.ChromeBasePryHover
-		}
-	case hov:
-		bgT, fgT = theme.Over(c.ChromeHoverTint, theme.Over(c.ChromeActive, base)), c.ChromeText
-	default:
-		bgT = theme.Over(c.ChromeActive, base)
-		fgT = theme.Over(c.ChromeTextDim, bgT)
-	}
 	now, reduce := gtx.Now, a.reduceMotion()
-	bg := st.bg.value(now, bgT, 125*time.Millisecond, stripEase, false)
-	fg := st.fg.value(now, fgT, 125*time.Millisecond, stripEase, false)
 	scaleT, rotT := 1.0, 0.0
-	if hov {
+	if btn.Hovered() {
 		scaleT = 1.1
 	}
 	if open {
@@ -93,12 +81,14 @@ func (a *App) createButton(gtx layout.Context, org image.Point, cs int) layout.D
 	}
 	scale := st.scale.value(now, scaleT, 125*time.Millisecond, stripEase, reduce)
 	rot := st.rt.value(now, rotT, 320*time.Millisecond, createIconEase, reduce)
-	if st.bg.running(now) || st.fg.running(now) || st.scale.running(now) || st.rt.running(now) {
+	if st.scale.running(now) || st.rt.running(now) {
 		gtx.Execute(op.InvalidateCmd{}) // the transitions' frames, then none
 	}
 	ctr := f32.Pt(float32(cs)/2, float32(cs)/2)
 	ts := op.Affine(f32.Affine2D{}.Scale(ctr, f32.Pt(float32(scale), float32(scale)))).Push(gtx.Ops)
 	defer ts.Pop()
+	var bg, bgT color.NRGBA
+	var on, hov bool
 	return clickArea(gtx, btn, func(gtx layout.Context, sz image.Point, _ bool) {
 		if !on && !hov && bg == bgT { // settled: the strip's own chrome composite
 			a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, c.ChromeActive)
@@ -106,6 +96,26 @@ func (a *App) createButton(gtx layout.Context, org image.Point, cs int) layout.D
 		}
 		theme.RRect(gtx, image.Rectangle{Max: sz}, sz.X/2, bg)
 	}, func(gtx layout.Context) layout.Dimensions {
+		hov = btn.Hovered()
+		on = open || btn.Pressed()
+		var fgT color.NRGBA
+		switch {
+		case on: // :active, --active
+			bgT, fgT = c.ChromeBasePry, c.ChromeContentTer
+			if hov {
+				bgT = c.ChromeBasePryHover
+			}
+		case hov:
+			bgT, fgT = theme.Over(c.ChromeHoverTint, theme.Over(c.ChromeActive, base)), c.ChromeText
+		default:
+			bgT = theme.Over(c.ChromeActive, base)
+			fgT = theme.Over(c.ChromeTextDim, bgT)
+		}
+		bg = st.bg.value(now, bgT, 125*time.Millisecond, stripEase, false)
+		fg := st.fg.value(now, fgT, 125*time.Millisecond, stripEase, false)
+		if st.bg.running(now) || st.fg.running(now) {
+			gtx.Execute(op.InvalidateCmd{})
+		}
 		off := (cs - gtx.Dp(20)) / 2
 		r := op.Affine(f32.Affine2D{}.Rotate(ctr, float32(rot*math.Pi/180))).Push(gtx.Ops)
 		at(gtx, image.Pt(off, off), image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {

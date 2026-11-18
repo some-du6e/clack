@@ -163,12 +163,18 @@ func (a *App) appMenuButton(gtx layout.Context, h int) {
 	org := image.Pt(gtx.Dp(8), (h-b)/2)
 	btn := a.clicks.get("nav.appmenu")
 	at(gtx, org, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
-		tile, ink := appMenuColors(&a.th.C, btn.Hovered(), btn.Pressed())
+		var tile color.NRGBA
 		return clickArea(gtx, btn, func(gtx layout.Context, sz image.Point, _ bool) {
 			if tile.A > 0 {
 				a.chrome(gtx, org, image.Rectangle{Max: sz}, 0, tile)
 			}
 		}, func(gtx layout.Context) layout.Dimensions {
+			// the Clickable as this frame's events left it (clickArea's
+			// update ran; the tile draws after this): a press shows its
+			// :active tile in the frame that delivers it, and Gio asks
+			// for no other while it's held
+			var ink color.NRGBA
+			tile, ink = appMenuColors(&a.th.C, btn.Hovered(), btn.Pressed())
 			is := gtx.Dp(18)
 			off := (b - is) / 2
 			t := op.Offset(image.Pt(off, off)).Push(gtx.Ops)

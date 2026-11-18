@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -172,9 +173,10 @@ func TestAccountThemeDrawSites(t *testing.T) {
 			if got, want := e.tcShot(t).RGBAAt(probe.X, probe.Y), theme.Over(white(0x26), rest); !tcNear(got, want, 2) {
 				t.Errorf("app menu :hover tile %s over %s; Slack desktop rgba(255,255,255,.15) = %s", tcHex(tcNRGBA(got)), tcHex(rest), tcHex(want))
 			}
+			// a held press: the one frame that delivers it (a window gets
+			// no other while the button is down)
 			pt := f32.Pt(float32(mid.X), float32(mid.Y))
 			e.r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt})
-			e.frame()
 			e.frame()
 			if got, want := e.tcShot(t).RGBAAt(probe.X, probe.Y), theme.Over(white(0x33), rest); !tcNear(got, want, 2) {
 				t.Errorf("app menu :active tile %s over %s; Slack desktop rgba(255,255,255,.2) = %s", tcHex(tcNRGBA(got)), tcHex(rest), tcHex(want))
@@ -190,13 +192,18 @@ func TestAccountThemeDrawSites(t *testing.T) {
 // The focus mode button while focus mode is on is
 // .p-control_strip__circle_button--active: the rail scope's
 // theme-base-pry with theme-content-ter under focus mode's silent sidebar
-// theme (gray, brightness 6): #f8f8f8 in light mode, #e0e0e0 in dark,
-// not the main pane's background. Drawn and sampled beside its moon.
+// theme (gray, brightness 6): #f8f8f8 with a #1d1c1d moon in light mode,
+// #e0e0e0 with #101214 in dark, not the main pane's colours; hovered,
+// :hover's blended surf-inv-pry-hover layer over the base-pry (#eae9ea,
+// #e2e2e2). Drawn and sampled: the disc beside the moon, the moon's ink.
 func TestAccountThemeFocusButtonActive(t *testing.T) {
 	for _, c := range []struct {
-		dark bool
-		want color.NRGBA
-	}{{false, color.NRGBA{R: 0xf8, G: 0xf8, B: 0xf8, A: 0xff}}, {true, color.NRGBA{R: 0xe0, G: 0xe0, B: 0xe0, A: 0xff}}} {
+		dark            bool
+		fill, ink, hovd color.NRGBA
+	}{
+		{false, tcRGB(0xf8f8f8), tcRGB(0x1d1c1d), tcRGB(0xeae9ea)},
+		{true, tcRGB(0xe0e0e0), tcRGB(0x101214), tcRGB(0xe2e2e2)},
+	} {
 		a, ca, _ := fakeApp(t, map[string]any{"focus_mode_expiration_ts": time.Now().Add(90 * time.Minute).Unix()})
 		ca.SetExperimentGroup("silent_sidebar", "on")
 		ft, ok := a.focusTheme()
@@ -206,35 +213,161 @@ func TestAccountThemeFocusButtonActive(t *testing.T) {
 		theme.CachedFields(ft, c.dark, true) // restyle's FieldsAsync then has them at once
 		a.th.Dark = c.dark
 		a.th.Refresh()
-		cs := 36
-		win := image.Pt(52, 52)
-		a.winSize = win
-		img := tcDraw(t, a, win, nil, func(gtx layout.Context) { a.focusButton(gtx, image.Pt(8, 8), cs) })
-		if got := img.RGBAAt(8+6, 8+cs/2); !tcNear(got, c.want, 2) {
-			t.Errorf("dark=%v: the active focus button is %s; Slack theme-base-pry %s (the gray silent theme's rail scope)", c.dark, tcHex(tcNRGBA(got)), tcHex(c.want))
+		w := newTCWin(t, a, func(gtx layout.Context) { a.focusButton(gtx, image.Pt(8, 8), 36) })
+		w.later(300 * time.Millisecond)
+		img := w.shot()
+		if got := img.RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.fill, 2) {
+			t.Errorf("dark=%v: the active focus button is %s; Slack theme-base-pry %s (the gray silent theme's rail scope)", c.dark, tcHex(tcNRGBA(got)), tcHex(c.fill))
+		}
+		if k, off, peak := tcAlong(img, tcIcon, c.fill, c.ink); k < .85 || k > 1.1 || off > 16 {
+			t.Errorf("dark=%v: the moon's ink peaks at %s (%.2f of the way to Slack's theme-content-ter %s)", c.dark, tcHex(peak), k, tcHex(c.ink))
+		}
+		w.ptr(pointer.Move, tcMid)
+		w.later(300 * time.Millisecond)
+		if got := w.shot().RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.hovd, 2) {
+			t.Errorf("dark=%v: the hovered active focus button is %s; Slack's :hover layer over theme-base-pry %s", c.dark, tcHex(tcNRGBA(got)), tcHex(c.hovd))
 		}
 	}
 }
 
-// tcDraw lays draw out over the chrome's base colour in win (the pointer
-// at ptr when not nil, a few frames for its hover), then renders the
-// last frame.
-func tcDraw(t *testing.T, a *App, win image.Point, ptr *image.Point, draw func(gtx layout.Context)) *image.RGBA {
+// A press on the control strip's focus and + buttons shows :active while
+// it's held: theme-base-pry with theme-content-ter, hovered :hover's layer
+// over it (the default theme's rail scope: #efdef6 and #39063a light,
+// #e4d0ec and #200221 dark). A window gets the frame that delivers the
+// press and then only the frames the app asks for, so the press's own
+// frame must start the 125 ms transition (they read the Clickable before
+// its update and missed it).
+func TestAccountThemeControlStripPress(t *testing.T) {
+	for _, b := range []struct {
+		name string
+		draw func(a *App, gtx layout.Context)
+	}{
+		{"focus", func(a *App, gtx layout.Context) { a.focusButton(gtx, image.Pt(8, 8), 36) }},
+		{"+", func(a *App, gtx layout.Context) { a.createButton(gtx, image.Pt(8, 8), 36) }},
+	} {
+		for _, c := range []struct {
+			dark      bool
+			fill, ink color.NRGBA
+		}{
+			{false, tcRGB(0xefdef6), tcRGB(0x39063a)},
+			{true, tcRGB(0xe4d0ec), tcRGB(0x200221)},
+		} {
+			a, _, _ := fakeApp(t, nil)
+			a.th.Dark = c.dark
+			a.th.Refresh()
+			w := newTCWin(t, a, func(gtx layout.Context) { b.draw(a, gtx) })
+			w.ptr(pointer.Move, tcMid)
+			w.later(300 * time.Millisecond) // hovered, settled
+			w.ptr(pointer.Press, tcMid)     // held from here
+			if _, ok := w.r.WakeupTime(); !ok {
+				t.Errorf("%s dark=%v: the press's frame asks for no other, so the held press never shows", b.name, c.dark)
+			}
+			w.later(300 * time.Millisecond)
+			img := w.shot()
+			if got := img.RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.fill, 2) {
+				t.Errorf("%s dark=%v: held, the button is %s; Slack's :active (hovered) %s", b.name, c.dark, tcHex(tcNRGBA(got)), tcHex(c.fill))
+			}
+			if k, off, peak := tcAlong(img, tcIcon, c.fill, c.ink); k < .8 || k > 1.1 || off > 16 {
+				t.Errorf("%s dark=%v: held, its icon's ink peaks at %s (%.2f of the way to Slack's theme-content-ter %s)", b.name, c.dark, tcHex(peak), k, tcHex(c.ink))
+			}
+		}
+	}
+}
+
+// The control strip test buttons' geometry: a 36px button at (8, 8) in a
+// 52x52 window; tcDisc is inside its disc left of the icon, tcIcon the
+// icon's box (with room for the hover's scale and tilt).
+var (
+	tcMid  = image.Pt(26, 26)
+	tcDisc = image.Pt(13, 26)
+	tcIcon = image.Rect(15, 15, 37, 37)
+)
+
+func tcRGB(v uint32) color.NRGBA {
+	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+}
+
+// tcWin runs a's frames through a router at a clock the test moves, as a
+// window gets them: a frame per delivered event, then the ones the app
+// asks for.
+type tcWin struct {
+	t    *testing.T
+	a    *App
+	size image.Point
+	r    input.Router
+	ops  op.Ops
+	now  time.Time
+	draw func(gtx layout.Context)
+}
+
+// newTCWin lays draw out over the chrome's base colour in a 52x52 window
+// and runs its first frame.
+func newTCWin(t *testing.T, a *App, draw func(gtx layout.Context)) *tcWin {
 	t.Helper()
-	var r input.Router
-	ops := new(op.Ops)
-	frame := func() {
-		ops.Reset()
-		gtx := layout.Context{Ops: ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(win), Source: r.Source()}
-		paint.FillShape(ops, a.chromeBase(image.Pt(win.X/2, win.Y/2)), clip.Rect{Max: win}.Op())
-		draw(gtx)
-		r.Frame(ops)
+	w := &tcWin{t: t, a: a, size: image.Pt(52, 52), now: time.Now(), draw: draw}
+	a.winSize = w.size
+	w.frame()
+	return w
+}
+
+func (w *tcWin) frame() {
+	w.ops.Reset()
+	gtx := layout.Context{Ops: &w.ops, Now: w.now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(w.size), Source: w.r.Source()}
+	paint.FillShape(&w.ops, w.a.chromeBase(image.Pt(w.size.X/2, w.size.Y/2)), clip.Rect{Max: w.size}.Op())
+	w.draw(gtx)
+	w.r.Frame(&w.ops)
+}
+
+// ptr queues a mouse event at p (a press with the primary button) and runs
+// the frame that delivers it.
+func (w *tcWin) ptr(kind pointer.Kind, p image.Point) {
+	ev := pointer.Event{Kind: kind, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y))}
+	if kind == pointer.Press {
+		ev.Buttons = pointer.ButtonPrimary
 	}
-	frame()
-	if ptr != nil {
-		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(ptr.X), float32(ptr.Y))})
+	w.r.Queue(ev)
+	w.frame()
+}
+
+// later runs a frame d on (the transitions the last one started done).
+func (w *tcWin) later(d time.Duration) {
+	w.now = w.now.Add(d)
+	w.frame()
+}
+
+func (w *tcWin) shot() *image.RGBA { return pixeltest.Render(w.t, w.size.X, w.size.Y, &w.ops) }
+
+// tcAlong is the most-covered ink pixel in r (the one farthest from bg)
+// placed on the line from bg to ink: a is how far along it lies (1: ink,
+// 0: nothing drawn), off its distance from the line in levels.
+func tcAlong(img *image.RGBA, r image.Rectangle, bg, ink color.NRGBA) (a, off float64, peak color.NRGBA) {
+	ab := func(v int) int {
+		if v < 0 {
+			return -v
+		}
+		return v
 	}
-	frame()
-	frame()
-	return pixeltest.Render(t, win.X, win.Y, ops)
+	far := -1
+	r = r.Intersect(img.Bounds())
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			c := img.RGBAAt(x, y)
+			if d := ab(int(c.R)-int(bg.R)) + ab(int(c.G)-int(bg.G)) + ab(int(c.B)-int(bg.B)); d > far {
+				far, peak = d, tcNRGBA(c)
+			}
+		}
+	}
+	dv := [3]float64{float64(ink.R) - float64(bg.R), float64(ink.G) - float64(bg.G), float64(ink.B) - float64(bg.B)}
+	pv := [3]float64{float64(peak.R) - float64(bg.R), float64(peak.G) - float64(bg.G), float64(peak.B) - float64(bg.B)}
+	dd := dv[0]*dv[0] + dv[1]*dv[1] + dv[2]*dv[2]
+	if dd == 0 {
+		return 0, 0, peak
+	}
+	a = (pv[0]*dv[0] + pv[1]*dv[1] + pv[2]*dv[2]) / dd
+	var res float64
+	for i := range pv {
+		e := pv[i] - a*dv[i]
+		res += e * e
+	}
+	return a, math.Sqrt(res), peak
 }
