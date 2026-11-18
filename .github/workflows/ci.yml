@@ -240,7 +240,7 @@ jobs:
       # devices' pixels are windows-applog's and macos's)
       - name: Gio live and external images and what a frame was asked for (vendored gioui.org/op/paint, gpu, app)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestDrawOpsExternalImage|TestFrameEventAsked$|TestReplayKeeps' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
+        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestDrawOpsExternal|TestFrameEventAsked$|TestReplayKeeps' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
       # Gio patch 22: what each point of a window with a hidden title bar
       # is (the caption buttons, the top band, the caption, the client);
       # the Windows codes on real windows are windows-applog's. Patch 24:

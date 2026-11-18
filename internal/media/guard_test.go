@@ -3,6 +3,7 @@ package media
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -13,27 +14,60 @@ import (
 // C-19), around Download's guards; and message content never touches the
 // disk.
 var nativeFetches = []string{
-	"SetSource(",                    // IMFMediaEngine's URL source
-	"CreateObjectFromURL",           // IMFSourceResolver
-	"MFCreateFile",                  // a file byte stream
-	"MFCreateTempFile",              //
-	`URLWithString:@"http`,          // an http(s) AVURLAsset
-	"AVURLAssetHTTPCookiesKey",      // the cookie handed to Apple's stack
-	"AVURLAssetHTTPHeaderFieldsKey", // private, the same
-	"NSURLSession",                  //
-	"souphttpsrc",                   // GStreamer's HTTP source
-	"GST_PLAY_FLAG_DOWNLOAD",        // playbin's download buffering (a temp file)
-	"os.Create",                     // also os.CreateTemp
-	"os.WriteFile",                  //
-	"os.OpenFile",                   //
+	// Media Foundation's URL sources and URL readers
+	"SetSource(", "_SetSource(", "SetSourceElements(", "AddElement(", "CreateObjectFromURL",
+	"MFCreateSourceReaderFromURL", "MFCreateSinkWriterFromURL", "MFCreateFile", "MFCreateTempFile",
+	// Apple's fetches, and the cookie handed to them
+	`URLWithString:@"http`, "AVURLAssetHTTPCookiesKey", "AVURLAssetHTTPHeaderFieldsKey", "NSURLSession",
+	"AVAssetDownloadURLSession", "NSURLConnection", "dataWithContentsOfURL:", "playerWithURL:", "playerItemWithURL:",
+	// GStreamer's
+	"souphttpsrc", "GST_PLAY_FLAG_DOWNLOAD",
+	// Windows' own HTTP
+	"WinHttpOpen", "InternetOpenUrl", "URLDownloadToFile",
+	// files: message content never touches the disk
+	"os.Create", "os.WriteFile", "os.OpenFile", "os.MkdirTemp", "ioutil.TempFile", "ioutil.WriteFile",
+	"fopen(", "CreateFileW", "CreateFile2", "SHCreateStreamOnFile", "writeToFile:", "writeToURL:",
+	"NSFileManager", "NSTemporaryDirectory",
 }
 
-// scanNative is each of nativeFetches src holds, as "pattern".
+// guarded are calls allowed only in a file that checks, at run time, that
+// the URL it hands the native stack is a made-up clack-media one.
+var guarded = map[string]string{
+	"URLAssetWithURL:": `isEqualToString:@"clack-media"`,
+}
+
+// vtableAllow is every COM method the media packages' C may call through
+// a vtable: a URL source under another name (a renamed slot) fails.
+var vtableAllow = map[string]bool{
+	"QueryInterface": true, "AddRef": true, "Release": true,
+	"Play": true, "Pause": true, "SetCurrentTime": true, "SetVolume": true, "SetMuted": true, "SetLoop": true,
+	"SetDefaultPlaybackRate": true, "SetPlaybackRate": true, "CurTime": true, "GetDuration": true, "IsPaused": true,
+	"IsEnded": true, "IsSeeking": true, "GetReadyState": true, "GetError": true, "GetErrorCode": true,
+	"GetExtendedErrorCode": true, "GetNativeVideoSize": true, "HasVideo": true, "HasAudio": true,
+	"GetNumberOfStreams": true, "GetStreamAttribute": true, "Shutdown": true, "TransferVideoFrame": true,
+	"OnVideoStreamTick": true, "SetSourceFromByteStream": true, "CreateInstance": true, "SetMultithreadProtected": true,
+}
+
+var vtableCall = regexp.MustCompile(`lpVtbl->([A-Za-z0-9_]+)\(`)
+
+// scanNative is what src calls that it may not: each of nativeFetches it
+// holds, a guarded call without its check, a vtable method off the
+// allowlist.
 func scanNative(src string) []string {
 	var hits []string
 	for _, p := range nativeFetches {
 		if strings.Contains(src, p) {
 			hits = append(hits, p)
+		}
+	}
+	for call, check := range guarded {
+		if strings.Contains(src, call) && !strings.Contains(src, check) {
+			hits = append(hits, call+" without the clack-media check")
+		}
+	}
+	for _, m := range vtableCall.FindAllStringSubmatch(src, -1) {
+		if !vtableAllow[m[1]] {
+			hits = append(hits, "lpVtbl->"+m[1])
 		}
 	}
 	return hits
@@ -55,7 +89,7 @@ func TestNativeNeverFetches(t *testing.T) {
 			return nil
 		}
 		switch filepath.Ext(path) {
-		case ".go", ".c", ".m", ".h":
+		case ".go", ".c", ".m", ".h", ".cc", ".cpp", ".cxx", ".mm", ".hpp", ".swift":
 		default:
 			return nil
 		}
@@ -84,6 +118,11 @@ func TestNativeNeverFetches(t *testing.T) {
 		`@{AVURLAssetHTTPCookiesKey: cookies}`,
 		`f, _ := os.CreateTemp("", "v")`,
 		`g_object_set(src, "location", u, NULL); /* souphttpsrc */`,
+		`hr = e->lpVtbl->SetSrcURL(e, url);`,
+		`IMFMediaEngine_SetSourceElements(engine, elems);`,
+		`_asset = [AVURLAsset URLAssetWithURL:[NSURL URLWithString:s] options:nil];`,
+		`FILE *f = fopen(path, "wb");`,
+		`[data writeToFile:path atomically:YES];`,
 	} {
 		if len(scanNative(src)) == 0 {
 			t.Errorf("the scan misses %q", src)

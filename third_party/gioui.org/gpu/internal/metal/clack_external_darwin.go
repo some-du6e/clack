@@ -23,8 +23,8 @@ func (b *Backend) ClackDevice() (uint8, uintptr) {
 }
 
 // ClackWrap implements driver.ClackExternal: native is an id<MTLTexture>
-// on b's device, of an _sRGB pixel format. The texture retains it until
-// it's released, and samples it with the backend's shared sampler for the
+// on b's device, of an _sRGB pixel format, whose reference the texture
+// takes over; it samples it with the backend's shared sampler for the
 // filter (no mipmaps).
 func (b *Backend) ClackWrap(native uintptr, width, height int, filter driver.TextureFilter) (driver.Texture, error) {
 	if native == 0 {
@@ -38,11 +38,17 @@ func (b *Backend) ClackWrap(native uintptr, width, height int, filter driver.Tex
 	if s == 0 {
 		return nil, errors.New("metal: [MTLDevice newSamplerStateWithDescriptor:] failed")
 	}
-	tex := C.CFTypeRef(native)
-	C.CFRetain(tex)
-	b.apiCall()
 	b.wrapped++
-	return &Texture{backend: b, texture: tex, sampler: s, width: width, height: height, external: true}, nil
+	return &Texture{backend: b, texture: C.CFTypeRef(native), sampler: s, width: width, height: height, external: true}, nil
+}
+
+// ClackDrop implements driver.ClackExternal: the texture's reference no
+// wrapper takes.
+func (b *Backend) ClackDrop(native uintptr) {
+	if native != 0 {
+		C.CFRelease(C.CFTypeRef(native))
+		b.apiCall()
+	}
 }
 
 // ClackForgetState implements driver.ClackExternal: an ask encodes
@@ -53,6 +59,12 @@ func (b *Backend) ClackForgetState() {}
 func (b *Backend) ClackNative(t driver.Texture) uintptr {
 	return uintptr(t.(*Texture).texture)
 }
+
+// ClackRetain implements driver.ClackExternalTest.
+func (b *Backend) ClackRetain(native uintptr) { C.CFRetain(C.CFTypeRef(native)) }
+
+// ClackRefs implements driver.ClackExternalTest.
+func (b *Backend) ClackRefs(native uintptr) int { return int(C.CFGetRetainCount(C.CFTypeRef(native))) }
 
 // ClackWrapped implements driver.ClackExternalTest.
 func (b *Backend) ClackWrapped() int { return b.wrapped }

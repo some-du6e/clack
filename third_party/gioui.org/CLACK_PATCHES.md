@@ -2113,41 +2113,62 @@ makes each a new mipmapped texture, an upload and a mip generation.
   backend's `ClackDevice`; after the ask the backend forgets its state
   cache (`ClackForgetState`: patch 37 trusts the context's state, and the
   ask may have used the immediate context).
-- A texture is wrapped (`ClackWrap`: no upload, no mipmaps, linear or
-  nearest) and cached under its native handle and `Key`: the same key
-  draws the frame before's wrapper, a new key wraps again, and the old
-  wrapper goes at the end of the first frame that doesn't draw it
-  (`textureCache.frame`), after the GPU finished the frame that drew it
-  last (Metal's `BeginFrame` waits for the previous command buffer).
-  Direct3D 11 AddRefs the shader resource view and samples it with one of
-  the backend's two clamped samplers, releasing only the view; Metal
-  `CFRetain`s the texture and samples it with patch 37's shared sampler.
+- The ask hands out the texture with a reference of its own (AddRef'd,
+  `CFRetain`ed), taken under the image's lock: a producer closing on
+  another thread can't free the texture between the ask and Gio's use of
+  it (round 1's review). A texture is wrapped (`ClackWrap`: no upload, no
+  mipmaps, linear or nearest), which takes that reference over, and
+  cached under its native handle and `Key`: the same key draws the frame
+  before's wrapper and drops the ask's reference (`ClackDrop`), a new key
+  wraps again, and the old wrapper goes at the end of the first frame
+  that doesn't draw it (`textureCache.frame`), after the GPU finished the
+  frame that drew it last (Metal's `BeginFrame` waits for the previous
+  command buffer). Direct3D 11 samples the view with one of the
+  backend's two clamped samplers (MinLOD and MaxLOD 0: the view's first
+  level, whatever its count), releasing only the view; Metal samples the
+  texture with patch 37's shared sampler.
 - No texture (`ok` false, or a device that can't draw external textures:
   OpenGL, Vulkan, which never ask) draws the still, stretched over the
-  op's size the same way; a zero or uniform still draws nothing (a 1×1
-  transparent texture the renderer keeps: every image paint needs a
-  texture to bind).
+  op's size the same way. A still that is itself external, or live and
+  showing an external image (a viewer's player over the inline player's
+  last frame), is resolved in turn, at most four deep (`resolveImage`); a
+  zero or uniform still, one nested deeper, and any source whose pixels
+  are shorter than its bounds (an external op's header) draw nothing: a
+  1×1 transparent texture the renderer keeps (every image paint needs a
+  texture to bind), never an upload of the header.
+- The ask may copy, sync and query on the device's immediate context
+  (Media Foundation's ring is a `CopyResource` and keyed-mutex calls), and
+  must leave its pipeline state as it found it: `ClackForgetState` resets
+  patch 37's cache, not the rasterizer state Gio sets once.
 - The texture must be of an sRGB format (`R8G8B8A8_UNORM_SRGB`,
   `BGRA8Unorm_sRGB`): Gio samples images decoded to linear light, as the
   textures it makes are.
 
 `FrameStats.Externals` counts the asks and `ExternalWraps` the wrappers a
-frame made. `ClackExternalTest` lets tests make a texture on the device
-and see its handle (`ClackNative`) and the wrappers held (`ClackWrapped`).
+frame made. `ClackExternalTest` lets tests make a texture on the device,
+see its handle (`ClackNative`), hand out a reference (`ClackRetain`), read
+its reference count (`ClackRefs`) and the wrappers held (`ClackWrapped`).
+On damage-redraw's partial frames, each new wrapper needs a texture id
+(`cache.nextID++`, the entry's id on a hit, one of its own for the 1×1):
+add `TestClackExternalPartial` with that merge.
 
 Clack's callers are behind `internal/media`'s `gio_patch50.go` /
 `gio_patch50_stock.go` pair; a stock Gio build draws the still (the
 poster). Tests: `gpu/clack_external_test.go` (`TestDrawOpsExternalImage`:
 the renderer's own `uploadImages`/`texHandle` against a device that counts
-wraps, releases and forgets: one ask per paint shown and none outside the
-viewport, one wrap per key, the old wrapper released, the still without a
-texture, nothing for a zero or uniform still, no ask on a device without
-the interface), on ci's linux-gio job; `gpu/headless/clack_external_test.go`
+wraps, releases, drops, forgets and every native reference: one ask per
+paint shown and none outside the viewport, one wrap per key, each ask's
+reference kept by a wrapper or dropped, the old wrapper released, the
+still without a texture, nothing for a zero or uniform still, no ask on a
+device without the interface; `TestDrawOpsExternalNestedStill`: external
+and live stills resolved in turn, too deep drawing nothing), on ci's
+linux-gio job; `gpu/headless/clack_external_test.go`
 (`TestClackExternalImage`: a texture the device made, drawn through its
 native handle under a rounded clip, an opacity layer and a rotating,
 magnifying transform, gives every pixel of an `ImageOp` of the same image;
 `TestClackExternalKeys`: the same key wraps nothing, a new key once, new
 pixels under a new key show, no texture draws the still, a zero or uniform
-still nothing), on ci's windows-applog (Direct3D 11, WARP) and macos
-(Metal) jobs; on llvmpipe (linux-gio) they check that the op draws its
+still nothing; both check the texture's native reference count is back
+where it was once the wrappers go), on ci's windows-applog (Direct3D 11,
+WARP) and macos (Metal) jobs; on llvmpipe (linux-gio) they check that the op draws its
 still and never asks. Not in `UPSTREAM.patch`.

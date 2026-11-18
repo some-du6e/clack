@@ -33,7 +33,9 @@ type Texture struct {
 
 // Frames is a backend player's frames as the GPU asks for them.
 type Frames interface {
-	// Texture is the frame to draw on dev now, on the goroutine drawing the
+	// Texture is the frame to draw on dev now, with a reference the GPU
+	// takes over (paint.ExternalImage's rule: taken under the player's
+	// lock, so Close can't free it between), on the goroutine drawing the
 	// window's frame; it must return at once. false: none yet on this
 	// device (the still shows).
 	Texture(dev Device) (Texture, bool)

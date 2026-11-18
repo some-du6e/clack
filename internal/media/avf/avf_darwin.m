@@ -602,7 +602,9 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 		done = _handed; // handed out at the frame before: its GPU work is done
 		_handed = _newest;
 	}
-	*tex = (uintptr_t)(__bridge void *)CVMetalTextureGetTexture(_handed.tex);
+	// a reference Gio takes over, taken under the lock: a close releasing
+	// the frame can't come between
+	*tex = (uintptr_t)CFBridgingRetain(CVMetalTextureGetTexture(_handed.tex));
 	*key = _handed.seq;
 	os_unfair_lock_unlock(&_lock);
 	if (done.tex != NULL) {
@@ -765,8 +767,8 @@ static ClackAVPlayer *P(void *p) { return (__bridge ClackAVPlayer *)p; }
 void *clack_avf_new(uintptr_t h, int64_t total, int seekable, const char *uti, const char *url, int drawW, int drawH) {
 	@autoreleasepool {
 		NSURL *u = [NSURL URLWithString:@(url)];
-		if (u == nil) {
-			return NULL;
+		if (u == nil || ![u.scheme isEqualToString:@"clack-media"]) {
+			return NULL; // AVFoundation is never given a URL it would fetch itself
 		}
 		ClackAVPlayer *o = [[ClackAVPlayer alloc] initWithHandle:h total:total seekable:seekable != 0 uti:@(uti) url:u drawW:drawW drawH:drawH];
 		return (__bridge_retained void *)o;

@@ -4,7 +4,7 @@ package d3d11
 
 import (
 	"errors"
-	"math"
+	"syscall"
 	"unsafe"
 
 	"gioui.org/gpu/internal/driver"
@@ -19,10 +19,16 @@ func (b *Backend) ClackDevice() (uint8, uintptr) {
 	return driver.ClackAPIDirect3D11, uintptr(unsafe.Pointer(b.dev))
 }
 
+// view is native as the shader resource view it is (a COM pointer, not Go
+// memory).
+func view(native uintptr) *d3d11.ShaderResourceView {
+	return *(**d3d11.ShaderResourceView)(unsafe.Pointer(&native))
+}
+
 // ClackWrap implements driver.ClackExternal: native is an
 // ID3D11ShaderResourceView* of a texture on b's device, of an _SRGB
-// format. The texture holds a reference to the view until it's released;
-// its sampler (clamped, no mipmaps) is the backend's.
+// format, whose reference the texture takes over; its sampler (clamped,
+// mip level 0 only) is the backend's.
 func (b *Backend) ClackWrap(native uintptr, width, height int, filter driver.TextureFilter) (driver.Texture, error) {
 	if native == 0 {
 		return nil, errors.New("d3d11: ClackWrap of no view")
@@ -40,8 +46,8 @@ func (b *Backend) ClackWrap(native uintptr, width, height int, filter driver.Tex
 			AddressV:      d3d11.TEXTURE_ADDRESS_CLAMP,
 			AddressW:      d3d11.TEXTURE_ADDRESS_CLAMP,
 			MaxAnisotropy: 1,
-			MinLOD:        -math.MaxFloat32,
-			MaxLOD:        math.MaxFloat32,
+			MinLOD:        0,
+			MaxLOD:        0, // the view's first level, whatever its count
 		})
 		b.calls.API++
 		if err != nil {
@@ -49,12 +55,19 @@ func (b *Backend) ClackWrap(native uintptr, width, height int, filter driver.Tex
 		}
 		b.extSamplers[i] = s
 	}
-	// native is a COM pointer, not Go memory
-	view := *(**d3d11.ShaderResourceView)(unsafe.Pointer(&native))
-	d3d11.IUnknownAddRef(unsafe.Pointer(view), view.Vtbl.AddRef)
-	b.calls.API++
 	b.wrapped++
-	return &Texture{backend: b, sampler: s, resView: view, width: width, height: height, bindings: driver.BufferBindingTexture, external: true}, nil
+	return &Texture{backend: b, sampler: s, resView: view(native), width: width, height: height, bindings: driver.BufferBindingTexture, external: true}, nil
+}
+
+// ClackDrop implements driver.ClackExternal: the view's reference no
+// wrapper takes.
+func (b *Backend) ClackDrop(native uintptr) {
+	if native == 0 {
+		return
+	}
+	v := view(native)
+	d3d11.IUnknownRelease(unsafe.Pointer(v), v.Vtbl.Release)
+	b.calls.API++
 }
 
 // ClackForgetState implements driver.ClackExternal: the state cache sets
@@ -67,6 +80,21 @@ func (b *Backend) ClackForgetState() {
 // resource view.
 func (b *Backend) ClackNative(t driver.Texture) uintptr {
 	return uintptr(unsafe.Pointer(t.(*Texture).resView))
+}
+
+// ClackRetain implements driver.ClackExternalTest.
+func (b *Backend) ClackRetain(native uintptr) {
+	v := view(native)
+	d3d11.IUnknownAddRef(unsafe.Pointer(v), v.Vtbl.AddRef)
+}
+
+// ClackRefs implements driver.ClackExternalTest: the count AddRef answers,
+// less the reference it took.
+func (b *Backend) ClackRefs(native uintptr) int {
+	v := view(native)
+	n, _, _ := syscall.SyscallN(v.Vtbl.AddRef, native)
+	syscall.SyscallN(v.Vtbl.Release, native)
+	return int(n) - 1
 }
 
 // ClackWrapped implements driver.ClackExternalTest.

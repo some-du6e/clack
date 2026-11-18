@@ -30,9 +30,9 @@ type ExternalDevice struct {
 
 // ExternalTexture is a texture on the device drawing the frame: an
 // ID3D11ShaderResourceView* of an _SRGB format on Direct3D 11, an
-// id<MTLTexture> of an _sRGB pixel format on Metal. Key names its pixels:
-// the same Key is the same pixels (nothing is wrapped again), new pixels
-// need a new Key.
+// id<MTLTexture> of an _sRGB pixel format on Metal, of premultiplied
+// alpha. Key names its pixels: the same Key is the same pixels (nothing is
+// wrapped again), new pixels need a new Key.
 type ExternalTexture struct {
 	Handle uintptr
 	Key    uint64
@@ -40,13 +40,17 @@ type ExternalTexture struct {
 
 // ExternalImage hands the GPU its texture while a frame is drawn.
 type ExternalImage interface {
-	// ExternalTexture is the texture to draw now. The GPU asks once for
-	// every paint of the image the frame shows (none for one outside the
-	// viewport or its clip, as live images, patch 35), on the goroutine
-	// drawing the frame: the window's thread on Windows, the main thread
-	// on macOS. It must return at once; it may use the device's
-	// immediate context. The texture must stay valid until the next frame
-	// on the device begins. ok false draws the still.
+	// ExternalTexture is the texture to draw now, with a reference the
+	// GPU takes over (AddRef'd, CFRetain'd: taken under the image's own
+	// lock, so a Close freeing it can't come between). The GPU asks once
+	// for every paint of the image the frame shows (none for one outside
+	// the viewport or its clip, as live images, patch 35), on the
+	// goroutine drawing the frame: the window's thread on Windows, the
+	// main thread on macOS, a goroutine of its own for a headless window.
+	// It must return at once. It may copy, sync and query on the device's
+	// immediate context, leaving its pipeline state as it found it. The
+	// texture's pixels must not change until the window's next frame
+	// begins. ok false draws the still.
 	ExternalTexture(dev ExternalDevice) (t ExternalTexture, ok bool)
 }
 

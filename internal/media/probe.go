@@ -2,6 +2,7 @@ package media
 
 import (
 	"encoding/binary"
+	"math"
 	"time"
 )
 
@@ -129,7 +130,11 @@ func (p *probe) walkHead() {
 			p.info.Entry = "none"
 			return
 		}
-		if at+size >= int64(len(p.head)) {
+		if size >= int64(len(p.head))-at {
+			if size > math.MaxInt64-at { // no file is that long: not a box
+				p.parsed, p.info.Entry = true, "none"
+				return
+			}
 			p.walkAt = at + size // a box running past head: read on there
 			p.hdr = p.hdr[:0]
 			return
@@ -164,6 +169,10 @@ func (p *probe) feedHeader(off int64, b []byte) {
 		}
 		if size == 0 {
 			p.parsed, p.info.Entry, p.walkAt = true, "none", -1
+			return
+		}
+		if size > math.MaxInt64-p.walkAt { // no file is that long: not a box
+			p.walkAt, p.parsed, p.info.Entry = -1, true, "none"
 			return
 		}
 		p.walkAt += size
@@ -221,7 +230,12 @@ func (p *probe) tryMoov() {
 		if !ok || csize == 0 {
 			break
 		}
-		body := m[at+chl : min(at+csize, end)]
+		last := csize >= end-at // runs to (or past) what's kept
+		cend := end
+		if !last {
+			cend = at + csize
+		}
+		body := m[at+chl : cend]
 		switch ctyp {
 		case "mvhd":
 			if d, ok := mvhdDuration(body); ok {
@@ -232,7 +246,15 @@ func (p *probe) tryMoov() {
 				p.info.Entry, p.info.Width, p.info.Height = entry, w, h
 			}
 		}
+		if last {
+			break
+		}
 		at += csize
+	}
+	if p.info.Entry == "none" && size != 0 && size > int64(len(m)) {
+		// the moov runs past what's kept (a long video's sample tables):
+		// a video track may be in what wasn't read
+		p.info.Entry = "?"
 	}
 }
 
@@ -271,7 +293,7 @@ func children(b []byte, f func(typ string, body []byte) bool) {
 		if !ok {
 			return
 		}
-		if size == 0 || at+size > int64(len(b)) {
+		if size == 0 || size > int64(len(b))-at {
 			size = int64(len(b)) - at
 		}
 		if !f(typ, b[at+hl:at+size]) {
@@ -294,7 +316,11 @@ func mvhdDuration(b []byte) (time.Duration, bool) {
 	if scale == 0 {
 		return 0, false
 	}
-	return time.Duration(dur * uint64(time.Second) / scale), true
+	d := float64(dur) / float64(scale) * float64(time.Second)
+	if d >= math.MaxInt64 {
+		return 0, false
+	}
+	return time.Duration(d), true
 }
 
 // videoTrack reads a trak: whether its handler is video, its tkhd size and

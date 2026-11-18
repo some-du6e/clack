@@ -40,6 +40,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <wchar.h>
 
 #include "_cgo_export.h"
 #include "mf_windows.h"
@@ -786,6 +787,10 @@ int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *u
 		fail(info, "no device", E_UNEXPECTED);
 		return E_UNEXPECTED;
 	}
+	if (wcsncmp((const wchar_t *)url, L"clack-media://", 14) != 0) {
+		fail(info, "the source's URL isn't clack-media://", E_INVALIDARG);
+		return E_INVALIDARG; // the engine is never given a URL it would fetch itself
+	}
 	clackNotify *n = calloc(1, sizeof *n);
 	if (n == NULL) {
 		return E_OUTOFMEMORY;
@@ -1091,8 +1096,8 @@ int clack_me_tick(clackMF *m, int32_t *phr) {
 }
 
 // clack_me_ask is Gio's ask, on its render thread: the newest frame
-// copied into Gio's own texture (an _SRGB view of the same bytes), and its
-// key. status, bits: 1, Gio asked with a device not seen before (bind to
+// copied into Gio's own texture (an _SRGB view of the same bytes), with a
+// reference Gio takes over, and its key. status, bits: 1, Gio asked with a device not seen before (bind to
 // it); 2, opening the ring on Gio's device failed (info says how).
 uintptr_t clack_me_ask(clackMF *m, uintptr_t devp, uint64_t *key, int *status, clackMFInfo *info) {
 	ID3D11Device *dev = (ID3D11Device *)devp;
@@ -1190,6 +1195,7 @@ uintptr_t clack_me_ask(clackMF *m, uintptr_t devp, uint64_t *key, int *status, c
 		return 0;
 	}
 	*key = (uint64_t)m->copied;
+	ID3D11ShaderResourceView_AddRef(m->srv); // Gio takes this reference over
 	return (uintptr_t)m->srv;
 }
 

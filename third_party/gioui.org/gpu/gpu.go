@@ -657,17 +657,12 @@ func resolveLive(data imageOpData) imageOpData {
 }
 
 func (r *renderer) texHandle(cache *textureCache, data imageOpData) driver.Texture {
-	if e, ok := data.handle.(externalImage); ok { // Clack patch 50
-		t, still, ok := r.resolveExternal(cache, e, data)
-		if ok {
-			return t
-		}
-		if still.src == nil {
-			return r.clearTexture()
-		}
-		data = still
+	// external and live images (Clack patches 50 and 35)
+	rt, d, ok := r.resolveImage(cache, data)
+	if ok {
+		return rt
 	}
-	data = resolveLive(data)
+	data = d
 	key := textureCacheKey{
 		filter: data.filter,
 		handle: data.handle,

@@ -17,8 +17,10 @@ import (
 
 // Clack patch 50 on a real device: external images.
 
-// hostImage hands out its texture with key while ok.
+// hostImage hands out its texture with key while ok, and a reference to
+// it (the GPU takes it over).
 type hostImage struct {
+	xt   driver.ClackExternalTest
 	tex  uintptr
 	key  uint64
 	ok   bool
@@ -29,7 +31,21 @@ type hostImage struct {
 func (h *hostImage) ExternalTexture(dev paint.ExternalDevice) (paint.ExternalTexture, bool) {
 	h.asks++
 	h.dev = dev
+	if h.ok && h.xt != nil {
+		h.xt.ClackRetain(h.tex)
+	}
 	return paint.ExternalTexture{Handle: h.tex, Key: h.key}, h.ok
+}
+
+// settleRefs draws a few frames without the image (the GPU's own
+// references to what earlier frames drew go with their command buffers)
+// and returns native's reference count.
+func settleRefs(t *testing.T, win *Window, xt driver.ClackExternalTest, native uintptr) int {
+	t.Helper()
+	for range 3 {
+		clackShot(t, win, func(o *op.Ops) { paint.Fill(o, color.NRGBA{A: 0xff}) })
+	}
+	return xt.ClackRefs(native)
 }
 
 // externalWindow is a pixel test's window and its device's external
@@ -116,13 +132,16 @@ func TestClackExternalImage(t *testing.T) {
 	want, _ := clackShot(t, win, scene(paint.NewImageOp(img)))
 	var e *hostImage
 	var ext paint.ImageOp
+	var native uintptr
+	base := 0
 	if x == nil {
 		t.Logf("%T has no external textures: the op draws its still", win.dev)
 		e = &hostImage{tex: 1, key: 1, ok: true}
 		ext = paint.NewExternalImageOp(e, img.Bounds().Size(), paint.NewImageOp(img))
 	} else {
-		_, native := deviceTexture(t, win, xt, img)
-		e = &hostImage{tex: native, key: 1, ok: true}
+		_, native = deviceTexture(t, win, xt, img)
+		base = settleRefs(t, win, xt, native)
+		e = &hostImage{xt: xt, tex: native, key: 1, ok: true}
 		ext = paint.NewExternalImageOp(e, img.Bounds().Size(), paint.ImageOp{})
 	}
 	got, st := clackShot(t, win, scene(ext))
@@ -168,6 +187,9 @@ func TestClackExternalImage(t *testing.T) {
 	if n := xt.ClackWrapped(); n != 0 {
 		t.Errorf("frames without the image left %d wrapped textures, want none", n)
 	}
+	if n := settleRefs(t, win, xt, native); n != base {
+		t.Errorf("the texture's references: %d after the frames that dropped it, %d before: every ask's reference must go", n, base)
+	}
 	t.Logf("%T: %d pixels of the image, all the ImageOp's", win.dev, n)
 }
 
@@ -205,6 +227,8 @@ func TestClackExternalKeys(t *testing.T) {
 	}
 	texB, b := deviceTexture(t, win, xt, solid(blue))
 	_, a := deviceTexture(t, win, xt, solid(red))
+	baseA, baseB := settleRefs(t, win, xt, a), xt.ClackRefs(b)
+	e.xt = xt
 	e.tex, e.key = a, 1
 	if c, n, w := frame(still); c != red || n != 1 || w != 1 || xt.ClackWrapped() != 1 {
 		t.Errorf("first frame: %v, %d externals, %d wraps, %d held; want red, wrapped once", c, n, w, xt.ClackWrapped())
@@ -232,5 +256,8 @@ func TestClackExternalKeys(t *testing.T) {
 	}
 	if c, _, _ := frame(paint.NewImageOp(&image.Uniform{C: yellow})); c != bg {
 		t.Errorf("no texture, a uniform still: %v, want the background", c)
+	}
+	if na, nb := settleRefs(t, win, xt, a), xt.ClackRefs(b); na != baseA || nb != baseB {
+		t.Errorf("references after the wrappers went: %d and %d, before %d and %d", na, nb, baseA, baseB)
 	}
 }
