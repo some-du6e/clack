@@ -1356,6 +1356,16 @@ func (v *Activity) describeItem(it *core.ActivityItem, refs map[string]core.Conv
 			// row is described again once it's in (namesIn)
 			ref.ID = it.Channel
 			d.ent, d.entOn = v.refEnt(ref), true
+			if fid, ok := v.canvasChannel(it); ok {
+				// a canvas's file channel is its canvas (chanent.Canvas):
+				// the row is described again when files.info names it
+				if ent, known := v.canvasEnt(fid, it.Channel); known {
+					d.ent = ent
+				} else {
+					d.ent = chanent.Ent{Bar: chanent.BarWidth(fid)}
+					d.waits = append(d.waits, fid)
+				}
+			}
 			d.title = d.ent.Title()
 		}
 		if c, ok := v.h.Core().Conv(it.Channel); ok {

@@ -205,6 +205,9 @@ func (a *App) OpenSplit(route string) {
 		a.Navigate(route)
 		return
 	}
+	if ts := r.Message(); ts != "" && a.canvasInstead(ch, ts, false) { // a canvas's file channel: the canvas (canvas_open.go)
+		return
+	}
 	s := &a.split
 	if a.pane == paneSplit && len(s.stack) > 0 {
 		// navigating inside the split view: the old view is its back stack

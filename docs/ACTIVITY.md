@@ -1317,6 +1317,16 @@ flake-check's activity-live-msg job runs them COUNT times, then three
 times under -race. TestIdleFrames has Activity on the views fixtures'
 feed with its search open and an item open beside it.
 
+## Canvas mentions (2026-11-18, branch `canvas-mention`)
+
+Karim (α.102): "kinda messed up on canvas pings". The Dense row's location read "🔒 :pet-i10: :pet-tyson-final:…", and a click "put me in a limbo esque channel where the canvas contents are messages??". Build 2c0d02ca130f, read from the public CDN chunks:
+
+- **What the item is.** An `at_user` entry whose message (subtype `document_mention`, `document_mention {file_id, section_id, mentioning_user_ids}`) sits in the canvas's hidden file channel: the file id with F swapped for C, `is_file`, private, named after the title with its :shortcodes:.
+- **Its destination, in every layout** (ActivityRowContentDense and -Detailed with `activity_entry_layout_revisions_2` off, ActivityRowContentSingleLine and -MultiLine with it on; all draw VeYL's destination): the file channel's InlineChannelEntity (X3qV). Its icon is getChannelIconType's file channel case (/HhV: `canvas` for a canvas, `lists` for a list, `file` while the file is unknown), and its name ChannelName's swap (g5tH: `renderQuipTitle` over the canvas's title_blocks at caption size, 13px with 16px emoji, `p-quip_title__blocks_simple` making mentions plain text). No lock, no shortcode. Clack: `chanent.Canvas` from the canvas's files.info (core `CanvasTitleOf`, the store's CanvasRef; a row waiting for it is described again when "names" brings the file id).
+- **The click.** jumpToMessage (wc0P) treats a canvas's file channel as `isSpaceship`: openDocWithThreadTs (lFpV) loads the message and opens the canvas at `document_mention.section_id` (zsuR openDoc, focusSection when it's already open). Clack opens the canvas viewer at that section where the inbox opens an item (the secondary column beside it, or Primary with the persistent detail panel), and "Open in home" opens the canvas too. One divergence: with the inbox experiments (`activity_inbox_remove_persistent_detail_panel`), Slack's handleOnClickActivityItem (GMkG) routes a non-thread item to its conversation's Channel view (jpad R9), and the ChannelView (client-channel-view rnre → LE5D) has no canvas case. Clack never shows a canvas's file channel there, as Karim asked.
+- **Everywhere else.** A jump to a message of a canvas's file channel (`c/<id>/m/<ts>`: links, search results, a notification's click) opens the canvas in the full view at the mention's section (`ui/canvas_open.go`). The conversation's own sidebar row keeps Slack's sidebar rule (core sidebar_docs.go). Core asks for a mention's canvas when its message arrives (boot-render maybePrefetchCanvasFromNotification).
+- **Tests:** views `TestActivityCanvasMentionRow` (Dense and Detailed, revisions_2 on and off, native and under a pass-through ActivityItem patch), `TestActivityCanvasMentionClickInbox` / `-Persistent` / `-TitleSpans`; ui `TestActivityCanvasMentionOpensCanvas`, `TestCanvasMentionMessageJumpOpensCanvas`; fakeslack `AddCanvasMention`.
+
 ## Not done
 
 - The channel accept's other workspaces, start-trial modal and other

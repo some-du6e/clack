@@ -816,9 +816,21 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		// open_in_home ends with maybeClosePeek: from the rail's peek the
 		// card closes too
 		closePeek := v.peekCloser()
+		open := func() { v.h.Navigate(route) }
+		if fid, ok := v.canvasChannel(&it); ok {
+			// a canvas mention's home is its canvas, at the section
+			// (activity_canvas.go), never the canvas's file channel
+			sec := ""
+			if dm := actDocMention(&it); dm != nil {
+				sec = dm.SectionID
+			}
+			if co, ok := v.h.(CanvasOpener); ok {
+				open = func() { co.OpenCanvasAt(fid, sec, true) }
+			}
+		}
 		g := []popups.MenuItem{{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() {
 			closePeek()
-			v.h.Navigate(route)
+			open()
 		}}}
 		// open_in_split_view (not in Simplified layout mode): the thread or
 		// the channel, with the ⌘⌥-click hint

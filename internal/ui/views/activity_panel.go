@@ -59,6 +59,9 @@ func (v *Activity) openSecondary() {
 	if !ok || !v.selOK || !v.h.Core().ActivityRemovePersistentDetailPanel() {
 		return
 	}
+	if v.openCanvas(false) { // a canvas mention: the canvas, never its file channel (activity_canvas.go)
+		return
+	}
 	ts := v.selJumpTS()
 	at, _ := v.h.(SavedSecondary)
 	switch {
@@ -93,6 +96,9 @@ type PaneJumper interface {
 // the Primary beside the list, which the view's own pane draws.
 func (v *Activity) jumpPane() {
 	if !v.paneInView() || v.sel.Channel == "" {
+		return
+	}
+	if v.openCanvas(true) { // a canvas mention opens the canvas in Primary (activity_canvas.go)
 		return
 	}
 	if j, ok := v.h.(PaneJumper); ok {
@@ -142,6 +148,11 @@ func (v *Activity) selJumpTS() string {
 func (v *Activity) secondaryShows(sh ActivitySecondary) bool {
 	if v.sel.Channel == "" {
 		return sh.SecondaryShowsDetail(v.selKey)
+	}
+	if fid, _, ok := v.selCanvas(); ok {
+		if co, ok := v.h.(CanvasOpener); ok {
+			return co.CanvasShown(fid)
+		}
 	}
 	return sh.SecondaryShows(v.sel.Channel, v.selDesc.thread)
 }

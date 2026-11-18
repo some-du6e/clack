@@ -50,6 +50,9 @@ type View struct {
 	// mentions are shown's user, channel and group mentions, named from
 	// the store when the blocks were built (nameMentions, render.go)
 	mentions []*richtext.Span
+	// emojiVer is the emoji map's version shown's title emoji were
+	// resolved with (nameMentions)
+	emojiVer uint64
 	title    *richview.View
 	list     layout.List
 	btns     map[string]*widget.Clickable

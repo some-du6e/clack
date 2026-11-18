@@ -21,7 +21,11 @@ func init() {
 	prev := mkPage
 	mkPage = func(a *App, r Route) View {
 		if id := canvasRouteID(r); id != "" {
-			return a.newCanvasView(id, canvasview.Full)
+			v := a.newCanvasView(id, canvasview.Full)
+			if sec := a.takeCanvasFocus(id); sec != "" { // OpenCanvasAt's section (canvas_open.go)
+				v.FocusSection(sec)
+			}
+			return v
 		}
 		if prev != nil {
 			return prev(a, r)

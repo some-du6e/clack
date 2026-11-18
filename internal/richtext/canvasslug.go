@@ -114,6 +114,39 @@ func (c *builder) canvasName(fileID string) (name []Span, status string, ok, fro
 	return nil, "", false, false
 }
 
+// TitleBlocks is a canvas title's title_blocks as Slack's
+// QuipTitleParsedId (renderQuipTitle) draws them: the first block's
+// spans; nil without blocks. An emoji element the resolver can't name yet
+// (the emoji map still loading, a custom emoji newer than the cached map)
+// stays an Emoji span with no URL and Text ":name:", which the surface
+// resolves from the store when it draws, as Slack's Emoji component reads
+// the emoji store on every render; it is never baked in as text.
+func TitleBlocks(r Resolver, title string, blocks json.RawMessage) []Span {
+	bs := parseBlocks(blocks)
+	if len(bs) == 0 {
+		return nil
+	}
+	c := &builder{r: r, keepEmoji: true}
+	out := c.blocks(bs)
+	if len(out) == 0 {
+		return nil
+	}
+	return out[0].Spans
+}
+
+// CanvasTitle is a canvas's title as its slug, the Activity entity and
+// the tab bar draw it: title_blocks (TitleBlocks), else the title string
+// with its :emoji: (FormatTextWithEmoji); nil for no title.
+func CanvasTitle(r Resolver, title string, blocks json.RawMessage) []Span {
+	if sp := TitleBlocks(r, title, blocks); len(sp) > 0 {
+		return sp
+	}
+	if title == "" {
+		return nil
+	}
+	return titleSpans(r, title)
+}
+
 func titleSpans(r Resolver, s string) []Span {
 	if sp := EmojiText(r, s); sp != nil {
 		return sp

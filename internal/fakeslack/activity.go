@@ -218,6 +218,11 @@ type activityState struct {
 	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
 	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
 	agent     bool            // the agent entry first (SetActivityAgentActions)
+	// extra are entries a test added (AddCanvasMention), newest first,
+	// before the fixture's; extraMsgs the messages messages.list answers
+	// for them
+	extra     []map[string]any
+	extraMsgs []slack.Message
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -352,6 +357,9 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		if st.agent {
 			entries = append([]map[string]any{activityAgentEntry()}, entries...)
 		}
+		if len(st.extra) > 0 {
+			entries = append(append([]map[string]any(nil), st.extra...), entries...)
+		}
 		bulk := st.bulk
 		if bulk > 0 {
 			entries = append(entries, activityBulk(bulk)...)
@@ -414,9 +422,12 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			return nil, false
 		}
 		out := map[string][]slack.Message{}
+		v.mu.Lock()
+		msgs := append(append([]slack.Message(nil), activityMsgs...), v.act().extraMsgs...)
+		v.mu.Unlock()
 		for _, w := range want {
 			for _, ts := range w.Timestamps {
-				for _, m := range activityMsgs {
+				for _, m := range msgs {
 					if m.Channel == w.Channel && m.TS == ts {
 						out[w.Channel] = append(out[w.Channel], m)
 					}
