@@ -81,6 +81,8 @@ type renderer struct {
 }
 
 type drawOps struct {
+	// red-evidence shim: buildVerts calls of clip paths this frame
+	tessellated  int
 	reader       ops.Reader
 	states       []f32.Affine2D
 	transStack   []f32.Affine2D
@@ -615,7 +617,12 @@ func (g *gpu) frame(target RenderTarget) error {
 	if on {
 		sticky = &g.partial.atlas
 	}
+	r.packer.work = 0 // red-evidence shim
 	r.packStencils(&g.drawOps.pathOps, sticky)
+	r.stats.PackWork, r.stats.PathsTessellated = r.packer.work, g.drawOps.tessellated
+	if sticky != nil {
+		r.stats.StickySlots, r.stats.StickyHoles = len(sticky.slots), sticky.holeSlots
+	}
 	r.packIntersections(g.drawOps.imageOps)
 	r.uploadImages(g.cache, g.drawOps.imageOps)
 	g.drawOps.layers = r.packLayers(g.drawOps.layers)
@@ -1301,6 +1308,7 @@ func (d *drawOps) reset(viewport image.Point) {
 	// arrays; cleared first, a longer earlier frame's entries don't keep
 	// what they point at (images' pixels, path vertices) reachable past
 	// the end of a shorter one.
+	d.tessellated = 0 // red-evidence shim
 	clear(d.imageOps)
 	clear(d.pathOps)
 	clear(d.pathOpCache)
@@ -1529,6 +1537,7 @@ loop:
 					pathData, bounds = d.buildVerts(
 						quads.aux, trans, quads.key.outline, quads.key.strokeWidth,
 					)
+					d.tessellated++ // red-evidence shim
 					quads.aux = pathData
 					if !ok {
 						// add it to the cache, without GPU data, so the transform can be

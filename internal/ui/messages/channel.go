@@ -123,6 +123,14 @@ func (v *ChannelView) Typing() string { return typingText(v.s.snap.typing) }
 // ScrollToBottom jumps to the newest message.
 func (v *ChannelView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 
+// ScrollPx (red-evidence copy of round 2's): moves the list by px before
+// its next layout.
+func (v *ChannelView) ScrollPx(px int) {
+	v.s.list.Position.BeforeEnd = true
+	v.s.list.Position.Offset += px
+	v.h.Invalidate()
+}
+
 // JumpToOwnSend is the composer under the channel sending the viewer's
 // message (composer.OnSend), cid its client_msg_id: the sendMessage
 // thunk's jumpToTimestamp to it, which placeSendJump makes once the

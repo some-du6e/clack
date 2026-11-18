@@ -53,6 +53,8 @@ type stickyAtlas struct {
 	fresh []stickyRegion
 	// repacked counts the fresh packings (for tests)
 	repacked int
+	// red-evidence shim: the holes in slots
+	holeSlots int
 }
 
 // stickyRegion is a region of path p: its main one (i -1) or p.more[i].
@@ -160,6 +162,12 @@ func (s *stickyAtlas) pack(pk *packer, ops []*pathOp) {
 		}
 	}
 	s.slots, s.next = next, s.slots
+	s.holeSlots = 0
+	for _, sl := range s.slots {
+		if !sl.live {
+			s.holeSlots++
+		}
+	}
 	// index the slots for the next frame, the first slot of a key first
 	clear(s.first)
 	if cap(s.same) < len(s.slots) {

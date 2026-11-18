@@ -54,6 +54,10 @@ type FrameStats struct {
 	DamageRects int
 	DamagePx    int64
 	CopyPx      int64
+	// red-evidence shim: the round-2 counters, on round 1's code
+	PackWork                 int64
+	StickySlots, StickyHoles int
+	PathsTessellated         int
 }
 
 // ClackStats reports the last frame's stats.

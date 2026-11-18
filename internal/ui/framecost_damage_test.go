@@ -16,12 +16,15 @@ import (
 	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/imgcache/webptest"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
@@ -40,7 +43,7 @@ import (
 //
 // each drawn whole (as Gio drew every frame), partial into the target and
 // partial through the frame texture and its copy (a window's way, Gio
-// patch 45). It logs each one's draws, API calls, pixels and time from
+// patch 46). It logs each one's draws, API calls, pixels and time from
 // submit to the end of its rasterization, and requires the partial frames'
 // pixels to be the whole frame's exactly (but the emoji's, which plays on
 // the wall clock) and their GPU work to be a small part of it.
@@ -109,7 +112,9 @@ func TestFrameCostDamage(t *testing.T) {
 			e.layInto(&b, now.Add(blink), nil)
 		}
 		caret()
-		damageScene(t, w, c.name+", the caret's blink", fmt.Sprintf("every %v", blink), &a, &b, caret, true, damageLimits{rects: 1, frac: 0.002})
+		damageScene(t, w, c.name+", the caret's blink", fmt.Sprintf("every %v", blink), &a, &b, caret, func(o *op.Ops, shift int) {
+			e.layProbed(o, now.Add(blink), nil, shift)
+		}, true, damageLimits{rects: 1, frac: 0.002})
 		// a spinner's turn over the sidebar, 33 ms apart
 		sp := func(at time.Time) func(gtx layout.Context) {
 			return func(gtx layout.Context) {
@@ -123,7 +128,9 @@ func TestFrameCostDamage(t *testing.T) {
 			e.layInto(&b, now, sp(now.Add(33*time.Millisecond)))
 		}
 		spin()
-		damageScene(t, w, c.name+", a spinner's turn", "every 33 ms (an agent's; the LoadingButton's every 16 ms)", &a, &b, spin, true, damageLimits{frac: 0.01})
+		damageScene(t, w, c.name+", a spinner's turn", "every 33 ms (an agent's; the LoadingButton's every 16 ms)", &a, &b, spin, func(o *op.Ops, shift int) {
+			e.layProbed(o, now, sp(now.Add(33*time.Millisecond)), shift)
+		}, true, damageLimits{frac: 0.01})
 		// the typing indicator appears
 		e.layInto(&a, now, nil)
 		raw, _ := json.Marshal(map[string]any{"type": "user_typing", "channel": ch, "user": users[1]})
@@ -141,7 +148,9 @@ func TestFrameCostDamage(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 		e.layInto(&b, now, nil)
-		damageScene(t, w, c.name+", the typing indicator ("+comp.TypingLine()+")", "at each user_typing event", &a, &b, nil, true, damageLimits{frac: 0.05})
+		damageScene(t, w, c.name+", the typing indicator ("+comp.TypingLine()+")", "at each user_typing event", &a, &b, nil, func(o *op.Ops, shift int) {
+			e.layProbed(o, now, nil, shift)
+		}, true, damageLimits{frac: 0.05})
 		// the animated emoji: a message with it, at the bottom
 		self := e.a.Core().Self().ID
 		ts, ev := fs.PostQuiet(ch, self, "boom :"+name+": boom")
@@ -181,6 +190,18 @@ type damageLimits struct {
 // layInto lays the window out at t into o, as App.Run's frames do, with
 // extra drawn over it.
 func (e *perfEnv) layInto(o *op.Ops, t time.Time, extra func(gtx layout.Context)) {
+	e.layProbed(o, t, extra, 0)
+}
+
+// layProbed is layInto with one more transparent path (costShift's: drawn
+// first for 1-3, right after the workspace's shadow for 4-6): every later
+// path lands elsewhere in Gio's atlas and no pixel changes but by the
+// placement rounding.
+func (e *perfEnv) layProbed(o *op.Ops, t time.Time, extra func(gtx layout.Context), shift int) {
+	if shift > 3 {
+		theme.SetFrameCostProbe(costShift(shift, e.size))
+		defer theme.SetFrameCostProbe(image.Rectangle{})
+	}
 	e.a.drain()
 	e.now = t
 	o.Reset()
@@ -190,6 +211,9 @@ func (e *perfEnv) layInto(o *op.Ops, t time.Time, extra func(gtx layout.Context)
 	}
 	gtx := layout.Context{Ops: o, Now: t, Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc},
 		Constraints: layout.Exact(e.size), Source: e.r.Source()}
+	if d := costShift(shift, e.size); !d.Empty() && shift <= 3 {
+		paint.FillShape(gtx.Ops, color.NRGBA{}, clip.Ellipse(d).Op(gtx.Ops))
+	}
 	e.a.frame(gtx)
 	if extra != nil {
 		extra(gtx)
@@ -247,11 +271,15 @@ func damageMeasure(t *testing.T, w *headless.Window, a, b *op.Ops) (gpu.FrameSta
 // damageScene measures the frame b after a: whole, then partial into the
 // window, then partial through the frame texture. Partial frames must have
 // the whole frame's pixels (the whole frame the same GPU draws then) and,
-// when cheap, cost a small part of a whole frame. relay lays a and b out
-// again: when something else changed between them (a load landing on a
-// slow runner), the damage is more than the change's, and the scene is
-// laid out again, up to three times.
-func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.Ops, relay func(), cheap bool, lim damageLimits) {
+// when cheap, cost a small part of a whole frame; the quiet frames after
+// one (b's ops again) must tessellate nothing. The whole frame the sticky
+// atlas places give must be within the placement floor of Gio's own (b
+// packed afresh: the same frame with a transparent path first, or after
+// the workspace's shadow, layB's shift). relay lays a and b out again:
+// when something else changed between them (a load landing on a slow
+// runner), the damage is more than the change's, and the scene is laid
+// out again, up to three times.
+func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.Ops, relay func(), layB func(o *op.Ops, shift int), cheap bool, lim damageLimits) {
 	t.Helper()
 	vp0 := int64(w.Size().X * w.Size().Y)
 	for try := 0; relay != nil && try < 3; try++ {
@@ -268,6 +296,19 @@ func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.O
 	ws, wms, plain := damageMeasure(t, w, a, b)
 	t.Logf("%s (%s), whole: %s; %.1f ms a frame", name, rate, costLine(ws), wms)
 	vp := int64(plain.Bounds().Dx() * plain.Bounds().Dy())
+	// Gio's own frame moved in the atlas: the placement floor, as
+	// TestFrameCostWindow takes it (a tiny path, a third of the window
+	// and nearly all of it, first and after the workspace's shadow)
+	floorN, floorM := 0, 0
+	for shift := 1; shift <= 6; shift++ {
+		var bp op.Ops
+		layB(&bp, shift)
+		damageDraw(t, w, a)
+		damageDraw(t, w, &bp)
+		n, m := costCount(plain, damageShot(t, w))
+		floorN, floorM = max(floorN, n), max(floorM, m)
+	}
+	limM, limN := max(6, floorM+2), 2*floorN+1024
 	for _, m := range []struct {
 		name              string
 		partial, frameTex bool
@@ -277,12 +318,33 @@ func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.O
 	} {
 		damageModes(m.partial, m.frameTex)
 		ps, pms, img := damageMeasure(t, w, a, b)
+		// the quiet frames after it: b's ops again, while only an
+		// animation elsewhere moves on (a partial frame uploads only the
+		// paths its damage stencils; the rest keep their path data)
+		var qs gpu.FrameStats
+		var qms []float64
+		for range 5 {
+			s, ms := damageDraw(t, w, b)
+			qs, qms = s, append(qms, ms)
+		}
+		sort.Float64s(qms)
+		t.Logf("%s, %s, quiet frames after it: %s, %d paths tessellated, %s; %.1f ms a frame (the partial frame %d paths tessellated)",
+			name, m.name, damagePart(qs), damageTessellated(qs), costLine(qs), qms[len(qms)/2], damageTessellated(ps))
+		if n := damageTessellated(qs); n != 0 || qs.PathsBuilt != 0 {
+			t.Errorf("%s, %s: a quiet frame after a partial frame tessellated %d paths and built %d; want none (its ops were the last frame's)", name, m.name, n, qs.PathsBuilt)
+		}
 		// the whole frame the same GPU draws for b now
 		damageWhole(true)
 		damageDraw(t, w, b)
 		whole := damageShot(t, w)
 		damageWhole(false)
 		damageModes(false, false)
+		if n, mx := costCount(plain, whole); mx > limM || n > limN {
+			t.Errorf("%s, %s: the whole frame with sticky atlas places differs from Gio's own in %d px by up to %d levels; a path moved in Gio's atlas moves %d px by up to %d (want %d levels and %d px at most): %s",
+				name, m.name, n, mx, floorN, floorM, limM, limN, costDiff(plain, whole))
+		} else {
+			t.Logf("%s, %s: the sticky whole frame against Gio's own: %d px by up to %d levels (the floor %d px by up to %d)", name, m.name, n, mx, floorN, floorM)
+		}
 		dmg := damagePart(ps)
 		t.Logf("%s, %s: %s, %s; %.1f ms a frame (%.0f%% of the whole frame's)", name, m.name, dmg, costLine(ps), pms, 100*pms/max(wms, 0.001))
 		if n, mx := costCount(whole, img); n > 0 {

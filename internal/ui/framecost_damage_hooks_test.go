@@ -8,7 +8,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache"
 )
 
-// The parts of TestFrameCostDamage that read Gio patch 45 (partial frames),
+// The parts of TestFrameCostDamage that read Gio patch 46 (partial frames),
 // apart so a run on code without it can stand them in.
 
 // imgStats is the image cache's stats.
@@ -41,3 +41,7 @@ func damagePart(s gpu.FrameStats) string {
 	}
 	return fmt.Sprintf("partial, %d px damaged in %d rects, %d px copied", s.DamagePx, s.DamageRects, s.CopyPx)
 }
+
+// damageTessellated is how many clip paths the frame tessellated (its
+// buildVerts calls: Gio's CPU work for a path).
+func damageTessellated(s gpu.FrameStats) int { return s.PathsTessellated }
