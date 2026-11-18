@@ -390,13 +390,14 @@ func (d *DMs) layoutPane(gtx C) D {
 }
 
 // rowTints are a row's fill and :hover fill: theme-surf-inv-ter when
-// --selected, and on :hover except in dark mode, where
-// .p-dms_list--dark makes an unselected row's hover transparent.
+// --selected, and on :hover except on the dark page, where
+// .p-dms_list--dark makes an unselected row's hover transparent. On the
+// peek card the hover is the card's own, in both modes (dmsCardColors).
 func (d *DMs) rowTints(sel bool) (bg, hover color.NRGBA) {
 	if sel {
 		return d.c.tint, d.c.tint
 	}
-	if d.th != nil && d.th.Dark {
+	if d.th != nil && d.th.Dark && !d.peeking {
 		return color.NRGBA{}, color.NRGBA{}
 	}
 	return color.NRGBA{}, d.c.tint
@@ -1178,11 +1179,13 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 			txt = nsRecent.T("You: ") + txt // ActivityMessage
 		}
 	}
+	// ActivityMessage: --muted before --read and --unread (both need
+	// !isMuted)
 	prevC := d.c.preview
-	if unread {
-		prevC = d.c.white
-	} else if muted { // __message--muted: theme-content-inv-sec
+	if muted { // __message--muted: theme-content-inv-sec
 		prevC = d.c.soft
+	} else if unread {
+		prevC = d.c.white
 	}
 	timeC := d.c.time
 	if muted { // .p-dms_channel__timestamp--muted: theme-content-inv-ter
@@ -1231,7 +1234,7 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					return col(gtx,
 						layout.Rigid(func(gtx C) D {
-							return d.nameLine(gtx, name, isSelf, statusURL, when, timeC)
+							return d.nameLine(gtx, name, isSelf, muted, statusURL, when, timeC)
 						}),
 						layout.Rigid(func(gtx C) D {
 							if txt == "" {
@@ -1282,8 +1285,15 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 }
 
 // nameLine is line 1 of a row: bold name (truncated), optional " (you)"
-// and 16px status emoji, then the timestamp at the right.
-func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string, timeC color.NRGBA) D {
+// and 16px status emoji, then the timestamp at the right. A muted
+// conversation's name, " (you)" with it, is .p-dms_channel__name--muted:
+// --dt_color-content-ter (not a theme token: the root's grey even in the
+// inverted sidebar), bold.
+func (d *DMs) nameLine(gtx C, name string, isSelf, muted bool, statusURL, when string, timeC color.NRGBA) D {
+	nameC := d.c.white
+	if muted && d.p != nil {
+		nameC = d.p.Muted
+	}
 	gtx.Constraints.Min.Y = 0
 	youW := 0
 	you := " " + nsRecent.T("(you)") // DmsChannel
@@ -1308,15 +1318,15 @@ func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string, 
 						return D{}
 					}
 					if !ns.Active() {
-						return d.para(gtx, dmsNameSize, dmsLine, wBold, d.c.white, 1, name)
+						return d.para(gtx, dmsNameSize, dmsLine, wBold, nameC, 1, name)
 					}
-					return ns.Wrap(gtx, func(gtx C) D { return d.para(gtx, dmsNameSize, dmsLine, wBold, ns.Color(d.c.white), 1, name) })
+					return ns.Wrap(gtx, func(gtx C) D { return d.para(gtx, dmsNameSize, dmsLine, wBold, ns.Color(nameC), 1, name) })
 				}),
 				layout.Rigid(func(gtx C) D {
 					if !isSelf {
 						return D{}
 					}
-					return d.para(gtx, dmsNameSize, dmsLine, wReg, d.c.white, 1, you)
+					return d.para(gtx, dmsNameSize, dmsLine, wReg, nameC, 1, you)
 				}),
 				layout.Rigid(func(gtx C) D {
 					if statusURL == "" {
@@ -1420,7 +1430,9 @@ func (d *DMs) personRow(gtx C, u core.User) D {
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		ring := d.ringColor(c.Hovered())
+		_, hov := d.rowTints(false)
+		hovered := c.Hovered() && hov.A > 0 // .p-dms_list--dark: no :hover tile, so no tinted ring
+		ring := d.ringColor(hovered)
 		m := op.Record(gtx.Ops)
 		dims := layout.UniformInset(dmsPad).Layout(gtx, func(gtx C) D {
 			return row(gtx, layout.Middle,
@@ -1446,7 +1458,7 @@ func (d *DMs) personRow(gtx C, u core.User) D {
 			)
 		})
 		call := m.Stop()
-		if _, hov := d.rowTints(false); c.Hovered() && hov.A > 0 { // .p-dms_list--dark: no :hover tile
+		if hovered {
 			fill(gtx, image.Rectangle{Max: dims.Size}, hov)
 		}
 		call.Add(gtx.Ops)

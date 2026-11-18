@@ -95,8 +95,29 @@ func TestDMsListFollowsSidebarScope(t *testing.T) {
 // too in light mode, and transparent in dark mode, where DmsList's
 // p-dms_list--dark (clientTheme dark) has
 // .p-dms_list--dark .p-activity_ia4_page__item:hover:not(--selected,…)
-// {background-color:#0000}.
+// {background-color:#0000}. On the peek card that rule meets
+// .p-peek_card .p-activity_ia4_page__item:hover (base-pry under the
+// base-pry-hover image), whose image it leaves: the card keeps a hover in
+// dark mode too, #f8f8f8 at .08 over its #212428 (#323538), and the
+// presence ring's cutout follows the tile.
 func TestDMsListHoverByMode(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		d := &DMs{}
+		d.th = themed("", dark)
+		d.peeking = true
+		d.dmsColors()
+		bg, hov := d.rowTints(false)
+		want := flatten(argb(0x0f454447), rgb(0xffffff)) // base-pry #fff under #4544470f
+		if dark {
+			want = rgb(0x323538)
+		}
+		if bg.A != 0 || hov != want {
+			t.Errorf("peek card dark=%v: row fill %s, hover %s; Slack transparent, hover %s", dark, hexA(bg), hexA(hov), hexA(want))
+		}
+		if r := d.ringColor(true); r != hov {
+			t.Errorf("peek card dark=%v: a hovered row's presence ring %s, its tile %s", dark, hexA(r), hexA(hov))
+		}
+	}
 	for _, dark := range []bool{false, true} {
 		for _, ia := range []string{"", pickerIA} {
 			d := &DMs{}
@@ -142,6 +163,57 @@ func TestActivityBadgesFollowImportant(t *testing.T) {
 		if p.Badge != c.fill || p.Accent != c.fill || p.AccentText != c.ink {
 			t.Errorf("%s: Activity's badge %s / dot %s with %s; Slack theme-base-imp %s with theme-content-imp %s",
 				c.name, hexA(p.Badge), hexA(p.Accent), hexA(p.AccentText), hexA(c.fill), hexA(c.ink))
+		}
+	}
+}
+
+// The DMs peek card (.p-peek_card--dms: DmsListAll on a Popover at the
+// document root) paints in the root scope: timestamps
+// .p-dms_channel__timestamp theme-content-inv-sec, a muted conversation's
+// --muted theme-content-inv-ter (drawn at alpha 0 before: ter unset),
+// the Unreads toggle theme-content-inv-sec / -inv-pry, an item's border
+// theme-otl-inv-pry, all from the account theme's primary (Karim's peach
+// ramp, Ochin's navy), over the card's ctr-pry. Values: Slack's root-scope
+// tokens (testdata/theme-oracle.json).
+func TestDMsPeekCardTokens(t *testing.T) {
+	hx := func(v uint32) color.NRGBA { return rgb(v) }
+	hxa := func(v uint32, a uint8) color.NRGBA { c := rgb(v); c.A = a; return c }
+	for _, c := range []struct {
+		name, ia                         string
+		dark                             bool
+		bg, invPry, invSec, invTer, rule color.NRGBA
+	}{
+		{"default light", ``, false, hx(0xffffff), hx(0x39063a), hxa(0x39063a, 0xcc), hxa(0x39063a, 0x80), hxa(0x611f69, 0x21)},
+		{"default dark", ``, true, hx(0x212428), hx(0xf8f8f8), hxa(0xe3ceeb, 0xcc), hxa(0xe3ceeb, 0x99), hxa(0xefe1f5, 0x38)},
+		{"karim import light", importIA, false, hx(0xffffff), hx(0x1c0901), hxa(0x1c0901, 0xcc), hxa(0x1c0901, 0x80), hxa(0x41281a, 0x21)},
+		{"karim picker dark", pickerIA, true, hx(0x212428), hx(0xf8f8f8), hxa(0xffdfcf, 0xcc), hxa(0xffdfcf, 0x99), hxa(0xfff4f0, 0x38)},
+		{"ochin light", ochinIA, false, hx(0xffffff), hx(0x122a59), hxa(0x122a59, 0xcc), hxa(0x122a59, 0x80), hxa(0x0b4c8c, 0x21)},
+	} {
+		th := themed(c.ia, c.dark)
+		pp := peekPalOf(th)
+		for _, f := range []struct {
+			what      string
+			got, want color.NRGBA
+		}{
+			{"card (ctr-pry)", pp.bg, c.bg},
+			{"toggle on (theme-content-inv-pry)", pp.invPry, c.invPry},
+			{"toggle, timestamps (theme-content-inv-sec)", pp.invSec, c.invSec},
+			{"muted timestamps (theme-content-inv-ter)", pp.invTer, c.invTer},
+			{"item border (theme-otl-inv-pry)", pp.rule, c.rule},
+		} {
+			if f.got != f.want {
+				t.Errorf("%s: %s = %s, Slack %s", c.name, f.what, hexA(f.got), hexA(f.want))
+			}
+		}
+		d := &DMs{}
+		d.th = th
+		d.peeking = true
+		d.dmsColors()
+		if got, want := d.c.ter, flatten(c.invTer, c.bg); got != want || got.A == 0 {
+			t.Errorf("%s: the card's muted timestamp %s, Slack %s", c.name, hexA(got), hexA(want))
+		}
+		if got, want := d.c.time, flatten(c.invSec, c.bg); got != want {
+			t.Errorf("%s: the card's timestamp %s, Slack %s", c.name, hexA(got), hexA(want))
 		}
 	}
 }

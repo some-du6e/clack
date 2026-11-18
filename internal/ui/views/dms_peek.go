@@ -28,17 +28,26 @@ import (
 
 var nsIA4 = i18n.NS("ia4")
 
-// dmsCardColors is dmsPal on the peek card (peekPalOf's tokens).
+// dmsCardColors is dmsPal on the peek card (peekPalOf's tokens). A row's
+// :hover is the card's (.p-peek_card .p-activity_ia4_page__item:hover:
+// base-pry under the base-pry-hover image); in dark mode DmsList's
+// p-dms_list--dark, keyed on the client's theme alone, clears only its
+// background-color, so the image lies on the card itself.
 func dmsCardColors(th *theme.Theme) dmsPal {
 	pp := peekPalOf(th)
+	tint := pp.hover
+	if th != nil && th.Dark {
+		tint = flatten(pp.pryHover, pp.bg)
+	}
 	c := dmsPal{
 		chrome:  pp.bg,
-		tint:    pp.hover,
+		tint:    tint,
 		rule:    flatten(pp.line, pp.bg),
 		inputBg: pp.bg,
 		soft:    pp.sec,
 		preview: pp.sec,
 		time:    flatten(pp.invSec, pp.bg), // .p-dms_channel__timestamp: theme-content-inv-sec
+		ter:     flatten(pp.invTer, pp.bg), // --muted: theme-content-inv-ter
 		white:   pp.fg,
 		green:   rgb(0x2bac76),
 		pillBg:  pp.baseImp,
