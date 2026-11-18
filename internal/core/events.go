@@ -556,7 +556,8 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			}
 		}
 		a.S.SlurpSub(ch, &m)
-		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this keeps it (store/live.go)
+		a.S.NoteLive(ch, m.TS, &m)  // a replies answer older than this keeps it (store/live.go)
+		a.forgetMsgThread(ch, m.TS) // its thread_ts as this copy has it, not as a lookup found it
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}

@@ -20,25 +20,42 @@ import (
 // from the newest the message is: two requests, never a walk back from
 // the newest page. The window's ends are the calls' has_more
 // (hasMoreStart, hasMoreEnd): a window short of the newest message is
-// Slack's reachedEnd false, which shows "Latest messages", loads newer
-// pages at its end (requestNewer: {oldest: the window's newest}) and
-// never marks the conversation read. None of it goes in the store's
-// timeline, which holds the newest window only.
+// Slack's reachedEnd false, which shows "Latest messages", loads its
+// neighbours as it scrolls (requestOlder {latest: its start}, requestNewer
+// {oldest: its end}, inclusive, 28 each) and never marks the conversation
+// read.
+//
+// The window is a slice of Slack's channelHistory (store/windows.go): core
+// keeps it as one of the conversation's windows, apart from the timeline
+// (the newest messages), so its messages take live changes and its pages
+// never write the timeline; the slice joins the timeline only once they
+// meet (or it reaches the newest message), as Slack's slices do. A jump
+// back to a message a window holds is the window again, with no request
+// (getTimestampsByChannelId's slice for startTs).
 
 // Around is a window of a conversation's history.
 type Around struct {
 	Messages []Message // ascending
 	HasOlder bool      // older messages exist (hasMoreStart)
 	HasNewer bool      // the window stops short of the newest message (hasMoreEnd)
+	// Merged: the window met the conversation's newest messages (or
+	// reached the newest) and core joined it to the timeline, which holds
+	// it now
+	Merged bool
 }
 
 // AroundLimit is each call's page (determineDefaultHistoryLimit).
 const AroundLimit = 28
 
-// HistoryAround is the window around message ts of ch: the page ending
-// at it and the page starting at it.
+// HistoryAround is the window around message ts of ch: the window core
+// holds that has it, else the page ending at it and the page starting at
+// it, kept as one of the conversation's windows.
 func (a *App) HistoryAround(ctx context.Context, ch, ts string) (Around, error) {
+	if w, ok := a.S.WindowAt(ch, ts); ok {
+		return a.around(ch, w), nil
+	}
 	t0 := time.Now()
+	pins, subs := a.S.PinSeq(), a.S.SubSeq()
 	type answer struct {
 		p   *slack.HistoryPage
 		err error
@@ -61,22 +78,58 @@ func (a *App) HistoryAround(ctx context.Context, ch, ts string) (Around, error) 
 		return Around{}, n.err
 	}
 	msgs := mergeHistory(o.p.Messages, n.p.Messages)
-	a.SubscribePresence(rowUsers(msgs))
-	return Around{Messages: a.timeline(ch, msgs), HasOlder: o.p.HasMore, HasNewer: n.p.HasMore}, nil
+	return a.addWindow(ch, msgs, ts, ts, o.p.HasMore, n.p.HasMore, pins, subs), nil
 }
 
-// HistoryNewer is requestNewer for a window short of the newest message:
-// the page just after after.
-func (a *App) HistoryNewer(ctx context.Context, ch, after string) (Around, error) {
+// WindowOlder is a window's requestOlder: the page ending at its start,
+// added to it.
+func (a *App) WindowOlder(ctx context.Context, ch, start string) (Around, error) {
 	t0 := time.Now()
-	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: after, Limit: 100})
-	log.Printf("history %s: newer than %s in %s", logtag.ID(ch), logtag.ID(after), time.Since(t0).Round(time.Millisecond))
+	pins, subs := a.S.PinSeq(), a.S.SubSeq()
+	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: start, Inclusive: true, Limit: AroundLimit})
+	log.Printf("history %s: older than %s in %s", logtag.ID(ch), logtag.ID(start), time.Since(t0).Round(time.Millisecond))
 	if err != nil {
 		return Around{}, err
 	}
-	msgs := mergeHistory(p.Messages, nil)
+	return a.addWindow(ch, mergeHistory(p.Messages, nil), "", start, p.HasMore, true, pins, subs), nil
+}
+
+// WindowNewer is a window's requestNewer: the page starting at its end,
+// added to it; the window joins the timeline once the page meets it.
+func (a *App) WindowNewer(ctx context.Context, ch, end string) (Around, error) {
+	t0 := time.Now()
+	pins, subs := a.S.PinSeq(), a.S.SubSeq()
+	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Oldest: end, Inclusive: true, Limit: AroundLimit})
+	log.Printf("history %s: newer than %s in %s", logtag.ID(ch), logtag.ID(end), time.Since(t0).Round(time.Millisecond))
+	if err != nil {
+		return Around{}, err
+	}
+	return a.addWindow(ch, mergeHistory(p.Messages, nil), end, "", true, p.HasMore, pins, subs), nil
+}
+
+// addWindow keeps a stretch of ch's history from start to end ("" the
+// page's own ends) as a window (store.AddWindow), with the pins and the
+// thread subscriptions events changed while it was out, and its files
+// looked up, as the newest page's are (fetchLatest).
+func (a *App) addWindow(ch string, msgs []slack.Message, start, end string, hasOlder, hasNewer bool, pins, subs uint64) Around {
+	a.S.SyncPins(ch, pins, msgs) // a pin event newer than the answer, over it (store/pins.go)
+	a.S.SyncSubs(ch, subs, msgs) // the roots' thread subscriptions (store/thread_subs.go)
+	w, merged := a.S.AddWindow(ch, msgs, start, end, hasOlder, hasNewer)
+	for i := range msgs {
+		if needsFileInfo(&msgs[i]) {
+			go a.fillFiles(ch, msgs[i].TS)
+		}
+	}
 	a.SubscribePresence(rowUsers(msgs))
-	return Around{Messages: a.timeline(ch, msgs), HasNewer: p.HasMore}, nil
+	if merged {
+		return Around{Messages: a.timeline(ch, msgs), Merged: true}
+	}
+	return a.around(ch, w)
+}
+
+// around is window w as Around.
+func (a *App) around(ch string, w store.Window) Around {
+	return Around{Messages: a.timeline(ch, w.Msgs), HasOlder: w.HasOlder, HasNewer: true}
 }
 
 // mergeHistory is two pages as one, each message once, ascending.

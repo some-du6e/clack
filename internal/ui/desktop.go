@@ -44,6 +44,9 @@ func linkKind(u string) string {
 	case err != nil || p.Scheme == "":
 		return "an unparsable link"
 	case p.Scheme == "slack":
+		if slackIDRE.MatchString(p.Host) && strings.ContainsAny(p.Host, "0123456789") {
+			return "slack://" + logTag(p.Host) // a team-scoped link's host is the workspace's id (slack://T…/magic-login)
+		}
 		return "slack://" + p.Host
 	}
 	return "a " + p.Scheme + " link"

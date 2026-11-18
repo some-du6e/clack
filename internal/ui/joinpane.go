@@ -18,6 +18,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -544,7 +545,7 @@ func (a *App) layoutArchivedBar(gtx layout.Context, c *convo, ci *convInfo) layo
 			ch := c.ch
 			go func() { // onUnarchiveLinkClicked: submitUnarchive
 				if err := svc.Unarchive(context.Background(), ch); err != nil {
-					log.Printf("unarchive %s: %v", ch, err)
+					log.Printf("unarchive %s: %v", logtag.ID(ch), err)
 				}
 			}()
 		}

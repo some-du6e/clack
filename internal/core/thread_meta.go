@@ -81,6 +81,7 @@ func (a *App) onMessageReplied(ctx context.Context, ch string, raw json.RawMessa
 	if stored, ok := a.S.Find(ch, m.TS); ok && staleReplied(r.latest(), &stored) {
 		return
 	}
+	a.forgetMsgThread(ch, m.TS) // a parent looked up before it had replies is one now
 	latest := m.LatestReply
 	if latest == "" {
 		latest = r.latest()

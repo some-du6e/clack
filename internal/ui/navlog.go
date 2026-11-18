@@ -64,7 +64,7 @@ var routerFuncs = []string{
 	"(*App).OpenThread", "(*App).openThread", "(*App).OpenThreadAt", "(*App).openThreadAt", "(*App).openThreadAtIn",
 	"(*App).OpenThreadReply", "(*App).Navigate", "(*App).afterRoute", "(*App).jumpToMessage", "(*App).jumpMessage",
 	"(*App).jumpAfterLookup", "(*App).jumpViaRoutes", "(*App).jumpSplit", "(*App).jumpLatest", "(*App).JumpToMessage",
-	"(*App).OpenPermalink", "(*App).FollowLink", "(*App).withVia", "(*App).navVia", "(*App).logThreadOpen",
+	"(*App).OpenPermalink", "(*App).openLinkIn", "(*App).FollowLink", "(*App).withVia", "(*App).navVia", "(*App).logThreadOpen",
 	"(*App).OpenSplit", "(*App).inPane", "(*App).OpenAtMessage", "(*App).replyAsThread", "callerOutsideRouter",
 }
 

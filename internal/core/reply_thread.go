@@ -110,6 +110,16 @@ func (a *App) noteMsgThread(ch, ts, thread string) {
 	a.msgThread[ch+"/"+ts] = thread
 }
 
+// forgetMsgThread drops what was remembered of message ts of ch: it got
+// replies, or a new copy (message_replied, message_changed), so a parent
+// looked up before it had any isn't left without its thread (Slack's
+// store keeps the message, and messageReplied updates it there).
+func (a *App) forgetMsgThread(ch, ts string) {
+	a.mu.Lock()
+	delete(a.msgThread, ch+"/"+ts)
+	a.mu.Unlock()
+}
+
 // msgThreadOf is what noteMsgThread remembered for message ts of ch.
 func (a *App) msgThreadOf(ch, ts string) (string, bool) {
 	a.mu.Lock()

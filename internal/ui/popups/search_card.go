@@ -1021,10 +1021,19 @@ func (a *srAttCard) open(it srAttItem) {
 			link = a.m.Permalink
 		}
 		if pl, ok := core.ParsePermalink(link); ok && pl.Kind == "message" {
-			RecordRecentConversation(pl.ChannelID)
-			if lf, ok := h.(LinkFollower); ok && lf.FollowLink(link, false) {
-				return // Slack's Link: openPermalink's jumpToMessage (a reply opens in its thread)
+			if lf, ok := h.(LinkFollower); ok {
+				// Slack's Link: openPermalink's jumpToMessage (a reply opens in
+				// its thread); one it can't place (another workspace's) opens
+				// in a new tab, and only a conversation the client opens is a
+				// recent one
+				if lf.FollowLink(link, false) {
+					RecordRecentConversation(pl.ChannelID)
+				} else {
+					_ = openurl.Open(link)
+				}
+				return
 			}
+			RecordRecentConversation(pl.ChannelID)
 			if pl.ThreadTS != "" {
 				h.Navigate("c/" + pl.ChannelID + "/t/" + pl.ThreadTS)
 			} else {

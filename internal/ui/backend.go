@@ -1639,8 +1639,8 @@ func (b *backend) signOut() {
 }
 
 // openURL opens a link in the system browser (http, https and mailto only;
-// see openurl.Check).
-func openURL(u string) { _ = openurl.Open(u) }
+// see openurl.Check). A var: tests catch what reaches the browser.
+var openURL = func(u string) { _ = openurl.Open(u) }
 
 // notificationMessage is showNotification's `message`: the message as
 // Slack's store keeps it, which plugins drop (ShutUpSlackbot, StreamerMode

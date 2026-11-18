@@ -52,8 +52,9 @@ func (a *App) ReplyAsThreadRoot(ch, reply, root string) {
 // rootForReplyHighlight: the conversation beside a handed-on pane was
 // asked to highlight the reply as a thread's root (toThread's
 // highlightRoot with the reply's ts, a message the conversation never
-// holds, so the jump would wait for it for good); it highlights the
-// thread's root, as toThread for the reply's thread does.
+// holds, so the jump waits for it or gives up); it highlights the
+// thread's root, as toThread for the reply's thread does, whether that
+// jump is still waiting or not.
 func (a *App) rootForReplyHighlight(ch, reply, root string) {
 	if a.router.Current().Channel() != ch {
 		return
@@ -63,9 +64,9 @@ func (a *App) rootForReplyHighlight(ch, reply, root string) {
 		return
 	}
 	if h, ok := c.list.(interface {
-		JumpPending() string
+		HighlightRequested() string
 		Highlight(ts string)
-	}); ok && h.JumpPending() == reply {
+	}); ok && h.HighlightRequested() == reply {
 		h.Highlight(root)
 	}
 }

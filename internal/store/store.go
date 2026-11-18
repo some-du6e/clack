@@ -49,6 +49,7 @@ type Store struct {
 	Usergroups  map[string]string
 	Presence    map[string]string
 	timelines   map[string]*Timeline
+	windows     map[string][]*Window       // a conversation's stretches apart from its timeline (windows.go)
 	threads     map[string][]slack.Message // key channel/ts
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
@@ -1263,11 +1264,13 @@ func (s *Store) TimelineIDs() []string {
 	return ids
 }
 
-// SetLatest replaces the newest window (from a fresh history fetch).
+// SetLatest replaces the newest window (from a fresh history fetch); a
+// window it now meets joins it (windows.go).
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+	s.absorbWindowsLocked(ch)
 	s.mu.Unlock()
 }
 
@@ -1288,6 +1291,7 @@ func (s *Store) PrependOlder(ch string, msgs []slack.Message, hasMore bool) {
 	if len(t.Msgs) > 5000 {
 		t.Msgs = t.Msgs[len(t.Msgs)-5000:]
 	}
+	s.absorbWindowsLocked(ch) // the timeline grew back to a window: they're one (Slack's slices merge as they meet)
 }
 
 // Upsert inserts or replaces a top-level message in a loaded timeline.
@@ -1328,6 +1332,12 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			}
 		}
 	}
+	if m := s.windowMsgLocked(ch, func(m *slack.Message) bool { return m.TS == ts }); m != nil {
+		f(m)
+		if !found {
+			out, found = *m, true
+		}
+	}
 	for k, th := range s.threads {
 		if !strings.HasPrefix(k, ch+"/") {
 			continue
@@ -1355,6 +1365,7 @@ func (s *Store) Remove(ch, ts string) {
 			}
 		}
 	}
+	s.removeWindowMsgLocked(ch, ts)
 	for k, th := range s.threads {
 		if !strings.HasPrefix(k, ch+"/") {
 			continue
@@ -1399,6 +1410,9 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 			}
 		}
 	}
+	if m := s.windowMsgLocked(ch, match); m != nil {
+		return m
+	}
 	pre := ch + "/"
 	for k, th := range s.threads {
 		if strings.HasPrefix(k, pre) {
@@ -1427,6 +1441,11 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			add(&t.Msgs[i])
+		}
+	}
+	for _, w := range s.windows[ch] {
+		for i := range w.Msgs {
+			add(&w.Msgs[i])
 		}
 	}
 	pre := ch + "/"

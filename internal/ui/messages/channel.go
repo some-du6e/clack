@@ -37,7 +37,9 @@ func NewChannelView(h Host, channelID string) *ChannelView {
 // position and inline editors are its own.
 func NewChannelViewIn(h Host, channelID, pane string) *ChannelView {
 	v := &ChannelView{h: h, ch: channelID, s: stateIn(h, channelID, "", pane)}
-	v.s.hb.ensureLoaded(v.s.m)
+	// the load starts as the list first lays out (ensure): a route at a
+	// message highlights it first, and a conversation not loaded yet then
+	// loads only the window around it
 	v.s.closeEdits() // an editor left open when you navigated away is gone, like Slack
 	// Each open places the "New" line at the read cursor as it is now.
 	if app := h.Core(); app != nil {
@@ -145,10 +147,8 @@ func (v *ChannelView) JumpToOwnSend(cid string, files bool) {
 	s := v.s
 	s.sendCID, s.sendAt = cid, time.Now()
 	// sendMessage's jumpToTimestamp: a window short of the newest message
-	// gives way to the newest page, where the send goes
-	if s.snap.newestMissing {
-		s.hb.jumpToLatest(s.m)
-	}
+	// gives way to the newest messages, where the send goes
+	s.jumpToLatest()
 	// the navigation replaces the view's startTs and highlightTs: a jump
 	// still paging back is dropped and a flashing message stops
 	s.pendingJump, s.pendingDate = "", time.Time{}
@@ -165,14 +165,16 @@ func (v *ChannelView) AtBottom() bool { return !v.s.list.Position.BeforeEnd }
 func (v *ChannelView) NewestRowBottom() (int, bool) { return v.s.newestBottom() }
 
 // Highlight scrolls to ts and flashes it (permalinks, search results,
-// route "c/<id>/m/<ts>"). Older messages are paged in until ts is loaded.
-// The jump stays pending until the list's next sync places it: a list
-// mounted in the background (the thread header's channel link with the
-// channel not on screen) rebuilds with the messages that arrived since it
-// last showed, and that rebuild's scroll anchoring, or an eviction's
-// reset, would otherwise put it back where it was last left.
+// route "c/<id>/m/<ts>"): in the conversation's newest messages, else in
+// the window around it (openWindow). The jump stays pending until the
+// list's next sync places it: a list mounted in the background (the
+// thread header's channel link with the channel not on screen) rebuilds
+// with the messages that arrived since it last showed, and that rebuild's
+// scroll anchoring, or an eviction's reset, would otherwise put it back
+// where it was last left.
 func (v *ChannelView) Highlight(ts string) {
 	v.s.highlight, v.s.highlightAt = ts, time.Now()
+	v.s.highlightReq = ts
 	v.s.positioned = true
 	v.s.aroundFor = ""
 	v.s.pendingJump = ts
@@ -196,6 +198,33 @@ func (v *ChannelView) Highlighted() string {
 
 // JumpPending is the message a Highlight waits to place ("" for none).
 func (v *ChannelView) JumpPending() string { return v.s.pendingJump }
+
+// HighlightRequested is the message the list was last asked to highlight,
+// placed or not (a jump to a message it never holds gives up, but the
+// ui root still knows what it asked for: the hand-over's root highlight).
+func (v *ChannelView) HighlightRequested() string { return v.s.highlightReq }
+
+// InWindow reports whether the list shows a window away from the
+// conversation's newest messages (and which message it was opened at).
+func (v *ChannelView) InWindow() bool { return v.s.win != nil }
+
+// Entered is a navigation to the conversation with no message to start at
+// (a sidebar click, Back, a thread's route): Slack's determineTimestamps
+// (client-boot) clears the channel's scrollmark when it has unread
+// messages, so the pane shows its newest messages, where they are; else
+// the pane opens at the scrollmark, where it was left (MessagePane:
+// startTs || getScrollmark(state, channel).mark), a window too. The list
+// keeps its place the same way: it leaves a window for the newest
+// messages only when the conversation has unreads.
+func (v *ChannelView) Entered() {
+	if v.s.win == nil {
+		return
+	}
+	if app := v.h.Core(); app != nil && app.Count(v.ch).Unread {
+		v.s.jumpToLatest()
+		v.h.Invalidate()
+	}
+}
 
 // Refresh refetches the newest messages in the background.
 func (v *ChannelView) Refresh() {

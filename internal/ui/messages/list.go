@@ -79,11 +79,18 @@ var tbIcons = [tbCount]string{"add-reaction", "comment-lines", "forward-msg", "t
 // views. It is cached across view instances (UI goroutine only), so
 // switching back to a conversation keeps its rows and scroll position.
 type listState struct {
-	hb     *hub
-	m      *model
-	thread bool
-	ch     string
-	ts     string // thread ts
+	hb *hub
+	m  *model // what the list shows: chm, or its window
+	// chm is a channel list's conversation model (the newest messages,
+	// every list's); win is the window it shows instead, its own (hub.go
+	// newWindow), nil when it shows chm
+	chm, win *model
+	// highlightReq is the message the list was last asked to highlight
+	// (Highlight), whether or not it holds it
+	highlightReq string
+	thread       bool
+	ch           string
+	ts           string // thread ts
 	// container is the view container the list is in ("" main, "split";
 	// see stateIn)
 	container string
@@ -326,6 +333,7 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 		s.m = hb.threadModel(ch, ts)
 	} else {
 		s.m = hb.channel(ch)
+		s.chm = s.m
 	}
 	s.list.Axis = layout.Vertical
 	s.list.ScrollToEnd = true
@@ -334,7 +342,8 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	// still keeps to its end once the thread outgrows it (Gio patch 45)
 	s.list.StartAligned = ts != ""
 	if len(listCache) > 2*maxModels {
-		for k := range listCache {
+		for k, old := range listCache {
+			old.hb.dropWindow(old.win) // its window takes no more live changes
 			delete(listCache, k)
 			break
 		}
@@ -343,11 +352,77 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	return s
 }
 
+// ensure is the list's load. A channel list opened at a message the
+// conversation hasn't loaded (its newest messages aren't loaded or
+// loading, and core's don't reach it) loads only the window around it:
+// Slack's pane mounted at startTs requests around it, two calls, never
+// the newest page first. Else its model's load (ensureLoaded).
+func (s *listState) ensure() {
+	if !s.thread && s.win == nil && s.pendingJump != "" && s.aroundFor != s.pendingJump {
+		s.chm.mu.Lock()
+		cold := !s.chm.loaded && !s.chm.loading
+		s.chm.mu.Unlock()
+		if app := s.hb.app; cold && app != nil && !app.S.TimelineHolds(s.ch, s.pendingJump) {
+			s.aroundFor = s.pendingJump
+			s.openWindow(s.pendingJump)
+			return
+		}
+	}
+	s.hb.ensureLoaded(s.m)
+}
+
+// openWindow shows the window around message ts in the list: a window
+// model of its own (the conversation's model, every list's, keeps the
+// newest messages), loaded from the window core holds that has it, else
+// Slack's two calls (hub.loadWindow). The list draws it as it lands.
+func (s *listState) openWindow(ts string) {
+	s.hb.dropWindow(s.win)
+	w := s.hb.newWindow(s.ch)
+	s.win, s.m = w, w
+	s.snap.rev = 0
+	s.hb.loadWindow(w, ts)
+}
+
+// leaveWindow shows the conversation's newest messages again (its model,
+// which took every live message meanwhile).
+func (s *listState) leaveWindow() {
+	if s.win == nil {
+		return
+	}
+	s.hb.dropWindow(s.win)
+	s.win, s.m = nil, s.chm
+	s.snap.rev = 0
+	s.hb.ensureLoaded(s.m)
+}
+
+// jumpToLatest is the pane's jumpToMostRecent (ArchivesBanner's "Latest
+// messages", a send): jumpToTimestamp({ts: null}), which clears the
+// channel's scrollmark, so the conversation's newest messages show, at
+// their end.
+func (s *listState) jumpToLatest() {
+	if s.win == nil {
+		return
+	}
+	s.leaveWindow()
+	s.pendingJump, s.aroundFor = "", ""
+	s.list.Position = layout.Position{BeforeEnd: false}
+	s.positioned = true
+}
+
+// newestHold reports whether the conversation's newest messages hold ts
+// (loaded from its first message on, or its whole history).
+func (s *listState) newestHold(ts string) bool {
+	m := s.chm
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.loaded && len(m.msgs) > 0 && (!m.hasMore || !tsLess(ts, m.msgs[0].m.TS))
+}
+
 // prepare is layoutList's load and sync, earlier in the frame at frame
 // (ThreadView.Prepare): what the ui root decides from the list before it
 // lays the list out (the reply box) is then what the list draws.
 func (s *listState) prepare(h Host, frame time.Time) {
-	s.hb.ensureLoaded(s.m)
+	s.ensure()
 	s.sync(h, time.Now())
 	s.preparedAt = frame
 }
@@ -399,6 +474,17 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.snap.rev = 0
 	}
 	changed := s.m.snapshot(&s.snap)
+	if s.win != nil && s.m == s.win && s.snap.merged {
+		// the window met the conversation's newest messages and is part of
+		// them now (core joined it to the timeline): the list shows them,
+		// read again from core, where it was reading
+		if s.pendingJump == "" {
+			s.pendingJump = s.firstVisibleMsg()
+		}
+		s.leaveWindow()
+		s.hb.refresh(s.chm)
+		changed = s.m.snapshot(&s.snap)
+	}
 	if changed {
 		s.sysUsers, s.sysHidden = s.hb.usersRev(), hk
 		s.sysMissing = s.adjustSystem(h, sysOn)
@@ -701,7 +787,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	now := time.Now()
 	lastHost = h
 	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
-		s.hb.ensureLoaded(s.m)
+		s.ensure()
 		s.sync(h, now)
 	}
 	s.hb.markDrawn(s.m, gtx.Now)
@@ -907,19 +993,22 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
 
-	// jumping to a message the window doesn't hold (older than its start,
-	// or past the end of a window short of the newest): Slack's pane opened
-	// at startTs loads the window around it, once (loadAround), and sync()
-	// places it when it's in. One the window around it lacks, or the
+	// jumping to a message what the list shows doesn't hold: Slack's pane
+	// at startTs shows the slice holding it (windows.go): older than its
+	// start (or past a window's end), the window around it, once
+	// (openWindow), the conversation's newest messages when they hold it;
+	// sync() places it when it's in. One the window around it lacks, or the
 	// conversation's whole history, isn't in this conversation.
 	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older && !s.snap.loading && s.snap.around == "" {
 		n := len(s.snap.msgs)
-		outside := n > 0 && (s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS) ||
-			s.snap.newestMissing && tsLess(s.snap.msgs[n-1].m.TS, s.pendingJump))
+		older := n > 0 && s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS)
+		newer := s.win != nil && n > 0 && tsLess(s.snap.msgs[n-1].m.TS, s.pendingJump)
 		switch {
-		case outside && s.aroundFor != s.pendingJump:
+		case newer && s.newestHold(s.pendingJump):
+			s.leaveWindow() // the conversation's newest messages hold it
+		case (older || newer) && s.aroundFor != s.pendingJump:
 			s.aroundFor = s.pendingJump
-			s.hb.loadAround(s.m, s.pendingJump)
+			s.openWindow(s.pendingJump)
 		case s.aroundFor == s.pendingJump && s.built == s.snap.rev,
 			n > 0 && !s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS):
 			s.pendingJump = "" // not in this conversation
@@ -2116,11 +2205,24 @@ func (s *listState) placeJump(now time.Time) {
 		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == s.pendingJump {
 			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
 			s.positioned = true
+			if s.highlight == s.pendingJump {
+				s.highlightAt = now // the flash starts as its message is placed
+			}
 			s.pendingJump = ""
-			s.highlightAt = now
 			return
 		}
 	}
+}
+
+// firstVisibleMsg is the first message the list showed last frame ("" for
+// none).
+func (s *listState) firstVisibleMsg() string {
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].kind == itMsg {
+			return s.items[i].key
+		}
+	}
+	return ""
 }
 
 // Sending from the composer under a channel (Slack's sendMessage thunk,

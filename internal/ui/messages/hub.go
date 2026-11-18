@@ -43,12 +43,14 @@ type model struct {
 	refreshQ bool
 	renames  [][2]string // pending ts -> confirmed ts, consumed by views
 	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
-	// newestMissing: the window misses the newest page (snap.newestMissing):
-	// a jump to a message older than what was loaded loads the window
-	// around it (loadAround)
-	newestMissing bool
-	// around: the message an around-load is out for; newer: loading the
-	// page after a window short of the newest (loadNewer)
+	// win: a window model, a list's own stretch of the conversation away
+	// from its newest messages (newWindow); newestMissing: it stops short
+	// of the newest message (snap.newestMissing, ArchivesBanner's "Latest
+	// messages"); merged: it met the newest messages and the list goes
+	// back to the conversation's model
+	win, newestMissing, merged bool
+	// around: the message a window's load is out for; newer: loading the
+	// page after its end (loadNewer)
 	around string
 	newer  bool
 	// live: messages an event changed (true: deleted) while a load was
@@ -125,6 +127,7 @@ type hub struct {
 	mu     sync.Mutex
 	chans  map[string]*model
 	thread map[string]*model // key ch + "/" + ts
+	wins   map[*model]bool   // the lists' window models (newWindow)
 	userRv uint64            // bumps on profile, name, pref and members-cache events
 	// authFailed stops every load after core's auth_failed (or an auth
 	// error) until the connection comes back or the user hits Retry.
@@ -153,6 +156,11 @@ func (hb *hub) onScreen(ch string) bool {
 		return true
 	}
 	for _, m := range hb.thread {
+		if m.ch == ch && m.drawn.Equal(hb.frame) {
+			return true
+		}
+	}
+	for m := range hb.wins {
 		if m.ch == ch && m.drawn.Equal(hb.frame) {
 			return true
 		}
@@ -274,10 +282,9 @@ func (hb *hub) ensureLoaded(m *model) {
 	}
 	now := time.Now()
 	m.mu.Lock()
-	// a window short of the newest message isn't refreshed from the
-	// newest page (that would leave a gap): it reaches the newest by
-	// loadNewer, or jumpToLatest swaps it for the newest page
-	if m.loading || m.around != "" || m.loaded && m.newestMissing || (m.loaded && now.Sub(m.fetched) < 30*time.Second) || now.Before(m.retryAt) {
+	// a window loads with loadWindow and its pages (never from the newest
+	// page, which would leave a gap)
+	if m.win || m.loading || (m.loaded && now.Sub(m.fetched) < 30*time.Second) || now.Before(m.retryAt) {
 		m.mu.Unlock()
 		return
 	}
@@ -346,6 +353,15 @@ func (hb *hub) afterLoad(m *model) {
 	}
 }
 
+// refresh reads model m again now (core changed what it holds under it:
+// a window joined its timeline).
+func (hb *hub) refresh(m *model) {
+	m.mu.Lock()
+	m.fetched = time.Time{}
+	m.mu.Unlock()
+	hb.ensureLoaded(m)
+}
+
 // retry is the Retry link: forget the backoff (and an auth stop) and load.
 func (hb *hub) retry(m *model) {
 	hb.authFailed.Store(false)
@@ -356,9 +372,14 @@ func (hb *hub) retry(m *model) {
 	hb.ensureLoaded(m)
 }
 
-// loadOlder fetches the page before the oldest loaded message.
+// loadOlder fetches the page before the oldest loaded message (a
+// window's: within the window, loadWindowPage).
 func (hb *hub) loadOlder(m *model) {
 	if hb.authFailed.Load() {
+		return
+	}
+	if m.win {
+		hb.loadWindowPage(m, true)
 		return
 	}
 	m.mu.Lock()
@@ -391,22 +412,75 @@ func (hb *hub) loadOlder(m *model) {
 	}()
 }
 
-// loadAround loads the window around message ts, a jump's target older
-// than what the model holds (or newer than a window short of the newest):
-// Slack's message pane opened at startTs, two conversations.history calls
-// (core.HistoryAround), never a walk back from the newest page. A window
-// that reaches the newest message joins what the model holds from its
-// start on; one that doesn't replaces it, newestMissing set. Never blocks.
-func (hb *hub) loadAround(m *model, ts string) {
+// ---- windows: a conversation's history away from its newest messages ----
+//
+// A jump to a message the conversation's newest messages don't reach (a
+// link, a search result, an Activity item far back) shows the window
+// around it: Slack's message pane at startTs over its channelHistory slice
+// (client-boot 1qrw addTimestamps, invH insert, B0mF
+// getTimestampsByChannelId; build 2c0d02ca130f). The window is a model of
+// the list's own (newWindow), never the conversation's model, which every
+// list of the conversation shares and which keeps the newest messages and
+// every live one: the split view's jump leaves the main view where it was.
+// Core keeps the window as one of the conversation's windows
+// (store/windows.go), so its messages take live changes (an edit, a
+// reaction, a reply count, a pin: apply reaches the window models), but
+// a new message never joins it. Paging inside it extends it
+// (core.WindowOlder, WindowNewer: Slack's requestOlder and requestNewer)
+// and never writes the conversation's newest messages; one that meets
+// them (or reaches the newest) joins them, and the list goes back to the
+// conversation's model (merged). "Latest messages" (ArchivesBanner's
+// jumpToMostRecent) and a send go back to it too.
+
+// newWindow is a window model for a list of ch, which takes ch's live
+// changes until dropWindow.
+func (hb *hub) newWindow(ch string) *model {
+	m := &model{ch: ch, win: true, typing: map[string]typingEntry{}, used: time.Now()}
+	hb.mu.Lock()
+	if hb.wins == nil {
+		hb.wins = map[*model]bool{}
+	}
+	hb.wins[m] = true
+	hb.mu.Unlock()
+	return m
+}
+
+// dropWindow is the list done with window model m.
+func (hb *hub) dropWindow(m *model) {
+	if m == nil {
+		return
+	}
+	hb.mu.Lock()
+	delete(hb.wins, m)
+	hb.mu.Unlock()
+}
+
+// windowsOf is ch's window models.
+func (hb *hub) windowsOf(ch string) []*model {
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	var out []*model
+	for m := range hb.wins {
+		if m.ch == ch {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// loadWindow loads window model m around message ts: the window core
+// holds that has it, else Slack's two calls (core.HistoryAround). Never
+// blocks.
+func (hb *hub) loadWindow(m *model, ts string) {
 	if hb.authFailed.Load() || ts == "" {
 		return
 	}
 	m.mu.Lock()
-	if m.threadTS != "" || m.around != "" {
+	if m.around != "" {
 		m.mu.Unlock()
 		return
 	}
-	m.around = ts
+	m.around, m.loading = ts, true
 	m.rev++
 	m.mu.Unlock()
 	hb.invalidate()
@@ -415,21 +489,14 @@ func (hb *hub) loadAround(m *model, ts string) {
 		defer cancel()
 		w, err := hb.app.HistoryAround(ctx, m.ch, ts)
 		m.mu.Lock()
-		m.around = ""
-		if err == nil && len(w.Messages) > 0 {
-			if w.HasNewer {
-				m.setAll(w.Messages)
-			} else {
-				all := append([]core.Message(nil), w.Messages...)
-				for _, e := range m.msgs {
-					if !tsLess(e.m.TS, w.Messages[0].TS) {
-						all = append(all, e.m)
-					}
-				}
-				m.setAll(dedupeTS(all))
-			}
-			m.hasMore, m.newestMissing = w.HasOlder, w.HasNewer
+		m.around, m.loading, m.err = "", false, err
+		if err == nil {
+			m.setAll(w.Messages)
+			m.hasMore, m.newestMissing, m.merged = w.HasOlder, !w.Merged, w.Merged
 			m.loaded, m.fetched = true, time.Now()
+			m.fails, m.retryAt = 0, time.Time{}
+		} else {
+			m.failed(hb, err, false, time.Now())
 		}
 		m.rev++
 		m.mu.Unlock()
@@ -438,37 +505,58 @@ func (hb *hub) loadAround(m *model, ts string) {
 	}()
 }
 
-// loadNewer is requestNewer: the page after a window short of the newest
-// message, once its end is in view (core.HistoryNewer). The window
-// reaches the newest when the page says no more.
-func (hb *hub) loadNewer(m *model) {
+// loadWindowPage is a window's requestOlder (older) or requestNewer: the
+// page past its start or its end, which core adds to the window
+// (WindowOlder, WindowNewer); the window as core holds it then is the
+// model's, merged once it met the conversation's newest messages.
+func (hb *hub) loadWindowPage(m *model, older bool) {
 	if hb.authFailed.Load() {
 		return
 	}
 	m.mu.Lock()
-	if m.newer || !m.newestMissing || len(m.msgs) == 0 || m.threadTS != "" || m.around != "" {
+	n := len(m.msgs)
+	if n == 0 || m.older || m.newer || m.around != "" || m.merged ||
+		older && (!m.hasMore || time.Now().Before(m.olderRetryAt)) || !older && !m.newestMissing {
 		m.mu.Unlock()
 		return
 	}
-	m.newer = true
-	after := m.msgs[len(m.msgs)-1].m.TS
+	edge := m.msgs[0].m.TS
+	if older {
+		m.older = true
+	} else {
+		m.newer, edge = true, m.msgs[n-1].m.TS
+	}
 	m.rev++
 	m.mu.Unlock()
 	hb.invalidate()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		w, err := hb.app.HistoryNewer(ctx, m.ch, after)
+		var w core.Around
+		var err error
+		if older {
+			w, err = hb.app.WindowOlder(ctx, m.ch, edge)
+		} else {
+			w, err = hb.app.WindowNewer(ctx, m.ch, edge)
+		}
 		m.mu.Lock()
-		m.newer = false
+		m.older, m.newer = false, false
 		if err == nil {
 			all := make([]core.Message, 0, len(m.msgs)+len(w.Messages))
 			for _, e := range m.msgs {
 				all = append(all, e.m)
 			}
 			m.setAll(dedupeTS(append(all, w.Messages...)))
-			m.newestMissing = w.HasNewer
-			m.fetched = time.Now()
+			if older {
+				m.hasMore = w.HasOlder
+			}
+			if w.Merged {
+				m.merged, m.newestMissing = true, false
+			}
+			m.olderFails, m.olderRetryAt = 0, time.Time{}
+		} else {
+			m.err = err
+			m.failed(hb, err, true, time.Now())
 		}
 		m.rev++
 		m.mu.Unlock()
@@ -477,36 +565,11 @@ func (hb *hub) loadNewer(m *model) {
 	}()
 }
 
-// jumpToLatest is jumpToMostRecent for a window short of the newest
-// message ("Latest messages", a send from the composer): the newest page
-// takes its place.
-func (hb *hub) jumpToLatest(m *model) {
-	if hb.authFailed.Load() {
-		return
+// loadNewer is a window's requestNewer, once its end is in view.
+func (hb *hub) loadNewer(m *model) {
+	if m.win {
+		hb.loadWindowPage(m, false)
 	}
-	m.mu.Lock()
-	if !m.newestMissing || m.threadTS != "" || m.loading {
-		m.mu.Unlock()
-		return
-	}
-	m.loading = true
-	m.mu.Unlock()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		p, err := hb.app.History(ctx, m.ch, "")
-		m.mu.Lock()
-		m.loading = false
-		if err == nil {
-			m.setAll(p.Messages)
-			m.hasMore, m.newestMissing = p.HasMore, false
-			m.loaded, m.fetched = true, time.Now()
-		}
-		m.rev++
-		m.mu.Unlock()
-		hb.afterLoad(m)
-		hb.invalidate()
-	}()
 }
 
 // dedupeTS keeps each message once (the later copy), in ts order.
@@ -523,13 +586,6 @@ func dedupeTS(msgs []core.Message) []core.Message {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return tsLess(out[i].TS, out[j].TS) })
 	return out
-}
-
-// pastWindow reports a new message after a window short of the newest
-// message: it joins when the window reaches the newest (callers hold
-// m.mu).
-func (m *model) pastWindow(ts string) bool {
-	return m.newestMissing && len(m.msgs) > 0 && m.find(ts) < 0 && tsLess(m.msgs[len(m.msgs)-1].m.TS, ts)
 }
 
 // ---- model mutation (callers hold m.mu) ----
@@ -777,11 +833,20 @@ func (hb *hub) apply(ev core.Event) bool {
 		thread := ev.Msg.ThreadTS
 		chm, thm := hb.models(ev.Channel, thread)
 		changed := false
+		// a window takes a change to a message it holds, never a new one
+		// (that's the newest messages', the conversation's model's)
+		for _, w := range hb.windowsOf(ev.Channel) {
+			w.mu.Lock()
+			if w.find(ev.Msg.TS) >= 0 {
+				w.upsert(*ev.Msg)
+				w.rev++
+				changed = true
+			}
+			w.mu.Unlock()
+		}
 		if chm != nil {
 			chm.mu.Lock()
-			if chm.pastWindow(ev.Msg.TS) {
-				// after a window short of the newest: loaded with the newer pages
-			} else if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
+			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
 				chm.upsert(*ev.Msg)
 				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
@@ -839,8 +904,8 @@ func (hb *hub) apply(ev core.Event) bool {
 		// a reply's parent (reply count) arrives as an "update"
 		return chm != nil || thm != nil
 	case "delete":
+		ms := hb.windowsOf(ev.Channel)
 		hb.mu.Lock()
-		var ms []*model
 		if m := hb.chans[ev.Channel]; m != nil {
 			ms = append(ms, m)
 		}
@@ -972,11 +1037,14 @@ func (hb *hub) reconvert(ev core.Event) bool {
 		return false
 	}
 	hb.mu.Lock()
-	ms := make([]*model, 0, len(hb.chans)+len(hb.thread))
+	ms := make([]*model, 0, len(hb.chans)+len(hb.thread)+len(hb.wins))
 	for _, m := range hb.chans {
 		ms = append(ms, m)
 	}
 	for _, m := range hb.thread {
+		ms = append(ms, m)
+	}
+	for m := range hb.wins {
 		ms = append(ms, m)
 	}
 	hb.mu.Unlock()
@@ -1047,8 +1115,8 @@ func mergeRefChange(a, b core.RefChange) core.RefChange {
 // message gains nothing.
 func (hb *hub) applyReactions(ev core.Event) bool {
 	ts := ev.Msg.TS
+	ms := hb.windowsOf(ev.Channel) // a window's messages take reactions too
 	hb.mu.Lock()
-	var ms []*model
 	if m := hb.chans[ev.Channel]; m != nil {
 		ms = append(ms, m)
 	}
@@ -1094,13 +1162,13 @@ type snap struct {
 	refresh  bool
 	renames  [][2]string
 	jump     string
-	// newestMissing is Slack's reachedEnd === false: the loaded window
-	// stops short of the newest message (ArchivesBanner's "Latest
-	// messages"): a jump loaded the window around an older message
-	// (loadAround).
+	// newestMissing is Slack's reachedEnd === false: the list shows a
+	// window that stops short of the newest message (ArchivesBanner's
+	// "Latest messages"), the one around a jump's message (loadWindow).
 	newestMissing bool
-	around        string // an around-load is out for this message
+	around        string // the window's load is out for this message
 	newer         bool   // loading the page after the window
+	merged        bool   // the window met the newest messages: the list goes back to them
 }
 
 func (m *model) snapshot(dst *snap) bool {
@@ -1111,7 +1179,7 @@ func (m *model) snapshot(dst *snap) bool {
 	}
 	dst.msgs = append(dst.msgs[:0], m.msgs...)
 	dst.hasMore, dst.lastRead, dst.loaded, dst.loading, dst.older, dst.err = m.hasMore, m.lastRead, m.loaded, m.loading, m.older, m.err
-	dst.newestMissing, dst.around, dst.newer = m.newestMissing, m.around, m.newer
+	dst.newestMissing, dst.around, dst.newer, dst.merged = m.newestMissing, m.around, m.newer, m.merged
 	dst.typing = dst.typing[:0]
 	now := time.Now()
 	for id, t := range m.typing {

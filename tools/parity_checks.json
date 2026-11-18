@@ -8,7 +8,7 @@
     {"id": "composer-send", "name": "Composer: sending, editing, drafts and scheduling", "audit": "docs/COMPOSER-AUDIT.md"},
     {"id": "messages", "name": "Messages: rich text, Block Kit, attachments and unfurls", "audit": "docs/MESSAGES-AUDIT.md"},
     {"id": "file-previews", "name": "Files and snippet previews", "audit": "docs/FILES-AUDIT.md", "gaps": "Only the snippet HTML cut (html-truncate) is differential."},
-    {"id": "threads", "name": "Threads", "audit": "docs/THREADS-AUDIT.md"},
+    {"id": "threads", "name": "Threads", "audit": "docs/THREADS-AUDIT.md", "gaps": "A link or pill without thread_ts into an AI app's DM opens the DM at the message; Slack's jumpViaRoutes (wc0P) opens it as a thread in the main window, or the app's chat tab, when AI apps are on and the app is valid (OePe K, Db4L wP, 3NYU yk). Clack doesn't model AI-app DMs yet."},
     {"id": "sidebar", "name": "Sidebar sections and rows", "docs": "docs/SIDEBAR-RULES.md"},
     {"id": "channels", "name": "Channel header, details and browser", "audit": "docs/CHANNELS-AUDIT.md"},
     {"id": "search", "name": "Search", "audit": "docs/SEARCH-AUDIT.md"},

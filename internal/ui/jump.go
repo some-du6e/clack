@@ -212,17 +212,21 @@ func (a *App) jumpLatest(ch, thread string) {
 	}
 	via := a.navVia()
 	fromSplit := a.pane == paneSplit
+	splitClick := !fromSplit && a.splitClick() // the modifier is gone once the reply's known
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		latest := c.LatestReply(ctx, ch, thread)
 		a.Post(func() {
 			a.withVia(via, func() {
-				if fromSplit && a.splitOpen() {
+				switch {
+				case fromSplit && a.splitOpen():
 					a.inPane(paneSplit, func() { a.jumpViaRoutes(ch, latest, thread) })
-					return
+				case splitClick:
+					a.jumpSplit(ch, latest, thread)
+				default:
+					a.jumpViaRoutes(ch, latest, thread)
 				}
-				a.jumpViaRoutes(ch, latest, thread)
 			})
 		})
 	}()
@@ -250,62 +254,111 @@ func (a *App) OpenPermalink(u string, openRoot bool) bool {
 	}
 	thread := slackTimestamp(p.Query().Get("thread_ts")) // its own ts too: that message's thread
 	if m := permalinkLatest.FindStringSubmatch(p.Path); m != nil && core.IsSlackURL(u) {
-		if a.foreignLink(p, m[1]) {
-			return false
-		}
-		a.withVia("permalink from "+callerOutsideRouter(), func() {
+		return a.openLinkIn(u, p, m[1], func() {
 			if thread != "" {
 				a.jumpLatest(m[1], thread)
 			} else {
 				a.jumpToMessage(m[1], "", "", false) // "latest" names no message: the conversation
 			}
 		})
-		return true
 	}
 	pl, ok := core.ParsePermalink(u)
 	if !ok || pl.Kind != "message" && pl.Kind != "channel" {
 		return false
 	}
-	if a.foreignLink(p, pl.ChannelID) {
-		return false
-	}
 	// a link with only a thread (/archives/<C>?thread_ts=) is toThread
 	// without a reply: jumpToMessage's `if (ed || !i)` branch
-	a.withVia("permalink from "+callerOutsideRouter(), func() { a.jumpToMessage(pl.ChannelID, pl.TS, thread, openRoot) })
+	return a.openLinkIn(u, p, pl.ChannelID, func() { a.jumpToMessage(pl.ChannelID, pl.TS, thread, openRoot) })
+}
+
+// openLinkIn opens a link to conversation ch with jump, once its
+// workspace is this one (linkWorkspace): false for another workspace's
+// (the caller's browser tab); on Enterprise Grid a link from another of
+// the org's workspaces opens once conversations.info finds the
+// conversation, else in the browser.
+func (a *App) openLinkIn(u string, p *url.URL, ch string, jump func()) bool {
+	via := "permalink from " + callerOutsideRouter()
+	switch a.linkWorkspace(p, ch) {
+	case linkForeign:
+		return false
+	case linkLookup:
+		c, pane, mods := a.Core(), a.pane, a.clickMods
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			_, found := c.ResolveConv(ctx, ch)
+			a.Post(func() {
+				if !found {
+					openURL(u) // jumpToMessage's "Could not find suitable target workspace": a new tab
+					return
+				}
+				a.WithClickMods(mods, func() {
+					a.withVia(via, func() {
+						if pane == paneSplit && a.splitOpen() {
+							a.inPane(paneSplit, jump)
+							return
+						}
+						jump()
+					})
+				})
+			})
+		}()
+		return true
+	}
+	a.withVia(via, jump)
 	return true
 }
 
-// permalinkLatest is parsePermalink's /archives/<C>/latest (a thread's
-// latest reply, with ?thread_ts=).
-var permalinkLatest = regexp.MustCompile(`^/archives/([CDG][A-Z0-9]+)/latest/?$`)
+// linkPlace is where a link's conversation is (linkWorkspace).
+type linkPlace uint8
 
-// foreignLink reports a link into another workspace: its subdomain isn't
-// this workspace's (nor "app", nor slack.com's own) and core doesn't know
-// the conversation, so jumpToMessage finds no suitable workspace.
-func (a *App) foreignLink(p *url.URL, ch string) bool {
+const (
+	linkLocal   linkPlace = iota // this workspace's: opens in the client
+	linkForeign                  // another workspace's: the browser
+	linkLookup                   // another of the Grid org's workspaces: looked up first
+)
+
+// linkWorkspace is jumpToMessage's target workspace for a link to
+// conversation ch (wc0P: the channel's team, else the org's team with the
+// link's subdomain): this workspace when the link's subdomain is its own,
+// the org's enterprise domain, app or slack.com's, or core knows the
+// conversation. On Enterprise Grid, where any of the org's workspaces can
+// hold it, a link with another subdomain is looked up (linkLookup);
+// elsewhere it's another workspace's.
+func (a *App) linkWorkspace(p *url.URL, ch string) linkPlace {
 	host := strings.ToLower(p.Hostname())
 	sub, _, _ := strings.Cut(host, ".")
 	if host == "slack.com" || sub == "app" {
-		return false
+		return linkLocal
 	}
 	c := a.Core()
 	if c == nil {
-		return false
+		return linkLocal
 	}
 	c.S.RLock()
 	dom := c.S.TeamDomain
 	c.S.RUnlock()
 	if dom == "" || strings.EqualFold(sub, dom) {
-		return false
+		return linkLocal
 	}
 	if _, ok := c.S.Conv(ch); ok {
-		return false
+		return linkLocal
 	}
 	if _, ok := c.S.ExtConv(ch); ok {
-		return false
+		return linkLocal
 	}
-	return true
+	if c.C == nil || c.C.Creds.EnterpriseID == "" {
+		return linkForeign
+	}
+	if e, err := url.Parse(c.C.Creds.EnterpriseURL); err == nil && e.Hostname() != "" && strings.EqualFold(e.Hostname(), host) {
+		return linkLocal // the org's own domain (acme.enterprise.slack.com)
+	}
+	return linkLookup
 }
+
+// permalinkLatest is parsePermalink's /archives/<C>/latest (a thread's
+// latest reply, with ?thread_ts=).
+var permalinkLatest = regexp.MustCompile(`^/archives/([CDG][A-Z0-9]+)/latest/?$`)
 
 // messageTimestampRE is formatMessageTimestamp's (ETk/): "p" optional,
 // the dot optional.
@@ -321,27 +374,29 @@ func slackTimestamp(s string) string {
 }
 
 // FollowLink is Slack's Link click (boot-shared jRB6) for a link Clack
-// draws (messages.LinkFollower, views' rows, search cards, Block Kit
-// surfaces, slackc): a slack: link but slack://open and slack://room
-// goes to handleDeepLink (eUmj U), a link to a message or a conversation
-// through openPermalink (openRoot: BaseMrkdwnLink's flag). false: the
-// caller opens it in the browser, as openPermalink opens every other link
-// in a new tab. UI goroutine.
+// draws (messages.LinkFollower, views' rows, the topic card, search
+// cards, Block Kit surfaces, canvases, slackc, toasts): a slack: link goes
+// to handleDeepLink (eUmj U; slack://open and slack://room go to
+// window.open, which the OS hands back to the app: the same handler),
+// and openPermalink opens the kinds of Slack link it parses in the client
+// (0S61 openPermalinkInClient): a canvas, a channel's tab, a list, and a
+// message or a conversation through jumpToMessage (openRoot:
+// BaseMrkdwnLink's flag). false: the caller opens it in the browser, as
+// openPermalink opens every other link in a new tab. UI goroutine.
 func (a *App) FollowLink(u string, openRoot bool) bool {
-	if isDeepLink(u) {
+	if isSlackScheme(u) {
 		a.OpenURL(u)
+		return true
+	}
+	if a.OpenCanvasLink(u) || a.OpenChannelTabLink(u) || a.OpenListLink(u) {
 		return true
 	}
 	return a.OpenPermalink(u, openRoot)
 }
 
-// isDeepLink is eUmj's U: a slack:// link handleDeepLink takes, all but
-// slack://open and slack://room.
-func isDeepLink(u string) bool {
-	if !strings.HasPrefix(u, "slack://") {
-		return false
-	}
-	return !strings.HasPrefix(u, "slack://open") && !strings.HasPrefix(u, "slack://room")
+// isSlackScheme is a slack: link, which only the app opens.
+func isSlackScheme(u string) bool {
+	return len(u) > 6 && strings.EqualFold(u[:6], "slack:")
 }
 
 // JumpToMessage is a message_mention pill's click (messages.MessageJumper,
@@ -350,6 +405,11 @@ func isDeepLink(u string) bool {
 // thread_ts is the parent's own ts for a thread's parent (KwXc
 // hydrateMessageSlugData), so that opens the thread too. UI goroutine.
 func (a *App) JumpToMessage(ch, ts, thread string) {
+	// the pill's ids as a deep link's are checked: a conversation id and
+	// formatMessageTimestamp's ts, else nothing to jump to
+	if ts = slackTimestamp(ts); ts == "" || !slackIDRE.MatchString(ch) || !strings.ContainsAny(ch[:1], "CDG") {
+		return
+	}
 	a.withVia("message mention from "+callerOutsideRouter(), func() { a.jumpToMessage(ch, ts, slackTimestamp(thread), false) })
 }
 
