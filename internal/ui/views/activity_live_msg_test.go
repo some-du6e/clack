@@ -1614,7 +1614,16 @@ func TestActivityLiveMaskedThreadWithInnerPatches(t *testing.T) {
 // its tree drew, and never draws the hidden person's reply natively (a
 // privacy-visible failure), until JS draws the new revision.
 func TestActivityLiveThreadProjectionJSHeld(t *testing.T) {
-	e := newLmEnv(t, lmOpts{latest: true, project: []string{"ActivityThread"}, patch: []string{"ActivityItem"}})
+	e := newLmEnv(t, lmOpts{latest: true, project: []string{"ActivityThread"}, patch: []string{"ActivityItem"}, setup: func(e *lmEnv) {
+		// the thread is in the store (opened earlier), so the message the
+		// plugin projects to has a copy to draw, as BetterBlock's reads
+		// Slack's messages store
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := e.app.RefreshReplies(ctx, lmChan, lmRoot); err != nil {
+			t.Fatal(err)
+		}
+	}})
 	e.e.until(t, "the projection drawn", func() bool { return e.rev() == 1 && e.drawn(lmLatest) == "" })
 	for i := 0; i < 5; i++ {
 		e.frame()
