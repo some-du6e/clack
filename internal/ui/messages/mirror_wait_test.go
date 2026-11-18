@@ -143,7 +143,21 @@ func placeEnv(t *testing.T, ch string, msg slack.Message) *core.App {
 		_, _, ready, ok := tautOf().MessageViewState(ch, msg.TS, false, 0)
 		return ok && ready
 	})
+	aheadOfChanges(app)
 	return app
+}
+
+// aheadOfChanges is the traffic of a session (typing: events that change
+// no message), so core's emit order runs far ahead of its message change
+// count, as it does once anyone types: fed the change table's place
+// (activity-live-msg's Event.Seq) for a row's need, the mirror is past it
+// already. In a fresh app nearly every event is a message change, and the
+// two counts stay close.
+func aheadOfChanges(app *core.App) {
+	for i := 0; i < 60; i++ {
+		injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UCARA0001"})
+	}
+	time.Sleep(300 * time.Millisecond) // the mirror handles them
 }
 
 // The row's copy an event wrote waits for the mirror to have handled the
@@ -182,6 +196,7 @@ func TestRowWaitsForTheMirror(t *testing.T) {
 		const ch = "C0MIRWEDT1"
 		msg := lunchMsg()
 		app, v, frame, row := mirrorWaitEnv(t, ch, msg)
+		aheadOfChanges(app)
 		release := tautOf().HoldMirror()
 		defer release()
 		injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
