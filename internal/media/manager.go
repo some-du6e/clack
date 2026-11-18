@@ -1,6 +1,7 @@
 package media
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -27,6 +28,8 @@ func NewManager(b Backend) *Manager {
 	m := &Manager{backend: b, players: map[*Handle]struct{}{}}
 	if b == nil {
 		m.backend, m.err = Default()
+	} else if err := b.Available(); err != nil {
+		m.err = fmt.Errorf("media: %s: %w", b.Name(), err)
 	}
 	return m
 }
@@ -50,7 +53,10 @@ func (m *Manager) Backend() string {
 // Open makes a player of src, paused (the caller plays it: Slack's
 // autoplay once the source is decided). frameReady is the App's repaint
 // for a new frame; onEvent (may be nil) gets the player's events and the
-// periodic timeupdate, on the handle's goroutine, in order.
+// periodic timeupdate, on the handle's goroutine, in order: it must not
+// block (it posts to the UI's loop), and it is the only way to the events
+// (Handle.Events is nil). Backends fire only HTML's non-periodic
+// timeupdates; the periodic ones are the manager's.
 func (m *Manager) Open(src Source, frameReady func(), onEvent func(Event)) (*Handle, error) {
 	if err := m.Available(); err != nil {
 		return nil, err
@@ -83,12 +89,16 @@ func (m *Manager) Playing() []*Handle {
 	defer m.mu.Unlock()
 	var out []*Handle
 	for h := range m.players {
-		if st := h.State(); !st.Paused && !st.Ended {
+		if playing(h.State()) {
 			out = append(out, h)
 		}
 	}
 	return out
 }
+
+// playing is whether st is a player playing: not paused, ended, waiting
+// or failed (HTML leaves paused false after an error).
+func playing(st State) bool { return !st.Paused && !st.Ended && !st.Waiting && st.Err == 0 }
 
 // CloseAll closes every player (sign-out, the window going).
 func (m *Manager) CloseAll() {
@@ -144,6 +154,11 @@ func (h *Handle) Close() {
 // Done is closed once the handle's goroutine is gone (after Close).
 func (h *Handle) Done() <-chan struct{} { return h.done }
 
+// Events is nil: a managed player's events go to Open's onEvent (the
+// handle's own loop reads the player's, and one read elsewhere wouldn't
+// reach the coordinator).
+func (h *Handle) Events() <-chan Event { return nil }
+
 // loop hands on the player's events, pauses the others when it plays, and
 // adds a timeupdate every TimeUpdateEvery while it plays.
 func (h *Handle) loop() {
@@ -155,6 +170,7 @@ func (h *Handle) loop() {
 		}
 	}()
 	events := h.Player.Events()
+	last := time.Duration(-1)
 	for {
 		var tc <-chan time.Time
 		if tick != nil {
@@ -165,25 +181,34 @@ func (h *Handle) loop() {
 			if !ok {
 				return
 			}
-			if ev.Kind == Play {
+			select {
+			case <-h.stop:
+				return // closed: what's queued is for no one
+			default:
+			}
+			if ev.Kind == Play && ev.State.Err == 0 {
 				h.m.playbackStarted(h)
 			}
-			playing := !ev.State.Paused && !ev.State.Ended && !ev.State.Waiting
+			on := playing(ev.State)
 			switch {
-			case playing && tick == nil:
+			case on && tick == nil:
 				tick = time.NewTicker(TimeUpdateEvery)
-			case !playing && tick != nil:
+			case !on && tick != nil:
 				tick.Stop()
 				tick = nil
 			}
 			h.emit(ev)
 		case <-tc:
 			st := h.Player.State()
-			if st.Paused || st.Ended || st.Waiting {
+			if !playing(st) {
 				tick.Stop()
 				tick = nil
 				continue
 			}
+			if st.Pos == last {
+				continue // Chromium fires it only when the media time moved
+			}
+			last = st.Pos
 			h.emit(Event{Kind: TimeUpdate, State: st})
 		case <-h.stop:
 			return

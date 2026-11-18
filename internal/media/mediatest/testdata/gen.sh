@@ -12,6 +12,6 @@ ffmpeg -hide_banner -y -f lavfi -i "color=c=0x404040:s=320x180:r=30:d=1" -f lavf
   -c:a aac -b:a 48k -movflags +faststart -map_metadata -1 -fflags +bitexact -flags:v +bitexact -flags:a +bitexact grey-grey-red-3s.mp4
 # the same streams with the moov after the mdat (an original not made for
 # progressive playback)
-ffmpeg -hide_banner -y -i grey-grey-red-3s.mp4 -c copy -movflags -faststart moov-at-end-3s.mp4
+ffmpeg -hide_banner -y -i grey-grey-red-3s.mp4 -c copy -movflags -faststart -map_metadata -1 -fflags +bitexact moov-at-end-3s.mp4
 # no audio track (a runner with no audio device plays this one)
 ffmpeg -hide_banner -y -i grey-grey-red-3s.mp4 -an -c copy -movflags +faststart -map_metadata -1 -fflags +bitexact grey-grey-red-3s-silent.mp4

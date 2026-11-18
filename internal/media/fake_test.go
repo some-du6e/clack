@@ -2,11 +2,14 @@ package media_test
 
 import (
 	"errors"
+	"image"
 	"image/color"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/media"
 	"github.com/some-du6e/clack/internal/media/mediatest"
@@ -295,11 +298,11 @@ func TestFakeErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer h.Close()
-	if ev := r.wait(t, media.Error, 5*time.Second); ev.State.Err != media.ErrNetwork {
-		t.Errorf("a source that fails: error %d, want 2", ev.State.Err)
+	if ev := r.wait(t, media.Error, 5*time.Second); ev.State.Err != media.ErrSrcNotSupported {
+		t.Errorf("a source that fails before its metadata: error %d, want 4 (Chromium's for a src)", ev.State.Err)
 	}
 	_, r2, _ := open(t, m, "FF6", []byte("<html>sign in</html>"))
-	if ev := r2.wait(t, media.Error, 5*time.Second); ev.State.Err != media.ErrSrcNotFound {
+	if ev := r2.wait(t, media.Error, 5*time.Second); ev.State.Err != media.ErrSrcNotSupported {
 		t.Errorf("a page: error %d, want 4", ev.State.Err)
 	}
 	m3 := media.NewManager(media.NewFake(media.FakeOptions{Err: media.ErrDecode, Log: quiet}))
@@ -344,5 +347,60 @@ func TestFakeClose(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if r.ready.Load() != n {
 		t.Error("frames after Close")
+	}
+}
+
+// The fake draws its still, the poster, until its first frame and after
+// an error, as the real backends draw theirs.
+func TestFakePoster(t *testing.T) {
+	poster := paint.NewImageOp(image.NewRGBA(image.Rect(0, 0, 32, 18)))
+	m := media.NewManager(media.NewFake(media.FakeOptions{Log: quiet, FailAfter: 300 * time.Millisecond}))
+	src, o := mediatest.Source("FF9", mediatest.GreyGreyRed, false)
+	o.Delay = 200 * time.Millisecond // the first frame comes late
+	r := newRecorder()
+	h, err := m.Open(src, r.frameReady, r.onEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	h.Op(poster, image.Pt(320, 180))
+	if got := media.FakeImage(h); got != poster {
+		t.Error("before the first frame: not the poster")
+	}
+	r.wait(t, media.FirstFrame, 5*time.Second)
+	if got := media.FakeImage(h); got == poster {
+		t.Error("after the first frame: still the poster")
+	}
+	h.Play()
+	g := draw(h)
+	r.wait(t, media.Error, 5*time.Second)
+	g.end()
+	if got := media.FakeImage(h); got != poster {
+		t.Error("after an error: not the poster")
+	}
+}
+
+// A player that fails mid-file isn't playing: the timeupdates stop and
+// the manager doesn't list it, though HTML leaves it unpaused.
+func TestManagerFailedNotPlaying(t *testing.T) {
+	m := media.NewManager(media.NewFake(media.FakeOptions{Log: quiet, FailAfter: 500 * time.Millisecond}))
+	h, r, _ := open(t, m, "FF10", mediatest.GreyGreyRed)
+	h.Play()
+	g := draw(h)
+	defer g.end()
+	ev := r.wait(t, media.Error, 5*time.Second)
+	if ev.State.Err != media.ErrNetwork || ev.State.Paused {
+		t.Errorf("error %+v, want 2 and not paused", ev.State)
+	}
+	n := r.count(media.TimeUpdate)
+	time.Sleep(700 * time.Millisecond)
+	if d := r.count(media.TimeUpdate) - n; d != 0 {
+		t.Errorf("%d timeupdates after the error", d)
+	}
+	if pl := m.Playing(); len(pl) != 0 {
+		t.Errorf("%d listed as playing after the error", len(pl))
+	}
+	if h.Events() != nil {
+		t.Error("a handle's Events isn't nil: a reader there would take events from the coordinator")
 	}
 }

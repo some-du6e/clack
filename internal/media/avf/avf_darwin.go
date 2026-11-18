@@ -265,7 +265,7 @@ func (p *player) open() {
 		return
 	}
 	if info.Total <= 0 {
-		p.fail(media.ErrSrcNotFound, "the server didn't say the file's size")
+		p.fail(media.ErrSrcNotSupported, "the server didn't say the file's size")
 		return
 	}
 	ext := strings.ToLower(strings.TrimPrefix(p.src.Ext, "."))
@@ -292,7 +292,7 @@ func (p *player) open() {
 	p.mu.Unlock()
 	obj := C.clack_avf_new(C.uintptr_t(p.id), C.int64_t(info.Total), seekable, uti, url, C.int(s.draw.X), C.int(s.draw.Y))
 	if obj == nil {
-		p.fail(media.ErrSrcNotFound, "the asset's URL")
+		p.fail(media.ErrSrcNotSupported, "the asset's URL")
 		return
 	}
 	p.obj = obj

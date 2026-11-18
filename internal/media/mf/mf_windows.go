@@ -424,7 +424,7 @@ func (p *player) doBind() {
 	hr := C.clack_me_bind(p.c, &info)
 	p.askMu.Unlock()
 	if hr != 0 {
-		p.fail(media.ErrSrcNotFound, fmt.Sprintf("the device on %q: %s: %s", C.GoString(&info.adapter[0]), C.GoString(&info.step[0]), hrString(int32(hr))))
+		p.fail(media.ErrSrcNotSupported, fmt.Sprintf("the device on %q: %s: %s", C.GoString(&info.adapter[0]), C.GoString(&info.step[0]), hrString(int32(hr))))
 		return
 	}
 	if !p.bound {
@@ -447,7 +447,7 @@ func (p *player) maybeOpen() {
 		return
 	}
 	if p.info.Total <= 0 {
-		p.fail(media.ErrSrcNotFound, "the server didn't say the file's size")
+		p.fail(media.ErrSrcNotSupported, "the server didn't say the file's size")
 		return
 	}
 	if p.format == 0 {
@@ -459,7 +459,7 @@ func (p *player) maybeOpen() {
 	}
 	u16, err := syscall.UTF16FromString("clack-media://" + p.src.FileID + "." + ext)
 	if err != nil {
-		p.fail(media.ErrSrcNotFound, err.Error())
+		p.fail(media.ErrSrcNotSupported, err.Error())
 		return
 	}
 	var info C.clackMFInfo
@@ -468,7 +468,7 @@ func (p *player) maybeOpen() {
 		seekable = 1
 	}
 	if hr := C.clack_me_open(p.c, C.int64_t(p.info.Total), seekable, (*C.uint16_t)(unsafe.Pointer(&u16[0])), C.uint32_t(p.format), &info); hr != 0 {
-		p.fail(media.ErrSrcNotFound, fmt.Sprintf("the engine: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
+		p.fail(media.ErrSrcNotSupported, fmt.Sprintf("the engine: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
 		return
 	}
 	runtime.KeepAlive(u16)
@@ -724,7 +724,7 @@ func (p *player) onEvent(ev mfEvent) {
 	case evError:
 		k = media.Error
 		code := int(ev.p1)
-		if code < media.ErrAborted || code > media.ErrSrcNotFound {
+		if code < media.ErrAborted || code > media.ErrSrcNotSupported {
 			code = media.ErrDecode
 		}
 		p.Update(func(st *media.State) { st.Err = code })

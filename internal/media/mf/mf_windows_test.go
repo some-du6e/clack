@@ -321,7 +321,7 @@ func TestMFNotSeekable(t *testing.T) {
 				t.Logf("a file read only in order plays to its end; events %v", r.kinds())
 				return
 			case media.Error:
-				if ev.State.Err != media.ErrSrcNotFound {
+				if ev.State.Err != media.ErrSrcNotSupported {
 					t.Errorf("error %d, want 4 (or playing)", ev.State.Err)
 				}
 				t.Logf("a file read only in order is refused: error %d; events %v", ev.State.Err, r.kinds())

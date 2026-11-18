@@ -32,6 +32,9 @@ type FakeOptions struct {
 	// Err fails every player with this MediaError code once its metadata
 	// is read.
 	Err int
+	// FailAfter, when set, fails a playing player with error 2 (network)
+	// once it played that long.
+	FailAfter time.Duration
 	// Log is the RangeSource's log (nil: log.Printf).
 	Log func(format string, args ...any)
 }
@@ -185,11 +188,34 @@ func (p *fakePlayer) Op(still paint.ImageOp, size image.Point) paint.ImageOp {
 	}
 	p.last = f
 	p.mu.Unlock()
+	f.mu.Lock()
+	f.still = still // drawn until the first frame, and after an error
+	f.mu.Unlock()
 	// NewLiveImageOp takes the image's size from it: that isn't the GPU's
 	// ask
 	f.making.Store(true)
 	defer f.making.Store(false)
 	return liveOp(f, still)
+}
+
+// FakeImage is the image a fake player's live op hands the GPU now (tests
+// that draw nothing: the poster until its first frame, a frame's colour
+// after), as the GPU's ask.
+func FakeImage(pl Player) paint.ImageOp {
+	if h, ok := pl.(*Handle); ok {
+		pl = h.Player
+	}
+	p, ok := pl.(*fakePlayer)
+	if !ok {
+		return paint.ImageOp{}
+	}
+	p.mu.Lock()
+	f := p.last
+	p.mu.Unlock()
+	if f == nil {
+		return paint.ImageOp{}
+	}
+	return f.Image()
 }
 
 // FakeAsk is the GPU asking a fake player for its frame, for tests that
@@ -226,6 +252,7 @@ type fakeFrames struct {
 	making atomic.Bool
 	mu     sync.Mutex
 	imgs   map[color.NRGBA]paint.ImageOp
+	still  paint.ImageOp
 }
 
 // Image is the frame to draw now, asked by the GPU as it draws a frame.
@@ -242,13 +269,19 @@ func (f *fakeFrames) Image() paint.ImageOp {
 		p.nAsks.Add(1)
 	}
 	p.mu.Lock()
-	c, shown := p.color, p.shown
+	c, shown := p.color, p.shown && p.st.Err == 0
 	p.mu.Unlock()
-	if !shown {
-		c = color.NRGBA{}
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if !shown {
+		// the poster, as the real backends draw their still (stretched over
+		// the frame's size, as theirs); while the live op is made, a frame
+		// of its size, which the op's size is taken from
+		if !f.making.Load() && f.still.Size() != (image.Point{}) {
+			return f.still
+		}
+		c = color.NRGBA{}
+	}
 	op, ok := f.imgs[c]
 	if !ok {
 		m := image.NewRGBA(image.Rectangle{Max: f.size})
@@ -261,7 +294,7 @@ func (f *fakeFrames) Image() paint.ImageOp {
 
 // pos is the position now. Call with mu held.
 func (p *fakePlayer) pos() time.Duration {
-	if p.st.Paused || p.st.Ended || p.st.Waiting {
+	if p.st.Paused || p.st.Ended || p.st.Waiting || p.st.Err != 0 {
 		return p.st.Pos
 	}
 	t := p.base + time.Duration(float64(time.Since(p.since))*p.rate)
@@ -396,11 +429,9 @@ var errNotSupported = errors.New("media: no video the fake can play")
 
 func (p *fakePlayer) onLoaded(err error) {
 	if err != nil {
-		code := ErrNetwork
-		if errors.Is(err, errNotSupported) {
-			code = ErrSrcNotFound
-		}
-		p.fail(code)
+		// before the metadata, a failed fetch is error 4 as a bad file is:
+		// Chromium's MediaLoadingFailed for a src (Slack's case)
+		p.fail(ErrSrcNotSupported)
 		return
 	}
 	info := p.rs.Probe()
@@ -444,6 +475,7 @@ func (p *fakePlayer) onLoaded(err error) {
 
 func (p *fakePlayer) fail(code int) {
 	p.mu.Lock()
+	p.rebase() // the clock stops where the error came
 	p.st.Err = code
 	p.mu.Unlock()
 	p.emit(Error)
@@ -513,6 +545,11 @@ func (p *fakePlayer) seek(t time.Duration) {
 // end (or the loop back to 0) when it's there.
 func (p *fakePlayer) advance() {
 	p.mu.Lock()
+	if fa := p.opt.FailAfter; fa > 0 && !p.st.Paused && p.st.Err == 0 && p.pos() >= fa {
+		p.mu.Unlock()
+		p.fail(ErrNetwork) // mid-file: Chromium's network error after the metadata
+		return
+	}
 	pos := p.pos()
 	end := p.st.Duration > 0 && pos >= p.st.Duration && !p.st.Paused
 	loop := p.st.Loop

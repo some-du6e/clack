@@ -63,10 +63,10 @@ const (
 
 // HTML5 MediaError codes (State.Err).
 const (
-	ErrAborted     = 1
-	ErrNetwork     = 2
-	ErrDecode      = 3
-	ErrSrcNotFound = 4 // MEDIA_ERR_SRC_NOT_SUPPORTED
+	ErrAborted         = 1
+	ErrNetwork         = 2
+	ErrDecode          = 3
+	ErrSrcNotSupported = 4 // MEDIA_ERR_SRC_NOT_SUPPORTED: also what Chromium gives a src whose fetch failed before the metadata
 )
 
 // State is a player's state now, as an HTMLMediaElement's attributes.
