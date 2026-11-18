@@ -455,9 +455,9 @@ func TestMentionsAndHelpers(t *testing.T) {
 		}
 	}
 	m := &slack.Message{}
-	applyReaction(m, "x", "U1", true)
-	applyReaction(m, "x", "U1", true)
-	applyReaction(m, "x", "U1", false)
+	store.ApplyReaction(m, "x", "U1", true)
+	store.ApplyReaction(m, "x", "U1", true)
+	store.ApplyReaction(m, "x", "U1", false)
 	if len(m.Reactions) != 0 {
 		t.Errorf("reactions: %+v", m.Reactions)
 	}

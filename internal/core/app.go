@@ -46,6 +46,10 @@ type App struct {
 
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
+	msgLog msgChanges // each message's latest change, for the views that keep copies of them (msg_changes.go)
+	// refetchQ is RefetchMessages' rounds (read_changes.go)
+	refetchQ refetchQueue
+
 	// prefsMu orders every change to the raw prefs: a change copies them,
 	// sets its keys and installs the copy, and two at once lost one of
 	// them (mergePrefs, installPrefs).
@@ -463,7 +467,12 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 	}
 }
 
-func (a *App) emit(ev Event) {
+func (a *App) emit(ev Event) { a.emitIf(ev, nil) }
+
+// emitIf is emit when ok, asked under the subscribers' lock (nil: always),
+// so no event emitted after the check goes out before ev; it reports
+// whether ev went out (read_changes.go announceHeld).
+func (a *App) emitIf(ev Event, ok func() bool) bool {
 	a.noteDocChange(&ev) // what ev changed of what message Docs read (msg_refs.go)
 	if !snapshotQuietEvents[ev.Type] {
 		a.InvalidateSnapshot() // snapshot_recent.go
@@ -471,6 +480,10 @@ func (a *App) emit(ev Event) {
 	a.pinsTabSee(ev) // the Pins tab's message copies (channel_pins.go)
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
+	if ok != nil && !ok() {
+		return false
+	}
+	a.noteMsgChange(&ev) // stamps ev.Seq, in the subscribers' order (msg_changes.go)
 	for s := range a.subs {
 		if s.lagged {
 			select {
@@ -486,6 +499,7 @@ func (a *App) emit(ev Event) {
 			s.lagged = true
 		}
 	}
+	return true
 }
 
 // once deduplicates concurrent identical fetches (e.g. prefetch + open).
@@ -985,15 +999,19 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// message cache budget: Slack resets a quiet conversation's history
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
-	pins, subs := a.S.PinSeq(), a.S.SubSeq()
+	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
 	}
-	// its people are asked for as rows draw them (lazy_users.go)
-	a.S.SetLatest(ch, p.Messages, p.HasMore)
+	// its people are asked for as rows draw them (lazy_users.go); the
+	// reactions the socket brought while the request was out stay, and a
+	// revision the store held another of reaches every copy and the views
+	// (store/read_revisions.go, read_changes.go)
+	a.S.SetLatestRead(ch, p.Messages, p.HasMore, live)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
+	a.announceReads()                  // after the pins and subscriptions: the copies as they are now
 	for i := range p.Messages {
 		if needsFileInfo(&p.Messages[i]) {
 			go a.fillFiles(ch, p.Messages[i].TS)

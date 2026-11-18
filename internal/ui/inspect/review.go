@@ -16,7 +16,7 @@ import (
 )
 
 // The review. A plain click's pick or a dragged region doesn't go to
-// the clipboard at once (a Shift+click's does): its shot is shown frozen over the dimmed
+// the clipboard at once (a Shift+click's does): its shot is shown still over the dimmed
 // window as the copy will show it (an element's margin blurred, the
 // element sharp and outlined; a region as it was), and the user drags
 // rects over anything in it (a name, an avatar, someone else's message)

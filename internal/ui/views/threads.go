@@ -67,6 +67,9 @@ var (
 type thrItem struct {
 	key string
 	core.Thread
+	// seq is the message change (core.MessageChangeSeq) the thread's
+	// copies are current as of (threads_live.go)
+	seq uint64
 }
 
 type thrData struct {
@@ -106,6 +109,13 @@ type thrCard struct {
 	olderBusy  bool
 	olderStart bool
 	olderRes   atomic.Pointer[thrOlder]
+
+	// olderSeq is the message change older is current as of
+	// (threads_live.go); shown is thrShown's older then latest replies,
+	// kept while neither changes (shownOf: the latest replies it was made
+	// with)
+	olderSeq       uint64
+	shown, shownOf []core.Message
 }
 
 func (c *thrCard) msg(ts string) *thrMsg {
@@ -166,6 +176,10 @@ type Threads struct {
 	// (threadMarked patches the thread in place: no reload).
 	mu    sync.Mutex
 	marks map[string]string
+
+	// lv is the cards' messages as core's changes left them
+	// (threads_live.go)
+	lv thrLive
 }
 
 // MessageFocuser is optionally implemented by the Host: transitionFocusTo
@@ -215,6 +229,14 @@ func (v *Threads) match(ev core.Event) bool {
 		return false
 	case "message":
 		return ev.Reply
+	case "update", "delete":
+		// an edit, an app's chat.update, a reaction or a deletion of a
+		// message a card shows: the next frame reads it from core
+		// (threads_live.go), no reload; off screen the next draw does
+		if v.lv.wakes(ev) && v.lv.shown.shown(v.h) {
+			v.h.Invalidate()
+		}
+		return false
 	case "thread_subscription":
 		return ev.Name == "follow"
 	case "thread_marked":
@@ -258,9 +280,11 @@ func (v *Threads) applyMarks() {
 
 // Layout draws the view.
 func (v *Threads) Layout(gtx C) D {
+	v.lv.shown.mark(v.h)
 	v.frame()
 	v.notes.drain(v.h)
 	v.w.watch(v.h, v.match)
+	v.applyLive() // threads_live.go
 	v.applyMarks()
 	if !v.data.started() {
 		v.load(actFresh)
@@ -365,6 +389,7 @@ func (v *Threads) settle() {
 
 func (v *Threads) load(mode actLoad) {
 	c := v.h.Core()
+	v.lv.log.start(c) // the messages change from here on (threads_live.go)
 	old, _, _ := v.data.get()
 	cursor := ""
 	if mode == actMore {
@@ -405,7 +430,7 @@ func thrFrom(p core.ThreadsPage) thrData {
 	d := thrData{next: p.Next, hasMore: p.HasMore, convs: p.Convs}
 	d.items = make([]thrItem, 0, len(p.Threads))
 	for _, t := range p.Threads {
-		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t})
+		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t, seq: p.MsgSeq})
 	}
 	thrSort(d.items)
 	return d

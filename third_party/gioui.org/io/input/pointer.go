@@ -21,6 +21,10 @@ type pointerQueue struct {
 	hitTree []hitNode
 	areas   []areaNode
 
+	// Clack patch 49 (clack_reset.go): the mouse's last event, kept after
+	// the router stops tracking it
+	mouse mouseInfo
+
 	semantic struct {
 		idsAssigned bool
 		lastID      SemanticID
@@ -67,6 +71,11 @@ type pointerHandler struct {
 	// setup tracks whether the handler has received
 	// the pointer.Cancel event that resets its state.
 	setup bool
+	// Clack patch 49 (clack_reset.go): the handler last read an Enter or
+	// a Move of pointer seenID, with no Leave or Cancel read since: as
+	// far as its widget knows, that pointer is over it.
+	seen   bool
+	seenID pointer.ID
 }
 
 // pointerFilter represents the union of a set of pointer filters.
@@ -734,6 +743,7 @@ func (q *pointerQueue) SemanticArea(areaIdx int) (semanticContent, int) {
 }
 
 func (q *pointerQueue) Push(handlers map[event.Tag]*handler, state pointerState, e pointer.Event) (pointerState, []taggedEvent) {
+	q.noteMouse(e) // Clack patch 49
 	var evts []taggedEvent
 	if e.Kind == pointer.Cancel {
 		for k := range handlers {

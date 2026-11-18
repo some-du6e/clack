@@ -22,7 +22,11 @@
 // While a session runs the window is laid out with a hover-only input
 // source (Gio patch 21): hover states, scrolling, carets and animations
 // stay, and no button, editor or shortcut reacts; the tool alone reads
-// the clicks and keys. Where things are comes from slackc's inspect
+// the clicks and keys. The freeze key (FreezeKey, freeze.go) holds the
+// window on the frame on screen, for what only shows while the pointer is
+// on it (a message's hover toolbar, a tooltip, a button's hover colour):
+// the window draws that frame's ops again and lays nothing out, and the
+// picker and the captures work on it. Where things are comes from slackc's inspect
 // records (slackc/inspect.go): each component boundary gets a
 // pass-through pointer area, and Gio's own hit test says which are under
 // the pointer. Plugins' host trees go down to their boxes, and the
@@ -68,9 +72,11 @@ type Region struct {
 type Host interface {
 	// Theme draws the session's label and banner.
 	Theme() *theme.Theme
-	// Describe fills the report's window and page fields; id-bearing
-	// fields go through red (UI goroutine).
-	Describe(r *Report, red *Redactor)
+	// Describer reads the window and the page as they are now, and
+	// returns what fills a report's window and page fields with them
+	// (id-bearing ones through red) later: a frozen capture's report
+	// describes the frozen frame (UI goroutine).
+	Describer() func(r *Report, red *Redactor)
 	// ConvKind is "public", "private", "dm", "mpdm" or "" for a channel
 	// id: what kind of conversation, never which.
 	ConvKind(id string) string
@@ -85,6 +91,12 @@ type Host interface {
 	Invalidate()
 	// ConfigDir is where reports are saved ("": nowhere).
 	ConfigDir() string
+	// Frozen says a freeze began (true: the window draws the frame on
+	// screen again, frame after frame, and holds its animated images) or
+	// ended (false: at its next frame, before anything reads input, the
+	// window starts every widget's pointer state over, Gio patch 49's
+	// Source.ResetPointers, and lays out again).
+	Frozen(on bool)
 }
 
 type state uint8
@@ -130,8 +142,8 @@ type Tool struct {
 	hist  [32]ptrAt
 	histN int
 	from  f32.Point   // where the primary button went down (window px)
-	win   image.Point // the window's size (px), at the last Begin
-	scale float32     // px per dp, at the last Begin
+	win   image.Point // the window's size (px), at the last input read
+	scale float32     // px per dp, at the last input read
 
 	hover    *pick
 	up       int           // ↑ presses: how many components out from the innermost
@@ -140,8 +152,25 @@ type Tool struct {
 	rev      *review       // reviewing
 	lastDone chan struct{} // the last report's delivery (Wait)
 	lastRep  *Report       // the last report delivered (tests, after Wait)
-	lastNow  time.Time     // the frame Begin last read input for
+	inAt     time.Time     // the frame whose input was read (Frame, Begin)
+	recAt    time.Time     // the frame recorded into frames[cur]
 	upKey    string        // the innermost element t.up counts from (innerKey)
+	// the last press of FreezeKey and of Esc while it's down (repeat)
+	freezeDown, escDown time.Time
+
+	// content is what the last laid-out frame drew, the tool's own
+	// drawing left out (End), and contentOK that it is the frame on
+	// screen: no frame reset its ops since. A freeze draws it again.
+	content   op.CallOp
+	contentOK bool
+	contentAt frameKey
+	fz        *freeze // the frozen frame (freeze.go), nil while none is
+}
+
+// frameKey is what a frame was laid out for: its size and scale.
+type frameKey struct {
+	size   image.Point
+	metric unit.Metric
 }
 
 type ptrAt struct {
@@ -223,6 +252,8 @@ func (t *Tool) start() {
 func (t *Tool) stop() {
 	t.state = off
 	t.pend, t.rev = nil, nil
+	t.contentOK = false
+	t.unfreeze()
 	t.release()
 }
 
@@ -232,14 +263,19 @@ func (t *Tool) release() {
 	t.hover, t.rec = nil, false
 	core.ObserveExperiments(nil)
 	for i := range t.frames {
-		clear(t.frames[i].Nodes)
-		t.frames[i].Nodes = t.frames[i].Nodes[:0]
+		t.frames[i].Release()
 	}
 }
 
 // backToInspecting ends a press or a drag that grabbed nothing: the
-// session goes on, recording afresh.
+// session goes on, recording afresh (or, frozen, on the frozen frame).
 func (t *Tool) backToInspecting() {
+	if t.fz != nil {
+		// the frozen frame's record stayed (release0): the next frame's
+		// hits outline it again
+		t.state, t.pend, t.hover = inspecting, nil, nil
+		return
+	}
 	// no outline until a frame is recorded again: the one shown was the
 	// press's, whose nodes are let go of
 	t.state, t.pend, t.rec, t.hover = inspecting, nil, false, nil
@@ -260,24 +296,43 @@ func observeExperiment(name, group string) {
 const pointerKinds = pointer.Move | pointer.Enter | pointer.Leave | pointer.Press | pointer.Release | pointer.Drag | pointer.Cancel
 
 // Begin starts a frame. Call it first in the window's frame, before
-// anything reads input; lay the window out with the context it returns
-// (gtx itself while no session runs) and call End last.
+// anything reads input (after Frame, which reads the frame's input when
+// a session runs); lay the window out with the context it returns (gtx
+// itself while no session runs) and call End last.
 func (t *Tool) Begin(gtx layout.Context) layout.Context {
 	if t.state == off {
 		return gtx
 	}
-	src := gtx.Source
-	hover := gtx
-	hover.Source = src.HoverOnly()
-	if !gtx.Now.IsZero() && gtx.Now.Equal(t.lastNow) {
-		// the same frame laid out again (a click navigated mid-frame):
-		// its input is read, record it afresh
-		if t.state == inspecting {
-			slackc.InspectBegin(&t.frames[t.cur], src)
+	t.contentOK = false // the window's ops were reset for this frame
+	if gtx.Now.IsZero() || !gtx.Now.Equal(t.inAt) {
+		// no Frame read this frame's input (the session started in it)
+		t.input(gtx)
+		if t.state == off {
+			return gtx
 		}
-		return hover
 	}
-	t.lastNow = gtx.Now
+	hover := gtx
+	hover.Source = gtx.Source.HoverOnly()
+	if t.state == inspecting && t.fz == nil {
+		if gtx.Now.IsZero() || !gtx.Now.Equal(t.recAt) {
+			t.cur = 1 - t.cur // the record of the frame on screen stays for the outline
+			t.recAt = gtx.Now
+		}
+		// recorded afresh when the frame is laid out again (a click
+		// navigated mid-frame)
+		slackc.InspectBegin(&t.frames[t.cur], gtx.Source)
+		t.rec = true
+	}
+	return hover
+}
+
+// input reads a frame's input (Frame, or Begin in the frame a session
+// starts): the pointer's events and the keys, what the pointer is over in
+// the last frame's record (the frozen frame's, while frozen), and what a
+// press, a drag or a release did.
+func (t *Tool) input(gtx layout.Context) {
+	src := gtx.Source
+	t.inAt = gtx.Now
 	t.win = gtx.Constraints.Max
 	t.scale = gtx.Metric.PxPerDp
 	if t.scale <= 0 {
@@ -287,20 +342,26 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 	in := t.readPointer(gtx)
 	t.readKeys(gtx)
 	switch t.state {
-	case off:
-		return gtx
-	case reviewing:
-		return hover
+	case off, reviewing:
+		return
 	case picked:
 		// a new frame and the capture's wasn't shot (AfterFrame doesn't
 		// run for a frame under the boot placeholder): give up, don't
 		// leave the window taking no clicks
 		t.stop()
 		t.host.Toast("Inspect: the capture's frame wasn't drawn, try again")
-		return gtx
+		return
+	}
+	var hits []slackc.InspectHit
+	if t.rec && (t.state == inspecting || t.fz != nil) {
+		// frozen, the frozen frame's areas are read whatever the state, so
+		// what each one says the pointer is over stays current (Hold)
+		hits = last.ReadHits(src, t.winAt)
+		if t.fz != nil && !last.Held() {
+			last.Hold(hits) // the freeze began this frame
+		}
 	}
 	if t.state == inspecting && t.rec {
-		hits := last.ReadHits(src, t.winAt)
 		t.hover = t.pickFrom(last, hits)
 	}
 	if t.state == inspecting && in.pressed {
@@ -330,24 +391,21 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 			r := t.dragRect(in.releaseAt)
 			if min := int(minRegion*t.scale + .5); r.Dx() < min || r.Dy() < min {
 				t.backToInspecting()
-				t.host.Toast("Inspect: drag a bigger region to grab it")
+				t.say("drag a bigger region to grab it")
 				break
 			}
 			at := image.Pt(int(in.releaseAt.X+.5), int(in.releaseAt.Y+.5))
 			t.capture, t.state = t.newRegionCapture(gtx, r, at), picked
 		}
 	}
-	if t.state == inspecting {
-		t.cur = 1 - t.cur
-		slackc.InspectBegin(&t.frames[t.cur], src)
-		t.rec = true
-	}
-	return hover
 }
 
 // release0 stops recording for a press (its report is built): the
 // outline stays where it was until the release says what the press was.
 func (t *Tool) release0() {
+	if t.fz != nil {
+		return // frozen: the frozen frame's record is all there is to pick from
+	}
 	h := t.hover
 	t.release()
 	t.hover = h
@@ -362,7 +420,8 @@ func (t *Tool) dragRect(p f32.Point) image.Rectangle {
 // End finishes the frame Begin started (gtx: the frame's own context, at
 // the window's origin, not Begin's): the outline and label, the banner,
 // and the window-wide pointer area the tool reads, all deferred so they
-// sit over every popup.
+// sit over every popup. What the window drew before them is the frame a
+// freeze holds.
 func (t *Tool) End(gtx layout.Context) {
 	if slackc.Inspecting() {
 		slackc.InspectEnd()
@@ -370,8 +429,17 @@ func (t *Tool) End(gtx layout.Context) {
 	if t.state == off {
 		return
 	}
-	// this frame's filters: the session's keys and the area's pointer
-	// kinds (their events come in the next frame's Begin)
+	t.content, t.contentOK = gtx.Ops.Whole(), true
+	t.contentAt = frameKey{gtx.Constraints.Max, gtx.Metric}
+	t.overlay(gtx)
+}
+
+// overlay is what the tool draws over a frame, the frame End finishes or
+// the frozen one: this frame's filters (the session's keys and the
+// area's pointer kinds, whose events come in the next frame's input), the
+// outline, label and banner or the review, and the window-wide pointer
+// area, deferred.
+func (t *Tool) overlay(gtx layout.Context) {
 	src := gtx.Source
 	for {
 		if _, ok := src.Event(t.keyFilters()...); !ok {
@@ -410,8 +478,51 @@ func (t *Tool) keyFilters() []event.Filter {
 		key.Filter{Name: key.NameDeleteForward},
 		key.Filter{Name: "Z", Required: key.ModShortcut},
 		key.Filter{Name: "C", Required: key.ModShortcut},
+		key.Filter{Name: FreezeKey},
 		t.combo,
+		// frozen, no widget asks for keys: every other press is the
+		// tool's too, so none goes unhandled (macOS beeps for one)
+		t.anyKey(),
 	}
+}
+
+// anyKey is a filter for every key while frozen (a catch-all: Gio leaves
+// out the keys it moves the focus with, which the Tab filter takes), and
+// the freeze key's again otherwise, which adds nothing: in a session that
+// isn't frozen the window's widgets still ask for theirs.
+func (t *Tool) anyKey() key.Filter {
+	if t.fz == nil {
+		return key.Filter{Name: FreezeKey} // already asked for
+	}
+	return key.Filter{Optional: key.ModCtrl | key.ModCommand | key.ModShift | key.ModAlt | key.ModSuper}
+}
+
+// repeat reports a press of FreezeKey or Esc while that key is still down
+// (no release read since its last press, which came less than a second
+// ago): a held key's auto-repeat, which would toggle the freeze on every
+// repeat, or unfreeze and then end the session. It notes those two keys'
+// presses and releases.
+func (t *Tool) repeat(ke key.Event) bool {
+	var down *time.Time
+	switch ke.Name {
+	case FreezeKey:
+		down = &t.freezeDown
+	case key.NameEscape:
+		down = &t.escDown
+	default:
+		return false
+	}
+	now := t.inAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if ke.State != key.Press {
+		*down = time.Time{}
+		return false
+	}
+	held := !down.IsZero() && now.Sub(*down) < time.Second
+	*down = now
+	return held
 }
 
 // comboPress reports that e is the shortcut f: its key, its required
@@ -445,6 +556,20 @@ func (t *Tool) readPointer(gtx layout.Context) ptrRead {
 		if !ok {
 			continue
 		}
+		if pe.Kind == pointer.Cancel {
+			// the window lost the focus, or a freeze's end started the
+			// pointer state over (Gio patch 49): a Cancel has no position,
+			// so the pointer stays where it was, only not known to be over
+			// anything until it moves (the outline goes, not to 0,0)
+			t.ptrIn = false
+			if t.state == reviewing {
+				t.reviewPointer(pe)
+			} else if held || in.pressed {
+				t.backToInspecting()
+				held, in = false, ptrRead{}
+			}
+			continue
+		}
 		t.hist[t.histN%len(t.hist)] = ptrAt{pe.Time, pe.Position}
 		t.histN++
 		t.ptr = pe.Position
@@ -455,11 +580,6 @@ func (t *Tool) readPointer(gtx layout.Context) ptrRead {
 		switch pe.Kind {
 		case pointer.Leave:
 			t.ptrIn = false
-		case pointer.Cancel:
-			if held || in.pressed {
-				t.backToInspecting()
-				held, in = false, ptrRead{}
-			}
 		case pointer.Press:
 			t.ptrIn = true
 			if pe.Buttons&pointer.ButtonPrimary != 0 && t.state == inspecting && !in.pressed {
@@ -519,7 +639,7 @@ func (t *Tool) readKeys(gtx layout.Context) {
 			break
 		}
 		ke, ok := e.(key.Event)
-		if !ok || ke.State != key.Press {
+		if !ok || t.repeat(ke) || ke.State != key.Press {
 			continue
 		}
 		switch {
@@ -529,11 +649,19 @@ func (t *Tool) readKeys(gtx layout.Context) {
 			// the shot comes at this frame's end: the review takes keys
 		case comboPress(t.combo, ke):
 			t.stop()
-		case ke.Name == key.NameEscape && t.state == dragging:
-			t.backToInspecting() // only the drag; its release is ignored
+		case ke.Name == key.NameEscape && (t.state == dragging || t.state == pressing):
+			t.backToInspecting() // only the drag or the press; its release is ignored
+		case ke.Name == key.NameEscape && t.fz != nil && t.state == inspecting:
+			t.unfreeze() // the session goes on; Esc again ends it
 		case ke.Name == key.NameEscape:
 			t.stop()
 		case t.state != inspecting:
+		case ke.Name == FreezeKey: // its filter takes no modifier
+			if t.fz != nil {
+				t.unfreeze()
+			} else if !t.freeze(gtx) {
+				t.host.Toast("Inspect: nothing to freeze yet, try again")
+			}
 		case ke.Name == key.NameUpArrow:
 			t.up++
 		case ke.Name == key.NameDownArrow:
@@ -550,7 +678,8 @@ func (t *Tool) readKeys(gtx layout.Context) {
 func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick {
 	ptr := image.Pt(int(t.ptr.X+.5), int(t.ptr.Y+.5))
 	p := &pick{frame: f, node: -1, inner: -1, tree: -1}
-	for _, r := range t.host.Regions() {
+	regions := t.regions()
+	for _, r := range regions {
 		if ptr.In(r.Rect) {
 			p.region = r.Name
 		}
@@ -582,7 +711,7 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	}
 	if best < 0 {
 		// no component: the shell's area
-		for _, r := range t.host.Regions() {
+		for _, r := range regions {
 			if ptr.In(r.Rect) {
 				p.rect = r.Rect
 			}
@@ -777,13 +906,15 @@ func (t *Tool) drawHover(gtx layout.Context) {
 		}
 	}
 	if th != nil && th.Shaper != nil {
-		t.banner(gtx, th, HintInspect)
+		t.banner(gtx, th, t.sessionHint(gtx))
 	}
 }
 
-// The banner's hints: a session's, a drag's.
+// The banner's hints: a session's, a frozen session's (freeze.go), a
+// drag's.
 const (
-	HintInspect = "Inspect: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · Esc to stop"
+	HintInspect = "Inspect: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · F freezes · Esc to stop"
+	HintFrozen  = "Frozen: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · F or Esc unfreezes"
 	HintDrag    = "Inspect: release to grab this region · Esc cancels the drag"
 )
 

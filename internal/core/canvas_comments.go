@@ -194,7 +194,7 @@ func (a *App) SetCommentResolved(ctx context.Context, ch, ts string, resolve boo
 	}
 	if r.Message != nil && r.Message.TS == ts {
 		upd := *r.Message
-		if m, ok := a.S.Mutate(ch, ts, func(x *slack.Message) {
+		if m, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) { // a read out now keeps it
 			keep := *x
 			*x = upd
 			if x.Reactions == nil {
@@ -207,7 +207,7 @@ func (a *App) SetCommentResolved(ctx context.Context, ch, ts string, resolve boo
 		a.emitUpdate(ch, &upd)
 		return nil
 	}
-	if m, ok := a.S.Mutate(ch, ts, func(x *slack.Message) { // no message in the answer: flip the flag
+	if m, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) { // no message in the answer: flip the flag
 		if x.DocumentComment == nil {
 			x.DocumentComment = &slack.MessageDocumentComment{}
 		}
