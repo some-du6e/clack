@@ -49,6 +49,17 @@ var (
 	documentTap func(body []byte)
 )
 
+// tautOwner is the bridge of the runtime the UI attached last: Attached's
+// post binds it to slackc and detachTaut clears it. Only the owner's
+// patched names reach slackc, so the patches a detached runtime publishes
+// as its plugins stop (sign-out, an account switch) can't leave the next
+// session's components on the patched path, its message menus holding for
+// a tree that never comes. It isn't read off slackc's bridge: whoever
+// wraps that bridge (the plugin bench, the perf plugins job and the
+// plugin-gap tests count calls through countingBridge once the runtime is
+// up) still talks to this runtime, and its plugins must still patch.
+var tautOwner atomic.Pointer[taut.Bridge]
+
 // startTaut connects Taut plugins (internal/taut) to the native UI
 // through slackc. taut.New reads the plugin config only; no JS engine
 // starts unless a plugin is enabled.
@@ -122,10 +133,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 	var patchMu sync.Mutex
 	var patchedNow []string
 	// the bridge the UI goroutine bound for this runtime (Attached): its
-	// patched names reach slackc only while slackc still holds it, so the
-	// patches a detached runtime publishes as its plugins stop (sign-out,
-	// an account switch) can't leave the next session's components on the
-	// patched path, its message menus holding for a tree that never comes
+	// patched names reach slackc only while it's tautOwner
 	var bound atomic.Pointer[taut.Bridge]
 	t, err := taut.New(taut.Options{
 		Dir:            a.inertPluginDir("taut"), // "": Taut's own (clackHome)
@@ -147,6 +155,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 					slackc.Reset()
 					slackc.SetBridge(br)
 					bound.Store(br)
+					tautOwner.Store(br)
 					patchMu.Lock()
 					slackc.SetPatched(patchedNow)
 					patchMu.Unlock()
@@ -166,7 +175,7 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 			SetPatched: func(names []string) {
 				patchMu.Lock()
 				patchedNow = names
-				if br := bound.Load(); br != nil && slackc.BridgeIs(br) {
+				if br := bound.Load(); br != nil && tautOwner.Load() == br {
 					slackc.SetPatched(names)
 				}
 				patchMu.Unlock()
@@ -283,6 +292,7 @@ func (b *backend) detachTaut() {
 		composer.SetTaut(nil)
 		richview.SetMemberLabel(nil)
 		b.taut = nil
+		tautOwner.Store(nil)
 		slackc.SetBridge(nil)
 		slackc.Reset()
 	}
