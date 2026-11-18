@@ -1,9 +1,9 @@
 package inspect
 
-// The tool on its own, through a real Gio router: a plain click copies
-// the element's report at once; a Shift+click, or a drag past dragSlop
-// (which grabs the region dragged out: the shot is that region, as it
-// was, at ShotDensity), opens the review first. A short drag is still a
+// The tool on its own, through a real Gio router: a plain click, or a
+// drag past dragSlop (which grabs the region dragged out: the shot is
+// that region, as it was, at ShotDensity), opens the review first; a
+// Shift+click copies the element's report at once. A short drag is still a
 // click that picks, the review marks rects in the shot's pixels, takes
 // the last one back, and Enter copies an image with them blurred out;
 // Esc drops the report.
@@ -324,9 +324,9 @@ func absI(v int) int { return max(v, -v) }
 
 // A press that moves less than dragSlop is still a click: it picks
 // (here the primary area, the host's innermost area under the pointer)
-// and copies at once, the session over, with no review. A Shift+click
-// opens the review instead, and Esc there drops the report, nothing
-// copied. A drag too thin grabs nothing, and the session goes on.
+// and opens the review, where Esc drops the report, nothing copied. A
+// Shift+click copies at once instead, the session over, with no review.
+// A drag too thin grabs nothing, and the session goes on.
 func TestClickStillPicksAndEscDrops(t *testing.T) {
 	e := newDragEnv(t)
 	p := f32.Pt(400, 300)
@@ -342,28 +342,11 @@ func TestClickStillPicksAndEscDrops(t *testing.T) {
 	if e.shots[0] != crop {
 		t.Errorf("the click shot %v, want the picked area's crop %v", e.shots[0], crop)
 	}
-	if e.tool.Reviewing() || e.tool.Active() {
-		t.Fatalf("after a plain click: reviewing %v, active %v; want the report copied at once, the session over", e.tool.Reviewing(), e.tool.Active())
-	}
-	e.tool.Wait()
-	e.frame()
-	if e.copied == nil {
-		t.Fatal("a plain click copied nothing")
-	}
-	if n := len(e.host.toasts); n == 0 || !strings.Contains(e.host.toasts[n-1], "Copied the inspect report") {
-		t.Errorf("toasts %q", e.host.toasts)
-	}
-
-	// Shift+click: the review; Esc drops it
-	e.copied = nil
-	e.startAt(p, "primary")
-	e.shiftClick(p, true, true)
-	e.frame()
-	if len(e.shots) != 2 || e.shots[1] != crop {
-		t.Fatalf("shots after the Shift+click %v, want a second %v", e.shots, crop)
-	}
 	if !e.tool.Reviewing() {
-		t.Fatal("no review after the Shift+click")
+		t.Fatal("no review after a plain click")
+	}
+	if e.copied != nil {
+		t.Fatal("a plain click copied before its review")
 	}
 	e.key(key.NameEscape, 0)
 	e.frame()
@@ -371,6 +354,25 @@ func TestClickStillPicksAndEscDrops(t *testing.T) {
 		t.Errorf("after Esc: active %v, copied %v", e.tool.Active(), e.copied != nil)
 	}
 	if n := len(e.host.toasts); n == 0 || !strings.Contains(e.host.toasts[n-1], "discarded") {
+		t.Errorf("toasts %q", e.host.toasts)
+	}
+
+	// Shift+click: copied at once, the session over, no review
+	e.startAt(p, "primary")
+	e.shiftClick(p, true, true)
+	e.frame()
+	if len(e.shots) != 2 || e.shots[1] != crop {
+		t.Fatalf("shots after the Shift+click %v, want a second %v", e.shots, crop)
+	}
+	if e.tool.Reviewing() || e.tool.Active() {
+		t.Fatalf("after a Shift+click: reviewing %v, active %v; want the report copied at once, the session over", e.tool.Reviewing(), e.tool.Active())
+	}
+	e.tool.Wait()
+	e.frame()
+	if e.copied == nil {
+		t.Fatal("a Shift+click copied nothing")
+	}
+	if n := len(e.host.toasts); n == 0 || !strings.Contains(e.host.toasts[n-1], "Copied the inspect report") {
 		t.Errorf("toasts %q", e.host.toasts)
 	}
 
@@ -401,9 +403,9 @@ func TestClickStillPicksAndEscDrops(t *testing.T) {
 	}
 }
 
-// Which capture opens the review: a plain click never does, a Shift+click
-// does whether Shift was held at the press or only at the release, and a
-// drag always does, Shift or not.
+// Which capture opens the review: a plain click and a drag always do
+// (a drag Shift or not), and a Shift+click never does, whether Shift was
+// held at the press or only at the release: it copies at once.
 func TestCaptureOpensReview(t *testing.T) {
 	e := newDragEnv(t)
 	p := f32.Pt(100, 300)
@@ -412,10 +414,10 @@ func TestCaptureOpensReview(t *testing.T) {
 		do     func()
 		review bool
 	}{
-		{"a plain click", func() { e.shiftClick(p, false, false) }, false},
-		{"a Shift+click", func() { e.shiftClick(p, true, true) }, true},
-		{"Shift at the press only", func() { e.shiftClick(p, true, false) }, true},
-		{"Shift at the release only", func() { e.shiftClick(p, false, true) }, true},
+		{"a plain click", func() { e.shiftClick(p, false, false) }, true},
+		{"a Shift+click", func() { e.shiftClick(p, true, true) }, false},
+		{"Shift at the press only", func() { e.shiftClick(p, true, false) }, false},
+		{"Shift at the release only", func() { e.shiftClick(p, false, true) }, false},
 		{"a drag", func() {
 			e.press(p)
 			e.frame()
@@ -446,33 +448,33 @@ func TestCaptureOpensReview(t *testing.T) {
 	}
 }
 
-// A plain click delivers what a Shift+click's review copies when no rect
+// A Shift+click delivers what a plain click's review copies when no rect
 // is marked (Mod+C here): the same crop, the same shot in the image, the
 // same report but for its time and its tags' hashes (salted per
 // report); no capture or blurred row.
-func TestPlainClickSameAsReviewed(t *testing.T) {
+func TestShiftClickSameAsReviewed(t *testing.T) {
 	e := newDragEnv(t)
 	p := f32.Pt(100, 300)
 	e.startAt(p, "sidebar")
-	e.shiftClick(p, false, false)
+	e.shiftClick(p, true, true)
 	e.frame()
 	if e.tool.Reviewing() {
-		t.Fatal("a plain click opened the review")
+		t.Fatal("a Shift+click opened the review")
 	}
 	e.tool.Wait()
 	e.frame()
 	plain, ok := e.copied.(*image.RGBA)
 	if !ok {
-		t.Fatalf("a plain click copied %T", e.copied)
+		t.Fatalf("a Shift+click copied %T", e.copied)
 	}
 	plainRep := e.tool.lastRep
 
 	e.copied = nil
 	e.startAt(p, "sidebar")
-	e.shiftClick(p, true, true)
+	e.shiftClick(p, false, false)
 	e.frame()
 	if !e.tool.Reviewing() {
-		t.Fatal("no review after the Shift+click")
+		t.Fatal("no review after the plain click")
 	}
 	e.untilReady()
 	e.key("C", key.ModShortcut)
@@ -507,7 +509,7 @@ func TestPlainClickSameAsReviewed(t *testing.T) {
 		}
 	}
 	if diff > 0 {
-		t.Errorf("%d px of the shot differ between the plain click's image and the reviewed one", diff)
+		t.Errorf("%d px of the shot differ between the Shift+click's image and the reviewed one", diff)
 	}
 	rows := func(r *Report) map[string]string {
 		m := map[string]string{}
@@ -519,20 +521,20 @@ func TestPlainClickSameAsReviewed(t *testing.T) {
 	}
 	a, b := rows(plainRep), rows(e.tool.lastRep)
 	if len(a) != len(b) {
-		t.Errorf("the plain click's report has %d rows, the reviewed one %d:\n%s\n---\n%s", len(a), len(b), plainRep.Text(), e.tool.lastRep.Text())
+		t.Errorf("the Shift+click's report has %d rows, the reviewed one %d:\n%s\n---\n%s", len(a), len(b), plainRep.Text(), e.tool.lastRep.Text())
 	}
 	for k, v := range a {
 		if b[k] != v {
-			t.Errorf("report row %s: plain %q, reviewed %q", k, v, b[k])
+			t.Errorf("report row %s: Shift+click %q, reviewed %q", k, v, b[k])
 		}
 	}
 	for _, k := range []string{"capture", "blurred"} {
 		if _, ok := a[k]; ok {
-			t.Errorf("a plain click's report has a %s row: %q", k, a[k])
+			t.Errorf("a Shift+click's report has a %s row: %q", k, a[k])
 		}
 	}
 	if a["region"] != "sidebar" || a["colors"] == "" {
-		t.Errorf("the plain click's report: region %q, colors %q", a["region"], a["colors"])
+		t.Errorf("the Shift+click's report: region %q, colors %q", a["region"], a["colors"])
 	}
 }
 

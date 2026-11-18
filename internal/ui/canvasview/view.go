@@ -47,20 +47,23 @@ type View struct {
 	shown   *core.CanvasDoc // the doc the blocks were built from
 	crashed error           // a recovered layout panic: the error state until Try again
 	blocks  []*blk
-	title   *richview.View
-	list    layout.List
-	btns    map[string]*widget.Clickable
-	retry   widget.Clickable
-	styles  styleSet
-	handler *handler
-	edit    *editState
-	phView  *richview.View // the empty canvas's placeholder
-	phText  string
-	tphView *richview.View // the empty title's placeholder
-	toc     *tocState      // the table of contents (toc.go)
-	access  accessState    // the View only / Comment only pill (access.go)
-	cover   coverState     // the header's Add cover (cover.go)
-	focus   string         // a section to scroll to once drawn (FocusSection)
+	// mentions are shown's user, channel and group mentions, named from
+	// the store when the blocks were built (nameMentions, render.go)
+	mentions []*richtext.Span
+	title    *richview.View
+	list     layout.List
+	btns     map[string]*widget.Clickable
+	retry    widget.Clickable
+	styles   styleSet
+	handler  *handler
+	edit     *editState
+	phView   *richview.View // the empty canvas's placeholder
+	phText   string
+	tphView  *richview.View // the empty title's placeholder
+	toc      *tocState      // the table of contents (toc.go)
+	access   accessState    // the View only / Comment only pill (access.go)
+	cover    coverState     // the header's Add cover (cover.go)
+	focus    string         // a section to scroll to once drawn (FocusSection)
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -340,6 +343,13 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 	theme.Fill(gtx, image.Rectangle{Max: sz}, th.C.Bg)
 	v.styles.sync(th, v.h)
 	if d != nil && d != v.shown {
+		v.rebuild(d)
+	} else if d != nil && v.edit.saving == 0 && v.mentionsMoved() {
+		// a mention's model answered (a channel looked up, a member
+		// loaded): its block lays out again in this frame, as Quip's
+		// views re-render on their model's change. Not while an edit is
+		// saving: its blocks are shown ahead of the document
+		// (replaceLocal), and the refetch after it names everything.
 		v.rebuild(d)
 	}
 	top := 0
