@@ -9,10 +9,23 @@ type Palette struct {
 	ChromeA, ChromeB, ChromeC color.NRGBA // conic/radial gradient stops
 	ChromeText                color.NRGBA // rail labels, top nav icons
 	ChromeTextDim             color.NRGBA
-	ChromeHover               color.NRGBA // rail icon hover / nav button hover
+	ChromeHover               color.NRGBA // top nav buttons' :hover tile (theme-surf-inv-pry)
+	ChromePressed             color.NRGBA // top nav buttons' :active tile (theme-surf-inv-sec)
 	ChromeActive              color.NRGBA // rail icon selected tile
-	SearchBg, SearchHover     color.NRGBA
-	SearchText                color.NRGBA
+	// ChromeHoverTint is the chrome scope's theme-surf-inv-pry-hover,
+	// the background-image layer Slack blends (--dt_blend-mode-interaction)
+	// over theme-surf-inv-pry on the search pill and a hovered control
+	// strip button, pre-blended so it composites over SearchBg or
+	// ChromeActive with Over (IATheme.hoverTint).
+	ChromeHoverTint color.NRGBA
+	SearchBg        color.NRGBA
+	SearchText      color.NRGBA
+	// ChromeBasePry and ChromeContentTer are the control strip buttons'
+	// :active and --active fill and ink (theme-base-pry and
+	// theme-content-ter in the rail's scope: the focus button while focus
+	// mode is on, + while the Create menu is open), ChromeBasePryHover the
+	// fill with :hover's blended surf-inv-pry-hover layer over it.
+	ChromeBasePry, ChromeContentTer, ChromeBasePryHover color.NRGBA
 
 	// Sidebar (translucent over the chrome gradient).
 	SidebarBg         color.NRGBA
@@ -23,6 +36,8 @@ type Palette struct {
 	SidebarActiveText color.NRGBA
 	SidebarDivider    color.NRGBA
 	SidebarButton     color.NRGBA // compose button tile
+	SidebarTextTer    color.NRGBA // theme-content-inv-ter: muted rows, org captions, "(you)"
+	SidebarRule       color.NRGBA // rgba(var(--sk_foreground_low), .13) in the sidebar's scope
 	WorkspaceBorder   color.NRGBA // dark mode: 1px outline around sidebar+panel
 
 	// Badges.
@@ -50,8 +65,16 @@ type Palette struct {
 	Accent color.NRGBA // focus rings, selected tab underline, blue buttons
 	// ThemeImp and ThemeImpText are --dt_color-theme-base-imp and
 	// -theme-content-imp when an account theme changes them (zero with
-	// Slack's default theme: packages keep their own default then).
+	// Slack's default theme: packages keep their own default then), and
+	// ThemeInvPry, ThemeInvSec, ThemeInvTer and ThemeOtlInvPry the root
+	// scope's --dt_color-theme-content-inv-pry / -inv-sec / -inv-ter and
+	// -otl-inv-pry, the same way: what the peek cards, a Popover at the
+	// document root, draw their toggles, timestamps and rules with.
 	ThemeImp, ThemeImpText color.NRGBA
+	ThemeInvPry            color.NRGBA
+	ThemeInvSec            color.NRGBA
+	ThemeInvTer            color.NRGBA
+	ThemeOtlInvPry         color.NRGBA
 	Mention                color.NRGBA // @user pill text
 	MentionBg              color.NRGBA
 	SelfMention            color.NRGBA // @you / @here background
@@ -79,9 +102,6 @@ type Palette struct {
 	ScrollThumb            color.NRGBA
 }
 
-// SearchTint is the extra rgba(131,56,138,.08) layer on Slack's search pill.
-var SearchTint = rgba(0x83388a, 0x14)
-
 func rgb(v uint32) color.NRGBA {
 	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
 }
@@ -93,27 +113,37 @@ func rgba(v uint32, a uint8) color.NRGBA {
 }
 
 // LightPalette is Slack's default light mode with the Aubergine chrome
-// (measured from app.slack.com, 2026-11).
+// (measured from app.slack.com, 2026-11). Its chrome and sidebar fields are
+// the default theme's tokens as Slack's code computes them
+// (theme_contrast_test.go), so a custom theme's colours and these never
+// part where Slack's don't.
 var LightPalette = Palette{
-	ChromeA:       rgb(0x4a154b), // radial center + conic light stop
-	ChromeB:       rgb(0x39063a), // conic dark stop
-	ChromeC:       rgb(0x4a154b),
-	ChromeText:    rgb(0xffffff),
-	ChromeTextDim: rgba(0xf6e4ff, 0xe6),
-	ChromeHover:   rgba(0xf9edff, 0x26),
-	ChromeActive:  rgba(0xf9edff, 0x40),
-	SearchBg:      rgba(0xf9edff, 0x40),
-	SearchHover:   rgba(0xf9edff, 0x55),
-	SearchText:    rgb(0xffffff),
+	ChromeA:         rgb(0x4a154b), // radial center + conic light stop
+	ChromeB:         rgb(0x39063a), // conic dark stop
+	ChromeC:         rgb(0x4a154b),
+	ChromeText:      rgb(0xffffff),
+	ChromeTextDim:   rgba(0xf6e4ff, 0xe6),
+	ChromeHover:     rgba(0xf9edff, 0x40),
+	ChromePressed:   rgba(0xf9edff, 0x1c),
+	ChromeActive:    rgba(0xf9edff, 0x40),
+	ChromeHoverTint: rgba(0x82378a, 0x14), // aubergine-70 at .08, multiplied over aubergine-0 at .25
+	SearchBg:        rgba(0xf9edff, 0x40),
+	SearchText:      rgb(0xffffff),
+
+	ChromeBasePry:      rgb(0xf9edff), // the inverted scope's aubergine-0
+	ChromeContentTer:   rgb(0x39063a), // aubergine-100
+	ChromeBasePryHover: rgb(0xefdef6), // aubergine-70 at .08 multiplied over it
 
 	SidebarBg:         rgba(0xf9edff, 0x1c),
 	SidebarText:       rgba(0xf6e4ff, 0xe6),
 	SidebarTextUnread: rgb(0xffffff),
-	SidebarHover:      rgba(0xf9edff, 0x1a),
+	SidebarHover:      rgba(0xf9edff, 0x14),
 	SidebarActive:     rgb(0xf9edff),
 	SidebarActiveText: rgb(0x39063a),
-	SidebarDivider:    rgba(0xf9edff, 0x33),
+	SidebarDivider:    rgba(0xf9edff, 0x38),
 	SidebarButton:     rgba(0xf9edff, 0x40),
+	SidebarTextTer:    rgba(0xf9edff, 0x99),
+	SidebarRule:       rgba(0xe8e8e8, 0x21),
 
 	Badge:         rgb(0xeabdfb),
 	BadgeText:     rgb(0x39063a),
@@ -161,19 +191,25 @@ var LightPalette = Palette{
 	ScrollThumb:        rgba(0x1d1c1d, 0x40),
 }
 
-// DarkPalette is Slack's dark mode.
+// DarkPalette is Slack's dark mode (its chrome and sidebar fields Slack's
+// computed default tokens too).
 var DarkPalette = Palette{
 	// measured from app.slack.com in dark mode (Aubergine), 2026-11-07
-	ChromeA:       rgb(0x431349),
-	ChromeB:       rgb(0x200221),
-	ChromeC:       rgb(0x431349),
-	ChromeText:    rgb(0xffffff),
-	ChromeTextDim: rgba(0xefe1f5, 0xe6),
-	ChromeHover:   rgba(0xefe1f5, 0x26),
-	ChromeActive:  rgba(0xefe1f5, 0x40),
-	SearchBg:      rgba(0xefe1f5, 0x40),
-	SearchHover:   rgba(0xefe1f5, 0x55),
-	SearchText:    rgb(0xffffff),
+	ChromeA:         rgb(0x431349),
+	ChromeB:         rgb(0x200221),
+	ChromeC:         rgb(0x431349),
+	ChromeText:      rgb(0xf8f8f8), // theme-content-inv-pry: gray-100
+	ChromeTextDim:   rgba(0xe3ceeb, 0xcc),
+	ChromeHover:     rgba(0xefe1f5, 0x40),
+	ChromePressed:   rgba(0x101214, 0x99),
+	ChromeActive:    rgba(0xefe1f5, 0x40),
+	ChromeHoverTint: rgba(0xefe1f5, 0x14), // aubergine-100 at .08, lighten over itself
+	SearchBg:        rgba(0xefe1f5, 0x40),
+	SearchText:      rgb(0xf8f8f8),
+
+	ChromeBasePry:      rgb(0xe3ceeb), // aubergine-90
+	ChromeContentTer:   rgb(0x200221), // aubergine-0
+	ChromeBasePryHover: rgb(0xe4d0ec), // aubergine-100 at .08, lighten over it
 
 	SidebarBg:         rgba(0x101214, 0x99),
 	SidebarText:       rgba(0xe3ceeb, 0xcc),
@@ -181,14 +217,16 @@ var DarkPalette = Palette{
 	SidebarHover:      rgba(0xefe1f5, 0x14),
 	SidebarActive:     rgb(0x7d3986),
 	SidebarActiveText: rgb(0xefe1f5),
-	SidebarDivider:    rgba(0xefe1f5, 0x26),
+	SidebarDivider:    rgba(0xefe1f5, 0x38),
 	SidebarButton:     rgba(0xefe1f5, 0x40),
+	SidebarTextTer:    rgba(0xe3ceeb, 0x99),
+	SidebarRule:       rgba(0xe8e8e8, 0x21),
 	WorkspaceBorder:   rgba(0xefe1f5, 0x26),
 
-	Badge:         rgb(0xeabdfb),
-	BadgeText:     rgb(0x39063a),
-	RailBadge:     rgb(0xeabdfb),
-	RailBadgeText: rgb(0x39063a),
+	Badge:         rgb(0xcfa1de), // theme-base-imp: aubergine-70
+	BadgeText:     rgb(0x200221), // theme-content-imp: aubergine-0
+	RailBadge:     rgb(0xcfa1de),
+	RailBadgeText: rgb(0x200221),
 
 	Bg:           rgb(0x1a1d21),
 	BgHover:      rgb(0x222529),
@@ -204,7 +242,7 @@ var DarkPalette = Palette{
 	PanelShadow:  rgba(0x000000, 0x60),
 
 	Link:               rgb(0x1d9bd1),
-	Accent:             rgb(0xd29bd6),
+	Accent:             rgb(0xe3ceeb), // theme-base-pry: aubergine-90
 	Mention:            rgb(0x1d9bd1),
 	MentionBg:          rgba(0x1d9bd1, 0x1a),
 	SelfMention:        rgba(0xf2c744, 0x33),
@@ -219,7 +257,7 @@ var DarkPalette = Palette{
 	SendText:           rgb(0xffffff),
 	Danger:             rgb(0xe01e5a),
 	Warning:            rgb(0xecb22e),
-	Presence:           rgb(0x20a271),
+	Presence:           rgb(0x3daa7c), // theme-base-inv-hgl-2: jade-60
 	PresenceAway:       rgb(0x9a9b9e),
 	Reaction:           rgba(0xd1d2d3, 0x14),
 	ReactionSelf:       rgba(0x1d9bd1, 0x26),
