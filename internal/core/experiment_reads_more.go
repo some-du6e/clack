@@ -49,6 +49,10 @@ func init() {
 		"agent_channel_header":                              on,
 		"sc_remove_full_access_user":                        on,
 		"ncea_allow_channel_managers_to_lock_configuration": on,
+		// the menu's Make Channel Manager skips channel visitors
+		// (core/channel_managers_edit.go: 3Wpu Oh); not assigned to the
+		// account
+		"hall_pass": on,
 	} {
 		experimentReads[name] = groups
 	}

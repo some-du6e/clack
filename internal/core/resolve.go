@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/url"
@@ -144,10 +145,7 @@ func (a *App) resolveChannels(ctx context.Context, ids []string) []string {
 			a.S.ForgetMissing('c', ids[i:j]...)
 			continue
 		}
-		for _, c := range r.Results {
-			if c.ID == "" {
-				continue
-			}
+		put := func(c slack.Conversation) {
 			a.S.PutName(c.ID, c.Name)
 			acc := richtext.ChannelVisible
 			if c.IsPrivate && !c.IsMPIM {
@@ -156,12 +154,52 @@ func (a *App) resolveChannels(ctx context.Context, ids []string) []string {
 			a.S.SetChannelAccess(c.ID, acc)
 			out = append(out, c.ID)
 		}
-		// failed_ids: channels the viewer can't see (private ones they're
-		// not in, other workspaces'): Slack's "Private channel" chip
-		for _, id := range r.Failed {
-			a.S.SetChannelAccess(id, richtext.ChannelHidden)
-			out = append(out, id)
+		for _, c := range r.Results {
+			if c.ID != "" {
+				put(c)
+			}
 		}
+		// failed_ids go to conversations.genericInfo, as Slack's
+		// fetchRawChannelsById falls back for flannel's misses; what
+		// neither knows is a channel the viewer can't see (private ones
+		// they're not in, other workspaces'): Slack's "Private channel"
+		got := map[string]bool{}
+		for _, c := range a.genericChannels(ctx, r.Failed) {
+			if c.ID != "" && !got[c.ID] {
+				got[c.ID] = true
+				put(c)
+			}
+		}
+		for _, id := range r.Failed {
+			if !got[id] {
+				a.S.SetChannelAccess(id, richtext.ChannelHidden)
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+// genericChannels is Slack's fetchRawChannelsFromAPI (client-boot 6ndL,
+// build 2c0d02ca130f): conversations.genericInfo {updated_channels: {id:
+// 0}} for the ids flannel's channels/info failed, 250 at a time. A batch
+// that fails leaves its ids out, as Slack's does.
+func (a *App) genericChannels(ctx context.Context, ids []string) []slack.Conversation {
+	var out []slack.Conversation
+	for i := 0; i < len(ids); i += 250 {
+		up := map[string]int{}
+		for _, id := range ids[i:min(i+250, len(ids))] {
+			up[id] = 0
+		}
+		b, _ := json.Marshal(up)
+		var r struct {
+			Channels []slack.Conversation `json:"channels"`
+		}
+		if err := a.C.Call(ctx, "conversations.genericInfo", url.Values{"updated_channels": {string(b)}}, &r); err != nil {
+			log.Printf("conversations.genericInfo: %v", err)
+			continue
+		}
+		out = append(out, r.Channels...)
 	}
 	return out
 }

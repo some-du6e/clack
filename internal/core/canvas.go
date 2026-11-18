@@ -161,7 +161,7 @@ func (a *App) canvasFileInfo(ctx context.Context, id string) (*canvasFileJSON, e
 	return &r.File, nil
 }
 
-func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
+func (a *App) canvasInfo(ctx context.Context, f *canvasFileJSON) CanvasInfo {
 	ci := CanvasInfo{ID: f.ID, Title: f.Title, Creator: firstNonEmpty(f.CanvasCreatorID, f.User), Created: f.Created,
 		Updated: f.EditTimestamp, Editable: f.Editable, Access: f.Access, Editors: f.Editors, Permalink: f.Permalink,
 		URL: f.URLPrivate, IsPublic: f.IsPublic, CommentsN: f.CommentsCount, ShowBadge: f.ShowBadge,
@@ -183,11 +183,11 @@ func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 		ci.AccessRequested = true
 	}
 	ci.Channels = append(append(append([]string(nil), f.Channels...), f.Groups...), f.IMs...)
-	if len(f.TitleBlocks) > 0 && string(f.TitleBlocks) != "null" {
-		if d := richtext.FromMessage(a.S, &slack.Message{Text: f.Title, Blocks: f.TitleBlocks}); len(d.Blocks) > 0 {
-			ci.TitleSpans = d.Blocks[0].Spans
-		}
-	}
+	// title_blocks, after looking up the channels and people they mention
+	// (tabTitleSpans, as the tab bar does): Slack's header renders them
+	// with the message renderer, which reads each mention's model, so a
+	// channel the viewer isn't in reads #name, not the id
+	ci.TitleSpans = a.tabTitleSpans(ctx, f.TitleBlocks, f.Title)
 	if ci.Title == "" {
 		ci.Title = "Untitled"
 	}
@@ -207,7 +207,7 @@ func (a *App) CanvasInfo(ctx context.Context, id string) (CanvasInfo, error) {
 	if !IsCanvasFile(f.Filetype, f.Mode, f.PrettyType) {
 		return CanvasInfo{}, errNotCanvas
 	}
-	return a.canvasInfo(f), nil
+	return a.canvasInfo(ctx, f), nil
 }
 
 // Canvas fetches a canvas: files.info, then the HTML export (never cached:
@@ -220,7 +220,7 @@ func (a *App) Canvas(ctx context.Context, id string) (*CanvasDoc, error) {
 	if !IsCanvasFile(f.Filetype, f.Mode, f.PrettyType) {
 		return nil, errNotCanvas
 	}
-	cd := &CanvasDoc{Info: a.canvasInfo(f), At: time.Now(), Files: map[string]CanvasFile{}}
+	cd := &CanvasDoc{Info: a.canvasInfo(ctx, f), At: time.Now(), Files: map[string]CanvasFile{}}
 	if f.URLPrivate == "" {
 		return cd, nil
 	}
@@ -377,6 +377,73 @@ func (a *App) ResolveCanvasMention(kind richtext.SpanKind, text string) (string,
 		}
 	}
 	return "", false
+}
+
+// NameCanvasMention gives a canvas mention its text from the store. Slack's
+// canvas draws every mention control from its model by id; the export
+// holds only the id (canvas parse.go). Quip's mention views
+// (quip-collab-editor, build of 2026-11-15):
+//
+//   - a channel (hI): "#" and its name; a private one the viewer is in,
+//     the lock and its name; one with no name, deleted or non-existent
+//     (private, another workspace's), the dimmed lock and "Private
+//     channel", not a link;
+//   - a person or a group (hu, a user control; an S id is a group): "@"
+//     and the member's mention name, a group's handle, "unknown group"
+//     for a group that doesn't exist;
+//   - a model still loading: the slack-control-missing-content skeleton
+//     (Pending), never the id.
+//
+// The models come from Slack's quip delegate (client-boot-shared
+// fetchAndFormatChannel: getChannelById, else ensureChannelsArePresent →
+// fetchAndUpsertChannelsById: flannel channels/info, then
+// conversations.genericInfo for the ids flannel fails). The store's reads
+// here ask for what they miss in the same way (resolve.go, the member
+// fetcher), and the canvas view names its mentions again when an answer
+// lands. It reports whether s changed.
+func (a *App) NameCanvasMention(s *richtext.Span) bool {
+	if s.ID == "" {
+		return false
+	}
+	n := *s
+	n.Pending, n.Off, n.Lock = false, false, false
+	switch s.Kind {
+	case richtext.Channel:
+		name := a.S.ChannelName(s.ID) // a miss is asked for (resolveChannels)
+		switch acc := a.S.ChannelAccess(s.ID); {
+		case acc == richtext.ChannelHidden:
+			n.Text, n.Off, n.Lock = richtext.PrivateChannelLabel, true, true
+		case name == "" || name == s.ID:
+			n.Text, n.Pending = "", true
+		case acc == richtext.ChannelPrivate:
+			n.Text, n.Lock = strings.TrimPrefix(name, "#"), true
+		default:
+			n.Text = "#" + strings.TrimPrefix(name, "#")
+		}
+	case richtext.User:
+		n.Self = s.ID == a.S.SelfID()
+		if name, ok := a.S.MemberName(s.ID); ok { // a miss goes to the member fetcher
+			n.Text = "@" + strings.TrimPrefix(name, "@")
+		} else {
+			n.Text, n.Pending = "", true
+		}
+	case richtext.Usergroup:
+		switch name := a.S.UsergroupName(s.ID); {
+		case name != "" && name != s.ID:
+			n.Text, n.Self = "@"+strings.TrimPrefix(name, "@"), a.S.InUsergroup(s.ID)
+		case !a.S.UsergroupsLoaded():
+			n.Text, n.Pending = "", true // the group list is still on its way
+		default:
+			n.Text = "@unknown group" // hu's fallback for a group with no name
+		}
+	default:
+		return false
+	}
+	if n == *s {
+		return false
+	}
+	*s = n
+	return true
 }
 
 // OpenCanvas tells Slack the viewer has the canvas open (files.open), so the

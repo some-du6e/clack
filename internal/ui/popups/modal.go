@@ -150,6 +150,15 @@ type ModalOpts struct {
 	CloseGuard func() bool
 	// NoClose hides the header close button.
 	NoClose bool
+	// TitleWrap lets the title wrap as .c-sk-modal_title_bar__text does
+	// (no Subtitle, HeadH or Header): the title bar (min-height 70px,
+	// padding 20px 28px) grows by its lines, and the close button keeps
+	// c-sk-modal__close_button's top 20px. A title with TitleIcon or
+	// TitleAfter that doesn't fit its line is drawn as TitleWrapText
+	// instead (the whole title as text). Without it the title stays on one
+	// line, cut with an ellipsis.
+	TitleWrap     bool
+	TitleWrapText string
 	// PadX and HeadH override the side padding (default 28) and header
 	// height (default 70) in dp; Slack's link dialog uses 24 / 68.
 	PadX, HeadH float32
@@ -264,6 +273,36 @@ func (m *Modal) press(b *ModalButton) {
 	}
 }
 
+// wrapTitle is the text to wrap in a title bar maxW wide
+// (ModalOpts.TitleWrap): the plain title, or TitleWrapText for a title
+// with an icon or a tail that doesn't fit its line.
+func (m *Modal) wrapTitle(gtx layout.Context, th *theme.Theme, cl *Colors, sz, lh float32, maxW int) (string, bool) {
+	o := m.o
+	if !o.TitleWrap || o.Subtitle != "" || o.HeadH != 0 || o.Header != nil {
+		return "", false
+	}
+	if o.TitleIcon == "" && o.TitleAfter == "" {
+		return m.Title(), true
+	}
+	if o.TitleWrapText == "" {
+		return "", false
+	}
+	width := func(s string) int {
+		_, d := record(loose(gtx, image.Pt(1<<20, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, sz, lh, theme.Black, cl.Fg, s, 1)
+		})
+		return d.Size.X
+	}
+	line := width(m.Title()) + width(o.TitleAfter)
+	if o.TitleIcon != "" {
+		line += dp(gtx, 22)
+	}
+	if line <= maxW {
+		return "", false
+	}
+	return o.TitleWrapText, true
+}
+
 // Title is the modal's title (tests).
 func (m *Modal) Title() string {
 	if m.o.TitleFunc != nil {
@@ -368,6 +407,17 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		headH += subH
 	}
 	titleH = headH
+	titleLines, wrapped := 1, ""
+	if text, ok := m.wrapTitle(gtx, th, cl, titleSz, titleLH, w-padX-dp(gtx, 64)); ok {
+		_, d := record(loose(gtx, image.Pt(maxInt(1, w-padX-dp(gtx, 64)), 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, titleSz, titleLH, theme.Black, cl.Fg, text, 0)
+		})
+		if lh := dp(gtx, titleLH); lh > 0 && d.Size.Y > lh {
+			titleLines, wrapped = (d.Size.Y+lh/2)/lh, text
+			headH = max(headH, d.Size.Y+dp(gtx, 40))
+			titleH = headH
+		}
+	}
 	var belowCall op.CallOp
 	if m.o.HeaderBelow != nil {
 		var d layout.Dimensions
@@ -466,16 +516,19 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					// .p-about_modal__contents on the content and the footer
 					fill(gtx, image.Rect(pos.X, pos.Y+headH, pos.X+w, m.rect.Dy()), cl.EmojiFoot)
 				}
-				ty := (titleH - subH - dp(gtx, titleLH)) / 2
+				ty := (titleH - subH - titleLines*dp(gtx, titleLH)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
-					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, titleLH))}
+					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, titleLines*dp(gtx, titleLH))}
 					title := m.o.Title
 					if m.o.TitleFunc != nil {
 						title = m.o.TitleFunc()
 					}
 					if title == "" && m.o.TitleIcon == "" && m.o.TitleAfter == "" {
 						return layout.Dimensions{} // a header-less dialog (showHeader false): shape nothing
+					}
+					if titleLines > 1 {
+						return para(gtx, th, titleSz, titleLH, theme.Black, cl.Fg, wrapped, 0)
 					}
 					d := para(gtx, th, titleSz, titleLH, theme.Black, cl.Fg, title, 1)
 					if m.o.TitleIcon == "" && m.o.TitleAfter == "" {
@@ -514,8 +567,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 				if !m.o.NoClose {
 					cy := pos.Y + (titleH-dp(gtx, 36))/2
-					if heroH > 0 {
+					switch {
+					case heroH > 0:
 						cy = dp(gtx, 20) // c-sk-modal__close_button: top 20px, over the hero
+					case titleLines > 1:
+						cy = pos.Y + dp(gtx, 20) // top 20px beside a wrapped title
 					}
 					at(gtx, image.Pt(w-dp(gtx, 20)-dp(gtx, 36), cy), func(gtx layout.Context) layout.Dimensions {
 						if m.ringOn(gtx, &m.close) {

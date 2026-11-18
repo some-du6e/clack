@@ -98,7 +98,10 @@ func (a *App) topicCardView(ch string, fg color.NRGBA) (*richview.View, *richvie
 		st.SetPalette(pal)
 		x.cardStyle, x.cardDark, x.cardFg, x.card = st, a.th.Dark, fg, nil
 	}
-	key := ch + "\x00" + cv.Topic
+	// keyed on what the topic reads too: a channel it mentions that was
+	// looked up after the card was made (a "names" resnapshot converts
+	// the topic again) reads #name, not its id
+	key := ch + "\x00" + cv.Topic + "\x00" + richtext.PlainText(richtext.Doc{Blocks: cv.TopicDoc})
 	if x.card == nil || x.cardKey != key {
 		blocks := cv.TopicDoc
 		if len(blocks) == 0 {
