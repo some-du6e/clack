@@ -1853,6 +1853,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		var up map[string]int
 		_ = json.Unmarshal(edge["updated_ids"], &up)
 		return s.edgeChannelsInfo(up) // channel_links.go
+	case "conversations.genericInfo":
+		var up map[string]int
+		_ = json.Unmarshal([]byte(f.Get("updated_channels")), &up)
+		return s.genericInfo(up) // channel_links.go
 	case "edge/permissions/info":
 		var ch string
 		_ = json.Unmarshal(edge["channel_id"], &ch)

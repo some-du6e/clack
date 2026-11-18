@@ -1553,7 +1553,10 @@ func (d *ChannelDetails) richText(gtx C, rk, raw string, blocks []richtext.Block
 	case strings.TrimSpace(raw) == "":
 		return d.para(gtx, 15, 22, wReg, d.p.Muted, 0, empty)
 	case len(blocks) > 0:
-		return d.richDoc(gtx, rk, raw, richtext.Doc{Blocks: blocks}, richview.Options{}, 0)
+		// the version is what it reads too: a mentioned channel looked up
+		// later reads #name once the conversation is converted again
+		doc := richtext.Doc{Blocks: blocks}
+		return d.richDoc(gtx, rk, raw+"\x00"+richtext.PlainText(doc), doc, richview.Options{}, 0)
 	}
 	return d.para(gtx, 15, 22, wReg, d.p.Text, 0, raw)
 }

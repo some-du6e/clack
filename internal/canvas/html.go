@@ -223,7 +223,7 @@ func (w *hw) inline(spans []richtext.Span) {
 		case richtext.Link:
 			w.s.WriteString(`<lnk href="` + html.EscapeString(s.URL) + `">` + html.EscapeString(s.Text) + `</lnk>`)
 		case richtext.User, richtext.Channel, richtext.Broadcast, richtext.Usergroup:
-			w.s.WriteString(`<control id="` + html.EscapeString(w.sec()) + `" data-remapped="true"><a>` + html.EscapeString(s.Text) + `</a></control>`)
+			w.s.WriteString(`<control id="` + html.EscapeString(w.sec()) + `" data-remapped="true"><a>` + html.EscapeString(exportMention(s)) + `</a></control>`)
 		case richtext.Date:
 			w.s.WriteString(`<control id="` + html.EscapeString(w.sec()) + `" data-remapped="true">` + html.EscapeString(s.Text) + `</control>`)
 		case richtext.Emoji:
@@ -240,4 +240,17 @@ func (w *hw) inline(spans []richtext.Span) {
 		}
 		w.s.WriteString(close)
 	}
+}
+
+// exportMention is a mention control's text in Quip's export: the id its
+// model holds ("#C…", "@U…", "@S…"; parse.go), never the name. A mention
+// without an id (an older export's name) and a broadcast keep their text.
+func exportMention(s richtext.Span) string {
+	if s.ID == "" || s.Kind == richtext.Broadcast {
+		return s.Text
+	}
+	if s.Kind == richtext.Channel {
+		return "#" + s.ID
+	}
+	return "@" + s.ID
 }

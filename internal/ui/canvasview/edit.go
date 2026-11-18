@@ -1036,9 +1036,25 @@ func emptyBlock(b canvas.Block) bool {
 	case canvas.Divider:
 		return false
 	case canvas.Quote:
-		return len(b.Children) == 0 || strings.TrimSpace(b.Children[0].Text()) == ""
+		return len(b.Children) == 0 || blankSpans(b.Children[0].Spans)
 	}
-	return strings.TrimSpace(canvas.SpansText(b.Spans)) == ""
+	return blankSpans(b.Spans)
+}
+
+// blankSpans: no text and no inline object. A mention counts whatever it
+// reads (one still loading has no text yet).
+func blankSpans(sp []richtext.Span) bool {
+	for _, s := range sp {
+		switch s.Kind {
+		case richtext.Text, richtext.Link, richtext.Break:
+			if strings.TrimSpace(s.Text) != "" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func unbold(sp []richtext.Span) []richtext.Span {
