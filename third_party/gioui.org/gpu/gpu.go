@@ -625,10 +625,15 @@ func (g *gpu) frame(target RenderTarget) error {
 		sticky = &g.partial.atlas
 	}
 	r.packer.work = 0
+	var repacked int
+	if sticky != nil {
+		repacked = sticky.repacked
+	}
 	r.packStencils(&g.drawOps.pathOps, sticky)
 	r.stats.PackWork = r.packer.work
 	if sticky != nil {
 		r.stats.StickySlots, r.stats.StickyHoles = len(sticky.slots), sticky.holeSlots
+		r.stats.StickyRepacks = sticky.repacked - repacked
 	}
 	r.packIntersections(g.drawOps.imageOps)
 	r.uploadImages(g.cache, g.drawOps.imageOps)

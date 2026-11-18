@@ -54,12 +54,17 @@ type FrameStats struct {
 	DamageRects int
 	DamagePx    int64
 	CopyPx      int64
-	// PackWork is the free spaces the coverage atlas's packer looked at;
-	// StickySlots the slots of its sticky sequence (partial frames), of
-	// them StickyHoles holes. PathsTessellated are the clip paths whose
-	// vertices the frame built on the CPU.
+	// PackWork is the free spaces the coverage atlas's packer looked at,
+	// and the holes the sticky places looked through; StickySlots the
+	// slots of its sticky sequence (partial frames), of them StickyHoles
+	// holes; StickyRepacks the times the frame packed an existing sequence
+	// afresh (holes or slack over their bounds, more pages than a fresh
+	// packing needs, more new geometry than a partial frame can have).
+	// PathsTessellated are the clip paths whose vertices the frame built
+	// on the CPU.
 	PackWork                 int64
 	StickySlots, StickyHoles int
+	StickyRepacks            int
 	PathsTessellated         int
 	// CopyChecked: the window's pixels were read back after the frame
 	// texture's copy (ClackVerifyCopy); CopyMismatchPx of them differed
