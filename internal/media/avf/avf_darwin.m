@@ -20,6 +20,7 @@
 #import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/QuartzCore.h>
+#include <math.h>
 #include <os/lock.h>
 #include <stdatomic.h>
 #include <time.h>
@@ -118,6 +119,11 @@ static int mapError(NSError *e) {
 	// the queue's
 	BOOL _closed, _ready, _wantPlay, _loop, _wantFrame, _firstFrame, _ended, _seekPending;
 	double _rate, _volume, _pendingSeek;
+	// the frame asked for (_wantFrame): the one at _wantAt (NAN: the next
+	// one), until _wantUntilNS (0: no end); _lastPts is the display time of
+	// the frame pulled last (-1 none), _seekTarget the seek's
+	double _wantAt, _lastPts, _seekTarget;
+	int64_t _wantUntilNS;
 	BOOL _muted;
 	int _drawW, _drawH;
 	size_t _outW, _outH;
@@ -145,6 +151,8 @@ static int mapError(NSError *e) {
 	_rate = 1;
 	_volume = 1;
 	_lastTime = -1;
+	_lastPts = -1;
+	_wantAt = NAN;
 	_lastStatus = AVPlayerItemStatusUnknown;
 	_lock = OS_UNFAIR_LOCK_INIT;
 	atomic_store(&_lastAsk, nowNS());
@@ -311,9 +319,10 @@ static int mapError(NSError *e) {
 	[self emit:CLACK_AV_METADATA];
 	[self emit:CLACK_AV_DATA];
 	if (_seekPending) {
-		[self seekTo:_pendingSeek];
+		[self seekTo:_pendingSeek]; // asks for the frame there
+	} else {
+		[self wantFrameAt:NAN];
 	}
-	_wantFrame = YES;
 	_lastTime = -1;
 	[self check];
 }
@@ -352,7 +361,9 @@ static int mapError(NSError *e) {
 	_output = o;
 	_outW = w;
 	_outH = h;
-	_wantFrame = YES;
+	if (!_wantFrame) {
+		[self wantFrameAt:NAN];
+	}
 }
 
 - (void)play {
@@ -398,6 +409,7 @@ static int mapError(NSError *e) {
 	}
 	_seekPending = YES;
 	_ended = NO;
+	_seekTarget = t;
 	[self emit:CLACK_AV_SEEKING];
 	__weak ClackAVPlayer *w = self;
 	[_player seekToTime:CMTimeMakeWithSeconds(t, 90000)
@@ -412,6 +424,26 @@ static int mapError(NSError *e) {
 			    [s seeked:finished];
 		    });
 	    }];
+	// pulled from now on: the frame there shows once it's decoded, not once
+	// the completion comes (AVFoundation runs it on the main queue, which
+	// a busy main thread holds up)
+	[self wantFrameAt:t];
+	[self updateTimers];
+}
+
+// wantFrameAt asks for pulls until the frame at t is pulled (NAN: the next
+// frame, whatever it is), a seek's for 2 s at most.
+- (void)wantFrameAt:(double)t {
+	_wantFrame = YES;
+	_wantAt = t;
+	_wantUntilNS = isnan(t) ? 0 : nowNS() + 2000000000;
+}
+
+// frameAt is whether the frame pulled last is the one at t: its display
+// time within a frame and a half of it.
+- (BOOL)frameAt:(double)t {
+	double fps = _fps > 0 ? _fps : 30;
+	return _lastPts >= 0 && fabs(_lastPts - t) <= 1.5 / fps;
 }
 
 - (void)seeked:(BOOL)finished {
@@ -420,7 +452,9 @@ static int mapError(NSError *e) {
 	}
 	_seekPending = NO;
 	if (finished) {
-		_wantFrame = YES;
+		if (![self frameAt:_seekTarget]) {
+			[self wantFrameAt:_seekTarget]; // not pulled while it ran
+		}
 		[self emit:CLACK_AV_SEEKED];
 	}
 	[self updateTimers];
@@ -497,12 +531,16 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 	atomic_fetch_add(&_pulls, 1);
 	CMTime t = [_output itemTimeForHostTime:CACurrentMediaTime()];
 	if (![_output hasNewPixelBufferForItemTime:t]) {
-		if (nowNS() - atomic_load(&_lastAsk) >= 1000000000) {
+		if (_wantFrame && _wantUntilNS != 0 && nowNS() > _wantUntilNS) {
+			_wantFrame = NO; // the seek's frame never came
+			[self updateTimers];
+		} else if (nowNS() - atomic_load(&_lastAsk) >= 1000000000) {
 			[self updateTimers];
 		}
 		return;
 	}
-	CVPixelBufferRef pb = [_output copyPixelBufferForItemTime:t itemTimeForDisplay:NULL];
+	CMTime disp = kCMTimeInvalid;
+	CVPixelBufferRef pb = [_output copyPixelBufferForItemTime:t itemTimeForDisplay:&disp];
 	if (pb == NULL) {
 		return;
 	}
@@ -529,7 +567,10 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 		releaseEntry(&old); // superseded before Gio took it
 	}
 	int64_t n = atomic_fetch_add(&_frames, 1) + 1;
-	_wantFrame = NO;
+	_lastPts = CMTIME_IS_NUMERIC(disp) ? CMTimeGetSeconds(disp) : -1;
+	if (isnan(_wantAt) || _lastPts < 0 || [self frameAt:_wantAt] || (_wantUntilNS != 0 && nowNS() > _wantUntilNS)) {
+		_wantFrame = NO; // the frame asked for (an older one, pulled while a seek ran, isn't)
+	}
 	if (!_firstFrame) {
 		_firstFrame = YES;
 		[self emit:CLACK_AV_FIRSTFRAME];
@@ -568,7 +609,7 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 		releaseEntry(&b);
 	}
 	releaseEntry(&a);
-	_wantFrame = YES;
+	[self wantFrameAt:NAN];
 	[self updateTimers];
 }
 
