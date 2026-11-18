@@ -15,7 +15,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"image"
 	"io"
 	"log"
@@ -262,7 +261,7 @@ func (p *player) Close() {
 func (p *player) open() {
 	info, err := p.rs.Info(p.ctx)
 	if err != nil {
-		p.fail(media.ErrNetwork, fmt.Sprintf("the file: %v", err))
+		p.fail(media.ErrNetwork, "the file: "+p.rs.Detail(err))
 		return
 	}
 	if info.Total <= 0 {

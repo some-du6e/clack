@@ -100,10 +100,19 @@ func Want(t time.Duration) string {
 type Opener struct {
 	Data  []byte
 	Whole bool
-	// Fail, when set, is every Open's error.
-	Fail error
+	// Fail, when set, is every Open's error, answered with FailStatus.
+	Fail       error
+	FailStatus int
 	// Delay is waited before each Read of a body (a slow network).
 	Delay time.Duration
+	// Cut, when set, ends every body cleanly at that byte of the file (a
+	// truncated object, a proxy's cap).
+	Cut int64
+	// ETag is the answers' validator.
+	ETag string
+	// UnknownTotal answers ranges with "bytes N-M/*", and a range past the
+	// end with a 416 naming the size.
+	UnknownTotal bool
 
 	mu      sync.Mutex
 	offsets []int64
@@ -128,19 +137,39 @@ func (o *Opener) Open(ctx context.Context, off int64) (io.ReadCloser, media.Info
 	defer o.mu.Unlock()
 	o.offsets = append(o.offsets, off)
 	if o.Fail != nil {
-		return nil, media.Info{Total: -1}, o.Fail
+		return nil, media.Info{Status: o.FailStatus, Total: -1}, o.Fail
 	}
 	total := int64(len(o.Data))
-	info := media.Info{Status: http.StatusPartialContent, Total: total, Seekable: true}
+	info := media.Info{Status: http.StatusPartialContent, Total: total, Seekable: true, ETag: o.ETag}
+	if o.UnknownTotal {
+		info.Total = -1
+	}
 	if o.Whole {
-		info, off = media.Info{Status: http.StatusOK, Total: total}, 0
+		info, off = media.Info{Status: http.StatusOK, Total: total, ETag: o.ETag}, 0
 	} else if off >= total {
 		return nil, media.Info{Status: http.StatusRequestedRangeNotSatisfiable, Total: total}, errors.New("mediatest: range not satisfiable")
 	}
+	end := total
+	if o.Cut > 0 && o.Cut < end {
+		end = max(o.Cut, off)
+	}
 	o.open++
 	o.maxOpen = max(o.maxOpen, o.open)
-	return &body{o: o, ctx: ctx, data: o.Data[off:]}, info, nil
+	return &body{o: o, ctx: ctx, data: o.Data[off:end]}, info, nil
 }
+
+// Change runs f with o locked: a test changing the server between GETs.
+func (o *Opener) Change(f func(o *Opener)) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	f(o)
+}
+
+// RetryAfter is an error whose answer said to come back after D.
+type RetryAfter struct{ D time.Duration }
+
+func (e RetryAfter) Error() string                     { return fmt.Sprintf("mediatest: come back after %v", e.D) }
+func (e RetryAfter) RetryAfterDuration() time.Duration { return e.D }
 
 // Stats are the counts so far.
 func (o *Opener) Stats() OpenerStats {
@@ -163,9 +192,12 @@ type body struct {
 }
 
 func (b *body) Read(p []byte) (int, error) {
-	if b.o.Delay > 0 {
+	b.o.mu.Lock()
+	delay := b.o.Delay
+	b.o.mu.Unlock()
+	if delay > 0 {
 		select {
-		case <-time.After(b.o.Delay):
+		case <-time.After(delay):
 		case <-b.ctx.Done():
 		}
 	}

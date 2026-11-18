@@ -246,3 +246,80 @@ func TestParseContentRange(t *testing.T) {
 		}
 	}
 }
+
+// The answer's validators come back with it; an error status keeps its
+// Retry-After.
+func TestDownloadRangeValidators(t *testing.T) {
+	data := rangeFile(1000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/files-pri/busy" {
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		w.Header().Set("Content-Type", "video/mp4")
+		http.ServeContent(w, r, "v.mp4", time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), bytes.NewReader(data))
+	}))
+	defer srv.Close()
+	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-1", TeamURL: srv.URL + "/"})
+	resp, info, err := c.DownloadRange(context.Background(), srv.URL+"/files-pri/T1-F1/v.mp4", 10, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if info.ETag != `"v1"` || info.LastModified != "Sun, 01 Nov 2026 00:00:00 GMT" {
+		t.Errorf("validators %q %q", info.ETag, info.LastModified)
+	}
+	_, _, err = c.DownloadRange(context.Background(), srv.URL+"/files-pri/busy", 0, -1)
+	var he *HTTPError
+	if !errors.As(err, &he) || he.Status != 503 || he.RetryAfterDuration() != 7*time.Second {
+		t.Errorf("a 503: %v, want an HTTPError with Retry-After 7 s", err)
+	}
+}
+
+// A streaming GET isn't cut by the client's request timeout (a video
+// plays for more than a minute); it is cut once its body brings nothing
+// for StreamIdleTimeout.
+func TestDownloadRangeStreams(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Content-Range", "bytes 0-99999/100000")
+		w.Header().Set("Content-Length", "100000")
+		w.WriteHeader(http.StatusPartialContent)
+		n := 10
+		if r.URL.Path == "/files-pri/stall" {
+			n = 1
+		}
+		for i := 0; i < n; i++ {
+			w.Write(make([]byte, 1000))
+			w.(http.Flusher).Flush()
+			time.Sleep(60 * time.Millisecond)
+		}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-1", TeamURL: srv.URL + "/"})
+	c.HTTP.Timeout = 200 * time.Millisecond // shorter than the body takes
+	defer func(d time.Duration) { StreamIdleTimeout = d }(StreamIdleTimeout)
+	StreamIdleTimeout = 300 * time.Millisecond
+	resp, _, err := c.DownloadRange(context.Background(), srv.URL+"/files-pri/slow", 0, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(io.LimitReader(resp.Body, 10000))
+	resp.Body.Close()
+	if len(got) != 10000 {
+		t.Errorf("read %d of the 10,000 bytes sent over 600 ms: the request timeout cut the stream", len(got))
+	}
+	resp, _, err = c.DownloadRange(context.Background(), srv.URL+"/files-pri/stall", 0, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Now()
+	_, err = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err == nil || time.Since(t0) > 3*time.Second {
+		t.Errorf("a stalled body: %v after %v, want cut after about 300 ms", err, time.Since(t0))
+	}
+}

@@ -47,6 +47,9 @@ type Info struct {
 	// Seekable is whether another offset can be asked for: the server
 	// answered the range (206). Not seekable, the body starts at byte 0.
 	Seekable bool
+	// ETag and LastModified are the answer's validators: a later answer
+	// with others is another version of the file (ErrChanged).
+	ETag, LastModified string
 }
 
 // HTML5 readyState values (State.Ready).

@@ -372,7 +372,7 @@ func (p *player) run() {
 		case err := <-infoCh:
 			p.infoOK, p.infoErr = true, err
 			if err != nil {
-				p.fail(media.ErrNetwork, fmt.Sprintf("the file: %v", err))
+				p.fail(media.ErrNetwork, "the file: "+p.rs.Detail(err))
 			}
 		case <-p.bind:
 			p.doBind()

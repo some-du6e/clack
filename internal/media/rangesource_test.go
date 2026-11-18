@@ -22,7 +22,7 @@ const mb = 1 << 20
 // bigFile is n bytes, distinct at every offset.
 func bigFile(n int) []byte {
 	b := make([]byte, n)
-	for i := 0; i < n; i += 8 {
+	for i := 0; i+8 <= n; i += 8 {
 		binary.LittleEndian.PutUint64(b[i:], uint64(i)*0x9e3779b97f4a7c15)
 	}
 	return b
@@ -33,10 +33,10 @@ func bigFile(n int) []byte {
 func settled(t *testing.T, o *mediatest.Opener) int64 {
 	t.Helper()
 	last, still := int64(-1), 0
-	for i := 0; i < 400; i++ {
+	for i := 0; i < 600; i++ {
 		n := o.Stats().Bytes
 		if n == last {
-			if still++; still >= 10 {
+			if still++; still >= 20 {
 				return n
 			}
 		} else {
@@ -75,11 +75,21 @@ func logLines() (func(string, ...any), func() []string) {
 		}
 }
 
+// source is a RangeSource of src logging into logf, with a set of logged
+// files of its test's own (a test run again in the same process logs
+// again).
+func source(src media.Source, logf func(string, ...any), logged *sync.Map) *media.RangeSource {
+	if logged == nil {
+		logged = new(sync.Map)
+	}
+	return media.NewRangeSource(src, media.RangeOptions{Log: logf, Logged: logged})
+}
+
 // The fixture read through the source is the fixture: one GET, the
 // answer's size, the first answer's status.
 func TestRangeSourceReadsAll(t *testing.T) {
 	src, o := mediatest.Source("FRS1", mediatest.GreyGreyRed, false)
-	s := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	s := source(src, quiet, nil)
 	defer s.Close()
 	info, err := s.Info(context.Background())
 	if err != nil {
@@ -104,7 +114,7 @@ func TestRangeSourceReadsAll(t *testing.T) {
 func TestRangeSourceReadAhead(t *testing.T) {
 	data := bigFile(40 * mb)
 	src, o := mediatest.Source("FRS2", data, false)
-	s := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	s := source(src, quiet, nil)
 	defer s.Close()
 	if !bytes.Equal(readAt(t, s, 0, mb), data[:mb]) {
 		t.Fatal("bytes differ")
@@ -138,7 +148,7 @@ func TestRangeSourceReadAhead(t *testing.T) {
 func TestRangeSourceCacheCap(t *testing.T) {
 	data := bigFile(40 * mb)
 	src, o := mediatest.Source("FRS3", data, false)
-	s := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	s := source(src, quiet, nil)
 	defer s.Close()
 	for off := 0; off < len(data); off += mb {
 		if !bytes.Equal(readAt(t, s, int64(off), mb), data[off:off+mb]) {
@@ -154,53 +164,102 @@ func TestRangeSourceCacheCap(t *testing.T) {
 	}
 }
 
-// At most one GET is open at once, however reads jump about; a read far
-// from what's coming starts the GET again at its block.
-func TestRangeSourceOneGET(t *testing.T) {
-	data := bigFile(40 * mb)
+// Scattered seeks on a slow link leave blocks partly filled: each counts
+// whole (it holds its 256 KB), so the cache stays within CacheMax.
+func TestRangeSourceCacheCountsBlocks(t *testing.T) {
+	data := bigFile(100 * mb)
 	src, o := mediatest.Source("FRS4", data, false)
-	s := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	o.Delay = time.Millisecond
+	s := source(src, quiet, nil)
 	defer s.Close()
-	r := rand.New(rand.NewSource(1))
+	r := rand.New(rand.NewSource(2))
+	for i := 0; i < 120; i++ {
+		off := r.Int63n(int64(len(data)) - 4096)
+		if !bytes.Equal(readAt(t, s, off, 4096), data[off:off+4096]) {
+			t.Fatalf("bytes at %d differ", off)
+		}
+		if c := s.Stats().Cached; c > media.CacheMax+media.BlockSize*2 {
+			t.Fatalf("after %d seeks the blocks hold %d bytes, over %d", i, c, media.CacheMax)
+		}
+	}
+}
+
+// Two readers far apart, each reading in order (a demuxer's video and its
+// audio, AVFoundation's request from 0 and its request for the moov),
+// each keep a GET: the GETs don't change hands with every read.
+func TestRangeSourceTwoReaders(t *testing.T) {
+	data := bigFile(40 * mb)
+	src, o := mediatest.Source("FRS5", data, false)
+	o.Delay = 100 * time.Microsecond
+	s := source(src, quiet, nil)
+	defer s.Close()
 	var wg sync.WaitGroup
-	for i := 0; i < 4; i++ { // readers at once, as AVFoundation's requests
+	for _, base := range []int64{0, 20 * mb} {
 		wg.Add(1)
-		go func(seed int64) {
+		go func(base int64) {
 			defer wg.Done()
-			r := rand.New(rand.NewSource(seed))
-			for j := 0; j < 10; j++ {
-				off := r.Int63n(int64(len(data)) - 64<<10)
-				b := make([]byte, 64<<10)
+			b := make([]byte, 64<<10)
+			for off := base; off < base+6*mb; off += int64(len(b)) {
 				if _, err := s.ReadAt(b, off); err != nil {
 					t.Error(err)
 					return
 				}
-				if !bytes.Equal(b, data[off:off+64<<10]) {
+				if !bytes.Equal(b, data[off:off+int64(len(b))]) {
 					t.Errorf("bytes at %d differ", off)
 					return
 				}
 			}
-		}(r.Int63())
+		}(base)
 	}
 	wg.Wait()
 	st, rs := o.Stats(), s.Stats()
-	if st.MaxOpen > 1 || rs.MaxInFlight > 1 {
-		t.Errorf("%d bodies open at once (the source counted %d), want 1", st.MaxOpen, rs.MaxInFlight)
+	t.Logf("two readers of 6 MB each, 20 MB apart: %d GETs at %v, %d restarts, %d bytes", len(st.Offsets), st.Offsets, rs.Restarts, st.Bytes)
+	if len(st.Offsets) > 2 || rs.Restarts != 0 || st.MaxOpen > 2 {
+		t.Errorf("%d GETs, %d restarts, %d open at once: want one GET each", len(st.Offsets), rs.Restarts, st.MaxOpen)
 	}
-	for _, off := range st.Offsets {
-		if off%media.BlockSize != 0 {
-			t.Errorf("a GET at %d, not at a block", off)
-		}
-	}
-	t.Logf("40 random reads by 4 readers: %d GETs, %d restarts, %d bytes", len(st.Offsets), rs.Restarts, st.Bytes)
 }
 
-// A seek outside what was read starts the GET again there; back inside
-// it, nothing is fetched again.
+// Three readers far apart share two GETs: one changes hands at most once
+// a tenure, never at each read.
+func TestRangeSourceThreeReaders(t *testing.T) {
+	data := bigFile(60 * mb)
+	src, o := mediatest.Source("FRS6", data, false)
+	o.Delay = 200 * time.Microsecond
+	s := source(src, quiet, nil)
+	defer s.Close()
+	var wg sync.WaitGroup
+	start := time.Now()
+	for _, base := range []int64{0, 20 * mb, 40 * mb} {
+		wg.Add(1)
+		go func(base int64) {
+			defer wg.Done()
+			b := make([]byte, 64<<10)
+			for off := base; off < base+3*mb; off += int64(len(b)) {
+				if _, err := s.ReadAt(b, off); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}(base)
+	}
+	wg.Wait()
+	took := time.Since(start)
+	st, rs := o.Stats(), s.Stats()
+	t.Logf("three readers of 3 MB, 20 MB apart, in %v: %d GETs, %d restarts, %d bytes, %d open at most", took, len(st.Offsets), rs.Restarts, st.Bytes, st.MaxOpen)
+	// a restart needs a GET to have brought 1 MB or had 300 ms: 9 MB read
+	// allow 9 by bytes, and the time allows took/300ms
+	if bound := int64(9+took/(300*time.Millisecond)) + 3; int64(len(st.Offsets)) > bound || st.MaxOpen > 2 {
+		t.Errorf("%d GETs (%d open at once), want at most %d", len(st.Offsets), st.MaxOpen, bound)
+	}
+}
+
+// A seek outside what was read gets a GET of its own; back inside it,
+// nothing is fetched again; a third place takes the least recently read
+// GET's place.
 func TestRangeSourceRestartOnSeek(t *testing.T) {
 	data := bigFile(40 * mb)
-	src, o := mediatest.Source("FRS5", data, false)
-	s := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	src, o := mediatest.Source("FRS7", data, false)
+	s := source(src, quiet, nil)
 	defer s.Close()
 	readAt(t, s, 0, 64<<10)
 	readAt(t, s, 30*mb+12345, 64<<10)
@@ -210,12 +269,29 @@ func TestRangeSourceRestartOnSeek(t *testing.T) {
 	if got := o.Stats().Offsets; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("GETs at %v, want %v", got, want)
 	}
+	time.Sleep(350 * time.Millisecond) // the GETs had their tenure
 	readAt(t, s, 20*mb, 64<<10)
 	if got := o.Stats().Offsets; len(got) != 3 || got[2] != 20*mb {
 		t.Errorf("GETs at %v, want a third at 20 MB", got)
 	}
-	if st := s.Stats(); st.Restarts != 2 || st.MaxInFlight != 1 {
-		t.Errorf("%+v, want 2 restarts, one GET at a time", st)
+	if st := s.Stats(); st.Restarts != 1 || st.MaxInFlight != 2 {
+		t.Errorf("%+v, want 1 restart, two GETs at once at most", st)
+	}
+}
+
+// A GET started for a read in a block partly cached starts at the
+// block's first missing byte, not at its start.
+func TestRangeSourceStartsAtMissingByte(t *testing.T) {
+	data := bigFile(4 * mb)
+	src, o := mediatest.Source("FRS8", data, false)
+	o.Cut = 100 << 10 // the first body ends 100 KB into the first block
+	s := source(src, quiet, nil)
+	defer s.Close()
+	readAt(t, s, 0, 50<<10)
+	o.Change(func(o *mediatest.Opener) { o.Cut = 0 })
+	readAt(t, s, 120<<10, 50<<10)
+	if got := o.Stats().Offsets; len(got) != 2 || got[1] != 100<<10 {
+		t.Errorf("GETs at %v, want the second at the first missing byte, 102400", got)
 	}
 }
 
@@ -238,8 +314,8 @@ func TestRangeSourceMoovAtEnd(t *testing.T) {
 	data := moovAtEnd(20 * mb)
 	moovAt := int64(len(data) - (len(mediatest.MoovAtEnd) - mediatest.MoovAtEndMoov))
 	logf, lines := logLines()
-	src, o := mediatest.Source("FRS6", data, false)
-	s := media.NewRangeSource(src, media.RangeOptions{Log: logf})
+	src, o := mediatest.Source("FRS9", data, false)
+	s := source(src, logf, nil)
 	readAt(t, s, 0, 64<<10)
 	if p := s.Probe(); p.Brand != "isom" || p.Entry != "" || p.MoovAt != -1 || p.NextAt != moovAt {
 		t.Errorf("after the start: %+v, want the brand, and the box after the mdat next", p)
@@ -255,7 +331,7 @@ func TestRangeSourceMoovAtEnd(t *testing.T) {
 	if p := s.Probe(); p.Entry != mediatest.SampleEntry || p.Width != 320 || p.Height != 180 || p.Duration != 3*time.Second {
 		t.Errorf("probe %+v", p)
 	}
-	if l := lines(); len(l) != 1 || !strings.Contains(l[0], `FRS6: http 206, `+fmt.Sprint(len(data))+` bytes, seekable true, ftyp "isom", video "avc1", moov at the end`) {
+	if l := lines(); len(l) != 1 || !strings.Contains(l[0], `FRS9: http 206, `+fmt.Sprint(len(data))+` bytes, seekable true, ftyp "isom", video "avc1", moov at the end`) {
 		t.Errorf("logged %q", l)
 	}
 	if st.Open != 0 {
@@ -269,8 +345,8 @@ func TestRangeSourceMoovAtEnd(t *testing.T) {
 func TestRangeSource200(t *testing.T) {
 	data := bigFile(40 * mb)
 	logf, lines := logLines()
-	src, o := mediatest.Source("FRS7", data, true)
-	s := media.NewRangeSource(src, media.RangeOptions{Log: logf})
+	src, o := mediatest.Source("FRS10", data, true)
+	s := source(src, logf, nil)
 	defer s.Close()
 	if !bytes.Equal(readAt(t, s, 10*mb, 4096), data[10*mb:10*mb+4096]) {
 		t.Fatal("bytes differ")
@@ -282,6 +358,7 @@ func TestRangeSource200(t *testing.T) {
 	for off := 10 * mb; off < len(data); off += mb {
 		readAt(t, s, int64(off), mb)
 	}
+	time.Sleep(350 * time.Millisecond)                    // its tenure
 	if !bytes.Equal(readAt(t, s, 0, 4096), data[:4096]) { // evicted: from 0 again
 		t.Fatal("bytes differ")
 	}
@@ -291,7 +368,7 @@ func TestRangeSource200(t *testing.T) {
 		t.Errorf("GETs at %v (%d open at once), want one from 10 MB answered from 0, then from 0", st.Offsets, st.MaxOpen)
 	}
 	s.Close()
-	if l := lines(); len(l) != 1 || !strings.Contains(l[0], "FRS7: http 200, 41943040 bytes, seekable false") {
+	if l := lines(); len(l) != 1 || !strings.Contains(l[0], "FRS10: http 200, 41943040 bytes, seekable false") {
 		t.Errorf("logged %q", l)
 	}
 }
@@ -299,9 +376,9 @@ func TestRangeSource200(t *testing.T) {
 // Close ends a read waiting for its bytes at once, and the GET's body.
 func TestRangeSourceCloseCancels(t *testing.T) {
 	data := bigFile(40 * mb)
-	src, o := mediatest.Source("FRS8", data, true)
+	src, o := mediatest.Source("FRS11", data, true)
 	o.Delay = 20 * time.Millisecond // 32 KB a read: a slow network
-	s := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	s := source(src, quiet, nil)
 	done := make(chan error, 1)
 	go func() {
 		_, err := s.ReadAt(make([]byte, 10), 30*mb)
@@ -325,7 +402,7 @@ func TestRangeSourceCloseCancels(t *testing.T) {
 		t.Errorf("a read after Close: %v", err)
 	}
 	// a read's own context ends it too
-	s2 := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	s2 := source(src, quiet, nil)
 	defer s2.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -335,11 +412,12 @@ func TestRangeSourceCloseCancels(t *testing.T) {
 }
 
 // A GET that fails to open fails the reads; reads right after don't ask
-// again.
+// again; the failure is the file's log line, with the status and no URL.
 func TestRangeSourceOpenError(t *testing.T) {
-	src, o := mediatest.Source("FRS9", mediatest.GreyGreyRed, false)
-	o.Fail = errors.New("slack: not a file URL")
-	s := media.NewRangeSource(src, media.RangeOptions{Log: quiet})
+	logf, lines := logLines()
+	src, o := mediatest.Source("FRS12", mediatest.GreyGreyRed, false)
+	o.Fail, o.FailStatus = errors.New("slack: not a file URL (https://files.slack.com/files-pri/T1-F1/secret.mp4)"), 403
+	s := source(src, logf, nil)
 	defer s.Close()
 	for i := 0; i < 3; i++ {
 		if _, err := s.ReadSome(context.Background(), make([]byte, 10), 0); err == nil || err.Error() != o.Fail.Error() {
@@ -349,19 +427,122 @@ func TestRangeSourceOpenError(t *testing.T) {
 	if n := len(o.Stats().Offsets); n != 1 {
 		t.Errorf("%d GETs, want 1", n)
 	}
+	if l := lines(); len(l) != 1 || l[0] != "media: FRS12: http 403, the file wasn't served: the request failed" {
+		t.Errorf("logged %q", l)
+	}
+}
+
+// A server that cuts every body at the same byte: the read waiting past
+// it fails after the GET that brought nothing new, not a GET a round
+// trip; then the source holds off (1 s, then 2 s).
+func TestRangeSourceShortBodies(t *testing.T) {
+	data := bigFile(4 * mb)
+	src, o := mediatest.Source("FRS13", data, false)
+	o.Cut = 3 * mb
+	s := source(src, quiet, nil)
+	defer s.Close()
+	readAt(t, s, 0, 64<<10)
+	settled(t, o)
+	t0 := time.Now()
+	_, err := s.ReadAt(make([]byte, 4096), 3*mb+100<<10)
+	if !errors.Is(err, media.ErrShort) || time.Since(t0) > time.Second {
+		t.Errorf("the read past the cut: %v after %v, want ErrShort at once", err, time.Since(t0))
+	}
+	if n := len(o.Stats().Offsets); n != 2 {
+		t.Errorf("%d GETs, want 2 (the one cut, the one bringing nothing)", n)
+	}
+	if _, err := s.ReadSome(context.Background(), make([]byte, 10), 3*mb+200<<10); !errors.Is(err, media.ErrShort) || len(o.Stats().Offsets) != 2 {
+		t.Errorf("a read within the hold: %v, %d GETs; want the error, no GET", err, len(o.Stats().Offsets))
+	}
+	time.Sleep(1100 * time.Millisecond)
+	s.ReadSome(context.Background(), make([]byte, 10), 3*mb+200<<10)
+	time.Sleep(1200 * time.Millisecond) // within the doubled hold
+	s.ReadSome(context.Background(), make([]byte, 10), 3*mb+200<<10)
+	if n := len(o.Stats().Offsets); n != 3 {
+		t.Errorf("%d GETs after 2.3 s, want 3 (the second failure holds 2 s)", n)
+	}
+}
+
+// A server saying when to come back (Retry-After) is left alone that long.
+func TestRangeSourceRetryAfter(t *testing.T) {
+	src, o := mediatest.Source("FRS14", mediatest.GreyGreyRed, false)
+	o.Fail = mediatest.RetryAfter{D: 3 * time.Second}
+	s := source(src, quiet, nil)
+	defer s.Close()
+	s.ReadSome(context.Background(), make([]byte, 10), 0)
+	time.Sleep(1500 * time.Millisecond)
+	if _, err := s.ReadSome(context.Background(), make([]byte, 10), 0); err == nil || len(o.Stats().Offsets) != 1 {
+		t.Errorf("1.5 s into a 3 s Retry-After: %v, %d GETs; want the error, no new GET", err, len(o.Stats().Offsets))
+	}
+}
+
+// A later answer for another version of the file (a new validator), or
+// the whole file after ranges, fails the source: its bytes aren't mixed in.
+func TestRangeSourceChanged(t *testing.T) {
+	for name, change := range map[string]func(o *mediatest.Opener){
+		"etag":  func(o *mediatest.Opener) { o.ETag = `"v2"` },
+		"200":   func(o *mediatest.Opener) { o.Whole = true },
+		"total": func(o *mediatest.Opener) { o.Data = o.Data[:30*mb] },
+	} {
+		t.Run(name, func(t *testing.T) {
+			data := bigFile(40 * mb)
+			src, o := mediatest.Source("FRS15"+name, data, false)
+			o.ETag = `"v1"`
+			s := source(src, quiet, nil)
+			defer s.Close()
+			readAt(t, s, 0, 4096)
+			o.Change(change)
+			if _, err := s.ReadAt(make([]byte, 4096), 25*mb); !errors.Is(err, media.ErrChanged) {
+				t.Errorf("a read after the file changed: %v, want ErrChanged", err)
+			}
+			if _, err := s.ReadAt(make([]byte, 10), 100); !errors.Is(err, media.ErrChanged) {
+				t.Errorf("even of what's cached: %v, want ErrChanged", err)
+			}
+		})
+	}
+}
+
+// A file the answers didn't size: a read past its end is the end (the
+// 416 names the size), not an error.
+func TestRangeSourceUnknownTotal(t *testing.T) {
+	data := bigFile(mb)
+	src, o := mediatest.Source("FRS16", data, false)
+	o.UnknownTotal = true
+	s := source(src, quiet, nil)
+	defer s.Close()
+	got := readAt(t, s, 0, mb)
+	if !bytes.Equal(got, data) {
+		t.Fatal("bytes differ")
+	}
+	if _, err := s.ReadSome(context.Background(), make([]byte, 10), mb); !errors.Is(err, io.EOF) {
+		t.Errorf("a read at the end: %v, want io.EOF", err)
+	}
+	if _, err := s.ReadSome(context.Background(), make([]byte, 10), 2*mb); !errors.Is(err, io.EOF) {
+		t.Errorf("a read past the end: %v, want io.EOF", err)
+	}
+	// the first read past the end: its GET's 416 says where the end is
+	s2 := source(src, quiet, nil)
+	defer s2.Close()
+	if _, err := s2.ReadSome(context.Background(), make([]byte, 10), 2*mb); !errors.Is(err, io.EOF) {
+		t.Errorf("a first read past the end: %v, want io.EOF (the 416's size)", err)
+	}
+	if n, err := s2.ReadSome(context.Background(), make([]byte, 10), 0); n == 0 || err != nil {
+		t.Errorf("then a read at 0: %d, %v", n, err)
+	}
 }
 
 // A file played twice is logged once.
 func TestRangeSourceLogOnce(t *testing.T) {
 	logf, lines := logLines()
+	logged := new(sync.Map)
 	for i := 0; i < 2; i++ {
-		src, _ := mediatest.Source("FRS10", mediatest.GreyGreyRed, false)
-		s := media.NewRangeSource(src, media.RangeOptions{Log: logf})
+		src, _ := mediatest.Source("FRS17", mediatest.GreyGreyRed, false)
+		s := source(src, logf, logged)
 		readAt(t, s, 0, len(mediatest.GreyGreyRed))
 		s.Close()
 		s.Wait()
 	}
-	if l := lines(); len(l) != 1 || !strings.Contains(l[0], `media: FRS10: http 206, 24943 bytes, seekable true, ftyp "isom", video "avc1"`) || strings.Contains(l[0], "moov at the end") {
+	if l := lines(); len(l) != 1 || !strings.Contains(l[0], `media: FRS17: http 206, 24943 bytes, seekable true, ftyp "isom", video "avc1"`) || strings.Contains(l[0], "moov at the end") {
 		t.Errorf("logged %q, want one line", l)
 	}
 }
