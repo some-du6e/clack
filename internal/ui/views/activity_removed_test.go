@@ -86,9 +86,22 @@ func TestActivityBadgesZeroReadLocally(t *testing.T) {
 	if _, ok := h.Core().S.FindHeld(fakeslack.ViewsChannel, faAtTS); !ok {
 		t.Fatal("fa-at-user's message isn't stored")
 	}
-	alert := actItem(t, v, "fa-alert") // a system alert: no message to look up
-	if !v.isUnread(alert, "fa-alert") {
-		t.Fatal("fa-alert is read before the event")
+	// the unread rows the rule leaves: a reaction's, and those with no
+	// message the store holds (an invite, a reminder, a system alert)
+	var keep []string
+	for _, it := range actPage(v).Items {
+		k := actKey(&it)
+		if !v.isUnread(&it, k) {
+			continue
+		}
+		ts := firstNonEmpty(it.LatestTS, actMessageTS(&it))
+		_, held := h.Core().S.FindHeld(it.Channel, ts)
+		if it.Type == "message_reaction" || it.Channel == "" || ts == "" || !held {
+			keep = append(keep, k)
+		}
+	}
+	if len(keep) == 0 {
+		t.Fatal("the feed has no unread row without a stored message")
 	}
 	writes := len(fs.ActivityWrites())
 	zeros := map[string]int{}
@@ -98,8 +111,10 @@ func TestActivityBadgesZeroReadLocally(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"type": "badge_counts_updated", "activity_v2": zeros})
 	h.Core().Inject(slack.Event{Type: "badge_counts_updated", Raw: raw})
 	e.until(t, "fa-at-user read", func() bool { return !v.isUnread(actItem(t, v, "fa-at-user"), "fa-at-user") })
-	if !v.isUnread(actItem(t, v, "fa-alert"), "fa-alert") {
-		t.Error("the system alert, no message stored, was marked read")
+	for _, k := range keep {
+		if !v.isUnread(actItem(t, v, k), k) {
+			t.Errorf("%s, a reaction's or with no message stored, was marked read", k)
+		}
 	}
 	for i := 0; i < 5; i++ {
 		e.frame()

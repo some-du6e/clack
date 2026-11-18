@@ -64,6 +64,10 @@ const (
 	// maxRefetchKeys bounds the failed fetches remembered for their
 	// backoff
 	maxRefetchKeys = 4096
+	// refetchTries is how many times core asks for a message by itself
+	// after its fetch failed (each after its backoff); then a view's next
+	// call does
+	refetchTries = 5
 )
 
 // refetchBackoff is the wait after the n-th failed fetch of a message: 2 s
@@ -82,10 +86,11 @@ func refetchBackoff(n int) time.Duration {
 // messages.list off the caller's goroutine: what comes back is kept and
 // announced as a change; a message the channel answered without is gone
 // (Slack's isNonExistent: a "gone" change, which removes no Activity
-// entry); after a failure the message waits before it's asked for again.
-// A view calls it for the messages core changed, or it shows, that no
-// copy is left of (the store let them go). One request per message while
-// one is out.
+// entry); after a failure the message waits before it's asked for again,
+// and core asks again by itself once the wait is over, a few times (a
+// view with nothing changing draws no frame to ask from). A view calls
+// it for the messages core changed, or it shows, that no copy is left of
+// (the store let them go). One request per message while one is out.
 func (a *App) RefetchMessages(ch string, tss []string) {
 	if ch == "" {
 		return
@@ -134,6 +139,8 @@ func (a *App) RefetchMessages(ch string, tss []string) {
 		}
 		l.mu.Lock()
 		at := time.Now()
+		var again []string
+		wait := time.Duration(0)
 		for _, ts := range want {
 			k := MsgKey{ch, ts}
 			if _, ok := got[ch+"/"+ts]; ok || answered[ch] {
@@ -142,9 +149,20 @@ func (a *App) RefetchMessages(ch string, tss []string) {
 			}
 			r := l.refetching[k]
 			r.out, r.fails = false, r.fails+1
-			r.retry = at.Add(refetchBackoff(r.fails))
+			d := refetchBackoff(r.fails)
+			r.retry = at.Add(d)
 			l.refetching[k] = r
+			if r.fails < refetchTries {
+				again, wait = append(again, ts), max(wait, d)
+			}
 		}
 		l.mu.Unlock()
+		if len(again) > 0 {
+			time.AfterFunc(wait, func() {
+				if a.bg.Err() == nil {
+					a.RefetchMessages(ch, again)
+				}
+			})
+		}
 	}()
 }

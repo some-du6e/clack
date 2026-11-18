@@ -241,6 +241,9 @@ func (v *Activity) applyMsgs(gtx C) {
 				m.stale[k] = now
 			}
 		}
+		if len(m.stale) > 0 && v.searchOn && v.query.text() != "" {
+			v.dirty = true // the search filters on the rows' text: all are described again
+		}
 		if gone && !(v.data.busy() && v.mode == actFresh) {
 			v.load(actRefresh)
 		}
