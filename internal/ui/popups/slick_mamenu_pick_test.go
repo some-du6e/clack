@@ -811,7 +811,7 @@ func TestMessageMenuLatePickRunsUnlessInput(t *testing.T) {
 	maStale = 150 * time.Millisecond
 	t.Cleanup(func() { maStale = prev })
 	e := slNewEnvIn(t, "")
-	e.loadCode(t, "PassSlick", maPass)
+	e.loadCode(t, "DecideSlick", maDecide) // passes Mark unread on, where it is
 	slPatched(t, "MAMenu")
 	marks := func() int { return e.api.called("conversations.mark") }
 	late := func(what string, pressAfter bool) int {
