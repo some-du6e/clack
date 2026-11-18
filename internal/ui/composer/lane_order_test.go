@@ -12,6 +12,8 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The user's input reaches the plugins' JS in the order the user made it,
@@ -209,13 +211,14 @@ func TestTypingGoesOutBeforeTheMessage(t *testing.T) {
 	_ = rt.Do(func(*jsrt.Ctx) error { return nil })
 }
 
-// A dispatch the native UI makes (a reaction pill, the emoji picker, a
-// draft sync) stays ahead of the user's later input, as every action of
-// the user's does in a browser: a plugin click after it can't overtake
-// it. OwlMode decides a reaction's identity from its mode when the
-// reaction's patch runs, and a reaction queued behind the backlog ran
-// after a later toggle click: one meant for Owl went out under the
-// user's own name.
+// A dispatch the native UI makes (the emoji picker's pick, a reaction
+// pill, a draft sync) stays ahead of the user's later input, as every
+// action of the user's does in a browser: a plugin click after it can't
+// overtake it. OwlMode decides a reaction's identity from its mode when
+// the reaction's patch runs, and a pick queued from run's goroutine ran
+// after a later toggle click: one meant for Owl went out under the user's
+// own name. Driven through popups.React, the picker's own call, which
+// queues its JS before it returns.
 func TestNativeDispatchBeforeLaterClick(t *testing.T) {
 	c, _, _ := composerEnv(t, nil)
 	tt, tree := laneTaut(t, c.api.a, `start() {
@@ -224,11 +227,13 @@ func TestNativeDispatchBeforeLaterClick(t *testing.T) {
     globalThis.__laneSeenNow = () => globalThis.__laneSeen
     this.offs = [
       this.api.composer.addButton({ id: 'lane-toggle', placement: 'end', render: () => ({ icon: 'eye', label: 'Reply as yourself', pressed: this.mode === 'as yourself', onClick: () => { this.mode = 'as yourself' } }) }),
-      this.api.redux.patchThunk('changeReactionFromUserAction', (orig) => (...a) => { globalThis.__laneSeen.push('reaction ' + this.mode); return orig(...a) }),
+      this.api.redux.patchThunk('submitAddOrRemoveReaction', (orig) => (...a) => { globalThis.__laneSeen.push('reaction ' + this.mode); return orig(...a) }),
     ]
   }
   stop() { for (const off of this.offs ?? []) off() }`)
-	waitFor(t, 10*time.Second, "the plugin's reaction patch", func() bool { return tt.ThunkPatched("changeReactionFromUserAction") })
+	waitFor(t, 10*time.Second, "the plugin's reaction patch", func() bool { return tt.ThunkPatched("submitAddOrRemoveReaction") })
+	popups.SetTaut(tt)
+	t.Cleanup(func() { popups.SetTaut(nil) })
 	rt, err := tt.JS()
 	if err != nil || rt == nil {
 		t.Fatalf("no JS runtime: %v", err)
@@ -260,22 +265,16 @@ func TestNativeDispatchBeforeLaterClick(t *testing.T) {
 		_ = json.Unmarshal(raw, &out)
 		return out
 	}
-	react := func() {
-		_, _ = taut.Dispatch(context.Background(), tt, "changeReactionFromUserAction", map[string]any{"key": "C1-1.0", "name": "eyes"},
-			func(context.Context, map[string]any) (any, error) { return nil, nil })
-	}
-	react() // warm
+	h := &slickHost{app: c.api.a, th: theme.New(false)}
+	// the picker's onPick, on the UI goroutine
+	pick := func() { popups.React(h, tChGen, "1700000000.000100", "eyes", true) }
+	pick() // warm
+	waitFor(t, 10*time.Second, "the warm-up reaction's patch", func() bool { return len(seen()) > 0 })
 	before := len(seen())
 	jsBacklog(rt, 400*time.Millisecond)
-	done := make(chan struct{})
-	go func() { defer close(done); react() }()     // the pill click, as list.go dispatches it
-	time.Sleep(50 * time.Millisecond)              // queued behind the renders
+	pick()                                         // the pick, behind the renders
 	tt.Bridge().Call(int64(fn), []byte("[]"), nil) // then the toggle
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the reaction's dispatch never finished")
-	}
+	waitFor(t, 10*time.Second, "the reaction's patch", func() bool { return len(seen()) > before })
 	got := strings.Join(seen()[before:], ", ")
 	if want := "reaction as Owl"; got != want {
 		t.Errorf("the reaction's patch saw %q, want %q: the click after it overtook it", got, want)

@@ -13,12 +13,14 @@ package ui
 // the time they land. core/history_catchup.go. Synthetic data only.
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/store"
 )
@@ -476,4 +478,41 @@ func TestOlderPageAcrossRestartInList(t *testing.T) {
 	}
 	e.settle(3 * time.Second) // the old window's older page lands
 	noHole(t, "after the old window's older page landed", e.listTS(ch), missed)
+}
+
+// A failed send left below a window that started over is no anchor for
+// paging back: the list reads the older page from the window's oldest
+// message from Slack, not from the failed copy's local ts (kept whatever
+// the range, with its Retry). From there it skipped every message between
+// the two, and paging back never filled the hole.
+func TestOlderPageFromSlacksOldestNotAFailedSend(t *testing.T) {
+	e := newLatEnv(t, latEnvOpts{})
+	ids := e.fs.ChannelIDs()
+	ch, probe := ids[16], ids[len(ids)-2]
+	for i := 0; i < 160; i++ {
+		e.fs.PostQuiet(ch, e.fs.UserIDs()[2+i%5], fmt.Sprintf("earlier %d", i))
+	}
+	e.openAtLatest(ch)
+	e.fs.SetFault("chat.postMessage", fakeslack.Fault{Error: "fatal_error", Times: 1})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := e.a.data.core.Send(ctx, core.SendOpts{Channel: ch, Text: "the send that failed"}); err == nil {
+		t.Fatal("the send went out")
+	}
+	// more than a page while the socket was down, then the wake: the
+	// window starts over at the newest page, the failed copy below it
+	var missed []string
+	for i := 0; i < 60; i++ {
+		ts, _ := e.fs.PostAppQuiet(ch, owlBot, owlApp, "Owl", fmt.Sprintf("%d: missed overnight", 43400+i))
+		missed = append(missed, ts)
+	}
+	e.fs.SetCountLatest(ch, missed[len(missed)-1])
+	landed := e.countsProbe(probe)
+	e.reconnectSlow(t, 0)
+	if !e.untilSoft(20*time.Second, func() bool { return landed() && e.rowDrawn(ch, missed[len(missed)-1]) }) {
+		t.Fatal("the catch-up never drew the newest missed message")
+	}
+	e.settle(400 * time.Millisecond)
+	e.scrollBack(t, ch, 90) // past the failed send
+	noHole(t, "after paging back past the failed send", e.listTS(ch), missed)
 }

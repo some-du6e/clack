@@ -117,3 +117,45 @@ func TestQueuedRectsAndMovesCoalesce(t *testing.T) {
 		t.Errorf("%d mousemoves dispatched, the last at x=%d; want the newest alone (x=99)", c.Moves, c.LastX)
 	}
 }
+
+// A drag's last pointermove, dispatched before its pointerup, runs before
+// it however much plain work is queued: the pointerup goes on the user's
+// lane ahead of the queue and takes the move queued before it along, as a
+// browser dispatches input in order. Run behind the queue, the move came
+// after the up, and a drag ended where its previous move had left it.
+func TestMoveBeforeLaterUpUnderBacklog(t *testing.T) {
+	r := newTest(t)
+	if _, err := r.Eval("seen.js", `globalThis.__seen = []
+		const dispatch = __clack.dispatch
+		__clack.dispatch = (k, e) => { __seen.push(e.type); return dispatch(k, e) }
+		globalThis.seen = () => __seen`); err != nil {
+		t.Fatal(err)
+	}
+	hold, running := make(chan struct{}), make(chan struct{})
+	r.Post(func(*Ctx) {
+		close(running)
+		<-hold
+	})
+	<-running
+	for i := 0; i < 20; i++ { // the renders queued meanwhile
+		r.Post(func(js *Ctx) {
+			arr := js.Global().Get("__seen")
+			_, _ = arr.Method("push", "render")
+		})
+	}
+	move, _ := json.Marshal(map[string]any{"type": "pointermove", "clientX": 40, "clientY": 5, "buttons": 1})
+	up, _ := json.Marshal(map[string]any{"type": "pointerup", "clientX": 40, "clientY": 5})
+	r.DispatchEvent(0, move)
+	r.DispatchEvent(0, up)
+	close(hold)
+	_ = r.Do(func(*Ctx) error { return nil })
+	raw, err := r.Call(context.Background(), "seen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	_ = json.Unmarshal(raw, &got)
+	if len(got) < 2 || got[0] != "pointermove" || got[1] != "pointerup" {
+		t.Errorf("ran %v: want the pointermove, then the pointerup, then the renders", got)
+	}
+}
