@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -78,23 +79,29 @@ func TestDownloadRange206(t *testing.T) {
 }
 
 // A server that ignores Range answers the whole file with a 200: the
-// download is that, from byte 0, and not seekable.
+// download is that, from byte 0, and not seekable; its size is the
+// Content-Length, unknown (-1) for a chunked answer.
 func TestDownloadRange200(t *testing.T) {
 	data := rangeFile(5000)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "video/mp4")
-		w.Write(data) // Content-Length set: one write under the buffer size
+		if r.URL.Path != "/files-pri/T1-F1/chunked.mp4" {
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		}
+		w.Write(data) // over 2 KB: chunked without a Content-Length
 	}))
 	defer srv.Close()
 	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-1", TeamURL: srv.URL + "/"})
-	resp, info, err := c.DownloadRange(context.Background(), srv.URL+"/files-pri/T1-F1/v.mp4", 1234, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	if info != (RangeInfo{Status: 200, Start: 0, Total: 5000, Seekable: false}) || !bytes.Equal(b, data) {
-		t.Errorf("%+v and %d bytes, want the whole file, not seekable", info, len(b))
+	for name, total := range map[string]int64{"v.mp4": 5000, "chunked.mp4": -1} {
+		resp, info, err := c.DownloadRange(context.Background(), srv.URL+"/files-pri/T1-F1/"+name, 1234, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if info != (RangeInfo{Status: 200, Start: 0, Total: total, Seekable: false}) || !bytes.Equal(b, data) {
+			t.Errorf("%s: %+v and %d bytes, want the whole file (total %d), not seekable", name, info, len(b), total)
+		}
 	}
 }
 
