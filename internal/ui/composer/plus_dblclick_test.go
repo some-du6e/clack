@@ -12,6 +12,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/gesture"
+	"gioui.org/io/event"
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -70,6 +71,13 @@ type plusEnv struct {
 	picks int           // file choosers opened
 	scale float32       // px per dp
 	size  image.Point   // the window, px
+	// spy: a pass-through handler over the window, laid out last, that
+	// logs the pointer events the window gets and the +'s hover per frame
+	// (a failure's message)
+	spy    int
+	frameN int
+	spyLog []string
+	hov    string // the +'s state last logged
 }
 
 func newPlusEnv(t *testing.T) *plusEnv {
@@ -133,6 +141,26 @@ func (e *plusEnv) frame() {
 		}
 	}
 	e.h.overlays = live
+	e.frameN++
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &e.spy, Kinds: pointer.Press | pointer.Release | pointer.Move | pointer.Drag | pointer.Enter | pointer.Leave | pointer.Cancel})
+		if !ok {
+			break
+		}
+		if pe, ok := ev.(pointer.Event); ok {
+			e.spyLog = append(e.spyLog, fmt.Sprintf("f%d %v %v", e.frameN, pe.Kind, pe.Position))
+		}
+	}
+	b := &e.c.ui.btn[crAttach]
+	if st := fmt.Sprintf("+hovered=%v pressed=%v overlays=%d", b.Hovered(), b.Pressed(), e.overlaysOpen()); st != e.hov {
+		e.hov = st
+		e.spyLog = append(e.spyLog, fmt.Sprintf("f%d %s", e.frameN, st))
+	}
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	sa := clip.Rect{Max: e.size}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &e.spy)
+	sa.Pop()
+	pass.Pop()
 	e.r.Frame(&e.ops)
 	e.now = e.now.Add(16 * time.Millisecond)
 	e.ptr += 16 * time.Millisecond
@@ -193,8 +221,12 @@ func (e *plusEnv) diag() string {
 	for _, h := range b.History() {
 		hs = append(hs, fmt.Sprintf("{at %v, %v ago, ended %v, cancelled %v}", h.Position, e.now.Sub(h.Start), !h.End.IsZero(), h.Cancelled))
 	}
-	return fmt.Sprintf("+ %v (local %v), hovered %v, pressed %v, open %v, turn %+v, presses %v",
-		e.plus(), e.c.ui.rect[crAttach], b.Hovered(), b.Pressed(), e.c.att.plusOpen, e.c.ui.turn, hs)
+	log := e.spyLog
+	if len(log) > 80 {
+		log = log[len(log)-80:]
+	}
+	return fmt.Sprintf("+ %v (local %v), hovered %v, pressed %v, open %v, turn %+v, presses %v; the window's pointer events and the +'s hover, last frames: %v",
+		e.plus(), e.c.ui.rect[crAttach], b.Hovered(), b.Pressed(), e.c.att.plusOpen, e.c.ui.turn, hs, log)
 }
 
 // menuOpen reports whether the + menu shows.
