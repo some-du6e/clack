@@ -255,11 +255,11 @@ func TestClackStickyNoOverlap(t *testing.T) {
 			}
 		}
 		ops := stickyFrame(regs)
+		repacked := s.repacked
 		s.pack(pk, ops)
 		if bad := stickyOverlaps(pk, ops); bad != "" {
 			t.Fatalf("frame %d: %s", f, bad)
 		}
-		repacked := s.repacked
 		for i, p := range ops {
 			if was, ok := prev[regs[i].id]; ok && was != p.place && s.repacked == repacked {
 				t.Fatalf("frame %d: region %d moved from %v to %v without a repack", f, regs[i].id, was, p.place)

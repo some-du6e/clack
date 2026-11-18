@@ -296,9 +296,11 @@ func damageScene(t *testing.T, w *headless.Window, name, rate string, a, b *op.O
 	ws, wms, plain := damageMeasure(t, w, a, b)
 	t.Logf("%s (%s), whole: %s; %.1f ms a frame", name, rate, costLine(ws), wms)
 	vp := int64(plain.Bounds().Dx() * plain.Bounds().Dy())
-	// Gio's own frame moved in the atlas: the placement floor
+	// Gio's own frame moved in the atlas: the placement floor, as
+	// TestFrameCostWindow takes it (a tiny path, a third of the window
+	// and nearly all of it, first and after the workspace's shadow)
 	floorN, floorM := 0, 0
-	for _, shift := range []int{1, 4} {
+	for shift := 1; shift <= 6; shift++ {
 		var bp op.Ops
 		layB(&bp, shift)
 		damageDraw(t, w, a)

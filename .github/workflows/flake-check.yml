@@ -1414,8 +1414,10 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
-          go test -count=1 -v -run '^(TestClackDamage|TestClackSticky)' gioui.org/gpu
-          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless
+          rc=0
+          go test -count=1 -v -run '^(TestClackDamage|TestClackSticky)' gioui.org/gpu || rc=1
+          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless || rc=1
+          exit $rc
       # what a caret's blink, the typing indicator, a
       # spinner's turn and an animated emoji's frame cost whole and as
       # partial frames, with the whole frame's pixels
