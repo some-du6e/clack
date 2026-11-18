@@ -128,6 +128,7 @@ type laterResult struct {
 	page   core.SavedPage
 	seq    int
 	cursor string
+	from   uint64 // core's message change log when the request went out (later_live.go)
 }
 
 // savedFeed is one saved.list filter, paged.
@@ -183,6 +184,12 @@ type savedBase struct {
 	mu    sync.Mutex
 	done  []laterDone
 	known map[string]bool // "channel/ts" of listed items (mu)
+
+	lv    viewMsgLog   // core's message changes the items took (later_live.go)
+	shown shownTracker // the page drew in the latest frame
+	// refetch are the messages a change of which this frame found no copy
+	// of, by channel (later_live.go)
+	refetch map[string][]string
 }
 
 func newSavedBase(h Host) savedBase {
@@ -199,9 +206,11 @@ func newSavedBase(h Host) savedBase {
 // begin runs at the top of update: subscribe once and report whether the
 // view is being shown again after a while (then it should reload).
 func (s *savedBase) begin(gtx C) bool {
+	s.shown.mark(s.h)
 	if !s.watching {
 		s.watching = true
 		s.w.watch(s.h, s.match)
+		s.lv.start(s.h.Core()) // the messages change from here on (later_live.go)
 	}
 	again := !s.last.IsZero() && gtx.Now.Sub(s.last) > 10*time.Second
 	s.last = gtx.Now
@@ -213,11 +222,11 @@ func (s *savedBase) begin(gtx C) bool {
 
 func (s *savedBase) reload(f *savedFeed) {
 	s.seq++
-	seq, filter := s.seq, f.filter
 	c := s.h.Core()
+	seq, filter, from := s.seq, f.filter, c.MessageChangeSeq() // what changed after this the answer may not have
 	f.first.load(s.h, true, func(ctx context.Context) (laterResult, error) {
 		p, err := c.Saved(ctx, filter, "")
-		return laterResult{page: p, seq: seq}, err
+		return laterResult{page: p, seq: seq, from: from}, err
 	})
 }
 
@@ -226,12 +235,12 @@ func (s *savedBase) loadMore(f *savedFeed) {
 		return
 	}
 	s.seq++
-	seq, filter, cur := s.seq, f.filter, f.next
-	f.moreTried = cur
 	c := s.h.Core()
+	seq, filter, cur, from := s.seq, f.filter, f.next, c.MessageChangeSeq()
+	f.moreTried = cur
 	f.more.load(s.h, true, func(ctx context.Context) (laterResult, error) {
 		p, err := c.Saved(ctx, filter, cur)
-		return laterResult{page: p, seq: seq, cursor: cur}, err
+		return laterResult{page: p, seq: seq, cursor: cur, from: from}, err
 	})
 }
 
@@ -243,18 +252,30 @@ func (s *savedBase) applyFeeds() {
 			changed = true
 		}
 	}
+	s.applyLive() // later_live.go
 	if !changed {
 		return
 	}
 	s.dirty = true
 	s.mu.Lock()
 	clear(s.known)
+	byCh := map[string][]string{}
 	for _, f := range s.feeds {
 		for i := range f.items {
-			s.known[f.items[i].Channel+"/"+f.items[i].TS] = true
+			it := &f.items[i]
+			s.known[it.Channel+"/"+it.TS] = true
+			if it.ItemType == "message" && it.Channel != "" && it.TS != "" {
+				byCh[it.Channel] = append(byCh[it.Channel], it.TS)
+			}
 		}
 	}
 	s.mu.Unlock()
+	// the listed messages are in use: the store lets go of others first
+	if c := s.h.Core(); c != nil {
+		for ch, tss := range byCh {
+			c.S.KeepFetched(ch, tss)
+		}
+	}
 }
 
 func (s *savedBase) applyFeed(f *savedFeed) bool {
@@ -286,6 +307,7 @@ func (s *savedBase) applyFeed(f *savedFeed) bool {
 		for id, r := range v.page.Convs {
 			s.convs[id] = r
 		}
+		s.landed(f, v.from) // what changed while the request was out (later_live.go)
 		changed = true
 	}
 	if v, ok, _ := f.more.get(); ok && v.seq != 0 && v.seq != f.moreApplied {
@@ -304,6 +326,7 @@ func (s *savedBase) applyFeed(f *savedFeed) bool {
 			for id, r := range v.page.Convs {
 				s.convs[id] = r
 			}
+			s.landed(f, v.from) // later_live.go
 			f.next = v.page.Next
 			f.pages++
 			changed = true
@@ -337,11 +360,17 @@ func (s *savedBase) match(ev core.Event) bool {
 	switch ev.Type {
 	case "resync", "saved":
 		return true
-	case "update", "delete":
+	case "update", "delete", "gone":
+		// a listed message's edit, reaction or deletion: the next frame
+		// takes it from core (later_live.go), no reload; off screen the
+		// next draw does
 		s.mu.Lock()
 		k := s.known[ev.Channel+"/"+ev.TS]
 		s.mu.Unlock()
-		return k
+		if k && s.shown.shown(s.h) {
+			s.h.Invalidate()
+		}
+		return false
 	}
 	return false
 }

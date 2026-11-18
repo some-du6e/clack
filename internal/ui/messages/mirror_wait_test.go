@@ -15,6 +15,7 @@ package messages
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -62,47 +63,240 @@ func modelHas(v *ChannelView, ts string, f func(*core.Message) bool) bool {
 	return i >= 0 && f(&m.msgs[i].m)
 }
 
-// drawsReaction fails t unless every frame for d draws the row's
-// reaction: its source's, or JS's copy of the revision that has it.
-func drawsReaction(t *testing.T, v *ChannelView, frame func(), row func() *row, h0 int, d time.Duration, why string) {
+// drawsReaction fails t unless every frame for d draws the reaction on
+// ts's row (taller than h0): its source's, or JS's copy of the revision
+// that has it.
+func drawsReaction(t *testing.T, v *ChannelView, frame func(), ts string, h0 int, d time.Duration, why string) {
 	t.Helper()
 	for dl := time.Now().Add(d); time.Now().Before(dl); {
 		frame()
-		r := row()
-		if r == nil || len(r.m.Reactions) != 1 || itemHeight(v.s, r.ts) <= h0 {
-			n := 0
+		r := v.s.rows[ts]
+		if r == nil || len(r.m.Reactions) != 1 || itemHeight(v.s, ts) <= h0 {
+			n := -1 // no row
 			if r != nil {
 				n = len(r.m.Reactions)
 			}
-			t.Fatalf("%s: a frame drew the row with %d reactions, %dpx tall (%dpx before the reaction): JS's copy of the revision before", why, n, itemHeight(v.s, r.ts), h0)
+			t.Fatalf("%s: a frame drew the row with %d reactions, %dpx tall (%dpx before the reaction): JS's copy of the revision before", why, n, itemHeight(v.s, ts), h0)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
+// drawsText fails t unless every frame for d draws text on ts's row.
+func drawsText(t *testing.T, v *ChannelView, frame func(), ts, text string, d time.Duration, why string) {
+	t.Helper()
+	for dl := time.Now().Add(d); time.Now().Before(dl); {
+		frame()
+		if r := v.s.rows[ts]; r == nil || !strings.Contains(rowText(r), text) {
+			got := "(no row)"
+			if r != nil {
+				got = rowText(r)
+			}
+			t.Fatalf("%s: a frame drew %q, want %q: JS's copy of the revision before", why, got, text)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// holdFirstLoad holds the loads of ch's channel model once their answer
+// is in (loadLanded): reached closes as the first one gets there.
+func holdFirstLoad(t *testing.T, ch string) (reached <-chan struct{}, release func()) {
+	r, gate := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	f := func(m *model) {
+		if m.ch == ch && m.threadTS == "" {
+			once.Do(func() { close(r) })
+			<-gate
+		}
+	}
+	loadLanded.Store(&f)
+	release = sync.OnceFunc(func() {
+		loadLanded.CompareAndSwap(&f, nil)
+		close(gate)
+	})
+	t.Cleanup(release)
+	return r, release
+}
+
+// waitClosed fails t unless c closes within d.
+func waitClosed(t *testing.T, c <-chan struct{}, d time.Duration, what string) {
+	t.Helper()
+	select {
+	case <-c:
+	case <-time.After(d):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// placeEnv is mirrorWaitEnv before any list of ch: the message is in
+// core's store and JS has read the channel (its copy is the message as it
+// is now), and no list has a model of it yet.
+func placeEnv(t *testing.T, ch string, msg slack.Message) *core.App {
+	t.Helper()
+	app, _, _ := shotsApp(t)
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "lunch", IsChannel: true, IsMember: true, NumMembers: 12})
+	app.S.PutConv(slack.Conversation{ID: mirrorWaitOther, Name: "elsewhere", IsChannel: true, IsMember: true, NumMembers: 12})
+	app.S.SetLatest(ch, []slack.Message{msg}, false)
+	patchedEnv(t, app, maskJS(ch, false))
+	until(t, 5*time.Second, "the messages slice patched", func() {}, func() bool { return tautOf().SlicePatched("messages") })
+	until(t, 5*time.Second, "JS's copy of the message", func() {}, func() bool {
+		_, _, ready, ok := tautOf().MessageViewState(ch, msg.TS, false, 0)
+		return ok && ready
+	})
+	return app
+}
+
+// The row's copy an event wrote waits for the mirror to have handled the
+// event, by every path it reaches the list: a reaction (applyReactions),
+// an edit of a message the list holds (apply's upsert), and an edit of a
+// message the list's first load hasn't brought in yet, which the load's
+// answer takes over its own copy (notePlace, then keepLive). Each takes
+// the event's EmitSeq: fed activity-live-msg's Event.Seq (the change
+// table's place) or 0, the wait is off.
 func TestRowWaitsForTheMirror(t *testing.T) {
-	const ch = "C0MIRWAIT1"
-	msg := lunchMsg()
-	app, v, frame, row := mirrorWaitEnv(t, ch, msg)
-	h0 := itemHeight(v.s, msg.TS)
-	// the mirror is behind: an event no view reads waits in it
-	release := tautOf().HoldMirror()
-	defer release()
-	injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
-	injectEvent(app, ch, "reaction_added", "", map[string]any{"user": "UBEN00001", "reaction": "eyes",
-		"item": map[string]any{"type": "message", "channel": ch, "ts": msg.TS}})
-	until(t, 5*time.Second, "the reaction in the list's model", frame, func() bool {
-		return modelHas(v, msg.TS, func(m *core.Message) bool { return len(m.Reactions) == 1 })
+	t.Run("reaction", func(t *testing.T) {
+		const ch = "C0MIRWAIT1"
+		msg := lunchMsg()
+		app, v, frame, row := mirrorWaitEnv(t, ch, msg)
+		h0 := itemHeight(v.s, msg.TS)
+		// the mirror is behind: an event no view reads waits in it
+		release := tautOf().HoldMirror()
+		defer release()
+		injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
+		injectEvent(app, ch, "reaction_added", "", map[string]any{"user": "UBEN00001", "reaction": "eyes",
+			"item": map[string]any{"type": "message", "channel": ch, "ts": msg.TS}})
+		until(t, 5*time.Second, "the reaction in the list's model", frame, func() bool {
+			return modelHas(v, msg.TS, func(m *core.Message) bool { return len(m.Reactions) == 1 })
+		})
+		// JS answers at once with its copy, from before the reaction for as
+		// long as the mirror is held
+		drawsReaction(t, v, frame, msg.TS, h0, 700*time.Millisecond, "the mirror behind the reaction")
+		release()
+		until(t, 5*time.Second, "JS's copy with the reaction", frame, func() bool {
+			r := row()
+			return r != nil && r.viewReady && len(r.m.Reactions) == 1
+		})
+		drawsReaction(t, v, frame, msg.TS, h0, 300*time.Millisecond, "JS's copy of the reaction")
 	})
-	// JS answers at once with its copy, from before the reaction for as
-	// long as the mirror is held
-	drawsReaction(t, v, frame, row, h0, 700*time.Millisecond, "the mirror behind the reaction")
-	release()
-	until(t, 5*time.Second, "JS's copy with the reaction", frame, func() bool {
-		r := row()
-		return r != nil && r.viewReady && len(r.m.Reactions) == 1
+	t.Run("edit", func(t *testing.T) {
+		const ch = "C0MIRWEDT1"
+		msg := lunchMsg()
+		app, v, frame, row := mirrorWaitEnv(t, ch, msg)
+		release := tautOf().HoldMirror()
+		defer release()
+		injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
+		editMsg(app, ch, msg.TS, "UANA00001", "lunch at one?")
+		until(t, 5*time.Second, "the edit in the list's model", frame, func() bool {
+			return modelHas(v, msg.TS, func(m *core.Message) bool { return m.Text == "lunch at one?" })
+		})
+		drawsText(t, v, frame, msg.TS, "lunch at one?", 700*time.Millisecond, "the mirror behind the edit")
+		release()
+		until(t, 5*time.Second, "JS's copy of the edit", frame, func() bool {
+			r := row()
+			return r != nil && r.viewReady && strings.Contains(rowText(r), "lunch at one?")
+		})
 	})
-	drawsReaction(t, v, frame, row, h0, 300*time.Millisecond, "JS's copy of the reaction")
+	t.Run("place", func(t *testing.T) {
+		const ch = "C0MIRWPLC1"
+		msg := lunchMsg()
+		app := placeEnv(t, ch, msg)
+		reached, landing := holdFirstLoad(t, ch)
+		v := NewChannelView(coreHost{app: app, th: theme.New(false)}, ch)
+		frame := frameFn(v)
+		frame() // the first load: its answer in, before the edit
+		waitClosed(t, reached, 5*time.Second, "the first load's answer")
+		release := tautOf().HoldMirror()
+		defer release()
+		injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
+		editMsg(app, ch, msg.TS, "UANA00001", "lunch at one?")
+		until(t, 5*time.Second, "the edit noted for the load", func() {}, func() bool {
+			m := v.s.m
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			_, ok := m.livePlace[msg.TS]
+			return ok
+		})
+		landing()
+		until(t, 5*time.Second, "the row", frame, func() bool { return v.s.rows[msg.TS] != nil })
+		drawsText(t, v, frame, msg.TS, "lunch at one?", 700*time.Millisecond, "the mirror behind an edit the first load took in")
+		release()
+		until(t, 5*time.Second, "JS's copy of the edit", frame, func() bool {
+			r := v.s.rows[msg.TS]
+			return r != nil && r.viewReady && strings.Contains(rowText(r), "lunch at one?")
+		})
+	})
+}
+
+// A reaction while a load is out: the load's answer, read before it,
+// takes the reactions over its own copy (keepLive), with the reaction's
+// EmitSeq, so the row waits for the mirror to have handled it. held: a
+// reload of a message the list holds, whose answer also differs from the
+// list's copy, so its views are marked for JS again (markLoadChanged) and
+// JS reads core's copy: guarded twice. place: the list's first load, of a
+// message it doesn't hold yet; the answer marks nothing, and only the
+// EmitSeq keeps JS's copy from before the reaction from being ready (0 or
+// the load's own: the reaction is after it).
+func TestKeepLiveTakesTheEventsEmitSeq(t *testing.T) {
+	react := func(app *core.App, ch, ts string) {
+		injectEvent(app, ch, "reaction_added", "", map[string]any{"user": "UBEN00001", "reaction": "eyes",
+			"item": map[string]any{"type": "message", "channel": ch, "ts": ts}})
+	}
+	noted := func(v *ChannelView, ts string) func() bool {
+		return func() bool {
+			m := v.s.m
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			_, ok := m.liveReact[ts]
+			return ok
+		}
+	}
+	t.Run("held", func(t *testing.T) {
+		const ch = "C0KEEPHLD1"
+		msg := lunchMsg()
+		app, v, frame, _ := mirrorWaitEnv(t, ch, msg)
+		h0 := itemHeight(v.s, msg.TS)
+		reached, landing := holdFirstLoad(t, ch)
+		v.Refresh()
+		waitClosed(t, reached, 5*time.Second, "the reload's answer")
+		release := tautOf().HoldMirror()
+		defer release()
+		injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
+		react(app, ch, msg.TS)
+		until(t, 5*time.Second, "the reaction noted for the load", func() {}, noted(v, msg.TS))
+		landing()
+		until(t, 5*time.Second, "the reload in", frame, func() bool {
+			m := v.s.m
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			i := m.find(msg.TS)
+			return !m.loading && i >= 0 && len(m.msgs[i].m.Reactions) == 1
+		})
+		drawsReaction(t, v, frame, msg.TS, h0, 700*time.Millisecond, "a reaction during the reload")
+		release()
+	})
+	t.Run("place", func(t *testing.T) {
+		const ch = "C0KEEPPLC1"
+		msg := lunchMsg()
+		app := placeEnv(t, ch, msg)
+		reached, landing := holdFirstLoad(t, ch)
+		v := NewChannelView(coreHost{app: app, th: theme.New(false)}, ch)
+		frame := frameFn(v)
+		frame()
+		waitClosed(t, reached, 5*time.Second, "the first load's answer")
+		release := tautOf().HoldMirror()
+		defer release()
+		injectEvent(app, mirrorWaitOther, "user_typing", "", map[string]any{"user": "UBEN00001"})
+		react(app, ch, msg.TS)
+		until(t, 5*time.Second, "the reaction noted for the load", func() {}, noted(v, msg.TS))
+		landing()
+		until(t, 5*time.Second, "the row", frame, func() bool { return v.s.rows[msg.TS] != nil })
+		drawsReaction(t, v, frame, msg.TS, 0, 700*time.Millisecond, "a reaction during the first load")
+		release()
+		until(t, 5*time.Second, "JS's copy with the reaction", frame, func() bool {
+			r := v.s.rows[msg.TS]
+			return r != nil && r.viewReady && len(r.m.Reactions) == 1
+		})
+	})
 }
 
 // A change only a load brings: core's newest page with a thread's new
@@ -232,7 +426,7 @@ func TestResyncClaimsOnlyWhatCameBefore(t *testing.T) {
 		r := row()
 		return r != nil && len(r.src.Reactions) == 1
 	})
-	drawsReaction(t, v, frame, row, h0, 700*time.Millisecond, "the reaction queued behind the resync")
+	drawsReaction(t, v, frame, msg.TS, h0, 700*time.Millisecond, "the reaction queued behind the resync")
 	holdAfter()
 	until(t, 5*time.Second, "JS's copy with the reaction", frame, func() bool {
 		r := row()

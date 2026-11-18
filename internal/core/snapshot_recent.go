@@ -75,7 +75,7 @@ func (a *App) SnapshotBuilds() int64 { return a.recent.builds.Load() }
 // snapshot RecentSnapshot's readers use (sections, conversations, team,
 // people): they keep its snapshot. Every other event drops it.
 var snapshotQuietEvents = map[string]bool{
-	"typing": true, "presence": true, "message": true, "update": true, "delete": true, "marked": true,
+	"typing": true, "presence": true, "message": true, "update": true, "delete": true, "gone": true, "marked": true,
 	"counts": true, "activity": true, "activity_badges": true, "assistant_status": true, "canvas_viewers": true,
 	"sent": true, "pins_tab": true, "poll": true, "work_objects": true, "suggested_prompts": true,
 	"list_record_info": true, "thread_subscription": true, "bookmarks": true, "tabs": true,

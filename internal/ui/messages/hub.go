@@ -36,6 +36,9 @@ type model struct {
 	mu       sync.Mutex
 	ch       string
 	threadTS string // "" for a channel timeline
+	// id tells the hub's models apart (live.go: a revision of a message
+	// is its model's and its entry's); set once, when made
+	id uint32
 
 	msgs     []entry // ascending
 	hasMore  bool
@@ -59,6 +62,15 @@ type model struct {
 	// live: messages an event changed (true: deleted) while a load was
 	// out; the load's answer, read before them, keeps them (keepLive)
 	live map[string]bool
+	// livePlace: updates of messages the model didn't hold while a load
+	// was out (one outside what it loaded, or anything before its first
+	// load): the answer takes each where it holds the message, and
+	// nowhere else (keepLive). Each keeps its event's EmitSeq.
+	livePlace map[string]liveUpdate
+	// liveReact: reaction changes (UpdateReactions, and nothing else of
+	// the message) while a load was out: the answer takes the reactions
+	// over its own copy (keepLive)
+	liveReact map[string]liveUpdate
 
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
@@ -151,6 +163,7 @@ type hub struct {
 	mu     sync.Mutex
 	chans  map[string]*model
 	thread map[string]*model // key ch + "/" + ts
+	nextID uint32            // the last model's id (guarded by mu)
 	userRv uint64            // bumps on profile, name, pref and members-cache events
 	// authFailed stops every load after core's auth_failed (or an auth
 	// error) until the connection comes back or the user hits Retry.
@@ -308,6 +321,7 @@ func (hb *hub) channel(ch string) *model {
 		m = &model{ch: ch, typing: map[string]typingEntry{}, used: time.Now()}
 		hb.chans[ch] = m
 		hb.evict(hb.chans)
+		m.id = hb.newID()
 	}
 	m.used = time.Now()
 	return m
@@ -322,9 +336,16 @@ func (hb *hub) threadModel(ch, ts string) *model {
 		m = &model{ch: ch, threadTS: ts, typing: map[string]typingEntry{}, used: time.Now()} // as channel's
 		hb.thread[k] = m
 		hb.evict(hb.thread)
+		m.id = hb.newID()
 	}
 	m.used = time.Now()
 	return m
+}
+
+// newID is a new model's id (hb.mu held).
+func (hb *hub) newID() uint32 {
+	hb.nextID++
+	return hb.nextID
 }
 
 func (hb *hub) evict(ms map[string]*model) {
@@ -439,6 +460,26 @@ func (hb *hub) ensureLoaded(m *model) {
 // in, converted, and not yet in the model (a change landing then is the
 // race afterLoad closes).
 var loadLanded atomic.Pointer[func(m *model)]
+
+// HoldLoad (tests) holds every load of ch's list model (threadTS: a
+// thread pane's) once its answer is in, until release: a list whose load
+// is out, its model on what it held before (a dropped one's reload).
+func HoldLoad(ch, threadTS string) (release func()) {
+	gate := make(chan struct{})
+	f := func(m *model) {
+		if m.ch == ch && m.threadTS == threadTS {
+			<-gate
+		}
+	}
+	loadLanded.Store(&f)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			loadLanded.CompareAndSwap(&f, nil)
+			close(gate)
+		})
+	}
+}
 
 // afterLoad converts again what of m's messages read something that
 // changed while its load was out (reconvert recorded it).
@@ -583,17 +624,13 @@ func (m *model) markLoadChanged() {
 	}
 }
 
-// inWindow reports whether ts belongs in the model's window: not older
-// than its oldest message while there's more before it, where it would
-// sit above a gap of messages never loaded (callers hold mu).
-func (m *model) inWindow(ts string) bool {
-	return !m.hasMore || len(m.msgs) == 0 || !tsLess(ts, m.msgs[0].m.TS)
-}
-
 // mergeNewest replaces the newest window with page, keeping older loaded
-// history that precedes it.
+// history that precedes it. A model that hasn't loaded (its first load,
+// or the first after a whole eviction) has no history to keep: the page
+// is the list, and says whether older messages exist (what the events
+// left in it meanwhile comes back through keepLive).
 func (m *model) mergeNewest(page []core.Message, hasMore bool) {
-	if len(m.msgs) == 0 || len(page) == 0 {
+	if len(m.msgs) == 0 || len(page) == 0 || !m.loaded {
 		m.setAll(page)
 		m.hasMore = hasMore
 		return
@@ -689,46 +726,145 @@ func (m *model) noteLive(ts string, gone bool) {
 		m.live = map[string]bool{}
 	}
 	m.live[ts] = gone
+	delete(m.livePlace, ts) // the model's entry (or its deletion) is newer
 }
 
-// takeLive is what the events changed during the load that just answered:
-// each message's current entry, nil for one deleted (callers hold m.mu).
-func (m *model) takeLive() map[string]*entry {
-	if len(m.live) == 0 {
-		m.live = nil
-		return nil
+// notePlace records an update of msg, which the model doesn't hold, while
+// a load is out: the answer may hold the message, read before the update.
+// seq is the update's EmitSeq, which the answer's entry takes with it
+// (never 0: a row would take JS's copy of the revision before as ready).
+// Callers hold m.mu.
+func (m *model) notePlace(msg core.Message, seq uint64) {
+	if !m.loading || msg.TS == "" {
+		return
 	}
-	out := make(map[string]*entry, len(m.live))
-	for ts, gone := range m.live {
-		if i := m.find(ts); !gone && i >= 0 {
-			e := m.msgs[i]
-			out[ts] = &e
-		} else if gone {
-			out[ts] = nil
+	if m.livePlace == nil {
+		m.livePlace = map[string]liveUpdate{}
+	}
+	m.livePlace[msg.TS] = liveUpdate{m: msg, seq: seq}
+}
+
+// noteReact records a reaction change to ts (rs, its reactions now; seq,
+// the update's EmitSeq) while a load is out, whether or not the model
+// holds the message (callers hold m.mu).
+func (m *model) noteReact(ts string, rs []core.Reaction, seq uint64) {
+	if !m.loading || ts == "" {
+		return
+	}
+	if m.liveReact == nil {
+		m.liveReact = map[string]liveUpdate{}
+	}
+	m.liveReact[ts] = liveUpdate{m: core.Message{TS: ts, Reactions: rs}, seq: seq}
+}
+
+// liveUpdate is an update an event made while a load was out, with the
+// event's EmitSeq.
+type liveUpdate struct {
+	m   core.Message
+	seq uint64
+}
+
+// liveChanges is what the events changed during a load: at, each
+// message's entry then (nil for one deleted); place, the updates of
+// messages the model didn't hold, which go only where the answer holds
+// them; react, the reaction changes, laid over the answer's copy.
+type liveChanges struct {
+	at    map[string]*entry
+	place map[string]liveUpdate
+	react map[string]liveUpdate
+}
+
+// takeLive is what the events changed during the load that just answered
+// (callers hold m.mu).
+func (m *model) takeLive() liveChanges {
+	var out liveChanges
+	if len(m.live) > 0 {
+		out.at = make(map[string]*entry, len(m.live))
+		for ts, gone := range m.live {
+			if i := m.find(ts); !gone && i >= 0 {
+				e := m.msgs[i]
+				out.at[ts] = &e
+			} else if gone {
+				out.at[ts] = nil
+			}
 		}
 	}
-	m.live = nil
+	out.place, out.react = m.livePlace, m.liveReact
+	m.live, m.livePlace, m.liveReact = nil, nil, nil
 	return out
 }
 
 // keepLive puts back what the events changed during a load after its
 // answer replaced the list: Slack's message_changed replaces the stored
 // message at once, so an answer read before an edit (or a delete, or a
-// new reply) mustn't show the old state again (callers hold m.mu). A
-// change to a message before the window the answer left (a dropped
-// model's reload takes core's window whole) stays out: put back, it sat
-// above a gap of messages never loaded, and paging back started before
-// it. Each keeps the EmitSeq of the event that made it (never 0: a row
-// would take JS's copy of the revision before as ready).
-func (m *model) keepLive(live map[string]*entry) {
-	for ts, e := range live {
+// new reply) mustn't show the old state again. A change goes back where
+// the answer holds the message or inside the answer's range (covers): an
+// answer that starts the list over (msg-latency's takeNewest, past a gap;
+// a dropped model's reload, which takes core's window whole) takes back
+// none of the messages from before its range, which load-older would then
+// read before. An update of a message the model didn't hold changes the
+// answer's copy, and adds nothing. A reaction change lays its reactions
+// over the answer's copy (Slack's reactions reducer touches nothing else):
+// the copy it was applied to may be older than the answer's (a dropped
+// model's, which missed an edit while out), and put back whole it took
+// the edit and the reply count back. Each keeps its event's EmitSeq
+// (never 0: a row would take JS's copy of the revision before as ready).
+// Callers hold m.mu.
+func (m *model) keepLive(live liveChanges) {
+	for ts, e := range live.at {
 		switch {
 		case e == nil:
 			m.remove(ts)
-		case m.find(ts) >= 0 || m.inWindow(ts):
+		case m.find(ts) >= 0 || m.covers(ts):
 			m.upsert(e.m, e.seq)
 		}
 	}
+	for ts, p := range live.place {
+		if _, ok := live.at[ts]; !ok && m.find(ts) >= 0 {
+			m.upsert(p.m, p.seq)
+		}
+	}
+	for ts, r := range live.react {
+		if _, ok := live.at[ts]; ok {
+			continue // the model's entry then: the reactions are in it
+		}
+		if p, ok := live.place[ts]; ok && p.seq > r.seq {
+			continue // an update after it carried the message whole
+		}
+		if i := m.find(ts); i >= 0 && !reflect.DeepEqual(m.msgs[i].m.Reactions, r.m.Reactions) {
+			msg := m.msgs[i].m
+			msg.Reactions = r.m.Reactions
+			m.msgs[i] = entry{m: msg, rev: m.bump(), seq: max(m.msgs[i].seq, r.seq)}
+		}
+	}
+}
+
+// inRange reports whether ts falls inside what the channel model loaded:
+// at or after its oldest message from Slack, or anywhere once it holds the
+// whole history (no hasMore). A model that hasn't loaded holds no range
+// (callers hold m.mu).
+func (m *model) inRange(ts string) bool {
+	return m.loaded && m.covers(ts)
+}
+
+// covers reports whether ts falls inside the list's range as it holds it
+// now (inRange without the loaded check: keepLive asks it of an answer
+// that just landed). The range starts at the oldest message from Slack,
+// not at a local copy (a pending or failed send, an ephemeral message: no
+// history page holds one, and msg-latency keeps them whatever the page's
+// range), which is no boundary: load-older reads from the oldest message
+// from Slack (msg-latency's oldestFromSlack), and the range is the same
+// (callers hold m.mu).
+func (m *model) covers(ts string) bool {
+	if !m.hasMore {
+		return true
+	}
+	for i := range m.msgs {
+		if x := &m.msgs[i].m; !x.Pending && !x.Failed && !x.Ephemeral {
+			return !tsLess(ts, x.TS)
+		}
+	}
+	return false
 }
 
 func (m *model) remove(ts string) {
@@ -820,10 +956,16 @@ func (hb *hub) apply(ev core.Event) bool {
 		changed := false
 		if chm != nil {
 			chm.mu.Lock()
-			// an update to a message before the window (an edit to last
-			// week's, the window today's with more before it) stays out:
-			// put in, it sat above a gap (inWindow)
-			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inWindow(ev.Msg.TS) {
+			// an update changes the list's message where it holds it, and
+			// goes in only inside what the list loaded: a revision of an
+			// old message the list never loaded (core announces a read's:
+			// an Activity row's copy, a Threads root, a refetch) taken in
+			// above the oldest loaded would skip the history between at
+			// the next load-older, whose cursor is the oldest message. It
+			// takes the event's EmitSeq: a row drawing it waits for the
+			// mirror to have handled the event (MessageViewState's need)
+			switch {
+			case ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inRange(ev.Msg.TS):
 				chm.upsert(*ev.Msg, ev.EmitSeq)
 				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
@@ -831,6 +973,8 @@ func (hb *hub) apply(ev core.Event) bool {
 				}
 				chm.rev++
 				changed = true
+			case chm.visible(ev.Msg):
+				chm.notePlace(*ev.Msg, ev.EmitSeq) // a load out may hold it
 			}
 			chm.mu.Unlock()
 		}
@@ -1165,10 +1309,12 @@ func (hb *hub) applyReactions(ev core.Event) bool {
 			msg := m.msgs[i].m
 			msg.Reactions = ev.Msg.Reactions
 			m.msgs[i] = entry{m: msg, rev: m.bump(), seq: ev.EmitSeq}
-			m.noteLive(ts, false)
 			m.rev++
 			changed = true
 		}
+		// a load out: its answer takes the reactions over its own copy
+		// (keepLive), held here or not
+		m.noteReact(ts, ev.Msg.Reactions, ev.EmitSeq)
 		m.mu.Unlock()
 	}
 	return changed

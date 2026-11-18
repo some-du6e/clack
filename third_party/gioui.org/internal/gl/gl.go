@@ -21,6 +21,7 @@ const (
 	CLAMP_TO_EDGE                         = 0x812f
 	COLOR_ATTACHMENT0                     = 0x8ce0
 	COLOR_BUFFER_BIT                      = 0x4000
+	SCISSOR_TEST                          = 0x0C11
 	COLOR_CLEAR_VALUE                     = 0x0C22
 	COMPILE_STATUS                        = 0x8b81
 	COMPUTE_SHADER                        = 0x91B9

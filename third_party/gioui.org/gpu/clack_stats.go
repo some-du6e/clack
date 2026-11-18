@@ -46,6 +46,26 @@ type FrameStats struct {
 	// pages the frame drew into.
 	AtlasPx, LayerPx int64
 	LayerPages       int
+	// Partial is whether the frame was drawn only where it differs from
+	// the last (Clack patch 46), in DamageRects rectangles of DamagePx
+	// pixels; CopyPx are the pixels copied: the frame texture into the
+	// window's target, the clear colour into a partial frame's damage.
+	Partial     bool
+	DamageRects int
+	DamagePx    int64
+	CopyPx      int64
+	// PackWork is the free spaces the coverage atlas's packer looked at;
+	// StickySlots the slots of its sticky sequence (partial frames), of
+	// them StickyHoles holes. PathsTessellated are the clip paths whose
+	// vertices the frame built on the CPU.
+	PackWork                 int64
+	StickySlots, StickyHoles int
+	PathsTessellated         int
+	// CopyChecked: the window's pixels were read back after the frame
+	// texture's copy (ClackVerifyCopy); CopyMismatchPx of them differed
+	// from the frame texture's.
+	CopyChecked    bool
+	CopyMismatchPx int64
 }
 
 // ClackStats reports the last frame's stats.

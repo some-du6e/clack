@@ -886,6 +886,11 @@ func (f *Functions) BlendFuncSeparate(srcRGB, dstRGB, srcA, dstA Enum) {
 	C.glBlendFuncSeparate(f.glBlendFuncSeparate, C.GLenum(srcRGB), C.GLenum(dstRGB), C.GLenum(srcA), C.GLenum(dstA))
 }
 
+// ClackBlitFramebufferLoaded reports whether the context has
+// glBlitFramebuffer (OpenGL ES 3, OpenGL 3): Clack patch 46's copy of a
+// frame into the window.
+func (f *Functions) ClackBlitFramebufferLoaded() bool { return f.glBlitFramebuffer != nil }
+
 func (f *Functions) BlitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1 int, mask Enum, filter Enum) {
 	f.Calls++
 	C.glBlitFramebuffer(f.glBlitFramebuffer,

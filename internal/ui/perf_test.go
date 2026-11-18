@@ -86,6 +86,9 @@ type perfEnv struct {
 	now   time.Time
 	start time.Time
 	scale float32 // px per dp (0: 1)
+	// frozen: the ops the last frame submitted when it was a frozen
+	// inspect session's (inspectFirst), nil when it was laid out
+	frozen *op.Ops
 }
 
 // newPerfEnv starts the client against the fake. warm reuses (or creates)
@@ -247,6 +250,19 @@ func (e *perfEnv) frame() {
 	}
 	a.drain()
 	e.now = time.Now()
+	// as App.Run: the inspect tool first, before the ops are reset (a
+	// frozen session draws the frame they hold again, inspect_wire.go)
+	if ops := a.inspectFirst(e.frameContext()); ops != nil {
+		e.frozen = ops
+		e.r.Frame(ops)
+		if e.gpu != nil {
+			if err := e.gpu.Frame(ops); err != nil {
+				e.tb.Fatal(err)
+			}
+		}
+		return
+	}
+	e.frozen = nil
 	gtx := e.context()
 	before := a.router.Current()
 	a.beginFullFrame() // as App.Run: the images a quiet frame draws again (quiet.go)
@@ -267,11 +283,18 @@ func (e *perfEnv) frame() {
 
 func (e *perfEnv) context() layout.Context {
 	e.ops.Reset()
+	gtx := e.frameContext()
+	gtx.Ops = &e.ops
+	return gtx
+}
+
+// frameContext is context's, with no ops and e.ops left as they are.
+func (e *perfEnv) frameContext() layout.Context {
 	sc := e.scale
 	if sc == 0 {
 		sc = 1
 	}
-	return layout.Context{Ops: &e.ops, Now: e.now, Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc},
+	return layout.Context{Now: e.now, Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc},
 		Constraints: layout.Exact(e.size), Source: e.r.Source()}
 }
 

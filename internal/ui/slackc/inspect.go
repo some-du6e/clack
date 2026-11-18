@@ -129,6 +129,16 @@ type InspectFrame struct {
 	Nodes []InspectNode
 	src   input.Source
 	stack []int
+	// held: the frame's ops are drawn again (Hold), each sized node's
+	// area as its events left it; nil while it isn't
+	held []heldHit
+}
+
+// heldHit is a held frame's node: whether the pointer is in its area, and
+// where, as its last Enter or Move said.
+type heldHit struct {
+	in  bool
+	hit InspectHit
 }
 
 // InspectBegin starts recording f for a frame (UI goroutine, inside the
@@ -138,8 +148,38 @@ func InspectBegin(f *InspectFrame, src input.Source) {
 	f.Nodes = f.Nodes[:0]
 	f.stack = f.stack[:0]
 	f.src = src
+	f.held = nil
 	inspectF = f
 	inspecting.Store(true)
+}
+
+// Hold says f's ops are drawn again from now on, frame after frame (the
+// inspect tool's freeze), instead of a new frame being recorded: its
+// areas keep their tags, so Gio sends no new Enter to an area still under
+// the pointer. ReadHits then reports each area as its own events left it,
+// under the pointer from an Enter or a Move until a Leave or a Cancel.
+// hits are the ones ReadHits returned for f this frame. Recording f
+// afresh (InspectBegin) ends the hold.
+func (f *InspectFrame) Hold(hits []InspectHit) {
+	f.held = make([]heldHit, len(f.Nodes))
+	for _, h := range hits {
+		if h.Node >= 0 && h.Node < len(f.held) {
+			f.held[h.Node] = heldHit{in: true, hit: h}
+		}
+	}
+}
+
+// Held reports that f is held (Hold).
+func (f *InspectFrame) Held() bool { return f.held != nil }
+
+// Release lets go of everything f recorded: its nodes (their widgets,
+// props funcs and scopes) and its hold. Recording f again starts afresh.
+func (f *InspectFrame) Release() {
+	clear(f.Nodes)
+	f.Nodes = f.Nodes[:0]
+	f.stack = f.stack[:0]
+	f.held = nil
+	f.src = input.Source{}
 }
 
 // InspectEnd stops recording.
@@ -385,7 +425,8 @@ type InspectHit struct {
 // the next frame, before that frame records anything) and returns the
 // nodes whose area the pointer is in, in drawing order. winAt gives the
 // window position of the pointer event at time t (the tool's overlay saw
-// every one).
+// every one). On a held frame (Hold) an area with no event this frame is
+// as the last one left it.
 func (f *InspectFrame) ReadHits(src input.Source, winAt func(t time.Duration) (f32.Point, bool)) []InspectHit {
 	var out []InspectHit
 	for i := range f.Nodes {
@@ -395,6 +436,12 @@ func (f *InspectFrame) ReadHits(src input.Source, winAt func(t time.Duration) (f
 		}
 		in := false
 		var last pointer.Event
+		var held *heldHit
+		if i < len(f.held) {
+			held = &f.held[i]
+			in = held.in
+		}
+		moved := false
 		for {
 			e, ok := src.Event(pointer.Filter{Target: n.tag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel})
 			if !ok {
@@ -406,10 +453,26 @@ func (f *InspectFrame) ReadHits(src input.Source, winAt func(t time.Duration) (f
 			}
 			switch pe.Kind {
 			case pointer.Enter, pointer.Move:
-				in, last = true, pe
+				in, last, moved = true, pe, true
 			default:
-				in = false
+				in, moved = false, false
 			}
+		}
+		if held != nil {
+			// a held frame: no event, no change
+			switch {
+			case !in:
+				held.in = false
+			case moved:
+				if w, ok := winAt(last.Time); ok {
+					o := w.Sub(last.Position)
+					*held = heldHit{in: true, hit: InspectHit{Node: i, Origin: image.Pt(int(o.X+.5), int(o.Y+.5)), Local: last.Position}}
+				}
+			}
+			if held.in {
+				out = append(out, held.hit)
+			}
+			continue
 		}
 		if !in {
 			continue
