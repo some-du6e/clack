@@ -239,7 +239,7 @@ func TestReplyPermalinkWithoutThreadOpensParentThread(t *testing.T) {
 		t.Errorf("clack.log has no jumpToMessage line for the reply in its thread (%q): %q", want, jumps)
 	}
 	if len(opens) != 1 || !strings.Contains(opens[0], logTag(pub)+" "+logTag(root)) ||
-		!strings.Contains(opens[0], "permalink from ui/messages.(*richHandler).OpenURL") {
+		!strings.Contains(opens[0], "permalink from ui/messages.(*richHandler).open ") { // the link's click (a mrkdwn link's OpenMrkdwnLink)
 		t.Errorf("clack.log's thread opens: %q, want one, of the parent thread, from the message's link", opens)
 	}
 	noRawIDs(t, logs, pub, root, reply, digest)

@@ -69,7 +69,7 @@ var routerFuncs = []string{
 }
 
 // callerOutsideRouter is the first caller outside the router's plumbing,
-// as "ui/messages.(*richHandler).OpenURL host.go:225".
+// as "ui/messages.(*richHandler).open host.go:229".
 func callerOutsideRouter() string {
 	var pcs [40]uintptr
 	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs[:])])
