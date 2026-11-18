@@ -340,10 +340,13 @@ type Page struct {
 	HasMore  bool      // older messages exist
 	LastRead string
 	Conv     *Conv
-	// Epoch is the window's (store.Timeline.Epoch): it changes when the
-	// window starts over at a newest page that doesn't reach what it had
-	// (a gap of more than a page), and a list holding older messages from
-	// before takes the page whole, as Slack renders the newest slice
+	// Epoch is the slice of Slack's history the page is of: the window's
+	// (store.Timeline.Epoch), which changes when it starts over and stays
+	// through every merge that keeps it contiguous, or, with GapView set,
+	// the window's messages past its gap while its catch-up is out (a
+	// slice of their own, loading back from their start). A list holding
+	// another Epoch's messages takes a newest page whole, and drops an
+	// older page of another Epoch (read for a window that started over).
 	Epoch uint64
 }
 
@@ -842,3 +845,7 @@ type CommandResult struct {
 	// modal (invite_command.go).
 	Invite *InviteModalRequest
 }
+
+// GapView marks a Page.Epoch as the window's messages past its gap
+// boundary, while the catch-up after a slow connect is out (History).
+const GapView uint64 = 1 << 63

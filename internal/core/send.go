@@ -193,6 +193,9 @@ func (a *App) confirmPending(ch string, m *slack.Message) bool {
 	})
 	a.S.Remove(ch, p.ts)
 	a.putLocal(ch, *m)
+	if isTopLevel(m) {
+		a.S.NoteHeard(ch, m.TS) // Slack's copy: the window's gap boundary goes on with it (store)
+	}
 	// a page read before Slack had it keeps the confirmed copy, and drops
 	// the local one (store/live.go)
 	a.S.NoteLive(ch, p.ts, nil)

@@ -522,22 +522,27 @@ T.view = (slice, key) => {
 /**
  * Go → JS: the patched store's values for [slice, key, subs] triples: the
  * slice (key null), its key's value, or with subs an array, only those
- * entries of the key's object (a message bucket's messages), and with subs
- * true that object's keys. Go reads big buckets in chunks of entries, so
- * one read never holds the thread long.
+ * entries of the key's object (a message bucket's messages); with subs
+ * {first: n}, that object's keys and its first n entries ({keys, part}).
+ * Go reads big buckets in chunks of entries, so one read never holds the
+ * thread long.
  */
 T.views = (pairs) => {
   const st = getState()
+  const pick = (v, keys) => {
+    const o = {}
+    for (const k of keys) if (v[k] !== undefined) o[k] = v[k]
+    return encode(o)
+  }
   return pairs.map(([slice, key, subs]) => {
     const s = st[slice]
     if (key === null || key === undefined) return encode(s)
     const v = s && typeof s === 'object' ? s[key] : undefined
-    if (subs === true) return v && typeof v === 'object' ? Object.keys(v) : null
-    if (Array.isArray(subs)) {
+    if (Array.isArray(subs)) return v && typeof v === 'object' ? pick(v, subs) : null
+    if (subs && typeof subs === 'object') {
       if (!v || typeof v !== 'object') return null
-      const o = {}
-      for (const k of subs) if (v[k] !== undefined) o[k] = v[k]
-      return encode(o)
+      const keys = Object.keys(v)
+      return { keys, part: pick(v, keys.slice(0, subs.first)) }
     }
     return encode(v) ?? null
   })

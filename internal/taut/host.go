@@ -211,6 +211,12 @@ func (t *Taut) installHost(r *runtime) {
 		jsonArg(a, 1, &args)
 		return t.thunks.runThunk(ctx, strArg(a, 0), args)
 	})
+	sync("checksPassed", func(a []json.RawMessage) (any, error) {
+		var id int64
+		jsonArg(a, 0, &id)
+		t.thunks.checksPassed(id)
+		return nil, nil
+	})
 	sync("callNativeSync", func(a []json.RawMessage) (any, error) {
 		var id int64
 		jsonArg(a, 0, &id)

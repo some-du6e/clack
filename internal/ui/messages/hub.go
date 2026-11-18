@@ -369,13 +369,7 @@ func (hb *hub) loadOlder(m *model) {
 		return
 	}
 	m.older = true
-	before := m.msgs[0].m.TS
-	for i := range m.msgs { // where Slack's history starts: not at a local copy (hub_catchup.go)
-		if !local(&m.msgs[i].m) {
-			before = m.msgs[i].m.TS
-			break
-		}
-	}
+	before := m.oldestFromSlack()
 	m.rev++
 	m.mu.Unlock()
 	hb.invalidate()
@@ -385,10 +379,16 @@ func (hb *hub) loadOlder(m *model) {
 		p, err := hb.app.History(ctx, m.ch, before)
 		m.mu.Lock()
 		m.older = false
-		if err == nil {
+		switch {
+		case err == nil && (p.Epoch != m.epoch || m.oldestFromSlack() != before):
+			// read for a list that started over since (a gap of more than a
+			// page, a purge): it belongs to the old one, and the next
+			// layout asks again from the new start; in front of the new
+			// page it left a hole paging back never filled
+		case err == nil:
 			m.prepend(p.Messages, p.HasMore)
 			m.olderFails, m.olderRetryAt = 0, time.Time{}
-		} else {
+		default:
 			m.err = err
 			m.failed(hb, err, true, time.Now())
 		}

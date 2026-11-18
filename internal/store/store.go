@@ -33,14 +33,26 @@ type Timeline struct {
 	Msgs    []slack.Message // ascending by ts
 	HasMore bool            // older messages exist beyond Msgs[0]
 	Loaded  bool
-	// Epoch changes when the window starts over (made, or replaced by a
-	// newest page that doesn't reach it: SetLatestSince): a list holding
-	// older messages from before then takes the window whole
+	// Epoch names the window's slice of Slack's history: it changes when
+	// the window starts over (made, or replaced by a newest page that
+	// doesn't reach it: SetLatestSince), and stays through every merge
+	// that keeps it contiguous (a page that joins, the socket's messages,
+	// an older page put in front). A list holding messages from an older
+	// Epoch takes the window whole; an older page read for one Epoch never
+	// goes in front of another's (PrependOlderAt).
 	Epoch uint64
 	// PageOldest is the oldest message of the newest page last read from
 	// Slack: a re-read of the scrollback starts below it (core's
 	// refreshOlder)
 	PageOldest string
+	// Contig is the window's gap boundary: its newest message known
+	// contiguous with Slack's history, the newest page read and what the
+	// socket brought after it (NoteHeard), while no slow connect came since
+	// ContigGen (GapGen). A page that doesn't reach it starts the window
+	// over (SetLatestSince), and the messages past it are the socket's
+	// after a gap (PastGap).
+	Contig    string
+	ContigGen uint64
 }
 
 type Store struct {
@@ -63,6 +75,7 @@ type Store struct {
 	pinSeq      uint64                     // pin events seen
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
 	epochN      uint64                     // the last Timeline.Epoch handed out
+	gapGen      uint64                     // slow connects so far (NoteSlowConnect)
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
@@ -1274,12 +1287,115 @@ func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	s.epochN++
-	t := &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, Epoch: s.epochN}
+	t := &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, Epoch: s.epochN, ContigGen: s.gapGen}
 	if len(msgs) > 0 {
-		t.PageOldest = msgs[0].TS
+		t.PageOldest, t.Contig = msgs[0].TS, msgs[len(msgs)-1].TS
 	}
 	s.timelines[ch] = t
 	s.mu.Unlock()
+}
+
+// NoteSlowConnect is the socket's slow connect (every Mac wake): what it
+// brings from now on may come after a gap, past every window's boundary
+// (Timeline.Contig).
+func (s *Store) NoteSlowConnect() {
+	s.mu.Lock()
+	s.gapGen++
+	s.mu.Unlock()
+}
+
+// GapGen is the count of slow connects so far (NoteSlowConnect).
+func (s *Store) GapGen() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.gapGen
+}
+
+// NoteHeard is a message of Slack's the window of ch took from the
+// socket (a new message, the confirmed copy of an own send): it moves the
+// window's gap boundary, unless a slow connect came since the boundary
+// held, when it may come after a gap.
+func (s *Store) NoteHeard(ch, ts string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.timelines[ch]
+	if t == nil || t.ContigGen != s.gapGen || t.Contig != "" && !TSLess(t.Contig, ts) {
+		return
+	}
+	nt := *t
+	nt.Contig = ts
+	s.timelines[ch] = &nt
+}
+
+// PastGap is, while ch's window is behind a slow connect (its boundary
+// holds for an earlier one), the messages it holds past its boundary:
+// what the socket brought after the gap, and the local copies past it.
+// ok is false when the window isn't behind, or holds nothing from Slack
+// past its boundary.
+func (s *Store) PastGap(ch string) (msgs []slack.Message, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t := s.timelines[ch]
+	if t == nil || t.Contig == "" || t.ContigGen == s.gapGen {
+		return nil, false
+	}
+	for i := range t.Msgs {
+		if TSLess(t.Contig, t.Msgs[i].TS) {
+			msgs = append(msgs, t.Msgs[i])
+			if !t.Msgs[i].IsEphemeral {
+				ok = true
+			}
+		}
+	}
+	return msgs, ok && len(msgs) > 0
+}
+
+// PrependOlderAt is PrependOlder for an older page read for the window of
+// epoch whose oldest message from Slack was before (local is the
+// viewer's unconfirmed sends' ts): it goes in front only if the window is
+// still that one, starting there. A page read before the window started
+// over (a gap of more than a page, a purge and refetch) belongs to the old
+// one: in front of the new one it left a hole paging back never filled.
+// It reports whether the page went in.
+func (s *Store) PrependOlderAt(ch string, msgs []slack.Message, hasMore bool, epoch uint64, before string, local map[string]bool) bool {
+	SortAsc(msgs)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.timelines[ch]
+	if t == nil || t.Epoch != epoch || oldestFromSlackLocked(t, local) != before {
+		return false
+	}
+	merged := append(append([]slack.Message(nil), msgs...), t.Msgs...)
+	nt := *t
+	nt.Msgs = dedupe(merged)
+	nt.HasMore = hasMore
+	if len(nt.Msgs) > 5000 { // bound memory per channel
+		nt.Msgs = nt.Msgs[len(nt.Msgs)-5000:]
+	}
+	s.timelines[ch] = &nt
+	return true
+}
+
+// OldestFromSlack is ch's window's epoch and its oldest message that isn't
+// a local copy (local: the viewer's unconfirmed sends' ts; an ephemeral
+// message), where an older page starts.
+func (s *Store) OldestFromSlack(ch string, local map[string]bool) (epoch uint64, ts string, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	t := s.timelines[ch]
+	if t == nil {
+		return 0, "", false
+	}
+	return t.Epoch, oldestFromSlackLocked(t, local), true
+}
+
+func oldestFromSlackLocked(t *Timeline, local map[string]bool) string {
+	for i := range t.Msgs {
+		if m := &t.Msgs[i]; !m.IsEphemeral && !local[m.TS] {
+			return m.TS
+		}
+	}
+	return ""
 }
 
 // PrependOlder adds an older page to the front. With no window (evicted

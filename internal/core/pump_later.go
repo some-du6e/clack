@@ -57,7 +57,23 @@ func (a *App) holdForConv(ch string) bool {
 	return true
 }
 
-// releaseConv is a held message of ch announced.
+// holdBehindConv reports whether ch has messages waiting for its lookup
+// (holdForConv), counting the caller's event among them when it does: an
+// edit or a deletion then goes out after them, in the socket's order
+// (releaseConv after it). With none waiting it applies at once, whether
+// core knows ch or not.
+func (a *App) holdBehindConv(ch string) bool {
+	a.convHoldMu.Lock()
+	defer a.convHoldMu.Unlock()
+	if a.convHold[ch] == 0 {
+		return false
+	}
+	a.convHold[ch]++
+	return true
+}
+
+// releaseConv is a held message of ch announced (or a held change
+// applied: holdBehindConv).
 func (a *App) releaseConv(ch string) {
 	a.convHoldMu.Lock()
 	if a.convHold[ch]--; a.convHold[ch] <= 0 {

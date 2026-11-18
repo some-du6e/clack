@@ -123,3 +123,19 @@ func (m *model) takeNewest(p core.Page) {
 // Where a page starts, and where the next older page reads from, go by
 // the others.
 func local(msg *core.Message) bool { return msg.Pending || msg.Failed || msg.Ephemeral }
+
+// oldestFromSlack is where Slack's history the model holds starts: its
+// oldest message that isn't a local copy, the next older page's before
+// (the model's first message when every one is local). The caller holds
+// m.mu.
+func (m *model) oldestFromSlack() string {
+	for i := range m.msgs {
+		if !local(&m.msgs[i].m) {
+			return m.msgs[i].m.TS
+		}
+	}
+	if len(m.msgs) > 0 {
+		return m.msgs[0].m.TS
+	}
+	return ""
+}

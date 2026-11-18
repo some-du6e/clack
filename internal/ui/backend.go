@@ -958,9 +958,11 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 // another, each after the last one's two JS round trips: the third of a
 // burst of DMs came five backlogs late.
 func (a *App) showNotification(args map[string]any, native func(context.Context, map[string]any) (any, error)) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	taut.DispatchSeq(ctx, a.Taut(), "showNotification", args, native, func(_ any, err error) {
-		cancel()
+	// on the user's lane (a plugin's patch runs ahead of the queued
+	// renders, after the socket events and store updates before it, as
+	// Slack shows the toast from messageReceived), and however late its JS
+	// runs, its native still shows it
+	taut.DispatchSeq(taut.UserAction(context.Background()), a.Taut(), "showNotification", args, native, func(_ any, err error) {
 		if err != nil {
 			log.Printf("ui: showNotification: %v", err)
 		}

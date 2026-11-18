@@ -1765,7 +1765,8 @@ func (s *listState) startEdit(h Host, ts string) {
 	if t := tautOf(); t != nil && t.ActionablePatched() {
 		src, app := r.src, h.Core()
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// the user's ↑: on their lane, ahead of the queued renders
+			ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 5*time.Second)
 			defer cancel()
 			m := src
 			if sm, ok := t.ActionableMessage(ctx, src.Channel, src.TS); ok && app != nil {
@@ -1806,6 +1807,9 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		h.Invalidate()
 	})
 	app := h.Core()
+	r.edit.SaveEditThen = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
+		commitEditThen(ctx, app, ch, ts, text, blocks, fileIDs, done)
+	}
 	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 		return commitEdit(ctx, app, ch, ts, text, blocks, fileIDs)
 	}

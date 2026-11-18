@@ -38,14 +38,30 @@ type Runtime struct {
 	// count, read between tasks without the lock.
 	urgent  []task
 	urgentN atomic.Int32
-	enqN    atomic.Uint64
+	// enqN numbers the tasks as they're queued (mu): the order in-order
+	// work and the user's work keep (enqueue), never the clock, which
+	// ticks with the clock interrupt on Windows (0.5-15.6 ms), so two
+	// tasks queued in one tick had equal stamps and the later went first
+	enqN atomic.Uint64
+	// ordQ are the in-order tasks (PostInOrder), from ordAt, in their
+	// order (mu); ordN counts them, read between tasks without the lock.
+	// They run ahead of the plain queue (runOrdered), and a user-blocking
+	// task takes those queued before it ahead of itself (enqueue).
+	ordQ  []task
+	ordAt int
+	ordN  atomic.Int32
 	// batch is the queue the loop swapped out and runs now, from batchAt
-	// (mu); orderedN counts the in-order tasks (PostInOrder) waiting in
-	// it and in queue (mu): a user-blocking task takes them ahead of
-	// itself (enqueue)
-	batch    []task
-	batchAt  int
-	orderedN int
+	// (mu)
+	batch   []task
+	batchAt int
+	// coalesce is bumped by every user-blocking task: a queued rects
+	// update or continuous event takes newer ones only while it holds
+	// (react.go), so nothing the user did comes between them
+	coalesce atomic.Uint64
+	rectsMu  sync.Mutex
+	rectsQ   *rectsBatch // the boxes a queued setRects task carries (nil: none queued)
+	movesMu  sync.Mutex
+	movesQ   map[moveKey]*queuedMove // the continuous events queued, newest kept
 	modules  map[string]string
 	wake     chan struct{}
 	done     chan struct{} // closed when the loop exits (or the watchdog gives up on it)
@@ -89,9 +105,10 @@ type Runtime struct {
 	timerN int
 	// urgentTimers counts the timers in timers a user-blocking task set
 	urgentTimers int
-	// holdUntil is when the hold a send's chain armed ends (monoNow):
-	// awaitUserChain
+	// holdUntil is when the hold a send's chain armed ends (monoNow), and
+	// holdRoot that chain's root: awaitUserChain
 	holdUntil  int64
+	holdRoot   int64
 	hosts      map[uint32]HostFunc
 	hostN      uint32
 	roots      map[uint64]*Root
@@ -139,6 +156,7 @@ func New(opts Options) (*Runtime, error) {
 		queue:   make([]task, 0, 64),
 		spare:   make([]task, 0, 64),
 		urgent:  make([]task, 0, 8),
+		ordQ:    make([]task, 0, 32),
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		roots:   map[uint64]*Root{},
@@ -193,6 +211,13 @@ func (r *Runtime) PostInOrder(f func(js *Ctx)) {
 	r.enqueue(task{kind: "Post", pc: callerPC(1), f: func() { f(r.js) }, ordered: true})
 }
 
+// PostInOrderAs is PostInOrder with what the task carries (an event's
+// name, never its payload) in the runtime's task lines, as a Call is named
+// by its path.
+func (r *Runtime) PostInOrderAs(what string, f func(js *Ctx)) {
+	r.enqueue(task{kind: "Post", what: what, pc: callerPC(1), f: func() { f(r.js) }, ordered: true})
+}
+
 // post is Post on the user-blocking lane when urgent (the user's input:
 // a discrete event, a control's callback), else in order with it (a
 // continuous event, a viewport or visibility change: a later click runs
@@ -209,16 +234,19 @@ func (r *Runtime) postChain(l lane, f func(js *Ctx)) {
 	if l.root != 0 && monoNow()-l.root > int64(userChain) {
 		l = lane{}
 	}
-	r.enqueue(task{kind: "Post", pc: callerPC(1), f: func() { f(r.js) }, urgent: l.root != 0, root: l.root, hold: l.hold})
+	r.enqueue(task{kind: "Post", pc: callerPC(1), f: func() { f(r.js) }, urgent: l.root != 0, root: l.root, chainSeq: l.seq, send: l.send, hold: l.hold})
 }
 
 // lane is a user-blocking chain as what its tasks start carries it: when
-// the user's action began (root, monoNow; 0: none) and whether it is a
-// send's (hold: UserChain), whose awaits of Go hold the queued tasks back
-// for a moment (awaitUserChain).
+// the user's action began (root, monoNow; 0: none), where it was queued
+// (seq: enqN), whether it is a send's (send: UserChain), which, going on,
+// takes ahead only the in-order tasks queued before it began, and whether
+// its trips through Go hold the queued tasks back for a moment (hold: not
+// past its last hop, NoChain; awaitUserChain).
 type lane struct {
-	root int64
-	hold bool
+	root       int64
+	seq        uint64
+	send, hold bool
 }
 
 // userChain bounds how long what a user-blocking task starts keeps the
@@ -237,7 +265,7 @@ func (r *Runtime) chainLane() lane {
 	if t == nil || !t.urgent || t.root == 0 || monoNow()-t.root > int64(userChain) {
 		return lane{}
 	}
-	return lane{root: t.root, hold: t.hold}
+	return lane{root: t.root, seq: t.chainSeq, send: t.send, hold: t.hold}
 }
 
 // Do runs f on the JS thread and waits for it (bounded by Options.Timeout).
@@ -279,6 +307,55 @@ func (r *Runtime) do(t task, f func(js *Ctx) error) error {
 	}
 }
 
+// doCtx is do bounded by ctx while the task waits its turn: when ctx ends
+// before it starts, it never runs and doCtx returns ctx's error, so a
+// synchronous caller's deadline (the composer's 150 ms for a plugin's
+// inline markup) caps its wait. Once the task runs, doCtx waits for it.
+func (r *Runtime) doCtx(ctx context.Context, t task, f func(js *Ctx) error) error {
+	if ctx.Done() == nil || r.onJSThread() {
+		return r.do(t, f)
+	}
+	if r.closed.Load() {
+		return ErrClosed
+	}
+	var state atomic.Int32 // 0 queued, 1 running, 2 given up
+	ch := make(chan error, 1)
+	t.f = func() {
+		if !state.CompareAndSwap(0, 1) {
+			return // its caller gave up on it while it waited
+		}
+		defer func() {
+			if p := recover(); p != nil {
+				ch <- fmt.Errorf("jsrt: panic in Do: %v", p)
+				r.afterPanic(p)
+			}
+		}()
+		ch <- f(r.js)
+	}
+	r.enqueue(t)
+	select {
+	case err := <-ch:
+		return err
+	case <-ctx.Done():
+		if state.CompareAndSwap(0, 2) {
+			return ctx.Err()
+		}
+		select { // running: it answers
+		case err := <-ch:
+			return err
+		case <-r.done:
+			return ErrClosed
+		}
+	case <-r.done:
+		select {
+		case err := <-ch:
+			return err
+		default:
+			return ErrClosed
+		}
+	}
+}
+
 // enqueue adds t to the queue and returns how many tasks were ever
 // queued, t included. It allocates nothing while it holds mu: every
 // goroutine that talks to JS posts here, the UI goroutine among them, and
@@ -287,43 +364,52 @@ func (r *Runtime) do(t task, f func(js *Ctx) error) error {
 // outside the lock.
 func (r *Runtime) enqueue(t task) uint64 {
 	q := &r.queue
-	if t.urgent {
+	switch {
+	case t.urgent:
 		q = &r.urgent
+		r.coalesce.Add(1)
+	case t.ordered:
+		q = &r.ordQ
 	}
 	for {
 		r.mu.Lock()
 		need := 1
 		if t.urgent {
-			need += r.orderedN // the in-order tasks queued before it go first
+			need += len(r.ordQ) - r.ordAt // the in-order tasks queued before it go first
+		}
+		if t.ordered && r.ordAt > 0 && len(r.ordQ)+need > cap(r.ordQ) {
+			r.compactOrderedLocked() // room behind the run part, within capacity
 		}
 		if len(*q)+need <= cap(*q) {
-			now := monoNow()
+			n := r.enqN.Add(1)
 			moved := 0
-			if t.urgent && r.orderedN > 0 {
-				// the in-order tasks queued before it; a send's chain going
-				// on takes those queued before the chain began, as Slack's
-				// send is one JS task the store's later updates wait for
-				cutoff := now
-				if t.hold && t.root != 0 {
-					cutoff = t.root
+			if t.urgent && len(r.ordQ) > r.ordAt {
+				// every in-order task queued before it; a send's chain
+				// going on takes those queued before the chain began, as
+				// Slack's send is one JS task the store's later updates
+				// wait for
+				cutoff := n
+				if t.send && t.chainSeq != 0 {
+					cutoff = t.chainSeq
 				}
 				moved = r.promoteOrderedLocked(cutoff)
 			}
 			if t.urgent && t.root == 0 {
-				t.root = now // the user's action: what it starts continues on its lane (chainLane)
+				t.root, t.chainSeq = monoNow(), n // the user's action: what it starts continues on its lane (chainLane)
 			}
-			if t.ordered {
-				t.queued = now
-			}
+			t.seq = n
 			*q = append(*q, t) // room: no allocation
-			n := r.enqN.Add(1)
-			if t.urgent {
+			switch {
+			case t.urgent:
 				r.urgentN.Add(int32(1 + moved))
-			} else if t.ordered {
-				r.orderedN++
+			case t.ordered:
+				r.ordN.Add(1)
 			}
 			r.mu.Unlock()
 			r.signal()
+			if h := queueHook.Load(); h != nil {
+				(*h)(QueuedTask{Name: t.name(), Urgent: t.urgent, Ordered: t.ordered})
+			}
 			return n
 		}
 		c, l := cap(*q), len(*q)
@@ -337,33 +423,33 @@ func (r *Runtime) enqueue(t task) uint64 {
 	}
 }
 
-// promoteOrderedLocked moves the in-order tasks queued before cutoff
-// (monoNow) waiting in the batch the loop runs and in the queue to the end
-// of the user-blocking queue, in their order (mu held; the urgent queue
-// has room for them), and returns how many. They run as they were,
-// without the user's lane for what they start: a store update's renders
-// stay behind the user's work.
-func (r *Runtime) promoteOrderedLocked(cutoff int64) int {
+// compactOrderedLocked drops the run part of ordQ (mu held), within its
+// capacity.
+func (r *Runtime) compactOrderedLocked() {
+	n := copy(r.ordQ, r.ordQ[r.ordAt:])
+	clear(r.ordQ[n:])
+	r.ordQ, r.ordAt = r.ordQ[:n], 0
+}
+
+// promoteOrderedLocked moves the in-order tasks queued before cutoff (an
+// enqN) to the end of the user-blocking queue, in their order (mu held;
+// the urgent queue has room for them), and returns how many. They run as
+// they were, without the user's lane for what they start: a store
+// update's renders stay behind the user's work.
+func (r *Runtime) promoteOrderedLocked(cutoff uint64) int {
 	moved := 0
-	move := func(ts []task) {
-		for i := range ts {
-			if r.orderedN == 0 {
-				return
-			}
-			if ts[i].ordered && ts[i].f != nil && ts[i].queued < cutoff {
-				x := ts[i]
-				x.ordered = false
-				r.urgent = append(r.urgent, x)
-				ts[i] = task{}
-				r.orderedN--
-				moved++
-			}
-		}
+	for r.ordAt < len(r.ordQ) && r.ordQ[r.ordAt].seq < cutoff {
+		x := r.ordQ[r.ordAt]
+		x.ordered = false
+		r.urgent = append(r.urgent, x)
+		r.ordQ[r.ordAt] = task{}
+		r.ordAt++
+		moved++
 	}
-	if r.batchAt < len(r.batch) {
-		move(r.batch[r.batchAt:])
+	if r.ordAt == len(r.ordQ) {
+		r.ordQ, r.ordAt = r.ordQ[:0], 0
 	}
-	move(r.queue)
+	r.ordN.Add(int32(-moved))
 	return moved
 }
 
@@ -440,6 +526,22 @@ func IsUserChain(ctx context.Context) bool {
 	return b
 }
 
+type noHoldKey struct{}
+
+// NoChain keeps ctx's calls on a send's lane (UserChain: in order, ahead
+// of the store updates that came during it) without the hold: the chain's
+// last hop, after which only the network follows (a send's sendMessage
+// thunk), or a send with no hop to come back.
+func NoChain(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noHoldKey{}, true)
+}
+
+// IsNoChain reports whether ctx came from NoChain.
+func IsNoChain(ctx context.Context) bool {
+	b, _ := ctx.Value(noHoldKey{}).(bool)
+	return b
+}
+
 type laneKey struct{}
 
 // laneOf is the chain an async Go function's ctx carries (ExposeAsync:
@@ -465,22 +567,24 @@ func IsUserBlocking(ctx context.Context) bool {
 
 // userChainHold is how long the loop holds its queued tasks back after a
 // send's chain went to Go (awaitUserChain): Go goes on with the chain a
-// goroutine switch or two later (the thunk after the check, the native's
-// transforms and sendMessage thunk), then waits for chat.postMessage,
-// which renders mustn't wait out. Each hop arms it again.
+// goroutine switch or two later (the native's transforms, its sendMessage
+// thunk), and the chain's next task releases it; renders mustn't wait out
+// a network call.
 const userChainHold = 30 * time.Millisecond
 
-// armHold starts or extends the hold a send's chain asks for (JS thread).
-func (r *Runtime) armHold() {
+// armHold starts or extends the hold for the chain at root (JS thread).
+func (r *Runtime) armHold(root int64) {
 	if at := monoNow() + int64(userChainHold); at > r.holdUntil {
 		r.holdUntil = at
 	}
+	r.holdRoot = root
 }
 
-// awaitUserChain holds the queued tasks (and the queue's timers) back
-// while a send's chain is in Go (UserChain: armHold), for userChainHold
-// from its last hop, running the user-blocking tasks and the user's timers
-// as they come (JS thread). It reports false once the runtime closed.
+// awaitUserChain holds the queued tasks (in-order, plain and the queue's
+// timers) back while a send's chain is in Go (UserChain: armHold), until
+// its next task comes or userChainHold passes, running the user-blocking
+// tasks and the user's timers as they come (JS thread). It reports false
+// once the runtime closed.
 func (r *Runtime) awaitUserChain() bool {
 	for {
 		if r.closed.Load() {
@@ -509,10 +613,11 @@ func (r *Runtime) awaitUserChain() bool {
 }
 
 // heldAwait arms the hold when the task running now, a send's chain's
-// (UserChain), calls an async Go function (JS thread).
+// (UserChain, short of its last hop), calls an async Go function: its next
+// hop comes from Go (JS thread).
 func (r *Runtime) heldAwait() {
-	if r.chainLane().hold {
-		r.armHold()
+	if l := r.chainLane(); l.hold {
+		r.armHold(l.root)
 	}
 }
 
@@ -520,6 +625,9 @@ func (r *Runtime) heldAwait() {
 // user-blocking timers due, each after the in-order tasks queued before it
 // (JS thread). It reports false once the runtime closed.
 func (r *Runtime) runUrgent() bool {
+	// the user's timers due now, not those their callbacks set meanwhile:
+	// a setTimeout(0) yield loop gives the queue its turns
+	round := time.Now()
 	for {
 		for r.urgentN.Load() > 0 {
 			fresh := make([]task, 0, 8) // outside the lock (enqueue's rule); u runs below
@@ -538,7 +646,7 @@ func (r *Runtime) runUrgent() bool {
 		if r.closed.Load() {
 			return false
 		}
-		if r.urgentTimers == 0 || !r.dueUrgentTimer() {
+		if r.urgentTimers == 0 || !r.dueUrgentTimerAt(round) {
 			return true
 		}
 		// a user's timer runs after the in-order tasks queued before it,
@@ -546,7 +654,7 @@ func (r *Runtime) runUrgent() bool {
 		if r.promoteOrdered() {
 			continue
 		}
-		if !r.fireUrgentTimer() {
+		if !r.fireUrgentTimer(round) {
 			return false
 		}
 	}
@@ -558,13 +666,13 @@ func (r *Runtime) runUrgent() bool {
 func (r *Runtime) promoteOrdered() bool {
 	for {
 		r.mu.Lock()
-		n := r.orderedN
+		n := len(r.ordQ) - r.ordAt
 		if n == 0 {
 			r.mu.Unlock()
 			return false
 		}
 		if len(r.urgent)+n <= cap(r.urgent) {
-			moved := r.promoteOrderedLocked(monoNow())
+			moved := r.promoteOrderedLocked(r.enqN.Load() + 1)
 			r.urgentN.Add(int32(moved))
 			r.mu.Unlock()
 			return moved > 0
@@ -578,6 +686,47 @@ func (r *Runtime) promoteOrdered() bool {
 		}
 		r.mu.Unlock()
 	}
+}
+
+// orderedSlice is how long the in-order work may hold the JS thread with
+// plain tasks waiting before one of them gets a turn (runOrdered): a busy
+// socket mustn't starve the renders.
+const orderedSlice = 50 * time.Millisecond
+
+// runOrdered runs the in-order tasks queued so far, in their order, ahead
+// of the plain queue, each after the user-blocking work queued by then,
+// until they have held the thread for orderedSlice since the last plain
+// task (since). Slack's store takes a socket event or a store update when
+// it arrives, and the renders follow; a user's chain waiting on one
+// (Owl's view_opened) waited behind every render queued before it. It
+// reports false once the runtime closed (JS thread).
+func (r *Runtime) runOrdered(since *int64) bool {
+	for r.ordN.Load() > 0 {
+		if r.closed.Load() {
+			return false
+		}
+		if monoNow()-*since > int64(orderedSlice) {
+			return true // a plain task's turn
+		}
+		r.mu.Lock()
+		if r.ordAt >= len(r.ordQ) {
+			r.mu.Unlock()
+			break
+		}
+		t := r.ordQ[r.ordAt]
+		r.ordQ[r.ordAt] = task{}
+		r.ordAt++
+		if r.ordAt == len(r.ordQ) {
+			r.ordQ, r.ordAt = r.ordQ[:0], 0
+		}
+		r.ordN.Add(-1)
+		r.mu.Unlock()
+		r.runTask(t)
+		if !r.runUrgent() || !r.awaitUserChain() {
+			return false
+		}
+	}
+	return !r.closed.Load()
 }
 
 func (r *Runtime) signal() {
@@ -643,11 +792,13 @@ func (r *Runtime) loop() {
 		r.queue, r.spare = r.spare[:0], nil
 		r.batch, r.batchAt = q, 0
 		r.mu.Unlock()
+		since := monoNow() // the last plain task (runOrdered's slice)
 		for {
-			// a user-blocking task that came meanwhile goes first, and
-			// nothing queued starts while a send's chain awaits Go for a
-			// moment (awaitUserChain)
-			if r.closed.Load() || !r.runUrgent() || !r.awaitUserChain() {
+			// a user-blocking task that came meanwhile goes first, nothing
+			// queued starts while a send's chain is in Go for a moment
+			// (awaitUserChain), and the in-order work runs ahead of the
+			// next plain task
+			if r.closed.Load() || !r.runUrgent() || !r.awaitUserChain() || !r.runOrdered(&since) {
 				return
 			}
 			r.mu.Lock()
@@ -659,20 +810,16 @@ func (r *Runtime) loop() {
 			t := r.batch[r.batchAt]
 			r.batch[r.batchAt] = task{} // the task's closure and whatever it holds
 			r.batchAt++
-			if t.ordered {
-				r.orderedN--
-			}
 			r.mu.Unlock()
-			if t.f != nil { // nil: a user-blocking task took it ahead
-				r.runTask(t)
-			}
+			r.runTask(t)
+			since = monoNow()
 		}
 		r.mu.Lock()
 		if r.spare == nil {
 			r.spare = q[:0]
 		}
 		r.mu.Unlock()
-		if !r.runUrgent() || !r.awaitUserChain() {
+		if !r.runUrgent() || !r.awaitUserChain() || !r.runOrdered(&since) {
 			return
 		}
 		r.fireTimers()
@@ -680,7 +827,7 @@ func (r *Runtime) loop() {
 			return
 		}
 		r.mu.Lock()
-		pending := len(r.queue) + len(r.urgent)
+		pending := len(r.queue) + len(r.urgent) + len(r.ordQ) - r.ordAt
 		r.mu.Unlock()
 		if pending > 0 {
 			continue
@@ -720,13 +867,16 @@ func (r *Runtime) runTask(t task) {
 	}()
 	start := monoNow()
 	t.start, t.mono = time.Now(), start
+	if t.urgent && t.root != 0 && t.root == r.holdRoot {
+		r.holdUntil = 0 // the hop the hold waited for
+	}
 	r.running.Store(&t)
 	r.taskStart.Store(start)
 	r.deadline.Store(start + int64(r.opts.Timeout))
 	t.f()
 	r.checkpoint()
-	if t.hold && monoNow()-t.root <= int64(userChain) {
-		r.armHold() // a send's chain goes on in Go
+	if t.hold && t.kind == "Call" && monoNow()-t.root <= int64(userChain) {
+		r.armHold(t.root) // a send's call answers Go, which goes on with the chain
 	}
 	if h := taskHook.Load(); h != nil {
 		(*h)(TaskRun{Name: t.name(), Urgent: t.urgent, Hold: t.hold, Start: t.start, Took: time.Since(t.start)})
@@ -754,6 +904,26 @@ func SetTaskHook(f func(TaskRun)) {
 	taskHook.Store(&f)
 }
 
+// QueuedTask is one task a runtime queued (SetQueueHook).
+type QueuedTask struct {
+	Name            string
+	Urgent, Ordered bool
+}
+
+var queueHook atomic.Pointer[func(QueuedTask)]
+
+// SetQueueHook has every runtime report each task it queues to f, on the
+// goroutine that queued it, once it is queued, until it is set to nil
+// (tests: an event reached the runtime before the user's input, without
+// a sleep). f must not block.
+func SetQueueHook(f func(QueuedTask)) {
+	if f == nil {
+		queueHook.Store(nil)
+		return
+	}
+	queueHook.Store(&f)
+}
+
 // task is one macrotask on the JS thread, and what the timeout lines say
 // about it: ids only (a Call path, a timer id, the Go function that
 // queued a Post or Do), never arguments.
@@ -768,13 +938,14 @@ type task struct {
 	// ordered: in order with the user-blocking tasks queued after it
 	// (PostInOrder)
 	urgent, ordered bool
-	// root: when the user-blocking chain the task belongs to began; hold:
-	// it is a send's (UserChain): chainLane
-	root int64
-	hold bool
-	// queued: when an in-order task was queued (monoNow; promotion's
-	// cutoff)
-	queued int64
+	// root: when the user-blocking chain the task belongs to began, and
+	// chainSeq where it was queued; send: the chain is a send's
+	// (UserChain); hold: its trips through Go hold the queue (chainLane)
+	root       int64
+	chainSeq   uint64
+	send, hold bool
+	// seq: where the task was queued (enqN; promotion's cutoff)
+	seq uint64
 }
 
 // callerPC is the return address into the caller of the function calling
@@ -917,10 +1088,10 @@ type timer struct {
 	id  int
 	seq int
 	idx int
-	// root, hold: set by a user-blocking task, it fires on the user's lane
-	// (chainLane's)
-	root int64
-	hold bool
+	// root, chainSeq: set by a user-blocking task, it fires on the user's
+	// lane (chainLane's), without the hold: a timer is no trip through Go
+	root     int64
+	chainSeq uint64
 }
 
 type timerHeap []*timer
@@ -960,7 +1131,13 @@ func (r *Runtime) addTimer(id int, d time.Duration) {
 	if l.root != 0 && monoNow()+int64(d)-l.root > int64(userChain) {
 		l = lane{}
 	}
-	t := &timer{at: time.Now().Add(d), id: id, seq: r.timerN, root: l.root, hold: l.hold}
+	if t := r.running.Load(); t != nil && t.kind == "timer" {
+		// a timer's timer: the user's lane passes to what the input
+		// started, not on down a yield loop (setTimeout(0),
+		// requestIdleCallback), as no browser passes input priority on
+		l = lane{}
+	}
+	t := &timer{at: time.Now().Add(d), id: id, seq: r.timerN, root: l.root, chainSeq: l.seq}
 	if t.root != 0 {
 		r.urgentTimers++
 	}
@@ -994,7 +1171,7 @@ func (r *Runtime) fireTimer(t *timer) {
 		r.urgentTimers--
 	}
 	id := t.id
-	r.runTask(task{kind: "timer", what: strconv.Itoa(id), urgent: t.root != 0, root: t.root, hold: t.hold, f: func() { r.eng.fireTimer(r.js, id) }})
+	r.runTask(task{kind: "timer", what: strconv.Itoa(id), urgent: t.root != 0, root: t.root, chainSeq: t.chainSeq, f: func() { r.eng.fireTimer(r.js, id) }})
 }
 
 // nextUrgentTimer is when the next user-blocking timer comes due (JS
@@ -1013,11 +1190,14 @@ func (r *Runtime) nextUrgentTimer() (time.Time, bool) {
 // dueUrgentTimer reports whether a user-blocking timer is due (JS
 // thread). One that comes due past its chain's userChain (the loop was
 // busy) goes back to the queue's timers.
-func (r *Runtime) dueUrgentTimer() bool {
+func (r *Runtime) dueUrgentTimer() bool { return r.dueUrgentTimerAt(time.Now()) }
+
+// dueUrgentTimerAt is dueUrgentTimer as of now.
+func (r *Runtime) dueUrgentTimerAt(now time.Time) bool {
 	if r.urgentTimers == 0 {
 		return false
 	}
-	now, mono := time.Now(), monoNow()
+	mono := monoNow()
 	due := false
 	for _, t := range r.timers {
 		if t.root == 0 || t.at.After(now) {
@@ -1033,10 +1213,9 @@ func (r *Runtime) dueUrgentTimer() bool {
 	return due
 }
 
-// fireUrgentTimer fires the earliest user-blocking timer due (JS thread).
-// It reports false once the runtime closed.
-func (r *Runtime) fireUrgentTimer() bool {
-	now := time.Now()
+// fireUrgentTimer fires the earliest user-blocking timer due as of now
+// (JS thread). It reports false once the runtime closed.
+func (r *Runtime) fireUrgentTimer(now time.Time) bool {
 	var due *timer
 	for _, t := range r.timers {
 		if t.root != 0 && !t.at.After(now) && (due == nil || r.timers.lessTimer(t, due)) {

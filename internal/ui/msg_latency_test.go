@@ -569,8 +569,24 @@ func latReport(t *testing.T, ps latPass, ws []*latWait, enforce bool) map[string
 			maxFrames, median = 3, latMedianBudget+idleprobe.Vsync
 		}
 		if kind == "own" && !ps.busy {
+			// With plugins and the JS thread drained before each Enter, one
+			// send of the pass may come a frame late: a task the plugin
+			// runtime starts on its own after the drain (React's scheduler,
+			// a timer: 5 to 10 ms mountIn tasks on the runners) holds the
+			// send's checks while it runs, as a browser's keydown waits for
+			// the task running when it comes. Two late sends are the sends'
+			// own work.
+			slack := 0
+			if ps.pluginSend && ps.drainJS != nil {
+				slack = 1
+			}
 			for n, k := range st.Frames {
-				if n > maxFrames {
+				switch {
+				case n > maxFrames && n == maxFrames+1 && slack > 0:
+					if k > slack {
+						t.Errorf("%s, own: %d sends drew their pending copy %d frames after the one that took the Enter key, want at most %d (one send of the pass a frame later)", ps.name, k, n-1, maxFrames-1)
+					}
+				case n > maxFrames:
 					t.Errorf("%s, own: %d sends drew their pending copy %d frames after the one that took the Enter key, want at most %d", ps.name, k, n-1, maxFrames-1)
 				}
 			}

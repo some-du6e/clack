@@ -77,9 +77,10 @@ type LatestOpts struct {
 	// and Slack keeps them apart from the history slices, so they stay
 	// whatever the page's range (the window's copy first).
 	Pending []slack.Message
-	// GapSeq is LiveSeq at the socket's last slow connect: what it brought
-	// after that may come after a gap the page doesn't reach.
-	GapSeq uint64
+	// Gen is GapGen when the request began: the window's gap boundary
+	// (Timeline.Contig) holds for the socket's messages from then on only
+	// while no slow connect came since.
+	Gen uint64
 }
 
 // heardFor is how long a message the socket brought stays over a page
@@ -168,20 +169,26 @@ func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, o 
 			out = append(out, mm)
 		}
 	}
-	// whether the page reaches what the window had from Slack: its newest
-	// message that isn't a local copy or one the socket brought after the
-	// last slow connect (past a gap the page may not reach)
+	// whether the page reaches what the window had from Slack: the newest
+	// message the window holds contiguous with Slack's history (its gap
+	// boundary, Timeline.Contig: a page read, then what the socket brought
+	// while no slow connect came), as Slack's slices keep it
+	// (resetReachedEnd, and the socket's messages a slice of their own
+	// until a page intersects it). One global mark of the last slow
+	// connect, read against a ring of live records, joined a page across
+	// a gap after a second wake, or once the records rolled over, and
+	// started a window over that had none.
 	contig := ""
-	for i := len(held) - 1; i >= 0; i-- {
-		m := &held[i]
-		if pending[m.TS] || m.IsEphemeral {
-			continue
+	if t != nil {
+		contig = t.Contig
+		if contig == "" {
+			for i := len(held) - 1; i >= 0; i-- {
+				if m := &held[i]; !pending[m.TS] && !m.IsEphemeral {
+					contig = m.TS
+					break
+				}
+			}
 		}
-		if r, ok := s.live[ch+"/"+m.TS]; ok && r.seq > o.GapSeq && !r.gone {
-			continue
-		}
-		contig = m.TS
-		break
 	}
 	restarted = t == nil || hasMore && oldest != "" && contig != "" && TSLess(contig, oldest)
 	keptOlder := false
@@ -223,9 +230,15 @@ func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, o 
 		}
 	}
 	SortAsc(out)
-	nt := &Timeline{Msgs: out, HasMore: hasMore, Loaded: true, PageOldest: oldest}
+	s.mergedLocked(ch, out, since)
+	nt := &Timeline{Msgs: out, HasMore: hasMore, Loaded: true, PageOldest: oldest, Contig: newest, ContigGen: o.Gen}
 	if keptOlder {
 		nt.HasMore = t.HasMore
+	}
+	// the socket's messages heard while the request was out, with no slow
+	// connect since the window's boundary, go on from the page
+	if !restarted && t.ContigGen == o.Gen && o.Gen == s.gapGen && newest != "" && TSLess(newest, t.Contig) {
+		nt.Contig = t.Contig
 	}
 	if restarted {
 		s.epochN++
@@ -236,6 +249,14 @@ func (s *Store) SetLatestSince(ch string, msgs []slack.Message, hasMore bool, o 
 	s.timelines[ch] = nt
 	return restarted
 }
+
+// mergedLocked is where a newest-page merge (SetLatestSince) and a
+// scrollback re-read (RefreshRange) have the window they're about to store
+// (s.mu held): out, after the live copies won (since: the read's
+// LiveSeq). A hook for what must see the merged window and never the raw
+// page, such as replaying reactions noted since the read, or announcing a
+// read revision of a message no older than a live-noted socket change.
+func (s *Store) mergedLocked(ch string, out []slack.Message, since uint64) {}
 
 // RefreshRange is a re-read of ch's scrollback (core's refreshOlder):
 // msgs, the older page Slack answered for the range lo ≤ ts < hi (lo ""
@@ -294,6 +315,7 @@ func (s *Store) RefreshRange(ch string, msgs []slack.Message, lo, hi string, o L
 		out = append(out, m)
 	}
 	SortAsc(out)
+	s.mergedLocked(ch, out, o.Since)
 	nt := *t
 	nt.Msgs = out
 	s.timelines[ch] = &nt

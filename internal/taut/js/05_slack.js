@@ -1321,6 +1321,7 @@ T.checkThenDispatch = async (ctx, name, args, nativeId, sync) => {
     error('Send check failed:', err)
   }
   if (ok === false) return { sent: false }
+  go('checksPassed', nativeId) // the send checks' grace is over: what follows is the dispatch
   return { sent: true, result: await T.dispatchThunk(name, args, nativeId, sync) }
 }
 /** Go → JS: whether a dialog a pending send check may be waiting on is open */

@@ -73,10 +73,6 @@ type histReads struct {
 	// countsApplied is the socket store's countsAreApplied: counts were
 	// applied since the socket's last connect
 	countsApplied bool
-	// gapSeq is the store's LiveSeq at the socket's last slow connect:
-	// what the socket brought after it may come after a gap a page
-	// doesn't reach (store.LatestOpts.GapSeq)
-	gapSeq uint64
 	// bg: the catch-ups running in the background (key as gen's)
 	bg map[string]bool
 	// older: the windows whose catch-up reads their scrollback again too
@@ -258,22 +254,25 @@ func (a *App) applyMutationTimes(c *slack.Counts) {
 	if len(changes) == 0 {
 		return
 	}
-	watched := a.watchedConv()
 	for _, x := range changes {
 		if !a.S.HasTimeline(x.ch) { // Slack's channels with history
 			continue
 		}
-		if x.ch == watched && (!x.purge || !connected) {
+		if !x.purge || !connected {
+			// an updated, on screen or not (a split view's other pane, a
+			// conversation not shown), or a history_invalid with no socket:
+			// the window and its threads read Slack again behind their
+			// cache when next shown, the scrollback too (refreshOlder), as
+			// Slack's prJX only marks them stale; a purge made each open on
+			// a network read
 			a.markStale(x.ch)
 			a.hist.mu.Lock()
-			a.hist.older[x.ch] = true // the change may be in the scrollback the list shows
+			a.hist.older[x.ch] = true
 			a.hist.mu.Unlock()
 			a.emit(Event{Type: "history_stale", Channel: x.ch})
 			continue
 		}
-		// an updated off screen too: its older pages and threads read
-		// Slack again when shown
-		a.purgeHistory(x.ch)
+		a.purgeHistory(x.ch) // a deletion the socket never told
 	}
 }
 
@@ -412,7 +411,7 @@ func (a *App) refreshOlder(ctx context.Context, ch string) error {
 	}
 	cursor := t.PageOldest
 	for i := 0; i < refreshPages && cursor != "" && oldest != "" && store.TSLess(oldest, cursor); i++ {
-		live := a.S.LiveSeq()
+		live, pins, subs := a.S.LiveSeq(), a.S.PinSeq(), a.S.SubSeq()
 		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: cursor, Limit: 100})
 		if err != nil {
 			h.mu.Lock()
@@ -428,7 +427,18 @@ func (a *App) refreshOlder(ctx context.Context, ch string) error {
 				}
 			}
 		}
+		// fetchLatest's fixups: the processed files core holds of the
+		// page's stubs, and the pins and subscriptions events changed while
+		// it was out; a stub left gets its files read
+		a.keepPageFiles(ch, p.Messages)
 		a.S.RefreshRange(ch, p.Messages, lo, cursor, store.LatestOpts{Since: live, Pending: a.pendingCopies(ch, "")})
+		a.S.SyncPins(ch, pins, p.Messages)
+		a.S.SyncSubs(ch, subs, p.Messages)
+		for j := range p.Messages {
+			if needsFileInfo(&p.Messages[j]) {
+				go a.fillFiles(ch, p.Messages[j].TS)
+			}
+		}
 		if lo == "" {
 			break
 		}
@@ -445,22 +455,30 @@ func (a *App) catchingUp(key string) bool {
 	return h.bg[key]
 }
 
-// gapSeqNow is the store's LiveSeq at the socket's last slow connect.
-func (a *App) gapSeqNow() uint64 {
-	h := &a.hist
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.gapSeq
-}
+// noteSlowConnect is the socket's slow connect: what it brings from now on
+// may come after a gap, past every window's boundary (store
+// NoteSlowConnect, Timeline.Contig).
+func (a *App) noteSlowConnect() { a.S.NoteSlowConnect() }
 
-// noteSlowConnect records where the socket's last slow connect sits in
-// the store's live records (gapSeq).
-func (a *App) noteSlowConnect() {
-	seq := a.S.LiveSeq()
-	h := &a.hist
-	h.mu.Lock()
-	h.gapSeq = seq
-	h.mu.Unlock()
+// confirmFromPage confirms the viewer's sends whose copy a page from
+// Slack holds (by client_msg_id): one whose reply and echo were lost (a
+// Wi-Fi drop) went out after all. The page only hid the failed copy, which
+// came back with its Retry once the message left the newest page.
+func (a *App) confirmFromPage(ch string, msgs []slack.Message) {
+	for i := range msgs {
+		m := &msgs[i]
+		if m.ClientMsgID == "" {
+			continue
+		}
+		a.mu.Lock()
+		p, ok := a.pending[m.ClientMsgID]
+		open := ok && !p.confirmed
+		a.mu.Unlock()
+		if open {
+			c := *m
+			a.confirmPending(ch, &c)
+		}
+	}
 }
 
 // purgeHistory is purgeChannelHistory with its threads: ch's window and
@@ -538,6 +556,16 @@ func (a *App) pendingCopies(ch, thread string) []slack.Message {
 		if in {
 			out = append(out, p.local)
 		}
+	}
+	return out
+}
+
+// localTSSet is the ts of ch's local copies (pendingCopies): where an
+// older page starts goes by the others.
+func (a *App) localTSSet(ch string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range a.pendingCopies(ch, "") {
+		out[m.TS] = true
 	}
 	return out
 }

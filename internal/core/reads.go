@@ -54,9 +54,11 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		// meanwhile, and the lists load again when it lands
 		// ("history_caught_up"); the window core holds shows now, as Slack
 		// renders its cached slice while it refetches
+		behind := false
 		if t != nil && a.windowBehind(ch, t) {
 			source = "cache, catching up"
 			a.catchUpLater(ch)
+			behind = true
 		}
 		if t == nil {
 			source = "fetch"
@@ -70,17 +72,39 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		if t != nil {
 			msgs, hasMore, epoch = t.Msgs, t.HasMore, t.Epoch
+			// behind a slow connect with the socket's messages past the gap:
+			// those alone, loading back from their start, until the
+			// catch-up lands, as Slack renders the newest slice after
+			// resetReachedEnd; the list drew the pre-gap messages straight
+			// above them
+			if behind {
+				if past, ok := a.S.PastGap(ch); ok {
+					msgs, hasMore, epoch = past, true, t.Epoch|GapView
+				}
+			}
 		}
 	} else {
 		source = "older"
 		pins, subs := a.S.PinSeq(), a.S.SubSeq()
+		local := a.localTSSet(ch)
+		epoch0, oldest, _ := a.S.OldestFromSlack(ch, local)
+		_, gapView := a.S.PastGap(ch)
 		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: before, Limit: 100})
 		if err != nil {
 			return fail(err)
 		}
-		a.S.PrependOlder(ch, p.Messages, p.HasMore)
-		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
-		a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
+		// the page goes in front of the window it was read for, starting
+		// where it was asked: one read for a window that started over
+		// since (a gap of more than a page, a purge) belongs to the old one,
+		// and the list drops it too (its Epoch)
+		epoch = epoch0
+		switch {
+		case gapView:
+			epoch |= GapView // for the list's slice past the gap; the window waits for its catch-up
+		case oldest == before && a.S.PrependOlderAt(ch, p.Messages, p.HasMore, epoch0, before, local):
+			a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
+			a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
+		}
 		msgs, hasMore = p.Messages, p.HasMore
 		store.SortAsc(msgs)
 	}
@@ -157,6 +181,7 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		// keeps the socket's copy (store/live.go)
 		a.keepPageFiles(ch, all) // the processed files the thread has of the answer's stubs
 		a.S.SetThreadSince(ch, ts, all, store.ThreadOpts{Since: live, Pending: a.pendingCopies(ch, ts)})
+		a.confirmFromPage(ch, all) // an own reply the answer has, its reply lost
 		a.noteRead(ch+"/"+ts, rm)
 		all, _ = a.S.Thread(ch, ts)
 		a.S.SyncPins(ch, pins, all)

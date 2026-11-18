@@ -112,7 +112,74 @@ type Rect struct{ X, Y, W, H float32 }
 // turn, though never behind a later discrete one (PostInOrder: a browser
 // dispatches input in order).
 func (r *Runtime) DispatchEvent(target int, ev []byte) {
-	r.post(discreteEvent(ev), func(js *Ctx) { _, _ = js.dispatch(target, ev) })
+	if discreteEvent(ev) {
+		r.post(true, func(js *Ctx) { _, _ = js.dispatch(target, ev) })
+		return
+	}
+	r.postMove(target, ev)
+}
+
+// moveKey is a continuous event's target and type (postMove).
+type moveKey struct {
+	target int
+	typ    string
+}
+
+// queuedMove is the newest continuous event of its key waiting in its
+// task (postMove).
+type queuedMove struct {
+	ev  []byte
+	gen uint64
+}
+
+// postMove queues a continuous event (a move, a scroll, a hover) in order
+// with the user's input, one task per target and type at a time: while
+// the JS thread is behind, a newer one replaces the event its task waits
+// with, as Chromium coalesces the continuous events it hasn't dispatched
+// yet. Each one queued a task of its own, 60 a second, and the user's next
+// key or send ran behind them all. Never across the user's input: a move
+// after a click is a task of its own, after it.
+func (r *Runtime) postMove(target int, ev []byte) {
+	k := moveKey{target, eventType(ev)}
+	gen := r.coalesce.Load()
+	r.movesMu.Lock()
+	if q := r.movesQ[k]; q != nil && q.gen == gen {
+		q.ev = ev
+		r.movesMu.Unlock()
+		return
+	}
+	q := &queuedMove{ev: ev, gen: gen}
+	if r.movesQ == nil {
+		r.movesQ = map[moveKey]*queuedMove{}
+	}
+	r.movesQ[k] = q
+	r.movesMu.Unlock()
+	r.PostInOrder(func(js *Ctx) {
+		r.movesMu.Lock()
+		ev := q.ev
+		if r.movesQ[k] == q {
+			delete(r.movesQ, k)
+		}
+		r.movesMu.Unlock()
+		_, _ = js.dispatch(target, ev)
+	})
+}
+
+// eventType is the event JSON's type ("" for none).
+func eventType(ev []byte) string {
+	i := bytes.Index(ev, []byte(`"type":`))
+	if i < 0 {
+		return ""
+	}
+	rest := bytes.TrimLeft(ev[i+len(`"type":`):], " ")
+	if len(rest) == 0 || rest[0] != '"' {
+		return ""
+	}
+	rest = rest[1:]
+	if j := bytes.IndexByte(rest, '"'); j >= 0 {
+		return string(rest[:j])
+	}
+	return ""
 }
 
 // DispatchEventThen is DispatchEvent telling done, on the JS goroutine,
@@ -142,19 +209,7 @@ var discreteEvents = map[string]bool{
 
 // discreteEvent reports whether the event JSON's type is a discrete
 // event's.
-func discreteEvent(ev []byte) bool {
-	i := bytes.Index(ev, []byte(`"type":`))
-	if i < 0 {
-		return false
-	}
-	rest := bytes.TrimLeft(ev[i+len(`"type":`):], " ")
-	if len(rest) == 0 || rest[0] != '"' {
-		return false
-	}
-	rest = rest[1:]
-	j := bytes.IndexByte(rest, '"')
-	return j >= 0 && discreteEvents[string(rest[:j])]
-}
+func discreteEvent(ev []byte) bool { return discreteEvents[eventType(ev)] }
 
 // DispatchEventSync is DispatchEvent waiting for the result (e.g. to learn
 // whether a key was preventDefault'ed). Bounded by ctx and Options.Timeout.
@@ -215,16 +270,46 @@ func (r *Runtime) callFn(urgent bool, id int, args []byte) {
 // SetRects reports laid-out boxes of host nodes by "k" (feeds
 // getBoundingClientRect, offsetWidth & co. and ResizeObserver). Async; in
 // order with the user's input (PostInOrder): a click's handler reads the
-// layout the click was made on, as in a browser.
+// layout the click was made on, as in a browser. One task at a time: a
+// newer layout joins the boxes the queued one waits with (setRects takes
+// each box as it is, so the newest of each wins), until the user's next
+// input; each frame that moved a box (every frame while scrolling) queued
+// a task of its own.
 func (r *Runtime) SetRects(rects map[int]Rect) {
-	b, _ := json.Marshal(rectsJSON(rects))
+	gen := r.coalesce.Load()
+	r.rectsMu.Lock()
+	if q := r.rectsQ; q != nil && q.gen == gen {
+		for k, x := range rects {
+			q.m[k] = x
+		}
+		r.rectsMu.Unlock()
+		return
+	}
+	q := &rectsBatch{m: make(map[int]Rect, len(rects)), gen: gen}
+	for k, x := range rects {
+		q.m[k] = x
+	}
+	r.rectsQ = q
+	r.rectsMu.Unlock()
 	r.PostInOrder(func(js *Ctx) {
+		r.rectsMu.Lock()
+		if r.rectsQ == q {
+			r.rectsQ = nil
+		}
+		b, _ := json.Marshal(rectsJSON(q.m))
+		r.rectsMu.Unlock()
 		fn := js.Global().Get("__clack").Get("setRects")
 		v, err := js.ParseJSON(b)
 		if err == nil {
 			_, _ = fn.Call(v)
 		}
 	})
+}
+
+// rectsBatch is the boxes a queued setRects task carries (SetRects).
+type rectsBatch struct {
+	m   map[int]Rect
+	gen uint64
 }
 
 func rectsJSON(rects map[int]Rect) map[int][4]float32 {

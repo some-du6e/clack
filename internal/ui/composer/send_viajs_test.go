@@ -316,14 +316,27 @@ func TestRuntimePostsStayAheadOfASend(t *testing.T) {
 	release := make(chan struct{})
 	rt.Post(func(*jsrt.Ctx) { <-release })
 	jsBacklog(rt, 200*time.Millisecond)
+	// core's raw tap reaches the runtime through the mirror's goroutine:
+	// Enter comes once the event is queued
+	queued := make(chan struct{}, 64)
+	jsrt.SetQueueHook(func(q jsrt.QueuedTask) {
+		if strings.HasPrefix(q.Name, "Post rtmEvent ") {
+			queued <- struct{}{}
+		}
+	})
+	t.Cleanup(func() { jsrt.SetQueueHook(nil) })
 	socket("the message right before Enter")
-	time.Sleep(50 * time.Millisecond) // core's raw tap reaches the runtime through a goroutine
+	select {
+	case <-queued:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the socket's message never reached the runtime")
+	}
+	jsrt.SetQueueHook(nil)
 	n0 := len(fs.called("chat.postMessage"))
 	d := NewDoc()
 	d.Insert(0, "ok", Attr{})
 	c.ed.SetDoc(d)
-	c.submit()
-	time.Sleep(20 * time.Millisecond)
+	c.submit() // its checks' call is queued before submit returns
 	close(release)
 	waitFor(t, 15*time.Second, "ok posted", func() bool { return len(fs.called("chat.postMessage")) > n0 })
 	got := strings.Join(seen()[before:], ", ")

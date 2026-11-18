@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -95,37 +96,105 @@ func TestSetLatestSincePageWins(t *testing.T) {
 // union of the slices it touches: the scrollback the user reads stays,
 // with the window's HasMore); one that doesn't (a gap of more than a page)
 // starts the window over at the page, a slice of its own, under a new
-// Epoch the lists take whole. A message the socket brought after the last
-// slow connect is no proof the page reaches the window: it may be past
-// the gap.
+// Epoch the lists take whole. What reaches the window is the window's own
+// gap boundary (Timeline.Contig): the page read, and what the socket
+// brought after it with no slow connect since; a message the socket
+// brought after a slow connect is no proof the page reaches the window.
 func TestSetLatestSinceJoinsOrStartsOver(t *testing.T) {
 	s := New("")
 	const ch = "C0LIVE0003"
 	s.SetLatest(ch, []slack.Message{msgAt("100.000001", "a"), msgAt("200.000001", "b"), msgAt("300.000001", "c")}, true)
 	e0 := s.Timeline(ch).Epoch
 	// a page from c on: joined
-	if restarted := s.SetLatestSince(ch, []slack.Message{msgAt("300.000001", "c"), msgAt("400.000001", "d")}, false, LatestOpts{Since: s.LiveSeq()}); restarted {
+	if restarted := s.SetLatestSince(ch, []slack.Message{msgAt("300.000001", "c"), msgAt("400.000001", "d")}, false, LatestOpts{Since: s.LiveSeq(), Gen: s.GapGen()}); restarted {
 		t.Error("a page that reaches the window started it over")
 	}
 	tl := s.Timeline(ch)
-	if g := timelineText(s, ch); g != "100.000001 a|200.000001 b|300.000001 c|400.000001 d" || !tl.HasMore || tl.Epoch != e0 {
-		t.Errorf("joined: %s, HasMore %v, epoch %d (was %d)", g, tl.HasMore, tl.Epoch, e0)
+	if g := timelineText(s, ch); g != "100.000001 a|200.000001 b|300.000001 c|400.000001 d" || !tl.HasMore || tl.Epoch != e0 || tl.Contig != "400.000001" {
+		t.Errorf("joined: %s, HasMore %v, epoch %d (was %d), boundary %s", g, tl.HasMore, tl.Epoch, e0, tl.Contig)
 	}
-	// the socket brings f after a slow connect; the page starts at e,
-	// past a gap: started over, the scrollback and HasMore the page's
-	gap := s.LiveSeq()
+	// a slow connect, then the socket brings f; the page starts at e, past
+	// the gap: started over, the scrollback and HasMore the page's
+	s.NoteSlowConnect()
 	f := msgAt("600.000001", "f")
 	s.Upsert(ch, f)
 	s.NoteLive(ch, f.TS, &f)
+	s.NoteHeard(ch, f.TS)
+	if got := s.Timeline(ch).Contig; got != "400.000001" {
+		t.Errorf("a message after a slow connect moved the boundary to %s", got)
+	}
 	pend := slack.Message{Type: "message", TS: "350.000001", Text: "failed while away", ClientMsgID: "c9"}
 	s.Upsert(ch, pend)
 	if restarted := s.SetLatestSince(ch, []slack.Message{msgAt("500.000001", "e"), f}, true,
-		LatestOpts{Since: s.LiveSeq(), GapSeq: gap, Pending: []slack.Message{pend}}); !restarted {
+		LatestOpts{Since: s.LiveSeq(), Gen: s.GapGen(), Pending: []slack.Message{pend}}); !restarted {
 		t.Error("a page past a gap joined the window")
 	}
 	tl = s.Timeline(ch)
 	if g := timelineText(s, ch); g != "350.000001 failed while away|500.000001 e|600.000001 f" || !tl.HasMore || tl.Epoch == e0 {
 		t.Errorf("started over: %s, HasMore %v, epoch %d (was %d)", g, tl.HasMore, tl.Epoch, e0)
+	}
+}
+
+// The boundary goes on with the socket's messages while no slow connect
+// came (sixty after a wake, then a fast reconnect: the next page joins), and
+// stops at a slow connect however many changes the socket brought since;
+// past it, PastGap has the socket's messages after the gap.
+func TestGapBoundaryIsTheWindows(t *testing.T) {
+	s := New("")
+	const ch = "C0LIVE0007"
+	s.SetLatest(ch, []slack.Message{msgAt("100.000001", "a"), msgAt("200.000001", "b")}, true)
+	for i := 0; i < 60; i++ {
+		m := msgAt(fmt.Sprintf("3%02d.000001", i), "socket")
+		s.Upsert(ch, m)
+		s.NoteHeard(ch, m.TS)
+	}
+	if got := s.Timeline(ch).Contig; got != "359.000001" {
+		t.Fatalf("the boundary is %s after the socket's messages, want the newest", got)
+	}
+	if _, behind := s.PastGap(ch); behind {
+		t.Error("a window with no slow connect since its boundary is behind a gap")
+	}
+	page := []slack.Message{}
+	for i := 11; i < 60; i++ {
+		page = append(page, msgAt(fmt.Sprintf("3%02d.000001", i), "socket"))
+	}
+	page = append(page, msgAt("400.000001", "missed in a fast reconnect"))
+	if restarted := s.SetLatestSince(ch, page, true, LatestOpts{Since: s.LiveSeq(), Gen: s.GapGen()}); restarted {
+		t.Error("a page reaching the socket's messages started the window over")
+	}
+	// a wake, and the socket's messages after it
+	s.NoteSlowConnect()
+	for _, ts := range []string{"500.000001", "501.000001"} {
+		m := msgAt(ts, "after the wake")
+		s.Upsert(ch, m)
+		s.NoteHeard(ch, m.TS)
+	}
+	past, behind := s.PastGap(ch)
+	if !behind || len(past) != 2 || past[0].TS != "500.000001" {
+		t.Errorf("past the gap: %v, %d messages; want the two after the wake", behind, len(past))
+	}
+}
+
+// An older page read for a window goes in front of it only while it is
+// still that window (its Epoch) starting where the page was asked
+// (before): one read before the window started over is dropped.
+func TestPrependOlderAtKeepsToItsWindow(t *testing.T) {
+	s := New("")
+	const ch = "C0LIVE0008"
+	s.SetLatest(ch, []slack.Message{msgAt("200.000001", "b"), msgAt("300.000001", "c")}, true)
+	tl := s.Timeline(ch)
+	older := []slack.Message{msgAt("100.000001", "a")}
+	if s.PrependOlderAt(ch, older, false, tl.Epoch+1, "200.000001", nil) {
+		t.Error("a page for another epoch went in")
+	}
+	if s.PrependOlderAt(ch, older, false, tl.Epoch, "300.000001", nil) {
+		t.Error("a page asked before another message went in")
+	}
+	if !s.PrependOlderAt(ch, older, false, tl.Epoch, "200.000001", nil) {
+		t.Fatal("the page for the window, where it starts, didn't go in")
+	}
+	if g := timelineText(s, ch); g != "100.000001 a|200.000001 b|300.000001 c" {
+		t.Errorf("the window is %s", g)
 	}
 }
 

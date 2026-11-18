@@ -157,7 +157,7 @@ func (r *runtime) call(ctx context.Context, fn string, out any, args ...any) err
 // browser's store holds every earlier event when an input handler or a
 // send reads it.
 func (r *runtime) post(fn string, args ...any) {
-	r.rt.PostInOrder(func(js *jsrt.Ctx) {
+	r.rt.PostInOrderAs(fn, func(js *jsrt.Ctx) {
 		f := js.Global().Get("__taut").Get(fn)
 		if !f.IsFunction() {
 			r.t.logf("taut: __taut.%s is not a function", fn)

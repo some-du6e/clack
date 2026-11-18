@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // CheckThenDispatch runs the plugins' send checks (SendCheck) and, when
@@ -30,6 +32,13 @@ import (
 // on later.
 func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext, name string, args A, native func(ctx context.Context, args A) (R, error), done func(sent bool, r R, err error)) {
 	var zero R
+	if t == nil { // plugins went off as the send came: no checks, no patches
+		go func() {
+			r, err := native(ctx, args)
+			done(true, r, err)
+		}()
+		return
+	}
 	rt := t.liveRuntime()
 	if rt == nil || !t.HasSendChecks() {
 		t.SendCheckAsync(ctx, c, func(ok bool) {
@@ -42,8 +51,12 @@ func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext
 		})
 		return
 	}
+	if !t.sendHops() {
+		ctx = jsrt.NoChain(ctx) // nothing comes back into JS after the native: no hold
+	}
 	var mu sync.Mutex
 	started, abandoned := false, false
+	var nativeErr error
 	inner := nativeCore(name, native)
 	tt := t.thunks
 	id := tt.add(ctx, func(nctx context.Context, raw []json.RawMessage) (any, error) {
@@ -54,8 +67,15 @@ func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext
 		}
 		started = true
 		mu.Unlock()
-		return inner(nctx, raw)
+		v, err := inner(nctx, raw)
+		if err != nil {
+			mu.Lock()
+			nativeErr = err // its own error, not the JS rejection that wraps it
+			mu.Unlock()
+		}
+		return v, err
 	})
+	passed := tt.watchChecks(id)
 	type answer struct {
 		raw json.RawMessage
 		err error
@@ -74,8 +94,26 @@ func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext
 		for {
 			select {
 			case a := <-answered:
+				mu.Lock()
+				ran, nerr := started, nativeErr
+				mu.Unlock()
 				if a.err != nil {
-					done(true, zero, a.err)
+					switch {
+					case nerr != nil:
+						done(true, zero, nerr) // the post failed: its own error
+					case ran:
+						t.logf("taut: a send's dispatch failed after its native ran: %v", a.err)
+						done(true, zero, nil) // the message went out
+					case !passed.Load():
+						// the checks never answered (the runtime closed, the
+						// watchdog interrupted them): a failed check lets the
+						// message go, as SendCheck's does
+						t.logf("taut: send check: %v", a.err)
+						r, err := native(context.WithoutCancel(ctx), args)
+						done(true, r, err)
+					default:
+						done(true, zero, a.err) // a patch threw or rejected: not sent
+					}
 					return
 				}
 				var out struct {
@@ -94,6 +132,9 @@ func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext
 				done(true, r, err)
 				return
 			case <-tick.C:
+				if passed.Load() {
+					continue // the checks passed: the dispatch is as long as it takes
+				}
 				if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
 					idle = 0
 					continue
@@ -106,7 +147,7 @@ func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext
 				abandoned = !started
 				mu.Unlock()
 				if out {
-					idle = 0 // the checks passed and the message is on its way: its answer comes
+					idle = 0 // the message is on its way: its answer comes
 					continue
 				}
 				t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
@@ -117,3 +158,25 @@ func CheckThenDispatch[A, R any](ctx context.Context, t *Taut, c ComposerContext
 		}
 	}()
 }
+
+// sendHops reports whether a send's native goes back into JS (a send
+// transform, a patched sendMessage or uploadFiles): only then does its
+// chain hold the queue while the native runs (jsrt.UserChain).
+func (t *Taut) sendHops() bool {
+	return t.HasSendTransforms() || t.ThunkPatched("sendMessage") || t.ThunkPatched("uploadFiles")
+}
+
+// SendLane is ctx for a send's JS work on t (the user's lane, as a send's
+// chain): with the hold only when its native goes back into JS
+// (sendHops).
+func SendLane(ctx context.Context, t *Taut) context.Context {
+	if t == nil || !t.sendHops() {
+		return jsrt.NoChain(jsrt.UserChain(ctx))
+	}
+	return jsrt.UserChain(ctx)
+}
+
+// LastHop is ctx for a send's last trip into JS (its sendMessage thunk,
+// or its send transforms when nothing follows them): on the send's lane,
+// without the hold, as only the network comes after it.
+func LastHop(ctx context.Context) context.Context { return jsrt.NoChain(ctx) }

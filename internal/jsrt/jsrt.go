@@ -305,7 +305,12 @@ func (r *Runtime) CallThen(ctx context.Context, path string, done func(json.RawM
 		case x := <-ch:
 			done(x.v, x.err)
 		case <-ctx.Done():
-			done(nil, ctx.Err())
+			select {
+			case x := <-ch: // it answered as the deadline passed
+				done(x.v, x.err)
+			default:
+				done(nil, ctx.Err())
+			}
 		case <-r.done:
 			select {
 			case x := <-ch:
@@ -322,10 +327,18 @@ func (r *Runtime) CallThen(ctx context.Context, path string, done func(json.RawM
 // queue.
 func callTask(ctx context.Context, path string) task {
 	urgent := IsUserBlocking(ctx)
-	t := task{kind: "Call", what: path, urgent: urgent, ordered: !urgent && IsInOrder(ctx), hold: urgent && IsUserChain(ctx)}
-	if l, ok := laneOf(ctx); ok && urgent {
-		t.root, t.hold = l.root, t.hold || l.hold // the chain an async Go function's call goes on with
+	t := task{kind: "Call", what: path, urgent: urgent, ordered: !urgent && IsInOrder(ctx)}
+	if !urgent {
+		return t
 	}
+	l, ok := laneOf(ctx)
+	if ok {
+		// the chain an async Go function's call goes on with: its root
+		// and its start
+		t.root, t.chainSeq = l.root, l.seq
+	}
+	t.send = IsUserChain(ctx) || ok && l.send
+	t.hold = t.send && !IsNoChain(ctx) && (IsUserChain(ctx) || ok && l.hold)
 	return t
 }
 
@@ -342,7 +355,7 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 	}
 	ch := make(chan res, 1)
 	onJS := r.onJSThread()
-	err := r.do(callTask(ctx, path), func(js *Ctx) error {
+	err := r.doCtx(ctx, callTask(ctx, path), func(js *Ctx) error {
 		fn, this, err := js.resolvePath(path)
 		if err != nil {
 			return err
@@ -371,6 +384,11 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 	})
 	if err != nil {
 		return nil, err
+	}
+	select {
+	case x := <-ch: // an answer that is in wins over a deadline that passed with it
+		return x.v, x.err
+	default:
 	}
 	select {
 	case x := <-ch:

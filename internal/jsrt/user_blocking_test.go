@@ -243,9 +243,10 @@ func TestUserBlockingAfterInOrderTasks(t *testing.T) {
 	l.post(l.r.Post, "render2")
 	close(h)
 	l.drain()
-	// render0 and store0 ran before H (they came before it); store1 and
-	// store2 go ahead of the click, store3 between the click and the send
-	if got, want := l.got(), "G, render0, store0, H, store1, store2, click, store3, send, render1, render2"; got != want {
+	// the in-order tasks run ahead of the renders queued before them
+	// (store0, store1); store2 goes ahead of the click, store3 between the
+	// click and the send, and the renders after all of it
+	if got, want := l.got(), "G, store0, store1, render0, H, store2, click, store3, send, render1, render2"; got != want {
 		t.Errorf("tasks ran %s,\nwant %s", got, want)
 	}
 }
@@ -493,10 +494,15 @@ func TestInOrderCallBeforeLaterInput(t *testing.T) {
 func TestSendChainHoldsTheQueue(t *testing.T) {
 	l := newLaneRecorder(t)
 	r := l.r
+	rendered := make(chan struct{}) // the click case: its hop comes once the render started
 	r.ExposeAsync("native", func(ctx context.Context, args []json.RawMessage) (any, error) {
 		var key string
 		_ = json.Unmarshal(args[0], &key)
-		time.Sleep(2 * time.Millisecond)    // the native's own work
+		if key == "click" {
+			<-rendered
+		} else {
+			time.Sleep(2 * time.Millisecond) // the native's own work
+		}
 		l.post(r.PostInOrder, key+" store") // a store update meanwhile
 		done := make(chan struct{})
 		r.CallThen(UserBlocking(ctx), "chain.next", func(json.RawMessage, error) { close(done) }, key)
@@ -545,14 +551,23 @@ func TestSendChainHoldsTheQueue(t *testing.T) {
 		ctx  context.Context
 		want string
 	}{
-		{"send", UserChain(context.Background()), "G, send, send next, render, send store"},
+		// the send's hop goes ahead of the store update that came during it,
+		// as Slack's send is one task; a click's continuation runs after
+		// what came before it
+		{"send", UserChain(context.Background()), "G, send, send next, send store, render"},
 		{"click", UserBlocking(context.Background()), "G, click, render, click store, click next"},
 	} {
 		l.mu.Lock()
 		l.order = nil
 		l.mu.Unlock()
 		g := l.hold("G", true)
-		l.post(r.Post, "render")
+		click := tc.name == "click"
+		l.r.Post(func(*Ctx) {
+			l.note("render")
+			if click {
+				close(rendered)
+			}
+		})
 		done := make(chan error, 1)
 		r.CallThen(tc.ctx, "chain.send", func(_ json.RawMessage, err error) { done <- err }, tc.name)
 		close(g)

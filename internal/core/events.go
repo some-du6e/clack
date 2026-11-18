@@ -328,9 +328,18 @@ func (a *App) handle(ev slack.Event) {
 			a.refreshCountsSoon()
 		case "pref_change":
 			var pc struct {
-				Name string `json:"name"`
+				Name  string          `json:"name"`
+				Value json.RawMessage `json:"value"`
 			}
 			_ = json.Unmarshal(ev.Raw, &pc)
+			if pc.Name != "" && len(pc.Value) > 0 && pc.Name != prefFrecency && pc.Name != prefEmojiUse {
+				// Slack's prefChange sets the event's value at once; the
+				// messages right behind the event notify with it, not with
+				// the prefs from before users.prefs answers
+				a.mergePrefs(map[string]json.RawMessage{pc.Name: pc.Value})
+				p := a.Prefs()
+				a.emit(Event{Type: "prefs", Prefs: &p})
+			}
 			a.pumpLater(func(ctx context.Context) { // pump_later.go
 				raw, err := a.C.Prefs(ctx)
 				if err != nil {
@@ -546,15 +555,27 @@ func (a *App) knownNonMember(ch string) bool {
 	return ok && c.Name != "" && !c.IsIM && !c.IsMPIM && !c.IsMember
 }
 
+// msgSubEvent is a message event's fields onMessage reads for its
+// subtypes.
+type msgSubEvent struct {
+	Subtype   string         `json:"subtype"`
+	Message   *slack.Message `json:"message"`
+	Previous  *slack.Message `json:"previous_message"`
+	DeletedTS string         `json:"deleted_ts"`
+	EventTS   string         `json:"event_ts"`
+}
+
 func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
-	var e struct {
-		Subtype   string         `json:"subtype"`
-		Message   *slack.Message `json:"message"`
-		Previous  *slack.Message `json:"previous_message"`
-		DeletedTS string         `json:"deleted_ts"`
-		EventTS   string         `json:"event_ts"`
-	}
+	var e msgSubEvent
 	if json.Unmarshal(ev.Raw, &e) != nil {
+		return
+	}
+	switch e.Subtype {
+	case "channel_history_changed", "group_history_changed", "im_history_changed", "mpim_history_changed":
+		// Slack's messageReceived returns for a message of these subtypes
+		// (VxbD): the event of that type is the one that changes anything
+		// (handle's channel_history_changed). Taken for a new message, it
+		// was stored and announced as one.
 		return
 	}
 	// what the next counts' history_invalid and updated already cover
@@ -566,6 +587,31 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	case "message_changed", "message_replied":
 		a.advanceMutation(ch, e.EventTS, false)
 	}
+	switch e.Subtype {
+	case "message_changed", "message_deleted", "message_locked", "message_replied":
+		// A change to a message of a conversation whose messages wait for
+		// its lookup (holdForConv) waits behind them, as Slack's
+		// preprocessRtmMessage holds each of the conversation's message
+		// events until it is fetched: applied at once, a deletion came
+		// before the reply it deleted, whose late announcement put it back
+		// in the open thread, and an edit before the copy announced as it
+		// was.
+		if a.holdBehindConv(ch) {
+			a.convLater(ch, func(ctx context.Context) {
+				defer a.releaseConv(ch)
+				a.onMessageChange(ctx, ch, &e, ev.Raw)
+			})
+			return
+		}
+		a.onMessageChange(ctx, ch, &e, ev.Raw)
+		return
+	}
+	a.onNewMessage(ch, ev.Raw)
+}
+
+// onMessageChange is onMessage for the subtypes that change a message the
+// store may hold: an edit, a deletion, a thread's lock or its replies.
+func (a *App) onMessageChange(ctx context.Context, ch string, e *msgSubEvent, raw json.RawMessage) {
 	switch e.Subtype {
 	case "message_changed":
 		if e.Message == nil {
@@ -638,14 +684,17 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":
-		a.onMessageLocked(ch, ev.Raw)
-		return
+		a.onMessageLocked(ch, raw)
 	case "message_replied":
-		a.onMessageReplied(ctx, ch, ev.Raw) // thread_meta.go
-		return
+		a.onMessageReplied(ctx, ch, raw) // thread_meta.go
 	}
+}
+
+// onNewMessage is onMessage for a message the socket brings (any other
+// subtype).
+func (a *App) onNewMessage(ch string, raw json.RawMessage) {
 	var m slack.Message
-	if json.Unmarshal(ev.Raw, &m) != nil || m.TS == "" {
+	if json.Unmarshal(raw, &m) != nil || m.TS == "" {
 		return
 	}
 	// appendMessages merges a socket message into the stored one: a pin
@@ -675,7 +724,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
 	// a broadcast's root carries its parent's reply metadata; a plain
 	// reply leaves the parent to message_replied (thread_meta.go)
-	a.mergeBroadcastRoot(ch, &m, ev.Raw)
+	a.mergeBroadcastRoot(ch, &m, raw)
 	// Echo of our own optimistic send: swap the pending row instead of
 	// announcing a second message.
 	if a.confirmPending(ch, &m) {
@@ -696,6 +745,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)
+		a.S.NoteHeard(ch, m.TS) // the window's gap boundary goes on with it, while no slow connect came (store)
 		if !isReply {
 			// a newest page whose request was out when it came keeps it
 			// (store.SetLatestSince): the store dropped it when no page

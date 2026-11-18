@@ -111,9 +111,10 @@ type thunkTable struct {
 	patched atomic.Pointer[map[string]bool]
 
 	mu      sync.Mutex
-	natives map[string]NativeFunc // defaults for plugin-initiated dispatches
-	calls   map[int64]NativeFunc  // in-flight native cores of a Dispatch
-	seq     map[int64]bool        // the calls whose natives run in JS's order (DispatchSeq)
+	natives map[string]NativeFunc  // defaults for plugin-initiated dispatches
+	calls   map[int64]NativeFunc   // in-flight native cores of a Dispatch
+	seq     map[int64]bool         // the calls whose natives run in JS's order (DispatchSeq)
+	checks  map[int64]*atomic.Bool // CheckThenDispatch's: its checks passed (checksPassed)
 	next    int64
 	// seqGo runs DispatchSeq's natives with no plugin, in the order they
 	// came
@@ -314,7 +315,11 @@ func dispatchThen[A, R any](ctx context.Context, t *Taut, name string, args A, n
 		tt.seq[id] = true
 		tt.mu.Unlock()
 	}
-	rt.rt.CallThen(ctx, "__taut.dispatchThunk", func(out json.RawMessage, err error) {
+	// the call waits for its JS whatever the caller's deadline (a toast
+	// behind a 30 s backlog still shows), and the native stays registered
+	// until that JS has run: one dropped at the deadline was gone when JS
+	// called it
+	rt.rt.CallThen(context.WithoutCancel(ctx), "__taut.dispatchThunk", func(out json.RawMessage, err error) {
 		tt.drop(id)
 		if err != nil {
 			var zero R
@@ -377,16 +382,28 @@ func inOrder(ctx context.Context) context.Context {
 // queued meanwhile; with an in-order one, in order with the user's later
 // input.
 func (tt *thunkTable) add(ctx context.Context, native NativeFunc) int64 {
+	// the native's work is the user's (a post, a reaction): it outlives the
+	// plugin runtime that called it, which may close meanwhile (plugins
+	// turned off, the watchdog), keeping the chain it goes on with
+	inner := native
+	mark := func(c context.Context) context.Context { return c }
 	switch {
 	case jsrt.IsUserChain(ctx):
-		inner := native
-		native = func(c context.Context, raw []json.RawMessage) (any, error) { return inner(jsrt.UserChain(c), raw) }
+		noHold := jsrt.IsNoChain(ctx)
+		mark = func(c context.Context) context.Context {
+			c = jsrt.UserChain(c)
+			if noHold {
+				c = jsrt.NoChain(c)
+			}
+			return c
+		}
 	case jsrt.IsUserBlocking(ctx):
-		inner := native
-		native = func(c context.Context, raw []json.RawMessage) (any, error) { return inner(jsrt.UserBlocking(c), raw) }
+		mark = jsrt.UserBlocking
 	case jsrt.IsInOrder(ctx):
-		inner := native
-		native = func(c context.Context, raw []json.RawMessage) (any, error) { return inner(jsrt.InOrder(c), raw) }
+		mark = jsrt.InOrder
+	}
+	native = func(c context.Context, raw []json.RawMessage) (any, error) {
+		return inner(mark(context.WithoutCancel(c)), raw)
 	}
 	tt.mu.Lock()
 	tt.next++
@@ -402,7 +419,32 @@ func (tt *thunkTable) drop(id int64) {
 	tt.mu.Lock()
 	delete(tt.calls, id)
 	delete(tt.seq, id)
+	delete(tt.checks, id)
 	tt.mu.Unlock()
+}
+
+// watchChecks is the flag checksPassed sets for dispatch id (a
+// CheckThenDispatch's call): its send checks let the message go, and what
+// follows is the dispatch.
+func (tt *thunkTable) watchChecks(id int64) *atomic.Bool {
+	f := new(atomic.Bool)
+	tt.mu.Lock()
+	if tt.checks == nil {
+		tt.checks = map[int64]*atomic.Bool{}
+	}
+	tt.checks[id] = f
+	tt.mu.Unlock()
+	return f
+}
+
+// checksPassed is JS saying dispatch id's checks passed (JS thread).
+func (tt *thunkTable) checksPassed(id int64) {
+	tt.mu.Lock()
+	f := tt.checks[id]
+	tt.mu.Unlock()
+	if f != nil {
+		f.Store(true)
+	}
 }
 
 // inSeq reports whether dispatch id's native runs in JS's order

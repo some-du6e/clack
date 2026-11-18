@@ -1559,10 +1559,13 @@ func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bo
 		}
 	}
 	// one read per (slice, key): the whole value, or the entries asked for
-	// (a message bucket's messages), at most viewChunk entries a call, so
-	// no read holds the JS thread long: a send's checks waited behind one
-	// that encoded a whole bucket (29 ms on the runners). A whole message
-	// bucket (its injected messages) is listed first, then read in chunks.
+	// (a message bucket's messages), at most viewChunk entries a JS task,
+	// so no read holds the thread long: a send's checks waited behind one
+	// that encoded a whole bucket (29 ms on the runners). The first chunk
+	// of each, and a whole message bucket's keys (its injected messages),
+	// go in one call; the rest then go together, each a task of its own,
+	// back to back: a bucket costs two trips through the queue, not one a
+	// chunk (13 behind a busy runtime for a 300-message timeline).
 	type pairReq struct {
 		whole bool
 		subs  []string
@@ -1592,92 +1595,104 @@ func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bo
 		}
 		return key
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	var listing [][3]any
-	var listed []viewSK
-	for _, sk := range order {
-		if reqs[sk].whole && sk.slice == "messages" && sk.key != "" {
-			listing = append(listing, [3]any{sk.slice, sk.key, true})
-			listed = append(listed, sk)
-		}
-	}
-	chunked := map[viewSK]bool{} // whole message buckets read in chunks
-	if len(listing) > 0 {
-		var lists []json.RawMessage
-		if err := rt.call(ctx, "views", &lists, listing); err != nil || len(lists) != len(listing) {
-			return out, true
-		}
-		for i, sk := range listed {
-			var all []string
-			_ = json.Unmarshal(lists[i], &all)
-			reqs[sk].whole, reqs[sk].subs = false, all
-			chunked[sk] = true
-		}
-	}
 	type part struct {
 		sk   viewSK
-		subs []string // nil: the whole value
+		subs []string
 	}
-	var calls [][]part
-	var cur []part
-	n := 0
-	flush := func() {
-		if len(cur) > 0 {
-			calls = append(calls, cur)
-			cur, n = nil, 0
-		}
+	const (
+		kindWhole = iota // the value in one piece
+		kindList         // a whole message bucket: its keys and first chunk
+		kindSubs         // the first chunk of the entries asked for
+	)
+	type spec struct {
+		sk   viewSK
+		kind int
 	}
+	var first [][3]any
+	var specs []spec
+	var rest []part
 	for _, sk := range order {
 		r := reqs[sk]
-		if r.whole {
-			if n+1 > viewChunk {
-				flush()
+		switch {
+		case r.whole && sk.slice == "messages" && sk.key != "":
+			first = append(first, [3]any{sk.slice, sk.key, map[string]int{"first": viewChunk}})
+			specs = append(specs, spec{sk, kindList})
+		case r.whole:
+			first = append(first, [3]any{sk.slice, jsKey(sk.key), nil})
+			specs = append(specs, spec{sk, kindWhole})
+		default:
+			first = append(first, [3]any{sk.slice, jsKey(sk.key), r.subs[:min(viewChunk, len(r.subs))]})
+			specs = append(specs, spec{sk, kindSubs})
+			for i := viewChunk; i < len(r.subs); i += viewChunk {
+				rest = append(rest, part{sk, r.subs[i:min(i+viewChunk, len(r.subs))]})
 			}
-			cur = append(cur, part{sk: sk})
-			n++
-			continue
-		}
-		for i := 0; i < len(r.subs); i += viewChunk {
-			subs := r.subs[i:min(i+viewChunk, len(r.subs))]
-			if n+len(subs) > viewChunk {
-				flush()
-			}
-			cur = append(cur, part{sk: sk, subs: subs})
-			n += len(subs)
 		}
 	}
-	flush()
 	vals := map[viewSK]json.RawMessage{}
 	buckets := map[viewSK]map[string]json.RawMessage{}
-	for _, c := range calls {
-		args := make([][3]any, len(c))
-		for i, p := range c {
-			var subs any
-			if p.subs != nil {
-				subs = p.subs
+	chunked := map[viewSK]bool{} // whole message buckets read in chunks
+	torn := map[viewSK]bool{}    // a chunk didn't answer: asked again
+	merge := func(sk viewSK, raw json.RawMessage) {
+		var b map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &b)
+		m := buckets[sk]
+		if m == nil {
+			m = make(map[string]json.RawMessage, len(b))
+			buckets[sk] = m
+		}
+		for ts, x := range b {
+			m[ts] = x
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	var got []json.RawMessage
+	err := rt.call(ctx, "views", &got, first)
+	cancel()
+	if err != nil || len(got) != len(first) {
+		return out, true
+	}
+	for i, sp := range specs {
+		switch sp.kind {
+		case kindWhole:
+			vals[sp.sk] = got[i]
+		case kindSubs:
+			merge(sp.sk, got[i])
+		case kindList:
+			var lr struct {
+				Keys []string        `json:"keys"`
+				Part json.RawMessage `json:"part"`
 			}
-			args[i] = [3]any{p.sk.slice, jsKey(p.sk.key), subs}
+			_ = json.Unmarshal(got[i], &lr)
+			chunked[sp.sk] = true
+			merge(sp.sk, lr.Part)
+			for j := viewChunk; j < len(lr.Keys); j += viewChunk {
+				rest = append(rest, part{sp.sk, lr.Keys[j:min(j+viewChunk, len(lr.Keys))]})
+			}
 		}
-		var got []json.RawMessage
-		if err := rt.call(ctx, "views", &got, args); err != nil || len(got) != len(args) {
-			return out, true
+	}
+	if len(rest) > 0 {
+		type answer struct {
+			i   int
+			raw json.RawMessage
+			err error
 		}
-		for i, p := range c {
-			if p.subs == nil {
-				vals[p.sk] = got[i]
+		answers := make(chan answer, len(rest))
+		for i, p := range rest {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			rt.rt.CallThen(ctx, "__taut.views", func(raw json.RawMessage, err error) {
+				cancel()
+				answers <- answer{i, raw, err}
+			}, [][3]any{{p.sk.slice, jsKey(p.sk.key), p.subs}})
+		}
+		for range rest {
+			a := <-answers
+			sk := rest[a.i].sk
+			var res []json.RawMessage
+			if a.err != nil || json.Unmarshal(a.raw, &res) != nil || len(res) != 1 {
+				torn[sk], failed = true, true
 				continue
 			}
-			var b map[string]json.RawMessage
-			_ = json.Unmarshal(got[i], &b)
-			m := buckets[p.sk]
-			if m == nil {
-				m = make(map[string]json.RawMessage, len(b))
-				buckets[p.sk] = m
-			}
-			for ts, raw := range b {
-				m[ts] = raw
-			}
+			merge(sk, res[0])
 		}
 	}
 	bucket := func(sk viewSK) map[string]json.RawMessage {
@@ -1692,6 +1707,8 @@ func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bo
 		sk := viewSK{k.slice, k.key}
 		var raw json.RawMessage
 		switch {
+		case torn[sk] && (k.sub == "" || bucket(sk)[k.sub] == nil):
+			continue // its chunk didn't answer: asked again
 		case k.sub != "":
 			raw = bucket(sk)[k.sub] // one message of a bucket
 		case chunked[sk]:

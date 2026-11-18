@@ -261,7 +261,14 @@ func transformBlocks(ctx context.Context, text string, blocks json.RawMessage) (
 // calls sent with that client_msg_id before core.Send puts the pending
 // copy in, so the list finds the message whichever arrives first.
 func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks json.RawMessage, broadcast bool, sent func(cid string, files bool), attachments ...json.RawMessage) error {
-	text, blocks = transformBlocks(ctx, text, blocks)
+	// the send's last trip into JS holds nothing after it: the network
+	// follows (taut.LastHop)
+	thunk := currentTaut().ThunkPatched(thSendMessage)
+	tctx := ctx
+	if !thunk {
+		tctx = taut.LastHop(ctx)
+	}
+	text, blocks = transformBlocks(tctx, text, blocks)
 	var atts json.RawMessage
 	if len(attachments) > 0 {
 		atts = attachments[0]
@@ -274,8 +281,8 @@ func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks j
 		_, err := api.send(ctx, ch, ts, text, blocks, broadcast, cid, atts)
 		return err
 	}
-	if t := currentTaut(); t.ThunkPatched(thSendMessage) {
-		_, err := taut.Dispatch(ctx, t, thSendMessage, sendMessageArgs{Channel: ch, Blocks: blocks, Text: text, ThreadTs: ts, ReplyBroadcast: broadcast, Attachments: atts},
+	if t := currentTaut(); thunk && t.ThunkPatched(thSendMessage) {
+		_, err := taut.Dispatch(taut.LastHop(ctx), t, thSendMessage, sendMessageArgs{Channel: ch, Blocks: blocks, Text: text, ThreadTs: ts, ReplyBroadcast: broadcast, Attachments: atts},
 			func(ctx context.Context, a sendMessageArgs) (any, error) {
 				return nil, send(ctx, a.Channel, a.ThreadTs, a.Text, a.Blocks, a.ReplyBroadcast, a.Attachments)
 			})
@@ -430,7 +437,7 @@ func tautSendCheck(m SendCheck, done func(ok bool)) {
 	// queued now, before this frame's layout queues the composer's
 	// re-render (SendCheckAsync); done hears the answer on another
 	// goroutine
-	t.SendCheckAsync(taut.UserSend(context.Background()), checkContext(m), done)
+	t.SendCheckAsync(taut.UserAction(context.Background()), checkContext(m), done)
 }
 
 // checkContext is the send checks' {kind, channelId, threadTs} and the

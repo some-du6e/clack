@@ -186,14 +186,13 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
-		if up {
-			a.firstUpOnce.Do(func() { close(a.firstUp) })
-		}
 		// a slow connect's count moves before the lists hear of it: the
 		// ones on screen load again at the event, and read Slack again
-		// (history_catchup.go)
+		// (history_catchup.go); boot's prefetch, waiting for the first
+		// connect, reads after its count moved
 		if up {
 			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
+			a.firstUpOnce.Do(func() { close(a.firstUp) })
 		} else {
 			a.socketDown()
 		}
@@ -1076,6 +1075,7 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
 	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
+	gen := a.S.GapGen()       // the slow connects the window's new boundary holds after (store.Timeline.Contig)
 	rm := a.readStarts()      // the slow connects and counts marks the page will cover (history_catchup.go)
 	known, _ := a.S.Count(ch) // the latest it will cover (windowBehind)
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
@@ -1087,7 +1087,8 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// (store/live.go), and so do the processed files the window has of
 	// the page's stubs (keepPageFiles)
 	a.keepPageFiles(ch, p.Messages)
-	a.S.SetLatestSince(ch, p.Messages, p.HasMore, store.LatestOpts{Since: live, Pending: a.pendingCopies(ch, ""), GapSeq: a.gapSeqNow()})
+	a.S.SetLatestSince(ch, p.Messages, p.HasMore, store.LatestOpts{Since: live, Pending: a.pendingCopies(ch, ""), Gen: gen})
+	a.confirmFromPage(ch, p.Messages) // an own send the page has, its reply lost
 	a.noteWindowRead(ch, rm, known.Latest)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)

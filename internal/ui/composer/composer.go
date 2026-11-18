@@ -100,6 +100,10 @@ type Composer struct {
 	// every file the message keeps, in order (saveMessageEditWithFiles:
 	// chat.update's file_ids).
 	SaveEdit func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error
+	// SaveEditThen is SaveEdit queuing its JS work before it returns (UI
+	// goroutine) and telling done the outcome on another goroutine; the
+	// composer prefers it.
+	SaveEditThen func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error))
 
 	// editFiles0 is an edit's initialFileIds (the message's files)
 	editFiles0 []string
@@ -1220,12 +1224,23 @@ func (c *Composer) submit() {
 
 	if c.edit != nil {
 		m := c.edit
+		if then := c.SaveEditThen; then != nil {
+			// the edit's thunks and transforms are the user's: queued now,
+			// on the UI goroutine (taut.UserAction, DispatchThen), so a
+			// plugin click after Enter comes after them
+			then(taut.UserAction(context.Background()), m.Channel, m.TS, text, blocks, nil, func(err error) {
+				if err != nil {
+					c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+				}
+			})
+			c.finishEdit()
+			return
+		}
 		save := c.SaveEdit
 		go func() {
-			// the edit's thunks and transforms are the user's, as a send's
-			// (taut.UserSend): ahead of the queued renders, after the
-			// user's earlier input
-			ctx := taut.UserSend(context.Background())
+			// the edit's thunks and transforms are the user's, ahead of the
+			// queued renders, after the user's earlier input
+			ctx := taut.UserAction(context.Background())
 			var err error
 			if save != nil {
 				err = save(ctx, m.Channel, m.TS, text, blocks, nil)
@@ -1341,7 +1356,19 @@ type outgoing struct {
 // Attached files leave the composer at once, as in Slack (the draft is
 // gone and the placeholder message shows them while their uploads
 // finish); a failed send puts them back.
-func (c *Composer) send(o *outgoing) { go c.startSend(o)() }
+func (c *Composer) send(o *outgoing) {
+	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
+		// a plugin's prepareAndSendMessage: its JS call queued now, on the
+		// UI goroutine (taut.DispatchThen), in order with the clicks after
+		// Enter; from the send's goroutine a click in the same frame could
+		// go first
+		job, finish := c.newSendJob(o)
+		taut.DispatchThen(taut.SendLane(context.Background(), t), t, thPrepareAndSend, job.patchArgs(job.args()), job.native,
+			func(_ any, err error) { finish(err) })
+		return
+	}
+	go c.startSend(o)()
+}
 
 // startSend is send's part on the UI goroutine (the attached files leave
 // the composer, the job is built); it returns the rest, to run on any
@@ -1350,8 +1377,9 @@ func (c *Composer) startSend(o *outgoing) (run func()) {
 	job, finish := c.newSendJob(o)
 	return func() {
 		// its send transforms and thunks are the user's: ahead of the JS
-		// work queued before them, the chain held together (taut.UserSend)
-		finish(job.run(taut.UserSend(context.Background())))
+		// work queued before them, held together when the native goes back
+		// into JS (taut.SendLane)
+		finish(job.run(taut.SendLane(context.Background(), currentTaut())))
 	}
 }
 
@@ -1584,7 +1612,8 @@ func (c *Composer) checkThenSend(o *outgoing) {
 		// the checks and the plugins' prepareAndSendMessage in one JS
 		// call (checkThenRun)
 		job, finish := c.newSendJob(o)
-		job.checkThenRun(taut.UserSend(context.Background()), currentTaut(), checkContext(m), func(sent bool, err error) {
+		t := currentTaut()
+		job.checkThenRun(taut.SendLane(context.Background(), t), t, checkContext(m), func(sent bool, err error) {
 			if !sent {
 				c.restoreSend(o) // held back (done(false)): the message goes back
 				return
@@ -1698,10 +1727,14 @@ func (c *Composer) clearAfterSend() { c.clearForSend()() }
 // clearForSend is clearAfterSend for a message about to go out: the
 // composer clears now, and what that tells the plugins and Slack (the
 // server draft's deletion, the plugins' live draft, the typing's end) goes
-// when after is called, once the send's own JS call is queued. Queued
-// before it, that work ran first (the drafts' store update re-renders the
-// patched components) and the pending copy missed its frame; Slack's
-// Enter dispatches prepareAndSendMessage before the draft clears.
+// when after is called, once the send's own JS call is queued. Slack's
+// MessagePaneInput.sendMessage clears the draft and the input first and
+// then dispatches prepareAndSendMessage, all in one task, so its plugins
+// see an empty draft in the send's checks and patches and the re-render
+// the clear causes comes after the send. Clack queues the clear's JS work
+// after the send's call to keep that re-render behind it: queued before,
+// the drafts' store update re-rendered the patched components ahead of
+// the send and the pending copy missed its frame.
 func (c *Composer) clearForSend() (after func()) {
 	c.ed.SetDoc(NewDoc())
 	c.lastVer = c.ed.Version()
