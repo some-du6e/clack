@@ -98,8 +98,8 @@ func TestDMsListFollowsSidebarScope(t *testing.T) {
 // {background-color:#0000}. On the peek card that rule meets
 // .p-peek_card .p-activity_ia4_page__item:hover (base-pry under the
 // base-pry-hover image), whose image it leaves: the card keeps a hover in
-// dark mode too, #f8f8f8 at .08 over its #212428 (#323538), and the
-// presence ring's cutout follows the tile.
+// dark mode too, #f8f8f8 at .08 over its #212428 (#323538); the presence
+// ring's cutout over it is TestDMsRowsDrawn's.
 func TestDMsListHoverByMode(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		d := &DMs{}
@@ -113,9 +113,6 @@ func TestDMsListHoverByMode(t *testing.T) {
 		}
 		if bg.A != 0 || hov != want {
 			t.Errorf("peek card dark=%v: row fill %s, hover %s; Slack transparent, hover %s", dark, hexA(bg), hexA(hov), hexA(want))
-		}
-		if r := d.ringColor(true); r != hov {
-			t.Errorf("peek card dark=%v: a hovered row's presence ring %s, its tile %s", dark, hexA(r), hexA(hov))
 		}
 	}
 	for _, dark := range []bool{false, true} {
@@ -167,53 +164,135 @@ func TestActivityBadgesFollowImportant(t *testing.T) {
 	}
 }
 
-// The DMs peek card (.p-peek_card--dms: DmsListAll on a Popover at the
-// document root) paints in the root scope: timestamps
-// .p-dms_channel__timestamp theme-content-inv-sec, a muted conversation's
-// --muted theme-content-inv-ter (drawn at alpha 0 before: ter unset),
-// the Unreads toggle theme-content-inv-sec / -inv-pry, an item's border
+// The DMs peek card (.p-peek_card--dms: DmsListAll in PeekView's portal
+// under document.body, outside .p-ia4_client) paints in the root scope:
+// timestamps .p-dms_channel__timestamp theme-content-inv-sec, a muted
+// conversation's --muted theme-content-inv-ter, a row's border-bottom
 // theme-otl-inv-pry, all from the account theme's primary (Karim's peach
-// ramp, Ochin's navy), over the card's ctr-pry. Values: Slack's root-scope
-// tokens (testdata/theme-oracle.json).
+// ramp, Ochin's navy), over the card's ctr-pry; and the rest as outside
+// .p-ia4_client: the previews content-pry (--read, --unread), content-sec
+// (--muted, and every row's with activity_inbox: the item's colour), the
+// Unreads toggle content-sec, content-pry on. Values: Slack's tokens
+// (testdata/theme-oracle.json's root scope, kit.css).
 func TestDMsPeekCardTokens(t *testing.T) {
 	hx := func(v uint32) color.NRGBA { return rgb(v) }
 	hxa := func(v uint32, a uint8) color.NRGBA { c := rgb(v); c.A = a; return c }
 	for _, c := range []struct {
-		name, ia                         string
-		dark                             bool
-		bg, invPry, invSec, invTer, rule color.NRGBA
+		name, ia                          string
+		dark                              bool
+		bg, fg, sec, invSec, invTer, rule color.NRGBA
+		baseImp, contImp                  color.NRGBA
 	}{
-		{"default light", ``, false, hx(0xffffff), hx(0x39063a), hxa(0x39063a, 0xcc), hxa(0x39063a, 0x80), hxa(0x611f69, 0x21)},
-		{"default dark", ``, true, hx(0x212428), hx(0xf8f8f8), hxa(0xe3ceeb, 0xcc), hxa(0xe3ceeb, 0x99), hxa(0xefe1f5, 0x38)},
-		{"karim import light", importIA, false, hx(0xffffff), hx(0x1c0901), hxa(0x1c0901, 0xcc), hxa(0x1c0901, 0x80), hxa(0x41281a, 0x21)},
-		{"karim picker dark", pickerIA, true, hx(0x212428), hx(0xf8f8f8), hxa(0xffdfcf, 0xcc), hxa(0xffdfcf, 0x99), hxa(0xfff4f0, 0x38)},
-		{"ochin light", ochinIA, false, hx(0xffffff), hx(0x122a59), hxa(0x122a59, 0xcc), hxa(0x122a59, 0x80), hxa(0x0b4c8c, 0x21)},
+		{"default light", ``, false, hx(0xffffff), hx(0x1d1c1d), hx(0x454447), hxa(0x39063a, 0xcc), hxa(0x39063a, 0x80), hxa(0x611f69, 0x21), hx(0x83388a), hx(0xf9edff)},
+		{"default dark", ``, true, hx(0x212428), hx(0xf8f8f8), hx(0xb9babd), hxa(0xe3ceeb, 0xcc), hxa(0xe3ceeb, 0x99), hxa(0xefe1f5, 0x38), hx(0xcfa1de), hx(0x200221)},
+		{"karim import light", importIA, false, hx(0xffffff), hx(0x1d1c1d), hx(0x454447), hxa(0x1c0901, 0xcc), hxa(0x1c0901, 0x80), hxa(0x41281a, 0x21), hx(0xe01e5a), hx(0xfff4f4)},
+		{"karim picker dark", pickerIA, true, hx(0x212428), hx(0xf8f8f8), hx(0xb9babd), hxa(0xffdfcf, 0xcc), hxa(0xffdfcf, 0x99), hxa(0xfff4f0, 0x38), hx(0xcfa1de), hx(0x200221)},
+		{"ochin light", ochinIA, false, hx(0xffffff), hx(0x1d1c1d), hx(0x454447), hxa(0x122a59, 0xcc), hxa(0x122a59, 0x80), hxa(0x0b4c8c, 0x21), hx(0x1a8343), hx(0xe9ffec)},
 	} {
 		th := themed(c.ia, c.dark)
 		pp := peekPalOf(th)
+		lOff, eOff, kOff, fOff := peekToggleInk(pp, false)
+		lOn, eOn, kOn, fOn := peekToggleInk(pp, true)
+		d := &DMs{}
+		d.th = th
+		d.peeking = true
+		d.dmsColors()
 		for _, f := range []struct {
 			what      string
 			got, want color.NRGBA
 		}{
 			{"card (ctr-pry)", pp.bg, c.bg},
-			{"toggle on (theme-content-inv-pry)", pp.invPry, c.invPry},
-			{"toggle, timestamps (theme-content-inv-sec)", pp.invSec, c.invSec},
+			{"timestamps (theme-content-inv-sec)", pp.invSec, c.invSec},
 			{"muted timestamps (theme-content-inv-ter)", pp.invTer, c.invTer},
-			{"item border (theme-otl-inv-pry)", pp.rule, c.rule},
+			{"row border (theme-otl-inv-pry)", pp.rule, c.rule},
+			{"the card's timestamp", d.c.time, flatten(c.invSec, c.bg)},
+			{"the card's muted timestamp", d.c.ter, flatten(c.invTer, c.bg)},
+			{"the card's row rule", d.c.rule, flatten(c.rule, c.bg)},
+			{"read and unread previews (--read, --unread: content-pry)", d.c.preview, c.fg},
+			{"unread preview", d.c.white, c.fg},
+			{"muted preview (--muted: content-sec)", d.c.soft, c.sec},
+			{"activity_inbox preview (the item's content-sec)", d.c.item, c.sec},
+			{"Unreads toggle label, off (content-sec)", lOff, c.sec},
+			{"its border, off", eOff, c.sec},
+			{"its handle, off", kOff, c.sec},
+			{"Unreads toggle label, on (content-pry)", lOn, c.fg},
+			{"its fill, on (theme-base-imp)", fOn, c.baseImp},
+			{"its border, on (theme-content-imp)", eOn, c.contImp},
+			{"its handle, on", kOn, c.contImp},
 		} {
 			if f.got != f.want {
 				t.Errorf("%s: %s = %s, Slack %s", c.name, f.what, hexA(f.got), hexA(f.want))
 			}
 		}
-		d := &DMs{}
-		d.th = th
-		d.peeking = true
-		d.dmsColors()
-		if got, want := d.c.ter, flatten(c.invTer, c.bg); got != want || got.A == 0 {
-			t.Errorf("%s: the card's muted timestamp %s, Slack %s", c.name, hexA(got), hexA(want))
+		if fOff.A != 0 {
+			t.Errorf("%s: the toggle has a fill while off (%s)", c.name, hexA(fOff))
 		}
-		if got, want := d.c.time, flatten(c.invSec, c.bg); got != want {
-			t.Errorf("%s: the card's timestamp %s, Slack %s", c.name, hexA(got), hexA(want))
+		if d.c.ter.A == 0 {
+			t.Errorf("%s: the card's muted timestamp is invisible", c.name)
 		}
+	}
+}
+
+// cascadeTokens are a stylesheet's tokens: what each expression resolves
+// to through its var() chain, and the custom properties the sheet
+// declares itself (theme.Declarer).
+type cascadeTokens struct {
+	vals     map[string]color.NRGBA // expression -> colour (own through the chain)
+	declared map[string]bool
+}
+
+func (c cascadeTokens) Color(expr string) (color.NRGBA, bool, bool) {
+	v, ok := c.vals[expr]
+	return v, ok, ok
+}
+func (c cascadeTokens) Overridden() bool          { return true }
+func (c cascadeTokens) Key() uint64               { return uint64(len(c.vals))*31 + uint64(len(c.declared)) }
+func (c cascadeTokens) Declares(name string) bool { return c.declared[name] }
+
+// The cascade is per variable, in the views kit and on the peek card: a
+// stylesheet keeps a token where it declares it itself, and only there.
+// One declaring only theme-base-imp keeps the account's theme-content-imp
+// (Karim's import in dark mode: #fff4f4 numerals); one overriding only a
+// ramp (Slick's AMOLED: the aubergine stops, which Clack's defaults spell
+// the theme tokens on) reaches none of an account theme's tokens, whose
+// Theme stylesheet spells them on its own ramp, but does reach Slack's
+// default theme's. A sheet declaring theme-content-inv-ter beats the
+// account's on the card.
+func TestThemeTokensCascadePerVariable(t *testing.T) {
+	hx := func(v uint32) color.NRGBA { return rgb(v) }
+	baseImp, contImp := "var(--dt_color-theme-base-imp)", "var(--dt_color-theme-content-imp)"
+	only := cascadeTokens{vals: map[string]color.NRGBA{baseImp: hx(0x3b4252)}, declared: map[string]bool{"--dt_color-theme-base-imp": true}}
+	both := cascadeTokens{vals: map[string]color.NRGBA{baseImp: hx(0x3b4252), contImp: hx(0xeceff4)},
+		declared: map[string]bool{"--dt_color-theme-base-imp": true, "--dt_color-theme-content-imp": true}}
+	amoled := cascadeTokens{vals: map[string]color.NRGBA{baseImp: hx(0x000000), contImp: hx(0x000000)},
+		declared: map[string]bool{"--dt_color-plt-aubergine-0": true, "--dt_color-plt-aubergine-10": true}}
+	ter := cascadeTokens{vals: map[string]color.NRGBA{"var(--dt_color-theme-content-inv-ter)": hx(0x123456)},
+		declared: map[string]bool{"--dt_color-theme-content-inv-ter": true}}
+	for _, c := range []struct {
+		name, ia             string
+		tk                   cascadeTokens
+		badge, badgeText     color.NRGBA // the views kit's (palOf)
+		peekImp, peekImpText color.NRGBA // the card's
+	}{
+		{"import, sheet declares base-imp only", importIA, only, hx(0x3b4252), hx(0xfff4f4), hx(0x3b4252), hx(0xfff4f4)},
+		{"import, sheet declares both", importIA, both, hx(0x3b4252), hx(0xeceff4), hx(0x3b4252), hx(0xeceff4)},
+		{"import, AMOLED's ramp only", importIA, amoled, hx(0xe01e5a), hx(0xfff4f4), hx(0xe01e5a), hx(0xfff4f4)},
+		{"default theme, AMOLED's ramp only", ``, amoled, hx(0x000000), hx(0x000000), hx(0x000000), hx(0x000000)},
+	} {
+		th := themed(c.ia, true)
+		th.Tokens = c.tk
+		p := palOf(th)
+		if p.Badge != c.badge || p.Accent != c.badge || p.AccentText != c.badgeText {
+			t.Errorf("%s: the kit's badge %s / dot %s with %s; Slack's cascade %s with %s", c.name, hexA(p.Badge), hexA(p.Accent), hexA(p.AccentText), hexA(c.badge), hexA(c.badgeText))
+		}
+		pp := peekPalOf(th)
+		if pp.baseImp != c.peekImp || pp.contImp != c.peekImpText {
+			t.Errorf("%s: the card's badge %s with %s; Slack's cascade %s with %s", c.name, hexA(pp.baseImp), hexA(pp.contImp), hexA(c.peekImp), hexA(c.peekImpText))
+		}
+	}
+	th := themed(importIA, true)
+	th.Tokens = ter
+	if pp := peekPalOf(th); pp.invTer != hx(0x123456) || pp.invSec != (color.NRGBA{R: 0xff, G: 0xdf, B: 0xcf, A: 0xcc}) {
+		t.Errorf("a sheet declaring theme-content-inv-ter over Karim's import: the card's %s / %s; Slack the sheet's #123456 with the account's #ffdfcfcc", hexA(pp.invTer), hexA(pp.invSec))
 	}
 }
