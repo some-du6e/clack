@@ -54,6 +54,17 @@ func TestSwitchedListWaitsForTheNewRevision(t *testing.T) {
 		t.Fatal("the hub still keeps the split list's model after 40 other conversations")
 	}
 
+	// the hub's new model for the conversation (the main pane's, below)
+	// numbers the message's next copy as the dropped one numbered the
+	// copy the row drew: what a first load does whenever nothing bumped
+	// the dropped model's number since its own (a conversion again, a
+	// reaction), set here so it doesn't hang on that
+	oldRev := row().rev
+	nm := hb.channel(ch)
+	nm.mu.Lock()
+	nm.nextRev = oldRev - 1
+	nm.mu.Unlock()
+
 	// the message is edited meanwhile, the mirror behind the edit
 	release := tautOf().HoldMirror()
 	defer release()
@@ -66,6 +77,12 @@ func TestSwitchedListWaitsForTheNewRevision(t *testing.T) {
 		r := main.s.rows[msg.TS]
 		return r != nil && strings.Contains(rowText(r), "lunch at one?")
 	})
+	if main.s.m != nm {
+		t.Fatal("the main pane doesn't draw the hub's new model")
+	}
+	if r := main.s.rows[msg.TS]; r.rev != oldRev {
+		t.Fatalf("the new model numbers the edited copy %d, the dropped one numbered the old %d: no collision to test", r.rev, oldRev)
+	}
 	// the split list draws again, on the hub's model now: every frame
 	// draws the edit until JS's copy of it comes
 	for dl := time.Now().Add(600 * time.Millisecond); time.Now().Before(dl); {
