@@ -83,7 +83,7 @@ clack.log uses the same tags for what a report about a navigation needs (`intern
 - every click on or reply to one of Clack's notifications: `notify: clicked a notification: ch:… ts:… thread ts:… (id type "msg")` (`replied to` for a reply, whose text isn't logged), and a button: `notify: a notification's button 1 (a link: false)`;
 - a slack: link Clack doesn't handle, by its command only: `ui: deep link not handled: slack://<command>` (`a https link` for anything else).
 
-The reads a navigation makes tag their ids the same way: `history ch:…: 120ms (network)`, `history ch:…: around ts:… in 80ms` (a jump's window), `history ch:…: newer than ts:… in 60ms`, `history ch:…: side <what> 40ms`, `tabs ch:…: 3 tabs (1 files) in 90ms`, and a failed lookup's `messages.list: 1 channels: <error> (ch:…)`.
+The reads a navigation makes tag their ids the same way: `history ch:…: 120ms (network)`, `history ch:…: around ts:… in 80ms` (a jump's window), `history ch:…: older than ts:… in 60ms` and `history ch:…: newer than ts:… in 60ms` (its pages), `history ch:…: side <what> 40ms`, `tabs ch:…: 3 tabs (1 files) in 90ms`, and a failed lookup's `messages.list: 1 channels: <error> (ch:…)`.
 
 The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it, or a dragged region as it was. Whatever the element or region holds (a picked message's text) is in it, unless the user blurs it out in the review. A click (or a drag over it) opens the review before anything is copied or saved, so the user decides what to share; a Shift+click copies the element as it is, for when nothing in it is private.
 
