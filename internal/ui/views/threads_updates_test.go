@@ -452,12 +452,17 @@ func TestThreadsSettleBeforeNextLoad(t *testing.T) {
 func TestThreadsHiddenFirstReadLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
 	app, fs := vkFake(t, nil)
+	// a channel left through the API, so the fake's own answers agree
+	// afterwards (#general can't be left)
 	other := ""
 	for _, id := range fs.ChannelIDs() {
-		if id != ch {
+		if id != ch && app.Leave(context.Background(), id) == nil && thrLeftChannel(app, id) {
 			other = id
 			break
 		}
+	}
+	if other == "" {
+		t.Fatal("no channel left")
 	}
 	fs.SetHook(func(method string, _ url.Values) (any, bool) {
 		if method != "subscriptions.thread.getView" {
@@ -467,14 +472,6 @@ func TestThreadsHiddenFirstReadLikeSlack(t *testing.T) {
 			thrFixRead(other, thrE, thrEReply, "U0FAKE00002", false, thrEReply), // the newest read one, in the channel left
 			thrFixRead(ch, thrX, thrXReply, "U0FAKE00002", false, thrXReply)), true
 	})
-	fs.Push(map[string]any{"type": "channel_left", "channel": other, "event_ts": "1762620000.000100"})
-	deadline := time.Now().Add(10 * time.Second)
-	for !thrLeftChannel(app, other) {
-		if time.Now().After(deadline) {
-			t.Fatal("the channel wasn't left")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
 	h := newKBHost(app, false)
 	h.away.Store(true)
 	v := NewThreads(h)

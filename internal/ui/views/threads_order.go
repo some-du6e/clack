@@ -358,13 +358,13 @@ const (
 // list's layout: a timer is due (350 ms after a load that sorts the list
 // landed, or after onListScroll, which the 150 ms debounce calls as a
 // scroll starts and once it has stopped), or the viewer's attention came
-// back since the last frame (componentDidUpdate). It asks for the frame
-// the next one is due in.
+// back since the frame before (componentDidUpdate; Layout tracks it in
+// every frame, and one that comes back while no list is drawn marks
+// nothing, as Slack's maybeMarkVisibleThreadAsRead returns without a
+// list). It asks for the frame the next one is due in.
 func (v *Threads) visibleDue(gtx C) bool {
 	now := gtx.Now
-	att := v.attention()
-	due := att && !v.attWas
-	v.attWas = att
+	due := v.attBack
 	if p := v.list.Position; p.First != v.scrollPos.First || p.Offset != v.scrollPos.Offset {
 		if now.Sub(v.scrollAt) > thrScrollWait { // the debounce's leading call
 			v.visAt = append(v.visAt, now.Add(thrMarkDelay))

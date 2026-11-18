@@ -231,12 +231,15 @@ type Threads struct {
 	// markVisible's runs (maybeMarkVisibleThreadAsRead): those due (a
 	// load's 350 ms on, a scroll's), the list's last position, when it
 	// last moved and whether the scroll's trailing call is to come, and
-	// the viewer's attention in the last frame
+	// the viewer's attention in the last frame the view drew (attSeen: it
+	// has drawn one since it mounted) and whether it came back since
 	visAt      []time.Time
 	scrollPos  layout.Position
 	scrollAt   time.Time
 	scrollTail bool
 	attWas     bool
+	attSeen    bool
+	attBack    bool
 	shown      shownTracker
 	notes      actNotes
 
@@ -390,6 +393,11 @@ func (v *Threads) Layout(gtx C) D {
 			v.remount()
 		}
 	}
+	// componentDidUpdate's attention edge, against the frame before: none
+	// in the first frame of a mount (its props have no earlier attention)
+	att := v.attention()
+	v.attBack = v.attSeen && att && !v.attWas
+	v.attWas, v.attSeen = att, true
 	if !v.data.started() {
 		v.load(actFresh)
 	}
@@ -615,7 +623,8 @@ func (v *Threads) remount() {
 	v.kb.active, v.kb.initial, v.kb.ring = "", "", false
 	v.mounting, v.loadErr = true, nil
 	v.grew, v.visAt = nil, nil // a new instance compares only with its own props
-	v.resort()                 // threads_order.go
+	v.attSeen = false
+	v.resort() // threads_order.go
 	v.reload()
 }
 
