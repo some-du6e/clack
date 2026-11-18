@@ -61,10 +61,11 @@ touches `site/`, and by hand with `gh workflow run site.yml`:
   scrolls to the bottom so every lazy image loads. A whole visit has to stay
   under 300 KB, no request may leave 127.0.0.1, and the page must not scroll
   sideways.
-- Lighthouse CI, mobile and desktop, three runs each: performance at least
-  99 on the median run, accessibility 100, LCP at most 1.8 s on mobile and
-  0.8 s on desktop, TBT at most 50 ms, CLS at most 0.01, and no
-  third-party, font, script or stylesheet requests.
+- Lighthouse CI on the home page, mobile and desktop, three runs each:
+  performance at least 99 on the median run, accessibility 100, FCP at
+  most 1 s and LCP at most 1.2 s on mobile (0.4 s and 0.5 s on desktop),
+  TBT at most 50 ms, CLS at most 0.01, the page at most 30 KB on the wire,
+  and no third-party, font, script or stylesheet requests.
 
 The run's summary has both tables, and the `site` artifact has the build
 and the Lighthouse reports.
