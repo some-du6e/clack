@@ -492,11 +492,17 @@ func (hb *hub) loadWindow(m *model, ts string) {
 		m.around, m.loading, m.err = "", false, err
 		if err == nil {
 			m.setAll(w.Messages)
-			m.hasMore, m.newestMissing, m.merged = w.HasOlder, !w.Merged, w.Merged
+			// a window with nothing in it (the message gone and nothing near
+			// it) gives way to the newest messages, as one that met them
+			merged := w.Merged || len(w.Messages) == 0
+			m.hasMore, m.newestMissing, m.merged = w.HasOlder, !merged, merged
 			m.loaded, m.fetched = true, time.Now()
 			m.fails, m.retryAt = 0, time.Time{}
 		} else {
+			// the window didn't load: the list goes back to the newest
+			// messages (the jump gives up there)
 			m.failed(hb, err, false, time.Now())
+			m.loaded, m.merged, m.newestMissing = true, true, false
 		}
 		m.rev++
 		m.mu.Unlock()

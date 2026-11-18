@@ -59,6 +59,9 @@ func (s *Store) AddWindow(ch string, msgs []slack.Message, start, end string, ha
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(msgs) == 0 && hasNewer {
+		return Window{Start: start, End: end, HasOlder: hasOlder}, false // nothing there to keep
+	}
 	nw := &Window{Msgs: msgs, Start: start, End: end, HasOlder: hasOlder, used: time.Now()}
 	var keep []*Window
 	for _, x := range s.windows[ch] {

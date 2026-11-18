@@ -358,7 +358,7 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 // Slack's pane mounted at startTs requests around it, two calls, never
 // the newest page first. Else its model's load (ensureLoaded).
 func (s *listState) ensure() {
-	if !s.thread && s.win == nil && s.pendingJump != "" && s.aroundFor != s.pendingJump {
+	if !s.thread && s.chm != nil && s.win == nil && s.pendingJump != "" && s.aroundFor != s.pendingJump {
 		s.chm.mu.Lock()
 		cold := !s.chm.loaded && !s.chm.loading
 		s.chm.mu.Unlock()
@@ -376,6 +376,9 @@ func (s *listState) ensure() {
 // newest messages), loaded from the window core holds that has it, else
 // Slack's two calls (hub.loadWindow). The list draws it as it lands.
 func (s *listState) openWindow(ts string) {
+	if s.chm == nil { // a channel list from stateIn only
+		return
+	}
 	s.hb.dropWindow(s.win)
 	w := s.hb.newWindow(s.ch)
 	s.win, s.m = w, w
