@@ -126,8 +126,10 @@ type Size struct {
 	// channel the viewer previews (preview_agents.go).
 	PreviewAgents bool
 	// ChannelAgents gives #agents-lab people, an agent and apps, and
-	// #no-agents people only (channel_agents.go).
-	ChannelAgents bool
+	// #no-agents people only (channel_agents.go). ChannelAgentsPrivate
+	// makes #no-agents a private channel (the roster menu's private rules,
+	// channel_managers.go).
+	ChannelAgents, ChannelAgentsPrivate bool
 	// WorkObjects adds #work-objects: app unfurls as work objects and
 	// the methods and events their cards and flexpane use
 	// (workobjects.go).
@@ -449,11 +451,15 @@ type Server struct {
 	ChannelPrefs map[string]map[string]any
 	// ChannelManagers are admin.roles.entity.listAssignments' channel
 	// managers (role Rl0A) by channel (missing: none). Set it before the
-	// calls.
+	// calls; admin.roles.addMembers and removeMembers change it after
+	// (channel_managers.go: read it with Managers).
 	ChannelManagers map[string][]string
 	// PinsFolderLimit refuses #pins-gallery's bookmarks.add past that many
 	// bookmarks (too_many_bookmarks); 0: no limit (pins_folders.go).
 	PinsFolderLimit int
+
+	// managerWrites: admin.roles.addMembers / removeMembers (channel_managers.go)
+	managerWrites []ManagerWrite
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
@@ -1708,10 +1714,13 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("channel_id", ch, "pref_name", name, "pref_value", v)
 	case "admin.roles.entity.listAssignments":
 		var as []map[string]any
-		if us := s.ChannelManagers[f.Get("entity_id")]; len(us) > 0 {
+		if us := s.Managers(f.Get("entity_id")); len(us) > 0 { // channel_managers.go's writes change them
 			as = append(as, map[string]any{"role_id": "Rl0A", "entity_id": f.Get("entity_id"), "users": us})
 		}
 		return ok("role_assignments", as)
+	case "admin.roles.addMembers", "admin.roles.removeMembers":
+		out, _ := s.handleChannelManagers(method, f) // channel_managers.go
+		return out
 	case "team.info":
 		if f.Get("team") == ExternalTeamID {
 			return ok("team", map[string]any{"id": ExternalTeamID, "name": "Partner Co", "domain": "partnerco",
