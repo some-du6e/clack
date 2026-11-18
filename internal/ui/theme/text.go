@@ -80,18 +80,20 @@ func envFloat(name string, def float32) float32 {
 //     (0.25 there);
 //   - on the dark main pane, the fade grows as the text dims: #b9babd
 //     (topic, y=.73) at 0.26-0.27 and #ababad (timestamps, y=.67) at 0.39,
-//     so k = 0.27 + max(0, .73-y)·2, held at .67's 0.39 below it: Gio's
-//     linear-light edges over-ink greys on dark by much the same 15-30%
-//     whatever their luma (Gio's blend over Chrome Linux's own coverage
-//     of the dark meta and body cells), and the fit continued past its
-//     data left #9a9b9e (y=.61) 6-17% light;
+//     so k = 0.27 + max(0, .73-y)·2 down to .67. Below that anchor the
+//     fit's continuation (to 0.45) left greys light, and the excess Gio's
+//     linear-light edges give them depends on size more than luma
+//     (font-shots 44251954931 against Chrome Linux, unfaded: 12px greys
+//     +21-23%, a 13px muted timestamp +8%, a 15px bold #9a9b9e name +6%),
+//     so k falls from .39 at .67 to 0.15 at .6, where that name and
+//     timestamp ink like Chrome's;
 //   - below y=.6 the text is light ink only on a dark background, which
 //     the text knows from the chrome scope (unless the account theme's
 //     sidebar is light) or the primary theme's mode (as onWhite): there
-//     the fade ramps from 0 at y=.45 to y=.6's, where
-//     it stopped at once before and a muted DM's timestamp (#958a9d,
-//     y=.56) came out brighter than its name (#9a9b9e, faded), the
-//     reverse of Slack. On white, darker text stays unfaded.
+//     the fade ramps down to 0 at y=.4. It stopped at once below .6
+//     before, so a muted DM's #958a9d timestamp (y=.56, unfaded) came out
+//     brighter than its faded #9a9b9e name, the reverse of Slack. On
+//     white, darker text stays unfaded.
 //
 // The result is scaled by LightTextFade/0.2 (the env knob). Bold needs 3/4
 // of it (dark tabs, #b9babd and #f8f8f8). Black gets no fade: the white
@@ -123,9 +125,10 @@ func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) 
 var lightFadeK = fadeK
 
 const (
-	paneFadeMax  = 0.39 // the main pane's k at y=.67, its lowest measured anchor
-	fadeRampLow  = 0.45 // below .6 the fade on dark ramps up from here
+	paneFadeKnee = 0.67 // the main pane's lowest measured anchor (#ababad, k .39)
+	paneFadeLow  = 0.15 // its k at y=.6 (a 13px muted timestamp, a 15px bold name)
 	fadeLightMin = 0.6  // light ink: the fade applies whatever the background
+	fadeRampLow  = 0.40 // below .6, on dark, the fade ramps down to 0 here
 )
 
 func fadeK(y float32, chrome, onDark bool) float32 {
@@ -138,7 +141,11 @@ func fadeK(y float32, chrome, onDark bool) float32 {
 	if chrome {
 		return min(0.15+max(0, 0.85-y)*0.65, 0.45)
 	}
-	return min(0.27+max(0, 0.73-y)*2, paneFadeMax)
+	if y < paneFadeKnee {
+		knee := fadeK(paneFadeKnee, false, onDark)
+		return paneFadeLow + (knee-paneFadeLow)*(y-fadeLightMin)/(paneFadeKnee-fadeLightMin)
+	}
+	return 0.27 + max(0, 0.73-y)*2
 }
 
 // LabelInk is the colour labels (Text, DrawText) ink c in: the

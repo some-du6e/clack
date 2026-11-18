@@ -374,10 +374,12 @@ func trPaint(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb, 
 }
 
 // TestTextMatchesChrome holds Clack's text to Chrome's: every cell of
-// trCells drawn under a text model is measured against Chrome 156's
+// trCells drawn under a text model is measured against Chrome's
 // screenshot of the same cell (testdata/text-render, from font-shots'
 // text-render jobs: page-<s>x.html in the embedded Lato; Chrome on the
-// Windows runner draws ClearType) the way text_render_compare.py measures
+// Windows runner draws ClearType; linux-chrome-1x is Chrome 157's with
+// the fade's probe cells, font-shots 44251954931, the Windows ones
+// Chrome 156's, which stop before them) the way text_render_compare.py measures
 // them: total ink, and the peaks of strokes along rows (stems) and columns
 // (bars, the strokes vertical hinting sharpens).
 //
