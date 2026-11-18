@@ -205,6 +205,12 @@ jobs:
       - name: Gio focus answers (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'FocusTagCanFocusWithin' gioui.org/io/input
+      # Gio patch 45: every handler's pointer state started over where the
+      # pointer is (the inspect tool's freeze ends: no widget read its
+      # events while the window drew a frame again)
+      - name: Gio pointer state reset (vendored gioui.org/io/input)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestResetPointers' gioui.org/io/input
       # Gio patches 37-44: a rounded clip's interior and a stroked one's
       # hole, ops split around them, a clip path's stencil regions, layers
       # of one depth on one atlas page, the sub-pixel path cache key, GL's

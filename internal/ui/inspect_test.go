@@ -111,7 +111,18 @@ func (e *inspectEnv) reactions() []string {
 	return append([]string(nil), e.reacted...)
 }
 
+// pillCenter is the middle of the pill where the last layout drew it (a
+// message posted since may have moved it).
 func (e *inspectEnv) pillCenter() f32.Point {
+	if cv := e.a.convos[e.ch+"/"]; cv != nil {
+		if l, ok := cv.list.(channelList); ok {
+			for _, r := range l.ReactionRects() {
+				if r.TS == e.ts && r.Name == "tada" {
+					e.pill = r
+				}
+			}
+		}
+	}
 	r := e.pill.R
 	return f32.Pt(float32(r.Min.X+r.Dx()/2), float32(r.Min.Y+r.Dy()/2))
 }
@@ -220,7 +231,7 @@ func fakeShots(t *testing.T) (shots *int, copied *image.Image) {
 	shots, copied = new(int), new(image.Image)
 	prevShoot, prevWrite := inspect.Shoot, inspect.WriteImage
 	fakeShotRegions = nil
-	inspect.Shoot = func(_ *op.Ops, region image.Rectangle, k float32) (*image.RGBA, error) {
+	inspect.Shoot = func(_ op.CallOp, region image.Rectangle, k float32) (*image.RGBA, error) {
 		*shots++
 		fakeShotRegions = append(fakeShotRegions, region)
 		img := image.NewRGBA(image.Rectangle{Max: inspect.ShotSize(region, k)})
@@ -618,8 +629,8 @@ func TestInspectComboIsHyperD(t *testing.T) {
 // The session's outline and label over the pill, and the image a pick
 // copies, light and dark, both through the tool's real headless capture
 // (inspect.Shoot: a GPU context made and released per shot, so no other
-// headless window may share its EGL display here). INSPECT_SHOTS_DIR:
-// the feel-shots workflow saves them.
+// headless window may share its EGL display here); then the same frozen
+// (freezeShots). INSPECT_SHOTS_DIR: the feel-shots workflow saves them.
 func TestInspectShots(t *testing.T) {
 	dir := os.Getenv("INSPECT_SHOTS_DIR")
 	if dir == "" {
@@ -648,7 +659,7 @@ func TestInspectShots(t *testing.T) {
 		if _, _, ok := e.a.insp.Hovered(); !ok {
 			t.Fatalf("%s: nothing outlined over the pill", mode)
 		}
-		hover, err := inspect.Shoot(&e.ops, image.Rectangle{Max: e.size}, 1)
+		hover, err := inspect.Shoot(e.ops.Whole(), image.Rectangle{Max: e.size}, 1)
 		if err != nil {
 			t.Fatalf("%s: the headless capture: %v", mode, err)
 		}
@@ -658,25 +669,32 @@ func TestInspectShots(t *testing.T) {
 		if !strings.Contains(e.a.toast.text, "paste it as an image") {
 			t.Fatalf("%s: toast %q: no image was made", mode, e.a.toast.text)
 		}
-		ents, _ := os.ReadDir(filepath.Join(e.home, "inspect-reports"))
-		var newest string
-		for _, en := range ents {
-			if filepath.Ext(en.Name()) == ".png" && en.Name() > newest {
-				newest = en.Name()
-			}
-		}
-		if newest == "" {
-			t.Fatalf("%s: no report image saved", mode)
-		}
-		b, err := os.ReadFile(filepath.Join(e.home, "inspect-reports", newest))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "inspect-"+mode+"-report.png"), b, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "inspect-"+mode+"-report.png"), e.newestReportPNG(t), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(1100 * time.Millisecond) // the next report's file name (seconds) differs
+		e.freezeShots(t, mode, dir, save)   // inspect_freeze_test.go
 	}
+}
+
+// newestReportPNG is the newest saved report image.
+func (e *inspectEnv) newestReportPNG(t *testing.T) []byte {
+	t.Helper()
+	ents, _ := os.ReadDir(filepath.Join(e.home, "inspect-reports"))
+	var newest string
+	for _, en := range ents {
+		if filepath.Ext(en.Name()) == ".png" && en.Name() > newest {
+			newest = en.Name()
+		}
+	}
+	if newest == "" {
+		t.Fatal("no report image saved")
+	}
+	b, err := os.ReadFile(filepath.Join(e.home, "inspect-reports", newest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 // drag presses at from and moves the pointer pressed through the

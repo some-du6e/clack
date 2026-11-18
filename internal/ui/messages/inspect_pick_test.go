@@ -61,6 +61,7 @@ func (h pickHost) CopyText(string)                             {}
 func (h pickHost) Post(f func())                               {}
 func (h pickHost) Invalidate()                                 {}
 func (h pickHost) ConfigDir() string                           { return "" }
+func (h pickHost) Frozen(bool)                                 {}
 
 func TestInspectPicksPluginPronouns(t *testing.T) {
 	_, _, tt, u, h := pluginEnv(t)

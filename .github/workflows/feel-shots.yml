@@ -17,6 +17,7 @@ on:
       - "internal/ui/inspect/**"
       - "internal/ui/inspect_wire.go"
       - "internal/ui/inspect_test.go"
+      - "internal/ui/inspect_freeze_test.go"
       - ".github/workflows/feel-shots.yml"
   workflow_dispatch:
 
@@ -54,7 +55,11 @@ jobs:
       # The inspect tool (internal/ui/inspect, a Clack developer shortcut):
       # its outline and label over a reaction pill and the image a pick
       # copies (the window with the pill outlined over the redacted
-      # report), light and dark, through the real headless capture.
+      # report), light and dark, through the real headless capture; then
+      # the window frozen (F) over the pill's message, the same with the
+      # pointer moved away and the message's hover toolbar still drawn
+      # (the same pixels after a message lands), and the image a pick of
+      # the toolbar's button copies from the frozen frame.
       - name: inspect tool shots
         if: ${{ !cancelled() }}
         env:

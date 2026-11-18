@@ -751,6 +751,38 @@ func (c *Cache) SetLiveOps(on bool) {
 	c.mu.Unlock()
 }
 
+// HoldLive holds every live image (SetLiveOps) on the frame it showed
+// when the hold began, until HoldLive(false): the GPU's asks get that
+// frame again (a player the sweep lets go meanwhile included), count as
+// no draw and ask for no next one, so nothing plays and no animation asks
+// the window for a frame. Clack's inspect tool holds them while it
+// freezes the window on a frame (internal/ui/inspect: the frozen frame is
+// drawn again from its ops, so its emoji would play on). The huddle
+// windows draw from the same cache and hold too. Get, which only a frame
+// that lays out calls, plays them as before (any goroutine).
+func (c *Cache) HoldLive(on bool) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if on == c.liveHeld {
+		return
+	}
+	c.liveHeld = on
+	if !on {
+		return
+	}
+	c.holdGen++
+	for el := c.lru.Front(); el != nil; el = el.Next() {
+		for _, l := range el.Value.(*entry).lives {
+			if l != nil {
+				l.heldGen, l.heldOp = c.holdGen, l.last
+			}
+		}
+	}
+}
+
 // live is an animated entry's paint.LiveImage (SetLiveOps): the frame due
 // when the GPU asks, as Get draws it. A released player leaves it on the
 // still (releaseLocked). An entry that's gone while a frame still draws it
@@ -763,6 +795,10 @@ type live struct {
 	making bool          // NewLiveImageOp asks while liveOpLocked holds mu
 	last   paint.ImageOp // under mu
 	gone   bool          // under mu: the entry went, a repaint was asked for
+	// under mu: what it shows while the cache holds (HoldLive), taken
+	// when hold heldGen began
+	heldGen uint32
+	heldOp  paint.ImageOp
 }
 
 func (l *live) Image() paint.ImageOp {
@@ -773,6 +809,14 @@ func (l *live) Image() paint.ImageOp {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.liveHeld {
+		// HoldLive: the frame it showed when the hold began, whatever a
+		// release did since; no draw, no next frame
+		if l.heldGen != c.holdGen { // made, or gone, since it began
+			l.heldGen, l.heldOp = c.holdGen, l.last
+		}
+		return l.heldOp
+	}
 	el, ok := c.entries[l.k]
 	if !ok {
 		if !l.gone {
