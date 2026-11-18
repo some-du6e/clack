@@ -104,10 +104,15 @@ func mrmDialog(e *perfEnv) (x0, x1 int) {
 	return x0, x0 + w
 }
 
-// hoverRow moves the pointer onto member id's row and returns a point on
-// it (its middle is 28px below).
+// hoverRow scrolls member id's row into view (the roster sorts by name:
+// Robin is below the fold at 1440×900), moves the pointer onto it and
+// returns a point on it (its middle is 28px below).
 func hoverRow(t *testing.T, e *perfEnv, d *views.ChannelDetails, id string) image.Point {
 	t.Helper()
+	if !d.ScrollMembersTo(id) {
+		t.Fatalf("the roster doesn't list %s: %v", id, d.MembersShown())
+	}
+	e.settle(150 * time.Millisecond)
 	row, _ := d.MemberRowClickables(id)
 	x0, x1 := mrmDialog(e)
 	at, ok := e.scanHover(row, image.Pt((x0+x1)/2, 0), image.Pt((x0+x1)/2, e.size.Y-1))
@@ -277,14 +282,15 @@ func TestMemberRowMenuItemsByRole(t *testing.T) {
 					t.Errorf("%s: %q, want %q", id, got, want)
 				}
 			}
+			// the manager's pill whatever the viewer may do
+			hoverRow(t, e, d, mrmAvery)
+			if pill, _ := d.MemberRowPill(mrmAvery); pill.Empty() {
+				t.Error("Avery's row has no Channel Manager pill")
+			}
 			// what the row draws on hover follows the items
 			hoverRow(t, e, d, mrmRobin)
 			if shown, want := d.MemberRowMenuShown(mrmRobin), len(c.items[mrmRobin]) > 0; shown != want {
 				t.Errorf("Robin's hovered row: \"…\" %v, want %v", shown, want)
-			}
-			// the manager's pill whatever the viewer may do
-			if pill, _ := d.MemberRowPill(mrmAvery); pill.Empty() {
-				t.Error("Avery's row has no Channel Manager pill")
 			}
 		})
 	}

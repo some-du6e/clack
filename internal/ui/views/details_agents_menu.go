@@ -345,3 +345,19 @@ func (d *ChannelDetails) ManagersLoaded() bool {
 	_, done, _ := d.managers.get()
 	return done
 }
+
+// ScrollMembersTo scrolls the Members list to member id's row, as the
+// wheel would (tests; false when the list doesn't show it).
+func (d *ChannelDetails) ScrollMembersTo(id string) bool {
+	i := slices.Index(d.MembersShown(), id)
+	if i < 0 {
+		return false
+	}
+	first := 1 + i // after "Add people"
+	if d.inviting {
+		first++ // and the invite panel
+	}
+	d.list(cdMembers).Position = layout.Position{First: first}
+	d.h.Invalidate()
+	return true
+}

@@ -26,7 +26,10 @@ package popups
 //     the alert says "There was a problem removing this person from
 //     Channel Managers. Give it another try in a few minutes."
 //
-// Neither focuses a button on open (BaseModal focuses the dialog).
+// Neither focuses a button on open (BaseModal focuses the dialog). Their
+// titles wrap (.c-sk-modal_title_bar__text has no nowrap); a wrapped
+// MakeChannelManagerModal title shows the channel as text, without the
+// private channel's lock.
 
 import (
 	"context"
@@ -137,6 +140,9 @@ func OpenMakeChannelManagerModal(h Host, ch, member string) *ChannelManagerModal
 	th := h.Theme()
 	d.Modal = NewModal(h, ModalOpts{
 		Title: pre, TitleIcon: ic, TitleAfter: name + post,
+		// a title too long for its line wraps (.c-sk-modal_title_bar__text),
+		// the channel then as text
+		TitleWrap: true, TitleWrapText: d.Heading,
 		NoClose: true, // showCloseButton false
 		Class:   "p-make_channel_managers_modal",
 		Body:    func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
@@ -177,10 +183,11 @@ func OpenRemoveManagerModal(h Host, ch, member string) *ChannelManagerModal {
 		}}
 	th := h.Theme()
 	d.Modal = NewModal(h, ModalOpts{
-		Title:   d.Heading,
-		Class:   "p-mpdm_add_people_modal",
-		Body:    func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
-		Buttons: []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, d.Go},
+		Title:     d.Heading,
+		TitleWrap: true, // .c-sk-modal_title_bar__text wraps
+		Class:     "p-mpdm_add_people_modal",
+		Body:      func(gtx layout.Context) layout.Dimensions { return d.body(gtx, th) },
+		Buttons:   []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, d.Go},
 	})
 	h.ShowOverlay(d)
 	return d
