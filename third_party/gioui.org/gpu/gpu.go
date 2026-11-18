@@ -98,6 +98,9 @@ type drawOps struct {
 	// statsDetail keeps each path's quad bounds for FrameStats.StencilPx
 	// (Clack patch 36)
 	statsDetail bool
+	// tessellated counts the frame's buildVerts of clip paths (Clack patch
+	// 46, FrameStats.PathsTessellated)
+	tessellated int
 }
 
 type opacityLayer struct {
@@ -158,8 +161,11 @@ type pathOp struct {
 	// and place are its first.
 	more []pathRegion
 	// hash is the path's geometry as its vertices are built from it (Clack
-	// patch 45, pathHash)
+	// patch 46, pathHash)
 	hash [2]uint64
+	// raw: pathVerts is the path's data, not yet tessellated (Clack patch
+	// 46: its cache entry has no GPU data)
+	raw bool
 }
 
 // pathRegion is a region of the coverage atlas a path is stenciled in.
@@ -615,7 +621,12 @@ func (g *gpu) frame(target RenderTarget) error {
 	if on {
 		sticky = &g.partial.atlas
 	}
+	r.packer.work = 0
 	r.packStencils(&g.drawOps.pathOps, sticky)
+	r.stats.PackWork = r.packer.work
+	if sticky != nil {
+		r.stats.StickySlots, r.stats.StickyHoles = len(sticky.slots), sticky.holeSlots
+	}
 	r.packIntersections(g.drawOps.imageOps)
 	r.uploadImages(g.cache, g.drawOps.imageOps)
 	g.drawOps.layers = r.packLayers(g.drawOps.layers)
@@ -626,6 +637,7 @@ func (g *gpu) frame(target RenderTarget) error {
 	// the paths the frame stencils: a partial frame's are the ones in its
 	// damage
 	r.stats.PathsBuilt, r.stats.PathBytes = g.drawOps.buildPaths(g.ctx, dmg)
+	r.stats.PathsTessellated = g.drawOps.tessellated
 	r.stencilClips(g.drawOps.pathCache, g.drawOps.pathOps, dmg)
 	r.prepareIntersections(g.drawOps.imageOps)
 	r.intersect(g.drawOps.imageOps, dmg)
@@ -1312,6 +1324,7 @@ func (d *drawOps) reset(viewport image.Point) {
 	d.transStack = d.transStack[:0]
 	d.layers = d.layers[:0]
 	d.opacityStack = d.opacityStack[:0]
+	d.tessellated = 0
 }
 
 func (d *drawOps) collect(root *op.Ops, viewport image.Point) {
@@ -1338,16 +1351,24 @@ func (d *drawOps) buildPaths(ctx driver.Device, dmg []image.Rectangle) (n int, b
 			continue
 		}
 		if v, exists := d.pathCache.get(p.pathKey); !exists || v.data.data == nil {
+			verts := p.pathVerts
+			if p.raw {
+				// its path data, from a cache entry no frame uploaded
+				// (Clack patch 46)
+				k := p.pathKey
+				verts, _ = d.buildVerts(verts, f32.NewAffine2D(k.sx, k.hx, k.ox, k.hy, k.sy, k.oy), k.outline, k.strokeWidth)
+				d.tessellated++
+			}
 			n++
-			bytes += int64(len(p.pathVerts))
-			data := buildPath(ctx, p.pathVerts)
+			bytes += int64(len(verts))
+			data := buildPath(ctx, verts)
 			val := opCacheValue{
 				data:   data,
 				bounds: p.bounds,
 				hash:   p.hash,
 			}
 			if d.statsDetail {
-				val.quads = quadBounds(p.pathVerts)
+				val.quads = quadBounds(verts)
 			}
 			d.pathCache.put(p.pathKey, val)
 		}
@@ -1376,7 +1397,7 @@ func (d *drawOps) newPathOp() *pathOp {
 	return &d.pathOpCache[len(d.pathOpCache)-1]
 }
 
-func (d *drawOps) addClipPath(state *drawState, aux []byte, auxKey opKey, bounds f32.Rectangle, off f32.Point, interior, hole image.Rectangle, hash [2]uint64) {
+func (d *drawOps) addClipPath(state *drawState, aux []byte, auxKey opKey, bounds f32.Rectangle, off f32.Point, interior, hole image.Rectangle, hash [2]uint64, raw bool) {
 	npath := d.newPathOp()
 	*npath = pathOp{
 		parent:    state.cpath,
@@ -1397,6 +1418,7 @@ func (d *drawOps) addClipPath(state *drawState, aux []byte, auxKey opKey, bounds
 		npath.pathKey = auxKey
 		npath.path = true
 		npath.pathVerts = aux
+		npath.raw = raw
 		d.pathOps = append(d.pathOps, npath)
 	}
 	state.cpath = npath
@@ -1501,40 +1523,40 @@ loop:
 					hole = quads.hole.Add(o)
 				}
 			}
-			// hash: the path's geometry, for partial frames (Clack patch 45)
+			// hash: the path's geometry, for partial frames (Clack patch 46);
+			// raw: aux is path data still to be tessellated
 			var hash [2]uint64
+			raw := false
 			if len(quads.aux) > 0 {
 				// There is a clipping path, build the gpu data and update the
 				// cache key such that it will be equal only if the transform is the
 				// same also. Use cached data if we have it.
 				quads.key = quads.key.SetTransform(trans)
-				if v, ok := d.pathCache.get(quads.key); ok && v.data.data != nil {
+				if v, ok := d.pathCache.get(quads.key); ok {
 					// Since the GPU data exists in the cache aux will not be used.
 					// Why is this not used for the offset shapes?
 					bounds = v.bounds
 					hash = v.hash
+					// Clack patch 46: an entry without GPU data keeps the path
+					// data, tessellated only if this frame uploads it
+					// (buildPaths). A partial frame uploads only the paths its
+					// damage stencils, and a path no op needs stenciled (all
+					// in its interior) never: the same ops drawn again (a
+					// quiet frame) left their data to be uploaded as if it
+					// were vertices, and building them again every frame cost
+					// the CPU what Gio tessellated once.
+					raw = v.data.data == nil
 				} else {
-					// Clack patch 45: an entry without GPU data is built
-					// again. A partial frame uploads only the paths its
-					// damage stencils, so an entry can stay without data
-					// into the next frame, and the same ops drawn again (a
-					// quiet frame) hit it: their path data then went to
-					// buildPaths as if it were vertices.
-					if ok {
-						hash = v.hash
-					} else {
-						hash = pathHash(quads.aux, quads.key)
-					}
+					hash = pathHash(quads.aux, quads.key)
 					var pathData []byte
 					pathData, bounds = d.buildVerts(
 						quads.aux, trans, quads.key.outline, quads.key.strokeWidth,
 					)
+					d.tessellated++
 					quads.aux = pathData
-					if !ok {
-						// add it to the cache, without GPU data, so the transform can be
-						// reused.
-						d.pathCache.put(quads.key, opCacheValue{bounds: bounds, hash: hash})
-					}
+					// add it to the cache, without GPU data, so the transform can be
+					// reused.
+					d.pathCache.put(quads.key, opCacheValue{bounds: bounds, hash: hash})
 				}
 			} else {
 				quads.aux, bounds, _ = d.boundsForTransformedRect(bounds, trans)
@@ -1545,7 +1567,7 @@ loop:
 					hash = pathHash(quads.aux, opKey{})
 				}
 			}
-			d.addClipPath(&state, quads.aux, quads.key, bounds, off, interior, hole, hash)
+			d.addClipPath(&state, quads.aux, quads.key, bounds, off, interior, hole, hash, raw)
 			quads = quadsOp{}
 		case ops.TypePopClip:
 			state.cpath = state.cpath.parent
@@ -1590,7 +1612,7 @@ loop:
 				// this transformed rectangle.
 				k := opKey{Key: encOp.Key}
 				k = k.SetTransform(t)
-				d.addClipPath(&state, clipData, k, bnd, off, image.Rectangle{}, image.Rectangle{}, pathHash(clipData, opKey{}))
+				d.addClipPath(&state, clipData, k, bnd, off, image.Rectangle{}, image.Rectangle{}, pathHash(clipData, opKey{}), false)
 			}
 
 			bounds := cl.Round()

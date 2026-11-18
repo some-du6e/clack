@@ -54,6 +54,13 @@ type FrameStats struct {
 	DamageRects int
 	DamagePx    int64
 	CopyPx      int64
+	// PackWork is the free spaces the coverage atlas's packer looked at;
+	// StickySlots the slots of its sticky sequence (partial frames), of
+	// them StickyHoles holes. PathsTessellated are the clip paths whose
+	// vertices the frame built on the CPU.
+	PackWork                 int64
+	StickySlots, StickyHoles int
+	PathsTessellated         int
 }
 
 // ClackStats reports the last frame's stats.

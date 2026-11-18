@@ -132,14 +132,17 @@ type partialFrames struct {
 	clearSize image.Point
 	clearCol  f32color.RGBA
 	clearOK   bool
-	// the last frame drawn: valid once it was drawn whole or in part, into
-	// what (key: the frame texture, or a texture target), at what viewport
-	// and clear colour, and its ops' signatures
-	valid    bool
-	key      any
-	viewport image.Point
-	color    f32color.RGBA
-	sigs     []opSig
+	// the last frame drawn: valid once its pixels are in what partial
+	// frames draw into (the frame texture, or a texture target: key); its
+	// viewport and clear colour, its ops' signatures (haveSigs), whether it
+	// was whole
+	valid     bool
+	key       any
+	viewport  image.Point
+	color     f32color.RGBA
+	sigs      []opSig
+	haveSigs  bool
+	lastWhole bool
 	// scratch: this frame's signatures, an op's words, the layers' chain
 	// of words, Myers' trace
 	cur   []opSig
@@ -339,8 +342,16 @@ func (g *gpu) partialOn(target RenderTarget, viewport image.Point) bool {
 }
 
 // partialBegin decides where the frame draws and whether whole (dmg nil)
-// or only in its damage (Clack patch 45). Call it once the frame is
+// or only in its damage (Clack patch 46). Call it once the frame is
 // packed, its pages sized and its textures uploaded.
+//
+// A window's frame goes through the frame texture, so the next frame can
+// be partial, but a whole frame right after a whole frame (a scroll, a
+// reflow) draws straight into the target: going through the texture would
+// cost a copy of the window for nothing. The texture is then stale, and
+// when frames get small again one whole frame draws into it first. While
+// the window's size changes, frames draw straight into the target too, and
+// no window-sized texture is made for each new size.
 func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, viewport image.Point) (out partialTarget, dmg []image.Rectangle) {
 	p := &g.partial
 	out = partialTarget{pass: defFBO}
@@ -348,33 +359,55 @@ func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, 
 		return out, nil
 	}
 	tex, isTex := target.(driver.Texture)
-	var key any
-	if isTex && !p.mode.frameTex {
-		// a texture target keeps its pixels: the frame draws into it
-		g.releaseFrameTex()
-		out.tex, key = tex, target
-	} else {
-		ft := g.frameTexture(viewport)
-		if ft == nil {
-			g.partialRelease()
-			return out, nil
-		}
-		out = partialTarget{pass: ft, tex: ft, copy: true}
-		key = ft
+	direct := isTex && !p.mode.frameTex // a texture target keeps its pixels
+	var key any = target
+	if !direct {
+		key = frameTexKey{}
 	}
-	full := !p.valid || p.key != key || p.viewport != viewport || !g.drawOps.clear || p.color != g.drawOps.clearColor ||
-		clackPartial.whole.Load()
+	resized := p.haveSigs && p.viewport != viewport
+	same := p.haveSigs && p.key == key && p.viewport == viewport && g.drawOps.clear && p.color == g.drawOps.clearColor &&
+		!clackPartial.whole.Load()
 	p.cur = g.sigOps(p.cur[:0])
-	if !full {
-		var ok bool
-		dmg, ok = damage(p.sigs, p.cur, viewport, &p.diff)
-		if !ok {
-			dmg = nil
+	small := false
+	if same {
+		if d, ok := damage(p.sigs, p.cur, viewport, &p.diff); ok {
+			dmg, small = d, true
 		}
 	}
 	p.sigs, p.cur = p.cur, p.sigs
-	p.valid = false // until it's drawn (partialEnd)
+	p.haveSigs = true
 	p.key, p.viewport, p.color = key, viewport, g.drawOps.clearColor
+	switch {
+	case direct:
+		g.releaseFrameTex()
+		out.tex = tex
+		if !p.valid {
+			dmg = nil
+		}
+	case resized || (!small && p.lastWhole):
+		// straight into the target: no copy, the frame texture stale (and
+		// let go of at another size)
+		if p.frameTex != nil && p.frameSize != viewport {
+			g.releaseFrameTex()
+		}
+		p.valid = false
+		dmg = nil
+	default:
+		ft := g.frameTexture(viewport)
+		if ft == nil {
+			g.partialRelease()
+			return partialTarget{pass: defFBO}, nil
+		}
+		out = partialTarget{pass: ft, tex: ft, copy: true}
+		if !p.valid {
+			dmg = nil
+		}
+	}
+	if dmg != nil && len(dmg) > 0 && !g.clearTexture(dmg) {
+		dmg = nil // no clear texture: the frame whole
+	}
+	p.valid = false // until it's drawn (partialEnd)
+	p.lastWhole = dmg == nil
 	st := &g.renderer.stats
 	if dmg != nil {
 		st.Partial = true
@@ -386,8 +419,13 @@ func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, 
 	return out, dmg
 }
 
+// frameTexKey is what a window's frames draw into (the frame texture),
+// for partialFrames.key.
+type frameTexKey struct{}
+
 // partialEnd finishes a frame drawn into out: the frame texture is copied
-// into the target, and the frame is the one the next starts from.
+// into the target, and the frame is the one the next starts from. A frame
+// drawn straight into a window's target leaves the frame texture stale.
 func (g *gpu) partialEnd(defFBO driver.Texture, out partialTarget, viewport image.Point) {
 	if out.tex == nil {
 		return
@@ -426,6 +464,17 @@ func (g *gpu) releaseFrameTex() {
 	}
 }
 
+// ClackFrameReleaser is a GPU that can let go of what partial frames keep
+// (Clack patch 46): its frame texture and clear texture, the last frame's
+// signatures and the sticky atlas places. Its next frame is whole.
+type ClackFrameReleaser interface {
+	ClackReleaseFrames()
+}
+
+// ClackReleaseFrames implements ClackFrameReleaser: for a window that draws
+// nothing for now (hidden, minimized, occluded), with its context current.
+func (g *gpu) ClackReleaseFrames() { g.partialRelease() }
+
 // partialRelease drops what partial frames keep: frames are drawn whole,
 // as Gio does.
 func (g *gpu) partialRelease() {
@@ -436,19 +485,14 @@ func (g *gpu) partialRelease() {
 		p.clearTex = nil
 		p.clearOK = false
 	}
-	p.valid = false
+	p.valid, p.haveSigs, p.lastWhole = false, false, false
 	p.sigs, p.cur = p.sigs[:0], p.cur[:0]
 	p.atlas.reset()
 }
 
-// partialClear sets the damage of out's texture to the clear colour, as
-// the whole frame's load action does: copied from clearTex, which a clear
-// of the same format made. Before the frame's render pass: Metal copies in
-// a blit encoder, OpenGL through framebuffer bindings.
-func (g *gpu) partialClear(out partialTarget, dmg []image.Rectangle, viewport image.Point) {
-	if dmg == nil || len(dmg) == 0 {
-		return
-	}
+// clearTexture makes sure clearTex holds the clear colour and is big
+// enough for the damage's tiles (partialClear); false if it can't be made.
+func (g *gpu) clearTexture(dmg []image.Rectangle) bool {
 	p := &g.partial
 	var need image.Point
 	for _, d := range dmg {
@@ -467,7 +511,8 @@ func (g *gpu) partialClear(out partialTarget, dmg []image.Rectangle, viewport im
 		t, err := g.ctx.NewTexture(driver.TextureFormatOutput, sz.X, sz.Y, driver.FilterNearest, driver.FilterNearest,
 			driver.BufferBindingFramebuffer|driver.BufferBindingTexture)
 		if err != nil {
-			panic(err)
+			p.clearSize, p.clearOK = image.Point{}, false
+			return false
 		}
 		p.clearTex, p.clearSize, p.clearOK = t, sz, false
 	}
@@ -478,6 +523,18 @@ func (g *gpu) partialClear(out partialTarget, dmg []image.Rectangle, viewport im
 		g.renderer.stats.ClearPx += int64(p.clearSize.X * p.clearSize.Y)
 		p.clearCol, p.clearOK = col, true
 	}
+	return true
+}
+
+// partialClear sets the damage of out's texture to the clear colour, as
+// the whole frame's load action does: copied from clearTex (clearTexture),
+// which a clear of the same format made. Before the frame's render pass:
+// Metal copies in a blit encoder, OpenGL through framebuffer bindings.
+func (g *gpu) partialClear(out partialTarget, dmg []image.Rectangle, viewport image.Point) {
+	if len(dmg) == 0 {
+		return
+	}
+	p := &g.partial
 	flip := g.ctx.Caps().BottomLeftOrigin
 	cs := p.clearSize
 	for _, d := range dmg {

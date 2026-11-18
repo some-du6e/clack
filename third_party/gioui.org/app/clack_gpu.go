@@ -19,8 +19,28 @@ var gpuBlocklistIgnored atomic.Bool
 // leaves out because of driver bugs.
 func IgnoreGPUBlocklist() { gpuBlocklistIgnored.Store(true) }
 
+// ClackGPUIdle lets the window's GPU drop what partial frames keep (Clack
+// patch, CLACK_PATCHES.md §46: the window-sized frame texture): the driver
+// calls it on the window's thread when the window stops drawing for a while
+// (hidden, minimized, occluded). Its next frame is whole.
+func (c *callbacks) ClackGPUIdle() {
+	w := c.w
+	if w.gpu == nil || w.ctx == nil {
+		return
+	}
+	r, ok := w.gpu.(gpu.ClackFrameReleaser)
+	if !ok {
+		return
+	}
+	if err := w.ctx.Lock(); err != nil {
+		return
+	}
+	r.ClackReleaseFrames()
+	w.ctx.Unlock()
+}
+
 // clackGPUFrames is SetGPUFrameHook's hook (Clack patch, CLACK_PATCHES.md
-// §45).
+// §46).
 var clackGPUFrames atomic.Pointer[func(gpu.FrameStats)]
 
 // SetGPUFrameHook has f called with the renderer's stats for every frame a

@@ -19,11 +19,16 @@ import (
 // With partial frames a region that was in the last frame keeps its place:
 // the last frame's packing sequence is replayed (the packer places the
 // same sizes in the same order the same way), a region taking the slot
-// the same region had (the same path geometry, region and offset), a
-// slot nothing takes left as a hole; the regions that weren't there come
-// after. When the holes outgrow the regions, or the sequence would need a
-// new atlas page, the regions are packed afresh in the frame's order (a
-// frame drawn whole, as any change to every place is).
+// the same region had (the same path geometry, region and offset). A new
+// region takes the smallest slot nobody took that holds it, keeping the
+// slot's size, so nothing else moves either: a path that changes every
+// frame (a working agent's spinner, every 33 ms) takes back the slots its
+// last frames left instead of piling up holes the replay packs every
+// frame. The regions no slot holds come after; a slot nothing takes is a
+// hole. When the holes outnumber the live slots or stickyMaxHoles, cover
+// more area than the regions, or the sequence would need a new atlas
+// page, the regions are packed afresh in the frame's order (a frame drawn
+// whole, as any change to every place is).
 
 // stickyKey is a stencil region's identity across frames: what decides
 // its coverage but its place.
@@ -48,11 +53,15 @@ type stickyAtlas struct {
 	// same: the next slot with the key)
 	first map[stickyKey]int32
 	same  []int32
-	// scratch: each slot's region this frame, the new regions
+	// scratch: each slot's region this frame, the new regions, the slots
+	// nobody took (-1: taken by a new region)
 	take  []stickyRegion
 	fresh []stickyRegion
-	// repacked counts the fresh packings (for tests)
-	repacked int
+	holes []int32
+	// holeSlots are the holes in slots; repacked counts the fresh
+	// packings (FrameStats, tests)
+	holeSlots int
+	repacked  int
 }
 
 // stickyRegion is a region of path p: its main one (i -1) or p.more[i].
@@ -84,7 +93,14 @@ func (s *stickyAtlas) reset() {
 	s.slots, s.next = s.slots[:0], s.next[:0]
 	clear(s.first)
 	s.same = s.same[:0]
+	s.holeSlots = 0
 }
+
+// stickyMaxHoles bounds the holes the sequence keeps: past it (or past
+// as many holes as live slots, or holes over more area than the regions)
+// the regions are packed afresh. The replay packs every slot each frame,
+// holes included.
+const stickyMaxHoles = 256
 
 // pack places ops' regions with pk.
 func (s *stickyAtlas) pack(pk *packer, ops []*pathOp) {
@@ -99,11 +115,10 @@ func (s *stickyAtlas) pack(pk *packer, ops []*pathOp) {
 		clear(s.take)
 	}
 	s.fresh = s.fresh[:0]
-	liveArea := int64(0)
+	// each region takes its own slot from the last frame
 	for _, p := range ops {
 		for i := -1; i < len(p.more); i++ {
 			sr := stickyRegion{p, i}
-			liveArea += area(sr.clip())
 			k := sr.key()
 			at := s.first[k] - 1
 			for at >= 0 && s.take[at].p != nil {
@@ -116,40 +131,79 @@ func (s *stickyAtlas) pack(pk *packer, ops []*pathOp) {
 			s.fresh = append(s.fresh, sr)
 		}
 	}
-	// replay the last frame's sequence, then the new regions
+	// a new region takes the smallest slot nobody took that holds it: the
+	// slot keeps its size, so the packer is given the same sizes in the
+	// same order and no other place moves. A path that changes every frame
+	// (a spinner's arcs) takes the slots its last frames left.
+	s.holes = s.holes[:0]
+	for k := range s.slots {
+		if s.take[k].p == nil {
+			s.holes = append(s.holes, int32(k))
+		}
+	}
+	appended := s.fresh[:0]
+	for _, sr := range s.fresh {
+		sz := sr.clip().Size()
+		best, bestArea := -1, 0
+		for hi, k := range s.holes {
+			if k < 0 {
+				continue
+			}
+			hs := s.slots[k].size
+			if hs.X < sz.X || hs.Y < sz.Y {
+				continue
+			}
+			if a := hs.X * hs.Y; best < 0 || a < bestArea {
+				best, bestArea = hi, a
+			}
+		}
+		if best < 0 {
+			appended = append(appended, sr)
+			continue
+		}
+		s.take[s.holes[best]] = sr
+		s.holes[best] = -1
+	}
+	// replay the last frame's sequence, then the regions no slot held
 	pk.clear()
 	next := s.next[:0]
-	holes := int64(0)
-	pages := 0
+	var holes, liveArea int64
+	holeSlots, pages := 0, 0
 	for k, sl := range s.slots {
 		place := stickyAdd(pk, sl.size)
 		pages = max(pages, place.Idx+1)
 		sr := s.take[k]
 		if sr.p != nil {
 			sr.setPlace(place)
-			next = append(next, stickySlot{size: sl.size, key: sl.key, live: true})
+			next = append(next, stickySlot{size: sl.size, key: sr.key(), live: true})
+			liveArea += int64(sl.size.X * sl.size.Y)
 		} else {
 			next = append(next, stickySlot{size: sl.size})
 			holes += int64(sl.size.X * sl.size.Y)
+			holeSlots++
 		}
 	}
-	for _, sr := range s.fresh {
+	for _, sr := range appended {
 		c := sr.clip()
 		place := stickyAdd(pk, c.Size())
 		pages = max(pages, place.Idx+1)
 		sr.setPlace(place)
 		next = append(next, stickySlot{size: c.Size(), key: sr.key(), live: true})
+		liveArea += area(c)
 	}
 	// the holes at the end hold no one's place
 	for len(next) > 0 && !next[len(next)-1].live {
 		holes -= int64(next[len(next)-1].size.X * next[len(next)-1].size.Y)
+		holeSlots--
 		next = next[:len(next)-1]
 	}
-	if holes > liveArea || (pages > 1 && holes > 0) {
+	liveSlots := len(next) - holeSlots
+	if holes > liveArea || holeSlots > liveSlots || holeSlots > stickyMaxHoles || (pages > 1 && holes > 0) {
 		// afresh, in the frame's order
 		s.repacked++
 		pk.clear()
 		next = next[:0]
+		holeSlots = 0
 		for _, p := range ops {
 			for i := -1; i < len(p.more); i++ {
 				sr := stickyRegion{p, i}
@@ -160,6 +214,7 @@ func (s *stickyAtlas) pack(pk *packer, ops []*pathOp) {
 		}
 	}
 	s.slots, s.next = next, s.slots
+	s.holeSlots = holeSlots
 	// index the slots for the next frame, the first slot of a key first
 	clear(s.first)
 	if cap(s.same) < len(s.slots) {

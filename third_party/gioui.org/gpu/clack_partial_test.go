@@ -3,6 +3,7 @@
 package gpu
 
 import (
+	"fmt"
 	"image"
 	"math/rand"
 	"testing"
@@ -179,5 +180,162 @@ func TestClackDamage(t *testing.T) {
 	big := append(append([]opSig(nil), a...), sig(3000, image.Rect(0, 0, 390, 290)))
 	if d, ok := damage(a, big, vp, &sc); ok {
 		t.Errorf("an op over most of the window: damage %v; want the whole frame", d)
+	}
+}
+
+// stickyFrame is a frame's regions for stickyAtlas.pack: one pathOp per
+// region (id: its geometry), placed by pack.
+func stickyFrame(regs []stickyTestRegion) []*pathOp {
+	ops := make([]*pathOp, len(regs))
+	for i, r := range regs {
+		ops[i] = &pathOp{clip: r.clip, hash: [2]uint64{r.id, 1}, path: true}
+	}
+	return ops
+}
+
+type stickyTestRegion struct {
+	id   uint64
+	clip image.Rectangle
+}
+
+// stickyOverlaps reports two regions of a frame whose atlas places
+// overlap, or one outside its page.
+func stickyOverlaps(pk *packer, ops []*pathOp) string {
+	type placed struct {
+		idx int
+		r   image.Rectangle
+	}
+	var ps []placed
+	for _, p := range ops {
+		r := image.Rectangle{Min: p.place.Pos, Max: p.place.Pos.Add(p.clip.Size())}
+		if p.place.Idx < 0 || p.place.Idx >= len(pk.sizes) || !r.In(image.Rectangle{Max: pk.sizes[p.place.Idx]}) {
+			return fmt.Sprintf("%v of page %d is outside its page %v", r, p.place.Idx, pk.sizes)
+		}
+		ps = append(ps, placed{p.place.Idx, r})
+	}
+	for i := range ps {
+		for j := i + 1; j < len(ps); j++ {
+			if ps[i].idx == ps[j].idx && ps[i].r.Overlaps(ps[j].r) {
+				return fmt.Sprintf("%v and %v overlap on page %d", ps[i].r, ps[j].r, ps[i].idx)
+			}
+		}
+	}
+	return ""
+}
+
+// Clack patch 46: sticky places never overlap and stay in their pages,
+// whatever regions come and go and change size from frame to frame; a
+// region the last frame had keeps its place.
+func TestClackStickyNoOverlap(t *testing.T) {
+	rng := rand.New(rand.NewSource(46))
+	pk := &packer{maxDims: image.Pt(4096, 4096)}
+	var s stickyAtlas
+	var regs []stickyTestRegion
+	next := uint64(1)
+	add := func() {
+		x, y := rng.Intn(1800), rng.Intn(1000)
+		regs = append(regs, stickyTestRegion{next, image.Rect(x, y, x+4+rng.Intn(300), y+4+rng.Intn(40))})
+		next++
+	}
+	for range 300 {
+		add()
+	}
+	prev := map[uint64]placement{}
+	for f := 0; f < 600; f++ {
+		for e := rng.Intn(12); e > 0; e-- {
+			switch k := rng.Intn(len(regs)); rng.Intn(3) {
+			case 0: // dropped
+				regs = append(regs[:k], regs[k+1:]...)
+			case 1: // changed: a new geometry and size
+				regs[k].id = next
+				next++
+				regs[k].clip.Max = regs[k].clip.Min.Add(image.Pt(4+rng.Intn(300), 4+rng.Intn(40)))
+			default:
+				add()
+			}
+		}
+		ops := stickyFrame(regs)
+		s.pack(pk, ops)
+		if bad := stickyOverlaps(pk, ops); bad != "" {
+			t.Fatalf("frame %d: %s", f, bad)
+		}
+		repacked := s.repacked
+		for i, p := range ops {
+			if was, ok := prev[regs[i].id]; ok && was != p.place && s.repacked == repacked {
+				t.Fatalf("frame %d: region %d moved from %v to %v without a repack", f, regs[i].id, was, p.place)
+			}
+		}
+		clear(prev)
+		for i, p := range ops {
+			prev[regs[i].id] = p.place
+		}
+	}
+	t.Logf("600 frames: %d slots at the end (%d holes), %d repacks", len(s.slots), s.holeSlots, s.repacked)
+}
+
+// Clack patch 46: a path that changes every frame in the middle of the
+// sequence (codeSpinner's two arcs, every 33 ms while an agent works) takes
+// back the slots its last frames left: over 3,000 frames (100 s) the
+// sequence stays within a constant of the live regions, the packer's work
+// a frame stays within a small factor of the first frame's, and the page
+// keeps its size. Before, every frame left two holes the replay packed
+// ever after: 4,302 slots and 55x the packing after 1,800 frames.
+func TestClackStickySpinnerBounded(t *testing.T) {
+	rng := rand.New(rand.NewSource(45))
+	var before, after []stickyTestRegion
+	id := uint64(1)
+	for range 350 {
+		x, y := rng.Intn(1700), rng.Intn(1000)
+		before = append(before, stickyTestRegion{id, image.Rect(x, y, x+14+rng.Intn(400), y+13+rng.Intn(8))})
+		id++
+	}
+	for range 350 {
+		x, y := rng.Intn(1700), rng.Intn(1000)
+		after = append(after, stickyTestRegion{id, image.Rect(x, y, x+14+rng.Intn(400), y+13+rng.Intn(8))})
+		id++
+	}
+	// the arcs' boxes over a turn, as codeSpinner draws them at 16 px
+	boxes := []image.Point{{5, 11}, {6, 10}, {6, 11}, {7, 10}, {8, 9}, {9, 8}, {10, 5}, {10, 6}, {10, 7}, {11, 5}, {11, 6}}
+	pk := &packer{maxDims: image.Pt(8192, 8192)}
+	var s stickyAtlas
+	var work0, maxWork int64
+	var size0 image.Point
+	maxSlots, grown := 0, -1
+	for f := 0; f < 3000; f++ {
+		regs := append([]stickyTestRegion(nil), before...)
+		for a := 0; a < 2; a++ {
+			b := boxes[(f*3+a*5)%len(boxes)]
+			regs = append(regs, stickyTestRegion{id, image.Rect(30, 320, 30+b.X, 320+b.Y)})
+			id++
+		}
+		regs = append(regs, after...)
+		ops := stickyFrame(regs)
+		pk.work = 0
+		s.pack(pk, ops)
+		if f == 0 {
+			work0, size0 = pk.work, pk.sizes[0]
+		}
+		if f%500 == 0 || f == 2999 {
+			t.Logf("frame %d: %d slots (%d holes), packer work %d (%.1fx the first frame's), page %v, %d repacks", f, len(s.slots), s.holeSlots, pk.work, float64(pk.work)/float64(work0), pk.sizes, s.repacked)
+		}
+		maxSlots, maxWork = max(maxSlots, len(s.slots)-len(regs)), max(maxWork, pk.work)
+		if grown < 0 && (len(pk.sizes) != 1 || pk.sizes[0] != size0) {
+			grown = f
+		}
+		if bad := stickyOverlaps(pk, ops); bad != "" {
+			t.Fatalf("frame %d: %s", f, bad)
+		}
+	}
+	if maxSlots > 64 {
+		t.Errorf("up to %d slots more than the frame's regions (holes the replay packs every frame); want 64 at most", maxSlots)
+	}
+	if maxWork > 3*work0 {
+		t.Errorf("the packer's work reached %d a frame, %.1fx the first frame's %d; want 3x at most", maxWork, float64(maxWork)/float64(work0), work0)
+	}
+	if grown >= 0 {
+		t.Errorf("the page grew at frame %d (%v, the first frame's %v)", grown, pk.sizes, size0)
+	}
+	if s.repacked > 0 {
+		t.Errorf("%d repacks over 3,000 spinner frames (each a whole frame); want none", s.repacked)
 	}
 }

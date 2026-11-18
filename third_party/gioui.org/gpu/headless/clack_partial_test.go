@@ -443,6 +443,98 @@ func TestClackPartialSameOps(t *testing.T) {
 		t.Errorf("the same ops drawn whole after partial frames: %d px differ from the whole frame by up to %d levels (%d paths built):%s", n, m, st.PathsBuilt, worstPixels(ref1, again2, again2.Bounds(), 6))
 	}
 	t.Logf("the emoji's frame: %s", statLine(st))
+	// a partial frame of new ops (the caret's blink, a layout), then quiet
+	// frames: the same ops again build and tessellate nothing (the paths
+	// the partial frame didn't stencil keep their path data unbuilt)
+	_, st = shot(partialVars{}, true)
+	if !st.Partial {
+		t.Errorf("the caret hidden, new ops: drawn whole, want a partial frame")
+	}
+	t.Logf("a layout's partial frame: %d paths tessellated, %d built", st.PathsTessellated, st.PathsBuilt)
+	for i := range 2 {
+		_, st = shot(partialVars{}, false)
+		if st.PathsTessellated != 0 || st.PathsBuilt != 0 {
+			t.Errorf("quiet frame %d after a partial frame: %d paths tessellated, %d built; want none", i+1, st.PathsTessellated, st.PathsBuilt)
+		}
+	}
+}
+
+// Clack patch 46: a spinner at the start of the frame's paths, whose arcs
+// change every frame (codeSpinner every 33 ms while an agent works), for
+// 3,000 frames: the sticky atlas's sequence stays within a constant of the
+// frame's regions, the packer's work a frame within a small factor of a
+// fresh packing's, the frames partial; the last is the whole frame's
+// pixels. Before, each frame left two holes the replay packed ever after.
+func TestClackPartialSpinner(t *testing.T) {
+	const w, h = 800, 600
+	win := clackWindow(t, w, h)
+	defer win.Release()
+	defer gpu.ClackPartialTextures(false)
+	defer gpu.ClackPartialWhole(false)
+	gpu.ClackPartialTextures(true)
+	gpu.ClackPartialReset()
+	scene := partialScene(w, h)
+	var o op.Ops
+	draw := func(f int) gpu.FrameStats {
+		t.Helper()
+		o.Reset()
+		// the spinner first: every path after it keeps its place
+		c := f32.Pt(30, 330)
+		for k, sweep := range []float32{math.Pi / 2, math.Pi / 3} {
+			a0 := float64(f)*0.37 + float64(k)*2.1
+			var p clip.Path
+			p.Begin(&o)
+			p.MoveTo(f32.Pt(c.X+7*float32(math.Cos(a0)), c.Y+7*float32(math.Sin(a0))))
+			p.ArcTo(c, c, sweep)
+			paint.FillShape(&o, color.NRGBA{R: 0x12, G: 0x64, B: 0xa3, A: 0xff}, clip.Stroke{Path: p.End(), Width: 2}.Op())
+		}
+		scene(&o, f32.Affine2D{}, partialVars{caret: f%30 < 15})
+		if err := win.Frame(&o); err != nil {
+			t.Fatal(err)
+		}
+		return win.ClackFrameStats()
+	}
+	first := draw(0)
+	var maxHoles, partials int
+	var maxWork int64
+	var work []int64
+	for f := 1; f < 3000; f++ {
+		st := draw(f)
+		if st.Partial {
+			partials++
+		}
+		maxHoles, maxWork = max(maxHoles, st.StickyHoles), max(maxWork, st.PackWork)
+		work = append(work, st.PackWork)
+		if f%500 == 0 {
+			t.Logf("frame %d: %d sticky slots (%d holes), packer work %d (the first frame's %d), partial %v, %d px damaged", f, st.StickySlots, st.StickyHoles, st.PackWork, first.PackWork, st.Partial, st.DamagePx)
+		}
+	}
+	if maxHoles > 64 {
+		t.Errorf("up to %d hole slots in the sticky sequence; want 64 at most", maxHoles)
+	}
+	if maxWork > 3*first.PackWork {
+		t.Errorf("the packer's work reached %d a frame, %.1fx the first frame's %d; want 3x at most", maxWork, float64(maxWork)/float64(first.PackWork), first.PackWork)
+	}
+	if partials < 2900 {
+		t.Errorf("%d of 2,999 spinner frames partial; want nearly all", partials)
+	}
+	// the last frame against the whole frame the same GPU draws for it
+	img := image.NewRGBA(image.Rectangle{Max: win.size})
+	if err := win.Screenshot(img); err != nil {
+		t.Fatal(err)
+	}
+	gpu.ClackPartialWhole(true)
+	if err := win.Frame(&o); err != nil {
+		t.Fatal(err)
+	}
+	gpu.ClackPartialWhole(false)
+	ref := image.NewRGBA(image.Rectangle{Max: win.size})
+	if err := win.Screenshot(ref); err != nil {
+		t.Fatal(err)
+	}
+	if n, m := diffCount(ref, img); n > 0 {
+		t.Errorf("after 3,000 spinner frames: %d px differ from the whole frame by up to %d levels:%s", n, m, worstPixels(ref, img, img.Bounds(), 6))
+	}
 }
 
 // Clack patch 45: the damage of two frames is the clips of the ops one has
