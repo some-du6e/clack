@@ -27,6 +27,7 @@ on:
       - "internal/pluginbench/**"
       - "internal/ui/plugin_bench*"
       - "internal/ui/library_prefs.go"
+      - "internal/ui/taut_wire.go"
       - "internal/fakeslack/plugin_bench.go"
       - "internal/taut/**"
       - "internal/slick/**"
