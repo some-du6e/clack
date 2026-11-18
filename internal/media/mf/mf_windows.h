@@ -60,7 +60,7 @@ void clack_me_close_engine(clackMF *m);
 int32_t clack_me_ring(clackMF *m, uint32_t w, uint32_t h, clackMFInfo *info);
 int32_t clack_me_control(clackMF *m, int op, double v);
 void clack_me_state(clackMF *m, clackMFState *st);
-int clack_me_tick(clackMF *m, int32_t *hr);
+int clack_me_tick(clackMF *m, int32_t *hr, int64_t *pts);
 uintptr_t clack_me_ask(clackMF *m, uintptr_t dev, uint64_t *key, int *status, clackMFInfo *info);
 void clack_me_counts(clackMF *m, int64_t *skips, int64_t *timeouts, int64_t *copies);
 void clack_me_close(clackMF *m);

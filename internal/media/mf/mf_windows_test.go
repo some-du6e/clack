@@ -276,17 +276,17 @@ func checkColors(t *testing.T, samples []sample) {
 
 // The first player in the process, the fixture with its audio track:
 // its metadata within 5 s of the window being made (Media Foundation's
-// and Direct3D's start included). On the runners (no audio output)
-// engines made with an audio renderer took 2 s to their metadata, and
-// the first ones in a process didn't get there in 15 s; with no output
-// the engine is made with none.
+// and Direct3D's start included). On a runner (no audio output) the
+// first engines of one process, made unmuted, didn't get there in 15 s;
+// with no output the engine is made muted.
 func TestMFColdStart(t *testing.T) {
 	t0 := time.Now()
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	r.draw()
 	md := r.wait(media.LoadedMetadata, 60*time.Second)
 	took := time.Since(t0)
-	t.Logf("loadedmetadata %v after the first player's window was made (audio: %s); the engine's events %s", took, r.audio(), traceOf(r.id))
+	audio, _ := r.audio()
+	t.Logf("loadedmetadata %v after the first player's window was made (audio: %s); the engine's events %s", took, audio, traceOf(r.id))
 	if took > 5*time.Second {
 		t.Errorf("loadedmetadata %v after the window was made, want under 5 s", took)
 	}
@@ -295,27 +295,41 @@ func TestMFColdStart(t *testing.T) {
 	}
 }
 
-// audio is what the player found of the audio output, once it's known.
-func (r *rig) audio() string {
-	done := make(chan string, 1)
-	r.p.post(func() { done <- r.p.audio })
+// audio is what the player found of the audio output, and whether its
+// engine is made muted, once it's known.
+func (r *rig) audio() (string, bool) {
+	type answer struct {
+		s    string
+		none bool
+	}
+	done := make(chan answer, 1)
+	r.p.post(func() { done <- answer{r.p.audio, r.p.noAudio} })
 	select {
 	case a := <-done:
-		return a
+		return a.s, a.none
 	case <-time.After(5 * time.Second):
-		return "(the media thread didn't answer)"
+		return "(the media thread didn't answer)", false
 	}
 }
 
 // The fixture plays to its end through a headless Gio window: the
-// metadata (3 s, 320×180), the events in order, the three colours, the
-// first frame within 2 s, in BGRA frames.
+// metadata (3 s, 320×180), the events in order, the three colours, in
+// BGRA frames; the first frame within 2 s of Play where there's an audio
+// output. Where there's none (the runners) the audio track's engine took
+// 2.2 s to its metadata, its audio renderer made or not, and the silent
+// fixture's 0.02 s: there 5 s, and TestMFSilent holds the video's own
+// path to 2 s.
 func TestMFPlaysFixture(t *testing.T) {
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	samples, first := r.playThrough()
 	checkColors(t, samples)
-	if first > 2*time.Second {
-		t.Errorf("the first frame came %v after Play, want under 2 s", first)
+	audio, none := r.audio()
+	budget := 2 * time.Second
+	if none {
+		budget = 5 * time.Second
+	}
+	if first > budget {
+		t.Errorf("the first frame came %v after Play, want under %v (audio: %s)", first, budget, audio)
 	}
 	if r.p.format != fmtBGRA {
 		t.Errorf("format %s, want BGRA", formatName(r.p.format))
@@ -437,8 +451,12 @@ func TestMFSilent(t *testing.T) {
 		t.Log("the runner has an audio output")
 	}
 	r := newRig(t, mediatest.Silent, false, image.Pt(320, 180))
-	samples, _ := r.playThrough()
+	samples, first := r.playThrough()
 	checkColors(t, samples)
+	if first > 2*time.Second {
+		t.Errorf("the first frame came %v after Play, want under 2 s", first)
+	}
+	t.Logf("first frame %v after Play", first)
 }
 
 // 300 frames through the shared ring: how many a busy texture skipped

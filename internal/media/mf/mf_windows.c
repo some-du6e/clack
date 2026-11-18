@@ -1057,9 +1057,11 @@ void clack_me_state(clackMF *m, clackMFState *st) {
 // clack_me_tick is the media thread's poll: when the engine has a new
 // frame, it goes into a texture of the ring that isn't the newest (a free
 // one, else a frame Gio never took), which is then the newest. 1: a new
-// frame; 0: none (or no texture free: a skip); -1: the transfer failed.
-int clack_me_tick(clackMF *m, int32_t *phr) {
+// frame, *ppts its presentation time (100 ns units); 0: none (or no
+// texture free: a skip); -1: the transfer failed.
+int clack_me_tick(clackMF *m, int32_t *phr, int64_t *ppts) {
 	*phr = S_OK;
+	*ppts = -1;
 	clackEngine *e = m->engine;
 	if (e == NULL || m->slot[0].tex == NULL) {
 		return 0;
@@ -1096,6 +1098,7 @@ int clack_me_tick(clackMF *m, int32_t *phr) {
 	m->seq++;
 	m->newest = got;
 	InterlockedExchange64(&m->published, (m->seq << 2) | got);
+	*ppts = pts;
 	return 1;
 }
 
@@ -1233,10 +1236,12 @@ void clack_me_free(clackMF *m) {
 }
 
 // clack_me_audio_endpoint is whether Windows has a default audio output
-// (S_OK). A runner has none (E_NOTFOUND); an engine made with an audio
-// renderer there took 2 s to its metadata, and the first ones in a
-// process never got there, so the player makes it with
-// MF_MEDIA_ENGINE_FORCEMUTE instead.
+// (S_OK). A runner has none (E_NOTFOUND), and the player then makes the
+// engine with MF_MEDIA_ENGINE_FORCEMUTE: the video plays silently there
+// anyway. (On a runner the first engines of one process, made without
+// it, never got to their metadata, and none has since; a file with an
+// audio track takes 2.2 s to its metadata there either way, the silent
+// fixture 0.02 s.)
 int32_t clack_me_audio_endpoint(void) {
 	IMMDeviceEnumerator *e = NULL;
 	HRESULT hr = CoCreateInstance(&clackCLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &clackIID_IMMDeviceEnumerator, (void **)&e);

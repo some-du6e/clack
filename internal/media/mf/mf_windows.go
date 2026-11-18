@@ -239,8 +239,13 @@ type player struct {
 	seekTo         float64 // a seek before the engine was there, -1 none
 	volume, rate   float64
 	muted, loop    bool
-	wantFrame      bool
-	wantUntil      time.Time
+	wantFrame      bool          // tick until the frame at the position is drawn
+	wantUntil      time.Time     // or until then
+	wantFrom       int64         // NTransfers when it was asked for
+	emptyTicks     int           // polls in a row with no new frame
+	lastPts        time.Duration // the newest frame transferred's, -1 none
+	seeking        bool          // a seek sent, no seeked yet: poll on
+	seekUntil      time.Time     // (at most until then)
 	lastRefresh    time.Time
 	restoreSeek    bool
 	transferErrs   int
@@ -249,7 +254,7 @@ type player struct {
 	loggedTransfer bool
 	loggedFirst    bool
 	// the default audio output: known once the check answered (or took
-	// too long); none, the engine is made with no audio renderer
+	// too long); none, the engine is made muted
 	audioKnown bool
 	noAudio    bool
 	audio      string // what the check found, for the logs
@@ -276,11 +281,19 @@ func (p *player) Pause() { p.post(func() { p.wantPlay = false; p.control(opPause
 func (p *player) Seek(t time.Duration) {
 	p.post(func() {
 		p.TouchAsk()
+		// currentTime reads the new position at once, as HTML's does
+		p.Update(func(st *media.State) {
+			st.Pos, st.Ended = max(t, 0), false
+			if st.Duration > 0 && st.Pos > st.Duration {
+				st.Pos = st.Duration
+			}
+		})
 		if !p.opened {
 			p.seekTo = t.Seconds()
 			return
 		}
 		p.control(opSeek, t.Seconds())
+		p.wantFrameHere()
 	})
 }
 func (p *player) SetVolume(v float64) {
@@ -343,6 +356,9 @@ func (p *player) control(op int, v float64) {
 		return
 	}
 	hr := C.clack_me_control(p.c, C.int(op), C.double(v))
+	if op == opSeek && hr == 0 {
+		p.seeking, p.seekUntil = true, time.Now().Add(10*time.Second)
+	}
 	if hr == 0 || op == opPlay || op == opPause || p.noAudio && (op == opVolume || op == opMuted) {
 		return
 	}
@@ -389,7 +405,7 @@ func (p *player) run() {
 	C.clack_me_thread_init()
 	defer close(p.done)
 	defer C.clack_me_thread_done()
-	p.seekTo = -1
+	p.seekTo, p.lastPts = -1, -1
 	infoCh := make(chan error, 1)
 	go func() {
 		info, err := p.rs.Info(p.ctx)
@@ -427,13 +443,13 @@ func (p *player) run() {
 		case <-audioC:
 			p.audioKnown = true
 			if p.noAudio = audio.err != nil; p.noAudio {
-				p.audio = fmt.Sprintf("no output (%v): the engine has no audio renderer", audio.err)
+				p.audio = fmt.Sprintf("no output (%v): the engine is made muted (MF_MEDIA_ENGINE_FORCEMUTE)", audio.err)
 			} else {
 				p.audio = "the default output"
 			}
 		case <-lateC:
 			p.audioKnown, p.noAudio = true, true
-			p.audio = fmt.Sprintf("the check of the default output didn't answer within %v: the engine has no audio renderer", audioWait)
+			p.audio = fmt.Sprintf("the check of the default output didn't answer within %v: the engine is made muted (MF_MEDIA_ENGINE_FORCEMUTE)", audioWait)
 		case <-p.bind:
 			p.doBind()
 		case <-p.wake:
@@ -455,11 +471,18 @@ func (p *player) run() {
 }
 
 // ticker is the poll for frames: only while it plays and Gio asked within
-// the last second, or for the one frame after the data came or a seek.
+// the last second, or while the frame drawn isn't the one at the position
+// (the data came, a seek, an engine made again; the engine needs the
+// polls to present a paused seek's frame before it sends seeked).
 func (p *player) ticker(t *time.Ticker) *time.Ticker {
 	st := p.State()
 	playing := !st.Paused && !st.Ended && st.Err == 0
-	want := p.opened && p.ringOK && !p.failed && ((playing && p.AskedWithin(time.Second)) || (p.wantFrame && time.Now().Before(p.wantUntil)))
+	now := time.Now()
+	if p.wantFrame && !p.seeking && (!now.Before(p.wantUntil) || p.frameHere(st.Pos)) {
+		p.wantFrame = false
+	}
+	seeking := p.seeking && now.Before(p.seekUntil)
+	want := p.opened && p.ringOK && !p.failed && ((playing && p.AskedWithin(time.Second)) || p.wantFrame || seeking)
 	switch {
 	case want && t == nil:
 		fps := p.fps
@@ -473,6 +496,34 @@ func (p *player) ticker(t *time.Ticker) *time.Ticker {
 		return nil
 	}
 	return t
+}
+
+// wantFrameHere asks for polls until the frame at the position is drawn,
+// for 2 s at most.
+func (p *player) wantFrameHere() {
+	p.wantFrame, p.wantUntil, p.wantFrom, p.emptyTicks = true, time.Now().Add(2*time.Second), p.NTransfers.Load(), 0
+}
+
+// frameHere is whether the frame transferred last is the one at pos: its
+// presentation time within a frame and a half of it, or the engine had
+// nothing newer for 8 polls since one came.
+func (p *player) frameHere(pos time.Duration) bool {
+	if p.lastPts < 0 {
+		return false
+	}
+	fps := p.fps
+	if fps <= 0 || math.IsNaN(fps) {
+		fps = 30
+	}
+	slack := time.Duration(1.5 * float64(time.Second) / fps)
+	return absDur(pos-p.lastPts) <= slack || p.NTransfers.Load() > p.wantFrom && p.emptyTicks >= 8
+}
+
+func absDur(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 func (p *player) doBind() {
@@ -648,16 +699,22 @@ func (p *player) tick() {
 		p.refresh()
 	}
 	var hr C.int32_t
-	r := C.clack_me_tick(p.c, &hr)
+	var pts C.int64_t
+	r := C.clack_me_tick(p.c, &hr, &pts)
 	if r == 1 && forceTransferFailures.Load() > 0 {
 		forceTransferFailures.Add(-1)
 		r, hr = -1, eFail
 	}
 	switch r {
+	case 0:
+		if hr == 1 { // S_FALSE: no new frame
+			p.emptyTicks++
+		}
 	case 1:
 		p.transferErrs = 0
 		p.okTransfers++
-		p.wantFrame = false
+		p.emptyTicks = 0
+		p.lastPts = time.Duration(pts) * 100
 		p.NTransfers.Add(1)
 		p.NFrames.Add(1)
 		if !p.loggedFirst {
@@ -716,6 +773,7 @@ func (p *player) reopen(format uint32) {
 	C.clack_me_close_engine(p.c)
 	p.askMu.Unlock()
 	p.opened, p.ringOK, p.format, p.reopening = false, false, format, true
+	p.lastPts, p.seeking = -1, false
 	p.restoreSeek = st.Pos > 0
 	if p.restoreSeek {
 		p.seekTo = st.Pos.Seconds()
@@ -786,6 +844,19 @@ func (p *player) onEvent(ev mfEvent) {
 		testEvent(p.src.FileID, ev.code)
 	}
 	switch ev.code {
+	case evSeeking:
+		if !p.seeking {
+			p.seeking, p.seekUntil = true, time.Now().Add(10*time.Second) // the engine's own (a loop)
+		}
+	case evSeeked:
+		p.seeking = false
+		p.wantFrameHere() // until the frame there is drawn (it may be already)
+	case evLoadedMetadata:
+		if p.reopening {
+			p.makeRing() // the same video: the polls a paused seek needs
+		}
+	}
+	switch ev.code {
 	case evStreamError:
 		log.Printf("media: %s: a stream can't be played (no audio device?), the rest plays: %s", p.src.FileID, hrString(int32(ev.p2)))
 		return
@@ -822,7 +893,7 @@ func (p *player) onEvent(ev mfEvent) {
 			waiting := p.State().Waiting
 			p.refresh()
 			p.makeRing()
-			p.wantFrame, p.wantUntil = true, time.Now().Add(time.Second)
+			p.wantFrameHere()
 			if waiting {
 				p.Update(func(st *media.State) { st.Waiting = false })
 				if ev.code == evPlaying {
@@ -849,7 +920,7 @@ func (p *player) onEvent(ev mfEvent) {
 		if p.tData.IsZero() {
 			p.tData = time.Now()
 		}
-		p.wantFrame, p.wantUntil = true, time.Now().Add(time.Second)
+		p.wantFrameHere()
 	case evPlay:
 		k = media.Play
 	case evPause:
@@ -864,7 +935,6 @@ func (p *player) onEvent(ev mfEvent) {
 		k = media.Seeking
 	case evSeeked:
 		k = media.Seeked
-		p.wantFrame, p.wantUntil = true, time.Now().Add(time.Second)
 	case evEnded:
 		k = media.Ended
 	case evDurationChange:
@@ -979,7 +1049,7 @@ func clackMFReadSync(h C.uintptr_t, pb unsafe.Pointer, cb C.ulong, off C.longlon
 }
 
 // audioWait is how long a player waits for the check of the default
-// audio output before it makes its engine with no audio renderer.
+// audio output before it makes its engine muted.
 const audioWait = 2 * time.Second
 
 // audioCall is a check of the default audio output; players made while
