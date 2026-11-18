@@ -214,6 +214,11 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 				return err
 			}
 		}
+		if h := clackGPUFrames.Load(); h != nil && w.gpu != nil {
+			if st, ok := w.gpu.(gpu.ClackStats); ok {
+				(*h)(st.ClackFrameStats()) // Clack patch (CLACK_PATCHES.md §46)
+			}
+		}
 		w.queue.Frame(frame)
 		// Let the client continue as soon as possible, in particular before
 		// a potentially blocking Present.

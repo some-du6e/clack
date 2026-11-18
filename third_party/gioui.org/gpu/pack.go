@@ -14,6 +14,9 @@ type packer struct {
 
 	sizes []image.Point
 	pos   image.Point
+	// work counts the free spaces tryAdd looked at (Clack patch 46,
+	// FrameStats.PackWork)
+	work int64
 }
 
 type placement struct {
@@ -55,6 +58,7 @@ func (p *packer) tryAdd(s image.Point) (placement, bool) {
 		bestSize = p.maxDims
 		lastSize = p.sizes[len(p.sizes)-1]
 	)
+	p.work += int64(len(p.spaces))
 	// Go backwards to prioritize smaller spaces.
 	for i := range p.spaces {
 		space := &p.spaces[i]
