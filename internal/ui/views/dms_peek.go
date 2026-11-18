@@ -28,17 +28,26 @@ import (
 
 var nsIA4 = i18n.NS("ia4")
 
-// dmsCardColors is dmsPal on the peek card (peekPalOf's tokens).
+// dmsCardColors is dmsPal on the peek card (peekPalOf's tokens). A row's
+// :hover is the card's (.p-peek_card .p-activity_ia4_page__item:hover:
+// base-pry under the base-pry-hover image); in dark mode DmsList's
+// p-dms_list--dark, keyed on the client's theme alone, clears only its
+// background-color, so the image lies on the card itself.
 func dmsCardColors(th *theme.Theme) dmsPal {
 	pp := peekPalOf(th)
+	tint := pp.hover
+	if th != nil && th.Dark {
+		tint = flatten(pp.pryHover, pp.bg)
+	}
 	c := dmsPal{
 		chrome:  pp.bg,
-		tint:    pp.hover,
+		tint:    tint,
 		rule:    flatten(pp.line, pp.bg),
 		inputBg: pp.bg,
 		soft:    pp.sec,
 		preview: pp.sec,
 		time:    flatten(pp.invSec, pp.bg), // .p-dms_channel__timestamp: theme-content-inv-sec
+		ter:     flatten(pp.invTer, pp.bg), // --muted: theme-content-inv-ter
 		white:   pp.fg,
 		green:   rgb(0x2bac76),
 		pillBg:  pp.baseImp,
@@ -49,9 +58,6 @@ func dmsCardColors(th *theme.Theme) dmsPal {
 	if th != nil {
 		if g := th.C.Presence; g.A > 0 {
 			c.green = g
-		}
-		if b := th.C.Badge; b.A > 0 && th.Dark {
-			c.pillBg, c.pillFg = b, th.C.BadgeText
 		}
 	}
 	return c
@@ -152,3 +158,6 @@ func (d *DMs) PeekFirst() string {
 
 // Unreads reports the Unreads filter (the tab's and the peek's).
 func (d *DMs) Unreads() bool { return d.unreads.Value }
+
+// ShowAllDMs is "Show all DMs" (setDmsFilter ALL): the Unreads filter off.
+func (d *DMs) ShowAllDMs() { d.unreads.Value = false }

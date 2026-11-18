@@ -59,6 +59,7 @@ const (
 // (theme.DarkPalette), so the list matches the sidebar beside it.
 type dmsPal struct {
 	chrome  color.NRGBA // flat stand-in for the chrome gradient
+	ter     color.NRGBA // muted timestamps (theme-content-inv-ter)
 	tint    color.NRGBA // hover / selected row (#f9edff@.08)
 	rule    color.NRGBA // row border, input border (@.22)
 	inputBg color.NRGBA // "Find a DM…" fill (@.11)
@@ -73,8 +74,35 @@ type dmsPal struct {
 	caret   color.NRGBA // input selection
 }
 
+// scope takes the colours from the sidebar's theme scope, which the list
+// sits in: Slack's .p-dms_list rows are p-activity_ia4_page__items
+// (theme-content-inv-pry names and read and unread messages, a muted
+// conversation's theme-content-inv-sec; theme-surf-inv-ter --selected,
+// and :hover outside dark mode; theme-otl-inv-pry rules), its timestamps
+// (.p-dms_channel__timestamp) and meta theme-content-inv-sec, a muted
+// one's theme-content-inv-ter, and its search box a themed
+// c-filter_input (theme-surf-inv-sec). The shell's sidebar fields carry
+// those tokens in the account theme's sidebar scope, so a light sidebar
+// (a light brightness, or Darker sidebars off) gets the primary's dark
+// ink, not the inverted scope's white. The skeleton and the caret keep
+// their measured alphas over the token.
+func (p *dmsPal) scope(c *theme.Palette) {
+	if c.SidebarTextUnread.A == 0 {
+		return
+	}
+	p.white, p.soft = c.SidebarTextUnread, c.SidebarText
+	p.tint, p.rule, p.inputBg = c.SidebarHover, c.SidebarDivider, c.SidebarBg
+	p.preview, p.time = c.SidebarTextUnread, c.SidebarText
+	if c.SidebarTextTer.A > 0 {
+		p.ter = c.SidebarTextTer
+	}
+	p.skel = theme.WithAlpha(c.SidebarHover, p.skel.A)
+	p.caret = theme.WithAlpha(c.SidebarHover, p.caret.A)
+}
+
 var dmsLight = dmsPal{
 	chrome:  rgb(0x3f0e40),
+	ter:     argb(0x99f9edff),
 	tint:    argb(0x14f9edff),
 	rule:    argb(0x38f9edff),
 	inputBg: argb(0x1cf9edff),
@@ -91,6 +119,7 @@ var dmsLight = dmsPal{
 
 var dmsDark = dmsPal{
 	chrome:  rgb(0x251627), // between DarkPalette.ChromeA and ChromeB
+	ter:     argb(0x99e3ceeb),
 	tint:    argb(0x14f9edff),
 	rule:    argb(0x1affffff),
 	inputBg: argb(0x14f9edff),
@@ -121,6 +150,7 @@ func (d *DMs) dmsColors() {
 	if d.th.Dark {
 		d.c = dmsDark
 	}
+	d.c.scope(&d.th.C)
 	if b := d.th.C.Badge; b.A > 0 {
 		d.c.pillBg, d.c.pillFg = b, d.th.C.BadgeText
 	}
@@ -134,7 +164,7 @@ func (d *DMs) dmsColors() {
 		d.c.chrome = flatten(sb, d.c.chrome)
 	}
 	base := d.c.chrome
-	for _, c := range []*color.NRGBA{&d.c.tint, &d.c.rule, &d.c.inputBg, &d.c.soft, &d.c.preview, &d.c.time, &d.c.skel} {
+	for _, c := range []*color.NRGBA{&d.c.tint, &d.c.rule, &d.c.inputBg, &d.c.soft, &d.c.preview, &d.c.time, &d.c.ter, &d.c.skel} {
 		*c = flatten(*c, base)
 	}
 }
@@ -357,6 +387,20 @@ func (d *DMs) layoutPane(gtx C) D {
 	}
 	return d.emptyState(gtx, "dms", "Your direct messages",
 		"Pick a conversation from the list, or use Find a DM to start one.", nil, "")
+}
+
+// rowTints are a row's fill and :hover fill: theme-surf-inv-ter when
+// --selected, and on :hover except on the dark page, where
+// .p-dms_list--dark makes an unselected row's hover transparent. On the
+// peek card the hover is the card's own, in both modes (dmsCardColors).
+func (d *DMs) rowTints(sel bool) (bg, hover color.NRGBA) {
+	if sel {
+		return d.c.tint, d.c.tint
+	}
+	if d.th != nil && d.th.Dark && !d.peeking {
+		return color.NRGBA{}, color.NRGBA{}
+	}
+	return color.NRGBA{}, d.c.tint
 }
 
 // ringColor is the opaque color under a row, for the presence ring and
@@ -1114,7 +1158,9 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 	r := d.rowState(dm.Channel)
 	sel := dm.Channel == d.sel && !d.peeking // isActive: eg === s.id && !isPeekView
 	unread := dmsUnread(dm) && !sel
-	ring := d.ringColor(sel || r.hovered)
+	bg, hoverBg := d.rowTints(sel)
+	ring := d.ringColor(sel || r.hovered && hoverBg.A > 0)
+	muted := dm.Conv.Muted || dm.Count.Muted
 
 	name := d.dmName(dm)
 	self := d.selfID()
@@ -1133,13 +1179,17 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 			txt = nsRecent.T("You: ") + txt // ActivityMessage
 		}
 	}
+	// ActivityMessage: --muted before --read and --unread (both need
+	// !isMuted)
 	prevC := d.c.preview
-	if unread {
+	if muted { // __message--muted: theme-content-inv-sec
+		prevC = d.c.soft
+	} else if unread {
 		prevC = d.c.white
 	}
-	bg := color.NRGBA{}
-	if sel {
-		bg = d.c.tint
+	timeC := d.c.time
+	if muted { // .p-dms_channel__timestamp--muted: theme-content-inv-ter
+		timeC = d.c.ter
 	}
 
 	// WbG1 Actions with isDmTab: Mark as read while unread, the to-do
@@ -1184,7 +1234,7 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					return col(gtx,
 						layout.Rigid(func(gtx C) D {
-							return d.nameLine(gtx, name, isSelf, statusURL, when)
+							return d.nameLine(gtx, name, isSelf, muted, statusURL, when, timeC)
 						}),
 						layout.Rigid(func(gtx C) D {
 							if txt == "" {
@@ -1221,7 +1271,7 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 			)
 		})
 	}
-	rd := d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: d.c.tint, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
+	rd := d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: hoverBg, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return slackc.Component(gtx, "DmsChannel", r, (*dmsRow).channelProps, (*dmsRow).layoutChannel)
 	}})
@@ -1235,8 +1285,15 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 }
 
 // nameLine is line 1 of a row: bold name (truncated), optional " (you)"
-// and 16px status emoji, then the timestamp at the right.
-func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) D {
+// and 16px status emoji, then the timestamp at the right. A muted
+// conversation's name, " (you)" with it, is .p-dms_channel__name--muted:
+// --dt_color-content-ter (not a theme token: the root's grey even in the
+// inverted sidebar), bold.
+func (d *DMs) nameLine(gtx C, name string, isSelf, muted bool, statusURL, when string, timeC color.NRGBA) D {
+	nameC := d.c.white
+	if muted && d.p != nil {
+		nameC = d.p.Muted
+	}
 	gtx.Constraints.Min.Y = 0
 	youW := 0
 	you := " " + nsRecent.T("(you)") // DmsChannel
@@ -1261,15 +1318,15 @@ func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) 
 						return D{}
 					}
 					if !ns.Active() {
-						return d.para(gtx, dmsNameSize, dmsLine, wBold, d.c.white, 1, name)
+						return d.para(gtx, dmsNameSize, dmsLine, wBold, nameC, 1, name)
 					}
-					return ns.Wrap(gtx, func(gtx C) D { return d.para(gtx, dmsNameSize, dmsLine, wBold, ns.Color(d.c.white), 1, name) })
+					return ns.Wrap(gtx, func(gtx C) D { return d.para(gtx, dmsNameSize, dmsLine, wBold, ns.Color(nameC), 1, name) })
 				}),
 				layout.Rigid(func(gtx C) D {
 					if !isSelf {
 						return D{}
 					}
-					return d.para(gtx, dmsNameSize, dmsLine, wReg, d.c.white, 1, you)
+					return d.para(gtx, dmsNameSize, dmsLine, wReg, nameC, 1, you)
 				}),
 				layout.Rigid(func(gtx C) D {
 					if statusURL == "" {
@@ -1286,7 +1343,7 @@ func (d *DMs) nameLine(gtx C, name string, isSelf bool, statusURL, when string) 
 			if when == "" {
 				return D{}
 			}
-			return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, dmsTimeSize, wReg, d.c.time, when) })
+			return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, dmsTimeSize, wReg, timeC, when) })
 		}),
 	)
 }
@@ -1373,7 +1430,9 @@ func (d *DMs) personRow(gtx C, u core.User) D {
 	return c.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
-		ring := d.ringColor(c.Hovered())
+		_, hov := d.rowTints(false)
+		hovered := c.Hovered() && hov.A > 0 // .p-dms_list--dark: no :hover tile, so no tinted ring
+		ring := d.ringColor(hovered)
 		m := op.Record(gtx.Ops)
 		dims := layout.UniformInset(dmsPad).Layout(gtx, func(gtx C) D {
 			return row(gtx, layout.Middle,
@@ -1399,8 +1458,8 @@ func (d *DMs) personRow(gtx C, u core.User) D {
 			)
 		})
 		call := m.Stop()
-		if c.Hovered() {
-			fill(gtx, image.Rectangle{Max: dims.Size}, d.c.tint)
+		if hovered {
+			fill(gtx, image.Rectangle{Max: dims.Size}, hov)
 		}
 		call.Add(gtx.Ops)
 		hl := max(1, gtx.Dp(1))

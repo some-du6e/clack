@@ -78,6 +78,9 @@ func (a *App) scopeTokens(t *theme.Theme, p *theme.Palette) {
 			"--dt_color-theme-content-hgl-1":   cssRGBA(side.SidebarActiveText),
 			"--dt_color-theme-base-imp":        cssRGBA(p.RailBadge),
 			"--dt_color-theme-content-imp":     cssRGBA(p.RailBadgeText),
+			"--dt_color-theme-base-pry":        cssRGBA(p.ChromeBasePry),
+			"--dt_color-theme-content-ter":     cssRGBA(p.ChromeContentTer),
+			"--dt_color-theme-content-inv-ter": cssRGBA(side.SidebarTextTer),
 		}
 	}
 	if maps.Equal(vars, a.scopeVars) && (vars == nil) == (a.scopeVars == nil) {

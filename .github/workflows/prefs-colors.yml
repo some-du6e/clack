@@ -2,8 +2,12 @@ name: prefs-colors
 # Preferences' colours against Slack's tokens: the token tests, the native
 # checkbox pixels, and screenshots of Availability / Notifications / Plugins
 # in light, dark, a custom-hex account theme (light and dark) and Hot Dog
-# Stand, over the whole client signed in to internal/fakeslack. Synthetic
-# data only: nothing here talks to Slack.
+# Stand, over the whole client signed in to internal/fakeslack. Then
+# TestThemeContrastShots: the whole window (top nav, tab rail, sidebar,
+# Direct messages, Activity) under Karim's custom colour #FED4BE as Slack's
+# picker and its Import store it, a dark custom colour and the default
+# theme, light and dark, with the inspect tool's rail sample logged.
+# Synthetic data only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run prefs-colors.yml --ref <branch>)
@@ -11,6 +15,16 @@ on:
       - "internal/ui/prefs*.go"
       - "internal/ui/taut_prefs.go"
       - "internal/ui/theme_tokens_test.go"
+      - "internal/ui/theme_contrast*_test.go"
+      - "internal/ui/appmenu.go"
+      - "internal/ui/create_button.go"
+      - "internal/ui/focus_peek.go"
+      - "internal/ui/sidebar.go"
+      - "internal/ui/sidebar_filter.go"
+      - "internal/ui/views/dms*.go"
+      - "internal/ui/views/peek.go"
+      - "internal/ui/theme/palette.go"
+      - "internal/ui/theme/account.go"
       - "internal/ui/theme/native.go"
       - "internal/ui/popups/prefs_availability.go"
       - "internal/ui/popups/datetime.go"
@@ -41,7 +55,21 @@ jobs:
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -p 1 -count=1 -v -run 'TestPrefsColors|TestNativeCheckPixels|TestThemeTokens|TestThemeOverlayRulesReachNatives|TestPrefsPagesMatchSlack|TestAccountTheme' ./internal/ui/
+        run: xvfb-run -a go test -p 1 -count=1 -v -run 'TestPrefsColors|TestNativeCheckPixels|TestThemeTokens|TestThemeOverlayRulesReachNatives|TestPrefsPagesMatchSlack|TestAccountTheme(FromPrefs|UnderStylesheets|WriteBack|WriteFails)' ./internal/ui/
+      - name: the account theme's draw sites (sidebar lines, filter box, app menu, control strip), drawn and sampled
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 15m -run '^(TestAccountThemeDrawSites|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen|TestAccountThemeControlStripPress)$' ./internal/ui/
+      - name: the DMs rows, drawn and sampled (the peek card and the page)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 10m -run '^(TestDMsRowsDrawn|TestDMsPeekCardTokens|TestDMsListHoverByMode)$' ./internal/ui/views/
       - name: Preferences colour screenshots
         env:
           PREFS_COLOR_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -50,6 +78,16 @@ jobs:
         run: |
           mkdir -p "$PREFS_COLOR_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestPrefsColorShots$' ./internal/ui/
+          ls "$PREFS_COLOR_SHOTS_DIR"
+      - name: Account theme contrast screenshots (Karim's #FED4BE, a dark custom colour, the default)
+        if: ${{ !cancelled() }}
+        env:
+          PREFS_COLOR_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$PREFS_COLOR_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestThemeContrastShots$' ./internal/ui/
           ls "$PREFS_COLOR_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
