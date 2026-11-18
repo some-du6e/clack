@@ -389,3 +389,5 @@ One row per platform per run of perf.yml's scale jobs (fakeslackd -scale: 65,846
 | 2026-11-18 | `e93a5e7` | main | windows | 242 MB | 261 MB | 767 MB | 687 MB | 512 MB | 255 MB | 2 MB |
 | 2026-11-18 | `9d10472` | dogfood-fixes-1 | linux | 228 MB | 574 MB | 791 MB | 808 MB | 618 MB | 279 MB | 1 MB |
 | 2026-11-18 | `9d10472` | dogfood-fixes-1 | windows | 238 MB | 269 MB | 766 MB | 692 MB | 474 MB | 257 MB | 2 MB |
+| 2026-11-18 | `f35995d` | dogfood-fixes-1 | linux | 230 MB | 380 MB | 779 MB | 763 MB | 579 MB | 219 MB | 1 MB |
+| 2026-11-18 | `f35995d` | dogfood-fixes-1 | windows | 203 MB | 265 MB | 756 MB | 708 MB | 522 MB | 278 MB | 2 MB |
