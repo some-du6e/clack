@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
@@ -117,6 +118,30 @@ func iabs(v int) int {
 	return v
 }
 
+// drawnInk is text ink c of weight w as Clack's labels paint it over bg:
+// theme.LabelInk's light-text fade (light text on dark, as thin as
+// Chrome's), blended in linear light as Gio does.
+func drawnInk(c, bg color.NRGBA, w font.Weight) color.NRGBA {
+	c = theme.LabelInk(c, 1, w, false)
+	a := float64(c.A) / 255
+	lin := func(v uint8) float64 {
+		x := float64(v) / 255
+		if x <= 0.04045 {
+			return x / 12.92
+		}
+		return math.Pow((x+0.055)/1.055, 2.4)
+	}
+	srgb := func(l float64) uint8 {
+		x := 12.92 * l
+		if l > 0.0031308 {
+			x = 1.055*math.Pow(l, 1/2.4) - 0.055
+		}
+		return uint8(math.Round(math.Max(0, math.Min(1, x)) * 255))
+	}
+	mix := func(f, b uint8) uint8 { return srgb(lin(f)*a + lin(b)*(1-a)) }
+	return color.NRGBA{R: mix(c.R, bg.R), G: mix(c.G, bg.G), B: mix(c.B, bg.B), A: 0xff}
+}
+
 // nearPx reports whether the drawn pixel is within tol per channel of c.
 func nearPx(got color.RGBA, c color.NRGBA, tol int) bool {
 	return iabs(int(got.R)-int(c.R)) <= tol && iabs(int(got.G)-int(c.G)) <= tol && iabs(int(got.B)-int(c.B)) <= tol
@@ -184,26 +209,33 @@ func TestDMsRowsDrawn(t *testing.T) {
 					ter = flatten(c.invTer, bg) // Slack's own value on the card
 				}
 				w := sz.X
+				nameR, prevR := image.Rect(60, 16, 140, 38), image.Rect(60, 40, 210, 58)
 				for _, f := range []struct {
 					what      string
 					r         image.Rectangle
 					want      color.NRGBA
+					wt        font.Weight
 					aMin, aMx float64
 				}{
-					{"muted timestamp (theme-content-inv-ter)", image.Rect(w-16-60, 16, w-16, 38), ter, .7, 1.12},
-					{"muted name (--dt_color-content-ter)", image.Rect(60, 16, 140, 38), name, .85, 1.08},
-					{"muted, unread preview (theme-content-inv-sec)", image.Rect(60, 40, 210, 58), soft, .7, 1.1},
+					{"muted timestamp (theme-content-inv-ter)", image.Rect(w-16-60, 16, w-16, 38), ter, wReg, .7, 1.12},
+					{"muted name (--dt_color-content-ter)", nameR, name, wBold, .85, 1.08},
+					{"muted, unread preview (theme-content-inv-sec)", prevR, soft, wReg, .7, 1.1},
 				} {
-					a, off, peak := inkAlong(img, f.r, bg, f.want)
+					ink := drawnInk(f.want, bg, f.wt)
+					a, off, peak := inkAlong(img, f.r, bg, ink)
 					if a < f.aMin || a > f.aMx || off > 16 {
-						t.Errorf("%s: %s peaks at %s (%.2f of the way from %s to Slack's %s, %.0f off it)", where, f.what, hexA(peak), a, hexA(bg), hexA(f.want), off)
+						t.Errorf("%s: %s peaks at %s (%.2f of the way from %s to %s, Slack's %s as Clack's labels ink it; %.0f off it)", where, f.what, hexA(peak), a, hexA(bg), hexA(ink), hexA(f.want), off)
 					}
 				}
 				// the name and the preview don't take the unmuted / unread ink
-				for _, r := range []image.Rectangle{image.Rect(60, 16, 140, 38), image.Rect(60, 40, 210, 58)} {
+				for _, f := range []struct {
+					r  image.Rectangle
+					wt font.Weight
+				}{{nameR, wBold}, {prevR, wReg}} {
 					if white != name && white != soft {
-						if a, _, peak := inkAlong(img, r, bg, white); a > .92 {
-							t.Errorf("%s: %v draws %s, the unmuted ink %s", where, r, hexA(peak), hexA(white))
+						ink := drawnInk(white, bg, f.wt)
+						if a, _, peak := inkAlong(img, f.r, bg, ink); a > .92 {
+							t.Errorf("%s: %v draws %s, the unmuted ink %s", where, f.r, hexA(peak), hexA(ink))
 						}
 					}
 				}
