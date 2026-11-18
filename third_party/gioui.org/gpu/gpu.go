@@ -679,6 +679,12 @@ func (g *gpu) frame(target RenderTarget) error {
 	g.cache.frame()
 	g.drawOps.pathCache.frame()
 	g.cleanupTimer.end()
+	// what the device holds once the caches let go (Clack patch 46)
+	r.stats.DeviceTextureBytes, r.stats.DeviceBufferBytes = -1, -1
+	if rd, ok := g.ctx.(driver.ClackResources); ok {
+		r.stats.DeviceTextureBytes, r.stats.DeviceBufferBytes = rd.ClackResourceBytes()
+	}
+	r.stats.FrameTextureBytes = g.partial.heldBytes()
 	if false && g.timers.ready() {
 		st, covt, cleant := g.stencilTimer.Elapsed, g.coverTimer.Elapsed, g.cleanupTimer.Elapsed
 		ft := st + covt + cleant

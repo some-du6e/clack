@@ -71,6 +71,13 @@ type FrameStats struct {
 	// from the frame texture's.
 	CopyChecked    bool
 	CopyMismatchPx int64
+	// DeviceTextureBytes and DeviceBufferBytes are the bytes of the
+	// textures and buffers the GPU's device holds at the frame's end, where
+	// its backend counts them (Direct3D 11; -1 elsewhere): the coverage
+	// atlas, layers, images, path vertices, and partial frames' frame
+	// texture and clear texture (FrameTextureBytes of it).
+	DeviceTextureBytes, DeviceBufferBytes int64
+	FrameTextureBytes                     int64
 }
 
 // ClackStats reports the last frame's stats.

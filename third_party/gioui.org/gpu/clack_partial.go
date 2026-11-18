@@ -579,6 +579,18 @@ func (g *gpu) releaseFrameTex() {
 	}
 }
 
+// heldBytes is what the frame texture and the clear texture take (4 bytes
+// a texel: TextureFormatOutput).
+func (p *partialFrames) heldBytes() (n int64) {
+	if p.frameTex != nil {
+		n += int64(p.frameSize.X*p.frameSize.Y) * 4
+	}
+	if p.clearTex != nil {
+		n += int64(p.clearSize.X*p.clearSize.Y) * 4
+	}
+	return n
+}
+
 // clackFrameTextures counts the frame textures the process's GPUs hold.
 var clackFrameTextures atomic.Int64
 
