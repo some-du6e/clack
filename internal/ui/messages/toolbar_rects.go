@@ -28,26 +28,6 @@ func (s *listState) rowRects() []RowRect {
 	return out
 }
 
-// HoverToolbar is the hover toolbar (MessageActions) the last frame
-// drew: the message it was drawn for and its card, in window
-// coordinates; ok is false when none was drawn.
-func (v *ChannelView) HoverToolbar() (ts string, r image.Rectangle, ok bool) {
-	return v.s.hoverToolbar()
-}
-
-// HoverToolbar is ChannelView.HoverToolbar for the thread.
-func (v *ThreadView) HoverToolbar() (ts string, r image.Rectangle, ok bool) {
-	return v.s.hoverToolbar()
-}
-
-func (s *listState) hoverToolbar() (string, image.Rectangle, bool) {
-	i := s.tbFor
-	if i < 0 || i >= len(s.items) {
-		return "", image.Rectangle{}, false
-	}
-	return s.items[i].key, s.tbRect.Add(s.origin), true
-}
-
 // ListRect is the list's box as the last frame laid it out, in window
 // coordinates.
 func (v *ChannelView) ListRect() image.Rectangle { return v.s.listRect() }
