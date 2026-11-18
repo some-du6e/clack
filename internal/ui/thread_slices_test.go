@@ -40,11 +40,12 @@ import (
 )
 
 // longEnv is a workspace whose channels C0FAKE00001…3 hold 3,000 messages
-// each, with the thread header fixtures.
+// each, with the thread header fixtures; its read channels are read to
+// their newest message (ReadCursors), so they open at it.
 func longEnv(t *testing.T) *perfEnv {
 	t.Helper()
 	sz := fakeslack.Small
-	sz.ThreadHeader = true
+	sz.ThreadHeader, sz.ReadCursors = true, true
 	sz.LongChannels, sz.LongHistory = 3, 3000
 	fs, err := fakeslack.Start(sz)
 	if err != nil {
