@@ -50,9 +50,25 @@ func TestMessageMentionElement(t *testing.T) {
 		{"type":"text","text":"see "},
 		{"type":"message_mention","message_ts":"1700000000.000100","channel_id":"C1","text":"https://ws.slack.com/archives/C1/p1700000000000100","url":"https://ws.slack.com/archives/C1/p1700000000000100","author_id":"U1"}]}]}]}`), &m)
 	d := FromMessage(kindRes{}, &m)
-	want := []Block{para(tx("see "), Span{Kind: MessageMention, Text: "alice in #general", URL: "https://ws.slack.com/archives/C1/p1700000000000100", ID: "1700000000.000100"})}
+	// the element's own ids go with the pill: its click is jumpToMessage
+	// ({channelId, ts: message_ts, threadTs: thread_ts}) (p9lB)
+	want := []Block{para(tx("see "), Span{Kind: MessageMention, Text: "alice in #general", URL: "https://ws.slack.com/archives/C1/p1700000000000100",
+		ID: "1700000000.000100", ChannelID: "C1"})}
 	eq(t, "mention", d.Blocks, want)
 	eq(t, "mention plain", PlainText(d), "see alice in #general")
+
+	// a thread's parent or a reply: thread_ts (getMessageThreadTs); a
+	// message that can't be shown keeps no ids
+	var m2 slack.Message
+	_ = json.Unmarshal([]byte(`{"ts":"2.0","blocks":[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
+		{"type":"message_mention","message_ts":"1700000060.000100","channel_id":"C1","thread_ts":"1700000000.000100","url":"https://ws.slack.com/archives/C1/p1700000060000100?thread_ts=1700000000.000100","author_id":"U1"},
+		{"type":"message_mention","message_ts":"1700000000.000100","channel_id":"CNOPE","thread_ts":"1700000000.000100","url":"https://ws.slack.com/archives/CNOPE/p1700000000000100","author_id":"U1"}]}]}]}`), &m2)
+	d = FromMessage(kindRes{}, &m2)
+	want = []Block{para(
+		Span{Kind: MessageMention, Text: "alice in #general", URL: "https://ws.slack.com/archives/C1/p1700000060000100?thread_ts=1700000000.000100",
+			ID: "1700000060.000100", ChannelID: "C1", ThreadTS: "1700000000.000100"},
+		Span{Kind: MessageMention, Text: "Private message", ID: "1700000000.000100", Off: true})}
+	eq(t, "mention in a thread", d.Blocks, want)
 }
 
 func TestMessageUnfurlCard(t *testing.T) {
