@@ -169,6 +169,25 @@ func (l *lay) missingMember(miss MemberMiss, k faceKey, col color.NRGBA) {
 	}
 }
 
+// canvasMissing is Quip's slack-control-missing-content (quip-collab-editor
+// hs), what a canvas draws for a mention whose model is still loading (a
+// Pending span, a member the store can't name yet): an inline-block 20px
+// tall holding .missing-icon, a 12px square with radius 3, and
+// .missing-text, a 120px by 8 bar with radius 2, 5px apart and 5px in from
+// each end, both in rgb(var(--quipBackgroundInverse)) at opacity .15
+// (black, white under body.dark-theme; canvas-controller CSS). No text,
+// link or hover card: the id is never drawn or copied. An atomic inline,
+// like MissingText's bar. col is the colour it inherits.
+func (l *lay) canvasMissing(id string, k faceKey, col color.NRGBA) {
+	fill := rgba(0, 0, 0, 0.15)
+	if l.st.Palette.Dark {
+		fill = rgba(255, 255, 255, 0.15)
+	}
+	l.decos = append(l.decos, deco{kind: decoCanvasMissing, bg: fill, face: k, target: -1})
+	l.items = append(l.items, item{kind: itPad, w: l.dpf(5 + 12 + 5 + 120 + 5), deco: -1, own: int16(len(l.decos)), face: k, col: col, target: -1, part: l.curPart, atom: true})
+	l.d.pending = append(l.d.pending, id)
+}
+
 // cardTime is AttachmentFooterTimestamp's compactTime: the time today,
 // "Yesterday"/"Tomorrow" next to it, else the date.
 func cardTime(ts string) string {

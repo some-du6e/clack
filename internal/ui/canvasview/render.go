@@ -168,8 +168,77 @@ func (v *View) rebuild(d *core.CanvasDoc) {
 		v.title = nil
 	}
 	v.shown = d
+	v.nameMentions(d)
 	v.blocks = v.makeBlocks(d, d.Doc.Blocks, old)
 	v.edit.docChanged(v)
+}
+
+// nameMentions names the document's user, channel and group mentions from
+// the store, in place (core.NameCanvasMention): the export holds only
+// their ids, and Slack's canvas draws each from its model. A mention
+// whose model is still loading is Pending (Quip's skeleton); its lookup
+// is out, and mentionsMoved notices the answer. The table of contents and
+// the editor read the same spans.
+func (v *View) nameMentions(d *core.CanvasDoc) {
+	v.mentions = v.mentions[:0]
+	a := v.h.Core()
+	if a == nil {
+		return
+	}
+	d.Doc.Walk(func(b *canvas.Block) bool {
+		for i := range b.Spans {
+			s := &b.Spans[i]
+			switch s.Kind {
+			case richtext.User, richtext.Channel, richtext.Usergroup:
+				if s.ID != "" {
+					a.NameCanvasMention(s)
+					v.mentions = append(v.mentions, s)
+				}
+			}
+		}
+		return true
+	})
+}
+
+// mentionsMoved reports whether a mention the blocks were built with
+// would read differently now: a channel's lookup or a member answered,
+// a name changed. It reads each mention's model on every frame, as
+// Quip's views do on every render.
+func (v *View) mentionsMoved() bool {
+	a := v.h.Core()
+	if a == nil {
+		return false
+	}
+	for _, s := range v.mentions {
+		n := *s
+		if a.NameCanvasMention(&n) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionKey is what a block's mentions read (their text and states), so
+// a block lays out again when one of them gets its name.
+func mentionKey(b *canvas.Block) string {
+	var sb strings.Builder
+	for i := range b.Spans {
+		s := &b.Spans[i]
+		switch s.Kind {
+		case richtext.User, richtext.Channel, richtext.Usergroup:
+			sb.WriteString("\x00")
+			sb.WriteString(s.Text)
+			for _, f := range []struct {
+				on bool
+				c  byte
+			}{{s.Pending, 'p'}, {s.Off, 'o'}, {s.Lock, 'l'}, {s.Self, 's'}} {
+				if f.on {
+					sb.WriteByte(f.c)
+				}
+			}
+		}
+	}
+	return sb.String()
 }
 
 func sameSpans(a, b []richtext.Span) bool {
@@ -188,7 +257,7 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 	out := make([]*blk, 0, len(bs))
 	for i := range bs {
 		b := &bs[i]
-		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b)
+		key := b.ID + "\x00" + string(rune('A'+b.Kind)) + "\x00" + canvas.Markdown(*b) + fileKey(d, b) + mentionKey(b)
 		if o, ok := old[key]; ok && len(b.Children) == 0 && len(b.Columns) == 0 && b.Kind != canvas.Table {
 			o.b = b
 			o.edOK, o.edWhy = canvas.Editable(*b)
