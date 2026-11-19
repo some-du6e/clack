@@ -92,7 +92,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack|TestActivityCanvasMentionOpensCanvas|TestCanvasMentionMessageJumpOpensCanvas|TestCanvasCommentJumpOpensCanvas|TestCanvasTabTitleEmojiLate' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack|TestActivityCanvasMentionOpensCanvas|TestActivityCanvasMentionPersistentPane|TestCanvasMentionMessageJumpOpensCanvas|TestCanvasMentionSplitOpensCanvas|TestCanvasJumpWaitsForFilesInfo|TestCanvasCommentJumpOpensCanvas|TestCanvasTabTitleEmojiLate' ./internal/ui/
       - name: the rail's Activity badge
         # activity_v2 at boot, badge_counts_updated, client.counts and a
         # mark read; light and dark rail crops with 1, 9, 10 and 99+
