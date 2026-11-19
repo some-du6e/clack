@@ -391,6 +391,18 @@ jobs:
           # python3-xlib: TestRealWindowCaretCost reads the window's pixels back
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
           xvfb-run -a -s "-screen 0 1920x1080x24" go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
+      # the inspect tool's review drawn in the frame after the pick's at
+      # 1918x1080 at 1x and 2x on the headless GPU (Mesa's llvmpipe), each
+      # capture's stage times logged (windows-applog runs it on WARP)
+      - name: the inspect tool's pick to review (TestInspectReviewTiming, llvmpipe)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
+          xvfb-run -a go test -count=1 -v -timeout 15m -run '^TestInspectReviewTiming$' ./internal/ui
 
   windows:
     runs-on: ubuntu-latest
@@ -518,6 +530,23 @@ jobs:
           rc=0
           go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture || rc=1
           go test -count=1 -v -timeout 10m -run '^TestInspectFreezeResetsHover$' ./internal/ui || rc=1
+          exit $rc
+      # Karim's 2026-11-18 reports came from Windows (α.108, 1918x1080 at
+      # 1x): the inspect tool's review drawn in the frame after the pick's at
+      # 1918x1080 at 1x and 2x on the headless GPU (WARP), each capture's
+      # stage times logged; Enter and Esc in the pick's frame; the picker
+      # inside popups (a Block Kit modal, a menu, the emoji picker, a profile
+      # card, a frozen tooltip)
+      - name: the inspect tool's pick to review, and the picker in popups (WARP, fakeslack)
+        if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
+        env:
+          CGO_ENABLED: "0"
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          rc=0
+          go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectFreezeHoldsPopups)$' ./internal/ui || rc=1
+          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation)$' ./internal/ui/inspect || rc=1
           exit $rc
       - name: thread reply box gap (layout, fakeslack)
         if: ${{ !cancelled() }}

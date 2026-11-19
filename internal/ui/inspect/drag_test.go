@@ -96,10 +96,15 @@ type dragEnv struct {
 	content func(gtx layout.Context)
 	// frozen: the last frame was drawn from the frozen frame (Frame)
 	frozen bool
+	// scale is the window's px per dp (0: 1)
+	scale float32
 }
 
-func newDragEnv(t *testing.T) *dragEnv {
-	e := &dragEnv{t: t, size: image.Pt(900, 600), content: func(layout.Context) {}}
+func newDragEnv(t *testing.T) *dragEnv { return newDragEnvAt(t, image.Pt(900, 600), 1) }
+
+// newDragEnvAt is newDragEnv for a window size px at scale px per dp.
+func newDragEnvAt(t *testing.T, size image.Point, scale float32) *dragEnv {
+	e := &dragEnv{t: t, size: size, scale: scale, content: func(layout.Context) {}}
 	e.host = &dragHost{size: e.size}
 	e.tool = New(e.host, key.Filter{Name: "D", Required: key.ModShortcut | key.ModAlt | key.ModShift})
 	prevShoot, prevWrite := Shoot, WriteImage
@@ -120,7 +125,11 @@ func newDragEnv(t *testing.T) *dragEnv {
 // pointer reset a freeze's end asked for, then the layout.
 func (e *dragEnv) frame() {
 	e.host.drain()
-	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source()}
+	sc := e.scale
+	if sc <= 0 {
+		sc = 1
+	}
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source()}
 	ops := e.tool.Frame(gtx)
 	if e.host.reset {
 		e.host.reset = false
