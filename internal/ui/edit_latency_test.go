@@ -82,17 +82,20 @@ return EditPassComponents
 
 // latDraw is one change (an edit, a reply) and when it was first drawn.
 type latDraw struct {
-	text   string
-	pushed time.Time
-	core   time.Time // core announced it (its "update" or "message" event)
-	coreN  int64     // frames drawn before core announced it
-	drawn  time.Time // the first frame drawing it
-	frames int64     // frames from core's announcement to that one
+	text    string
+	pushed  time.Time // the server sent it over the socket
+	pushedN int64     // frames drawn before it was sent
+	core    time.Time // core announced it (its "update" or "message" event)
+	drawn   time.Time // the first frame drawing it
+	frames  int64     // frames from its sending to that one
 }
 
 // latStats logs a phase's changes and fails those drawn more than two
-// frames after core took them in (the hub's goroutine hop can miss the
-// frame in progress), or never; it returns their median latency.
+// frames after the server sent them (the socket's and the hub's goroutine
+// hops can miss the frame in progress), or never; it returns their
+// median latency. Counted from the socket, not from core's announcement:
+// core holding an event back (a lookup on the event pump) is lateness
+// too.
 func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
 	t.Helper()
 	var lat []time.Duration
@@ -101,18 +104,19 @@ func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
 	for i := range ds {
 		d := &ds[i]
 		switch {
-		case d.core.IsZero():
-			t.Errorf("%s, %s: core never announced %q", mode, name, d.text)
-			all = append(all, "unannounced")
 		case d.drawn.IsZero():
 			missed++
 			all = append(all, "missed")
 		default:
-			lat = append(lat, d.drawn.Sub(d.core))
+			lat = append(lat, d.drawn.Sub(d.pushed))
 			if d.frames > 2 {
 				late++
 			}
-			all = append(all, fmt.Sprintf("%dms/%df", d.drawn.Sub(d.core).Milliseconds(), d.frames))
+			s := fmt.Sprintf("%dms/%df", d.drawn.Sub(d.pushed).Milliseconds(), d.frames)
+			if !d.core.IsZero() {
+				s += fmt.Sprintf("(core +%dms)", d.core.Sub(d.pushed).Milliseconds())
+			}
+			all = append(all, s)
 		}
 	}
 	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
@@ -122,10 +126,10 @@ func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
 		}
 		return lat[min(len(lat)-1, int(p*float64(len(lat))))]
 	}
-	t.Logf("%s, %s: %d changes, drawn %d (late %d, never %d), event to frame median %v p90 %v max %v; each: %s",
+	t.Logf("%s, %s: %d changes, drawn %d (late %d, never %d), socket to frame median %v p90 %v max %v; each: %s",
 		mode, name, len(ds), len(lat), late, missed, q(0.5).Round(time.Millisecond), q(0.9).Round(time.Millisecond), q(1).Round(time.Millisecond), strings.Join(all, " "))
 	if missed > 0 || late > 0 {
-		t.Errorf("%s, %s: %d of %d changes drawn more than two frames after core took them in, %d never: Slack draws each in the render after it", mode, name, late, len(ds), missed)
+		t.Errorf("%s, %s: %d of %d changes drawn more than two frames after the socket brought them, %d never: Slack draws each in the render after it", mode, name, late, len(ds), missed)
 	}
 	return q(0.5)
 }
@@ -143,6 +147,7 @@ func editLatency(t *testing.T, mode string) {
 	sz := fakeslack.Small
 	sz.AppPlans = true
 	sz.Views = true // Activity's feed, and messages.list for a reply's activity entry
+	sz.Authors = 20 // the generated messages' people; the others are no one the client fetched
 	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +157,10 @@ func editLatency(t *testing.T, mode string) {
 	ts := fs.PostUptimeQuiet("10router blipped · 0m 0s")
 	fs.PostReplyQuiet(ch, ts, fakeslack.SelfID, "on it, checking 10router") // Karim replied in its thread: he follows it
 	other := fs.ChannelIDs()[0]
-	replier := fs.UserIDs()[1]
+	ids := fs.UserIDs()
+	// the replies' people: each someone the client never fetched, as on
+	// Karim's Grid, so a lookup that holds the event shows
+	replier := func(k int) string { return ids[len(ids)-1-k] }
 
 	var e *perfEnv
 	switch mode {
@@ -275,12 +283,10 @@ func editLatency(t *testing.T, mode string) {
 	defer stop()
 	var emu sync.Mutex
 	announced := map[string]time.Time{}
-	announcedN := map[string]int64{}
 	note := func(k string) {
 		emu.Lock()
 		if _, ok := announced[k]; !ok {
 			announced[k] = time.Now()
-			announcedN[k] = frames.Load()
 		}
 		emu.Unlock()
 	}
@@ -315,8 +321,9 @@ func editLatency(t *testing.T, mode string) {
 				break
 			}
 			if now.Before(end) && !now.Before(next) {
+				pn := frames.Load()
 				text, key := change(len(ds))
-				ds = append(ds, latDraw{text: text, pushed: now})
+				ds = append(ds, latDraw{text: text, pushed: now, pushedN: pn})
 				keys = append(keys, key)
 				next = next.Add(every)
 			}
@@ -331,11 +338,11 @@ func editLatency(t *testing.T, mode string) {
 				dd := &ds[i]
 				if dd.core.IsZero() {
 					if at, ok := announced[keys[i]]; ok {
-						dd.core, dd.coreN = at, announcedN[keys[i]]
+						dd.core = at
 					}
 				}
-				if dd.drawn.IsZero() && !dd.core.IsZero() && drawn(ls, bs, i) {
-					dd.drawn, dd.frames = lastFrame, frames.Load()-dd.coreN
+				if dd.drawn.IsZero() && drawn(ls, bs, i) {
+					dd.drawn, dd.frames = lastFrame, frames.Load()-dd.pushedN
 				}
 			}
 			emu.Unlock()
@@ -366,7 +373,7 @@ func editLatency(t *testing.T, mode string) {
 			r++
 			text := fmt.Sprintf("synthetic reply %d to the outage", r)
 			texts = append(texts, text)
-			rts := fs.PushReplyLive(ch, ts, replier, text)
+			rts := fs.PushReplyLive(ch, ts, replier(r), text)
 			return text, "reply " + rts
 		}, func(_, bs []string, i int) bool { return has(bs, texts[i]) })
 		return latStats(t, mode, name, ds)
@@ -420,7 +427,17 @@ func editLatency(t *testing.T, mode string) {
 	edits("channel and thread root")
 
 	// replies: in the open pane (the primary on another channel), then in
-	// Activity (no pane): the pane no later than Activity
+	// Activity (no pane, open before they come: its feed is the server's,
+	// the live entries come over the socket): the pane no later than
+	// Activity. Lookups are slow, as on a busy Grid: users/info answers
+	// after 1.5 s.
+	fs.SetEdgeHook(func(method string, _ map[string]json.RawMessage) (any, bool) {
+		if method == "edge/users/info" {
+			time.Sleep(1500 * time.Millisecond)
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetEdgeHook(nil) })
 	e.unblur()
 	e.openChannel(other)
 	e.a.OpenThread(ch, ts)
@@ -431,7 +448,8 @@ func editLatency(t *testing.T, mode string) {
 	e.unblur()
 	e.a.CloseSecondary()
 	e.a.Navigate("activity")
-	until("Activity", func(_, bs []string) bool { return has(bs, fmt.Sprintf("synthetic reply %d to the outage", r)) })
+	until("Activity's feed", func(_, bs []string) bool { return len(bs) > 3 })
+	e.settle(2 * time.Second)
 	settleBlurred()
 	act := replies("reply in Activity")
 	if pane > act+vsync {
