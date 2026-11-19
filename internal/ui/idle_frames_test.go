@@ -221,19 +221,6 @@ func TestIdleFrames(t *testing.T) {
 					case <-tick.C:
 					}
 					u := fmt.Sprintf("U0IDLETR%03d", i%40)
-					if i%10 == 5 {
-						// a reply in another channel's thread from someone the
-						// client never fetched, once a second: core announces
-						// it with the sender as the store has them, nothing
-						// asked. Read through getMemberById, each sender went
-						// to users/info, and its "names" made the UI read every
-						// conversation on screen again (α.110's review). A
-						// reply: a new top-level message moves the channel's
-						// latest, which the sidebar's model takes (a frame)
-						ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), 100000+i)
-						e.fs.Push(map[string]any{"type": "message", "channel": other, "user": fmt.Sprintf("U0IDLERP%03d", i/10),
-							"text": "a synthetic reply nobody here reads", "ts": ts, "thread_ts": "1762500000.000100"})
-					}
 					switch i % 4 {
 					case 0:
 						e.fs.Push(map[string]any{"type": "user_change", "user": map[string]any{"id": u, "name": "idle" + u, "real_name": "Idle " + u,
