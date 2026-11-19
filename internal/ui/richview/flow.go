@@ -475,9 +475,10 @@ type lay struct {
 	// expandKey, when set, is the section whose "Show more" is being laid
 	// out (its key in kitExpanded).
 	expandKey string
-	// collapsed holds the image blocks and call cards hidden with their
-	// toggle (View state).
-	collapsed map[any]bool
+	// collapsed holds the image blocks, call cards and containers toggled
+	// by the viewer, collapseDefs the containers' defaults (View state).
+	collapsed    map[any]bool
+	collapseDefs map[string]uint8
 	// playing holds the stills the viewer played (View state, animated.go);
 	// noAnim: Accessibility > "Allow animations" is off
 	playing map[string]bool

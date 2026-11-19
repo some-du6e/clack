@@ -121,10 +121,17 @@ type View struct {
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
 	expanded map[*richtext.Attachment]bool
-	// collapsed: image blocks hidden with their title-row toggle, call
-	// cards with theirs (keys *richtext.Image, *richtext.CallCard)
-	collapsed map[any]bool
-	redraw    bool // ask for a frame after this frame's events
+	// collapsed: image blocks hidden with their title-row toggle (keys
+	// *richtext.Image), and call cards and containers toggled by the
+	// viewer, by keys that outlive a rebuilt Doc ("call:" + the call id,
+	// "container:" + Container.Key): the row's View keeps them through
+	// reactions, replies and chat.update, as Slack's component state and
+	// its redux expandables do. collapseDefs is the is_collapsible and
+	// default_collapsed each container key was last laid out with: a
+	// change resets its toggle (ContainerBlock's useEffect).
+	collapsed    map[any]bool
+	collapseDefs map[string]uint8
+	redraw       bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -558,6 +565,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	}
 	if v.collapsed == nil {
 		v.collapsed = map[any]bool{}
+		v.collapseDefs = map[string]uint8{}
 	}
 	if v.playing == nil {
 		v.playing = map[string]bool{}
@@ -566,7 +574,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
 		l.css = &v.css

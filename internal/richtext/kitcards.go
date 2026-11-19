@@ -73,10 +73,20 @@ var containerWidths = map[string]bool{"narrow": true, "standard": true, "wide": 
 // subtitle; the icon) and its child blocks.
 func (c *builder) containerBlock(b *bk) Block {
 	ci := &Container{Collapsible: b.IsCollapsible, DefaultCollapsed: b.IsCollapsible && b.DefaultCollapsed,
-		HeaderDivider: b.HasHeaderDivider && !b.IsCollapsible}
+		HeaderDivider: b.HasHeaderDivider && !b.IsCollapsible, Key: b.BlockID}
+	if ci.Key == "" {
+		ci.Key = "#" + strconv.Itoa(c.containers)
+	}
+	c.containers++
+	// width's "standard" is a default parameter: it fills only an absent
+	// field; any other value (null, a class Slack lacks) adds no max-width
+	// class, so the box is the column's (width:100%)
 	_ = json.Unmarshal(b.Width, &ci.Width)
-	if !containerWidths[ci.Width] {
+	switch {
+	case len(b.Width) == 0:
 		ci.Width = "standard"
+	case !containerWidths[ci.Width]:
+		ci.Width = "full"
 	}
 	if rt := b.RichTextTitle; rt != nil && rt.Type == "rich_text" {
 		ci.Title = flattenSpans(c.richText(rt.Elements))

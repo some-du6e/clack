@@ -186,6 +186,8 @@ type builder struct {
 	// depth is how deep resolveFallback is in fallbacks, nested how deep
 	// in child blocks (fallback.go)
 	depth, nested int
+	// containers counts the message's container blocks (Container.Key)
+	containers int
 }
 
 func parseBlocks(raw json.RawMessage) []bk {

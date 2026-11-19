@@ -256,6 +256,10 @@ type Container struct {
 	// with DefaultCollapsed. HeaderDivider draws a rule under a fixed
 	// header.
 	Collapsible, DefaultCollapsed, HeaderDivider bool
+	// Key names the container within its message across rebuilds: its
+	// block_id, else "#n", its place among the message's containers
+	// (richview keeps the collapse state by it).
+	Key string
 }
 
 // Image is a remote image reference.

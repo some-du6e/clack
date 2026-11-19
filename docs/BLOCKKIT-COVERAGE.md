@@ -157,6 +157,7 @@ Round 1's review fixes, with tests that fail on `8126e895`:
 - Buttons in a container, a callout and a fallback payload draw and send `block_actions` with their own block's id: `TestNestedBlockElements` (clicks, on the elements gallery's new `nested` family), `TestNestedElementsRichview` (richview's own layout with the message host), `TestSurfaceNestedElements` (modal and App Home).
 - A message's alert shrinks to its text: it's the flex item of its block wrapper, and `.c-alert` sets no width. It wraps only at the column. Inside a callout or a container, and in a shared message's text, it fills the width: `TestAlertWidth`.
 - The loading block's spinner sits centred (`.infiniteSpinner{margin:0 auto}`). Its ring fills the 52px box, because `noMargin` gives it a 78-unit viewBox. The track is content-ter at .25 and the arc content-hgl-1: `TestBoxedBlocksLayout`.
+- A container's or a call card's toggle survives the message changing (a reaction, a reply, `chat.update`). The View keys it by the container's block_id (else its place among the message's containers) and by the call id. A change to `is_collapsible` or `default_collapsed` resets it, as ContainerBlock's `useEffect` does: `TestCollapseSurvivesUpdates`. A container `width` Slack lacks, or `null`, now draws full width, since "standard" is only the default for an absent field: `TestBoxedBlocks`.
 
 ## Next
 

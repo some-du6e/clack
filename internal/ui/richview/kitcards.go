@@ -243,7 +243,21 @@ func (l *lay) container(b *richtext.Block, x, y, w int) int {
 	bw := max(1, l.dp(1))
 	pad := l.dp(12)
 	box0 := len(l.d.boxes)
-	collapsed := ci.Collapsible && ci.DefaultCollapsed != l.collapsed[ci]
+	key := "container:" + ci.Key
+	if l.collapseDefs != nil {
+		var defs uint8
+		if ci.Collapsible {
+			defs |= 1
+		}
+		if ci.DefaultCollapsed {
+			defs |= 2
+		}
+		if d, ok := l.collapseDefs[key]; ok && d != defs {
+			delete(l.collapsed, key) // useEffect: back to the new default
+		}
+		l.collapseDefs[key] = defs
+	}
+	collapsed := ci.Collapsible && ci.DefaultCollapsed != l.collapsed[key]
 	ts := l.bodyStyle()
 	ts.face.Weight = font.Bold
 	ts.lineH = int(l.dpf(22.5) + 0.5)
@@ -298,7 +312,7 @@ func (l *lay) container(b *richtext.Block, x, y, w int) int {
 	}
 	yy := hy + rowH + pad
 	if ci.Collapsible {
-		tg := l.d.addTarget(target{kind: tCollapse, key: ci})
+		tg := l.d.addTarget(target{kind: tCollapse, key: key})
 		l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+cw, yy), t: tg})
 	}
 	if ci.HeaderDivider {

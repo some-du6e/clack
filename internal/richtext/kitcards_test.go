@@ -31,10 +31,14 @@ func TestBoxedBlocks(t *testing.T) {
 				"subtitle":{"type":"mrkdwn","text":"*sub* title"},"icon":{"type":"image","image_url":"https://img.test/i.png","alt_text":"i"},"width":"wide","has_header_divider":true,
 				"child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"a"}},{"type":"mystery"},{"type":"divider"}]},
 			  {"type":"container","title":{"type":"plain_text","text":"Fold"},"is_collapsible":true,"default_collapsed":true,"has_header_divider":true,"width":"enormous","child_blocks":[]},
-			  {"type":"container","title":{"type":"plain_text","text":"Open"},"default_collapsed":true}]`,
+			  {"type":"container","title":{"type":"plain_text","text":"Open"},"default_collapsed":true},
+			  {"type":"container","title":{"type":"plain_text","text":"Null"},"width":null}]`,
+			// a width Slack lacks, or null, adds no max-width class: full
+			// ("standard" is only width's default parameter)
 			[]string{"container wide title=Rich 😄 subtitle=sub title icon=https://img.test/i.png divider [Section Divider]",
-				"container standard title=Fold subtitle= icon= collapsible collapsed []",
-				"container standard title=Open subtitle= icon= []"}},
+				"container full title=Fold subtitle= icon= collapsible collapsed []",
+				"container standard title=Open subtitle= icon= []",
+				"container full title=Null subtitle= icon= []"}},
 		{"a header's numeric level still decodes beside a string one",
 			`[{"type":"header","text":{"type":"plain_text","text":"H"},"level":2},{"type":"alert","text":{"type":"plain_text","text":"A"},"level":"info"}]`,
 			[]string{"alert info: A"}},
