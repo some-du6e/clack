@@ -466,7 +466,9 @@ static int mapError(NSError *e) {
 	}
 	if (_loop) {
 		[self seekTo:0];
-		[_player play];
+		if (_wantPlay) { // not when a pause came first
+			[_player play];
+		}
 		return;
 	}
 	_ended = YES;
@@ -568,8 +570,13 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 	}
 	int64_t n = atomic_fetch_add(&_frames, 1) + 1;
 	_lastPts = CMTIME_IS_NUMERIC(disp) ? CMTimeGetSeconds(disp) : -1;
-	if (isnan(_wantAt) || _lastPts < 0 || [self frameAt:_wantAt] || (_wantUntilNS != 0 && nowNS() > _wantUntilNS)) {
-		_wantFrame = NO; // the frame asked for (an older one, pulled while a seek ran, isn't)
+	// the frame asked for (an older one, pulled while a seek ran, isn't),
+	// or any once a seek done while playing ended: playing on brings the
+	// frames from there (the first one pulled can be a frame or two past
+	// the target, and the ask would keep pulls going after a pause)
+	if (isnan(_wantAt) || _lastPts < 0 || [self frameAt:_wantAt] || (_wantPlay && !_seekPending) ||
+	    (_wantUntilNS != 0 && nowNS() > _wantUntilNS)) {
+		_wantFrame = NO;
 	}
 	if (!_firstFrame) {
 		_firstFrame = YES;

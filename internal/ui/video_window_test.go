@@ -4,6 +4,7 @@ package ui
 
 import (
 	"image"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -57,7 +58,7 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	// external images (Gio patch 51), counted from the click
 	var mu sync.Mutex
 	var measuring, clicked bool
-	var frames, gpuAll, externals, wraps int
+	var frames, asked, gpuAll, externals, wraps int
 	var gpuFrames []caretGPUFrame
 	stopHook := caretGPUHook(func(f caretGPUFrame) {
 		mu.Lock()
@@ -75,10 +76,15 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	images := imgcache.New(fs.Fetch, "", nil)
 	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), OnWindowEvent: func(e event.Event) {
 		realWindowEvent(e)
-		if _, ok := e.(app.FrameEvent); ok {
+		if fe, ok := e.(app.FrameEvent); ok {
 			mu.Lock()
 			if measuring {
 				frames++
+				// the window's own (the composer caret's blinks lay out at a
+				// fixed rate), as TestRealWindowQuietFrames counts them
+				if fe.Asked && !fe.AskedAt.After(fe.Now) {
+					asked++
+				}
 			}
 			mu.Unlock()
 		}
@@ -204,13 +210,15 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	var st0, st1 videoTileInfo
 	onUI(func() { st0, _ = videoTileState(a, ch, ts) })
 	q0, l0 := a.QuietFrames(), a.FrameSeq()
+	scale := float32(1)
+	onUI(func() { scale = max(a.pxPerDp, 1) })
 	mu.Lock()
-	measuring, frames, gpuFrames = true, 0, nil
+	measuring, frames, asked, gpuFrames = true, 0, 0, nil
 	mu.Unlock()
 	time.Sleep(5 * time.Second)
 	mu.Lock()
 	measuring = false
-	n, gf := frames, append([]caretGPUFrame(nil), gpuFrames...)
+	n, nAsked, gf := frames, asked, append([]caretGPUFrame(nil), gpuFrames...)
 	mu.Unlock()
 	quiet, laid := int(a.QuietFrames()-q0), int(a.FrameSeq()-l0)
 	onUI(func() { st1, _ = videoTileState(a, ch, ts) })
@@ -218,6 +226,10 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	partial, over := 0, 0
 	var dmgSum, dmgMax int64
 	area := int64(tile.Dx() * tile.Dy())
+	// the composer's caret (1px wide, its line's ascent and descent tall)
+	// blinks too: a frame with another damage rectangle may hold its
+	// pixels as well, at most 2×28 dp
+	caretMax := int64(math.Ceil(float64(2*scale))) * int64(math.Ceil(float64(28*scale)))
 	for _, f := range gf {
 		if !f.partial {
 			continue
@@ -225,7 +237,7 @@ func TestRealWindowVideoFrames(t *testing.T) {
 		partial++
 		dmgSum += f.damagePx
 		dmgMax = max(dmgMax, f.damagePx)
-		if area > 0 && f.damagePx > area {
+		if extra := f.damagePx - area; area > 0 && extra > 0 && (f.damageRects < 2 || extra > caretMax) {
 			over++
 		}
 	}
@@ -233,19 +245,20 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	if partial > 0 {
 		avg = dmgSum / int64(partial)
 	}
-	t.Logf("5 s playing: %d video frames published; the window drew %d frames, %d quiet, %d laid out; GPU: %d frames, %d partial, damage %d px a frame on average, %d at most (the tile %v is %d px)",
-		vf, n, quiet, laid, len(gf), partial, avg, dmgMax, tile, area)
+	t.Logf("5 s playing: %d video frames published; the window drew %d frames (%d it asked for itself), %d quiet, %d laid out; GPU: %d frames, %d partial, damage %d px a frame on average, %d at most (the tile %v is %d px, a caret's %d more)",
+		vf, n, nAsked, quiet, laid, len(gf), partial, avg, dmgMax, tile, area, caretMax)
 	if vf < 30 {
 		t.Errorf("%d video frames in 5 s of playing", vf)
 	}
-	if n == 0 || quiet*10 < n*9 {
-		t.Errorf("%d of the window's %d frames were quiet (%d laid out): a video frame lays the window out", quiet, n, laid)
+	// against the frames the window didn't ask for itself: the video's
+	if n == 0 || n-nAsked <= 0 || quiet*10 < (n-nAsked)*9 {
+		t.Errorf("%d of the window's %d frames were quiet (%d laid out, %d asked for by the window itself): a video frame lays the window out", quiet, n, laid, nAsked)
 	}
 	if partial == 0 {
 		t.Error("no partial frame while the video played: its frames redraw the whole window")
 	}
 	if over > 0 {
-		t.Errorf("%d partial frames damaged more than the tile's %d px (at most %d)", over, area, dmgMax)
+		t.Errorf("%d partial frames damaged more than the tile's %d px and a caret's %d (at most %d)", over, area, caretMax, dmgMax)
 	}
 
 	onUI(func() { videoClick(a, ch, ts) })

@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"image"
 	"io"
 	"log"
@@ -45,7 +46,7 @@ func (backend) New(src media.Source, frameReady func()) (media.Player, error) {
 	if frameReady == nil {
 		frameReady = func() {}
 	}
-	p := &player{src: src, frameReady: frameReady, loads: map[uint64]context.CancelFunc{}, done: make(chan struct{})}
+	p := &player{src: src, frameReady: frameReady, loads: map[uint64]context.CancelFunc{}, done: make(chan struct{}), born: time.Now()}
 	p.Init()
 	p.pend.volume, p.pend.rate, p.pend.seekTo = 1, 1, -1
 	p.ctx, p.cancel = context.WithCancel(context.Background())
@@ -106,6 +107,13 @@ type player struct {
 	loads  map[uint64]context.CancelFunc
 	failed bool
 	done   chan struct{}
+
+	// the first frame's timing line: when New made the player, and each
+	// step's time after (the file's head, the asset, loadedmetadata,
+	// loadeddata), once
+	born                         time.Time
+	head, asset, meta, data      time.Duration
+	metaSeen, dataSeen, firstLog bool
 }
 
 // readLog, when set (tests), sees each of an asset's data requests.
@@ -260,6 +268,9 @@ func (p *player) Close() {
 // answers ranges are the content information AVFoundation asks first).
 func (p *player) open() {
 	info, err := p.rs.Info(p.ctx)
+	p.mu.Lock()
+	p.head = time.Since(p.born)
+	p.mu.Unlock()
 	if err != nil {
 		// before the metadata a failed fetch is error 4, as for a file that
 		// can't be played: Chromium's MediaLoadingFailed for a src (the fake's)
@@ -316,7 +327,41 @@ func (p *player) open() {
 	if s.play {
 		C.clack_avf_play(obj)
 	}
+	p.mu.Lock()
+	p.asset = time.Since(p.born)
+	p.mu.Unlock()
 	log.Printf("media: %s: AVFoundation (%s, %d bytes, seekable %v)", p.src.FileID, utiFor(p.src.Mime, ext), info.Total, info.Seekable)
+}
+
+// timing notes an event's time after the player was made, and logs the
+// first frame's line once (as Media Foundation's): each step in seconds,
+// and the frames' size.
+func (p *player) timing(k media.EventKind) {
+	p.mu.Lock()
+	since := time.Since(p.born)
+	switch k {
+	case media.LoadedMetadata:
+		if !p.metaSeen {
+			p.meta, p.metaSeen = since, true
+		}
+	case media.LoadedData:
+		if !p.dataSeen {
+			p.data, p.dataSeen = since, true
+		}
+	}
+	if k != media.FirstFrame || p.firstLog {
+		p.mu.Unlock()
+		return
+	}
+	p.firstLog = true
+	head, asset, meta, data := p.head, p.asset, p.meta, p.data
+	p.mu.Unlock()
+	s := func(d time.Duration) string { return fmt.Sprintf("%.2f s", d.Seconds()) }
+	line := fmt.Sprintf("media: %s: first frame %s after the player was made (the file's head %s, the asset %s, loadedmetadata %s, loadeddata %s)",
+		p.src.FileID, s(since), s(head), s(asset), s(meta), s(data))
+	// off the queue: PixelSize takes objMu, which Close holds while it
+	// closes the queue
+	go func() { log.Printf("%s; frames %v (video %v)", line, p.PixelSize(), p.State().Size) }()
 }
 
 // utiFor is the asset's type for AVFoundation's content information.
@@ -399,6 +444,7 @@ func clackAVFEvent(h C.uintptr_t, code C.int, s *C.clackAVState) {
 	if kinds[c] == media.Error {
 		log.Printf("media: %s: media_error_code %d (AVFoundation %d)", p.src.FileID, int(s.err), int32(s.errCode))
 	}
+	p.timing(kinds[c])
 	p.Emit(kinds[c])
 }
 
