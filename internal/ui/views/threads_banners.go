@@ -60,6 +60,11 @@ type thrBanners struct {
 	pending []thrPendingRead
 	prev    map[string]bool
 	count   int
+	// jumpRow is a jump's row whose card wasn't laid out when it went
+	// (scrollTo knew only the card's top), jumped to again once it is, for
+	// jumpFrames more frames at most
+	jumpRow    string
+	jumpFrames int
 }
 
 // thrBannerButtons is ThreadBannerButtonsGeneric's two buttons: the
@@ -178,6 +183,16 @@ func (v *Threads) scanInputs(page thrData) string {
 func (v *Threads) bannersLaidOut(gtx C, page thrData) {
 	b := &v.ban
 	b.listed = true
+	if b.jumpRow != "" { // the jump's card laid out: its row 100px down now
+		if v.kb.placed(b.jumpRow) {
+			v.kb.scrollTo(b.jumpRow)
+			v.list.Position.Offset -= gtx.Dp(100)
+			b.jumpRow = ""
+			v.h.Invalidate()
+		} else if b.jumpFrames--; b.jumpFrames <= 0 {
+			b.jumpRow = ""
+		}
+	}
 	sig, count := v.scanInputs(page), 0
 	if app := v.h.Core(); app != nil {
 		count = app.UnreadThreadsCount()
@@ -298,6 +313,12 @@ func (v *Threads) bannerJump(gtx C, up bool) {
 	// click does nothing
 	if row != key+"-"+first && (row != "load_older-"+key || first != held) {
 		return
+	}
+	// scrollToKey(divider, {offset: -100}): the row's place in a card not
+	// laid out yet isn't known, so the jump goes again once it is
+	// (bannersLaidOut)
+	if !v.kb.placed(row) {
+		v.ban.jumpRow, v.ban.jumpFrames = row, 3
 	}
 	v.kb.scrollTo(row)
 	v.list.Position.Offset -= gtx.Dp(100)

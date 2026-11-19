@@ -276,6 +276,60 @@ func TestThreadsBannerJumpHiddenUnreadLikeSlack(t *testing.T) {
 	}
 }
 
+// The jump puts the divider itself 100px down the list (scrollToKey on
+// the divider's key, offset -100), the usual ↓ target included: a card
+// below the fold that was never laid out, whose rows' places aren't known
+// when the jump goes. The view opens straight at 300px, so the fourth of
+// seven read threads has never been drawn when the pane marks it unread.
+func TestThreadsBannerJumpUnlaidCardLikeSlack(t *testing.T) {
+	ch := fakeslack.ViewsChannel
+	const root, reply = "1762665000.000100", "1762665500.000100" // after thrBannerThreads[2]'s activity, before [3]'s
+	var marks thrMarkLog
+	app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
+		marks.note(method, f)
+		if method != "subscriptions.thread.getView" {
+			return nil, false
+		}
+		ths := []map[string]any{thrFixRead(ch, root, reply, "U0FAKE00002", false, reply)}
+		for _, th := range thrBannerThreads {
+			ths = append(ths, thrFixRead(ch, th[0], th[1], "U0FAKE00002", false, th[1]))
+		}
+		return thrOrderAnswer(ths...), true
+	})
+	h := newKBHost(app, false)
+	h.away.Store(true)
+	v := NewThreads(h)
+	e := thrViewEnvAt(t, v, 7, image.Pt(1000, 300))
+	e.frame()
+	key := ch + "/" + root
+	if got := thrRoots(v); len(got) != 7 || got[3] != root {
+		t.Fatalf("the threads are in the order %v, want the thread fourth", got)
+	}
+	if v.cards[key] != nil {
+		t.Fatal("the fourth thread's card was laid out at 300px")
+	}
+	if err := app.MarkThreadUnreadFrom(context.Background(), ch, root, reply, core.MarkedInThread); err != nil {
+		t.Fatal(err)
+	}
+	fs.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ch,
+		"thread_ts": root, "last_read": root, "active": true}, "event_ts": "1762699500.000100"})
+	e.until(t, "↓ 1 unread thread", func() bool { return slices.Equal(v.ban.below, []string{key}) })
+	if v.cards[key] != nil {
+		t.Fatal("the fourth thread's card was laid out before the jump")
+	}
+	e.click(thrFind(t, e, &v.ban.down.jump))
+	for range 3 {
+		e.frame()
+	}
+	row := key + "-" + reply
+	if y, ok, _ := v.kb.top(row); !ok || y < 99 || y > 101 {
+		t.Errorf("the jump left the divider at y=%d (laid out %v), want 100: Slack scrolls to the divider's key, not the card's top", y, ok)
+	}
+	if !marks.has(root + "@" + reply + " read=1") {
+		t.Errorf("the jump marked %v, want the thread read", marks.all())
+	}
+}
+
 // A thread's read mark that fails puts its last read and its hand mark
 // back, with no toast (markThread only logs); one already read to its
 // newest reply sends no request, and its hand mark still goes.

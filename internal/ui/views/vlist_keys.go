@@ -131,6 +131,10 @@ func (k *vkList) elem(i int, d layout.Dimensions) layout.Dimensions {
 // sub records a sub-row's top and height within its element.
 func (k *vkList) sub(key string, top, h int) { k.subs[key] = [2]int{top, h} }
 
+// placed reports whether the row's place within its element is known (its
+// element was laid out), so scrollTo can put the row itself at the top.
+func (k *vkList) placed(key string) bool { _, ok := k.subs[key]; return ok }
+
 func (k *vkList) size(e int) (int, bool) {
 	if h, ok := k.sizes[e]; ok {
 		return h, true
