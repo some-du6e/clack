@@ -205,6 +205,29 @@ func TestCanvasMentionMessageJumpOpensCanvas(t *testing.T) {
 	fullCanvas(e, fakeslack.CanvasMentionFile)
 }
 
+// Open in split view on a canvas mention (its message's route) opens the
+// canvas, never the file channel: the split view holds conversations
+// only, so the canvas goes in the side panel.
+func TestCanvasMentionSplitOpensCanvas(t *testing.T) {
+	e := newActShell(t)
+	cmSeed(e)
+	cmOpenActivity(e)
+	ch := fakeslack.CanvasMentionChannel
+	e.a.OpenSplit("c/" + ch + "/m/" + fakeslack.CanvasMentionTS)
+	e.until("the canvas", func() bool {
+		cv, ok := e.a.secondary.view.(*canvasview.View)
+		return ok && cv.ID() == fakeslack.CanvasMentionFile || string(e.a.router.Current()) == "docs/"+fakeslack.CanvasMentionFile
+	})
+	for _, r := range e.a.split.stack {
+		if r.Channel() == ch {
+			t.Errorf("the split view opened the canvas's file channel: %s", r)
+		}
+	}
+	if r := e.a.router.Current(); r.Channel() == ch {
+		t.Errorf("the route is the file channel's: %s", r)
+	}
+}
+
 // A jump into a canvas's file channel before files.info named its canvas
 // (canvas refs live in memory, so a fresh session's link or toast meets
 // it) waits for files.info instead of opening the file channel. Then the

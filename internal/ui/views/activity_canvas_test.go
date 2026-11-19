@@ -32,6 +32,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -51,6 +52,7 @@ type cmHost struct {
 	openSec   string   // the canvas the secondary column shows
 	paneDrawn string   // the canvas CanvasPane drew last
 	asked     []string // the image URLs fetched
+	splits    []string // OpenSplit's routes
 }
 
 // Images draws the fake's pictures (the harness's own host has no cache,
@@ -130,6 +132,15 @@ func (h *cmHost) OpenThread(ch, thread string) {
 }
 
 func (h *cmHost) SecondaryAt() (string, string) { return "", "" }
+
+// the menu's Open in split view (popups.SplitViewer)
+func (h *cmHost) OpenSplit(route string) {
+	h.mu.Lock()
+	h.splits = append(h.splits, route)
+	h.mu.Unlock()
+}
+
+func (h *cmHost) SplitViewOK() bool { return true }
 
 // the inbox's column (ActivitySecondary: the draw is a layout.Widget, a
 // func(C) D literal would leave cmHost without the interface)
@@ -478,6 +489,39 @@ func TestActivityCanvasMentionClickInbox(t *testing.T) {
 	}
 	if !v.selOK || v.selKey != fakeslack.CanvasMentionKey {
 		t.Errorf("the mention isn't the opened row (selOK %v, key %q)", v.selOK, v.selKey)
+	}
+}
+
+// The item menu's Open in home and Open in split view jump to the
+// mention's message, which the App opens as the canvas (its section;
+// ui/canvas_open.go), never the bare file channel route.
+func TestActivityCanvasMentionMenuRoutes(t *testing.T) {
+	v, h, _, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true})
+	it := actItem(t, v, fakeslack.CanvasMentionKey)
+	var home, split bool
+	for _, mi := range v.itemMenu(h, *it, fakeslack.CanvasMentionKey, false) {
+		switch mi.Key {
+		case "open_in_home":
+			mi.Do()
+			home = true
+		case popups.SplitKey:
+			mi.Do()
+			split = true
+		}
+	}
+	if !home || !split {
+		t.Fatalf("the menu has Open in home %v, Open in split view %v", home, split)
+	}
+	want := []string{"c/" + fakeslack.CanvasMentionChannel + "/m/" + fakeslack.CanvasMentionTS}
+	_, _, _, routes, _ := h.cmCalls()
+	h.mu.Lock()
+	splits := slices.Clone(h.splits)
+	h.mu.Unlock()
+	if !slices.Equal(routes, want) {
+		t.Errorf("Open in home navigated to %q, want %q", routes, want)
+	}
+	if !slices.Equal(splits, want) {
+		t.Errorf("Open in split view opened %q, want %q", splits, want)
 	}
 }
 
