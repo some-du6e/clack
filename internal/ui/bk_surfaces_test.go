@@ -9,6 +9,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
@@ -158,6 +159,24 @@ func TestBlockKitSurfaces(t *testing.T) {
 	blockkit.RunShortcut(a, inspect, ch, fakeslack.SurfLegacyTS)
 	if m := modal("the inspect modal", func(m blockkit.ModalInfo) bool { return m.ViewID == fakeslack.SurfInspectView }); m.Title != "Inspect message" || m.Close != "Done" {
 		t.Errorf("inspect modal: %+v", m)
+	}
+	// the section draws its line of text, then a code block holding the
+	// JSON as it is (the *gallery* in it literal), and no backtick
+	inspected := func() bool {
+		for _, tx := range blockkit.ModalTexts(a) {
+			if len(tx.Kinds) == 2 && tx.Kinds[0] == richtext.Paragraph && tx.Kinds[1] == richtext.Preformatted &&
+				strings.Contains(tx.Drawn, "Here's the raw JSON from that message:") && strings.Contains(tx.Drawn, `"ts": "`+fakeslack.SurfLegacyTS+`"`) &&
+				strings.Contains(tx.Drawn, "A synthetic *gallery* message") && !strings.Contains(tx.Drawn, "`") {
+				return true
+			}
+		}
+		return false
+	}
+	for end := time.Now().Add(10 * time.Second); !inspected() && time.Now().Before(end); {
+		e.settle(100 * time.Millisecond)
+	}
+	if !inspected() {
+		t.Errorf("the inspect modal draws no code block with the message's JSON: %+v", blockkit.ModalTexts(a))
 	}
 	shots("bk-surfaces-modal-code")
 	blockkit.CloseModal(a)

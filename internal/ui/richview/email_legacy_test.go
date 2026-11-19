@@ -26,7 +26,7 @@ func TestEmailLegacyFileEmail(t *testing.T) {
 	if hasIcon(dd, "file-email") {
 		t.Error("FileEmailV2's header (the email icon) is drawn with the flag off")
 	}
-	drawn := strings.Join(fragStrings(dd), " ")
+	drawn := drawnText(dd)
 	for _, s := range []string{"Lunch on Friday?", "From Alex Rivera", "Hi team, Anyone up for lunch"} {
 		if !strings.Contains(drawn, s) {
 			t.Errorf("collapsed FileEmail lacks %q; frags %q", s, drawn)
@@ -59,7 +59,7 @@ func TestEmailLegacyFileEmail(t *testing.T) {
 	}
 	f.Expanded = true
 	v = layoutAt(st, d, opts, 900)
-	drawn = strings.Join(fragStrings(&v.d), " ")
+	drawn = drawnText(&v.d)
 	for _, s := range []string{"From", "Alex Rivera", "<alex@mail.example>", "To", "Subject", "Date", "Anyone up for lunch on Friday at noon?"} {
 		if !strings.Contains(drawn, s) {
 			t.Errorf("expanded FileEmail lacks %q; frags %q", s, drawn)
@@ -100,7 +100,7 @@ func TestEmailRecipientsShowMore(t *testing.T) {
 	t.Cleanup(func() { openRecipients(f, "To", false) })
 	opts := Options{CompactFiles: true, Channel: "C0EMAIL0001", TS: ts}
 	v := layoutAt(st, d, opts, 900)
-	drawn := strings.Join(fragStrings(&v.d), " ")
+	drawn := drawnText(&v.d)
 	if !strings.Contains(drawn, "Show more") {
 		t.Fatalf("no Show more under 30 recipients; frags %q", drawn)
 	}
@@ -109,7 +109,7 @@ func TestEmailRecipientsShowMore(t *testing.T) {
 	}
 	openRecipients(f, "To", true)
 	v = layoutAt(st, d, opts, 900)
-	drawn = strings.Join(fragStrings(&v.d), " ")
+	drawn = drawnText(&v.d)
 	if !strings.Contains(drawn, "Show less") || !strings.Contains(drawn, "person29@mail.example") {
 		t.Errorf("open: frags %q, want every recipient and Show less", drawn)
 	}

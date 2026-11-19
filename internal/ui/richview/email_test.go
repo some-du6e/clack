@@ -79,6 +79,16 @@ func hasIcon(d *display, name string) bool {
 
 func plainHas(v *View, s string) bool { return strings.Contains(string(v.d.plain), s) }
 
+// drawnText is the drawn words in order, a space between them (a word
+// the flow broke after a hyphen joined again).
+func drawnText(d *display) string {
+	return strings.ReplaceAll(strings.Join(fragStrings(d), " "), "- ", "-")
+}
+
+// drawnHas reports whether s is drawn, word by word (plainHas reads the
+// copy text, which keeps what the layout cut).
+func drawnHas(v *View, s string) bool { return strings.Contains(drawnText(&v.d), s) }
+
 // Karim (2026-11-17, #clack 1794883661.462709): an email the Email app
 // posted drew as a plain file card whose type tile read "EMAI". Slack's
 // (new_email_rendering, on for Hack Club): MessageFile's email header, at
@@ -102,8 +112,8 @@ func TestEmailFileCard(t *testing.T) {
 	if !hasIcon(&v.d, "file-email") {
 		t.Errorf("no email file icon (c-icon--file-email-svgicon); icons %+v", v.d.overlayIcons)
 	}
-	if !plainHas(v, "Lunch on Friday?") {
-		t.Errorf("no subject; plain %q", string(v.d.plain))
+	if !drawnHas(v, "Lunch on Friday?") {
+		t.Errorf("no subject drawn; words %q", drawnText(&v.d))
 	}
 	if !strings.Contains(strings.Join(fragStrings(&v.d), " "), "Today at ") {
 		t.Errorf("no \"Today at …\" detail (toHumanReadableDateAndTimePure); frags %q", fragStrings(&v.d))
@@ -131,8 +141,8 @@ func TestEmailFileExpanded(t *testing.T) {
 	docFile(t, d).Expanded = true
 	v := layoutAt(st, d, Options{CompactFiles: true, Channel: "C0EMAIL0001", TS: ts}, 900)
 	for _, s := range []string{"From", "To", "Alex Rivera", "alex@mail.example", "#email-inbox", "Anyone up for lunch on Friday at noon?"} {
-		if !hasFrag(&v.d, s) && !plainHas(v, s) {
-			t.Errorf("expanded email lacks %q; frags %q", s, fragStrings(&v.d))
+		if !drawnHas(v, s) {
+			t.Errorf("expanded email draws no %q; words %q", s, drawnText(&v.d))
 		}
 	}
 	if !hasIcon(&v.d, "email") {
@@ -171,12 +181,12 @@ func TestEmailFileHTML(t *testing.T) {
 		t.Error("no Heads up for a sender that failed DMARC")
 	}
 	for _, s := range []string{"Cc", "team@build.example", "The Weekly Build", "makers", "full notes", "A faster sidebar", "Builds"} {
-		if !hasFrag(&v.d, s) && !plainHas(v, s) {
-			t.Errorf("no %q in the expanded HTML email; frags %q", s, fragStrings(&v.d))
+		if !drawnHas(v, s) {
+			t.Errorf("the expanded HTML email draws no %q; words %q", s, drawnText(&v.d))
 		}
 	}
 	for _, s := range []string{"p{color:red}", "ignored title", "tracking pixel text", "The very end"} {
-		if plainHas(v, s) && hasFrag(&v.d, s) {
+		if drawnHas(v, s) {
 			t.Errorf("%q is drawn", s)
 		}
 	}
