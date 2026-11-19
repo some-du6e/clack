@@ -493,6 +493,12 @@ type lay struct {
 	ctr     partPath
 	curPart uint8
 	inBlock bool // inside a .p-rich_text_block
+	// filled counts the boxes whose Block Kit blocks fill the width rather
+	// than sit in a message's flex block wrapper (an alert shrinks to its
+	// content there): a callout's or a container's children (renderBlocks
+	// draws them bare) and a shared message's text
+	// (.p-embedded_message_content's wrappers are display:block)
+	filled int
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }

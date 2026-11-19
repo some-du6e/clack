@@ -2,8 +2,48 @@ package richview
 
 import (
 	"image"
+	"strings"
 	"testing"
 )
+
+// TestAlertWidth: a message's alert is its block wrapper's flex item
+// (.p-block_kit_renderer__block_wrapper{display:flex}; .c-alert sets no
+// width), so its box shrinks to the text (1px border, 16px padding, the
+// 20px icon and 12px, the text, 16px, 1px) and wraps only at the column.
+// A callout's child (renderBlocks: no wrapper) fills the callout.
+func TestAlertWidth(t *testing.T) {
+	st := newTestStyle()
+	long := strings.Repeat("word ", 60)
+	d := kitDoc(t, `[
+		{"type":"alert","text":{"type":"plain_text","text":"Alfa"},"level":"info"},
+		{"type":"alert","text":{"type":"plain_text","text":"`+long+`Bravo"},"level":"warning"},
+		{"type":"callout","child_blocks":[{"type":"alert","text":{"type":"plain_text","text":"Charlie"},"level":"error"}]}
+	]`)
+	v := layoutAt(st, d, Options{}, 800)
+	var alerts []box
+	var callout *box
+	for i := range v.d.boxes {
+		switch b := &v.d.boxes[i]; {
+		case b.radius == 8 && b.kind == bFill:
+			alerts = append(alerts, *b)
+		case b.radius == 12 && b.kind == bBorder:
+			callout = b
+		}
+	}
+	if len(alerts) != 3 || callout == nil {
+		t.Fatalf("%d alert boxes and callout %v, want 3 and one", len(alerts), callout)
+	}
+	alfa := findFrag(t, &v.d, "Alfa")
+	if want := int(alfa.x+alfa.w+0.999) + 16 + 1; alerts[0].r.Min.X != 0 || alerts[0].r.Max.X != want {
+		t.Errorf("short alert %v, want 0 to %d (its text and padding)", alerts[0].r, want)
+	}
+	if alerts[1].r.Dx() != 800 {
+		t.Errorf("long alert %v, want the column's 800px", alerts[1].r)
+	}
+	if want := callout.r.Inset(1 + 12); alerts[2].r.Min.X != want.Min.X || alerts[2].r.Max.X != want.Max.X {
+		t.Errorf("callout's alert %v, want the callout's inner %d to %d", alerts[2].r, want.Min.X, want.Max.X)
+	}
+}
 
 // TestBoxedBlocksLayout: alert, callout and loading blocks lay out as
 // Slack's client-boot-styles draw them (kitcards.go): the alert's 8px
@@ -38,14 +78,14 @@ func TestBoxedBlocksLayout(t *testing.T) {
 	for i := range v.d.boxes {
 		b := &v.d.boxes[i]
 		switch {
-		case b.radius == 8 && b.r.Min.Y == 8 && b.r.Dx() == 800:
+		case b.radius == 8 && b.r.Min.Y == 8:
 			alertBox = b
 		case b.radius == 12 && b.kind == bBorder:
 			calloutBox = b
 		}
 	}
 	if alertBox == nil || alertBox.r.Dy() != 1+12+22+12+1 {
-		t.Fatalf("alert box %+v, want 800 wide at y 8, 48 tall", alertBox)
+		t.Fatalf("alert box %+v, want one at y 8, 48 tall", alertBox)
 	}
 	if calloutBox == nil {
 		t.Fatal("no callout box")

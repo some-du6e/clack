@@ -49,7 +49,11 @@ func (l *lay) alertTone(level string) (bg, ink color.NRGBA, icon string) {
 }
 
 // alert lays out an alert block's box at (x, y) (its 8px margins are the
-// block's, blocks.go).
+// block's, blocks.go). In a message the box is its block wrapper's flex
+// item (.p-block_kit_renderer__block_wrapper{display:flex}; .c-alert sets
+// no width), so it shrinks to its text's max-content width and wraps
+// only at the column's; where blocks fill the width (l.filled) it spans
+// the column.
 func (l *lay) alert(b *richtext.Block, x, y, w int) int {
 	p := &l.st.Palette
 	bg, ink, icon := l.alertTone(b.Tone)
@@ -57,6 +61,9 @@ func (l *lay) alert(b *richtext.Block, x, y, w int) int {
 	bw := max(1, l.dp(1))
 	padX, padY := l.dp(16), l.dp(12)
 	is := l.dp(20)
+	if l.filled == 0 {
+		w = min(w, 2*bw+2*padX+is+l.dp(12)+l.maxContentW(b.Children))
+	}
 	box0 := len(l.d.boxes)
 	ix, iy := x+bw+padX, y+bw+padY+l.dp(1) // translateY(1px)
 	l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, iy, ix+is, iy+is), url: iconURL + icon, target: -1, px: is, tint: ink})
@@ -79,6 +86,31 @@ func (l *lay) alert(b *richtext.Block, x, y, w int) int {
 	copy(l.d.boxes[box0+1:], l.d.boxes[box0:])
 	l.d.boxes[box0] = bx
 	return h
+}
+
+// maxContentW is the widest line bs draws unwrapped (CSS max-content),
+// laid out into a scratch display.
+func (l *lay) maxContentW(bs []richtext.Block) int {
+	if len(bs) == 0 {
+		return 0
+	}
+	saved, lead := l.d, l.lead
+	var scratch display
+	l.d, l.lead = &scratch, 0
+	l.nestedText(bs, 0, 0, 1<<20)
+	l.d, l.lead = saved, lead
+	w := 0
+	for i := range scratch.frags {
+		f := &scratch.frags[i]
+		w = max(w, int(f.x+f.w+0.999))
+	}
+	for i := range scratch.imgs {
+		w = max(w, scratch.imgs[i].r.Max.X)
+	}
+	for i := range scratch.boxes {
+		w = max(w, scratch.boxes[i].r.Max.X)
+	}
+	return w
 }
 
 // nestedText lays out a text slot's blocks (an alert's mrkdwn or
@@ -150,6 +182,8 @@ func (l *lay) nestedBlocks(bs []richtext.Block, x, y, w int) int {
 // nestedBlocksFrom is nestedBlocks; without firstTop the first block's
 // top margin is dropped (a container's >:first-child{margin-top:0}).
 func (l *lay) nestedBlocksFrom(bs []richtext.Block, x, y, w int, firstTop bool) int {
+	l.filled++
+	defer func() { l.filled-- }()
 	y0 := y
 	prevBottom := 0
 	for i := range bs {
