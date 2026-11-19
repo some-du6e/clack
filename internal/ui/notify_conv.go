@@ -59,8 +59,8 @@ const noteResolveMax = 8
 
 // noteMembersMax is how many people one notification waits for: one
 // users/info batch (EnsureUsers asks 100 at a time), so a message naming
-// many people names them all (on ui, onMessage fetched every mention
-// before converting it).
+// many people names them all (before α.110, onMessage fetched every
+// mention before converting it).
 const noteMembersMax = 100
 
 // noteUnknownChannel is formatChannelName's name for a channel without
@@ -188,6 +188,11 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 		if !core.LooksLikeMemberID(s.ID) {
 			return "", false
 		}
+		if b.core.S.HiddenUser(s.ID) {
+			// userToText (client-boot DRDu) checks first: a member the
+			// viewer hid reads "Hidden user", no @
+			return i18n.T("channel_token", "Hidden user"), true
+		}
 		if n, ok := b.core.S.MemberNameHeld(s.ID); ok && n != "" { // waited for: nothing asked again
 			return "@" + strings.TrimPrefix(n, "@"), true
 		}
@@ -244,16 +249,12 @@ func (b *backend) noteMembers(m *core.Message) []string {
 	if b.core == nil || m == nil {
 		return nil
 	}
+	// the sender and the conversation's people first, the ones the title
+	// names, so a cut takes mentions past it rather than them
 	var ids []string
 	if m.User != "" { // a user-less bot's message names its sender itself
 		ids = append(ids, m.User)
 	}
-	richtext.PlainTextWith(m.Doc, func(s richtext.Span) (string, bool) {
-		if s.Kind == richtext.User && s.ID != "" {
-			ids = append(ids, s.ID)
-		}
-		return "", false
-	})
 	if v, ok := b.core.Conv(m.Channel); ok {
 		switch v.Kind {
 		case "im":
@@ -266,6 +267,12 @@ func (b *backend) noteMembers(m *core.Message) []string {
 			}
 		}
 	}
+	richtext.PlainTextWith(m.Doc, func(s richtext.Span) (string, bool) {
+		if s.Kind == richtext.User && s.ID != "" {
+			ids = append(ids, s.ID)
+		}
+		return "", false
+	})
 	if len(ids) == 0 {
 		return nil
 	}
