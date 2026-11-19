@@ -21,6 +21,10 @@ name: site
 #     FCP, LCP, TBT and CLS budgets, total bytes, no third-party, script or
 #     stylesheet requests, one font; SEO on the home page only (the 404 page
 #     is noindex on purpose)
+# The demo job builds the web demo (cmd/clack-web: Clack on Gio's js/wasm
+# target with the fake workspace in the page, served at /demo/), here and
+# never on a dev machine, and drives it in headless Chrome. A push that
+# touches only the demo's Go side runs it alone (the changes job).
 # The compare job puts this build beside an earlier commit's (SITE_BEFORE):
 # the same sections at the same widths, before and after, in the
 # site-before-after artifact (tools/shots.mjs). It holds nothing to a
@@ -33,6 +37,12 @@ on:
       - "assets/icon.svg"
       - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
+      # the web demo: Clack's Go side
+      - "cmd/clack-web/**"
+      - "internal/**"
+      - "third_party/**"
+      - "go.mod"
+      - "go.sum"
   pull_request:
     paths:
       - "site/**"
@@ -49,7 +59,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # site=true when this push touched the page itself (or it isn't a push)
+    runs-on: ubuntu-latest
+    outputs:
+      site: ${{ steps.diff.outputs.site }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          site=true
+          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+            && git fetch --no-tags --depth=1 origin "$BEFORE" 2>/dev/null; then
+            git diff --name-only "$BEFORE" HEAD > changed.txt
+            cat changed.txt
+            grep -qE '^(site/|assets/icon\.svg$|internal/pluginlib/compat\.go$|\.github/workflows/site\.yml$)' changed.txt || site=false
+          fi
+          echo "site=$site" >> "$GITHUB_OUTPUT"
+
   budget:
+    needs: changes
+    if: ${{ needs.changes.outputs.site == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -115,6 +150,8 @@ jobs:
             site/lhci
 
   compare:
+    needs: changes
+    if: ${{ needs.changes.outputs.site == 'true' }}
     runs-on: ubuntu-latest
     env:
       # round 2 of the site, the build getclack.club went live with
@@ -143,3 +180,40 @@ jobs:
         with:
           name: site-before-after
           path: site/shots
+
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: the in-memory wiring (memnet, demo.StartInMemory)
+        run: |
+          go test -count=1 ./internal/memnet/
+          go test -count=1 -v -run '^TestInMemory$' ./internal/demo/
+      - name: build the wasm (GOOS=js GOARCH=wasm)
+        run: |
+          mkdir -p "$RUNNER_TEMP/demo"
+          GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" -o "$RUNNER_TEMP/demo/main.wasm" ./cmd/clack-web
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" "$RUNNER_TEMP/demo/"
+          ls -la "$RUNNER_TEMP/demo"
+          {
+            echo "### Web demo"
+            echo
+            echo "| file | raw | gzip -9 | brotli -q 11 |"
+            echo "|---|---|---|---|"
+            for f in "$RUNNER_TEMP"/demo/*; do
+              br=$(node -e 'const z = require("zlib"); process.stdout.write(String(z.brotliCompressSync(require("fs").readFileSync(process.argv[1]), { params: { [z.constants.BROTLI_PARAM_QUALITY]: 11, [z.constants.BROTLI_PARAM_LGWIN]: 24 } }).length))' "$f")
+              echo "| $(basename "$f") | $(stat -c %s "$f") | $(gzip -9c "$f" | wc -c) | $br |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: site-demo
+          path: ${{ runner.temp }}/demo
+          if-no-files-found: ignore

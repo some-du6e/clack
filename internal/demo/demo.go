@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -39,6 +40,10 @@ type Options struct {
 	// and mentions in them are not (Clack's introduction shows #general
 	// without a "new messages" pill).
 	Read []string
+	// Listener is where the fake serves; it must say it's at a loopback
+	// address. nil: a loopback port (StartInMemory passes an in-memory
+	// one).
+	Listener net.Listener
 }
 
 // Session is a running demo: the fake, its workspace and the bots.
@@ -70,9 +75,15 @@ func Start(opts Options) (*Session, error) {
 	// a nearly empty generated workspace: the world answers the rest
 	// no fixture canvases or lists of the fake's own; permalinks on the
 	// demo's host
-	fs, err := fakeslack.Start(fakeslack.Size{Users: 3, NoFixtureDocs: true, ActivityViews: true, PermalinkHost: "https://" + TeamDomain + ".slack.com"}) // generate() reads users[2]
-	if err != nil {
-		return nil, err
+	sz := fakeslack.Size{Users: 3, NoFixtureDocs: true, ActivityViews: true, PermalinkHost: "https://" + TeamDomain + ".slack.com"} // generate() reads users[2]
+	var fs *fakeslack.Server
+	if opts.Listener != nil {
+		fs = fakeslack.Serve(opts.Listener, sz)
+	} else {
+		var err error
+		if fs, err = fakeslack.Start(sz); err != nil {
+			return nil, err
+		}
 	}
 	if err := CheckLoopback(fs.URL); err != nil {
 		fs.Close()

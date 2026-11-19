@@ -114,6 +114,9 @@ func lockDefaultTransport() {
 		if err := CheckAddr(addr); err != nil {
 			return nil, err
 		}
+		if d := dialLoopback(); d != nil { // the browser demo's in-memory fake (loopback.go)
+			return d(ctx, network, addr)
+		}
 		return dial(ctx, network, addr)
 	}
 }

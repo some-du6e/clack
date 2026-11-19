@@ -39,6 +39,9 @@ func (d *Dialer) tcp(ctx context.Context, network, addr string) (net.Conn, error
 	if err := CheckAddr(addr); err != nil { // loopback.go
 		return nil, err
 	}
+	if dial := dialLoopback(); dial != nil { // the browser demo's in-memory fake
+		return dial(ctx, network, addr)
+	}
 	if d.Dial != nil {
 		return d.Dial(ctx, network, addr)
 	}

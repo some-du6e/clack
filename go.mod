@@ -69,3 +69,8 @@ replace github.com/go-text/typesetting => ./third_party/typesetting
 // Upstream v0.3.0 declares go 1.26; third_party/rnnoise-go is that release
 // with go.mod lowered to 1.24 (third_party/rnnoise-go/CLACK_PATCHES.md).
 replace github.com/VoiceBlender/rnnoise-go => ./third_party/rnnoise-go
+
+// coder/websocket v1.8.15 without its browser backend, so the browser demo
+// (cmd/clack-web) speaks websockets over its in-memory connections
+// (third_party/websocket/CLACK_PATCHES.md). Elsewhere it's upstream's code.
+replace github.com/coder/websocket => ./third_party/websocket

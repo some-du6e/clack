@@ -1,6 +1,7 @@
 package tlsfp
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/url"
@@ -63,6 +64,33 @@ func CheckAddr(addr string) error {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil || !LoopbackHost(host) {
 		return ErrNotLoopback
+	}
+	return nil
+}
+
+// LoopbackDial is what opens connections in loopback-only mode when
+// SetLoopbackDialer gave one (nil: the network).
+type LoopbackDial func(ctx context.Context, network, addr string) (net.Conn, error)
+
+var loopbackDial atomic.Pointer[LoopbackDial]
+
+// SetLoopbackDialer makes dial open every connection this package's
+// dialers and transports make, and Go's default transport's, in place of
+// the network: the browser demo (cmd/clack-web) serves its fake in memory
+// (internal/memnet), since a web page has no sockets. Only in loopback-only
+// mode, so the address each dial gets has passed CheckAddr; it panics
+// before LoopbackOnly.
+func SetLoopbackDialer(dial LoopbackDial) {
+	if !loopbackOnly.Load() {
+		panic("tlsfp: SetLoopbackDialer before LoopbackOnly")
+	}
+	loopbackDial.Store(&dial)
+}
+
+// dialLoopback is SetLoopbackDialer's dial, if there is one.
+func dialLoopback() LoopbackDial {
+	if d := loopbackDial.Load(); d != nil {
+		return *d
 	}
 	return nil
 }

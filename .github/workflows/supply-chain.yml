@@ -133,6 +133,44 @@ jobs:
           done
           echo "every unpatched vendored file matches $(jq -r .Version "$d/info.json") ($(jq -r .Sum "$d/info.json"))"
 
+  websocket:
+    # third_party/websocket is coder/websocket v1.8.15 from the Go module
+    # proxy (its non-test files but the browser backend), file for file,
+    # except the files third_party/websocket/CLACK_PATCHES.md lists as
+    # changed, and those differ only in their build constraint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: vendored coder/websocket matches the proxy's v1.8.15 (but for Clack's build constraints)
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          cd "$d"
+          go mod init check >/dev/null 2>&1
+          GOFLAGS=-mod=mod go mod download -json github.com/coder/websocket@v1.8.15 > info.json
+          dir=$(jq -r .Dir info.json)
+          test -d "$dir" || { echo "::error::download failed"; cat info.json; exit 1; }
+          cd "$GITHUB_WORKSPACE/third_party/websocket"
+          patched='accept.go close.go compress.go conn.go dial.go doc.go frame.go hijack.go netconn_notjs.go read.go write.go mask_go.go CLACK_PATCHES.md'
+          for f in $patched; do grep -qF "\`$f\`" CLACK_PATCHES.md || [ "$f" = CLACK_PATCHES.md ] || { echo "::error::$f is patched but CLACK_PATCHES.md doesn't name it"; exit 1; }; done
+          find . -type f | sed 's#^\./##' | sort | while read -r f; do
+            case " $patched " in *" $f "*) continue ;; esac
+            cmp "$f" "$dir/$f"
+          done
+          for f in $patched; do
+            [ "$f" = CLACK_PATCHES.md ] && continue
+            if ! diff <(grep -v '^//go:build' "$dir/$f" | sed '/./,$!d') <(grep -v '^//go:build' "$f" | sed '/./,$!d'); then
+              echo "::error::$f changes more than its build constraint"; exit 1
+            fi
+          done
+          echo "every vendored file matches $(jq -r .Version "$d/info.json") ($(jq -r .Sum "$d/info.json")), the patched ones but for their build constraint"
+
   workflows:
     runs-on: ubuntu-latest
     steps:
