@@ -1567,15 +1567,17 @@ jobs:
 
   # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
   # host's pages (files.slack.com/ssb/redirect), dot segments however many
-  # times a server decodes them, look-alike and overlong dots, the sign-in
-  # client's /ssb/redirect guard (bannedPage) and Taut's fetch redirects.
-  # Dispatch with only=fileurl-dotdot.
+  # times a server decodes them, look-alike, NFKC and overlong dots and
+  # separators, names with a literal % that still download, the sign-in
+  # client's /ssb/redirect guard (bannedPage), POST hops, and Taut's fetch
+  # (its redirects and its first request's sign-out gate). Dispatch with
+  # only=fileurl-dotdot.
   fileurl-dotdot:
     if: ${{ !inputs.only || startsWith('fileurl-dotdot', inputs.only) }}
     runs-on: ubuntu-latest
     env:
       SLACK_TESTS: '^(TestDownloadRefusesDotSegments|TestFileHostsNeedFilePaths|TestBannedPageNormalises|TestCheckRedirectStripsCredentials)$'
-      TAUT_TESTS: '^TestFetchRedirectKeepsCredentialsOffSlackPages$'
+      TAUT_TESTS: '^(TestFetchRedirectKeepsCredentialsOffSlackPages|TestPluginFetchRefusesSignOut)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
