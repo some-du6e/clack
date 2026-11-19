@@ -14,7 +14,6 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/i18n"
-	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -36,11 +35,10 @@ import (
 //     sk_foreground_low_solid tile); once fetched, its name, its
 //     getFileTypeDescription (the pretty_type) and its icon.
 //   - fetchWithRetries tries each fetch 3 times when it times out (65s an
-//     attempt); any other failure ends it, and the files it didn't get
-//     become non-existent objects {id, isNonExistent}: isTombstone, so the
-//     entity reads "This file was deleted." and the thumbnail is the trash
-//     glyph. Offline, UFM keeps them unknown and fetches again (here: a
-//     transport error is retried like a timeout).
+//     attempt); any other failure, a network one too, ends it, and the
+//     files it didn't get become non-existent objects {id, isNonExistent}:
+//     isTombstone, so the entity reads "This file was deleted." and the
+//     thumbnail is the trash glyph.
 //
 // Each failed attempt logs the method, the error and the file's id hashed
 // (a draft's files are the user's).
@@ -61,22 +59,14 @@ func attLogID(id string) string {
 }
 
 // attMetaRetry reports whether err is one fetchWithRetries tries again:
-// a timeout, or (Clack's stand-in for UFM's offline wait) a transport
-// error. Slack's answers ({"ok":false}, an HTTP status) end it.
+// a timeout (its FETCH_TIMEOUT_MS, or the network's). Anything else, an
+// answer ({"ok":false}, an HTTP status) or a network failure, ends it.
 func attMetaRetry(err error) bool {
-	var se *slack.Error
-	var he *slack.HTTPError
-	if errors.As(err, &se) || errors.As(err, &he) {
-		return false
-	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	var ne net.Error
-	if errors.As(err, &ne) {
-		return true
-	}
-	return !errors.Is(err, context.Canceled)
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // loadMeta is the unknown fetch for chip c: files.info, then the chip
@@ -109,7 +99,7 @@ func (a *attachments) loadMeta(c *attChip) {
 			a.metaDone(c, nil, false)
 			return
 		}
-		if !errors.Is(err, context.DeadlineExceeded) {
+		if !errors.Is(err, context.DeadlineExceeded) { // a network timeout: give it a moment
 			time.Sleep(attMetaBackoff * time.Duration(attempt))
 		}
 	}
