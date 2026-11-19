@@ -462,6 +462,69 @@ func TestJumpWindowEndStaysPut(t *testing.T) {
 	}
 }
 
+// TestJumpWindowLastPageStaysPut: the newer page that meets the newest
+// messages lands under the reader like the pages before it. The window
+// around a message 90 back stops short of the newest page (the newest
+// 50), and its first newer page reaches them: core joins the two, and
+// the list keeps to its end from then on (reachedEnd). Clack turned that
+// on before the stick test of the same sync, so a reader at the window's
+// end was taken to the page's end, 27 messages on. Slack's setKeys reads
+// stickToBottom from before: MessageList.componentDidUpdate sets it after
+// the children's setKeys (AEjl:1163; dxC+ setKeys).
+func TestJumpWindowLastPageStaysPut(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	target := plainAt(t, e.fs, ch, 90)
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.a.Navigate("c/" + ch + "/m/" + target)
+	e.waitDrawn(t, "the message 90 back, highlighted", 30*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return lit(rows, target) })
+	if cv := e.channelView(ch); cv == nil || !cv.InWindow() {
+		t.Fatal("the jump 90 back didn't show a window short of the newest messages")
+	}
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method == "conversations.history" && f.Get("channel") == ch && f.Get("oldest") != "" && f.Get("latest") == "" {
+			time.Sleep(300 * time.Millisecond) // the newer page, a moment late
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { e.fs.SetHook(nil) })
+	calls := e.recordCalls("conversations.history")
+	newer := func() int {
+		k := 0
+		for _, c := range calls.of("conversations.history", ch, "oldest", "latest") {
+			if c != "oldest= latest=" && strings.HasSuffix(c, " latest=") {
+				k++
+			}
+		}
+		return k
+	}
+	for dl := time.Now().Add(15 * time.Second); newer() < 1; {
+		if time.Now().After(dl) {
+			t.Fatalf("wheeled to the window's end, no newer page was asked: %q", calls.of("conversations.history", ch, "latest", "oldest"))
+		}
+		e.scroll(e.listPoint(), 3000)
+		e.frame()
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.frame()
+	rows := e.paneRows("", ch, "")
+	if len(rows) == 0 {
+		t.Fatal("nothing drawn at the window's end")
+	}
+	last := rows[len(rows)-1]
+	e.settle(3 * time.Second) // the page lands and meets the newest messages; no input
+	rows = e.paneRows("", ch, "")
+	if y, ok := topOf(rows, last.TS); !ok || y != last.Top {
+		t.Errorf("the page that met the newest messages moved the reader: %s, the last row in view, went from %d to %d (drawn %v; %s)",
+			last.TS, last.Top, y, ok, drawnState(rows))
+	}
+	if drewRow(rows, newest.TS) {
+		t.Errorf("the newest message is drawn after the last page landed: %s", drawnState(rows))
+	}
+}
+
 // TestAnchorLineKeepsRowAfterScroll is AnchorLayout's setHeight once the
 // reader has scrolled: a row ending above the anchor line (64px down) that
 // grows moves the list by what it grew, so the row on the line stays where

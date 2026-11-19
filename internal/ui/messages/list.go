@@ -625,7 +625,12 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 	// stickToBottom is reachedEnd (MessageList.componentDidUpdate): a
 	// window short of the newest messages never keeps to its end, so a
-	// newer page lands under the reader rather than pulling the list on
+	// newer page lands under the reader rather than pulling the list on.
+	// componentDidUpdate sets it after the children's setKeys (AEjl:1163),
+	// so the keys' change in this sync reads the flag from before
+	// (wasEnd): the page that meets the newest messages lands under the
+	// reader too, and only later changes stick.
+	wasEnd := s.list.ScrollToEnd
 	s.list.ScrollToEnd = !s.snap.newestMissing
 	if changed {
 		s.sysUsers, s.sysHidden = s.hb.usersRev(), hk
@@ -678,12 +683,13 @@ func (s *listState) sync(h Host, now time.Time) {
 	// and one handed over keeps its row even at its end (the window's end
 	// isn't the newest messages'). Not while a jump is pending or placed:
 	// it places the list itself.
-	anchorTS, anchorY, stick := "", 0, false
+	anchorTS, anchorY, stick, keep := "", 0, false, false
 	if s.laidOut && s.positioned && s.pendingJump == "" && s.place.key == "" {
-		if !handed && s.list.ScrollToEnd && (!s.list.Position.BeforeEnd || s.endGap <= s.stickyPx) {
+		if !handed && wasEnd && (!s.list.Position.BeforeEnd || s.endGap <= s.stickyPx) {
 			stick = true
 		} else {
 			anchorTS, anchorY = s.lineRow(s.linePx) // items still index the previous snapshot; the key is the ts
+			keep = true
 		}
 	}
 	s.build(h, now)
@@ -695,6 +701,10 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.list.Position = layout.Position{} // bracketScrollTop(Infinity)
 	} else if i := s.anchorItem(anchorTS); i >= 0 {
 		s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -anchorY}
+	} else if keep {
+		// no row on the line came through: the list keeps its place, where
+		// Gio would take one at its end to the new end (ScrollToEnd)
+		s.list.Position.BeforeEnd = true
 	}
 	s.placeJump(now)
 	// Confirmed sends keep their row (and its layout) under the real ts.
