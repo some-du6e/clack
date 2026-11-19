@@ -6,22 +6,25 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/app"
 	"gioui.org/io/event"
 )
 
-// On macOS the window's drawables are made readable for the test
-// (CLACK_METAL_READBACK, before the window opens: a window's are
-// framebufferOnly), and the GPU reads the window back after each copy of
-// the frame texture into it (gpu.ClackVerifyCopy): Metal's draw of the
-// frame texture into the drawable must give the drawable its pixels, bit
-// for bit.
+// On macOS the window's drawables are made readable for the readback
+// alone (app.ClackReadableDrawables: a window's are framebufferOnly, and
+// the test's blinks and scroll are measured on those), and the GPU reads
+// the window back after each copy of the frame texture into it
+// (gpu.ClackVerifyCopy): Metal's draw of the frame texture into the
+// drawable must give the drawable its pixels, bit for bit.
 
-func caretReadbackSetup(t *testing.T) { t.Setenv("CLACK_METAL_READBACK", "1") }
+func caretReadbackSetup(*testing.T) {}
 
 func caretWindowEvent(event.Event) {}
 
 func caretReadback(t *testing.T, a *App, frames <-chan caretGPUFrame, blink time.Duration, ww, wh int) {
 	t.Helper()
+	app.ClackReadableDrawables(true)
+	defer app.ClackReadableDrawables(false)
 	caretVerifyCopy(true)
 	defer caretVerifyCopy(false)
 	for drained := false; !drained; {

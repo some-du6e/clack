@@ -247,6 +247,17 @@ func sweepRows(now time.Time) {
 		}
 		for _, r := range s.rows {
 			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
+				// the trees' msgs it remembered and laid over its message
+				// (slackc's sweep has let their roots go, and a remount
+				// hands the natives none until JS draws them again): not
+				// kept alive for the row's lifetime
+				r.textMemo, r.blocksMemo, r.filesMemo, r.attsMemo = fpMemo{}, fpMemo{}, fpMemo{}, fpMemo{}
+				r.ovEl = elMemo{}
+				if r.textOv != nil || r.filesOv != nil || r.attsOv != nil || r.wrapMsg != nil || r.inMsg != nil {
+					r.textOv, r.filesOv, r.attsOv = nil, nil, nil
+					r.wrapOv, r.msgOv, r.wrapMsg, r.inMsg = 0, 0, nil, nil
+					r.recompose()
+				}
 				r.rv.Release()
 			}
 		}
@@ -339,9 +350,39 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 // (ThreadView.Prepare): what the ui root decides from the list before it
 // lays the list out (the reply box) is then what the list draws.
 func (s *listState) prepare(h Host, frame time.Time) {
+	s.adopt(frame)
 	s.hb.ensureLoaded(s.m)
 	s.sync(h, time.Now())
 	s.preparedAt = frame
+}
+
+// adopt marks the list's model drawn in the frame at (the hub's eviction
+// keeps the conversations drawn last; a model it dropped while the list
+// was off screen is taken back here) and, when another list made the hub
+// a model for the conversation meanwhile, switches to that one: the one
+// core's events change. It runs before the frame's load and sync, in
+// prepare or in layoutList's own, so a prepared frame (ThreadView.Prepare)
+// syncs from the right model and every frame marks its model drawn.
+// Revisions count per model, and a model's first load numbers its
+// messages as the dropped one's did, so a row whose message changed while
+// the model was out kept its copy (the same number) and skipped the
+// updates whose numbers the old model had used: every row takes the new
+// model's entries again, with the caches keyed on those numbers (its view
+// read, its huddle, its hidden-sender check), and evictions count from
+// the new model's own.
+func (s *listState) adopt(at time.Time) {
+	m := s.hb.markDrawn(s.m, at)
+	if m == s.m {
+		return
+	}
+	s.m, s.snap.rev = m, 0
+	for _, r := range s.rows {
+		r.rev, r.viewRev, r.viewConv = 0, 0, 0
+		r.hmOK, r.hidChecked = false, false
+	}
+	m.mu.Lock()
+	s.evictSeen = m.evictGen
+	m.mu.Unlock()
 }
 
 // sync copies the model and rebuilds items if anything changed.
@@ -693,10 +734,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	now := time.Now()
 	lastHost = h
 	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
+		s.adopt(gtx.Now)
 		s.hb.ensureLoaded(s.m)
 		s.sync(h, now)
 	}
-	s.hb.markDrawn(s.m, gtx.Now)
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
 	size := gtx.Constraints.Max
@@ -888,9 +929,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// (bounded), then sync() positions on it.
 	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older {
 		if s.snap.hasMore && len(s.snap.msgs) > 0 && tsLess(s.pendingJump, s.snap.msgs[0].m.TS) && s.jumpPages < 20 && now.Sub(s.lastOlder) > 300*time.Millisecond {
-			s.jumpPages++
-			s.lastOlder = now
-			s.hb.loadOlder(s.m)
+			// a page refused (a dropped model's reload still out) counts
+			// for nothing: the jump pages from the reloaded window
+			if s.hb.loadOlder(s.m) {
+				s.jumpPages++
+				s.lastOlder = now
+			}
 		} else if !s.snap.hasMore || s.jumpPages >= 20 {
 			s.pendingJump = "" // not in this conversation (or too far back)
 		}
@@ -903,8 +947,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
-		s.lastOlder = now
-		s.hb.loadOlder(s.m)
+		if s.hb.loadOlder(s.m) {
+			s.lastOlder = now
+		}
 	}
 	// Mark as read: mark_msgs_read_immediately marks as soon as the
 	// conversation shows; Slack's default leaves unseen messages unread,

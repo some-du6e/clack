@@ -25,31 +25,39 @@ import (
 // off. GTK's timeout (gtk-cursor-blink-timeout) is GTK's own widgets':
 // Blink's caret (FrameCaret) blinks on, and so does Slack's.
 //
-// GTK 3 (Chromium's default GTK; gtk/gtksettings.c, gtk-3-24) takes the
-// two settings from the display's backend first: on X11 the settings
-// manager's XSETTINGS (Net/CursorBlink, Net/CursorBlinkTime: GNOME's
-// gsd-xsettings, Xfce's xfsettingsd, ...), on Wayland the XDG settings
-// portal's org.gnome.desktop.interface (cursor-blink, cursor-blink-time);
-// a time from there under GTK's minimum of 100 ms is raised to it
-// (g_param_value_validate). What the backend doesn't set comes from
-// settings.ini, read once as GTK reads them at start: GTK 3's
-// /usr/share/gtk-3.0, /etc/gtk-3.0, each of XDG_CONFIG_DIRS (/etc/xdg) and
-// then XDG_CONFIG_HOME (~/.config), a later file's value over an earlier
-// one's; a value GTK's key file doesn't parse (booleans true, false, 1, 0)
-// or outside the setting's range (a time under 100 ms) is skipped. Read on
-// a goroutine of its own (X11 and D-Bus wait): XSETTINGS again every
-// xsettingsPoll (GTK hears the manager's changes at once), the portal
-// again when it says they changed. Clack's window is on Wayland when
-// WAYLAND_DISPLAY is set (Gio tries Wayland first), else on X11.
+// GTK takes the two settings from the display's backend first. On X11
+// (GTK 3, Chromium's GTK there; gtk/gtksettings.c, gtk-3-24) that's the
+// settings manager's XSETTINGS (Net/CursorBlink, Net/CursorBlinkTime:
+// GNOME's gsd-xsettings, Xfce's xfsettingsd, ...). On GNOME's Wayland
+// session Chromium loads GTK 4 (ui/gtk/gtk_compat.cc), which reads the XDG
+// settings portal's org.gnome.desktop.interface (cursor-blink,
+// cursor-blink-time) and waits for the portal to start (GTK 3's Wayland
+// backend reads the same keys from GSettings). A time from there under
+// GTK's minimum of 100 ms is raised to it (g_param_value_validate). What
+// the backend doesn't set comes from settings.ini, read once as GTK reads
+// them at start: GTK 3's /usr/share/gtk-3.0, /etc/gtk-3.0, each of
+// XDG_CONFIG_DIRS (/etc/xdg) and then XDG_CONFIG_HOME (~/.config), a later
+// file's value over an earlier one's; a value GTK's key file doesn't parse
+// (booleans true, false, 1, 0) or outside the setting's range (a time
+// under 100 ms) is skipped. Read on a goroutine of its own (X11 and D-Bus
+// wait): XSETTINGS once, as Chromium reads the interval (it never polls
+// it, and re-reads only when its theme changes), the portal again when it
+// says the keys changed or when it starts. Clack's window is on Wayland
+// when WAYLAND_DISPLAY is set (Gio tries Wayland first), else on X11.
 
 const (
 	// gtkBlinkTime is GTK's default gtk-cursor-blink-time; gtkBlinkMin its
 	// minimum.
 	gtkBlinkTime = 1200 * time.Millisecond
 	gtkBlinkMin  = 100 * time.Millisecond
-	// xsettingsPoll is how often XSETTINGS are read again.
-	xsettingsPoll = 5 * time.Second
+	// portalFirstWait is how long the first read waits for the portal:
+	// GTK 4 gives its Settings interface 25 s to answer, starting at login
+	// with the session (D-Bus activation)
+	portalFirstWait = 25 * time.Second
 )
+
+// readXSettings is app.ClackXSettings (a variable: tests).
+var readXSettings = app.ClackXSettings
 
 // gtkDataDir and gtkSysconfDir are GTK's data prefix's share and its
 // sysconfdir (variables: tests).
@@ -79,42 +87,44 @@ func (s gtkBlink) interval() time.Duration {
 	if !s.blink {
 		return 0
 	}
-	return s.period / 2
+	// Chromium's integer milliseconds (cursor_blink_time / 2)
+	return (s.period / 2).Truncate(time.Millisecond)
 }
 
 func startCaretBlinkWatcher() {
 	go func() {
 		ini := gtkSettingsIni()
 		if os.Getenv("WAYLAND_DISPLAY") == "" {
-			last := time.Duration(-1)
-			for {
-				if d := xsettingsBlink(app.ClackXSettings()).over(ini).interval(); d != last {
-					widget.SetCaretBlinkInterval(d)
-					last = d
-				}
-				time.Sleep(xsettingsPoll)
-			}
+			widget.SetCaretBlinkInterval(xsettingsBlink(readXSettings()).over(ini).interval())
+			return
 		}
 		c := caretBus()
-		apply := func() { widget.SetCaretBlinkInterval(portalBlink(c).over(ini).interval()) }
-		apply()
 		if c == nil {
+			widget.SetCaretBlinkInterval(ini.interval())
 			return
 		}
-		if c.AddMatchSignal(dbus.WithMatchInterface(portalIface), dbus.WithMatchMember("SettingChanged"),
-			dbus.WithMatchObjectPath(portalPath)) != nil {
-			return
-		}
+		// the keys' changes and the portal's start, matched before the
+		// first read so neither is missed
 		sig := make(chan *dbus.Signal, 8)
 		c.Signal(sig)
+		c.AddMatchSignal(dbus.WithMatchInterface(portalIface), dbus.WithMatchMember("SettingChanged"),
+			dbus.WithMatchObjectPath(portalPath))
+		c.AddMatchSignal(dbus.WithMatchInterface("org.freedesktop.DBus"), dbus.WithMatchMember("NameOwnerChanged"),
+			dbus.WithMatchArg(0, portalDest))
+		apply := func(wait time.Duration) { widget.SetCaretBlinkInterval(portalBlink(c, wait).over(ini).interval()) }
+		apply(portalFirstWait)
 		for s := range sig {
-			if s.Name != portalIface+".SettingChanged" || len(s.Body) < 2 {
-				continue
-			}
-			ns, _ := s.Body[0].(string)
-			key, _ := s.Body[1].(string)
-			if ns == "org.gnome.desktop.interface" && (key == "cursor-blink" || key == "cursor-blink-time") {
-				apply()
+			switch {
+			case s.Name == portalIface+".SettingChanged" && len(s.Body) >= 2:
+				ns, _ := s.Body[0].(string)
+				key, _ := s.Body[1].(string)
+				if ns == "org.gnome.desktop.interface" && (key == "cursor-blink" || key == "cursor-blink-time") {
+					apply(time.Second)
+				}
+			case s.Name == "org.freedesktop.DBus.NameOwnerChanged" && len(s.Body) == 3:
+				if owner, _ := s.Body[2].(string); owner != "" {
+					apply(time.Second) // the portal started (again)
+				}
 			}
 		}
 	}()
@@ -137,19 +147,23 @@ func caretBus() *dbus.Conn {
 }
 
 // portalBlink is what the XDG settings portal says (c: the session bus, or
-// nil), as GDK's Wayland backend reads it.
-func portalBlink(c *dbus.Conn) gtkBlink {
+// nil), as GDK's Wayland backend reads it, waiting up to wait for the
+// portal (then a second for the other key, when it didn't answer).
+func portalBlink(c *dbus.Conn, wait time.Duration) gtkBlink {
 	uiguard.OffUI("portalBlink")
 	var s gtkBlink
 	if c == nil {
 		return s
 	}
-	if v, ok := portalRead(c, "org.gnome.desktop.interface", "cursor-blink"); ok {
+	v, ok := portalRead(c, "org.gnome.desktop.interface", "cursor-blink", wait)
+	if ok {
 		if b, ok := v.(bool); ok {
 			s.blink, s.okBlink = b, true
 		}
+	} else {
+		wait = time.Second
 	}
-	if v, ok := portalRead(c, "org.gnome.desktop.interface", "cursor-blink-time"); ok {
+	if v, ok := portalRead(c, "org.gnome.desktop.interface", "cursor-blink-time", wait); ok {
 		if n, ok := v.(int32); ok {
 			s.period, s.okPeriod = max(time.Duration(n)*time.Millisecond, gtkBlinkMin), true
 		}
@@ -235,13 +249,13 @@ func xsettingInts(b []byte) (map[string]int32, bool) {
 	return ints, true
 }
 
-// portalRead is a value from the XDG settings portal (up to a second).
-func portalRead(c *dbus.Conn, ns, key string) (any, bool) {
+// portalRead is a value from the XDG settings portal (up to wait).
+func portalRead(c *dbus.Conn, ns, key string, wait time.Duration) (any, bool) {
 	ch := make(chan *dbus.Call, 1)
 	call := c.Object(portalDest, portalPath).Go(portalIface+".Read", 0, ch, ns, key)
 	select {
 	case <-call.Done:
-	case <-time.After(time.Second):
+	case <-time.After(wait):
 		return nil, false
 	}
 	if call.Err != nil {

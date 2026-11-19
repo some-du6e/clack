@@ -182,7 +182,7 @@ func (a *App) agentsPal() agPal {
 		tile: th.C.Skeleton} // base-ter
 	if th.Dark {
 		p.rowHover = color.NRGBA{R: 0xf8, G: 0xf8, B: 0xf8, A: 0x0f} // --dt_color-surf-pry
-		p.rule = color.NRGBA{R: 0xd1, G: 0xd2, B: 0xd3, A: 0x21}     // rgba(var(--sk_foreground_low),.13)
+		p.rule = color.NRGBA{R: 0xe8, G: 0xe8, B: 0xe8, A: 0x21}     // rgba(var(--sk_foreground_low),.13): 232 under .sk-client-theme--dark
 		p.maxSolid = color.NRGBA{R: 0xab, G: 0xab, B: 0xad, A: 0xff}
 	} else {
 		p.rowHover = color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0x0f}

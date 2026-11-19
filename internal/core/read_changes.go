@@ -44,7 +44,7 @@ func (a *App) announceHeld(ch, ts string) bool {
 		}
 		v := a.messageWith(ch, &m, true) // asks for nobody: the rows ask as they draw
 		ev := Event{Type: "update", Channel: ch, TS: ts, ThreadTS: m.ThreadTS, Msg: &v}
-		if a.emitIf(ev, func() bool { return a.S.LiveStamp(ch, ts) == stamp }) {
+		if _, sent := a.emitIf(ev, func() bool { return a.S.LiveStamp(ch, ts) == stamp }); sent {
 			return true
 		}
 		// changed meanwhile: its own update is out or on its way; this

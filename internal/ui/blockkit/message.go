@@ -105,6 +105,10 @@ type Message struct {
 	ver atomic.Uint32
 	gtx layout.Context
 	ops op.Ops
+	// used is when the host was last looked up or drawn, drawn the frame
+	// (gtx.Now) it was last drawn at, both unix ns: the registry lets go
+	// of the one used longest ago, never one drawn in the last frame
+	used, drawn atomic.Int64
 }
 
 type legacyRef struct {
@@ -115,8 +119,37 @@ type legacyRef struct {
 var (
 	msgsMu sync.Mutex
 	msgs   = map[string]*Message{}
-	order  []string
+	// cur is each message's (channel/ts) host key looked up last: its
+	// current blocks
+	cur = map[string]string{}
+	// frameNow and framePrev are the latest two frames (gtx.Now, unix ns)
+	// a host was drawn in
+	frameNow, framePrev atomic.Int64
 )
+
+// maxHosts bounds the registry.
+const maxHosts = 400
+
+// noteFrame records that a host is drawn in the frame at now.
+func noteFrame(now int64) {
+	for {
+		n := frameNow.Load()
+		if now <= n {
+			return
+		}
+		if frameNow.CompareAndSwap(n, now) {
+			framePrev.Store(n)
+			return
+		}
+	}
+}
+
+// drawnLately reports whether me was drawn in either of the latest two
+// frames a host was drawn in.
+func (me *Message) drawnLately() bool {
+	d := me.drawn.Load()
+	return d != 0 && d >= framePrev.Load()
+}
 
 // Interactive reports whether m has elements blockkit makes live.
 func Interactive(m *core.Message) bool {
@@ -125,14 +158,26 @@ func Interactive(m *core.Message) bool {
 		bytes.Contains(m.Attachments, []byte(`"actions"`)) || bytes.Contains(m.Attachments, []byte(`"action_id"`))
 }
 
-// MessageElements returns the element host for m (one per message,
-// kept across rows and refreshed when its blocks change), or nil when
-// m has nothing interactive.
+// MessageElements returns the element host for m, or nil when m has
+// nothing interactive: one per message and blocks, kept across rows (a
+// row drawing the same blocks finds the same host, its widgets and their
+// state). Keyed by the message alone, two rows drawing two revisions of
+// it (the thread pane's root a vote behind the channel row, one drawing
+// the plugins' view and one its source) took turns resetting the one host
+// to their own blocks, and the other row's buttons found no element: one
+// pane's buttons went at each vote. The blocks are compared as JSON
+// values, not bytes: JS's copy of a message (a view) re-encodes the same
+// blocks as Slack sent them. A message's earlier blocks back (current
+// again after another revision, not drawn in the last frame) start over,
+// as Slack's resetKey does on each change of blocks; the registry lets go
+// of the host used longest ago, never one drawn in the last frame.
 func MessageElements(h Host, m *core.Message) *Message {
 	if m == nil || m.Pending || !Interactive(m) {
 		return nil
 	}
-	k := m.Channel + "/" + m.TS
+	sig := blocksSig(m)
+	base := m.Channel + "/" + m.TS
+	k := base + "/" + string(sigHash(sig))
 	msgsMu.Lock()
 	defer msgsMu.Unlock()
 	me := msgs[k]
@@ -140,23 +185,115 @@ func MessageElements(h Host, m *core.Message) *Message {
 	case me == nil:
 		me = &Message{h: h}
 		msgs[k] = me
-		order = append(order, k)
-		if len(order) > 400 {
-			delete(msgs, order[0])
-			order = order[1:]
+		if len(msgs) > maxHosts {
+			evictHostLocked(k)
+		}
+		// a message's older blocks' hosts: the rows still drawing them
+		// keep theirs; the registry keeps the last few
+		if ks := append(revs[base], k); len(ks) > maxRevHosts {
+			if old := msgs[ks[0]]; old == nil || !old.drawnLately() {
+				delete(msgs, ks[0])
+			}
+			revs[base] = ks[1:]
+		} else {
+			revs[base] = ks
+		}
+		if len(revs) > 800 {
+			clear(revs) // bounded: the hosts stay in msgs
 		}
 	case me.h != h:
 		// another host's (tests run one app after another): this host's
 		// actions must go through its own core
 		me = &Message{h: h}
 		msgs[k] = me
+	case cur[base] != "" && cur[base] != k && !me.drawnLately():
+		// the message's earlier blocks back (the app replaced the message,
+		// then put them back): Slack's resetKey moved twice, so their
+		// state starts over (idle, the initial values) rather than come
+		// back with the error, spinner and picks they held then. A host
+		// drawn in the last frame is a row's still (a pane a revision
+		// behind): it keeps its state
+		me.sig = nil
 	}
-	me.setMessage(m)
+	if cur[base] != k {
+		if len(cur) > 2*maxHosts {
+			clear(cur) // bounded: what's drawn looks up again on its next change
+		}
+		cur[base] = k
+	}
+	me.used.Store(time.Now().UnixNano())
+	me.setMessage(m, sig)
 	return me
 }
 
-func (me *Message) setMessage(m *core.Message) {
-	sig := append(append([]byte(nil), m.Blocks...), m.Attachments...)
+// evictHostLocked lets go of the host used longest ago (looked up or
+// drawn), never one drawn in the last frame, nor keep (msgsMu held).
+// Evicted by creation order, the host a row drew frame after frame went
+// as other messages made theirs (a busy vote message one per vote); the
+// next lookup made another, and its state went with it.
+func evictHostLocked(keep string) {
+	var oldest string
+	var at int64
+	for k, me := range msgs {
+		if k == keep || me.drawnLately() {
+			continue
+		}
+		u := max(me.used.Load(), me.drawn.Load())
+		if oldest == "" || u < at {
+			oldest, at = k, u
+		}
+	}
+	if oldest != "" {
+		delete(msgs, oldest)
+	}
+}
+
+// maxRevHosts is how many of a message's blocks' hosts the registry keeps.
+const maxRevHosts = 3
+
+// revs are each message's hosts' keys in the registry, oldest first.
+var revs = map[string][]string{}
+
+// blocksSig is m's blocks and attachments as canonical JSON (keys
+// sorted, as Go encodes maps): what an element host is made of, the same
+// for Slack's bytes and JS's encoding of them. Raw bytes where they
+// don't parse.
+func blocksSig(m *core.Message) []byte {
+	canon := func(b []byte) []byte {
+		if len(b) == 0 {
+			return nil
+		}
+		var v any
+		if json.Unmarshal(b, &v) != nil {
+			return b
+		}
+		out, err := json.Marshal(v)
+		if err != nil {
+			return b
+		}
+		return out
+	}
+	out := append([]byte(nil), canon(m.Blocks)...) // never m's own bytes, which append could write past
+	return append(append(out, 0), canon(m.Attachments)...)
+}
+
+// sigHash is FNV-1a over sig, as a registry key part.
+func sigHash(sig []byte) []byte {
+	h := uint64(14695981039346656037)
+	for _, c := range sig {
+		h ^= uint64(c)
+		h *= 1099511628211
+	}
+	const hex = "0123456789abcdef"
+	out := make([]byte, 16)
+	for i := 15; i >= 0; i-- {
+		out[i] = hex[h&15]
+		h >>= 4
+	}
+	return out
+}
+
+func (me *Message) setMessage(m *core.Message, sig []byte) {
 	me.m = *m
 	if bytes.Equal(sig, me.sig) {
 		return
@@ -465,6 +602,10 @@ func (me *Message) ElementsSize(bs []richtext.Button, maxW int, accessory bool, 
 
 func (me *Message) LayoutElements(gtx layout.Context, bs []richtext.Button, accessory bool) layout.Dimensions {
 	drain()
+	if now := gtx.Now.UnixNano(); !gtx.Now.IsZero() {
+		noteFrame(now)
+		me.drawn.Store(now)
+	}
 	sz := gtx.Constraints.Max
 	if len(bs) == 1 && isAgentKind(bs[0].Kind) { // agent.go
 		me.agentRun(gtx, &bs[0], sz.X)

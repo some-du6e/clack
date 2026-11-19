@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -150,17 +151,20 @@ func (a *App) handle(ev slack.Event) {
 			// most of a large workspace's profile changes are. The event is
 			// read without a lookup, which would count as a view's.
 			seen := a.S.MemberAccessed(e.User.ID)
-			// what message Docs read of the member, before and after
-			// (a status or huddle change converts no message again)
-			var before slack.User
-			old, had := a.S.RawUser(e.User.ID)
-			if had && old != nil {
-				before = *old
+			// what message Docs read of the member, against both the last
+			// event's and the stored copy's (a status or huddle change
+			// converts no message again; a name stored anew since without
+			// an event, an older answer stored after it included, does)
+			before, had := a.S.RawUser(e.User.ID)
+			var beforeFP uint64
+			if had && before != nil {
+				beforeFP = userDocFP(before)
 			}
 			a.S.PutUsers([]slack.User{e.User})
 			if su, ok := a.S.RawUser(e.User.ID); ok {
 				u := a.userOf(su)
-				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: had && old != nil && sameUserNames(&before, su)})
+				same := a.noteUserDoc(su) && had && beforeFP == userDocFP(su)
+				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: same})
 			}
 		}
 	case "team_icon_change":
@@ -195,7 +199,9 @@ func (a *App) handle(ev slack.Event) {
 		case "remove":
 			a.S.CustomEmoji.Remove(e.Names...)
 		}
-		a.emit(Event{Type: "emoji_changed", Name: e.Name})
+		// the names, a removal's too: the messages that drew them convert
+		// again, not every loaded one (a removal named none)
+		a.emit(Event{Type: "emoji_changed", Name: e.Name, Users: e.Names})
 	case "member_joined_channel":
 		var e struct {
 			User string `json:"user"`
@@ -858,10 +864,47 @@ func (a *App) setFiles(ch, ts string, files []slack.File) {
 // processed, renamed or shared, so every loaded message carrying it gets
 // files.info's current object (Slack keeps files in one store by id;
 // Clack keeps copies in the messages).
+// refreshCanvasRef asks files.info for canvas id's title again, once for
+// the file_change events of 400 ms (people editing a canvas send many;
+// each cost a files.info, and answers landing out of order could install
+// an older title), and has the messages that read it converted again
+// when it changed.
+func (a *App) refreshCanvasRef(id string) {
+	st := a.canvases()
+	st.mu.Lock()
+	if st.titles[id] {
+		st.mu.Unlock()
+		return
+	}
+	st.titles[id] = true
+	st.mu.Unlock()
+	time.AfterFunc(400*time.Millisecond, func() {
+		st.mu.Lock()
+		delete(st.titles, id)
+		st.mu.Unlock()
+		old, _ := a.S.KnownCanvasRef(id)
+		ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
+		defer cancel()
+		if a.resolveCanvasRef(ctx, id) {
+			if now, _ := a.S.KnownCanvasRef(id); !reflect.DeepEqual(now, old) {
+				a.emit(Event{Type: "names", Users: []string{id}})
+			}
+		}
+	})
+}
+
 func (a *App) onFileChange(ev slack.Event) {
 	id := canvasEventFile(ev)
 	if id == "" {
 		return
+	}
+	// a canvas or list that titles tab slugs and links (its CanvasRef,
+	// asked for once): its title as files.info has it now, and the
+	// messages whose conversion read it (Message.Refs) converted again.
+	// Slack's useTabLabel reads the files store, which file_change
+	// updates; Clack kept a renamed canvas's first title for the session.
+	if _, ok := a.S.KnownCanvasRef(id); ok {
+		a.refreshCanvasRef(id)
 	}
 	refs := a.S.WithFile(id)
 	if len(refs) == 0 {
