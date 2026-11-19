@@ -1063,11 +1063,12 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_REAL_WINDOW_TESTS: "1"
         run: go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
-      # patch 46's memory on Karim's window (1918x1080 at 1x, his light
-      # custom theme, a thread open), with partial frames and without, a
-      # process each: the difference is the frame texture and the clear
-      # texture (TestRealWindowMemory). The runner's display is 1024x768
-      # until it's set (Set-DisplayResolution, else ChangeDisplaySettings).
+      # patch 46's memory on Karim's window (a 1918x1080 client area at 1x,
+      # his light custom theme, a thread open), with partial frames and
+      # without, a process each, three pairs: the pairs' median difference
+      # is the frame texture and the clear texture (TestRealWindowMemory).
+      # The runner's display is 1024x768 until it's set
+      # (Set-DisplayResolution, else ChangeDisplaySettings).
       - name: partial frames' memory on a 1918x1080 window (TestRealWindowMemory)
         if: ${{ !cancelled() }}
         env:

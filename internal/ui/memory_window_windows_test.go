@@ -34,15 +34,17 @@ import (
 
 // TestRealWindowMemory is what partial frames (Gio patch 46) cost in
 // memory on Clack's real window (App.Run's, Direct3D 11; ci's windows-idle
-// job): Karim's window (1918×1080 at 1x, his light custom theme, a channel
-// with a thread open, the composer focused, its caret blinking), once with
-// partial frames and once with CLACK_FULL_FRAMES=1, each in a process of
-// its own (this test's binary again: one App per process, and the frame
-// mode is set as Run starts). Each measures, once the boot's loads have
-// settled: the process's private working set (Task Manager's Memory) and
-// commit (private bytes), the Go heap, and what the Direct3D 11 device
-// holds (FrameStats.DeviceTextureBytes and DeviceBufferBytes; the frame
-// texture and clear texture partial frames keep, FrameTextureBytes). The
+// job): Karim's window (its client area 1918×1080 at 1x, his light custom
+// theme, a channel with a thread open, the composer focused, its caret
+// blinking), with partial frames and with CLACK_FULL_FRAMES=1 (Gio's own
+// whole frames and atlas packing), each in a process of its own (this
+// test's binary again: one App per process, and the frame mode is set as
+// Run starts), memPairs pairs of them, the two modes in turn. Each
+// measures, once the boot's loads have settled: the process's private
+// working set (Task Manager's Memory) and commit (private bytes), the Go
+// heap, and what the Direct3D 11 device holds (FrameStats.
+// DeviceTextureBytes and DeviceBufferBytes; the frame texture and clear
+// texture partial frames keep, FrameTextureBytes). The pairs' median
 // difference in commit must be what partial frames keep by design: the
 // frame texture and the clear texture, and memBudgetSlack for their CPU
 // side (each op's signature, the diff, the sticky atlas places).
@@ -55,36 +57,117 @@ func TestRealWindowMemory(t *testing.T) {
 	if on, why := realWindowGate(); !on {
 		t.Skip(why)
 	}
-	part := runMemoryChild(t, false)
-	full := runMemoryChild(t, true)
 	mb := func(b int64) string { return fmt.Sprintf("%.1f MB", float64(b)/(1<<20)) }
 	line := func(name string, m memSample) {
 		t.Logf("%s: a %v window; private working set %s, commit %s; Go heap in use %s (the Go runtime %s from the OS); the device's textures %s (the frame and clear textures %s, the coverage atlas %.2f Mpx, layers %.2f Mpx), buffers %s",
 			name, m.Size, mb(m.PrivateWS), mb(m.Commit), mb(m.HeapInuse), mb(m.GoSys), mb(m.DevTex), mb(m.FrameTex), float64(m.AtlasPx)/1e6, float64(m.LayerPx)/1e6, mb(m.DevBuf))
 	}
-	line("partial frames", part)
-	line("every frame whole (CLACK_FULL_FRAMES)", full)
-	dCommit, dWS := part.Commit-full.Commit, part.PrivateWS-full.PrivateWS
-	dTex, dBuf, dGo := part.DevTex-full.DevTex, part.DevBuf-full.DevBuf, part.GoSys-full.GoSys
-	t.Logf("partial frames cost: commit %s, private working set %s; of it the device's textures %s (the frame and clear textures %s, the rest %s), buffers %s, the Go runtime %s (heap in use %s); not accounted for %s",
-		mb(dCommit), mb(dWS), mb(dTex), mb(part.FrameTex), mb(dTex-part.FrameTex), mb(dBuf), mb(dGo), mb(part.HeapInuse-full.HeapInuse), mb(dCommit-dTex-dBuf-dGo))
-	if part.Size != (memWindow) || full.Size != memWindow {
-		t.Logf("the windows were %v and %v, not %v (the runner's display)", part.Size, full.Size, memWindow)
+	cost := func(name string, d memDiff, frameTex int64) {
+		t.Logf("%s: partial frames cost commit %s, private working set %s; of it the device's textures %s (the frame and clear textures %s, the rest %s), buffers %s, the Go runtime %s (heap in use %s); not accounted for %s",
+			name, mb(d.Commit), mb(d.WS), mb(d.Tex), mb(frameTex), mb(d.Tex-frameTex), mb(d.Buf), mb(d.Go), mb(d.Heap), mb(d.Unaccounted))
 	}
-	if want := int64(part.Size.X*part.Size.Y) * 4; part.FrameTex < want {
-		t.Errorf("partial frames hold %s of frame and clear textures, want the window's %s frame texture at least", mb(part.FrameTex), mb(want))
+	var parts, fulls []memSample
+	var diffs []memDiff
+	for i := range memPairs {
+		p := runMemoryChild(t, false)
+		f := runMemoryChild(t, true)
+		parts, fulls = append(parts, p), append(fulls, f)
+		line(fmt.Sprintf("pair %d, partial frames", i+1), p)
+		line(fmt.Sprintf("pair %d, every frame whole (CLACK_FULL_FRAMES)", i+1), f)
+		diffs = append(diffs, memDiffOf(p, f))
+		cost(fmt.Sprintf("pair %d", i+1), diffs[i], p.FrameTex)
 	}
-	if full.FrameTex != 0 {
-		t.Errorf("every frame whole: %s of frame and clear textures held, want none", mb(full.FrameTex))
+	part, full, d := memMedians(parts), memMedians(fulls), memDiffMedians(diffs)
+	line("partial frames, the medians", part)
+	line("every frame whole, the medians", full)
+	cost("the pairs' medians", d, part.FrameTex)
+	for i := range parts {
+		if parts[i].Size != memWindow || fulls[i].Size != memWindow {
+			t.Logf("pair %d: the windows were %v and %v, not %v (the runner's display)", i+1, parts[i].Size, fulls[i].Size, memWindow)
+		}
+		if want := int64(parts[i].Size.X*parts[i].Size.Y) * 4; parts[i].FrameTex < want {
+			t.Errorf("pair %d: partial frames hold %s of frame and clear textures, want the window's %s frame texture at least", i+1, mb(parts[i].FrameTex), mb(want))
+		}
+		if fulls[i].FrameTex != 0 {
+			t.Errorf("pair %d: every frame whole: %s of frame and clear textures held, want none", i+1, mb(fulls[i].FrameTex))
+		}
 	}
-	if budget := part.FrameTex + memBudgetSlack; dCommit > budget {
-		t.Errorf("partial frames cost %s of commit, more than their frame and clear textures (%s) and %s: the device's textures %s, buffers %s, the Go runtime %s",
-			mb(dCommit), mb(part.FrameTex), mb(memBudgetSlack), mb(dTex), mb(dBuf), mb(dGo))
+	if budget := part.FrameTex + memBudgetSlack; d.Commit > budget {
+		t.Errorf("partial frames cost %s of commit (the pairs' median), more than their frame and clear textures (%s) and %s: the device's textures %s, buffers %s, the Go runtime %s",
+			mb(d.Commit), mb(part.FrameTex), mb(memBudgetSlack), mb(d.Tex), mb(d.Buf), mb(d.Go))
 	}
 }
 
-// memWindow is Karim's window (his inspect report of 2026-11-17).
+// memWindow is Karim's window (his inspect report of 2026-11-17): its
+// client area, what Gio draws.
 var memWindow = struct{ X, Y int }{1918, 1080}
+
+// memPairs is how many pairs of processes TestRealWindowMemory runs, a
+// partial frames one then a CLACK_FULL_FRAMES one: one process's figures
+// vary from the next one's.
+const memPairs = 3
+
+// memDiff is what partial frames cost in one pair: the partial frames
+// process's figure less the whole frames one's.
+type memDiff struct {
+	Commit, WS         int64
+	Tex, Buf, Go, Heap int64
+	Unaccounted        int64 // commit less the device's textures and buffers and the Go runtime
+}
+
+func memDiffOf(p, f memSample) memDiff {
+	d := memDiff{Commit: p.Commit - f.Commit, WS: p.PrivateWS - f.PrivateWS, Tex: p.DevTex - f.DevTex,
+		Buf: p.DevBuf - f.DevBuf, Go: p.GoSys - f.GoSys, Heap: p.HeapInuse - f.HeapInuse}
+	d.Unaccounted = d.Commit - d.Tex - d.Buf - d.Go
+	return d
+}
+
+// memMedian is the median of v (the upper one of an even count).
+func memMedian(v []int64) int64 {
+	s := append([]int64(nil), v...)
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+	return s[len(s)/2]
+}
+
+// memMedians is each figure's median over the samples (the first one's
+// size and counts).
+func memMedians(ms []memSample) memSample {
+	of := func(f func(memSample) int64) int64 {
+		var v []int64
+		for _, m := range ms {
+			v = append(v, f(m))
+		}
+		return memMedian(v)
+	}
+	m := ms[0]
+	m.PrivateWS = of(func(s memSample) int64 { return s.PrivateWS })
+	m.Commit = of(func(s memSample) int64 { return s.Commit })
+	m.HeapInuse = of(func(s memSample) int64 { return s.HeapInuse })
+	m.GoSys = of(func(s memSample) int64 { return s.GoSys })
+	m.DevTex = of(func(s memSample) int64 { return s.DevTex })
+	m.DevBuf = of(func(s memSample) int64 { return s.DevBuf })
+	m.FrameTex = of(func(s memSample) int64 { return s.FrameTex })
+	m.AtlasPx = of(func(s memSample) int64 { return s.AtlasPx })
+	m.LayerPx = of(func(s memSample) int64 { return s.LayerPx })
+	return m
+}
+
+// memDiffMedians is each figure's median over the pairs.
+func memDiffMedians(ds []memDiff) memDiff {
+	of := func(f func(memDiff) int64) int64 {
+		var v []int64
+		for _, d := range ds {
+			v = append(v, f(d))
+		}
+		return memMedian(v)
+	}
+	return memDiff{
+		Commit: of(func(d memDiff) int64 { return d.Commit }), WS: of(func(d memDiff) int64 { return d.WS }),
+		Tex: of(func(d memDiff) int64 { return d.Tex }), Buf: of(func(d memDiff) int64 { return d.Buf }),
+		Go: of(func(d memDiff) int64 { return d.Go }), Heap: of(func(d memDiff) int64 { return d.Heap }),
+		Unaccounted: of(func(d memDiff) int64 { return d.Unaccounted }),
+	}
+}
 
 // memBudgetSlack is what partial frames may keep beyond their frame and
 // clear textures: every op's signature and the last frame's, the diff's
@@ -158,6 +241,7 @@ func memoryChild(t *testing.T) {
 	var last gpu.FrameStats
 	var frames, partials int
 	var size struct{ X, Y int }
+	var hwnd uintptr
 	app.SetGPUFrameHook(func(s gpu.FrameStats) {
 		mu.Lock()
 		last = s
@@ -171,10 +255,17 @@ func memoryChild(t *testing.T) {
 	images := imgcache.New(fs.Fetch, "", nil)
 	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), OnWindowEvent: func(e event.Event) {
 		realWindowEvent(e)
-		if fe, ok := e.(app.FrameEvent); ok {
+		switch e := e.(type) {
+		case app.FrameEvent:
 			mu.Lock()
-			size.X, size.Y = fe.Size.X, fe.Size.Y
+			size.X, size.Y = e.Size.X, e.Size.Y
 			mu.Unlock()
+		case app.Win32ViewEvent:
+			if e.HWND != 0 {
+				mu.Lock()
+				hwnd = e.HWND
+				mu.Unlock()
+			}
 		}
 	}}, images)
 	a.prefs.MainWindow = &mainWindowSettings{Size: &winSize{Width: memWindow.X, Height: memWindow.Y},
@@ -223,6 +314,25 @@ func memoryChild(t *testing.T) {
 		return !booted.IsZero()
 	})
 	realWindowShow(t)
+	// the bounds above are the window's outer size (its frame and the
+	// invisible resize borders inside them): its client area, what Gio
+	// draws, made Karim's at the screen's top left
+	var win uintptr
+	until("the window's HWND", 30*time.Second, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		win = hwnd
+		return win != 0
+	})
+	memSizeClient(win, memWindow.X, memWindow.Y)
+	at := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return size == memWindow
+	}
+	for dl := time.Now().Add(10 * time.Second); !at() && time.Now().Before(dl); {
+		time.Sleep(50 * time.Millisecond)
+	}
 	onUI(func() { a.Navigate("c/" + ch) })
 	until("the channel's history", 60*time.Second, func() bool {
 		found := false
@@ -273,21 +383,8 @@ func memoryChild(t *testing.T) {
 		mu.Unlock()
 		samples = append(samples, s)
 	}
-	med := func(f func(memSample) int64) int64 {
-		var v []int64
-		for _, s := range samples {
-			v = append(v, f(s))
-		}
-		sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
-		return v[len(v)/2]
-	}
-	m := samples[len(samples)-1]
-	m.PrivateWS = med(func(s memSample) int64 { return s.PrivateWS })
-	m.Commit = med(func(s memSample) int64 { return s.Commit })
-	m.HeapInuse = med(func(s memSample) int64 { return s.HeapInuse })
-	m.GoSys = med(func(s memSample) int64 { return s.GoSys })
-	m.DevTex = med(func(s memSample) int64 { return s.DevTex })
-	m.DevBuf = med(func(s memSample) int64 { return s.DevBuf })
+	m := memMedians(samples)
+	m.Size, m.Partial = samples[len(samples)-1].Size, samples[len(samples)-1].Partial
 	m.DevTexMin, m.DevTexMax = samples[0].DevTex, samples[0].DevTex
 	m.CommitMin, m.CommitMax = samples[0].Commit, samples[0].Commit
 	for _, s := range samples {
@@ -299,6 +396,20 @@ func memoryChild(t *testing.T) {
 	mu.Unlock()
 	b, _ := json.Marshal(m)
 	fmt.Printf("CLACK_MEMORY %s\n", b)
+}
+
+// memSizeClient moves and sizes hwnd's window so its client area is w×h at
+// the screen's top left, its frame around that.
+func memSizeClient(hwnd uintptr, w, h int) {
+	var wr, cr tbRect
+	tbGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&wr)))
+	tbGetClientRect.Call(hwnd, uintptr(unsafe.Pointer(&cr)))
+	o := tbOrigin(hwnd) // the client area's top left on the screen
+	x, y := int(wr.Left)-o.X, int(wr.Top)-o.Y
+	fw := int(wr.Right-wr.Left) - int(cr.Right-cr.Left)
+	fh := int(wr.Bottom-wr.Top) - int(cr.Bottom-cr.Top)
+	const noZOrder, noActivate = 0x0004, 0x0010 // SWP_NOZORDER, SWP_NOACTIVATE
+	tbSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), uintptr(w+fw), uintptr(h+fh), noZOrder|noActivate)
 }
 
 // memCounters is PROCESS_MEMORY_COUNTERS_EX2.

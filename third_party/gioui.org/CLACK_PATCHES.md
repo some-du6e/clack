@@ -2306,6 +2306,21 @@ made readable for that part alone by `app.ClackReadableDrawables`; the
 blinks and the scroll are measured on the framebufferOnly drawables a
 window has).
 
+What a window's GPU holds, in bytes: Direct3D 11 counts the textures and
+buffers it made and hasn't released (`driver.ClackResources`, the
+backend's `ClackResourceBytes`: every mip level's texels at the format's
+size, each buffer's size), and `FrameStats.DeviceTextureBytes` and
+`DeviceBufferBytes` report them after each frame (-1 on the other
+backends); `FrameStats.FrameTextureBytes` is the share partial frames
+keep, the frame texture and the clear texture. internal/ui's
+`TestRealWindowMemory` (ci's windows-idle, the runner's display at
+1920x1080) measures Karim's window, a client area of 1918x1080 with a
+thread open and the caret blinking, in three pairs of processes, partial
+frames then `CLACK_FULL_FRAMES=1` (Gio's own whole frames and atlas
+packing): each process's private working set and commit, its Go heap, and
+what the device holds. The pairs' median difference in commit must be no
+more than the frame and clear textures and 4 MB.
+
 `gpu/clack_floor.go` has two switches for the pixel tests that hold a
 change in packing to Gio's own placement rounding. `ClackPackOrder` packs
 the coverage atlas in a seeded order instead of the ops' (every path's
