@@ -131,6 +131,13 @@ func AgentFixtures() map[string][]any {
 			agentTask("t6", "Cleaned up", "complete", map[string]any{"icon": map[string]any{"name": "not-an-icon"}}),
 			agentTask("t7", "Shared it", "complete", map[string]any{"icon": "share"}),
 		}}},
+		// a plan task's header with its caret: a one-line title of x-height
+		// letters only, and one that wraps
+		"plan-caret": {map[string]any{"type": "plan", "block_id": "p8", "title": "Reviewed", "tasks": []any{
+			agentTask("t1", "run some scans", "complete", map[string]any{"details": agentRich("All clear.")})}}},
+		"plan-caret-wrap": {map[string]any{"type": "plan", "block_id": "p9", "title": "Reviewed", "tasks": []any{
+			agentTask("t1", "Read every failing test, traced the clock in the fixture, checked the seed and ran the suite again", "complete",
+				map[string]any{"details": agentRich("All clear.")})}}},
 		// an MCP task's card while it runs, and once it is done (same
 		// block: the stream's update)
 		"task-card-mcp-running": {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "in_progress", "output": agentRich("Reading the orders table.")}},

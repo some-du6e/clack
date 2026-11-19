@@ -1044,18 +1044,27 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 			if has {
 				caret = dp(gtx, 4) + dp(gtx, 13)
 			}
-			lines := wrapText(gtx, th, 13, task.Title, cw, caret)
+			// .taskHeaderSlim in the step content: a fit-content flex row
+			// (padding 4px 0, gap 4px) of the title (margin 2px 0), which
+			// wraps in what the caret leaves, and the caret (.taskHeaderCaret:
+			// align-self start, margin-top 6px), so 10px down, after the
+			// title's box: the line's width, or all of it once it wraps
+			lines := wrapText(gtx, th, 13, task.Title, max(cw-caret, 1), 0)
 			if len(lines) == 0 {
 				lines = []string{""}
 			}
 			ty := y + cy + pad + mar
-			lastW := 0
+			lineW := 0
 			for _, ln := range lines {
 				at(gtx, image.Pt(cx, ty), func(gtx C) D {
 					return vcenter(gtx, lh, func(gtx C) D { return label(gtx, th, 13, font.Normal, pal.ter, ln) })
 				})
-				lastW = measure(gtx, th, 13, font.Normal, ln)
+				lineW = measure(gtx, th, 13, font.Normal, ln)
 				ty += lh
+			}
+			titleW := lineW
+			if len(lines) > 1 {
+				titleW = max(cw-caret, 1)
 			}
 			headH := pad + mar + len(lines)*lh + mar + pad
 			if has {
@@ -1063,10 +1072,9 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 				if open {
 					name = "caret-down"
 				}
-				// align-self start, margin-top 6px
-				at(gtx, image.Pt(cx+lastW+dp(gtx, 4), y+cy+dp(gtx, 6)), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
+				at(gtx, image.Pt(cx+titleW+dp(gtx, 4), y+cy+pad+dp(gtx, 6)), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
 				at(gtx, image.Pt(cx, y+cy), func(gtx C) D {
-					t.add(gtx, image.Pt(lastW+caret, headH))
+					t.add(gtx, image.Pt(titleW+caret, headH))
 					return D{}
 				})
 			}
