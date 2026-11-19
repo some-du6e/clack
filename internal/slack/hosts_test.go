@@ -196,8 +196,11 @@ func TestCheckRedirectStripsCredentials(t *testing.T) {
 		return c.checkRedirect(req, []*http.Request{{Method: http.MethodPost, URL: mustURL(t, "https://hackclub.slack.com/api/chat.postMessage")}})
 	}
 	for _, target := range []string{"https://hackclub.slack.com/ssb/redirect", "https://hackclub.slack.com/signin", "https://hackclub.slack.com/api/../ssb/redirect", "https://hackclub.slack.com/api/%2e%2e/ssb/redirect",
-		// a Web API method that ends the session, however it is written
-		"https://hackclub.slack.com/api/auth.signout", "https://slack.com/api/AUTH.REVOKE", "https://hackclub.slack.com/api/%61uth.signout", "https://hackclub.slack.com/api//auth.signout/"} {
+		// a Web API method that ends the session, however it is written: a
+		// query or ";" after the name (methodPrefix stops there), and a
+		// fullwidth "a" NFKC-folds to one (readForms)
+		"https://hackclub.slack.com/api/auth.signout", "https://slack.com/api/AUTH.REVOKE", "https://hackclub.slack.com/api/%61uth.signout", "https://hackclub.slack.com/api//auth.signout/",
+		"https://hackclub.slack.com/api/auth.signout%3Fx=1", "https://hackclub.slack.com/api/%EF%BD%81uth.signout"} {
 		if err := post(target); !errors.Is(err, ErrNotAFile) {
 			t.Errorf("POST hop to %s: err %v, want ErrNotAFile", target, err)
 		}

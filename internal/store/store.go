@@ -860,6 +860,11 @@ func userName(look userLookup, id string) string {
 // to be fetched.
 func (s *Store) MemberName(id string) (string, bool) { return s.memberName(s.User, id) }
 
+// MemberNameHeld is MemberName for a member the store holds now, a miss
+// asked for by nobody (getRawMemberById's read): for text built once
+// what it names was waited for (a notification's body).
+func (s *Store) MemberNameHeld(id string) (string, bool) { return s.memberName(s.RawUser, id) }
+
 func (s *Store) memberName(look userLookup, id string) (string, bool) {
 	u, ok := look(id) // a miss is asked for
 	if !ok || u == nil {

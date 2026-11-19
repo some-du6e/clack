@@ -24,6 +24,7 @@ import (
 type reactOp struct {
 	seq        uint64
 	name, user string
+	url        string // reaction_added's: an emoji the workspace hasn't got (a Slack Connect partner's)
 	add        bool
 	at         time.Time
 }
@@ -42,7 +43,7 @@ const (
 func (s *Store) NoteReaction(ch, ts, name, user string, add bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.noteReactionLocked(ch, ts, name, user, add)
+	s.noteReactionLocked(ch, ts, name, user, "", add)
 }
 
 // ApplyReactionNoted is a reaction the socket brought (or the viewer's
@@ -52,14 +53,27 @@ func (s *Store) NoteReaction(ch, ts, name, user string, add bool) {
 // It returns the first copy (Mutate's), whether there was one, and
 // whether it changed.
 func (s *Store) ApplyReactionNoted(ch, ts, name, user string, add bool) (m slack.Message, found, changed bool) {
+	return s.ApplyReactionNotedURL(ch, ts, name, user, "", add)
+}
+
+// ApplyReactionNotedURL is ApplyReactionNoted with the reaction's url, a
+// reaction_added's: an emoji the workspace hasn't got (a Slack Connect
+// partner's custom one), which the pill draws from it (cBAo addReaction:
+// m&&(h.url=m)); a fetch's replay keeps it. A malformed event, with no
+// message, no reaction or an add by nobody, changes nothing, as cBAo
+// (key, name and userId) and yzJf (key and name) refuse it.
+func (s *Store) ApplyReactionNotedURL(ch, ts, name, user, url string, add bool) (m slack.Message, found, changed bool) {
+	if ch == "" || ts == "" || name == "" || add && user == "" {
+		return slack.Message{}, false, false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.noteReactionLocked(ch, ts, name, user, add)
-	m, found = s.mutateLocked(ch, ts, func(x *slack.Message) { changed = ApplyReaction(x, name, user, add) || changed })
+	s.noteReactionLocked(ch, ts, name, user, url, add)
+	m, found = s.mutateLocked(ch, ts, func(x *slack.Message) { changed = ApplyReactionURL(x, name, user, url, add) || changed })
 	return m, found, changed
 }
 
-func (s *Store) noteReactionLocked(ch, ts, name, user string, add bool) {
+func (s *Store) noteReactionLocked(ch, ts, name, user, url string, add bool) {
 	if ch == "" || ts == "" || name == "" || user == "" {
 		return
 	}
@@ -87,7 +101,7 @@ func (s *Store) noteReactionLocked(ch, ts, name, user string, add bool) {
 			ops = slices.Delete(slices.Clone(ops), 0, drop)
 		}
 	}
-	s.reacts[k] = append(ops, reactOp{seq: s.liveSeq, name: name, user: user, add: add, at: now})
+	s.reacts[k] = append(ops, reactOp{seq: s.liveSeq, name: name, user: user, url: url, add: add, at: now})
 }
 
 // replayReactsLocked applies the reactions noted for ch/m.TS after since
@@ -105,7 +119,7 @@ func (s *Store) replayReactsLocked(ch string, m *slack.Message, since uint64) {
 				continue
 			}
 		}
-		ApplyReaction(m, op.name, op.user, op.add)
+		ApplyReactionURL(m, op.name, op.user, op.url, op.add)
 	}
 }
 
@@ -128,12 +142,28 @@ func (s *Store) replayAllReactsLocked(ch string, msgs []slack.Message, since uin
 // writes to the old slices (copies already handed out share them) and
 // reports whether m changed.
 func ApplyReaction(m *slack.Message, name, user string, add bool) bool {
+	return ApplyReactionURL(m, name, user, "", add)
+}
+
+// ApplyReactionURL is ApplyReaction with an add's url, set on the
+// reaction it makes or joins, as cBAo sets h.url before comparing: an
+// add by someone listed changes only a url it brings anew.
+func ApplyReactionURL(m *slack.Message, name, user, url string, add bool) bool {
 	for i := range m.Reactions {
 		r := m.Reactions[i]
 		if r.Name != name {
 			continue
 		}
 		has := slices.Contains(r.Users, user)
+		if add && has {
+			if url == "" || r.URL == url {
+				return false
+			}
+			rs := slices.Clone(m.Reactions)
+			rs[i].URL = url
+			m.Reactions = rs
+			return true
+		}
 		if add == has {
 			return false
 		}
@@ -141,6 +171,9 @@ func ApplyReaction(m *slack.Message, name, user string, add bool) bool {
 		if add {
 			rs[i].Users = append(slices.Clip(r.Users), user)
 			rs[i].Count++
+			if url != "" {
+				rs[i].URL = url
+			}
 		} else {
 			rs[i].Users = slices.DeleteFunc(slices.Clone(r.Users), func(u string) bool { return u == user })
 			rs[i].Count--
@@ -154,6 +187,6 @@ func ApplyReaction(m *slack.Message, name, user string, add bool) bool {
 	if !add {
 		return false
 	}
-	m.Reactions = append(slices.Clip(m.Reactions), slack.Reaction{Name: name, Count: 1, Users: []string{user}})
+	m.Reactions = append(slices.Clip(m.Reactions), slack.Reaction{Name: name, Count: 1, Users: []string{user}, URL: url})
 	return true
 }

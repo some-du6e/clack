@@ -135,6 +135,10 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 		} else {
 			e.msg, e.ok = b.tt.MessageView(m.Channel, m.TS)
 		}
+		// its reactions are core's, not the view's: Slack draws them from
+		// the reactions store by the message's reaction key, never from
+		// the messages slice (messages.applyView)
+		e.msg.Reactions = m.Reactions
 	}
 	if !e.ok {
 		return m
