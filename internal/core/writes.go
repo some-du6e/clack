@@ -513,20 +513,26 @@ func (a *App) SubscribeThread(ctx context.Context, ch, threadTS string, follow b
 	return err
 }
 
-// MarkThread marks a thread read up to ts.
+// MarkThread marks a thread read up to ts. As setThreadLastRead does, it
+// sends subscriptions.thread.mark (markThread) and, without waiting for
+// its answer, runs maybeMarkChannelFromThread (thread_channel_mark.go)
+// with the thread's last read from before, whatever the thread mark's
+// outcome. The subscription's last_read moves once the mark is done, as
+// the thread_marked event would move it.
 func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 	prev := ""
 	if sub, ok := a.S.ThreadSub(ch, threadTS); ok {
 		prev = sub.LastRead
 	}
-	err := a.C.Call(ctx, "subscriptions.thread.mark", url.Values{"channel": {ch}, "thread_ts": {threadTS}, "ts": {ts}, "read": {"1"}}, nil)
+	done := make(chan error, 1)
+	go func() {
+		done <- a.C.Call(ctx, "subscriptions.thread.mark", url.Values{"channel": {ch}, "thread_ts": {threadTS}, "ts": {ts}, "read": {"1"}}, nil)
+	}()
+	a.maybeMarkChannelFromThread(ctx, ch, threadTS, prev, ts)
+	err := <-done
 	if err == nil {
-		// setThreadLastRead: the subscription's last_read now, as the
-		// thread_marked event would set it, and its
-		// maybeMarkChannelFromThread (thread_channel_mark.go)
 		a.setThreadLastRead(ch, threadTS, ts)
 		a.refreshCountsSoon()
-		a.maybeMarkChannelFromThread(ctx, ch, threadTS, prev, ts)
 	}
 	return err
 }
