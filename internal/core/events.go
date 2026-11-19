@@ -292,7 +292,11 @@ func (a *App) handle(ev slack.Event) {
 			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it
 		}
 		if ev.Type == "badge_counts_updated" {
-			a.onActivityBadges(ev.Raw) // handleBadgeCountsUpdatedRTMEvent's activity_v2
+			// handleBadgeCountsUpdatedRTMEvent's activity_v2, in order with
+			// the activity entries before it (activity_later.go): its zero
+			// marks the rows they made unread read
+			raw := ev.Raw
+			a.activityInOrder(ctx, func(context.Context) { a.onActivityBadges(raw) })
 		}
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
@@ -345,7 +349,8 @@ func (a *App) handle(ev slack.Event) {
 	case "draft_create", "draft_update", "draft_delete", "draft_send":
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
-		a.onActivityEvent(ctx, ev.Raw)
+		raw := ev.Raw
+		a.activityLater(func(ctx context.Context) { a.onActivityEvent(ctx, raw) }) // activity_later.go
 	case "activity_clear_all_completed":
 		// handleActivityRTMEvent's sibling (client-boot-render
 		// activityClearAllCompleted): with an undo_key, the clear-all
@@ -355,7 +360,10 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		if e.UndoKey != "" {
-			a.emit(Event{Type: "activity", Name: ev.Type, ID: e.UndoKey, Raw: ev.Raw})
+			raw := ev.Raw // in order with the activity entries before it (activity_later.go)
+			a.activityInOrder(ctx, func(context.Context) {
+				a.emit(Event{Type: "activity", Name: "activity_clear_all_completed", ID: e.UndoKey, Raw: raw})
+			})
 		}
 	case "activity_views_updated":
 		// sD/F activityViewsUpdated: the saved views changed (another
@@ -622,10 +630,15 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" {
 		a.readBadgePerson(ch)
 	}
-	// the "message" event names its sender for the notification (and the
-	// mentions in its text), so the people are fetched before it goes out;
-	// not its reactions' (a new message has none) (lazy_users.go)
-	a.EnsureUsers(ctx, rowUsers([]slack.Message{m}))
+	// Nobody the message names is fetched before it goes out: Slack's
+	// messageReceived puts it into the store the moment it arrives, its
+	// rows ask for the people they draw (the conversion and a.User below
+	// queue the lookups, lazy_users.go), and only the desktop notification
+	// waits for them (showNotification's ensureModelsArePresent: the UI's
+	// maybeNotify). Fetched here, on the event pump, a reply from someone
+	// the client never saw waited for users/info, and every event behind
+	// it with it: an open thread drew replies seconds late, after Activity
+	// had them (Karim, 2026-11-18, "threads are a shit show rn").
 	if needsFileInfo(&m) { // the echo of the viewer's own upload too
 		go a.fillFiles(ch, m.TS)
 	}

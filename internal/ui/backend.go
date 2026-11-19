@@ -920,8 +920,16 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 			ids = append(ids, ev.Channel)
 		}
 		ids = append(ids, b.noteMentions(ev.Msg.Doc)...)
-		if len(ids) > 0 {
-			b.noteResolve(a, ids, func() { b.maybeNotifyAfter(a, ev, true) })
+		// and the people it names core doesn't hold (core announced the
+		// message without them; notify_conv.go noteMembers)
+		people := b.noteMembers(ev.Msg)
+		if len(ids) > 0 || len(people) > 0 {
+			b.noteResolve(a, ids, people, func() {
+				if len(people) > 0 {
+					ev = b.noteFresh(ev)
+				}
+				b.maybeNotifyAfter(a, ev, true)
+			})
 			return
 		}
 	}

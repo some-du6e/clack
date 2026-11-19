@@ -318,8 +318,15 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	return v.draw(gtx, st)
 }
 
+// DrawnHook, when set (tests: a message body's frame, edit_latency_test.go),
+// sees the doc of every View as it paints it. UI goroutine.
+var DrawnHook func(doc richtext.Doc)
+
 // draw paints the laid-out doc and registers its input areas.
 func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
+	if h := DrawnHook; h != nil {
+		h(v.doc)
+	}
 	size := v.d.size
 	if gtx.Constraints.Min.X > size.X {
 		size.X = gtx.Constraints.Min.X

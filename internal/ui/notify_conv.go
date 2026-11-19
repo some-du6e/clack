@@ -185,13 +185,56 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 	return out
 }
 
+// noteMembers are the people a notification names that the store doesn't
+// hold: its sender and the members its text mentions (at most
+// noteResolveMax). Core announces a message the moment it arrives, its
+// rows asking for the people they draw; the notification waits for them,
+// as Slack's showNotification waits for ensureModelsArePresent.
+func (b *backend) noteMembers(m *core.Message) []string {
+	if b.core == nil || m == nil {
+		return nil
+	}
+	var ids []string
+	if m.User != "" { // a user-less bot's message names its sender itself
+		ids = append(ids, m.User)
+	}
+	richtext.PlainTextWith(m.Doc, func(s richtext.Span) (string, bool) {
+		if s.Kind == richtext.User && s.ID != "" {
+			ids = append(ids, s.ID)
+		}
+		return "", false
+	})
+	if len(ids) == 0 {
+		return nil
+	}
+	out := b.core.S.MissingUsers(ids)
+	if len(out) > noteResolveMax {
+		out = out[:noteResolveMax]
+	}
+	return out
+}
+
+// noteFresh is ev with its message converted again from the store's copy
+// (core.HeldMessage), now that the people it names are in: core converted
+// it before they were, and the body would name a mention by its id.
+func (b *backend) noteFresh(ev core.Event) core.Event {
+	if b.core == nil || ev.Msg == nil {
+		return ev
+	}
+	if m, ok := b.core.HeldMessage(ev.Channel, ev.TS); ok {
+		ev.Msg = &m
+	}
+	return ev
+}
+
 // noteResolve looks ids up (core.ResolveConv: conversations.info for one
-// the store doesn't name, which keeps what it learns) off the UI
-// goroutine, for at most noteResolveWait, then runs then on it. Slack's
-// store has a notification's channel when it builds the notification;
-// Clack's may learn it a beat later, so the notification waits for the
-// lookup instead of showing the id.
-func (b *backend) noteResolve(a *App, ids []string, then func()) {
+// the store doesn't name, which keeps what it learns) and people
+// (core.EnsureUsers: users/info) off the UI goroutine, for at most
+// noteResolveWait, then runs then on it. Slack's store has a
+// notification's channel and people when it builds the notification;
+// Clack's may learn them a beat later, so the notification waits for the
+// lookups instead of showing ids.
+func (b *backend) noteResolve(a *App, ids, people []string, then func()) {
 	parent := b.ctx
 	if parent == nil {
 		parent = context.Background()
@@ -207,6 +250,13 @@ func (b *backend) noteResolve(a *App, ids []string, then func()) {
 				defer wg.Done()
 				c.ResolveConv(ctx, id)
 			}(id)
+		}
+		if len(people) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c.EnsureUsers(ctx, people)
+			}()
 		}
 		wg.Wait()
 		a.Post(then)
