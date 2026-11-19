@@ -102,9 +102,13 @@ type player struct {
 	obj    unsafe.Pointer
 	closed bool
 
-	mu     sync.Mutex
-	pend   pending // the controls before obj was made
-	loads  map[uint64]context.CancelFunc
+	mu    sync.Mutex
+	pend  pending // the controls before obj was made
+	loads map[uint64]context.CancelFunc
+	// toEnd is each request to the end's offset as it reads (under mu),
+	// moved closed at each change (holdBehind)
+	toEnd  map[uint64]int64
+	moved  chan struct{}
 	failed bool
 	done   chan struct{}
 
@@ -523,11 +527,15 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 	end := off + n
 	if toEnd {
 		end = math.MaxInt64
+		defer p.readTo(req, -1)
 	}
 	buf := make([]byte, 256<<10)
 	for cur := off; cur < end; {
-		if toEnd && !p.pace(ctx, cur) {
-			return // cancelled while held
+		if toEnd {
+			p.readTo(req, cur)
+			if !p.pace(ctx, cur) || !p.holdBehind(ctx, req, cur) {
+				return // cancelled while held
+			}
 		}
 		k, err := p.rs.ReadSome(ctx, buf[:min(int64(len(buf)), end-cur)], cur)
 		if k > 0 {
@@ -547,6 +555,61 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 		}
 	}
 	p.finish(req, false)
+}
+
+// spread is how far a request to the end may read ahead of another one
+// still reading. AVFoundation asks for two to the end (0-end, then X-end
+// a few hundred KB in), which pacing holds only in files over 30 s:
+// within it, the one behind reads what the one ahead fetched from the
+// source's cache, so each byte comes from the network once (unheld, the
+// two drifted apart past the cache and both read the whole file).
+const spread = media.CacheMax - 2*media.BlockSize
+
+// readTo notes request req's offset (-1: it ended) and wakes the requests
+// held behind it.
+func (p *player) readTo(req uint64, at int64) {
+	p.mu.Lock()
+	if p.toEnd == nil {
+		p.toEnd = map[uint64]int64{}
+	}
+	if at < 0 {
+		delete(p.toEnd, req)
+	} else {
+		p.toEnd[req] = at
+	}
+	if p.moved != nil {
+		close(p.moved)
+		p.moved = nil
+	}
+	p.mu.Unlock()
+}
+
+// holdBehind holds request req at cur while it's more than spread ahead
+// of another request to the end still reading; false: ctx ended.
+func (p *player) holdBehind(ctx context.Context, req uint64, cur int64) bool {
+	for {
+		p.mu.Lock()
+		lo := int64(math.MaxInt64)
+		for r, at := range p.toEnd {
+			if r != req && at < lo {
+				lo = at
+			}
+		}
+		if lo == math.MaxInt64 || cur <= lo+spread {
+			p.mu.Unlock()
+			return true
+		}
+		if p.moved == nil {
+			p.moved = make(chan struct{})
+		}
+		moved := p.moved
+		p.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-moved:
+		}
+	}
 }
 
 // pace holds a request to the end of the resource at media.PaceLimit:

@@ -470,10 +470,17 @@ func mdatTail() []byte {
 // A file much longer than what plays: the asset's reads are logged, and
 // what the source fetched while 3 s played.
 func TestAVFReadsAhead(t *testing.T) {
-	r := newRig(t, mdatTail(), false, image.Pt(320, 180), image.Pt(320, 180))
+	data := mdatTail()
+	r := newRig(t, data, false, image.Pt(320, 180), image.Pt(320, 180))
 	r.playThrough()
 	st := r.o.Stats()
 	t.Logf("50 MB past a 3 s video: the source fetched %d bytes in %d GETs (%v); requests %v", st.Bytes, len(st.Offsets), st.Offsets, requestsOf(r.id))
+	// round 4 step 5: AVFoundation's two requests to the end (pacing holds
+	// neither in a file under 30 s) read the file once between them, not
+	// once each (they read 52 to 103 MB of the 52)
+	if lim := int64(len(data)) * 6 / 5; st.Bytes > lim {
+		t.Errorf("the source fetched %d bytes of a %d-byte file: the requests to the end read it more than once", st.Bytes, len(data))
+	}
 }
 
 // Closed, every player lets go of all it held: the player, its frames'
