@@ -5,9 +5,9 @@ package ui
 // thread plays in the thread pane, as in Slack: the pane's rows take
 // their players under "thread"; its More actions has no "Open in thread"
 // (frPc, not in a thread pane); one video plays at a time across the
-// channel and the pane (bxCZ); closing the pane while its video plays
-// docks it into the mini player (useNavigateDockTrigger), its own player
-// paused at once and let go 10 s later (React unmounting the pane).
+// channel and the pane (bxCZ: the channel's playing pauses the pane's);
+// closing the pane lets its paused player go 10 s later (React unmounting
+// the pane). The two share one file, so its progress too.
 
 import (
 	"image"
@@ -44,26 +44,11 @@ func TestVideoThreadPane(t *testing.T) {
 	inThread := func() (videoplayer.State, bool) {
 		return e.a.vids.TileState("thread", ch, reply, fakeslack.FilesVideoID)
 	}
-	// the channel's video plays first
 	m := e.filesMsg("video")
-	tile := e.videoTile(t, m.TS)
 	clk := time.Second
-	e.clickAt(mid(tile.R), clk)
-	e.until("the channel's video playing", 15*time.Second, func() bool { st, _ := e.videoState(m.TS); return st.Playing && !st.Loading })
 
 	e.a.OpenThread(ch, root)
 	var tr image.Rectangle
-	e.until("the reply's video tile in the pane", 15*time.Second, func() bool {
-		for _, r := range rectsOf(e.threadFiles(ch, root), reply) {
-			if r.File.IsVideo {
-				tr = r.R
-				return true
-			}
-		}
-		return false
-	})
-	// the gallery's images load and the pane's rows move: wait for the
-	// tile to stay put
 	videoIn := func() image.Rectangle {
 		for _, r := range rectsOf(e.threadFiles(ch, root), reply) {
 			if r.File.IsVideo {
@@ -72,6 +57,9 @@ func TestVideoThreadPane(t *testing.T) {
 		}
 		return image.Rectangle{}
 	}
+	e.until("the reply's video tile in the pane", 15*time.Second, func() bool { tr = videoIn(); return !tr.Empty() })
+	// the gallery's images load and the pane's rows move: wait for the
+	// tile to stay put
 	for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); {
 		e.settle(300 * time.Millisecond)
 		if r := videoIn(); r == tr && !r.Empty() {
@@ -83,10 +71,8 @@ func TestVideoThreadPane(t *testing.T) {
 	if _, ok := inThread(); !ok {
 		t.Fatal("the reply's video isn't the thread pane's player tile")
 	}
-	if pv, ok := pipShown(e); ok {
-		t.Logf("before the click the mini player shows %+v", pv)
-	}
-	clk += time.Second
+	// the pane's video plays (from the start: the file hasn't played; the
+	// fixture's 3 s leave the checks time)
 	e.clickAt(mid(tr), clk)
 	for dl := time.Now().Add(15 * time.Second); ; {
 		if st, _ := inThread(); st.Playing && !st.Loading {
@@ -101,14 +87,9 @@ func TestVideoThreadPane(t *testing.T) {
 		e.frame()
 		time.Sleep(time.Millisecond)
 	}
-	e.until("the channel's video paused (one at a time)", 5*time.Second, func() bool { st, _ := e.videoState(m.TS); return !st.Playing })
 
 	// More actions, from the pane: no "Open in thread"
-	for _, r := range rectsOf(e.threadFiles(ch, root), reply) {
-		if r.File.IsVideo {
-			tr = r.R
-		}
-	}
+	tr = videoIn()
 	clk += 300 * time.Millisecond
 	e.hoverAt(mid(tr), clk)
 	e.frame()
@@ -129,6 +110,16 @@ func TestVideoThreadPane(t *testing.T) {
 	}
 	e.a.dismissTop()
 	e.frame()
+
+	// one at a time: the channel's video playing pauses the pane's
+	tile := e.videoTile(t, m.TS)
+	clk += time.Second
+	e.clickAt(mid(tile.R), clk)
+	e.until("the channel's video playing", 15*time.Second, func() bool {
+		st, _ := e.videoState(m.TS)
+		return st.Played && (st.Playing || st.Elapsed >= st.Duration)
+	})
+	e.until("the pane's video paused (one at a time)", 5*time.Second, func() bool { st, _ := inThread(); return !st.Playing })
 
 	// the pane closes: its video pauses at once, its player goes 10 s on
 	e.a.CloseSecondary()
