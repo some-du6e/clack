@@ -1371,6 +1371,36 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestThreadReplyLatency$' ./internal/ui || rc=1
           exit $rc
 
+  # reactions-live: other people's reactions in a channel draw as they
+  # come (Karim, 2026-11-19: "reactions are not syncing", "in a channel
+  # for another"): reaction_added / reaction_removed over the socket on a
+  # plain message, a thread root, a reply in the open pane, a file message
+  # and one the viewer reacted to, in the channel on screen and in one not
+  # open, each within two frames; a refresh, a re-open and a reconnect keep
+  # them. Natively and under component and messages-slice patches.
+  # Dispatch with only=reactions-live.
+  reactions-live:
+    if: ${{ !inputs.only || startsWith('reactions-live', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: other people's reactions, socket to frame (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestChannelReactionsLive$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestChannelReactionsLive$' ./internal/ui || rc=1
+          exit $rc
+
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
   # doesn't list (Slackbot's, the Slack system user's, an app's), and under
