@@ -474,8 +474,12 @@ func TestAnchorLineKeepsRowAfterScroll(t *testing.T) {
 	newest, _ := e.fs.HistoryAt(ch, 0)
 	e.openChannel(ch)
 	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.settle(500 * time.Millisecond)
 	e.scroll(e.listPoint(), -2000) // read back, with room under the screen
 	e.settle(500 * time.Millisecond)
+	if cv := e.channelView(ch); cv == nil || cv.AtBottom() {
+		t.Fatalf("a 2000px wheel up left the list at its end")
+	}
 	line := e.anchorLine()
 	// a short row on screen, then wheeled to the list's top: it ends above
 	// the anchor line
