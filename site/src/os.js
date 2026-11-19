@@ -2,12 +2,26 @@
 // closing download buttons at the build for this system and marks its card.
 // Without it those buttons go to #download, which lists all three systems.
 // Phones and tablets get no pick: Clack is desktop only. It also closes the
-// phone menu when one of its links is followed.
+// phone menu when one of its links is followed, and marks the section on
+// screen in the section bar.
 (function () {
   var d = document, n = navigator, u = n.userAgent, p = n.platform || "";
   var s = ((n.userAgentData && n.userAgentData.platform) || p) + " " + u;
   var menu = d.querySelector(".menu");
   if (menu) menu.addEventListener("click", function (e) { if (e.target.closest("a")) menu.open = false; });
+  // the section bar marks the section on screen, as slack.com's does
+  var tabs = d.querySelectorAll(".toc a");
+  if (tabs.length && window.IntersectionObserver) {
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        tabs.forEach(function (a) {
+          if (a.hash === "#" + e.target.id) a.setAttribute("aria-current", "true"); else a.removeAttribute("aria-current");
+        });
+      });
+    }, { rootMargin: "-45% 0px -50% 0px" });
+    tabs.forEach(function (a) { var t = d.getElementById(a.hash.slice(1)); if (t) io.observe(t); });
+  }
   if (/Android|iPhone|iPad|iPod|CrOS/.test(s) || (/Mac/.test(s) && n.maxTouchPoints > 1)) return;
   var os = /Win/.test(s) ? "win" : /Mac/.test(s) ? "mac" : /Linux|X11/.test(s) ? "linux" : "";
   var card = os && d.querySelector('.dl-card[data-os="' + os + '"]');

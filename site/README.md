@@ -171,10 +171,20 @@ and no wazero), huddles and their video (`internal/huddle/rtc` stands in for
 pion/webrtc and opens no connection, so joining fails with "huddles aren't
 part of the browser demo"; `apm_js.go` keeps the microphone's RNNoise model
 out), and desktop integrations, which have no browser counterpart (Clack's
-fallbacks for other systems apply). The page shows the download as a
-percentage: what crosses the network is main.wasm's brotli or gzip size
-when the host compresses `application/wasm` (the demo job's summary has
-all three), and the whole of it when it doesn't.
+fallbacks for other systems apply).
+
+Before anything big downloads, the page checks for WebAssembly and WebGL
+(Gio draws with WebGL 2 or 1) and says plainly if one is missing. On a
+phone, a touch-only device or a small screen, or with the browser's
+save-data on, it gives the download's size (build.json's brotli and
+unpacked sizes) and waits for a tap. The download shows as a percentage of
+that size; screen readers hear it each quarter, not each chunk. What
+crosses the network is main.wasm's brotli or gzip size when the host
+compresses `application/wasm` (the demo job's summary has all three), and
+the whole of it when it doesn't. A bar above Clack's window links back to
+the homepage, the download and the licences: build.mjs copies Clack's
+LICENSE and THIRD_PARTY_NOTICES.md into `dist/demo/` as `LICENSE.txt` and
+`THIRD_PARTY_NOTICES.txt`, which the homepage's footer links too.
 
 It's built and tested in CI only, by the site workflow's demo job:
 

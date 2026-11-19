@@ -102,6 +102,10 @@ for (const f of readdirSync(join(here, 'fonts'))) {
 cpSync(join(here, '..', 'assets', 'icon.svg'), join(out, 'icon.svg'));
 mkdirSync(join(out, 'demo'), { recursive: true });
 for (const f of ['index.html', 'boot.js', 'fs.js']) cpSync(join(here, 'demo', f), join(out, 'demo', f));
+// Clack's licence and the notices for what it's built from, as text (the
+// demo card's Licences link and the footer's): the demo redistributes them
+cpSync(join(here, '..', 'LICENSE'), join(out, 'demo', 'LICENSE.txt'));
+cpSync(join(here, '..', 'THIRD_PARTY_NOTICES.md'), join(out, 'demo', 'THIRD_PARTY_NOTICES.txt'));
 writeFileSync(join(out, 'robots.txt'), flags.preview
   ? 'User-agent: *\nDisallow: /\n'
   : 'User-agent: *\nAllow: /\n' + (siteURL ? `Sitemap: ${siteURL}/sitemap.xml\n` : ''));

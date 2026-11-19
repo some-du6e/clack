@@ -15,8 +15,14 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { overflow: hidden; background: var(--aub-dark); color: var(--ink); font: 400 16px/1.5 var(--sans); }
-#giowindow { position: fixed; inset: 0; }
-.veil { position: fixed; inset: 0; z-index: 2; display: grid; place-items: center; padding: 16px; overflow-y: auto; background: var(--aub-dark); transition: opacity .3s, visibility .3s; }
+/* the bar back to the site stays above Clack's window */
+.bar { position: fixed; top: 0; left: 0; right: 0; z-index: 3; display: flex; align-items: center; gap: 20px; height: 32px; padding: 0 12px; background: #2e0039; font: 600 13px/32px var(--sans); }
+.bar a { color: #fff; text-decoration: none; }
+.bar a:hover { text-decoration: underline; }
+.bar a:focus-visible { outline-color: #fff; outline-offset: 2px; }
+.bar a:first-child { margin-right: auto; }
+#giowindow { position: fixed; inset: 32px 0 0; }
+.veil { position: fixed; inset: 32px 0 0; z-index: 2; display: grid; place-items: center; padding: 16px; overflow-y: auto; background: var(--aub-dark); transition: opacity .3s, visibility .3s; }
 .ready .veil { visibility: hidden; opacity: 0; }
 .card { width: min(480px, 100%); padding: 32px; border-radius: 16px; background: #fff; box-shadow: 0 0 32px rgba(0, 0, 0, .25); }
 .card > img { display: block; width: 48px; height: 48px; }
@@ -28,6 +34,7 @@ progress::-webkit-progress-value { border-radius: 8px; background: var(--aub); }
 progress::-moz-progress-bar { border-radius: 8px; background: var(--aub); }
 .stopped progress { display: none; }
 #state { min-height: 24px; margin: 12px 0 0; font: 600 15px/24px var(--sans); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .btn { display: inline-block; margin-top: 16px; padding: 14px 24px; border: 0; border-radius: 4px; background: var(--aub); color: #fff; font: 700 14px/18px var(--sans); letter-spacing: .057em; text-transform: uppercase; cursor: pointer; }
 .btn:hover { background: var(--aub-dark); }
 .btn[hidden] { display: none; }
@@ -38,6 +45,11 @@ progress::-moz-progress-bar { border-radius: 8px; background: var(--aub); }
 </style>
 </head>
 <body>
+<nav class="bar" aria-label="Clack's site">
+  <a href="../"><span aria-hidden="true">← </span>getclack.club</a>
+  <a href="../#download">Download Clack</a>
+  <a href="THIRD_PARTY_NOTICES.txt">Licences</a>
+</nav>
 <div id="giowindow"></div>
 <div class="veil">
   <main class="card" id="card">
@@ -45,10 +57,11 @@ progress::-moz-progress-bar { border-radius: 8px; background: var(--aub); }
     <h1>Clack, in your browser</h1>
     <p class="sub">The real Clack, built for the web, on Quillfeather Paper Co., a made-up company. Nothing in it connects to Slack, and reloading the page starts over.</p>
     <progress id="bar" max="1" value="0" aria-label="Download"></progress>
-    <p id="state" role="status" aria-live="polite">Getting ready</p>
+    <p id="state" aria-hidden="true">Getting ready</p>
+    <p class="sr" id="say" role="status">Getting ready</p>
     <button class="btn" id="go" type="button" hidden>Load the demo</button>
     <button class="btn" id="again" type="button" hidden>Start again</button>
-    <p class="note">Not in the browser demo: plugins, huddles, video and desktop integrations. <a href="../#download">Download Clack</a> for those, or go <a href="../">back to the homepage</a>.</p>
+    <p class="note">Not in the browser demo: plugins, huddles, video and desktop integrations. <a href="../#download">Download Clack</a> for those, or go <a href="../">back to the homepage</a>. <a href="THIRD_PARTY_NOTICES.txt">Licences</a> of what's inside.</p>
     <noscript><p>The demo needs JavaScript and WebAssembly.</p></noscript>
   </main>
 </div>

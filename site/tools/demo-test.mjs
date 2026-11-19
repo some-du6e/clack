@@ -106,7 +106,8 @@ if (failed) problems.unshift(failed.message);
 const md = ['### Web demo in headless Chrome', '', '| step | after |', '|---|---|',
   ...report.steps.map((s) => `| ${s.step} | ${(s.ms / 1000).toFixed(1)} s |`), '',
   `Requests: ${report.requests.length}, all to the local server: ${report.requests.every((u) => u.startsWith(origin + '/')) ? 'yes' : 'no'}.`,
-  report.wasm ? `The program: ${report.wasm.parts} part(s), ${(report.wasm.bytes / 1048576).toFixed(1)} MB, fetched in ${(report.wasm.ms / 1000).toFixed(1)} s from the local server.` : '', '',
+  report.wasm ? `The program: ${report.wasm.parts} part(s), ${(report.wasm.bytes / 1048576).toFixed(1)} MB, fetched in ${(report.wasm.ms / 1000).toFixed(1)} s from the local server.` : '',
+  report.memory ? `Memory: the program's wasm memory ${(report.memory.booted.wasm / 1048576).toFixed(0)} MB once booted${report.memory.sent ? `, ${(report.memory.sent.wasm / 1048576).toFixed(0)} MB after the send` : ''}; the page's JS heap ${(report.memory.booted.js / 1048576).toFixed(0)} MB.` : '', '',
   problems.length ? `**Problems:**\n\n${problems.map((p) => `- ${p}`).join('\n')}` : 'No problems.', ''].join('\n');
 writeFileSync(join(out, 'report.md'), md);
 if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n', { flag: 'a' });
@@ -165,6 +166,9 @@ async function run() {
   await until('channel list', 120000, '["general", "random", "it-help"].every((n) => clackDemo.drawn().includes(n))');
   step('channel list');
   await shot('1-channel-list');
+  // the program's memory (its wasm memory) once booted, and the page's JS heap
+  const mem = () => ev('JSON.stringify({ wasm: clackDemo.memory ? clackDemo.memory() : 0, js: performance.memory ? performance.memory.usedJSHeapSize : 0 })').then(JSON.parse);
+  report.memory = { booted: await mem() };
 
   // the composer: a click on its text line (the bottom of the message pane,
   // under #general; its placeholder isn't a label drawn() sees), then text
@@ -187,6 +191,7 @@ async function run() {
   step('message sent');
   await sleep(1500);
   await shot('3-sent');
+  report.memory.sent = await mem();
   if (await ev('document.querySelector(".card.stopped") !== null')) throw new Error('the program stopped');
   // the program's parts: bytes, and from the first request to the last byte
   report.wasm = await ev(`(() => {
