@@ -12,6 +12,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -148,7 +149,7 @@ func TestEmailInbox(t *testing.T) {
 	e.move(f32.Pt(float32(mid.X), float32(mid.Y)))
 	e.settle(200 * time.Millisecond)
 	acts, rs := e.emailActions(ec.TS)
-	want := []richview.FileAction{richview.FileShowMore, richview.FileExternal, richview.FileShare, richview.FileDetails, richview.FileMore}
+	want := []richview.FileAction{richview.FileShowMore, richview.FileShare, richview.FileDetails, richview.FileMore}
 	if !sameActs(acts, want) {
 		t.Fatalf("the email's FileActions %v, want %v (renderEmailExpand first)", acts, want)
 	}
@@ -191,6 +192,45 @@ func TestEmailInbox(t *testing.T) {
 	if v.PlainLen() < 200 {
 		t.Errorf("FileDetails drew %d characters, want the whole email", v.PlainLen())
 	}
+	// under the email the Shared in section (FileShareContext:
+	// files.getShares, the email's #email-inbox message as a card); the
+	// flexpane's footer has Share File… and More actions
+	e.until("files.getShares for the email", 10*time.Second, func() bool { return e.fs.CallCount("files.getShares") > 0 })
+	emailPaneShowShares(e.a)
+	e.until("the Shared in section's card", 10*time.Second, func() bool {
+		s := frameStrings(e)
+		return s["Conversations 1"] && s["Thread in #email-inbox"]
+	})
+	if s := frameStrings(e); !s["Share File\u2026"] {
+		t.Error("the FileDetails footer has no Share File\u2026")
+	}
+	e.move(f32.Pt(1300, 450)) // over the pane: its origin
+	e.settle(200 * time.Millisecond)
+	sr, mr := emailPaneFooter(e.a)
+	if sr.Dy() != 36 || mr.Dx() != 36 || mr.Dy() != 36 || sr.Max.X+8 != mr.Min.X {
+		t.Errorf("the footer's Share File\u2026 %v and More actions %v, want 36px tall, 8px apart, Share filling the row", sr, mr)
+	}
+	ov := len(e.a.overlays)
+	e.clickAt(mr.Min.Add(mr.Max).Div(2), time.Second)
+	e.until("More actions' menu", 5*time.Second, func() bool {
+		if len(e.a.overlays) <= ov {
+			return false
+		}
+		_, ok := e.a.overlays[len(e.a.overlays)-1].(*popups.Menu)
+		return ok
+	})
+	e.a.closeOverlays()
+	e.settle(300 * time.Millisecond)
+	ov = len(e.a.overlays)
+	e.clickAt(sr.Min.Add(sr.Max).Div(2), time.Second)
+	e.until("Share File\u2026's dialog", 5*time.Second, func() bool {
+		if len(e.a.overlays) <= ov {
+			return false
+		}
+		_, ok := e.a.overlays[len(e.a.overlays)-1].(*popups.Modal)
+		return ok
+	})
+	e.a.closeOverlays()
 }
 
 // TestEmailShots saves #email-inbox (FILES_SHOTS_DIR, the files-shots

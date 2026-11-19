@@ -37,8 +37,9 @@ package richview
 //	                 a snippet's edit "Edit", a post's new-window "Edit in
 //	                 new window"
 //	renderExternal   new-window: "Open in new window" for a snippet the
-//	                 viewer can't edit (and an email, an uneditable
-//	                 space), "Open file on Google Drive" / Dropbox / Box /
+//	                 viewer can't edit (and an uneditable space, an email
+//	                 with new_email_rendering off), "Open file on Google
+//	                 Drive" / Dropbox / Box /
 //	                 OneDrive / "a web page" for an external file (a
 //	                 Google Drive one only when it's an image); never a
 //	                 docs or CSV file
@@ -240,7 +241,9 @@ func fileActionsFor(f *richtext.File, gallery, noAnim, emailV1 bool) []barBtn {
 		add(barBtn{act: FileEditWindow, icon: "new-window", tip: i18n.T("file", "Edit in new window")})
 	}
 	extOK := ext && (f.ExternalType != "gdrive" || f.IsImage)
-	if (extOK || email || snippet && !edit || post && !edit && f.Mode != "post") && f.Mode != "docs" && !strings.EqualFold(f.Type, "csv") {
+	// renderExternal: never an email's with new_email_rendering on
+	// (isEmail && experimentNewEmailRenderingGroupOn)
+	if (extOK || email && emailV1 || snippet && !edit || post && !edit && f.Mode != "post") && f.Mode != "docs" && !strings.EqualFold(f.Type, "csv") {
 		tip := i18n.T("file", "Open in new window")
 		if ext {
 			tip = externalLabel(f)

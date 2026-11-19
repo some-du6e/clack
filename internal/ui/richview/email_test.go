@@ -192,8 +192,9 @@ func TestEmailFileHTML(t *testing.T) {
 }
 
 // FileActions on an email (new_email_rendering): Expand (expand-diagonal)
-// while collapsed, Collapse (reduce-diagonal) once expanded, then Open in
-// new window, Share, View file details, More actions; no Download.
+// while collapsed, Collapse (reduce-diagonal) once expanded, then Share,
+// View file details, More actions; no Download, and no Open in new window
+// (renderExternal returns null for an email with the flag on).
 func TestEmailFileActions(t *testing.T) {
 	ts := itoa(time.Now().Unix()) + ".000200"
 	f := docFile(t, emailMessage(t, ts, nil))
@@ -203,7 +204,7 @@ func TestEmailFileActions(t *testing.T) {
 		acts = append(acts, b.act)
 		icons = append(icons, b.icon)
 	}
-	want := []FileAction{FileShowMore, FileExternal, FileShare, FileDetails, FileMore}
+	want := []FileAction{FileShowMore, FileShare, FileDetails, FileMore}
 	if len(acts) != len(want) {
 		t.Fatalf("collapsed email's FileActions %v (%v), want %v", acts, icons, want)
 	}

@@ -135,7 +135,7 @@ func (s *Server) addEmailsChannel() {
 }
 
 // handleEmails answers files.info for the emails and their attachments,
-// and bots.info for the Email app's bot.
+// files.getShares for the emails, and bots.info for the Email app's bot.
 func (s *Server) handleEmails(method string, f url.Values) (any, bool) {
 	if !s.Size.Emails {
 		return nil, false
@@ -155,6 +155,18 @@ func (s *Server) handleEmails(method string, f url.Values) (any, bool) {
 					return ok("file", slack.File{ID: id, Name: a.Filename, Title: a.Filename, Mimetype: a.Mimetype, Filetype: ft,
 						PrettyType: strings.ToUpper(ft), Size: a.Size, Mode: "hosted", User: SlackbotID, URLPrivate: a.URL}, "comments", []any{}), true
 				}
+			}
+		}
+	case "files.getShares":
+		// the email's one share, its #email-inbox message (the shape Hack
+		// Club answers: core/file_shares.go)
+		for i, x := range s.emailFixtures() {
+			if x.file.ID == f.Get("file_id") {
+				share := map[string]any{"ts": emailsTS(i), "channel_name": "email-inbox", "team_id": TeamID, "share_user_id": SlackbotID,
+					"source": "UNKNOWN", "is_silent_share": false, "reply_users": []string{}, "reply_users_count": 0, "reply_count": 0}
+				none := map[string]any{"count": 0, "shares": map[string]any{}}
+				return ok("conversation_shares", map[string]any{"count": 1, "shares": map[string]any{"public": map[string]any{EmailsChannelID: []any{share}}}},
+					"tab_shares", none, "file_channel_shares", none), true
 			}
 		}
 	case "bots.info":

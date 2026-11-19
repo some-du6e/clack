@@ -42,9 +42,19 @@ func TestEmailLegacyFileEmail(t *testing.T) {
 		t.Error("a click on the collapsed FileEmail doesn't expand it (expandEmail)")
 	}
 	f := docFile(t, d)
+	ext := false
 	for _, b := range emailActions(f, true) {
 		if b.act == FileShowMore || b.act == FileCollapse {
 			t.Errorf("an email's %q button with the flag off (renderEmailExpand and renderCollapse draw nothing)", b.tip)
+		}
+		ext = ext || b.act == FileExternal
+	}
+	if !ext {
+		t.Error("no Open in new window on an email with the flag off (renderExternal: isEmail)")
+	}
+	for _, b := range emailActions(f, false) {
+		if b.act == FileExternal {
+			t.Error("Open in new window on an email with the flag on (renderExternal returns null)")
 		}
 	}
 	f.Expanded = true
