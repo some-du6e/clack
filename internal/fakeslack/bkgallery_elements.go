@@ -147,7 +147,7 @@ func (s *Server) GalleryElementsTS() map[string]string {
 }
 
 // GalleryElementNames is the elements gallery, in order.
-var GalleryElementNames = []string{"buttons", "overflow", "selects", "people", "multi", "pickers", "options", "inputs", "workflow", "more"}
+var GalleryElementNames = []string{"buttons", "overflow", "selects", "people", "multi", "pickers", "options", "inputs", "workflow", "more", "nested"}
 
 func galleryElements(s *Server) []slack.Message {
 	pt := func(t string) map[string]any { return map[string]any{"type": "plain_text", "text": t, "emoji": true} }
@@ -291,6 +291,26 @@ func galleryElements(s *Server) []slack.Message {
 				btn("six_5", "Five", "5"), btn("six_6", "Six", "6")),
 			act("bk_seven", btn("seven_1", "One", "1"), btn("seven_2", "Two", "2"), btn("seven_3", "Three", "3"), btn("seven_4", "Four", "4"),
 				btn("seven_5", "Five", "5"), btn("seven_6", "Six", "6"), btn("seven_7", "Seven", "7")),
+		},
+		// elements inside other blocks: Slack renders a container's and a
+		// callout's child_blocks and a fallback's payload through the same
+		// renderables, so their buttons are live
+		"nested": {
+			sec("bk_nested_intro", "*Nested* — a container's actions, a callout's accessory and a fallback's accessory."),
+			{"type": "container", "block_id": "bk_nested_container", "title": pt("Deploy"),
+				"child_blocks": []any{act("bk_nested_actions", btn("nested_go", "Ship it", "go"), btn("nested_wait", "Wait", "wait"))}},
+			{"type": "callout", "block_id": "bk_nested_callout", "background_color": "blue",
+				"child_blocks": []any{func() map[string]any {
+					b := sec("bk_nested_callout_sec", "A callout's section with a button")
+					b["accessory"] = btn("nested_callout", "Approve", "yes")
+					return b
+				}()}},
+			{"type": "future_widget", "block_id": "bk_nested_future",
+				"fallback": []any{func() map[string]any {
+					b := sec("bk_nested_fallback", "A fallback's section with a button")
+					b["accessory"] = btn("nested_fallback", "Retry", "retry")
+					return b
+				}()}},
 		},
 	}
 	var out []slack.Message

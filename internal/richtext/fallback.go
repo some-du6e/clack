@@ -102,6 +102,31 @@ func (c *builder) resolveFallback(out []Block, b *bk) []Block {
 	return c.lastResort(out)
 }
 
+// FallbackItems is what resolveFallback draws for a block of type typ
+// whose fallback field is raw: nothing when Slack has a renderable for
+// typ (or Clack converts it itself, markdown); else its list's payload
+// items, or its single payload item. Blockkit walks them for the
+// elements richtext draws there.
+func FallbackItems(typ string, raw json.RawMessage) []json.RawMessage {
+	if messageRenderables[typ] || typ == "markdown" || len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '[' {
+		var parts, out []json.RawMessage
+		_ = json.Unmarshal(raw, &parts)
+		for _, p := range parts {
+			if isPayloadItem(p) {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	if isPayloadItem(raw) {
+		return []json.RawMessage{raw}
+	}
+	return nil
+}
+
 // lastResort is resolveFallback's fallback component: the card at the
 // top level, nothing among child blocks.
 func (c *builder) lastResort(out []Block) []Block {

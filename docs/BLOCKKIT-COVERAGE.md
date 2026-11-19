@@ -31,6 +31,8 @@ Types in Slack's own block enum (client-boot `WP`) still fall back when no rende
 
 Clack before: only types missing from the enum fell back. Known types it couldn't draw showed their text object or nothing, a fallback list skipped nested unknown types, an empty list drew the card, and conditions drew nothing. After: `richtext/fallback.go` implements the chain above, and condition expansion runs on every surface (`richtext.ExpandConditions`, `blockkit.expandConditions`).
 
+The elements inside child blocks and fallback payloads are live, as in Slack, where the surface's `onAction` reaches them (Container `yWQF` provides the blockKit context, and Callout's `a+Oj` inherits it). Blockkit keeps the tree richtext draws (`Block.Nested`: a container's or a callout's `child_blocks`, and `richtext.FallbackItems`). Its lookups and the view state walk that tree, so a nested button sends `block_actions` with its own block's id. In modals and App Home, the Surface is the Elements host of the richview that draws those blocks. One gap remains there: an input block nested in a container draws as a section with its element (no hint, no error line), and the submit's checks skip it.
+
 ## Use in the probe account's conversations
 
 Top-level blocks; "in attachments" counts attachment `blocks`:
@@ -152,6 +154,7 @@ Tests that fail on `e93a5e70`: `TestBlockFallbacks`, `TestConditionBlocks`, `Tes
 Round 1's review fixes, with tests that fail on `8126e895`:
 
 - `visible_to_user_ids` is read only by the actions block. A hidden element keeps its place, and section accessories and input elements draw: `TestVisibleToUserIDs` (rewritten), `TestActionsHiddenElements` (richview), `TestMessageVisibleTo` and `TestSurfaceVisibleTo` (blockkit, modal and App Home).
+- Buttons in a container, a callout and a fallback payload draw and send `block_actions` with their own block's id: `TestNestedBlockElements` (clicks, on the elements gallery's new `nested` family), `TestNestedElementsRichview` (richview's own layout with the message host), `TestSurfaceNestedElements` (modal and App Home).
 
 ## Next
 

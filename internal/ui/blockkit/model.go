@@ -249,13 +249,23 @@ type Block struct {
 	Optional       bool            `json:"optional"`
 	DispatchAction bool            `json:"dispatch_action"`
 	Raw            json.RawMessage `json:"-"`
+	// Nested is the blocks richtext draws inside this one: a container's
+	// or a callout's child_blocks, or the fallback payload of a type with
+	// no renderable (richtext.FallbackItems). Slack draws them through
+	// the same renderables with the surface's onAction (Container yWQF's
+	// childBlocks slot, Callout's createRenderBlocks a+Oj, Q5CE
+	// resolveFallback), so their elements are the surface's own: find,
+	// initValues and the view's state walk them (allBlocks).
+	Nested []Block `json:"-"`
 }
 
 func (b *Block) UnmarshalJSON(raw []byte) error {
 	type plain Block
 	var p struct {
 		plain
-		Elements json.RawMessage `json:"elements"`
+		Elements    json.RawMessage `json:"elements"`
+		ChildBlocks json.RawMessage `json:"child_blocks"`
+		Fallback    json.RawMessage `json:"fallback"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
@@ -265,7 +275,33 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 	if b.Type == "actions" && len(p.Elements) > 0 {
 		_ = json.Unmarshal(p.Elements, &b.Elements)
 	}
+	switch {
+	case b.Type == "container" || b.Type == "callout":
+		b.Nested = ParseBlocks(p.ChildBlocks)
+	case len(p.Fallback) > 0:
+		for _, it := range richtext.FallbackItems(b.Type, p.Fallback) {
+			var nb Block
+			if json.Unmarshal(it, &nb) == nil {
+				b.Nested = append(b.Nested, nb)
+			}
+		}
+	}
 	return nil
+}
+
+// allBlocks is every block of bs with the blocks nested in it, each
+// before its own (Block.Nested): the tree richtext draws.
+func allBlocks(bs []Block) []*Block {
+	var out []*Block
+	var walk func(bs []Block)
+	walk = func(bs []Block) {
+		for i := range bs {
+			out = append(out, &bs[i])
+			walk(bs[i].Nested)
+		}
+	}
+	walk(bs)
+	return out
 }
 
 // expandConditions is richtext.ExpandConditions with the viewer's
@@ -332,8 +368,7 @@ func elementsOf(b *Block) []*Element {
 // find returns the element with blockID/actionID (actionID may be empty
 // when the app didn't set one: then the first of its type at index n).
 func find(bs []Block, blockID, actionID string) (ref, bool) {
-	for i := range bs {
-		b := &bs[i]
+	for _, b := range allBlocks(bs) {
 		if blockID != "" && b.BlockID != blockID {
 			continue
 		}

@@ -159,13 +159,15 @@ type Surface struct {
 	// last drew it; curY the y of the block being laid out (ModalFields).
 	org  image.Point
 	curY int
+	// nested hosts the elements of blocks richview draws (Surface.block)
+	nested *nestedElements
 }
 
 // dirty reports whether the user changed any input since the view was
 // shown (Slack compares initialViewState.values with the block state).
 func (s *Surface) dirty() bool {
-	for i := range s.blocks {
-		for _, e := range elementsOf(&s.blocks[i]) {
+	for _, b := range allBlocks(s.blocks) {
+		for _, e := range elementsOf(b) {
 			if stateful(e.Type) {
 				return string(s.vals.JSON(false)) != s.initial
 			}
@@ -190,8 +192,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	s.blocks = ParseBlocks(expandConditions(s.h, v.Blocks))
 	s.vals = Values{}
 	if keep && old != nil {
-		for i := range s.blocks {
-			b := &s.blocks[i]
+		for _, b := range allBlocks(s.blocks) {
 			for _, e := range elementsOf(b) {
 				if pv := old.get(b.BlockID, e.ActionID); pv != nil && pv.Type == e.Type {
 					s.vals.set(b.BlockID, e.ActionID, pv)
@@ -211,8 +212,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	oldWS := s.ws
 	s.ws = map[string]*ew{}
 	if keep {
-		for i := range s.blocks {
-			b := &s.blocks[i]
+		for _, b := range allBlocks(s.blocks) {
 			for _, e := range elementsOf(b) {
 				k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
 				if w := oldWS[k]; w != nil && s.vals.get(b.BlockID, e.ActionID) == old.get(b.BlockID, e.ActionID) {
@@ -369,6 +369,8 @@ func (s *Surface) widget(b *Block, e *Element) *ew {
 // Slack's client does; it reports whether the form may go.
 func (s *Surface) validate() bool {
 	ok := true
+	// top-level inputs only: one nested in a container or a callout draws
+	// through richview (a section with its element), with no error line
 	for i := range s.blocks {
 		b := &s.blocks[i]
 		if b.Type != "input" || b.Element == nil {
@@ -487,6 +489,12 @@ func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 		return s.section(gtx, b, key, w, st)
 	}
 	v := s.textOf(key, func() richtext.Doc { return s.docOf(b) })
+	if len(b.Nested) > 0 { // a container's or a callout's children, a fallback's payload: their elements are live
+		if s.nested == nil {
+			s.nested = &nestedElements{s: s}
+		}
+		v.SetOptions(richview.Options{Elements: s.nested})
+	}
 	d := v.Layout(gtx, st, &s.hand)
 	return d.Size.Y
 }
@@ -503,7 +511,10 @@ func errorLine(gtx C, th *theme.Theme, cl colors, w int, msg string) D {
 // flow lays out an actions block's elements, wrapping, 8px apart. In
 // modals Slack makes it a grid: two equal columns, every element (28px
 // tall) filling its column, rows 8px apart.
-func (s *Surface) flow(gtx C, b *Block, w int) int {
+func (s *Surface) flow(gtx C, b *Block, w int) int { return s.flowRun(gtx, b, w, true) }
+
+// flowRun is flow; without draw it only measures (nestedElements).
+func (s *Surface) flowRun(gtx C, b *Block, w int, draw bool) int {
 	x, y, rowH := 0, 0, 0
 	gap := dp(gtx, 8)
 	self := s.selfID()
@@ -530,7 +541,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 				y += rowH + gap
 				rowH = 0
 			}
-			at(gtx, image.Pt(cx, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+			if draw {
+				at(gtx, image.Pt(cx, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+			}
 			rowH = max(rowH, sz.Y)
 			n++
 		}
@@ -551,7 +564,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 			y += rowH + gap
 			rowH = 0
 		}
-		at(gtx, image.Pt(x, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+		if draw {
+			at(gtx, image.Pt(x, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+		}
 		x += sz.X + gap
 		rowH = max(rowH, sz.Y)
 	}
