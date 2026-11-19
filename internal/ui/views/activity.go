@@ -1359,11 +1359,12 @@ func (v *Activity) describeItem(it *core.ActivityItem, refs map[string]core.Conv
 			if fid, ok := v.canvasChannel(it); ok {
 				// a canvas's file channel is its canvas (chanent.Canvas):
 				// the row is described again when files.info names it
+				// (core's "names" with the file id: membersIn)
 				if ent, known := v.canvasEnt(fid, it.Channel); known {
 					d.ent = ent
 				} else {
 					d.ent = chanent.Ent{Bar: chanent.BarWidth(fid)}
-					d.waits = append(d.waits, fid)
+					v.noteWait(fid)
 				}
 			}
 			d.title = d.ent.Title()

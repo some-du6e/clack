@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"gioui.org/layout"
 
@@ -111,9 +112,10 @@ var _ CanvasOpener = (*cmHost)(nil)
 
 // cmOpts is one layout: Dense or Detailed, activity_entry_layout_revisions_2
 // on or off, the inbox's detail panel beside it (inbox) or the persistent
-// one, and whether a plugin patches ActivityItem.
+// one, and whether a plugin patches ActivityItem. With late, files.info
+// answers only after the row is drawn.
 type cmOpts struct {
-	dark, dense, rev2, inbox, patched bool
+	dark, dense, rev2, inbox, patched, late bool
 }
 
 // cmActivity is the Activity page over the fixture with the canvas
@@ -128,9 +130,18 @@ func cmActivity(t *testing.T, o cmOpts) (*Activity, *cmHost, *vaEnv, *fakeslack.
 	s.PutUsers([]slack.User{{ID: fakeslack.CanvasMentionUser, Name: "ada", RealName: "Ada Example"}})
 	s.PutConv(slack.Conversation{ID: fakeslack.CanvasMentionChannel, Name: fakeslack.CanvasMentionTitle, IsChannel: true, IsGroup: true,
 		IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 2})
-	blocks, _ := json.Marshal(fakeslack.CanvasMentionTitleBlocks())
-	s.PutCanvasRef(fakeslack.CanvasMentionFile, richtext.CanvasRef{Title: fakeslack.CanvasMentionTitle, TitleBlocks: blocks,
-		Status: "normal", Kind: "canvas"})
+	if o.late {
+		// canvas refs live in memory only, so every start meets the
+		// mention before files.info answers (held here until the row is
+		// drawn); core looks it up as a booted app does
+		fs.SetFault("files.info", fakeslack.Fault{Delay: 1500 * time.Millisecond})
+		app.ServeLookups()
+		t.Cleanup(app.StopTraffic)
+	} else {
+		blocks, _ := json.Marshal(fakeslack.CanvasMentionTitleBlocks())
+		s.PutCanvasRef(fakeslack.CanvasMentionFile, richtext.CanvasRef{Title: fakeslack.CanvasMentionTitle, TitleBlocks: blocks,
+			Status: "normal", Kind: "canvas"})
+	}
 	s.CustomEmoji.Put(fakeslack.CanvasMentionEmoji, fs.CanvasMentionEmojiURL())
 	on := map[bool]string{true: "on", false: "off"}
 	app.SetExperimentGroup("activity_inbox", "on")
@@ -220,6 +231,24 @@ func TestActivityCanvasMentionRow(t *testing.T) {
 			e.until(t, "the pictures loaded", func() bool { return h.imgs.Pending() == 0 })
 			vaShot(t, e, "activity-canvas-mention-"+base, o.dark)
 		})
+	}
+}
+
+// A canvas mention described before files.info answered is described
+// again once core's "names" brings the file id: the loading bar gives way
+// to the canvas and its title.
+func TestActivityCanvasMentionRowLateFilesInfo(t *testing.T) {
+	v, _, e, fs := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true, late: true})
+	if d := v.rows[fakeslack.CanvasMentionKey].d; !d.ent.Loading() {
+		t.Fatalf("precondition: the row knew the canvas before files.info answered (%+v)", d.ent)
+	}
+	e.until(t, "files.info for the canvas", func() bool { return fs.CallCount("files.info") > 0 })
+	e.until(t, "the row described again as the canvas", func() bool {
+		r := v.rows[fakeslack.CanvasMentionKey]
+		return r != nil && r.built && r.d.entOn && r.d.ent.Icon == "canvas"
+	})
+	if drawn := cmDrawn(e); !drawn["Pet roster "] {
+		t.Errorf("the canvas title isn't drawn once files.info answered (%d labels drawn)", len(drawn))
 	}
 }
 
