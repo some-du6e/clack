@@ -60,6 +60,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // ExpAgentTasksTab is wfb_3p_agent_tasks_tab (YwqI qC,
@@ -533,6 +535,13 @@ func (a *App) AgentTasks(ctx context.Context, appID, query, cursor string) (Agen
 	}
 	a.rememberAgentTasks(page.Tasks)
 	return page, nil
+}
+
+// AgentTasksRetry is AgentTasks for the error row's Retry: a click, so
+// the request skips the client's backoff for the identical one that just
+// failed (resetQueryAndFetch is a fresh request in Slack).
+func (a *App) AgentTasksRetry(ctx context.Context, appID, query string) (AgentTasksPage, error) {
+	return a.AgentTasks(slack.NoBackoff(ctx), appID, query, "")
 }
 
 // SortAgentTasks is useAgentTasksExplorer's U: published tasks first

@@ -47,10 +47,17 @@ type AppDM struct {
 	cardWait bool
 }
 
+// dmKey is an app DM per session: the core it reads (a new session, or
+// a test's next App in the same process, gets its own) and the DM.
+type dmKey struct {
+	c  *core.App
+	ch string
+}
+
 var (
 	dmsMu sync.Mutex
-	dms   = map[string]*AppDM{}
-	notDM = map[string]bool{} // conversations known not to be app DMs
+	dms   = map[dmKey]*AppDM{}
+	notDM = map[dmKey]bool{} // conversations known not to be app DMs
 )
 
 // AppDMFor returns the app DM state for conversation ch, or nil when ch
@@ -60,8 +67,9 @@ func AppDMFor(h Host, ch string) *AppDM {
 	if c == nil {
 		return nil
 	}
+	k := dmKey{c, ch}
 	dmsMu.Lock()
-	d, no := dms[ch], notDM[ch]
+	d, no := dms[k], notDM[k]
 	dmsMu.Unlock()
 	if d != nil {
 		return d.ready()
@@ -75,7 +83,7 @@ func AppDMFor(h Host, ch string) *AppDM {
 	}
 	if cv.Kind != "im" || cv.User == "" || cv.User == "USLACKBOT" {
 		dmsMu.Lock()
-		notDM[ch] = true
+		notDM[k] = true
 		dmsMu.Unlock()
 		return nil
 	}
@@ -85,14 +93,14 @@ func AppDMFor(h Host, ch string) *AppDM {
 	}
 	if !u.IsBot {
 		dmsMu.Lock()
-		notDM[ch] = true
+		notDM[k] = true
 		dmsMu.Unlock()
 		return nil
 	}
 	d = &AppDM{h: h, ch: ch, user: u, tab: "messages", opened: map[string]bool{}}
 	d.list.Axis = layout.Vertical
 	dmsMu.Lock()
-	dms[ch] = d
+	dms[k] = d
 	dmsMu.Unlock()
 	d.load()
 	return d.ready()
@@ -141,10 +149,10 @@ func (d *AppDM) load() {
 	})
 }
 
-// homeUpdated applies a realtime home view.
-func homeUpdated(ch string, v *core.View) {
+// homeUpdated applies a realtime home view to the session c's DM ch.
+func homeUpdated(c *core.App, ch string, v *core.View) {
 	dmsMu.Lock()
-	d := dms[ch]
+	d := dms[dmKey{c, ch}]
 	dmsMu.Unlock()
 	if d == nil || v == nil {
 		return

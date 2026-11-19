@@ -198,8 +198,9 @@ func (v *AgentTasks) Refresh() {
 	v.h.Invalidate()
 }
 
-// load reads the first page for query (or the next page with more).
-func (v *AgentTasks) load(app, query string, more bool) {
+// load reads the first page for query (or the next page with more);
+// retry is the error row's Retry (past the client's failure backoff).
+func (v *AgentTasks) load(app, query string, more bool, retry ...bool) {
 	c := v.h.Core()
 	v.mu.Lock()
 	if more && (v.loading || v.cursor == "") {
@@ -216,7 +217,13 @@ func (v *AgentTasks) load(app, query string, more bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		page, err := c.AgentTasks(ctx, app, query, cursor)
+		var page core.AgentTasksPage
+		var err error
+		if len(retry) > 0 && retry[0] {
+			page, err = c.AgentTasksRetry(ctx, app, query)
+		} else {
+			page, err = c.AgentTasks(ctx, app, query, cursor)
+		}
 		v.post(func() {
 			v.mu.Lock()
 			defer v.mu.Unlock()
@@ -354,7 +361,7 @@ func (v *AgentTasks) Layout(gtx C) D {
 		v.mu.Lock()
 		v.failed = false
 		v.mu.Unlock()
-		v.load(app, v.asked, false)
+		v.load(app, v.asked, false, true)
 	}
 
 	v.mu.Lock()
@@ -708,7 +715,7 @@ func (v *AgentTasks) Retry() {
 	v.mu.Lock()
 	v.failed = false
 	v.mu.Unlock()
-	v.load(app, v.asked, false)
+	v.load(app, v.asked, false, true)
 }
 
 // Removed reports whether a live event (or Delete task) took the task
