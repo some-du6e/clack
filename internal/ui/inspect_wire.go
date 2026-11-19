@@ -338,6 +338,9 @@ func overlayLayerName(o Overlay) string {
 }
 
 func overlayRole(o Overlay, typ string) string {
+	if r, ok := o.(interface{ InspectRole() string }); ok {
+		return r.InspectRole() // an overlay naming itself (popups' date picker, time picker, select list)
+	}
 	switch o.(type) {
 	case *popups.EmojiPicker:
 		return "emoji picker"

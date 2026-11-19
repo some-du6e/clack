@@ -136,6 +136,13 @@ func (t *Tool) reviewKey(ke key.Event) {
 		}
 		t.dropReview()
 	case ke.Name == key.NameReturn || ke.Name == key.NameEnter || mod && ke.Name == "C":
+		if r.c.region && r.drawnFrames == 0 {
+			// a region is blurred only in its review: an Enter that came
+			// before the review was ever drawn (the frame after the
+			// release; on a software GPU, the seconds the shot took) is
+			// dropped, so the region never goes out unseen
+			return
+		}
 		// a rect still being dragged out goes with the copy: what the user
 		// was blurring never goes out sharp
 		r.endDrag(t.scale)

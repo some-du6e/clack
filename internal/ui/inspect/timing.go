@@ -112,9 +112,14 @@ func (m *capTimes) line() string {
 		fmt.Fprintf(&b, ", review drawn %s after the pick (%d frames)", dur(m.drawn), m.frames)
 	}
 	if m.compose > 0 || m.encode > 0 || m.clipbd > 0 || m.save > 0 {
-		if m.atOnce {
+		switch {
+		case m.atOnce:
 			b.WriteString("; copied at once:")
-		} else {
+		case m.drawn == 0:
+			// an element's Enter in the frame after its pick: the review
+			// was never drawn (a region's waits for it: reviewKey)
+			fmt.Fprintf(&b, "; Enter %s after the pick, before the review showed:", dur(m.enter))
+		default:
 			fmt.Fprintf(&b, "; Enter %s after the review showed:", dur(m.enter))
 		}
 		fmt.Fprintf(&b, " colours %s, compose %s, png %s, save %s, clipboard %s",

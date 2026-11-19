@@ -84,8 +84,6 @@ type Host interface {
 	Regions() []Region
 	// Toast shows a short note at the bottom of the window.
 	Toast(text string)
-	// CopyText puts text on the clipboard.
-	CopyText(text string)
 	// Post runs f on the UI goroutine; Invalidate asks for a frame.
 	Post(f func())
 	Invalidate()
@@ -152,6 +150,7 @@ type Tool struct {
 	rev      *review       // reviewing
 	lastDone chan struct{} // the last report's delivery (Wait)
 	lastRep  *Report       // the last report delivered (tests, after Wait)
+	texts    textCopies    // text copies on their way to the clipboard (textcopy.go)
 	inAt     time.Time     // the frame whose input was read (Frame, Begin)
 	recAt    time.Time     // the frame recorded into frames[cur]
 	upKey    string        // the innermost element t.up counts from (innerKey)
@@ -334,6 +333,7 @@ const pointerKinds = pointer.Move | pointer.Enter | pointer.Leave | pointer.Pres
 // a session runs); lay the window out with the context it returns (gtx
 // itself while no session runs) and call End last.
 func (t *Tool) Begin(gtx layout.Context) layout.Context {
+	t.flushTexts(gtx) // a session or not: a delivery's text copy
 	if t.state == off {
 		return gtx
 	}

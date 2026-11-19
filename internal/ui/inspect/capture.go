@@ -446,18 +446,26 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 			c.tm.outcome = "copied as text"
 		}
 		logTimes(c)
-		h.Post(func() {
-			switch {
-			case img != nil && cerr == nil:
-				h.Toast("Copied the inspect report: paste it as an image")
-			default:
-				h.CopyText(text)
-				why := "no screenshot"
-				if errors.Is(cerr, clipimg.ErrUnsupported) {
-					why = "this system can't copy images"
-				}
-				h.Toast("Copied the inspect report as text (" + why + ")")
+		asText := img == nil || cerr != nil
+		if asText {
+			// on the window's clipboard before the next delivery copies
+			// (textcopy.go); a window that draws no frame for a while (hidden)
+			// takes it when it does
+			select {
+			case <-t.copyText(text):
+			case <-time.After(3 * time.Second):
 			}
+		}
+		h.Post(func() {
+			if !asText {
+				h.Toast("Copied the inspect report: paste it as an image")
+				return
+			}
+			why := "no screenshot"
+			if errors.Is(cerr, clipimg.ErrUnsupported) {
+				why = "this system can't copy images"
+			}
+			h.Toast("Copied the inspect report as text (" + why + ")")
 		})
 	}()
 }

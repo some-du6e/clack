@@ -83,6 +83,7 @@ func (t *Tool) Frozen() bool { return t.fz != nil }
 // laid out; call AfterFrame after submitting them. Otherwise it returns
 // nil and the window lays out as usual, Begin to End.
 func (t *Tool) Frame(gtx layout.Context) *op.Ops {
+	t.flushTexts(gtx) // a frozen frame lays nothing out: Begin doesn't run
 	if t.state == off {
 		t.contentOK = false
 		return nil

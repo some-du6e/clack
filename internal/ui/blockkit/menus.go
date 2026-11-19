@@ -98,6 +98,15 @@ type watch struct {
 // Unwrap is the overlay watched (the inspect tool names the layer by it).
 func (x *watch) Unwrap() popups.Overlay { return x.Overlay }
 
+// Rect is the watched overlay's (its card, window coords): the inspect
+// tool boxes the layer with it.
+func (x *watch) Rect() image.Rectangle {
+	if r, ok := x.Overlay.(interface{ Rect() image.Rectangle }); ok {
+		return r.Rect()
+	}
+	return image.Rectangle{}
+}
+
 func (x *watch) Layout(gtx C) D {
 	d := x.Overlay.Layout(gtx)
 	if x.Overlay.Dismissed() && !x.fired {

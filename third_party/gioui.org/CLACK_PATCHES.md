@@ -2509,3 +2509,16 @@ of a `-run` line leaves every job green with one patch's tests no longer
 run anywhere; `.github/scripts/headless-tests.py` (ci's linux-build)
 fails the push instead: every `TestClack` function in `gpu/headless`
 must be in all three lists, and the lists must match.
+
+As the branches stood on 2026-11-19: video-playback also carries §53
+(io/input, a tag's area: `io/input/clack_bounds*.go` in its file list),
+so its side of the closing hunk holds §51 and §53; split it to put §52
+between them (51, 52, 53). With thread-open-root, CLACK_PATCHES.md
+conflicts only in the closing sections, and flake-check.yml conflicts
+where both branches add jobs after the same one: the hunks interleave
+this branch's `inspect-blur-fast` job with thread-open-root's
+`thread-open-root` and `jump-reactions`, and keeping both sides hunk by
+hunk gives a workflow file GitHub rejects. Keep each job whole (each
+with its own `steps:` and `exit $rc`): the simplest way is one side's
+file with the other side's jobs appended whole, as this branch did with
+ui's `theme-contrast-4` and `fileurl-dotdot` in round 2.

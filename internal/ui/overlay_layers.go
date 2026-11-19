@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"image"
+	"log"
 	"reflect"
 
 	"gioui.org/io/event"
@@ -54,8 +56,14 @@ func (a *App) drawOverlay(gtx layout.Context, o Overlay) {
 		lm := slackc.InspectOverlay(overlayLayerName(o))
 		// a popup that gave its layer no box (no InspectCard): its own
 		// Rect, so a pick on its card where nothing in it was recorded
-		// outlines the card under the popup's region
-		defer func() { lm.EndCardOr(gtx, overlayRect(o)) }()
+		// outlines the card under the popup's region. One with neither
+		// is logged once (TestOverlayKindsBoxTheirLayer finds them
+		// statically; this is for what it can't see)
+		defer func() {
+			if !lm.EndCardOr(gtx, overlayRect(o)) {
+				unboxedOverlay(o)
+			}
+		}()
 	}
 	if invisible(o) || peeking(o) || !reflect.TypeOf(o).Comparable() {
 		o.Layout(gtx)
@@ -83,6 +91,17 @@ func overlayRect(o Overlay) image.Rectangle {
 		return r.Rect()
 	}
 	return image.Rectangle{}
+}
+
+// unboxedSeen are the overlay types whose layer ended a session's frame
+// with no box (UI goroutine): each is logged once.
+var unboxedSeen = map[string]bool{}
+
+func unboxedOverlay(o Overlay) {
+	if typ := fmt.Sprintf("%T", o); !unboxedSeen[typ] {
+		unboxedSeen[typ] = true
+		log.Printf("inspect: overlay %s drew no card box (no InspectCard, no Rect): picks on it report the window under it", typ)
+	}
 }
 
 // pruneOverlayLayers forgets the layers of overlays no longer shown.

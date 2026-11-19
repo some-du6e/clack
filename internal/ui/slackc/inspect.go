@@ -374,15 +374,16 @@ func (m InspectMark) EndCard(gtx layout.Context) {
 // (no InspectCard): it takes r then (the overlay's own Rect, its card in
 // the layer's op coordinates), so a pick on the card where nothing in it
 // was recorded is the layer's, under its own region, not the window's
-// under it. Empty r: none.
-func (m InspectMark) EndCardOr(gtx layout.Context, r image.Rectangle) {
+// under it. Empty r: none. It reports whether the layer has a box (true
+// for no mark: nothing to tell).
+func (m InspectMark) EndCardOr(gtx layout.Context, r image.Rectangle) bool {
 	f := inspectF
 	if m.i == 0 || f == nil {
-		return
+		return true
 	}
 	i := m.i - 1
 	if i >= len(f.Nodes) {
-		return
+		return true
 	}
 	f.popTo(i)
 	n := &f.Nodes[i]
@@ -392,6 +393,7 @@ func (m InspectMark) EndCardOr(gtx layout.Context, r image.Rectangle) {
 	if n.boxed {
 		f.areaAt(gtx, i, n.box)
 	}
+	return n.boxed
 }
 
 // EndCardAt closes a popup's card element recorded for the inspect tool

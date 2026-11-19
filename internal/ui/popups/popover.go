@@ -479,6 +479,7 @@ func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string, maxWidt
 type Toast struct {
 	base
 	h     Host
+	rect  image.Rectangle // the toast as last drawn, window coords (Rect)
 	text  string
 	pill  bool
 	until time.Time
@@ -496,6 +497,9 @@ func NewHintPill(h Host, text string) *Toast {
 }
 
 // Layout draws the toast.
+// Rect is the toast as last drawn (window coords).
+func (t *Toast) Rect() image.Rectangle { return t.rect }
+
 func (t *Toast) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if t.done {
@@ -526,6 +530,7 @@ func (t *Toast) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	w := tw + 2*padX
 	r := image.Rect((win.X-w)/2, win.Y-h-dp(gtx, 28), (win.X+w)/2, win.Y-dp(gtx, 28))
+	t.rect = r
 	if !t.pill {
 		softShadow(gtx, r, rad, dp(gtx, 4), dp(gtx, 12), cl.Shadow)
 	}
