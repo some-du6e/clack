@@ -53,4 +53,10 @@ func TestBoxedBlocks(t *testing.T) {
 	if len(d.Blocks) != 1 || d.Blocks[0].Level != 2 {
 		t.Errorf("header level: %s", dump(d.Blocks))
 	}
+	// beside a string level, the header's numeric one still decodes: it
+	// draws, with its level
+	d = blocksMsg(t, `[{"type":"header","text":{"type":"plain_text","text":"H"},"level":2},{"type":"alert","text":{"type":"plain_text","text":"A"},"level":"info"}]`)
+	if len(d.Blocks) != 2 || d.Blocks[0].Kind != Header || d.Blocks[0].Level != 2 {
+		t.Errorf("header beside an alert: %s", dump(d.Blocks))
+	}
 }
