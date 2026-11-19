@@ -26,7 +26,6 @@ package slick
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,9 +44,6 @@ import (
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/taut"
 )
-
-//go:embed js/*.js
-var jsFiles embed.FS
 
 // prelude is every js/ file in name order inside one function scope.
 var prelude = func() string {

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	opus "github.com/kazzmir/opus-go/opus"
+	opus "github.com/some-du6e/clack/internal/huddle/opus"
 )
 
 // Audio runs at Opus's native 48 kHz: the microphone is mono, the huddle's

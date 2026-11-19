@@ -169,12 +169,22 @@ It can't reach the network:
   local server.
 
 Left out, behind `GOOS=js` build constraints, and said so on the page in one
-line: plugins' JavaScript runtime (`internal/jsrt/engine_js.go`: no QuickJS
-and no wazero), huddles and their video (`internal/huddle/rtc` stands in for
-pion/webrtc and opens no connection, so joining fails with "huddles aren't
-part of the browser demo"; `apm_js.go` keeps the microphone's RNNoise model
-out), and desktop integrations, which have no browser counterpart (Clack's
-fallbacks for other systems apply).
+line:
+
+- Plugins: the JavaScript runtime (`internal/jsrt/engine_js.go` and
+  `pack_embed_js.go`: no QuickJS, React or wazero), Taut's and Slick's own
+  JavaScript (`js_embed_js.go` in each), the plugin benchmark's data and
+  Taut's author credits (`internal/taut/authors_js.go`).
+- Huddles, their audio and their video. `internal/huddle/rtc`,
+  `internal/huddle/opus` and `internal/huddle/h264` stand in for pion/webrtc,
+  opus-go and goh264 and never open a connection or a codec, so joining
+  fails with "huddles aren't part of the browser demo". `bgblur_js.go` keeps
+  the MediaPipe selfie model and the TFLite interpreter out, and
+  `apm_js.go` the microphone's RNNoise model. The LGPL-2.1 decoder (goh264)
+  and the Apache-2.0 model aren't in the demo at all.
+- Desktop integrations, which have no browser counterpart (Clack's
+  fallbacks for other systems apply), and Slack's taskbar badge images
+  (`internal/desktop/badge_embed_js.go`).
 
 Before anything big downloads, the page checks for WebAssembly and WebGL
 (Gio draws with WebGL 2 or 1) and says plainly if one is missing. On a

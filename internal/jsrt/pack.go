@@ -3,14 +3,14 @@ package jsrt
 import (
 	"bytes"
 	"compress/flate"
-	_ "embed"
 	"fmt"
 	"io"
 	"strconv"
 )
 
 // The engine (jsrt.wasm, 1 MB) and the boot scripts (js/, vendor/; 1.2 MB)
-// are embedded as one deflate-compressed pack: 2.2 MB of the binary becomes
+// are embedded as one deflate-compressed pack (pack_embed.go; the browser
+// demo has none): 2.2 MB of the binary becomes
 // ~0.6 MB, and nothing is decompressed (or held in memory) unless a plugin
 // runtime starts. The source files stay in the repo for editing; after
 // changing any of them (or rebuilding jsrt.wasm) run
@@ -20,8 +20,6 @@ import (
 // TestAssetPackFresh fails while the pack is stale.
 //
 //go:generate go run ./genpack
-//go:embed assets.pack
-var assetPack []byte
 
 // PackFiles are the files in assets.pack, in pack order.
 var PackFiles = []string{

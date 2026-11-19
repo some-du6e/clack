@@ -25,8 +25,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/pion/webrtc/v4/pkg/media"
 
-	opus "github.com/kazzmir/opus-go/opus"
-
+	opus "github.com/some-du6e/clack/internal/huddle/opus"
 	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 

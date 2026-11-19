@@ -2,7 +2,6 @@ package taut
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,9 +18,6 @@ import (
 // Taut's contract) that runs on jsrt next to the plugins. It reads Slack
 // state from Go through host functions (__clack.taut_*) and Go drives it
 // through __taut.* (runtime.call).
-
-//go:embed js/*.js
-var jsFiles embed.FS
 
 // prelude is every js/ file in name order inside one function scope, so the
 // files share their top-level names without leaking them to plugins.

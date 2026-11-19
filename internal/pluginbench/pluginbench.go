@@ -8,7 +8,6 @@
 package pluginbench
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -124,9 +123,6 @@ type Data struct {
 	Sources   []string `json:"sources,omitempty"` // "taut <commit>", "slick <commit>"
 	Plugins   []Plugin `json:"plugins"`
 }
-
-//go:embed bench.json
-var embedded []byte
 
 var (
 	once sync.Once

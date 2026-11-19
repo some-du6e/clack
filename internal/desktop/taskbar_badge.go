@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -29,9 +28,6 @@ import (
 // drawn centred on a transparent 16×16 canvas under an antialiased oval
 // clip, and IconUtil::CreateHICONFromSkBitmap copies those premultiplied
 // pixels into the icon's 32-bit DIB. BadgeOverlay is that pipeline.
-
-//go:embed unread-badge-resources.json
-var badgeJSON []byte
 
 var badgePNGs = sync.OnceValues(func() ([]string, error) { // vu: the file is read once
 	var l []string

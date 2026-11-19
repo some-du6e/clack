@@ -7,8 +7,8 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
-	"github.com/thesyncim/goh264"
 
+	goh264 "github.com/some-du6e/clack/internal/huddle/h264"
 	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 

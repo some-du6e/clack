@@ -1,3 +1,5 @@
+//go:build !js
+
 package bgblur
 
 // cadence is Slack's MaskCadenceController (the background worker's

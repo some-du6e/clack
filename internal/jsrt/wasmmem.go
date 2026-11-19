@@ -70,8 +70,6 @@ func ReservedWasmMemory() (bytes int64, n int) {
 	return reservedWasm.Load(), int(reservations.Load())
 }
 
-// wasmMemStats is what a Runtime knows of its engine's memory, for
-// Snapshots: atomics, read from any goroutine.
 // wasmAllocator is the experimental.MemoryAllocator newEngine hands
 // wazero (through the instantiation context). An engine has one memory.
 type wasmAllocator struct {

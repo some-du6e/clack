@@ -15,6 +15,8 @@ const (
 
 func unpack(pl uint64) (uint32, uint32) { return uint32(pl >> 32), uint32(pl) }
 
+// wasmMemStats is what a Runtime knows of its engine's memory, for
+// Snapshots: atomics, read from any goroutine.
 type wasmMemStats struct {
 	size     atomic.Uint64 // the memory's length in bytes
 	reserved atomic.Uint64 // address space reserved for it; 0 = it's a Go slice

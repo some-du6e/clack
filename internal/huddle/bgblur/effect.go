@@ -1,3 +1,5 @@
+//go:build !js
+
 // Package bgblur is Slack's huddle background blur, on the CPU.
 //
 // Slack (web client bv1-13, the background.worker chunk and the

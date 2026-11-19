@@ -1,3 +1,5 @@
+//go:build !js
+
 package bgblur
 
 import _ "embed"
