@@ -44,6 +44,8 @@ func TestBannedPageNormalises(t *testing.T) {
 		// (round 5)
 		"https://hackclub.slack.com/ssb%EF%BC%852fredirect",
 		"https://hackclub.slack.com/%EF%B9%AA2573sb/redirect",
+		// and the overlong '/' C0 AF built the same way (round 6)
+		"https://hackclub.slack.com/ssb%EF%BC%85c0%EF%BC%85afredirect",
 	} {
 		if !bannedPage(mustURL(t, u)) {
 			t.Errorf("bannedPage(%s) = false, want true", u)
