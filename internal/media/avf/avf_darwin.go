@@ -361,7 +361,10 @@ func (p *player) timing(k media.EventKind) {
 		p.src.FileID, s(since), s(head), s(asset), s(meta), s(data))
 	// off the queue: PixelSize takes objMu, which Close holds while it
 	// closes the queue
-	go func() { log.Printf("%s; frames %v (video %v)", line, p.PixelSize(), p.State().Size) }()
+	go func() {
+		px, sz := p.PixelSize(), p.State().Size
+		log.Printf("%s; frames %d×%d (video %d×%d)", line, px.X, px.Y, sz.X, sz.Y)
+	}()
 }
 
 // utiFor is the asset's type for AVFoundation's content information.

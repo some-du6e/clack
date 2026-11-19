@@ -215,7 +215,9 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	mu.Lock()
 	measuring, frames, asked, gpuFrames = true, 0, 0, nil
 	mu.Unlock()
+	c0 := procCPU()
 	time.Sleep(5 * time.Second)
+	cpuPlaying := procCPU() - c0
 	mu.Lock()
 	measuring = false
 	n, nAsked, gf := frames, asked, append([]caretGPUFrame(nil), gpuFrames...)
@@ -247,6 +249,7 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	}
 	t.Logf("5 s playing: %d video frames published; the window drew %d frames (%d it asked for itself), %d quiet, %d laid out; GPU: %d frames, %d partial, damage %d px a frame on average, %d at most (the tile %v is %d px, a caret's %d more)",
 		vf, n, nAsked, quiet, laid, len(gf), partial, avg, dmgMax, tile, area, caretMax)
+	t.Logf("the process's CPU in 5 s playing: %v (%.0f%% of a core)", cpuPlaying.Round(time.Millisecond), 100*cpuPlaying.Seconds()/5)
 	if vf < 30 {
 		t.Errorf("%d video frames in 5 s of playing", vf)
 	}
@@ -273,13 +276,15 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	mu.Lock()
 	measuring, frames = true, 0
 	mu.Unlock()
+	c1 := procCPU()
 	time.Sleep(3 * time.Second)
+	cpuPaused := procCPU() - c1
 	mu.Lock()
 	measuring = false
 	idle := frames
 	mu.Unlock()
 	onUI(func() { st3, _ = videoTileState(a, ch, ts) })
-	t.Logf("3 s paused: %d frames from the player, the window drew %d", st3.frames-st2.frames, idle)
+	t.Logf("3 s paused: %d frames from the player, the window drew %d; the process's CPU %v", st3.frames-st2.frames, idle, cpuPaused.Round(time.Millisecond))
 	if st3.frames != st2.frames {
 		t.Errorf("paused, the player published %d frames in 3 s", st3.frames-st2.frames)
 	}
