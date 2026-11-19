@@ -192,6 +192,7 @@ Round 1's review fixes, with tests that fail on `8126e895`:
   - a missed or declined DM call that has a `join_url` and a hidden facepile draws no footer band;
   - an external participant without an avatar shows ava_0002;
   - odd `app_icon_urls`, channel and participant values no longer fail the card.
+- An inline file slug draws its label beside its icon. Round 2's first cut drew the icon alone, which the gallery shot showed: `TestFileSlugLabel` (richview).
 - A container's or a call card's toggle survives the message changing (a reaction, a reply, `chat.update`). The View keys it by the container's block_id (else its place among the message's containers) and by the call id. A change to `is_collapsible` or `default_collapsed` resets it, as ContainerBlock's `useEffect` does: `TestCollapseSurvivesUpdates`. A container `width` Slack lacks, or `null`, now draws full width, since "standard" is only the default for an absent field: `TestBoxedBlocks`.
 
 ## Next

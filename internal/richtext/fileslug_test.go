@@ -40,7 +40,11 @@ func TestRichTextFileSlug(t *testing.T) {
 		{"type":"rich_text_file","file_id":"F3","url":"https://x.slack.com/files/U1/F3/f"},{"type":"file","url":"https://x.test/no-id"}]}]}]}`)
 	d := FromMessage(r, m)
 	slug := func(id, icon, text string, off bool) Span {
-		return Span{Kind: Canvas, ID: id, URL: "https://x.slack.com/files/U1/" + id + "/f", Icon: icon, Text: text, Off: off}
+		s := Span{Kind: Canvas, ID: id, URL: "https://x.slack.com/files/U1/" + id + "/f", Icon: icon, Text: text, Off: off}
+		if text != "" {
+			s.Parts = &SpanParts{Spans: []Span{tx(text)}}
+		}
+		return s
 	}
 	var spans []Span
 	for _, b := range d.Blocks {

@@ -66,7 +66,11 @@ func (c *builder) fileSlugSpan(e *bk) (Span, bool) {
 	default:
 		icon = FileTypeIcon(ref.Filetype, ref.Mode, ref.Subtype)
 	}
-	return Span{Kind: Canvas, ID: id, URL: SafeURL(e.URL), Icon: icon, Text: label, Off: status != "normal"}, true
+	sp := Span{Kind: Canvas, ID: id, URL: SafeURL(e.URL), Icon: icon, Text: label, Off: status != "normal"}
+	if label != "" { // the slug draws its label from its parts (RichTextSlug's children)
+		sp.Parts = &SpanParts{Spans: []Span{{Kind: Text, Text: label}}}
+	}
+	return sp, true
 }
 
 func isAudioClip(subtype string) bool {
