@@ -126,11 +126,10 @@ func TestDownloadRefusesDotSegments(t *testing.T) {
 		// the prefix is matched on the wire: this goes out as /%66iles-pri/
 		"https://hackclub.slack.com/%66iles-pri/T1-F1/x.png",
 		// bytes a lenient UTF-8 decoder could read as '.', '/' or '\', once a
-		// server has decoded twice: the overlong leads C0, E0 and F0 and the
-		// five-byte F8 (before continuation bytes), and 0xAF, 0xDC and 0xAE,
-		// which are '/', '\' and '.' with the high bit set. Any other invalid
-		// byte reads as U+FFFD, which counts as a dot (0xB7, and 0xFE before a
-		// slash)
+		// server has decoded twice: 0xAF, 0xDC and 0xAE, which are '/', '\'
+		// and '.' with the high bit set, and overlong forms of those. Any
+		// other invalid byte reads as U+FFFD, which counts as a dot (0xB7,
+		// and 0xFE before a slash).
 		"https://hackclub.slack.com/files-pri/x%25c0%25af..%25c0%25afssb/redirect",
 		"https://hackclub.slack.com/files-pri/x%25AF..%25AFssb/redirect",
 		"https://hackclub.slack.com/files-pri/x%25DC..%25DCssb/redirect",
@@ -140,6 +139,33 @@ func TestDownloadRefusesDotSegments(t *testing.T) {
 		"https://hackclub.slack.com/files-pri/%25f8%2580%2580%2580%25ae%25f8%2580%2580%2580%25ae/ssb/redirect",
 		"https://hackclub.slack.com/files-pri/%25B7%25B7/ssb/redirect",
 		"https://hackclub.slack.com/files-pri/..%25FE/ssb/redirect",
+		// the overlong leads are the only guard against an overlong
+		// backslash, which carries no 0xAE/0xAF/0xDC byte: C1, E0, F0 and the
+		// five-byte F8, each before the continuation bytes of an overlong
+		// '\'. C0 too: its overlong '\' (C0 9C) carries no 0xAE/0xAF/0xDC
+		// byte either, unlike its overlong '.' and '/'. (smuggles)
+		"https://hackclub.slack.com/files-pri/..%25c0%259cssb/redirect",
+		"https://hackclub.slack.com/files-pri/..%25c1%259cssb/redirect",
+		"https://hackclub.slack.com/files-pri/..%25e0%2581%259cssb/redirect",
+		"https://hackclub.slack.com/files-pri/..%25f0%2580%2581%259cssb/redirect",
+		"https://hackclub.slack.com/files-pri/..%25f8%2580%2580%2581%259cssb/redirect",
+		// NFKC can fold a fullwidth or small percent (U+FF05, U+FE6A) to a
+		// literal '%', which a decode→NFKC→decode server then reads as an
+		// escape: these build "../../ssb/redirect" and "..%00/ssb/redirect"
+		// out of fullwidth percents and are read the same way (round 5).
+		"https://files.slack.com/files-pri/T1-F1/%EF%BC%852e%EF%BC%852e%EF%BC%8F%EF%BC%852e%EF%BC%852e%EF%BC%8Fssb%EF%BC%8Fredirect",
+		"https://hackclub.slack.com/files-pri/%EF%B9%AA2e%EF%B9%AA2e/ssb/redirect",
+		// a fullwidth or small percent before the bytes of an overlong or
+		// high-bit '/', '\' or a NUL: the NFKC stage decodes to bytes the raw
+		// chain never held (plainDecoded, round 6), refused like their ASCII
+		// "%25" twin, the first case
+		"https://files.slack.com/files-pri/T1-F1/..%25c0%25af..%25c0%25afssb/redirect",
+		"https://files.slack.com/files-pri/T1-F1/..%EF%BC%85c0%EF%BC%85af..%EF%BC%85c0%EF%BC%85afssb/redirect",
+		"https://files.slack.com/files-pri/T1-F1/..%EF%BC%85c0%EF%BC%85af..%EF%BC%85c0%EF%BC%85af/ssb/redirect",
+		"https://files.slack.com/files-pri/T1-F1/..%EF%B9%AAc0%EF%B9%AAaf..%EF%B9%AAc0%EF%B9%AAafssb/redirect",
+		"https://files.slack.com/files-pri/T1-F1/..%EF%BC%85c1%EF%BC%859c..%EF%BC%85c1%EF%BC%859cssb/redirect",
+		"https://files.slack.com/files-pri/T1-F1/..%EF%BC%85af..%EF%BC%85afssb/redirect",
+		"https://files.slack.com/files-pri/T1-F1/..%EF%BC%8500/ssb/redirect",
 		// NFKC separator look-alikes: the fullwidth solidus folds to '/', the
 		// fullwidth and small reverse solidi to '\' (also encoded twice, and
 		// between fullwidth dots)
@@ -184,6 +210,9 @@ func TestDownloadRefusesDotSegments(t *testing.T) {
 		"https://files.slack.com/files-pri/T1-F1/caf%25E9.pdf",
 		"https://files.slack.com/files-tmb/T1-F1-abc/caf%25E9_thumb_pdf.png",
 		"https://files.slack.com/files-pri/T1-F1/10%25Fee.pdf",
+		// a fullwidth percent in a name before hex digits that decode to a
+		// byte no decoder reads as '.', '/' or '\' (0xAB)
+		"https://files.slack.com/files-pri/T1-F1/100%EF%BC%85ab.png",
 		"https://files.slack.com/files-tmb/T1-F1-abc/10%25Fee_thumb_pdf.png",
 		"https://files.slack.com/files-pri/T1-F1/R%25E9sum%25E9.pdf",
 		"https://files.slack.com/files-tmb/T1-F1-abc/R%25E9sum%25E9_thumb_pdf.png",
@@ -198,6 +227,15 @@ func TestDownloadRefusesDotSegments(t *testing.T) {
 		"https://files.slack.com/files-pri/T1-F1/%EF%BC%BC%28%5Eo%5E%29%EF%BC%8F.png",
 		"https://files.slack.com/files-pri/T1-F1/Screenshot%202026-11-18%20at%2010.00.00%E2%80%AFAM.png",
 		"https://files.slack.com/files-pri/T1-F1/a%C2%A0b.png",
+		// a fullwidth percent in a name is just a character (NFKC reads it as
+		// '%', but what follows isn't an escape, so nothing decodes to a dot)
+		"https://files.slack.com/files-pri/T1-F1/%EF%BC%85.png",
+		"https://files.slack.com/files-pri/T1-F1/100%EF%BC%85.png",
+		// names Go keeps a RawPath for (a '+' and ';' escaped, lower-case
+		// hex): Download must send the path exactly as the wire has it, not
+		// re-escape it from the decoded form
+		"https://files.slack.com/files-pri/T1-F1/a%2Bb%3Bc.png",
+		"https://files.slack.com/files-pri/T1-F1/caf%c3%a9.png",
 	})
 }
 

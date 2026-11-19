@@ -38,6 +38,14 @@ func TestBannedPageNormalises(t *testing.T) {
 		"https://hackclub.slack.com/ssb%EF%BC%8Fredirect",
 		"https://hackclub.slack.com/ssb%EF%BC%BCredirect",
 		"https://hackclub.slack.com/%EF%BD%93%EF%BD%93%EF%BD%82/redirect",
+		// a fullwidth or small percent (U+FF05, U+FE6A) NFKC-folds to '%',
+		// which a decode→NFKC→decode server reads as an escape: these build
+		// the "/" of /ssb/redirect and the "s" of ssb from fullwidth percents
+		// (round 5)
+		"https://hackclub.slack.com/ssb%EF%BC%852fredirect",
+		"https://hackclub.slack.com/%EF%B9%AA2573sb/redirect",
+		// and the overlong '/' C0 AF built the same way (round 6)
+		"https://hackclub.slack.com/ssb%EF%BC%85c0%EF%BC%85afredirect",
 	} {
 		if !bannedPage(mustURL(t, u)) {
 			t.Errorf("bannedPage(%s) = false, want true", u)

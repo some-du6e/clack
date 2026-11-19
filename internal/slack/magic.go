@@ -339,22 +339,22 @@ func magicRedirect(req *http.Request, via []*http.Request) error {
 // never loads with a session cookie, even when a redirect points there. The
 // path is read every way plainPath reads it. A path plainPath refuses (a
 // dot segment however it is encoded, a byte that could decode to a dot or
-// a separator) counts as banned. Otherwise each form pathForms visits (as
-// sent and after each decode, up to maxDecodes), both as it is and as
-// readForm reads it (NFKC: U+FF0F is a slash), is compared lower-cased,
-// split on '/' and '\', with ";…" segment parameters cut and empty
-// segments dropped: /ssb//redirect, /ssb;x/redirect, /ssb/%252fredirect,
-// /ssb/%2572edirect and /%2573sb/redirect are all the page.
+// a separator) counts as banned. Otherwise each form a normalising server
+// reads (readForms: as sent, after each decode up to maxDecodes, and
+// NFKC-normalised, so a fullwidth slash U+FF0F or a fullwidth percent
+// U+FF05 that decodes to one is folded) is compared lower-cased, split on
+// '/' and '\', with ";…" segment parameters cut and empty segments
+// dropped: /ssb//redirect, /ssb;x/redirect, /ssb/%252fredirect,
+// /ssb/%2572edirect, /%2573sb/redirect and /ssb%EF%BC%852fredirect are all
+// the page.
 func bannedPage(u *url.URL) bool {
-	forms, ok := pathForms(u)
-	if !ok {
+	if !plainPath(u) {
 		return true
 	}
-	for _, p := range forms {
-		for _, f := range [2]string{p, readForm(p)} {
-			if strings.HasPrefix("/"+strings.Join(pathSegments(f), "/"), "/ssb/redirect") {
-				return true
-			}
+	forms, _ := readForms(u) // ok: plainPath already checked it
+	for _, f := range forms {
+		if strings.HasPrefix("/"+strings.Join(pathSegments(f), "/"), "/ssb/redirect") {
+			return true
 		}
 	}
 	return false
