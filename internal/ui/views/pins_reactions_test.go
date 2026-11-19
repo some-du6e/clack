@@ -17,6 +17,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -42,6 +43,10 @@ func TestPinsTabReactionsAreCoresUnderSlicePatch(t *testing.T) {
 	if msg == nil {
 		t.Fatalf("no pinned message %s", target)
 	}
+	// the channel's history holds it, as with the channel open beside the
+	// tab (the messages slice is the loaded history's: a pin fetched by id
+	// alone has no view, and draws core's message)
+	app.S.SetLatest(fakeslack.PinsChannelID, []slack.Message{{Type: "message", TS: target, User: msg.User, Text: msg.Text}}, false)
 	e.until(t, "the plugins' view of the pinned message", func() bool {
 		_, ok := tt.MessageView(fakeslack.PinsChannelID, target)
 		return ok

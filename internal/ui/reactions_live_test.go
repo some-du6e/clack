@@ -278,6 +278,27 @@ func channelReactionsLive(t *testing.T, mode string) {
 		}
 		return false
 	}
+	// viewsDrawn (slice-text) runs frames until the rows of tss draw the
+	// plugins' views of their messages (taut converts a newly shown row's
+	// view a moment after it first draws core's copy), so each change is
+	// measured on a row already drawing the view
+	viewsDrawn := func(what string, tss ...string) {
+		t.Helper()
+		if mode != "slice-text" {
+			return
+		}
+		for dl := time.Now().Add(15 * time.Second); time.Now().Before(dl); time.Sleep(5 * time.Millisecond) {
+			frame()
+			ok := true
+			for _, ts := range tss {
+				ok = ok && drewText(texts[ts]+reactLogged)
+			}
+			if ok {
+				return
+			}
+		}
+		t.Errorf("%s: the rows never drew the plugins' views", what)
+	}
 	holds := func(ps map[pillKey]pillState, ws []pillWant) bool {
 		for _, w := range ws {
 			if !drew(w.ts, w.pane) {
@@ -370,6 +391,7 @@ func channelReactionsLive(t *testing.T, mode string) {
 	// the channel on screen
 	reopen(ch)
 	settled("the channel", pillWant{ts: mine, name: "eyes", count: 1, self: true})
+	viewsDrawn("the channel", plain, root, file, mine)
 	quiet()
 	step("someone's reaction on a plain message", react(plain, "tada", r1, true), pillWant{ts: plain, name: "tada", count: 1})
 	step("another person's same reaction", react(plain, "tada", r2, true), pillWant{ts: plain, name: "tada", count: 2})
@@ -384,6 +406,7 @@ func channelReactionsLive(t *testing.T, mode string) {
 	e.unblur()
 	e.a.OpenThread(ch, root)
 	settled("the thread pane", pillWant{ts: root, name: "tada", pane: true, count: 1})
+	viewsDrawn("the thread pane", root, reply)
 	quiet()
 	step("a reaction on a reply in the open pane", react(reply, "tada", r1, true), pillWant{ts: reply, name: "tada", pane: true, count: 1})
 	step("a reaction on the root, both surfaces", react(root, "heart", r2, true),
