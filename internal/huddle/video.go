@@ -8,9 +8,10 @@ import (
 
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp/codecs"
-	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
 	"github.com/thesyncim/goh264"
+
+	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 
 // VideoFrame is the newest decoded picture of one remote video. Img is

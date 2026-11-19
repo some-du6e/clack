@@ -16,7 +16,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/pion/rtcp"
-	"github.com/pion/webrtc/v4"
+
+	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 
 // The content attendee's streams as the fake's INDEX and audio info list

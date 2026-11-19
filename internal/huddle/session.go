@@ -22,10 +22,10 @@ import (
 	"github.com/coder/websocket"
 	"github.com/pion/dtls/v3"
 	"github.com/pion/interceptor"
-	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
 	"github.com/some-du6e/clack/internal/huddle/avperm"
+	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 
 // Phase is where the session is.

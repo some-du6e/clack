@@ -16,16 +16,20 @@
 //   - with --production: indexable (no noindex, robots.txt allows, a
 //     sitemap and a canonical link); with --preview: not indexable
 //   - with --pages: CNAME is in the build
+//   - demo/ is the web demo, an app page: it may load its own local
+//     scripts and its images needn't be lazy; with --demo its program
+//     (main.wasm, wasm_exec.js, build.json, from the site workflow's demo
+//     job) must be in the build, and build.json must give main.wasm's size
 // Node built-ins only.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 const site = join(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
-const mode = { production: argv.includes('--production'), preview: argv.includes('--preview'), pages: argv.includes('--pages') };
+const mode = { production: argv.includes('--production'), preview: argv.includes('--preview'), pages: argv.includes('--pages'), demo: argv.includes('--demo') };
 const dist = resolve(argv.find((a) => !a.startsWith('--')) ?? join(site, 'dist'));
 const HTML_GZIP_BUDGET = 30 * 1024;
 const errors = [];
@@ -35,8 +39,12 @@ const files = walk(dist);
 const pages = files.filter((f) => f.endsWith('.html'));
 if (!pages.includes('index.html')) err('no index.html');
 
+// the web demo's program, which the page fetches from its script
+const DEMO_PROGRAM = ['demo/main.wasm', 'demo/wasm_exec.js', 'demo/build.json'];
+
 for (const page of pages) {
   const html = readFileSync(join(dist, page), 'utf8');
+  const app = page.startsWith('demo/');
   const local = (url) => !/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith('//');
 
   // resources the browser fetches by itself
@@ -58,15 +66,19 @@ for (const page of pages) {
     if (!m[1].startsWith('#') && !m[1].startsWith('data:')) fetched.push(m[1]);
   }
   if (/@import\b/i.test(html)) err(`${page}: CSS @import`);
-  if (/<script\b[^>]*\ssrc=/i.test(html)) err(`${page}: an external <script src>`);
+  if (!app && /<script\b[^>]*\ssrc=/i.test(html)) err(`${page}: an external <script src>`);
   if (/<link\b[^>]*rel="?stylesheet/i.test(html)) err(`${page}: an external stylesheet`);
   for (const m of html.matchAll(/@font-face\s*\{([^}]*)\}/gi)) {
-    for (const u of m[1].matchAll(/url\(\s*['"]?([^'")]+)/gi)) if (!/^\/?fonts\/[\w.-]+\.woff2$/.test(u[1])) err(`${page}: @font-face loads ${u[1]}, not a woff2 in fonts/`);
+    for (const u of m[1].matchAll(/url\(\s*['"]?([^'")]+)/gi)) {
+      const at = u[1].startsWith('/') ? u[1].slice(1) : normalize(join(dirname(page), u[1]));
+      if (!/^fonts\/[\w.-]+\.woff2$/.test(at)) err(`${page}: @font-face loads ${u[1]}, not a woff2 in fonts/`);
+    }
   }
   for (const u of fetched) {
     if (!local(u)) { err(`${page}: loads ${u} from another host`); continue; }
     const p = u.split(/[?#]/)[0];
     const f = p.startsWith('/') ? join(dist, p) : join(dist, dirname(page), p);
+    if (!mode.demo && DEMO_PROGRAM.includes(normalize(join(dirname(page), p)))) continue; // the demo job's
     if (p && !existsSync(f)) err(`${page}: ${u} is missing from the build`);
   }
   // links to files of the site itself
@@ -85,13 +97,24 @@ for (const page of pages) {
     const tag = m[0];
     for (const a of ['alt', 'width', 'height']) if (!new RegExp(`\\s${a}="`).test(tag)) err(`${page}: <img> without ${a}: ${tag.slice(0, 120)}`);
     if (/fetchpriority="high"/.test(tag)) eager++;
-    else if (!/loading="lazy"/.test(tag)) err(`${page}: <img> neither lazy nor the hero: ${tag.slice(0, 120)}`);
+    else if (!app && !/loading="lazy"/.test(tag)) err(`${page}: <img> neither lazy nor the hero: ${tag.slice(0, 120)}`);
   }
   if (eager > 1) err(`${page}: ${eager} fetchpriority="high" images, at most one`);
 
   const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
   for (const id of new Set(ids.filter((id, i) => ids.indexOf(id) !== i))) err(`${page}: duplicate id ${id}`);
   for (const host of ['github.io', 'workers.dev', 'pages.dev']) if (html.includes(host)) err(`${page}: hard-codes ${host}`);
+}
+
+// the web demo: its page, and with --demo its program
+if (!pages.includes('demo/index.html')) err('no demo/index.html');
+if (mode.demo) {
+  for (const f of DEMO_PROGRAM) if (!existsSync(join(dist, f))) err(`--demo: ${f} is missing`);
+  if (existsSync(join(dist, 'demo/build.json')) && existsSync(join(dist, 'demo/main.wasm'))) {
+    const b = JSON.parse(readFileSync(join(dist, 'demo/build.json'), 'utf8'));
+    const size = statSync(join(dist, 'demo/main.wasm')).size;
+    if (b.wasm !== size) err(`--demo: build.json says main.wasm is ${b.wasm} bytes, it's ${size}`);
+  }
 }
 
 // the heading font covers every character the headings show
@@ -142,7 +165,7 @@ if (errors.length) {
   console.error(errors.map((e) => `check: ${e}`).join('\n'));
   process.exit(1);
 }
-console.log(`check: ${pages.length} pages ok${mode.production ? ', production' : ''}${mode.preview ? ', preview' : ''}${mode.pages ? ', pages' : ''}`);
+console.log(`check: ${pages.length} pages ok${mode.production ? ', production' : ''}${mode.preview ? ', preview' : ''}${mode.pages ? ', pages' : ''}${mode.demo ? ', demo' : ''}`);
 
 function walk(dir, pre = '') {
   return readdirSync(join(dir, pre), { withFileTypes: true }).flatMap((e) =>

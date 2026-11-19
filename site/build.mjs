@@ -19,6 +19,11 @@
 // becomes a <picture> from img/images.json (tools/images.mjs writes it).
 // Plugin verdicts come from ../internal/pluginlib/compat.go, the table
 // Clack itself shows, and the perf numbers from data/perf.json.
+//
+// demo/ is the web demo's page (copied as it is to dist/demo/). Its
+// program, main.wasm with wasm_exec.js and build.json, is built by the
+// site workflow's demo job (cmd/clack-web) and goes in beside it; without
+// it the page says the demo isn't in this build.
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -95,6 +100,8 @@ for (const f of readdirSync(join(here, 'fonts'))) {
   if (/\.woff2$/.test(f)) cpSync(join(here, 'fonts', f), join(out, 'fonts', f));
 }
 cpSync(join(here, '..', 'assets', 'icon.svg'), join(out, 'icon.svg'));
+mkdirSync(join(out, 'demo'), { recursive: true });
+for (const f of ['index.html', 'boot.js', 'fs.js']) cpSync(join(here, 'demo', f), join(out, 'demo', f));
 writeFileSync(join(out, 'robots.txt'), flags.preview
   ? 'User-agent: *\nDisallow: /\n'
   : 'User-agent: *\nAllow: /\n' + (siteURL ? `Sitemap: ${siteURL}/sitemap.xml\n` : ''));

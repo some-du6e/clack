@@ -31,10 +31,10 @@ import (
 	"time"
 
 	"github.com/pion/rtcp"
-	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
 	"github.com/some-du6e/clack/internal/huddle/avperm"
+	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 
 // CameraState is where your camera is.

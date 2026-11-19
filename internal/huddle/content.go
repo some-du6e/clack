@@ -23,10 +23,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 
 	opus "github.com/kazzmir/opus-go/opus"
+
+	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 
 // contentConn is one screen share's content attendee.

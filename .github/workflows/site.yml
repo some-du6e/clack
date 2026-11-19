@@ -191,29 +191,27 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
       - name: the in-memory wiring (memnet, demo.StartInMemory)
         run: |
           go test -count=1 ./internal/memnet/
           go test -count=1 -v -run '^TestInMemory$' ./internal/demo/
-      - name: build the wasm (GOOS=js GOARCH=wasm)
+      - name: the site, with the demo's page
+        working-directory: site
+        run: node build.mjs --strict --pages
+      - name: the demo's program (GOOS=js GOARCH=wasm)
         run: |
-          mkdir -p "$RUNNER_TEMP/demo"
-          GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" -o "$RUNNER_TEMP/demo/main.wasm" ./cmd/clack-web
-          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" "$RUNNER_TEMP/demo/"
-          ls -la "$RUNNER_TEMP/demo"
-          {
-            echo "### Web demo"
-            echo
-            echo "| file | raw | gzip -9 | brotli -q 11 |"
-            echo "|---|---|---|---|"
-            for f in "$RUNNER_TEMP"/demo/*; do
-              br=$(node -e 'const z = require("zlib"); process.stdout.write(String(z.brotliCompressSync(require("fs").readFileSync(process.argv[1]), { params: { [z.constants.BROTLI_PARAM_QUALITY]: 11, [z.constants.BROTLI_PARAM_LGWIN]: 24 } }).length))' "$f")
-              echo "| $(basename "$f") | $(stat -c %s "$f") | $(gzip -9c "$f" | wc -c) | $br |"
-            done
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+          GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" -o site/dist/demo/main.wasm ./cmd/clack-web
+          cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/dist/demo/
+          node site/tools/demo-size.mjs site/dist/demo "$(git rev-parse --short HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: static checks, with the demo
+        working-directory: site
+        run: node tools/check.mjs --production --pages --demo
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: site-demo
-          path: ${{ runner.temp }}/demo
+          path: site/dist/demo
           if-no-files-found: ignore

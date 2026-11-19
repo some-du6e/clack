@@ -21,8 +21,9 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/pion/rtcp"
-	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
+
+	webrtc "github.com/some-du6e/clack/internal/huddle/rtc"
 )
 
 const (
