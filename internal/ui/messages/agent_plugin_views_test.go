@@ -51,6 +51,11 @@ func TestAgentPluginPathViews(t *testing.T) {
 		t.Errorf("both rows draw the plugin's msg as one drawing: their plans share toggles and the height transition")
 	}
 	st := styleForTheme(host.th, nil)
+	// spinners hold still (an inactive window): the frames asked for are
+	// the drawings' alone
+	prevActive := blockkit.IndicatorActive
+	blockkit.IndicatorActive = func() bool { return false }
+	t.Cleanup(func() { blockkit.IndicatorActive = prevActive })
 	var r input.Router
 	now := time.Now().Add(time.Hour) // ahead of the wall clock blockkit measures on
 	frame := func() {

@@ -400,13 +400,18 @@ func (me *Message) agentState() *agentState {
 		}
 	}
 	st := am.insts[me.inst]
+	if st != nil { // the order is by last use: a drawing still on screen isn't the one evicted
+		if i := slices.Index(am.order, me.inst); i >= 0 && i != len(am.order)-1 {
+			am.order = append(append(am.order[:i:i], am.order[i+1:]...), me.inst)
+		}
+	}
 	if st == nil {
 		st = &agentState{parsed: am.parsed, open: map[string]bool{}, taps: map[string]*tap{},
 			tips: map[string]*popups.TipState{}, rating: am.rating, views: map[string]*agentText{},
 			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: am.cuts, touched: map[string]bool{}}
 		am.insts[me.inst] = st
 		am.order = append(am.order, me.inst)
-		if len(am.order) > 8 { // the oldest drawing of the message goes (its row is long gone)
+		if len(am.order) > 8 { // the drawing used longest ago goes (its row is long gone)
 			delete(am.insts, am.order[0])
 			am.order = am.order[1:]
 		}
