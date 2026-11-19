@@ -172,11 +172,6 @@ on:
         description: "run only the jobs whose id starts with this (empty: all)"
         required: false
         default: ""
-      slice:
-        description: "edit-latency: TestEditLatency's messages-slice case too (CLACK_LATENCY_SLICE; red until its view re-read is fixed)"
-        required: false
-        type: boolean
-        default: false
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run flake-check.yml --ref <branch>)
     paths:
@@ -1391,9 +1386,7 @@ jobs:
   # root of its open thread pane, and both at once; natively and under
   # pass-through plugins (the messages slice, the components a message
   # draws through). Frames are drawn when the app asks for one, as a
-  # window does. The messages-slice case, red until its view re-read is
-  # fixed, runs only on request (-f slice=true sets CLACK_LATENCY_SLICE; ui
-  # and main pushes leave it off). Dispatch with only=edit-latency.
+  # window does. Dispatch with only=edit-latency.
   edit-latency:
     if: ${{ !inputs.only || startsWith('edit-latency', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1410,7 +1403,6 @@ jobs:
       - name: "ui: each edit to the frame that draws it, per surface (one verbose run, then COUNT)"
         env:
           CLACK_LATENCY_TESTS: "1"
-          CLACK_LATENCY_SLICE: ${{ inputs.slice && '1' || '' }}
         run: |
           rc=0
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestEditLatency$' ./internal/ui || rc=1
