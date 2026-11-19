@@ -67,3 +67,58 @@ func TestAgentTasksTabDeleteStalePage(t *testing.T) {
 		t.Errorf("the deleted task came back with a list answer older than its delete")
 	}
 }
+
+// TestAgentTasksTabPauseHold: a Pause that succeeded holds over a list
+// that hasn't caught up yet (vRD3 holdPublishedState: until a copy agrees
+// or 30 s pass), instead of flipping the row back to active.
+func TestAgentTasksTabPauseHold(t *testing.T) {
+	e, fs := agentTasksEnv(t, nil)
+	dm := e.agentDM(t, "messages,about,tasks")
+	v := e.openTasks(t, dm, "list")
+	st := fs.AgentTasks()
+	published := func() (bool, bool) {
+		for _, tk := range v.Tasks() {
+			if tk.WorkflowID == fakeslack.TaskBriefing {
+				return tk.Published, true
+			}
+		}
+		return false, false
+	}
+	var brief core.AgentTask
+	for _, tk := range v.Tasks() {
+		if tk.WorkflowID == fakeslack.TaskBriefing {
+			brief = tk
+		}
+	}
+	v.SetPublished(brief, false)
+	e.until("the pause sent", 10*time.Second, func() bool {
+		for _, c := range st.AgentTaskCalls() {
+			if c.Method == "functions.workflows.unpublish" {
+				return true
+			}
+		}
+		return false
+	})
+	e.settle(500 * time.Millisecond) // its success applied
+	// the next list answers as if the pause hadn't landed yet
+	var stale atomic.Bool
+	fs.SetHook(func(m string, _ url.Values) (any, bool) {
+		if m == "functions.workflows.list" && stale.CompareAndSwap(false, true) {
+			st.Set(func(s *fakeslack.AgentTasksState) {
+				for _, tk := range s.Tasks {
+					if tk.ID == fakeslack.TaskBriefing {
+						tk.Published = true
+					}
+				}
+			})
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
+	v.Refresh()
+	e.until("the list read again", 10*time.Second, func() bool { return stale.Load() })
+	e.settle(800 * time.Millisecond)
+	if p, ok := published(); !ok || p {
+		t.Errorf("a list that hasn't caught up undid the pause: published %v (listed %v)", p, ok)
+	}
+}

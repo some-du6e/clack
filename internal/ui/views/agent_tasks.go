@@ -96,8 +96,13 @@ type AgentTasks struct {
 	// at or after its own request, so an answer read before a delete
 	// committed can't bring the task back (Slack removes the item on the
 	// delete's success and on workflowChanged)
-	removed  map[string]int
-	override map[string]bool // optimistic is_published (Pause/Restart in flight)
+	removed map[string]int
+	// override is the optimistic is_published of a Pause or Restart: in
+	// flight, and after its success until a list agrees or 30 s pass
+	// (vRD3 holdPublishedState); holds numbers each hold, so an old timer
+	// can't end a newer one
+	override map[string]bool
+	holds    map[string]int
 	inflight map[string]bool
 	ui       []func() // results applied on the UI goroutine
 	subbed   bool
@@ -128,7 +133,7 @@ type taskRowUI struct {
 // NewAgentTasks makes the Tasks tab of the agent DM ch.
 func NewAgentTasks(h Host, ch string) *AgentTasks {
 	v := &AgentTasks{base: newBase(h), ch: ch, srch: newSearchIn(nsSlackbotAI, AgentTasksSearch),
-		removed: map[string]int{}, override: map[string]bool{}, inflight: map[string]bool{}, rows: map[string]*taskRowUI{}}
+		removed: map[string]int{}, override: map[string]bool{}, holds: map[string]int{}, inflight: map[string]bool{}, rows: map[string]*taskRowUI{}}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -243,8 +248,10 @@ func (v *AgentTasks) load(app, query string, more bool, retry ...bool) {
 			v.failed, v.loaded, v.query = false, true, query
 			if more {
 				v.tasks = append(v.tasks, page.Tasks...)
+				v.releaseHolds(page.Tasks)
 			} else {
 				v.tasks = page.Tasks
+				v.releaseHolds(page.Tasks)
 				for id, g := range v.removed {
 					if g < gen {
 						delete(v.removed, id) // the page was asked for after it went
@@ -798,13 +805,30 @@ func (v *AgentTasks) setPublished(t core.AgentTask, publish bool) {
 		v.post(func() {
 			v.mu.Lock()
 			delete(v.inflight, id)
-			delete(v.override, id)
-			if err == nil {
+			if err != nil {
+				delete(v.override, id) // the old state, at once
+			} else {
 				for i := range v.tasks {
 					if v.tasks[i].WorkflowID == id {
 						v.tasks[i].Published, v.tasks[i].Known = publish, true
 					}
 				}
+				// markSucceeded: the state holds over a list that hasn't
+				// caught up, until one agrees or 30 s pass, then the task
+				// reads again
+				v.holds[id]++
+				n := v.holds[id]
+				time.AfterFunc(agentTaskHold, func() {
+					v.post(func() {
+						v.mu.Lock()
+						if v.holds[id] == n && !v.inflight[id] {
+							delete(v.override, id)
+							delete(v.holds, id)
+							v.stale = true
+						}
+						v.mu.Unlock()
+					})
+				})
 			}
 			v.mu.Unlock()
 			if err != nil {
@@ -812,6 +836,21 @@ func (v *AgentTasks) setPublished(t core.AgentTask, publish bool) {
 			}
 		})
 	}()
+}
+
+// agentTaskHold is how long a Pause or Restart that succeeded holds its
+// state over lists that disagree (holdPublishedState's setTimeout 3e4).
+const agentTaskHold = 30 * time.Second
+
+// releaseHolds ends the holds a list agrees with (v.mu held): a task it
+// reports in the requested state, with no request in flight.
+func (v *AgentTasks) releaseHolds(ts []core.AgentTask) {
+	for _, t := range ts {
+		if p, ok := v.override[t.WorkflowID]; ok && !v.inflight[t.WorkflowID] && v.holds[t.WorkflowID] > 0 && t.Published == p {
+			delete(v.override, t.WorkflowID)
+			delete(v.holds, t.WorkflowID)
+		}
+	}
 }
 
 // moreItems is AgentTaskMoreActionsMenu for a third-party agent's task:
