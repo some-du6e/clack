@@ -171,6 +171,11 @@ func (h *Handle) loop() {
 	}()
 	events := h.Player.Events()
 	last := time.Duration(-1)
+	// a play without the data to play yet (an autoplay still loading):
+	// the others pause at its playing, as Chromium fires <video
+	// autoplay>'s play once it has enough data (fIJO's tI calls
+	// bxCZ.playbackStarted from onPlay)
+	waitStart := false
 	for {
 		var tc <-chan time.Time
 		if tick != nil {
@@ -186,8 +191,18 @@ func (h *Handle) loop() {
 				return // closed: what's queued is for no one
 			default:
 			}
-			if ev.Kind == Play && ev.State.Err == 0 {
+			switch {
+			case ev.Kind == Play && ev.State.Err == 0:
+				if ev.State.Waiting || ev.State.Ready < HaveFutureData {
+					waitStart = true
+				} else {
+					h.m.playbackStarted(h)
+				}
+			case ev.Kind == Playing && waitStart:
+				waitStart = false
 				h.m.playbackStarted(h)
+			case ev.Kind == Pause || ev.Kind == Error || ev.Kind == Ended:
+				waitStart = false
 			}
 			on := playing(ev.State)
 			switch {
