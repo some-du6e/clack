@@ -292,7 +292,11 @@ func (a *App) handle(ev slack.Event) {
 			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it
 		}
 		if ev.Type == "badge_counts_updated" {
-			a.onActivityBadges(ev.Raw) // handleBadgeCountsUpdatedRTMEvent's activity_v2
+			// handleBadgeCountsUpdatedRTMEvent's activity_v2, in order with
+			// the activity entries before it (activity_later.go): its zero
+			// marks the rows they made unread read
+			raw := ev.Raw
+			a.activityLater(func(context.Context) { a.onActivityBadges(raw) })
 		}
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
@@ -356,7 +360,10 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		if e.UndoKey != "" {
-			a.emit(Event{Type: "activity", Name: ev.Type, ID: e.UndoKey, Raw: ev.Raw})
+			raw := ev.Raw // in order with the activity entries before it (activity_later.go)
+			a.activityLater(func(context.Context) {
+				a.emit(Event{Type: "activity", Name: "activity_clear_all_completed", ID: e.UndoKey, Raw: raw})
+			})
 		}
 	case "activity_views_updated":
 		// sD/F activityViewsUpdated: the saved views changed (another

@@ -13,7 +13,9 @@ import (
 // came first reached the open thread pane only after Activity drew it
 // (Karim, 2026-11-18: "i see it like in my activity tab first"). Slack's
 // activity store takes an entry without holding up the socket's other
-// events.
+// events. The events Activity orders against its entries go through the
+// same queue: the badges' zero (badge_counts_updated) marks read the rows
+// the entries before it made unread, and a clear-all's undo follows them.
 
 // activityLater runs f after every activity event's work queued before
 // it, off the caller's goroutine, with a context that ends with the
