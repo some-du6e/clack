@@ -156,6 +156,14 @@ func (p *player) Pause() {
 }
 func (p *player) Seek(t time.Duration) {
 	p.TouchAsk()
+	// currentTime reads the new position at once, as HTML's does (before
+	// the metadata too: the default playback start position)
+	p.Update(func(st *media.State) {
+		st.Pos, st.Ended = max(t, 0), false
+		if st.Duration > 0 && st.Pos > st.Duration {
+			st.Pos = st.Duration
+		}
+	})
 	p.call(func(o unsafe.Pointer) { C.clack_avf_seek(o, C.double(t.Seconds())) }, func(s *pending) { s.seek, s.seekTo = true, t.Seconds() })
 }
 func (p *player) SetVolume(v float64) {

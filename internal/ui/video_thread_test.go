@@ -62,7 +62,24 @@ func TestVideoThreadPane(t *testing.T) {
 		}
 		return false
 	})
-	e.settle(300 * time.Millisecond)
+	// the gallery's images load and the pane's rows move: wait for the
+	// tile to stay put
+	videoIn := func() image.Rectangle {
+		for _, r := range rectsOf(e.threadFiles(ch, root), reply) {
+			if r.File.IsVideo {
+				return r.R
+			}
+		}
+		return image.Rectangle{}
+	}
+	for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); {
+		e.settle(300 * time.Millisecond)
+		if r := videoIn(); r == tr && !r.Empty() {
+			break
+		} else {
+			tr = r
+		}
+	}
 	if _, ok := inThread(); !ok {
 		t.Fatal("the reply's video isn't the thread pane's player tile")
 	}
@@ -72,6 +89,11 @@ func TestVideoThreadPane(t *testing.T) {
 	e.until("the channel's video paused (one at a time)", 5*time.Second, func() bool { st, _ := e.videoState(m.TS); return !st.Playing })
 
 	// More actions, from the pane: no "Open in thread"
+	for _, r := range rectsOf(e.threadFiles(ch, root), reply) {
+		if r.File.IsVideo {
+			tr = r.R
+		}
+	}
 	clk += 300 * time.Millisecond
 	e.hoverAt(mid(tr), clk)
 	e.frame()

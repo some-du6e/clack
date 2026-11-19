@@ -550,8 +550,10 @@ func (p *fakePlayer) seek(t time.Duration) {
 	p.mu.Lock()
 	if !p.loaded {
 		// before the metadata: where playback starts once it's there
-		// (HTML's default playback start position)
+		// (HTML's default playback start position, which currentTime
+		// reads until then)
 		p.startAt, p.hasStart = t, true
+		p.st.Pos = max(t, 0)
 		p.mu.Unlock()
 		return
 	}
