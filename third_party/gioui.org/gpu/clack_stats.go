@@ -68,7 +68,7 @@ type FrameStats struct {
 	CopyMismatchPx int64
 	// Externals are the external images' paints the frame asked for their
 	// texture, ExternalWraps the textures it wrapped: an image whose key
-	// the frame before drew costs none (Clack patch 50).
+	// the frame before drew costs none (Clack patch 51).
 	Externals, ExternalWraps int
 }
 

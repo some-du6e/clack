@@ -8,7 +8,7 @@ import (
 	"gioui.org/op/paint"
 )
 
-// ExternalImages: Gio draws external images (patch 50,
+// ExternalImages: Gio draws external images (patch 51,
 // third_party/gioui.org/CLACK_PATCHES.md) and live ones (patch 35), so a
 // player's frames show.
 const ExternalImages = true

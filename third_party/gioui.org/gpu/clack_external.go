@@ -8,7 +8,7 @@ import (
 	"gioui.org/gpu/internal/driver"
 )
 
-// Clack patch 50: external images (paint.NewExternalImageOp), textures the
+// Clack patch 51: external images (paint.NewExternalImageOp), textures the
 // renderer didn't make, such as a video decoder's frames.
 
 // externalImage is an external ImageOp's handle, with plain types so gpu

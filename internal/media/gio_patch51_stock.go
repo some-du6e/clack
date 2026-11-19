@@ -8,7 +8,7 @@ import (
 	"gioui.org/op/paint"
 )
 
-// Stock Gio v0.10.3 has neither external images (gio_patch50.go) nor live
+// Stock Gio v0.10.3 has neither external images (gio_patch51.go) nor live
 // ones: a player's op is its still, the poster.
 const ExternalImages = false
 

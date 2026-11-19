@@ -7,7 +7,7 @@
 // and its single thread. Each new frame is transferred into one of three
 // shared textures (keyed mutexes: 0 is free for the engine, 1 holds a
 // frame for Gio); Gio's ask copies the newest into a texture of its own
-// device, of an _SRGB format, which it draws (Gio patch 50). Neither side
+// device, of an _SRGB format, which it draws (Gio patch 51). Neither side
 // ever waits for the other: a busy texture skips a frame, a frame Gio
 // can't take now is taken at its next ask.
 //

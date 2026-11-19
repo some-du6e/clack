@@ -4,7 +4,7 @@ package paint
 
 import "image"
 
-// Clack patch 50 (CLACK_PATCHES.md §50): an image whose pixels are a GPU
+// Clack patch 51 (CLACK_PATCHES.md §51): an image whose pixels are a GPU
 // texture something else made, such as a video decoder's frame, drawn
 // where its op is inside the window's own frame (under clips, opacity
 // layers and transforms, below and above the ops around it).

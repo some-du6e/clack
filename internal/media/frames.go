@@ -49,8 +49,8 @@ type FrameHandle struct{ f Frames }
 func NewFrameHandle(f Frames) *FrameHandle { return &FrameHandle{f: f} }
 
 // Op is the op drawing the frame stretched over size pixels, or still
-// while there's none: an external image (Gio patch 50), or still on stock
-// Gio (gio_patch50_stock.go).
+// while there's none: an external image (Gio patch 51), or still on stock
+// Gio (gio_patch51_stock.go).
 func (h *FrameHandle) Op(still paint.ImageOp, size image.Point) paint.ImageOp {
 	return externalOp(h, size, still)
 }

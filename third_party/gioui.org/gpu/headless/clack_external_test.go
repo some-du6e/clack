@@ -16,7 +16,7 @@ import (
 	"gioui.org/op/paint"
 )
 
-// Clack patch 50 on a real device: external images.
+// Clack patch 51 on a real device: external images.
 
 // hostImage hands out its texture with key while ok, and a reference to
 // it (the GPU takes it over).
@@ -108,7 +108,7 @@ func pattern() *image.RGBA {
 	return m
 }
 
-// Clack patch 50: a texture the device made, drawn through its native
+// Clack patch 51: a texture the device made, drawn through its native
 // handle, gives the pixels of an ImageOp of the same image, under a
 // rounded clip, an opacity layer and a rotating, magnifying transform
 // (magnified, the ImageOp's mipmaps don't come into it). Without external
@@ -194,7 +194,7 @@ func TestClackExternalImage(t *testing.T) {
 	t.Logf("%T: %d pixels of the image, all the ImageOp's", win.dev, n)
 }
 
-// Clack patch 50: the same key wraps nothing new, a new key wraps once and
+// Clack patch 51: the same key wraps nothing new, a new key wraps once and
 // the old key's wrapper goes when a frame doesn't draw it, new pixels in
 // the same texture under a new key are drawn, no texture draws the still,
 // and a zero or uniform still draws nothing.
@@ -263,7 +263,7 @@ func TestClackExternalKeys(t *testing.T) {
 	}
 }
 
-// Clack patch 50 under patch 46's partial frames: the same ops drawn again
+// Clack patch 51 under patch 46's partial frames: the same ops drawn again
 // (the client's quiet frames) with the image's key unchanged damage
 // nothing; a new key (the decoder's next frame) damages only the op's
 // rectangle, and that partial frame is the whole frame's pixels.

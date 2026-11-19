@@ -144,7 +144,7 @@ func paintOps(o paint.ImageOp, twice bool, off *testExternal) *op.Ops {
 	return &ops
 }
 
-// Clack patch 50: an external image's paint asks for its texture once a
+// Clack patch 51: an external image's paint asks for its texture once a
 // frame while the frame shows it, wraps a texture once per key (the same
 // key draws the wrapper the frame before made, a new one wraps again and
 // the old wrapper goes when a frame doesn't draw it), takes over the
@@ -206,7 +206,7 @@ func TestDrawOpsExternalImage(t *testing.T) {
 	}
 }
 
-// Clack patch 50: a still that is itself external (a viewer's player over
+// Clack patch 51: a still that is itself external (a viewer's player over
 // the inline player's last frame), or live showing an external image, is
 // resolved in turn: its texture, else its own still; one nested too deep,
 // or a header with no pixels, draws nothing instead of uploading it.

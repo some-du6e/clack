@@ -4,7 +4,7 @@
 // (BaseMediaVideo, 1ERX) on the first click, drawn in Gio over the
 // message's video tile. richview hands it the tile (richview.Media);
 // internal/media plays the file with the OS's decoder, whose frames the
-// window draws as its own (Gio patch 50), so a playing video costs a
+// window draws as its own (Gio patch 51), so a playing video costs a
 // quiet frame for each of its frames and no layout.
 package videoplayer
 

@@ -2,7 +2,7 @@
 
 package driver
 
-// Clack patch 50: textures the backend didn't make (paint.NewExternalImageOp).
+// Clack patch 51: textures the backend didn't make (paint.NewExternalImageOp).
 
 // ClackExternal is a Device that can draw a texture it didn't make:
 // Direct3D 11's and Metal's. OpenGL and Vulkan don't implement it, and an

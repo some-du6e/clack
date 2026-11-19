@@ -608,7 +608,7 @@ type Backend struct {
 	rtSize image.Point
 
 	// wrapped counts the textures ClackWrap made that aren't released yet
-	// (Clack patch 50)
+	// (Clack patch 51)
 	wrapped int
 }
 

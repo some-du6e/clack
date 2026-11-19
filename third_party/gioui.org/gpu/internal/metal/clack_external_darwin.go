@@ -14,7 +14,7 @@ import (
 */
 import "C"
 
-// Clack patch 50: Metal draws a texture something else made on its device
+// Clack patch 51: Metal draws a texture something else made on its device
 // (paint.NewExternalImageOp).
 
 // ClackDevice implements driver.ClackExternal: the id<MTLDevice>.

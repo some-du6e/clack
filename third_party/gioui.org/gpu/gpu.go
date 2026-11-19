@@ -75,7 +75,7 @@ type renderer struct {
 	stats  FrameStats
 	calls0 driver.Calls
 	// clear1x1 is drawn for an external image with nothing to draw (Clack
-	// patch 50)
+	// patch 51)
 	clear1x1 driver.Texture
 	// fills are a partial frame's fill pipelines for coverage and layer
 	// pages, made on first use (Clack patch 46)
@@ -713,7 +713,7 @@ func resolveLive(data imageOpData) imageOpData {
 }
 
 func (r *renderer) texHandle(cache *textureCache, data imageOpData) (driver.Texture, uint64) {
-	// external and live images (Clack patches 50 and 35)
+	// external and live images (Clack patches 51 and 35)
 	rt, id, d, ok := r.resolveImage(cache, data)
 	if ok {
 		return rt, id

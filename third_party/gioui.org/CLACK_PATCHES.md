@@ -2392,7 +2392,7 @@ Enter and a its Leave. `gesture/clack_reset_test.go`
 and `internal/ui`'s `TestInspectFreezeResetsHover`. On ci's linux-gio,
 windows-applog and macos jobs. Not in `UPSTREAM.patch`.
 
-## 50. op/paint, gpu, gpu/internal: external images (a texture something else made, drawn in the frame)
+## 51. op/paint, gpu, gpu/internal: external images (a texture something else made, drawn in the frame)
 
 `op/paint/clack_external.go` (new: `ExternalImage`, `ExternalDevice`,
 `ExternalTexture`, `NewExternalImageOp`), `gpu/clack_external.go` (new:
@@ -2465,8 +2465,8 @@ for the ops' signatures (`cache.nextID` when it's made, the entry's on a
 hit, `clearID` for the 1×1): a new key (the decoder's next frame) damages
 only its op's rectangle, a frame drawn again with the same key nothing.
 
-Clack's callers are behind `internal/media`'s `gio_patch50.go` /
-`gio_patch50_stock.go` pair; a stock Gio build draws the still (the
+Clack's callers are behind `internal/media`'s `gio_patch51.go` /
+`gio_patch51_stock.go` pair; a stock Gio build draws the still (the
 poster). Tests: `gpu/clack_external_test.go` (`TestDrawOpsExternalImage`:
 the renderer's own `uploadImages`/`texHandle` against a device that counts
 wraps, releases, drops, forgets and every native reference: one ask per

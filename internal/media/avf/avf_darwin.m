@@ -6,7 +6,7 @@
 // so AVFoundation never fetches anything itself. Frames come from an
 // AVPlayerItemVideoOutput (32BGRA, Metal-compatible IOSurfaces at the
 // drawn size) as BGRA8Unorm_sRGB textures of Gio's own MTLDevice through
-// a CVMetalTextureCache, which Gio draws (patch 50). Everything of
+// a CVMetalTextureCache, which Gio draws (patch 51). Everything of
 // AVFoundation's runs on the player's serial queue; Gio's ask, on the
 // thread drawing the frame, only reads the newest frame under a lock.
 //

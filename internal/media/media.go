@@ -2,7 +2,7 @@
 // with the operating system's decoder: Media Foundation on Windows
 // (internal/media/mf), AVFoundation on macOS (internal/media/avf). The
 // decoder's frames are GPU textures that Gio draws inside the window's own
-// frame (Gio patch 50, external images), under Slack's own controls, so a
+// frame (Gio patch 51, external images), under Slack's own controls, so a
 // frame's pixels never enter Go memory.
 //
 // The backends never get a Slack URL: they read the file through a
@@ -162,7 +162,7 @@ type Player interface {
 	// come at this size or the video's, whichever is smaller.
 	SetDrawSize(px image.Point)
 	// Op is the op drawing the player's frame over size pixels: an
-	// external image (Gio patch 50) on the real backends, a live one on
+	// external image (Gio patch 51) on the real backends, a live one on
 	// the fake; still (the poster) while there's no frame.
 	Op(still paint.ImageOp, size image.Point) paint.ImageOp
 	State() State

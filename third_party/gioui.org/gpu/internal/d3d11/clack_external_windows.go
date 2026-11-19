@@ -11,7 +11,7 @@ import (
 	"gioui.org/internal/d3d11"
 )
 
-// Clack patch 50: Direct3D 11 draws a shader resource view something else
+// Clack patch 51: Direct3D 11 draws a shader resource view something else
 // made on its device (paint.NewExternalImageOp).
 
 // ClackDevice implements driver.ClackExternal: the *ID3D11Device.
