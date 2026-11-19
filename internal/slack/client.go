@@ -852,10 +852,10 @@ func FileURL(u *url.URL) bool {
 // (NFKC) folds to one or more dots: the fullwidth and small full stops, the
 // one- and two-dot leaders, the ellipsis and the vertical presentation
 // forms of the ellipsis and the two-dot leader, plus the space a segment
-// like ". ." pads with. Written as code points so no look-alike sits in
-// source.
+// like ". ." pads with, and U+FFFD, which a byte that isn't UTF-8 reads as
+// (plainForm). Written as code points so no look-alike sits in source.
 var dotLike = ". " + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0x2024)) + string(rune(0x2025)) +
-	string(rune(0x2026)) + string(rune(0xFE19)) + string(rune(0xFE30))
+	string(rune(0x2026)) + string(rune(0xFE19)) + string(rune(0xFE30)) + string(utf8.RuneError)
 
 // maxDecodes is how many times plainPath decodes a path the way a lenient
 // server might. A path that still changes after that many decodes is no
@@ -866,9 +866,10 @@ const maxDecodes = 4
 // server that normalises it, however many times that server decodes it.
 // It checks the path as sent (EscapedPath) and after each decode, up to
 // maxDecodes, until decoding changes nothing (a path still changing after
-// that is refused). Each form must be valid UTF-8 (an overlong %c0%ae
-// isn't), hold no backslash, NUL or other control byte, and have no
-// segment made only of dots or dot look-alikes (also with a ";…" parameter
+// that is refused). Each form must hold no byte a lenient UTF-8 decoder
+// could read as '.', '/' or '\' (the overlong %c0%ae; other invalid bytes
+// read as U+FFFD), no backslash, NUL or other control byte, and no segment
+// made only of dots, dot look-alikes or U+FFFD (also with a ";…" parameter
 // cut, as some proxies strip it). An encoded slash that decodes to a real
 // one only adds a segment, so a file named "uploads%2F2024.jpg" still
 // works; what it decodes to is checked like the rest.
@@ -889,25 +890,70 @@ func plainPath(u *url.URL) bool {
 	}
 }
 
-// plainForm checks one form of a path for plainPath.
+// plainForm checks one form of a path for plainPath. A byte that isn't
+// part of valid UTF-8 is refused when a lenient decoder could read it as
+// '.', '/' or '\' (smuggles); any other reads as U+FFFD, which counts as
+// a dot in the segment test (a decoder may drop it, leaving only dots).
+// So a name with a literal "%" before two hex digits that aren't UTF-8
+// (100%Beef.jpg, a Latin-1 caf%E9.pdf typed as it was saved) still works,
+// and "..%BE" doesn't.
 func plainForm(p string) bool {
-	if !utf8.ValidString(p) {
-		return false
-	}
-	for _, r := range p {
+	for i := 0; i < len(p); {
+		r, n := utf8.DecodeRuneInString(p[i:])
+		if r == utf8.RuneError && n == 1 && smuggles(p, i) {
+			return false
+		}
 		if r == '\\' || r < 0x20 || r == 0x7f {
 			return false
 		}
+		i += n
 	}
 	for _, seg := range strings.Split(p, "/") {
 		if i := strings.IndexByte(seg, ';'); i >= 0 {
 			seg = seg[:i]
 		}
-		if seg != "" && strings.Trim(seg, dotLike) == "" {
+		if seg != "" && dotOnly(seg) {
 			return false
 		}
 	}
 	return true
+}
+
+// dotOnly reports whether every character of seg is dotLike, each byte of
+// invalid UTF-8 counting as U+FFFD.
+func dotOnly(seg string) bool {
+	for _, r := range seg { // an invalid byte ranges as utf8.RuneError
+		if !strings.ContainsRune(dotLike, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// smuggles reports whether p[i], a byte that isn't part of valid UTF-8,
+// is one a lenient decoder could read as an ASCII '.', '/' or '\': the
+// lead of an overlong form (C0 and C1, E0 before 80-9F, F0 before 80-8F)
+// or of a sequence longer than UTF-8 allows (F5-FF, when a continuation
+// byte follows: the 5- and 6-byte overlongs of RFC 2279 and Perl's
+// extended forms all need one, so a literal "%Fe" in 10%Fee.pdf is only
+// an invalid byte), or 0xAE, 0xAF and 0xDC, which are '.', '/' and '\'
+// with the high bit set, for a decoder that strips it.
+func smuggles(p string, i int) bool {
+	c, next := p[i], byte(0)
+	if i+1 < len(p) {
+		next = p[i+1]
+	}
+	switch {
+	case c == 0xC0 || c == 0xC1:
+		return true
+	case c == 0xE0:
+		return 0x80 <= next && next <= 0x9F
+	case c == 0xF0:
+		return 0x80 <= next && next <= 0x8F
+	case c >= 0xF5:
+		return 0x80 <= next && next <= 0xBF
+	}
+	return c == 0xAE || c == 0xAF || c == 0xDC
 }
 
 // lenientUnescape decodes every valid %XX escape in s and leaves any other
