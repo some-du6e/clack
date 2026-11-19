@@ -71,6 +71,12 @@ type appCardEntry struct {
 	err  error
 	at   time.Time
 	wait chan struct{}
+	// last is the card a refetch replaces, kept while it runs and after
+	// it fails: Slack's stored app profile (+MzB T, 2MXT v ?? gvD6 sO)
+	// stays while it refetches, so what reads it (the Tasks tab rule)
+	// doesn't see an app that stopped being an agent for a moment
+	last    AppCard
+	hasLast bool
 }
 
 type appCardCache struct {
@@ -96,8 +102,11 @@ func (a *App) CachedAppCard(userID, botID string) (AppCard, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.m[k]
-	if !ok || e.wait != nil || e.err != nil {
+	if !ok {
 		return AppCard{}, false
+	}
+	if e.wait != nil || e.err != nil {
+		return e.last, e.hasLast
 	}
 	return e.card, true
 }
@@ -159,6 +168,9 @@ func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, err
 		}
 	}
 	e := &appCardEntry{wait: make(chan struct{})}
+	if old, ok := c.m[k]; ok && old.err == nil { // a stale card: kept while this one is fetched
+		e.last, e.hasLast = old.card, true
+	}
 	c.m[k] = e
 	c.mu.Unlock()
 
@@ -170,7 +182,13 @@ func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, err
 	e.card, e.err, e.at = card, err, time.Now()
 	close(e.wait)
 	e.wait = nil
-	if err != nil {
+	switch {
+	case err == nil:
+		e.last, e.hasLast = AppCard{}, false
+	case e.hasLast: // keep the last good card, and try again in a minute
+		e.card, e.err = e.last, nil
+		e.at = time.Now().Add(time.Minute - appCardTTL)
+	default:
 		delete(c.m, k) // retry next time
 	}
 	c.mu.Unlock()
