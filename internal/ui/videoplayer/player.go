@@ -576,6 +576,7 @@ type State struct {
 	// layout drew them, in the tile's coordinates (the slider shows while
 	// the pointer is on the volume control).
 	Mute, Slider, Scrub, More image.Rectangle
+	Expand                    image.Rectangle
 	Hover                     bool
 }
 
@@ -602,7 +603,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
 		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
-		Hover: t.hover}
+		Expand: t.z.expand, Hover: t.hover}
 	if t.h != nil {
 		st.Player = t.h
 	}

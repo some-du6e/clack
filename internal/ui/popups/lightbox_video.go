@@ -170,6 +170,9 @@ func (lb *Lightbox) VideoState() (st videoplayer.ViewerState, f *richtext.File, 
 	return lb.vid.p.State(), lb.cur().file, lb.vid.shown, true
 }
 
+// Position is the item shown and how many the viewer has.
+func (lb *Lightbox) Position() (idx, n int) { return lb.idx, len(lb.items) }
+
 // VideoParts are the video footer's controls as last drawn (window
 // coordinates): Play/Pause, Mute, the progress bar's track.
 func (lb *Lightbox) VideoParts() (play, mute, bar image.Rectangle) {

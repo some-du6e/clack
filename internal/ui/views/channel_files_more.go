@@ -511,9 +511,9 @@ func (v *ChannelFiles) openLinkDetails(l core.ChannelLink) {
 func (v *ChannelFiles) openMedia(it fileItem) {
 	g, ok := v.h.(interface {
 		OpenMediaGallery(items []popups.GalleryItem, idx int)
-		VideosPlay() bool
 	})
-	videos := ok && g.VideosPlay()
+	vp, _ := v.h.(interface{ VideosPlay() bool }) // where videos play in place, the viewer plays them
+	videos := ok && vp != nil && vp.VideosPlay()
 	viewable := func(m *fileItem) bool { // fileIsViewableInMediaViewer, as far as Clack's viewer goes
 		return m.URL != "" && (m.isImage() || videos && m.IsVideo)
 	}
