@@ -176,12 +176,15 @@ line:
   JavaScript (`js_embed_js.go` in each), the plugin benchmark's data and
   Taut's author credits (`internal/taut/authors_js.go`).
 - Huddles, their audio and their video. `internal/huddle/rtc`,
-  `internal/huddle/opus` and `internal/huddle/h264` stand in for pion/webrtc,
-  opus-go and goh264 and never open a connection or a codec, so joining
-  fails with "huddles aren't part of the browser demo". `bgblur_js.go` keeps
-  the MediaPipe selfie model and the TFLite interpreter out, and
-  `apm_js.go` the microphone's RNNoise model. The LGPL-2.1 decoder (goh264)
-  and the Apache-2.0 model aren't in the demo at all.
+  `internal/huddle/opus` and `internal/huddle/h264` stand in for Pion's
+  WebRTC stack, opus-go and goh264 and never open a connection or a codec,
+  so joining fails with "huddles aren't part of the browser demo" (Pion's
+  rtp, rtcp, interceptor and dtls packages stay: the huddle code uses their
+  types). `bgblur_js.go` keeps the MediaPipe selfie model and the TFLite
+  interpreter out, `apm_js.go` the microphone's RNNoise model, and
+  `ring_mp3_js.go` the MP3 decoder for Slack's sounds (a page has no audio
+  output to play them on). The LGPL-2.1 decoder (goh264) and the Apache-2.0
+  model and MP3 decoder (go-mp3) aren't in the demo at all.
 - Desktop integrations, which have no browser counterpart (Clack's
   fallbacks for other systems apply), and Slack's taskbar badge images
   (`internal/desktop/badge_embed_js.go`).
