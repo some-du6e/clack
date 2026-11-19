@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // Makes site/img from the demo workflow's screenshots. Every picture on the
 // site is `clack demo`, made-up data on a fake Slack server: the
-// TestDemoReadmeShots and TestDemoSiteShots files in a demo run's
-// demo-shots artifact. Needs sharp (an optional dependency of site/).
+// TestDemoSiteShots files (site/ in a demo run's demo-shots artifact),
+// taken without the "Demo workspace" banner; the page says once, under the
+// hero, that the workspace is made up. Needs sharp (an optional dependency
+// of site/).
 //
 //   gh run download <run> --repo some-du6e/clack --name demo-shots --dir <dir>
 //   node tools/images.mjs --run <run> --from <dir>
@@ -34,11 +36,11 @@ if (!run || !from) {
 const TILE = { left: 0, top: 0, width: 720, height: 450 };
 const BAND = { left: 0, top: 0, width: 1314, height: 900 };
 const SHOTS = [
-  { name: 'hero', light: 'readme/demo-main-light.png', widths: [640, 720, 960, 1440] },
-  { name: 'band', light: 'demo-surface-light-emoji-picker.png', crop: BAND, widths: [680, 1020, 1314] },
-  { name: 'channel', light: 'readme/demo-huddle-light.png', widths: [720, 1080, 1440] },
-  { name: 'thread', light: 'readme/demo-thread-light.png', widths: [720, 1080, 1440] },
-  { name: 'activity', light: 'readme/demo-activity-light.png', widths: [720, 1080, 1440] },
+  { name: 'hero', light: 'site/demo-main.png', widths: [640, 720, 960, 1440] },
+  { name: 'band', light: 'site/demo-emoji-picker.png', crop: BAND, widths: [680, 1020, 1314] },
+  { name: 'channel', light: 'site/demo-huddle.png', widths: [720, 1080, 1440] },
+  { name: 'thread', light: 'site/demo-thread.png', widths: [720, 1080, 1440] },
+  { name: 'activity', light: 'site/demo-activity.png', widths: [720, 1080, 1440] },
   { name: 'theme-jade', light: 'site/demo-theme-jade-light.png', crop: TILE, widths: [360, 540, 720] },
   { name: 'theme-lagoon', light: 'site/demo-theme-lagoon-light.png', crop: TILE, widths: [360, 540, 720] },
   { name: 'theme-clementine', light: 'site/demo-theme-clementine-light.png', crop: TILE, widths: [360, 540, 720] },

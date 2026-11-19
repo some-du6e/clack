@@ -3,7 +3,8 @@ name: demo
 # world and bot tests, the loopback-only guard, a headless end-to-end
 # smoke test of the real UI on the demo (sidebar, a channel, a bot's
 # reply to a posted message, a Block Kit button round trip, the code
-# channel) and screenshots of the demo, light and dark. Synthetic only:
+# channel) and screenshots of the demo, light and dark, with the website's
+# pictures made from them (the site-img artifact). Synthetic only:
 # the demo runs fakeslack on 127.0.0.1 and nothing here talks to Slack.
 on:
   push:
@@ -74,6 +75,25 @@ jobs:
         with:
           name: demo-shots
           path: dist/shots
+      # the website's pictures from this run's TestDemoSiteShots, as
+      # site/tools/images.mjs makes them (AVIF and WebP at each width,
+      # images.json), ready to commit: gh run download <run> --name site-img
+      # --dir site/img
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: ${{ !cancelled() }}
+        with:
+          node-version: 24
+      - name: site images
+        if: ${{ !cancelled() }}
+        working-directory: site
+        run: |
+          npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+          node tools/images.mjs --run "$GITHUB_RUN_ID" --from "$GITHUB_WORKSPACE/dist/shots"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: site-img
+          path: site/img
       - name: clack demo --help (the release binary's path)
         run: |
           CGO_ENABLED=1 go build -trimpath -o dist/clack ./cmd/clack
