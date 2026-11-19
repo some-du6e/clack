@@ -331,8 +331,9 @@ func TestThreadsBannerJumpUnlaidCardLikeSlack(t *testing.T) {
 }
 
 // A thread's read mark that fails puts its last read and its hand mark
-// back, with no toast (markThread only logs); one already read to its
-// newest reply sends no request, and its hand mark still goes.
+// back, with no toast (markThread only logs), except a message_not_found,
+// which Slack's markThread counts as done; one already read to its newest
+// reply sends no request, and its hand mark still goes.
 func TestThreadsMarkFailureLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
 	ctx := context.Background()
@@ -364,6 +365,34 @@ func TestThreadsMarkFailureLikeSlack(t *testing.T) {
 		thrBounded(e, 200*time.Millisecond, func() bool { return false })
 		if ts := h.toasts(); len(ts) != 0 {
 			t.Errorf("a failed thread mark toasted %q; Slack's markThread only logs", ts)
+		}
+	})
+	t.Run("message not found", func(t *testing.T) {
+		app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
+			if method != "subscriptions.thread.getView" {
+				return nil, false
+			}
+			return thrOrderAnswer(thrFixRead(ch, thrA, thrAReply, "U0FAKE00002", true, thrA),
+				thrFixRead(ch, thrC, thrCReply, fakeslack.SelfID, false, thrCReply)), true
+		})
+		h := newKBHost(app, false)
+		h.away.Store(true)
+		v := NewThreads(h)
+		e := thrViewEnv(t, v, 2)
+		e.frame()
+		key := ch + "/" + thrA
+		if err := app.MarkThreadUnreadFrom(ctx, ch, thrA, thrAReply, core.MarkedInThread); err != nil {
+			t.Fatal(err)
+		}
+		n := fs.CallCount("subscriptions.thread.mark")
+		fs.SetFault("subscriptions.thread.mark", fakeslack.Fault{Error: "message_not_found", Times: 1})
+		h.away.Store(false) // the attention back: markVisible marks a, and the server can't find the message
+		e.until(t, "the mark's request", func() bool { return fs.CallCount("subscriptions.thread.mark") > n })
+		if thrBounded(e, 600*time.Millisecond, func() bool { return v.lastRead(thrItemOf(v, key)) != thrAReply }) {
+			t.Errorf("the read mark Slack counts done (message_not_found) was undone: last read %s", v.lastRead(thrItemOf(v, key)))
+		}
+		if o := app.ThreadMarkedUnread(ch, thrA); o != "" {
+			t.Errorf("the hand mark came back (%q) after a read mark Slack counts done", o)
 		}
 	})
 	t.Run("already read", func(t *testing.T) {

@@ -518,7 +518,9 @@ func (a *App) SubscribeThread(ctx context.Context, ch, threadTS string, follow b
 // its answer, runs maybeMarkChannelFromThread (thread_channel_mark.go)
 // with the thread's last read from before, whatever the thread mark's
 // outcome. The subscription's last_read moves once the mark is done, as
-// the thread_marked event would move it.
+// the thread_marked event would move it. A read mark the server answers
+// with message_not_found counts as done (markThread's
+// isMessageNotFoundError: the read stays, nothing is put back).
 func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 	prev := ""
 	if sub, ok := a.S.ThreadSub(ch, threadTS); ok {
@@ -530,6 +532,9 @@ func (a *App) MarkThread(ctx context.Context, ch, threadTS, ts string) error {
 	}()
 	a.maybeMarkChannelFromThread(ctx, ch, threadTS, prev, ts)
 	err := <-done
+	if ErrCode(err) == "message_not_found" {
+		err = nil
+	}
 	if err == nil {
 		a.setThreadLastRead(ch, threadTS, ts)
 		a.refreshCountsSoon()
