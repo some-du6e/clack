@@ -205,7 +205,7 @@ jobs:
         run: |
           GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" -o site/dist/demo/main.wasm ./cmd/clack-web
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/dist/demo/
-          node site/tools/demo-size.mjs site/dist/demo "$(git rev-parse --short HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+          node site/tools/demo-pack.mjs site/dist/demo "$(git rev-parse --short HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: static checks, with the demo
         working-directory: site
         run: node tools/check.mjs --production --pages --demo

@@ -18,8 +18,10 @@
 //   - with --pages: CNAME is in the build
 //   - demo/ is the web demo, an app page: it may load its own local
 //     scripts and its images needn't be lazy; with --demo its program
-//     (main.wasm, wasm_exec.js, build.json, from the site workflow's demo
-//     job) must be in the build, and build.json must give main.wasm's size
+//     (wasm_exec.js, build.json and main.N.wasm, from the site workflow's
+//     demo job) must be in the build: every part build.json names, each at
+//     most 25 MiB (Cloudflare's static assets' limit), adding up to its
+//     size
 // Node built-ins only.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -40,7 +42,7 @@ const pages = files.filter((f) => f.endsWith('.html'));
 if (!pages.includes('index.html')) err('no index.html');
 
 // the web demo's program, which the page fetches from its script
-const DEMO_PROGRAM = ['demo/main.wasm', 'demo/wasm_exec.js', 'demo/build.json'];
+const DEMO_PROGRAM = ['demo/wasm_exec.js', 'demo/build.json'];
 
 for (const page of pages) {
   const html = readFileSync(join(dist, page), 'utf8');
@@ -110,10 +112,19 @@ for (const page of pages) {
 if (!pages.includes('demo/index.html')) err('no demo/index.html');
 if (mode.demo) {
   for (const f of DEMO_PROGRAM) if (!existsSync(join(dist, f))) err(`--demo: ${f} is missing`);
-  if (existsSync(join(dist, 'demo/build.json')) && existsSync(join(dist, 'demo/main.wasm'))) {
+  if (existsSync(join(dist, 'demo/build.json'))) {
     const b = JSON.parse(readFileSync(join(dist, 'demo/build.json'), 'utf8'));
-    const size = statSync(join(dist, 'demo/main.wasm')).size;
-    if (b.wasm !== size) err(`--demo: build.json says main.wasm is ${b.wasm} bytes, it's ${size}`);
+    let sum = 0;
+    for (const p of b.parts || []) {
+      const f = join(dist, 'demo', p.file);
+      if (!/^main\.\d+\.wasm$/.test(p.file) || !existsSync(f)) { err(`--demo: build.json names ${p.file}, which isn't in the build`); continue; }
+      const size = statSync(f).size;
+      if (size !== p.size) err(`--demo: ${p.file} is ${size} bytes, build.json says ${p.size}`);
+      if (size > 25 * 1024 * 1024) err(`--demo: ${p.file} is over 25 MiB`);
+      sum += size;
+    }
+    if (!b.parts || !b.parts.length || sum !== b.wasm) err(`--demo: build.json's parts add up to ${sum} bytes, not its ${b.wasm}`);
+    if (existsSync(join(dist, 'demo/main.wasm'))) err('--demo: main.wasm is still there (tools/demo-pack.mjs splits it)');
   }
 }
 

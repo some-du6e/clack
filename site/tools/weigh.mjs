@@ -5,7 +5,8 @@
 // windows at 1x and 2x, a tablet and two phones. It reads the paint
 // timings, then scrolls to the bottom so every lazy image loads, and adds up
 // the bytes on the wire, the web font included. It fails when a request
-// goes anywhere but 127.0.0.1, when the page with its CSS and JS goes over
+// goes anywhere but 127.0.0.1 or to the web demo (/demo/, which only its
+// own page loads), when the page with its CSS and JS goes over
 // 30 KB, when a whole visit goes over 300 KB, when it loads more than one
 // font, or when the page is wider than the window (it names the elements
 // that stick out). First it checks that last test on a page that's too wide
@@ -200,11 +201,12 @@ async function visit(sc, path = '/', scroll = true) {
 
   const all = [...reqs.values()];
   const offsite = all.filter((r) => !r.url.startsWith(origin + '/') && !r.url.startsWith('data:')).map((r) => r.url);
+  const demo = all.filter((r) => r.url.startsWith(origin + '/demo/')).map((r) => r.url);
   const failed = all.filter((r) => r.failed).map((r) => r.url);
   const doc = all.find((r) => r.type === 'Document')?.bytes ?? 0;
   const images = all.filter((r) => r.type === 'Image').reduce((n, r) => n + r.bytes, 0);
   const fonts = all.filter((r) => r.type === 'Font');
-  return { ...sc, requests: all.length, firstScreen: above, total: sum(reqs), doc, images, fonts: fonts.length, fontBytes: fonts.reduce((n, r) => n + r.bytes, 0), offsite, failed, overflow, timing };
+  return { ...sc, requests: all.length, firstScreen: above, total: sum(reqs), doc, images, fonts: fonts.length, fontBytes: fonts.reduce((n, r) => n + r.bytes, 0), offsite, demo, failed, overflow, timing };
 }
 
 function sum(reqs) { return [...reqs.values()].reduce((n, r) => n + r.bytes, 0); }
@@ -225,6 +227,7 @@ for (const t of selfTest) {
 }
 for (const r of results) {
   if (r.offsite.length) problems.push(`${r.name}: requests off 127.0.0.1: ${r.offsite.join(', ')}`);
+  if (r.demo.length) problems.push(`${r.name}: the homepage loaded the web demo's files: ${r.demo.join(', ')}`);
   if (r.failed.length) problems.push(`${r.name}: failed requests: ${r.failed.join(', ')}`);
   if (r.total > BUDGET.page) problems.push(`${r.name}: ${kb(r.total)} in all, over the ${kb(BUDGET.page)} budget`);
   if (r.doc > BUDGET.doc) problems.push(`${r.name}: the page is ${kb(r.doc)} on the wire, over ${kb(BUDGET.doc)}`);
