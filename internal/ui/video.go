@@ -8,8 +8,11 @@ import (
 	"log"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/media"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/videoplayer"
@@ -60,6 +63,26 @@ func (a *App) videos() *videoplayer.Controller {
 		Theme: func() *theme.Theme { return a.th },
 	})
 	return a.vids
+}
+
+// Videos is the window's players (popups' media viewer plays its video
+// items with them: one plays at a time with the inline ones).
+func (a *App) Videos() *videoplayer.Controller { return a.videos() }
+
+// VideosPlay reports whether videos play here (a backend), for the
+// views that open them in the media viewer.
+func (a *App) VideosPlay() bool { return a.videos().Available() }
+
+// OpenVideoViewer is messages.VideoViewerOpener's: the media viewer at f,
+// one of m's files, from at, playing unless !autoplay. false where
+// videos don't play (the caller opens the file's page).
+func (a *App) OpenVideoViewer(f *richtext.File, m core.Message, at time.Duration, autoplay bool) bool {
+	lb := popups.NewVideoViewer(a, m, f, at, autoplay)
+	if lb == nil {
+		return false
+	}
+	a.ShowOverlay(lb)
+	return true
 }
 
 // openVideo is a player's source: core.App.OpenRange (Range from off, the

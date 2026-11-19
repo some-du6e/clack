@@ -63,6 +63,7 @@ const (
 	zMute        // the mute button
 	zSlider      // the volume slider
 	zMore        // More actions
+	zExpand      // Expand (FullscreenButton, QC+B)
 )
 
 // zones are the overlay's parts as the last layout drew them (tile
@@ -71,13 +72,15 @@ type zones struct {
 	scrub, track         image.Rectangle
 	mute, volume, slider image.Rectangle // volume: the control, its slider included, as :hover sees it
 	vertical             bool
-	more                 image.Rectangle
+	more, expand         image.Rectangle
 }
 
 func (z *zones) at(p image.Point, volOpen bool) zone {
 	switch {
 	case p.In(z.more):
 		return zMore
+	case p.In(z.expand):
+		return zExpand
 	case p.In(z.mute):
 		return zMute
 	case volOpen && p.In(z.slider):
@@ -171,7 +174,9 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 			continue
 		}
 		p := image.Pt(int(e.Position.X), int(e.Position.Y))
-		more := false
+		more, expand := false, false
+		var at time.Duration
+		var playing bool
 		c.mu.Lock()
 		switch e.Kind {
 		case pointer.Enter, pointer.Move:
@@ -225,6 +230,11 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 					c.applyLocked(t)
 				case zMore:
 					more = true
+				case zExpand: // tR: pause, then the viewer at the time, playing if this played
+					expand, at, playing = true, t.elapsed, t.playing
+					if t.h != nil && t.playing {
+						t.h.Pause()
+					}
 				}
 			}
 			t.press = zNone
@@ -233,6 +243,9 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 		c.mu.Unlock()
 		if more && r.h != nil {
 			r.h.FileAction(richview.FileMore, s.File, btn) // VideoActionsButton's menu
+		}
+		if ex, ok := r.h.(Expander); expand && ok {
+			ex.ExpandVideo(s.File, at, playing)
 		}
 	}
 }
@@ -448,9 +461,31 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		off.Pop()
 	}
 
-	// the corner: More actions
+	// the corner: Expand, then More actions, 2px apart (gallery_v3's
+	// small buttons)
 	bs := dp(28)
 	z.more = image.Rect(sz.X-m8-bs, m8, sz.X-m8, m8+bs)
+	if _, ok := r.h.(Expander); ok {
+		z.expand = z.more.Sub(image.Pt(bs+dp(2), 0))
+	}
+	expandHot := hot && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(z.expand)
+	if hot && !z.expand.Empty() {
+		dark := false
+		if th := r.c.theme(); th != nil {
+			dark = th.Dark
+		}
+		border, iconCol, iconHot := cornerColors(dark)
+		bg := btnHover
+		if expandHot {
+			bg, iconCol = cornerHot, iconHot
+		}
+		paint.FillShape(gtx.Ops, bg, clip.UniformRRect(z.expand, dp(4)).Op(gtx.Ops))
+		ring(gtx.Ops, z.expand, dp(4), max(1, dp(1)), border)
+		is := dp(16)
+		off := op.Offset(image.Pt(z.expand.Min.X+(bs-is)/2, z.expand.Min.Y+(bs-is)/2)).Push(gtx.Ops)
+		icons.Get("expand")(gtx, unit.Dp(16), iconCol) // expand-diagonal
+		off.Pop()
+	}
 	if hot {
 		dark := false
 		if th := r.c.theme(); th != nil {

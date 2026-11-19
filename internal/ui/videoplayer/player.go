@@ -61,6 +61,13 @@ type RowHost interface {
 	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
 }
 
+// Expander is optional on a RowHost: Expand opens the media viewer at
+// the video from at, playing unless !autoplay (fIJO's tR), false where it
+// can't. The corner shows Expand only with one.
+type Expander interface {
+	ExpandVideo(f *richtext.File, at time.Duration, autoplay bool) bool
+}
+
 // unmountAfter is how long a player paused and not laid out lives: then
 // it closes, as React unmounting its row does (Clack's stand-in).
 var unmountAfter = 10 * time.Second
@@ -93,6 +100,7 @@ type Controller struct {
 	prefVol     float64
 	prefRaw     [2]string
 	prefsLoaded bool
+	viewers     uint64 // the media viewer's players so far (viewer.go)
 }
 
 // New is a window's players.
@@ -173,6 +181,13 @@ type tile struct {
 	applied bool
 	appMute bool
 	appVol  float64
+	// viewer: the media viewer's player (viewer.go), which never loops;
+	// startAt is the caller's time for it (Expand's), 0 for the file's
+	viewer  bool
+	startAt time.Duration
+	// shown: the viewer's footer shows (its clock and bar follow the
+	// time, as the inline overlay's do while hovered)
+	shown bool
 }
 
 // tileLocked is the tile for k, made with f's progress if new; f is the
@@ -225,9 +240,12 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	t.h, t.gen = h, gen
 	t.loading, t.ended, t.errCode, t.applied = autoplay, false, 0, false
 	start := c.startLocked(f)
+	if t.startAt > 0 {
+		start, t.startAt = t.startAt, 0
+	}
 	t.elapsed = start
 	c.applyLocked(t)
-	if c.loops(f) {
+	if !t.viewer && c.loops(f) {
 		h.SetLoop(true)
 	}
 	if t.size.X > 0 && t.size.Y > 0 {
@@ -298,7 +316,7 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 		return
 	}
 	st := ev.State
-	repaint := t.hover // the overlay shows the time
+	repaint := t.hover || t.shown // the overlay, or the viewer's footer, shows the time
 	switch ev.Kind {
 	case media.Play: // onPlay (tI)
 		t.playing, t.played, t.ended, repaint = true, true, false, true

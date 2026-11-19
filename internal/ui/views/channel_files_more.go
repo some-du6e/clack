@@ -505,13 +505,19 @@ func (v *ChannelFiles) openLinkDetails(l core.ChannelLink) {
 // ---- the media viewer ----
 
 // openMedia is the media cell's handleFileContainerClick with
-// fileChannelMediaInfo: images open in the viewer with the media
-// browser's loaded images to page through, videos on their page.
+// fileChannelMediaInfo: images and playable videos open in the viewer
+// with the media browser's loaded ones to page through (videos on their
+// page where they don't play).
 func (v *ChannelFiles) openMedia(it fileItem) {
 	g, ok := v.h.(interface {
 		OpenMediaGallery(items []popups.GalleryItem, idx int)
+		VideosPlay() bool
 	})
-	if !ok || !it.isImage() || it.URL == "" {
+	videos := ok && g.VideosPlay()
+	viewable := func(m *fileItem) bool { // fileIsViewableInMediaViewer, as far as Clack's viewer goes
+		return m.URL != "" && (m.isImage() || videos && m.IsVideo)
+	}
+	if !ok || !viewable(&it) {
 		v.open(it)
 		return
 	}
@@ -519,13 +525,18 @@ func (v *ChannelFiles) openMedia(it fileItem) {
 	idx := 0
 	for i := range v.media.items {
 		m := &v.media.items[i]
-		if !m.isImage() || m.URL == "" { // fileIsViewableInMediaViewer, as far as Clack's viewer goes
+		if !viewable(m) {
 			continue
 		}
 		if m.ID == it.ID {
 			idx = len(items)
 		}
 		f := cfRich(m)
+		if m.IsVideo {
+			im := richtext.Image{URL: m.Thumb, Alt: m.title(), Title: m.title(), Proxy: true}
+			items = append(items, popups.GalleryItem{File: f, Img: im})
+			continue
+		}
 		items = append(items, popups.GalleryItem{File: f, Img: richtext.Image{URL: m.URL, Alt: m.title(), W: m.ThumbW,
 			H: m.ThumbH, Title: m.title(), Proxy: true}})
 	}

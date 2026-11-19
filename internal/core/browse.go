@@ -42,8 +42,9 @@ type File struct {
 	IsImage bool
 	// IsVideo is Slack's fileIsPlayableVideo (slack.FileIsPlayableVideo):
 	// a video/* file that won't play (an mkv with no mp4 yet) is a plain
-	// file.
+	// file. MP4 is its transcode, the media viewer's source with URL.
 	IsVideo bool
+	MP4     string
 	// LastRead is when the viewer last opened it (last_read: milliseconds
 	// or seconds, 0 never), for the collections' Last viewed sort.
 	LastRead int64
@@ -329,6 +330,9 @@ func (r *browseFileRaw) file() File {
 		Thumb360GIF: r.Thumb360GIF, Thumb800: r.Thumb800, IsSalesforceFile: r.IsSalesforceFile})
 	f.IsVideo = slack.FileIsPlayableVideo(&slack.File{Mimetype: r.Mimetype, Filetype: r.Filetype, MP4: r.MP4, Subtype: r.Subtype,
 		Mode: r.Mode, IsExternal: r.IsExternal, ExternalType: r.ExtType})
+	if f.IsVideo {
+		f.MP4 = r.MP4
+	}
 	var lr json.Number
 	if len(r.LastRead) > 0 && json.Unmarshal(r.LastRead, &lr) == nil {
 		f.LastRead, _ = lr.Int64()

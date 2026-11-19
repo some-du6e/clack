@@ -538,9 +538,19 @@ func (v *ChannelFiles) openLinkMenu(l core.ChannelLink, btn image.Rectangle) {
 
 // cfRich is a row's file as a message attachment (DownloadFile's).
 func cfRich(it *fileItem) *richtext.File {
-	return &richtext.File{ID: it.ID, Name: it.Name, Title: it.Title, Type: it.Filetype, PrettyType: it.PrettyType,
+	f := &richtext.File{ID: it.ID, Name: it.Name, Title: it.Title, Type: it.Filetype, PrettyType: it.PrettyType,
 		Mime: it.Mime, User: it.User, URL: it.URL, Permalink: it.Permalink, Size: it.Size, Created: it.Created,
 		IsImage: it.isImage()}
+	if it.IsVideo { // the media viewer's source (mp4 || url_private) and poster (thumb_video)
+		f.IsVideo = true
+		if it.MP4 != "" {
+			f.URL = it.MP4
+		}
+		if it.Thumb != "" {
+			f.Thumb = &richtext.Image{URL: it.Thumb, Alt: it.title(), Title: it.title(), Proxy: true}
+		}
+	}
+	return f
 }
 
 // ---- rows ----

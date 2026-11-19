@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"gioui.org/text"
 
@@ -43,6 +44,19 @@ type MediaHost interface {
 type MediaRowHost interface {
 	OpenFile(f *richtext.File)
 	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
+}
+
+// VideoViewerOpener is optional on the Host: the media viewer at f, one
+// of m's files (a gallery's video, fIJO's tE; Expand, its tR), from at,
+// playing unless !autoplay; false where videos don't play.
+type VideoViewerOpener interface {
+	OpenVideoViewer(f *richtext.File, m core.Message, at time.Duration, autoplay bool) bool
+}
+
+// ExpandVideo is the inline player's Expand (videoplayer.Expander).
+func (r *richHandler) ExpandVideo(f *richtext.File, at time.Duration, autoplay bool) bool {
+	vo, ok := r.h.(VideoViewerOpener)
+	return ok && r.m != nil && vo.OpenVideoViewer(f, *r.m, at, autoplay)
 }
 
 // mediaVisibility is optional on a row's richview.Media: the share of a
@@ -306,6 +320,11 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 		}
 		r.h.OpenLightbox(img, *r.m)
 		return
+	}
+	if f.IsVideo { // a gallery's video: the media viewer, playing (tE)
+		if vo, ok := r.h.(VideoViewerOpener); ok && vo.OpenVideoViewer(f, *r.m, 0, true) {
+			return
+		}
 	}
 	if f.Permalink != "" {
 		openURL(f.Permalink)
