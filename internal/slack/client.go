@@ -267,7 +267,7 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 			if !FileURL(req.URL) {
 				return ErrNotAFile
 			}
-		} else if !sameEndpointHop(req.URL, via) {
+		} else if !EndpointHop(req.URL, via) {
 			// A 307 or 308 keeps a POST (an API call, an upload) and the
 			// cookie Go copies to the hop: it may only move to another
 			// Web API method or the same path, never to a page.
@@ -277,11 +277,14 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// sameEndpointHop reports whether a non-GET redirect hop to u stays on an
-// endpoint, not a page: a plain path (plainPath) that is a Web API method
-// (/api/…) or the path the first request went to.
-func sameEndpointHop(u *url.URL, via []*http.Request) bool {
-	if !plainPath(u) {
+// EndpointHop reports whether a non-GET redirect hop to u that keeps the
+// session cookie stays on an endpoint, not a page: a plain path
+// (plainPath) that is a Web API method (/api/…) other than the ones that
+// end the session (SignOutURL), or the path the first request went to.
+// Client.checkRedirect follows a 307 or 308 that keeps a POST only when it
+// holds, and so does Taut's plugin fetch.
+func EndpointHop(u *url.URL, via []*http.Request) bool {
+	if u == nil || !plainPath(u) || SignOutURL(u) {
 		return false
 	}
 	wire := u.EscapedPath()
@@ -504,6 +507,41 @@ func refusedMethod(method string) bool {
 		}
 	}
 	return forbiddenMethods[strings.ToLower(method)]
+}
+
+// SignOutURL reports whether u calls one of the methods that end the
+// session (forbiddenMethods), its path read every way bannedPage reads it:
+// /api/auth.signout, /API/Auth.Revoke;x, /api//auth.signout/,
+// /api/%2561uth.signout and the like. A path plainPath refuses could be
+// read as one, so it counts.
+func SignOutURL(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	forms, ok := pathForms(u)
+	if !ok {
+		return true
+	}
+	for _, p := range forms {
+		for _, f := range [2]string{p, readForm(p)} {
+			if segs := pathSegments(f); len(segs) >= 2 && segs[0] == "api" && forbiddenMethods[methodPrefix(segs[1])] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// methodPrefix is the method name a path segment starts with: up to the
+// first character a method name can't hold ("auth.signout%3fx" is
+// auth.signout).
+func methodPrefix(seg string) string {
+	for i, r := range seg {
+		if !(r == '.' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return seg[:i]
+		}
+	}
+	return seg
 }
 
 func (c *Client) callOn(ctx context.Context, method string, ent bool, params url.Values, out any) error {
