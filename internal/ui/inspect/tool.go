@@ -164,10 +164,12 @@ type Tool struct {
 	// content is what the last laid-out frame drew, the tool's own
 	// drawing left out (End), and contentOK that it is the frame on
 	// screen: no frame reset its ops since. A freeze draws it again.
-	content   op.CallOp
-	contentOK bool
-	contentAt frameKey
-	fz        *freeze // the frozen frame (freeze.go), nil while none is
+	content    op.CallOp
+	contentOK  bool
+	contentAt  frameKey
+	contentOps *op.Ops       // the window's ops End finished
+	contentCP  op.Checkpoint // their end after content
+	fz         *freeze       // the frozen frame (freeze.go), nil while none is
 }
 
 // frameKey is what a frame was laid out for: its size and scale.
@@ -446,6 +448,7 @@ func (t *Tool) End(gtx layout.Context) {
 		return
 	}
 	t.content, t.contentOK = gtx.Ops.Whole(), true
+	t.contentOps, t.contentCP = gtx.Ops, gtx.Ops.Checkpoint()
 	t.contentAt = frameKey{gtx.Constraints.Max, gtx.Metric}
 	t.overlay(gtx)
 }

@@ -636,7 +636,9 @@ func (a *App) Run() error {
 			}
 			wd.next(&stagePosted)
 			a.drain()
-			if fops := a.inspectFirst(a.frameContext(e)); fops != nil {
+			fc := a.frameContext(e)
+			fc.Ops = &ops // the window's ops as the last frame left them: a frozen frame draws into them
+			if fops := a.inspectFirst(fc); fops != nil {
 				// a frozen inspect session: the frame on screen again,
 				// under the tool's drawing, nothing laid out
 				// (inspect_wire.go)

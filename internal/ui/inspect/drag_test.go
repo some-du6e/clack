@@ -129,7 +129,7 @@ func (e *dragEnv) frame() {
 	if sc <= 0 {
 		sc = 1
 	}
-	gtx := layout.Context{Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source()}
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source(), Ops: &e.ops}
 	ops := e.tool.Frame(gtx)
 	if e.host.reset {
 		e.host.reset = false

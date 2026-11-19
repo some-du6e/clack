@@ -546,7 +546,7 @@ jobs:
         run: |
           rc=0
           go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectFreezeHoldsPopups)$' ./internal/ui || rc=1
-          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation)$' ./internal/ui/inspect || rc=1
+          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld)$' ./internal/ui/inspect || rc=1
           exit $rc
       - name: thread reply box gap (layout, fakeslack)
         if: ${{ !cancelled() }}

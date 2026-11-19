@@ -1601,6 +1601,6 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
           rc=0
-          go test -count=$COUNT -v -timeout 20m -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation)$' ./internal/ui/inspect || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld)$' ./internal/ui/inspect || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectFreezeHoldsPopups)$' ./internal/ui || rc=1
           exit $rc
