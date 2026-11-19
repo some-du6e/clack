@@ -915,7 +915,10 @@ const maxDecodes = 4
 //   - No form a normalising server reads (readForms) has a dot segment
 //     (hasDotSegment). readForm folds the separators, so a '\' or a
 //     fullwidth solidus there is a separator, not a refusal; only the wire
-//     bytes are held to the stricter rule above.
+//     bytes are held to the stricter rule above. What each of those forms
+//     decodes to is still checked for smuggled and control bytes
+//     (plainDecoded), because NFKC can turn a fullwidth percent into an
+//     escape the raw chain never decoded.
 //
 // An encoded slash that decodes to a real one only adds a segment, so a
 // file named "uploads%2F2024.jpg" still works; what it decodes to is
@@ -981,7 +984,11 @@ func readForms(u *url.URL) (forms []string, ok bool) {
 	s := readForm(u.EscapedPath())
 	for i := 0; ; i++ {
 		forms = append(forms, s)
-		next := readForm(lenientUnescape(s))
+		dec := lenientUnescape(s)
+		if !plainDecoded(dec) {
+			return forms, false
+		}
+		next := readForm(dec)
 		if next == s {
 			return forms, true
 		}
@@ -990,6 +997,29 @@ func readForms(u *url.URL) (forms []string, ok bool) {
 		}
 		s = next
 	}
+}
+
+// plainDecoded checks one stage readForms decoded, before readForm reads
+// its invalid bytes as U+FFFD. NFKC can make a '%' (U+FF05, U+FE6A), so a
+// decode→NFKC→decode server meets bytes the raw chain never held:
+// "%EF%BC%85c0%EF%BC%85af" reads as "%c0%af", the overlong '/'. A byte a
+// lenient decoder could read as '.', '/' or '\' (smuggles) or a control
+// byte is refused there as on the raw chain. A backslash isn't: readForm
+// folds the fullwidth reverse solidi to one, and hasDotSegment splits on
+// it, so a name drawn with the fullwidth solidi (the (^o^) smiley the
+// tests use) keeps working.
+func plainDecoded(p string) bool {
+	for i := 0; i < len(p); {
+		r, n := utf8.DecodeRuneInString(p[i:])
+		if r == utf8.RuneError && n == 1 && smuggles(p, i) {
+			return false
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+		i += n
+	}
+	return true
 }
 
 // hasDotSegment reports whether s, a form readForms already NFKC-read, has
