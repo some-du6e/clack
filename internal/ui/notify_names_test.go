@@ -11,6 +11,7 @@ package ui
 // group DM whose history it never loaded. Synthetic data only.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -322,5 +323,22 @@ func TestNotifyNamesTheDMPartner(t *testing.T) {
 	}
 	if !strings.Contains(n.Title, u.Name) || strings.Contains(n.Title, dm.User) {
 		t.Errorf("the toast's title %q doesn't name the DM's partner %q", n.Title, u.Name)
+	}
+}
+
+// A member the viewer hid (hidden_users) reads "Hidden user" in a toast's
+// body, with no @ and never their name or id, as Slack's userToText
+// writes them.
+func TestNotifyNamesAHiddenMember(t *testing.T) {
+	a, ca, fs, rec := privNoteAppFS(t)
+	conv, sender := groupDMFixture(t, ca)
+	hidden := strangers(t, ca, fs, conv, 1)[0]
+	fs.SetPrefs(map[string]any{"mute_sounds": true, "hidden_users": hidden})
+	if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	n := noteToast(t, a, ca, fs, rec, conv.ID, sender, "1762521000.000100", "<@"+hidden+"> joined the synthetic standup", 200*time.Millisecond)
+	if !strings.Contains(n.Body, "Hidden user joined the synthetic standup") || strings.Contains(n.Body, "Name hidden") || strings.Contains(n.Body, hidden) {
+		t.Errorf("the toast's body %q: want the hidden member as \"Hidden user\", no @, no id", n.Body)
 	}
 }
