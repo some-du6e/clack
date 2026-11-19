@@ -79,6 +79,11 @@ type Message struct {
 	// AssistantThread is an assistant thread root's assistant_app_thread
 	// (nil for other messages).
 	AssistantThread *slack.MessageAssistantThread
+	// Stopped is an agent reply whose stream the person stopped
+	// (ai_context.result_status "stopped_by_user": Slack's StoppedLabel);
+	// StoppedBy is ai_context.stopped_by_user_id.
+	Stopped   bool
+	StoppedBy string
 	// ThreadLastRead is a followed thread's last read reply (root
 	// messages; the subscription's last_read from conversations.replies,
 	// thread_marked and subscriptions.thread.mark): Slack's

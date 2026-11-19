@@ -64,6 +64,10 @@ type Message struct {
 	// (assistant_app_thread: {title, …}); the thread pane's header reads
 	// its title (srGL renderThreadTitle, Aa1F AssistantThreadTitleLabel).
 	AssistantAppThread *MessageAssistantThread `json:"assistant_app_thread,omitempty"`
+	// AIContext is an agent's reply's ai_context: result_status
+	// "stopped_by_user" when the person stopped its stream (Slack's
+	// getMessageLabelValues isStopped, stopped_by_user_id).
+	AIContext *MessageAIContext `json:"ai_context,omitempty"`
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`
@@ -634,4 +638,11 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		m.SubscribedSet = json.Unmarshal(aux.RawSub, &m.Subscribed) == nil
 	}
 	return nil
+}
+
+// MessageAIContext is a message's ai_context (the fields Slack's client
+// reads).
+type MessageAIContext struct {
+	ResultStatus    string `json:"result_status,omitempty"`
+	StoppedByUserID string `json:"stopped_by_user_id,omitempty"`
 }

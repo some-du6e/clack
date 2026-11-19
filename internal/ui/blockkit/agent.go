@@ -94,7 +94,88 @@ type AgentTask struct {
 	// plan_block_coding_enhancements a plan task shows its content
 	// without its title line.
 	HideTitle bool `json:"hide_title"`
+	// Icon is the task's icon ({"name": ...}, a Block Kit icon name): kept
+	// raw, so a stray shape costs only the icon, never the block
+	Icon json.RawMessage `json:"icon"`
 }
+
+// taskIconNames is Qw/u deriveIconName: the Block Kit icon names a task's
+// icon may use, as Slack's icon set names them.
+var taskIconNames = map[string]string{
+	"archive":     "archive",
+	"book":        "book",
+	"bookmark":    "bookmark",
+	"bot":         "bot",
+	"bug":         "bug",
+	"calendar":    "calendar",
+	"call":        "call",
+	"caret-left":  "caret-left",
+	"caret-right": "caret-right",
+	"check":       "check",
+	"clipboard":   "copy",
+	"code":        "code",
+	"comment":     "comment",
+	"compass":     "explore",
+	"copy":        "copy",
+	"cube":        "blocks",
+	"download":    "download",
+	"edit":        "edit",
+	"email":       "email",
+	"eye-closed":  "eye-closed",
+	"eye-open":    "eye-open",
+	"file":        "file",
+	"flag":        "flag",
+	"folder":      "folder",
+	"gear":        "settings",
+	"globe":       "globe",
+	"heart":       "heart",
+	"help":        "help",
+	"image":       "image",
+	"info":        "info",
+	"key":         "key",
+	"lightbulb":   "emoji-objects",
+	"link":        "link",
+	"map":         "map",
+	"mobile":      "mobile",
+	"new-window":  "new-window",
+	"pin":         "pin",
+	"plus":        "plus",
+	"refine":      "refine",
+	"refresh":     "refresh",
+	"rocket":      "rocket",
+	"save":        "save",
+	"screen":      "screen",
+	"share":       "share",
+	"sparkle":     "sparkles",
+	"star":        "star",
+	"star-filled": "star-filled",
+	"tag":         "tag",
+	"thumbs-down": "thumbs-down",
+	"thumbs-up":   "thumbs-up",
+	"trash":       "trash",
+	"upload":      "file-upload",
+	"user":        "user",
+	"warning":     "warning",
+}
+
+// taskIconName is the icon TaskIcon (IDPB) draws for t instead of its
+// status glyph: the task's own icon, when it has one Block Kit knows and
+// the task is neither in progress nor failed; "" otherwise.
+func taskIconName(t *AgentTask) string {
+	if len(t.Icon) == 0 || t.Status == StatusInProgress || t.Status == StatusError {
+		return ""
+	}
+	var ic struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(t.Icon, &ic) != nil {
+		return ""
+	}
+	return taskIconNames[ic.Name]
+}
+
+// agentIconHook, when set (tests), sees each task icon drawn, by name.
+var agentIconHook func(name string)
 
 func (t *AgentTask) hasContent() bool {
 	return isRichText(t.Details) || isRichText(t.Output) || len(t.Sources) > 0
@@ -925,7 +1006,7 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 		rrect(gtx, image.Rect(lx, y, lx+lineW, y+top), 0, pal.line)
 		iy := y + top + gap + dp(gtx, 2) // icon box: margin 2px 0, height 8
 		ic := iy + dp(gtx, 4)
-		at(gtx, image.Pt(0, ic-dp(gtx, 6)), func(gtx C) D { return stepIcon(gtx, pal, task.Status, gut) })
+		at(gtx, image.Pt(0, ic-dp(gtx, 6)), func(gtx C) D { return stepIcon(gtx, pal, task, gut) })
 		below := iy + dp(gtx, 8) + dp(gtx, 2) + gap
 		showLine := !last || (open && has)
 		if itemH < below-y {
@@ -942,8 +1023,24 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 // stepIcon is the secondary slim TaskIcon in a gutter-wide, 12px-tall
 // box: spinner in progress, warning on error, else the placeholder dot
 // (5px; content-sec when complete, tertiary when pending).
-func stepIcon(gtx C, pal agentPal, status string, gut int) D {
+func stepIcon(gtx C, pal agentPal, task *AgentTask, gut int) D {
 	h := dp(gtx, 12)
+	status := task.Status
+	if name := taskIconName(task); name != "" {
+		// .taskIconSlim in the step indicator: the content's 13px, centred
+		// on its 8px box (overflow visible); content-sec when complete,
+		// else the block's content-ter
+		c := pal.ter
+		if status == StatusComplete {
+			c = pal.sec
+		}
+		s := dp(gtx, 13)
+		at(gtx, image.Pt((gut-s)/2, (h-s)/2), func(gtx C) D { return icon(gtx, name, 13, c) })
+		if agentIconHook != nil {
+			agentIconHook(name)
+		}
+		return D{Size: image.Pt(gut, h)}
+	}
 	switch status {
 	case StatusInProgress:
 		at(gtx, image.Pt((gut-h)/2, 0), func(gtx C) D { agentSpinner(gtx, h, pal); return D{} })

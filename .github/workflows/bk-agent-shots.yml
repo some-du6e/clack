@@ -12,7 +12,8 @@ on:
     paths:
       - "internal/ui/blockkit/agent*.go"
       - "internal/richtext/agent*.go"
-      - "internal/ui/richview/agent.go"
+      - "internal/ui/richview/agent*.go"
+      - "internal/ui/messages/agent*.go"
       - "internal/core/agent*.go"
       - "internal/fakeslack/agents.go"
       - "internal/fakeslack/agent_tasks.go"
@@ -46,7 +47,7 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: agent tests
         run: |
-          go test -count=1 -run 'TestAgent|TestStringTitle' ./internal/richtext ./internal/core
+          go test -count=1 -run 'TestAgent|TestStringTitle' ./internal/richtext ./internal/core ./internal/ui/richview
           go test -count=1 -run 'TestAssistantStatusLine' ./internal/ui/composer
       - name: agent block screenshots (light and dark)
         env:
@@ -58,7 +59,7 @@ jobs:
         run: |
           mkdir -p "$BK_AGENT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestAgent' ./internal/ui/blockkit
-          xvfb-run -a go test -count=1 -v -run 'TestAppPlanRows' ./internal/ui/messages
+          xvfb-run -a go test -count=1 -v -run 'TestAppPlanRows|TestAgent' ./internal/ui/messages
           xvfb-run -a go test -count=1 -v -run 'TestAppPlanWindow|TestAgentTasks' ./internal/ui
           ls -l "$BK_AGENT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

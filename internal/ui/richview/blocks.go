@@ -197,21 +197,36 @@ func editedPlace(bs []richtext.Block) (in, after int) {
 	return -1, last
 }
 
+// hasLabel is whether the message ends in a label: "(edited)", or
+// StoppedLabel's "(stopped)" (insertMessageLabelIntoBlocks).
+func (l *lay) hasLabel() bool { return l.opts.Edited || l.opts.Stopped }
+
+// addEdited adds the message's label: "(edited)" (EditedLabel), or, on a
+// message that shows none, "(stopped)" (StoppedLabel, J825: the same
+// c-message__edited_label, c-message__stopped_label rule, white-space
+// nowrap, no tooltip).
 func (l *lay) addEdited() {
 	p := &l.st.Palette
 	k := faceKey{f: font.Font{Typeface: l.st.Face}, size: fixedPx(l.sp(13))}
 	sp := l.st.spaceOf(faceKey{f: font.Font{Typeface: l.st.Face}, size: fixedPx(l.sp(15))})
 	l.items = append(l.items, item{kind: itSpace, w: sp.adv, deco: -1, target: -1, p0: int32(len(l.d.plain)), p1: int32(len(l.d.plain)), part: l.curPart})
+	cls, txt := editedClass, i18n.T("message_kit", "(edited)")
+	if !l.opts.Edited {
+		cls, txt = stoppedClass, i18n.T("message_kit", "(stopped)")
+		if by := l.opts.StoppedBy; by != "" {
+			txt = i18n.T("message_kit", "(stopped by {name})", "name", by)
+		}
+	}
 	var pt uint8
 	if l.css != nil {
-		pp := l.ctr.with(editedClass)
+		pp := l.ctr.with(cls)
 		pt = l.partFor(&pp)
 		k = l.partFace(k, pt)
 	}
-	w := l.st.word(k, i18n.T("message_kit", "(edited)"))
+	w := l.st.word(k, txt)
 	n := int32(len(l.d.plain))
 	var tip int16
-	if l.opts.EditedTS != "" { // EditedLabel's Tooltip (delay 300): the edit's time
+	if l.opts.Edited && l.opts.EditedTS != "" { // EditedLabel's Tooltip (delay 300): the edit's time
 		l.d.tips = append(l.d.tips, editedTipKey)
 		tip = int16(len(l.d.tips))
 	}
@@ -286,7 +301,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
 	}
 	edited, editedAfter := -1, -1
-	if top && l.opts.Edited {
+	if top && l.hasLabel() {
 		edited, editedAfter = editedPlace(bs)
 	}
 	editedDone := false
@@ -424,7 +439,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			editedDone = true
 		}
 	}
-	if edited < 0 && !editedDone && top && l.opts.Edited {
+	if edited < 0 && !editedDone && top && l.hasLabel() {
 		// No text block to attach to: a line of its own.
 		fs := l.bodyStyle()
 		l.addEdited()

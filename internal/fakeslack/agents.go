@@ -118,6 +118,19 @@ func AgentFixtures() map[string][]any {
 			agentTask("t2", "Run the smoke tests", "in_progress", nil)}}},
 		"plan-grow-title": {map[string]any{"type": "plan", "block_id": "p6", "title": "Checking the release: the changelog, the smoke tests, the migration notes and the rollout plan for every region", "tasks": []any{
 			agentTask("t1", "Read the changelog", "in_progress", nil)}}},
+		// a plan whose tasks carry icons (TaskIcon draws a known one for a
+		// task neither running nor failed): a rocket, a bug, one running
+		// and one failed (their status wins), a lightbulb (Slack's
+		// emoji-objects), a name Block Kit doesn't know and a bare string
+		"plan-icons": {map[string]any{"type": "plan", "block_id": "p7", "title": "Shipping the release", "tasks": []any{
+			agentTask("t1", "Built the release", "complete", map[string]any{"icon": map[string]any{"name": "rocket"}}),
+			agentTask("t2", "Filed the regression", "pending", map[string]any{"icon": map[string]any{"name": "bug"}}),
+			agentTask("t3", "Checking the mirrors", "in_progress", map[string]any{"icon": map[string]any{"name": "globe"}}),
+			agentTask("t4", "Tagging failed", "error", map[string]any{"icon": map[string]any{"name": "flag"}}),
+			agentTask("t5", "Wrote the notes", "complete", map[string]any{"icon": map[string]any{"name": "lightbulb"}}),
+			agentTask("t6", "Cleaned up", "complete", map[string]any{"icon": map[string]any{"name": "not-an-icon"}}),
+			agentTask("t7", "Shared it", "complete", map[string]any{"icon": "share"}),
+		}}},
 		// an MCP task's card while it runs, and once it is done (same
 		// block: the stream's update)
 		"task-card-mcp-running": {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "in_progress", "output": agentRich("Reading the orders table.")}},
@@ -142,6 +155,16 @@ func AgentMessage(ts string, blocks []any, streaming string) map[string]any {
 	if streaming != "" {
 		m["streaming_state"] = streaming
 	}
+	return m
+}
+
+// AgentStoppedReply is the agent's reply whose stream the viewer stopped:
+// ai_context result_status stopped_by_user (Slack's StoppedLabel).
+func AgentStoppedReply(ts string) map[string]any {
+	m := AgentMessage(ts, []any{map[string]any{"type": "rich_text", "block_id": "sr", "elements": []any{
+		map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": "Here is the start of an answer"}}}}}},
+		"completed")
+	m["ai_context"] = map[string]any{"result_status": "stopped_by_user", "stopped_by_user_id": SelfID}
 	return m
 }
 

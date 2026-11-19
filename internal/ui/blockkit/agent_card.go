@@ -246,7 +246,7 @@ func (me *Message) cardPlanTasks(gtx C, st *agentState, cp cardPal, b *AgentBloc
 		lines := wrapWeight(gtx, th, 15, theme.Bold, task.Title, max(w-tx-dp(gtx, 2)-dp(gtx, 9), 1))
 		n := max(len(lines), 1)
 		head := max(dp(gtx, 2)+dp(gtx, 20)+dp(gtx, 2), dp(gtx, 2)+n*lh+dp(gtx, 2))
-		at(gtx, image.Pt(x, iy+dp(gtx, 2)), func(gtx C) D { return me.cardTaskIcon(gtx, cp, task.Status, enh) })
+		at(gtx, image.Pt(x, iy+dp(gtx, 2)), func(gtx C) D { return me.cardTaskIcon(gtx, cp, task, enh) })
 		ty := iy + dp(gtx, 2)
 		for _, ln := range lines {
 			at(gtx, image.Pt(tx, ty), func(gtx C) D {
@@ -265,8 +265,17 @@ func (me *Message) cardPlanTasks(gtx C, st *agentState, cp cardPal, b *AgentBloc
 // box: hourglass, ai-sparkle-filled (shimmering, theme-base-pry, until
 // plan_block_coding_enhancements), check-filled, warning-filled
 // (content-sec), 15px (size inherit).
-func (me *Message) cardTaskIcon(gtx C, cp cardPal, status string, enh bool) D {
+func (me *Message) cardTaskIcon(gtx C, cp cardPal, task *AgentTask, enh bool) D {
 	box := dp(gtx, 20)
+	status := task.Status
+	if n := taskIconName(task); n != "" { // the task's own icon, in the header's colour
+		s := dp(gtx, 15)
+		at(gtx, image.Pt((box-s)/2, (box-s)/2), func(gtx C) D { return icon(gtx, n, 15, cp.pry) })
+		if agentIconHook != nil {
+			agentIconHook(n)
+		}
+		return D{Size: image.Pt(box, box)}
+	}
 	name, col := "check-filled", cp.pry
 	switch status {
 	case StatusPending:
