@@ -257,6 +257,7 @@ func filesEnvWith(t *testing.T, size image.Point, before func(*fakeslack.Server)
 // and the slider's give exactly media_muted=true, media_muted=false,
 // media_volume=0.5, and the mounted player follows each.
 func TestVideoPrefsNoUnpromptedWrites(t *testing.T) {
+	keepIdlePlayers(t) // paused a while: the player checked is the one mounted
 	fakeVideos(t)
 	var mu sync.Mutex
 	var sets []string

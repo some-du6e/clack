@@ -7,7 +7,11 @@ package ui
 // slider opened the moment the pointer reached the volume control, and
 // State had no VolumeOpen: the hovered controls' slider stands in.
 
-import "github.com/some-du6e/clack/internal/ui/videoplayer"
+import (
+	"testing"
+
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
+)
 
 var redHudPings int64
 
@@ -23,3 +27,6 @@ func playerFrameReady(e *perfEnv) func() {
 func hudPings(e *perfEnv) int64 { return redHudPings }
 
 func volumeOpen(st videoplayer.State) bool { return st.Hover && !st.Slider.Empty() }
+
+// no idle release there
+func keepIdlePlayers(*testing.T) {}

@@ -69,6 +69,14 @@ const (
 	ErrSrcNotSupported = 4 // MEDIA_ERR_SRC_NOT_SUPPORTED: also what Chromium gives a src whose fetch failed before the metadata
 )
 
+// Snapshotter is optional on a Player: the frame it shows now, read back
+// at the size it draws it (sRGB bytes, opaque), so a tile that lets an
+// idle player go keeps showing it (Chromium's idle suspend keeps the last
+// frame on screen).
+type Snapshotter interface {
+	Snapshot() (*image.RGBA, bool)
+}
+
 // State is a player's state now, as an HTMLMediaElement's attributes.
 type State struct {
 	Pos, Duration time.Duration

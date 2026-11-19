@@ -256,6 +256,7 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 			}
 			t.press = zNone
 		}
+		c.idleLocked(t) // a scrub keeps it mounted; its end may leave it idle
 		btn, win := t.z.more.Add(s.At), image.Rectangle{}
 		c.mu.Unlock()
 		if more && r.h != nil { // VideoActionsButton's menu
@@ -403,6 +404,7 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	xs, noVol := w <= 154, w <= 138
 	c.mu.Lock()
 	h := t.h
+	still, stillOK := t.still, t.stillOK
 	hot := t.hover || t.scrub || t.vol || t.menuOpen
 	playing, loading, pillOn := t.playing, t.loading, t.pillShownLocked()
 	label := pillTime(t, hot)
@@ -423,13 +425,21 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	muted, vol := c.muted, c.vol
 	c.mu.Unlock()
 
-	if h != nil {
+	if h != nil || stillOK {
 		ps := poster.Size()
-		im := h.Op(paint.ImageOp{}, ps) // the poster underneath shows until a frame does
 		cl := clip.RRect{Rect: poster, NW: s.Radii[0], NE: s.Radii[1], SE: s.Radii[2], SW: s.Radii[3]}.Push(gtx.Ops)
 		off := op.Offset(poster.Min).Push(gtx.Ops)
-		im.Add(gtx.Ops)
-		paint.PaintOp{}.Add(gtx.Ops)
+		// the frame a player let go of idle showed, until a new one's first
+		if is := still.Size(); stillOK && is.X > 0 && is.Y > 0 {
+			sc := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(float32(ps.X)/float32(is.X), float32(ps.Y)/float32(is.Y)))).Push(gtx.Ops)
+			still.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			sc.Pop()
+		}
+		if h != nil {
+			h.Op(paint.ImageOp{}, ps).Add(gtx.Ops) // the poster underneath shows until a frame does
+			paint.PaintOp{}.Add(gtx.Ops)
+		}
 		off.Pop()
 		cl.Pop()
 		// the tile's inset outline, which Slack draws over the video too

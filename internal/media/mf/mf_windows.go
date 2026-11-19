@@ -328,6 +328,33 @@ func (p *player) Op(still paint.ImageOp, size image.Point) paint.ImageOp {
 	return p.frames.Op(still, size)
 }
 
+// Snapshot is the frame shown now (media.Snapshotter): the ring's newest
+// texture read back on the media thread, at the ring's size.
+func (p *player) Snapshot() (*image.RGBA, bool) {
+	type shot struct {
+		img *image.RGBA
+		ok  bool
+	}
+	ch := make(chan shot, 1)
+	p.post(func() {
+		if p.c == nil || !p.ringOK || p.ringW == 0 || p.ringH == 0 {
+			ch <- shot{}
+			return
+		}
+		img := image.NewRGBA(image.Rect(0, 0, int(p.ringW), int(p.ringH)))
+		r := C.clack_me_snapshot(p.c, (*C.uint8_t)(unsafe.Pointer(&img.Pix[0])), C.size_t(len(img.Pix)), C.uint32_t(p.ringW), C.uint32_t(p.ringH))
+		ch <- shot{img, r == 1}
+	})
+	select {
+	case s := <-ch:
+		return s.img, s.ok
+	case <-p.done:
+		return nil, false
+	case <-time.After(2 * time.Second):
+		return nil, false
+	}
+}
+
 func (p *player) Stats() media.Stats {
 	st := p.BaseStats(p.rs)
 	p.askMu.Lock()

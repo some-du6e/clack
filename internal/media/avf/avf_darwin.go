@@ -239,6 +239,26 @@ func (p *player) Texture(dev media.Device) (media.Texture, bool) {
 	return media.Texture{Handle: uintptr(tex), Key: uint64(key)}, true
 }
 
+// Snapshot is the frame shown now (media.Snapshotter): the newest pixel
+// buffer read back, at its size.
+func (p *player) Snapshot() (*image.RGBA, bool) {
+	p.objMu.RLock()
+	defer p.objMu.RUnlock()
+	if p.obj == nil {
+		return nil, false
+	}
+	var w, h C.int
+	C.clack_avf_snapshot(p.obj, nil, 0, &w, &h)
+	if w <= 0 || h <= 0 {
+		return nil, false
+	}
+	img := image.NewRGBA(image.Rect(0, 0, int(w), int(h)))
+	if C.clack_avf_snapshot(p.obj, (*C.uint8_t)(unsafe.Pointer(&img.Pix[0])), C.size_t(len(img.Pix)), &w, &h) != 1 {
+		return nil, false // a frame of another size came between
+	}
+	return img, true
+}
+
 func (p *player) Close() {
 	p.objMu.Lock()
 	if p.closed {

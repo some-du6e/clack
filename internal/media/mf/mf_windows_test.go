@@ -437,6 +437,34 @@ func TestMFPausedFrameSurvivesResize(t *testing.T) {
 	}
 }
 
+// Paused, the frame it shows reads back (media.Snapshotter: a tile keeps
+// it when its idle player lets go, Chromium's idle suspend): light grey
+// at 1.5 s, at the ring's size.
+func TestMFSnapshot(t *testing.T) {
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
+	r.draw()
+	r.p.Play()
+	r.wait(media.Playing, 10*time.Second)
+	r.p.Pause()
+	r.wait(media.Pause, 5*time.Second)
+	r.p.Seek(1500 * time.Millisecond)
+	r.wait(media.Seeked, 5*time.Second)
+	for t0 := time.Now(); time.Since(t0) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+		if mediatest.Matches(1500*time.Millisecond, r.draw()) {
+			break
+		}
+	}
+	img, ok := r.p.Snapshot()
+	if !ok {
+		t.Fatal("no snapshot of the paused frame")
+	}
+	b := img.Bounds()
+	if c := img.RGBAAt(b.Dx()/2, b.Dy()/2); !mediatest.Matches(1500*time.Millisecond, c) {
+		t.Errorf("the snapshot's centre is %v, want %s", c, mediatest.Want(1500*time.Millisecond))
+	}
+	t.Logf("snapshot %v", b)
+}
+
 // A file with its moov after the mdat and 4 MB before it plays; the
 // demuxer's reads get to the moov. (The 25 KB fixture alone came in one
 // read at 0.)

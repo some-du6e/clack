@@ -206,6 +206,22 @@ func (p *fakePlayer) Op(still paint.ImageOp, size image.Point) paint.ImageOp {
 	return liveOp(f, still)
 }
 
+// Snapshot is the frame shown now (Snapshotter): the frame's colour at
+// the size Op last drew.
+func (p *fakePlayer) Snapshot() (*image.RGBA, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.shown || p.last == nil {
+		return nil, false
+	}
+	img := image.NewRGBA(image.Rectangle{Max: p.last.size})
+	c := color.RGBA{R: p.color.R, G: p.color.G, B: p.color.B, A: 255}
+	for i := 0; i < len(img.Pix); i += 4 {
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = c.R, c.G, c.B, c.A
+	}
+	return img, true
+}
+
 // FakeImage is the image a fake player's live op hands the GPU now (tests
 // that draw nothing: the poster until its first frame, a frame's colour
 // after), as the GPU's ask.

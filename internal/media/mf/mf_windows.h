@@ -58,6 +58,7 @@ uintptr_t clack_me_gio_ref(clackMF *m);
 void clack_me_dev_release(uintptr_t dev);
 int32_t clack_me_bind(clackMF *m, uintptr_t gio, clackMFInfo *info, uintptr_t *newDev);
 void clack_me_bind_set(clackMF *m, uintptr_t dev);
+int clack_me_snapshot(clackMF *m, uint8_t *dst, size_t cap, uint32_t w, uint32_t h);
 int32_t clack_me_open(clackMF *m, int64_t total, int seekable, const uint16_t *url, uint32_t format, uint32_t flags, uint32_t gen, clackMFInfo *info);
 void clack_me_close_engine(clackMF *m);
 int32_t clack_me_ring(clackMF *m, uint32_t w, uint32_t h, clackMFInfo *info);

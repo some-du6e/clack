@@ -6,6 +6,7 @@
 #ifndef CLACK_AVF_H
 #define CLACK_AVF_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 // clackAVState is the player's state, read on its queue.
@@ -47,6 +48,7 @@ void clack_avf_rate(void *p, double r);
 void clack_avf_drawsize(void *p, int w, int h);
 void clack_avf_asked(void *p);
 int clack_avf_ask(void *p, uintptr_t device, uintptr_t *tex, uint64_t *key);
+int clack_avf_snapshot(void *p, uint8_t *dst, size_t cap, int *w, int *h);
 void clack_avf_respond(void *p, uint64_t req, const void *bytes, int n);
 void clack_avf_finish(void *p, uint64_t req, int failed);
 void clack_avf_counts(void *p, int64_t *pulls, int64_t *frames, uint32_t *w, uint32_t *h);

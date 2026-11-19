@@ -19,9 +19,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/media"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -84,6 +86,25 @@ type Expander interface {
 // unmountAfter is how long a player paused and not laid out lives: then
 // it closes, as React unmounting its row does (Clack's stand-in).
 var unmountAfter = 10 * time.Second
+
+// idleAfter is how long a paused or ended player stays mounted while its
+// tile is laid out (in ns; the players' goroutines read it): then it lets
+// go of its pipeline (Media Foundation's engine and its own device, the
+// decoder's surfaces, AVPlayer, the 16 MB cache) and the tile keeps the
+// frame it showed, as Chromium's idle suspend does after its delegate's
+// 15 s idle timeout. The next play or scrub mounts it again from the
+// progress. Only a backend that reads its frame back (media.Snapshotter)
+// lets go.
+var idleAfter atomic.Int64
+
+func init() { idleAfter.Store(int64(15 * time.Second)) }
+
+// SetIdleAfter makes the idle release come d after a pause, until the undo
+// it returns (tests).
+func SetIdleAfter(d time.Duration) (undo func()) {
+	prev := idleAfter.Swap(int64(d))
+	return func() { idleAfter.Store(prev) }
+}
 
 // dockBelow is useScrollDockTrigger's (YPBt): a playing video scrolled
 // under 10% visible docks into the mini player. Until Clack has one, it
@@ -183,15 +204,20 @@ type tile struct {
 	elapsed time.Duration
 	dur     time.Duration // the player's duration, 0 until its metadata
 	// the overlay's (input, and the zones the last layout drew)
-	hover    bool
-	ptr      f32.Point
-	press    zone
-	scrub    bool        // the scrubber is dragged
-	resume   bool        // the video played when the scrub began
-	vol      bool        // the volume slider is dragged
-	volOver  bool        // the pointer is on the volume control: its slider shows
-	volWait  *time.Timer // the popover's .16 s delay, from the pointer reaching the mute
-	menuOpen bool        // its More actions menu is open: the overlay stays active
+	hover   bool
+	ptr     f32.Point
+	press   zone
+	scrub   bool        // the scrubber is dragged
+	resume  bool        // the video played when the scrub began
+	vol     bool        // the volume slider is dragged
+	volOver bool        // the pointer is on the volume control: its slider shows
+	volWait *time.Timer // the popover's .16 s delay, from the pointer reaching the mute
+	idle    *time.Timer // idleAfter's, while it's mounted, paused and laid out
+	// still is the frame of a player let go of idle (stillOK), drawn until
+	// a new player's first frame
+	still    paint.ImageOp
+	stillOK  bool
+	menuOpen bool // its More actions menu is open: the overlay stays active
 	z        zones
 	// the frame it was last laid out in, and the close waiting for it
 	laid    uint64
@@ -393,6 +419,10 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 		t.errCode, t.loading, repaint = st.Err, false, true
 	case media.LoadedMetadata, media.DurationChange, media.Seeked:
 		repaint = true
+	case media.FirstFrame: // a new player's own frame: the kept one goes
+		if t.stillOK {
+			t.still, t.stillOK, repaint = paint.ImageOp{}, false, true
+		}
 	}
 	was := t.elapsed
 	if !t.scrub {
@@ -405,8 +435,57 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 	if !t.scrub && !t.ended && (t.elapsed != was || ev.Kind == media.Play || ev.Kind == media.Pause) {
 		c.reportLocked(t, false, 0)
 	}
+	c.idleLocked(t)
 	c.mu.Unlock()
 	if repaint && c.env.Repaint != nil {
+		c.env.Repaint()
+	}
+}
+
+// idleLocked arms the idle release while t's player is mounted and
+// nothing plays, loads or scrubs it, and disarms it otherwise.
+func (c *Controller) idleLocked(t *tile) {
+	idle := t.h != nil && !t.viewer && !t.playing && !t.loading && !t.scrub && t.errCode == 0
+	if !idle {
+		if t.idle != nil {
+			t.idle.Stop()
+			t.idle = nil
+		}
+		return
+	}
+	if _, ok := t.h.Player.(media.Snapshotter); !ok || t.idle != nil {
+		return
+	}
+	h := t.h
+	t.idle = time.AfterFunc(time.Duration(idleAfter.Load()), func() { c.releaseIdle(t, h) })
+}
+
+// releaseIdle lets go of t's player h once it has been idle idleAfter,
+// keeping the frame it shows on the tile: the backend reads it back first,
+// without the controller's lock (on its media thread).
+func (c *Controller) releaseIdle(t *tile, h *media.Handle) {
+	idle := func() bool { return t.h == h && !t.playing && !t.loading && !t.scrub }
+	c.mu.Lock()
+	ok := idle()
+	c.mu.Unlock()
+	if !ok {
+		return
+	}
+	img, got := h.Player.(media.Snapshotter).Snapshot()
+	c.mu.Lock()
+	if !idle() {
+		c.mu.Unlock()
+		return
+	}
+	t.idle = nil
+	if !got {
+		c.mu.Unlock()
+		return // no frame to keep: it stays mounted
+	}
+	t.still, t.stillOK = paint.NewImageOp(img), true
+	c.closeLocked(t)
+	c.mu.Unlock()
+	if c.env.Repaint != nil {
 		c.env.Repaint()
 	}
 }
@@ -417,6 +496,10 @@ func (c *Controller) closeLocked(t *tile) {
 	if t.unmount != nil {
 		t.unmount.Stop()
 		t.unmount = nil
+	}
+	if t.idle != nil {
+		t.idle.Stop()
+		t.idle = nil
 	}
 	if t.h == nil {
 		return
@@ -660,6 +743,9 @@ type State struct {
 	// Pill is whether the pill shows (paused, the overlay active, or
 	// loading)
 	Pill bool
+	// Still is whether the tile shows the frame of a player it let go of
+	// idle (SetIdleAfter)
+	Still bool
 }
 
 // Click is the tile's click (fIJO's tE), as a press and release on it
@@ -685,7 +771,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
 		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
-		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked()}
+		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked(), Still: t.stillOK}
 	if t.h != nil {
 		st.Player = t.h
 	}

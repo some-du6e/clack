@@ -808,6 +808,46 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 	[self makeOutput];
 	[self updateTimers];
 }
+// snapshot copies the newest frame's pixels (32BGRA) into dst as RGBA,
+// opaque, when dst holds them: 1; else 0, *pw and *ph its size (0 with no
+// frame). Any thread: the frame is retained under the lock.
+- (int)snapshot:(uint8_t *)dst cap:(size_t)cap w:(int *)pw h:(int *)ph {
+	*pw = 0;
+	*ph = 0;
+	os_unfair_lock_lock(&_lock);
+	CVPixelBufferRef pb = _newest.pb;
+	if (pb != NULL) {
+		CVPixelBufferRetain(pb);
+	}
+	os_unfair_lock_unlock(&_lock);
+	if (pb == NULL) {
+		return 0;
+	}
+	size_t w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb);
+	*pw = (int)w;
+	*ph = (int)h;
+	int ok = 0;
+	if (dst != NULL && w * h * 4 <= cap && CVPixelBufferLockBaseAddress(pb, kCVPixelBufferLock_ReadOnly) == kCVReturnSuccess) {
+		const uint8_t *base = CVPixelBufferGetBaseAddress(pb);
+		size_t stride = CVPixelBufferGetBytesPerRow(pb);
+		if (base != NULL) {
+			for (size_t y = 0; y < h; y++) {
+				const uint8_t *s = base + y * stride;
+				uint8_t *o = dst + y * w * 4;
+				for (size_t x = 0; x < w; x++, s += 4, o += 4) {
+					o[0] = s[2];
+					o[1] = s[1];
+					o[2] = s[0];
+					o[3] = 255;
+				}
+			}
+			ok = 1;
+		}
+		CVPixelBufferUnlockBaseAddress(pb, kCVPixelBufferLock_ReadOnly);
+	}
+	CVPixelBufferRelease(pb);
+	return ok;
+}
 @end
 
 static ClackAVPlayer *P(void *p) { return (__bridge ClackAVPlayer *)p; }
@@ -842,6 +882,7 @@ void clack_avf_drawsize(void *p, int w, int h) { ON_QUEUE(p, [o_ setDrawW:w h:h]
 void clack_avf_asked(void *p) { ON_QUEUE(p, [o_ updateTimers]); }
 
 int clack_avf_ask(void *p, uintptr_t device, uintptr_t *tex, uint64_t *key) { return [P(p) askDevice:device tex:tex key:key]; }
+int clack_avf_snapshot(void *p, uint8_t *dst, size_t cap, int *w, int *h) { return [P(p) snapshot:dst cap:cap w:w h:h]; }
 
 void clack_avf_respond(void *p, uint64_t req, const void *bytes, int n) {
 	@autoreleasepool {

@@ -1240,6 +1240,60 @@ uintptr_t clack_me_ask(clackMF *m, uintptr_t devp, uint64_t *key, int *status, c
 	return (uintptr_t)m->srv;
 }
 
+// clack_me_snapshot copies the ring's newest frame, w×h (the ring's
+// size), into dst as RGBA, opaque: 1, or 0 with no frame or on a failure.
+// The slot is read under its keyed mutex as the ring left it (published,
+// key 1, or taken back by Gio's ask, 0), and released the same. On the
+// media thread.
+int clack_me_snapshot(clackMF *m, uint8_t *dst, size_t cap, uint32_t w, uint32_t h) {
+	int i = m->newest;
+	if (m->dev == NULL || i < 0 || m->slot[i].tex == NULL || m->slot[i].mx == NULL || w != m->w || h != m->h_ || (size_t)w * h * 4 > cap) {
+		return 0;
+	}
+	D3D11_TEXTURE2D_DESC d;
+	ID3D11Texture2D_GetDesc(m->slot[i].tex, &d);
+	d.Usage = D3D11_USAGE_STAGING;
+	d.BindFlags = 0;
+	d.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	d.MiscFlags = 0;
+	ID3D11Texture2D *st = NULL;
+	if (FAILED(ID3D11Device_CreateTexture2D(m->dev, &d, NULL, &st))) {
+		return 0;
+	}
+	ID3D11DeviceContext *ctx = NULL;
+	ID3D11Device_GetImmediateContext(m->dev, &ctx);
+	UINT64 k = 1;
+	HRESULT hr = IDXGIKeyedMutex_AcquireSync(m->slot[i].mx, 1, 100);
+	if (hr != S_OK) {
+		k = 0;
+		hr = IDXGIKeyedMutex_AcquireSync(m->slot[i].mx, 0, 100);
+	}
+	int ok = 0;
+	if (hr == S_OK) {
+		ID3D11DeviceContext_CopyResource(ctx, (ID3D11Resource *)st, (ID3D11Resource *)m->slot[i].tex);
+		IDXGIKeyedMutex_ReleaseSync(m->slot[i].mx, k);
+		D3D11_MAPPED_SUBRESOURCE map;
+		if (SUCCEEDED(ID3D11DeviceContext_Map(ctx, (ID3D11Resource *)st, 0, D3D11_MAP_READ, 0, &map))) {
+			int bgra = m->format == DXGI_FORMAT_B8G8R8A8_UNORM;
+			for (uint32_t y = 0; y < h; y++) {
+				const uint8_t *s = (const uint8_t *)map.pData + (size_t)y * map.RowPitch;
+				uint8_t *o = dst + (size_t)y * w * 4;
+				for (uint32_t x = 0; x < w; x++, s += 4, o += 4) {
+					o[0] = bgra ? s[2] : s[0];
+					o[1] = s[1];
+					o[2] = bgra ? s[0] : s[2];
+					o[3] = 255;
+				}
+			}
+			ID3D11DeviceContext_Unmap(ctx, (ID3D11Resource *)st, 0);
+			ok = 1;
+		}
+	}
+	ID3D11DeviceContext_Release(ctx);
+	ID3D11Texture2D_Release(st);
+	return ok;
+}
+
 void clack_me_counts(clackMF *m, int64_t *skips, int64_t *timeouts, int64_t *copies) {
 	*skips = InterlockedCompareExchange64(&m->skips, 0, 0);
 	*timeouts = InterlockedCompareExchange64(&m->timeouts, 0, 0);
