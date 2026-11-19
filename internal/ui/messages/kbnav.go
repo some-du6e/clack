@@ -19,14 +19,24 @@ type kbNav struct {
 	ts       string // the selected message
 	focusReq bool
 	want     string // FocusMessage's message, until the list has it
+	newest   bool   // focusNewest left a window: select the newest message once it's drawn
 	leave    func() // back to the composer
 	// page: a PageUp/PageDown/Home/End scrolled the list; the next layout
 	// selects the first (PageUp, Home) or last message in view (pageKey)
 	page key.Name
 }
 
-// focusNewest selects the newest message and takes keyboard focus.
+// focusNewest selects the newest message and takes keyboard focus. A
+// window short of the newest messages goes to them first, as Slack's
+// scrollToMostRecentMessage(true) does (jumpToTimestamp({ts: ""}) with
+// !reachedEnd, AEjl), and its onJump focuses the last row once they're
+// drawn (kbWant).
 func (s *listState) focusNewest() bool {
+	if s.win != nil && s.snap.newestMissing {
+		s.jumpToLatest()
+		s.kb.want, s.kb.newest = "", true
+		return true
+	}
 	for i := len(s.items) - 1; i >= 0; i-- {
 		if s.items[i].kind == itMsg {
 			s.kb.ts, s.kb.focusReq = s.items[i].key, true
@@ -181,6 +191,17 @@ func (s *listState) kbLeave(gtx layout.Context) {
 // history holds it and pendingJump is spent); a message the jump gave up
 // on is dropped.
 func (s *listState) kbWant() {
+	if s.kb.newest {
+		// the newest messages, rebuilt from the conversation's model
+		if !s.snap.loaded || s.win != nil || s.built != s.snap.rev {
+			return
+		}
+		s.kb.newest = false
+		if i := s.newestItem(); i >= 0 {
+			s.kb.ts, s.kb.focusReq = s.items[i].key, true
+		}
+		return
+	}
 	w := s.kb.want
 	if w == "" || !s.snap.loaded || s.pendingJump != "" {
 		return

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -155,6 +156,17 @@ func (s *Server) PostQuiet(ch, user, text string) (ts string, ev map[string]any)
 	s.hist[ch] = append([]slack.Message{m}, h...)
 	return ts, map[string]any{"type": "message", "channel": ch, "user": user, "text": text, "ts": ts, "event_ts": ts,
 		"client_msg_id": m.ClientMsgID}
+}
+
+// PostQuietAt is PostQuiet at ts, where the history puts it (newest
+// first): a history whose messages are minutes apart, for date jumps.
+func (s *Server) PostQuietAt(ch, user, text, ts string) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	h := s.histLocked(ch)
+	i := sort.Search(len(h), func(i int) bool { return !slackTSLess(ts, h[i].TS) })
+	m := slack.Message{Type: "message", TS: ts, User: user, Text: text, ClientMsgID: "quiet-" + ts}
+	s.hist[ch] = append(h[:i:i], append([]slack.Message{m}, h[i:]...)...)
 }
 
 // PostFilesQuiet is PostQuiet for a message sharing files (complete file

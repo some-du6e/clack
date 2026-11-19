@@ -247,6 +247,7 @@ type listState struct {
 	// the floating banners and the day pills' menu (banners.go)
 	ub          unreadBannerState
 	pendingDate time.Time                    // jumpToTimestamp's time, paged back to
+	dateFor     string                       // the date jump's ts a window was opened around (pendingDateJump)
 	dayReq      *dayMenuReq                  // a day pill clicked this frame
 	dayBtns     map[string]*widget.Clickable // the dividers' pills, by day
 	stickyDay   widget.Clickable             // the sticky pill
@@ -2249,7 +2250,9 @@ func (s *listState) scrollTo(ts string) {
 	for i, it := range s.items {
 		if it.kind == itMsg && it.key == ts {
 			if i == s.newestItem() {
-				s.list.Position = layout.Position{} // newest: stay anchored at the bottom
+				// newest: the end, which a list showing the newest messages
+				// keeps to (a window keeps to none, and Position{} is its top)
+				s.toEnd()
 				return
 			}
 			if i >= s.visible[0] && i < s.visible[1]-1 {

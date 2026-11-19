@@ -483,14 +483,22 @@ func (s *listState) openDayMenu(h Host, req dayMenuReq, now time.Time, gtx layou
 	h.ShowOverlay(popups.NewMenuOpts(h, items, popups.MenuOpts{Anchor: anchor, Side: popups.Below}))
 }
 
-// jumpToTime is jumpToTimestamp: the zero time is the most recent
+// jumpToTime is MessageList.jumpToDate: the zero time is the most recent
 // messages, else the first message at or after t, paging back until it
-// is loaded (layoutList's pendingDate).
+// is loaded (layoutList's pendingDate). In a window short of the newest
+// messages, the zero time is jumpToTimestamp({ts: ""}) (jumpToDate(null)
+// takes the last timestamp only with reachedEnd, AEjl): the newest
+// messages, where the window's end was its top (Position{}).
 func (s *listState) jumpToTime(h Host, t time.Time) {
-	if t.IsZero() {
-		s.list.Position = layout.Position{}
+	s.dateFor = ""
+	switch {
+	case t.IsZero() && s.win != nil && s.snap.newestMissing:
+		s.jumpToLatest()
 		s.pendingDate = time.Time{}
-	} else {
+	case t.IsZero():
+		s.toEnd()
+		s.pendingDate = time.Time{}
+	default:
 		s.pendingDate, s.jumpPages = t, 0
 	}
 	h.Invalidate()
@@ -498,11 +506,28 @@ func (s *listState) jumpToTime(h Host, t time.Time) {
 
 // pendingDateJump pages back until a message at or before pendingDate is
 // loaded (or history ends), then shows the first message at or after it.
+// A window takes a date it doesn't reach the way jumpToDate's
+// jumpToTimestamp at the date does (AEjl): the conversation's newest
+// messages when they hold it, else the window around it.
 func (s *listState) pendingDateJump(now time.Time) {
 	if s.pendingDate.IsZero() || s.thread || !s.snap.loaded || s.snap.older {
 		return
 	}
 	msgs := s.snap.msgs
+	if n := len(msgs); s.win != nil && n > 0 && s.snap.around == "" && !s.snap.newer {
+		ts := strconv.FormatInt(s.pendingDate.Unix(), 10) + ".000000"
+		before := s.snap.hasMore && tsLess(ts, msgs[0].m.TS)
+		after := s.snap.newestMissing && tsLess(msgs[n-1].m.TS, ts)
+		switch {
+		case after && s.newestHold(ts):
+			s.leaveWindow() // the next frame finds it in the newest messages
+			return
+		case (before || after) && s.dateFor != ts:
+			s.dateFor = ts
+			s.openWindow(ts)
+			return
+		}
+	}
 	if len(msgs) > 0 && s.snap.hasMore && tsTime(msgs[0].m.TS).After(s.pendingDate) && s.jumpPages < 20 {
 		if now.Sub(s.lastOlder) > 300*time.Millisecond && s.hb.loadOlder(s.m) {
 			s.jumpPages++
