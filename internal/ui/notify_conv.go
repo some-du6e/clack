@@ -185,12 +185,12 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 	return out
 }
 
-// notePeople are the people a notification names that the store doesn't
+// noteMembers are the people a notification names that the store doesn't
 // hold: its sender and the members its text mentions (at most
 // noteResolveMax). Core announces a message the moment it arrives, its
 // rows asking for the people they draw; the notification waits for them,
 // as Slack's showNotification waits for ensureModelsArePresent.
-func (b *backend) notePeople(m *core.Message) []string {
+func (b *backend) noteMembers(m *core.Message) []string {
 	if b.core == nil || m == nil {
 		return nil
 	}
