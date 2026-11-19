@@ -239,13 +239,14 @@ func (v *ChannelView) Entered() {
 	if app == nil || !app.Count(v.ch).Unread {
 		return // where it was left: the row on the anchor line, the window too
 	}
-	// no scrollmark: it opens as a conversation does, at its newest
-	// messages (the unread line when that's far up)
+	// no scrollmark (determineTimestamps clears an unread conversation's,
+	// client-boot eCxs) and, with Mark as read's default prefs, no
+	// startTs: it opens at its newest messages, at their end
 	s := v.s
 	s.leaveWindow()
 	s.pendingJump, s.aroundFor, s.place, s.jumpLazy = "", "", jumpPlace{}, false
 	s.list.Position = layout.Position{}
-	s.positioned = false
+	s.positioned = true
 	v.h.Invalidate()
 }
 

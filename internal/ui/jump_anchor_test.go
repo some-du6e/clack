@@ -784,6 +784,61 @@ func TestEnteringWithUnreadsShowsNewest(t *testing.T) {
 	}
 }
 
+// TestUnreadConversationOpensAtNewest: with Mark as read's default
+// prefs ("Start me at the newest message, but leave unseen messages
+// unread": mark_msgs_read_immediately and start_scroll_at_oldest off) a
+// conversation with unread messages opens at its newest, however many
+// are unread, and so does entering it again from elsewhere.
+// determineTimestamps clears an unread conversation's scrollmark and adds
+// no startTs (client-boot eCxs:1838-1863; dYJr gives one only with both
+// prefs), and the pane anchors at the end (dxC+ getOffsetForKey(null));
+// the unread banner jumps up to the "New" line. Clack opened at the "New"
+// line once more than 12 items followed it (a rule from the first WIP).
+func TestUnreadConversationOpensAtNewest(t *testing.T) {
+	sz := fakeslack.Small
+	sz.Unreads = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	ch := fakeslack.UnreadsLaunchID // 31 unread messages
+	newest, _ := fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "#unreads-launch", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return len(rows) > 0 })
+	e.settle(800 * time.Millisecond)
+	if cv := e.channelView(ch); cv == nil || !cv.AtBottom() || !drewRow(e.paneRows("", ch, ""), newest.TS) {
+		t.Fatalf("#unreads-launch, 31 unread, didn't open at its newest message: %s", drawnState(e.paneRows("", ch, "")))
+	}
+	// read back a few screens, look elsewhere, come back: still unread
+	for k := 0; k < 6; k++ {
+		e.scroll(e.listPoint(), -400)
+		e.frame()
+	}
+	e.settle(300 * time.Millisecond)
+	if cv := e.channelView(ch); cv == nil || cv.AtBottom() {
+		t.Fatal("wheeling up left the list at its newest")
+	}
+	e.openChannel(fakeslack.ThreadPrivateID)
+	e.settle(300 * time.Millisecond)
+	// 15 new messages while the reader is away
+	last := ""
+	for k := 0; k < 15; k++ {
+		last = fmt.Sprintf("%d.%06d", time.Now().Unix()+5, 100+k)
+		raw, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": e.fs.UserIDs()[3], "text": fmt.Sprintf("a synthetic new message %d", k), "ts": last})
+		e.a.Core().Inject(slack.Event{Type: "message", Channel: json.RawMessage(strconv.Quote(ch)), Raw: raw})
+	}
+	e.until("#unreads-launch unread", 10*time.Second, func() bool { return e.a.Core().Count(ch).Unread })
+	e.openChannel(ch)
+	e.waitDrawn(t, "#unreads-launch's newest message", 10*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, last) })
+	e.settle(500 * time.Millisecond)
+	if cv := e.channelView(ch); cv == nil || !cv.AtBottom() || !drewRow(e.paneRows("", ch, ""), last) {
+		t.Errorf("entered #unreads-launch again with its unreads: not at its newest message: %s", drawnState(e.paneRows("", ch, "")))
+	}
+}
+
 // TestHighlightRootRouteKeepsWindow: a highlightRoot jump (toThread from
 // elsewhere) into a conversation showing a window, with unreads, isn't an
 // entry without a start: the primary gets the root as its startTs, so the

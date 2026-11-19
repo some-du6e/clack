@@ -477,6 +477,10 @@ func (s *listState) leaveWindow() {
 	s.hb.dropWindow(s.win)
 	s.win = nil
 	s.useModel(s.chm)
+	// the newest messages: the list keeps to their end from now on, so a
+	// Position{} written for them (jumpToLatest, Entered) is their end in
+	// the next sync too (its stick test reads the value from before it)
+	s.list.ScrollToEnd = true
 	s.handAsked = false
 	s.hb.ensureLoaded(s.m)
 }
@@ -1075,17 +1079,21 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.checkThreadUnreads(gtx, h, now) // thread_unread.go
 		s.placeThreadJump(now)            // after the thread's last read is known
 	}
-	// first positioning: at the unread line if there are many unread
+	// first positioning: a conversation opens at its newest messages,
+	// however many are unread. determineTimestamps adds no startTs with
+	// Mark as read's default prefs (client-boot eCxs, dYJr gives one only
+	// with start_scroll_at_oldest and mark_msgs_read_immediately), so the
+	// pane anchors at the end (dxC+ getOffsetForKey(null)); the unread
+	// banner jumps up to the "New" line. A thread opens at
+	// getThreadStartPosition's message.
 	if !s.positioned && s.snap.loaded {
 		s.positioned = true
 		if s.thread {
 			// getThreadStartPosition: the first unread reply, the reply
 			// last read to, or the root (thread_unread.go)
 			s.list.Position = s.threadStartPosition(gtx, "")
-		} else if u := s.unreadIndex(); u >= 0 && len(s.items)-u > 12 {
-			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, u-1)}
 		} else {
-			s.list.Position = layout.Position{}
+			s.toEnd()
 		}
 	}
 
