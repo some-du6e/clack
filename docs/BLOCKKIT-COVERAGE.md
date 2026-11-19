@@ -196,4 +196,19 @@ Round 1's review fixes, with tests that fail on `8126e895`:
 
 ## Next
 
-In order: `carousel` (it needs a horizontal scroller with clipping, which richview doesn't have yet), `data_table`, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
+Round 2 built `share_shortcut`, the inline file slug, `card` and check lists. What's left, in order, with what each needs:
+
+1. `carousel` (`ZDqH`): LSo8's horizontal scroller of 340px cards 16px apart, with arrows and shadows inside and paging by whole cards. Richview has no horizontal scrolling or clipping yet, and the partly shown card needs both.
+2. `data_table` (`6dWo`): pagination, sorting, raw and rich cells.
+3. `contact_card` (`zb3H`): Slack Connect's introductions card. Its Save contact info and Start DM actions call the API and open their own modals, and fakeslack needs both endpoints first.
+4. `timeline` (`9B8s`) and `event` (`0lYF`, a calendar event card).
+5. `message_embed` (`ACXQ`): the referenced message drawn as a message unfurl. richtext needs a resolver for a stored message by channel and ts.
+6. `share_prompt` (`JcWK`): the prompt card, CvC8, or 6HeA for Slackbot's.
+7. The call card's open items:
+   - the ended card's grayscale icon and faces (richview has no image filter);
+   - the faces' name tooltips;
+   - Decline on an incoming DM call;
+   - Join opening `desktop_app_join_url` when the OS has a handler, and ending your huddle;
+   - renderCallIcon's phone-flat, call-missed and call-declined glyphs.
+
+Then the rest of the client-only blocks.
