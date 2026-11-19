@@ -1,10 +1,13 @@
 package media_test
 
 import (
+	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/some-du6e/clack/internal/media"
+	"github.com/some-du6e/clack/internal/media/mediatest"
 )
 
 // A stream is held to 30 s of the file's average bitrate past the
@@ -28,5 +31,56 @@ func TestPaceLimit(t *testing.T) {
 	}
 	if got := media.PaceLimit(-1, 0, time.Minute); got != -1 {
 		t.Errorf("an unknown size: %d, want no limit", got)
+	}
+}
+
+// A request Pace holds while the player is paused costs no wake-ups: it
+// waits on the state, not a timer. Round 3's review, a MINOR: AVPlayer
+// keeps its to-end request open while paused, and the request held there
+// woke 10 times a second for as long as the tile stayed on screen. Once it
+// plays, the limit moving with the position, Pace looks again every 100 ms,
+// and lets the request go once the limit passes it.
+func TestPaceWaitsWhilePaused(t *testing.T) {
+	src, _ := mediatest.Source("FPACE", mediatest.GreyGreyRed, false)
+	rs := source(src, quiet, nil)
+	defer rs.Close()
+	var b media.Base
+	b.Init() // paused
+	b.Update(func(st *media.State) { st.Duration = 10 * time.Minute })
+	var wakes atomic.Int64
+	undo := media.SetPaceWake(func() { wakes.Add(1) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan bool, 1)
+	const cur = 9 << 20 // past 30 s of a 10-minute file's bitrate and the 8 MB slack: held
+	go func() { done <- b.Pace(ctx, rs, cur) }()
+	defer func() {
+		cancel()
+		<-done
+		undo()
+	}()
+	time.Sleep(600 * time.Millisecond)
+	if n := wakes.Load(); n != 1 {
+		t.Errorf("paused for 600 ms, the held request woke %d times, want once (its wait)", n)
+	}
+	select {
+	case <-done:
+		t.Fatal("Pace let the request go while paused")
+	default:
+	}
+	b.Update(func(st *media.State) { st.Paused, st.Ready = false, media.HaveEnoughData })
+	time.Sleep(450 * time.Millisecond)
+	if n := wakes.Load(); n < 3 {
+		t.Errorf("playing for 450 ms: %d waits in all, want it looking again every 100 ms", n)
+	}
+	b.Update(func(st *media.State) { st.Pos = 9*time.Minute + 40*time.Second }) // the rest is within the lead
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Error("Pace ended as if cancelled")
+		}
+		done <- ok // for the deferred wait
+	case <-time.After(2 * time.Second):
+		t.Fatal("the limit passed the request and Pace held it on")
 	}
 }

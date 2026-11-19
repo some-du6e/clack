@@ -17,10 +17,11 @@ type Base struct {
 	emitMu sync.Mutex // Emit and CloseEvents, from any goroutine
 	closed bool
 
-	mu   sync.Mutex
-	st   State
-	rate float64
-	at   time.Time // when st.Pos was read
+	mu      sync.Mutex
+	st      State
+	rate    float64
+	at      time.Time     // when st.Pos was read
+	changed chan struct{} // closed at the next Update (Changed)
 
 	lastAsk atomic.Int64 // unix ns
 
@@ -51,7 +52,7 @@ func (b *Base) State() State {
 
 func (b *Base) stateLocked() State {
 	st := b.st
-	if !st.Paused && !st.Ended && !st.Waiting && st.Err == 0 && st.Ready >= HaveFutureData {
+	if st.runs() {
 		st.Pos += time.Duration(float64(time.Since(b.at)) * b.rate)
 		if st.Duration > 0 && st.Pos > st.Duration {
 			st.Pos = st.Duration
@@ -68,6 +69,27 @@ func (b *Base) Update(f func(st *State)) {
 	b.st.Pos = b.stateLocked().Pos
 	b.at = time.Now()
 	f(&b.st)
+	if b.changed != nil {
+		close(b.changed)
+		b.changed = nil
+	}
+}
+
+// Changed is closed at the snapshot's next Update: a waiter takes it
+// before it reads the state, and wakes for any change after.
+func (b *Base) Changed() <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.changed == nil {
+		b.changed = make(chan struct{})
+	}
+	return b.changed
+}
+
+// runs is whether the position runs on with the clock (playing, with
+// data).
+func (st State) runs() bool {
+	return !st.Paused && !st.Ended && !st.Waiting && st.Err == 0 && st.Ready >= HaveFutureData
 }
 
 // SetRate is the rate the position runs at.

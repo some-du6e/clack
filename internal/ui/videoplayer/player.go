@@ -657,6 +657,9 @@ type State struct {
 	// VolumeOpen is whether the volume slider shows (its control
 	// hovered, or dragged)
 	VolumeOpen bool
+	// Pill is whether the pill shows (paused, the overlay active, or
+	// loading)
+	Pill bool
 }
 
 // Click is the tile's click (fIJO's tE), as a press and release on it
@@ -682,7 +685,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
 		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
-		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol}
+		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked()}
 	if t.h != nil {
 		st.Player = t.h
 	}

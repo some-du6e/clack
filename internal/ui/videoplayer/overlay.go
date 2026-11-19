@@ -404,7 +404,7 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	c.mu.Lock()
 	h := t.h
 	hot := t.hover || t.scrub || t.vol || t.menuOpen
-	playing, loading := t.playing, t.loading
+	playing, loading, pillOn := t.playing, t.loading, t.pillShownLocked()
 	label := pillTime(t, hot)
 	iconPx := dp(20)
 	if xs {
@@ -511,7 +511,7 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	// the pill: it fades out while playing unless hovered (--playing);
 	// a loading video isn't playing yet (Slack's isPlaying comes with its
 	// play event), so the pill and its spinner stay
-	if !playing || hot || loading {
+	if pillOn {
 		if !hot {
 			paint.FillShape(gtx.Ops, pillBg, clip.UniformRRect(pill, dp(4)).Op(gtx.Ops))
 		}
@@ -653,6 +653,13 @@ func (r *Row) label(gtx layout.Context, txt string, sp float32) (op.CallOp, imag
 // pillTime is the pill's time (fIJO's tp): a lone video's duration until
 // it plays or was partly played, the time played after (and while
 // hovered with no duration), "Video" with neither.
+// pillShownLocked is whether the pill shows: fIJO's --playing rule hides
+// it while the video plays and the overlay isn't active, and a loading
+// tile doesn't play yet (isPlaying waits for the play event, tI).
+func (t *tile) pillShownLocked() bool {
+	return !t.playing || t.loading || t.hover || t.scrub || t.vol || t.menuOpen
+}
+
 func pillTime(t *tile, hover bool) string {
 	d, u, m := t.durLocked(), t.elapsed, t.playing && !t.loading
 	if d <= 0 || m || u > 0 {

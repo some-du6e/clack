@@ -523,23 +523,11 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 
 // pace holds a request to the end of the resource at media.PaceLimit:
 // AVFoundation takes every byte responded at once, so unheld it would pull
-// the whole file in as fast as the network goes. false: ctx ended.
+// the whole file in as fast as the network goes. AVPlayer keeps that
+// request open while paused, and Base.Pace waits on the state then, not a
+// timer. false: ctx ended.
 func (p *player) pace(ctx context.Context, cur int64) bool {
-	for {
-		info, err := p.rs.Info(ctx)
-		if err != nil {
-			return ctx.Err() == nil
-		}
-		st := p.State()
-		if lim := media.PaceLimit(info.Total, st.Pos, st.Duration); lim < 0 || cur < lim || st.Err != 0 {
-			return true
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
+	return p.Pace(ctx, p.rs, cur)
 }
 
 func (p *player) finish(req uint64, failed bool) {

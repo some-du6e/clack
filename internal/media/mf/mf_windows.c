@@ -605,6 +605,7 @@ struct clackMF {
 	IMFDXGIDeviceManager *mgr;
 	UINT token;
 	LUID adapter;
+	LUID nextAdapter; // clack_me_bind's new device's, until clack_me_bind_set
 	uint32_t format;
 	struct {
 		ID3D11Texture2D *tex;
@@ -684,15 +685,38 @@ static void releaseRing(clackMF *m) {
 	InterlockedIncrement(&m->gen);
 }
 
-// clack_me_bind makes the engine's device on the adapter of the device Gio
-// last asked with (the ask records it), or moves the engine there.
-int32_t clack_me_bind(clackMF *m, clackMFInfo *info) {
+// clack_me_gio_ref is the device Gio last asked with (the ask records
+// it), with a reference the caller lets go of (clack_me_dev_release); 0
+// before any ask. Under askMu.
+uintptr_t clack_me_gio_ref(clackMF *m) {
 	if (m->gioDev == NULL) {
+		return 0;
+	}
+	ID3D11Device_AddRef(m->gioDev);
+	return (uintptr_t)m->gioDev;
+}
+
+void clack_me_dev_release(uintptr_t devp) {
+	if (devp != 0) {
+		ID3D11Device_Release((ID3D11Device *)devp);
+	}
+}
+
+// clack_me_bind makes the engine's device on the adapter of giop, the
+// device Gio last asked with (clack_me_gio_ref), and moves the engine's
+// manager to it. It touches nothing the ask reads, so it runs without
+// askMu: D3D11CreateDevice and the manager take tens of milliseconds on a
+// real GPU, which Gio's render thread would wait out. *newDev is the new
+// device for clack_me_bind_set, or 0 when the engine's device is already
+// on that adapter.
+int32_t clack_me_bind(clackMF *m, uintptr_t giop, clackMFInfo *info, uintptr_t *newDev) {
+	*newDev = 0;
+	if (giop == 0) {
 		fail(info, "no device asked yet", E_UNEXPECTED);
 		return E_UNEXPECTED;
 	}
 	IDXGIDevice *xd = NULL;
-	HRESULT hr = ID3D11Device_QueryInterface(m->gioDev, &clackIID_IDXGIDevice, (void **)&xd);
+	HRESULT hr = ID3D11Device_QueryInterface((ID3D11Device *)giop, &clackIID_IDXGIDevice, (void **)&xd);
 	if (FAILED(hr)) {
 		fail(info, "IDXGIDevice", hr);
 		return hr;
@@ -768,18 +792,25 @@ int32_t clack_me_bind(clackMF *m, clackMFInfo *info) {
 		fail(info, "ResetDevice", hr);
 		return hr;
 	}
-	if (m->dev != NULL) {
-		releaseRing(m);
-		ID3D11Device_Release(m->dev);
-		InterlockedDecrement(&live[CLACK_MF_LIVE_DEVICES]);
-	}
-	m->dev = dev;
-	m->adapter = desc.AdapterLuid;
+	m->nextAdapter = desc.AdapterLuid;
+	*newDev = (uintptr_t)dev;
 	if (info != NULL) {
 		info->featureLevel = (uint32_t)got;
 		info->flags = flags;
 	}
 	return S_OK;
+}
+
+// clack_me_bind_set makes devp (clack_me_bind's) the engine's device, under
+// askMu: the old device's ring, which the ask reads, goes with it.
+void clack_me_bind_set(clackMF *m, uintptr_t devp) {
+	if (m->dev != NULL) {
+		releaseRing(m);
+		ID3D11Device_Release(m->dev);
+		InterlockedDecrement(&live[CLACK_MF_LIVE_DEVICES]);
+	}
+	m->dev = (ID3D11Device *)devp;
+	m->adapter = m->nextAdapter;
 }
 
 // clack_me_open makes the engine, reading the file through a byte stream
@@ -1058,8 +1089,10 @@ void clack_me_state(clackMF *m, clackMFState *st) {
 // frame, it goes into a texture of the ring that isn't the newest (a free
 // one, else a frame Gio never took), which is then the newest. 1: a new
 // frame, *ppts its presentation time (100 ns units); 0: none (or no
-// texture free: a skip); -1: the transfer failed.
-int clack_me_tick(clackMF *m, int32_t *phr, int64_t *ppts) {
+// texture free: a skip); -1: the transfer failed. force transfers the
+// frame the engine presented even when it has no new one (a new ring,
+// paused): *ppts is -1 then, and a failure is a 0 with its *phr.
+int clack_me_tick(clackMF *m, int force, int32_t *phr, int64_t *ppts) {
 	*phr = S_OK;
 	*ppts = -1;
 	clackEngine *e = m->engine;
@@ -1068,7 +1101,8 @@ int clack_me_tick(clackMF *m, int32_t *phr, int64_t *ppts) {
 	}
 	LONGLONG pts = 0;
 	HRESULT hr = e->lpVtbl->OnVideoStreamTick(e, &pts);
-	if (hr != S_OK) {
+	int fresh = hr == S_OK;
+	if (!fresh && !force) {
 		*phr = hr;
 		return 0;
 	}
@@ -1093,12 +1127,12 @@ int clack_me_tick(clackMF *m, int32_t *phr, int64_t *ppts) {
 	IDXGIKeyedMutex_ReleaseSync(m->slot[got].mx, FAILED(hr) ? 0 : 1);
 	if (FAILED(hr)) {
 		*phr = hr;
-		return -1;
+		return fresh ? -1 : 0;
 	}
 	m->seq++;
 	m->newest = got;
 	InterlockedExchange64(&m->published, (m->seq << 2) | got);
-	*ppts = pts;
+	*ppts = fresh ? pts : -1;
 	return 1;
 }
 

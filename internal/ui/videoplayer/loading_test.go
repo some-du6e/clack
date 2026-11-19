@@ -179,3 +179,29 @@ func TestLoadErrorStopsSpinner(t *testing.T) {
 		t.Errorf("%d frames asked in 300 ms after the failure", d)
 	}
 }
+
+// While a video loads its pill stays, with the spinner and the duration,
+// hovered or not: isPlaying waits for the play event (fIJO's tI), so the
+// --playing rule that hides the pill doesn't apply yet. A MINOR: on the
+// round-3 head the backend's Play made the tile playing at once, so the
+// pill hid when the pointer left, and read 0:00 while hovered.
+// pillShown is loading_hooks_test.go's.
+func TestLoadingPillShowsDuration(t *testing.T) {
+	c, _ := slowEnv(t, 400*time.Millisecond, media.FakeOptions{})
+	r := c.Row("channel", "C1", "1.0", nil)
+	f := videoFile("F1")
+	layoutWakes(c, r, f)
+	click(c, r, f)
+	waitFor(t, "the play event", 5*time.Second, func() bool { st := state(t, c, r, f); return st.Playing || !st.Loading })
+	st := state(t, c, r, f)
+	if !st.Loading {
+		t.Skip("the fixture loaded before the play event was seen")
+	}
+	if !pillShown(st) {
+		t.Error("the pill hid while the video loads, the pointer away")
+	}
+	// the file's 1:23 until the metadata, the fixture's 0:03 after
+	if got, want := pillTimeOf(c, r, f), clock(st.Duration); got != want || st.Duration <= 0 {
+		t.Errorf("the loading pill reads %q, want the duration, %s", got, want)
+	}
+}

@@ -394,6 +394,49 @@ func TestMFSeekAndPause(t *testing.T) {
 	}
 }
 
+// Paused, a change of the drawn size (a zoom, another monitor's scale, a
+// narrower tile) makes the ring again, and the paused frame goes into the
+// new one: a paused <video> keeps its frame at any size. Round 3's
+// review, a MINOR: the new ring stayed empty until a play or a seek (the
+// engine has no new frame to tick), and the tile showed its poster.
+func TestMFPausedFrameSurvivesResize(t *testing.T) {
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
+	r.draw()
+	r.p.Play()
+	r.wait(media.Playing, 10*time.Second)
+	r.p.Pause()
+	r.wait(media.Pause, 5*time.Second)
+	r.p.Seek(1500 * time.Millisecond)
+	r.wait(media.Seeked, 5*time.Second)
+	shown := func(what string) {
+		t.Helper()
+		var c color.RGBA
+		for t0 := time.Now(); time.Since(t0) < 2*time.Second; time.Sleep(10 * time.Millisecond) {
+			if c = r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
+				return
+			}
+		}
+		t.Fatalf("%s: %v drawn, want the paused frame (%s)", what, c, mediatest.Want(1500*time.Millisecond))
+	}
+	shown("paused at 1.5 s")
+	st0 := r.p.Stats()
+	r.p.SetDrawSize(image.Pt(160, 90)) // a new ring, 160x90
+	time.Sleep(300 * time.Millisecond)
+	shown("the drawn size halved")
+	st1 := r.p.Stats()
+	if st1.Transfers <= st0.Transfers {
+		t.Errorf("no transfer into the new ring (%d before, %d after)", st0.Transfers, st1.Transfers)
+	}
+	time.Sleep(200 * time.Millisecond)
+	st2 := r.p.Stats()
+	for t1 := time.Now(); time.Since(t1) < time.Second; time.Sleep(30 * time.Millisecond) {
+		r.draw()
+	}
+	if st3 := r.p.Stats(); st3.Ticks != st2.Ticks || st3.Transfers != st2.Transfers {
+		t.Errorf("paused, its frame back: %d ticks and %d transfers in a second, want none", st3.Ticks-st2.Ticks, st3.Transfers-st2.Transfers)
+	}
+}
+
 // A file with its moov after the mdat and 4 MB before it plays; the
 // demuxer's reads get to the moov. (The 25 KB fixture alone came in one
 // read at 0.)
@@ -607,6 +650,56 @@ func TestMFCloseReleases(t *testing.T) {
 	}
 	if l != ([liveN]int32{}) {
 		t.Errorf("live after Close: players %d, streams %d, notify %d, engines %d, devices %d, textures %d, reads %d", l[0], l[1], l[2], l[3], l[4], l[5], l[6])
+	}
+}
+
+// The engine's device is made, and the engine shut down, without askMu,
+// which Gio's ask takes on its render thread. Round 3's review, a MINOR:
+// D3D11CreateDevice (with its retry), the DXGI manager and the engine's
+// Shutdown take tens of milliseconds on a real GPU, and the frame after a
+// first click, or a close while drawn, waited them out.
+func TestMFSlowCallsLeaveTheAskFree(t *testing.T) {
+	var mu sync.Mutex
+	var binds, closes []bool
+	free := func(p *player) bool {
+		if !p.askMu.TryLock() {
+			return false
+		}
+		p.askMu.Unlock()
+		return true
+	}
+	bindHook = func(p *player) {
+		ok := free(p)
+		mu.Lock()
+		binds = append(binds, ok)
+		mu.Unlock()
+	}
+	closeHook = func(p *player) {
+		ok := free(p)
+		mu.Lock()
+		closes = append(closes, ok)
+		mu.Unlock()
+	}
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(160, 90))
+	t.Cleanup(func() { bindHook, closeHook = nil, nil }) // the player is closed below
+	r.draw()
+	r.p.Play()
+	r.wait(media.Playing, 10*time.Second)
+	r.p.Close()
+	<-r.p.done
+	mu.Lock()
+	defer mu.Unlock()
+	if len(binds) == 0 {
+		t.Error("the device was never made")
+	}
+	for _, ok := range binds {
+		if !ok {
+			t.Errorf("the device was made holding askMu (%v)", binds)
+			break
+		}
+	}
+	if len(closes) != 1 || !closes[0] {
+		t.Errorf("the engine was shut down holding askMu (%v)", closes)
 	}
 }
 

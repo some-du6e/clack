@@ -58,8 +58,9 @@ const (
 )
 
 const (
-	eAbort = -2147467260 // E_ABORT
-	eFail  = -2147467259 // E_FAIL
+	eAbort      = -2147467260 // E_ABORT
+	eFail       = -2147467259 // E_FAIL
+	waitTimeout = 0x102       // WAIT_TIMEOUT: clack_me_tick found no texture of the ring free
 )
 
 // The controls (mf_windows.h's CLACK_MF_*) and the live objects' kinds.
@@ -234,6 +235,7 @@ type player struct {
 	fellBack       bool   // made again for the other format (once)
 	okTransfers    int    // the frames this engine transferred
 	reopening      bool
+	forceFrame     bool // a new ring: the frame presented goes into it (clack_me_tick's force)
 	reopens        int
 	ringW, ringH   uint32
 	native, draw   image.Point
@@ -338,9 +340,29 @@ func (p *player) Stats() media.Stats {
 	return st
 }
 
+// Close ends the player: its reads abort at once (the media thread may
+// be in a cgo call), and the media thread lets go of the rest.
 func (p *player) Close() {
-	p.once.Do(func() { close(p.quit) })
+	p.once.Do(func() {
+		p.cancel()
+		p.rs.Close()
+		close(p.quit)
+	})
 }
+
+// closing is whether Close was called.
+func (p *player) closing() bool {
+	select {
+	case <-p.quit:
+		return true
+	default:
+		return false
+	}
+}
+
+// bindHook and closeHook run on the media thread just before the
+// device's making and the engine's Shutdown (tests: askMu is free then).
+var bindHook, closeHook func(*player)
 
 func b2f(b bool) float64 {
 	if b {
@@ -492,7 +514,7 @@ func (p *player) ticker(t *time.Ticker) *time.Ticker {
 		p.wantFrame = false
 	}
 	seeking := p.seeking && now.Before(p.seekUntil)
-	want := p.opened && p.ringOK && !p.failed && ((playing && p.AskedWithin(time.Second)) || p.wantFrame || seeking)
+	want := p.opened && p.ringOK && !p.failed && ((playing && p.AskedWithin(time.Second)) || p.wantFrame || seeking || p.forceFrame)
 	switch {
 	case want && t == nil:
 		fps := p.fps
@@ -536,14 +558,29 @@ func absDur(d time.Duration) time.Duration {
 	return d
 }
 
+// doBind makes the engine's device on the adapter of Gio's. The device
+// and its manager are made without askMu, which Gio's ask takes on its
+// render thread (D3D11CreateDevice takes tens of milliseconds on a real
+// GPU); only the swap, which lets go of the ring the ask reads, takes it.
 func (p *player) doBind() {
 	if p.c == nil {
 		return
 	}
 	var info C.clackMFInfo
 	p.askMu.Lock()
-	hr := C.clack_me_bind(p.c, &info)
+	gio := C.clack_me_gio_ref(p.c)
 	p.askMu.Unlock()
+	var dev C.uintptr_t
+	if bindHook != nil {
+		bindHook(p)
+	}
+	hr := C.clack_me_bind(p.c, gio, &info, &dev)
+	C.clack_me_dev_release(gio)
+	if hr == 0 && dev != 0 {
+		p.askMu.Lock()
+		C.clack_me_bind_set(p.c, dev)
+		p.askMu.Unlock()
+	}
 	if hr != 0 {
 		p.fail(media.ErrSrcNotSupported, fmt.Sprintf("the device on %q: %s: %s", C.GoString(&info.adapter[0]), C.GoString(&info.step[0]), hrString(int32(hr))))
 		return
@@ -681,6 +718,12 @@ func (p *player) makeRing() {
 		return
 	}
 	p.ringOK, p.ringW, p.ringH = true, w, h
+	if p.okTransfers > 0 {
+		// the new ring has no frame: the one the engine presented goes into
+		// it whatever OnVideoStreamTick says (paused, it has no new one), so
+		// a paused video keeps its frame at any size, as a <video> does
+		p.forceFrame = true
+	}
 	if !p.loggedRing {
 		p.loggedRing = true
 		handles := "NT"
@@ -710,7 +753,12 @@ func (p *player) tick() {
 	}
 	var hr C.int32_t
 	var pts C.int64_t
-	r := C.clack_me_tick(p.c, &hr, &pts)
+	force := p.forceFrame
+	var f C.int
+	if force {
+		f = 1
+	}
+	r := C.clack_me_tick(p.c, f, &hr, &pts)
 	if r == 1 && forceTransferFailures.Load() > 0 {
 		forceTransferFailures.Add(-1)
 		r, hr = -1, eFail
@@ -720,11 +768,17 @@ func (p *player) tick() {
 		if hr == 1 { // S_FALSE: no new frame
 			p.emptyTicks++
 		}
+		if force && hr != waitTimeout { // a failed forced transfer: the poster stays, as before
+			p.forceFrame = false
+		}
 	case 1:
+		p.forceFrame = false
 		p.transferErrs = 0
 		p.okTransfers++
 		p.emptyTicks = 0
-		p.lastPts = time.Duration(pts) * 100
+		if pts >= 0 { // a forced transfer's frame is the one presented
+			p.lastPts = time.Duration(pts) * 100
+		}
 		p.NTransfers.Add(1)
 		p.NFrames.Add(1)
 		if !p.loggedFirst {
@@ -779,9 +833,8 @@ func (p *player) transferFailed(hr int32) {
 // plays.
 func (p *player) reopen(format uint32) {
 	st := p.State()
-	p.askMu.Lock()
+	// the engine's Shutdown, without askMu: the ask reads none of it
 	C.clack_me_close_engine(p.c)
-	p.askMu.Unlock()
 	p.opened, p.ringOK, p.format, p.reopening = false, false, format, true
 	p.lastPts, p.seeking = -1, false
 	p.restoreSeek = st.Pos > 0
@@ -968,8 +1021,8 @@ func (p *player) onEvent(ev mfEvent) {
 // fail ends the playback with a MediaError code, as the element's error
 // event; the poster stays (Slack's error look).
 func (p *player) fail(code int, why string) {
-	if p.failed {
-		return
+	if p.failed || p.closing() {
+		return // a read Close aborted isn't the file's error
 	}
 	p.failed = true
 	log.Printf("media: %s: media_error_code %d: %s", p.src.FileID, code, why)
@@ -977,17 +1030,23 @@ func (p *player) fail(code int, why string) {
 	p.Emit(media.Error)
 }
 
-// shutdown lets go of everything, on the media thread.
+// shutdown lets go of everything, on the media thread. The ask sees the
+// player closed once p.c is nil (under askMu); the engine's Shutdown and
+// the releases come after, without the lock Gio's render thread takes.
 func (p *player) shutdown() {
 	p.cancel()
 	p.rs.Close()
 	p.askMu.Lock()
-	if p.c != nil {
-		C.clack_me_close(p.c)
-		C.clack_me_free(p.c)
-		p.c = nil
-	}
+	c := p.c
+	p.c = nil
 	p.askMu.Unlock()
+	if c != nil {
+		if closeHook != nil {
+			closeHook(p)
+		}
+		C.clack_me_close(c)
+		C.clack_me_free(c)
+	}
 	unregister(p.id)
 	p.CloseEvents()
 }
