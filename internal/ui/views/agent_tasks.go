@@ -82,16 +82,21 @@ type AgentTasks struct {
 	base
 	ch string
 
-	mu       sync.Mutex
-	tasks    []core.AgentTask // the loaded pages, as the server sent them
-	cursor   string           // the next page ("" none)
-	loaded   bool
-	loading  bool
-	failed   bool
-	gen      int    // drops answers of an older request
-	query    string // the query the server answered (more pages only)
-	stale    bool   // a live event asked for the list again
-	removed  map[string]bool
+	mu      sync.Mutex
+	tasks   []core.AgentTask // the loaded pages, as the server sent them
+	cursor  string           // the next page ("" none)
+	loaded  bool
+	loading bool
+	failed  bool
+	gen     int    // drops answers of an older request
+	query   string // the query the server answered (more pages only)
+	stale   bool   // a live event asked for the list again
+	// removed are the tasks deleted here or by a live event, by the list
+	// generation (gen) current when they went: a first page keeps those
+	// at or after its own request, so an answer read before a delete
+	// committed can't bring the task back (Slack removes the item on the
+	// delete's success and on workflowChanged)
+	removed  map[string]int
 	override map[string]bool // optimistic is_published (Pause/Restart in flight)
 	inflight map[string]bool
 	ui       []func() // results applied on the UI goroutine
@@ -123,7 +128,7 @@ type taskRowUI struct {
 // NewAgentTasks makes the Tasks tab of the agent DM ch.
 func NewAgentTasks(h Host, ch string) *AgentTasks {
 	v := &AgentTasks{base: newBase(h), ch: ch, srch: newSearchIn(nsSlackbotAI, AgentTasksSearch),
-		removed: map[string]bool{}, override: map[string]bool{}, inflight: map[string]bool{}, rows: map[string]*taskRowUI{}}
+		removed: map[string]int{}, override: map[string]bool{}, inflight: map[string]bool{}, rows: map[string]*taskRowUI{}}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -178,7 +183,7 @@ func (v *AgentTasks) subscribe() {
 			}
 			v.mu.Lock()
 			if ev.Name == "deleted" && ev.TS != "" {
-				v.removed[ev.TS] = true
+				v.removed[ev.TS] = v.gen
 			} else {
 				v.stale = true
 			}
@@ -240,7 +245,11 @@ func (v *AgentTasks) load(app, query string, more bool, retry ...bool) {
 				v.tasks = append(v.tasks, page.Tasks...)
 			} else {
 				v.tasks = page.Tasks
-				v.removed = map[string]bool{}
+				for id, g := range v.removed {
+					if g < gen {
+						delete(v.removed, id) // the page was asked for after it went
+					}
+				}
 			}
 			v.cursor = page.Cursor
 		})
@@ -260,7 +269,7 @@ func (v *AgentTasks) rowsLocked(q string) []core.AgentTask {
 	out := make([]core.AgentTask, 0, len(v.tasks))
 	seen := map[string]bool{}
 	for _, t := range v.tasks {
-		if v.removed[t.WorkflowID] || seen[t.WorkflowID] {
+		if _, gone := v.removed[t.WorkflowID]; gone || seen[t.WorkflowID] {
 			continue
 		}
 		seen[t.WorkflowID] = true
@@ -723,7 +732,8 @@ func (v *AgentTasks) Retry() {
 func (v *AgentTasks) Removed(id string) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.removed[id]
+	_, gone := v.removed[id]
+	return gone
 }
 
 // buttonRect is the clicked button's window rectangle (the pointer less
@@ -860,7 +870,7 @@ func (v *AgentTasks) confirmDelete(t core.AgentTask) {
 						return
 					}
 					v.mu.Lock()
-					v.removed[t.WorkflowID] = true
+					v.removed[t.WorkflowID] = v.gen
 					v.mu.Unlock()
 				})
 			}()
