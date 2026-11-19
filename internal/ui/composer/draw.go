@@ -43,8 +43,15 @@ func fillRect(gtx layout.Context, r image.Rectangle, col color.NRGBA) {
 	paint.PaintOp{}.Add(gtx.Ops)
 }
 
+// fillHook, when set (tests), sees each box fillRRect fills: r in the
+// coordinates of the offset it's drawn at, its corner radius and colour.
+var fillHook func(r image.Rectangle, radius int, col color.NRGBA)
+
 // fillRRect paints a rounded rectangle; radius in pixels.
 func fillRRect(gtx layout.Context, r image.Rectangle, radius int, col color.NRGBA) {
+	if fillHook != nil {
+		fillHook(r, radius, col)
+	}
 	defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
 	paint.ColorOp{Color: col}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)

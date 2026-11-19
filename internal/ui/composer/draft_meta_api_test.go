@@ -1,6 +1,12 @@
 package composer
 
-import "time"
+import (
+	"image"
+	"image/color"
+	"time"
+
+	"github.com/some-du6e/clack/internal/ui/icons"
+)
 
 // The draft file tests' reads of what the change adds (a red run replaces
 // this file with stubs).
@@ -23,4 +29,13 @@ func shortMetaTimeout(d time.Duration) func() {
 	old, oldB := attMetaTimeout, attMetaBackoff
 	attMetaTimeout, attMetaBackoff = d, 10*time.Millisecond
 	return func() { attMetaTimeout, attMetaBackoff = old, oldB }
+}
+
+// recordDraws sends what the composer draws to box (each rounded box it
+// fills, and its colour) and icon (each icon's name) until stop.
+func recordDraws(box func(r image.Rectangle, col color.NRGBA), icon func(name string)) (stop func()) {
+	oldF, oldI := fillHook, icons.DrawHook
+	fillHook = func(r image.Rectangle, _ int, col color.NRGBA) { box(r, col) }
+	icons.DrawHook = icon
+	return func() { fillHook, icons.DrawHook = oldF, oldI }
 }
