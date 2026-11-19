@@ -2386,3 +2386,26 @@ Enter and a its Leave. `gesture/clack_reset_test.go`
 `TestResetPointersClearsBodyHover`, slackc's `TestResetPointersLeavesTree`
 and `internal/ui`'s `TestInspectFreezeResetsHover`. On ci's linux-gio,
 windows-applog and macos jobs. Not in `UPSTREAM.patch`.
+
+## 50. layout: what the list's own scrolling moved it
+
+`layout/list.go` (`List.ScrollDelta`). An accessor: nothing upstream
+behaves differently.
+
+Slack's message list holds a jumped-to message 64px under its top
+(AnchorLayout's anchor, `ANCHOR_OFFSET`) while rows above it change
+height, until the reader scrolls (`MessageList.onScroll` drops it).
+Clack's message list does the same (`internal/ui/messages` `jumpKey`)
+and has to tell the reader's scrolling from everything else that moves
+a `List`: the rows' sizes, its own writes to `Position`, the end
+clamps. Comparing positions can't: a row above the first visible one
+shrinking, or the list clamped at its end, changes `Position` with no
+input. `ScrollDelta` is the distance `List.update` took from the
+gesture (a wheel notch's curve, a precise delta, a drag, a fling,
+middle-click autoscroll) in the last `Layout`.
+
+Tests: `layout/clack_list_test.go` `TestListScrollDelta` (on ci's
+linux-gio job: 0 on the first layout, 7 for a 7px precise wheel, 0 when
+`Position` and the children's sizes changed) and `internal/ui`
+`TestJumpHoldsThroughRowsGrowingAbove` (a wheel drops the anchor). Not
+in `UPSTREAM.patch`.
