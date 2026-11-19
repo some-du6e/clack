@@ -142,13 +142,37 @@ func (b *backend) channelToText(id, text string) string {
 	return "#" + noteHiddenChannel() // not in the store: isNonExistent
 }
 
-// noteSpanText writes a notification's channel mentions (channelToText);
-// the other spans keep their text.
+// noteSpanText writes a notification's channel mentions (channelToText)
+// and its member mentions; the other spans keep their text. A member
+// mention is named from the store as the body is written, as Slack's
+// showNotification builds it (extractTextFromMessage over the store,
+// after ensureModelsArePresent), under the viewer's name pref
+// (store.MemberName: display_real_names, hidden_users): core announces a
+// message before anyone it names is fetched, so its conversion wrote a
+// member the store didn't hold yet as the id ("@U07DANA"), and the
+// store's copy, converted again once noteResolve fetched them
+// (noteFresh), is there only for a conversation whose messages it keeps
+// (no group DM or DM not opened lately, no thread it never loaded). One
+// still unknown after the wait, or past noteResolveMax, reads as nothing,
+// never the id (the views' mentionText); an id that isn't a member's
+// keeps its text.
 func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
-	if s.Kind != richtext.Channel || s.ID == "" || b.core == nil {
+	if s.ID == "" || b.core == nil {
 		return "", false
 	}
-	return b.channelToText(s.ID, s.Text), true
+	switch s.Kind {
+	case richtext.Channel:
+		return b.channelToText(s.ID, s.Text), true
+	case richtext.User:
+		if !core.LooksLikeMemberID(s.ID) {
+			return "", false
+		}
+		if n, ok := b.core.S.MemberName(s.ID); ok && n != "" {
+			return "@" + strings.TrimPrefix(n, "@"), true
+		}
+		return "", true
+	}
+	return "", false
 }
 
 // noteChannelKnown reports whether channelToText has what it needs for
@@ -186,10 +210,13 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 }
 
 // noteMembers are the people a notification names that the store doesn't
-// hold: its sender and the members its text mentions (at most
-// noteResolveMax). Core announces a message the moment it arrives, its
-// rows asking for the people they draw; the notification waits for them,
-// as Slack's showNotification waits for ensureModelsArePresent.
+// hold: its sender, the members its text mentions, and its conversation's
+// people, a DM's partner and a group DM's members, whose names title it
+// (at most noteResolveMax). Core announces a message the moment it
+// arrives, its rows asking for the people they draw; the notification
+// waits for them, as Slack's showNotification waits for
+// ensureModelsArePresent (which adds a DM's user and a group DM's
+// members: isMpim && members ? push(...members)).
 func (b *backend) noteMembers(m *core.Message) []string {
 	if b.core == nil || m == nil {
 		return nil
@@ -204,6 +231,18 @@ func (b *backend) noteMembers(m *core.Message) []string {
 		}
 		return "", false
 	})
+	if v, ok := b.core.Conv(m.Channel); ok {
+		switch v.Kind {
+		case "im":
+			ids = append(ids, v.User)
+		case "mpim":
+			for _, id := range v.Members {
+				if id != b.selfID {
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
 	if len(ids) == 0 {
 		return nil
 	}
