@@ -267,6 +267,8 @@ on:
       - "internal/ui/reactions_live_test.go"
       - "internal/fakeslack/uptime.go"
       - "internal/fakeslack/react_live.go"
+      - "internal/store/reacts.go"
+      - "internal/ui/views/taut.go"
 
 permissions:
   contents: read
@@ -1479,7 +1481,8 @@ jobs:
   # plain message, a thread root, a reply in the open pane, a file message
   # and one the viewer reacted to, in the channel on screen and in one not
   # open, each within two frames; a refresh, a re-open and a reconnect keep
-  # them. Natively and under component and messages-slice patches.
+  # them. Natively and under component and messages-slice patches (one
+  # marking every message's text, so rows draw the plugins' view).
   # Dispatch with only=reactions-live.
   reactions-live:
     if: ${{ !inputs.only || startsWith('reactions-live', inputs.only) }}
@@ -1501,6 +1504,32 @@ jobs:
           rc=0
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestChannelReactionsLive$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestChannelReactionsLive$' ./internal/ui || rc=1
+          exit $rc
+
+  # reactions-more: a live reaction_added keeps the event's url (a Slack
+  # Connect partner's custom emoji: cBAo's h.url) and a fetch's replay
+  # keeps it; a malformed add changes nothing; the Pins tab draws core's
+  # reactions on the plugins' view under a messages-slice patch. Dispatch
+  # with only=reactions-more.
+  reactions-more:
+    if: ${{ !inputs.only || startsWith('reactions-more', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core, store, views: reaction urls, malformed events, the Pins tab under a slice patch (COUNT runs)"
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestReactionAddedKeepsItsURL|TestMalformedReactionChangesNothing)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^TestReactionURLSurvivesAFetch$' ./internal/store || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run '^TestPinsTabReactionsAreCoresUnderSlicePatch$' ./internal/ui/views || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost

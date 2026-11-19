@@ -251,6 +251,17 @@ func TestNotifyNamesTheGroupDMTheSidebarHalfNamed(t *testing.T) {
 			t.Errorf("the toast's title %q doesn't name the group's member %q", n.Title, u.Name)
 		}
 	}
+	// and its title asked for nobody: the toast waited for the members
+	// itself (an ask here was a second users/info, and its "names" a pass
+	// over everything on screen)
+	_, asked, _ := ca.S.TakeMissing()
+	for _, id := range asked {
+		for _, m := range conv.Members {
+			if id == m {
+				t.Errorf("the toast's title asked for the group's member %s", id)
+			}
+		}
+	}
 }
 
 // Ten people the store didn't hold, mentioned at once: the toast waits for

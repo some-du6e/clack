@@ -30,7 +30,9 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -71,6 +73,27 @@ class ReactPassSlice extends TautPlugin {
 return ReactPassSlice
 })()`
 
+// reactSliceText patches the messages slice by marking each message's
+// text, as Message Logger's edit marks do: every row draws the plugins'
+// view of its message, not core's.
+const reactSliceText = `(() => {
+const TautPlugin = globalThis.TautPlugin
+class ReactSliceText extends TautPlugin {
+  static id = 'ReactSliceText'
+  static pluginName = 'React slice text'
+  static description = 'Marks every message text, patching the messages slice'
+  static category = 'other'
+  static authors = ['test']
+  static defaultConfig = { enabled: false }
+  start() { this.api.messages.patchMessageText((s) => (typeof s === 'string' && s ? s + ' (logged)' : s)) }
+  stop() {}
+}
+return ReactSliceText
+})()`
+
+// reactLogged is the mark reactSliceText adds to a message's text.
+const reactLogged = " (logged)"
+
 // pillKey is a reaction pill: its message, its reaction, its surface.
 type pillKey struct {
 	ts, name string
@@ -106,7 +129,7 @@ func TestChannelReactionsLive(t *testing.T) {
 	if os.Getenv("CLACK_LATENCY_TESTS") == "" {
 		t.Skip("CLACK_LATENCY_TESTS not set: flake-check's reactions-live job runs this")
 	}
-	for _, mode := range []string{"native", "components", "slice"} {
+	for _, mode := range []string{"native", "components", "slice", "slice-text"} {
 		t.Run(mode, func(t *testing.T) { channelReactionsLive(t, mode) })
 	}
 }
@@ -146,8 +169,11 @@ func channelReactionsLive(t *testing.T, mode string) {
 		e.until("Taut", 60*time.Second, func() bool { return e.a.Taut() != nil })
 		tt := e.a.Taut()
 		code, id := reactPassComponents, "ReactPassComponents"
-		if mode == "slice" {
+		switch mode {
+		case "slice":
 			code, id = reactPassSlice, "ReactPassSlice"
+		case "slice-text":
+			code, id = reactSliceText, "ReactSliceText"
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -158,7 +184,7 @@ func channelReactionsLive(t *testing.T, mode string) {
 			t.Fatal(err)
 		}
 		e.until("the plugin's patches", 30*time.Second, func() bool {
-			if mode == "slice" {
+			if mode == "slice" || mode == "slice-text" {
 				return tt.SlicePatched("messages")
 			}
 			return slackc.Patched("Reaction") && slackc.Patched("ReactionBar") && slackc.Patched("MessageWrapper")
@@ -175,6 +201,20 @@ func channelReactionsLive(t *testing.T, mode string) {
 		pmu.Unlock()
 	}
 	t.Cleanup(func() { messages.ReactionDrawnHook = nil })
+	// slice-text: the bodies a frame draws, the plugins' marked texts
+	var bodies []string
+	if mode == "slice-text" {
+		richview.DrawnHook = func(d richtext.Doc) {
+			pmu.Lock()
+			bodies = append(bodies, richtext.PlainText(d))
+			pmu.Unlock()
+		}
+		t.Cleanup(func() { richview.DrawnHook = nil })
+	}
+	// the messages' texts as posted (slice-text: drawn marked)
+	texts := map[string]string{plain: "a plain message to react to", root: "a thread root to react to", reply: "a reply to react to",
+		file: "the outage report", mine: "a message the viewer reacted to", elsewhere: "a message in a channel not open"}
+	var frameBodies []string
 	var asked atomic.Bool
 	prevHook := invalidateHook
 	invalidateHook = func(*App) { asked.Store(true) }
@@ -191,11 +231,13 @@ func channelReactionsLive(t *testing.T, mode string) {
 		lastFrame = time.Now()
 		pmu.Lock()
 		clear(pills)
+		bodies = bodies[:0]
 		pmu.Unlock()
 		e.frame()
 		frames++
 		pmu.Lock()
 		defer pmu.Unlock()
+		frameBodies = append(frameBodies[:0], bodies...)
 		out := make(map[pillKey]pillState, len(pills))
 		for k, v := range pills {
 			out[k] = v
@@ -227,6 +269,15 @@ func channelReactionsLive(t *testing.T, mode string) {
 		}
 		return false
 	}
+	// drewText reports whether the last frame drew a body with s
+	drewText := func(s string) bool {
+		for _, b := range frameBodies {
+			if strings.Contains(b, s) {
+				return true
+			}
+		}
+		return false
+	}
 	holds := func(ps map[pillKey]pillState, ws []pillWant) bool {
 		for _, w := range ws {
 			if !drew(w.ts, w.pane) {
@@ -241,6 +292,9 @@ func channelReactionsLive(t *testing.T, mode string) {
 			}
 			if !ok || got.count != w.count || got.self != w.self {
 				return false
+			}
+			if mode == "slice-text" && !drewText(texts[w.ts]+reactLogged) {
+				return false // the pill, but on a row not drawing the plugins' view
 			}
 		}
 		return true
