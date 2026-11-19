@@ -942,6 +942,22 @@ func readForm(p string) string {
 	return norm.NFKC.String(strings.ToValidUTF8(p, string(utf8.RuneError)))
 }
 
+// pathSegments is path p as bannedPage and SignOutURL compare it:
+// lower-cased, split on '/' and '\', ";…" parameters cut, empty segments
+// dropped.
+func pathSegments(p string) []string {
+	var segs []string
+	for _, s := range strings.FieldsFunc(strings.ToLower(p), pathSep) {
+		if i := strings.IndexByte(s, ';'); i >= 0 {
+			s = s[:i]
+		}
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	return segs
+}
+
 // pathSep reports whether r separates segments for a server that reads a
 // backslash as a slash, as some do.
 func pathSep(r rune) bool { return r == '/' || r == '\\' }

@@ -337,25 +337,32 @@ func magicRedirect(req *http.Request, via []*http.Request) error {
 
 // bannedPage reports whether u is a team's /ssb/redirect page, which Clack
 // never loads with a session cookie, even when a redirect points there. The
-// path is read as a normalising server might read it: a path plainPath
-// refuses (a dot segment, an encoded dot or slash: /x/%2e%2e/ssb/redirect)
-// counts as banned, and empty segments and ";…" segment parameters are
-// dropped before the comparison (/ssb//redirect, /ssb;x/redirect).
+// path is read every way plainPath reads it. A path plainPath refuses (a
+// dot segment however it is encoded, a byte that could decode to a dot or
+// a separator) counts as banned. Otherwise each form pathForms visits (as
+// sent and after each decode, up to maxDecodes), both as it is and as
+// readForm reads it (NFKC: U+FF0F is a slash), is compared lower-cased,
+// split on '/' and '\', with ";…" segment parameters cut and empty
+// segments dropped: /ssb//redirect, /ssb;x/redirect, /ssb/%252fredirect,
+// /ssb/%2572edirect and /%2573sb/redirect are all the page.
 func bannedPage(u *url.URL) bool {
-	if !plainPath(u) {
+	forms, ok := pathForms(u)
+	if !ok {
 		return true
 	}
-	var segs []string
-	for _, s := range strings.Split(strings.ToLower(u.Path), "/") {
-		if i := strings.IndexByte(s, ';'); i >= 0 {
-			s = s[:i]
-		}
-		if s != "" {
-			segs = append(segs, s)
+	for _, p := range forms {
+		for _, f := range [2]string{p, readForm(p)} {
+			if strings.HasPrefix("/"+strings.Join(pathSegments(f), "/"), "/ssb/redirect") {
+				return true
+			}
 		}
 	}
-	return strings.HasPrefix("/"+strings.Join(segs, "/"), "/ssb/redirect")
+	return false
 }
+
+// BannedPage is bannedPage for requests outside this package that carry a
+// session cookie or token, such as a Taut plugin's fetch.
+func BannedPage(u *url.URL) bool { return u != nil && bannedPage(u) }
 
 func magicExchange(ctx context.Context, hc *http.Client, s MagicTokenSet, key *dpopKey) (*magicResult, error) {
 	u := "https://" + s.BaseDomain + "/api/auth.loginMagicBulk?magic_tokens=" + strings.Join(s.Tokens, ",") + "&ssb=1"
