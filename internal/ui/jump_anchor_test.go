@@ -27,6 +27,7 @@ import (
 	"math"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -326,5 +327,165 @@ func TestArchivedTombstoneThreadScrollsUp(t *testing.T) {
 		e.scroll(e.secondaryPoint(), -400)
 		e.frame()
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestJumpWindowEndStaysPut: a jump window doesn't keep to its end
+// (MessageList.setStickToBottom(reachedEnd || prevReachedEnd), and a
+// window slice hasn't reachedEnd): wheeled to its end, the newer page that
+// lands goes in under the reader, who stays where they were, and no more
+// pages follow without input. Clack kept every list to its end, so each
+// newer page pulled the reader to the new end, which asked for the next
+// page a second later, until the window ran into the newest messages.
+func TestJumpWindowEndStaysPut(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	target := plainAt(t, e.fs, ch, 2500)
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.a.Navigate("c/" + ch + "/m/" + target)
+	e.waitDrawn(t, "the old message, highlighted", 30*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return lit(rows, target) })
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method == "conversations.history" && f.Get("channel") == ch && f.Get("oldest") != "" && f.Get("latest") == "" {
+			time.Sleep(400 * time.Millisecond) // the newer page, a moment late
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { e.fs.SetHook(nil) })
+	calls := e.recordCalls("conversations.history")
+	newer := func() int {
+		k := 0
+		for _, c := range calls.of("conversations.history", ch, "oldest", "latest") {
+			if c != "oldest= latest=" && strings.HasSuffix(c, " latest=") {
+				k++
+			}
+		}
+		return k
+	}
+	for dl := time.Now().Add(15 * time.Second); newer() < 1; {
+		if time.Now().After(dl) {
+			t.Fatalf("wheeled to the window's end, no newer page was asked: %q", calls.of("conversations.history", ch, "latest", "oldest"))
+		}
+		e.scroll(e.listPoint(), 3000)
+		e.frame()
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.frame()
+	rows := e.paneRows("", ch, "")
+	if len(rows) == 0 {
+		t.Fatal("nothing drawn at the window's end")
+	}
+	last := rows[len(rows)-1]
+	e.settle(3 * time.Second) // the page lands; no input
+	y, ok := topOf(e.paneRows("", ch, ""), last.TS)
+	if !ok || y != last.Top {
+		t.Errorf("the newer page moved the reader: %s, the last row in view, went from %d to %d (drawn %v)", last.TS, last.Top, y, ok)
+	}
+	if n := newer(); n > 1 {
+		t.Errorf("%d newer pages in 3 s with no input; want the one the reader's scroll asked for", n)
+	}
+}
+
+// TestAnchorLineKeepsRowAfterScroll is AnchorLayout's setHeight once the
+// reader has scrolled: a row ending above the anchor line (64px down) that
+// grows moves the list by what it grew, so the row on the line stays where
+// it is. Clack kept the first message wholly on screen in place instead,
+// so a short row at the top gaining a picture pushed everything under it
+// down.
+func TestAnchorLineKeepsRowAfterScroll(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.scroll(e.listPoint(), -400) // read back a little
+	e.settle(500 * time.Millisecond)
+	line := e.anchorLine()
+	// a short row on screen, then wheeled to the list's top: it ends above
+	// the anchor line
+	var short messages.SenderView
+	rows := e.paneRows("", ch, "")
+	for i := 0; i+1 < len(rows); i++ {
+		if h := rows[i+1].Top - rows[i].Top; rows[i].Top > 0 && h > 0 && h < line-8 {
+			short = rows[i]
+			break
+		}
+	}
+	if short.TS == "" {
+		t.Fatalf("no row under %dpx tall on screen: %s", line-8, drawnState(rows))
+	}
+	e.scroll(e.listPoint(), float32(short.Top))
+	e.settle(400 * time.Millisecond)
+	rows = e.paneRows("", ch, "")
+	if y, ok := topOf(rows, short.TS); !ok || y != 0 {
+		t.Fatalf("the short row %s isn't at the list's top: %d (%v)", short.TS, y, ok)
+	}
+	var onLine messages.SenderView
+	for _, r := range rows {
+		if r.Top <= line && r.Top+1 > 0 && r.TS != short.TS && r.Top > 0 {
+			onLine = r // the row across or at the line
+		}
+	}
+	if onLine.TS == "" {
+		t.Fatalf("no row on the anchor line: %s", drawnState(rows))
+	}
+	k := -1
+	for i := 0; i < 3000; i++ {
+		if m, ok := e.fs.HistoryAt(ch, i); ok && m.TS == short.TS {
+			k = i
+			break
+		}
+	}
+	m, _ := e.fs.HistoryAt(ch, k)
+	e.growWithPicture(ch, m, "anchor-short-row")
+	for dl := time.Now().Add(10 * time.Second); ; {
+		rows := e.paneRows("", ch, "")
+		if y, ok := topOf(rows, short.TS); ok && y < -e.anchorLine() {
+			break // it grew upward, past the list's top
+		}
+		if time.Now().After(dl) {
+			y, ok := topOf(rows, onLine.TS)
+			t.Fatalf("the short row's picture never pushed it up past the list's top; the row on the line %s went from %d to %d (%v)", onLine.TS, onLine.Top, y, ok)
+		}
+		e.frame()
+		time.Sleep(2 * time.Millisecond)
+	}
+	if y, ok := topOf(e.paneRows("", ch, ""), onLine.TS); !ok || y != onLine.Top {
+		t.Errorf("the row on the anchor line %s moved from %d to %d (%v) when a row above the line grew", onLine.TS, onLine.Top, y, ok)
+	}
+}
+
+// TestNewMessageNearEndSticks is AnchorLayout's stick-to-bottom inside
+// STICKY_EPSILON (getMessageListLayout: half the default row height, 40px
+// in the light theme): read back 20px from the end, a new message arrives
+// and the list keeps to its end, the new message on screen. Clack stuck
+// only when the list was exactly at its end, so the message landed below
+// the fold.
+func TestNewMessageNearEndSticks(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.settle(500 * time.Millisecond)
+	cv := e.channelView(ch)
+	if cv == nil || !cv.AtBottom() {
+		t.Fatal("the conversation didn't open at its end")
+	}
+	e.scroll(e.listPoint(), -20)
+	e.settle(300 * time.Millisecond)
+	if cv.AtBottom() {
+		t.Fatal("a 20px wheel up left the list at its end")
+	}
+	ts := fmt.Sprintf("%d.000600", time.Now().Unix())
+	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": e.fs.UserIDs()[3], "text": "synthetic new message near the end", "ts": ts})
+	e.a.Core().Inject(slack.Event{Type: "message", Channel: json.RawMessage(strconv.Quote(ch)), Raw: raw})
+	e.waitDrawn(t, "the new message on screen", 10*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, ts)
+		return ok && y < viewHOf(rows)
+	})
+	if !cv.AtBottom() {
+		t.Errorf("20px from the end when a message arrived: the list didn't keep to its end")
 	}
 }

@@ -152,7 +152,7 @@ func (v *ChannelView) JumpToOwnSend(cid string, files bool) {
 	// the navigation replaces the view's startTs and highlightTs: a jump
 	// still paging back is dropped and a flashing message stops
 	s.pendingJump, s.pendingDate = "", time.Time{}
-	s.jumpKey, s.jumpPin = "", false
+	s.place = jumpPlace{}
 	s.highlight = ""
 	v.h.Invalidate()
 }
@@ -186,7 +186,7 @@ func (v *ChannelView) highlight(ts string, lazy bool) {
 	v.s.positioned = true
 	v.s.aroundFor = ""
 	v.s.pendingJump, v.s.jumpLazy = ts, lazy
-	v.s.jumpKey, v.s.jumpPin = "", false // the next sync places it (placeJump)
+	v.s.place = jumpPlace{} // the next sync places it (placeJump)
 }
 
 // Highlighted is the message the list highlights now (Highlight's flash,

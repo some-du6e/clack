@@ -168,6 +168,13 @@ func (e *flingEnv) firstMsg() (string, int) {
 	return "", 0
 }
 
+// lineMsg is the row on the list's anchor line and its y (AnchorLayout's
+// findAnchor row: the first message row ending below the line).
+func (e *flingEnv) lineMsg() (string, int) {
+	s := e.v.s
+	return s.lineRow(s.linePx)
+}
+
 func (e *flingEnv) yOf(key string) (int, bool) {
 	s := e.v.s
 	for i := s.visible[0]; i < s.visible[1]; i++ {
@@ -487,8 +494,9 @@ func (e *flingEnv) diag() {
 
 // A channel name looked up in the background (a mention of a channel the
 // store doesn't know) shows in every row from the same frame, and the row
-// cut off at the top growing or shrinking with it doesn't move what's
-// under it. The lookup is done by the test, around frames: storing the
+// cut off at the top growing or shrinking with it doesn't move the row on
+// the anchor line (AnchorLayout.setHeight: a row ending above the line
+// moves the scroll by what it grew; one across the line grows downward). The lookup is done by the test, around frames: storing the
 // name and announcing it are two steps, and a frame drawn between them
 // used to show it in the rows laid out after the store and not in those
 // before (a row a line too tall for a frame, then the list jumped: CI run
@@ -549,11 +557,11 @@ func TestChannelNameArrivesBetweenFrames(t *testing.T) {
 		e.frame()
 	}
 	e.check("before the name")
-	akey, ay := e.firstMsg()
+	akey, ay := e.lineMsg()
 	h0 := itemHeight(s, key)
 	moved := func(when string) {
 		if y, ok := e.yOf(akey); !ok || y != ay {
-			t.Errorf("%s: %s, first on screen, moved from %d to %d (shown %v)", when, akey, ay, y, ok)
+			t.Errorf("%s: %s, on the anchor line, moved from %d to %d (shown %v)", when, akey, ay, y, ok)
 		}
 	}
 	// the lookup's two steps with a frame between them

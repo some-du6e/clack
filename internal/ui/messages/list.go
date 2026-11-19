@@ -182,17 +182,18 @@ type listState struct {
 	// jumpLazy: the pending jump is highlightRoot's (highlightLazy): a
 	// message whose top is already on screen isn't scrolled to
 	jumpLazy bool
-	// The jump anchor, Slack's AnchorLayout anchor (placeJump): the item
-	// keyed jumpKey stays anchorOffset under the list's top while rows
-	// above it change height, items come and go and the list resizes, until
-	// something scrolls the list (MessageList.onScroll drops the anchor):
-	// the reader's wheel, drag or keys, the scrollbar, another jump.
-	// jumpPin puts it on that line in the next layout; jumpY is where the
-	// last layout drew it (lower when the list ends first, as
-	// bracketScrollTop holds the scroll within the content).
-	jumpKey string
-	jumpPin bool
-	jumpY   int
+	// place is a jump's placement, made in the next layout: the item keyed
+	// place.key place.off under the list's top (placeJump). Nothing holds
+	// it there after: Slack's anchor drops at its own scroll's echo, and
+	// AnchorLayout's own anchoring keeps the row on the anchor line.
+	place jumpPlace
+	// the anchor line under the list's top and STICKY_EPSILON, px, as the
+	// last layout had them (lineOff)
+	linePx, stickyPx int
+	// endGap is how far the content ran on past the list's bottom in the
+	// last layout: 0 at its end, math.MaxInt32 when its last item wasn't
+	// laid out
+	endGap int
 	// handAsked: a window that met the newest messages asked the
 	// conversation's model to read them again (handOver); handWant is the
 	// first of its reads that began after the join
@@ -307,7 +308,7 @@ func (s *listState) releaseEvicted() bool {
 	s.snap.rev = 0
 	s.list.Position = layout.Position{}
 	s.positioned, s.laidOut = false, false
-	s.jumpKey, s.jumpPin = "", false
+	s.place, s.pendingJump, s.laid = jumpPlace{}, "", s.laid[:0]
 	s.rootHandedOn = false // a reply-rooted pane hands on again when it next loads
 	return true
 }
@@ -404,7 +405,7 @@ func (s *listState) openWindow(ts string) {
 	w := s.hb.newWindow(s.ch)
 	s.win, s.m = w, w
 	s.snap.rev = 0
-	s.jumpKey, s.handAsked = "", false
+	s.place, s.handAsked = jumpPlace{}, false
 	s.hb.loadWindow(w, ts)
 }
 
@@ -430,7 +431,7 @@ func (s *listState) jumpToLatest() {
 		return
 	}
 	s.leaveWindow()
-	s.pendingJump, s.aroundFor, s.jumpKey = "", "", ""
+	s.pendingJump, s.aroundFor, s.place = "", "", jumpPlace{}
 	s.list.Position = layout.Position{BeforeEnd: false}
 	s.positioned = true
 }
@@ -531,6 +532,10 @@ func (s *listState) sync(h Host, now time.Time) {
 	if s.win != nil && s.m == s.win && s.snap.merged && s.handOver() {
 		changed, handed = s.m.snapshot(&s.snap), true
 	}
+	// stickToBottom is reachedEnd (MessageList.componentDidUpdate): a
+	// window short of the newest messages never keeps to its end, so a
+	// newer page lands under the reader rather than pulling the list on
+	s.list.ScrollToEnd = !s.snap.newestMissing
 	if changed {
 		s.sysUsers, s.sysHidden = s.hb.usersRev(), hk
 		s.sysMissing = s.adjustSystem(h, sysOn)
@@ -574,18 +579,20 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.placeJump(now)
 		return
 	}
-	// Scroll anchoring: remember the first visible message and its y (not
-	// while a jump is pending or anchored: it places the list itself). A
-	// window handed over keeps it even at its end: the window's end isn't
-	// the newest messages'.
-	anchorTS, anchorY := "", 0
-	if (s.list.Position.BeforeEnd || handed) && s.positioned && s.pendingJump == "" && s.jumpKey == "" {
-		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
-			if s.items[i].kind == itMsg && i < len(s.pos) {
-				// items still index the previous snapshot; key is the ts
-				anchorTS, anchorY = s.items[i].key, s.pos[i]
-				break
-			}
+	// AnchorLayout.setKeys (client-boot dxC+): as items come and go the
+	// row on the anchor line keeps its place (findAnchor: the first row
+	// ending below the line that's still there), and a list within
+	// STICKY_EPSILON of its end stays at its end while it shows the newest
+	// messages (stickToBottom). A window short of the newest never sticks,
+	// and one handed over keeps its row even at its end (the window's end
+	// isn't the newest messages'). Not while a jump is pending or placed:
+	// it places the list itself.
+	anchorTS, anchorY, stick := "", 0, false
+	if s.laidOut && s.positioned && s.pendingJump == "" && s.place.key == "" {
+		if !handed && s.list.ScrollToEnd && (!s.list.Position.BeforeEnd || s.endGap <= s.stickyPx) {
+			stick = true
+		} else {
+			anchorTS, anchorY = s.lineRow(s.linePx) // items still index the previous snapshot; the key is the ts
 		}
 	}
 	s.build(h, now)
@@ -593,13 +600,10 @@ func (s *listState) sync(h Host, now time.Time) {
 	s.built = s.snap.rev
 	s.dayKey = dk
 	s.dense = dense
-	if i := s.anchorItem(anchorTS); i >= 0 {
-		s.list.Position.First = i
-		s.list.Position.Offset = -anchorY
-		s.list.Position.BeforeEnd = true
-	}
-	if s.jumpKey != "" {
-		s.jumpPin = true // the items moved under it: back on the anchor line
+	if stick {
+		s.list.Position = layout.Position{} // bracketScrollTop(Infinity)
+	} else if i := s.anchorItem(anchorTS); i >= 0 {
+		s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -anchorY}
 	}
 	s.placeJump(now)
 	// Confirmed sends keep their row (and its layout) under the real ts.
@@ -953,18 +957,32 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 
 	// the wheel over the message actions (toolbar_scroll.go)
 	actD := s.actionsScroll(gtx)
-	ji := s.jumpAnchor(gtx, actD)
+	line := s.lineOff(gtx, th.Dark)
+	if s.place.key != "" {
+		// a jump's placement: a programmatic scroll, which ends the
+		// reader's running one (Chromium cancels a wheel animation or a
+		// fling on a scrollTop write)
+		if i := s.itemOfKey(s.place.key); i >= 0 {
+			s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -gtx.Dp(s.place.off)}
+			s.list.StopScroll()
+			s.actScroll.Stop()
+		}
+		s.place = jumpPlace{}
+	}
 
-	// The anchor: the first message wholly on screen last frame, while
-	// nothing has moved the list since (no rebuild, no jump), and no jump
-	// holds its message on the anchor line.
+	// AnchorLayout.setHeight (dxC+): a row above the anchor line that
+	// grows or shrinks moves the list by as much, so the row on the line
+	// stays where it was (the reader's own scrolling in this frame aside:
+	// ScrollDelta); a list within 2px of its end (STICKY_EPSILON_SETHEIGHT)
+	// that shows the newest messages stays at its end instead. Only while
+	// nothing else moved the list since the last layout (a placement, the
+	// keys, the scrollbar: they say where it is).
 	akey, ay := "", 0
-	if ji < 0 && s.laidOut && s.built == s.laidBuilt && samePos(s.list.Position, s.laidPos) && s.list.Position.BeforeEnd {
-		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
-			if s.items[i].kind == itMsg && s.pos[i] >= 0 {
-				akey, ay = s.items[i].key, s.pos[i]
-				break
-			}
+	if s.laidOut && s.built == s.laidBuilt && samePos(s.list.Position, s.laidPos) && (s.list.Position.BeforeEnd || !s.list.ScrollToEnd) {
+		if s.list.ScrollToEnd && s.endGap <= gtx.Dp(2) {
+			s.list.Position.BeforeEnd = false
+		} else {
+			akey, ay = s.lineRow(line)
 		}
 	}
 	for i := range s.heights {
@@ -998,31 +1016,27 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		})
 		return m.Stop()
 	}
-	before := s.list.Position
 	call := lay()
-	if ji >= 0 && s.holdJump(gtx, ji, size.Y) {
-		// the jump's message moved off the anchor line: back on it, in this
-		// frame
-		for i := range s.heights {
-			s.heights[i] = 0
-		}
-		call = lay()
-		s.jumpY = s.jumpYNow(size.Y)
-	}
-	// Nothing scrolled, yet the anchor moved: a row above it changed height
-	// (a channel name or a picture arriving, a plugin's tree). Keep what
-	// the reader is looking at where it was, in this frame: lay out again
+	// The row on the line moved by more than the reader scrolled: a row
+	// above it changed height (a channel name or a picture arriving, a
+	// plugin's tree). Keep it where it was, in this frame: lay out again
 	// with the offset corrected and draw only that.
-	if ji < 0 && akey != "" && samePos(s.list.Position, before) {
-		if y, ok := s.yOfKey(akey, size.Y); ok && y != ay {
+	if akey != "" {
+		want := ay - s.list.ScrollDelta()
+		if y, ok := s.yOfKey(akey, size.Y); ok && y != want {
 			for i := range s.heights {
 				s.heights[i] = 0
 			}
-			s.list.Position.Offset += y - ay
+			s.list.Position.Offset += y - want
 			call = lay()
 		}
 	}
 	call.Add(gtx.Ops)
+	if p := s.list.Position; p.First+p.Count >= len(s.items) {
+		s.endGap = max(0, -p.OffsetLast)
+	} else {
+		s.endGap = math.MaxInt32
+	}
 	s.laidOut, s.laidPos, s.laidBuilt = true, s.list.Position, s.built
 	s.actionsScrollEnd(actD)
 
@@ -2257,14 +2271,16 @@ func (s *listState) editComposer() *composer.Composer {
 	return nil
 }
 
-// placeJump anchors a pending jump's message once the built items hold
+// placeJump places a pending jump's message once the built items hold
 // it, and flashes it from then. Slack's message list scrolls the startTs
 // message to the anchor line, ANCHOR_OFFSET under its top, for a message
 // it holds (scrollToKey: AnchorLayout.getOffsetForKey) as for one it
-// loads (the layout's anchor), bracketed by the content's ends, and holds
-// it there through height changes until the reader scrolls (jumpAnchor,
-// holdJump). highlightRoot's highlightLazy scrolls only to a message whose
-// top isn't on screen (scrollToKey's lazy: isItemInView).
+// loads (the layout's anchor), bracketed by the content's ends. The
+// anchor drops at that scroll's echo (MessageList.onScroll), so nothing
+// holds the message after: AnchorLayout's own anchoring keeps the row on
+// the line through height and item changes (lineRow). highlightRoot's
+// highlightLazy scrolls only to a message whose top isn't on screen
+// (scrollToKey's lazy: isItemInView).
 func (s *listState) placeJump(now time.Time) {
 	if s.pendingJump == "" {
 		return
@@ -2272,8 +2288,8 @@ func (s *listState) placeJump(now time.Time) {
 	for i, it := range s.items {
 		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == s.pendingJump {
 			if !s.jumpLazy || !s.topOnScreen(it.key) {
-				s.jumpKey, s.jumpPin = it.key, true
-				s.list.Position = layout.Position{BeforeEnd: true, First: i} // until the layout puts it on the line
+				s.place = jumpPlace{key: it.key, off: anchorOffset}
+				s.list.Position = layout.Position{BeforeEnd: true, First: i} // until the layout places it
 			}
 			s.jumpLazy = false
 			s.positioned = true
@@ -2286,61 +2302,41 @@ func (s *listState) placeJump(now time.Time) {
 	}
 }
 
-// jumpAnchor is the jump anchor's item this frame, -1 for none
-// (placeJump). Anything that moved the list since the last layout drops
-// the anchor, as a scroll event drops Slack's (MessageList.onScroll): the
-// keys, the scrollbar, a selection's edge, the actions' wheel, a banner,
-// a send. One just placed, or whose items were rebuilt, goes on the
-// anchor line now.
-func (s *listState) jumpAnchor(gtx layout.Context, actD int) int {
-	if s.jumpKey == "" {
-		return -1
-	}
-	if !s.jumpPin && (actD != 0 || !samePos(s.list.Position, s.laidPos)) {
-		s.jumpKey = ""
-		return -1
-	}
-	i := s.itemOfKey(s.jumpKey)
-	if i < 0 { // its message went
-		s.jumpKey, s.jumpPin = "", false
-		return -1
-	}
-	if s.jumpPin {
-		s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -gtx.Dp(anchorOffset)}
-	}
-	return i
+// jumpPlace is a jump's placement (placeJump): the item keyed key, off
+// under the list's top.
+type jumpPlace struct {
+	key string
+	off unit.Dp
 }
 
-// holdJump keeps the jump anchor's item i where the line put it, after a
-// layout. The reader's scrolling in that layout (the List's wheel, drag or
-// fling) drops the anchor; the first layout on the line records where it
-// drew the item; a later one that drew it anywhere else (a row above it
-// changed height, or the list's height or end moved) puts it back on the
-// line, and reports that the list has to lay out again.
-func (s *listState) holdJump(gtx layout.Context, i, viewH int) bool {
-	if s.list.ScrollDelta() != 0 {
-		s.jumpKey, s.jumpPin = "", false
-		return false
+// lineOff is the list's anchor line under its top, px, and it notes it and
+// STICKY_EPSILON for the next sync: AnchorLayout's ANCHOR_OFFSET and
+// STICKY_EPSILON as getMessageListLayout makes them (IY25/5cnQ: 64 and
+// half the default row height, 40 light and 30 dark) in a conversation,
+// and the thread list's own AnchorLayout's (Twp/: new AnchorLayout(), the
+// line at the top, 2) in a thread.
+func (s *listState) lineOff(gtx layout.Context, dark bool) int {
+	line, eps := 0, unit.Dp(2)
+	if !s.thread {
+		line, eps = gtx.Dp(anchorOffset), 40
+		if dark {
+			eps = 30
+		}
 	}
-	y := s.jumpYNow(viewH)
-	if s.jumpPin {
-		s.jumpPin, s.jumpY = false, y
-		return false
-	}
-	if y == s.jumpY {
-		return false
-	}
-	s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -gtx.Dp(anchorOffset)}
-	return true
+	s.linePx, s.stickyPx = line, gtx.Dp(eps)
+	return line
 }
 
-// jumpYNow is the jump anchor's item's top in this frame's layout
-// (math.MinInt32 when it isn't on screen).
-func (s *listState) jumpYNow(viewH int) int {
-	if y, ok := s.yOfKey(s.jumpKey, viewH); ok {
-		return y
+// lineRow is the row on the anchor line, line px under the list's top, in
+// the last layout, and its top: findAnchor's row, the first message row
+// ending below the line ("" for none).
+func (s *listState) lineRow(line int) (string, int) {
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos) && i < len(s.heights); i++ {
+		if s.items[i].kind == itMsg && s.pos[i]+s.heights[i] > line {
+			return s.items[i].key, s.pos[i]
+		}
 	}
-	return math.MinInt32
+	return "", 0
 }
 
 // itemOfKey is the item keyed key, -1 for none.
