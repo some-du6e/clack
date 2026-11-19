@@ -805,7 +805,7 @@ jobs:
       matrix:
         include:
           - part: marks
-            test: (TestThreadsUpToDateDividerLikeSlack|TestThreadsMarkedUnreadDividerLikeSlack|TestThreadsMarkVisibleLikeSlack|TestThreadsMarkVisibleOnScrollLikeSlack|TestThreadsMarkVisibleSkipsOwnMarksLikeSlack|TestThreadsSeenReplyGuardLikeSlack|TestThreadsHiddenFirstReadLikeSlack|TestThreadsUpToDateDivider|TestThreadsMarkVisibleFlingLikeSlack|TestThreadsUnreadRowPointLikeSlack|TestThreadsRemountNoScrollLikeSlack|TestThreadsAttentionAfterMinimizeLikeSlack|TestThreadsGhostLineDrawnLikeSlack)
+            test: (TestThreadsUpToDateDividerLikeSlack|TestThreadsMarkedUnreadDividerLikeSlack|TestThreadsMarkVisibleLikeSlack|TestThreadsMarkVisibleOnScrollLikeSlack|TestThreadsMarkVisibleSkipsOwnMarksLikeSlack|TestThreadsSeenReplyGuardLikeSlack|TestThreadsHiddenFirstReadLikeSlack|TestThreadsUpToDateDivider|TestThreadsMarkVisibleFlingLikeSlack|TestThreadsUnreadRowPointLikeSlack|TestThreadsRemountNoScrollLikeSlack|TestThreadsAttentionAfterMinimizeLikeSlack|TestThreadsGhostLineDrawnLikeSlack|TestThreadsKeysHeldDownLikeSlack|TestThreadsFooterFocusLikeSlack|TestThreadsUnreadRowEdgesLikeSlack|TestThreadsChecksSpentWithoutListLikeSlack)
           - part: loads
             test: (TestThreadsSlowReconnectLikeSlack|TestThreadsFastReconnectLikeSlack|TestThreadsRefreshGapLikeSlack|TestThreadsSettleBeforeNextLoad|TestThreadsNamedThreadWaitsLikeSlack|TestThreadsAwayIgnoresRepliesLikeSlack|TestThreadsMountLoadLikeSlack|TestThreadsFailedReloadLikeSlack)
           - part: order

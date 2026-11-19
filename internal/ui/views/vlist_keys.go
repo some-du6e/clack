@@ -193,10 +193,13 @@ func (k *vkList) overlaps(key string) bool {
 }
 
 // pointIn is getVisibleRange(void 0, true) for a row that takes no height
-// at key's top (the unread divider): that point inside the viewport.
+// at key's top (the unread divider). Layout.getBounds(S, S+H) starts at
+// the last row whose top is at most S and ends before the first whose top
+// is past S+H; a row of no height shares its top with the row after it,
+// so at S it falls before the start, and at S+H it is in: 0 < y <= viewH.
 func (k *vkList) pointIn(key string) bool {
 	y, ok, _ := k.top(key)
-	return ok && y >= 0 && y < k.viewH
+	return ok && y > 0 && y <= k.viewH
 }
 
 // fullyInView is getVisibleRange's test: neither edge cut off (1px slack).

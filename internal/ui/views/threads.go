@@ -848,13 +848,18 @@ func (v *Threads) unread(t *thrItem) int {
 	return max(n, t.UnreadCount)
 }
 
-// markRead marks a thread read up to its latest reply: locally at once,
-// then with subscriptions.thread.mark. A thread the viewer had marked
-// unread leaves ThreadsMarkedUnread (removeThreadFromManuallyMarkedUnreadArray).
+// markRead marks an unread thread read up to its latest reply (sendRead).
 func (v *Threads) markRead(t *thrItem) {
-	if v.unread(t) == 0 {
-		return
+	if v.unread(t) > 0 {
+		v.sendRead(t)
 	}
+}
+
+// sendRead is setThreadLastRead {lastRead: maxMarkableTs, read: true}:
+// the thread read up to its latest reply, locally at once, then with
+// subscriptions.thread.mark. A thread the viewer had marked unread leaves
+// ThreadsMarkedUnread (removeThreadFromManuallyMarkedUnreadArray).
+func (v *Threads) sendRead(t *thrItem) {
 	ts := t.latest()
 	v.read[t.key] = ts
 	c, ch, root := v.h.Core(), t.Channel, t.Root.TS
@@ -1452,9 +1457,11 @@ type thrSub struct {
 	y, h int
 }
 
-// openReply swaps in the card's real composer and focuses it.
+// openReply swaps in the card's real composer and focuses it. Opening it
+// marks nothing: the box's focus does what onFooterInputFocus does
+// (footerFocus), and the threads the viewer passes on the way are marked
+// by the check over what shows once the list is still (markVisible).
 func (v *Threads) openReply(t *thrItem, c *thrCard) {
-	v.markRead(t)
 	ch, ok := v.h.(composer.Host)
 	if !ok {
 		v.h.OpenThread(t.Channel, t.Root.TS)
@@ -1469,8 +1476,25 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 		c.comp.OnFocusList = func() { v.focusAboveFooter(key) }
 		// onDownArrowInEmptyInput: focusItemBelowInput
 		c.comp.OnDownWhenEmpty = func() { v.focusBelowFooter(key) }
+		// the box's onFocus: onFooterInputFocus
+		c.comp.OnFocus = func() { v.footerFocus(key) }
 	}
 	c.comp.Focus()
+}
+
+// footerFocus is onFooterInputFocus (threads-view.js 1521-1542), a card's
+// reply box taking the focus: a thread the viewer marked unread by hand
+// (from any container: threadsManuallyMarkedUnread) and follows is marked
+// read at its newest reply, even with nothing unread, and the hand mark
+// goes. Any other thread's box marks nothing, and a hand-marked thread
+// nobody follows keeps its mark.
+func (v *Threads) footerFocus(key string) {
+	app := v.h.Core()
+	t, _ := v.item(key)
+	if app == nil || t == nil || app.ThreadMarkedUnread(t.Channel, t.Root.TS) == "" || !v.followed(t) {
+		return
+	}
+	v.sendRead(t)
 }
 
 // card lays out the card's segments and returns its size and the top of
@@ -2024,8 +2048,9 @@ func (v *Threads) kbText(gtx C, text, active string) {
 }
 
 // typeInto is onKeyDown's move for a printable key: the keyboard thread's
-// footer (focusOnKey footer-…) and its reply box take the focus, and the
-// box takes text.
+// footer (focusOnKey footer-…, which scrolls it into view) and its reply
+// box take the focus, and the box takes text. The list doesn't take the
+// focus back (focusOn would): the box has it, as focusInput gave it.
 func (v *Threads) typeInto(gtx C, active, text string) {
 	thread := v.kbRows[v.kb.initial].key
 	if thread == "" {
@@ -2039,7 +2064,11 @@ func (v *Threads) typeInto(gtx C, active, text string) {
 	if c.comp != nil && text != "" {
 		c.comp.InsertText(text)
 	}
-	v.kb.setActive("footer-"+thread, true)
+	footer := "footer-" + thread
+	v.kb.setActive(footer, true)
+	if !v.kb.inView(footer) {
+		v.kb.scrollTo(footer)
+	}
 	gtx.Execute(op.InvalidateCmd{})
 }
 

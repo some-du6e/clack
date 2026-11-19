@@ -53,6 +53,16 @@ func (a *App) UserAttention() bool {
 // componentDidUpdate sees every change of isUserAttentionOnThreadsView.
 func (a *App) AttentionLost() uint64 { return a.attLost }
 
+// setFocused is the window's focus as a ConfigEvent has it (a loss
+// counts: AttentionLost).
+func (a *App) setFocused(on bool) {
+	if on {
+		a.focused = true
+		return
+	}
+	a.loseFocus()
+}
+
 // loseFocus is the window losing the focus (AttentionLost).
 func (a *App) loseFocus() {
 	if a.focused {

@@ -585,11 +585,7 @@ func (a *App) Run() error {
 			if e.Config.Focused != a.focused {
 				a.Invalidate() // the indicators an inactive window held still move on (indicatorFrame)
 			}
-			if e.Config.Focused {
-				a.focused = true
-			} else {
-				a.loseFocus() // host.go
-			}
+			a.setFocused(e.Config.Focused) // host.go
 			a.drainIdle()
 		default:
 			// Gio's wake-up after an Invalidate, which also comes while

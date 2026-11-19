@@ -26,10 +26,11 @@ import (
 )
 
 // thrPointIn is getVisibleRange's test for the unread divider before the
-// row key: a row of no height at its top, so that point in the viewport.
+// row key: a row of no height at its top, in Layout.getBounds' range from
+// just past the viewport's top to its bottom.
 func thrPointIn(v *Threads, key string) bool {
 	y, ok, _ := v.kb.top(key)
-	return ok && y >= 0 && y < v.kb.viewH
+	return ok && y > 0 && y <= v.kb.viewH
 }
 
 // thrFling moves the list dy px a frame, a frame about every 16 ms, while
