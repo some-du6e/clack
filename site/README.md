@@ -3,9 +3,11 @@
 The marketing and download page for Clack. It follows the layout of
 slack.com's homepage section for section, with values measured from it
 (sizes, spacing, colours, buttons and breakpoints): the nav, the hero with
-its product frame, the aubergine band, What's new, the section tabs, four
-feature sections, the stats band, the numbers, the cards and the closing
-band. The name, the logo, the screenshots and every word are Clack's own,
+its product frame, the aubergine band, the section tabs, four feature
+sections, the stats band, the numbers, the cards and the closing band. Like
+slack.com's, the section tabs stick under the nav only through the feature
+sections, and the pill tabs under the hero sit on one row from 1024px and
+are hidden below that. The name, the logo, the screenshots and every word are Clack's own,
 and nothing on the page is copied from slack.com.
 
 It loads instantly: one HTML file with its CSS and its only script inlined,
@@ -15,9 +17,9 @@ nothing renders on the client. The script points the download buttons at
 the build for the visitor's system. Without it every button goes to the
 download section, which lists all three.
 
-Nothing here is public yet. The canonical base is https://getclack.club, but
-GitHub Pages isn't turned on, and the domain still has Porkbun's parking
-records ([Going live](#going-live-on-github-pages-at-getclackclub)).
+The site is live at https://getclack.club, served by a Cloudflare Worker
+([Cloudflare](#cloudflare-live)). GitHub Pages isn't turned on; its steps
+below are the alternative.
 
 ## Files
 
@@ -29,12 +31,13 @@ records ([Going live](#going-live-on-github-pages-at-getclackclub)).
 | `build.mjs` | writes `dist/`, with Node built-ins only |
 | `site.json` | the canonical base (`url`) and the GitHub repository |
 | `CNAME` | the domain again, for GitHub Pages; `tools/check.mjs` keeps it in step with `site.json` |
-| `data/release.json` | the newest complete release, its downloads and the five newest releases' headlines |
+| `data/release.json` | the newest complete release and its downloads |
 | `data/plugins.json` | the plugin Library index: names, systems and ids |
 | `data/perf.json` | the numbers in the stats band and where they come from |
 | `fonts/` | the heading font, its coverage list and its licence |
 | `img/` | the screenshots, made by `tools/images.mjs`, with `images.json` saying where each came from |
 | `tools/check.mjs`, `tools/weigh.mjs`, `lighthouserc*.json` | the budgets CI holds the page to |
+| `tools/shots.mjs` | before and after pictures of the page against an earlier commit's build |
 | `tools/font.py` | makes the heading font from TeX Gyre Adventor |
 | `wrangler.jsonc` | for serving the site from Cloudflare instead |
 | `package.json` | Lighthouse CI for CI, and sharp for `tools/images.mjs`; the build needs neither |
@@ -79,8 +82,8 @@ For each:
   every image but the hero is lazy. The production build is indexable, with
   a canonical link, a sitemap and CNAME; `--preview` checks the opposite.
 - `tools/weigh.mjs`: headless Chrome loads the page from a gzip server on
-  127.0.0.1 on two desktops, a tablet and two phones, and scrolls to the
-  bottom so every lazy image loads. A whole visit has to stay under 300 KB
+  127.0.0.1 on desktops at 1440 and 1280, a 1024 laptop, a tablet and two
+  phones, and scrolls to the bottom so every lazy image loads. A whole visit has to stay under 300 KB
   with the font, load one font, keep every request on 127.0.0.1, and fit
   the window. Before that it loads a page that's too wide on purpose and
   fails the run if the width check doesn't catch it.
@@ -94,6 +97,15 @@ For each:
 
 `site-pages.yml` runs the same checks on the build it deploys, and uploads
 that same directory.
+
+The workflow's compare job builds the site at an earlier commit
+(`SITE_BEFORE` in `site.yml`, now round 2's 1608949c, the build
+getclack.club went live with) next to this one, and `tools/shots.mjs`
+takes the same sections at the same widths from both: the top of the page,
+the strip and pills, the sections, the stats band, the footer at 1024px
+and two phone views. The pairs are in the run's `site-before-after`
+artifact, with an `index.html` that shows them side by side. An empty
+`SITE_BEFORE` skips the job.
 
 ## Screenshots
 
@@ -156,10 +168,10 @@ as it will be on getclack.club.
 
 ## Going live on GitHub Pages at getclack.club
 
-None of this is done yet. getclack.club is registered at Porkbun, and on
-2026-11-17 it still had Porkbun's parking records: the apex resolved to
-Porkbun's parking addresses, and every subdomain was a CNAME to
-pixie.porkbun.com. Do the steps in this order. Pointing DNS at GitHub
+Not used: the domain went to Cloudflare instead. If it ever moves to GitHub
+Pages, getclack.club is registered at Porkbun, whose parking records (an
+ALIAS on the apex and a wildcard CNAME to pixie.porkbun.com) come back if
+the nameservers return to Porkbun. Do the steps in this order. Pointing DNS at GitHub
 before the domain is verified and claimed would let someone else's Pages
 site claim it in the meantime, which GitHub's docs warn about.
 
@@ -214,25 +226,23 @@ site claim it in the meantime, which GitHub's docs warn about.
    they break for as long as a rerun of release.yml has that release back
    in draft.
 
-## Or Cloudflare
+## Cloudflare (live)
 
-The same `dist/` works on Cloudflare, and the temporary preview is a
-Cloudflare Worker with static assets. To serve getclack.club from
-Cloudflare instead of GitHub:
+getclack.club is served from Cloudflare, and the orchestrator does the live
+deploys:
 
-1. Add getclack.club as a site in a Cloudflare account. At Porkbun, under
-   the domain's Authoritative Nameservers, replace Porkbun's four
-   nameservers with the two Cloudflare gives you. Don't add GitHub's
-   records from above.
-2. Build and deploy with the config here, which serves `404.html` for
-   unknown paths: `node build.mjs --refresh && wrangler deploy`.
-3. In the Worker's Settings, then Domains & Routes, add `getclack.club` and
-   `www.getclack.club` as custom domains. Cloudflare creates the DNS
-   records and the certificate.
+- The getclack.club zone is in Karim's Cloudflare account. Porkbun's
+  "Connect to Cloudflare" switched the domain's nameservers to Cloudflare's.
+- The Worker `clack-site` serves `dist/` as static assets. `wrangler.jsonc`
+  holds its setup: getclack.club and www.getclack.club as custom domains,
+  workers.dev off, and `404.html` for unknown paths. Deploy with
+  `node build.mjs --refresh && wrangler deploy`.
+- Always Use HTTPS is on.
+- A Response Header Transform Rule removes Cloudflare's Network Error
+  Logging headers (`nel` and `report-to`), so visitors' browsers don't
+  report failed loads to a.nel.cloudflare.com and the page keeps its "no
+  requests to any other host" promise.
 
-Cloudflare adds Network Error Logging headers (`nel` and `report-to`) to
-its responses, so a visitor's browser can report failed loads to
-a.nel.cloudflare.com. That breaks "no requests to any other host" for those
-visitors. Remove both headers with a Response Header Transform Rule on the
-zone, or use GitHub Pages, which doesn't send them. Use one host for the
-apex, not both.
+Previews go up with `wrangler deploy --temporary` and a private
+`XDG_CONFIG_HOME`, never to the live domain. The GitHub Pages steps above
+stay ready as the alternative; use one host for the apex, not both.

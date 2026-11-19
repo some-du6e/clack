@@ -72,10 +72,15 @@
     <div class="strip">
       <p class="strip-label">Runs on</p>
       <ul>
-        <li>macOS</li><li>Windows</li><li>Ubuntu</li><li>Debian</li><li>Fedora</li><li>any Linux</li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9V6.5A2.5 2.5 0 1 0 6.5 9zm0 0h6m-6 0v6m6-6V6.5A2.5 2.5 0 1 1 17.5 9zm0 0v6m0 0h2.5a2.5 2.5 0 1 1-2.5 2.5zm0 0H9m0 0v2.5A2.5 2.5 0 1 1 6.5 15z"/></svg>macOS</li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 9h18M6.5 6.8h.01M9 6.8h.01"/></svg>Windows</li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 7 5 5-5 5M12 18h7"/></svg>Linux</li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M10 3.5v3M14 3.5v3M10 17.5v3M14 17.5v3M3.5 10h3M3.5 14h3M17.5 10h3M17.5 14h3"/></svg>x64</li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/><path d="M10 3.5v3M14 3.5v3M10 17.5v3M14 17.5v3M3.5 10h3M3.5 14h3M17.5 10h3M17.5 14h3"/></svg>ARM64</li>
       </ul>
     </div>
     <div class="hero-media"><x-shot name="hero" eager sizes="(min-width: 848px) 800px, 92vw" alt="Clack's window on a made-up workspace. The sidebar lists channels and sections, #sales-leaderboard shows a bar chart someone posted with reactions and replies under it, and the message box sits at the bottom."></x-shot></div>
+    <p class="shot-note">The screenshots on this page are <code>clack demo</code>: Quillfeather Paper Co. and everyone in it are made up.</p>
     <ul class="pills">
       <li><a class="on" href="#features">Channels<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 7 20M17 4l-2 16M4 9h16M3 15h16"/></svg></a></li>
       <li><a href="#plugins">Plugins<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4M6 7h12v4a6 6 0 0 1-12 0zM12 17v4"/></svg></a></li>
@@ -91,24 +96,19 @@
     <h2 id="band-h">A native window, not a web page</h2>
     <p class="sub">Clack draws every pixel itself, on your GPU. There's no Chromium, Electron or web view inside, so there's no page to load before your messages show up.</p>
     <div class="band-grid">
-      <ul class="band-list">{{{release.pills}}}</ul>
+      <ul class="band-list">
+        <li><a href="#speed"><span>Opens your workspace in about a second</span><span aria-hidden="true">→</span></a></li>
+        <li><a href="#features"><span>Channels, threads and Activity where you'd look for them</span><span aria-hidden="true">→</span></a></li>
+        <li><a href="#plugins"><span>Taut and Slick plugins, as native widgets</span><span aria-hidden="true">→</span></a></li>
+        <li><a href="#themes"><span>All 28 of Slack's theme presets</span><span aria-hidden="true">→</span></a></li>
+        <li><a href="#open"><span>Try it without an account</span><span aria-hidden="true">→</span></a></li>
+      </ul>
       <div class="band-media"><x-shot name="band" sizes="(min-width: 1358px) 677px, (min-width: 1024px) 55vw, 92vw" alt="Clack's emoji picker open over #general in the demo workspace, with frequently used emoji above a grid of smileys."></x-shot></div>
     </div>
   </div>
 </section>
 
-<section class="wn" aria-labelledby="wn-h">
-  <div class="wrap">
-    <div class="wn-head">
-      <div>
-        <h2 id="wn-h">What's new in Clack</h2>
-        <a class="see" href="{{repo.url}}/releases">See all releases <span aria-hidden="true">→</span></a>
-      </div>
-    </div>
-    <ul class="cards">{{{release.cards}}}</ul>
-  </div>
-</section>
-
+<div class="feats">
 <nav class="toc" aria-label="Sections">
   <ul>
     <li><a href="#features">Features</a></li>
@@ -130,7 +130,7 @@
           <details class="d2" name="features"><summary><h3>Threads open next to the conversation</h3></summary><p>A thread opens in a pane on the right with its own message box, so the channel stays in view. Tick "Also send to" and the reply goes to the channel too.</p></details>
           <details class="d3" name="features"><summary><h3>One list for everything that needs you</h3></summary><p>Mentions, thread replies, reactions, DMs and invites collect in Activity, with All, DMs, Mentions and Threads tabs. Pick an item and its conversation opens beside the list.</p></details>
         </div>
-        <p class="gstat"><b>{{perf.settled}}</b><span>until a warm start has drawn everything<sup><a href="#m1" aria-label="Note 1, how this was measured">1</a></sup></span></p>
+        <p class="gstat"><b>{{perf.settled}}<sup><a href="#m1" aria-label="Note 1, how this was measured">1</a></sup></b><span>until a warm start has drawn everything</span></p>
       </div>
       <div class="feat-media">
         <div class="m1"><x-shot name="channel" sizes="(min-width: 1358px) 713px, 58vw" alt="#party-planning-crew in Clack, with reactions, a saved message, a New line and a huddle in progress with a Join Huddle button."></x-shot></div>
@@ -141,28 +141,26 @@
   </div>
 </section>
 
-<section class="feat" id="plugins" aria-labelledby="plugins-h">
+<section class="feat plug" id="plugins" aria-labelledby="plugins-h">
   <div class="wrap">
     <p class="eyebrow">Plugins</p>
     <h2 id="plugins-h">Bring your Taut and Slick plugins</h2>
     <p class="feat-sub">Taut and Slick are client mods for Slack. Clack builds their plugins unmodified from the upstream source and runs them in a sandboxed JavaScript engine, turning their React components into native widgets.</p>
-    <div class="feat-grid">
-      <div class="feat-text">
-        <div class="acc">
-          <details name="plugins" open><summary><h3>{{plugins.ok}} work fully, {{plugins.partial}} partly</h3></summary><p>Of the {{plugins.count}} plugins in Clack's Library, {{plugins.ok}} work as they do in Slack, {{plugins.partial}} work with something missing, and {{plugins.broken}} don't work in Clack yet. The status pages list each one and what's missing.</p><a class="more" href="{{repo.url}}/blob/main/docs/PLUGINS-live-taut.md">Taut plugins in Clack <span aria-hidden="true">→</span></a><a class="more" href="{{repo.url}}/blob/main/docs/PLUGINS-live-slick.md">Slick plugins in Clack <span aria-hidden="true">→</span></a></details>
-          <details name="plugins"><summary><h3>One click to install</h3></summary><p>The Library downloads a plugin from Clack's weekly plugins release when you install it. Where a plugin exists in both Taut and Slick, a weekly benchmark decides which version Install picks.</p><a class="more" href="{{repo.url}}/blob/main/docs/PLUGIN-BENCH.md">How the benchmark picks <span aria-hidden="true">→</span></a></details>
-          <details name="plugins"><summary><h3>Made by their authors</h3></summary><p>Taut is by <a href="https://github.com/jeremy46231/taut">jeremy46231 and contributors</a>, and Slick is by <a href="https://github.com/3kh0/slick">3kh0 and contributors</a>. Their plugins are GPLv3 and belong to their authors.</p></details>
-        </div>
-        <p class="gstat"><b>{{plugins.ok}}</b><span>of {{plugins.count}} Library plugins work fully<sup><a href="#m3" aria-label="Note 3, where this number comes from">3</a></sup></span></p>
-      </div>
-      <div class="feat-media">
-        <div class="lib">
-          <p class="lib-head">In Clack's Library, without the ones that don't work yet</p>
-          <ul class="chips">{{{plugins.chips}}}</ul>
-          <p class="lib-key"><span class="tag">partly</span> works, with something missing</p>
-        </div>
-      </div>
-    </div>
+    <dl class="plug-stats">
+      <div><dt>of the {{plugins.count}} plugins in Clack's Library work as they do in Slack</dt><dd>{{plugins.ok}}<sup><a href="#m3" aria-label="Note 3, where these numbers come from">3</a></sup></dd></div>
+      <div><dt>work, with something missing</dt><dd>{{plugins.partial}}</dd></div>
+      <div><dt>don't work in Clack yet</dt><dd>{{plugins.broken}}</dd></div>
+    </dl>
+    <p class="plug-links"><a class="more" href="{{repo.url}}/blob/main/docs/PLUGINS-live-taut.md">Taut plugins in Clack <span aria-hidden="true">→</span></a><a class="more" href="{{repo.url}}/blob/main/docs/PLUGINS-live-slick.md">Slick plugins in Clack <span aria-hidden="true">→</span></a></p>
+  </div>
+  <div class="mq-wrap">
+    <input type="checkbox" id="mq-pause" class="mq-toggle">
+    <div class="marquee" role="region" aria-label="Plugins in Clack's Library">{{{plugins.marquee}}}</div>
+    <p class="wrap mq-key"><span class="tag">partly</span> works, with something missing · <label for="mq-pause">Pause</label></p>
+  </div>
+  <div class="wrap plug-foot">
+    <p>One click installs a plugin from Clack's weekly plugins release. Where a plugin exists in both Taut and Slick, a weekly benchmark picks the version that works better. <a href="{{repo.url}}/blob/main/docs/PLUGIN-BENCH.md">How the benchmark picks</a></p>
+    <p>Taut is by <a href="https://github.com/jeremy46231/taut">jeremy46231 and contributors</a>, and Slick is by <a href="https://github.com/3kh0/slick">3kh0 and contributors</a>. Their plugins are GPLv3 and belong to their authors.</p>
   </div>
 </section>
 
@@ -173,12 +171,11 @@
     <p class="feat-sub">All 28 of Slack's theme presets, custom colours and dark mode. The theme you pick is saved to your Slack account, the way Slack saves it.</p>
     <div class="feat-grid">
       <div class="feat-text">
-        <div class="acc">
-          <details name="themes" open><summary><h3>28 presets</h3></summary><p>Aubergine, Clementine, Banana, Jade, Lagoon, Barbra, Gray, Mood Indigo and the rest, drawn from Slack's own palettes.</p></details>
-          <details name="themes"><summary><h3>Your own colours</h3></summary><p>Set a custom theme in Preferences, under Appearance, the same way you would in Slack.</p></details>
-          <details name="themes"><summary><h3>Light, dark or your system's</h3></summary><p>Dark mode can follow your system's setting, as Slack's does.</p></details>
-        </div>
-        <p class="gstat"><b>28</b><span>theme presets, the same as Slack's</span></p>
+        <ul class="facts">
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z"/></svg><div><h3>28 presets</h3><p>Aubergine, Clementine, Banana, Jade, Lagoon, Barbra, Gray, Mood Indigo and the rest, drawn from Slack's own palettes.</p></div></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5s-6 6.3-6 10.5a6 6 0 0 0 12 0c0-4.2-6-10.5-6-10.5z"/></svg><div><h3>Your own colours</h3><p>Set a custom theme in Preferences, under Appearance, the same way you would in Slack.</p></div></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/></svg><div><h3>Light, dark or your system's</h3><p>Dark mode can follow your system's setting, as Slack's does.</p></div></li>
+        </ul>
       </div>
       <div class="feat-media">
         <ul class="tiles">
@@ -199,12 +196,11 @@
     <p class="feat-sub">Clack is MIT licensed and built in the open. Every release comes out of CI with a SHA256SUMS file for its downloads.</p>
     <div class="feat-grid">
       <div class="feat-text">
-        <div class="acc">
-          <details name="open" open><summary><h3>Try it without an account</h3></summary><p>Run Clack with <code>demo</code> and it opens Quillfeather Paper Co., a made-up company whose coworkers post, reply, react and start huddles. The demo runs its own fake Slack server, and Clack refuses every connection that isn't to your own computer.</p></details>
-          <details name="open"><summary><h3>It updates itself</h3></summary><p>On all three systems Clack downloads each new release, checks it against the release's SHA256SUMS and applies it when you restart.</p></details>
-          <details name="open"><summary><h3>Its own sign-in</h3></summary><p>You sign in through your browser, the way the Slack app does, and Clack gets a session of its own. Nothing is copied out of your browser.</p><a class="more" href="{{repo.url}}#sign-in">How signing in works <span aria-hidden="true">→</span></a></details>
-        </div>
-        <figure class="quote"><blockquote>"The demo is offline and can't reach Slack."</blockquote><figcaption><b>Clack's README,</b> on <code>clack demo</code></figcaption></figure>
+        <ul class="facts">
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/></svg><div><h3>Try it without an account</h3><p>Run Clack with <code>demo</code> and it opens Quillfeather Paper Co., a made-up company whose coworkers post, reply, react and start huddles. The demo runs its own fake Slack server, and Clack refuses every connection that isn't to your own computer.</p></div></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4v4h-4"/></svg><div><h3>It updates itself</h3><p>On all three systems Clack downloads each new release, checks it against the release's SHA256SUMS and applies it when you restart.</p></div></li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15.5" r="4"/><path d="m11 12.5 8.5-8.5M16 7.5l2.5 2.5M13.5 10l2 2"/></svg><div><h3>Its own sign-in</h3><p>You sign in through your browser, the way the Slack app does, and Clack gets a session of its own. Nothing is copied out of your browser.</p><a class="more" href="{{repo.url}}#sign-in">How signing in works <span aria-hidden="true">→</span></a></div></li>
+        </ul>
       </div>
       <div class="feat-media">
         <pre class="term"><code><span class="c"># Linux, AppImage</span>
@@ -220,6 +216,7 @@
     </div>
   </div>
 </section>
+</div>
 
 <div class="cta-row wrap">
   <a class="btn" href="#download">Download Clack</a>
@@ -230,9 +227,9 @@
   <div class="wrap">
     <h2 id="speed-h">Measured on Clack's own CI</h2>
     <dl>
-      <div class="stat"><dt>to the first frame<sup><a href="#m1" aria-label="Note 1, how this was measured">1</a></sup></dt><dd>{{perf.firstFrame}}</dd></div>
-      <div class="stat"><dt>after a warm start<sup><a href="#m2" aria-label="Note 2, how this was measured">2</a></sup></dt><dd>{{perf.memWarm}}</dd></div>
-      <div class="stat"><dt>after heavy use, then idle<sup><a href="#m2" aria-label="Note 2, how this was measured">2</a></sup></dt><dd>{{perf.memIdle}}</dd></div>
+      <div class="stat"><dt>to the first frame</dt><dd>{{perf.firstFrame}}<sup><a href="#m1" aria-label="Note 1, how this was measured">1</a></sup></dd></div>
+      <div class="stat"><dt>after a warm start</dt><dd>{{perf.memWarm}}<sup><a href="#m2" aria-label="Note 2, how this was measured">2</a></sup></dd></div>
+      <div class="stat"><dt>after heavy use, then idle</dt><dd>{{perf.memIdle}}<sup><a href="#m2" aria-label="Note 2, how this was measured">2</a></sup></dd></div>
     </dl>
   </div>
 </section>
@@ -324,7 +321,7 @@
     <a href="{{repo.url}}">GitHub</a>
   </div>
   <div class="foot-menu">
-    <a class="foot-logo" href="./" aria-label="Clack, home">{{{icon.foot}}}</a>
+    <a class="foot-logo" href="./" aria-label="Clack, home"><img src="icon.svg" width="54" height="54" alt="" loading="lazy" decoding="async"></a>
     <nav aria-labelledby="f1"><h2 id="f1">Clack</h2><ul><li><a href="#features">Features</a></li><li><a href="#plugins">Plugins</a></li><li><a href="#themes">Themes</a></li><li><a href="#open">Demo</a></li><li><a href="#download">Download</a></li></ul></nav>
     <nav aria-labelledby="f2"><h2 id="f2">Releases</h2><ul><li><a href="{{release.url}}">What's new in {{release.short}}</a></li><li><a href="{{repo.url}}/releases">All releases</a></li><li><a href="{{repo.url}}/releases.atom">Release feed</a></li><li><a href="{{dl.sums.url}}">SHA256SUMS</a></li></ul></nav>
     <nav aria-labelledby="f3"><h2 id="f3">Docs</h2><ul><li><a href="{{repo.url}}#install">Install guide</a></li><li><a href="{{repo.url}}#sign-in">Signing in</a></li><li><a href="{{repo.url}}/blob/main/docs/PLUGINS.md">Plugins</a></li><li><a href="{{repo.url}}/blob/main/docs/PLUGINS-live-taut.md">Taut plugin status</a></li><li><a href="{{repo.url}}/blob/main/docs/PLUGINS-live-slick.md">Slick plugin status</a></li><li><a href="{{repo.url}}/blob/main/docs/SECURITY.md">Security review</a></li></ul></nav>

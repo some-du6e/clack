@@ -21,6 +21,10 @@ name: site
 #     FCP, LCP, TBT and CLS budgets, total bytes, no third-party, script or
 #     stylesheet requests, one font; SEO on the home page only (the 404 page
 #     is noindex on purpose)
+# The compare job puts this build beside an earlier commit's (SITE_BEFORE):
+# the same sections at the same widths, before and after, in the
+# site-before-after artifact (tools/shots.mjs). It holds nothing to a
+# budget; an empty SITE_BEFORE skips it.
 # Static pages only: nothing here talks to Slack or deploys anything.
 on:
   push:
@@ -109,3 +113,33 @@ jobs:
             site/dist
             site/weigh
             site/lhci
+
+  compare:
+    runs-on: ubuntu-latest
+    env:
+      # round 2 of the site, the build getclack.club went live with
+      SITE_BEFORE: 1608949c0e8fcca26536c00609f3b3174a21d3a7
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ env.SITE_BEFORE != '' }}
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: ${{ env.SITE_BEFORE != '' }}
+        with:
+          node-version: 24
+      - name: both builds
+        if: ${{ env.SITE_BEFORE != '' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$SITE_BEFORE"
+          git worktree add --detach "$RUNNER_TEMP/before" "$SITE_BEFORE"
+          node "$RUNNER_TEMP/before/site/build.mjs" --strict --pages --out "$RUNNER_TEMP/before-dist"
+          node site/build.mjs --strict --pages
+      - name: before and after
+        if: ${{ env.SITE_BEFORE != '' }}
+        run: node site/tools/shots.mjs --before "$RUNNER_TEMP/before-dist" --after site/dist --out site/shots
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ env.SITE_BEFORE != '' && !cancelled() }}
+        with:
+          name: site-before-after
+          path: site/shots

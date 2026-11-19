@@ -64,42 +64,5 @@
       "size": 1144,
       "url": "https://github.com/some-du6e/clack/releases/download/v0.1.0-alpha.106/SHA256SUMS"
     }
-  ],
-  "recent": [
-    {
-      "tag": "v0.1.0-alpha.106",
-      "published": "2026-11-18T01:59:17Z",
-      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.106",
-      "headline": "Slick plugins' message menus work again.",
-      "blurb": "Slick's newest builds add their actions to message menus through a new menu API, which Clack didn't have."
-    },
-    {
-      "tag": "v0.1.0-alpha.105",
-      "published": "2026-11-17T17:45:01Z",
-      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.105",
-      "headline": "Mentions that wrap across lines draw like Slack's.",
-      "blurb": "A wrapped mention pill now keeps its picture at the start of its first line."
-    },
-    {
-      "tag": "v0.1.0-alpha.104",
-      "published": "2026-11-17T11:40:05Z",
-      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.104",
-      "headline": "A full window is far cheaper for the GPU.",
-      "blurb": "Clack skips work the graphics API already has, batches Metal's commands, leaves a rounded clip off what's drawn inside it, and stencils clip paths only…"
-    },
-    {
-      "tag": "v0.1.0-alpha.103",
-      "published": "2026-11-17T05:23:22Z",
-      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.103",
-      "headline": "Animated emoji play smoothly, and cost almost nothing while they do.",
-      "blurb": "Animated custom emoji like :explodes: now follow Chromium's timing exactly: each frame shows for its own duration, a late frame skips ahead instead of…"
-    },
-    {
-      "tag": "v0.1.0-alpha.102",
-      "published": "2026-11-16T23:51:10Z",
-      "url": "https://github.com/some-du6e/clack/releases/tag/v0.1.0-alpha.102",
-      "headline": "Plugins do far less work.",
-      "blurb": "A plugin view that re-renders without changing anything no longer sends Clack the same tree again."
-    }
   ]
 }

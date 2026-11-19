@@ -34,6 +34,7 @@ const SCENARIOS = [
   { name: 'desktop 1440×900', width: 1440, height: 900, dpr: 1, mobile: false },
   { name: 'desktop 1440×900 at 2x', width: 1440, height: 900, dpr: 2, mobile: false },
   { name: 'laptop 1280×800 at 2x', width: 1280, height: 800, dpr: 2, mobile: false },
+  { name: 'small laptop 1024×768', width: 1024, height: 768, dpr: 1, mobile: false },
   { name: 'tablet 768×1024 at 2x', width: 768, height: 1024, dpr: 2, mobile: true },
   { name: 'phone 412×915 at 2.625x', width: 412, height: 915, dpr: 2.625, mobile: true },
   { name: 'phone 360×780 at 3x', width: 360, height: 780, dpr: 3, mobile: true },

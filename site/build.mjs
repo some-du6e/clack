@@ -70,8 +70,6 @@ const ctx = {
     date: fmtDate(release.published),
     url: release.url,
     packages: release.assets.filter((a) => !ASSETS.sums.test(a.name)).length,
-    pills: release.recent.slice(0, 5).map((r) => `<li><a href="${esc(r.url)}"><span>${esc(r.headline)}</span><span class="badge">${esc(short(r.tag))}</span></a></li>`).join(''),
-    cards: release.recent.slice(0, 3).map((r) => `<li><a class="card" href="${esc(r.url)}"><span class="card-art" aria-hidden="true">${esc(short(r.tag))}<small>${esc(fmtDate(r.published))}</small></span><span class="card-body"><span class="badge">New in ${esc(short(r.tag))}</span><h3>${esc(r.headline)}</h3><p>${esc(r.blurb)}</p></span></a></li>`).join(''),
   },
   releases: { count: release.count },
   dl: downloads(release),
@@ -79,7 +77,7 @@ const ctx = {
   perf: perfContext(perf),
   css: minCSS(read('src/style.css')),
   js: minJS(read('src/os.js')),
-  icon: { top: icon('top'), menu: icon('menu'), foot: icon('foot') },
+  icon: { top: icon('top'), menu: icon('menu') },
 };
 const flags = { site: !!siteURL, preview: !!args.preview };
 ctx.hero = { preload: heroPreload(read('src/index.html')) };
@@ -216,10 +214,15 @@ function pluginContext(p, compat) {
     partial: count('partial'),
     broken: count('broken'),
     generated: fmtDate(p.generated),
-    // a plugin that doesn't work never shows; one that partly works says so
-    chips: rows.filter((r) => r.status !== 'broken').map((r) => r.status === 'partial'
-      ? `<li title="${esc(r.line)}">${esc(r.name)}<span class="tag">partly</span></li>`
-      : `<li>${esc(r.name)}</li>`).join(''),
+    // the Library as two rows that scroll past each other: a plugin that
+    // doesn't work never shows, one that partly works says so (the status
+    // pages linked above it say what's missing). Each row is its list
+    // twice, the copy hidden from screen readers, so the loop is seamless.
+    marquee: [0, 1].map((half) => {
+      const row = rows.filter((r) => r.status !== 'broken').filter((_, i) => i % 2 === half);
+      const chips = row.map((r) => `<li>${esc(r.name)}${r.status === 'partial' ? '<span class="tag">partly</span>' : ''}</li>`).join('');
+      return `<div class="mq-row${half ? ' mq-rev' : ''}"><ul>${chips}</ul><ul aria-hidden="true">${chips}</ul></div>`;
+    }).join(''),
   };
 }
 
@@ -257,14 +260,12 @@ async function refresh() {
   if (!rel) fail('no release has all its downloads');
   const newer = tagged.indexOf(rel);
   if (newer > 0) console.warn(`refresh: ${tagged.slice(0, newer).map((r) => r.tag_name).join(', ')} not complete yet; using ${rel.tag_name}`);
-  const recent = tagged.slice(newer, newer + 5).map((r) => ({ tag: r.tag_name, published: r.published_at, url: r.html_url, ...notes(r.body || '') }));
   writeJSON('data/release.json', {
     tag: rel.tag_name,
     published: rel.published_at,
     url: rel.html_url,
     count: tagged.filter((r) => /^v\d/.test(r.tag_name)).length,
     assets: rel.assets.filter((a) => a.state === 'uploaded').map((a) => ({ name: a.name, size: a.size, url: a.browser_download_url })),
-    recent,
   });
   // the plugin Library: names, systems and ids only
   const idx = await gh(`https://github.com/${repo}/releases/download/plugins/index.json`, 'application/json');
@@ -278,20 +279,7 @@ async function refresh() {
     builds: idx.plugins.length,
     plugins: [...by].sort(([a], [b]) => a.localeCompare(b)).map(([name, variants]) => ({ name, variants: variants.sort((a, b) => a.system.localeCompare(b.system)) })),
   });
-  console.log(`refreshed data/: ${rel.tag_name} (${recent.length} recent), ${by.size} plugins`);
-}
-
-// the notes' first bullet: its bold lead-in ("- **Thing that changed.** …")
-// and the sentence after it
-function notes(body) {
-  const m = body.match(/^\s*[-*]\s+\*\*(.+?)\*\*\s*(.*)$/m);
-  if (!m) return { headline: 'Read the release notes', blurb: '' };
-  const plain = (t) => t.replace(/`([^`]*)`/g, '$1').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*?([^*]+)\*\*?/g, '$1').trim();
-  let blurb = plain(m[2]);
-  const end = blurb.search(/[.!?](\s|$)/);
-  if (end > 0) blurb = blurb.slice(0, end + 1);
-  if (blurb.length > 160) blurb = blurb.slice(0, 157).replace(/\s+\S*$/, '') + '…';
-  return { headline: plain(m[1]), blurb };
+  console.log(`refreshed data/: ${rel.tag_name}, ${by.size} plugins`);
 }
 
 function semver(tag) {
@@ -319,7 +307,8 @@ function short(tag) { return tag.replace(/^v\d+(\.\d+)*-/, ''); }
 
 function minCSS(s) {
   return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, ' ')
-    .replace(/\s*([{};])\s*/g, '$1').replace(/,\s+/g, ',').replace(/;}/g, '}').trim();
+    .replace(/\s*([{};])\s*/g, '$1').replace(/,\s+/g, ',').replace(/;}/g, '}')
+    .replace(/([{;])([-\w]+):\s+/g, '$1$2:').trim();
 }
 
 function minJS(s) {
