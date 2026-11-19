@@ -136,10 +136,13 @@ func init() {
 	// corners 1.528, inner 0.694) and its flap from cap centre to cap
 	// centre; the 0's 1.111-wide ring, the 1's flag, stem and foot; the
 	// T's bar with its two serifs, its stem and its foot, round-capped as
-	// Slack's are.
+	// Slack's are. The T's stem ends at the bars' centrelines: its caps
+	// stay inside them (the same outline), so no two parts' antialiased
+	// edges fall on the same pixels (Gio fills each part on its own, and
+	// edges that coincide add their ink).
 	reg("file-email", sw(0.83333, rrect(5.41667, 6.52778, 9.16667, 6.94444, 1.11111)), sw(0.83333, "M7.364 8.472 L10 10.7225 L12.636 8.472"))
 	reg("file-binary", sw(1.11111, rrect(6.66667, 7.77778, 2.22222, 4.44444, 0.67778)), sw(1.11111, "M11.1111 7.7778 L12.2222 7.7778 L12.2222 12.2222"), sw(1.11111, "M11.1111 12.2222 L13.3333 12.2222"))
-	reg("file-text", sw(1.11111, "M7.7778 8.8778 L7.7778 7.7778 L12.2222 7.7778 L12.2222 8.8889"), sw(1.11111, "M10 7.7778 L10 12.2222"), sw(1.11111, "M8.9 12.2222 L11.1 12.2222"))
+	reg("file-text", sw(1.11111, "M7.7778 8.8778 L7.7778 7.7778 L12.2222 7.7778 L12.2222 8.8889"), sw(1.11111, "M10 8.3333 L10 11.6667"), sw(1.11111, "M8.9 12.2222 L11.1 12.2222"))
 	// Slack's email-up: the envelope open at the bottom left for an arrow
 	// going up (channel details' "Send emails to this channel")
 	reg("email-up", s("M7.75 16.75 H15.75 A2 2 0 0 0 17.75 14.75 V5.25 A2 2 0 0 0 15.75 3.25 H4.25 A2 2 0 0 0 2.25 5.25 V9.25"),
