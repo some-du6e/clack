@@ -1521,8 +1521,12 @@ func (d *Directories) rowMenuUpdate(gtx C, ch core.ChannelHit) {
 	case 0:
 		d.h.Navigate("c/" + ch.ID)
 	case 1:
-		cdCopy(gtx, cdLinkPrefix+ch.ID)
-		d.h.Toast(i18n.T("file", "Link copied to clipboard"))
+		// the workspace's own link, as the channel menu's Copy link builds
+		// it (the team's domain), not one workspace's for every workspace
+		if ph, ok := d.h.(popups.Host); ok {
+			cdCopy(gtx, popups.ChannelLink(ph, ch.ID))
+			d.h.Toast(i18n.T("file", "Link copied to clipboard"))
+		}
 	}
 }
 

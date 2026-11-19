@@ -3,7 +3,7 @@
     {
       "patterns": ["status", "progress", "update", "eta", "where are we", "how's it going", "hows it going", "done yet", "almost done"],
       "tasks": [
-        {"title": "Read the PR #217 timeline", "detail": "quillfeather/order-portal", "output": "4 commits, 1 review"},
+        {"title": "Read the PR #217 timeline", "detail": "octo-org/order-portal", "output": "4 commits, 1 review"},
         {"title": "Checked the latest CI run", "output": "38 passed, 0 failed"},
         {"title": "Listed what's left", "output": "1 approval from theo-lindqvist"}
       ],
@@ -71,7 +71,7 @@
       "patterns": [],
       "tasks": [
         {"title": "Read your message"},
-        {"title": "Checked it against PR #217", "detail": "quillfeather/order-portal"}
+        {"title": "Checked it against PR #217", "detail": "octo-org/order-portal"}
       ],
       "text": "I'm focused on *PR #217*, which fixes the bulk discount rounding on orders of 10+ reams. I can tell you the status, explain the bug or the fix, run the tests, or summarize the review.\nWhat would you like to know?"
     }
@@ -142,7 +142,7 @@
     },
     {
       "card": "Checked PR #217",
-      "detail": "quillfeather/order-portal",
+      "detail": "octo-org/order-portal",
       "output": "CI passing, ready to merge"
     }
   ],

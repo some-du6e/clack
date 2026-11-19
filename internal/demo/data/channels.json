@@ -36,7 +36,7 @@
   {"id": "C0DEMOCODE", "name": "inkwell-order-portal", "kind": "code", "creator": "jordan", "created": "-1 11:35",
    "members": ["jordan", "inkwell", "theo", "nadia"],
    "topic": "Inkwell is fixing the bulk discount on 10+ reams",
-   "purpose": "Code channel: quillfeather/order-portal · fix-bulk-discount-rounding"},
+   "purpose": "Code channel: octo-org/order-portal · fix-bulk-discount-rounding"},
   {"id": "C0DEMOCONN", "name": "papertrail-freight", "kind": "connect", "creator": "wendell", "age_days": 420, "unread": 2,
    "members": ["wendell", "dale", "gordon", "nadia", "jordan", "ines", "bram"],
    "topic": "Pickups Tue/Thu 10am · dock 3 · tracking numbers in threads please",

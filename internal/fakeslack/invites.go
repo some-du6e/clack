@@ -197,12 +197,24 @@ func (s *Server) handleInvites(method string, f url.Values) (any, bool) {
 		}
 		now := time.Now().Unix()
 		code := fmt.Sprintf("zt-fake%04d", len(s.inv.links)+1)
-		l := map[string]any{"code": code, "url": "https://join.slack.com/t/fakeclub/shared_invite/" + code,
+		l := map[string]any{"code": code, "url": "https://join.slack.com/t/" + s.inviteTeam() + "/shared_invite/" + code,
 			"date_create": now, "date_expire": now + 30*24*3600, "max_signups": 400, "num_signups": 0,
 			"inviter_id": SelfID, "notifications_enabled": true}
 		s.inv.links = append(s.inv.links, l)
 		return ok(kvPairs(l)...), true
 	}
+}
+
+// inviteTeam is the workspace an invite link names: Size.PermalinkHost's
+// subdomain (internal/demo's quillfeather.slack.com is quillfeather), else
+// fakeclub.
+func (s *Server) inviteTeam() string {
+	if u, err := url.Parse(s.Size.PermalinkHost); err == nil {
+		if d, ok := strings.CutSuffix(u.Hostname(), ".slack.com"); ok && d != "" && !strings.Contains(d, ".") {
+			return d
+		}
+	}
+	return "fakeclub"
 }
 
 // kvPairs is m as ok's key, value pairs.

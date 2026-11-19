@@ -12,9 +12,9 @@ import (
 // story: PR #217 fixes the order portal's bulk discount rounding.
 
 const (
-	DemoRepo    = "quillfeather/order-portal"
+	DemoRepo    = "octo-org/order-portal"
 	DemoBranch  = "fix-bulk-discount-rounding"
-	DemoPRURL   = "https://github.com/quillfeather/order-portal/pull/217"
+	DemoPRURL   = "https://github.com/octo-org/order-portal/pull/217"
 	DemoPRTitle = "Fix the bulk discount rounding on 10+ reams"
 )
 

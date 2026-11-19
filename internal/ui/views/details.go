@@ -61,7 +61,6 @@ const (
 	cdPadX        = 28 // header, card and list side inset
 	cdHeadH       = 130
 	cdHeadDMH     = 188
-	cdLinkPrefix  = "https://hackclub.slack.com/archives/"
 	cdUnsupported = "Not supported yet"
 )
 
