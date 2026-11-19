@@ -191,6 +191,9 @@ func threadReplyLatency(t *testing.T, mode string) {
 			break
 		}
 		if now.Before(end) && typed == len(rs) && !now.Before(next.Add(-typingLead)) {
+			if _, held := c.S.RawUser(typer(len(rs) + 1)); held {
+				t.Fatalf("the typer %s is in the store already: their typing asks nobody, and the test checks nothing", typer(len(rs)+1))
+			}
 			fs.Push(map[string]any{"type": "user_typing", "channel": ch, "thread_ts": root, "user": typer(len(rs) + 1)})
 			typed++
 		}
