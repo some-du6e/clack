@@ -87,26 +87,24 @@ func (a *App) CanvasTitleOf(fileID string) (spans []richtext.Span, kind string, 
 	return richtext.CanvasTitle(a.S, ref.Title, ref.TitleBlocks), ref.Kind, true
 }
 
-// CanvasOfJump is the canvas a jump to message ts of ch opens (Slack's
-// jumpToMessage, isSpaceship): CanvasOfChannel's. While files.info hasn't
-// answered for a stored file channel, it is the canvas the message's own
-// document_mention names. Otherwise wait is true: the store asked
-// files.info, and the jump waits for the "names" that brings the file id
-// (fileID) instead of opening the file channel.
-func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
-	if fid, ok := a.CanvasOfChannel(ch); ok {
-		return fid, true, false
-	}
+// FileChannelKind is the file a file channel ch belongs to and what it
+// is, "canvas" or "list", as Slack's RedirectFileChannel middleware and
+// jumpToMessage read it from the file in the store (Tac1 uz(getFileById)
+// with fileIsCanvas, fileIsList). kind is "" for a conversation that is no
+// file channel, or one whose file is gone or another kind: Slack mounts
+// the conversation then. A held message ts whose own document_mention
+// names the file is a canvas's. wait is true while files.info hasn't
+// answered for a stored file channel (the store asked): Slack's prefetch
+// has the file by then, Clack waits for it.
+func (a *App) FileChannelKind(ch, ts string) (fileID, kind string, wait bool) {
 	if !strings.HasPrefix(ch, "C") {
-		return "", false, false
+		return "", "", false
 	}
 	fileID = FileOfChannel(ch)
-	// the message names its canvas itself (a document_mention), whatever
-	// the store holds of the channel
 	if ts != "" {
 		if m, held := a.S.FindHeld(ch, ts); held && m.DocumentMention != nil && m.DocumentMention.FileID == fileID {
 			if ref, known := a.S.KnownCanvasRef(fileID); !known || ref.Kind == "canvas" {
-				return fileID, true, false
+				return fileID, "canvas", false
 			}
 		}
 	}
@@ -114,14 +112,58 @@ func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
 	if !stored {
 		c, stored = a.S.ExtConv(ch)
 	}
-	if !stored || !IsFileChannel(c) {
-		return "", false, false
+	if stored && !IsFileChannel(c) {
+		return "", "", false
 	}
-	if _, known := a.S.KnownCanvasRef(fileID); known {
-		return "", false, false // a list's file channel, or a file that's gone
+	var ref richtext.CanvasRef
+	var known bool
+	if stored {
+		ref, known = a.S.CanvasRef(fileID) // a miss is asked for (resolveCanvasRef)
+	} else {
+		ref, known = a.S.KnownCanvasRef(fileID)
 	}
-	a.S.CanvasRef(fileID) // asked for (resolveCanvasRef), if CanvasOfChannel hadn't
-	return fileID, false, true
+	switch {
+	case known && (ref.Kind == "canvas" || ref.Kind == "list"):
+		return fileID, ref.Kind, false
+	case known || !stored:
+		return "", "", false
+	}
+	return fileID, "", true
+}
+
+// CanvasOfJump is FileChannelKind for a canvas: the canvas a jump to
+// message ts of ch opens (Slack's jumpToMessage, isSpaceship), or wait.
+func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
+	fid, kind, wait := a.FileChannelKind(ch, ts)
+	switch {
+	case kind == "canvas":
+		return fid, true, false
+	case wait:
+		return fid, false, true
+	}
+	return "", false, false
+}
+
+// ListRecordOf is the list record whose comment thread message ts of
+// list file channel ch is in: the held message's slack_list, else its
+// thread root's ("" when the store holds neither).
+func (a *App) ListRecordOf(ch, thread, ts string) string {
+	for _, at := range []string{ts, thread} {
+		if at == "" {
+			continue
+		}
+		if m, held := a.S.FindHeld(ch, at); held {
+			if m.SlackList != nil && m.SlackList.ListRecordID != "" {
+				return m.SlackList.ListRecordID
+			}
+			if m.ThreadTS != "" && m.ThreadTS != at {
+				if r, held := a.S.FindHeld(ch, m.ThreadTS); held && r.SlackList != nil {
+					return r.SlackList.ListRecordID
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // CanvasJump is where Slack opens a jump into canvas file channel ch.

@@ -85,6 +85,9 @@ type Message struct {
 	// (lFpV openDocWithThreadTs) opens the canvas at, and Activity's
 	// header counts ("You were mentioned {mentionCount} times in {space}").
 	DocumentMention *MessageDocumentMention `json:"document_mention,omitempty"`
+	// SlackList is a list record's comment thread's message: its list and
+	// record (GMkG and wc0P read slack_list.list_record_id)
+	SlackList *MessageSlackList `json:"slack_list,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
@@ -106,6 +109,11 @@ type MessageDocumentComment struct {
 
 // MessageDocumentMention is a canvas mention's document_mention: the
 // canvas, the section the mention sits in, and who mentioned the viewer.
+type MessageSlackList struct {
+	ListID       string `json:"list_id,omitempty"`
+	ListRecordID string `json:"list_record_id,omitempty"`
+}
+
 type MessageDocumentMention struct {
 	FileID            string   `json:"file_id,omitempty"`
 	SectionID         string   `json:"section_id,omitempty"`
