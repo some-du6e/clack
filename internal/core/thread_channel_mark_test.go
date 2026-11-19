@@ -13,7 +13,9 @@ import (
 // maybeMarkChannelFromThread): the channel reads up to the broadcast. Any
 // other unread message in that span, or a window that doesn't reach back
 // to the channel's last read, leaves the channel as it is; the viewer's
-// own messages and ignored types don't count.
+// own messages, ignored types and hidden ones don't count, but a deleted
+// parent that still has replies (a tombstone, which the processor keeps
+// on display) does.
 func TestMarkThreadMarksChannelFromBroadcastLikeSlack(t *testing.T) {
 	const root, chanRead, bcast, newest = "1700000000.000100", "1700000010.000100", "1700000020.000100", "1700000030.000100"
 	msg := func(ts, user, subtype string) slack.Message {
@@ -23,6 +25,10 @@ func TestMarkThreadMarksChannelFromBroadcastLikeSlack(t *testing.T) {
 		}
 		return m
 	}
+	tomb := msg("1700000015.000100", "USLACKBOT", "tombstone")
+	tomb.Hidden, tomb.ThreadTS, tomb.ReplyCount = true, tomb.TS, 3
+	hidden := msg("1700000015.000100", "U1", "")
+	hidden.Hidden = true
 	for _, tc := range []struct {
 		name    string
 		extra   []slack.Message
@@ -34,6 +40,8 @@ func TestMarkThreadMarksChannelFromBroadcastLikeSlack(t *testing.T) {
 		{"another unread message", []slack.Message{msg("1700000015.000100", "U1", "")}, false, root, false},
 		{"the viewer's own message", []slack.Message{msg("1700000015.000100", "USELF", "")}, false, root, true},
 		{"a join", []slack.Message{msg("1700000015.000100", "U2", "channel_join")}, false, root, true},
+		{"a deleted parent with replies", []slack.Message{tomb}, false, root, false},
+		{"a hidden message", []slack.Message{hidden}, false, root, true},
 		{"the window short of the channel's last read", nil, true, "1700000012.000100", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

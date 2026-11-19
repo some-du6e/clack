@@ -21,15 +21,22 @@ var unreadIgnoredSubtypes = map[string]bool{
 
 // countsAsUnread is isMessageUnread (qxeT) over
 // canCountAsUnreadForCurrentUser (qxvW): m is past lastRead, not a local
-// send (isTempMsg) and not hidden (isHidden; Clack's copies keep no
-// no_display or _hidden_reply), and is either an invite of the viewer
-// (isInviteForCurrentUser) or not the viewer's own (a workflow's from them
-// counts) and not an ignored type. Not ported: a file comment's author,
+// send (isTempMsg) and not hidden (isHidden), and is either an invite of
+// the viewer (isInviteForCurrentUser) or not the viewer's own (a
+// workflow's from them counts) and not an ignored type. isHidden reads
+// the no_display the incoming-message processor sets (client-boot
+// @3325752: hidden && !(subtype "tombstone" && reply_count > 0)), so a
+// deleted parent that still has replies stays a message that counts (its
+// user USLACKBOT, "tombstone" no ignored type); Clack's copies keep no
+// _hidden_reply. Not ported: a file comment's author,
 // isMpdmMoveByCurrentUser, dnd_suppressed and the system messages
 // redesign's ignored types, which Clack's copies don't carry.
 func (a *App) countsAsUnread(m *slack.Message, lastRead, self string) bool {
-	if m == nil || !store.TSLess(lastRead, m.TS) || a.isLocalTS(m.TS) || m.Hidden || m.Subtype == "tombstone" {
+	if m == nil || !store.TSLess(lastRead, m.TS) || a.isLocalTS(m.TS) {
 		return false
+	}
+	if m.Hidden && !(m.Subtype == "tombstone" && m.ReplyCount > 0) {
+		return false // no_display
 	}
 	if (m.Subtype == "channel_join" || m.Subtype == "group_join") && m.Inviter != "" && m.User == self {
 		return true
