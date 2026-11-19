@@ -902,6 +902,9 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	if ev.Msg.Streaming() && b.core.Experiment("defer_notification_3p_streaming") == "on" {
 		return
 	}
+	if c, ok := b.core.MessageChange(ev.Channel, ev.TS); ok && c.Deleted {
+		return // deleted while the lookups it waited for ran: nothing to show, or open
+	}
 	cur := a.router.Current().Channel()
 	c, named := b.noteConv(ev.Channel)
 	if c != nil && c.Preview {
@@ -922,8 +925,16 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 			ids = append(ids, ev.Channel)
 		}
 		ids = append(ids, b.noteMentions(ev.Msg.Doc)...)
-		if len(ids) > 0 {
-			b.noteResolve(a, ids, func() { b.maybeNotifyAfter(a, ev, true) })
+		// and the people it names core doesn't hold (core announced the
+		// message without them; notify_conv.go noteMembers)
+		people := b.noteMembers(ev.Msg)
+		if len(ids) > 0 || len(people) > 0 {
+			b.noteResolve(a, ids, people, func() {
+				if len(people) > 0 {
+					ev = b.noteFresh(ev)
+				}
+				b.maybeNotifyAfter(a, ev, true)
+			})
 			return
 		}
 	}

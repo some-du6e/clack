@@ -434,8 +434,10 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 						found = true
 					}
 				}
-				if !found {
-					if m, ok := s.commentAt(w.Channel, ts); ok { // a canvas's comment (a jump's root, a thread_v2's messages)
+				if !found { // a canvas's comment (a jump's root, a thread_v2's messages), else any message of the fake's, by ts, as Slack's: a live reply's too
+					if m, ok := s.commentAt(w.Channel, ts); ok {
+						out[w.Channel] = append(out[w.Channel], m)
+					} else if m, ok := s.messageByTS(w.Channel, ts); ok {
 						out[w.Channel] = append(out[w.Channel], m)
 					}
 				}
