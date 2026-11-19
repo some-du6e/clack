@@ -467,6 +467,10 @@ func (lb *Lightbox) clicks(gtx layout.Context) {
 	if lb.dlBtn.Clicked(gtx) {
 		lb.download()
 	}
+	if lb.vid.dockBtn.Clicked(gtx) {
+		lb.dock()
+		return
+	}
 	if lb.threadBtn.Clicked(gtx) {
 		if lb.m.Channel == "" || lb.m.TS == "" {
 			h.Toast("This image isn't part of a conversation")

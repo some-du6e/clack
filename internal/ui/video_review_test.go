@@ -163,9 +163,11 @@ func (e *perfEnv) filesList(t *testing.T) channelList {
 }
 
 // A playing video scrolled until about 5% of it shows in the list, its row
-// still laid out, pauses (YPBt's 10% rule); at about half it plays on.
-// Scrolling the row out of the list (TestVideoVisibilityPause) pauses it
-// whether or not the share is measured; this needs the share.
+// still laid out, docks into the mini player (YPBt's 10% rule, with
+// clips_pip as the test account has it): the inline player pauses; at
+// about half it plays on. Scrolling the row out of the list
+// (TestVideoVisibilityPause) docks it whether or not the share is
+// measured; this needs the share.
 func TestVideoTenPercentPause(t *testing.T) {
 	fakeVideos(t)
 	e := filesEnv(t, image.Pt(1440, 900), false)
@@ -224,6 +226,9 @@ func TestVideoTenPercentPause(t *testing.T) {
 	}
 	if _, _, ok := at(); !ok {
 		t.Error("the row left the list: the pause may be EndFrame's, not the 10% rule's")
+	}
+	if p, ok := pipShown(e); !ok || p.trigger != "scroll" {
+		t.Errorf("under 10%% visible while playing: the mini player %+v (%v), want it docked by the scroll", p, ok)
 	}
 }
 

@@ -151,6 +151,7 @@ func (r *Row) LayoutMedia(gtx layout.Context, s richview.MediaSlot) layout.Dimen
 		t.unmount.Stop()
 		t.unmount = nil
 	}
+	c.pendingResumeLocked(t) // a closed mini player's time, now it's laid out
 	c.syncPrefsLocked()
 	if ps := poster.Size(); ps != t.size {
 		t.size = ps
@@ -206,7 +207,7 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 			t.hover, t.volOver, t.press = false, false, zNone
 			t.stopVolWait()
 		case pointer.Press:
-			if e.Buttons != pointer.ButtonPrimary {
+			if e.Buttons != pointer.ButtonPrimary || t.inPip { // isThisPlayerInPip: its click does nothing
 				break
 			}
 			t.hover, t.ptr = true, e.Position
@@ -405,7 +406,10 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	c.mu.Lock()
 	h := t.h
 	still, stillOK := t.still, t.stillOK
-	hot := t.hover || t.scrub || t.vol || t.menuOpen
+	inPip, mini := t.inPip, t.mini
+	// isThisPlayerInPip: the mini player shows this video, so here only
+	// the pill (no controls, no corner)
+	hot := (t.hover || t.scrub || t.vol || t.menuOpen) && !inPip
 	playing, loading, pillOn := t.playing, t.loading, t.pillShownLocked()
 	label := pillTime(t, hot)
 	iconPx := dp(20)
@@ -595,9 +599,11 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	// the corner: Expand, then More actions, 2px apart (gallery_v3's
 	// small buttons)
 	bs := dp(28)
-	z.more = image.Rect(sz.X-m8-bs, m8, sz.X-m8, m8+bs)
-	if _, ok := r.h.(Expander); ok {
-		z.expand = z.more.Sub(image.Pt(bs+dp(2), 0))
+	if !mini && !inPip { // the mini player's own controls stand for the corner (PipControls)
+		z.more = image.Rect(sz.X-m8-bs, m8, sz.X-m8, m8+bs)
+		if _, ok := r.h.(Expander); ok {
+			z.expand = z.more.Sub(image.Pt(bs+dp(2), 0))
+		}
 	}
 	expandHot := hot && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(z.expand)
 	if hot && !z.expand.Empty() {
@@ -617,7 +623,7 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		icons.Get("expand")(gtx, unit.Dp(16), iconCol) // expand-diagonal
 		off.Pop()
 	}
-	if hot {
+	if hot && !z.more.Empty() {
 		dark := false
 		if th := r.c.theme(); th != nil {
 			dark = th.Dark
@@ -635,6 +641,9 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		off.Pop()
 	}
 
+	if inPip { // nothing here acts
+		z = zones{}
+	}
 	c.mu.Lock()
 	t.z = z
 	c.mu.Unlock()

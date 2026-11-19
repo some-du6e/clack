@@ -235,6 +235,9 @@ type App struct {
 	// videoRepaints are the layouts the players asked for (their state
 	// changing: a play, a pause, a loop's seek), video.go
 	videoRepaints atomic.Int64
+	// the mini player's window part (video_pip.go) and its next wake
+	pip     pipUI
+	pipWake time.Time
 
 	title       string
 	firstPaint  bool
@@ -851,6 +854,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.syncSplitWindow(gtx) // the split view's minimum window width (split.go)
 
 	a.layoutSwipe(gtx, primary)
+	a.layoutVideoPip(gtx)  // the mini player: over the content, under the overlays (video_pip.go)
 	a.layoutHoverCard(gtx) // above the content, under the overlays
 	a.layoutOverlays(gtx)
 	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers

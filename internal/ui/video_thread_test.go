@@ -5,8 +5,9 @@ package ui
 // thread plays in the thread pane, as in Slack: the pane's rows take
 // their players under "thread"; its More actions has no "Open in thread"
 // (frPc, not in a thread pane); one video plays at a time across the
-// channel and the pane (bxCZ); closing the pane pauses its video at once
-// and lets the player go 10 s later (React unmounting the pane).
+// channel and the pane (bxCZ); closing the pane while its video plays
+// docks it into the mini player (useNavigateDockTrigger), its own player
+// paused at once and let go 10 s later (React unmounting the pane).
 
 import (
 	"image"

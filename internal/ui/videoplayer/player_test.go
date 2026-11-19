@@ -43,8 +43,14 @@ func (p *prefs) writes() []string {
 }
 
 // fakeEnv is a controller on the fake backend, the fixture behind every
-// URL.
+// URL, with every experiment on.
 func fakeEnv(t *testing.T) (*Controller, *prefs) {
+	t.Helper()
+	return fakeEnvExp(t, func(string) string { return "on" })
+}
+
+// fakeEnvExp is fakeEnv with exp's experiments.
+func fakeEnvExp(t *testing.T, exp func(string) string) (*Controller, *prefs) {
 	t.Helper()
 	_, o := mediatest.Source("FVP", mediatest.GreyGreyRed, false)
 	p := &prefs{vals: map[string]json.RawMessage{}}
@@ -55,7 +61,7 @@ func fakeEnv(t *testing.T) (*Controller, *prefs) {
 		},
 		Pref:       p.get,
 		SetPref:    p.set,
-		Experiment: func(string) string { return "on" },
+		Experiment: exp,
 	})
 	t.Cleanup(c.CloseAll)
 	return c, p
@@ -168,28 +174,31 @@ func TestOnePlaysAtATime(t *testing.T) {
 	waitFor(t, "the first paused", 5*time.Second, func() bool { return !state(t, c, r1, f).Playing })
 }
 
-// A playing video the list shows under 10% of pauses (Slack docks it);
-// one the layout no longer draws pauses, then closes after unmountAfter,
-// keeping where it was; the next player starts there.
+// Without clips_pip (no mini player), a playing video the list shows
+// under 10% of plays on (YPBt's observer isn't active); one the layout no
+// longer draws pauses, then closes after unmountAfter, keeping where it
+// was (React unmounting its row); the next player starts there.
 func TestOffscreenPausesThenCloses(t *testing.T) {
 	defer func(d time.Duration) { unmountAfter = d }(unmountAfter)
 	unmountAfter = 300 * time.Millisecond
-	c, _ := fakeEnv(t)
+	c, _ := fakeEnvExp(t, func(name string) string {
+		if name == "clips_pip" {
+			return "off"
+		}
+		return "on"
+	})
 	r := c.Row("channel", "C1", "1.0", nil)
 	f := videoFile("F1")
 	frame(c, [2]any{r, f})
 	click(c, r, f)
 	waitFor(t, "playing", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	r.MediaVisible(f, 0.5)
-	time.Sleep(50 * time.Millisecond)
-	if !state(t, c, r, f).Playing {
-		t.Fatal("half on screen, it paused")
-	}
 	r.MediaVisible(f, 0.05)
-	waitFor(t, "paused under 10% visible", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
-	click(c, r, f)
-	waitFor(t, "playing again", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	if st := state(t, c, r, f); !st.Playing || st.InPip {
+		t.Fatalf("under 10%% visible without clips_pip: %+v, want it playing on", st)
+	}
+	time.Sleep(300 * time.Millisecond)
 	frame(c) // a layout that doesn't draw it: another conversation
 	waitFor(t, "paused off the screen", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
 	at := state(t, c, r, f).Elapsed

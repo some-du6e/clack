@@ -47,8 +47,12 @@ import (
 //     next item. A new item starts from where the viewer left it, playing
 //     (tC: autoPlay on, the time from the file's progress).
 //
-// Not yet: playback speed (j/l, the speed button) and captions, Dock to
-// corner (the mini player), and one-click reactions on the video.
+//   - Dock to corner (MediaViewerPipButton, left of Show thread) docks the
+//     video into the mini player from its time and closes the viewer
+//     (VideoDocker; videoplayer/pip.go).
+//
+// Not yet: playback speed (j/l, the speed button) and captions, and
+// one-click reactions on the video.
 
 // lbHideAfter is how long the viewer's controls stay after the pointer
 // last moved while the video plays (LqYI).
@@ -88,6 +92,9 @@ type lbVideo struct {
 	volLeft                  time.Time
 	playBtn, muteBtn         widget.Clickable
 	tips                     [2]TipState
+	dockBtn                  widget.Clickable // Dock to corner (MediaViewerPipButton)
+	dockTip                  TipState
+	dockR                    image.Rectangle
 	wakeAt                   time.Time // the layout asked for (later)
 }
 
@@ -705,6 +712,38 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 		rx -= dp(gtx, 48)
 		btn(rx, &lb.threadBtn, "panel-right", &lb.tips[6], nsViewer.T("Show thread"))
 	}
+	// MediaViewerPipButton (before Show thread in FileViewerActions'
+	// children): any playable video, where the host docks it
+	if _, ok := lb.h.(VideoDocker); ok && lb.vid.p != nil {
+		rx -= dp(gtx, 48)
+		lb.vid.dockR = btn(rx, &lb.vid.dockBtn, "surface", &lb.vid.dockTip, nsViewer.T("Dock to corner"))
+	} else {
+		lb.vid.dockR = image.Rectangle{}
+	}
+}
+
+// DockRect is the footer's Dock to corner as the last frame drew it (tests).
+func (lb *Lightbox) DockRect() image.Rectangle { return lb.vid.dockR }
+
+// VideoDocker is optional on the Host: the media viewer's Dock to corner
+// (the viewer's popToSidebar, tG) docks the video item into the mini
+// player from at, playing if playing; gallery is a gallery's video (it
+// can't play inline). The viewer closes first.
+type VideoDocker interface {
+	DockVideo(f *richtext.File, m core.Message, at time.Duration, playing, gallery bool) bool
+}
+
+// dock is the Dock to corner button's click.
+func (lb *Lightbox) dock() {
+	d, ok := lb.h.(VideoDocker)
+	it := lb.cur()
+	if !ok || lb.vid.p == nil || !it.video || it.file == nil {
+		return
+	}
+	st := lb.vid.p.State()
+	f, m, gallery := it.file, lb.m, len(lb.items) > 1
+	lb.Dismiss()
+	d.DockVideo(f, m, st.Elapsed, st.Playing, gallery)
 }
 
 // barFrac is the elapsed share of the duration, 0..1.

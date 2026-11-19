@@ -136,6 +136,11 @@ type Controller struct {
 	prefsLoaded bool
 	viewers     uint64 // the media viewer's players so far (viewer.go)
 	spinOn      bool   // the spinner's quiet frames are coming (spinner.go)
+	// the mini player (pip.go): what it shows, a closed one's time for an
+	// inline player not laid out, and its width as the viewer dragged it
+	pip       *pipState
+	pipResume *pipResume
+	pipW      int
 }
 
 // New is a window's players.
@@ -173,17 +178,26 @@ func (r *Row) MediaTile(f *richtext.File, files int, overflow bool) bool {
 
 func (r *Row) key(f *richtext.File) key { return key{r.pane, r.ch, r.ts, f.ID} }
 
-// MediaVisible is how much of f's tile the list showed as it laid out
-// (0..1): a playing video under dockBelow pauses (Slack docks it).
+// MediaVisible is how much of f's tile its scrollers showed in the last
+// frame (0..1). useScrollDockTrigger's IntersectionObserver (threshold
+// dockBelow) calls back as the tile crosses it, the first callback
+// skipped: a playing video that goes under it docks into the mini player
+// (pip.go) when it docks at all; otherwise it plays on.
 func (r *Row) MediaVisible(f *richtext.File, frac float64) {
-	if f == nil || frac >= dockBelow {
+	if f == nil {
 		return
 	}
 	c := r.c
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if t := c.tiles[r.key(f)]; t != nil && t.h != nil && t.playing {
-		t.h.Pause()
+	t := c.tiles[r.key(f)]
+	if t == nil {
+		return
+	}
+	was := t.visible
+	t.visible = frac >= dockBelow
+	if was && !t.visible && c.docksLocked(t) {
+		c.dockLocked(t, "scroll")
 	}
 }
 
@@ -218,7 +232,13 @@ type tile struct {
 	still    paint.ImageOp
 	stillOK  bool
 	menuOpen bool // its More actions menu is open: the overlay stays active
-	z        zones
+	// mini: the mini player's own tile (pip.go); inPip: an inline tile
+	// whose video the mini player shows (isThisPlayerInPip: only the pill)
+	mini, inPip bool
+	// visible: at least dockBelow of it showed at the last report
+	// (useScrollDockTrigger's isIntersecting)
+	visible bool
+	z       zones
 	// the frame it was last laid out in, and the close waiting for it
 	laid    uint64
 	unmount *time.Timer
@@ -253,6 +273,12 @@ func (c *Controller) tileLocked(k key, f *richtext.File) *tile {
 			t.elapsed, t.played = p, true
 		}
 		c.tiles[k] = t
+		// its video in the mini player: only the pill; a closed mini
+		// player's time for it
+		if c.pip != nil && t.inlineOf(c.pip.media) {
+			t.inPip = true
+		}
+		c.pendingResumeLocked(t)
 	}
 	t.f = f
 	return t
@@ -538,7 +564,9 @@ func (c *Controller) EndFrame() {
 			delete(c.tiles, k)
 			continue
 		}
-		if t.playing {
+		if c.docksLocked(t) {
+			c.dockLocked(t, "navigate") // useNavigateDockTrigger: it plays on in the corner
+		} else if t.playing {
 			t.h.Pause()
 		}
 		if t.unmount == nil {
@@ -564,6 +592,7 @@ func (c *Controller) unmountIdle(k key, t *tile, laid uint64) {
 func (c *Controller) CloseAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.pip, c.pipResume = nil, nil
 	for k, t := range c.tiles {
 		c.closeLocked(t)
 		delete(c.tiles, k)
@@ -746,6 +775,9 @@ type State struct {
 	// Still is whether the tile shows the frame of a player it let go of
 	// idle (SetIdleAfter)
 	Still bool
+	// InPip is whether the mini player shows its video (only the pill
+	// here)
+	InPip bool
 }
 
 // Click is the tile's click (fIJO's tE), as a press and release on it
@@ -771,7 +803,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
 		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
-		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked(), Still: t.stillOK}
+		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked(), Still: t.stillOK, InPip: t.inPip}
 	if t.h != nil {
 		st.Player = t.h
 	}

@@ -34,6 +34,8 @@ on:
       - "internal/ui/popups/lightbox.go"
       - "internal/ui/popups/lightbox_video.go"
       - "internal/ui/video_viewer_test.go"
+      - "internal/ui/video_pip*.go"
+      - "internal/ui/videoplayer/pip*.go"
       - "internal/ui/files_shots_test.go"
       - "internal/ui/drop_overlay.go"
       - "internal/ui/drop_overlay_test.go"
@@ -93,19 +95,20 @@ jobs:
           rc=0
           # the branch: a gallery's video, Expand and the Files tab open the
           # viewer playing; its keys, auto-hide and end; shots *-after.png
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestVideoViewer' ./internal/ui/ || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ || rc=1
           go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ || rc=1
           # ui, where there's no player (the stand-in hooks): every check
           # fails and the shots (*-before.png) show what ui does. Until ui
           # has the viewer's videos (NewVideoViewer), a ui run that fails
           # none of them fails this step: the comparison is the evidence.
-          cp internal/ui/video_viewer_test.go before-ui/internal/ui/
+          cp internal/ui/video_viewer_test.go internal/ui/video_pip_test.go before-ui/internal/ui/
           cp internal/ui/testdata/video_viewer_hooks_ui.go.txt before-ui/internal/ui/video_viewer_hooks_test.go
+          cp internal/ui/testdata/video_pip_hooks_ui.go.txt before-ui/internal/ui/video_pip_hooks_test.go
           cp internal/ui/views/channel_files_video_test.go before-ui/internal/ui/views/
-          (cd before-ui && git log -1 --format='before = ui at %H' && VIDEO_VIEWER_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestVideoViewer' ./internal/ui/ > "$FILES_SHOTS_DIR/video-viewer-before-ui.log" 2>&1)
+          (cd before-ui && git log -1 --format='before = ui at %H' && VIDEO_VIEWER_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ > "$FILES_SHOTS_DIR/video-viewer-before-ui.log" 2>&1)
           (cd before-ui && go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ > "$FILES_SHOTS_DIR/video-viewer-before-views.log" 2>&1)
           fixed=0
-          grep -q 'func NewVideoViewer' before-ui/internal/ui/popups/lightbox_video.go 2>/dev/null && fixed=1
+          grep -q 'func NewVideoViewer' before-ui/internal/ui/popups/lightbox_video.go 2>/dev/null && grep -q 'func (c \*Controller) PipOn' before-ui/internal/ui/videoplayer/pip.go 2>/dev/null && fixed=1
           for f in "$FILES_SHOTS_DIR"/video-viewer-before-*.log; do
             echo "== $f (ui): results, then one report per failing check (numbers folded)"
             grep -E '^\s*--- (PASS|FAIL)|^(ok|FAIL)\b' "$f" || true

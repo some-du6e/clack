@@ -19,9 +19,11 @@ import (
 //	Delete file (Delete clip for a clip)
 //
 // Left out until Clack has them: Open in new window (Slack's pop-out
-// player window), Dock to corner (the mini player), Edit thumbnail…,
-// Add to folder and Add to section, and Report to Slack. View details
-// opens the file's page, as FileActions' View file details does.
+// player window), Edit thumbnail…, Add to folder and Add to section, and
+// Report to Slack. View details opens the file's page, as FileActions'
+// View file details does. (Dock to corner is only with
+// showPlaybackSettings, the media viewer's menu: the viewer's own Dock
+// button docks it there.)
 // inThread: the message shows in a thread pane.
 func NewVideoActionsMenu(h Host, btn image.Rectangle, m core.Message, f *richtext.File, inThread bool) *Menu {
 	return NewVideoActionsMenuClosing(h, btn, m, f, inThread, nil)

@@ -8,7 +8,9 @@ package ui
 // State had no VolumeOpen: the hovered controls' slider stands in.
 
 import (
+	"image"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
@@ -30,3 +32,15 @@ func volumeOpen(st videoplayer.State) bool { return st.Hover && !st.Slider.Empty
 
 // no idle release there
 func keepIdlePlayers(*testing.T) {}
+
+// no mini player there (video_pip_hooks_test.go's)
+type pipView struct {
+	rect     image.Rectangle
+	controls []image.Rectangle
+	corner   string
+	playing  bool
+	elapsed  time.Duration
+	trigger  string
+}
+
+func pipShown(*perfEnv) (pipView, bool) { return pipView{}, false }

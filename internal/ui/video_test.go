@@ -141,9 +141,9 @@ func TestVideoInlinePlay(t *testing.T) {
 	}
 }
 
-// A playing video scrolled out of the list pauses (under 10% visible
-// Slack docks it into the mini player, which Clack hasn't yet), and
-// doesn't play on by itself when it's back.
+// A playing video scrolled out of the list docks into the mini player
+// (clips_pip, as the test account has it: YPBt), the inline player
+// paused, and doesn't play on by itself when it's back.
 func TestVideoVisibilityPause(t *testing.T) {
 	fakeVideos(t)
 	e := filesEnv(t, image.Pt(1440, 900), false)
@@ -160,6 +160,9 @@ func TestVideoVisibilityPause(t *testing.T) {
 		e.frame()
 	}
 	e.until("paused off the screen", 5*time.Second, func() bool { st, _ := e.videoState(m.TS); return !st.Playing })
+	if _, ok := pipShown(e); !ok {
+		t.Error("scrolled away while playing, it didn't dock")
+	}
 	if rs := rectsOf(e.channelFiles(ch), m.TS); len(rs) > 0 {
 		view := image.Rectangle{Min: e.a.primaryOrigin, Max: e.size}
 		if in := rs[0].R.Intersect(view); in.Dx()*in.Dy()*10 >= rs[0].R.Dx()*rs[0].R.Dy() {
@@ -173,10 +176,10 @@ func TestVideoVisibilityPause(t *testing.T) {
 	}
 }
 
-// A video whose conversation the window leaves pauses at once and lets
-// its player go after 10 s, as React unmounting its row does; the tile
-// then shows the poster with the time played, and a new player starts
-// there.
+// A paused video whose conversation the window leaves lets its player go
+// after 10 s, as React unmounting its row does (a playing one docks into
+// the mini player: TestVideoPipDocks); the tile then shows the poster with
+// the time played, and a new player starts there.
 func TestVideoUnmountReleases(t *testing.T) {
 	fakeVideos(t)
 	e := filesEnv(t, image.Pt(1440, 6000), false)
@@ -186,6 +189,8 @@ func TestVideoUnmountReleases(t *testing.T) {
 	e.clickAt(mid(tile.R), time.Second)
 	e.until("playing", 15*time.Second, func() bool { st, _ := e.videoState(m.TS); return st.Playing })
 	e.settle(500 * time.Millisecond)
+	e.clickAt(mid(tile.R), 2*time.Second) // paused: it doesn't dock
+	e.until("paused", 5*time.Second, func() bool { st, _ := e.videoState(m.TS); return !st.Playing })
 	other := ""
 	for _, id := range e.fs.ChannelIDs() {
 		if id != ch {
