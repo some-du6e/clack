@@ -35,7 +35,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // thrBanners is the banners' share of ThreadsView's state:
@@ -353,23 +353,29 @@ func thrUnreadThreadsLabel(n int) string {
 }
 
 // bannerPill is ThreadBannerButtonsGeneric under .p-threads_view: a 28px
-// #1264a3 pill, radius 14, 13px bold white on a 28px line; the label
-// button with 8px sides, the arrow-up or arrow-down icon 4px before a
-// space and the text (top 2px), then the 36px close (times-small, padding
-// 1px top and 2px right). A hovered button is #0b4c8c. The top banner
-// sits 5px down the area, the bottom one 8px up plus the pill's 4px
-// margin-bottom.
+// #1264a3 pill, radius 14, 13px bold white on a 28px line, its baseline
+// where Chrome puts it (thrLineBaseline). The label button has 8px sides:
+// the arrow-up or arrow-down c-icon, the icon font's glyph in a 20px box
+// whose baseline (the font's 1700/2000 ascent) sits on the line's, moved
+// 2px down (top:2px), then 4px, a space and the text. The close is the
+// times-small c-icon: 36px wide plus its 2px right padding (content-box),
+// the glyph in the middle of the 36 and of the 28 under its 1px top
+// padding. A hovered button is #0b4c8c. The top banner sits 5px down the
+// area, the bottom one 8px up plus the pill's 4px margin-bottom. Chrome
+// lays Slack's rules out to these boxes: the arrow box at (8, 4), the
+// text from 32px with its baseline at 19, the close 38px wide.
 func (v *Threads) bannerPill(gtx C, bb *thrBannerButtons, up bool, txt string, area image.Point) {
 	white := rgb(0xffffff)
-	bh, is := gtx.Dp(28), gtx.Dp(16)
+	bh, is := gtx.Dp(28), gtx.Dp(20)
 	tw, space := v.th.Measure(gtx, 13, wBold, txt), v.th.Measure(gtx, 13, wBold, " ")
 	jw := gtx.Dp(8) + is + gtx.Dp(4) + space + tw + gtx.Dp(8)
-	cw := gtx.Dp(36)
+	cw := gtx.Dp(36) + gtx.Dp(2)
 	w := jw + cw
-	y, icon := gtx.Dp(5), "arrow-up"
+	y, icon := gtx.Dp(5), "arrow-up-font"
 	if !up {
-		y, icon = area.Y-gtx.Dp(8)-gtx.Dp(4)-bh, "arrow-down"
+		y, icon = area.Y-gtx.Dp(8)-gtx.Dp(4)-bh, "arrow-down-font"
 	}
+	bl := thrLineBaseline(gtx, v.th, 13, 28)
 	r := bh / 2
 	defer op.Offset(image.Pt((area.X-w)/2, y)).Push(gtx.Ops).Pop()
 	rrect(gtx, image.Rectangle{Max: image.Pt(w, bh)}, r, rgb(0x1264a3))
@@ -395,19 +401,33 @@ func (v *Threads) bannerPill(gtx C, bb *thrBannerButtons, up bool, txt string, a
 		})
 	}
 	btn(&bb.jump, 0, jw, true, func(gtx C) {
-		st := op.Offset(image.Pt(gtx.Dp(8), (bh-is)/2+gtx.Dp(2))).Push(gtx.Ops)
-		v.icon(gtx, icons.Slack(icon), 16, white)
+		st := op.Offset(image.Pt(gtx.Dp(8), bl-gtx.Dp(17)+gtx.Dp(2))).Push(gtx.Ops)
+		v.icon(gtx, icon, 20, white)
 		st.Pop()
-		st = op.Offset(image.Pt(gtx.Dp(8)+is+gtx.Dp(4)+space, 0)).Push(gtx.Ops)
+		// the label's baseline on the line's (Gio puts a line's at its
+		// ascent, with no half-leading above)
+		m := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints.Min = image.Point{}
-		v.para(g, 13, 28, wBold, white, 1, txt)
+		d := v.label(g, 13, wBold, white, txt)
+		call := m.Stop()
+		st = op.Offset(image.Pt(gtx.Dp(8)+is+gtx.Dp(4)+space, bl-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
+		call.Add(gtx.Ops)
 		st.Pop()
 	})
 	btn(&bb.close, jw, cw, false, func(gtx C) {
 		cs := gtx.Dp(20)
-		st := op.Offset(image.Pt((cw-gtx.Dp(2)-cs)/2, (bh-cs)/2+gtx.Dp(1))).Push(gtx.Ops)
+		st := op.Offset(image.Pt((cw-gtx.Dp(2)-cs)/2, gtx.Dp(1)+(bh-cs)/2)).Push(gtx.Ops)
 		v.icon(gtx, "times-small", 20, white)
 		st.Pop()
 	})
+}
+
+// thrLineBaseline is where Chrome puts a size/lineH line's baseline from
+// its line box's top: half the leading above the UI font's ascent and
+// descent, then the ascent (messages' cssBaseline).
+func thrLineBaseline(gtx C, th *theme.Theme, size, lineH float32) int {
+	sp := gtx.Metric.PxPerSp
+	e := theme.UIExtents(th.Shaper)
+	return int((lineH*sp-(e.Ascent+e.Descent)*size*sp)/2 + e.Ascent*size*sp + 0.5)
 }

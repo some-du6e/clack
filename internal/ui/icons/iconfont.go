@@ -72,6 +72,12 @@ func init() {
 	// SvgIcon enter.
 	reg("arrow-up-medium", s("M6.75 9 L10 5.75 L13.25 9 M10 5.75 V14.25"))
 	reg("arrow-down-medium", s("M6.75 11 L10 14.25 L13.25 11 M10 14.25 V5.75"))
+	// U+E288 icon_arrow_up and U+E289 icon_arrow_down (c-icon--arrow-up,
+	// c-icon--arrow-down): the Threads view's unread banners
+	// (ThreadBannerButtonsGeneric's y8g2 Icon), an 8-unit arrow in the
+	// middle of the 20-unit view
+	reg("arrow-up-font", s("M6.75 10 L10 6.75 L13.25 10 M10 6.75 V13.25"))
+	reg("arrow-down-font", s("M6.75 10 L10 13.25 L13.25 10 M10 13.25 V6.75"))
 	reg("enter-font", s("M16.25 4.25 V11.25 H3.75 M7 8 L3.75 11.25 L7 14.5"))
 	// U+E106 icon_broadcast (c-icon--broadcast): the @here / @channel /
 	// @everyone rows' icon (SmallBroadcastEntity's y8g2 Icon type

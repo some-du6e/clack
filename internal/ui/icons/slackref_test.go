@@ -346,6 +346,8 @@ var fontRef = map[string]rune{
 	"scheduled-send-glyph":  0xE07A,
 	"arrow-up-medium":       0xE292,
 	"arrow-down-medium":     0xE293,
+	"arrow-up-font":         0xE288,
+	"arrow-down-font":       0xE289,
 	"enter-font":            0xE302,
 	"broadcast":             0xE106,
 	"lock-o":                0xE029,

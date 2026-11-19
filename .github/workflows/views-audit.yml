@@ -61,6 +61,15 @@ jobs:
           # To-dos and Saved beside their list in the whole window (W42)
           xvfb-run -a go test -count=1 -v -run 'TestSavedListColumnLikeSlack|TestLaterRowsOpenBesideLikeSlack|TestViewTodosOpensBeside' ./internal/ui
           ls -la "$VIEWS_SHOTS_DIR"
+      # the unread threads pills' ink where Chrome draws Slack's rules;
+      # CLACK_PIXEL_TESTS makes a missing GPU fail the test, not skip it
+      - name: threads banners drawn (Mesa llvmpipe)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: xvfb-run -a go test -count=1 -v -run '^TestThreadsBannerPillDrawnLikeSlack$' ./internal/ui/views
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
