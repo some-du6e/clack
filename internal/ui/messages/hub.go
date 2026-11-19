@@ -505,12 +505,13 @@ func (hb *hub) ensureLoaded(m *model) {
 var loadLanded atomic.Pointer[func(m *model)]
 
 // HoldLoad (tests) holds every load of ch's list model (threadTS: a
-// thread pane's) once its answer is in, until release: a list whose load
-// is out, its model on what it held before (a dropped one's reload).
+// thread pane's; never a jump's window) once its answer is in, until
+// release: a list whose load is out, its model on what it held before (a
+// dropped one's reload).
 func HoldLoad(ch, threadTS string) (release func()) {
 	gate := make(chan struct{})
 	f := func(m *model) {
-		if m.ch == ch && m.threadTS == threadTS {
+		if m.ch == ch && m.threadTS == threadTS && !m.win {
 			<-gate
 		}
 	}
@@ -709,6 +710,9 @@ func (hb *hub) loadWindow(m *model, ts string) {
 		defer cancel()
 		w, err := hb.app.HistoryAround(ctx, m.ch, ts)
 		seq := hb.app.EmitSeq() // as ensureLoaded's: the entries it writes carry it (loadSeq)
+		if f := loadLanded.Load(); f != nil {
+			(*f)(m)
+		}
 		m.mu.Lock()
 		m.loadSeq = seq
 		m.around, m.loading, m.err = "", false, err
@@ -1228,14 +1232,20 @@ func (hb *hub) apply(ev core.Event) bool {
 		chm, thm := hb.models(ev.Channel, thread)
 		changed := false
 		// a window takes a change to a message it holds, never a new one
-		// (that's the newest messages', the conversation's model's)
+		// (that's the newest messages', the conversation's model's). With
+		// its load out it holds nothing yet: the answer, read before the
+		// change, may hold the message, and takes the change (keepLive),
+		// as the conversation's model's does
 		for _, w := range hb.windowsOf(ev.Channel) {
 			w.mu.Lock()
-			if w.find(ev.Msg.TS) >= 0 {
+			switch {
+			case w.find(ev.Msg.TS) >= 0:
 				w.upsert(*ev.Msg, ev.EmitSeq)
 				w.noteLive(ev.Msg.TS, false)
 				w.rev++
 				changed = true
+			case w.visible(ev.Msg):
+				w.notePlace(*ev.Msg, ev.EmitSeq)
 			}
 			w.mu.Unlock()
 		}

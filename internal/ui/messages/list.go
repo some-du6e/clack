@@ -424,8 +424,8 @@ func (s *listState) openWindow(ts string) {
 	}
 	s.hb.dropWindow(s.win)
 	w := s.hb.newWindow(s.ch)
-	s.win, s.m = w, w
-	s.snap.rev = 0
+	s.win = w
+	s.useModel(w)
 	s.place, s.handAsked = jumpPlace{}, false
 	s.hb.loadWindow(w, ts)
 }
@@ -437,8 +437,8 @@ func (s *listState) leaveWindow() {
 		return
 	}
 	s.hb.dropWindow(s.win)
-	s.win, s.m = nil, s.chm
-	s.snap.rev = 0
+	s.win = nil
+	s.useModel(s.chm)
 	s.handAsked = false
 	s.hb.ensureLoaded(s.m)
 }
@@ -544,9 +544,23 @@ func (s *listState) adopt(at time.Time) {
 	if s.chm == s.m && s.chm != nil {
 		s.chm = m
 	}
-	if m == s.m {
-		return
+	if m != s.m {
+		s.useModel(m)
 	}
+}
+
+// useModel has the list draw model m: the one the hub made for the
+// conversation meanwhile (adopt), a jump's window (openWindow), or the
+// conversation's model again (leaveWindow). Revisions count per model, a
+// window's from its own first load as much as a new model's, so a row
+// could hold the number m gave its message's copy and skip that copy:
+// every row takes m's entries again, with the caches keyed on those
+// numbers (its view read, its huddle, its hidden-sender check). And
+// evictions count from m's own: switched to a window with the
+// conversation's count of evictions, a list that had let its rows go for
+// one let them go again the first time the sweep found it off screen (the
+// window, never evicted, counted none), and lost its place and its jump.
+func (s *listState) useModel(m *model) {
 	s.m, s.snap.rev = m, 0
 	for _, r := range s.rows {
 		r.rev, r.viewRev, r.viewConv = 0, 0, 0
