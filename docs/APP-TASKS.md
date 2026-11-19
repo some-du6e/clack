@@ -83,6 +83,20 @@ All go through `createApiMethodFetcher` (G8am), which snake-cases arguments deep
 - **Edit task** opens `edit-task-modal`. **Add Task** (coQm `useAddTaskMenu`, o6XF) opens `create-task-modal` (zNS2 `handleCreateTask`): `functions.workflows.create {title, creation_source_type: AGENT, creation_source_id}`, a `send_prompt_to_3p_agent` step, `functions.workflows.publish`, then `workflows.triggers.create`. Both modals are **TaskModal**, the full Workflow Builder trigger editor (prompt, ScheduledTriggerForm, FrequencySelect, WeekdaysPicker, TimeBucketSelect, SlackEventTriggerForm), about 190 KB of Slack code in the `slackbot-tasks_prompt-blocks` chunk. Neither is in Clack yet.
 - **Task details** (`wfb_agents_can_create_simple_automations_tab_ms3`) makes the row a button into `agent-task-details-view`, with run history from `workflows.taskRuns.list`. The account doesn't have that experiment, so the row isn't clickable there.
 
+## Add Task's requests (handleCreateTask, zNS2; not built)
+
+CreateTaskModal (`gantry-v2-async-create-task-modal`) saves through the `handleCreateTask` thunk. Every call has reason `create-task-modal`. Arguments are snake-cased by `pctx nf` to a set depth, leaving the keys of a step's `input_parameters` and of a trigger's `service.inputs` as they are.
+
+1. `functions.workflows.create {title: <name>, description: "", creation_source_type: "AGENT", creation_source_id: <app id>}` (gCWs `H6`) returns the workflow (`id`, `app_id`).
+2. `functions.workflows.steps.add {workflow_id, step: {id: <new uuid>, function_id: send_prompt_to_3p_agent, inputs: {prompt: {value}, agent_id: {value: <app id>}}}, input_parameters?}` (gOZ5 `eD`). Slackbot's own tasks use `send_prompt_to_agent` with the prompt alone. The prompt value is built by fEP6 `E` from the text, the prompt blocks and the enabled skills.
+3. `functions.workflows.publish {workflow_id}` (8b/l `Yk`).
+4. `workflows.triggers.create {...<trigger config>, name, description: "", workflow: <id>, workflow_app_id, inputs: {}}` (gOZ5 `Ii`). The config is the trigger definition's `toCreateConfig(form)` (75zy `hX`), for the schedule form or the event form. With neither, Slack logs "Cannot create task: no schedule or event provided" and toasts "Something went wrong. Please try again."
+5. Then the tab's browser fetches again, and the toast is "Task created successfully.".
+
+When the prompt reads trigger variables and the experiment YwqI `i4` is on, the order changes. The trigger comes first, then WdYh `Hn` resolves the variables against it, then steps 2 and 3 run with the resolved prompt and `input_parameters`. Last, `workflows.triggers.update {trigger: {...definition.toUpdatePayload(trigger), inputs}, name, description: "", workflow}` (1x2R `Y`) maps the inputs. If that update fails, the toast is "Task created, but some of its prompt variables couldn’t be connected.".
+
+Any failure deletes what was made: `workflows.triggers.delete` (VV9g) for a trigger that was created, then `functions.workflows.delete {workflow_id}` (9S8A). EditTaskModal is the same TaskModal (`gantry-v2-async-edit-task-modal`). Its form (prompt, ScheduledTriggerForm with FrequencySelect, WeekdaysPicker and TimeBucketSelect, and SlackEventTriggerForm) is the next slice to read.
+
 ## Live updates (boot-render)
 
 - `workflow {workflow_id, subtype}` (**workflowChanged**): for every `agent-tasks`, managed-workflows and workflows browser, a `deleted` subtype removes the item at once; anything else marks the browser stale and it fetches again.
