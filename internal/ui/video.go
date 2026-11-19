@@ -7,6 +7,7 @@ import (
 	"image"
 	"io"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -26,57 +27,95 @@ import (
 var videoBackend media.Backend
 
 // videos is the window's inline video players, made when a message list
-// first asks.
+// first asks. A controller is one session's (closeVideos ends it), so its
+// calls use that session's core, taken here: the players' own goroutines
+// call them, and a.data changes on the UI goroutine.
 func (a *App) videos() *videoplayer.Controller {
 	if a.vids != nil {
 		return a.vids
 	}
+	c := a.Core()
+	var writes serialQueue // users.prefs.set and media.progress.update, in the order the players made them
 	a.vids = videoplayer.New(videoplayer.Env{
-		Manager:    media.NewManager(videoBackend),
-		Open:       a.openVideo,
+		Manager: media.NewManager(videoBackend),
+		Open: func(ctx context.Context, rawURL string, off int64) (io.ReadCloser, media.Info, error) {
+			return openVideo(ctx, c, rawURL, off)
+		},
 		FrameReady: a.videoFrameReady, // a new video frame: a quiet frame of this window (quiet.go)
 		Repaint:    a.videoRepaint,
 		Pref: func(name string) (json.RawMessage, bool) {
-			if c := a.Core(); c != nil {
+			if c != nil {
 				return c.Pref(name)
 			}
 			return nil, false
 		},
 		SetPref: func(name string, v any) {
-			c := a.Core()
 			if c == nil {
 				return
 			}
-			go func() {
+			writes.do(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				if err := c.SetPref(ctx, name, v); err != nil {
 					log.Printf("video: users.prefs.set %s: %v", name, err)
 				}
-			}()
+			})
 		},
 		Experiment: func(name string) string {
-			if c := a.Core(); c != nil {
+			if c != nil {
 				return c.Experiment(name)
 			}
 			return ""
 		},
 		Theme: func() *theme.Theme { return a.th },
 		ProgressUpdate: func(file string, offsetMS, durationMS int64) {
-			c := a.Core()
 			if c == nil {
 				return
 			}
-			go func() {
+			writes.do(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				if err := c.MediaProgressUpdate(ctx, file, offsetMS, durationMS); err != nil {
 					log.Printf("video: media.progress.update %s: %v", file, err)
 				}
-			}()
+			})
 		},
 	})
 	return a.vids
+}
+
+// serialQueue runs its calls one at a time, in the order they came, off
+// the caller's goroutine: two writes of one pref (a slider's press, then
+// its release) reach the server in that order.
+type serialQueue struct {
+	mu      sync.Mutex
+	q       []func()
+	running bool
+}
+
+func (s *serialQueue) do(f func()) {
+	s.mu.Lock()
+	s.q = append(s.q, f)
+	if s.running {
+		s.mu.Unlock()
+		return
+	}
+	s.running = true
+	s.mu.Unlock()
+	go func() {
+		for {
+			s.mu.Lock()
+			if len(s.q) == 0 {
+				s.running = false
+				s.mu.Unlock()
+				return
+			}
+			f := s.q[0]
+			s.q = s.q[1:]
+			s.mu.Unlock()
+			f()
+		}
+	}()
 }
 
 // videoRepaint is a player's state change its overlay shows (a play, a
@@ -119,8 +158,7 @@ func (a *App) OpenVideoViewer(f *richtext.File, m core.Message, at time.Duration
 
 // openVideo is a player's source: core.App.OpenRange (Range from off, the
 // session's TLS fingerprint and cookie, the bytes in memory only).
-func (a *App) openVideo(ctx context.Context, rawURL string, off int64) (io.ReadCloser, media.Info, error) {
-	c := a.Core()
+func openVideo(ctx context.Context, c *core.App, rawURL string, off int64) (io.ReadCloser, media.Info, error) {
 	if c == nil {
 		return nil, media.Info{Total: -1}, errors.New("video: signed out")
 	}
