@@ -301,7 +301,7 @@ func TestInspectFreezeHoldsPopups(t *testing.T) {
 		}
 	}
 	if found == "" {
-		t.Fatalf("frozen with the pill's tooltip up: no tooltip outlined above the pill %v; outlined above it: %s", pill, strings.Join(seen, "; "))
+		t.Fatalf("frozen with the pill's tooltip up: no tooltip outlined above the pill %v; outlined above it: %s; the record's layers: %q", pill, strings.Join(seen, "; "), e.a.insp.RecordedLayers())
 	}
 	if !e.a.insp.Frozen() {
 		t.Fatal("the freeze ended while the pointer moved")

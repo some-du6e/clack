@@ -844,6 +844,20 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	return p
 }
 
+// RecordedLayers lists the popup layers of the record the picker reads
+// (the last frame's, the frozen frame's while frozen): each one's name,
+// with its box when it has one (tests).
+func (t *Tool) RecordedLayers() []string {
+	f := &t.frames[t.cur]
+	var out []string
+	for i := range f.Nodes {
+		if n := &f.Nodes[i]; n.Kind == slackc.InspectLayer {
+			out = append(out, fmt.Sprintf("%s %v sized %v", n.Name, n.Size, n.Sized()))
+		}
+	}
+	return out
+}
+
 // drawnOver reports that node i is drawn in a layer drawn over
 // everything else (slackc.InspectNode.Over: a tooltip).
 func drawnOver(f *slackc.InspectFrame, i int) bool {
