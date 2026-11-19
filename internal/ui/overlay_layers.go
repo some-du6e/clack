@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"reflect"
 
 	"gioui.org/io/event"
@@ -49,11 +50,13 @@ func peeking(o Overlay) bool {
 func (a *App) drawOverlay(gtx layout.Context, o Overlay) {
 	// a layer of the inspect tool's record too: what o draws reports o as
 	// its region, and its card is its box (slackc.InspectCard)
-	var lm slackc.InspectMark
 	if slackc.Inspecting() && !invisible(o) {
-		lm = slackc.InspectOverlay(overlayLayerName(o))
+		lm := slackc.InspectOverlay(overlayLayerName(o))
+		// a popup that gave its layer no box (no InspectCard): its own
+		// Rect, so a pick on its card where nothing in it was recorded
+		// outlines the card under the popup's region
+		defer func() { lm.EndCardOr(gtx, overlayRect(o)) }()
 	}
-	defer lm.EndCard(gtx)
 	if invisible(o) || peeking(o) || !reflect.TypeOf(o).Comparable() {
 		o.Layout(gtx)
 		return
@@ -71,6 +74,15 @@ func (a *App) drawOverlay(gtx layout.Context, o Overlay) {
 		spec.Home = h.FocusHome()
 	}
 	slackc.DrawLayer(gtx, l, spec, func(gtx layout.Context) { o.Layout(gtx) })
+}
+
+// overlayRect is o's card as it says (Rect, window coords), empty for an
+// overlay that doesn't.
+func overlayRect(o Overlay) image.Rectangle {
+	if r, ok := o.(interface{ Rect() image.Rectangle }); ok {
+		return r.Rect()
+	}
+	return image.Rectangle{}
 }
 
 // pruneOverlayLayers forgets the layers of overlays no longer shown.

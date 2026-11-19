@@ -663,11 +663,13 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 	if m.sub != nil && !m.done {
 		// a layer of its own for the inspect tool (a pick in it reports the
 		// submenu), with its own card
-		var sub slackc.InspectMark
+		var sub, sm slackc.InspectMark
 		if slackc.Inspecting() {
 			sub = slackc.InspectOverlay("submenu (popups.Menu)")
+			sm = slackc.InspectAs("Menu") // the root menu's rows report theirs (its Menu boundary)
 		}
 		m.sub.layoutSub(gtx, win)
+		sm.EndCard(gtx)
 		sub.EndCard(gtx)
 	}
 }

@@ -32,6 +32,9 @@ var (
 	epInputClass   = slackc.Class("p-emoji_picker__input_container")
 	epRowClass     = slackc.Class("p-emoji_picker__row")
 	epHeadingClass = slackc.Class("p-emoji_picker__heading").Tag("span")
-	epItemClass    = slackc.Class("c-link--button p-emoji_picker__list_item").Tag("button").
-			Mods("p-emoji_picker__list_item--a11y-not-selected", "p-emoji_picker__list_item--a11y-selected")
+	// clsx(…, "p-emoji_picker__list_item", {"…--a11y-not-selected":
+	// !selected, key_selection: selected by the keyboard}), data-qa
+	// emoji_list_item
+	epItemClass = slackc.Class("c-link--button p-emoji_picker__list_item", "data-qa", "emoji_list_item").Tag("button").
+			Mods("p-emoji_picker__list_item--a11y-not-selected", "key_selection")
 )

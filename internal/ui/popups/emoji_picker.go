@@ -1140,7 +1140,10 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 		if slackc.Inspecting() {
 			mods := uint64(1) // --a11y-not-selected
 			if lit.row == i && lit.col == j {
-				mods = 2
+				mods = 0
+				if p.hover.row < 0 {
+					mods = 2 // key_selection: the keyboard's
+				}
 			}
 			eb := slackc.InspectAs("EmojiListEmojiButton")
 			epItemClass.Inspect(mods).EndAt(gtx, cell)

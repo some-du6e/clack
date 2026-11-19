@@ -14,7 +14,6 @@ import (
 	gtext "gioui.org/text"
 	"gioui.org/unit"
 
-	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -117,6 +116,9 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		cg.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, win.Y-2*m)}
 	}
+	// the inspect tool: the card's element recorded before the content is
+	// laid out, so the content is inside it (slackc EndCardAt)
+	cm := popoverClass.Inspect(0)
 	call, d := record(cg, p.content)
 	gap := p.o.Gap
 	if gap == 0 {
@@ -165,7 +167,7 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	keyTarget(gtx, p, p.rect)
 	st := popoverClass.Enter(gtx, 0, 0)
-	defer st.Leave()
+	var box image.Rectangle
 	if !st.Hidden() {
 		styledCard(gtx, st, cl, pos, d.Size, dp(gtx, rad), false, func(gtx layout.Context) {
 			local := image.Rectangle{Max: d.Size}
@@ -174,8 +176,10 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 			call.Add(gtx.Ops)
 			cs.Pop()
 		})
-		slackc.InspectCard(gtx, image.Rectangle{Min: pos, Max: pos.Add(d.Size)}) // the inspect tool: the card is the popover's box
+		box = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	}
+	st.Leave()
+	cm.EndCardAt(gtx, box) // the inspect tool: the card is the popover's box
 	return layout.Dimensions{Size: win}
 }
 

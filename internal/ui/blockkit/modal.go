@@ -650,7 +650,7 @@ func (s *Stack) header(gtx C, mw, hh int, v *core.View) {
 	is := dp(gtx, 36)
 	cs := dp(gtx, 36)
 	// the h1 and BlockKitModal's title in it, for the inspect tool
-	h1, ts := bkTitleClass.Inspect(0), bkTitleSpan.Inspect(0)
+	h1, ts := bkTitleClass.Inspect(0), bkTitleDiv.Inspect(0)
 	tx := x
 	if u := s.appIcon(v); u != "" {
 		bkTitleIcon.Inspect(0).EndAt(gtx, image.Rect(x, (hh-is)/2, x+is, (hh-is)/2+is))

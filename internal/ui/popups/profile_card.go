@@ -242,6 +242,9 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 	if mw := win.X - 2*dp(gtx, 8); w > mw {
 		w = mw
 	}
+	// the inspect tool: the card's element recorded before its content is
+	// laid out, so the content is inside it (slackc EndCardAt)
+	cm := pfCardClass.Inspect(0)
 	call, d := record(loose(gtx, image.Pt(w, win.Y)), func(gtx layout.Context) layout.Dimensions {
 		if !ok {
 			return p.content(gtx, th, cl, u, ok, w, nil)
@@ -270,6 +273,7 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	rad := dp(gtx, 8)
 	st := pfCardClass.Enter(gtx, 0, 0)
+	var box image.Rectangle
 	if !st.Hidden() {
 		styledCard(gtx, st, cl, pos, d.Size, rad, false, func(gtx layout.Context) {
 			local := image.Rectangle{Max: d.Size}
@@ -278,9 +282,10 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 			call.Add(gtx.Ops)
 			cs.Pop()
 		})
-		slackc.InspectCard(gtx, p.rect) // the inspect tool: the card is the popup's box
+		box = p.rect
 	}
 	st.Leave()
+	cm.EndCardAt(gtx, box) // the inspect tool: the card is the popup's box
 	if !p.hover {
 		keyTarget(gtx, p, p.rect)
 	}

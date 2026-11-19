@@ -16,7 +16,8 @@ import "github.com/some-du6e/clack/internal/ui/slackc"
 var (
 	bkHeaderClass  = slackc.Class("c-dialog__header", "data-qa", "wizard_modal_header")
 	bkTitleClass   = slackc.Class("c-dialog__title").Tag("h1")
-	bkTitleSpan    = slackc.Class("p-block_kit_modal__title").Tag("span")
+	bkTitleDiv     = slackc.Class("p-block_kit_modal__title")      // BlockKitModal.renderTitle: a div
+	bkOptionClass  = slackc.Class("c-select_options_list__option") // a select's option row
 	bkTitleIcon    = slackc.Class("p-block_kit_modal__title_icon").Tag("img")
 	bkTitleText    = slackc.Class("p-block_kit_modal__title_text").Tag("span")
 	bkCloseClass   = slackc.Class("c-button-unstyled c-icon_button c-icon_button--size_medium c-dialog__close", "data-qa", "wizard_modal_close").Tag("button")

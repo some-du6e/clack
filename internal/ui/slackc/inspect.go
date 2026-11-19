@@ -367,6 +367,15 @@ func InspectOverlay(name string) InspectMark {
 // at: its area is its card's box, none when the popup drew no card
 // (InspectCard).
 func (m InspectMark) EndCard(gtx layout.Context) {
+	m.EndCardOr(gtx, image.Rectangle{})
+}
+
+// EndCardOr is EndCard for a layer whose popup may have given it no box
+// (no InspectCard): it takes r then (the overlay's own Rect, its card in
+// the layer's op coordinates), so a pick on the card where nothing in it
+// was recorded is the layer's, under its own region, not the window's
+// under it. Empty r: none.
+func (m InspectMark) EndCardOr(gtx layout.Context, r image.Rectangle) {
 	f := inspectF
 	if m.i == 0 || f == nil {
 		return
@@ -376,20 +385,57 @@ func (m InspectMark) EndCard(gtx layout.Context) {
 		return
 	}
 	f.popTo(i)
-	if n := &f.Nodes[i]; n.boxed {
+	n := &f.Nodes[i]
+	if !n.boxed && !r.Empty() {
+		n.box, n.boxed = r, true
+	}
+	if n.boxed {
 		f.areaAt(gtx, i, n.box)
 	}
+}
+
+// EndCardAt closes a popup's card element recorded for the inspect tool
+// alone (ClassDef.Inspect) before what the card holds was laid out, at r
+// in the op coordinates of the popup's layer (an overlay's: the window's
+// origin). A popup that lays its content out first and then draws the
+// card around it (ProfileCard, every popups.Popover) records the card
+// this way: the content is inside the card's element, so the content's
+// components are what the picker finds over them (it keeps the node
+// recorded last) and the card wherever nothing in it is. The element gets
+// its area at r, and the components around it up to the layer, and the
+// layer, take r as their box, as InspectCard gives them. Empty r (the
+// card wasn't drawn): no area.
+func (m InspectMark) EndCardAt(gtx layout.Context, r image.Rectangle) {
+	f := inspectF
+	if m.i == 0 || f == nil {
+		return
+	}
+	i := m.i - 1
+	if i >= len(f.Nodes) {
+		return
+	}
+	f.popTo(i)
+	if r.Empty() {
+		return
+	}
+	f.areaAt(gtx, i, r)
+	f.boxLayer(r)
 }
 
 // InspectCard gives a popup's card its box, r in the current op
 // coordinates, which must be the ones the popup's layer (InspectOverlay)
 // was recorded at: an overlay drawn at the window's origin. The innermost
-// element entered, the card's, gets its area there (InspectArea), and the
-// components around it up to the layer, and the layer itself, take r as
-// their box when they end, in place of what their natives return: a
-// popup's boundaries lay out over the whole window, as its scrim does, and
-// draw the card somewhere in it. Outside a layer only the element gets
-// its area. Outside inspect mode it is one atomic load.
+// element entered, the card's, gets its area there (InspectArea) when what
+// the card holds was recorded inside it, and the components around it up
+// to the layer, and the layer itself, take r as their box when they end,
+// in place of what their natives return: a popup's boundaries lay out over
+// the whole window, as its scrim does, and draw the card somewhere in it.
+// An element with nothing recorded after it gets no area: a popup that
+// laid its content out before it entered the card's element would have
+// the card picked over all of it (the picker keeps the node recorded
+// last); such a popup records its card first (EndCardAt). Outside a layer
+// only the element gets its area. Outside inspect mode it is one atomic
+// load.
 func InspectCard(gtx layout.Context, r image.Rectangle) {
 	if !inspecting.Load() {
 		return
@@ -398,9 +444,15 @@ func InspectCard(gtx layout.Context, r image.Rectangle) {
 	if f == nil || r.Empty() {
 		return
 	}
-	if i := f.top(); i >= 0 && f.Nodes[i].Kind == InspectElement && f.Nodes[i].tag == nil {
+	if i := f.top(); i >= 0 && i < len(f.Nodes)-1 && f.Nodes[i].Kind == InspectElement && f.Nodes[i].tag == nil {
 		f.areaAt(gtx, i, r)
 	}
+	f.boxLayer(r)
+}
+
+// boxLayer gives the components being recorded up to the innermost layer,
+// and that layer, r as their box (InspectCard); none outside a layer.
+func (f *InspectFrame) boxLayer(r image.Rectangle) {
 	layer := -1
 	for k := len(f.stack) - 1; k >= 0; k-- {
 		if f.Nodes[f.stack[k]].Kind == InspectLayer {

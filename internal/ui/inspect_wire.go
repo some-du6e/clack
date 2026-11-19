@@ -326,6 +326,13 @@ func (h inspectHost) Regions() []inspect.Region {
 // picker" …) and its Go type, as the report's overlays row names it
 // ("menu (popups.Menu)", "modal (blockkit.Stack)").
 func overlayLayerName(o Overlay) string {
+	for {
+		w, ok := o.(interface{ Unwrap() popups.Overlay }) // a wrapper (Block Kit's watch): what it wraps
+		if !ok {
+			break
+		}
+		o = w.Unwrap()
+	}
 	typ := strings.TrimPrefix(fmt.Sprintf("%T", o), "*")
 	return overlayRole(o, typ) + " (" + typ + ")"
 }
