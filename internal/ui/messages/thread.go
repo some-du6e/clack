@@ -213,7 +213,7 @@ func (v *ThreadView) JumpTo(ts string, flash bool) {
 		s.highlight = ""
 		return // no highlight: the reopened pane's own place (getThreadStartPosition's scrollmark)
 	}
-	flashing := flash && s.highlight == ts && time.Since(s.highlightAt) < highlightFor
+	flashing := flash && s.highlight == ts && time.Since(s.highlightAt) < highlightFor && s.mounted()
 	switch {
 	case flashing: // a repeat jump: the running flash goes on (rFp4)
 	case flash:

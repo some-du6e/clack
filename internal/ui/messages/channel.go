@@ -184,7 +184,7 @@ func (v *ChannelView) highlight(ts string, lazy bool) {
 	// a repeat jump to a message still flashing doesn't restart it (its
 	// highlight prop never turns from false to true: rFp4)
 	s := v.s
-	flashing := s.highlight == ts && time.Since(s.highlightAt) < highlightFor
+	flashing := s.highlight == ts && time.Since(s.highlightAt) < highlightFor && s.mounted()
 	if !flashing {
 		s.highlight, s.highlightAt, s.hlSeen = ts, time.Now(), false
 	}

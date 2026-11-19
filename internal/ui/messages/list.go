@@ -2391,6 +2391,15 @@ func (s *listState) placeThreadJump(now time.Time) {
 	s.pendingJump, s.jumpLazy = "", false
 }
 
+// mounted reports whether the list was drawn in the latest frame lists
+// drew (or the one before, when another list drew first this frame): its
+// rows are mounted, so a repeat jump finds its flash running. A list off
+// screen since mounts its rows anew, and their flash starts over.
+func (s *listState) mounted() bool {
+	latest, before := s.hb.latestFrames()
+	return s.laidOut && (s.laidAt.Equal(latest) || s.laidAt.Equal(before))
+}
+
 // toEnd puts the list at its end, whether or not it keeps to it.
 func (s *listState) toEnd() {
 	s.list.Position = layout.Position{} // a ScrollToEnd list: its end
