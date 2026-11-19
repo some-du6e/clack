@@ -58,8 +58,12 @@ type bk struct {
 	Title       *textObj        `json:"title"`
 	ActionID    string          `json:"action_id"`
 	VisibleTo   []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button (actionHidden)
-	Placeholder *textObj        `json:"placeholder"`
-	Options     []struct {
+	// a citation element's details.citation_type (either spelling): only
+	// then does Slack's Citation take it (unknownInline)
+	CitationType      json.RawMessage `json:"citation_type"`
+	CitationTypeCamel json.RawMessage `json:"citationType"`
+	Placeholder       *textObj        `json:"placeholder"`
+	Options           []struct {
 		Text  textObj `json:"text"`
 		Value string  `json:"value"`
 	} `json:"options"`
@@ -183,11 +187,17 @@ type builder struct {
 	chID   string                 // the message's channel (tabslug.go: a slug to its own tab is the tab alone)
 	// msgCh and msgTS are the message (its files' expandables)
 	msgCh, msgTS string
-	// depth is how deep resolveFallback is in fallbacks, nested how deep
-	// in child blocks (fallback.go)
-	depth, nested int
+	// depth is how deep resolveFallback is in fallbacks, noCard how deep
+	// in callouts' children (no fallback card there, fallback.go)
+	depth, noCard int
 	// containers counts the message's container blocks (Container.Key)
 	containers int
+	// missing: a block Slack draws but Clack can't yet drew nothing (the
+	// message text then stands in, FromMessageIn)
+	missing bool
+	// notify converts for a notification's text (NotificationText): a
+	// type with no renderable adds nothing, with no fallback chain
+	notify bool
 }
 
 func parseBlocks(raw json.RawMessage) []bk {
@@ -558,6 +568,9 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, unsupported())
 	}
 	if !messageRenderables[b.Type] {
+		if c.notify { // convertMessageToPlainText: no converter, no text
+			return out
+		}
 		// SUIRendererItem: no renderable for the type (fallback.go)
 		return c.resolveFallback(out, b)
 	}
@@ -566,6 +579,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
 	}
+	c.missing = true
 	return out
 }
 
@@ -893,19 +907,8 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 				sp.Kind = ColorSwatch
 			}
 			out = append(out, sp)
-		case "team":
-			out = append(out, Span{Kind: Text, Text: firstNonEmpty(string(e.Value), e.TeamID)})
 		default:
-			// UnknownElement (Dvg3): a link to its url when it has one,
-			// else its text, else nothing
-			t := e.textString()
-			switch {
-			case e.URL != "" && !pre:
-				sp := linkSpan(e.URL, firstNonEmpty(t, e.URL))
-				out = append(out, sp)
-			case t != "":
-				out = append(out, Span{Kind: Text, Text: t})
-			}
+			out = append(out, c.unknownInline(e, m)...)
 		}
 		for k := n; k < len(out); k++ {
 			if out[k].Kind != Break {
@@ -914,6 +917,76 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 		}
 	}
 	return out
+}
+
+// richTextTypes are Slack's rich text element types (N8wa Lv's values):
+// UnknownElement's text and url gates (BeP8, tlJF) refuse them.
+var richTextTypes = map[string]bool{}
+
+func init() {
+	for _, t := range strings.Fields(`rich_text expanded_rich_text rich_text_section rich_text_header rich_text_divider
+		rich_text_quote rich_text_preformatted rich_text_list text user usergroup channel broadcast emoji link date color
+		workflowtoken truncation unknown file canvas message_mention workflow_mention canvas_message_unfurl list_record skill
+		citation tag salesforce_data_field canvas_user_mention attachment_mention work_object_mention _edited_label
+		_stopped_label _emoji_group _quote_group _theme_install_button _truncation_expand_button
+		_truncation_collapse_button _file_mention _canvas_mention _unfurl_mention _canvas_user_mention _variable
+		slackhorizontalrule`) {
+		richTextTypes[t] = true
+	}
+}
+
+// unknownInline draws an inline element none of Clack's renderers take.
+//
+// One Slack draws with its own component (messageRenderables) keeps its
+// text and link here, save a citation without details.citation_type,
+// which Slack's Citation doesn't take: it falls through to the last
+// branches below, where Lv's gate leaves it empty.
+//
+// A type Slack has no renderer for either (team among them) gets
+// RichTextRenderer's (J825) last branches: a null fallback draws
+// nothing, an object fallback draws in its place (nesting up to
+// maxFallbackDepth), else UnknownElement (Dvg3) with the element's text
+// and url only when each is a string and the type isn't one of Slack's
+// rich text types (BeP8, tlJF against richTextTypes): a link to the url,
+// else the text, else nothing.
+func (c *builder) unknownInline(e *bk, m brMode) []Span {
+	if messageRenderables[e.Type] {
+		if e.Type != "citation" || e.Details != nil && (len(e.Details.CitationType) > 0 || len(e.Details.CitationTypeCamel) > 0) {
+			return unknownElement(e.textString(), e.URL)
+		}
+	}
+	switch fb := e.Fallback.raw; {
+	case string(fb) == "null":
+		return nil
+	case len(fb) > 0 && fb[0] == '{':
+		if c.depth >= maxFallbackDepth {
+			return nil
+		}
+		c.depth++
+		defer func() { c.depth-- }()
+		return c.richInline([]bk{decodeBlock(fb)}, m)
+	}
+	if richTextTypes[e.Type] {
+		return nil
+	}
+	text := ""
+	if len(e.Text) > 0 && e.Text[0] == '"' {
+		text = e.textString()
+	}
+	return unknownElement(text, e.URL)
+}
+
+// unknownElement is UnknownElement (Dvg3): a link to url (labelled with
+// the text, else the url), else the text, else nothing. Inside
+// preformatted text the link stays a link.
+func unknownElement(text, url string) []Span {
+	switch {
+	case url != "":
+		return []Span{linkSpan(url, firstNonEmpty(text, url))}
+	case text != "":
+		return []Span{{Kind: Text, Text: text}}
+	}
+	return nil
 }
 
 // richRunRe is insertTextBreakPlaceholders' paragraph run (kWQh m): two

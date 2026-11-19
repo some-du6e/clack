@@ -35,7 +35,9 @@ func TestBoxedBlocks(t *testing.T) {
 			  {"type":"container","title":{"type":"plain_text","text":"Null"},"width":null}]`,
 			// a width Slack lacks, or null, adds no max-width class: full
 			// ("standard" is only width's default parameter)
-			[]string{"container wide title=Rich 😄 subtitle=sub title icon=https://img.test/i.png divider [Section Divider]",
+			// the unknown child gets the container's fallback card (yWQF's
+			// slot keeps the message's UnsupportedBlockFallback)
+			[]string{"container wide title=Rich 😄 subtitle=sub title icon=https://img.test/i.png divider [Section UnknownBlock Divider]",
 				"container full title=Fold subtitle= icon= collapsible collapsed []",
 				"container standard title=Open subtitle= icon= []",
 				"container full title=Null subtitle= icon= []"}},

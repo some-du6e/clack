@@ -27,7 +27,18 @@ Every surface (messages through `InteractiveBlocks` boot-shared `VoyB` and `Read
    - a single payload item draws itself.
    - anything else draws the surface's fallback component, `UnsupportedBlockFallback` (boot-shared `1G65`): an entity card reading "This message can’t be fully displayed."
 
-Types in Slack's own block enum (client-boot `WP`) still fall back when no renderable exists: `fallback_canary`, `expandable`, `group`, `error`. `markdown` isn't in the enum and has no renderable: Slack's server translates markdown blocks before a client sees them. Child blocks (a callout's, a container's) render through `createRenderBlocks` (boot-shared `a+Oj`) with no fallback component, so there an unknown child with no fallback draws nothing. They also render without block wrappers, so their margins collapse.
+Types in Slack's own block enum (client-boot `WP`) still fall back when no renderable exists: `fallback_canary`, `expandable`, `group`, `error`. `markdown` isn't in the enum and has no renderable: Slack's server translates markdown blocks before a client sees them.
+
+Child blocks differ by parent:
+- A callout's render through `createRenderBlocks` (boot-shared `a+Oj`) with no fallback component, so an unknown child with no fallback draws nothing there.
+- A container's are its `childBlocks` slot (`yWQF`). Those SUIRendererItems keep the container's own fallback component: in a message that's the card, and nothing when the container sits in a callout.
+- Neither kind has block wrappers, so the children's margins collapse.
+
+A message that has blocks draws them instead of its text (client-boot `iub5` shouldRenderBlocksInsteadOfText), even when they draw nothing. A condition with no case for the desktop, or a lone empty fallback, leaves an empty body. The text stands in only when the blocks array is empty or holds nothing but nulls and empty rich_text (`lby4`). In Clack it also stands in when a block that Clack can't draw yet drew nothing.
+
+Two other readers skip the chain:
+- **Notifications** read a message through `convertMessageToPlainText` (client-boot `2xQY`, from boot-shared `Eley` getContentForNotification). It doesn't expand conditions (that's for message summaries) and has no fallback chain, so a condition, a `fallback_canary` or a type it can't convert adds nothing, and an empty result is the message text: `richtext.NotificationText`.
+- **Search previews** give MessageBlocks `NoUnsupportedBlockNotice` as their fallback (boot-shared `vVRo`), so the card adds nothing to a result's text: `richtext.SearchText`.
 
 Clack before: only types missing from the enum fell back. Known types it couldn't draw showed their text object or nothing, a fallback list skipped nested unknown types, an empty list drew the card, and conditions drew nothing. After: `richtext/fallback.go` implements the chain above, and condition expansion runs on every surface (`richtext.ExpandConditions`, `blockkit.expandConditions`).
 
@@ -142,8 +153,9 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | preformatted `language` | absent | absent | Slack highlights it (`VKeu`) |
 | text, link (`unsafe`, `truncated`), user, channel, usergroup, broadcast, emoji (`unicode`, `skin_tone`), date (`format`, `url`, `fallback`), color, message_mention, canvas, list_record, workflow_mention | full | full | |
 | file (→ `rich_text_file`, `v1Jk`) | partial: its text | **partial**: Slack's File slug (getFileSlugAttributes: the file's title or name, "Audio clip" / "Video clip", getFileTypeSvgIconName, trash / eye-closed and disabled when the file isn't there to see) | eight type glyphs Clack's set lacks (transcript, gauge-filled, pdf-file, binary, disc-image, text, presentation, zip) draw Slack's generic `file`; a click follows the link (Slack opens its file viewer); the slug's Download menu |
-| team, tag, variable, workflowtoken, skill, citation, folder_mention, salesforce_data_field, canvas_user_mention, work_object_mention, attachment_mention | partial: their text | partial: UnknownElement's rule | their own components |
-| an inline type nobody knows | its text | **full**: UnknownElement (`Dvg3`), a link to its `url`, else its text, else nothing | |
+| tag, variable, workflowtoken, skill, citation, folder_mention, salesforce_data_field, canvas_user_mention, work_object_mention, attachment_mention | partial: their text | partial: their text or link. A citation without `details.citation_type` draws nothing: Slack's Citation doesn't take it, and the last branches' gate leaves it empty | their own components |
+| team | its id | **full**: Slack has no renderer for it, so the rule below applies (a team element has no text: nothing) | |
+| an inline type nobody knows | its text | **full**: RichTextRenderer's (`J825`) last branches. A null `fallback` draws nothing; an object `fallback` draws in its place. Otherwise UnknownElement (`Dvg3`) gets its `text` and `url` only when each is a string and the type isn't one of Slack's rich text types (`BeP8`, `tlJF` against N8wa `Lv`): a link to the url, else the text, else nothing (inside preformatted text too) | |
 
 ## Shots and tests
 
@@ -157,6 +169,11 @@ Round 1's review fixes, with tests that fail on `8126e895`:
 - Buttons in a container, a callout and a fallback payload draw and send `block_actions` with their own block's id: `TestNestedBlockElements` (clicks, on the elements gallery's new `nested` family), `TestNestedElementsRichview` (richview's own layout with the message host), `TestSurfaceNestedElements` (modal and App Home).
 - A message's alert shrinks to its text: it's the flex item of its block wrapper, and `.c-alert` sets no width. It wraps only at the column. Inside a callout or a container, and in a shared message's text, it fills the width: `TestAlertWidth`.
 - The loading block's spinner sits centred (`.infiniteSpinner{margin:0 auto}`). Its ring fills the 52px box, because `noMargin` gives it a 78-unit viewBox. The track is content-ter at .25 and the arc content-hgl-1: `TestBoxedBlocksLayout`.
+- The fallback chain's edges:
+  - A container's unknown child is the card, a callout's draws nothing (`TestBlockFallbacks`).
+  - Blocks that draw nothing leave an empty body, not the message text (`TestBlockFallbacks`, `TestConditionBlocks`).
+  - Notifications read the raw blocks as `convertMessageToPlainText` does (`TestNotificationText`), and search results drop the card (`TestSearchText`).
+  - Unknown inline elements take RichTextRenderer's last branches (`TestUnknownInlineElement`).
 - A container's or a call card's toggle survives the message changing (a reaction, a reply, `chat.update`). The View keys it by the container's block_id (else its place among the message's containers) and by the call id. A change to `is_collapsible` or `default_collapsed` resets it, as ContainerBlock's `useEffect` does: `TestCollapseSurvivesUpdates`. A container `width` Slack lacks, or `null`, now draws full width, since "standard" is only the default for an absent field: `TestBoxedBlocks`.
 
 ## Next

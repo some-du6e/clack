@@ -127,19 +127,26 @@ func FallbackItems(typ string, raw json.RawMessage) []json.RawMessage {
 	return nil
 }
 
-// lastResort is resolveFallback's fallback component: the card at the
-// top level, nothing among child blocks.
+// lastResort is resolveFallback's fallback component: the card, save
+// among a callout's children (noCard).
 func (c *builder) lastResort(out []Block) []Block {
-	if c.nested > 0 {
+	if c.noCard > 0 {
 		return out
 	}
 	return append(out, unknownCard())
 }
 
-// children converts a block's child blocks (renderBlocks).
-func (c *builder) children(bs []bk) []Block {
-	c.nested++
-	defer func() { c.nested-- }()
+// children converts a block's child blocks. A container's are its
+// childBlocks slot (yWQF), whose SUIRendererItems keep the container's
+// own fallback component (in a message, its caller's: the card, or
+// nothing inside a callout); a callout's go through createRenderBlocks
+// (a+Oj) with no fallback component, so there an unknown child draws
+// nothing.
+func (c *builder) children(bs []bk, callout bool) []Block {
+	if callout {
+		c.noCard++
+		defer func() { c.noCard-- }()
+	}
 	return c.blocks(bs)
 }
 

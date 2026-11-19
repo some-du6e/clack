@@ -39,11 +39,39 @@ func TestBlockFallbacks(t *testing.T) {
 		{"a fallback_canary without a fallback is the card",
 			`[{"type":"fallback_canary"}]`,
 			[]Block{cantDisplay}},
+		// Slack draws a message's blocks instead of its text whenever it
+		// has any (shouldRenderBlocksInsteadOfText), even if they draw
+		// nothing; only a block Clack can't draw yet lets the text stand in
+		{"a lone empty fallback draws an empty body, not the text",
+			`[{"type":"mystery","fallback":[]}]`,
+			nil},
+		{"a block Clack can't draw yet lets the text stand in",
+			`[{"type":"card","block_id":"c1"}]`,
+			[]Block{para(tx("fallback text"))}},
 	}
 	for _, c := range cases {
 		d := blocksMsg(t, c.blocks)
 		eq(t, c.name, d.Blocks, c.want)
 	}
+	// child blocks: a container's unknown child is the card (yWQF's slot
+	// keeps the message's fallback component), a callout's draws nothing
+	// (createRenderBlocks has none), and so does one in a container that
+	// sits in a callout
+	d := blocksMsg(t, `[{"type":"container","title":{"type":"plain_text","text":"Box"},"child_blocks":[{"type":"future_widget"},`+sec("kept")+`]},
+		{"type":"callout","child_blocks":[{"type":"future_widget"},{"type":"container","title":{"type":"plain_text","text":"Inner"},
+			"child_blocks":[{"type":"future_widget"},`+sec("inner")+`]}]}]`)
+	kinds := func(bs []Block) []string {
+		var out []string
+		for _, b := range bs {
+			out = append(out, b.kindName())
+		}
+		return out
+	}
+	if len(d.Blocks) != 2 || len(d.Blocks[1].Children) != 1 {
+		t.Fatalf("blocks %s", dump(d.Blocks))
+	}
+	eq(t, "container's children", kinds(d.Blocks[0].Children), []string{"UnknownBlock", "Section"})
+	eq(t, "callout's container's children", kinds(d.Blocks[1].Children[0].Children), []string{"Section"})
 }
 
 // teamRes is the fake resolver with a workspace and an enterprise.
@@ -93,6 +121,9 @@ func TestConditionBlocks(t *testing.T) {
 		{"cases that aren't a list: no renderable, so the card",
 			`[{"type":"condition","cases":"nope"}]`,
 			[]Block{cantDisplay}},
+		{"a lone condition with no case for the desktop is an empty body, not the text",
+			`[{"type":"condition","cases":[` + cond(`{"type":"client","op":"=","value":"ios"}`, sec("ios")) + `]}]`,
+			nil},
 	}
 	for _, c := range cases {
 		d := FromMessage(r, msg(t, `{"ts":"1.0","text":"fallback text","blocks":`+c.blocks+`}`))
@@ -139,4 +170,25 @@ func TestUnknownInlineElement(t *testing.T) {
 		{"type":"text","text":" d"},{"type":"future_thing"}]}]}]`)
 	eq(t, "unknown inline", d.Blocks, []Block{para(tx("a "), lk("linked", "https://f.test/x"), tx(" b "),
 		lk("https://f.test/bare", "https://f.test/bare"), tx(" c "), tx("plain"), tx(" d"))})
+	// J825's last branches: a null fallback draws nothing, an object
+	// fallback draws in the element's place, and UnknownElement takes the
+	// text only when it's a string (BeP8); team is no type of Slack's
+	// either, so its team_id draws nothing; a citation without
+	// details.citation_type isn't Citation's and Lv's gate leaves it
+	// empty; inside preformatted text the url still links
+	d = blocksMsg(t, `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
+		{"type":"text","text":"e "},{"type":"future_mention","text":"@x","fallback":{"type":"text","text":"@Ana"}},
+		{"type":"text","text":" f "},{"type":"future_mention","text":"@x","fallback":null},
+		{"type":"text","text":" g "},{"type":"future_mention","text":{"type":"plain_text","text":"obj"}},
+		{"type":"text","text":" h "},{"type":"team","team_id":"T1"},
+		{"type":"text","text":" i "},{"type":"citation","text":"[1]","url":"https://s.test/a"},
+		{"type":"text","text":" j"}]},
+		{"type":"rich_text_preformatted","elements":[{"type":"future_thing","url":"https://f.test/pre"}]}]}]`)
+	if len(d.Blocks) != 2 {
+		t.Fatalf("blocks %+v", d.Blocks)
+	}
+	eq(t, "fallbacks", d.Blocks[0], para(tx("e "), tx("@Ana"), tx(" f "), tx(" g "), tx(" h "), tx(" i "), tx(" j")))
+	if sp := d.Blocks[1].Spans; len(sp) != 1 || sp[0].Kind != Link || sp[0].URL != "https://f.test/pre" {
+		t.Errorf("preformatted unknown element %+v, want a link", sp)
+	}
 }

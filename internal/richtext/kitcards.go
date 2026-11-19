@@ -62,7 +62,7 @@ func (c *builder) calloutBlock(b *bk) Block {
 	if !calloutColors[tone] {
 		tone = "green"
 	}
-	return Block{Kind: CalloutBlock, BlockID: b.BlockID, Tone: tone, Children: c.children(b.ChildBlocks)}
+	return Block{Kind: CalloutBlock, BlockID: b.BlockID, Tone: tone, Children: c.children(b.ChildBlocks, true)}
 }
 
 // containerWidths are ContainerBlock's max-width classes.
@@ -104,5 +104,5 @@ func (c *builder) containerBlock(b *bk) Block {
 			}
 		}
 	}
-	return Block{Kind: ContainerBlock, BlockID: b.BlockID, Container: ci, Children: c.children(b.ChildBlocks)}
+	return Block{Kind: ContainerBlock, BlockID: b.BlockID, Container: ci, Children: c.children(b.ChildBlocks, false)}
 }

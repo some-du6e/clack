@@ -21,6 +21,45 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 	return FromMessageIn(r, m, m.Channel)
 }
 
+// newBuilder is a builder for message m shown in channel ch: its sender,
+// its canvas unfurls' hints and its files.
+func newBuilder(r Resolver, m *slack.Message, ch string) *builder {
+	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS}
+	c.hintsFrom(m)
+	if len(m.Files) > 0 {
+		c.files = make(map[string]*slack.File, len(m.Files))
+		c.used = map[string]bool{}
+		for i := range m.Files {
+			c.files[m.Files[i].ID] = &m.Files[i]
+		}
+	}
+	return c
+}
+
+// hasMessageBlocks is shouldRenderBlocksInsteadOfText (client-boot
+// iub5 hasMessageBlocks: a non-empty blocks array) with Blocks' (lby4)
+// check that they aren't all null or rich_text without elements.
+func hasMessageBlocks(raw json.RawMessage) bool {
+	var bs []json.RawMessage
+	if json.Unmarshal(raw, &bs) != nil {
+		return false
+	}
+	for _, b := range bs {
+		if string(b) == "null" {
+			continue
+		}
+		var rt struct {
+			Type     string            `json:"type"`
+			Elements []json.RawMessage `json:"elements"`
+		}
+		if json.Unmarshal(b, &rt) == nil && rt.Type == "rich_text" && len(rt.Elements) == 0 {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // FromMessageIn is FromMessage for a message shown in channel ch (Slack's
 // MessageContext channelId: a channel-tab slug to ch is the tab's label
 // alone).
@@ -31,21 +70,17 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	if m.Subtype == "message_deleted" || m.Subtype == "tombstone" {
 		return Doc{Blocks: []Block{tombstone("This message was deleted.")}}
 	}
-	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS}
-	c.hintsFrom(m)
-	if len(m.Files) > 0 {
-		c.files = make(map[string]*slack.File, len(m.Files))
-		c.used = map[string]bool{}
-		for i := range m.Files {
-			c.files[m.Files[i].ID] = &m.Files[i]
-		}
-	}
+	c := newBuilder(r, m, ch)
 	var d Doc
 	if bs := parseBlocks(c.expanded(m.Blocks)); len(bs) > 0 {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
 	}
-	if len(d.Blocks) == 0 && m.Text != "" {
+	// Slack draws the blocks instead of the text whenever the message has
+	// any (shouldRenderBlocksInsteadOfText), even if they draw nothing (a
+	// condition with no case for the desktop, an empty fallback list). The
+	// text stands in when a block Clack can't draw yet drew nothing.
+	if len(d.Blocks) == 0 && m.Text != "" && (!hasMessageBlocks(m.Blocks) || c.missing) {
 		d.Blocks = FromMrkdwn(r, m.Text)
 		d.Jumbo = onlyEmoji(r, m.Text)
 	}

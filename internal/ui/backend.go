@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/openurl"
@@ -977,7 +979,15 @@ func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 // outside DMs, its channel mentions as Slack's channelToText writes them
 // (notify_conv.go: never the raw id).
 func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
-	text := richtext.PlainTextWith(ev.Msg.Doc, b.noteSpanText)
+	text := ""
+	if m := ev.Msg; len(m.Blocks) > 0 && b.core != nil && b.core.S != nil {
+		// convertMessageToPlainText: conditions unexpanded, no fallbacks
+		sm := slack.Message{TS: m.TS, Channel: m.Channel, User: m.User, Text: m.Text, Blocks: m.Blocks}
+		_ = json.Unmarshal(m.Attachments, &sm.Attachments)
+		text = richtext.NotificationText(b.core.S, &sm, m.Doc, b.noteSpanText)
+	} else {
+		text = richtext.PlainTextWith(ev.Msg.Doc, b.noteSpanText)
+	}
 	if c == nil || c.Kind == "im" || c.Kind == "app" {
 		return text
 	}
