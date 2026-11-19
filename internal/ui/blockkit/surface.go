@@ -415,6 +415,14 @@ func (s *Surface) validate() bool {
 func atof(s string) float64 { f, _ := strconv.ParseFloat(s, 64); return f }
 
 // textOfBlock is a non-interactive block as a richtext doc.
+// selfID is the viewer's member id ("" without a workspace).
+func (s *Surface) selfID() string {
+	if c := s.h.Core(); c != nil && c.S != nil {
+		return c.S.SelfID()
+	}
+	return ""
+}
+
 func (s *Surface) docOf(b *Block) richtext.Doc {
 	c := s.h.Core()
 	if c == nil {
@@ -498,11 +506,15 @@ func errorLine(gtx C, th *theme.Theme, cl colors, w int, msg string) D {
 func (s *Surface) flow(gtx C, b *Block, w int) int {
 	x, y, rowH := 0, 0, 0
 	gap := dp(gtx, 8)
+	self := s.selfID()
 	if s.modal() {
 		colW := (w - gap) / 2
 		n := 0
 		for i := range b.Elements {
 			e := &b.Elements[i]
+			if hiddenFrom(e, self) {
+				continue
+			}
 			ew := s.widget(b, e)
 			sz := ew.size(gtx, colW, false)
 			if sz.X == 0 {
@@ -526,6 +538,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 	}
 	for i := range b.Elements {
 		e := &b.Elements[i]
+		if hiddenFrom(e, self) {
+			continue
+		}
 		ew := s.widget(b, e)
 		sz := ew.size(gtx, w, false)
 		if sz.X == 0 {
@@ -545,6 +560,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 
 func (s *Surface) section(gtx C, b *Block, key string, w int, st *richview.Style) int {
 	acc := b.Accessory
+	if hiddenFrom(acc, s.selfID()) {
+		acc = nil
+	}
 	var accW, accH int
 	var aw *ew
 	stack := false

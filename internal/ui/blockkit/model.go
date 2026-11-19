@@ -101,6 +101,9 @@ type Element struct {
 	URL   string `json:"url"`
 	Style string `json:"style"`
 	Icon  string `json:"icon"` // icon_button
+	// VisibleTo is visible_to_user_ids: a button or checkboxes the
+	// viewer isn't listed in isn't drawn (isVisibleToMember)
+	VisibleTo []string `json:"visible_to_user_ids"`
 
 	Placeholder         *Text `json:"placeholder"`
 	Confirm             *Confirm
@@ -174,6 +177,21 @@ func (e *Element) allOptions() []Option {
 		out = append(out, g.Options...)
 	}
 	return out
+}
+
+// hiddenFrom reports whether e is a button or checkboxes whose
+// visible_to_user_ids leave out the viewer self: Slack's Actions block
+// and section accessory don't draw it (client-boot isVisibleToMember).
+func hiddenFrom(e *Element, self string) bool {
+	if e == nil || (e.Type != "button" && e.Type != "checkboxes") || len(e.VisibleTo) == 0 || self == "" {
+		return false
+	}
+	for _, id := range e.VisibleTo {
+		if id == self {
+			return false
+		}
+	}
+	return true
 }
 
 // Kinds of elements.

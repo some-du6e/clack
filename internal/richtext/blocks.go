@@ -56,6 +56,7 @@ type bk struct {
 	AltText     string          `json:"alt_text"`
 	Title       *textObj        `json:"title"`
 	ActionID    string          `json:"action_id"`
+	VisibleTo   []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button
 	Placeholder *textObj        `json:"placeholder"`
 	Options     []struct {
 		Text  textObj `json:"text"`
@@ -620,8 +621,27 @@ func (c *builder) imageOf(b *bk) *Image {
 	return image(u, b.AltText, b.ImageWidth, b.ImageHeight)
 }
 
-// element converts an interactive element into a Button.
+// visibleTo is isVisibleToMember (client-boot): no list, or no viewer,
+// or the viewer in it.
+func visibleTo(ids []string, self string) bool {
+	if len(ids) == 0 || self == "" {
+		return true
+	}
+	for _, id := range ids {
+		if id == self {
+			return true
+		}
+	}
+	return false
+}
+
+// element converts an interactive element into a Button. A button or
+// checkboxes with visible_to_user_ids that leave the viewer out draws
+// nothing (the Actions block's element, the section's accessory).
 func (c *builder) element(e *bk, blockID string) (Button, bool) {
+	if (e.Type == "button" || e.Type == "checkboxes") && !visibleTo(e.VisibleTo, c.r.SelfID()) {
+		return Button{}, false
+	}
 	btn := Button{Kind: e.Type, ActionID: e.ActionID, Value: e.Value, BlockID: blockID}
 	switch e.Type {
 	case "button", "workflow_button":
