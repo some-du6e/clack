@@ -718,7 +718,10 @@ var activityLiveTypes = []string{"thread_v2", "at_user", "at_user_group", "at_ch
 
 func activityLiveType(t string) bool { return slices.Contains(activityLiveTypes, t) }
 
-func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage) {
+// onActivityEvent is an activity event's work, on the activity queue
+// (activity_later.go); seq is MessageChangeSeq when the socket brought it
+// (handle's "activity"), its items' stamp.
+func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage, seq uint64) {
 	var e struct {
 		Subtype string      `json:"subtype"`
 		Key     string      `json:"key"`
@@ -733,7 +736,6 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage) {
 		return
 	}
 	if e.Entry.Key != "" || e.Entry.Item.Type != "" {
-		seq := a.MessageChangeSeq() // msg_changes.go
 		items := a.activityItems(ctx, []activityRaw{e.Entry})
 		stampItems(items, seq)
 		if len(items) == 1 {
