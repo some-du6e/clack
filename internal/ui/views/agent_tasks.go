@@ -130,6 +130,30 @@ type taskRowUI struct {
 	moreSize                 image.Point
 }
 
+// RowHoveredForTest and ActionHoveredForTest are whether the pointer is
+// on task id's row, and on its hover action (run, pause, more), as the
+// router last told the row (tests that click them as a person would).
+func (v *AgentTasks) RowHoveredForTest(id string) bool {
+	u := v.rows[id]
+	return u != nil && u.hover.Hovered()
+}
+
+func (v *AgentTasks) ActionHoveredForTest(id, action string) bool {
+	u := v.rows[id]
+	if u == nil {
+		return false
+	}
+	switch action {
+	case "run":
+		return u.run.Hovered()
+	case "pause":
+		return u.pause.Hovered()
+	case "more":
+		return u.more.Hovered()
+	}
+	return false
+}
+
 // NewAgentTasks makes the Tasks tab of the agent DM ch.
 func NewAgentTasks(h Host, ch string) *AgentTasks {
 	v := &AgentTasks{base: newBase(h), ch: ch, srch: newSearchIn(nsSlackbotAI, AgentTasksSearch),

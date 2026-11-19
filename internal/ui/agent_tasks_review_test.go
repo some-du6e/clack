@@ -4,11 +4,14 @@ package ui
 // internal/fakeslack (Atlas). Synthetic only.
 
 import (
+	"image"
 	"net/url"
 	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/ui/popups"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -121,4 +124,95 @@ func TestAgentTasksTabPauseHold(t *testing.T) {
 	if p, ok := published(); !ok || p {
 		t.Errorf("a list that hasn't caught up undid the pause: published %v (listed %v)", p, ok)
 	}
+}
+
+// TestAgentTasksTabRowButtons: the row's hover actions and its More menu,
+// clicked through Gio's router as a person would. Pause task sends the
+// unpublish; More actions, Delete task asks first: nothing is deleted
+// before Confirm, Cancel deletes nothing, and Confirm sends both deletes.
+func TestAgentTasksTabRowButtons(t *testing.T) {
+	e, fs := agentTasksEnv(t, nil)
+	dm := e.agentDM(t, "messages,about,tasks")
+	v := e.openTasks(t, dm, "list")
+	calls := func(m string) int {
+		n := 0
+		for _, c := range fs.AgentTasks().AgentTaskCalls() {
+			if c.Method == m {
+				n++
+			}
+		}
+		return n
+	}
+	// a row's button: hover down the tab's right side to the row, then
+	// along it to the button
+	find := func(id, action string) image.Point {
+		t.Helper()
+		for y := 40; y < e.size.Y; y += 6 {
+			e.movePtr(image.Pt(e.size.X-60, y))
+			if !v.RowHoveredForTest(id) {
+				continue
+			}
+			for _, dy := range []int{0, 6, 12, 18, 24, -6, -12} {
+				for x := e.size.X - 16; x > e.size.X/2; x -= 3 {
+					e.movePtr(image.Pt(x, y+dy))
+					if v.ActionHoveredForTest(id, action) {
+						return image.Pt(x, y+dy)
+					}
+				}
+			}
+		}
+		t.Fatalf("no %s button on task %s", action, id)
+		return image.Point{}
+	}
+	e.click(find(fakeslack.TaskBriefing, "pause"))
+	e.until("Pause task sent", 10*time.Second, func() bool { return calls("functions.workflows.unpublish") == 1 })
+
+	deleteMenu := func() *popups.Modal {
+		t.Helper()
+		e.click(find(fakeslack.TaskStandup, "more"))
+		e.frame()
+		e.frame()
+		var menu *popups.Menu
+		if n := len(e.a.overlays); n > 0 {
+			menu, _ = e.a.overlays[n-1].(*popups.Menu)
+		}
+		if menu == nil {
+			t.Fatal("More actions opened no menu")
+		}
+		i := slices.Index(menu.Labels(), "Delete task")
+		rows := menu.RowRects()
+		if i < 0 || i >= len(rows) {
+			t.Fatalf("no Delete task in More actions: %q", menu.Labels())
+		}
+		r := rows[i]
+		e.click(image.Pt((r.Min.X+r.Max.X)/2, (r.Min.Y+r.Max.Y)/2))
+		e.frame()
+		e.frame()
+		m, ok := topModal(e.a)
+		if !ok || m.Title() != "Permanently delete this task?" {
+			t.Fatalf("Delete task opened no confirm (%v)", ok)
+		}
+		return m
+	}
+	m := deleteMenu()
+	if calls("workflows.triggers.delete")+calls("functions.workflows.delete") != 0 {
+		t.Fatal("a delete went out before Confirm")
+	}
+	if !m.Press("Cancel") {
+		t.Fatal("no Cancel button")
+	}
+	e.settle(800 * time.Millisecond)
+	if calls("workflows.triggers.delete")+calls("functions.workflows.delete") != 0 {
+		t.Error("a delete went out after Cancel")
+	}
+	if !slices.Contains(v.TaskIDs(), fakeslack.TaskStandup) {
+		t.Error("Cancel took the task out of the list")
+	}
+	m = deleteMenu()
+	if !m.Press("Confirm") {
+		t.Fatal("no Confirm button")
+	}
+	e.until("both deletes", 10*time.Second, func() bool {
+		return calls("workflows.triggers.delete") == 1 && calls("functions.workflows.delete") == 1
+	})
 }
