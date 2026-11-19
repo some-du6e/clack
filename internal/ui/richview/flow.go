@@ -494,6 +494,11 @@ type lay struct {
 	ctr     partPath
 	curPart uint8
 	inBlock bool // inside a .p-rich_text_block
+	// ink, when set, is the text colour bodyStyle gives (an alert's
+	// .c-alert--boxed content-pry); linkInk, when set, is the links':
+	// that colour, always underlined (.c-alert :any-link{color:inherit;
+	// text-decoration:underline})
+	ink, linkInk color.NRGBA
 	// filled counts the boxes whose Block Kit blocks fill the width rather
 	// than sit in a message's flex block wrapper (an alert shrinks to its
 	// content there): a callout's or a container's children (renderBlocks
@@ -737,6 +742,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			if st&richtext.Code == 0 {
 				col = p.Link
+				if l.linkInk.A != 0 {
+					col, st = l.linkInk, st|richtext.Underline
+				}
 			}
 		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
 			if sp.Pending && l.opts.Canvas {

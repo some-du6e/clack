@@ -179,6 +179,19 @@ func (l *lay) tok(name string) color.NRGBA {
 	return c
 }
 
+// skRGBA is Slack's rgba(var(--<name>), a) for one of its "r, g, b"
+// variables (sk_primary_foreground, sk_foreground_max) in the palette's
+// mode, not composited.
+func (l *lay) skRGBA(name string, a float64) color.NRGBA {
+	dark := lum(l.st.Palette.Panel) < 0.5
+	c, ok := css.ParseColor("rgb(" + css.SlackVars(dark)["--"+name] + ")")
+	if !ok {
+		return l.st.Palette.Text
+	}
+	c.A = uint8(float64(c.A)*a + 0.5)
+	return c
+}
+
 // ---- grouping (MessageKitAttachments, MessageFiles) ----
 
 // arrangeWorkObjects puts a message's work object cards where Slack

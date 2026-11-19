@@ -24,6 +24,9 @@ func (l *lay) bodyStyle() flowStyle {
 	if l.opts.Color.A != 0 {
 		col = l.opts.Color
 	}
+	if l.ink.A != 0 {
+		col = l.ink
+	}
 	size, lh := l.st.TextSize, l.st.LineHeight
 	if l.opts.Compact {
 		size, lh = 13, 19.5

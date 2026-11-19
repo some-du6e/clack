@@ -174,6 +174,12 @@ Round 1's review fixes, with tests that fail on `8126e895`:
   - Blocks that draw nothing leave an empty body, not the message text (`TestBlockFallbacks`, `TestConditionBlocks`).
   - Notifications read the raw blocks as `convertMessageToPlainText` does (`TestNotificationText`), and search results drop the card (`TestSearchText`).
   - Unknown inline elements take RichTextRenderer's last branches (`TestUnknownInlineElement`).
+- The cards' texts take Slack's tokens, tested by `TestKitCardTokens`:
+  - a container's title is content-pry and its subtitle content-sec;
+  - an alert's text is content-pry, with its links in that colour and always underlined (`.c-alert :any-link`);
+  - a call card's title and status are `sk_primary_foreground`, and its Meeting ID is `sk_foreground_max` at .7;
+  - a container's caret is 1em (15px), with 12+8px before it;
+  - a callout's border sits over its own fill.
 - A container's or a call card's toggle survives the message changing (a reaction, a reply, `chat.update`). The View keys it by the container's block_id (else its place among the message's containers) and by the call id. A change to `is_collapsible` or `default_collapsed` resets it, as ContainerBlock's `useEffect` does: `TestCollapseSurvivesUpdates`. A container `width` Slack lacks, or `null`, now draws full width, since "standard" is only the default for an absent field: `TestBoxedBlocks`.
 
 ## Next

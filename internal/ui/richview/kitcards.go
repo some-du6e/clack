@@ -71,7 +71,10 @@ func (l *lay) alert(b *richtext.Block, x, y, w int) int {
 	tw := max(x+w-bw-padX-tx, l.dp(40))
 	th := 0
 	if len(b.Children) > 0 {
+		ink, linkInk := l.ink, l.linkInk
+		l.ink, l.linkInk = l.tok("content-pry"), l.tok("content-pry")
 		th = l.nestedText(b.Children, tx, y+bw+padY, tw)
+		l.ink, l.linkInk = ink, linkInk
 	}
 	h := bw + padY + max(th, l.dp(22)) + padY + bw
 	stroke := color.NRGBA{}
@@ -160,11 +163,14 @@ func (l *lay) callout(b *richtext.Block, x, y, w int) int {
 		inner = l.nestedBlocks(b.Children, x+bw+pad, y+bw+pad, w-2*(bw+pad))
 	}
 	h := bw + pad + inner + pad + bw
-	stroke := Over(rgba(0x5e, 0x5d, 0x60, 0x21/255.0), p.Panel) // otl-ter
+	// the translucent border over the callout's own fill (its background
+	// reaches under the border: background-clip border-box)
+	fill := l.calloutTone(b.Tone)
+	stroke := Over(rgba(0x5e, 0x5d, 0x60, 0x21/255.0), fill) // otl-ter
 	if p.Dark {
-		stroke = Over(rgba(0x79, 0x7c, 0x81, 0x80/255.0), p.Panel) // otl-sec
+		stroke = Over(rgba(0x79, 0x7c, 0x81, 0x80/255.0), fill) // otl-sec
 	}
-	bx := box{kind: bBorder, r: image.Rect(x, y, x+w, y+h), radius: l.dp(12), fill: l.calloutTone(b.Tone), stroke: stroke, bw: bw, target: -1}
+	bx := box{kind: bBorder, r: image.Rect(x, y, x+w, y+h), radius: l.dp(12), fill: fill, stroke: stroke, bw: bw, target: -1}
 	l.d.boxes = append(l.d.boxes, box{})
 	copy(l.d.boxes[box0+1:], l.d.boxes[box0:])
 	l.d.boxes[box0] = bx
@@ -258,12 +264,14 @@ func (l *lay) container(b *richtext.Block, x, y, w int) int {
 		l.collapseDefs[key] = defs
 	}
 	collapsed := ci.Collapsible && ci.DefaultCollapsed != l.collapsed[key]
+	// .containerBlockTitle content-pry, .containerBlockSubtitle content-sec
 	ts := l.bodyStyle()
 	ts.face.Weight = font.Bold
 	ts.lineH = int(l.dpf(22.5) + 0.5)
 	ts.maxLines, ts.ellipsis = 1, true
+	ts.col = l.tok("content-pry")
 	ss := l.bodyStyle()
-	ss.size, ss.lineH, ss.col = l.sp(13), int(l.dpf(16.25)+0.5), p.Text2
+	ss.size, ss.lineH, ss.col = l.sp(13), int(l.dpf(16.25)+0.5), l.tok("content-sec")
 	ss.emoji = l.dp(16)
 	ss.maxLines, ss.ellipsis = 1, true
 	groupH := 0
@@ -273,7 +281,7 @@ func (l *lay) container(b *richtext.Block, x, y, w int) int {
 	if len(ci.Subtitle) > 0 {
 		groupH += ss.lineH
 	}
-	is, cs := l.dp(36), l.dp(20)
+	is, cs := l.dp(36), l.dp(15) // the caret is 1em of the header's 15px
 	rowH := groupH
 	if ci.Icon != "" {
 		rowH = max(rowH, is)
@@ -291,7 +299,7 @@ func (l *lay) container(b *richtext.Block, x, y, w int) int {
 		right -= cs
 		cy := hy + (rowH-cs)/2
 		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(right, cy, right+cs, cy+cs), url: iconURL + icon, target: -1, px: cs, tint: p.Text})
-		right -= l.dp(8)
+		right -= l.dp(12) + l.dp(8) // the header's 12px gap and the caret's 8px margin
 	}
 	tx := hx
 	if ci.Icon != "" {

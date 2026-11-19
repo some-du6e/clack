@@ -90,18 +90,21 @@ func (l *lay) callCard(c *richtext.CallCard, x, y, w int) int {
 	}
 	tx := ir.Max.X + l.dp(12)
 	tw2 := max(x+cw-bw-pad-tx, l.dp(40))
+	// .p-call_subtype__title and __status: rgba(var(--sk_primary_foreground),1)
 	ts := l.bodyStyle()
 	ts.face.Weight = font.Bold
+	ts.col = Over(l.skRGBA("sk_primary_foreground", 1), p.Panel)
 	th, _ := l.plainFlow(c.Title, tx, ir.Min.Y, tw2, &ts, -1)
 	l.plainAdd("\n")
 	ss := l.bodyStyle()
 	ss.maxLines, ss.ellipsis = 1, true
+	ss.col = ts.col
 	sh, _ := l.plainFlow(c.Status, tx, ir.Min.Y+th, tw2, &ss, -1)
 	y = ir.Min.Y + max(icon, th+sh) + pad
 
 	// body and footer: a 1px top border on the faint fill
 	panelFill := Over(rgba(p.Text.R, p.Text.G, p.Text.B, 0.04), p.Panel)
-	descCol := Over(rgba(p.Text.R, p.Text.G, p.Text.B, 0.7), panelFill)
+	descCol := Over(l.skRGBA("sk_foreground_max", 0.7), panelFill) // .p-call_subtype__description
 	section := func(h int, last bool) image.Rectangle {
 		r := image.Rect(x+bw, y, x+cw-bw, y+bw+h)
 		b := box{kind: bFill, r: r, fill: panelFill, target: -1}
