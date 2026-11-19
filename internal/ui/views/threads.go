@@ -767,6 +767,8 @@ func (v *Threads) cardOf(t *thrItem) *thrCard {
 	if c == nil {
 		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS, folds: v.nextFold()}
 		v.cards[t.key] = c
+		d, _, _ := v.data.get()
+		v.minVisible(t, c, d.load) // threads_older.go
 	}
 	return c
 }

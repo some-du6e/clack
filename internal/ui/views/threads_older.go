@@ -93,21 +93,26 @@ func thrMinVisible(replyCount int, known []core.Message, lastRead string, reache
 // minVisibles is getDerivedStateFromProps' minimumVisibleTsByThread: each
 // card's first shown reply, picked once per refreshId (the data's load)
 // and again while it is "" (none read yet), so a thread read since shows
-// its two newest.
+// its two newest. A card not made yet gets its own when it is (cardOf).
 func (v *Threads) minVisibles(page thrData) {
 	for i := range page.items {
-		t := &page.items[i]
-		c := v.cardOf(t)
-		if c.minVisLoad == page.load && c.minVis != "" {
-			continue
+		if c := v.cards[page.items[i].key]; c != nil {
+			v.minVisible(&page.items[i], c, page.load)
 		}
-		known := thrKnown(t, c)
-		mv := thrMinVisible(t.Root.ReplyCount, known, v.lastRead(t), c.olderStart || len(known) >= t.Root.ReplyCount)
-		if mv != c.minVis || c.minVisLoad != page.load {
-			c.setMinVis(mv)
-		}
-		c.minVisLoad = page.load
 	}
+}
+
+// minVisible picks card c's first shown reply for the data's load.
+func (v *Threads) minVisible(t *thrItem, c *thrCard, load int) {
+	if c.minVisLoad == load && c.minVis != "" {
+		return
+	}
+	known := thrKnown(t, c)
+	mv := thrMinVisible(t.Root.ReplyCount, known, v.lastRead(t), c.olderStart || len(known) >= t.Root.ReplyCount)
+	if mv != c.minVis || c.minVisLoad != load {
+		c.setMinVis(mv)
+	}
+	c.minVisLoad = load
 }
 
 // setMinVis moves the card's first shown reply.

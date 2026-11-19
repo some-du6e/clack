@@ -323,13 +323,19 @@ func TestThreadsTypeScrollsReplyBoxLikeSlack(t *testing.T) {
 	h.away.Store(true)
 	v := NewThreads(h)
 	e := thrViewEnv(t, v, 2)
-	e.size = image.Pt(1000, 300)
-	e.frame()
 	e.frame()
 	p, _, _ := v.data.get()
 	k0 := p.items[0].key
-	kbClickRow(t, e, v.kb, "root-"+k0, 49)
 	footer := "footer-" + k0
+	// the list ends just above the first thread's footer
+	y, ok, _ := v.kb.top(footer)
+	if !ok {
+		t.Fatal("the first thread's footer isn't laid out")
+	}
+	e.size = image.Pt(1000, 49+y-10)
+	e.frame()
+	e.frame()
+	kbClickRow(t, e, v.kb, "root-"+k0, 49)
 	if !v.kb.focused || v.kb.inView(footer) {
 		t.Fatalf("the list focused %v with %s's footer in view %v: want it below the list", v.kb.focused, k0, v.kb.inView(footer))
 	}

@@ -194,10 +194,15 @@ func TestThreadsUnreadBannersLikeSlack(t *testing.T) {
 	if m := app.ThreadsMarkedUnread(); m != nil {
 		t.Errorf("after the close the threads marked unread are %v, want none", m)
 	}
+	// the close hides them from the next determineUnreadThreadBannerVisibility
+	// (render reads only the lists): the server's thread_marked events, or
+	// here a scroll; with unread threads both above and below it lasts 5 s
+	v.list.Position.Offset += 40
+	thrBounded(e, 400*time.Millisecond, func() bool { return false })
 	if got := drawn(); len(got) != 0 {
-		t.Errorf("right after the close the banners say %v", got)
+		t.Errorf("once the scroll after the close stopped the banners say %v", got)
 	}
-	v.list.Position.Offset += 40 // a scroll while hidden: still hidden
+	v.list.Position.Offset += 20 // another scroll while hidden: still hidden
 	thrBounded(e, time.Until(closed.Add(4*time.Second)), func() bool { return false })
 	if got := drawn(); len(got) != 0 {
 		t.Errorf("4 s after the close the banners say %v", got)
