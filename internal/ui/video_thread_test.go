@@ -72,8 +72,11 @@ func TestVideoThreadPane(t *testing.T) {
 		t.Fatal("the reply's video isn't the thread pane's player tile")
 	}
 	// the pane's video plays (from the start: the file hasn't played; the
-	// fixture's 3 s leave the checks time)
-	e.clickAt(mid(tr), clk)
+	// fixture's 3 s leave the checks time). The pane's tile is small
+	// (about 204x115): its middle is on the scrubber, which scrubs, so the
+	// click goes on the video above the controls, left of the corner.
+	free := func(r image.Rectangle) image.Point { return image.Pt(r.Min.X+r.Dx()/3, r.Min.Y+r.Dy()/4) }
+	e.clickAt(free(tr), clk)
 	for dl := time.Now().Add(15 * time.Second); ; {
 		if st, _ := inThread(); st.Playing && !st.Loading {
 			break
@@ -82,7 +85,7 @@ func TestVideoThreadPane(t *testing.T) {
 			st, ok := inThread()
 			pv, pip := pipShown(e)
 			t.Fatalf("the pane's video didn't play after the click at %v (its tile now %v): %+v (%v); mounted %d; mini player %v %+v",
-				mid(tr), videoIn(), st, ok, e.a.vids.Mounted(), pip, pv)
+				free(tr), videoIn(), st, ok, e.a.vids.Mounted(), pip, pv)
 		}
 		e.frame()
 		time.Sleep(time.Millisecond)
