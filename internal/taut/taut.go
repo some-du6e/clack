@@ -59,17 +59,20 @@ func honestFetch(fetch func(context.Context, *http.Request) (*http.Response, err
 
 // fetchRedirect is the default fetch client's redirect policy. Go copies a
 // hand-set Cookie or Authorization header (checkAuth's d cookie, a
-// plugin's own) to a hop on the same host or a subdomain, and turns a POST
-// into a GET on 301-303. So a hop that would carry them to a Slack page
-// (an https slack.com URL that isn't a file path, such as /ssb/redirect,
-// whose load with the cookie can end the session) has them removed and
-// isn't followed, as slack.Client's own redirects aren't.
+// plugin's own) to a hop whose host name is the same or a subdomain,
+// whatever its scheme, port or userinfo, and turns a POST into a GET on
+// 301-303. So a hop that would carry them to a Slack host keeps them only
+// when it's an https file URL on the default port (slack.CookieURL and
+// slack.FileURL). Any other such hop (a page such as /ssb/redirect, whose
+// load with the cookie can end the session; plain http; another port;
+// userinfo) has them removed and isn't followed, as slack.Client's own
+// redirects aren't.
 func fetchRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
 	}
 	if (req.Header.Get("Cookie") != "" || req.Header.Get("Authorization") != "") &&
-		slack.CookieURL(req.URL.String()) && !slack.FileURL(req.URL) {
+		slack.CookieHost(req.URL.Hostname()) && !(slack.CookieURL(req.URL.String()) && slack.FileURL(req.URL)) {
 		req.Header.Del("Cookie")
 		req.Header.Del("Authorization")
 		return errors.New("taut: refusing to follow a redirect to a Slack page with credentials")

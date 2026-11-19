@@ -261,10 +261,33 @@ func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
 	// A file download redirected to a Slack page (sign-in, /ssb/…): stop.
 	// Loading Slack's web pages with the cookie from outside the browser
 	// can end the session.
-	if (req.Method == "" || req.Method == http.MethodGet) && cookieURL(req.URL) && !FileURL(req.URL) {
-		return ErrNotAFile
+	if cookieURL(req.URL) {
+		if req.Method == "" || req.Method == http.MethodGet {
+			if !FileURL(req.URL) {
+				return ErrNotAFile
+			}
+		} else if !sameEndpointHop(req.URL, via) {
+			// A 307 or 308 keeps a POST (an API call, an upload) and the
+			// cookie Go copies to the hop: it may only move to another
+			// Web API method or the same path, never to a page.
+			return ErrNotAFile
+		}
 	}
 	return nil
+}
+
+// sameEndpointHop reports whether a non-GET redirect hop to u stays on an
+// endpoint, not a page: a plain path (plainPath) that is a Web API method
+// (/api/…) or the path the first request went to.
+func sameEndpointHop(u *url.URL, via []*http.Request) bool {
+	if !plainPath(u) {
+		return false
+	}
+	wire := u.EscapedPath()
+	if strings.HasPrefix(wire, "/api/") {
+		return true
+	}
+	return len(via) > 0 && via[0].URL != nil && wire == via[0].URL.EscapedPath()
 }
 
 // CredentialsOK reports whether raw may be fetched with the session cookie
@@ -807,10 +830,11 @@ var filePaths = []string{"/files-pri/", "/files-tmb/", "/files-pri-safe/", "/fil
 // decides on every host, the file hosts too: files.slack.com/ssb/redirect
 // is a page like any other. The prefix is matched as it goes on the wire
 // (EscapedPath, what RequestURI sends), so /%66iles-pri/… isn't one. A
-// path with dot segments or encoded separators is never one either: Go
-// sends /files-pri/../ssb/redirect as written, and a server that
-// normalises it would answer the sign-out redirect to a cookie-bearing
-// request. Slack's own file URLs never have them.
+// path a normalising server could read as another path (plainPath: dot
+// segments however they are encoded) is never one either: Go sends
+// /files-pri/../ssb/redirect as written, and a server that normalises it
+// would answer the sign-out redirect to a cookie-bearing request. Slack's
+// own file URLs never have them.
 func FileURL(u *url.URL) bool {
 	if u == nil || !plainPath(u) {
 		return false
@@ -825,28 +849,57 @@ func FileURL(u *url.URL) bool {
 }
 
 // dotLike is "." and the characters Unicode compatibility normalisation
-// (NFKC) folds to dots: the fullwidth and small full stops and the one- and
-// two-dot leaders. Written as code points so no look-alike sits in source.
-var dotLike = "." + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0x2024)) + string(rune(0x2025))
+// (NFKC) folds to one or more dots: the fullwidth and small full stops, the
+// one- and two-dot leaders, the ellipsis and the vertical presentation
+// forms of the ellipsis and the two-dot leader, plus the space a segment
+// like ". ." pads with. Written as code points so no look-alike sits in
+// source.
+var dotLike = ". " + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0x2024)) + string(rune(0x2025)) +
+	string(rune(0x2026)) + string(rune(0xFE19)) + string(rune(0xFE30))
+
+// maxDecodes is how many times plainPath decodes a path the way a lenient
+// server might. A path that still changes after that many decodes is no
+// path Slack makes, so it's refused.
+const maxDecodes = 4
 
 // plainPath reports whether u's path can't be read as another path by a
-// server that normalises it, however many times it decodes: the path is
-// valid UTF-8 (an overlong %c0%ae is not), no segment is made only of dots
-// or dot look-alikes (also with a ";…" parameter, as some proxies strip
-// it), there is no backslash or control byte, and no percent-encoded dot,
-// slash, backslash or NUL is left in the raw path or after one decode
-// (%252e), nor an encoded percent sign that a third decode would read
-// (%25252e).
+// server that normalises it, however many times that server decodes it.
+// It checks the path as sent (EscapedPath) and after each decode, up to
+// maxDecodes, until decoding changes nothing (a path still changing after
+// that is refused). Each form must be valid UTF-8 (an overlong %c0%ae
+// isn't), hold no backslash, NUL or other control byte, and have no
+// segment made only of dots or dot look-alikes (also with a ";…" parameter
+// cut, as some proxies strip it). An encoded slash that decodes to a real
+// one only adds a segment, so a file named "uploads%2F2024.jpg" still
+// works; what it decodes to is checked like the rest.
 func plainPath(u *url.URL) bool {
-	if !utf8.ValidString(u.Path) {
+	p := u.EscapedPath()
+	for i := 0; ; i++ {
+		if !plainForm(p) {
+			return false
+		}
+		next := lenientUnescape(p)
+		if next == p {
+			return true
+		}
+		if i == maxDecodes {
+			return false
+		}
+		p = next
+	}
+}
+
+// plainForm checks one form of a path for plainPath.
+func plainForm(p string) bool {
+	if !utf8.ValidString(p) {
 		return false
 	}
-	for _, r := range u.Path {
+	for _, r := range p {
 		if r == '\\' || r < 0x20 || r == 0x7f {
 			return false
 		}
 	}
-	for _, seg := range strings.Split(u.Path, "/") {
+	for _, seg := range strings.Split(p, "/") {
 		if i := strings.IndexByte(seg, ';'); i >= 0 {
 			seg = seg[:i]
 		}
@@ -854,13 +907,41 @@ func plainPath(u *url.URL) bool {
 			return false
 		}
 	}
-	raw, once := strings.ToLower(u.EscapedPath()), strings.ToLower(u.Path)
-	for _, enc := range []string{"%2e", "%2f", "%5c", "%00"} {
-		if strings.Contains(raw, enc) || strings.Contains(once, enc) {
-			return false
-		}
+	return true
+}
+
+// lenientUnescape decodes every valid %XX escape in s and leaves any other
+// "%" as it is, as the most permissive server would.
+func lenientUnescape(s string) string {
+	if strings.IndexByte(s, '%') < 0 {
+		return s
 	}
-	return !strings.Contains(once, "%25")
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) && isHex(s[i+1]) && isHex(s[i+2]) {
+			b.WriteByte(unhex(s[i+1])<<4 | unhex(s[i+2]))
+			i += 2
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isHex(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+}
+
+func unhex(c byte) byte {
+	switch {
+	case '0' <= c && c <= '9':
+		return c - '0'
+	case 'a' <= c && c <= 'f':
+		return c - 'a' + 10
+	default:
+		return c - 'A' + 10
+	}
 }
 
 // UploadBytes sends file contents to an upload URL from

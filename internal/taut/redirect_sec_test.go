@@ -36,6 +36,12 @@ func TestFetchRedirectKeepsCredentialsOffSlackPages(t *testing.T) {
 		"https://files.slack.com/ssb/redirect",
 		"https://app.slack.com/client",
 		"https://hackclub.slack.com/files-pri/%2e%2e/ssb/redirect",
+		// Go copies the cookie to these too (it compares host names only):
+		// plain http, userinfo and another port are never a cookie hop.
+		"http://hackclub.slack.com/ssb/redirect",
+		"https://x@hackclub.slack.com/ssb/redirect",
+		"https://hackclub.slack.com:8443/files-pri/T1-F1/x.png",
+		"http://files.slack.com/files-pri/T1-F1/x.png",
 	} {
 		for _, creds := range [][2]string{{"d=xoxd-1", ""}, {"", "Bearer xoxc-1"}} {
 			req, err := hop(target, creds[0], creds[1])
