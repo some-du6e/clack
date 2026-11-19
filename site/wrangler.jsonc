@@ -1,11 +1,16 @@
 // How getclack.club is served: a Cloudflare Worker with static assets, on
 // the getclack.club zone in Cloudflare, with getclack.club and
 // www.getclack.club as its custom domains (README.md, "Cloudflare"). The
-// orchestrator deploys it; build first with node build.mjs --refresh.
+// orchestrator deploys it; build first with
+// node build.mjs --refresh --demo <the site-demo artifact's directory>.
 // 404-page serves dist/404.html for unknown paths. The build command is
 // the deploy's guard: wrangler runs it before every deploy and stops when
 // it fails, and check.mjs --demo fails a dist/ without the web demo's
-// program (README.md, "The web demo"), which would break TRY THE DEMO.
+// program and its licences (README.md, "The web demo"), which would break
+// TRY THE DEMO. wrangler runs it in the shell's directory: from site/ it is
+// site/tools/check.mjs, and from the repo root (-c site/wrangler.jsonc)
+// tools/check.mjs, which runs the same check; either way it checks
+// site/dist, the directory assets.directory names.
 {
   "name": "clack-site",
   "build": {

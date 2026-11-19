@@ -8,6 +8,11 @@
 //                               every crawler away, no sitemap
 //   node build.mjs --pages      the GitHub Pages build: adds CNAME
 //   node build.mjs --strict     fail when a download is missing
+//   node build.mjs --demo <dir> put the web demo's program in: <dir> is the
+//                               site workflow's site-demo artifact (the
+//                               packed page, main.wasm's parts and the
+//                               licence texts), which takes the place of
+//                               demo/'s unpacked page and scripts
 //
 // The canonical base (canonical link, og:url, og:image, sitemap) is
 // site.json's "url"; --site-url or SITE_URL overrides it, and an empty one
@@ -21,12 +26,14 @@
 // Clack itself shows, and the perf numbers from data/perf.json.
 //
 // demo/ is the web demo's page (copied as it is to dist/demo/). Its
-// program, main.wasm with wasm_exec.js and build.json, is built by the
-// site workflow's demo job (cmd/clack-web) and goes in beside it; without
-// it the page says the demo isn't in this build.
+// program, main.wasm with wasm_exec.js and build.json, is built and packed
+// by the site workflow's demo job (cmd/clack-web), whose site-demo
+// artifact --demo copies in; without it the page says the demo isn't in
+// this build.
 
+import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { brotliCompressSync, gzipSync, constants as zc } from 'node:zlib';
 
@@ -53,6 +60,9 @@ const ASSETS = {
   sums: /^SHA256SUMS$/,
 };
 const REQUIRED = ['win', 'mac', 'linux', 'sums'];
+
+// --demo's artifact, checked before anything is fetched or dist/ is removed
+const demoFrom = 'demo' in args ? demoDir(args.demo) : '';
 
 if (siteURL && !/^https:\/\/[a-z0-9.-]+(:\d+)?(\/[\w./-]*)?$/i.test(siteURL)) fail(`site url ${siteURL} is not an https URL`);
 if (args.preview && args.pages) fail('--preview and --pages are different builds');
@@ -101,11 +111,12 @@ for (const f of readdirSync(join(here, 'fonts'))) {
 }
 cpSync(join(here, '..', 'assets', 'icon.svg'), join(out, 'icon.svg'));
 mkdirSync(join(out, 'demo'), { recursive: true });
-for (const f of ['index.html', 'boot.js', 'fs.js']) cpSync(join(here, 'demo', f), join(out, 'demo', f));
 // Clack's licence and the notices for what it's built from, as text (the
-// demo card's Licences link and the footer's): the demo redistributes them
+// demo card's Licences links and the footer's): the demo redistributes them
 cpSync(join(here, '..', 'LICENSE'), join(out, 'demo', 'LICENSE.txt'));
 cpSync(join(here, '..', 'THIRD_PARTY_NOTICES.md'), join(out, 'demo', 'THIRD_PARTY_NOTICES.txt'));
+if (demoFrom) demoArtifact(demoFrom);
+else for (const f of ['index.html', 'boot.js', 'fs.js']) cpSync(join(here, 'demo', f), join(out, 'demo', f));
 // Cloudflare's headers: the web demo's program and scripts are named by
 // their content (tools/demo-pack.mjs puts them in demo/p/<hash>/), so they
 // never change once published; everything else revalidates
@@ -125,6 +136,43 @@ const br = brotliCompressSync(html, { params: { [zc.BROTLI_PARAM_QUALITY]: 11 } 
 const kind = flags.preview ? ' (preview)' : args.pages ? ' (pages)' : '';
 console.log(`built ${out}${kind}: ${release.tag}, base ${siteURL || '(none)'}`);
 console.log(`index.html with its CSS and JS: ${kb(html.length)} raw, ${kb(gz)} gzip, ${kb(br)} brotli`);
+
+// ---- the web demo's program ----
+
+// demoDir checks --demo's directory: the site-demo artifact, a packed web
+// demo (index.html with its #build manifest, nothing unpacked), outside the
+// dist/ this build removes.
+function demoDir(arg) {
+  if (typeof arg !== 'string' || !arg) fail('--demo needs a directory: the site-demo artifact');
+  const from = resolve(arg);
+  if (from === out || from.startsWith(out + sep)) fail(`--demo ${from} is inside ${out}, which the build removes first: download the artifact somewhere else`);
+  const b = demoManifest(from);
+  if (!b) fail(`--demo ${from}: no packed web demo there (an index.html with its #build manifest): download the site workflow's site-demo artifact into an empty directory and pass that`);
+  for (const f of ['boot.js', 'fs.js', 'wasm_exec.js', 'main.wasm']) {
+    if (existsSync(join(from, f))) fail(`--demo ${from}: ${f} is there unpacked; the artifact keeps the program under p/${b.hash}/`);
+  }
+  return from;
+}
+
+function demoManifest(dir) {
+  const page = existsSync(join(dir, 'index.html')) ? readFileSync(join(dir, 'index.html'), 'utf8') : '';
+  const m = page.match(/<script type="application\/json" id="build">([^<]*)<\/script>/);
+  return m ? JSON.parse(m[1]) : null;
+}
+
+// demoArtifact copies the site-demo artifact into dist/demo/: the packed
+// page (its manifest inline), p/<hash>/ (main.wasm's parts, the scripts and
+// Go's LICENSE), build.json and the licences, the artifact's own copies
+// over the ones above, so they match the build they came with.
+function demoArtifact(from) {
+  const b = demoManifest(from);
+  cpSync(from, join(out, 'demo'), { recursive: true });
+  let head = '';
+  try { head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* not a checkout */ }
+  const mib = (n) => `${(n / 1048576).toFixed(1)} MiB`;
+  console.log(`demo: the program from commit ${b.commit || '(unknown)'}, p/${b.hash}/: ${b.parts.length} parts, ${mib(b.wasm)} (${mib(b.brotli)} brotli, ${mib(b.gzip)} gzip)`);
+  if (head && b.commit && !head.startsWith(b.commit)) console.warn(`demo: note: this checkout is ${head.slice(0, 12)}, the artifact was built from ${b.commit}`);
+}
 
 // ---- template ----
 
@@ -353,7 +401,7 @@ function parseArgs(argv) {
     const m = argv[i].match(/^--([\w-]+)(?:=(.*))?$/);
     if (!m) fail(`unknown argument ${argv[i]}`);
     if (m[2] !== undefined) a[m[1]] = m[2];
-    else if (['site-url', 'out'].includes(m[1])) a[m[1]] = argv[++i] ?? '';
+    else if (['site-url', 'out', 'demo'].includes(m[1])) a[m[1]] = argv[++i] ?? '';
     else a[m[1]] = true;
   }
   return a;

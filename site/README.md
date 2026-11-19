@@ -199,9 +199,20 @@ that size; screen readers hear it each quarter, not each chunk. What
 crosses the network is main.wasm's brotli or gzip size when the host
 compresses `application/wasm` (the demo job's summary has all three), and
 the whole of it when it doesn't. A bar above Clack's window links back to
-the homepage, the download and the licences: build.mjs copies Clack's
-LICENSE and THIRD_PARTY_NOTICES.md into `dist/demo/` as `LICENSE.txt` and
-`THIRD_PARTY_NOTICES.txt`, which the homepage's footer links too.
+the homepage, the download and the licences, which the card's note and the
+homepage's footer link too:
+
+- `LICENSE.txt` and `THIRD_PARTY_NOTICES.txt`: Clack's LICENSE and
+  THIRD_PARTY_NOTICES.md, which build.mjs copies into `dist/demo/`.
+- `THIRD_PARTY_LICENSES.txt`: the licence texts themselves, word for word,
+  of what main.wasm contains. `tools/licenses.py` (at the repo root) writes
+  it in the demo job from `GOOS=js GOARCH=wasm go list -deps
+  ./cmd/clack-web`: Go's LICENSE and PATENTS, each module's licence files
+  from the module cache (or the `third_party/` copy it builds from), and
+  the licences of the fonts and the emoji table it embeds. It fails the job
+  when a module has no licence file.
+- `p/<hash>/LICENSE`: Go's LICENSE again, beside `wasm_exec.js`, whose
+  header says its licence "can be found in the LICENSE file".
 
 It's built and tested in CI only, by the site workflow's demo job:
 
@@ -217,29 +228,39 @@ It's built and tested in CI only, by the site workflow's demo job:
    carries the manifest (the parts and their sizes) inline, so a page and
    its parts are always one build; `_headers` (from build.mjs) serves
    `/demo/p/*` as immutable for a year, and everything else revalidates.
-   build.json is the same manifest, for the record.
-4. `tools/check.mjs --demo`.
-5. `tools/demo-test.mjs`: headless Chrome, with WebGL on SwiftShader as a
+   build.json is the same manifest, for the record. Go's LICENSE goes in
+   beside `wasm_exec.js`.
+4. `tools/licenses.py --target js/wasm` writes `THIRD_PARTY_LICENSES.txt`.
+5. `tools/check.mjs --demo`.
+6. `tools/demo-test.mjs`: headless Chrome, with WebGL on SwiftShader as a
    machine without a GPU has it, opens the demo, waits for the first frame
    and the channel list, types a message into the composer, sends it with
    Enter and checks the fake has it, with no console error. Its screenshots
    and timings are the run's `site-demo-test` artifact.
 
-The run's `site-demo` artifact is `dist/demo/` with the program, ready to
-deploy. To deploy the site with it:
+The run's `site-demo` artifact is `dist/demo/` with the program and its
+licences, ready to deploy. To deploy the site with it, from `site/`:
 
 ```sh
-node build.mjs --refresh
 gh run download <site run> --repo some-du6e/clack --name site-demo --dir <empty dir>
-cp -r <empty dir>/* dist/demo/
+node build.mjs --refresh --demo <empty dir>
 npm run deploy
 ```
+
+`--demo` makes the artifact `dist/demo/`: the packed page and `p/<hash>/`
+take the place of `demo/`'s unpacked page and scripts, which would
+otherwise stay beside them. It refuses a directory that isn't a packed web
+demo, or one inside `dist/` (the build removes `dist/` first), and says so
+when the artifact was built from another commit than the checkout's.
 
 The deploy is guarded: `npm run deploy` runs `tools/check.mjs --production
 --demo` before `wrangler deploy`, and wrangler.jsonc's build command runs
 the same check before any `wrangler deploy`, so a `dist/` without the
-program (the page alone, which says the demo isn't in that build) never
-goes live behind TRY THE DEMO.
+program and its licences (the page alone says the demo isn't in that
+build) never goes live behind TRY THE DEMO. wrangler runs that command in
+the shell's directory; it works from `site/` and from the repo root
+(`wrangler deploy -c site/wrangler.jsonc`, through `tools/check.mjs` there),
+and checks `site/dist` from either.
 
 ## The heading font
 
@@ -345,9 +366,9 @@ deploys:
 - The Worker `clack-site` serves `dist/` as static assets. `wrangler.jsonc`
   holds its setup: getclack.club and www.getclack.club as custom domains,
   workers.dev off, and `404.html` for unknown paths. Deploy with
-  `node build.mjs --refresh && npm run deploy`, with the web demo's program
-  copied into `dist/demo/` in between ([The web demo](#the-web-demo)); the
-  deploy refuses a `dist/` without it.
+  `node build.mjs --refresh --demo <site-demo artifact> && npm run deploy`
+  ([The web demo](#the-web-demo)); the deploy refuses a `dist/` without the
+  web demo's program.
 - Always Use HTTPS is on.
 - A Response Header Transform Rule removes Cloudflare's Network Error
   Logging headers (`nel` and `report-to`), so visitors' browsers don't
