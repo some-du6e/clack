@@ -122,14 +122,17 @@ func (me *Message) layoutTaskCard(gtx C, st *agentState, b *AgentBlock, first bo
 		status, title, hasContent = PlanStatus(b.Tasks), PlanTitle(b), len(b.Tasks) > 0
 	} else {
 		status, title, hasContent = CardStatus(b.Status), b.Title, b.hasContent()
-		def = strings.HasPrefix(b.BlockID, "mcp_task_")
+		def = me.taskCardDefault(st, b, key)
 	}
 	open := hasContent && st.isOpen(key, def)
 	t := st.tap(key)
 	if hasContent && t.clicked(gtx, me.h) {
 		st.open[key] = !open
 		open = !open
-		st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
+		st.touched[key] = true
+		if !open {
+			st.resetUnder(b)
+		}
 		me.changed()
 	}
 	cw := min(w, dp(gtx, 480))

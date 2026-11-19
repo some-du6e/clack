@@ -111,7 +111,9 @@ func TestAgentTaskShowMore(t *testing.T) {
 			s.frame(w, hgt, now)
 		}
 	}
-	tick(1)
+	// two frames: the first also measures the slot, and theme.DrawHook
+	// sees that pass's labels too
+	tick(2)
 	// the long details and the five-line ones are cut; "All green." isn't
 	if n := drawn.count("Show more"); n != 2 {
 		t.Errorf("Show more drawn %d times, want 2 (labels %q)", n, drawn.s)
@@ -134,7 +136,7 @@ func TestAgentTaskShowMore(t *testing.T) {
 		t.Fatalf("no Show more tap under the long details (slot %v)", sl)
 	}
 	s.click(p)
-	tick(3)
+	tick(6) // the height transition, then a frame that measures and one that only draws
 	if n, m := drawn.count("Show less"), drawn.count("Show more"); n != 1 || m != 1 {
 		t.Errorf("after Show more: Show less %d, Show more %d, want 1 and 1 (the other task's)", n, m)
 	}
@@ -153,7 +155,7 @@ func TestAgentTaskShowMore(t *testing.T) {
 		t.Fatal("no Show less tap")
 	}
 	s.click(p)
-	tick(3)
+	tick(6) // the height transition, then a frame that measures and one that only draws
 	if n := drawn.count("Show more"); n != 2 {
 		t.Errorf("after Show less: Show more drawn %d times, want 2", n)
 	}
@@ -164,7 +166,7 @@ func TestAgentTaskShowMore(t *testing.T) {
 	// open it, close the plan and open it again: TaskItem remounts, cut
 	p, _ = s.hoverFind(st, moreKey, sl.Min.X+20+12, sl.Min.Y, sl.Max.Y, w, hgt, now)
 	s.click(p)
-	tick(3)
+	tick(6) // the height transition, then a frame that measures and one that only draws
 	toggle := image.Pt(sl.Min.X+24, sl.Min.Y+9)
 	s.click(toggle)
 	tick(6)
@@ -269,6 +271,54 @@ func TestAgentMCPCardAutoCollapse(t *testing.T) {
 		got := slotH(t, s.rows[0]) > closedMax
 		if got != c.open {
 			t.Errorf("group %q: a done MCP card starts open=%v, want %v", c.group, got, c.open)
+		}
+	}
+}
+
+// A plan the app updates (chat.update, the same block) while it is open
+// grows to its new height with .block's .25s height transition from the
+// height on screen, as Slack's ExpandableContent does, instead of jumping;
+// collapsed, a title that wraps anew does the same. The toggle's own
+// transition is the same rule.
+func TestAgentPlanUpdateTransition(t *testing.T) {
+	const w, hgt = 560, 600
+	for _, c := range []struct {
+		name     string
+		open     bool
+		from, to string
+	}{
+		{"open", true, "plan-grow-1", "plan-grow-2"},
+		{"collapsed", false, "plan-grow-1", "plan-grow-title"},
+	} {
+		h := &agentHost{th: theme.New(false)}
+		m := agentMsg(t, c.from)
+		s := newAgentShot(h, m)
+		if c.open {
+			s.rows[0].me.agentState().open["plan\x00p6"] = true
+		}
+		now := time.Now().Add(time.Hour) // see TestAgentTaskShowMore
+		tick := func(n int) {
+			for i := 0; i < n; i++ {
+				now = now.Add(100 * time.Millisecond)
+				s.frame(w, hgt, now)
+			}
+		}
+		tick(2)
+		before := slotH(t, s.rows[0])
+		r := s.rows[0]
+		r.m = streamTo(t, m, c.to)
+		r.me = MessageElements(h, &r.m)
+		r.v.Set(r.m.Doc, richview.Options{Elements: r.me})
+		now = now.Add(16 * time.Millisecond)
+		s.frame(w, hgt, now)
+		first := slotH(t, r)
+		tick(6)
+		after := slotH(t, r)
+		if after <= before {
+			t.Errorf("%s: the update left the plan %dpx tall, was %d: want it taller", c.name, after, before)
+		}
+		if first != before {
+			t.Errorf("%s: the frame after the update is %dpx, want the %dpx on screen (the transition to %d starts there)", c.name, first, before, after)
 		}
 	}
 }

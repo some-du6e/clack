@@ -240,9 +240,15 @@ func IconButtonPayload(blockID string, e *AgentElement) json.RawMessage {
 
 // ---- per-message state ----
 
+// agentAnim is a running height transition.
 type agentAnim struct {
 	from, to int
 	start    time.Time
+	// CSS transitions: the reversing-adjusted start value (where a
+	// transition back to it came from) and the reversing shortening factor
+	// (the share of the duration it runs for)
+	adj    int
+	factor float64
 }
 
 type agentState struct {
@@ -254,6 +260,7 @@ type agentState struct {
 	views  map[string]*agentText
 	anim   map[string]*agentAnim
 	shown  map[string]int // block → height last drawn (animation start)
+	target map[string]int // block → the height it was last laid out to reach
 	// cuts caches each task content's truncated copy (agent_truncate.go)
 	cuts map[string]*agentCut
 	// touched: the viewer toggled the block (a task card the viewer
@@ -286,7 +293,7 @@ func (me *Message) agentState() *agentState {
 	if st == nil {
 		st = &agentState{parsed: map[string]*agentParsed{}, open: map[string]bool{}, taps: map[string]*tap{},
 			tips: map[string]*popups.TipState{}, rating: map[string]string{}, views: map[string]*agentText{},
-			anim: map[string]*agentAnim{}, shown: map[string]int{}, cuts: map[string]*agentCut{}, touched: map[string]bool{}}
+			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: map[string]*agentCut{}, touched: map[string]bool{}}
 		agentStates[k] = st
 		agentOrder = append(agentOrder, k)
 		if len(agentOrder) > 400 {
@@ -541,34 +548,16 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 		status, title, hasContent = PlanStatus(b.Tasks), PlanTitle(b), len(b.Tasks) > 0
 	} else {
 		status, title, hasContent = CardStatus(b.Status), b.Title, b.hasContent()
-		// TaskCard (1+vf): an MCP task's card (block id mcp_task_…) starts
-		// open, unless it is already done under
-		// slackbot_mcp_tasks_card_auto_collapse_when_complete; that one
-		// also closes when its task completes or fails, unless the viewer
-		// toggled it
-		mcp := strings.HasPrefix(b.BlockID, "mcp_task_")
-		done := b.Status == StatusComplete || b.Status == StatusError
-		auto := me.mcpAutoCollapse()
-		def = mcp && !(auto && done)
-		if mcp && auto && done && !st.touched[key] && !st.touched[key+"\x00auto"] {
-			st.touched[key+"\x00auto"] = true // once, when it is first seen done
-			if st.isOpen(key, true) {
-				st.open[key] = false
-				if st.shown[key] > 0 { // it was drawn open: the height transition closes it
-					st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
-				}
-			}
-		}
+		def = me.taskCardDefault(st, b, key)
 	}
 	open := hasContent && st.isOpen(key, def)
 
-	// toggle line
+	// toggle line (the height transition follows in animated)
 	t := st.tap(key)
 	if hasContent && t.clicked(gtx, me.h) {
 		st.open[key] = !open
 		open = !open
 		st.touched[key] = true
-		st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
 		if !open { // the content unmounts: its tasks and Show more start over when reopened
 			st.resetUnder(b)
 		}
@@ -611,21 +600,44 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 	return image.Pt(w, h+bottom)
 }
 
-// animated is the block height during Slack's 250ms height transition
-// (from what was last shown to target); it keeps frames and relayouts
-// coming while it runs.
+// animated is the block's height on screen for target, the height its
+// content takes now. ExpandableContent (cQd1) sets .block's height to its
+// content's measured height (slim, or open), and .block has transition:
+// height .25s: so once the block has been drawn, every change of that
+// height runs the transition from the height on screen, whatever made it
+// (a toggle, an MCP card closing, an update that adds a task or wraps the
+// title anew). A change during a transition starts a new one from where
+// it got to; one back to where the running one came from runs for the
+// share of it that had run (CSS's reversing shortening factor). It keeps
+// frames and relayouts coming while one runs.
 func (me *Message) animated(gtx C, st *agentState, key string, min0, target int) int {
-	a := st.anim[key]
-	if a == nil {
-		return target
-	}
-	if a.to != target {
-		a.to = target
-	}
 	// .block's transition: height .25s (slackc.NativeTransitionsCSS),
 	// through the cascade: a rule over it (Slick's Snappy) shortens it
 	dur, delay := slackc.CurrentScope().Child(clsAgentBlock, 0).Transition("height", 250*time.Millisecond, 0)
-	p, done := slackc.TransitionProgress(a.start, gtx.Now, dur, delay)
+	a := st.anim[key]
+	last, seen := st.target[key]
+	st.target[key] = target
+	if seen && last != target && st.shown[key] > 0 && !gtx.Now.IsZero() {
+		cur := st.shown[key]
+		n := &agentAnim{from: cur, to: target, start: gtx.Now, adj: cur, factor: 1}
+		if a != nil {
+			if p, done := slackc.TransitionProgress(a.start, gtx.Now, scaleDur(dur, a.factor), delay); !done {
+				e := easeCSS(float64(p))
+				cur = a.from + int(math.Round(float64(a.to-a.from)*e))
+				n.from, n.adj = cur, cur
+				if target == a.adj { // going back: the reversing shortening factor
+					n.factor = math.Min(math.Abs(e*a.factor+1-a.factor), 1)
+					n.adj = a.to
+				}
+			}
+		}
+		a = n
+		st.anim[key] = a
+	}
+	if a == nil {
+		return target
+	}
+	p, done := slackc.TransitionProgress(a.start, gtx.Now, scaleDur(dur, a.factor), delay)
 	if done || a.from == 0 || gtx.Now.IsZero() {
 		delete(st.anim, key)
 		return target
@@ -635,6 +647,33 @@ func (me *Message) animated(gtx C, st *agentState, key string, min0, target int)
 	me.ver.Add(1) // size changes: relayout next frame
 	gtx.Execute(op.InvalidateCmd{})
 	return max(h, min0)
+}
+
+// scaleDur is d × f.
+func scaleDur(d time.Duration, f float64) time.Duration {
+	if f <= 0 || f >= 1 {
+		return d
+	}
+	return time.Duration(float64(d) * f)
+}
+
+// taskCardDefault is whether a task_card starts open (TaskCard 1+vf, slim
+// or not): an MCP task's card (block id mcp_task_…) does, unless it is
+// already done under slackbot_mcp_tasks_card_auto_collapse_when_complete.
+// Under it a card the viewer hasn't toggled also closes when its task
+// completes or fails (once, when first seen done; animated runs the
+// height transition from the height on screen).
+func (me *Message) taskCardDefault(st *agentState, b *AgentBlock, key string) bool {
+	mcp := strings.HasPrefix(b.BlockID, "mcp_task_")
+	done := b.Status == StatusComplete || b.Status == StatusError
+	auto := me.mcpAutoCollapse()
+	if mcp && auto && done && !st.touched[key] && !st.touched[key+"\x00auto"] {
+		st.touched[key+"\x00auto"] = true
+		if st.isOpen(key, true) {
+			st.open[key] = false
+		}
+	}
+	return mcp && !(auto && done)
 }
 
 // clsAgentBlock is the plan / task_card block's element (CSS module

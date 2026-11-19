@@ -140,9 +140,14 @@ func TestAgentPayloads(t *testing.T) {
 	}
 }
 
-// slotSize is the agent slot's size for the message's first agent block.
+// slotSize is the agent slot's size for the message's first agent block,
+// settled: a change of state the test made takes effect at once, with no
+// height transition.
 func slotSize(t *testing.T, me *Message, m *core.Message, w int) image.Point {
 	t.Helper()
+	st := me.agentState()
+	clear(st.anim)
+	clear(st.target)
 	for _, b := range m.Doc.Blocks {
 		if b.Kind == richtext.Agent {
 			sz, _ := me.ElementsSize(b.Buttons, w, false, unit.Metric{PxPerDp: 1, PxPerSp: 1})

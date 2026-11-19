@@ -107,6 +107,17 @@ func AgentFixtures() map[string][]any {
 			agentTask("t2", "Traced the clock", "complete", map[string]any{"details": agentRich("Opened the fixture.\nFound the start date.\nIt is a year early.\nEvery relative date shifts.\nFixed the seed.")}),
 			agentTask("t3", "Ran them again", "complete", map[string]any{"details": agentRich("All green.")}),
 		}}},
+		// a plan an app updates with chat.update (the same block, as the
+		// plan posts in the account's channels are): its first task
+		// running; then done, with details, and a second one running; and
+		// collapsed, its title grown past a line
+		"plan-grow-1": {map[string]any{"type": "plan", "block_id": "p6", "title": "Checking the release", "tasks": []any{
+			agentTask("t1", "Read the changelog", "in_progress", nil)}}},
+		"plan-grow-2": {map[string]any{"type": "plan", "block_id": "p6", "title": "Checking the release", "tasks": []any{
+			agentTask("t1", "Read the changelog", "complete", map[string]any{"details": agentRich("Three fixes and one new setting.")}),
+			agentTask("t2", "Run the smoke tests", "in_progress", nil)}}},
+		"plan-grow-title": {map[string]any{"type": "plan", "block_id": "p6", "title": "Checking the release: the changelog, the smoke tests, the migration notes and the rollout plan for every region", "tasks": []any{
+			agentTask("t1", "Read the changelog", "in_progress", nil)}}},
 		// an MCP task's card while it runs, and once it is done (same
 		// block: the stream's update)
 		"task-card-mcp-running": {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "in_progress", "output": agentRich("Reading the orders table.")}},
