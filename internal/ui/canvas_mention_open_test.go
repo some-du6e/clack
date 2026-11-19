@@ -114,30 +114,6 @@ func cmLabels(e *actShellEnv) map[string]bool {
 	return set
 }
 
-// The inbox's click on a canvas mention shows the canvas viewer on that
-// canvas in the column beside the inbox, scrolled to the mention's
-// section, not the file channel's messages.
-func TestActivityCanvasMentionOpensCanvas(t *testing.T) {
-	e := newActShellPictures(t)
-	cmSeed(e)
-	cmOpenActivity(e)
-	e.activity().StepItem(1, false) // the newest row: the canvas mention
-	var v *canvasview.View
-	e.until("the canvas viewer beside the inbox", func() bool {
-		cv, ok := e.a.secondary.view.(*canvasview.View)
-		v = cv
-		return e.a.secondary.open() && ok && cv.ID() == fakeslack.CanvasMentionFile
-	})
-	if k := e.activity().OpenedItem(); k != fakeslack.CanvasMentionKey {
-		t.Errorf("opened %q, want the canvas mention %s (the newest row)", k, fakeslack.CanvasMentionKey)
-	}
-	if r := string(e.a.router.Current()); strings.Contains(r, fakeslack.CanvasMentionChannel) {
-		t.Errorf("the route is the file channel's: %s", r)
-	}
-	cmScrolledTo(e, v)
-	cmShot(t, e, v, "shell-canvas-mention-open-light.png")
-}
-
 // With the persistent detail panel the mention's click opens the canvas
 // in the Activity view's own pane, at the mention's section. The inbox
 // stays beside it: Slack's openDoc replaces Primary, and the inbox sits

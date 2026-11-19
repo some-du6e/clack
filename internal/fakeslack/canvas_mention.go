@@ -79,6 +79,13 @@ func (s *Server) AddCanvasMention() {
 			MentioningUserIDs: []string{CanvasMentionUser}}}
 	s.histMu.Lock()
 	s.hist[CanvasMentionChannel] = append([]slack.Message{m}, s.histLocked(CanvasMentionChannel)...)
+	// conversations.replies on the mention answers the message alone, as
+	// Slack's does for a message without replies: the thread view on it
+	// (RedirectFileChannel's toMessage)
+	if s.quietReplies == nil {
+		s.quietReplies = map[string][]slack.Message{}
+	}
+	s.quietReplies[CanvasMentionChannel+"/"+CanvasMentionTS] = nil
 	s.histMu.Unlock()
 	v := s.views()
 	v.mu.Lock()

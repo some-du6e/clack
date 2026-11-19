@@ -57,6 +57,16 @@ type cmHost struct {
 	paneHeld  bool     // the pane jump is still out (PaneFile not done)
 	asked     []string // the image URLs fetched
 	splits    []string // OpenSplit's routes
+	items     []string // OpenListItem's "list/record"
+	hold      bool     // the column's toMessage shows nothing yet (the App waits for files.info)
+}
+
+// OpenListItem is a list record's item pane in the column.
+func (h *cmHost) OpenListItem(listID, recID string) {
+	h.mu.Lock()
+	h.items = append(h.items, listID+"/"+recID)
+	h.shows = listID
+	h.mu.Unlock()
 }
 
 // Images draws the fake's pictures (the harness's own host has no cache,
@@ -143,9 +153,12 @@ func (h *cmHost) OpenMessageSecondary(ch, ts string) {
 	_, canvas, _ := h.Core().CanvasOfJump(ch, ts)
 	h.mu.Lock()
 	h.opened = append(h.opened, ch+"/"+ts)
-	h.shows = ch + "/"
-	if canvas {
+	switch {
+	case h.hold:
+	case canvas:
 		h.shows = ch + "/" + ts
+	default:
+		h.shows = ch + "/"
 	}
 	h.mu.Unlock()
 }
@@ -205,9 +218,11 @@ func (h *cmHost) cmCalls() (canvas, jumps, opened, routes []string, pane string)
 // on or off, the inbox's detail panel beside it (inbox) or the persistent
 // one, and whether a plugin patches ActivityItem. With late, files.info
 // answers only after the row is drawn; with comments the feed also holds
-// the Launch plan canvas's comment items (AddCanvasCommentActivity).
+// the Launch plan canvas's comment items (AddCanvasCommentActivity), with
+// lists the kitchen list's record comment (AddListCommentActivity), its
+// thread's root held.
 type cmOpts struct {
-	dark, dense, rev2, inbox, patched, late, comments bool
+	dark, dense, rev2, inbox, patched, late, comments, lists bool
 }
 
 // cmActivity is the Activity page over the fixture with the canvas
@@ -246,6 +261,15 @@ func cmActivity(t *testing.T, o cmOpts) (*Activity, *cmHost, *vaEnv, *fakeslack.
 			IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 4})
 		s.PutCanvasRef(fakeslack.CanvasChannel, richtext.CanvasRef{Title: "Launch plan", Status: "normal", Kind: "canvas"})
 	}
+	if o.lists {
+		fs.AddListCommentActivity()
+		s.PutConv(slack.Conversation{ID: fakeslack.FileChanKitchen, Name: "Launch tracker", IsChannel: true, IsGroup: true,
+			IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 3})
+		s.PutCanvasRef(fakeslack.ListKitchen, richtext.CanvasRef{Title: "Launch tracker", Status: "normal", Kind: "list"})
+		s.PutFetched(fakeslack.FileChanKitchen, []slack.Message{{Type: "message", Subtype: "list_record_comment", User: "U0FAKE00001",
+			TS: fakeslack.ListKitchenThread, ThreadTS: fakeslack.ListKitchenThread,
+			SlackList: &slack.MessageSlackList{ListID: fakeslack.ListKitchen, ListRecordID: fakeslack.ListKitchenRecord}}}, s.LiveSeq())
+	}
 	on := map[bool]string{true: "on", false: "off"}
 	app.SetExperimentGroup("activity_inbox", "on")
 	app.SetExperimentGroup("nested_secondary_view", on[o.inbox])
@@ -283,6 +307,9 @@ func cmActivity(t *testing.T, o cmOpts) (*Activity, *cmHost, *vaEnv, *fakeslack.
 	keys := []string{fakeslack.CanvasMentionKey}
 	if o.comments {
 		keys = append(keys, fakeslack.CanvasCommentKey, fakeslack.CanvasCommentThreadKey)
+	}
+	if o.lists {
+		keys = append(keys, fakeslack.ListCommentKey)
 	}
 	for _, k := range keys {
 		e.until(t, "the row "+k, func() bool { r := v.rows[k]; return r != nil && r.built })
@@ -606,7 +633,7 @@ func TestActivityCanvasMentionClickInbox(t *testing.T) {
 // stays: toChannel, or toThread for a comment's thread, in the split view.
 // An ordinary channel's item keeps both.
 func TestActivityCanvasItemMenu(t *testing.T) {
-	v, h, _, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true, comments: true})
+	v, h, _, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true, comments: true, lists: true})
 	keysOf := func(key string, split bool) []string {
 		var keys []string
 		for _, mi := range v.itemMenu(h, *actItem(t, v, key), key, false) {
@@ -621,6 +648,7 @@ func TestActivityCanvasItemMenu(t *testing.T) {
 		{fakeslack.CanvasMentionKey, "c/" + fakeslack.CanvasMentionChannel},
 		{fakeslack.CanvasCommentKey, "c/" + fakeslack.FileChanLaunch + "/t/" + fakeslack.CommentOpen},
 		{fakeslack.CanvasCommentThreadKey, "c/" + fakeslack.FileChanLaunch + "/t/" + fakeslack.CommentUnread},
+		{fakeslack.ListCommentKey, "c/" + fakeslack.FileChanKitchen + "/t/" + fakeslack.ListKitchenThread}, // a list's file channel
 	} {
 		keys := keysOf(c.key, true)
 		if slices.Contains(keys, "open_in_home") || slices.Contains(keys, "remind_submenu") {
@@ -692,6 +720,73 @@ func TestActivityCanvasCommentItems(t *testing.T) {
 		thread := fakeslack.FileChanLaunch + "/" + fakeslack.CommentUnread + "/"
 		if len(canvas) != 1 || !slices.ContainsFunc(jumps, func(j string) bool { return strings.HasPrefix(j, thread) }) {
 			t.Errorf("the thread_v2 click: canvas jumps %q, pane jumps %q; want the comment thread %s… in the pane", canvas, jumps, thread)
+		}
+	})
+}
+
+// A file channel's item whose view opens after the click (the App waited
+// for files.info, or for the message: ui/canvas_open.go) is the opened
+// row once the column shows it, the thread view on the mention or the
+// conversation a wait gave up on, and lets go when the column closes.
+func TestActivityFileItemFollowsLateView(t *testing.T) {
+	for _, late := range []string{"thread", "conversation"} {
+		t.Run(late, func(t *testing.T) {
+			v, h, e, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true})
+			h.mu.Lock()
+			h.hold = true
+			h.mu.Unlock()
+			v.StepItem(1, false)
+			e.frame()
+			if !v.selOK || v.selSec {
+				t.Fatalf("precondition: the row opens beside nothing yet (selOK %v, selSec %v)", v.selOK, v.selSec)
+			}
+			h.mu.Lock()
+			h.shows = fakeslack.CanvasMentionChannel + "/"
+			if late == "thread" {
+				h.shows += fakeslack.CanvasMentionTS
+			}
+			h.mu.Unlock()
+			e.frame()
+			if !v.selOK || !v.selSec {
+				t.Errorf("the row doesn't follow the late %s (selOK %v, selSec %v)", late, v.selOK, v.selSec)
+			}
+			h.closeColumn()
+			e.frame()
+			if v.selOK {
+				t.Errorf("the row is still opened after the column closed")
+			}
+		})
+	}
+}
+
+// A reply in a list record's comment thread, its root held, opens the
+// record with its thread (GMkG reads the root's slack_list before any
+// thread rule: el.C, defaultContentType "thread"), not the thread on the
+// list's file channel. In the inbox that's the record's item pane in the
+// column, and the row follows it; with the persistent panel it's the jump
+// to the list at the record, in the pane.
+func TestActivityListCommentOpensRecord(t *testing.T) {
+	t.Run("inbox", func(t *testing.T) {
+		v, h, e, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true, lists: true})
+		cmChoose(t, v, e, fakeslack.ListCommentKey)
+		h.mu.Lock()
+		items, opened := slices.Clone(h.items), slices.Clone(h.opened)
+		h.mu.Unlock()
+		want := fakeslack.ListKitchen + "/" + fakeslack.ListKitchenRecord
+		if !slices.Equal(items, []string{want}) || len(opened) > 0 {
+			t.Errorf("the click opened items %q, the column %q; want the record %s alone", items, opened, want)
+		}
+		if !v.selOK || !v.selSec {
+			t.Errorf("the row doesn't follow the record's pane (selOK %v, selSec %v)", v.selOK, v.selSec)
+		}
+	})
+	t.Run("persistent", func(t *testing.T) {
+		v, h, e, _ := cmActivity(t, cmOpts{dense: true, rev2: true, lists: true})
+		cmChoose(t, v, e, fakeslack.ListCommentKey)
+		canvas, jumps, _, _, _ := h.cmCalls()
+		want := fakeslack.FileChanKitchen + " " + fakeslack.ListKitchenThread + " " + fakeslack.ListCommentTS + " pane"
+		if !slices.Equal(canvas, []string{want}) || len(jumps) > 0 {
+			t.Errorf("the click: file jumps %q, pane jumps %q; want %q", canvas, jumps, want)
 		}
 	})
 }

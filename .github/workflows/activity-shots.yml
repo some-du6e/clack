@@ -47,6 +47,8 @@ on:
       - "internal/ui/chanent/**"
       - "internal/ui/canvas_open.go"
       - "internal/ui/canvas_mention_open_test.go"
+      - "internal/ui/canvas_redirect_test.go"
+      - "internal/ui/messages/thread_file.go"
       - "internal/core/canvas_channel.go"
       - "internal/fakeslack/canvas_mention.go"
       - "internal/fakeslack/canvas_comments.go"
@@ -92,7 +94,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack|TestActivityCanvasMention|TestActivityCanvasCommentClicks|TestCanvasMention|TestCanvasJump|TestCanvasCommentJumpOpensCanvas|TestCanvasCommentSplitOpensThread|TestCanvasTabTitleEmojiLate|TestResolveEmojiKeepsHiddenEmoji' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack|TestActivityCanvasMention|TestActivityCanvasCommentClicks|TestCanvasMention|TestCanvasJump|TestCanvasCommentJumpOpensCanvas|TestCanvasCommentSplitOpensThread|TestCanvasTabTitleEmojiLate|TestResolveEmojiKeepsHiddenEmoji|TestFileChannelThreadHeader|TestListFileChannelOpensList|TestCanvasCommentLinkInSplitOpensCanvas|TestSplitFileWaitKeepsBackStack|TestActivityPane|TestSidebarDocsListsPinOnly' ./internal/ui/
       - name: the rail's Activity badge
         # activity_v2 at boot, badge_counts_updated, client.counts and a
         # mark read; light and dark rail crops with 1, 9, 10 and 99+
