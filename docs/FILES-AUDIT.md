@@ -92,24 +92,24 @@ Sources: CDN build 2c0d02ca130f, fetched without a cookie: `fIJO` (VideoPlayer, 
 - Sign-out closes every player and forgets the progress.
 - More actions (frPc's order, with the items Clack has): Download, Share file…, Copy link; Open in ▸ Open in thread (not in a thread pane), View details; Delete file.
 
-**Tests.** Green in CI on 4a4ce1fb (ci run 44448457103, read from its test-shard artifacts and job logs) and again on e0fbc6c0 (ci run 44453796868, with full-test):
+**Tests.** Green in CI on 4a4ce1fb (ci run 44448457103, read from its test-shard artifacts and job logs) and again on e0fbc6c0 and 03ed4111 (ci runs 44453796868 and 44459683639, with full-test):
 - `TestFileIsPlayableVideo` (internal/slack).
 - videoplayer's unit tests on the fake backend: `TestMediaTile`, `TestClickMountsAndToggles`, `TestOnePlaysAtATime`, `TestOffscreenPausesThenCloses`, `TestVolumePrefs`, `TestPillTime`, `TestSliderValues`, `TestLoopAndExt` and `TestProgressAt`.
 - The App through Gio's router over fakeslack's #files-gallery video, on the fake backend: `TestVideoInlinePlay`, `TestVideoVisibilityPause`, `TestVideoUnmountReleases` and `TestVideoPrefs`.
-- `TestRealWindowVideoFrames` on App.Run's own window: windows-idle (Media Foundation on WARP's Direct3D 11, decoding in software) and macos (AVFoundation, the runner's Metal). Also 3 of 3 on each in flake-check rw-video (runs 44448461171 and 44453931641). Its red run, on video-playback-red with the player calls stood in, failed on both (run 44435242673).
+- `TestRealWindowVideoFrames` on App.Run's own window: windows-idle (Media Foundation on WARP's Direct3D 11, decoding in software) and macos (AVFoundation, the runner's Metal). Also 3 of 3 on each in flake-check rw-video (runs 44448461171, 44453931641 and 44459822685). Its red run, on video-playback-red with the player calls stood in, failed on both (run 44435242673).
 
-What TestRealWindowVideoFrames measured, playing the 320×180 fixture for 5 s in an 800×600 window (the tile 204×115, 23,460 px):
+What TestRealWindowVideoFrames measured in those runs, playing the 320×180 fixture for 5 s in an 800×600 window on ci's runners (the tile 204×115, 23,460 px):
 
 | | Windows | macOS |
 |---|---|---|
 | Video frames | 149 to 150 (30 fps) | 99 to 139 |
-| Quiet frames, of those the window didn't ask for itself | 96 to 98% | 93 to 98% |
+| Quiet frames, of those the window didn't ask for itself | 96 to 99% | 91 to 98% |
 | Partial frames | all | all |
-| Damage a frame | 21.4k to 21.9k px on average; the tile's at most, plus the composer caret's 19 px when it blinks in the same frame | 20.6k to 22.3k px on average; the same at most |
+| Damage a frame | 21.1k to 21.9k px on average; the tile's at most, plus the composer caret's 19 px when it blinks in the same frame | 20.6k to 22.3k px on average; the same at most |
 | Frames from the player in 3 s paused | 0 | 0 |
-| First frame after the click | 2.1 to 3.1 s, once 5.3 s (2.1 s of it the audio track, below) | 0.3 to 1.0 s |
-| The process's CPU playing | 42 to 43% of a core (Media Foundation decodes in software, WARP draws on the CPU) | 11 to 16% |
-| The process's CPU in 3 s paused | 0 to 31 ms | 62 to 68 ms |
+| First frame after the click | 2.1 to 4.1 s, once 5.3 s (2.1 s of it the audio track, below) | 0.3 to 1.7 s |
+| The process's CPU playing | 42 to 48% of a core (Media Foundation decodes in software, WARP draws on the CPU) | 11 to 20% |
+| The process's CPU in 3 s paused | 0 to 94 ms | 62 to 96 ms |
 
 **Divergences.**
 - A gallery's video opens the file's page: Slack opens the media viewer, which plays it there. That's round 4.
