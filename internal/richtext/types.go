@@ -277,6 +277,13 @@ type Button struct {
 	Value    string
 	BlockID  string
 	Kind     string // addition: "button", "overflow", "select", "datepicker", "timepicker", "datetimepicker", "input", "checkboxes", "radio_buttons"
+	// Invisible: an Actions block's element whose visible_to_user_ids
+	// leave the viewer out (blocks.go actionHidden). It isn't drawn, but
+	// it keeps its place: Slack's Actions block counts it for "+ N more"
+	// and for the five shown before it. A hidden icon_button keeps its
+	// empty action box (X2Vm hides only itself); a button or checkboxes
+	// leaves none (maybeRenderActionsElement).
+	Invisible bool
 }
 
 // Attachment is a legacy attachment, link unfurl or shared/forwarded message.

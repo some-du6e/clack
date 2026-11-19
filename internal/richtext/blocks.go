@@ -3,6 +3,7 @@ package richtext
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -56,7 +57,7 @@ type bk struct {
 	AltText     string          `json:"alt_text"`
 	Title       *textObj        `json:"title"`
 	ActionID    string          `json:"action_id"`
-	VisibleTo   []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button
+	VisibleTo   []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button (actionHidden)
 	Placeholder *textObj        `json:"placeholder"`
 	Options     []struct {
 		Text  textObj `json:"text"`
@@ -408,10 +409,17 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			blk.FieldShort = append(blk.FieldShort, true)
 		}
 		if a := b.Accessory; a != nil {
-			if a.Type == "image" {
+			// Section (bzDH) draws its accessory for every member; only
+			// an icon_button hides itself (X2Vm). Slack keeps that one's
+			// empty accessory box (8px left margin); Clack draws nothing.
+			switch {
+			case a.Type == "image":
 				blk.Image = c.imageOf(a)
-			} else if btn, ok := c.element(a, b.BlockID); ok {
-				blk.Buttons = append(blk.Buttons, btn)
+			case a.Type == "icon_button" && iconButtonHidden(a.VisibleTo, c.r.SelfID()):
+			default:
+				if btn, ok := c.element(a, b.BlockID); ok {
+					blk.Buttons = append(blk.Buttons, btn)
+				}
 			}
 		}
 		if blk.Spans == nil && blk.Children == nil && blk.Fields == nil && blk.Image == nil && blk.Buttons == nil {
@@ -473,8 +481,11 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, Block{Kind: ImageBlock, Image: img})
 	case "actions":
 		blk := Block{Kind: Actions}
+		self := c.r.SelfID()
 		for i := range b.Elements {
-			if btn, ok := c.element(&b.Elements[i], b.BlockID); ok {
+			e := &b.Elements[i]
+			if btn, ok := c.element(e, b.BlockID); ok {
+				btn.Invisible = actionHidden(e, self)
 				blk.Buttons = append(blk.Buttons, btn)
 			}
 		}
@@ -655,27 +666,30 @@ func (c *builder) imageOf(b *bk) *Image {
 	return image(u, b.AltText, b.ImageWidth, b.ImageHeight)
 }
 
-// visibleTo is isVisibleToMember (client-boot): no list, or no viewer,
-// or the viewer in it.
-func visibleTo(ids []string, self string) bool {
-	if len(ids) == 0 || self == "" {
-		return true
-	}
-	for _, id := range ids {
-		if id == self {
-			return true
-		}
+// actionHidden is whether an Actions block's element e isn't drawn for
+// the viewer self (Button.Invisible). Only the Actions block reads
+// visible_to_user_ids (boot-shared /jJF maybeRenderActionsElement): a
+// button or checkboxes whose list is set, with a viewer known, who isn't
+// in it. Section accessories and input elements draw for everyone. An
+// icon_button hides itself wherever it is (iconButtonHidden).
+func actionHidden(e *bk, self string) bool {
+	switch e.Type {
+	case "button", "checkboxes":
+		return len(e.VisibleTo) > 0 && self != "" && !slices.Contains(e.VisibleTo, self)
+	case "icon_button":
+		return iconButtonHidden(e.VisibleTo, self)
 	}
 	return false
 }
 
-// element converts an interactive element into a Button. A button or
-// checkboxes with visible_to_user_ids that leave the viewer out draws
-// nothing (the Actions block's element, the section's accessory).
+// iconButtonHidden is IconButton's own check (boot-shared X2Vm): a list
+// that leaves out the current user, or any list while there's none.
+func iconButtonHidden(ids []string, self string) bool {
+	return len(ids) > 0 && (self == "" || !slices.Contains(ids, self))
+}
+
+// element converts an interactive element into a Button.
 func (c *builder) element(e *bk, blockID string) (Button, bool) {
-	if (e.Type == "button" || e.Type == "checkboxes") && !visibleTo(e.VisibleTo, c.r.SelfID()) {
-		return Button{}, false
-	}
 	btn := Button{Kind: e.Type, ActionID: e.ActionID, Value: string(e.Value), BlockID: blockID}
 	switch e.Type {
 	case "button", "workflow_button":

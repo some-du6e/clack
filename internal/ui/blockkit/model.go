@@ -2,6 +2,7 @@ package blockkit
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/emoji"
@@ -101,8 +102,9 @@ type Element struct {
 	URL   string `json:"url"`
 	Style string `json:"style"`
 	Icon  string `json:"icon"` // icon_button
-	// VisibleTo is visible_to_user_ids: a button or checkboxes the
-	// viewer isn't listed in isn't drawn (isVisibleToMember)
+	// VisibleTo is visible_to_user_ids: an actions block's button or
+	// checkboxes the viewer isn't listed in isn't drawn, and an
+	// icon_button hides itself (hiddenFrom)
 	VisibleTo []string `json:"visible_to_user_ids"`
 
 	Placeholder         *Text `json:"placeholder"`
@@ -179,19 +181,27 @@ func (e *Element) allOptions() []Option {
 	return out
 }
 
-// hiddenFrom reports whether e is a button or checkboxes whose
-// visible_to_user_ids leave out the viewer self: Slack's Actions block
-// and section accessory don't draw it (client-boot isVisibleToMember).
+// hiddenFrom reports whether an actions block's element e isn't drawn
+// for the viewer self. Only the Actions block reads visible_to_user_ids
+// (boot-shared /jJF maybeRenderActionsElement): a button or checkboxes
+// whose list is set, with a viewer known, who isn't in it. A section's
+// accessory and an input's element draw for everyone; an icon_button
+// hides itself wherever it is (iconButtonHidden).
 func hiddenFrom(e *Element, self string) bool {
-	if e == nil || (e.Type != "button" && e.Type != "checkboxes") || len(e.VisibleTo) == 0 || self == "" {
+	if e == nil {
 		return false
 	}
-	for _, id := range e.VisibleTo {
-		if id == self {
-			return false
-		}
+	switch e.Type {
+	case "button", "checkboxes":
+		return len(e.VisibleTo) > 0 && self != "" && !slices.Contains(e.VisibleTo, self)
 	}
-	return true
+	return iconButtonHidden(e, self)
+}
+
+// iconButtonHidden is IconButton's own check (boot-shared X2Vm): a list
+// that leaves out the current user, or any list while there's none.
+func iconButtonHidden(e *Element, self string) bool {
+	return e != nil && e.Type == "icon_button" && len(e.VisibleTo) > 0 && (self == "" || !slices.Contains(e.VisibleTo, self))
 }
 
 // Kinds of elements.

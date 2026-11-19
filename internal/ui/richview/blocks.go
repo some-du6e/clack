@@ -117,7 +117,12 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(8), 0, l.dp(4)
 	case richtext.Header:
 		return l.dp(15), l.dp(4), l.dp(4)
-	case richtext.Divider, richtext.Actions:
+	case richtext.Actions:
+		if actionsEmpty(b.Buttons) { // .p-actions_block{margin-bottom:8px}: the 8px above is its elements'
+			return 0, 0, l.dp(8)
+		}
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.Divider:
 		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.Context, richtext.Table:
 		return l.dp(4), l.dp(4), l.dp(4)
@@ -1354,6 +1359,21 @@ func (l *lay) button(bt richtext.Button, x, y int) int {
 	return bh
 }
 
+// actionsEmpty is an Actions block none of whose elements draws an
+// action box: each is Invisible, and none an icon_button (whose empty box
+// stays, Button.Invisible). Seven or more draw "+ N more".
+func actionsEmpty(bs []richtext.Button) bool {
+	if len(bs) >= 7 {
+		return false
+	}
+	for i := range bs {
+		if !bs[i].Invisible || bs[i].Kind == "icon_button" {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *lay) buttons(bs []richtext.Button, x, y, w int) int {
 	if el := l.opts.Elements; el != nil {
 		sz, _ := el.ElementsSize(bs, w, false, l.metric())
@@ -1363,6 +1383,12 @@ func (l *lay) buttons(bs []richtext.Button, x, y, w int) int {
 	cx, cy := x, y
 	rowH := 0
 	for _, bt := range bs {
+		if bt.Invisible {
+			if bt.Kind == "icon_button" { // its empty action box's 8px right margin
+				cx += l.dp(8)
+			}
+			continue
+		}
 		bw := l.buttonWidth(bt)
 		if cx > x && cx+bw > x+w {
 			cx = x

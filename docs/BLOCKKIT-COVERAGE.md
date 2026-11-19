@@ -55,7 +55,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 
 | block | Slack (renderable · component) | before | after | what's missing |
 |---|---|---|---|---|
-| actions | `/jJF` | full | full | |
+| actions | `/jJF` | full | full; `visible_to_user_ids` (the one block that reads it) hides a button or checkboxes from members it doesn't list, and the hidden element still counts for "+ N more" and takes one of the first five places | modals and App Home draw every element: Slack's Actions block truncates there too (the first five and "+ N more" from seven) |
 | alert | `MyNk` AlertRenderable · client-boot `MlDl` Alert | absent | **full** | the optimal-line-length pref's 75ch cap |
 | auth_provider (@slack/types only) | `zTn9` AuthProviderBlockLazy | absent | absent | connect/disconnect card |
 | call (slack.ts) | `FkcF` · `9CtN` PlatformCallSubtype | partial: a generic "Call" link card | **partial** | the ended icon's and faces' grayscale filter, the faces' name tooltips, Decline for an incoming DM call, `desktop_app_join_url` (Join opens `join_url`), stopping your huddle on Join |
@@ -83,7 +83,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | message_embed (slack.ts) | `ACXQ` MessageEmbed | absent | absent | |
 | plan | `5mjF` PlanBlock | full | full | (agent.go) |
 | rich_text | `N5ZY` · `EAqS` → `qaNC` RichTextRenderer | full | full | see rich_text below |
-| section | `bzDH` | full | full | `visible_to_user_ids` on its button/checkboxes accessory now hides it |
+| section | `bzDH` | full | full | |
 | share_prompt (slack.ts) | `JcWK` | absent | absent | |
 | share_shortcut (slack.ts) | `KrN7` ShareShortcut → WorkflowEntity on `VLgN`/`aJif` | absent (drew nothing) | **partial** | Forward workflow (Slack's share dialog for a workflow) and More actions' Add workflow to channel aren't in Clack, so neither is drawn; the other-org badge (`ISuZ`, hermes_next); a service trigger's byline; the Slackbot-message attachment variant (`7lAH`) |
 | table | `POW9` Table | partial: a `raw_number` cell's numeric `value` failed the whole block ("This content could not be displayed."), `cell_text` cells drew empty | **full** | |
@@ -98,8 +98,8 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 
 | element | Slack | before | after | what's missing |
 |---|---|---|---|---|
-| button | `pPpA` | full | full; `visible_to_user_ids` hides it from other members | `agent_prompt` / `agent_prompt_display` (send a prompt to Slackbot in an agent DM) |
-| checkboxes | `JSDD` | full | full; `visible_to_user_ids` too | |
+| button | `pPpA` | full | full; in an actions block `visible_to_user_ids` hides it from members it doesn't list (`/jJF` maybeRenderActionsElement). A section accessory or an input element draws for everyone, since neither the section, the input nor the button reads the list | `agent_prompt` / `agent_prompt_display` (send a prompt to Slackbot in an agent DM) |
+| checkboxes | `JSDD` | full | full; `visible_to_user_ids` as for button | |
 | channels_select, conversations_select, users_select, static_select, external_select | `rlGy`, `6bah`, `1hVl`, `2RVQ`, `v36g` | full | full | |
 | multi_* (5) | `xjrl`, `bgmB`, `RBm/`, `pMe8`, `yIlz` | full | full | |
 | datepicker, timepicker, datetimepicker | `KoX7`, `MUoz`, `UXHZ` | full | full | |
@@ -109,7 +109,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | overflow | `tZYQ` | full | full | |
 | radio_buttons | `DNgy` | full | full | |
 | workflow_button | `wDHu` | full | full | |
-| icon_button | `RVG0` | full | full | |
+| icon_button | `RVG0` | full | full; it hides itself from members its `visible_to_user_ids` doesn't list, wherever it is (`X2Vm`). In an actions block its empty action box stays (8px) | a hidden icon_button accessory (outside @slack/types, which allows icon_button only in context_actions) takes no room; Slack keeps its empty 8px accessory box |
 | feedback_buttons | `1ou8` | full | full | (context_actions) |
 | image (element) | in section/context/card | full | full | |
 | split_button, password (client only) | `jHw9`, `nvsC` | absent | absent | |
@@ -148,6 +148,10 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 The gallery's `12-coverage` part (`internal/fakeslack/gallery_coverage.go`) holds a fixture for each block this round built: calls (ended, running with a facepile, waiting), alerts at every level, callouts in several colours, containers (fixed header with a divider, collapsible, collapsed by default), rich_text headers and dividers, the fallback chain, and a condition block. The loading block sits in a thread reply, because its spinner turns for ever as Slack's does and `TestIdleFrames` holds the gallery channel to no idle frames. `bk-gallery-shots` saves the channel page by page in light and dark, and the loading thread as `gallery-thread-loading-*`.
 
 Tests that fail on `e93a5e70`: `TestBlockFallbacks`, `TestConditionBlocks`, `TestCallBlock`, `TestBoxedBlocks`, `TestRichTextHeaderDivider`, `TestTableTextCells`, `TestUnknownInlineElement`, `TestVisibleToUserIDs` (richtext) and `TestCallCardLayout`, `TestBoxedBlocksLayout`, `TestRichHeaderDividerLayout`, `TestContainerLayout` (richview). The tests that reach new API do it through `*_api_test.go` files, which the red-evidence branch stubs.
+
+Round 1's review fixes, with tests that fail on `8126e895`:
+
+- `visible_to_user_ids` is read only by the actions block. A hidden element keeps its place, and section accessories and input elements draw: `TestVisibleToUserIDs` (rewritten), `TestActionsHiddenElements` (richview), `TestMessageVisibleTo` and `TestSurfaceVisibleTo` (blockkit, modal and App Home).
 
 ## Next
 

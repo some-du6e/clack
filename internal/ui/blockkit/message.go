@@ -602,12 +602,19 @@ func serverMessage(err error) string {
 // run lays out (and with draw, paints) an actions block / attachment
 // buttons: wrapping rows 8px apart, the first five then "+ N more", and
 // the error line.
+//
+// An Invisible element (visible_to_user_ids) isn't drawn but keeps its
+// index: it counts for truncateAt and "+ N more", and takes one of the
+// first five places. An Invisible icon_button keeps its empty action box,
+// so the next element sits 8px further on.
 func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.Point {
 	th := me.h.Theme()
 	var ws []*ew
+	var src []richtext.Button // ws[i]'s Button
 	for i := range bs {
 		if w := me.widgetFor(&bs[i]); w != nil {
 			ws = append(ws, w)
+			src = append(src, bs[i])
 		}
 	}
 	if len(ws) == 0 {
@@ -647,7 +654,13 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 			me.runAt[bid] = append(me.runAt[bid], image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+sz.X, y+sz.Y)})
 		}
 	}
-	for _, w := range ws[:n] {
+	for i, w := range ws[:n] {
+		if src[i].Invisible {
+			if src[i].Kind == "icon_button" {
+				place(image.Point{}, func(C) {})
+			}
+			continue
+		}
 		w := w
 		sz := w.size(gtx, maxW, false)
 		if sz.X == 0 {
