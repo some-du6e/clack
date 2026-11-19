@@ -53,15 +53,21 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	cache := filepath.Join(home, "cache")
 
 	// what the window drew while measuring: its FrameEvents, and the GPU's
-	// stats for each frame (partial, damage)
+	// stats for each frame (partial, damage); and every frame's asks for
+	// external images (Gio patch 51), counted from the click
 	var mu sync.Mutex
-	var measuring bool
-	var frames int
+	var measuring, clicked bool
+	var frames, gpuAll, externals, wraps int
 	var gpuFrames []caretGPUFrame
 	stopHook := caretGPUHook(func(f caretGPUFrame) {
 		mu.Lock()
 		if measuring {
 			gpuFrames = append(gpuFrames, f)
+		}
+		if clicked {
+			gpuAll++
+			externals += f.externals
+			wraps += f.wraps
 		}
 		mu.Unlock()
 	})
@@ -146,27 +152,63 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	if d := 8*time.Second - time.Since(start); d > 0 {
 		time.Sleep(d) // boot's loads settle (idle-tests-wait-boot-loads)
 	}
-	var tile image.Rectangle
-	onUI(func() {
-		if l, ok := a.convoFor(ch, "").list.(channelList); ok {
+	// the tile wholly in the list: a jump puts the two rows above the
+	// message at the list's top, and #files-gallery's are tall, so in this
+	// window the tile starts under the list (a video under 10% visible
+	// pauses, and the GPU never draws an image off the screen)
+	var tile, list image.Rectangle
+	for i := 0; ; i++ {
+		onUI(func() {
+			tile, list = image.Rectangle{}, image.Rectangle{}
+			l, ok := a.convoFor(ch, "").list.(channelList)
+			if !ok {
+				return
+			}
+			list = l.ListRect()
 			for _, r := range l.FileRects() {
 				if r.TS == ts && r.File.IsVideo {
 					tile = r.R
 				}
 			}
+			switch {
+			case tile.Empty() || list.Empty():
+			case tile.Min.Y < list.Min.Y:
+				l.ScrollPx(tile.Min.Y - list.Min.Y - 16)
+			case tile.Max.Y > list.Max.Y:
+				l.ScrollPx(tile.Max.Y - list.Max.Y + 16)
+			}
+		})
+		if !tile.Empty() && tile.In(list) {
+			break
 		}
-	})
-	clicked := false
-	onUI(func() { clicked = videoClick(a, ch, ts) })
-	if !clicked {
+		if i == 100 {
+			t.Fatalf("the video's tile %v isn't wholly in the list %v", tile, list)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Logf("the video's tile %v in the list %v", tile, list)
+	ok := false
+	mu.Lock()
+	clicked = true
+	mu.Unlock()
+	onUI(func() { ok = videoClick(a, ch, ts) })
+	if !ok {
 		t.Fatal("the video's tile has no player to click")
 	}
 	at := time.Now()
-	until("the video playing, its first frame published", 30*time.Second, func() bool {
-		var st videoTileInfo
-		onUI(func() { st, _ = videoTileState(a, ch, ts) })
-		return st.playing && !st.loading && st.frames > 0
-	})
+	var last videoTileInfo
+	for dl := time.Now().Add(30 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		onUI(func() { last, _ = videoTileState(a, ch, ts) })
+		if last.playing && !last.loading && last.frames > 0 {
+			break
+		}
+		if time.Now().After(dl) {
+			mu.Lock()
+			g, x, w := gpuAll, externals, wraps
+			mu.Unlock()
+			t.Fatalf("no frame of the video 30 s after the click: tile %+v; the GPU drew %d frames since, asked external images %d times, wrapped %d textures", last, g, x, w)
+		}
+	}
 	t.Logf("the first frame %v after the click", time.Since(at).Round(time.Millisecond))
 	onUI(func() { videoLoop(a, ch, ts) })
 	time.Sleep(time.Second)

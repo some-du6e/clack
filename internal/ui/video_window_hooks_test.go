@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"fmt"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/media"
 	_ "github.com/some-du6e/clack/internal/media/avf" // the OS's decoders, as cmd/clack imports them
@@ -17,6 +19,8 @@ import (
 type videoTileInfo struct {
 	mounted, playing, loading bool
 	frames                    int64 // the player's frames published
+	asks                      int64 // the GPU's asks for its frame
+	stats                     string
 }
 
 func videoBackendAvailable() error { return media.Available() }
@@ -33,7 +37,9 @@ func videoTileState(a *App, ch, ts string) (videoTileInfo, bool) {
 	}
 	in := videoTileInfo{mounted: st.Mounted, playing: st.Playing, loading: st.Loading}
 	if st.Player != nil {
-		in.frames = st.Player.Stats().Frames
+		s := st.Player.Stats()
+		in.frames, in.asks = s.Frames, s.Asks
+		in.stats = fmt.Sprintf("%+v; state %+v", s, st.Player.State())
 	}
 	return in, true
 }

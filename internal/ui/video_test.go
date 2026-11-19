@@ -49,6 +49,38 @@ func (e *perfEnv) videoTile(t *testing.T, ts string) messages.FileRect {
 	return out
 }
 
+// videoTileInView scrolls message ts's video tile wholly into the list
+// and returns it: a jump puts the two rows above the message at the
+// list's top, and in a short window #files-gallery's tall rows push the
+// tile under it (FileRects aren't clipped to the list).
+func (e *perfEnv) videoTileInView(t *testing.T, ts string) messages.FileRect {
+	t.Helper()
+	for i := 0; ; i++ {
+		tile := e.videoTile(t, ts)
+		var l channelList
+		if c := e.a.convos[fakeslack.FilesChannelID+"/"]; c != nil {
+			l, _ = c.list.(channelList)
+		}
+		if l.ChannelView == nil {
+			t.Fatal("no channel list")
+		}
+		list := l.ListRect()
+		if tile.R.In(list) {
+			return tile
+		}
+		if i == 30 {
+			t.Fatalf("the video's tile %v isn't wholly in the list %v", tile.R, list)
+		}
+		if tile.R.Min.Y < list.Min.Y {
+			l.ScrollPx(tile.R.Min.Y - list.Min.Y - 16)
+		} else {
+			l.ScrollPx(tile.R.Max.Y - list.Max.Y + 16)
+		}
+		e.frame()
+		e.frame()
+	}
+}
+
 // videoState is message ts's player tile in the channel.
 func (e *perfEnv) videoState(ts string) (videoplayer.State, bool) {
 	if e.a.vids == nil {
@@ -123,7 +155,7 @@ func TestVideoVisibilityPause(t *testing.T) {
 	m := e.filesMsg("video")
 	e.a.jumpToMessage(ch, m.TS, "")
 	e.settle(800 * time.Millisecond)
-	tile := e.videoTile(t, m.TS)
+	tile := e.videoTileInView(t, m.TS)
 	clk := time.Second
 	e.clickAt(mid(tile.R), clk)
 	e.until("playing", 15*time.Second, func() bool { st, _ := e.videoState(m.TS); return st.Playing })
