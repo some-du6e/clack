@@ -385,6 +385,8 @@ var clackOwn = map[string]string{
 	"close-small":     "a smaller close for 16px chips; Slack's set has close, close-circle and close-filled, none small",
 	"dot":             "SlackFallback, drawn for Slack names the set lacks",
 	"file-email":      "the envelope of Slack's email file icon (c-icon--file-email-svgicon, email-5606c9a.svg), a file-type svgicon outside the SvgIcon set",
+	"file-binary":     "the 01 of Slack's binary file icon (c-icon--file-binary-svgicon, binary-4f9150d.svg), a file-type svgicon outside the SvgIcon set",
+	"file-text":       "the T of Slack's text file icon (c-icon--file-text-svgicon, file-snippet-0a4c72a.svg), a file-type svgicon outside the SvgIcon set",
 	"hackclub":        "the Hack Club plugin category's mark",
 	"hand":            "a raised hand (huddles); Slack's set has none (call-handset is a phone)",
 	"headphones-off":  "Slack's headphones with a slash (huddle deafen); Slack's set has headphones and headphones-filled only",

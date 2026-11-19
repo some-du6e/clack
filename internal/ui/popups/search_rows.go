@@ -289,7 +289,7 @@ func srFileTile(gtx layout.Context, h Host, th *theme.Theme, f core.File, s floa
 	bg, fg, name := srFileTileStyle(f, th != nil && th.Dark)
 	rrect(gtx, image.Rectangle{Max: sz}, rad, bg)
 	gs := float32(20)
-	if name == "file-email" { // the svgicon's envelope is drawn on the whole tile
+	if strings.HasPrefix(name, "file-") { // a svgicon's glyph is drawn on the whole tile
 		gs = s
 	}
 	g := dp(gtx, gs)
@@ -321,6 +321,10 @@ func srFileTileStyle(f core.File, dark bool) (bg, fg color.NRGBA, name string) {
 		return rgb(0x1d9bd1), white, "canvas"
 	case ft == "email" || f.Mode == "email":
 		return rgb(0x1d9bd1), white, "file-email" // c-icon--file-email-svgicon
+	case ft == "binary":
+		return rgb(0x616061), white, "file-binary" // c-icon--file-binary-svgicon
+	case ft == "text":
+		return rgb(0x1d9bd1), white, "file-text" // c-icon--file-text-svgicon
 	case ft == "pdf":
 		return rgb(0xe01e5a), white, "files"
 	case in("xls", "xlsx", "csv", "gsheet", "ods", "numbers") || strings.Contains(f.Mime, "spreadsheet"):

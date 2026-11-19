@@ -67,11 +67,7 @@ var emailIconBlue = rgb(0x1d, 0x9b, 0xd1)
 
 // emailIcon is the email file icon at (x, y), s px: the tile (radius
 // 800/3600 of its side) and the envelope (icons' file-email).
-func (l *lay) emailIcon(x, y, s int) {
-	r := image.Rect(x, y, x+s, y+s)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: (s*2 + 4) / 9, fill: emailIconBlue, target: -1})
-	l.d.overlayIcons = append(l.d.overlayIcons, overlayIcon{r: r, name: "file-email", col: rgb(255, 255, 255)})
-}
+func (l *lay) emailIcon(x, y, s int) { l.svgIconTile(x, y, s, emailIconBlue, "file-email") }
 
 // humanTs is toHumanReadableDateAndTimePure (LYtI, uncapitalized false):
 // "Today at 4:16 PM", "Yesterday at …" or "Tomorrow at …", else

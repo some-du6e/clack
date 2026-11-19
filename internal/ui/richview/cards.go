@@ -1174,6 +1174,10 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	p := &l.st.Palette
 	bg, fg := p.FileIconBg, p.FileIconText
 	label := strings.ToUpper(f.Type)
+	if tile, glyph, ok := svgFileIcon(f.Type); ok {
+		l.svgIconTile(x, y, s, tile, glyph)
+		return
+	}
 	switch strings.ToLower(f.Type) {
 	case "quip", "canvas": // Slack's canvas tile: a white sheet on blue
 		r := image.Rect(x, y, x+s, y+s)
@@ -1199,6 +1203,28 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	k := l.faceFor(fs.face, fs.size, 0)
 	tw := int(l.measure(label, k) + 0.5)
 	l.plainFlow(label, x+(s-tw)/2, y+(s-fs.lineH)/2, s, &fs, -1)
+}
+
+// svgFileIcon is FileEntityThumbnailIcon's svgicon for a file of filetype
+// ft, where Clack has Slack's glyph (getSVGIconType: the filetype when
+// Slack has an icon for it): binary (binary-4f9150d.svg, a #616061 tile)
+// and text (file-snippet-0a4c72a.svg, #1D9BD1).
+func svgFileIcon(ft string) (tile color.NRGBA, glyph string, ok bool) {
+	switch strings.ToLower(ft) {
+	case "binary":
+		return rgb(0x61, 0x60, 0x61), "file-binary", true
+	case "text":
+		return rgb(0x1d, 0x9b, 0xd1), "file-text", true
+	}
+	return color.NRGBA{}, "", false
+}
+
+// svgIconTile is a file svgicon at (x, y), s px: its tile (radius
+// 800/3600 of the side) and its white glyph.
+func (l *lay) svgIconTile(x, y, s int, tile color.NRGBA, glyph string) {
+	r := image.Rect(x, y, x+s, y+s)
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: (s*2 + 4) / 9, fill: tile, target: -1})
+	l.d.overlayIcons = append(l.d.overlayIcons, overlayIcon{r: r, name: glyph, col: rgb(255, 255, 255)})
 }
 
 // pillowGrid is FileGallery's mixed_file_format grid for several pillows:
