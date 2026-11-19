@@ -2016,9 +2016,12 @@ func (s *Server) historyPage(f url.Values) any {
 		limit = 50
 	}
 	latest := f.Get("latest")
+	// inclusive keeps the messages at latest and oldest themselves (Slack
+	// sends inclusive: true on every call: fetchHistory, client-boot rGEL)
+	incl := f.Get("inclusive") == "true" || f.Get("inclusive") == "1"
 	start := 0
 	if latest != "" {
-		for start < len(msgs) && !slackTSLess(msgs[start].TS, latest) {
+		for start < len(msgs) && (slackTSLess(latest, msgs[start].TS) || !incl && msgs[start].TS == latest) {
 			start++
 		}
 	}
@@ -2026,7 +2029,6 @@ func (s *Server) historyPage(f url.Values) any {
 	if oldest := f.Get("oldest"); oldest != "" {
 		// Slack answers oldest (without latest) with the messages just
 		// after it, newest first; has_more when newer ones remain.
-		incl := f.Get("inclusive") == "true"
 		stop := start
 		for stop < len(msgs) && (slackTSLess(oldest, msgs[stop].TS) || incl && msgs[stop].TS == oldest) {
 			stop++

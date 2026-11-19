@@ -784,3 +784,54 @@ func TestPageKeysScrollTheList(t *testing.T) {
 		t.Errorf("after End the selection is %s; want the last message, %s", s, newest.TS)
 	}
 }
+
+// TestArchivedTombstoneJumpScrollsBothWays is the test Karim's capture
+// needed ("i cant scroll up from this thread even tho theres other
+// stuff"): a link into an archived channel's thread whose root was
+// deleted (a tombstone with 40 replies), the thread being the channel's
+// last discussion, so the window around the root reaches the newest
+// message and joins the conversation's newest messages. From the root on
+// the anchor line, scrolling up loads and draws the pages before it, and
+// scrolling back down reaches the channel's last message, its archive, at
+// the list's end.
+func TestArchivedTombstoneJumpScrollsBothWays(t *testing.T) {
+	e := anchorEnv(t)
+	ch, root := fakeslack.TombstoneNearID, fakeslack.TombstoneNearRootTS
+	e.a.OpenAtMessage(ch, root, root, true)
+	e.waitDrawn(t, "the tombstone root on the anchor line", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, root)
+		return ok && y == e.anchorLine()
+	})
+	far := fakeslack.TombstoneNearOlderTS(fakeslack.TombstoneOlder - 70) // two pages past the window's
+	reached := func(rows []messages.SenderView) bool {
+		for _, r := range rows {
+			if r.TS == far || slackTSBefore(r.TS, far) {
+				return true
+			}
+		}
+		return false
+	}
+	calls := e.recordCalls("conversations.history")
+	for dl := time.Now().Add(40 * time.Second); !reached(e.paneRows("", ch, "")); {
+		if time.Now().After(dl) {
+			t.Fatalf("scrolling up from the root never drew %s or anything older: drew %s; conversations.history %q",
+				far, drawnState(e.paneRows("", ch, "")), calls.of("conversations.history", ch, "latest", "oldest", "limit"))
+		}
+		e.scroll(e.primaryPoint(), -600)
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
+	}
+	archive := fakeslack.TombstoneNearArchiveTS()
+	for dl := time.Now().Add(40 * time.Second); ; {
+		rows := e.paneRows("", ch, "")
+		if cv := e.channelView(ch); cv != nil && cv.AtBottom() && drewRow(rows, archive) {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("scrolling down never reached the channel's last message %s at the end: drew %s", archive, drawnState(rows))
+		}
+		e.scroll(e.primaryPoint(), 600)
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
+	}
+}
