@@ -277,7 +277,7 @@ jobs:
       # have made it quit Clack), and a SIGTERM ends Clack by its own quit,
       # status 0, with "exit: signal: terminated" in clack.log and in its
       # run record.
-      - name: Clack's signals and exit line on X11
+      - name: Clack's signals and exit line on X11 (and when the X server goes)
         if: ${{ !cancelled() }}
         env:
           GALLIUM_DRIVER: llvmpipe
@@ -307,6 +307,23 @@ jobs:
           grep -F 'exit: signal: terminated' "$logs/clack.log" || { echo "no exit line for SIGTERM"; rc=1; }
           grep -F ': signal: terminated' "$logs"/lastrun-*.txt || { echo "no reason in the run record"; rc=1; }
           [ "$code" = 0 ] || { echo "exit status $code"; rc=1; }
+          # the X server goes (Gio patch 51): the exit line, then Xlib's exit 1
+          Xvfb :94 -nolisten tcp -screen 0 1280x800x24 & xvfb2=$!
+          for i in $(seq 1 40); do [ -S /tmp/.X11-unix/X94 ] && break; sleep 0.25; done
+          home2="$RUNNER_TEMP/clack-x-home"; logs2="$RUNNER_TEMP/clack-x-logs"
+          mkdir -p "$home2" "$logs2"
+          env -u WAYLAND_DISPLAY DISPLAY=:94 CLACK_HOME="$home2" CLACK_LOG_DIR="$logs2" CLACK_TIMING=1 ./build/clack-signals > "$RUNNER_TEMP/clack-x.out" 2>&1 &
+          pid2=$!
+          for i in $(seq 1 240); do grep -q 'timing: main ready' "$logs2/clack.log" 2>/dev/null && break; sleep 0.5; done
+          sleep 2
+          kill -9 $xvfb2
+          for i in $(seq 1 60); do kill -0 $pid2 2>/dev/null || break; sleep 0.5; done
+          if kill -0 $pid2 2>/dev/null; then echo "Clack still runs 30 s after its X server went"; kill -9 $pid2; rc=1; fi
+          wait $pid2; code2=$?
+          tail -20 "$logs2/clack.log"; tail -5 "$RUNNER_TEMP/clack-x.out"
+          grep -F "exit: the X server's connection broke" "$logs2/clack.log" || { echo "no exit line when the X server went"; rc=1; }
+          grep -F "the X server's connection broke" "$logs2"/lastrun-*.txt || { echo "no reason in the run record when the X server went"; rc=1; }
+          [ "$code2" = 1 ] || { echo "exit status $code2 after the X server went, want 1 (Xlib's)"; rc=1; }
           exit $rc
       - name: pixel tests (Mesa llvmpipe)
         env:

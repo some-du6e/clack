@@ -213,7 +213,6 @@ func TestDraftFileArrivesLate(t *testing.T) {
 			"title": "Q3 report", "filetype": "pdf", "pretty_type": "PDF", "mimetype": "application/pdf", "size": 48213, "mode": "hosted"}}, true
 	})
 	e := newDraftMetaEnv(t, fs, fs.ChannelIDs()[4], id)
-	e.until("files.info for the draft's file", func() bool { return asked.Load() > 0 })
 	// held: the card draws MissingText's two 120x8 pills over the empty
 	// 40px tile, and no text of its own
 	d := e.drawn()
@@ -226,6 +225,7 @@ func TestDraftFileArrivesLate(t *testing.T) {
 	if n := d.tiles(40, 40, color.NRGBA{R: 0xdd, G: 0xdd, B: 0xdd, A: 0xff}); n != 1 {
 		t.Errorf("before its file came the card drew %d empty exception tiles (40px, sk_foreground_low_solid), want 1; boxes %v", n, d.boxes)
 	}
+	e.until("files.info for the draft's file", func() bool { return asked.Load() > 0 })
 	once.Do(func() { close(release) })
 	e.until("the file's name and type", func() bool {
 		d := e.drawn()

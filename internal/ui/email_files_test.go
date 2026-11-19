@@ -151,7 +151,10 @@ func TestEmailInbox(t *testing.T) {
 	acts, rs := e.emailActions(ec.TS)
 	want := []richview.FileAction{richview.FileShowMore, richview.FileShare, richview.FileDetails, richview.FileMore}
 	if !sameActs(acts, want) {
-		t.Fatalf("the email's FileActions %v, want %v (renderEmailExpand first)", acts, want)
+		t.Errorf("the email's FileActions %v, want %v (renderEmailExpand first, no Open in new window)", acts, want)
+	}
+	if len(acts) == 0 || acts[0] != richview.FileShowMore {
+		t.Fatalf("the email's FileActions %v start with no Expand", acts)
 	}
 	n := e.fs.CallCount("files.info")
 	e.clickAt(rs[0].Min.Add(rs[0].Max).Div(2), time.Second)
