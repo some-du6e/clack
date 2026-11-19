@@ -15,7 +15,7 @@ import (
 	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
-func TestAppCardKeptWhileRefetching(t *testing.T) {
+func TestAgentAppCardKeptWhileRefetching(t *testing.T) {
 	a, fs := agentTasksApp(t, nil)
 	ctx := context.Background()
 	card, err := a.AppCardOf(ctx, fakeslack.AgentTasksUserID, "")
