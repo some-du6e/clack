@@ -1035,10 +1035,11 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 	lineW := max(dp(gtx, 1), 1)
 	y := 0
 	n := len(b.Tasks)
+	keys := taskKeys(b)
 	for i := range b.Tasks {
 		task := &b.Tasks[i]
 		first, last := i == 0, i == n-1
-		key := "task\x00" + b.BlockID + "\x00" + task.TaskID + "\x00" + itoa(i)
+		key := keys[i]
 		has := task.hasContent()
 		noTitle := enh && task.HideTitle
 		open := st.isOpen(key, true)
@@ -1249,13 +1250,34 @@ func (me *Message) slimRich(gtx C, st *agentState, pal agentPal, key string, raw
 	return h + lh
 }
 
+// taskKeys are a plan's tasks' state keys (open, Show more): Slack's
+// PlanTaskList keys its items by task_id (hTrF InteractiveList's key ??
+// e.id), so a task's state follows it across an update wherever it moves;
+// the index stands in only for a task with no task_id, or one that
+// repeats in the plan.
+func taskKeys(b *AgentBlock) []string {
+	n := map[string]int{}
+	for i := range b.Tasks {
+		n[b.Tasks[i].TaskID]++
+	}
+	keys := make([]string, len(b.Tasks))
+	for i := range b.Tasks {
+		if id := b.Tasks[i].TaskID; id != "" && n[id] == 1 {
+			keys[i] = "task\x00" + b.BlockID + "\x00" + id
+		} else {
+			keys[i] = "task\x00" + b.BlockID + "\x00#" + itoa(i)
+		}
+	}
+	return keys
+}
+
 // resetUnder forgets the open states under a block that closed: Slack
 // unmounts its content (PlanTaskList's TaskItems, their truncated text),
 // so reopening it shows each task open and its text cut again.
 func (st *agentState) resetUnder(b *AgentBlock) {
 	pre := "task\x00" + b.BlockID + "\x00"
 	if b.Type != "plan" {
-		pre = "card\x00" + b.BlockID
+		pre = "card\x00" + b.BlockID + "\x00" // not another card's whose id starts with this one's
 	}
 	for k := range st.open {
 		if strings.HasPrefix(k, pre) {

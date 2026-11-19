@@ -130,7 +130,7 @@ func TestAgentTaskShowMore(t *testing.T) {
 
 	// Show more under the long details: the whole text and Show less
 	sl := row.v.ElementSlots()[0].Add(row.at)
-	moreKey := "task\x00p5\x00t1\x000\x00d\x00more"
+	moreKey := "task\x00p5\x00t1\x00d\x00more"
 	p, ok := s.hoverFind(st, moreKey, sl.Min.X+20+12, sl.Min.Y, sl.Max.Y, w, hgt, now)
 	if !ok {
 		t.Fatalf("no Show more tap under the long details (slot %v)", sl)
@@ -338,7 +338,7 @@ func TestAgentSlimContentShots(t *testing.T) {
 			s.rows[i].me.agentState().open["plan\x00p5"] = true
 		}
 		s.rows[4].me.agentState().open["plan\x00p6"] = true
-		s.rows[1].me.agentState().open["task\x00p5\x00t1\x000\x00d\x00more"] = true
+		s.rows[1].me.agentState().open["task\x00p5\x00t1\x00d\x00more"] = true
 		const w, hgt = 560, 1400
 		now := time.Now().Add(time.Hour) // see TestAgentTaskShowMore
 		var ops *op.Ops

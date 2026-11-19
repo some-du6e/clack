@@ -189,7 +189,7 @@ func TestAgentSlotSizes(t *testing.T) {
 		t.Errorf("open plan %v not taller than collapsed %v by two tasks", open, closed)
 	}
 	// a plan task collapses on its own (tasks start open)
-	st.open["task\x00p1\x00t1\x000"] = false
+	st.open["task\x00p1\x00t1"] = false
 	if fold := slotSize(t, me, &m, 480); fold.Y >= open.Y {
 		t.Errorf("collapsing a task: %v, open %v", fold, open)
 	}

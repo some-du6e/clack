@@ -234,9 +234,10 @@ func (me *Message) cardPlanTasks(gtx C, st *agentState, cp cardPal, b *AgentBloc
 	th := me.h.Theme()
 	enh := me.planCodingEnhancements()
 	y := 0
+	keys := taskKeys(b)
 	for i := range b.Tasks {
 		task := &b.Tasks[i]
-		key := "task\x00" + b.BlockID + "\x00" + task.TaskID + "\x00" + itoa(i)
+		key := keys[i]
 		// .taskItem padding 1px; .taskHeader margin 0 8px, padding-left 1px
 		itemX := dp(gtx, 1)
 		x := itemX + dp(gtx, 8) + dp(gtx, 1)

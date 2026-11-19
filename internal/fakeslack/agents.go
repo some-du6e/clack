@@ -138,6 +138,15 @@ func AgentFixtures() map[string][]any {
 		"plan-caret-wrap": {map[string]any{"type": "plan", "block_id": "p9", "title": "Reviewed", "tasks": []any{
 			agentTask("t1", "Read every failing test, traced the clock in the fixture, checked the seed and ran the suite again", "complete",
 				map[string]any{"details": agentRich("All clear.")})}}},
+		// a plan whose update puts a task ahead of the others (the same
+		// block, chat.update)
+		"plan-follow-1": {map[string]any{"type": "plan", "block_id": "p10", "title": "Checking the release", "tasks": []any{
+			agentTask("t1", "Read the changelog", "complete", map[string]any{"details": agentRich("Three fixes.")}),
+			agentTask("t2", "Ran the smoke tests", "complete", map[string]any{"details": agentRich("All green.")})}}},
+		"plan-follow-2": {map[string]any{"type": "plan", "block_id": "p10", "title": "Checking the release", "tasks": []any{
+			agentTask("t0", "Fetched the branch", "complete", map[string]any{"details": agentRich("Up to date.")}),
+			agentTask("t1", "Read the changelog", "complete", map[string]any{"details": agentRich("Three fixes.")}),
+			agentTask("t2", "Ran the smoke tests", "complete", map[string]any{"details": agentRich("All green.")})}}},
 		// an MCP task's card while it runs, and once it is done (same
 		// block: the stream's update)
 		"task-card-mcp-running": {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "in_progress", "output": agentRich("Reading the orders table.")}},

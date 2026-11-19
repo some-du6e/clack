@@ -48,7 +48,7 @@ func TestAgentTaskCaretPlace(t *testing.T) {
 		s := newAgentShot(h, m)
 		st := s.rows[0].me.agentState()
 		st.open["plan\x00"+block] = true
-		st.open["task\x00"+block+"\x00t1\x000"] = false // the header alone
+		st.open["task\x00"+block+"\x00t1"] = false // the header alone
 		var ops *op.Ops
 		for i := 0; i < 3; i++ {
 			now = now.Add(100 * time.Millisecond)
@@ -61,7 +61,7 @@ func TestAgentTaskCaretPlace(t *testing.T) {
 	s, _ := shot("plan-caret-wrap", "p9")
 	sl := s.rows[0].v.ElementSlots()[0]
 	cw := sl.Dx() - 20 // the step gutter (12px) and its 8px gap
-	tp := s.rows[0].me.agentState().taps["task\x00p9\x00t1\x000"]
+	tp := s.rows[0].me.agentState().taps["task\x00p9\x00t1"]
 	if tp == nil || tp.sz.X != cw {
 		w := -1
 		if tp != nil {
