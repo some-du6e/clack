@@ -208,9 +208,11 @@ func Reopen(hasVisibleWindows bool) (ret, handled bool) {
 }
 
 // Terminate sends NSApp terminate:, as the Dock's Quit, log out, restart
-// and a quit Apple Event do, from the main queue, and returns at once:
-// while the app delegate answers NSTerminateLater (Gio patch 50) AppKit's
-// terminate: doesn't return until the app replies. Any goroutine.
+// and a quit Apple Event do, from the main run loop (a perform the main
+// queue schedules, so the main queue stays free while terminate: waits),
+// and returns at once: while the app delegate answers NSTerminateLater
+// (Gio patch 50) AppKit's terminate: doesn't return until the app
+// replies. Any goroutine.
 func Terminate() { C.cocoatest_terminate() }
 
 // PostDidBecomeActive posts NSApplicationDidBecomeActiveNotification, as

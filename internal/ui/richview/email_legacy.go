@@ -50,14 +50,22 @@ func (l *lay) emailLegacy(f *richtext.File, x, y, w int) int {
 	cw := min(w, l.dp(emailFileMaxW))
 	pad := l.dp(12)
 	ix, iw := x+pad, cw-2*pad
+	// the pillow: the file's context menu (and FileRects); collapsed, a
+	// click anywhere on it but its attachments expands it (expandEmail):
+	// that hit sits over the pillow's, under the attachments' links
 	card := l.d.addTarget(target{kind: tFile, file: f, menuOnly: true})
+	boxT, expand := card, int16(-1)
 	if !f.Expanded {
-		card = l.d.addTarget(target{kind: tSnippet, file: f, act: FileShowMore}) // expandEmail
+		expand = l.d.addTarget(target{kind: tSnippet, file: f, act: FileShowMore})
+		boxT = expand
 	}
 	bi := len(l.d.boxes)
-	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: card, hover: p.BorderHover})
+	l.d.boxes = append(l.d.boxes, box{kind: bBorder, fill: p.Panel, stroke: p.Border, bw: l.dp(1), radius: l.dp(12), target: boxT, hover: p.BorderHover})
 	hi := len(l.d.hits)
 	l.d.hits = append(l.d.hits, hit{t: card})
+	if expand >= 0 {
+		l.d.hits = append(l.d.hits, hit{t: expand})
+	}
 	grey := Over(rgba(p.Text.R, p.Text.G, p.Text.B, 0.5), p.Panel)
 	date := ""
 	if e.Timestamp > 0 {
@@ -155,6 +163,9 @@ func (l *lay) emailLegacy(f *richtext.File, x, y, w int) int {
 	r := image.Rect(x, y, x+cw, y+h)
 	l.d.boxes[bi].r = r
 	l.d.hits[hi].r = r
+	if expand >= 0 {
+		l.d.hits[hi+1].r = r
+	}
 	l.pillowBar(f, r) // FileActions (file_actions.go)
 	return h
 }

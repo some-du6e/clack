@@ -185,7 +185,11 @@ int cocoatest_reopen(int visible, int *handled) {
 
 void cocoatest_terminate(void) {
 	dispatch_async(dispatch_get_main_queue(), ^{
-		[NSApp terminate:nil];
+		// terminate: from the run loop, as AppKit sends it for the Dock's
+		// Quit or a quit Apple Event: not inside this main-queue block,
+		// which would hold the serial main queue for as long as terminate:
+		// waits (NSTerminateLater), so no dispatched work could run
+		[NSApp performSelector:@selector(terminate:) withObject:nil afterDelay:0];
 	});
 }
 
