@@ -57,7 +57,6 @@ func TestThreadsKeysHeldDownLikeSlack(t *testing.T) {
 	if v.kb.active != "heading-"+ka || !v.kb.focused {
 		t.Fatalf("after a press on a's heading: active %q, focused %v", v.kb.active, v.kb.focused)
 	}
-	footers := 0
 	var last time.Time
 	for deadline := time.Now().Add(15 * time.Second); v.kb.active != "heading-"+kc; {
 		if time.Now().After(deadline) {
@@ -71,16 +70,17 @@ func TestThreadsKeysHeldDownLikeSlack(t *testing.T) {
 		if q := v.list.Position; q.First != p.First || q.Offset != p.Offset {
 			last = at
 		}
-		if r := v.kbRows[v.kb.active]; r.kind == "footer" {
-			footers++
-		}
 		if got := marks.all(); len(got) != n {
 			t.Fatalf("marked %v while ↓ moved through the list; Slack's footer focus marks only a thread marked unread by hand", got[n:])
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	if footers < 3 {
-		t.Fatalf("↓ went through %d footers, want 3", footers)
+	// each footer handed the focus to its reply box (the list's active row
+	// goes while the box has it)
+	for _, k := range []string{ka, ch + "/" + thrB, ch + "/" + thrE} {
+		if c := v.cards[k]; c == nil || c.comp == nil {
+			t.Fatalf("↓ through %s's footer opened no reply box", k)
+		}
 	}
 	if last.IsZero() {
 		t.Fatal("the list never moved")
@@ -221,7 +221,9 @@ func TestThreadsUnreadRowEdgesLikeSlack(t *testing.T) {
 			e := thrViewEnv(t, v, 3)
 			e.size = image.Pt(1000, 400)
 			e.frame()
-			row := ch + "/" + thrB + "-" + thrBReply // b's unread row goes before its reply
+			row := ch + "/" + thrB + "-" + thrBReply    // b's unread row goes before its reply
+			v.list.Position = layout.Position{First: 1} // b's card laid out
+			e.frame()
 			want := tc.y(v.kb.viewH)
 			for range 4 {
 				y, ok, _ := v.kb.top(row)
