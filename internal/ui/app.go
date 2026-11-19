@@ -6,6 +6,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"log"
@@ -279,6 +280,7 @@ type App struct {
 	jump             jumpKey                    // what the jump list was last made from
 	resetPending     bool                       // a reset-window waits for the window
 	quitting         atomic.Bool                // Quit: the next close isn't runFromTray's (Slack's app.isQuitting)
+	exitWhy          atomic.Pointer[string]     // why Run is ending, for the exit line (ExitReason)
 	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
 	winPlace         bool                       // Gio places the window here (Windows, macOS): mainWindowSettings keeps its bounds (winbounds.go)
 	winSaveDue       bool                       // mainWindowSettings changed since ui.json was last written
@@ -544,6 +546,9 @@ func (a *App) Run() error {
 		nativemenu.NoteEvent(ev) // the window's HWND / NSView for native context menus
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			if e.Err != nil {
+				a.noteExit(fmt.Sprintf("the window ended with an error: %v", e.Err))
+			}
 			wd.end()
 			wd.stop()
 			a.shutdownIntro() // the introduction's preview renderer and its folder (intro_preview.go)

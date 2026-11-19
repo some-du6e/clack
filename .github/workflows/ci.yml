@@ -672,6 +672,7 @@ jobs:
             Wait-Log 'desktop: another launch handed over a slack:// sign-in link' 'the running Clack getting the link'
             Wait-Log 'sign-in: a sign-in link came from outside Clack; signing in with it' 'the sign-in card taking it'
             Wait-Log "sign-in: couldn't read the team and token from the sign-in link" 'the sign-in attempt (the fake link stops it there)'
+            Wait-Log 'exit: handed this launch to the Clack already running' 'the launch that handed over saying why it ended'
             if ($p.HasExited) { throw "the first Clack exited ($($p.ExitCode))" }
             # the window's Clack processes: not the introduction's renderer
             # (Clack.exe intro-preview, which the first run's intro starts)
@@ -682,7 +683,9 @@ jobs:
             if (Select-String -Path $log -SimpleMatch -Pattern 'magic-login/xyz' -Quiet) { throw 'the sign-in link is in the log' }
           } finally { Stop-Clack $p }
 
-          # 3. Another app takes the legacy key (as Slack desktop does at its start): Clack's next start leaves it
+          # 3. Another app takes the legacy key (as Slack desktop does at its start): Clack's next start leaves it.
+          # The Clack before it was killed (Stop-Process), so this start says that run ended without saying why;
+          # closing this one's window (the sign-in screen: a quit) leaves its reason, which the next start logs.
           $other = Join-Path $env:SystemRoot 'System32\cmd.exe'
           $otherCmd = "`"$other`" /c exit `"%1`""
           Set-ItemProperty -Path 'HKCU:\Software\Classes\slack\shell\open\command' -Name '(default)' -Value $otherCmd
@@ -690,9 +693,20 @@ jobs:
           $p = Start-Process -PassThru -FilePath $exe
           try {
             Wait-Log 'has the default, so Windows asks which app to use' 'the registration beside another app'
+            Wait-Log 'applog: previous run ended without saying why' 'the start after a killed Clack'
             Assert-Reg 'HKCU\Software\Classes\slack\shell\open\command' '' $otherCmd
             Assert-Reg 'HKCU\Software\Classes\Clack.slack\shell\open\command' '' $cmd
             Assert-Reg 'HKCU\Software\RegisteredApplications' 'Clack' 'Software\Clack\Capabilities'
+            for ($i = 0; $i -lt 120 -and $p.MainWindowHandle -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 250; $p.Refresh() }
+            if (-not $p.CloseMainWindow()) { throw 'no window to close' }
+            if (-not $p.WaitForExit(60000)) { throw 'the close on the sign-in screen did not end Clack' }
+            Wait-Log 'exit: the window closed while signed out' 'the exit line of a close on the sign-in screen'
+          } finally { Stop-Clack $p }
+          Mark-Log
+          $p = Start-Process -PassThru -FilePath $exe
+          try {
+            Wait-Log ': the window closed while signed out' 'the start after it naming how the last run ended'
+            Get-Content $log | Select-Object -Skip $script:mark | Select-String -SimpleMatch 'applog: previous run' | ForEach-Object { $_.Line }
           } finally { Stop-Clack $p }
 
           # 4. -unregister-url-handler removes Clack's keys and leaves the other app's
@@ -757,7 +771,7 @@ jobs:
         run: |
           rc=0
           go test -count=1 -v -timeout 10m -run 'TestHideAndRaise|TestHideWithoutDriver|TestCaretBlinkFromOS|TestOptionKeepsHiddenAndMinimized|TestInvalidateWhileHandling' gioui.org/app || rc=1
-          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop || rc=1
+          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16|TestTraySessionEnd' ./internal/desktop || rc=1
           go test -count=1 -v -timeout 15m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui || rc=1
           exit $rc
 

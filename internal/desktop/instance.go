@@ -21,6 +21,11 @@ type Request struct {
 	URL string `json:"url,omitempty"`
 }
 
+// ErrAnotherInstance is Listen's error when another Clack listens on the
+// socket (it didn't take Forward's request in time): this process isn't
+// the primary instance.
+var ErrAnotherInstance = errors.New("desktop: another instance is listening")
+
 // Instance is the primary (first) Clack process's listener.
 type Instance struct {
 	ln   net.Listener
@@ -101,7 +106,7 @@ func listen(path string, handle func(Request)) (*Instance, error) {
 		// it and try once more.
 		if c, derr := net.DialTimeout("unix", path, 500*time.Millisecond); derr == nil {
 			c.Close()
-			return nil, fmt.Errorf("desktop: another instance is listening on %s", path)
+			return nil, fmt.Errorf("%w on %s", ErrAnotherInstance, path)
 		}
 		_ = os.Remove(path)
 		if ln, err = net.Listen("unix", path); err != nil {
