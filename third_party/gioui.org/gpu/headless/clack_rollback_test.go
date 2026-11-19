@@ -14,17 +14,25 @@ import (
 
 // TestClackRollbackKeys: what is written to an Ops after a Rollback has
 // op keys of its own (Clack patch 3's rollback epoch), so the GPU's caches
-// never take it for what was at the same place before. Clack's inspect
-// tool draws each frozen frame as the frame's ops rolled back to their
-// checkpoint, with the tool's drawing appended: a rounded rect (a path,
-// cached by its op key) drawn there at a new place after a rollback is
-// drawn there, pixel for pixel what a new window draws, not where the
-// rect of the frame before was.
+// never take it for what was at the same place before, while what was
+// written before the checkpoint keeps its keys and its cache entries.
+// Clack's inspect tool draws each frozen frame as the frame's ops rolled
+// back to their checkpoint, with the tool's drawing appended: a rounded
+// rect and a stroke (paths, cached by their op keys) drawn there at a new
+// place after a rollback are drawn there, pixel for pixel what a new
+// window draws, not where the frame before's were; and only they are
+// built again, not the frame's own path before the checkpoint (a rollback
+// that gave the whole Ops new keys would build that one every frozen
+// frame too).
 func TestClackRollbackKeys(t *testing.T) {
 	sz := image.Pt(160, 100)
 	bg := color.NRGBA{R: 0x20, G: 0x40, B: 0x60, A: 0xff}
 	ink := color.NRGBA{R: 0xf0, G: 0x10, B: 0x30, A: 0xff}
-	content := func(o *op.Ops) { paint.FillShape(o, bg, clip.Rect{Max: sz}.Op()) }
+	content := func(o *op.Ops) {
+		paint.FillShape(o, bg, clip.Rect{Max: sz}.Op())
+		// the frame's own path, before the checkpoint
+		paint.FillShape(o, color.NRGBA{R: 0x40, G: 0xd0, B: 0x60, A: 0xff}, clip.UniformRRect(image.Rect(100, 8, 150, 30), 6).Op(o))
+	}
 	overlay := func(o *op.Ops, r image.Rectangle) {
 		paint.FillShape(o, ink, clip.UniformRRect(r, 7).Op(o))
 		paint.FillShape(o, ink, clip.Stroke{Path: clip.UniformRRect(r.Inset(-4), 9).Path(o), Width: 2}.Op())
@@ -63,6 +71,9 @@ func TestClackRollbackKeys(t *testing.T) {
 		}
 		overlay(&o, r)
 		got := shot(win, &o)
+		if n, want := win.ClackFrameStats().PathsBuilt, map[bool]int{true: 3, false: 2}[i == 0]; n != want {
+			t.Errorf("frame %d: %d paths built, want %d (after a rollback only the overlay's fill and stroke; the content's path kept)", i, n, want)
+		}
 		diff := 0
 		for j := range got.Pix {
 			if got.Pix[j] != want[i].Pix[j] {

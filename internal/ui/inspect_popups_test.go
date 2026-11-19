@@ -470,6 +470,86 @@ func TestInspectPicksSelectMenu(t *testing.T) {
 	}
 }
 
+// TestInspectPicksPickers: a date picker and a time picker over an app's
+// Block Kit modal, shown as Block Kit's pickers are (wrapped to hear them
+// close), and the composer's Schedule message time list (unwrapped): a
+// pick on a day or a time row reports the picker as its region and
+// outlines its card, not the modal or the window column under it (review
+// of 3a75558d: these drew no card box and had no Rect, and the wrapper
+// hid any Rect).
+func TestInspectPicksPickers(t *testing.T) {
+	fakeShots(t)
+	t.Setenv("CLACK_INSPECT", "1")
+	fs, err := fakeslack.Start(fakeslack.Gallery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	pe := startEnv(t, fs, t.TempDir())
+	fs.Emit = func(ev map[string]any) {
+		b, _ := json.Marshal(ev)
+		typ, _ := ev["type"].(string)
+		pe.a.data.core.Inject(slack.Event{Type: typ, Raw: b})
+	}
+	e := &inspectEnv{perfEnv: pe}
+	e.waitReady()
+	e.openChannel(fakeslack.BlockKitGalleryID)
+	e.until("the gallery", 20*time.Second, func() bool { return e.loadedMessages(fakeslack.BlockKitGalleryID) >= 7 })
+	e.settle(500 * time.Millisecond)
+	blockkit.RunShortcut(e.a, core.AppShortcut{ActionID: "SURFA3", AppID: fakeslack.AppAppID, AppName: "Deploy Bot", Type: "global_action"},
+		fakeslack.BlockKitGalleryID, "")
+	e.until("the settings modal", 15*time.Second, func() bool {
+		m, ok := blockkit.OpenModal(e.a)
+		fields := blockkit.ModalFields(e.a)
+		return ok && m.ViewID == fakeslack.SurfNoteView && len(fields) > 0 && !fields[0].R.Empty()
+	})
+	e.settle(300 * time.Millisecond)
+	field := blockkit.ModalFields(e.a)[0].R // the anchor: the modal's field
+	day := time.Date(2026, 11, 20, 0, 0, 0, 0, time.Local)
+	for _, c := range []struct {
+		name, role string
+		show       func()
+		at         image.Point // a day or a row, where the picker draws it
+	}{
+		{"Block Kit's date picker", "date picker", func() {
+			blockkit.ShowWatched(e.a, popups.NewDatePicker(e.a, field, day, time.Time{}, func(time.Time) {}))
+		}, image.Pt(field.Max.X-60, field.Max.Y+110)},
+		{"Block Kit's time picker", "time picker", func() {
+			blockkit.ShowWatched(e.a, popups.NewTimePicker(e.a, field, 13*60, 0, 15, func(int) {}))
+		}, image.Pt(field.Min.X+40, field.Max.Y+40)},
+		{"Schedule message's time list", "time picker", func() {
+			e.a.ShowOverlay(popups.NewTimePickerRange(e.a, field, 13*60, 9*60, 17*60, 15, func(int) {}))
+		}, image.Pt(field.Min.X+40, field.Max.Y+40)},
+	} {
+		n := len(e.a.overlays)
+		c.show()
+		e.settle(200 * time.Millisecond)
+		if len(e.a.overlays) != n+1 {
+			t.Fatalf("%s: %d overlays, want one more (%v)", c.name, len(e.a.overlays), e.overlayTypes())
+		}
+		top := e.a.overlays[len(e.a.overlays)-1]
+		at := c.at
+		if rr, ok := top.(interface{ Rect() image.Rectangle }); ok && !rr.Rect().Empty() {
+			r := rr.Rect()
+			at = image.Pt(r.Min.X+r.Dx()/2, r.Min.Y+r.Dy()*2/3) // a day, a row
+		}
+		e.startSession(t)
+		label, r, ok := e.hoverAt(at)
+		if !ok || strings.HasPrefix(label, "modal") || strings.HasPrefix(label, "primary") || !at.In(r) {
+			t.Errorf("%s: over it at %v, outline %q %v (%v), want the %s's card", c.name, at, label, r, ok, c.role)
+		}
+		rows := e.pickReport(t, at)
+		if !strings.HasPrefix(rows["region"], c.role) {
+			t.Errorf("%s: report region %q, want the %s", c.name, rows["region"], c.role)
+		}
+		if d, ok := top.(interface{ Dismiss() }); ok {
+			d.Dismiss()
+		}
+		e.frame()
+		e.frame()
+	}
+}
+
 // TestInspectFreezeHoldsPopups: the reaction pill's who-reacted tooltip
 // shows while the pointer rests on the pill and goes when it leaves.
 // Frozen (F), the tooltip stays in the frozen frame with the pointer on

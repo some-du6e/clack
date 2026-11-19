@@ -203,9 +203,13 @@ func TestEnterRightAfterPick(t *testing.T) {
 		if e.tool.Active() || e.tool.Reviewing() {
 			t.Errorf("Enter %s: session %v, reviewing %v after the copy", when, e.tool.Active(), e.tool.Reviewing())
 		}
-		// the stage-time line says what happened: no review was shown
+		// the stage-time line says what happened: no review was shown (in
+		// the frame after the pick, the review was started but never drawn)
 		if line := LastTimes(); when == "in the pick's frame" && (!strings.Contains(line, "copied at once") || strings.Contains(line, "after the review showed")) {
 			t.Errorf("Enter %s: logged %q, want the capture copied at once, no review", when, line)
+		}
+		if line := LastTimes(); when == "in the frame after it" && (!strings.Contains(line, "before the review showed") || strings.Contains(line, "after the review showed")) {
+			t.Errorf("Enter %s: logged %q, want Enter before the review showed (it was never drawn)", when, line)
 		}
 		if len(e.shots) != n+1 {
 			t.Fatalf("Enter %s: %d shots, want one", when, len(e.shots)-n)
@@ -308,39 +312,62 @@ func TestEscDuringPreparation(t *testing.T) {
 	}
 }
 
-// TestRegionEnterOpensReview: Enter or Mod+C in the frame a dragged region
-// is let go of doesn't copy the region at once (review of a8fa243c): its
-// review is the only place it can be blurred, so the review opens with
-// nothing copied, and Enter there copies. An element's pick still copies
-// at once (TestEnterRightAfterPick: its margin is blurred anyway).
+// TestRegionEnterOpensReview: Enter or Mod+C before a dragged region's
+// review has been drawn doesn't copy the region (reviews of a8fa243c and
+// 3a75558d): the review is the only place a region can be blurred. In the
+// release's own frame, and in the frame after it (the review started, not
+// drawn yet: where a quick Enter lands, and on a software GPU for the
+// seconds the shot takes), the key is dropped and the review comes up with
+// nothing copied; once the review has drawn its shot, Enter copies. An
+// element's pick still copies at once (TestEnterRightAfterPick: its
+// margin is blurred anyway).
 func TestRegionEnterOpensReview(t *testing.T) {
 	e := newDragEnv(t)
 	for _, k := range []struct {
 		name key.Name
 		mods key.Modifiers
 	}{{key.NameReturn, 0}, {"C", key.ModShortcut}} {
-		e.copied = nil
-		e.tool.Toggle()
-		e.frame()
-		from, to := f32.Pt(150, 120), f32.Pt(450, 320)
-		e.press(from)
-		e.frame()
-		e.dragTo(to)
-		e.frame()
-		e.releaseAt(to)
-		e.key(k.name, k.mods)
-		e.frame()
-		e.tool.Wait()
-		e.frame()
-		if e.copied != nil || !e.tool.Reviewing() {
-			t.Fatalf("%v%v in the region's release frame: copied %v, reviewing %v; want its review, nothing copied", k.mods, k.name, e.copied != nil, e.tool.Reviewing())
-		}
-		e.key(key.NameReturn, 0)
-		e.frame()
-		e.tool.Wait()
-		e.frame()
-		if e.copied == nil || e.tool.Active() {
-			t.Errorf("Enter in the region's review: copied %v, session %v", e.copied != nil, e.tool.Active())
+		for _, when := range []string{"in the release's frame", "in the frame after it", "two frames after it"} {
+			e.copied = nil
+			e.tool.Toggle()
+			e.frame()
+			from, to := f32.Pt(150, 120), f32.Pt(450, 320)
+			e.press(from)
+			e.frame()
+			e.dragTo(to)
+			e.frame()
+			e.releaseAt(to)
+			switch when {
+			case "in the frame after it":
+				e.frame() // the release's: shot, its review started
+			case "two frames after it":
+				e.frame()
+				e.frame() // the review drawn
+			}
+			e.key(k.name, k.mods)
+			e.frame()
+			e.tool.Wait()
+			e.frame()
+			if when == "two frames after it" {
+				if e.copied == nil || e.tool.Active() {
+					t.Errorf("%v%v %s, the review drawn: copied %v, session %v; want the copy", k.mods, k.name, when, e.copied != nil, e.tool.Active())
+				}
+				if e.tool.Active() {
+					e.key(key.NameEscape, 0)
+					e.frame()
+				}
+				continue
+			}
+			if e.copied != nil || !e.tool.Reviewing() {
+				t.Fatalf("%v%v %s: copied %v, reviewing %v; want its review, nothing copied", k.mods, k.name, when, e.copied != nil, e.tool.Reviewing())
+			}
+			e.key(key.NameReturn, 0)
+			e.frame()
+			e.tool.Wait()
+			e.frame()
+			if e.copied == nil || e.tool.Active() {
+				t.Errorf("Enter in the region's review (%v%v %s): copied %v, session %v", k.mods, k.name, when, e.copied != nil, e.tool.Active())
+			}
 		}
 	}
 }

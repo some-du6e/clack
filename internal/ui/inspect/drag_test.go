@@ -98,6 +98,8 @@ type dragEnv struct {
 	frozen bool
 	// scale is the window's px per dp (0: 1)
 	scale float32
+	// onClip hears each text the window's clipboard took in a frame
+	onClip func(text string)
 }
 
 func newDragEnv(t *testing.T) *dragEnv { return newDragEnvAt(t, image.Pt(900, 600), 1) }
@@ -138,6 +140,7 @@ func (e *dragEnv) frame() {
 	e.frozen = ops != nil
 	if ops != nil {
 		e.r.Frame(ops)
+		e.clip()
 		e.tool.AfterFrame(ops, e.size)
 		return
 	}
@@ -147,7 +150,15 @@ func (e *dragEnv) frame() {
 	e.content(g)
 	e.tool.End(gtx)
 	e.r.Frame(&e.ops)
+	e.clip()
 	e.tool.AfterFrame(&e.ops, e.size)
+}
+
+// clip is the window's clipboard taking the frame's text write, if any.
+func (e *dragEnv) clip() {
+	if _, b, ok := e.r.WriteClipboard(); ok && e.onClip != nil {
+		e.onClip(string(b))
+	}
 }
 
 func (e *dragEnv) queue(evs ...pointer.Event) {

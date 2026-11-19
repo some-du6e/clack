@@ -3,6 +3,8 @@ package blockkit
 import (
 	"image"
 	"strings"
+
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // Read-only views of blockkit's state and the user's modal actions, for
@@ -133,6 +135,11 @@ func ModalSelects(h Host) []FieldInfo {
 	}
 	return out
 }
+
+// ShowWatched shows ov as Block Kit's date and time pickers show theirs:
+// wrapped to hear it close (tests: the inspect tool sees through the
+// wrapper).
+func ShowWatched(h Host, ov popups.Overlay) { h.ShowOverlay(&watch{Overlay: ov}) }
 
 // SubmitModal is the user pressing the modal's submit button.
 func SubmitModal(h Host) {
