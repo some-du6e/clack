@@ -57,6 +57,12 @@ const noteResolveWait = 5 * time.Second
 // up (the rest read "#private-channel" until core's resolver names them).
 const noteResolveMax = 8
 
+// noteMembersMax is how many people one notification waits for: one
+// users/info batch (EnsureUsers asks 100 at a time), so a message naming
+// many people names them all (on ui, onMessage fetched every mention
+// before converting it).
+const noteMembersMax = 100
+
 // noteUnknownChannel is formatChannelName's name for a channel without
 // one; noteHiddenChannel is channelToText's for a channel the viewer
 // can't see.
@@ -80,6 +86,21 @@ func noteNamed(c *convInfo) bool {
 // doesn't know it.
 func (b *backend) noteConv(ch string) (c *convInfo, named bool) {
 	if c = b.m.conv(ch); c != nil && noteNamed(c) {
+		if c.Kind != "mpim" {
+			return c, true
+		}
+		// a group DM is named for its members as the store holds them now
+		// (the toast waited for them: noteMembers), not as the sidebar's
+		// snapshot did: a closed group DM's members are never read for
+		// the sidebar, so its row named only those held then
+		// (RawUser: nothing asked; a lookup here brought a second
+		// users/info beside the toast's own, and its "names" a pass over
+		// everything on screen for people nothing draws)
+		if v, ok := b.core.Conv(ch); ok {
+			ci := *c
+			ci.Name = b.mpimNameBy(&v, b.selfID, b.core.RawUser)
+			return &ci, noteNamed(&ci)
+		}
 		return c, true
 	}
 	if b.core == nil || ch == "" {
@@ -153,9 +174,9 @@ func (b *backend) channelToText(id, text string) string {
 // store's copy, converted again once noteResolve fetched them
 // (noteFresh), is there only for a conversation whose messages it keeps
 // (no group DM or DM not opened lately, no thread it never loaded). One
-// still unknown after the wait, or past noteResolveMax, reads as nothing,
-// never the id (the views' mentionText); an id that isn't a member's
-// keeps its text.
+// still unknown after the wait, or past noteMembersMax, reads as nothing,
+// never the id (the views' mentionText), and one with a label of its own
+// keeps the label; an id that isn't a member's keeps its text.
 func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 	if s.ID == "" || b.core == nil {
 		return "", false
@@ -167,10 +188,12 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 		if !core.LooksLikeMemberID(s.ID) {
 			return "", false
 		}
-		if n, ok := b.core.S.MemberName(s.ID); ok && n != "" {
+		if n, ok := b.core.S.MemberNameHeld(s.ID); ok && n != "" { // waited for: nothing asked again
 			return "@" + strings.TrimPrefix(n, "@"), true
 		}
-		return "", true
+		// still unknown: the id the conversion fell back to reads as
+		// nothing; a mention's own label (<@U…|dana>) stays
+		return "", s.Text == "@"+s.ID
 	}
 	return "", false
 }
@@ -212,7 +235,7 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 // noteMembers are the people a notification names that the store doesn't
 // hold: its sender, the members its text mentions, and its conversation's
 // people, a DM's partner and a group DM's members, whose names title it
-// (at most noteResolveMax). Core announces a message the moment it
+// (at most noteMembersMax). Core announces a message the moment it
 // arrives, its rows asking for the people they draw; the notification
 // waits for them, as Slack's showNotification waits for
 // ensureModelsArePresent (which adds a DM's user and a group DM's
@@ -247,8 +270,8 @@ func (b *backend) noteMembers(m *core.Message) []string {
 		return nil
 	}
 	out := b.core.S.MissingUsers(ids)
-	if len(out) > noteResolveMax {
-		out = out[:noteResolveMax]
+	if len(out) > noteMembersMax {
+		out = out[:noteMembersMax]
 	}
 	return out
 }

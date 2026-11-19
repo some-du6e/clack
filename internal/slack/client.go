@@ -510,23 +510,24 @@ func refusedMethod(method string) bool {
 }
 
 // SignOutURL reports whether u calls one of the methods that end the
-// session (forbiddenMethods), its path read every way bannedPage reads it:
-// /api/auth.signout, /API/Auth.Revoke;x, /api//auth.signout/,
-// /api/%2561uth.signout and the like. A path plainPath refuses could be
-// read as one, so it counts.
+// session (forbiddenMethods), its path read every way bannedPage reads it
+// (readForms): /api/auth.signout, /API/Auth.Revoke;x, /api//auth.signout/,
+// /api/%2561uth.signout, a fullwidth "a" (U+FF41) in /api/auth.signout and
+// the like. A
+// path plainPath refuses could be read as one, so it counts. The method
+// name ends at the first character it can't hold (methodPrefix), so
+// "auth.signout%3fx" is auth.signout.
 func SignOutURL(u *url.URL) bool {
 	if u == nil {
 		return false
 	}
-	forms, ok := pathForms(u)
-	if !ok {
+	if !plainPath(u) {
 		return true
 	}
-	for _, p := range forms {
-		for _, f := range [2]string{p, readForm(p)} {
-			if segs := pathSegments(f); len(segs) >= 2 && segs[0] == "api" && forbiddenMethods[methodPrefix(segs[1])] {
-				return true
-			}
+	forms, _ := readForms(u) // ok: plainPath already checked it
+	for _, f := range forms {
+		if segs := pathSegments(f); len(segs) >= 2 && segs[0] == "api" && forbiddenMethods[methodPrefix(segs[1])] {
+			return true
 		}
 	}
 	return false
@@ -905,49 +906,57 @@ var dotLike = ". " + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0
 const maxDecodes = 4
 
 // plainPath reports whether u's path can't be read as another path by a
-// server that normalises it, however many times that server decodes it:
-// every form pathForms reads it in must be plain (plainForm). An encoded
-// slash that decodes to a real one only adds a segment, so a file named
-// "uploads%2F2024.jpg" still works; what it decodes to is checked like the
-// rest.
+// server that normalises it, however many times it decodes and
+// NFKC-normalises. Two checks, each over its own set of forms:
+//   - The raw decode chain (lenientUnescape from the wire path, up to
+//     maxDecodes) holds, at every stage, no byte a lenient UTF-8 decoder
+//     could read as '.', '/' or '\' (plainBytes: an overlong lead, or
+//     0xAE/0xAF/0xDC), no backslash, NUL or control byte.
+//   - No form a normalising server reads (readForms) has a dot segment
+//     (hasDotSegment). readForm folds the separators, so a '\' or a
+//     fullwidth solidus there is a separator, not a refusal; only the wire
+//     bytes are held to the stricter rule above. What each of those forms
+//     decodes to is still checked for smuggled and control bytes
+//     (plainDecoded), because NFKC can turn a fullwidth percent into an
+//     escape the raw chain never decoded.
+//
+// An encoded slash that decodes to a real one only adds a segment, so a
+// file named "uploads%2F2024.jpg" still works; what it decodes to is
+// checked like the rest.
 func plainPath(u *url.URL) bool {
-	_, ok := pathForms(u)
-	return ok
-}
-
-// pathForms returns the forms of u's path a lenient server could read: as
-// sent (EscapedPath), then after each decode until decoding changes
-// nothing. ok is false when one of them isn't plain (plainForm) or the
-// path still changes after maxDecodes decodes.
-func pathForms(u *url.URL) (forms []string, ok bool) {
 	p := u.EscapedPath()
 	for i := 0; ; i++ {
-		if !plainForm(p) {
-			return nil, false
+		if !plainBytes(p) {
+			return false
 		}
-		forms = append(forms, p)
 		next := lenientUnescape(p)
 		if next == p {
-			return forms, true
+			break
 		}
 		if i == maxDecodes {
-			return nil, false
+			return false
 		}
 		p = next
 	}
+	forms, ok := readForms(u)
+	if !ok {
+		return false
+	}
+	for _, s := range forms {
+		if hasDotSegment(s) {
+			return false
+		}
+	}
+	return true
 }
 
-// plainForm checks one form of a path for plainPath. A byte that isn't
+// plainBytes checks one raw decode form for plainPath: a byte that isn't
 // part of valid UTF-8 is refused when a lenient decoder could read it as
-// '.', '/' or '\' (smuggles); any other reads as U+FFFD, which counts as
-// a dot in the segment test (a decoder may drop it, leaving only dots).
-// So a name with a literal "%" before two hex digits that aren't UTF-8
-// (100%Beef.jpg, a Latin-1 caf%E9.pdf typed as it was saved) still works,
-// and "..%BE" doesn't. The form may hold no backslash, NUL or other
-// control byte. Then, read as a normalising server could (readForm), no
-// segment, split on '/' and '\' with a ";…" parameter cut (some proxies
-// strip it), may be made only of dotLike.
-func plainForm(p string) bool {
+// '.', '/' or '\' (smuggles); any other reads as U+FFFD elsewhere. No
+// backslash, NUL or other control byte. So a name with a literal "%"
+// before two hex digits that aren't UTF-8 (100%Beef.jpg, a Latin-1
+// caf%E9.pdf typed as it was saved) still works, and "..%BE" doesn't.
+func plainBytes(p string) bool {
 	for i := 0; i < len(p); {
 		r, n := utf8.DecodeRuneInString(p[i:])
 		if r == utf8.RuneError && n == 1 && smuggles(p, i) {
@@ -958,31 +967,91 @@ func plainForm(p string) bool {
 		}
 		i += n
 	}
-	for _, seg := range strings.FieldsFunc(readForm(p), pathSep) {
+	return true
+}
+
+// readForms returns the forms a server that normalises Unicode could read
+// u's path in: readForm (NFKC, invalid bytes as U+FFFD, separators folded)
+// of the wire path, then of each further decode, until it stops changing
+// or maxDecodes. ok is false if it still changes after that. NFKC folds a
+// fullwidth or small percent (U+FF05, U+FE6A) to '%', so decoding must
+// continue over readForm's output and not only over the raw escapes:
+// "%EF%BC%852e" reads as "%2e", then as ".". These are the forms the dot,
+// bannedPage and SignOutURL checks all compare, so each catches a path a
+// decode→NFKC→decode server would resolve to a dot segment, /ssb/redirect
+// or a sign-out method.
+func readForms(u *url.URL) (forms []string, ok bool) {
+	s := readForm(u.EscapedPath())
+	for i := 0; ; i++ {
+		forms = append(forms, s)
+		dec := lenientUnescape(s)
+		if !plainDecoded(dec) {
+			return forms, false
+		}
+		next := readForm(dec)
+		if next == s {
+			return forms, true
+		}
+		if i == maxDecodes {
+			return forms, false
+		}
+		s = next
+	}
+}
+
+// plainDecoded checks one stage readForms decoded, before readForm reads
+// its invalid bytes as U+FFFD. NFKC can make a '%' (U+FF05, U+FE6A), so a
+// decode→NFKC→decode server meets bytes the raw chain never held:
+// "%EF%BC%85c0%EF%BC%85af" reads as "%c0%af", the overlong '/'. A byte a
+// lenient decoder could read as '.', '/' or '\' (smuggles) or a control
+// byte is refused there as on the raw chain. A backslash isn't: readForm
+// folds the fullwidth reverse solidi to one, and hasDotSegment splits on
+// it, so a name drawn with the fullwidth solidi (the (^o^) smiley the
+// tests use) keeps working.
+func plainDecoded(p string) bool {
+	for i := 0; i < len(p); {
+		r, n := utf8.DecodeRuneInString(p[i:])
+		if r == utf8.RuneError && n == 1 && smuggles(p, i) {
+			return false
+		}
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+		i += n
+	}
+	return true
+}
+
+// hasDotSegment reports whether s, a form readForms already NFKC-read, has
+// a path segment — split on '/' and '\', a ";…" parameter cut — made only
+// of dots, dot look-alikes, padding spaces or U+FFFD (dotLike).
+func hasDotSegment(s string) bool {
+	for _, seg := range strings.FieldsFunc(s, pathSep) {
 		if i := strings.IndexByte(seg, ';'); i >= 0 {
 			seg = seg[:i]
 		}
 		if seg != "" && strings.Trim(seg, dotLike) == "" {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // readForm is form p as a server that normalises Unicode could read it:
 // each byte that isn't UTF-8 as U+FFFD, then NFKC, which folds the
 // fullwidth solidus U+FF0F to '/', the fullwidth and small reverse solidi
-// U+FF3C and U+FE68 to '\', the dot look-alikes to dots and NBSP and the
-// other compatibility spaces to ' '. So "..%EF%BC%8Fssb" reads as "../ssb".
+// U+FF3C and U+FE68 to '\', the fullwidth and small percent U+FF05 and
+// U+FE6A to '%', the dot look-alikes to dots and NBSP and the other
+// compatibility spaces to ' '. So "..%EF%BC%8Fssb" reads as "../ssb".
 // Names keep working: NFKC composes an NFD "cafe" + U+0301 to the NFC one,
 // and Japanese and the like are unchanged.
 func readForm(p string) string {
 	return norm.NFKC.String(strings.ToValidUTF8(p, string(utf8.RuneError)))
 }
 
-// pathSegments is path p as bannedPage and SignOutURL compare it:
-// lower-cased, split on '/' and '\', ";…" parameters cut, empty segments
-// dropped.
+// pathSegments is a form readForms produced as bannedPage and SignOutURL
+// compare it: lower-cased, split on '/' and '\', ";…" parameters cut,
+// empty segments dropped.
 func pathSegments(p string) []string {
 	var segs []string
 	for _, s := range strings.FieldsFunc(strings.ToLower(p), pathSep) {
