@@ -10,6 +10,7 @@ package ui
 // states are saved, light and dark.
 
 import (
+	"context"
 	"encoding/json"
 	"image"
 	"image/png"
@@ -264,6 +265,32 @@ func TestThreadsAuditEscape(t *testing.T) {
 	if n := len(e.fs.ThreadsAuditMarks()); n != 1 {
 		t.Errorf("marked %d times, want once", n)
 	}
+}
+
+// The pane's reply box taking the focus lets its thread go from the
+// threads the viewer marked unread (onFooterInputFocus:
+// removeThreadFromManuallyMarkedUnreadArray), so the pane may then mark
+// it read again.
+func TestThreadsAuditReplyFocusLetsMarkGo(t *testing.T) {
+	e := threadsAuditEnv(t, false)
+	ch, root := fakeslack.ThreadsAuditChannel, fakeslack.ThreadsAuditAllUnread
+	e.openChannel(ch)
+	e.a.OpenThread(ch, root)
+	e.until("the thread", 15*time.Second, func() bool {
+		tv := e.threadView(ch, root)
+		return tv != nil && tv.ContentHeight() > 0
+	})
+	e.settle(300 * time.Millisecond)
+	app := e.a.Core()
+	if err := app.MarkThreadUnreadFrom(context.Background(), ch, root, fakeslack.ThreadsAuditReply(root, 1), core.MarkedInThreadsView); err != nil {
+		t.Fatal(err)
+	}
+	e.settle(300 * time.Millisecond)
+	if o := app.ThreadMarkedUnread(ch, root); o != core.MarkedInThreadsView {
+		t.Fatalf("marked unread from %q with the pane open, want %q", o, core.MarkedInThreadsView)
+	}
+	e.a.FocusThreadComposer(ch, root)
+	e.until("the reply box's focus letting the mark go", 5*time.Second, func() bool { return app.ThreadMarkedUnread(ch, root) == "" })
 }
 
 // The pane's states for the side-by-sides (THREADS_AUDIT_SHOTS_DIR).

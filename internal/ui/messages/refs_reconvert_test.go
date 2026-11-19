@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -190,13 +191,18 @@ return InjectRefs`))
 	wait("the file owner's name", rows(files, "cara | ", ""))
 	wait("the tab slug", rows(slugs, "Runbook in #ops", ""))
 	if patched {
-		// the rows of the messages core has draw the plugin's views
+		// the rows of the messages core has draw the plugin's views, each
+		// as its own view comes (a row re-reads its view every 250 ms, and
+		// one view's fetch can land a batch after another's)
 		wait("the plugin's text", rows([]string{ts(0)}, "PLAN", ""))
-		for _, k := range stored {
-			if r := v.s.rows[k]; r == nil || !r.viewed {
-				t.Errorf("the row of %s doesn't draw the plugin's view: %s", k, texts())
+		wait("every row of a message core has drawing the plugin's view", func() bool {
+			for _, k := range stored {
+				if r := v.s.rows[k]; r == nil || !r.viewed {
+					return false
+				}
 			}
-		}
+			return true
+		})
 	}
 
 	// Cara renames herself: the rows of her file say so (she sent none of
@@ -218,54 +224,76 @@ return InjectRefs`))
 // A rename that comes while a model's load is out finds none of the
 // load's messages to convert again, and the load's answer, converted
 // before the rename, lands with the old name: the model converts again
-// what the rename changed once the load is in (afterLoad).
+// what the rename changed once the load is in (afterLoad), for a channel's
+// newest page and for an older one. Through the hub's real loads
+// (conversations.history on the fake), the rename landing as each answer
+// is in (loadLanded).
 func TestRenameDuringLoad(t *testing.T) {
-	app, _, _ := shotsApp(t)
+	t.Run("newest", func(t *testing.T) { checkRenameDuringLoad(t, false) })
+	t.Run("older", func(t *testing.T) { checkRenameDuringLoad(t, true) })
+}
+
+func checkRenameDuringLoad(t *testing.T, older bool) {
+	app, fs, _ := shotsApp(t)
 	app.S.PutConv(slack.Conversation{ID: refsChan, Name: "launch", IsChannel: true, IsMember: true, NumMembers: 12})
-	base := time.Now().Add(-time.Hour).Unix()
-	ts := func(i int) string { return fmt.Sprintf("%d.%06d", base+int64(i)*60, 100+i) }
-	b, _ := json.Marshal(refsMessages(ts, 0, refsChan)[0])
-	var sm slack.Message
-	if err := json.Unmarshal(b, &sm); err != nil {
-		t.Fatal(err)
+	file := slack.File{ID: "F0LOADED01", Name: "plan.pdf", Title: "Launch plan", Mimetype: "application/pdf", Filetype: "pdf", PrettyType: "PDF",
+		Mode: "hosted", User: "UCARA0001", Size: 2048, URLPrivate: "https://files.invalid/plan.pdf", Permalink: "https://files.invalid/p/plan"}
+	fileTS := fs.PostFilesQuiet(refsChan, "UANA00001", "Here's the plan", []slack.File{file})
+	if older { // a page of newer messages over it: it comes with the older page
+		for i := 0; i < 120; i++ {
+			fs.PostQuiet(refsChan, "UBEN00001", fmt.Sprintf("newer %d", i))
+		}
 	}
-	app.S.SetLatest(refsChan, []slack.Message{sm}, false)
 	hb := hubFor(coreHost{app: app, th: theme.New(false)})
 	m := hb.channel(refsChan)
-	m.mu.Lock()
-	m.loading = true // a load is out
-	m.mu.Unlock()
-	answer := app.MessageFromSlack(refsChan, &sm) // converted as it came, before the rename
-	if got := refsOwners(&answer); len(got) != 1 || got[0] != "cara" {
-		t.Fatalf("the file's owner before the rename: %v", got)
+	var once sync.Once
+	hook := func(lm *model) {
+		lm.mu.Lock()
+		which := lm.older
+		lm.mu.Unlock()
+		if lm != m || which != older {
+			return
+		}
+		once.Do(func() {
+			refsUserChange(app, "kit.l") // as the answer is in, before it's in the model
+			for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(5 * time.Millisecond) {
+				m.mu.Lock()
+				seen := !m.reconv.Empty()
+				m.mu.Unlock()
+				if seen {
+					return
+				}
+			}
+			t.Error("the rename never reached the loading model")
+		})
 	}
-
-	refsUserChange(app, "kit.l")
-	deadline := time.Now().Add(5 * time.Second)
-	for {
+	loadLanded.Store(&hook)
+	t.Cleanup(func() { loadLanded.Store(nil) })
+	owners := func() []string {
 		m.mu.Lock()
-		seen := !m.reconv.Empty()
-		m.mu.Unlock()
-		if seen {
-			break
+		defer m.mu.Unlock()
+		if i := m.find(fileTS); i >= 0 {
+			return refsOwners(&m.msgs[i].m)
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the rename never reached the loading model")
-		}
-		time.Sleep(5 * time.Millisecond)
+		return nil
 	}
-
-	// the load lands as ensureLoaded lands it
+	hb.ensureLoaded(m)
+	if older {
+		until(t, 10*time.Second, "the newest page", func() {}, func() bool {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			return m.loaded && !m.loading && m.hasMore
+		})
+		hb.loadOlder(m)
+	}
+	until(t, 10*time.Second, "the file's message, converted again after the rename", func() {}, func() bool {
+		got := owners()
+		return len(got) == 1 && got[0] == "kit.l"
+	})
 	m.mu.Lock()
-	m.msgs = []entry{{m: answer, rev: m.bump()}}
-	m.loading = false
-	m.rev++
+	left := m.reconv
 	m.mu.Unlock()
-	hb.afterLoad(m)
-	m.mu.Lock()
-	got := refsOwners(&m.msgs[0].m)
-	m.mu.Unlock()
-	if len(got) != 1 || got[0] != "kit.l" {
-		t.Errorf("the load's copy, converted before the rename, names %v; want [kit.l]", got)
+	if !left.Empty() {
+		t.Errorf("the change recorded during the load is still pending after it landed: %+v", left)
 	}
 }

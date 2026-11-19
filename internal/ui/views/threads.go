@@ -10,8 +10,9 @@ package views
 // real composer (internal/ui/composer) for that card. Threads with unread
 // replies get a black-weight channel name and Slack's red "New" line
 // above the first unread reply; opening a thread (its replies link or its
-// reply box) marks it read. Measurements are from
-// /tmp/ui-views-spec/threads.md.
+// reply box) marks it read, and so does a new reply that lands on screen
+// while the viewer's attention is on the view (markNewReplies).
+// Measurements are from /tmp/ui-views-spec/threads.md.
 
 import (
 	"context"
@@ -48,7 +49,7 @@ import (
 )
 
 const (
-	thrLimit             = 10
+	thrLimit             = 8           // loadThreads' refreshThreads {limit: 8}
 	thrMsgPad    unit.Dp = 20          // message row side padding (avatar at card x+21)
 	thrMsgIndent unit.Dp = 20 + 36 + 8 // padding + avatar + gap
 	thrComposerH unit.Dp = 144
@@ -70,6 +71,9 @@ type thrItem struct {
 	// seq is the message change (core.MessageChangeSeq) the thread's
 	// copies are current as of (threads_live.go)
 	seq uint64
+	// window is the first reply of the latest getView window: the
+	// replies before it a refresh carried over (thrRefreshed)
+	window string
 }
 
 type thrData struct {
@@ -77,6 +81,31 @@ type thrData struct {
 	next    string
 	hasMore bool
 	convs   map[string]core.ConvRef
+	// unreads is the answer's threads_state.has_unreads (Slack's
+	// userHasUnreadThreads)
+	unreads bool
+	// load counts the loads that sorted the list afresh (Slack's
+	// refreshId): a realtime refresh or the next page keeps it
+	load int
+	// seq and mode stamp the answer with the fetch that brought it, so
+	// settle takes each answer once and in its own mode, whenever it
+	// lands (Threads.settled)
+	seq  int
+	mode actLoad
+	// gaps are the cards a refresh's window starts after: replies may have
+	// come between the card's newest and the window's first that neither
+	// has (thrRefreshed); settle fetches them (fillGap)
+	gaps []thrGap
+}
+
+// thrGap is a span a card may be missing: the replies of thread key after
+// its card's newest (after) and before the refresh window's first (before).
+type thrGap struct{ key, after, before string }
+
+// thrLineDrawn is a New line as a frame drew it (Threads.lines).
+type thrLineDrawn struct {
+	col   color.NRGBA
+	ghost bool
 }
 
 // thrCard is the per-thread widget state and cached header text.
@@ -109,11 +138,32 @@ type thrCard struct {
 	olderBusy  bool
 	olderStart bool
 	olderRes   atomic.Pointer[thrOlder]
+	// folds is the view's fold stamp when the card was made or last went
+	// back to its default first reply (fold): a stamp no other card and
+	// no remount repeats (Threads.folds), so a fetch asked for before it
+	// lands nowhere
+	folds uint64
+	// mid is the replies fillGap brought between the card's replies and a
+	// later refresh's window, oldest first, current as of message change
+	// midSeq: they take what changed after it as the older ones do
+	// (threads_live.go). One gap fetch at a time (gapOut): a refresh's gap
+	// while one is out widens gapNext, fetched when it lands; a failure
+	// cuts the card to its latest window, with floor the window's first
+	// reply for the answers asked for before the cut (fetch seq up to
+	// floorSeq), which may still carry older ones over, and gapBack the
+	// time the card's gaps cut it so at once instead of fetching
+	mid      []core.Message
+	midSeq   uint64
+	gapOut   bool
+	gapNext  thrGap
+	gapBack  time.Time
+	floor    string
+	floorSeq int
 
 	// olderSeq is the message change older is current as of
-	// (threads_live.go); shown is thrShown's older then latest replies,
-	// kept while neither changes (shownOf: the latest replies it was made
-	// with)
+	// (threads_live.go); shown is thrShown's older, filled and latest
+	// replies, kept while none of them changes (shownOf: the latest
+	// replies it was made with; whatever changes older or mid drops it)
 	olderSeq       uint64
 	shown, shownOf []core.Message
 }
@@ -163,6 +213,66 @@ type Threads struct {
 	read  map[string]string
 	sizes map[int]int // list element heights this frame (composer origins)
 	divAt int         // the item the "You’re up to date" divider sits above (-1: none)
+	// readKey is firstReadThreadKey for the load that sorted the list
+	// (readLoad, the data's load): the first shown thread with nothing
+	// unread, picked once, in that load's first frame or, while every
+	// thread is unread, when one is read
+	readKey  string
+	readLoad int
+	loads    int  // the loads started that sort the list afresh (thrData.load)
+	left     bool // the route moved off the view (PageLeft): it mounts again
+	// initial is initialLastReadByThread for the list's load (initLoad):
+	// the last read each thread had when it came into the list unread, ""
+	// for one read then or never read (threads_order.go noteEntries)
+	initial  map[string]string
+	initLoad int
+	// mounting is isDoingGlobalRefresh: a new visit's load is out (the
+	// floating loader, no divider); loadErr is the last failed load that
+	// sorts the list (Slack's errored: the error view over the threads)
+	mounting bool
+	loadErr  error
+	// named are the threads replies and thread_subscribed named since the
+	// last load that sorts the list, each with the order it was named in
+	// (guarded by mu, as namedSeq): a refresh puts on top only those
+	// (thrRefresh), as maybeUpdateAllThreadsOnNewMessage does
+	named    map[string]uint64
+	namedSeq uint64
+	// reconn is maybeRefreshAllThreads' reload waiting for the frame: a
+	// slow socket connect came while the view showed (guarded by mu)
+	reconn bool
+	// maxSeen is each thread's newest reply and last read as the last
+	// load left them, the props before Slack's componentDidUpdate; grew is
+	// the threads the load that just landed moved on (their maxSeen
+	// before it), waiting for the frame that lays them out
+	// (markNewReplies)
+	maxSeen, grew map[string]thrSeen
+	// settled is the answer settle took last (thrData.seq); seq counts the
+	// fetches started
+	settled, seq int
+	// markVisible's runs (maybeMarkVisibleThreadAsRead): those due (a
+	// load's 350 ms on, a scroll's), the list's last position, when it
+	// last moved and whether the scroll's trailing call is to come, and
+	// the viewer's attention in the last frame the view drew (attSeen: it
+	// has drawn one since it mounted) and whether it came back since
+	visAt      []time.Time
+	scrollPos  layout.Position
+	scrollAt   time.Time
+	scrollTail bool
+	attWas     bool
+	attSeen    bool
+	attBack    bool
+	// attLost is the host's count of the times the viewer's attention
+	// left (AttentionLost) as of the last frame: one a hidden window
+	// never drew still makes the next attentive frame an edge
+	attLost uint64
+	// folds stamps the cards: each one made or folded takes the next
+	// (thrCard.folds), so no fetch outlives its card's state, across
+	// remounts too
+	folds uint64
+	// lines is the New lines the last frame drew, by thread: their line's
+	// colour and whether it was the ghost (what tests check as drawn)
+	lines map[string]thrLineDrawn
+	shown shownTracker
 	notes actNotes
 
 	// kb is the list's keyboard (vlist_keys.go) over Slack's rows:
@@ -213,9 +323,28 @@ func NewThreads(h Host) *Threads {
 // thunk) fetch the thread into the list, which Clack does with a refresh;
 // thread_marked patches the thread's last read in place; thread_unsubscribed
 // only flips the root's subscribed flag and update_thread_state only the
-// badges, so neither reloads.
+// badges, so neither reloads. A slow socket connect reloads the list
+// (maybeRefreshAllThreads). Replies and connects matter only while the view
+// shows: Slack's ThreadsView is unmounted on another page, and the next
+// visit loads afresh.
 func (v *Threads) match(ev core.Event) bool {
+	shown := v.shown.shown(v.h)
+	if shown {
+		v.noteNamed(ev) // the thread it names, for the refresh (threads_order.go)
+	}
 	switch ev.Type {
+	case "connection":
+		// k0ZD maybeRefreshAllThreads, on socket connected: nothing after a
+		// fast reconnect (its payload), else the allThreads view open gets
+		// 181D incrementAllThreadsRefreshCounter, which ThreadsView answers
+		// with reloadThreads (reconnectDue); a slow connect missed the gap
+		if ev.Connected && !ev.Fast && shown {
+			v.mu.Lock()
+			v.reconn = true
+			v.mu.Unlock()
+			v.h.Invalidate()
+		}
+		return false
 	case "names":
 		// the member fetcher (or bots.info) named people: the cards that
 		// left one out make their header again (membersIn), as Slack's
@@ -228,17 +357,19 @@ func (v *Threads) match(ev core.Event) bool {
 		}
 		return false
 	case "message":
-		return ev.Reply
+		return ev.Reply && shown
 	case "update", "delete":
 		// an edit, an app's chat.update, a reaction or a deletion of a
-		// message a card shows: the next frame reads it from core
-		// (threads_live.go), no reload; off screen the next draw does
+		// message a card shows (its root, its replies, the older ones it
+		// loaded and the gaps it filled: noteLiveKeys): the next frame
+		// reads it from core (threads_live.go), no reload; off screen the
+		// next draw does
 		if v.lv.wakes(ev) && v.lv.shown.shown(v.h) {
 			v.h.Invalidate()
 		}
 		return false
 	case "thread_subscription":
-		return ev.Name == "follow"
+		return ev.Name == "follow" && shown
 	case "thread_marked":
 		var e struct {
 			Subscription struct {
@@ -282,23 +413,44 @@ func (v *Threads) applyMarks() {
 func (v *Threads) Layout(gtx C) D {
 	v.lv.shown.mark(v.h)
 	v.frame()
+	v.shown.mark(v.h)
 	v.notes.drain(v.h)
 	v.w.watch(v.h, v.match)
 	v.applyLive() // threads_live.go
 	v.applyMarks()
+	v.settle() // a load that finished, before another can start and take its mode
+	if v.left {
+		v.left = false
+		if v.data.started() {
+			v.remount()
+		}
+	}
+	// componentDidUpdate's attention edge, against the frame before: none
+	// in the first frame of a mount (its props have no earlier attention).
+	// Slack renders on the attention's every change; a window minimized
+	// or hidden draws no frame without it, so the host's count of the
+	// times it left tells one that went and came back between frames
+	att, lost := v.attention(), v.attentionLost()
+	v.attBack = v.attSeen && att && (!v.attWas || lost != v.attLost)
+	v.attWas, v.attLost, v.attSeen = att, lost, true
+	clear(v.lines)
 	if !v.data.started() {
 		v.load(actFresh)
 	}
 	if v.retry.Clicked(gtx) {
-		v.load(actFresh)
+		v.tryAgain()
 	}
 	if v.retryMore.Clicked(gtx) {
 		v.failedCursor = ""
 	}
-	if v.w.due(gtx, 5*time.Second) && !(v.data.busy() && v.mode == actFresh) {
+	if v.reconnectDue() {
+		v.reloadThreads()
+	}
+	// not while a load that sorts the list is out: its staleness waits for
+	// the next frame after it (due clears it)
+	if !(v.data.busy() && v.mode == actFresh) && v.w.due(gtx, 5*time.Second) {
 		v.load(actRefresh)
 	}
-	v.settle()
 
 	st := thrViewClass.Enter(gtx, 0, 0)
 	defer st.Leave()
@@ -370,24 +522,72 @@ func (v *Threads) head(gtx C) D {
 	return D{Size: image.Pt(w, h)}
 }
 
-// settle runs once after each load finishes.
+// settle takes in what the loads brought, at the top of each frame, of
+// body and of every fetch: each answer once, in the mode of the fetch it
+// came from (its stamp), whenever it landed, so one that lands between a
+// frame's checks or just before the next fetch is still settled; then the
+// end of the load that was out, a failure's errored and "Load more".
 func (v *Threads) settle() {
+	page, _, err := v.data.get()
+	if page.seq != 0 && page.seq != v.settled {
+		v.settled = page.seq
+		v.took(page)
+	}
 	if !v.wasBusy || v.data.busy() {
 		return
 	}
 	v.wasBusy = false
-	for _, c := range v.cards {
-		c.built = false
-	}
 	if v.paging {
 		v.paging = false
-		if _, _, err := v.data.get(); err != nil {
+		if err != nil {
 			v.failedCursor = v.pageCursor
 		}
 	}
+	if err != nil && v.mode == actFresh {
+		v.loadErr = err // loadThreads' errored, over whatever threads the view holds
+	}
 }
 
-func (v *Threads) load(mode actLoad) {
+// took is an answer landing (settle). A load that sorts the list ends the
+// global refresh and errored, its new refreshId folds every card, and
+// 350 ms on loadThreads marks the threads whose unread row shows read
+// (setTimeout(maybeMarkVisibleThreadAsRead, 350): markVisible). Another
+// keeps the cards cut to their window since it went out (keepFloors),
+// and a refresh's gaps are fetched (fillGap).
+func (v *Threads) took(page thrData) {
+	for _, c := range v.cards {
+		c.built = false
+	}
+	if page.mode == actFresh {
+		v.loadErr, v.mounting = nil, false
+		for _, c := range v.cards {
+			v.fold(c)
+		}
+		v.visAt = append(v.visAt, time.Now().Add(thrMarkDelay))
+	} else {
+		v.keepFloors(page) // threads_order.go
+		page, _, _ = v.data.get()
+	}
+	for _, g := range page.gaps {
+		v.fillGap(page, g) // threads_order.go
+	}
+	v.landed(page) // threads_order.go
+}
+
+// load fetches the threads: actFresh page 1 sorted afresh (the view's
+// first load, Try Again), actRefresh page 1 again for realtime news,
+// merged into the list in place (thrRefresh), actMore the next page.
+func (v *Threads) load(mode actLoad) { v.fetch(mode, false) }
+
+// reload is ThreadsView's loadThreads on a mount, or reloadThreads after
+// its sidebar row is clicked again: page 1 sorted afresh, a new refreshId
+// (a new "You’re up to date" thread). Slack's store keeps the threads
+// loaded before, so they stay on screen until the answer replaces them,
+// and the list keeps its scroll (nextScrollTop).
+func (v *Threads) reload() { v.fetch(actFresh, true) }
+
+func (v *Threads) fetch(mode actLoad, keep bool) {
+	v.settle() // one that landed since the last frame: this load takes its mode
 	c := v.h.Core()
 	v.lv.log.start(c) // the messages change from here on (threads_live.go)
 	old, _, _ := v.data.get()
@@ -396,49 +596,162 @@ func (v *Threads) load(mode actLoad) {
 		cursor = old.next
 		v.pageCursor = cursor
 	}
+	load := old.load
 	if mode == actFresh {
-		for _, c := range v.cards {
-			if c.comp != nil {
-				c.comp.Close()
+		v.loads++
+		load = v.loads
+		if !keep {
+			for _, c := range v.cards {
+				if c.comp != nil {
+					c.comp.Close()
+				}
 			}
+			v.cards = map[string]*thrCard{}
+			v.list.Position = layout.Position{}
+			v.scrollPos, v.scrollAt, v.scrollTail = layout.Position{}, time.Time{}, false // a new list, not a scroll
 		}
-		v.cards = map[string]*thrCard{}
-		v.list.Position = layout.Position{}
 		v.failedCursor = ""
+		v.sortingLoad() // threads_order.go: its answer covers what came before it
 	}
+	named := v.namedNow(mode) // threads_order.go
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
-	v.data.load(v.h, mode != actFresh, func(ctx context.Context) (thrData, error) {
-		p, err := c.Threads(ctx, cursor, thrLimit)
+	v.seq++
+	seq := v.seq
+	v.data.load(v.h, mode != actFresh || keep, func(ctx context.Context) (thrData, error) {
+		p, err := c.Threads(thrLoadCtx(ctx, mode), cursor, thrLimit)
 		if err != nil {
 			return thrData{}, err
 		}
 		fresh := thrFrom(p)
 		switch mode {
 		case actMore:
-			return thrJoin(old, fresh), nil
+			fresh = thrJoin(old, fresh)
 		case actRefresh:
-			if len(old.items) <= len(fresh.items) || len(fresh.items) == 0 {
-				return fresh, nil
-			}
-			return thrJoin(fresh, old), nil
+			fresh = thrRefresh(old, fresh, named, thrCarryLive(c))
+		default:
+			fresh.load = load
 		}
+		fresh.seq, fresh.mode = seq, mode
 		return fresh, nil
 	})
 }
 
+// PageLeft is the route moving off the view (the ui root's afterRoute):
+// Slack unmounts ThreadsView, and the next visit mounts it again. Its
+// componentWillUnmount clears the threads marked unread
+// (clearThreadsFromManuallyMarkedUnreadArray).
+func (v *Threads) PageLeft() {
+	v.left = true
+	if app := v.h.Core(); app != nil {
+		app.ForgetThreadMarkedUnread("", "")
+	}
+}
+
+// remount is the view mounting again after another page (Slack's
+// componentDidMount): a new list at its top with no active row, the
+// store's threads sorted afresh with a new refreshId (resort) until
+// loadThreads' answer replaces them, the floating loader and no divider
+// meanwhile (isDoingGlobalRefresh). A new instance hasn't errored: a
+// failure from the last visit shows no more.
+func (v *Threads) remount() {
+	for _, c := range v.cards {
+		if c.comp != nil {
+			c.comp.Close() // saves the draft, as the unmounted reply box did
+		}
+	}
+	v.cards = map[string]*thrCard{}
+	v.list.Position = layout.Position{}
+	// a new list at its top: no scroll (componentDidMount's list has
+	// scrolled nowhere), and no check before loadThreads' 350 ms
+	v.scrollPos, v.scrollAt, v.scrollTail = layout.Position{}, time.Time{}, false
+	v.kb.active, v.kb.initial, v.kb.ring = "", "", false
+	v.mounting, v.loadErr = true, nil
+	v.grew, v.visAt = nil, nil // a new instance compares only with its own props
+	v.attSeen = false
+	v.resort() // threads_order.go
+	v.reload()
+}
+
+// tryAgain is ThreadsView's tryAgain, the error view's button: errored
+// goes, and loadThreads runs again over the threads the view holds (a
+// failed mount keeps its floating loader).
+func (v *Threads) tryAgain() {
+	v.loadErr = nil
+	v.reload()
+}
+
+// Reselect is the sidebar's Threads row clicked while the view shows:
+// AllThreadsRowElement's onClick dispatches
+// incrementAllThreadsRefreshCounter when its row is selected
+// (reloadThreads).
+func (v *Threads) Reselect() { v.reloadThreads() }
+
+// reloadThreads is incrementAllThreadsRefreshCounter landing (the
+// sidebar row clicked again, a slow reconnect): ThreadsView's
+// componentDidUpdate calls reloadThreads unless it is loading already
+// (this.loading: its own load or the next page's). reloadThreads drops
+// currentRefreshId first, so the threads are sorted afresh at once with a
+// new divider thread (resort) and every card goes back to its default
+// first reply (the older replies it loaded fold away, a fetch still out
+// with them), then the list goes to its top and loadThreads runs.
+func (v *Threads) reloadThreads() {
+	if v.data.busy() && v.mode != actRefresh {
+		return
+	}
+	v.resort()
+	for _, c := range v.cards {
+		v.fold(c)
+	}
+	v.list.Position = layout.Position{}
+	v.reload()
+	v.h.Invalidate()
+}
+
+// fold puts a card back to its default first reply: the older replies it
+// loaded and the gaps it filled go, and a fetch for either still out lands
+// nowhere (a new stamp). A failed gap's backoff stays (gapBack).
+func (v *Threads) fold(c *thrCard) {
+	c.older, c.olderStart, c.mid, c.shown, c.built = nil, false, nil, nil, false
+	c.gapOut, c.gapNext, c.floor = false, thrGap{}, ""
+	c.folds = v.nextFold()
+}
+
+// nextFold is a new card stamp (Threads.folds).
+func (v *Threads) nextFold() uint64 {
+	v.folds++
+	return v.folds
+}
+
+// cardOf is thread t's card, made on first use.
+func (v *Threads) cardOf(t *thrItem) *thrCard {
+	c := v.cards[t.key]
+	if c == nil {
+		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS, folds: v.nextFold()}
+		v.cards[t.key] = c
+	}
+	return c
+}
+
+// thrFrom is an answer's threads in processThreads' order (thrSort).
 func thrFrom(p core.ThreadsPage) thrData {
-	d := thrData{next: p.Next, hasMore: p.HasMore, convs: p.Convs}
+	d := thrData{next: p.Next, hasMore: p.HasMore, convs: p.Convs, unreads: p.State.Unread}
 	d.items = make([]thrItem, 0, len(p.Threads))
 	for _, t := range p.Threads {
-		d.items = append(d.items, thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t, seq: p.MsgSeq})
+		it := thrItem{key: t.Channel + "/" + t.Root.TS, Thread: t, seq: p.MsgSeq}
+		if len(t.Replies) > 0 {
+			it.window = t.Replies[0].TS
+		}
+		d.items = append(d.items, it)
 	}
 	thrSort(d.items)
 	return d
 }
 
-// thrJoin returns a's threads then b's that aren't in a, with b's cursor
-// (pagination: a = loaded, b = next page; refresh: a = fresh first page,
-// b = everything loaded before).
+// thrJoin is the next page b after the threads loaded, a: b's threads that
+// aren't in a after a's, in b's own order, with b's cursor. Slack's
+// appendMoreThreads appends the page's keys (uniq([...ordered, ...page]),
+// the page sorted within itself by processThreads); nothing loaded before
+// moves.
 func thrJoin(a, b thrData) thrData {
 	seen := make(map[string]bool, len(a.items))
 	items := make([]thrItem, 0, len(a.items)+len(b.items))
@@ -451,8 +764,59 @@ func thrJoin(a, b thrData) thrData {
 			items = append(items, t)
 		}
 	}
-	thrSort(items)
-	return thrData{items: items, next: b.next, hasMore: b.hasMore, convs: actRefs(a.convs, b.convs)}
+	return thrData{items: items, next: b.next, hasMore: b.hasMore, convs: actRefs(a.convs, b.convs), unreads: b.unreads, load: a.load}
+}
+
+// thrRefresh is a realtime refresh's page 1, fresh, over the threads
+// listed, old. Slack sorts the list only on a load (a new refreshId) and
+// takes realtime replies one at a time: a reply in a listed thread leaves
+// it where it is, its card gaining the reply (maybeUpdateAllThreadsOnNewMessage
+// returns early), and a followed thread the list doesn't have that a new
+// reply or thread_subscribed names is fetched and put first
+// (prependThread), its key going to the top of the order while the viewer
+// has unread threads (ThreadsView's getDerivedStateFromProps). So listed
+// threads keep their places with the page's copy of them (thrRefreshed),
+// the page's threads in named go on top newest first, and threads the
+// page doesn't have stay (a left channel's are drawn no more: shownItems).
+// Its other threads stay out: one that only moved into page 1 because a
+// listed one left it (unfollowed, its root deleted, its channel left) has
+// no event, and comes with the next page, after the list, as
+// appendMoreThreads brings it. An empty list takes the page as it is,
+// sorted (an empty order is sorted again).
+func thrRefresh(old, fresh thrData, named map[string]bool, carry thrCarry) thrData {
+	if len(old.items) == 0 {
+		fresh.load = old.load
+		return fresh
+	}
+	at := make(map[string]int, len(fresh.items))
+	for i, t := range fresh.items {
+		at[t.key] = i
+	}
+	listed := make(map[string]bool, len(old.items))
+	for _, t := range old.items {
+		listed[t.key] = true
+	}
+	items := make([]thrItem, 0, len(old.items)+len(fresh.items))
+	if fresh.unreads {
+		for _, t := range fresh.items {
+			if !listed[t.key] && named[t.key] {
+				items = append(items, t)
+			}
+		}
+		sort.SliceStable(items, func(i, j int) bool { return actTSLess(items[j].sortTS(), items[i].sortTS()) })
+	}
+	var gaps []thrGap
+	for _, t := range old.items {
+		if i, ok := at[t.key]; ok {
+			var g thrGap
+			var gap bool
+			if t, g, gap = thrRefreshed(t, fresh.items[i], carry); gap { // threads_order.go
+				gaps = append(gaps, g)
+			}
+		}
+		items = append(items, t)
+	}
+	return thrData{items: items, next: old.next, hasMore: old.hasMore, convs: actRefs(old.convs, fresh.convs), unreads: fresh.unreads, load: old.load, gaps: gaps}
 }
 
 // latest is the newest reply ts shown for a thread (or the root's).
@@ -486,15 +850,24 @@ func (v *Threads) unread(t *thrItem) int {
 	return max(n, t.UnreadCount)
 }
 
-// markRead marks a thread read up to its latest reply: locally at once,
-// then with subscriptions.thread.mark.
+// markRead marks an unread thread read up to its latest reply (sendRead).
 func (v *Threads) markRead(t *thrItem) {
-	if v.unread(t) == 0 {
-		return
+	if v.unread(t) > 0 {
+		v.sendRead(t)
 	}
+}
+
+// sendRead is setThreadLastRead {lastRead: maxMarkableTs, read: true}:
+// the thread read up to its latest reply, locally at once, then with
+// subscriptions.thread.mark. A thread the viewer had marked unread leaves
+// ThreadsMarkedUnread (removeThreadFromManuallyMarkedUnreadArray).
+func (v *Threads) sendRead(t *thrItem) {
 	ts := t.latest()
 	v.read[t.key] = ts
 	c, ch, root := v.h.Core(), t.Channel, t.Root.TS
+	if c != nil {
+		c.ForgetThreadMarkedUnread(ch, root)
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -504,19 +877,53 @@ func (v *Threads) markRead(t *thrItem) {
 	}()
 }
 
-// thrSort puts threads with unread replies first, keeping Slack's order
-// otherwise.
+// sortTS is the thread's newest activity, processThreads' sortTs: the
+// newest reply the answer has (unread_replies, latest_replies; the root's
+// latest_reply names it too), else the root.
+func (t *thrItem) sortTS() string {
+	ts := t.Root.TS
+	if lr := t.Root.LatestReply; lr != "" && actTSLess(ts, lr) {
+		ts = lr
+	}
+	if n := len(t.Replies); n > 0 && actTSLess(ts, t.Replies[n-1].TS) {
+		ts = t.Replies[n-1].TS
+	}
+	return ts
+}
+
+// thrSort is the order Slack's client gives threads on every load, the
+// server's whatever it was: processThreads (boot-shared zoZ+) sorts by
+// `${hasUnreads ? 1 : 0}-${sortTs}` descending and ThreadsView's
+// sortThreads (8orQ) by unread then maxMarkableTs the same way, so threads
+// with unread replies come first, then each group newest activity first.
 func thrSort(items []thrItem) {
 	sort.SliceStable(items, func(i, j int) bool {
-		return items[i].UnreadCount > 0 && items[j].UnreadCount == 0
+		if ui, uj := items[i].UnreadCount > 0, items[j].UnreadCount > 0; ui != uj {
+			return ui
+		}
+		return actTSLess(items[j].sortTS(), items[i].sortTS())
 	})
 }
 
 func (v *Threads) body(gtx C) D {
+	v.settle() // an answer that landed since the frame began: drawn settled
 	page, loaded, err := v.data.get()
+	page.items = v.shownItems(page.items) // threads_order.go
 	n := len(page.items)
+	reloading := v.data.busy() && v.mode == actFresh
+	if v.loadErr != nil || n == 0 {
+		// no list: nothing to judge replies against (Slack's early return
+		// without a listRef, the errored view); maxSeen keeps up, and a
+		// mark check due finds no list and is spent (threads_order.go)
+		v.grew = nil
+		v.spendChecks(gtx)
+	}
 	switch {
-	case !loaded && n == 0:
+	case v.loadErr != nil: // errored: the view's error state, whatever threads it holds
+		return v.emptyState(gtx, "", nsThreads.T(thrErrText), friendlyErr(v.loadErr), &v.retry, nsThreads.T("Try Again"))
+	case n == 0 && (!loaded || reloading && (v.mounting || err != nil)):
+		// no threads to show while the first load, a mount's or Try
+		// Again's is out: the loading view, not a stale error's
 		return layout.Inset{Top: 16}.Layout(gtx, func(gtx C) D { return v.skeleton(gtx, 5, 36) })
 	case err != nil && n == 0:
 		return v.emptyState(gtx, "", nsThreads.T(thrErrText), friendlyErr(err), &v.retry, nsThreads.T("Try Again")) // MessageContainerError
@@ -526,7 +933,11 @@ func (v *Threads) body(gtx C) D {
 	failed := v.failedCursor != "" && v.failedCursor == page.next
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	clear(v.sizes)
-	div := v.firstRead(page.items)
+	if page.load != v.readLoad { // sorted afresh: a new refreshId, a new divider thread
+		v.readKey, v.readLoad = "", page.load
+	}
+	v.noteEntries(page) // threads_order.go
+	div := v.firstRead(page)
 	v.divAt = div
 	v.kb.setItems(v.kbItems(page.items))
 	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick, Key: func(e key.Event, active string) bool { return v.kbKey(gtx, e, active) },
@@ -551,6 +962,18 @@ func (v *Threads) body(gtx C) D {
 	})
 	v.kb.area(gtx, image.Rectangle{Max: d.Size})
 	v.kb.after()
+	if p := v.list.Position; v.mounting && p.First == 0 {
+		// the "global-loading" row (threads_order.go), in the list
+		st := clip.Rect(image.Rectangle{Max: d.Size}).Push(gtx.Ops)
+		v.floatingLoader(gtx, d.Size.X, -p.Offset)
+		st.Pop()
+	}
+	if v.markNewReplies(page) { // threads_order.go
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if v.visibleDue(gtx) && v.markVisible(page) { // threads_order.go
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	v.placeComposers(gtx, page.items)
 	if page.hasMore && page.next != "" && !failed && !v.data.busy() &&
 		v.list.Position.First+v.list.Position.Count >= n-2 {
@@ -631,12 +1054,10 @@ const (
 )
 
 // upToDate is Slack's threads-view Divider ("You’re up to date") before
-// the first thread that was already read when the view loaded, once no
-// thread above it has unread replies (get_rows_and_keys: the divider row
-// goes before firstReadThreadKey unless it's the first thread or a thread
-// above still has replies newer than its initial last read). It's a 1px
-// #dddddd line with the 700 #616061 label on the page background in a
-// rounded pill (padding 4px 12px); margin 32px above, 20px below.
+// the first thread that was already read when the view loaded (where and
+// when: firstRead). It's a 1px #dddddd line with the 700 #616061 label on
+// the page background in a rounded pill (padding 4px 12px); margin 32px
+// above, 20px below.
 func (v *Threads) upToDate(gtx C) D {
 	w := gtx.Constraints.Max.X
 	top, bottom := gtx.Dp(32), gtx.Dp(20)
@@ -657,25 +1078,53 @@ func (v *Threads) upToDate(gtx C) D {
 }
 
 // firstRead is the index of the thread Slack puts the "You’re up to
-// date" divider before, or -1: the first thread that had no unread
-// replies at load, when it isn't the first one and every thread above it
-// has since been read.
-func (v *Threads) firstRead(items []thrItem) int {
+// date" divider before, or -1. That thread is firstReadThreadKey
+// (getDerivedStateFromProps): the first one in the order with nothing
+// unread among the threads mapStateToProps shows (page holds only those),
+// picked in the first frame of the load that sorts the list and kept
+// through realtime refreshes and pages, whatever they bring to it. While
+// there is none, the first thread read since is picked (Slack looks again
+// while it has none). get_rows_and_keys draws the divider unless
+// the view's load is out (isDoingGlobalRefresh), the thread is the first
+// one, or a thread from it on (dropWhile, NbLH: never one above it) has a
+// reply from someone else newer than the last read it came into the list
+// with (initialLastReadByThread: unread then, read before). Threads sort
+// unread first, so after a load the divider shows at once, whatever is
+// unread above it; a page bringing an unread thread in below hides it.
+func (v *Threads) firstRead(page thrData) int {
+	items := page.items
+	key := v.readKey
+	if key == "" {
+		for i := range items {
+			if v.unread(&items[i]) == 0 {
+				v.readKey, key = items[i].key, items[i].key
+				break
+			}
+		}
+	}
+	at := -1
 	for i := range items {
-		if items[i].UnreadCount > 0 {
+		if items[i].key == key && key != "" {
+			at = i
+			break
+		}
+	}
+	if at <= 0 || v.mounting {
+		return -1
+	}
+	self := v.selfID()
+	for j := at; j < len(items); j++ {
+		lr := v.initial[items[j].key]
+		if lr == "" {
 			continue
 		}
-		if i == 0 {
-			return -1
-		}
-		for j := 0; j < i; j++ {
-			if v.unread(&items[j]) > 0 {
+		for _, m := range thrShown(&items[j], v.cards[items[j].key]) { // the thread's messages
+			if m.User != self && actTSLess(lr, m.TS) {
 				return -1
 			}
 		}
-		return i
 	}
-	return -1
+	return at
 }
 
 func (v *Threads) footer(gtx C, failed bool) D {
@@ -851,11 +1300,7 @@ func (v *Threads) msgHover() color.NRGBA {
 }
 
 func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
-	c := v.cards[t.key]
-	if c == nil {
-		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS}
-		v.cards[t.key] = c
-	}
+	c := v.cardOf(t)
 	if c.built && (c.name == t.Channel || c.name == "#"+t.Channel || c.name == unknownChannelName() || c.name == "#"+unknownChannelName()) {
 		// Built before core knew the conversation (early boot, or a
 		// channel it's still looking up: convTitle's placeholder): retry.
@@ -914,7 +1359,7 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef, y0 in
 		v.openReply(t, c)
 	}
 	nameW := wBold
-	if v.unread(t) > 0 {
+	if v.drawUnread(t) > 0 { // threads_order.go
 		nameW = wBlack
 	}
 	st := thrItemClass.EnterAttr(gtx, 0, 0, "data-item-key", c.itemKey)
@@ -1014,9 +1459,11 @@ type thrSub struct {
 	y, h int
 }
 
-// openReply swaps in the card's real composer and focuses it.
+// openReply swaps in the card's real composer and focuses it. Opening it
+// marks nothing: the box's focus does what onFooterInputFocus does
+// (footerFocus), and the threads the viewer passes on the way are marked
+// by the check over what shows once the list is still (markVisible).
 func (v *Threads) openReply(t *thrItem, c *thrCard) {
-	v.markRead(t)
 	ch, ok := v.h.(composer.Host)
 	if !ok {
 		v.h.OpenThread(t.Channel, t.Root.TS)
@@ -1031,16 +1478,32 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 		c.comp.OnFocusList = func() { v.focusAboveFooter(key) }
 		// onDownArrowInEmptyInput: focusItemBelowInput
 		c.comp.OnDownWhenEmpty = func() { v.focusBelowFooter(key) }
+		// the box's onFocus: onFooterInputFocus
+		c.comp.OnFocus = func() { v.footerFocus(key) }
 	}
 	c.comp.Focus()
+}
+
+// footerFocus is onFooterInputFocus (threads-view.js 1521-1542), a card's
+// reply box taking the focus: a thread the viewer marked unread by hand
+// (from any container: threadsManuallyMarkedUnread) and follows is marked
+// read at its newest reply, even with nothing unread, and the hand mark
+// goes. Any other thread's box marks nothing, and a hand-marked thread
+// nobody follows keeps its mark.
+func (v *Threads) footerFocus(key string) {
+	app := v.h.Core()
+	t, _ := v.item(key)
+	if app == nil || t == nil || app.ThreadMarkedUnread(t.Channel, t.Root.TS) == "" || !v.followed(t) {
+		return
+	}
+	v.sendRead(t)
 }
 
 // card lays out the card's segments and returns its size and the top of
 // the reply box within it.
 func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h int)) (D, int) {
-	unread := v.unread(t)
-	replies := thrShown(t, c) // the loaded older replies, then the latest ones
-	unreadFrom := len(replies) - unread
+	replies := thrShown(t, c)               // the loaded older replies, then the latest ones
+	at, ghost := v.unreadRow(t, c, replies) // threads_order.go
 	compH, compBottom := 0, 20
 	if c.comp != nil {
 		compBottom = 0 // the real composer ends with its 24px hint bar
@@ -1061,14 +1524,18 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h 
 			if c.moreText == "" {
 				return D{}
 			}
-			return rec("load_older-"+t.key, v.olderRow(gtx, c))
+			d := v.olderRow(gtx, c)
+			if at == thrUnreadAtOlder { // the unread run starts among the hidden replies
+				v.newLine(gtx, d.Size.X, t.key, ghost)
+			}
+			return rec("load_older-"+t.key, d)
 		}),
 		layout.Rigid(func(gtx C) D {
 			return actStack(gtx, len(replies), func(gtx C, i int) D {
 				m := &replies[i]
 				d := v.msg(gtx, c.msg(m.TS), m, 8)
-				if unread > 0 && i == max(unreadFrom, 0) {
-					v.newLine(gtx, d.Size.X)
+				if i == at {
+					v.newLine(gtx, d.Size.X, t.key, ghost)
 				}
 				return rec(t.key+"-"+m.TS, d)
 			})
@@ -1095,15 +1562,26 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h 
 	return d, d.Size.Y - compBottom - compH
 }
 
-// newLine is Slack's unread divider drawn over the top edge of the first
-// unread reply: a 1px #e01e5a line with a bold 13px "New" at its right
-// end (padding 0 4px, 15px from the edge), as in the channel view.
-func (v *Threads) newLine(gtx C, w int) {
+// newLine is Slack's UnreadDivider (VxYf) for thread key's unread row,
+// drawn over the top edge of the row it goes before: a 1px #e01e5a line
+// with a bold 13px "New" at its right end (padding 0 4px, 15px from the
+// edge), as in the channel view. A ghost one ("unread_marked_read":
+// c-message_list__unread_divider--ghost) keeps its label, and its line
+// is at half opacity from its first frame (ghostLine).
+func (v *Threads) newLine(gtx C, w int, key string, ghost bool) {
 	red := v.th.C.NewLine
+	line := red
+	if ghost {
+		line = v.ghostLine(red) // threads_order.go
+	}
+	if v.lines == nil {
+		v.lines = map[string]thrLineDrawn{}
+	}
+	v.lines[key] = thrLineDrawn{line, ghost}
 	newTxt := nsMessages.T("New") // UnreadDivider's
 	tw := v.th.Measure(gtx, 13, wBold, newTxt)
 	lx := w - gtx.Dp(15) - gtx.Dp(4) - tw
-	fill(gtx, image.Rect(0, 0, lx-gtx.Dp(4), max(1, gtx.Dp(1))), red)
+	fill(gtx, image.Rect(0, 0, lx-gtx.Dp(4), max(1, gtx.Dp(1))), line)
 	defer op.Offset(image.Pt(lx, -gtx.Dp(9))).Push(gtx.Ops).Pop()
 	g := gtx
 	g.Constraints.Min = image.Point{}
@@ -1572,8 +2050,9 @@ func (v *Threads) kbText(gtx C, text, active string) {
 }
 
 // typeInto is onKeyDown's move for a printable key: the keyboard thread's
-// footer (focusOnKey footer-…) and its reply box take the focus, and the
-// box takes text.
+// footer (focusOnKey footer-…, which scrolls it into view) and its reply
+// box take the focus, and the box takes text. The list doesn't take the
+// focus back (focusOn would): the box has it, as focusInput gave it.
 func (v *Threads) typeInto(gtx C, active, text string) {
 	thread := v.kbRows[v.kb.initial].key
 	if thread == "" {
@@ -1587,7 +2066,11 @@ func (v *Threads) typeInto(gtx C, active, text string) {
 	if c.comp != nil && text != "" {
 		c.comp.InsertText(text)
 	}
-	v.kb.setActive("footer-"+thread, true)
+	footer := "footer-" + thread
+	v.kb.setActive(footer, true)
+	if !v.kb.inView(footer) {
+		v.kb.scrollTo(footer)
+	}
 	gtx.Execute(op.InvalidateCmd{})
 }
 

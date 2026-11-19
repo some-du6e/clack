@@ -114,12 +114,16 @@ func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 // subscription's lastRead, and the reading position is kept, as Slack
 // restores the scrollmark it saved on close (maybeSaveThreadScrollmarks),
 // except in a public channel the viewer isn't in, where it saves none
-// and the pane opens at its start position again.
+// and the pane opens at its start position again. The thread leaves
+// ThreadsMarkedUnread, as the pane's componentDidMount and a thread switch
+// (componentDidUpdate) call removeThreadFromManuallyMarkedUnreadArray:
+// showing it is reading it.
 func (v *ThreadView) Reopen() {
 	v.closeFind(false) // ThreadSearchBar unmounts with the pane
 	v.s.thr = threadRead{}
 	v.s.snap.rev = 0 // rebuild the rows with the new marker
 	if app := v.h.Core(); app != nil {
+		app.ForgetThreadMarkedUnread(v.ch, v.ts)
 		if cv, ok := app.Conv(v.ch); ok && cv.Kind == "channel" && cv.Preview {
 			v.s.positioned = false
 		}

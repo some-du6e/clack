@@ -153,6 +153,11 @@ func TextContrast(c color.NRGBA) float32 {
 var (
 	primaryTheme atomic.Pointer[Theme]
 	primaryDark  atomic.Bool
+	// primaryChromeLight: the primary theme's sidebar scope is light, its
+	// ink dark (an account theme's light sidebar: Karim's #FED4BE as the
+	// picker stores it). The light-text fade below y=.6 counts the chrome
+	// scope as a dark background only while it isn't.
+	primaryChromeLight atomic.Bool
 )
 
 // SetPrimary makes t the theme whose mode the text model follows (the
@@ -160,6 +165,31 @@ var (
 func SetPrimary(t *Theme) {
 	primaryTheme.Store(t)
 	primaryDark.Store(t != nil && t.Dark)
+	primaryChromeLight.Store(t != nil && chromeLight(&t.C))
+}
+
+// notePrimaryPalette is SetDark's: the primary theme's palette moved.
+func notePrimaryPalette(t *Theme) {
+	if primaryTheme.Load() == t {
+		primaryChromeLight.Store(chromeLight(&t.C))
+	}
+}
+
+// chromeLight reports whether the sidebar scope's ink is dark: a light
+// sidebar.
+func chromeLight(c *Palette) bool {
+	i := c.SidebarTextUnread
+	return i.A > 0 && (0.299*float32(i.R)+0.587*float32(i.G)+0.114*float32(i.B))/255 < 0.5
+}
+
+// onDarkBackground is whether text sits on a dark background, for the
+// light-text fade below y=.6: in the chrome scope unless the account
+// theme's sidebar is light, elsewhere while the primary theme is dark.
+func onDarkBackground(chrome bool) bool {
+	if chrome {
+		return !primaryChromeLight.Load()
+	}
+	return primaryDark.Load()
 }
 
 // notePrimaryDark is SetDark's: the primary theme switched modes.
