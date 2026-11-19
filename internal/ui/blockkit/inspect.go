@@ -139,7 +139,7 @@ func ModalSelects(h Host) []FieldInfo {
 // ShowWatched shows ov as Block Kit's date and time pickers show theirs:
 // wrapped to hear it close (tests: the inspect tool sees through the
 // wrapper).
-func ShowWatched(h Host, ov popups.Overlay) { h.ShowOverlay(&watch{Overlay: ov}) }
+func ShowWatched(h Host, ov popups.Overlay) { h.ShowOverlay(&watch{Overlay: ov, onDone: func() {}}) }
 
 // SubmitModal is the user pressing the modal's submit button.
 func SubmitModal(h Host) {
