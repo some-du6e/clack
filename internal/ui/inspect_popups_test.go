@@ -109,9 +109,17 @@ func TestInspectPicksBlockKitModal(t *testing.T) {
 		t.Errorf("over the modal's Edit button: outline %q %v (%v), want Slack's button.c-button.c-button--primary…[data-qa=wizard_modal_next] around %v", label, r, ok, next)
 	}
 	title := image.Pt(body.Min.X+100, body.Min.Y-34)
-	if label, r, ok := e.hoverAt(title); !ok || !strings.HasPrefix(label, "div.p-block_kit_modal__title") || !title.In(r) {
-		t.Errorf("over the modal's title: outline %q %v (%v), want its div.p-block_kit_modal__title (BlockKitModal.renderTitle)", label, r, ok)
+	if label, r, ok := e.hoverAt(title); !ok || !strings.Contains(label, "p-block_kit_modal__title") || !title.In(r) {
+		t.Errorf("over the modal's title: outline %q %v (%v), want its p-block_kit_modal__title", label, r, ok)
 	}
+	// ↑ from the title's text: the title, a div (BlockKitModal.renderTitle)
+	e.key(key.NameUpArrow, 0)
+	e.frame()
+	if label, r, ok := e.a.insp.Hovered(); !ok || !strings.HasPrefix(label, "div.p-block_kit_modal__title") || !title.In(r) {
+		t.Errorf("↑ from the modal's title text: outline %q %v (%v), want the title's div.p-block_kit_modal__title", label, r, ok)
+	}
+	e.key(key.NameDownArrow, 0)
+	e.frame()
 	block := image.Pt(body.Min.X+44, body.Min.Y+18)
 	if label, r, ok := e.hoverAt(block); !ok || !strings.Contains(label, "p-block_kit_renderer__block_wrapper") || !block.In(r) {
 		t.Errorf("over the modal's first block: outline %q %v (%v), want a p-block_kit_renderer__block_wrapper", label, r, ok)
