@@ -86,8 +86,9 @@ func TestVideoPipDocks(t *testing.T) {
 	}
 }
 
-// Close: the mini player goes and the inline player takes its time,
-// paused.
+// Close: the mini player goes, and the inline player takes its time,
+// paused, once it's laid out again (useResumeAfterPipClose runs as the
+// VideoPlayer mounts).
 func TestVideoPipClose(t *testing.T) {
 	viewerVideos(t)
 	e := filesEnv(t, image.Pt(1440, 900), false)
@@ -99,6 +100,9 @@ func TestVideoPipClose(t *testing.T) {
 	clk += time.Second
 	e.clickAt(vvMid(p.controls[len(p.controls)-1]), clk)
 	e.until("the mini player closed", 5*time.Second, func() bool { _, ok := pipShown(e); return !ok })
+	e.openChannel(fakeslack.FilesChannelID)
+	vvTile(t, e, ts)
+	e.settle(300 * time.Millisecond)
 	playing, el, ok := inlineState(e, ts)
 	if !ok || playing || el < at-100*time.Millisecond {
 		t.Errorf("after Close the inline player: playing %v at %v (%v), want paused at the mini player's %v", playing, el, ok, at)

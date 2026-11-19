@@ -104,8 +104,9 @@ type RangeSource struct {
 type RangeStats struct {
 	// Requests are the GETs made, Restarts those that took another GET's
 	// place, Failures those that ended without bringing anything new,
-	// BytesRead what they brought.
-	Requests, Restarts, Failures, BytesRead int64
+	// BytesRead what they brought, Merged those that ended where another
+	// had already brought the bytes on.
+	Requests, Restarts, Failures, BytesRead, Merged int64
 	// MaxInFlight is the most bodies open at once (at most maxGets).
 	MaxInFlight int
 	// Cached is the memory the blocks hold now.
@@ -525,6 +526,18 @@ func (s *RangeSource) run(ctx context.Context, g *rstream, prev chan struct{}) {
 			s.mu.Unlock()
 			return
 		}
+		if s.overtaken(g) {
+			// the bytes on from here are another GET's, in the cache: this
+			// one would bring them again (AVFoundation's two requests to
+			// the end, a GET each, read the whole file twice). Its readers
+			// read them from the cache, and on from the first byte
+			// missing through another GET.
+			g.ended = true
+			s.stats.Merged++
+			s.broadcast()
+			s.mu.Unlock()
+			return
+		}
 		s.mu.Unlock()
 		n, err := body.Read(buf)
 		s.mu.Lock()
@@ -560,6 +573,16 @@ func (s *RangeSource) run(ctx context.Context, g *rstream, prev chan struct{}) {
 		}
 		s.mu.Unlock()
 	}
+}
+
+// overtaken is whether g's next byte is cached already: another GET
+// brought it (g brings only bytes past its own). Its readers take them from
+// the cache, and a GET starts again at the first byte missing, if any.
+// Call with mu held.
+func (s *RangeSource) overtaken(g *rstream) bool {
+	idx := g.pos / s.opt.Block
+	bl := s.blocks[idx]
+	return bl != nil && int64(len(bl.data)) > g.pos-idx*s.opt.Block
 }
 
 // share is each GET's read-ahead. Call with mu held.

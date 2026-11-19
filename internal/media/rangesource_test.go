@@ -567,3 +567,54 @@ func TestProbeFixtures(t *testing.T) {
 		t.Errorf("a page: %+v", p)
 	}
 }
+
+// Two readers to the end of one file, the second starting past the
+// first's GET (AVFoundation's 0-end and X-end requests): once the first
+// GET reaches the bytes the second brought, it ends, and its reader takes
+// them from the cache, so the file comes once between them. Round 4 step
+// 5: each kept its GET to the end and the file came twice.
+func TestRangeSourceOverlappingReadersShare(t *testing.T) {
+	data := bigFile(6 * mb)
+	src, o := mediatest.Source("FRSO", data, false)
+	o.Delay = time.Millisecond // a network: the GETs take a while
+	s := media.NewRangeSource(src, media.RangeOptions{Ahead: 512 << 10, Near: 128 << 10, Log: quiet, Logged: new(sync.Map)})
+	defer s.Close()
+	read := func(off int64, step time.Duration, done chan<- error) {
+		buf := make([]byte, 64<<10)
+		for cur := off; cur < int64(len(data)); {
+			n, err := s.ReadSome(context.Background(), buf, cur)
+			if n > 0 && !bytes.Equal(buf[:n], data[cur:cur+int64(n)]) {
+				done <- fmt.Errorf("the bytes at %d differ", cur)
+				return
+			}
+			cur += int64(n)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				done <- err
+				return
+			}
+			time.Sleep(step)
+		}
+		done <- nil
+	}
+	a, b := make(chan error, 1), make(chan error, 1)
+	go read(0, 3*time.Millisecond, a) // the one behind
+	readAt(t, s, 0, 1)                // its GET is open
+	go read(2*mb, 0, b)               // past its read-ahead: a GET of its own
+	if err := <-b; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-a; err != nil {
+		t.Fatal(err)
+	}
+	st, rs := o.Stats(), s.Stats()
+	t.Logf("GETs at %v brought %d bytes of %d; %d merged", st.Offsets, st.Bytes, len(data), rs.Merged)
+	if len(st.Offsets) < 2 {
+		t.Skip("one GET served both: the second read came within the first's read-ahead")
+	}
+	if lim := int64(len(data)) * 6 / 5; st.Bytes > lim || rs.Merged == 0 {
+		t.Errorf("two readers to the end brought %d bytes of a %d-byte file (%d GETs merged): each read it", st.Bytes, len(data), rs.Merged)
+	}
+}
