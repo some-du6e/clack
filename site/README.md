@@ -133,7 +133,7 @@ page, and every shot is the light theme except the Mood Indigo tile.
 | Activity | `site/demo-activity.png`, the newest mention open beside the feed |
 | Themes | `site/demo-theme-{jade,lagoon,clementine}-light.png`, `site/demo-theme-mood-indigo-dark.png`, top-left 720×450 |
 
-The current set is from demo run 44440446799. Each demo run also runs
+The current set is from demo run 44570143774. Each demo run also runs
 `tools/images.mjs` on its own shots and uploads the result as `site-img`,
 so new pictures need no local tools:
 
@@ -143,9 +143,10 @@ gh run download <run> --repo some-du6e/clack --name site-img --dir <empty dir>
 cp <empty dir>/* site/img/
 ```
 
-The demo places its messages from the clock, so where the day dividers
-land changes with the time of the run: look at the pictures before
-committing them. `node tools/images.mjs --run <run> --from <demo-shots dir>`
+TestDemoSiteShots takes them in a zone where it's mid-morning
+(`shotZone`, with `demo.Options.Zone` placing the messages there too), so
+their times read as a working morning whatever hour the run starts. Still
+look at the pictures before committing them. `node tools/images.mjs --run <run> --from <demo-shots dir>`
 makes the same files locally, with sharp from `npm install`.
 
 ## The web demo
