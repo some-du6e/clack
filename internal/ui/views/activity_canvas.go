@@ -5,7 +5,8 @@ package views
 // contents are messages??"). Slack's item is an @-mention whose message
 // (subtype document_mention, document_mention {file_id, section_id,
 // mentioning_user_ids}) sits in the canvas's hidden file channel (core
-// canvas_channel.go), as do its comments' threads. Build 2c0d02ca130f:
+// canvas_channel.go), as do its comments' threads. Builds 2c0d02ca130f
+// and 548618a2169f2a90:
 //
 //   - the row's destination (VeYL, every layout: ActivityRowContentDense
 //     and -Detailed, ActivityRowContentSingleLine and -MultiLine) is the
@@ -15,17 +16,22 @@ package views
 //     That holds for every item of the file channel, mentions and
 //     comments alike;
 //   - the click (GMkG handleOnClickActivityItem): in the inbox a mention
-//     opens its message (jpad toMessage) in the file channel's Channel
-//     view, which has no canvas case, so Clack opens the canvas there
-//     instead (openMention). A comment's thread_v2 item opens its comment
-//     thread (toQuipCommentThread) and another reply opens its thread
-//     (toThread), in the column as any thread does. With the persistent
-//     detail panel any other item jumps to its message (wc0P
-//     jumpToMessage), which for a canvas's file channel opens the canvas
-//     in Primary at the mention's section, or with the comment's thread
-//     beside it (isSpaceship → lFpV openDocWithThreadTs → zsuR openDoc):
-//     the view's own pane, the inbox staying in the Sidebar
-//     (paneCanvasJump).
+//     opens its message (jpad toMessage) in the column, which Slack's
+//     RedirectFileChannel middleware turns into the thread view on the
+//     mention (ui canvas_open.go): the thread pane, the mention its
+//     highlighted root, the canvas its subtitle. A comment's thread_v2
+//     item opens its comment thread (toQuipCommentThread) and another
+//     reply opens its thread (toThread), in the column as any thread
+//     does. With the persistent detail panel any other item jumps to its
+//     message (wc0P jumpToMessage), which for a canvas's file channel
+//     opens the canvas in Primary at the mention's section, or with the
+//     comment's thread beside it (isSpaceship → lFpV openDocWithThreadTs →
+//     zsuR openDoc): the view's own pane, the inbox staying in the Sidebar
+//     (paneFileJump);
+//   - a list's file channel holds its records' comment threads: a reply
+//     there whose root names its record (slack_list) opens the record,
+//     its thread shown (GMkG's el.C, before any thread rule:
+//     selListRecord), and a jump opens the list at the record (isList).
 
 import (
 	"gioui.org/layout"
@@ -35,40 +41,41 @@ import (
 	"github.com/some-du6e/clack/internal/ui/chanent"
 )
 
-// CanvasWhere is the container a jump into a canvas's file channel opens
-// the canvas in.
-type CanvasWhere int
+// FileWhere is the container a navigation into a canvas's or a list's
+// file channel opens the canvas or list in.
+type FileWhere int
 
 const (
-	// CanvasSide is the secondary column (beside the inbox: Slack's
+	// FileSide is the secondary column (beside the inbox: Slack's
 	// Secondary).
-	CanvasSide CanvasWhere = iota
-	// CanvasFull is the full view, in place of the page: a link, Open in
+	FileSide FileWhere = iota
+	// FileFull is the full view, in place of the page: a link, Open in
 	// home.
-	CanvasFull
-	// CanvasPane is the Activity persistent detail panel's own pane:
+	FileFull
+	// FileInPane is the Activity persistent detail panel's own pane:
 	// Slack's Primary, the inbox staying in the Sidebar.
-	CanvasPane
+	FileInPane
 )
 
-// CanvasOpener is optionally implemented by the Host: Slack's
-// jumpToMessage into a canvas's file channel (wc0P isSpaceship → lFpV
-// openDocWithThreadTs → zsuR openDoc), which opens the canvas at a
-// mention's section, with a comment's thread beside it (ui/canvas_open.go).
-type CanvasOpener interface {
-	// OpenCanvasJump opens the jump to message ts (or thread) of canvas
-	// file channel ch, the canvas where says.
-	OpenCanvasJump(ch, thread, ts string, where CanvasWhere)
-	// CanvasShown reports whether the secondary column shows canvas
+// FileOpener is optionally implemented by the Host: Slack's jumpToMessage
+// into a canvas's or a list's file channel (wc0P isSpaceship → lFpV
+// openDocWithThreadTs → zsuR openDoc, which opens the canvas at a
+// mention's section, with a comment's thread beside it; isList, the list
+// at the record), and what its column shows of one (ui/canvas_open.go).
+type FileOpener interface {
+	// OpenFileJump opens the jump to message ts (or thread) of file
+	// channel ch, the canvas or list where says.
+	OpenFileJump(ch, thread, ts string, where FileWhere)
+	// FileShown reports whether the secondary column shows canvas or list
 	// fileID.
-	CanvasShown(fileID string) bool
-	// CanvasPane draws canvas fileID in the persistent detail panel's
-	// pane (after a CanvasPane jump).
-	CanvasPane(fileID string) layout.Widget
-	// CanvasPaneFile is the canvas the last CanvasPane jump opened, and
-	// whether it resolved: a canvas, or "" for none (the pane shows the
+	FileShown(fileID string) bool
+	// FilePane draws file fileID in the persistent detail panel's pane
+	// (after a FileInPane jump), as the jump left it.
+	FilePane(fileID string) layout.Widget
+	// PaneFile is the file the last FileInPane jump opened, and whether
+	// it resolved: a canvas or a list, or "" for none (the pane shows the
 	// item's conversation instead).
-	CanvasPaneFile() (fileID string, done bool)
+	PaneFile() (fileID string, done bool)
 }
 
 // actDocMention is an item's canvas mention (nil for other items).
@@ -109,73 +116,75 @@ func (v *Activity) canvasEnt(fileID, ch string) (chanent.Ent, bool) {
 	return chanent.Canvas(spans), true
 }
 
-// selMention is the chosen item's canvas when the item is a canvas
-// mention: its own document_mention, in the canvas's file channel.
-func (v *Activity) selMention() (fileID string, ok bool) {
+// fileChannel is the canvas or list whose file channel the item's
+// conversation is, and the file's kind ("canvas", "list"): a canvas
+// mention's own, else what core knows. pending is true while files.info
+// hasn't answered for a file channel (core asked).
+func (v *Activity) fileChannel(it *core.ActivityItem) (fileID, kind string, pending bool) {
+	if it == nil || it.Channel == "" {
+		return "", "", false
+	}
+	if dm := actDocMention(it); dm != nil && core.FileOfChannel(it.Channel) == dm.FileID {
+		return dm.FileID, "canvas", false
+	}
+	return v.h.Core().FileChannelKind(it.Channel, "")
+}
+
+// selListRecord is the list record the chosen item opens: a reply in a
+// list's file channel whose thread's root names its record (GMkG reads
+// the held root's slack_list, before any thread rule, and opens the
+// record with its thread: el.C, defaultContentType "thread"). rec is ""
+// for any other item.
+func (v *Activity) selListRecord() (listID, rec string) {
+	ch, thread := v.sel.Channel, v.selDesc.thread
+	if !v.selOK || ch == "" || thread == "" || !v.h.Core().IsFileChannelID(ch) {
+		return "", ""
+	}
+	if rec = v.h.Core().ListRecordOf(ch, thread, ""); rec == "" {
+		return "", ""
+	}
+	return core.FileOfChannel(ch), rec
+}
+
+// paneFileJump is the persistent detail panel's click on an item of a
+// canvas's or a list's file channel: Slack's jump to the item's message,
+// the canvas in Primary at a mention's section or with a comment's thread
+// beside it (core CanvasJump), the list at the record, here the view's
+// own pane. A thread_v2 item opens its comment thread instead
+// (toQuipCommentThread), in the pane as any thread does (JumpPane), unless
+// it is a list record's. ok is false for an item of any other
+// conversation.
+func (v *Activity) paneFileJump() bool {
 	if !v.selOK {
-		return "", false
+		return false
 	}
-	dm := actDocMention(&v.sel)
-	if dm == nil || core.FileOfChannel(v.sel.Channel) != dm.FileID {
-		return "", false
+	if _, rec := v.selListRecord(); v.sel.Type == "thread_v2" && rec == "" {
+		return false
 	}
-	return dm.FileID, true
-}
-
-// openMention opens the chosen canvas mention's canvas in the secondary
-// column beside the inbox, at the mention's section. Slack's inbox opens
-// the mention's message there (toMessage), in the file channel's Channel
-// view, which has no canvas case: the one place Clack opens the canvas
-// instead. ok is false for any other item, which opens as Slack opens it.
-func (v *Activity) openMention() bool {
-	fid, ok := v.selMention()
+	if _, kind, pending := v.fileChannel(&v.sel); kind == "" && !pending {
+		return false
+	}
+	fo, ok := v.h.(FileOpener)
 	if !ok {
 		return false
 	}
-	co, ok := v.h.(CanvasOpener)
-	if !ok {
-		return false
-	}
-	co.OpenCanvasJump(v.sel.Channel, "", v.selJumpTS(), CanvasSide)
-	v.selOut = true
-	v.selSec = co.CanvasShown(fid)
+	v.paneFileKey = v.selKey
+	fo.OpenFileJump(v.sel.Channel, v.selDesc.thread, v.selJumpTS(), FileInPane)
 	return true
 }
 
-// paneCanvasJump is the persistent detail panel's click on an item of a
-// canvas's file channel: Slack's jump to the item's message, the canvas
-// in Primary at a mention's section or with a comment's thread beside it
-// (core CanvasJump), here the view's own pane. A thread_v2 item opens its
-// comment thread instead (toQuipCommentThread), in the pane as any thread
-// does (JumpPane). ok is false for an item of any other conversation.
-func (v *Activity) paneCanvasJump() bool {
-	if !v.selOK || v.sel.Type == "thread_v2" {
-		return false
-	}
-	if _, ok, pending := v.canvasChannel(&v.sel); !ok && !pending {
-		return false
-	}
-	co, ok := v.h.(CanvasOpener)
-	if !ok {
-		return false
-	}
-	v.paneCanvasKey = v.selKey
-	co.OpenCanvasJump(v.sel.Channel, v.selDesc.thread, v.selJumpTS(), CanvasPane)
-	return true
-}
-
-// paneCanvasOf is the canvas the pane shows for the chosen item once its
-// jump resolved (paneCanvasJump), "" for none; wait is true while the
-// jump resolves (the pane shows the item's preview, as Slack's Primary
-// keeps what it showed until openDoc runs).
-func (v *Activity) paneCanvasOf() (fileID string, wait bool) {
-	if !v.selOK || v.paneCanvasKey != v.selKey {
+// paneFileOf is the canvas or list the pane shows for the chosen item
+// once its jump resolved (paneFileJump), "" for none; wait is true while
+// the jump resolves (the pane keeps what it showed, as Slack's Primary
+// does until openDoc runs: Activity.pane).
+func (v *Activity) paneFileOf() (fileID string, wait bool) {
+	if !v.selOK || v.paneFileKey != v.selKey {
 		return "", false
 	}
-	co, ok := v.h.(CanvasOpener)
+	fo, ok := v.h.(FileOpener)
 	if !ok {
 		return "", false
 	}
-	fileID, done := co.CanvasPaneFile()
+	fileID, done := fo.PaneFile()
 	return fileID, !done
 }

@@ -38,9 +38,11 @@ import (
 )
 
 // cmHost records where the Activity sends a click: a jump into a canvas
-// (OpenCanvasJump), a conversation (Navigate, JumpPane) or the column
-// beside the inbox (OpenThreadAt, OpenMessageSecondary). Its images are
-// the fake's own (fs.Fetch), and it records which ones the view asks for.
+// (OpenFileJump), a conversation (Navigate, JumpPane) or the column beside
+// the inbox (OpenThreadAt, OpenMessageSecondary). Its column shows what
+// the App's would: a canvas's file channel's message as the thread view on
+// it (Slack's RedirectFileChannel, ui/canvas_open.go). Its images are the
+// fake's own (fs.Fetch), and it records which ones the view asks for.
 type cmHost struct {
 	*vaHost
 	imgs      *imgcache.Cache
@@ -49,9 +51,10 @@ type cmHost struct {
 	routes    []string
 	jumps     []string // "ch/thread/ts"
 	opened    []string // the column: "ch", "ch/ts", "ch/thread/ts"
-	openSec   string   // the canvas the secondary column shows
-	paneDrawn string   // the canvas CanvasPane drew last
+	shows     string   // what the column shows: "ch/ts" a thread, "ch/" a conversation, a file id
+	paneDrawn string   // the canvas FilePane drew last
 	paneFile  string   // the canvas the last pane jump opened (resolved at once, as with the message held)
+	paneHeld  bool     // the pane jump is still out (PaneFile not done)
 	asked     []string // the image URLs fetched
 	splits    []string // OpenSplit's routes
 }
@@ -72,37 +75,47 @@ func (h *cmHost) askedFor(sub string) bool {
 	return false
 }
 
-func (h *cmHost) OpenCanvasJump(ch, thread, ts string, where CanvasWhere) {
+func (h *cmHost) OpenFileJump(ch, thread, ts string, where FileWhere) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.canvas = append(h.canvas, ch+" "+thread+" "+ts+" "+map[CanvasWhere]string{CanvasSide: "side", CanvasFull: "full", CanvasPane: "pane"}[where])
+	h.canvas = append(h.canvas, ch+" "+thread+" "+ts+" "+map[FileWhere]string{FileSide: "side", FileFull: "full", FileInPane: "pane"}[where])
 	switch where {
-	case CanvasSide:
-		h.openSec = core.FileOfChannel(ch)
-	case CanvasPane:
+	case FileSide:
+		h.shows = core.FileOfChannel(ch)
+	case FileInPane:
 		h.paneFile = core.FileOfChannel(ch)
 	}
 }
 
-func (h *cmHost) CanvasPaneFile() (string, bool) {
+func (h *cmHost) PaneFile() (string, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.paneHeld {
+		return "", false
+	}
 	return h.paneFile, h.paneFile != ""
 }
 
-func (h *cmHost) CanvasShown(fileID string) bool {
+func (h *cmHost) FileShown(fileID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.openSec == fileID
+	return h.shows == fileID
 }
 
-func (h *cmHost) CanvasPane(fileID string) layout.Widget {
+func (h *cmHost) FilePane(fileID string) layout.Widget {
 	return func(gtx C) D {
 		h.mu.Lock()
 		h.paneDrawn = fileID
 		h.mu.Unlock()
 		return D{Size: gtx.Constraints.Max}
 	}
+}
+
+// closeColumn is the column closing (its close button, Esc).
+func (h *cmHost) closeColumn() {
+	h.mu.Lock()
+	h.shows = ""
+	h.mu.Unlock()
 }
 
 func (h *cmHost) Navigate(r string) {
@@ -120,24 +133,34 @@ func (h *cmHost) JumpPane(ch, thread, ts string) {
 func (h *cmHost) OpenChannelSecondary(ch string) {
 	h.mu.Lock()
 	h.opened = append(h.opened, ch)
+	h.shows = ch + "/"
 	h.mu.Unlock()
 }
 
+// OpenMessageSecondary is toMessage in the column: a canvas's file
+// channel's message is the thread view on it (RedirectFileChannel).
 func (h *cmHost) OpenMessageSecondary(ch, ts string) {
+	_, canvas, _ := h.Core().CanvasOfJump(ch, ts)
 	h.mu.Lock()
 	h.opened = append(h.opened, ch+"/"+ts)
+	h.shows = ch + "/"
+	if canvas {
+		h.shows = ch + "/" + ts
+	}
 	h.mu.Unlock()
 }
 
 func (h *cmHost) OpenThreadAt(ch, thread, ts string) {
 	h.mu.Lock()
 	h.opened = append(h.opened, ch+"/"+thread+"/"+ts)
+	h.shows = ch + "/" + thread
 	h.mu.Unlock()
 }
 
 func (h *cmHost) OpenThread(ch, thread string) {
 	h.mu.Lock()
 	h.opened = append(h.opened, ch+"/"+thread+"/")
+	h.shows = ch + "/" + thread
 	h.mu.Unlock()
 }
 
@@ -155,13 +178,17 @@ func (h *cmHost) InSplitView() bool { return false }
 
 // the inbox's column (ActivitySecondary: the draw is a layout.Widget, a
 // func(C) D literal would leave cmHost without the interface)
-func (h *cmHost) SecondaryShows(ch, ts string) bool         { return false }
+func (h *cmHost) SecondaryShows(ch, ts string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.shows == ch+"/"+ts
+}
 func (h *cmHost) OpenDetailSecondary(string, layout.Widget) {}
 func (h *cmHost) SecondaryShowsDetail(string) bool          { return false }
 
 var (
 	_ ActivitySecondary  = (*cmHost)(nil)
-	_ CanvasOpener       = (*cmHost)(nil)
+	_ FileOpener         = (*cmHost)(nil)
 	_ SavedSecondary     = (*cmHost)(nil)
 	_ PaneJumper         = (*cmHost)(nil)
 	_ popups.SplitViewer = (*cmHost)(nil)
@@ -548,26 +575,28 @@ func TestActivityCanvasMentionClickPersistent(t *testing.T) {
 	}
 }
 
-// The inbox's click opens the canvas in the secondary column beside it
-// (the jump reads the mention's section); the row stays the opened one
-// while the column shows it.
+// The inbox's click is GMkG's toMessage in the column, as for any
+// message: Slack's RedirectFileChannel (the App's, ui/canvas_open.go)
+// makes it the thread view on the mention, so the view opens no canvas
+// itself. The row stays the opened one while the column shows that
+// thread, and lets go once the column closes.
 func TestActivityCanvasMentionClickInbox(t *testing.T) {
 	v, h, e, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true})
 	v.StepItem(1, false)
 	e.frame()
 	e.frame()
 	canvas, _, opened, _, _ := h.cmCalls()
-	want := fakeslack.CanvasMentionChannel + "  " + fakeslack.CanvasMentionTS + " side"
-	if len(canvas) != 1 || canvas[0] != want {
-		t.Errorf("canvas jumps %q, want %q", canvas, want)
+	want := fakeslack.CanvasMentionChannel + "/" + fakeslack.CanvasMentionTS
+	if len(canvas) > 0 || !slices.Equal(opened, []string{want}) {
+		t.Errorf("the click: canvas jumps %q, the column %q; want toMessage %s", canvas, opened, want)
 	}
-	for _, c := range opened {
-		if strings.HasPrefix(c, fakeslack.CanvasMentionChannel) {
-			t.Errorf("the column opened the canvas's file channel: %q", opened)
-		}
+	if !v.selOK || !v.selSec || v.selKey != fakeslack.CanvasMentionKey {
+		t.Errorf("the mention isn't the opened row beside the column (selOK %v, selSec %v, key %q)", v.selOK, v.selSec, v.selKey)
 	}
-	if !v.selOK || v.selKey != fakeslack.CanvasMentionKey {
-		t.Errorf("the mention isn't the opened row (selOK %v, key %q)", v.selOK, v.selKey)
+	h.closeColumn()
+	e.frame()
+	if v.selOK {
+		t.Errorf("the row is still opened after the column closed")
 	}
 }
 

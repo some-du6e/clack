@@ -468,9 +468,12 @@ type Activity struct {
 	closeBtn widget.Clickable
 	prevList widget.List
 
-	// paneCanvasKey is the item whose click the persistent detail
-	// panel's pane opened as a canvas (activity_canvas.go paneCanvasJump)
-	paneCanvasKey string
+	// paneFileKey is the item whose click the persistent detail panel's
+	// pane opened as a canvas or list (activity_canvas.go paneFileJump);
+	// paneLast is what the pane drew last, which it keeps drawing while a
+	// jump resolves (nil: ActivityEmptyView, or the preview it can't keep)
+	paneFileKey string
+	paneLast    layout.Widget
 
 	locGen uint64 // i18n.Gen the rows were built in
 
@@ -3885,15 +3888,29 @@ func (v *Activity) pointerAt() image.Point {
 func (v *Activity) pane(gtx C) D {
 	defer clipMax(gtx).Pop()
 	fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, v.p.Bg)
-	fid, wait := v.paneCanvasOf() // a canvas's file channel: the canvas (activity_canvas.go)
-	if co, ok := v.h.(CanvasOpener); ok && fid != "" {
-		return co.CanvasPane(fid)(gtx)
-	}
-	if ps, ok := v.h.(Panes); ok && v.sel.Channel != "" && !wait {
-		if v.selDesc.thread != "" {
-			return ps.ThreadPane(v.sel.Channel, v.selDesc.thread)(gtx)
+	// a canvas's or list's file channel: the file (activity_canvas.go).
+	// While its jump resolves the pane keeps what it drew, as Slack's
+	// Primary keeps its view until openDoc navigates it
+	fid, wait := v.paneFileOf()
+	if wait {
+		if v.paneLast != nil {
+			return v.paneLast(gtx)
 		}
-		return ps.ChannelPane(v.sel.Channel)(gtx)
+		return v.activityEmpty(gtx)
+	}
+	var w layout.Widget
+	if fo, ok := v.h.(FileOpener); ok && fid != "" {
+		w = fo.FilePane(fid)
+	} else if ps, ok := v.h.(Panes); ok && v.sel.Channel != "" {
+		if v.selDesc.thread != "" {
+			w = ps.ThreadPane(v.sel.Channel, v.selDesc.thread)
+		} else {
+			w = ps.ChannelPane(v.sel.Channel)
+		}
+	}
+	v.paneLast = w
+	if w != nil {
+		return w(gtx)
 	}
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(v.previewHead),

@@ -49,9 +49,17 @@ func (a *App) OpenChannelSecondary(ch string) {
 	if ch == "" {
 		return
 	}
-	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
+	a.canvasNavigated() // a navigation still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit {
 		a.OpenSplit("c/" + ch)
+		return
+	}
+	// a file channel (Slack's RedirectFileChannel, canvas_open.go): its
+	// canvas (toCanvas) or its list (toList) in the column
+	if a.redirectInstead(ch, "", fileTo{
+		canvas: func(fid string) { a.OpenCanvasAt(fid, "", false) },
+		list:   a.OpenList,
+	}, func() { a.OpenChannelSecondary(ch) }) {
 		return
 	}
 	s := &a.secondary

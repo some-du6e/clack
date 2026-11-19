@@ -27,6 +27,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/text"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -52,19 +53,23 @@ type ActivitySecondary interface {
 // (Bb on, a Host with one, an item with a conversation): a thread at its
 // reply (toThread's replyTs, highlighted), a message's conversation at the
 // message (toMessage: startTs and highlightTs), the conversation itself
-// for an item that points at none (selJumpTS).
+// for an item that points at none (selJumpTS). A file channel's
+// conversation is what Slack's RedirectFileChannel makes of it (the app
+// does: a canvas mention's thread view, activity_canvas.go), and a list
+// record's thread reply its record (selListRecord).
 func (v *Activity) openSecondary() {
 	v.selSec, v.selOut = false, false
 	sh, ok := v.h.(ActivitySecondary)
 	if !ok || !v.selOK || !v.h.Core().ActivityRemovePersistentDetailPanel() {
 		return
 	}
-	if v.openMention() { // a canvas mention: the canvas, never its file channel (activity_canvas.go)
-		return
-	}
 	ts := v.selJumpTS()
 	at, _ := v.h.(SavedSecondary)
+	lo, _ := v.h.(interface{ OpenListItem(listID, recID string) })
+	list, rec := v.selListRecord()
 	switch {
+	case rec != "" && lo != nil:
+		lo.OpenListItem(list, rec)
 	case v.sel.Channel == "":
 		sh.OpenDetailSecondary(v.selKey, v.pane)
 	case v.selDesc.thread != "" && ts != "" && at != nil:
@@ -98,7 +103,7 @@ func (v *Activity) jumpPane() {
 	if !v.paneInView() || v.sel.Channel == "" {
 		return
 	}
-	if v.paneCanvasJump() { // a canvas's file channel opens the canvas in the pane (activity_canvas.go)
+	if v.paneFileJump() { // a canvas's or list's file channel opens the file in the pane (activity_canvas.go)
 		return
 	}
 	if j, ok := v.h.(PaneJumper); ok {
@@ -145,16 +150,25 @@ func (v *Activity) selJumpTS() string {
 }
 
 // secondaryShows reports whether the app's column shows the chosen item.
+// For a file channel's item that is what Slack's rules open instead
+// (activity_canvas.go): the thread view on its message, its canvas, its
+// list or record, as well as the conversation a wait gave up on.
 func (v *Activity) secondaryShows(sh ActivitySecondary) bool {
-	if v.sel.Channel == "" {
+	ch := v.sel.Channel
+	if ch == "" {
 		return sh.SecondaryShowsDetail(v.selKey)
 	}
-	if fid, ok := v.selMention(); ok {
-		if co, ok := v.h.(CanvasOpener); ok {
-			return co.CanvasShown(fid)
-		}
+	if sh.SecondaryShows(ch, v.selDesc.thread) {
+		return true
 	}
-	return sh.SecondaryShows(v.sel.Channel, v.selDesc.thread)
+	if !v.h.Core().IsFileChannelID(ch) {
+		return false
+	}
+	if ts := v.selJumpTS(); v.selDesc.thread == "" && ts != "" && sh.SecondaryShows(ch, ts) {
+		return true
+	}
+	fo, ok := v.h.(FileOpener)
+	return ok && fo.FileShown(core.FileOfChannel(ch))
 }
 
 // closeSecondary closes the item's secondary view (the selected row
@@ -169,14 +183,12 @@ func (v *Activity) closeSecondary() {
 // followSecondary ends the selection once the app's column no longer
 // shows the item (closed, ⌘., Esc, another view opened there).
 func (v *Activity) followSecondary() {
-	if v.selOK && v.selOut && !v.selSec {
-		// a mention's canvas that opened after the click (its message
-		// fetched first, or files.info waited for): the column shows the
-		// item now
-		if fid, ok := v.selMention(); ok {
-			if co, ok := v.h.(CanvasOpener); ok && co.CanvasShown(fid) {
-				v.selSec = true
-			}
+	if v.selOK && v.selOut && !v.selSec && v.h.Core().IsFileChannelID(v.sel.Channel) {
+		// a file channel's item whose view opened after the click (files.info
+		// waited for, or its message fetched first; or the conversation the
+		// wait gave up on): the column shows the item now
+		if sh, ok := v.h.(ActivitySecondary); ok && v.secondaryShows(sh) {
+			v.selSec = true
 		}
 	}
 	if !v.selOK || !v.selSec {
@@ -231,6 +243,7 @@ func (v *Activity) persistentLayout(gtx C) {
 			v.pane(g)
 			return
 		}
+		v.paneLast = nil // Primary shows ActivityEmptyView now
 		v.activityEmpty(g)
 	}()
 	wideSidebarHandle(gtx, v.h, lw, size.Y, extra)

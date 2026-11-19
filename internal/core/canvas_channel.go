@@ -144,22 +144,58 @@ func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
 	return "", false, false
 }
 
-// ListRecordOf is the list record whose comment thread message ts of
-// list file channel ch is in: the held message's slack_list, else its
-// thread root's ("" when the store holds neither).
+// ListRecordOf is the record of list file channel ch whose comment
+// thread holds message ts (its thread root's ts thread, "" for a top-level
+// message): the slack_list.list_record_id of the root the store holds
+// (Slack's jumpToMessage reads it from the held root, wc0P isList), else
+// the loaded list's record with that thread_ts. "" while neither knows:
+// ListRecordFetch reads the root first, as Slack's List view does
+// ("load-list-record-root-message").
 func (a *App) ListRecordOf(ch, thread, ts string) string {
-	for _, at := range []string{ts, thread} {
-		if at == "" {
-			continue
-		}
-		if m, held := a.S.FindHeld(ch, at); held {
-			if m.SlackList != nil && m.SlackList.ListRecordID != "" {
-				return m.SlackList.ListRecordID
-			}
-			if m.ThreadTS != "" && m.ThreadTS != at {
-				if r, held := a.S.FindHeld(ch, m.ThreadTS); held && r.SlackList != nil {
-					return r.SlackList.ListRecordID
-				}
+	root := thread
+	if root == "" {
+		root = ts
+	}
+	if root == "" {
+		return ""
+	}
+	if m, held := a.S.FindHeld(ch, root); held && m.SlackList != nil && m.SlackList.ListRecordID != "" {
+		return m.SlackList.ListRecordID
+	}
+	return a.listRecordByThread(FileOfChannel(ch), root)
+}
+
+// ListRecordFetch is ListRecordOf for a root the store doesn't hold:
+// fetched by id first (messages.list). rec is "" for a root without a
+// slack_list, and err says the root couldn't be had.
+func (a *App) ListRecordFetch(ctx context.Context, ch, thread, ts string) (rec string, err error) {
+	root := thread
+	if root == "" {
+		root = ts
+	}
+	got, answered := a.hydrateOK(ctx, map[string][]string{ch: {root}})
+	m, ok := got[ch+"/"+root]
+	switch {
+	case ok && m.SlackList != nil:
+		return m.SlackList.ListRecordID, nil
+	case ok:
+		return a.listRecordByThread(FileOfChannel(ch), root), nil
+	case answered[ch]:
+		return "", fmt.Errorf("%s/%s: no such message", ch, root)
+	}
+	return "", fmt.Errorf("%s/%s: messages.list didn't answer", ch, root)
+}
+
+// listRecordByThread is the loaded list's record whose comment thread
+// is root ("" if the list isn't loaded or has none).
+func (a *App) listRecordByThread(listID, root string) string {
+	st := a.lists()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if d := st.docs[listID]; d != nil {
+		for i := range d.Records {
+			if d.Records[i].ThreadTS == root {
+				return d.Records[i].ID
 			}
 		}
 	}

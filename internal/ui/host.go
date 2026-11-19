@@ -81,21 +81,35 @@ func (a *App) Navigate(route string) {
 	if r == "" {
 		return
 	}
-	a.canvasNavigated() // a canvas jump still waiting for its message or files.info is dropped
-	// a conversation opened from inside the split view stays there, as one
-	// opened with Slack's split modifier click goes there (split.go; a
-	// canvas's file channel there is its canvas or its comment thread)
-	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
+	a.canvasNavigated() // a navigation still waiting for its file or message is dropped (canvas_open.go)
+	split := r.Channel() != "" && a.SplitViewOK()
+	// Slack's split modifier click (maybeOpenInSurface) opens the route
+	// in the split view, a file channel's as the split view's
+	// RedirectFileChannel says (OpenSplit)
+	if split && a.splitClick() {
 		a.OpenSplit(route)
 		return
 	}
-	// a jump to a message or thread of a canvas's file channel (a link, a
-	// search result, a notification) opens the canvas, as Slack's
-	// jumpToMessage does (canvas_open.go): a mention at its section, a
-	// comment with its thread. The conversation itself, from its sidebar
-	// row, keeps Slack's sidebar rule
+	// a jump to a message or thread of a file channel (a link, a search
+	// result, a notification) is Slack's jumpToMessage, from wherever it
+	// starts (openDocWithThreadTs has no split routing; canvas_open.go):
+	// a canvas's opens the canvas (a mention at its section, a comment
+	// with its thread), a list's the list at the record
 	if ch, th, ts := r.Channel(), r.Thread(), r.Message(); ch != "" && (th != "" || ts != "") &&
-		a.canvasInstead(ch, th, ts, views.CanvasFull, func() { a.Navigate(route) }) {
+		a.jumpInstead(ch, th, ts, views.FileFull, func() { a.Navigate(route) }) {
+		return
+	}
+	// a conversation opened from inside the split view stays there
+	if split && a.pane == paneSplit {
+		a.OpenSplit(route)
+		return
+	}
+	// the main view's toChannel into a file channel is its canvas or its
+	// list (RedirectFileChannel's toCanvas, toList)
+	if ch := r.Channel(); ch != "" && r.Thread() == "" && r.Message() == "" && a.redirectInstead(ch, "", fileTo{
+		canvas: a.OpenCanvasFull,
+		list:   a.OpenListFull,
+	}, func() { a.Navigate(route) }) {
 		return
 	}
 	if r.Page() == "search" {
