@@ -638,3 +638,37 @@ func TestJumpToMissingInWindowDoesNotClimb(t *testing.T) {
 		t.Errorf("%d older pages in 4 s after one scroll up: the list climbed by itself", n)
 	}
 }
+
+// TestHighlightRootFromElsewhereAnchors: a thread opened from elsewhere
+// (Activity's Open in home: toThread with highlightRoot) puts the
+// conversation's root on the anchor line, wherever the conversation was
+// left. MessageList's lazyScroll holds only when the primary was showing
+// the same conversation with the root in the range it held (AEjl
+// UNSAFE_componentWillReceiveProps: inRange and the same channelId).
+// Clack applied the lazy rule from anywhere, against the layout the
+// conversation was last drawn with: messages that arrived since had moved
+// the root off screen, and the stale layout said it was on it.
+func TestHighlightRootFromElsewhereAnchors(t *testing.T) {
+	e := anchorEnv(t)
+	ch, other := longRead, fakeslack.ThreadPrivateID
+	users := e.fs.UserIDs()[1:4]
+	root, _ := e.fs.PostQuiet(ch, users[0], "a synthetic thread root near the end")
+	reply := e.fs.PostReplyQuiet(ch, root, users[1], "a synthetic reply")
+	e.openChannel(ch)
+	e.waitDrawn(t, "the root at the end", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, root) })
+	e.settle(300 * time.Millisecond)
+	e.openChannel(other)
+	e.settle(300 * time.Millisecond)
+	base := time.Now().Unix() + 5
+	for n := 0; n < 15; n++ { // new messages in the conversation meanwhile
+		ts := fmt.Sprintf("%d.%06d", base+int64(n), 700)
+		raw, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": users[n%3], "text": "a synthetic newer message", "ts": ts})
+		e.a.Core().Inject(slack.Event{Type: "message", Channel: json.RawMessage(strconv.Quote(ch)), Raw: raw})
+	}
+	e.settle(300 * time.Millisecond)
+	e.a.OpenAtMessage(ch, reply, root, true) // Activity's Open in home
+	e.waitDrawn(t, "the root on the anchor line, highlighted", 15*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, root)
+		return ok && y == e.anchorLine() && lit(rows, root)
+	})
+}

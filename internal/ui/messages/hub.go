@@ -152,17 +152,25 @@ type hub struct {
 	authFailed atomic.Bool
 	// frame is the latest frame a list drew at (markDrawn): the models
 	// drawn then are the ones on screen
-	frame time.Time
+	frame     time.Time
+	prevFrame time.Time // the frame before it (latestFrames)
 }
 
 // markDrawn notes that a list drew m in the frame at (gtx.Now).
 func (hb *hub) markDrawn(m *model, at time.Time) {
 	hb.mu.Lock()
 	if at.After(hb.frame) {
-		hb.frame = at
+		hb.prevFrame, hb.frame = hb.frame, at
 	}
 	m.drawn = at
 	hb.mu.Unlock()
+}
+
+// latestFrames is the latest frame a list drew at and the one before it.
+func (hb *hub) latestFrames() (latest, before time.Time) {
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	return hb.frame, hb.prevFrame
 }
 
 // onScreen reports whether a list of ch (the channel or one of its

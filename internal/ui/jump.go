@@ -137,10 +137,20 @@ func (a *App) jumpViaRoutes(ch, ts, thread string) {
 		if a.router.Current().Channel() != ch {
 			return
 		}
-		// highlightRoot: the primary conversation at the root, highlighted
-		// (highlightLazy: scrolled to only when its top is off screen)
-		if h, ok := a.convoFor(ch, "").list.(interface{ HighlightLazy(string) }); ok {
-			h.HighlightLazy(thread)
+		// highlightRoot: the primary conversation at the root, highlighted.
+		// Its highlightLazy holds only where the primary was showing this
+		// conversation (MessageList's lazyScroll: the same channel and the
+		// root inside the range it held, else the anchor puts the root on
+		// the 64px line): from anywhere else the root is anchored.
+		if h, ok := a.convoFor(ch, "").list.(interface {
+			Highlight(string)
+			HighlightLazy(string)
+		}); ok {
+			if prev.Channel() == ch {
+				h.HighlightLazy(thread)
+			} else {
+				h.Highlight(thread)
+			}
 		}
 		if ts != "" {
 			a.openThreadAt(ch, thread, ts, prev)

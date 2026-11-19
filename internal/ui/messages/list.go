@@ -214,6 +214,7 @@ type listState struct {
 	laidOut   bool
 	laidPos   layout.Position
 	laidBuilt uint64
+	laidAt    time.Time // the frame (gtx.Now) of that layout
 	// preparedAt is the frame (gtx.Now) prepare synced the list for:
 	// layoutList draws that copy and doesn't sync again in that frame
 	preparedAt time.Time
@@ -1042,7 +1043,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	} else {
 		s.endGap = math.MaxInt32
 	}
-	s.laidOut, s.laidPos, s.laidBuilt = true, s.list.Position, s.built
+	s.laidOut, s.laidPos, s.laidBuilt, s.laidAt = true, s.list.Position, s.built, gtx.Now
 	if s.thread && s.snap.loaded {
 		s.thrOpening = false // the pane shows its thread: a jump now is a re-highlight
 	}
@@ -2437,9 +2438,16 @@ func (s *listState) itemOfKey(key string) int {
 	return -1
 }
 
-// topOnScreen reports whether the last layout drew message item key's top
-// inside the list (isItemInView).
+// topOnScreen reports whether the list draws message item key's top
+// inside it (isItemInView, which reads the live scroll): from its last
+// layout, only when that laid out these very items in the latest frame
+// lists drew (or the one before, when another list already drew this
+// frame). A list off screen since, or rebuilt since, doesn't know.
 func (s *listState) topOnScreen(key string) bool {
+	latest, before := s.hb.latestFrames()
+	if !s.laidOut || s.laidBuilt != s.built || s.laidAt.IsZero() || !s.laidAt.Equal(latest) && !s.laidAt.Equal(before) {
+		return false
+	}
 	for _, r := range s.laid {
 		if r.key == key {
 			return r.y >= 0 && r.y <= s.size.Y
