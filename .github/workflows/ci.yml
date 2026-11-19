@@ -266,7 +266,9 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
-          xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop' gioui.org/app
+          # and patches 46/47 on X11: an unmapped window stops its frames and
+          # lets its frame texture go; XSETTINGS from a real settings manager
+          xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop|TestUnmappedStopsFramesX11|TestClackXSettingsX11' gioui.org/app
           xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app
       - name: pixel tests (Mesa llvmpipe)
         env:
@@ -1061,6 +1063,49 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_REAL_WINDOW_TESTS: "1"
         run: go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
+      # patch 46's memory on Karim's window (a 1918x1080 client area at 1x,
+      # his light custom theme, a thread open), with partial frames and
+      # without, a process each, three pairs: the pairs' median difference
+      # is the frame texture and the clear texture (TestRealWindowMemory).
+      # The runner's display is 1024x768 until it's set
+      # (Set-DisplayResolution, else ChangeDisplaySettings).
+      - name: partial frames' memory on a 1918x1080 window (TestRealWindowMemory)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_REAL_WINDOW_TESTS: "1"
+        run: |
+          if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) {
+            try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch { Write-Host "Set-DisplayResolution: $_" }
+          } else {
+            Add-Type @'
+          using System; using System.Runtime.InteropServices;
+          public class ClackDisplay {
+            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+            public struct DEVMODE {
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+              public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra; public int dmFields;
+              public int dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+              public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+              [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+              public short dmLogPixels; public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+              public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+            }
+            [DllImport("user32.dll")] public static extern int EnumDisplaySettings(string dev, int mode, ref DEVMODE dm);
+            [DllImport("user32.dll")] public static extern int ChangeDisplaySettings(ref DEVMODE dm, int flags);
+            public static int Set(int w, int h) {
+              DEVMODE dm = new DEVMODE(); dm.dmSize = (short)Marshal.SizeOf(dm);
+              EnumDisplaySettings(null, -1, ref dm);
+              dm.dmPelsWidth = w; dm.dmPelsHeight = h; dm.dmFields = 0x80000 | 0x100000;
+              return ChangeDisplaySettings(ref dm, 0);
+            }
+          }
+          '@
+            Write-Host "ChangeDisplaySettings: $([ClackDisplay]::Set(1920, 1080))"
+          }
+          Add-Type -AssemblyName System.Windows.Forms
+          Write-Host "the display: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
+          go test -count=1 -v -timeout 15m -run '^TestRealWindowMemory$' ./internal/ui
 
 
   macos:

@@ -51,6 +51,47 @@ func (r *row) withElements(h Host) {
 	r.rv.SetOptions(o)
 }
 
+// elMemo is the element host made of one plugin msg (held, so its
+// address can't be another map's).
+type elMemo struct {
+	m  slackc.Props
+	el richview.Elements
+}
+
+// withElementsFor hands the body's richview the element host of what it
+// draws: a plugin's msg when that is the body (MessageText's rewrite, a
+// Blocks patch's), else the row's message. Made from the row's message
+// while the body drew a MessageText tree's (JS's of the revision before,
+// an update's first frames), the host had no buttons for the blocks
+// drawn, and their rows went for a frame. One host per message
+// (blockkit.MessageElements): the row's takes its message back when the
+// body does.
+func (r *row) withElementsFor(h Host, msg slackc.Props) {
+	if msg == nil {
+		if r.ovEl.m != nil {
+			r.ovEl = elMemo{}
+			r.bk.done = false // the host holds the plugin's msg: the row's again
+		}
+		r.withElements(h)
+		return
+	}
+	if propsID(r.ovEl.m) != propsID(msg) {
+		var app *core.App
+		if h != nil {
+			app = h.Core()
+		}
+		r.ovEl = elMemo{m: msg, el: hostElements(h, app, msg)}
+		r.bk.done = false
+	}
+	if r.ovEl.el == nil {
+		r.withElements(h)
+		return
+	}
+	o := r.rvOpts()
+	o.Elements = r.ovEl.el
+	r.rv.SetOptions(o)
+}
+
 // ephemeral reports whether m shows the "Only visible to you" label.
 func ephemeral(rc *rowCtx, m *core.Message) bool {
 	if !blockkit.Ephemeral(rc.h, m.Channel, m.TS) {

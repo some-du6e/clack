@@ -66,7 +66,7 @@ const (
 
 var (
 	trScales   = []float32{1, 1.25, 1.5, 2}
-	trVariants = []string{"clack", "raw", "skia", "win"}
+	trVariants = []string{"clack", "raw", "skia", "win", "prev"}
 )
 
 const (
@@ -77,11 +77,14 @@ const (
 
 func trCells() []trCell {
 	var cs []trCell
-	add := func(mode, ctx string, size float32, w int, txt string, fg, bg color.NRGBA) {
+	addAs := func(name, mode, ctx string, size float32, w int, txt string, fg, bg color.NRGBA) {
 		cs = append(cs, trCell{
-			Name: fmt.Sprintf("%s-%s-%d", mode, ctx, w), Mode: mode, Ctx: ctx, Size: size, Weight: w, Text: txt,
+			Name: name, Mode: mode, Ctx: ctx, Size: size, Weight: w, Text: txt,
 			FG: [4]uint8{fg.R, fg.G, fg.B, fg.A}, BG: [3]uint8{bg.R, bg.G, bg.B}, Y: len(cs) * trCellH,
 		})
+	}
+	add := func(mode, ctx string, size float32, w int, txt string, fg, bg color.NRGBA) {
+		addAs(fmt.Sprintf("%s-%s-%d", mode, ctx, w), mode, ctx, size, w, txt, fg, bg)
 	}
 	for _, dark := range []bool{true, false} {
 		mode, p := "light", LightPalette
@@ -101,7 +104,39 @@ func trCells() []trCell {
 	}
 	add("cal", "white", 15, 400, trBodyText, rgb(0xffffff), rgb(0x000000))
 	add("cal", "black", 15, 400, trBodyText, rgb(0x000000), rgb(0xffffff))
+	// Greys on dark around the light-text fade's old cliff at y=.6 and
+	// its ramp below (theme-contrast round 4), appended so the cells above
+	// keep their place in the references: dark content-ter on the page,
+	// the DMs card's muted name and timestamps (Slack's default and
+	// Karim's #FED4BE root-scope theme-content-inv-ter over ctr-pry),
+	// two greys down the ramp, and muted sidebar rows (theme-content-inv-ter
+	// over the sidebar, the chrome scope) in both modes.
+	dark, card := rgb(0x1a1d21), rgb(0x212428)
+	dsb := Over(DarkPalette.SidebarBg, DarkPalette.ChromeB)
+	lsb := Over(LightPalette.SidebarBg, LightPalette.ChromeB)
+	addAs("dark-ter-400", "dark", "ter", 12, 400, trMetaText, rgb(0x9a9b9e), dark)
+	addAs("dark-dmname-700", "dark", "dmname", 15, 700, trSidebarText, rgb(0x9a9b9e), card)
+	addAs("dark-mutedts-400", "dark", "mutedts", 13, 400, trMetaText, Over(color.NRGBA{R: 0xe3, G: 0xce, B: 0xeb, A: 0x99}, card), card)
+	addAs("dark-mutedts-karim-400", "dark", "mutedts", 13, 400, trMetaText, Over(color.NRGBA{R: 0xff, G: 0xdf, B: 0xcf, A: 0x99}, card), card)
+	addAs("dark-grey86-400", "dark", "grey", 12, 400, trMetaText, rgb(0x868686), dark)
+	addAs("dark-grey7a-400", "dark", "grey", 12, 400, trMetaText, rgb(0x7a7a7a), dark)
+	addAs("dark-sidebar-muted-400", "dark", "sidebar", 13, 400, trSidebarText, Over(DarkPalette.SidebarTextTer, dsb), dsb)
+	addAs("light-sidebar-muted-400", "light", "sidebar", 13, 400, trSidebarText, Over(LightPalette.SidebarTextTer, lsb), lsb)
 	return cs
+}
+
+// prevFadeK is the light-text fade before theme-contrast round 4
+// (64f76d34): the main pane's fit continued past its data to 0.45, and
+// nothing below y=.6. The "prev" variant draws with it, beside "clack".
+func prevFadeK(y float32, chrome, _ bool) float32 {
+	if y < 0.6 {
+		return 0
+	}
+	k := 0.27 + max(0, 0.73-y)*2
+	if chrome {
+		k = 0.15 + max(0, 0.85-y)*0.65
+	}
+	return min(k, 0.45)
 }
 
 func trTag(s float32) string { return strconv.FormatFloat(float64(s), 'g', -1, 32) + "x" }
@@ -263,11 +298,18 @@ func trDraw(gtx layout.Context, th *Theme, c trCell, variant string, s float32) 
 		return trPaint(gtx, th.Shaper, o, c.Text, 0, skiaContrast(o.Color, skiaWinContrast))
 	}
 	// the app's paths under the variant's model: "clack" legacy, "win"
-	// Skia's Windows model (with whiteContrast for dark ink in light mode)
+	// Skia's Windows model (with whiteContrast for dark ink in light
+	// mode), "prev" legacy with the light-text fade before round 4
 	m := TextModelLegacy
-	if variant == "win" {
+	switch variant {
+	case "win":
 		m = TextModelSkiaWin
-	} else if variant != "clack" {
+	case "prev":
+		pk := lightFadeK
+		lightFadeK = prevFadeK
+		defer func() { lightFadeK = pk }()
+	case "clack":
+	default:
 		panic("variant " + variant)
 	}
 	pm := CurrentTextModel()
@@ -332,10 +374,12 @@ func trPaint(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb, 
 }
 
 // TestTextMatchesChrome holds Clack's text to Chrome's: every cell of
-// trCells drawn under a text model is measured against Chrome 156's
+// trCells drawn under a text model is measured against Chrome's
 // screenshot of the same cell (testdata/text-render, from font-shots'
 // text-render jobs: page-<s>x.html in the embedded Lato; Chrome on the
-// Windows runner draws ClearType) the way text_render_compare.py measures
+// Windows runner draws ClearType; linux-chrome-1x is Chrome 157's with
+// the fade's probe cells, font-shots 44251954931, the Windows ones
+// Chrome 156's, which stop before them) the way text_render_compare.py measures
 // them: total ink, and the peaks of strokes along rows (stems) and columns
 // (bars, the strokes vertical hinting sharpens).
 //
@@ -375,13 +419,20 @@ func TestTextMatchesChrome(t *testing.T) {
 				t.Fatal(err)
 			}
 			img := trRender(t, th, cs, r.scale, r.variant)
-			if ref.Bounds() != img.Bounds() {
+			// a reference taken before cells were appended is shorter:
+			// those cells wait for the next one (font-shots' text-render
+			// jobs draw every cell)
+			if ref.Bounds().Dx() != img.Bounds().Dx() || ref.Bounds().Dy() > img.Bounds().Dy() {
 				t.Fatalf("reference %v, rendering %v", ref.Bounds(), img.Bounds())
 			}
 			type acc struct{ ink, stem, bar float64 }
 			modes := map[string]*acc{}
 			n := map[string]int{}
 			for _, c := range cs {
+				if trPx(c.Y+trCellH, r.scale) > ref.Bounds().Dy() {
+					t.Logf("%-18s not in this reference yet", c.Name)
+					continue
+				}
 				got, want := trMeasure(img, c, r.scale), trMeasure(ref, c, r.scale)
 				ratio, ds, db := got.ink/want.ink, got.stem-want.stem, got.bar-want.bar
 				t.Logf("%-18s ink %5.1f%%  stem %+.3f  bar %+.3f", c.Name, 100*ratio, ds, db)

@@ -46,6 +46,31 @@ func (a *App) UserAttention() bool {
 	return true
 }
 
+// AttentionLost counts the times UserAttention went false: the window
+// lost the focus, or an overlay that counts opened. A view comparing the
+// attention of the frames it draws learns of a change it drew no frame
+// for (a minimized or hidden window draws none), as Slack's
+// componentDidUpdate sees every change of isUserAttentionOnThreadsView.
+func (a *App) AttentionLost() uint64 { return a.attLost }
+
+// setFocused is the window's focus as a ConfigEvent has it (a loss
+// counts: AttentionLost).
+func (a *App) setFocused(on bool) {
+	if on {
+		a.focused = true
+		return
+	}
+	a.loseFocus()
+}
+
+// loseFocus is the window losing the focus (AttentionLost).
+func (a *App) loseFocus() {
+	if a.focused {
+		a.attLost++
+	}
+	a.focused = false
+}
+
 // Images returns the shared image cache.
 func (a *App) Images() *imgcache.Cache { return a.images }
 

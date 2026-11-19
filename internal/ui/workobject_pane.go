@@ -705,10 +705,9 @@ func (p *woPane) layoutComposer(gtx layout.Context, e *workobject.Entity, y, w i
 	}
 	at(gtx, image.Pt(in.X, in.Y+(h-gtx.Dp(22))/2), image.Pt(iw, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = iw
-		// a translucent selection, as the sidebar filter's: an opaque
-		// Accent hid the selected text (dark theme-base-pry #e3ceeb
-		// under #d1d2d3 is 1.03:1)
-		return th.Editor(gtx, &p.editor, 15, c.Fg, theme.WithAlpha(c.Accent, 0x66))
+		// the browser's own selection, as the composer's: Slack styles
+		// no ::selection here (an opaque Accent hid the selected text)
+		return th.Editor(gtx, &p.editor, 15, c.Fg, c.Selection)
 	})
 	for {
 		ev, ok := p.editor.Update(gtx)

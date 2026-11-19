@@ -667,7 +667,7 @@ func (a *App) sbActivate(gtx layout.Context, row *sbRow, space, shift bool) {
 		a.sbSetCollapsed(row, !a.sbCollapsed(row))
 	case sbLink:
 		if !a.sidebar.edit.on {
-			a.Navigate(row.key)
+			a.sbLinkClicked(row.key)
 		}
 	case sbConv:
 		if a.sidebar.edit.on {
