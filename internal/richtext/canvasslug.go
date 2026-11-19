@@ -47,6 +47,9 @@ type CanvasRef struct {
 	// Kind is the file's kind as files.info said: "canvas", "list" or ""
 	// (search_file_channel_messages reads a file channel as its file).
 	Kind string
+	// Name, Filetype, Mode and Subtype are the file's own (an inline
+	// rich_text file's slug: its name and icon, fileslug.go).
+	Name, Filetype, Mode, Subtype string
 }
 
 // CanvasResolver is an optional Resolver extension (store.Store). ok and

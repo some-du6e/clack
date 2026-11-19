@@ -847,6 +847,10 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 			out = append(out, messageMentionSpan(c.r, e))
 		case "canvas":
 			out = append(out, c.canvasSpan(e))
+		case "file", "rich_text_file": // fileslug.go
+			if sp, ok := c.fileSlugSpan(e); ok {
+				out = append(out, sp)
+			}
 		case "workflow_mention": // workflow_mention.go
 			if sp, ok := c.workflowMentionSpan(e); ok {
 				out = append(out, sp)

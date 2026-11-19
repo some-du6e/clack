@@ -130,7 +130,7 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 		if byline != "" {
 			l.plainAdd("\n")
 			bx := lx
-			if sc.BylineIcon != "" && icons.Has(sc.BylineIcon) && !deleted {
+			if sc.BylineIcon != "" && (icons.Has(sc.BylineIcon) || icons.HasSlack(sc.BylineIcon)) && !deleted {
 				gs := l.dp(13)
 				l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(bx, ly+(cs.lineH-gs)/2, bx+gs, ly+(cs.lineH-gs)/2+gs),
 					url: iconURL + sc.BylineIcon, target: -1, px: gs, tint: cs.col})

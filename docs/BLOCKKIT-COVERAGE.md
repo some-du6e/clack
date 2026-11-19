@@ -139,7 +139,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | check lists (`style: "check"` / `checklist`, `checked`) | absent (bullets) | absent | Slack's `checkbox-filled` / `square` glyphs aren't in Clack's icon set yet |
 | preformatted `language` | absent | absent | Slack highlights it (`VKeu`) |
 | text, link (`unsafe`, `truncated`), user, channel, usergroup, broadcast, emoji (`unicode`, `skin_tone`), date (`format`, `url`, `fallback`), color, message_mention, canvas, list_record, workflow_mention | full | full | |
-| file (→ `rich_text_file`, `v1Jk`) | partial: its text | partial: its text, linked to its `url` | Slack's file slug (label and icon from the file, disabled variants) |
+| file (→ `rich_text_file`, `v1Jk`) | partial: its text | **partial**: Slack's File slug (getFileSlugAttributes: the file's title or name, "Audio clip" / "Video clip", getFileTypeSvgIconName, trash / eye-closed and disabled when the file isn't there to see) | eight type glyphs Clack's set lacks (transcript, gauge-filled, pdf-file, binary, disc-image, text, presentation, zip) draw Slack's generic `file`; a click follows the link (Slack opens its file viewer); the slug's Download menu |
 | team, tag, variable, workflowtoken, skill, citation, folder_mention, salesforce_data_field, canvas_user_mention, work_object_mention, attachment_mention | partial: their text | partial: UnknownElement's rule | their own components |
 | an inline type nobody knows | its text | **full**: UnknownElement (`Dvg3`), a link to its `url`, else its text, else nothing | |
 
@@ -151,4 +151,4 @@ Tests that fail on `e93a5e70`: `TestBlockFallbacks`, `TestConditionBlocks`, `Tes
 
 ## Next
 
-In order: the inline file slug, `card`, `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
+In order: `card`, `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
