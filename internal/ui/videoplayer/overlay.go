@@ -73,6 +73,9 @@ type zones struct {
 	mute, volume, slider image.Rectangle // volume: the control, its slider included, as :hover sees it
 	vertical             bool
 	more, expand         image.Rectangle
+	// pill and cont: the pill (its click is the overlay's), and the
+	// controls container, whose empty parts take no click
+	pill, cont image.Rectangle
 }
 
 func (z *zones) at(p image.Point, volOpen bool) zone {
@@ -87,6 +90,13 @@ func (z *zones) at(p image.Point, volOpen bool) zone {
 		return zSlider
 	case p.In(z.scrub):
 		return zScrub
+	case p.In(z.pill):
+		return zTile // the pill's click is the overlay's (tE)
+	case volOpen && z.vertical && p.In(z.volume), p.In(z.cont):
+		// the controls container (and the vertical volume box) take
+		// presses but have no click of their own (fIJO's container stops
+		// mousedown; only its controls act)
+		return zNone
 	}
 	return zTile
 }
@@ -306,12 +316,21 @@ var (
 func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.Point, poster image.Rectangle) {
 	c := r.c
 	dp := func(v float32) int { return gtx.Dp(unit.Dp(v)) }
+	// the player's width in CSS px, for its size classes (fIJO, in gallery
+	// contexts, which are all Clack's): x-small at 154 or less (the 64x28
+	// pill, a 16px icon, 13px time; the 28px mute), no mute or volume at
+	// 138 or less (Slack moves it into the settings gear, not drawn here)
+	w := float32(sz.X) / max(gtx.Metric.PxPerDp, 0.01)
+	xs, noVol := w <= 154, w <= 138
 	c.mu.Lock()
 	h := t.h
 	hot := t.hover || t.scrub || t.vol
 	playing, loading := t.playing, t.loading
 	label := pillTime(t, hot)
 	iconPx := dp(20)
+	if xs {
+		iconPx = dp(16)
+	}
 	if loading && (t.spin == nil || len(t.spin.frames) == 0 || t.spin.frames[0].Size().X != iconPx) {
 		t.spin = &spinLive{frames: spinImages(iconPx), t0: gtx.Now}
 	}
@@ -340,7 +359,6 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		}
 	}
 
-	w := float32(sz.X) / max(gtx.Metric.PxPerDp, 0.01) // the player's width in CSS px (its breakpoints)
 	vertical := w <= 330
 	ultra := w <= 180
 	var z zones
@@ -355,10 +373,16 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	row := image.Rect(cont.Min.X+p4, z.scrub.Max.Y, cont.Max.X-p4, z.scrub.Max.Y+rowH)
 
 	// the pill
-	iconS, textH := dp(20), dp(22)
-	call, tsz := r.label(gtx, label)
-	pw := dp(6) + iconS + dp(8) + tsz.X + dp(8)
+	iconS, textH, gap, tsp := iconPx, dp(22), dp(8), float32(15)
+	if xs {
+		gap, tsp = dp(4), 13
+	}
+	call, tsz := r.label(gtx, label, tsp)
+	pw := dp(6) + iconS + gap + tsz.X + dp(8)
 	ph := dp(4) + max(iconS, textH) + dp(4)
+	if xs { // --size-x-small: 64x28
+		pw, ph = dp(64), dp(28)
+	}
 	pill := image.Rect(row.Min.X, row.Min.Y+(rowH-ph)/2, row.Min.X+pw, row.Min.Y+(rowH-ph)/2+ph)
 
 	// mute and volume: their place, drawn while hovered
@@ -366,7 +390,11 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	if ultra {
 		ml = 0
 	}
-	z.mute = image.Rect(pill.Max.X+ml, row.Min.Y, pill.Max.X+ml+rowH, row.Max.Y)
+	mb := rowH // the mute button: 32px, 28 at x-small
+	if xs {
+		mb = dp(28)
+	}
+	z.mute = image.Rect(pill.Max.X+ml, row.Min.Y+(rowH-mb)/2, pill.Max.X+ml+mb, row.Min.Y+(rowH-mb)/2+mb)
 	z.vertical = vertical
 	if vertical {
 		box := image.Rect(z.mute.Min.X, z.mute.Max.Y-dp(118), z.mute.Max.X, z.mute.Max.Y)
@@ -376,6 +404,10 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		z.slider = image.Rect(z.mute.Min.X+dp(40), z.mute.Min.Y+m8, z.mute.Min.X+dp(40)+dp(70), z.mute.Min.Y+m8+dp(16))
 		z.volume = z.mute.Union(image.Rect(z.mute.Min.X, z.slider.Min.Y, z.slider.Max.X+m8, z.slider.Max.Y))
 	}
+	if noVol {
+		z.mute, z.slider, z.volume = image.Rectangle{}, image.Rectangle{}, image.Rectangle{}
+	}
+	z.pill, z.cont = pill, cont
 
 	// the scrubber, hidden while the vertical volume shows
 	if hot && !(vertical && volOver) {
@@ -412,18 +444,18 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 			im.Add(gtx.Ops)
 			paint.PaintOp{}.Add(gtx.Ops)
 		case playing:
-			icons.Get("pause-bold")(gtx, unit.Dp(20), white)
+			icons.Get("pause-bold")(gtx, unit.Dp(float32(iconS)/max(gtx.Metric.PxPerDp, 0.01)), white)
 		default:
-			icons.Get("play")(gtx, unit.Dp(20), white) // play-filled
+			icons.Get("play")(gtx, unit.Dp(float32(iconS)/max(gtx.Metric.PxPerDp, 0.01)), white) // play-filled
 		}
 		off.Pop()
-		to := op.Offset(image.Pt(ic.X+iconS+dp(8), pill.Min.Y+(ph-tsz.Y)/2)).Push(gtx.Ops)
+		to := op.Offset(image.Pt(ic.X+iconS+gap, pill.Min.Y+(ph-tsz.Y)/2)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		to.Pop()
 	}
 
 	// mute and volume
-	if hot {
+	if hot && !noVol {
 		shown := vol
 		if muted {
 			shown = 0
@@ -465,7 +497,8 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		case vol >= 0.3:
 			name = "sound-medium"
 		}
-		off := op.Offset(image.Pt(z.mute.Min.X+(z.mute.Dx()-iconS)/2, z.mute.Min.Y+(z.mute.Dy()-iconS)/2)).Push(gtx.Ops)
+		mi := dp(20)
+		off := op.Offset(image.Pt(z.mute.Min.X+(z.mute.Dx()-mi)/2, z.mute.Min.Y+(z.mute.Dy()-mi)/2)).Push(gtx.Ops)
 		icons.Get(name)(gtx, unit.Dp(20), white)
 		off.Pop()
 	}
@@ -526,14 +559,14 @@ func (c *Controller) theme() *theme.Theme {
 }
 
 // label records the pill's time in 15px bold white.
-func (r *Row) label(gtx layout.Context, txt string) (op.CallOp, image.Point) {
+func (r *Row) label(gtx layout.Context, txt string, sp float32) (op.CallOp, image.Point) {
 	th := r.c.theme()
 	m := op.Record(gtx.Ops)
 	var d layout.Dimensions
 	if th != nil && txt != "" {
 		g := gtx
 		g.Constraints = layout.Constraints{Max: image.Pt(1<<16, 1<<16)}
-		d = th.Text(g, theme.LabelOpts{Font: font.Font{Weight: theme.Bold}, Size: unit.Sp(15), MaxLines: 1, Color: white}, txt)
+		d = th.Text(g, theme.LabelOpts{Font: font.Font{Weight: theme.Bold}, Size: unit.Sp(sp), MaxLines: 1, Color: white}, txt)
 	}
 	return m.Stop(), d.Size
 }
