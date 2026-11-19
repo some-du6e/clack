@@ -413,6 +413,16 @@ type Event struct {
 	Saved       *SavedItem    // saved: add | update | delete
 	Activity    *ActivityItem // activity: updated item (hydrated when possible)
 	Raw         json.RawMessage
+	// EmitSeq is the event's place in the order core emitted its events (1
+	// on), the same for every subscriber, which each gets them in this
+	// order: a view that applied the event can tell when another
+	// subscriber (taut's mirror) has handled it too (App.EmitSeq). 0: a
+	// resync for a subscriber that fell behind, or an event core never
+	// emitted. It numbers every event; it is not a message change counter
+	// (activity-live-msg's per-message change sequence is another number,
+	// and must keep another name: fed to the mirror's wait, a change
+	// counter far below this one turns the wait off).
+	EmitSeq uint64
 }
 
 // SendOpts are the options for Send.

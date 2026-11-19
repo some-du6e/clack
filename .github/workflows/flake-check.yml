@@ -1561,17 +1561,20 @@ jobs:
       - name: "slackc + jsrt + taut + core: panes, same-output commits, refresh, conversion refs, COUNT runs"
         run: |
           rc=0
-          go test -count=$COUNT -run '^TestPanesHaveRootsOfTheirOwn$' ./internal/ui/slackc || rc=1
+          go test -count=$COUNT -run '^(TestPanesHaveRootsOfTheirOwn|TestRemountKeyedInPane)$' ./internal/ui/slackc || rc=1
           go test -count=$COUNT -run '^(TestSameOutputSendsNoTree|TestPortalUnderHiddenNativeAnswers)$' ./internal/jsrt || rc=1
-          go test -count=$COUNT -run '^(TestRefreshSendsNoSameTree|TestUserEventsForUndrawnMembersCostNothing|TestChangeDuringFirstConversion)$' ./internal/taut || rc=1
-          go test -count=$COUNT -run '^(TestMessageRefs|TestStoredMessageReadsNoMember|TestEventsMarkDocChanges)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestRefreshSendsNoSameTree|TestUserEventsForUndrawnMembersCostNothing|TestChangeDuringFirstConversion|TestIndexRefsStaleness|TestConvBumpRedraws|TestOffScreenViewsDrawNothing|TestMemberChangesOnlyForWhatJSHolds|TestInvalidationsJoinTheQueuedTask|TestRawEventsConvertNothing|TestUnconvertedMessagesKeepNoGeneration|TestRefetchDecodesOnlyWhatChanged|TestInjectedMessagesOneStorePass|TestRefreshRedrawsOnlyChanges)$' ./internal/taut || rc=1
+          go test -count=$COUNT -run '^(TestMessageRefs|TestMessageRefsBotsAndEmoji|TestDocFingerprints|TestStoredMessageReadsNoMember|TestEventsMarkDocChanges|TestUserEventAfterSilentRename|TestPrefsBaselineFollowsInstalls|TestRenamedCanvasTitle|TestEmojiRemovalNamesAndAliases)$' ./internal/core || rc=1
           exit $rc
-      - name: "messages + composer: the broadcast reply in every list, renames redraw rows, one thread's composers, 3 runs"
+      - name: "messages + blockkit + composer + ui: every list's roots, renames and prefs re-convert, loads, views under the throttle and with only the frames asked for, thread replies, a patched root's updates, the mirror's wait, a dropped model's reload, element hosts, composers' panes, COUNT runs"
         if: ${{ !cancelled() }}
         run: |
           rc=0
-          go test -count=3 -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions)$' ./internal/ui/messages || rc=1
-          go test -count=3 -v -timeout 10m -run '^TestComposersForOneThreadSendTheirOwn$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -timeout 60m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions|TestDocPrefsConvertLoadedMessages|TestPatchedRowTakesChangeWithoutAnotherFrame|TestBroadcastPreambleReadsMentionsAsItDraws|TestMessagePatchGetsWrappersExactMsg|TestPatchedRootSurvivesUpdates|TestVoteButtonsSurviveUpdates|TestViewedRowTakesUpdates|TestReconvertKeepsAnUpdate|TestBroadcastPreambleFollowsARename|TestUnviewedRowTakesUpdatesOnce|TestSenderRenameWhileDrawing|TestListsPastTheModelLimitTakeLiveMessages|TestVoteRootInBothPanesUnderASlicePatch|TestEditMaskedWhileTheChannelIsBusy|TestViewedRowGoesBackToItsSource|TestOverlayKeepsTheViewsMasks|TestMessageTextDropsFilesAndAttachments|TestPreviewMemberStatusRedrawsNothing|TestSenderRenameMidFrameDraws|TestDroppedModelTakesCoresWindow|TestDroppedModelPagesBackAfterItsReload|TestReadyViewDrawsWithOnlyInvalidateFrames|TestViewedRowGoesBackWithOnlyInvalidateFrames|TestFirstReadAfterARefreshDrawsTheView|TestRowWaitsForTheMirror|TestLoadOnlyChangeNeverDrawsTheOldCount|TestResyncClaimsOnlyWhatCameBefore|TestSwitchedListWaitsForTheNewRevision|TestKeepLiveTakesTheEventsEmitSeq|TestDroppedModelKeepsItsEditUnderAReaction)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveDroppedModel)$' ./internal/ui/views || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestGalleryElementPayloads|TestDrawnHostOutlivesNewerHosts)$' ./internal/ui/blockkit || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestComposersForOneThreadSendTheirOwn|TestComposerVanishRemountsInItsPane)$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestComposersDrawInTheirListsPanes|TestPatchedViewShowsUnderQuietFrames)$' ./internal/ui || rc=1
           exit $rc
 
   # What one frame costs the GPU (branch gpu-frame-cost): Clack's window
@@ -1629,11 +1632,14 @@ jobs:
           CLACK_GPU_COST_SHOTS: ${{ runner.temp }}/gpu-cost-shots
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
+          RUNS: ${{ inputs.count || '1' }}
         run: |
           mkdir -p "$CLACK_GPU_COST_SHOTS"
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
-          "${x[@]}" go test -count=1 -v -timeout 25m -run '^TestFrameCostWindow$' ./internal/ui
+          # count=N runs it up to 3 times (a run takes 2-10 min per OS)
+          n="$RUNS"; [ "$n" -gt 3 ] && n=3
+          "${x[@]}" go test -count="$n" -v -timeout 60m -run '^TestFrameCostWindow$' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -1761,4 +1767,82 @@ jobs:
           go test -count=$COUNT -v -run '^(TestHoldLive|TestHoldLiveHoldsPlayers)$' ./internal/imgcache || rc=1
           go test -count=$COUNT -v -run '^(TestFreeze\w*|TestCaptureOpensReview)$' ./internal/ui/inspect || rc=1
           go test -count=$COUNT -v -timeout 40m -run '^(TestInspectFreeze\w*|TestInspectSessionEndsAtSignIn|TestInspectFileDropsIgnored|TestInspectFrozenReportDescribesFrozenFrame|TestInspectReactionPill)$' ./internal/ui || rc=1
+          exit $rc
+
+  # theme-contrast round 4: the fade's continuity, the cascade per variable,
+  # the DMs rows drawn (activity_inbox on and off, the peek card's scope),
+  # the control strip's held press. Dispatch with only=theme-contrast-4
+  # count=3; the last step runs the GPU-free ones once under -race.
+  theme-contrast-4:
+    if: ${{ !inputs.only || startsWith('theme-contrast-4', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "theme + css, COUNT runs"
+        run: |
+          rc=0
+          go test -count=$COUNT -run '^(TestLightTextFadeContinuous|TestSidebarRuleFollowsSheets|TestThemeInkMatchesSlack)$' ./internal/ui/theme || rc=1
+          go test -count=$COUNT -run '^TestRootTokensDeclares$' ./internal/ui/slackc/css || rc=1
+          exit $rc
+      - name: "views: the DMs rows and the card, COUNT runs (Mesa llvmpipe)"
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -timeout 20m -run '^(TestDMsRowsDrawn|TestDMsListChromeScope|TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views
+      - name: "ui: the control strip and the draw sites, COUNT runs (Mesa llvmpipe)"
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -timeout 25m -run '^(TestAccountThemeControlStripPress|TestPeekHeaderRule|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen|TestAccountThemeDrawSites)$' ./internal/ui
+      - name: "-race, once: the GPU-free ones"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -race -count=1 -run '^(TestLightTextFadeContinuous|TestSidebarRuleFollowsSheets)$' ./internal/ui/theme || rc=1
+          go test -race -count=1 -run '^TestRootTokensDeclares$' ./internal/ui/slackc/css || rc=1
+          go test -race -count=1 -run '^(TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views || rc=1
+          exit $rc
+
+  # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
+  # host's pages (files.slack.com/ssb/redirect), dot segments however many
+  # times a server decodes them, look-alike, NFKC and overlong dots and
+  # separators, names with a literal % that still download, the sign-in
+  # client's /ssb/redirect guard (bannedPage), POST hops, and Taut's fetch
+  # (its redirects and its first request's sign-out gate). Dispatch with
+  # only=fileurl-dotdot.
+  fileurl-dotdot:
+    if: ${{ !inputs.only || startsWith('fileurl-dotdot', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      SLACK_TESTS: '^(TestDownloadRefusesDotSegments|TestFileHostsNeedFilePaths|TestBannedPageNormalises|TestCheckRedirectStripsCredentials)$'
+      TAUT_TESTS: '^(TestFetchRedirectKeepsCredentialsOffSlackPages|TestPluginFetchRefusesSignOut)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: slack, taut (one verbose run, then COUNT)
+        run: |
+          rc=0
+          go test -count=1 -v -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=1 -v -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
           exit $rc

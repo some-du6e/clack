@@ -225,6 +225,7 @@ func (t *Theme) SetDark(dark bool) {
 		t.Restyle(t, &p)
 	}
 	t.C = Flatten(p)
+	notePrimaryPalette(t)
 	if !t.genInit || oldDark != dark || oldC != t.C || oldTok != tokensKey(t.Tokens) {
 		t.genInit = true
 		t.Gen++

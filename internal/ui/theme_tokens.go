@@ -55,6 +55,8 @@ func (t paneTokens) Color(expr string) (color.NRGBA, bool, bool) {
 
 func (t paneTokens) Overridden() bool { return true }
 
+func (t paneTokens) Declares(name string) bool { return theme.Declares(t.Tokens, name) }
+
 func (t paneTokens) Key() uint64 {
 	var k uint64
 	if t.Tokens != nil {

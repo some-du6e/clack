@@ -80,8 +80,8 @@ var clackPartial struct {
 // frame texture into it, and count the pixels that differ
 // (FrameStats.CopyChecked, CopyMismatchPx), for tests: the window's pixels
 // are the frame's. The target must be readable: on Metal the test makes
-// the layer's drawables so (CLACK_METAL_READBACK; a window's are
-// framebufferOnly).
+// the layer's drawables so (app.ClackReadableDrawables; a window's are
+// framebufferOnly, and a frame with one is left unchecked).
 func ClackVerifyCopy(on bool) { clackPartial.verify.Store(on) }
 
 // ClackPartialWhole has frames drawn whole while what partial frames keep
@@ -147,7 +147,8 @@ type partialFrames struct {
 	// the last frame drawn: valid once its pixels are in what partial
 	// frames draw into (the frame texture, or a texture target: key); its
 	// viewport and clear colour, its ops' signatures (haveSigs), whether it
-	// was whole
+	// was whole, and whether it was a small change (one partial frames
+	// could draw; lastSmall)
 	valid     bool
 	key       any
 	viewport  image.Point
@@ -155,6 +156,7 @@ type partialFrames struct {
 	sigs      []opSig
 	haveSigs  bool
 	lastWhole bool
+	lastSmall bool
 	// scratch: this frame's signatures, an op's words, the layers' chain
 	// of words, Myers' trace
 	cur   []opSig
@@ -403,9 +405,12 @@ func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, 
 		if !p.valid {
 			dmg = nil
 		}
-	case resized || (!small && p.lastWhole):
+	case resized || (!small && p.lastWhole) || (small && !p.valid && !p.lastSmall && p.lastWhole):
 		// straight into the target: no copy, the frame texture stale (and
-		// let go of at another size)
+		// let go of at another size). A new size, a whole frame after a
+		// whole one (a scroll), and the first small change after frames
+		// drawn straight in (a still frame inside a scroll: the second in a
+		// row fills the frame texture again, the third is partial)
 		if p.frameTex != nil && p.frameSize != viewport {
 			g.releaseFrameTex()
 		}
@@ -427,6 +432,7 @@ func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, 
 	}
 	p.valid = false // until it's drawn (partialEnd)
 	p.lastWhole = dmg == nil
+	p.lastSmall = small
 	st := &g.renderer.stats
 	if dmg != nil {
 		st.Partial = true
@@ -559,6 +565,7 @@ func (g *gpu) frameTexture(sz image.Point) driver.Texture {
 	}
 	p.frameTex, p.frameSize = t, sz
 	p.valid = false
+	clackFrameTextures.Add(1)
 	return t
 }
 
@@ -568,8 +575,29 @@ func (g *gpu) releaseFrameTex() {
 		p.frameTex.Release()
 		p.frameTex = nil
 		p.valid = false
+		clackFrameTextures.Add(-1)
 	}
 }
+
+// heldBytes is what the frame texture and the clear texture take (4 bytes
+// a texel: TextureFormatOutput).
+func (p *partialFrames) heldBytes() (n int64) {
+	if p.frameTex != nil {
+		n += int64(p.frameSize.X*p.frameSize.Y) * 4
+	}
+	if p.clearTex != nil {
+		n += int64(p.clearSize.X*p.clearSize.Y) * 4
+	}
+	return n
+}
+
+// clackFrameTextures counts the frame textures the process's GPUs hold.
+var clackFrameTextures atomic.Int64
+
+// ClackFrameTexturesHeld is how many frame textures the process's GPUs
+// hold (a window's each, while it draws partial frames), for tests: a
+// hidden, minimized or occluded window lets its frame texture go.
+func ClackFrameTexturesHeld() int { return int(clackFrameTextures.Load()) }
 
 // ClackFrameReleaser is a GPU that can let go of what partial frames keep
 // (Clack patch 46): its frame texture and clear texture, the last frame's
@@ -592,7 +620,7 @@ func (g *gpu) partialRelease() {
 		p.clearTex = nil
 		p.clearOK = false
 	}
-	p.valid, p.haveSigs, p.lastWhole = false, false, false
+	p.valid, p.haveSigs, p.lastWhole, p.lastSmall = false, false, false, false
 	p.sigs, p.cur = p.sigs[:0], p.cur[:0]
 	p.atlas.reset()
 }

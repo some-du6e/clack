@@ -332,6 +332,7 @@ func (a *App) installPrefsLocked(raw map[string]json.RawMessage) {
 	a.S.SetRawPrefs(raw)
 	p, muted := store.ParsePrefs(raw)
 	a.S.SetPrefs(p, a.withTempMutes(p, muted)) // temp_mute's muted-until (temp_mute.go)
+	a.notePrefsInstalled()                     // what Docs converted until now read moved? (msg_refs.go)
 }
 
 // Pref returns one users.prefs.get value as Slack sent it (ok: present).

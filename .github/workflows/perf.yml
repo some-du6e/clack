@@ -70,6 +70,14 @@ on:
         description: "scale jobs: the warm session's stages (CLACK_PERF_WARM_SCRIPT); empty = startup,picker,picker-all,scroll,channels,idle,gifs,gifs-left"
         required: false
         default: ""
+      plugins_rounds:
+        description: "plugins job: rounds of the scroll passes (each side once per round)"
+        required: false
+        default: "3"
+      plugins_sides:
+        description: "plugins job: which trees run (base head, or head alone for a quick look)"
+        required: false
+        default: "base head"
 
 permissions:
   contents: write # perf-history branch
@@ -461,7 +469,15 @@ jobs:
   # installs the Library's default Taut plugins and Slick's Message Logger
   # from the published `plugins` release, then scrolls the plugin bench's
   # 500-message channel (quiet, then with people typing, posting, reacting,
-  # editing and deleting) and a 300-reply thread. HEAD's test file runs on
+  # editing and deleting) and a 300-reply thread, and leaves the channel
+  # alone for 10 s (the idle pass: frames a second and Go→JS tasks a
+  # second while nothing on screen changes). The live passes' traffic is a
+  # busy Enterprise Grid's: besides the conversation's own, messages in the
+  # other channels 4 a second, profile changes 4 a second for members no
+  # row draws and one every 2.5 s for an author on screen (one rename a
+  # pass), badge counts every 2 s, a followed thread's state every 4 s; the
+  # idle pass has the background part, plus updates elsewhere, Slack's
+  # pref_change echo and new custom emoji. HEAD's test file runs on
   # the base tree too, so both columns are the same passes; the sides run
   # interleaved on one runner. Dispatch only (jobs: plugins; base: the
   # commit to compare against, default the merge base with ui).
@@ -517,13 +533,15 @@ jobs:
           # then 3 pairs of channel-live with the execution-trace flight
           # recorder off and on (trees that have it: internal/ui/flightrec.go)
           PERF_PLUGIN_RECORDER: "3"
+          ROUNDS: ${{ inputs.plugins_rounds || '3' }}
+          SIDES: ${{ inputs.plugins_sides || 'base head' }}
           # then the channel with the GPU renderer drawing every frame,
           # light and dark, 60 frames each (perfGPUScroll)
           PERF_PLUGIN_GPU: "60"
           GALLIUM_DRIVER: llvmpipe
         run: |
-          for r in 1 2 3; do
-            for s in base head; do
+          for r in $(seq 1 "$ROUNDS"); do
+            for s in $SIDES; do
               [ -x perf-out/$s.test ] || continue
               echo "::group::$s round $r"
               PERF_PLUGIN_OUT="$PWD/perf-out/$s-$r.json" PERF_PLUGIN_PROF="$PWD/perf-out/$s-$r" xvfb-run -a perf-out/$s.test -test.run '^TestPerfPluginScroll$' -test.v -test.count 1 -test.timeout 25m > perf-out/$s-$r.log 2>&1 || echo "::warning::$s round $r failed"

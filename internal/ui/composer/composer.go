@@ -144,6 +144,7 @@ type Composer struct {
 	cs            chromeState
 	paneP, inputP slackc.Props
 	sendJS        slackc.JSFunc // a patched prepareAndSendMessage (send checks)
+	pane          string        // the slackc pane LayoutIn drew it in ("" outside one)
 	pending       *outgoing     // the message sendJS is deciding on
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
@@ -482,6 +483,9 @@ func (c *Composer) LayoutIn(gtx layout.Context, pane string) layout.Dimensions {
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	runRestores()
 	c.drawnAt = gtx.Now
+	// the pane its roots are keyed in (vanish.go remounts those): LayoutIn's,
+	// or the list's an edit composer or a Block Kit field is drawn inside
+	c.pane = slackc.CurrentPane()
 	c.maybeRestoreServerDraft()
 	syncHooks()
 	th := c.h.Theme()

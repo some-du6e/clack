@@ -500,10 +500,9 @@ func (s *listState) pendingDateJump(now time.Time) {
 	}
 	msgs := s.snap.msgs
 	if len(msgs) > 0 && s.snap.hasMore && tsTime(msgs[0].m.TS).After(s.pendingDate) && s.jumpPages < 20 {
-		if now.Sub(s.lastOlder) > 300*time.Millisecond {
+		if now.Sub(s.lastOlder) > 300*time.Millisecond && s.hb.loadOlder(s.m) {
 			s.jumpPages++
 			s.lastOlder = now
-			s.hb.loadOlder(s.m)
 		}
 		return
 	}

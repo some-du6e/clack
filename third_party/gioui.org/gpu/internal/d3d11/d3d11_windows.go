@@ -46,6 +46,10 @@ type Backend struct {
 	// scissorOn which one is set (Clack patch 46)
 	raster    [2]*d3d11.RasterizerState
 	scissorOn bool
+	// texBytes and bufBytes are what the textures and buffers this
+	// backend made and hasn't released take (Clack patch 46:
+	// ClackResourceBytes)
+	texBytes, bufBytes int64
 }
 
 // ctxState is the device context state the backend last set (Clack patch
@@ -99,6 +103,9 @@ type Texture struct {
 	height  int
 	mipmap  bool
 	foreign bool
+	// bytes is what the texture takes, its mipmaps included (Clack patch
+	// 46: ClackResourceBytes)
+	bytes int64
 }
 
 type VertexShader struct {
@@ -210,6 +217,19 @@ func (b *Backend) releaseRaster() {
 
 // ClackPartialOK implements driver.ClackPartial (Clack patch 46).
 func (b *Backend) ClackPartialOK() bool { return b.raster[1] != nil }
+
+// ClackResourceBytes implements driver.ClackResources (Clack patch 46): the
+// bytes of the textures and buffers made and not yet released.
+func (b *Backend) ClackResourceBytes() (textures, buffers int64) { return b.texBytes, b.bufBytes }
+
+// texelBytes is a texel's size in a format NewTexture makes.
+func texelBytes(format uint32) int64 {
+	switch format {
+	case d3d11.DXGI_FORMAT_R16_FLOAT:
+		return 2
+	}
+	return 4 // R32_FLOAT, R8G8B8A8_UNORM(_SRGB)
+}
 
 // ClackCopyDraws implements driver.ClackPartial: a copy into the swap
 // chain's buffer.
@@ -470,7 +490,12 @@ func (b *Backend) NewTexture(format driver.TextureFormat, width, height int, min
 			return nil, err
 		}
 	}
-	return &Texture{backend: b, format: d3dfmt, tex: tex, sampler: sampler, resView: resView, uaView: uaView, renderTarget: fbo, bindings: bindings, width: width, height: height, mipmap: mipmap}, nil
+	var bytes int64
+	for l := 0; l < nmipmaps; l++ {
+		bytes += int64(max(width>>l, 1)*max(height>>l, 1)) * texelBytes(d3dfmt)
+	}
+	b.texBytes += bytes
+	return &Texture{backend: b, format: d3dfmt, tex: tex, sampler: sampler, resView: resView, uaView: uaView, renderTarget: fbo, bindings: bindings, width: width, height: height, mipmap: mipmap, bytes: bytes}, nil
 }
 
 func (b *Backend) newInputLayout(vertexShader shader.Sources, layout []driver.InputDesc) (*d3d11.InputLayout, error) {
@@ -602,6 +627,7 @@ func (b *Backend) newBuffer(typ driver.BufferBinding, size int, data []byte, imm
 			return nil, err
 		}
 	}
+	b.bufBytes += int64(size)
 	return &Buffer{backend: b, buf: buf, bind: bind, size: size, resView: resView, uaView: uaView, immutable: immutable}, nil
 }
 
@@ -832,6 +858,7 @@ func (t *Texture) Release() {
 		d3d11.IUnknownRelease(unsafe.Pointer(t.uaView), t.uaView.Vtbl.Release)
 	}
 	d3d11.IUnknownRelease(unsafe.Pointer(t.tex), t.tex.Vtbl.Release)
+	t.backend.texBytes -= t.bytes
 	*t = Texture{}
 }
 
@@ -986,6 +1013,7 @@ func (b *Buffer) Release() {
 		d3d11.IUnknownRelease(unsafe.Pointer(b.uaView), b.uaView.Vtbl.Release)
 	}
 	d3d11.IUnknownRelease(unsafe.Pointer(b.buf), b.buf.Vtbl.Release)
+	b.backend.bufBytes -= int64(b.size)
 	*b = Buffer{}
 }
 
