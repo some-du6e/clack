@@ -169,8 +169,12 @@ Left out, behind `GOOS=js` build constraints, and said so on the page in one
 line: plugins' JavaScript runtime (`internal/jsrt/engine_js.go`: no QuickJS
 and no wazero), huddles and their video (`internal/huddle/rtc` stands in for
 pion/webrtc and opens no connection, so joining fails with "huddles aren't
-part of the browser demo"), and desktop integrations, which have no browser
-counterpart (Clack's fallbacks for other systems apply).
+part of the browser demo"; `apm_js.go` keeps the microphone's RNNoise model
+out), and desktop integrations, which have no browser counterpart (Clack's
+fallbacks for other systems apply). The page shows the download as a
+percentage: what crosses the network is main.wasm's brotli or gzip size
+when the host compresses `application/wasm` (the demo job's summary has
+all three), and the whole of it when it doesn't.
 
 It's built and tested in CI only, by the site workflow's demo job:
 

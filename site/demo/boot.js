@@ -9,7 +9,6 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const card = $('card'), bar = $('bar'), go = $('go'), again = $('again');
-  const mb = (n) => (n / 1048576).toFixed(1);
   let stopped = false;
 
   const show = (text) => { $('state').textContent = text; };
@@ -33,9 +32,10 @@
 
   async function run({ wasm: size, parts }) {
     go.hidden = true;
-    show(`Downloading Clack · ${mb(size)} MB`);
+    show('Downloading Clack');
     // the parts one after another as one stream, counted (decompressed, as
-    // they arrive) against the size build.json gave
+    // they arrive) against the size build.json gave; as a percentage,
+    // since what crosses the network depends on the host's compression
     let got = 0, i = 0, reader = null;
     const counted = new ReadableStream({
       async pull(c) {
@@ -50,7 +50,7 @@
           if (done) { reader = null; continue; }
           got += value.byteLength;
           bar.value = Math.min(got / size, 1);
-          show(`Downloading Clack · ${mb(got)} of ${mb(size)} MB`);
+          show(`Downloading Clack · ${Math.floor((100 * got) / size)}%`);
           c.enqueue(value);
           return;
         }
@@ -79,7 +79,6 @@
     const save = navigator.connection && navigator.connection.saveData;
     if (!small && !save) return run(build);
     show(small ? 'Clack is a desktop app, so the demo wants a wide window.' : 'Your browser asked to save data.');
-    go.textContent = `Load the demo · ${mb(build.wasm)} MB`;
     go.hidden = false;
     go.addEventListener('click', () => run(build).catch(fail), { once: true });
   }
