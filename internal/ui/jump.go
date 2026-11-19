@@ -24,6 +24,14 @@ func (a *App) jumpToMessage(ch, ts, thread string) {
 	if ch == "" {
 		return
 	}
+	// a canvas's file channel is its canvas (canvas_open.go), outside the
+	// split view (OpenSplit has its own rule); this whole jump is the
+	// fallback for a file that turns out to be no canvas, so a list's
+	// thread still opens at the reply
+	if (thread != "" || ts != "") && !(a.pane == paneSplit || a.splitClick()) &&
+		a.canvasInstead(ch, thread, ts, views.CanvasFull, func() { a.jumpToMessage(ch, ts, thread) }) {
+		return
+	}
 	prev := a.router.Current()
 	switch {
 	case thread != "":
@@ -55,6 +63,7 @@ func (a *App) JumpPane(ch, thread, ts string) {
 	if ch == "" || ts == "" {
 		return
 	}
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if thread != "" {
 		if j, ok := a.convoFor(ch, thread).list.(interface{ JumpTo(ts string, flash bool) }); ok {
 			j.JumpTo(ts, true)

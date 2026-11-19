@@ -55,6 +55,25 @@ func (a *App) CanvasOfChannel(ch string) (fileID string, ok bool) {
 	return fileID, true
 }
 
+// IsFileChannelID is Slack's isFileChannelById (gxWy OR): the stored
+// conversation's is_file, or for one the store doesn't hold, whether the
+// file its id names (C swapped for F) is known. Activity's item menu
+// calls such an item canvas-related (ITY6 isCanvasRelated) and leaves out
+// Open in home and Remind me about this.
+func (a *App) IsFileChannelID(ch string) bool {
+	if !strings.HasPrefix(ch, "C") {
+		return false
+	}
+	if c, ok := a.S.Conv(ch); ok {
+		return IsFileChannel(c)
+	}
+	if c, ok := a.S.ExtConv(ch); ok {
+		return IsFileChannel(c)
+	}
+	_, known := a.S.KnownCanvasRef(FileOfChannel(ch))
+	return known
+}
+
 // CanvasTitleOf is a canvas's title as Slack's channel entity draws it
 // (renderQuipTitle: title_blocks with their emoji as images, else the
 // title string's :emoji:; richtext.CanvasTitle) and the file's kind
@@ -78,6 +97,19 @@ func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
 	if fid, ok := a.CanvasOfChannel(ch); ok {
 		return fid, true, false
 	}
+	if !strings.HasPrefix(ch, "C") {
+		return "", false, false
+	}
+	fileID = FileOfChannel(ch)
+	// the message names its canvas itself (a document_mention), whatever
+	// the store holds of the channel
+	if ts != "" {
+		if m, held := a.S.FindHeld(ch, ts); held && m.DocumentMention != nil && m.DocumentMention.FileID == fileID {
+			if ref, known := a.S.KnownCanvasRef(fileID); !known || ref.Kind == "canvas" {
+				return fileID, true, false
+			}
+		}
+	}
 	c, stored := a.S.Conv(ch)
 	if !stored {
 		c, stored = a.S.ExtConv(ch)
@@ -85,14 +117,8 @@ func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
 	if !stored || !IsFileChannel(c) {
 		return "", false, false
 	}
-	fileID = FileOfChannel(ch)
 	if _, known := a.S.KnownCanvasRef(fileID); known {
 		return "", false, false // a list's file channel, or a file that's gone
-	}
-	if ts != "" {
-		if m, held := a.S.FindHeld(ch, ts); held && m.DocumentMention != nil && m.DocumentMention.FileID == fileID {
-			return fileID, true, false
-		}
 	}
 	a.S.CanvasRef(fileID) // asked for (resolveCanvasRef), if CanvasOfChannel hadn't
 	return fileID, false, true

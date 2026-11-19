@@ -103,7 +103,7 @@ func (a *App) canvasViews(file string) []*canvasview.View {
 		add(p.view)
 	}
 	add(a.views[Route("docs/"+file)])
-	if p := a.canvasJumpsOf().pane; p != nil { // the Activity pane's (canvas_open.go)
+	if p := a.paneCanvasLive(); p != nil { // the Activity pane's while it draws it (canvas_open.go)
 		add(p)
 	}
 	if m, ok := canvasTabs.Load(a); ok {

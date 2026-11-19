@@ -65,6 +65,10 @@ type CanvasOpener interface {
 	// CanvasPane draws canvas fileID in the persistent detail panel's
 	// pane (after a CanvasPane jump).
 	CanvasPane(fileID string) layout.Widget
+	// CanvasPaneFile is the canvas the last CanvasPane jump opened, and
+	// whether it resolved: a canvas, or "" for none (the pane shows the
+	// item's conversation instead).
+	CanvasPaneFile() (fileID string, done bool)
 }
 
 // actDocMention is an item's canvas mention (nil for other items).
@@ -148,24 +152,30 @@ func (v *Activity) paneCanvasJump() bool {
 	if !v.selOK || v.sel.Type == "thread_v2" {
 		return false
 	}
-	fid, ok, pending := v.canvasChannel(&v.sel)
-	if !ok && !pending {
+	if _, ok, pending := v.canvasChannel(&v.sel); !ok && !pending {
 		return false
 	}
 	co, ok := v.h.(CanvasOpener)
 	if !ok {
 		return false
 	}
+	v.paneCanvasKey = v.selKey
 	co.OpenCanvasJump(v.sel.Channel, v.selDesc.thread, v.selJumpTS(), CanvasPane)
-	v.paneCanvas, v.paneCanvasKey = fid, v.selKey
 	return true
 }
 
-// paneCanvasOf is the canvas the pane shows for the chosen item
-// (paneCanvasJump), "" for none.
-func (v *Activity) paneCanvasOf() string {
-	if v.selOK && v.paneCanvasKey == v.selKey {
-		return v.paneCanvas
+// paneCanvasOf is the canvas the pane shows for the chosen item once its
+// jump resolved (paneCanvasJump), "" for none; wait is true while the
+// jump resolves (the pane shows the item's preview, as Slack's Primary
+// keeps what it showed until openDoc runs).
+func (v *Activity) paneCanvasOf() (fileID string, wait bool) {
+	if !v.selOK || v.paneCanvasKey != v.selKey {
+		return "", false
 	}
-	return ""
+	co, ok := v.h.(CanvasOpener)
+	if !ok {
+		return "", false
+	}
+	fileID, done := co.CanvasPaneFile()
+	return fileID, !done
 }

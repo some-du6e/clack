@@ -206,9 +206,13 @@ func (a *App) OpenSplit(route string) {
 		a.Navigate(route)
 		return
 	}
-	// a canvas's file channel: the canvas, in the side panel (the split
-	// view holds conversations only; canvas_open.go)
-	if th, ts := r.Thread(), r.Message(); (th != "" || ts != "") && a.canvasInstead(ch, th, ts, views.CanvasSide, func() { a.OpenSplit(route) }) {
+	// a canvas's file channel without a thread (toChannel, toMessage) is
+	// its canvas: Slack's RedirectFileChannel middleware turns it into
+	// toCanvas in the split view too. Clack's split view holds
+	// conversations only, so the canvas goes in the side panel
+	// (canvas_open.go). A comment's thread (toThread) stays a thread in
+	// the split view, as the middleware leaves Thread views alone.
+	if r.Thread() == "" && a.canvasInstead(ch, "", r.Message(), views.CanvasSide, func() { a.OpenSplit(route) }) {
 		return
 	}
 	s := &a.split

@@ -51,6 +51,7 @@ type cmHost struct {
 	opened    []string // the column: "ch", "ch/ts", "ch/thread/ts"
 	openSec   string   // the canvas the secondary column shows
 	paneDrawn string   // the canvas CanvasPane drew last
+	paneFile  string   // the canvas the last pane jump opened (resolved at once, as with the message held)
 	asked     []string // the image URLs fetched
 	splits    []string // OpenSplit's routes
 }
@@ -75,9 +76,18 @@ func (h *cmHost) OpenCanvasJump(ch, thread, ts string, where CanvasWhere) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.canvas = append(h.canvas, ch+" "+thread+" "+ts+" "+map[CanvasWhere]string{CanvasSide: "side", CanvasFull: "full", CanvasPane: "pane"}[where])
-	if where == CanvasSide {
+	switch where {
+	case CanvasSide:
 		h.openSec = core.FileOfChannel(ch)
+	case CanvasPane:
+		h.paneFile = core.FileOfChannel(ch)
 	}
+}
+
+func (h *cmHost) CanvasPaneFile() (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.paneFile, h.paneFile != ""
 }
 
 func (h *cmHost) CanvasShown(fileID string) bool {
@@ -561,36 +571,41 @@ func TestActivityCanvasMentionClickInbox(t *testing.T) {
 	}
 }
 
-// The item menu's Open in home and Open in split view jump to the
-// mention's message, which the App opens as the canvas (its section;
-// ui/canvas_open.go), never the bare file channel route.
-func TestActivityCanvasMentionMenuRoutes(t *testing.T) {
-	v, h, _, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true})
-	it := actItem(t, v, fakeslack.CanvasMentionKey)
-	var home, split bool
-	for _, mi := range v.itemMenu(h, *it, fakeslack.CanvasMentionKey, false) {
-		switch mi.Key {
-		case "open_in_home":
-			mi.Do()
-			home = true
-		case popups.SplitKey:
-			mi.Do()
-			split = true
+// Slack's item menu calls a file channel's items canvas-related (ITY6
+// renderMenuPlaceholderItem's isCanvasRelated, gxWy isFileChannelById)
+// and leaves out Open in home and Remind me about this. Open in split view
+// stays: toChannel, or toThread for a comment's thread, in the split view.
+// An ordinary channel's item keeps both.
+func TestActivityCanvasItemMenu(t *testing.T) {
+	v, h, _, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true, comments: true})
+	keysOf := func(key string, split bool) []string {
+		var keys []string
+		for _, mi := range v.itemMenu(h, *actItem(t, v, key), key, false) {
+			keys = append(keys, mi.Key)
+			if split && mi.Key == popups.SplitKey {
+				mi.Do()
+			}
+		}
+		return keys
+	}
+	for _, c := range []struct{ key, split string }{
+		{fakeslack.CanvasMentionKey, "c/" + fakeslack.CanvasMentionChannel},
+		{fakeslack.CanvasCommentKey, "c/" + fakeslack.FileChanLaunch + "/t/" + fakeslack.CommentOpen},
+		{fakeslack.CanvasCommentThreadKey, "c/" + fakeslack.FileChanLaunch + "/t/" + fakeslack.CommentUnread},
+	} {
+		keys := keysOf(c.key, true)
+		if slices.Contains(keys, "open_in_home") || slices.Contains(keys, "remind_submenu") {
+			t.Errorf("%s's menu %q has Open in home or Remind me about this, which Slack leaves out of a file channel's items", c.key, keys)
+		}
+		h.mu.Lock()
+		splits := slices.Clone(h.splits)
+		h.mu.Unlock()
+		if !slices.Contains(keys, popups.SplitKey) || len(splits) == 0 || splits[len(splits)-1] != c.split {
+			t.Errorf("%s: Open in split view opened %q, want %q (menu %q)", c.key, splits, c.split, keys)
 		}
 	}
-	if !home || !split {
-		t.Fatalf("the menu has Open in home %v, Open in split view %v", home, split)
-	}
-	want := []string{"c/" + fakeslack.CanvasMentionChannel + "/m/" + fakeslack.CanvasMentionTS}
-	_, _, _, routes, _ := h.cmCalls()
-	h.mu.Lock()
-	splits := slices.Clone(h.splits)
-	h.mu.Unlock()
-	if !slices.Equal(routes, want) {
-		t.Errorf("Open in home navigated to %q, want %q", routes, want)
-	}
-	if !slices.Equal(splits, want) {
-		t.Errorf("Open in split view opened %q, want %q", splits, want)
+	if keys := keysOf("fa-at-user", false); !slices.Contains(keys, "open_in_home") || !slices.Contains(keys, "remind_submenu") {
+		t.Errorf("an ordinary channel's mention lost Open in home or Remind me about this: %q", keys)
 	}
 }
 
@@ -672,6 +687,38 @@ func TestActivityCanvasMentionTitleSpans(t *testing.T) {
 	sp := richtext.TitleBlocks(&noEmoji{}, "x", json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"emoji","name":"`+fakeslack.CanvasMentionEmoji+`"}]}]}]`))
 	if len(sp) != 1 || sp[0].Kind != richtext.Emoji || sp[0].ID != fakeslack.CanvasMentionEmoji || sp[0].URL != "" {
 		t.Errorf("an unknown emoji element converted to %+v, want an Emoji span without an image", sp)
+	}
+}
+
+// A hidden emoji (Unicode 17 with emoji_v17 off, which richEmoji leaves
+// as its characters) stays its characters in the canvas entity, even when
+// a custom emoji has its name; an emoji TitleBlocks kept is drawn as its
+// image.
+func TestActivityCanvasTitleHiddenEmoji(t *testing.T) {
+	v, h, _, fs := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true})
+	const hidden = "late-hidden-fixture"
+	hiddenURL := fs.URL + "img/64x64/" + fakeslack.TeamID + "/" + hidden + "/00000000000000f4.png"
+	v.h.Core().S.CustomEmoji.Put(hidden, hiddenURL)
+	char := string(rune(0x1FAE8))
+	spans := []richtext.Span{{Kind: richtext.Text, Text: "Plan "}, {Kind: richtext.Emoji, ID: hidden, Text: char},
+		{Kind: richtext.Emoji, ID: fakeslack.CanvasMentionEmoji, Text: ":" + fakeslack.CanvasMentionEmoji + ":"}}
+	drew := map[string]int{}
+	labels := map[string]bool{}
+	emojiDrawn = func(u string, px int) { drew[u] = px }
+	theme.DrawHook = func(s string) { labels[s] = true }
+	defer func() { emojiDrawn, theme.DrawHook = nil, nil }()
+	var ops op.Ops
+	for deadline := time.Now().Add(10 * time.Second); drew[fs.CanvasMentionEmojiURL()] == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the kept emoji's image never drew (drew %v)", drew)
+		}
+		v.canvasTitle(actFrame(&ops, image.Pt(600, 40)), spans, 13, wBold, v.p.Sec)
+	}
+	if _, ok := drew[hiddenURL]; ok || h.askedFor("/"+hidden+"/") {
+		t.Errorf("the hidden emoji was drawn as the custom emoji of its name")
+	}
+	if !labels[char] {
+		t.Errorf("the hidden emoji's characters aren't drawn (labels %v)", labels)
 	}
 }
 

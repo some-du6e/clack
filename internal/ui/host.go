@@ -57,6 +57,13 @@ func (a *App) Navigate(route string) {
 		return
 	}
 	a.canvasNavigated() // a canvas jump still waiting for its message or files.info is dropped
+	// a conversation opened from inside the split view stays there, as one
+	// opened with Slack's split modifier click goes there (split.go; a
+	// canvas's file channel there is its canvas or its comment thread)
+	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
+		a.OpenSplit(route)
+		return
+	}
 	// a jump to a message or thread of a canvas's file channel (a link, a
 	// search result, a notification) opens the canvas, as Slack's
 	// jumpToMessage does (canvas_open.go): a mention at its section, a
@@ -64,12 +71,6 @@ func (a *App) Navigate(route string) {
 	// row, keeps Slack's sidebar rule
 	if ch, th, ts := r.Channel(), r.Thread(), r.Message(); ch != "" && (th != "" || ts != "") &&
 		a.canvasInstead(ch, th, ts, views.CanvasFull, func() { a.Navigate(route) }) {
-		return
-	}
-	// a conversation opened from inside the split view stays there, as one
-	// opened with Slack's split modifier click goes there (split.go)
-	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
-		a.OpenSplit(route)
 		return
 	}
 	if r.Page() == "search" {

@@ -49,6 +49,7 @@ func (a *App) OpenChannelSecondary(ch string) {
 	if ch == "" {
 		return
 	}
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit {
 		a.OpenSplit("c/" + ch)
 		return
@@ -108,6 +109,7 @@ func (a *App) OpenDetailSecondary(key string, draw layout.Widget) {
 	if key == "" || draw == nil {
 		return
 	}
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	a.secondary = secondaryState{kind: secActivity, width: a.secondary.width, page: a.router.Current().Page()}
 	a.secondary.view = &secDetailPane{key: key, draw: draw}
 	a.Invalidate()

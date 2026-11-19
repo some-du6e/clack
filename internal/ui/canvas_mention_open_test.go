@@ -18,12 +18,16 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/gpu/headless"
+	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/canvasview"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -202,29 +206,185 @@ func TestCanvasMentionMessageJumpOpensCanvas(t *testing.T) {
 	e.a.Navigate("activity")
 	e.frames(3)
 	e.a.notificationClicked(ch, ts, "", "")
-	fullCanvas(e, fakeslack.CanvasMentionFile)
+	cmScrolledTo(e, fullCanvas(e, fakeslack.CanvasMentionFile))
 }
 
-// Open in split view on a canvas mention (its message's route) opens the
-// canvas, never the file channel: the split view holds conversations
-// only, so the canvas goes in the side panel.
-func TestCanvasMentionSplitOpensCanvas(t *testing.T) {
+// cmSeedComments gives the shell's store the Launch plan canvas's file
+// channel, as the private conversation it is, and the canvas's files.info.
+func cmSeedComments(e *actShellEnv) {
+	s := e.ca.S
+	s.PutConv(slack.Conversation{ID: fakeslack.FileChanLaunch, Name: "Launch plan", IsChannel: true, IsGroup: true,
+		IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 4})
+	s.PutCanvasRef(fakeslack.CanvasChannel, richtext.CanvasRef{Title: "Launch plan", Status: "normal", Kind: "canvas"})
+	e.a.data.fetched[fakeslack.FileChanLaunch] = time.Now() // no header reads for it
+}
+
+// A ⌘⌥ click on a canvas mention's row is Slack's maybeOpenInSurface:
+// toChannel in the split view, which the RedirectFileChannel middleware
+// turns into the canvas there too. Clack's split view holds conversations
+// only, so the canvas goes in the side panel; the file channel never
+// shows, and the click doesn't open the row in the inbox.
+func TestCanvasMentionSplitClickOpensCanvas(t *testing.T) {
 	e := newActShell(t)
 	cmSeed(e)
 	cmOpenActivity(e)
-	ch := fakeslack.CanvasMentionChannel
-	e.a.OpenSplit("c/" + ch + "/m/" + fakeslack.CanvasMentionTS)
-	e.until("the canvas", func() bool {
-		cv, ok := e.a.secondary.view.(*canvasview.View)
-		return ok && cv.ID() == fakeslack.CanvasMentionFile || string(e.a.router.Current()) == "docs/"+fakeslack.CanvasMentionFile
-	})
+	pos := f32.Pt(float32(e.sz.X/3), 232) // the newest row (the mention), right of its sender and time
+	mods := shortcut.Mod() | key.ModAlt
+	e.rt.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos, Modifiers: mods},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos, Modifiers: mods},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos, Modifiers: mods},
+	)
+	e.frames(3)
 	for _, r := range e.a.split.stack {
-		if r.Channel() == ch {
-			t.Errorf("the split view opened the canvas's file channel: %s", r)
+		if r.Channel() == fakeslack.CanvasMentionChannel {
+			t.Fatalf("the split view opened the canvas's file channel: %s", r)
 		}
 	}
-	if r := e.a.router.Current(); r.Channel() == ch {
-		t.Errorf("the route is the file channel's: %s", r)
+	e.until("the canvas in the side panel", func() bool {
+		cv, ok := e.a.secondary.view.(*canvasview.View)
+		return e.a.secondary.open() && ok && cv.ID() == fakeslack.CanvasMentionFile
+	})
+	if k := e.activity().OpenedItem(); k != "" {
+		t.Errorf("the split click opened %q in the inbox; it goes to the split view's place only", k)
+	}
+	if r := string(e.a.router.Current()); r != "activity" {
+		t.Errorf("the route is %q, want activity", r)
+	}
+}
+
+// Open in split view (and the ⌘⌥ click) on a comment's item is toThread
+// in the split view: the comment thread stays a thread there, as the
+// RedirectFileChannel middleware leaves Thread views alone, not the canvas
+// in the side panel.
+func TestCanvasCommentSplitOpensThread(t *testing.T) {
+	e := newActShell(t)
+	cmSeedComments(e)
+	cmOpenActivity(e)
+	route := Route("c/" + fakeslack.FileChanLaunch + "/t/" + fakeslack.CommentUnread)
+	e.a.OpenSplit(string(route))
+	e.frames(5)
+	if n := len(e.a.split.stack); n == 0 || e.a.split.stack[n-1] != route {
+		t.Errorf("the split view holds %v, want the comment thread %s", e.a.split.stack, route)
+	}
+	if cv, ok := e.a.secondary.view.(*canvasview.View); ok && e.a.secondary.open() {
+		t.Errorf("the side panel opened canvas %s instead", cv.ID())
+	}
+}
+
+// A canvas comment's items in the App. In the inbox a reply that
+// mentions the viewer opens its thread in the column (GMkG: toThread).
+// With the persistent panel it jumps to its message: the canvas in the
+// Activity pane with the comment thread in the column (jumpToMessage →
+// openDocWithThreadTs), the inbox staying; the comment's thread_v2 opens
+// its comment thread in the pane.
+func TestActivityCanvasCommentClicks(t *testing.T) {
+	open := func(e *actShellEnv, text string) {
+		e.activity().Search(text)
+		e.frames(5)
+		e.activity().StepItem(1, false)
+	}
+	commentThread := func(e *actShellEnv, ts string) func() bool {
+		return func() bool {
+			sec := e.a.secondary
+			return sec.open() && sec.kind == secThread && sec.channel == fakeslack.FileChanLaunch && sec.ts == ts
+		}
+	}
+	t.Run("inbox", func(t *testing.T) {
+		e := newActShell(t)
+		e.fs.AddCanvasCommentActivity()
+		cmSeedComments(e)
+		cmOpenActivity(e)
+		open(e, "keep it on Wednesday")
+		e.until("the reply's thread in the column", commentThread(e, fakeslack.CommentOpen))
+	})
+	t.Run("persistent", func(t *testing.T) {
+		e := newActShell(t)
+		e.fs.AddCanvasCommentActivity()
+		cmSeedComments(e)
+		off := "off"
+		e.ca.SetExperimentGroups(map[string]*string{"activity_inbox_remove_persistent_detail_panel": &off, "nested_secondary_view": &off})
+		cmOpenActivity(e)
+		open(e, "keep it on Wednesday")
+		e.until("the canvas in the Activity pane", func() bool {
+			v := e.a.canvasJumpsOf().pane
+			return v != nil && v.ID() == fakeslack.CanvasChannel
+		})
+		e.until("the comment thread beside it", commentThread(e, fakeslack.CommentOpen))
+		if r := string(e.a.router.Current()); r != "activity" {
+			t.Errorf("the click left Activity for %q", r)
+		}
+		open(e, "Booked it")
+		e.until("the thread_v2's comment thread in the pane", func() bool {
+			return e.a.convos[fakeslack.FileChanLaunch+"/"+fakeslack.CommentUnread] != nil
+		})
+	})
+}
+
+// A jump whose message the store lacks reads it with messages.list
+// first. When that fails nothing opens, as in Slack (openDocWithThreadTs
+// rejects and Primary stays as it was).
+func TestCanvasJumpFetchFailureOpensNothing(t *testing.T) {
+	e := newActShell(t)
+	cmSeed(e)
+	e.a.Navigate("c/" + fakeslack.ViewsChannel)
+	e.frames(5)
+	e.fs.SetFault("messages.list", fakeslack.Fault{Error: "internal_error"})
+	before := e.a.router.Current()
+	e.a.Navigate("c/" + fakeslack.CanvasMentionChannel + "/m/" + fakeslack.CanvasMentionTS)
+	e.until("messages.list", func() bool { return e.fs.CallCount("messages.list") > 0 })
+	e.frames(30)
+	if r := e.a.router.Current(); r != before {
+		t.Errorf("the route moved to %q, want %q", r, before)
+	}
+	if _, ok := e.a.views[Route("docs/"+fakeslack.CanvasMentionFile)]; ok {
+		t.Errorf("the canvas's full view opened")
+	}
+}
+
+// A slow jump drops once the user moved on: another view opened in the
+// column first, not only a navigation.
+func TestCanvasJumpDroppedByAnotherOpen(t *testing.T) {
+	e := newActShell(t)
+	cmSeed(e)
+	e.a.Navigate("c/" + fakeslack.ViewsChannel)
+	e.frames(5)
+	e.fs.SetFault("messages.list", fakeslack.Fault{Delay: 800 * time.Millisecond})
+	e.a.Navigate("c/" + fakeslack.CanvasMentionChannel + "/m/" + fakeslack.CanvasMentionTS) // reads its message first
+	e.frames(2)
+	e.a.OpenChannelSecondary(fakeslack.ViewsChannel) // meanwhile
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
+	}
+	if r := string(e.a.router.Current()); r == "docs/"+fakeslack.CanvasMentionFile {
+		t.Errorf("the canvas opened after the user had opened something else")
+	}
+}
+
+// A jump that waits for files.info and never hears back (a transport
+// error brings no "names") opens the conversation after canvasWaitLimit,
+// instead of dropping the click.
+func TestCanvasJumpWaitEnds(t *testing.T) {
+	e := newActShell(t)
+	cmSeedConv(e)
+	e.fs.SetFault("files.info", fakeslack.Fault{HangUp: true})
+	e.ca.ServeLookups()
+	t.Cleanup(e.ca.StopTraffic)
+	route := "c/" + fakeslack.CanvasMentionChannel + "/m/" + fakeslack.CanvasMentionTS
+	e.a.Navigate(route)
+	e.frames(2)
+	if r := string(e.a.router.Current()); r == route {
+		t.Fatalf("the jump didn't wait for files.info")
+	}
+	deadline := time.Now().Add(canvasWaitLimit + 3*time.Second)
+	for string(e.a.router.Current()) != route {
+		if time.Now().After(deadline) {
+			t.Fatalf("still at %q %v after files.info hung up; want the conversation %s", e.a.router.Current(), canvasWaitLimit+3*time.Second, route)
+		}
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -357,4 +517,19 @@ func TestCanvasTabTitleEmojiLate(t *testing.T) {
 		t.Errorf("the leading emoji's tab reads %q, want its title without the emoji", tb.label)
 	}
 	e.frame()
+}
+
+// The tab bar resolves late only the emoji TitleBlocks kept (Text
+// ":name:"); a hidden emoji (Unicode 17 with emoji_v17 off) keeps its
+// characters even when a custom emoji has its name.
+func TestResolveEmojiKeepsHiddenEmoji(t *testing.T) {
+	char := string(rune(0x1FAE8))
+	in := []richtext.Span{{Kind: richtext.Emoji, ID: "hidden-fixture", Text: char}, {Kind: richtext.Emoji, ID: "kept-fixture", Text: ":kept-fixture:"}}
+	out := resolveEmoji(in, func(name string) (string, string, bool) { return "https://emoji.example/" + name + ".png", "", true })
+	if out[0].URL != "" || out[0].Text != char {
+		t.Errorf("the hidden emoji became %+v, want its characters", out[0])
+	}
+	if out[1].URL == "" {
+		t.Errorf("the kept emoji wasn't resolved: %+v", out[1])
+	}
 }

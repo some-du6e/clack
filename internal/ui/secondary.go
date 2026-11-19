@@ -83,6 +83,7 @@ func (a *App) ActiveThread() (channel, ts string) {
 // split view, or with Slack's split modifier click (⌘⌥, Ctrl+Alt), it
 // goes in the split view instead (split.go).
 func (a *App) OpenThread(channel, ts string) {
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit || a.splitClick() {
 		a.OpenSplit("c/" + channel + "/t/" + ts)
 		return
@@ -239,6 +240,7 @@ func (a *App) searchInChannel(ch string) {
 // message input takes the focus; the pane's composer lets go of it at the
 // end of the frame (composer_release.go).
 func (a *App) CloseSecondary() {
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit {
 		a.CloseSplit()
 		return

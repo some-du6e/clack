@@ -468,9 +468,9 @@ type Activity struct {
 	closeBtn widget.Clickable
 	prevList widget.List
 
-	// paneCanvas is the canvas the persistent detail panel's pane shows
-	// for the item keyed paneCanvasKey (activity_canvas.go paneCanvasJump)
-	paneCanvas, paneCanvasKey string
+	// paneCanvasKey is the item whose click the persistent detail
+	// panel's pane opened as a canvas (activity_canvas.go paneCanvasJump)
+	paneCanvasKey string
 
 	locGen uint64 // i18n.Gen the rows were built in
 
@@ -3885,12 +3885,11 @@ func (v *Activity) pointerAt() image.Point {
 func (v *Activity) pane(gtx C) D {
 	defer clipMax(gtx).Pop()
 	fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, v.p.Bg)
-	if fid := v.paneCanvasOf(); fid != "" { // a canvas's file channel: the canvas (activity_canvas.go)
-		if co, ok := v.h.(CanvasOpener); ok {
-			return co.CanvasPane(fid)(gtx)
-		}
+	fid, wait := v.paneCanvasOf() // a canvas's file channel: the canvas (activity_canvas.go)
+	if co, ok := v.h.(CanvasOpener); ok && fid != "" {
+		return co.CanvasPane(fid)(gtx)
 	}
-	if ps, ok := v.h.(Panes); ok && v.sel.Channel != "" {
+	if ps, ok := v.h.(Panes); ok && v.sel.Channel != "" && !wait {
 		if v.selDesc.thread != "" {
 			return ps.ThreadPane(v.sel.Channel, v.selDesc.thread)(gtx)
 		}

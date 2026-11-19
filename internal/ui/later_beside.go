@@ -94,6 +94,7 @@ func (a *App) OpenMessageSecondary(ch, ts string) {
 	if ts != "" && a.canvasInstead(ch, "", ts, views.CanvasSide, func() { a.OpenMessageSecondary(ch, ts) }) { // a canvas's file channel: the canvas (canvas_open.go)
 		return
 	}
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit && ts != "" {
 		a.OpenSplit("c/" + ch + "/m/" + ts)
 		return
@@ -116,6 +117,7 @@ func (a *App) OpenMessageSecondary(ch, ts string) {
 // page shown now (Slack's prevViewSet is the active tab's view set when
 // it starts).
 func (a *App) OpenThreadAt(ch, thread, ts string) {
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	a.openThreadAt(ch, thread, ts, a.router.Current())
 }
 

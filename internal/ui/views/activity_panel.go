@@ -169,6 +169,16 @@ func (v *Activity) closeSecondary() {
 // followSecondary ends the selection once the app's column no longer
 // shows the item (closed, ⌘., Esc, another view opened there).
 func (v *Activity) followSecondary() {
+	if v.selOK && v.selOut && !v.selSec {
+		// a mention's canvas that opened after the click (its message
+		// fetched first, or files.info waited for): the column shows the
+		// item now
+		if fid, ok := v.selMention(); ok {
+			if co, ok := v.h.(CanvasOpener); ok && co.CanvasShown(fid) {
+				v.selSec = true
+			}
+		}
+	}
 	if !v.selOK || !v.selSec {
 		return
 	}

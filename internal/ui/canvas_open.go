@@ -42,9 +42,15 @@ type canvasJumpState struct {
 	// focus is a full view's section to focus once its page is made
 	// (OpenCanvasAt before the route's view exists)
 	focus map[string]string
-	// pane is the Activity persistent detail panel's canvas (CanvasPane)
-	pane *canvasview.View
-	// bypass is set while a waiting jump falls back to the conversation
+	// pane is the Activity persistent detail panel's canvas view
+	// (CanvasPane) and paneSeq the frame that last drew it. paneFile is
+	// the canvas the pane's jump opened, paneDone whether the jump
+	// resolved: a canvas, or "" for none (the item's conversation)
+	pane     *canvasview.View
+	paneSeq  uint64
+	paneFile string
+	paneDone bool
+	// bypass is set while a jump falls back to the conversation
 	bypass bool
 }
 
@@ -53,8 +59,14 @@ type canvasJumpWait struct {
 	gen            uint64
 	ch, thread, ts string
 	where          views.CanvasWhere
-	fallback       func() // the conversation itself, when the file is no canvas
+	fallback       func()      // the conversation itself, when the file is no canvas or files.info never answers
+	still          func() bool // whether the jump still stands (Activity's item still open); nil: no such check
 }
+
+// canvasWaitLimit is how long a jump waits for files.info before it
+// opens the conversation after all: a transport error never brings the
+// file id's "names".
+const canvasWaitLimit = 4 * time.Second
 
 var canvasJumps sync.Map // *App -> *canvasJumpState
 
@@ -115,16 +127,69 @@ func (a *App) CanvasShown(fileID string) bool {
 }
 
 // OpenCanvasJump is views.CanvasOpener: Activity's jump into canvas file
-// channel ch, at its thread or message ts.
+// channel ch, at its thread or message ts. It stands while Activity's
+// item stays open. A file that turns out to be no canvas, or whose
+// files.info never answers, opens the item's conversation instead, as the
+// click does for any other conversation.
 func (a *App) OpenCanvasJump(ch, thread, ts string, where views.CanvasWhere) {
-	a.canvasInstead(ch, thread, ts, where, nil)
+	key := a.activityOpened()
+	still := func() bool { return a.activityOpened() == key }
+	fallback := func() {
+		if ts != "" {
+			a.OpenMessageSecondary(ch, ts)
+		} else {
+			a.OpenChannelSecondary(ch)
+		}
+	}
+	if where == views.CanvasPane {
+		st := a.canvasJumpsOf()
+		st.paneFile, st.paneDone = "", false
+		fallback = func() {
+			st.paneFile, st.paneDone = "", true
+			a.JumpPane(ch, thread, ts)
+		}
+	}
+	if !a.canvasJumpOf(ch, thread, ts, where, fallback, still) {
+		a.canvasFallback(fallback)
+	}
+}
+
+// activityOpened is the Activity page's open item ("" for none).
+func (a *App) activityOpened() string {
+	if v, ok := a.views[Route("activity")].(*views.Activity); ok {
+		return v.OpenedItem()
+	}
+	return ""
+}
+
+// CanvasPaneFile is views.CanvasOpener: the canvas the persistent detail
+// panel's pane jump opened, and whether the jump resolved (a canvas, or ""
+// for none: the pane shows the item's conversation).
+func (a *App) CanvasPaneFile() (string, bool) {
+	st := a.canvasJumpsOf()
+	return st.paneFile, st.paneDone
 }
 
 // CanvasPane is views.CanvasOpener: canvas fileID in the Activity
 // persistent detail panel's own pane. Slack's openDoc puts the canvas in
 // Primary and leaves the inbox in the Sidebar.
 func (a *App) CanvasPane(fileID string) layout.Widget {
-	return func(gtx layout.Context) layout.Dimensions { return a.activityCanvas(fileID).Layout(gtx) }
+	return func(gtx layout.Context) layout.Dimensions {
+		st := a.canvasJumpsOf()
+		st.paneSeq = a.FrameSeq()
+		return a.activityCanvas(fileID).Layout(gtx)
+	}
+}
+
+// paneCanvasLive is the Activity pane's canvas view while the pane draws
+// it (nil otherwise): one the pane left goes stale, its live updates
+// stopped, and must not write over newer edits.
+func (a *App) paneCanvasLive() *canvasview.View {
+	st := a.canvasJumpsOf()
+	if st.pane == nil || a.FrameSeq()-st.paneSeq > 2 {
+		return nil
+	}
+	return st.pane
 }
 
 // activityCanvas is the Activity pane's canvas view on fileID: the one it
@@ -143,8 +208,15 @@ func (a *App) activityCanvas(fileID string) *canvasview.View {
 // (OpenCommentThread; the canvas is its back stack when the canvas is in
 // the pane too). where says where the canvas goes. A jump that waits for
 // files.info calls fallback (the conversation, guards off) if the file
-// is no canvas. It reports whether the jump is the canvas's.
+// is no canvas, or files.info never answers. It reports whether the jump
+// is the canvas's.
 func (a *App) canvasInstead(ch, thread, ts string, where views.CanvasWhere, fallback func()) bool {
+	return a.canvasJumpOf(ch, thread, ts, where, fallback, nil)
+}
+
+// canvasJumpOf is canvasInstead with still, whether the jump still stands
+// when it opens late (nil: until the next jump or navigation).
+func (a *App) canvasJumpOf(ch, thread, ts string, where views.CanvasWhere, fallback func(), still func() bool) bool {
 	c := a.Core()
 	st := a.canvasJumpsOf()
 	if c == nil || ch == "" || st.bypass {
@@ -158,19 +230,22 @@ func (a *App) canvasInstead(ch, thread, ts string, where views.CanvasWhere, fall
 	switch {
 	case wait:
 		st.gen++
-		st.waiting[fid] = canvasJumpWait{gen: st.gen, ch: ch, thread: thread, ts: ts, where: where, fallback: fallback}
+		gen := st.gen
+		st.waiting[fid] = canvasJumpWait{gen: gen, ch: ch, thread: thread, ts: ts, where: where, fallback: fallback, still: still}
+		time.AfterFunc(canvasWaitLimit, func() { a.Post(func() { a.canvasWaitOver(fid, gen) }) })
 		return true
 	case !ok:
 		return false
 	}
-	a.canvasJump(fid, ch, thread, ts, where)
+	a.canvasJump(fid, ch, thread, ts, where, still)
 	return true
 }
 
 // canvasJump opens canvas fid where a jump to ch's thread or message ts
 // says, from the message the store holds, else once messages.list brought
-// it. Nothing opens if it can't be had, as in Slack.
-func (a *App) canvasJump(fid, ch, thread, ts string, where views.CanvasWhere) {
+// it. Nothing opens if it can't be had, as in Slack, nor once another
+// jump, navigation or click came first.
+func (a *App) canvasJump(fid, ch, thread, ts string, where views.CanvasWhere, still func() bool) {
 	c := a.Core()
 	st := a.canvasJumpsOf()
 	st.gen++
@@ -184,8 +259,8 @@ func (a *App) canvasJump(fid, ch, thread, ts string, where views.CanvasWhere) {
 		defer cancel()
 		sec, comment, err := c.CanvasJumpFetch(ctx, ch, thread, ts)
 		a.Post(func() {
-			if a.canvasJumpsOf().gen != gen || a.Core() != c {
-				return // another jump or a navigation since, or another account
+			if a.canvasJumpsOf().gen != gen || a.Core() != c || still != nil && !still() {
+				return // another jump, navigation or click since, or another account
 			}
 			if err != nil {
 				log.Printf("canvas %s: the jump's message: %v", fid, err)
@@ -197,21 +272,50 @@ func (a *App) canvasJump(fid, ch, thread, ts string, where views.CanvasWhere) {
 }
 
 // openCanvasTarget opens canvas fid at section sec where says, with
-// comment thread comment (its root's ts) of file channel ch beside it.
+// comment thread comment (its root's ts) of file channel ch beside it,
+// unless the column shows that thread already.
 func (a *App) openCanvasTarget(fid, ch, sec, comment string, where views.CanvasWhere) {
 	switch where {
 	case views.CanvasPane:
+		st := a.canvasJumpsOf()
 		if v := a.activityCanvas(fid); sec != "" {
 			v.FocusSection(sec)
 		}
+		st.paneFile, st.paneDone = fid, true
 		a.Invalidate()
 	case views.CanvasFull:
 		a.OpenCanvasAt(fid, sec, true)
 	default:
 		a.OpenCanvasAt(fid, sec, false)
 	}
-	if comment != "" {
+	if comment != "" && !(a.secondary.open() && a.secondary.kind == secThread && a.secondary.channel == ch && a.secondary.ts == comment) {
 		a.OpenCommentThread(fid, ch, comment)
+	}
+}
+
+// canvasFallback runs a jump's fallback with the canvas guards off.
+func (a *App) canvasFallback(f func()) {
+	if f == nil {
+		return
+	}
+	st := a.canvasJumpsOf()
+	st.bypass = true
+	defer func() { st.bypass = false }()
+	f()
+}
+
+// canvasWaitOver ends a jump that waited canvasWaitLimit for its
+// files.info: the conversation opens after all, unless another jump,
+// navigation or click came first.
+func (a *App) canvasWaitOver(fid string, gen uint64) {
+	st := a.canvasJumpsOf()
+	w, ok := st.waiting[fid]
+	if !ok || w.gen != gen {
+		return
+	}
+	delete(st.waiting, fid)
+	if st.gen == gen && (w.still == nil || w.still()) {
+		a.canvasFallback(w.fallback)
 	}
 }
 
@@ -229,8 +333,8 @@ func (a *App) canvasJumpNames(ids []string) {
 			continue
 		}
 		delete(st.waiting, id)
-		if w.gen != st.gen {
-			continue // another jump or a navigation since
+		if w.gen != st.gen || w.still != nil && !w.still() {
+			continue // another jump, navigation or click since
 		}
 		at := w.thread
 		if at == "" {
@@ -238,13 +342,11 @@ func (a *App) canvasJumpNames(ids []string) {
 		}
 		switch fid, ok, wait := a.Core().CanvasOfJump(w.ch, at); {
 		case ok:
-			a.canvasJump(fid, w.ch, w.thread, w.ts, w.where)
+			a.canvasJump(fid, w.ch, w.thread, w.ts, w.where, w.still)
 		case wait:
-			st.waiting[id] = w // still unknown: the next "names"
-		case w.fallback != nil:
-			st.bypass = true
-			w.fallback()
-			st.bypass = false
+			st.waiting[id] = w // still unknown: the next "names", or the wait's end
+		default:
+			a.canvasFallback(w.fallback)
 		}
 	}
 }

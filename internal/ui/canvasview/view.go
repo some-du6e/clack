@@ -823,6 +823,7 @@ func (v *View) FocusSection(id string) {
 		return
 	}
 	v.focus = id
+	v.focused = "" // Focus reports this jump's scroll, not an earlier one's
 	v.h.Invalidate()
 }
 
