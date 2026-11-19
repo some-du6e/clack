@@ -79,21 +79,18 @@ func (a *App) handle(ev slack.Event) {
 		}
 		// Slack's typing line maps its typers through getMemberById as it
 		// renders (MessagePaneInput, cRQG): the record goes out at once
-		// with the name the store has, and the line names a typer it
-		// didn't hold once the member is in (composer typers reads the
-		// names as it draws; "names" draws it again). Only the
-		// conversation on screen asks for a missing typer, through the
-		// lazy fetcher (store.User's miss), off the pump: fetched here,
-		// every event behind the typing waited for users/info, a reply in
-		// the thread open beside it too. Elsewhere the record waits with
-		// what the store has: a busy workspace types in hundreds of
-		// channels, and each fetch's "names" redrew the window for nothing
-		// on it.
+		// with the name the store has, nobody asked for, and the line asks
+		// for a typer the store doesn't hold as it draws (composer typers'
+		// User), naming them once "names" brings them. Fetched here, on the
+		// pump, every event behind the typing waited for users/info (a
+		// reply in the thread open beside it too); asked for here, a typer
+		// in a watched conversation nothing shows (a thread whose pane
+		// closed, a line with typing display off) brought a "names" that
+		// made the UI read everything on screen again. A busy workspace
+		// types in hundreds of channels.
 		name := ""
 		if u, ok := a.S.RawUser(e.User); ok {
 			name = store.DisplayName(u)
-		} else if a.watching(ch, e.ThreadTS) {
-			a.S.User(e.User) // a miss is asked for (store afterLookup)
 		}
 		a.emit(Event{Type: "typing", Channel: ch, UserID: e.User, Name: name, ThreadTS: e.ThreadTS})
 	case "channel_marked", "im_marked", "group_marked", "mpim_marked":
@@ -495,15 +492,13 @@ func (a *App) refreshConv(ctx context.Context, id string) {
 		c.ID = id
 	}
 	a.putInfo(c)
-	if c.IsIM {
-		// the partner is asked for (the lazy fetcher: store.User's miss),
-		// not fetched here: refreshConv runs on the event pump (im_created,
-		// im_open, a message in a conversation core didn't know), and
-		// every event behind it waited for users/info. The DM's row names
-		// them once they're in ("names"); a notification waits for them
-		// itself (the UI's noteMembers)
-		a.S.User(c.User)
-	}
+	// An IM's partner is neither fetched nor asked for here: refreshConv
+	// runs on the event pump (im_created, im_open, a message in a
+	// conversation core didn't know), where a fetch held every event
+	// behind it for users/info, and an ask brought a "names" pass for a DM
+	// nothing may show. What draws the partner asks as it draws (the
+	// sidebar's DM row, the DMs page), and a notification waits for them
+	// itself (the UI's noteMembers).
 	v := a.conv(c)
 	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
 }
@@ -645,19 +640,22 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	a.S.SlurpSub(ch, &m)
 	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
 	// the DM badges read the member of the IM this makes unread (members.go
-	// readBadgePerson), before EnsureUsers below can load it unannounced
+	// readBadgePerson: the badge's own ask, which names them)
 	if m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" {
 		a.readBadgePerson(ch)
 	}
-	// Nobody the message names is fetched before it goes out: Slack's
-	// messageReceived puts it into the store the moment it arrives, its
-	// rows ask for the people they draw (the conversion and a.User below
-	// queue the lookups, lazy_users.go), and only the desktop notification
+	// Nobody the message names is fetched or asked for on its way out:
+	// Slack's messageReceived puts it into the store the moment it
+	// arrives, its rows ask for the people they draw (row.resolve's User,
+	// a mention's MemberRead; the conversion and the event read the store
+	// as it is: msgNames, RawUser), and only the desktop notification
 	// waits for them (showNotification's ensureModelsArePresent: the UI's
-	// maybeNotify). Fetched here, on the event pump, a reply from someone
-	// the client never saw waited for users/info, and every event behind
-	// it with it: an open thread drew replies seconds late, after Activity
-	// had them (Karim, 2026-11-18, "threads are a shit show rn").
+	// maybeNotify, noteMembers). Fetched here, on the event pump, a reply
+	// from someone the client never saw waited for users/info, and every
+	// event behind it with it: an open thread drew replies seconds late,
+	// after Activity had them (Karim, 2026-11-18, "threads are a shit show
+	// rn"); asked for here, every sender in any channel brought a "names"
+	// pass for people nothing drew.
 	if needsFileInfo(&m) { // the echo of the viewer's own upload too
 		go a.fillFiles(ch, m.TS)
 	}
