@@ -270,6 +270,23 @@ func TestEnteringConversationAfterJump(t *testing.T) {
 // the wrong page.
 func TestColdJumpLoadsOnlyTheWindow(t *testing.T) {
 	e := longEnv(t)
+	e.coldJump(t, nil)
+}
+
+// TestColdJumpRefreshedBeforeFirstFrame: core's names landing between the
+// navigation and the list's first frame (refreshVisible) don't load the
+// newest page for the jump's list: it still loads only the window. The
+// refresh loaded the newest page, then the window: three calls, and the
+// newest page drawn first.
+func TestColdJumpRefreshedBeforeFirstFrame(t *testing.T) {
+	e := longEnv(t)
+	e.coldJump(t, e.a.refreshVisible)
+}
+
+// coldJump is TestColdJumpLoadsOnlyTheWindow's jump and checks, with
+// between run after the navigation, before the first frame.
+func (e *perfEnv) coldJump(t *testing.T, between func()) {
+	t.Helper()
 	ch := "C0FAKE00003" // read: not prefetched
 	if e.a.Core().S.Timeline(ch) != nil {
 		t.Fatalf("%s's history is loaded already", ch)
@@ -278,6 +295,9 @@ func TestColdJumpLoadsOnlyTheWindow(t *testing.T) {
 	target := plainAt(t, e.fs, ch, 500)
 	calls := e.recordCalls("conversations.history")
 	e.a.Navigate("c/" + ch + "/m/" + target)
+	if between != nil {
+		between()
+	}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		rows := e.paneRows("", ch, "")
