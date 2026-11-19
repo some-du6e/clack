@@ -172,6 +172,11 @@ on:
         description: "run only the jobs whose id starts with this (empty: all)"
         required: false
         default: ""
+      slice:
+        description: "edit-latency: TestEditLatency's messages-slice case too (CLACK_LATENCY_SLICE; red until its view re-read is fixed)"
+        required: false
+        type: boolean
+        default: false
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run flake-check.yml --ref <branch>)
     paths:
@@ -251,6 +256,17 @@ on:
       - "internal/ui/richview/pill_*_test.go"
       - "internal/ui/messages/pill_wrap_test.go"
       - "internal/ui/slackc/wrap.go"
+      # the event pump's latency guards (edit-latency, thread-replies,
+      # reactions-live: gated, they run only here) and what they guard
+      - "internal/core/events.go"
+      - "internal/core/activity_later.go"
+      - "internal/ui/notify_conv.go"
+      - "internal/ui/messages/taut.go"
+      - "internal/ui/edit_latency_test.go"
+      - "internal/ui/thread_reply_latency_test.go"
+      - "internal/ui/reactions_live_test.go"
+      - "internal/fakeslack/uptime.go"
+      - "internal/fakeslack/react_live.go"
 
 permissions:
   contents: read
@@ -1320,8 +1336,8 @@ jobs:
   # pass-through plugins (the messages slice, the components a message
   # draws through). Frames are drawn when the app asks for one, as a
   # window does. The messages-slice case, red until its view re-read is
-  # fixed, runs only with CLACK_LATENCY_SLICE=1 (not set here: ui and main
-  # pushes run this job). Dispatch with only=edit-latency.
+  # fixed, runs only on request (-f slice=true sets CLACK_LATENCY_SLICE; ui
+  # and main pushes leave it off). Dispatch with only=edit-latency.
   edit-latency:
     if: ${{ !inputs.only || startsWith('edit-latency', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1338,6 +1354,7 @@ jobs:
       - name: "ui: each edit to the frame that draws it, per surface (one verbose run, then COUNT)"
         env:
           CLACK_LATENCY_TESTS: "1"
+          CLACK_LATENCY_SLICE: ${{ inputs.slice && '1' || '' }}
         run: |
           rc=0
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestEditLatency$' ./internal/ui || rc=1
