@@ -50,6 +50,7 @@ func (a *App) handle(ev slack.Event) {
 		var e struct {
 			User     string `json:"user"`
 			Reaction string `json:"reaction"`
+			URL      string `json:"url"` // reaction_added: an emoji the workspace hasn't got (a Slack Connect partner's)
 			Item     struct {
 				Channel string `json:"channel"`
 				TS      string `json:"ts"`
@@ -57,9 +58,13 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		add := ev.Type == "reaction_added"
+		if !add {
+			e.URL = "" // removeReaction takes none
+		}
 		// every copy takes it and a fetch out now keeps it, under one lock
-		// (store/reacts.go)
-		m, ok, changed := a.S.ApplyReactionNoted(e.Item.Channel, e.Item.TS, e.Reaction, e.User, add)
+		// (store/reacts.go); its url too (REACTIONS-SHARED-RTM passes the
+		// event's url to cBAo addReaction)
+		m, ok, changed := a.S.ApplyReactionNotedURL(e.Item.Channel, e.Item.TS, e.Reaction, e.User, e.URL, add)
 		// the reactor isn't fetched: only the reaction's tooltip names it
 		// (ReactionTip's TooltipMemberName, lazy_users.go)
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
