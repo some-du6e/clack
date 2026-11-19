@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/media"
 )
 
 // A video's frames repaint the main window alone, never the huddle call
@@ -51,6 +52,14 @@ func TestVideoSessionEndClosesPlayers(t *testing.T) {
 	e.until("every player closed behind the sign-in screen", 5*time.Second, func() bool {
 		return e.a.vids == nil || e.a.vids.Mounted() == 0
 	})
+	// the player itself closed: its goroutine gone, its clock stopped
+	if h, ok := pl.(*media.Handle); ok {
+		select {
+		case <-h.Done():
+		case <-time.After(2 * time.Second):
+			t.Error("the player wasn't closed: its handle's goroutine runs on")
+		}
+	}
 	time.Sleep(200 * time.Millisecond)
 	if p := pl.State(); !p.Paused && p.Pos > 0 {
 		before := p.Pos

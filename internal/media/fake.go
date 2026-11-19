@@ -167,8 +167,16 @@ func (p *fakePlayer) Stats() Stats {
 		Requests: rs.Requests, BytesRead: rs.BytesRead, Dropped: p.nDropped.Load()}
 }
 
+// Close ends the player: its clock stops where it was (a <video> taken
+// out of the page plays nothing), and its goroutine ends.
 func (p *fakePlayer) Close() {
-	p.quitOnce.Do(func() { close(p.quit) })
+	p.quitOnce.Do(func() {
+		p.mu.Lock()
+		p.st.Pos = p.pos()
+		p.st.Paused = true
+		p.mu.Unlock()
+		close(p.quit)
+	})
 }
 
 // Op is a live image (patch 35) of the frame published, size big: solid

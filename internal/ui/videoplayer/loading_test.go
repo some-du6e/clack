@@ -89,10 +89,12 @@ func TestLoadingPauseAsksNoFrames(t *testing.T) {
 	if layoutWakes(c, r, f) {
 		t.Error("the paused tile's layout asks the window for a frame")
 	}
-	n := frames.Load()
+	pl := state(t, c, r, f).Player
+	n, pf := frames.Load(), pl.Stats().Frames
 	time.Sleep(300 * time.Millisecond)
-	if d := frames.Load() - n; d != 0 {
-		t.Errorf("%d frames asked in 300 ms with nothing playing", d)
+	// the player's own (its first frame, once it loads, shows paused) aside
+	if d := frames.Load() - n - (pl.Stats().Frames - pf); d != 0 {
+		t.Errorf("%d frames asked in 300 ms with nothing playing, past the player's own", d)
 	}
 }
 
@@ -132,20 +134,27 @@ func TestSpinnerQuietFrames(t *testing.T) {
 	if layoutWakes(c, r, f) {
 		t.Error("the loading tile's layout asks the window for a frame (an op.InvalidateCmd mid-layout)")
 	}
-	n := frames.Load()
+	// the spinner's frames: the frames asked past the player's own (the
+	// fake publishes the video's for a second after Play, as if on screen)
+	pl := state(t, c, r, f).Player
+	spun := func() func() int64 {
+		n, pf := frames.Load(), pl.Stats().Frames
+		return func() int64 { return frames.Load() - n - (pl.Stats().Frames - pf) }
+	}
+	d := spun()
 	time.Sleep(300 * time.Millisecond)
 	if !state(t, c, r, f).Loading {
 		t.Skip("the fixture loaded within 300 ms")
 	}
-	if d := frames.Load() - n; d < 10 {
+	if d := d(); d < 10 {
 		t.Errorf("%d quiet frames in 300 ms of loading, want the spinner's (about 18)", d)
 	}
 	waitFor(t, "playing", 15*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
 	time.Sleep(100 * time.Millisecond)
-	n = frames.Load()
+	d = spun()
 	time.Sleep(300 * time.Millisecond)
-	if d := frames.Load() - n; d > 2 { // the fake publishes frames only for the GPU's asks: none here
-		t.Errorf("%d frames asked in 300 ms after it played: the spinner's go on", d)
+	if d := d(); d > 1 {
+		t.Errorf("%d frames asked in 300 ms after it played, past the video's: the spinner's go on", d)
 	}
 }
 
