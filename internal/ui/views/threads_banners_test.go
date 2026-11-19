@@ -276,7 +276,9 @@ func TestThreadsUnreadBannerCountLikeSlack(t *testing.T) {
 // mark, and the hand mark stays.
 func TestThreadsBannerJumpHiddenUnreadLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
-	const root, r4, r5, r8, r9, r10 = "1762600000.000100", "1762600400.000100", "1762600500.000100", "1762600800.000100", "1762600900.000100", "1762601000.000100"
+	// not the views fixture's own unread thread (1762600000.000100), whose
+	// subscription the store holds
+	const root, r4, r5, r8, r9, r10 = "1762610000.000100", "1762610400.000100", "1762610500.000100", "1762610800.000100", "1762610900.000100", "1762611000.000100"
 	var marks thrMarkLog
 	app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
 		marks.note(method, f)

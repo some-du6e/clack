@@ -99,8 +99,10 @@ func thrViewEnvAt(t *testing.T, v *Threads, n int, size image.Point) *vaEnv {
 // r10, not its two newest.
 func TestThreadsBelowFoldFirstReplyLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
-	const root = "1762600000.000100"
-	r := func(n int) string { return fmt.Sprintf("176260%02d00.000100", n) } // r(6) is 1762600600.000100
+	// not the views fixture's own unread thread (1762600000.000100), whose
+	// subscription the store holds
+	const root = "1762610000.000100"
+	r := func(n int) string { return fmt.Sprintf("176261%02d00.000100", n) } // r(6) is 1762610600.000100
 	key := ch + "/" + root
 	fillers := func(unread bool) []map[string]any {
 		var ths []map[string]any
