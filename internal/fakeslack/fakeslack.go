@@ -99,6 +99,9 @@ type Size struct {
 	// ThreadAssistantTitle, and the app DM's bot an agent app
 	// (apps.profile.get is_agent_app, is_shown_as_agent left out).
 	ThreadAgentTitles bool
+	// AgentTasks adds Atlas, a third-party agent app with the Tasks tab
+	// on, the viewer's DM with it and its tasks (agent_tasks.go).
+	AgentTasks bool
 	// SlackConnectDM (with ThreadHeader) adds an open DM with ExternalID,
 	// Partner Co's member: the sidebar's external DM row
 	// (SlackConnectDMID).
@@ -724,6 +727,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ThreadHeader {
 		s.addThreadHeader() // threadheader.go
+	}
+	if sz.AgentTasks {
+		s.addAgentTasks() // agent_tasks.go
 	}
 	if sz.ThreadsAudit {
 		s.addThreadsAudit() // threads_audit.go
@@ -1396,6 +1402,11 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if s.Size.AgentTasks {
+		if out, handled := s.handleAgentTasks(method, f); handled { // agent_tasks.go
+			return out
+		}
+	}
 	if out, handled := s.handleComments(method, f); handled { // canvas_comments.go
 		return out
 	}
