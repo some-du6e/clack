@@ -198,6 +198,8 @@ const (
 	// ShortcutBlock is a share_shortcut block (shortcut.go): Shortcut
 	// holds the workflow card.
 	ShortcutBlock
+	// CardBlock is a card block (card.go): Card holds its parts.
+	CardBlock
 )
 
 // Block is one vertical unit of a document.
@@ -243,6 +245,8 @@ type Block struct {
 	Container *Container
 	// Shortcut is a ShortcutBlock's workflow card (shortcut.go).
 	Shortcut *ShortcutCard
+	// Card is a CardBlock's parts (card.go).
+	Card *Card
 }
 
 // Container is a container block's header and options (Slack's

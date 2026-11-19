@@ -78,7 +78,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | call (slack.ts) | `FkcF` · `9CtN` PlatformCallSubtype | partial: a generic "Call" link card | **partial** | the ended icon's and faces' grayscale filter, renderCallIcon's phone-flat (ended), call-missed and call-declined glyphs (DM calls; they aren't in Clack's icon set yet, so it draws phone), the faces' name tooltips, Decline for an incoming DM call, `desktop_app_join_url` (Join opens `join_url`), stopping your huddle on Join, ava_0002 for an external avatar that fails to load (a face with no `avatar_url` draws it), and the times' clock (always 12-hour; Slack's follows the locale's default, 24-hour outside en-US, en-GB, ko-KR and zh) |
 | callout (slack.ts) | `zMv1` · `Xhau` Callout | absent | **full** | a callout inside a container lays its children out as a flex column with an 8px gap |
 | canvas_table (slack.ts) | `8Rt0` CanvasTable | the per-block error line (its object `rows` failed the decode) | absent | |
-| card | `ARtW` · `7Xkb` Card | absent | absent | hero image, icon, title/subtitle/body mrkdwn, buttons left/right |
+| card | `ARtW` · `7Xkb` Card on Slack Kit's entity card (`aJif`) | absent | **partial**: the 180–340px card with its hero image (4:3, cover), its header (slack_icon glyph or icon image, title, subtitle), body, subtext and actions (partitionActions `fWi9`: three or more put the danger ones left; getButtonType `szY5`), live in messages, modals and App Home | the hero image's load-error picture (`Ec61`), the buttons' label truncation and the ghost style (drawn as the outline button), the explore-my-trial dark hero images |
 | carousel | `ZDqH` CarouselBlock | absent | absent | horizontally scrolling cards |
 | channel_section / channel_set (slack.ts) | `865t` | absent | absent | |
 | condition (slack.ts) | expanded first (`CRur`), no renderable | absent (drew nothing) | **full** | |
@@ -196,4 +196,4 @@ Round 1's review fixes, with tests that fail on `8126e895`:
 
 ## Next
 
-In order: `card`, `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
+In order: `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.

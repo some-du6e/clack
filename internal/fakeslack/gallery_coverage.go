@@ -20,6 +20,7 @@ func galleryCoverage(e GalleryEnv) []GalleryMessage {
 	now := time.Now().Unix()
 	at := func(sec int64) string { return strconv.FormatInt(sec, 10) }
 	r := strings.NewReplacer("{U1}", u1, "{U2}", u2, "{U3}", u3, "{ICON72}", e.Img(72, 72, "callapp"),
+		"{HERO}", e.Img(400, 300, "cardhero"), "{CARDICON}", e.Img(72, 72, "cardicon"),
 		"{RUN}", at(now-25*60), "{END}", at(1762506000), "{ENDS}", at(1762506000-47*60))
 	b := func(s string) string { return r.Replace(s) }
 	icons := `"app_icon_urls":{"image_32":"{ICON72}","image_72":"{ICON72}"}`
@@ -94,6 +95,22 @@ func galleryCoverage(e GalleryEnv) []GalleryMessage {
 			{"type":"fallback_canary","fallback":[{"type":"section","text":{"type":"mrkdwn","text":"*fallback_canary* drew its fallback"}},{"type":"divider"}]},
 			{"type":"future_widget","fallback":[]},
 			{"type":"expandable"}]`},
+		// cards (Card, 7Xkb): every part; the slack_icon glyph with three
+		// actions (the danger one left, the primary last); a title alone
+		{Name: "coverage/card", Text: "card", Blocks: b(`[{"type":"card","block_id":"card1",
+			"hero_image":{"type":"image","image_url":"{HERO}","alt_text":"a harbour at dusk"},
+			"icon":{"type":"image","image_url":"{CARDICON}","alt_text":"app"},
+			"title":{"type":"mrkdwn","text":"*card*: Quarterly planning"},"subtitle":{"type":"mrkdwn","text":"Due Friday"},
+			"body":{"type":"mrkdwn","text":"Review the roadmap and pick the _three_ bets for next quarter."},
+			"subtext":{"type":"mrkdwn","text":"Updated 2 hours ago"},
+			"actions":[{"type":"button","action_id":"card_open","text":{"type":"plain_text","text":"Open"},"style":"primary","value":"open"},
+				{"type":"button","action_id":"card_later","text":{"type":"plain_text","text":"Later"},"value":"later"}]}]`)},
+		{Name: "coverage/card slack icon", Text: "card with a slack icon", Blocks: `[{"type":"card","block_id":"card2",
+			"slack_icon":{"name":"calendar"},"title":{"type":"plain_text","text":"Design review"},"subtitle":{"type":"plain_text","text":"Tomorrow at 10:00"},
+			"actions":[{"type":"button","action_id":"card_decline","text":{"type":"plain_text","text":"Decline"},"style":"danger","value":"no"},
+				{"type":"button","action_id":"card_accept","text":{"type":"plain_text","text":"Accept"},"style":"primary","value":"yes"},
+				{"type":"button","action_id":"card_maybe","text":{"type":"plain_text","text":"Maybe"},"value":"maybe"}]}]`},
+		{Name: "coverage/card title only", Text: "card with a title", Blocks: `[{"type":"card","block_id":"card3","title":{"type":"plain_text","text":"Just a title"}}]`},
 		{Name: "coverage/condition", Text: "condition", Blocks: `[{"type":"condition","cases":[
 			{"conditions":[{"type":"client","op":"=","value":"ios"}],"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"ios only"}}]},
 			{"conditions":[{"type":"client","op":"=","value":"desktop"}],"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"*condition*: the desktop case drew"}}]}],

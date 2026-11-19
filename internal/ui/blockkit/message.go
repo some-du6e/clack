@@ -22,6 +22,10 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
+// richview draws a card's slack_icon through deriveIconName (Card's
+// BlockKitIcon and icon_button share Qw/u): agenticons.go's table.
+func init() { richview.BlockKitIcon = func(name string) string { return blockKitIconNames[name] } }
+
 // maxVisible is how many elements of an actions block a message shows
 // before "+ N more", and truncateAt how many it takes to truncate: Slack's
 // Actions block shows every element up to six and, from seven, the first

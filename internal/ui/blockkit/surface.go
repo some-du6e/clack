@@ -489,7 +489,7 @@ func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 		return s.section(gtx, b, key, w, st)
 	}
 	v := s.textOf(key, func() richtext.Doc { return s.docOf(b) })
-	if len(b.Nested) > 0 { // a container's or a callout's children, a fallback's payload: their elements are live
+	if len(b.Nested) > 0 || len(b.Elements) > 0 { // child blocks, a fallback's payload, a card's actions: live elements
 		if s.nested == nil {
 			s.nested = &nestedElements{s: s}
 		}

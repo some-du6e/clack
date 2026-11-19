@@ -264,6 +264,7 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 	var p struct {
 		plain
 		Elements    json.RawMessage `json:"elements"`
+		Actions     json.RawMessage `json:"actions"` // a card's buttons
 		ChildBlocks json.RawMessage `json:"child_blocks"`
 		Fallback    json.RawMessage `json:"fallback"`
 	}
@@ -272,8 +273,11 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 	}
 	*b = Block(p.plain)
 	b.Raw = append(json.RawMessage(nil), raw...)
-	if b.Type == "actions" && len(p.Elements) > 0 {
+	switch {
+	case b.Type == "actions" && len(p.Elements) > 0:
 		_ = json.Unmarshal(p.Elements, &b.Elements)
+	case b.Type == "card" && len(p.Actions) > 0: // Card's actions (7Xkb), its block id theirs
+		_ = json.Unmarshal(p.Actions, &b.Elements)
 	}
 	switch {
 	case b.Type == "container" || b.Type == "callout":
@@ -349,7 +353,7 @@ type ref struct {
 func elementsOf(b *Block) []*Element {
 	var out []*Element
 	switch b.Type {
-	case "actions":
+	case "actions", "card":
 		for i := range b.Elements {
 			out = append(out, &b.Elements[i])
 		}

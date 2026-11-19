@@ -267,13 +267,16 @@ func (e *bkEnv) layoutMessage(gtx layout.Context) []slotRect {
 }
 
 // flatBlocks is bs with a container's or a callout's children after it,
-// the blocks richview draws inside them.
+// the blocks richview draws inside them, and a card's buttons as a run.
 func flatBlocks(bs []richtext.Block) []richtext.Block {
 	var out []richtext.Block
 	for _, b := range bs {
 		out = append(out, b)
 		if b.Kind == richtext.ContainerBlock || b.Kind == richtext.CalloutBlock {
 			out = append(out, flatBlocks(b.Children)...)
+		}
+		if cb := cardButtons(b); len(cb) > 0 {
+			out = append(out, richtext.Block{Kind: richtext.Actions, Buttons: cb})
 		}
 	}
 	return out

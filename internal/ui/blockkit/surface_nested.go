@@ -48,8 +48,11 @@ func (n *nestedElements) ElementsSize(bs []richtext.Button, maxW int, accessory 
 		return image.Point{}, false
 	}
 	gtx := n.scratch(m, maxW)
-	if b.Type == "actions" {
+	switch {
+	case b.Type == "actions":
 		return image.Pt(maxW, n.s.flowRun(gtx, b, maxW, false)), false
+	case !accessory:
+		return n.row(gtx, bs, false), false
 	}
 	w := n.s.widget(b, e)
 	if stacks(e) {
@@ -65,10 +68,38 @@ func (n *nestedElements) LayoutElements(gtx layout.Context, bs []richtext.Button
 	case b == nil || iconButtonHidden(e, n.s.selfID()):
 	case b.Type == "actions":
 		n.s.flowRun(gtx, b, sz.X, true)
+	case !accessory:
+		n.row(gtx, bs, true)
 	default:
 		n.s.widget(b, e).layout(fixed(gtx, sz), sz)
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// row lays out a run of a card's buttons (not an actions block): each
+// its own widget, 8px apart (.actionsLeft / .actionsRight column-gap).
+func (n *nestedElements) row(gtx C, bs []richtext.Button, draw bool) image.Point {
+	x, h := 0, 0
+	for i := range bs {
+		r, ok := find(n.s.blocks, bs[i].BlockID, bs[i].ActionID)
+		if !ok {
+			continue
+		}
+		w := n.s.widget(r.block, r.el)
+		sz := w.size(gtx, gtx.Constraints.Max.X, false)
+		if sz.X == 0 {
+			continue
+		}
+		if x > 0 {
+			x += dp(gtx, 8)
+		}
+		if draw {
+			at(gtx, image.Pt(x, 0), func(gtx C) D { return w.layout(fixed(gtx, sz), sz) })
+		}
+		x += sz.X
+		h = max(h, sz.Y)
+	}
+	return image.Pt(x, h)
 }
 
 func (n *nestedElements) ElementsVersion() uint32 { return n.s.gen }

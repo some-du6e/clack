@@ -311,6 +311,7 @@ func galleryElements(s *Server) []slack.Message {
 					b["accessory"] = btn("nested_fallback", "Retry", "retry")
 					return b
 				}()}},
+			{"type": "card", "block_id": "bk_nested_card", "title": md("A card's action"), "actions": []any{btn("nested_card", "Open", "open")}},
 		},
 	}
 	var out []slack.Message

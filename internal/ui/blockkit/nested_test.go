@@ -30,6 +30,7 @@ func TestNestedBlockElements(t *testing.T) {
 		{"bk_nested_actions", "nested_wait", "Wait", "wait"},
 		{"bk_nested_callout_sec", "nested_callout", "Approve", "yes"},
 		{"bk_nested_fallback", "nested_fallback", "Retry", "retry"},
+		{"bk_nested_card", "nested_card", "Open", "open"},
 	} {
 		e.idle(c.bid)
 		e.clickEl(c.bid, c.aid)
@@ -43,7 +44,7 @@ func TestNestedBlockElements(t *testing.T) {
 }
 
 // TestSurfaceNestedElements: in a modal and in App Home, a container's
-// actions child and a callout's section accessory are the surface's own
+// actions child, a callout's section accessory and a card's action are the surface's own
 // element widgets (drawn through richview's Elements host), not
 // richview's static buttons, which only open links.
 func TestSurfaceNestedElements(t *testing.T) {
@@ -54,12 +55,14 @@ func TestSurfaceNestedElements(t *testing.T) {
 		map[string]any{"type": "callout", "block_id": "c2", "background_color": "blue",
 			"child_blocks": []any{map[string]any{"type": "section", "block_id": "s1",
 				"text": map[string]any{"type": "mrkdwn", "text": "Approve?"}, "accessory": visBtn("ok")}}},
+		map[string]any{"type": "card", "block_id": "k1", "title": map[string]any{"type": "plain_text", "text": "A card"},
+			"actions": []any{visBtn("cardgo")}},
 	}
 	raw, _ := json.Marshal(blocks)
 	for _, typ := range []string{"modal", "home"} {
 		s := newSurface(h, &core.View{Type: typ, Blocks: raw})
 		s.Layout(visGtx(480))
-		for _, k := range []string{"a1\x00go\x00button", "s1\x00ok\x00button"} {
+		for _, k := range []string{"a1\x00go\x00button", "s1\x00ok\x00button", "k1\x00cardgo\x00button"} {
 			if w := s.ws[k]; w == nil || w.main.sz == (image.Point{}) {
 				t.Errorf("%s: %q isn't a drawn element widget", typ, k)
 			}
@@ -79,7 +82,7 @@ func TestNestedElementsRichview(t *testing.T) {
 		v.Layout(e.context(), styleFor(e.h.th, e.h.img), &surfHandler{h: e.h})
 	}
 	for _, k := range []string{"bk_nested_actions\x00nested_go", "bk_nested_actions\x00nested_wait",
-		"bk_nested_callout_sec\x00nested_callout", "bk_nested_fallback\x00nested_fallback"} {
+		"bk_nested_callout_sec\x00nested_callout", "bk_nested_fallback\x00nested_fallback", "bk_nested_card\x00nested_card"} {
 		if w := me.ws[k]; w == nil || w.main.sz == (image.Point{}) {
 			t.Errorf("%q isn't drawn", k)
 		}
