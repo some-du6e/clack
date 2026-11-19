@@ -91,7 +91,7 @@ func (a *App) OpenMessageSecondary(ch, ts string) {
 	if ch == "" {
 		return
 	}
-	if ts != "" && a.canvasInstead(ch, "", ts, false) { // a canvas's file channel: the canvas (canvas_open.go)
+	if ts != "" && a.canvasInstead(ch, "", ts, views.CanvasSide, func() { a.OpenMessageSecondary(ch, ts) }) { // a canvas's file channel: the canvas (canvas_open.go)
 		return
 	}
 	if a.pane == paneSplit && ts != "" {

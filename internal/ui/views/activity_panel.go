@@ -59,7 +59,7 @@ func (v *Activity) openSecondary() {
 	if !ok || !v.selOK || !v.h.Core().ActivityRemovePersistentDetailPanel() {
 		return
 	}
-	if v.openCanvas(false) { // a canvas mention: the canvas, never its file channel (activity_canvas.go)
+	if v.openMention() { // a canvas mention: the canvas, never its file channel (activity_canvas.go)
 		return
 	}
 	ts := v.selJumpTS()
@@ -98,7 +98,7 @@ func (v *Activity) jumpPane() {
 	if !v.paneInView() || v.sel.Channel == "" {
 		return
 	}
-	if v.openCanvas(true) { // a canvas mention opens the canvas in Primary (activity_canvas.go)
+	if v.paneCanvasJump() { // a canvas's file channel opens the canvas in the pane (activity_canvas.go)
 		return
 	}
 	if j, ok := v.h.(PaneJumper); ok {
@@ -149,7 +149,7 @@ func (v *Activity) secondaryShows(sh ActivitySecondary) bool {
 	if v.sel.Channel == "" {
 		return sh.SecondaryShowsDetail(v.selKey)
 	}
-	if fid, _, ok := v.selCanvas(); ok {
+	if fid, ok := v.selMention(); ok {
 		if co, ok := v.h.(CanvasOpener); ok {
 			return co.CanvasShown(fid)
 		}

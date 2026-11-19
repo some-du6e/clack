@@ -468,6 +468,10 @@ type Activity struct {
 	closeBtn widget.Clickable
 	prevList widget.List
 
+	// paneCanvas is the canvas the persistent detail panel's pane shows
+	// for the item keyed paneCanvasKey (activity_canvas.go paneCanvasJump)
+	paneCanvas, paneCanvasKey string
+
 	locGen uint64 // i18n.Gen the rows were built in
 
 	// typing is who's typing where, for the status column (rZx3 z8;
@@ -1356,7 +1360,7 @@ func (v *Activity) describeItem(it *core.ActivityItem, refs map[string]core.Conv
 			// row is described again once it's in (namesIn)
 			ref.ID = it.Channel
 			d.ent, d.entOn = v.refEnt(ref), true
-			if fid, ok := v.canvasChannel(it); ok {
+			if fid, ok, pending := v.canvasChannel(it); ok || pending {
 				// a canvas's file channel is its canvas (chanent.Canvas):
 				// the row is described again when files.info names it
 				// (core's "names" with the file id: membersIn)
@@ -3881,6 +3885,11 @@ func (v *Activity) pointerAt() image.Point {
 func (v *Activity) pane(gtx C) D {
 	defer clipMax(gtx).Pop()
 	fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, v.p.Bg)
+	if fid := v.paneCanvasOf(); fid != "" { // a canvas's file channel: the canvas (activity_canvas.go)
+		if co, ok := v.h.(CanvasOpener); ok {
+			return co.CanvasPane(fid)(gtx)
+		}
+	}
 	if ps, ok := v.h.(Panes); ok && v.sel.Channel != "" {
 		if v.selDesc.thread != "" {
 			return ps.ThreadPane(v.sel.Channel, v.selDesc.thread)(gtx)

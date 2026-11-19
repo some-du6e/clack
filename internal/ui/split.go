@@ -50,6 +50,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // paneSplit names the split view's view container (App.pane).
@@ -205,7 +206,9 @@ func (a *App) OpenSplit(route string) {
 		a.Navigate(route)
 		return
 	}
-	if th, ts := r.Thread(), r.Message(); (th != "" || ts != "") && a.canvasInstead(ch, th, ts, false) { // a canvas's file channel: the canvas (canvas_open.go)
+	// a canvas's file channel: the canvas, in the side panel (the split
+	// view holds conversations only; canvas_open.go)
+	if th, ts := r.Thread(), r.Message(); (th != "" || ts != "") && a.canvasInstead(ch, th, ts, views.CanvasSide, func() { a.OpenSplit(route) }) {
 		return
 	}
 	s := &a.split

@@ -1,9 +1,12 @@
 package core
 
 import (
+	"context"
+	"fmt"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // A canvas's hidden file channel (sidebar_docs.go: the file's id with F
@@ -65,32 +68,93 @@ func (a *App) CanvasTitleOf(fileID string) (spans []richtext.Span, kind string, 
 	return richtext.CanvasTitle(a.S, ref.Title, ref.TitleBlocks), ref.Kind, true
 }
 
-// CanvasJump is how Slack opens a jump into canvas file channel ch (lFpV
-// openDocWithThreadTs, whose threadTs is the jump's thread, else its
-// message: wc0P "eo && !ed && (ed = i)"). It reads the message at that ts:
+// CanvasOfJump is the canvas a jump to message ts of ch opens (Slack's
+// jumpToMessage, isSpaceship): CanvasOfChannel's. While files.info hasn't
+// answered for a stored file channel, it is the canvas the message's own
+// document_mention names. Otherwise wait is true: the store asked
+// files.info, and the jump waits for the "names" that brings the file id
+// (fileID) instead of opening the file channel.
+func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
+	if fid, ok := a.CanvasOfChannel(ch); ok {
+		return fid, true, false
+	}
+	c, stored := a.S.Conv(ch)
+	if !stored {
+		c, stored = a.S.ExtConv(ch)
+	}
+	if !stored || !IsFileChannel(c) {
+		return "", false, false
+	}
+	fileID = FileOfChannel(ch)
+	if _, known := a.S.KnownCanvasRef(fileID); known {
+		return "", false, false // a list's file channel, or a file that's gone
+	}
+	if ts != "" {
+		if m, held := a.S.FindHeld(ch, ts); held && m.DocumentMention != nil && m.DocumentMention.FileID == fileID {
+			return fileID, true, false
+		}
+	}
+	a.S.CanvasRef(fileID) // asked for (resolveCanvasRef), if CanvasOfChannel hadn't
+	return fileID, false, true
+}
+
+// CanvasJump is where Slack opens a jump into canvas file channel ch.
+// lFpV openDocWithThreadTs reads the message at the jump's thread, else at
+// its message (wc0P "eo && !ed && (ed = i)"):
 //
 //   - a mention (document_mention): the canvas at its section_id;
-//   - a thread's root, which is a comment's (document_comment_root): the
-//     canvas with that comment thread (openDoc's commentThreadId →
-//     showQuipCommentThread). A root without replies opens just the canvas
-//     (suppressCommentThread).
+//   - a comment's root (document_comment_root) with replies: the canvas
+//     with that comment thread (openDoc's commentThreadId →
+//     showQuipCommentThread). A root without replies opens just the
+//     canvas (suppressCommentThread);
+//   - any other message (a reply): just the canvas.
 //
-// A jump with a thread always opens that thread. Any other message, or
-// one the store doesn't hold, opens just the canvas.
-func (a *App) CanvasJump(ch, thread, ts string) (section, comment string) {
-	if thread != "" {
-		return "", thread
+// known is false while the store doesn't hold that message:
+// CanvasJumpFetch reads it first, as lFpV does.
+func (a *App) CanvasJump(ch, thread, ts string) (section, comment string, known bool) {
+	at := thread
+	if at == "" {
+		at = ts
 	}
-	if ts == "" {
-		return "", ""
+	if at == "" {
+		return "", "", true
 	}
-	if m, ok := a.S.Find(ch, ts); ok {
-		switch {
-		case m.DocumentMention != nil:
-			return m.DocumentMention.SectionID, ""
-		case m.Subtype == "document_comment_root" && m.ReplyCount > 0:
-			return "", ts
-		}
+	m, ok := a.S.FindHeld(ch, at)
+	if !ok {
+		return "", "", false
+	}
+	section, comment = canvasJumpOf(&m)
+	return section, comment, true
+}
+
+// CanvasJumpFetch is CanvasJump for a message the store doesn't hold:
+// fetched by id first (lFpV's fetchMessagesByIds, reason
+// "quip-root-comment-not-loaded", is messages.list). When the message
+// can't be had nothing opens, as in Slack.
+func (a *App) CanvasJumpFetch(ctx context.Context, ch, thread, ts string) (section, comment string, err error) {
+	at := thread
+	if at == "" {
+		at = ts
+	}
+	got, answered := a.hydrateOK(ctx, map[string][]string{ch: {at}})
+	m, ok := got[ch+"/"+at]
+	switch {
+	case ok:
+		section, comment = canvasJumpOf(&m)
+		return section, comment, nil
+	case answered[ch]:
+		return "", "", fmt.Errorf("%s/%s: no such message", ch, at)
+	}
+	return "", "", fmt.Errorf("%s/%s: messages.list didn't answer", ch, at)
+}
+
+// canvasJumpOf is what openDocWithThreadTs opens for message m.
+func canvasJumpOf(m *slack.Message) (section, comment string) {
+	switch {
+	case m.DocumentMention != nil:
+		return m.DocumentMention.SectionID, ""
+	case m.Subtype == "document_comment_root" && m.ReplyCount > 0:
+		return "", m.TS
 	}
 	return "", ""
 }

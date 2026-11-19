@@ -427,8 +427,15 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		v.mu.Unlock()
 		for _, w := range want {
 			for _, ts := range w.Timestamps {
+				found := false
 				for _, m := range msgs {
 					if m.Channel == w.Channel && m.TS == ts {
+						out[w.Channel] = append(out[w.Channel], m)
+						found = true
+					}
+				}
+				if !found {
+					if m, ok := s.commentAt(w.Channel, ts); ok { // a canvas's comment (a jump's root, a thread_v2's messages)
 						out[w.Channel] = append(out[w.Channel], m)
 					}
 				}

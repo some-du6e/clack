@@ -784,6 +784,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 		b.resnapshot(a)
 		a.refreshVisible()
 		a.Invalidate()
+		a.canvasJumpNames(ev.Users) // a jump that waited for its canvas's files.info (canvas_open.go)
 		for id := range b.ext {
 			// re-resolve closed-DM headers, keeping what they show until
 			// the new answer lands: forgetting them blanked the header and
