@@ -46,7 +46,7 @@ func TestBlockFallbacks(t *testing.T) {
 			`[{"type":"mystery","fallback":[]}]`,
 			nil},
 		{"a block Clack can't draw yet lets the text stand in",
-			`[{"type":"card","block_id":"c1"}]`,
+			`[{"type":"timeline","block_id":"t1"}]`,
 			[]Block{para(tx("fallback text"))}},
 		{"a rich_text piece or an inline element at the top level draws as inside a rich_text",
 			`[{"type":"rich_text_section","elements":[{"type":"text","text":"hi"}]},{"type":"text","text":"there"}]`,
