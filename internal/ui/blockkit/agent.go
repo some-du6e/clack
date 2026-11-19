@@ -924,6 +924,14 @@ func (me *Message) toggleLine(gtx C, pal agentPal, status, title string, hasCont
 		if open {
 			name = "caret-down"
 		}
+		if len(lines) > 0 && lastW+caretW > max(w-ix, 1) {
+			// the caret (.toggleBarCaretInline, inline-flex) is an atomic
+			// inline: where the title's last line leaves it no room it
+			// breaks onto a line of its own and the bar grows, never past
+			// the block's edge (its clip would hide it)
+			lastW = 0
+			y += lh
+		}
 		cx := ix + lastW + dp(gtx, 4)
 		at(gtx, image.Pt(cx, y-lh+(lh-dp(gtx, 13))/2), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
 		maxW = max(maxW, lastW+caretW)
