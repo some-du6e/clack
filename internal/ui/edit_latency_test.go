@@ -55,9 +55,11 @@ return EditPassSlice
 })()`
 
 // editSliceText patches the messages slice by marking each plan block's
-// title (reactSliceText's mark, ' (logged)'): the uptime monitor's title
-// lives in its blocks, where patchMessageText doesn't reach, and a row
-// drawing core's copy then draws the title unmarked, so the slice-text
+// title and the message's text (reactSliceText's mark, ' (logged)', as
+// Message Logger's edit marks): the uptime monitor's title lives in its
+// blocks, where patchMessageText doesn't reach, and a row takes the
+// plugins' view only once its text differs from core's (applyView), so a
+// row drawing core's copy draws the title unmarked, and the slice-text
 // mode tells the plugins' view from core's.
 const editSliceText = `(() => {
 const TautPlugin = globalThis.TautPlugin
@@ -71,7 +73,8 @@ class EditSliceText extends TautPlugin {
   start() {
     const { patchSlice, mapEntries } = this.api.redux
     const mark = (m) => (m && Array.isArray(m.blocks) ?
-      { ...m, blocks: m.blocks.map((b) => (b && typeof b.title === 'string' ? { ...b, title: b.title + ' (logged)' } : b)) } : m)
+      { ...m, text: typeof m.text === 'string' ? m.text + ' (logged)' : m.text,
+        blocks: m.blocks.map((b) => (b && typeof b.title === 'string' ? { ...b, title: b.title + ' (logged)' } : b)) } : m)
     patchSlice('messages', (ch, bucket) => (bucket && typeof bucket === 'object' ? mapEntries(bucket, (ts, m) => mark(m)) : bucket))
   }
   stop() {}
