@@ -79,7 +79,7 @@ Sources: CDN build 2c0d02ca130f, fetched without a cookie: `fIJO` (VideoPlayer, 
 
 **Where.** VideoPlayer's click (`tE`): in a gallery (2 files or more, or the "+ N" tile) Slack opens the media viewer, which in Clack doesn't play videos yet, so those tiles still open the file's page; a lone video plays in place. richview hands such a tile to the player (`richview.Media`): the poster stays in the message's recording, and the player draws the video's frames and its overlay over it on every layout and takes the tile's input. Its frames are external images (Gio patch 51): a new frame repaints the window as a quiet frame (the last ops again, no layout), and the GPU draws only the tile's rectangle.
 
-**The overlay** (design_polish): the controls box 8px in, padding 4, radius 8, `#1d1c1d` .7 while hovered; the scrubber (20px: a 4px track, `#ffffff80`, elapsed `#1d9bd1`, an 8px thumb scaled .5 → 1); the pill (play-filled, pause-bold or the spinner, 20px, then 15px Bold time: the duration until it played, then the time played; `--playing` hides it unless hovered); mute (32×32, `sound-off`, `sound-up` at .6 or more, `sound-medium` at .3, `sound-down`) with the volume slider over it (70×16, or the vertical 118px box at 330px wide or less); the corner's More actions (28×28, 8px in).
+**The overlay** (design_polish): the controls box 8px in, padding 4, radius 8, `#1d1c1d` .7 while hovered; the scrubber (20px: a 4px track, `#ffffff80`, elapsed `#1d9bd1`, an 8px thumb scaled .5 → 1); the pill (play-filled, pause-bold or the spinner, 20px; Slack's set has no SVG for pause-bold, so it draws the icon font's U+EA32, which Clack's two round-ended bars are measured from and icon-shots holds them to; then 15px Bold time: the duration until it played, then the time played; `--playing` hides it unless hovered); mute (32×32, `sound-off`, `sound-up` at .6 or more, `sound-medium` at .3, `sound-down`) with the volume slider over it (70×16, or the vertical 118px box at 330px wide or less); the corner's More actions (28×28, 8px in).
 
 **What it does.**
 - The first click mounts the player and plays it (Slack's `autoPlay`), with the spinner until it plays; later clicks pause and play. A scrub mounts it without playing and plays on after the scrub if it played before (X7vT).
@@ -92,22 +92,24 @@ Sources: CDN build 2c0d02ca130f, fetched without a cookie: `fIJO` (VideoPlayer, 
 - Sign-out closes every player and forgets the progress.
 - More actions (frPc's order, with the items Clack has): Download, Share file…, Copy link; Open in ▸ Open in thread (not in a thread pane), View details; Delete file.
 
-**Tests.** Green in CI on 4a4ce1fb (ci run 44448457103, read from its test-shard artifacts and job logs):
+**Tests.** Green in CI on 4a4ce1fb (ci run 44448457103, read from its test-shard artifacts and job logs) and again on e0fbc6c0 (ci run 44453796868, with full-test):
 - `TestFileIsPlayableVideo` (internal/slack).
 - videoplayer's unit tests on the fake backend: `TestMediaTile`, `TestClickMountsAndToggles`, `TestOnePlaysAtATime`, `TestOffscreenPausesThenCloses`, `TestVolumePrefs`, `TestPillTime`, `TestSliderValues`, `TestLoopAndExt` and `TestProgressAt`.
 - The App through Gio's router over fakeslack's #files-gallery video, on the fake backend: `TestVideoInlinePlay`, `TestVideoVisibilityPause`, `TestVideoUnmountReleases` and `TestVideoPrefs`.
-- `TestRealWindowVideoFrames` on App.Run's own window: windows-idle (Media Foundation on WARP's Direct3D 11, decoding in software) and macos (AVFoundation, the runner's Metal). Also 3 of 3 on each in flake-check rw-video (run 44448461171). Its red run, on video-playback-red with the player calls stood in, failed on both (run 44435242673).
+- `TestRealWindowVideoFrames` on App.Run's own window: windows-idle (Media Foundation on WARP's Direct3D 11, decoding in software) and macos (AVFoundation, the runner's Metal). Also 3 of 3 on each in flake-check rw-video (runs 44448461171 and 44453931641). Its red run, on video-playback-red with the player calls stood in, failed on both (run 44435242673).
 
 What TestRealWindowVideoFrames measured, playing the 320×180 fixture for 5 s in an 800×600 window (the tile 204×115, 23,460 px):
 
 | | Windows | macOS |
 |---|---|---|
-| Video frames | 150 (30 fps) | 108 to 124 |
-| Quiet frames, of those the window didn't ask for itself | 96 to 98% | 93 to 96% |
+| Video frames | 149 to 150 (30 fps) | 99 to 139 |
+| Quiet frames, of those the window didn't ask for itself | 96 to 98% | 93 to 98% |
 | Partial frames | all | all |
-| Damage a frame | 21.6k px on average, the tile's at most, plus the composer caret's 19 px when it blinks in the same frame | the same |
+| Damage a frame | 21.4k to 21.9k px on average; the tile's at most, plus the composer caret's 19 px when it blinks in the same frame | 20.6k to 22.3k px on average; the same at most |
 | Frames from the player in 3 s paused | 0 | 0 |
-| First frame after the click | 2.1 to 3.1 s (2.1 s of it the audio track, below) | 0.3 to 1.0 s |
+| First frame after the click | 2.1 to 3.1 s, once 5.3 s (2.1 s of it the audio track, below) | 0.3 to 1.0 s |
+| The process's CPU playing | 42 to 43% of a core (Media Foundation decodes in software, WARP draws on the CPU) | 11 to 16% |
+| The process's CPU in 3 s paused | 0 to 31 ms | 62 to 68 ms |
 
 **Divergences.**
 - A gallery's video opens the file's page: Slack opens the media viewer, which plays it there. That's round 4.
@@ -115,7 +117,6 @@ What TestRealWindowVideoFrames measured, playing the 320×180 fixture for 5 s in
 - Scrolled away, a playing video pauses: Slack docks it into the mini player, which Clack hasn't got.
 - The first click calls play() at once, so a video playing elsewhere pauses at the click. Slack mounts `<video autoplay>`, whose `play` (and with it the other video's pause, bxCZ) comes once the new video has enough data.
 - More actions leaves out Open in new window, Dock to corner, Edit thumbnail…, Add to folder, Add to section and Report to Slack. View details opens the file's page.
-- `pause-bold` is redrawn as two filled bars and compared with the icon font's glyph (U+EA32), not with an SVG of Slack's.
 - Clack plays the file's `mp4` (else `url_private`) as a progressive download through ranged GETs. When there's an `hls_embed`, Slack can stream that instead.
 - A video with an audio track takes about 2.1 s more to its metadata on a Windows machine with no audio output (the runner: 2.15 s with the engine muted, 2.11 s with its audio renderer, 19 ms for the silent fixture; TestMFAudioTrackLoad, windows-idle). The mute isn't the cause.
 - AVFoundation asks for two ranges to the end of the file (`0-end`, then `X-end` a few hundred KB in). In a file under 30 s, pacing doesn't hold either request, so both read the whole file. TestAVFReadsAhead's 52 MB file (a 3 s video and 50 MB of free box) fetched 52 to 103 MB. In longer files both requests are paced to the same window and share the source's 16 MB cache.
