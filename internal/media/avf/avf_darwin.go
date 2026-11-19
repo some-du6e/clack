@@ -560,10 +560,11 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 // spread is how far a request to the end may read ahead of another one
 // still reading. AVFoundation asks for two to the end (0-end, then X-end
 // a few hundred KB in), which pacing holds only in files over 30 s:
-// within it, the one behind reads what the one ahead fetched from the
-// source's cache, so each byte comes from the network once (unheld, the
-// two drifted apart past the cache and both read the whole file).
-const spread = media.CacheMax - 2*media.BlockSize
+// within it, what the one ahead fetched is still in the source's cache
+// when the one behind gets there (the span between them and the GETs'
+// read-ahead past them fit in it), so the GET behind ends there (the
+// RangeSource's overtaken) and each byte comes from the network once.
+const spread = media.CacheMax/2 - 2*media.BlockSize
 
 // readTo notes request req's offset (-1: it ended) and wakes the requests
 // held behind it.
