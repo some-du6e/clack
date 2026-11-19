@@ -52,6 +52,23 @@ const (
 )
 
 // FilesCases are the #files-gallery messages in channel order.
+// FilesVideoID is #files-gallery's video file: its url_private and mp4
+// serve mediatest's fixture (3 s, 320×180) with ranges, as
+// files.slack.com does.
+const FilesVideoID = "F0FILESVID01"
+
+// FilesVideo is the video file the "video" case shares.
+func (s *Server) FilesVideo() slack.File {
+	for _, f := range s.filesFixtures() {
+		for _, fl := range f.files {
+			if fl.ID == FilesVideoID {
+				return fl
+			}
+		}
+	}
+	return slack.File{}
+}
+
 func (s *Server) FilesCases() []FilesCase {
 	var out []FilesCase
 	for i, f := range s.filesFixtures() {
