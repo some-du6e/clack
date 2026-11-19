@@ -122,7 +122,19 @@ func TestVideoPipJump(t *testing.T) {
 	at := p.elapsed
 	clk += time.Second
 	e.clickAt(vvMid(p.controls[1]), clk)
-	e.until("the inline player playing on", 10*time.Second, func() bool { pl, _, ok := inlineState(e, ts); return ok && pl })
+	for dl := time.Now().Add(10 * time.Second); ; {
+		if pl, _, ok := inlineState(e, ts); ok && pl {
+			break
+		}
+		if time.Now().After(dl) {
+			pl, el, ok := inlineState(e, ts)
+			v, pip := pipShown(e)
+			t.Fatalf("after Jump to message the inline player: playing %v at %v (%v); route %q; mini player %v %+v",
+				pl, el, ok, e.a.router.Current(), pip, v)
+		}
+		e.frame()
+		time.Sleep(time.Millisecond)
+	}
 	if _, ok := pipShown(e); ok {
 		t.Error("the mini player stayed after Jump to message")
 	}

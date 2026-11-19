@@ -83,9 +83,24 @@ func TestVideoThreadPane(t *testing.T) {
 	if _, ok := inThread(); !ok {
 		t.Fatal("the reply's video isn't the thread pane's player tile")
 	}
+	if pv, ok := pipShown(e); ok {
+		t.Logf("before the click the mini player shows %+v", pv)
+	}
 	clk += time.Second
 	e.clickAt(mid(tr), clk)
-	e.until("the pane's video playing", 15*time.Second, func() bool { st, _ := inThread(); return st.Playing && !st.Loading })
+	for dl := time.Now().Add(15 * time.Second); ; {
+		if st, _ := inThread(); st.Playing && !st.Loading {
+			break
+		}
+		if time.Now().After(dl) {
+			st, ok := inThread()
+			pv, pip := pipShown(e)
+			t.Fatalf("the pane's video didn't play after the click at %v (its tile now %v): %+v (%v); mounted %d; mini player %v %+v",
+				mid(tr), videoIn(), st, ok, e.a.vids.Mounted(), pip, pv)
+		}
+		e.frame()
+		time.Sleep(time.Millisecond)
+	}
 	e.until("the channel's video paused (one at a time)", 5*time.Second, func() bool { st, _ := e.videoState(m.TS); return !st.Playing })
 
 	// More actions, from the pane: no "Open in thread"

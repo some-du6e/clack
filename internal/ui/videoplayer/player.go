@@ -814,7 +814,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
 		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
-		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen || t.focus >= 0, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked(), Still: t.stillOK, InPip: t.inPip}
+		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen || t.focus >= 0, VolumeOpen: t.volOver || t.vol || t.volFocused(), Pill: t.pillShownLocked(), Still: t.stillOK, InPip: t.inPip}
 	if t.h != nil {
 		st.Player = t.h
 	}
