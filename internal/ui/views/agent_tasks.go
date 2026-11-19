@@ -48,6 +48,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -59,7 +60,6 @@ import (
 var (
 	nsSlackbotAI = i18n.NS("slackbot-ai")       // the tab, rows, empty states
 	nsShortcuts  = i18n.NS("shortcuts_gallery") // ConfirmDeleteWorkflowModal
-	nsDialog     = i18n.NS("generic_dialog")    // ConfirmationModal's Confirm
 )
 
 // AgentTasksTexts are Slack's strings (en-US) the tab draws; tests read
@@ -869,7 +869,7 @@ func (v *AgentTasks) skeletonRow(gtx C, i int, first, last bool) D {
 	dirAt(gtx, image.Pt(pad, (h-is)/2), func(gtx C) D {
 		return v.th.Placeholder(gtx, image.Pt(is, is), gtx.Dp(12))
 	})
-	widths := [...]int{120, 200, 360}
+	widths := [...]unit.Dp{120, 200, 360}
 	tx := pad + is + gtx.Dp(12)
 	ty := (h - gtx.Dp(40)) / 2
 	w1 := min(gtx.Dp(widths[i%3]), max(0, rw-tx-pad))
