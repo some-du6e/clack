@@ -159,7 +159,7 @@ func (me *Message) layoutTaskCard(gtx C, st *agentState, b *AgentBlock, first bo
 	if !open && b.Type == "plan" {
 		target = dp(gtx, 40) // initialHeight; a plan doesn't fit its collapsed height to the bar
 	}
-	h := me.animated(gtx, st, key, min(barH, target), target)
+	h := me.animated(gtx, st, key, target) // .block: overflow hidden
 	st.shown[key] = h
 	r := image.Rect(0, top, cw, top+h+2*bw)
 	rad := dp(gtx, 12)

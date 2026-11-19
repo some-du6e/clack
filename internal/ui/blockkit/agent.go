@@ -563,6 +563,9 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 		}
 		me.changed()
 	}
+	// the toggle line and, open, the content, drawn whole and then clipped
+	// to the height on screen
+	whole := op.Record(gtx.Ops)
 	y := top
 	td := at(gtx, image.Pt(0, y), func(gtx C) D {
 		return me.toggleLine(gtx, pal, status, title, hasContent, open, w)
@@ -577,25 +580,24 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 	y += hh
 	full := y
 	if open {
-		m := op.Record(gtx.Ops)
+		off := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		var ch int
 		if b.Type == "plan" {
 			ch = me.planTasks(gtx, st, pal, b, w)
 		} else {
 			ch = me.cardBody(gtx, st, pal, b, w)
 		}
-		call := m.Stop()
-		full = y + ch
-		h := me.animated(gtx, st, key, y, full)
-		cl := clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops)
-		off := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
-		call.Add(gtx.Ops)
 		off.Pop()
-		cl.Pop()
-		st.shown[key] = h
-		return image.Pt(w, h+bottom)
+		full = y + ch
 	}
-	h := me.animated(gtx, st, key, y, y)
+	call := whole.Stop()
+	h := me.animated(gtx, st, key, full)
+	// .blockSlim: overflow clip, with overflow-clip-margin 8px (what runs
+	// past the block during its height transition shows 8px further)
+	m := dp(gtx, 8)
+	cl := clip.Rect{Min: image.Pt(-m, top-m), Max: image.Pt(w+m, h+m)}.Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	cl.Pop()
 	st.shown[key] = h
 	return image.Pt(w, h+bottom)
 }
@@ -610,7 +612,7 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 // it got to; one back to where the running one came from runs for the
 // share of it that had run (CSS's reversing shortening factor). It keeps
 // frames and relayouts coming while one runs.
-func (me *Message) animated(gtx C, st *agentState, key string, min0, target int) int {
+func (me *Message) animated(gtx C, st *agentState, key string, target int) int {
 	// .block's transition: height .25s (slackc.NativeTransitionsCSS),
 	// through the cascade: a rule over it (Slick's Snappy) shortens it
 	dur, delay := slackc.CurrentScope().Child(clsAgentBlock, 0).Transition("height", 250*time.Millisecond, 0)
@@ -646,7 +648,7 @@ func (me *Message) animated(gtx C, st *agentState, key string, min0, target int)
 	h := a.from + int(math.Round(float64(target-a.from)*f))
 	me.ver.Add(1) // size changes: relayout next frame
 	gtx.Execute(op.InvalidateCmd{})
-	return max(h, min0)
+	return h
 }
 
 // scaleDur is d × f.
