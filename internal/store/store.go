@@ -899,6 +899,17 @@ func firstNonEmptyName(v ...string) string {
 	return ""
 }
 
+// MemberDeleted is richtext.MemberStater: whether the member is
+// deleted; known is false for a member not loaded yet, which is noted to
+// be fetched.
+func (s *Store) MemberDeleted(id string) (deleted, known bool) {
+	u, ok := s.User(id) // a miss is asked for
+	if !ok || u == nil {
+		return false, false
+	}
+	return u.Deleted, true
+}
+
 // MemberAvatar is richtext.MemberNamer: the member's own picture for a
 // 36px avatar (ConnectedBaseAvatar asks for twice that), the image
 // message rows draw; "" for a member not loaded yet.

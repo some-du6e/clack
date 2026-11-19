@@ -195,6 +195,9 @@ const (
 	// ContainerBlock is a container block (kitcards.go): Container holds
 	// its header, Children its child blocks.
 	ContainerBlock
+	// ShortcutBlock is a share_shortcut block (shortcut.go): Shortcut
+	// holds the workflow card.
+	ShortcutBlock
 )
 
 // Block is one vertical unit of a document.
@@ -238,6 +241,8 @@ type Block struct {
 	First bool
 	// Container is a ContainerBlock's header and options (kitcards.go).
 	Container *Container
+	// Shortcut is a ShortcutBlock's workflow card (shortcut.go).
+	Shortcut *ShortcutCard
 }
 
 // Container is a container block's header and options (Slack's

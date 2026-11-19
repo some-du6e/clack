@@ -1615,6 +1615,12 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		if wh, ok := h.(WorkObjectHandler); ok && tg.att != nil {
 			wh.WorkObject(v.woEvent(tg, anchor))
 		}
+	case tWorkflowCard: // a share_shortcut card (shortcut.go)
+		if wh, ok := h.(WorkflowCardHandler); ok {
+			if c, ok := tg.key.(*richtext.ShortcutCard); ok {
+				wh.WorkflowCard(tg.id, c, image.Rectangle{Min: anchor, Max: anchor})
+			}
+		}
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})

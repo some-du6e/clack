@@ -694,6 +694,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.ContainerBlock:
 		return l.container(b, x, y, w)
 
+	case richtext.ShortcutBlock:
+		return l.shortcutCard(b.Shortcut, x, y, w)
+
 	case richtext.Table:
 		return l.table(b, x, y, w)
 

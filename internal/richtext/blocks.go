@@ -100,6 +100,7 @@ type bk struct {
 	HasHeaderDivider bool            `json:"has_header_divider"`
 
 	bkWorkflow // workflow_mention (workflow_mention.go)
+	bkShortcut // share_shortcut (shortcut.go)
 }
 
 type textObj struct {
@@ -379,7 +380,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", "container", badBlock:
+		"alert", "callout", "loading", "container", "share_shortcut", badBlock:
 		return true
 	}
 	return false
@@ -523,6 +524,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, Block{Kind: LoadingBlock})
 	case "container":
 		return append(out, c.containerBlock(b))
+	case "share_shortcut":
+		return append(out, c.shortcutBlock(b))
 	case "markdown":
 		return append(out, markdownBlocks(c.r, b.textString())...)
 	case "mrkdwn", "plain_text":

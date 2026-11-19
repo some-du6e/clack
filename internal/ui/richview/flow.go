@@ -160,6 +160,9 @@ const (
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
 	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
 	tSnippet    // a snippet's Show more / Show less (file, act; snippet.go)
+	// tWorkflowCard is a share_shortcut card's click, Start Workflow or
+	// ⋮ (id: "open", "start", "more"; key: the card; shortcut.go)
+	tWorkflowCard
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no

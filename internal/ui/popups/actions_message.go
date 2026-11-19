@@ -354,6 +354,11 @@ func actWorkflowBot(h Host, m core.Message) bool {
 // seen in channel ch.
 var OpenWorkflowDetails func(triggerID, ch string)
 
+// WorkflowCardMenu, set by the ui root, opens a share_shortcut card's
+// More actions menu (MoreActionsMenu, boot-shared 9mPk) at anchor (window
+// coordinates) for the card c seen in channel ch.
+var WorkflowCardMenu func(h Host, anchor image.Rectangle, c *richtext.ShortcutCard, ch string)
+
 // fetchTriggerPreview asks for a trigger's preview unless it is known
 // (getTriggerPreviews: fetchObjectWithId for the missing ones).
 func fetchTriggerPreview(h Host, id string) {

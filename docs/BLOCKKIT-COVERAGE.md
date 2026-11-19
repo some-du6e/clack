@@ -85,7 +85,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | rich_text | `N5ZY` · `EAqS` → `qaNC` RichTextRenderer | full | full | see rich_text below |
 | section | `bzDH` | full | full | `visible_to_user_ids` on its button/checkboxes accessory now hides it |
 | share_prompt (slack.ts) | `JcWK` | absent | absent | |
-| share_shortcut (slack.ts) | `KrN7` ShareShortcut → WorkflowEntity | absent (drew nothing) | absent | the workflow entity card: details fetch, Start workflow, Forward bar; next round |
+| share_shortcut (slack.ts) | `KrN7` ShareShortcut → WorkflowEntity on `VLgN`/`aJif` | absent (drew nothing) | **partial** | Forward workflow (Slack's share dialog for a workflow) and More actions' Add workflow to channel aren't in Clack, so neither is drawn; the other-org badge (`ISuZ`, hermes_next); a service trigger's byline; the Slackbot-message attachment variant (`7lAH`) |
 | table | `POW9` Table | partial: a `raw_number` cell's numeric `value` failed the whole block ("This content could not be displayed."), `cell_text` cells drew empty | **full** | |
 | task_card | `1+vf` TaskCard | full | full | (agent.go) |
 | timeline (slack.ts) | `9B8s` Timeline | absent | absent | |
@@ -151,4 +151,4 @@ Tests that fail on `e93a5e70`: `TestBlockFallbacks`, `TestConditionBlocks`, `Tes
 
 ## Next
 
-In order: `share_shortcut` (the one real use left), the inline file slug, `card`, `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
+In order: the inline file slug, `card`, `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
