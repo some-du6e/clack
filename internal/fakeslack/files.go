@@ -203,6 +203,7 @@ func (s *Server) filesFixtures() []filesFixture {
 		{FilesThread, "A thread of images", 2, nil, []filesFixture{
 			{"thread image", "One in the thread", 1, ims(50, land), nil},
 			{"thread gallery", "Six in the thread", 3, ims(51, land, land, land, land, sq, port), nil},
+			{"thread video", "A video in the thread", 2, []slack.File{video}, nil},
 		}},
 	}
 }
