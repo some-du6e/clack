@@ -27,6 +27,11 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: gofmt
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      # a merge that keeps one side of a conflict on the gpu/headless -run
+      # lists drops a Gio patch's tests from CI with every job green
+      # (third_party/gioui.org/CLACK_PATCHES.md, patch 52's "Merging")
+      - name: every Gio patch test in gpu/headless runs on all three GPUs
+        run: python3 .github/scripts/headless-tests.py
       - name: vet
         run: go vet ./...
       # The app must not link golang.org/x/image/webp: its init would
