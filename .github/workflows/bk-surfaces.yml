@@ -49,7 +49,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$BK_SURFACES_SHOTS_DIR"
-          go test -count=1 -v -run 'TestMessageMention|TestMessageUnfurlCard|TestAttachments' ./internal/richtext
+          go test -count=1 -v -run 'TestMessageMention|TestMessageUnfurlCard|TestAttachments|TestMrkdwnFences|TestFromMrkdwn|TestMrkdwnFuzzish' ./internal/richtext
           go test -count=1 -v -run 'TestMessageSlug|TestPastedSlackLinks|TestSlugAtom|TestParsePermalink' ./internal/ui/composer
           go test -count=1 -v -run 'TestGallerySurfaces' ./internal/fakeslack
           go test -count=1 -v -run 'TestSubmitView|TestViewEvents|TestShortcutsAndHome' ./internal/core

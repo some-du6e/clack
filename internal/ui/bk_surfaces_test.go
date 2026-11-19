@@ -150,6 +150,19 @@ func TestBlockKitSurfaces(t *testing.T) {
 	}
 	blockkit.CloseModal(a)
 
+	// an "Inspect message" modal: a verbatim mrkdwn section whose ```
+	// block holds the message's JSON draws a code block (Karim,
+	// 2026-11-18; blockkit's TestModalMrkdwnVerbatim)
+	e.until("the ticket modal closed", 10*time.Second, func() bool { _, open := blockkit.OpenModal(a); return !open })
+	inspect := core.AppShortcut{ActionID: "SURFA6", AppID: fakeslack.AppAppID, AppName: "Deploy Bot", Name: "Inspect message", Type: "message_action"}
+	blockkit.RunShortcut(a, inspect, ch, fakeslack.SurfLegacyTS)
+	if m := modal("the inspect modal", func(m blockkit.ModalInfo) bool { return m.ViewID == fakeslack.SurfInspectView }); m.Title != "Inspect message" || m.Close != "Done" {
+		t.Errorf("inspect modal: %+v", m)
+	}
+	shots("bk-surfaces-modal-code")
+	blockkit.CloseModal(a)
+	e.until("the inspect modal closed", 10*time.Second, func() bool { _, open := blockkit.OpenModal(a); return !open })
+
 	// an ephemeral message: "Only visible to you"
 	eph := map[string]any{"type": "message", "channel": ch, "ts": "1762515500.000100", "user": fakeslack.SlackbotID, "is_ephemeral": true,
 		"text": "Only you can see this synthetic note.", "blocks": []any{}}

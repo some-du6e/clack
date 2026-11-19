@@ -272,6 +272,22 @@ func SurfQuickCheck() map[string]any {
 	})
 }
 
+// SurfInspectView is an "Inspect message" modal like the one Karim saw
+// (2026-11-18; the JSON is synthetic): one section whose mrkdwn text,
+// verbatim, puts a message's JSON in a ``` block after a line of text.
+// Message shortcut SURFA6.
+const SurfInspectView = "VSURF00006"
+
+// SurfInspect is that view.
+func SurfInspect() map[string]any {
+	js := "{\n  \"type\": \"message\",\n  \"user\": \"U0FAKE00001\",\n  \"ts\": \"" + SurfLegacyTS +
+		"\",\n  \"text\": \"A synthetic *gallery* message\",\n  \"blocks\": []\n}"
+	return surfView(SurfInspectView, SurfInspectView, "", "Inspect message", "", "Done", "x1", []any{
+		map[string]any{"type": "section", "block_id": "json", "text": map[string]any{"type": "mrkdwn", "verbatim": true,
+			"text": "Here's the raw JSON from that message: ```" + js + "```"}},
+	})
+}
+
 func surfConfirm(updated bool) map[string]any {
 	if updated {
 		return surfView("VSURF00002", SurfTicketView, SurfTicketView, "Ticket created", "Finish", "Back", "h3", []any{
@@ -359,6 +375,8 @@ func surfAPI(s *Server, method string, f url.Values) (any, bool) {
 			v := SurfInputs()
 			s.openSurfView(f.Get("client_token"), v)
 			s.emit(map[string]any{"type": "view_updated", "view_id": SurfInputsView, "app_id": AppAppID, "view": v})
+		case "SURFA6":
+			s.openSurfView(f.Get("client_token"), SurfInspect())
 		default:
 			s.openSurfView(f.Get("client_token"), surfTicket())
 		}
