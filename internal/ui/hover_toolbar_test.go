@@ -182,10 +182,11 @@ func (e *perfEnv) checkToolbar(t *testing.T, what string, l rowsLister, ts, rowC
 // From Activity, a thread item opens the thread beside the inbox at the
 // reply (OpenThreadAt, activity_panel.go openSecondary); the thread
 // header's channel name opens the channel at the root (c/<id>/m/<root>,
-// the channel jumped to the message and flashing it). Hovering the root
-// and its neighbours, each toolbar is at Slack's place against its row,
-// the row at the list's top (the jump puts the root two rows down) too,
-// its card cut off by the list's top edge.
+// the channel jumped to the message and flashing it, on Slack's anchor
+// line: ANCHOR_OFFSET under the list's top). Hovering the root and its
+// neighbours, each toolbar is at Slack's place against its row; then the
+// row above the root, wheeled up to the list's top, has its card cut off
+// by the list's top edge.
 func TestHoverToolbarJumpFromActivity(t *testing.T) {
 	e := hoverToolbarEnv(t)
 	e.jumpFromActivityToolbars(t, "jump from Activity")
@@ -257,11 +258,25 @@ func (e *perfEnv) jumpFromActivityToolbars(t *testing.T, what string) {
 			i = k
 		}
 	}
-	if i < 2 || rows[i-2].R.Min.Y != list.Min.Y {
-		t.Fatalf("%s: the jump didn't put the root two rows down from the list's top (list %v, rows %v)", what, list, rows)
+	if i < 1 || rows[i].R.Min.Y-list.Min.Y != e.anchorLine() {
+		t.Fatalf("%s: the jump didn't put the root on the anchor line, %dpx under the list's top (list %v, rows %v)", what, e.anchorLine(), list, rows)
+	}
+	// the row above the root to the list's top: a wheel takes it there
+	// exactly (a precise delta), and its card is cut off by the list's top
+	e.scroll(rowPoint(rows[i].R, list), float32(rows[i-1].R.Min.Y-list.Min.Y))
+	e.settle(300 * time.Millisecond)
+	e.pointerIn(l())
+	at := image.Rectangle{}
+	for _, r := range l().RowRects() {
+		if r.TS == rows[i-1].TS {
+			at = r.R
+		}
+	}
+	if at.Min.Y != list.Min.Y {
+		t.Fatalf("%s: wheeled to the list's top, the row above the root is at %v (list %v)", what, at, list)
 	}
 	e.inspectOn()
-	for _, k := range []int{i, i - 1, i + 1, i - 2} {
+	for _, k := range []int{i, i - 1, i + 1} {
 		if k < len(rows) {
 			e.checkToolbar(t, what, l(), rows[k].TS, "MessageWrapper", actsTopDefault)
 		}

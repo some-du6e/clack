@@ -276,13 +276,23 @@ func TestArchivedTombstoneWindowPagesOlder(t *testing.T) {
 	e.a.OpenAtMessage(ch, root, root, true)
 	e.waitDrawn(t, "the tombstone root in the conversation", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, root) })
 	e.waitDrawn(t, "the thread", 20*time.Second, "", ch, root, func(rows []messages.SenderView) bool { return drewRow(rows, fakeslack.TombstoneReplyTS(0)) })
-	far := fakeslack.TombstoneOlderTS(fakeslack.TombstoneOlder - 70) // two pages past the window's
-	for dl := time.Now().Add(40 * time.Second); !drewRow(e.paneRows("", ch, ""), far); {
+	// two pages past the window's: a row at or before it drawn (a wheel
+	// can carry the list past it between frames)
+	far := fakeslack.TombstoneOlderTS(fakeslack.TombstoneOlder - 70)
+	reached := func(rows []messages.SenderView) bool {
+		for _, r := range rows {
+			if r.TS == far || slackTSBefore(r.TS, far) {
+				return true
+			}
+		}
+		return false
+	}
+	for dl := time.Now().Add(40 * time.Second); !reached(e.paneRows("", ch, "")); {
 		if time.Now().After(dl) {
-			t.Fatalf("scrolling up from the root never drew %s, 70 messages before it: drew %s; conversations.history %q",
+			t.Fatalf("scrolling up from the root never drew %s, 70 messages before it, or anything older: drew %s; conversations.history %q",
 				far, drawnState(e.paneRows("", ch, "")), calls.of("conversations.history", ch, "latest", "oldest", "limit"))
 		}
-		e.scroll(e.primaryPoint(), -1500)
+		e.scroll(e.primaryPoint(), -600)
 		e.frame()
 		time.Sleep(20 * time.Millisecond)
 	}
