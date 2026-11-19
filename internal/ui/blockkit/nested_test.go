@@ -30,7 +30,6 @@ func TestNestedBlockElements(t *testing.T) {
 		{"bk_nested_actions", "nested_wait", "Wait", "wait"},
 		{"bk_nested_callout_sec", "nested_callout", "Approve", "yes"},
 		{"bk_nested_fallback", "nested_fallback", "Retry", "retry"},
-		{"bk_nested_card", "nested_card", "Open", "open"},
 	} {
 		e.idle(c.bid)
 		e.clickEl(c.bid, c.aid)
@@ -41,6 +40,21 @@ func TestNestedBlockElements(t *testing.T) {
 		sameJSON(t, c.aid+" container", got.Container, map[string]any{"type": "message", "message_ts": ts["nested"],
 			"channel_id": fakeslack.GalleryChannelID, "is_ephemeral": false})
 	}
+}
+
+// TestCardElements: a card's action is a live element (Card's actions
+// render through the SUI renderer with the block's onAction): it draws,
+// and a click sends block_actions with the card's block id.
+func TestCardElements(t *testing.T) {
+	e := newBKEnv(t, false, false)
+	ts := e.fs.GalleryElementsTS()
+	e.show("nested")
+	e.clickEl("bk_nested_card", "nested_card")
+	got := e.calls(1)[0]
+	sameJSON(t, "card action", got.Actions, []any{map[string]any{"type": "button", "block_id": "bk_nested_card", "action_id": "nested_card",
+		"text": pt("Open"), "value": "open"}})
+	sameJSON(t, "card container", got.Container, map[string]any{"type": "message", "message_ts": ts["nested"],
+		"channel_id": fakeslack.GalleryChannelID, "is_ephemeral": false})
 }
 
 // TestSurfaceNestedElements: in a modal and in App Home, a container's
