@@ -136,9 +136,9 @@ func (s *Store) replayAllReactsLocked(ch string, msgs []slack.Message, since uin
 }
 
 // ApplyReaction adds or removes user's name reaction on m, counting each
-// user once (Slack's reactions reducer, 8o8l addReaction and 6Dm2
-// removeReaction: a person it doesn't list changes nothing, and a reaction
-// goes once nobody it lists is left or its count is below 1). It never
+// user once (Slack's reactions reducer, boot-shared cBAo addReaction and
+// yzJf removeReaction: a person it doesn't list changes nothing, and a
+// reaction goes once nobody it lists is left or its count is below 1). It never
 // writes to the old slices (copies already handed out share them) and
 // reports whether m changed.
 func ApplyReaction(m *slack.Message, name, user string, add bool) bool {

@@ -97,9 +97,15 @@ func (b *backend) noteConv(ch string) (c *convInfo, named bool) {
 		// users/info beside the toast's own, and its "names" a pass over
 		// everything on screen for people nothing draws)
 		if v, ok := b.core.Conv(ch); ok {
-			ci := *c
-			ci.Name = b.mpimNameBy(&v, b.selfID, b.core.RawUser)
-			return &ci, noteNamed(&ci)
+			// none of its members held (users/info failed or outlasted the
+			// wait): the sidebar's name, never the mpdm slug mpimNameBy
+			// falls back to (getMpimDisplayNameAlphabetical leaves unknown
+			// members out)
+			if n := b.mpimNameBy(&v, b.selfID, b.core.RawUser); n != strings.TrimPrefix(v.Name, "mpdm-") {
+				ci := *c
+				ci.Name = n
+				return &ci, noteNamed(&ci)
+			}
 		}
 		return c, true
 	}
