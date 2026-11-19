@@ -237,12 +237,15 @@ func (v *ChannelView) Entered() {
 	}
 }
 
-// Refresh refetches the newest messages in the background.
+// Refresh refetches the newest messages in the background. A list still
+// to open the window around a jump (core's names landed before its first
+// frame) opens the window instead, through the list's own load: the
+// conversation's newest page isn't the jump's (ensure).
 func (v *ChannelView) Refresh() {
 	v.s.m.mu.Lock()
 	v.s.m.fetched = time.Time{}
 	v.s.m.mu.Unlock()
-	v.s.hb.ensureLoaded(v.s.m)
+	v.s.ensure()
 }
 
 // LayoutSig describes what the list drew in its last layout, for the ui
