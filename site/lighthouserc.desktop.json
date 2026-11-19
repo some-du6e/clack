@@ -63,7 +63,7 @@
               "error",
               {
                 "maxNumericValue": 50,
-                "aggregationMethod": "median-run"
+                "aggregationMethod": "median"
               }
             ],
             "cumulative-layout-shift": [
@@ -159,7 +159,7 @@
               "error",
               {
                 "maxNumericValue": 50,
-                "aggregationMethod": "median-run"
+                "aggregationMethod": "median"
               }
             ],
             "cumulative-layout-shift": [

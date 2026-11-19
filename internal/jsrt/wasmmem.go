@@ -1,3 +1,5 @@
+//go:build !js
+
 package jsrt
 
 import (
@@ -70,11 +72,6 @@ func ReservedWasmMemory() (bytes int64, n int) {
 
 // wasmMemStats is what a Runtime knows of its engine's memory, for
 // Snapshots: atomics, read from any goroutine.
-type wasmMemStats struct {
-	size     atomic.Uint64 // the memory's length in bytes
-	reserved atomic.Uint64 // address space reserved for it; 0 = it's a Go slice
-}
-
 // wasmAllocator is the experimental.MemoryAllocator newEngine hands
 // wazero (through the instantiation context). An engine has one memory.
 type wasmAllocator struct {

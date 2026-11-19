@@ -1,3 +1,5 @@
+//go:build !js
+
 package jsrt
 
 import (
@@ -19,8 +21,6 @@ import (
 
 // jsrt.wasm is QuickJS-NG + csrc/glue.c, built by .github/workflows/jsrt.yml.
 // It is embedded compressed in assets.pack (see pack.go).
-
-const excBit = 0x80000000
 
 // The compiled engine code is shared by every Runtime in the process
 // through one compilation cache (on disk when Options.CacheDir is set).
@@ -304,8 +304,6 @@ func (e *engine) read(ptr, n uint32) []byte {
 	return append([]byte(nil), b...)
 }
 
-func unpack(pl uint64) (uint32, uint32) { return uint32(pl >> 32), uint32(pl) }
-
 // ---- results & errors ----
 
 // res turns a returned handle into (handle, error).
@@ -369,12 +367,6 @@ func (e *engine) typeOf(h uint32) string {
 	}
 	return typeNames[t]
 }
-
-const (
-	isArray   = 1
-	isPromise = 2
-	isError   = 3
-)
 
 func (e *engine) is(h uint32, what int) bool {
 	return h != 0 && e.call("jr_is", uint64(h), uint64(what)) != 0

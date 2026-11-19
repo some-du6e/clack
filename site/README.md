@@ -90,8 +90,10 @@ For each:
 - Lighthouse CI on the home page and the 404 page, mobile and desktop, three
   runs each: performance at least 99 on the median run, accessibility 100,
   FCP at most 1 s and LCP at most 1.2 s on mobile (0.4 s and 0.5 s on
-  desktop), TBT at most 50 ms, CLS at most 0.01, the page at most 30 KB on
-  the wire, one font, and no third-party, script or stylesheet requests.
+  desktop), TBT at most 50 ms (the median of the three runs: Lighthouse's
+  median run was one with a 121 ms stall on a busy runner, beside 0 and
+  42 ms), CLS at most 0.01, the page at most 30 KB on the wire, one font,
+  and no third-party, script or stylesheet requests.
   SEO is checked on the home page only, because the 404 page is noindex on
   purpose.
 
