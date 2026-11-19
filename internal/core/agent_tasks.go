@@ -636,11 +636,35 @@ func (a *App) RunAgentTaskNow(ctx context.Context, agentUserID string, t AgentTa
 		}
 		ch = cv.ID
 	}
-	m, err := a.Send(ctx, SendOpts{Channel: ch, Text: t.Prompt})
+	blocks, text := runPromptBlocks(t.PromptRaw)
+	m, err := a.Send(ctx, SendOpts{Channel: ch, Text: text, Blocks: blocks})
 	if err != nil {
 		return ch, "", err
 	}
 	return ch, m.TS, nil
+}
+
+// runPromptBlocks is what Run task now posts for a prompt value (EAAO
+// runPromptFor3pAgent: a string becomes a Delta, rich text goes through
+// convertBlocksToDelta, and prepareAndSendMessage posts the
+// convertDeltaToBlocks rich_text blocks): a string as one rich_text block
+// holding it as literal text, a rich text prompt's blocks as they are;
+// text is the plain fallback.
+func runPromptBlocks(raw json.RawMessage) (json.RawMessage, string) {
+	text := promptText(raw)
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		b, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "elements": []any{
+			map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": s}}}}}})
+		return b, text
+	}
+	var blocks []json.RawMessage
+	if json.Unmarshal(raw, &blocks) == nil && len(blocks) > 0 {
+		return raw, text
+	}
+	b, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "elements": []any{
+		map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": text}}}}}})
+	return b, text
 }
 
 // openIMWith is the open IM with user, "" when none is known.

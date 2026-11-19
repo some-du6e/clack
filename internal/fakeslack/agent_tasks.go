@@ -52,8 +52,11 @@ func TaskAppID(workflowID string) string { return "A0" + strings.TrimPrefix(work
 
 // FakeTask is one of Atlas's tasks.
 type FakeTask struct {
-	ID, Title   string
-	Prompt      string
+	ID, Title string
+	Prompt    string
+	// PromptRich, when set, is the prompt as rich text blocks (the
+	// step's inputs.prompt.value; Prompt is then unused)
+	PromptRich  []any
 	Published   bool
 	Empty       bool
 	DateUpdated int64
@@ -186,11 +189,20 @@ func (t *FakeTask) taskJSON() map[string]any {
 	if !t.Empty {
 		w["steps"] = []any{map[string]any{"id": "st-" + t.ID, "function_id": "Fn00SP3PAGT",
 			"function": map[string]any{"callback_id": "send_prompt_to_3p_agent", "title": "Send a prompt to an agent", "type": "builtin"},
-			"inputs":   map[string]any{"prompt": map[string]any{"value": t.Prompt}, "agent_id": map[string]any{"value": AgentTasksAppID}}}}
+			"inputs":   map[string]any{"prompt": map[string]any{"value": t.promptValue()}, "agent_id": map[string]any{"value": AgentTasksAppID}}}}
 	} else {
 		w["steps"] = []any{}
 	}
 	return w
+}
+
+// promptValue is the step's inputs.prompt.value: the rich text, or the
+// string.
+func (t *FakeTask) promptValue() any {
+	if t.PromptRich != nil {
+		return t.PromptRich
+	}
+	return t.Prompt
 }
 
 // triggerJSON is the task's scheduled trigger as workflows.triggers.list
