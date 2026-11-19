@@ -490,6 +490,9 @@ func TestActivityLiveUpdatesLikeSlack(t *testing.T) {
 	v.vip = true
 	inject("activity_updated", map[string]any{"key": "fa-live-2", "feed_ts": "1762702200.000100", "is_unread": true,
 		"item": map[string]any{"type": "keyword", "message": map[string]any{"ts": "1762700400.000100", "channel": fakeslack.ViewsChannel, "author_user_id": "U0FAKE00002"}}})
+	// the entry announced (its lookups run off the event pump) before the
+	// frames that must leave it out
+	e.until(t, "the entry's lookups done", v.h.Core().ActivitySettled)
 	for range 20 {
 		e.frame()
 	}

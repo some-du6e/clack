@@ -78,6 +78,10 @@ type App struct {
 	// cancelled when the session ends.
 	bg     context.Context
 	stopBG context.CancelFunc
+	// the activity events' work, off the event pump (activity_later.go)
+	actLaterMu sync.Mutex
+	actLaterQ  []func(context.Context)
+	actLaterOn bool
 
 	pending   map[string]*pendingSend // client_msg_id -> optimistic send
 	fileEvs   *fileEvents             // file_created seen / awaited (upload_send.go)
