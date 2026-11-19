@@ -23,7 +23,8 @@ var scanAllow = map[string]map[string]string{
 	// coder/websocket, vendored without its browser backend
 	// (third_party/websocket/CLACK_PATCHES.md): upstream's default client
 	// for a Dial without DialOptions.HTTPClient, which the rule above only
-	// lets the two Chime sockets do
+	// lets the two Chime sockets do. supply-chain.yml's websocket job holds
+	// dial.go byte for byte to upstream's, so this stays its one such line.
 	"third_party/websocket/dial.go": {"uses http.DefaultClient": "upstream's default for a Dial without HTTPClient"},
 }
 

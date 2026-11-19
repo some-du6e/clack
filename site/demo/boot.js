@@ -123,7 +123,9 @@
     const small = matchMedia('(max-width: 767px), (pointer: coarse) and (hover: none)').matches;
     const save = navigator.connection && navigator.connection.saveData;
     if (!small && !save) return run(build);
-    show(`${small ? 'Clack is a desktop app, so the demo wants a wide window.' : 'Your browser asked to save data.'} Loading it downloads about ${mb(build.brotli)} MB (${mb(build.wasm)} MB unpacked).`);
+    // memory: the CI browser test's measure, about 136 MB of wasm memory
+    // after a message is sent, and 16 MB of JavaScript heap
+    show(`${small ? 'Clack is a desktop app, so the demo wants a wide window.' : 'Your browser asked to save data.'} Loading it downloads about ${mb(build.brotli)} MB (${mb(build.wasm)} MB unpacked) and uses about 150 MB of memory.`);
     go.hidden = false;
     go.addEventListener('click', () => run(build).catch(fail), { once: true });
   }

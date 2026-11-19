@@ -75,25 +75,6 @@ jobs:
         with:
           name: demo-shots
           path: dist/shots
-      # the website's pictures from this run's TestDemoSiteShots, as
-      # site/tools/images.mjs makes them (AVIF and WebP at each width,
-      # images.json), ready to commit: gh run download <run> --name site-img
-      # --dir site/img
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        if: ${{ !cancelled() }}
-        with:
-          node-version: 24
-      - name: site images
-        if: ${{ !cancelled() }}
-        working-directory: site
-        run: |
-          npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-          node tools/images.mjs --run "$GITHUB_RUN_ID" --from "$GITHUB_WORKSPACE/dist/shots"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ !cancelled() }}
-        with:
-          name: site-img
-          path: site/img
       - name: clack demo --help (the release binary's path)
         run: |
           CGO_ENABLED=1 go build -trimpath -o dist/clack ./cmd/clack
@@ -114,3 +95,23 @@ jobs:
           ! grep -qi 'panic' demo.log
           test -f "$CLACK_DEMO_HOME/.clack-demo"
           test ! -e "$HOME/.config/clack/creds.json"
+      # the website's pictures from this run's TestDemoSiteShots, as
+      # site/tools/images.mjs makes them (AVIF and WebP at each width,
+      # images.json), ready to commit: gh run download <run> --name site-img
+      # --dir <empty dir>. Last, so an npm or images.mjs failure can't skip
+      # the release binary's launch checks above.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: ${{ !cancelled() }}
+        with:
+          node-version: 24
+      - name: site images
+        if: ${{ !cancelled() }}
+        working-directory: site
+        run: |
+          npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+          node tools/images.mjs --run "$GITHUB_RUN_ID" --from "$GITHUB_WORKSPACE/dist/shots"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: site-img
+          path: site/img

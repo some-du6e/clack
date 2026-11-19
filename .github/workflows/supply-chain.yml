@@ -134,10 +134,13 @@ jobs:
           echo "every unpatched vendored file matches $(jq -r .Version "$d/info.json") ($(jq -r .Sum "$d/info.json"))"
 
   websocket:
-    # third_party/websocket is coder/websocket v1.8.15 from the Go module
-    # proxy (its non-test files but the browser backend), file for file,
-    # except the files third_party/websocket/CLACK_PATCHES.md lists as
-    # changed, and those differ only in their build constraint
+    # third_party/websocket is coder/websocket, at the version go.mod
+    # requires, from the Go module proxy (its non-test files but the
+    # browser backend), file for file, except the files
+    # third_party/websocket/CLACK_PATCHES.md lists as changed, and those
+    # differ only in their build constraint. The version comes from go.mod
+    # alone: CLACK_PATCHES.md must name it, so a go get that bumps go.mod
+    # without a new copy fails here instead of building the old copy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -147,13 +150,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: vendored coder/websocket matches the proxy's v1.8.15 (but for Clack's build constraints)
+      - name: vendored coder/websocket matches the proxy's copy of go.mod's version (but for Clack's build constraints)
         run: |
           set -euo pipefail
+          v=$(go list -m -f '{{.Version}}' github.com/coder/websocket)
+          head -1 third_party/websocket/CLACK_PATCHES.md | grep -qF " $v" || { echo "::error::go.mod requires coder/websocket $v but third_party/websocket/CLACK_PATCHES.md is for: $(head -1 third_party/websocket/CLACK_PATCHES.md)"; exit 1; }
           d=$(mktemp -d)
           cd "$d"
           go mod init check >/dev/null 2>&1
-          GOFLAGS=-mod=mod go mod download -json github.com/coder/websocket@v1.8.15 > info.json
+          GOFLAGS=-mod=mod go mod download -json "github.com/coder/websocket@$v" > info.json
           dir=$(jq -r .Dir info.json)
           test -d "$dir" || { echo "::error::download failed"; cat info.json; exit 1; }
           cd "$GITHUB_WORKSPACE/third_party/websocket"
