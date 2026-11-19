@@ -324,16 +324,20 @@ func (s *Server) handleAgentTasks(method string, f url.Values) (any, bool) {
 		}
 		st.mu.Lock()
 		defer st.mu.Unlock()
-		var out []map[string]any
+		out, owned := []map[string]any{}, false
 		for _, t := range st.Tasks {
-			if !t.Deleted && !t.Empty && ids[TaskAppID(t.ID)] {
+			if !ids[TaskAppID(t.ID)] {
+				continue
+			}
+			owned = true // one of Atlas's workflows (a draft has no trigger)
+			if !t.Deleted && !t.Empty {
 				out = append(out, t.triggerJSON())
 			}
 		}
-		if out == nil {
+		if !owned {
 			return nil, false
 		}
-		record()
+		st.Calls = append(st.Calls, AgentTaskCall{Method: method, Form: f})
 		return ok("triggers", out), true
 	case "functions.workflows.publish", "functions.workflows.unpublish", "functions.workflows.delete":
 		st.mu.Lock()

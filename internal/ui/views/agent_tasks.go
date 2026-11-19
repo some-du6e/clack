@@ -97,18 +97,19 @@ type AgentTasks struct {
 	ui       []func() // results applied on the UI goroutine
 	subbed   bool
 
-	srch      *search
-	typed     string
-	typedAt   time.Time
-	asked     string // the query last sent to the server
-	debounced string // the query a debounce timer is out for
-	list      widget.List
-	retry     widget.Clickable
-	rows      map[string]*taskRowUI
-	glow      paint.ImageOp
-	glowOK    bool
-	glowDark  bool
-	shown     shownTracker
+	srch       *search
+	typed      string
+	typedAt    time.Time
+	asked      string // the query last sent to the server
+	debounced  string // the query a debounce timer is out for
+	list       widget.List
+	retry      widget.Clickable
+	rows       map[string]*taskRowUI
+	forceHover string // HoverForTest
+	glow       paint.ImageOp
+	glowOK     bool
+	glowDark   bool
+	shown      shownTracker
 }
 
 type taskRowUI struct {
@@ -483,7 +484,7 @@ func (v *AgentTasks) taskRow(gtx C, t core.AgentTask, user string, first, last b
 	nameH, descH := gtx.Dp(22), gtx.Dp(18)
 	h := 2*pad + max(is, nameH+descH)
 	rad := gtx.Dp(12)
-	hover := u.hover.Hovered() || u.run.Hovered() || u.pause.Hovered() || u.more.Hovered() || u.menuOpen
+	hover := u.hover.Hovered() || u.run.Hovered() || u.pause.Hovered() || u.more.Hovered() || u.menuOpen || v.forceHover == t.WorkflowID
 
 	defer op.Offset(image.Pt(x0, 0)).Push(gtx.Ops).Pop()
 	r := image.Rect(0, 0, rw, h)
@@ -617,17 +618,16 @@ func (v *AgentTasks) rowActions(gtx C, t core.AgentTask, u *taskRowUI, w, h, pad
 		text string
 	}
 	var bs []btn
-	if t.CanRunNow() {
-		bs = append(bs, btn{&u.run, &u.tipRun, "play-line", nsSlackbotAI.T("Run task now")})
-	}
-	if t.WorkflowID != "" {
-		if t.Paused() {
-			bs = append(bs, btn{&u.pause, &u.tipPause, "rotate", nsSlackbotAI.T("Restart task")})
-		} else {
-			bs = append(bs, btn{&u.pause, &u.tipPause, "pause-line", nsSlackbotAI.T("Pause task")})
+	for _, a := range taskActions(t) {
+		switch a.key {
+		case "run":
+			bs = append(bs, btn{&u.run, &u.tipRun, a.icon, a.label})
+		case "pause", "restart":
+			bs = append(bs, btn{&u.pause, &u.tipPause, a.icon, a.label})
+		default:
+			bs = append(bs, btn{&u.more, &u.tipMor, a.icon, a.label})
 		}
 	}
-	bs = append(bs, btn{&u.more, &u.tipMor, "kebab", nsSlackbotAI.T("More actions")})
 	bsz, ins := gtx.Dp(32), gtx.Dp(4)
 	card := image.Rect(0, 0, 2*ins+len(bs)*bsz, 2*ins+bsz)
 	card = card.Add(image.Pt(w-pad-card.Dx(), (h-card.Dy())/2))
@@ -659,6 +659,64 @@ func (v *AgentTasks) rowActions(gtx C, t core.AgentTask, u *taskRowUI, w, h, pad
 			u.moreSize = image.Pt(bsz, bsz)
 		}
 	}
+}
+
+// taskAction is one of the row's ActionsMenu buttons.
+type taskAction struct{ key, icon, label string }
+
+// taskActions is AgentTaskItem's et for a third-party agent's task in
+// the Tasks tab (showUnpublished): Run task now while canRunNow and not
+// paused, Pause task or Restart task, then More actions. Edit task (the
+// edit task modal) isn't in Clack.
+func taskActions(t core.AgentTask) []taskAction {
+	var out []taskAction
+	if t.CanRunNow() {
+		out = append(out, taskAction{"run", "play-line", nsSlackbotAI.T("Run task now")})
+	}
+	if t.WorkflowID != "" {
+		if t.Paused() {
+			out = append(out, taskAction{"restart", "rotate", nsSlackbotAI.T("Restart task")})
+		} else {
+			out = append(out, taskAction{"pause", "pause-line", nsSlackbotAI.T("Pause task")})
+		}
+	}
+	return append(out, taskAction{"more", "kebab", nsSlackbotAI.T("More actions")})
+}
+
+// RowActions lists the row's action labels (tests).
+func RowActions(t core.AgentTask) []string {
+	var out []string
+	for _, a := range taskActions(t) {
+		out = append(out, a.label)
+	}
+	return out
+}
+
+// HoverForTest draws the row of workflow id as hovered (its ActionsMenu
+// shown) without a pointer: the shots' hover state.
+func (v *AgentTasks) HoverForTest(id string) {
+	v.forceHover = id
+	v.h.Invalidate()
+}
+
+// Retry is the error row's Retry (tests).
+func (v *AgentTasks) Retry() {
+	_, app := v.agent()
+	if app == "" {
+		return
+	}
+	v.mu.Lock()
+	v.failed = false
+	v.mu.Unlock()
+	v.load(app, v.asked, false)
+}
+
+// Removed reports whether a live event (or Delete task) took the task
+// with workflow id out of the list (tests).
+func (v *AgentTasks) Removed(id string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.removed[id]
 }
 
 // buttonRect is the clicked button's window rectangle (the pointer less
