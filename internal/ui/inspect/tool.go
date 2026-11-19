@@ -852,7 +852,15 @@ func (t *Tool) RecordedLayers() []string {
 	var out []string
 	for i := range f.Nodes {
 		if n := &f.Nodes[i]; n.Kind == slackc.InspectLayer {
-			out = append(out, fmt.Sprintf("%s %v sized %v", n.Name, n.Size, n.Sized()))
+			parent := "none"
+			if n.Parent >= 0 {
+				pn := &f.Nodes[n.Parent]
+				parent = pn.Name
+				if pn.Kind == slackc.InspectElement {
+					parent = selector(pn, nil, 2)
+				}
+			}
+			out = append(out, fmt.Sprintf("%s %v sized %v (node %d of %d, in %s)", n.Name, n.Size, n.Sized(), i, len(f.Nodes), parent))
 		}
 	}
 	return out

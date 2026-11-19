@@ -301,7 +301,17 @@ func TestInspectFreezeHoldsPopups(t *testing.T) {
 		}
 	}
 	if found == "" {
-		t.Fatalf("frozen with the pill's tooltip up: no tooltip outlined above the pill %v; outlined above it: %s; the record's layers: %q", pill, strings.Join(seen, "; "), e.a.insp.RecordedLayers())
+		// where the tooltip is outlined at all, if anywhere
+		where := "nowhere"
+		for y := pill.Min.Y - 260; y < pill.Max.Y+100 && where == "nowhere"; y += 12 {
+			for x := pill.Min.X - 260; x < pill.Max.X+260; x += 12 {
+				if label, r, ok := e.hoverAt(image.Pt(x, y)); ok && strings.Contains(label, "c-tooltip__tip") {
+					where = fmt.Sprintf("at %v (%v)", image.Pt(x, y), r)
+					break
+				}
+			}
+		}
+		t.Fatalf("frozen with the pill's tooltip up: no tooltip outlined above the pill %v; outlined above it: %s; the record's layers: %q; the tooltip outlined %s", pill, strings.Join(seen, "; "), e.a.insp.RecordedLayers(), where)
 	}
 	if !e.a.insp.Frozen() {
 		t.Fatal("the freeze ended while the pointer moved")
