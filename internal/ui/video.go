@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"gioui.org/layout"
+	"gioui.org/op"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/media"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -67,7 +70,29 @@ func (a *App) videos() *videoplayer.Controller {
 			}
 			return ""
 		},
-		Theme: func() *theme.Theme { return a.th },
+		Theme:     func() *theme.Theme { return a.th },
+		FocusRing: func(gtx layout.Context, r image.Rectangle, rad int) { popups.FocusRing(gtx, a.th, r, rad) },
+		Tooltip: func(gtx layout.Context, id any, hovered bool, r image.Rectangle, below bool, delay time.Duration, label string) {
+			st := a.vidTips[id]
+			if st == nil {
+				if !hovered {
+					return
+				}
+				if a.vidTips == nil {
+					a.vidTips = map[any]*popups.TipState{}
+				}
+				st = &popups.TipState{}
+				a.vidTips[id] = st
+			}
+			st.Delay = delay
+			side := popups.Above
+			if below {
+				side = popups.Below
+			}
+			off := op.Offset(r.Min).Push(gtx.Ops)
+			popups.Tooltip(gtx, a.th, st, hovered, r.Size(), side, label, "")
+			off.Pop()
+		},
 		ProgressUpdate: func(file string, offsetMS, durationMS int64) {
 			if c == nil {
 				return
@@ -134,6 +159,7 @@ func (a *App) closeVideos() {
 		a.vids.CloseAll()
 		a.vids = nil
 	}
+	a.vidTips = nil
 }
 
 // Videos is the window's players (popups' media viewer plays its video

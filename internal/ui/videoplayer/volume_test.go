@@ -19,6 +19,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/input"
+	gkey "gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -38,12 +39,17 @@ type tileRig struct {
 	router input.Router
 	ops    op.Ops
 	at     time.Duration
+	focus  any // a tag the next frame focuses (keys_test.go)
 }
 
 func (g *tileRig) frame() {
 	g.ops.Reset()
 	gtx := layout.Context{Ops: &g.ops, Now: time.Now(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 		Constraints: layout.Exact(g.size), Source: g.router.Source()}
+	if g.focus != nil {
+		gtx.Execute(gkey.FocusCmd{Tag: g.focus})
+		g.focus = nil
+	}
 	g.c.BeginFrame()
 	g.r.LayoutMedia(gtx, richview.MediaSlot{File: g.f, Poster: image.Rectangle{Max: g.size}})
 	g.c.EndFrame()

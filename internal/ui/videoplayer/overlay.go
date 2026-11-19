@@ -64,6 +64,7 @@ const (
 	zSlider      // the volume slider
 	zMore        // More actions
 	zExpand      // Expand (FullscreenButton, QC+B)
+	zDock        // Dock to corner (PipButton)
 )
 
 // zones are the overlay's parts as the last layout drew them (tile
@@ -72,7 +73,7 @@ type zones struct {
 	scrub, track         image.Rectangle
 	mute, volume, slider image.Rectangle // volume: the control, its slider included, as :hover sees it
 	vertical             bool
-	more, expand         image.Rectangle
+	more, expand, dock   image.Rectangle
 	// pill and cont: the pill (its click is the overlay's), and the
 	// controls container, whose empty parts take no click
 	pill, cont image.Rectangle
@@ -84,6 +85,8 @@ func (z *zones) at(p image.Point, volOpen bool) zone {
 		return zMore
 	case p.In(z.expand):
 		return zExpand
+	case p.In(z.dock):
+		return zDock
 	case p.In(z.mute):
 		return zMute
 	case volOpen && p.In(z.slider):
@@ -167,6 +170,7 @@ func (r *Row) LayoutMedia(gtx layout.Context, s richview.MediaSlot) layout.Dimen
 		r.MediaVisible(s.File, float64(shown.Dx()*shown.Dy())/float64(full.Dx()*full.Dy()))
 	}
 	r.input(gtx, t, s)
+	more, expand := r.keyInput(gtx, t)
 	r.draw(gtx, t, s, sz, poster)
 	// the input area: the overlay's button covers the tile, above the
 	// doc's own areas (richview skips presses on it: inSlot)
@@ -174,7 +178,51 @@ func (r *Row) LayoutMedia(gtx layout.Context, s richview.MediaSlot) layout.Dimen
 	event.Op(gtx.Ops, t)
 	pointer.CursorPointer.Add(gtx.Ops)
 	area.Pop()
+	r.focusAreas(gtx, t) // the controls' focus, over it
+	if more || expand {
+		r.keyAction(gtx, t, s, more)
+	}
 	return layout.Dimensions{Size: sz}
+}
+
+// keyAction is More actions' or Expand's key press: what their clicks do.
+func (r *Row) keyAction(gtx layout.Context, t *tile, s richview.MediaSlot, more bool) {
+	c := r.c
+	c.mu.Lock()
+	btn := t.z.more.Add(s.At)
+	at, playing := t.elapsed, t.playing
+	if !more && t.h != nil && t.playing {
+		t.h.Pause()
+	}
+	c.mu.Unlock()
+	if more {
+		win := image.Rectangle{}
+		if full, _, ok := gtx.Source.AreaBounds(t); ok {
+			win = btn.Sub(s.At).Add(full.Min)
+		}
+		if mo, ok := r.h.(MenuOpener); ok {
+			c.mu.Lock()
+			t.menuOpen = true
+			c.mu.Unlock()
+			closed := func() {
+				c.mu.Lock()
+				t.menuOpen = false
+				c.mu.Unlock()
+				if c.env.Repaint != nil {
+					c.env.Repaint()
+				}
+			}
+			if !mo.OpenFileMenu(s.File, win, btn, closed) {
+				closed()
+			}
+		} else if r.h != nil {
+			r.h.FileAction(richview.FileMore, s.File, btn)
+		}
+		return
+	}
+	if ex, ok := r.h.(Expander); ok {
+		ex.ExpandVideo(s.File, at, playing)
+	}
 }
 
 // input takes the tile's pointer events (the last frame's zones).
@@ -211,7 +259,7 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 				break
 			}
 			t.hover, t.ptr = true, e.Position
-			switch z := t.z.at(p, t.volOver); z {
+			switch z := t.z.at(p, t.volOver || t.volFocused()); z {
 			case zScrub: // X7vT's mousedown: the time there at once
 				t.scrub, t.resume = true, t.playing
 				if t.h == nil {
@@ -239,7 +287,7 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 		case pointer.Release:
 			drag := t.scrub || t.vol
 			c.endDragsLocked(t, p)
-			if z := t.z.at(p, t.volOver); !drag && t.press != zNone && z == t.press {
+			if z := t.z.at(p, t.volOver || t.volFocused()); !drag && t.press != zNone && z == t.press {
 				switch z {
 				case zTile:
 					c.clickLocked(t)
@@ -248,6 +296,8 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 					c.applyLocked(t)
 				case zMore:
 					more = true
+				case zDock: // useManualPipButton: the mini player from here, playing if this played
+					c.dockLocked(t, "manual", t.playing)
 				case zExpand: // tR: pause, then the viewer at the time, playing if this played
 					expand, at, playing = true, t.elapsed, t.playing
 					if t.h != nil && t.playing {
@@ -409,7 +459,7 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	inPip, mini := t.inPip, t.mini
 	// isThisPlayerInPip: the mini player shows this video, so here only
 	// the pill (no controls, no corner)
-	hot := (t.hover || t.scrub || t.vol || t.menuOpen) && !inPip
+	hot := (t.hover || t.scrub || t.vol || t.menuOpen || t.focus >= 0) && !inPip
 	playing, loading, pillOn := t.playing, t.loading, t.pillShownLocked()
 	label := pillTime(t, hot)
 	iconPx := dp(20)
@@ -421,11 +471,11 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	}
 	spin := t.spin
 	elapsed, dur := t.elapsed, t.durLocked()
-	volOver := t.volOver || t.vol
+	volOver := t.volOver || t.vol || t.volFocused() // --keyboard_focus:focus-within opens it too
 	scrubHot := t.scrub || hot && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(t.z.scrub)
 	muteHot := hot && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(t.z.mute)
 	sliderHot := t.vol || volOver && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(t.z.slider)
-	moreHot := hot && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(t.z.more)
+	ptrF := t.ptr
 	muted, vol := c.muted, c.vol
 	c.mu.Unlock()
 
@@ -596,49 +646,53 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		off.Pop()
 	}
 
-	// the corner: Expand, then More actions, 2px apart (gallery_v3's
-	// small buttons)
+	// the corner, right to left: More actions, Dock to corner (PipButton:
+	// clips_pip, a lone video wider than 154px), Expand; 2px apart
+	// (gallery_v3's small buttons)
 	bs := dp(28)
 	if !mini && !inPip { // the mini player's own controls stand for the corner (PipControls)
 		z.more = image.Rect(sz.X-m8-bs, m8, sz.X-m8, m8+bs)
+		next := z.more
+		if c.PipOn() && w > 154 {
+			z.dock = next.Sub(image.Pt(bs+dp(2), 0))
+			next = z.dock
+		}
 		if _, ok := r.h.(Expander); ok {
-			z.expand = z.more.Sub(image.Pt(bs+dp(2), 0))
+			z.expand = next.Sub(image.Pt(bs+dp(2), 0))
 		}
 	}
-	expandHot := hot && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(z.expand)
-	if hot && !z.expand.Empty() {
-		dark := false
-		if th := r.c.theme(); th != nil {
-			dark = th.Dark
-		}
-		border, iconCol, iconHot := cornerColors(dark)
-		bg := btnHover
-		if expandHot {
-			bg, iconCol = cornerHot, iconHot
-		}
-		paint.FillShape(gtx.Ops, bg, clip.UniformRRect(z.expand, dp(4)).Op(gtx.Ops))
-		ring(gtx.Ops, z.expand, dp(4), max(1, dp(1)), border)
-		is := dp(16)
-		off := op.Offset(image.Pt(z.expand.Min.X+(bs-is)/2, z.expand.Min.Y+(bs-is)/2)).Push(gtx.Ops)
-		icons.Get("expand")(gtx, unit.Dp(16), iconCol) // expand-diagonal
-		off.Pop()
+	ptr := image.Pt(int(ptrF.X), int(ptrF.Y))
+	dark := false
+	if th := r.c.theme(); th != nil {
+		dark = th.Dark
 	}
-	if hot && !z.more.Empty() {
-		dark := false
-		if th := r.c.theme(); th != nil {
-			dark = th.Dark
+	for _, b := range []struct {
+		r         image.Rectangle
+		icon, tip string
+	}{{z.expand, "expand", "Expand"}, {z.dock, "surface", "Dock to corner"}, {z.more, "kebab", "More actions"}} {
+		if !hot || b.r.Empty() {
+			continue
 		}
+		on := ptr.In(b.r)
 		border, iconCol, iconHot := cornerColors(dark)
 		bg := btnHover
-		if moreHot {
+		if on {
 			bg, iconCol = cornerHot, iconHot
 		}
-		paint.FillShape(gtx.Ops, bg, clip.UniformRRect(z.more, dp(4)).Op(gtx.Ops))
-		ring(gtx.Ops, z.more, dp(4), max(1, dp(1)), border)
+		paint.FillShape(gtx.Ops, bg, clip.UniformRRect(b.r, dp(4)).Op(gtx.Ops))
+		ring(gtx.Ops, b.r, dp(4), max(1, dp(1)), border)
 		is := dp(16)
-		off := op.Offset(image.Pt(z.more.Min.X+(bs-is)/2, z.more.Min.Y+(bs-is)/2)).Push(gtx.Ops)
-		icons.Get("kebab")(gtx, unit.Dp(16), iconCol) // ellipsis-vertical-filled
+		off := op.Offset(image.Pt(b.r.Min.X+(bs-is)/2, b.r.Min.Y+(bs-is)/2)).Push(gtx.Ops)
+		icons.Get(b.icon)(gtx, unit.Dp(16), iconCol) // expand-diagonal, surface, ellipsis-vertical-filled
 		off.Pop()
+		c.tip(gtx, tipID{t.k, b.icon}, on, b.r, false, 0, i18n.T("stories_av", b.tip))
+	}
+	if hot && !z.mute.Empty() { // ToggleMute's Tooltip: top (bottom with the vertical volume), 60ms
+		tip := "Mute"
+		if muted {
+			tip = "Unmute"
+		}
+		c.tip(gtx, tipID{t.k, "mute"}, ptr.In(z.mute) && !(vertical && volOver), z.mute, vertical, 60*time.Millisecond, i18n.T("stories_av", tip))
 	}
 
 	if inPip { // nothing here acts

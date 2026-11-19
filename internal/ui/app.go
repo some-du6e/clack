@@ -235,9 +235,11 @@ type App struct {
 	// videoRepaints are the layouts the players asked for (their state
 	// changing: a play, a pause, a loop's seek), video.go
 	videoRepaints atomic.Int64
-	// the mini player's window part (video_pip.go) and its next wake
+	// the mini player's window part (video_pip.go) and its next wake;
+	// the players' controls' tooltips (video.go)
 	pip     pipUI
 	pipWake time.Time
+	vidTips map[any]*popups.TipState
 
 	title       string
 	firstPaint  bool

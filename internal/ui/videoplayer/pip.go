@@ -4,6 +4,8 @@ import (
 	"image"
 	"time"
 
+	"gioui.org/layout"
+
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
@@ -76,15 +78,17 @@ func (c *Controller) docksLocked(t *tile) bool {
 	return t.h != nil && t.playing && t.inline() && !t.inPip && c.PipOn() && c.autoDockLocked()
 }
 
-// dockLocked docks t's video (openPip from an inline player).
-func (c *Controller) dockLocked(t *tile, trigger string) {
+// dockLocked docks t's video (openPip from an inline player), playing
+// there if autoplay (the scroll and navigate triggers always: isPlaying
+// !0; the manual one if t played).
+func (c *Controller) dockLocked(t *tile, trigger string, autoplay bool) {
 	if t.f == nil {
 		return
 	}
 	if t.h != nil && t.playing {
 		t.h.Pause() // onOpen
 	}
-	c.openPipLocked(PipMedia{File: t.f, Channel: t.k.ch, TS: t.k.ts}, t.elapsed, true, trigger)
+	c.openPipLocked(PipMedia{File: t.f, Channel: t.k.ch, TS: t.k.ts}, t.elapsed, autoplay, trigger)
 }
 
 // openPipLocked shows m in the mini player, a new player from at, playing
@@ -271,4 +275,17 @@ func (c *Controller) SetPipWidth(dp int) {
 	c.mu.Lock()
 	c.pipW = max(dp, 0)
 	c.mu.Unlock()
+}
+
+// tipID keys a control's tooltip state.
+type tipID struct {
+	k    key
+	what string
+}
+
+// tip draws a control's tooltip through the host.
+func (c *Controller) tip(gtx layout.Context, id tipID, hovered bool, r image.Rectangle, below bool, delay time.Duration, label string) {
+	if c.env.Tooltip != nil {
+		c.env.Tooltip(gtx, id, hovered, r, below, delay, label)
+	}
 }

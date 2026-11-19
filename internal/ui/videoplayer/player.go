@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/layout"
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/media"
@@ -54,6 +55,13 @@ type Env struct {
 	Experiment func(name string) string
 	// Theme is the window's: its shaper draws the overlay's text.
 	Theme func() *theme.Theme
+	// FocusRing, when set, draws Slack's keyboard focus ring around r
+	// (the ui's popups.FocusRing).
+	FocusRing func(gtx layout.Context, r image.Rectangle, rad int)
+	// Tooltip, when set, draws a Slack tooltip for a control at r (the
+	// tile's coordinates) while hovered, above it or below: id keys its
+	// state, delay 0 is Kit's default (the ui's popups.Tooltip).
+	Tooltip func(gtx layout.Context, id any, hovered bool, r image.Rectangle, below bool, delay time.Duration, label string)
 	// ProgressUpdate sends where the viewer is in a video to Slack
 	// (media.progress.update: offset_ms of duration_ms), off the caller's
 	// goroutine; nil sends nothing.
@@ -197,7 +205,7 @@ func (r *Row) MediaVisible(f *richtext.File, frac float64) {
 	was := t.visible
 	t.visible = frac >= dockBelow
 	if was && !t.visible && c.docksLocked(t) {
-		c.dockLocked(t, "scroll")
+		c.dockLocked(t, "scroll", true)
 	}
 }
 
@@ -238,7 +246,10 @@ type tile struct {
 	// visible: at least dockBelow of it showed at the last report
 	// (useScrollDockTrigger's isIntersecting)
 	visible bool
-	z       zones
+	// the controls' focus tags (keys.go) and the one focused (-1: none)
+	ftags [fN]int
+	focus int
+	z     zones
 	// the frame it was last laid out in, and the close waiting for it
 	laid    uint64
 	unmount *time.Timer
@@ -265,7 +276,7 @@ type tile struct {
 func (c *Controller) tileLocked(k key, f *richtext.File) *tile {
 	t := c.tiles[k]
 	if t == nil {
-		t = &tile{k: k, f: f}
+		t = &tile{k: k, f: f, focus: -1}
 		// where the viewer left the file, before any click: the local
 		// progress, else media_progress unless watched (fIJO's
 		// use_media_elapsed, xnwb), so the pill and the scrubber show it
@@ -565,7 +576,7 @@ func (c *Controller) EndFrame() {
 			continue
 		}
 		if c.docksLocked(t) {
-			c.dockLocked(t, "navigate") // useNavigateDockTrigger: it plays on in the corner
+			c.dockLocked(t, "navigate", true) // useNavigateDockTrigger: it plays on in the corner
 		} else if t.playing {
 			t.h.Pause()
 		}
@@ -803,7 +814,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
 		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
-		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked(), Still: t.stillOK, InPip: t.inPip}
+		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen || t.focus >= 0, VolumeOpen: t.volOver || t.vol, Pill: t.pillShownLocked(), Still: t.stillOK, InPip: t.inPip}
 	if t.h != nil {
 		st.Player = t.h
 	}
