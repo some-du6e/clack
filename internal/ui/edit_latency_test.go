@@ -17,6 +17,12 @@ package ui
 // the messages slice (rows draw the plugins' view of the message), one
 // patching the components a message draws through (Blocks, MessageText,
 // MessageWrapper: their trees come from JS). Synthetic data only.
+//
+// And replies (Karim, the same day: "threads are a shit show rn, they
+// dont get replies quickly and i see it like in my activity tab first"):
+// a reply posted to the thread open in the pane, with the activity entries
+// the server pushes for it, is drawn by the pane within a frame of core
+// taking it in, and no later than Activity draws it.
 
 import (
 	"context"
@@ -31,6 +37,8 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -72,14 +80,54 @@ class EditPassComponents extends TautPlugin {
 return EditPassComponents
 })()`
 
-// editDraw is one edit and when each surface first drew it.
-type editDraw struct {
-	title  string
+// latDraw is one change (an edit, a reply) and when it was first drawn.
+type latDraw struct {
+	text   string
 	pushed time.Time
-	core   time.Time // core announced it (its "update" event)
+	core   time.Time // core announced it (its "update" or "message" event)
 	coreN  int64     // frames drawn before core announced it
-	drawn  time.Time // the first frame drawing it as often as wanted
+	drawn  time.Time // the first frame drawing it
 	frames int64     // frames from core's announcement to that one
+}
+
+// latStats logs a phase's changes and fails those drawn more than two
+// frames after core took them in (the hub's goroutine hop can miss the
+// frame in progress), or never; it returns their median latency.
+func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
+	t.Helper()
+	var lat []time.Duration
+	late, missed := 0, 0
+	var all []string
+	for i := range ds {
+		d := &ds[i]
+		switch {
+		case d.core.IsZero():
+			t.Errorf("%s, %s: core never announced %q", mode, name, d.text)
+			all = append(all, "unannounced")
+		case d.drawn.IsZero():
+			missed++
+			all = append(all, "missed")
+		default:
+			lat = append(lat, d.drawn.Sub(d.core))
+			if d.frames > 2 {
+				late++
+			}
+			all = append(all, fmt.Sprintf("%dms/%df", d.drawn.Sub(d.core).Milliseconds(), d.frames))
+		}
+	}
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+	q := func(p float64) time.Duration {
+		if len(lat) == 0 {
+			return 0
+		}
+		return lat[min(len(lat)-1, int(p*float64(len(lat))))]
+	}
+	t.Logf("%s, %s: %d changes, drawn %d (late %d, never %d), event to frame median %v p90 %v max %v; each: %s",
+		mode, name, len(ds), len(lat), late, missed, q(0.5).Round(time.Millisecond), q(0.9).Round(time.Millisecond), q(1).Round(time.Millisecond), strings.Join(all, " "))
+	if missed > 0 || late > 0 {
+		t.Errorf("%s, %s: %d of %d changes drawn more than two frames after core took them in, %d never: Slack draws each in the render after it", mode, name, late, len(ds), missed)
+	}
+	return q(0.5)
 }
 
 func TestEditLatency(t *testing.T) {
@@ -94,6 +142,7 @@ func TestEditLatency(t *testing.T) {
 func editLatency(t *testing.T, mode string) {
 	sz := fakeslack.Small
 	sz.AppPlans = true
+	sz.Views = true // Activity's feed, and messages.list for a reply's activity entry
 	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
@@ -101,8 +150,9 @@ func editLatency(t *testing.T, mode string) {
 	t.Cleanup(func() { fs.Close() })
 	ch := fakeslack.AppPlanChannelID
 	ts := fs.PostUptimeQuiet("10router blipped · 0m 0s")
-	fs.PostReplyQuiet(ch, ts, fakeslack.SelfID, "on it") // Karim replied in its thread
+	fs.PostReplyQuiet(ch, ts, fakeslack.SelfID, "on it, checking 10router") // Karim replied in its thread: he follows it
 	other := fs.ChannelIDs()[0]
+	replier := fs.UserIDs()[1]
 
 	var e *perfEnv
 	switch mode {
@@ -139,16 +189,23 @@ func editLatency(t *testing.T, mode string) {
 		})
 	}
 
-	// what each frame draws (theme.DrawHook: the plan card's title is a
-	// label), and whether the app asked for a frame since the last one
+	// what each frame draws: labels (theme.DrawHook: the plan card's title
+	// is one) and message bodies (richview.DrawnHook: a reply's text), and
+	// whether the app asked for a frame since the last one
 	var dmu sync.Mutex
-	var drawn []string
+	var labels, bodies []string
 	theme.DrawHook = func(s string) {
 		dmu.Lock()
-		drawn = append(drawn, s)
+		labels = append(labels, strings.TrimSpace(s))
 		dmu.Unlock()
 	}
-	t.Cleanup(func() { theme.DrawHook = nil })
+	richview.DrawnHook = func(d richtext.Doc) {
+		s := richtext.PlainText(d)
+		dmu.Lock()
+		bodies = append(bodies, s)
+		dmu.Unlock()
+	}
+	t.Cleanup(func() { theme.DrawHook, richview.DrawnHook = nil, nil })
 	var asked atomic.Bool
 	prevHook := invalidateHook
 	invalidateHook = func(*App) { asked.Store(true) }
@@ -157,164 +214,165 @@ func editLatency(t *testing.T, mode string) {
 	var frames atomic.Int64
 	var lastFrame time.Time
 	const vsync = time.Second / 60
-	frame := func() []string {
+	frame := func() (ls, bs []string) {
 		if w := time.Until(lastFrame.Add(vsync)); w > 0 {
 			time.Sleep(w)
 		}
 		lastFrame = time.Now()
 		dmu.Lock()
-		drawn = drawn[:0]
+		labels, bodies = labels[:0], bodies[:0]
 		dmu.Unlock()
 		e.frame()
 		frames.Add(1)
 		dmu.Lock()
-		out := append([]string(nil), drawn...)
+		ls, bs = append([]string(nil), labels...), append([]string(nil), bodies...)
 		dmu.Unlock()
-		return out
+		return ls, bs
 	}
-	// how many labels a frame drew that read s (the card's title is one
-	// line)
-	count := func(strs []string, s string) int {
-		n := 0
+	has := func(strs []string, s string) bool {
 		for _, x := range strs {
-			if strings.TrimSpace(x) == s {
-				n++
+			if strings.Contains(x, s) {
+				return true
 			}
 		}
-		return n
+		return false
 	}
-	// frames (every frame: setup) until the drawn labels read s at least n
-	// times, then a second's more; it returns how often a frame draws it
-	// then (once per surface showing the message, or more if one draws it
-	// twice)
-	waitDrawn := func(what, s string, n int) int {
+	// setup: frames (every frame) until cond holds on what one drew
+	until := func(what string, cond func(ls, bs []string) bool) {
 		t.Helper()
-		for dl := time.Now().Add(20 * time.Second); ; {
-			if count(frame(), s) >= n {
-				break
+		for dl := time.Now().Add(20 * time.Second); ; time.Sleep(time.Millisecond) {
+			if ls, bs := frame(); cond(ls, bs) {
+				return
 			}
 			if time.Now().After(dl) {
-				t.Fatalf("%s: %q never drawn %d times", what, s, n)
+				t.Fatalf("timed out waiting for %s", what)
 			}
-			time.Sleep(time.Millisecond)
 		}
-		got := 0
-		for dl := time.Now().Add(time.Second); time.Now().Before(dl); time.Sleep(10 * time.Millisecond) {
-			got = max(got, count(frame(), s))
-		}
-		return got
 	}
-	title := func(k int) string { return fmt.Sprintf("10router blipped · %dm %ds", k/60, k%60) }
 
-	// core's "update" for each edit, by its plan's title
+	const prefix = "10router blipped · "
+	title := func(k int) string { return fmt.Sprintf(prefix+"%dm %ds", k/60, k%60) }
+	n := 0 // the edits so far
+	// newestTitle is whether a frame's labels draw edit k's title and no
+	// older one: every surface showing the message is at k
+	newestTitle := func(ls []string, k int) bool {
+		at := false
+		for _, l := range ls {
+			if !strings.HasPrefix(l, prefix) {
+				continue
+			}
+			if l != title(k) {
+				return false // a surface still draws another (older) title
+			}
+			at = true
+		}
+		return at
+	}
+
+	// core's announcements: an edit's "update" by its plan's title, a
+	// reply's "message" by its ts
 	evs, stop := c.Subscribe()
 	defer stop()
 	var emu sync.Mutex
 	announced := map[string]time.Time{}
 	announcedN := map[string]int64{}
+	note := func(k string) {
+		emu.Lock()
+		if _, ok := announced[k]; !ok {
+			announced[k] = time.Now()
+			announcedN[k] = frames.Load()
+		}
+		emu.Unlock()
+	}
 	go func() {
 		for ev := range evs {
-			if ev.Type != "update" || ev.Msg == nil || ev.Msg.TS != ts {
-				continue
+			switch {
+			case ev.Type == "update" && ev.Msg != nil && ev.Msg.TS == ts:
+				var bs []struct {
+					Title string `json:"title"`
+				}
+				if json.Unmarshal(ev.Msg.Blocks, &bs) == nil && len(bs) > 0 {
+					note(bs[0].Title)
+				}
+			case ev.Type == "message" && ev.Msg != nil && ev.Msg.ThreadTS == ts && ev.TS != ts:
+				note("reply " + ev.TS)
 			}
-			var bs []struct {
-				Title string `json:"title"`
-			}
-			if json.Unmarshal(ev.Msg.Blocks, &bs) != nil || len(bs) == 0 {
-				continue
-			}
-			emu.Lock()
-			if _, ok := announced[bs[0].Title]; !ok {
-				announced[bs[0].Title] = time.Now()
-				announcedN[bs[0].Title] = frames.Load()
-			}
-			emu.Unlock()
 		}
 	}()
 
-	n := 0
-	// phase: edits every 500 ms for 10 s, each wanted drawn want times a
-	// frame (one per surface showing the message)
-	phase := func(name string, want int) []editDraw {
+	// watch runs frames as the window asks for them (an Invalidate, the
+	// router's wake-up) for d, plus up to 3 s for the last change, making
+	// a change every every; drawn reports whether a frame drew change i
+	watch := func(d, every time.Duration, change func(i int) (text, key string), drawn func(ls, bs []string, i int) bool) []latDraw {
 		t.Helper()
-		var eds []editDraw
+		var ds []latDraw
+		var keys []string
 		next := time.Now()
-		end := next.Add(10 * time.Second)
-		for time.Now().Before(end) || len(eds) > 0 && eds[len(eds)-1].drawn.IsZero() && time.Since(eds[len(eds)-1].pushed) < 3*time.Second {
+		end := next.Add(d)
+		for {
 			now := time.Now()
+			if !now.Before(end) && (len(ds) == 0 || !ds[len(ds)-1].drawn.IsZero() || now.Sub(ds[len(ds)-1].pushed) > 3*time.Second) {
+				break
+			}
 			if now.Before(end) && !now.Before(next) {
-				n++
-				if !fs.EditUptime(ts, title(n)) {
-					t.Fatal("the fake lost the message")
-				}
-				eds = append(eds, editDraw{title: title(n), pushed: now})
-				next = next.Add(500 * time.Millisecond)
+				text, key := change(len(ds))
+				ds = append(ds, latDraw{text: text, pushed: now})
+				keys = append(keys, key)
+				next = next.Add(every)
 			}
 			wake, ok := e.r.WakeupTime()
 			if !asked.Swap(false) && !(ok && !wake.After(now)) {
 				time.Sleep(time.Millisecond)
 				continue
 			}
-			strs := frame()
+			ls, bs := frame()
 			emu.Lock()
-			for i := range eds {
-				d := &eds[i]
-				if d.core.IsZero() {
-					if at, ok := announced[d.title]; ok {
-						d.core, d.coreN = at, announcedN[d.title]
+			for i := range ds {
+				dd := &ds[i]
+				if dd.core.IsZero() {
+					if at, ok := announced[keys[i]]; ok {
+						dd.core, dd.coreN = at, announcedN[keys[i]]
 					}
 				}
-				if d.drawn.IsZero() && !d.core.IsZero() && count(strs, d.title) >= want {
-					d.drawn, d.frames = lastFrame, frames.Load()-d.coreN
+				if dd.drawn.IsZero() && !dd.core.IsZero() && drawn(ls, bs, i) {
+					dd.drawn, dd.frames = lastFrame, frames.Load()-dd.coreN
 				}
 			}
 			emu.Unlock()
 		}
-		// what each edit cost, and the budget: drawn, within two frames of
-		// core taking it in (the hub's goroutine hop can miss the frame in
-		// progress), as Slack draws it in the render after it
-		var lat []time.Duration
-		late, missed := 0, 0
-		for i := range eds {
-			d := &eds[i]
-			switch {
-			case d.core.IsZero():
-				t.Errorf("%s, %s: core never announced edit %q", mode, name, d.title)
-			case d.drawn.IsZero():
-				missed++
-			default:
-				lat = append(lat, d.drawn.Sub(d.core))
-				if d.frames > 2 {
-					late++
-				}
-			}
-		}
-		sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
-		q := func(p float64) time.Duration {
-			if len(lat) == 0 {
-				return 0
-			}
-			return lat[min(len(lat)-1, int(p*float64(len(lat))))]
-		}
-		var all []string
-		for i := range eds {
-			d := &eds[i]
-			s := "missed"
-			if !d.drawn.IsZero() {
-				s = fmt.Sprintf("%dms/%df", d.drawn.Sub(d.core).Milliseconds(), d.frames)
-			}
-			all = append(all, s)
-		}
-		t.Logf("%s, %s: %d edits, drawn %d (late %d, never %d), event to frame median %v p90 %v max %v; each: %s",
-			mode, name, len(eds), len(lat), late, missed, q(0.5).Round(time.Millisecond), q(0.9).Round(time.Millisecond), q(1).Round(time.Millisecond), strings.Join(all, " "))
-		if missed > 0 || late > 0 {
-			t.Errorf("%s, %s: %d of %d edits drawn more than two frames after core took them in, %d never: Slack draws each in the render after it", mode, name, late, len(eds), missed)
-		}
-		return eds
+		return ds
 	}
-
+	// edits every 500 ms for 10 s: each drawn when a frame draws its title
+	// and no older one
+	edits := func(name string) {
+		t.Helper()
+		first := n + 1
+		ds := watch(10*time.Second, 500*time.Millisecond, func(int) (string, string) {
+			n++
+			if !fs.EditUptime(ts, title(n)) {
+				t.Fatal("the fake lost the message")
+			}
+			return title(n), title(n)
+		}, func(ls, _ []string, i int) bool { return newestTitle(ls, first+i) })
+		latStats(t, mode, name, ds)
+	}
+	// replies every second for 8 s, from someone else, with their
+	// activity entries: each drawn when a message body draws its text
+	r := 0
+	replies := func(name string) time.Duration {
+		t.Helper()
+		var texts []string
+		ds := watch(8*time.Second, time.Second, func(int) (string, string) {
+			r++
+			text := fmt.Sprintf("synthetic reply %d to the outage", r)
+			texts = append(texts, text)
+			rts := fs.PushReplyLive(ch, ts, replier, text)
+			return text, "reply " + rts
+		}, func(_, bs []string, i int) bool { return has(bs, texts[i]) })
+		return latStats(t, mode, name, ds)
+	}
 	// the window watched, not used: no caret blinking in a focused
-	// composer draws frames the edits didn't ask for
+	// composer draws frames the changes didn't ask for
 	settleBlurred := func() {
 		e.settle(500 * time.Millisecond)
 		e.blur()
@@ -323,23 +381,60 @@ func editLatency(t *testing.T, mode string) {
 
 	// the channel alone
 	e.openChannel(ch)
-	inList := waitDrawn("the channel", title(0), 1)
+	until("the channel", func(ls, _ []string) bool { return has(ls, title(0)) })
 	settleBlurred()
-	phase("channel", inList)
+	edits("channel")
 
 	// the thread pane alone: its root, the primary on another channel
 	e.unblur()
 	e.openChannel(other)
 	e.a.OpenThread(ch, ts)
-	inThread := waitDrawn("the thread pane's root", title(n), 1)
+	until("the thread pane's root", func(ls, _ []string) bool { return newestTitle(ls, n) })
 	settleBlurred()
-	phase("thread root", inThread)
+	edits("thread root")
 
 	// both: the channel with its thread open beside it (Karim's)
 	e.unblur()
 	e.openChannel(ch)
 	e.a.OpenThread(ch, ts)
-	waitDrawn("the channel and the thread pane", title(n), inList+inThread)
+	until("the channel and the thread pane", func(ls, _ []string) bool {
+		tv := e.threadView(ch, ts)
+		if tv == nil || !newestTitle(ls, n) {
+			return false
+		}
+		if _, _, ok := tv.RowText(ts); !ok {
+			return false
+		}
+		l, ok := e.a.convoFor(ch, "").list.(channelList)
+		if !ok {
+			return false
+		}
+		for _, row := range l.VisibleRows() {
+			if row.Key == ts {
+				return true
+			}
+		}
+		return false
+	})
 	settleBlurred()
-	phase("channel and thread root", inList+inThread)
+	edits("channel and thread root")
+
+	// replies: in the open pane (the primary on another channel), then in
+	// Activity (no pane): the pane no later than Activity
+	e.unblur()
+	e.openChannel(other)
+	e.a.OpenThread(ch, ts)
+	until("the thread pane", func(_, bs []string) bool { return has(bs, "checking 10router") })
+	settleBlurred()
+	pane := replies("reply in the thread pane")
+
+	e.unblur()
+	e.a.CloseSecondary()
+	e.a.Navigate("activity")
+	until("Activity", func(_, bs []string) bool { return has(bs, fmt.Sprintf("synthetic reply %d to the outage", r)) })
+	settleBlurred()
+	act := replies("reply in Activity")
+	if pane > act+vsync {
+		t.Errorf("%s: the pane drew replies %v after core took them in (median), Activity %v: replies show in Activity first", mode, pane.Round(time.Millisecond), act.Round(time.Millisecond))
+	}
 }

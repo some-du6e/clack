@@ -81,3 +81,60 @@ func uptimeEditTS(ts string) string {
 	}
 	return fmt.Sprintf("%d.%06d", sec, us)
 }
+
+// PushReplyLive posts user's reply text in the thread of root (a message
+// of ch) as the server tells a follower of the thread: the reply's message
+// event, the root's message_replied, then the activity entries, the
+// thread_reply one (which Slack's client drops) and the thread's thread_v2
+// bundle with the reply as its latest. It returns the reply's ts.
+func (s *Server) PushReplyLive(ch, root, user, text string) string {
+	ts := s.PostReplyQuiet(ch, root, user, text)
+	var rm map[string]any
+	s.histMu.Lock()
+	for _, m := range s.hist[ch] {
+		if m.TS == root {
+			raw, _ := json.Marshal(m)
+			_ = json.Unmarshal(raw, &rm)
+			break
+		}
+	}
+	s.histMu.Unlock()
+	s.Push(map[string]any{"type": "message", "channel": ch, "user": user, "text": text, "ts": ts, "event_ts": ts,
+		"thread_ts": root, "client_msg_id": "quiet-" + ts})
+	if rm != nil {
+		rm["channel"] = ch
+		s.Push(map[string]any{"type": "message", "subtype": "message_replied", "channel": ch, "hidden": true,
+			"message": rm, "event_ts": ts, "ts": ts})
+	}
+	s.Push(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": map[string]any{
+		"key": "thread_reply-" + ch + "-" + ts, "feed_ts": ts, "is_unread": true,
+		"item": map[string]any{"type": "thread_reply", "message": map[string]any{
+			"ts": ts, "channel": ch, "thread_ts": root, "author_user_id": user, "is_broadcast": false}}}})
+	s.Push(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": map[string]any{
+		"key": "thread_v2-" + ch + "-" + root, "feed_ts": ts, "is_unread": true,
+		"item": map[string]any{"type": "thread_v2", "bundle_info": map[string]any{"payload": map[string]any{
+			"thread_entry": map[string]any{"channel_id": ch, "thread_ts": root, "latest_ts": ts, "unread_msg_count": 1}}}}}})
+	return ts
+}
+
+// messageByTS is ch's message ts from its history or its quiet threads.
+func (s *Server) messageByTS(ch, ts string) (slack.Message, bool) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	for _, m := range s.hist[ch] {
+		if m.TS == ts {
+			return m, true
+		}
+	}
+	for k, rs := range s.quietReplies {
+		if !strings.HasPrefix(k, ch+"/") {
+			continue
+		}
+		for _, m := range rs {
+			if m.TS == ts {
+				return m, true
+			}
+		}
+	}
+	return slack.Message{}, false
+}
