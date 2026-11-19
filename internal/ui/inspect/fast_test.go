@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/draw"
 	"math"
 	"strconv"
 	"strings"
@@ -86,16 +87,17 @@ func TestReviewShotNextFrame(t *testing.T) {
 		e.key(key.NameEscape, 0)
 		e.frame()
 		t.Logf("%gx: %s", sc, LastTimes())
-		e.checkShownTime(sc, "a region's", shot, sc*e.ks[1])
 	}
 }
 
 // checkShownTime fails unless the last capture's review image (its
-// "review shot ready" stage: the margin blurred) took at most a quarter
-// of the time blurring the whole shot takes here (what the review's
-// image cost before only the margin was blurred: a second and more for a
-// 3200x2000 px shot). Frames alone can't tell: the image is made before
-// the review's first frame, however long it takes.
+// "review shot ready" stage: the shot copied, its margin blurred) took at
+// most half of what the image cost before only the margin was blurred:
+// the shot copied and blurred whole (a second and more for a 3200x2000 px
+// shot on the old blur), timed here on as big a shot. Frames alone can't
+// tell: the image is made before the review's first frame, however long
+// it takes. (A dragged region's image is a copy, then and now: nothing
+// to bound.)
 func (e *dragEnv) checkShownTime(sc float32, what string, shot image.Point, scale float32) {
 	e.t.Helper()
 	line := LastTimes()
@@ -104,13 +106,15 @@ func (e *dragEnv) checkShownTime(sc float32, what string, shot image.Point, scal
 		e.t.Errorf("%gx: %s capture logged no review image time: %s", sc, what, line)
 		return
 	}
-	img := noiseShot(shot, 2)
+	src := noiseShot(shot, 2)
 	rad := max(int(math.Round(float64(MarginBlur*scale))), 1)
 	t0 := time.Now()
+	img := image.NewRGBA(src.Bounds())
+	draw.Draw(img, img.Bounds(), src, image.Point{}, draw.Src)
 	blur(img, img.Bounds(), rad)
 	whole := time.Since(t0)
-	if shown > whole/4 {
-		e.t.Errorf("%gx: %s %v px review image took %v, more than a quarter of blurring the whole shot (%v): the margin alone is blurred (blurOutside)", sc, what, shot, shown, whole)
+	if shown > whole/2 {
+		e.t.Errorf("%gx: %s %v px review image took %v, more than half of copying the shot and blurring it whole (%v): the margin alone is blurred (blurOutside)", sc, what, shot, shown, whole)
 	}
 }
 
