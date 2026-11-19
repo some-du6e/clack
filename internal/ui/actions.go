@@ -200,10 +200,7 @@ func (a *App) signOut() {
 	if a.opts.SignOut != nil && a.data == nil {
 		a.opts.SignOut() // deletes the stored credentials
 	}
-	if a.vids != nil { // the players go with the session (video.go)
-		a.vids.CloseAll()
-		a.vids = nil
-	}
+	a.closeVideos() // the players go with the session (video.go)
 	if a.data != nil {
 		a.data.signOut()
 		a.data = nil

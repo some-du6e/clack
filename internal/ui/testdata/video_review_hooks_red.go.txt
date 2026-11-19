@@ -1,0 +1,19 @@
+package ui
+
+// The stand-in for video_review_hooks_test.go on the round-3 head
+// (0cbe7e63), which has neither: its players' FrameReady is a.animReady
+// (video.go), which calls the huddle controller's ImagesChanged whenever
+// one is live (quiet.go). This counts those calls as it makes them.
+
+var redHudPings int64
+
+func playerFrameReady(e *perfEnv) func() {
+	return func() {
+		if e.a.hudLive.Load() != nil {
+			redHudPings++
+		}
+		e.a.animReady()
+	}
+}
+
+func hudPings(e *perfEnv) int64 { return redHudPings }

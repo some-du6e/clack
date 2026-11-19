@@ -33,7 +33,7 @@ func (a *App) videos() *videoplayer.Controller {
 	a.vids = videoplayer.New(videoplayer.Env{
 		Manager:    media.NewManager(videoBackend),
 		Open:       a.openVideo,
-		FrameReady: a.animReady, // a new video frame: a quiet frame (quiet.go)
+		FrameReady: a.videoFrameReady, // a new video frame: a quiet frame of this window (quiet.go)
 		Repaint:    a.Invalidate,
 		Pref: func(name string) (json.RawMessage, bool) {
 			if c := a.Core(); c != nil {
@@ -63,6 +63,17 @@ func (a *App) videos() *videoplayer.Controller {
 		Theme: func() *theme.Theme { return a.th },
 	})
 	return a.vids
+}
+
+// closeVideos closes every player and forgets the controller: the
+// session or the window going (sign-out, the session ending or the
+// api.accounts sign-in screen, an account switch, quit), as Slack's
+// client view unmounting every <video> does. UI goroutine.
+func (a *App) closeVideos() {
+	if a.vids != nil {
+		a.vids.CloseAll()
+		a.vids = nil
+	}
 }
 
 // Videos is the window's players (popups' media viewer plays its video

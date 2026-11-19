@@ -109,6 +109,9 @@ func New(env Env) *Controller {
 	return &Controller{env: env, tiles: map[key]*tile{}, progress: map[string]time.Duration{}, vol: 1, prefVol: 1}
 }
 
+// FrameReady is the repaint the players ask for a new frame (tests).
+func (c *Controller) FrameReady() func() { return c.env.FrameReady }
+
 // Available reports whether videos play in place here.
 func (c *Controller) Available() bool {
 	return c != nil && c.env.Manager != nil && c.env.Manager.Available() == nil

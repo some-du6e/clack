@@ -229,6 +229,9 @@ type App struct {
 
 	// hud, for the image cache's goroutines (imagesReady, huddle_wire.go)
 	hudLive atomic.Pointer[huddleui.Controller]
+	// hudPings are animReady's calls into the huddle windows (tests: a
+	// video's frames never make them draw, videoFrameReady)
+	hudPings atomic.Int64
 
 	title       string
 	firstPaint  bool
@@ -548,6 +551,7 @@ func (a *App) Run() error {
 		case app.DestroyEvent:
 			wd.end()
 			wd.stop()
+			a.closeVideos()   // no sound after the window is gone (video.go)
 			a.shutdownIntro() // the introduction's preview renderer and its folder (intro_preview.go)
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
