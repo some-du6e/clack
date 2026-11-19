@@ -220,7 +220,7 @@ func TestThreadsUnreadBannersLikeSlack(t *testing.T) {
 // the lists.
 func TestThreadsBannerCloseLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
-	app, fs := vaFake(t)
+	app, fs := vkFake(t, nil) // the views fixture's own handlers, over a live socket (vaFake serves offline)
 	h := newKBHost(app, false)
 	h.away.Store(true)
 	v := NewThreads(h)
