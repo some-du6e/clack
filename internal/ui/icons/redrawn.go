@@ -139,7 +139,8 @@ func init() {
 	// Slack's are. The T's stem ends at the bars' centrelines: its caps
 	// stay inside them (the same outline), so no two parts' antialiased
 	// edges fall on the same pixels (Gio fills each part on its own, and
-	// edges that coincide add their ink).
+	// edges that coincide add their ink: 1.101 dark at 1x with the stem
+	// to the bars' edges, 1.071 without).
 	reg("file-email", sw(0.83333, rrect(5.41667, 6.52778, 9.16667, 6.94444, 1.11111)), sw(0.83333, "M7.364 8.472 L10 10.7225 L12.636 8.472"))
 	reg("file-binary", sw(1.11111, rrect(6.66667, 7.77778, 2.22222, 4.44444, 0.67778)), sw(1.11111, "M11.1111 7.7778 L12.2222 7.7778 L12.2222 12.2222"), sw(1.11111, "M11.1111 12.2222 L13.3333 12.2222"))
 	reg("file-text", sw(1.11111, "M7.7778 8.8778 L7.7778 7.7778 L12.2222 7.7778 L12.2222 8.8889"), sw(1.11111, "M10 8.3333 L10 11.6667"), sw(1.11111, "M8.9 12.2222 L11.1 12.2222"))
