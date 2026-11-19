@@ -444,7 +444,8 @@ jobs:
       # TestFrameCostPixels), shared layer pages, sub-pixel paths, atlas
       # pages; patch 46: partial frames are the whole frame's pixels, the
       # frame texture's copy included (TestClackPartial*); linux-gio runs
-      # them on llvmpipe, macos on Metal
+      # them on llvmpipe, macos on Metal. The unread threads pills' ink
+      # (TestThreadsBannerPillDrawnLikeSlack) is held to Chrome's here too
       - name: Gio frame cost on Direct3D 11 (WARP)
         if: ${{ !cancelled() }}
         shell: bash
@@ -454,6 +455,7 @@ jobs:
         run: |
           go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
+          go test -count=1 -v -timeout 10m -run '^TestThreadsBannerPillDrawnLikeSlack$' ./internal/ui/views
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
       - name: awake clock (QueryUnbiasedInterruptTime)
@@ -1200,6 +1202,7 @@ jobs:
         run: |
           go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
+          go test -count=1 -v -timeout 10m -run '^TestThreadsBannerPillDrawnLikeSlack$' ./internal/ui/views
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
           go test -count=1 -v ./internal/ui/uiguard

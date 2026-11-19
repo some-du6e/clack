@@ -7,7 +7,9 @@ package views
 // ink, from the pill's top left: the arrow's 8px glyph in rows 10-17,
 // columns 14-20; the label's glyphs in rows 9-18 (the baseline at 19)
 // from column 35; the close's times glyph in rows 12-17, its last column
-// 16px in from the pill's right edge (a 38px button).
+// 16px in from the pill's right edge (a 38px button). The pill is 178.72px
+// wide (8 + 20 + 4 + the label's 100.72 + 8 + the close's 38), the same
+// with either digit (Lato's are tabular).
 
 import (
 	"image"
@@ -105,8 +107,12 @@ func TestThreadsBannerPillDrawnLikeSlack(t *testing.T) {
 		{"the bottom pill", 180, e.size.Y},
 	} {
 		pill, runs := thrPillInk(t, img, tc.from, tc.to)
+		t.Logf("%s: pill %v (%dx%d), ink runs %+v", tc.name, pill, pill.Dx(), pill.Dy(), runs)
 		if pill.Dy() != 28 {
 			t.Errorf("%s is %dpx high, want 28", tc.name, pill.Dy())
+		}
+		if !near(pill.Dx(), 179, 1) {
+			t.Errorf("%s is %dpx wide; Chrome lays it out 178.72px wide (the arrow's 20px box, the close's 38px)", tc.name, pill.Dx())
 		}
 		if len(runs) < 3 {
 			t.Errorf("%s draws %d ink runs (%+v), want the arrow, the label and the close", tc.name, len(runs), runs)
