@@ -59,7 +59,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gpu/internal/driver/clack_external.go`,
 `gpu/internal/d3d11/clack_external_windows.go`,
 `gpu/internal/metal/clack_external_darwin.go`,
-`gpu/headless/clack_external_test.go` and
+`gpu/headless/clack_external_test.go`, `io/input/clack_bounds.go`,
+`io/input/clack_bounds_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2488,3 +2489,29 @@ rectangle, and that frame is the whole frame's pixels), on ci's
 windows-applog (Direct3D 11, WARP) and macos (Metal) jobs; on llvmpipe
 (linux-gio) they check that the op draws its still and never asks (the
 partial test skips there). Not in `UPSTREAM.patch`.
+
+## 53. io/input: a tag's area, and what of it its clip areas show
+
+`io/input/clack_bounds.go` (new: `Router.AreaBounds`, `Source.AreaBounds`),
+`io/input/clack_bounds_test.go` (new). Additions only.
+
+A widget can't learn where Gio drew it: its ops don't know their
+transform, and a list positions its children with offsets they don't
+see. Clack's video tiles need their share of the scrolling list they're
+in, wherever that list is (the channel, a thread pane, the Threads and
+Unreads views, Later): Slack's useScrollDockTrigger docks a playing video
+scrolled under 10% visible (Clack pauses it until the mini player comes).
+The router already holds every frame's clip areas as a tree, with their
+transforms, for hit testing.
+
+- `AreaBounds(tag)` is the window rectangle of the clip area `tag` was
+  registered on with `event.Op` in the last frame, and that rectangle
+  clipped to each clip area above it (`ClipFor`): what of it showed. false
+  for a tag that had no area. A rounded or path clip counts as its
+  bounding rectangle, as in hit testing.
+- `Source.AreaBounds` is the router's, so a widget asks it through
+  `gtx.Source` during its layout (one frame late, which a scroll's pause
+  doesn't mind).
+
+Tested by `TestClackAreaBounds` (a tile half out of a scrolled viewport),
+in every job that runs `io/input`'s tests. Not in `UPSTREAM.patch`.

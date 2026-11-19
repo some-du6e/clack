@@ -160,6 +160,11 @@ func (r *Row) LayoutMedia(gtx layout.Context, s richview.MediaSlot) layout.Dimen
 	}
 	c.applyLocked(t)
 	c.mu.Unlock()
+	// useScrollDockTrigger (YPBt): the share of the tile its scrollers
+	// showed in the last frame, wherever its list is (Gio patch 53)
+	if full, shown, ok := gtx.Source.AreaBounds(t); ok && full.Dx() > 0 && full.Dy() > 0 {
+		r.MediaVisible(s.File, float64(shown.Dx()*shown.Dy())/float64(full.Dx()*full.Dy()))
+	}
 	r.input(gtx, t, s)
 	r.draw(gtx, t, s, sz, poster)
 	// the input area: the overlay's button covers the tile, above the
@@ -249,10 +254,15 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 			}
 			t.press = zNone
 		}
-		btn := t.z.more.Add(s.At)
+		btn, win := t.z.more.Add(s.At), t.z.more
 		c.mu.Unlock()
-		if more && r.h != nil {
-			r.h.FileAction(richview.FileMore, s.File, btn) // VideoActionsButton's menu
+		if more && r.h != nil { // VideoActionsButton's menu
+			wa, isWin := r.h.(WindowFileActioner)
+			if full, _, ok := gtx.Source.AreaBounds(t); isWin && ok {
+				wa.FileActionWindow(richview.FileMore, s.File, win.Add(full.Min))
+			} else {
+				r.h.FileAction(richview.FileMore, s.File, btn)
+			}
 		}
 		if ex, ok := r.h.(Expander); expand && ok {
 			ex.ExpandVideo(s.File, at, playing)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
 	"io"
 	"log"
 	"time"
@@ -118,6 +119,16 @@ func (a *App) openVideo(ctx context.Context, rawURL string, off int64) (io.ReadC
 	}
 	rc, info, err := c.OpenRange(ctx, rawURL, off)
 	return rc, media.Info{Status: info.Status, Total: info.Total, Seekable: info.Seekable, ETag: info.ETag, LastModified: info.LastModified}, err
+}
+
+// ViewMedia is views.MediaSource's: message ts's players as the view
+// named pane draws it (the Threads, Unreads and Later views), under the
+// view's own keys.
+func (a *App) ViewMedia(pane, ch, ts string, h interface {
+	OpenFile(f *richtext.File)
+	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
+}) richview.Media {
+	return a.MessageMedia(pane, ch, ts, h)
 }
 
 // MessageMedia is messages.MediaHost's: message ts's video players in

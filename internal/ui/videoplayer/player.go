@@ -65,6 +65,13 @@ type RowHost interface {
 	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
 }
 
+// WindowFileActioner is optional on a RowHost: FileAction with btn in
+// window coordinates (where Gio drew the tile), for a host that doesn't
+// know where it drew the View (the views' messages).
+type WindowFileActioner interface {
+	FileActionWindow(a richview.FileAction, f *richtext.File, btn image.Rectangle)
+}
+
 // Expander is optional on a RowHost: Expand opens the media viewer at
 // the video from at, playing unless !autoplay (fIJO's tR), false where it
 // can't. The corner shows Expand only with one.

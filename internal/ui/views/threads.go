@@ -204,6 +204,7 @@ func NewThreads(h Host) *Threads {
 	v.list.Axis = layout.Vertical
 	v.kb = newVKList(&v.list)
 	v.kb.onFocus = v.kbFocus
+	v.mediaPane = "threads"
 	return v
 }
 

@@ -211,6 +211,11 @@ jobs:
       - name: Gio pointer state reset (vendored gioui.org/io/input, gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture
+      # Gio patch 53: a tag's area in the window, and what of it its clip
+      # areas show (the video tiles' share of their list)
+      - name: Gio area bounds (vendored gioui.org/io/input)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackAreaBounds$' gioui.org/io/input
       # Gio patches 37-44: a rounded clip's interior and a stroked one's
       # hole, ops split around them, a clip path's stencil regions, layers
       # of one depth on one atlas page, the sub-pixel path cache key, GL's
