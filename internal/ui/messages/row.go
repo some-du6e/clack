@@ -1268,18 +1268,16 @@ func (r *row) withRowFill(gtx layout.Context, rc *rowCtx, f layout.Widget) layou
 	return d
 }
 
-// seeFill is see-through fill x (one of c's, pre-blended over the pane)
-// over the row's fill instead, when the row has one of its own (its hover,
-// its jump highlight): Slack's rgba reaction pills and badges show the
-// row's background through them.
-func (r *row) seeFill(c *colors, x color.NRGBA) color.NRGBA {
-	if r.under.A != 255 || r.under == c.Bg {
+// seeFill is fill x (one of c's, pre-blended over the pane) with raw, the
+// rgba it's blended from (c.raw; zero for an opaque one), over the row's
+// fill instead, when the row has one of its own (its hover, its jump
+// highlight): Slack's rgba reaction pills and badges show the row's
+// background through them.
+func (r *row) seeFill(c *colors, x, raw color.NRGBA) color.NRGBA {
+	if r.under.A != 255 || r.under == c.Bg || raw.A == 0 {
 		return x
 	}
-	if raw, ok := c.see[x]; ok {
-		return richview.Over(raw, r.under)
-	}
-	return x
+	return richview.Over(raw, r.under)
 }
 
 // srgbMix is a and b mixed in sRGB, t of b (opaque).
@@ -2076,7 +2074,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		bw := sz.X + dp(gtx, 6)
 		bh := dp(gtx, 14)
 		top := baseline - dp(gtx, 11)
-		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), r.seeFill(c, c.BadgeBg))
+		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), r.seeFill(c, c.BadgeBg, c.raw.BadgeBg))
 		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, badge) })
 		xx += bw
 	}
@@ -2708,12 +2706,12 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 		rad := ph / 2
 		switch {
 		case sel:
-			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactSelfBg))
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case r.reactExpand.Hovered():
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 		default:
-			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactBg))
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		at(gtx, dp(gtx, 8), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
 		return layout.Dimensions{Size: size}
@@ -2800,7 +2798,7 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 			border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
 			col = rgb(0xecb22e)
 		} else {
-			rrect(gtx.Ops, rr, ph/2, st.Background(r.seeFill(c, c.ReactBg)))
+			rrect(gtx.Ops, rr, ph/2, st.Background(r.seeFill(c, c.ReactBg, c.raw.ReactBg)))
 		}
 		col = st.Color(col)
 		is := dp(gtx, 18)
@@ -2891,13 +2889,13 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case self:
-			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactSelfBg)))
+			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg)))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case hov:
 			rrect(gtx.Ops, rr, rad, st.Background(colorNone))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 		default:
-			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactBg)))
+			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactBg, c.raw.ReactBg)))
 		}
 		t := op.Offset(image.Pt(dp(gtx, 8), cy)).Push(gtx.Ops)
 		content.Add(gtx.Ops)
@@ -3266,7 +3264,7 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	top := dp(gtx, mt.padTop)
 	av := dp(gtx, mt.avatar)
 	sq := image.Rect(padX, top, padX+av, top+av)
-	rrect(gtx.Ops, sq, dp(gtx, 8), r.seeFill(c, c.BadgeBg))
+	rrect(gtx.Ops, sq, dp(gtx, 8), r.seeFill(c, c.BadgeBg, c.raw.BadgeBg))
 	is := dp(gtx, 20)
 	at(gtx, padX+(av-is)/2, top+(av-is)/2, func(gtx layout.Context) layout.Dimensions {
 		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)

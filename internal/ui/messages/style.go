@@ -33,11 +33,12 @@ func rgba(v uint32, a float32) color.NRGBA {
 
 // colors are the message-pane colors measured from the 2026 client.
 type colors struct {
-	// see maps a see-through fill drawn inside a row (a reaction pill, a
-	// badge), as flatten pre-blended it over the pane, to its own rgba: a
-	// row over a fill of its own (the jump highlight, the hover) blends it
-	// over that instead (row.seeFill), as Slack's rgba fills do
-	see                                          map[color.NRGBA]color.NRGBA
+	// raw is the see-through fills drawn inside a row (a reaction pill, a
+	// badge) as their rgba, before flatten pre-blended them over the pane
+	// (zero where one is opaque): a row over a fill of its own (the jump
+	// highlight, the hover) blends that over it instead (row.seeFill), as
+	// Slack's rgba fills do
+	raw                                          rowSee
 	Bg, Hover, Text, Text2, Text3                color.NRGBA
 	Edited, PinIcon, Muted70, TimeSystem         color.NRGBA
 	Pinned, PinnedHover, Highlight, ActiveThread color.NRGBA
@@ -160,16 +161,22 @@ var (
 	lightFlat, darkFlat colors
 )
 
+// rowSee is colors' see-through fills before flatten (colors.raw).
+type rowSee struct {
+	BadgeBg, ReactBg, ReactSelfBg, ReactSelfHoverBg color.NRGBA
+}
+
 // flatten pre-blends the translucent row/pill fills over the pane color in
 // sRGB, the way browsers composite CSS rgba(). Gio blends in linear light,
 // which makes e.g. rgba(242,199,68,.1) on the dark pane look far brighter
 // than Slack's.
 func flatten(c colors) colors {
 	bg := c.Bg
-	c.see = map[color.NRGBA]color.NRGBA{}
-	for _, p := range []*color.NRGBA{&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg} {
-		if p.A > 0 && p.A < 255 {
-			c.see[richview.Over(*p, bg)] = *p
+	for _, p := range []struct{ fill, raw *color.NRGBA }{{&c.BadgeBg, &c.raw.BadgeBg}, {&c.ReactBg, &c.raw.ReactBg},
+		{&c.ReactSelfBg, &c.raw.ReactSelfBg}, {&c.ReactSelfHoverBg, &c.raw.ReactSelfHoverBg}} {
+		*p.raw = color.NRGBA{}
+		if p.fill.A > 0 && p.fill.A < 255 {
+			*p.raw = *p.fill
 		}
 	}
 	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing, &c.CustomTint,
