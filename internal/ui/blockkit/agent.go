@@ -550,9 +550,14 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 		done := b.Status == StatusComplete || b.Status == StatusError
 		auto := me.mcpAutoCollapse()
 		def = mcp && !(auto && done)
-		if mcp && auto && done && !st.touched[key] && st.open[key] {
-			st.open[key] = false
-			st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
+		if mcp && auto && done && !st.touched[key] && !st.touched[key+"\x00auto"] {
+			st.touched[key+"\x00auto"] = true // once, when it is first seen done
+			if st.isOpen(key, true) {
+				st.open[key] = false
+				if st.shown[key] > 0 { // it was drawn open: the height transition closes it
+					st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
+				}
+			}
 		}
 	}
 	open := hasContent && st.isOpen(key, def)

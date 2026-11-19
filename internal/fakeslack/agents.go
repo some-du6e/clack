@@ -100,11 +100,28 @@ func AgentFixtures() map[string][]any {
 			"details": agentRich("Looked for Block Kit plan blocks."), "output": agentRich("Found ", bold("2"), " pages."), "sources": src}},
 		"task-card-error": {map[string]any{"type": "task_card", "block_id": "c4", "task_id": "k4", "title": "Deploy failed", "status": "error", "output": agentRich("exit status 1")}},
 		"task-card-mcp":   {map[string]any{"type": "task_card", "block_id": "mcp_task_1", "task_id": "k5", "title": "Called a tool", "status": "complete", "output": agentRich("42 rows")}},
+		// a plan whose tasks' details run past Slack's 3 lines / 250
+		// characters (TaskItem cuts them, with Show more)
+		"plan-long-details": {map[string]any{"type": "plan", "block_id": "p5", "title": "Thinking completed", "tasks": []any{
+			agentTask("t1", "Read the failing tests", "complete", map[string]any{"details": agentRich(AgentLongDetail)}),
+			agentTask("t2", "Traced the clock", "complete", map[string]any{"details": agentRich("Opened the fixture.\nFound the start date.\nIt is a year early.\nEvery relative date shifts.\nFixed the seed.")}),
+			agentTask("t3", "Ran them again", "complete", map[string]any{"details": agentRich("All green.")}),
+		}}},
+		// an MCP task's card while it runs, and once it is done (same
+		// block: the stream's update)
+		"task-card-mcp-running": {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "in_progress", "output": agentRich("Reading the orders table.")}},
+		"task-card-mcp-done":    {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "complete", "output": agentRich("Read 1,204 orders.")}},
 		"reply-feedback": append([]any{map[string]any{"type": "rich_text", "block_id": "r1", "elements": []any{
 			map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": "Sure, here's the answer. "},
 				map[string]any{"type": "emoji", "name": "sweat_smile", "unicode": "1f605"}}}}}}, AgentFeedback()...),
 	}
 }
+
+// AgentLongDetail is plan-long-details' first task's details: past the
+// 250 characters a slim task shows before Show more.
+const AgentLongDetail = "Read the three failing tests and the stack traces from the last CI run, then traced each failure back to the helper " +
+	"that builds the fake workspace: the fixture's clock starts a year early, so every relative date in the assertions is off by " +
+	"twelve months, which is why only the tests that print a date fail and the rest of the suite stays green."
 
 // AgentMessage wraps fixture blocks as the agent's thread reply.
 func AgentMessage(ts string, blocks []any, streaming string) map[string]any {
