@@ -816,6 +816,21 @@ func (me *Message) animated(gtx C, st *agentState, key string, target int) int {
 	return h
 }
 
+// IndicatorActive, when set (the ui package: its main window's focus), is
+// whether a spinner may ask for its next frame: an inactive window's
+// indicators hold still and ask for none (ui's indicatorFrame), and its
+// activation draws them on again.
+var IndicatorActive func() bool
+
+// indicatorFrame asks for a spinner's or shimmer's next frame d from now
+// while the window is active.
+func indicatorFrame(gtx C, d time.Duration) {
+	if IndicatorActive != nil && !IndicatorActive() {
+		return
+	}
+	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(d)})
+}
+
 // scaleDur is d × f.
 func scaleDur(d time.Duration, f float64) time.Duration {
 	if f <= 0 || f >= 1 {
@@ -962,7 +977,7 @@ func agentSpinner(gtx C, d int, pal agentPal) {
 	tail := float32(2 * math.Pi * cubicBezier(.41, .24, .64, .69, t))
 	circle(base+ring, dash, pal.blue)
 	circle(base+tail, dash, pal.blue)
-	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	indicatorFrame(gtx, 33*time.Millisecond)
 }
 
 // wrapText breaks s into lines of at most w px (13px regular), keeping

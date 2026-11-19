@@ -223,7 +223,7 @@ func (me *Message) cardBar(gtx C, cp cardPal, t *tap, status, title string, hasC
 		t.add(gtx, image.Pt(w, h))
 	}
 	if shimmer {
-		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+		indicatorFrame(gtx, 33*time.Millisecond)
 	}
 	return h
 }
@@ -286,7 +286,7 @@ func (me *Message) cardTaskIcon(gtx C, cp cardPal, task *AgentTask, enh bool) D 
 			col = cp.themePry
 			if !me.noAnimations() {
 				col = shimmerColor(gtx.Now, 0, 2, cp.themePry, cp.themeSec)
-				gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+				indicatorFrame(gtx, 33*time.Millisecond)
 			}
 		}
 	case StatusError:
@@ -513,5 +513,5 @@ func cardSpinner(gtx C, d int, col color.NRGBA) {
 	base := float32(-90.0/219.9*2*math.Pi) - float32(math.Pi/4)
 	arc(base+float32(2*math.Pi*cubicBezier(.25, .29, .54, .86, t)), dash, col)
 	arc(base+float32(2*math.Pi*cubicBezier(.41, .24, .64, .69, t)), dash, col)
-	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	indicatorFrame(gtx, 33*time.Millisecond)
 }
