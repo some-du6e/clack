@@ -464,8 +464,9 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 
 // save writes the report's image and text to dir/inspect-reports (only
 // the owner can read them: the image shows the element). It returns the
-// files' common stem: inspect-YYYYMMDD-HHMMSS, then -2, -3… for the
-// reports of the same second (the text file is made with O_EXCL: no
+// files' common stem: inspect-YYYYMMDD-HHMMSS, then _2, _3… for the
+// reports of the same second, which sort after it ('_' after '.'), so the
+// names keep the captures' order (the text file is made with O_EXCL: no
 // report's files are another's).
 func save(dir string, when time.Time, img []byte, text string) (string, error) {
 	if dir == "" {
@@ -494,7 +495,7 @@ func save(dir string, when time.Time, img []byte, text string) (string, error) {
 				return "", err
 			}
 		}
-		stem = fmt.Sprintf("%s-%d", base, n)
+		stem = fmt.Sprintf("%s_%d", base, n)
 	}
 	if img != nil {
 		if err := os.WriteFile(stem+".png", img, 0o600); err != nil {

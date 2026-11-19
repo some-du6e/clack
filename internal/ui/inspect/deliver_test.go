@@ -86,7 +86,9 @@ func TestDeliveriesInOrder(t *testing.T) {
 }
 
 // TestSaveUniqueStems: two reports saved in the same second keep a stem
-// each, every image beside its own text.
+// each, every image beside its own text, and their names sort in the
+// order they were saved (what lists the folder by name, as the ui tests'
+// readReport does, finds the newest last).
 func TestSaveUniqueStems(t *testing.T) {
 	dir := t.TempDir()
 	when := time.Date(2026, 11, 19, 5, 14, 34, 120e6, time.UTC)
@@ -100,6 +102,9 @@ func TestSaveUniqueStems(t *testing.T) {
 	}
 	if a == b {
 		t.Fatalf("two reports in one second saved as one stem %q", a)
+	}
+	if !(a+".txt" < b+".txt") || !(a+".png" < b+".png") {
+		t.Errorf("the second report's files (%s) sort before the first's (%s)", b, a)
 	}
 	for _, c := range []struct{ stem, img, txt string }{{a, "image a", "text a"}, {b, "image b", "text b"}} {
 		img, err1 := os.ReadFile(c.stem + ".png")
