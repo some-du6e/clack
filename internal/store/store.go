@@ -1212,6 +1212,18 @@ func (s *Store) SelfID() string {
 	return s.Self.ID
 }
 
+// TeamIDs is the viewer's workspace and enterprise ids (richtext's
+// TeamResolver: Slack's selectTeamId and selectEnterpriseId, which a
+// condition block's "team" conditions compare against).
+func (s *Store) TeamIDs() (team, enterprise string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if eu := s.Self.EnterpriseUser; eu != nil {
+		enterprise = eu.EnterpriseID
+	}
+	return s.TeamID, enterprise
+}
+
 // ---- conversations ----
 
 func (s *Store) PutConv(c slack.Conversation) {

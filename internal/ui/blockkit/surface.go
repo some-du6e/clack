@@ -187,7 +187,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	old := s.vals
 	s.view = v
 	s.isHome = v != nil && v.Type == "home"
-	s.blocks = ParseBlocks(v.Blocks)
+	s.blocks = ParseBlocks(expandConditions(s.h, v.Blocks))
 	s.vals = Values{}
 	if keep && old != nil {
 		for i := range s.blocks {

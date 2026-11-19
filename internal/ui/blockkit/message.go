@@ -167,8 +167,8 @@ func (me *Message) setMessage(m *core.Message) {
 	// sets and bumps the generation an answer must match.
 	me.sig = sig
 	me.gen++
-	me.blocks = ParseBlocks(m.Blocks)
-	me.atts = parseAttachments(m.Attachments)
+	me.blocks = ParseBlocks(expandConditions(me.h, m.Blocks))
+	me.atts = parseAttachments(me.h, m.Attachments)
 	me.vals = Values{}
 	initValues(me.vals, me.blocks)
 	for i := range me.atts {
@@ -206,7 +206,7 @@ func (me *Message) Probe(bid string) (gen uint32, w any, pressed, hovered bool) 
 	return me.gen, nil, false, false
 }
 
-func parseAttachments(raw json.RawMessage) []attachment {
+func parseAttachments(h Host, raw json.RawMessage) []attachment {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -221,7 +221,7 @@ func parseAttachments(raw json.RawMessage) []attachment {
 	}
 	out := make([]attachment, len(as))
 	for i, a := range as {
-		out[i] = attachment{ID: a.ID, CallbackID: a.CallbackID, Blocks: ParseBlocks(a.Blocks), Actions: a.Actions}
+		out[i] = attachment{ID: a.ID, CallbackID: a.CallbackID, Blocks: ParseBlocks(expandConditions(h, a.Blocks)), Actions: a.Actions}
 		if out[i].ID == 0 {
 			out[i].ID = i + 1
 		}

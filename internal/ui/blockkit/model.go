@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // Text is a Block Kit text object.
@@ -237,6 +238,19 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 		_ = json.Unmarshal(p.Elements, &b.Elements)
 	}
 	return nil
+}
+
+// expandConditions is richtext.ExpandConditions with the viewer's
+// workspace: every Block Kit surface (InteractiveBlocks, ReadonlyBlocks,
+// AppHomeBlocks, ViewBlocks) expands condition blocks before drawing.
+func expandConditions(h Host, raw json.RawMessage) json.RawMessage {
+	var team, ent string
+	if h != nil {
+		if c := h.Core(); c != nil && c.S != nil {
+			team, ent = c.S.TeamIDs()
+		}
+	}
+	return richtext.ExpandConditions(raw, team, ent)
 }
 
 // ParseBlocks decodes a Block Kit blocks array (unknown fields ignored).

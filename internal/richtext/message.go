@@ -41,7 +41,7 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 		}
 	}
 	var d Doc
-	if bs := parseBlocks(m.Blocks); len(bs) > 0 {
+	if bs := parseBlocks(c.expanded(m.Blocks)); len(bs) > 0 {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
 	}
@@ -426,7 +426,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 			att.ShareChannel = strings.TrimPrefix(c.r.ChannelName(a.ChannelID), "#")
 		}
 		for _, mb := range a.MessageBlocks {
-			att.Text = append(att.Text, c.blocks(parseBlocks(mb.Message.Blocks))...)
+			att.Text = append(att.Text, c.topBlocks(mb.Message.Blocks)...)
 		}
 		if len(att.Text) == 0 {
 			att.Text = FromMrkdwn(c.r, a.Text)
@@ -448,7 +448,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		}
 		att.TitleLink = SafeURL(a.TitleLink)
 		att.Text = c.attachmentText(a)
-		if kb := c.blocks(parseBlocks(a.Blocks)); len(kb) > 0 {
+		if kb := c.topBlocks(a.Blocks); len(kb) > 0 {
 			att.Kit, att.KitFrom = true, len(att.Text)
 			att.Text = append(att.Text, kb...)
 		}
