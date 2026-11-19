@@ -496,8 +496,8 @@ const thrGapBackoff = 30 * time.Second
 func (v *Threads) fillGap(page thrData, g thrGap) {
 	app := v.h.Core()
 	t := thrByKey(page.items, g.key)
-	if app == nil || t == nil {
-		return
+	if app == nil || t == nil || v.left {
+		return // left: the remount in this frame replaces the cards
 	}
 	c := v.cardOf(t)
 	if c.floor != "" && actTSLess(g.after, c.floor) {
@@ -590,10 +590,10 @@ func (v *Threads) landGap(g thrGap, folds, from uint64, msgs []core.Message, fai
 // it filled and the replies refreshes carried over go, with any fetch
 // still out for them (fold). A load already out read the carried replies
 // before this, so settle drops what it brings from before the window
-// (floor).
+// (floor), and only from that load's answer.
 func (v *Threads) cutToWindow(c *thrCard, t *thrItem) {
 	v.fold(c)
-	c.floor = t.window
+	c.floor, c.floorSeq = t.window, v.seq
 	v.dropCarried(t.key, t.window)
 }
 
@@ -620,15 +620,28 @@ func (v *Threads) dropCarried(key, ts string) {
 	})
 }
 
-// keepFloors drops from a load's threads the replies a refresh carried
-// over from before a card's floor (cutToWindow): the load read them
-// before the cut.
+// keepFloors drops from the answer of a load asked for before a card's
+// cut (cutToWindow; its fetch seq up to the cut's floorSeq) the replies it
+// carries over from before the card's floor: it read them before the cut.
+// The answer's own window stays wherever it starts (a deletion moves it
+// back). An answer asked for after the cut has the cut in its copies, and
+// the floor goes.
 func (v *Threads) keepFloors(page thrData) {
 	for i := range page.items {
 		t := &page.items[i]
-		if c := v.cards[t.key]; c != nil && c.floor != "" {
-			v.dropCarried(t.key, c.floor)
+		c := v.cards[t.key]
+		if c == nil || c.floor == "" {
+			continue
 		}
+		if page.seq > c.floorSeq {
+			c.floor = ""
+			continue
+		}
+		cut := c.floor
+		if t.window != "" && actTSLess(t.window, cut) {
+			cut = t.window
+		}
+		v.dropCarried(t.key, cut)
 	}
 }
 
@@ -690,7 +703,10 @@ func thrLeftChannel(app *core.App, ch string) bool {
 // sortThreads (8orQ) on the view's own read state (isThreadUnread reads
 // the subscription store, the view's marks in it), then newest activity,
 // with a new load number (the divider's thread is picked from it in the
-// next frame), until the reload's answer replaces them.
+// next frame), until the reload's answer replaces them. Each card starts
+// again at its getView window (getDefaultMinimumVisibleTs, iPpN, on the
+// new refreshId), "Show N more replies" above it: the replies refreshes
+// carried over go, as the gaps filled among them do (fold).
 func (v *Threads) resort() {
 	app := v.h.Core()
 	v.loads++
@@ -701,6 +717,11 @@ func (v *Threads) resort() {
 			if app != nil {
 				if sub, ok := app.S.ThreadSub(t.Channel, t.Root.TS); ok && !sub.Subscribed {
 					continue
+				}
+			}
+			if t.window != "" {
+				if j := slices.IndexFunc(t.Replies, func(m core.Message) bool { return !actTSLess(m.TS, t.window) }); j > 0 {
+					t.Replies = t.Replies[j:]
 				}
 			}
 			items = append(items, t)

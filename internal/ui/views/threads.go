@@ -148,15 +148,17 @@ type thrCard struct {
 	// midSeq: they take what changed after it as the older ones do
 	// (threads_live.go). One gap fetch at a time (gapOut): a refresh's gap
 	// while one is out widens gapNext, fetched when it lands; a failure
-	// cuts the card to its latest window, with floor the first reply a
-	// refresh may still carry over, and gapBack the time the card's gaps
-	// cut it so at once instead of fetching
-	mid     []core.Message
-	midSeq  uint64
-	gapOut  bool
-	gapNext thrGap
-	gapBack time.Time
-	floor   string
+	// cuts the card to its latest window, with floor the window's first
+	// reply for the answers asked for before the cut (fetch seq up to
+	// floorSeq), which may still carry older ones over, and gapBack the
+	// time the card's gaps cut it so at once instead of fetching
+	mid      []core.Message
+	midSeq   uint64
+	gapOut   bool
+	gapNext  thrGap
+	gapBack  time.Time
+	floor    string
+	floorSeq int
 
 	// olderSeq is the message change older is current as of
 	// (threads_live.go); shown is thrShown's older, filled and latest
