@@ -488,6 +488,30 @@ func (a *App) loadFeatures(ctx context.Context) {
 	}
 }
 
+// onFeatureAccessUpdated is boot-render's featureAccessUpdate: the
+// event's feature_access_policies (the list's shape) replace the policies
+// at once, so what reads them (the Tasks tab's agent_tasks__write) follows
+// a plan change without waiting for the hourly read.
+func (a *App) onFeatureAccessUpdated(raw json.RawMessage) {
+	var e struct {
+		Policies map[string]struct {
+			Enabled bool `json:"is_enabled"`
+		} `json:"feature_access_policies"`
+	}
+	if json.Unmarshal(raw, &e) != nil || e.Policies == nil {
+		return
+	}
+	on := map[string]bool{}
+	for k, v := range e.Policies {
+		on[k] = v.Enabled
+	}
+	f := a.features()
+	f.mu.Lock()
+	f.on, f.known, f.at = on, true, time.Now()
+	f.mu.Unlock()
+	a.emit(Event{Type: "features"})
+}
+
 // The experiments the posting permissions read (TestExperimentReadsListed):
 // PostingPermissions' frontline label and the Standard-plan upsell.
 func init() {

@@ -169,6 +169,8 @@ func (a *App) handle(ev slack.Event) {
 		}
 	case "team_icon_change":
 		a.onTeamIconChange(ev.Raw)
+	case "feature_access_policies_updated":
+		a.onFeatureAccessUpdated(ev.Raw) // chposting.go
 	case "team_pref_change":
 		a.onTeamPrefChange(ev.Raw) // teamprefs.go
 	case "workflow", "hermes_trigger_updated":

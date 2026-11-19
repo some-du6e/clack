@@ -455,3 +455,31 @@ func TestAgentTasksScheduleText(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentTasksFeatureAccessLive: feature_access_policies_updated
+// replaces the policies at once (boot-render featureAccessUpdate), so the
+// Tasks tab's agent_tasks__write follows a plan change live.
+func TestAgentTasksFeatureAccessLive(t *testing.T) {
+	a, _ := agentTasksApp(t, nil)
+	a.SetExperimentGroup(ExpAgentTasksTab, "on")
+	if shown, in := agentTabNow(t, a); !shown {
+		t.Fatalf("no tab before the change (%+v)", in)
+	}
+	evs, stop := a.Subscribe()
+	defer stop()
+	b, _ := json.Marshal(map[string]any{"type": "feature_access_policies_updated",
+		"feature_access_policies": map[string]any{"agent_tasks__write": map[string]any{"is_enabled": false}}})
+	a.Inject(slack.Event{Type: "feature_access_policies_updated", Raw: b})
+	dl := time.After(10 * time.Second)
+	for got := false; !got; {
+		select {
+		case ev := <-evs:
+			got = ev.Type == "features"
+		case <-dl:
+			t.Fatal("no features event after feature_access_policies_updated")
+		}
+	}
+	if a.FeatureAccess("agent_tasks__write") {
+		t.Error("agent_tasks__write still on after the event turned it off")
+	}
+}
