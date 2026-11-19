@@ -20,6 +20,11 @@ var scanAllow = map[string]map[string]string{
 	// the screen share's content attendee: the same Chime signalling host
 	// with the "#content" join token
 	"internal/huddle/content.go": {"websocket.Dial without HTTPClient": "Chime, not Slack"},
+	// coder/websocket, vendored without its browser backend
+	// (third_party/websocket/CLACK_PATCHES.md): upstream's default client
+	// for a Dial without DialOptions.HTTPClient, which the rule above only
+	// lets the two Chime sockets do
+	"third_party/websocket/dial.go": {"uses http.DefaultClient": "upstream's default for a Dial without HTTPClient"},
 }
 
 // Every connection that can reach Slack is made by this package: no other
