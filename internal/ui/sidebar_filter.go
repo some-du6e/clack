@@ -220,7 +220,7 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		}
 		return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return a.th.Editor(gtx, &f.ed, 13, c.SidebarTextUnread, theme.WithAlpha(a.th.C.Accent, 0x66))
+			return a.th.Editor(gtx, &f.ed, 13, c.SidebarTextUnread, a.th.C.Selection) // the browser's own: c-filter_input has no ::selection
 		})
 	})
 	if f.text != "" { // c-filter_input__reset_button--visible: "Clear text"

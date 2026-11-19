@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"gioui.org/widget"
 )
 
 // The caret's blink on Linux: half GTK's gtk-cursor-blink-time, none when
@@ -63,6 +65,8 @@ func TestGtkCaretBlink(t *testing.T) {
 	check("40 ms, under GTK's 100 ms minimum: refused, the system's stays", none, 900*time.Millisecond)
 	write(home, "[Settings]\ngtk-cursor-blink-time=1000\ngtk-cursor-blink-time=40\n")
 	check("a refused last line refuses the key", none, 900*time.Millisecond)
+	write(home, "[Settings]\ngtk-cursor-blink-time=1201\n")
+	check("1201 ms: half in Chromium's integer milliseconds", none, 600*time.Millisecond)
 	write(home, "[Settings]\ngtk-cursor-blink-time=1000 ms\n")
 	check("1000 then a space (strtol's)", none, 500*time.Millisecond)
 	write(home, "[Settings]\ngtk-cursor-blink-time=1000ms\n")
@@ -169,5 +173,25 @@ func TestXSettingsBlink(t *testing.T) {
 	}
 	if s := xsettingsBlink(nil); s.okBlink || s.okPeriod {
 		t.Errorf("no manager: %+v, want nothing", s)
+	}
+}
+
+// The watcher on X11 applies the settings manager's XSETTINGS over GTK's
+// files, read once (as Chromium reads the interval).
+func TestCaretBlinkWatcherX11(t *testing.T) {
+	t.Setenv("WAYLAND_DISPLAY", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_DIRS", t.TempDir())
+	defer func(d, e string) { gtkDataDir, gtkSysconfDir = d, e }(gtkDataDir, gtkSysconfDir)
+	gtkDataDir, gtkSysconfDir = t.TempDir(), t.TempDir()
+	defer func(f func() []byte) { readXSettings = f }(readXSettings)
+	readXSettings = func() []byte { return xsettingsProp(binary.LittleEndian, 1, 800) }
+	widget.SetCaretBlinkInterval(-1)
+	t.Cleanup(func() { widget.SetCaretBlinkInterval(-1) })
+	startCaretBlinkWatcher()
+	for dl := time.Now().Add(10 * time.Second); widget.CaretBlinkInterval() != 400*time.Millisecond; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatalf("the caret blinks every %v, want the manager's 800 ms halved", widget.CaretBlinkInterval())
+		}
 	}
 }

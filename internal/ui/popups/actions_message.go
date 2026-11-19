@@ -146,7 +146,11 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	markUnread := MenuItem{Key: "mark_unread", Action: "mark_unread", Label: nsMessage.T("Mark unread"), Icon: "mark-unread", Hint: nsMessage.T("U"), Keys: KeyMarkUnread, Do: func() {
 		actDo(h, "", func(ctx context.Context, a *core.App) error {
 			if inThread {
-				return a.MarkThreadUnread(ctx, ch, root, ts)
+				origin := core.MarkedInThread // the markOrigin: its messageContainerType
+				if o.Where == InThreadsView {
+					origin = core.MarkedInThreadsView
+				}
+				return a.MarkThreadUnreadFrom(ctx, ch, root, ts, origin)
 			}
 			_, err := a.MarkUnread(ctx, ch, ts)
 			return err

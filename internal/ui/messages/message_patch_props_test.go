@@ -113,11 +113,15 @@ class WrapperFields extends TautPlugin {
 }
 return WrapperFields`)
 
-// Message (ThreadReplyGeneric in a thread pane) gets MessageWrapper's msg
-// as the wrapper's patch passed it, the very object (Slack's MessageWrapper
-// renders Message with {...this.props}). Clack rebuilt it from the row's
-// message: a field of the plugin's own was gone and the bot_profile the
-// wrapper took out was back. Synthetic data only.
+// Message gets MessageWrapper's msg as the wrapper's patch passed it, the
+// very object (Slack's MessageWrapper renders Message with
+// {...this.props}). Clack rebuilt it from the row's message: a field of
+// the plugin's own was gone and the bot_profile the wrapper took out was
+// back. A thread pane's reply has no MessageWrapper (Slack renders
+// ThreadReply → ThreadReplyGeneric there; MessageWrapper is
+// BaseMessageList's alone): the wrapper's patch doesn't reach it, and
+// ThreadReplyGeneric's patch gets the reply as the store has it.
+// Synthetic data only.
 func TestMessagePatchGetsWrappersExactMsg(t *testing.T) {
 	app, _, _ := shotsApp(t)
 	app.S.PutConv(slack.Conversation{ID: voteChan, Name: "meta", IsChannel: true, IsMember: true, NumMembers: 40})
@@ -129,7 +133,7 @@ func TestMessagePatchGetsWrappersExactMsg(t *testing.T) {
 	root.ThreadTS, root.ReplyCount, root.ReplyUsers, root.LatestReply = rootTS, 1, []string{"UBEN00001"}, replyTS
 	app.S.SetLatest(voteChan, []slack.Message{root, voteMsg(chanTS, "", 1, 0, 0)}, false)
 	app.S.SetThread(voteChan, rootTS, []slack.Message{root, voteMsg(replyTS, rootTS, 1, 0, 0)})
-	_, step := patchedEnv(t, app, wrapperFieldsJS, "MessageWrapper", "Message", "ThreadReplyGeneric")
+	renders, step := patchedEnv(t, app, wrapperFieldsJS, "MessageWrapper", "Message", "ThreadReplyGeneric")
 
 	h := coreHost{app: app, th: theme.New(false)}
 	cv := NewChannelView(h, voteChan)
@@ -137,23 +141,59 @@ func TestMessagePatchGetsWrappersExactMsg(t *testing.T) {
 	tv := NewThreadView(h, voteChan, rootTS)
 	now := time.Now()
 	panes := []struct {
-		p  *votePane
-		ts string
+		p    *votePane
+		ts   string
+		want string
 	}{
-		{&votePane{name: "channel", s: cv.s, v: cv, size: image.Pt(1100, 700), now: &now, step: step}, chanTS},
-		{&votePane{name: "thread", s: tv.s, v: tv, size: image.Pt(520, 700), now: &now, step: step}, replyTS},
+		{&votePane{name: "channel", s: cv.s, v: cv, size: image.Pt(1100, 700), now: &now, step: step}, chanTS,
+			"Upvotes: 0\nDownvotes: 0 [from-wrapper, bot_profile false]"},
+		// no MessageWrapper: ThreadReplyGeneric's patch, over the reply as it is
+		{&votePane{name: "thread", s: tv.s, v: tv, size: image.Pt(520, 700), now: &now, step: step}, replyTS,
+			"Upvotes: 0\nDownvotes: 0 [undefined, bot_profile true]"},
 	}
-	const want = "Upvotes: 0\nDownvotes: 0 [from-wrapper, bot_profile false]"
 	for _, x := range panes {
 		got := ""
-		for dl := time.Now().Add(10 * time.Second); got != want && time.Now().Before(dl); time.Sleep(15 * time.Millisecond) {
+		for dl := time.Now().Add(10 * time.Second); got != x.want && time.Now().Before(dl); time.Sleep(15 * time.Millisecond) {
 			x.p.frame()
 			if r := x.p.s.rows[x.ts]; r != nil {
 				got = r.m.Text
 			}
 		}
-		if got != want {
-			t.Errorf("%s: the row draws %q; want %q (the msg MessageWrapper's patch handed Original, as Message's patch got it)", x.p.name, got, want)
+		if got != x.want {
+			t.Errorf("%s: the row draws %q; want %q", x.p.name, got, x.want)
+		}
+	}
+	wrapper, reply := 0, 0
+	for _, r := range renders.since(0) {
+		if r.ts != replyTS {
+			continue
+		}
+		switch r.name {
+		case "MessageWrapper":
+			wrapper++
+		case "ThreadReplyGeneric":
+			reply++
+		}
+	}
+	if wrapper != 0 || reply == 0 {
+		t.Errorf("the thread's reply rendered MessageWrapper %d times and ThreadReplyGeneric %d times; want none and some (Slack's thread pane has no MessageWrapper)", wrapper, reply)
+	}
+	// what ThreadReplyGeneric gets is what Slack's ThreadReply hands it
+	var props map[string]any
+	for _, r := range renders.since(0) {
+		if r.ts == replyTS && r.name == "ThreadReplyGeneric" {
+			props = r.props
+		}
+	}
+	for k, want := range map[string]any{"isSingleThread": true, "messageContainerType": "Thread", "blocksContainerContext": "thread",
+		"showShareButton": true, "parentId": rootTS, "className": "c-message_kit__message c-message_kit__thread_message"} {
+		if props[k] != want {
+			t.Errorf("ThreadReplyGeneric's %s is %v; want %v (Slack's ThreadReply's), props %v", k, props[k], want, props)
+		}
+	}
+	for _, k := range []string{"clearHighlight", "onBackgroundClick", "onMediaPlaybackInProgressChanged"} {
+		if props[k] == nil {
+			t.Errorf("ThreadReplyGeneric has no %s (Slack's ThreadReply always passes one)", k)
 		}
 	}
 }

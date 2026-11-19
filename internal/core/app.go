@@ -43,8 +43,11 @@ type App struct {
 
 	subMu sync.Mutex
 	subs  map[*sub]struct{}
+	evSeq uint64 // the last event's EmitSeq (subMu)
 
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
+
+	thrUnread threadsMarkedUnread // ThreadsMarkedUnread (message_menu.go)
 
 	msgLog msgChanges // each message's latest change, for the views that keep copies of them (msg_changes.go)
 	// refetchQ is RefetchMessages' rounds (read_changes.go)
@@ -175,7 +178,13 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.mu.Lock()
 		a.connected = up
 		a.mu.Unlock()
-		a.emit(Event{Type: "connection", Connected: up})
+		// Merging msg-latency: its OnState block (socketConnected(fast)
+		// and firstUp before the emit, socketDown on a drop) replaces this
+		// emit; keep its block and give its emit Fast: up &&
+		// a.RTM.LastConnectFast(). Without Fast every reconnect reloads
+		// the Threads view (TestThreadsFastReconnectLikeSlack); without
+		// its block slow connects miss its catch-up.
+		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
 			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
@@ -187,9 +196,10 @@ func New(c *slack.Client, s *store.Store) *App {
 	appsByStore.Store(s, a)
 	store.ExperimentGroup = experimentForStore
 	a.followEmojiSet() // the defaults' set until the account's groups are in
-	// what of the prefs conversions read as they start (a prefs event
-	// that changes it converts again what reads it: msg_refs.go)
-	a.docs.prefs, a.docs.docPrefs, a.docs.prefsInit = a.namePrefsKey(), a.docPrefsKey(), true
+	// what of the prefs conversions read as they start; every install
+	// after notes what it moved, and the next prefs event converts again
+	// what reads it (msg_refs.go)
+	a.docs.prefs, a.docs.docPrefs = a.namePrefsKey(), a.docPrefsKey()
 	return a
 }
 
@@ -471,12 +481,32 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 	}
 }
 
-func (a *App) emit(ev Event) { a.emitIf(ev, nil) }
+// EmitSeq is the EmitSeq of the last event emitted so far: the last one
+// that went out (emitIf numbers an event once its check has passed, so a
+// refused one takes no number). A load's need is this, read when the load
+// returns: the mirror always reaches it, as every number up to it went
+// out (to a subscriber that fell behind as a resync, which claims what was
+// emitted before it).
+func (a *App) EmitSeq() uint64 {
+	a.subMu.Lock()
+	defer a.subMu.Unlock()
+	return a.evSeq
+}
+
+// emit sends ev to every subscriber and returns it as they get it (with
+// its EmitSeq, and a message change's Seq).
+func (a *App) emit(ev Event) Event {
+	ev, _ = a.emitIf(ev, nil)
+	return ev
+}
 
 // emitIf is emit when ok, asked under the subscribers' lock (nil: always),
 // so no event emitted after the check goes out before ev; it reports
-// whether ev went out (read_changes.go announceHeld).
-func (a *App) emitIf(ev Event, ok func() bool) bool {
+// whether ev went out (read_changes.go announceHeld), and returns it as
+// the subscribers got it. A refused event takes no EmitSeq: numbered
+// before its check, it left App.EmitSeq past every event sent, a need no
+// event the mirror handles could meet.
+func (a *App) emitIf(ev Event, ok func() bool) (Event, bool) {
 	a.noteDocChange(&ev) // what ev changed of what message Docs read (msg_refs.go)
 	if !snapshotQuietEvents[ev.Type] {
 		a.InvalidateSnapshot() // snapshot_recent.go
@@ -485,9 +515,13 @@ func (a *App) emitIf(ev Event, ok func() bool) bool {
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
 	if ok != nil && !ok() {
-		return false
+		return ev, false
 	}
 	a.noteMsgChange(&ev) // stamps ev.Seq, in the subscribers' order (msg_changes.go)
+	// numbered under the lock that orders the sends, once it goes out:
+	// every subscriber gets the events in EmitSeq order
+	a.evSeq++
+	ev.EmitSeq = a.evSeq
 	for s := range a.subs {
 		if s.lagged {
 			select {
@@ -503,7 +537,7 @@ func (a *App) emitIf(ev Event, ok func() bool) bool {
 			s.lagged = true
 		}
 	}
-	return true
+	return ev, true
 }
 
 // once deduplicates concurrent identical fetches (e.g. prefetch + open).
@@ -541,6 +575,7 @@ func (a *App) Boot(ctx context.Context) error {
 	go func() {
 		s := time.Now()
 		a.S.LoadCache()
+		a.notePrefsInstalled()       // the cached prefs (msg_refs.go)
 		a.installCachedExperiments() // Slack's persisted experiments store (experiments.go)
 		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
@@ -687,7 +722,9 @@ func (a *App) Boot(ctx context.Context) error {
 			a.installPrefs(raw)
 			// set_tz_automatically keeps tz in step (timezone.go)
 			go func() { _, _ = a.MaybeUpdateTimezone(a.bg) }()
-			if a.S.HasCachedPrefs() { // the first frame drew the cached copy
+			// the first frame drew the cached copy; or, without one, what
+			// was converted before this install read the defaults
+			if a.S.HasCachedPrefs() || a.prefsMoved() {
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}
@@ -906,9 +943,12 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 	a.S.SetUsergroups(gs)
 	// updateUserGroups: the viewer's groups (usergroups.membership), what
 	// a group mention's highlight follows (UserGroup fg3x isUserInGroup)
-	if mine, err := a.C.UsergroupMembership(ctx); err == nil {
-		a.S.SetMyUsergroups(mine)
-		a.emit(Event{Type: "names"}) // the visible messages re-read their mentions
+	if mine, err := a.C.UsergroupMembership(ctx); err == nil && a.S.SetMyUsergroups(mine) {
+		// the visible messages re-read their group mentions. Only when the
+		// viewer's groups moved: a names{} converts every loaded message
+		// again, and with no groups every Usergroups call (the composer's
+		// first "@", a directory search) loaded them again
+		a.emit(Event{Type: "names"})
 	}
 	return nil
 }
@@ -1530,6 +1570,14 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	rn := refNames{msgNames: msgNames{a.S}, app: a, peek: peek}
 	v.Doc = richtext.FromMessageIn(&rn, m, ch)
 	v.Refs = rn.refs
+	// what senderOf and the reactions read besides: the sending bot's
+	// name, the reactions' emoji
+	if m.User == "" && m.BotID != "" {
+		addRef(&v.Refs.Bots, m.BotID)
+	}
+	for _, re := range m.Reactions {
+		addRef(&v.Refs.Emoji, re.Name)
+	}
 	return v
 }
 

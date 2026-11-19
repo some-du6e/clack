@@ -8,6 +8,7 @@ package messages
 
 import (
 	"encoding/json"
+	"hash/fnv"
 	"reflect"
 	"strconv"
 	"strings"
@@ -526,6 +527,81 @@ func applySlackMessage(app *core.App, src *core.Message, msg slackc.Props) core.
 	return m
 }
 
+// contentFP fingerprints what a message msg says: its text, blocks,
+// attachments and files, as a component's msg prop carries them (0 for
+// none). A tree hands its msg back parsed afresh, never the map the row
+// sent, so what the row sent is told by this, not by identity.
+func contentFP(msg slackc.Props) uint64 {
+	if msg == nil {
+		return 0
+	}
+	h := fnv.New64a()
+	h.Write([]byte(msg.StrOr("text", "")))
+	for _, k := range [...]string{"blocks", "attachments", "files"} {
+		h.Write([]byte{0, k[0]})
+		if v, ok := msg[k]; ok && v != nil {
+			if b, err := json.Marshal(jsonable(v)); err == nil {
+				h.Write(b)
+			}
+		}
+	}
+	return h.Sum64() | 1 // never 0
+}
+
+// sentFPs are the contentFPs of the msgs a row handed one level of its
+// components (sentMax at most, newest first): a tree whose msg has one
+// of them changed nothing the message says, whichever revision it
+// answers. Kept by content, so reactions, reply counts and conversions
+// again take no room; a tree of an older revision than the oldest kept
+// counts as a plugin's change.
+type sentFPs []uint64
+
+const sentMax = 16
+
+func (s sentFPs) has(fp uint64) bool {
+	for _, x := range s {
+		if x == fp {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *sentFPs) add(fp uint64) {
+	if fp == 0 || len(*s) > 0 && (*s)[0] == fp {
+		return
+	}
+	for i, x := range *s {
+		if x == fp { // sent again: newest
+			copy((*s)[1:i+1], (*s)[:i])
+			(*s)[0] = fp
+			return
+		}
+	}
+	if len(*s) < sentMax {
+		*s = append(*s, 0)
+	}
+	copy((*s)[1:], (*s)[:len(*s)-1])
+	(*s)[0] = fp
+}
+
+// fpMemo is contentFP of the last map it was asked about (held, so its
+// address can't be another map's): natives ask every frame.
+type fpMemo struct {
+	m  slackc.Props
+	fp uint64
+}
+
+func (f *fpMemo) of(msg slackc.Props) uint64 {
+	if msg == nil {
+		return 0
+	}
+	if propsID(f.m) != propsID(msg) {
+		f.m, f.fp = msg, contentFP(msg)
+	}
+	return f.fp
+}
+
 // sameSlice reports whether a and b are the same slice (docBlocks returns
 // orig itself when nothing changed).
 func sameSlice(a, b []richtext.Block) bool {
@@ -601,6 +677,77 @@ func iconURL(ic slackc.Props) string {
 		}
 	}
 	return ""
+}
+
+// overBlocks is msg, a msg the row built from sent's doc (its blocks
+// numbered "clack-i", sent[i]), made ready for docBlocks over base, the
+// doc the row draws over (the plugins' view): a block the plugin handed
+// back as the row sent it becomes base's block in its place, which
+// docBlocks keeps; one the plugin changed stays the plugin's, which
+// docBlocks parses. Matched against base itself, a text-only message's
+// blocks (from the source) differed wherever the view differed, and the
+// source's text replaced the view's: Censorship's masks went whenever
+// ShowRealUser's wrapper rewrote a forwarded message's author. msg as it
+// is when there's nothing to map (the same doc, raw blocks, none).
+func overBlocks(base, sent []richtext.Block, raw json.RawMessage, msg slackc.Props) slackc.Props {
+	list, ok := msg["blocks"].([]any)
+	if !ok || rawBlocks(raw) != nil || sameSlice(base, sent) {
+		return msg
+	}
+	emitted := func(bs []richtext.Block) []int {
+		var out []int
+		for i := range bs {
+			switch bs[i].Kind {
+			case richtext.FileBlock, richtext.AttachmentBlock, richtext.Tombstone:
+				continue
+			}
+			if slackBlock(&bs[i]) != nil {
+				out = append(out, i)
+			}
+		}
+		return out
+	}
+	sw, bw := emitted(sent), emitted(base)
+	pos := make(map[int]int, len(sw))
+	for p, i := range sw {
+		pos[i] = p
+	}
+	out := make([]any, len(list))
+	asSent := len(list) == len(sw) // every block back as the row sent it, in order
+	for k, v := range list {
+		out[k] = v
+		b := slackc.Props(asMap(v))
+		id := b.StrOr("block_id", "")
+		i, err := strconv.Atoi(strings.TrimPrefix(id, blockIDPrefix))
+		p, isSent := pos[i]
+		if !strings.HasPrefix(id, blockIDPrefix) || err != nil || !isSent {
+			asSent = false
+			continue
+		}
+		sb := slackBlock(&sent[i])
+		sb["block_id"] = id
+		if !sameJSON(b, sb) {
+			asSent = false
+			continue // the plugin's
+		}
+		asSent = asSent && p == k
+		if len(bw) == len(sw) {
+			j := bw[p]
+			nb := slackBlock(&base[j])
+			nb["block_id"] = blockIDPrefix + strconv.Itoa(j)
+			out[k] = map[string]any(nb)
+		}
+	}
+	m := make(slackc.Props, len(msg))
+	for k, v := range msg {
+		m[k] = v
+	}
+	if asSent {
+		delete(m, "blocks") // a msg without blocks keeps base's body
+	} else {
+		m["blocks"] = out
+	}
+	return m
 }
 
 // docBlocks rebuilds a Doc's blocks from msg.blocks / msg.attachments.

@@ -134,9 +134,8 @@ func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
 		return nil
 	}
 	v := a.message(ch, &m)
-	ev := Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v}
-	a.emit(ev)
-	return &ev
+	ev := a.emit(Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
+	return &ev // with its EmitSeq: the views that show it now (ApplyEvent) wait for the mirror by it
 }
 
 // overlayReactions lays the viewer's unsettled reaction changes over rs
