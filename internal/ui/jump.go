@@ -138,8 +138,9 @@ func (a *App) jumpViaRoutes(ch, ts, thread string) {
 			return
 		}
 		// highlightRoot: the primary conversation at the root, highlighted
-		if h, ok := a.convoFor(ch, "").list.(interface{ Highlight(string) }); ok {
-			h.Highlight(thread)
+		// (highlightLazy: scrolled to only when its top is off screen)
+		if h, ok := a.convoFor(ch, "").list.(interface{ HighlightLazy(string) }); ok {
+			h.HighlightLazy(thread)
 		}
 		if ts != "" {
 			a.openThreadAt(ch, thread, ts, prev)

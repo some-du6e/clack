@@ -185,6 +185,7 @@ func (v *ThreadView) JumpToOwnSend(cid string, files bool) {
 	s.list.Position = layout.Position{}
 	s.positioned = true
 	s.pendingJump = "" // a JumpTo still waiting for its reply
+	s.jumpKey, s.jumpPin = "", false
 	v.h.Invalidate()
 }
 
@@ -202,11 +203,10 @@ func (v *ThreadView) JumpTo(ts string, flash bool) {
 		s.highlight, s.highlightAt = ts, time.Now()
 	}
 	s.pendingJump = ts
-	for i, it := range s.items {
+	s.jumpKey, s.jumpPin = "", false // the next sync places it (placeJump)
+	for _, it := range s.items {
 		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == ts {
-			// there now; the next sync places it again after any rebuild
-			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
-			s.positioned = true
+			s.positioned = true // there now: not the thread's start position
 			break
 		}
 	}

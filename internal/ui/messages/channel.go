@@ -152,6 +152,7 @@ func (v *ChannelView) JumpToOwnSend(cid string, files bool) {
 	// the navigation replaces the view's startTs and highlightTs: a jump
 	// still paging back is dropped and a flashing message stops
 	s.pendingJump, s.pendingDate = "", time.Time{}
+	s.jumpKey, s.jumpPin = "", false
 	s.highlight = ""
 	v.h.Invalidate()
 }
@@ -172,19 +173,20 @@ func (v *ChannelView) NewestRowBottom() (int, bool) { return v.s.newestBottom() 
 // with the messages that arrived since it last showed, and that rebuild's
 // scroll anchoring, or an eviction's reset, would otherwise put it back
 // where it was last left.
-func (v *ChannelView) Highlight(ts string) {
+func (v *ChannelView) Highlight(ts string) { v.highlight(ts, false) }
+
+// HighlightLazy is Highlight for highlightRoot (jumpToThreadReply's
+// highlightLazy): a message whose top is on screen already flashes where
+// it is; one off screen or not loaded is scrolled to as Highlight's.
+func (v *ChannelView) HighlightLazy(ts string) { v.highlight(ts, true) }
+
+func (v *ChannelView) highlight(ts string, lazy bool) {
 	v.s.highlight, v.s.highlightAt = ts, time.Now()
 	v.s.highlightReq = ts
 	v.s.positioned = true
 	v.s.aroundFor = ""
-	v.s.pendingJump = ts
-	for i, it := range v.s.items {
-		if it.kind == itMsg && it.idx < len(v.s.snap.msgs) && v.s.snap.msgs[it.idx].m.TS == ts {
-			// there now; the next sync places it again after any rebuild
-			v.s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
-			break
-		}
-	}
+	v.s.pendingJump, v.s.jumpLazy = ts, lazy
+	v.s.jumpKey, v.s.jumpPin = "", false // the next sync places it (placeJump)
 }
 
 // Highlighted is the message the list highlights now (Highlight's flash,

@@ -189,6 +189,10 @@ type SenderView struct {
 	// Highlight is the jump highlight's strength the row painted in the
 	// last frame (0 none, 1 Slack's #f2c74433 at full)
 	Highlight float32
+	// Top is the row's top edge in the list, px under the list's top
+	// (negative: cut off above it), and ViewH the list's height, as the
+	// last frame laid them out.
+	Top, ViewH int
 }
 
 // Senders lists the senders of the visible messages as of the last frame.
@@ -207,7 +211,10 @@ func (s *listState) senders() []SenderView {
 		if r == nil {
 			continue
 		}
-		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown, Highlight: r.hlDrawn}
+		sv := SenderView{TS: r.src.TS, User: r.m.User, Name: r.nameShown, Highlight: r.hlDrawn, ViewH: s.size.Y}
+		if i < len(s.pos) {
+			sv.Top = s.pos[i]
+		}
 		if sv.Name == "" {
 			sv.Missing = r.senderMiss()
 		}

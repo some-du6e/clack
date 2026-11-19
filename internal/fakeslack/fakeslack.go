@@ -106,6 +106,11 @@ type Size struct {
 	// ThreadsAudit adds #th-audit: one thread per way the thread pane
 	// marks unread replies, opens and counts (threads_audit.go).
 	ThreadsAudit bool
+	// TombstoneThread adds an archived public channel the viewer is in,
+	// its history several pages long both ways around a thread whose root
+	// was deleted: a tombstone with TombstoneReplies replies
+	// (tombstone.go).
+	TombstoneThread bool
 	// PluginBench adds the plugin bench's channels (plugin_bench.go):
 	// #plugin-bench (500 messages), #admins-only and a Slackbot DM; the
 	// viewer becomes a workspace admin.
@@ -727,6 +732,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ThreadsAudit {
 		s.addThreadsAudit() // threads_audit.go
+	}
+	if sz.TombstoneThread {
+		s.addTombstoneThread() // tombstone.go
 	}
 	if sz.PluginBench {
 		s.addPluginBench() // plugin_bench.go

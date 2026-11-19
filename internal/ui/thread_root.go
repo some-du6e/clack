@@ -65,9 +65,9 @@ func (a *App) rootForReplyHighlight(ch, reply, root string) {
 	}
 	if h, ok := c.list.(interface {
 		HighlightRequested() string
-		Highlight(ts string)
+		HighlightLazy(ts string)
 	}); ok && h.HighlightRequested() == reply {
-		h.Highlight(root)
+		h.HighlightLazy(root) // highlightRoot's highlightLazy
 	}
 }
 
