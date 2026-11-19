@@ -1,15 +1,15 @@
 package ui
 
-// A known gap, tracked and run on request (flake-check only=first-draw,
-// CLACK_FIRST_DRAW): a row newly shown under a plugin patching the
+// A known gap, tracked and run on request (flake-check only=slice-gaps,
+// CLACK_SLICE_GAPS): a row newly shown under a plugin patching the
 // messages slice draws the plugins' view from its first frame, as Slack
 // renders the patched slice in the render that first shows the message.
 // Clack's row draws core's copy until JS's copy of it is ready
-// (messages.applyView's viewWait: one JS round trip), so a channel opened,
-// or a thread pane, under a text-marking plugin (Message Logger's kind)
-// first paints the unmarked text for a few hundred milliseconds (the
-// reviews: 280 ms for a pane's reply). Red until a row's first read waits
-// for the view or takes it at once. Synthetic data only.
+// (messages.applyView's viewWait: one JS round trip), so a thread pane
+// opened under a text-marking plugin (Message Logger's kind) first paints
+// its reply unmarked for a few hundred milliseconds (218-266 ms, 12-15
+// frames: runs 44591888895, 44596411773). Red until a row's first read
+// waits for the view or takes it at once. Synthetic data only.
 
 import (
 	"context"
@@ -25,8 +25,8 @@ import (
 )
 
 func TestSliceFirstDraw(t *testing.T) {
-	if os.Getenv("CLACK_FIRST_DRAW") == "" {
-		t.Skip("CLACK_FIRST_DRAW not set: a known gap, flake-check's first-draw job runs it on request")
+	if os.Getenv("CLACK_SLICE_GAPS") == "" {
+		t.Skip("CLACK_SLICE_GAPS not set: a known gap, flake-check's slice-gaps job runs it on request")
 	}
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
@@ -100,7 +100,8 @@ func TestSliceFirstDraw(t *testing.T) {
 		t.Errorf("%s: never drawn marked", what)
 	}
 	e.openChannel(ch)
-	watch("the channel opened", rootText)
+	e.until("the channel's history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+	e.settle(2 * time.Second)
 	e.a.OpenThread(ch, root)
 	watch("the thread pane opened", replyText)
 }

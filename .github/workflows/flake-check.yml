@@ -1408,7 +1408,7 @@ jobs:
         run: |
           rc=0
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestEditLatency$' ./internal/ui || rc=1
-          xvfb-run -a go test -count=$COUNT -timeout 60m -run '^TestEditLatency$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 50m -run '^TestEditLatency$' ./internal/ui || rc=1
           exit $rc
 
   # thread-replies: a reply posted to the thread open in the pane draws
@@ -1607,13 +1607,15 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestActivityEditLatency$' ./internal/ui || rc=1
           exit $rc
 
-  # first-draw: a known gap, run only on request (only=first-draw, never
-  # on a push): a row newly shown under a text-marking slice plugin draws
-  # the plugins' view from its first frame, as Slack renders the patched
-  # slice in its first render; Clack's draws core's copy until JS's is
-  # ready (applyView's viewWait), a few hundred ms. Red until that changes.
-  first-draw:
-    if: ${{ inputs.only == 'first-draw' }}
+  # slice-gaps: known gaps, run only on request (only=slice-gaps, never on
+  # a push): under a plugin rewriting messages through the messages slice,
+  # a thread pane's newly shown reply draws the plugins' view from its
+  # first frame (Clack's draws core's copy until JS's is ready: ~250 ms),
+  # and each edit's rewritten view draws in the frame after the socket
+  # (Clack's: a JS round trip, 3 frames). Slack renders the patched slice
+  # in the render itself. Red until those change.
+  slice-gaps:
+    if: ${{ inputs.only == 'slice-gaps' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1625,13 +1627,14 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "ui: a newly shown row's first frame under a slice patch (one verbose run, then COUNT)"
+      - name: "ui: a newly shown row's first frame, and each edit's rewritten view, under a slice patch (COUNT runs)"
         env:
-          CLACK_FIRST_DRAW: "1"
+          CLACK_SLICE_GAPS: "1"
+          CLACK_LATENCY_TESTS: "1"
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestSliceFirstDraw$' ./internal/ui || rc=1
-          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestSliceFirstDraw$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSliceFirstDraw$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestEditLatency$/^slice-text$' ./internal/ui || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
