@@ -31,6 +31,8 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/key"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/messages"
@@ -743,5 +745,42 @@ func TestHighlightRootRouteKeepsWindow(t *testing.T) {
 	}
 	if cv := e.channelView(ch); cv == nil || !cv.InWindow() {
 		t.Errorf("after the highlightRoot jump the list left the window")
+	}
+}
+
+// TestPageKeysScrollTheList is BaseKeyboardNavigableList's PageUp and End
+// (client-boot FOmE) with the message list focused: PageUp scrolls a page
+// up and selects the first message in view, End goes back to the end and
+// selects the last. Clack's list took only the arrows.
+func TestPageKeysScrollTheList(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.a.FocusMessage(ch, newest.TS)
+	sel := func() string {
+		if l, ok := e.a.convoFor(ch, "").list.(interface{ KeyboardSelected() string }); ok {
+			return l.KeyboardSelected()
+		}
+		return ""
+	}
+	e.until("the list focused at the newest message", 10*time.Second, func() bool { return sel() == newest.TS })
+	e.key(key.NamePageUp, 0)
+	e.settle(300 * time.Millisecond)
+	rows := e.paneRows("", ch, "")
+	if drewRow(rows, newest.TS) {
+		t.Fatalf("PageUp left the newest message on screen: %s", drawnState(rows))
+	}
+	if s := sel(); s == newest.TS || !drewRow(rows, s) {
+		t.Errorf("after PageUp the selection is %s; want the first message in view (%s)", s, drawnState(rows))
+	}
+	e.key(key.NameEnd, 0)
+	e.settle(300 * time.Millisecond)
+	if cv := e.channelView(ch); cv == nil || !cv.AtBottom() || !drewRow(e.paneRows("", ch, ""), newest.TS) {
+		t.Errorf("End didn't take the list back to its end")
+	}
+	if s := sel(); s != newest.TS {
+		t.Errorf("after End the selection is %s; want the last message, %s", s, newest.TS)
 	}
 }

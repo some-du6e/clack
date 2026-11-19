@@ -776,8 +776,14 @@ func (s *listState) build(h Host, now time.Time) {
 		s.items = append(s.items, item{kind: itMsg, idx: i, header: header, key: m.TS})
 		prev, prevT = m, t
 	}
-	if !s.thread && s.snap.loaded { // reachedEnd: Clack always holds the newest page
+	// getListProps: the bottom spacer only at reachedEnd (a window short of
+	// the newest messages has none), and the loading spinner at the end
+	// while its newer page is out (isLoading, !isLoadingOlder, !reachedEnd)
+	if !s.thread && s.snap.loaded && !s.snap.newestMissing {
 		s.items = append(s.items, item{kind: itBottom, key: "bottomSpacer"})
+	}
+	if !s.thread && s.snap.newer {
+		s.items = append(s.items, item{kind: itLoading, key: "loading-newer"})
 	}
 	if s.thread && !s.snap.loaded && len(msgs) > 0 && s.snap.err == nil {
 		// getThreadRowsAndKeys' "loading-end" row: some messages are in
@@ -1047,6 +1053,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if s.thread && s.snap.loaded {
 		s.thrOpening = false // the pane shows its thread: a jump now is a re-highlight
 	}
+	defer s.pageSelect() // after the positions below (kbnav.go)
 	s.actionsScrollEnd(actD)
 
 	// positions of visible items

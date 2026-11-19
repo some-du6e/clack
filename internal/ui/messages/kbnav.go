@@ -20,6 +20,9 @@ type kbNav struct {
 	focusReq bool
 	want     string // FocusMessage's message, until the list has it
 	leave    func() // back to the composer
+	// page: a PageUp/PageDown/Home/End scrolled the list; the next layout
+	// selects the first (PageUp, Home) or last message in view (pageKey)
+	page key.Name
 }
 
 // focusNewest selects the newest message and takes keyboard focus.
@@ -59,6 +62,10 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		ev, ok := gtx.Event(key.FocusFilter{Target: &s.kb},
 			key.Filter{Focus: &s.kb, Name: key.NameUpArrow},
 			key.Filter{Focus: &s.kb, Name: key.NameDownArrow},
+			key.Filter{Focus: &s.kb, Name: key.NamePageUp},
+			key.Filter{Focus: &s.kb, Name: key.NamePageDown},
+			key.Filter{Focus: &s.kb, Name: key.NameHome},
+			key.Filter{Focus: &s.kb, Name: key.NameEnd},
 			key.Filter{Focus: &s.kb, Name: key.NameEscape},
 			key.Filter{Focus: &s.kb, Name: key.NameReturn},
 			key.Filter{Focus: &s.kb, Name: "E"},
@@ -91,6 +98,8 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 				case d > 0:
 					s.kbLeave(gtx)
 				}
+			case key.NamePageUp, key.NamePageDown, key.NameHome, key.NameEnd:
+				s.pageKey(e.Name)
 			case key.NameEscape:
 				s.kbLeave(gtx)
 			case "V": // Add to list…: a message the server has (not a local send)
@@ -108,6 +117,56 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 		}
 	}
 	event.Op(gtx.Ops, &s.kb)
+}
+
+// pageKey is BaseKeyboardNavigableList's PageUp, PageDown, Home and End
+// (client-boot FOmE): a page (the list's height) up or down, or the ends
+// of what's loaded; the keyboard's selection then goes to the first
+// message in view (PageUp, Home) or the last (PageDown, End), as Slack's
+// focusFirstItemInView and getNextLastFocusableItemInView do. Each writes
+// the scroll, so the list's anchoring starts from the new place.
+func (s *listState) pageKey(name key.Name) {
+	p := s.list.Position
+	switch name {
+	case key.NamePageUp:
+		p.BeforeEnd, p.Offset = true, p.Offset-s.size.Y
+	case key.NamePageDown:
+		p.BeforeEnd, p.Offset = true, p.Offset+s.size.Y
+	case key.NameHome:
+		p = layout.Position{BeforeEnd: true}
+	case key.NameEnd:
+		p = layout.Position{} // scrollToOffset(Infinity)
+		if !s.list.ScrollToEnd {
+			p = layout.Position{BeforeEnd: true, First: len(s.items)}
+		}
+	}
+	s.list.Position = p
+	s.kb.page = name
+}
+
+// pageSelect is pageKey's selection, after the layout that scrolled.
+func (s *listState) pageSelect() {
+	if s.kb.page == "" {
+		return
+	}
+	first := s.kb.page == key.NamePageUp || s.kb.page == key.NameHome
+	s.kb.page = ""
+	pick := ""
+	for _, r := range s.laid {
+		in := r.y >= 0 && r.y+r.h <= s.size.Y
+		if first && (in || pick == "") {
+			pick = r.key
+			if in {
+				break
+			}
+		}
+		if !first && (in || pick == "") {
+			pick = r.key
+		}
+	}
+	if pick != "" {
+		s.kb.ts = pick
+	}
 }
 
 func (s *listState) kbLeave(gtx layout.Context) {
