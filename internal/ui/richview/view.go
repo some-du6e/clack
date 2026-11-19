@@ -322,10 +322,18 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 // sees the doc of every View as it paints it. UI goroutine.
 var DrawnHook func(doc richtext.Doc)
 
+// PaintedHook, when set (tests: which surface painted a body,
+// thread_reply_latency_test.go), sees every View as it paints. UI
+// goroutine.
+var PaintedHook func(v *View)
+
 // draw paints the laid-out doc and registers its input areas.
 func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if h := DrawnHook; h != nil {
 		h(v.doc)
+	}
+	if h := PaintedHook; h != nil {
+		h(v)
 	}
 	size := v.d.size
 	if gtx.Constraints.Min.X > size.X {

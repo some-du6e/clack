@@ -34,8 +34,10 @@ func (a *App) activityLater(f func(ctx context.Context)) {
 // activityInOrder runs f, work Activity orders against its entries (no
 // lookups of its own), now on the caller's goroutine when no entry's work
 // is queued or running, else behind it (activityLater): in socket order
-// either way. The event pump is the queue's only producer, so nothing can
-// queue between the check and f.
+// either way. Nothing can queue between the check and f while one
+// goroutine produces: the event pump with realtime on, the caller of
+// Inject with it off. A test injecting activity events while the socket
+// delivers others has two, and loses socket order between them.
 func (a *App) activityInOrder(ctx context.Context, f func(ctx context.Context)) {
 	a.actLaterMu.Lock()
 	busy := a.actLaterOn
@@ -45,6 +47,15 @@ func (a *App) activityInOrder(ctx context.Context, f func(ctx context.Context)) 
 		return
 	}
 	f(ctx)
+}
+
+// ActivitySettled reports whether no activity event's work is queued or
+// running: every entry handed to the queue before it came true has been
+// announced. For tests that check an entry stayed out of a list.
+func (a *App) ActivitySettled() bool {
+	a.actLaterMu.Lock()
+	defer a.actLaterMu.Unlock()
+	return !a.actLaterOn && len(a.actLaterQ) == 0
 }
 
 func (a *App) activityWorker() {
