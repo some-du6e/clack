@@ -30,6 +30,27 @@ type Host interface {
 	popups.Host
 }
 
+// MediaHost is optional on the Host: a message's playable videos play in
+// place (internal/ui/videoplayer, through richview.Media). pane names the
+// list ("channel", "thread", with its container), h is the row's
+// handler.
+type MediaHost interface {
+	MessageMedia(pane, ch, ts string, h MediaRowHost) richview.Media
+}
+
+// MediaRowHost is what a row gives its videos: its handler's file
+// actions (the corner's More actions) and its OpenFile.
+type MediaRowHost interface {
+	OpenFile(f *richtext.File)
+	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
+}
+
+// mediaVisibility is optional on a row's richview.Media: the share of a
+// video tile the list showed as it laid out.
+type mediaVisibility interface {
+	MediaVisible(f *richtext.File, frac float64)
+}
+
 // CanvasOpener is optional: the ui root shows canvases natively (canvas
 // files in messages, links to canvases).
 type CanvasOpener interface {
@@ -192,6 +213,7 @@ type richHandler struct {
 	h      Host
 	m      *core.Message
 	anchor func(p image.Point) image.Point
+	thread bool // the row is in a thread pane
 }
 
 func (r *richHandler) OpenURL(url string) {
@@ -391,6 +413,12 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 			r.h.Invalidate()
 		}()
 	case richview.FileMore:
+		if ph != nil && f.IsVideo { // a video player's corner (internal/ui/videoplayer)
+			if mn := popups.NewVideoActionsMenu(ph, btn, *m, f, r.thread); mn != nil {
+				ph.ShowOverlay(mn)
+			}
+			return
+		}
 		if ph != nil {
 			gallery := f.IsImage && f.Thumb != nil
 			if mn := popups.NewFileActionsMenu(ph, btn, *m, f, gallery); mn != nil {

@@ -298,6 +298,9 @@ var slackRef = map[string]string{
 	"video-off":                   "video-off",
 	"vip":                         "vip",
 	"volume":                      "sound",
+	"sound-up":                    "sound-up",
+	"sound-medium":                "sound-medium",
+	"sound-down":                  "sound-down",
 	"warning":                     "warning",
 	"warning-filled":              "warning-filled",
 	"workflow":                    "ai-workflow",
@@ -329,6 +332,7 @@ var slackRef = map[string]string{
 // TestIconsMatchSlack holds each to the font's outline, which the
 // icon-shots workflow dumps from the CDN's font.
 var fontRef = map[string]rune{
+	"pause-bold":            0xEA32, // the video pill's (fIJO)
 	"stop-screen-sharing":   0xE096,
 	"hash-small":            0xE125,
 	"bullet-list":           0xE157,

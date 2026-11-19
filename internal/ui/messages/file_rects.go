@@ -41,6 +41,36 @@ func (s *listState) fileRects() []FileRect {
 	return out
 }
 
+// reportMedia tells the rows' video players how much of each of their
+// tiles the list shows, as this layout placed them (against the list's
+// own box): a playing video scrolled under 10% visible pauses.
+func (s *listState) reportMedia() {
+	view := image.Rectangle{Min: s.origin, Max: s.origin.Add(s.size)}
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].kind != itMsg || i >= len(s.heights) || s.heights[i] <= 0 || i >= len(s.pos) {
+			continue
+		}
+		r := s.rows[s.items[i].key]
+		if r == nil || r.rv == nil || r.media == nil {
+			continue
+		}
+		mv, ok := r.media.(mediaVisibility)
+		if !ok {
+			continue
+		}
+		off := s.origin.Add(image.Pt(r.bodyRect.Min.X, s.pos[i]+r.bodyRect.Min.Y))
+		for _, mr := range r.rv.MediaRects() {
+			tr := mr.R.Add(off)
+			a := tr.Dx() * tr.Dy()
+			if a <= 0 {
+				continue
+			}
+			in := tr.Intersect(view)
+			mv.MediaVisible(mr.File, float64(in.Dx()*in.Dy())/float64(a))
+		}
+	}
+}
+
 // FileActionRect is a shown FileActions button on screen (the hovered
 // file's), in window coordinates.
 type FileActionRect struct {

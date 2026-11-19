@@ -42,6 +42,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // AppName is the product name (Karim picked "Clack" on 2026-11-06). The
@@ -157,7 +158,8 @@ type App struct {
 	win    *app.Window
 	th     *theme.Theme
 	images *imgcache.Cache
-	data   *backend // nil until signed in
+	vids   *videoplayer.Controller // the inline video players, once a list asked (video.go)
+	data   *backend                // nil until signed in
 
 	caption captionState // Windows: the window's HWND and DWM attributes (caption_windows.go)
 	wco     wcoBar       // Windows: the caption buttons over the top nav (titlebar.go)
@@ -792,6 +794,10 @@ func (a *App) frame(gtx layout.Context) {
 		return
 	}
 	defer a.startupFrame()
+	if v := a.vids; v != nil { // which players this layout drew (video.go)
+		v.BeginFrame()
+		defer v.EndFrame()
+	}
 	// the inspect tool, before anything reads input: while a session runs
 	// the window lays out hover-only and the tool reads the clicks and
 	// keys (inspect_wire.go)
