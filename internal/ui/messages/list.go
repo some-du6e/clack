@@ -171,6 +171,11 @@ type listState struct {
 	lastNewer   time.Time
 	highlight   string
 	highlightAt time.Time
+	// hlSeen: the highlighted row has been drawn (its unmount ends the
+	// flash: MessageBackground's componentWillUnmount); hlRestart: the
+	// placement starts the flash (not a repeat jump to a ts still flashing,
+	// whose highlight prop never turns from false to true)
+	hlSeen, hlRestart bool
 	// find in thread (thread_find.go): the highlight words (the query of
 	// the last results), the current result and the result flashing
 	findWords, findTS string
@@ -857,6 +862,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.ensure()
 		s.sync(h, now)
 	}
+	if latest, before := s.hb.latestFrames(); s.hlSeen && s.laidOut && !s.laidAt.Equal(latest) && !s.laidAt.Equal(before) {
+		s.highlight, s.hlSeen = "", false // off screen for a frame: unmounted, its flash over
+	}
 	s.hb.markDrawn(s.m, gtx.Now)
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
@@ -1068,6 +1076,23 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 		y += s.heights[i]
 		s.visible[1] = i + 1
+	}
+	// MessageBackground's componentWillUnmount: the highlighted row leaving
+	// the drawn rows (scrolled out of the virtual list) ends its flash
+	if s.highlight != "" {
+		drawn := false
+		for _, r := range s.laid {
+			if r.key == s.highlight {
+				drawn = true
+				break
+			}
+		}
+		switch {
+		case drawn:
+			s.hlSeen = true
+		case s.hlSeen:
+			s.highlight, s.hlSeen = "", false
+		}
 	}
 	// contentH is the total item height when every item was laid out (the
 	// ui root puts a short thread's reply box under it), else 0.
@@ -2309,7 +2334,7 @@ func (s *listState) placeJump(now time.Time) {
 			}
 			s.jumpLazy = false
 			s.positioned = true
-			if s.highlight == s.pendingJump {
+			if s.highlight == s.pendingJump && s.hlRestart {
 				s.highlightAt = now // the flash starts as its message is placed
 			}
 			s.pendingJump = ""
@@ -2359,7 +2384,7 @@ func (s *listState) placeThreadJump(now time.Time) {
 	default:
 		s.placeAt(i, 100) // getThreadStartPosition's startOffset
 	}
-	if s.highlight == s.pendingJump {
+	if s.highlight == s.pendingJump && s.hlRestart {
 		s.highlightAt = now // the flash starts as its message is placed
 	}
 	s.pendingJump, s.jumpLazy = "", false

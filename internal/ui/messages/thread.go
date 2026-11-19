@@ -212,10 +212,15 @@ func (v *ThreadView) JumpTo(ts string, flash bool) {
 	if !flash && opening && s.positioned && s.laidOut {
 		return // no highlight: the reopened pane's own place (getThreadStartPosition's scrollmark)
 	}
-	s.highlight = ""
-	if flash {
-		s.highlight, s.highlightAt = ts, time.Now()
+	flashing := flash && s.highlight == ts && time.Since(s.highlightAt) < highlightFor
+	switch {
+	case flashing: // a repeat jump: the running flash goes on (rFp4)
+	case flash:
+		s.highlight, s.highlightAt, s.hlSeen = ts, time.Now(), false
+	default:
+		s.highlight = ""
 	}
+	s.hlRestart = !flashing
 	s.pendingJump, s.jumpLazy = ts, !opening
 	s.place = jumpPlace{}
 	s.positioned = true // the jump places the list, not the thread's start position

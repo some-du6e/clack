@@ -1,0 +1,109 @@
+package messages
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
+)
+
+// Every row is MessageBackground's (Message's first child, boot-shared
+// b5pm; ThreadRootGeneric and ThreadRootCanvas wrap theirs too, JM3a), so
+// a jump flashes a tombstone (MessageTombstoneContent, sQ5n), a system
+// message and a huddle message the way it does an ordinary one, in the
+// conversation and, as a thread's root, in the thread pane. Clack painted
+// the highlight only in ordinary message rows: Karim's deleted root never
+// flashed. Synthetic messages.
+
+const (
+	tFlashCh                                  = "C0FLASH01"
+	tsFlashTomb, tsFlashJoin, tsFlashHuddle   = "1700000100.000100", "1700000200.000100", "1700000300.000100"
+	tsFlashPlain, tsFlashReply, tsFlashReply2 = "1700000400.000100", "1700000110.000100", "1700000310.000100"
+)
+
+func flashMsgs() []slack.Message {
+	room, _ := json.Marshal(map[string]any{"id": "R0FLASH", "channels": []string{tFlashCh}, "date_start": 1700000300,
+		"date_end": 1700000600, "has_ended": true, "participants": []string{}, "participant_history": []string{"UBOB"}})
+	return []slack.Message{
+		{Type: "message", Subtype: "tombstone", TS: tsFlashTomb, User: tBot, Hidden: true, Text: "This message was deleted.",
+			ThreadTS: tsFlashTomb, ReplyCount: 1, LatestReply: tsFlashReply},
+		{Type: "message", Subtype: "channel_join", TS: tsFlashJoin, User: "UBOB", Text: "<@UBOB> has joined the channel"},
+		{Type: "message", Subtype: "huddle_thread", TS: tsFlashHuddle, User: tBot, Text: "A huddle started", Room: room,
+			ThreadTS: tsFlashHuddle, ReplyCount: 1, LatestReply: tsFlashReply2},
+		{Type: "message", TS: tsFlashPlain, User: "UALICE", Text: "after the huddle"},
+	}
+}
+
+// lights runs frames until row ts of l draws the jump highlight.
+func lights(t *testing.T, frame func(), l *listState, ts, what string) {
+	t.Helper()
+	for dl := time.Now().Add(5 * time.Second); ; {
+		frame()
+		if r := l.rows[ts]; r != nil && r.hlDrawn > 0 {
+			return
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("%s: row %s never drew the jump highlight", what, ts)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestEveryRowFlashes(t *testing.T) {
+	msgs := flashMsgs()
+	e := newCtxEnvSetup(t, tFlashCh, msgs, func(app *core.App) { app.SetExperimentGroup("system_messages_redesign_m1", "on") })
+	for _, c := range []struct{ ts, what string }{
+		{tsFlashTomb, "a tombstone"}, {tsFlashJoin, "a join"}, {tsFlashHuddle, "a huddle message"}, {tsFlashPlain, "a message"},
+	} {
+		e.v.Highlight(c.ts)
+		lights(t, e.frame, e.v.s, c.ts, c.what)
+	}
+	time.Sleep(highlightFor + 200*time.Millisecond)
+	e.frame()
+	if r := e.row(tsFlashPlain); r == nil || r.hlDrawn != 0 {
+		t.Errorf("the last flash didn't end at 3 s")
+	}
+	// the thread pane's roots: the huddle's and the deleted one
+	app := e.h.app
+	app.S.SetThread(tFlashCh, tsFlashHuddle, []slack.Message{msgs[2],
+		{Type: "message", TS: tsFlashReply2, User: "UALICE", ThreadTS: tsFlashHuddle, Text: "notes in the canvas"}})
+	app.S.SetThread(tFlashCh, tsFlashTomb, []slack.Message{msgs[0],
+		{Type: "message", TS: tsFlashReply, User: "UBOB", ThreadTS: tsFlashTomb, Text: "a reply to it"}})
+	for _, c := range []struct{ root, what string }{{tsFlashHuddle, "a huddle's root"}, {tsFlashTomb, "a deleted root"}} {
+		tv := NewThreadView(e.h, tFlashCh, c.root)
+		frame := frameFn(tv)
+		tv.JumpTo(c.root, true)
+		lights(t, frame, tv.s, c.root, c.what+" in the thread pane")
+		time.Sleep(highlightFor + 200*time.Millisecond)
+		frame()
+		if r := tv.s.rows[c.root]; r == nil || r.hlDrawn != 0 {
+			t.Errorf("%s in the thread pane: the flash didn't end at 3 s", c.what)
+		}
+	}
+}
+
+// TestRepeatJumpKeepsFlash: a second jump to a message still flashing
+// doesn't start its flash over (its highlight prop doesn't turn from false
+// to true: MessageBackground's componentDidUpdate, rFp4), so the flash ends
+// 3 s after the first. Clack restarted it.
+func TestRepeatJumpKeepsFlash(t *testing.T) {
+	e := newCtxEnvSetup(t, tFlashCh, flashMsgs(), nil)
+	e.v.Highlight(tsFlashPlain)
+	lights(t, e.frame, e.v.s, tsFlashPlain, "the first jump")
+	start := time.Now()
+	time.Sleep(1500 * time.Millisecond)
+	e.v.Highlight(tsFlashPlain)
+	e.frame()
+	e.frame()
+	time.Sleep(time.Until(start.Add(highlightFor + 300*time.Millisecond)))
+	e.frame()
+	r := e.row(tsFlashPlain)
+	if r == nil {
+		t.Fatalf("the row isn't on screen")
+	}
+	if r.hlDrawn != 0 {
+		t.Errorf("3.3 s after the first jump the row still flashes (%.2f): the second jump restarted it", r.hlDrawn)
+	}
+}

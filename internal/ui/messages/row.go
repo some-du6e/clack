@@ -886,11 +886,14 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 			r.resolve(rc)
 		}
 	}
+	// MessageBackground wraps every row (Message's first child, b5pm), so
+	// a tombstone and a canvas comment root get its fill too: the hover and
+	// the jump highlight
 	if r.m.Tombstone {
-		return r.tombstoneLayout(gtx, rc)
+		return r.withRowFill(gtx, rc, func(gtx layout.Context) layout.Dimensions { return r.tombstoneLayout(gtx, rc) })
 	}
 	if rc.parent && rc.thread && r.m.IsCommentRoot() { // ThreadRootCanvas (thread_comment.go)
-		return r.commentRootLayout(gtx, rc)
+		return r.withRowFill(gtx, rc, func(gtx layout.Context) layout.Dimensions { return r.commentRootLayout(gtx, rc) })
 	}
 	if r.m.System && (!rc.parent || huddleSubtype(r.m.Subtype)) && !r.hiddenSystem(rc) {
 		// ThreadRootGeneric draws a huddle root as a redesigned system
@@ -1012,20 +1015,62 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 }
 
 func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.Point, bg color.NRGBA) layout.Dimensions {
-	fill(gtx.Ops, image.Rectangle{Max: size}, bg)
-	r.hlDrawn = r.rc.highlight
-	if hl := r.rc.highlight; hl > 0 {
-		c := r.rc.c.Highlight
-		c.A = uint8(float32(c.A) * hl)
-		fill(gtx.Ops, image.Rectangle{Max: size}, c)
-	}
-	if fl := r.rc.findFlash; fl > 0 {
-		c := r.rc.c.ActiveThread
-		c.A = uint8(float32(c.A) * fl)
-		fill(gtx.Ops, image.Rectangle{Max: size}, c)
-	}
+	r.paintRowFill(gtx, size, bg)
 	content.Add(gtx.Ops)
 	return layout.Dimensions{Size: size}
+}
+
+// paintRowFill is MessageBackground's fill over a row of size: its own
+// background bg (transparent for none), the jump highlight over it
+// (c-message_kit__background--highlight: CSS animates the row's background
+// to #f2c74433 and back, so each frame is the sRGB mix of the two, painted
+// solid: Gio's linear-light blend of a scaled alpha drifts from it
+// mid-fade, most on dark rows), then thread find's flash. Every row layout
+// paints it, whatever it draws on top (a message, a tombstone, a system
+// message, a huddle or canvas comment root).
+func (r *row) paintRowFill(gtx layout.Context, size image.Point, bg color.NRGBA) {
+	c := r.rc.c
+	under := c.Bg
+	switch {
+	case bg.A == 255:
+		under = bg
+	case bg.A > 0:
+		under = richview.Over(bg, c.Bg)
+	}
+	cur := under
+	if hl := r.rc.highlight; hl > 0 {
+		cur = srgbMix(under, c.Highlight, hl)
+	}
+	r.hlDrawn = r.rc.highlight
+	if bg.A > 0 || cur != under {
+		fill(gtx.Ops, image.Rectangle{Max: size}, cur)
+	}
+	if fl := r.rc.findFlash; fl > 0 {
+		f := c.ActiveThread
+		f.A = uint8(float32(f.A) * fl)
+		fill(gtx.Ops, image.Rectangle{Max: size}, f)
+	}
+}
+
+// withRowFill lays out f, a row layout that paints no background of its
+// own, over the row's fill (paintRowFill): the hover, then the highlight.
+func (r *row) withRowFill(gtx layout.Context, rc *rowCtx, f layout.Widget) layout.Dimensions {
+	rec := op.Record(gtx.Ops)
+	d := f(gtx)
+	call := rec.Stop()
+	var bg color.NRGBA
+	if rc.hovered {
+		bg = rc.c.Hover
+	}
+	r.paintRowFill(gtx, d.Size, bg)
+	call.Add(gtx.Ops)
+	return d
+}
+
+// srgbMix is a and b mixed in sRGB, t of b (opaque).
+func srgbMix(a, b color.NRGBA, t float32) color.NRGBA {
+	m := func(x, y uint8) uint8 { return uint8(float32(x)*(1-t) + float32(y)*t + 0.5) }
+	return color.NRGBA{R: m(a.R, b.R), G: m(a.G, b.G), B: m(a.B, b.B), A: 255}
 }
 
 // layoutGutter is the gutter memo (filter-matched by its source marker
@@ -2807,9 +2852,11 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	}
 	content := rec.Stop()
 	h := y + dp(gtx, 8)
+	var bg color.NRGBA
 	if rc.hovered {
-		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
+		bg = c.Hover
 	}
+	r.paintRowFill(gtx, image.Pt(w, h), bg) // MessageBackground's: the hover, the jump highlight
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
@@ -2918,9 +2965,11 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	}
 	content := rec.Stop()
 	h := y
+	var bg color.NRGBA
 	if rc.hovered {
-		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
+		bg = c.Hover
 	}
+	r.paintRowFill(gtx, image.Pt(w, h), bg) // MessageBackground's: the hover, the jump highlight
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}

@@ -847,3 +847,34 @@ func TestArchivedTombstoneJumpScrollsBothWays(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestFlashEndsWhenRowLeaves: a jumped-to message scrolled out of the list
+// while it flashes ends its flash for good (its MessageBackground unmounts:
+// componentWillUnmount, rFp4), so scrolling straight back finds it plain.
+// Clack's flash ran on the clock wherever the row went.
+func TestFlashEndsWhenRowLeaves(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	target := plainAt(t, e.fs, ch, 40)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.a.Navigate("c/" + ch + "/m/" + target)
+	e.waitDrawn(t, "the message, highlighted", 15*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return lit(rows, target) })
+	e.scroll(e.listPoint(), 4000) // away: the row leaves the list
+	e.settle(150 * time.Millisecond)
+	if drewRow(e.paneRows("", ch, ""), target) {
+		t.Fatalf("a 4000px wheel down left the message on screen")
+	}
+	for dl := time.Now().Add(2 * time.Second); !drewRow(e.paneRows("", ch, ""), target); { // straight back, inside the 3 s
+		if time.Now().After(dl) {
+			t.Fatalf("scrolling back up never brought the message back on screen")
+		}
+		e.scroll(e.listPoint(), -300)
+		e.frame()
+		e.frame()
+	}
+	if rows := e.paneRows("", ch, ""); lit(rows, target) {
+		t.Errorf("back on screen within 3 s, the message still flashes: its row left the list, which ends the flash")
+	}
+}
