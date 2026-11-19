@@ -77,7 +77,9 @@ const FeatureAgentTasksWrite = "agent_tasks__write"
 // the schedule line's switches (AgentTaskItem's n1._ arguments).
 func init() {
 	for _, n := range []string{ExpAgentTasksTab, "wfb_agent_tasks_recent_prompts", "wfb_scheduled_trigger_time_buckets",
-		"wfb_schedule_on_last_day_of_month", "wfb_agents_can_create_simple_automations_tab_ms3"} {
+		"wfb_schedule_on_last_day_of_month", "wfb_agents_can_create_simple_automations_tab_ms3",
+		// a task card's auto-collapse (ui/blockkit/agent.go)
+		"slackbot_mcp_tasks_card_auto_collapse_when_complete"} {
 		experimentReads[n] = on
 	}
 }

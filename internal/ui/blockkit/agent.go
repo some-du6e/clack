@@ -254,6 +254,17 @@ type agentState struct {
 	views  map[string]*agentText
 	anim   map[string]*agentAnim
 	shown  map[string]int // block → height last drawn (animation start)
+	// cuts caches each task content's truncated copy (agent_truncate.go)
+	cuts map[string]*agentCut
+	// touched: the viewer toggled the block (a task card the viewer
+	// opened or closed isn't auto-collapsed when it completes)
+	touched map[string]bool
+}
+
+// agentCut is a task content's truncated copy, for its raw bytes.
+type agentCut struct {
+	raw, cut  []byte
+	truncated bool
 }
 
 type agentParsed struct {
@@ -275,7 +286,7 @@ func (me *Message) agentState() *agentState {
 	if st == nil {
 		st = &agentState{parsed: map[string]*agentParsed{}, open: map[string]bool{}, taps: map[string]*tap{},
 			tips: map[string]*popups.TipState{}, rating: map[string]string{}, views: map[string]*agentText{},
-			anim: map[string]*agentAnim{}, shown: map[string]int{}}
+			anim: map[string]*agentAnim{}, shown: map[string]int{}, cuts: map[string]*agentCut{}, touched: map[string]bool{}}
 		agentStates[k] = st
 		agentOrder = append(agentOrder, k)
 		if len(agentOrder) > 400 {
@@ -530,7 +541,19 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 		status, title, hasContent = PlanStatus(b.Tasks), PlanTitle(b), len(b.Tasks) > 0
 	} else {
 		status, title, hasContent = CardStatus(b.Status), b.Title, b.hasContent()
-		def = strings.HasPrefix(b.BlockID, "mcp_task_")
+		// TaskCard (1+vf): an MCP task's card (block id mcp_task_…) starts
+		// open, unless it is already done under
+		// slackbot_mcp_tasks_card_auto_collapse_when_complete; that one
+		// also closes when its task completes or fails, unless the viewer
+		// toggled it
+		mcp := strings.HasPrefix(b.BlockID, "mcp_task_")
+		done := b.Status == StatusComplete || b.Status == StatusError
+		auto := me.mcpAutoCollapse()
+		def = mcp && !(auto && done)
+		if mcp && auto && done && !st.touched[key] && st.open[key] {
+			st.open[key] = false
+			st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
+		}
 	}
 	open := hasContent && st.isOpen(key, def)
 
@@ -539,7 +562,11 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 	if hasContent && t.clicked(gtx, me.h) {
 		st.open[key] = !open
 		open = !open
+		st.touched[key] = true
 		st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
+		if !open { // the content unmounts: its tasks and Show more start over when reopened
+			st.resetUnder(b)
+		}
 		me.changed()
 	}
 	y := top
@@ -903,17 +930,87 @@ func (me *Message) taskContent(gtx C, st *agentState, pal agentPal, key string, 
 		h += dh
 	}
 	if isRichText(t.Details) {
-		tv := me.agentRich(st, key+"\x00d", t.Details)
-		add(at(gtx, image.Pt(x, y+h+gapIf(h, gap)), func(gtx C) D { return D{Size: image.Pt(w, tv.layoutAgent(gtx, w))} }).Size.Y)
+		add(me.slimRich(gtx, st, pal, key+"\x00d", t.Details, x, y+h+gapIf(h, gap), w))
 	}
 	if isRichText(t.Output) {
-		tv := me.agentRich(st, key+"\x00o", t.Output)
-		add(at(gtx, image.Pt(x, y+h+gapIf(h, gap)), func(gtx C) D { return D{Size: image.Pt(w, tv.layoutAgent(gtx, w))} }).Size.Y)
+		add(me.slimRich(gtx, st, pal, key+"\x00o", t.Output, x, y+h+gapIf(h, gap), w))
 	}
 	if len(t.Sources) > 0 {
 		add(me.sources(gtx, st, pal, key, t.Sources, x, y+h+gapIf(h, gap), w))
 	}
 	return h
+}
+
+// slimRich is a slim TaskItem's details or output (its q: ZJNP
+// TruncatedBlocks, maxLines 3, maxChars 250, block-level expand button):
+// the rich text cut by Slack's rules (agent_truncate.go) with "Show more"
+// under it, the whole of it with "Show less" once opened
+// (c-rich_text_expand_button / _collapse_button: c-link--button, the
+// content's 13px in --dt_color-content-hgl-1, underlined on hover, a line
+// of its own).
+func (me *Message) slimRich(gtx C, st *agentState, pal agentPal, key string, raw json.RawMessage, x, y, w int) int {
+	c := st.cuts[key]
+	if c == nil || !bytes.Equal(c.raw, raw) {
+		cut, ok := truncateTaskContent(raw)
+		c = &agentCut{raw: append([]byte(nil), raw...), cut: cut, truncated: ok}
+		st.cuts[key] = c
+	}
+	moreKey := key + "\x00more"
+	open := st.isOpen(moreKey, false)
+	src, vk := raw, key+"\x00full"
+	if c.truncated && !open {
+		src, vk = c.cut, key+"\x00cut"
+	}
+	tv := me.agentRich(st, vk, src)
+	h := at(gtx, image.Pt(x, y), func(gtx C) D { return D{Size: image.Pt(w, tv.layoutAgent(gtx, w))} }).Size.Y
+	if !c.truncated {
+		return h
+	}
+	th := me.h.Theme()
+	txt := searchNS.T("Show more")
+	if open {
+		txt = searchNS.T("Show less")
+	}
+	t := st.tap(moreKey)
+	if t.clicked(gtx, me.h) {
+		st.open[moreKey] = !open
+		me.changed()
+	}
+	lh := dp(gtx, agentLH)
+	lw := min(measure(gtx, th, 13, font.Normal, txt), w)
+	at(gtx, image.Pt(x, y+h), func(gtx C) D {
+		return vcenter(gtx, lh, func(gtx C) D { return label(gtx, th, 13, font.Normal, pal.link, txt) })
+	})
+	at(gtx, image.Pt(x, y+h), func(gtx C) D {
+		t.add(gtx, image.Pt(max(lw, 1), lh))
+		return D{}
+	})
+	if t.g.Hovered() {
+		rrect(gtx, image.Rect(x, y+h+lh-dp(gtx, 3), x+lw, y+h+lh-dp(gtx, 2)), 0, pal.link)
+	}
+	return h + lh
+}
+
+// resetUnder forgets the open states under a block that closed: Slack
+// unmounts its content (PlanTaskList's TaskItems, their truncated text),
+// so reopening it shows each task open and its text cut again.
+func (st *agentState) resetUnder(b *AgentBlock) {
+	pre := "task\x00" + b.BlockID + "\x00"
+	if b.Type != "plan" {
+		pre = "card\x00" + b.BlockID
+	}
+	for k := range st.open {
+		if strings.HasPrefix(k, pre) {
+			delete(st.open, k)
+		}
+	}
+}
+
+// mcpAutoCollapse is slackbot_mcp_tasks_card_auto_collapse_when_complete
+// (mGJN sn).
+func (me *Message) mcpAutoCollapse() bool {
+	c := me.h.Core()
+	return c != nil && c.Experiment("slackbot_mcp_tasks_card_auto_collapse_when_complete") == "on"
 }
 
 func gapIf(h, gap int) int {
@@ -970,16 +1067,14 @@ func (me *Message) cardBody(gtx C, st *agentState, pal agentPal, b *AgentBlock, 
 	key := "card\x00" + b.BlockID
 	y := 0
 	if isRichText(b.Details) {
-		tv := me.agentRich(st, key+"\x00d", b.Details)
-		h := at(gtx, image.Pt(pad, y), func(gtx C) D { return D{Size: image.Pt(cw, tv.layoutAgent(gtx, cw))} }).Size.Y
+		h := me.slimRich(gtx, st, pal, key+"\x00d", b.Details, pad, y, cw)
 		rrect(gtx, image.Rect(gut/2, y, gut/2+lineW, y+h), 0, pal.line)
 		y += h
 	}
 	start := y
 	h := 0
 	if isRichText(b.Output) {
-		tv := me.agentRich(st, key+"\x00o", b.Output)
-		h = at(gtx, image.Pt(pad, y), func(gtx C) D { return D{Size: image.Pt(cw, tv.layoutAgent(gtx, cw))} }).Size.Y
+		h = me.slimRich(gtx, st, pal, key+"\x00o", b.Output, pad, y, cw)
 		h += dp(gtx, 4) // .taskContentOutput margin-bottom
 	}
 	if len(b.Sources) > 0 {
