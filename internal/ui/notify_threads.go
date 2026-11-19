@@ -101,7 +101,7 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	}
 	c, named := b.noteConv(e.Channel)
 	if !named && !resolved && b.core != nil {
-		b.noteResolve(a, []string{e.Channel}, func() { b.desktopNotificationAfter(a, ev, true) })
+		b.noteResolve(a, []string{e.Channel}, nil, func() { b.desktopNotificationAfter(a, ev, true) })
 		return
 	}
 	if c == nil {
