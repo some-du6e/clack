@@ -134,6 +134,7 @@ func TestLegacyUserAgentIgnored(t *testing.T) {
 // ended sessions).
 func TestDownloadRefusesSlackPages(t *testing.T) {
 	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-1"})
+	c.HTTP.Transport = noNetwork{t} // a refused page must never reach a server
 	for _, u := range []string{
 		"https://hackclub.slack.com/ssb/redirect",
 		"https://hackclub.slack.com/",
@@ -145,17 +146,8 @@ func TestDownloadRefusesSlackPages(t *testing.T) {
 			t.Errorf("Download(%s) = %v, want ErrNotAFile", u, err)
 		}
 	}
-	for _, u := range []string{
-		"https://files.slack.com/files-pri/T1-F1/x.png",
-		"https://files-origin.slack.com/files-pri/T1-F1/x.png",
-		"https://hackclub.slack.com/files-pri/T1-F1/x.png",
-		"https://files.slack.com/files-tmb/T1-F1-abc/x_360.png",
-	} {
-		pu, _ := url.Parse(u)
-		if !FileURL(pu) {
-			t.Errorf("FileURL(%s) = false", u)
-		}
-	}
+	// File URLs that must still download are covered by downloadAll in
+	// fileurl_dots_test.go, which also checks the request's wire path.
 	via := []*http.Request{{URL: mustURL(t, "https://files.slack.com/files-pri/x")}}
 	req := &http.Request{URL: mustURL(t, "https://hackclub.slack.com/?redir=%2Ffiles-pri%2Fx"), Header: http.Header{}}
 	if err := c.checkRedirect(req, via); !errors.Is(err, ErrNotAFile) {
