@@ -409,21 +409,22 @@ func TestActivityPaneKeepsViewWhileJumpResolves(t *testing.T) {
 	e.until("the comment thread beside it", crSecThread(e, fakeslack.FileChanLaunch, fakeslack.CommentOpen))
 }
 
-// A pane jump still waiting drops once another item is opened: the canvas
-// never replaces the newer item's view, and its comment thread never
-// opens.
+// A pane jump still waiting drops once another item is opened (here the
+// comment's thread_v2, which opens its thread in the pane): the canvas
+// never replaces the newer item's view, and the reply's comment thread
+// never opens.
 func TestActivityPaneJumpDroppedByAnotherItem(t *testing.T) {
 	e := crLateCanvas(t, 2*time.Second)
 	crCommentReply(e)
 	if _, waits := e.a.canvasJumpsOf().waiting[fakeslack.CanvasChannel]; !waits {
 		t.Fatalf("precondition: the jump doesn't wait for the canvas's files.info")
 	}
-	e.activity().Search("")
+	e.activity().Search("Booked it") // the comment's thread_v2, meanwhile
 	e.frames(5)
-	e.activity().StepItem(-1, false) // a newer item, meanwhile
+	e.activity().StepItem(1, false)
 	next := e.activity().OpenedItem()
-	if next == fakeslack.CanvasCommentKey || next == "" {
-		t.Fatalf("precondition: opened %q, want another item", next)
+	if next != fakeslack.CanvasCommentThreadKey {
+		t.Fatalf("precondition: opened %q, want the thread_v2 %s", next, fakeslack.CanvasCommentThreadKey)
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
