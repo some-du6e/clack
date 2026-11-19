@@ -24,6 +24,7 @@ package ui
 // Synthetic fakeslack history; nothing talks to Slack.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -360,4 +361,105 @@ func TestHandOverHighlightsRootAfterWindow(t *testing.T) {
 	e.waitDrawn(t, "the root highlighted in the conversation", 15*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
 		return lit(rows, root)
 	})
+}
+
+// TestJumpWindowKeepsReactionsAfterOtherJumps: a window a list shows
+// stays core's while the list shows it, however many jumps elsewhere come
+// after (Slack's slices stay until their own channel's
+// truncateChannelHistory): a reaction on its message still shows. Core
+// kept the 8 windows loaded last across every conversation, so nine old
+// search results opened elsewhere dropped the shown window, and the
+// socket's reactions (the viewer's own too) found no message to change.
+func TestJumpWindowKeepsReactionsAfterOtherJumps(t *testing.T) {
+	e := longEnv(t)
+	ch := longRead
+	target := plainAt(t, e.fs, ch, 2500)
+	e.openAtOld(t, ch, target)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	for _, other := range []string{"C0FAKE00001", "C0FAKE00003"} {
+		for _, back := range []int{400, 800, 1200, 1600, 2000} { // windows far apart: one each
+			if _, err := e.a.Core().HistoryAround(ctx, other, plainAt(t, e.fs, other, back)); err != nil {
+				t.Fatalf("a window in %s: %v", other, err)
+			}
+		}
+	}
+	e.settle(200 * time.Millisecond)
+	who := e.fs.UserIDs()[3]
+	raw, _ := json.Marshal(map[string]any{"type": "reaction_added", "user": who, "reaction": "tada",
+		"item": map[string]any{"type": "message", "channel": ch, "ts": target}, "event_ts": fmt.Sprintf("%d.000500", time.Now().Unix())})
+	e.a.Core().Inject(slack.Event{Type: "reaction_added", Raw: raw})
+	e.until("the reaction on the window's message after ten jumps elsewhere", 10*time.Second, func() bool {
+		cv := e.channelView(ch)
+		if cv == nil {
+			return false
+		}
+		for _, r := range cv.ReactionRects() {
+			if r.TS == target && r.Name == "tada" {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// TestWindowNewerFailureDoesNotBlockOlder: a window's requestNewer that
+// keeps failing backs off on its own (Slack's requestHistory limits each
+// request: {oldest} and {latest} apart), and never holds up scrolling up
+// in the window. Clack counted a newer failure as an older one, so each
+// failed page at the window's end pushed the older page's retry out
+// again, and asked for the newer page every second.
+func TestWindowNewerFailureDoesNotBlockOlder(t *testing.T) {
+	e := longEnv(t)
+	ch := longRead
+	target := plainAt(t, e.fs, ch, 2500)
+	e.openAtOld(t, ch, target)
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method == "conversations.history" && f.Get("channel") == ch && f.Get("oldest") != "" && f.Get("latest") == "" {
+			return map[string]any{"ok": false, "error": "synthetic_failure"}, true // every newer page fails
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { e.fs.SetHook(nil) })
+	calls := e.recordCalls("conversations.history")
+	newer := func() int { // newer pages asked so far
+		k := 0
+		for _, c := range calls.of("conversations.history", ch, "oldest", "latest") {
+			if c != "oldest= latest=" && strings.HasSuffix(c, " latest=") {
+				k++
+			}
+		}
+		return k
+	}
+	older := func() int {
+		k := 0
+		for _, c := range calls.of("conversations.history", ch, "latest") {
+			if c != "latest=" {
+				k++
+			}
+		}
+		return k
+	}
+	// to the window's end: its newer page fails, again and again
+	for dl := time.Now().Add(15 * time.Second); newer() < 1; {
+		if time.Now().After(dl) {
+			t.Fatalf("no newer page asked at the window's end: %q", calls.of("conversations.history", ch, "latest", "oldest"))
+		}
+		e.scroll(e.listPoint(), 3000)
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
+	}
+	e.settle(6 * time.Second) // the window's end in view all along
+	if n := newer(); n > 4 {
+		t.Errorf("%d newer pages asked in about 6 s with each one failing; want the retries to back off", n)
+	}
+	before := older()
+	for dl := time.Now().Add(4 * time.Second); older() == before; {
+		if time.Now().After(dl) {
+			t.Fatalf("after the failed newer pages, scrolling up asked for no older page in 4 s")
+		}
+		e.scroll(e.listPoint(), -3000)
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
+	}
 }

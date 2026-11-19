@@ -194,8 +194,10 @@ type listState struct {
 	jumpPin bool
 	jumpY   int
 	// handAsked: a window that met the newest messages asked the
-	// conversation's model to read them again (handOver)
+	// conversation's model to read them again (handOver); handWant is the
+	// first of its reads that began after the join
 	handAsked bool
+	handWant  uint64
 	// sendCID is the client_msg_id of the viewer's message from the
 	// composer beside the list, which the list jumps to once it's in
 	// (ChannelView.JumpToOwnSend); sendAt is when it went out.
@@ -435,24 +437,29 @@ func (s *listState) jumpToLatest() {
 
 // handOver: the window met the conversation's newest messages and core
 // joined it to their timeline, so the list shows them, read again from
-// core (Slack's union of the two slices). The window stays on screen
-// until the conversation's model has read them (one refresh), then the
-// rebuild keeps the first message on screen where it was, or the jump
-// anchor or a pending jump places theirs. Reports whether it went.
+// core (Slack's union of the two slices, in the state the pane reads).
+// The window stays on screen until the conversation's model has read
+// them in a read begun after the join (one in flight then began before
+// it, and a failed one holds nothing: the window stays until a later read
+// lands), then the rebuild keeps the reader's row where it was, or a
+// pending jump places its message. Reports whether it went.
 func (s *listState) handOver() bool {
-	if !s.handAsked {
-		s.handAsked = true
-		s.hb.refresh(s.chm) // the read starts at once: loading from here
-	}
 	m := s.chm
 	m.mu.Lock()
-	read := !m.loading && (m.loaded || m.err != nil)
-	m.mu.Unlock()
-	if !read {
-		return false
+	if !s.handAsked {
+		s.handAsked = true
+		s.handWant = m.readGen + 1 // the next read: it begins after the join
 	}
-	s.leaveWindow()
-	return true
+	ok, idle := m.readOK >= s.handWant, !m.loading
+	m.mu.Unlock()
+	if ok {
+		s.leaveWindow()
+		return true
+	}
+	if idle {
+		s.hb.refresh(m) // starts the read, unless it's backing off a failure
+	}
+	return false
 }
 
 // newestHold reports whether the conversation's newest messages hold ts

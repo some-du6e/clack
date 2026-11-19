@@ -29,7 +29,7 @@ func TestWindowsAreSlices(t *testing.T) {
 	s := New("")
 	s.SetLatest("C1", msgsAt(900, 950), true) // the newest 50
 	// a jump far back: the window around 100
-	if _, merged := s.AddWindow("C1", msgsAt(72, 128), tsAt(72), tsAt(127), true, true); merged {
+	if _, merged := s.AddWindow("C1", msgsAt(72, 128), tsAt(72), tsAt(127), true, true, 0); merged {
 		t.Fatalf("a window far from the newest joined the timeline")
 	}
 	if tl := s.Timeline("C1"); len(tl.Msgs) != 50 || tl.Msgs[0].TS != tsAt(900) {
@@ -45,7 +45,7 @@ func TestWindowsAreSlices(t *testing.T) {
 		t.Errorf("WindowAt: %d messages, older %v, ok %v", len(w.Msgs), w.HasOlder, ok)
 	}
 	// the page before it (requestOlder: latest its start, inclusive) joins it
-	w, merged := s.AddWindow("C1", msgsAt(44, 73), "", tsAt(72), true, true)
+	w, merged := s.AddWindow("C1", msgsAt(44, 73), "", tsAt(72), true, true, 0)
 	if merged || w.Start != tsAt(44) || w.End != tsAt(127) || len(w.Msgs) != 84 {
 		t.Errorf("the older page: window %s…%s, %d messages, merged %v; want one window 44…127", w.Start, w.End, len(w.Msgs), merged)
 	}
@@ -63,8 +63,8 @@ func TestWindowsAreSlices(t *testing.T) {
 	// a window whose newer page reaches the newest messages joins them
 	s2 := New("")
 	s2.SetLatest("C2", msgsAt(500, 550), true)
-	s2.AddWindow("C2", msgsAt(400, 456), "", "", true, true)
-	if _, merged := s2.AddWindow("C2", msgsAt(455, 510), tsAt(455), "", true, true); !merged {
+	s2.AddWindow("C2", msgsAt(400, 456), "", "", true, true, 0)
+	if _, merged := s2.AddWindow("C2", msgsAt(455, 510), tsAt(455), "", true, true, 0); !merged {
 		t.Errorf("a newer page meeting the timeline didn't join it")
 	}
 	if tl := s2.Timeline("C2"); tl.Msgs[0].TS != tsAt(400) || len(tl.Msgs) != 150 {
@@ -73,11 +73,76 @@ func TestWindowsAreSlices(t *testing.T) {
 	// a page that reaches the newest message is the timeline's, with no
 	// timeline yet too
 	s3 := New("")
-	if _, merged := s3.AddWindow("C3", msgsAt(10, 40), "", "", true, false); !merged || s3.Timeline("C3") == nil {
+	if _, merged := s3.AddWindow("C3", msgsAt(10, 40), "", "", true, false, 0); !merged || s3.Timeline("C3") == nil {
 		t.Errorf("a window reaching the newest message isn't the timeline")
 	}
 	s.Remove("C1", tsAt(60))
 	if _, ok := s.Find("C1", tsAt(60)); ok {
 		t.Errorf("Remove left the message")
+	}
+}
+
+// TestWindowReadsMergeLive: a window's answers are a read like the
+// timeline's (SetLatestRead, PrependOlderSince): a message deleted while
+// the calls were out stays out (Slack's addMessagesFromHistory drops what
+// was deleted locally), and a read's newer revision of a message reaches
+// a window's copy (spreadLocked). Synthetic messages.
+func TestWindowReadsMergeLive(t *testing.T) {
+	s := New("")
+	s.SetLatest("C1", msgsAt(900, 950), true)
+	since := s.LiveSeq()
+	s.NoteRemove("C1", tsAt(100)) // deleted while the window's calls were out
+	s.AddWindow("C1", msgsAt(72, 128), tsAt(72), tsAt(127), true, true, since)
+	w, ok := s.WindowAt("C1", tsAt(100))
+	if !ok {
+		t.Fatalf("no window around %s", tsAt(100))
+	}
+	for _, m := range w.Msgs {
+		if m.TS == tsAt(100) {
+			t.Errorf("the window took back %s, deleted while its calls were out", m.TS)
+		}
+	}
+	if len(w.Msgs) != 55 || w.Start != tsAt(72) || w.End != tsAt(127) {
+		t.Errorf("window %s…%s with %d messages; want 72…127 and 55 messages", w.Start, w.End, len(w.Msgs))
+	}
+	// a newer revision a read brings (the newest page re-read with an edit
+	// of a message a window also holds) reaches the window's copy
+	edited := msgsAt(110, 111)
+	edited[0].Text = "synthetic, edited"
+	edited[0].Edited = &slack.Edited{User: "U1", TS: tsAt(111)}
+	s.PutFetched("C1", edited, s.LiveSeq())
+	w, _ = s.WindowAt("C1", tsAt(110))
+	for _, m := range w.Msgs {
+		if m.TS == tsAt(110) && m.Text != "synthetic, edited" {
+			t.Errorf("the window's copy of %s after a read brought its edit: %q", m.TS, m.Text)
+		}
+	}
+}
+
+// TestHeldWindowsStay: a window a list shows (HoldWindow) is never
+// dropped by the cap on windows, nor by an eviction of its conversation's
+// whole history; released, it's an ordinary window again. Slack's slices
+// stay until their own channel's truncateChannelHistory. Synthetic.
+func TestHeldWindowsStay(t *testing.T) {
+	s := New("")
+	release := s.HoldWindow("C0", tsAt(100))
+	s.AddWindow("C0", msgsAt(72, 128), tsAt(72), tsAt(127), true, true, 0)
+	for i := 1; i <= maxWindows+2; i++ { // jumps in other conversations
+		ch := fmt.Sprintf("C%d", i)
+		s.AddWindow(ch, msgsAt(72, 128), tsAt(72), tsAt(127), true, true, 0)
+	}
+	if _, ok := s.WindowAt("C0", tsAt(100)); !ok {
+		t.Fatalf("the cap dropped a window a list holds")
+	}
+	if _, ok := s.WindowAt("C1", tsAt(100)); ok {
+		t.Errorf("the cap kept the least recently used window too")
+	}
+	release()
+	release() // twice is fine
+	for i := maxWindows + 3; i <= maxWindows+4; i++ {
+		s.AddWindow(fmt.Sprintf("C%d", i), msgsAt(72, 128), tsAt(72), tsAt(127), true, true, 0)
+	}
+	if _, ok := s.WindowAt("C0", tsAt(100)); ok {
+		t.Errorf("a released window outlived the cap")
 	}
 }

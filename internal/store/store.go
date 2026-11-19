@@ -50,6 +50,7 @@ type Store struct {
 	Presence    map[string]string
 	timelines   map[string]*Timeline
 	windows     map[string][]*Window       // a conversation's stretches apart from its timeline (windows.go)
+	windowHolds map[string]map[string]int  // the windows lists show, by a ts each holds (HoldWindow)
 	threads     map[string][]slack.Message // key channel/ts
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first

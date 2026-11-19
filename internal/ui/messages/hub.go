@@ -56,6 +56,8 @@ type model struct {
 	// page after its end (loadNewer)
 	around string
 	newer  bool
+	// release lets core drop the window this model shows (HoldWindow)
+	release func()
 	// live: messages an event changed (true: deleted) while a load was
 	// out; the load's answer, read before them, keeps them (keepLive)
 	live map[string]bool
@@ -68,6 +70,13 @@ type model struct {
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
 	retryAt, olderRetryAt time.Time
+	// a window's requestNewer backs off on its own: a failed newer page
+	// never holds up scrolling up (requestHistory's per-request limiter)
+	newerFails   int
+	newerRetryAt time.Time
+	// readGen counts the reads ensureLoaded started; readOK is the latest
+	// that landed (the hand-over waits for one begun after a join)
+	readGen, readOK uint64
 
 	// evictGen counts evict calls: sweepRows releases the rows of lists
 	// not on screen whose model was trimmed since they last looked
@@ -306,6 +315,8 @@ func (hb *hub) ensureLoaded(m *model) {
 		return
 	}
 	m.loading = true
+	m.readGen++
+	gen := m.readGen
 	m.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -337,6 +348,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			if err == nil {
 				m.mergeNewest(p.Messages, p.HasMore)
 				m.keepLive(live)
+				m.readOK = max(m.readOK, gen)
 				if !m.loaded {
 					m.lastRead = p.LastRead
 				}
@@ -463,7 +475,8 @@ func (hb *hub) newWindow(ch string) *model {
 	return m
 }
 
-// dropWindow is the list done with window model m.
+// dropWindow is the list done with window model m: core may let its
+// window go (HoldWindow).
 func (hb *hub) dropWindow(m *model) {
 	if m == nil {
 		return
@@ -471,6 +484,13 @@ func (hb *hub) dropWindow(m *model) {
 	hb.mu.Lock()
 	delete(hb.wins, m)
 	hb.mu.Unlock()
+	m.mu.Lock()
+	release := m.release
+	m.release = nil
+	m.mu.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
 // windowsOf is ch's window models.
@@ -499,6 +519,11 @@ func (hb *hub) loadWindow(m *model, ts string) {
 		return
 	}
 	m.around, m.loading = ts, true
+	if m.release == nil {
+		// core keeps the window while the list shows it: the socket's
+		// reactions and edits keep finding its messages
+		m.release = hb.app.HoldWindow(m.ch, ts)
+	}
 	m.rev++
 	m.mu.Unlock()
 	hb.invalidate()
@@ -508,8 +533,10 @@ func (hb *hub) loadWindow(m *model, ts string) {
 		w, err := hb.app.HistoryAround(ctx, m.ch, ts)
 		m.mu.Lock()
 		m.around, m.loading, m.err = "", false, err
+		live := m.takeLive()
 		if err == nil {
 			m.setAll(w.Messages)
+			m.keepLive(live) // what the socket changed while the calls were out (a delete stays out)
 			// a window with nothing in it (the message gone and nothing near
 			// it) gives way to the newest messages, as one that met them
 			merged := w.Merged || len(w.Messages) == 0
@@ -540,7 +567,7 @@ func (hb *hub) loadWindowPage(m *model, older bool) {
 	m.mu.Lock()
 	n := len(m.msgs)
 	if n == 0 || m.older || m.newer || m.around != "" || m.merged ||
-		older && (!m.hasMore || time.Now().Before(m.olderRetryAt)) || !older && !m.newestMissing {
+		older && (!m.hasMore || time.Now().Before(m.olderRetryAt)) || !older && (!m.newestMissing || time.Now().Before(m.newerRetryAt)) {
 		m.mu.Unlock()
 		return
 	}
@@ -577,10 +604,21 @@ func (hb *hub) loadWindowPage(m *model, older bool) {
 			if w.Merged {
 				m.merged, m.newestMissing = true, false
 			}
-			m.olderFails, m.olderRetryAt = 0, time.Time{}
-		} else {
+			if older {
+				m.olderFails, m.olderRetryAt = 0, time.Time{}
+			} else {
+				m.newerFails, m.newerRetryAt = 0, time.Time{}
+			}
+		} else if older {
 			m.err = err
 			m.failed(hb, err, true, time.Now())
+		} else {
+			m.err = err
+			m.newerFails++
+			m.newerRetryAt = time.Now().Add(backoff(m.newerFails))
+			if authError(err) {
+				hb.authFailed.Store(true)
+			}
 		}
 		m.rev++
 		m.mu.Unlock()

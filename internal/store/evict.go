@@ -268,7 +268,7 @@ func (s *Store) EvictMessagesStats(in EvictInput) ([]Evicted, EvictStats) {
 		if len(keep) == 0 {
 			// evictUncountedChannelHistories: the history starts over
 			delete(s.timelines, ch)
-			delete(s.windows, ch)
+			s.keepHeldWindowsLocked(ch) // a window a list shows stays (HoldWindow)
 			for k := range s.threads {
 				if strings.HasPrefix(k, ch+"/") && !in.Keep[k] {
 					delete(s.threads, k)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -41,15 +42,20 @@ const (
 
 // AddWindow stores a stretch of ch's history: msgs, every message of the
 // conversation from start to end ("": its first or last message), older
-// ones existing when hasOlder and newer ones when hasNewer. As Slack's
+// ones existing when hasOlder and newer ones when hasNewer, read by
+// requests begun at LiveSeq since. As the timeline's reads (SetLatestRead,
+// PrependOlderSince) a message the socket changed meanwhile keeps the
+// socket's copy, one it deleted stays out (Slack's addMessagesFromHistory
+// drops what was deleted locally), the reactions it brought are replayed
+// and a newer revision reaches every copy (readWindowLocked). As Slack's
 // insert it unions with every window whose range meets its own, and with
 // the timeline when it meets the timeline's range or reaches the newest
 // message (hasNewer false; without a timeline it then is the timeline).
-// merged reports that it joined the timeline; w is the window it's part
-// of otherwise.
-func (s *Store) AddWindow(ch string, msgs []slack.Message, start, end string, hasOlder, hasNewer bool) (w Window, merged bool) {
+// merged reports that it joined the timeline (w then holds only what the
+// read kept of msgs); w is the window it's part of otherwise.
+func (s *Store) AddWindow(ch string, msgs []slack.Message, start, end string, hasOlder, hasNewer bool, since uint64) (w Window, merged bool) {
 	msgs = dedupe(append([]slack.Message(nil), msgs...))
-	if len(msgs) > 0 {
+	if len(msgs) > 0 { // the range the answers cover, a message deleted since included
 		if start == "" || TSLess(msgs[0].TS, start) {
 			start = msgs[0].TS
 		}
@@ -59,6 +65,8 @@ func (s *Store) AddWindow(ch string, msgs []slack.Message, start, end string, ha
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	msgs = s.liveKeepLocked(ch, msgs, since)
+	s.readWindowLocked(ch, msgs, since)
 	if len(msgs) == 0 && hasNewer {
 		return Window{Start: start, End: end, HasOlder: hasOlder}, false // nothing there to keep
 	}
@@ -75,7 +83,7 @@ func (s *Store) AddWindow(ch string, msgs []slack.Message, start, end string, ha
 	if !hasNewer || t != nil && t.Loaded && timelineMeets(t, nw.End) {
 		s.joinTimelineLocked(ch, nw)
 		s.setWindowsLocked(ch, keep)
-		return Window{}, true
+		return Window{Msgs: append([]slack.Message(nil), msgs...)}, true // what the read kept
 	}
 	keep = append(keep, nw)
 	s.setWindowsLocked(ch, keep)
@@ -189,7 +197,8 @@ func (s *Store) setWindowsLocked(ch string, ws []*Window) {
 	s.windows[ch] = ws
 }
 
-// capWindowsLocked keeps the maxWindows windows used last.
+// capWindowsLocked keeps the maxWindows windows used last, and every
+// window a list holds (HoldWindow) whatever their number.
 func (s *Store) capWindowsLocked() {
 	for {
 		n := 0
@@ -198,7 +207,7 @@ func (s *Store) capWindowsLocked() {
 		for ch, ws := range s.windows {
 			for _, w := range ws {
 				n++
-				if old == nil || w.used.Before(old.used) {
+				if !s.heldWindowLocked(ch, w) && (old == nil || w.used.Before(old.used)) {
 					oldCh, old = ch, w
 				}
 			}
@@ -244,6 +253,61 @@ func (s *Store) removeWindowMsgLocked(ch, ts string) {
 			}
 		}
 	}
+}
+
+// HoldWindow keeps the window of ch that holds ts (or will: a jump's
+// window still loading) while a list shows it: the cap on windows never
+// drops it, nor does an eviction of the conversation's history (Slack's
+// slices stay until their own channel's truncateChannelHistory; jumps in
+// other conversations never drop one). release lets it go; it's safe to
+// call more than once.
+func (s *Store) HoldWindow(ch, ts string) (release func()) {
+	s.mu.Lock()
+	if s.windowHolds == nil {
+		s.windowHolds = map[string]map[string]int{}
+	}
+	if s.windowHolds[ch] == nil {
+		s.windowHolds[ch] = map[string]int{}
+	}
+	s.windowHolds[ch][ts]++
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if hs := s.windowHolds[ch]; hs != nil {
+				if hs[ts]--; hs[ts] <= 0 {
+					delete(hs, ts)
+				}
+				if len(hs) == 0 {
+					delete(s.windowHolds, ch)
+				}
+			}
+		})
+	}
+}
+
+// heldWindowLocked reports whether a list holds window w of ch.
+func (s *Store) heldWindowLocked(ch string, w *Window) bool {
+	for ts := range s.windowHolds[ch] {
+		if !TSLess(ts, w.Start) && !TSLess(w.End, ts) {
+			return true
+		}
+	}
+	return false
+}
+
+// keepHeldWindowsLocked drops ch's windows but the ones a list holds (its
+// history started over).
+func (s *Store) keepHeldWindowsLocked(ch string) {
+	var keep []*Window
+	for _, w := range s.windows[ch] {
+		if s.heldWindowLocked(ch, w) {
+			keep = append(keep, w)
+		}
+	}
+	s.setWindowsLocked(ch, keep)
 }
 
 // DropWindows forgets every window of ch (its history went: evicted whole,
