@@ -110,27 +110,36 @@ artifact, with an `index.html` that shows them side by side. An empty
 ## Screenshots
 
 Every picture is `clack demo`, a made-up company on a fake Slack server
-inside the app, taken by the demo workflow (`.github/workflows/demo.yml`).
-No real workspace, person or message appears on the site. slack.com has no
-dark mode, so neither does the page, and every shot is the light theme
-except the Mood Indigo tile.
+inside the app, taken by the demo workflow's `TestDemoSiteShots`
+(`.github/workflows/demo.yml`, `internal/ui/demo_site_test.go`). No real
+workspace, person or message appears on the site. The shots leave out the
+app's "Demo workspace" banner, and the page says once, under the hero, that
+the workspace is made up. slack.com has no dark mode, so neither does the
+page, and every shot is the light theme except the Mood Indigo tile.
 
-| picture | file in the run's `demo-shots` artifact | test |
-|---|---|---|
-| hero | `readme/demo-main-light.png`, #sales-leaderboard | `TestDemoReadmeShots` |
-| aubergine band | `demo-surface-light-emoji-picker.png`, cropped to 1314×900 | `TestDemoSurfaces` |
-| Channels | `readme/demo-huddle-light.png`, #party-planning-crew with a live huddle | `TestDemoReadmeShots` |
-| Threads | `readme/demo-thread-light.png`, #it-help's busiest thread | `TestDemoReadmeShots` |
-| Activity | `readme/demo-activity-light.png` | `TestDemoReadmeShots` |
-| Themes | `site/demo-theme-{jade,lagoon,clementine}-light.png`, `site/demo-theme-mood-indigo-dark.png`, top-left 720×450 | `TestDemoSiteShots` |
+| picture | file in the run's `demo-shots` artifact |
+|---|---|
+| hero | `site/demo-main.png`, #sales-leaderboard |
+| aubergine band | `site/demo-emoji-picker.png`, cropped to 1314×900 |
+| Channels | `site/demo-huddle.png`, #party-planning-crew with a live huddle |
+| Threads | `site/demo-thread.png`, #it-help's busiest thread |
+| Activity | `site/demo-activity.png`, the newest mention open beside the feed |
+| Themes | `site/demo-theme-{jade,lagoon,clementine}-light.png`, `site/demo-theme-mood-indigo-dark.png`, top-left 720×450 |
 
-The current set is from demo run 44198572787. To take new ones:
+The current set is from demo run 44440446799. Each demo run also runs
+`tools/images.mjs` on its own shots and uploads the result as `site-img`,
+so new pictures need no local tools:
 
 ```sh
 gh workflow run demo.yml --repo some-du6e/clack --ref <branch>
-gh run download <run> --repo some-du6e/clack --name demo-shots --dir <dir>
-cd site && npm install && node tools/images.mjs --run <run> --from <dir>
+gh run download <run> --repo some-du6e/clack --name site-img --dir <empty dir>
+cp <empty dir>/* site/img/
 ```
+
+The demo places its messages from the clock, so where the day dividers
+land changes with the time of the run: look at the pictures before
+committing them. `node tools/images.mjs --run <run> --from <demo-shots dir>`
+makes the same files locally, with sharp from `npm install`.
 
 ## The heading font
 
