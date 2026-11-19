@@ -113,3 +113,72 @@ func TestRichHeaderDividerLayout(t *testing.T) {
 		t.Errorf("text after the second header at %d, want %d", e.top, want)
 	}
 }
+
+// TestContainerLayout: a container block lays out as Slack's
+// ContainerBlock (yWQF, .containerBlock*): 16px down (kept on the first
+// block), a 480px standard box with radius 12, the 12px-padded header
+// with the 36px icon and the title 12px right of it, centred on the row;
+// the bare children 12px in, the first without its top margin; a
+// collapsible container's header hides and shows them.
+func TestContainerLayout(t *testing.T) {
+	st := newTestStyle()
+	d := kitDoc(t, `[
+		{"type":"container","title":{"type":"plain_text","text":"Alpha"},"subtitle":{"type":"plain_text","text":"Bravo"},
+		 "icon":{"type":"image","image_url":"https://img.test/c.png","alt_text":"c"},
+		 "child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Charlie"}}]},
+		{"type":"container","title":{"type":"plain_text","text":"Delta"},"is_collapsible":true,"width":"narrow",
+		 "child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Echo"}}]}
+	]`)
+	v := layoutAt(st, d, Options{}, 800)
+	var boxes []box
+	for _, b := range v.d.boxes {
+		if b.kind == bBorder && b.radius == 12 {
+			boxes = append(boxes, b)
+		}
+	}
+	if len(boxes) != 2 {
+		t.Fatalf("container boxes %d, want 2", len(boxes))
+	}
+	c1, c2 := boxes[0], boxes[1]
+	if c1.r.Min != image.Pt(0, 16) || c1.r.Dx() != 480 || c2.r.Dx() != 320 {
+		t.Errorf("containers %v and %v, want 480 wide at (0, 16) and 320 wide", c1.r, c2.r)
+	}
+	icons := imgsWithURL(&v.d, "https://img.test/c.png")
+	if len(icons) != 1 {
+		t.Fatalf("icons %d", len(icons))
+	}
+	ic := icons[0].r
+	// title 23 + subtitle 16 = 39 > 36: the icon is centred on the 39px row
+	if want := image.Rect(13, 16+13+1, 13+36, 16+13+1+36); ic != want {
+		t.Errorf("icon %v, want %v", ic, want)
+	}
+	a, b, c := findFrag(t, &v.d, "Alpha"), findFrag(t, &v.d, "Bravo"), findFrag(t, &v.d, "Charlie")
+	if int(a.x) != ic.Max.X+12 || a.top != 16+13 || b.top != a.top+23 || b.size != 13 {
+		t.Errorf("title at (%.0f, %d), subtitle top %d (%dpx); want (%d, %d), %d, 13px", a.x, a.top, b.top, b.size, ic.Max.X+12, 16+13, 16+13+23)
+	}
+	// the header ends 12px under the row; the first child has no top margin
+	if want := 16 + 1 + 12 + 39 + 12; c.top != want || int(c.x) != 13 {
+		t.Errorf("child at (%.0f, %d), want (13, %d)", c.x, c.top, want)
+	}
+	if want := c.bot + 4 + 12 + 1; c1.r.Max.Y != want {
+		t.Errorf("container bottom %d, want %d (the section's 4px, 12px padding, border)", c1.r.Max.Y, want)
+	}
+	if !hasFrag(&v.d, "Echo") {
+		t.Fatal("the collapsible container starts open")
+	}
+	tc := int16(-1)
+	for i, tg := range v.d.targets {
+		if tg.kind == tCollapse {
+			tc = int16(i)
+		}
+	}
+	if tc < 0 {
+		t.Fatal("no header toggle")
+	}
+	h := &recHandler{}
+	v.activate(tc, image.Point{}, h)
+	v.relayout(st, 800, 1, 1)
+	if hasFrag(&v.d, "Echo") || !hasFrag(&v.d, "Delta") {
+		t.Errorf("collapsed container: %q", fragStrings(&v.d))
+	}
+}

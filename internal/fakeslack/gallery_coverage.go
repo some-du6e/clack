@@ -50,6 +50,16 @@ func galleryCoverage(e GalleryEnv) []GalleryMessage {
 			{"type":"callout","background_color":"orange","child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"orange"}}]},
 			{"type":"callout","background_color":"gray","child_blocks":[]},
 			{"type":"callout","child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"no colour: green"}}]}]`},
+		{Name: "coverage/container", Text: "containers", Blocks: b(`[
+			{"type":"container","title":{"type":"plain_text","text":"Standard container"},"subtitle":{"type":"mrkdwn","text":"a *mrkdwn* subtitle"},
+			 "icon":{"type":"image","image_url":"{ICON72}","alt_text":"icon"},"has_header_divider":true,
+			 "child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Child blocks sit 12px in; the first has no top margin."}},
+				{"type":"context","elements":[{"type":"mrkdwn","text":"a context child"}]}]},
+			{"type":"container","rich_text_title":{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Collapsible ","style":{"bold":true}},{"type":"emoji","name":"package"}]}]},
+			 "subtitle":{"type":"plain_text","text":"click the header"},"is_collapsible":true,"width":"wide",
+			 "child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Shown until the header is clicked."}}]},
+			{"type":"container","title":{"type":"plain_text","text":"Narrow, collapsed by default"},"is_collapsible":true,"default_collapsed":true,"width":"narrow",
+			 "child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"hidden"}}]}]`)},
 		{Name: "coverage/loading", Text: "loading", Blocks: `[{"type":"section","text":{"type":"mrkdwn","text":"A loading block:"}},{"type":"loading"}]`},
 		{Name: "coverage/rich_text header and divider", Text: "rich text headers", Blocks: `[{"type":"rich_text","elements":[
 			{"type":"rich_text_header","level":1,"elements":[{"type":"text","text":"rich_text_header level 1"}]},

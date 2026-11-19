@@ -64,3 +64,35 @@ func (c *builder) calloutBlock(b *bk) Block {
 	}
 	return Block{Kind: CalloutBlock, BlockID: b.BlockID, Tone: tone, Children: c.children(b.ChildBlocks)}
 }
+
+// containerWidths are ContainerBlock's max-width classes.
+var containerWidths = map[string]bool{"narrow": true, "standard": true, "wide": true, "full": true}
+
+// containerBlock converts a container block: the header (its
+// rich_text_title drawn inline, else its plain title; the mrkdwn or plain
+// subtitle; the icon) and its child blocks.
+func (c *builder) containerBlock(b *bk) Block {
+	ci := &Container{Collapsible: b.IsCollapsible, DefaultCollapsed: b.IsCollapsible && b.DefaultCollapsed,
+		HeaderDivider: b.HasHeaderDivider && !b.IsCollapsible}
+	_ = json.Unmarshal(b.Width, &ci.Width)
+	if !containerWidths[ci.Width] {
+		ci.Width = "standard"
+	}
+	if rt := b.RichTextTitle; rt != nil && rt.Type == "rich_text" {
+		ci.Title = flattenSpans(c.richText(rt.Elements))
+	} else if t := b.Title; t != nil {
+		ci.Title = plainSpans(c.r, t.Text)
+	}
+	if st := b.Subtitle; st != nil && st.Text != "" {
+		ci.Subtitle = c.textSpans(st)
+	}
+	if len(b.Icon) > 0 && b.Icon[0] == '{' {
+		var ic bk
+		if json.Unmarshal(b.Icon, &ic) == nil {
+			if img := c.imageOf(&ic); img != nil {
+				ci.Icon = img.URL
+			}
+		}
+	}
+	return Block{Kind: ContainerBlock, BlockID: b.BlockID, Container: ci, Children: c.children(b.ChildBlocks)}
+}

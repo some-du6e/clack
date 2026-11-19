@@ -59,14 +59,14 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | alert | `MyNk` AlertRenderable · client-boot `MlDl` Alert | absent | **full** | the optimal-line-length pref's 75ch cap |
 | auth_provider (@slack/types only) | `zTn9` AuthProviderBlockLazy | absent | absent | connect/disconnect card |
 | call (slack.ts) | `FkcF` · `9CtN` PlatformCallSubtype | partial: a generic "Call" link card | **partial** | the ended icon's and faces' grayscale filter, the faces' name tooltips, Decline for an incoming DM call, `desktop_app_join_url` (Join opens `join_url`), stopping your huddle on Join |
-| callout (slack.ts) | `zMv1` · `Xhau` Callout | absent | **full** | callout inside a container (flex column, gap 8) |
+| callout (slack.ts) | `zMv1` · `Xhau` Callout | absent | **full** | a callout inside a container lays its children out as a flex column with an 8px gap |
 | canvas_table (slack.ts) | `8Rt0` CanvasTable | absent | absent | |
 | card | `ARtW` · `7Xkb` Card | absent | absent | hero image, icon, title/subtitle/body mrkdwn, buttons left/right |
 | carousel | `ZDqH` CarouselBlock | absent | absent | horizontally scrolling cards |
 | channel_section / channel_set (slack.ts) | `865t` | absent | absent | |
 | condition (slack.ts) | expanded first (`CRur`), no renderable | absent (drew nothing) | **full** | |
 | contact_card (slack.ts) | `zb3H` ContactCard | absent | absent | |
-| container | `yWQF` ContainerBlock | absent | absent | title/rich_text_title, subtitle, icon, collapsible, widths, child blocks |
+| container | `yWQF` ContainerBlock | absent | **full** | the collapse's 0.16s height animation |
 | context | `0v+p` | full | full | |
 | context_actions | `fYf1` | full | full | (agent.go) |
 | data_table | `6dWo` DataTableBlock | absent | absent | pagination, sorting, raw/rich cells |
@@ -86,7 +86,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | section | `bzDH` | full | full | `visible_to_user_ids` on its button/checkboxes accessory now hides it |
 | share_prompt (slack.ts) | `JcWK` | absent | absent | |
 | share_shortcut (slack.ts) | `KrN7` ShareShortcut → WorkflowEntity | absent (drew nothing) | absent | the workflow entity card: details fetch, Start workflow, Forward bar; next round |
-| table | `POW9` Table | partial: `raw_number` and `cell_text` cells drew empty | **full** | |
+| table | `POW9` Table | partial: a `raw_number` cell's numeric `value` failed the whole block ("This content could not be displayed."), `cell_text` cells drew empty | **full** | |
 | task_card | `1+vf` TaskCard | full | full | (agent.go) |
 | timeline (slack.ts) | `9B8s` Timeline | absent | absent | |
 | video | `u8h8` VideoBlock | partial (drawn as an unfurl card) | same | not re-audited |
@@ -145,10 +145,10 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 
 ## Shots and tests
 
-The gallery's `12-coverage` part (`internal/fakeslack/gallery_coverage.go`) holds a fixture for each block this round built: calls (ended, running with a facepile, waiting), alerts at every level, callouts in several colours, loading, rich_text headers and dividers, the fallback chain, and a condition block. `bk-gallery-shots` saves the channel page by page in light and dark.
+The gallery's `12-coverage` part (`internal/fakeslack/gallery_coverage.go`) holds a fixture for each block this round built: calls (ended, running with a facepile, waiting), alerts at every level, callouts in several colours, containers (fixed header with a divider, collapsible, collapsed by default), loading, rich_text headers and dividers, the fallback chain, and a condition block. `bk-gallery-shots` saves the channel page by page in light and dark.
 
-Tests that fail on `e93a5e70`: `TestBlockFallbacks`, `TestConditionBlocks`, `TestCallBlock`, `TestBoxedBlocks`, `TestRichTextHeaderDivider`, `TestTableTextCells`, `TestUnknownInlineElement`, `TestVisibleToUserIDs` (richtext) and `TestCallCardLayout`, `TestBoxedBlocksLayout`, `TestRichHeaderDividerLayout` (richview). The tests that reach new API do it through `*_api_test.go` files, which the red-evidence branch stubs.
+Tests that fail on `e93a5e70`: `TestBlockFallbacks`, `TestConditionBlocks`, `TestCallBlock`, `TestBoxedBlocks`, `TestRichTextHeaderDivider`, `TestTableTextCells`, `TestUnknownInlineElement`, `TestVisibleToUserIDs` (richtext) and `TestCallCardLayout`, `TestBoxedBlocksLayout`, `TestRichHeaderDividerLayout`, `TestContainerLayout` (richview). The tests that reach new API do it through `*_api_test.go` files, which the red-evidence branch stubs.
 
 ## Next
 
-In order: `share_shortcut` (the one real use left), the inline file slug, `card`, `container`, `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
+In order: `share_shortcut` (the one real use left), the inline file slug, `card`, `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.

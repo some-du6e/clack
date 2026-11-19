@@ -154,7 +154,7 @@ const (
 	tButton
 	tCard       // whole-card click (opens URL)
 	tExpand     // attachment "Show more" / "Show less" (id: attachment number)
-	tCollapse   // image block's or call card's hide / show toggle (img: the image, call: the call)
+	tCollapse   // a hide / show toggle (img: an image block's image, else key: a call card, a container)
 	tRemove     // an unfurl's remove button (id: the attachment id)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
@@ -173,7 +173,7 @@ type target struct {
 	url  string
 	id   string
 	img  *richtext.Image
-	call *richtext.CallCard // tCollapse: a call card's toggle (call.go)
+	key  any // tCollapse: what the toggle hides when it isn't img (a call card, a container)
 	file *richtext.File
 	btn  *richtext.Button
 	// underline on hover (links)

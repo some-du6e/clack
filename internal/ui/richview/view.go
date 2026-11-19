@@ -1621,10 +1621,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		}
 	case tCollapse:
 		var k any = tg.img
-		if tg.call != nil {
-			k = tg.call
+		if tg.key != nil {
+			k = tg.key
 		}
-		if (tg.img != nil || tg.call != nil) && v.collapsed != nil {
+		if (tg.img != nil || tg.key != nil) && v.collapsed != nil {
 			v.collapsed[k] = !v.collapsed[k]
 			v.dirty = true
 			v.redraw = true

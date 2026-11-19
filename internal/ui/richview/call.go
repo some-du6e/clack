@@ -47,7 +47,7 @@ func (l *lay) callCard(c *richtext.CallCard, x, y, w int) int {
 	lh, tw := l.plainFlow("Call", x, y, w, &fs, -1)
 	// ExpandableTrigger
 	collapsed := l.collapsed[c]
-	tg := l.d.addTarget(target{kind: tCollapse, call: c})
+	tg := l.d.addTarget(target{kind: tCollapse, key: c})
 	cx := x + tw + l.dp(4) + l.dp(4)
 	cy := y + fs.lineH/2
 	kind, cr := bCaret, image.Rect(cx-l.dp(4), cy-l.dp(2), cx+l.dp(4), cy+l.dp(3))

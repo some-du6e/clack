@@ -4,6 +4,8 @@ import (
 	"image"
 	"image/color"
 
+	"gioui.org/font"
+
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
@@ -142,13 +144,21 @@ func (l *lay) callout(b *richtext.Block, x, y, w int) int {
 // bottom margin stay inside the parent's padding and two neighbours'
 // margins collapse into the larger.
 func (l *lay) nestedBlocks(bs []richtext.Block, x, y, w int) int {
+	return l.nestedBlocksFrom(bs, x, y, w, true)
+}
+
+// nestedBlocksFrom is nestedBlocks; without firstTop the first block's
+// top margin is dropped (a container's >:first-child{margin-top:0}).
+func (l *lay) nestedBlocksFrom(bs []richtext.Block, x, y, w int, firstTop bool) int {
 	y0 := y
 	prevBottom := 0
 	for i := range bs {
 		b := &bs[i]
 		top, _, bottom := l.margins(b)
 		if i == 0 {
-			y += top
+			if firstTop {
+				y += top
+			}
 		} else {
 			y += max(prevBottom, top)
 		}
@@ -163,4 +173,109 @@ func (l *lay) loading(x, y int) int {
 	s := l.dp(52)
 	l.d.spinners = append(l.d.spinners, spinPrim{r: image.Rect(x, y, x+s, y+s)})
 	return s
+}
+
+// container lays out a container block (Slack's ContainerBlock, boot-shared
+// yWQF; client-boot-styles .containerBlock*): a 1px otl-ter box, radius
+// 12, on the primary background, at most 320/480/642px wide (narrow,
+// standard, wide; full: the pane); its header (padding 12, gap 12, items
+// centred): the 36px icon (radius 8), the title (15px/1.5 bold) over the
+// subtitle (13px/1.25 content-sec), each one line with an ellipsis, and
+// for a collapsible one the caret-down 8px further (caret-right
+// collapsed); a fixed header's divider (1px otl-ter, 12px under it);
+// then the child blocks, bare, in padding 0 12px 12px, the first without
+// its top margin.
+func (l *lay) container(b *richtext.Block, x, y, w int) int {
+	ci := b.Container
+	if ci == nil {
+		return 0
+	}
+	p := &l.st.Palette
+	cw := w
+	switch ci.Width {
+	case "narrow":
+		cw = min(w, l.dp(320))
+	case "standard":
+		cw = min(w, l.dp(480))
+	case "wide":
+		cw = min(w, l.dp(642))
+	}
+	bw := max(1, l.dp(1))
+	pad := l.dp(12)
+	box0 := len(l.d.boxes)
+	collapsed := ci.Collapsible && ci.DefaultCollapsed != l.collapsed[ci]
+	ts := l.bodyStyle()
+	ts.face.Weight = font.Bold
+	ts.lineH = int(l.dpf(22.5) + 0.5)
+	ts.maxLines, ts.ellipsis = 1, true
+	ss := l.bodyStyle()
+	ss.size, ss.lineH, ss.col = l.sp(13), int(l.dpf(16.25)+0.5), p.Text2
+	ss.emoji = l.dp(16)
+	ss.maxLines, ss.ellipsis = 1, true
+	groupH := 0
+	if len(ci.Title) > 0 {
+		groupH += ts.lineH
+	}
+	if len(ci.Subtitle) > 0 {
+		groupH += ss.lineH
+	}
+	is, cs := l.dp(36), l.dp(20)
+	rowH := groupH
+	if ci.Icon != "" {
+		rowH = max(rowH, is)
+	}
+	if ci.Collapsible {
+		rowH = max(rowH, cs)
+	}
+	hx, hy := x+bw+pad, y+bw+pad
+	right := x + cw - bw - pad
+	if ci.Collapsible {
+		icon := "caret-down"
+		if collapsed {
+			icon = "caret-right"
+		}
+		right -= cs
+		cy := hy + (rowH-cs)/2
+		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(right, cy, right+cs, cy+cs), url: iconURL + icon, target: -1, px: cs, tint: p.Text})
+		right -= l.dp(8)
+	}
+	tx := hx
+	if ci.Icon != "" {
+		rad := l.dp(8)
+		iy := hy + (rowH-is)/2
+		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(hx, iy, hx+is, iy+is), url: ci.Icon, radii: [4]int{rad, rad, rad, rad}, target: -1, px: is})
+		tx += is + l.dp(12)
+	}
+	tw := max(right-tx, l.dp(20))
+	ty := hy + (rowH-groupH)/2
+	if len(ci.Title) > 0 {
+		l.textFlow(ci.Title, tx, ty, tw, &ts)
+		ty += ts.lineH
+	}
+	if len(ci.Subtitle) > 0 {
+		l.plainAdd("\n")
+		l.textFlow(ci.Subtitle, tx, ty, tw, &ss)
+	}
+	yy := hy + rowH + pad
+	if ci.Collapsible {
+		tg := l.d.addTarget(target{kind: tCollapse, key: ci})
+		l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+cw, yy), t: tg})
+	}
+	if ci.HeaderDivider {
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x+bw, yy, x+cw-bw, yy+bw), fill: p.Border, target: -1})
+		yy += bw + pad
+	}
+	if !collapsed { // the content's padding-bottom is there with no children too
+		if len(b.Children) > 0 {
+			l.plainAdd("\n")
+			yy += l.nestedBlocksFrom(b.Children, x+bw+pad, yy, cw-2*(bw+pad), false)
+		}
+		yy += pad
+	}
+	h := yy + bw - y
+	bx := box{kind: bBorder, r: image.Rect(x, y, x+cw, y+h), radius: l.dp(12), fill: p.Panel, stroke: p.Border, bw: bw, target: -1}
+	l.d.boxes = append(l.d.boxes, box{})
+	copy(l.d.boxes[box0+1:], l.d.boxes[box0:])
+	l.d.boxes[box0] = bx
+	return h
 }

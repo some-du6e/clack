@@ -192,6 +192,9 @@ const (
 	RichHeader
 	// RichDivider is a rich_text_divider: .p-rich_text_divider's rule.
 	RichDivider
+	// ContainerBlock is a container block (kitcards.go): Container holds
+	// its header, Children its child blocks.
+	ContainerBlock
 )
 
 // Block is one vertical unit of a document.
@@ -233,6 +236,21 @@ type Block struct {
 	Tone string
 	// First: a RichHeader that is its rich_text block's first element.
 	First bool
+	// Container is a ContainerBlock's header and options (kitcards.go).
+	Container *Container
+}
+
+// Container is a container block's header and options (Slack's
+// ContainerBlock, boot-shared yWQF).
+type Container struct {
+	Title, Subtitle []Span // one line each
+	Icon            string // 36px image ("" none)
+	// Width is narrow, standard, wide or full (the max-width class).
+	Width string
+	// Collapsible: the header toggles the content, which starts hidden
+	// with DefaultCollapsed. HeaderDivider draws a rule under a fixed
+	// header.
+	Collapsible, DefaultCollapsed, HeaderDivider bool
 }
 
 // Image is a remote image reference.

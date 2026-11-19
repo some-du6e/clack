@@ -129,6 +129,8 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(8), 0, l.dp(8)
 	case richtext.AlertBlock: // .alertBlock (kitcards.go); the first block keeps it
 		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.ContainerBlock: // .containerBlock{margin-top:16px;margin-bottom:8px}, kept on the first block
+		return l.dp(16), l.dp(16), l.dp(8)
 	}
 	return 0, 0, 0 // call, callout, loading: no margins of their own
 }
@@ -688,6 +690,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.LoadingBlock:
 		return l.loading(x, y)
+
+	case richtext.ContainerBlock:
+		return l.container(b, x, y, w)
 
 	case richtext.Table:
 		return l.table(b, x, y, w)

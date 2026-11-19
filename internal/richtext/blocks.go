@@ -46,7 +46,7 @@ type bk struct {
 	Timestamp   json.RawMessage `json:"timestamp"`
 	Format      string          `json:"format"`
 	Fallback    bkFallback      `json:"fallback"`
-	Value       string          `json:"value"`
+	Value       bkStr           `json:"value"` // a string (buttons, colors) or a number (raw_number cells)
 	Indent      int             `json:"indent"`
 	Offset      int             `json:"offset"`
 	Border      int             `json:"border"`
@@ -88,9 +88,16 @@ type bk struct {
 	Level      bkLevel  `json:"level"`  // header: 1–4 (Slack's Header: p-header_block--level_N); alert: a severity (kitcards.go)
 	CallID     string   `json:"call_id"`
 	Call       *bkCall  `json:"call"` // call.go
-	// callout (kitcards.go)
-	ChildBlocks     []bk   `json:"child_blocks"`
-	BackgroundColor string `json:"background_color"`
+	// callout, container (kitcards.go)
+	ChildBlocks      []bk            `json:"child_blocks"`
+	BackgroundColor  string          `json:"background_color"`
+	RichTextTitle    *bk             `json:"rich_text_title"`
+	Subtitle         *textObj        `json:"subtitle"`
+	Icon             json.RawMessage `json:"icon"`  // container: an image element (icon_button: a name)
+	Width            json.RawMessage `json:"width"` // container: a width class (canvas_table cells: px)
+	IsCollapsible    bool            `json:"is_collapsible"`
+	DefaultCollapsed bool            `json:"default_collapsed"`
+	HasHeaderDivider bool            `json:"has_header_divider"`
 
 	bkWorkflow // workflow_mention (workflow_mention.go)
 }
@@ -217,6 +224,28 @@ func (f *bkFallback) UnmarshalJSON(b []byte) error {
 		return json.Unmarshal(b, &f.Text)
 	}
 	f.raw = append(json.RawMessage(nil), b...)
+	return nil
+}
+
+// bkStr is a field that is usually a string but may come as another
+// JSON scalar (a raw_number cell's numeric "value"): it keeps the
+// scalar's text instead of failing the whole block.
+type bkStr string
+
+func (v *bkStr) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*v = bkStr(s)
+		return nil
+	}
+	if string(b) == "null" || len(b) == 0 || b[0] == '{' || b[0] == '[' {
+		*v = ""
+		return nil
+	}
+	*v = bkStr(b)
 	return nil
 }
 
@@ -350,7 +379,7 @@ func (c *builder) blocks(bs []bk) []Block {
 func kitLayout(t string) bool {
 	switch t {
 	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
-		"alert", "callout", "loading", badBlock:
+		"alert", "callout", "loading", "container", badBlock:
 		return true
 	}
 	return false
@@ -492,6 +521,8 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, c.calloutBlock(b))
 	case "loading":
 		return append(out, Block{Kind: LoadingBlock})
+	case "container":
+		return append(out, c.containerBlock(b))
 	case "markdown":
 		return append(out, markdownBlocks(c.r, b.textString())...)
 	case "mrkdwn", "plain_text":
@@ -642,7 +673,7 @@ func (c *builder) element(e *bk, blockID string) (Button, bool) {
 	if (e.Type == "button" || e.Type == "checkboxes") && !visibleTo(e.VisibleTo, c.r.SelfID()) {
 		return Button{}, false
 	}
-	btn := Button{Kind: e.Type, ActionID: e.ActionID, Value: e.Value, BlockID: blockID}
+	btn := Button{Kind: e.Type, ActionID: e.ActionID, Value: string(e.Value), BlockID: blockID}
 	switch e.Type {
 	case "button", "workflow_button":
 		btn.Kind = "button"
@@ -834,13 +865,13 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 			}
 			out = append(out, sp)
 		case "color":
-			sp := Span{Kind: Text, Text: e.Value}
-			if hexColorRe.MatchString(e.Value) {
+			sp := Span{Kind: Text, Text: string(e.Value)}
+			if hexColorRe.MatchString(string(e.Value)) {
 				sp.Kind = ColorSwatch
 			}
 			out = append(out, sp)
 		case "team":
-			out = append(out, Span{Kind: Text, Text: firstNonEmpty(e.Value, e.TeamID)})
+			out = append(out, Span{Kind: Text, Text: firstNonEmpty(string(e.Value), e.TeamID)})
 		default:
 			// UnknownElement (Dvg3): a link to its url when it has one,
 			// else its text, else nothing
