@@ -228,13 +228,20 @@ func (v *ChannelView) LatestMessagesRect() image.Rectangle {
 // keeps its place the same way: it leaves a window for the newest
 // messages only when the conversation has unreads.
 func (v *ChannelView) Entered() {
-	if v.s.win == nil {
-		return
+	app := v.h.Core()
+	if app == nil || !app.Count(v.ch).Unread {
+		return // where it was left: the row on the anchor line, the window too
 	}
-	if app := v.h.Core(); app != nil && app.Count(v.ch).Unread {
-		v.s.jumpToLatest()
-		v.h.Invalidate()
+	// no scrollmark: the newest messages, at their end (getOffsetForKey(null))
+	s := v.s
+	if s.win != nil {
+		s.jumpToLatest()
+	} else {
+		s.pendingJump, s.aroundFor, s.place, s.jumpLazy = "", "", jumpPlace{}, false
+		s.list.Position = layout.Position{}
+		s.positioned = true
 	}
+	v.h.Invalidate()
 }
 
 // Refresh refetches the newest messages in the background. A list still

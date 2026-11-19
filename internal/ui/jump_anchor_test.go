@@ -672,3 +672,76 @@ func TestHighlightRootFromElsewhereAnchors(t *testing.T) {
 		return ok && y == e.anchorLine() && lit(rows, root)
 	})
 }
+
+// TestEnteringWithUnreadsShowsNewest: after a jump that stayed among the
+// newest messages, entering the conversation again once it has unreads
+// shows the newest messages at the end (determineTimestamps clears the
+// scrollmark when it has unreads; no anchor survives a channel switch).
+// Clack kept the old place, the jump's message still on the line and the
+// new messages below the fold.
+func TestEnteringWithUnreadsShowsNewest(t *testing.T) {
+	e := anchorEnv(t)
+	ch, other := longRead, fakeslack.ThreadPrivateID
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	target := plainAt(t, e.fs, ch, 30)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.a.Navigate("c/" + ch + "/m/" + target)
+	e.waitDrawn(t, "the message on the anchor line", 15*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, target)
+		return ok && y == e.anchorLine()
+	})
+	e.openChannel(other)
+	e.settle(300 * time.Millisecond)
+	ts := fmt.Sprintf("%d.000800", time.Now().Unix()+3)
+	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": e.fs.UserIDs()[3], "text": "a synthetic new message", "ts": ts})
+	e.a.Core().Inject(slack.Event{Type: "message", Channel: json.RawMessage(strconv.Quote(ch)), Raw: raw})
+	e.until("the conversation unread", 10*time.Second, func() bool { return e.a.Core().Count(ch).Unread })
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages, the new one in them", 10*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, ts)
+		return ok && y < viewHOf(rows)
+	})
+	if cv := e.channelView(ch); cv == nil || !cv.AtBottom() {
+		t.Errorf("entered with unreads: the list isn't at its end")
+	}
+}
+
+// TestHighlightRootRouteKeepsWindow: a highlightRoot jump (toThread from
+// elsewhere) into a conversation showing a window, with unreads, isn't an
+// entry without a start: the primary gets the root as its startTs, so the
+// window isn't left for the newest messages first (determineTimestamps
+// clears the scrollmark only with no startTs). Clack entered the
+// conversation as from the sidebar, drew its newest messages, then opened
+// the window again.
+func TestHighlightRootRouteKeepsWindow(t *testing.T) {
+	e := anchorEnv(t)
+	ch, other := longRead, fakeslack.ThreadPrivateID
+	target := plainAt(t, e.fs, ch, 2500)
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openAtOld(t, ch, target)
+	e.openChannel(other)
+	e.settle(300 * time.Millisecond)
+	ts := fmt.Sprintf("%d.000900", time.Now().Unix()+3)
+	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": e.fs.UserIDs()[3], "text": "a synthetic new message", "ts": ts})
+	e.a.Core().Inject(slack.Event{Type: "message", Channel: json.RawMessage(strconv.Quote(ch)), Raw: raw})
+	e.until("the conversation unread", 10*time.Second, func() bool { return e.a.Core().Count(ch).Unread })
+	e.a.OpenAtMessage(ch, target, target, true) // the message as a thread's root, highlightRoot
+	for dl := time.Now().Add(15 * time.Second); ; {
+		rows := e.paneRows("", ch, "")
+		if drewRow(rows, newest.TS) || drewRow(rows, ts) {
+			t.Fatalf("the highlightRoot jump drew the newest messages first: %s", drawnState(rows))
+		}
+		if lit(rows, target) {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("the root never drew highlighted: %s", drawnState(rows))
+		}
+		e.frame()
+		time.Sleep(time.Millisecond)
+	}
+	if cv := e.channelView(ch); cv == nil || !cv.InWindow() {
+		t.Errorf("after the highlightRoot jump the list left the window")
+	}
+}

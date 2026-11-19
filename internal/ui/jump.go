@@ -133,7 +133,11 @@ func (a *App) jumpViaRoutes(ch, ts, thread string) {
 	prev := a.router.Current()
 	switch {
 	case thread != "":
+		// highlightRoot gives the primary a startTs (the root), so the
+		// navigation isn't an entry without one (determineTimestamps)
+		a.navHasStart = true
 		a.Navigate(jumpRoute(ch, ts, thread))
+		a.navHasStart = false
 		if a.router.Current().Channel() != ch {
 			return
 		}

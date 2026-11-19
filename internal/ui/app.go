@@ -233,6 +233,10 @@ type App struct {
 	frameStats  frameStats
 	frameSeq    atomic.Uint64 // frames laid out (FrameSeq)
 	lastChannel string
+	// navHasStart: the navigation under way gives the primary a startTs
+	// (jumpViaRoutes' highlightRoot), so afterRoute doesn't enter the
+	// conversation as one without (ChannelView.Entered)
+	navHasStart bool
 	dock        dockState // the macOS Dock badge last set (dock.go)
 	// previewFrom is the channel-browser route previewFromCh was opened
 	// from ("Back to All channels", joinpane.go)
