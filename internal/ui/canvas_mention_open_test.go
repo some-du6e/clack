@@ -10,9 +10,13 @@ package ui
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"gioui.org/gpu/headless"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -35,10 +39,26 @@ func cmSeed(e *actShellEnv) {
 	e.a.data.fetched[fakeslack.CanvasMentionChannel] = time.Now() // no header reads for it
 }
 
+// newActShellPictures is newActShell drawing the fake's pictures
+// (avatars, the title's emoji), for a shot.
+func newActShellPictures(t *testing.T) *actShellEnv {
+	t.Helper()
+	sz := fakeslack.Small
+	sz.Views = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	return newActShellOn(t, fs, fs.Fetch)
+}
+
 // The inbox's click on a canvas mention shows the canvas viewer on that
 // canvas in the column beside the inbox, not the file channel's messages.
+// With ACTIVITY_SHOTS_DIR (the activity-shots workflow) the window is
+// saved once the canvas has loaded.
 func TestActivityCanvasMentionOpensCanvas(t *testing.T) {
-	e := newActShell(t)
+	e := newActShellPictures(t)
 	cmSeed(e)
 	e.a.Navigate("activity")
 	e.until("the activity view", func() bool { return e.activity() != nil })
@@ -59,6 +79,19 @@ func TestActivityCanvasMentionOpensCanvas(t *testing.T) {
 	if r := string(e.a.router.Current()); strings.Contains(r, fakeslack.CanvasMentionChannel) {
 		t.Errorf("the route is the file channel's: %s", r)
 	}
+	dir := os.Getenv("ACTIVITY_SHOTS_DIR")
+	if dir == "" || t.Failed() {
+		return
+	}
+	win, err := headless.NewWindow(e.sz.X, e.sz.Y)
+	if err != nil {
+		t.Fatalf("headless window: %v", err)
+	}
+	t.Cleanup(win.Release)
+	e.until("the canvas's content", func() bool { _, known := v.Empty(); return known })
+	e.frames(20)
+	e.until("the pictures", func() bool { return e.a.images.Pending() == 0 })
+	e.shot(win, filepath.Join(dir, "shell-canvas-mention-open-light.png"))
 }
 
 // A jump to the mention's message (a link, a search result, a
@@ -81,6 +114,31 @@ func TestCanvasMentionMessageJumpOpensCanvas(t *testing.T) {
 	e.frames(5)
 	if r := string(e.a.router.Current()); r != "docs/"+fakeslack.CanvasMentionFile {
 		t.Errorf("the notification's click went to %q, want docs/%s", r, fakeslack.CanvasMentionFile)
+	}
+}
+
+// A comment's notification (a reply in one of a canvas's comment threads:
+// jumpToMessage with the thread) opens the canvas with that comment
+// thread in the pane beside it, as Slack's openDocWithThreadTs does,
+// never the file channel with the thread open.
+func TestCanvasCommentJumpOpensCanvas(t *testing.T) {
+	e := newActShell(t)
+	s := e.ca.S
+	s.PutConv(slack.Conversation{ID: fakeslack.FileChanLaunch, Name: "Launch plan", IsChannel: true, IsGroup: true,
+		IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 2})
+	s.PutCanvasRef(fakeslack.CanvasChannel, richtext.CanvasRef{Title: "Launch plan", Status: "normal", Kind: "canvas"})
+	e.a.data.fetched[fakeslack.FileChanLaunch] = time.Now() // no header reads for it
+	e.a.Navigate("activity")
+	e.frames(3)
+	const reply = "1762510200.000300" // the viewer's reply in CommentOpen
+	e.a.notificationClicked(fakeslack.FileChanLaunch, reply, fakeslack.CommentOpen, "")
+	e.frames(5)
+	if r := string(e.a.router.Current()); r != "docs/"+fakeslack.CanvasChannel {
+		t.Errorf("the comment's notification went to %q, want the canvas's full view docs/%s", r, fakeslack.CanvasChannel)
+	}
+	if sec := e.a.secondary; sec.kind != secThread || sec.channel != fakeslack.FileChanLaunch || sec.ts != fakeslack.CommentOpen {
+		t.Errorf("the pane shows %v %s/%s, want the comment thread %s/%s", sec.kind, sec.channel, sec.ts,
+			fakeslack.FileChanLaunch, fakeslack.CommentOpen)
 	}
 }
 

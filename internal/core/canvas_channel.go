@@ -20,7 +20,8 @@ import (
 //     name with its :shortcodes: or a private channel's lock;
 //   - a jump to one of its messages (wc0P jumpToMessage) is isSpaceship:
 //     the canvas opens (lFpV openDocWithThreadTs → zsuR openDoc), at the
-//     message's document_mention.section_id for a mention.
+//     message's document_mention.section_id for a mention, with its
+//     comment thread for a comment (CanvasJump).
 
 // CanvasOfChannel is the canvas whose file channel ch is: a stored file
 // channel (or one the store doesn't hold) whose file files.info said is a
@@ -64,17 +65,32 @@ func (a *App) CanvasTitleOf(fileID string) (spans []richtext.Span, kind string, 
 	return richtext.CanvasTitle(a.S, ref.Title, ref.TitleBlocks), ref.Kind, true
 }
 
-// MentionSection is the section a canvas mention points at: the stored
-// message ch/ts's document_mention.section_id, as Slack's
-// openDocWithThreadTs reads it from the message ("" for another message,
-// or one the store doesn't hold).
-func (a *App) MentionSection(ch, ts string) string {
+// CanvasJump is how Slack opens a jump into canvas file channel ch (lFpV
+// openDocWithThreadTs, whose threadTs is the jump's thread, else its
+// message: wc0P "eo && !ed && (ed = i)"). It reads the message at that ts:
+//
+//   - a mention (document_mention): the canvas at its section_id;
+//   - a thread's root, which is a comment's (document_comment_root): the
+//     canvas with that comment thread (openDoc's commentThreadId →
+//     showQuipCommentThread). A root without replies opens just the canvas
+//     (suppressCommentThread).
+//
+// A jump with a thread always opens that thread. Any other message, or
+// one the store doesn't hold, opens just the canvas.
+func (a *App) CanvasJump(ch, thread, ts string) (section, comment string) {
+	if thread != "" {
+		return "", thread
+	}
 	if ts == "" {
-		return ""
+		return "", ""
 	}
-	m, ok := a.S.Find(ch, ts)
-	if !ok || m.DocumentMention == nil {
-		return ""
+	if m, ok := a.S.Find(ch, ts); ok {
+		switch {
+		case m.DocumentMention != nil:
+			return m.DocumentMention.SectionID, ""
+		case m.Subtype == "document_comment_root" && m.ReplyCount > 0:
+			return "", ts
+		}
 	}
-	return m.DocumentMention.SectionID
+	return "", ""
 }

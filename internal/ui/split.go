@@ -205,7 +205,7 @@ func (a *App) OpenSplit(route string) {
 		a.Navigate(route)
 		return
 	}
-	if ts := r.Message(); ts != "" && a.canvasInstead(ch, ts, false) { // a canvas's file channel: the canvas (canvas_open.go)
+	if th, ts := r.Thread(), r.Message(); (th != "" || ts != "") && a.canvasInstead(ch, th, ts, false) { // a canvas's file channel: the canvas (canvas_open.go)
 		return
 	}
 	s := &a.split

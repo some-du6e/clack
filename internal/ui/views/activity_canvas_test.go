@@ -20,21 +20,41 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // cmHost records where the Activity sends a click: the canvas viewer
-// (OpenCanvasAt) or a conversation (Navigate, JumpPane).
+// (OpenCanvasAt) or a conversation (Navigate, JumpPane). Its images are
+// the fake's own (fs.Fetch), and it records which ones the view asks for.
 type cmHost struct {
 	*vaHost
+	imgs    *imgcache.Cache
 	mu      sync.Mutex
 	canvas  []string // "file section full"
 	routes  []string
 	jumps   []string
 	opened  []string
-	openSec string // the canvas the secondary column shows
+	openSec string   // the canvas the secondary column shows
+	asked   []string // the image URLs fetched
+}
+
+// Images draws the fake's pictures (the harness's own host has no cache,
+// so its shots leave every image blank).
+func (h *cmHost) Images() *imgcache.Cache { return h.imgs }
+
+// askedFor reports whether the view fetched an image whose URL holds sub.
+func (h *cmHost) askedFor(sub string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, u := range h.asked {
+		if strings.Contains(u, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *cmHost) OpenCanvasAt(fileID, sectionID string, full bool) {
@@ -126,6 +146,12 @@ func cmActivity(t *testing.T, o cmOpts) (*Activity, *cmHost, *vaEnv, *fakeslack.
 		lmPatch(t, app, []string{"ActivityItem"}, false)
 	}
 	h := &cmHost{vaHost: &vaHost{slickHost: &slickHost{app: app, th: theme.New(o.dark)}}}
+	h.imgs = imgcache.New(func(ctx context.Context, u string) ([]byte, error) {
+		h.mu.Lock()
+		h.asked = append(h.asked, u)
+		h.mu.Unlock()
+		return fs.Fetch(ctx, u)
+	}, "", nil)
 	v := NewActivity(h)
 	e := &vaEnv{size: image.Pt(1200, 900)}
 	e.draw = func(gtx C) { v.Layout(gtx) }
@@ -163,11 +189,13 @@ func TestActivityCanvasMentionRow(t *testing.T) {
 		{dense: true, rev2: true, inbox: true}, {dense: false, rev2: true, inbox: true},
 		{dense: true, rev2: false, inbox: true}, {dense: false, rev2: false, inbox: true},
 		{dense: true, rev2: true, inbox: true, patched: true}, {dense: false, rev2: true, inbox: true, patched: true},
+		{dense: true, rev2: true, inbox: true, dark: true}, {dense: false, rev2: true, inbox: true, dark: true},
 	} {
-		name := map[bool]string{true: "dense", false: "detailed"}[o.dense] + map[bool]string{true: "-rev2", false: ""}[o.rev2] +
+		base := map[bool]string{true: "dense", false: "detailed"}[o.dense] + map[bool]string{true: "-rev2", false: ""}[o.rev2] +
 			map[bool]string{true: "-patched", false: ""}[o.patched]
+		name := base + map[bool]string{true: "-dark", false: "-light"}[o.dark]
 		t.Run(name, func(t *testing.T) {
-			v, _, e, _ := cmActivity(t, o)
+			v, h, e, _ := cmActivity(t, o)
 			d := v.rows[fakeslack.CanvasMentionKey].d
 			if !d.entOn || d.ent.Icon != "canvas" {
 				t.Errorf("the destination's icon %q, want canvas (InlineChannelIcon of a canvas's file channel)", d.ent.Icon)
@@ -187,7 +215,10 @@ func TestActivityCanvasMentionRow(t *testing.T) {
 			if !drawn["Pet roster "] && !drawn["Pet roster"] {
 				t.Errorf("the canvas title isn't drawn (title labels %q)", got)
 			}
-			vaShot(t, e, "activity-canvas-mention-"+name, o.dark)
+			// the emoji is the emoji's image (the store's URL for it)
+			e.until(t, "the title's emoji image fetched", func() bool { return h.askedFor("/" + fakeslack.CanvasMentionEmoji + "/") })
+			e.until(t, "the pictures loaded", func() bool { return h.imgs.Pending() == 0 })
+			vaShot(t, e, "activity-canvas-mention-"+base, o.dark)
 		})
 	}
 }

@@ -3,11 +3,13 @@ package ui
 // A canvas's hidden file channel (core canvas_channel.go) never opens as a
 // channel: Slack's jump to one of its messages is isSpaceship (wc0P
 // jumpToMessage → lFpV openDocWithThreadTs → zsuR openDoc), the canvas at a
-// mention's section. Karim (α.102) clicked a canvas mention and got "a limbo
-// esque channel where the canvas contents are messages". Every way into a
-// conversation (a route, the secondary column, a thread, the split view, the
-// Activity panes) opens the canvas instead once core knows the conversation
-// is a canvas's.
+// mention's section or with a comment's thread. Karim (α.102) clicked a
+// canvas mention and got "a limbo esque channel where the canvas contents
+// are messages". Every jump into the conversation opens the canvas instead
+// once core knows the conversation is a canvas's: a route to a message or
+// a thread (Navigate), the secondary column, the split view, the Activity
+// panes. A comment thread itself still opens in the pane
+// (OpenCommentThread).
 
 import (
 	"sync"
@@ -77,10 +79,13 @@ func (a *App) CanvasShown(fileID string) bool {
 	return ok && v.ID() == fileID
 }
 
-// canvasInstead opens the canvas when ch is a canvas's file channel, at
-// the section of the message ts points at when it is a mention, in the
-// side panel or (full) the full view. It reports whether it did.
-func (a *App) canvasInstead(ch, ts string, full bool) bool {
+// canvasInstead opens the canvas when ch is a canvas's file channel, as
+// Slack opens a jump to its message ts or thread (core CanvasJump): a
+// mention at its section, a comment with its comment thread in the pane
+// (OpenCommentThread; the canvas is its back stack when the canvas is in
+// the pane too). The canvas opens in the side panel, or with full in the
+// full view. It reports whether it did.
+func (a *App) canvasInstead(ch, thread, ts string, full bool) bool {
 	c := a.Core()
 	if c == nil || ch == "" {
 		return false
@@ -89,6 +94,10 @@ func (a *App) canvasInstead(ch, ts string, full bool) bool {
 	if !ok {
 		return false
 	}
-	a.OpenCanvasAt(fid, c.MentionSection(ch, ts), full)
+	sec, comment := c.CanvasJump(ch, thread, ts)
+	a.OpenCanvasAt(fid, sec, full)
+	if comment != "" {
+		a.OpenCommentThread(fid, ch, comment)
+	}
 	return true
 }

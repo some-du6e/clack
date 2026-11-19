@@ -55,11 +55,12 @@ func (a *App) Navigate(route string) {
 	if r == "" {
 		return
 	}
-	// a jump to a message of a canvas's file channel (a link, a search
-	// result, a notification) opens the canvas at the mention's section,
-	// as Slack's jumpToMessage does (canvas_open.go); the conversation
-	// itself, from its sidebar row, keeps Slack's sidebar rule
-	if ch, ts := r.Channel(), r.Message(); ch != "" && ts != "" && a.canvasInstead(ch, ts, true) {
+	// a jump to a message or thread of a canvas's file channel (a link, a
+	// search result, a notification) opens the canvas, as Slack's
+	// jumpToMessage does (canvas_open.go): a mention at its section, a
+	// comment with its thread. The conversation itself, from its sidebar
+	// row, keeps Slack's sidebar rule
+	if ch, th, ts := r.Channel(), r.Thread(), r.Message(); ch != "" && (th != "" || ts != "") && a.canvasInstead(ch, th, ts, true) {
 		return
 	}
 	// a conversation opened from inside the split view stays there, as one
