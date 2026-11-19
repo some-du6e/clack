@@ -93,9 +93,13 @@ func (b *backend) noteConv(ch string) (c *convInfo, named bool) {
 		// (the toast waited for them: noteMembers), not as the sidebar's
 		// snapshot did: a closed group DM's members are never read for
 		// the sidebar, so its row named only those held then
+		// (RawUser: nothing asked; a lookup here brought a second
+		// users/info beside the toast's own, and its "names" a pass over
+		// everything on screen for people nothing draws)
 		if v, ok := b.core.Conv(ch); ok {
-			ci := b.noteInfo(v)
-			return ci, noteNamed(ci)
+			ci := *c
+			ci.Name = b.mpimNameBy(&v, b.selfID, b.core.RawUser)
+			return &ci, noteNamed(&ci)
 		}
 		return c, true
 	}
@@ -184,7 +188,7 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 		if !core.LooksLikeMemberID(s.ID) {
 			return "", false
 		}
-		if n, ok := b.core.S.MemberName(s.ID); ok && n != "" {
+		if n, ok := b.core.S.MemberNameHeld(s.ID); ok && n != "" { // waited for: nothing asked again
 			return "@" + strings.TrimPrefix(n, "@"), true
 		}
 		// still unknown: the id the conversion fell back to reads as
