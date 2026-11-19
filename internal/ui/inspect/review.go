@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
@@ -45,6 +46,9 @@ type review struct {
 
 	marks []image.Rectangle // shot px, oldest first
 
+	started     time.Time // startReview (the capture's stage times)
+	drawnFrames int       // frames that drew the shot (ShotDrawn)
+
 	dragging bool
 	from, to f32.Point       // the drag, window px
 	view     image.Rectangle // where the shot was drawn last frame, window px
@@ -58,7 +62,7 @@ const minMark = 4
 // AfterFrame).
 func (t *Tool) startReview(c *capture, shot *image.RGBA) {
 	t.release()
-	r := &review{c: c, shot: shot}
+	r := &review{c: c, shot: shot, started: time.Now()}
 	t.state, t.rev = reviewing, r
 	t.redraw(r)
 	t.host.Invalidate()
@@ -78,6 +82,9 @@ func (t *Tool) redraw(r *review) {
 				return
 			}
 			r.shown, r.shownV, r.ready = paint.NewImageOp(img), v, true
+			if r.c.tm.shown == 0 {
+				r.c.tm.shown = time.Since(r.started)
+			}
 			h.Invalidate()
 		})
 	}()
@@ -100,6 +107,10 @@ func (t *Tool) finishReview() {
 
 // dropReview ends the review with nothing saved or copied.
 func (t *Tool) dropReview() {
+	if r := t.rev; r != nil {
+		r.c.tm.outcome = "dropped"
+		logTimes(r.c)
+	}
 	t.stop()
 	t.host.Toast("Inspect report discarded: nothing copied")
 }
@@ -179,6 +190,12 @@ func (t *Tool) Marks() (marks []image.Rectangle, shot image.Point, ok bool) {
 		return nil, image.Point{}, false
 	}
 	return append([]image.Rectangle(nil), t.rev.marks...), t.rev.shot.Bounds().Size(), true
+}
+
+// ShotDrawn reports that a review is up and a frame has drawn its shot
+// (tests: the review appears in the frame after the pick's).
+func (t *Tool) ShotDrawn() bool {
+	return t.state == reviewing && t.rev != nil && t.rev.drawnFrames > 0
 }
 
 // ReviewView is where the review shows the shot (window px), empty
@@ -272,6 +289,10 @@ func (t *Tool) drawReview(gtx layout.Context) {
 	r.view = reviewView(sz, r.shot.Bounds().Size(), r.c.k, gtx.Dp(52), gtx.Dp(24), gtx.Dp(24))
 	one := max(gtx.Dp(1), 1)
 	if r.ready && !r.view.Empty() {
+		if r.c.tm.drawn == 0 && !r.c.tm.pick.IsZero() {
+			r.c.tm.drawn, r.c.tm.frames = time.Since(r.c.tm.pick), t.frameN-r.c.tm.pickN
+		}
+		r.drawnFrames++
 		s := r.shot.Bounds()
 		drawShot(gtx, r.shown, r.view, s)
 		if !r.c.region {

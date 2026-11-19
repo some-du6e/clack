@@ -44,6 +44,8 @@ type capture struct {
 	elem    image.Rectangle
 	ptrShot image.Point
 	k       float32
+
+	tm capTimes // its stages (timing.go)
 }
 
 // Shoot renders the part of a frame in region (window px), each px of it
@@ -59,11 +61,13 @@ var Shoot = func(frame op.CallOp, region image.Rectangle, k float32) (*image.RGB
 	if size.X <= 0 || size.Y <= 0 {
 		return nil, errors.New("empty region")
 	}
+	t0 := time.Now()
 	w, err := headless.NewWindow(size.X, size.Y)
 	if err != nil {
 		return nil, err
 	}
 	defer w.Release()
+	t1 := time.Now()
 	var o op.Ops
 	tr := op.Affine(f32.AffineId().Offset(f32.Pt(-float32(region.Min.X), -float32(region.Min.Y))).Scale(f32.Point{}, f32.Pt(k, k))).Push(&o)
 	frame.Add(&o)
@@ -71,10 +75,12 @@ var Shoot = func(frame op.CallOp, region image.Rectangle, k float32) (*image.RGB
 	if err := w.Frame(&o); err != nil {
 		return nil, err
 	}
+	t2 := time.Now()
 	img := image.NewRGBA(image.Rectangle{Max: size})
 	if err := w.Screenshot(img); err != nil {
 		return nil, err
 	}
+	lastShot = shotTimes{gpu: t1.Sub(t0), render: t2.Sub(t1), read: time.Since(t2)}
 	return img, nil
 }
 
@@ -143,6 +149,7 @@ var WriteImage = func(img image.Image) error {
 // newCapture builds the report for p (UI goroutine, before this frame
 // lays anything out: p's frame still holds what the pointer was over).
 func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
+	t0 := time.Now()
 	now := gtx.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -159,13 +166,16 @@ func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
 	r.Region = p.region
 	r.Rect = dpRect(p.rect, scale)
 	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
-	return &capture{rep: r, rect: p.rect, ptr: ptr, scale: scale}
+	c := &capture{rep: r, rect: p.rect, ptr: ptr, scale: scale}
+	c.tm = capTimes{kind: "click", scale: scale, report: time.Since(t0)}
+	return c
 }
 
 // newRegionCapture builds the report for a dragged region (window px;
 // ptr where the button came up): no component, the shell's areas it
 // takes in, the window and the page.
 func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr image.Point) *capture {
+	t0 := time.Now()
 	now := gtx.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -186,7 +196,9 @@ func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr im
 	r.Region = strings.Join(in, ", ")
 	r.Rect = dpRect(rect, scale)
 	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
-	return &capture{rep: r, rect: rect, ptr: ptr, scale: scale, region: true}
+	c := &capture{rep: r, rect: rect, ptr: ptr, scale: scale, region: true}
+	c.tm = capTimes{kind: "region", scale: scale, report: time.Since(t0)}
+	return c
 }
 
 // Limits on the chains a report lists.
@@ -340,6 +352,8 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 		return
 	}
 	t.capture = nil
+	c.tm.submit = time.Since(c.tm.pick)
+	c.tm.win, c.tm.frozen = size, t.fz != nil
 	frame := ops.Whole()
 	if fz := t.fz; fz != nil {
 		frame, size = fz.content, fz.at.size
@@ -351,7 +365,12 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	var img *image.RGBA
 	err := errors.New("the element is outside the window")
 	if !crop.Empty() {
+		lastShot = shotTimes{}
+		t0 := time.Now()
 		img, err = Shoot(frame, crop, k)
+		c.tm.shoot = lastShot
+		c.tm.shoot.total = time.Since(t0)
+		c.tm.shot, c.tm.k = ShotSize(crop, k), k
 	}
 	if err != nil {
 		log.Printf("inspect: no screenshot: %v", err)
@@ -381,28 +400,39 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 	h := t.host
 	done := make(chan struct{})
 	t.lastDone, t.lastRep = done, c.rep
+	if !c.tm.pick.IsZero() {
+		c.tm.enter = time.Since(c.tm.pick) - c.tm.drawn
+	}
 	go func() {
 		defer close(done)
+		t0 := time.Now()
 		if shot != nil {
 			c.rep.Colors = sampleColors(shot, c.elem, c.ptrShot, max(int(c.k), 1))
 		}
+		c.tm.colors = time.Since(t0)
 		lines := c.rep.Lines()
 		text := c.rep.Text()
 		var img *image.RGBA
 		var data []byte
 		if shot != nil {
 			var err error
+			t1 := time.Now()
 			if img, err = Compose(shot, c.elem, c.scale*c.k, lines, c.redact...); err != nil {
 				log.Printf("inspect: composing the report image: %v", err)
 				img = nil
 			} else {
+				c.tm.compose = time.Since(t1)
+				t2 := time.Now()
 				var b bytes.Buffer
 				if err := png.Encode(&b, img); err == nil {
 					data = b.Bytes()
 				}
+				c.tm.encode = time.Since(t2)
 			}
 		}
+		t3 := time.Now()
 		where, serr := save(dir, c.rep.When, data, text)
+		c.tm.save = time.Since(t3)
 		if serr != nil {
 			log.Printf("inspect: saving the report: %v", serr)
 		} else if where != "" {
@@ -410,8 +440,19 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 		}
 		var cerr error = shotErr
 		if img != nil {
+			t4 := time.Now()
 			cerr = WriteImage(img)
+			c.tm.clipbd = time.Since(t4)
 		}
+		switch {
+		case img != nil && cerr == nil:
+			c.tm.outcome = "copied as an image"
+		case cerr != nil:
+			c.tm.outcome = "copied as text: " + cerr.Error()
+		default:
+			c.tm.outcome = "copied as text"
+		}
+		logTimes(c)
 		h.Post(func() {
 			switch {
 			case img != nil && cerr == nil:

@@ -738,6 +738,9 @@ func (p *EmojiPicker) layoutPopover(gtx layout.Context, pp slackc.Props) layout.
 	return childrenOr(gtx, pp, "EmojiPicker", p.pickerProps, p.layoutCard)
 }
 
+// Rect is the card's last laid-out rectangle (window coords).
+func (p *EmojiPicker) Rect() image.Rectangle { return p.rect }
+
 // layoutCard is EmojiPicker's native: the card at its window position.
 func (p *EmojiPicker) layoutCard(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	th := p.h.Theme()

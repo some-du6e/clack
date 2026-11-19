@@ -157,6 +157,7 @@ type Tool struct {
 	upKey    string        // the innermost element t.up counts from (innerKey)
 	// the last press of FreezeKey and of Esc while it's down (repeat)
 	freezeDown, escDown time.Time
+	frameN              int // frames whose input was read (a capture's stage times count them)
 
 	// content is what the last laid-out frame drew, the tool's own
 	// drawing left out (End), and contentOK that it is the frame on
@@ -332,6 +333,7 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 // press, a drag or a release did.
 func (t *Tool) input(gtx layout.Context) {
 	src := gtx.Source
+	t.frameN++
 	t.inAt = gtx.Now
 	t.win = gtx.Constraints.Max
 	t.scale = gtx.Metric.PxPerDp
@@ -387,6 +389,10 @@ func (t *Tool) input(gtx layout.Context) {
 			}
 			t.pend.review = t.pend.review && !in.shift // Shift at the press or the release
 			t.capture, t.pend, t.state = t.pend, nil, picked
+			if !t.capture.review {
+				t.capture.tm.kind = "shift-click"
+			}
+			t.capture.tm.pick, t.capture.tm.pickN = time.Now(), t.frameN
 		case dragging:
 			r := t.dragRect(in.releaseAt)
 			if min := int(minRegion*t.scale + .5); r.Dx() < min || r.Dy() < min {
@@ -396,6 +402,7 @@ func (t *Tool) input(gtx layout.Context) {
 			}
 			at := image.Pt(int(in.releaseAt.X+.5), int(in.releaseAt.Y+.5))
 			t.capture, t.state = t.newRegionCapture(gtx, r, at), picked
+			t.capture.tm.pick, t.capture.tm.pickN = time.Now(), t.frameN
 		}
 	}
 }
