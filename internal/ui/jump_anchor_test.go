@@ -489,3 +489,87 @@ func TestNewMessageNearEndSticks(t *testing.T) {
 		t.Errorf("20px from the end when a message arrived: the list didn't keep to its end")
 	}
 }
+
+// betweenTS is a ts between messages k and k+1 back in ch (no message
+// has it: a message deleted since, a reply the history never holds), and
+// the newer of the two, the message a jump to it lands on.
+func (e *perfEnv) betweenTS(t *testing.T, ch string, k int) (missing, next string) {
+	t.Helper()
+	newer, ok1 := e.fs.HistoryAt(ch, k)
+	older, ok2 := e.fs.HistoryAt(ch, k+1)
+	if !ok1 || !ok2 {
+		t.Fatalf("no messages %d and %d back in %s", k, k+1, ch)
+	}
+	a, _ := strconv.ParseFloat(older.TS, 64)
+	b, _ := strconv.ParseFloat(newer.TS, 64)
+	if b-a < 0.002 {
+		t.Fatalf("messages %d and %d back in %s are too close for a ts between", k, k+1, ch)
+	}
+	return strconv.FormatFloat(a+0.001, 'f', 6, 64), newer.TS
+}
+
+// TestJumpToMissingMessageLandsOnNext: a link to a message no row holds
+// (deleted since) far back in a conversation not loaded yet lands, once
+// the window around it is in, on the first message after it, on the
+// anchor line (Slack's findTimestampClosestToStartTs: find(timestamps,
+// t => t >= startTs)), and nothing is left pending. Clack matched only
+// the exact ts, gave the jump up and left the window drawn from its end.
+func TestJumpToMissingMessageLandsOnNext(t *testing.T) {
+	e := anchorEnv(t)
+	ch := "C0FAKE00003" // read: not loaded
+	missing, next := e.betweenTS(t, ch, 600)
+	e.a.Navigate("c/" + ch + "/m/" + missing)
+	e.waitDrawn(t, "the message after the missing one", 30*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, next)
+		return ok && y == e.anchorLine()
+	})
+	if cv := e.channelView(ch); cv == nil || cv.JumpPending() != "" {
+		t.Errorf("the jump is still pending after it landed")
+	}
+	e.holdsLine(t, "after the jump to a missing message", ch, "", next, time.Second)
+}
+
+// TestJumpToMissingInWindowDoesNotClimb: inside a window, a jump to a ts
+// no row holds lands on the next message and is done: scroll anchoring
+// is on again, so one older page landing above leaves the reader where
+// they were, and no more pages follow without input. Clack left such a
+// jump pending for good with the list's anchoring off, so each page that
+// landed above pulled the view to its top, which asked for the next page,
+// climbing to the conversation's first message.
+func TestJumpToMissingInWindowDoesNotClimb(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	target := plainAt(t, e.fs, ch, 2500)
+	e.openAtOld(t, ch, target)
+	missing, next := e.betweenTS(t, ch, 2492) // inside the window, newer than the target
+	e.a.Navigate("c/" + ch + "/m/" + missing)
+	e.waitDrawn(t, "the message after the missing one", 15*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, next)
+		return ok && y == e.anchorLine()
+	})
+	if cv := e.channelView(ch); cv == nil || cv.JumpPending() != "" {
+		t.Fatalf("the jump to a missing message is still pending")
+	}
+	calls := e.recordCalls("conversations.history")
+	older := func() int {
+		k := 0
+		for _, c := range calls.of("conversations.history", ch, "latest") {
+			if c != "latest=" {
+				k++
+			}
+		}
+		return k
+	}
+	for dl := time.Now().Add(15 * time.Second); older() < 1; {
+		if time.Now().After(dl) {
+			t.Fatalf("scrolling up the window asked for no older page")
+		}
+		e.scroll(e.listPoint(), -600)
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
+	}
+	e.settle(4 * time.Second) // no input
+	if n := older(); n > 1 {
+		t.Errorf("%d older pages in 4 s after one scroll up: the list climbed by itself", n)
+	}
+}

@@ -1070,12 +1070,12 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
 
-	// jumping to a message what the list shows doesn't hold: Slack's pane
+	// jumping to a message what the list shows doesn't reach: Slack's pane
 	// at startTs shows the slice holding it (windows.go): older than its
 	// start (or past a window's end), the window around it, once
 	// (openWindow), the conversation's newest messages when they hold it;
-	// sync() places it when it's in. One the window around it lacks, or the
-	// conversation's whole history, isn't in this conversation.
+	// sync() places it, or the first message after it, once they cover it
+	// (placeJump). One whose window gave way has nowhere to land.
 	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older && !s.snap.loading && s.snap.around == "" {
 		n := len(s.snap.msgs)
 		older := n > 0 && s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS)
@@ -1086,9 +1086,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		case (older || newer) && s.aroundFor != s.pendingJump:
 			s.aroundFor = s.pendingJump
 			s.openWindow(s.pendingJump)
-		case s.aroundFor == s.pendingJump && s.built == s.snap.rev,
-			n > 0 && !s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS):
-			s.pendingJump = "" // not in this conversation
+		case (older || newer) && s.win == nil && s.built == s.snap.rev:
+			// its window gave way (it failed, or came back empty) and the
+			// newest messages don't reach it: nothing to land on
+			s.pendingJump = ""
 		}
 	}
 	if s.pendingJump != "" && s.thread && s.snap.loaded && !s.snap.loading && s.built == s.snap.rev {
@@ -2288,8 +2289,7 @@ func (s *listState) placeJump(now time.Time) {
 	for i, it := range s.items {
 		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == s.pendingJump {
 			if !s.jumpLazy || !s.topOnScreen(it.key) {
-				s.place = jumpPlace{key: it.key, off: anchorOffset}
-				s.list.Position = layout.Position{BeforeEnd: true, First: i} // until the layout places it
+				s.placeAt(i, anchorOffset)
 			}
 			s.jumpLazy = false
 			s.positioned = true
@@ -2300,6 +2300,54 @@ func (s *listState) placeJump(now time.Time) {
 			return
 		}
 	}
+	// No row has it (a message deleted since, a reply the history never
+	// holds, a join folded into a group): once what the list shows covers
+	// it, the jump is to the first message at or after it, Slack's
+	// findTimestampClosestToStartTs (find(timestamps, t => t >= startTs)),
+	// with nothing to flash (its highlightTs names no row); with nothing at
+	// or after it, the end (getOffsetForKey(undefined)). Nothing stays
+	// pending.
+	if s.thread || !s.jumpCovered() {
+		return
+	}
+	if i := s.firstItemFrom(s.pendingJump); i >= 0 {
+		s.placeAt(i, anchorOffset)
+	} else {
+		s.list.Position = layout.Position{}
+	}
+	s.jumpLazy = false
+	s.positioned = true
+	s.pendingJump = ""
+}
+
+// placeAt places item i off under the list's top in the next layout.
+func (s *listState) placeAt(i int, off unit.Dp) {
+	s.place = jumpPlace{key: s.items[i].key, off: off}
+	s.list.Position = layout.Position{BeforeEnd: true, First: i} // until the layout places it
+}
+
+// jumpCovered reports whether the messages the list shows cover the
+// pending jump's ts: loaded, no load out for it, and the ts within them
+// (from their first message on, or anywhere before it when nothing is
+// older; up to their last, or past it when they end at the newest).
+func (s *listState) jumpCovered() bool {
+	n := len(s.snap.msgs)
+	if !s.snap.loaded || s.snap.loading || s.snap.around != "" || n == 0 || s.built != s.snap.rev {
+		return false
+	}
+	ts := s.pendingJump
+	return (!s.snap.hasMore || !tsLess(ts, s.snap.msgs[0].m.TS)) && (!s.snap.newestMissing || !tsLess(s.snap.msgs[n-1].m.TS, ts))
+}
+
+// firstItemFrom is the first message item holding a message at or after
+// ts (a join group by its last), -1 for none.
+func (s *listState) firstItemFrom(ts string) int {
+	for i, it := range s.items {
+		if it.kind == itMsg && it.idx < len(s.snap.msgs) && !tsLess(s.snap.msgs[it.idx].m.TS, ts) {
+			return i
+		}
+	}
+	return -1
 }
 
 // jumpPlace is a jump's placement (placeJump): the item keyed key, off
