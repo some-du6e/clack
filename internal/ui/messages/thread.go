@@ -116,7 +116,8 @@ func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 // except in a public channel the viewer isn't in, where it saves none
 // and the pane opens at its start position again.
 func (v *ThreadView) Reopen() {
-	v.closeFind(false) // ThreadSearchBar unmounts with the pane
+	v.s.thrOpening = true // a new pane: a jump starts it at getThreadStartPosition's message
+	v.closeFind(false)    // ThreadSearchBar unmounts with the pane
 	v.s.thr = threadRead{}
 	v.s.rootHandedOn = false // opened with a reply's ts again: hand on again (ReplyRootRedirector)
 	v.s.snap.rev = 0         // rebuild the rows with the new marker
@@ -193,23 +194,31 @@ func (v *ThreadView) JumpToOwnSend(cid string, files bool) {
 // pane opens at a message (client-boot 6IaZ over CSo3 GC, from toThread's
 // replyTs and uiState.highlightTs): the list starts at ts (startTs) and,
 // with flash, ts is highlighted (highlightTs) the way a permalink's
-// message is (ChannelView.Highlight). The thread loads whole
-// (conversations.replies, every page), so a ts it doesn't hold is
-// dropped once it's in, and the pane keeps its own start position.
+// message is (ChannelView.Highlight). Where it starts is the thread
+// list's (ThreadsFlexpane, boot-shared 4M8N; its BaseMessageList Twp/):
+//   - a pane that just opened starts at getThreadStartPosition's message,
+//     100px under the top or at the top (placeThreadJump, threadStart),
+//     and with no highlight its saved place wins (the scrollmark);
+//   - a pane already showing the thread scrolls the reply's top to the
+//     list's top unless that's on screen already (a new highlightKey:
+//     scrollToKey(startTs, {lazy: true}), the anchor line at the top).
+//
+// Nothing holds the reply there after (the anchor drops at the scroll's
+// echo). The thread loads whole (conversations.replies, every page).
 func (v *ThreadView) JumpTo(ts string, flash bool) {
 	s := v.s
+	opening := s.thrOpening || !s.positioned
+	s.thrOpening = false
+	if !flash && opening && s.positioned && s.laidOut {
+		return // no highlight: the reopened pane's own place (getThreadStartPosition's scrollmark)
+	}
 	s.highlight = ""
 	if flash {
 		s.highlight, s.highlightAt = ts, time.Now()
 	}
-	s.pendingJump = ts
-	s.place = jumpPlace{} // the next sync places it (placeJump)
-	for _, it := range s.items {
-		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == ts {
-			s.positioned = true // there now: not the thread's start position
-			break
-		}
-	}
+	s.pendingJump, s.jumpLazy = ts, !opening
+	s.place = jumpPlace{}
+	s.positioned = true // the jump places the list, not the thread's start position
 }
 
 // Highlighted is the message the pane highlights now (JumpTo's flash),

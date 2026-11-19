@@ -85,12 +85,27 @@ func bodyOf(rows []messages.SenderView, ts string) image.Rectangle {
 // its top on the anchor line.
 func (e *perfEnv) holdsLine(t *testing.T, what, ch, thread, ts string, d time.Duration) {
 	t.Helper()
-	want := e.anchorLine()
+	e.holdsAt(t, what, ch, thread, ts, e.anchorLine(), d)
+}
+
+// px is dp in the env's px.
+func (e *perfEnv) px(dp float64) int {
+	s := e.scale
+	if s == 0 {
+		s = 1
+	}
+	return int(math.Round(dp * float64(s)))
+}
+
+// holdsAt fails unless every frame for d draws ts (pane ch/thread) with
+// its top want px under the list's top.
+func (e *perfEnv) holdsAt(t *testing.T, what, ch, thread, ts string, want int, d time.Duration) {
+	t.Helper()
 	for dl := time.Now().Add(d); time.Now().Before(dl); {
 		e.frame()
 		rows := e.paneRows("", ch, thread)
 		if y, ok := topOf(rows, ts); !ok || y != want {
-			t.Fatalf("%s: %s drawn %v with its top %dpx under the list's top (list %dpx tall); want it on the anchor line, %dpx (rows %s)",
+			t.Fatalf("%s: %s drawn %v with its top %dpx under the list's top (list %dpx tall); want %dpx (rows %s)",
 				what, ts, ok, y, viewHOf(rows), want, drawnState(rows))
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -247,22 +262,72 @@ func TestJumpHoldsThroughRowsGrowingAbove(t *testing.T) {
 	}
 }
 
-// TestJumpToReplyOnAnchorLine: a link to a reply deep in a thread opens
-// the thread pane with the reply on the anchor line, highlighted, and it
-// stays there while the replies above it gain pictures.
+// TestJumpToReplyOnAnchorLine is the thread list's start for a link to
+// a reply deep in a thread with no unread replies: getThreadStartPosition's
+// startOffset 100, the reply 100px under the pane's top (ThreadsFlexpane,
+// boot-shared 4M8N), highlighted. Nothing holds it there after (the
+// anchor drops at the scroll's echo, and the thread list's own line is
+// its top): a reply between the top and it that gains a picture pushes it
+// down. Clack put the reply 64px down and held it there.
 func TestJumpToReplyOnAnchorLine(t *testing.T) {
 	e := anchorEnv(t)
 	ch, root := fakeslack.TombstoneChannelID, fakeslack.TombstoneRootTS
 	reply := fakeslack.TombstoneReplyTS(19)
 	e.a.OpenAtMessage(ch, reply, root, true)
 	e.waitDrawn(t, "the thread at the reply, highlighted", 20*time.Second, "", ch, root, func(rows []messages.SenderView) bool { return lit(rows, reply) })
-	e.holdsLine(t, "after the jump", ch, root, reply, time.Second)
-	for i := 16; i <= 18; i++ {
-		ts := fakeslack.TombstoneReplyTS(i)
-		e.growWithPicture(ch, slack.Message{TS: ts, User: e.fs.UserIDs()[1+i%3], ThreadTS: root, Text: fmt.Sprintf("Thread reply %d", i+1)},
-			fmt.Sprintf("anchor-reply-%d", i))
+	want := e.px(100)
+	e.holdsAt(t, "after the jump", ch, root, reply, want, time.Second)
+	above := fakeslack.TombstoneReplyTS(18)
+	if y, ok := topOf(e.paneRows("", ch, root), above); !ok || y < 0 {
+		t.Fatalf("the reply above isn't wholly on screen under the pane's top: %d (%v)", y, ok)
 	}
-	e.holdsLine(t, "while the replies above it grew", ch, root, reply, 2*time.Second)
+	e.growWithPicture(ch, slack.Message{TS: above, User: e.fs.UserIDs()[1+18%3], ThreadTS: root, Text: "Thread reply 19"}, "thread-reply-above")
+	for dl := time.Now().Add(10 * time.Second); ; {
+		y, ok := topOf(e.paneRows("", ch, root), reply)
+		if ok && y >= want+e.px(150) {
+			break // pushed down by the picture above it
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("the reply above gained a picture and the reply stayed at %d (%v): held, where Slack's anchor has dropped", y, ok)
+		}
+		e.frame()
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// TestThreadReHighlightScrollsLazilyToTop: in a pane already showing the
+// thread, a link to a reply off screen scrolls its top to the pane's top
+// (a new highlightKey: scrollToKey(startTs, {lazy: true}), the line at the
+// top), and a link to a reply whose top is on screen doesn't scroll.
+// Clack placed every re-highlight 64px down.
+func TestThreadReHighlightScrollsLazilyToTop(t *testing.T) {
+	e := anchorEnv(t)
+	ch, root := fakeslack.TombstoneChannelID, fakeslack.TombstoneRootTS
+	e.a.OpenAtMessage(ch, fakeslack.TombstoneReplyTS(30), root, true)
+	e.waitDrawn(t, "the thread at reply 31", 20*time.Second, "", ch, root, func(rows []messages.SenderView) bool {
+		return lit(rows, fakeslack.TombstoneReplyTS(30))
+	})
+	e.settle(3500 * time.Millisecond) // the flash done
+	off := fakeslack.TombstoneReplyTS(5)
+	if _, ok := topOf(e.paneRows("", ch, root), off); ok {
+		t.Fatalf("reply 6 is on screen already")
+	}
+	e.a.OpenAtMessage(ch, off, root, true)
+	e.waitDrawn(t, "reply 6 at the pane's top, highlighted", 10*time.Second, "", ch, root, func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, off)
+		return ok && y == 0 && lit(rows, off)
+	})
+	e.settle(3500 * time.Millisecond)
+	on := fakeslack.TombstoneReplyTS(7)
+	y0, ok := topOf(e.paneRows("", ch, root), on)
+	if !ok || y0 <= 0 {
+		t.Fatalf("reply 8 isn't on screen under the top: %d (%v)", y0, ok)
+	}
+	e.a.OpenAtMessage(ch, on, root, true)
+	e.waitDrawn(t, "reply 8 highlighted where it is", 10*time.Second, "", ch, root, func(rows []messages.SenderView) bool { return lit(rows, on) })
+	if y, ok := topOf(e.paneRows("", ch, root), on); !ok || y != y0 {
+		t.Errorf("a link to reply 8, on screen, scrolled it from %d to %d (%v); want it left where it was", y0, y, ok)
+	}
 }
 
 // TestArchivedTombstoneWindowPagesOlder is Karim's capture: a link to a

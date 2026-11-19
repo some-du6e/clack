@@ -179,9 +179,13 @@ type listState struct {
 	sel               selection
 	sb                scrollbar
 	pendingJump       string
-	// jumpLazy: the pending jump is highlightRoot's (highlightLazy): a
-	// message whose top is already on screen isn't scrolled to
+	// jumpLazy: the pending jump is highlightRoot's (highlightLazy) or a
+	// re-highlight in an open thread pane: a message whose top is already
+	// on screen isn't scrolled to
 	jumpLazy bool
+	// thrOpening: the thread pane just opened (ThreadView.Reopen), so a jump
+	// starts it at getThreadStartPosition's message
+	thrOpening bool
 	// place is a jump's placement, made in the next layout: the item keyed
 	// place.key place.off under the list's top (placeJump). Nothing holds
 	// it there after: Slack's anchor drops at its own scroll's echo, and
@@ -915,6 +919,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	if s.thread {
 		s.pendAt = time.Time{}
 		s.checkThreadUnreads(gtx, h, now) // thread_unread.go
+		s.placeThreadJump(now)            // after the thread's last read is known
 	}
 	// first positioning: at the unread line if there are many unread
 	if !s.positioned && s.snap.loaded {
@@ -1038,6 +1043,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.endGap = math.MaxInt32
 	}
 	s.laidOut, s.laidPos, s.laidBuilt = true, s.list.Position, s.built
+	if s.thread && s.snap.loaded {
+		s.thrOpening = false // the pane shows its thread: a jump now is a re-highlight
+	}
 	s.actionsScrollEnd(actD)
 
 	// positions of visible items
@@ -2283,7 +2291,7 @@ func (s *listState) editComposer() *composer.Composer {
 // highlightLazy scrolls only to a message whose top isn't on screen
 // (scrollToKey's lazy: isItemInView).
 func (s *listState) placeJump(now time.Time) {
-	if s.pendingJump == "" {
+	if s.pendingJump == "" || s.thread { // a thread's: placeThreadJump
 		return
 	}
 	for i, it := range s.items {
@@ -2318,6 +2326,35 @@ func (s *listState) placeJump(now time.Time) {
 	s.jumpLazy = false
 	s.positioned = true
 	s.pendingJump = ""
+}
+
+// placeThreadJump is a thread pane's jump (ThreadView.JumpTo) once the
+// whole thread is in: a pane that just opened starts at
+// getThreadStartPosition's message (threadStart: the reply 100px under the
+// top, or at the top when it's an unread one at or before the last read),
+// and one already showing the thread scrolls that message's top to the
+// list's top unless its top is on screen (scrollToKey lazy, the thread
+// list's anchor line at the top). A ts the thread doesn't hold starts it
+// at the newest message at or before it, else at its top.
+func (s *listState) placeThreadJump(now time.Time) {
+	if s.pendingJump == "" || !s.snap.loaded || s.snap.loading || s.built != s.snap.rev {
+		return
+	}
+	key, offset := s.threadStart(s.pendingJump)
+	i := s.itemOfKey(key)
+	switch {
+	case i < 0:
+		s.list.Position = layout.Position{BeforeEnd: true} // getOffsetForKey of a ts it doesn't hold: 0
+	case s.jumpLazy && s.topOnScreen(key):
+	case s.jumpLazy || !offset:
+		s.placeAt(i, 0)
+	default:
+		s.placeAt(i, 100) // getThreadStartPosition's startOffset
+	}
+	if s.highlight == s.pendingJump {
+		s.highlightAt = now // the flash starts as its message is placed
+	}
+	s.pendingJump, s.jumpLazy = "", false
 }
 
 // placeAt places item i off under the list's top in the next layout.
