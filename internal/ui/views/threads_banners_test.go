@@ -223,6 +223,59 @@ func TestThreadsUnreadBannerCountLikeSlack(t *testing.T) {
 	})
 }
 
+// The jump goes to the divider keyed with the thread's first timestamp
+// past its last read, hidden replies counted (Slack's timestamps). A
+// thread read at load to the newest of its ten replies shows its two
+// newest (r9, r10; r8 held but hidden). Marked unread from r5 in the
+// thread pane, its unread row is at r9 and "↓ 1 unread thread" counts it,
+// but no divider is keyed with r8: the click does nothing. No scroll, no
+// mark, and the hand mark stays.
+func TestThreadsBannerJumpHiddenUnreadLikeSlack(t *testing.T) {
+	ch := fakeslack.ViewsChannel
+	const root, r4, r5, r8, r9, r10 = "1762600000.000100", "1762600400.000100", "1762600500.000100", "1762600800.000100", "1762600900.000100", "1762601000.000100"
+	var marks thrMarkLog
+	app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
+		marks.note(method, f)
+		if method != "subscriptions.thread.getView" {
+			return nil, false
+		}
+		var ths []map[string]any
+		for _, th := range thrBannerThreads[:3] {
+			ths = append(ths, thrFixRead(ch, th[0], th[1], "U0FAKE00002", false, th[1]))
+		}
+		ths = append(ths, thrFixReplies(ch, root, 10, r10, thrReplyBy(r8, "U0FAKE00002"), thrReplyBy(r9, "U0FAKE00001"), thrReplyBy(r10, "U0FAKE00002")))
+		return thrOrderAnswer(ths...), true
+	})
+	h := newKBHost(app, false)
+	h.away.Store(true)
+	v := NewThreads(h)
+	e := thrViewEnv(t, v, 4)
+	e.size = image.Pt(1000, 300)
+	e.frame()
+	key := ch + "/" + root
+	if got, want := thrTSs(thrShown(thrItemOf(v, key), v.cards[key])), []string{r9, r10}; !slices.Equal(got, want) {
+		t.Fatalf("the read thread shows %v, want its two newest %v", got, want)
+	}
+	if err := app.MarkThreadUnreadFrom(context.Background(), ch, root, r5, core.MarkedInThread); err != nil {
+		t.Fatal(err)
+	}
+	fs.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ch,
+		"thread_ts": root, "last_read": r4, "active": true}, "event_ts": "1762699500.000100"})
+	e.until(t, "↓ 1 unread thread", func() bool { return slices.Equal(v.ban.below, []string{key}) })
+	at, n := v.list.Position, len(marks.all())
+	e.click(thrFind(t, e, &v.ban.down.jump))
+	e.frame()
+	if p := v.list.Position; p.First != at.First || p.Offset != at.Offset {
+		t.Errorf("the click moved the list from %+v to %+v; Slack's list has no divider keyed with %s to go to", at, p, r8)
+	}
+	if got := marks.all()[n:]; len(got) != 0 {
+		t.Errorf("the click marked %v", got)
+	}
+	if o := app.ThreadMarkedUnread(ch, root); o != core.MarkedInThread {
+		t.Errorf("the click took the pane's hand mark (now %q)", o)
+	}
+}
+
 // A thread's read mark that fails puts its last read and its hand mark
 // back, with no toast (markThread only logs); one already read to its
 // newest reply sends no request, and its hand mark still goes.

@@ -248,9 +248,11 @@ func (v *Threads) unreadsBelowCount(page thrData) int {
 }
 
 // bannerJump is scrollToNextUnreadAndMark: the nearest thread past the
-// banner's edge (the last above, the first below) whose divider the list
-// has is scrolled 100px down the list and marked read, its hand mark gone
-// whatever its origin.
+// banner's edge (the last above, the first below) is scrolled to its
+// divider 100px down the list and marked read, its hand mark gone
+// whatever its origin, when the list has a divider keyed with the thread's
+// first timestamp past its last read (divider-<thread>-<n>, n over every
+// timestamp the store holds, hidden replies too); else nothing happens.
 func (v *Threads) bannerJump(gtx C, up bool) {
 	page, _, _ := v.data.get()
 	page.items = v.shownItems(page.items)
@@ -271,12 +273,18 @@ func (v *Threads) bannerJump(gtx C, up bool) {
 	if t == nil {
 		return
 	}
-	// the first timestamp past the last read, not the root's: the
-	// divider's key (divider-<thread>-<ts>) names it
-	replies := thrShown(t, v.cards[key])
-	lr, first := v.lastRead(t), ""
-	for _, m := range replies {
-		if m.TS != t.Root.TS && actTSLess(lr, m.TS) {
+	// n: the first timestamp the store holds for the thread past its last
+	// read, not the root's; Slack's timestamps are every reply held, the
+	// hidden ones too
+	lr, first, held := v.lastRead(t), "", ""
+	for _, m := range thrKnown(t, v.cards[key]) {
+		if m.TS == t.Root.TS {
+			continue
+		}
+		if held == "" {
+			held = m.TS
+		}
+		if actTSLess(lr, m.TS) {
 			first = m.TS
 			break
 		}
@@ -285,8 +293,12 @@ func (v *Threads) bannerJump(gtx C, up bool) {
 	if first == "" || !has {
 		return
 	}
-	if row != key+"-"+first && (row != "load_older-"+key || len(replies) == 0 || replies[0].TS != first) {
-		return // no divider row with that key
+	// get_rows_and_keys keys a reply's divider with that reply and
+	// load_older's with the first timestamp held: with no divider keyed
+	// with n (its reply hidden behind "Show N more replies"), Slack's
+	// click does nothing
+	if row != key+"-"+first && (row != "load_older-"+key || first != held) {
+		return
 	}
 	v.kb.scrollTo(row)
 	v.list.Position.Offset -= gtx.Dp(100)

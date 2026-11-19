@@ -811,7 +811,7 @@ jobs:
           - part: order
             test: (TestThreadsReloadLikeSlack|TestThreadsRefreshKeepsOldThreadsOffTopLikeSlack|TestThreadsReplyDuringReloadLikeSlack|TestThreadsOrderHeldOnReplyLikeSlack|TestThreadsPageAppendedLikeSlack|TestThreadsOrderUnreadFirstLikeSlack|TestThreadsRealtimeLikeSlack|TestThreadsKeysLikeSlack)
           - part: banners
-            test: (TestThreadsUnreadBannersLikeSlack|TestThreadsUnreadBannerCountLikeSlack|TestThreadsMarkFailureLikeSlack|TestThreadsDefaultFirstReplyLikeSlack|TestThreadsShowMoreReplies|TestThreadsShowMoreFocusLikeSlack)
+            test: (TestThreadsUnreadBannersLikeSlack|TestThreadsUnreadBannerCountLikeSlack|TestThreadsBannerJumpHiddenUnreadLikeSlack|TestThreadsMarkFailureLikeSlack|TestThreadsDefaultFirstReplyLikeSlack|TestThreadsShowMoreReplies|TestThreadsShowMoreFocusLikeSlack)
           - part: gaps
             test: (TestThreadsGapOnePerCardLikeSlack|TestThreadsGapCarryFloorLikeSlack|TestThreadsGapRemountLikeSlack|TestThreadsCarriedChangeLikeSlack|TestThreadsGapFloorLeavesLaterWindowsLikeSlack|TestThreadsGapAwayLikeSlack|TestThreadsReloadCutsToWindowLikeSlack|TestThreadsGapFloorKeepsOwnWindowLikeSlack|TestThreadsReloadSkipsLandedGapLikeSlack|TestThreadsGapAfterTwoRepliesLikeSlack|TestThreadsLiveMessages|TestThreadsLiveVote|TestThreadsLiveBatch|TestThreadsLiveEvictedRefetch|TestThreadsLiveFloor)
     steps:
