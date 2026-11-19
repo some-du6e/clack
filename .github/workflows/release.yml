@@ -125,6 +125,11 @@ jobs:
           build/linux/clack -version | tee /dev/stderr | grep -qF "$TAG"
           echo "linked libraries:"; readelf -d build/linux/clack | grep NEEDED
           echo "glibc symbol versions:"; objdump -T build/linux/clack | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -3
+      # the licence texts of everything build/linux/clack links or embeds,
+      # beside LICENSE and THIRD_PARTY_NOTICES.md in every package
+      - name: licence texts (tools/licenses.py)
+        run: |
+          python3 tools/licenses.py --target "linux/$ARCH/cgo" --for "Clack for Linux ($ARCH)" -o build/linux/THIRD_PARTY_LICENSES.txt ./cmd/clack
       - name: desktop file
         run: desktop-file-validate packaging/linux/clack.desktop
       - name: deb + rpm
@@ -135,8 +140,12 @@ jobs:
           "$nfpm" pkg -f packaging/linux/nfpm.yaml -p deb -t "dist/clack_${VERSION}_${ARCH}.deb"
           "$nfpm" pkg -f packaging/linux/nfpm.yaml -p rpm -t "dist/clack-${VERSION}.${{ matrix.rpmarch }}.rpm"
           dpkg-deb -I dist/*.deb && dpkg-deb -c dist/*.deb
-          dpkg-deb -c dist/*.deb | grep -q './usr/share/doc/clack/LICENSE$' && dpkg-deb -c dist/*.deb | grep -q './usr/share/doc/clack/THIRD_PARTY_NOTICES.md$'
-          rpm -qpl dist/*.rpm | grep -qx /usr/share/doc/clack/LICENSE && rpm -qpl dist/*.rpm | grep -qx /usr/share/doc/clack/THIRD_PARTY_NOTICES.md
+          # one check a line: under set -e a failure inside an && list that
+          # isn't its last command doesn't stop the step
+          for f in LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt; do
+            dpkg-deb -c dist/*.deb | grep -q "\./usr/share/doc/clack/$f\$"
+            rpm -qpl dist/*.rpm | grep -qx "/usr/share/doc/clack/$f"
+          done
           rpm -qip dist/*.rpm && rpm -qpl dist/*.rpm && rpm -qp --requires --recommends dist/*.rpm
       - name: AppImage
         run: |
@@ -153,6 +162,7 @@ jobs:
           install -Dm644 assets/icon/clack.svg $app/usr/share/icons/hicolor/scalable/apps/clack.svg
           install -Dm644 LICENSE $app/usr/share/doc/clack/LICENSE
           install -Dm644 THIRD_PARTY_NOTICES.md $app/usr/share/doc/clack/THIRD_PARTY_NOTICES.md
+          install -Dm644 build/linux/THIRD_PARTY_LICENSES.txt $app/usr/share/doc/clack/THIRD_PARTY_LICENSES.txt
           cp assets/icon/clack-256.png $app/clack.png
           ln -s clack.png $app/.DirIcon
           tool="$RUNNER_TEMP/appimagetool"
@@ -167,7 +177,7 @@ jobs:
           "$img" --appimage-extract >/dev/null
           find squashfs-root | sort
           test -x squashfs-root/AppRun && test -x squashfs-root/usr/bin/clack && test -f squashfs-root/clack.desktop
-          test -f squashfs-root/usr/share/doc/clack/LICENSE && test -f squashfs-root/usr/share/doc/clack/THIRD_PARTY_NOTICES.md
+          for f in LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt; do test -f "squashfs-root/usr/share/doc/clack/$f"; done
           squashfs-root/AppRun -version | grep -qF "$TAG"
           APPIMAGE_EXTRACT_AND_RUN=1 "$img" -version | grep -qF "$TAG"
       # Install the packages on clean distros: dependencies resolve, the binary
@@ -238,9 +248,12 @@ jobs:
             cp packaging/windows/README.txt build/windows-$arch/Clack/README.txt
             cp LICENSE build/windows-$arch/Clack/LICENSE.txt
             cp THIRD_PARTY_NOTICES.md build/windows-$arch/Clack/THIRD_PARTY_NOTICES.md
+            target=windows/$arch; if [ $cgo = 1 ]; then target=$target/cgo; fi
+            python3 tools/licenses.py --target $target --for "Clack for Windows ($arch)" -o build/windows-$arch/Clack/THIRD_PARTY_LICENSES.txt ./cmd/clack
             (cd build/windows-$arch && zip -9 -r "../../dist/Clack-${VERSION}-windows-$arch.zip" Clack)
             unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | tee /dev/stderr | grep -q 'Clack/LICENSE.txt'
             unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | grep -q 'Clack/THIRD_PARTY_NOTICES.md'
+            unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | grep -q 'Clack/THIRD_PARTY_LICENSES.txt'
           done
       - name: check resources in Clack.exe
         run: |
@@ -261,7 +274,10 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-amd64-exe
-          path: build/windows-amd64/Clack/Clack.exe
+          path: |
+            build/windows-amd64/Clack/Clack.exe
+            build/windows-amd64/Clack/THIRD_PARTY_LICENSES.txt
+          if-no-files-found: error
 
   windows-installer:
     needs: [meta, windows]
@@ -303,7 +319,7 @@ jobs:
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
           }
-          & $iscc /Qp "/DAppVersion=$env:VERSION" "/DAppVersionNum=$env:NUM.0" "/DSourceExe=$PWD\build\windows-amd64\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
+          & $iscc /Qp "/DAppVersion=$env:VERSION" "/DAppVersionNum=$env:NUM.0" "/DSourceExe=$PWD\build\windows-amd64\Clack.exe" "/DLicensesTxt=$PWD\build\windows-amd64\THIRD_PARTY_LICENSES.txt" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
           if ($LASTEXITCODE -ne 0) { throw "iscc failed with $LASTEXITCODE" }
           Get-ChildItem dist
       - name: install, check, uninstall
@@ -315,7 +331,7 @@ jobs:
           $app = Join-Path $env:LOCALAPPDATA 'Programs\Clack'
           $exe = Join-Path $app 'Clack.exe'
           Get-ChildItem $app
-          foreach ($f in @($exe, "$app\README.txt", "$app\unins000.exe", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Clack.lnk")) {
+          foreach ($f in @($exe, "$app\README.txt", "$app\LICENSE.txt", "$app\THIRD_PARTY_NOTICES.md", "$app\THIRD_PARTY_LICENSES.txt", "$app\unins000.exe", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Clack.lnk")) {
             if (-not (Test-Path $f)) { throw "missing $f" }
           }
           if (Test-Path "$env:USERPROFILE\Desktop\Clack.lnk") { throw "desktop shortcut created without the task" }
@@ -415,6 +431,9 @@ jobs:
           vtool -show-build build/clack | grep -E 'architecture|minos'
           build/clack -version | grep -F "$TAG"
           if arch -x86_64 /usr/bin/true 2>/dev/null; then arch -x86_64 build/clack -version | grep -F "$TAG"; fi
+      - name: licence texts (tools/licenses.py, both arches)
+        run: |
+          python3 tools/licenses.py --target darwin/arm64/cgo --target darwin/amd64/cgo --for "Clack for macOS (universal: arm64 and x86_64)" -o build/THIRD_PARTY_LICENSES.txt ./cmd/clack
       - name: Clack.app
         run: |
           set -eu
@@ -422,7 +441,7 @@ jobs:
           mkdir -p $app/Contents/MacOS $app/Contents/Resources
           cp build/clack $app/Contents/MacOS/clack
           cp assets/icon/clack.icns $app/Contents/Resources/clack.icns
-          cp LICENSE THIRD_PARTY_NOTICES.md $app/Contents/Resources/
+          cp LICENSE THIRD_PARTY_NOTICES.md build/THIRD_PARTY_LICENSES.txt $app/Contents/Resources/
           sed "s/@VERSION@/$NUM/g" packaging/macos/Info.plist > $app/Contents/Info.plist
           printf 'APPL????' > $app/Contents/PkgInfo
           plutil -lint $app/Contents/Info.plist
@@ -457,7 +476,7 @@ jobs:
           t=$(mktemp -d)
           ditto -x -k "dist/Clack-${VERSION}-macos-universal.zip" "$t"
           codesign --verify --deep --strict "$t/Clack.app"
-          test -f "$t/Clack.app/Contents/Resources/LICENSE" && test -f "$t/Clack.app/Contents/Resources/THIRD_PARTY_NOTICES.md"
+          for f in LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt; do test -f "$t/Clack.app/Contents/Resources/$f"; done
           "$t/Clack.app/Contents/MacOS/clack" -version | grep -F "$TAG"
           hdiutil verify "dist/Clack-${VERSION}-macos-universal.dmg"
           mnt=$(mktemp -d)

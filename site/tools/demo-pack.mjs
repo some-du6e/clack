@@ -10,6 +10,9 @@
 //     points at those scripts and carries the manifest inline (the parts
 //     and their sizes), which boot.js reads.
 //   - build.json is the same manifest, for the record and the checks.
+//   - wasm_exec.js says its licence "can be found in the LICENSE file":
+//     Go's, which the demo job copies in as go-LICENSE, goes beside it as
+//     p/<hash>/LICENSE.
 // It prints the sizes: as built, gzipped (-9) and brotli (quality 11), the
 // way a host can send them.
 //
@@ -18,7 +21,7 @@
 // Node built-ins only.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { brotliCompressSync, gzipSync, constants as zc } from 'node:zlib';
 
@@ -29,6 +32,10 @@ const [dir, commit = ''] = process.argv.slice(2);
 if (!dir) {
   console.error('usage: node tools/demo-pack.mjs <dist/demo> [commit]');
   process.exit(2);
+}
+if (!existsSync(join(dir, 'go-LICENSE'))) {
+  console.error(`demo-pack: no ${join(dir, 'go-LICENSE')}: copy in $(go env GOROOT)/LICENSE, wasm_exec.js's licence`);
+  process.exit(1);
 }
 const wasm = readFileSync(join(dir, 'main.wasm'));
 const h = createHash('sha256');
@@ -45,6 +52,7 @@ for (let at = 0, i = 0; at < wasm.length; at += PART, i++) {
 }
 rmSync(join(dir, 'main.wasm'));
 for (const f of SCRIPTS) renameSync(join(dir, f), join(dir, p, f));
+renameSync(join(dir, 'go-LICENSE'), join(dir, p, 'LICENSE'));
 
 const size = (b) => ({
   raw: b.length,

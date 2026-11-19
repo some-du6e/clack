@@ -37,8 +37,12 @@ on:
       - "assets/icon.svg"
       - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
-      # the web demo: Clack's Go side
+      # the web demo: Clack's Go side, and the licences it ships with
       - "cmd/clack-web/**"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
+      - "tools/licenses.py"
+      - "tools/check.mjs"
       - "internal/**"
       - "third_party/**"
       - "go.mod"
@@ -50,6 +54,10 @@ on:
       - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
       - "cmd/clack-web/**"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
+      - "tools/licenses.py"
+      - "tools/check.mjs"
       - "internal/**"
       - "third_party/**"
       - "go.mod"
@@ -216,7 +224,16 @@ jobs:
         run: |
           GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" -o site/dist/demo/main.wasm ./cmd/clack-web
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/dist/demo/
+          # wasm_exec.js's licence: demo-pack puts it beside it, p/<hash>/LICENSE
+          cp "$(go env GOROOT)/LICENSE" site/dist/demo/go-LICENSE
           node site/tools/demo-pack.mjs site/dist/demo "$(git rev-parse --short HEAD)" | tee -a "$GITHUB_STEP_SUMMARY"
+      # the licence texts of everything main.wasm links or embeds, Go's own
+      # (wasm_exec.js) first, beside LICENSE.txt and THIRD_PARTY_NOTICES.txt
+      - name: the demo's licence texts (tools/licenses.py)
+        run: |
+          python3 tools/licenses.py --target js/wasm -o site/dist/demo/THIRD_PARTY_LICENSES.txt \
+            --for "Clack's browser demo, getclack.club/demo/ (main.wasm and wasm_exec.js)" ./cmd/clack-web
+          sed -n '/^Contents$/,/^=====/p' site/dist/demo/THIRD_PARTY_LICENSES.txt | sed '$d'
       - name: static checks, with the demo
         working-directory: site
         run: node tools/check.mjs --production --pages --demo

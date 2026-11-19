@@ -23,8 +23,12 @@
 //     part it names under p/<hash>/, each at most 25 MiB (Cloudflare's
 //     static assets' limit), adding up to its size, the page's scripts
 //     under the same p/<hash>/, nothing left unhashed, build.json equal to
-//     the manifest, and _headers serving /demo/p/* immutable. It is also
-//     the deploy's guard (wrangler.jsonc's build command, npm run deploy)
+//     the manifest, and _headers serving /demo/p/* immutable; and the
+//     licences beside it: LICENSE.txt, THIRD_PARTY_NOTICES.txt, the
+//     licence texts the demo job writes (THIRD_PARTY_LICENSES.txt,
+//     tools/licenses.py) and Go's LICENSE beside wasm_exec.js, whose
+//     header points at it. It is also the deploy's guard (wrangler.jsonc's
+//     build command, npm run deploy)
 // Node built-ins only.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -44,9 +48,9 @@ const files = walk(dist);
 const pages = files.filter((f) => f.endsWith('.html'));
 if (!pages.includes('index.html')) err('no index.html');
 
-// the web demo's program, which the demo job adds: an unpacked page names
-// wasm_exec.js, which only it brings
-const DEMO_PROGRAM = ['demo/wasm_exec.js'];
+// what the demo job adds with the web demo's program: an unpacked page
+// names wasm_exec.js, and the pages link the licence texts it writes
+const DEMO_PROGRAM = ['demo/wasm_exec.js', 'demo/THIRD_PARTY_LICENSES.txt'];
 
 for (const page of pages) {
   const html = readFileSync(join(dist, page), 'utf8');
@@ -94,8 +98,9 @@ for (const page of pages) {
       if (u.startsWith('#') && u.length > 1 && !html.includes(`id="${u.slice(1)}"`)) err(`${page}: link to ${u}, which isn't on the page`);
       continue;
     }
-    const f = join(dist, dirname(page), u.split(/[?#]/)[0]);
-    if (!existsSync(f)) err(`${page}: link to ${u}, which is missing`);
+    const p = u.split(/[?#]/)[0];
+    if (!mode.demo && DEMO_PROGRAM.includes(normalize(join(dirname(page), p)))) continue; // the demo job's
+    if (!existsSync(join(dist, dirname(page), p))) err(`${page}: link to ${u}, which is missing`);
   }
 
   let eager = 0;
@@ -142,6 +147,13 @@ function demoProgram() {
   if (json !== m[1]) err('--demo: build.json differs from the manifest in demo/index.html');
   const headers = existsSync(join(dist, '_headers')) ? readFileSync(join(dist, '_headers'), 'utf8') : '';
   if (!/^\/demo\/p\/\*\n\s+Cache-Control: public, max-age=31536000, immutable$/m.test(headers)) err('--demo: _headers doesn\'t serve /demo/p/* immutable');
+  // the licences that go with it
+  const text = (f) => (existsSync(join(dist, f)) ? readFileSync(join(dist, f), 'utf8') : '');
+  if (!text('demo/LICENSE.txt').includes('MIT License')) err('--demo: demo/LICENSE.txt isn\'t Clack\'s licence');
+  if (!text('demo/THIRD_PARTY_NOTICES.txt').startsWith('# Third-party notices')) err('--demo: demo/THIRD_PARTY_NOTICES.txt is missing');
+  const lic = text('demo/THIRD_PARTY_LICENSES.txt');
+  if (!lic.startsWith('Third-party licences') || !/^1\. Go go1\.[\d.]+: the runtime and standard library, and wasm_exec\.js$/m.test(lic)) err('--demo: demo/THIRD_PARTY_LICENSES.txt is missing or isn\'t the js build\'s (tools/licenses.py --target js/wasm)');
+  if (!text(`demo/${p}/LICENSE`).includes('The Go Authors')) err(`--demo: Go's LICENSE isn't beside wasm_exec.js (demo/${p}/LICENSE)`);
 }
 
 // the heading font covers every character the headings show
