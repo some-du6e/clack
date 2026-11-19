@@ -108,22 +108,23 @@ func TestInspectReviewTiming(t *testing.T) {
 			e.click(pill)
 			capture("the reaction pill")
 
-			// a component widened with ↑ to most of the message pane
+			// a component widened with ↑ from the pill as far as it goes, or
+			// to a quarter of the window (an ancestor as big as the one
+			// inside it is a step too)
 			e.startSession(t)
-			_, r, _ := e.a.insp.Hovered()
-			for range 16 {
-				e.key(key.NameUpArrow, 0)
-				e.frame()
-				_, nr, ok := e.a.insp.Hovered()
-				if !ok || nr == r {
-					break
-				}
-				r = nr
+			label, r, _ := e.a.insp.Hovered()
+			for range 24 {
 				if r.Dx()*r.Dy()*4 >= e.size.X*e.size.Y {
 					break
 				}
+				e.key(key.NameUpArrow, 0)
+				e.frame()
+				nl, nr, ok := e.a.insp.Hovered()
+				if !ok || nl == label && nr == r {
+					break // the outermost
+				}
+				label, r = nl, nr
 			}
-			label, r, _ := e.a.insp.Hovered()
 			t.Logf("widened to %q %v", label, r)
 			e.click(pill)
 			capture("a component (" + label + ")")

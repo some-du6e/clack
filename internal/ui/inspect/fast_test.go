@@ -52,9 +52,11 @@ func TestReviewShotNextFrame(t *testing.T) {
 		shot := ShotSize(e.shots[0], e.ks[0])
 		if n := e.shownWithin(2); n == 0 {
 			t.Errorf("%gx: a %v px click's shot isn't drawn for review within 2 frames of the pick (%s)", sc, shot, e.hintNow())
+			e.untilShown() // how long it took after all: the line below
 		}
 		e.key(key.NameEscape, 0)
 		e.frame()
+		t.Logf("%gx: %s", sc, LastTimes())
 
 		e.tool.Toggle()
 		e.frame()
@@ -71,6 +73,7 @@ func TestReviewShotNextFrame(t *testing.T) {
 		shot = ShotSize(e.shots[1], e.ks[1])
 		if n := e.shownWithin(2); n == 0 {
 			t.Errorf("%gx: a %v px region isn't drawn for review within 2 frames of the release (%s)", sc, shot, e.hintNow())
+			e.untilShown()
 		}
 		e.key(key.NameEscape, 0)
 		e.frame()
@@ -91,6 +94,14 @@ func TestFreezeReviewShotNextFrame(t *testing.T) {
 	}
 	if n := e.shownWithin(2); n == 0 {
 		t.Errorf("the frozen frame's shot isn't drawn for review within 2 frames of the pick (%s)", e.hintNow())
+	}
+}
+
+// untilShown runs frames until the review draws its shot, 30 s at most.
+func (e *dragEnv) untilShown() {
+	for dl := time.Now().Add(30 * time.Second); !e.tool.ShotDrawn() && time.Now().Before(dl); {
+		time.Sleep(2 * time.Millisecond)
+		e.frame()
 	}
 }
 
