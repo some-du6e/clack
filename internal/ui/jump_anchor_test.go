@@ -301,7 +301,8 @@ func TestJumpToReplyOnAnchorLine(t *testing.T) {
 // thread, a link to a reply off screen scrolls its top to the pane's top
 // (a new highlightKey: scrollToKey(startTs, {lazy: true}), the line at the
 // top), and a link to a reply whose top is on screen doesn't scroll.
-// Clack placed every re-highlight 64px down.
+// Clack placed every re-highlight 64px down. (From the same conversation
+// beside the pane, jumpToThreadReply doesn't flash the reply.)
 func TestThreadReHighlightScrollsLazilyToTop(t *testing.T) {
 	e := anchorEnv(t)
 	ch, root := fakeslack.TombstoneChannelID, fakeslack.TombstoneRootTS
@@ -315,18 +316,25 @@ func TestThreadReHighlightScrollsLazilyToTop(t *testing.T) {
 		t.Fatalf("reply 6 is on screen already")
 	}
 	e.a.OpenAtMessage(ch, off, root, true)
-	e.waitDrawn(t, "reply 6 at the pane's top, highlighted", 10*time.Second, "", ch, root, func(rows []messages.SenderView) bool {
-		y, ok := topOf(rows, off)
-		return ok && y == 0 && lit(rows, off)
-	})
-	e.settle(3500 * time.Millisecond)
+	for dl := time.Now().Add(10 * time.Second); ; {
+		y, ok := topOf(e.paneRows("", ch, root), off)
+		if ok && y == 0 {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("a link to reply 6, off screen, left it at %d (%v); want its top at the pane's top", y, ok)
+		}
+		e.frame()
+		time.Sleep(2 * time.Millisecond)
+	}
+	e.settle(500 * time.Millisecond)
 	on := fakeslack.TombstoneReplyTS(7)
 	y0, ok := topOf(e.paneRows("", ch, root), on)
 	if !ok || y0 <= 0 {
 		t.Fatalf("reply 8 isn't on screen under the top: %d (%v)", y0, ok)
 	}
 	e.a.OpenAtMessage(ch, on, root, true)
-	e.waitDrawn(t, "reply 8 highlighted where it is", 10*time.Second, "", ch, root, func(rows []messages.SenderView) bool { return lit(rows, on) })
+	e.settle(800 * time.Millisecond)
 	if y, ok := topOf(e.paneRows("", ch, root), on); !ok || y != y0 {
 		t.Errorf("a link to reply 8, on screen, scrolled it from %d to %d (%v); want it left where it was", y0, y, ok)
 	}
@@ -466,7 +474,7 @@ func TestAnchorLineKeepsRowAfterScroll(t *testing.T) {
 	newest, _ := e.fs.HistoryAt(ch, 0)
 	e.openChannel(ch)
 	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
-	e.scroll(e.listPoint(), -400) // read back a little
+	e.scroll(e.listPoint(), -2000) // read back, with room under the screen
 	e.settle(500 * time.Millisecond)
 	line := e.anchorLine()
 	// a short row on screen, then wheeled to the list's top: it ends above

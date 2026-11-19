@@ -139,8 +139,9 @@ func TestHeldWindowsStay(t *testing.T) {
 	}
 	release()
 	release() // twice is fine
-	for i := maxWindows + 3; i <= maxWindows+4; i++ {
-		s.AddWindow(fmt.Sprintf("C%d", i), msgsAt(72, 128), tsAt(72), tsAt(127), true, true, 0)
+	// windows newer than C0's last use (the WindowAt above)
+	for i := 0; i < maxWindows; i++ {
+		s.AddWindow(fmt.Sprintf("D%d", i), msgsAt(72, 128), tsAt(72), tsAt(127), true, true, 0)
 	}
 	if _, ok := s.WindowAt("C0", tsAt(100)); ok {
 		t.Errorf("a released window outlived the cap")
