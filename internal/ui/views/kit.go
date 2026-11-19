@@ -337,6 +337,13 @@ type base struct {
 	// revision each message's patched view was last read for (viewMsg)
 	vers map[string]verMemo
 	vsrc map[string]viewRev
+	// vneed is the EmitSeq core had emitted when viewMsg first saw a
+	// message's current revision (JS's copy counts as that revision's once
+	// the mirror handled it); vdiff whether the message's last ready view
+	// changed its text (a plugin that rewrites it keeps its view while JS
+	// answers for an edit)
+	vneed map[string]uint64
+	vdiff map[string]bool
 	// rec, while a row is described (recording), notes the members it
 	// drew without a name (missing_member.go); reads (recordingReads)
 	// every member it looked up

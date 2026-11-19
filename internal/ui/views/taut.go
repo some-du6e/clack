@@ -38,6 +38,7 @@ type memoEntry struct {
 	mem taut.MemberFields
 	ch  taut.ChannelFields
 	msg core.Message
+	src bool // viewMsg: draw core's copy, JS's not yet of its revision
 }
 
 func (b *base) memo(key string) (*memoEntry, bool) {
@@ -119,6 +120,10 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 	key := m.Channel + "/" + m.TS
 	e, hit := b.memo("m:" + key)
 	if !hit {
+		fresh := false
+		if b.vsrc == nil || len(b.vsrc) > 4000 {
+			b.vsrc, b.vneed, b.vdiff = map[string]viewRev{}, map[string]uint64{}, map[string]bool{}
+		}
 		if rev := viewRevOf(m); b.vsrc[key] != rev {
 			// a new revision of the message: its view is converted again
 			// now, as the message lists' rows have it (applyView's
@@ -127,20 +132,34 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 			// is: a row hands over a fresh copy every frame (authorOf's
 			// override, a root's), which converted the plugins' message
 			// in every frame.
-			if b.vsrc == nil || len(b.vsrc) > 4000 {
-				b.vsrc = map[string]viewRev{}
-			}
 			b.vsrc[key] = rev
-			e.msg, e.ok = b.tt.MessageViewChanged(m.Channel, m.TS)
-		} else {
-			e.msg, e.ok = b.tt.MessageView(m.Channel, m.TS)
+			fresh = true
+			if c := b.h.Core(); c != nil {
+				b.vneed[key] = c.EmitSeq() // the event that brought it is no later
+			}
 		}
+		var ready bool
+		e.msg, _, ready, e.ok = b.tt.MessageViewState(m.Channel, m.TS, fresh, b.vneed[key])
 		// its reactions are core's, not the view's: Slack draws them from
 		// the reactions store by the message's reaction key, never from
 		// the messages slice (messages.applyView)
 		e.msg.Reactions = m.Reactions
+		e.src = false
+		switch {
+		case !e.ok:
+		case ready:
+			b.vdiff[key] = e.msg.Text != m.Text
+		case !b.vdiff[key]:
+			// JS's copy may be of the revision before, an edit it hasn't
+			// answered for: a message the plugins leave as it is draws
+			// core's new copy until JS's is of it, as the message lists'
+			// rows draw their new source (applyView's viewWait). Slack's
+			// Activity row reads the live message in the render after the
+			// edit; the view drew it a JS round trip later (three frames)
+			e.src = true
+		}
 	}
-	if !e.ok {
+	if !e.ok || e.src {
 		return m
 	}
 	return &e.msg
