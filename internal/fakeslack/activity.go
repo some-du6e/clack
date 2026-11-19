@@ -416,8 +416,15 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		out := map[string][]slack.Message{}
 		for _, w := range want {
 			for _, ts := range w.Timestamps {
+				found := false
 				for _, m := range activityMsgs {
 					if m.Channel == w.Channel && m.TS == ts {
+						out[w.Channel] = append(out[w.Channel], m)
+						found = true
+					}
+				}
+				if !found { // any message of the fake's, by ts, as Slack's: a live reply's too
+					if m, ok := s.messageByTS(w.Channel, ts); ok {
 						out[w.Channel] = append(out[w.Channel], m)
 					}
 				}
