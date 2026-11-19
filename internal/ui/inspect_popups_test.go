@@ -13,6 +13,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	"net/url"
 	"strings"
@@ -272,9 +273,10 @@ func TestInspectFreezeHoldsPopups(t *testing.T) {
 	fakeShots(t)
 	e := newInspectEnv(t)
 	e.startSession(t) // the pointer on the pill
-	// its tooltip up: ReactionTip's "reacted with" drawn
+	// its tooltip up: ReactionTip's "reacted with" drawn (word by word:
+	// flowTip)
 	dl := time.Now().Add(5 * time.Second)
-	for !drawnContains(frameStrings(e.perfEnv), "reacted with") {
+	for !drawnContains(frameStrings(e.perfEnv), "reacted") {
 		if time.Now().After(dl) {
 			t.Fatal("the pill's who-reacted tooltip never showed in the session")
 		}
@@ -288,15 +290,18 @@ func TestInspectFreezeHoldsPopups(t *testing.T) {
 	pill := e.pill.R
 	var at image.Point
 	found := ""
+	var seen []string
 	for dy := 10; dy <= 160 && found == ""; dy += 5 {
 		p := image.Pt(pill.Min.X+pill.Dx()/2, pill.Min.Y-dy)
-		if label, _, ok := e.hoverAt(p); ok && strings.Contains(label, "c-tooltip__tip") {
+		label, r, ok := e.hoverAt(p)
+		if ok && strings.Contains(label, "c-tooltip__tip") {
 			at, found = p, label
+		} else if dy%20 == 10 {
+			seen = append(seen, fmt.Sprintf("%dpx: %q %v", dy, label, r))
 		}
 	}
 	if found == "" {
-		label, r, _ := e.hoverAt(image.Pt(pill.Min.X+pill.Dx()/2, pill.Min.Y-30))
-		t.Fatalf("frozen with the pill's tooltip up: no tooltip outlined above the pill %v (30px above it: %q %v)", pill, label, r)
+		t.Fatalf("frozen with the pill's tooltip up: no tooltip outlined above the pill %v; outlined above it: %s", pill, strings.Join(seen, "; "))
 	}
 	if !e.a.insp.Frozen() {
 		t.Fatal("the freeze ended while the pointer moved")
