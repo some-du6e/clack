@@ -11,7 +11,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/inspect"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -303,7 +305,60 @@ func (h inspectHost) Regions() []inspect.Region {
 	if !a.split.col.Empty() {
 		out = append(out, inspect.Region{Name: "split view", Rect: a.split.col})
 	}
+	// the popups over the shell, bottom first: where the pointer is over
+	// one, it is the region (what a dragged region takes in, and what the
+	// picker outlines where nothing of the popup's was recorded)
+	for _, o := range a.overlays {
+		if o == nil || o.Dismissed() || invisible(o) {
+			continue
+		}
+		if rr, ok := o.(interface{ Rect() image.Rectangle }); ok {
+			if r := rr.Rect(); !r.Empty() {
+				out = append(out, inspect.Region{Name: overlayLayerName(o), Rect: r})
+			}
+		}
+	}
 	return out
+}
+
+// overlayLayerName names overlay o for the inspect tool, as the region a
+// pick in it reports: what it is ("menu", "modal", "popover", "emoji
+// picker" …) and its Go type, as the report's overlays row names it
+// ("menu (popups.Menu)", "modal (blockkit.Stack)").
+func overlayLayerName(o Overlay) string {
+	typ := strings.TrimPrefix(fmt.Sprintf("%T", o), "*")
+	return overlayRole(o, typ) + " (" + typ + ")"
+}
+
+func overlayRole(o Overlay, typ string) string {
+	switch o.(type) {
+	case *popups.EmojiPicker:
+		return "emoji picker"
+	case *popups.ProfileCard:
+		return "profile card"
+	case *popups.Menu:
+		return "menu"
+	case *popups.Popover:
+		return "popover"
+	case *popups.Modal, *blockkit.Stack:
+		return "modal"
+	}
+	name := typ[strings.LastIndex(typ, ".")+1:]
+	switch {
+	case strings.Contains(name, "Modal"), strings.Contains(name, "Dialog"):
+		return "modal"
+	case strings.Contains(name, "Menu"):
+		return "menu"
+	case strings.Contains(name, "Picker"):
+		return "picker"
+	case strings.Contains(name, "Card"):
+		return "card"
+	case strings.Contains(name, "Popover"), strings.Contains(name, "Peek"):
+		return "popover"
+	case strings.Contains(name, "Lightbox"):
+		return "lightbox"
+	}
+	return "overlay"
 }
 
 // Describer reads the report's window and page fields now (a frozen

@@ -450,7 +450,9 @@ func (s *Surface) Layout(gtx C) D {
 		s.curY = y
 		at(gtx, image.Pt(0, y), func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+			bm := bkBlockClass.Inspect(blockMods(b.Type, i == 0)) // Slack's block wrapper, for the inspect tool
 			bh = s.block(gtx, b, i, w, st)
+			bm.End(gtx, image.Pt(w, bh))
 			return D{}
 		})
 		y += bh

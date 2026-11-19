@@ -60,11 +60,19 @@ const minMark = 4
 
 // startReview shows c's shot for blurring (UI goroutine, from
 // AfterFrame).
+// The shot as the copy shows it is made here, at once: the next frame
+// draws the review with it (Karim, 2026-11-18: "this shit takes to long
+// between a selection and the blur page"). Its margin's blur (paintShot,
+// blurOutside) computes only the margin, over the CPUs: milliseconds for
+// a 3200x2000 px shot that took the old whole-shot blur over a second.
+// The rects marked afterwards are blurred off the UI goroutine (redraw).
 func (t *Tool) startReview(c *capture, shot *image.RGBA) {
 	t.release()
 	r := &review{c: c, shot: shot, started: time.Now()}
+	img := shownImage(shot, nil, c.elem, c.scale*c.k)
+	r.shown, r.ready = paint.NewImageOp(img), true
+	c.tm.shown = time.Since(r.started)
 	t.state, t.rev = reviewing, r
-	t.redraw(r)
 	t.host.Invalidate()
 }
 
@@ -75,8 +83,7 @@ func (t *Tool) redraw(r *review) {
 	marks := append([]image.Rectangle(nil), r.marks...)
 	shot, elem, scale, h := r.shot, r.c.elem, r.c.scale*r.c.k, t.host
 	go func() {
-		img := image.NewRGBA(shot.Bounds())
-		paintShot(img, shot.Bounds().Min, Redacted(shot, marks, scale), elem, scale)
+		img := shownImage(shot, marks, elem, scale)
 		h.Post(func() {
 			if t.rev != r || v < r.shownV {
 				return

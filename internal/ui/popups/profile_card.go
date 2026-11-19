@@ -260,6 +260,7 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 			call.Add(gtx.Ops)
 			cs.Pop()
 		})
+		slackc.InspectCard(gtx, p.rect) // the inspect tool: the card is the popup's box
 	}
 	st.Leave()
 	if !p.hover {

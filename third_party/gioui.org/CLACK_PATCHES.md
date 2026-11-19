@@ -54,7 +54,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
 `io/input/clack_inputidle_test.go`,
 `io/input/clack_reset.go`, `io/input/clack_reset_test.go`,
-`gesture/clack_reset_test.go` and
+`gesture/clack_reset_test.go`, `gpu/headless/clack_size.go`,
+`gpu/headless/clack_size_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2386,3 +2387,24 @@ Enter and a its Leave. `gesture/clack_reset_test.go`
 `TestResetPointersClearsBodyHover`, slackc's `TestResetPointersLeavesTree`
 and `internal/ui`'s `TestInspectFreezeResetsHover`. On ci's linux-gio,
 windows-applog and macos jobs. Not in `UPSTREAM.patch`.
+
+## 52. gpu/headless: a window's framebuffer takes a new size
+
+`gpu/headless/clack_size.go` (new: `Window.SetSize`).
+
+A headless window had one size for its life: its framebuffer texture
+was made with it. Clack's inspect tool renders one shot per pick, each
+its own size, and made a window (a context, a device and a GPU) for
+every shot: 4 to 35 ms on WARP and llvmpipe, 1.2 s for the first in a
+process on llvmpipe (its shaders compiled), with its glyph paths and
+images uploaded afresh every time. `SetSize(width, height)` makes a
+framebuffer texture of that size on the window's device and lets the old
+one go; the context, the device and the GPU, with its caches, stay. A
+session of the tool keeps one window and gives it each shot's size
+(`internal/ui/inspect` shooter.go).
+
+Tests: `gpu/headless/clack_size_test.go` (`TestClackSetSize`: frames of
+three sizes through one window are pixel for pixel what new windows of
+those sizes draw, on the same GPU; an empty size is refused), on ci's
+linux-gio (llvmpipe), windows-applog (WARP) and macos (Metal) jobs. Not
+in `UPSTREAM.patch`.

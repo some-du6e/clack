@@ -158,6 +158,8 @@ type Tool struct {
 	// the last press of FreezeKey and of Esc while it's down (repeat)
 	freezeDown, escDown time.Time
 	frameN              int // frames whose input was read (a capture's stage times count them)
+	// afterPick are the frame's keys held for after its release (readKeys)
+	afterPick []key.Event
 
 	// content is what the last laid-out frame drew, the tool's own
 	// drawing left out (End), and contentOK that it is the frame on
@@ -248,6 +250,9 @@ func (t *Tool) start() {
 	t.hover, t.up, t.rec, t.pend, t.capture, t.rev = nil, 0, false, nil, nil, nil
 	t.frames[0].Nodes, t.frames[1].Nodes = t.frames[0].Nodes[:0], t.frames[1].Nodes[:0]
 	core.ObserveExperiments(observeExperiment)
+	if ownShoot() {
+		shots.setWanted(true) // the shots' GPU, ready for the first pick (shooter.go)
+	}
 }
 
 func (t *Tool) stop() {
@@ -256,6 +261,9 @@ func (t *Tool) stop() {
 	t.contentOK = false
 	t.unfreeze()
 	t.release()
+	if ownShoot() {
+		shots.setWanted(false)
+	}
 }
 
 // release stops recording frames: no outline, no experiments observed,
@@ -342,7 +350,8 @@ func (t *Tool) input(gtx layout.Context) {
 	}
 	last := &t.frames[t.cur] // the frame before recorded into frames[cur]
 	in := t.readPointer(gtx)
-	t.readKeys(gtx)
+	t.readKeys(gtx, in.released)
+	defer t.pickKeys(gtx) // the keys after this frame's release, once it's known what it picked
 	switch t.state {
 	case off, reviewing:
 		return
@@ -639,7 +648,13 @@ func (t *Tool) SeedPointer(p image.Point) {
 	t.ptrIn = true
 }
 
-func (t *Tool) readKeys(gtx layout.Context) {
+// readKeys reads the frame's key presses. In a frame whose pointer events
+// released the button (released: a pick or a region, maybe), Esc, Enter,
+// Mod+C and the shortcut wait for the release to be read (pickKeys): they
+// came after it, and act on its capture. Keys come after the pointer's
+// events in a frame (Gio's order), and anyone fast enough to press one
+// before the capture's frame was drawn means the capture.
+func (t *Tool) readKeys(gtx layout.Context, released bool) {
 	for {
 		e, ok := gtx.Event(t.keyFilters()...)
 		if !ok {
@@ -649,33 +664,83 @@ func (t *Tool) readKeys(gtx layout.Context) {
 		if !ok || t.repeat(ke) || ke.State != key.Press {
 			continue
 		}
+		if released && t.state != reviewing && (ke.Name == key.NameEscape || enterKey(ke) || comboPress(t.combo, ke)) {
+			t.afterPick = append(t.afterPick, ke)
+			continue
+		}
+		t.key(gtx, ke)
+	}
+}
+
+// enterKey is Enter, Return or Mod+C: what copies in the review.
+func enterKey(ke key.Event) bool {
+	return ke.Name == key.NameReturn || ke.Name == key.NameEnter || ke.Modifiers.Contain(key.ModShortcut) && ke.Name == "C"
+}
+
+// pickKeys acts on the keys readKeys held for after this frame's release:
+// with a capture waiting for its shot, Enter copies it as soon as it's
+// shot, with no review (AfterFrame: the image the review's Enter copies
+// with nothing marked), and Esc or the shortcut drop it before anything is
+// shot, as the review's do; with none, they act as ever.
+func (t *Tool) pickKeys(gtx layout.Context) {
+	keys := t.afterPick
+	t.afterPick = t.afterPick[:0]
+	for _, ke := range keys {
 		switch {
-		case t.state == reviewing:
-			t.reviewKey(ke)
-		case t.state == picked:
-			// the shot comes at this frame's end: the review takes keys
-		case comboPress(t.combo, ke):
-			t.stop()
-		case ke.Name == key.NameEscape && (t.state == dragging || t.state == pressing):
-			t.backToInspecting() // only the drag or the press; its release is ignored
-		case ke.Name == key.NameEscape && t.fz != nil && t.state == inspecting:
-			t.unfreeze() // the session goes on; Esc again ends it
-		case ke.Name == key.NameEscape:
-			t.stop()
-		case t.state != inspecting:
-		case ke.Name == FreezeKey: // its filter takes no modifier
-			if t.fz != nil {
-				t.unfreeze()
-			} else if !t.freeze(gtx) {
-				t.host.Toast("Inspect: nothing to freeze yet, try again")
-			}
-		case ke.Name == key.NameUpArrow:
-			t.up++
-		case ke.Name == key.NameDownArrow:
-			t.up = max(t.up-1, 0)
+		case t.state == picked && t.capture != nil && enterKey(ke):
+			t.capture.copyNow = true
+			t.capture.tm.kind += " (Enter in its frame)"
+		case t.state == picked && t.capture != nil:
+			t.cancelPick()
+		default:
+			t.key(gtx, ke)
 		}
 		t.host.Invalidate()
 	}
+}
+
+// cancelPick drops the capture whose frame isn't shot yet (Esc or the
+// shortcut in the pick's own frame): nothing shot, saved or copied, and
+// the session over, as the review's Esc leaves it.
+func (t *Tool) cancelPick() {
+	c := t.capture
+	t.capture = nil
+	if c != nil {
+		c.tm.outcome = "dropped before its shot"
+		logTimes(c)
+	}
+	t.stop()
+	t.host.Toast("Inspect report discarded: nothing copied")
+}
+
+// key acts on one key press.
+func (t *Tool) key(gtx layout.Context, ke key.Event) {
+	switch {
+	case t.state == reviewing:
+		t.reviewKey(ke)
+	case t.state == picked:
+		// the shot comes at this frame's end: the review takes keys
+	case comboPress(t.combo, ke):
+		t.stop()
+	case ke.Name == key.NameEscape && (t.state == dragging || t.state == pressing):
+		t.backToInspecting() // only the drag or the press; its release is ignored
+	case ke.Name == key.NameEscape && t.fz != nil && t.state == inspecting:
+		t.unfreeze() // the session goes on; Esc again ends it
+	case ke.Name == key.NameEscape:
+		t.stop()
+	case t.state != inspecting:
+	case ke.Name == FreezeKey: // its filter takes no modifier
+		if t.fz != nil {
+			t.unfreeze()
+		} else if !t.freeze(gtx) {
+			t.host.Toast("Inspect: nothing to freeze yet, try again")
+		}
+	case ke.Name == key.NameUpArrow:
+		t.up++
+	case ke.Name == key.NameDownArrow:
+		t.up = max(t.up-1, 0)
+	}
+	t.host.Invalidate()
 }
 
 // pickFrom chooses what the pointer is over among the last frame's hits:
@@ -706,7 +771,7 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 			}
 			continue
 		}
-		best = max(best, h.Node) // a component, or an element with a size
+		best = max(best, h.Node) // a component, an element with a size, or a popup's layer
 	}
 	if p.tree >= 0 && best < p.tree {
 		// the tree was drawn after the natives inside it: one of them
@@ -764,7 +829,22 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	if p.label == "" {
 		p.label = t.labelFor(f, node)
 	}
+	if l := layerOf(f, node); l != "" {
+		p.region = l // a popup's (slackc.InspectOverlay): not the window's area under it
+	}
 	return p
+}
+
+// layerOf is the name of the innermost popup layer node i is drawn in
+// (slackc.InspectLayer: an overlay, a submenu, a tooltip), "" for the
+// window's own.
+func layerOf(f *slackc.InspectFrame, i int) string {
+	for _, j := range f.Chain(i) {
+		if n := &f.Nodes[j]; n.Kind == slackc.InspectLayer {
+			return n.Name
+		}
+	}
+	return ""
 }
 
 // treeBox is the innermost box of a plugin tree under the pointer, to
@@ -825,8 +905,11 @@ func descends(f *slackc.InspectFrame, i, anc int) bool {
 // the element.
 func (t *Tool) labelFor(f *slackc.InspectFrame, i int) string {
 	n := &f.Nodes[i]
-	if n.Kind == slackc.InspectElement {
+	switch n.Kind {
+	case slackc.InspectElement:
 		return selector(n, nil, 3)
+	case slackc.InspectLayer:
+		return n.Name
 	}
 	s := n.Name
 	if el := rootElement(f, i); el >= 0 {

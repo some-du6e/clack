@@ -14,6 +14,7 @@ import (
 	gtext "gioui.org/text"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -173,6 +174,7 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 			call.Add(gtx.Ops)
 			cs.Pop()
 		})
+		slackc.InspectCard(gtx, image.Rectangle{Min: pos, Max: pos.Add(d.Size)}) // the inspect tool: the card is the popover's box
 	}
 	return layout.Dimensions{Size: win}
 }

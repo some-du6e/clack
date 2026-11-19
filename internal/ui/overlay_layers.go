@@ -47,6 +47,13 @@ func peeking(o Overlay) bool {
 // drawOverlay lays out overlay o as a layer: inside its area, so a focus
 // in it is in the layer, with its focus home when it has one.
 func (a *App) drawOverlay(gtx layout.Context, o Overlay) {
+	// a layer of the inspect tool's record too: what o draws reports o as
+	// its region, and its card is its box (slackc.InspectCard)
+	var lm slackc.InspectMark
+	if slackc.Inspecting() && !invisible(o) {
+		lm = slackc.InspectOverlay(overlayLayerName(o))
+	}
+	defer lm.EndCard(gtx)
 	if invisible(o) || peeking(o) || !reflect.TypeOf(o).Comparable() {
 		o.Layout(gtx)
 		return

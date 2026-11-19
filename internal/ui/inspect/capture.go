@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"gioui.org/f32"
-	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
 
@@ -46,43 +44,20 @@ type capture struct {
 	k       float32
 
 	tm capTimes // its stages (timing.go)
+	// copyNow: Enter came in the pick's own frame (pickKeys): copied as
+	// soon as it's shot, with no review
+	copyNow bool
 }
 
 // Shoot renders the part of a frame in region (window px), each px of it
 // drawn as k: a ShotSize(region, k) image. frame is the frame's ops as
 // one call (Gio patch 31, Ops.Whole). The window's GPU can't read its
-// frames back, so the ops go once more through a headless GPU context (a
-// Metal device, D3D11, EGL), under a transform that scales the region up
-// and moves it to the origin; paths and glyph outlines are vectors, so
-// the region comes out as sharp as a window k times as dense. Tests
-// replace it.
-var Shoot = func(frame op.CallOp, region image.Rectangle, k float32) (*image.RGBA, error) {
-	size := ShotSize(region, k)
-	if size.X <= 0 || size.Y <= 0 {
-		return nil, errors.New("empty region")
-	}
-	t0 := time.Now()
-	w, err := headless.NewWindow(size.X, size.Y)
-	if err != nil {
-		return nil, err
-	}
-	defer w.Release()
-	t1 := time.Now()
-	var o op.Ops
-	tr := op.Affine(f32.AffineId().Offset(f32.Pt(-float32(region.Min.X), -float32(region.Min.Y))).Scale(f32.Point{}, f32.Pt(k, k))).Push(&o)
-	frame.Add(&o)
-	tr.Pop()
-	if err := w.Frame(&o); err != nil {
-		return nil, err
-	}
-	t2 := time.Now()
-	img := image.NewRGBA(image.Rectangle{Max: size})
-	if err := w.Screenshot(img); err != nil {
-		return nil, err
-	}
-	lastShot = shotTimes{gpu: t1.Sub(t0), render: t2.Sub(t1), read: time.Since(t2)}
-	return img, nil
-}
+// frames back, so the ops go once more through a headless GPU (a Metal
+// device, D3D11, EGL; the session's, shooter.go), under a transform that
+// scales the region up and moves it to the origin; paths and glyph
+// outlines are vectors, so the region comes out as sharp as a window k
+// times as dense. Tests replace it.
+var Shoot = shootHeadless
 
 // ShotSize is the size of Shoot's image of region at k.
 func ShotSize(region image.Rectangle, k float32) image.Point {
@@ -232,6 +207,9 @@ func (t *Tool) fill(r *Report, red *Redactor, p *pick) {
 	propsRead := 0
 	for _, i := range f.Chain(node) {
 		n := &f.Nodes[i]
+		if n.Kind == slackc.InspectLayer {
+			break // a popup's: what's around its layer is the window under it
+		}
 		switch n.Kind {
 		case slackc.InspectComponent:
 			if r.Component == "" {
@@ -385,7 +363,7 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	// the middle of the pointer's px
 	c.ptrShot = image.Pt(int((float32(c.ptr.X-crop.Min.X)+.5)*k), int((float32(c.ptr.Y-crop.Min.Y)+.5)*k))
 	c.k = k
-	if !c.region && !c.review {
+	if !c.region && !c.review || c.copyNow {
 		t.stop()
 		t.deliver(c, img, nil)
 		return
