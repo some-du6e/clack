@@ -154,7 +154,7 @@ const (
 	tButton
 	tCard       // whole-card click (opens URL)
 	tExpand     // attachment "Show more" / "Show less" (id: attachment number)
-	tCollapse   // image block's hide / show toggle (img: the image)
+	tCollapse   // image block's or call card's hide / show toggle (img: the image, call: the call)
 	tRemove     // an unfurl's remove button (id: the attachment id)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
@@ -173,6 +173,7 @@ type target struct {
 	url  string
 	id   string
 	img  *richtext.Image
+	call *richtext.CallCard // tCollapse: a call card's toggle (call.go)
 	file *richtext.File
 	btn  *richtext.Button
 	// underline on hover (links)
@@ -471,8 +472,9 @@ type lay struct {
 	// expandKey, when set, is the section whose "Show more" is being laid
 	// out (its key in kitExpanded).
 	expandKey string
-	// collapsed holds the image blocks hidden with their toggle (View state).
-	collapsed map[*richtext.Image]bool
+	// collapsed holds the image blocks and call cards hidden with their
+	// toggle (View state).
+	collapsed map[any]bool
 	// playing holds the stills the viewer played (View state, animated.go);
 	// noAnim: Accessibility > "Allow animations" is off
 	playing map[string]bool

@@ -110,3 +110,33 @@ func TestConditionBlocks(t *testing.T) {
 	}
 	eq(t, "attachment", got, []Block{secB("in attachment")})
 }
+
+// Table cells: Slack's TableBlock (bx/I) renders raw_text, cell_text and
+// raw_number cells by their text.
+func TestTableTextCells(t *testing.T) {
+	d := blocksMsg(t, `[{"type":"table","rows":[
+		[{"type":"raw_text","text":"Item"},{"type":"raw_text","text":"Count"}],
+		[{"type":"cell_text","text":"apples"},{"type":"raw_number","value":42,"text":"42"}],
+		[{"type":"raw_text","text":"pears"},{"type":"raw_number","value":1234.5,"text":"1,234.5"}]]}]`)
+	if len(d.Blocks) != 1 || d.Blocks[0].Kind != Table {
+		t.Fatalf("blocks: %s", dump(d.Blocks))
+	}
+	eq(t, "cells", d.Blocks[0].Rows, [][][]Span{
+		{{tx("Item")}, {tx("Count")}},
+		{{tx("apples")}, {tx("42")}},
+		{{tx("pears")}, {tx("1,234.5")}},
+	})
+}
+
+// An inline element Slack's renderer has no component for is
+// UnknownElement (Dvg3): a link to its url when it has one, else its
+// text, else nothing.
+func TestUnknownInlineElement(t *testing.T) {
+	d := blocksMsg(t, `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[
+		{"type":"text","text":"a "},{"type":"future_thing","text":"linked","url":"https://f.test/x"},
+		{"type":"text","text":" b "},{"type":"future_thing","url":"https://f.test/bare"},
+		{"type":"text","text":" c "},{"type":"future_thing","text":"plain"},
+		{"type":"text","text":" d"},{"type":"future_thing"}]}]}]`)
+	eq(t, "unknown inline", d.Blocks, []Block{para(tx("a "), lk("linked", "https://f.test/x"), tx(" b "),
+		lk("https://f.test/bare", "https://f.test/bare"), tx(" c "), tx("plain"), tx(" d"))})
+}

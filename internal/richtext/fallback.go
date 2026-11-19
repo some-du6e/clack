@@ -72,11 +72,13 @@ func isPayloadItem(raw json.RawMessage) bool {
 // resolveFallback draws b, a block without a renderable, the way Q5CE's
 // resolveFallback does: its fallback list's payload items (others are
 // skipped, and an empty list draws nothing), its single payload item, or
-// the UnsupportedBlockFallback card.
+// the UnsupportedBlockFallback card. Child blocks (a callout's, a
+// container's) render through createRenderBlocks with no fallback
+// component, so there the last resort is nothing.
 func (c *builder) resolveFallback(out []Block, b *bk) []Block {
 	raw := b.Fallback.raw
 	if c.depth >= maxFallbackDepth {
-		return append(out, unknownCard())
+		return c.lastResort(out)
 	}
 	c.depth++
 	defer func() { c.depth-- }()
@@ -84,7 +86,7 @@ func (c *builder) resolveFallback(out []Block, b *bk) []Block {
 	case len(raw) > 0 && raw[0] == '[':
 		var parts []json.RawMessage
 		if json.Unmarshal(raw, &parts) != nil {
-			return append(out, unknownCard())
+			return c.lastResort(out)
 		}
 		var items []bk
 		for _, p := range parts {
@@ -97,7 +99,23 @@ func (c *builder) resolveFallback(out []Block, b *bk) []Block {
 	case isPayloadItem(raw):
 		return append(out, c.blocks([]bk{decodeBlock(raw)})...)
 	}
+	return c.lastResort(out)
+}
+
+// lastResort is resolveFallback's fallback component: the card at the
+// top level, nothing among child blocks.
+func (c *builder) lastResort(out []Block) []Block {
+	if c.nested > 0 {
+		return out
+	}
 	return append(out, unknownCard())
+}
+
+// children converts a block's child blocks (renderBlocks).
+func (c *builder) children(bs []bk) []Block {
+	c.nested++
+	defer func() { c.nested-- }()
+	return c.blocks(bs)
 }
 
 // decodeBlock decodes one block; one that doesn't decode is badBlock

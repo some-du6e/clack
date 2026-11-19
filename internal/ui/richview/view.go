@@ -121,8 +121,9 @@ type View struct {
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
 	expanded map[*richtext.Attachment]bool
-	// collapsed: image blocks hidden with their title-row toggle
-	collapsed map[*richtext.Image]bool
+	// collapsed: image blocks hidden with their title-row toggle, call
+	// cards with theirs (keys *richtext.Image, *richtext.CallCard)
+	collapsed map[any]bool
 	redraw    bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
@@ -541,7 +542,7 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
 	if v.collapsed == nil {
-		v.collapsed = map[*richtext.Image]bool{}
+		v.collapsed = map[any]bool{}
 	}
 	if v.playing == nil {
 		v.playing = map[string]bool{}
@@ -1619,8 +1620,12 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})
 		}
 	case tCollapse:
-		if tg.img != nil && v.collapsed != nil {
-			v.collapsed[tg.img] = !v.collapsed[tg.img]
+		var k any = tg.img
+		if tg.call != nil {
+			k = tg.call
+		}
+		if (tg.img != nil || tg.call != nil) && v.collapsed != nil {
+			v.collapsed[k] = !v.collapsed[k]
 			v.dirty = true
 			v.redraw = true
 		}

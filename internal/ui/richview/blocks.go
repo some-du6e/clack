@@ -87,6 +87,8 @@ func isTextual(k richtext.BlockKind) bool {
 //	actions       elements 8px top, block 8px bottom
 //	table         padding 4px 0 (tableMargin)
 //	error         0 0 6px             ("This content could not be displayed.")
+//	alert         8px 0               (kept on the first block)
+//	call, callout, loading            none of their own
 //
 // rich_text has none of its own; its quotes and pre blocks keep their 4px.
 func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
@@ -96,6 +98,17 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 			return l.dp(4), 0, l.dp(4)
 		case richtext.FileBlock, richtext.AttachmentBlock:
 			return l.dp(4), 0, l.dp(8)
+		case richtext.RichHeader: // .p-rich_text_header{margin:1em 0 4px}, none above the block's first
+			top := l.dp(15)
+			if b.Level == 1 {
+				top = l.dp(18)
+			}
+			if b.First {
+				top = 0
+			}
+			return top, top, l.dp(4)
+		case richtext.RichDivider: // .p-rich_text_divider{margin:8px 0}
+			return l.dp(8), l.dp(8), l.dp(8)
 		}
 		return 0, 0, 0
 	}
@@ -114,12 +127,20 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return 0, 0, l.dp(6)
 	case richtext.UnknownBlock:
 		return l.dp(8), 0, l.dp(8)
+	case richtext.AlertBlock: // .alertBlock (kitcards.go); the first block keeps it
+		return l.dp(8), l.dp(8), l.dp(8)
 	}
-	return 0, 0, 0
+	return 0, 0, 0 // call, callout, loading: no margins of their own
 }
 
 // gapBetween is the vertical space between two consecutive blocks.
 func (l *lay) gapBetween(prev, cur *richtext.Block) int {
+	if !prev.Kit && !cur.Kit && (richMargined(prev.Kind) || richMargined(cur.Kind)) {
+		// siblings in one rich_text block: their margins collapse
+		_, _, b := l.margins(prev)
+		t, _, _ := l.margins(cur)
+		return max(b, t)
+	}
 	if prev.Kit || cur.Kit {
 		_, _, b := l.margins(prev)
 		t, _, _ := l.margins(cur)
@@ -142,11 +163,17 @@ func (l *lay) gap(prev, cur richtext.BlockKind) int {
 	return l.dp(4)
 }
 
+// richMargined is a rich_text element with margins of its own (a header,
+// a divider).
+func richMargined(k richtext.BlockKind) bool {
+	return k == richtext.RichHeader || k == richtext.RichDivider
+}
+
 // lastTextual returns the index of the block that gets the "(edited)" label.
 func lastTextual(bs []richtext.Block) int {
 	for i := len(bs) - 1; i >= 0; i-- {
 		switch bs[i].Kind {
-		case richtext.Paragraph, richtext.Quote, richtext.List, richtext.Section, richtext.Header, richtext.Preformatted:
+		case richtext.Paragraph, richtext.Quote, richtext.List, richtext.Section, richtext.Header, richtext.Preformatted, richtext.RichHeader:
 			if len(bs[i].Children) > 0 {
 				return -1
 			}
@@ -189,7 +216,7 @@ func editedPlace(bs []richtext.Block) (in, after int) {
 	}
 	switch b := &bs[last]; {
 	case b.Kit:
-	case b.Kind == richtext.Paragraph || b.Kind == richtext.Quote || b.Kind == richtext.List || b.Kind == richtext.Preformatted:
+	case b.Kind == richtext.Paragraph || b.Kind == richtext.Quote || b.Kind == richtext.List || b.Kind == richtext.Preformatted || b.Kind == richtext.RichHeader:
 		if len(b.Children) == 0 {
 			return last, -1
 		}
@@ -291,7 +318,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	}
 	editedDone := false
 	var gal []*richtext.File
-	if top && len(bs) > 0 && bs[0].Kit {
+	if top && len(bs) > 0 && (bs[0].Kit || richMargined(bs[0].Kind)) {
 		_, first, _ := l.margins(&bs[0])
 		y += first
 	}
@@ -432,7 +459,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		h, _ := l.flow(x, y, w, &fs)
 		y += h
 	}
-	if top && len(bs) > 0 && bs[len(bs)-1].Kit && !(editedDone && editedAfter == len(bs)-1) {
+	if top && len(bs) > 0 && (bs[len(bs)-1].Kit || richMargined(bs[len(bs)-1].Kind)) && !(editedDone && editedAfter == len(bs)-1) {
 		_, _, bottom := l.margins(&bs[len(bs)-1])
 		y += bottom
 	}
@@ -566,6 +593,28 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		h, _ := l.flow(x, y, w, &fs)
 		return h
 
+	case richtext.RichHeader:
+		// .p-rich_text_header--level_1 18px/1.33334 black, --level_2
+		// 15px/1.46668 black, --level_3 15px/1.46668 bold
+		fs := l.bodyStyle()
+		fs.face.Weight = font.Black
+		switch b.Level {
+		case 1:
+			fs.size, fs.lineH = l.sp(18), l.dp(24)
+		case 3, 4:
+			fs.face.Weight = font.Bold
+		}
+		l.addSpans(b.Spans, &fs)
+		if edited {
+			l.addEdited()
+		}
+		h, _ := l.flow(x, y, w, &fs)
+		return h
+
+	case richtext.RichDivider: // its margins are the element's (margins)
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, y, x+w, y+l.dp(1)), fill: p.Divider, target: -1})
+		return l.dp(1)
+
 	case richtext.Divider:
 		m := l.dp(8)
 		if b.Kit { // the margins are the block's (margins)
@@ -627,6 +676,18 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 
 	case richtext.Agent:
 		return l.agent(b, x, y, w)
+
+	case richtext.CallBlock:
+		return l.callCard(b.Call, x, y, w)
+
+	case richtext.AlertBlock:
+		return l.alert(b, x, y, w)
+
+	case richtext.CalloutBlock:
+		return l.callout(b, x, y, w)
+
+	case richtext.LoadingBlock:
+		return l.loading(x, y)
 
 	case richtext.Table:
 		return l.table(b, x, y, w)

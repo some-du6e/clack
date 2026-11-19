@@ -84,19 +84,12 @@ type bk struct {
 	FileID     string   `json:"file_id"`
 	Source     string   `json:"source"`
 	Expand     bool     `json:"expand"` // section: never truncate
-	Level      int      `json:"level"`  // header: 1–4 (Slack's Header: p-header_block--level_N)
+	Level      bkLevel  `json:"level"`  // header: 1–4 (Slack's Header: p-header_block--level_N); alert: a severity (kitcards.go)
 	CallID     string   `json:"call_id"`
-	Call       *struct {
-		V1 struct {
-			Name        string `json:"name"`
-			JoinURL     string `json:"join_url"`
-			DateStart   int64  `json:"date_start"`
-			DateEnd     int64  `json:"date_end"`
-			AppIconURLs struct {
-				Image32 string `json:"image_32"`
-			} `json:"app_icon_urls"`
-		} `json:"v1"`
-	} `json:"call"`
+	Call       *bkCall  `json:"call"` // call.go
+	// callout (kitcards.go)
+	ChildBlocks     []bk   `json:"child_blocks"`
+	BackgroundColor string `json:"background_color"`
 
 	bkWorkflow // workflow_mention (workflow_mention.go)
 }
@@ -180,8 +173,9 @@ type builder struct {
 	chID   string                 // the message's channel (tabslug.go: a slug to its own tab is the tab alone)
 	// msgCh and msgTS are the message (its files' expandables)
 	msgCh, msgTS string
-	// depth is how deep resolveFallback is in fallbacks (fallback.go)
-	depth int
+	// depth is how deep resolveFallback is in fallbacks, nested how deep
+	// in child blocks (fallback.go)
+	depth, nested int
 }
 
 func parseBlocks(raw json.RawMessage) []bk {
@@ -354,7 +348,8 @@ func (c *builder) blocks(bs []bk) []Block {
 // with Slack's p-*_block margins (rich_text has none of its own).
 func kitLayout(t string) bool {
 	switch t {
-	case "section", "context", "header", "divider", "image", "actions", "table", "input", badBlock:
+	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
+		"alert", "callout", "loading", badBlock:
 		return true
 	}
 	return false
@@ -432,7 +427,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		if len(ss) == 0 {
 			return out
 		}
-		return append(out, Block{Kind: Header, Spans: ss, Level: b.Level})
+		return append(out, Block{Kind: Header, Spans: ss, Level: b.Level.N})
 	case "divider":
 		return append(out, Block{Kind: Divider})
 	case "image":
@@ -478,19 +473,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		}
 		return append(out, Block{Kind: FileBlock, File: &File{ID: id, Type: b.Source}})
 	case "call":
-		a := &Attachment{ServiceName: "Call", IsUnfurl: true}
-		name := "Call"
-		if b.Call != nil {
-			name = firstNonEmpty(b.Call.V1.Name, name)
-			a.TitleLink = SafeURL(b.Call.V1.JoinURL)
-			a.ServiceIcon = SafeImage(b.Call.V1.AppIconURLs.Image32)
-			a.TS = b.Call.V1.DateStart
-			if b.Call.V1.DateEnd > 0 {
-				a.Text = []Block{{Kind: Paragraph, Spans: []Span{{Kind: Text, Text: "Ended"}}}}
-			}
-		}
-		a.Title = []Span{{Kind: Text, Text: name}}
-		return append(out, Block{Kind: AttachmentBlock, Att: a})
+		return append(out, c.callBlock(b))
 	case "input":
 		blk := Block{Kind: Section, Spans: c.textSpans(b.Label)}
 		for i := range blk.Spans {
@@ -502,6 +485,12 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			}
 		}
 		return append(out, blk)
+	case "alert":
+		return append(out, c.alertBlock(b))
+	case "callout":
+		return append(out, c.calloutBlock(b))
+	case "loading":
+		return append(out, Block{Kind: LoadingBlock})
 	case "markdown":
 		return append(out, markdownBlocks(c.r, b.textString())...)
 	case "mrkdwn", "plain_text":
@@ -691,6 +680,18 @@ func (c *builder) richText(els []bk) []Block {
 			if ss := c.richInline(e.Elements, brSection(i == 0)); len(ss) > 0 {
 				out = append(out, Block{Kind: Paragraph, Spans: ss})
 			}
+		case "rich_text_header":
+			// RichTextHeader: nothing without elements; the level
+			// classes 1–3 (4 draws as 3, anything else as 2)
+			if len(e.Elements) > 0 {
+				lv := e.Level.N
+				if lv < 1 || lv > 4 {
+					lv = 2
+				}
+				out = append(out, Block{Kind: RichHeader, Spans: c.richInline(e.Elements, brMode{lead: true}), Level: lv, First: i == 0})
+			}
+		case "rich_text_divider":
+			out = append(out, Block{Kind: RichDivider})
 		case "rich_text_preformatted":
 			out = append(out, Block{Kind: Preformatted, Spans: c.richInline(e.Elements, brRaw), Border: e.Border > 0})
 		case "rich_text_quote":
@@ -821,7 +822,14 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 		case "team":
 			out = append(out, Span{Kind: Text, Text: firstNonEmpty(e.Value, e.TeamID)})
 		default:
-			if t := e.textString(); t != "" {
+			// UnknownElement (Dvg3): a link to its url when it has one,
+			// else its text, else nothing
+			t := e.textString()
+			switch {
+			case e.URL != "" && !pre:
+				sp := linkSpan(e.URL, firstNonEmpty(t, e.URL))
+				out = append(out, sp)
+			case t != "":
 				out = append(out, Span{Kind: Text, Text: t})
 			}
 		}
@@ -1001,7 +1009,9 @@ func (c *builder) tableCell(cell *bk) []Span {
 	switch cell.Type {
 	case "rich_text":
 		return flattenSpans(c.richText(cell.Elements))
-	case "raw_text", "plain_text":
+	case "raw_text", "plain_text", "raw_number", "cell_text":
+		// bx/I renders raw_text, cell_text and raw_number cells by their
+		// text (BaseText)
 		if t := cell.textString(); t != "" {
 			return []Span{{Kind: Text, Text: t}}
 		}

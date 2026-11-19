@@ -121,7 +121,6 @@ func TestBlockKit(t *testing.T) {
 			{"type":"mystery_widget"}]},
 		{"type":"input","label":{"type":"plain_text","text":"Name"},"element":{"type":"plain_text_input","placeholder":{"type":"plain_text","text":"Type here"}}},
 		{"type":"video","title":{"type":"plain_text","text":"Demo"},"title_url":"https://v.test/w","video_url":"https://v.test/embed","thumbnail_url":"https://v.test/t.jpg","alt_text":"demo","author_name":"Someone","provider_name":"VidSite","provider_icon_url":"https://v.test/i.png","description":{"type":"plain_text","text":"A demo"}},
-		{"type":"call","call_id":"R1","call":{"v1":{"name":"Standup","join_url":"https://call.test/j","date_start":1700000000,"app_icon_urls":{"image_32":"https://call.test/i.png"}}}},
 		{"type":"unknown_future_block","text":{"type":"mrkdwn","text":"future _text_"}},
 		{"type":"unknown_with_fallback","fallback":{"type":"section","text":{"type":"mrkdwn","text":"degraded"}}},
 		{"type":"markdown","text":"**md bold** and [a link](https://md.test)"}
@@ -151,8 +150,6 @@ func TestBlockKit(t *testing.T) {
 		{Kind: AttachmentBlock, Att: &Attachment{ServiceName: "VidSite", ServiceIcon: "https://v.test/i.png", AuthorName: "Someone",
 			Title: []Span{tx("Demo")}, TitleLink: "https://v.test/w", VideoURL: "https://v.test/embed", IsUnfurl: true,
 			Image: &Image{URL: "https://v.test/t.jpg", Alt: "demo"}, Text: []Block{para(tx("A demo"))}}},
-		{Kind: AttachmentBlock, Att: &Attachment{ServiceName: "Call", ServiceIcon: "https://call.test/i.png", IsUnfurl: true,
-			Title: []Span{tx("Standup")}, TitleLink: "https://call.test/j", TS: 1700000000}},
 		// SUIRendererItem: a type Slack doesn't know is UnsupportedBlockFallback,
 		// or its own fallback payload when it carries one
 		{Kind: UnknownBlock, Spans: []Span{tx("This message can’t be fully displayed.")}},
@@ -168,7 +165,7 @@ func TestBlockKit(t *testing.T) {
 }
 
 func (b Block) kindName() string {
-	return [...]string{"Paragraph", "Preformatted", "Quote", "List", "Header", "Divider", "Context", "Section", "ImageBlock", "Actions", "AttachmentBlock", "FileBlock", "Tombstone", "Table", "Agent", "Unsupported", "UnknownBlock"}[b.Kind]
+	return [...]string{"Paragraph", "Preformatted", "Quote", "List", "Header", "Divider", "Context", "Section", "ImageBlock", "Actions", "AttachmentBlock", "FileBlock", "Tombstone", "Table", "Agent", "Unsupported", "UnknownBlock", "FileStatus", "CallBlock", "AlertBlock", "CalloutBlock", "LoadingBlock", "RichHeader", "RichDivider"}[b.Kind]
 }
 
 func TestBlocksFallBackToText(t *testing.T) {

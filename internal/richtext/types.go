@@ -175,6 +175,23 @@ const (
 	// viewer's uploads finish (PendingFilesMetaTextWrapper,
 	// c-message_kit__file__meta): Spans holds "Uploading…" and the like.
 	FileStatus
+	// CallBlock is a call block (call.go): Call holds what Slack's
+	// PlatformCallSubtype card shows.
+	CallBlock
+	// AlertBlock is an alert block (kitcards.go): Slack's c-alert box,
+	// Tone its level, Children the text.
+	AlertBlock
+	// CalloutBlock is a callout block: a tinted box (Tone the colour)
+	// around its child blocks (Children).
+	CalloutBlock
+	// LoadingBlock is a loading block: the jumbo spinner.
+	LoadingBlock
+	// RichHeader is a rich_text_header (Slack's RichTextHeader, h1–h3 by
+	// Level, p-rich_text_header--level_N); First marks the rich_text
+	// block's first element, which loses its top margin.
+	RichHeader
+	// RichDivider is a rich_text_divider: .p-rich_text_divider's rule.
+	RichDivider
 )
 
 // Block is one vertical unit of a document.
@@ -209,6 +226,13 @@ type Block struct {
 	// Level is a header block's level (1–4, 0 for none): Slack's Header
 	// (/WQN) classes its text p-header_block--level_1/2/3 (4 draws as 3).
 	Level int
+	// Call is a CallBlock's call (call.go).
+	Call *CallCard
+	// Tone is an AlertBlock's level (default, info, success, warning,
+	// error) or a CalloutBlock's background colour (kitcards.go).
+	Tone string
+	// First: a RichHeader that is its rich_text block's first element.
+	First bool
 }
 
 // Image is a remote image reference.
