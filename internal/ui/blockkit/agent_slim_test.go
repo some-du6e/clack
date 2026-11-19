@@ -325,28 +325,33 @@ func TestAgentPlanUpdateTransition(t *testing.T) {
 
 // TestAgentSlimContentShots: a plan's cut details with Show more, the
 // same plan with its long details shown in full (Show less), the running
-// MCP card and the same card once done.
+// MCP card and the same card once done, and the plan the app updates
+// (open, then grown; collapsed, then its title wrapped), settled.
 func TestAgentSlimContentShots(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		h := mcpHost(dark, "on")
 		cut, full := agentMsg(t, "plan-long-details"), agentMsg(t, "plan-long-details")
 		running, done := agentMsg(t, "task-card-mcp-running"), agentMsg(t, "task-card-mcp-running")
-		s := newAgentShot(h, cut, full, running, done)
+		grow, wrap := agentMsg(t, "plan-grow-1"), agentMsg(t, "plan-grow-1")
+		s := newAgentShot(h, cut, full, running, done, grow, wrap)
 		for _, i := range []int{0, 1} {
 			s.rows[i].me.agentState().open["plan\x00p5"] = true
 		}
+		s.rows[4].me.agentState().open["plan\x00p6"] = true
 		s.rows[1].me.agentState().open["task\x00p5\x00t1\x000\x00d\x00more"] = true
-		const w, hgt = 560, 1100
+		const w, hgt = 560, 1400
 		now := time.Now().Add(time.Hour) // see TestAgentTaskShowMore
 		var ops *op.Ops
 		for i := 0; i < 2; i++ {
 			now = now.Add(100 * time.Millisecond)
 			ops = s.frame(w, hgt, now)
 		}
-		r := s.rows[3]
-		r.m = streamTo(t, done, "task-card-mcp-done")
-		r.me = MessageElements(h, &r.m)
-		r.v.Set(r.m.Doc, richview.Options{Elements: r.me})
+		for i, to := range map[int]string{3: "task-card-mcp-done", 4: "plan-grow-2", 5: "plan-grow-title"} {
+			r := s.rows[i]
+			r.m = streamTo(t, r.m, to)
+			r.me = MessageElements(h, &r.m)
+			r.v.Set(r.m.Doc, richview.Options{Elements: r.me})
+		}
 		for i := 0; i < 6; i++ {
 			now = now.Add(100 * time.Millisecond)
 			ops = s.frame(w, hgt, now)
