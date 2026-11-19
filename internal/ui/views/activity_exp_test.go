@@ -533,6 +533,9 @@ func TestActivityLiveAutomationFilters(t *testing.T) {
 	live := func(it map[string]any) bool {
 		ev, _ := json.Marshal(map[string]any{"type": "activity", "subtype": "activity_updated", "entry": it})
 		app.Inject(slack.Event{Type: "activity", Subtype: "activity_updated", Raw: ev})
+		// announced (its lookups run off the event pump) before the frames
+		// that must show it or leave it out
+		e.until(t, "the entry's lookups done", app.ActivitySettled)
 		key := it["key"].(string)
 		for i := 0; i < 40; i++ {
 			e.frame()
