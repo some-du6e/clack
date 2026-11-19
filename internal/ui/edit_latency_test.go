@@ -54,6 +54,31 @@ class EditPassSlice extends TautPlugin {
 return EditPassSlice
 })()`
 
+// editSliceText patches the messages slice by marking each plan block's
+// title (reactSliceText's mark, ' (logged)'): the uptime monitor's title
+// lives in its blocks, where patchMessageText doesn't reach, and a row
+// drawing core's copy then draws the title unmarked, so the slice-text
+// mode tells the plugins' view from core's.
+const editSliceText = `(() => {
+const TautPlugin = globalThis.TautPlugin
+class EditSliceText extends TautPlugin {
+  static id = 'EditSliceText'
+  static pluginName = 'Edit slice text'
+  static description = 'Marks every plan block title, patching the messages slice'
+  static category = 'other'
+  static authors = ['test']
+  static defaultConfig = { enabled: false }
+  start() {
+    const { patchSlice, mapEntries } = this.api.redux
+    const mark = (m) => (m && Array.isArray(m.blocks) ?
+      { ...m, blocks: m.blocks.map((b) => (b && typeof b.title === 'string' ? { ...b, title: b.title + ' (logged)' } : b)) } : m)
+    patchSlice('messages', (ch, bucket) => (bucket && typeof bucket === 'object' ? mapEntries(bucket, (ts, m) => mark(m)) : bucket))
+  }
+  stop() {}
+}
+return EditSliceText
+})()`
+
 // editPassComponents patches what a message draws through and passes it
 // through.
 const editPassComponents = `(() => {
@@ -143,7 +168,9 @@ func TestEditLatency(t *testing.T) {
 	// one asked for a frame (Karim's uptime bot, "like every 33 seconds");
 	// rows now draw the message as it is and a view that turns ready asks
 	// for its own frame (plugin-render-3, 9fae788f)
-	for _, mode := range []string{"native", "slice", "components"} {
+	// slice-text: the same under a plugin marking each plan's title, every
+	// edit's marked title within the same bound
+	for _, mode := range []string{"native", "slice", "slice-text", "components"} {
 		t.Run(mode, func(t *testing.T) { editLatency(t, mode) })
 	}
 }
@@ -177,8 +204,11 @@ func editLatency(t *testing.T, mode string) {
 		e.until("Taut", 60*time.Second, func() bool { return e.a.Taut() != nil })
 		tt := e.a.Taut()
 		code, id := editPassSlice, "EditPassSlice"
-		if mode == "components" {
+		switch mode {
+		case "components":
 			code, id = editPassComponents, "EditPassComponents"
+		case "slice-text":
+			code, id = editSliceText, "EditSliceText"
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -189,7 +219,7 @@ func editLatency(t *testing.T, mode string) {
 			t.Fatal(err)
 		}
 		e.until("the plugin's patches", 30*time.Second, func() bool {
-			if mode == "slice" {
+			if mode == "slice" || mode == "slice-text" {
 				return tt.SlicePatched("messages")
 			}
 			return slackc.Patched("Blocks") && slackc.Patched("MessageWrapper")
@@ -259,6 +289,14 @@ func editLatency(t *testing.T, mode string) {
 
 	const prefix = "10router blipped · "
 	title := func(k int) string { return fmt.Sprintf(prefix+"%dm %ds", k/60, k%60) }
+	// drawn is title k as the rows draw it: marked under slice-text, where
+	// core's copy draws it unmarked
+	drawn := func(k int) string {
+		if mode == "slice-text" {
+			return title(k) + reactLogged
+		}
+		return title(k)
+	}
 	n := 0 // the edits so far
 	// newestTitle is whether a frame's labels draw edit k's title and no
 	// older one: every surface showing the message is at k
@@ -268,8 +306,8 @@ func editLatency(t *testing.T, mode string) {
 			if !strings.HasPrefix(l, prefix) {
 				continue
 			}
-			if l != title(k) {
-				return false // a surface still draws another (older) title
+			if l != drawn(k) {
+				return false // a surface still draws another (older, or unmarked) title
 			}
 			at = true
 		}
@@ -368,7 +406,7 @@ func editLatency(t *testing.T, mode string) {
 
 	// the channel alone
 	e.openChannel(ch)
-	until("the channel", func(ls, _ []string) bool { return has(ls, title(0)) })
+	until("the channel", func(ls, _ []string) bool { return has(ls, drawn(0)) })
 	settleBlurred()
 	edits("channel")
 
