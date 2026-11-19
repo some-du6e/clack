@@ -144,41 +144,24 @@ func TestRealWindowVideoFrames(t *testing.T) {
 		return found
 	})
 	onUI(func() { a.jumpToMessage(ch, ts, "") })
-	until("the video's tile laid out as a player's", 30*time.Second, func() bool {
-		ok := false
-		onUI(func() { _, ok = videoTileState(a, ch, ts) })
-		return ok
-	})
 	if d := 8*time.Second - time.Since(start); d > 0 {
 		time.Sleep(d) // boot's loads settle (idle-tests-wait-boot-loads)
 	}
 	// the tile wholly in the list: a jump puts the two rows above the
 	// message at the list's top, and #files-gallery's are tall, so in this
-	// window the tile starts under the list (a video under 10% visible
-	// pauses, and the GPU never draws an image off the screen)
+	// window the tile starts under the list or off the screen (a video
+	// under 10% visible pauses, and the GPU never draws an image off the
+	// screen)
 	var tile, list image.Rectangle
 	for i := 0; ; i++ {
+		in := false
 		onUI(func() {
 			tile, list = image.Rectangle{}, image.Rectangle{}
-			l, ok := a.convoFor(ch, "").list.(channelList)
-			if !ok {
-				return
-			}
-			list = l.ListRect()
-			for _, r := range l.FileRects() {
-				if r.TS == ts && r.File.IsVideo {
-					tile = r.R
-				}
-			}
-			switch {
-			case tile.Empty() || list.Empty():
-			case tile.Min.Y < list.Min.Y:
-				l.ScrollPx(tile.Min.Y - list.Min.Y - 16)
-			case tile.Max.Y > list.Max.Y:
-				l.ScrollPx(tile.Max.Y - list.Max.Y + 16)
+			if l, ok := a.convoFor(ch, "").list.(channelList); ok {
+				tile, list, in = videoScrollStep(l, ts)
 			}
 		})
-		if !tile.Empty() && tile.In(list) {
+		if in {
 			break
 		}
 		if i == 100 {
@@ -187,6 +170,11 @@ func TestRealWindowVideoFrames(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Logf("the video's tile %v in the list %v", tile, list)
+	until("the video's tile laid out as a player's", 30*time.Second, func() bool {
+		ok := false
+		onUI(func() { _, ok = videoTileState(a, ch, ts) })
+		return ok
+	})
 	ok := false
 	mu.Lock()
 	clicked = true

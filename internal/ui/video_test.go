@@ -49,14 +49,47 @@ func (e *perfEnv) videoTile(t *testing.T, ts string) messages.FileRect {
 	return out
 }
 
-// videoTileInView scrolls message ts's video tile wholly into the list
-// and returns it: a jump puts the two rows above the message at the
-// list's top, and in a short window #files-gallery's tall rows push the
-// tile under it (FileRects aren't clipped to the list).
+// videoScrollStep is a step bringing message ts's video tile wholly into
+// list l, as the last frame laid it out: a jump puts the two rows above
+// the message at the list's top, so in a short window #files-gallery's
+// tall rows can leave the tile under the list (FileRects aren't clipped
+// to it) or its row not on screen at all. It scrolls toward the tile, or
+// toward its row by the rows on screen, and reports where the tile (empty
+// while its row is off the screen) and the list were, in true once the
+// tile was wholly in the list.
+func videoScrollStep(l channelList, ts string) (tile, list image.Rectangle, in bool) {
+	list = l.ListRect()
+	for _, r := range l.FileRects() {
+		if r.TS == ts && r.File.IsVideo {
+			tile = r.R
+		}
+	}
+	switch {
+	case list.Empty():
+	case !tile.Empty() && tile.In(list):
+		return tile, list, true
+	case !tile.Empty() && tile.Min.Y < list.Min.Y:
+		l.ScrollPx(tile.Min.Y - list.Min.Y - 16)
+	case !tile.Empty():
+		l.ScrollPx(tile.Max.Y - list.Max.Y + 16)
+	default:
+		rows := l.RowRects()
+		switch {
+		case len(rows) == 0:
+		case tsBefore(ts, rows[0].TS):
+			l.ScrollPx(-list.Dy() / 2)
+		case tsBefore(rows[len(rows)-1].TS, ts):
+			l.ScrollPx(list.Dy() / 2)
+		}
+	}
+	return tile, list, false
+}
+
+// videoTileInView scrolls message ts's video tile wholly into the
+// channel's list (videoScrollStep) and returns it.
 func (e *perfEnv) videoTileInView(t *testing.T, ts string) messages.FileRect {
 	t.Helper()
 	for i := 0; ; i++ {
-		tile := e.videoTile(t, ts)
 		var l channelList
 		if c := e.a.convos[fakeslack.FilesChannelID+"/"]; c != nil {
 			l, _ = c.list.(channelList)
@@ -64,17 +97,16 @@ func (e *perfEnv) videoTileInView(t *testing.T, ts string) messages.FileRect {
 		if l.ChannelView == nil {
 			t.Fatal("no channel list")
 		}
-		list := l.ListRect()
-		if tile.R.In(list) {
-			return tile
+		tile, list, in := videoScrollStep(l, ts)
+		if in {
+			for _, r := range rectsOf(l.FileRects(), ts) {
+				if r.File.IsVideo {
+					return r
+				}
+			}
 		}
-		if i == 30 {
-			t.Fatalf("the video's tile %v isn't wholly in the list %v", tile.R, list)
-		}
-		if tile.R.Min.Y < list.Min.Y {
-			l.ScrollPx(tile.R.Min.Y - list.Min.Y - 16)
-		} else {
-			l.ScrollPx(tile.R.Max.Y - list.Max.Y + 16)
+		if i == 60 {
+			t.Fatalf("the video's tile %v isn't wholly in the list %v", tile, list)
 		}
 		e.frame()
 		e.frame()
