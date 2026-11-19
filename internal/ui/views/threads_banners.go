@@ -141,14 +141,17 @@ func (v *Threads) currentUnreads(page thrData) (above, below []string, notBelow 
 
 // determineBanners is determineUnreadThreadBannerVisibility: the threads
 // above and below the visible range, none while the banners are hidden
-// (the close's 5 s), which ends early once either side has none.
-func (v *Threads) determineBanners(page thrData) {
+// (the close's 5 s), which ends early once either side has none. The 5 s
+// end is read here, at the next check: Slack's timer only clears
+// hideUnreadBanners, and render reads only the lists, so no frame is
+// asked for then.
+func (v *Threads) determineBanners(now time.Time, page thrData) {
 	above, below, notBelow, ok := v.currentUnreads(page)
 	if !ok {
 		return
 	}
 	b := &v.ban
-	hidden := b.hide
+	hidden := b.hide && now.Before(b.unhideAt)
 	b.hide = hidden && len(above) > 0 && len(below) > 0
 	if hidden {
 		above, below = nil, nil
@@ -202,7 +205,7 @@ func (v *Threads) bannersLaidOut(gtx C, page thrData) {
 	}
 	if b.due || sig != b.sig {
 		b.due = false
-		v.determineBanners(page)
+		v.determineBanners(gtx.Now, page)
 	}
 	b.sig, b.count = sig, count
 }
@@ -349,24 +352,20 @@ func (v *Threads) bannerClose(now time.Time) {
 // showBanner.
 func (v *Threads) banners(gtx C, area image.Point) {
 	b := &v.ban
+	// the window asked for the next frame, not the router mid-layout
+	// (a command with no events of its own replays the events no handler
+	// laid out after the view has read yet)
 	if b.up.jump.Clicked(gtx) {
 		v.bannerJump(gtx, true)
-		gtx.Execute(op.InvalidateCmd{})
+		v.h.Invalidate()
 	}
 	if b.down.jump.Clicked(gtx) {
 		v.bannerJump(gtx, false)
-		gtx.Execute(op.InvalidateCmd{})
+		v.h.Invalidate()
 	}
 	if b.up.close.Clicked(gtx) || b.down.close.Clicked(gtx) {
 		v.bannerClose(gtx.Now)
-		gtx.Execute(op.InvalidateCmd{})
-	}
-	if !b.unhideAt.IsZero() {
-		if gtx.Now.Before(b.unhideAt) {
-			gtx.Execute(op.InvalidateCmd{At: b.unhideAt})
-		} else {
-			b.hide, b.unhideAt = false, time.Time{}
-		}
+		v.h.Invalidate()
 	}
 	if n := len(b.above); n > 0 {
 		v.bannerPill(gtx, &b.up, true, thrUnreadThreadsLabel(n), area)

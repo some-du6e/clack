@@ -212,6 +212,50 @@ func TestThreadsUnreadBannersLikeSlack(t *testing.T) {
 	e.until(t, "the banners back after 5 s", func() bool { return len(drawn()) > 0 })
 }
 
+// The close's own path over the views fixture, with no clearAll override:
+// subscriptions.thread.clearAll, then the server's thread_marked for the
+// thread it read. The thread reads, and the check its scan inputs bring
+// leaves no banner, with no scroll. The 5 s hide asks for no frame at its
+// end: Slack's timer only clears hideUnreadBanners, and render reads only
+// the lists.
+func TestThreadsBannerCloseLikeSlack(t *testing.T) {
+	ch := fakeslack.ViewsChannel
+	app, fs := vaFake(t)
+	h := newKBHost(app, false)
+	h.away.Store(true)
+	v := NewThreads(h)
+	e := thrViewEnv(t, v, 2)
+	e.size = image.Pt(1000, 150)
+	e.frame()
+	key := ch + "/" + fakeslack.ViewsThreadUnread
+	v.list.Position = layout.Position{First: 1} // the read thread at the top, the unread one above the list
+	e.until(t, "↑ 1 unread thread", func() bool { return slices.Equal(v.ban.above, []string{key}) })
+	at := thrFind(t, e, &v.ban.up.jump)
+	e.click(thrHoverAt(t, e, &v.ban.up.close, at.Y))
+	e.until(t, "subscriptions.thread.clearAll", func() bool { return fs.ThreadClears() == 1 })
+	e.until(t, "the thread read by the server's thread_marked", func() bool {
+		return v.lastRead(thrItemOf(v, key)) == "1762600200.000100"
+	})
+	e.frame()
+	if len(v.ban.above) != 0 || len(v.ban.below) != 0 {
+		t.Errorf("after the close's thread_marked the banners list %v above and %v below", v.ban.above, v.ban.below)
+	}
+	if got := drawnStrings(e); slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, "unread thread") }) {
+		t.Errorf("a banner is drawn after the close's thread_marked: %v", got)
+	}
+	end := v.ban.unhideAt
+	if end.IsZero() {
+		t.Fatal("the close set no end to its hide")
+	}
+	for stop := time.Now().Add(time.Second); time.Now().Before(stop); time.Sleep(50 * time.Millisecond) {
+		e.r.WakeupTime()
+		e.frame()
+		if w, ok := e.r.WakeupTime(); ok && !w.IsZero() && w.Sub(end).Abs() < 50*time.Millisecond {
+			t.Fatalf("the hide asks for a frame at its end (%v)", w)
+		}
+	}
+}
+
 // With more pages to load and the server's unread threads count, the
 // bottom banner counts at least that count less the unread threads not
 // below (getUnreadsBelowCount): 9 unread in all, 3 at or above the list's
