@@ -694,7 +694,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		return l.callout(b, x, y, w)
 
 	case richtext.LoadingBlock:
-		return l.loading(x, y)
+		return l.loading(x, y, w)
 
 	case richtext.ContainerBlock:
 		return l.container(b, x, y, w)

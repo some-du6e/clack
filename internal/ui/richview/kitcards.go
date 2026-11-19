@@ -202,10 +202,16 @@ func (l *lay) nestedBlocksFrom(bs []richtext.Block, x, y, w int, firstTop bool) 
 	return y + prevBottom - y0
 }
 
-// loading lays out a loading block: the 52px blue spinner.
-func (l *lay) loading(x, y int) int {
+// loading lays out a loading block: Loading (boot-shared KSQB) is
+// InfiniteSpinner{size: jumbo, color: blue, noMargin}: a 52px box
+// (.infiniteSpinner{margin:0 auto}, so centred in the column) whose ring
+// fills it (noMargin's 78-unit viewBox), the track content-ter at .25
+// and the arc content-hgl-1.
+func (l *lay) loading(x, y, w int) int {
 	s := l.dp(52)
-	l.d.spinners = append(l.d.spinners, spinPrim{r: image.Rect(x, y, x+s, y+s)})
+	sx := x + max(0, w-s)/2
+	l.d.spinners = append(l.d.spinners, spinPrim{r: image.Rect(sx, y, sx+s, y+s), noMargin: true,
+		track: l.tok("content-ter"), arc: l.tok("content-hgl-1")})
 	return s
 }
 

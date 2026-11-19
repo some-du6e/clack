@@ -53,6 +53,11 @@ func (l *lay) fade(nb, nf int) {
 type spinPrim struct {
 	r     image.Rectangle
 	white bool // color="white" (else blue)
+	// noMargin is InfiniteSpinner's noMargin (the loading block's): the
+	// 78-unit viewBox, so the ring fills r; track and arc are then its
+	// colours (content-ter at .25, content-hgl-1)
+	noMargin   bool
+	track, arc color.NRGBA
 }
 
 // pendingTile marks a gallery tile of a file still uploading: its image
@@ -80,6 +85,9 @@ func (s *spinPrim) draw(gtx layout.Context, st *Style) {
 	}
 	defer op.Offset(s.r.Min).Push(gtx.Ops).Pop()
 	sc := float32(d) / 100
+	if s.noMargin {
+		sc = float32(d) / 78
+	}
 	r := 35 * sc
 	sw := 8 * sc
 	ctr := f32.Pt(float32(d)/2, float32(d)/2)
@@ -90,10 +98,12 @@ func (s *spinPrim) draw(gtx layout.Context, st *Style) {
 		p.ArcTo(ctr, ctr, sweep)
 		paint.FillShape(gtx.Ops, c, clip.Stroke{Path: p.End(), Width: sw}.Op())
 	}
-	track := st.Palette.Text2
+	track, col := st.Palette.Text2, st.Palette.Link
+	if s.noMargin {
+		track, col = s.track, s.arc
+	}
 	track.A = uint8(float32(track.A)*.25 + .5)
 	arc(0, 2*math.Pi-0.001, track)
-	col := st.Palette.Link
 	if s.white {
 		col = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 	}

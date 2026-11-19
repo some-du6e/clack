@@ -50,7 +50,7 @@ func TestAlertWidth(t *testing.T) {
 // block margin (kept on the first block), its box with 12/16 padding,
 // the 20px level icon 1px down and the text 12px right of it; the
 // callout's 12px-radius bordered box 12px around its children, whose
-// margins collapse; the loading block's 52px spinner.
+// margins collapse; the loading block's 52px spinner, centred.
 func TestBoxedBlocksLayout(t *testing.T) {
 	st := newTestStyle()
 	d := kitDoc(t, `[
@@ -106,8 +106,11 @@ func TestBoxedBlocksLayout(t *testing.T) {
 	if want := charlie.bot + 4 + 12 + 1; calloutBox.r.Max.Y != want {
 		t.Errorf("callout bottom %d, want %d", calloutBox.r.Max.Y, want)
 	}
-	if len(v.d.spinners) != 1 || v.d.spinners[0].r != image.Rect(0, calloutBox.r.Max.Y, 52, calloutBox.r.Max.Y+52) {
-		t.Errorf("loading spinner %+v, want 52px at (0, %d)", v.d.spinners, calloutBox.r.Max.Y)
+	// the loading block's spinner: 52px, centred (margin: 0 auto), its
+	// ring filling the box (noMargin)
+	if len(v.d.spinners) != 1 || v.d.spinners[0].r != image.Rect(374, calloutBox.r.Max.Y, 426, calloutBox.r.Max.Y+52) ||
+		!spinFills(v.d.spinners[0]) {
+		t.Errorf("loading spinner %+v, want 52px at (374, %d) with its ring filling it", v.d.spinners, calloutBox.r.Max.Y)
 	}
 }
 
