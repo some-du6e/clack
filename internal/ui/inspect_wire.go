@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -23,10 +24,13 @@ import (
 // ui.json ("inspect_tool": true); the code again turns it off.
 // CLACK_INSPECT=1 turns it on too, read at launch like ui.json. Then
 // Hyper+D (⌃⌥⇧⌘D; Ctrl+Alt+Shift+D on Linux and Windows) starts a
-// session, Esc or Hyper+D again ends it, and a click copies a report of
-// the element under the pointer. A Shift+click (or a drag, for the region
-// dragged out) captures it for a review where rects can be blurred out
-// before Enter copies the report.
+// session, Esc or Hyper+D again ends it, and a click captures the element
+// under the pointer for a review where rects can be blurred out before
+// Enter copies the report (a drag does for the region dragged out; a
+// Shift+click copies at once). F freezes the window on the frame on
+// screen, hover states included, and the picker and the captures work on
+// that frame (inspect/freeze.go): inspectFirst draws the frozen frames,
+// with nothing laid out.
 
 // inspectFilter is the tool's shortcut, Hyper+D: all four modifiers (off
 // macOS Mod is Ctrl, so three). Super may be held as well: a Linux Hyper
@@ -106,6 +110,82 @@ func (k *konami) press(e key.Event) bool {
 	return false
 }
 
+// inspectFirst runs first in every frame of the main window, App.Run's
+// and the tests', after the posted work and before the window's ops are
+// reset (gtx: the frame's context, its ops unused; frameContext). In a
+// session it reads the frame's input (inspect.Tool.Frame), and frozen it
+// draws the frame on screen again under the tool's drawing: then it
+// returns the ops to submit for the frame, with nothing laid out (call
+// inspectAfterFrame after them), and nil when the window lays out as
+// usual. When a freeze ended (inspectHost.Frozen) it first starts every
+// widget's pointer state over where the pointer is (Gio patch 49): no
+// widget read its events while the window was frozen.
+func (a *App) inspectFirst(gtx layout.Context) *op.Ops {
+	var ops *op.Ops
+	if a.login != nil {
+		// the sign-in screen: no session outlives the workspace it was
+		// inspecting (showLogin, signOut and switchAccount end it; this
+		// is for any other way there)
+		a.closeInspectSession()
+	}
+	if a.insp != nil && a.insp.Active() {
+		// the frame's key presses for the Konami code, read now: a frozen
+		// frame lays out nothing (inspectBegin reads the rest)
+		a.inspPresses = append(a.inspPresses, gtx.Source.KeyPresses()...)
+		ops = a.insp.Frame(gtx)
+		if ops != nil {
+			a.konamiKeys(nil)
+			if a.insp == nil {
+				ops = nil // the code turned the tool off: lay the window out
+			}
+		}
+	}
+	if a.inspReset {
+		a.inspReset = false
+		gtx.Source.ResetPointers()
+	}
+	if ops != nil {
+		// the frozen frame's images are drawn again (quiet.go)
+		a.images.FrameRedrawn()
+	}
+	return ops
+}
+
+// konamiKeys follows the Konami code through the presses inspectFirst
+// read and src's since (src nil: none).
+func (a *App) konamiKeys(src *input.Source) {
+	presses := a.inspPresses
+	a.inspPresses = nil
+	if src != nil {
+		presses = append(presses, src.KeyPresses()...)
+	}
+	for _, e := range presses {
+		if a.konami.press(e) {
+			a.setInspectTool(a.insp == nil)
+		}
+	}
+}
+
+// closeInspectSession ends a running session, a frozen one included, and
+// forgets the key presses read for the Konami code in it: the sign-in
+// screen is coming up (signed out, the session ended, another account),
+// and the tool would otherwise read its keys (Return, Tab, the arrows)
+// before the card with no banner drawn.
+func (a *App) closeInspectSession() {
+	a.inspPresses = nil
+	if a.insp != nil && a.insp.Active() {
+		a.insp.Close()
+	}
+}
+
+// inspectNotShown says the frame just laid out didn't go to the screen
+// (the boot placeholder did): no freeze holds it.
+func (a *App) inspectNotShown() {
+	if a.insp != nil {
+		a.insp.NotShown()
+	}
+}
+
 // inspectBegin follows the Konami code, reads the shortcut before
 // anything else reads keys (it works over a modal too), and while a
 // session runs returns the hover-only context the window lays out with.
@@ -113,11 +193,7 @@ func (a *App) inspectBegin(gtx layout.Context) layout.Context {
 	// every key press, whichever widget takes it (the composer takes the
 	// arrows and the letters): Gio patch 28. Once per frame: a frame
 	// laid out again reads none.
-	for _, e := range gtx.Source.KeyPresses() {
-		if a.konami.press(e) {
-			a.setInspectTool(a.insp == nil)
-		}
-	}
+	a.konamiKeys(&gtx.Source)
 	if a.insp == nil {
 		return gtx
 	}
@@ -171,6 +247,18 @@ func (h inspectHost) CopyText(text string) { h.a.copyText(text) }
 func (h inspectHost) Post(f func())        { h.a.Post(f) }
 func (h inspectHost) Invalidate()          { h.a.Invalidate() }
 func (h inspectHost) ConfigDir() string    { return h.a.opts.ConfigDir }
+
+// Frozen holds the animated images while the window is frozen (the
+// frozen frame's would play on) and, when the freeze ends, asks the next
+// frame to start the pointer state over (inspectFirst).
+func (h inspectHost) Frozen(on bool) {
+	h.a.images.HoldLive(on)
+	if !on {
+		h.a.inspReset = true
+	}
+	h.a.Invalidate()
+}
+
 func (h inspectHost) ConvKind(id string) string {
 	c := h.a.model().conv(id)
 	if c == nil {
@@ -218,41 +306,52 @@ func (h inspectHost) Regions() []inspect.Region {
 	return out
 }
 
-// Describe fills the report's window and page fields.
-func (h inspectHost) Describe(r *inspect.Report, red *inspect.Redactor) {
+// Describer reads the report's window and page fields now (a frozen
+// capture's report describes the frozen frame, whatever the window does
+// meanwhile) and returns what fills them in, the route through the
+// report's redactor.
+func (h inspectHost) Describer() func(r *inspect.Report, red *inspect.Redactor) {
 	a := h.a
-	r.Version = buildVersion
 	s := a.pxPerDp
 	if s <= 0 {
 		s = 1
 	}
-	r.Scale = s
-	r.Window = image.Pt(int(float32(a.winSize.X)/s+.5), int(float32(a.winSize.Y)/s+.5))
-	r.Zoom = a.prefs.Zoom
-	r.Dark = a.th.Dark
-	r.Theme = a.inspectThemeName()
-	r.Font = a.font.applied
-	if r.Font == "" {
-		r.Font = "lato"
+	window := image.Pt(int(float32(a.winSize.X)/s+.5), int(float32(a.winSize.Y)/s+.5))
+	zoom, dark, theme := a.prefs.Zoom, a.th.Dark, a.inspectThemeName()
+	font := a.font.applied
+	if font == "" {
+		font = "lato"
 	}
 	cur := a.router.Current()
-	r.Page = red.Route(string(cur))
+	kind := ""
 	if ch := cur.Channel(); ch != "" {
-		if k := h.ConvKind(ch); k != "" {
-			r.Page += " (" + k + ")"
-		}
+		kind = h.ConvKind(ch)
 	}
+	pane := ""
 	if a.secondary.open() {
-		r.Page += " · pane " + secKindName(a.secondary.kind)
+		pane = secKindName(a.secondary.kind)
 	}
-	r.Patches = slackc.PatchedNames()
+	patches := slackc.PatchedNames()
 	var open []string
 	for _, o := range a.overlays {
 		if o != nil && !o.Dismissed() {
 			open = append(open, strings.TrimPrefix(fmt.Sprintf("%T", o), "*"))
 		}
 	}
-	r.Overlays = open
+	return func(r *inspect.Report, red *inspect.Redactor) {
+		r.Version = buildVersion
+		r.Scale, r.Window, r.Zoom = s, window, zoom
+		r.Dark, r.Theme, r.Font = dark, theme, font
+		r.Page = red.Route(string(cur))
+		if kind != "" {
+			r.Page += " (" + kind + ")"
+		}
+		if pane != "" {
+			r.Page += " · pane " + pane
+		}
+		r.Patches = append([]string(nil), patches...)
+		r.Overlays = append([]string(nil), open...)
+	}
 }
 
 // inspectThemeName is the account theme as Slack names its palette

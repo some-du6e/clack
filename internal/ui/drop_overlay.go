@@ -82,6 +82,19 @@ func (z dropZone) key() any {
 
 // fileDrop handles one app.FileDropEvent.
 func (a *App) fileDrop(e app.FileDropEvent) {
+	if a.inspecting() {
+		// the window is the inspect tool's (inspect_wire.go), and a frozen
+		// one draws none of what a drop does: a Shift+drop (Shift is also
+		// the tool's copy-at-once) would share the file at once, unseen
+		if a.drop.on || a.drop.hover != nil {
+			a.drop.on = false
+			a.dropHover(nil)
+		}
+		if e.Kind == app.FileDrop {
+			a.insp.Say("files can't be dropped during a session")
+		}
+		return
+	}
 	p := image.Pt(int(e.Position.X+.5), int(e.Position.Y+.5))
 	switch e.Kind {
 	case app.FileDragEnter, app.FileDragOver:

@@ -334,6 +334,11 @@ type App struct {
 	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
 	inspKey key.Filter    // its shortcut
 	konami  konami        // the code that turns it on and off
+	// a freeze ended: the next frame starts the pointer state over first
+	// (inspectFirst); presses: key presses read for the Konami code before
+	// the frame's layout
+	inspReset   bool
+	inspPresses []key.Event
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -631,6 +636,17 @@ func (a *App) Run() error {
 			}
 			wd.next(&stagePosted)
 			a.drain()
+			if fops := a.inspectFirst(a.frameContext(e)); fops != nil {
+				// a frozen inspect session: the frame on screen again,
+				// under the tool's drawing, nothing laid out
+				// (inspect_wire.go)
+				slackc.UnlockFrame()
+				wd.next(&stageSubmit)
+				e.Frame(fops)
+				a.inspectAfterFrame(fops, e.Size)
+				a.frameStats.addQuiet(time.Since(t0))
+				break
+			}
 			wd.next(&stageLayout)
 			wd.notePage(a.router.Current().Page())
 			gtx := a.newContext(&ops, e)
@@ -656,6 +672,7 @@ func (a *App) Run() error {
 				// mount, plugins render, images load) but only the placeholder
 				// goes to the GPU: each step of the start-up cascade is a
 				// layout, not a full frame (reveal.go).
+				a.inspectNotShown()
 				coverOps.Reset()
 				cg := a.newContext(&coverOps, e)
 				a.drawCover(cg)
@@ -723,6 +740,24 @@ func (a *App) drain() {
 	for _, f := range p {
 		f()
 	}
+}
+
+// frameContext is the context newContext makes for e, without ops: the
+// frame's time, input and metric (zoomed), and its size inside the
+// insets, as app.NewContext computes it. The inspect tool reads a frame's
+// input with it before the window's ops are reset (inspectFirst).
+func (a *App) frameContext(e app.FrameEvent) layout.Context {
+	size := e.Size
+	if e.Insets != (app.Insets{}) {
+		size.X -= e.Metric.Dp(e.Insets.Left) + e.Metric.Dp(e.Insets.Right)
+		size.Y -= e.Metric.Dp(e.Insets.Top) + e.Metric.Dp(e.Insets.Bottom)
+	}
+	gtx := layout.Context{Now: e.Now, Source: e.Source, Metric: e.Metric, Constraints: layout.Exact(size)}
+	if f := a.zoomFactor(); f != 1 {
+		gtx.Metric.PxPerDp *= f
+		gtx.Metric.PxPerSp *= f
+	}
+	return gtx
 }
 
 // newContext is app.NewContext at View > Zoom's scale (Slack's zoom

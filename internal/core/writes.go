@@ -77,7 +77,7 @@ func (a *App) DeleteAttachment(ctx context.Context, ch, ts, id string) error {
 	for _, s := range ids {
 		drop[s] = true
 	}
-	if upd, ok := a.S.Mutate(ch, ts, func(x *slack.Message) {
+	if upd, ok := a.S.MutateNoted(ch, ts, func(x *slack.Message) { // a read out now keeps it
 		kept := x.Attachments[:0:0]
 		for _, at := range x.Attachments {
 			if !drop[strconv.Itoa(at.ID)] {
@@ -505,7 +505,7 @@ func (a *App) SubscribeThread(ctx context.Context, ch, threadTS string, follow b
 		// The thread's subscribed flag now, as the thread_subscribed event
 		// would set it (it may come late or, on some workspaces, not at all).
 		a.S.SetThreadSub(ch, threadTS, func(s *store.ThreadSub) { s.Subscribed = follow })
-		if msg, ok := a.S.Find(ch, threadTS); ok {
+		if msg, ok := a.S.FindHeld(ch, threadTS); ok { // a root fetched by id too (store/fetched.go)
 			a.emitUpdate(ch, &msg)
 		}
 		a.refreshCountsSoon()

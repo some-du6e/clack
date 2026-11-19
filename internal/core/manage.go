@@ -733,7 +733,9 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage) {
 		return
 	}
 	if e.Entry.Key != "" || e.Entry.Item.Type != "" {
+		seq := a.MessageChangeSeq() // msg_changes.go
 		items := a.activityItems(ctx, []activityRaw{e.Entry})
+		stampItems(items, seq)
 		if len(items) == 1 {
 			ev.Activity = &items[0]
 			ev.Channel, ev.TS = items[0].Channel, items[0].TS
@@ -762,7 +764,7 @@ func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
 			s.LastRead = lr
 		}
 	})
-	if m, ok := a.S.Find(ch, ts); ok {
+	if m, ok := a.S.FindHeld(ch, ts); ok { // a root fetched by id too (store/fetched.go)
 		a.emitUpdate(ch, &m)
 	}
 	a.emit(Event{Type: "thread_subscription", Channel: ch, ThreadTS: ts, TS: ts, Name: map[bool]string{true: "follow", false: "unfollow"}[on], Raw: raw})

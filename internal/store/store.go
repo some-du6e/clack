@@ -56,6 +56,14 @@ type Store struct {
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
+	fetched     map[string]*slack.Message  // key channel/ts: messages fetched by id (fetched.go)
+	fetchedUse  map[string]fetchedUse      // fetched's last use and size (fetched.go)
+	fetchedQ    []fetchedTick              // fetched's uses, oldest first
+	fetchedN    uint64                     // fetched's uses so far
+	fetchedSize int                        // fetched's messages' size (messageSize)
+	reacts      map[string][]reactOp       // key channel/ts: realtime reactions (reacts.go)
+	reactQ      []string                   // reacts' keys, oldest first
+	readRevs    []ReadRevision             // revisions reads brought, for core (read_revisions.go)
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
 	subQ        []string                   // subs' keys, oldest first
 	subSeq      uint64                     // subscription events seen
@@ -1271,15 +1279,28 @@ func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	s.mu.Unlock()
 }
 
-// PrependOlder adds an older page to the front.
+// PrependOlder adds an older page to the front (one no request read:
+// a test's window).
 func (s *Store) PrependOlder(ch string, msgs []slack.Message, hasMore bool) {
+	s.PrependOlderSince(ch, msgs, hasMore, ^uint64(0))
+}
+
+// PrependOlderSince is PrependOlder for an older page whose request began
+// at LiveSeq since (scrolling up), a read like the newest page's: a
+// message the socket changed meanwhile keeps the socket's copy, one it
+// deleted stays out, the reactions it brought stay, and a revision the
+// store held another of reaches every copy and core (readWindowLocked).
+// It returns what it kept of the page.
+func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool, since uint64) []slack.Message {
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	msgs = s.liveKeepLocked(ch, msgs, since)
+	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
 	if t == nil {
 		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
-		return
+		return msgs
 	}
 	merged := append(append([]slack.Message(nil), msgs...), t.Msgs...)
 	t.Msgs = dedupe(merged)
@@ -1288,6 +1309,7 @@ func (s *Store) PrependOlder(ch string, msgs []slack.Message, hasMore bool) {
 	if len(t.Msgs) > 5000 {
 		t.Msgs = t.Msgs[len(t.Msgs)-5000:]
 	}
+	return msgs
 }
 
 // Upsert inserts or replaces a top-level message in a loaded timeline.
@@ -1302,6 +1324,47 @@ func (s *Store) Upsert(ch string, m slack.Message) {
 		if t.Msgs[i].TS == m.TS {
 			s.keepPinLocked(ch, &m, &t.Msgs[i])
 			t.Msgs[i] = m
+			return
+		}
+	}
+	s.keepPinLocked(ch, &m, nil)
+	t.Msgs = append(t.Msgs, m)
+	SortAsc(t.Msgs)
+}
+
+// UpsertInRange is Upsert for a message the socket changed that no window
+// or cached thread held (a message_changed of one Activity, Threads or
+// Saved fetched by id: a poll 80 messages back, a root after one of its
+// replies is deleted): it goes into a window holding older history
+// (HasMore) only at or after the window's oldest message from Slack, as
+// the message lists take an update (ui/messages hub.go inRange). Taken in
+// above it, the window's next reader drew it right above the newest page
+// and load-older read from it, skipping the history between; Slack's invH
+// keeps such a ts as a slice of its own, which a page covering it brings.
+// An ephemeral message, a local copy, is no boundary.
+func (s *Store) UpsertInRange(ch string, m slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t := s.timelines[ch]
+	if t == nil {
+		return
+	}
+	for i := range t.Msgs {
+		if t.Msgs[i].TS == m.TS {
+			s.keepPinLocked(ch, &m, &t.Msgs[i])
+			t.Msgs[i] = m
+			return
+		}
+	}
+	if t.HasMore {
+		oldest := ""
+		for i := range t.Msgs {
+			if !t.Msgs[i].IsEphemeral {
+				oldest = t.Msgs[i].TS
+				break
+			}
+		}
+		if oldest == "" || TSLess(m.TS, oldest) {
 			return
 		}
 	}
@@ -1341,12 +1404,25 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			}
 		}
 	}
+	// a message fetched by id (fetched.go): the socket's changes reach
+	// it as Slack's reach every message of its store
+	if m := s.fetched[ch+"/"+ts]; m != nil {
+		f(m)
+		s.measureFetchedLocked(ch + "/" + ts)
+		if !found {
+			out, found = *m, true
+		}
+	}
 	return out, found
 }
 
 func (s *Store) Remove(ch, ts string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.removeLocked(ch, ts)
+}
+
+func (s *Store) removeLocked(ch, ts string) {
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			if t.Msgs[i].TS == ts {
@@ -1366,6 +1442,7 @@ func (s *Store) Remove(ch, ts string) {
 			}
 		}
 	}
+	s.dropFetchedLocked(ch + "/" + ts) // fetched.go
 }
 
 func (s *Store) Find(ch, ts string) (slack.Message, bool) {
@@ -1472,6 +1549,10 @@ func (s *Store) WithFile(id string) []MsgRef {
 			add(ch, &th[i])
 		}
 	}
+	for k, m := range s.fetched { // messages fetched by id (fetched.go)
+		ch, _, _ := strings.Cut(k, "/")
+		add(ch, m)
+	}
 	return out
 }
 
@@ -1520,6 +1601,22 @@ func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 func (s *Store) AddReply(ch string, m slack.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.addReplyLocked(ch, m)
+}
+
+// AddReplyNoted is AddReply and the reply's live note (NoteLive) under
+// one lock: a replies read landing between the two put an answer from
+// before the reply back over the cached thread.
+func (s *Store) AddReplyNoted(ch string, m slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addReplyLocked(ch, m)
+	if ch != "" && m.TS != "" {
+		s.noteLiveLocked(ch, m.TS, &m)
+	}
+}
+
+func (s *Store) addReplyLocked(ch string, m slack.Message) {
 	key := ch + "/" + m.ThreadTS
 	if th, ok := s.threads[key]; ok {
 		replaced := false
