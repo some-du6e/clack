@@ -12,13 +12,15 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // AppDM is an app's DM: Slack shows its tabs (Home when the app has an
-// App Home, Messages, About) instead of the channel tab bar.
+// App Home, Messages, About, and Tasks for an agent app that turns its
+// Tasks tab on) instead of the channel tab bar.
 //
 // Slack opens it with conversations.info {return_app_home: true} (tab
 // flags + the published home view), tells the app which tab is open
@@ -32,7 +34,7 @@ type AppDM struct {
 	home    core.AppHome
 	known   bool // app_home loaded
 	tab     string
-	tabs    [3]tap
+	tabs    [4]tap
 	surf    *Surface
 	list    layout.List
 	about   *core.AppProfile
@@ -40,6 +42,9 @@ type AppDM struct {
 	page    *popups.AboutPage // the About page (agent_about_page)
 	loading bool
 	opened  map[string]bool
+	// cardWait: the app profile the Tasks tab's rule reads is being
+	// fetched (AppCardOf)
+	cardWait bool
 }
 
 var (
@@ -187,8 +192,11 @@ func initialTab(want string, messages, home bool) string {
 // deepLinkFromAppIdToApp: "home" unless the link names one).
 func (d *AppDM) OpenTab(want string) { d.SetTab(initialTab(want, d.home.MessagesTab, d.home.HomeTab)) }
 
-// Tabs lists the DM's tabs in Slack's order: Home and Messages when the
-// app enables them, then About.
+// Tabs lists the DM's tabs in Slack's order (getSortedStaticTabs over
+// 3HCD's s3: AppHome, Channel, AppSessions, AppAbout, App3pAgentTasks):
+// Home and Messages when the app enables them, About, then Tasks when
+// L1V2's rule shows it (core.AgentTasksTab). The agent DM's Sessions tab
+// (agentic_ia_agent_dm_sessions_tab) isn't in Clack.
 func (d *AppDM) Tabs() []string {
 	var out []string
 	if d.home.HomeTab {
@@ -197,11 +205,46 @@ func (d *AppDM) Tabs() []string {
 	if d.home.MessagesTab {
 		out = append(out, "messages")
 	}
-	return append(out, "about")
+	out = append(out, "about")
+	if d.tasksTab() {
+		out = append(out, "tasks")
+	}
+	return out
 }
 
-// Tab is the open tab: "home", "messages" or "about".
-func (d *AppDM) Tab() string { return d.tab }
+// tasksTab is L1V2's App3pAgentTasks entry for this DM. Until the app's
+// profile is in (is_agent_app, is_shown_as_agent) it reads as off and
+// the profile is fetched.
+func (d *AppDM) tasksTab() bool {
+	c := d.h.Core()
+	if c == nil {
+		return false
+	}
+	shown, pending := c.AgentTasksTab(d.ch, d.home)
+	if pending && !d.cardWait {
+		d.cardWait = true
+		user := d.user.ID
+		run(d.h, 15*time.Second, func(ctx context.Context) (core.AppCard, error) {
+			return c.AppCardOf(ctx, user, "")
+		}, func(core.AppCard, error) {
+			d.cardWait = false
+			d.h.Invalidate()
+		})
+	}
+	return shown
+}
+
+// Tab is the open tab: "home", "messages", "about" or "tasks" (the
+// agent's Tasks tab, which the ui root draws: views.AgentTasks). A Tasks
+// tab that went away (its rule no longer holds) falls back to the tab
+// Slack opens.
+func (d *AppDM) Tab() string {
+	if d.tab == "tasks" && !d.tasksTab() {
+		d.tab = initialTab("", d.home.MessagesTab, d.home.HomeTab)
+		d.dispatchOpen(d.tab)
+	}
+	return d.tab
+}
 
 // ReadOnly reports whether the Messages tab is read-only (Slack replaces
 // the composer with "Sending messages to this app has been turned off.").
@@ -256,8 +299,28 @@ func (d *AppDM) AboutPage() *popups.AboutPage {
 	return d.page
 }
 
-var tabLabel = map[string]string{"home": "Home", "messages": "Messages", "about": "About"}
-var tabIcon = map[string]string{"home": "home", "messages": "threads", "about": "info"}
+var tabLabel = map[string]string{"home": "Home", "messages": "Messages", "about": "About", "tasks": "Tasks"}
+
+// tabIcon is useTabIconProps' icon per tab (X2Ko: App3pAgentTasks is
+// ai-workflow, Clack's "workflow"); the open tab's is the -filled one
+// (useFilledIcon), as the channel tab bar draws it (tabContent).
+var tabIcon = map[string]string{"home": "home", "messages": "threads", "about": "info", "tasks": "workflow"}
+
+// tabIconFor is the tab's icon, filled while it is open, as the channel
+// tab bar's tabContent does: Messages' bubble is messages-filled, the
+// others their -filled twin (home-filled, info-filled, workflow-filled).
+func tabIconFor(t string, open bool) string {
+	name := tabIcon[t]
+	switch {
+	case !open:
+		return name
+	case t == "messages":
+		return "messages-filled"
+	case icons.Has(name + "-filled"):
+		return name + "-filled"
+	}
+	return name
+}
 
 // LayoutTabs draws the tab bar (Slack's channel tabs look: 13/700,
 // 16px icon, 2px aubergine underline on the open tab).
@@ -290,7 +353,7 @@ func (d *AppDM) LayoutTabs(gtx C) D {
 			if cur {
 				col = th.C.Fg
 			}
-			at(gtx, image.Pt(dp(gtx, 8), (sz.Y-dp(gtx, 16))/2), func(gtx C) D { return icon(gtx, tabIcon[t], 16, col) })
+			at(gtx, image.Pt(dp(gtx, 8), (sz.Y-dp(gtx, 16))/2), func(gtx C) D { return icon(gtx, tabIconFor(t, cur), 16, col) })
 			at(gtx, image.Pt(dp(gtx, 28), 0), func(gtx C) D {
 				return vcenter(gtx, sz.Y, func(gtx C) D { return label(gtx, th, 13, theme.Bold, col, lbl) })
 			})
