@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io/fs"
 	"log"
 	"math"
 	"os"
@@ -350,6 +351,12 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 		c.tm.shoot.total = time.Since(t0)
 		c.tm.shot, c.tm.k = ShotSize(crop, k), k
 	}
+	if ownShoot() {
+		// a session takes one shot: its GPU window (the shot's
+		// framebuffer, ~31 MB for a whole-window one, and its caches) goes
+		// now, not after the review
+		shots.setWanted(false)
+	}
 	if err != nil {
 		log.Printf("inspect: no screenshot: %v", err)
 		t.stop()
@@ -364,6 +371,7 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	c.ptrShot = image.Pt(int((float32(c.ptr.X-crop.Min.X)+.5)*k), int((float32(c.ptr.Y-crop.Min.Y)+.5)*k))
 	c.k = k
 	if !c.region && !c.review || c.copyNow {
+		c.tm.atOnce = true
 		t.stop()
 		t.deliver(c, img, nil)
 		return
@@ -372,10 +380,14 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 }
 
 // deliver composes, saves and copies the report off the UI goroutine,
-// then says what it did in a toast.
+// then says what it did in a toast. Deliveries save and copy in the order
+// of their captures: each waits for the one before it (its colours, image
+// and PNG made meanwhile), so a big capture's (0.4-0.7 s) never puts its
+// older image on the clipboard after a newer one's.
 func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 	dir := t.host.ConfigDir()
 	h := t.host
+	prev := t.lastDone
 	done := make(chan struct{})
 	t.lastDone, t.lastRep = done, c.rep
 	if !c.tm.pick.IsZero() {
@@ -407,6 +419,9 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 				}
 				c.tm.encode = time.Since(t2)
 			}
+		}
+		if prev != nil {
+			<-prev // the captures before this one saved and copied first
 		}
 		t3 := time.Now()
 		where, serr := save(dir, c.rep.When, data, text)
@@ -448,8 +463,10 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 }
 
 // save writes the report's image and text to dir/inspect-reports (only
-// the owner can read them: the image shows the element). It
-// returns the files' common stem.
+// the owner can read them: the image shows the element). It returns the
+// files' common stem: inspect-YYYYMMDD-HHMMSS, then -2, -3… for the
+// reports of the same second (the text file is made with O_EXCL: no
+// report's files are another's).
 func save(dir string, when time.Time, img []byte, text string) (string, error) {
 	if dir == "" {
 		return "", nil
@@ -458,14 +475,31 @@ func save(dir string, when time.Time, img []byte, text string) (string, error) {
 	if err := os.MkdirAll(d, 0o700); err != nil {
 		return "", err
 	}
-	stem := filepath.Join(d, "inspect-"+when.Format("20060102-150405"))
+	base := filepath.Join(d, "inspect-"+when.Format("20060102-150405"))
+	stem := base
+	for n := 2; ; n++ {
+		if _, err := os.Lstat(stem + ".png"); err != nil {
+			f, err := os.OpenFile(stem+".txt", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err == nil {
+				_, werr := f.WriteString(text)
+				if cerr := f.Close(); werr == nil {
+					werr = cerr
+				}
+				if werr != nil {
+					return "", werr
+				}
+				break
+			}
+			if !errors.Is(err, fs.ErrExist) {
+				return "", err
+			}
+		}
+		stem = fmt.Sprintf("%s-%d", base, n)
+	}
 	if img != nil {
 		if err := os.WriteFile(stem+".png", img, 0o600); err != nil {
 			return "", err
 		}
-	}
-	if err := os.WriteFile(stem+".txt", []byte(text), 0o600); err != nil {
-		return "", err
 	}
 	return stem, nil
 }

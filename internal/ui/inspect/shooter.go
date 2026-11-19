@@ -6,6 +6,7 @@ import (
 	"log"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
@@ -14,20 +15,29 @@ import (
 )
 
 // The shots' GPU. Each shot used to make a headless context, device and
-// GPU and let them go again: 4-35 ms on WARP and llvmpipe, 1.2 s for the
-// first in a process on llvmpipe (its shaders compiled), and its glyph
-// paths and images uploaded afresh every time. A session now keeps one
-// headless window (shooter): made when the session starts, off the UI
-// goroutine, so the first pick finds it ready; each shot gives its
-// framebuffer the shot's size (Gio patch 52, Window.SetSize), keeping the
-// GPU's caches from shot to shot; let go when the session ends. Outside a
-// session (a test calling Shoot) a shot makes and lets go of its own
-// window, as before.
+// GPU when it was taken: 4-35 ms on WARP and llvmpipe, 1.2 s for the first
+// in a process on llvmpipe (its shaders compiled), all of it on the UI
+// goroutine between the pick and its review. A session now makes its
+// headless window (shooter) as it starts, off the UI goroutine, so the
+// pick finds it ready (the stage-time line says "gpu ready"); the shot
+// gives its framebuffer the shot's size (Gio patch 52, Window.SetSize). A
+// session takes one shot, so the window goes once the shot is read back
+// (AfterFrame), not after the review: the shot-sized framebuffer and the
+// caches it filled (~31 MB for a whole-window shot) aren't kept for
+// nothing. Outside a session (a test calling Shoot) a shot makes and lets
+// go of its own window, as before.
+//
+// Nothing on the UI goroutine waits for a window being made or let go of
+// (setWanted only stores want): a slow driver can't freeze the window as
+// a session ends, a stuck one can't hang it. The shot itself still runs
+// on the UI goroutine (the frame's ops are only good for this frame):
+// render and readback, milliseconds on a GPU, 0.3-2.6 s on a software one
+// (docs/INSPECT.md).
 
 type shooter struct {
-	mu   sync.Mutex
-	want bool       // a session runs
-	w    shotWindow // the session's, nil until made
+	want atomic.Bool // a session wants a window (setWanted)
+	mu   sync.Mutex  // w, and the GPU work on it
+	w    shotWindow  // the session's, nil until made
 	// pending counts the reconciles running (settle: tests)
 	pending sync.WaitGroup
 }
@@ -63,13 +73,12 @@ func ownShoot() bool {
 	return reflect.ValueOf(Shoot).Pointer() == reflect.ValueOf(shootHeadless).Pointer()
 }
 
-// setWanted says a session started (on) or ended: its window is made or
-// let go of off the UI goroutine. Several calls in a row end as the last
-// asked: each one acts on want as it is when it runs.
+// setWanted says a session started (on) or ended, or took its shot: its
+// window is made or let go of off the UI goroutine. It never waits for
+// that. Several calls in a row end as the last asked: each reconcile acts
+// on want as it is when it runs.
 func (s *shooter) setWanted(on bool) {
-	s.mu.Lock()
-	s.want = on
-	s.mu.Unlock()
+	s.want.Store(on)
 	s.pending.Add(1)
 	go func() {
 		defer s.pending.Done()
@@ -83,15 +92,15 @@ func (s *shooter) settle() { s.pending.Wait() }
 func (s *shooter) reconcile() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	switch {
-	case s.want && s.w == nil:
+	switch want := s.want.Load(); {
+	case want && s.w == nil:
 		w, err := newShotWindow(64, 64)
 		if err != nil {
 			log.Printf("inspect: no headless GPU for the shots yet: %v", err)
 			return
 		}
 		s.w = w
-	case !s.want && s.w != nil:
+	case !want && s.w != nil:
 		s.w.Release()
 		s.w = nil
 	}
@@ -141,8 +150,8 @@ func (s *shooter) shoot(frame op.CallOp, region image.Rectangle, k float32) (*im
 }
 
 // window is the window for a shot of size px (s.mu held): the session's,
-// given that size, or a new one, kept as the session's while one runs;
-// own when it's the shot's alone, to let go of after.
+// given that size, or a new one, kept as the session's while one wants
+// it; own when it's the shot's alone, to let go of after.
 func (s *shooter) window(size image.Point) (w shotWindow, own bool, err error) {
 	if s.w != nil {
 		if err := s.w.SetSize(size.X, size.Y); err == nil {
@@ -154,7 +163,7 @@ func (s *shooter) window(size image.Point) (w shotWindow, own bool, err error) {
 	if w, err = newShotWindow(size.X, size.Y); err != nil {
 		return nil, false, err
 	}
-	if s.want {
+	if s.want.Load() {
 		s.w = w
 		return w, false, nil
 	}

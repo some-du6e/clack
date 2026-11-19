@@ -53,7 +53,7 @@ func blurOutside(img *image.RGBA, r image.Rectangle, rad int, keep image.Rectang
 	b := blurJob{img: img, r: r, rad: rad, q: q, ml: ml, mr: mr, mt: mt, mb: mb}
 	// rows: whole ones near the top and bottom margins (the columns
 	// across keep read them), the margins' spans of the others
-	b.parallel(h, func(bufs *lineBufs, y0, y1 int) {
+	b.parallel(h, false, func(bufs *lineBufs, y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			left, right := w, w // the whole row
 			if y >= mt+3*rad && y < h-mb-3*rad {
@@ -65,7 +65,7 @@ func blurOutside(img *image.RGBA, r image.Rectangle, rad int, keep image.Rectang
 	// columns, in blocks of colBlock: whole ones in the left and right
 	// margins, the top and bottom margins' spans of the others
 	blocks := (w + colBlock - 1) / colBlock
-	b.parallel(blocks, func(bufs *lineBufs, k0, k1 int) {
+	b.parallel(blocks, true, func(bufs *lineBufs, k0, k1 int) {
 		for k := k0; k < k1; k++ {
 			b.columns(bufs, k*colBlock, min((k+1)*colBlock, w))
 		}
@@ -90,25 +90,39 @@ type lineBufs struct {
 	outs   [colBlock][]uint8
 }
 
-func (l *lineBufs) grow(n int) {
+// grow makes l's lines n px or more: the passes' (both phases), and a
+// block's columns too when cols (the columns' phase; the rows' reads none).
+func (l *lineBufs) grow(n int, cols bool) {
 	if cap(l.t1) < 4*n {
 		l.t1, l.t2 = make([]uint8, 4*n), make([]uint8, 4*n)
+	}
+	if cols && cap(l.cols[0]) < 4*n {
 		for i := range l.cols {
 			l.cols[i], l.outs[i] = make([]uint8, 4*n), make([]uint8, 4*n)
 		}
 	}
 }
 
+// lines keeps the goroutines' lines from blur to blur (the review's image,
+// then each redraw after a mark, blur a shot-sized image; a 3200 px
+// side's lines are 435 KB a goroutine).
+var lines = sync.Pool{New: func() any { return new(lineBufs) }}
+
 // parallel runs f over [0, n) in contiguous parts, one per CPU (at most
-// 8), each with its own lines; small jobs on the calling goroutine.
-func (b *blurJob) parallel(n int, f func(bufs *lineBufs, i0, i1 int)) {
+// 8), each with its own lines (cols: a block's columns too); small jobs on
+// the calling goroutine.
+func (b *blurJob) parallel(n int, cols bool, f func(bufs *lineBufs, i0, i1 int)) {
 	long := max(b.r.Dx(), b.r.Dy())
 	work := b.r.Dx() * b.r.Dy()
 	parts := min(runtime.GOMAXPROCS(0), 8, n)
+	run := func(i0, i1 int) {
+		bufs := lines.Get().(*lineBufs)
+		bufs.grow(long, cols)
+		f(bufs, i0, i1)
+		lines.Put(bufs)
+	}
 	if work < 1<<16 || parts <= 1 {
-		var bufs lineBufs
-		bufs.grow(long)
-		f(&bufs, 0, n)
+		run(0, n)
 		return
 	}
 	var wg sync.WaitGroup
@@ -117,9 +131,7 @@ func (b *blurJob) parallel(n int, f func(bufs *lineBufs, i0, i1 int)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var bufs lineBufs
-			bufs.grow(long)
-			f(&bufs, i0, i1)
+			run(i0, i1)
 		}()
 	}
 	wg.Wait()

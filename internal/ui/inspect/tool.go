@@ -230,6 +230,13 @@ func (t *Tool) Hovered() (label string, rect image.Rectangle, ok bool) {
 // Close ends a session, a pick waiting for its frame included, before
 // the window drops the tool.
 func (t *Tool) Close() {
+	// every capture logs its line, whatever ends it (sign-out, the tool
+	// turned off, hide to tray)
+	if r := t.rev; r != nil && r.c != nil {
+		r.c.tm.outcome = "dropped: the tool closed"
+		logTimes(r.c)
+	}
+	t.dropCapture("dropped: the tool closed")
 	if t.state != off {
 		t.stop()
 	}
@@ -258,6 +265,7 @@ func (t *Tool) start() {
 }
 
 func (t *Tool) stop() {
+	t.dropCapture("dropped: the session ended before its shot")
 	t.state = off
 	t.pend, t.rev = nil, nil
 	t.contentOK = false
@@ -266,6 +274,21 @@ func (t *Tool) stop() {
 	if ownShoot() {
 		shots.setWanted(false)
 	}
+}
+
+// dropCapture lets go of a pick not shot yet, its stage times logged with
+// outcome (unless it has one): no later frame's AfterFrame shoots it and
+// opens a review after its session ended.
+func (t *Tool) dropCapture(outcome string) {
+	c := t.capture
+	if c == nil {
+		return
+	}
+	t.capture = nil
+	if c.tm.outcome == "" {
+		c.tm.outcome = outcome
+	}
+	logTimes(c)
 }
 
 // release stops recording frames: no outline, no experiments observed,
@@ -360,7 +383,9 @@ func (t *Tool) input(gtx layout.Context) {
 	case picked:
 		// a new frame and the capture's wasn't shot (AfterFrame doesn't
 		// run for a frame under the boot placeholder): give up, don't
-		// leave the window taking no clicks
+		// leave the window taking no clicks; the capture goes with the
+		// session (stop)
+		t.dropCapture("dropped: its frame wasn't drawn")
 		t.stop()
 		t.host.Toast("Inspect: the capture's frame wasn't drawn, try again")
 		return
@@ -401,9 +426,9 @@ func (t *Tool) input(gtx layout.Context) {
 			t.pend.review = t.pend.review && !in.shift // Shift at the press or the release
 			t.capture, t.pend, t.state = t.pend, nil, picked
 			if !t.capture.review {
-				t.capture.tm.kind = "shift-click"
+				t.capture.tm.kind, t.capture.tm.atOnce = "shift-click", true
 			}
-			t.capture.tm.pick, t.capture.tm.pickN = time.Now(), t.frameN
+			t.capture.tm.pick, t.capture.tm.pickN, t.capture.tm.win = time.Now(), t.frameN, t.win
 		case dragging:
 			r := t.dragRect(in.releaseAt)
 			if min := int(minRegion*t.scale + .5); r.Dx() < min || r.Dy() < min {
@@ -413,7 +438,7 @@ func (t *Tool) input(gtx layout.Context) {
 			}
 			at := image.Pt(int(in.releaseAt.X+.5), int(in.releaseAt.Y+.5))
 			t.capture, t.state = t.newRegionCapture(gtx, r, at), picked
-			t.capture.tm.pick, t.capture.tm.pickN = time.Now(), t.frameN
+			t.capture.tm.pick, t.capture.tm.pickN, t.capture.tm.win = time.Now(), t.frameN, t.win
 		}
 	}
 }
@@ -652,11 +677,13 @@ func (t *Tool) SeedPointer(p image.Point) {
 }
 
 // readKeys reads the frame's key presses. In a frame whose pointer events
-// released the button (released: a pick or a region, maybe), Esc, Enter,
-// Mod+C and the shortcut wait for the release to be read (pickKeys): they
-// came after it, and act on its capture. Keys come after the pointer's
-// events in a frame (Gio's order), and anyone fast enough to press one
-// before the capture's frame was drawn means the capture.
+// released the button (released: a pick or a region, maybe), Enter and
+// Mod+C wait for the release to be read (pickKeys): they came after it,
+// and anyone fast enough to press one before the capture's frame was drawn
+// means the capture (keys come after the pointer's events in a frame:
+// Gio's order). Esc and the shortcut act at once, as they always have: Esc
+// while pressing or dragging drops only that press (its release is then
+// ignored, nothing is shot), and the shortcut ends the session.
 func (t *Tool) readKeys(gtx layout.Context, released bool) {
 	for {
 		e, ok := gtx.Event(t.keyFilters()...)
@@ -667,7 +694,7 @@ func (t *Tool) readKeys(gtx layout.Context, released bool) {
 		if !ok || t.repeat(ke) || ke.State != key.Press {
 			continue
 		}
-		if released && t.state != reviewing && (ke.Name == key.NameEscape || enterKey(ke) || comboPress(t.combo, ke)) {
+		if released && t.state != reviewing && enterKey(ke) {
 			t.afterPick = append(t.afterPick, ke)
 			continue
 		}
@@ -680,40 +707,27 @@ func enterKey(ke key.Event) bool {
 	return ke.Name == key.NameReturn || ke.Name == key.NameEnter || ke.Modifiers.Contain(key.ModShortcut) && ke.Name == "C"
 }
 
-// pickKeys acts on the keys readKeys held for after this frame's release:
-// with a capture waiting for its shot, Enter copies it as soon as it's
-// shot, with no review (AfterFrame: the image the review's Enter copies
-// with nothing marked), and Esc or the shortcut drop it before anything is
-// shot, as the review's do; with none, they act as ever.
+// pickKeys acts on the keys readKeys held for after this frame's release
+// (Enter, Mod+C): an element's pick waiting for its shot is copied as soon
+// as it's shot, with no review (AfterFrame: the image the review's Enter
+// copies with nothing marked; its margin is blurred anyway). A dragged
+// region still opens its review, the only place it can be blurred: the
+// Enter that came before it is dropped. With no capture they act as ever.
 func (t *Tool) pickKeys(gtx layout.Context) {
 	keys := t.afterPick
 	t.afterPick = t.afterPick[:0]
 	for _, ke := range keys {
-		switch {
-		case t.state == picked && t.capture != nil && enterKey(ke):
-			t.capture.copyNow = true
-			t.capture.tm.kind += " (Enter in its frame)"
-		case t.state == picked && t.capture != nil:
-			t.cancelPick()
+		switch c := t.capture; {
+		case t.state == picked && c != nil && !c.region:
+			c.copyNow, c.tm.atOnce = true, true
+			c.tm.kind += " (Enter in its frame)"
+		case t.state == picked && c != nil:
+			// a region: reviewed first
 		default:
 			t.key(gtx, ke)
 		}
 		t.host.Invalidate()
 	}
-}
-
-// cancelPick drops the capture whose frame isn't shot yet (Esc or the
-// shortcut in the pick's own frame): nothing shot, saved or copied, and
-// the session over, as the review's Esc leaves it.
-func (t *Tool) cancelPick() {
-	c := t.capture
-	t.capture = nil
-	if c != nil {
-		c.tm.outcome = "dropped before its shot"
-		logTimes(c)
-	}
-	t.stop()
-	t.host.Toast("Inspect report discarded: nothing copied")
 }
 
 // key acts on one key press.

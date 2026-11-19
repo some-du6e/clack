@@ -33,6 +33,7 @@ type capTimes struct {
 	drawn  time.Duration // from the release to the first frame drawing the review's shot
 	frames int           // frames from the release's to that one
 
+	atOnce                                bool          // copied at once, no review (a Shift+click; Enter in an element pick's frame)
 	enter                                 time.Duration // from the review drawn (or the shot, with no review) to Enter
 	colors, compose, encode, save, clipbd time.Duration
 	outcome                               string
@@ -111,7 +112,7 @@ func (m *capTimes) line() string {
 		fmt.Fprintf(&b, ", review drawn %s after the pick (%d frames)", dur(m.drawn), m.frames)
 	}
 	if m.compose > 0 || m.encode > 0 || m.clipbd > 0 || m.save > 0 {
-		if m.kind == "shift-click" {
+		if m.atOnce {
 			b.WriteString("; copied at once:")
 		} else {
 			fmt.Fprintf(&b, "; Enter %s after the review showed:", dur(m.enter))

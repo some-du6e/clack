@@ -136,6 +136,9 @@ func (t *Tool) reviewKey(ke key.Event) {
 		}
 		t.dropReview()
 	case ke.Name == key.NameReturn || ke.Name == key.NameEnter || mod && ke.Name == "C":
+		// a rect still being dragged out goes with the copy: what the user
+		// was blurring never goes out sharp
+		r.endDrag(t.scale)
 		t.finishReview()
 	case ke.Name == key.NameDeleteBackward || ke.Name == key.NameDeleteForward || mod && ke.Name == "Z":
 		if r.dragging {
@@ -176,18 +179,33 @@ func (t *Tool) reviewPointer(pe pointer.Event) {
 	case pointer.Release:
 		if r.dragging && pe.Buttons&pointer.ButtonPrimary == 0 {
 			r.to = pe.Position
-			r.dragging = false
-			min := float32(minMark) * t.scale
-			if abs32(r.to.X-r.from.X) >= min && abs32(r.to.Y-r.from.Y) >= min {
-				if m := r.markFor(r.from, r.to); !m.Empty() {
-					r.marks = append(r.marks, m)
-					t.changed(r)
-				}
+			if r.endDrag(t.scale) {
+				t.changed(r)
 			}
 		}
 	case pointer.Cancel:
 		r.dragging = false
 	}
+}
+
+// endDrag ends the rect being dragged out at r.to (scale px per dp): it is
+// a mark if it's at least minMark dp each way (less was a click). It
+// reports whether a mark was added.
+func (r *review) endDrag(scale float32) bool {
+	if !r.dragging {
+		return false
+	}
+	r.dragging = false
+	min := float32(minMark) * scale
+	if abs32(r.to.X-r.from.X) < min || abs32(r.to.Y-r.from.Y) < min {
+		return false
+	}
+	m := r.markFor(r.from, r.to)
+	if m.Empty() {
+		return false
+	}
+	r.marks = append(r.marks, m)
+	return true
 }
 
 // Marks are the rects marked in the review so far (shot px), and the
