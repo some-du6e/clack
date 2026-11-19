@@ -108,7 +108,7 @@ type AgentTasks struct {
 	forceHover string // HoverForTest
 	glow       paint.ImageOp
 	glowOK     bool
-	glowDark   bool
+	glowAt     glowKey
 	shown      shownTracker
 }
 
@@ -1029,44 +1029,50 @@ func (v *AgentTasks) emptyCard(gtx C) D {
 // drawGlow paints the header's :before: a box 310px tall (20px wider than
 // the card each side) centred on the card's top edge, filled with a
 // circle radial-gradient from col to transparent (farthest-corner), at
-// opacity .3, blurred: a small image scaled up with linear filtering.
+// opacity .3, blurred: a small image scaled up with linear filtering. The
+// card's background is the view's, so the gradient is mixed over it in
+// sRGB here (as a browser blends) and drawn opaque: Gio blends in linear
+// light, which would wash the 30% tint out to grey.
 func (v *AgentTasks) drawGlow(gtx C, card image.Rectangle, col color.NRGBA) {
 	gw := card.Dx() + 2*gtx.Dp(20)
 	gh := gtx.Dp(310)
 	if gw <= 0 || gh <= 0 {
 		return
 	}
-	dark := v.mode() == 1
-	if !v.glowOK || v.glowDark != dark {
+	key := glowKey{w: gw, h: gh, col: col, bg: v.p.Bg}
+	if !v.glowOK || v.glowAt != key {
 		const iw, ih = 64, 32
-		img := image.NewNRGBA(image.Rect(0, 0, iw, ih))
+		img := image.NewRGBA(image.Rect(0, 0, iw, ih))
+		rmax := float64(gw*gw)/4 + float64(gh*gh)/4
 		for y := 0; y < ih; y++ {
 			for x := 0; x < iw; x++ {
 				dx := (float64(x) + .5 - iw/2) / (iw / 2)
 				dy := (float64(y) + .5 - ih/2) / (ih / 2)
-				// farthest-corner of a circle: the distance to a corner in
-				// the box's own pixels, normalised by the half extents
+				// a circle, sized to the farthest corner of the box (in
+				// its own pixels)
 				d := dx*dx*float64(gw*gw)/4 + dy*dy*float64(gh*gh)/4
-				rmax := float64(gw*gw)/4 + float64(gh*gh)/4
-				t := 1.0
-				if rmax > 0 {
-					t = math.Sqrt(d / rmax)
-				}
-				a := (1 - t) * .3
+				a := (1 - math.Sqrt(d/rmax)) * .3
 				if a < 0 {
 					a = 0
 				}
-				img.SetNRGBA(x, y, color.NRGBA{R: col.R, G: col.G, B: col.B, A: uint8(a*255 + .5)})
+				c := theme.Mix(v.p.Bg, col, float32(a))
+				img.SetRGBA(x, y, color.RGBA{R: c.R, G: c.G, B: c.B, A: 0xff})
 			}
 		}
 		v.glow = paint.NewImageOp(img)
 		v.glow.Filter = paint.FilterLinear
-		v.glowOK, v.glowDark = true, dark
+		v.glowOK, v.glowAt = true, key
 	}
 	defer op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(float32(gw)/64, float32(gh)/32)).
 		Offset(f32.Pt(float32(card.Min.X-gtx.Dp(20)), float32(card.Min.Y-gh/2)))).Push(gtx.Ops).Pop()
 	v.glow.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
+}
+
+// glowKey is what the glow image was made for.
+type glowKey struct {
+	w, h    int
+	col, bg color.NRGBA
 }
 
 // TaskIDs lists the drawn rows' workflow ids in order (tests).
