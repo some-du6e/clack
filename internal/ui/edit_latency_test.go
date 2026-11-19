@@ -17,12 +17,7 @@ package ui
 // the messages slice (rows draw the plugins' view of the message), one
 // patching the components a message draws through (Blocks, MessageText,
 // MessageWrapper: their trees come from JS). Synthetic data only.
-//
-// And replies (Karim, the same day: "threads are a shit show rn, they
-// dont get replies quickly and i see it like in my activity tab first"):
-// a reply posted to the thread open in the pane, with the activity entries
-// the server pushes for it, is drawn by the pane within a frame of core
-// taking it in, and no later than Activity draws it.
+// Replies to an open thread: thread_reply_latency_test.go.
 
 import (
 	"context"
@@ -146,8 +141,6 @@ func TestEditLatency(t *testing.T) {
 func editLatency(t *testing.T, mode string) {
 	sz := fakeslack.Small
 	sz.AppPlans = true
-	sz.Views = true // Activity's feed, and messages.list for a reply's activity entry
-	sz.Authors = 20 // the generated messages' people; the others are no one the client fetched
 	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
@@ -157,10 +150,6 @@ func editLatency(t *testing.T, mode string) {
 	ts := fs.PostUptimeQuiet("10router blipped · 0m 0s")
 	fs.PostReplyQuiet(ch, ts, fakeslack.SelfID, "on it, checking 10router") // Karim replied in its thread: he follows it
 	other := fs.ChannelIDs()[0]
-	ids := fs.UserIDs()
-	// the replies' people: each someone the client never fetched, as on
-	// Karim's Grid, so a lookup that holds the event shows
-	replier := func(k int) string { return ids[len(ids)-1-k] }
 
 	var e *perfEnv
 	switch mode {
@@ -277,8 +266,7 @@ func editLatency(t *testing.T, mode string) {
 		return at
 	}
 
-	// core's announcements: an edit's "update" by its plan's title, a
-	// reply's "message" by its ts
+	// core's announcements: an edit's "update" by its plan's title
 	evs, stop := c.Subscribe()
 	defer stop()
 	var emu sync.Mutex
@@ -292,16 +280,13 @@ func editLatency(t *testing.T, mode string) {
 	}
 	go func() {
 		for ev := range evs {
-			switch {
-			case ev.Type == "update" && ev.Msg != nil && ev.Msg.TS == ts:
+			if ev.Type == "update" && ev.Msg != nil && ev.Msg.TS == ts {
 				var bs []struct {
 					Title string `json:"title"`
 				}
 				if json.Unmarshal(ev.Msg.Blocks, &bs) == nil && len(bs) > 0 {
 					note(bs[0].Title)
 				}
-			case ev.Type == "message" && ev.Msg != nil && ev.Msg.ThreadTS == ts && ev.TS != ts:
-				note("reply " + ev.TS)
 			}
 		}
 	}()
@@ -363,21 +348,6 @@ func editLatency(t *testing.T, mode string) {
 		}, func(ls, _ []string, i int) bool { return newestTitle(ls, first+i) })
 		latStats(t, mode, name, ds)
 	}
-	// replies every second for 8 s, from someone else, with their
-	// activity entries: each drawn when a message body draws its text
-	r := 0
-	replies := func(name string) time.Duration {
-		t.Helper()
-		var texts []string
-		ds := watch(8*time.Second, time.Second, func(int) (string, string) {
-			r++
-			text := fmt.Sprintf("synthetic reply %d to the outage", r)
-			texts = append(texts, text)
-			rts := fs.PushReplyLive(ch, ts, replier(r), text)
-			return text, "reply " + rts
-		}, func(_, bs []string, i int) bool { return has(bs, texts[i]) })
-		return latStats(t, mode, name, ds)
-	}
 	// the window watched, not used: no caret blinking in a focused
 	// composer draws frames the changes didn't ask for
 	settleBlurred := func() {
@@ -425,34 +395,4 @@ func editLatency(t *testing.T, mode string) {
 	})
 	settleBlurred()
 	edits("channel and thread root")
-
-	// replies: in the open pane (the primary on another channel), then in
-	// Activity (no pane, open before they come: its feed is the server's,
-	// the live entries come over the socket): the pane no later than
-	// Activity. Lookups are slow, as on a busy Grid: users/info answers
-	// after 1.5 s.
-	fs.SetEdgeHook(func(method string, _ map[string]json.RawMessage) (any, bool) {
-		if method == "edge/users/info" {
-			time.Sleep(1500 * time.Millisecond)
-		}
-		return nil, false
-	})
-	t.Cleanup(func() { fs.SetEdgeHook(nil) })
-	e.unblur()
-	e.openChannel(other)
-	e.a.OpenThread(ch, ts)
-	until("the thread pane", func(_, bs []string) bool { return has(bs, "checking 10router") })
-	settleBlurred()
-	pane := replies("reply in the thread pane")
-
-	e.unblur()
-	e.a.CloseSecondary()
-	e.a.Navigate("activity")
-	until("Activity's feed", func(_, bs []string) bool { return len(bs) > 3 })
-	e.settle(2 * time.Second)
-	settleBlurred()
-	act := replies("reply in Activity")
-	if pane > act+vsync {
-		t.Errorf("%s: the pane drew replies %v after core took them in (median), Activity %v: replies show in Activity first", mode, pane.Round(time.Millisecond), act.Round(time.Millisecond))
-	}
 }
