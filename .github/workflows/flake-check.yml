@@ -1578,13 +1578,16 @@ jobs:
   # hand-over, a followed thread's toast, the log's tags; the pane's
   # hand-over on each open and the highlight's keyframes (messages), row
   # and surface links, search results and Activity's Open in home, the
-  # lookups (core). One verbose run, then COUNT. Dispatch:
+  # lookups (core). Round 3 adds the jump's anchor line (Karim, α.108:
+  # links highlighted a message without scrolling to it; Gio patch 50) and
+  # an archived channel's tombstone thread paging up (Karim: "i cant scroll
+  # up from this thread"). One verbose run, then COUNT. Dispatch:
   # only=thread-open-root.
   thread-open-root:
     if: ${{ !inputs.only || startsWith('thread-open-root', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit|TestParentLinkOpensItsThread|TestMessageMentionPillOpensThread|TestPermalinkLoadsAroundOldMessage|TestSplitViewLinkKeepsBackStack|TestReplyRouteLeavesNoHistory|TestReplyRootedPaneFetchesThreadOnce|TestThreadOnlyLinksOpenTheThread|TestForeignWorkspaceLinkOpensBrowser|TestNavigationLogsTagIDs|TestJumpWindowIsTheListsOwn|TestJumpWindowPagesWithinItself|TestJumpWindowTakesLiveChanges|TestEnteringConversationAfterJump|TestColdJumpLoadsOnlyTheWindow|TestHandOverHighlightsRootAfterWindow|TestFollowLinkOpensSlackLinksInClient|TestTopicCardLinksFollowSlackLinks)$'
+      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit|TestParentLinkOpensItsThread|TestMessageMentionPillOpensThread|TestPermalinkLoadsAroundOldMessage|TestSplitViewLinkKeepsBackStack|TestReplyRouteLeavesNoHistory|TestReplyRootedPaneFetchesThreadOnce|TestThreadOnlyLinksOpenTheThread|TestForeignWorkspaceLinkOpensBrowser|TestNavigationLogsTagIDs|TestJumpWindowIsTheListsOwn|TestJumpWindowPagesWithinItself|TestJumpWindowTakesLiveChanges|TestEnteringConversationAfterJump|TestColdJumpLoadsOnlyTheWindow|TestHandOverHighlightsRootAfterWindow|TestFollowLinkOpensSlackLinksInClient|TestTopicCardLinksFollowSlackLinks|TestJumpToLoadedMessageOnAnchorLine|TestJumpToLateMessageOnAnchorLine|TestJumpHoldsThroughRowsGrowingAbove|TestJumpToReplyOnAnchorLine|TestArchivedTombstoneWindowPagesOlder|TestArchivedTombstoneThreadScrollsUp)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -1597,8 +1600,8 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: ui (links, deep links, panes and toasts open a message's thread as Slack's jumpToMessage does)
         run: |
-          go test -count=1 -v -timeout 30m -run "$TESTS" ./internal/ui
-          go test -count=$COUNT -timeout 60m -run "$TESTS" ./internal/ui
+          go test -count=1 -v -timeout 45m -run "$TESTS" ./internal/ui
+          go test -count=$COUNT -timeout 120m -run "$TESTS" ./internal/ui
       - name: messages, views, popups, blockkit (the pane's hand-over, the highlight, row and surface links, search, Activity)
         if: ${{ !cancelled() }}
         run: |
@@ -1617,3 +1620,6 @@ jobs:
           go test -count=$COUNT -v -run '^TestWindowsAreSlices$' ./internal/store
           go test -count=$COUNT -v -run '^TestID$' ./internal/logtag
           go test -count=$COUNT -run '^(TestDeepLinkMessage|TestNavLogTags)$' ./internal/ui
+      - name: gio (patch 50, List.ScrollDelta)
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^TestListScrollDelta$' gioui.org/layout
