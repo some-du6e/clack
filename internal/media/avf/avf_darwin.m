@@ -698,6 +698,7 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 		if (r != nil) {
 			[r.dataRequest respondWithData:d];
 		}
+		clackAVFResponded(self->_h); // Go may queue its next
 	});
 }
 

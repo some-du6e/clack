@@ -60,6 +60,7 @@ var rigN atomic.Int64
 var (
 	reqMu    sync.Mutex
 	requests = map[string][]string{}
+	notes    = map[string][]string{}
 )
 
 func init() {
@@ -72,6 +73,17 @@ func init() {
 			requests[id] = append(requests[id], fmt.Sprintf("%d+%d", off, n))
 		}
 	}
+	noteLog = func(id, line string) {
+		reqMu.Lock()
+		defer reqMu.Unlock()
+		notes[id] = append(notes[id], line)
+	}
+}
+
+func notesOf(id string) []string {
+	reqMu.Lock()
+	defer reqMu.Unlock()
+	return append([]string(nil), notes[id]...)
 }
 
 func requestsOf(id string) []string {
@@ -475,11 +487,16 @@ func TestAVFReadsAhead(t *testing.T) {
 	r.playThrough()
 	st := r.o.Stats()
 	t.Logf("50 MB past a 3 s video: the source fetched %d bytes in %d GETs (%v); requests %v", st.Bytes, len(st.Offsets), st.Offsets, requestsOf(r.id))
+	rs := r.p.rs.Stats()
+	t.Logf("the source: %d GETs, %d merged, %d restarts; the requests to the end: %q", rs.Requests, rs.Merged, rs.Restarts, notesOf(r.id))
 	// round 4 step 5: AVFoundation's two requests to the end (pacing holds
-	// neither in a file under 30 s) read the file once between them, not
-	// once each (they read 52 to 103 MB of the 52)
-	if lim := int64(len(data)) * 6 / 5; st.Bytes > lim {
-		t.Errorf("the source fetched %d bytes of a %d-byte file: the requests to the end read it more than once", st.Bytes, len(data))
+	// neither in a file under 30 s) share their bytes, not reading the
+	// file once each (they read 52 to 103 MB of the 52). The second
+	// begins where the asset's bytes end: with the responds queued
+	// unbounded, the first had read up to 28 MB past that, out of the
+	// source's cache, and 17 MB came twice (2 of 3 runs on f7dca4f1)
+	if lim := int64(len(data)) * 21 / 20; st.Bytes > lim {
+		t.Errorf("the source fetched %d bytes of a %d-byte file: the requests to the end read some of it twice", st.Bytes, len(data))
 	}
 }
 

@@ -46,7 +46,7 @@ func (backend) New(src media.Source, frameReady func()) (media.Player, error) {
 	if frameReady == nil {
 		frameReady = func() {}
 	}
-	p := &player{src: src, frameReady: frameReady, loads: map[uint64]context.CancelFunc{}, done: make(chan struct{}), born: time.Now()}
+	p := &player{src: src, frameReady: frameReady, loads: map[uint64]context.CancelFunc{}, slots: make(chan struct{}, respondAhead), done: make(chan struct{}), born: time.Now()}
 	p.Init()
 	p.pend.volume, p.pend.rate, p.pend.seekTo = 1, 1, -1
 	p.ctx, p.cancel = context.WithCancel(context.Background())
@@ -107,8 +107,11 @@ type player struct {
 	loads map[uint64]context.CancelFunc
 	// toEnd is each request to the end's offset as it reads (under mu),
 	// moved closed at each change (holdBehind)
-	toEnd  map[uint64]int64
-	moved  chan struct{}
+	toEnd map[uint64]int64
+	moved chan struct{}
+	// slots holds a token for each respond the queue hasn't handed on yet
+	// (at most respondAhead)
+	slots  chan struct{}
 	failed bool
 	done   chan struct{}
 
@@ -120,11 +123,20 @@ type player struct {
 	metaSeen, dataSeen, firstLog bool
 }
 
-// readLog, when set (tests), sees each of an asset's data requests.
+// readLog, when set (tests), sees each of an asset's data requests, and
+// noteLog how each request to the end began and ended.
 var (
 	readLogMu sync.Mutex
 	readLog   func(id string, off, n int64, toEnd bool)
+	noteLog   func(id, line string)
 )
+
+// respondAhead is how many responds (256 KB each) may wait on the queue at
+// once. The queue hands each to AVFoundation in turn; unbounded, a fast
+// network queued tens of MB ahead of what the asset had, and its second
+// request to the end began where the asset's bytes ended, that far behind
+// the first one: past the source's cache, a GET read it all again.
+const respondAhead = 4
 
 type pending struct {
 	play, seek   bool
@@ -508,6 +520,19 @@ func clackAVFLoad(h C.uintptr_t, req C.uint64_t, off, n C.int64_t, toEnd C.int) 
 	if f != nil {
 		f(p.src.FileID, int64(off), int64(n), toEnd != 0)
 	}
+	if toEnd != 0 {
+		// its offset counts now, on the queue: a request to the end
+		// already reading holds at its next read (holdBehind), not only
+		// once this one's goroutine runs
+		p.mu.Lock()
+		var others []int64
+		for _, at := range p.toEnd {
+			others = append(others, at)
+		}
+		p.mu.Unlock()
+		p.readTo(uint64(req), int64(off))
+		p.note("%d-end began; the others at %v, %d responds queued", int64(off), others, len(p.slots))
+	}
 	ctx, cancel := context.WithCancel(p.ctx)
 	p.mu.Lock()
 	p.loads[uint64(req)] = cancel
@@ -525,12 +550,14 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 		p.mu.Unlock()
 	}()
 	end := off + n
+	cur, how := off, "cancelled"
 	if toEnd {
 		end = math.MaxInt64
 		defer p.readTo(req, -1)
+		defer func() { p.note("%d-end ended at %d: %s", off, cur, how) }()
 	}
 	buf := make([]byte, 256<<10)
-	for cur := off; cur < end; {
+	for cur < end {
 		if toEnd {
 			p.readTo(req, cur)
 			if !p.pace(ctx, cur) || !p.holdBehind(ctx, req, cur) {
@@ -539,9 +566,17 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 		}
 		k, err := p.rs.ReadSome(ctx, buf[:min(int64(len(buf)), end-cur)], cur)
 		if k > 0 {
+			// a slot first: the queue has handed the responds before on
+			select {
+			case p.slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
 			p.objMu.RLock()
 			if p.obj != nil && ctx.Err() == nil {
 				C.clack_avf_respond(p.obj, C.uint64_t(req), unsafe.Pointer(&buf[0]), C.int(k))
+			} else {
+				<-p.slots
 			}
 			p.objMu.RUnlock()
 			cur += int64(k)
@@ -550,11 +585,39 @@ func (p *player) load(ctx context.Context, req uint64, off, n int64, toEnd bool)
 			if ctx.Err() != nil {
 				return // cancelled: AVFoundation dropped it
 			}
+			how = "failed"
+			if errors.Is(err, io.EOF) {
+				how = "at the end"
+			}
 			p.finish(req, !errors.Is(err, io.EOF))
 			return
 		}
 	}
+	how = "done"
 	p.finish(req, false)
+}
+
+// note logs a line to noteLog (tests).
+func (p *player) note(format string, args ...any) {
+	readLogMu.Lock()
+	f := noteLog
+	readLogMu.Unlock()
+	if f != nil {
+		f(p.src.FileID, fmt.Sprintf(format, args...))
+	}
+}
+
+// clackAVFResponded is the queue having handed a respond on (or dropped
+// it, its request gone): its slot frees.
+//
+//export clackAVFResponded
+func clackAVFResponded(h C.uintptr_t) {
+	if p := lookup(h); p != nil {
+		select {
+		case <-p.slots:
+		default:
+		}
+	}
 }
 
 // spread is how far a request to the end may read ahead of another one
