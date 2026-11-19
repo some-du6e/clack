@@ -32,6 +32,10 @@ import (
 type View struct {
 	doc  richtext.Doc
 	opts Options
+	// under is the opaque fill the View sits on when it isn't its
+	// palette's panel (SetUnder), see the palette's see-through fills
+	under color.NRGBA
+	see   map[color.NRGBA]color.NRGBA
 
 	d       display
 	laidW   int
@@ -270,6 +274,9 @@ func (v *View) selRange() (int32, int32) {
 // Layout draws the doc at the constraints' max width and returns its size.
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
 	v.dark = st != nil && st.Palette.Dark
+	if st != nil {
+		v.see = st.Palette.see
+	}
 	w := gtx.Constraints.Max.X
 	if v.opts.MaxWidth > 0 {
 		if mw := gtx.Dp(dpUnit(v.opts.MaxWidth)); mw < w {
@@ -675,7 +682,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
-				fillRadii(ops, b.r, b.radii(), b.hover)
+				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover))
 			}
 		}
 	}
@@ -894,21 +901,54 @@ func (v *View) targetBounds(t int16) image.Rectangle {
 }
 
 // drawBox draws b, with its CSS part's fill when it has one.
+// SetUnder is the opaque fill the View is drawn over this frame, when it
+// isn't its palette's panel (a hovered or flashing message row; the zero
+// color: the panel). The palette's see-through fills (a mention's, code's,
+// a pre block's) composite over it, as Slack's rgba fills blend over the
+// row's own background: the jump highlight's yellow shows through them.
+func (v *View) SetUnder(c color.NRGBA) {
+	if c.A != 255 {
+		c = color.NRGBA{}
+	}
+	if c != v.under {
+		v.under = c
+		v.recorded = false // the fills are in the recording
+	}
+}
+
+// overUnder is fill c over the View's under: a see-through fill of the
+// palette composited over it (sRGB) instead of over the panel.
+func (v *View) overUnder(c color.NRGBA) color.NRGBA {
+	if v.under.A != 255 {
+		return c
+	}
+	if raw, ok := v.see[c]; ok {
+		return Over(raw, v.under)
+	}
+	return c
+}
+
 func (v *View) drawBox(ops *op.Ops, b *box, css bool) {
 	if b.hoverOver && b.comp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
 		// a component pill, drawn each frame: hovered, its hover fill in
 		// place of its fill
 		bb := *b
-		bb.fill = b.hover
+		bb.fill = v.overUnder(b.hover)
 		drawBox(ops, &bb)
 		return
 	}
 	if !css || b.part == 0 {
+		if f := v.overUnder(b.fill); f != b.fill {
+			bb := *b
+			bb.fill = f
+			drawBox(ops, &bb)
+			return
+		}
 		drawBox(ops, b)
 		return
 	}
 	bb := *b
-	bb.fill = v.boxFill(b)
+	bb.fill = v.overUnder(v.boxFill(b))
 	if ps := v.css.get(b.part); ps != nil {
 		bb.stroke = mulAlpha(bb.stroke, ps.alpha)
 	}

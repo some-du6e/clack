@@ -71,6 +71,9 @@ type row struct {
 	// hlDrawn: the jump highlight's strength the row last painted (0..1,
 	// highlightAlpha), for SenderView
 	hlDrawn float32
+	// under is the row's fill as last painted (paintRowFill), opaque: its
+	// see-through fills blend over it (seeFill, richview's SetUnder)
+	under color.NRGBA
 
 	// find in thread (thread_find.go): the query the body marks
 	// (findInThreadHighlightWords) and whether the row is the current
@@ -886,6 +889,15 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 			r.resolve(rc)
 		}
 	}
+	// the body's see-through fills (code, mentions) over the row's fill as
+	// last painted (paintRowFill): its hover or its jump highlight
+	if r.rv != nil {
+		u := r.under
+		if u == rc.c.Bg {
+			u = color.NRGBA{} // the pane: the palette's own blend
+		}
+		r.rv.SetUnder(u)
+	}
 	// MessageBackground wraps every row (Message's first child, b5pm), so
 	// a tombstone and a canvas comment root get its fill too: the hover and
 	// the jump highlight
@@ -1045,6 +1057,12 @@ func (r *row) paintRowFill(gtx layout.Context, size image.Point, bg color.NRGBA)
 	if bg.A > 0 || cur != under {
 		fill(gtx.Ops, image.Rectangle{Max: size}, cur)
 	}
+	if cur != r.under {
+		// the next frame draws the row's see-through fills over the new
+		// fill (they were laid out before it was known)
+		r.under = cur
+		gtx.Execute(op.InvalidateCmd{})
+	}
 	if fl := r.rc.findFlash; fl > 0 {
 		f := c.ActiveThread
 		f.A = uint8(float32(f.A) * fl)
@@ -1065,6 +1083,20 @@ func (r *row) withRowFill(gtx layout.Context, rc *rowCtx, f layout.Widget) layou
 	r.paintRowFill(gtx, d.Size, bg)
 	call.Add(gtx.Ops)
 	return d
+}
+
+// seeFill is see-through fill x (one of c's, pre-blended over the pane)
+// over the row's fill instead, when the row has one of its own (its hover,
+// its jump highlight): Slack's rgba reaction pills and badges show the
+// row's background through them.
+func (r *row) seeFill(c *colors, x color.NRGBA) color.NRGBA {
+	if r.under.A != 255 || r.under == c.Bg {
+		return x
+	}
+	if raw, ok := c.see[x]; ok {
+		return richview.Over(raw, r.under)
+	}
+	return x
 }
 
 // srgbMix is a and b mixed in sRGB, t of b (opaque).
@@ -1846,7 +1878,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		bw := sz.X + dp(gtx, 6)
 		bh := dp(gtx, 14)
 		top := baseline - dp(gtx, 11)
-		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), c.BadgeBg)
+		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), r.seeFill(c, c.BadgeBg))
 		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, badge) })
 		xx += bw
 	}
@@ -2451,12 +2483,12 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 		rad := ph / 2
 		switch {
 		case sel:
-			rrect(gtx.Ops, rr, rad, c.ReactSelfBg)
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactSelfBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case r.reactExpand.Hovered():
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 		default:
-			rrect(gtx.Ops, rr, rad, c.ReactBg)
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactBg))
 		}
 		at(gtx, dp(gtx, 8), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
 		return layout.Dimensions{Size: size}
@@ -2543,7 +2575,7 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 			border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
 			col = rgb(0xecb22e)
 		} else {
-			rrect(gtx.Ops, rr, ph/2, st.Background(c.ReactBg))
+			rrect(gtx.Ops, rr, ph/2, st.Background(r.seeFill(c, c.ReactBg)))
 		}
 		col = st.Color(col)
 		is := dp(gtx, 18)
@@ -2634,13 +2666,13 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case self:
-			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfBg))
+			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactSelfBg)))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case hov:
 			rrect(gtx.Ops, rr, rad, st.Background(colorNone))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 		default:
-			rrect(gtx.Ops, rr, rad, st.Background(c.ReactBg))
+			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactBg)))
 		}
 		t := op.Offset(image.Pt(dp(gtx, 8), cy)).Push(gtx.Ops)
 		content.Add(gtx.Ops)
@@ -3007,7 +3039,7 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	top := dp(gtx, mt.padTop)
 	av := dp(gtx, mt.avatar)
 	sq := image.Rect(padX, top, padX+av, top+av)
-	rrect(gtx.Ops, sq, dp(gtx, 8), c.BadgeBg)
+	rrect(gtx.Ops, sq, dp(gtx, 8), r.seeFill(c, c.BadgeBg))
 	is := dp(gtx, 20)
 	at(gtx, padX+(av-is)/2, top+(av-is)/2, func(gtx layout.Context) layout.Dimensions {
 		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)

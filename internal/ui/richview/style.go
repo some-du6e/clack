@@ -140,6 +140,12 @@ type Palette struct {
 	// Dark is the dark theme: MemberSlug's c-member_slug--{clientTheme}
 	// (light otherwise).
 	Dark bool
+	// see maps each see-through fill as flat pre-composited it to its own
+	// rgba (a mention's, code's, a pre block's...): a View over a fill of
+	// its own (SetUnder: a hovered or flashing message row) composites
+	// them over that instead, as Slack's fills blend over the row's
+	// background
+	see map[color.NRGBA]color.NRGBA
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -162,8 +168,16 @@ func Over(c, bg color.NRGBA) color.NRGBA {
 // flat pre-composites the palette's translucent fills over the card/pane
 // color (see Over).
 func (p Palette) flat() Palette {
+	p.see = map[color.NRGBA]color.NRGBA{}
 	for _, c := range []*color.NRGBA{&p.MentionBg, &p.MentionHoverBg, &p.SelfMentionBg, &p.CodeBg, &p.PreBg,
-		&p.Highlight, &p.FindHighlight, &p.FindFocused, &p.FileIconBg, &p.Border, &p.BorderHover, &p.QuoteBar, &p.Divider, &p.ButtonBorder,
+		&p.Highlight, &p.FindHighlight, &p.FindFocused, &p.FileIconBg} {
+		raw := *c
+		*c = Over(raw, p.Panel)
+		if raw.A > 0 && raw.A < 255 {
+			p.see[*c] = raw
+		}
+	}
+	for _, c := range []*color.NRGBA{&p.Border, &p.BorderHover, &p.QuoteBar, &p.Divider, &p.ButtonBorder,
 		&p.CodeBorder, &p.PreBorder} {
 		*c = Over(*c, p.Panel)
 	}

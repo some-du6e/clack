@@ -2,11 +2,14 @@ package messages
 
 import (
 	"encoding/json"
+	"image"
+	"image/color"
 	"testing"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // Every row is MessageBackground's (Message's first child, boot-shared
@@ -106,4 +109,45 @@ func TestRepeatJumpKeepsFlash(t *testing.T) {
 	if r.hlDrawn != 0 {
 		t.Errorf("3.3 s after the first jump the row still flashes (%.2f): the second jump restarted it", r.hlDrawn)
 	}
+}
+
+// TestFlashTintsSeeThroughFills: a reaction pill is rgba
+// (.c-reaction: --dt_color-surf-pry), so in a row holding the jump
+// highlight it shows the yellow through it, as code and mentions do
+// (richview's SetUnder). Clack pre-blended it over the pane, so it stayed
+// grey on the yellow row. Synthetic messages.
+func TestFlashTintsSeeThroughFills(t *testing.T) {
+	msgs := []slack.Message{
+		{Type: "message", TS: tsFlashPlain, User: "UALICE", Text: "a message with a reaction",
+			Reactions: []slack.Reaction{{Name: "tada", Count: 1, Users: []string{"UBOB"}}}},
+	}
+	e := newCtxEnvSetup(t, tFlashCh, msgs, nil)
+	e.v.Highlight(tsFlashPlain)
+	lights(t, e.frame, e.v.s, tsFlashPlain, "the jump")
+	for dl := time.Now().Add(3 * time.Second); ; { // the hold: 0.6 s to 1.8 s
+		e.frame()
+		if r := e.row(tsFlashPlain); r != nil && r.hlDrawn == 1 {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("the highlight never held")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.frame() // the pills follow the fill a frame later
+	var fills []color.NRGBA
+	rrectHook = func(_ image.Rectangle, c color.NRGBA) { fills = append(fills, c) }
+	e.frame()
+	rrectHook = nil
+	c := colorsFor(e.h.th)
+	want := richview.Over(lightColors.ReactBg, c.Highlight)
+	for _, f := range fills {
+		if f == want {
+			return
+		}
+		if f == c.ReactBg {
+			t.Fatalf("the reaction pill drew %v, its blend over the pane, on the yellow row; want %v (its rgba over the highlight)", f, want)
+		}
+	}
+	t.Errorf("no reaction pill drawn in %v over the highlight %v; fills %v", want, c.Highlight, fills)
 }

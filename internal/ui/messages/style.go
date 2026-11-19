@@ -33,6 +33,11 @@ func rgba(v uint32, a float32) color.NRGBA {
 
 // colors are the message-pane colors measured from the 2026 client.
 type colors struct {
+	// see maps a see-through fill drawn inside a row (a reaction pill, a
+	// badge), as flatten pre-blended it over the pane, to its own rgba: a
+	// row over a fill of its own (the jump highlight, the hover) blends it
+	// over that instead (row.seeFill), as Slack's rgba fills do
+	see                                          map[color.NRGBA]color.NRGBA
 	Bg, Hover, Text, Text2, Text3                color.NRGBA
 	Edited, PinIcon, Muted70, TimeSystem         color.NRGBA
 	Pinned, PinnedHover, Highlight, ActiveThread color.NRGBA
@@ -161,6 +166,12 @@ var (
 // than Slack's.
 func flatten(c colors) colors {
 	bg := c.Bg
+	c.see = map[color.NRGBA]color.NRGBA{}
+	for _, p := range []*color.NRGBA{&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg} {
+		if p.A > 0 && p.A < 255 {
+			c.see[richview.Over(*p, bg)] = *p
+		}
+	}
 	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing, &c.CustomTint,
 		&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg, &c.ToolbarHoverBg, &c.CloseHover,
 		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70, &c.HuddleTile,
@@ -225,9 +236,15 @@ func fill(ops *op.Ops, r image.Rectangle, c color.NRGBA) {
 	paint.FillShape(ops, c, clip.Rect(r).Op())
 }
 
+// rrectHook sees every rounded fill rrect paints (tests).
+var rrectHook func(r image.Rectangle, c color.NRGBA)
+
 func rrect(ops *op.Ops, r image.Rectangle, radius int, c color.NRGBA) {
 	if c.A == 0 || r.Empty() {
 		return
+	}
+	if rrectHook != nil {
+		rrectHook(r, c)
 	}
 	paint.FillShape(ops, c, clip.UniformRRect(r, radius).Op(ops))
 }
