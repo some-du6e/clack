@@ -1077,6 +1077,16 @@ jobs:
           CGO_ENABLED: "1"
           CLACK_MEDIA_TESTS: "1"
         run: go test -count=1 -v -timeout 15m ./internal/media/...
+      # The inline player on the real window: Media Foundation plays
+      # #files-gallery's video in App.Run's own window (quiet frames, its
+      # partial frames inside the tile, nothing while paused)
+      - name: the inline video player on the real window (TestRealWindowVideoFrames, Media Foundation)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+          CLACK_REAL_WINDOW_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run '^TestRealWindowVideoFrames$' ./internal/ui
 
   macos:
     runs-on: macos-latest
@@ -1402,6 +1412,8 @@ jobs:
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
           # Gio patch 46 on Metal: a caret's blink is a partial frame
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' || rc=1
+          # the inline video player (AVFoundation) on the real window
+          CLACK_MACOS_WINDOW_TESTS=1 CLACK_MEDIA_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowVideoFrames$' || rc=1
           exit $rc
       - name: build
         if: ${{ !cancelled() }}

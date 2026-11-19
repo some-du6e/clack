@@ -1376,6 +1376,43 @@ jobs:
           go test -count=3 -v -timeout 10m -run '^TestComposersForOneThreadSendTheirOwn$' ./internal/ui/composer || rc=1
           exit $rc
 
+  # The inline video player on Clack's real window (internal/ui
+  # TestRealWindowVideoFrames): Media Foundation on windows-latest,
+  # AVFoundation on macos-latest play #files-gallery's video in App.Run's
+  # own window; quiet frames, partial frames inside the tile, the paused
+  # budget. One App per process, so each run is its own process; at most
+  # 3. Dispatch with only=rw-video.
+  rw-video:
+    if: ${{ !inputs.only || startsWith('rw-video', inputs.only) }}
+    name: "rw-video (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: the inline player on the real window (TestRealWindowVideoFrames)
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -c -o "$RUNNER_TEMP/ui-video.test" ./internal/ui || exit 1
+          cd internal/ui
+          rc=0
+          for i in $(seq 1 "$n"); do
+            CLACK_REAL_WINDOW_TESTS=1 CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-video.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowVideoFrames$' || rc=1
+          done
+          exit $rc
+
   # Video playback's backends (internal/media/mf, internal/media/avf): the
   # fixtures played by the OS's own decoder into a headless Gio window,
   # Media Foundation on windows-latest (Direct3D 11 on the Basic Render

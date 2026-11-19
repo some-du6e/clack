@@ -61,16 +61,14 @@ type RowHost interface {
 	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
 }
 
-const (
-	// unmountAfter is how long a player paused and not laid out lives:
-	// then it closes, as React unmounting its row does (Clack's
-	// stand-in).
-	unmountAfter = 10 * time.Second
-	// dockBelow is useScrollDockTrigger's (YPBt): a playing video
-	// scrolled under 10% visible docks into the mini player. Until Clack
-	// has one, it pauses there.
-	dockBelow = 0.1
-)
+// unmountAfter is how long a player paused and not laid out lives: then
+// it closes, as React unmounting its row does (Clack's stand-in).
+var unmountAfter = 10 * time.Second
+
+// dockBelow is useScrollDockTrigger's (YPBt): a playing video scrolled
+// under 10% visible docks into the mini player. Until Clack has one, it
+// pauses there.
+const dockBelow = 0.1
 
 // key names a tile: a file in a message, in one list (the channel's and
 // the thread pane's root are two players, as in Slack).
@@ -412,12 +410,17 @@ func (c *Controller) syncPrefsLocked() {
 	if c.prefsLoaded && raw == c.prefRaw {
 		return
 	}
-	c.prefRaw, c.prefsLoaded = raw, true
-	c.muted = prefBool(m)
-	c.prefVol = prefVolume(v)
-	if !c.dragging() {
-		c.vol = c.prefVol
+	first := !c.prefsLoaded
+	if first || raw[0] != c.prefRaw[0] {
+		c.muted = prefBool(m)
 	}
+	if first || raw[1] != c.prefRaw[1] { // useEffect([C]): the slider takes a new pref volume
+		c.prefVol = prefVolume(v)
+		if !c.dragging() {
+			c.vol = c.prefVol
+		}
+	}
+	c.prefRaw, c.prefsLoaded = raw, true
 }
 
 func (c *Controller) dragging() bool {
@@ -542,6 +545,24 @@ type State struct {
 	// Player is the mounted player (nil before the first click and once
 	// closed).
 	Player media.Player
+	// Mute, Slider, Scrub and More are the overlay's controls as the last
+	// layout drew them, in the tile's coordinates (the slider shows while
+	// the pointer is on the volume control).
+	Mute, Slider, Scrub, More image.Rectangle
+	Hover                     bool
+}
+
+// Click is the tile's click (fIJO's tE), as a press and release on it
+// give: the real-window test's, which gives the window no input.
+func (c *Controller) Click(pane, ch, ts, file string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.tiles[key{pane, ch, ts, file}]
+	if t == nil {
+		return false
+	}
+	c.clickLocked(t)
+	return true
 }
 
 // TileState is the tile of file in message ts of ch in pane.
@@ -553,7 +574,8 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 		return State{}, false
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
-		Elapsed: t.elapsed, Duration: t.durLocked()}
+		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
+		Hover: t.hover}
 	if t.h != nil {
 		st.Player = t.h
 	}
