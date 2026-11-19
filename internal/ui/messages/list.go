@@ -997,13 +997,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// that shows the newest messages stays at its end instead. Only while
 	// nothing else moved the list since the last layout (a placement, the
 	// keys, the scrollbar: they say where it is).
-	akey, ay := "", 0
+	akey, ay, nearEnd := "", 0, false
 	if s.laidOut && s.built == s.laidBuilt && samePos(s.list.Position, s.laidPos) && (s.list.Position.BeforeEnd || !s.list.ScrollToEnd) {
-		if s.list.ScrollToEnd && s.endGap <= gtx.Dp(2) {
-			s.list.Position.BeforeEnd = false
-		} else {
-			akey, ay = s.lineRow(line)
-		}
+		akey, ay = s.lineRow(line)
+		nearEnd = s.list.ScrollToEnd && s.endGap <= gtx.Dp(2)
 	}
 	for i := range s.heights {
 		s.heights[i] = 0
@@ -1042,12 +1039,16 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// plugin's tree). Keep it where it was, in this frame: lay out again
 	// with the offset corrected and draw only that.
 	if akey != "" {
-		want := ay - s.list.ScrollDelta()
-		if y, ok := s.yOfKey(akey, size.Y); ok && y != want {
+		d := s.list.ScrollDelta()
+		if y, ok := s.yOfKey(akey, size.Y); ok && y != ay-d {
 			for i := range s.heights {
 				s.heights[i] = 0
 			}
-			s.list.Position.Offset += y - want
+			if nearEnd && d == 0 {
+				s.list.Position = layout.Position{} // within 2px of the end: it stays at the end
+			} else {
+				s.list.Position.Offset += y - (ay - d)
+			}
 			call = lay()
 		}
 	}
@@ -2388,6 +2389,14 @@ func (s *listState) placeThreadJump(now time.Time) {
 		s.highlightAt = now // the flash starts as its message is placed
 	}
 	s.pendingJump, s.jumpLazy = "", false
+}
+
+// toEnd puts the list at its end, whether or not it keeps to it.
+func (s *listState) toEnd() {
+	s.list.Position = layout.Position{} // a ScrollToEnd list: its end
+	if !s.list.ScrollToEnd {
+		s.list.Position = layout.Position{BeforeEnd: true, First: len(s.items)} // drawn back from the last item
+	}
 }
 
 // placeAt places item i off under the list's top in the next layout.

@@ -210,6 +210,7 @@ func (v *ThreadView) JumpTo(ts string, flash bool) {
 	opening := s.thrOpening || !s.positioned
 	s.thrOpening = false
 	if !flash && opening && s.positioned && s.laidOut {
+		s.highlight = ""
 		return // no highlight: the reopened pane's own place (getThreadStartPosition's scrollmark)
 	}
 	flashing := flash && s.highlight == ts && time.Since(s.highlightAt) < highlightFor

@@ -343,8 +343,11 @@ func (s *listState) archivesBanner(gtx layout.Context, h Host, size image.Point)
 	r := image.Rect((size.X-bw)/2, size.Y-bh-dp(gtx, 16), (size.X-bw)/2+bw, size.Y-dp(gtx, 16))
 	s.latestR = r
 	if s.jump.Clicked(gtx) { // jumpToMostRecent: the newest page in the window's place
-		s.list.Position = layout.Position{}
-		s.jumpToLatest()
+		if s.win != nil {
+			s.jumpToLatest()
+		} else {
+			s.toEnd()
+		}
 		h.Invalidate()
 	}
 	at(gtx, r.Min.X, r.Min.Y, func(gtx layout.Context) layout.Dimensions {

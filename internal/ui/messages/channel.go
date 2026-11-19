@@ -239,15 +239,13 @@ func (v *ChannelView) Entered() {
 	if app == nil || !app.Count(v.ch).Unread {
 		return // where it was left: the row on the anchor line, the window too
 	}
-	// no scrollmark: the newest messages, at their end (getOffsetForKey(null))
+	// no scrollmark: it opens as a conversation does, at its newest
+	// messages (the unread line when that's far up)
 	s := v.s
-	if s.win != nil {
-		s.jumpToLatest()
-	} else {
-		s.pendingJump, s.aroundFor, s.place, s.jumpLazy = "", "", jumpPlace{}, false
-		s.list.Position = layout.Position{}
-		s.positioned = true
-	}
+	s.leaveWindow()
+	s.pendingJump, s.aroundFor, s.place, s.jumpLazy = "", "", jumpPlace{}, false
+	s.list.Position = layout.Position{}
+	s.positioned = false
 	v.h.Invalidate()
 }
 
