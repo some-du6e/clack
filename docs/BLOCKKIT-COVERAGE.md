@@ -145,7 +145,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 
 ## Shots and tests
 
-The gallery's `12-coverage` part (`internal/fakeslack/gallery_coverage.go`) holds a fixture for each block this round built: calls (ended, running with a facepile, waiting), alerts at every level, callouts in several colours, containers (fixed header with a divider, collapsible, collapsed by default), loading, rich_text headers and dividers, the fallback chain, and a condition block. `bk-gallery-shots` saves the channel page by page in light and dark.
+The gallery's `12-coverage` part (`internal/fakeslack/gallery_coverage.go`) holds a fixture for each block this round built: calls (ended, running with a facepile, waiting), alerts at every level, callouts in several colours, containers (fixed header with a divider, collapsible, collapsed by default), rich_text headers and dividers, the fallback chain, and a condition block. The loading block sits in a thread reply, because its spinner turns for ever as Slack's does and `TestIdleFrames` holds the gallery channel to no idle frames. `bk-gallery-shots` saves the channel page by page in light and dark, and the loading thread as `gallery-thread-loading-*`.
 
 Tests that fail on `e93a5e70`: `TestBlockFallbacks`, `TestConditionBlocks`, `TestCallBlock`, `TestBoxedBlocks`, `TestRichTextHeaderDivider`, `TestTableTextCells`, `TestUnknownInlineElement`, `TestVisibleToUserIDs` (richtext) and `TestCallCardLayout`, `TestBoxedBlocksLayout`, `TestRichHeaderDividerLayout`, `TestContainerLayout` (richview). The tests that reach new API do it through `*_api_test.go` files, which the red-evidence branch stubs.
 

@@ -91,6 +91,17 @@ func TestBlockKitGallery(t *testing.T) {
 		})
 		e.settle(800 * time.Millisecond)
 		snap("gallery-thread-show-more-" + mode)
+
+		// the loading block's thread (its spinner never idles, so it
+		// isn't in the channel)
+		lts := fs.GalleryTS("coverage/loading")
+		e.a.OpenThread(ch, lts)
+		e.until("loading thread", 20*time.Second, func() bool {
+			msgs, _ := e.a.data.core.S.Thread(ch, lts)
+			return len(msgs) >= 2
+		})
+		e.settle(800 * time.Millisecond)
+		snap("gallery-thread-loading-" + mode)
 	}
 }
 

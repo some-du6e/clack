@@ -60,7 +60,12 @@ func galleryCoverage(e GalleryEnv) []GalleryMessage {
 			 "child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"Shown until the header is clicked."}}]},
 			{"type":"container","title":{"type":"plain_text","text":"Narrow, collapsed by default"},"is_collapsible":true,"default_collapsed":true,"width":"narrow",
 			 "child_blocks":[{"type":"section","text":{"type":"mrkdwn","text":"hidden"}}]}]`)},
-		{Name: "coverage/loading", Text: "loading", Blocks: `[{"type":"section","text":{"type":"mrkdwn","text":"A loading block:"}},{"type":"loading"}]`},
+		// the loading block's spinner turns for ever (as in Slack), so it
+		// lives in a thread: the channel itself must idle (TestIdleFrames)
+		{Name: "coverage/loading", Text: "A loading block lives in this thread",
+			Blocks: `[{"type":"section","text":{"type":"mrkdwn","text":"A loading block lives in this thread."}}]`,
+			Replies: []GalleryMessage{{Name: "coverage/loading reply", Text: "loading",
+				Blocks: `[{"type":"section","text":{"type":"mrkdwn","text":"A loading block:"}},{"type":"loading"}]`}}},
 		{Name: "coverage/rich_text header and divider", Text: "rich text headers", Blocks: `[{"type":"rich_text","elements":[
 			{"type":"rich_text_header","level":1,"elements":[{"type":"text","text":"rich_text_header level 1"}]},
 			{"type":"rich_text_section","elements":[{"type":"text","text":"Its first header has no top margin; later ones keep 1em."}]},
