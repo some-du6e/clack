@@ -128,8 +128,8 @@ func galleryCoverage(e GalleryEnv) []GalleryMessage {
 }
 
 // the inline rich_text file slugs: a message whose rich text links its own
-// files (Slack's File slug: the file's name and type icon) and a file the
-// fake doesn't know (not fetched yet: the disabled trash slug)
+// files (Slack's File slug: the file's name and type icon) and a deleted
+// one (a tombstone in the message's files: the disabled trash slug)
 func init() { RegisterGalleryMessages("13-coverage-files", galleryFileSlugs) }
 
 func galleryFileSlugs(s *Server) []slack.Message {
@@ -143,12 +143,13 @@ func galleryFileSlugs(s *Server) []slack.Message {
 	txt := func(t string) string { return `{"type":"text","text":"` + t + `"}` }
 	blocks := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` + strings.Join([]string{
 		txt("Inline file slugs: "), el("F0GALSLUG1", "q3-report.pdf"), txt(", "), el("F0GALSLUG2", "standup.m4a"),
-		txt(" and one not fetched yet: "), el("F0GALSLUG9", "gone.txt")}, ",") + `]}]}]`
+		txt(" and a deleted one: "), el("F0GALSLUG9", "gone.txt")}, ",") + `]}]}]`
 	return []slack.Message{{
 		Type: "message", User: u, Text: "Inline file slugs", Blocks: json.RawMessage(blocks),
 		Files: []slack.File{
 			{ID: "F0GALSLUG1", Name: "q3-report.pdf", Title: "Q3 report", Filetype: "pdf", Mimetype: "application/pdf", PrettyType: "PDF", Size: 245000, Mode: "hosted"},
 			{ID: "F0GALSLUG2", Name: "standup.m4a", Title: "", Filetype: "m4a", Mimetype: "audio/mp4", Subtype: "slack_audio", Size: 52000, Mode: "hosted"},
+			{ID: "F0GALSLUG9", Mode: "tombstone"},
 		},
 	}}
 }
