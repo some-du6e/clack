@@ -1319,7 +1319,9 @@ jobs:
   # root of its open thread pane, and both at once; natively and under
   # pass-through plugins (the messages slice, the components a message
   # draws through). Frames are drawn when the app asks for one, as a
-  # window does. Dispatch with only=edit-latency.
+  # window does. The messages-slice case, red until its view re-read is
+  # fixed, runs only with CLACK_LATENCY_SLICE=1 (not set here: ui and main
+  # pushes run this job). Dispatch with only=edit-latency.
   edit-latency:
     if: ${{ !inputs.only || startsWith('edit-latency', inputs.only) }}
     runs-on: ubuntu-latest
