@@ -34,7 +34,7 @@ func TestSliceFirstDraw(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	chs, ids := fs.ChannelIDs(), fs.UserIDs()
-	ch := chs[1]
+	ch := chs[2] // read: it opens at its newest, the root on screen (the second is unread, opening at its unread line)
 	const rootText, replyText = "a synthetic first-draw root", "a synthetic first-draw reply"
 	root, _ := fs.PostQuiet(ch, ids[2], rootText)
 	fs.PostReplyQuiet(ch, root, ids[3], replyText)
