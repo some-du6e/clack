@@ -9,6 +9,7 @@ package richtext
 // built (like HuddleMsgText).
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -21,31 +22,40 @@ type bkCall struct {
 }
 
 type bkCallV1 struct {
-	ID                 string            `json:"id"`
-	Name               string            `json:"name"`
-	CreatedBy          string            `json:"created_by"`
-	IsDMCall           bool              `json:"is_dm_call"`
-	WasAccepted        bool              `json:"was_accepted"`
-	WasRejected        bool              `json:"was_rejected"`
-	WasMissed          bool              `json:"was_missed"`
-	Channels           []string          `json:"channels"`
-	DateStart          int64             `json:"date_start"`
-	DateEnd            int64             `json:"date_end"`
-	ActiveParticipants []bkCallMember    `json:"active_participants"`
-	AllParticipants    []bkCallMember    `json:"all_participants"`
-	DisplayID          string            `json:"display_id"`
-	JoinURL            string            `json:"join_url"`
-	DesktopJoinURL     string            `json:"desktop_app_join_url"`
-	AppID              string            `json:"app_id"`
-	AppIconURLs        map[string]string `json:"app_icon_urls"`
+	ID                 string         `json:"id"`
+	Name               string         `json:"name"`
+	CreatedBy          string         `json:"created_by"`
+	IsDMCall           bool           `json:"is_dm_call"`
+	WasAccepted        bool           `json:"was_accepted"`
+	WasRejected        bool           `json:"was_rejected"`
+	WasMissed          bool           `json:"was_missed"`
+	Channels           []bkStr        `json:"channels"`
+	DateStart          int64          `json:"date_start"`
+	DateEnd            int64          `json:"date_end"`
+	ActiveParticipants []bkCallMember `json:"active_participants"`
+	AllParticipants    []bkCallMember `json:"all_participants"`
+	DisplayID          string         `json:"display_id"`
+	JoinURL            string         `json:"join_url"`
+	DesktopJoinURL     string         `json:"desktop_app_join_url"`
+	AppID              string         `json:"app_id"`
+	// app_icon_urls is read only for its string values: an app's icon map
+	// can carry others (is_default), and Slack takes the icon from the app
+	AppIconURLs map[string]json.RawMessage `json:"app_icon_urls"`
 }
 
 // bkCallMember is a call participant: a Slack member or an external one.
+// Its fields take any scalar, so one odd value can't fail the whole card.
 type bkCallMember struct {
-	SlackID     string `json:"slack_id"`
-	ExternalID  string `json:"external_id"`
-	DisplayName string `json:"display_name"`
-	AvatarURL   string `json:"avatar_url"`
+	SlackID     bkStr `json:"slack_id"`
+	ExternalID  bkStr `json:"external_id"`
+	DisplayName bkStr `json:"display_name"`
+	AvatarURL   bkStr `json:"avatar_url"`
+}
+
+// DMResolver is an optional Resolver extension: an IM's other member
+// (getOtherMemberNameInDmCall reads the DM call's D channel).
+type DMResolver interface {
+	DMUser(channelID string) (userID string, ok bool)
 }
 
 // CallCard is a call block as PlatformCallSubtype draws it: "Call" and
@@ -72,6 +82,9 @@ type CallCard struct {
 	// call ended, else who is in it); nil when Slack hides it
 	// (hideFacepile).
 	Faces []CallFace
+	// NoFooter: renderCallFooter draws nothing (a DM call missed or
+	// declined, with a join_url, its facepile hidden)
+	NoFooter bool
 }
 
 // CallFace is one face of the call's facepile.
@@ -99,7 +112,7 @@ func callCard(r Resolver, id string, v *bkCallV1, now time.Time) *CallCard {
 	}
 	in := false
 	for _, m := range members {
-		if m.SlackID != "" && m.SlackID == self {
+		if m.SlackID != "" && string(m.SlackID) == self {
 			in = true
 		}
 	}
@@ -116,22 +129,33 @@ func callCard(r Resolver, id string, v *bkCallV1, now time.Time) *CallCard {
 		elsewhere: in && v.JoinURL == "", // !activeCallWindowExists: Clack never has one
 		now:       now.Unix(),
 	}
+	if s.dm { // getOtherMemberNameInDmCall: the call's D channel's other member
+		if dr, ok := r.(DMResolver); ok {
+			for _, ch := range v.Channels {
+				if strings.HasPrefix(string(ch), "D") {
+					if u, ok := dr.DMUser(string(ch)); ok {
+						s.dmName = memberName(r, u)
+					}
+					break
+				}
+			}
+		}
+	}
 	cc := &CallCard{ID: firstNonEmpty(v.ID, id), Title: s.title(), Status: s.status(now.Location()),
 		Description: s.description(), MeetingID: v.DisplayID, JoinURL: SafeURL(v.JoinURL), Ended: v.DateEnd != 0}
 	cc.Button, cc.Primary = s.button()
 	cc.Icon = callIcon(v.AppID, v.AppIconURLs)
 	hide := s.count == 0 || s.dm && s.count == 1 && !s.creator
+	cc.NoFooter = s.dm && (s.missed || s.rejected) && v.JoinURL != "" && hide
 	if !hide {
 		mn, _ := r.(MemberNamer)
 		for _, m := range members {
-			f := CallFace{UserID: m.SlackID, Name: m.DisplayName, Avatar: SafeImage(m.AvatarURL)}
-			if m.SlackID != "" {
-				f.Name, f.Avatar = r.UserName(m.SlackID), ""
+			id := string(m.SlackID)
+			f := CallFace{UserID: id, Name: string(m.DisplayName), Avatar: SafeImage(string(m.AvatarURL))}
+			if id != "" {
+				f.Name, f.Avatar = memberName(r, id), ""
 				if mn != nil {
-					if n, ok := mn.MemberName(m.SlackID); ok {
-						f.Name = n
-					}
-					f.Avatar = SafeImage(mn.MemberAvatar(m.SlackID))
+					f.Avatar = SafeImage(mn.MemberAvatar(id))
 				}
 			}
 			cc.Faces = append(cc.Faces, f)
@@ -142,16 +166,30 @@ func callCard(r Resolver, id string, v *bkCallV1, now time.Time) *CallCard {
 
 // callIcon is the app's 36px icon (Slack reads the app's icons; the
 // block carries the same set), none for Slack's own calls (A00).
-func callIcon(appID string, icons map[string]string) string {
+func callIcon(appID string, icons map[string]json.RawMessage) string {
 	if appID == "" || appID == "A00" {
 		return ""
 	}
 	for _, k := range []string{"image_72", "image_64", "image_96", "image_48", "image_128", "image_36", "image_192", "image_512", "image_1024", "image_32"} {
-		if u := SafeImage(icons[k]); u != "" {
-			return u
+		var s string
+		if json.Unmarshal(icons[k], &s) == nil {
+			if u := SafeImage(s); u != "" {
+				return u
+			}
 		}
 	}
 	return ""
+}
+
+// memberName is a member's name for messages (MemberNamer when it knows
+// them, else the resolver's UserName).
+func memberName(r Resolver, id string) string {
+	if mn, ok := r.(MemberNamer); ok {
+		if n, ok := mn.MemberName(id); ok {
+			return n
+		}
+	}
+	return r.UserName(id)
 }
 
 // callState is getCallObjectText's input.

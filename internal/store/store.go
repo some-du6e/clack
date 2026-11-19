@@ -1269,6 +1269,17 @@ func (s *Store) Conv(id string) (*slack.Conversation, bool) {
 	return c, ok
 }
 
+// DMUser is an IM's other member (richtext's DMResolver: a DM call's
+// card names them, getOtherMemberNameInDmCall).
+func (s *Store) DMUser(id string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if c, ok := s.Convs[id]; ok && c.IsIM && c.User != "" {
+		return c.User, true
+	}
+	return "", false
+}
+
 // ---- timelines ----
 
 func (s *Store) Timeline(ch string) *Timeline {

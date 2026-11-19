@@ -71,7 +71,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | actions | `/jJF` | full | full; `visible_to_user_ids` (the one block that reads it) hides a button or checkboxes from members it doesn't list, and the hidden element still counts for "+ N more" and takes one of the first five places | modals and App Home draw every element: Slack's Actions block truncates there too (the first five and "+ N more" from seven) |
 | alert | `MyNk` AlertRenderable · client-boot `MlDl` Alert | absent | **full** | the optimal-line-length pref's 75ch cap |
 | auth_provider (@slack/types only) | `zTn9` AuthProviderBlockLazy | absent | absent | connect/disconnect card |
-| call (slack.ts) | `FkcF` · `9CtN` PlatformCallSubtype | partial: a generic "Call" link card | **partial** | the ended icon's and faces' grayscale filter, the faces' name tooltips, Decline for an incoming DM call, `desktop_app_join_url` (Join opens `join_url`), stopping your huddle on Join |
+| call (slack.ts) | `FkcF` · `9CtN` PlatformCallSubtype | partial: a generic "Call" link card | **partial** | the ended icon's and faces' grayscale filter, renderCallIcon's phone-flat (ended), call-missed and call-declined glyphs (DM calls; they aren't in Clack's icon set yet, so it draws phone), the faces' name tooltips, Decline for an incoming DM call, `desktop_app_join_url` (Join opens `join_url`), stopping your huddle on Join, and ava_0002 for an external avatar that fails to load (a face with no `avatar_url` draws it) |
 | callout (slack.ts) | `zMv1` · `Xhau` Callout | absent | **full** | a callout inside a container lays its children out as a flex column with an 8px gap |
 | canvas_table (slack.ts) | `8Rt0` CanvasTable | absent | absent | |
 | card | `ARtW` · `7Xkb` Card | absent | absent | hero image, icon, title/subtitle/body mrkdwn, buttons left/right |
@@ -180,6 +180,11 @@ Round 1's review fixes, with tests that fail on `8126e895`:
   - a call card's title and status are `sk_primary_foreground`, and its Meeting ID is `sk_foreground_max` at .7;
   - a container's caret is 1em (15px), with 12+8px before it;
   - a callout's border sits over its own fill.
+- Call cards, tested by `TestCallCardEdges` (richtext and richview):
+  - a DM call names the other member, through the call's D channel (getOtherMemberNameInDmCall);
+  - a missed or declined DM call that has a `join_url` and a hidden facepile draws no footer band;
+  - an external participant without an avatar shows ava_0002;
+  - odd `app_icon_urls`, channel and participant values no longer fail the card.
 - A container's or a call card's toggle survives the message changing (a reaction, a reply, `chat.update`). The View keys it by the container's block_id (else its place among the message's containers) and by the call id. A change to `is_collapsible` or `default_collapsed` resets it, as ContainerBlock's `useEffect` does: `TestCollapseSurvivesUpdates`. A container `width` Slack lacks, or `null`, now draws full width, since "standard" is only the default for an absent field: `TestBoxedBlocks`.
 
 ## Next

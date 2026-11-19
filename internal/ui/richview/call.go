@@ -122,70 +122,75 @@ func (l *lay) callCard(c *richtext.CallCard, x, y, w int) int {
 		mt := "Meeting ID: " + c.MeetingID
 		textW := cw - 2*bw - 2*pad
 		mh := l.textWidthH(mt, textW, &ds)
-		section(bp+mh+bp, false)
+		section(bp+mh+bp, c.NoFooter) // the card's last part when there's no footer
 		l.plainAdd("\n")
 		l.plainFlow(mt, x+bw+pad, y+bw+bp, textW, &ds, -1)
 		y += bw + bp + mh + bp
 	}
 
-	// footer
-	inner := cw - 2*bw - 2*pad
-	btnH := l.dp(36)
-	btnW := 0
-	bk := faceKey{f: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: fixedPx(l.sp(15))}
-	if c.Button != "" {
-		btnW = max(l.dp(80), int(l.measure(c.Button, bk)+0.999)+2*l.dp(12))
-	}
-	rowW := inner
-	if btnW > 0 {
-		rowW -= btnW + l.dp(12)
-	}
-	faces := len(c.Faces) > 0
-	var pileW, shown int
-	descX, descW := x+bw+pad, rowW
-	if faces {
-		descMax := l.textWidth(c.Description, &ds)
-		if c.Description == "" {
-			descMax = 0
+	// footer (renderCallFooter: none for a missed or declined DM call
+	// with a join_url whose facepile is hidden)
+	if !c.NoFooter {
+		inner := cw - 2*bw - 2*pad
+		btnH := l.dp(36)
+		btnW := 0
+		bk := faceKey{f: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: fixedPx(l.sp(15))}
+		if c.Button != "" {
+			btnW = max(l.dp(80), int(l.measure(c.Button, bk)+0.999)+2*l.dp(12))
 		}
-		pileW = max(rowW-descMax-l.dp(12), l.dp(44))
-		shown = facesShown(pileW, len(c.Faces), l.dp(44), l.dp(8))
-		descX = x + bw + pad + pileW + l.dp(12)
-		descW = max(rowW-pileW-l.dp(12), 0)
-	}
-	dh := 0
-	if c.Description != "" && descW > 0 {
-		dh = l.textWidthH(c.Description, descW, &ds)
-	}
-	rowH := max(dh, fs.lineH)
-	if faces || btnW > 0 {
-		rowH = max(rowH, l.dp(36))
-	}
-	fr := section(pad+rowH+pad, true)
-	fy := fr.Min.Y + bw + pad
-	if faces {
-		l.facepile(c, x+bw+pad, fy+(rowH-l.dp(36))/2, shown)
-	}
-	if dh > 0 {
-		l.plainAdd("\n")
-		l.plainFlow(c.Description, descX, fy+(rowH-dh)/2, descW, &ds, -1)
-	}
-	if btnW > 0 {
-		br := image.Rect(x+cw-bw-pad-btnW, fy+(rowH-btnH)/2, x+cw-bw-pad, fy+(rowH-btnH)/2+btnH)
-		btg := l.d.addTarget(target{kind: tCard, url: c.JoinURL})
-		col := p.Text
-		if c.Primary {
-			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: br, radius: l.dp(8), fill: p.Primary, target: btg})
-			col = p.PrimaryText
-		} else {
-			l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: br, radius: l.dp(8), fill: p.Panel, stroke: p.ButtonBorder, bw: bw, target: btg, hover: p.ButtonHoverBg})
+		rowW := inner
+		if btnW > 0 {
+			rowW -= btnW + l.dp(12)
 		}
-		bs := flowStyle{face: bk.f, size: l.sp(15), lineH: btnH, col: col, emoji: l.dp(16), maxLines: 1, noSelect: true}
-		tw := int(l.measure(c.Button, bk) + 0.999)
-		l.plainFlow(c.Button, br.Min.X+(btnW-tw)/2, br.Min.Y-l.dp(1), tw+l.dp(2), &bs, -1)
-		l.d.hits = append(l.d.hits, hit{r: br, t: btg})
+		faces := len(c.Faces) > 0
+		var pileW, shown int
+		descX, descW := x+bw+pad, rowW
+		if faces {
+			descMax := l.textWidth(c.Description, &ds)
+			if c.Description == "" {
+				descMax = 0
+			}
+			pileW = max(rowW-descMax-l.dp(12), l.dp(44))
+			shown = facesShown(pileW, len(c.Faces), l.dp(44), l.dp(8))
+			descX = x + bw + pad + pileW + l.dp(12)
+			descW = max(rowW-pileW-l.dp(12), 0)
+		}
+		dh := 0
+		if c.Description != "" && descW > 0 {
+			dh = l.textWidthH(c.Description, descW, &ds)
+		}
+		rowH := max(dh, fs.lineH)
+		if faces || btnW > 0 {
+			rowH = max(rowH, l.dp(36))
+		}
+		fr := section(pad+rowH+pad, true)
+		fy := fr.Min.Y + bw + pad
+		if faces {
+			l.facepile(c, x+bw+pad, fy+(rowH-l.dp(36))/2, shown)
+		}
+		if dh > 0 {
+			l.plainAdd("\n")
+			l.plainFlow(c.Description, descX, fy+(rowH-dh)/2, descW, &ds, -1)
+		}
+		if btnW > 0 {
+			br := image.Rect(x+cw-bw-pad-btnW, fy+(rowH-btnH)/2, x+cw-bw-pad, fy+(rowH-btnH)/2+btnH)
+			btg := l.d.addTarget(target{kind: tCard, url: c.JoinURL})
+			col := p.Text
+			if c.Primary {
+				l.d.boxes = append(l.d.boxes, box{kind: bFill, r: br, radius: l.dp(8), fill: p.Primary, target: btg})
+				col = p.PrimaryText
+			} else {
+				l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: br, radius: l.dp(8), fill: p.Panel, stroke: p.ButtonBorder, bw: bw, target: btg, hover: p.ButtonHoverBg})
+			}
+			bs := flowStyle{face: bk.f, size: l.sp(15), lineH: btnH, col: col, emoji: l.dp(16), maxLines: 1, noSelect: true}
+			tw := int(l.measure(c.Button, bk) + 0.999)
+			l.plainFlow(c.Button, br.Min.X+(btnW-tw)/2, br.Min.Y-l.dp(1), tw+l.dp(2), &bs, -1)
+			l.d.hits = append(l.d.hits, hit{r: br, t: btg})
+		}
+		y = fr.Max.Y + bw
+	} else {
+		y += bw
 	}
-	y = fr.Max.Y + bw
 	// the card itself, under its parts
 	cardBox := box{kind: bBorder, r: image.Rect(x, top, x+cw, y), radius: l.dp(8), fill: p.Panel, stroke: p.Border, bw: bw, target: -1}
 	l.d.boxes = append(l.d.boxes, box{})
@@ -194,6 +199,12 @@ func (l *lay) callCard(c *richtext.CallCard, x, y, w int) int {
 	y += l.dp(8) + l.dp(4) // margin-bottom, then the body's :after
 	return y - y0
 }
+
+// DefaultAvatar is the image URL of Slack's ava_0002 (messages sets it to
+// its embedded copy): an external call participant without an avatar_url
+// (Facepile's renderExternalAvatarFallback: getMemberProfileImage's isBot
+// branch).
+var DefaultAvatar string
 
 // facesShown is Facepile's maxNumFacesOverride (maxNumFaces 5): fewer
 // faces when the pile is narrower than five 44px steps and than its
@@ -226,8 +237,12 @@ func (l *lay) facepile(c *richtext.CallCard, x, y, shown int) {
 		if f.UserID == "" {
 			rad = l.dp(3) // p-call_facepile__face--external img
 		}
-		if f.Avatar != "" {
-			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: f.Avatar, radii: [4]int{rad, rad, rad, rad}, target: -1, px: s})
+		avatar := f.Avatar
+		if avatar == "" && f.UserID == "" {
+			avatar = DefaultAvatar // renderExternalAvatarFallback: ConnectedBaseAvatar with no member
+		}
+		if avatar != "" {
+			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: avatar, radii: [4]int{rad, rad, rad, rad}, target: -1, px: s})
 		} else {
 			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: l.st.Palette.Placeholder, target: -1})
 		}
