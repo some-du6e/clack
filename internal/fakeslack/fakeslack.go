@@ -1975,6 +1975,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	if s.Size.ThreadHeader && id == ThreadAppUserID { // threadheader.go
 		return s.threadHeaderApp(), true
 	}
+	if s.Size.AgentTasks && id == AgentTasksUserID { // agent_tasks.go
+		return s.agentTasksUser(), true
+	}
 	if u, ok := s.dmBadgeUser(id); ok { // dm_badges.go
 		return u, true
 	}

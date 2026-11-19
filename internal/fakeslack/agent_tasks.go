@@ -161,12 +161,17 @@ func TriggerUpdatedEvent(triggerID string, deleted, published bool) map[string]a
 		"is_workflow_published": published}
 }
 
-// addAgentTasks adds Atlas's bot user and the viewer's DM with it.
-func (s *Server) addAgentTasks() {
-	s.users = append(s.users, slack.User{ID: AgentTasksUserID, TeamID: TeamID, Name: "atlas", RealName: AgentTasksAppName, IsBot: true,
+// agentTasksUser is Atlas's bot user (users.list and users.info).
+func (s *Server) agentTasksUser() slack.User {
+	return slack.User{ID: AgentTasksUserID, TeamID: TeamID, Name: "atlas", RealName: AgentTasksAppName, IsBot: true,
 		Profile: slack.Profile{RealName: AgentTasksAppName, Team: TeamID, BotID: AgentTasksBotID, APIAppID: AgentTasksAppID,
 			Image48: s.URL + "img/48x48/app.png", Image72: s.URL + "img/72x72/app.png", Image192: s.URL + "img/192x192/app.png"},
-		Presence: "active"})
+		Presence: "active"}
+}
+
+// addAgentTasks adds Atlas's bot user and the viewer's DM with it.
+func (s *Server) addAgentTasks() {
+	s.users = append(s.users, s.agentTasksUser())
 	s.convs = append(s.convs, slack.Conversation{ID: AgentTasksDMID, IsIM: true, User: AgentTasksUserID, IsOpen: true,
 		Created: 1762500000, Priority: 0.8})
 	s.hist[AgentTasksDMID] = []slack.Message{{Type: "message", TS: "1763400000.000100", User: AgentTasksUserID, BotID: AgentTasksBotID,
