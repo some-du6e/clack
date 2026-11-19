@@ -71,9 +71,21 @@ func TestViewsPlayVideosInPlace(t *testing.T) {
 		pane string
 		body func(gtx layout.Context) layout.Dimensions
 	}{
-		{"threads", func(gtx layout.Context) layout.Dimensions { return NewThreads(h).msgBody(gtx, &m, false, 0) }},
-		{"unreads", func(gtx layout.Context) layout.Dimensions { return NewUnreads(h).msgBody(gtx, &m, false, 0) }},
-		{"later", func(gtx layout.Context) layout.Dimensions { return NewLater(h).msgBody(gtx, &m, false, 0) }},
+		{"threads", func(gtx layout.Context) layout.Dimensions {
+			v := NewThreads(h)
+			v.frame()
+			return v.msgBody(gtx, &m, false, 0)
+		}},
+		{"unreads", func(gtx layout.Context) layout.Dimensions {
+			v := NewUnreads(h)
+			v.frame()
+			return v.msgBody(gtx, &m, false, 0)
+		}},
+		{"later", func(gtx layout.Context) layout.Dimensions {
+			v := NewLater(h)
+			v.frame()
+			return v.msgBody(gtx, &m, false, 0)
+		}},
 	} {
 		e := &vaEnv{size: image.Pt(900, 700)}
 		e.draw = func(gtx layout.Context) { tc.body(gtx) }

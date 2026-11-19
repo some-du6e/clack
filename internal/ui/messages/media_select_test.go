@@ -87,7 +87,8 @@ func TestVideoTilePressStartsNoSelection(t *testing.T) {
 	r.Queue(
 		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt(c), Time: at},
 		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt(c), Time: at + time.Millisecond},
-		pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt(c.Sub(image.Pt(0, 200))), Time: at + 50*time.Millisecond},
+		// a move with the button held: the router makes it the drag
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt(c.Sub(image.Pt(0, 200))), Time: at + 50*time.Millisecond},
 	)
 	frame()
 	frame()

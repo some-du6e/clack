@@ -114,7 +114,7 @@ func TestVolumePopoverOpensFromMute(t *testing.T) {
 	}
 	drag := image.Pt(z.slider.Min.X+z.slider.Dx()*3/4, hidden.Y)
 	v2 := z.volumeAt(drag)
-	g.ev(pointer.Drag, drag, pointer.ButtonPrimary)
+	g.ev(pointer.Move, drag, pointer.ButtonPrimary) // held: the router makes it a drag
 	if n := len(p.writes()); n != 1 {
 		t.Errorf("%d writes during the drag, want none past the press's", n-1)
 	}
