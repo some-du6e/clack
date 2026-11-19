@@ -573,7 +573,10 @@ func (a *App) ThreadCanvas(ch string) (icon, emoji string, title []richtext.Span
 	if len(t.TitleSpans) > 0 {
 		label = richtext.PlainSpans(t.TitleSpans)
 	}
-	_, emoji, _, title = docTab(t, label, tabSpans(t, label, c.Emoji), false, c.Emoji)
+	_, emoji, label, title = docTab(t, label, tabSpans(t, label, c.Emoji), false, c.Emoji)
+	if title == nil && label != "" { // a title without emoji is its text (tabLabelSpans: nil)
+		title = []richtext.Span{{Kind: richtext.Text, Text: label}}
+	}
 	switch ref.Status {
 	case "deleted":
 		return "trash", "", title, true
