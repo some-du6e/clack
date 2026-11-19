@@ -122,8 +122,10 @@ func (a *App) AgentTasksTabInputsOf(ch string, home AppHome) (in AgentTasksTabIn
 	if u, ok := a.S.User(c.User); ok && u != nil {
 		appOfUser, status = u.Profile.APIAppID, u.AgentStatus
 	}
-	card, cached := a.CachedAppCard(c.User, "")
-	pending = !cached
+	// a fetch that failed counts as known (no card) until its retry, so the
+	// tab bar asks for the profile once, not every frame
+	card, _, known := a.AppCardSettled(c.User, "")
+	pending = !known
 	in.AgentApp, in.ShownAsAgent = card.AgentApp, card.ShownAsAgent
 	if a.experiment("support_lots_of_agents") == "on" && status == "consistently_an_agent" {
 		// getMemberAgentIdentity / resolveShownAsAgent: a member whose

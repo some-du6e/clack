@@ -77,6 +77,33 @@ type appCardEntry struct {
 	// doesn't see an app that stopped being an agent for a moment
 	last    AppCard
 	hasLast bool
+	// retry is when a fetch that failed (with no last card to keep) may
+	// run again: until then AppCardOf answers its error without asking
+	// the server (or the client's backoff) again
+	retry time.Time
+}
+
+// appCardRetry is how long a failed fetch is remembered before another.
+const appCardRetry = time.Minute
+
+// AppCardSettled is CachedAppCard for a reader that must not start a
+// fetch on every frame (the Tasks tab rule): known also holds, with no
+// card, while a failed fetch waits for its retry.
+func (a *App) AppCardSettled(userID, botID string) (card AppCard, ok, known bool) {
+	k := a.appCardKey(userID, botID)
+	c := a.appCards()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.m[k]
+	switch {
+	case e == nil:
+		return AppCard{}, false, false
+	case e.wait != nil:
+		return e.last, e.hasLast, e.hasLast
+	case e.err != nil:
+		return e.last, e.hasLast, e.hasLast || time.Now().Before(e.retry)
+	}
+	return e.card, true, true
 }
 
 type appCardCache struct {
@@ -140,11 +167,16 @@ func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, err
 			appID = u.Profile.APIAppID
 		}
 	}
-	if botID == "" && appID == "" {
-		return AppCard{}, ErrNotAnApp
-	}
 	k := a.appCardKey(userID, botID)
 	c := a.appCards()
+	if botID == "" && appID == "" { // remembered like a failed fetch: asked again after appCardRetry
+		c.mu.Lock()
+		if e, ok := c.m[k]; !ok || e.wait == nil {
+			c.m[k] = &appCardEntry{err: ErrNotAnApp, at: time.Now(), retry: time.Now().Add(appCardRetry)}
+		}
+		c.mu.Unlock()
+		return AppCard{}, ErrNotAnApp
+	}
 	c.mu.Lock()
 	if e, ok := c.m[k]; ok {
 		if w := e.wait; w != nil {
@@ -165,6 +197,10 @@ func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, err
 		if e.err == nil && time.Since(e.at) < appCardTTL {
 			c.mu.Unlock()
 			return e.card, nil
+		}
+		if e.err != nil && time.Now().Before(e.retry) {
+			c.mu.Unlock()
+			return AppCard{}, e.err
 		}
 	}
 	e := &appCardEntry{wait: make(chan struct{})}
@@ -188,8 +224,8 @@ func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, err
 	case e.hasLast: // keep the last good card, and try again in a minute
 		e.card, e.err = e.last, nil
 		e.at = time.Now().Add(time.Minute - appCardTTL)
-	default:
-		delete(c.m, k) // retry next time
+	default: // remembered, so a reader asking every frame doesn't fetch every frame
+		e.retry = time.Now().Add(appCardRetry)
 	}
 	c.mu.Unlock()
 	return card, err

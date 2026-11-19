@@ -15,6 +15,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 )
 
 // TestAgentTasksTabDeleteStalePage: a list read that went out before a
@@ -215,4 +216,37 @@ func TestAgentTasksTabRowButtons(t *testing.T) {
 	e.until("both deletes", 10*time.Second, func() bool {
 		return calls("workflows.triggers.delete") == 1 && calls("functions.workflows.delete") == 1
 	})
+}
+
+// TestAgentTasksTabCardFailureQuiet: with the agent DM open and its app
+// card's fetch failing, the tab bar asks for the card once and then
+// waits (the failure is remembered for a minute), instead of fetching and
+// redrawing on every frame while the client's backoff answers each try at
+// once.
+func TestAgentTasksTabCardFailureQuiet(t *testing.T) {
+	e, fs := agentTasksEnv(t, nil)
+	var fetches atomic.Int32
+	fs.SetHook(func(m string, _ url.Values) (any, bool) {
+		if m == "apps.profile.get" {
+			fetches.Add(1)
+			return map[string]any{"ok": false, "error": "internal_error"}, true
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
+	e.a.Navigate("c/" + fakeslack.AgentTasksDMID)
+	e.until("the agent DM's tabs", 20*time.Second, func() bool { return blockkit.AppDMFor(e.a, fakeslack.AgentTasksDMID) != nil })
+	e.settle(1500 * time.Millisecond)
+	var asked atomic.Int32
+	prev := invalidateHook
+	invalidateHook = func(*App) { asked.Add(1) }
+	t.Cleanup(func() { invalidateHook = prev })
+	before := fetches.Load()
+	e.settle(2 * time.Second)
+	if n := asked.Load(); n > 3 {
+		t.Errorf("the open DM asked for %d frames in 2 s while its app card failed (and %d fetches): want it quiet", n, fetches.Load()-before)
+	}
+	if n := fetches.Load() - before; n > 1 {
+		t.Errorf("the app card was fetched %d more times in 2 s: want the failure remembered", n)
+	}
 }
