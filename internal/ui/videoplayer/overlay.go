@@ -311,6 +311,11 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	hot := t.hover || t.scrub || t.vol
 	playing, loading := t.playing, t.loading
 	label := pillTime(t, hot)
+	iconPx := dp(20)
+	if loading && (t.spin == nil || len(t.spin.frames) == 0 || t.spin.frames[0].Size().X != iconPx) {
+		t.spin = &spinLive{frames: spinImages(iconPx), t0: gtx.Now}
+	}
+	spin := t.spin
 	elapsed, dur := t.elapsed, t.durLocked()
 	volOver := t.volOver || t.vol
 	scrubHot := t.scrub || hot && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(t.z.scrub)
@@ -392,16 +397,20 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		paint.FillShape(gtx.Ops, elapsedCol, clip.Ellipse(image.Rect(cx-ts/2, cy-ts/2, cx-ts/2+ts, cy-ts/2+ts)).Op(gtx.Ops))
 	}
 
-	// the pill: it fades out while playing unless hovered (--playing)
-	if !playing || hot {
+	// the pill: it fades out while playing unless hovered (--playing);
+	// a loading video isn't playing yet (Slack's isPlaying comes with its
+	// play event), so the pill and its spinner stay
+	if !playing || hot || loading {
 		if !hot {
 			paint.FillShape(gtx.Ops, pillBg, clip.UniformRRect(pill, dp(4)).Op(gtx.Ops))
 		}
 		ic := image.Pt(pill.Min.X+dp(6), pill.Min.Y+(ph-iconS)/2)
 		off := op.Offset(ic).Push(gtx.Ops)
 		switch {
-		case loading:
-			spinner(gtx, iconS)
+		case loading && spin != nil:
+			im := paint.NewLiveImageOp(spin)
+			im.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
 		case playing:
 			icons.Get("pause-bold")(gtx, unit.Dp(20), white)
 		default:
@@ -507,9 +516,6 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	c.mu.Lock()
 	t.z = z
 	c.mu.Unlock()
-	if loading && (!playing || hot) {
-		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(16 * time.Millisecond)}) // the spinner turns
-	}
 }
 
 func (c *Controller) theme() *theme.Theme {
@@ -536,7 +542,7 @@ func (r *Row) label(gtx layout.Context, txt string) (op.CallOp, image.Point) {
 // it plays or was partly played, the time played after (and while
 // hovered with no duration), "Video" with neither.
 func pillTime(t *tile, hover bool) string {
-	d, u, m := t.durLocked(), t.elapsed, t.playing
+	d, u, m := t.durLocked(), t.elapsed, t.playing && !t.loading
 	if d <= 0 || m || u > 0 {
 		if u > 0 || m || hover {
 			return clock(u)
@@ -609,32 +615,6 @@ func ring(ops *op.Ops, r image.Rectangle, rad, bw int, col color.NRGBA) {
 	p.QuadTo(f32.Pt(x0, y0), f32.Pt(x0+rd, y0))
 	p.Close()
 	paint.FillShape(ops, col, clip.Stroke{Path: p.End(), Width: float32(bw)}.Op())
-}
-
-// spinner is the pill's (s6So, medium, white, noMargin): Slack Kit's
-// InfiniteSpinner in a d box on a 78-unit viewBox, the track circle (r
-// 35, stroke 8) at .25 and the arc's two quarter turns, each once per
-// 1.2 s on its own easing.
-func spinner(gtx layout.Context, d int) {
-	box := float32(78)
-	sw := float32(d) * 8 / box
-	rr := float32(d) * 35 / box
-	ctr := f32.Pt(float32(d)/2, float32(d)/2)
-	t := float64(gtx.Now.UnixMilli()%1200) / 1200
-	track := white
-	track.A = 64
-	arc := func(a0 float64, col color.NRGBA, sweep float64) {
-		var p clip.Path
-		p.Begin(gtx.Ops)
-		p.MoveTo(f32.Pt(ctr.X+rr*float32(math.Cos(a0)), ctr.Y+rr*float32(math.Sin(a0))))
-		p.ArcTo(ctr, ctr, float32(sweep))
-		paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: sw}.Op())
-	}
-	arc(0, track, math.Pi)
-	arc(math.Pi, track, math.Pi)
-	q := 1.5 * math.Pi
-	arc(q+2*math.Pi*cubicBezierY(.25, .29, .54, .86, t), white, math.Pi/2)
-	arc(q+2*math.Pi*cubicBezierY(.41, .24, .64, .69, t), white, math.Pi/2)
 }
 
 // cubicBezierY is CSS cubic-bezier(x1, y1, x2, y2) at time x.

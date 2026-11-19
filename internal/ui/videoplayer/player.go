@@ -101,6 +101,7 @@ type Controller struct {
 	prefRaw     [2]string
 	prefsLoaded bool
 	viewers     uint64 // the media viewer's players so far (viewer.go)
+	spinOn      bool   // the spinner's quiet frames are coming (spinner.go)
 }
 
 // New is a window's players.
@@ -188,6 +189,7 @@ type tile struct {
 	// shown: the viewer's footer shows (its clock and bar follow the
 	// time, as the inline overlay's do while hovered)
 	shown bool
+	spin  *spinLive // the pill's spinner while loading (spinner.go)
 }
 
 // tileLocked is the tile for k, made with f's progress if new; f is the
@@ -257,6 +259,8 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	if autoplay {
 		h.Play()
 	}
+	t.spin = nil
+	c.spinLocked()
 }
 
 // progressAt is the progress kept for a video left at pos of dur:
@@ -322,16 +326,16 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 		t.playing, t.played, t.ended, repaint = true, true, false, true
 	case media.Playing: // the spinner shows until it plays
 		t.playing, t.loading, repaint = true, false, true
-	case media.Pause:
-		t.playing, repaint = false, true
+	case media.Pause: // a pause stops the spinner too: nothing more is loading
+		t.playing, t.loading, repaint = false, false, true
 		if !t.ended {
 			c.progress[t.f.ID] = progressAt(st.Pos, st.Duration)
 		}
 	case media.Ended:
 		t.playing, t.ended, repaint = false, true, true
 		c.progress[t.f.ID] = 0
-	case media.Error: // 1ERX: no error UI; a spinner showing keeps spinning
-		t.errCode, repaint = st.Err, true
+	case media.Error: // 1ERX: no error UI; the spinner stops
+		t.errCode, t.loading, repaint = st.Err, false, true
 	case media.LoadedMetadata, media.DurationChange, media.Seeked:
 		repaint = true
 	}
@@ -555,6 +559,13 @@ func (c *Controller) setVolumeLocked(v float64, dragging bool) {
 func (c *Controller) clickLocked(t *tile) {
 	if t.h == nil {
 		c.mountLocked(t, true)
+		return
+	}
+	if t.loading {
+		// the <video> still waiting to autoplay is paused: togglePlayPause
+		// plays it, and its play event ends the spinner (tI)
+		t.loading = false
+		t.h.Play()
 		return
 	}
 	if st := t.h.State(); st.Paused || st.Ended {

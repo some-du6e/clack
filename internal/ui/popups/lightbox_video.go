@@ -88,6 +88,20 @@ type lbVideo struct {
 	volLeft                  time.Time
 	playBtn, muteBtn         widget.Clickable
 	tips                     [2]TipState
+	wakeAt                   time.Time // the layout asked for (later)
+}
+
+// later asks for a layout after d through the host (time.AfterFunc: no
+// op.InvalidateCmd mid-layout, which loses the window's other input),
+// once for each due time not already covered by an earlier one.
+func (lb *Lightbox) later(d time.Duration) {
+	now := time.Now()
+	due := now.Add(d)
+	if w := lb.vid.wakeAt; w.After(now) && !w.After(due) {
+		return
+	}
+	lb.vid.wakeAt = due
+	time.AfterFunc(d, lb.h.Invalidate)
 }
 
 // lbVideos is the window's players (the App's videoplayer.Controller),
@@ -235,7 +249,7 @@ func (lb *Lightbox) videoFade(gtx layout.Context, now time.Time, shown bool) flo
 	}
 	t = min(max(t, 0), 1)
 	if t < 1 {
-		gtx.Execute(op.InvalidateCmd{})
+		lb.later(16 * time.Millisecond)
 	}
 	if shown {
 		return t
@@ -504,12 +518,9 @@ func (lb *Lightbox) videoChrome(gtx layout.Context, th *theme.Theme, panel image
 	shown := lb.videoShown(now, st)
 	a := lb.videoFade(gtx, now, shown)
 	v.p.SetShown(a > 0)
-	if !shown && v.over {
-		// wake when the controls are due to hide
-		gtx.Execute(op.InvalidateCmd{At: v.moveAt.Add(lbHideAfter)})
-	}
-	if st.Playing && a > 0 {
-		gtx.Execute(op.InvalidateCmd{}) // the bar moves on between time updates (Jm6q interpolates)
+	if shown && v.over && st.Playing {
+		// a layout when the controls are due to hide
+		lb.later(time.Until(v.moveAt.Add(lbHideAfter)) + time.Millisecond)
 	}
 	headH := dp(gtx, 85)
 	slide := int(float32(dp(gtx, 20)) * (1 - a))
@@ -587,7 +598,7 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 			rrect(gtx, image.Rect(cx-d/2, cy-d/2, cx-d/2+d, cy-d/2+d), d/2, lagoon)
 		}
 		if !hot && now.Sub(v.barLeft) < 580*time.Millisecond {
-			gtx.Execute(op.InvalidateCmd{})
+			lb.later(16 * time.Millisecond)
 		}
 	}
 	func() { // its hit area: the bar and 4px above it (the 12px :before)
@@ -638,7 +649,7 @@ func (lb *Lightbox) videoFooter(gtx layout.Context, th *theme.Theme, panel image
 	sw := dp(gtx, 70)
 	ow := volWidth(open, now, &v.volLeft, sw)
 	if ow > 0 && ow < sw {
-		gtx.Execute(op.InvalidateCmd{})
+		lb.later(16 * time.Millisecond)
 	}
 	ctl := image.Rect(x, y, x+dp(gtx, 36)+ow, y+dp(gtx, 36))
 	if ow > 0 {
