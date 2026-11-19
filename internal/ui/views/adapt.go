@@ -25,8 +25,19 @@ import (
 
 // icon draws a named vector icon from internal/ui/icons.
 func (b *base) icon(gtx C, name string, size unit.Dp, col color.NRGBA) D {
+	if iconDrawn != nil {
+		iconDrawn(name)
+	}
 	return icons.Get(name)(gtx, size, col)
 }
+
+// iconDrawn and emojiDrawn, when set (tests, UI goroutine), see every icon
+// b.icon draws and every emoji image b.emojiImg draws (its URL and pixel
+// size): what one row drew, not what it described.
+var (
+	iconDrawn  func(name string)
+	emojiDrawn func(url string, px int)
+)
 
 // body draws a document as plain text (for docs without a message key,
 // e.g. drafts) clipped to maxLines (0 = all). Prefer msgBody for messages.

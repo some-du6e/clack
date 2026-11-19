@@ -192,7 +192,7 @@ func (v *View) nameMentions(d *core.CanvasDoc) {
 	v.emojiVer = a.EmojiVersion()
 	for i := range d.Info.TitleSpans {
 		s := &d.Info.TitleSpans[i]
-		if s.Kind != richtext.Emoji || s.URL != "" || s.ID == "" {
+		if !s.KeptEmoji() {
 			continue
 		}
 		if u, _, ok := a.Emoji(s.ID); ok && u != "" {

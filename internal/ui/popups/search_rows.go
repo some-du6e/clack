@@ -299,7 +299,7 @@ func srTitleSpans(gtx layout.Context, h Host, th *theme.Theme, spans []richtext.
 		}
 		if sp.Kind == richtext.Emoji {
 			url := sp.URL
-			if url == "" {
+			if sp.KeptEmoji() {
 				url = emojiURL(h, sp.ID)
 			}
 			if url != "" {

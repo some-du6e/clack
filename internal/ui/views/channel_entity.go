@@ -133,7 +133,7 @@ func (b *base) canvasTitle(gtx C, spans []richtext.Span, size unit.Sp, w font.We
 		}
 		if s.Kind == richtext.Emoji {
 			url := s.URL
-			if url == "" && s.ID != "" && app != nil {
+			if s.KeptEmoji() && app != nil {
 				url, _, _ = app.Emoji(s.ID)
 			}
 			if url != "" {

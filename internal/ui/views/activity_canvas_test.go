@@ -10,9 +10,13 @@ package views
 // AddCanvasMention, made-up content only.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -20,13 +24,16 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // cmHost records where the Activity sends a click: a jump into a canvas
@@ -202,6 +209,9 @@ func cmActivity(t *testing.T, o cmOpts) (*Activity, *cmHost, *vaEnv, *fakeslack.
 		h.mu.Lock()
 		h.asked = append(h.asked, u)
 		h.mu.Unlock()
+		if strings.Contains(u, "/"+fakeslack.CanvasMentionEmoji+"/") {
+			return cmMagenta, nil // a colour no row draws otherwise: cmMagentaIn finds the emoji's pixels
+		}
 		return fs.Fetch(ctx, u)
 	}, "", nil)
 	v := NewActivity(h)
@@ -241,6 +251,99 @@ func cmChoose(t *testing.T, v *Activity, e *vaEnv, key string) {
 	t.Fatalf("no item %s in the feed", key)
 }
 
+// cmMagenta is the title emoji's image in these tests: solid magenta.
+var cmMagenta = func() []byte {
+	m := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	for i := 0; i < len(m.Pix); i += 4 {
+		m.Pix[i], m.Pix[i+1], m.Pix[i+2], m.Pix[i+3] = 0xff, 0, 0xff, 0xff
+	}
+	var b bytes.Buffer
+	_ = png.Encode(&b, m)
+	return b.Bytes()
+}()
+
+// cmMagentaIn is where img's magenta pixels are, and how many.
+func cmMagentaIn(img *image.RGBA) (image.Rectangle, int) {
+	var r image.Rectangle
+	n := 0
+	for y := img.Rect.Min.Y; y < img.Rect.Max.Y; y++ {
+		for x := img.Rect.Min.X; x < img.Rect.Max.X; x++ {
+			if c := img.RGBAAt(x, y); c.R > 200 && c.G < 70 && c.B > 200 {
+				r = r.Union(image.Rect(x, y, x+1, y+1))
+				n++
+			}
+		}
+	}
+	return r, n
+}
+
+// cmShot is vaShot returning the frame it saved (nil without
+// VIEWS_SHOTS_DIR, whose workflow has the GPU context pixels need).
+func cmShot(t *testing.T, e *vaEnv, name string, dark bool) *image.RGBA {
+	t.Helper()
+	dir := os.Getenv("VIEWS_SHOTS_DIR")
+	if dir == "" {
+		return nil
+	}
+	win, err := pixeltest.NewWindow(e.size.X, e.size.Y)
+	if err != nil {
+		t.Fatalf("headless window: %v", err)
+	}
+	defer win.Release()
+	for range 3 { // images and rows settle
+		e.frame()
+	}
+	if err := win.Frame(&e.ops); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	img := image.NewRGBA(image.Rectangle{Max: e.size})
+	if err := win.Screenshot(img); err != nil {
+		t.Fatalf("screenshot: %v", err)
+	}
+	f, err := os.Create(filepath.Join(dir, name+"-"+map[bool]string{false: "light", true: "dark"}[dark]+".png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	return img
+}
+
+// cmRowDraws draws the row keyed key alone and returns the icons it drew
+// and the emoji images it drew (their pixel size by URL).
+func cmRowDraws(t *testing.T, v *Activity, key string) (icons []string, emoji map[string]int) {
+	t.Helper()
+	emoji = map[string]int{}
+	iconDrawn = func(n string) { icons = append(icons, n) }
+	emojiDrawn = func(u string, px int) { emoji[u] = px }
+	defer func() { iconDrawn, emojiDrawn = nil, nil }()
+	page := actPage(v)
+	for i := range page.Items {
+		if actKey(&page.Items[i]) != key {
+			continue
+		}
+		var ops op.Ops
+		gtx := actFrame(&ops, image.Pt(1200, 400))
+		gtx.Constraints = layout.Constraints{Min: image.Pt(1200, 0), Max: image.Pt(1200, 400)}
+		v.row(gtx, &page.Items[i], i)
+		return icons, emoji
+	}
+	t.Fatalf("no item %s in the feed", key)
+	return nil, nil
+}
+
+// cmCanvasIconDrawn checks that the row keyed key drew the canvas icon, not
+// a private channel's lock.
+func cmCanvasIconDrawn(t *testing.T, v *Activity, key string) {
+	t.Helper()
+	drew, _ := cmRowDraws(t, v, key)
+	if !slices.Contains(drew, icons.Slack("canvas")) || slices.Contains(drew, icons.Slack("lock-filled")) {
+		t.Errorf("%s drew the icons %q, want the canvas's (%s) and no lock", key, drew, icons.Slack("canvas"))
+	}
+}
+
 // drawn is every label the next frame draws.
 func cmDrawn(e *vaEnv) map[string]bool {
 	var mu sync.Mutex
@@ -268,7 +371,7 @@ func TestActivityCanvasMentionRow(t *testing.T) {
 			map[bool]string{true: "-patched", false: ""}[o.patched]
 		name := base + map[bool]string{true: "-dark", false: "-light"}[o.dark]
 		t.Run(name, func(t *testing.T) {
-			v, h, e, _ := cmActivity(t, o)
+			v, h, e, fs := cmActivity(t, o)
 			d := v.rows[fakeslack.CanvasMentionKey].d
 			if !d.entOn || d.ent.Icon != "canvas" {
 				t.Errorf("the destination's icon %q, want canvas (InlineChannelIcon of a canvas's file channel)", d.ent.Icon)
@@ -291,7 +394,24 @@ func TestActivityCanvasMentionRow(t *testing.T) {
 			// the emoji is the emoji's image (the store's URL for it)
 			e.until(t, "the title's emoji image fetched", func() bool { return h.askedFor("/" + fakeslack.CanvasMentionEmoji + "/") })
 			e.until(t, "the pictures loaded", func() bool { return h.imgs.Pending() == 0 })
-			vaShot(t, e, "activity-canvas-mention-"+base, o.dark)
+			// what the row drew: the canvas icon, no lock, the emoji's image at
+			// caption size (16px)
+			cmCanvasIconDrawn(t, v, fakeslack.CanvasMentionKey)
+			_, emoji := cmRowDraws(t, v, fakeslack.CanvasMentionKey)
+			if px := emoji[fs.CanvasMentionEmojiURL()]; px != 16 {
+				t.Errorf("the title's emoji drew at %dpx (drew %v), want 16", px, emoji)
+			}
+			// and on screen, in the shots run: about 16x16 of the emoji's
+			// magenta, in Dense's location column at the row's right
+			if img := cmShot(t, e, "activity-canvas-mention-"+base, o.dark); img != nil {
+				r, n := cmMagentaIn(img)
+				if n < 150 || r.Dx() < 12 || r.Dx() > 20 || r.Dy() < 12 || r.Dy() > 20 {
+					t.Errorf("the emoji's pixels: %d in %v, want about 16x16", n, r)
+				}
+				if o.dense && r.Min.X < e.size.X*6/10 {
+					t.Errorf("the emoji drew at %v, want the location column at the row's right", r)
+				}
+			}
 		})
 	}
 }
@@ -312,6 +432,7 @@ func TestActivityCanvasMentionRowLateFilesInfo(t *testing.T) {
 	if drawn := cmDrawn(e); !drawn["Pet roster "] {
 		t.Errorf("the canvas title isn't drawn once files.info answered (%d labels drawn)", len(drawn))
 	}
+	cmCanvasIconDrawn(t, v, fakeslack.CanvasMentionKey)
 }
 
 // With the persistent detail panel (the inbox without
@@ -380,6 +501,8 @@ func TestActivityCanvasCommentItems(t *testing.T) {
 		if drawn := cmDrawn(e); !drawn["Launch plan"] {
 			t.Errorf("the canvas's title isn't drawn")
 		}
+		cmCanvasIconDrawn(t, v, fakeslack.CanvasCommentKey)
+		cmCanvasIconDrawn(t, v, fakeslack.CanvasCommentThreadKey)
 	})
 	t.Run("inbox", func(t *testing.T) {
 		v, h, e, _ := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true, comments: true})

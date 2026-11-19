@@ -114,6 +114,14 @@ func (c *builder) canvasName(fileID string) (name []Span, status string, ok, fro
 	return nil, "", false, false
 }
 
+// KeptEmoji reports whether s is an emoji TitleBlocks kept for its
+// surface to resolve (no image yet, its Text ":name:"). A hidden emoji
+// (richEmoji's Unicode 17 one with emoji_v17 off, drawn as its
+// characters) has no image either, by design, and is not one.
+func (s Span) KeptEmoji() bool {
+	return s.Kind == Emoji && s.URL == "" && s.ID != "" && s.Text == ":"+s.ID+":"
+}
+
 // TitleBlocks is a canvas title's title_blocks as Slack's
 // QuipTitleParsedId (renderQuipTitle) draws them: the first block's
 // spans; nil without blocks. An emoji element the resolver can't name yet

@@ -716,7 +716,7 @@ func resolveEmoji(sp []richtext.Span, emoji func(name string) (url, text string,
 	}
 	var out []richtext.Span
 	for i, s := range sp {
-		if s.Kind != richtext.Emoji || s.URL != "" || s.ID == "" {
+		if !s.KeptEmoji() {
 			continue
 		}
 		if u, _, ok := emoji(s.ID); ok && u != "" {

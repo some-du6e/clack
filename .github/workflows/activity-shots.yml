@@ -41,6 +41,15 @@ on:
       - "internal/fakeslack/unreads.go"
       - "internal/ui/views/kit.go"
       - "internal/ui/theme/account.go"
+      # canvas mentions and comments in Activity (activity_canvas.go): the
+      # row's canvas entity, the jump into the canvas, the fixtures
+      - "internal/ui/views/channel_entity.go"
+      - "internal/ui/chanent/**"
+      - "internal/ui/canvas_open.go"
+      - "internal/ui/canvas_mention_open_test.go"
+      - "internal/core/canvas_channel.go"
+      - "internal/fakeslack/canvas_mention.go"
+      - "internal/fakeslack/canvas_comments.go"
       - ".github/scripts/activity_ref.py"
       - ".github/workflows/activity-shots.yml"
   workflow_dispatch:
