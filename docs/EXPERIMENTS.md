@@ -351,6 +351,15 @@ Tests: `TestCanRemoveMemberFromChannel`, `TestCanRemoveMemberGridManager`, `Test
 
 `dm_history_prefetch` and `cold_channel_history_prefetch` (both `treatment`) are read by name through `TWX9 FH` (DM or not), so the inventory's scan saw them only as strings. Under `treatment`, `requestNavigationHistoryPrefetchOnNavigate` (client-boot `1zp8`) starts the destination's history request at the navigation instead of at the message pane's mount. Clack's channel view starts its load in the frame of the navigation either way, so both groups behave alike here and Clack doesn't read them.
 
+## 2026-11-19 email files (branch karim-1118, build 031dbe6a7400)
+
+`new_email_rendering` is A, not the B row it was filed under: it picks how an email file (a message's file with mode `email`) draws, and it is `on` for the account (account_experiments.json, a team experiment). Every reader asks `"on" === getGroupForUser(state, "new_email_rendering")`:
+
+- **On** (boot-shared `2bi5`): MessageFileHeader's clickable header (the email icon, the subject, the message's time: +SxN), FileEmailV2 under it once expanded (SenderRecipientRow's From, To and Cc, cut at three wrapped rows with Show more / Show less; the body in EmailIframe's 150, 300 or 400px box, `wwJm` getEmailContentHeight; the attachments), FileActions' Expand and the reduce-diagonal Collapse (`v1+y` renderEmailExpand, renderCollapse), the meta text "Email" when the file names no app (`QD+H` renderEmailMetaText), and the email FileDetails in the secondary view (`FkQ0` EmailFileDetails, `eg5B`).
+- **Off**: no header; MessageFilePreview draws FileEmail (`2bi5`'s `ee`), the legacy pillow: collapsed, the subject with the date and " From {sender} " with the start of preview_plain_text (a click expands it), the attachments under it; expanded, the From / To / Cc / Subject / Date table, the email in a 400px box ("max") and the attachments with their count. No Expand, no Collapse, no email FileDetails; the meta text is "Email from {appName}" or "Email from Unknown email app".
+
+Clack reads it through core (`core.ExpNewEmailRendering`, `App.NewEmailRendering`; experimentReads, and `on` in the offline defaults) and draws both groups: `internal/ui/richview/email.go` (on) and `email_legacy.go` (off), the style's `SetNewEmailRendering` (set by ui/messages' styleFor), the gated file actions and meta text, and ui/messages' routing of a click to the email pane only when on. Not ported in the off group: FileEmail's expandable pill (`U.s`) and the "attachments removed" tooltip. Tests: richview `TestEmailLegacyFileEmail`, `TestEmailRecipientsShowMore`, and the `TestEmailFile*` cards (on).
+
 ## How Clack follows them
 
 - **core** keeps what Slack's `experiments` store keeps (client-boot `RIWm`): experiments.getByUser's records, whole (`ExperimentAssignments`), plus a forced layer, the way Slack's `overrideExperimentAssignments` replaces a group. `Experiment(name)` is the group every check reads ("" when not assigned, Slack's null). `SetExperimentGroup` / `SetExperimentGroups` force groups ("" reads as not assigned), `ClearExperimentGroup` gives the server's back; every change emits one `experiments` event, the sidebar is rebuilt and every check reads the new group on its next frame (internal/core/experiments.go).
@@ -737,7 +746,7 @@ None of these is assigned to the test account, so Slack draws none of them there
 
 **The huddle audio/video engine's internals (CPU ladders, UDP, voice-focus models, device re-apply).** (10): `huddles_browser_cpu_ladder`, `huddles_dual_udp_support`, `huddles_preview_permission_in_window`, `huddles_screenshare_permission_refresh`, `huddles_serial_guard_settle_superseded`, `huddles_skip_unchanged_device_reapply`, `huddles_updated_audio_detection_trigger`, `huddles_voice_focus_model_ladder`, `huddles_voice_focus_swap_timeout`, `prewarmed_huddles`
 
-**Email: verification, rendering of emailed files, email drafts.** (7): `email_domain_restriction`, `happy_emails`, `hermes_builder_webhook_user_email`, `new_email_rendering`, `require_verified_email_for_invites`, `restrict_corp_emails_toggle`, `slackbot_ai_email_draft_without_connector`
+**Email: verification, emailed-file details, email drafts.** (6): `email_domain_restriction`, `happy_emails`, `hermes_builder_webhook_user_email`, `require_verified_email_for_invites`, `restrict_corp_emails_toggle`, `slackbot_ai_email_draft_without_connector`
 
 **Mobile apps and mobile-only flows.** (5): `joiner_mobile_task_fix_translations`, `joiner_mobile_task_fix_v2`, `joiner_mobile_task_fix_v2_translation`, `mobile_awareness_team_menu_entrypoint_link_update`, `mobile_browser_file_links_bug_fix`
 

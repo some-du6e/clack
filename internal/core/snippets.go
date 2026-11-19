@@ -94,6 +94,21 @@ func (a *App) emitStored(ch, ts string) {
 	}
 }
 
+// ExpNewEmailRendering is Slack's new_email_rendering (a team experiment):
+// on, an email file is FileEmailV2's card with Expand and Collapse, the
+// "Email" meta text and the email FileDetails; off, the legacy FileEmail
+// pillow and "Email from {appName}" (TestExperimentReadsListed).
+const ExpNewEmailRendering = "new_email_rendering"
+
+func init() {
+	experimentReads[ExpNewEmailRendering] = on
+	// experiments.getByUser for Hack Club (testdata/account_experiments.json)
+	defaultExperimentGroups[ExpNewEmailRendering] = "on"
+}
+
+// NewEmailRendering reports whether new_email_rendering is on.
+func (a *App) NewEmailRendering() bool { return a.experiment(ExpNewEmailRendering) == "on" }
+
 // EmailFile reads email file id whole for its FileDetails view
 // (EmailFileDetails reads the file from the store, which files.info fills:
 // simplified_html is the whole email where a message's copy has its

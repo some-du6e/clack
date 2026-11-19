@@ -2,8 +2,9 @@ package richview
 
 // An email file in a message (mode "email": the Email app's messages, an
 // email sent to a channel's address), as Slack's web client draws it with
-// new_email_rendering on (a team experiment, on for Hack Club;
-// boot-shared 2bi5, build 031dbe6a7400):
+// new_email_rendering on (a team experiment, on for Hack Club, read
+// through core: Style.SetNewEmailRendering; off, email_legacy.go draws
+// the legacy FileEmail; boot-shared 2bi5, build 031dbe6a7400):
 //
 //   - FilesMetaTextWrapper's line above it reads the email's kind
 //     (renderEmailMetaText: "Email", or "Email from {appName}" when the
@@ -48,6 +49,7 @@ import (
 	"image"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"gioui.org/font"
 
@@ -93,7 +95,7 @@ func sameDayAs(a, b time.Time) bool {
 // emailBodyH is EmailIframe's height class for plain text pt
 // (getEmailContentHeight): small 150px, medium 300px, else 400px.
 func emailBodyH(pt string) int {
-	n := len([]rune(pt))
+	n := len(utf16.Encode([]rune(pt))) // getEmailContentHeight's e.length: UTF-16 units
 	lines := strings.Count(pt, "\n") + 1
 	switch {
 	case pt == "":
@@ -184,7 +186,7 @@ func (l *lay) emailUnfurl(f *richtext.File, x, y, w int) int {
 		l.plainFlow(r.label, lx, y, l.dp(36), &ls, -1)
 		vx := lx + l.dp(36) + l.dp(8)
 		vw := x + w - l.dp(12) - vx
-		hgt := l.emailRecipients(r.rcpt, vx, y, vw)
+		hgt := l.emailRecipientRow(f, r.label, r.rcpt, vx, y, vw)
 		if r.warn {
 			ws := l.small(Over(rgba(p.Text.R, p.Text.G, p.Text.B, 0.5), p.Panel))
 			wh, _ := l.plainFlow(i18n.T("files", "Heads up — we couldn’t verify this email’s sender. Make sure you know them before you open any links or attachments."), vx, y+hgt+l.dp(4), vw, &ws, -1)
@@ -375,6 +377,46 @@ func (l *lay) emailAttachment(f *richtext.File, x, y, w int) int {
 	}
 	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
 	return h
+}
+
+// emailRcptKey is the expandables key of the card's recipient row label
+// for file f (SenderRecipientRow's open state).
+func emailRcptKey(f *richtext.File, label string) string {
+	return "emailRecipients\x00" + f.ID + "\x00" + label
+}
+
+// emailRecipientRow is SenderRecipientRow's values (FileEmailV2): rs laid
+// out as emailRecipients does, and past three wrapped rows cut at the
+// third's bottom (maxHeight, overflow hidden) with "Show more" 4px under
+// them, the content's link colour; open, every row and "Show less". It
+// returns the height.
+func (l *lay) emailRecipientRow(f *richtext.File, label string, rs []richtext.EmailAddress, x, y, w int) int {
+	rowH, gap := l.dp(22), l.dp(4)
+	m := l.mark()
+	h := l.emailRecipients(rs, x, y, w)
+	if rows := (h + gap) / (rowH + gap); rows <= 3 {
+		return h
+	}
+	key := emailRcptKey(f, label)
+	open := kitIsExpanded(key)
+	if !open {
+		limit := y + 3*rowH + 2*gap
+		l.clipSince(m, limit)
+		h = limit - y
+	}
+	tg := l.d.addTarget(target{kind: tExpand, id: key, underline: true})
+	fs := l.bodyStyle()
+	fs.size, fs.lineH, fs.col = l.sp(15), l.dp(22), l.st.Palette.Link
+	fs.maxLines, fs.noSelect = 1, true
+	text := i18n.T("files", "Show more")
+	if open {
+		text = i18n.T("files", "Show less")
+	}
+	ly := y + h + gap
+	tw := int(l.measure(text, l.faceFor(fs.face, fs.size, 0)) + 0.999)
+	l.plainFlow(text, x, ly, tw+l.dp(2), &fs, tg)
+	l.d.hits = append(l.d.hits, hit{r: image.Rect(x, ly, x+tw, ly+rowH), t: tg})
+	return h + gap + rowH
 }
 
 // emailRecipients lays out rs from (x, y) in w (wrapping 4px apart, 22px

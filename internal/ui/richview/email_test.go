@@ -221,3 +221,15 @@ func TestEmailFileActions(t *testing.T) {
 		t.Errorf("expanded email's first action %+v, want Collapse with reduce-diagonal", bs)
 	}
 }
+
+// getEmailContentHeight (boot-shared wwJm) measures the plain text's
+// e.length, UTF-16 units: 80 emoji are 160 of them, so the body gets the
+// medium 300px box, not the small 150px one (review of karim-1118).
+func TestEmailBodyHeightUTF16(t *testing.T) {
+	if h := emailBodyH(strings.Repeat("\U0001F600", 80)); h != 300 {
+		t.Errorf("80 emoji: %dpx, want 300 (160 UTF-16 units, past 150)", h)
+	}
+	if h := emailBodyH(strings.Repeat("a", 150)); h != 150 {
+		t.Errorf("150 letters: %dpx, want 150", h)
+	}
+}

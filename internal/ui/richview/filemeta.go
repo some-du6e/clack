@@ -63,6 +63,11 @@ func (l *lay) filesExpanded(files []*richtext.File) bool {
 
 // fileMetaText is renderMetaText for the files.
 func fileMetaText(files []*richtext.File, expanded bool) string {
+	return fileMetaTextFor(files, expanded, false)
+}
+
+// fileMetaTextFor is fileMetaText with new_email_rendering off (emailV1).
+func fileMetaTextFor(files []*richtext.File, expanded, emailV1 bool) string {
 	if len(files) != 1 {
 		return strconv.Itoa(len(files)) + " files"
 	}
@@ -74,12 +79,17 @@ func fileMetaText(files []*richtext.File, expanded bool) string {
 	case f.IsAudio:
 		return "Audio"
 	case f.Email != nil && f.Email.AppID != "":
-		// renderEmailMetaText (new_email_rendering): "Email" unless the
-		// file names its app
-		if f.Email.AppName == "" {
+		// renderEmailMetaText: "Email" with new_email_rendering on and no
+		// app_name, else "Email from {appName}", the app named or
+		// "Unknown email app"
+		if !emailV1 && f.Email.AppName == "" {
 			return i18n.T("files", "Email")
 		}
-		return i18n.T("files", "Email from {appName}", "appName", f.Email.AppName)
+		app := f.Email.AppName
+		if app == "" {
+			app = i18n.T("files", "Unknown email app")
+		}
+		return i18n.T("files", "Email from {appName}", "appName", app)
 	case f.PrettyType == "Arugula":
 		return "Post"
 	case richtext.IsCanvasFile(f): // renderSingleFileTitle: isCanvas
@@ -114,7 +124,7 @@ func (l *lay) fileMetaWith(files []*richtext.File, wos, x, y, w int) (int, bool)
 	lineH := l.dp(fileMetaLineH)
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: lineH, col: p.Text2,
 		emoji: l.dp(16), maxLines: 1, ellipsis: true}
-	label := fileMetaText(files, expanded)
+	label := fileMetaTextFor(files, expanded, l.st.emailV1)
 	if wos > 0 {
 		label = i18n.T("files", "{fileCount, plural, =1 {attachment} other {# attachments}}", "fileCount", len(files)+wos)
 	}

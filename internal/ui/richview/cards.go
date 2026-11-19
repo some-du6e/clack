@@ -653,6 +653,8 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 		return l.snippet(f, x, y, w) // snippet.go
 	case richtext.IsCanvasFile(f):
 		return l.canvasFile(f, x, y, w) // canvasfile.go
+	case isEmailFile(f) && l.st.emailV1: // new_email_rendering off: the legacy FileEmail
+		return l.emailLegacy(f, x, y, w)
 	case isEmailFile(f) && l.opts.EmailDetails:
 		return l.emailDetails(f, x, y, w) // email.go
 	case isEmailFile(f):

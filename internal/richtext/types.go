@@ -418,7 +418,14 @@ type Email struct {
 	Subject      string
 	HTML         string
 	PlainText    string
-	Attachments  []EmailAttachment
+	// Preview is preview_plain_text: the legacy FileEmail's (new_email_
+	// rendering off) collapsed view shows it.
+	Preview     string
+	Attachments []EmailAttachment
+	// Removed is how many of the email's attachments Slack dropped
+	// (original_attachment_count less the attachments and the inline
+	// ones): the legacy FileEmail says so.
+	Removed int
 	// Unverified: email_security.has_valid_dmarc is false (FileEmailV2's
 	// "Heads up" under From). An absent check counts as valid.
 	Unverified bool

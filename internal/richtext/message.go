@@ -277,8 +277,11 @@ func convertEmail(f *slack.File) *Email {
 		return out
 	}
 	e := &Email{From: addrs(f.From), To: addrs(f.To), Cc: addrs(f.Cc), Subject: f.Subject,
-		HTML: firstNonEmpty(f.SimplifiedHTML, f.Preview), PlainText: f.PlainText,
+		HTML: firstNonEmpty(f.SimplifiedHTML, f.Preview), PlainText: f.PlainText, Preview: f.PreviewPlainText,
 		Timestamp: f.Timestamp, AppID: f.AppID, AppName: f.AppName}
+	if n := len(f.EmailAttachments) + f.InlineAttachmentCount; f.OriginalAttachmentCount > 0 && f.OriginalAttachmentCount != n {
+		e.Removed = f.OriginalAttachmentCount - n // renderAttachments' "{count} attachments removed"
+	}
 	if s := f.EmailSecurity; s != nil && s.HasValidDMARC != nil && !*s.HasValidDMARC {
 		e.Unverified = true
 	}
