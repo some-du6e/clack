@@ -248,6 +248,7 @@ type listState struct {
 	ub          unreadBannerState
 	pendingDate time.Time                    // jumpToTimestamp's time, paged back to
 	dateFor     string                       // the date jump's ts a window was opened around (pendingDateJump)
+	own         [2]string                    // the model's first and last message, before plugins' injected ones (ends)
 	dayReq      *dayMenuReq                  // a day pill clicked this frame
 	dayBtns     map[string]*widget.Clickable // the dividers' pills, by day
 	stickyDay   widget.Clickable             // the sticky pill
@@ -665,6 +666,12 @@ func (s *listState) sync(h Host, now time.Time) {
 	handed := false
 	if s.win != nil && s.m == s.win && s.snap.merged && s.handOver() {
 		changed, handed = s.m.snapshot(&s.snap), true
+	}
+	if changed {
+		s.own = [2]string{}
+		if n := len(s.snap.msgs); n > 0 {
+			s.own = [2]string{s.snap.msgs[0].m.TS, s.snap.msgs[n-1].m.TS}
+		}
 	}
 	// stickToBottom is reachedEnd (MessageList.componentDidUpdate): a
 	// window short of the newest messages never keeps to its end, so a
@@ -1251,9 +1258,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	// sync() places it, or the first message after it, once they cover it
 	// (placeJump). One whose window gave way has nowhere to land.
 	if s.pendingJump != "" && !s.thread && s.snap.loaded && !s.snap.older && !s.snap.loading && s.snap.around == "" {
-		n := len(s.snap.msgs)
-		older := n > 0 && s.snap.hasMore && tsLess(s.pendingJump, s.snap.msgs[0].m.TS)
-		newer := s.win != nil && n > 0 && tsLess(s.snap.msgs[n-1].m.TS, s.pendingJump)
+		first, last, ok := s.ends()
+		older := ok && s.snap.hasMore && tsLess(s.pendingJump, first)
+		newer := s.win != nil && ok && tsLess(last, s.pendingJump)
 		switch {
 		case newer && s.newestHold(s.pendingJump):
 			s.leaveWindow() // the conversation's newest messages hold it
@@ -2554,12 +2561,21 @@ func (s *listState) placeAt(i int, off unit.Dp) {
 // (from their first message on, or anywhere before it when nothing is
 // older; up to their last, or past it when they end at the newest).
 func (s *listState) jumpCovered() bool {
-	n := len(s.snap.msgs)
-	if !s.snap.loaded || s.snap.loading || s.snap.around != "" || n == 0 || s.built != s.snap.rev {
+	first, last, ok := s.ends()
+	if !s.snap.loaded || s.snap.loading || s.snap.around != "" || !ok || s.built != s.snap.rev {
 		return false
 	}
 	ts := s.pendingJump
-	return (!s.snap.hasMore || !tsLess(ts, s.snap.msgs[0].m.TS)) && (!s.snap.newestMissing || !tsLess(s.snap.msgs[n-1].m.TS, ts))
+	return (!s.snap.hasMore || !tsLess(ts, first)) && (!s.snap.newestMissing || !tsLess(last, ts))
+}
+
+// ends is the first and last message of the list's model (ok: it has
+// any): the range a jump or a date reads. Plugins' injected messages
+// (mergeInjected) don't widen it: one from today under a window from
+// months ago counted as the window's end, and a jump past the window
+// landed on it.
+func (s *listState) ends() (first, last string, ok bool) {
+	return s.own[0], s.own[1], s.own[0] != ""
 }
 
 // firstItemFrom is the first message item holding a message at or after

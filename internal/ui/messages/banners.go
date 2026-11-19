@@ -514,10 +514,10 @@ func (s *listState) pendingDateJump(now time.Time) {
 		return
 	}
 	msgs := s.snap.msgs
-	if n := len(msgs); s.win != nil && n > 0 && s.snap.around == "" && !s.snap.newer {
+	if first, last, ok := s.ends(); s.win != nil && ok && s.snap.around == "" && !s.snap.newer {
 		ts := strconv.FormatInt(s.pendingDate.Unix(), 10) + ".000000"
-		before := s.snap.hasMore && tsLess(ts, msgs[0].m.TS)
-		after := s.snap.newestMissing && tsLess(msgs[n-1].m.TS, ts)
+		before := s.snap.hasMore && tsLess(ts, first)
+		after := s.snap.newestMissing && tsLess(last, ts)
 		switch {
 		case after && s.newestHold(ts):
 			s.leaveWindow() // the next frame finds it in the newest messages
@@ -528,7 +528,7 @@ func (s *listState) pendingDateJump(now time.Time) {
 			return
 		}
 	}
-	if len(msgs) > 0 && s.snap.hasMore && tsTime(msgs[0].m.TS).After(s.pendingDate) && s.jumpPages < 20 {
+	if first, _, ok := s.ends(); ok && s.snap.hasMore && tsTime(first).After(s.pendingDate) && s.jumpPages < 20 {
 		if now.Sub(s.lastOlder) > 300*time.Millisecond && s.hb.loadOlder(s.m) {
 			s.jumpPages++
 			s.lastOlder = now
