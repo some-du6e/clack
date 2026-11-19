@@ -36,6 +36,14 @@ func fenceShape(bs []Block) string {
 // (TSF's placeholder ends in "-"), and only ASCII whitespace is blank.
 // Karim (2026-11-18): an app's "Inspect message" modal, "Here's the raw
 // JSON from that message: ```{ …".
+//
+// Every case's blocks are what Slack's own TSF gives (2026-11-19: module
+// j+eK of gantry-v2-vendors.cb6db553e1c67977.min.js run in node,
+// getTokensArray(text, "NORMAL", {jumbomoji: true,
+// allow_intra_word_formatting: true}) as Mrkdwn calls it). For "own
+// lines" TSF also keeps the newline before the closing fence, a
+// <LINE:BREAK> just before <PRE:END>: renderPre draws it as the pre's
+// last <br>, which adds no line, so the block here ends at "b".
 func TestMrkdwnFences(t *testing.T) {
 	for _, c := range []struct{ name, in, want string }{
 		{"after text", "Here's the raw JSON from that message: ```{\n  \"type\": \"message\",\n  \"text\": \"hi\"\n}```",
