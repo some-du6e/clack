@@ -117,8 +117,11 @@ func (p *pic) bar(c color.NRGBA, a, b pt, w float32) {
 		return
 	}
 	nx, ny := -dy/l*w/2, dx/l*w/2
-	p.fill(c, []pt{{a.x + nx, a.y + ny}, {b.x + nx, b.y + ny}, {b.x - nx, b.y - ny}, {a.x - nx, a.y - ny}},
-		circle(a.x, a.y, w/2), circle(b.x, b.y, w/2))
+	// three fills, not one path: a cap that winds against the body
+	// cancels where they overlap and leaves a half-moon hole at each end
+	p.fill(c, []pt{{a.x + nx, a.y + ny}, {b.x + nx, b.y + ny}, {b.x - nx, b.y - ny}, {a.x - nx, a.y - ny}})
+	p.fill(c, circle(a.x, a.y, w/2))
+	p.fill(c, circle(b.x, b.y, w/2))
 }
 
 // person is a head and shoulders, s across, its top at (x, y).
