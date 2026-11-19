@@ -49,17 +49,22 @@ Tests are in `agent_slim_test.go`:
 
 The fixtures are `plan-long-details`, `task-card-mcp-running` and `-done`, and `plan-grow-1`, `-2` and `-title` (fakeslack/agents.go). On e93a5e70 the three behaviour tests fail and the guards pass (red runs 44480752516 and 44487568322). The shots are `agent-slim-content-{light,dark}.png` in bk-agent-shots.
 
+Round 3 added:
+
+- **Task icons** (TaskIcon, IDPB). A task's `icon` (`{"name": …}`) draws instead of its status glyph when the task is neither in progress nor failed, and its name is one of the 54 Block Kit names Qw/u `deriveIconName` maps (`lightbulb` → `emoji-objects`, `gear` → `settings`, …). Slim draws it at 13px in the step indicator, `content-sec` when complete. Cards draw it at 15px in the header's 20px box. An unknown name, or an icon that isn't an object, keeps the glyph, and the block still parses. Fixture `plan-icons`, test `TestAgentTaskIcons`.
+- **The stopped label** (StoppedLabel, J825). `ai_context.result_status` `stopped_by_user` (vshb `getMessageLabelValues`) puts "(stopped)" where "(edited)" goes, in `c-message__stopped_label` (13px, the same colour, no tooltip). Under `agents_streaming_stop_button_fe` it reads "(stopped by {name})" when someone other than the viewer stopped it. A message showing "(edited)" shows that alone (insertMessageLabelIntoBlocks), and an app's message never shows "(edited)". Fixture `AgentStoppedReply`, tests `TestAgentStoppedLabelValues` (core), `TestAgentStoppedLabel` (richview), `TestAgentStoppedRow` (messages).
+
 Not built yet:
 
-- the task `icon`;
-- the Sources button and its modal;
-- `plan_block_sidebar` ("Working…" opening PlanDetails in the sidebar; the account doesn't have it);
-- the stopped label (` (stopped) `, `_stopped_label`, J825);
-- the streaming text reveal. StreamingMessageRenderer (u33y, under `sui_stable_streaming_mount`) and StreamingRichTextBlock (0gd9) reveal a streaming message's text at 250 characters a second in 30ms ticks. When it completes with 250 or more characters still hidden, the rest fades in: opacity 0→1 and 20px up over .4s, staggered over 1s. A remount doesn't animate again. Clack draws each update's text at once. The account's plan app doesn't stream, but agents that use chat.startStream do.
+- **The Sources button and its modal.** In slim mode, more than five sources become one "Sources" link opening SourcesModal (+sSl, `openPlanSourcesModalCircular`). The modal sorts them into Slack messages, files and web links. A message source is fetched by its permalink and drawn with the sender's avatar, the channel, a timestamp that jumps to it, and its text cut to 165 characters and 3 lines. A file source is a Slack file URL. A web source has a title and domain.
+- `plan_block_sidebar` ("Working…" opening PlanDetails in the sidebar; the account doesn't have it).
+- **The streaming text reveal.** StreamingMessageRenderer (u33y, under `sui_stable_streaming_mount`) and StreamingRichTextBlock (0gd9) reveal a streaming message's text at 250 characters a second in 30ms ticks. When it completes with 250 or more characters still hidden, the rest fades in: opacity 0→1 and 20px up over .4s, staggered over 1s. A remount doesn't animate again. Clack draws each update's text at once. The account's plan app doesn't stream, but agents that use chat.startStream do.
 
 A hazard, not proven to be the bug: the spinner and the height transition run `gtx.Execute(op.InvalidateCmd)` in the middle of layout. That is the pattern that lost the composer's + clicks (composer-plus-dblclick, not merged into ui). In Gio's router (`io/input/router.go` `execute`), such a command collapses the frame's pending state changes and requeues their events. I couldn't build a plan sequence that loses a click on paper, so it is left as it is, with no red test.
 
 ## Agent DMs
+
+The full map from Slack's code (the new agent DM, its header and tab model, the AI app tabs, suggested prompts and status rows) is in docs/AGENT-DMS.md.
 
 Slack's agent DM changes are gated on the app and on experiments:
 
