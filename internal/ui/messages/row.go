@@ -61,9 +61,14 @@ import (
 type row struct {
 	ts  string
 	rev uint32
-	bk  bkState      // live Block Kit elements (blockkit.go)
-	src core.Message // the message as core has it
-	m   core.Message // what the row draws: src, or src with a plugin's msg
+	bk  bkState // live Block Kit elements (blockkit.go)
+	// bkView is the row's drawing of its message's elements
+	// (blockkit.InView): its plans' toggles and height transitions are
+	// its own, apart from the same message elsewhere (a thread's root in
+	// the channel and in the pane)
+	bkView uint64
+	src    core.Message // the message as core has it
+	m      core.Message // what the row draws: src, or src with a plugin's msg
 
 	rv      *richview.View
 	handler richHandler

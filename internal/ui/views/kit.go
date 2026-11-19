@@ -324,6 +324,9 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// bkView is this view's drawing of its messages' elements
+	// (blockkit.InView, elements.go)
+	bkView uint64
 	// tt is the Host's Taut plugin system (nil without plugins); tgen/tmemo
 	// cache its patched member/channel/message views for one frame.
 	tt    *taut.Taut

@@ -47,7 +47,10 @@ func (r *row) withElements(h Host) {
 		return
 	}
 	o := r.rvOpts()
-	o.Elements = el
+	if r.bkView == 0 {
+		r.bkView = blockkit.NewViewID()
+	}
+	o.Elements = blockkit.InView(el, r.bkView)
 	r.rv.SetOptions(o)
 }
 

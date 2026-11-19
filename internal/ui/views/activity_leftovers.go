@@ -188,7 +188,7 @@ var _ richview.Elements = (*actActionsEls)(nil)
 func (v *Activity) agentActions(gtx C, r *actRow, m *core.Message, bid string, blk richtext.Block) D {
 	o := richview.Options{Channel: m.Channel, TS: m.TS}
 	if el := v.liveElements(m); el != nil {
-		if me, ok := el.(*blockkit.Message); ok {
+		if me := blockkit.HostOf(el); me != nil {
 			if r.actEls == nil || r.actEls.me != me || r.actEls.bid != bid {
 				r.actEls = &actActionsEls{me: me, bid: bid, tag: &r.actTag}
 			}

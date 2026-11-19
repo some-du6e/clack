@@ -48,14 +48,17 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
@@ -360,30 +363,109 @@ type agentParsed struct {
 	b   *AgentBlock
 }
 
+// agentMsgState is a message's agent block state: one agentState per drawing
+// instance (a message shows in the channel and, as a thread's root, in
+// the thread pane; each of Slack's rendered PlanBlocks has its own React
+// state: open, taps, text, height transition), sharing the parse and cut
+// caches and the feedback ratings.
+type agentMsgState struct {
+	insts  map[uint64]*agentState
+	order  []uint64
+	parsed map[string]*agentParsed
+	cuts   map[string]*agentCut
+	rating map[string]string
+}
+
 var (
 	agentMu     sync.Mutex
-	agentStates = map[string]*agentState{}
+	agentStates = map[string]*agentMsgState{}
 	agentOrder  []string
 )
 
+// agentState is the state of the agent blocks for the drawing instance
+// the call is for (me.inst).
 func (me *Message) agentState() *agentState {
 	k := me.m.Channel + "/" + me.m.TS
 	agentMu.Lock()
 	defer agentMu.Unlock()
-	st := agentStates[k]
-	if st == nil {
-		st = &agentState{parsed: map[string]*agentParsed{}, open: map[string]bool{}, taps: map[string]*tap{},
-			tips: map[string]*popups.TipState{}, rating: map[string]string{}, views: map[string]*agentText{},
-			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: map[string]*agentCut{}, touched: map[string]bool{}}
-		agentStates[k] = st
+	am := agentStates[k]
+	if am == nil {
+		am = &agentMsgState{insts: map[uint64]*agentState{}, parsed: map[string]*agentParsed{}, cuts: map[string]*agentCut{},
+			rating: map[string]string{}}
+		agentStates[k] = am
 		agentOrder = append(agentOrder, k)
 		if len(agentOrder) > 400 {
 			delete(agentStates, agentOrder[0])
 			agentOrder = agentOrder[1:]
 		}
 	}
+	st := am.insts[me.inst]
+	if st == nil {
+		st = &agentState{parsed: am.parsed, open: map[string]bool{}, taps: map[string]*tap{},
+			tips: map[string]*popups.TipState{}, rating: am.rating, views: map[string]*agentText{},
+			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: am.cuts, touched: map[string]bool{}}
+		am.insts[me.inst] = st
+		am.order = append(am.order, me.inst)
+		if len(am.order) > 8 { // the oldest drawing of the message goes (its row is long gone)
+			delete(am.insts, am.order[0])
+			am.order = am.order[1:]
+		}
+	}
 	return st
 }
+
+var viewSeq atomic.Uint64
+
+// NewViewID is a fresh drawing-instance id for InView (a message row, a
+// view's list).
+func NewViewID() uint64 { return viewSeq.Add(1) }
+
+// InView is el drawn as instance id: richview's calls go through it, so a
+// plan's or task card's toggles, taps, text and height transition there
+// are that drawing's own. el is returned as is when it isn't a message's
+// element host, or id is 0.
+func InView(el richview.Elements, id uint64) richview.Elements {
+	if me, ok := el.(*Message); ok && me != nil && id != 0 {
+		return elemView{me: me, id: id}
+	}
+	return el
+}
+
+// HostOf is the message element host behind el (InView's or the host
+// itself), nil for anything else.
+func HostOf(el richview.Elements) *Message {
+	switch v := el.(type) {
+	case *Message:
+		return v
+	case elemView:
+		return v.me
+	}
+	return nil
+}
+
+// elemView is one drawing of a message's elements (InView).
+type elemView struct {
+	me *Message
+	id uint64
+}
+
+func (v elemView) ElementsSize(bs []richtext.Button, maxW int, accessory bool, m unit.Metric) (image.Point, bool) {
+	prev := v.me.inst
+	v.me.inst = v.id
+	defer func() { v.me.inst = prev }()
+	return v.me.ElementsSize(bs, maxW, accessory, m)
+}
+
+func (v elemView) LayoutElements(gtx layout.Context, bs []richtext.Button, accessory bool) layout.Dimensions {
+	prev := v.me.inst
+	v.me.inst = v.id
+	defer func() { v.me.inst = prev }()
+	return v.me.LayoutElements(gtx, bs, accessory)
+}
+
+func (v elemView) ElementsVersion() uint32 { return v.me.ElementsVersion() }
+
+var _ richview.Elements = elemView{}
 
 func (st *agentState) tap(k string) *tap {
 	t := st.taps[k]
@@ -727,8 +809,10 @@ func (me *Message) animated(gtx C, st *agentState, key string, target int) int {
 	}
 	f := easeCSS(float64(p))
 	h := a.from + int(math.Round(float64(target-a.from)*f))
-	me.ver.Add(1) // size changes: relayout next frame
-	gtx.Execute(op.InvalidateCmd{})
+	// size changes: relayout and a frame next, asked of the host, not an
+	// op.InvalidateCmd mid-layout (the router would replay the frame's
+	// unread events)
+	me.changed()
 	return h
 }
 
