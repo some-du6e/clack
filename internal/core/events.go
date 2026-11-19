@@ -78,17 +78,22 @@ func (a *App) handle(ev slack.Event) {
 			return
 		}
 		// Slack's typing line maps its typers through getMemberById as it
-		// renders (MessagePaneInput, cRQG), so only the conversation on
-		// screen asks for a typer it doesn't hold. Elsewhere the record
-		// waits with what the store has: a busy workspace types in
-		// hundreds of channels, and each fetch's "names" redrew the window
-		// for nothing on it.
+		// renders (MessagePaneInput, cRQG): the record goes out at once
+		// with the name the store has, and the line names a typer it
+		// didn't hold once the member is in (composer typers reads the
+		// names as it draws; "names" draws it again). Only the
+		// conversation on screen asks for a missing typer, through the
+		// lazy fetcher (store.User's miss), off the pump: fetched here,
+		// every event behind the typing waited for users/info, a reply in
+		// the thread open beside it too. Elsewhere the record waits with
+		// what the store has: a busy workspace types in hundreds of
+		// channels, and each fetch's "names" redrew the window for nothing
+		// on it.
 		name := ""
-		if a.watching(ch, e.ThreadTS) {
-			a.EnsureUsers(ctx, []string{e.User})
-			name = a.S.UserName(e.User)
-		} else if u, ok := a.S.RawUser(e.User); ok {
+		if u, ok := a.S.RawUser(e.User); ok {
 			name = store.DisplayName(u)
+		} else if a.watching(ch, e.ThreadTS) {
+			a.S.User(e.User) // a miss is asked for (store afterLookup)
 		}
 		a.emit(Event{Type: "typing", Channel: ch, UserID: e.User, Name: name, ThreadTS: e.ThreadTS})
 	case "channel_marked", "im_marked", "group_marked", "mpim_marked":
@@ -350,7 +355,15 @@ func (a *App) handle(ev slack.Event) {
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
 		raw := ev.Raw
-		a.activityLater(func(ctx context.Context) { a.onActivityEvent(ctx, raw) }) // activity_later.go
+		// stamped here, in socket order, not when its turn comes: a
+		// deletion or an edit dropping the viewer's mention that lands
+		// while the entry waits for the lookups ahead of it is newer than
+		// the entry, and takes it out (Activity drops an entry whose
+		// message changed after its stamp: RemoveSeq > MsgSeq). Stamped
+		// in the worker, the entry came out newer than the deletion and
+		// stayed, a deleted reply's thread row (Karim, 2026-11-17)
+		seq := a.MessageChangeSeq()                                                     // msg_changes.go
+		a.activityLater(func(ctx context.Context) { a.onActivityEvent(ctx, raw, seq) }) // activity_later.go
 	case "activity_clear_all_completed":
 		// handleActivityRTMEvent's sibling (client-boot-render
 		// activityClearAllCompleted): with an undo_key, the clear-all
@@ -464,7 +477,7 @@ func (a *App) emitStreamDone(ch string, m *slack.Message) {
 		Reply:    m.ThreadTS != "" && m.ThreadTS != m.TS,
 		Mention:  mentionsSelf(m, self) || (m.User != self && keywordMention(m, a.S.HighlightWords())),
 		ConvKind: a.kindOf(ch)}
-	if u, ok := a.User(m.User); ok {
+	if u, ok := a.RawUser(m.User); ok { // as the store has them: see onMessage
 		ev.User = &u
 	}
 	a.emit(ev)
@@ -483,7 +496,13 @@ func (a *App) refreshConv(ctx context.Context, id string) {
 	}
 	a.putInfo(c)
 	if c.IsIM {
-		a.EnsureUsers(ctx, []string{c.User})
+		// the partner is asked for (the lazy fetcher: store.User's miss),
+		// not fetched here: refreshConv runs on the event pump (im_created,
+		// im_open, a message in a conversation core didn't know), and
+		// every event behind it waited for users/info. The DM's row names
+		// them once they're in ("names"); a notification waits for them
+		// itself (the UI's noteMembers)
+		a.S.User(c.User)
 	}
 	v := a.conv(c)
 	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
@@ -687,7 +706,15 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
 		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch)}
-	if u, ok := a.User(m.User); ok {
+	// the sender as the store has them, nothing asked: messageReceived asks
+	// for no one, the rows ask as they draw (row.resolve's User), the
+	// notification for itself (the UI's noteMembers). Read through
+	// getMemberById, every never-fetched sender in any channel went to
+	// users/info, and its "names" answer made the UI read every
+	// conversation on screen again (a resnapshot, the open channel's
+	// history converted afresh, every row resolved again) for people
+	// nothing drew (α.110's review)
+	if u, ok := a.RawUser(m.User); ok {
 		ev2.User = &u
 	}
 	a.emit(ev2)

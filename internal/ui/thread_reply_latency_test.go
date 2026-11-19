@@ -13,11 +13,16 @@ package ui
 // came first held the reply behind the entry's own lookups (its messages,
 // its people). Slack's messageReceived stores the message at once, and its
 // activity store holds up no other event. Here users/info answers after
-// 1.5 s, as on a busy Grid, every reply is from someone new, and the
-// window shows Activity with the thread open beside it, as Karim's did.
+// 1.5 s, as on a busy Grid, every reply is from someone new, someone else
+// new types in the thread 100 ms before each (core asked users/info for a
+// typer on the pump, and the reply waited behind it: α.110's review), and
+// the window shows Activity with the thread open beside it, as Karim's
+// did.
 // Frames are drawn as a window draws them (when the app asks for one).
-// Natively and under a plugin patching the components a message draws
-// through. Synthetic data only.
+// A reply counts once the pane's row paints its body, within two frames
+// and 250 ms of the socket. Natively, under a plugin patching the messages
+// slice, and under one patching the components a message draws through.
+// Synthetic data only.
 
 import (
 	"context"
@@ -30,6 +35,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -37,7 +43,7 @@ func TestThreadReplyLatency(t *testing.T) {
 	if os.Getenv("CLACK_LATENCY_TESTS") == "" {
 		t.Skip("CLACK_LATENCY_TESTS not set: flake-check's thread-replies job runs this")
 	}
-	for _, mode := range []string{"native", "components"} {
+	for _, mode := range []string{"native", "slice", "components"} {
 		t.Run(mode, func(t *testing.T) { threadReplyLatency(t, mode) })
 	}
 }
@@ -57,6 +63,10 @@ func threadReplyLatency(t *testing.T, mode string) {
 	fs.PostReplyQuiet(ch, root, fakeslack.SelfID, "on it, checking 10router") // the viewer follows the thread
 	ids := fs.UserIDs()
 	replier := func(k int) string { return ids[len(ids)-1-k] } // someone the client never fetched
+	// typer(k) types in the thread just before reply k: someone else the
+	// client never fetched (the typing line asks for them; on the pump,
+	// users/info for them held the reply behind it: α.110's review)
+	typer := func(k int) string { return ids[len(ids)-31-k] }
 
 	var e *perfEnv
 	switch mode {
@@ -69,18 +79,27 @@ func threadReplyLatency(t *testing.T, mode string) {
 	c := e.a.data.core
 	c.SetRealtime(true)
 	e.until("the socket", 20*time.Second, func() bool { return c.RTM != nil && c.RTM.Connected() })
-	if mode == "components" {
+	if mode != "native" {
 		e.until("Taut", 60*time.Second, func() bool { return e.a.Taut() != nil })
 		tt := e.a.Taut()
+		code, id := editPassComponents, "EditPassComponents"
+		if mode == "slice" {
+			code, id = editPassSlice, "EditPassSlice"
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if _, err := tt.Import(ctx, []byte(editPassComponents), ""); err != nil {
+		if _, err := tt.Import(ctx, []byte(code), ""); err != nil {
 			t.Fatal(err)
 		}
-		if err := tt.SetEnabled(ctx, "EditPassComponents", true); err != nil {
+		if err := tt.SetEnabled(ctx, id, true); err != nil {
 			t.Fatal(err)
 		}
-		e.until("the plugin's patches", 30*time.Second, func() bool { return slackc.Patched("MessageText") && slackc.Patched("MessageWrapper") })
+		e.until("the plugin's patches", 30*time.Second, func() bool {
+			if mode == "slice" {
+				return tt.SlicePatched("messages")
+			}
+			return slackc.Patched("MessageText") && slackc.Patched("MessageWrapper")
+		})
 	}
 
 	// Activity, with the thread open beside it
@@ -97,6 +116,20 @@ func threadReplyLatency(t *testing.T, mode string) {
 	}
 	e.until("the thread pane", 20*time.Second, func() bool { return paneDrew(root) })
 	e.settle(500 * time.Millisecond)
+	// a reply counts once the pane's own row paints its body (Activity,
+	// beside it, paints the same text): the row's richview, which a
+	// component patch's MessageText reaches through MessageBlocks
+	painted := map[*richview.View]bool{}
+	richview.PaintedHook = func(v *richview.View) { painted[v] = true }
+	t.Cleanup(func() { richview.PaintedHook = nil })
+	panePainted := func(ts string) bool {
+		tv := e.threadView(ch, root)
+		if tv == nil {
+			return false
+		}
+		b := tv.RowBody(ts)
+		return b != nil && painted[b]
+	}
 
 	// core's announcements: a reply's message, its thread_v2 entry
 	evs, stop := c.Subscribe()
@@ -148,12 +181,18 @@ func threadReplyLatency(t *testing.T, mode string) {
 	}
 	var rs []reply
 	var ds []latDraw
-	next := time.Now()
+	const typingLead = 100 * time.Millisecond
+	next := time.Now().Add(typingLead)
 	end := next.Add(8 * time.Second)
+	typed := 0 // the replies whose typer has typed
 	for {
 		now := time.Now()
 		if !now.Before(end) && (len(ds) == 0 || !ds[len(ds)-1].drawn.IsZero() || now.Sub(ds[len(ds)-1].pushed) > 4*time.Second) {
 			break
+		}
+		if now.Before(end) && typed == len(rs) && !now.Before(next.Add(-typingLead)) {
+			fs.Push(map[string]any{"type": "user_typing", "channel": ch, "thread_ts": root, "user": typer(len(rs) + 1)})
+			typed++
 		}
 		if now.Before(end) && !now.Before(next) {
 			k := len(rs) + 1
@@ -174,6 +213,7 @@ func threadReplyLatency(t *testing.T, mode string) {
 			time.Sleep(w)
 		}
 		lastFrame = time.Now()
+		clear(painted)
 		e.frame()
 		frames++
 		mu.Lock()
@@ -182,7 +222,7 @@ func threadReplyLatency(t *testing.T, mode string) {
 			if at, ok := msgAt[rs[i].ts]; ok && d.core.IsZero() {
 				d.core = at
 			}
-			if d.drawn.IsZero() && paneDrew(rs[i].ts) {
+			if d.drawn.IsZero() && panePainted(rs[i].ts) {
 				d.drawn, d.frames = lastFrame, frames-d.pushedN
 			}
 		}
