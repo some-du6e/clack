@@ -14,9 +14,10 @@
   #define SourceExe "..\..\dist\windows-amd64\Clack.exe"
 #endif
 ; the licence texts of what SourceExe contains (tools/licenses.py, written
-; beside it by release.yml's windows job)
+; beside it by release.yml's windows job, whose install check wants it);
+; test builds (ci.yml, updater.yml) leave it out
 #ifndef LicensesTxt
-  #define LicensesTxt "..\..\dist\windows-amd64\THIRD_PARTY_LICENSES.txt"
+  #define LicensesTxt ""
 #endif
 #ifndef OutputDir
   #define OutputDir "..\..\dist"
@@ -82,7 +83,9 @@ Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreve
 Source: "README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+#if LicensesTxt != ""
 Source: "{#LicensesTxt}"; DestDir: "{app}"; DestName: "THIRD_PARTY_LICENSES.txt"; Flags: ignoreversion
+#endif
 ; The icon Windows shows for Clack's toasts and in Settings > System >
 ; Notifications: the app id registration below names it. Clack.exe writes
 ; the same file when it's missing (internal/desktop/aumid_windows.go).
