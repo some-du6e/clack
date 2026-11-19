@@ -13,8 +13,11 @@ package ui
 // came first held the reply behind the entry's own lookups (its messages,
 // its people). Slack's messageReceived stores the message at once, and its
 // activity store holds up no other event. Here users/info answers after
-// 1.5 s, as on a busy Grid, every reply is from someone new, and the
-// window shows Activity with the thread open beside it, as Karim's did.
+// 1.5 s, as on a busy Grid, every reply is from someone new, someone else
+// new types in the thread 100 ms before each (core asked users/info for a
+// typer on the pump, and the reply waited behind it: α.110's review), and
+// the window shows Activity with the thread open beside it, as Karim's
+// did.
 // Frames are drawn as a window draws them (when the app asks for one).
 // Natively and under a plugin patching the components a message draws
 // through. Synthetic data only.
@@ -57,6 +60,10 @@ func threadReplyLatency(t *testing.T, mode string) {
 	fs.PostReplyQuiet(ch, root, fakeslack.SelfID, "on it, checking 10router") // the viewer follows the thread
 	ids := fs.UserIDs()
 	replier := func(k int) string { return ids[len(ids)-1-k] } // someone the client never fetched
+	// typer(k) types in the thread just before reply k: someone else the
+	// client never fetched (the typing line asks for them; on the pump,
+	// users/info for them held the reply behind it: α.110's review)
+	typer := func(k int) string { return ids[len(ids)-31-k] }
 
 	var e *perfEnv
 	switch mode {
@@ -148,12 +155,18 @@ func threadReplyLatency(t *testing.T, mode string) {
 	}
 	var rs []reply
 	var ds []latDraw
-	next := time.Now()
+	const typingLead = 100 * time.Millisecond
+	next := time.Now().Add(typingLead)
 	end := next.Add(8 * time.Second)
+	typed := 0 // the replies whose typer has typed
 	for {
 		now := time.Now()
 		if !now.Before(end) && (len(ds) == 0 || !ds[len(ds)-1].drawn.IsZero() || now.Sub(ds[len(ds)-1].pushed) > 4*time.Second) {
 			break
+		}
+		if now.Before(end) && typed == len(rs) && !now.Before(next.Add(-typingLead)) {
+			fs.Push(map[string]any{"type": "user_typing", "channel": ch, "thread_ts": root, "user": typer(len(rs) + 1)})
+			typed++
 		}
 		if now.Before(end) && !now.Before(next) {
 			k := len(rs) + 1
