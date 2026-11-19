@@ -141,6 +141,7 @@ func (h *cmHost) OpenSplit(route string) {
 }
 
 func (h *cmHost) SplitViewOK() bool { return true }
+func (h *cmHost) InSplitView() bool { return false }
 
 // the inbox's column (ActivitySecondary: the draw is a layout.Widget, a
 // func(C) D literal would leave cmHost without the interface)
@@ -149,10 +150,11 @@ func (h *cmHost) OpenDetailSecondary(string, layout.Widget) {}
 func (h *cmHost) SecondaryShowsDetail(string) bool          { return false }
 
 var (
-	_ ActivitySecondary = (*cmHost)(nil)
-	_ CanvasOpener      = (*cmHost)(nil)
-	_ SavedSecondary    = (*cmHost)(nil)
-	_ PaneJumper        = (*cmHost)(nil)
+	_ ActivitySecondary  = (*cmHost)(nil)
+	_ CanvasOpener       = (*cmHost)(nil)
+	_ SavedSecondary     = (*cmHost)(nil)
+	_ PaneJumper         = (*cmHost)(nil)
+	_ popups.SplitViewer = (*cmHost)(nil)
 )
 
 // cmCalls is a copy of what h recorded.
@@ -186,7 +188,12 @@ func cmActivity(t *testing.T, o cmOpts) (*Activity, *cmHost, *vaEnv, *fakeslack.
 	if o.late {
 		// canvas refs live in memory only, so every start meets the
 		// mention before files.info answers (held here until the row is
-		// drawn); core looks it up as a booted app does
+		// drawn); core looks it up as a booted app does. The feed's DMs
+		// are known: their lookups' "names" would describe every waiting
+		// row again on their own, and in a quiet session files.info's
+		// comes alone
+		s.PutConv(slack.Conversation{ID: "D0FAKE00000", IsIM: true, User: "U0FAKE00001", IsMember: true})
+		s.PutConv(slack.Conversation{ID: fakeslack.ActivitySlackbotDM, IsIM: true, User: "USLACKBOT", IsMember: true})
 		fs.SetFault("files.info", fakeslack.Fault{Delay: 1500 * time.Millisecond})
 		app.ServeLookups()
 		t.Cleanup(app.StopTraffic)
@@ -273,19 +280,42 @@ var cmMagenta = func() []byte {
 	return b.Bytes()
 }()
 
-// cmMagentaIn is where img's magenta pixels are, and how many.
+// cmMagentaIn is img's largest patch of magenta (4-connected) and its
+// size in pixels. The fake's other pictures are gradients, a few of whose
+// pixels come out magenta too, never a patch.
 func cmMagentaIn(img *image.RGBA) (image.Rectangle, int) {
-	var r image.Rectangle
-	n := 0
-	for y := img.Rect.Min.Y; y < img.Rect.Max.Y; y++ {
-		for x := img.Rect.Min.X; x < img.Rect.Max.X; x++ {
-			if c := img.RGBAAt(x, y); c.R > 200 && c.G < 70 && c.B > 200 {
-				r = r.Union(image.Rect(x, y, x+1, y+1))
-				n++
+	b := img.Rect
+	is := func(p image.Point) bool { c := img.RGBAAt(p.X, p.Y); return c.R >= 235 && c.G <= 40 && c.B >= 235 }
+	seen := make([]bool, b.Dx()*b.Dy())
+	at := func(p image.Point) int { return (p.Y-b.Min.Y)*b.Dx() + p.X - b.Min.X }
+	var best image.Rectangle
+	bestN := 0
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			p := image.Pt(x, y)
+			if seen[at(p)] || !is(p) {
+				continue
+			}
+			var r image.Rectangle
+			n := 0
+			seen[at(p)] = true
+			for stack := []image.Point{p}; len(stack) > 0; {
+				q := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				r, n = r.Union(image.Rect(q.X, q.Y, q.X+1, q.Y+1)), n+1
+				for _, d := range [...]image.Point{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
+					if o := q.Add(d); o.In(b) && !seen[at(o)] && is(o) {
+						seen[at(o)] = true
+						stack = append(stack, o)
+					}
+				}
+			}
+			if n > bestN {
+				best, bestN = r, n
 			}
 		}
 	}
-	return r, n
+	return best, bestN
 }
 
 // cmShot is vaShot returning the frame it saved (nil without
@@ -432,14 +462,53 @@ func TestActivityCanvasMentionRow(t *testing.T) {
 // to the canvas and its title.
 func TestActivityCanvasMentionRowLateFilesInfo(t *testing.T) {
 	v, _, e, fs := cmActivity(t, cmOpts{dense: true, rev2: true, inbox: true, late: true})
+	// the "names" core sends: a conversation's describes a loading row
+	// again on its own (namesIn), so the one that brings the file id, and
+	// any after it, must carry no conversation
+	evs, unsub := v.h.Core().Subscribe()
+	t.Cleanup(unsub)
+	var mu sync.Mutex
+	var named [][]string
+	go func() {
+		for ev := range evs {
+			if ev.Type == "names" {
+				mu.Lock()
+				named = append(named, ev.Users)
+				mu.Unlock()
+			}
+		}
+	}()
+	fileNames := func() (int, [][]string) {
+		mu.Lock()
+		defer mu.Unlock()
+		for k, ids := range named {
+			if slices.Contains(ids, fakeslack.CanvasMentionFile) {
+				return k, slices.Clone(named)
+			}
+		}
+		return -1, nil
+	}
 	if d := v.rows[fakeslack.CanvasMentionKey].d; !d.ent.Loading() {
 		t.Fatalf("precondition: the row knew the canvas before files.info answered (%+v)", d.ent)
 	}
 	e.until(t, "files.info for the canvas", func() bool { return fs.CallCount("files.info") > 0 })
-	e.until(t, "the row described again as the canvas", func() bool {
+	e.until(t, "the names that bring the file id", func() bool { k, _ := fileNames(); return k >= 0 })
+	described := func() bool {
 		r := v.rows[fakeslack.CanvasMentionKey]
 		return r != nil && r.built && r.d.entOn && r.d.ent.Icon == "canvas"
-	})
+	}
+	for deadline := time.Now().Add(2 * time.Second); !described(); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the row is still %+v 2 s after files.info named the canvas", v.rows[fakeslack.CanvasMentionKey].d.ent)
+		}
+		e.frame()
+	}
+	k, all := fileNames()
+	for _, ids := range all[k:] {
+		if actConvIDs(ids) {
+			t.Fatalf("precondition: a conversation's names came with or after the file id's (%q): they describe the row again on their own", all[k:])
+		}
+	}
 	if drawn := cmDrawn(e); !drawn["Pet roster "] {
 		t.Errorf("the canvas title isn't drawn once files.info answered (%d labels drawn)", len(drawn))
 	}
