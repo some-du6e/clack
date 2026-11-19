@@ -19,7 +19,7 @@ type bk struct {
 	Type      string `json:"type"`
 	BlockID   string `json:"block_id"`
 	Elements  []bk   `json:"elements"`
-	Rows      [][]bk `json:"rows"` // table
+	Rows      bkRows `json:"rows"` // table
 	ColumnSet []struct {
 		Align     string `json:"align"`
 		IsWrapped bool   `json:"is_wrapped"`
@@ -40,7 +40,7 @@ type bk struct {
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
-	Name        string          `json:"name"`
+	Name        bkStr           `json:"name"` // emoji; auth_provider's is a text object
 	Unicode     string          `json:"unicode"`
 	SkinTone    int             `json:"skin_tone"`
 	Range       string          `json:"range"`
@@ -238,6 +238,31 @@ func (f *bkFallback) UnmarshalJSON(b []byte) error {
 		return json.Unmarshal(b, &f.Text)
 	}
 	f.raw = append(json.RawMessage(nil), b...)
+	return nil
+}
+
+// bkRows is a table's "rows": arrays of cells, decoded as strictly as
+// before. Other blocks' rows aren't arrays (canvas_table's and layout's
+// are objects): those are no rows rather than a failed block.
+type bkRows [][]bk
+
+func (r *bkRows) UnmarshalJSON(b []byte) error {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(b, &rows); err != nil {
+		*r = nil
+		return nil
+	}
+	for _, row := range rows {
+		if len(row) == 0 || row[0] != '[' {
+			*r = nil
+			return nil
+		}
+	}
+	var rs [][]bk
+	if err := json.Unmarshal(b, &rs); err != nil {
+		return err
+	}
+	*r = rs
 	return nil
 }
 
@@ -1063,7 +1088,7 @@ func appendRichText(out []Span, s string, lead, first bool) []Span {
 }
 
 func richEmoji(r Resolver, e *bk) Span {
-	name := e.Name
+	name := string(e.Name)
 	if e.SkinTone >= 2 && e.SkinTone <= 6 {
 		name += "::skin-tone-" + strconv.Itoa(e.SkinTone)
 	}
@@ -1080,8 +1105,8 @@ func richEmoji(r Resolver, e *bk) Span {
 	if sp, ok := emojiSpan(r, name); ok {
 		return sp
 	}
-	if name != e.Name {
-		if sp, ok := emojiSpan(r, e.Name); ok {
+	if name != string(e.Name) {
+		if sp, ok := emojiSpan(r, string(e.Name)); ok {
 			return sp
 		}
 	}

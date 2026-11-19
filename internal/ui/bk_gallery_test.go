@@ -102,6 +102,10 @@ func TestBlockKitGallery(t *testing.T) {
 		})
 		e.settle(800 * time.Millisecond)
 		snap("gallery-thread-loading-" + mode)
+		// close it: the next pass pages the channel at its full width, and
+		// with no spinner on screen an unchanged page ends the paging
+		e.a.CloseSecondary()
+		e.settle(300 * time.Millisecond)
 	}
 }
 

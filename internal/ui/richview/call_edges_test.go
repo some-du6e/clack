@@ -2,6 +2,7 @@ package richview
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,5 +35,47 @@ func TestCallCardEdges(t *testing.T) {
 	}
 	if !hasFrag(&v.d, "missed") {
 		t.Errorf("no status: %q", fragStrings(&v.d))
+	}
+}
+
+// TestCallFacepileOverflow: seven people in a call show five faces, the
+// fifth under "+2" (Facepile: maxNumFaces 5, the rest counted on the
+// last face): the overlay's dark box sits under its text
+// (.c-avatar__additional_overlay), on the face.
+func TestCallFacepileOverflow(t *testing.T) {
+	st := newTestStyle()
+	start := strconv.FormatInt(time.Now().Unix()-600, 10)
+	ps := ""
+	for i := 1; i <= 7; i++ {
+		if i > 1 {
+			ps += ","
+		}
+		ps += `{"external_id":"g` + strconv.Itoa(i) + `","display_name":"Guest","avatar_url":"https://call.test/g` + strconv.Itoa(i) + `.png"}`
+	}
+	d := kitDoc(t, `[{"type":"call","call_id":"R1","call":{"v1":{"id":"R1","name":"All hands","date_start":`+start+`,
+		"join_url":"https://call.test/j","active_participants":[`+ps+`],"all_participants":[]}}}]`)
+	v := layoutAt(st, d, Options{}, 800)
+	var faces []imgPrim
+	for _, im := range v.d.imgs {
+		if strings.HasPrefix(im.url, "https://call.test/g") {
+			faces = append(faces, im)
+		}
+	}
+	if len(faces) != 5 {
+		t.Fatalf("%d faces, want 5", len(faces))
+	}
+	fifth := faces[4].r
+	more := findFrag(t, &v.d, "+2")
+	if int(more.x) < fifth.Min.X || int(more.x+more.w) > fifth.Max.X || more.top < fifth.Min.Y || more.bot > fifth.Max.Y {
+		t.Errorf("+2 at (%.0f, %d)-(%.0f, %d), want inside the fifth face %v", more.x, more.top, more.x+more.w, more.bot, fifth)
+	}
+	var overlay *box
+	for i := range v.d.boxes {
+		if b := &v.d.boxes[i]; b.r == fifth && b.kind == bFill && b.fill == rgba(0, 0, 0, 0.5) {
+			overlay = b
+		}
+	}
+	if overlay == nil || overlay.layer != 2 {
+		t.Errorf("overlay %+v, want the 50%% black box on layer 2 (over the face, under the +2)", overlay)
 	}
 }

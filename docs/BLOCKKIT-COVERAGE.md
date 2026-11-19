@@ -69,11 +69,11 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | block | Slack (renderable · component) | before | after | what's missing |
 |---|---|---|---|---|
 | actions | `/jJF` | full | full; `visible_to_user_ids` (the one block that reads it) hides a button or checkboxes from members it doesn't list, and the hidden element still counts for "+ N more" and takes one of the first five places | modals and App Home draw every element: Slack's Actions block truncates there too (the first five and "+ N more" from seven) |
-| alert | `MyNk` AlertRenderable · client-boot `MlDl` Alert | absent | **full** | the optimal-line-length pref's 75ch cap |
-| auth_provider (@slack/types only) | `zTn9` AuthProviderBlockLazy | absent | absent | connect/disconnect card |
+| alert | `MyNk` AlertRenderable · client-boot `MlDl` Alert | the per-block error line ("This content could not be displayed.": a string `level` failed the decode) | **full** | the optimal-line-length pref's 75ch cap |
+| auth_provider (@slack/types only) | `zTn9` AuthProviderBlockLazy | the per-block error line (its `name` text object failed the decode) | absent | connect/disconnect card |
 | call (slack.ts) | `FkcF` · `9CtN` PlatformCallSubtype | partial: a generic "Call" link card | **partial** | the ended icon's and faces' grayscale filter, renderCallIcon's phone-flat (ended), call-missed and call-declined glyphs (DM calls; they aren't in Clack's icon set yet, so it draws phone), the faces' name tooltips, Decline for an incoming DM call, `desktop_app_join_url` (Join opens `join_url`), stopping your huddle on Join, and ava_0002 for an external avatar that fails to load (a face with no `avatar_url` draws it) |
 | callout (slack.ts) | `zMv1` · `Xhau` Callout | absent | **full** | a callout inside a container lays its children out as a flex column with an 8px gap |
-| canvas_table (slack.ts) | `8Rt0` CanvasTable | absent | absent | |
+| canvas_table (slack.ts) | `8Rt0` CanvasTable | the per-block error line (its object `rows` failed the decode) | absent | |
 | card | `ARtW` · `7Xkb` Card | absent | absent | hero image, icon, title/subtitle/body mrkdwn, buttons left/right |
 | carousel | `ZDqH` CarouselBlock | absent | absent | horizontally scrolling cards |
 | channel_section / channel_set (slack.ts) | `865t` | absent | absent | |
@@ -103,7 +103,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | task_card | `1+vf` TaskCard | full | full | (agent.go) |
 | timeline (slack.ts) | `9B8s` Timeline | absent | absent | |
 | video | `u8h8` VideoBlock | partial (drawn as an unfurl card) | same | not re-audited |
-| share_skill, share_workflow, salesforce_record_card, search_top_results, mcp_app, page, layout, prototype, related_automation_decorator, attachment_reference, canvas_mermaid, message (client only) | `1Ine`, `ZiEp`, `bgQL`, `jBv3`, `bwbq`, `eMXm`, `+42+`, `b3P2`, `9H1Y`, `jBv3`, `iToP`, `jBv3` | absent | absent | |
+| share_skill, share_workflow, salesforce_record_card, search_top_results, mcp_app, page, layout, prototype, related_automation_decorator, attachment_reference, canvas_mermaid, message (client only) | `1Ine`, `ZiEp`, `bgQL`, `jBv3`, `bwbq`, `eMXm`, `+42+`, `b3P2`, `9H1Y`, `jBv3`, `iToP`, `jBv3` | absent (layout: the per-block error line, its object `rows` failed the decode) | absent | |
 | expandable, group, error (client enum) | no renderable | drew nothing | **fallback** (the card) | |
 | a type nobody knows | no renderable | the card; nested unknown fallback items skipped | **fallback** (Slack's chain exactly) | |
 
@@ -174,6 +174,9 @@ Round 1's review fixes, with tests that fail on `8126e895`:
   - Blocks that draw nothing leave an empty body, not the message text (`TestBlockFallbacks`, `TestConditionBlocks`).
   - Notifications read the raw blocks as `convertMessageToPlainText` does (`TestNotificationText`), and search results drop the card (`TestSearchText`).
   - Unknown inline elements take RichTextRenderer's last branches (`TestUnknownInlineElement`).
+- A field shape that only some blocks use no longer fails the decode into the per-block error line: auth_provider's text-object `name`, and canvas_table's and layout's object `rows`. Those blocks now follow the absent rule (`TestBlockFallbacks`).
+- The gallery's dark pages are no longer shot with the loading thread open, and the duplicate end pages are gone: `bk_gallery_test.go` closes the thread after its shot.
+- Tests for round-1 code that had none: blockkit's condition expansion in a message, a modal and App Home (`TestConditionElements`), and the facepile's "+N" over its fifth face (`TestCallFacepileOverflow`). A mutation run proves them: the same tests with the expansion and the overlay's layer removed.
 - The cards' texts take Slack's tokens, tested by `TestKitCardTokens`:
   - a container's title is content-pry and its subtitle content-sec;
   - an alert's text is content-pry, with its links in that colour and always underlined (`.c-alert :any-link`);
