@@ -265,7 +265,7 @@ func (c *Controller) endDragsLocked(t *tile, p image.Point) {
 		}
 		t.resume = false
 		if t.f != nil {
-			c.progress[t.f.ID] = t.elapsed
+			c.progress[t.f.ID] = progressAt(t.elapsed, t.durLocked())
 		}
 	}
 	if t.vol {

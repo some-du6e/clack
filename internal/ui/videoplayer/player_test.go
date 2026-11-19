@@ -250,6 +250,21 @@ func TestVolumePrefs(t *testing.T) {
 	}
 }
 
+// saveMediaProgress (gnNF) keeps 0 for a video left within a second of
+// its end, else where it was left.
+func TestProgressAt(t *testing.T) {
+	for _, c := range []struct{ pos, dur, want time.Duration }{
+		{1900 * time.Millisecond, 3 * time.Second, 1900 * time.Millisecond},
+		{2001 * time.Millisecond, 3 * time.Second, 0},
+		{3 * time.Second, 3 * time.Second, 0},
+		{5 * time.Second, 0, 5 * time.Second}, // no duration yet
+	} {
+		if got := progressAt(c.pos, c.dur); got != c.want {
+			t.Errorf("left at %v of %v: progress %v, want %v", c.pos, c.dur, got, c.want)
+		}
+	}
+}
+
 // The pill's time is fIJO's: the duration at rest, the time played once
 // it plays or was partly played, "Video" with neither (and the time
 // played, 0:00, hovered); w7xZ's format.

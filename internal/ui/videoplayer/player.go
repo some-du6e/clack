@@ -241,6 +241,15 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	}
 }
 
+// progressAt is the progress kept for a video left at pos of dur:
+// saveMediaProgress (gnNF) keeps 0 within a second of the end.
+func progressAt(pos, dur time.Duration) time.Duration {
+	if dur > 0 && dur-pos < time.Second {
+		return 0
+	}
+	return pos
+}
+
 // startLocked is where a new player of f starts.
 func (c *Controller) startLocked(f *richtext.File) time.Duration {
 	if p, ok := c.progress[f.ID]; ok {
@@ -298,9 +307,9 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 	case media.Pause:
 		t.playing, repaint = false, true
 		if !t.ended {
-			c.progress[t.f.ID] = st.Pos
+			c.progress[t.f.ID] = progressAt(st.Pos, st.Duration)
 		}
-	case media.Ended: // gnNF: within a second of the end, the progress is 0
+	case media.Ended:
 		t.playing, t.ended, repaint = false, true, true
 		c.progress[t.f.ID] = 0
 	case media.Error: // 1ERX: no error UI; a spinner showing keeps spinning
@@ -331,7 +340,7 @@ func (c *Controller) closeLocked(t *tile) {
 		return
 	}
 	if !t.ended && t.f != nil {
-		c.progress[t.f.ID] = t.elapsed
+		c.progress[t.f.ID] = progressAt(t.elapsed, t.durLocked())
 	}
 	t.h.Close()
 	t.h, t.gen = nil, 0
