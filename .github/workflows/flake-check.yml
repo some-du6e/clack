@@ -1564,3 +1564,25 @@ jobs:
           go test -count=$COUNT -v -run '^(TestFreeze\w*|TestCaptureOpensReview)$' ./internal/ui/inspect || rc=1
           go test -count=$COUNT -v -timeout 40m -run '^(TestInspectFreeze\w*|TestInspectSessionEndsAtSignIn|TestInspectFileDropsIgnored|TestInspectFrozenReportDescribesFrozenFrame|TestInspectReactionPill)$' ./internal/ui || rc=1
           exit $rc
+
+  # karim-1118 (2026-11-18): a restored draft's attachment card drew its
+  # file's id ("F0CJB175J10") over "File". The composer fetches a draft's
+  # file it knows by id alone (files.info, Slack's unknown fetch) with
+  # Slack's loading bars and retry, and logs a failed load by hashed id.
+  # Dispatch with only=karim-1118-drafts.
+  karim-1118-drafts:
+    if: ${{ !inputs.only || startsWith('karim-1118-drafts', inputs.only) }}
+    name: "karim-1118 the draft file card's fetch (composer)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "TestDraftFileArrivesLate, TestDraftFileInfoFails, TestDraftFileRetriesTimeouts, COUNT runs"
+        run: go test -count=$COUNT -v -timeout 20m -run '^(TestDraftFileArrivesLate|TestDraftFileInfoFails|TestDraftFileRetriesTimeouts|TestDraftFromAnotherDevice)$' ./internal/ui/composer
