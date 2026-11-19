@@ -94,9 +94,12 @@ func (m *capTimes) line() string {
 	fmt.Fprintf(&b, ": report %s, pick to frame submitted %s", dur(m.report), dur(m.submit))
 	if m.shoot.total > 0 {
 		fmt.Fprintf(&b, ", shoot %s (", dur(m.shoot.total))
-		if m.shoot.reused {
+		switch {
+		case m.shoot.reused && m.shoot.gpu >= time.Millisecond:
+			fmt.Fprintf(&b, "gpu ready after %s", dur(m.shoot.gpu)) // the session's, still being made at the pick
+		case m.shoot.reused:
 			b.WriteString("gpu ready")
-		} else {
+		default:
 			fmt.Fprintf(&b, "gpu context %s", dur(m.shoot.gpu))
 		}
 		fmt.Fprintf(&b, ", render %s, readback %s)", dur(m.shoot.render), dur(m.shoot.read))
