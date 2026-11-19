@@ -665,3 +665,42 @@ func TestMFCloseWhileDrawn(t *testing.T) {
 	}
 	t.Logf("%d frames drawn around Close", n)
 }
+
+// The time a file with an audio track takes to its metadata where there's
+// no audio output (the runners: 2.2 s in round 2, muted or not), against
+// the silent fixture's: the engine made muted (what the player does with
+// no output), then with its audio renderer, then a file with no audio
+// track. Logged for the question; it fails only on no metadata in 30 s.
+func TestMFAudioTrackLoad(t *testing.T) {
+	defer forceAudioRenderer.Store(false)
+	for _, c := range []struct {
+		name     string
+		data     []byte
+		renderer bool
+	}{
+		{"an audio track, the engine muted", mediatest.GreyGreyRed, false},
+		{"an audio track, the engine with its audio renderer", mediatest.GreyGreyRed, true},
+		{"no audio track", mediatest.Silent, false},
+	} {
+		forceAudioRenderer.Store(c.renderer)
+		t0 := time.Now()
+		r := newRig(t, c.data, false, image.Pt(320, 180))
+		r.draw()
+		got := false
+		for dl := time.Now().Add(30 * time.Second); !got && time.Now().Before(dl); {
+			select {
+			case ev := <-r.evC:
+				got = ev.Kind == media.LoadedMetadata
+			case <-time.After(15 * time.Millisecond):
+				r.draw()
+			}
+		}
+		took := time.Since(t0)
+		audio, _ := r.audio()
+		if !got {
+			t.Errorf("%s: no metadata within 30 s (audio: %s); the engine's events %s", c.name, audio, traceOf(r.id))
+			continue
+		}
+		t.Logf("%s: loadedmetadata %v after the player was made (audio: %s); the engine's events %s", c.name, took.Round(time.Millisecond), audio, traceOf(r.id))
+	}
+}

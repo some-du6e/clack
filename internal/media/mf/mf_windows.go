@@ -174,6 +174,10 @@ func otherFormat(f uint32) uint32 {
 // format fallback).
 var forceTransferFailures atomic.Int32
 
+// forceAudioRenderer makes engines with their audio renderer even where
+// there's no audio output (tests: the 2.2 s to the metadata, muted or not).
+var forceAudioRenderer atomic.Bool
+
 // The tests' hooks, set before any player is made: each of the demuxer's
 // reads as it ends (the file's id, where, the bytes it got), and each of
 // the engine's events as it comes (codes below 1000 are HTML5's).
@@ -446,6 +450,10 @@ func (p *player) run() {
 			p.audioKnown = true
 			if p.noAudio = audio.err != nil; p.noAudio {
 				p.audio = fmt.Sprintf("no output (%v): the engine is made muted (MF_MEDIA_ENGINE_FORCEMUTE)", audio.err)
+				if forceAudioRenderer.Load() {
+					p.noAudio = false
+					p.audio = fmt.Sprintf("no output (%v), the engine made with its audio renderer all the same (the test's)", audio.err)
+				}
 			} else {
 				p.audio = "the default output"
 			}
