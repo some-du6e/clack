@@ -70,6 +70,16 @@ const ExpAgentTasksTab = "wfb_3p_agent_tasks_tab"
 // (isAgentTasksAllowedByPlan).
 const FeatureAgentTasksWrite = "agent_tasks__write"
 
+// The experiments the Tasks tab reads (TestExperimentReadsListed): the
+// tab itself, the title's weight (tabTitleHeavy under recent prompts) and
+// the schedule line's switches (AgentTaskItem's n1._ arguments).
+func init() {
+	for _, n := range []string{ExpAgentTasksTab, "wfb_agent_tasks_recent_prompts", "wfb_scheduled_trigger_time_buckets",
+		"wfb_schedule_on_last_day_of_month", "wfb_agents_can_create_simple_automations_tab_ms3"} {
+		experimentReads[n] = on
+	}
+}
+
 // agentTasksBlockedApps is o1P2's u: apps Slack never gives a Tasks tab.
 var agentTasksBlockedApps = map[string]bool{"A0AT1U0QRNH": true, "A019W997N66": true}
 

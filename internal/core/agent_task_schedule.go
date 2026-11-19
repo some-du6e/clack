@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // a schedule's zone on Windows too (the app has it through jsrt; core's tests need their own)
 )
 
 // TaskTextOpts are the row's switches.
