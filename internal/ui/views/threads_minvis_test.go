@@ -5,11 +5,17 @@ package views
 // minimumVisibleTsByThread.
 
 import (
+	"fmt"
+	"image"
 	"net/url"
 	"slices"
+	"sync/atomic"
 	"testing"
 
+	"gioui.org/layout"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Three threads of seven replies, getView's window the three newest: one
@@ -48,7 +54,11 @@ func TestThreadsDefaultFirstReplyLikeSlack(t *testing.T) {
 	if got, want := shown(p), []string{p.r6, p.r7}; !slices.Equal(got, want) {
 		t.Errorf("a thread read to its newest reply shows %v, want its two newest %v", got, want)
 	}
-	if c := v.cards[ch+"/"+p.root]; c == nil || c.moreText != "Show 5 more replies" {
+	c := v.cards[ch+"/"+p.root]
+	if c == nil {
+		t.Fatal("the thread read to its newest reply has no card")
+	}
+	if c.moreText != "Show 5 more replies" {
 		t.Errorf("its row says %q, want Show 5 more replies", c.moreText)
 	}
 	if got, want := shown(q), []string{q.r6, q.r7}; !slices.Equal(got, want) {
@@ -66,4 +76,107 @@ func TestThreadsDefaultFirstReplyLikeSlack(t *testing.T) {
 	if got, want := shown(q), []string{q.r6, q.r7}; !slices.Equal(got, want) {
 		t.Errorf("q's first shown reply moved after its mark: %v, want %v", got, want)
 	}
+}
+
+// thrViewEnvAt is thrViewEnv opened straight at size, so the cards below
+// the fold are never laid out (thrViewEnv's first frames, at 1100px, lay
+// every card out).
+func thrViewEnvAt(t *testing.T, v *Threads, n int, size image.Point) *vaEnv {
+	t.Helper()
+	e := &vaEnv{size: size}
+	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+	e.until(t, fmt.Sprintf("%d threads", n), func() bool { return len(thrRoots(v)) == n && !v.data.busy() })
+	return e
+}
+
+// Each thread's first shown reply is picked when the threads load, for
+// the threads below the fold too (getDerivedStateFromProps runs iPpN over
+// props.threads, laid out or not), so what lands on a thread before the
+// viewer scrolls to it doesn't move it. A read thread of ten replies (r8,
+// r9 and r10 held) starts at r9; a reply r11 that lands before its card is
+// laid out shows with r9 and r10. A thread unread at load from r6 starts
+// at r6; read elsewhere before its card is laid out, it still shows r6 to
+// r10, not its two newest.
+func TestThreadsBelowFoldFirstReplyLikeSlack(t *testing.T) {
+	ch := fakeslack.ViewsChannel
+	const root = "1762600000.000100"
+	r := func(n int) string { return fmt.Sprintf("176260%02d00.000100", n) } // r(6) is 1762600600.000100
+	key := ch + "/" + root
+	fillers := func(unread bool) []map[string]any {
+		var ths []map[string]any
+		for _, th := range thrBannerThreads[:3] {
+			lr := th[1]
+			if unread {
+				lr = th[0]
+			}
+			ths = append(ths, thrFixRead(ch, th[0], th[1], "U0FAKE00002", unread, lr))
+		}
+		return ths
+	}
+	scrollTo := func(t *testing.T, e *vaEnv, v *Threads) []string {
+		t.Helper()
+		if v.cards[key] != nil {
+			t.Fatal("the thread's card was laid out before it was scrolled to")
+		}
+		v.list.Position = layout.Position{First: 3}
+		e.frame()
+		e.frame()
+		if v.cards[key] == nil {
+			t.Fatal("the thread's card isn't laid out once scrolled to")
+		}
+		return thrTSs(thrShown(thrItemOf(v, key), v.cards[key]))
+	}
+	t.Run("a reply", func(t *testing.T) {
+		var late atomic.Bool
+		app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
+			if method != "subscriptions.thread.getView" {
+				return nil, false
+			}
+			th := thrFixReplies(ch, root, 10, r(10), thrReplyBy(r(8), "U0FAKE00002"), thrReplyBy(r(9), "U0FAKE00001"), thrReplyBy(r(10), "U0FAKE00002"))
+			if late.Load() {
+				th = thrFixReplies(ch, root, 11, r(10), thrReplyBy(r(9), "U0FAKE00001"), thrReplyBy(r(10), "U0FAKE00002"), thrReplyBy(r(11), "U0FAKE00002"))
+			}
+			return thrOrderAnswer(append(fillers(false), th)...), true
+		})
+		h := newKBHost(app, false)
+		h.away.Store(true) // nothing marked read by what shows
+		v := NewThreads(h)
+		e := thrViewEnvAt(t, v, 4, image.Pt(1000, 300))
+		e.frame()
+		late.Store(true)
+		thrRefreshAfter(t, e, v, fs, "the refresh after r11", thrReplyEvent(ch, root, r(11)))
+		e.until(t, "r11 held", func() bool {
+			it := thrItemOf(v, key)
+			return it != nil && it.latest() == r(11)
+		})
+		if got, want := scrollTo(t, e, v), []string{r(9), r(10), r(11)}; !slices.Equal(got, want) {
+			t.Errorf("the thread shows %v once scrolled to, want %v from r9, its first shown reply at the load", got, want)
+		}
+	})
+	t.Run("a read", func(t *testing.T) {
+		app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
+			if method != "subscriptions.thread.getView" {
+				return nil, false
+			}
+			var rs []slack.Message
+			for n := 6; n <= 10; n++ {
+				rs = append(rs, thrReplyBy(r(n), "U0FAKE00002"))
+			}
+			return thrOrderAnswer(append(fillers(true), thrFixReplies(ch, root, 10, r(6), rs...))...), true
+		})
+		h := newKBHost(app, false)
+		h.away.Store(true)
+		v := NewThreads(h)
+		e := thrViewEnvAt(t, v, 4, image.Pt(1000, 300))
+		e.frame()
+		if got := thrRoots(v); len(got) != 4 || got[3] != root {
+			t.Fatalf("the threads are in the order %v, want the thread last", got)
+		}
+		fs.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ch,
+			"thread_ts": root, "last_read": r(10), "active": true}, "event_ts": "1762699500.000100"})
+		e.until(t, "the thread read elsewhere", func() bool { return v.lastRead(thrItemOf(v, key)) == r(10) })
+		if got, want := scrollTo(t, e, v), []string{r(6), r(7), r(8), r(9), r(10)}; !slices.Equal(got, want) {
+			t.Errorf("the thread shows %v once scrolled to, want %v from r6, its first shown reply at the load", got, want)
+		}
+	})
 }

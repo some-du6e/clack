@@ -81,8 +81,7 @@ func (v *Threads) threadUnread(t *thrItem) bool { return actTSLess(v.lastRead(t)
 // ghost) goes before: its first unread reply, or load_older when the
 // unread run starts among the hidden replies; ok false without one.
 func (v *Threads) unreadRowKey(t *thrItem) (string, bool) {
-	c := v.cards[t.key]
-	replies := thrShown(t, c)
+	c, replies := v.repliesShown(t) // threads_older.go
 	at, ghost := v.unreadRow(t, c, replies)
 	switch {
 	case at == thrNoUnreadRow || ghost:

@@ -327,7 +327,7 @@ func (v *Threads) unreadRow(t *thrItem, c *thrCard, replies []core.Message) (at 
 		return thrNoUnreadRow, false
 	}
 	ghost = v.lastRead(t) != a
-	if actTSLess(a, t.Root.TS) && c != nil && c.moreText != "" {
+	if actTSLess(a, t.Root.TS) && v.hasOlderRow(t, c, replies) {
 		return thrUnreadAtOlder, ghost
 	}
 	for i := range replies {
@@ -346,8 +346,7 @@ func (v *Threads) unreadRow(t *thrItem, c *thrCard, replies []core.Message) (at 
 // hidden replies: it is in the range while that point is in the viewport,
 // however much of the reply below it shows.
 func (v *Threads) unreadRowSeen(t *thrItem) bool {
-	c := v.cards[t.key]
-	replies := thrShown(t, c)
+	c, replies := v.repliesShown(t) // threads_older.go
 	at, ghost := v.unreadRow(t, c, replies)
 	switch {
 	case at == thrNoUnreadRow || ghost:

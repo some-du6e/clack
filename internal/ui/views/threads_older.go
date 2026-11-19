@@ -90,34 +90,95 @@ func thrMinVisible(replyCount int, known []core.Message, lastRead string, reache
 	return read[len(read)-1]
 }
 
-// minVisibles is getDerivedStateFromProps' minimumVisibleTsByThread: each
-// card's first shown reply, picked once per refreshId (the data's load)
-// and again while it is "" (none read yet), so a thread read since shows
-// its two newest. A card not made yet gets its own when it is (cardOf).
+// minVisibles is getDerivedStateFromProps' minimumVisibleTsByThread: every
+// thread's first shown reply, picked for each thread in the list once per
+// refreshId (the data's load) and again while it is "" (none read yet),
+// whether or not its card is laid out, so a reply or a read that lands
+// before a thread is scrolled to leaves what it shows as Slack's. A card
+// takes its thread's.
 func (v *Threads) minVisibles(page thrData) {
+	if v.minVis == nil || v.minVisLoad != page.load {
+		v.minVis, v.minVisLoad = map[string]string{}, page.load
+	}
 	for i := range page.items {
-		if c := v.cards[page.items[i].key]; c != nil {
-			v.minVisible(&page.items[i], c, page.load)
+		t := &page.items[i]
+		mv := v.minVis[t.key]
+		if mv == "" {
+			mv = v.pickMinVis(t)
+			v.minVis[t.key] = mv
+		}
+		if c := v.cards[t.key]; c != nil && c.minVis != mv {
+			c.setMinVis(mv)
 		}
 	}
 }
 
-// minVisible picks card c's first shown reply for the data's load.
-func (v *Threads) minVisible(t *thrItem, c *thrCard, load int) {
-	if c.minVisLoad == load && c.minVis != "" {
-		return
+// minVisOf is thread t's first shown reply for the list's load, picked
+// now if the load hasn't given it one yet.
+func (v *Threads) minVisOf(t *thrItem) string {
+	if mv := v.minVis[t.key]; mv != "" {
+		return mv
 	}
+	mv := v.pickMinVis(t)
+	if v.minVis != nil {
+		v.minVis[t.key] = mv
+	}
+	return mv
+}
+
+// pickMinVis is getDefaultMinimumVisibleTs over the replies thread t holds
+// now and its last read.
+func (v *Threads) pickMinVis(t *thrItem) string {
+	c := v.cards[t.key]
 	known := thrKnown(t, c)
-	mv := thrMinVisible(t.Root.ReplyCount, known, v.lastRead(t), c.olderStart || len(known) >= t.Root.ReplyCount)
-	if mv != c.minVis || c.minVisLoad != load {
-		c.setMinVis(mv)
+	return thrMinVisible(t.Root.ReplyCount, known, v.lastRead(t), c != nil && c.olderStart || len(known) >= t.Root.ReplyCount)
+}
+
+// setMinVis moves thread key's first shown reply (loadOlderReplies) and
+// its card's.
+func (v *Threads) setMinVis(key string, c *thrCard, ts string) {
+	if v.minVis == nil {
+		v.minVis = map[string]string{}
 	}
-	c.minVisLoad = load
+	v.minVis[key] = ts
+	if c != nil {
+		c.setMinVis(ts)
+	}
 }
 
 // setMinVis moves the card's first shown reply.
 func (c *thrCard) setMinVis(ts string) {
 	c.minVis, c.shown, c.built = ts, nil, false
+}
+
+// repliesShown is the replies thread t shows and its card: the card's
+// (thrShown), or for a thread whose card isn't made yet (nil), those it
+// holds from its first shown reply on.
+func (v *Threads) repliesShown(t *thrItem) (*thrCard, []core.Message) {
+	if c := v.cards[t.key]; c != nil {
+		return c, thrShown(t, c)
+	}
+	mv := v.minVis[t.key]
+	if mv == "" || mv == thrAllReplies {
+		return nil, t.Replies
+	}
+	i := 0
+	for i < len(t.Replies) && actTSLess(t.Replies[i].TS, mv) {
+		i++
+	}
+	return nil, t.Replies[i:]
+}
+
+// hasOlderRow reports whether thread t has "Show N more replies"
+// (get_rows_and_keys' load_older: its start not held, or replies held
+// before its first shown one): its card's row, or for a thread whose card
+// isn't made yet, what thrMoreText would give it over the replies it
+// shows.
+func (v *Threads) hasOlderRow(t *thrItem, c *thrCard, shown []core.Message) bool {
+	if c != nil {
+		return c.moreText != ""
+	}
+	return t.Root.ReplyCount > len(shown)
 }
 
 // thrHidden is the replies the card holds before its first shown one.
@@ -211,12 +272,12 @@ func (v *Threads) loadOlder(t *thrItem, c *thrCard) {
 	}
 	hidden := thrHidden(t, c)
 	if len(hidden) >= thrOlderLimit {
-		c.setMinVis(hidden[len(hidden)-thrOlderLimit].TS)
+		v.setMinVis(t.key, c, hidden[len(hidden)-thrOlderLimit].TS)
 		c.moreText = thrMoreText(t, c)
 		return
 	}
 	if c.olderStart {
-		c.setMinVis(thrAllReplies)
+		v.setMinVis(t.key, c, thrAllReplies)
 		c.moreText = thrMoreText(t, c)
 		return
 	}
@@ -280,7 +341,7 @@ func (v *Threads) applyOlder(t *thrItem, c *thrCard) {
 	if keep := thrOlderLimit - r.hidden; keep > 0 && len(add) > 0 {
 		mv = add[max(0, len(add)-keep)].TS
 	}
-	c.setMinVis(mv)
+	v.setMinVis(t.key, c, mv)
 	c.moreText = thrMoreText(t, c)
 	// onLoadOlderRepliesClick, once loadOlderReplies is done:
 	// focusOnKey(the key holding the minimum visible ts it started from),

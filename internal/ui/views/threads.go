@@ -139,11 +139,10 @@ type thrCard struct {
 	olderBusy  bool
 	olderStart bool
 	olderRes   atomic.Pointer[thrOlder]
-	// minVis is minimumVisibleTsByThread for the card, picked in the data's
-	// load minVisLoad (threads_older.go minVisibles): the replies before it
-	// are held but hidden behind "Show N more replies"
-	minVis     string
-	minVisLoad int
+	// minVis is the card's copy of its thread's minimumVisibleTsByThread
+	// (Threads.minVis): the replies before it are held but hidden behind
+	// "Show N more replies"
+	minVis string
 	// folds is the view's fold stamp when the card was made or last went
 	// back to its default first reply (fold): a stamp no other card and
 	// no remount repeats (Threads.folds), so a fetch asked for before it
@@ -232,6 +231,12 @@ type Threads struct {
 	// for one read then or never read (threads_order.go noteEntries)
 	initial  map[string]string
 	initLoad int
+	// minVis is minimumVisibleTsByThread for the list's load (minVisLoad):
+	// each thread's first shown reply, picked for every thread in the
+	// list whether or not its card is laid out (threads_older.go
+	// minVisibles); a card holds a copy (thrCard.minVis)
+	minVis     map[string]string
+	minVisLoad int
 	// mounting is isDoingGlobalRefresh: a new visit's load is out (the
 	// floating loader, no divider); loadErr is the last failed load that
 	// sorts the list (Slack's errored: the error view over the threads)
@@ -767,8 +772,7 @@ func (v *Threads) cardOf(t *thrItem) *thrCard {
 	if c == nil {
 		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS, folds: v.nextFold()}
 		v.cards[t.key] = c
-		d, _, _ := v.data.get()
-		v.minVisible(t, c, d.load) // threads_older.go
+		c.minVis = v.minVisOf(t) // threads_older.go: the one the thread got at the load
 	}
 	return c
 }
@@ -2005,10 +2009,11 @@ func (v *Threads) kbItems(items []thrItem) []vkItem {
 		k := t.key
 		add("heading-"+k, thrKBRow{kind: "heading", key: k, ch: t.Channel}, i)
 		add("root-"+k, thrKBRow{kind: "root", key: k, ch: t.Channel, ts: t.Root.TS}, i)
-		if c := v.cards[k]; c != nil && c.moreText != "" {
+		c, shown := v.repliesShown(t) // threads_older.go: a card not made yet too
+		if v.hasOlderRow(t, c, shown) {
 			add("load_older-"+k, thrKBRow{kind: "load_older", key: k, ch: t.Channel}, i)
 		}
-		for _, m := range thrShown(t, v.cards[k]) {
+		for _, m := range shown {
 			add(k+"-"+m.TS, thrKBRow{kind: "reply", key: k, ch: t.Channel, ts: m.TS}, i)
 		}
 		add("footer-"+k, thrKBRow{kind: "footer", key: k, ch: t.Channel}, i)
