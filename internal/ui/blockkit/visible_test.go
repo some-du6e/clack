@@ -50,7 +50,7 @@ func visGtx(w int) layout.Context {
 func TestMessageVisibleTo(t *testing.T) {
 	h, app := visibleHost()
 	msgsMu.Lock()
-	msgs, order = map[string]*Message{}, nil
+	msgs, cur, revs = map[string]*Message{}, map[string]string{}, map[string][]string{}
 	msgsMu.Unlock()
 	blocks := []any{
 		map[string]any{"type": "actions", "block_id": "a", "elements": []any{
