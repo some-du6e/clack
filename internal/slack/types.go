@@ -341,12 +341,15 @@ type Attachment struct {
 	IsAppUnfurl   bool              `json:"is_app_unfurl,omitempty"`
 	Hidden        bool              `json:"hidden,omitempty"`
 	IsMsgUnfurl   bool              `json:"is_msg_unfurl"`
-	IsShare       bool              `json:"is_share"`
-	ChannelID     string            `json:"channel_id"`
-	ChannelName   string            `json:"channel_name"`
-	MsgSubtype    string            `json:"msg_subtype"`
-	Blocks        json.RawMessage   `json:"blocks,omitempty"`
-	MessageBlocks []struct {
+	// AgentChannelUnfurl is the card of a code channel an agent made
+	// (MessageKitAttachments draws it as CodeChannelEntityCard)
+	AgentChannelUnfurl *AgentChannelUnfurl `json:"agent_channel_unfurl,omitempty"`
+	IsShare            bool                `json:"is_share"`
+	ChannelID          string              `json:"channel_id"`
+	ChannelName        string              `json:"channel_name"`
+	MsgSubtype         string              `json:"msg_subtype"`
+	Blocks             json.RawMessage     `json:"blocks,omitempty"`
+	MessageBlocks      []struct {
 		Message struct {
 			Blocks json.RawMessage `json:"blocks"`
 		} `json:"message"`
@@ -645,4 +648,16 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 type MessageAIContext struct {
 	ResultStatus    string `json:"result_status,omitempty"`
 	StoppedByUserID string `json:"stopped_by_user_id,omitempty"`
+}
+
+// AgentChannelUnfurl is an attachment's agent_channel_unfurl: the code
+// channel an agent session made.
+type AgentChannelUnfurl struct {
+	ChannelID             string `json:"channel_id"`
+	ChannelName           string `json:"channel_name"`
+	AgentBotUserID        string `json:"agent_bot_user_id"`
+	IsPrivate             bool   `json:"is_private"`
+	JoinableFromChannelID string `json:"joinable_from_channel_id"`
+	WorkflowName          string `json:"workflow_name,omitempty"`
+	WorkflowTriggerID     string `json:"workflow_trigger_id,omitempty"`
 }

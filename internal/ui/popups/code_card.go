@@ -544,3 +544,46 @@ func (p *ChannelHoverCard) codeClicks(gtx layout.Context) {
 		p.done = true
 	}
 }
+
+// EntityCard draws the channel's CodeChannelEntityCard where a message
+// shows an agent_channel_unfurl attachment (MessageKitAttachments, surface
+// MessageUnfurl): ICrU's classic card with its border (.card__iFien: 1px
+// otl-ter on base-pry, radius 8, at most 428px wide, margin-bottom 8px;
+// otl-sec and a 0 1px 2px #0000000c shadow while hovered). The whole card
+// is a button to the channel. ok is false where Slack draws no card:
+// session_channels off, or a channel the viewer can't see or hasn't got
+// (the card reads the store's channel, and a channel it lacks is neither
+// joined nor viewable).
+func (p *ChannelHoverCard) EntityCard(gtx layout.Context, maxW int) (layout.Dimensions, bool) {
+	cv, ok := p.conv()
+	if !ok || !channelViewable(cv) || !p.codeChannelCard(cv) {
+		return layout.Dimensions{}, false
+	}
+	if p.codeBtn.Clicked(gtx) { // before codeCard lays the button out
+		p.h.Navigate("c/" + p.id)
+	}
+	th := p.h.Theme()
+	cl := colorsOf(th)
+	w := min(maxW, dp(gtx, 428))
+	bw := max(1, dp(gtx, 1))
+	rad := dp(gtx, 8)
+	m := op.Record(gtx.Ops)
+	d := func() layout.Dimensions {
+		defer op.Offset(image.Pt(bw, bw)).Push(gtx.Ops).Pop()
+		return p.codeCard(gtx, th, cl, cv, w-2*bw)
+	}()
+	call := m.Stop()
+	r := image.Rect(0, 0, w, d.Size.Y+2*bw)
+	border := codeTok(th, "otl-ter")
+	if p.codeBtn.Hovered() {
+		border = codeTok(th, "otl-sec")
+		theme.Shadow(gtx, r.Add(image.Pt(0, dp(gtx, 1))), rad, dp(gtx, 2), color.NRGBA{A: 0x0c})
+	}
+	rrect(gtx, r, rad, border)
+	inner := r.Inset(bw)
+	rrect(gtx, inner, max(rad-bw, 0), codeTok(th, "base-pry"))
+	cs := clip.UniformRRect(inner, max(rad-bw, 0)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	cs.Pop()
+	return layout.Dimensions{Size: image.Pt(w, r.Dy()+dp(gtx, 8))}, true
+}

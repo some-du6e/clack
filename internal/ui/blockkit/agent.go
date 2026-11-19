@@ -281,13 +281,13 @@ func isRichText(raw json.RawMessage) bool {
 
 // isAgentKind reports whether a richview button names an agent block.
 func isAgentKind(k string) bool {
-	return k == "plan" || k == "task_card" || k == "context_actions"
+	return k == "plan" || k == "task_card" || k == "context_actions" || k == richtext.AgentChannelUnfurlKind
 }
 
 // hasAgentBlocks reports whether blocks (or attachments) carry one.
 func hasAgentBlocks(raw json.RawMessage) bool {
 	return bytes.Contains(raw, []byte(`"plan"`)) || bytes.Contains(raw, []byte(`"task_card"`)) ||
-		bytes.Contains(raw, []byte(`"context_actions"`))
+		bytes.Contains(raw, []byte(`"context_actions"`)) || bytes.Contains(raw, []byte(`"agent_channel_unfurl"`))
 }
 
 // ---- payloads (blocks.actions actions[0]) ----
@@ -347,6 +347,8 @@ type agentState struct {
 	target map[string]int // block → the height it was last laid out to reach
 	// cuts caches each task content's truncated copy (agent_truncate.go)
 	cuts map[string]*agentCut
+	// cards are the agent_channel_unfurl attachments' code channel cards
+	cards map[string]*popups.ChannelHoverCard
 	// touched: the viewer toggled the block (a task card the viewer
 	// opened or closed isn't auto-collapsed when it completes)
 	touched map[string]bool
@@ -408,7 +410,8 @@ func (me *Message) agentState() *agentState {
 	if st == nil {
 		st = &agentState{parsed: am.parsed, open: map[string]bool{}, taps: map[string]*tap{},
 			tips: map[string]*popups.TipState{}, rating: am.rating, views: map[string]*agentText{},
-			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: am.cuts, touched: map[string]bool{}}
+			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: am.cuts, touched: map[string]bool{},
+			cards: map[string]*popups.ChannelHoverCard{}}
 		am.insts[me.inst] = st
 		am.order = append(am.order, me.inst)
 		if len(am.order) > 8 { // the drawing used longest ago goes (its row is long gone)
@@ -681,6 +684,9 @@ const agentLH = 19 // 13px × Slack's 1.46668 line height
 // agentSize / agentDraw: one function lays out (and with a real gtx,
 // draws) an agent block; ElementsSize calls it on scratch ops.
 func (me *Message) agentRun(gtx C, bt *richtext.Button, maxW int) image.Point {
+	if bt.Kind == richtext.AgentChannelUnfurlKind {
+		return me.layoutAgentChannelCard(gtx, me.agentState(), bt.BlockID, maxW)
+	}
 	b := me.agentBlock(bt)
 	if b == nil {
 		return image.Point{}
@@ -696,6 +702,25 @@ func (me *Message) agentRun(gtx C, bt *richtext.Button, maxW int) image.Point {
 		return me.layoutContextActions(gtx, st, b, maxW)
 	}
 	return image.Point{}
+}
+
+// layoutAgentChannelCard is an agent_channel_unfurl attachment, the code
+// channel an agent session made: MessageKitAttachments'
+// CodeChannelEntityCard (surface MessageUnfurl), the classic card with its
+// border (popups.ChannelHoverCard.EntityCard), one per drawing; nothing
+// where Slack draws none.
+func (me *Message) layoutAgentChannelCard(gtx C, st *agentState, ch string, maxW int) image.Point {
+	key := "acu\x00" + ch
+	card := st.cards[key]
+	if card == nil {
+		card = popups.NewChannelHoverCard(me.h, image.Rectangle{}, ch, false, false)
+		st.cards[key] = card
+	}
+	d, ok := card.EntityCard(gtx, maxW)
+	if !ok {
+		return image.Point{}
+	}
+	return d.Size
 }
 
 // layoutTaskBlock draws a plan or task_card (slim): the toggle line and,

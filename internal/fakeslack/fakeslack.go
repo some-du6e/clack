@@ -68,6 +68,10 @@ type Size struct {
 	// CodeChannels adds the code channel fixtures (codechannels.go): one
 	// per agent status, an archived one and one the viewer isn't in.
 	CodeChannels bool
+	// AgentSessionRequests adds, with CodeChannels, #agent-requests: an
+	// agent session request whose agent_channel_unfurl is the working
+	// code channel, and a post linking it (agent_session_msgs.go)
+	AgentSessionRequests bool
 	// Views adds the rail list views' fixtures (views.go): followed
 	// threads, scheduled drafts, recorded activity writes.
 	Views bool
@@ -715,6 +719,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.CodeChannels {
 		s.addCodeChannels() // codechannels.go
+		if sz.AgentSessionRequests {
+			s.addAgentSessionMessages() // agent_session_msgs.go
+		}
 	}
 	if sz.Files {
 		s.addFilesChannel() // files.go
