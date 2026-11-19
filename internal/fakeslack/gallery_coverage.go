@@ -115,9 +115,9 @@ func galleryFileSlugs(s *Server) []slack.Message {
 		return `{"type":"file","file_id":"` + id + `","url":"` + s.URL + `files/` + u + `/` + id + `/` + name + `","text":"` + name + `"}`
 	}
 	txt := func(t string) string { return `{"type":"text","text":"` + t + `"}` }
-	blocks := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` +
-		txt("Inline file slugs: ") + el("F0GALSLUG1", "q3-report.pdf") + txt(", ") + el("F0GALSLUG2", "standup.m4a") +
-		txt(" and one not fetched yet: ") + el("F0GALSLUG9", "gone.txt") + `]}]}]`
+	blocks := `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` + strings.Join([]string{
+		txt("Inline file slugs: "), el("F0GALSLUG1", "q3-report.pdf"), txt(", "), el("F0GALSLUG2", "standup.m4a"),
+		txt(" and one not fetched yet: "), el("F0GALSLUG9", "gone.txt")}, ",") + `]}]}]`
 	return []slack.Message{{
 		Type: "message", User: u, Text: "Inline file slugs", Blocks: json.RawMessage(blocks),
 		Files: []slack.File{

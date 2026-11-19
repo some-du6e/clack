@@ -40,6 +40,9 @@ func TestGallery(t *testing.T) {
 		if m.Text == "" && len(m.Attachments) == 0 { // attachment-only bot messages may have none
 			t.Errorf("%s: no fallback text", g.Name)
 		}
+		if len(m.Blocks) > 0 && !json.Valid(m.Blocks) { // one bad fixture empties the whole history response
+			t.Errorf("%s: blocks aren't valid JSON", g.Name)
+		}
 		d := richtext.FromMessage(galleryRes{}, &m)
 		bad := 0
 		for _, b := range d.Blocks {
