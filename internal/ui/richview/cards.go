@@ -197,12 +197,15 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		l.leave(ct)
 	}
 	if len(a.Title) > 0 {
+		// .c-message_attachment__title{font-weight:700} in the text's
+		// colour; a title_link makes it all one link, else only its own
+		// <links> are (AttachmentTitle, boot-shared yvlf)
 		fs := l.bodyStyle()
 		fs.face.Weight = font.Bold
-		fs.col = p.Link
 		var tg int16 = -1
 		ct := l.enter(attTitleClass)
 		if a.TitleLink != "" { // AttachmentTitle's link (HbXx): underline links reaches it
+			fs.col = p.Link
 			tg = l.d.addTarget(target{kind: tLink, url: a.TitleLink, underline: true, website: true})
 			l.enter(linkClass)
 		}
@@ -272,15 +275,10 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		cy += l.dp(4)
 		row(l.blocks(b.Children, cx, cy, cw, false))
 	}
-	if len(b.Buttons) > 0 {
-		cy += l.dp(8)
-		row(l.buttons(b.Buttons, cx, cy, cw))
-	}
 	v1 := kindOf(b) == akV1
 	if len(a.Footer) > 0 || a.TS > 0 || (a.IsShare && a.ShareChannel != "") || v1 && a.IsAppUnfurl && a.BotID != "" {
 		cy += l.dp(4)
 		ct := l.enter(attFooterClass)
-		defer l.leave(ct)
 		fs := l.small(p.Text2)
 		fs.size = l.sp(12)
 		fx := cx
@@ -308,7 +306,16 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 			l.addAttribution(a, &fs, k, fs.col, false)
 		}
 		h, _ := l.flow(fx, cy, x+w-fx, &fs)
+		l.leave(ct)
 		row(max(h, l.dp(18)))
+	}
+	if len(b.Buttons) > 0 {
+		// MessageAttachmentGeneric's actions (Ea: c-message_attachment__row
+		// --actions) come after the footer and the media: 6px under the
+		// row before (.c-message_attachment__row+...--actions), each
+		// button's 2px top margin
+		cy += l.dp(8)
+		row(l.buttons(b.Buttons, cx, cy, cw))
 	}
 	if len(a.Text) == 0 && len(a.Title) == 0 && a.AuthorName == "" && a.Image == nil && cy == y {
 		// Fields-only or empty attachments still get a little bar.

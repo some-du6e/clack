@@ -520,7 +520,11 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		att.ServiceIcon = SafeImage(a.ServiceIcon)
 		att.Pretext = flatten(FromMrkdwn(c.r, a.Pretext))
 		if a.Title != "" {
-			att.Title = emojify(c.r, unescape(a.Title), 0)
+			// AttachmentTitle (boot-shared yvlf): Mrkdwn with noSpecials
+			// (TSF's NOMRKDWN): its <links>, mentions and :emoji:, no
+			// *bold* or `code`. A title that is one <url|label> token
+			// (GitHub's "#4045 Update record for …") is that link.
+			att.Title = c.plainLinked(a.Title)
 		}
 		att.TitleLink = SafeURL(a.TitleLink)
 		att.Text = c.attachmentText(a)
