@@ -11,6 +11,7 @@ package ui
 // only: the demo runs fakeslack on loopback and everything in it is invented.
 
 import (
+	"fmt"
 	"image"
 	"os"
 	"path/filepath"
@@ -31,6 +32,13 @@ func TestDemoSiteShots(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Clack draws every time in time.Local and the demo seeds its messages
+	// around now, so a run at 2 AM UTC showed coworkers posting at 1 AM:
+	// draw and seed the shots in a zone where it's mid-morning.
+	zone := shotZone(time.Now())
+	local := time.Local
+	time.Local = zone
+	t.Cleanup(func() { time.Local = local })
 	presets := map[string]theme.IATheme{}
 	for _, p := range theme.ThemePresets {
 		presets[p.ID] = p.Theme
@@ -52,7 +60,7 @@ func TestDemoSiteShots(t *testing.T) {
 		{"dark", []string{"aubergine", "jade", "lagoon", "mood-indigo"}},
 	} {
 		t.Run(c.mode, func(t *testing.T) {
-			e, s := demoEnvBanner(t, demo.Options{Quiet: true, Speed: 40, Seed: 3}, "")
+			e, s := demoEnvBanner(t, demo.Options{Quiet: true, Speed: 40, Seed: 3, Zone: zone}, "")
 			e.setDark(c.mode == "dark")
 			e.until("the demo sidebar", 30*time.Second, func() bool { return e.sidebarHas(demo.GeneralID) && e.sidebarHas(demo.CodeID) })
 			if c.mode == "light" {
@@ -143,4 +151,10 @@ func clearStickyDay(e *perfEnv, ch string) bool {
 		}
 	}
 	return false
+}
+
+// shotZone is the whole-hour zone in which now falls between 10 and 11 AM.
+func shotZone(now time.Time) *time.Location {
+	off := (10-now.UTC().Hour()+36)%24 - 12 // -12 to +11 hours
+	return time.FixedZone(fmt.Sprintf("UTC%+d", off), off*3600)
 }

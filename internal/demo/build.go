@@ -149,6 +149,7 @@ type schedSpec struct {
 type builder struct {
 	base string
 	now  time.Time
+	zone *time.Location // Options.Zone (nil: the branch's and each sender's)
 	ws   *Workspace
 
 	byHandle map[string]*Person
@@ -173,11 +174,15 @@ type pendingMsg struct {
 
 // Build loads data/ into a Workspace whose URLs point at base (the fake's
 // URL, ending in "/"). The result depends only on base and now.
-func Build(base string, now time.Time) (*Workspace, error) {
+func Build(base string, now time.Time) (*Workspace, error) { return build(base, now, nil) }
+
+// build is Build with Options.Zone: when zone is set, "today", workdays
+// and every message's clock time are counted in it.
+func build(base string, now time.Time, zone *time.Location) (*Workspace, error) {
 	if !strings.HasSuffix(base, "/") {
 		base += "/"
 	}
-	b := &builder{base: base, now: now, byHandle: map[string]*Person{}, locs: map[string]*time.Location{},
+	b := &builder{base: base, now: now, zone: zone, byHandle: map[string]*Person{}, locs: map[string]*time.Location{},
 		convID: map[string]string{}, convName: map[string]string{}}
 	b.ws = &Workspace{Now: now, Base: base, History: map[string][]slack.Message{},
 		Replies: map[string]map[string][]slack.Message{}, Pins: map[string][]string{}, Unread: map[string]Unread{}}
@@ -513,9 +518,18 @@ var (
 	afterRE   = regexp.MustCompile(`^\+((?:\d+h)?(?:\d+m)?)$`)
 )
 
+// branch is the zone "today" and workdays are counted in: the branch's,
+// or Options.Zone.
+func (b *builder) branch() *time.Location {
+	if b.zone != nil {
+		return b.zone
+	}
+	return location(branchTZ)
+}
+
 // workday is n workdays before (n<0: after) the branch's today.
 func (b *builder) workday(n int) time.Time {
-	d := b.now.In(location(branchTZ))
+	d := b.now.In(b.branch())
 	step := -1
 	if n < 0 {
 		step, n = 1, -n
@@ -541,8 +555,8 @@ func (b *builder) at(spec, by string, parent time.Time) (time.Time, error) {
 		}
 		d := b.workday(n)
 		loc := b.locs[by]
-		if loc == nil {
-			loc = location(branchTZ)
+		if loc == nil || b.zone != nil {
+			loc = b.branch()
 		}
 		return time.Date(d.Year(), d.Month(), d.Day(), hh, mm, 0, 0, loc), nil
 	}
@@ -1053,7 +1067,7 @@ func (b *builder) lists() error {
 		created := b.now.Add(-time.Duration(s.AgeDays) * 24 * time.Hour)
 		l := fakeslack.FakeList{ID: s.ID, Title: s.Title, Channel: b.convID[s.Channel], Creator: creator,
 			Created: created.Unix(), Updated: updated.Unix(), Meta: todoMeta(s.ID, s.Icon)}
-		today := b.now.In(location(branchTZ))
+		today := b.now.In(b.branch())
 		for i, it := range s.Items {
 			who, err := b.id(it.Who)
 			if err != nil {
@@ -1176,7 +1190,7 @@ func (b *builder) scheduled() error {
 		if _, err := fmt.Sscanf(clock, "%d:%d", &hh, &mm); err != nil {
 			return fmt.Errorf("scheduled.json: at %q", s.At)
 		}
-		d := b.now.In(location(branchTZ))
+		d := b.now.In(b.branch())
 		switch {
 		case day == "tomorrow":
 			d = d.AddDate(0, 0, 1)

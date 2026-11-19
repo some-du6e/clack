@@ -63,6 +63,41 @@ func TestBuildDeterministic(t *testing.T) {
 	}
 }
 
+// With Options.Zone every seeded clock is that zone's (the site's
+// screenshots pin one where it's mid-morning): Nadia's "-1 15:45" post
+// from Chicago is at 15:45 there on the zone's workday before, not at
+// 15:45 in Chicago on the branch's.
+func TestBuildZone(t *testing.T) {
+	now := time.Date(2026, 11, 18, 2, 30, 0, 0, time.UTC) // Wednesday 10:30 at UTC+8, Tuesday 21:30 in New York
+	plus8 := time.FixedZone("UTC+8", 8*3600)
+	for _, c := range []struct {
+		zone *time.Location
+		want time.Time
+	}{
+		{plus8, time.Date(2026, 11, 17, 15, 45, 0, 0, plus8)},
+		{nil, time.Date(2026, 11, 16, 15, 45, 0, 0, location("America/Chicago"))},
+	} {
+		ws, err := build(testBase, now, c.zone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkWorkspace(t, ws, now)
+		var got time.Time
+		for _, msgs := range ws.History {
+			for _, m := range msgs {
+				if strings.HasPrefix(m.Text, "Not to brag but 96 reams") {
+					var sec int64
+					fmt.Sscan(m.TS[:10], &sec)
+					got = time.Unix(sec, 0)
+				}
+			}
+		}
+		if !got.Truncate(time.Minute).Equal(c.want) {
+			t.Errorf("zone %v: Nadia's -1 15:45 post is at %v, want %v", c.zone, got.In(c.want.Location()), c.want)
+		}
+	}
+}
+
 func checkWorkspace(t *testing.T, ws *Workspace, now time.Time) {
 	t.Helper()
 	users := map[string]bool{}

@@ -32,6 +32,12 @@ type Options struct {
 	Quiet bool
 	// Now is the demo's clock at start (zero: time.Now()).
 	Now time.Time
+	// Zone, when set, is every clock's zone: "today", workdays and each
+	// seeded message's clock time are counted in it, not in the branch's
+	// (America/New_York) and each sender's own. The site's screenshots
+	// set it, with time.Local, to a zone where it's mid-morning, so they
+	// show a working day whenever CI takes them.
+	Zone *time.Location
 	// Seed makes the bots' random choices repeatable (0: from the clock).
 	Seed int64
 	// Logf, when set, gets the bots' log lines.
@@ -89,7 +95,7 @@ func Start(opts Options) (*Session, error) {
 		fs.Close()
 		return nil, err
 	}
-	ws, err := Build(fs.URL, opts.Now)
+	ws, err := build(fs.URL, opts.Now, opts.Zone)
 	if err != nil {
 		fs.Close()
 		return nil, fmt.Errorf("demo: %w", err)
