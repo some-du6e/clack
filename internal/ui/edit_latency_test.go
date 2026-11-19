@@ -139,15 +139,11 @@ func TestEditLatency(t *testing.T) {
 	if os.Getenv("CLACK_LATENCY_TESTS") == "" {
 		t.Skip("CLACK_LATENCY_TESTS not set: flake-check's edit-latency job runs this")
 	}
-	modes := []string{"native", "components"}
-	if os.Getenv("CLACK_LATENCY_SLICE") != "" {
-		// under a messages-slice patch an edit still draws only when the
-		// next one asks for a frame (the view re-read waits viewRefresh):
-		// red until that lands, so run on request only, not on the ui and
-		// main pushes that run flake-check's edit-latency job
-		modes = append(modes, "slice")
-	}
-	for _, mode := range modes {
+	// slice: under a messages-slice patch an edit drew only when the next
+	// one asked for a frame (Karim's uptime bot, "like every 33 seconds");
+	// rows now draw the message as it is and a view that turns ready asks
+	// for its own frame (plugin-render-3, 9fae788f)
+	for _, mode := range []string{"native", "slice", "components"} {
 		t.Run(mode, func(t *testing.T) { editLatency(t, mode) })
 	}
 }
