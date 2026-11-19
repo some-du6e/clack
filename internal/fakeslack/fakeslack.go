@@ -1619,6 +1619,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		s.prefsMu.Unlock()
 		return ok("prefs", m)
+	case "media.progress.update": // the videos' saveMediaProgress (gnNF): accepted
+		return map[string]any{"ok": true}
 	case "users.prefs.set":
 		if n := f.Get("name"); n != "" {
 			s.setPref(n, f.Get("value"))

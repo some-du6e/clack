@@ -61,6 +61,19 @@ func (a *App) videos() *videoplayer.Controller {
 			return ""
 		},
 		Theme: func() *theme.Theme { return a.th },
+		ProgressUpdate: func(file string, offsetMS, durationMS int64) {
+			c := a.Core()
+			if c == nil {
+				return
+			}
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := c.MediaProgressUpdate(ctx, file, offsetMS, durationMS); err != nil {
+					log.Printf("video: media.progress.update %s: %v", file, err)
+				}
+			}()
+		},
 	})
 	return a.vids
 }

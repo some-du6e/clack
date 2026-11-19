@@ -373,6 +373,8 @@ type File struct {
 	// player start there or at 0 (xnwb).
 	MediaOffsetMS int
 	MediaWatched  bool
+	// Salesforce is is_salesforce_file: its progress is never sent (9NKl)
+	Salesforce bool
 	// Pending: the viewer's own upload, not finished yet (drawn at .5
 	// with a spinner, c-pending_files__thumbnail--pending); Percent is its
 	// percentComplete.

@@ -196,6 +196,9 @@ func convertFile(f *slack.File) *File {
 		if p := f.MediaProgress; p != nil {
 			out.MediaOffsetMS, out.MediaWatched = p.OffsetMS, p.MediaWatched
 		}
+		if f.IsSalesforceFile {
+			out.Salesforce = true
+		}
 	case strings.HasPrefix(mime, "audio/") || f.Subtype == "slack_audio":
 		out.IsAudio = true
 		if f.MP4 != "" {

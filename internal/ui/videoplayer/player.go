@@ -52,6 +52,10 @@ type Env struct {
 	Experiment func(name string) string
 	// Theme is the window's: its shaper draws the overlay's text.
 	Theme func() *theme.Theme
+	// ProgressUpdate sends where the viewer is in a video to Slack
+	// (media.progress.update: offset_ms of duration_ms), off the caller's
+	// goroutine; nil sends nothing.
+	ProgressUpdate func(file string, offsetMS, durationMS int64)
 }
 
 // RowHost is what a message gives its tiles: the file actions (the
@@ -193,6 +197,10 @@ type tile struct {
 	// time, as the inline overlay's do while hovered)
 	shown bool
 	spin  *spinLive // the pill's spinner while loading (spinner.go)
+	// gBWG's: the time last sent with media.progress.update, and whether
+	// it played since its last pause
+	sentMS    int64
+	hasPlayed bool
 }
 
 // tileLocked is the tile for k, made with f's progress if new; f is the
@@ -201,7 +209,10 @@ func (c *Controller) tileLocked(k key, f *richtext.File) *tile {
 	t := c.tiles[k]
 	if t == nil {
 		t = &tile{k: k, f: f}
-		if p, ok := c.progress[f.ID]; ok && p > 0 {
+		// where the viewer left the file, before any click: the local
+		// progress, else media_progress unless watched (fIJO's
+		// use_media_elapsed, xnwb), so the pill and the scrubber show it
+		if p := c.startLocked(f); p > 0 {
 			t.elapsed, t.played = p, true
 		}
 		c.tiles[k] = t
@@ -248,7 +259,7 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	if t.startAt > 0 {
 		start, t.startAt = t.startAt, 0
 	}
-	t.elapsed = start
+	t.elapsed, t.sentMS, t.hasPlayed = start, start.Milliseconds(), false
 	c.applyLocked(t)
 	if !t.viewer && c.loops(f) {
 		h.SetLoop(true)
@@ -264,6 +275,39 @@ func (c *Controller) mountLocked(t *tile, autoplay bool) {
 	}
 	t.spin = nil
 	c.spinLocked()
+}
+
+// reportLocked is gBWG's reportMediaProgress: once the video plays (or
+// forced), each new time is saved (gnNF: the local progress, 0 within a
+// second of the end) and sent with media.progress.update when forced (an
+// unmount, a scrub's end), while it doesn't play (a pause), 20 s or more
+// after the time last sent, or when it went back; never for a Salesforce
+// file (9NKl). forceMS, when set, is the time to save.
+func (c *Controller) reportLocked(t *tile, forced bool, forceMS int64) {
+	if t.f == nil {
+		return
+	}
+	if t.playing {
+		t.hasPlayed = true
+	}
+	n := forceMS
+	if n <= 0 {
+		n = t.elapsed.Milliseconds()
+	}
+	g := t.durLocked().Milliseconds()
+	if (forced || t.playing || t.hasPlayed) && t.f.ID != "" && g > 0 && n > 0 && n != t.sentMS {
+		send := !t.f.Salesforce && (forced || !t.playing || n-t.sentMS >= 20000 || n-t.sentMS < 0)
+		if send {
+			t.sentMS = n
+		}
+		c.progress[t.f.ID] = progressAt(time.Duration(n)*time.Millisecond, time.Duration(g)*time.Millisecond)
+		if send && c.env.ProgressUpdate != nil {
+			c.env.ProgressUpdate(t.f.ID, n, g)
+		}
+	}
+	if t.hasPlayed && !t.playing {
+		t.hasPlayed = false
+	}
 }
 
 // progressAt is the progress kept for a video left at pos of dur:
@@ -331,9 +375,6 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 		t.playing, t.loading, repaint = true, false, true
 	case media.Pause: // a pause stops the spinner too: nothing more is loading
 		t.playing, t.loading, repaint = false, false, true
-		if !t.ended {
-			c.progress[t.f.ID] = progressAt(st.Pos, st.Duration)
-		}
 	case media.Ended:
 		t.playing, t.ended, repaint = false, true, true
 		c.progress[t.f.ID] = 0
@@ -342,11 +383,16 @@ func (c *Controller) onEvent(t *tile, gen uint64, ev media.Event) {
 	case media.LoadedMetadata, media.DurationChange, media.Seeked:
 		repaint = true
 	}
+	was := t.elapsed
 	if !t.scrub {
 		t.elapsed = st.Pos
 	}
 	if st.Duration > 0 {
 		t.dur = st.Duration
+	}
+	// gBWG's effect on [elapsedMs, isPlaying], skipped while scrubbing
+	if !t.scrub && !t.ended && (t.elapsed != was || ev.Kind == media.Play || ev.Kind == media.Pause) {
+		c.reportLocked(t, false, 0)
 	}
 	c.mu.Unlock()
 	if repaint && c.env.Repaint != nil {
@@ -365,7 +411,7 @@ func (c *Controller) closeLocked(t *tile) {
 		return
 	}
 	if !t.ended && t.f != nil {
-		c.progress[t.f.ID] = progressAt(t.elapsed, t.durLocked())
+		c.reportLocked(t, true, 0) // gBWG's unmount: forced
 	}
 	t.h.Close()
 	t.h, t.gen = nil, 0
