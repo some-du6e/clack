@@ -3,13 +3,13 @@ package core
 // Run task now posts the prompt as Slack does (EAAO runPromptFor3pAgent →
 // prepareAndSendMessage): rich_text blocks, a string prompt as one block
 // of literal text and a rich text prompt's blocks unchanged (its
-// mentions, channels, links and emoji kept); text is the plain fallback.
+// mentions, channels, links and emoji kept), and no text, link_names or
+// unfurl_links (Xhlw sendMessage's arguments).
 
 import (
 	"context"
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -58,6 +58,11 @@ func TestAgentTasksRunNowBlocks(t *testing.T) {
 	for _, c := range st.AgentTaskCalls() {
 		if c.Method == "chat.postMessage" {
 			posts = append(posts, map[string]string{"blocks": c.Form.Get("blocks"), "text": c.Form.Get("text")})
+			for _, k := range []string{"text", "link_names", "unfurl_links"} {
+				if c.Form.Has(k) {
+					t.Errorf("chat.postMessage has %s=%q: Slack's sendMessage posts the blocks alone", k, c.Form.Get(k))
+				}
+			}
 		}
 	}
 	if len(posts) != 2 {
@@ -75,15 +80,11 @@ func TestAgentTasksRunNowBlocks(t *testing.T) {
 	if got := decode(posts[0]["blocks"]); !reflect.DeepEqual(got, decode(mustJSON(t, wantString))) {
 		t.Errorf("string prompt: blocks %s, want one rich_text block of its text", posts[0]["blocks"])
 	}
-	if posts[0]["text"] != brief.Prompt {
-		t.Errorf("string prompt: text %q, want the prompt", posts[0]["text"])
-	}
+
 	if got := decode(posts[1]["blocks"]); !reflect.DeepEqual(got, decode(mustJSON(t, rich))) {
 		t.Errorf("rich text prompt: blocks %s, want the prompt's blocks unchanged", posts[1]["blocks"])
 	}
-	if tx := posts[1]["text"]; !strings.HasPrefix(tx, "Summarize ") {
-		t.Errorf("rich text prompt: text %q, want its plain fallback", tx)
-	}
+
 }
 
 func mustJSON(t *testing.T, v any) string {

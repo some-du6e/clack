@@ -438,6 +438,9 @@ type SendOpts struct {
 	// Attachments go out as chat.postMessage attachments (prepareAndSendMessage's
 	// channelSectionBlocks: [{blocks: [channel_section]}]).
 	Attachments json.RawMessage
+	// BlocksOnly posts Blocks alone (slack.PostOpts.BlocksOnly); Text is
+	// then the optimistic local copy's only.
+	BlocksOnly bool
 	// ClientMsgID is the message's client_msg_id, as sendMessage's
 	// caller may pass one (`client_msg_id || uuid()`); "" makes one. The
 	// composer passes its own so its message list can find the message

@@ -308,7 +308,7 @@ func TestAgentTasksActions(t *testing.T) {
 		{"functions.workflows.publish", fakeslack.TaskChecklist, "slackbot-automation-item-restart"},
 		{"workflows.triggers.delete", fakeslack.TaskTriggerID(fakeslack.TaskStandup), "slackbot-automation-item-delete"},
 		{"functions.workflows.delete", fakeslack.TaskStandup, "slackbot-automation-item-delete"},
-		{"chat.postMessage", fakeslack.AgentTasksDMID, brief.Prompt},
+		{"chat.postMessage", fakeslack.AgentTasksDMID, ""}, // blocks alone: TestAgentTasksRunNowBlocks
 	}
 	if len(got) != len(want) {
 		t.Fatalf("calls %v\nwant %v", got, want)

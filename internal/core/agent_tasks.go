@@ -685,7 +685,9 @@ func (a *App) RunAgentTaskNow(ctx context.Context, agentUserID string, t AgentTa
 		ch = cv.ID
 	}
 	blocks, text := runPromptBlocks(t.PromptRaw)
-	m, err := a.Send(ctx, SendOpts{Channel: ch, Text: text, Blocks: blocks})
+	// sendMessage's arguments: the blocks alone (s0Qa sets text only
+	// without blocks); text draws the optimistic copy
+	m, err := a.Send(ctx, SendOpts{Channel: ch, Text: text, Blocks: blocks, BlocksOnly: true})
 	if err != nil {
 		return ch, "", err
 	}

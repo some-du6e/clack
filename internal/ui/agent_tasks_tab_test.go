@@ -279,7 +279,7 @@ func TestAgentTasksTabActions(t *testing.T) {
 	brief := task(fakeslack.TaskBriefing)
 	v.RunNow(brief)
 	e.until("the prompt sent", 10*time.Second, func() bool { return len(calls("chat.postMessage")) == 1 })
-	if f := calls("chat.postMessage")[0]; f.Get("channel") != fakeslack.AgentTasksDMID || f.Get("text") != brief.Prompt {
+	if f := calls("chat.postMessage")[0]; f.Get("channel") != fakeslack.AgentTasksDMID || !strings.Contains(f.Get("blocks"), brief.Prompt) {
 		t.Errorf("chat.postMessage %v", f)
 	}
 	e.until("the Messages tab", 10*time.Second, func() bool { return dm.Tab() == "messages" })
