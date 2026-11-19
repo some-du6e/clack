@@ -761,6 +761,7 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	}
 	origin := map[int]slackc.InspectHit{}
 	best := -1
+	bestOver := false // best is in a layer drawn over everything (a tooltip)
 	var tb treeBox
 	for _, h := range hits {
 		origin[h.Node] = h
@@ -771,9 +772,17 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 			}
 			continue
 		}
-		best = max(best, h.Node) // a component, an element with a size, or a popup's layer
+		// a component, an element with a size, or a popup's layer: the
+		// one drawn last, and before all one in a tooltip, drawn over
+		// everything whatever was recorded after it
+		switch o := drawnOver(f, h.Node); {
+		case o && !bestOver:
+			best, bestOver = h.Node, true
+		case o == bestOver:
+			best = max(best, h.Node)
+		}
 	}
-	if p.tree >= 0 && best < p.tree {
+	if p.tree >= 0 && best < p.tree && !bestOver {
 		// the tree was drawn after the natives inside it: one of them
 		// under the pointer still wins; the component the plugin patches
 		// (the tree's parent) and a native elsewhere don't
@@ -833,6 +842,17 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 		p.region = l // a popup's (slackc.InspectOverlay): not the window's area under it
 	}
 	return p
+}
+
+// drawnOver reports that node i is drawn in a layer drawn over
+// everything else (slackc.InspectNode.Over: a tooltip).
+func drawnOver(f *slackc.InspectFrame, i int) bool {
+	for _, j := range f.Chain(i) {
+		if n := &f.Nodes[j]; n.Kind == slackc.InspectLayer {
+			return n.Over
+		}
+	}
+	return false
 }
 
 // layerOf is the name of the innermost popup layer node i is drawn in

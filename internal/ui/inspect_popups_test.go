@@ -244,13 +244,13 @@ func TestInspectPicksPopover(t *testing.T) {
 	ep.Dismiss()
 	e.frame()
 
-	// a profile card
+	// a profile card (the card a click on a name opens)
 	e.startSession(t)
-	e.a.OpenProfile(image.Pt(int(pc.X), int(pc.Y)), e.fs.UserIDs()[1])
+	e.a.ShowOverlay(popups.NewProfileCard(e.a, image.Pt(int(pc.X), int(pc.Y)), e.fs.UserIDs()[1]))
 	e.settle(500 * time.Millisecond)
 	card, ok := topOverlay[*popups.ProfileCard](e.a)
 	if !ok || card.Rect().Empty() {
-		t.Fatalf("no profile card after OpenProfile (overlays %v)", e.overlayTypes())
+		t.Fatalf("no profile card on screen (overlays %v)", e.overlayTypes())
 	}
 	cr := card.Rect()
 	mid := image.Pt(cr.Min.X+cr.Dx()/2, cr.Min.Y+cr.Dy()/2)
@@ -272,7 +272,14 @@ func TestInspectFreezeHoldsPopups(t *testing.T) {
 	fakeShots(t)
 	e := newInspectEnv(t)
 	e.startSession(t) // the pointer on the pill
-	e.settle(800 * time.Millisecond)
+	// its tooltip up: ReactionTip's "reacted with" drawn
+	dl := time.Now().Add(5 * time.Second)
+	for !drawnContains(frameStrings(e.perfEnv), "reacted with") {
+		if time.Now().After(dl) {
+			t.Fatal("the pill's who-reacted tooltip never showed in the session")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	e.key(inspect.FreezeKey, 0)
 	e.frame()
 	if !e.a.insp.Frozen() {

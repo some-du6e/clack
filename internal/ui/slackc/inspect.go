@@ -78,6 +78,9 @@ type InspectNode struct {
 	Size image.Point
 	// Exps are the experiments read while it drew ("name=group", sorted).
 	Exps []string
+	// Over: a layer drawn over everything else whatever was recorded
+	// after it (a tooltip, drawn deferred)
+	Over bool
 
 	def   *ClassDef
 	mods  uint64
@@ -456,7 +459,7 @@ func inspectTooltip(gtx layout.Context, r image.Rectangle) {
 	if f == nil || r.Empty() {
 		return
 	}
-	l := f.push(InspectNode{Kind: InspectLayer, Name: "tooltip"})
+	l := f.push(InspectNode{Kind: InspectLayer, Name: "tooltip", Over: true})
 	e := f.push(InspectNode{Kind: InspectElement, def: tooltipTip})
 	f.popTo(e)
 	f.areaAt(gtx, e, r)
