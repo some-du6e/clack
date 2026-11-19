@@ -293,10 +293,15 @@ func TestThreadsGhostLineDrawnLikeSlack(t *testing.T) {
 	}
 	e.until(t, "the thread marked read", func() bool { return marks.has(thrA + "@" + thrAReply + " read=1") })
 	strs := drawnStrings(e) // the frame after the mark
-	e.r.WakeupTime()
-	e.frame()
-	if at, ok := e.r.WakeupTime(); ok && !at.IsZero() && time.Until(at) < time.Second {
-		t.Errorf("right after the mark the view asks for a frame in %v: the ghost has nothing to animate", time.Until(at))
+	// a few frames ~50ms apart with nothing queued: no frame asked for at
+	// once (InvalidateCmd{}, a zero wakeup) nor within a second
+	for range 4 {
+		e.r.WakeupTime()
+		time.Sleep(50 * time.Millisecond)
+		e.frame()
+		if at, ok := e.r.WakeupTime(); ok && (at.IsZero() || time.Until(at) < time.Second) {
+			t.Fatalf("right after the mark the view asks for a frame (at once: %v, in %v): the ghost has nothing to animate", at.IsZero(), time.Until(at))
+		}
 	}
 	half := uint8(float32(red.A) * 0.5)
 	l, ok := v.lines[ka]
