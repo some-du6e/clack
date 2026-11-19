@@ -296,7 +296,7 @@ func (a *App) handle(ev slack.Event) {
 			// the activity entries before it (activity_later.go): its zero
 			// marks the rows they made unread read
 			raw := ev.Raw
-			a.activityLater(func(context.Context) { a.onActivityBadges(raw) })
+			a.activityInOrder(ctx, func(context.Context) { a.onActivityBadges(raw) })
 		}
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
@@ -361,7 +361,7 @@ func (a *App) handle(ev slack.Event) {
 		_ = json.Unmarshal(ev.Raw, &e)
 		if e.UndoKey != "" {
 			raw := ev.Raw // in order with the activity entries before it (activity_later.go)
-			a.activityLater(func(context.Context) {
+			a.activityInOrder(ctx, func(context.Context) {
 				a.emit(Event{Type: "activity", Name: "activity_clear_all_completed", ID: e.UndoKey, Raw: raw})
 			})
 		}

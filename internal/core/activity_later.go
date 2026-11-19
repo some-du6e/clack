@@ -31,6 +31,22 @@ func (a *App) activityLater(f func(ctx context.Context)) {
 	}
 }
 
+// activityInOrder runs f, work Activity orders against its entries (no
+// lookups of its own), now on the caller's goroutine when no entry's work
+// is queued or running, else behind it (activityLater): in socket order
+// either way. The event pump is the queue's only producer, so nothing can
+// queue between the check and f.
+func (a *App) activityInOrder(ctx context.Context, f func(ctx context.Context)) {
+	a.actLaterMu.Lock()
+	busy := a.actLaterOn
+	a.actLaterMu.Unlock()
+	if busy {
+		a.activityLater(f)
+		return
+	}
+	f(ctx)
+}
+
 func (a *App) activityWorker() {
 	for {
 		a.actLaterMu.Lock()
