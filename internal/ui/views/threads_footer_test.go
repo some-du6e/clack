@@ -14,6 +14,7 @@ import (
 	"image"
 	"net/url"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -88,25 +89,26 @@ func TestThreadsKeysHeldDownLikeSlack(t *testing.T) {
 	if thrBounded(e, time.Until(last.Add(480*time.Millisecond)), func() bool { return len(marks.all()) != n }) {
 		t.Fatalf("marked %v less than 500 ms after the list last moved", marks.all()[n:])
 	}
+	// e's unread row brought mid-list in one move: once the list has been
+	// still 150 ms and 350 ms on, e alone is marked
 	thrBounded(e, time.Until(last.Add(900*time.Millisecond)), func() bool { return false })
-	var want []string
-	p, _, _ := v.data.get()
-	for i := range p.items {
-		it := &p.items[i]
-		if it.key == ka || !v.followed(it) {
-			continue
-		}
-		c := v.cards[it.key]
-		replies := thrShown(it, c)
-		if at, ghost := v.unreadRow(it, c, replies); at >= 0 && !ghost && thrPointIn(v, it.key+"-"+replies[at].TS) {
-			want = append(want, it.Root.TS+"@"+it.latest()+" read=1")
-		}
+	n = len(marks.all())
+	rowE := ch + "/" + thrE + "-" + thrEReply
+	v.kb.scrollTo(rowE)
+	v.list.Position.Offset -= v.kb.viewH / 2
+	moved := time.Now()
+	e.frame()
+	if !thrPointIn(v, rowE) {
+		t.Fatalf("e's unread row isn't on the list after the move (position %+v)", v.list.Position)
 	}
-	got := marks.all()[n:]
-	slices.Sort(got)
-	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("once the list was still: marked %v, want %v (the threads whose unread row shows)", got, want)
+	markE := thrE + "@" + thrEReply + " read=1"
+	e.until(t, "e marked once the list is still", func() bool { return marks.has(markE) })
+	if el := time.Since(moved); el < 490*time.Millisecond {
+		t.Errorf("e marked %v after the move; Slack waits 150 ms still, then 350 ms", el)
+	}
+	thrBounded(e, 300*time.Millisecond, func() bool { return false })
+	if got := marks.all()[n:]; !slices.Equal(got, []string{markE}) {
+		t.Errorf("once still with e's unread row on the list: marked %v, want only %s", got, markE)
 	}
 }
 
@@ -309,4 +311,39 @@ func TestThreadsChecksSpentWithoutListLikeSlack(t *testing.T) {
 	if el := time.Since(*answered.Load()); el < 330*time.Millisecond {
 		t.Errorf("marked %v after Try Again's answer; Slack waits 350 ms", el)
 	}
+}
+
+// A printable key on a row moves the focus to the keyboard thread's reply
+// box (onKeyDown's focusOnKey footer-…), scrolling the footer into view
+// when it's below the list: the box takes the focus and the letter, and
+// the list lets the focus go.
+func TestThreadsTypeScrollsReplyBoxLikeSlack(t *testing.T) {
+	app, _ := vaFake(t)
+	h := newKBHost(app, false)
+	h.away.Store(true)
+	v := NewThreads(h)
+	e := thrViewEnv(t, v, 2)
+	e.size = image.Pt(1000, 300)
+	e.frame()
+	e.frame()
+	p, _, _ := v.data.get()
+	k0 := p.items[0].key
+	kbClickRow(t, e, v.kb, "root-"+k0, 49)
+	footer := "footer-" + k0
+	if !v.kb.focused || v.kb.inView(footer) {
+		t.Fatalf("the list focused %v with %s's footer in view %v: want it below the list", v.kb.focused, k0, v.kb.inView(footer))
+	}
+	kbType(e, "A", 0, "a")
+	e.frame()
+	if !v.kb.inView(footer) {
+		t.Errorf("typing left %s's footer below the list (position %+v)", k0, v.list.Position)
+	}
+	c := v.cards[k0]
+	if c == nil || c.comp == nil || !c.comp.Focused() || !strings.Contains(c.comp.DocText(), "a") {
+		t.Fatalf("the reply box didn't take the focus and the letter")
+	}
+	if v.kb.focused {
+		t.Error("the list kept the focus after typing moved it to the reply box")
+	}
+	c.comp.Close()
 }

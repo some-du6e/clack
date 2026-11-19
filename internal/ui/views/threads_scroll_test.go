@@ -86,9 +86,14 @@ func TestThreadsMarkVisibleFlingLikeSlack(t *testing.T) {
 		t.Fatal("b's unread row is on screen before the fling")
 	}
 	n := len(marks.all())
-	// down to b's unread row, over it slowly for half a second, then on
-	// past it: never 150 ms still
-	thrFling(t, e, v, 40, func() bool { return !thrPointIn(v, rowB) })
+	// one move brings b's unread row on the list (a leading call would
+	// check 350 ms on, while the list creeps), then it creeps over it for
+	// half a second and moves on past: never 150 ms still
+	v.list.Position = layout.Position{First: 1, Offset: -60}
+	e.frame()
+	if !thrPointIn(v, rowB) {
+		t.Fatalf("b's unread row isn't on the list after the jump (position %+v)", v.list.Position)
+	}
 	crept := time.Now()
 	thrFling(t, e, v, 1, func() bool { return time.Since(crept) < 500*time.Millisecond })
 	if !thrPointIn(v, rowB) {
@@ -288,6 +293,11 @@ func TestThreadsGhostLineDrawnLikeSlack(t *testing.T) {
 	}
 	e.until(t, "the thread marked read", func() bool { return marks.has(thrA + "@" + thrAReply + " read=1") })
 	strs := drawnStrings(e) // the frame after the mark
+	e.r.WakeupTime()
+	e.frame()
+	if at, ok := e.r.WakeupTime(); ok && !at.IsZero() && time.Until(at) < time.Second {
+		t.Errorf("right after the mark the view asks for a frame in %v: the ghost has nothing to animate", time.Until(at))
+	}
 	half := uint8(float32(red.A) * 0.5)
 	l, ok := v.lines[ka]
 	if !ok || !l.ghost || l.col.A != half || l.col.R != red.R || l.col.G != red.G || l.col.B != red.B {

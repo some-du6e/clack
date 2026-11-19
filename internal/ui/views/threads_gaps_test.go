@@ -451,3 +451,40 @@ func TestThreadsReloadCutsToWindowLikeSlack(t *testing.T) {
 	e.until(t, "the reload", func() bool { return v.Settled() && !v.data.busy() })
 	thrGapMore(t, e, v, 5)
 }
+
+// A refresh asked for before a gap's failure cuts the card brings its own
+// window even where it starts before the cut's floor: the newest reply
+// deleted meanwhile moves getView's window back, and the card draws that
+// window (the floor drops only the replies carried over from before it).
+func TestThreadsGapFloorKeepsOwnWindowLikeSlack(t *testing.T) {
+	ch := fakeslack.ViewsChannel
+	rs := thrGapReplies
+	f := &thrGapFake{}
+	v, e, fs := thrGapView(t, f)
+	f.failGap(rs[1])
+	f.gaps.hold()
+	f.n.Store(5)
+	thrRefreshAfter(t, e, v, fs, "the refresh after r2-r4", thrReplyEvent(ch, thrGapRoot, rs[4]))
+	e.until(t, "the gap's fetch", func() bool { return fs.CallCount("conversations.replies") >= 1 })
+	f.del(rs[4])
+	fs.Push(thrGapDeleted(ch, rs[4]))
+	e.until(t, "r4's deletion drawn", func() bool { return !slices.Contains(thrGapShown(v), rs[4]) })
+	// a refresh goes out over the card as it is (getView's window now
+	// r2, r3), and is held
+	f.views.hold()
+	v.w.mu.Lock()
+	v.w.last = time.Time{}
+	v.w.mu.Unlock()
+	n := fs.CallCount("subscriptions.thread.getView")
+	fs.Push(thrReplyEvent(ch, thrGapRoot, rs[3]))
+	e.until(t, "the refresh's request", func() bool { return fs.CallCount("subscriptions.thread.getView") > n })
+	f.gaps.open() // the gap's fetch fails: the card is cut at its window, r3
+	e.until(t, "the card cut to its window", func() bool { return slices.Equal(thrGapShown(v), rs[3:4]) })
+	f.views.open()
+	e.until(t, "the refresh in", func() bool { return !v.data.busy() && slices.Contains(thrGapShown(v), rs[2]) })
+	e.frame()
+	if got := thrGapShown(v); !slices.Equal(got, rs[2:4]) {
+		t.Errorf("the refresh asked for before the cut shows %v; want its window %v", got, rs[2:4])
+	}
+	thrGapMore(t, e, v, 4)
+}

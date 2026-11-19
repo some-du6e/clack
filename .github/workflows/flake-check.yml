@@ -805,13 +805,15 @@ jobs:
       matrix:
         include:
           - part: marks
-            test: (TestThreadsUpToDateDividerLikeSlack|TestThreadsMarkedUnreadDividerLikeSlack|TestThreadsMarkVisibleLikeSlack|TestThreadsMarkVisibleOnScrollLikeSlack|TestThreadsMarkVisibleSkipsOwnMarksLikeSlack|TestThreadsSeenReplyGuardLikeSlack|TestThreadsHiddenFirstReadLikeSlack|TestThreadsUpToDateDivider|TestThreadsMarkVisibleFlingLikeSlack|TestThreadsUnreadRowPointLikeSlack|TestThreadsRemountNoScrollLikeSlack|TestThreadsAttentionAfterMinimizeLikeSlack|TestThreadsGhostLineDrawnLikeSlack|TestThreadsKeysHeldDownLikeSlack|TestThreadsFooterFocusLikeSlack|TestThreadsUnreadRowEdgesLikeSlack|TestThreadsChecksSpentWithoutListLikeSlack)
+            test: (TestThreadsUpToDateDividerLikeSlack|TestThreadsMarkedUnreadDividerLikeSlack|TestThreadsMarkVisibleLikeSlack|TestThreadsMarkVisibleOnScrollLikeSlack|TestThreadsMarkVisibleSkipsOwnMarksLikeSlack|TestThreadsSeenReplyGuardLikeSlack|TestThreadsHiddenFirstReadLikeSlack|TestThreadsUpToDateDivider|TestThreadsMarkVisibleFlingLikeSlack|TestThreadsUnreadRowPointLikeSlack|TestThreadsRemountNoScrollLikeSlack|TestThreadsAttentionAfterMinimizeLikeSlack|TestThreadsGhostLineDrawnLikeSlack|TestThreadsKeysHeldDownLikeSlack|TestThreadsFooterFocusLikeSlack|TestThreadsUnreadRowEdgesLikeSlack|TestThreadsChecksSpentWithoutListLikeSlack|TestThreadsTypeScrollsReplyBoxLikeSlack)
           - part: loads
             test: (TestThreadsSlowReconnectLikeSlack|TestThreadsFastReconnectLikeSlack|TestThreadsRefreshGapLikeSlack|TestThreadsSettleBeforeNextLoad|TestThreadsNamedThreadWaitsLikeSlack|TestThreadsAwayIgnoresRepliesLikeSlack|TestThreadsMountLoadLikeSlack|TestThreadsFailedReloadLikeSlack)
           - part: order
             test: (TestThreadsReloadLikeSlack|TestThreadsRefreshKeepsOldThreadsOffTopLikeSlack|TestThreadsReplyDuringReloadLikeSlack|TestThreadsOrderHeldOnReplyLikeSlack|TestThreadsPageAppendedLikeSlack|TestThreadsOrderUnreadFirstLikeSlack|TestThreadsRealtimeLikeSlack|TestThreadsKeysLikeSlack)
+          - part: banners
+            test: (TestThreadsUnreadBannersLikeSlack|TestThreadsUnreadBannerCountLikeSlack|TestThreadsMarkFailureLikeSlack)
           - part: gaps
-            test: (TestThreadsGapOnePerCardLikeSlack|TestThreadsGapCarryFloorLikeSlack|TestThreadsGapRemountLikeSlack|TestThreadsCarriedChangeLikeSlack|TestThreadsGapFloorLeavesLaterWindowsLikeSlack|TestThreadsGapAwayLikeSlack|TestThreadsReloadCutsToWindowLikeSlack|TestThreadsLiveMessages|TestThreadsLiveVote|TestThreadsLiveBatch|TestThreadsLiveEvictedRefetch|TestThreadsLiveFloor)
+            test: (TestThreadsGapOnePerCardLikeSlack|TestThreadsGapCarryFloorLikeSlack|TestThreadsGapRemountLikeSlack|TestThreadsCarriedChangeLikeSlack|TestThreadsGapFloorLeavesLaterWindowsLikeSlack|TestThreadsGapAwayLikeSlack|TestThreadsReloadCutsToWindowLikeSlack|TestThreadsGapFloorKeepsOwnWindowLikeSlack|TestThreadsLiveMessages|TestThreadsLiveVote|TestThreadsLiveBatch|TestThreadsLiveEvictedRefetch|TestThreadsLiveFloor)
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
