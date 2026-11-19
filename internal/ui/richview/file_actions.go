@@ -205,7 +205,16 @@ func fileActions(f *richtext.File, gallery, noAnim bool) []barBtn {
 	// anyone may edit while it isn't locked)
 	edit := (f.Mode == "snippet" || f.Mode == "space") && viewerOwns(f)
 	if f.Expanded && !gallery {
-		add(barBtn{act: FileCollapse, icon: "arrow-collapse", tip: i18n.T("file", "Collapse")})
+		// renderCollapse: an email's (new_email_rendering) is reduce-diagonal
+		icon := "arrow-collapse"
+		if f.Email != nil {
+			icon = "collapse"
+		}
+		add(barBtn{act: FileCollapse, icon: icon, tip: i18n.T("file", "Collapse")})
+	}
+	if f.Email != nil && !f.Expanded && !gallery {
+		// renderEmailExpand: expand-diagonal, fetchAndExpand (email.go)
+		add(barBtn{act: FileShowMore, icon: "expand", tip: i18n.T("file", "Expand")})
 	}
 	// fileActions.download (QjaE): a hosted or snippet file
 	if !ext && !remote && !post && (f.Mode == "hosted" || f.Mode == "snippet") {

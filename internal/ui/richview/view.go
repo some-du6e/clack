@@ -1575,6 +1575,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		if tg.url == "" {
 			break
 		}
+		if eh, ok := h.(EmailLinkHandler); ok && tg.emailLink {
+			eh.OpenEmailLink(tg.url)
+			break
+		}
 		if lh, ok := h.(LinkTextHandler); ok && tg.kind == tLink {
 			lh.OpenLink(tg.url, text)
 			break

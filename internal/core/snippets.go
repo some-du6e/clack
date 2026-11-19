@@ -93,3 +93,17 @@ func (a *App) emitStored(ch, ts string) {
 		a.emitUpdate(ch, &m)
 	}
 }
+
+// EmailFile reads email file id whole for its FileDetails view
+// (EmailFileDetails reads the file from the store, which files.info fills:
+// simplified_html is the whole email where a message's copy has its
+// preview).
+func (a *App) EmailFile(ctx context.Context, id string) (*slack.File, error) {
+	var r struct {
+		File slack.File `json:"file"`
+	}
+	if err := a.C.Call(ctx, "files.info", url.Values{"file": {id}, "count": {"0"}}, &r); err != nil {
+		return nil, err
+	}
+	return &r.File, nil
+}

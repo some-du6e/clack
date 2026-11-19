@@ -125,6 +125,11 @@ func init() {
 	reg("kebab", disc(10, 3.75, 1.75), disc(10, 10, 1.75), disc(10, 16.25, 1.75))
 	reg("email", s("M3.06 16.36 L2.39 15.75 L2.25 14.11 V5.89 L2.37 4.34 L2.91 3.75 A3 3 0 0 1 4.89 3.25 H15.11 L16.66 3.37 L17.25 4 A2.93 2.93 0 0 1 17.75 5.66 V14.34 A2.38 2.38 0 0 1 17 16.25 A2.91 2.91 0 0 1 15.34 16.75 H4.66 A3.25 3.25 0 0 1 3.06 16.36 Z"), s("M5.25 6.75 L10 11.25 L14.75 6.75"))
 	reg("mail", registry["email"].parts...)
+	// Slack's email file icon's envelope (c-icon--file-email-svgicon,
+	// email-5606c9a.svg, its 3600-unit tile on this 20-unit grid): the
+	// 150-unit outline and flap on their centrelines; the #1D9BD1 tile
+	// under it is the file card's (richview email.go)
+	reg("file-email", sw(0.83, rrect(5.42, 6.53, 9.17, 6.94, 1.11)), sw(0.83, "M7.36 8.47 L10 10.63 L12.64 8.47"))
 	// Slack's email-up: the envelope open at the bottom left for an arrow
 	// going up (channel details' "Send emails to this channel")
 	reg("email-up", s("M7.75 16.75 H15.75 A2 2 0 0 0 17.75 14.75 V5.25 A2 2 0 0 0 15.75 3.25 H4.25 A2 2 0 0 0 2.25 5.25 V9.25"),

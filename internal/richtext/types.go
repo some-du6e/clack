@@ -402,6 +402,43 @@ type File struct {
 	Expanded, Expanding bool
 	Content             *CodeMirror
 	ContentTruncated    bool
+
+	// Email is an email file's message (mode "email"; email.go), nil for
+	// any other file.
+	Email *Email
+}
+
+// Email is an email file as Slack's FileEmailV2 and EmailFileDetails
+// draw it (new_email_rendering): who sent it and to whom, the subject (the
+// file's title), the body (HTML is its preview's HTML, PlainText the
+// plain text whose length sizes the inline body), the files it carried,
+// the sender's DMARC check, and the email app that brought it in.
+type Email struct {
+	From, To, Cc []EmailAddress
+	Subject      string
+	HTML         string
+	PlainText    string
+	Attachments  []EmailAttachment
+	// Unverified: email_security.has_valid_dmarc is false (FileEmailV2's
+	// "Heads up" under From). An absent check counts as valid.
+	Unverified bool
+	// Timestamp is the email's own time (the file's timestamp).
+	Timestamp int64
+	// AppID and AppName are the app that posted it (renderEmailMetaText's
+	// "Email from {appName}").
+	AppID, AppName string
+}
+
+// EmailAddress is one of an email's senders or recipients: UserID is the
+// member who it is (slack_user_id), when Slack knows.
+type EmailAddress struct {
+	Name, Address, UserID string
+}
+
+// EmailAttachment is a file an email carried (FileID: its Slack file).
+type EmailAttachment struct {
+	Name, Mime, URL, FileID string
+	Size                    int64
 }
 
 // Doc is a whole message body.

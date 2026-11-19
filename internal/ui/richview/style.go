@@ -43,6 +43,13 @@ type Handler interface {
 	Button(b richtext.Button)
 }
 
+// EmailLinkHandler is a Handler that opens a link from an email's body
+// as Slack's EmailIframe does: an http(s) link through the "Open Link"
+// confirmation (openLinkRedirectModal), any other straight away.
+type EmailLinkHandler interface {
+	OpenEmailLink(url string)
+}
+
 // AttachmentRemover is a Handler that can remove a message's link
 // preview (the unfurl's remove button): Slack's "Remove preview?" dialog,
 // then chat.deleteAttachment.
@@ -393,6 +400,9 @@ type Options struct {
 	// Details tab (WorkObjectDetails: the full layout's fields and the
 	// "Updated …" line) instead of the card (workobject.go).
 	WorkObjectDetails bool
+	// EmailDetails lays the doc's email file out as Slack's
+	// EmailFileDetailsContent (the secondary view's FileDetails; email.go).
+	EmailDetails bool
 	// WorkObjectSearch lays the doc's work object out as a search result
 	// (WorkObjectSearchResult: source WORK_OBJECT_SEARCH, no width cap,
 	// no meta line), at WorkObjectSize ("compact" for the dense view,

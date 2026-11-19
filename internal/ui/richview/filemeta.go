@@ -25,7 +25,8 @@ import (
 //	  owns the one file (renderUploader: "BetterClient | Canvas")
 //	one image, snippet or video, or any collapsed file: its title
 //	one other file, expanded: pretty_type ("PDF"; "Video", "Audio",
-//	  "Post" for Arugula)
+//	  "Post" for Arugula; an app's email "Email", or "Email from
+//	  {appName}" when the file names the app)
 //	several files: "N files"
 //
 // The button toggles the files' expandable (getExpandableKey("files",
@@ -72,6 +73,13 @@ func fileMetaText(files []*richtext.File, expanded bool) string {
 	switch {
 	case f.IsAudio:
 		return "Audio"
+	case f.Email != nil && f.Email.AppID != "":
+		// renderEmailMetaText (new_email_rendering): "Email" unless the
+		// file names its app
+		if f.Email.AppName == "" {
+			return i18n.T("files", "Email")
+		}
+		return i18n.T("files", "Email from {appName}", "appName", f.Email.AppName)
 	case f.PrettyType == "Arugula":
 		return "Post"
 	case richtext.IsCanvasFile(f): // renderSingleFileTitle: isCanvas
