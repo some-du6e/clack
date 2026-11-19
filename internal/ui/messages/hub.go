@@ -671,6 +671,37 @@ func (hb *hub) dropWindow(m *model) {
 	}
 }
 
+// wantsWindowBack reports whether window model m is out of the hub
+// (dropWindow) though a list still shows it.
+func (hb *hub) wantsWindowBack(m *model) bool {
+	hb.mu.Lock()
+	defer hb.mu.Unlock()
+	return !hb.wins[m]
+}
+
+// takeBackWindow puts window model m back when the list cache let it go
+// (dropWindow) while a view still drew it: core's events reach it again,
+// core holds the window again, and it reloads around ts, since it missed
+// the events in between. markDrawn takes a dropped conversation model
+// back the same way, reading core's copy.
+func (hb *hub) takeBackWindow(m *model, ts string) {
+	hb.mu.Lock()
+	if hb.wins == nil {
+		hb.wins = map[*model]bool{}
+	}
+	hb.wins[m] = true
+	hb.mu.Unlock()
+	if hb.authFailed.Load() || hb.app == nil || ts == "" {
+		return
+	}
+	m.mu.Lock()
+	if m.release == nil {
+		m.release = hb.app.HoldWindow(m.ch, ts)
+	}
+	m.mu.Unlock()
+	hb.loadWindow(m, ts)
+}
+
 // windowsOf is ch's window models.
 func (hb *hub) windowsOf(ch string) []*model {
 	hb.mu.Lock()

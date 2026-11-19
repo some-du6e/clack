@@ -386,14 +386,32 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 	// still keeps to its end once the thread outgrows it (Gio patch 45)
 	s.list.StartAligned = ts != ""
 	if len(listCache) > 2*maxModels {
-		for k, old := range listCache {
-			old.hb.dropWindow(old.win) // its window takes no more live changes
-			delete(listCache, k)
-			break
-		}
+		evictList()
 	}
 	listCache[key] = s
 	return s
+}
+
+// evictList lets the least recently drawn list go from the cache: one
+// that isn't on screen and drew in neither of the latest frames, and only
+// its window goes (dropWindow: it takes no more live changes). Its view
+// may still be mounted in the ui root's LRU; drawn again, the list takes
+// its window back (adopt). Map order picked any list, the one on screen
+// too, and its window stopped taking reactions, edits and deletes.
+func evictList() {
+	victim, at := "", time.Time{}
+	for k, s := range listCache {
+		if s.onScreen() || s.mounted() {
+			continue
+		}
+		if victim == "" || s.laidAt.Before(at) {
+			victim, at = k, s.laidAt
+		}
+	}
+	if old := listCache[victim]; old != nil {
+		old.hb.dropWindow(old.win)
+		delete(listCache, victim)
+	}
 }
 
 // ensure is the list's load. A channel list opened at a message the
@@ -429,6 +447,24 @@ func (s *listState) openWindow(ts string) {
 	s.useModel(w)
 	s.place, s.handAsked = jumpPlace{}, false
 	s.hb.loadWindow(w, ts)
+}
+
+// reloadAt is where the list's window reloads when the list takes it back
+// (adopt): the message on the anchor line when the list last drew, so
+// the reader's rows come back, else the window's first message.
+func (s *listState) reloadAt() string {
+	key, _ := s.lineRow(s.linePx)
+	ts := strings.TrimPrefix(key, "g") // a group row: its first message
+	w := s.win
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if ts != "" && w.find(ts) >= 0 {
+		return ts
+	}
+	if len(w.msgs) > 0 {
+		return w.msgs[0].m.TS
+	}
+	return s.aroundFor
 }
 
 // leaveWindow shows the conversation's newest messages again (its model,
@@ -532,9 +568,16 @@ func (s *listState) endUnmountedFlash() {
 //
 // A list showing a jump's window draws the window (its own model) and
 // keeps the conversation's model the hub's too (chm, which takes the live
-// messages it goes back to).
+// messages it goes back to). A list the cache let go (evictList) and a
+// view still draws is cached again, and takes its window back.
 func (s *listState) adopt(at time.Time) {
+	if _, ok := listCache[s.paneID]; !ok && s.paneID != "" {
+		listCache[s.paneID] = s // unless a new list took its key
+	}
 	if s.win != nil {
+		if s.hb.wantsWindowBack(s.win) {
+			s.hb.takeBackWindow(s.win, s.reloadAt())
+		}
 		s.hb.markDrawn(s.win, at)
 		if s.chm != nil {
 			s.chm = s.hb.markDrawn(s.chm, at)

@@ -24,6 +24,9 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
+// winEndChan is winEnv's channel.
+const winEndChan = "C0WINEND01"
+
 // winEnv is a channel of 240 messages 90 s apart, its list in the window
 // around the 41st (the newest page holds the last 50).
 type winEnv struct {
@@ -36,7 +39,7 @@ type winEnv struct {
 func newWinEnv(t *testing.T) *winEnv {
 	t.Helper()
 	app, fs, _ := shotsApp(t)
-	const ch = "C0WINEND01"
+	ch := winEndChan
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "archive-walk", IsChannel: true, IsMember: true, NumMembers: 12})
 	e := &winEnv{h: &ctxHost{coreHost: coreHost{app: app, th: theme.New(false)}}}
 	base := time.Now().Add(-7 * time.Hour).Unix()
