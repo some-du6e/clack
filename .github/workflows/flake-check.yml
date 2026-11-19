@@ -262,6 +262,8 @@ on:
       - "internal/ui/reactions_live_test.go"
       - "internal/fakeslack/uptime.go"
       - "internal/fakeslack/react_live.go"
+      - "internal/fakeslack/edit_live.go"
+      - "internal/ui/activity_edit_latency_test.go"
       - "internal/store/reacts.go"
       - "internal/ui/views/taut.go"
 
@@ -1576,6 +1578,33 @@ jobs:
           go test -count=$COUNT -v -run '^(TestReactionAddedKeepsItsURL|TestMalformedReactionChangesNothing)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^TestReactionURLSurvivesAFetch$' ./internal/store || rc=1
           xvfb-run -a go test -count=$COUNT -v -run '^TestPinsTabReactionsAreCoresUnderSlicePatch$' ./internal/ui/views || rc=1
+          exit $rc
+
+  # activity-edits: an edit of an Activity entry's message draws in its
+  # row in the frame after the socket brings it (Slack's Activity row reads
+  # the live message): someone's mention edited every 500 ms with the
+  # Activity page open, frames drawn when the app asks; natively and under
+  # messages-slice and component patches. Dispatch with only=activity-edits.
+  activity-edits:
+    if: ${{ !inputs.only || startsWith('activity-edits', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: each edit to the Activity row's frame (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestActivityEditLatency$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestActivityEditLatency$' ./internal/ui || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
