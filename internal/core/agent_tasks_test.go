@@ -349,6 +349,39 @@ func TestAgentTasksLiveEvents(t *testing.T) {
 	wait(Event{Name: "trigger_deleted", TS: fakeslack.TaskBriefing, ThreadTS: trig})
 }
 
+// TestAgentTasksScheduleZones: the zone in a schedule line is Intl's
+// en-US short name (ZgZs u.format("z"), dayjs's timezone offsetName): the
+// letters CLDR's en-US data has for US zones and UTC/GMT, GMT±H[:MM] for
+// everything else.
+func TestAgentTasksScheduleZones(t *testing.T) {
+	now := time.Date(2026, 11, 18, 20, 0, 0, 0, time.UTC)
+	sched := func(zone, start string, f *TaskFrequency) AgentTask {
+		return AgentTask{TriggerType: "scheduled", Description: "fallback",
+			Schedule: &TaskSchedule{StartTime: start, Timezone: zone, Frequency: f}}
+	}
+	daily := &TaskFrequency{Type: "daily", RepeatsEvery: 1}
+	for _, c := range []struct {
+		name string
+		t    AgentTask
+		want string
+	}{
+		{"Paris in winter", sched("Europe/Paris", "2026-11-23T08:00:00Z", daily), "Daily at 9:00 AM GMT+1"},
+		{"London in summer", sched("Europe/London", "2026-07-15T13:00:00Z", nil), "Once on July 15th at 2:00 PM GMT+1"},
+		{"London in winter", sched("Europe/London", "2026-12-01T14:00:00Z", nil), "Once on December 1st at 2:00 PM GMT"},
+		{"Kolkata", sched("Asia/Kolkata", "2026-11-23T04:00:00Z", daily), "Daily at 9:30 AM GMT+5:30"},
+		{"Manila", sched("Asia/Manila", "2026-11-23T01:00:00Z", daily), "Daily at 9:00 AM GMT+8"},
+		{"Shanghai", sched("Asia/Shanghai", "2026-11-23T01:00:00Z", daily), "Daily at 9:00 AM GMT+8"},
+		{"St. John's", sched("America/St_Johns", "2026-11-23T12:30:00Z", daily), "Daily at 9:00 AM GMT-3:30"},
+		{"Chicago", sched("America/Chicago", "2026-11-23T15:00:00Z", daily), "Daily at 9:00 AM CST"},
+		{"Honolulu", sched("Pacific/Honolulu", "2026-11-23T19:00:00Z", daily), "Daily at 9:00 AM HST"},
+		{"UTC", sched("UTC", "2026-11-23T09:00:00Z", daily), "Daily at 9:00 AM UTC"},
+	} {
+		if got := TaskScheduleText(c.t, TaskTextOpts{Now: now}); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // TestAgentTasksScheduleText: ZgZs's lines for the fixture's schedules and
 // the other branches (America/Los_Angeles, en-US).
 func TestAgentTasksScheduleText(t *testing.T) {

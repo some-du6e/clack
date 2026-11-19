@@ -10,6 +10,7 @@ package core
 // zone dayjs's "z" (the zone's short name).
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -298,27 +299,36 @@ func taskClock(t time.Time, time24 bool) string {
 	return t.Format("3:04 PM")
 }
 
-// zoneAbbrev is dayjs's "z": the zone's short name (Intl's
-// timeZoneName short: GMT+5 where a zone has no letters).
+// enUSZoneNames are the zone abbreviations CLDR's en-US data has, with
+// the offset each names: Intl.DateTimeFormat("en-US", {timeZoneName:
+// "short"}) writes these and GMT±H[:MM] for everything else (Paris
+// GMT+1, Kolkata GMT+5:30, Manila's "PST" GMT+8, Shanghai's "CST" GMT+8).
+var enUSZoneNames = map[string]int{
+	"PST": -8 * 3600, "PDT": -7 * 3600, "MST": -7 * 3600, "MDT": -6 * 3600,
+	"CST": -6 * 3600, "CDT": -5 * 3600, "EST": -5 * 3600, "EDT": -4 * 3600,
+	"AKST": -9 * 3600, "AKDT": -8 * 3600, "HST": -10 * 3600, "HDT": -9 * 3600,
+	"AST": -4 * 3600, "ADT": -3 * 3600, "GMT": 0, "UTC": 0,
+}
+
+// zoneAbbrev is dayjs's "z" (ZgZs u.format("z")): the timezone plugin's
+// offsetName, Intl's en-US short zone name.
 func zoneAbbrev(t time.Time) string {
 	n, off := t.Zone()
-	if n != "" && (n[0] == '+' || n[0] == '-') {
-		h := off / 3600
-		m := (off % 3600) / 60
-		if m < 0 {
-			m = -m
-		}
-		s := "GMT"
-		if h >= 0 {
-			s += "+"
-		}
-		s += strconv.Itoa(h)
-		if m != 0 {
-			s += ":" + strconv.Itoa(m)
-		}
-		return s
+	if o, ok := enUSZoneNames[n]; ok && o == off {
+		return n
 	}
-	return n
+	if off == 0 {
+		return "GMT"
+	}
+	sign := "+"
+	if off < 0 {
+		sign, off = "-", -off
+	}
+	s := "GMT" + sign + strconv.Itoa(off/3600)
+	if m := (off % 3600) / 60; m != 0 {
+		s += ":" + fmt.Sprintf("%02d", m)
+	}
+	return s
 }
 
 // calendarDate is toCalendarDate: MMMM Do, with the year (", YYYY")
