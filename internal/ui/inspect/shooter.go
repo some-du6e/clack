@@ -26,8 +26,28 @@ import (
 
 type shooter struct {
 	mu   sync.Mutex
-	want bool             // a session runs
-	w    *headless.Window // the session's, nil until made
+	want bool       // a session runs
+	w    shotWindow // the session's, nil until made
+	// pending counts the reconciles running (settle: tests)
+	pending sync.WaitGroup
+}
+
+// shotWindow is what a shot renders in: Gio's headless.Window (tests: a
+// fake).
+type shotWindow interface {
+	SetSize(width, height int) error
+	Frame(*op.Ops) error
+	Screenshot(*image.RGBA) error
+	Release()
+}
+
+// newShotWindow makes a shot's window (tests replace it).
+var newShotWindow = func(width, height int) (shotWindow, error) {
+	w, err := headless.NewWindow(width, height)
+	if err != nil {
+		return nil, err
+	}
+	return w, nil
 }
 
 var shots shooter
@@ -50,15 +70,22 @@ func (s *shooter) setWanted(on bool) {
 	s.mu.Lock()
 	s.want = on
 	s.mu.Unlock()
-	go s.reconcile()
+	s.pending.Add(1)
+	go func() {
+		defer s.pending.Done()
+		s.reconcile()
+	}()
 }
+
+// settle waits for the reconciles running (tests).
+func (s *shooter) settle() { s.pending.Wait() }
 
 func (s *shooter) reconcile() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch {
 	case s.want && s.w == nil:
-		w, err := headless.NewWindow(64, 64)
+		w, err := newShotWindow(64, 64)
 		if err != nil {
 			log.Printf("inspect: no headless GPU for the shots yet: %v", err)
 			return
@@ -116,7 +143,7 @@ func (s *shooter) shoot(frame op.CallOp, region image.Rectangle, k float32) (*im
 // window is the window for a shot of size px (s.mu held): the session's,
 // given that size, or a new one, kept as the session's while one runs;
 // own when it's the shot's alone, to let go of after.
-func (s *shooter) window(size image.Point) (w *headless.Window, own bool, err error) {
+func (s *shooter) window(size image.Point) (w shotWindow, own bool, err error) {
 	if s.w != nil {
 		if err := s.w.SetSize(size.X, size.Y); err == nil {
 			return s.w, false, nil
@@ -124,7 +151,7 @@ func (s *shooter) window(size image.Point) (w *headless.Window, own bool, err er
 		s.w.Release()
 		s.w = nil
 	}
-	if w, err = headless.NewWindow(size.X, size.Y); err != nil {
+	if w, err = newShotWindow(size.X, size.Y); err != nil {
 		return nil, false, err
 	}
 	if s.want {
@@ -136,7 +163,7 @@ func (s *shooter) window(size image.Point) (w *headless.Window, own bool, err er
 
 // render draws o in w (size px) and reads it back, into st's render and
 // readback times from t1.
-func render(w *headless.Window, o *op.Ops, size image.Point, st *shotTimes, t1 time.Time) (*image.RGBA, error) {
+func render(w shotWindow, o *op.Ops, size image.Point, st *shotTimes, t1 time.Time) (*image.RGBA, error) {
 	if err := w.Frame(o); err != nil {
 		return nil, err
 	}

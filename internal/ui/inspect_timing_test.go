@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,7 +99,17 @@ func TestInspectReviewTiming(t *testing.T) {
 				e.frameShot()
 				e.a.insp.Wait()
 				e.frame()
-				t.Logf("%s at %gx: review drawn in frame %d after the pick's, %v after it; %s", name, sc, n, wall.Round(100*time.Microsecond), inspect.LastTimes())
+				line := inspect.LastTimes()
+				t.Logf("%s at %gx: review drawn in frame %d after the pick's, %v after it; %s", name, sc, n, wall.Round(100*time.Microsecond), line)
+				if n > 1 {
+					t.Errorf("%s at %gx: the review's shot drawn in frame %d after the pick's, want the first", name, sc, n)
+				}
+				// the session's GPU, made as it started, did the shot: a
+				// context made for the shot (seconds, the first on llvmpipe)
+				// says "gpu context"
+				if gpu && !strings.Contains(line, "gpu ready") {
+					t.Errorf("%s at %gx: the shot didn't use the session's GPU: %s", name, sc, line)
+				}
 			}
 
 			// the reaction pill

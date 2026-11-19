@@ -13,7 +13,9 @@ import (
 )
 
 // TestClackSetSize: one window draws frames of three sizes (Clack patch
-// 52), each pixel for pixel what a new window of that size draws. The new
+// 52), each pixel for pixel what a new window of that size draws, its
+// cached paths (the ones of one size at one place in every frame) kept
+// across each SetSize. The new
 // windows draw first, each released before the next is made: on EGL two
 // headless windows can't outlive each other (Release terminates the
 // default display under the other).
@@ -22,6 +24,10 @@ func TestClackSetSize(t *testing.T) {
 		paint.FillShape(o, color.NRGBA{R: 0x20, G: 0x40, B: 0x60, A: 0xff}, clip.Rect{Max: sz}.Op())
 		paint.FillShape(o, color.NRGBA{R: 0xf0, G: 0x10, B: 0x30, A: 0xff}, clip.Rect(image.Rect(sz.X/4, sz.Y/3, sz.X*3/4, sz.Y*2/3)).Op())
 		paint.FillShape(o, color.NRGBA{G: 0xc0, B: 0x20, A: 0xff}, clip.Ellipse(image.Rect(2, 2, 2+sz.Y/2, 2+sz.Y/2)).Op(o))
+		// paths of one size at one place in every frame: the GPU's caches
+		// keep them from frame to frame, across a SetSize
+		paint.FillShape(o, color.NRGBA{R: 0xe0, G: 0xe0, B: 0x40, A: 0xff}, clip.Ellipse(image.Rect(6, 20, 26, 40)).Op(o))
+		paint.FillShape(o, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}, clip.Stroke{Path: clip.UniformRRect(image.Rect(4, 18, 28, 42), 5).Path(o), Width: 1.5}.Op())
 	}
 	shot := func(w *Window, sz image.Point) *image.RGBA {
 		t.Helper()

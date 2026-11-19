@@ -10,6 +10,7 @@ import (
 	"image/draw"
 	"math"
 	"math/rand/v2"
+	"runtime"
 	"testing"
 )
 
@@ -176,5 +177,28 @@ func TestPaintShotMatchesOld(t *testing.T) {
 		if d := diffPx(got, want, want.Bounds(), image.Rectangle{}); d > 0 {
 			t.Errorf("case %d (%dx%d, elem %v, %gx): %d px differ from the old whole-shot blur", i, c.w, c.h, c.elem, c.scale, d)
 		}
+	}
+}
+
+// TestBlurOutsideAllocs: blurring a big shot's margin again allocates
+// little: each goroutine's lines are the ones its phase reads, and come
+// back from a pool (review of a8fa243c: 34 lines of the longest side per
+// goroutine and phase, ~7 MB of garbage per blur on the UI goroutine).
+func TestBlurOutsideAllocs(t *testing.T) {
+	prev := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(prev)
+	img := noiseImage(3200, 2000, rand.New(rand.NewPCG(5, 6)))
+	keep := image.Rect(60, 60, 3140, 1940)
+	blurOutside(img, img.Bounds(), 8, keep) // the pool filled
+	least := uint64(1 << 62)
+	for range 3 {
+		var a, b runtime.MemStats
+		runtime.ReadMemStats(&a)
+		blurOutside(img, img.Bounds(), 8, keep)
+		runtime.ReadMemStats(&b)
+		least = min(least, b.TotalAlloc-a.TotalAlloc)
+	}
+	if least > 512<<10 {
+		t.Errorf("blurring a 3200x2000 shot's margin again allocated %d KB, want under 512 KB", least>>10)
 	}
 }

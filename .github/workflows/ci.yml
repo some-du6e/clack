@@ -288,7 +288,7 @@ jobs:
           # layer pages and splits under a transform none, a cached path at
           # a new sub-pixel offset is built there, atlas pages shrink and go;
           # patch 46: a partial frame is the whole frame's pixels, bit for bit
-          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize)$' gioui.org/gpu/headless
+          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -462,7 +462,7 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
@@ -534,9 +534,12 @@ jobs:
       # Karim's 2026-11-18 reports came from Windows (α.108, 1918x1080 at
       # 1x): the inspect tool's review drawn in the frame after the pick's at
       # 1918x1080 at 1x and 2x on the headless GPU (WARP), each capture's
-      # stage times logged; Enter and Esc in the pick's frame; the picker
-      # inside popups (a Block Kit modal, a menu, the emoji picker, a profile
-      # card, a frozen tooltip)
+      # stage times logged; Enter and Esc in the pick's frame; the shots'
+      # GPU made as a session starts and let go of after its shot; captures
+      # copied in order; the picker inside popups (a Block Kit modal and its
+      # select's dropdown, a menu, the emoji picker, a profile card's parts,
+      # a rail peek's rows, the Ctrl+K switcher, a frozen tooltip, plugin
+      # overlay roots and tree tooltips)
       - name: the inspect tool's pick to review, and the picker in popups (WARP, fakeslack)
         if: ${{ !cancelled() }}
         shell: bash # every go test counts (pwsh steps fail only on the last command)
@@ -545,8 +548,9 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
         run: |
           rc=0
-          go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectFreezeHoldsPopups)$' ./internal/ui || rc=1
-          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld)$' ./internal/ui/inspect || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectFreezeHoldsPopups)$' ./internal/ui || rc=1
+          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestDeliveriesInOrder|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
+          go test -count=1 -v -run '^(TestInspectCardAfterContent|TestInspectCardMarkHoldsContent|TestInspectPluginOverlayLayer|TestInspectTreeTooltipEitherTheme)$' ./internal/ui/slackc || rc=1
           exit $rc
       - name: thread reply box gap (layout, fakeslack)
         if: ${{ !cancelled() }}
@@ -1182,7 +1186,7 @@ jobs:
         env:
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |

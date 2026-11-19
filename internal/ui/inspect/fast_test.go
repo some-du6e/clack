@@ -3,22 +3,29 @@ package inspect
 // The pick-to-review path (Karim, 2026-11-18, Windows at 1918x1080:
 // "this shit takes to long between a selection and the blur page"): the
 // review draws its shot in the frame after the pick's, whatever the size
-// of the shot; nothing it doesn't need first (the image's PNG, the
-// clipboard) holds it. Enter pressed in the pick's own frame copies the
-// exact image the review's Enter copies; Esc there drops the capture
-// before anything is shot, nothing comes back later, and the next
-// session works as before.
+// of the shot, and making that image takes a fraction of blurring the
+// whole shot; nothing it doesn't need first (the image's PNG, the
+// clipboard) holds it. Enter pressed in an element pick's own frame copies
+// the exact image the review's Enter copies; a region still opens its
+// review (the only place a region is blurred). Esc in the frame a press
+// is let go of drops that press, as Esc while pressing always has: nothing
+// shot, the session going on.
 
 import (
 	"bytes"
 	"fmt"
 	"image"
+	"math"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/unit"
 )
 
 // shownWithin runs up to n frames after the pick's and reports how many it
@@ -57,6 +64,7 @@ func TestReviewShotNextFrame(t *testing.T) {
 		e.key(key.NameEscape, 0)
 		e.frame()
 		t.Logf("%gx: %s", sc, LastTimes())
+		e.checkShownTime(sc, "a click's", shot, sc*e.ks[0])
 
 		e.tool.Toggle()
 		e.frame()
@@ -78,7 +86,51 @@ func TestReviewShotNextFrame(t *testing.T) {
 		e.key(key.NameEscape, 0)
 		e.frame()
 		t.Logf("%gx: %s", sc, LastTimes())
+		e.checkShownTime(sc, "a region's", shot, sc*e.ks[1])
 	}
+}
+
+// checkShownTime fails unless the last capture's review image (its
+// "review shot ready" stage: the margin blurred) took at most a quarter
+// of the time blurring the whole shot takes here (what the review's
+// image cost before only the margin was blurred: a second and more for a
+// 3200x2000 px shot). Frames alone can't tell: the image is made before
+// the review's first frame, however long it takes.
+func (e *dragEnv) checkShownTime(sc float32, what string, shot image.Point, scale float32) {
+	e.t.Helper()
+	line := LastTimes()
+	shown, ok := stageTime(line, "review shot ready ")
+	if !ok {
+		e.t.Errorf("%gx: %s capture logged no review image time: %s", sc, what, line)
+		return
+	}
+	img := noiseShot(shot, 2)
+	rad := max(int(math.Round(float64(MarginBlur*scale))), 1)
+	t0 := time.Now()
+	blur(img, img.Bounds(), rad)
+	whole := time.Since(t0)
+	if shown > whole/4 {
+		e.t.Errorf("%gx: %s %v px review image took %v, more than a quarter of blurring the whole shot (%v): the margin alone is blurred (blurOutside)", sc, what, shot, shown, whole)
+	}
+}
+
+// stageTime is the duration after prefix in a stage-time line (timing.go
+// dur: "12.3ms", or a time.Duration from 10 s on).
+func stageTime(line, prefix string) (time.Duration, bool) {
+	i := strings.Index(line, prefix)
+	if i < 0 {
+		return 0, false
+	}
+	v := line[i+len(prefix):]
+	if j := strings.IndexAny(v, ",;( "); j >= 0 {
+		v = v[:j]
+	}
+	if ms, ok := strings.CutSuffix(v, "ms"); ok {
+		f, err := strconv.ParseFloat(ms, 64)
+		return time.Duration(f * float64(time.Millisecond)), err == nil
+	}
+	d, err := time.ParseDuration(v)
+	return d, err == nil
 }
 
 // TestFreezeReviewShotNextFrame: a plain click on a frozen frame is drawn
@@ -147,6 +199,10 @@ func TestEnterRightAfterPick(t *testing.T) {
 		if e.tool.Active() || e.tool.Reviewing() {
 			t.Errorf("Enter %s: session %v, reviewing %v after the copy", when, e.tool.Active(), e.tool.Reviewing())
 		}
+		// the stage-time line says what happened: no review was shown
+		if line := LastTimes(); when == "in the pick's frame" && (!strings.Contains(line, "copied at once") || strings.Contains(line, "after the review showed")) {
+			t.Errorf("Enter %s: logged %q, want the capture copied at once, no review", when, line)
+		}
 		if len(e.shots) != n+1 {
 			t.Fatalf("Enter %s: %d shots, want one", when, len(e.shots)-n)
 		}
@@ -173,37 +229,61 @@ func TestEnterRightAfterPick(t *testing.T) {
 	}
 }
 
-// TestEscDuringPreparation: Esc in the pick's own frame drops the capture
-// before anything is shot: no review, nothing copied or saved, the session
-// over with the review's toast, and nothing comes back in later frames.
-// The next session picks and reviews as before. Esc in the frame after the
-// pick drops the review the same way.
+// TestEscDuringPreparation: Esc in the frame a press is let go of drops
+// that press, as Esc while pressing or dragging always has (review of
+// a8fa243c: it ended the whole session, whether it did depending on
+// whether Esc and the release fell in one frame): nothing is shot, saved
+// or copied, no review comes in later frames, and the session goes on, its
+// picker outlining again until a second Esc ends it. The same for a drag
+// let go of in Esc's frame and for one too small to grab. The next pick is
+// reviewed in the frame after it, and Esc in that review drops it.
 func TestEscDuringPreparation(t *testing.T) {
 	e := newDragEnv(t)
 	p := f32.Pt(400, 300)
-	e.startAt(p, "primary")
-	n := len(e.shots)
-	e.shiftClick(p, false, false)
-	e.key(key.NameEscape, 0)
-	e.frame()
-	if e.tool.Reviewing() || e.tool.Active() {
-		t.Fatalf("Esc in the pick's frame: reviewing %v, session %v; want the capture dropped, the session over", e.tool.Reviewing(), e.tool.Active())
-	}
-	if len(e.shots) != n {
-		t.Errorf("Esc in the pick's frame: %d shots taken, want none", len(e.shots)-n)
-	}
-	for range 5 {
-		time.Sleep(20 * time.Millisecond)
+	for _, how := range []string{"a click", "a drag", "a drag too small to grab"} {
+		e.startAt(p, "primary")
+		n := len(e.shots)
+		e.press(p)
 		e.frame()
-	}
-	if e.tool.Reviewing() || e.tool.Active() || e.copied != nil || e.tool.lastRep != nil {
-		t.Fatalf("after Esc in the pick's frame: reviewing %v, session %v, copied %v, a report delivered %v", e.tool.Reviewing(), e.tool.Active(), e.copied != nil, e.tool.lastRep != nil)
-	}
-	if k := len(e.host.toasts); k == 0 || !strings.Contains(e.host.toasts[k-1], "discarded") {
-		t.Errorf("toasts after Esc in the pick's frame %q, want the review's discarded one", e.host.toasts)
+		end := p
+		switch how {
+		case "a drag":
+			end = f32.Pt(700, 500)
+		case "a drag too small to grab":
+			end = p.Add(f32.Pt(20, 4)) // past the slop, under minRegion one way
+		}
+		if end != p {
+			e.dragTo(end)
+			e.frame()
+		}
+		e.releaseAt(end)
+		e.key(key.NameEscape, 0)
+		e.frame()
+		if !e.tool.Active() || e.tool.Reviewing() || len(e.shots) != n {
+			t.Fatalf("Esc in the frame %s was let go of: session %v, reviewing %v, %d shots; want only the press dropped, the session on", how, e.tool.Active(), e.tool.Reviewing(), len(e.shots)-n)
+		}
+		for range 3 {
+			time.Sleep(20 * time.Millisecond)
+			e.frame()
+		}
+		if e.tool.Reviewing() || e.copied != nil || e.tool.lastRep != nil || len(e.shots) != n {
+			t.Fatalf("after Esc with %s: reviewing %v, copied %v, a report delivered %v, %d shots", how, e.tool.Reviewing(), e.copied != nil, e.tool.lastRep != nil, len(e.shots)-n)
+		}
+		e.queue(pointer.Event{Kind: pointer.Move, Position: p.Add(f32.Pt(3, 0))})
+		e.frame()
+		e.frame()
+		if label, _, ok := e.tool.Hovered(); !ok || label != "primary" {
+			t.Errorf("after Esc with %s: the picker outlines %q (%v), want it going on over the primary area", how, label, ok)
+		}
+		e.key(key.NameEscape, 0)
+		e.frame()
+		if e.tool.Active() {
+			t.Fatalf("a second Esc after %s left the session on", how)
+		}
 	}
 
 	// the next session: a pick, its review in the frame after
+	n := len(e.shots)
 	e.startAt(p, "primary")
 	e.shiftClick(p, false, false)
 	e.frame()
@@ -218,5 +298,158 @@ func TestEscDuringPreparation(t *testing.T) {
 	e.frame()
 	if e.tool.Active() || e.copied != nil {
 		t.Errorf("Esc in the review: session %v, copied %v", e.tool.Active(), e.copied != nil)
+	}
+	if k := len(e.host.toasts); k == 0 || !strings.Contains(e.host.toasts[k-1], "discarded") {
+		t.Errorf("toasts after Esc in the review %q, want the review's discarded one", e.host.toasts)
+	}
+}
+
+// TestRegionEnterOpensReview: Enter or Mod+C in the frame a dragged region
+// is let go of doesn't copy the region at once (review of a8fa243c): its
+// review is the only place it can be blurred, so the review opens with
+// nothing copied, and Enter there copies. An element's pick still copies
+// at once (TestEnterRightAfterPick: its margin is blurred anyway).
+func TestRegionEnterOpensReview(t *testing.T) {
+	e := newDragEnv(t)
+	for _, k := range []struct {
+		name key.Name
+		mods key.Modifiers
+	}{{key.NameReturn, 0}, {"C", key.ModShortcut}} {
+		e.copied = nil
+		e.tool.Toggle()
+		e.frame()
+		from, to := f32.Pt(150, 120), f32.Pt(450, 320)
+		e.press(from)
+		e.frame()
+		e.dragTo(to)
+		e.frame()
+		e.releaseAt(to)
+		e.key(k.name, k.mods)
+		e.frame()
+		e.tool.Wait()
+		e.frame()
+		if e.copied != nil || !e.tool.Reviewing() {
+			t.Fatalf("%v%v in the region's release frame: copied %v, reviewing %v; want its review, nothing copied", k.mods, k.name, e.copied != nil, e.tool.Reviewing())
+		}
+		e.key(key.NameReturn, 0)
+		e.frame()
+		e.tool.Wait()
+		e.frame()
+		if e.copied == nil || e.tool.Active() {
+			t.Errorf("Enter in the region's review: copied %v, session %v", e.copied != nil, e.tool.Active())
+		}
+	}
+}
+
+// TestEnterMidMarkKeepsIt: Enter while a rect is still being dragged out
+// in the review copies the image with that rect blurred (review of
+// a8fa243c: the rect joined the marks only when the button came up, so
+// what was being blurred went out sharp): the copy is what the review's
+// Enter copies with the rect marked.
+func TestEnterMidMarkKeepsIt(t *testing.T) {
+	e := newDragEnv(t)
+	e.tool.Toggle()
+	e.frame()
+	from, to := f32.Pt(150, 120), f32.Pt(450, 320)
+	e.press(from)
+	e.frame()
+	e.dragTo(to)
+	e.frame()
+	e.releaseAt(to)
+	e.frame()
+	if !e.tool.Reviewing() || len(e.shots) != 1 {
+		t.Fatalf("after the region: reviewing %v, %d shots", e.tool.Reviewing(), len(e.shots))
+	}
+	e.untilReady()
+	v := e.tool.ReviewView()
+	a, b := v.Min.Add(v.Size().Div(3)), v.Min.Add(v.Size().Mul(2).Div(3))
+	pa, pb := f32.Pt(float32(a.X), float32(a.Y)), f32.Pt(float32(b.X), float32(b.Y))
+	e.press(pa)
+	e.frame()
+	e.dragTo(pb)
+	e.frame()
+	if marks, _, _ := e.tool.Marks(); len(marks) != 0 {
+		t.Fatalf("marks %v before the button came up", marks)
+	}
+	m := e.tool.rev.markFor(pa, pb)
+	if m.Empty() {
+		t.Fatal("the drag covers no shot px")
+	}
+	e.key(key.NameReturn, 0)
+	e.frame()
+	e.tool.Wait()
+	e.frame()
+	img, ok := e.copied.(*image.RGBA)
+	if !ok {
+		t.Fatalf("Enter mid-drag copied %T", e.copied)
+	}
+	shot := noiseShot(ShotSize(e.shots[0], e.ks[0]), 1)
+	want, err := Compose(shot, shot.Bounds(), e.ks[0], e.tool.lastRep.Lines(), m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.Bounds() != want.Bounds() || !bytes.Equal(img.Pix, want.Pix) {
+		t.Errorf("Enter mid-drag: the copy (%v) isn't the image with the rect being drawn (%v in the shot) blurred", img.Bounds(), m)
+	}
+}
+
+// frameUnshot is a frame whose AfterFrame doesn't run (a frame under the
+// boot placeholder).
+func (e *dragEnv) frameUnshot() {
+	e.host.drain()
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source(), Ops: &e.ops}
+	if ops := e.tool.Frame(gtx); ops != nil {
+		e.r.Frame(ops)
+		return
+	}
+	e.ops.Reset()
+	g := e.tool.Begin(gtx)
+	e.content(g)
+	e.tool.End(gtx)
+	e.r.Frame(&e.ops)
+}
+
+// TestGiveUpDropsCapture: a pick whose frame is never shot ends the
+// session at the next frame with a toast, and drops the capture with it:
+// no later frame's AfterFrame shoots it or opens a review after the
+// session ended (review of a8fa243c).
+func TestGiveUpDropsCapture(t *testing.T) {
+	e := newDragEnv(t)
+	p := f32.Pt(400, 300)
+	e.startAt(p, "primary")
+	n := len(e.shots)
+	e.shiftClick(p, false, false)
+	e.frameUnshot() // the pick's
+	e.frameUnshot() // the next: given up
+	if e.tool.Active() {
+		t.Fatal("the session went on after its pick's frame was never shot")
+	}
+	if k := len(e.host.toasts); k == 0 || !strings.Contains(e.host.toasts[k-1], "wasn't drawn") {
+		t.Errorf("toasts %q, want the give-up's", e.host.toasts)
+	}
+	e.frame()
+	e.frame()
+	if len(e.shots) != n || e.tool.Reviewing() || e.tool.Active() {
+		t.Errorf("after the give-up: %d shots, reviewing %v, session %v; want nothing", len(e.shots)-n, e.tool.Reviewing(), e.tool.Active())
+	}
+}
+
+// TestCloseLogsCapture: the tool closed with a review up (sign-out, the
+// tool turned off, hide to tray) logs the capture's stage-time line, as
+// every capture does whatever ends it.
+func TestCloseLogsCapture(t *testing.T) {
+	e := newDragEnv(t)
+	p := f32.Pt(400, 300)
+	e.startAt(p, "primary")
+	e.shiftClick(p, false, false)
+	e.frame()
+	if !e.tool.Reviewing() {
+		t.Fatal("no review after the click")
+	}
+	e.frame()
+	before := LastTimes()
+	e.tool.Close()
+	if got := LastTimes(); got == before || !strings.Contains(got, "closed") {
+		t.Errorf("Close with a review up logged %q (before it %q), want the capture's line, closed", got, before)
 	}
 }

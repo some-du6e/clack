@@ -1,6 +1,9 @@
 package blockkit
 
-import "image"
+import (
+	"image"
+	"strings"
+)
 
 // Read-only views of blockkit's state and the user's modal actions, for
 // tests and debugging (UI goroutine only).
@@ -100,6 +103,33 @@ func (s *Stack) fields() []FieldInfo {
 		fi.R = image.Rectangle{Min: org, Max: org.Add(w.box)}
 		fi.Body = s.bodyR
 		out = append(out, fi)
+	}
+	return out
+}
+
+// ModalSelects lists the select menus (static_select, users_select…) of
+// the open modal's top view's input blocks as ModalFields lists its text
+// inputs: R is the field, the anchor its menu opens at.
+func ModalSelects(h Host) []FieldInfo {
+	s := openStack(h)
+	if s == nil || len(s.views) == 0 {
+		return nil
+	}
+	sf := s.top()
+	var out []FieldInfo
+	for i := range sf.blocks {
+		b := &sf.blocks[i]
+		if b.Type != "input" || b.Element == nil || !strings.HasSuffix(b.Element.Type, "_select") {
+			continue
+		}
+		e := b.Element
+		w := sf.ws[b.BlockID+"\x00"+e.ActionID+"\x00"+e.Type]
+		if w == nil {
+			continue
+		}
+		org := sf.org.Add(w.pos)
+		out = append(out, FieldInfo{BlockID: b.BlockID, ActionID: e.ActionID, Type: e.Type, Focused: w.focusedD,
+			R: image.Rectangle{Min: org, Max: org.Add(w.box)}, Body: s.bodyR})
 	}
 	return out
 }

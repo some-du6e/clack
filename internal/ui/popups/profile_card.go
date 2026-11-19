@@ -69,7 +69,10 @@ type ProfileCard struct {
 	msgBtn, huddleBtn, vipBtn, moreBtn widget.Clickable
 	moreLocal                          image.Rectangle // kebab rect, card coords
 	huddleLocal                        image.Rectangle // Huddle button rect, card coords
-	key                                string          // slackc instance key
+	// the header's name line and its presence dot as last drawn
+	// unpatched, card coords (NameRect, PresenceRect: tests)
+	nameLine, dotLine image.Rectangle
+	key               string // slackc instance key
 	// texty is the composer's slug card (NewTextyHoverCard): Texty's
 	// Popover placement and hideButtons
 	texty bool
@@ -161,6 +164,21 @@ func (p *ProfileCard) ensureTeam(u core.User) {
 
 // Rect is the card's bounds in window coordinates (after a Layout).
 func (p *ProfileCard) Rect() image.Rectangle { return p.rect }
+
+// NameRect is the header's name line (the name, then the presence dot) and
+// PresenceRect the dot, in window px as last drawn, empty before the card
+// is drawn or with no dot (tests; a plugin's header draws its own).
+func (p *ProfileCard) NameRect() image.Rectangle { return p.inCard(p.nameLine) }
+
+// PresenceRect: see NameRect.
+func (p *ProfileCard) PresenceRect() image.Rectangle { return p.inCard(p.dotLine) }
+
+func (p *ProfileCard) inCard(r image.Rectangle) image.Rectangle {
+	if r.Empty() || p.rect.Empty() {
+		return image.Rectangle{}
+	}
+	return r.Add(p.rect.Min)
+}
 
 // Holding reports whether a menu the card opened is still showing (a hover
 // card stays open under it, like Slack's: the menu is inside the trigger).
@@ -490,6 +508,9 @@ func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 		defer op.Offset(image.Pt(colX, top)).Push(gtx.Ops).Pop()
 		colCall.Add(gtx.Ops)
 	}()
+	if ok {
+		p.nameLine, p.dotLine = p.nameLine.Add(image.Pt(colX, bh+top)), p.dotLine.Add(image.Pt(colX, bh+top))
+	}
 	y := bh + pad + maxInt(av, inner) + pad
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
@@ -522,9 +543,14 @@ func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 	lineH := dp(gtx, 22)
 	y := 0
 	// name + presence
-	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+	nd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		return pfNameLine(gtx, p.h, th, &p.nameBtn, u, 15, 22, 10, colW)
 	})
+	p.nameLine, p.dotLine = image.Rect(0, 0, nd.Size.X, lineH), image.Rectangle{}
+	if pfShowsPresence(u) { // the dot ends the line (pfNameLine), centred in it
+		dot := dp(gtx, 10)
+		p.dotLine = image.Rect(nd.Size.X-dot, (lineH-dot)/2, nd.Size.X, (lineH-dot)/2+dot)
+	}
 	y += lineH
 	if pfSubtextShown(u.Title) {
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
