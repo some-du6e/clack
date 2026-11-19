@@ -38,6 +38,8 @@ below are the alternative.
 | `img/` | the screenshots, made by `tools/images.mjs`, with `images.json` saying where each came from |
 | `tools/check.mjs`, `tools/weigh.mjs`, `lighthouserc*.json` | the budgets CI holds the page to |
 | `tools/shots.mjs` | before and after pictures of the page against an earlier commit's build |
+| `demo/` | the web demo's page; its program comes from CI ([The web demo](#the-web-demo)) |
+| `tools/demo-pack.mjs`, `tools/demo-test.mjs` | the web demo's packing and its test in headless Chrome |
 | `tools/font.py` | makes the heading font from TeX Gyre Adventor |
 | `wrangler.jsonc` | for serving the site from Cloudflare instead |
 | `package.json` | Lighthouse CI for CI, and sharp for `tools/images.mjs`; the build needs neither |
@@ -143,6 +145,63 @@ land changes with the time of the run: look at the pictures before
 committing them. `node tools/images.mjs --run <run> --from <demo-shots dir>`
 makes the same files locally, with sharp from `npm install`.
 
+## The web demo
+
+`demo/` is Clack in the browser, at getclack.club/demo/: `cmd/clack-web`,
+the real Clack built with Gio's js/wasm target, signed in to Quillfeather
+Paper Co. with the fake Slack server running in the same page. The homepage
+only links to it and never loads any of it (`tools/weigh.mjs` fails a visit
+that does).
+
+It can't reach the network:
+
+- A page has no sockets, so the fake serves on an in-memory listener
+  (`internal/memnet`) and every connection Clack opens goes to it
+  (`demo.StartInMemory`, `tlsfp.SetLoopbackDialer`), the realtime socket's
+  too. `third_party/websocket` is coder/websocket without its browser
+  backend, which would have opened a real WebSocket to 127.0.0.1.
+- Files live in the page's memory (`demo/fs.js`, an in-memory file system
+  for Go's js runtime), so a reload starts over.
+- The CI test fails on any request or WebSocket that isn't to its own
+  local server.
+
+Left out, behind `GOOS=js` build constraints, and said so on the page in one
+line: plugins' JavaScript runtime (`internal/jsrt/engine_js.go`: no QuickJS
+and no wazero), huddles and their video (`internal/huddle/rtc` stands in for
+pion/webrtc and opens no connection, so joining fails with "huddles aren't
+part of the browser demo"), and desktop integrations, which have no browser
+counterpart (Clack's fallbacks for other systems apply).
+
+It's built and tested in CI only, by the site workflow's demo job:
+
+1. `go test ./internal/memnet/` and `TestInMemory` (internal/demo), the
+   in-memory wiring on a normal process.
+2. `node build.mjs`, then
+   `GOOS=js GOARCH=wasm go build -o dist/demo/main.wasm ./cmd/clack-web`,
+   with Go's `wasm_exec.js` beside it.
+3. `tools/demo-pack.mjs` splits main.wasm into parts of at most 24 MiB
+   (Cloudflare's static assets take 25 MiB a file) and writes build.json,
+   which the page reads for the parts and the size.
+4. `tools/check.mjs --demo`.
+5. `tools/demo-test.mjs`: headless Chrome, with WebGL on SwiftShader as a
+   machine without a GPU has it, opens the demo, waits for the first frame
+   and the channel list, types a message into the composer, sends it with
+   Enter and checks the fake has it, with no console error. Its screenshots
+   and timings are the run's `site-demo-test` artifact.
+
+The run's `site-demo` artifact is `dist/demo/` with the program, ready to
+deploy. To deploy the site with it:
+
+```sh
+node build.mjs --refresh
+gh run download <site run> --repo some-du6e/clack --name site-demo --dir <empty dir>
+cp <empty dir>/* dist/demo/
+wrangler deploy
+```
+
+Without the program, `dist/demo/` is the page alone, which says the demo
+isn't in that build.
+
 ## The heading font
 
 slack.com sets its headings in a licensed Avant Garde. The page uses
@@ -247,7 +306,8 @@ deploys:
 - The Worker `clack-site` serves `dist/` as static assets. `wrangler.jsonc`
   holds its setup: getclack.club and www.getclack.club as custom domains,
   workers.dev off, and `404.html` for unknown paths. Deploy with
-  `node build.mjs --refresh && wrangler deploy`.
+  `node build.mjs --refresh && wrangler deploy`, with the web demo's program
+  copied into `dist/demo/` in between ([The web demo](#the-web-demo)).
 - Always Use HTTPS is on.
 - A Response Header Transform Rule removes Cloudflare's Network Error
   Logging headers (`nel` and `report-to`), so visitors' browsers don't
