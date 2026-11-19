@@ -246,6 +246,28 @@ type TaskFrequency struct {
 	OnDays           []string // Monday … Sunday
 	OnWeekNum        *int     // 1…4, -1 for the last
 	OnLastDayOfMonth bool
+	// keys are the keys the trigger sent (nil for one built in Go): TGBB
+	// matches a menu option with lodash's deep isEqual, so a key past the
+	// option's own (repeats_every 1, on_last_day_of_month false) makes it
+	// custom
+	keys map[string]bool
+}
+
+// exactly reports whether the frequency, as sent, has only these keys.
+// A frequency built in Go has no key record and passes.
+func (f *TaskFrequency) exactly(keys ...string) bool {
+	if f.keys == nil {
+		return true
+	}
+	if len(f.keys) != len(keys) {
+		return false
+	}
+	for _, k := range keys {
+		if !f.keys[k] {
+			return false
+		}
+	}
+	return true
 }
 
 // Paused is AgentTaskItem's F (showUnpublished, as the Tasks tab sets
@@ -336,13 +358,7 @@ type rawTaskTrigger struct {
 		Timezone        string          `json:"timezone"`
 		OccurrenceCount int             `json:"occurrence_count"`
 		TimeBucket      string          `json:"time_bucket"`
-		Frequency       *struct {
-			Type             string   `json:"type"`
-			RepeatsEvery     int      `json:"repeats_every"`
-			OnDays           []string `json:"on_days"`
-			OnWeekNum        *int     `json:"on_week_num"`
-			OnLastDayOfMonth bool     `json:"on_last_day_of_month"`
-		} `json:"frequency"`
+		Frequency       json.RawMessage `json:"frequency"`
 	} `json:"schedule"`
 }
 
@@ -422,6 +438,31 @@ func promptText(raw json.RawMessage) string {
 }
 
 // agentTaskOf merges a workflow with its trigger (nil for none).
+// taskFrequencyOf is a trigger's schedule.frequency, with the keys it
+// came with (nil for none).
+func taskFrequencyOf(raw json.RawMessage) *TaskFrequency {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var f struct {
+		Type             string   `json:"type"`
+		RepeatsEvery     int      `json:"repeats_every"`
+		OnDays           []string `json:"on_days"`
+		OnWeekNum        *int     `json:"on_week_num"`
+		OnLastDayOfMonth bool     `json:"on_last_day_of_month"`
+	}
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(raw, &f) != nil || json.Unmarshal(raw, &keys) != nil {
+		return nil
+	}
+	out := &TaskFrequency{Type: f.Type, RepeatsEvery: f.RepeatsEvery, OnDays: f.OnDays, OnWeekNum: f.OnWeekNum,
+		OnLastDayOfMonth: f.OnLastDayOfMonth, keys: map[string]bool{}}
+	for k := range keys {
+		out.keys[k] = true
+	}
+	return out
+}
+
 func agentTaskOf(w rawTaskWorkflow, tr *rawTaskTrigger) AgentTask {
 	t := AgentTask{WorkflowID: w.ID, Title: w.Title, Description: w.Description, AppID: w.AppID,
 		Collaborators: w.Collaborators, CreationSourceID: w.CreationSourceID, DateUpdated: jsonInt64(w.DateUpdated), Empty: w.IsEmpty}
@@ -461,10 +502,7 @@ func agentTaskOf(w rawTaskWorkflow, tr *rawTaskTrigger) AgentTask {
 	if s := tr.Schedule; s != nil && tr.Type == "scheduled" {
 		ts := &TaskSchedule{StartTime: jsonTime(s.StartTime), EndTime: jsonTime(s.EndTime), Timezone: s.Timezone,
 			OccurrenceCount: s.OccurrenceCount, TimeBucket: s.TimeBucket}
-		if f := s.Frequency; f != nil {
-			ts.Frequency = &TaskFrequency{Type: f.Type, RepeatsEvery: f.RepeatsEvery, OnDays: f.OnDays, OnWeekNum: f.OnWeekNum,
-				OnLastDayOfMonth: f.OnLastDayOfMonth}
-		}
+		ts.Frequency = taskFrequencyOf(s.Frequency)
 		t.Schedule = ts
 	}
 	return t

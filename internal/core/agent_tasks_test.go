@@ -483,3 +483,29 @@ func TestAgentTasksFeatureAccessLive(t *testing.T) {
 		t.Error("agent_tasks__write still on after the event turned it off")
 	}
 }
+
+// TestAgentTasksMonthlyNthDayShape: TGBB matches the monthly option with
+// a deep isEqual against {type, onDays, onWeekNum}, so a trigger that
+// also sends repeats_every 1 is "custom" and its time-bucket line says so
+// (znID), not "repeats monthly on the first Monday".
+func TestAgentTasksMonthlyNthDayShape(t *testing.T) {
+	now := time.Date(2026, 11, 18, 20, 0, 0, 0, time.UTC)
+	line := func(freq string) string {
+		raw := `{"id":"Ft1","type":"scheduled","workflow":{"id":"Wf1","app_id":"A1","app":{"id":"A1","is_workflow_app":true}},` +
+			`"schedule":{"start_time":"2026-12-07T18:00:00Z","timezone":"America/Los_Angeles","time_bucket":"morning","frequency":` + freq + `}}`
+		var tr rawTaskTrigger
+		if err := json.Unmarshal([]byte(raw), &tr); err != nil {
+			t.Fatal(err)
+		}
+		return TaskScheduleText(agentTaskOf(rawTaskWorkflow{ID: "Wf1"}, &tr), TaskTextOpts{TimeBuckets: true, Now: now})
+	}
+	exact := line(`{"type":"monthly","on_days":["Monday"],"on_week_num":1}`)
+	extra := line(`{"type":"monthly","repeats_every":1,"on_days":["Monday"],"on_week_num":1}`)
+	const nth = "repeats monthly on the first Monday"
+	if !strings.Contains(exact, nth) {
+		t.Errorf("exactly {type, on_days, on_week_num}: %q, want %q", exact, nth)
+	}
+	if strings.Contains(extra, nth) {
+		t.Errorf("with repeats_every 1: %q, want Slack's custom repeat (its isEqual fails on the extra key)", extra)
+	}
+}

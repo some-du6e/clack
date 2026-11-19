@@ -178,8 +178,9 @@ func scheduleOption(s TaskSchedule, d time.Time) string {
 		if nth == 0 {
 			nth = 1
 		}
+		// afel {type: "monthly", onDays: [day], onWeekNum: nth}, deep-equal
 		if len(f.OnDays) == 1 && f.OnDays[0] == d.Weekday().String() && f.OnWeekNum != nil && *f.OnWeekNum == nth &&
-			!f.OnLastDayOfMonth && f.RepeatsEvery <= 1 {
+			!f.OnLastDayOfMonth && f.RepeatsEvery <= 1 && f.exactly("type", "on_days", "on_week_num") {
 			return "monthly_nth_day"
 		}
 		if f.OnLastDayOfMonth && d.AddDate(0, 0, 1).Month() != d.Month() {
