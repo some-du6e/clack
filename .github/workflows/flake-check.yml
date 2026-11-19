@@ -1350,8 +1350,10 @@ jobs:
   # ... i see it like in my activity tab first"): replies from people the
   # client never fetched, users/info answering after 1.5 s, the entries
   # before or after the message, someone else never fetched typing in the
-  # thread 100 ms before each; Activity with the thread beside it,
-  # natively and under a component patch. Dispatch with only=thread-replies.
+  # thread 100 ms before each; Activity with the thread beside it; a reply
+  # counts once the pane's row paints it, within two frames and 250 ms;
+  # natively, under a messages-slice patch and under a component patch.
+  # Dispatch with only=thread-replies.
   thread-replies:
     if: ${{ !inputs.only || startsWith('thread-replies', inputs.only) }}
     runs-on: ubuntu-latest
