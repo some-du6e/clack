@@ -229,7 +229,8 @@ func (l *lay) facepile(c *richtext.CallCard, x, y, shown int) {
 			if extra > 9 {
 				t = "9+"
 			}
-			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: rgba(0, 0, 0, 0.5), target: -1, layer: 1})
+			// .c-avatar__additional_overlay: over the face, under its text
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: rgba(0, 0, 0, 0.5), target: -1, layer: 2})
 			ks := faceKey{f: font.Font{Typeface: l.st.Face, Weight: font.Bold}, size: fixedPx(l.sp(15))}
 			fs := flowStyle{face: ks.f, size: l.sp(15), lineH: s, col: rgb(255, 255, 255), emoji: l.dp(16), maxLines: 1, noSelect: true}
 			tw := int(l.measure(t, ks) + 0.999)
