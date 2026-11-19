@@ -32,8 +32,10 @@ func fenceShape(bs []Block) string {
 // or one of _*?.,-!^;:{([%$#+=" opens one; the first ``` after it with
 // the end, whitespace or one of _*?.,-!^;:})]%$#+=…" after it closes it;
 // a block of only whitespace keeps its backticks, as do fences without
-// those edges or without a close. Karim (2026-11-18): an app's "Inspect
-// message" modal, "Here's the raw JSON from that message: ```{ …".
+// those edges or without a close; a <…> token before a fence is an edge
+// (TSF's placeholder ends in "-"), and only ASCII whitespace is blank.
+// Karim (2026-11-18): an app's "Inspect message" modal, "Here's the raw
+// JSON from that message: ```{ …".
 func TestMrkdwnFences(t *testing.T) {
 	for _, c := range []struct{ name, in, want string }{
 		{"after text", "Here's the raw JSON from that message: ```{\n  \"type\": \"message\",\n  \"text\": \"hi\"\n}```",
@@ -48,6 +50,12 @@ func TestMrkdwnFences(t *testing.T) {
 		{"spaces, then a block", "``` ``` ```x```", "p[``` ``` ] pre[x]"},
 		{"unterminated", "look: ```{ \"a\": 1", "p[look: ```{ \"a\": 1]"},
 		{"two", "```a```\n```b```", "pre[a] pre[b]"},
+		// a <…> token is a placeholder ending in "-" when pre_rx runs
+		{"after a mention", "<@U1>```code```", "p[@alice] pre[code]"},
+		{"after a link", "<https://x.example|log>```a```", "p[log] pre[a]"},
+		// StringTools.trim keeps a no-break space; JS's \s has U+FEFF
+		{"no-break space block", "```\u00a0```", "pre[\u00a0]"},
+		{"U+FEFF edge", "a\ufeff```x```", "p[a\ufeff] pre[x]"},
 	} {
 		got := FromMrkdwn(R, c.in)
 		if s := fenceShape(got); s != c.want {

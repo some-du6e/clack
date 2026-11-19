@@ -52,15 +52,34 @@ const (
 // preEdge reports whether r may stand next to a fence (set is preBefore
 // or preAfter).
 func preEdge(r rune, set string) bool {
-	return unicode.IsSpace(r) || strings.ContainsRune(set, r) || r >= 0x2000 && r <= 0x206f || r >= 0x2e00 && r <= 0x2e7f
+	return jsWhitespace(r) || strings.ContainsRune(set, r) || r >= 0x2000 && r <= 0x206f || r >= 0x2e00 && r <= 0x2e7f
 }
+
+// jsWhitespace is JavaScript's \s, which pre_rx's edges use: ASCII's
+// whitespace, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F,
+// U+205F, U+3000 and U+FEFF (not U+0085, which Go's unicode.IsSpace has).
+func jsWhitespace(r rune) bool {
+	switch r {
+	case '\t', '\n', '\v', '\f', '\r', ' ', 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff:
+		return true
+	}
+	return r >= 0x2000 && r <= 0x200a
+}
+
+// tsfBlank is whether s is blank to TSF (Haxe's StringTools.trim: only
+// \t, \n, \v, \f, \r and space), which keeps a block of only those as its
+// backticks.
+func tsfBlank(s string) bool { return strings.Trim(s, " \t\n\v\f\r") == "" }
 
 // mrkdwnFences splits text at its ``` blocks, as TSF's doSpecials finds
 // them with pre_rx: a ``` at the start or after whitespace or a preBefore
 // character opens one, and the first ``` after it that the end,
-// whitespace or a preAfter character follows closes it. A block of only
-// whitespace stays as it was, backticks and all; so does a fence with no
-// edge (a```b```c) or no close. The odd parts are the blocks' contents.
+// whitespace or a preAfter character follows closes it. A <…> token right
+// before a fence is an edge too: TSF swaps every token for a placeholder
+// ending in "-" (placeholdStr) before pre_rx runs, and the text is
+// escaped, so a raw '>' only ends a token. A block of only whitespace
+// stays as it was, backticks and all; so does a fence with no edge
+// (a```b```c) or no close. The odd parts are the blocks' contents.
 func mrkdwnFences(text string) []string {
 	var parts []string
 	last, pos := 0, 0 // the literal part's start; where the scan goes on
@@ -70,7 +89,7 @@ func mrkdwnFences(text string) []string {
 			break
 		}
 		i += pos
-		if r, _ := utf8.DecodeLastRuneInString(text[:i]); i > 0 && !preEdge(r, preBefore) {
+		if r, _ := utf8.DecodeLastRuneInString(text[:i]); i > 0 && r != '>' && !preEdge(r, preBefore) {
 			pos = i + 1
 			continue
 		}
@@ -89,7 +108,7 @@ func mrkdwnFences(text string) []string {
 		if j < 0 {
 			break // no fence after this one closes: none after it would
 		}
-		if body := text[i+3 : j]; strings.TrimSpace(body) != "" {
+		if body := text[i+3 : j]; !tsfBlank(body) {
 			parts = append(parts, text[last:i], body)
 			last = j + 3
 		}
