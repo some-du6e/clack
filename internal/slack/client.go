@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/some-du6e/clack/internal/slack/tlsfp"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Creds is the on-disk credential file (~/.config/clack/creds.json).
@@ -853,7 +854,10 @@ func FileURL(u *url.URL) bool {
 // one- and two-dot leaders, the ellipsis and the vertical presentation
 // forms of the ellipsis and the two-dot leader, plus the space a segment
 // like ". ." pads with, and U+FFFD, which a byte that isn't UTF-8 reads as
-// (plainForm). Written as code points so no look-alike sits in source.
+// (plainForm). readForm's NFKC already folds the look-alikes to '.' (and
+// NBSP and the other compatibility spaces to ' '); they're listed too so
+// the test doesn't rest on the tables alone. Written as code points so no
+// look-alike sits in source.
 var dotLike = ". " + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0x2024)) + string(rune(0x2025)) +
 	string(rune(0x2026)) + string(rune(0xFE19)) + string(rune(0xFE30)) + string(utf8.RuneError)
 
@@ -863,28 +867,33 @@ var dotLike = ". " + string(rune(0xFF0E)) + string(rune(0xFE52)) + string(rune(0
 const maxDecodes = 4
 
 // plainPath reports whether u's path can't be read as another path by a
-// server that normalises it, however many times that server decodes it.
-// It checks the path as sent (EscapedPath) and after each decode, up to
-// maxDecodes, until decoding changes nothing (a path still changing after
-// that is refused). Each form must hold no byte a lenient UTF-8 decoder
-// could read as '.', '/' or '\' (the overlong %c0%ae; other invalid bytes
-// read as U+FFFD), no backslash, NUL or other control byte, and no segment
-// made only of dots, dot look-alikes or U+FFFD (also with a ";…" parameter
-// cut, as some proxies strip it). An encoded slash that decodes to a real
-// one only adds a segment, so a file named "uploads%2F2024.jpg" still
-// works; what it decodes to is checked like the rest.
+// server that normalises it, however many times that server decodes it:
+// every form pathForms reads it in must be plain (plainForm). An encoded
+// slash that decodes to a real one only adds a segment, so a file named
+// "uploads%2F2024.jpg" still works; what it decodes to is checked like the
+// rest.
 func plainPath(u *url.URL) bool {
+	_, ok := pathForms(u)
+	return ok
+}
+
+// pathForms returns the forms of u's path a lenient server could read: as
+// sent (EscapedPath), then after each decode until decoding changes
+// nothing. ok is false when one of them isn't plain (plainForm) or the
+// path still changes after maxDecodes decodes.
+func pathForms(u *url.URL) (forms []string, ok bool) {
 	p := u.EscapedPath()
 	for i := 0; ; i++ {
 		if !plainForm(p) {
-			return false
+			return nil, false
 		}
+		forms = append(forms, p)
 		next := lenientUnescape(p)
 		if next == p {
-			return true
+			return forms, true
 		}
 		if i == maxDecodes {
-			return false
+			return nil, false
 		}
 		p = next
 	}
@@ -896,7 +905,10 @@ func plainPath(u *url.URL) bool {
 // a dot in the segment test (a decoder may drop it, leaving only dots).
 // So a name with a literal "%" before two hex digits that aren't UTF-8
 // (100%Beef.jpg, a Latin-1 caf%E9.pdf typed as it was saved) still works,
-// and "..%BE" doesn't.
+// and "..%BE" doesn't. The form may hold no backslash, NUL or other
+// control byte. Then, read as a normalising server could (readForm), no
+// segment, split on '/' and '\' with a ";…" parameter cut (some proxies
+// strip it), may be made only of dotLike.
 func plainForm(p string) bool {
 	for i := 0; i < len(p); {
 		r, n := utf8.DecodeRuneInString(p[i:])
@@ -908,27 +920,31 @@ func plainForm(p string) bool {
 		}
 		i += n
 	}
-	for _, seg := range strings.Split(p, "/") {
+	for _, seg := range strings.FieldsFunc(readForm(p), pathSep) {
 		if i := strings.IndexByte(seg, ';'); i >= 0 {
 			seg = seg[:i]
 		}
-		if seg != "" && dotOnly(seg) {
+		if seg != "" && strings.Trim(seg, dotLike) == "" {
 			return false
 		}
 	}
 	return true
 }
 
-// dotOnly reports whether every character of seg is dotLike, each byte of
-// invalid UTF-8 counting as U+FFFD.
-func dotOnly(seg string) bool {
-	for _, r := range seg { // an invalid byte ranges as utf8.RuneError
-		if !strings.ContainsRune(dotLike, r) {
-			return false
-		}
-	}
-	return true
+// readForm is form p as a server that normalises Unicode could read it:
+// each byte that isn't UTF-8 as U+FFFD, then NFKC, which folds the
+// fullwidth solidus U+FF0F to '/', the fullwidth and small reverse solidi
+// U+FF3C and U+FE68 to '\', the dot look-alikes to dots and NBSP and the
+// other compatibility spaces to ' '. So "..%EF%BC%8Fssb" reads as "../ssb".
+// Names keep working: NFKC composes an NFD "cafe" + U+0301 to the NFC one,
+// and Japanese and the like are unchanged.
+func readForm(p string) string {
+	return norm.NFKC.String(strings.ToValidUTF8(p, string(utf8.RuneError)))
 }
+
+// pathSep reports whether r separates segments for a server that reads a
+// backslash as a slash, as some do.
+func pathSep(r rune) bool { return r == '/' || r == '\\' }
 
 // smuggles reports whether p[i], a byte that isn't part of valid UTF-8,
 // is one a lenient decoder could read as an ASCII '.', '/' or '\': the
