@@ -183,6 +183,12 @@ int cocoatest_reopen(int visible, int *handled) {
 	}
 }
 
+void cocoatest_terminate(void) {
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[NSApp terminate:nil];
+	});
+}
+
 void cocoatest_post_did_become_active(void) {
 	@autoreleasepool {
 		[[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidBecomeActiveNotification object:NSApp];

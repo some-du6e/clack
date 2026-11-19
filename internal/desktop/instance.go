@@ -32,16 +32,22 @@ type Instance struct {
 	path string
 }
 
-// SocketPath is the per-user, per-config-directory socket the instances
-// talk over (AF_UNIX works on Linux, macOS and Windows 10 1803+). Separate
-// CLACK_HOME directories get separate instances.
-func SocketPath(configDir string) string {
+// InstanceKey names configDir's instance: separate CLACK_HOME directories
+// are separate instances (their own socket, their own run record).
+func InstanceKey(configDir string) string {
 	abs, err := filepath.Abs(configDir)
 	if err != nil {
 		abs = configDir
 	}
 	h := sha256.Sum256([]byte(abs))
-	name := fmt.Sprintf("clack-%x.sock", h[:6])
+	return fmt.Sprintf("%x", h[:6])
+}
+
+// SocketPath is the per-user, per-config-directory socket the instances
+// talk over (AF_UNIX works on Linux, macOS and Windows 10 1803+). Separate
+// CLACK_HOME directories get separate instances.
+func SocketPath(configDir string) string {
+	name := "clack-" + InstanceKey(configDir) + ".sock"
 	switch runtime.GOOS {
 	case "windows", "darwin":
 		// Both temp directories are per user (%LOCALAPPDATA%\Temp,

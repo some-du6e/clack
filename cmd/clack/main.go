@@ -397,9 +397,14 @@ func main() {
 	// line about how the last one ended. Not when another Clack holds the
 	// socket: the record is that one's.
 	if !errors.Is(lerr, desktop.ErrAnotherInstance) {
-		if prev := logs.StartRun(fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), started.Format(time.RFC3339))); prev != "" {
+		if prev := logs.StartRun(desktop.InstanceKey(cfg), fmt.Sprintf("clack %s %s/%s pid %d, started %s", version, runtime.GOOS, runtime.GOARCH, os.Getpid(), started.Format(time.RFC3339))); prev != "" {
 			log.Print(prev)
 		}
+	}
+	// Linux X11: a broken X connection ends the process in Xlib's IO error
+	// handler (Gio patch 51); the reason goes first
+	app.X11ConnectionLost = func() {
+		logs.Exit("the X server's connection broke (the X session ended, or the server stopped or was killed)", time.Second)
 	}
 	cacheDir := filepath.Join(cfg, "cache")
 	// build makes the session's client, store and core: it reads the
@@ -497,6 +502,27 @@ func main() {
 	if os.Getenv("CLACK_TIMING") != "" || os.Getenv("YOLOSLACK_TIMING") != "" {
 		log.Printf("timing: main ready: %v", time.Since(started).Round(100*time.Microsecond))
 	}
+	// quit is a request from outside to end Clack (a signal, Windows ending
+	// the session, macOS's terminate:): the exit line and the run record
+	// first, then Clack quits as its own Quit does. The fallback is armed
+	// before anything that can block: a window that never closes (its
+	// thread stuck) still ends the process, 10 s on, and says so.
+	var quitOnce sync.Once
+	quit := func(why string) {
+		quitOnce.Do(func() {
+			time.AfterFunc(10*time.Second, func() {
+				log.Printf("exit: the window didn't close within 10 s of %q, so Clack ended itself", why)
+				logs.Flush(time.Second)
+				os.Exit(1)
+			})
+			logs.Exit(why, time.Second)
+			go func() {
+				flushSession()
+				a.QuitBecause(why)
+			}()
+		})
+	}
+	runDone := make(chan struct{}) // closed once Run's end is recorded
 	var tray *desktop.Tray
 	if runtime.GOOS == "windows" { // Slack's notification-area icon
 		var terr error
@@ -509,38 +535,51 @@ func main() {
 			a.SetTray(tray) // closing the window leaves Clack here (runFromTray)
 			// Windows ending the session (sign-out, shut down, restart, an
 			// installer's Restart Manager) ends the process once the tray
-			// window's WM_ENDSESSION returns: the exit line goes first.
+			// window's WM_ENDSESSION returns: the exit line goes first, then
+			// the quit it starts gets up to 3 s.
 			tray.OnSessionEnd(func(why string) {
-				flushSession()
-				logs.Exit(why, 2*time.Second)
-				a.QuitBecause(why)
+				quit(why)
+				select {
+				case <-runDone:
+				case <-time.After(3 * time.Second):
+				}
 			})
 		}
 	}
 	// Ctrl+C or a closed terminal, kill's SIGTERM, a Linux session's end;
 	// on Windows a console's control events (Go's SIGTERM for close,
 	// sign-out and shutdown). A second signal ends Clack at once.
+	// A signal the launcher ignored stays ignored (nohup's SIGHUP, the
+	// SIGINT of a job a script put in the background): Notify would
+	// install a handler for it.
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	for _, s := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
+		if !signal.Ignored(s) {
+			signal.Notify(sigs, s)
+		}
+	}
 	go func() {
 		s := <-sigs
 		signal.Stop(sigs)
-		why := "signal: " + s.String()
-		flushSession()
-		logs.Exit(why, time.Second)
-		a.QuitBecause(why)
-		time.AfterFunc(10*time.Second, func() { os.Exit(1) }) // the window didn't close
+		quit("signal: " + s.String())
 	}()
 	go func() {
 		err := a.Run()
-		flushSession()
-		tray.Close()
-		inst.Close()
 		code, why := 0, a.ExitReason()
 		if err != nil {
 			log.Print(err)
-			code, why = 1, fmt.Sprintf("%s (%v)", why, err)
+			code = 1
+			if !strings.Contains(why, err.Error()) { // the window's own error is in why already
+				why = fmt.Sprintf("%s (%v)", why, err)
+			}
 		}
+		// the reason and the run record before the instance socket goes: a
+		// Clack started once it's gone makes the record its own
+		logs.Exit(why, time.Second)
+		flushSession()
+		tray.Close()
+		inst.Close()
+		close(runDone)
 		exitWith(logs, code, why) // after what's still queued for the log file
 	}()
 	// app.Events replaces app.Main: macOS delivers slack:// links opened
@@ -553,12 +592,20 @@ func main() {
 	// deadlocked: Clack beachballed when a browser handed it a sign-in link
 	// while it was running (2026-11-08). Do nothing here but hand off.
 	for e := range app.Events {
-		if u, ok := e.(app.URLEvent); ok && u.URL != nil {
-			link := u.URL.String()
-			go func() {
-				a.Raise()
-				openLink(link)
-			}()
+		switch e := e.(type) {
+		case app.URLEvent:
+			if e.URL != nil {
+				link := e.URL.String()
+				go func() {
+					a.Raise()
+					openLink(link)
+				}()
+			}
+		case app.TerminateEvent:
+			// macOS asked Clack to quit (Gio patch 50): AppKit waits while
+			// Clack logs and records why and quits as its own Quit does;
+			// the process ends when Clack exits
+			go quit("macOS asked Clack to quit (the Dock's Quit, log out, restart or shut down, or a quit Apple Event)")
 		}
 	}
 }
