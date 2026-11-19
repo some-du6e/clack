@@ -488,3 +488,43 @@ func TestThreadsGapFloorKeepsOwnWindowLikeSlack(t *testing.T) {
 	}
 	thrGapMore(t, e, v, 4)
 }
+
+// reloadThreads (the sidebar row clicked again) right after a refresh with
+// a gap landed, before a frame settled it: the reload's fetch settles that
+// refresh into the cards it folds, and its gap is fetched no more.
+func TestThreadsReloadSkipsLandedGapLikeSlack(t *testing.T) {
+	f := &thrGapFake{}
+	v, e, fs := thrGapView(t, f)
+	f.n.Store(5) // the gap after r1: r2
+	v.load(actRefresh)
+	for deadline := time.Now().Add(10 * time.Second); v.data.busy(); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the refresh never answered")
+		}
+	}
+	v.Reselect() // before a frame settled the refresh
+	e.until(t, "the reload", func() bool { return v.Settled() && !v.data.busy() })
+	thrBounded(e, 300*time.Millisecond, func() bool { return false })
+	if got := fs.CallCount("conversations.replies"); got != 0 {
+		t.Errorf("%d conversations.replies: the landed refresh's gap went out into the folded cards", got)
+	}
+}
+
+// Two replies between refreshes, both off the socket: the refresh's window
+// is those two, and the span between the card's newest and them is empty
+// as the socket announced (Slack's card takes each reply off the socket
+// and asks nothing), so no conversations.replies goes out.
+func TestThreadsGapAfterTwoRepliesLikeSlack(t *testing.T) {
+	ch := fakeslack.ViewsChannel
+	rs := thrGapReplies
+	f := &thrGapFake{}
+	v, e, fs := thrGapView(t, f)
+	f.n.Store(4)
+	fs.Push(thrReplyEvent(ch, thrGapRoot, rs[2]))
+	thrRefreshAfter(t, e, v, fs, "the refresh after r2 and r3", thrReplyEvent(ch, thrGapRoot, rs[3]))
+	e.until(t, "both replies in the card", func() bool { return slices.Equal(thrGapShown(v), rs[:4]) })
+	thrBounded(e, 300*time.Millisecond, func() bool { return false })
+	if got := fs.CallCount("conversations.replies"); got != 0 {
+		t.Errorf("%d conversations.replies for a span the socket covered, want none", got)
+	}
+}

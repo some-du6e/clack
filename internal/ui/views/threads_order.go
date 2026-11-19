@@ -130,6 +130,7 @@ func (v *Threads) sortingLoad() {
 	v.w.clear()
 	v.mu.Lock()
 	clear(v.named)
+	clear(v.announced)
 	v.reconn = false
 	v.mu.Unlock()
 }
@@ -287,7 +288,7 @@ func (v *Threads) markNewReplies(page thrData) bool {
 // thrOtherAfter reports a reply of the card's newer than after and base
 // from someone other than self.
 func thrOtherAfter(t *thrItem, c *thrCard, after, base, self string) bool {
-	for _, m := range thrShown(t, c) {
+	for _, m := range thrKnown(t, c) {
 		if actTSLess(after, m.TS) && actTSLess(base, m.TS) && m.User != self {
 			return true
 		}
@@ -497,8 +498,8 @@ const thrGapBackoff = 30 * time.Second
 func (v *Threads) fillGap(page thrData, g thrGap) {
 	app := v.h.Core()
 	t := thrByKey(page.items, g.key)
-	if app == nil || t == nil || v.left {
-		return // left: the remount in this frame replaces the cards
+	if app == nil || t == nil || v.left || v.renewing || v.gapAnnounced(g) {
+		return // left or renewing: the cards are being replaced or folded
 	}
 	c := v.cardOf(t)
 	if c.floor != "" && actTSLess(g.after, c.floor) {
@@ -533,6 +534,27 @@ func (v *Threads) fillGap(page thrData, g thrGap) {
 		msgs, more, err := app.RepliesBetween(ctx, ch, root, g.after, g.before, thrOlderLimit)
 		v.notes.run(v.h, func() { v.landGap(g, folds, from, msgs, more || err != nil) })
 	}()
+}
+
+// gapAnnounced reports a refresh's gap the socket covered: it announced
+// the window's first reply and none between the card's newest and it.
+// The socket sends a conversation's messages in order, so nothing came
+// between: Slack's card, which takes each reply off the socket, has no
+// request to make there. A missed event leaves the first reply
+// unannounced, and the span is fetched.
+func (v *Threads) gapAnnounced(g thrGap) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	seen := v.announced[g.key]
+	if !seen[g.before] {
+		return false
+	}
+	for ts := range seen {
+		if actTSLess(g.after, ts) && actTSLess(ts, g.before) {
+			return false
+		}
+	}
+	return true
 }
 
 // thrByKey is the thread key among items, nil when it isn't one.

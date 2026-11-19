@@ -139,6 +139,11 @@ type thrCard struct {
 	olderBusy  bool
 	olderStart bool
 	olderRes   atomic.Pointer[thrOlder]
+	// minVis is minimumVisibleTsByThread for the card, picked in the data's
+	// load minVisLoad (threads_older.go minVisibles): the replies before it
+	// are held but hidden behind "Show N more replies"
+	minVis     string
+	minVisLoad int
 	// folds is the view's fold stamp when the card was made or last went
 	// back to its default first reply (fold): a stamp no other card and
 	// no remount repeats (Threads.folds), so a fetch asked for before it
@@ -274,9 +279,15 @@ type Threads struct {
 	// colour and whether it was the ghost (what tests check as drawn)
 	lines map[string]thrLineDrawn
 	// ban is the unread threads banners' state (threads_banners.go)
-	ban   thrBanners
-	shown shownTracker
-	notes actNotes
+	ban thrBanners
+	// renewing: reloadThreads is starting a new refreshId (fillGap)
+	renewing bool
+	// announced is the replies the socket brought per thread since the
+	// last load that sorted the list (guarded by mu): a refresh's gap the
+	// socket covered is fetched no more (gapAnnounced)
+	announced map[string]map[string]bool
+	shown     shownTracker
+	notes     actNotes
 
 	// kb is the list's keyboard (vlist_keys.go) over Slack's rows:
 	// heading, root, load_older, replies and footer per thread
@@ -360,6 +371,20 @@ func (v *Threads) match(ev core.Event) bool {
 		}
 		return false
 	case "message":
+		if ev.Reply && shown && ev.TS != "" {
+			// the replies the socket announced, for the refresh's gaps
+			// (threads_order.go gapAnnounced)
+			key := ev.Channel + "/" + ev.ThreadTS
+			v.mu.Lock()
+			if v.announced == nil {
+				v.announced = map[string]map[string]bool{}
+			}
+			if v.announced[key] == nil {
+				v.announced[key] = map[string]bool{}
+			}
+			v.announced[key][ev.TS] = true
+			v.mu.Unlock()
+		}
 		return ev.Reply && shown
 	case "update", "delete":
 		// an edit, an app's chat.update, a reaction or a deletion of a
@@ -423,10 +448,10 @@ func (v *Threads) Layout(gtx C) D {
 	v.applyMarks()
 	v.settle() // a load that finished, before another can start and take its mode
 	if v.left {
-		v.left = false
 		if v.data.started() {
-			v.remount()
+			v.remount() // with left still set: a refresh it settles fetches no gaps (fillGap)
 		}
+		v.left = false
 	}
 	// componentDidUpdate's attention edge, against the frame before: none
 	// in the first frame of a mount (its props have no earlier attention).
@@ -708,6 +733,10 @@ func (v *Threads) reloadThreads() {
 	if v.data.busy() && v.mode != actRefresh {
 		return
 	}
+	// a refresh that landed before this settles in its fetch into cards
+	// this folds: its gaps aren't fetched (fillGap)
+	v.renewing = true
+	defer func() { v.renewing = false }()
 	v.resort()
 	for _, c := range v.cards {
 		v.fold(c)
@@ -972,6 +1001,7 @@ func (v *Threads) body(gtx C) D {
 		v.readKey, v.readLoad = "", page.load
 	}
 	v.noteEntries(page) // threads_order.go
+	v.minVisibles(page) // threads_older.go: each card's first shown reply
 	div := v.firstRead(page)
 	v.divAt = div
 	v.kb.setItems(v.kbItems(page.items))
@@ -1154,7 +1184,7 @@ func (v *Threads) firstRead(page thrData) int {
 		if lr == "" {
 			continue
 		}
-		for _, m := range thrShown(&items[j], v.cards[items[j].key]) { // the thread's messages
+		for _, m := range thrKnown(&items[j], v.cards[items[j].key]) { // the thread's messages
 			if m.User != self && actTSLess(lr, m.TS) {
 				return -1
 			}

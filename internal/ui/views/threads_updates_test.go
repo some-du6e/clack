@@ -390,9 +390,11 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			if c := v.cards[key]; c == nil || c.moreText != "" {
 				t.Errorf("a \"Show N more replies\" row (%q) with every reply shown", c.moreText)
 			}
-			// the gap's fetch, and the failed card's older replies
-			if got, want := fs.CallCount("conversations.replies"), map[bool]int64{false: 1, true: 2}[tc.fail]; got != want {
-				t.Errorf("%d conversations.replies for one gap, want %d", got, want)
+			// the gap's fetch, the failed card's older replies; straddle's
+			// last gap the socket covered (r3 announced, nothing before it
+			// unannounced), so none
+			if got, want := fs.CallCount("conversations.replies"), map[string]int64{"burst": 1, "straddle": 0, "fetch fails": 2}[tc.name]; got != want {
+				t.Errorf("%d conversations.replies, want %d", got, want)
 			}
 			if tc.name != "burst" {
 				return
