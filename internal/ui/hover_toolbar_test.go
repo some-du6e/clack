@@ -352,7 +352,10 @@ func TestHoverToolbarThreadPane(t *testing.T) {
 	e.checkToolbar(t, "thread pane, at the root", l(), root, "ThreadRootGeneric", actsTopInside)
 	rows := l().RowRects()
 	if len(rows) > 2 {
-		e.checkToolbar(t, "thread pane, a reply", l(), rows[2].TS, "MessageWrapper", actsTopDefault)
+		// a reply in the thread pane is ThreadReply → ThreadReplyGeneric, as
+		// in Slack's thread pane (modern.vendor), with no MessageWrapper:
+		// that's the channel list's alone (plugin-render-3)
+		e.checkToolbar(t, "thread pane, a reply", l(), rows[2].TS, "ThreadReplyGeneric", actsTopDefault)
 	}
 	// 10px down: the root's top above the list's
 	e.a.insp.Toggle()
@@ -386,5 +389,5 @@ func TestHoverToolbarThreadPane(t *testing.T) {
 		}
 	}
 	e.inspectOn()
-	e.checkToolbar(t, "thread pane, a reply at the list's top", l(), reply.TS, "MessageWrapper", actsTopDefault)
+	e.checkToolbar(t, "thread pane, a reply at the list's top", l(), reply.TS, "ThreadReplyGeneric", actsTopDefault)
 }

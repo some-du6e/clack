@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // entry is one message in a model, with a revision that bumps whenever the
@@ -17,6 +18,14 @@ import (
 type entry struct {
 	m   core.Message
 	rev uint32
+	// seq is core.Event.EmitSeq (emit order, not a message change
+	// counter) of the event that wrote m, or for a load's entries core's
+	// EmitSeq as the load came back (loadSeq); 0: none (injected and
+	// grouped entries). A row waits for the plugins' view of it until
+	// taut's mirror has handled that event (applyView). A merge that feeds
+	// it another counter (activity-live-msg's per-message change sequence)
+	// turns the wait off: TestRowWaitsForTheMirror
+	seq uint64
 }
 
 // model is the shared, goroutine-safe state of one conversation (or one
@@ -41,6 +50,8 @@ type model struct {
 	rev      uint64
 	nextRev  uint32
 	typing   map[string]typingEntry
+	// used is when a list last asked for or drew the model (the hub's mu
+	// guards it): the eviction drops the one drawn longest ago
 	used     time.Time
 	fetched  time.Time // last full refresh
 	refreshQ bool
@@ -54,8 +65,12 @@ type model struct {
 	// livePlace: updates of messages the model didn't hold while a load
 	// was out (one outside what it loaded, or anything before its first
 	// load): the answer takes each where it holds the message, and
-	// nowhere else (keepLive)
-	livePlace map[string]core.Message
+	// nowhere else (keepLive). Each keeps its event's EmitSeq.
+	livePlace map[string]liveUpdate
+	// liveReact: reaction changes (UpdateReactions, and nothing else of
+	// the message) while a load was out: the answer takes the reactions
+	// over its own copy (keepLive)
+	liveReact map[string]liveUpdate
 
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
@@ -69,10 +84,31 @@ type model struct {
 	// hub's mu guards it (markDrawn, onScreen)
 	drawn time.Time
 
+	// dropped: the hub let the model go (evict) and its list kept it.
+	// Out of the hub it took none of core's events, its "evicted" ones
+	// among them: core may have trimmed or reset the conversation
+	// meanwhile (store/evict.go, the 3000-message budget), so the next
+	// load takes core's window whole (merged, the model kept what core let
+	// go before the window's newest page, and a gap of unread messages
+	// between them never loaded: loadOlder pages before the model's oldest)
+	dropped bool
+
+	// loadSeq is core's EmitSeq (App.EmitSeq) when the load being taken
+	// in came back (callers hold mu): the entries it brings in or changes
+	// were written by that event or one before it (setAll), so a row waits
+	// for the mirror to have handled them, as for an event's entry
+	loadSeq uint64
+
 	// reconv is what changed of what Docs read while a load was out
 	// (reconvert): its answer may hold messages converted before it, so
 	// they're converted again once it lands (afterLoad)
 	reconv core.RefChange
+
+	// loadChanged are the messages a load's answer changed (setAll: a
+	// newer copy than the model's, which no event the hub applied
+	// brought): taut marks their views as an event's would
+	// (taut.MessagesChanged) before the answer is the model's
+	loadChanged []string
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -133,18 +169,46 @@ type hub struct {
 	// error) until the connection comes back or the user hits Retry.
 	authFailed atomic.Bool
 	// frame is the latest frame a list drew at (markDrawn): the models
-	// drawn then are the ones on screen
-	frame time.Time
+	// drawn then are the ones on screen; prevFrame the one before it
+	frame, prevFrame time.Time
+	// reconvMu runs one reconvertIn at a time (hub.run's, a landed
+	// load's): each converts after the last one wrote, so a conversion
+	// that read the store before a change can't land after the one made
+	// for it and put the old name back
+	reconvMu sync.Mutex
 }
 
-// markDrawn notes that a list drew m in the frame at (gtx.Now).
-func (hb *hub) markDrawn(m *model, at time.Time) {
+// markDrawn notes that a list drew m in the frame at (gtx.Now) and returns
+// the model to draw: the one the hub keeps for m's conversation, which
+// core's events, polls and resyncs change. One the eviction dropped while
+// its list was off screen took none of them; drawn again, it's kept again
+// and reads core's copy (what it missed), unless another list made a new
+// model for the conversation meanwhile, which is the one to draw then.
+func (hb *hub) markDrawn(m *model, at time.Time) *model {
 	hb.mu.Lock()
 	if at.After(hb.frame) {
-		hb.frame = at
+		hb.prevFrame, hb.frame = hb.frame, at
 	}
-	m.drawn = at
+	ms, k := hb.chans, m.ch
+	if m.threadTS != "" {
+		ms, k = hb.thread, m.ch+"/"+m.threadTS
+	}
+	cur, kept := ms[k]
+	if !kept {
+		cur = m
+		ms[k] = m
+	}
+	cur.used, cur.drawn = time.Now(), at
+	if !kept {
+		hb.evict(ms) // drawn now: another one goes
+	}
 	hb.mu.Unlock()
+	if !kept {
+		m.mu.Lock()
+		m.fetched = time.Time{} // the list's ensureLoaded reads core's copy now
+		m.mu.Unlock()
+	}
+	return cur
 }
 
 // onScreen reports whether a list of ch (the channel or one of its
@@ -167,14 +231,34 @@ func (hb *hub) onScreen(ch string) bool {
 // about in the latest frame a list drew: every row reads its sender and
 // every mention its member as it draws (store.MemberAccessed, which the
 // event carries from before the change: core.Event.Seen).
+//
+// Or by a frame drawn since: the event's access is from before the
+// change, and a frame drawn between the change and the hub hearing of it
+// is newer than that; a member still on screen was read again by it
+// (store.MemberAccessed now). Judged by the event's alone, a rename while
+// the window drew frame after frame looked undrawn, and the row kept the
+// old name.
 func (hb *hub) drawsMember(ev core.Event) bool {
-	if ev.Seen.IsZero() {
+	seen := ev.Seen
+	if id := ev.UserID; id != "" && hb.app != nil && hb.app.S != nil {
+		if at := hb.app.S.MemberAccessed(id); at.After(seen) {
+			seen = at
+		}
+	}
+	if seen.IsZero() {
 		return false
 	}
+	// a read since the frame before the latest one began: a frame stamps
+	// itself (markDrawn) before its rows read their members, so a check
+	// that ran while the latest frame laid its rows out found the sender's
+	// read in the frame before, and the rename never redrew the row
 	hb.mu.Lock()
-	frame := hb.frame
+	frame := hb.prevFrame
+	if frame.IsZero() {
+		frame = hb.frame
+	}
 	hb.mu.Unlock()
-	return frame.IsZero() || ev.Seen.UnixMilli() >= frame.UnixMilli()
+	return frame.IsZero() || seen.UnixMilli() >= frame.UnixMilli()
 }
 
 // redraws reports whether ev's change to the models shows: a
@@ -231,7 +315,10 @@ func (hb *hub) channel(ch string) *model {
 	defer hb.mu.Unlock()
 	m, ok := hb.chans[ch]
 	if !ok {
-		m = &model{ch: ch, typing: map[string]typingEntry{}}
+		// its use set first: the eviction took a new model for the oldest
+		// (no use yet), so past maxModels every conversation opened kept
+		// none of core's events
+		m = &model{ch: ch, typing: map[string]typingEntry{}, used: time.Now()}
 		hb.chans[ch] = m
 		hb.evict(hb.chans)
 		m.id = hb.newID()
@@ -246,7 +333,7 @@ func (hb *hub) threadModel(ch, ts string) *model {
 	k := ch + "/" + ts
 	m, ok := hb.thread[k]
 	if !ok {
-		m = &model{ch: ch, threadTS: ts, typing: map[string]typingEntry{}}
+		m = &model{ch: ch, threadTS: ts, typing: map[string]typingEntry{}, used: time.Now()} // as channel's
 		hb.thread[k] = m
 		hb.evict(hb.thread)
 		m.id = hb.newID()
@@ -272,6 +359,11 @@ func (hb *hub) evict(ms map[string]*model) {
 			oldest, t = k, m.used
 		}
 	}
+	if m := ms[oldest]; m != nil {
+		m.mu.Lock() // inside hb.mu, as PerfCounts takes them
+		m.dropped = true
+		m.mu.Unlock()
+	}
 	delete(ms, oldest)
 }
 
@@ -296,12 +388,18 @@ func (hb *hub) ensureLoaded(m *model) {
 		defer cancel()
 		if m.threadTS != "" {
 			msgs, err := hb.app.Replies(ctx, m.ch, m.threadTS)
+			seq := hb.app.EmitSeq()
+			if f := loadLanded.Load(); f != nil {
+				(*f)(m)
+			}
 			m.mu.Lock()
+			m.loadSeq = seq
 			m.loading = false
 			m.err = err
 			live := m.takeLive()
 			if err == nil {
 				m.setAll(msgs)
+				m.dropped = false // setAll is core's thread whole
 				m.keepLive(live)
 				m.loaded = true
 				m.fetched = time.Now()
@@ -309,17 +407,36 @@ func (hb *hub) ensureLoaded(m *model) {
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
+			m.markLoadChanged()
 			m.rev++
 			m.mu.Unlock()
 			hb.afterLoad(m)
 		} else {
 			p, err := hb.app.History(ctx, m.ch, "")
+			seq := hb.app.EmitSeq()
+			if f := loadLanded.Load(); f != nil {
+				(*f)(m)
+			}
 			m.mu.Lock()
+			m.loadSeq = seq
 			m.loading = false
 			m.err = err
 			live := m.takeLive()
 			if err == nil {
-				m.mergeNewest(p.Messages, p.HasMore)
+				if m.dropped {
+					// core's window as it is now (dropped), whole: setAll
+					// keeps the revisions of the messages it already had, as
+					// they were. No older page was asked meanwhile (loadOlder
+					// refuses a dropped model's), and keepLive below puts back
+					// only what's in this window. (msg-latency: this branch
+					// takes the window's epoch too, m.epoch = p.Epoch, or
+					// every older page after it is turned away as another
+					// window's until the next reload.)
+					m.setAll(p.Messages)
+					m.hasMore, m.dropped = p.HasMore, false
+				} else {
+					m.mergeNewest(p.Messages, p.HasMore)
+				}
 				m.keepLive(live)
 				if !m.loaded {
 					m.lastRead = p.LastRead
@@ -330,12 +447,38 @@ func (hb *hub) ensureLoaded(m *model) {
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
+			m.markLoadChanged()
 			m.rev++
 			m.mu.Unlock()
 			hb.afterLoad(m)
 		}
 		hb.invalidate()
 	}()
+}
+
+// loadLanded, tests only, runs on a load's goroutine when its answer is
+// in, converted, and not yet in the model (a change landing then is the
+// race afterLoad closes).
+var loadLanded atomic.Pointer[func(m *model)]
+
+// HoldLoad (tests) holds every load of ch's list model (threadTS: a
+// thread pane's) once its answer is in, until release: a list whose load
+// is out, its model on what it held before (a dropped one's reload).
+func HoldLoad(ch, threadTS string) (release func()) {
+	gate := make(chan struct{})
+	f := func(m *model) {
+		if m.ch == ch && m.threadTS == threadTS {
+			<-gate
+		}
+	}
+	loadLanded.Store(&f)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			loadLanded.CompareAndSwap(&f, nil)
+			close(gate)
+		})
+	}
 }
 
 // afterLoad converts again what of m's messages read something that
@@ -364,15 +507,21 @@ func (hb *hub) retry(m *model) {
 	hb.ensureLoaded(m)
 }
 
-// loadOlder fetches the page before the oldest loaded message.
-func (hb *hub) loadOlder(m *model) {
+// loadOlder fetches the page before the oldest loaded message, and
+// reports whether it asked for one. A dropped model's window is one core
+// may have reset since (dropped): it pages back only once its reload has
+// taken core's window. Paged back from the old window while the reload
+// was out (infinite scroll, a jump), the older page landed in front of
+// the reloaded newest one: every unread message between them was gone,
+// and paging back went on before them.
+func (hb *hub) loadOlder(m *model) bool {
 	if hb.authFailed.Load() {
-		return
+		return false
 	}
 	m.mu.Lock()
-	if m.older || !m.hasMore || len(m.msgs) == 0 || m.threadTS != "" || time.Now().Before(m.olderRetryAt) {
+	if m.older || !m.hasMore || len(m.msgs) == 0 || m.threadTS != "" || m.dropped || time.Now().Before(m.olderRetryAt) {
 		m.mu.Unlock()
-		return
+		return false
 	}
 	m.older = true
 	before := m.msgs[0].m.TS
@@ -383,20 +532,34 @@ func (hb *hub) loadOlder(m *model) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		p, err := hb.app.History(ctx, m.ch, before)
+		seq := hb.app.EmitSeq()
+		if f := loadLanded.Load(); f != nil {
+			(*f)(m)
+		}
 		m.mu.Lock()
+		m.loadSeq = seq
 		m.older = false
-		if err == nil {
+		switch {
+		case err == nil && (m.dropped || len(m.msgs) == 0 || m.msgs[0].m.TS != before):
+			// the window it was read for is gone: dropped, reset or trimmed
+			// (core's "evicted") meanwhile. In front of what's there now it
+			// leaves a gap; the list asks again from its oldest. (msg-latency
+			// also turns away a page of another window's epoch, and core's
+			// PrependOlderAt one that doesn't start at its window's oldest.)
+		case err == nil:
 			m.prepend(p.Messages, p.HasMore)
 			m.olderFails, m.olderRetryAt = 0, time.Time{}
-		} else {
+		default:
 			m.err = err
 			m.failed(hb, err, true, time.Now())
 		}
+		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
 		hb.afterLoad(m)
 		hb.invalidate()
 	}()
+	return true
 }
 
 // ---- model mutation (callers hold m.mu) ----
@@ -424,14 +587,41 @@ func (m *model) setAll(msgs []core.Message) {
 		if !m.visible(&x) {
 			continue
 		}
-		if o, ok := old[x.TS]; ok && sameMessage(&o.m, &x) {
-			out = append(out, entry{m: x, rev: o.rev})
+		o, had := old[x.TS]
+		if had && sameMessage(&o.m, &x) {
+			out = append(out, entry{m: x, rev: o.rev, seq: o.seq})
 			continue
 		}
-		out = append(out, entry{m: x, rev: m.bump()})
+		if had && len(m.loadChanged) < maxLoadChanged && !sameExceptDoc(&o.m, &x) {
+			m.loadChanged = append(m.loadChanged, x.TS)
+		}
+		out = append(out, entry{m: x, rev: m.bump(), seq: m.loadSeq})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return tsLess(out[i].m.TS, out[j].m.TS) })
 	m.msgs = out
+}
+
+// maxLoadChanged bounds a load's loadChanged: a reload past it (a whole
+// window converted again) marks only the first ones.
+const maxLoadChanged = 200
+
+// markLoadChanged gives the messages the load just taken in changed
+// (loadChanged) the marks an event's change would have made: taut's
+// views of them aren't ready until JS has core's new copy. Without them a
+// row whose read waited on the load (its need) took JS's copy from before
+// the load as ready once the mirror caught up, and drew the new copy,
+// the old, then the new again once the mirror's sweep told JS: a vote's
+// count N, N-1, N after a poll while the socket was down. Made before the
+// answer is the model's (callers hold mu), so no frame reads it first.
+func (m *model) markLoadChanged() {
+	tss := m.loadChanged
+	m.loadChanged = nil
+	if len(tss) == 0 {
+		return
+	}
+	if t := tautOf(); t != nil {
+		t.MessagesChanged(m.ch, tss)
+	}
 }
 
 // mergeNewest replaces the newest window with page, keeping older loaded
@@ -506,7 +696,9 @@ func (m *model) find(ts string) int {
 	return -1
 }
 
-func (m *model) upsert(msg core.Message) {
+// upsert puts msg in, written by the core event whose EmitSeq is seq (0:
+// none; an update placed after a load passes its own event's, never 0).
+func (m *model) upsert(msg core.Message, seq uint64) {
 	if !m.visible(&msg) {
 		// a reply taken back from the conversation (removeBroadcast) leaves
 		// its list; its thread keeps it
@@ -514,14 +706,14 @@ func (m *model) upsert(msg core.Message) {
 		return
 	}
 	if i := m.find(msg.TS); i >= 0 {
-		m.msgs[i] = entry{m: msg, rev: m.bump()}
+		m.msgs[i] = entry{m: msg, rev: m.bump(), seq: seq}
 		return
 	}
 	// Replace an optimistic pending message with the same text from self.
 	i := sort.Search(len(m.msgs), func(i int) bool { return !tsLess(m.msgs[i].m.TS, msg.TS) })
 	m.msgs = append(m.msgs, entry{})
 	copy(m.msgs[i+1:], m.msgs[i:])
-	m.msgs[i] = entry{m: msg, rev: m.bump()}
+	m.msgs[i] = entry{m: msg, rev: m.bump(), seq: seq}
 }
 
 // noteLive records that an event changed (or deleted) ts while a load is
@@ -538,25 +730,48 @@ func (m *model) noteLive(ts string, gone bool) {
 }
 
 // notePlace records an update of msg, which the model doesn't hold, while
-// a load is out: the answer may hold the message, read before the update
-// (callers hold m.mu).
-func (m *model) notePlace(msg core.Message) {
+// a load is out: the answer may hold the message, read before the update.
+// seq is the update's EmitSeq, which the answer's entry takes with it
+// (never 0: a row would take JS's copy of the revision before as ready).
+// Callers hold m.mu.
+func (m *model) notePlace(msg core.Message, seq uint64) {
 	if !m.loading || msg.TS == "" {
 		return
 	}
 	if m.livePlace == nil {
-		m.livePlace = map[string]core.Message{}
+		m.livePlace = map[string]liveUpdate{}
 	}
-	m.livePlace[msg.TS] = msg
+	m.livePlace[msg.TS] = liveUpdate{m: msg, seq: seq}
+}
+
+// noteReact records a reaction change to ts (rs, its reactions now; seq,
+// the update's EmitSeq) while a load is out, whether or not the model
+// holds the message (callers hold m.mu).
+func (m *model) noteReact(ts string, rs []core.Reaction, seq uint64) {
+	if !m.loading || ts == "" {
+		return
+	}
+	if m.liveReact == nil {
+		m.liveReact = map[string]liveUpdate{}
+	}
+	m.liveReact[ts] = liveUpdate{m: core.Message{TS: ts, Reactions: rs}, seq: seq}
+}
+
+// liveUpdate is an update an event made while a load was out, with the
+// event's EmitSeq.
+type liveUpdate struct {
+	m   core.Message
+	seq uint64
 }
 
 // liveChanges is what the events changed during a load: at, each
 // message's entry then (nil for one deleted); place, the updates of
 // messages the model didn't hold, which go only where the answer holds
-// them.
+// them; react, the reaction changes, laid over the answer's copy.
 type liveChanges struct {
 	at    map[string]*entry
-	place map[string]core.Message
+	place map[string]liveUpdate
+	react map[string]liveUpdate
 }
 
 // takeLive is what the events changed during the load that just answered
@@ -574,8 +789,8 @@ func (m *model) takeLive() liveChanges {
 			}
 		}
 	}
-	out.place = m.livePlace
-	m.live, m.livePlace = nil, nil
+	out.place, out.react = m.livePlace, m.liveReact
+	m.live, m.livePlace, m.liveReact = nil, nil, nil
 	return out
 }
 
@@ -584,22 +799,42 @@ func (m *model) takeLive() liveChanges {
 // message at once, so an answer read before an edit (or a delete, or a
 // new reply) mustn't show the old state again. A change goes back where
 // the answer holds the message or inside the answer's range (covers): an
-// answer that starts the list over (msg-latency's takeNewest, past a gap)
-// takes back none of the messages from before its range, which load-older
-// would then read before. An update of a message the model didn't hold
-// changes the answer's copy, and adds nothing (callers hold m.mu).
+// answer that starts the list over (msg-latency's takeNewest, past a gap;
+// a dropped model's reload, which takes core's window whole) takes back
+// none of the messages from before its range, which load-older would then
+// read before. An update of a message the model didn't hold changes the
+// answer's copy, and adds nothing. A reaction change lays its reactions
+// over the answer's copy (Slack's reactions reducer touches nothing else):
+// the copy it was applied to may be older than the answer's (a dropped
+// model's, which missed an edit while out), and put back whole it took
+// the edit and the reply count back. Each keeps its event's EmitSeq
+// (never 0: a row would take JS's copy of the revision before as ready).
+// Callers hold m.mu.
 func (m *model) keepLive(live liveChanges) {
 	for ts, e := range live.at {
 		switch {
 		case e == nil:
 			m.remove(ts)
 		case m.find(ts) >= 0 || m.covers(ts):
-			m.upsert(e.m)
+			m.upsert(e.m, e.seq)
 		}
 	}
-	for ts, msg := range live.place {
+	for ts, p := range live.place {
 		if _, ok := live.at[ts]; !ok && m.find(ts) >= 0 {
-			m.upsert(msg)
+			m.upsert(p.m, p.seq)
+		}
+	}
+	for ts, r := range live.react {
+		if _, ok := live.at[ts]; ok {
+			continue // the model's entry then: the reactions are in it
+		}
+		if p, ok := live.place[ts]; ok && p.seq > r.seq {
+			continue // an update after it carried the message whole
+		}
+		if i := m.find(ts); i >= 0 && !reflect.DeepEqual(m.msgs[i].m.Reactions, r.m.Reactions) {
+			msg := m.msgs[i].m
+			msg.Reactions = r.m.Reactions
+			m.msgs[i] = entry{m: msg, rev: m.bump(), seq: max(m.msgs[i].seq, r.seq)}
 		}
 	}
 }
@@ -644,6 +879,16 @@ func sameMessage(a, b *core.Message) bool {
 	// block count but another doc, and a row keeping its rev would draw
 	// the old one (wrapped differently) until something else refreshed it
 	return reflect.DeepEqual(a, b)
+}
+
+// sameExceptDoc reports whether a and b differ only in their conversion
+// (Doc, Refs: a name resolved since, a pref): JS's copy of the message is
+// the same then, and a load that brings b marks nothing (markLoadChanged).
+func sameExceptDoc(a, b *core.Message) bool {
+	x, y := *a, *b
+	x.Doc, y.Doc = richtext.Doc{}, richtext.Doc{}
+	x.Refs, y.Refs = core.MsgRefs{}, core.MsgRefs{}
+	return reflect.DeepEqual(x, y)
 }
 
 // sameView is the looser test applyView (taut.go) uses on the plugins'
@@ -716,10 +961,12 @@ func (hb *hub) apply(ev core.Event) bool {
 			// old message the list never loaded (core announces a read's:
 			// an Activity row's copy, a Threads root, a refetch) taken in
 			// above the oldest loaded would skip the history between at
-			// the next load-older, whose cursor is the oldest message
+			// the next load-older, whose cursor is the oldest message. It
+			// takes the event's EmitSeq: a row drawing it waits for the
+			// mirror to have handled the event (MessageViewState's need)
 			switch {
 			case ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inRange(ev.Msg.TS):
-				chm.upsert(*ev.Msg)
+				chm.upsert(*ev.Msg, ev.EmitSeq)
 				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
 					delete(chm.typing, ev.Msg.User)
@@ -727,13 +974,13 @@ func (hb *hub) apply(ev core.Event) bool {
 				chm.rev++
 				changed = true
 			case chm.visible(ev.Msg):
-				chm.notePlace(*ev.Msg) // a load out may hold it
+				chm.notePlace(*ev.Msg, ev.EmitSeq) // a load out may hold it
 			}
 			chm.mu.Unlock()
 		}
 		if thm != nil {
 			thm.mu.Lock()
-			thm.upsert(*ev.Msg)
+			thm.upsert(*ev.Msg, ev.EmitSeq)
 			thm.noteLive(ev.Msg.TS, false)
 			if ev.Type == "message" {
 				delete(thm.typing, ev.Msg.User)
@@ -746,7 +993,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		if ev.Msg.ThreadTS == "" || ev.Msg.ThreadTS == ev.Msg.TS {
 			if _, t2 := hb.models(ev.Channel, ev.Msg.TS); t2 != nil {
 				t2.mu.Lock()
-				t2.upsert(*ev.Msg)
+				t2.upsert(*ev.Msg, ev.EmitSeq)
 				t2.noteLive(ev.Msg.TS, false)
 				t2.rev++
 				t2.mu.Unlock()
@@ -771,7 +1018,7 @@ func (hb *hub) apply(ev core.Event) bool {
 				m.remove(ev.ReplacesTS)
 				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
 			}
-			m.upsert(*ev.Msg)
+			m.upsert(*ev.Msg, ev.EmitSeq)
 			m.rev++
 			m.mu.Unlock()
 		}
@@ -832,11 +1079,18 @@ func (hb *hub) apply(ev core.Event) bool {
 		// the list's next sync reads it; nothing it draws shows typing
 		// (the composer's typing line has its own hub, composer/typing.go)
 		return false
-	case "presence", "emoji_changed":
-		// No row draws presence, and a row reads its emoji as it draws:
-		// redrawing every list for them drew nothing new, many times a
-		// second on a busy workspace's socket (Karim 2026-11-14)
+	case "presence":
+		// No row draws presence: redrawing every list for it drew nothing
+		// new, many times a second on a busy workspace's socket (Karim
+		// 2026-11-14)
 		return false
+	case "emoji_changed", "canvas", "list", "list_record_info", "experiments":
+		// an emoji added or removed, a canvas's or a list's content, the
+		// experiment groups (a huddle's sentence, the emoji set): the
+		// messages whose Doc read it are converted again (reconvert;
+		// Message.Refs records the emoji a message used, known or not),
+		// and only a list that changed redraws
+		return hb.reconvert(ev)
 	case "user", "prefs", "names", "members_evicted":
 		// user: a profile change, for a member a list drew in its latest
 		// frame (drawsMember); another draws nowhere now, and a row that
@@ -926,7 +1180,13 @@ func (hb *hub) reconvert(ev core.Event) bool {
 // StoredMessage's, whose reads don't count as a view's: a message
 // converted again for a name in it touched the members it names, so their
 // next profile change looked drawn (drawsMember) and every list redrew.
+// reconvRead, tests only, runs after reconvertIn read a message from the
+// store and before it writes the conversion to the model.
+var reconvRead atomic.Pointer[func(m *model, ts string)]
+
 func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
+	hb.reconvMu.Lock()
+	defer hb.reconvMu.Unlock()
 	type key struct{ ch, ts string }
 	var fresh map[key]*core.Message // converted once for every model holding it
 	changed := false
@@ -935,18 +1195,22 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 		if m.loading || m.older {
 			m.reconv = mergeRefChange(m.reconv, c) // its answer may be older than c
 		}
-		var stale []string
+		type staleEnt struct {
+			ts     string
+			blocks []richtext.Block // the entry's Doc when it was found to read c
+		}
+		var stale []staleEnt
 		for i := range m.msgs {
 			if m.msgs[i].m.Refs.Reads(c) {
-				stale = append(stale, m.msgs[i].m.TS)
+				stale = append(stale, staleEnt{m.msgs[i].m.TS, m.msgs[i].m.Doc.Blocks})
 			}
 		}
 		m.mu.Unlock()
-		for _, ts := range stale {
-			k := key{m.ch, ts}
+		for _, st := range stale {
+			k := key{m.ch, st.ts}
 			f, seen := fresh[k]
 			if !seen {
-				if v, ok := hb.app.StoredMessage(m.ch, ts); ok {
+				if v, ok := hb.app.StoredMessage(m.ch, st.ts); ok {
 					f = &v
 				}
 				if fresh == nil {
@@ -957,12 +1221,20 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 			if f == nil {
 				continue // the store let it go: the next load converts it
 			}
+			if hook := reconvRead.Load(); hook != nil {
+				(*hook)(m, st.ts)
+			}
 			m.mu.Lock()
-			if i := m.find(ts); i >= 0 {
+			// an entry whose Doc hub.run replaced meanwhile (an update,
+			// converted with what is there now) keeps what it got: this
+			// conversion read the store before it, and wrote the revision
+			// before's Doc over the update (a vote's count going back). One
+			// that only moved otherwise (a reaction) takes it: skipped, its
+			// Doc kept the old name for good
+			if i := m.find(st.ts); i >= 0 && sameSlice(m.msgs[i].m.Doc.Blocks, st.blocks) {
 				msg := m.msgs[i].m
-				if !reflect.DeepEqual(msg.Doc, f.Doc) || !reflect.DeepEqual(msg.Refs, f.Refs) {
-					msg.Doc, msg.Refs = f.Doc, f.Refs
-					m.msgs[i] = entry{m: msg, rev: m.bump()}
+				if takeConverted(&msg, f) {
+					m.msgs[i] = entry{m: msg, rev: m.bump(), seq: m.msgs[i].seq} // converted again: the same message
 					m.rev++
 					changed = true
 				}
@@ -973,10 +1245,43 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 	return changed
 }
 
+// takeConverted gives msg what a conversion of the message again made of
+// what it read: its Doc and refs, a bot sender's name and picture (the
+// bot's, resolved since), the reactions' emoji (an emoji added since);
+// the rest of msg (another conversation's copy may differ: a thread
+// pane's root) stays. It reports whether anything changed.
+func takeConverted(msg, f *core.Message) bool {
+	changed := false
+	if !reflect.DeepEqual(msg.Doc, f.Doc) || !reflect.DeepEqual(msg.Refs, f.Refs) {
+		msg.Doc, msg.Refs = f.Doc, f.Refs
+		changed = true
+	}
+	if msg.IsBot && (msg.Name != f.Name || msg.Avatar != f.Avatar) {
+		msg.Name, msg.Avatar = f.Name, f.Avatar
+		changed = true
+	}
+	copied := false
+	for i := range msg.Reactions {
+		for _, fr := range f.Reactions {
+			if fr.Name != msg.Reactions[i].Name || fr.URL == msg.Reactions[i].URL {
+				continue
+			}
+			if !copied { // not the slice other copies share
+				msg.Reactions = append([]core.Reaction(nil), msg.Reactions...)
+				copied = true
+			}
+			msg.Reactions[i].URL = fr.URL
+			changed = true
+		}
+	}
+	return changed
+}
+
 // mergeRefChange is a and b together.
 func mergeRefChange(a, b core.RefChange) core.RefChange {
 	return core.RefChange{Members: append(a.Members, b.Members...), Channels: append(a.Channels, b.Channels...),
-		Files: append(a.Files, b.Files...), AnyMember: a.AnyMember || b.AnyMember}
+		Files: append(a.Files, b.Files...), Bots: append(a.Bots, b.Bots...), Emoji: append(a.Emoji, b.Emoji...),
+		AnyMember: a.AnyMember || b.AnyMember, All: a.All || b.All}
 }
 
 // applyReactions is a reaction change: each model holding the message
@@ -1003,11 +1308,13 @@ func (hb *hub) applyReactions(ev core.Event) bool {
 		if i := m.find(ts); i >= 0 {
 			msg := m.msgs[i].m
 			msg.Reactions = ev.Msg.Reactions
-			m.msgs[i] = entry{m: msg, rev: m.bump()}
-			m.noteLive(ts, false)
+			m.msgs[i] = entry{m: msg, rev: m.bump(), seq: ev.EmitSeq}
 			m.rev++
 			changed = true
 		}
+		// a load out: its answer takes the reactions over its own copy
+		// (keepLive), held here or not
+		m.noteReact(ts, ev.Msg.Reactions, ev.EmitSeq)
 		m.mu.Unlock()
 	}
 	return changed

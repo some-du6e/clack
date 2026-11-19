@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -1517,6 +1518,54 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	return ts, cids
 }
 
+// MsgKey is a message by ts or client_msg_id (Held).
+type MsgKey struct{ TS, CID string }
+
+// Held reports, for each key, whether the store caches a message of ch
+// with its ts (or client_msg_id) in the timeline or a thread: Holds for
+// many at once, one pass over the store under one read lock (Holds per
+// message scanned the timeline and every cached thread once each).
+func (s *Store) Held(ch string, keys []MsgKey) []bool {
+	out := make([]bool, len(keys))
+	if len(keys) == 0 {
+		return out
+	}
+	byTS := make(map[string][]int, len(keys))
+	byCID := map[string][]int{}
+	for i, k := range keys {
+		byTS[k.TS] = append(byTS[k.TS], i)
+		if k.CID != "" {
+			byCID[k.CID] = append(byCID[k.CID], i)
+		}
+	}
+	mark := func(m *slack.Message) {
+		for _, i := range byTS[m.TS] {
+			out[i] = true
+		}
+		if m.ClientMsgID != "" {
+			for _, i := range byCID[m.ClientMsgID] {
+				out[i] = true
+			}
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if t := s.timelines[ch]; t != nil {
+		for i := range t.Msgs {
+			mark(&t.Msgs[i])
+		}
+	}
+	pre := ch + "/"
+	for k, th := range s.threads {
+		if strings.HasPrefix(k, pre) {
+			for i := range th {
+				mark(&th[i])
+			}
+		}
+	}
+	return out
+}
+
 // MsgRef names a cached message.
 type MsgRef struct{ Channel, TS string }
 
@@ -1798,14 +1847,19 @@ func (s *Store) HasCachedPrefs() bool {
 // SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
 // SetMyUsergroups replaces the viewer's user groups
 // (bulkSetUserGroupMembership).
-func (s *Store) SetMyUsergroups(ids []string) {
+func (s *Store) SetMyUsergroups(ids []string) (changed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.MyGroups = make(map[string]bool, len(ids))
+	next := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		s.MyGroups[id] = true
+		next[id] = true
 	}
+	if s.MyGroups != nil && maps.Equal(next, s.MyGroups) {
+		return false // the usual answer: nothing a message reads moved
+	}
+	s.MyGroups = next
 	s.gen.Add(1)
+	return true
 }
 
 // SetMyUsergroup records the viewer joining or leaving group id

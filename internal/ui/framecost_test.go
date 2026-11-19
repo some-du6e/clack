@@ -38,9 +38,13 @@ import (
 // the frame's time from layout to the end of its rasterization, and the
 // pixels that differ: new against old, each part alone against old, and
 // the old way against itself with every path moved in the atlas (its
-// floor). It fails when new against old goes past the floor, or the
-// state caches change a pixel (costScene); a scene whose window changes
-// while it's measured is measured again, then left unchecked.
+// floor: a transparent path first or after the workspace shadow, and the
+// atlas packed in other orders, gpu.ClackPackOrder). It fails when new
+// against old goes past the floor, the floor lets the new way with a few
+// wrong coverage texels through (gpu.ClackCanaryTexels: the bound must
+// catch an error), or the state caches change a pixel (costScene); a
+// scene whose window changes while it's measured is measured again, then
+// left unchecked.
 // CLACK_GPU_COST=1 (flake-check's gpu-cost job, on each OS's GPU backend).
 func TestFrameCostWindow(t *testing.T) {
 	if os.Getenv("CLACK_GPU_COST") == "" {
@@ -119,13 +123,16 @@ func TestFrameCostWindow(t *testing.T) {
 }
 
 // costScene measures one scene: the old way and the new, their costs,
-// the old way's floor (every path moved in the atlas by a transparent
-// path drawn first or right after the workspace shadow), each part of the
-// new way alone, and the new way with the backends' state caches off. It
-// checks new against old within the floor (1.5× its pixels and 1024, its
-// levels and 2) and the caches off against on exactly, unless the old way
-// came out differently at the end than at the start: then the window
-// changed meanwhile and it reports the scene unsettled.
+// the old way's floor (every path moved in the atlas: by a transparent
+// path drawn first or right after the workspace shadow, and by the atlas
+// packed in three other orders, as any change to what's stenciled moves
+// every later place), each part of the new way alone, and the new way
+// with the backends' state caches off. It checks new against old within
+// the floor (1.5× its pixels and 1024, its levels and 2), the new way with
+// 16 wrong coverage texels outside it (the bound catches an error), and
+// the caches off against on exactly, unless the old way came out
+// differently at the end than at the start: then the window changed
+// meanwhile and it reports the scene unsettled.
 func (e *perfEnv) costScene(t *testing.T, name string) (settled bool) {
 	t.Helper()
 	now := time.Now()
@@ -143,6 +150,20 @@ func (e *perfEnv) costScene(t *testing.T, name string) (settled bool) {
 			where = "after the workspace shadow"
 		}
 		t.Logf("%s, the old way with a transparent %v path %s: %s", name, costShift(sh, e.size).Size(), where, costDiff(old, moved))
+		if n > floorN {
+			floorN, worst = n, moved
+		}
+		floorMax = max(floorMax, m)
+	}
+	// the atlas packed in other orders: every path on other texels, as
+	// the new way's other set of stenciled paths (or partial frames'
+	// sticky places) put them
+	for seed := int64(1); seed <= 3; seed++ {
+		gpu.ClackPackOrder(seed)
+		moved, _, _ := e.costFrame(t, costOld, 0, now, false)
+		gpu.ClackPackOrder(0)
+		n, m := costCount(old, moved)
+		t.Logf("%s, the old way with its atlas packed in order %d: %s", name, seed, costDiff(old, moved))
 		if n > floorN {
 			floorN, worst = n, moved
 		}
@@ -174,11 +195,22 @@ func (e *perfEnv) costScene(t *testing.T, name string) (settled bool) {
 	if un, um := costCount(cur, uncached); un > 0 {
 		t.Errorf("%s: with the backends' state caches off %d px differ, by up to %d levels: %s", name, un, um, costDiff(cur, uncached))
 	}
-	if lim := floorN*3/2 + 1024; n > lim {
+	lim, limMax := floorN*3/2+1024, floorMax+2
+	if n > lim {
 		t.Errorf("%s: new against old %d px differ, more than %d (1.5× the %d the floor moves, and 1024)", name, n, lim, floorN)
 	}
-	if m > floorMax+2 {
+	if m > limMax {
 		t.Errorf("%s: new against old a pixel differs by %d levels, more than the floor's %d and 2", name, m, floorMax)
+	}
+	// the bound catches an error: the new way with a wrong coverage in the
+	// centre texel of its 16 largest stencil regions
+	gpu.ClackCanaryTexels(16)
+	canary, _, _ := e.costFrame(t, costNew, 0, now, false)
+	gpu.ClackCanaryTexels(0)
+	cn, cm := costCount(old, canary)
+	t.Logf("%s, the new way with 16 wrong coverage texels against old: %s", name, costDiff(old, canary))
+	if cn <= lim && cm <= limMax {
+		t.Errorf("%s: the new way with 16 wrong coverage texels passes the floor (%d px by up to %d levels, within %d px and %d levels): the bound can't catch an error", name, cn, cm, lim, limMax)
 	}
 	if dir := os.Getenv("CLACK_GPU_COST_SHOTS"); dir != "" {
 		costCrops(t, dir, strings.ReplaceAll(name, " ", "-"), old, cur)

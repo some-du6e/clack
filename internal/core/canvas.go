@@ -132,6 +132,7 @@ type canvasState struct {
 	mu       sync.Mutex
 	open     map[string]int             // file id -> open views
 	pending  map[string]bool            // a refetch is scheduled
+	titles   map[string]bool            // a CanvasRef refresh is scheduled (onFileChange)
 	viewers  map[string]map[string]bool // file id -> users viewing it (files.open, file_opened/closed)
 	watching bool
 	infos    map[string]CanvasInfo // the last files.info of each canvas read (KnownCanvasInfo)
@@ -143,8 +144,8 @@ func (a *App) canvases() *canvasState {
 	if v, ok := canvasStates.Load(a); ok {
 		return v.(*canvasState)
 	}
-	v, _ := canvasStates.LoadOrStore(a, &canvasState{open: map[string]int{}, pending: map[string]bool{}, viewers: map[string]map[string]bool{},
-		infos: map[string]CanvasInfo{}})
+	v, _ := canvasStates.LoadOrStore(a, &canvasState{open: map[string]int{}, pending: map[string]bool{}, titles: map[string]bool{},
+		viewers: map[string]map[string]bool{}, infos: map[string]CanvasInfo{}})
 	return v.(*canvasState)
 }
 

@@ -47,7 +47,17 @@ func init() {
 	// each view container (the split view: split.go) lists with its own state
 	mkChannelView = func(a *App, ch string) View { return channelList{messages.NewChannelViewIn(a, ch, a.pane)} }
 	mkThreadView = func(a *App, ch, ts string) View { return threadList{messages.NewThreadViewIn(a, ch, ts, a.pane)} }
-	mkComposer = func(a *App, ch, ts string) View { return composerBox{composer.New(a, ch, ts)} }
+	mkComposer = func(a *App, ch, ts string) View {
+		c := composer.New(a, ch, ts)
+		if ts != "" { // a thread's reply box: onFooterInputFocus lets the thread go from the marked-unread threads
+			c.OnFocus = func() {
+				if app := a.Core(); app != nil {
+					app.ForgetThreadMarkedUnread(ch, ts)
+				}
+			}
+		}
+		return composerBox{c}
+	}
 	mkEditComposer = func(a *App, m core.Message, onDone func()) composerView {
 		return composerBox{composer.NewEdit(a, m, onDone)}
 	}

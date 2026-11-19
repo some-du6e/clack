@@ -105,3 +105,37 @@ func TestPanesHaveRootsOfTheirOwn(t *testing.T) {
 		t.Errorf("a pane outlived its EndPane: %q", curPane)
 	}
 }
+
+// RemountKeyedIn drops one pane's roots for a key and leaves another
+// pane's with the same key: a composer whose box vanished remounts its own
+// plugin roots, not the other composer's of the same thread (the thread
+// pane's and a Threads view card's), which may be holding a send.
+func TestRemountKeyedInPane(t *testing.T) {
+	b, at := sweepEnv(t)
+	const key = "C1/1700000000.000100"
+	frame := func() {
+		LockFrame()
+		defer UnlockFrame()
+		gtx := cardCtx(at)
+		Frame(gtx)
+		paneCards(gtx, "C1/1700000000.000100", key)
+		paneCards(gtx, "threads:C1/1700000000.000100", key)
+		at = at.Add(20 * time.Millisecond)
+	}
+	frame()
+	byPane := map[string]uint64{}
+	for k, in := range insts {
+		if k.key == key {
+			byPane[k.pane] = in.root
+		}
+	}
+	if len(byPane) != 2 {
+		t.Fatalf("roots by pane %v; want one in each", byPane)
+	}
+	if n := RemountKeyedIn(key, "threads:C1/1700000000.000100"); n != 1 {
+		t.Errorf("RemountKeyedIn dropped %d instances; want the one in its pane", n)
+	}
+	if !b.gone(byPane["threads:C1/1700000000.000100"]) || b.gone(byPane["C1/1700000000.000100"]) {
+		t.Errorf("unmounted %v: want the card's root only (card %d, pane %d)", b.unmounted, byPane["threads:C1/1700000000.000100"], byPane["C1/1700000000.000100"])
+	}
+}

@@ -420,28 +420,34 @@ func vaFake(t *testing.T) (*core.App, *fakeslack.Server) {
 	return app, fs
 }
 
-// The Threads view: the unread thread first; once it's read the read
-// thread below gets Slack's "You’re up to date" divider; the mark goes
-// out as subscriptions.thread.mark.
+// The Threads view: the unread thread first, and Slack's "You’re up to
+// date" divider before the read thread as soon as the load lands, whatever
+// is unread above it (get_rows_and_keys hides it only for a thread from
+// the divider down that came in unread: TestThreadsUpToDateDividerLikeSlack).
+// Reading the unread thread keeps it there; the mark goes out as
+// subscriptions.thread.mark.
 func TestThreadsUpToDateDivider(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		app, fs := vaFake(t)
-		v := NewThreads(&slickHost{app: app, th: theme.New(dark)})
+		h := newKBHost(app, dark)
+		h.away.Store(true) // the read is the test's own (no markVisible)
+		v := NewThreads(h)
 		e := &vaEnv{size: image.Pt(1000, 1100)}
 		e.draw = func(gtx layout.Context) { v.Layout(gtx) }
 		e.until(t, "the followed threads", func() bool { p, ok, _ := v.data.get(); return ok && len(p.items) == 2 })
+		e.frame()
 		p, _, _ := v.data.get()
 		if p.items[0].Root.TS != fakeslack.ViewsThreadUnread || v.unread(&p.items[0]) != 1 {
 			t.Fatalf("first thread %s with %d unread", p.items[0].Root.TS, v.unread(&p.items[0]))
 		}
-		if v.firstRead(p.items) != -1 {
-			t.Error("divider shown while a thread above is unread")
+		if v.divAt != 1 {
+			t.Errorf("divider at %d right after the load, want 1: before the read thread, with the unread one above it", v.divAt)
 		}
 		vaShot(t, e, "threads-unread", dark)
 		v.markRead(&p.items[0])
 		e.frame()
-		if got := v.firstRead(p.items); got != 1 {
-			t.Fatalf("divider at %d after reading the first thread, want 1", got)
+		if v.divAt != 1 {
+			t.Fatalf("divider at %d after reading the first thread, want 1", v.divAt)
 		}
 		e.until(t, "subscriptions.thread.mark", func() bool { return len(fs.ThreadMarks()) == 1 })
 		if m := fs.ThreadMarks()[0]; m.Channel != fakeslack.ViewsChannel || m.ThreadTS != fakeslack.ViewsThreadUnread || m.TS != "1762600200.000100" {

@@ -47,8 +47,8 @@ func checkBroadcastPanes(t *testing.T, lockstep bool) {
 	app.S.SetThread(ch, rootTS, []slack.Message{root, reply})
 
 	// MessageBackground: what both of Slack's panes draw for the reply
-	// (Clack's thread rows also draw MessageWrapper, which Slack's thread
-	// pane doesn't: see docs/PLUGINS-taut.md)
+	// (the thread pane has no MessageWrapper, in Slack nor in Clack: see
+	// docs/PLUGINS-taut.md)
 	patch := []string{"MessageBackground"}
 	renders, step := patchedEnv(t, app, passThroughJS(patch), patch...)
 	if !lockstep {

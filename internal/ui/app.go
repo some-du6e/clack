@@ -252,6 +252,7 @@ type App struct {
 	}
 	notify           notifier
 	focused          bool
+	attLost          uint64 // AttentionLost (host.go)
 	winSize          image.Point
 	sbBase           color.NRGBA
 	sbPal            theme.Palette
@@ -584,7 +585,7 @@ func (a *App) Run() error {
 			if e.Config.Focused != a.focused {
 				a.Invalidate() // the indicators an inactive window held still move on (indicatorFrame)
 			}
-			a.focused = e.Config.Focused
+			a.setFocused(e.Config.Focused) // host.go
 			a.drainIdle()
 		default:
 			// Gio's wake-up after an Invalidate, which also comes while
