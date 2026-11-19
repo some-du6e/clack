@@ -142,13 +142,37 @@ func (b *backend) channelToText(id, text string) string {
 	return "#" + noteHiddenChannel() // not in the store: isNonExistent
 }
 
-// noteSpanText writes a notification's channel mentions (channelToText);
-// the other spans keep their text.
+// noteSpanText writes a notification's channel mentions (channelToText)
+// and its member mentions; the other spans keep their text. A member
+// mention is named from the store as the body is written, as Slack's
+// showNotification builds it (extractTextFromMessage over the store,
+// after ensureModelsArePresent), under the viewer's name pref
+// (store.MemberName: display_real_names, hidden_users): core announces a
+// message before anyone it names is fetched, so its conversion wrote a
+// member the store didn't hold yet as the id ("@U07DANA"), and the
+// store's copy, converted again once noteResolve fetched them
+// (noteFresh), is there only for a conversation whose messages it keeps
+// (no group DM or DM not opened lately, no thread it never loaded). One
+// still unknown after the wait, or past noteResolveMax, reads as nothing,
+// never the id (the views' mentionText); an id that isn't a member's
+// keeps its text.
 func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
-	if s.Kind != richtext.Channel || s.ID == "" || b.core == nil {
+	if s.ID == "" || b.core == nil {
 		return "", false
 	}
-	return b.channelToText(s.ID, s.Text), true
+	switch s.Kind {
+	case richtext.Channel:
+		return b.channelToText(s.ID, s.Text), true
+	case richtext.User:
+		if !core.LooksLikeMemberID(s.ID) {
+			return "", false
+		}
+		if n, ok := b.core.S.MemberName(s.ID); ok && n != "" {
+			return "@" + strings.TrimPrefix(n, "@"), true
+		}
+		return "", true
+	}
+	return "", false
 }
 
 // noteChannelKnown reports whether channelToText has what it needs for
@@ -185,13 +209,71 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 	return out
 }
 
+// noteMembers are the people a notification names that the store doesn't
+// hold: its sender, the members its text mentions, and its conversation's
+// people, a DM's partner and a group DM's members, whose names title it
+// (at most noteResolveMax). Core announces a message the moment it
+// arrives, its rows asking for the people they draw; the notification
+// waits for them, as Slack's showNotification waits for
+// ensureModelsArePresent (which adds a DM's user and a group DM's
+// members: isMpim && members ? push(...members)).
+func (b *backend) noteMembers(m *core.Message) []string {
+	if b.core == nil || m == nil {
+		return nil
+	}
+	var ids []string
+	if m.User != "" { // a user-less bot's message names its sender itself
+		ids = append(ids, m.User)
+	}
+	richtext.PlainTextWith(m.Doc, func(s richtext.Span) (string, bool) {
+		if s.Kind == richtext.User && s.ID != "" {
+			ids = append(ids, s.ID)
+		}
+		return "", false
+	})
+	if v, ok := b.core.Conv(m.Channel); ok {
+		switch v.Kind {
+		case "im":
+			ids = append(ids, v.User)
+		case "mpim":
+			for _, id := range v.Members {
+				if id != b.selfID {
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	out := b.core.S.MissingUsers(ids)
+	if len(out) > noteResolveMax {
+		out = out[:noteResolveMax]
+	}
+	return out
+}
+
+// noteFresh is ev with its message converted again from the store's copy
+// (core.HeldMessage), now that the people it names are in: core converted
+// it before they were, and the body would name a mention by its id.
+func (b *backend) noteFresh(ev core.Event) core.Event {
+	if b.core == nil || ev.Msg == nil {
+		return ev
+	}
+	if m, ok := b.core.HeldMessage(ev.Channel, ev.TS); ok {
+		ev.Msg = &m
+	}
+	return ev
+}
+
 // noteResolve looks ids up (core.ResolveConv: conversations.info for one
-// the store doesn't name, which keeps what it learns) off the UI
-// goroutine, for at most noteResolveWait, then runs then on it. Slack's
-// store has a notification's channel when it builds the notification;
-// Clack's may learn it a beat later, so the notification waits for the
-// lookup instead of showing the id.
-func (b *backend) noteResolve(a *App, ids []string, then func()) {
+// the store doesn't name, which keeps what it learns) and people
+// (core.EnsureUsers: users/info) off the UI goroutine, for at most
+// noteResolveWait, then runs then on it. Slack's store has a
+// notification's channel and people when it builds the notification;
+// Clack's may learn them a beat later, so the notification waits for the
+// lookups instead of showing ids.
+func (b *backend) noteResolve(a *App, ids, people []string, then func()) {
 	parent := b.ctx
 	if parent == nil {
 		parent = context.Background()
@@ -207,6 +289,13 @@ func (b *backend) noteResolve(a *App, ids []string, then func()) {
 				defer wg.Done()
 				c.ResolveConv(ctx, id)
 			}(id)
+		}
+		if len(people) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c.EnsureUsers(ctx, people)
+			}()
 		}
 		wg.Wait()
 		a.Post(then)

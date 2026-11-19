@@ -1312,6 +1312,148 @@ jobs:
           xvfb-run -a go test -race -count=3 -run "$HUB_TESTS" ./internal/ui/messages || rc=1
           exit $rc
 
+  # edit-latency: an app's message edited every 500 ms over the socket
+  # (Karim's uptime monitor, 2026-11-18: a plan block whose title is the
+  # outage's duration, "updates really slowly like every 33 seconds") draws
+  # each edit within a frame of core taking it in: in the channel, as the
+  # root of its open thread pane, and both at once; natively and under
+  # pass-through plugins (the messages slice, the components a message
+  # draws through). Frames are drawn when the app asks for one, as a
+  # window does. The messages-slice case, red until its view re-read is
+  # fixed, runs only with CLACK_LATENCY_SLICE=1 (not set here: ui and main
+  # pushes run this job). Dispatch with only=edit-latency.
+  edit-latency:
+    if: ${{ !inputs.only || startsWith('edit-latency', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: each edit to the frame that draws it, per surface (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestEditLatency$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestEditLatency$' ./internal/ui || rc=1
+          exit $rc
+
+  # thread-replies: a reply posted to the thread open in the pane draws
+  # there in the frame after the socket brings it, and no later than
+  # Activity has its entry (Karim, 2026-11-18: "threads are a shit show rn
+  # ... i see it like in my activity tab first"): replies from people the
+  # client never fetched, users/info answering after 1.5 s, the entries
+  # before or after the message, someone else never fetched typing in the
+  # thread 100 ms before each; Activity with the thread beside it; a reply
+  # counts once the pane's row paints it, within two frames and 250 ms;
+  # natively, under a messages-slice patch and under a component patch.
+  # Dispatch with only=thread-replies.
+  thread-replies:
+    if: ${{ !inputs.only || startsWith('thread-replies', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: a reply to the open thread, socket to the pane's frame (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestThreadReplyLatency$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestThreadReplyLatency$' ./internal/ui || rc=1
+          exit $rc
+
+  # toast-names: a toast names the members its message mentions, those the
+  # store didn't hold when the message came too (α.110's review: "@U07DANA
+  # can you join?"; core announces a message before fetching anyone it
+  # names): a group DM whose history the store never loaded, users/info
+  # answering after 1 s, its title naming the group's members; no toast for
+  # a message deleted while it waited. Dispatch with only=toast-names.
+  toast-names:
+    if: ${{ !inputs.only || startsWith('toast-names', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: a toast's mention of a member the store didn't hold (one verbose run, then COUNT)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^(TestNotifyNamesAMentionCoreDidNotHold|TestNotifyDropsAMessageDeletedWhileItWaits)$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^(TestNotifyNamesAMentionCoreDidNotHold|TestNotifyDropsAMessageDeletedWhileItWaits)$' ./internal/ui || rc=1
+          exit $rc
+
+  # activity-stamp: an activity entry whose message is deleted, or edited
+  # to drop the viewer's mention, while the entry waits behind another
+  # entry's lookups never shows (α.110's review; Karim's 2026-11-17 ghost
+  # thread row): the entry is stamped in socket order. users/info answering
+  # after 1.5 s. Dispatch with only=activity-stamp.
+  activity-stamp:
+    if: ${{ !inputs.only || startsWith('activity-stamp', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "views: an entry whose message goes while it waits (one verbose run, then COUNT)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestActivityEntryLeavesWhenItsMessageGoesWhileItWaits$' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestActivityEntryLeavesWhenItsMessageGoesWhileItWaits$' ./internal/ui/views || rc=1
+          exit $rc
+
+  # sender-lookups: socket messages and thread replies from people the
+  # client never fetched, in a channel nothing on screen shows, ask
+  # users/info for no one (α.110 review: each such sender's users/info and
+  # its "names" made the UI read every conversation on screen again).
+  # Dispatch with only=sender-lookups.
+  sender-lookups:
+    if: ${{ !inputs.only || startsWith('sender-lookups', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: senders nothing on screen shows are asked for by no one (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestSocketSendersAskedForNoOne$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestSocketSendersAskedForNoOne$' ./internal/ui || rc=1
+          exit $rc
+
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
   # doesn't list (Slackbot's, the Slack system user's, an app's), and under

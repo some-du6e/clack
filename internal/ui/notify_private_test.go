@@ -31,6 +31,13 @@ import (
 // the next snapshot.
 func privNoteApp(t *testing.T) (*App, *core.App, *noteRec) {
 	t.Helper()
+	a, ca, _, rec := privNoteAppFS(t)
+	return a, ca, rec
+}
+
+// privNoteAppFS is privNoteApp with its fakeslack.
+func privNoteAppFS(t *testing.T) (*App, *core.App, *fakeslack.Server, *noteRec) {
+	t.Helper()
 	sz := fakeslack.Small
 	sz.ThreadHeader = true
 	fs, err := fakeslack.Start(sz)
@@ -56,7 +63,7 @@ func privNoteApp(t *testing.T) (*App, *core.App, *noteRec) {
 	storeTeam(ca)
 	rec := &noteRec{}
 	a.notify = rec
-	return a, ca, rec
+	return a, ca, fs, rec
 }
 
 // fixtureConv is id's conversation as fakeslack serves it.
