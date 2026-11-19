@@ -270,6 +270,14 @@ func (s *shownTracker) shown(h Host) bool {
 	return s.seen.Load()+1 >= fc.FrameSeq()
 }
 
+// clear drops the staleness a load covers: its answer has what happened
+// before it went out.
+func (w *watcher) clear() {
+	w.mu.Lock()
+	w.stale = false
+	w.mu.Unlock()
+}
+
 // due reports (and clears) staleness at most once per minGap.
 func (w *watcher) due(gtx C, minGap time.Duration) bool {
 	w.mu.Lock()

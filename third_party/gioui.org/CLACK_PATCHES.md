@@ -45,11 +45,13 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
 `gpu/headless/clack_live_test.go`, `layout/list.go`,
 `layout/clack_list_test.go`, `gpu/clack_partial.go`, `gpu/clack_sticky.go`,
+`gpu/clack_floor.go`,
 `gpu/pack.go`, `gpu/clack_partial_test.go`, `gpu/headless/clack_partial_test.go`,
 `gpu/internal/driver/clack_partial.go`, `internal/d3d11/d3d11_windows.go`,
 `internal/gl/gl.go`, `app/clack_caret_macos.go`, `app/clack_caret_macos.m`,
 `app/clack_caret_darwin_test.go`, `app/clack_xsettings_x11.go`,
-`app/clack_xsettings_nox11.go`, `app/clack_keytext_windows_test.go`,
+`app/clack_xsettings_nox11.go`, `app/clack_xsettings_x11_test.go`,
+`app/clack_unmap_x11_test.go`, `app/clack_keytext_windows_test.go`,
 `gpu/clack_opcache_test.go`, `io/input/clack_focus.go`,
 `io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
 `io/input/clack_inputidle_test.go`,
@@ -2150,20 +2152,31 @@ where they differ:
   later one and the frame was all damage. With partial frames the last
   frame's packing sequence is replayed (the packer places the same sizes
   in the same order the same way): a region that was there (the same
-  geometry, region and offset) takes its own slot; a new region takes the
-  smallest slot nobody took that holds it, keeping the slot's size, so no
-  other place moves; the regions no slot holds come after, and a slot
-  nobody takes is a hole. A path that changes every frame (a working
-  agent's spinner every 33 ms, the LoadingButton's every 16 ms, a
-  huddle's speaking bars) so takes back the slots its last frames left:
-  before, each frame left its regions' old slots as holes the replay
-  packed ever after (the sequence grew from 702 slots to 4,302 in 1,800
-  spinner frames, the packer's work 55 times over, the page wider, until
-  the holes outgrew the regions minutes later). When the holes outnumber
-  the live slots or 256, cover more than the regions' area, or the
-  sequence would need another page, everything is packed afresh in the
-  frame's order (a frame drawn whole). A page's regions are then not
-  together in the ops' order, so the stencil pass goes page by page.
+  geometry, region and offset) takes its own slot; a new region takes a
+  slot nobody took of exactly its size, else the smallest that holds it,
+  keeping the slot's size, so no other place moves; the regions no slot
+  holds come after, and a slot nobody takes is a hole. A path that
+  changes every frame (a working agent's spinner every 33 ms, the
+  LoadingButton's every 16 ms, a huddle's speaking bars) so takes back the
+  slots its last frames left: before, each frame left its regions' old
+  slots as holes the replay packed ever after (the sequence grew from 702
+  slots to 4,302 in 1,800 spinner frames, the packer's work 55 times over,
+  the page wider, until the holes outgrew the regions minutes later).
+  Everything is packed afresh in the frame's order (a frame drawn whole)
+  when the holes outnumber the live slots or 256; when the slots, holes
+  and the slack of bigger slots included, cover more than 1.5 times the
+  regions' own area (after a lower scale or a smaller window every region
+  fits an old, bigger slot, and the page stayed up to 4 times Gio's); or
+  when the sequence needs more pages than the last fresh packing did
+  (comparing with one page instead repacked 61-92% of a spinner's frames
+  once the atlas needed two, at 4K). A frame with more paths of new
+  geometry than a partial frame can add (a scroll's, a live resize's, a
+  channel switch's) is whole however it's packed, so it's packed afresh
+  at once, with no holes matched and no sequence replayed (a scroll had
+  every moved region scan every hole: 2.2-2.6 times Gio's packing in the
+  scan alone). `FrameStats.PackWork` counts the holes looked through, and
+  `StickyRepacks` the fresh packings. A page's regions aren't together in
+  the ops' order, so the stencil pass goes page by page.
 - A window's frame draws into the frame texture (`TextureFormatOutput`,
   the swap chain's or the layer's own format), which keeps its pixels: a
   window's buffers come back undefined (DXGI's blit model discards them,
@@ -2180,15 +2193,22 @@ where they differ:
   whole frame's load action.
 - Whole frames in a row (a scroll, an animation over most of the window)
   draw straight into the target, without the frame texture or its copy,
-  and leave the frame texture stale: the first small change after them is
-  drawn whole into it, and partial frames go on from there. A frame at a
-  new size (a live resize) draws straight in too, and the frame texture
-  is made at the size the window stays at. A hidden, minimized or
-  occluded window (Windows' minimize and hide, AppKit's occlusion and
-  orderOut, X11's unmap) lets the frame texture and the clear texture go
-  (`ClackGPUIdle`); its next frame is whole. Windows has no occlusion
-  tracker yet (Chromium's NativeWindowOcclusionTrackerWin): a window
-  covered by others keeps its frame texture and draws what it's asked to.
+  and leave the frame texture stale: the first small change after them
+  (a still frame inside a scroll) draws straight in too, the second fills
+  the frame texture again, and partial frames go on from the third. A
+  frame at a new size (a live resize) draws straight in too, and the
+  frame texture is made at the size the window stays at. A hidden,
+  minimized or occluded window (Windows' minimize and hide, AppKit's
+  occlusion and orderOut, X11's unmap) lets the frame texture and the
+  clear texture go (`ClackGPUIdle`); its next frame is whole. Nothing
+  makes them again while it stays so: Windows doesn't draw a hidden
+  window's sync frame (the one Window.Hide's own WM_WINDOWPOSCHANGED
+  queued, delivered once a close to the tray returned), and an unmapped
+  X11 window draws no animation frames until it's mapped again.
+  `ClackFrameTexturesHeld` counts the frame textures held, for tests.
+  Windows has no occlusion tracker yet (Chromium's
+  NativeWindowOcclusionTrackerWin): a window covered by others keeps its
+  frame texture and draws what it's asked to.
 - A path's vertices are built (tessellated on the CPU) when the frame
   uploads them: a partial frame uploads only the paths its damage
   stencils, and the rest keep their path data in the cache (`raw`), so
@@ -2230,10 +2250,16 @@ Tests: `gpu/clack_partial_test.go` (ci's linux-gio Gio frame cost step:
 LCS on random sequences; `TestClackDamageRects`, disjoint and covering;
 `TestClackDamage`; `TestClackStickyNoOverlap`, sticky places never
 overlap or leave their page under random churn, and a region keeps its
-place unless the sequence is packed afresh; `TestClackStickySpinnerBounded`,
-3,000 frames of a spinner's two arcs among 700 regions keep the sequence
-within 64 slots of the regions, the packer's work within 3 times the
-first frame's, the page and no fresh packing),
+place unless the sequence is packed afresh, with 30 fresh packings in 600
+frames at most (8 in the port); `TestClackStickySpinnerBounded`, 3,000
+frames of a spinner's two arcs among 700 regions, on one page and on two,
+keep the sequence within 64 slots of the regions, the packer's work
+within 3 times the first frame's, the pages and no fresh packing;
+`TestClackStickyShrink`, the regions at half, 0.6 and 0.75 of their size
+bring the pages back within 1.25 times Gio's own; `TestClackStickyScroll`,
+a busy list's scroll packs at Gio's own cost and a sparse one's within
+1.5 times, the pages within 1.5 times, and a busy list's end within 3 and
+2.5),
 `gpu/headless/clack_partial_test.go` on llvmpipe, Metal and WARP (ci's
 linux-gio, macos and windows-applog jobs, and flake-check's gpu-cost and
 gpu-cost-damage): `TestClackPartialFrames` draws 48 frames of changes a
@@ -2255,7 +2281,11 @@ next frame damages only it; the quiet frames after a partial frame of new
 ops tessellate and build nothing); `TestClackPartialSpinner` (3,000
 spinner frames: the sequence's holes, the packer's work, the frames
 partial, the last the whole frame's pixels); `TestClackPartialDamageRects`.
-In Clack: `internal/ui` `TestFrameCostDamage` (flake-check's
+In `app`: `TestUnmappedStopsFramesX11` (ci's linux-gio Xvfb step: an
+animating window unmapped by another client draws no frames and holds no
+frame texture until it's mapped again) and the Windows hide tests'
+`TestHideAndRaise` (a window hidden from inside its ClosingEvent holds no
+frame texture). In Clack: `internal/ui` `TestFrameCostDamage` (flake-check's
 gpu-cost-damage: the caret's blink, the typing indicator, a spinner's turn
 and an animated emoji's frame over Clack's window at 1440×900, Karim's
 1918×1080 and 1280×800 at 2x, each whole and partial, pixels and costs, the
@@ -2264,14 +2294,47 @@ TestFrameCostWindow's placement floor of Gio's own) and
 `TestRealWindowCaretCost` (ci's linux-idle, macos, windows-idle and
 flake-check's gpu-cost-damage, count=N runs: App.Run's real window, 6 s of
 blinks partial and whole in turns of 3 s, their draws and the process's
-CPU; 12 s of a scroll, partial frames on and off, what its frames cost
-and copied; on Xvfb the window's pixels read back with python3-xlib, the
+CPU; a scroll in four turns of 1.5 s, partial frames on and off, what
+its frames cost and copied and the coverage atlas, the median turn's CPU
+a frame within 1.25 times CLACK_FULL_FRAMES' on every OS (the Mac's ran
+110-129% a turn); on Xvfb the window's pixels read back with python3-xlib, the
 caret's toggling between blinks and a partial frame's window bit for bit
 a whole frame's; on macOS each blink's drawable read back after the frame
 texture's draw into it, bit for bit the frame texture: `ClackVerifyCopy`,
 `FrameStats.CopyChecked` and `CopyMismatchPx`, with the layer's drawables
-made readable by `CLACK_METAL_READBACK`, the test's only). Not in
-`UPSTREAM.patch`.
+made readable for that part alone by `app.ClackReadableDrawables`; the
+blinks and the scroll are measured on the framebufferOnly drawables a
+window has).
+
+What a window's GPU holds, in bytes: Direct3D 11 counts the textures and
+buffers it made and hasn't released (`driver.ClackResources`, the
+backend's `ClackResourceBytes`: every mip level's texels at the format's
+size, each buffer's size), and `FrameStats.DeviceTextureBytes` and
+`DeviceBufferBytes` report them after each frame (-1 on the other
+backends); `FrameStats.FrameTextureBytes` is the share partial frames
+keep, the frame texture and the clear texture. internal/ui's
+`TestRealWindowMemory` (ci's windows-idle, the runner's display at
+1920x1080) measures Karim's window, a client area of 1918x1080 with a
+thread open and the caret blinking, in three pairs of processes, partial
+frames then `CLACK_FULL_FRAMES=1` (Gio's own whole frames and atlas
+packing): each process's private working set and commit, its Go heap, and
+what the device holds. The pairs' median difference in commit must be no
+more than the frame and clear textures and 4 MB.
+
+`gpu/clack_floor.go` has two switches for the pixel tests that hold a
+change in packing to Gio's own placement rounding. `ClackPackOrder` packs
+the coverage atlas in a seeded order instead of the ops' (every path's
+coverage on other texels: the noise of any packing change, where a
+transparent probe path moves only the paths after it), and
+`ClackCanaryTexels` writes coverage one half into the centre texel of a
+whole frame's largest stencil regions (pixels a renderer error gets
+wrong). internal/ui's `TestFrameCostWindow` takes its new-against-old floor
+from both kinds of move, and requires the bound to reject the new way with
+16 such texels in every scene. Its karim 1x light thread scene had fit the
+probes' floor with 2% to spare (5,260 px against 5,380, ui a3f8d0b0), and
+went past it when ui 556c6251's theme colours made one probe move 18%
+fewer pixels (5,282 against 5,116) with the difference itself unchanged.
+Not in `UPSTREAM.patch`.
 
 ## 47. app: the caret's blink period from the OS (macOS's, X11's XSETTINGS)
 
@@ -2300,15 +2363,19 @@ Net/CursorBlink and Net/CursorBlinkTime; gsd-xsettings, xfsettingsd).
 display connection of its own (the server grabbed while it looks, as the
 XSETTINGS spec has clients do: the manager's window can't go between
 finding and reading it, which Xlib's default error handler would make the
-process's end); Clack parses it and does the rest
-(`internal/ui/caretblink_linux.go`).
+process's end; Xlib's threads are made safe through Gio's own once);
+Clack reads it once, as Chromium reads the interval (it never polls it),
+parses it and does the rest (`internal/ui/caretblink_linux.go`).
 
 Tests: `app/clack_caret_darwin_test.go` `TestCaretBlinkFromOSMac` (ci's
 macOS window step: a window opens with the average of the two periods
 set in the process's own defaults; the app becoming active reads them
 again: one period alone, an on period over a minute, a negative one, both
-0, neither) and, for XSETTINGS, `internal/ui` `TestXSettingsBlink`. Not in
-`UPSTREAM.patch`.
+0, neither); `app/clack_xsettings_x11_test.go` `TestClackXSettingsX11`
+(ci's linux-gio Xvfb step: python-xlib plays a settings manager, and
+`ClackXSettings` reads its property byte for byte, again after it changes,
+and nothing once the manager is gone); `internal/ui` `TestXSettingsBlink`
+and `TestCaretBlinkWatcherX11`. Not in `UPSTREAM.patch`.
 
 ## 49. io/input: every handler caught up with where the pointer is
 

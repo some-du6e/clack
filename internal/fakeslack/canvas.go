@@ -216,6 +216,22 @@ func (s *Server) dropSocket(c *websocket.Conn) {
 	cs.mu.Unlock()
 }
 
+// DropSockets cuts every realtime socket, as a network drop does (no
+// close handshake): the client connects again, a slow connect, as the
+// fake hands out no reconnect_url. Events pushed meanwhile reach nobody.
+func (s *Server) DropSockets() {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	var conns []*websocket.Conn
+	for c := range cs.sockets {
+		conns = append(conns, c)
+	}
+	cs.mu.Unlock()
+	for _, c := range conns {
+		_ = c.CloseNow()
+	}
+}
+
 type fakeNames struct{ s *Server }
 
 func (n fakeNames) UserName(id string) string {

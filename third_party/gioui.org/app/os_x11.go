@@ -104,6 +104,9 @@ type x11Window struct {
 	}
 
 	animating bool
+	// unmapped: minimized (iconified) or hidden, until the next MapNotify
+	// (Clack patch, CLACK_PATCHES.md §46): no animation frames meanwhile
+	unmapped bool
 
 	pointerBtns pointer.Buttons
 
@@ -498,7 +501,11 @@ dispatchFnsLoop:
 		return
 	}
 	if !syn {
-		anim = w.animating
+		// Clack patch (CLACK_PATCHES.md §46): an unmapped window draws no
+		// animation frames (nobody sees them, and they'd make again the
+		// frame texture its unmap let go of); the request waits for the
+		// window to be mapped again, as Windows' and macOS's do
+		anim = w.animating && !w.unmapped
 		if !anim {
 			// Clear poll events.
 			*xEvents = 0
@@ -778,7 +785,14 @@ func (h *x11EventHandler) handleEvents() bool {
 			}
 			// redraw will be done by a later expose event
 		case C.UnmapNotify: // minimized (iconified), hidden or reparented
-			w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
+			// Clack patch (CLACK_PATCHES.md §46): no frames for now
+			w.unmapped = true
+			w.w.ClackGPUIdle()
+		case C.MapNotify:
+			if w.unmapped {
+				w.unmapped = false
+				redraw = true
+			}
 		case C.SelectionNotify:
 			cevt := (*C.XSelectionEvent)(unsafe.Pointer(xev))
 			if w.handleXdndSelection(cevt) { // Clack patch (CLACK_PATCHES.md §11)
@@ -873,7 +887,24 @@ func (h *x11EventHandler) handleEvents() bool {
 	return redraw
 }
 
-var x11Threads sync.Once
+var (
+	x11Threads sync.Once
+	// x11ThreadsErr is XInitThreads' failure (Clack patch, CLACK_PATCHES.md
+	// §47: ClackXSettings' connection shares the once)
+	x11ThreadsErr error
+)
+
+// initX11Threads makes Xlib thread-safe, before the process's first
+// connection.
+func initX11Threads() error {
+	x11Threads.Do(func() {
+		if C.XInitThreads() == 0 {
+			x11ThreadsErr = errors.New("x11: threads init failed")
+		}
+		C.XrmInitialize()
+	})
+	return x11ThreadsErr
+}
 
 func init() {
 	x11Driver = newX11Window
@@ -887,13 +918,7 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 		return fmt.Errorf("NewX11Window: failed to create pipe: %w", err)
 	}
 
-	x11Threads.Do(func() {
-		if C.XInitThreads() == 0 {
-			err = errors.New("x11: threads init failed")
-		}
-		C.XrmInitialize()
-	})
-	if err != nil {
+	if err := initX11Threads(); err != nil {
 		return err
 	}
 	dpy := C.XOpenDisplay(nil)

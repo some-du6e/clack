@@ -179,8 +179,47 @@ func TestCheckRedirectStripsCredentials(t *testing.T) {
 		req.Header.Set("Authorization", "Bearer xoxc-1")
 		return req, c.checkRedirect(req, via)
 	}
-	if req, err := try("https://files-origin.slack.com/x"); err != nil || req.Header.Get("Cookie") == "" {
-		t.Errorf("slack.com hop: err %v, cookie %q (want kept)", err, req.Header.Get("Cookie"))
+	if req, err := try("https://files-origin.slack.com/files-pri/T1-F1/x.png"); err != nil || req.Header.Get("Cookie") == "" {
+		t.Errorf("slack.com file hop: err %v, cookie %q (want kept)", err, req.Header.Get("Cookie"))
+	}
+	// a file host's page is a page: the hop isn't followed
+	for _, target := range []string{"https://files-origin.slack.com/x", "https://files.slack.com/ssb/redirect", "https://files.slack.com/files-pri/%252e%252e/ssb/redirect"} {
+		if _, err := try(target); !errors.Is(err, ErrNotAFile) {
+			t.Errorf("redirect to %s: err %v, want ErrNotAFile", target, err)
+		}
+	}
+	// A 307 or 308 keeps a POST and the cookie Go copies to the hop: it may
+	// move to another Web API method or the same path, never to a page.
+	post := func(target string) error {
+		req := &http.Request{Method: http.MethodPost, URL: mustURL(t, target), Header: http.Header{}}
+		req.Header.Set("Cookie", "d=xoxd-secret")
+		return c.checkRedirect(req, []*http.Request{{Method: http.MethodPost, URL: mustURL(t, "https://hackclub.slack.com/api/chat.postMessage")}})
+	}
+	for _, target := range []string{"https://hackclub.slack.com/ssb/redirect", "https://hackclub.slack.com/signin", "https://hackclub.slack.com/api/../ssb/redirect", "https://hackclub.slack.com/api/%2e%2e/ssb/redirect",
+		// a Web API method that ends the session, however it is written
+		"https://hackclub.slack.com/api/auth.signout", "https://slack.com/api/AUTH.REVOKE", "https://hackclub.slack.com/api/%61uth.signout", "https://hackclub.slack.com/api//auth.signout/"} {
+		if err := post(target); !errors.Is(err, ErrNotAFile) {
+			t.Errorf("POST hop to %s: err %v, want ErrNotAFile", target, err)
+		}
+	}
+	for _, target := range []string{"https://slack.com/api/chat.postMessage", "https://hackclub.slack.com/api/chat.update"} {
+		if err := post(target); err != nil {
+			t.Errorf("POST hop to %s: %v (want followed)", target, err)
+		}
+	}
+	// The same path: a 307 that moves an upload's POST keeps it on the
+	// path the first request went to, whatever the query; any other path
+	// that isn't a Web API method is refused.
+	upload := func(target string) error {
+		req := &http.Request{Method: http.MethodPost, URL: mustURL(t, target), Header: http.Header{}}
+		req.Header.Set("Cookie", "d=xoxd-secret")
+		return c.checkRedirect(req, []*http.Request{{Method: http.MethodPost, URL: mustURL(t, "https://files.slack.com/upload/v1/ABC")}})
+	}
+	if err := upload("https://files.slack.com/upload/v1/ABC?retry=1"); err != nil {
+		t.Errorf("POST hop to the first request's path: %v (want followed)", err)
+	}
+	if err := upload("https://files.slack.com/upload/v1/OTHER"); !errors.Is(err, ErrNotAFile) {
+		t.Errorf("POST hop to another path: err %v, want ErrNotAFile", err)
 	}
 	if req, err := try("https://a.slack-edge.com/x.png"); err != nil || req.Header.Get("Cookie") != "" || req.Header.Get("Authorization") != "" {
 		t.Errorf("slack-edge hop: err %v, cookie %q (want followed, cookie dropped)", err, req.Header.Get("Cookie"))

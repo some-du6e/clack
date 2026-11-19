@@ -580,7 +580,7 @@ var accountFields = map[string]func(*Palette) *color.NRGBA{
 	"RailBadge": func(p *Palette) *color.NRGBA { return &p.RailBadge }, "RailBadgeText": func(p *Palette) *color.NRGBA { return &p.RailBadgeText },
 	"Accent": func(p *Palette) *color.NRGBA { return &p.Accent }, "Presence": func(p *Palette) *color.NRGBA { return &p.Presence },
 	"ThemeImp": func(p *Palette) *color.NRGBA { return &p.ThemeImp }, "ThemeImpText": func(p *Palette) *color.NRGBA { return &p.ThemeImpText },
-	"ThemeInvPry": func(p *Palette) *color.NRGBA { return &p.ThemeInvPry }, "ThemeInvSec": func(p *Palette) *color.NRGBA { return &p.ThemeInvSec },
+	"ThemeInvSec": func(p *Palette) *color.NRGBA { return &p.ThemeInvSec },
 	"ThemeInvTer": func(p *Palette) *color.NRGBA { return &p.ThemeInvTer }, "ThemeOtlInvPry": func(p *Palette) *color.NRGBA { return &p.ThemeOtlInvPry },
 }
 
@@ -659,12 +659,11 @@ func (t IATheme) Fields(dark, gradients bool) map[string]color.NRGBA {
 	out["ThemeImp"] = t.baseToken(t.Important, "base-imp", root)
 	out["ThemeImpText"] = t.contentToken(t.Important, "content-imp", root)
 	out["Presence"] = t.baseToken(t.Highlight2, "base-inv-hgl-2", root)
-	// the root scope's inverted content and outline: the peek cards'
-	// Unreads toggles (.p-unreads_toggle: content-inv-sec, -inv-pry when
-	// on), the DMs peek's timestamps (.p-dms_channel__timestamp,
-	// --muted's content-inv-ter) and an item's otl-inv-pry border
+	// the root scope's inverted content and outline: the DMs peek's
+	// timestamps (.p-dms_channel__timestamp, --muted's content-inv-ter)
+	// and its rows' otl-inv-pry border (the card is a portal under
+	// document.body, outside .p-ia4_client)
 	al := func(k string) uint8 { return chromeAlpha[k][root] }
-	out["ThemeInvPry"] = t.contentInvPry(root)
 	out["ThemeInvSec"] = withA(t.token(pr, "content-inv-sec", root), al("content-inv-sec"))
 	out["ThemeInvTer"] = withA(t.token(pr, "content-inv-ter", root), al("content-inv-ter"))
 	out["ThemeOtlInvPry"] = withA(t.token(pr, "otl-inv-pry", root), al("otl-inv-pry"))

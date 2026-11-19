@@ -272,6 +272,22 @@ func (c *Custom) Snapshot() map[string]string {
 	return c.m
 }
 
+// AliasChain is the names an alias name resolves through (its target,
+// the target's target…, as Resolve follows them), nil for one that isn't
+// an alias.
+func (c *Custom) AliasChain(name string) []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	var out []string
+	v, has := c.m[name]
+	for i := 0; has && strings.HasPrefix(v, "alias:") && i < 5; i++ {
+		target := strings.TrimPrefix(v, "alias:")
+		out = append(out, target)
+		v, has = c.m[target]
+	}
+	return out
+}
+
 // Resolve returns an image URL (custom or standard) and unicode text for name.
 func (c *Custom) Resolve(name, style string) (url, text string, ok bool) {
 	c.mu.RLock()
