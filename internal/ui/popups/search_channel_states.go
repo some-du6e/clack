@@ -32,7 +32,6 @@ package popups
 
 import (
 	"bytes"
-	_ "embed"
 	"image"
 	"image/color"
 	"image/png"
@@ -51,12 +50,6 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
-
-//go:embed assets/empty-search-light-b73db25@1x.png
-var srcEmptyPNG1x []byte
-
-//go:embed assets/empty-search-light-b73db25@2x.png
-var srcEmptyPNG2x []byte
 
 var (
 	srcEmptyOnce sync.Once

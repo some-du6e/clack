@@ -3,7 +3,6 @@ package popups
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"image"
 	"image/png"
 	"strconv"
@@ -688,9 +687,6 @@ func adActiveIn(n int) string {
 	}
 	return "Active in " + strconv.Itoa(n) + " channels and DMs"
 }
-
-//go:embed assets/magnifying-glass-d8a6430@512.png
-var adGlassPNG []byte
 
 var (
 	adGlassOnce sync.Once

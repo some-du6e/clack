@@ -2,7 +2,6 @@ package messages
 
 import (
 	"bytes"
-	_ "embed"
 	"image"
 	"image/png"
 	"strings"
@@ -10,15 +9,6 @@ import (
 
 	"gioui.org/op/paint"
 )
-
-// Slack's default bot avatar (getMemberProfileImage's isBot fallback,
-// ava_0002: a white person silhouette on blue) for a user-less bot with no
-// icons. The web client bundles it as ava_0002-72-b939583.png; this is
-// that file (byte-identical to a.slack-edge.com/df10d/img/avatars/
-// ava_0002-72.png), embedded so it never waits on the network.
-//
-//go:embed assets/ava_0002-72.png
-var defaultBotAvatarPNG []byte
 
 var (
 	defaultBotOnce sync.Once

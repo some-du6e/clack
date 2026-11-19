@@ -60,7 +60,6 @@ package views
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"image"
 	"image/png"
 	"slices"
@@ -423,12 +422,6 @@ func (v *FolderTab) pendingRow(gtx C, p core.PendingFolderFile, i, n int) D {
 
 // Pending is the folder's uploading files as last drawn (tests).
 func (v *FolderTab) Pending() []core.PendingFolderFile { return v.pending }
-
-//go:embed assets/empty_state_folder-7c5c7a1@1x.png
-var emptyFolderPNG1x []byte
-
-//go:embed assets/empty_state_folder-7c5c7a1@2x.png
-var emptyFolderPNG2x []byte
 
 var (
 	emptyFolderOnce sync.Once

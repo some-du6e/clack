@@ -2,7 +2,6 @@ package popups
 
 import (
 	"bytes"
-	_ "embed"
 	"image"
 	"image/png"
 	"sync"
@@ -21,9 +20,6 @@ import (
 // client already holds, so it draws at once; Clack carries a 256px copy
 // (the card's 64px icon and the flexpane's 36px avatar at up to 4x) and
 // never fetches it.
-
-//go:embed assets/default_new_app_icon-936d613@256.png
-var defaultAppIconPNG []byte
 
 var (
 	defaultAppIconOnce sync.Once

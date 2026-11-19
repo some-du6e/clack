@@ -3,7 +3,6 @@ package popups
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"errors"
 	"image"
 	"image/color"
@@ -71,9 +70,6 @@ import (
 //     a danger "Remove" or "Deactivate".
 
 var nsUG = i18n.NS("user_groups")
-
-//go:embed assets/user-group-section-group-3de1100.png
-var ugSectionPNG []byte
 
 var (
 	ugSectionOnce sync.Once

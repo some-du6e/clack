@@ -49,6 +49,11 @@ on:
       - "assets/icon.svg"
       - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
+      - "cmd/clack-web/**"
+      - "internal/**"
+      - "third_party/**"
+      - "go.mod"
+      - "go.sum"
   workflow_dispatch:
 
 permissions:
@@ -198,6 +203,12 @@ jobs:
         run: |
           go test -count=1 ./internal/memnet/
           go test -count=1 -v -run '^TestInMemory$' ./internal/demo/
+      # the demo's drawn stand-ins for Slack's pictures, kept with the
+      # browser test's shots (site-demo-test) to look at
+      - name: the stand-in pictures (internal/ui/standin)
+        env:
+          CLACK_STANDIN_OUT: ${{ github.workspace }}/site/demo-test/standin
+        run: go test -count=1 -run '^TestStandins$' ./internal/ui/standin/
       - name: the site, with the demo's page
         working-directory: site
         run: node build.mjs --strict --pages

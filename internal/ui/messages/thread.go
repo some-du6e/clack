@@ -3,7 +3,6 @@ package messages
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"image"
 	"image/draw"
 	"image/gif"
@@ -1076,15 +1075,6 @@ func (s *listState) loadingRepliesRow(gtx layout.Context, h Host, c *colors, w i
 	at(gtx, (w-m.X)/2, 0, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, msg) })
 	return layout.Dimensions{Size: image.Pt(w, dp(gtx, 96))}
 }
-
-// Slack's loading_hash_animation@2x (light and dark), the image
-// FlexpaneLoading shows: 80px frames for a 40px box, 30ms each.
-var (
-	//go:embed assets/loading_hash_animation_2x.gif
-	hashGIFLight []byte
-	//go:embed assets/loading_hash_animation_2x_dark.gif
-	hashGIFDark []byte
-)
 
 // hashAnim is the decoded animation, composed frame by frame (each frame
 // draws over the last: disposal "none").

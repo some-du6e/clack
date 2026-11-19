@@ -2,7 +2,6 @@ package ui
 
 import (
 	"bytes"
-	_ "embed"
 	"image"
 	"image/color"
 	"image/draw"
@@ -645,15 +644,6 @@ func dropSprite(gtx layout.Context, img paint.ImageOp, pos, t, sz f32.Point, deg
 }
 
 // ---- the sprites ----
-
-//go:embed assets/dragdrop/dragdrop_sprites@2x-ca59764.png
-var dropSpritesPNG []byte
-
-//go:embed assets/dragdrop/dragdrop_threads_sprites@2x-f3aaf0a.png
-var dropThreadSpritesPNG []byte
-
-//go:embed assets/dragdrop/emptystate-blockedfiles@1x-6b3ea84.png
-var dropBlockedPNG []byte
 
 // dropSpriteSet is Slack's drag-and-drop sprites, cut into the pieces the
 // CSS shows (background-position in the 100×358 / 110×203 background
