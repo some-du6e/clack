@@ -491,12 +491,15 @@ func TestAVFReadsAhead(t *testing.T) {
 	t.Logf("the source: %d GETs, %d merged, %d restarts; the requests to the end: %q", rs.Requests, rs.Merged, rs.Restarts, notesOf(r.id))
 	// round 4 step 5: AVFoundation's two requests to the end (pacing holds
 	// neither in a file under 30 s) share their bytes, not reading the
-	// file once each (they read 52 to 103 MB of the 52). The second
-	// begins where the asset's bytes end: with the responds queued
-	// unbounded, the first had read up to 28 MB past that, out of the
-	// source's cache, and 17 MB came twice (2 of 3 runs on f7dca4f1)
-	if lim := int64(len(data)) * 21 / 20; st.Bytes > lim {
-		t.Errorf("the source fetched %d bytes of a %d-byte file: the requests to the end read some of it twice", st.Bytes, len(data))
+	// file once each (they read 52 to 103 MB of the 52). It drops the
+	// first and asks again from where the asset's bytes end: with the
+	// responds queued unbounded the first had read up to 28 MB past that,
+	// out of the source's cache, and 17 MB came twice (2 of 3 runs on
+	// f7dca4f1); bounded, the GET's read-ahead was evicted before the
+	// bytes read again, and 2 or 3 blocks came twice (222f3fc9). A body's
+	// read in flight as another GET brings the same bytes may come twice.
+	if again := st.Again(); again > 64<<10 {
+		t.Errorf("%d of the %d bytes the source fetched came twice (GETs at %v, their spans %v)", again, st.Bytes, st.Offsets, st.Spans)
 	}
 }
 

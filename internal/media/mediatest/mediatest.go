@@ -10,6 +10,7 @@ package mediatest
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/binary"
@@ -18,6 +19,7 @@ import (
 	"image/color"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -144,8 +146,8 @@ func Want(t time.Duration) string {
 // Opener serves a file from memory as a file server does: a range from
 // the offset asked for (a 206), or with Whole the whole file from byte 0
 // whatever was asked (a 200). It records each request's offset, the bytes
-// its bodies gave and the most bodies open at once, and its bodies stop
-// with the request's context.
+// its bodies gave (each body's span of the file too) and the most bodies
+// open at once, and its bodies stop with the request's context.
 type Opener struct {
 	Data  []byte
 	Whole bool
@@ -165,6 +167,7 @@ type Opener struct {
 
 	mu      sync.Mutex
 	offsets []int64
+	spans   [][2]int64
 	bytes   int64
 	open    int
 	maxOpen int
@@ -174,10 +177,28 @@ type Opener struct {
 type OpenerStats struct {
 	// Offsets are the requests' offsets, in order.
 	Offsets []int64
+	// Spans are the bytes each body gave, [first, end) in the file, in
+	// the order they opened.
+	Spans [][2]int64
 	// Bytes are what the bodies gave, MaxOpen the most bodies open at
 	// once, Open those open now.
 	Bytes         int64
 	MaxOpen, Open int
+}
+
+// Again is how many of the bytes the bodies gave were given before: Bytes
+// less the bytes of the file the spans cover.
+func (s OpenerStats) Again() int64 {
+	sp := slices.Clone(s.Spans)
+	slices.SortFunc(sp, func(a, b [2]int64) int { return cmp.Compare(a[0], b[0]) })
+	var covered, end int64
+	for _, x := range sp {
+		if x[1] > end {
+			covered += x[1] - max(x[0], end)
+			end = x[1]
+		}
+	}
+	return s.Bytes - covered
 }
 
 // Open implements media.Source's Open.
@@ -204,7 +225,8 @@ func (o *Opener) Open(ctx context.Context, off int64) (io.ReadCloser, media.Info
 	}
 	o.open++
 	o.maxOpen = max(o.maxOpen, o.open)
-	return &body{o: o, ctx: ctx, data: o.Data[off:end]}, info, nil
+	o.spans = append(o.spans, [2]int64{off, off})
+	return &body{o: o, ctx: ctx, data: o.Data[off:end], span: len(o.spans) - 1}, info, nil
 }
 
 // Change runs f with o locked: a test changing the server between GETs.
@@ -224,7 +246,7 @@ func (e RetryAfter) RetryAfterDuration() time.Duration { return e.D }
 func (o *Opener) Stats() OpenerStats {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return OpenerStats{Offsets: append([]int64(nil), o.offsets...), Bytes: o.bytes, MaxOpen: o.maxOpen, Open: o.open}
+	return OpenerStats{Offsets: append([]int64(nil), o.offsets...), Spans: slices.Clone(o.spans), Bytes: o.bytes, MaxOpen: o.maxOpen, Open: o.open}
 }
 
 // Source is a media.Source of data through a new Opener.
@@ -237,6 +259,7 @@ type body struct {
 	o      *Opener
 	ctx    context.Context
 	data   []byte
+	span   int // its index in o.spans
 	closed bool
 }
 
@@ -260,6 +283,7 @@ func (b *body) Read(p []byte) (int, error) {
 	b.data = b.data[n:]
 	b.o.mu.Lock()
 	b.o.bytes += int64(n)
+	b.o.spans[b.span][1] += int64(n)
 	b.o.mu.Unlock()
 	return n, nil
 }

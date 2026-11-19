@@ -631,25 +631,41 @@ func (s *RangeSource) put(g *rstream, b []byte) {
 	s.evict()
 }
 
-// evict lets the least recently used blocks go while the cache is over its
-// cap, but none a GET is filling. Call with mu held.
+// evict lets blocks go while the cache is over its cap, the least
+// recently used first: first those no GET brought past its furthest read
+// (a GET's read-ahead, which no read took yet), then any; never one a GET
+// is filling. Read-ahead goes last because LRU alone misjudges it: blocks
+// a GET brought ahead and nothing has read since are older than blocks a
+// reader behind is reading again (AVFoundation's second request to the
+// end begins behind where the first was dropped), so they went first and
+// a GET brought them again. Call with mu held.
 func (s *RangeSource) evict() {
-	for el := s.lru.Back(); el != nil && s.cached > s.opt.Cache; {
-		prev := el.Prev()
-		bl := el.Value.(*rblock)
-		filling := false
-		for _, g := range s.gets {
-			if !g.ended && g.pos/s.opt.Block == bl.idx {
-				filling = true
+	for pass := 0; pass < 2 && s.cached > s.opt.Cache; pass++ {
+		for el := s.lru.Back(); el != nil && s.cached > s.opt.Cache; {
+			prev := el.Prev()
+			if bl := el.Value.(*rblock); !s.held(bl, pass == 0) {
+				s.lru.Remove(el)
+				delete(s.blocks, bl.idx)
+				s.cached -= s.opt.Block
 			}
+			el = prev
 		}
-		if !filling {
-			s.lru.Remove(el)
-			delete(s.blocks, bl.idx)
-			s.cached -= s.opt.Block
-		}
-		el = prev
 	}
+}
+
+// held is whether bl stays: a GET is filling it, or (ahead) it holds bytes
+// a GET brought past its furthest read. Call with mu held.
+func (s *RangeSource) held(bl *rblock, ahead bool) bool {
+	lo, hi := bl.idx*s.opt.Block, (bl.idx+1)*s.opt.Block
+	for _, g := range s.gets {
+		if g.ended {
+			continue
+		}
+		if g.pos/s.opt.Block == bl.idx || ahead && hi > g.furthest && lo < g.pos {
+			return true
+		}
+	}
+	return false
 }
 
 // copyAt copies the cached bytes at off into p, as far as they're

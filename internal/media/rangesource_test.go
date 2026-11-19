@@ -618,3 +618,43 @@ func TestRangeSourceOverlappingReadersShare(t *testing.T) {
 		t.Errorf("two readers to the end brought %d bytes of a %d-byte file (%d GETs merged): each read it", st.Bytes, len(data), rs.Merged)
 	}
 }
+
+// A reader dropped where it read to, and another beginning a little behind
+// it (AVFoundation drops its first request to the end and asks again from
+// where the asset's bytes end): the second reads again bytes the first
+// read, then the first GET's read-ahead, and every byte comes from the
+// network once. The least recently used going first, that read-ahead
+// (brought before the second reader began, and read by nothing since) went
+// before the blocks read again, and a GET brought it again (macOS runs on
+// 222f3fc9: two or three 256 KB blocks of TestAVFReadsAhead's file twice).
+func TestRangeSourceKeepsReadAhead(t *testing.T) {
+	const block = 64 << 10
+	data := bigFile(4 * mb)
+	src, o := mediatest.Source("FRSK", data, false)
+	s := media.NewRangeSource(src, media.RangeOptions{Block: block, Cache: 16 * block, Ahead: 8 * block, Near: 2 * block, Log: quiet, Logged: new(sync.Map)})
+	defer s.Close()
+	readAt(t, s, 0, 5*block) // the first, dropped there
+	if n := settled(t, o); n < 13*block {
+		t.Fatalf("its GET stopped at %d, want its read-ahead of 8 blocks past the 5 read", n)
+	}
+	buf := make([]byte, block)
+	for cur := int64(3 * block); cur < int64(len(data)); { // the second, slower than the network
+		n, err := s.ReadSome(context.Background(), buf, cur)
+		if n > 0 && !bytes.Equal(buf[:n], data[cur:cur+int64(n)]) {
+			t.Fatalf("the bytes at %d differ", cur)
+		}
+		cur += int64(n)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	st := o.Stats()
+	t.Logf("GETs at %v, their spans %v: %d bytes of %d", st.Offsets, st.Spans, st.Bytes, len(data))
+	if again := st.Again(); again > 0 {
+		t.Errorf("%d bytes came twice (GETs at %v): the read-ahead went before the blocks read again", again, st.Offsets)
+	}
+}
