@@ -21,6 +21,31 @@ type Tokens interface {
 	Key() uint64
 }
 
+// Declarer is Tokens that know which custom properties a stylesheet
+// declares itself (slackc's RootTokens).
+type Declarer interface {
+	// Declares reports whether a sheet declares name
+	// ("--dt_color-theme-content-imp") itself, not only a variable its
+	// var() chain over Slack's defaults reaches.
+	Declares(name string) bool
+}
+
+// Declares is the cascade per variable: whether t's sheets declare name
+// themselves. Where an account theme's stylesheet spells a token on its
+// own ramp, a sheet that overrides only the ramp (Slick's AMOLED: the
+// aubergine stops) doesn't reach it. Tokens that can't tell answer from
+// Color's chain-wide own.
+func Declares(t Tokens, name string) bool {
+	if t == nil {
+		return false
+	}
+	if d, ok := t.(Declarer); ok {
+		return d.Declares(name)
+	}
+	_, own, ok := t.Color("var(" + name + ")")
+	return own && ok
+}
+
 func tokensKey(t Tokens) uint64 {
 	if t == nil {
 		return 0
@@ -178,10 +203,11 @@ func ApplyTokens(p *Palette, t Tokens, dark bool) {
 	for _, f := range paletteTokens {
 		SetTok(t, f.f(p), f.tok, dark)
 	}
-	// a root --sk_foreground_low reaches the sidebar's rules in dark mode
+	// a sheet's --sk_foreground_low reaches the sidebar's rules in dark
+	// mode (declared on body or below: Slack's body block shadows :root's)
 	// and in a light sidebar scope; a light client's inverted scope
 	// (.sk-client-theme--light-inverted-sidebar) redeclares the variable
-	if dark || p.SidebarRule == sidebarRuleLight {
+	if (dark || p.SidebarRule == sidebarRuleLight) && Declares(t, "--sk_foreground_low") {
 		SetTok(t, &p.SidebarRule, tokSidebarRule, dark)
 	}
 	rehover(p, t, dark, bg, bp)

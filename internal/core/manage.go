@@ -550,6 +550,12 @@ func (a *App) MarkActivityUnread(ctx context.Context, items ...ActivityItem) err
 	es := make([]entry, 0, len(items))
 	for _, it := range items {
 		es = append(es, entry{Type: it.Type, Key: it.Key, TS: firstNonEmpty(it.TS, it.FeedTS), FeedTS: it.FeedTS})
+		// markActivityItemAsUnread (boot-shared 54V6): a thread's item
+		// puts its thread in threadsManuallyMarkedUnread (ACTIVITY_PAGE),
+		// and a failure doesn't take it out; reactions are never marked
+		if it.Type != "message_reaction" && it.Channel != "" && it.ThreadTS != "" {
+			a.thrUnread.set(it.Channel+"/"+it.ThreadTS, MarkedInActivity)
+		}
 	}
 	b, _ := json.Marshal(es)
 	return a.C.Call(ctx, "activity.markUnread", url.Values{"entries": {string(b)}}, nil)
@@ -774,6 +780,8 @@ func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
 
 // onThreadMarked is the thread_marked event ({subscription: {channel,
 // thread_ts, last_read}}): another client (or this one) read the thread.
+// Slack's threadMarked reads those three alone (setSubscription
+// {lastRead}): the event's active says nothing Clack records.
 func (a *App) onThreadMarked(raw json.RawMessage) {
 	var e struct {
 		Subscription struct {
@@ -788,10 +796,20 @@ func (a *App) onThreadMarked(raw json.RawMessage) {
 
 // setThreadLastRead records a thread's last read reply (Slack's
 // setSubscription {lastRead}: the subscription, which the cached root
-// copies take too) and tells the views.
+// copies take too) and tells the views. Slack's on a thread its store has
+// no subscription for leaves subscribed unset, and readers fall back to
+// the root's own copy. Clack's record has no unset, so a last read for a
+// thread the store knows nothing of (no subscription, no cached root)
+// records nothing rather than a thread nobody follows: the Threads view
+// would stop marking it read and drop it on a resort.
 func (a *App) setThreadLastRead(ch, threadTS, lastRead string) {
 	if ch == "" || threadTS == "" || lastRead == "" {
 		return
+	}
+	if _, known := a.S.ThreadSub(ch, threadTS); !known {
+		if _, cached := a.S.Find(ch, threadTS); !cached {
+			return
+		}
 	}
 	a.S.SetThreadSub(ch, threadTS, func(s *store.ThreadSub) { s.LastRead = lastRead })
 	if m, ok := a.S.Find(ch, threadTS); ok {

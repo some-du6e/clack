@@ -56,7 +56,10 @@ func Live(app *core.App, ch, ts, threadTS string, since time.Time, have uint64) 
 		}
 		md.mu.Lock()
 		i := -1
-		if md.loaded {
+		// a model the hub let go and a list took back holds the window it
+		// had then until its reload lands (dropped): it missed every event
+		// while out, and its copy may be older than the one Activity drew
+		if md.loaded && !md.dropped {
 			i = md.find(ts)
 		}
 		if i < 0 {

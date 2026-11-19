@@ -292,6 +292,17 @@ func sweepRows(now time.Time) {
 		}
 		for _, r := range s.rows {
 			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
+				// the trees' msgs it remembered and laid over its message
+				// (slackc's sweep has let their roots go, and a remount
+				// hands the natives none until JS draws them again): not
+				// kept alive for the row's lifetime
+				r.textMemo, r.blocksMemo, r.filesMemo, r.attsMemo = fpMemo{}, fpMemo{}, fpMemo{}, fpMemo{}
+				r.ovEl = elMemo{}
+				if r.textOv != nil || r.filesOv != nil || r.attsOv != nil || r.wrapMsg != nil || r.inMsg != nil {
+					r.textOv, r.filesOv, r.attsOv = nil, nil, nil
+					r.wrapOv, r.msgOv, r.wrapMsg, r.inMsg = 0, 0, nil, nil
+					r.recompose()
+				}
 				r.rv.Release()
 			}
 		}
@@ -486,9 +497,64 @@ func (s *listState) newestHold(ts string) bool {
 // (ThreadView.Prepare): what the ui root decides from the list before it
 // lays the list out (the reply box) is then what the list draws.
 func (s *listState) prepare(h Host, frame time.Time) {
+	s.endUnmountedFlash()
+	s.adopt(frame)
 	s.ensure()
 	s.sync(h, time.Now())
 	s.preparedAt = frame
+}
+
+// endUnmountedFlash ends a jump's flash whose list missed a frame since
+// its row was drawn: off screen, its rows unmounted, and Slack's
+// MessageBackground clears the highlight on unmount. Before the frame
+// marks the list drawn (adopt).
+func (s *listState) endUnmountedFlash() {
+	if latest, before := s.hb.latestFrames(); s.hlSeen && s.laidOut && !s.laidAt.Equal(latest) && !s.laidAt.Equal(before) {
+		s.highlight, s.hlSeen = "", false
+	}
+}
+
+// adopt marks the list's model drawn in the frame at (the hub's eviction
+// keeps the conversations drawn last; a model it dropped while the list
+// was off screen is taken back here) and, when another list made the hub
+// a model for the conversation meanwhile, switches to that one: the one
+// core's events change. It runs before the frame's load and sync, in
+// prepare or in layoutList's own, so a prepared frame (ThreadView.Prepare)
+// syncs from the right model and every frame marks its model drawn.
+// Revisions count per model, and a model's first load numbers its
+// messages as the dropped one's did, so a row whose message changed while
+// the model was out kept its copy (the same number) and skipped the
+// updates whose numbers the old model had used: every row takes the new
+// model's entries again, with the caches keyed on those numbers (its view
+// read, its huddle, its hidden-sender check), and evictions count from
+// the new model's own.
+//
+// A list showing a jump's window draws the window (its own model) and
+// keeps the conversation's model the hub's too (chm, which takes the live
+// messages it goes back to).
+func (s *listState) adopt(at time.Time) {
+	if s.win != nil {
+		s.hb.markDrawn(s.win, at)
+		if s.chm != nil {
+			s.chm = s.hb.markDrawn(s.chm, at)
+		}
+		return
+	}
+	m := s.hb.markDrawn(s.m, at)
+	if s.chm == s.m && s.chm != nil {
+		s.chm = m
+	}
+	if m == s.m {
+		return
+	}
+	s.m, s.snap.rev = m, 0
+	for _, r := range s.rows {
+		r.rev, r.viewRev, r.viewConv = 0, 0, 0
+		r.hmOK, r.hidChecked = false, false
+	}
+	m.mu.Lock()
+	s.evictSeen = m.evictGen
+	m.mu.Unlock()
 }
 
 // sync copies the model and rebuilds items if anything changed.
@@ -859,13 +925,11 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	now := time.Now()
 	lastHost = h
 	if gtx.Now.IsZero() || !gtx.Now.Equal(s.preparedAt) { // else prepare did, this frame
+		s.endUnmountedFlash()
+		s.adopt(gtx.Now)
 		s.ensure()
 		s.sync(h, now)
 	}
-	if latest, before := s.hb.latestFrames(); s.hlSeen && s.laidOut && !s.laidAt.Equal(latest) && !s.laidAt.Equal(before) {
-		s.highlight, s.hlSeen = "", false // off screen for a frame: unmounted, its flash over
-	}
-	s.hb.markDrawn(s.m, gtx.Now)
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
 	size := gtx.Constraints.Max
@@ -1142,8 +1206,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
-		s.lastOlder = now
-		s.hb.loadOlder(s.m)
+		if s.hb.loadOlder(s.m) {
+			s.lastOlder = now
+		}
 	}
 	// a window short of the newest message: its end in view loads the
 	// next page (requestNewer)

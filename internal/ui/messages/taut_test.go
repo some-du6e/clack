@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -133,6 +134,22 @@ func frameFn(v interface {
 	return func() {
 		ops.Reset()
 		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(900, 700)), Now: time.Now()}
+		v.Layout(gtx)
+	}
+}
+
+// prepFrameFn is frameFn for a view the ui root prepares before laying
+// it out (ThreadView.Prepare: layoutConvo calls it first in the frame), as
+// the window's frames go.
+func prepFrameFn(v interface {
+	Layout(gtx layout.Context) layout.Dimensions
+	Prepare(gtx layout.Context)
+}) func() {
+	ops := new(op.Ops)
+	return func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(900, 700)), Now: time.Now()}
+		v.Prepare(gtx)
 		v.Layout(gtx)
 	}
 }
@@ -370,8 +387,17 @@ func (u *pluginUI) hooks() taut.UIHooks {
 		SetStyle:    slackc.SetStyle,
 		RemoveStyle: slackc.RemoveStyle,
 		ThreadPane:  ThreadPane,
+		Invalidate: func() {
+			if f := tautInvalidate.Load(); f != nil {
+				(*f)()
+			}
+		},
 	}
 }
+
+// tautInvalidate is what taut's Invalidate calls in these tests (the
+// window's: a test that draws frames only when asked sets it).
+var tautInvalidate atomic.Pointer[func()]
 
 func (u *pluginUI) anyTree(sub string) bool {
 	u.mu.Lock()
