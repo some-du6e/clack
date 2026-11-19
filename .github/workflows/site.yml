@@ -209,6 +209,17 @@ jobs:
       - name: static checks, with the demo
         working-directory: site
         run: node tools/check.mjs --production --pages --demo
+      # boots, draws the channel list, sends a typed message to the fake;
+      # no console errors, no request off the local server
+      - name: the demo in headless Chrome
+        working-directory: site
+        run: node tools/demo-test.mjs --out demo-test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: site-demo-test
+          path: site/demo-test
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

@@ -11,8 +11,8 @@
 // The page (site/demo/index.html) defines globalThis.clackDemo before the
 // program starts; status, ready and failed are called as it boots. With
 // clackDemo.probe set (the CI browser test, site/tools/demo-test.mjs) it
-// adds drawn(), the strings the last frame drew, and lastPost(channel),
-// what you last posted there as the fake has it.
+// adds drawn(), the strings the last frame drew, lastPost(channel), what
+// you last posted there as the fake has it, and general, #general's id.
 package main
 
 import (
@@ -71,6 +71,7 @@ func main() {
 	probe := page.Truthy() && page.Get("probe").Truthy()
 	drawn := map[string]bool{}
 	if probe {
+		page.Set("general", demo.GeneralID)
 		theme.DrawHook = func(s string) { drawn[s] = true }
 		page.Set("drawn", js.FuncOf(func(js.Value, []js.Value) any {
 			out := make([]any, 0, len(drawn))
