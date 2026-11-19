@@ -58,6 +58,8 @@ type bk struct {
 	Title       *textObj        `json:"title"`
 	ActionID    string          `json:"action_id"`
 	VisibleTo   []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button (actionHidden)
+	Checked     *bool           `json:"checked"`             // a check list's, or one of its items'
+	Checklist   bool            `json:"checklist"`
 	// a citation element's details.citation_type (either spelling): only
 	// then does Slack's Citation take it (unknownInline)
 	CitationType      json.RawMessage `json:"citation_type"`
@@ -833,12 +835,25 @@ func (c *builder) richText(els []bk) []Block {
 			out = append(out, Block{Kind: Quote, Spans: c.richInline(e.Elements, brSection(false)), Border: e.Border > 0})
 		case "rich_text_list":
 			blk := Block{Kind: List, Ordered: e.styleString() == "ordered", Indent: e.Indent, Offset: e.Offset, Border: e.Border > 0}
+			// a check list (BS) draws checkboxes or, where they aren't
+			// allowed, bullets: never the ordered markers
+			blk.Check = e.Checklist || e.styleString() == "check"
+			if blk.Check {
+				blk.Ordered = false
+			}
 			for j := range e.Elements {
 				it := &e.Elements[j]
 				if it.Type == "rich_text_section" {
 					blk.Items = append(blk.Items, c.richInline(it.Elements, brSection(false)))
 				} else {
 					blk.Items = append(blk.Items, c.richInline([]bk{*it}, brSection(false)))
+				}
+				if blk.Check { // e.checked ?? the list's
+					on := it.Checked
+					if on == nil {
+						on = e.Checked
+					}
+					blk.Checked = append(blk.Checked, on != nil && *on)
 				}
 			}
 			out = append(out, blk)

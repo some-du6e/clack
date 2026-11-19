@@ -335,8 +335,12 @@ func (s *Style) Invalidate() {
 // Options are per-message rendering flags.
 type Options struct {
 	Edited bool // append "(edited)" after the last text block
-	Muted  bool // system message: body in the secondary color
-	Dim    bool // pending/failed: draw at reduced opacity
+	// CheckLists: rich_text check lists draw their checkboxes, as the
+	// rich_text renderable allows in a message or a thread (allowCheckList:
+	// s3Wf sS's blocks container contexts); elsewhere they're bullet lists
+	CheckLists bool
+	Muted      bool // system message: body in the secondary color
+	Dim        bool // pending/failed: draw at reduced opacity
 	// CompactFiles is MessageFiles' shouldUseCompactStack: the files
 	// without FilesMetaTextWrapper's title line (filemeta.go).
 	CompactFiles bool

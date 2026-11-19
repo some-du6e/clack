@@ -153,7 +153,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | rich_text_section, _list (`style`, `indent`, `offset`, `border`), _quote (`border`), _preformatted (`border`) | full | full | |
 | rich_text_header (`level`) | absent (drew nothing) | **full** | |
 | rich_text_divider | absent (drew nothing) | **full** | |
-| check lists (`style: "check"` / `checklist`, `checked`) | absent (bullets) | absent | Slack's `checkbox-filled` / `square` glyphs aren't in Clack's icon set yet |
+| check lists (`style: "check"` / `checklist`, `checked`) | absent (bullets) | **full**: RichTextList's 16px `checkbox-filled` / `square` icon (each item's `checked`, else the list's), 8px before the text, the item 4px in at indent 0 and 28px per step deeper, its next lines wrapping back under the icon; bullets where the rich_text renderable doesn't allow checkboxes (sS: anything but a message, a thread and a Slackbot message). The two glyphs are in Clack's icon set, held to Slack's by icon-shots | |
 | preformatted `language` | absent | absent | Slack highlights it (`VKeu`) |
 | text, link (`unsafe`, `truncated`), user, channel, usergroup, broadcast, emoji (`unicode`, `skin_tone`), date (`format`, `url`, `fallback`), color, message_mention, canvas, list_record, workflow_mention | full | full | |
 | file (→ `rich_text_file`, `v1Jk`) | partial: its text | **partial**: Slack's File slug (getFileSlugAttributes: the file's title or name, "Audio clip" / "Video clip", getFileTypeSvgIconName, trash / eye-closed and disabled when the file isn't there to see) | eight type glyphs Clack's set lacks (transcript, gauge-filled, pdf-file, binary, disc-image, text, presentation, zip) draw Slack's generic `file`; a click follows the link (Slack opens its file viewer); the slug's Download menu |
@@ -196,4 +196,4 @@ Round 1's review fixes, with tests that fail on `8126e895`:
 
 ## Next
 
-In order: `carousel`, `data_table`, check lists with their two glyphs, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.
+In order: `carousel` (it needs a horizontal scroller with clipping, which richview doesn't have yet), `data_table`, `contact_card`, `timeline`, `event`, `message_embed`, `share_prompt`, then the rest of the client-only blocks.

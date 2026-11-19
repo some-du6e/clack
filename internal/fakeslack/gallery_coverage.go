@@ -111,6 +111,15 @@ func galleryCoverage(e GalleryEnv) []GalleryMessage {
 				{"type":"button","action_id":"card_accept","text":{"type":"plain_text","text":"Accept"},"style":"primary","value":"yes"},
 				{"type":"button","action_id":"card_maybe","text":{"type":"plain_text","text":"Maybe"},"value":"maybe"}]}]`},
 		{Name: "coverage/card title only", Text: "card with a title", Blocks: `[{"type":"card","block_id":"card3","title":{"type":"plain_text","text":"Just a title"}}]`},
+		// a check list: the 16px checkbox-filled / square icons, an item's
+		// own checked over the list's, a nested list 28px further in
+		{Name: "coverage/check list", Text: "check list", Blocks: `[{"type":"rich_text","elements":[
+			{"type":"rich_text_section","elements":[{"type":"text","text":"check list:","style":{"bold":true}}]},
+			{"type":"rich_text_list","style":"check","checked":true,"elements":[
+				{"type":"rich_text_section","elements":[{"type":"text","text":"Book the room"}]},
+				{"type":"rich_text_section","checked":false,"elements":[{"type":"text","text":"Send the agenda, a long item that wraps back under its checkbox when the column is narrow enough"}]}]},
+			{"type":"rich_text_list","style":"check","indent":1,"elements":[
+				{"type":"rich_text_section","elements":[{"type":"text","text":"Draft it first"}]}]}]}]`},
 		{Name: "coverage/condition", Text: "condition", Blocks: `[{"type":"condition","cases":[
 			{"conditions":[{"type":"client","op":"=","value":"ios"}],"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"ios only"}}]},
 			{"conditions":[{"type":"client","op":"=","value":"desktop"}],"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"*condition*: the desktop case drew"}}]}],

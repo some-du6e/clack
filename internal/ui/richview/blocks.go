@@ -788,6 +788,20 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 	if b.Border {
 		cx += l.dp(11) // .p-rich_text_list[data-border="1"] padding-inline-start
 	}
+	// a check list's item (.p-rich_text_list__check>li): 4px in at indent 0
+	// (the [data-indent] rules' 28px steps deeper), then the 16px icon and
+	// its 8px margin inline with the text, whose next lines wrap back
+	// under the icon (the section is display: contents)
+	check := b.Check && l.opts.CheckLists
+	if check {
+		cx = x + l.dp(4)
+		if b.Indent > 0 {
+			cx = x + indentW*(b.Indent+1)
+		}
+		if b.Border {
+			cx += l.dp(11)
+		}
+	}
 	fs := l.bodyStyle()
 	for i, it := range b.Items {
 		if i > 0 {
@@ -799,6 +813,20 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			l.addEdited()
 		}
 		lineStart := len(l.d.lines)
+		if check {
+			gs := l.dp(16)
+			name := "square"
+			if i < len(b.Checked) && b.Checked[i] {
+				name = "checkbox-filled"
+			}
+			gy := y + (fs.lineH-gs)/2
+			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(cx, gy, cx+gs, gy+gs), url: iconURL + name, target: -1, px: gs, tint: fs.col})
+			l.lead = float32(gs + l.dp(8))
+			h, _ := l.flow(cx, y, x+w-cx, &fs)
+			l.leave(li)
+			y += max(h, fs.lineH)
+			continue
+		}
 		h, _ := l.flow(cx, y, x+w-cx, &fs)
 		if h == 0 {
 			h = fs.lineH

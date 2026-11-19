@@ -204,10 +204,16 @@ const (
 
 // Block is one vertical unit of a document.
 type Block struct {
-	Kind       BlockKind
-	Spans      []Span   // inline content (Paragraph, Preformatted, Quote, Header, Context, Section text, Tombstone)
-	Items      [][]Span // List items
-	Ordered    bool     // List
+	Kind    BlockKind
+	Spans   []Span   // inline content (Paragraph, Preformatted, Quote, Header, Context, Section text, Tombstone)
+	Items   [][]Span // List items
+	Ordered bool     // List
+	// Check: a check list (N8wa BS: checklist true or style "check");
+	// Checked is each item's state (its checked, else the list's). Slack
+	// draws its checkboxes only where the rich_text renderable allows them
+	// (richview Options.CheckLists), bullets elsewhere.
+	Check      bool     // List
+	Checked    []bool   // List
 	Indent     int      // List
 	Offset     int      // List
 	Border     bool     // List (also Quote/Preformatted from rich_text border)
