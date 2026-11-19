@@ -281,6 +281,19 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	}
 	// keep what only the native knows (pending state, resolved author)
 	mv.Pending, mv.Failed, mv.ClientMsgID = r.src.Pending, r.src.Failed, r.src.ClientMsgID
+	// and the reactions, core's: Slack keeps them out of the messages
+	// slice, in the reactions store under the message's reaction key
+	// (client-boot slurpReactions moves a fetched message's there, and
+	// reaction_added / reaction_removed change them there: boot-shared
+	// cBAo addReaction, yzJf removeReaction), and its ReactionBar reads
+	// them from that store by the key (its connect: reactions = bk(state,
+	// reactionKey)), not from the message. A plugin patching the messages
+	// slice never touches them, and the view, converted from the mirror a
+	// moment after core's change, can't hold one back: the row drew the
+	// view's old reactions until something else asked for a frame after
+	// it caught up (Karim, 2026-11-19: "reactions are not syncing", "in a
+	// channel for another")
+	mv.Reactions = r.src.Reactions
 	// A row drawing the view takes one converted again (or the fresh one
 	// of a new revision) that differs only in its Doc, past what sameView
 	// compares: a name in it (a file's uploader, a tab slug), which taut

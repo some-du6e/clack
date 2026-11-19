@@ -173,12 +173,24 @@ func TestActivityBadgesZeroInSocketOrder(t *testing.T) {
 			"item": map[string]any{"type": "keyword", "message": map[string]any{"ts": ts, "channel": fakeslack.ViewsChannel, "author_user_id": "U0FAKE00002"}}}})
 		app.Inject(slack.Event{Type: "activity", Subtype: "activity_updated", Raw: raw})
 	}
+	// settled waits, drawing nothing, for the activity queue to announce
+	// what it holds (an entry's lookups run off the event pump) and the
+	// view's event goroutine to take it
+	settled := func() {
+		t.Helper()
+		for dl := time.Now().Add(10 * time.Second); !app.ActivitySettled(); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(dl) {
+				t.Fatal("the activity queue never settled")
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	const kw = "1762700400.000100" // fa-keyword's message, in ViewsChannel's window
 	entry("fa-keyword", kw, true)
 	for i := 0; i < 3; i++ {
 		badgesZero(t, v)
 	}
-	time.Sleep(150 * time.Millisecond) // the event goroutine queues them; no frame drawn meanwhile
+	settled() // no frame drawn meanwhile
 	e.frame()
 	e.frame()
 	if v.isUnread(actItem(t, v, "fa-keyword"), "fa-keyword") {
@@ -186,7 +198,7 @@ func TestActivityBadgesZeroInSocketOrder(t *testing.T) {
 	}
 	badgesZero(t, v)
 	entry("fa-keyword", kw, true)
-	time.Sleep(150 * time.Millisecond)
+	settled()
 	e.frame()
 	e.frame()
 	if !v.isUnread(actItem(t, v, "fa-keyword"), "fa-keyword") {
