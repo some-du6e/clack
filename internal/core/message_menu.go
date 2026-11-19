@@ -124,6 +124,13 @@ func (a *App) ThreadMarkedUnread(ch, threadTS string) ThreadMarkOrigin {
 	return a.thrUnread.get(ch + "/" + threadTS)
 }
 
+// RestoreThreadMarkedUnread puts ch/threadTS back in ThreadsMarkedUnread
+// as marked from origin, with no request: markThread's failed read mark
+// restoring its previousManualMark ("" leaves the thread out).
+func (a *App) RestoreThreadMarkedUnread(ch, threadTS string, origin ThreadMarkOrigin) {
+	a.thrUnread.set(ch+"/"+threadTS, origin)
+}
+
 // ForgetThreadMarkedUnread lets a thread go from ThreadsMarkedUnread,
 // removeThreadFromManuallyMarkedUnreadArray: the Threads view marked it
 // read, or the thread pane showed it or its reply box took the focus.

@@ -45,6 +45,7 @@ type viewsState struct {
 	marks    []ThreadMark
 	writes   []ActivityWrite
 	read     bool // the unread thread was marked read
+	clears   int  // subscriptions.thread.clearAll calls
 	seeded   bool
 	activity *activityState // activity.go
 }
@@ -62,6 +63,14 @@ func (s *Server) ThreadMarks() []ThreadMark {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return append([]ThreadMark(nil), v.marks...)
+}
+
+// ThreadClears is how many times subscriptions.thread.clearAll was called.
+func (s *Server) ThreadClears() int {
+	v := s.views()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.clears
 }
 
 // ActivityWrites returns the activity.* writes, in order.
@@ -160,6 +169,19 @@ func (s *Server) handleViews(method string, f url.Values) (any, bool) {
 			v.read = true
 		}
 		v.mu.Unlock()
+		return ok(), true
+	case "subscriptions.thread.clearAll":
+		// every followed thread read: the unread one's thread_marked, as
+		// the server announces a read
+		v.mu.Lock()
+		v.clears++
+		was := v.read
+		v.read = true
+		v.mu.Unlock()
+		if !was {
+			s.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ViewsChannel,
+				"thread_ts": ViewsThreadUnread, "last_read": "1762600200.000100", "active": true}, "event_ts": strconv.FormatInt(time.Now().Unix(), 10) + ".000200"})
+		}
 		return ok(), true
 	case "drafts.list":
 		s.SeedViewDrafts()

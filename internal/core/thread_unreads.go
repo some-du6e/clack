@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -32,6 +33,46 @@ func (a *App) ThreadsUnreadIn(ch string) int {
 	a.S.RLock()
 	defer a.S.RUnlock()
 	return a.S.ThreadsUnreadByChannel[ch]
+}
+
+// UnreadThreadsCount is unreadCounts.threadsUnreadCount (client-boot BScm,
+// "Update the unread count for the all threads view"), the Threads view's
+// userUnreadThreadsCount: client.counts' threads.unread_count_by_channel
+// summed over the conversations an inbox view shows
+// (shouldInboxViewsShowChannel: every one on an Enterprise team, else the
+// ones not muted); without that map, 1 when the counts said has_unreads.
+func (a *App) UnreadThreadsCount() int {
+	ent := a.EnterpriseTeam()
+	a.S.RLock()
+	defer a.S.RUnlock()
+	if a.S.ThreadsUnreadByChannel == nil {
+		if a.S.ThreadsUnread {
+			return 1
+		}
+		return 0
+	}
+	n := 0
+	for ch, c := range a.S.ThreadsUnreadByChannel {
+		if ent || !a.S.Muted[ch] {
+			n += c
+		}
+	}
+	return n
+}
+
+// ClearAllThreads is markAllThreadsAndClearManuallyMarkedArray, the
+// Threads view's unread banner close (markAllThreadsAsread): the threads
+// the viewer marked unread go (clearThreadsFromManuallyMarkedUnreadArray),
+// then subscriptions.thread.clearAll, the markAllThreads fetcher, with no
+// max_ts (the view gives none). The server's thread_marked events read
+// the threads.
+func (a *App) ClearAllThreads(ctx context.Context) error {
+	a.ForgetThreadMarkedUnread("", "")
+	err := a.C.Call(ctx, "subscriptions.thread.clearAll", url.Values{}, nil)
+	if err == nil {
+		a.refreshCountsSoon()
+	}
+	return err
 }
 
 // ChannelUnreadThreads is fetchActivitiesForChannel for the reply bar:

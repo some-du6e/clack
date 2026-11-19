@@ -384,6 +384,7 @@ func (v *Threads) visibleDue(gtx C) bool {
 		if at := v.scrollAt.Add(thrScrollWait); !now.Before(at) { // the debounce's call
 			v.scrollTail = false
 			v.visAt = append(v.visAt, now.Add(thrMarkDelay))
+			v.ban.due = true // onListScroll's determineUnreadThreadBannerVisibility (threads_banners.go)
 		} else {
 			gtx.Execute(op.InvalidateCmd{At: at})
 		}

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"log"
 	"slices"
 	"sort"
 	"strconv"
@@ -272,6 +273,8 @@ type Threads struct {
 	// lines is the New lines the last frame drew, by thread: their line's
 	// colour and whether it was the ghost (what tests check as drawn)
 	lines map[string]thrLineDrawn
+	// ban is the unread threads banners' state (threads_banners.go)
+	ban   thrBanners
 	shown shownTracker
 	notes actNotes
 
@@ -459,7 +462,12 @@ func (v *Threads) Layout(gtx C) D {
 	border := v.headBorder(gtx) // from the list's last position
 	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(v.head),
-		layout.Flexed(1, v.body),
+		layout.Flexed(1, func(gtx C) D {
+			area := gtx.Constraints.Max
+			d := v.body(gtx)
+			v.banners(gtx, area) // threads_banners.go: over the list, in every branch
+			return d
+		}),
 	)
 	if border == thrBorderBelow { // .p-view_header's box-shadow 0 1px 0 0, over the list (z-index 202)
 		h, hl := gtx.Dp(thrHeadH), max(1, gtx.Dp(1))
@@ -568,6 +576,7 @@ func (v *Threads) took(page thrData) {
 		v.keepFloors(page) // threads_order.go
 		page, _, _ = v.data.get()
 	}
+	v.ban.due = true // loadThreads' determineUnreadThreadBannerVisibility, once the answer is laid out
 	for _, g := range page.gaps {
 		v.fillGap(page, g) // threads_order.go
 	}
@@ -667,6 +676,7 @@ func (v *Threads) remount() {
 	v.kb.active, v.kb.initial, v.kb.ring = "", "", false
 	v.mounting, v.loadErr = true, nil
 	v.grew, v.visAt = nil, nil // a new instance compares only with its own props
+	v.ban = thrBanners{}       // and starts with no banners
 	v.attSeen = false
 	v.resort() // threads_order.go
 	v.reload()
@@ -857,22 +867,46 @@ func (v *Threads) markRead(t *thrItem) {
 	}
 }
 
-// sendRead is setThreadLastRead {lastRead: maxMarkableTs, read: true}:
-// the thread read up to its latest reply, locally at once, then with
-// subscriptions.thread.mark. A thread the viewer had marked unread leaves
-// ThreadsMarkedUnread (removeThreadFromManuallyMarkedUnreadArray).
+// sendRead is setThreadLastRead {lastRead: maxMarkableTs, read: true}
+// with the view's removeThreadFromManuallyMarkedUnreadArray: the hand mark
+// goes and the view remembers marking the thread (markedReadKeys). Then
+// markThread (2wCo): nothing for a thread nobody follows or one already
+// read to its newest reply, else the thread reads to it at once and then
+// on the server (subscriptions.thread.mark). A failure puts its last read
+// and its hand mark (previousManualMark) back, and is only logged.
 func (v *Threads) sendRead(t *thrItem) {
-	ts := t.latest()
-	v.read[t.key] = ts
-	c, ch, root := v.h.Core(), t.Channel, t.Root.TS
-	if c != nil {
-		c.ForgetThreadMarkedUnread(ch, root)
+	if v.ban.marked == nil {
+		v.ban.marked = map[string]bool{}
 	}
+	v.ban.marked[t.key] = true // markedReadKeys (threads_banners.go)
+	c, ch, root, key, ts := v.h.Core(), t.Channel, t.Root.TS, t.key, t.latest()
+	if c == nil {
+		return
+	}
+	prevMark := c.ThreadMarkedUnread(ch, root)
+	c.ForgetThreadMarkedUnread(ch, root)
+	if !v.followed(t) || v.lastRead(t) == ts {
+		return
+	}
+	prev, had := v.read[key]
+	v.read[key] = ts
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := c.MarkThread(ctx, ch, root, ts); err != nil {
-			v.notes.add(v.h, "Couldn’t mark the thread as read: "+friendlyErr(err))
+			log.Printf("threads: failed to mark thread %s/%s: %v", ch, root, err)
+			v.notes.run(v.h, func() {
+				if v.read[key] == ts {
+					if had {
+						v.read[key] = prev
+					} else {
+						delete(v.read, key)
+					}
+				}
+				if prevMark != "" && c.ThreadMarkedUnread(ch, root) == "" {
+					c.RestoreThreadMarkedUnread(ch, root, prevMark)
+				}
+			})
 		}
 	}()
 }
@@ -906,7 +940,8 @@ func thrSort(items []thrItem) {
 }
 
 func (v *Threads) body(gtx C) D {
-	v.settle() // an answer that landed since the frame began: drawn settled
+	v.ban.listed = false // until the list is laid out (threads_banners.go)
+	v.settle()           // an answer that landed since the frame began: drawn settled
 	page, loaded, err := v.data.get()
 	page.items = v.shownItems(page.items) // threads_order.go
 	n := len(page.items)
@@ -962,6 +997,7 @@ func (v *Threads) body(gtx C) D {
 	})
 	v.kb.area(gtx, image.Rectangle{Max: d.Size})
 	v.kb.after()
+	v.bannersLaidOut(gtx, page) // threads_banners.go
 	if p := v.list.Position; v.mounting && p.First == 0 {
 		// the "global-loading" row (threads_order.go), in the list
 		st := clip.Rect(image.Rectangle{Max: d.Size}).Push(gtx.Ops)

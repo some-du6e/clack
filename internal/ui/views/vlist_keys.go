@@ -202,6 +202,24 @@ func (k *vkList) pointIn(key string) bool {
 	return ok && y > 0 && y <= k.viewH
 }
 
+// side is where a row of no height at key's top falls against
+// getVisibleRange(void 0, true): -1 before the range (at or above the
+// list's top: pointIn's complement there), 0 in it, 1 past it (below the
+// bottom). known is false for a key the list doesn't have.
+func (k *vkList) side(key string) (int, bool) {
+	if _, ok := k.idx[key]; !ok {
+		return 0, false
+	}
+	y, ok, above := k.top(key)
+	switch {
+	case !ok && above, ok && y <= 0:
+		return -1, true
+	case !ok, y > k.viewH:
+		return 1, true
+	}
+	return 0, true
+}
+
 // fullyInView is getVisibleRange's test: neither edge cut off (1px slack).
 func (k *vkList) fullyInView(key string) bool {
 	y, ok, _ := k.top(key)
