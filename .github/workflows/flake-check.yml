@@ -1312,6 +1312,33 @@ jobs:
           xvfb-run -a go test -race -count=3 -run "$HUB_TESTS" ./internal/ui/messages || rc=1
           exit $rc
 
+  # jump-reactions: reactions on a jump window's messages draw after the
+  # list left the conversation for old messages elsewhere and came back to
+  # the window it kept (edit-latency's reactions round, thread-open-root's
+  # review: core dropped the shown window past 8, and reactions found no
+  # message). Dispatch with only=jump-reactions.
+  jump-reactions:
+    if: ${{ !inputs.only || startsWith('jump-reactions', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: reactions on a jump window after leaving it (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 15m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
+          exit $rc
+
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
   # doesn't list (Slackbot's, the Slack system user's, an app's), and under
