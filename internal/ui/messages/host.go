@@ -53,6 +53,31 @@ type VideoViewerOpener interface {
 	OpenVideoViewer(f *richtext.File, m core.Message, at time.Duration, autoplay bool) bool
 }
 
+// OpenFileMenu is the video player's More actions
+// (videoplayer.MenuOpener): VideoActionsButton's menu under the button
+// (win when Gio said where, else view from the row's anchor), onClose once
+// it closes.
+func (r *richHandler) OpenFileMenu(f *richtext.File, win, view image.Rectangle, onClose func()) bool {
+	ph, ok := r.h.(popups.Host)
+	if !ok || r.m == nil || f == nil {
+		return false
+	}
+	btn := win
+	if btn.Empty() {
+		btn = view
+		if r.anchor != nil {
+			min := r.anchor(view.Min)
+			btn = image.Rectangle{Min: min, Max: min.Add(view.Size())}
+		}
+	}
+	mn := popups.NewVideoActionsMenuClosing(ph, btn, *r.m, f, r.thread, onClose)
+	if mn == nil {
+		return false
+	}
+	ph.ShowOverlay(mn)
+	return true
+}
+
 // ExpandVideo is the inline player's Expand (videoplayer.Expander).
 func (r *richHandler) ExpandVideo(f *richtext.File, at time.Duration, autoplay bool) bool {
 	vo, ok := r.h.(VideoViewerOpener)

@@ -45,3 +45,26 @@ func pillTimeOf(c *Controller, r *Row, f *richtext.File) string {
 	}
 	return pillTime(t, false)
 }
+
+// A first player starts where the viewer left the file on the server
+// (media_progress.offset_ms), or at 0 once it was watched (xnwb).
+func TestPlayerStartsAtServerProgress(t *testing.T) {
+	c, _ := slowEnv(t, 0, media.FakeOptions{})
+	r := c.Row("channel", "C1", "1.0", nil)
+	f := videoFile("F1")
+	f.MediaOffsetMS = 1500
+	layoutAt(c, r, f, image.Pt(480, 270))
+	click(c, r, f)
+	waitFor(t, "playing", 10*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	if p := state(t, c, r, f).Player.State().Pos; p < 1400*time.Millisecond || p > 2300*time.Millisecond {
+		t.Errorf("the first player starts at %v, want media_progress's 1.5 s", p)
+	}
+	w := videoFile("F2")
+	w.MediaOffsetMS, w.MediaWatched = 1500, true
+	layoutAt(c, r, w, image.Pt(480, 270))
+	click(c, r, w)
+	waitFor(t, "playing", 10*time.Second, func() bool { st := state(t, c, r, w); return st.Playing && !st.Loading })
+	if p := state(t, c, r, w).Player.State().Pos; p > 700*time.Millisecond {
+		t.Errorf("a watched file's player starts at %v, want 0", p)
+	}
+}

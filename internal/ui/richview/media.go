@@ -96,6 +96,11 @@ func (v *View) layoutMedia(gtx layout.Context) {
 	}
 }
 
+// InMedia reports whether pt (View coordinates) is on a tile
+// Options.Media draws: its presses are the player's (the list's text
+// selection leaves them alone).
+func (v *View) InMedia(pt image.Point) bool { return v.inMedia(pt) }
+
 // inMedia reports whether p is on a tile Options.Media draws.
 func (v *View) inMedia(pt image.Point) bool {
 	for i := range v.d.media {

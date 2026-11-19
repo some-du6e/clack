@@ -49,42 +49,6 @@ func (e *perfEnv) videoTile(t *testing.T, ts string) messages.FileRect {
 	return out
 }
 
-// videoScrollStep is a step bringing message ts's video tile wholly into
-// list l, as the last frame laid it out: a jump puts the two rows above
-// the message at the list's top, so in a short window #files-gallery's
-// tall rows can leave the tile under the list (FileRects aren't clipped
-// to it) or its row not on screen at all. It scrolls toward the tile, or
-// toward its row by the rows on screen, and reports where the tile (empty
-// while its row is off the screen) and the list were, in true once the
-// tile was wholly in the list.
-func videoScrollStep(l channelList, ts string) (tile, list image.Rectangle, in bool) {
-	list = l.ListRect()
-	for _, r := range l.FileRects() {
-		if r.TS == ts && r.File.IsVideo {
-			tile = r.R
-		}
-	}
-	switch {
-	case list.Empty():
-	case !tile.Empty() && tile.In(list):
-		return tile, list, true
-	case !tile.Empty() && tile.Min.Y < list.Min.Y:
-		l.ScrollPx(tile.Min.Y - list.Min.Y - 16)
-	case !tile.Empty():
-		l.ScrollPx(tile.Max.Y - list.Max.Y + 16)
-	default:
-		rows := l.RowRects()
-		switch {
-		case len(rows) == 0:
-		case tsBefore(ts, rows[0].TS):
-			l.ScrollPx(-list.Dy() / 2)
-		case tsBefore(rows[len(rows)-1].TS, ts):
-			l.ScrollPx(list.Dy() / 2)
-		}
-	}
-	return tile, list, false
-}
-
 // videoTileInView scrolls message ts's video tile wholly into the
 // channel's list (videoScrollStep) and returns it.
 func (e *perfEnv) videoTileInView(t *testing.T, ts string) messages.FileRect {
@@ -254,12 +218,20 @@ func TestVideoUnmountReleases(t *testing.T) {
 	if !ok || st.Mounted || !st.Played || st.Elapsed != p {
 		t.Errorf("back in the conversation: %+v %v, want the poster showing the time played, %v", st, ok, p)
 	}
+	// the next click's player starts there (mountLocked's Seek)
+	e.clickAt(mid(tile.R), 20*time.Second)
+	e.until("a new player playing", 15*time.Second, func() bool { st, _ := e.videoState(m.TS); return st.Playing && !st.Loading })
+	st, _ = e.videoState(m.TS)
+	if pos := st.Player.State().Pos; pos < p-100*time.Millisecond || pos > p+900*time.Millisecond {
+		t.Errorf("the new player starts at %v, the video was left at %v", pos, p)
+	}
 }
 
 // Mute and volume are Slack's media_muted and media_volume prefs (lGYe):
 // the mute button's click writes media_muted, and the volume slider's,
-// unmuting, writes media_muted false and then media_volume when the
-// press ends.
+// unmuting, writes media_muted false and then media_volume, at the press
+// (X7vT's onChange comes before its onMouseDown). The slider opens once
+// the pointer has rested on the mute .16 s.
 func TestVideoPrefs(t *testing.T) {
 	fakeVideos(t)
 	e := filesEnv(t, image.Pt(1440, 6000), false)
@@ -302,8 +274,7 @@ func TestVideoPrefs(t *testing.T) {
 	e.until("users.prefs.set media_muted=true", 10*time.Second, sent("media_muted=true"))
 	clk += 300 * time.Millisecond
 	e.hoverAt(mute, clk) // over the control: its slider shows
-	e.frame()
-	e.frame()
+	e.until("the volume slider", 3*time.Second, func() bool { st, _ := e.videoState(m.TS); return st.VolumeOpen })
 	st, _ = e.videoState(m.TS)
 	if st.Slider.Empty() {
 		t.Fatalf("no volume slider: %+v", st)

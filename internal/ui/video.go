@@ -35,7 +35,7 @@ func (a *App) videos() *videoplayer.Controller {
 		Manager:    media.NewManager(videoBackend),
 		Open:       a.openVideo,
 		FrameReady: a.videoFrameReady, // a new video frame: a quiet frame of this window (quiet.go)
-		Repaint:    a.Invalidate,
+		Repaint:    a.videoRepaint,
 		Pref: func(name string) (json.RawMessage, bool) {
 			if c := a.Core(); c != nil {
 				return c.Pref(name)
@@ -77,6 +77,13 @@ func (a *App) videos() *videoplayer.Controller {
 		},
 	})
 	return a.vids
+}
+
+// videoRepaint is a player's state change its overlay shows (a play, a
+// pause, the time while hovered): a layout, counted.
+func (a *App) videoRepaint() {
+	a.videoRepaints.Add(1)
+	a.Invalidate()
 }
 
 // closeVideos closes every player and forgets the controller: the

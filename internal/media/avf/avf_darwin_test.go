@@ -253,6 +253,25 @@ func checkColors(t *testing.T, samples []sample) {
 	}
 }
 
+// The first player of the process takes AVFoundation's cold start (its
+// frameworks, the decoder; 0.8 s to 2.3 s on the runners, against 0.04 s
+// to 0.27 s for every later one), as Media Foundation's first does
+// (TestMFColdStart): this one takes it, so the 2 s first-frame budget
+// below measures warm players. It fails only past 10 s.
+func TestAVFColdStart(t *testing.T) {
+	t0 := time.Now()
+	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180), image.Pt(320, 180))
+	r.draw()
+	r.p.Play()
+	r.wait(media.FirstFrame, 30*time.Second)
+	took := time.Since(t0)
+	t.Logf("the process's first player: first frame %v after it was made", took)
+	if took > 10*time.Second {
+		t.Errorf("the first frame %v after the first player was made, want under 10 s", took)
+	}
+	r.p.Close()
+}
+
 // SKEPTIC note 3: the fixture plays to its end from Clack's ranged
 // source through the resource loader: the metadata (3 s, 320×180), the
 // events in order, the three colours (BGRA8Unorm_sRGB textures), the

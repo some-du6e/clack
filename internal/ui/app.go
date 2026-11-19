@@ -232,6 +232,9 @@ type App struct {
 	// hudPings are animReady's calls into the huddle windows (tests: a
 	// video's frames never make them draw, videoFrameReady)
 	hudPings atomic.Int64
+	// videoRepaints are the layouts the players asked for (their state
+	// changing: a play, a pause, a loop's seek), video.go
+	videoRepaints atomic.Int64
 
 	title       string
 	firstPaint  bool

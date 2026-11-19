@@ -78,18 +78,18 @@ func (h *viewMediaHost) OpenFile(f *richtext.File) {
 }
 
 // FileAction takes btn in the View's coordinates, which a view doesn't
-// know: the players use FileActionWindow.
+// know: the players open their menu with OpenFileMenu.
 func (h *viewMediaHost) FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle) {}
 
-// FileActionWindow is the corner's More actions, btn in window
-// coordinates (videoplayer.WindowFileActioner).
-func (h *viewMediaHost) FileActionWindow(a richview.FileAction, f *richtext.File, btn image.Rectangle) {
-	if a != richview.FileMore || f == nil || !f.IsVideo {
-		return
+// OpenFileMenu is the corner's More actions (videoplayer.MenuOpener),
+// under win, the button in window coordinates.
+func (h *viewMediaHost) OpenFileMenu(f *richtext.File, win, view image.Rectangle, onClose func()) bool {
+	ph, ok := h.b.h.(popups.Host)
+	if !ok || f == nil || win.Empty() {
+		return false
 	}
-	if ph, ok := h.b.h.(popups.Host); ok {
-		ph.ShowOverlay(popups.NewVideoActionsMenu(ph, btn, h.m, f, false))
-	}
+	ph.ShowOverlay(popups.NewVideoActionsMenuClosing(ph, win, h.m, f, false, onClose))
+	return true
 }
 
 // ExpandVideo is the corner's Expand (videoplayer.Expander).

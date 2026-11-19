@@ -65,11 +65,13 @@ type RowHost interface {
 	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
 }
 
-// WindowFileActioner is optional on a RowHost: FileAction with btn in
-// window coordinates (where Gio drew the tile), for a host that doesn't
-// know where it drew the View (the views' messages).
-type WindowFileActioner interface {
-	FileActionWindow(a richview.FileAction, f *richtext.File, btn image.Rectangle)
+// MenuOpener is optional on a RowHost: the corner's More actions opens
+// the video's menu through it, under win (window coordinates, where Gio
+// drew the button; empty when unknown) or view (the View's), and onClose
+// runs once it closes. Meanwhile the overlay stays active, as frPc's
+// onPopoverOpen keeps fIJO's --active. false: it opened nothing.
+type MenuOpener interface {
+	OpenFileMenu(f *richtext.File, win, view image.Rectangle, onClose func()) bool
 }
 
 // Expander is optional on a RowHost: Expand opens the media viewer at
@@ -181,14 +183,16 @@ type tile struct {
 	elapsed time.Duration
 	dur     time.Duration // the player's duration, 0 until its metadata
 	// the overlay's (input, and the zones the last layout drew)
-	hover   bool
-	ptr     f32.Point
-	press   zone
-	scrub   bool // the scrubber is dragged
-	resume  bool // the video played when the scrub began
-	vol     bool // the volume slider is dragged
-	volOver bool // the pointer is on the volume control: its slider shows
-	z       zones
+	hover    bool
+	ptr      f32.Point
+	press    zone
+	scrub    bool        // the scrubber is dragged
+	resume   bool        // the video played when the scrub began
+	vol      bool        // the volume slider is dragged
+	volOver  bool        // the pointer is on the volume control: its slider shows
+	volWait  *time.Timer // the popover's .16 s delay, from the pointer reaching the mute
+	menuOpen bool        // its More actions menu is open: the overlay stays active
+	z        zones
 	// the frame it was last laid out in, and the close waiting for it
 	laid    uint64
 	unmount *time.Timer
@@ -586,8 +590,10 @@ func (c *Controller) toggleMuteLocked() {
 }
 
 // setVolumeLocked is the volume slider's change (j, then T): 0 mutes; any
-// other volume unmutes, and is written as media_volume unless the slider
-// is still being dragged (its mouseup writes it).
+// other volume unmutes, and is written as media_volume when it changed,
+// unless the slider is being dragged (the press writes its volume before
+// the drag starts, X7vT calling onChange before onMouseDown, and the
+// mouseup writes where the drag left it).
 func (c *Controller) setVolumeLocked(v float64, dragging bool) {
 	if v < 0 {
 		return
@@ -645,6 +651,12 @@ type State struct {
 	Mute, Slider, Scrub, More image.Rectangle
 	Expand                    image.Rectangle
 	Hover                     bool
+	// Active is whether the overlay shows its controls: hovered, a drag on
+	// it, or its menu open
+	Active bool
+	// VolumeOpen is whether the volume slider shows (its control
+	// hovered, or dragged)
+	VolumeOpen bool
 }
 
 // Click is the tile's click (fIJO's tE), as a press and release on it
@@ -670,7 +682,7 @@ func (c *Controller) TileState(pane, ch, ts, file string) (State, bool) {
 	}
 	st := State{Mounted: t.h != nil, Playing: t.playing, Loading: t.loading, Played: t.played, Err: t.errCode,
 		Elapsed: t.elapsed, Duration: t.durLocked(), Mute: t.z.mute, Slider: t.z.slider, Scrub: t.z.scrub, More: t.z.more,
-		Expand: t.z.expand, Hover: t.hover}
+		Expand: t.z.expand, Hover: t.hover, Active: t.hover || t.scrub || t.vol || t.menuOpen, VolumeOpen: t.volOver || t.vol}
 	if t.h != nil {
 		st.Player = t.h
 	}

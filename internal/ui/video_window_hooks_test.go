@@ -25,6 +25,9 @@ type videoTileInfo struct {
 
 func videoBackendAvailable() error { return media.Available() }
 
+// playerRepaints are the layouts the players asked for so far.
+func playerRepaints(a *App) int64 { return a.videoRepaints.Load() }
+
 // videoTileState is #files-gallery's video in message ts of ch, false
 // until the list laid its tile out.
 func videoTileState(a *App, ch, ts string) (videoTileInfo, bool) {

@@ -287,6 +287,36 @@ jobs:
           go test -cpu 1 -count=$COUNT -run 'TestDraftKeepsAttachedFiles$' ./internal/ui/composer
           go test -cpu 1 -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
 
+  # The video players' concurrency under the race detector (round 3's
+  # review: Handle.loop's onEvent taking the controller's lock across the
+  # UI goroutine, handle goroutines and time.AfterFunc unmounts, the
+  # RangeSource's two GETs, the fake backend, Base.Emit/CloseEvents):
+  # internal/media and videoplayer whole, then ui's video tests on the
+  # fake backend. Dispatch with only=race-video (no other job's id starts
+  # with "race-video", nor this one with "video").
+  race-video:
+    if: ${{ !inputs.only || startsWith('race-video', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: media and videoplayer under -race
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -race -count=$n -timeout 30m ./internal/media/ ./internal/ui/videoplayer/
+      - name: ui's video tests under -race (the fake backend)
+        if: ${{ !cancelled() }}
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -race -count=$n -timeout 40m -run '^TestVideo' ./internal/ui/
+
   # the members cache (store/members.go) and its unknown member fetcher
   # (core/members.go): eviction order, the pass's schedule, users/info's
   # chunks and pending ids, and every main view drawing its people again

@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"math"
 	"os"
@@ -59,6 +60,7 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	var mu sync.Mutex
 	var measuring, clicked bool
 	var frames, asked, gpuAll, externals, wraps int
+	whys := map[string]int{} // why each measured frame wasn't quiet
 	var gpuFrames []caretGPUFrame
 	stopHook := caretGPUHook(func(f caretGPUFrame) {
 		mu.Lock()
@@ -74,7 +76,8 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	})
 	t.Cleanup(stopHook)
 	images := imgcache.New(fs.Fetch, "", nil)
-	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), OnWindowEvent: func(e event.Event) {
+	var a *App
+	a = New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), OnWindowEvent: func(e event.Event) {
 		realWindowEvent(e)
 		if fe, ok := e.(app.FrameEvent); ok {
 			mu.Lock()
@@ -84,6 +87,9 @@ func TestRealWindowVideoFrames(t *testing.T) {
 				// fixed rate), as TestRealWindowQuietFrames counts them
 				if fe.Asked && !fe.AskedAt.After(fe.Now) {
 					asked++
+				}
+				if w := a.quietWhy; w != "" { // the frame before this one's (quiet_window_test.go)
+					whys[w]++
 				}
 			}
 			mu.Unlock()
@@ -216,8 +222,10 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	measuring, frames, asked, gpuFrames = true, 0, 0, nil
 	mu.Unlock()
 	c0 := procCPU()
+	r0 := playerRepaints(a)
 	time.Sleep(5 * time.Second)
 	cpuPlaying := procCPU() - c0
+	repaints := int(playerRepaints(a) - r0)
 	mu.Lock()
 	measuring = false
 	n, nAsked, gf := frames, asked, append([]caretGPUFrame(nil), gpuFrames...)
@@ -225,7 +233,7 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	quiet, laid := int(a.QuietFrames()-q0), int(a.FrameSeq()-l0)
 	onUI(func() { st1, _ = videoTileState(a, ch, ts) })
 	vf := st1.frames - st0.frames
-	partial, over := 0, 0
+	partial, over, big, wrapped := 0, 0, 0, 0
 	var dmgSum, dmgMax int64
 	area := int64(tile.Dx() * tile.Dy())
 	// the composer's caret (1px wide, its line's ascent and descent tall)
@@ -239,6 +247,10 @@ func TestRealWindowVideoFrames(t *testing.T) {
 		partial++
 		dmgSum += f.damagePx
 		dmgMax = max(dmgMax, f.damagePx)
+		if area > 0 && f.damagePx*2 >= area {
+			big++ // a video frame's: the tile's pixels changed
+		}
+		wrapped += f.wraps
 		if extra := f.damagePx - area; area > 0 && extra > 0 && (f.damageRects < 2 || extra > caretMax) {
 			over++
 		}
@@ -253,12 +265,28 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	if vf < 30 {
 		t.Errorf("%d video frames in 5 s of playing", vf)
 	}
-	// against the frames the window didn't ask for itself: the video's
-	if n == 0 || n-nAsked <= 0 || quiet*10 < (n-nAsked)*9 {
-		t.Errorf("%d of the window's %d frames were quiet (%d laid out, %d asked for by the window itself): a video frame lays the window out", quiet, n, laid, nAsked)
+	// against the frames neither the window (the caret) nor the player's
+	// own state changes (a loop's seek and play repaint the overlay) asked
+	// for: the video's frames
+	mu.Lock()
+	why := fmt.Sprint(whys)
+	mu.Unlock()
+	t.Logf("not quiet: %s; the players asked %d layouts", why, repaints)
+	if d := n - nAsked - repaints; n == 0 || d <= 0 || quiet*10 < d*9 {
+		t.Errorf("%d of the window's %d frames were quiet (%d laid out, %d asked for by the window itself, %d by the player's events): a video frame lays the window out", quiet, n, laid, nAsked, repaints)
 	}
 	if partial == 0 {
 		t.Error("no partial frame while the video played: its frames redraw the whole window")
+	}
+	// the video's pixels reach the window: the GPU wrapped the player's
+	// textures, and most frames redrew the tile (only the poster showing
+	// would pass everything above)
+	t.Logf("%d textures wrapped, %d frames redrew half the tile or more", wrapped, big)
+	if wrapped == 0 {
+		t.Error("the GPU wrapped no texture of the player's in 5 s of playing: only the poster shows")
+	}
+	if vf > 0 && big*4 < int(vf)*3 {
+		t.Errorf("%d frames redrew the tile for %d video frames: the video's pixels don't reach the window", big, vf)
 	}
 	if over > 0 {
 		t.Errorf("%d partial frames damaged more than the tile's %d px and a caret's %d (at most %d)", over, area, caretMax, dmgMax)

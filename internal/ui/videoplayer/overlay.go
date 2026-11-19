@@ -196,13 +196,15 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 		switch e.Kind {
 		case pointer.Enter, pointer.Move:
 			t.hover, t.ptr = true, e.Position
-			t.volOver = t.vol || p.In(t.z.volume)
+			c.volHoverLocked(t, p)
 		case pointer.Leave:
 			t.hover = t.scrub || t.vol
 			t.volOver = t.vol
+			t.stopVolWait()
 		case pointer.Cancel:
 			c.endDragsLocked(t, p)
 			t.hover, t.volOver, t.press = false, false, zNone
+			t.stopVolWait()
 		case pointer.Press:
 			if e.Buttons != pointer.ButtonPrimary {
 				break
@@ -217,9 +219,9 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 					t.h.Pause()
 				}
 				c.scrubToLocked(t, p)
-			case zSlider:
+			case zSlider: // X7vT's mousedown: onChange (the volume written) before onMouseDown (the drag)
+				c.setVolumeLocked(t.z.volumeAt(p), false)
 				t.vol = true
-				c.setVolumeLocked(t.z.volumeAt(p), true)
 				c.applyLocked(t)
 			default:
 				t.press = z
@@ -254,12 +256,27 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 			}
 			t.press = zNone
 		}
-		btn, win := t.z.more.Add(s.At), t.z.more
+		btn, win := t.z.more.Add(s.At), image.Rectangle{}
 		c.mu.Unlock()
 		if more && r.h != nil { // VideoActionsButton's menu
-			wa, isWin := r.h.(WindowFileActioner)
-			if full, _, ok := gtx.Source.AreaBounds(t); isWin && ok {
-				wa.FileActionWindow(richview.FileMore, s.File, win.Add(full.Min))
+			if full, _, ok := gtx.Source.AreaBounds(t); ok {
+				win = btn.Sub(s.At).Add(full.Min)
+			}
+			if mo, ok := r.h.(MenuOpener); ok {
+				c.mu.Lock()
+				t.menuOpen = true
+				c.mu.Unlock()
+				closed := func() {
+					c.mu.Lock()
+					t.menuOpen = false
+					c.mu.Unlock()
+					if c.env.Repaint != nil {
+						c.env.Repaint()
+					}
+				}
+				if !mo.OpenFileMenu(s.File, win, btn, closed) {
+					closed()
+				}
 			} else {
 				r.h.FileAction(richview.FileMore, s.File, btn)
 			}
@@ -267,6 +284,58 @@ func (r *Row) input(gtx layout.Context, t *tile, s richview.MediaSlot) {
 		if ex, ok := r.h.(Expander); expand && ok {
 			ex.ExpandVideo(s.File, at, playing)
 		}
+	}
+}
+
+// volDelay is the volume popover's transition-delay (.16s): its slider
+// shows once the pointer has been on the mute button that long.
+const volDelay = 160 * time.Millisecond
+
+// volHoverLocked is the volume control's :hover (css-volume-pillow.txt).
+// Its hidden slider takes no hover (visibility:hidden), so the slider
+// opens from the mute button alone: at once in the vertical box, volDelay
+// later in the popover. Once open, it stays open while the pointer is
+// anywhere on the control.
+func (c *Controller) volHoverLocked(t *tile, p image.Point) {
+	switch {
+	case t.vol:
+		t.volOver = true
+	case t.volOver:
+		t.volOver = p.In(t.z.volume)
+	case !p.In(t.z.mute):
+	case t.z.vertical:
+		t.volOver = true
+	case t.volWait == nil:
+		var tm *time.Timer
+		tm = time.AfterFunc(volDelay, func() {
+			c.mu.Lock()
+			open := t.volWait == tm && t.hover && image.Pt(int(t.ptr.X), int(t.ptr.Y)).In(t.z.mute)
+			if t.volWait == tm {
+				t.volWait = nil
+			}
+			if open {
+				t.volOver = true
+			}
+			c.mu.Unlock()
+			if open && c.env.Repaint != nil {
+				c.env.Repaint()
+			}
+		})
+		t.volWait = tm
+		return
+	default:
+		return
+	}
+	if t.volOver || !p.In(t.z.mute) {
+		t.stopVolWait()
+	}
+}
+
+// stopVolWait ends the popover's wait (the pointer left the mute).
+func (t *tile) stopVolWait() {
+	if t.volWait != nil {
+		t.volWait.Stop()
+		t.volWait = nil
 	}
 }
 
@@ -334,7 +403,7 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 	xs, noVol := w <= 154, w <= 138
 	c.mu.Lock()
 	h := t.h
-	hot := t.hover || t.scrub || t.vol
+	hot := t.hover || t.scrub || t.vol || t.menuOpen
 	playing, loading := t.playing, t.loading
 	label := pillTime(t, hot)
 	iconPx := dp(20)
@@ -435,7 +504,7 @@ func (r *Row) draw(gtx layout.Context, t *tile, s richview.MediaSlot, sz image.P
 		if scrubHot {
 			ts = dp(8)
 		}
-		cx, cy := ex+dp(1), tr.Min.Y+dp(2)
+		cx, cy := ex-dp(1), tr.Min.Y+dp(2) // :after right -3px, 8px wide: centred 1px left of the elapsed end
 		paint.FillShape(gtx.Ops, elapsedCol, clip.Ellipse(image.Rect(cx-ts/2, cy-ts/2, cx-ts/2+ts, cy-ts/2+ts)).Op(gtx.Ops))
 	}
 
