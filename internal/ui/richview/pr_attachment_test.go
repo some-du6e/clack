@@ -84,3 +84,45 @@ func TestLegacyAttachmentPR(t *testing.T) {
 		t.Errorf("the button is %dpx under the footer's line, want the actions row's 6px and the button's 2px margin", gap)
 	}
 }
+
+// A bot's attachment with an image, a footer and a button: Slack's
+// MessageAttachmentGeneric v1 (client-boot-render 1NOh) draws its rows as
+// author, title, text, fields, footer (YNNH), media (jtXh), then the
+// actions (Ea), so an alert's chart sits under "Monitoring | Nov 9th"
+// and above its button. Clack drew the image above the footer.
+func TestLegacyAttachmentMediaAfterFooter(t *testing.T) {
+	st := newTestStyle()
+	acts, _ := json.Marshal([]map[string]any{{"id": "1", "name": "ack", "text": "Acknowledge", "type": "button", "value": "a1"}})
+	d := attDoc("", slack.Attachment{ID: 1, Color: "danger", Fallback: "CPU high on web-3", Title: "CPU above 90% on web-3",
+		Text: "for ten minutes", ImageURL: "https://img.test/chart.png", ImageWidth: 600, ImageHeight: 300,
+		Footer: "Monitoring", TS: json.RawMessage(`1762700000`), Actions: acts})
+	v := layoutAt(st, d, Options{}, 700)
+	dd := &v.d
+	var footer, btn *frag
+	for _, f := range textFrags(dd) {
+		switch f.sh.str {
+		case "Monitoring":
+			footer = f
+		case "Acknowledge":
+			btn = f
+		}
+	}
+	var img *imgPrim
+	for i := range dd.imgs {
+		if dd.imgs[i].url == "https://img.test/chart.png" {
+			img = &dd.imgs[i]
+		}
+	}
+	if footer == nil || btn == nil || img == nil {
+		t.Fatalf("footer %v, button %v, image %v; frags %q", footer != nil, btn != nil, img != nil, fragStrings(dd))
+	}
+	if img.r.Min.Y < footer.bot {
+		t.Errorf("the image (%v) is above the footer's line (%d-%d): Slack draws the media after the footer", img.r, footer.top, footer.bot)
+	}
+	if btn.top < img.r.Max.Y {
+		t.Errorf("the button (line %d-%d) is above the image's bottom (%d): Slack's actions come after the media", btn.top, btn.bot, img.r.Max.Y)
+	}
+	if img.r.Dx() != 360 || img.r.Dy() != 180 {
+		t.Errorf("image %v, want AttachmentMedia's 360x180 for a 600x300 image", img.r)
+	}
+}

@@ -247,35 +247,45 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		row(l.fields(b.Fields, b.FieldShort, cx, cy, cw))
 		l.leave(ct)
 	}
-	if a.Image != nil && !a.Legacy {
-		cy += l.dp(6)
-		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
-		row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
-		l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
-	} else if a.Image != nil && mediaExpanded() {
-		// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
-		// 360x360, floored; 5px over the image container
-		cy += l.dp(5)
-		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
-		iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
-		if a.Image.W <= 0 || a.Image.H <= 0 {
+	// media is AttachmentMedia's row. MessageAttachmentGeneric v1 (a bot's
+	// or an app's attachment: client-boot-render 1NOh) draws it after the
+	// footer and before the actions: author, title, text, fields, footer
+	// (YNNH), media (jtXh), actions (Ea). Other attachments keep it under
+	// the fields.
+	media := func() {
+		if a.Image != nil && !a.Legacy {
+			cy += l.dp(6)
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 			row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
-		} else {
-			r := image.Rect(cx, cy, cx+min(cw, l.dp(float32(iw))), cy+l.dp(float32(ih)))
-			if r.Dx() < l.dp(float32(iw)) { // narrower than the image: keep its aspect
-				r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
+			l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
+		} else if a.Image != nil && mediaExpanded() {
+			// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
+			// 360x360, floored; 5px over the image container
+			cy += l.dp(5)
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
+			iw, ih := adjustedDims(a.Image.W, a.Image.H, 360, 360)
+			if a.Image.W <= 0 || a.Image.H <= 0 {
+				row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+			} else {
+				r := image.Rect(cx, cy, cx+min(cw, l.dp(float32(iw))), cy+l.dp(float32(ih)))
+				if r.Dx() < l.dp(float32(iw)) { // narrower than the image: keep its aspect
+					r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
+				}
+				l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
+				l.imageControls(a.Image, len(l.d.imgs)-1, r)
+				l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+				row(r.Dy())
 			}
-			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
-			l.imageControls(a.Image, len(l.d.imgs)-1, r)
-			l.d.hits = append(l.d.hits, hit{r: r, t: tg})
-			row(r.Dy())
 		}
+	}
+	v1 := kindOf(b) == akV1
+	if !v1 {
+		media()
 	}
 	if len(b.Children) > 0 {
 		cy += l.dp(4)
 		row(l.blocks(b.Children, cx, cy, cw, false))
 	}
-	v1 := kindOf(b) == akV1
 	if len(a.Footer) > 0 || a.TS > 0 || (a.IsShare && a.ShareChannel != "") || v1 && a.IsAppUnfurl && a.BotID != "" {
 		cy += l.dp(4)
 		ct := l.enter(attFooterClass)
@@ -308,6 +318,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		h, _ := l.flow(fx, cy, x+w-fx, &fs)
 		l.leave(ct)
 		row(max(h, l.dp(18)))
+	}
+	if v1 {
+		media()
 	}
 	if len(b.Buttons) > 0 {
 		// MessageAttachmentGeneric's actions (Ea: c-message_attachment__row
