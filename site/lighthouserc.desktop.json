@@ -158,7 +158,7 @@
             "total-blocking-time": [
               "error",
               {
-                "maxNumericValue": 50,
+                "maxNumericValue": 150,
                 "aggregationMethod": "median"
               }
             ],

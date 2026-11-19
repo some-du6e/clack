@@ -10,7 +10,8 @@
     "build": "node build.mjs",
     "check": "node tools/check.mjs",
     "weigh": "node tools/weigh.mjs",
-    "images": "node tools/images.mjs"
+    "images": "node tools/images.mjs",
+    "deploy": "node tools/check.mjs --production --demo && wrangler deploy"
   },
   "devDependencies": {
     "@lhci/cli": "0.16.0"

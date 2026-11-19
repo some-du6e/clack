@@ -1,12 +1,14 @@
 // Starts the web demo: checks that the browser has what Clack needs
-// (WebAssembly and WebGL) before anything big downloads, reads build.json
-// (the site workflow writes it with the program, tools/demo-pack.mjs),
-// streams the program's parts into one module with a progress bar, runs it
-// with wasm_exec.js, and hides the card once Clack draws its first frame.
+// (WebAssembly and WebGL) before anything big downloads, reads the
+// manifest tools/demo-pack.mjs put in this page (#build: the program's
+// parts under p/<hash>/ and their sizes, so the page and its parts are
+// always one build), streams the parts into one module with a progress
+// bar, runs it with wasm_exec.js, and hides the card once Clack draws its
+// first frame.
 // clackDemo is how the program talks to the page (cmd/clack-web): status,
-// ready, failed and ended; ?probe asks it for the CI test's hooks. On a
-// phone, a touch-only device or a small screen, or when the browser asks
-// to save data, it says how big the download is and waits for a tap.
+// ready, failed and ended; ?probe asks it for the CI test's hooks. In a
+// narrow window or on a touch-only device, or when the browser asks to
+// save data, it says how big the download is and waits for a tap.
 (() => {
   const $ = (id) => document.getElementById(id);
   const card = $('card'), bar = $('bar'), go = $('go'), again = $('again');
@@ -46,15 +48,15 @@
     return '';
   };
 
-  // a part that isn't the size build.json says: another deploy landed
-  // while this one loaded
+  // a part that's gone or isn't the size the manifest says: another deploy
+  // landed while this one loaded
   class Updated extends Error {}
 
   async function run({ wasm: size, brotli, parts }) {
     go.hidden = true;
     show(`Downloading Clack · about ${mb(brotli)} MB`);
     // the parts one after another as one stream, counted (decompressed, as
-    // they arrive) against their sizes in build.json
+    // they arrive) against their sizes in the manifest
     let got = 0, i = 0, reader = null, inPart = 0, said = 0;
     const counted = new ReadableStream({
       async pull(c) {
@@ -109,13 +111,16 @@
         : 'This browser can’t run the demo: it needs WebAssembly.', false);
       return;
     }
-    const info = await fetch('build.json', { cache: 'no-cache' });
-    if (!info.ok) {
+    const inline = $('build');
+    if (!inline) {
       stop('The demo isn’t in this copy of the site.', false);
       return;
     }
-    const build = await info.json();
-    const small = matchMedia('(max-width: 767px), (pointer: coarse) and (hover: none)').matches || Math.min(screen.width, screen.height) < 768;
+    const build = JSON.parse(inline.textContent);
+    // a narrow window, or a touch-only device (phones either way up,
+    // tablets); not the screen's size, which a scaled 1080p desktop shares
+    // with a tablet
+    const small = matchMedia('(max-width: 767px), (pointer: coarse) and (hover: none)').matches;
     const save = navigator.connection && navigator.connection.saveData;
     if (!small && !save) return run(build);
     show(`${small ? 'Clack is a desktop app, so the demo wants a wide window.' : 'Your browser asked to save data.'} Loading it downloads about ${mb(build.brotli)} MB (${mb(build.wasm)} MB unpacked).`);

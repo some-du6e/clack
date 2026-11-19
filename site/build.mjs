@@ -106,6 +106,10 @@ for (const f of ['index.html', 'boot.js', 'fs.js']) cpSync(join(here, 'demo', f)
 // demo card's Licences link and the footer's): the demo redistributes them
 cpSync(join(here, '..', 'LICENSE'), join(out, 'demo', 'LICENSE.txt'));
 cpSync(join(here, '..', 'THIRD_PARTY_NOTICES.md'), join(out, 'demo', 'THIRD_PARTY_NOTICES.txt'));
+// Cloudflare's headers: the web demo's program and scripts are named by
+// their content (tools/demo-pack.mjs puts them in demo/p/<hash>/), so they
+// never change once published; everything else revalidates
+writeFileSync(join(out, '_headers'), '/demo/p/*\n  Cache-Control: public, max-age=31536000, immutable\n');
 writeFileSync(join(out, 'robots.txt'), flags.preview
   ? 'User-agent: *\nDisallow: /\n'
   : 'User-agent: *\nAllow: /\n' + (siteURL ? `Sitemap: ${siteURL}/sitemap.xml\n` : ''));

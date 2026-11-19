@@ -94,8 +94,11 @@ For each:
   FCP at most 1 s and LCP at most 1.2 s on mobile (0.4 s and 0.5 s on
   desktop), TBT at most 50 ms (the median of the three runs: Lighthouse's
   median run was one with a 121 ms stall on a busy runner, beside 0 and
-  42 ms), CLS at most 0.01, the page at most 30 KB on the wire, one font,
-  and no third-party, script or stylesheet requests.
+  42 ms; 150 ms on the 404 page, which runs no script of its own but whose
+  one long task, Chrome's own work about 600 ms in, comes and goes between
+  runs: 68, 94 and 0 ms in one), CLS at most 0.01, the page at most 30 KB
+  on the wire, one font, and no third-party, script or stylesheet
+  requests.
   SEO is checked on the home page only, because the 404 page is noindex on
   purpose.
 
@@ -194,8 +197,13 @@ It's built and tested in CI only, by the site workflow's demo job:
    `GOOS=js GOARCH=wasm go build -o dist/demo/main.wasm ./cmd/clack-web`,
    with Go's `wasm_exec.js` beside it.
 3. `tools/demo-pack.mjs` splits main.wasm into parts of at most 24 MiB
-   (Cloudflare's static assets take 25 MiB a file) and writes build.json,
-   which the page reads for the parts and the size.
+   (Cloudflare's static assets take 25 MiB a file) and moves them, with
+   the page's scripts, into `demo/p/<hash>/`, named by a hash of all of
+   them. The page, the one entry point, loads its scripts from there and
+   carries the manifest (the parts and their sizes) inline, so a page and
+   its parts are always one build; `_headers` (from build.mjs) serves
+   `/demo/p/*` as immutable for a year, and everything else revalidates.
+   build.json is the same manifest, for the record.
 4. `tools/check.mjs --demo`.
 5. `tools/demo-test.mjs`: headless Chrome, with WebGL on SwiftShader as a
    machine without a GPU has it, opens the demo, waits for the first frame
@@ -209,12 +217,15 @@ deploy. To deploy the site with it:
 ```sh
 node build.mjs --refresh
 gh run download <site run> --repo some-du6e/clack --name site-demo --dir <empty dir>
-cp <empty dir>/* dist/demo/
-wrangler deploy
+cp -r <empty dir>/* dist/demo/
+npm run deploy
 ```
 
-Without the program, `dist/demo/` is the page alone, which says the demo
-isn't in that build.
+The deploy is guarded: `npm run deploy` runs `tools/check.mjs --production
+--demo` before `wrangler deploy`, and wrangler.jsonc's build command runs
+the same check before any `wrangler deploy`, so a `dist/` without the
+program (the page alone, which says the demo isn't in that build) never
+goes live behind TRY THE DEMO.
 
 ## The heading font
 
@@ -320,8 +331,9 @@ deploys:
 - The Worker `clack-site` serves `dist/` as static assets. `wrangler.jsonc`
   holds its setup: getclack.club and www.getclack.club as custom domains,
   workers.dev off, and `404.html` for unknown paths. Deploy with
-  `node build.mjs --refresh && wrangler deploy`, with the web demo's program
-  copied into `dist/demo/` in between ([The web demo](#the-web-demo)).
+  `node build.mjs --refresh && npm run deploy`, with the web demo's program
+  copied into `dist/demo/` in between ([The web demo](#the-web-demo)); the
+  deploy refuses a `dist/` without it.
 - Always Use HTTPS is on.
 - A Response Header Transform Rule removes Cloudflare's Network Error
   Logging headers (`nel` and `report-to`), so visitors' browsers don't

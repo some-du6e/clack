@@ -2,9 +2,15 @@
 // the getclack.club zone in Cloudflare, with getclack.club and
 // www.getclack.club as its custom domains (README.md, "Cloudflare"). The
 // orchestrator deploys it; build first with node build.mjs --refresh.
-// 404-page serves dist/404.html for unknown paths.
+// 404-page serves dist/404.html for unknown paths. The build command is
+// the deploy's guard: wrangler runs it before every deploy and stops when
+// it fails, and check.mjs --demo fails a dist/ without the web demo's
+// program (README.md, "The web demo"), which would break TRY THE DEMO.
 {
   "name": "clack-site",
+  "build": {
+    "command": "node tools/check.mjs --production --demo"
+  },
   "compatibility_date": "2026-11-17",
   "workers_dev": false,
   "routes": [

@@ -18,10 +18,13 @@
 //   - with --pages: CNAME is in the build
 //   - demo/ is the web demo, an app page: it may load its own local
 //     scripts and its images needn't be lazy; with --demo its program
-//     (wasm_exec.js, build.json and main.N.wasm, from the site workflow's
-//     demo job) must be in the build: every part build.json names, each at
-//     most 25 MiB (Cloudflare's static assets' limit), adding up to its
-//     size
+//     (from the site workflow's demo job, packed by tools/demo-pack.mjs)
+//     must be in the build: the manifest inline in demo/index.html, every
+//     part it names under p/<hash>/, each at most 25 MiB (Cloudflare's
+//     static assets' limit), adding up to its size, the page's scripts
+//     under the same p/<hash>/, nothing left unhashed, build.json equal to
+//     the manifest, and _headers serving /demo/p/* immutable. It is also
+//     the deploy's guard (wrangler.jsonc's build command, npm run deploy)
 // Node built-ins only.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
@@ -41,8 +44,9 @@ const files = walk(dist);
 const pages = files.filter((f) => f.endsWith('.html'));
 if (!pages.includes('index.html')) err('no index.html');
 
-// the web demo's program, which the page fetches from its script
-const DEMO_PROGRAM = ['demo/wasm_exec.js', 'demo/build.json'];
+// the web demo's program, which the demo job adds: an unpacked page names
+// wasm_exec.js, which only it brings
+const DEMO_PROGRAM = ['demo/wasm_exec.js'];
 
 for (const page of pages) {
   const html = readFileSync(join(dist, page), 'utf8');
@@ -110,22 +114,34 @@ for (const page of pages) {
 
 // the web demo: its page, and with --demo its program
 if (!pages.includes('demo/index.html')) err('no demo/index.html');
-if (mode.demo) {
-  for (const f of DEMO_PROGRAM) if (!existsSync(join(dist, f))) err(`--demo: ${f} is missing`);
-  if (existsSync(join(dist, 'demo/build.json'))) {
-    const b = JSON.parse(readFileSync(join(dist, 'demo/build.json'), 'utf8'));
-    let sum = 0;
-    for (const p of b.parts || []) {
-      const f = join(dist, 'demo', p.file);
-      if (!/^main\.\d+\.wasm$/.test(p.file) || !existsSync(f)) { err(`--demo: build.json names ${p.file}, which isn't in the build`); continue; }
-      const size = statSync(f).size;
-      if (size !== p.size) err(`--demo: ${p.file} is ${size} bytes, build.json says ${p.size}`);
-      if (size > 25 * 1024 * 1024) err(`--demo: ${p.file} is over 25 MiB`);
-      sum += size;
-    }
-    if (!b.parts || !b.parts.length || sum !== b.wasm) err(`--demo: build.json's parts add up to ${sum} bytes, not its ${b.wasm}`);
-    if (existsSync(join(dist, 'demo/main.wasm'))) err('--demo: main.wasm is still there (tools/demo-pack.mjs splits it)');
+if (mode.demo) demoProgram();
+
+function demoProgram() {
+  const page = existsSync(join(dist, 'demo/index.html')) ? readFileSync(join(dist, 'demo/index.html'), 'utf8') : '';
+  const m = page.match(/<script type="application\/json" id="build">([^<]*)<\/script>/);
+  if (!m) return err('--demo: demo/index.html has no manifest (#build): the program isn\'t in this build (tools/demo-pack.mjs)');
+  const b = JSON.parse(m[1]);
+  if (!/^[0-9a-f]{12}$/.test(b.hash || '')) return err(`--demo: the manifest's hash ${b.hash} isn't 12 hex digits`);
+  const p = `p/${b.hash}`;
+  let sum = 0;
+  for (const q of b.parts || []) {
+    const f = join(dist, 'demo', q.file);
+    if (!new RegExp(`^${p}/main\\.\\d+\\.wasm$`).test(q.file) || !existsSync(f)) { err(`--demo: the manifest names ${q.file}, which isn't in the build under ${p}/`); continue; }
+    const size = statSync(f).size;
+    if (size !== q.size) err(`--demo: ${q.file} is ${size} bytes, the manifest says ${q.size}`);
+    if (size > 25 * 1024 * 1024) err(`--demo: ${q.file} is over 25 MiB`);
+    sum += size;
   }
+  if (!b.parts || !b.parts.length || sum !== b.wasm) err(`--demo: the manifest's parts add up to ${sum} bytes, not its ${b.wasm}`);
+  for (const f of ['wasm_exec.js', 'fs.js', 'boot.js']) {
+    if (!page.includes(`<script src="${p}/${f}"></script>`)) err(`--demo: demo/index.html doesn't load ${p}/${f}`);
+    if (existsSync(join(dist, 'demo', f))) err(`--demo: demo/${f} is still there, unhashed`);
+  }
+  if (existsSync(join(dist, 'demo/main.wasm'))) err('--demo: main.wasm is still there (tools/demo-pack.mjs splits it)');
+  const json = existsSync(join(dist, 'demo/build.json')) ? readFileSync(join(dist, 'demo/build.json'), 'utf8').trim() : '';
+  if (json !== m[1]) err('--demo: build.json differs from the manifest in demo/index.html');
+  const headers = existsSync(join(dist, '_headers')) ? readFileSync(join(dist, '_headers'), 'utf8') : '';
+  if (!/^\/demo\/p\/\*\n\s+Cache-Control: public, max-age=31536000, immutable$/m.test(headers)) err('--demo: _headers doesn\'t serve /demo/p/* immutable');
 }
 
 // the heading font covers every character the headings show

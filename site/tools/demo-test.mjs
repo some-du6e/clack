@@ -142,7 +142,7 @@ async function run() {
     }
   });
   for (const d of ['Runtime', 'Log', 'Network', 'Page']) await s(`${d}.enable`);
-  await s('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
+  await s('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false, screenWidth: W, screenHeight: H });
   const ev = async (expr) => (await s('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })).result.value;
   const shot = async (name) => {
     const { data } = await s('Page.captureScreenshot', { format: 'png' });
@@ -155,6 +155,7 @@ async function run() {
       if (report.errors.length) throw new Error(`${what}: stopped by ${report.errors[0]}`);
       if (await ev(`(() => { try { return !!(${expr}); } catch { return false; } })()`)) return;
       if (await ev('document.querySelector(".card.stopped") !== null')) throw new Error(`${what}: the page says "${await ev('document.getElementById("state").textContent')}"`);
+      if (await ev('!document.getElementById("go").hidden')) throw new Error(`${what}: the phone gate showed in a ${W}×${H} desktop window ("${await ev('document.getElementById("state").textContent')}")`);
     }
     await shot(`timeout-${what.replace(/\W+/g, '-')}`);
     throw new Error(`${what}: not within ${ms / 1000} s`);
