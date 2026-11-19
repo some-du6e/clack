@@ -57,6 +57,10 @@ type FileShares struct {
 	fileID string
 	data   async[core.FileShareInfo]
 	cards  map[string]*widget.Clickable
+	// got are the shares' cards the store could give, read again after
+	// any message changes (seq: core's MessageChangeSeq)
+	got map[string]core.LinkShare
+	seq uint64
 }
 
 // NewFileShares starts reading file id's shares.
@@ -83,8 +87,18 @@ func (v *FileShares) Layout(gtx C, vh int) D {
 	var cards []core.LinkShare
 	var shares []core.FileShare
 	if loaded && err == nil && app != nil {
+		if seq := app.MessageChangeSeq(); v.got == nil || seq != v.seq {
+			v.got, v.seq = map[string]core.LinkShare{}, seq
+		}
 		for _, s := range info.Conversations {
-			if ls, ok := app.FileShareCard(s); ok {
+			key := s.Channel + "/" + s.TS
+			ls, ok := v.got[key]
+			if !ok {
+				if ls, ok = app.FileShareCard(s); ok {
+					v.got[key] = ls
+				}
+			}
+			if ok {
 				cards, shares = append(cards, ls), append(shares, s)
 			}
 		}
@@ -111,6 +125,9 @@ func (v *FileShares) Layout(gtx C, vh int) D {
 		return v.empty(gtx, vh)
 	}
 	return layout.UniformInset(16).Layout(gtx, func(gtx C) D {
+		if info.ConversationCount == 0 { // only tab or file-channel shares: their sections aren't drawn
+			return D{Size: image.Pt(gtx.Constraints.Max.X, 0)}
+		}
 		ch := []layout.FlexChild{layout.Rigid(func(gtx C) D { return v.divider(gtx, info.ConversationCount, app) })}
 		for i := range cards {
 			s := &cards[i]
