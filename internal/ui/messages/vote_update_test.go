@@ -247,6 +247,7 @@ type sentRender struct {
 	name, ts, text string
 	view           string // the props' viewContext
 	blocks         []string
+	props          map[string]any // all of them, decoded
 }
 
 func (b *renderCount) Render(root uint64, name string, props []byte) {
@@ -272,6 +273,7 @@ func (b *renderCount) add(root uint64, name string, props []byte) {
 	}
 	_ = json.Unmarshal(props, &p)
 	r := sentRender{root: root, name: name, ts: p.Msg.TS, text: p.Msg.Text, view: p.View}
+	_ = json.Unmarshal(props, &r.props)
 	for _, bl := range p.Msg.Blocks {
 		r.blocks = append(r.blocks, bl.ID)
 	}

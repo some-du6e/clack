@@ -15,7 +15,7 @@ import (
 //   - subscriptions.thread.getView {limit, fetch_threads_state, max_ts}:
 //     two followed threads in ViewsChannel. The first has one unread
 //     reply, the second is read (the Threads view's "You're up to date"
-//     divider goes between them once the first is read).
+//     divider goes between them as soon as they load).
 //   - subscriptions.thread.mark {channel, thread_ts, ts} is recorded
 //     (ThreadMarks) and clears the unread reply.
 //   - drafts.list carries a draft, a scheduled message and a scheduled
@@ -131,16 +131,21 @@ func (s *Server) handleViews(method string, f url.Values) (any, bool) {
 		r1 := viewsMsg(ch, ViewsThreadUnread, ViewsThreadUnread, "U0FAKE00001", "a synthetic question for the team")
 		r1.ReplyCount, r1.ReplyUsers = 2, []string{SelfID, "U0FAKE00002"}
 		r1.LatestReply = "1762600200.000100"
+		// both followed, as getView lists only followed threads; the
+		// viewer read up to their own answer (the follow-up unread)
+		r1.Subscribed, r1.LastRead = true, "1762600100.000100"
 		a1 := viewsMsg(ch, "1762600100.000100", ViewsThreadUnread, SelfID, "a synthetic answer")
 		a2 := viewsMsg(ch, "1762600200.000100", ViewsThreadUnread, "U0FAKE00002", "a synthetic follow-up")
 		r2 := viewsMsg(ch, ViewsThreadRead, ViewsThreadRead, SelfID, "a synthetic note that was settled")
 		r2.ReplyCount, r2.ReplyUsers = 1, []string{"U0FAKE00001"}
 		r2.LatestReply = "1762500100.000100"
+		r2.Subscribed, r2.LastRead = true, "1762500100.000100"
 		b1 := viewsMsg(ch, "1762500100.000100", ViewsThreadRead, "U0FAKE00001", "a synthetic thumbs up")
 		unread := []slack.Message{a2}
 		total := 1
 		if read {
 			unread, total = nil, 0
+			r1.LastRead = a2.TS
 		}
 		threads := []any{
 			map[string]any{"root_msg": r1, "latest_replies": []slack.Message{a1, a2}, "unread_replies": unread},

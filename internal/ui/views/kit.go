@@ -237,9 +237,13 @@ var (
 // the ui root) over p where it changes Slack's --dt_color-theme-* tokens:
 // theme-base-pry (the selected tab's underline), theme-base-imp and
 // theme-content-imp (unread dots and count badges). With Slack's default
-// theme p is returned as is. A stylesheet that declares the token itself
-// keeps it (Slick's :root declarations beat the Theme component's
-// stylesheet in Slack, as in theme.ApplyTokens and peekPalOf).
+// theme p is returned as is. The cascade is per variable: a stylesheet
+// that declares a token itself keeps it (Slick's :root declarations beat
+// the Theme component's stylesheet in Slack), and only that token. One
+// declaring only theme-base-imp keeps the account's theme-content-imp;
+// one that overrides only a ramp (Slick's AMOLED: the aubergine stops)
+// reaches none of the account's tokens, which its Theme stylesheet
+// spells on its own ramp (theme.Declares, as peekPalOf).
 func accountPal(th *theme.Theme, p *pal) *pal {
 	if th == nil {
 		return p
@@ -249,29 +253,23 @@ func accountPal(th *theme.Theme, p *pal) *pal {
 		def = theme.DarkPalette
 	}
 	tab := th.C.Accent != def.Accent
-	imp := th.C.ThemeImp.A != 0
-	if !tab && !imp {
+	imp, impText := th.C.ThemeImp.A != 0, th.C.ThemeImpText.A != 0
+	if !tab && !imp && !impText {
 		return p
 	}
 	acctMu.Lock()
 	defer acctMu.Unlock()
 	if acctTh != th || acctGen != th.Gen || acctIn != p {
-		owns := func(expr string) bool { // the sheet declares the token itself
-			if th.Tokens == nil {
-				return false
-			}
-			_, own, ok := th.Tokens.Color(expr)
-			return own && ok
-		}
+		declares := func(name string) bool { return theme.Declares(th.Tokens, name) }
 		o := *p
-		if tab && !owns("var(--dt_color-theme-base-pry)") {
+		if tab && !declares("--dt_color-theme-base-pry") {
 			o.TabLine = th.C.Accent
 		}
-		if imp && !owns("var(--dt_color-theme-base-imp)") {
+		if imp && !declares("--dt_color-theme-base-imp") {
 			o.Accent, o.Badge = th.C.ThemeImp, th.C.ThemeImp
-			if th.C.ThemeImpText.A != 0 && !owns("var(--dt_color-theme-content-imp)") {
-				o.AccentText = th.C.ThemeImpText
-			}
+		}
+		if impText && !declares("--dt_color-theme-content-imp") {
+			o.AccentText = th.C.ThemeImpText
 		}
 		acctTh, acctGen, acctIn, acctOut = th, th.Gen, p, o
 	}

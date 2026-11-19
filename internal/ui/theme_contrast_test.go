@@ -224,7 +224,7 @@ func TestAccountThemeFocusButtonActive(t *testing.T) {
 		}
 		w.ptr(pointer.Move, tcMid)
 		w.later(300 * time.Millisecond)
-		if got := w.shot().RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.hovd, 2) {
+		if got := w.shot().RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.hovd, 1) || tcNear(got, c.fill, 0) { // the layer moves the dark discs by 1-2 levels only
 			t.Errorf("dark=%v: the hovered active focus button is %s; Slack's :hover layer over theme-base-pry %s", c.dark, tcHex(tcNRGBA(got)), tcHex(c.hovd))
 		}
 	}
@@ -233,10 +233,15 @@ func TestAccountThemeFocusButtonActive(t *testing.T) {
 // A press on the control strip's focus and + buttons shows :active while
 // it's held: theme-base-pry with theme-content-ter, hovered :hover's layer
 // over it (the default theme's rail scope: #efdef6 and #39063a light,
-// #e4d0ec and #200221 dark). A window gets the frame that delivers the
-// press and then only the frames the app asks for, so the press's own
-// frame must start the 125 ms transition (they read the Clickable before
-// its update and missed it).
+// #e4d0ec and #200221 dark), and dragged off the button, the :active disc
+// without the layer (#f9edff, #e3ceeb), as Chrome keeps :active until
+// mouseup. A window gets the frame that delivers the press and then only
+// the frames the app asks for: the press's own frame must start the
+// 125 ms transition and ask for the next one (the buttons read the
+// Clickable before its update and missed the press; dropping the
+// transition's InvalidateCmd leaves the held button on the hover tile).
+// The focus button's tooltip asks for frames of its own, so the + one is
+// the strict case.
 func TestAccountThemeControlStripPress(t *testing.T) {
 	for _, b := range []struct {
 		name string
@@ -246,23 +251,25 @@ func TestAccountThemeControlStripPress(t *testing.T) {
 		{"+", func(a *App, gtx layout.Context) { a.createButton(gtx, image.Pt(8, 8), 36) }},
 	} {
 		for _, c := range []struct {
-			dark      bool
-			fill, ink color.NRGBA
+			dark            bool
+			fill, ink, rest color.NRGBA
 		}{
-			{false, tcRGB(0xefdef6), tcRGB(0x39063a)},
-			{true, tcRGB(0xe4d0ec), tcRGB(0x200221)},
+			{false, tcRGB(0xefdef6), tcRGB(0x39063a), tcRGB(0xf9edff)},
+			{true, tcRGB(0xe4d0ec), tcRGB(0x200221), tcRGB(0xe3ceeb)},
 		} {
 			a, _, _ := fakeApp(t, nil)
 			a.th.Dark = c.dark
 			a.th.Refresh()
 			w := newTCWin(t, a, func(gtx layout.Context) { b.draw(a, gtx) })
 			w.ptr(pointer.Move, tcMid)
+			w.later(300 * time.Millisecond)
 			w.later(300 * time.Millisecond) // hovered, settled
-			w.ptr(pointer.Press, tcMid)     // held from here
-			if _, ok := w.r.WakeupTime(); !ok {
+			w.run()
+			w.ptr(pointer.Press, tcMid) // held from here
+			if !w.soon(20 * time.Millisecond) {
 				t.Errorf("%s dark=%v: the press's frame asks for no other, so the held press never shows", b.name, c.dark)
 			}
-			w.later(300 * time.Millisecond)
+			w.run()
 			img := w.shot()
 			if got := img.RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.fill, 2) {
 				t.Errorf("%s dark=%v: held, the button is %s; Slack's :active (hovered) %s", b.name, c.dark, tcHex(tcNRGBA(got)), tcHex(c.fill))
@@ -270,6 +277,33 @@ func TestAccountThemeControlStripPress(t *testing.T) {
 			if k, off, peak := tcAlong(img, tcIcon, c.fill, c.ink); k < .8 || k > 1.1 || off > 16 {
 				t.Errorf("%s dark=%v: held, its icon's ink peaks at %s (%.2f of the way to Slack's theme-content-ter %s)", b.name, c.dark, tcHex(peak), k, tcHex(c.ink))
 			}
+			w.drag(image.Pt(50, 50)) // off the button, still held
+			w.run()
+			w.later(300 * time.Millisecond)
+			if got := w.shot().RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.rest, 1) {
+				t.Errorf("%s dark=%v: held and dragged off, the button is %s; Slack keeps :active, theme-base-pry %s", b.name, c.dark, tcHex(tcNRGBA(got)), tcHex(c.rest))
+			}
+		}
+	}
+}
+
+// The peek cards' header rule (.p-peek_card__header: box-shadow 0 1px 0 0
+// rgba(var(--sk_foreground_low), .13)) is Slack Kit's 232,232,232 under
+// .sk-client-theme--dark (209,210,211 is --sk_primary_foreground) and
+// 29,28,29 in light mode.
+func TestPeekHeaderRule(t *testing.T) {
+	for _, c := range []struct {
+		dark bool
+		want color.NRGBA
+	}{
+		{false, color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0x21}},
+		{true, color.NRGBA{R: 0xe8, G: 0xe8, B: 0xe8, A: 0x21}},
+	} {
+		a, _, _ := fakeApp(t, nil)
+		a.th.Dark = c.dark
+		a.th.Refresh()
+		if got := a.agentsPal().rule; got != c.want {
+			t.Errorf("dark=%v: the peek header's rule is %v; Slack rgba(var(--sk_foreground_low),.13) %v", c.dark, got, c.want)
 		}
 	}
 }
@@ -288,16 +322,19 @@ func tcRGB(v uint32) color.NRGBA {
 }
 
 // tcWin runs a's frames through a router at a clock the test moves, as a
-// window gets them: a frame per delivered event, then the ones the app
-// asks for.
+// window gets them: a frame per delivered event, then only the ones the
+// app asks for (the router's wakeup, read after every frame as a window
+// reads it).
 type tcWin struct {
-	t    *testing.T
-	a    *App
-	size image.Point
-	r    input.Router
-	ops  op.Ops
-	now  time.Time
-	draw func(gtx layout.Context)
+	t      *testing.T
+	a      *App
+	size   image.Point
+	r      input.Router
+	ops    op.Ops
+	now    time.Time
+	draw   func(gtx layout.Context)
+	wake   time.Time // the frame the last one asked for, while wakeOK
+	wakeOK bool
 }
 
 // newTCWin lays draw out over the chrome's base colour in a 52x52 window
@@ -316,6 +353,23 @@ func (w *tcWin) frame() {
 	paint.FillShape(&w.ops, w.a.chromeBase(image.Pt(w.size.X/2, w.size.Y/2)), clip.Rect{Max: w.size}.Op())
 	w.draw(gtx)
 	w.r.Frame(&w.ops)
+	w.wake, w.wakeOK = w.r.WakeupTime()
+}
+
+// soon reports whether the last frame asked for another within d.
+func (w *tcWin) soon(d time.Duration) bool { return w.wakeOK && !w.wake.After(w.now.Add(d)) }
+
+// run runs the frames the app asks for, each at its wakeup and at least
+// 16 ms after the last, until it asks for none within 50 ms (or 120).
+func (w *tcWin) run() {
+	for i := 0; i < 120 && w.soon(50*time.Millisecond); i++ {
+		next := w.now.Add(16 * time.Millisecond)
+		if w.wake.After(next) {
+			next = w.wake
+		}
+		w.now = next
+		w.frame()
+	}
 }
 
 // ptr queues a mouse event at p (a press with the primary button) and runs
@@ -326,6 +380,13 @@ func (w *tcWin) ptr(kind pointer.Kind, p image.Point) {
 		ev.Buttons = pointer.ButtonPrimary
 	}
 	w.r.Queue(ev)
+	w.frame()
+}
+
+// drag moves the pointer to p with the primary button held (the router
+// makes it a Drag; a queued pointer.Drag panics) and runs that frame.
+func (w *tcWin) drag(p image.Point) {
+	w.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(float32(p.X), float32(p.Y))})
 	w.frame()
 }
 

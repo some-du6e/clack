@@ -51,6 +51,41 @@ func RemountKeyed(key string) int {
 	return n
 }
 
+// RemountKeyedIn is RemountKeyed for the instances drawn in pane (Pane;
+// "" outside any): one composer's missing box remounts its own roots, not
+// those of another place's composer for the same conversation (the
+// thread pane's and a Threads view card's share their "$key").
+func RemountKeyedIn(key, pane string) int {
+	if key == "" {
+		return 0
+	}
+	b := bridge()
+	n := 0
+	for k, in := range insts {
+		if k.key == key && k.pane == pane {
+			delete(insts, k)
+			dropRoot(in, b)
+			n++
+		}
+	}
+	return n
+}
+
+// KeyedTreesIn is KeyedTrees for the instances drawn in pane.
+func KeyedTreesIn(key, pane string) string {
+	if key == "" {
+		return ""
+	}
+	var out []string
+	for k, in := range insts {
+		if k.key == key && k.pane == pane {
+			out = append(out, k.name+": "+treeState(in))
+		}
+	}
+	sort.Strings(out)
+	return strings.Join(out, "; ")
+}
+
 // KeyedTrees describes, for a log line, the plugin trees of the instances
 // keyed key, sorted by component: "MessagePaneInput: an empty tree;
 // TypingNames: 3 nodes". "" when there are none. UI goroutine.

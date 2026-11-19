@@ -714,7 +714,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		switch r.kind {
 		case sbLink:
 			if !r.disabled { // organize mode's disabled page links do nothing
-				a.Navigate(r.key)
+				a.sbLinkClicked(r.key)
 			}
 		case sbHeading:
 			// the huddle stack sits outside toggleAndLabel: its click
@@ -738,6 +738,19 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		return layout.Dimensions{Size: image.Pt(w, d.Size.Y+gtx.Dp(12))} // SpacerRow (height 12)
 	}
 	return layout.Dimensions{Size: image.Pt(w, d.Size.Y)}
+}
+
+// sbLinkClicked opens a page link's page. The row of the page on screen
+// clicked again tells the page: Slack's AllThreadsRowElement dispatches
+// incrementAllThreadsRefreshCounter when its row is the selected one, and
+// the Threads view reloads (views.Threads.Reselect).
+func (a *App) sbLinkClicked(route string) {
+	if r := Route(route); r == a.router.Current() {
+		if v, ok := a.views[r].(interface{ Reselect() }); ok {
+			v.Reselect()
+		}
+	}
+	a.Navigate(route)
 }
 
 // sbHeadingHuddle is the channel whose huddle a heading's

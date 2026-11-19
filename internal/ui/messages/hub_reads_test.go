@@ -98,7 +98,7 @@ func TestHubUpdateAfterWholeEviction(t *testing.T) {
 	}
 	// whatever an unloaded model holds, its first load's page and hasMore
 	// win (ensureLoaded: takeLive, mergeNewest, keepLive)
-	m.upsert(old)
+	m.upsert(old, 1)
 	m.loading = true
 	live := m.takeLive()
 	m.mergeNewest(hubReadsPage(ch), true)
@@ -146,7 +146,7 @@ func TestHubUpdateDuringFirstLoad(t *testing.T) {
 func TestHubUpdateAfterLocalCopyAtTop(t *testing.T) {
 	const ch = "C0HUBREAD4"
 	hb, m := hubReadsEnv(ch)
-	m.upsert(core.Message{TS: "1762200000.000100", Channel: ch, Text: "a synthetic send that failed", Failed: true})
+	m.upsert(core.Message{TS: "1762200000.000100", Channel: ch, Text: "a synthetic send that failed", Failed: true}, 1)
 	before := hubTSs(m)
 	between := core.Message{TS: "1762300000.000100", Channel: ch, Text: "an older synthetic message, edited"}
 	hb.apply(core.Event{Type: "update", Channel: ch, TS: between.TS, Msg: &between})
@@ -166,10 +166,10 @@ func TestHubKeepLiveAfterStartOver(t *testing.T) {
 	m.loading = true
 	pre := m.msgs[2].m
 	pre.Text += ", reacted"
-	m.upsert(pre)
+	m.upsert(pre, 1)
 	m.noteLive(pre.TS, false)
 	late := core.Message{TS: "1762900000.000100", Channel: ch, Text: "a synthetic message posted during the load"}
-	m.upsert(late)
+	m.upsert(late, 1)
 	m.noteLive(late.TS, false)
 	live := m.takeLive()
 	var fresh []core.Message

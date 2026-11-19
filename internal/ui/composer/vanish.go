@@ -133,10 +133,10 @@ func (c *Composer) vanished(now time.Time) {
 	}
 	g.last = now
 	g.frames++
-	trees := slackc.KeyedTrees(c.key()) // before the remount drops them
+	trees := slackc.KeyedTreesIn(c.key(), c.pane) // before the remount drops them
 	remounted := 0
 	if !now.Before(g.remountAt) {
-		remounted = slackc.RemountKeyed(c.key())
+		remounted = slackc.RemountKeyedIn(c.key(), c.pane) // this place's roots only
 		g.remounts++
 		if g.backoff == 0 {
 			g.backoff = vanishRemountMin

@@ -56,7 +56,7 @@ func TestAccountThemeCreateButtonOpen(t *testing.T) {
 		}
 		w.ptr(pointer.Move, tcMid)
 		w.later(300 * time.Millisecond)
-		if got := w.shot().RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.hovd, 2) {
+		if got := w.shot().RGBAAt(tcDisc.X, tcDisc.Y); !tcNear(got, c.hovd, 1) || tcNear(got, c.fill, 0) { // the layer moves the dark discs by 1-2 levels only
 			t.Errorf("%s: + hovered with its menu open is %s; Slack's :hover layer over theme-base-pry %s", c.name, tcHex(tcNRGBA(got)), tcHex(c.hovd))
 		}
 	}

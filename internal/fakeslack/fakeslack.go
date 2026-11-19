@@ -1498,7 +1498,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
 		var chans, ims []slack.CountEntry
-		for i, c := range s.convs {
+		s.convMu.Lock() // a leave or a join rewrites the list meanwhile
+		convs := append([]slack.Conversation(nil), s.convs...)
+		s.convMu.Unlock()
+		for i, c := range convs {
 			e := slack.CountEntry{ID: c.ID, LastRead: "1762500000.000000", Latest: "1762516800.000000"}
 			if s.Size.ReadCursors {
 				base := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix() // history's clock

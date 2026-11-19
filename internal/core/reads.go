@@ -332,6 +332,7 @@ func (a *App) installPrefsLocked(raw map[string]json.RawMessage) {
 	a.S.SetRawPrefs(raw)
 	p, muted := store.ParsePrefs(raw)
 	a.S.SetPrefs(p, a.withTempMutes(p, muted)) // temp_mute's muted-until (temp_mute.go)
+	a.notePrefsInstalled()                     // what Docs converted until now read moved? (msg_refs.go)
 }
 
 // Pref returns one users.prefs.get value as Slack sent it (ok: present).
@@ -860,9 +861,18 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 			MentionCount int  `json:"mention_count"`
 		} `json:"threads_state"`
 	}
+	subs := a.S.SubSeq() // a subscription event while it is out is newer (SyncSubs)
 	seq, since := a.MessageChangeSeq(), a.S.LiveSeq()
 	if err := a.C.Call(ctx, "subscriptions.thread.getView", p, &res); err != nil {
 		return ThreadsPage{}, err
+	}
+	// processThreads runs every root through slurpThreadSubscriptions
+	// (udbq, preprocessImsgs): each listed thread's subscription is the
+	// answer's (subscribed, last_read), so a later mark or thread_marked
+	// only moves its last read (store/thread_subs.go); before the copies
+	// below read it
+	for _, t := range res.Threads {
+		a.S.SyncSubs(t.Root.Channel, subs, []slack.Message{t.Root})
 	}
 	// the threads' people are asked for as rows draw them (lazy_users.go)
 	out := ThreadsPage{HasMore: res.HasMore, Next: res.MaxTS, TotalUnread: res.TotalUnreadReplies, MsgSeq: seq}

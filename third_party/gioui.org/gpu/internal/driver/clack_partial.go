@@ -25,3 +25,10 @@ type ClackPartial interface {
 	// blit can't write).
 	ClackCopyDraws() bool
 }
+
+// ClackResources is a Device that counts what its resources take: the
+// bytes of the textures and buffers it made and hasn't released (Clack
+// patch 46, for tests: FrameStats.DeviceTextureBytes).
+type ClackResources interface {
+	ClackResourceBytes() (textures, buffers int64)
+}
