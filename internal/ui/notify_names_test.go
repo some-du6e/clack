@@ -12,6 +12,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -90,5 +91,72 @@ func TestNotifyNamesAMentionCoreDidNotHold(t *testing.T) {
 		if strings.Contains(n.Title, id) {
 			t.Errorf("the toast's title %q carries the id %s", n.Title, id)
 		}
+	}
+	// the title names the group's members, whom the toast waited for too
+	// (ensureModelsArePresent adds a group DM's members)
+	for _, id := range conv.Members {
+		if id == fakeslack.SelfID {
+			continue
+		}
+		u, ok := ca.RawUser(id)
+		if !ok || u.Name == "" {
+			t.Errorf("the group's member %s wasn't fetched for the toast's title %q", id, n.Title)
+			continue
+		}
+		if !strings.Contains(n.Title, u.Name) {
+			t.Errorf("the toast's title %q doesn't name the group's member %q", n.Title, u.Name)
+		}
+	}
+}
+
+// A toast whose message was deleted while it waited for the people it
+// names isn't shown: core knows the message is gone (its change log), and
+// clicking the toast would open nothing.
+func TestNotifyDropsAMessageDeletedWhileItWaits(t *testing.T) {
+	a, ca, fs, rec := privNoteAppFS(t)
+	g := fakeslack.ThreadGroupDMID
+	conv := fixtureConv(t, ca, g)
+	ca.S.PutConv(conv)
+	var sender string
+	for _, id := range conv.Members {
+		if id != fakeslack.SelfID {
+			sender = id
+			break
+		}
+	}
+	fs.SetEdgeHook(func(method string, _ map[string]json.RawMessage) (any, bool) {
+		if method == "edge/users/info" {
+			time.Sleep(time.Second)
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetEdgeHook(nil) })
+	evs, stop := ca.Subscribe()
+	defer stop()
+	const ts = "1762520500.000100"
+	cj, _ := json.Marshal(g)
+	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": g, "user": sender, "ts": ts, "text": "a synthetic ping"})
+	ca.Inject(slack.Event{Type: "message", Channel: cj, Raw: raw})
+	var ev core.Event
+	dl := time.After(10 * time.Second)
+	for ev.Msg == nil {
+		select {
+		case e := <-evs:
+			if e.Type == "message" && e.Channel == g && e.TS == ts {
+				ev = e
+			}
+		case <-dl:
+			t.Fatal("core never announced the message")
+		}
+	}
+	a.data.handle(a, ev) // waits for its sender, whom the store doesn't hold
+	now := fmt.Sprintf("%d.000200", time.Now().Unix())
+	del, _ := json.Marshal(map[string]any{"type": "message", "subtype": "message_deleted", "channel": g, "hidden": true,
+		"deleted_ts": ts, "ts": now, "event_ts": now,
+		"previous_message": map[string]any{"type": "message", "user": sender, "ts": ts, "text": "a synthetic ping"}})
+	ca.Inject(slack.Event{Type: "message", Subtype: "message_deleted", Channel: cj, Raw: del})
+	quiet(a, rec) // past the second users/info takes
+	if n := quiet(a, rec); n != 0 {
+		t.Errorf("%d toasts for a message deleted while its toast waited for its sender", n)
 	}
 }

@@ -1380,7 +1380,8 @@ jobs:
   # store didn't hold when the message came too (α.110's review: "@U07DANA
   # can you join?"; core announces a message before fetching anyone it
   # names): a group DM whose history the store never loaded, users/info
-  # answering after 1 s. Dispatch with only=toast-names.
+  # answering after 1 s, its title naming the group's members; no toast for
+  # a message deleted while it waited. Dispatch with only=toast-names.
   toast-names:
     if: ${{ !inputs.only || startsWith('toast-names', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1397,8 +1398,8 @@ jobs:
       - name: "ui: a toast's mention of a member the store didn't hold (one verbose run, then COUNT)"
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestNotifyNamesAMentionCoreDidNotHold$' ./internal/ui || rc=1
-          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestNotifyNamesAMentionCoreDidNotHold$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^(TestNotifyNamesAMentionCoreDidNotHold|TestNotifyDropsAMessageDeletedWhileItWaits)$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^(TestNotifyNamesAMentionCoreDidNotHold|TestNotifyDropsAMessageDeletedWhileItWaits)$' ./internal/ui || rc=1
           exit $rc
 
   # activity-stamp: an activity entry whose message is deleted, or edited
