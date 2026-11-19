@@ -83,7 +83,11 @@ type AgentTasksState struct {
 	MessagesTab, TasksTab bool
 	ShownAsAgent          bool // apps.profile.get is_shown_as_agent
 	Plan                  bool // features.access.policies.list agent_tasks__write
-	AdminOff              bool // ai_apps_settings: is_agent_tasks_enabled false for Atlas
+	// AdminOff is an org admin's is_agent_tasks_enabled false for Atlas in
+	// ai_apps_settings, as Grid holds it (enterprise.prefs.get's
+	// locked_prefs); TeamAdminOff the same entry in the workspace's
+	// team.prefs.get, which Slack ignores on Grid
+	AdminOff, TeamAdminOff bool
 	// ListError makes functions.workflows.list fail (the tab's error row).
 	ListError bool
 	Calls     []AgentTaskCall
@@ -281,11 +285,18 @@ func (s *Server) handleAgentTasks(method string, f url.Values) (any, bool) {
 			prefs[k] = v
 		}
 		st.mu.Lock()
-		off := st.AdminOff
+		off := st.TeamAdminOff
 		st.mu.Unlock()
 		prefs["ai_apps_settings"] = map[string]any{"apps": []any{map[string]any{"app_id": AgentTasksAppID,
 			"is_agent_tasks_enabled": !off, "is_ai_enabled": true}}, "allow_user_pinning": true}
 		return ok("prefs", prefs), true
+	case "enterprise.prefs.get":
+		st.mu.Lock()
+		off := st.AdminOff
+		st.mu.Unlock()
+		locked := map[string]any{"ai_apps_settings": map[string]any{"apps": []any{map[string]any{"app_id": AgentTasksAppID,
+			"is_agent_tasks_enabled": !off, "is_ai_enabled": true}}, "allow_user_pinning": true}}
+		return ok("org_prefs", map[string]any{}, "locked_prefs", locked, "unlocked_prefs", map[string]any{}), true
 	case "functions.workflows.list":
 		var fo struct {
 			Name               string `json:"name"`

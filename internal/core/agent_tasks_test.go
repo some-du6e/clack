@@ -54,12 +54,28 @@ func agentTabNow(t *testing.T, a *App) (bool, AgentTasksTabInputs) {
 	if err := a.LoadTeamPrefs(ctx); err != nil {
 		t.Fatalf("team prefs: %v", err)
 	}
+	if err := a.LoadEnterprisePrefs(ctx); err != nil {
+		t.Fatalf("enterprise prefs: %v", err)
+	}
 	shown, pending := a.AgentTasksTab(fakeslack.AgentTasksDMID, home)
 	if pending {
 		t.Fatal("the app profile still reads as pending after AppCardOf")
 	}
 	in, _ := a.AgentTasksTabInputsOf(fakeslack.AgentTasksDMID, home)
 	return shown, in
+}
+
+// TestAgentTasksGridLockedPref: on Enterprise Grid, Slack reads
+// ai_apps_settings from the org's locked prefs only (o1P2: TI4y
+// getLockedOrgPref under THpq isEnterprise), so a workspace's own entry
+// turning the app's tasks off doesn't hide the tab; the org's does (the
+// rule table's "admin turned it off").
+func TestAgentTasksGridLockedPref(t *testing.T) {
+	a, _ := agentTasksApp(t, func(st *fakeslack.AgentTasksState) { st.TeamAdminOff = true })
+	a.SetExperimentGroup(ExpAgentTasksTab, "on")
+	if shown, in := agentTabNow(t, a); !shown {
+		t.Errorf("a workspace's ai_apps_settings entry hid the tab on Grid (%+v): want the org's locked pref to rule", in)
+	}
 }
 
 // TestAgentTasksTabRule: every one of L1V2's inputs is needed.

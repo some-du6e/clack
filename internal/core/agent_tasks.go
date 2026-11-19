@@ -164,8 +164,16 @@ func (a *App) agentTasksDisabled(appID string) bool {
 	if agentTasksBlockedApps[appID] {
 		return true
 	}
-	raw, ok := a.TeamPref("ai_apps_settings")
-	if !ok {
+	// o1P2's ai_apps_settings: on Enterprise Grid the org's locked pref
+	// alone (TI4y getLockedOrgPref; THpq isEnterprise), a workspace's
+	// entry ignored; elsewhere the team pref
+	var raw json.RawMessage
+	if a.C.Creds.EnterpriseID != "" {
+		raw = a.EnterpriseLockedPref("ai_apps_settings")
+	} else if r, ok := a.TeamPref("ai_apps_settings"); ok {
+		raw = r
+	}
+	if len(raw) == 0 {
 		return false
 	}
 	var s string
