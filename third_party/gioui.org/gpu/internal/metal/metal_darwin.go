@@ -120,6 +120,15 @@ static void textureSize(CFTypeRef texRef, NSUInteger *w, NSUInteger *h) {
 	}
 }
 
+// Clack patch 46: whether a texture is framebufferOnly (a drawable of a
+// layer that is): no blit can read it.
+static bool textureFramebufferOnly(CFTypeRef texRef) {
+	@autoreleasepool {
+		id<MTLTexture> tex = (__bridge id<MTLTexture>)texRef;
+		return tex.framebufferOnly;
+	}
+}
+
 // Clack patch 46: a partial frame's scissor.
 static void renderEncScissor(CFTypeRef renderEncRef, NSUInteger x, NSUInteger y, NSUInteger w, NSUInteger h) {
 	@autoreleasepool {
@@ -1663,6 +1672,12 @@ func (b *Buffer) Release() {
 func (t *Texture) ReadPixels(src image.Rectangle, pixels []byte, stride int) error {
 	if len(pixels) == 0 {
 		return nil
+	}
+	if t.foreign && bool(C.textureFramebufferOnly(t.texture)) {
+		// Clack patch 46: a window's drawable, which no blit may read
+		// (gpu.ClackVerifyCopy reads one only when the layer's drawables
+		// were made readable)
+		return errors.New("metal: the texture is framebufferOnly")
 	}
 	sz := src.Size()
 	orig := C.MTLOrigin{

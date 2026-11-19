@@ -285,7 +285,14 @@ func (w *window) update() {
 		w.config.Mode = Windowed
 	}
 	w.ProcessEvent(ConfigEvent{Config: w.config})
-	w.draw(true)
+	// Clack patch (CLACK_PATCHES.md §46): a hidden window draws nothing, as
+	// runLoop's rule (patch 13) has it; showing it paints it. Its sync
+	// frame, delivered once the event that hid it returns (Window.Hide in
+	// a ClosingEvent, close to the tray), would make again the frame
+	// texture hide let go of.
+	if windows.IsWindowVisible(w.hwnd) {
+		w.draw(true)
+	}
 	if p.IsMinimized() {
 		w.w.ClackGPUIdle() // Clack patch (CLACK_PATCHES.md §46): no frames for now
 	}

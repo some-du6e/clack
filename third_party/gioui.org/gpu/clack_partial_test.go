@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"math/rand"
+	"slices"
 	"testing"
 )
 
@@ -271,6 +272,12 @@ func TestClackStickyNoOverlap(t *testing.T) {
 		}
 	}
 	t.Logf("600 frames: %d slots at the end (%d holes), %d repacks", len(s.slots), s.holeSlots, s.repacked)
+	// each repack is a frame drawn whole: up to 12 changes a frame among
+	// 300 regions near a page's capacity repack now and then, never most
+	// frames (217 of 600 when every replay needing a second page repacked)
+	if s.repacked > 30 {
+		t.Errorf("%d repacks in 600 frames, want 30 (5%%) at most", s.repacked)
+	}
 }
 
 // Clack patch 46: a path that changes every frame in the middle of the
@@ -281,6 +288,14 @@ func TestClackStickyNoOverlap(t *testing.T) {
 // keeps its size. Before, every frame left two holes the replay packed
 // ever after: 4,302 slots and 55x the packing after 1,800 frames.
 func TestClackStickySpinnerBounded(t *testing.T) {
+	// one page (8192) and, as at 4K, two (2048: Gio's own packing of the
+	// scene needs a second page)
+	for _, maxDim := range []int{8192, 2048} {
+		t.Run(fmt.Sprintf("page %d", maxDim), func(t *testing.T) { stickySpinnerBounded(t, maxDim) })
+	}
+}
+
+func stickySpinnerBounded(t *testing.T, maxDim int) {
 	rng := rand.New(rand.NewSource(45))
 	var before, after []stickyTestRegion
 	id := uint64(1)
@@ -296,10 +311,10 @@ func TestClackStickySpinnerBounded(t *testing.T) {
 	}
 	// the arcs' boxes over a turn, as codeSpinner draws them at 16 px
 	boxes := []image.Point{{5, 11}, {6, 10}, {6, 11}, {7, 10}, {8, 9}, {9, 8}, {10, 5}, {10, 6}, {10, 7}, {11, 5}, {11, 6}}
-	pk := &packer{maxDims: image.Pt(8192, 8192)}
+	pk := &packer{maxDims: image.Pt(maxDim, maxDim)}
 	var s stickyAtlas
 	var work0, maxWork int64
-	var size0 image.Point
+	var sizes0 []image.Point
 	maxSlots, grown := 0, -1
 	for f := 0; f < 3000; f++ {
 		regs := append([]stickyTestRegion(nil), before...)
@@ -313,13 +328,13 @@ func TestClackStickySpinnerBounded(t *testing.T) {
 		pk.work = 0
 		s.pack(pk, ops)
 		if f == 0 {
-			work0, size0 = pk.work, pk.sizes[0]
+			work0, sizes0 = pk.work, append([]image.Point(nil), pk.sizes...)
 		}
 		if f%500 == 0 || f == 2999 {
-			t.Logf("frame %d: %d slots (%d holes), packer work %d (%.1fx the first frame's), page %v, %d repacks", f, len(s.slots), s.holeSlots, pk.work, float64(pk.work)/float64(work0), pk.sizes, s.repacked)
+			t.Logf("frame %d: %d slots (%d holes), packer work %d (%.1fx the first frame's), pages %v, %d repacks", f, len(s.slots), s.holeSlots, pk.work, float64(pk.work)/float64(work0), pk.sizes, s.repacked)
 		}
 		maxSlots, maxWork = max(maxSlots, len(s.slots)-len(regs)), max(maxWork, pk.work)
-		if grown < 0 && (len(pk.sizes) != 1 || pk.sizes[0] != size0) {
+		if grown < 0 && !slices.Equal(pk.sizes, sizes0) {
 			grown = f
 		}
 		if bad := stickyOverlaps(pk, ops); bad != "" {
@@ -333,9 +348,156 @@ func TestClackStickySpinnerBounded(t *testing.T) {
 		t.Errorf("the packer's work reached %d a frame, %.1fx the first frame's %d; want 3x at most", maxWork, float64(maxWork)/float64(work0), work0)
 	}
 	if grown >= 0 {
-		t.Errorf("the page grew at frame %d (%v, the first frame's %v)", grown, pk.sizes, size0)
+		t.Errorf("the pages grew at frame %d (%v, the first frame's %v)", grown, pk.sizes, sizes0)
 	}
 	if s.repacked > 0 {
 		t.Errorf("%d repacks over 3,000 spinner frames (each a whole frame); want none", s.repacked)
+	}
+}
+
+// stickyFresh is Gio's own packing of ops' regions in their order: the
+// packer's work and its pages' area.
+func stickyFresh(maxDims image.Point, ops []*pathOp) (work, pagesArea int64) {
+	pk := &packer{maxDims: maxDims}
+	pk.clear()
+	for _, p := range ops {
+		for i := -1; i < len(p.more); i++ {
+			stickyAdd(pk, stickyRegion{p, i}.clip().Size())
+		}
+	}
+	for _, sz := range pk.sizes {
+		pagesArea += int64(sz.X * sz.Y)
+	}
+	return pk.work, pagesArea
+}
+
+func pagesArea(pk *packer) (a int64) {
+	for _, sz := range pk.sizes {
+		a += int64(sz.X * sz.Y)
+	}
+	return a
+}
+
+// Clack patch 46: the same window's regions at a lower scale (a 2x display
+// to a 1x one, or a window made smaller): every path is new and smaller,
+// so each fits an old, bigger slot. The slack counts as waste, so the
+// sequence is packed afresh and the pages come back to Gio's own size,
+// instead of keeping the old scale's for as long as the window shows.
+func TestClackStickyShrink(t *testing.T) {
+	rng := rand.New(rand.NewSource(47))
+	var regs2x []stickyTestRegion
+	for id := uint64(1); id <= 600; id++ {
+		x, y := rng.Intn(3400), rng.Intn(2000)
+		regs2x = append(regs2x, stickyTestRegion{id, image.Rect(x, y, x+28+rng.Intn(800), y+26+rng.Intn(16))})
+	}
+	maxDims := image.Pt(8192, 8192)
+	pk := &packer{maxDims: maxDims}
+	var s stickyAtlas
+	for range 30 {
+		s.pack(pk, stickyFrame(regs2x))
+	}
+	before := pagesArea(pk)
+	for _, k := range []float64{0.5, 0.6, 0.75} {
+		var regs []stickyTestRegion
+		for i, r := range regs2x {
+			c := image.Rect(int(float64(r.clip.Min.X)*k), int(float64(r.clip.Min.Y)*k), int(float64(r.clip.Max.X)*k), int(float64(r.clip.Max.Y)*k))
+			regs = append(regs, stickyTestRegion{uint64(10000*(k*100) + float64(i)), c})
+		}
+		// back at 2x, then the lower scale for a while
+		for range 10 {
+			s.pack(pk, stickyFrame(regs2x))
+		}
+		r0 := s.repacked
+		var ops []*pathOp
+		for range 60 {
+			ops = stickyFrame(regs)
+			s.pack(pk, ops)
+		}
+		_, fresh := stickyFresh(maxDims, ops)
+		got := pagesArea(pk)
+		t.Logf("2x, then x%.2f: pages %.2f Mpx (2x %.2f), Gio's own %.2f; %d repacks", k, float64(got)/1e6, float64(before)/1e6, float64(fresh)/1e6, s.repacked-r0)
+		if got*4 > fresh*5 {
+			t.Errorf("at x%.2f the pages are %.2f Mpx, Gio's own packing %.2f: want 1.25x at most", k, float64(got)/1e6, float64(fresh)/1e6)
+		}
+	}
+}
+
+// Clack patch 46: a scroll moves every region of a list (its clip is in
+// its key), so each is new every frame, and rows enter and leave at the
+// list's edges. A busy list (more new regions than a partial frame can
+// have) is packed afresh at once, at Gio's own cost; a sparse one goes
+// through the sticky places, its rows taking holes of their own size.
+// Either way the packing's work (the holes looked through included) and
+// the pages stay within a small factor of Gio's own packing. The busy
+// list's end is where it turns sparse: the rows that leave are holes until
+// they outweigh the regions (a frame that replays and then packs afresh,
+// 2.84x in the port, pages up to 2.19x for a dozen frames before).
+func TestClackStickyScroll(t *testing.T) {
+	for _, c := range []struct {
+		name            string
+		rows            int // rows on screen
+		maxWork, maxPgs float64
+	}{
+		{"a busy list", 90, 3, 2.5}, // 270 regions a frame
+		{"a sparse list", 18, 1.5, 1.5},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rng := rand.New(rand.NewSource(48))
+			// the window's other regions, still
+			var still []stickyTestRegion
+			for id := uint64(1); id <= 300; id++ {
+				x, y := rng.Intn(1700), rng.Intn(1000)
+				still = append(still, stickyTestRegion{id, image.Rect(x, y, x+14+rng.Intn(300), y+13+rng.Intn(8))})
+			}
+			// a message row: an avatar, a name, a line of text
+			type row struct{ w, h [3]int }
+			rows := make([]row, 400)
+			for i := range rows {
+				rows[i] = row{w: [3]int{36, 50 + rng.Intn(130), 80 + rng.Intn(800)}, h: [3]int{36, 17, 18}}
+			}
+			const top, bottom = 60, 1000
+			maxDims := image.Pt(8192, 8192)
+			pk := &packer{maxDims: maxDims}
+			var s stickyAtlas
+			var maxRatio, maxPages float64
+			for f := 0; f < 300; f++ {
+				off := f * 14 // a wheel's 14 px a frame
+				regs := append([]stickyTestRegion(nil), still...)
+				pitch := (bottom - top) / c.rows
+				for i, r := range rows {
+					y := top + i*pitch - off
+					for k := range 3 {
+						c := image.Rect(300+k*60, y+k*2, 300+k*60+r.w[k], y+k*2+r.h[k]).Intersect(image.Rect(0, top, 1900, bottom))
+						if c.Empty() {
+							continue
+						}
+						// the key: the row's own geometry, its offset (y) moving
+						regs = append(regs, stickyTestRegion{uint64(1_000_000+i*10+k)<<20 | uint64(y&0xfffff), c})
+					}
+				}
+				ops := stickyFrame(regs)
+				pk.work = 0
+				s.pack(pk, ops)
+				work, pages := stickyFresh(maxDims, ops)
+				if bad := stickyOverlaps(pk, ops); bad != "" {
+					t.Fatalf("frame %d: %s", f, bad)
+				}
+				if f < 10 {
+					continue // the first frames pack afresh
+				}
+				maxRatio = max(maxRatio, float64(pk.work)/float64(work))
+				maxPages = max(maxPages, float64(pagesArea(pk))/float64(pages))
+				if f%60 == 0 {
+					t.Logf("frame %d: %d regions, %d slots (%d holes), work %d (Gio's own %d), pages %v, %d repacks", f, len(regs), len(s.slots), s.holeSlots, pk.work, work, pk.sizes, s.repacked)
+				}
+			}
+			t.Logf("over 300 frames: the work up to %.2fx Gio's own packing's, the pages up to %.2fx", maxRatio, maxPages)
+			if maxRatio > c.maxWork {
+				t.Errorf("the sticky packing's work reached %.2fx Gio's own; want %.1fx at most", maxRatio, c.maxWork)
+			}
+			if maxPages > c.maxPgs {
+				t.Errorf("the sticky pages reached %.2fx Gio's own; want %.1fx at most", maxPages, c.maxPgs)
+			}
+		})
 	}
 }

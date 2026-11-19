@@ -20,6 +20,7 @@ import (
 type RootTokens struct {
 	raw  map[string]string // Slack's raw tokens + sheet overrides
 	own  map[string]bool   // names a sheet declared
+	deep map[string]bool   // names a sheet declared on body or below, not only on html
 	memo map[string]tokenVal
 	dark bool
 	// copied: raw is this RootTokens' own map (else shared, read-only)
@@ -109,6 +110,12 @@ func (t *RootTokens) overlay(el *rootEl) {
 		}
 		if t.own == nil {
 			t.own = map[string]bool{}
+		}
+		if el.tag != "html" {
+			if t.deep == nil {
+				t.deep = map[string]bool{}
+			}
+			t.deep[d.Prop] = true
 		}
 		if !t.copied {
 			m := make(map[string]string, len(t.raw)+16)
@@ -210,6 +217,25 @@ func (t *RootTokens) Key() uint64 {
 
 // Overridden reports that some sheet declared a root custom property.
 func (t *RootTokens) Overridden() bool { return t != nil && len(t.own) > 0 }
+
+// Declares reports whether a sheet declared name itself (theme.Declarer),
+// not only a variable its var() chain reaches, where it reaches the
+// client: in dark mode Slack declares its whole dark set on
+// body.sk-client-theme--dark (Slack Kit's --sk_* and the Theme
+// component's tokens), which shadows an html-only (:root) declaration of
+// those names for everything in body, so only a sheet rule matching body
+// or below counts for them.
+func (t *RootTokens) Declares(name string) bool {
+	if t == nil {
+		return false
+	}
+	if t.dark {
+		if _, slack := slackVarsDark[name]; slack {
+			return t.deep[name]
+		}
+	}
+	return t.own[name]
+}
 
 // lookup resolves one token; own reports that a sheet's declaration was
 // used for it or anywhere in its var() chain.

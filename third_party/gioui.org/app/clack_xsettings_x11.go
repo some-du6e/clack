@@ -73,14 +73,17 @@ var clackXSettings struct {
 // screen: its _XSETTINGS_SETTINGS property, in the XSETTINGS spec's
 // format, or nil without a display, a manager or settings. The connection
 // is its own, opened on the first call and kept; any goroutine. It may
-// wait on the X server: not on the UI goroutine.
+// wait on the X server (and grabs it while it reads, when a manager
+// exists): not on the UI goroutine, and not periodically.
 func ClackXSettings() []byte {
 	x := &clackXSettings
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	if !x.tried {
 		x.tried = true
-		C.XInitThreads() // as Gio's windows do, before any connection
+		if initX11Threads() != nil { // as Gio's windows do, before any connection
+			return nil
+		}
 		if x.dpy = C.XOpenDisplay(nil); x.dpy != nil {
 			x.sel = C.clack_xsettings_selection(x.dpy)
 			prop := C.CString("_XSETTINGS_SETTINGS")

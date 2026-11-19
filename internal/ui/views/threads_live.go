@@ -80,8 +80,8 @@ func (l *thrLive) wakes(ev core.Event) bool {
 }
 
 // noteLiveKeys records the messages the cards show: roots, replies, the
-// older replies a card loaded. They're in use: the store lets go of
-// others first (KeepFetched), as Activity's.
+// older replies a card loaded and the gaps it filled. They're in use: the
+// store lets go of others first (KeepFetched), as Activity's.
 func (v *Threads) noteLiveKeys() {
 	d, _, _ := v.data.get()
 	keys := make(map[actMsgKey]bool, 4*len(d.items))
@@ -102,6 +102,9 @@ func (v *Threads) noteLiveKeys() {
 		if c := v.cards[t.key]; c != nil {
 			for j := range c.older {
 				add(t.Channel, c.older[j].TS)
+			}
+			for j := range c.mid {
+				add(t.Channel, c.mid[j].TS)
 			}
 		}
 	}
@@ -183,7 +186,7 @@ func (v *Threads) applyLive() {
 // floorLive is applyLive further behind than core remembers: a message
 // core forgot the changes of whose copy is older than what it forgot
 // takes the store's copy (the socket kept it current), in every thread
-// and every card's older replies the view loaded; one the store doesn't
+// and every card's older replies and filled gaps; one the store doesn't
 // hold is fetched again by id (it comes back as a change, or gone).
 // landLive takes the changes core remembers after it.
 func (v *Threads) floorLive(c *core.App) {
@@ -225,19 +228,29 @@ func (v *Threads) floorLive(c *core.App) {
 		}
 		d.items = items
 	})
-	for key, card := range v.cards {
-		var older []core.Message
-		for j := range card.older {
-			m := &card.older[j]
-			if nm, ok := held(m.Channel, m, card.olderSeq); ok {
-				if older == nil {
-					older = slices.Clone(card.older)
+	heldAll := func(msgs []core.Message, seq uint64) []core.Message {
+		var out []core.Message
+		for j := range msgs {
+			m := &msgs[j]
+			if nm, ok := held(m.Channel, m, seq); ok {
+				if out == nil {
+					out = slices.Clone(msgs)
 				}
-				older[j] = nm
+				out[j] = nm
 			}
 		}
+		return out
+	}
+	for key, card := range v.cards {
+		older, mid := heldAll(card.older, card.olderSeq), heldAll(card.mid, card.midSeq)
 		if older != nil {
-			card.older, card.shown = older, nil
+			card.older = older
+		}
+		if mid != nil {
+			card.mid = mid
+		}
+		if older != nil || mid != nil {
+			card.shown = nil
 			v.unbuildThread(key)
 		}
 	}
@@ -250,8 +263,8 @@ func thrSameItems(a, b []thrItem) bool {
 }
 
 // landLive has each thread take what core changed of its messages after
-// its copies were read (thrItem.seq), the cards' older replies too, and
-// stamps them current as of now.
+// its copies were read (thrItem.seq), the cards' older replies and filled
+// gaps too (olderSeq, midSeq), and stamps them current as of now.
 func (v *Threads) landLive(c *core.App) {
 	now := c.MessageChangeSeq()
 	v.data.mutate(func(d *thrData) {
@@ -263,35 +276,44 @@ func (v *Threads) landLive(c *core.App) {
 		d.items = items
 	})
 	for _, card := range v.cards {
-		if card.olderSeq >= now {
-			continue
+		if out := v.landCopies(c, card.older, card.olderSeq, now); out != nil {
+			card.older, card.shown, card.built = out, nil, false
 		}
-		var out []core.Message
-		for j := range card.older {
-			m := &card.older[j]
-			ch, ok := c.MessageChange(m.Channel, m.TS)
-			if !ok || ch.Seq <= card.olderSeq {
-				if out != nil {
-					out = append(out, *m)
-				}
-				continue
-			}
-			if out == nil {
-				out = append(make([]core.Message, 0, len(card.older)), card.older[:j]...)
-			}
-			if nm, ok := v.changedCopy(c, actMsgKey{m.Channel, m.TS}, &ch, m, card.olderSeq); ok {
-				out = append(out, nm)
-			} else if !ch.Deleted {
-				out = append(out, *m)
-			}
-			card.built = false
+		if out := v.landCopies(c, card.mid, card.midSeq, now); out != nil {
+			card.mid, card.shown, card.built = out, nil, false
 		}
-		if out != nil {
-			card.older, card.shown = out, nil
-		}
-		card.olderSeq = now
+		card.olderSeq, card.midSeq = max(card.olderSeq, now), max(card.midSeq, now)
 	}
 	v.noteLiveKeys()
+}
+
+// landCopies is landLive for one of a card's own lists of replies (its
+// older ones, its filled gaps), current as of seq: each reply takes what
+// changed of it after that, a deleted one leaves; nil when none changed.
+func (v *Threads) landCopies(c *core.App, msgs []core.Message, seq, now uint64) []core.Message {
+	if seq >= now {
+		return nil
+	}
+	var out []core.Message
+	for j := range msgs {
+		m := &msgs[j]
+		ch, ok := c.MessageChange(m.Channel, m.TS)
+		if !ok || ch.Seq <= seq {
+			if out != nil {
+				out = append(out, *m)
+			}
+			continue
+		}
+		if out == nil {
+			out = append(make([]core.Message, 0, len(msgs)), msgs[:j]...)
+		}
+		if nm, ok := v.changedCopy(c, actMsgKey{m.Channel, m.TS}, &ch, m, seq); ok {
+			out = append(out, nm)
+		} else if !ch.Deleted {
+			out = append(out, *m)
+		}
+	}
+	return out
 }
 
 // landThread brings t's copies up to date (newer than t.seq), and stamps
@@ -385,22 +407,34 @@ func (v *Threads) patchThreads(c *core.App, k actMsgKey, ch *core.MsgChange) {
 		}
 	})
 	for key, card := range v.cards {
-		j := slices.IndexFunc(card.older, func(m core.Message) bool { return m.Channel == k.ch && m.TS == k.ts })
-		if j < 0 || card.olderSeq >= ch.Seq {
-			continue
+		if older, ok := v.patchCopies(c, k, ch, card.older, card.olderSeq); ok {
+			card.older, card.shown = older, nil
+			v.unbuildThread(key)
 		}
-		var older []core.Message
-		if m, ok := v.changedCopy(c, k, ch, &card.older[j], card.olderSeq); ok {
-			older = slices.Clone(card.older)
-			older[j] = m
-		} else if ch.Deleted {
-			older = slices.Delete(slices.Clone(card.older), j, j+1)
-		} else {
-			continue // fetched again: it comes back as a change
+		if mid, ok := v.patchCopies(c, k, ch, card.mid, card.midSeq); ok {
+			card.mid, card.shown = mid, nil
+			v.unbuildThread(key)
 		}
-		card.older, card.shown = older, nil
-		v.unbuildThread(key)
 	}
+}
+
+// patchCopies is patchThreads for one of a card's own lists of replies
+// (current as of seq): the list with change ch of k taken in (a new
+// slice), and whether k was in it to take it.
+func (v *Threads) patchCopies(c *core.App, k actMsgKey, ch *core.MsgChange, msgs []core.Message, seq uint64) ([]core.Message, bool) {
+	j := slices.IndexFunc(msgs, func(m core.Message) bool { return m.Channel == k.ch && m.TS == k.ts })
+	if j < 0 || seq >= ch.Seq {
+		return nil, false
+	}
+	if m, ok := v.changedCopy(c, k, ch, &msgs[j], seq); ok {
+		out := slices.Clone(msgs)
+		out[j] = m
+		return out, true
+	}
+	if ch.Deleted {
+		return slices.Delete(slices.Clone(msgs), j, j+1), true
+	}
+	return nil, false // fetched again: it comes back as a change
 }
 
 // thrUnreadGone is the reply at j of t's replies leaving: when it was one

@@ -625,10 +625,15 @@ func (g *gpu) frame(target RenderTarget) error {
 		sticky = &g.partial.atlas
 	}
 	r.packer.work = 0
+	var repacked int
+	if sticky != nil {
+		repacked = sticky.repacked
+	}
 	r.packStencils(&g.drawOps.pathOps, sticky)
 	r.stats.PackWork = r.packer.work
 	if sticky != nil {
 		r.stats.StickySlots, r.stats.StickyHoles = len(sticky.slots), sticky.holeSlots
+		r.stats.StickyRepacks = sticky.repacked - repacked
 	}
 	r.packIntersections(g.drawOps.imageOps)
 	r.uploadImages(g.cache, g.drawOps.imageOps)
@@ -674,6 +679,12 @@ func (g *gpu) frame(target RenderTarget) error {
 	g.cache.frame()
 	g.drawOps.pathCache.frame()
 	g.cleanupTimer.end()
+	// what the device holds once the caches let go (Clack patch 46)
+	r.stats.DeviceTextureBytes, r.stats.DeviceBufferBytes = -1, -1
+	if rd, ok := g.ctx.(driver.ClackResources); ok {
+		r.stats.DeviceTextureBytes, r.stats.DeviceBufferBytes = rd.ClackResourceBytes()
+	}
+	r.stats.FrameTextureBytes = g.partial.heldBytes()
 	if false && g.timers.ready() {
 		st, covt, cleant := g.stencilTimer.Elapsed, g.coverTimer.Elapsed, g.cleanupTimer.Elapsed
 		ft := st + covt + cleant
@@ -943,6 +954,10 @@ func createColorPrograms(b driver.Device, vsSrc shader.Sources, fsSrc [3]shader.
 // the place the whole frame does, and clears just those texels first.
 // The pages are sized before (frame).
 func (r *renderer) stencilClips(pathCache *opCache, ops []*pathOp, dmg []image.Rectangle) {
+	var canary map[stickyRegion]bool // ClackCanaryTexels (tests)
+	if dmg == nil {
+		canary = canaryRegions(ops, int(clackFloor.canary.Load()))
+	}
 	// page by page: with sticky places (Clack patch 46) a page's regions
 	// aren't together in the ops' order, and a page begun again would be
 	// cleared again
@@ -984,6 +999,9 @@ func (r *renderer) stencilClips(pathCache *opCache, ops []*pathOp, dmg []image.R
 				if dmg == nil {
 					begin()
 					r.stencil(p, v, clip, place, clip)
+					if canary[stickyRegion{p, i}] {
+						r.canaryTexel(clip, place)
+					}
 					continue
 				}
 				for _, d := range dmg {
@@ -1170,6 +1188,22 @@ func (r *renderer) packStencils(pops *[]*pathOp, sticky *stickyAtlas) {
 		clear(ops[k:])
 		ops = ops[:k]
 		sticky.pack(&r.packer, ops)
+		*pops = ops
+		return
+	}
+	if seed := clackFloor.packSeed.Load(); seed != 0 {
+		// Clack patch 46, tests: the regions Gio keeps, in seed's order
+		// (ClackPackOrder)
+		var i int
+		for i < len(ops) {
+			if ops[i].clip.Empty() {
+				ops[i] = ops[len(ops)-1]
+				ops = ops[:len(ops)-1]
+				continue
+			}
+			i++
+		}
+		packShuffled(&r.packer, ops, seed)
 		*pops = ops
 		return
 	}

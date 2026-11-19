@@ -10,8 +10,12 @@ package views
 //     drawn on the card: no "Find a DM" header (the page's query doesn't
 //     filter it), no bottom-padding row (compactDisplay), no VIP
 //     sections, no active row and no preselected DM (isPeekView).
-//   - .p-peek_card--dms: each row's rule is inset 0 -1px
-//     rgba(--sk_foreground_low,.13), and the preview is one line.
+//   - The card is a portal under document.body, outside .p-ia4_client
+//     (peek.go): a row's border-bottom is the root scope's
+//     theme-otl-inv-pry (.p-activity_ia4_page__item, DmsChannel's rows are
+//     no --card__dense; .p-peek_card--dms .p-recent_page__item's
+//     sk_foreground_low rule matches no element), the item's colour
+//     content-sec, and the preview keeps ActivityMessage's two lines.
 //   - A row closes the peek (maybeClosePeek) and selects the DM in the DMs
 //     tab (forceTabWhenNavigating: DMs).
 //   - Until the first fetch is in the skeleton rows show; an empty
@@ -32,7 +36,10 @@ var nsIA4 = i18n.NS("ia4")
 // :hover is the card's (.p-peek_card .p-activity_ia4_page__item:hover:
 // base-pry under the base-pry-hover image); in dark mode DmsList's
 // p-dms_list--dark, keyed on the client's theme alone, clears only its
-// background-color, so the image lies on the card itself.
+// background-color, so the image lies on the card itself. The previews
+// are ActivityMessage's outside .p-ia4_client: --read and --unread
+// content-pry, --muted content-sec, and with activity_inbox on (no state
+// class) the item's content-sec.
 func dmsCardColors(th *theme.Theme) dmsPal {
 	pp := peekPalOf(th)
 	tint := pp.hover
@@ -42,10 +49,11 @@ func dmsCardColors(th *theme.Theme) dmsPal {
 	c := dmsPal{
 		chrome:  pp.bg,
 		tint:    tint,
-		rule:    flatten(pp.line, pp.bg),
+		rule:    flatten(pp.rule, pp.bg),
 		inputBg: pp.bg,
 		soft:    pp.sec,
-		preview: pp.sec,
+		preview: pp.fg,
+		item:    pp.sec,
 		time:    flatten(pp.invSec, pp.bg), // .p-dms_channel__timestamp: theme-content-inv-sec
 		ter:     flatten(pp.invTer, pp.bg), // --muted: theme-content-inv-ter
 		white:   pp.fg,

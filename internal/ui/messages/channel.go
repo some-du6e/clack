@@ -233,6 +233,17 @@ type RowY struct {
 	Y   int
 }
 
+// RowText is the text message ts's row drew in its last layout ("" with
+// no row): what a test of the whole window reads of a row (the draw hook
+// doesn't see richview's text).
+func (v *ChannelView) RowText(ts string) string {
+	r := v.s.rows[ts]
+	if r == nil || r.rv == nil {
+		return ""
+	}
+	return r.rv.TextRange(0, r.rv.PlainLen())
+}
+
 // VisibleRows lists the items on screen in the last layout, top to bottom
 // (the wheel frame probe measures scrolled distance with it).
 func (v *ChannelView) VisibleRows() []RowY {

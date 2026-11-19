@@ -103,3 +103,34 @@ func TestParseColorTriple(t *testing.T) {
 		}
 	}
 }
+
+// Declares is per variable and per element: a sheet's own declaration,
+// not one its var() chain reaches; in dark mode, for Slack's names, only
+// one matching body or below, since Slack's body.sk-client-theme--dark
+// block shadows a :root-only declaration for everything in the client. A
+// sheet's own variables and light mode's :root declarations count.
+func TestRootTokensDeclares(t *testing.T) {
+	e := NewEngine()
+	e.Set("slick:user", ":root{--sk_foreground_low:255,0,0;--my-var:#123456}\n"+
+		themeSel+"{--dt_color-plt-aubergine-0:0,0,0 !important}\n"+
+		"body{--dt_color-theme-base-imp:#3b4252}")
+	dark := e.RootTokens(Env{Dark: true})
+	for name, want := range map[string]bool{
+		"--sk_foreground_low":          false, // :root only: Slack's body block shadows it
+		"--my-var":                     true,  // not Slack's: nothing on body redeclares it
+		"--dt_color-plt-aubergine-0":   true,  // the theme selector matches body too
+		"--dt_color-theme-base-imp":    true,  // declared on body
+		"--dt_color-theme-content-imp": false, // only its ramp is
+	} {
+		if got := dark.Declares(name); got != want {
+			t.Errorf("dark: Declares(%s) = %v, want %v", name, got, want)
+		}
+	}
+	if !e.RootTokens(Env{}).Declares("--sk_foreground_low") {
+		t.Error("light: a :root declaration of --sk_foreground_low doesn't count; Slack's light tokens live on :root")
+	}
+	// Color's own still follows the chain
+	if _, own, ok := dark.Color("var(--dt_color-theme-content-imp)"); !ok || !own {
+		t.Errorf("content-imp over the declared ramp: own=%v ok=%v", own, ok)
+	}
+}

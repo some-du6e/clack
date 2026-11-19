@@ -42,6 +42,18 @@ func installMemberRead(c *core.App) {
 		}
 		return "", richview.MemberLoading // the unknown stub until "names"
 	})
+	richview.SetMemberPeek(func(id string) (string, richview.MemberMiss) {
+		u, ok := c.S.RawUser(id) // getRawMemberById: no access, nothing asked for
+		switch {
+		case ok && u != nil:
+			return store.DisplayName(u), richview.MemberLoaded
+		case !core.LooksLikeMemberID(id):
+			return "", richview.MemberLoaded
+		case c.MissingMember(id) == core.MemberNonExistent:
+			return "", richview.MemberGone
+		}
+		return "", richview.MemberLoading
+	})
 }
 
 // uninstallMemberRead removes the hook if c's backend installed it last.
@@ -51,5 +63,6 @@ func uninstallMemberRead(c *core.App) {
 	if memberReadOwner.c == c {
 		memberReadOwner.c = nil
 		richview.SetMemberRead(nil)
+		richview.SetMemberPeek(nil)
 	}
 }

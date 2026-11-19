@@ -67,6 +67,18 @@ func loadingButtonGrp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, 
 	})
 }
 
+// InfiniteSpinner draws Slack Kit's InfiniteSpinner (s6So) in a d box at
+// the op origin: kitSpinner with noMargin's viewBox (78 units) or the
+// default (100), the track and arc colours. It keeps frames coming while
+// it shows.
+func InfiniteSpinner(gtx layout.Context, d int, noMargin bool, track, arc color.NRGBA) {
+	box := float32(100)
+	if noMargin {
+		box = 78
+	}
+	kitSpinner(gtx, d, box, track, arc)
+}
+
 // kitSpinner is Slack Kit's InfiniteSpinner in a d box whose SVG viewBox
 // is box units (100, or 78 with noMargin): the track circle (r 35, stroke
 // 8, the track colour at .25) and the arc (stroke-dasharray 55 200,
