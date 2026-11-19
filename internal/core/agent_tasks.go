@@ -124,6 +124,23 @@ func (a *App) AgentTasksTabInputsOf(ch string, home AppHome) (in AgentTasksTabIn
 	return in, pending
 }
 
+// AgentTasksAgent is the agent DM ch's agent: its bot user and app id
+// (the app profile's, else the bot user's api_app_id; "" until known).
+func (a *App) AgentTasksAgent(ch string) (user, app string) {
+	c, ok := a.S.Conv(ch)
+	if !ok || !c.IsIM || c.User == "" {
+		return "", ""
+	}
+	user = c.User
+	if card, ok := a.CachedAppCard(user, ""); ok && card.AppID != "" {
+		return user, card.AppID
+	}
+	if u, ok := a.S.User(user); ok && u != nil {
+		return user, u.Profile.APIAppID
+	}
+	return user, ""
+}
+
 // agentTasksDisabled is o1P2 sQ: the two blocked apps, or the team's
 // ai_apps_settings entry for the app with is_agent_tasks_enabled false.
 func (a *App) agentTasksDisabled(appID string) bool {
