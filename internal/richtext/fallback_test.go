@@ -48,6 +48,9 @@ func TestBlockFallbacks(t *testing.T) {
 		{"a block Clack can't draw yet lets the text stand in",
 			`[{"type":"card","block_id":"c1"}]`,
 			[]Block{para(tx("fallback text"))}},
+		{"a rich_text piece or an inline element at the top level draws as inside a rich_text",
+			`[{"type":"rich_text_section","elements":[{"type":"text","text":"hi"}]},{"type":"text","text":"there"}]`,
+			[]Block{para(tx("hi")), para(tx("there"))}},
 		// their fields' shapes (an object name, object rows) no longer
 		// fail the decode into the per-block error line
 		{"known blocks Clack can't draw keep that rule whatever their fields' shapes",

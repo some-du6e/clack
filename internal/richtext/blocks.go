@@ -591,6 +591,10 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return c.agentBlock(out, b)
 	case badBlock:
 		return append(out, unsupported())
+	case "rich_text_section", "rich_text_list", "rich_text_quote", "rich_text_preformatted", "rich_text_header", "rich_text_divider":
+		// a rich_text piece at the top level (or as a fallback payload)
+		// draws through its own renderable, as inside a rich_text
+		return append(out, c.richText([]bk{*b})...)
 	}
 	if !messageRenderables[b.Type] {
 		if c.notify { // convertMessageToPlainText: no converter, no text
@@ -599,6 +603,13 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		// SUIRendererItem: no renderable for the type (fallback.go)
 		return c.resolveFallback(out, b)
 	}
+	// an inline element at the top level draws as it does in a section
+	if inlineTypes[b.Type] {
+		if bs := c.richText([]bk{{Type: "rich_text_section", Elements: []bk{*b}}}); len(bs) > 0 {
+			return append(out, bs...)
+		}
+		return out
+	}
 	// a type Slack draws that Clack doesn't yet: its text object, if any
 	// (docs/BLOCKKIT-COVERAGE.md)
 	if t := b.textObj(); t != nil {
@@ -606,6 +617,18 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	}
 	c.missing = true
 	return out
+}
+
+// inlineTypes are the inline rich text elements Slack's renderables take
+// at any level (jBv3's list): one at the top level draws as in a section.
+var inlineTypes = map[string]bool{}
+
+func init() {
+	for _, t := range strings.Fields(`text emoji link channel user usergroup broadcast color date variable workflowtoken
+		workflow_mention work_object_mention tag canvas canvas_user_mention message_mention list_record skill rich_text_file
+		folder_mention salesforce_data_field citation attachment_mention`) {
+		inlineTypes[t] = true
+	}
 }
 
 // markdownBlocks converts a "markdown" block (standard Markdown, which
