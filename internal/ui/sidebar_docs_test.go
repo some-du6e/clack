@@ -184,6 +184,11 @@ func TestSidebarDocsListsPinOnly(t *testing.T) {
 		t.Errorf("the canvas row didn't draw its name %q as text", fakeslack.CanvasSnacksTitle)
 	}
 	e.organizeShot(t, "sidebar-docs-lists-pin-light")
+	// the row's files.info is the redirect's too (Slack's one file store):
+	// the click asks no second files.info and doesn't wait
+	if _, known := a.Core().S.KnownCanvasRef(fakeslack.CanvasSnacks); !known {
+		t.Errorf("the sidebar's files.info answer isn't in the store the redirect reads")
+	}
 	e.clickWith(e.sbRowPoint(t, fakeslack.FileChanSnacks), 0)
 	e.until("the canvas (RedirectFileChannel's toCanvas)", 10*time.Second, func() bool {
 		return string(a.router.Current()) == "docs/"+fakeslack.CanvasSnacks

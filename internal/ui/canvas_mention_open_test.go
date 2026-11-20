@@ -177,12 +177,8 @@ func TestCanvasMentionMessageJumpOpensCanvas(t *testing.T) {
 	if sec := e.a.secondary; sec.open() && sec.channel == ch {
 		t.Errorf("the thread link opened %v %s/%s beside the canvas, want none (a mention has no comment thread)", sec.kind, sec.channel, sec.ts)
 	}
-
-	// the toast's click: jumpToMessage for the mention
-	e.a.Navigate("activity")
-	e.frames(3)
-	e.a.notificationClicked(ch, ts, "", "")
-	cmScrolledTo(e, fullCanvas(e, fakeslack.CanvasMentionFile))
+	// a toast's click on the mention opens the canvas unfocused
+	// (TestNotificationOpensCanvasUnfocused)
 }
 
 // cmSeedComments gives the shell's store the Launch plan canvas's file

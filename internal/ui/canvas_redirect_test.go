@@ -147,6 +147,23 @@ func TestActivityCanvasMentionOpensThread(t *testing.T) {
 	cmScrolledTo(e, fullCanvas(e, fakeslack.CanvasMentionFile))
 }
 
+// The inbox row follows the mention's thread view in the column: closing
+// the column lets the row go (SecondaryShows matches the thread view).
+func TestActivityCanvasMentionThreadCloses(t *testing.T) {
+	e := newActShell(t)
+	cmSeed(e)
+	cmOpenActivity(e)
+	ch, ts := fakeslack.CanvasMentionChannel, fakeslack.CanvasMentionTS
+	e.activity().StepItem(1, false)
+	e.until("the thread view on the mention in the column", crSecThread(e, ch, ts))
+	e.frames(3)
+	if k := e.activity().OpenedItem(); k != fakeslack.CanvasMentionKey {
+		t.Fatalf("opened %q, want the mention", k)
+	}
+	e.a.CloseSecondary()
+	e.until("the row let go", func() bool { return e.activity().OpenedItem() == "" })
+}
+
 // Every direct toMessage into a canvas's file channel is that thread
 // view: LaterLabel's View to-dos in the column (wRj5's R9), Later's menu's
 // Open in Home (e6's R9 with forceTab Home) and the split view's
@@ -357,6 +374,189 @@ func TestListFileChannelOpensList(t *testing.T) {
 			t.Errorf("the history holds the list's file channel: %v", e.a.router.stack)
 		}
 	}
+
+	// a link to a reply in the record's thread, without the thread: the
+	// reply names its thread (getThreadTsToOpen), whose root names the
+	// record
+	e.a.CloseSecondary()
+	e.a.Navigate("activity")
+	e.frames(3)
+	const reply = "1762500100.000100" // the kitchen list's first record's thread's first reply (fakeslack lists.go)
+	e.a.Navigate("c/" + ch + "/m/" + reply)
+	e.until("the record from its reply's link", func() bool {
+		return string(e.a.router.Current()) == "lists/"+fakeslack.ListKitchen && item()
+	})
+}
+
+// A toast's click on a canvas mention (a file channel's message without
+// a thread) opens the canvas itself, unfocused: Slack's
+// notificationClickedInVisitOrigin calls openDoc with no section before
+// any jumpToMessage.
+func TestNotificationOpensCanvasUnfocused(t *testing.T) {
+	e := newActShell(t)
+	cmSeed(e)
+	e.a.Navigate("activity")
+	e.frames(3)
+	e.a.notificationClicked(fakeslack.CanvasMentionChannel, fakeslack.CanvasMentionTS, "", "")
+	v := fullCanvas(e, fakeslack.CanvasMentionFile)
+	e.frames(10)
+	if pending, at := v.Focus(); pending != "" || at != "" {
+		t.Errorf("the toast's canvas focuses %q/%q, want no section (openDoc without sectionId)", pending, at)
+	}
+}
+
+// A navigation into a file channel still waiting for files.info drops
+// once the user goes elsewhere: Back (whose forward history then stays),
+// a thread opened meanwhile, another canvas opened meanwhile. Slack never
+// waits, so nothing of it may land late.
+func TestNavigationWaitDropped(t *testing.T) {
+	ch := fakeslack.CanvasMentionChannel
+	known := func(e *actShellEnv) func() bool {
+		return func() bool {
+			_, ok := e.ca.S.KnownCanvasRef(fakeslack.CanvasMentionFile)
+			return ok
+		}
+	}
+	lateEnv := func(t *testing.T) *actShellEnv {
+		e := newActShell(t)
+		cmSeedConv(e)
+		cmSeedComments(e)
+		e.fs.SetFault("files.info", fakeslack.Fault{Delay: 2 * time.Second})
+		e.ca.ServeLookups()
+		t.Cleanup(e.ca.StopTraffic)
+		crNames(e)
+		e.a.Navigate("threads")
+		e.frames(2)
+		e.a.Navigate("c/" + fakeslack.ViewsChannel)
+		e.frames(2)
+		return e
+	}
+	t.Run("back", func(t *testing.T) {
+		e := lateEnv(t)
+		e.a.Navigate("c/" + ch) // toChannel: waits for the file
+		e.frames(2)
+		if r := e.a.router.Current(); r != Route("c/"+fakeslack.ViewsChannel) {
+			t.Fatalf("precondition: the navigation didn't wait (at %s)", r)
+		}
+		e.a.Back()
+		e.until("files.info's answer", known(e))
+		e.frames(20)
+		if r := string(e.a.router.Current()); r != "threads" {
+			t.Errorf("after Back the route is %q, want threads: the dropped navigation landed", r)
+		}
+		e.a.Forward()
+		if r := e.a.router.Current(); r != Route("c/"+fakeslack.ViewsChannel) {
+			t.Errorf("Forward went to %q, want the c/%s Back left: the forward history was cut", r, fakeslack.ViewsChannel)
+		}
+	})
+	t.Run("thread", func(t *testing.T) {
+		e := lateEnv(t)
+		e.a.Navigate("c/" + ch + "/m/" + fakeslack.CanvasMentionTS) // a jump: waits for the file
+		e.frames(2)
+		e.a.OpenThread(fakeslack.ViewsChannel, fakeslack.ThreadRootTS)
+		e.until("files.info's answer", known(e))
+		e.frames(20)
+		if r := e.a.router.Current(); canvasRouteID(r) != "" {
+			t.Errorf("the dropped jump opened %s over the thread", r)
+		}
+	})
+	t.Run("canvas", func(t *testing.T) {
+		e := lateEnv(t)
+		e.a.Navigate("c/" + ch + "/m/" + fakeslack.CanvasMentionTS)
+		e.frames(2)
+		e.a.OpenCanvas(fakeslack.CanvasChannel) // another canvas, in the side panel
+		e.until("files.info's answer", known(e))
+		e.frames(20)
+		if r := e.a.router.Current(); canvasRouteID(r) != "" {
+			t.Errorf("the dropped jump opened %s", r)
+		}
+		if cv, ok := e.a.secondary.view.(*canvasview.View); !ok || cv.ID() != fakeslack.CanvasChannel {
+			t.Errorf("the side panel no longer shows the canvas opened meanwhile")
+		}
+	})
+}
+
+// A file the viewer can't read is still a known file: files.info's
+// not_visible names a canvas by the error's filetype (fetchFileById's
+// make_not_visible), which the redirect opens; hidden_by_limit is no
+// canvas, so the conversation opens. Neither waits on the next
+// navigation, nor asks files.info again.
+func TestHiddenFilesDontWait(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		body map[string]any
+		want string
+	}{
+		{"not_visible", map[string]any{"ok": false, "error": "not_visible", "filetype": "quip", "title": "A hidden plan"}, "docs/" + fakeslack.CanvasMentionFile},
+		{"hidden_by_limit", map[string]any{"ok": false, "error": "hidden_by_limit"}, "c/" + fakeslack.CanvasMentionChannel},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newActShell(t)
+			cmSeedConv(e)
+			e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+				if method == "files.info" && f.Get("file") == fakeslack.CanvasMentionFile {
+					return c.body, true
+				}
+				return nil, false
+			})
+			e.ca.ServeLookups()
+			t.Cleanup(e.ca.StopTraffic)
+			crNames(e)
+			e.a.Navigate("c/" + fakeslack.ViewsChannel)
+			e.frames(2)
+			e.a.Navigate("c/" + fakeslack.CanvasMentionChannel)
+			e.until("the first navigation's end", func() bool { return string(e.a.router.Current()) == c.want })
+			if _, known := e.ca.S.KnownCanvasRef(fakeslack.CanvasMentionFile); !known {
+				t.Fatalf("files.info's error left the file unknown")
+			}
+			e.a.Navigate("c/" + fakeslack.ViewsChannel)
+			e.frames(2)
+			e.a.Navigate("c/" + fakeslack.CanvasMentionChannel)
+			if r := string(e.a.router.Current()); r != c.want {
+				t.Errorf("the second navigation is at %q, want %q at once (the file is known)", r, c.want)
+			}
+		})
+	}
+}
+
+// The column's toChannel into a canvas's file channel is the canvas in
+// the side panel (toCanvas), and a toast's click on a reply in a list
+// record's thread, while the list's files.info is out, opens the list
+// with the record once it answers.
+func TestFileChannelOpeners(t *testing.T) {
+	t.Run("column toChannel", func(t *testing.T) {
+		e := newActShell(t)
+		cmSeedComments(e)
+		e.a.Navigate("activity")
+		e.frames(3)
+		e.a.OpenChannelSecondary(fakeslack.FileChanLaunch)
+		e.until("the canvas in the side panel", func() bool {
+			cv, ok := e.a.secondary.view.(*canvasview.View)
+			return e.a.secondary.open() && ok && cv.ID() == fakeslack.CanvasChannel
+		})
+	})
+	t.Run("list toast", func(t *testing.T) {
+		e := newActShell(t)
+		ch := fakeslack.FileChanKitchen
+		e.ca.S.PutConv(slack.Conversation{ID: ch, Name: "Launch tracker", IsChannel: true, IsGroup: true,
+			IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 3})
+		e.a.data.fetched[ch] = time.Now()
+		e.fs.SetFault("files.info", fakeslack.Fault{Delay: 800 * time.Millisecond})
+		e.ca.ServeLookups()
+		t.Cleanup(e.ca.StopTraffic)
+		crNames(e)
+		e.a.Navigate("activity")
+		e.frames(3)
+		e.a.notificationClicked(ch, "1762500100.000100", fakeslack.ListKitchenThread, "")
+		e.frames(2)
+		if r := e.a.router.Current(); r.Channel() == ch {
+			t.Fatalf("the toast opened the list's file channel (%s) before files.info answered", r)
+		}
+		e.until("the list with the record", func() bool {
+			it, ok := e.a.secondary.view.(*listview.Item)
+			return string(e.a.router.Current()) == "lists/"+fakeslack.ListKitchen && ok && it.RecordID() == fakeslack.ListKitchenRecord
+		})
+	})
 }
 
 // A jump clicked inside the split view stays there (getTargetContainer:

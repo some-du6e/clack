@@ -91,7 +91,9 @@ func (h *cmHost) OpenFileJump(ch, thread, ts string, where FileWhere) {
 	h.canvas = append(h.canvas, ch+" "+thread+" "+ts+" "+map[FileWhere]string{FileSide: "side", FileFull: "full", FileInPane: "pane"}[where])
 	switch where {
 	case FileSide:
-		h.shows = core.FileOfChannel(ch)
+		if !h.hold {
+			h.shows = core.FileOfChannel(ch)
+		}
 	case FileInPane:
 		h.paneFile = core.FileOfChannel(ch)
 	}
@@ -778,6 +780,12 @@ func TestActivityListCommentOpensRecord(t *testing.T) {
 		}
 		if !v.selOK || !v.selSec {
 			t.Errorf("the row doesn't follow the record's pane (selOK %v, selSec %v)", v.selOK, v.selSec)
+		}
+		// the row's destination is the list's file channel as
+		// InlineChannelEntity draws it: getChannelIconType's lists icon,
+		// never a private channel's lock
+		if d := v.rows[fakeslack.ListCommentKey].d; !d.entOn || d.ent.Icon != "lists" {
+			t.Errorf("the list comment's destination %+v, want the lists icon", d.ent)
 		}
 	})
 	t.Run("persistent", func(t *testing.T) {
