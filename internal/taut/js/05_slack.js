@@ -528,6 +528,229 @@ async function userAPI(method, params = {}, options = {}) {
   }
 }
 
+// ---- apiCall: Slack's API request, its response and its rejection ----
+// Slack's apiCall thunk (client-boot 0hZc H, build 35b42de8b870) makes a
+// SlackApiRequest (QCxN) of {method, args} and queues it on the team's API
+// queue (XG3c → BcxX → 7quX ApiQ.q), which tries it as BaseRequest (Umoo)
+// says; apiCallExpedited (0hZc T) dispatches apiCall with EXPEDITED. Here
+// Go sends the request and tries it the way the queue does (taut's apiCall
+// native, slack.SlackRetriesUpTo), then hands back its last try whole, and
+// apiCallSettle settles the thunk from it as Slack's request settles.
+// Clack sends its own token whatever args say, and none of Slack's request
+// metadata (_x_reason, _x_mode, queryParams, the per-call timeout): the
+// args Slack's response and errors carry show the token as "[redacted]".
+
+/** client-boot 9BpC */
+class SlackError extends Error {
+  args
+  data
+  apiErrorCode
+  id
+  method
+  subType
+  type
+  attempts
+  doNotFetchAuth
+  constructor(message, { name, stack } = { name: 'SlackError' }) {
+    super(message)
+    this.name = name
+    if (stack) this.stack = stack
+  }
+}
+/** BaseRequest's (client-boot Umoo lc) */
+class AbortError extends Error {
+  constructor(message = 'Request was cancelled') {
+    super(message)
+    this.name = 'AbortError'
+  }
+}
+
+/** getDefaultArgsByMethod's table (0hZc c) */
+const API_DEFAULT_ARGS = {
+  'channels.view': { canonical_avatars: true, name_tagging: true, visible: true },
+  'conversations.view': { canonical_avatars: true, name_tagging: true, visible: true },
+  'groups.view': { visible: true },
+  'im.view': { visible: true },
+  'mpim.view': { visible: true },
+  'rtm.start': { canonical_avatars: true, name_tagging: true },
+  'users.info': { canonical_avatars: true, name_tagging: true },
+  'users.list': { canonical_avatars: true, name_tagging: true },
+}
+/** the methods apiCall tries once (0hZc m, shouldRetryMethod) */
+const API_TRIED_ONCE = new Set([
+  'aiApps.list', 'ai.alpha.singer.window', 'ai.alpha.singer.windowThread', 'ai.alpha.slackbot.searchAnswerThreads.create',
+  'ai.alpha.solutions.create', 'api.benchmark', 'api.statusSite', 'audit.logs', 'blocks.actions', 'blocks.suggestions',
+  'calls.request', 'channels.insights', 'channels.view', 'chat.attachmentAction', 'chat.attachmentSuggestion', 'chat.command',
+  'client.apps.composerSuggestions', 'client.codeChannels.action', 'client.codeChannels.addPullRequestComment',
+  'client.codeChannels.addReaction', 'client.codeChannels.addReviewComment', 'client.codeChannels.create',
+  'client.codeChannels.createAndStart', 'client.codeChannels.deleteComment', 'client.codeChannels.deleteReviewComment',
+  'client.codeChannels.editComment', 'client.codeChannels.editReviewComment', 'client.codeChannels.getSummary',
+  'client.codeChannels.mergePullRequest', 'client.codeChannels.removeReaction', 'client.codeChannels.requestReviewers',
+  'client.codeChannels.setFileViewed', 'client.codeChannels.setReviewThreadResolved', 'client.codeChannels.submitReview',
+  'conversations.view', 'dnd.teamInfo', 'highlights.list', 'enterprise.channels.createShared', 'enterprise.groups.createShared',
+  'enterprise.migrations.getAvailableTimes', 'enterprise.migrations.add', 'enterprise.migrations.fetchIntents',
+  'enterprise.teams.create', 'feedback.submitUserFeedback', 'functions.list', 'screenhero.rooms.invite', 'screenhero.rooms.join',
+  'screenhero.rooms.refreshToken', 'search.autocomplete.files', 'search.autocomplete.topEmoji', 'search.autocomplete.triggers',
+  'search.enterprise', 'search.inline', 'search.team', 'apps.approvals.requests.create', 'rtm.shouldReload', 'missions.apps.create',
+  'payments.admin.resolveFailedCharges', 'payments.stripe.customer.get', 'promo.codes.redeem', 'apps.home.dispatchOpenEvent',
+  'calendar.event.create', 'developer.apps.actions.v2.create', 'developer.apps.mcp.updateToolsSnapshot',
+  'developer.apps.secret.regenerate', 'developer.apps.updateNotification.send', 'calendar.event.rsvp', 'calendar.freebusy',
+  'workflows.ai.create', 'workflows.ai.generate', 'workflows.triggers.create', 'functions.workflows.create',
+  'functions.workflows.steps.add', 'functions.shortcuts.copy', 'mc.enterprise.migrations.addHold',
+  'mc.enterprise.migrations.updateHold', 'mc.enterprise.migrations.getTeamStats', 'test.getOauthCode', 'test.getOauthCodeV2',
+  'oauth.access', 'oauth.v2.access', 'conversations.coreProdAIPrototype',
+])
+/** the error codes that mean rate limited (Umoo FJ): the queue fails such an answer at once, as its dummy request */
+const API_RATE_LIMITED = ['ratelimited', 'rate_limited', 'rate_limit_exceeded', 'rate_limit_reached', 'ratelimit', 'rate_limit']
+const API_SKIP_ARRAYS = 'skip_simple_array_serialization_in_get_form_data'
+
+/** generateId (client-boot EVbb): the request's _x_id */
+const apiRequestId = (versionUid, fallback = 'noversion') =>
+  `${versionUid ? versionUid.substring(0, 8) : fallback}-${(Date.now() / 1e3).toFixed(3)}`
+
+const isBlob = (v) => typeof Blob !== 'undefined' && v instanceof Blob
+
+/** getFormData (client-boot L9gf): the fields Slack posts for args, and its file parts */
+function apiFormData(args) {
+  const fields = {}
+  const files = []
+  if (!args) return { fields, files }
+  const keys = Object.keys(args)
+  const arrays = args[API_SKIP_ARRAYS] !== true
+  for (const k of keys) {
+    if (k === API_SKIP_ARRAYS) continue
+    const v = args[k]
+    if (v == null) continue
+    if (Array.isArray(v) && arrays) {
+      if (v.length > 0 && v.every(isBlob)) {
+        for (const b of v) files.push({ field: `${k}[]`, file: b })
+        continue
+      }
+      if (v.every((x) => x == null || typeof x !== 'object' || x.toString !== Object.prototype.toString)) {
+        fields[k] = `${v}` // FormData.append stringifies
+        continue
+      }
+    }
+    if (isBlob(v)) files.push({ field: k, file: v })
+    else if (v instanceof Date) fields[k] = `${v}`
+    else if (typeof v === 'object') fields[k] = JSON.stringify(v)
+    else fields[k] = `${v}`
+  }
+  return { fields, files }
+}
+
+/** getBackoffJittered (client-boot ZI29 qH) through its randomIntBetween, sort and all */
+function apiBackoffJittered({ attempts = 0, cap = 180, base = 5, modifier = 2 } = {}) {
+  const [n, a] = [0, Math.min(cap, base * modifier ** attempts)].map(Math.floor).sort()
+  return Math.floor(Math.random() * (a - (n + 1))) + n
+}
+
+/** BaseRequest._getRetryAfterMs (Umoo) for a try that came back as o, once its statusCode is set */
+function apiRetryAfterMs(o, statusCode, attempts) {
+  const server = parseInt(o.retryAfter || '', 10)
+  const fromServer = isNaN(server) ? 0 : server
+  const status = typeof o.status === 'number' ? o.status : 0 // xhr.status: 0 without an answer
+  const withBackoff = () => {
+    let base = 1
+    if (status === 429 || status === 503 || statusCode === 'RATELIMITED') base = 60
+    else if (status === 504) base = 15
+    else if (status >= 500) base = 30
+    return base + apiBackoffJittered({ attempts, cap: 180 - base })
+  }
+  return 1e3 * Math.min(fromServer || withBackoff(), 180)
+}
+
+/**
+ * settles an apiCall from its last try o ({attempts, status, reqId,
+ * retryAfter, body}) as Slack's request settles: SlackApiRequest.resolve,
+ * _onNotOk and throwError (QCxN), BaseRequest's _onLoad, _onTimeout,
+ * _onError and throwError (Umoo), and the queue's final reject (7quX),
+ * which hands the caller the request's own rejection
+ */
+function apiCallSettle(o, { id, method, args, responseParser = JSON.parse }) {
+  const status = o.status
+  const response = typeof o.body === 'string' ? o.body : ''
+  const attempts = o.attempts || 1
+  // BaseRequest.throwError, its source error as SlackApiRequest.throwError
+  // makes it when it has none
+  const thrown = ({ message, status: code, sourceError } = {}) => {
+    const source = sourceError ?? Object.assign(Error(message), { method })
+    const s = code ?? 0
+    return Object.assign(Error(message || source?.message || 'Request did not complete.'), source, {
+      status: s,
+      response,
+      retryAfter: apiRetryAfterMs(o, s, attempts),
+      attempts,
+    })
+  }
+  if (status === 'TIMEOUT') throw thrown({ message: 'Request timed out after 60 seconds.', status: 'TIMEOUT' })
+  if (status === 0) throw thrown() // XHR's error event: no answer
+  if (status !== 200) throw thrown({ message: 'Request completed but is not OK', status })
+  let t
+  try {
+    t = responseParser(response)
+  } catch (n) {
+    t = { ok: false, error: '_parse_error' }
+    if (typeof n?.message === 'string') t.parse_error_message = n.message
+    if (typeof response === 'string') t.payload_size = response.length
+  }
+  const res = { request_id: o.reqId || null, client_request_id: id, args, method, ...t }
+  if (res.ok) return res
+  // _onNotOk(e = {error: "_unknown"})
+  const e = t === undefined ? { error: '_unknown' } : t
+  const { error: code = '_unknown' } = e
+  const r = new SlackError(`${id} ${method} not ok: ${code}`, { name: code })
+  r.apiErrorCode = code
+  r.data = e
+  r.id = id
+  r.method = method
+  r.status = 200
+  r.args = args?.token ? { ...args, token: '[redacted]' } : args
+  r.attempts = attempts
+  if (code === 'internal_error') throw thrown({ sourceError: r })
+  if (API_RATE_LIMITED.includes(code)) throw thrown({ sourceError: r, status: 'RATELIMITED' })
+  throw r
+}
+
+/** Slack's apiCall thunk (0hZc H): options is its {method, args, …} */
+function apiCallThunk(options, getState) {
+  const { method, args, defaultArgs = API_DEFAULT_ARGS[method] || {}, responseParser, SET_ACTIVE = false, abortSignal, maxAttempts } = options
+  const all = { ...defaultArgs, ...args }
+  // computeSetActive
+  const setActive = all.set_active === undefined ? (SET_ACTIVE ? { set_active: true } : {}) : { set_active: all.set_active }
+  const { token, ...rest } = all
+  const posted = { ...rest, ...setActive }
+  const apiArgs = { token: '[redacted]', ...posted }
+  const id = apiRequestId(getState?.()?.bootData?.version_uid)
+  // maxAttempts: 1 for the methods apiCall never retries, else the
+  // caller's (BaseRequest's 3 when none). The first try always goes out
+  // and another follows while attempts < maxAttempts, so this is how many
+  // tries that allows (Go holds it to slack.SlackMaxAttemptsCap)
+  let tries = 1
+  if (!API_TRIED_ONCE.has(method)) {
+    const n = maxAttempts === undefined ? 3 : Number(maxAttempts)
+    if (n === Infinity) tries = 1e9
+    else if (n > 1) tries = Math.ceil(n)
+  }
+  // the SlackApiRequest constructor, inside the thunk: dispatch throws
+  if (!method) throw Error('Cannot use `SlackApiRequest` without a valid `method`')
+  // ApiQ.q: a request whose signal has already aborted is cancelled
+  if (abortSignal?.aborted) return Promise.reject(new AbortError())
+  const { fields, files } = apiFormData(posted)
+  const sent = (async () => {
+    const parts = files.length ? await encodeAsync(files) : []
+    const o = await go('thunk', 'apiCall', [{ method, fields, files: parts, maxAttempts: tries }])
+    return apiCallSettle(o, { id, method, args: apiArgs, responseParser })
+  })()
+  if (!abortSignal) return sent
+  // aborted on its way: the queue rejects at once, the answer is dropped
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new AbortError())
+    abortSignal.addEventListener?.('abort', onAbort, { once: true })
+    sent.then(resolve, reject).finally(() => abortSignal.removeEventListener?.('abort', onAbort))
+  })
+}
+
 const rateWindows = new Map()
 class RateLimit {
   constructor(key, options) {

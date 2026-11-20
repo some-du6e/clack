@@ -593,6 +593,12 @@ function nativeThunk(name) {
       return undefined
     })
   }
+  // Slack's apiCall settles as its API request does (05_slack.js
+  // apiCallThunk); apiCallExpedited (client-boot 0hZc T) dispatches
+  // apiCall's creator, patches and all, with EXPEDITED
+  if (name === 'apiCall') return defineThunk(name, (args, d, getState) => apiCallThunk(args[0], getState))
+  if (name === 'apiCallExpedited')
+    return defineThunk(name, (args, d) => d((thunkCreators.get('apiCall') ?? nativeThunk('apiCall'))({ ...args[0], EXPEDITED: true })))
   const changes = THUNK_CHANGES[name]
   if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(nativeArgs(name, args)))))
   return defineThunk(name, async (args) => {

@@ -328,7 +328,11 @@ type HTTPError struct {
 	// RetryAfter is the answer's Retry-After in whole seconds (0: none or
 	// not a number), as Slack's BaseRequest reads it.
 	RetryAfter int
-	text       string
+	// Body is the answer (memory only, never logged) when the call's
+	// observer asked for answers (ObserveAttempts): Slack's request hands
+	// it on as the error's response.
+	Body []byte
+	text string
 }
 
 func (e *HTTPError) Error() string { return e.text }
@@ -737,15 +741,17 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		HonestHeaders(req.Header) // no Origin, no client hints (ua.go)
 		resp, err := c.do(req, method, body)
 		if err != nil {
+			unanswered(ctx, u, err)
 			return &transportError{scrubErr(err)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests && slackRetrying(ctx) {
-			resp.Body.Close() // Slack's queue's schedule, in post
-			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+			b := observedBody(ctx, resp) // Slack's queue's schedule, in post
+			answered(ctx, u, resp, b)
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: b,
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
-			resp.Body.Close()
+			answered(ctx, u, resp, observedBody(ctx, resp))
 			if attempt >= 4 {
 				return RateLimited
 			}
@@ -764,10 +770,12 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
+			unanswered(ctx, u, err) // cut off before the whole answer came
 			return &transportError{scrubErr(err)}
 		}
+		answered(ctx, u, resp, data)
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
-			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: kept(ctx, data),
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		// {"ok":true…: no need to parse the whole body (7 MB for
@@ -778,7 +786,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 				Error string `json:"error"`
 			}
 			if err := json.Unmarshal(data, &head); err != nil {
-				return fmt.Errorf("slack %s: bad json: %w", method, err)
+				return &ParseError{Method: method, Body: kept(ctx, data), Err: err}
 			}
 			if head.OK != nil && !*head.OK {
 				return &Error{Method: method, Code: head.Error, Body: data, Status: resp.StatusCode}

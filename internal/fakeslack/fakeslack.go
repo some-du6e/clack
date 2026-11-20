@@ -1372,6 +1372,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back
 	}
+	if r, ok := out.(Reply); ok {
+		r.write(w)
+		return
+	}
 	b, isBytes := out.([]byte)
 	if !isBytes {
 		var buf bytes.Buffer
@@ -1385,6 +1389,26 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.noteAnswer(method, form, answerForeign, m)
 	}
 	w.Write(b)
+}
+
+// Reply is an answer a hook (SetHook) gives as written: its HTTP status
+// (0: 200), headers over the usual Content-Type, and body (the failures a
+// client must hand on whole: a 429 with Retry-After, a 5xx page, an answer
+// that isn't JSON, an {"ok":false} with details).
+type Reply struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+func (r Reply) write(w http.ResponseWriter) {
+	for k, v := range r.Header {
+		w.Header()[k] = v
+	}
+	if r.Status != 0 {
+		w.WriteHeader(r.Status)
+	}
+	_, _ = w.Write(r.Body)
 }
 
 func ok(kv ...any) map[string]any {

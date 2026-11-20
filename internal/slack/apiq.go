@@ -94,7 +94,13 @@ func refusal(err error) bool {
 // slackRetryWait is the wait before trying again after err, attempts tries
 // in, and whether Slack's queue tries again at all.
 func slackRetryWait(err error, attempts int) (time.Duration, bool) {
-	if attempts >= SlackMaxAttempts {
+	return slackRetryWaitUpTo(err, attempts, SlackMaxAttempts)
+}
+
+// slackRetryWaitUpTo is slackRetryWait for a request tried at most
+// maxAttempts times.
+func slackRetryWaitUpTo(err error, attempts, maxAttempts int) (time.Duration, bool) {
+	if attempts >= maxAttempts {
 		return 0, false
 	}
 	base, server := 1, 0
@@ -147,14 +153,15 @@ func (c *Client) retrySlack(ctx context.Context, method string, err error, again
 		if ctx.Err() != nil || c.SignedOut() {
 			return err
 		}
-		wait, ok := slackRetryWait(err, attempts)
+		most := slackMaxAttempts(ctx)
+		wait, ok := slackRetryWaitUpTo(err, attempts, most)
 		if !ok {
 			return err
 		}
 		if dl, has := ctx.Deadline(); has && time.Until(dl) <= wait {
 			return err
 		}
-		log.Printf("slack: %s: %s on try %d of %d, trying again in %s", method, FailureDetail(err), attempts, SlackMaxAttempts, wait)
+		log.Printf("slack: %s: %s on try %d of %d, trying again in %s", method, FailureDetail(err), attempts, most, wait)
 		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():

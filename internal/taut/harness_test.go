@@ -194,8 +194,15 @@ func (h *harness) jsLogged() []string {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	api := newFakeAPI(t)
-	c := slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test%2Fcookie", UserID: selfID, Team: teamID, EnterpriseID: entID,
-		TeamURL: api.srv.URL + "/", EnterpriseURL: api.srv.URL + "/"})
+	return newHarnessOn(t, api, slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test%2Fcookie", UserID: selfID, Team: teamID, EnterpriseID: entID,
+		TeamURL: api.srv.URL + "/", EnterpriseURL: api.srv.URL + "/"}))
+}
+
+// newHarnessOn is newHarness with Clack's client c (on another fake
+// Slack, e.g. internal/fakeslack's); api still answers plugin fetches of
+// its own URL.
+func newHarnessOn(t *testing.T, api *fakeAPI, c *slack.Client) *harness {
+	t.Helper()
 	s := store.New("")
 	seed(s)
 	app := core.New(c, s)

@@ -1883,6 +1883,39 @@ jobs:
           go test -race -count=1 -run '^(TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views || rc=1
           exit $rc
 
+  # Plugins' Slack API calls settle the way Slack's API request does
+  # (client-boot 0hZc apiCall, QCxN, Umoo, 7quX; build 35b42de8b870): the
+  # response with its request ids, and every rejection (err.data the
+  # answer's JSON, Slack's messages, a 429's and internal_error's 3 tries,
+  # a rate-limit code failing at once, no answer, a timeout, a page that
+  # isn't JSON), for Taut and Slick plugins, over internal/fakeslack.
+  # Dispatch with only=plugin-api.
+  plugin-api:
+    if: ${{ !inputs.only || startsWith('plugin-api', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      TAUT_TESTS: '^(TestAPICallNotOkLikeSlack|TestAPICallResolvesLikeSlack|TestAPICallRateLimitedLikeSlack|TestAPICallRetriesLikeSlack)$'
+      SLICK_TESTS: '^(TestSlickAPICallErrorsLikeSlack)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: taut, slick (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=1 -v -run "$SLICK_TESTS" ./internal/slick || rc=1
+          go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=$COUNT -run "$SLICK_TESTS" ./internal/slick || rc=1
+          exit $rc
+
   # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
   # host's pages (files.slack.com/ssb/redirect), dot segments however many
   # times a server decodes them, look-alike, NFKC and overlong dots and
