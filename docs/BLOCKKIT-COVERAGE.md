@@ -208,6 +208,15 @@ Round 3's other fixes (the review's MINORs and NITs):
 - Blocks that are all null or rich_text without elements leave an empty body. The text doesn't stand in, since the array isn't empty (`iub5`); `lby4` draws nothing for them: `TestBlockFallbacks`.
 - Inline file slugs take getFileStatus (`SRWA`, `richtext.FileStatusOf`) over a message file's or a files.info answer's mode, file_access, is_deleted, is_hidden_by_limit and is_tombstoned. Their label is getFileDisplayName: the title, the name, the status's string ("Deleted file", "Hidden file", "Deleted canvas"…), else "Untitled". A file not fetched yet is the store's unknown object, an enabled "Untitled" slug. A normal file's label draws its emoji (a canvas its title_blocks) in the element's style. A skill canvas draws no slug, and a skill set folder takes the book icon: `TestRichTextFileSlug` (the gallery's tombstone among its cases).
 - A share_shortcut whose function_trigger_id isn't a trigger id (`^Ft[A-Z0-9]{7,}$`) is the text "UNKNOWN SHORTCUT TYPE", as ShareShortcut draws it. A service trigger's byline names its service_name, else "a third party": `TestShareShortcutBlock`.
+- The workflow card's details:
+  - the byline is content-sec (WorkflowTriggerTypeLabel), the deleted card's caption tertiary;
+  - the loading card's skeletons are surface.secondary, and the 86px content one is clipped to the card's corners;
+  - the Uses AI badge sits 20px after the wider label, in every state;
+  - the description's newlines collapse, and the title and caption take Panda's 22.5px and 16.25px lines;
+  - Start Workflow sits 16px from the card's outer edge;
+  - the ⋮ turns content-pry while hovered, and its menu opens from the button: `TestShortcutCardDetails`, `TestShortcutCardLayout`.
+- More actions puts Start workflow first for a link trigger (not for a guest; WjTy), and shows the VIP item only on a paid team (isPriorityVipAvailableForCurrentTeam).
+- Start Workflow ignores clicks while its trigger's trip is in flight (isTriggerRunning: `blockkit.TripRunning`), so a double click no longer trips twice. Its spinner and disabled look aren't drawn yet.
 
 ## Next
 

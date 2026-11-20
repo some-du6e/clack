@@ -424,7 +424,9 @@ func (r *richHandler) WorkflowCard(act string, c *richtext.ShortcutCard, at imag
 			popups.OpenWorkflowDetails(c.TriggerID, m.Channel)
 		}
 	case "start":
-		if c.URL != "" {
+		// BaseWorkflowStartButton is disabled while the trigger runs
+		// (isTriggerRunning): no second trip until the first is answered
+		if c.URL != "" && !blockkit.TripRunning(c.TriggerID) {
 			blockkit.TripWorkflow(r.h, c.URL, core.MessageTripContext(m.Channel, m.TS), "")
 		}
 	case "more":
@@ -432,7 +434,7 @@ func (r *richHandler) WorkflowCard(act string, c *richtext.ShortcutCard, at imag
 			if r.anchor != nil {
 				at = image.Rectangle{Min: r.anchor(at.Min), Max: r.anchor(at.Max)}
 			}
-			popups.WorkflowCardMenu(r.h, at, c, m.Channel)
+			popups.WorkflowCardMenu(r.h, at, c, m.Channel, m.TS)
 		}
 	}
 }

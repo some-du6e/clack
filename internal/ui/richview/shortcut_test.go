@@ -12,9 +12,10 @@ import (
 // WorkflowEntity (boot-shared KrN7 on VLgN): 420 wide, radius 12; the
 // 12px-padded header with the 36px icon and the title 12px right of it,
 // centred on the row; the description 16px in under it; the primary
-// Start Workflow button 16px inside the bottom-left corner, under 64px
-// of padding. The card opens the details, the button trips the link, the
-// hover bar's ⋮ opens More actions.
+// Start Workflow button under 64px
+// of padding, 16px from the card's outer bottom-left corner. The card
+// opens the details, the button trips the link, the hover bar's ⋮ opens
+// More actions.
 func TestShortcutCardLayout(t *testing.T) {
 	st := newTestStyle()
 	d := kitDoc(t, `[{"type":"share_shortcut","function_trigger_id":"Ft0SHORT01","title":"Alpha","description":"Bravo",
@@ -31,9 +32,10 @@ func TestShortcutCardLayout(t *testing.T) {
 		t.Fatalf("no 420px workflow card; boxes %+v", v.d.boxes)
 	}
 	a, b := findFrag(t, &v.d, "Alpha"), findFrag(t, &v.d, "Bravo")
-	// header: 1 + 12 padding; the 36px row; the 22px title centred on it
-	if int(a.x) != 1+12+36+12 || a.top != card.r.Min.Y+13+7 {
-		t.Errorf("title at (%.0f, %d), want (61, %d)", a.x, a.top, card.r.Min.Y+20)
+	// header: 1 + 12 padding; the 36px row; the title's 22.5px line
+	// (Panda's body text style, 15px/1.5) centred on it
+	if int(a.x) != 1+12+36+12 || a.top != card.r.Min.Y+13+6 {
+		t.Errorf("title at (%.0f, %d), want (61, %d)", a.x, a.top, card.r.Min.Y+19)
 	}
 	if want := card.r.Min.Y + 13 + 36 + 12; int(b.x) != 17 || b.top != want {
 		t.Errorf("description at (%.0f, %d), want (17, %d)", b.x, b.top, want)
@@ -47,8 +49,10 @@ func TestShortcutCardLayout(t *testing.T) {
 			btn = bx
 		}
 	}
-	if btn == nil || btn.r.Min.X != 17 || btn.r.Max.Y != card.r.Max.Y-17 || !hasFrag(&v.d, "Start") {
-		t.Fatalf("Start Workflow button %+v, want 36px at x 17, 16px over the card's bottom %d", btn, card.r.Max.Y)
+	// .workflowButtonContainer (padding 16, absolute at bottom 0 left 0)
+	// is in the borderless .group: 16px from the card's outer edge
+	if btn == nil || btn.r.Min.X != 16 || btn.r.Max.Y != card.r.Max.Y-16 || !hasFrag(&v.d, "Start") {
+		t.Fatalf("Start Workflow button %+v, want 36px at x 16, 16px over the card's bottom %d", btn, card.r.Max.Y)
 	}
 	for _, c := range []struct{ act, want string }{
 		{"open", "open Ft0SHORT01 https://slack.com/shortcuts/Ft0SHORT01/x"},

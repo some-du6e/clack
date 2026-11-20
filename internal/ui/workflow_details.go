@@ -344,14 +344,24 @@ func (p *wfDetailsPane) openMore(s wfShortcut) {
 
 // workflowCardMenu is a share_shortcut card's MoreActionsMenu (9mPk, not
 // the details view) for a viewer who doesn't manage the workflow, the
-// items Clack runs: Copy workflow link (the block's share_url) and View
-// details (xDjj), the bot's Add to VIP / Remove from VIP, Copy workflow ID.
-// Add workflow to channel (its modal) isn't in Clack.
-func (a *App) workflowCardMenu(anchor image.Rectangle, c *richtext.ShortcutCard, ch string) {
+// items Clack runs: Start workflow (a link trigger, not for a guest: the
+// Start button's trip from message ts), then Copy workflow link (the
+// block's share_url) and View details (xDjj), the bot's Add to VIP /
+// Remove from VIP (on a paid team), Copy workflow ID. Feature workflow,
+// Add workflow to channel (its modal) and Forward workflow (Tw8O, the
+// share dialog) aren't in Clack.
+func (a *App) workflowCardMenu(h popups.Host, anchor image.Rectangle, c *richtext.ShortcutCard, ch, ts string) {
 	if c == nil {
 		return
 	}
 	var groups [][]popups.MenuItem
+	// useStartWorkflowMenuItemTemplate (WjTy): a link trigger, for a
+	// viewer who isn't a guest; the button's executeShortcut
+	if u := c.URL; u != "" && c.TriggerType == "shortcut" && a.Core() != nil && !a.Core().ViewerRestricted() {
+		groups = append(groups, []popups.MenuItem{{Key: "start_workflow", Label: wfShortNS.T("Start workflow"), Do: func() {
+			blockkit.TripWorkflow(h, u, core.MessageTripContext(ch, ts), "")
+		}}})
+	}
 	var g []popups.MenuItem
 	if u := c.ShareURL; u != "" {
 		g = append(g, popups.MenuItem{Key: "copy_workflow", Label: wfShortNS.T("Copy workflow link"), DoCtx: func(gtx layout.Context) {
@@ -363,7 +373,8 @@ func (a *App) workflowCardMenu(anchor image.Rectangle, c *richtext.ShortcutCard,
 		g = append(g, popups.MenuItem{Key: "view_details", Label: wfShortNS.T("View details"), Do: func() { a.OpenWorkflowDetails(id, ch) }})
 	}
 	groups = append(groups, g)
-	if bot := c.BotUserID; bot != "" {
+	// the VIP item only where VIPs exist (isPriorityVipAvailableForCurrentTeam: a paid team)
+	if bot := c.BotUserID; bot != "" && a.Core() != nil && a.Core().PaidTeam() {
 		key, label := "workflow_menu_item_add_to_vip", wfShortNS.T("Add to VIP")
 		if a.wfIsVIP(bot) {
 			key, label = "workflow_menu_item_remove_from_vip", wfShortNS.T("Remove from VIP")

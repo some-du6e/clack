@@ -2,6 +2,7 @@ package richview
 
 import (
 	"image"
+	"strings"
 
 	"gioui.org/font"
 
@@ -40,7 +41,8 @@ var DefaultAppIcon string
 //     16px, or 64px when the Start Workflow button sits in the card's
 //     bottom left (.workflowButtonContainer: padding 16; a primary 36px
 //     button, the play glyph 4px before "Start Workflow");
-//   - the actions bar on hover: More actions (⋮). Forward workflow (the
+//   - the actions bar on hover: More actions (⋮, content-pry while
+//     hovered; its menu opens from the button). Forward workflow (the
 //     share dialog for a workflow) isn't in Clack, so it isn't drawn.
 //
 // While the workflow's bot member loads the card is the loading entity
@@ -70,14 +72,19 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 	// ---- the header ----
 	ic := l.dp(36)
 	hx, hy := x+bw+pad, y+bw+pad
+	// Panda's text styles: body 15px/1.5, caption 13px/1.25
 	ts := l.bodyStyle()
 	ts.face.Weight = font.Bold
+	ts.lineH = int(l.dpf(22.5) + 0.5)
 	ts.maxLines, ts.ellipsis = 1, true
-	cs := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: l.dp(18), col: l.tok("content-ter"),
+	// the byline is WorkflowTriggerTypeLabel (.p-workflow_trigger_type_label:
+	// content-sec); the deleted card's caption is StackedLabels' tertiary
+	cs := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: int(l.dpf(16.25) + 0.5), col: l.tok("content-sec"),
 		emoji: l.dp(16), maxLines: 1, ellipsis: true}
 	title, byline := sc.Title, sc.Byline
 	if deleted {
 		title, byline = "", "This workflow no longer exists."
+		cs.col = l.tok("content-ter")
 	}
 	labelsH := 0
 	switch {
@@ -95,8 +102,8 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 	ir := image.Rect(hx, iy, hx+ic, iy+ic)
 	rad := l.dp(8)
 	switch {
-	case loading:
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: ir, radius: rad, fill: l.tok("base-ter"), target: -1})
+	case loading: // LoadingBox: surface.secondary
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: ir, radius: rad, fill: l.tok("surf-sec"), target: -1})
 	case deleted:
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: ir, radius: rad, fill: l.tok("surf-sec"), target: -1})
 		gs := l.dp(20)
@@ -110,14 +117,15 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 	}
 	lx := ir.Max.X + l.dp(12)
 	lw := max(x+cw-bw-pad-lx, l.dp(20))
-	if sc.AI && enabled {
-		lw -= l.dp(8) + l.dp(15)
+	if sc.AI { // the badge: 12px gap, its 8px margin, the 15px sparkle
+		lw -= l.dp(12) + l.dp(8) + l.dp(15)
 	}
 	ly := hy + (rowH-labelsH)/2
-	titleEnd := lx
+	labelsEnd := lx // the labels div's right edge: its wider label's
 	switch {
 	case loading:
-		sk := l.tok("base-ter")
+		labelsEnd = lx + l.dp(193)
+		sk := l.tok("surf-sec")
 		r8 := l.dp(8)
 		l.d.boxes = append(l.d.boxes,
 			box{kind: bFill, r: image.Rect(lx, ly, lx+l.dp(100), ly+r8), radius: r8, fill: sk, target: -1},
@@ -126,7 +134,7 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 	default:
 		if title != "" {
 			_, tw := l.plainFlow(title, lx, ly, lw, &ts, -1)
-			titleEnd = lx + tw
+			labelsEnd = max(labelsEnd, lx+tw)
 			ly += ts.lineH + l.dp(4)
 		}
 		if byline != "" {
@@ -138,12 +146,13 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 					url: iconURL + sc.BylineIcon, target: -1, px: gs, tint: cs.col})
 				bx += gs + l.dp(4)
 			}
-			l.plainFlow(byline, bx, ly, max(lx+lw-bx, l.dp(20)), &cs, -1)
+			_, bwid := l.plainFlow(byline, bx, ly, max(lx+lw-bx, l.dp(20)), &cs, -1)
+			labelsEnd = max(labelsEnd, bx+bwid)
 		}
 	}
-	if sc.AI && enabled { // WorkflowAiBadge: the sparkle at 1em, 8px after the labels, 4px up
+	if sc.AI { // WorkflowAiBadge, in every state (VLgN): 12px gap, its 8px margin, the sparkle at 1em, 4px up
 		gs := l.dp(15)
-		gx := min(titleEnd, lx+lw) + l.dp(8)
+		gx := min(labelsEnd, lx+lw) + l.dp(12) + l.dp(8)
 		gy := hy + (rowH-gs)/2 - l.dp(2)
 		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(gx, gy, gx+gs, gy+gs), url: iconURL + "sparkle", target: -1, px: gs, tint: l.tok("plt-gray-50")})
 	}
@@ -153,9 +162,10 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 	start := enabled && sc.TriggerType == "shortcut" && sc.URL != ""
 	btnH := l.dp(36)
 	switch {
-	case loading:
+	case loading: // the 86px LoadingBox, clipped to the frame's corners (overflow: hidden)
 		sk := image.Rect(x+bw, yy, x+cw-bw, yy+l.dp(86))
-		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sk, fill: l.tok("base-ter"), target: -1})
+		in := l.dp(12) - bw
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sk, fill: l.tok("surf-sec"), target: -1, perCorner: true, corners: [4]int{0, 0, in, in}})
 		yy += l.dp(86)
 	case enabled:
 		cx := x + bw + l.dp(16)
@@ -164,7 +174,8 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 			ds := l.bodyStyle()
 			ds.lineH = int(l.dpf(22.5) + 0.5)
 			l.plainAdd("\n")
-			h, _ := l.plainFlow(sc.Description, cx, yy, cwid, &ds, -1)
+			// a text node without pre-wrap: its newlines collapse to spaces
+			h, _ := l.plainFlow(strings.Join(strings.Fields(sc.Description), " "), cx, yy, cwid, &ds, -1)
 			yy += h
 		}
 		if start {
@@ -189,7 +200,9 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 		label := "Start Workflow"
 		gs := l.dp(18)
 		bwid := l.dp(12) + gs + l.dp(4) + int(l.measure(label, bk)+0.999) + l.dp(12)
-		br := image.Rect(x+bw+l.dp(16), r.Max.Y-bw-l.dp(16)-btnH, x+bw+l.dp(16)+bwid, r.Max.Y-bw-l.dp(16))
+		// .workflowButtonContainer{padding:16px;position:absolute;bottom:0;left:0}
+		// in the borderless .group: 16px from the card's outer edge
+		br := image.Rect(x+l.dp(16), r.Max.Y-l.dp(16)-btnH, x+l.dp(16)+bwid, r.Max.Y-l.dp(16))
 		stg := l.d.addTarget(target{kind: tWorkflowCard, id: "start", key: sc})
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: br, radius: l.dp(8), fill: p.Primary, target: stg})
 		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(br.Min.X+l.dp(12), br.Min.Y+(btnH-gs)/2, br.Min.X+l.dp(12)+gs, br.Min.Y+(btnH-gs)/2+gs),
@@ -227,6 +240,13 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: l.dp(12), stroke: l.tok("otl-sec"), bw: bw, target: -1, hov: int16(border)})
 		bv := &l.d.hovers[border-1]
 		bv.card, bv.cardTo, bv.skip, bv.skipTo = card, int16(len(l.d.targets)-1), mtg, mtg
+		// ActionButton's _hover (uJed): the ⋮ turns content-pry
+		tint := l.newHover()
+		nb, ni, nf = l.hoverFrom()
+		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(mr.Min.X+(btn-gs)/2, mr.Min.Y+(btn-gs)/2, mr.Min.X+(btn-gs)/2+gs, mr.Min.Y+(btn-gs)/2+gs),
+			url: iconURL + "ellipsis-vertical-filled", target: -1, px: gs, tint: l.tok("content-pry")})
+		l.hoverEnd(tint, nb, ni, nf)
+		l.d.hovers[tint-1].card, l.d.hovers[tint-1].cardTo = mtg, mtg
 	}
 	return h
 }

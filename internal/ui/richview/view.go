@@ -1592,6 +1592,16 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	v.activateTarget(&v.d.targets[t], v.targetText(t), anchor, h)
 }
 
+// targetRect is tg's (first) hit box, in the View's coordinates.
+func (v *View) targetRect(tg *target) (image.Rectangle, bool) {
+	for _, h := range v.d.hits {
+		if h.t >= 0 && int(h.t) < len(v.d.targets) && &v.d.targets[h.t] == tg {
+			return h.r, true
+		}
+	}
+	return image.Rectangle{}, false
+}
+
 // activateTarget is a click on tg (text: what it draws).
 func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Handler) {
 	if tg.cardOnly || tg.menuOnly {
@@ -1644,7 +1654,13 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tWorkflowCard: // a share_shortcut card (shortcut.go)
 		if wh, ok := h.(WorkflowCardHandler); ok {
 			if c, ok := tg.key.(*richtext.ShortcutCard); ok {
-				wh.WorkflowCard(tg.id, c, image.Rectangle{Min: anchor, Max: anchor})
+				r := image.Rectangle{Min: anchor, Max: anchor}
+				if tg.id == "more" { // the menu opens from the ⋮ button itself (uJed: LeftBottom)
+					if hr, ok := v.targetRect(tg); ok {
+						r = hr
+					}
+				}
+				wh.WorkflowCard(tg.id, c, r)
 			}
 		}
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
