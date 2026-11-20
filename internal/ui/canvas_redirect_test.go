@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -287,7 +288,9 @@ func TestFileChannelThreadHeader(t *testing.T) {
 	e := newActShell(t)
 	cmSeedComments(e)
 	s := e.ca.S
-	s.PutConv(slack.Conversation{ID: fakeslack.FileChanKitchen, Name: "Launch tracker", IsChannel: true, IsGroup: true,
+	// a list's file channel named after its title, an emoji in it
+	s.CustomEmoji.Put(fakeslack.CanvasMentionEmoji, e.fs.CanvasMentionEmojiURL())
+	s.PutConv(slack.Conversation{ID: fakeslack.FileChanKitchen, Name: ":" + fakeslack.CanvasMentionEmoji + ": Launch tracker", IsChannel: true, IsGroup: true,
 		IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 3})
 	s.PutCanvasRef(fakeslack.ListKitchen, richtext.CanvasRef{Title: "Launch tracker", Status: "normal", Kind: "list"})
 	e.a.data.fetched[fakeslack.FileChanKitchen] = time.Now()
@@ -310,12 +313,12 @@ func TestFileChannelThreadHeader(t *testing.T) {
 	} else if sub, _, ok := tv.HeaderName(); ok {
 		t.Errorf("beside the canvas the header names %+v, want nothing", sub)
 	}
-	e.a.OpenThread(fakeslack.ViewsChannel, fakeslack.ThreadRootTS) // any thread beside a canvas
+	e.a.OpenThread(fakeslack.ViewsChannel, fakeslack.ViewsThreadUnread) // any thread beside a canvas
 	e.frames(10)
-	if tv := crThread(e, fakeslack.ViewsChannel, fakeslack.ThreadRootTS, false); tv != nil {
-		if sub, _, ok := tv.HeaderName(); ok {
-			t.Errorf("beside the canvas a channel thread's header names %+v, want nothing", sub)
-		}
+	if tv := crThread(e, fakeslack.ViewsChannel, fakeslack.ViewsThreadUnread, false); tv == nil {
+		t.Errorf("no channel thread beside the canvas")
+	} else if sub, _, ok := tv.HeaderName(); ok {
+		t.Errorf("beside the canvas a channel thread's header names %+v, want nothing", sub)
 	}
 	e.a.OpenSplit("c/" + ch + "/t/" + root)
 	if sub, _ := crHeader(e, ch, root, true, false); sub.Icon != "canvas-content" || sub.Text != "Launch plan" {
@@ -326,8 +329,64 @@ func TestFileChannelThreadHeader(t *testing.T) {
 	e.a.Navigate("activity")
 	e.frames(3)
 	e.a.OpenThread(fakeslack.FileChanKitchen, fakeslack.ListKitchenThread)
-	if sub, _ := crHeader(e, fakeslack.FileChanKitchen, fakeslack.ListKitchenThread, false, false); sub.Icon != "lists" {
-		t.Errorf("a list's thread names %+v, want the channel entity with the lists icon", sub)
+	if sub, _ := crHeader(e, fakeslack.FileChanKitchen, fakeslack.ListKitchenThread, false, false); sub.Icon != "lists" ||
+		!slices.ContainsFunc(sub.Spans, func(sp richtext.Span) bool { return sp.Kind == richtext.Emoji && sp.ID == fakeslack.CanvasMentionEmoji }) {
+		t.Errorf("a list's thread names %+v, want the channel entity with the lists icon and its name's emoji", sub)
+	}
+
+	// the split view names its thread's channel even when the main view
+	// shows that channel (ThreadSubtitle: never hidden in Split)
+	e.a.Navigate("c/" + fakeslack.ViewsChannel)
+	e.frames(3)
+	e.a.OpenSplit("c/" + fakeslack.ViewsChannel + "/t/" + fakeslack.ViewsThreadUnread)
+	if sub, _ := crHeader(e, fakeslack.ViewsChannel, fakeslack.ViewsThreadUnread, true, false); sub.Text == "" {
+		t.Errorf("the split view's thread on the primary's channel names %+v, want the channel", sub)
+	}
+	e.a.CloseSplit()
+}
+
+// A canvas whose title starts with an emoji draws it as the header's
+// icon (SmallFileEntity's useLeadingEmojiAsIcon), the title without it.
+func TestFileChannelThreadHeaderLeadingEmoji(t *testing.T) {
+	e := newActShell(t)
+	cmSeedComments(e)
+	url := e.fs.CanvasMentionEmojiURL()
+	e.ca.S.CustomEmoji.Put(fakeslack.CanvasMentionEmoji, url)
+	blocks := `[{"type":"rich_text","block_id":"title","elements":[{"type":"rich_text_section","elements":[` +
+		`{"type":"emoji","name":"` + fakeslack.CanvasMentionEmoji + `"},{"type":"text","text":" Launch plan"}]}]}]`
+	e.ca.S.PutCanvasRef(fakeslack.CanvasChannel, richtext.CanvasRef{Title: ":" + fakeslack.CanvasMentionEmoji + ": Launch plan",
+		TitleBlocks: []byte(blocks), Status: "normal", Kind: "canvas"})
+	e.a.Navigate("activity")
+	e.frames(3)
+	e.a.OpenThread(fakeslack.FileChanLaunch, fakeslack.CommentOpen)
+	sub, _ := crHeader(e, fakeslack.FileChanLaunch, fakeslack.CommentOpen, false, false)
+	if sub.Emoji != url || strings.TrimSpace(sub.Text) != "Launch plan" {
+		t.Errorf("the header names %+v, want the emoji %s as its icon and the title Launch plan", sub, url)
+	}
+}
+
+// Beside the Activity persistent panel's canvas (openDoc's Primary) a
+// thread names nothing: ThreadSubtitle hides it beside any canvas in
+// Primary.
+func TestCommentThreadBesidePaneCanvas(t *testing.T) {
+	e := newActShell(t)
+	e.fs.AddCanvasCommentActivity()
+	cmSeedComments(e)
+	crPersistent(e)
+	cmOpenActivity(e)
+	e.activity().Search("keep it on Wednesday")
+	e.frames(5)
+	e.activity().StepItem(1, false)
+	e.until("the canvas in the pane, the comment thread beside it", func() bool {
+		return e.a.paneCanvasLive() != nil && crSecThread(e, fakeslack.FileChanLaunch, fakeslack.CommentOpen)()
+	})
+	e.frames(10)
+	tv := crThread(e, fakeslack.FileChanLaunch, fakeslack.CommentOpen, false)
+	if tv == nil {
+		t.Fatalf("no comment thread view")
+	}
+	if sub, _, ok := tv.HeaderName(); ok {
+		t.Errorf("beside the pane's canvas the header names %+v, want nothing", sub)
 	}
 }
 
