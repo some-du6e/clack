@@ -286,7 +286,9 @@ func (e *inspectEnv) reviewAndCopy(t *testing.T) {
 	if !e.a.insp.Reviewing() {
 		t.Fatal("no review after the capture")
 	}
-	e.frame()
+	// a region's review (or a pick of no component) takes Enter once it
+	// has been on screen a while
+	e.settle(450 * time.Millisecond)
 	e.key(key.NameReturn, 0)
 	e.frame()
 	e.a.insp.Wait()
@@ -655,9 +657,11 @@ func TestInspectComboIsHyperD(t *testing.T) {
 
 // The session's outline and label over the pill, and the image a pick
 // copies, light and dark, both through the tool's real headless capture
-// (inspect.Shoot: a GPU context made and released per shot, so no other
-// headless window may share its EGL display here); then the same frozen
-// (freezeShots). INSPECT_SHOTS_DIR: the feel-shots workflow saves them.
+// (inspect.Shoot: each session's headless window, made as it starts and
+// let go of off the UI goroutine after its one shot; on EGL a headless
+// window let go of terminates the display under any other, so none may be
+// made here meanwhile); then the same frozen (freezeShots).
+// INSPECT_SHOTS_DIR: the feel-shots workflow saves them.
 func TestInspectShots(t *testing.T) {
 	dir := os.Getenv("INSPECT_SHOTS_DIR")
 	if dir == "" {

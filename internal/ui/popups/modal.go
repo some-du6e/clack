@@ -10,6 +10,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -516,6 +517,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					// .p-about_modal__contents on the content and the footer
 					fill(gtx, image.Rect(pos.X, pos.Y+headH, pos.X+w, m.rect.Dy()), cl.EmojiFoot)
 				}
+				// the inspect tool's record of Slack's ModalHeader >
+				// ModalTitleBar (inspect_parts.go: nothing styles see)
+				hdr, bar := skHeaderClass.Inspect(0), skTitleBarClass.Inspect(0)
 				ty := (titleH - subH - titleLines*dp(gtx, titleLH)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
@@ -579,8 +583,15 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						}
 						return iconButton(gtx, &m.close, "close", 36, 20, cl.Fg2, cl.BgHover, 8)
 					})
+					skCloseClass.Inspect(0).EndAt(gtx, image.Rect(w-dp(gtx, 20)-dp(gtx, 36), cy, w-dp(gtx, 20), cy+dp(gtx, 36)))
 				}
-				// body
+				if m.o.Title != "" || m.o.TitleFunc != nil || m.o.TitleIcon != "" || m.o.TitleAfter != "" {
+					skTitleClass.Inspect(0).EndAt(gtx, image.Rect(pos.X+padX, pos.Y+ty, pos.X+w-dp(gtx, 64), pos.Y+ty+titleLines*dp(gtx, titleLH)))
+				}
+				bar.EndAt(gtx, image.Rect(pos.X, pos.Y, pos.X+w, pos.Y+titleH))
+				hdr.EndAt(gtx, image.Rect(pos.X, pos.Y, pos.X+w, pos.Y+headH))
+				// body (ModalContent)
+				content := skContentClass.Inspect(0)
 				if m.o.Body != nil {
 					at(gtx, pos.Add(image.Pt(bodyX, headH)), func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints = layout.Constraints{Min: image.Pt(bodyW, 0), Max: image.Pt(bodyW, bodyH)}
@@ -595,7 +606,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						})
 					})
 				}
-				// footer
+				content.EndAt(gtx, image.Rect(pos.X+bodyX, pos.Y+headH, pos.X+bodyX+bodyW, pos.Y+headH+bodyH))
+				// footer (ModalFooter)
+				foot := skFooterClass.Inspect(0)
 				if len(m.o.Buttons) > 0 {
 					fy := pos.Y + headH + bodyH
 					if m.o.Border {
@@ -659,6 +672,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						macroAt(gtx, call, image.Pt(lx, fy+footPad+(dp(gtx, 36)-d.Size.Y)/2))
 					}
 				}
+				if footH > 0 {
+					foot.EndAt(gtx, image.Rect(pos.X, pos.Y+headH+bodyH, pos.X+w, pos.Y+headH+bodyH+footH))
+				} else {
+					foot.EndAt(gtx, image.Rectangle{})
+				}
 				if m.o.Over != nil {
 					gtx := gtx
 					gtx.Constraints = layout.Exact(m.rect.Size())
@@ -666,6 +684,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 			}
 		})
+		slackc.InspectCard(gtx, m.rect) // the inspect tool: the card is the modal's box
 	}
 	return layout.Dimensions{Size: win}
 }
