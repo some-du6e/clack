@@ -234,11 +234,17 @@ func activityEditLatency(t *testing.T, mode string) {
 		t.Errorf("%s: %d of %d edits drawn after the first frame following them: the row drew the revision before first", mode, slow, len(ds))
 	}
 	// the bounds hold only while the page asks for frames for the edits
-	// alone: an edit asks for its frame, the plugins' view turning ready for
-	// another (slice: 3 an edit, 61 for 20), where a page drawing on its own
-	// at 60 a second draws 30 an edit and every edit in time
+	// alone: an edit asks for its frame (natively 21 for 20 edits), under a
+	// plugin the views turning ready for two more (slice 61, components 60),
+	// where a page redrawing on its own draws every edit in time; a few
+	// frames over for a stray ask
 	t.Logf("%s: %d frames for %d edits", mode, frames-startFrames, len(ds))
-	if n := len(ds); n > 0 && frames-startFrames > int64(4*n) {
-		t.Errorf("%s: %d frames for %d edits: the Activity page asks for frames of its own", mode, frames-startFrames, n)
+	edits := int64(len(ds))
+	most := 2 * edits
+	if mode != "native" {
+		most = 3*edits + 5
+	}
+	if edits > 0 && frames-startFrames > most {
+		t.Errorf("%s: %d frames for %d edits, past %d: the Activity page asks for frames of its own", mode, frames-startFrames, edits, most)
 	}
 }

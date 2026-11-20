@@ -121,11 +121,12 @@ const latWall = 250 * time.Millisecond
 
 // sliceTextFrames and sliceTextWall bound an edit's rewritten view under a
 // plugin rewriting the message, a JS round trip after the socket (3 frames,
-// ~35 ms today: the known gap slice-gaps holds to latWall's bound): a wider
-// gap fails on pushes.
+// 34-36 ms in every edit measured: the known gap slice-gaps holds to
+// latWall's bound): a wider gap fails on pushes. Frames are drawn only
+// when asked, so a slower JS shows in the wall, not the frame count.
 const (
 	sliceTextFrames = 4
-	sliceTextWall   = 80 * time.Millisecond
+	sliceTextWall   = 65 * time.Millisecond
 )
 
 // latStats logs a phase's changes and fails those drawn more than two
