@@ -75,8 +75,10 @@ jobs:
           path: dist/clack-linux-amd64
 
   # `go test ./...`, split: internal/ui's and internal/ui/messages' top-level
-  # tests hashed by name into 4 shards (test-shard.py), every other package
-  # in the rest shard. linux-coverage checks the shards ran every test.
+  # tests packed into 4 shards by their recorded times (test-shard.py,
+  # .github/test-times.json: about 4 min of each package's tests per shard;
+  # hashed by name they ran 2.4 to 6.8 min), every other package in the
+  # rest shard. linux-coverage checks the shards ran every test once.
   linux-test:
     if: ${{ !inputs.only || startsWith('linux-test', inputs.only) }}
     runs-on: ubuntu-latest
@@ -100,7 +102,7 @@ jobs:
           SHARD: ${{ matrix.shard }}
           HEAVY: github.com/some-du6e/clack/internal/ui,github.com/some-du6e/clack/internal/ui/messages
         run: |
-          if [ "$SHARD" = rest ]; then set -- --rest; else set -- --shard "$SHARD"; fi
+          if [ "$SHARD" = rest ]; then set -- --rest; else set -- --shard "$SHARD" --times .github/test-times.json; fi
           python3 .github/scripts/test-shard.py run --heavy "$HEAVY" "$@" --out "$RUNNER_TEMP/shard"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
