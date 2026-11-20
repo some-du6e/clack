@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -38,15 +40,19 @@ func TestMarkThreadMarksChannelFromBroadcastLikeSlack(t *testing.T) {
 		first   string // the window's oldest message
 		marked  bool
 		fail    string // subscriptions.thread.mark's error
+		// the thread mark answered only once the channel mark went out:
+		// the two go together, not the channel mark after the answer
+		held bool
 	}{
-		{"only the broadcast unread", nil, false, root, true, ""},
-		{"another unread message", []slack.Message{msg("1700000015.000100", "U1", "")}, false, root, false, ""},
-		{"the viewer's own message", []slack.Message{msg("1700000015.000100", "USELF", "")}, false, root, true, ""},
-		{"a join", []slack.Message{msg("1700000015.000100", "U2", "channel_join")}, false, root, true, ""},
-		{"a deleted parent with replies", []slack.Message{tomb}, false, root, false, ""},
-		{"a hidden message", []slack.Message{hidden}, false, root, true, ""},
-		{"the thread mark fails", nil, false, root, true, "internal_error"},
-		{"the window short of the channel's last read", nil, true, "1700000012.000100", false, ""},
+		{"only the broadcast unread", nil, false, root, true, "", false},
+		{"another unread message", []slack.Message{msg("1700000015.000100", "U1", "")}, false, root, false, "", false},
+		{"the viewer's own message", []slack.Message{msg("1700000015.000100", "USELF", "")}, false, root, true, "", false},
+		{"a join", []slack.Message{msg("1700000015.000100", "U2", "channel_join")}, false, root, true, "", false},
+		{"a deleted parent with replies", []slack.Message{tomb}, false, root, false, "", false},
+		{"a hidden message", []slack.Message{hidden}, false, root, true, "", false},
+		{"the thread mark fails", nil, false, root, true, "internal_error", false},
+		{"the thread mark answered after the channel mark", nil, false, root, true, "", true},
+		{"the window short of the channel's last read", nil, true, "1700000012.000100", false, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, f := testApp(t)
@@ -55,6 +61,16 @@ func TestMarkThreadMarksChannelFromBroadcastLikeSlack(t *testing.T) {
 				f.reply["subscriptions.thread.mark"] = `{"ok":false,"error":"` + tc.fail + `"}`
 			}
 			f.reply["conversations.mark"] = `{"ok":true}`
+			if tc.held {
+				f.hooks["subscriptions.thread.mark"] = func(url.Values) {
+					for deadline := time.Now().Add(5 * time.Second); f.last("conversations.mark") == nil; time.Sleep(10 * time.Millisecond) {
+						if time.Now().After(deadline) {
+							t.Error("no channel mark while the thread mark waited for its answer; setThreadLastRead sends both at once")
+							return
+						}
+					}
+				}
+			}
 			msgs := []slack.Message{msg(tc.first, "U1", "")}
 			if tc.first == root {
 				msgs[0].ThreadTS, msgs[0].ReplyCount = root, 2
