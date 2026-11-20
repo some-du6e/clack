@@ -219,9 +219,10 @@ type listState struct {
 	laidOut   bool
 	laidPos   layout.Position
 	laidBuilt uint64
-	laidAt    time.Time // the frame (gtx.Now) of that layout
-	laidH     int       // its height (setContainerHeight)
-	pageH     int       // a PageUp's or PageDown's scroll, px (pageKey)
+	laidAt    time.Time      // the frame (gtx.Now) of that layout
+	laidH     int            // its height (setContainerHeight)
+	pageH     int            // a PageUp's or PageDown's scroll, px (pageKey)
+	tailH     map[string]int // the last tailItems items' heights as last laid out, by key (gapToEnd)
 	// preparedAt is the frame (gtx.Now) prepare synced the list for:
 	// layoutList draws that copy and doesn't sync again in that frame
 	preparedAt time.Time
@@ -1178,6 +1179,16 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	for i := range s.heights {
 		s.heights[i] = 0
 	}
+	if len(s.tailH) > 4*tailItems || s.tailH == nil {
+		// the last items' heights only: keys of items no longer last go
+		keep := make(map[string]int, tailItems)
+		for i := max(0, len(s.items)-tailItems); i < len(s.items); i++ {
+			if h, ok := s.tailH[s.items[i].key]; ok {
+				keep[s.items[i].key] = h
+			}
+		}
+		s.tailH = keep
+	}
 	selfID := ""
 	if h.Core() != nil {
 		selfID = h.Core().Self().ID
@@ -1202,6 +1213,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.list.Layout(gtx, len(s.items), func(gtx layout.Context, i int) layout.Dimensions {
 			d := s.layoutItem(gtx, h, rc, i)
 			s.heights[i] = d.Size.Y
+			if i >= len(s.items)-tailItems {
+				s.tailH[s.items[i].key] = d.Size.Y
+			}
 			return d
 		})
 		return m.Stop()
@@ -1235,11 +1249,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	call.Add(gtx.Ops)
-	if p := s.list.Position; p.First+p.Count >= len(s.items) {
-		s.endGap = max(0, -p.OffsetLast)
-	} else {
-		s.endGap = math.MaxInt32
-	}
+	s.endGap = s.gapToEnd(s.list.Position)
 	s.laidOut, s.laidPos, s.laidBuilt, s.laidAt, s.laidH = true, s.list.Position, s.built, gtx.Now, size.Y
 	if s.thread && s.snap.loaded {
 		s.thrOpening = false // the pane shows its thread: a jump now is a re-highlight
@@ -2586,6 +2596,35 @@ func (s *listState) placeThreadJump(now time.Time) {
 func (s *listState) mounted() bool {
 	latest, before := s.hb.latestFrames()
 	return s.laidOut && (s.laidAt.Equal(latest) || s.laidAt.Equal(before))
+}
+
+// tailItems is how many of the last items' heights the list keeps
+// (tailH): enough for the gap to its end past what a layout reached.
+const tailItems = 8
+
+// gapToEnd is how far the list sits above its end at p, px: past its
+// last laid-out item's bottom, the items after it at the heights they
+// last laid out at (the 24px bottom spacer under a list 35px from its
+// end: the layout stops at the viewport). MaxInt32 when that's more than
+// tailItems or one hasn't laid out yet. It counted only a list whose last
+// item was in view, so STICKY_EPSILON reached no further than the spacer.
+func (s *listState) gapToEnd(p layout.Position) int {
+	last := p.First + p.Count
+	if last >= len(s.items) {
+		return max(0, -p.OffsetLast)
+	}
+	if len(s.items)-last > tailItems {
+		return math.MaxInt32
+	}
+	gap := -p.OffsetLast
+	for i := last; i < len(s.items); i++ {
+		h, ok := s.tailH[s.items[i].key]
+		if !ok {
+			return math.MaxInt32
+		}
+		gap += h
+	}
+	return max(0, gap)
 }
 
 // stopScroll ends the reader's running scroll (a wheel curve, a fling)
