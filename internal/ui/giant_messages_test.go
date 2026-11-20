@@ -25,7 +25,9 @@ package ui
 // directory for heap profiles (one per stage) and a report.
 
 import (
+	"context"
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -43,11 +45,12 @@ import (
 
 const (
 	// giantHeapMB bounds the live heap's growth from before the channel
-	// opened to any stage's end.
-	giantHeapMB = 700
+	// opened to any stage's end (CI, 2026-11-20: +308 MB at most, nearly
+	// all of it the messages' text and blocks, 1.9 MB each)
+	giantHeapMB = 500
 	// giantRSSMB bounds the peak RSS's growth over the RSS before the
-	// channel opened.
-	giantRSSMB = 2000
+	// channel opened (+825 MB, the fake in its own process)
+	giantRSSMB = 1500
 	// giantFrameMax bounds every frame from the open on.
 	giantFrameMax = 300 * time.Millisecond
 	// giantAbortMB: past this RSS growth the test stops driving frames
@@ -99,31 +102,80 @@ type giantFrame struct {
 }
 
 func TestGiantMessagesBounded(t *testing.T) {
+	n, out := giantSetup(t)
+	fs := giantServer(t, n, true)
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	giantSession(t, e, fs, n, out, nil)
+}
+
+// TestGiantMessagesPlugins is the same session under a Taut plugin that
+// patches the messages slice (passing it through, as Slick's and Taut's
+// message plugins patch it): every row then draws the plugins' view of
+// its message, and the mirror hands JS the open channel's messages.
+// CLACK_GIANT_PLUGINS=1 too (the fake in this process: the bench needs it).
+func TestGiantMessagesPlugins(t *testing.T) {
+	n, out := giantSetup(t)
+	if os.Getenv("CLACK_GIANT_PLUGINS") == "" {
+		t.Skip("CLACK_GIANT_PLUGINS not set (flake-check's giant-messages job runs this)")
+	}
+	fs := giantServer(t, n, false)
+	be := benchStart(t, fs)
+	e := be.perfEnv
+	e.waitReady()
+	e.until("Taut", 60*time.Second, func() bool { return e.a.Taut() != nil })
+	tt := e.a.Taut()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, err := tt.Import(ctx, []byte(editPassSlice), ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.SetEnabled(ctx, "EditPassSlice", true); err != nil {
+		t.Fatal(err)
+	}
+	e.until("the messages slice patched", 30*time.Second, func() bool { return tt.SlicePatched("messages") })
+	giantSession(t, e, fs, n, out, func() string { return fmt.Sprintf("plugin engine %.0f MB", perfOffHeapWasmMB()) })
+}
+
+// giantSetup reads the job's settings: how many latest messages
+// #giant-wall holds, and where the profiles and report go.
+func giantSetup(t *testing.T) (n int, out string) {
 	if os.Getenv("CLACK_GIANT_MESSAGES") == "" {
 		t.Skip("CLACK_GIANT_MESSAGES not set (flake-check's giant-messages job runs this)")
 	}
-	n := 100
+	n = 100
 	if v, err := strconv.Atoi(os.Getenv("CLACK_GIANT_MESSAGES")); err == nil && v > 0 {
 		n = v
 	}
-	out := os.Getenv("CLACK_GIANT_OUT")
+	out = os.Getenv("CLACK_GIANT_OUT")
 	if out != "" {
+		out = filepath.Join(out, t.Name())
 		if err := os.MkdirAll(out, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	return n, out
+}
+
+// giantServer is the fake: fakeslackd at CLACK_FAKESLACK_URL when remote
+// may be (its memory then isn't the client's), else in this process.
+func giantServer(t *testing.T, n int, remote bool) *fakeslack.Server {
 	sz := fakeslack.Small
 	sz.Giant = n
-	var fs *fakeslack.Server
-	if u := os.Getenv("CLACK_FAKESLACK_URL"); u != "" { // fakeslackd -small -giant n: the heap is the client's alone
-		fs = fakeslack.Remote(u, sz)
-	} else {
-		var err error
-		if fs, err = fakeslack.Start(sz); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { fs.Close() })
+	if u := os.Getenv("CLACK_FAKESLACK_URL"); u != "" && remote { // fakeslackd -small -giant n
+		return fakeslack.Remote(u, sz)
 	}
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	return fs
+}
+
+// giantSession opens #giant-wall in e and measures it (see
+// TestGiantMessagesBounded); extra, if set, adds to each stage's line.
+func giantSession(t *testing.T, e *perfEnv, fs *fakeslack.Server, n int, out string, extra func() string) {
 	ch := fakeslack.GiantWallID
 	profile := func(name string) {
 		if out == "" {
@@ -137,12 +189,10 @@ func TestGiantMessagesBounded(t *testing.T) {
 		defer f.Close()
 		_ = pprof.Lookup("heap").WriteTo(f, 0)
 	}
-
-	e := startEnv(t, fs, t.TempDir())
-	e.waitReady()
 	e.openChannel(fs.ChannelIDs()[1])
 	e.settle(time.Second)
 	baseHeap := liveHeapMB()
+	_ = os.WriteFile("/proc/self/clear_refs", []byte("5"), 0) // VmHWM from here (Linux)
 	baseRSS := giantProcStatus("VmRSS")["VmRSS"]
 	profile("0-before")
 	t.Logf("before #giant-wall: live heap %.0f MB, RSS %.0f MB", baseHeap, baseRSS)
@@ -152,10 +202,14 @@ func TestGiantMessagesBounded(t *testing.T) {
 	debug.SetTraceback("all")
 	stop := make(chan struct{})
 	defer close(stop)
-	var peakRSS atomic.Int64
+	// frameAt is when the frame being laid out began (unix ns, 0 between
+	// frames), frameOf its stage
+	var frameAt atomic.Int64
+	var frameOf atomic.Pointer[string]
 	go func() {
 		tk := time.NewTicker(50 * time.Millisecond)
 		defer tk.Stop()
+		over := false
 		for {
 			select {
 			case <-stop:
@@ -163,10 +217,18 @@ func TestGiantMessagesBounded(t *testing.T) {
 			case <-tk.C:
 			}
 			rss := giantProcStatus("VmRSS")["VmRSS"]
-			if int64(rss) > peakRSS.Load() {
-				peakRSS.Store(int64(rss))
+			if g := rss - baseRSS; g > giantRSSMB && !over {
+				over = true
+				t.Errorf("RSS %.0f MB, %.0f MB over the %.0f MB before the channel opened (bound %d MB)", rss, g, baseRSS, giantRSSMB)
 			}
 			if rss > giantPanicMB {
+				if at := frameAt.Load(); at != 0 {
+					stage := "a"
+					if s := frameOf.Load(); s != nil {
+						stage = *s
+					}
+					t.Errorf("a %s frame has run for %v and counting (bound %v)", stage, time.Since(time.Unix(0, at)).Round(time.Millisecond), giantFrameMax)
+				}
 				profile("watchdog")
 				panic(fmt.Sprintf("giant messages: RSS %.0f MB passed %d MB in one frame (before the channel: %.0f MB)", rss, giantPanicMB, baseRSS))
 			}
@@ -185,7 +247,10 @@ func TestGiantMessagesBounded(t *testing.T) {
 			return false
 		}
 		t0 := time.Now()
+		frameOf.Store(&stage)
+		frameAt.Store(t0.UnixNano())
 		e.frame()
+		frameAt.Store(0)
 		d := time.Since(t0)
 		st := giantProcStatus("VmRSS")
 		frames = append(frames, giantFrame{stage: stage, d: d, heap: giantHeapObjectsMB(), rss: st["VmRSS"]})
@@ -224,7 +289,11 @@ func TestGiantMessagesBounded(t *testing.T) {
 		if l := list(); l != nil {
 			shown, _, _ = l.LayoutSig()
 		}
-		t.Logf("%s: live heap %.0f MB (+%.0f), RSS %.0f MB (+%.0f), %d messages in the list (core's window %d)", name, h, h-baseHeap, r, r-baseRSS, shown, e.loadedMessages(ch))
+		more := ""
+		if extra != nil {
+			more = ", " + extra()
+		}
+		t.Logf("%s: live heap %.0f MB (+%.0f), RSS %.0f MB (+%.0f), %d messages in the list (core's window %d)%s", name, h, h-baseHeap, r, r-baseRSS, shown, e.loadedMessages(ch), more)
 	}
 
 	// a CPU profile of everything from the open on
@@ -283,6 +352,52 @@ func TestGiantMessagesBounded(t *testing.T) {
 				t.Errorf("the newest message's row is %d px tall; Slack's is its header and %d lines of 22px (%d px)", h, lines, lines*22)
 			}
 		}
+	}
+
+	// what's on screen is drawn: in the middle of the newest message every
+	// 22px band of the text column has ink (the GPU renderer's frame)
+	inked := func(what string) {
+		l := list()
+		if e.gpu == nil || l == nil || aborted != "" {
+			return
+		}
+		img := image.NewRGBA(image.Rect(0, 0, e.size.X, e.size.Y))
+		if err := e.gpu.Screenshot(img); err != nil {
+			t.Errorf("%s: screenshot: %v", what, err)
+			return
+		}
+		luma := func(x, y int) int {
+			c := img.RGBAAt(x, y)
+			return (299*int(c.R) + 587*int(c.G) + 114*int(c.B)) / 1000
+		}
+		x0, y0 := l.Origin.X+60, l.Origin.Y+40
+		bands, blank := 0, 0
+		for y := y0; y+22 <= y0+440 && y+22 <= e.size.Y; y += 22 {
+			bands++
+			bg := luma(x0-30, y+11) // the gutter: no avatar in the middle of a message
+			ink := 0
+			for yy := y; yy < y+22; yy++ {
+				for x := x0; x < x0+240; x++ {
+					if d := luma(x, yy) - bg; d > 80 || d < -80 {
+						ink++
+					}
+				}
+			}
+			if ink < 10 {
+				blank++
+			}
+		}
+		if blank > 1 {
+			t.Errorf("%s: %d of %d 22px bands of the message's text on screen drew nothing", what, blank, bands)
+		}
+	}
+	if l := list(); l != nil && aborted == "" {
+		l.ScrollPx(-20000)
+		settle("scroll", 500*time.Millisecond)
+		inked("20,000px up the newest message")
+		l.ScrollPx(-1500)
+		step("scroll")
+		inked("a jump of 1,500px")
 	}
 
 	// 2. up through the newest message and back down
