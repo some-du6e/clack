@@ -445,6 +445,24 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^TestCustomEmojiAnimatedWebPDraws$' ./internal/ui/richview
 
+  # huddle-polish (2026-11-19, Karim's α.112 huddle report): the static
+  # (the transpiled libopus on a goroutine whose stack moves mid-call)
+  huddle-polish:
+    if: ${{ !inputs.only || startsWith('huddle-polish', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps (internal/huddle's X11 screen share needs the headers)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "huddle: Opus frames don't depend on the caller's goroutine stack"
+        run: go test -count=$COUNT -v -run '^(TestOpusDecodeIgnoresCallerStack|TestOpusEncodeIgnoresCallerStack|TestCodecGoroutineStackStill)$' ./internal/huddle
+
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
     runs-on: ubuntu-latest

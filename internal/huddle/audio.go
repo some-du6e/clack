@@ -203,16 +203,24 @@ func level(pcm []int16) float64 {
 	return math.Sqrt(s / float64(len(pcm)))
 }
 
+// opusEnc and opusDec run every call into the transpiled libopus on the
+// codec goroutine (codecstack.go): its C keeps Go stack addresses as
+// uintptr, and on any other goroutine a stack that grows mid-call turns
+// the frame into noise.
+
 type opusEnc struct{ e *opus.Encoder }
 
-func newOpusEnc() (*opusEnc, error) {
-	e, err := opus.NewEncoder(sampleRate, 1, opus.ApplicationVoIP)
-	if err != nil {
-		return nil, err
-	}
-	_ = e.SetBitrate(32000)
-	_ = e.SetComplexity(5)
-	return &opusEnc{e: e}, nil
+func newOpusEnc() (enc *opusEnc, err error) {
+	codecCall(func() {
+		var e *opus.Encoder
+		if e, err = opus.NewEncoder(sampleRate, 1, opus.ApplicationVoIP); err != nil {
+			return
+		}
+		_ = e.SetBitrate(32000)
+		_ = e.SetComplexity(5)
+		enc = &opusEnc{e: e}
+	})
+	return enc, err
 }
 
 func (o *opusEnc) encode(pcm []int16, out []byte) (pkt []byte, err error) {
@@ -226,7 +234,8 @@ func (o *opusEnc) encode(pcm []int16, out []byte) (pkt []byte, err error) {
 			}
 		}
 	}()
-	n, err := o.e.Encode(pcm, frameSamples, out[:cap(out)])
+	var n int
+	codecCall(func() { n, err = o.e.Encode(pcm, frameSamples, out[:cap(out)]) })
 	if err != nil {
 		return nil, err
 	}
@@ -238,12 +247,15 @@ type opusDec struct {
 	pcm []int16
 }
 
-func newOpusDec() (*opusDec, error) {
-	d, err := opus.NewDecoder(sampleRate, playChannels)
-	if err != nil {
-		return nil, err
-	}
-	return &opusDec{d: d, pcm: make([]int16, 120*sampleRate/1000*playChannels)}, nil
+func newOpusDec() (dec *opusDec, err error) {
+	codecCall(func() {
+		var d *opus.Decoder
+		if d, err = opus.NewDecoder(sampleRate, playChannels); err != nil {
+			return
+		}
+		dec = &opusDec{d: d, pcm: make([]int16, 120*sampleRate/1000*playChannels)}
+	})
+	return dec, err
 }
 
 // decode returns interleaved stereo PCM (valid until the next call). A nil
@@ -264,7 +276,8 @@ func (o *opusDec) decode(pkt []byte) (pcm []int16, err error) {
 	if pkt == nil {
 		frame = frameSamples
 	}
-	n, err := o.d.Decode(pkt, o.pcm, frame, false)
+	var n int
+	codecCall(func() { n, err = o.d.Decode(pkt, o.pcm, frame, false) })
 	if err != nil {
 		return nil, err
 	}
