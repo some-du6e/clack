@@ -97,7 +97,7 @@ func TestWindowSwitchCountsFromItsModel(t *testing.T) {
 	sharedRev := chm.msgs[i].rev
 	chm.readGen, chm.readOK = 3, 4 // a read begun after the join has landed
 	chm.mu.Unlock()
-	s.rows[shared] = &row{rev: sharedRev}
+	s.rows[shared] = &row{rev: sharedRev, viewed: true, viewReady: true} // drawing a plugin's view of the window's copy
 	s.place = jumpPlace{}
 	if !s.handOver() || s.win != nil || s.m != chm {
 		t.Fatal("the window that met the newest messages didn't go over to the conversation's model")
@@ -107,6 +107,11 @@ func TestWindowSwitchCountsFromItsModel(t *testing.T) {
 	chm.mu.Unlock()
 	if r := s.rows[shared]; r.rev == e.rev {
 		t.Errorf("the row kept the number %d the window gave its copy, the number of the conversation's copy: it never draws that copy's reaction", r.rev)
+	}
+	if r := s.rows[shared]; r.viewReady {
+		// applyView's first ready read after the switch looks at JS's view
+		// only when it turned ready: a view that changed meanwhile stayed
+		t.Error("the viewed row kept its view's ready mark through the switch: JS's view of the new copy is never compared")
 	}
 
 	// the switch counts from the conversation's own evictions: none since

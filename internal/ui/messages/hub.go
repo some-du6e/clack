@@ -530,7 +530,7 @@ func HoldLoad(ch, threadTS string) (release func()) {
 func (hb *hub) afterLoad(m *model) {
 	m.mu.Lock()
 	c := m.reconv
-	if !m.loading && !m.older {
+	if !m.loading && !m.older && !m.newer {
 		m.reconv = core.RefChange{}
 	} else {
 		c = core.RefChange{} // another load is still out: it does this
@@ -807,8 +807,12 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 			w, err = hb.app.WindowNewer(ctx, m.ch, edge)
 		}
 		seq := hb.app.EmitSeq()
+		if f := loadLanded.Load(); f != nil {
+			(*f)(m)
+		}
 		m.mu.Lock()
 		m.loadSeq = seq
+		live := m.takeLive() // what the socket changed while the page was out
 		m.older, m.newer = false, false
 		if err == nil {
 			all := make([]core.Message, 0, len(m.msgs)+len(w.Messages))
@@ -816,6 +820,7 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 				all = append(all, e.m)
 			}
 			m.setAll(dedupeTS(append(all, w.Messages...)))
+			m.keepLive(live) // the answer's copies are core's from before them (a delete stays out)
 			if older {
 				m.hasMore = w.HasOlder
 			}
@@ -1024,10 +1029,18 @@ func (m *model) upsert(msg core.Message, seq uint64) {
 	m.msgs[i] = entry{m: msg, rev: m.bump(), seq: seq}
 }
 
+// recording reports whether a load is out whose answer replaces what the
+// model holds, so the events meanwhile are kept for it (takeLive,
+// keepLive): a first load, and a window's page, whose answer is core's
+// whole window as it was when the page landed in core (WindowOlder,
+// WindowNewer). The conversation's older page only goes in front.
+// Callers hold m.mu.
+func (m *model) recording() bool { return m.loading || m.win && (m.older || m.newer) }
+
 // noteLive records that an event changed (or deleted) ts while a load is
 // out (callers hold m.mu).
 func (m *model) noteLive(ts string, gone bool) {
-	if !m.loading || ts == "" {
+	if !m.recording() || ts == "" {
 		return
 	}
 	if m.live == nil {
@@ -1043,7 +1056,7 @@ func (m *model) noteLive(ts string, gone bool) {
 // (never 0: a row would take JS's copy of the revision before as ready).
 // Callers hold m.mu.
 func (m *model) notePlace(msg core.Message, seq uint64) {
-	if !m.loading || msg.TS == "" {
+	if !m.recording() || msg.TS == "" {
 		return
 	}
 	if m.livePlace == nil {
@@ -1056,7 +1069,7 @@ func (m *model) notePlace(msg core.Message, seq uint64) {
 // the update's EmitSeq) while a load is out, whether or not the model
 // holds the message (callers hold m.mu).
 func (m *model) noteReact(ts string, rs []core.Reaction, seq uint64) {
-	if !m.loading || ts == "" {
+	if !m.recording() || ts == "" {
 		return
 	}
 	if m.liveReact == nil {
@@ -1521,7 +1534,7 @@ func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
 	changed := false
 	for _, m := range ms {
 		m.mu.Lock()
-		if m.loading || m.older {
+		if m.loading || m.older || m.newer {
 			m.reconv = mergeRefChange(m.reconv, c) // its answer may be older than c
 		}
 		type staleEnt struct {

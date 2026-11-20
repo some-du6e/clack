@@ -613,6 +613,10 @@ func (s *listState) useModel(m *model) {
 	s.m, s.snap.rev = m, 0
 	for _, r := range s.rows {
 		r.rev, r.viewRev, r.viewConv = 0, 0, 0
+		// a viewed row's first ready read compares JS's view (turned): one
+		// that changed while the list was off the model (an edit the
+		// dropped model missed, a nickname) otherwise stayed drawn
+		r.viewReady = false
 		r.hmOK, r.hidChecked = false, false
 	}
 	m.mu.Lock()
