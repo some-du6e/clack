@@ -148,6 +148,13 @@ type App struct {
 
 	// tempMuteTimer is kickOffTempMuteTimer's timer (temp_mute.go).
 	tempMuteTimer *time.Timer
+
+	// memberMC is each conversation's last users/counts answer whole;
+	// memberStale the counts a join or a leave made stale and countThr
+	// their refetch throttles (membership_counts.go)
+	memberMC    map[string]MemberCounts
+	memberStale map[string]bool
+	countThr    map[string]*countThrottle
 }
 
 type watchedThread struct {

@@ -163,7 +163,9 @@ type ChannelDetails struct {
 	// Realtime: conv (joined elsewhere, renamed, topic/purpose changed via
 	// a refresh) and conv_removed (left elsewhere, archived) for this
 	// conversation. refreshDue defers a reload while a write is in flight.
-	evq        dirEvents
+	evq dirEvents
+	// bodyKind is the tab the body drew last (remountMembers)
+	bodyKind   int
 	refreshDue bool
 
 	// presIDs are the loaded members (the watch goroutine redraws on their
@@ -337,7 +339,9 @@ func (d *ChannelDetails) refreshInfo() {
 // watch subscribes to this conversation's conv / conv_removed events, and
 // to presence_change / user_change for the loaded members (their rows read
 // presence live, so an empty note just redraws); its permissions and
-// channel_email events and the team and org prefs redraw too.
+// channel_email events and the team and org prefs redraw too. Its member
+// counts going stale (someone joined or left) refetches them, and their
+// answer replaces the tab strip's count.
 func (d *ChannelDetails) watch() {
 	id := d.id
 	shown := &d.presIDs
@@ -369,11 +373,24 @@ func (d *ChannelDetails) watch() {
 			return dirMemberNote{id: id, verify: true}, true
 		case ev.Type == "conv_removed":
 			return dirMemberNote{id: id, ev: true}, true
+		case ev.Type == "member_count_stale":
+			return dirMemberNote{id: id, countStale: true}, true
+		case ev.Type == "member_count":
+			return dirMemberNote{id: id, counted: true}, true
 		}
 		return dirMemberNote{}, false
 	})
 	for _, n := range d.evq.drain() {
 		switch {
+		case n.countStale:
+			// someone joined or left: the tab strip draws the count, and
+			// its draw refetches a stale one (WDcq vC → 1Ti7 q8's
+			// maybeRefetch, core/membership_counts.go)
+			d.h.Core().RefreshMemberCount(d.id)
+		case n.counted:
+			if mc, ok := d.h.Core().MemberCountsCached(d.id); ok && d.counts.started() && !d.counts.busy() {
+				d.counts.mutate(func(v *core.MemberCounts) { *v = mc })
+			}
 		case n.verify:
 			d.refreshInfo()
 		case n.ev && cdGroup(d.kind) == "channel" && !d.writing():
@@ -395,14 +412,18 @@ func (d *ChannelDetails) watch() {
 	}
 }
 
-func (d *ChannelDetails) loadMembers(marker string) {
+func (d *ChannelDetails) loadMembers(marker string) { d.loadMembersAs(marker, true) }
+
+// loadMembersAs loads a page of members after marker; keep holds the
+// rows already loaded while it does (false: the skeleton shows).
+func (d *ChannelDetails) loadMembersAs(marker string, keep bool) {
 	var prev []core.User
 	if marker != "" {
 		cur, _, _ := d.members.get()
 		prev = append([]core.User(nil), cur.users...)
 	}
 	c, id, self := d.h.Core(), d.id, d.selfID()
-	d.members.load(d.h, true, func(ctx context.Context) (cdMembersPage, error) {
+	d.members.load(d.h, keep, func(ctx context.Context) (cdMembersPage, error) {
 		// Slack's Members tab is people only (MEMBER_LIST filter "everyone
 		// AND NOT bots AND NOT apps"); bots and apps are Agents & apps.
 		us, next, err := c.Members(ctx, id, marker, true)
@@ -1324,6 +1345,12 @@ func cdBtn(b *base, gtx C, c *widget.Clickable, icon, label string, caret bool, 
 
 func (d *ChannelDetails) bodyArea(gtx C) D {
 	k := d.tabKinds[min(d.tab.Sel, len(d.tabKinds)-1)]
+	if k != d.bodyKind {
+		if k == cdMembers && d.members.started() {
+			d.remountMembers()
+		}
+		d.bodyKind = k
+	}
 	bg := d.p.ReadFill
 	reworked := k == cdApps && d.agentsImproved() // p-about_modal__contents--reworked-agents: base-pry
 	if k == cdMembers || reworked {
@@ -1826,6 +1853,20 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 	)
 }
 
+// remountMembers is the Members tab drawn again after another tab.
+// Slack's Tabs (client-boot tt5m) render only the selected tab's content,
+// so IaDetailsPopoverMembers mounts afresh: its search is empty, its list
+// at the top, and its people are fetched again, with the placeholders
+// until the first page answers (its member ids, eq, start empty). While
+// the tab stays open the list keeps the people it fetched: someone who
+// joins (member_joined_channel) or leaves shows up on the next mount,
+// only the tab's count follows at once (core/membership_counts.go).
+func (d *ChannelDetails) remountMembers() {
+	d.find.ed.SetText("")
+	d.list(cdMembers).Position = layout.Position{}
+	d.loadMembersAs("", false)
+}
+
 // cdSortMembers is the Members list order Slack showed for #clack
 // (2026-11-08): the viewer first, then by display name, case-insensitive
 // ("clod (you)", dodge1, karim, kyto), whatever order the edge list
@@ -1860,9 +1901,28 @@ func cdSelfFirst(us []core.User, self string) []core.User {
 // name (the real name when none is set) and " (you)" for the viewer; the
 // secondary is the real name, shown only after a display name.
 func cdMemberNames(u core.User, self string) (primary, secondary string) {
+	return cdMemberNamesPref(u, self, false)
+}
+
+// cdMemberNamesPref is cdMemberNames under the viewer's display_real_names
+// pref (client-boot rR47 EP). MediumMemberEntity's memberPrimaryName is
+// getPrefCompliantMemberName (VRXO sE): the display name, or with the pref
+// the real name; memberSecondaryName is getMemberSecondaryName (hWCs Mu):
+// with the pref the display name, else the real name when a display name
+// is set. Equal names draw twice ("clod ○ clod"), as Slack does.
+func cdMemberNamesPref(u core.User, self string, realNames bool) (primary, secondary string) {
 	primary = displayName(u)
 	if u.DisplaySet {
 		secondary = u.RealName
+	}
+	if realNames {
+		if u.RealName != "" {
+			primary = u.RealName
+		}
+		secondary = ""
+		if u.DisplaySet {
+			secondary = u.Name // the display name (Name falls back to the real name only without one)
+		}
 	}
 	if u.ID == self {
 		primary += " (you)"
@@ -1949,7 +2009,7 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 		// the profile pane
 		d.h.OpenProfile(d.press.at, u.ID)
 	}
-	full, disp := cdMemberNames(u, self)
+	full, disp := cdMemberNamesPref(u, self, d.h.Core().Prefs().DisplayRealNames)
 	// IaDetailsPopoverChannelManagerIndicatorWrapper: the managers store
 	manager := secondary && slices.Contains(d.managerIDs(), u.ID)
 	return d.hoverable(gtx, c, false, 0, func(gtx C) D {

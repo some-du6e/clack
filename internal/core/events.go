@@ -209,10 +209,15 @@ func (a *App) handle(ev slack.Event) {
 			User string `json:"user"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		// anyone's join: the channel's member counts are stale
+		// (batchProcessChannelMembers, membership_counts.go)
+		a.membershipChanged(ch)
 		if e.User != a.S.SelfID() {
 			return
 		}
 		a.refreshConv(ctx, ch)
+	case "member_left_channel":
+		a.membershipChanged(ch) // anyone's leave, as a join
 	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename",
 		"group_rename", "channel_unarchive", "im_open", "mpim_open":
 		var e struct {

@@ -756,6 +756,14 @@ func (b *backend) handle(a *App, ev core.Event) {
 			b.refreshExt(ev.Channel) // a non-member channel looked up again (renamed, unarchived): its header and footer
 		}
 		b.resnapshot(a)
+	case "member_count_stale":
+		// someone joined or left: the open channel's header draws the
+		// count, and its draw refetches a stale one (getMembershipCountsByChannelId's
+		// maybeRefetch, core/membership_counts.go); the answer comes back
+		// as "member_count"
+		if b.core != nil && ev.Channel != "" && a.router.Current().Channel() == ev.Channel {
+			b.core.RefreshMemberCount(ev.Channel)
+		}
 	case "member_count":
 		// users/counts answered after the page showed (core History's side
 		// read): the header draws the count from the row, so set it there
