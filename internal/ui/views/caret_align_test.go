@@ -68,7 +68,7 @@ func TestCaretAlignViewsInputs(t *testing.T) {
 				e.h.th = th
 				d := e.d
 				d.base.frame() // the palette the backgrounds read
-				dp :=func(v float32) int { return int(v*sc + .5) }
+				dp := func(v float32) int { return int(v*sc + .5) }
 				w, h := dp(480), dp(120)
 
 				// the agents and apps invite modal's picker (Karim's
