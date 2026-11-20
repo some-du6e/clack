@@ -11,6 +11,10 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
+// The huddle windows run the inspect tool (inspect_wire.go's InspectOn
+// and the rest).
+var _ huddleui.InspectHost = (*App)(nil)
+
 // huddles is the native huddle controller (internal/ui/huddleui): the
 // sidebar huddle bar, the header's huddle button and the huddle window.
 func (a *App) huddles() *huddleui.Controller {

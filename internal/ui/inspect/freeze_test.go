@@ -29,6 +29,8 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
+
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // freezeEnv is a dragEnv whose window draws a widget's area and counts
@@ -169,6 +171,7 @@ func TestFreezeCapturesTheFrozenFrame(t *testing.T) {
 		t.Fatalf("after a plain click: reviewing %v, frozen %v, the frozen frame shot %v", e.tool.Reviewing(), e.tool.Frozen(), len(shotFrom) == 2 && shotFrom[1] == frozen)
 	}
 	e.untilReady()
+	e.wait(armDelayTest) // a pick with no component arms its copy keys once it has been on screen a while
 	e.key(key.NameReturn, 0)
 	e.frame()
 	e.tool.Wait()
@@ -236,8 +239,12 @@ func TestFreezeDragsAndEnds(t *testing.T) {
 		t.Fatalf("%d shots without a capture", len(e.shots))
 	}
 
-	// the frozen ops go when the freeze ends
-	frozenOps := weak.Make(e.tool.FrozenOps())
+	// what the freeze held goes when it ends (its frames are drawn in the
+	// window's own ops)
+	frozen := weak.Make(e.tool.fz)
+	if e.tool.FrozenOps() != &e.ops {
+		t.Error("the frozen frames aren't drawn in the window's ops")
+	}
 	e.key(FreezeKey, 0)
 	e.frame()
 	e.frame()
@@ -246,8 +253,8 @@ func TestFreezeDragsAndEnds(t *testing.T) {
 	}
 	runtime.GC()
 	runtime.GC()
-	if frozenOps.Value() != nil {
-		t.Error("the frozen ops outlived the freeze")
+	if frozen.Value() != nil {
+		t.Error("the freeze outlived itself")
 	}
 
 	// a new window size unfreezes
@@ -406,4 +413,38 @@ func TestFreezeEndReleasesHold(t *testing.T) {
 			t.Errorf("after the session record %d is still held", i)
 		}
 	}
+}
+
+// TestFreezeDeferredTooltip: a tooltip the window draws deferred, under a
+// transform (as the message list's reaction tooltip is), is outlined where
+// it is drawn, live and frozen. The frozen frames were drawn in ops of the
+// tool's own calling the window's, and Gio numbers a Defer's saved state
+// per op.Ops: the tooltip's state and the tool's deferred drawing's were
+// both 1, so the frozen tooltip was drawn, and hit, at the tool's origin
+// instead of its own (2026-11-18).
+func TestFreezeDeferredTooltip(t *testing.T) {
+	e := newDragEnv(t)
+	e.content = func(gtx layout.Context) {
+		defer op.Offset(image.Pt(300, 200)).Push(gtx.Ops).Pop()
+		m := op.Record(gtx.Ops)
+		theme.TooltipShape(gtx, image.Rect(10, 10, 170, 70), 8, theme.TooltipArrow{}, color.NRGBA{A: 0xff}, color.NRGBA{})
+		op.Defer(gtx.Ops, m.Stop())
+	}
+	tip := f32.Pt(390, 240) // the tooltip's middle in the window
+	e.startAt(f32.Pt(600, 400), "primary")
+	outlined := func(when string) {
+		t.Helper()
+		e.queue(pointerMove(f32.Pt(600, 400)))
+		e.frame()
+		e.queue(pointerMove(tip))
+		e.frame()
+		e.frame()
+		label, r, ok := e.tool.Hovered()
+		if !ok || !strings.Contains(label, "c-tooltip__tip") || r != image.Rect(310, 210, 470, 270) {
+			t.Errorf("%s, over the tooltip: outline %q %v (%v), want its c-tooltip__tip at (310,210)-(470,270)", when, label, r, ok)
+		}
+	}
+	outlined("live")
+	e.freeze()
+	outlined("frozen")
 }

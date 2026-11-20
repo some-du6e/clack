@@ -1921,3 +1921,54 @@ jobs:
           go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
           go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
           exit $rc
+
+  # inspect-blur-fast (2026-11-18, round 2 2026-11-19): the inspect tool's
+  # pick-to-review path at 1918x1080 (Karim's Windows window) at 1x and 2x,
+  # on the headless GPU (llvmpipe, WARP): the review's shot drawn in the
+  # frame after the pick's, its image bounded against the whole shot's
+  # blur, each capture's stage times logged; the keys in the release's
+  # frame; the shots' GPU (made as a session starts, let go of after its
+  # shot, never waited for); deliveries in order; the picker inside popups
+  # (a Block Kit modal and its select, a menu, the emoji picker, a profile
+  # card's parts, a rail peek's rows, the Ctrl+K switcher, a frozen
+  # tooltip, plugin layers); Gio's rollback op keys and SetSize; round 4: a
+  # region's (and a pick of nothing's) copy keys armed 300 ms after its
+  # review shows, a held Enter's repeats dropped, a toast and channel
+  # details' stacked dialogs picked as themselves; the tool in each of
+  # huddleui's windows (2026-11-20). Dispatch with only=inspect-blur-fast.
+  inspect-blur-fast:
+    if: ${{ !inputs.only || startsWith('inspect-blur-fast', inputs.only) }}
+    name: "inspect-blur-fast (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "the pick-to-review path and the picker in popups, COUNT runs"
+        shell: bash
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          rc=0
+          go test -count=$COUNT -v -timeout 20m -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestRegionCopyArms|TestHeldCopyKeyRepeats|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestShooterTwoSessions|TestExperimentNotesFromTheRecorder|TestDeliveriesInOrder|TestDeliveriesInOrderWithText|TestNoShotLogsAtOnce|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestInspectCardAfterContent|TestInspectCardMarkHoldsContent|TestInspectPluginOverlayLayer|TestInspectTreeTooltipEitherTheme)$' ./internal/ui/slackc || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 10m -run '^(TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 10m -run '^(TestDetailsDialogInspectCard)$' ./internal/ui/views || rc=1
+          go test -count=$COUNT -v -timeout 15m -run '^(TestInspectHuddleWindow|TestInspectScreensharePopout|TestInspectPresenterPanel|TestInspectInviteWindow|TestInspectJoinPreview)$' ./internal/ui/huddleui || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast|TestInspectSubWindowsGate)$' ./internal/ui || rc=1
+          exit $rc

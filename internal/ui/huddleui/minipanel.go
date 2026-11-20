@@ -90,6 +90,28 @@ type miniPanel struct {
 	seen   map[string]bool // joins
 	joined []string
 	joinAt time.Time
+
+	insp *winInspect // the inspect tool in this window (inspect.go)
+}
+
+// newInspect makes the panel's inspect tool (run; th its theme).
+func (p *miniPanel) newInspect(th *theme.Theme) *winInspect {
+	return p.c.newWinInspect("presenter panel", "huddle", th, p.invalidate)
+}
+
+// frameEvent draws one frame (run; tests drive it with a router's frame
+// events), the window's inspect tool around it (inspect.go), and asks for
+// the next at next (a frozen frame asks for none).
+func (p *miniPanel) frameEvent(e app.FrameEvent, ops *op.Ops, patch *slackc.SubWindow, th *theme.Theme, next time.Time) {
+	p.insp.frame(e, ops, func(gtx C) {
+		th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
+		gtx.Execute(op.InvalidateCmd{At: next})
+		// its patch points (HuddleMiniPanel) are shared with the main
+		// window's dock: one frame at a time (frame holds the frame lock)
+		restore := patch.Frame(gtx, "sk-client-theme--dark", panelInk)
+		p.layout(gtx, th)
+		restore()
+	})
 }
 
 // syncMiniPanel opens the panel while you share and closes it after
@@ -171,6 +193,7 @@ func (p *miniPanel) run() {
 	th := theme.Bare(true)
 	sh := theme.NewShaper()
 	th.SetShapers(sh, sh)
+	p.insp = p.newInspect(th)
 	p.mu.Lock()
 	p.w = ww
 	closed := p.closed
@@ -186,6 +209,7 @@ func (p *miniPanel) run() {
 	for {
 		switch e := ww.Event().(type) {
 		case app.DestroyEvent:
+			p.insp.close()
 			patch.Close()
 			p.mu.Lock()
 			p.closed = true
@@ -196,21 +220,13 @@ func (p *miniPanel) run() {
 			case bounds = <-screen:
 			default:
 			}
-			gtx := app.NewContext(&ops, e)
-			th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
 			// the next frame: who's talking, or sooner while the window
 			// waits for its handle and the screen to be placed on
 			next := 500 * time.Millisecond
-			if !p.place(bounds, gtx.Metric) {
+			if !p.place(bounds, e.Metric) {
 				next = 50 * time.Millisecond
 			}
-			gtx.Execute(op.InvalidateCmd{At: e.Now.Add(next)})
-			slackc.LockFrame()
-			restore := patch.Frame(gtx, "sk-client-theme--dark", panelInk)
-			p.layout(gtx, th)
-			restore()
-			slackc.UnlockFrame()
-			e.Frame(gtx.Ops)
+			p.frameEvent(e, &ops, &patch, th, e.Now.Add(next))
 		default:
 			if h, ok := panelHandle(e); ok { // placed by the next frame
 				p.mu.Lock()

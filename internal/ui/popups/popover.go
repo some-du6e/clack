@@ -116,6 +116,9 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		cg.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, win.Y-2*m)}
 	}
+	// the inspect tool: the card's element recorded before the content is
+	// laid out, so the content is inside it (slackc EndCardAt)
+	cm := popoverClass.Inspect(0)
 	call, d := record(cg, p.content)
 	gap := p.o.Gap
 	if gap == 0 {
@@ -164,7 +167,7 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	keyTarget(gtx, p, p.rect)
 	st := popoverClass.Enter(gtx, 0, 0)
-	defer st.Leave()
+	var box image.Rectangle
 	if !st.Hidden() {
 		styledCard(gtx, st, cl, pos, d.Size, dp(gtx, rad), false, func(gtx layout.Context) {
 			local := image.Rectangle{Max: d.Size}
@@ -173,7 +176,10 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 			call.Add(gtx.Ops)
 			cs.Pop()
 		})
+		box = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	}
+	st.Leave()
+	cm.EndCardAt(gtx, box) // the inspect tool: the card is the popover's box
 	return layout.Dimensions{Size: win}
 }
 
@@ -463,76 +469,4 @@ func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string, maxWidt
 		macroAt(gtx, kc, image.Pt((sz.X-kw)/2, y+dp(gtx, 4)))
 	}
 	return layout.Dimensions{Size: sz}
-}
-
-// ---- Toast ----
-
-// Toast is a transient message at the bottom center of the window
-// (Slack's dark toast: #1d1c1d, radius 8, 15/700 white). Pill toasts use
-// Slack's keyboard-hint pill instead (rgba(0,0,0,.7), fully rounded).
-type Toast struct {
-	base
-	h     Host
-	text  string
-	pill  bool
-	until time.Time
-	dur   time.Duration
-}
-
-// NewToast returns a toast overlay that disappears after 3.5 s.
-func NewToast(h Host, text string) *Toast {
-	return &Toast{h: h, text: text, dur: 3500 * time.Millisecond}
-}
-
-// NewHintPill returns the translucent keyboard-hint pill ("Tip: …").
-func NewHintPill(h Host, text string) *Toast {
-	return &Toast{h: h, text: text, pill: true, dur: 4 * time.Second}
-}
-
-// Layout draws the toast.
-func (t *Toast) Layout(gtx layout.Context) layout.Dimensions {
-	drain()
-	if t.done {
-		return layout.Dimensions{}
-	}
-	if t.until.IsZero() {
-		t.until = gtx.Now.Add(t.dur)
-	}
-	if !gtx.Now.Before(t.until) {
-		t.Dismiss()
-		return layout.Dimensions{}
-	}
-	gtx.Execute(op.InvalidateCmd{At: t.until})
-	th := t.h.Theme()
-	cl := colorsOf(th)
-	win := gtx.Constraints.Max
-	fs := float32(15)
-	tw := textW(gtx, th, fs, theme.Bold, t.text)
-	if mx := win.X - dp(gtx, 80); tw > mx {
-		tw = mx
-	}
-	padX, h := dp(gtx, 16), dp(gtx, 44)
-	bg, rad := cl.Tooltip, dp(gtx, 8)
-	if t.pill {
-		h = dp(gtx, 34)
-		bg = rgba(0x000000, .7)
-		rad = h / 2
-	}
-	w := tw + 2*padX
-	r := image.Rect((win.X-w)/2, win.Y-h-dp(gtx, 28), (win.X+w)/2, win.Y-dp(gtx, 28))
-	if !t.pill {
-		softShadow(gtx, r, rad, dp(gtx, 4), dp(gtx, 12), cl.Shadow)
-	}
-	rrect(gtx, r, rad, bg)
-	fg := cl.TooltipText // .c-toast: content-inv-pry on base-inv-pry
-	if t.pill {
-		fg = rgb(0xffffff)
-	}
-	at(gtx, image.Pt(r.Min.X+padX, r.Min.Y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, h)}
-		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, fs, theme.Bold, fg, t.text)
-		})
-	})
-	return layout.Dimensions{}
 }

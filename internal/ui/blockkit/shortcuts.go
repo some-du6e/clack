@@ -18,6 +18,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -122,6 +123,7 @@ func OpenShortcuts(h Host, anchor image.Point, kind, ch, ts string) {
 type picker struct {
 	h       Host
 	anchor  image.Point
+	card    image.Rectangle // the card as last laid out, window coords (Rect)
 	kind    string
 	ch, ts  string
 	ed      widget.Editor
@@ -180,6 +182,12 @@ func (p *picker) pick(i int) {
 	p.Dismiss()
 	RunShortcut(p.h, s, p.ch, p.ts)
 }
+
+// Rect is the card as last laid out (window coords).
+func (p *picker) Rect() image.Rectangle { return p.card }
+
+// InspectRole names the overlay for the inspect tool's report.
+func (p *picker) InspectRole() string { return "shortcuts picker" }
 
 func (p *picker) Layout(gtx C) D {
 	drain()
@@ -272,6 +280,8 @@ func (p *picker) Layout(gtx C) D {
 	}
 	pos.X = max(dp(gtx, 8), min(pos.X, win.X-w-dp(gtx, 8)))
 	pos.Y = max(dp(gtx, 8), min(pos.Y, win.Y-h-dp(gtx, 8)))
+	p.card = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(w, h))}
+	defer slackc.InspectCard(gtx, p.card) // the inspect tool: the card is the picker's box
 	at(gtx, pos, func(gtx C) D {
 		r := image.Rect(0, 0, w, h)
 		theme.Shadow(gtx, r, dp(gtx, 8), dp(gtx, 12), cl.Shadow)

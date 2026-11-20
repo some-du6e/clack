@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io/fs"
 	"log"
 	"math"
 	"os"
@@ -16,8 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"gioui.org/f32"
-	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
 
@@ -44,39 +43,32 @@ type capture struct {
 	elem    image.Rectangle
 	ptrShot image.Point
 	k       float32
+
+	tm capTimes // its stages (timing.go)
+	// copyNow: Enter came in the pick's own frame (pickKeys): copied as
+	// soon as it's shot, with no review
+	copyNow bool
+}
+
+// guarded reports a capture that leaves only through its review, once
+// the review has been on screen a while (Tool.armed): a dragged region,
+// whose review is the only place it can be blurred, and a pick of no
+// component and no element (the shell's area under the pointer: a whole
+// column; a whole-window layer: the lightbox, the apps browser), a
+// region's size with no margin to blur (review of a614d3b3).
+func (c *capture) guarded() bool {
+	return c.region || c.rep != nil && c.rep.Component == "" && c.rep.Element == ""
 }
 
 // Shoot renders the part of a frame in region (window px), each px of it
 // drawn as k: a ShotSize(region, k) image. frame is the frame's ops as
 // one call (Gio patch 31, Ops.Whole). The window's GPU can't read its
-// frames back, so the ops go once more through a headless GPU context (a
-// Metal device, D3D11, EGL), under a transform that scales the region up
-// and moves it to the origin; paths and glyph outlines are vectors, so
-// the region comes out as sharp as a window k times as dense. Tests
-// replace it.
-var Shoot = func(frame op.CallOp, region image.Rectangle, k float32) (*image.RGBA, error) {
-	size := ShotSize(region, k)
-	if size.X <= 0 || size.Y <= 0 {
-		return nil, errors.New("empty region")
-	}
-	w, err := headless.NewWindow(size.X, size.Y)
-	if err != nil {
-		return nil, err
-	}
-	defer w.Release()
-	var o op.Ops
-	tr := op.Affine(f32.AffineId().Offset(f32.Pt(-float32(region.Min.X), -float32(region.Min.Y))).Scale(f32.Point{}, f32.Pt(k, k))).Push(&o)
-	frame.Add(&o)
-	tr.Pop()
-	if err := w.Frame(&o); err != nil {
-		return nil, err
-	}
-	img := image.NewRGBA(image.Rectangle{Max: size})
-	if err := w.Screenshot(img); err != nil {
-		return nil, err
-	}
-	return img, nil
-}
+// frames back, so the ops go once more through a headless GPU (a Metal
+// device, D3D11, EGL; the session's, shooter.go), under a transform that
+// scales the region up and moves it to the origin; paths and glyph
+// outlines are vectors, so the region comes out as sharp as a window k
+// times as dense. Tests replace it.
+var Shoot = shootHeadless
 
 // ShotSize is the size of Shoot's image of region at k.
 func ShotSize(region image.Rectangle, k float32) image.Point {
@@ -143,6 +135,7 @@ var WriteImage = func(img image.Image) error {
 // newCapture builds the report for p (UI goroutine, before this frame
 // lays anything out: p's frame still holds what the pointer was over).
 func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
+	t0 := time.Now()
 	now := gtx.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -159,13 +152,16 @@ func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
 	r.Region = p.region
 	r.Rect = dpRect(p.rect, scale)
 	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
-	return &capture{rep: r, rect: p.rect, ptr: ptr, scale: scale}
+	c := &capture{rep: r, rect: p.rect, ptr: ptr, scale: scale}
+	c.tm = capTimes{kind: "click", scale: scale, report: time.Since(t0)}
+	return c
 }
 
 // newRegionCapture builds the report for a dragged region (window px;
 // ptr where the button came up): no component, the shell's areas it
 // takes in, the window and the page.
 func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr image.Point) *capture {
+	t0 := time.Now()
 	now := gtx.Now
 	if now.IsZero() {
 		now = time.Now()
@@ -186,7 +182,9 @@ func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr im
 	r.Region = strings.Join(in, ", ")
 	r.Rect = dpRect(rect, scale)
 	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
-	return &capture{rep: r, rect: rect, ptr: ptr, scale: scale, region: true}
+	c := &capture{rep: r, rect: rect, ptr: ptr, scale: scale, region: true}
+	c.tm = capTimes{kind: "region", scale: scale, report: time.Since(t0)}
+	return c
 }
 
 // Limits on the chains a report lists.
@@ -220,6 +218,9 @@ func (t *Tool) fill(r *Report, red *Redactor, p *pick) {
 	propsRead := 0
 	for _, i := range f.Chain(node) {
 		n := &f.Nodes[i]
+		if n.Kind == slackc.InspectLayer {
+			break // a popup's: what's around its layer is the window under it
+		}
 		switch n.Kind {
 		case slackc.InspectComponent:
 			if r.Component == "" {
@@ -340,6 +341,8 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 		return
 	}
 	t.capture = nil
+	c.tm.submit = time.Since(c.tm.pick)
+	c.tm.win, c.tm.frozen = size, t.fz != nil
 	frame := ops.Whole()
 	if fz := t.fz; fz != nil {
 		frame, size = fz.content, fz.at.size
@@ -351,10 +354,22 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	var img *image.RGBA
 	err := errors.New("the element is outside the window")
 	if !crop.Empty() {
+		lastShot = shotTimes{}
+		t0 := time.Now()
 		img, err = Shoot(frame, crop, k)
+		c.tm.shoot = lastShot
+		c.tm.shoot.total = time.Since(t0)
+		c.tm.shot, c.tm.k = ShotSize(crop, k), k
+	}
+	if ownShoot() {
+		// a session takes one shot: its GPU window (the shot's
+		// framebuffer, ~31 MB for a whole-window one, and its caches) goes
+		// now, not after the review
+		shots.wantFor(t, false)
 	}
 	if err != nil {
 		log.Printf("inspect: no screenshot: %v", err)
+		c.tm.noShot = true
 		t.stop()
 		t.deliver(c, nil, err)
 		return
@@ -366,7 +381,8 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	// the middle of the pointer's px
 	c.ptrShot = image.Pt(int((float32(c.ptr.X-crop.Min.X)+.5)*k), int((float32(c.ptr.Y-crop.Min.Y)+.5)*k))
 	c.k = k
-	if !c.region && !c.review {
+	if !c.region && !c.review || c.copyNow {
+		c.tm.atOnce = true
 		t.stop()
 		t.deliver(c, img, nil)
 		return
@@ -375,34 +391,52 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 }
 
 // deliver composes, saves and copies the report off the UI goroutine,
-// then says what it did in a toast.
+// then says what it did in a toast. Deliveries save and copy in the order
+// of their captures: each waits for the one before it (its colours, image
+// and PNG made meanwhile), so a big capture's (0.4-0.7 s) never puts its
+// older image on the clipboard after a newer one's.
 func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 	dir := t.host.ConfigDir()
 	h := t.host
+	prev := t.lastDone
 	done := make(chan struct{})
 	t.lastDone, t.lastRep = done, c.rep
+	if !c.tm.pick.IsZero() {
+		c.tm.enter = time.Since(c.tm.pick) - c.tm.drawn
+	}
 	go func() {
 		defer close(done)
+		t0 := time.Now()
 		if shot != nil {
 			c.rep.Colors = sampleColors(shot, c.elem, c.ptrShot, max(int(c.k), 1))
 		}
+		c.tm.colors = time.Since(t0)
 		lines := c.rep.Lines()
 		text := c.rep.Text()
 		var img *image.RGBA
 		var data []byte
 		if shot != nil {
 			var err error
+			t1 := time.Now()
 			if img, err = Compose(shot, c.elem, c.scale*c.k, lines, c.redact...); err != nil {
 				log.Printf("inspect: composing the report image: %v", err)
 				img = nil
 			} else {
+				c.tm.compose = time.Since(t1)
+				t2 := time.Now()
 				var b bytes.Buffer
 				if err := png.Encode(&b, img); err == nil {
 					data = b.Bytes()
 				}
+				c.tm.encode = time.Since(t2)
 			}
 		}
+		if prev != nil {
+			<-prev // the captures before this one saved and copied first
+		}
+		t3 := time.Now()
 		where, serr := save(dir, c.rep.When, data, text)
+		c.tm.save = time.Since(t3)
 		if serr != nil {
 			log.Printf("inspect: saving the report: %v", serr)
 		} else if where != "" {
@@ -410,27 +444,49 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 		}
 		var cerr error = shotErr
 		if img != nil {
+			t4 := time.Now()
 			cerr = WriteImage(img)
+			c.tm.clipbd = time.Since(t4)
+		}
+		switch {
+		case img != nil && cerr == nil:
+			c.tm.outcome = "copied as an image"
+		case cerr != nil:
+			c.tm.outcome = "copied as text: " + cerr.Error()
+		default:
+			c.tm.outcome = "copied as text"
+		}
+		logTimes(c)
+		asText := img == nil || cerr != nil
+		if asText {
+			// on the window's clipboard before the next delivery copies
+			// (textcopy.go); a window that draws no frame for a while (hidden)
+			// takes it when it does
+			select {
+			case <-t.copyText(text):
+			case <-time.After(3 * time.Second):
+			}
 		}
 		h.Post(func() {
-			switch {
-			case img != nil && cerr == nil:
+			if !asText {
 				h.Toast("Copied the inspect report: paste it as an image")
-			default:
-				h.CopyText(text)
-				why := "no screenshot"
-				if errors.Is(cerr, clipimg.ErrUnsupported) {
-					why = "this system can't copy images"
-				}
-				h.Toast("Copied the inspect report as text (" + why + ")")
+				return
 			}
+			why := "no screenshot"
+			if errors.Is(cerr, clipimg.ErrUnsupported) {
+				why = "this system can't copy images"
+			}
+			h.Toast("Copied the inspect report as text (" + why + ")")
 		})
 	}()
 }
 
 // save writes the report's image and text to dir/inspect-reports (only
-// the owner can read them: the image shows the element). It
-// returns the files' common stem.
+// the owner can read them: the image shows the element). It returns the
+// files' common stem: inspect-YYYYMMDD-HHMMSS, then _2, _3… for the
+// reports of the same second, which sort after it ('_' after '.'), so the
+// names keep the captures' order (the text file is made with O_EXCL: no
+// report's files are another's).
 func save(dir string, when time.Time, img []byte, text string) (string, error) {
 	if dir == "" {
 		return "", nil
@@ -439,14 +495,31 @@ func save(dir string, when time.Time, img []byte, text string) (string, error) {
 	if err := os.MkdirAll(d, 0o700); err != nil {
 		return "", err
 	}
-	stem := filepath.Join(d, "inspect-"+when.Format("20060102-150405"))
+	base := filepath.Join(d, "inspect-"+when.Format("20060102-150405"))
+	stem := base
+	for n := 2; ; n++ {
+		if _, err := os.Lstat(stem + ".png"); err != nil {
+			f, err := os.OpenFile(stem+".txt", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err == nil {
+				_, werr := f.WriteString(text)
+				if cerr := f.Close(); werr == nil {
+					werr = cerr
+				}
+				if werr != nil {
+					return "", werr
+				}
+				break
+			}
+			if !errors.Is(err, fs.ErrExist) {
+				return "", err
+			}
+		}
+		stem = fmt.Sprintf("%s_%d", base, n)
+	}
 	if img != nil {
 		if err := os.WriteFile(stem+".png", img, 0o600); err != nil {
 			return "", err
 		}
-	}
-	if err := os.WriteFile(stem+".txt", []byte(text), 0o600); err != nil {
-		return "", err
 	}
 	return stem, nil
 }

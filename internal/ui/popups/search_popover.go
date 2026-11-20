@@ -1441,6 +1441,9 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 
 // ---- layout ----
 
+// Rect is the card as last laid out (window coords).
+func (p *SearchPopover) Rect() image.Rectangle { return p.rect }
+
 // Layout draws the popover.
 func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
@@ -1618,6 +1621,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	p.rect = image.Rect(x, y, x+w, y+h)
 	rad := dp(gtx, 8)
 	card(gtx, cl, p.rect, rad)
+	slackc.InspectCard(gtx, p.rect) // the inspect tool: the card is the switcher's box
 	p.block.Layout(gtx, p.rect)
 	p.layoutCard(gtx, th, cl, w, h, inputH, padT, footH, listH, rad, acOpen)
 	p.tbRunPending(gtx)

@@ -252,7 +252,9 @@ func (e *perfEnv) frame() {
 	e.now = time.Now()
 	// as App.Run: the inspect tool first, before the ops are reset (a
 	// frozen session draws the frame they hold again, inspect_wire.go)
-	if ops := a.inspectFirst(e.frameContext()); ops != nil {
+	fc := e.frameContext()
+	fc.Ops = &e.ops // a frozen frame draws into the window's ops
+	if ops := a.inspectFirst(fc); ops != nil {
 		e.frozen = ops
 		e.r.Frame(ops)
 		if e.gpu != nil {
