@@ -250,12 +250,24 @@ jobs:
             cp packaging/windows/README.txt build/windows-$arch/Clack/README.txt
             cp LICENSE build/windows-$arch/Clack/LICENSE.txt
             cp THIRD_PARTY_NOTICES.md build/windows-$arch/Clack/THIRD_PARTY_NOTICES.md
-            target=windows/$arch; if [ $cgo = 1 ]; then target=$target/cgo; fi
-            python3 tools/licenses.py --target $target --for "Clack for Windows ($arch)" -o build/windows-$arch/Clack/THIRD_PARTY_LICENSES.txt ./cmd/clack
+            target=windows/$arch; extra=()
+            if [ $cgo = 1 ]; then
+              target=$target/cgo
+              # cgo links the MinGW-w64 runtime (gdtoa, mingw_pformat, the x86
+              # libm, crt2) into Clack.exe, which go list can't see: the build
+              # machine's package records its licences
+              mingw=/usr/share/doc/mingw-w64-x86-64-dev/copyright
+              test -s $mingw
+              extra=(--extra "the MinGW-w64 runtime cgo links into Clack.exe, as the build machine's mingw-w64-x86-64-dev records it=$mingw")
+            fi
+            python3 tools/licenses.py --target $target "${extra[@]}" --for "Clack for Windows ($arch)" -o build/windows-$arch/Clack/THIRD_PARTY_LICENSES.txt ./cmd/clack
             (cd build/windows-$arch && zip -9 -r "../../dist/Clack-${VERSION}-windows-$arch.zip" Clack)
             unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | tee /dev/stderr | grep -q 'Clack/LICENSE.txt'
             unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | grep -q 'Clack/THIRD_PARTY_NOTICES.md'
             unzip -l "dist/Clack-${VERSION}-windows-$arch.zip" | grep -q 'Clack/THIRD_PARTY_LICENSES.txt'
+            if [ $cgo = 1 ]; then
+              unzip -p "dist/Clack-${VERSION}-windows-$arch.zip" Clack/THIRD_PARTY_LICENSES.txt | grep -qF 'the MinGW-w64 runtime cgo links into Clack.exe'
+            fi
           done
       - name: check resources in Clack.exe
         run: |
@@ -336,6 +348,7 @@ jobs:
           foreach ($f in @($exe, "$app\README.txt", "$app\LICENSE.txt", "$app\THIRD_PARTY_NOTICES.md", "$app\THIRD_PARTY_LICENSES.txt", "$app\unins000.exe", "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Clack.lnk")) {
             if (-not (Test-Path $f)) { throw "missing $f" }
           }
+          if (-not (Select-String -Path "$app\THIRD_PARTY_LICENSES.txt" -Pattern 'the MinGW-w64 runtime cgo links into Clack.exe' -SimpleMatch -Quiet)) { throw "the installed THIRD_PARTY_LICENSES.txt has no MinGW-w64 runtime section" }
           if (Test-Path "$env:USERPROFILE\Desktop\Clack.lnk") { throw "desktop shortcut created without the task" }
           $k = 'HKCU:\Software\Classes\slack'
           # slack:// is opt-in (the slackurl task is unchecked): Slack desktop also claims it

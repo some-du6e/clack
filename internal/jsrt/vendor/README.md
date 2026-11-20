@@ -34,6 +34,10 @@ scheduler 0.28.0 sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Y
 da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93  LICENSE.react
 da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93  LICENSE.react-reconciler
 da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93  LICENSE.scheduler
+2711a8b5a5cdfef0e639f96c1aca12ae23d7d64a02d0507f1bdf14d2b27bbc3a  LICENSE.wasi-libc
+23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3  LICENSE.wasi-libc-MIT
+f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af  LICENSE.wasi-libc-musl
+c8b789cf5a746611e6300a0cc7750dbf92b61912a709d04e639245f7290656d0  LICENSE.wasi-libc-cloudlibc
 ```
 
 ## Other third-party code in jsrt
@@ -41,8 +45,16 @@ da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93  LICENSE.schedu
 | what | where | license |
 |---|---|---|
 | QuickJS-NG v0.18.0 (commit `d7215b0ad3fc2c562e8317fd9bca058fd4863804`) | compiled into `../jsrt.wasm` | MIT, `LICENSE.quickjs-ng` |
-| wasi-libc from wasi-sdk 27 (tarball sha256 `b7d4d944…23bc2`) | statically linked into `../jsrt.wasm` | MIT / Apache-2.0 WITH LLVM-exception (musl-derived parts MIT) |
+| wasi-libc from wasi-sdk 27 (tarball sha256 `b7d4d944…23bc2`; wasi-libc commit `3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f`) | statically linked into `../jsrt.wasm`: musl's stdio, string and strerror code and cloudlibc's WASI calls (writev, lseek, clock_gettime) | wasi-libc's own code under MIT, one of its three licences (`LICENSE.wasi-libc`, `LICENSE.wasi-libc-MIT`); musl MIT (`LICENSE.wasi-libc-musl`); cloudlibc BSD-2-Clause (`LICENSE.wasi-libc-cloudlibc`); its malloc, dlmalloc, is CC0 |
 | CLDR data via ICU 78 | the generated block in `../js/intl.js` | Unicode License v3, `LICENSE.unicode` |
+
+The wasi-libc texts are the files at the commit wasi-sdk 27's `src/wasi-libc` submodule pins.
+The `supply-chain` workflow checks that `jsrt.yml`'s wasi-sdk version still pins that commit,
+fetches each file there and diffs it against its copy, from this block (`path=copy`):
+
+```wasi-libc
+3f7eb4c7d6ede4dde3c4bffa6ed14e8d656fe93f LICENSE=LICENSE.wasi-libc LICENSE-MIT=LICENSE.wasi-libc-MIT libc-top-half/musl/COPYRIGHT=LICENSE.wasi-libc-musl libc-bottom-half/cloudlibc/LICENSE=LICENSE.wasi-libc-cloudlibc
+```
 
 `../jsrt.wasm` is reproducible: the `jsrt` workflow's `wasm` job rebuilds it from `../csrc/` with
 the pinned QuickJS-NG commit and the checksummed wasi-sdk tarball, and fails if the result differs

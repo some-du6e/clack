@@ -1,7 +1,15 @@
 name: supply-chain
 # Re-verifies what Clack embeds or builds from third parties:
 # - internal/jsrt/vendor: each file against the sha256 recorded in its README,
-#   and against the npm registry tarball (sha512 = recorded dist.integrity).
+#   against the npm registry tarball (sha512 = recorded dist.integrity), and
+#   the wasi-libc licence texts against wasi-libc at the commit jsrt.yml's
+#   wasi-sdk pins.
+# - third_party/licenses (and emoji-data's licence): each text against its
+#   upstream file at the commit its README pins.
+# - tools/licenses.py for every build Clack ships (the desktop targets and the
+#   browser demo): it fails on a module without a licence file, an embedded
+#   font, model or script nothing covers, and a compiled file's copyright line
+#   or SPDX id no text accounts for. Only go list runs.
 #   Tarballs are only hashed, extracted and diffed; nothing in them is run.
 # - go.sum: `go mod download` checks it against sum.golang.org, `go mod verify`
 #   checks the extracted module cache against it.
@@ -58,6 +66,65 @@ jobs:
               echo "$pkg@$ver ${m%%=*} == ${m#*=}"
             done
           done < /tmp/vendor.npm
+      - name: vendored wasi-libc licences match wasi-libc at wasi-sdk's commit
+        working-directory: internal/jsrt/vendor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          awk '/^```wasi-libc$/{f=1;next} /^```$/{f=0} f' README.md > /tmp/vendor.wasi
+          read -r commit maps < /tmp/vendor.wasi
+          v=$(sed -n 's/^  WASI_SDK_VERSION: "\([0-9]*\)".*/\1/p' ../../../.github/workflows/jsrt.yml)
+          pinned=$(gh api "repos/WebAssembly/wasi-sdk/contents/src/wasi-libc?ref=wasi-sdk-$v" --jq .sha)
+          [ "$pinned" = "$commit" ] || { echo "::error::wasi-sdk-$v pins wasi-libc $pinned; the vendored licence texts are from $commit"; exit 1; }
+          d=$(mktemp -d)
+          for m in $maps; do
+            curl -fsSL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors -o "$d/f" "https://raw.githubusercontent.com/WebAssembly/wasi-libc/$commit/${m%%=*}"
+            cmp "$d/f" "${m#*=}"
+            echo "wasi-libc@${commit:0:12} ${m%%=*} == ${m#*=}"
+          done
+      - name: third_party/licenses match their upstream files
+        working-directory: third_party/licenses
+        run: |
+          set -euo pipefail
+          awk '/^```upstream$/{f=1;next} /^```$/{f=0} f' README.md > /tmp/licenses.upstream
+          test -s /tmp/licenses.upstream
+          d=$(mktemp -d)
+          while read -r repo commit maps; do
+            for m in $maps; do
+              curl -fsSL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors -o "$d/f" "https://raw.githubusercontent.com/$repo/$commit/${m%%=*}"
+              cmp "$d/f" "${m#*=}"
+              echo "$repo@${commit:0:12} ${m%%=*} == ${m#*=}"
+            done
+          done < /tmp/licenses.upstream
+      # every texts directory licenses.py names is in the upstream block or
+      # vendored with its own check (jsrt/vendor), so a new one can't skip it
+      - name: every extra licence text is checked
+        run: |
+          set -euo pipefail
+          for f in $(sed -n "s/.*('file', '\(third_party\/licenses\/[^']*\)').*/\1/p" tools/licenses.py); do
+            grep -qF "=${f#third_party/licenses/}" third_party/licenses/README.md || { echo "::error::$f isn't in third_party/licenses/README.md's upstream block"; exit 1; }
+          done
+
+  licences:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # the same targets release.yml and site.yml write THIRD_PARTY_LICENSES.txt
+      # for, so a dependency missing its licence fails here, not on the tag
+      - name: tools/licenses.py for each build
+        run: |
+          set -euo pipefail
+          for t in linux/amd64/cgo linux/arm64/cgo windows/amd64/cgo windows/arm64 darwin/arm64/cgo darwin/amd64/cgo; do
+            python3 tools/licenses.py --target "$t" -o "/tmp/licences-${t//\//-}.txt" ./cmd/clack
+          done
+          python3 tools/licenses.py --target js/wasm -o /tmp/licences-js-wasm.txt ./cmd/clack-web
 
   go-modules:
     runs-on: ubuntu-latest
