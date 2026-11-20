@@ -1644,6 +1644,23 @@ func (s *Store) Thread(ch, ts string) ([]slack.Message, bool) {
 	return append([]slack.Message(nil), th...), ok
 }
 
+// ThreadTSs is the timestamps of the thread ch/ts that a replies fetch
+// cached (the thread pane's), its root's and its replies', oldest first;
+// nil when nothing cached it.
+func (s *Store) ThreadTSs(ch, ts string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	th := s.threads[ch+"/"+ts]
+	if len(th) == 0 {
+		return nil
+	}
+	out := make([]string, len(th))
+	for i := range th {
+		out[i] = th[i].TS
+	}
+	return out
+}
+
 func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 	SortAsc(msgs)
 	s.mu.Lock()

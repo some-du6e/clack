@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"image"
+	"slices"
 	"time"
 
 	"gioui.org/layout"
@@ -60,26 +61,66 @@ func thrKnown(t *thrItem, c *thrCard) []core.Message {
 	return append(out, thrMerge(c.mid, t.Replies)...)
 }
 
-// thrMinVisible is getDefaultMinimumVisibleTs (iPpN) over the replies a
-// card holds (known, oldest first) and the thread's last read: every reply
-// for a thread of four or fewer (reply_count), and for one whose start the
-// card holds (reachedStart) with at most two read; the two newest when
-// every reply is read; else from the newest read reply; "" (every reply,
-// picked again in the next frame) when none is read.
-func thrMinVisible(replyCount int, known []core.Message, lastRead string, reachedStart bool) string {
+// heldTSs is every reply timestamp held for thread t, oldest first, the
+// root's left out: the card's (thrKnown) and those a replies fetch cached
+// in core (the thread pane's). Slack's view and pane write the thread's
+// one slice in the messages store, so its timestamps
+// (getPotentiallyOutdatedTimestamps) are both, the replies the card hides
+// too.
+func (v *Threads) heldTSs(t *thrItem, c *thrCard) []string {
+	known := thrKnown(t, c)
+	var cached []string
+	if app := v.h.Core(); app != nil {
+		cached = app.S.ThreadTSs(t.Channel, t.Root.TS)
+	}
+	out := make([]string, 0, len(known)+len(cached))
+	seen := make(map[string]bool, len(known)+len(cached))
+	add := func(ts string) {
+		if ts != t.Root.TS && !seen[ts] {
+			seen[ts] = true
+			out = append(out, ts)
+		}
+	}
+	for i := range known {
+		add(known[i].TS)
+	}
+	for _, ts := range cached {
+		add(ts)
+	}
+	if len(cached) > 0 {
+		slices.SortFunc(out, func(a, b string) int {
+			switch {
+			case actTSLess(a, b):
+				return -1
+			case actTSLess(b, a):
+				return 1
+			}
+			return 0
+		})
+	}
+	return out
+}
+
+// thrMinVisible is getDefaultMinimumVisibleTs (iPpN) over the reply
+// timestamps held for a thread (held, oldest first: heldTSs) and its last
+// read: every reply for a thread of four or fewer (reply_count), and for
+// one whose start is held (reachedStart) with at most two read; the two
+// newest when every reply is read; else from the newest read reply; ""
+// (every reply, picked again in the next frame) when none is read.
+func thrMinVisible(replyCount int, held []string, lastRead string, reachedStart bool) string {
 	if replyCount <= 4 {
 		return thrAllReplies
 	}
 	var read []string
-	for i := range known {
-		if !actTSLess(lastRead, known[i].TS) {
-			read = append(read, known[i].TS)
+	for _, ts := range held {
+		if !actTSLess(lastRead, ts) {
+			read = append(read, ts)
 		}
 	}
 	switch {
 	case reachedStart && len(read) <= 2:
 		return thrAllReplies
-	case len(read) == len(known):
+	case len(read) == len(held):
 		if len(read) == 0 {
 			return ""
 		}
@@ -126,12 +167,12 @@ func (v *Threads) minVisOf(t *thrItem) string {
 	return mv
 }
 
-// pickMinVis is getDefaultMinimumVisibleTs over the replies thread t holds
-// now and its last read.
+// pickMinVis is getDefaultMinimumVisibleTs over the replies held for
+// thread t now (heldTSs: the pane's fetch too) and its last read.
 func (v *Threads) pickMinVis(t *thrItem) string {
 	c := v.cards[t.key]
-	known := thrKnown(t, c)
-	return thrMinVisible(t.Root.ReplyCount, known, v.lastRead(t), c != nil && c.olderStart || len(known) >= t.Root.ReplyCount)
+	held := v.heldTSs(t, c)
+	return thrMinVisible(t.Root.ReplyCount, held, v.lastRead(t), c != nil && c.olderStart || len(held) >= t.Root.ReplyCount)
 }
 
 // setMinVis moves thread key's first shown reply (loadOlderReplies) and

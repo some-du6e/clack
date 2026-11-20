@@ -269,7 +269,8 @@ func (v *Threads) unreadsBelowCount(page thrData) int {
 // divider 100px down the list and marked read, its hand mark gone
 // whatever its origin, when the list has a divider keyed with the thread's
 // first timestamp past its last read (divider-<thread>-<n>, n over every
-// timestamp the store holds, hidden replies too); else nothing happens.
+// timestamp held for the thread: the card's hidden replies and the thread
+// pane's fetch too); else nothing happens.
 func (v *Threads) bannerJump(gtx C, up bool) {
 	page, _, _ := v.data.get()
 	page.items = v.shownItems(page.items)
@@ -290,19 +291,17 @@ func (v *Threads) bannerJump(gtx C, up bool) {
 	if t == nil {
 		return
 	}
-	// n: the first timestamp the store holds for the thread past its last
-	// read, not the root's; Slack's timestamps are every reply held, the
-	// hidden ones too
+	// n: the first timestamp held for the thread past its last read, not
+	// the root's. Slack's timestamps are the thread's slice in the one
+	// messages store, every reply the card holds and hides and those the
+	// thread pane fetched (heldTSs)
 	lr, first, held := v.lastRead(t), "", ""
-	for _, m := range thrKnown(t, v.cards[key]) {
-		if m.TS == t.Root.TS {
-			continue
-		}
+	for _, ts := range v.heldTSs(t, v.cards[key]) {
 		if held == "" {
-			held = m.TS
+			held = ts
 		}
-		if actTSLess(lr, m.TS) {
-			first = m.TS
+		if actTSLess(lr, ts) {
+			first = ts
 			break
 		}
 	}

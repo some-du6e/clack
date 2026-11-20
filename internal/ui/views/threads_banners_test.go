@@ -6,6 +6,7 @@ package views
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"net/url"
 	"slices"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // thrBannerThreads are six followed unread threads, newest first: at
@@ -268,59 +270,106 @@ func TestThreadsUnreadBannerCountLikeSlack(t *testing.T) {
 }
 
 // The jump goes to the divider keyed with the thread's first timestamp
-// past its last read, hidden replies counted (Slack's timestamps). A
-// thread read at load to the newest of its ten replies shows its two
-// newest (r9, r10; r8 held but hidden). Marked unread from r5 in the
-// thread pane, its unread row is at r9 and "↓ 1 unread thread" counts it,
-// but no divider is keyed with r8: the click does nothing. No scroll, no
-// mark, and the hand mark stays.
+// past its last read over every reply held for the thread (Slack's
+// timestamps: the thread's slice in the one messages store): the replies
+// the card holds and hides, and those the thread pane fetched. A thread
+// read at load to the newest of its ten replies shows its two newest (r9,
+// r10), its card laid out. Marked unread from r5 in the thread pane, its
+// unread row is at r9 and "↓ 1 unread thread" counts it, but no divider is
+// keyed with the first reply past r4: the click does nothing. No scroll,
+// no mark, and the hand mark stays. Either r8 is held but hidden (a
+// three-reply getView window), or the pane fetched r1 to r10 (a two-reply
+// window, like the views fixture's).
 func TestThreadsBannerJumpHiddenUnreadLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
-	// not the views fixture's own unread thread (1762600000.000100), whose
-	// subscription the store holds
-	const root, r4, r5, r8, r9, r10 = "1762610000.000100", "1762610400.000100", "1762610500.000100", "1762610800.000100", "1762610900.000100", "1762611000.000100"
-	var marks thrMarkLog
-	app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
-		marks.note(method, f)
-		if method != "subscriptions.thread.getView" {
-			return nil, false
-		}
-		var ths []map[string]any
-		for _, th := range thrBannerThreads[:3] {
-			ths = append(ths, thrFixRead(ch, th[0], th[1], "U0FAKE00002", false, th[1]))
-		}
-		ths = append(ths, thrFixReplies(ch, root, 10, r10, thrReplyBy(r8, "U0FAKE00002"), thrReplyBy(r9, "U0FAKE00001"), thrReplyBy(r10, "U0FAKE00002")))
-		return thrOrderAnswer(ths...), true
-	})
-	h := newKBHost(app, false)
-	h.away.Store(true)
-	v := NewThreads(h)
-	e := thrViewEnv(t, v, 4)
-	e.size = image.Pt(1000, 300)
-	e.frame()
-	key := ch + "/" + root
-	// (its card may be gone: a reload clears the cards, and at 300px the
-	// thread is below the fold, so the view's row model, not thrShown over
-	// a nil card, says what it shows)
-	if err := app.MarkThreadUnreadFrom(context.Background(), ch, root, r5, core.MarkedInThread); err != nil {
-		t.Fatal(err)
-	}
-	fs.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ch,
-		"thread_ts": root, "last_read": r4, "active": true}, "event_ts": "1762699500.000100"})
-	e.until(t, "↓ 1 unread thread", func() bool { return slices.Equal(v.ban.below, []string{key}) })
-	row, _ := v.unreadRowKey(thrItemOf(v, key))
-	t.Logf("its unread row: %s (r9 is %s)", row, r9)
-	at, n := v.list.Position, len(marks.all())
-	e.click(thrFind(t, e, &v.ban.down.jump))
-	e.frame()
-	if p := v.list.Position; p.First != at.First || p.Offset != at.Offset {
-		t.Errorf("the click moved the list from %+v to %+v; Slack's list has no divider keyed with %s to go to", at, p, r8)
-	}
-	if got := marks.all()[n:]; len(got) != 0 {
-		t.Errorf("the click marked %v", got)
-	}
-	if o := app.ThreadMarkedUnread(ch, root); o != core.MarkedInThread {
-		t.Errorf("the click took the pane's hand mark (now %q)", o)
+	const root = "1762610000.000100"
+	r := func(n int) string { return fmt.Sprintf("176261%02d00.000100", n) } // r(5) is 1762610500.000100
+	for _, tc := range []struct {
+		name   string
+		window []int // getView's replies
+		pane   bool  // the thread pane fetched the thread
+	}{
+		{"r8 held behind Show more replies", []int{8, 9, 10}, false},
+		{"the thread pane fetched r1 to r10", []int{9, 10}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var win []slack.Message
+			for _, n := range tc.window {
+				win = append(win, thrReplyBy(r(n), "U0FAKE00002"))
+			}
+			fix := thrFixReplies(ch, root, 10, r(10), win...)
+			var marks thrMarkLog
+			app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
+				marks.note(method, f)
+				switch {
+				case method == "conversations.replies" && f.Get("ts") == root:
+					msgs := []slack.Message{fix["root_msg"].(slack.Message)}
+					for n := 1; n <= 10; n++ {
+						m := thrReplyBy(r(n), "U0FAKE00002")
+						m.Channel, m.ThreadTS = ch, root
+						msgs = append(msgs, m)
+					}
+					return map[string]any{"ok": true, "has_more": false, "messages": msgs}, true
+				case method != "subscriptions.thread.getView":
+					return nil, false
+				}
+				var ths []map[string]any
+				for _, th := range thrBannerThreads[:3] {
+					ths = append(ths, thrFixRead(ch, th[0], th[1], "U0FAKE00002", false, th[1]))
+				}
+				return thrOrderAnswer(append(ths, fix)...), true
+			})
+			h := newKBHost(app, false)
+			h.away.Store(true)
+			v := NewThreads(h)
+			e := thrViewEnv(t, v, 4)
+			e.size = image.Pt(1000, 300)
+			e.frame()
+			key := ch + "/" + root
+			// the thread's card laid out (it is fourth, below the fold),
+			// then the list back at its top
+			v.list.Position = layout.Position{First: 3}
+			e.frame()
+			e.frame()
+			v.list.Position = layout.Position{}
+			e.frame()
+			c := v.cards[key]
+			if c == nil {
+				t.Fatal("the thread's card isn't laid out once scrolled to")
+			}
+			if got, want := thrTSs(thrShown(thrItemOf(v, key), c)), []string{r(9), r(10)}; !slices.Equal(got, want) {
+				t.Fatalf("the read thread shows %v, want its two newest %v", got, want)
+			}
+			if tc.pane {
+				if _, err := app.Replies(context.Background(), ch, root); err != nil {
+					t.Fatal(err)
+				}
+				if got := app.S.ThreadTSs(ch, root); len(got) != 11 {
+					t.Fatalf("core holds %d of the thread's messages after the pane's fetch, want the root and its 10 replies", len(got))
+				}
+			}
+			if err := app.MarkThreadUnreadFrom(context.Background(), ch, root, r(5), core.MarkedInThread); err != nil {
+				t.Fatal(err)
+			}
+			fs.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ch,
+				"thread_ts": root, "last_read": r(4), "active": true}, "event_ts": "1762699500.000100"})
+			e.until(t, "↓ 1 unread thread", func() bool { return slices.Equal(v.ban.below, []string{key}) })
+			if row, _ := v.unreadRowKey(thrItemOf(v, key)); row != key+"-"+r(9) {
+				t.Fatalf("its unread row is %s, want the divider at r9 (%s)", row, r(9))
+			}
+			at, n := v.list.Position, len(marks.all())
+			e.click(thrFind(t, e, &v.ban.down.jump))
+			e.frame()
+			if p := v.list.Position; p.First != at.First || p.Offset != at.Offset {
+				t.Errorf("the click moved the list from %+v to %+v; Slack's list has no divider keyed with the first reply past the last read to go to", at, p)
+			}
+			if got := marks.all()[n:]; len(got) != 0 {
+				t.Errorf("the click marked %v", got)
+			}
+			if o := app.ThreadMarkedUnread(ch, root); o != core.MarkedInThread {
+				t.Errorf("the click took the pane's hand mark (now %q)", o)
+			}
+		})
 	}
 }
 
