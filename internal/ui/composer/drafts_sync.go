@@ -68,6 +68,16 @@ type draftOp struct {
 	// or attach the key's slot to this server draft (selectStashedDraft,
 	// stash_draft.go): the saves after it update that one
 	attach *string
+	// or save this content as a composer draft of its own ("Save as
+	// draft", draft_button.go): keep updates the key's server draft
+	// (stashed under it, a conversation's), else a new one is made (a
+	// thread's: the delete queued after it removes the one it held).
+	// The key holds no draft after a keep, nor after a failure (the
+	// delete after it mustn't remove what wasn't stashed); onErr runs
+	// then.
+	stash *draftSyncArgs
+	keep  bool
+	onErr func(error)
 }
 
 func queueDraftOp(key string, op draftOp) {
@@ -113,6 +123,21 @@ func runDraftOp(key string, op draftOp) {
 		cur = v.(string)
 	}
 	ctx := context.Background()
+	if op.stash != nil {
+		args := *op.stash
+		args.ID = ""
+		if op.keep {
+			args.ID = cur
+		}
+		_, err := syncDraft(ctx, op.api, args)
+		if op.keep || err != nil {
+			serverDraftIDs.Delete(key)
+		}
+		if err != nil && op.onErr != nil {
+			op.onErr(err)
+		}
+		return
+	}
 	if op.del != nil {
 		if cur == "" {
 			return
@@ -217,7 +242,7 @@ func syncDraft(ctx context.Context, api coreAPI, args draftSyncArgs) (string, er
 
 func saveDraftNative(ctx context.Context, api coreAPI, a draftSyncArgs) (string, error) {
 	d, err := api.saveDraft(ctx, core.DraftOpts{ID: a.ID, Channel: a.ChannelID, ThreadTS: a.ThreadTs, Broadcast: a.Broadcast,
-		Text: a.Text, Blocks: a.Blocks, FileIDs: a.FileIDs, Attachments: a.Attachments})
+		Text: a.Text, Blocks: a.Blocks, FileIDs: a.FileIDs, Attachments: a.Attachments, DateStashed: a.DateStashed})
 	if err != nil {
 		return "", err
 	}

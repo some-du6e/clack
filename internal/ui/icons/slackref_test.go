@@ -321,6 +321,7 @@ var slackRef = map[string]string{
 	"emoji-flag":             "emoji-flag",
 	"hourglass":              "hourglass",
 	"status-slackbot-filled": "status-slackbot-filled",
+	"cloud-offline-filled":   "cloud-offline-filled", // the composer hint bar's offline notice
 }
 
 // fontRef names, for each glyph of Slack's icon font the set draws (the

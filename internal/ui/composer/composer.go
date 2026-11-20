@@ -135,6 +135,16 @@ type Composer struct {
 	attVer  uint64
 	touched bool
 	srvGen  uint64
+	// the drafts button's count (draftsCount, draft_button.go) and what
+	// it was counted for
+	dmN   int
+	dmKey dmCountKey
+	dmOK  bool
+	// hasMoreThanTwoCharacters at moreVer (the hint bar's, counted once
+	// per change)
+	moreVer uint64
+	more    bool
+	moreOK  bool
 
 	setBroadcastFn func(bool) // bound once: the plugin buttons' broadcast.set
 
@@ -690,6 +700,11 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	if isHeading(st.Block) && c.api.a != nil {
 		st.HeadingFormats = c.api.a.Experiment("rich_text_headers_and_dividers") == "on"
 	}
+	st.Online, st.OnlineUntil = recentlyOnline(c.h)
+	st.MoreThanTwo = c.moreThanTwo()
+	if n := c.draftsCount(); n > 0 {
+		st.Drafts, st.DraftsBusy = n, c.att.uploading()
+	}
 	if d := c.ed.Doc(); d.Len() == 0 && (len(d.Lines) == 0 || d.Lines[0].Kind == Para) {
 		st.InputEmpty = true // checkIfTextyIsEmptyOfTextOrFormats
 	}
@@ -932,6 +947,8 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		case caDivider:
 			c.ed.InsertDivider()
 			c.ed.Focus(gtx)
+		case caDrafts:
+			c.draftsMenu(a.Anchor)
 		}
 		c.h.Invalidate()
 	}
@@ -1185,6 +1202,16 @@ func (c *Composer) deleteEmptiedEdit() {
 		return
 	}
 	popups.ConfirmDelete(c.h, *c.edit)
+}
+
+// moreThanTwo is MessagePaneInput's hasMoreThanTwoCharacters: the
+// message is past 2 characters as getMessageLengthForDelta counts them
+// (slackLength), counted once per document change.
+func (c *Composer) moreThanTwo() bool {
+	if v := c.ed.Version(); !c.moreOK || v != c.moreVer {
+		c.moreVer, c.more, c.moreOK = v, slackLength(c.ed.Doc()) > 2, true
+	}
+	return c.more
 }
 
 // overLimit is how far the message is past the 12,000-character limit

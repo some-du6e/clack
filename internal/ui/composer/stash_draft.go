@@ -38,18 +38,21 @@ func attachGenOf(key string) uint64 {
 
 // AttachedDraftID is the server draft ch's composer slot is attached to
 // ("" none yet: the composer restores the newest when it opens).
-func AttachedDraftID(ch string) string {
-	if v, ok := serverDraftIDs.Load(draftKey(ch, "")); ok {
+func AttachedDraftID(ch string) string { return attachedDraftID(draftKey(ch, "")) }
+
+func attachedDraftID(key string) string {
+	if v, ok := serverDraftIDs.Load(key); ok {
 		return v.(string)
 	}
 	return ""
 }
 
-// SelectStashedDraft puts d in ch's composer slot (live: that channel's
-// composer when one exists). It reports false when d is already there.
-func SelectStashedDraft(h Host, live *Composer, ch string, d core.Draft) bool {
-	key := draftKey(ch, "")
-	if AttachedDraftID(ch) == d.ID {
+// SelectStashedDraft puts d in the composer slot of ch (ts "") or of the
+// thread ts in it (live: that slot's composer when one exists). It
+// reports false when d is already there.
+func SelectStashedDraft(h Host, live *Composer, ch, ts string, d core.Draft) bool {
+	key := draftKey(ch, ts)
+	if attachedDraftID(key) == d.ID {
 		return false
 	}
 	api := coreAPI{h.Core()}
@@ -61,9 +64,9 @@ func SelectStashedDraft(h Host, live *Composer, ch string, d core.Draft) bool {
 		}
 		live.syncDraftNow()
 	default:
-		if doc := loadDraft(ch, ""); doc != nil && doc.Len() > 0 && AttachedDraftID(ch) == "" {
+		if doc := loadDraft(ch, ts); doc != nil && doc.Len() > 0 && attachedDraftID(key) == "" {
 			// never synced: save it as a draft of its own before the swap
-			args := draftSyncArgs{DraftID: ch, ChannelID: ch, Blocks: doc.RichTextBlocks(), Text: doc.Mrkdwn()}
+			args := draftSyncArgs{DraftID: ch, ChannelID: ch, ThreadTs: ts, Blocks: doc.RichTextBlocks(), Text: doc.Mrkdwn()}
 			if ops, ok := doc.Delta()["ops"].([]any); ok {
 				args.Ops = ops
 			}

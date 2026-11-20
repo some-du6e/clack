@@ -1949,9 +1949,9 @@ jobs:
   # cost, the frames a notch gets at 60 Hz, the rows a frame lays out, the
   # install-state lookups, the GPU's whole and partial frame and a CPU
   # profile (TestPrefsLibraryScrollCost), on WARP and llvmpipe. Dispatch
-  # with only=prefs-scroll.
-  prefs-scroll:
-    if: ${{ !inputs.only || startsWith('prefs-scroll', inputs.only) }}
+  # with only=karim-1118-r3 (this job and karim-1118-r3-composer).
+  karim-1118-r3-scroll:
+    if: ${{ !inputs.only || startsWith('karim-1118-r3-scroll', inputs.only) }}
     name: "the plugin library's scroll (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}
     strategy:
@@ -1996,3 +1996,43 @@ jobs:
           path: |
             ${{ runner.temp }}/scroll-shots
             ${{ runner.temp }}/scroll-prof
+
+  # The composer's bottom right (Karim, α.112 on Windows: "this is maybe
+  # missing smth"): Slack's drafts button left of the send button under
+  # draft_management_in_composer, and the hint bar's formatting tip past
+  # two characters, its fade, its click and the offline notice
+  # (TestDraftManagementButton, TestHintBarLikeSlack, COUNT runs), then
+  # their shots (TestDraftsButtonShots, llvmpipe). Dispatch with
+  # only=karim-1118-r3.
+  karim-1118-r3-composer:
+    if: ${{ !inputs.only || startsWith('karim-1118-r3-composer', inputs.only) }}
+    name: "the composer's drafts button and hint bar"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the drafts button and the hint bar, COUNT runs, then their shots
+        env:
+          COMPOSER_AUDIT_SHOTS_DIR: ${{ runner.temp }}/composer-shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 20m -run '^(TestDraftManagementButton|TestHintBarLikeSlack)$' ./internal/ui/composer || rc=1
+          mkdir -p "$COMPOSER_AUDIT_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run '^TestDraftsButtonShots$' ./internal/ui/composer || rc=1
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: composer-drafts-shots
+          path: ${{ runner.temp }}/composer-shots

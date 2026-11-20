@@ -147,6 +147,9 @@ type draftSyncArgs struct {
 	FileIDs   []string        `json:"file_ids,omitempty"`
 	// Attachments are the draft's GIFs (EwsX, status draft)
 	Attachments json.RawMessage `json:"attachments,omitempty"`
+	// DateStashed (ms) saves a composer draft: "Save as draft"
+	// (stashDraft's date_stashed, is_from_composer)
+	DateStashed int64 `json:"dateStashed,omitempty"`
 }
 
 // draftResult is what the draft natives return (the saved draft's id).

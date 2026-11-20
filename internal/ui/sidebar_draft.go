@@ -94,13 +94,7 @@ func draftFiles(d core.Draft) int {
 }
 
 // draftPreview is DraftRichTextPreview's text: the draft truncated at 50.
-func draftPreview(d core.Draft) string {
-	t := strings.Join(strings.Fields(d.Text), " ")
-	if r := []rune(t); len(r) > 50 {
-		return string(r[:50]) + "…"
-	}
-	return t
-}
+func draftPreview(d core.Draft) string { return composer.DraftPreview(d) }
 
 // draftTipText is ChannelSuffixDraftIconTooltipContent for the row's
 // draft (its channel draft: the newest one not in a thread).
@@ -235,5 +229,5 @@ func (a *App) selectStashedDraft(ch string, d core.Draft) {
 			live = cb.Composer
 		}
 	}
-	composer.SelectStashedDraft(a, live, ch, d)
+	composer.SelectStashedDraft(a, live, ch, "", d)
 }
