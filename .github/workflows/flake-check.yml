@@ -266,6 +266,12 @@ on:
       - "internal/ui/activity_edit_latency_test.go"
       - "internal/store/reacts.go"
       - "internal/ui/views/taut.go"
+      # the readiness the latency guards wait on, and where Activity reads it
+      - "internal/taut/ui.go"
+      - "internal/taut/mirror.go"
+      - "internal/store/taut_mirror.go"
+      - "internal/ui/views/adapt.go"
+      - "internal/ui/views/activity_rows.go"
 
 permissions:
   contents: read
@@ -1388,7 +1394,10 @@ jobs:
   # root of its open thread pane, and both at once; natively and under
   # pass-through plugins (the messages slice, the components a message
   # draws through). Frames are drawn when the app asks for one, as a
-  # window does. Dispatch with only=edit-latency.
+  # window does. Its first run adds the known slice gaps held to bounds
+  # that pass today (CLACK_SLICE_TEXT: a rewriting plugin's view of each
+  # edit within 4 frames and 80 ms, a newly shown row's first draw within
+  # 500 ms), so they can't grow unseen. Dispatch with only=edit-latency.
   edit-latency:
     if: ${{ !inputs.only || startsWith('edit-latency', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1407,7 +1416,7 @@ jobs:
           CLACK_LATENCY_TESTS: "1"
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestEditLatency$' ./internal/ui || rc=1
+          CLACK_SLICE_TEXT=1 xvfb-run -a go test -count=1 -v -timeout 25m -run '^(TestEditLatency|TestSliceFirstDraw)$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 50m -run '^TestEditLatency$' ./internal/ui || rc=1
           exit $rc
 
@@ -1633,8 +1642,10 @@ jobs:
           CLACK_LATENCY_TESTS: "1"
         run: |
           rc=0
-          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSliceFirstDraw$' ./internal/ui || rc=1
-          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestEditLatency$/^slice-text$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSliceFirstDraw$' ./internal/ui 2>&1 | tee "$RUNNER_TEMP/first-draw.log" || rc=1
+          grep -q "first draw, the thread pane opened:" "$RUNNER_TEMP/first-draw.log" || { echo "the first-draw test measured nothing"; rc=1; }
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestEditLatency$/^slice-text$' ./internal/ui 2>&1 | tee "$RUNNER_TEMP/slice-text.log" || rc=1
+          grep -q "slice-text, channel:" "$RUNNER_TEMP/slice-text.log" || { echo "the slice-text mode ran nothing"; rc=1; }
           exit $rc
 
   # views-rewrites: a view a plugin rewrites outside the text (Censorship's

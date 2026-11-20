@@ -119,6 +119,15 @@ type latDraw struct {
 // natively, under 35 ms under a component patch).
 const latWall = 250 * time.Millisecond
 
+// sliceTextFrames and sliceTextWall bound an edit's rewritten view under a
+// plugin rewriting the message, a JS round trip after the socket (3 frames,
+// ~35 ms today: the known gap slice-gaps holds to latWall's bound): a wider
+// gap fails on pushes.
+const (
+	sliceTextFrames = 4
+	sliceTextWall   = 80 * time.Millisecond
+)
+
 // latStats logs a phase's changes and fails those drawn more than two
 // frames, or latWall, after the server sent them (the socket's and the
 // hub's goroutine hops can miss the frame in progress), or never; it
@@ -126,6 +135,13 @@ const latWall = 250 * time.Millisecond
 // announcement: core holding an event back (a lookup on the event pump)
 // is lateness too.
 func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
+	t.Helper()
+	return latStatsBound(t, mode, name, ds, 2, latWall)
+}
+
+// latStatsBound is latStats with its own bound: changes drawn more than
+// maxFrames frames or maxWall after the socket count as late.
+func latStatsBound(t *testing.T, mode, name string, ds []latDraw, maxFrames int64, maxWall time.Duration) time.Duration {
 	t.Helper()
 	var lat []time.Duration
 	late, missed := 0, 0
@@ -138,7 +154,7 @@ func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
 			all = append(all, "missed")
 		default:
 			lat = append(lat, d.drawn.Sub(d.pushed))
-			if d.frames > 2 || d.drawn.Sub(d.pushed) > latWall {
+			if d.frames > maxFrames || d.drawn.Sub(d.pushed) > maxWall {
 				late++
 			}
 			s := fmt.Sprintf("%dms/%df", d.drawn.Sub(d.pushed).Milliseconds(), d.frames)
@@ -158,7 +174,7 @@ func latStats(t *testing.T, mode, name string, ds []latDraw) time.Duration {
 	t.Logf("%s, %s: %d changes, drawn %d (late %d, never %d), socket to frame median %v p90 %v max %v; each: %s",
 		mode, name, len(ds), len(lat), late, missed, q(0.5).Round(time.Millisecond), q(0.9).Round(time.Millisecond), q(1).Round(time.Millisecond), strings.Join(all, " "))
 	if missed > 0 || late > 0 {
-		t.Errorf("%s, %s: %d of %d changes drawn more than two frames or %v after the socket brought them, %d never: Slack draws each in the render after it", mode, name, late, len(ds), latWall, missed)
+		t.Errorf("%s, %s: %d of %d changes drawn more than %d frames or %v after the socket brought them, %d never: Slack draws each in the render after it", mode, name, late, len(ds), maxFrames, maxWall, missed)
 	}
 	return q(0.5)
 }
@@ -172,7 +188,7 @@ func TestEditLatency(t *testing.T) {
 	// rows now draw the message as it is and a view that turns ready asks
 	// for its own frame (plugin-render-3, 9fae788f)
 	modes := []string{"native", "slice", "components"}
-	if os.Getenv("CLACK_SLICE_GAPS") != "" {
+	if os.Getenv("CLACK_SLICE_GAPS") != "" || os.Getenv("CLACK_SLICE_TEXT") != "" {
 		// slice-text, a known gap run on request (flake-check
 		// only=slice-gaps): under a plugin rewriting the message (each
 		// plan title and the text marked), every edit's marked title within
@@ -180,7 +196,10 @@ func TestEditLatency(t *testing.T) {
 		// answers for an edit, so a masking plugin never flashes what it
 		// masks (applyView), and the view of each edit draws a JS round trip
 		// after the socket: 3 frames, ~35 ms (run 44597666006), where Slack
-		// renders the patched slice in the render after the edit
+		// renders the patched slice in the render after the edit. Pushes
+		// run it once (CLACK_SLICE_TEXT, flake-check's edit-latency job)
+		// held to sliceTextFrames and sliceTextWall, so the gap can't grow
+		// unseen; CLACK_SLICE_GAPS holds it to the others' bound
 		modes = append(modes, "slice-text")
 	}
 	for _, mode := range modes {
@@ -407,6 +426,10 @@ func editLatency(t *testing.T, mode string) {
 			}
 			return title(n), title(n)
 		}, func(ls, _ []string, i int) bool { return newestTitle(ls, first+i) })
+		if mode == "slice-text" && os.Getenv("CLACK_SLICE_GAPS") == "" {
+			latStatsBound(t, mode, name, ds, sliceTextFrames, sliceTextWall)
+			return
+		}
 		latStats(t, mode, name, ds)
 	}
 	// the window watched, not used: no caret blinking in a focused
