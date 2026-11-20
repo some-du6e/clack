@@ -112,13 +112,10 @@ func socketGapList(t *testing.T, jump bool) {
 				break
 			}
 		}
-		for _, ts := range all[from:] {
-			if !have[ts] {
-				miss = append(miss, ts)
-			}
-		}
-		for _, ts := range must {
-			if !have[ts] {
+		seen := map[string]bool{}
+		for _, ts := range append(append([]string(nil), all[from:]...), must...) {
+			if !have[ts] && !seen[ts] {
+				seen[ts] = true
 				miss = append(miss, ts)
 			}
 		}
