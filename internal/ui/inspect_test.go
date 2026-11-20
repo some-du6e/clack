@@ -286,7 +286,9 @@ func (e *inspectEnv) reviewAndCopy(t *testing.T) {
 	if !e.a.insp.Reviewing() {
 		t.Fatal("no review after the capture")
 	}
-	e.frame()
+	// a region's review (or a pick of no component) takes Enter once it
+	// has been on screen a while
+	e.settle(450 * time.Millisecond)
 	e.key(key.NameReturn, 0)
 	e.frame()
 	e.a.insp.Wait()

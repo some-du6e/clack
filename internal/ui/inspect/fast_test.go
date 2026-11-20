@@ -169,16 +169,21 @@ func (e *dragEnv) hintNow() string {
 	return "no review"
 }
 
-// TestEnterRightAfterPick: Enter in the pick's own frame, and Enter in the
-// frame after it, copy the image the review's Enter copies (the shot, its
-// margin blurred, composed over the report the tool delivered), pixel for
-// pixel, and end the session.
+// TestEnterRightAfterPick: Enter in an element pick's own frame, and
+// Enter in the frame after it, copy the image the review's Enter copies
+// (the shot, its margin blurred, composed over the report the tool
+// delivered), pixel for pixel, and end the session. A pick of no component
+// and no element (the shell's area under the pointer: a whole column, and
+// a whole-window layer: no margin to blur) is reviewed like a region
+// instead (review of a614d3b3): Enter there copies nothing, and the review
+// comes up.
 func TestEnterRightAfterPick(t *testing.T) {
 	e := newDragEnv(t)
-	p := f32.Pt(400, 300)
+	e.content = drawPill
+	p := f32.Pt(400, 300) // on the pill
 	for _, when := range []string{"in the pick's frame", "in the frame after it"} {
 		e.copied = nil
-		e.startAt(p, "primary")
+		e.startAt(p, "Pill")
 		n := len(e.shots)
 		e.shiftClick(p, false, false)
 		if when == "in the pick's frame" {
@@ -216,7 +221,7 @@ func TestEnterRightAfterPick(t *testing.T) {
 		}
 		crop, k := e.shots[n], e.ks[n]
 		shot := noiseShot(ShotSize(crop, k), 1)
-		elem := inShot(image.Rect(200, 0, 900, 600), crop, k) // the primary area picked
+		elem := inShot(image.Rect(380, 290, 420, 310), crop, k) // the pill picked
 		want, err := Compose(shot, elem, k, e.tool.lastRep.Lines())
 		if err != nil {
 			t.Fatal(err)
@@ -233,6 +238,31 @@ func TestEnterRightAfterPick(t *testing.T) {
 				}
 			}
 			t.Errorf("Enter %s: %d of %d bytes of the copy differ from the image the review copies", when, diff, len(img.Pix))
+		}
+	}
+
+	// the primary area, no component: reviewed like a region
+	area := f32.Pt(700, 300)
+	for _, when := range []string{"in the pick's frame", "in the frame after it"} {
+		e.copied = nil
+		e.startAt(area, "primary")
+		e.shiftClick(area, false, false)
+		if when == "in the pick's frame" {
+			e.key(key.NameReturn, 0)
+		}
+		e.frame()
+		if when == "in the frame after it" {
+			e.key(key.NameReturn, 0)
+			e.frame()
+		}
+		e.tool.Wait()
+		e.frame()
+		if e.copied != nil || !e.tool.Reviewing() {
+			t.Errorf("Enter %s on an area with no component: copied %v, reviewing %v; want its review, nothing copied", when, e.copied != nil, e.tool.Reviewing())
+		}
+		if e.tool.Active() {
+			e.key(key.NameEscape, 0)
+			e.frame()
 		}
 	}
 }
@@ -313,14 +343,15 @@ func TestEscDuringPreparation(t *testing.T) {
 }
 
 // TestRegionEnterOpensReview: Enter or Mod+C before a dragged region's
-// review has been drawn doesn't copy the region (reviews of a8fa243c and
-// 3a75558d): the review is the only place a region can be blurred. In the
-// release's own frame, and in the frame after it (the review started, not
-// drawn yet: where a quick Enter lands, and on a software GPU for the
-// seconds the shot takes), the key is dropped and the review comes up with
-// nothing copied; once the review has drawn its shot, Enter copies. An
-// element's pick still copies at once (TestEnterRightAfterPick: its
-// margin is blurred anyway).
+// review has been on screen a while doesn't copy the region (reviews of
+// a8fa243c, 3a75558d and a614d3b3): the review is the only place a region
+// can be blurred. In the release's own frame, in the frame after it (the
+// review started, not drawn yet: where a quick Enter lands, and on a
+// software GPU for the seconds the shot takes) and two frames after (its
+// first frame drawn, maybe still on its way to the screen), the key is
+// dropped and the review stays with nothing copied; once it has been on
+// screen armDelay, Enter copies. An element's pick still copies at once
+// (TestEnterRightAfterPick: its margin is blurred anyway).
 func TestRegionEnterOpensReview(t *testing.T) {
 	e := newDragEnv(t)
 	for _, k := range []struct {
@@ -348,27 +379,109 @@ func TestRegionEnterOpensReview(t *testing.T) {
 			e.frame()
 			e.tool.Wait()
 			e.frame()
-			if when == "two frames after it" {
-				if e.copied == nil || e.tool.Active() {
-					t.Errorf("%v%v %s, the review drawn: copied %v, session %v; want the copy", k.mods, k.name, when, e.copied != nil, e.tool.Active())
-				}
-				if e.tool.Active() {
-					e.key(key.NameEscape, 0)
-					e.frame()
-				}
-				continue
-			}
 			if e.copied != nil || !e.tool.Reviewing() {
 				t.Fatalf("%v%v %s: copied %v, reviewing %v; want its review, nothing copied", k.mods, k.name, when, e.copied != nil, e.tool.Reviewing())
 			}
+			e.wait(armDelayTest)
 			e.key(key.NameReturn, 0)
 			e.frame()
 			e.tool.Wait()
 			e.frame()
 			if e.copied == nil || e.tool.Active() {
-				t.Errorf("Enter in the region's review (%v%v %s): copied %v, session %v", k.mods, k.name, when, e.copied != nil, e.tool.Active())
+				t.Errorf("Enter in the region's review, on screen a while (%v%v %s): copied %v, session %v", k.mods, k.name, when, e.copied != nil, e.tool.Active())
 			}
 		}
+	}
+}
+
+// regionReview drags a region and runs frames until its review has been
+// drawn and a frame has been read after that one (the review on screen).
+func (e *dragEnv) regionReview(t *testing.T) {
+	t.Helper()
+	e.tool.Toggle()
+	e.frame()
+	from, to := f32.Pt(150, 120), f32.Pt(450, 320)
+	e.press(from)
+	e.frame()
+	e.dragTo(to)
+	e.frame()
+	e.releaseAt(to)
+	e.frame() // the release's: shot, its review started
+	e.frame() // the review drawn
+	e.frame() // the first frame read after it went to the screen
+	if !e.tool.Reviewing() || !e.tool.ShotDrawn() {
+		t.Fatalf("no region review drawn: reviewing %v, drawn %v", e.tool.Reviewing(), e.tool.ShotDrawn())
+	}
+}
+
+// TestRegionCopyArms: a region's review takes its copy keys only once it
+// has been on screen armDelay (review of a614d3b3: Enter was armed as soon
+// as a frame had recorded the review, though that frame was still on its
+// way to the screen, for a long while on a software GPU): Enter 200 ms
+// after its first frame went out copies nothing, Enter after armDelay
+// copies.
+func TestRegionCopyArms(t *testing.T) {
+	e := newDragEnv(t)
+	e.regionReview(t)
+	e.skew += 200 * time.Millisecond
+	e.key(key.NameReturn, 0)
+	e.frame()
+	e.tool.Wait()
+	e.frame()
+	if e.copied != nil || !e.tool.Reviewing() {
+		t.Fatalf("Enter 200 ms after the region's review showed: copied %v, reviewing %v; want it dropped, the review up", e.copied != nil, e.tool.Reviewing())
+	}
+	e.wait(armDelayTest - 200*time.Millisecond)
+	e.key(key.NameReturn, 0)
+	e.frame()
+	e.tool.Wait()
+	e.frame()
+	if e.copied == nil || e.tool.Active() {
+		t.Errorf("Enter after the review had been on screen %v: copied %v, session %v", armDelayTest, e.copied != nil, e.tool.Active())
+	}
+}
+
+// TestHeldCopyKeyRepeats: a copy key that went down before the region's
+// review armed and is held (its auto-repeats: presses with no release
+// between them, as Windows and macOS send them) copies nothing however
+// long it is held (review of a614d3b3: the first repeat after the review
+// drew copied the region); once it has come up, a press copies.
+func TestHeldCopyKeyRepeats(t *testing.T) {
+	e := newDragEnv(t)
+	e.tool.Toggle()
+	e.frame()
+	from, to := f32.Pt(150, 120), f32.Pt(450, 320)
+	e.press(from)
+	e.frame()
+	e.dragTo(to)
+	e.frame()
+	e.releaseAt(to)
+	e.pressKey(key.NameReturn, 0) // down with the release, and held
+	e.frame()
+	e.frame()
+	e.frame()
+	e.wait(armDelayTest)
+	e.pressKey(key.NameReturn, 0) // auto-repeats
+	e.frame()
+	e.wait(100 * time.Millisecond)
+	e.pressKey(key.NameReturn, 0)
+	e.frame()
+	e.wait(1800 * time.Millisecond) // macOS's slowest repeat
+	e.pressKey(key.NameReturn, 0)
+	e.frame()
+	e.tool.Wait()
+	e.frame()
+	if e.copied != nil || !e.tool.Reviewing() {
+		t.Fatalf("a held Enter's auto-repeats: copied %v, reviewing %v; want nothing copied, the review up", e.copied != nil, e.tool.Reviewing())
+	}
+	e.releaseKey(key.NameReturn, 0)
+	e.frame()
+	e.key(key.NameReturn, 0)
+	e.frame()
+	e.tool.Wait()
+	e.frame()
+	if e.copied == nil || e.tool.Active() {
+		t.Errorf("Enter after the held one came up: copied %v, session %v", e.copied != nil, e.tool.Active())
 	}
 }
 
@@ -392,6 +505,7 @@ func TestEnterMidMarkKeepsIt(t *testing.T) {
 		t.Fatalf("after the region: reviewing %v, %d shots", e.tool.Reviewing(), len(e.shots))
 	}
 	e.untilReady()
+	e.wait(armDelayTest) // a region's copy keys arm once its review has been on screen a while
 	v := e.tool.ReviewView()
 	a, b := v.Min.Add(v.Size().Div(3)), v.Min.Add(v.Size().Mul(2).Div(3))
 	pa, pb := f32.Pt(float32(a.X), float32(a.Y)), f32.Pt(float32(b.X), float32(b.Y))

@@ -314,5 +314,20 @@ func TestOverlayKindsBoxTheirLayer(t *testing.T) {
 			t.Errorf("unboxedOverlays lists %s, which is no unboxed overlay kind now: drop it", k)
 		}
 	}
+	// what the list exempts says so at run time (InspectNoCard), so a
+	// session over it logs no missing box, and nothing else does
+	for r := range types {
+		k := r.String()
+		if !isKind[k] {
+			continue
+		}
+		_, listed := unboxedOverlays[k]
+		switch says := mset(r, map[okRef]bool{})["InspectNoCard"]; {
+		case says && !listed:
+			t.Errorf("overlay kind %s says it has no card (InspectNoCard), which unboxedOverlays doesn't list: list it with why, or box it", k)
+		case listed && !says:
+			t.Errorf("unboxedOverlays lists %s, which doesn't say so (InspectNoCard): a session over it logs a missing box", k)
+		}
+	}
 	t.Logf("%d overlay kinds, %d with no card box listed", len(kinds), len(still))
 }

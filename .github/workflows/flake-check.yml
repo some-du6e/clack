@@ -1924,8 +1924,11 @@ jobs:
   # shot, never waited for); deliveries in order; the picker inside popups
   # (a Block Kit modal and its select, a menu, the emoji picker, a profile
   # card's parts, a rail peek's rows, the Ctrl+K switcher, a frozen
-  # tooltip, plugin layers); Gio's rollback op keys and SetSize. Dispatch
-  # with only=inspect-blur-fast.
+  # tooltip, plugin layers); Gio's rollback op keys and SetSize; round 4: a
+  # region's (and a pick of nothing's) copy keys armed 300 ms after its
+  # review shows, a held Enter's repeats dropped, a toast and channel
+  # details' stacked dialogs picked as themselves. Dispatch with
+  # only=inspect-blur-fast.
   inspect-blur-fast:
     if: ${{ !inputs.only || startsWith('inspect-blur-fast', inputs.only) }}
     name: "inspect-blur-fast (${{ matrix.os }})"
@@ -1955,8 +1958,9 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
           rc=0
-          go test -count=$COUNT -v -timeout 20m -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestDeliveriesInOrder|TestDeliveriesInOrderWithText|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
+          go test -count=$COUNT -v -timeout 20m -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestRegionCopyArms|TestHeldCopyKeyRepeats|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestDeliveriesInOrder|TestDeliveriesInOrderWithText|TestNoShotLogsAtOnce|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
           go test -count=$COUNT -v -timeout 10m -run '^(TestInspectCardAfterContent|TestInspectCardMarkHoldsContent|TestInspectPluginOverlayLayer|TestInspectTreeTooltipEitherTheme)$' ./internal/ui/slackc || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 10m -run '^(TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless || rc=1
-          "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups)$' ./internal/ui || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 10m -run '^(TestDetailsDialogInspectCard)$' ./internal/ui/views || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast)$' ./internal/ui || rc=1
           exit $rc

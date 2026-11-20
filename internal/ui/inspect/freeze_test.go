@@ -171,6 +171,7 @@ func TestFreezeCapturesTheFrozenFrame(t *testing.T) {
 		t.Fatalf("after a plain click: reviewing %v, frozen %v, the frozen frame shot %v", e.tool.Reviewing(), e.tool.Frozen(), len(shotFrom) == 2 && shotFrom[1] == frozen)
 	}
 	e.untilReady()
+	e.wait(armDelayTest) // a pick with no component arms its copy keys once it has been on screen a while
 	e.key(key.NameReturn, 0)
 	e.frame()
 	e.tool.Wait()

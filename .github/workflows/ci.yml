@@ -546,7 +546,9 @@ jobs:
       # copied in order; the picker inside popups (a Block Kit modal and its
       # select's dropdown, a menu, the emoji picker, a profile card's parts,
       # a rail peek's rows, the Ctrl+K switcher, a frozen tooltip, plugin
-      # overlay roots and tree tooltips)
+      # overlay roots and tree tooltips, a toast); a region's copy keys armed
+      # once its review has been on screen 300 ms, a held Enter's repeats
+      # dropped
       - name: the inspect tool's pick to review, and the picker in popups (WARP, fakeslack)
         if: ${{ !cancelled() }}
         shell: bash # every go test counts (pwsh steps fail only on the last command)
@@ -555,8 +557,8 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
         run: |
           rc=0
-          go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups)$' ./internal/ui || rc=1
-          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestDeliveriesInOrder|TestDeliveriesInOrderWithText|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast)$' ./internal/ui || rc=1
+          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestRegionCopyArms|TestHeldCopyKeyRepeats|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestDeliveriesInOrder|TestDeliveriesInOrderWithText|TestNoShotLogsAtOnce|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
           go test -count=1 -v -run '^(TestInspectCardAfterContent|TestInspectCardMarkHoldsContent|TestInspectPluginOverlayLayer|TestInspectTreeTooltipEitherTheme)$' ./internal/ui/slackc || rc=1
           exit $rc
       - name: thread reply box gap (layout, fakeslack)

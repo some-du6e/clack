@@ -95,6 +95,7 @@ func TestInspectReviewTiming(t *testing.T) {
 					t.Errorf("%s at %gx: the review's shot isn't drawn within 2 frames of the pick (drawn %v after it)", name, sc, time.Since(t0).Round(time.Millisecond))
 				}
 				wall := time.Since(t0)
+				e.settle(450 * time.Millisecond) // a region's review takes Enter once on screen a while
 				e.key(key.NameReturn, 0)
 				e.frameShot()
 				e.a.insp.Wait()

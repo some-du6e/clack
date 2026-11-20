@@ -25,6 +25,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -42,7 +43,6 @@ func (h *dragHost) Describer() func(*Report, *Redactor) {
 	return func(r *Report, red *Redactor) { r.Page = red.Route("c/C0123456789") }
 }
 func (h *dragHost) ConvKind(string) string { return "" }
-func (h *dragHost) CopyText(string)        {}
 func (h *dragHost) Invalidate()            {}
 func (h *dragHost) ConfigDir() string      { return "" }
 func (h *dragHost) Toast(s string)         { h.toasts = append(h.toasts, s) }
@@ -100,6 +100,9 @@ type dragEnv struct {
 	scale float32
 	// onClip hears each text the window's clipboard took in a frame
 	onClip func(text string)
+	// skew puts the frames' clock ahead of time.Now (wait): the review
+	// arms a region's copy keys by frame time
+	skew time.Duration
 }
 
 func newDragEnv(t *testing.T) *dragEnv { return newDragEnvAt(t, image.Pt(900, 600), 1) }
@@ -131,7 +134,7 @@ func (e *dragEnv) frame() {
 	if sc <= 0 {
 		sc = 1
 	}
-	gtx := layout.Context{Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source(), Ops: &e.ops}
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc}, Constraints: layout.Exact(e.size), Now: time.Now().Add(e.skew), Source: e.r.Source(), Ops: &e.ops}
 	ops := e.tool.Frame(gtx)
 	if e.host.reset {
 		e.host.reset = false
@@ -208,6 +211,33 @@ func (e *dragEnv) startAt(p f32.Point, want string) {
 
 func (e *dragEnv) key(name key.Name, mods key.Modifiers) {
 	e.r.Queue(key.Event{Name: name, Modifiers: mods, State: key.Press}, key.Event{Name: name, Modifiers: mods, State: key.Release})
+}
+
+// pressKey is a key going down, or one of a held key's auto-repeats
+// (Windows' and macOS' come as presses with no release between them);
+// releaseKey is it coming up.
+func (e *dragEnv) pressKey(name key.Name, mods key.Modifiers) {
+	e.r.Queue(key.Event{Name: name, Modifiers: mods, State: key.Press})
+}
+func (e *dragEnv) releaseKey(name key.Name, mods key.Modifiers) {
+	e.r.Queue(key.Event{Name: name, Modifiers: mods, State: key.Release})
+}
+
+// armDelayTest is more than a region's review waits on screen before its
+// copy keys work (review.go armDelay).
+const armDelayTest = 400 * time.Millisecond
+
+// wait is d passing with no input: the frames' clock d ahead, a frame.
+func (e *dragEnv) wait(d time.Duration) {
+	e.skew += d
+	e.frame()
+}
+
+// drawPill is a 40x20 px component at (380,290) for the content to draw (a
+// pick there is an element's, its margin blurred)
+func drawPill(gtx layout.Context) {
+	defer op.Offset(image.Pt(380, 290)).Push(gtx.Ops).Pop()
+	slackc.InspectAs("Pill").End(gtx, image.Pt(40, 20))
 }
 
 // untilReady runs frames until the review shows its shot.
@@ -300,6 +330,7 @@ func TestDragGrabsRegion(t *testing.T) {
 	}
 	e.untilReady()
 	m := marks[0]
+	e.wait(armDelayTest) // a region's copy keys arm once its review has been on screen a while
 	e.key(key.NameReturn, 0)
 	e.frame()
 	e.tool.Wait()
@@ -533,6 +564,7 @@ func TestShiftClickSameAsReviewed(t *testing.T) {
 		t.Fatal("no review after the plain click")
 	}
 	e.untilReady()
+	e.wait(armDelayTest) // a region's copy keys arm once its review has been on screen a while
 	e.key("C", key.ModShortcut)
 	e.frame()
 	e.tool.Wait()

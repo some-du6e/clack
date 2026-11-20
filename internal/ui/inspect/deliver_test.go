@@ -11,6 +11,7 @@ import (
 	"errors"
 	"image"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -87,42 +88,71 @@ func TestDeliveriesInOrder(t *testing.T) {
 	}
 }
 
-// TestDeliveriesInOrderWithText: a capture that falls back to text (its
-// shot failed) and one copied as an image right after it reach the
-// clipboard in the order they were taken (review of 3a75558d: the text
-// went through the host's CopyText, which took it a frame or two later,
-// so the newer image could land first and the older text last). The text
-// goes to the window's clipboard first thing in a frame, and the image
-// waits until a frame has passed since.
+// TestDeliveriesInOrderWithText: a capture whose image the clipboard
+// refused (it falls back to text) and a newer one copied as an image reach
+// the clipboard in the order they were taken (review of a614d3b3: the
+// test before this saw the text first through timing alone). The older
+// capture is held at the clipboard while the newer one, small, composes
+// and waits for it; the clipboard then refuses the older image ("clipboard
+// busy"), so its text goes to the window's clipboard, which takes it only
+// in a frame. With no frame drawn (1.5 s: the text's handoff waits 3 s at
+// most) the newer image waits; once frames come, the text lands, then the
+// image.
 func TestDeliveriesInOrderWithText(t *testing.T) {
 	e := newDragEnv(t)
+	e.content = drawPill
 	var mu sync.Mutex
 	var got []string
+	calls := 0
 	note := func(s string) {
 		mu.Lock()
 		got = append(got, s)
 		mu.Unlock()
 	}
-	e.onClip = func(string) { note("text") }
-	fail := true
-	Shoot = func(_ op.CallOp, region image.Rectangle, k float32) (*image.RGBA, error) {
-		if fail {
-			fail = false
-			return nil, errors.New("no headless GPU")
-		}
-		return noiseShot(ShotSize(region, k), 1), nil
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return calls
 	}
+	hold := make(chan error)
+	e.onClip = func(string) { note("text") }
 	WriteImage = func(image.Image) error {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			return <-hold // held, then refused
+		}
 		note("image")
 		return nil
 	}
-	p := f32.Pt(400, 300)
-	e.startAt(p, "primary")
-	e.shiftClick(p, true, true) // copied at once; no shot: as text
+	// the older: the primary area, copied at once (Shift)
+	big := f32.Pt(700, 300)
+	e.startAt(big, "primary")
+	e.shiftClick(big, true, true)
 	e.frame()
-	e.startAt(p, "primary")
-	e.shiftClick(p, true, true) // copied at once, as an image
+	for dl := time.Now().Add(10 * time.Second); count() < 1; time.Sleep(time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("the older capture never reached the clipboard")
+		}
+	}
+	// the newer: the pill, copied at once, while the older is held
+	small := f32.Pt(400, 300)
+	e.startAt(small, "Pill")
+	e.shiftClick(small, true, true)
 	e.frame()
+	time.Sleep(300 * time.Millisecond) // the pill's shot (88x68 px at 4x) composes in milliseconds: it waits for the older
+	hold <- errors.New("clipboard busy")
+	early := 0 // no frame: the older's text can't reach the clipboard, so nor may the newer image
+	for dl := time.Now().Add(1500 * time.Millisecond); early == 0 && time.Now().Before(dl); time.Sleep(5 * time.Millisecond) {
+		if c := count(); c != 1 {
+			early = c
+		}
+	}
+	if early != 0 {
+		t.Errorf("the newer capture's image reached the clipboard (%d writes) before a frame took the older one's text", early)
+	}
 	for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); {
 		mu.Lock()
 		n := len(got)
@@ -138,6 +168,37 @@ func TestDeliveriesInOrderWithText(t *testing.T) {
 	defer mu.Unlock()
 	if len(got) != 2 || got[0] != "text" || got[1] != "image" {
 		t.Errorf("the clipboard took %q, want the older capture's text, then the newer one's image", got)
+	}
+}
+
+// TestNoShotLogsAtOnce: a pick whose shot failed goes out as text at
+// once, and its stage-time line says so (review of a614d3b3: it logged an
+// Enter nobody pressed, "before the review showed").
+func TestNoShotLogsAtOnce(t *testing.T) {
+	e := newDragEnv(t)
+	e.content = drawPill
+	Shoot = func(op.CallOp, image.Rectangle, float32) (*image.RGBA, error) {
+		return nil, errors.New("no headless GPU")
+	}
+	var mu sync.Mutex
+	texts := 0
+	e.onClip = func(string) { mu.Lock(); texts++; mu.Unlock() }
+	got := func() int { mu.Lock(); defer mu.Unlock(); return texts }
+	p := f32.Pt(400, 300)
+	e.startAt(p, "Pill")
+	e.press(p)
+	e.frame()
+	e.releaseAt(p)
+	for dl := time.Now().Add(10 * time.Second); got() == 0; time.Sleep(2 * time.Millisecond) {
+		if time.Now().After(dl) {
+			t.Fatal("the pick with no shot never reached the clipboard as text")
+		}
+		e.frame()
+	}
+	e.frame()
+	e.tool.Wait()
+	if line := LastTimes(); !strings.Contains(line, "; no shot: copied as text at once:") || strings.Contains(line, "Enter") {
+		t.Errorf("a pick with no shot logged %q, want it copied as text at once, with no Enter", line)
 	}
 }
 
