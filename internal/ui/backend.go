@@ -546,11 +546,8 @@ func defaultSectionName(t string) string {
 	return "Section"
 }
 
-func (b *backend) mpimName(c *core.Conv, self string) string {
-	return b.mpimNameBy(c, self, b.core.User)
-}
-
-// mpimNameBy is mpimName reading the members with user.
+// mpimNameBy is a group DM's name for the sidebar: its custom name, else
+// its members' names but self's, read with user, else its mpdm slug.
 func (b *backend) mpimNameBy(c *core.Conv, self string, user func(string) (core.User, bool)) string {
 	if n, ok := b.core.MpdmCustomName(c.ID); ok { // mpdm_naming (core/mpdm_name.go)
 		return n
@@ -990,15 +987,18 @@ func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
 	return text
 }
 
-// notifySender is the sender's name (getMemberName; a bot's username).
+// notifySender is the sender's name, a body's "{sender}: " and a DM's
+// "New message from {name}": a member's under the viewer's
+// display_real_names (getContentForNotification's
+// getPrefCompliantMemberNameById, R6Qy), as the store holds them (the
+// toast waited for them: nothing asked again); a user-less bot's own name
+// (its username or the bot's: core's Message.Name).
 func (b *backend) notifySender(ev core.Event) string {
-	name := ev.Msg.Name
-	if name == "" {
-		if u, ok := b.core.User(ev.Msg.User); ok {
-			name = u.Name
-		}
+	if ev.Msg.Name != "" {
+		return ev.Msg.Name
 	}
-	return name
+	n, _ := b.core.S.PrefNameHeld(ev.Msg.User)
+	return n
 }
 
 func contains(s []string, v string) bool {

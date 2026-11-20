@@ -255,6 +255,28 @@ func (a *App) UserHidden(user string) bool {
 	return hs.set[user]
 }
 
+// RealNamesInMentions is shouldDisplayRealNamesInMentions (client-boot
+// eskW kz), which resolveMemberMentionName asks before writing a mention
+// with the member's real name: off unless the viewer is in the
+// mentions_full_names_only_pref experiment ("on"); then the viewer's
+// mentions_real_names_override (1 real names, -1 display names), else the
+// team's display_real_names_in_mentions. On Grid Slack reads that pref on
+// each of the viewer's workspaces (any one on, internalWorkspaceIds);
+// Clack holds the signed-in team's.
+func (a *App) RealNamesInMentions() bool {
+	if a.experiment("mentions_full_names_only_pref") != "on" {
+		return false
+	}
+	switch a.PrefInt("mentions_real_names_override", 0) {
+	case 1:
+		return true
+	case -1:
+		return false
+	}
+	v, ok := a.TeamPref("display_real_names_in_mentions")
+	return ok && prefTruthy(v, false)
+}
+
 // hiddenState is the hidden-people state message rows read: the parsed
 // hidden_users and the messages shown anyway.
 type hiddenState struct {

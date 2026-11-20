@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -174,12 +175,40 @@ func noteToast(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, rec *no
 // noteSend is noteToast up to the backend taking core's announcement.
 func noteSend(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, ch, user, ts, text string, slow time.Duration) {
 	t.Helper()
-	fs.SetEdgeHook(func(method string, _ map[string]json.RawMessage) (any, bool) {
+	noteSendHook(t, a, ca, fs, ch, user, ts, text, func(method string, _ map[string]json.RawMessage) (any, bool) {
 		if method == "edge/users/info" {
 			time.Sleep(slow)
 		}
 		return nil, false
 	})
+}
+
+// usersInfoAs answers edge/users/info with us after slow, every other id
+// asked for as failed (users/info has no such member).
+func usersInfoAs(us map[string]slack.User, slow time.Duration) func(string, map[string]json.RawMessage) (any, bool) {
+	return func(method string, body map[string]json.RawMessage) (any, bool) {
+		if method != "edge/users/info" {
+			return nil, false
+		}
+		time.Sleep(slow)
+		var asked map[string]int
+		_ = json.Unmarshal(body["updated_ids"], &asked)
+		res, failed := []slack.User{}, []string{}
+		for id := range asked {
+			if u, ok := us[id]; ok {
+				res = append(res, u)
+			} else {
+				failed = append(failed, id)
+			}
+		}
+		return map[string]any{"ok": true, "results": res, "failed_ids": failed}, true
+	}
+}
+
+// noteSendHook is noteSend with hook answering the fake's edge calls.
+func noteSendHook(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, ch, user, ts, text string, hook func(string, map[string]json.RawMessage) (any, bool)) {
+	t.Helper()
+	fs.SetEdgeHook(hook)
 	t.Cleanup(func() { fs.SetEdgeHook(nil) })
 	evs, stop := ca.Subscribe()
 	defer stop()
@@ -378,5 +407,198 @@ func TestNotifyNamesNoToastFromAHiddenSender(t *testing.T) {
 				t.Errorf("%s: %d toasts for a message from a member the viewer hid", name, n)
 			}
 		})
+	}
+}
+
+// namedUser is a synthetic member with a display name and a real name.
+func namedUser(id, handle, display, real string) slack.User {
+	return slack.User{ID: id, Name: handle, RealName: real, Profile: slack.Profile{DisplayName: display, RealName: real}}
+}
+
+// A group DM's toast is titled as getMpimDisplayNameAlphabetical names it:
+// its members' names sorted as Slack's sorter does (en-US, numeric), not
+// in the API's order, under the viewer's display_real_names, and "Name
+// hidden" for one the viewer hid. The body's "{sender}: " follows
+// display_real_names too (getPrefCompliantMemberNameById); a mention
+// doesn't (userToText's getMemberMentionName: the display name) unless
+// the viewer's mentions show real names (shouldDisplayRealNamesInMentions:
+// the mentions_full_names_only_pref experiment, then
+// mentions_real_names_override, then the team's
+// display_real_names_in_mentions). Clack titled it in the API's order
+// with display names and the hidden member's own name (the reviews).
+func TestNotifyNamesTheGroupDMAsSlackDoes(t *testing.T) {
+	const plain, real = "New message in adam, Name hidden, zoe", "New message in Adam Apple, Name hidden, Zoe Zimmer"
+	const noted, notedReal, mentionReal = "zoe: @adam took the synthetic notes", "Zoe Zimmer: @adam took the synthetic notes", "zoe: @Adam Apple took the synthetic notes"
+	inMentions := map[string]json.RawMessage{"display_real_names_in_mentions": json.RawMessage("true")}
+	for _, c := range []struct {
+		name        string
+		prefs       map[string]any
+		team        map[string]json.RawMessage
+		experiment  string // mentions_full_names_only_pref's group
+		title, body string
+	}{
+		{"display names", nil, nil, "", plain, noted},
+		{"display_real_names", map[string]any{"display_real_names": true}, nil, "", real, notedReal},
+		{"display_real_names_override", map[string]any{"display_real_names_override": 1}, nil, "", real, notedReal},
+		{"real names in mentions", map[string]any{"mentions_real_names_override": 1}, nil, "on", plain, mentionReal},
+		{"the team's real names in mentions", nil, inMentions, "on", plain, mentionReal},
+		{"display names in mentions over the team's", map[string]any{"mentions_real_names_override": -1}, inMentions, "on", plain, noted},
+		{"real names in mentions, out of the experiment", map[string]any{"mentions_real_names_override": 1}, inMentions, "off", plain, noted},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, ca, fs, rec := privNoteAppFS(t)
+			a.data.selfID = fakeslack.SelfID // a session's snapshot sets it
+			conv, _ := groupDMFixture(t, ca)
+			var others []string
+			for _, id := range conv.Members {
+				if id != fakeslack.SelfID {
+					others = append(others, id)
+				}
+			}
+			if len(others) < 3 {
+				t.Fatalf("the group DM has %d members besides the viewer, want 3", len(others))
+			}
+			// in the API's order: zoe, the member the viewer hid, adam
+			zoe, hidden, adam := others[0], others[1], others[2]
+			us := map[string]slack.User{
+				zoe:    namedUser(zoe, "zoe.z", "zoe", "Zoe Zimmer"),
+				hidden: namedUser(hidden, "mia.m", "mia", "Mia Moss"),
+				adam:   namedUser(adam, "adam.a", "adam", "Adam Apple"),
+			}
+			prefs := map[string]any{"hidden_users": hidden}
+			for k, v := range c.prefs {
+				prefs[k] = v
+			}
+			fs.SetPrefs(prefs)
+			if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if c.team != nil {
+				ca.SetTeamPrefs(c.team)
+			}
+			ca.SetExperimentGroup("mentions_full_names_only_pref", c.experiment)
+			noteSendHook(t, a, ca, fs, conv.ID, zoe, "1762521200.000100", "<@"+adam+"> took the synthetic notes", usersInfoAs(us, 200*time.Millisecond))
+			n := rec.wait(t, a, 1)
+			if n.Title != c.title || n.Body != c.body {
+				t.Errorf("notified %q / %q, Slack %q / %q", n.Title, n.Body, c.title, c.body)
+			}
+		})
+	}
+}
+
+// A group DM whose members users/info never brought (none held after the
+// wait): its toast keeps the sidebar's name when that names people (they
+// were held at the sidebar's snapshot and left the store's cache since),
+// else it reads the handles in its mpdm slug but the viewer's, never the
+// slug itself ("alice--bob--carol-1": the viewer's handle and a counter
+// in it). Slack leaves out every member it can't name ("New message in ").
+func TestNotifyNamesTheGroupDMWhoseMembersNeverCame(t *testing.T) {
+	for _, named := range []bool{true, false} {
+		t.Run(map[bool]string{true: "the sidebar named it", false: "the sidebar has its slug"}[named], func(t *testing.T) {
+			a, ca, fs, rec := privNoteAppFS(t)
+			a.data.selfID = fakeslack.SelfID
+			conv, sender := groupDMFixture(t, ca)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			ca.EnsureUsers(ctx, []string{fakeslack.SelfID}) // the viewer, whom a session holds
+			self, ok := ca.S.RawUser(fakeslack.SelfID)
+			if !ok || self.Name == "" {
+				t.Fatal("the store doesn't hold the viewer")
+			}
+			slug := strings.TrimPrefix(conv.Name, "mpdm-")
+			row := "alex"
+			if !named {
+				row = slug
+			}
+			a.data.m.Convs[conv.ID] = &convInfo{ID: conv.ID, Name: row, Kind: "mpim", Members: conv.Members}
+			noteSendHook(t, a, ca, fs, conv.ID, sender, "1762521300.000100", "a synthetic hello", usersInfoAs(nil, 0))
+			n := rec.wait(t, a, 1)
+			names, ok := strings.CutPrefix(n.Title, "New message in ")
+			if !ok || strings.Contains(n.Title, "mpdm-") || strings.Contains(n.Title, slug) {
+				t.Fatalf("titled %q: never the slug %q", n.Title, slug)
+			}
+			if named {
+				if names != "alex" {
+					t.Errorf("titled %q, want the sidebar's name: \"New message in alex\"", n.Title)
+				}
+				return
+			}
+			var want []string
+			for _, h := range strings.Split(slug[:strings.LastIndex(slug, "-")], "--") {
+				if h != self.Name {
+					want = append(want, h)
+				}
+			}
+			got := strings.Split(names, ", ")
+			sort.Strings(got)
+			sort.Strings(want)
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("titled %q: want the slug's handles but the viewer's (%q), %v", n.Title, self.Name, want)
+			}
+		})
+	}
+}
+
+// noteMembers puts the people a toast's title names, its sender and its
+// group DM's members, ahead of the members its text mentions, so a
+// message mentioning more people than one users/info batch
+// (noteMembersMax) still waits for them; never the viewer.
+func TestNotifyMembersPutsTheTitlesPeopleFirst(t *testing.T) {
+	a, ca, _, _ := privNoteAppFS(t)
+	a.data.selfID = fakeslack.SelfID
+	conv, sender := groupDMFixture(t, ca)
+	text := ""
+	for i := 0; i < noteMembersMax+20; i++ {
+		text += fmt.Sprintf("<@U0NOTE%05d> ", i)
+	}
+	m := ca.MessageFromSlack(conv.ID, &slack.Message{Type: "message", User: sender, TS: "1762521400.000100", Text: text + "all hands"})
+	got := a.data.noteMembers(&m)
+	if len(got) != noteMembersMax {
+		t.Errorf("%d people to wait for, want one users/info batch of %d", len(got), noteMembersMax)
+	}
+	in := map[string]bool{}
+	for _, id := range got {
+		in[id] = true
+	}
+	for _, id := range conv.Members {
+		switch {
+		case id == fakeslack.SelfID && in[id]:
+			t.Error("the toast waits for the viewer")
+		case id != fakeslack.SelfID && !in[id]:
+			t.Errorf("the group's member %s, whom the title names, was cut for the mentions", id)
+		}
+	}
+}
+
+// A DM's toast names its partner under the viewer's display_real_names
+// (getPrefCompliantMemberNameById), whether the sidebar lists the DM (its
+// row has their display name: a followed thread's reply is titled from
+// it) or only core knows it; and a socket message in it is titled "New
+// message from" that name.
+func TestNotifyNamesTheDMPartnerUnderThePref(t *testing.T) {
+	a, ca, fs, rec := privNoteAppFS(t)
+	a.data.selfID = fakeslack.SelfID
+	dm := fixtureConv(t, ca, fakeslack.ThreadDMID)
+	ca.S.PutConv(dm)
+	ca.S.PutUsers([]slack.User{namedUser(dm.User, "zoe.z", "zoe", "Zoe Zimmer")})
+	for i, real := range []bool{false, true} {
+		fs.SetPrefs(map[string]any{"display_real_names": real})
+		if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		want := map[bool]string{false: "zoe", true: "Zoe Zimmer"}[real]
+		a.data.m.Convs[dm.ID] = &convInfo{ID: dm.ID, Name: "zoe", Kind: "im", User: dm.User}
+		if c, named := a.data.noteConv(dm.ID); c == nil || !named || c.Name != want {
+			t.Errorf("display_real_names %v, the sidebar's row: named %+v, want %q", real, c, want)
+		}
+		delete(a.data.m.Convs, dm.ID)
+		if c, named := a.data.noteConv(dm.ID); c == nil || !named || c.Name != want {
+			t.Errorf("display_real_names %v, core's DM: named %+v, want %q", real, c, want)
+		}
+		noteSend(t, a, ca, fs, dm.ID, dm.User, fmt.Sprintf("1762521500.00010%d", i), "a synthetic question", 0)
+		n := rec.wait(t, a, i+1)
+		if n.Title != "New message from "+want || n.Body != "a synthetic question" {
+			t.Errorf("display_real_names %v: notified %q / %q, Slack %q / %q", real, n.Title, n.Body, "New message from "+want, "a synthetic question")
+		}
 	}
 }

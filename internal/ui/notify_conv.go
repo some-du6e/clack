@@ -9,6 +9,9 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // What a notification names, as Slack's web client reads it (CDN build
@@ -86,24 +89,28 @@ func noteNamed(c *convInfo) bool {
 // doesn't know it.
 func (b *backend) noteConv(ch string) (c *convInfo, named bool) {
 	if c = b.m.conv(ch); c != nil && noteNamed(c) {
-		if c.Kind != "mpim" {
+		if b.core == nil {
 			return c, true
 		}
-		// a group DM is named for its members as the store holds them now
-		// (the toast waited for them: noteMembers), not as the sidebar's
-		// snapshot did: a closed group DM's members are never read for
-		// the sidebar, so its row named only those held then
-		// (RawUser: nothing asked; a lookup here brought a second
-		// users/info beside the toast's own, and its "names" a pass over
-		// everything on screen for people nothing draws)
-		if v, ok := b.core.Conv(ch); ok {
-			// none of its members held (users/info failed or outlasted the
-			// wait): the sidebar's name, never the mpdm slug mpimNameBy
-			// falls back to (getMpimDisplayNameAlphabetical leaves unknown
-			// members out)
-			if n := b.mpimNameBy(&v, b.selfID, b.core.RawUser); n != strings.TrimPrefix(v.Name, "mpdm-") {
+		switch c.Kind {
+		case "im", "app":
+			// a DM is named for its partner under the viewer's
+			// display_real_names (getDisplayNameForChannel's
+			// getPrefCompliantMemberNameById), the sidebar's row for their
+			// display name
+			if n, ok := b.core.S.PrefNameHeld(c.User); ok && n != "" && n != c.Name {
 				ci := *c
 				ci.Name = n
+				return &ci, true
+			}
+		case "mpim":
+			// a group DM is named for its members as the store holds them
+			// now (the toast waited for them: noteMembers), not as the
+			// sidebar's snapshot did: a closed group DM's members are never
+			// read for the sidebar, so its row named only those held then
+			if v, ok := b.core.Conv(ch); ok {
+				ci := *c
+				ci.Name = b.noteMpimTitle(&v, c.Name)
 				return &ci, noteNamed(&ci)
 			}
 		}
@@ -121,8 +128,9 @@ func (b *backend) noteConv(ch string) (c *convInfo, named bool) {
 }
 
 // noteInfo is what apply makes of core's conversation, for the fields a
-// notification reads: a DM named for its partner (an app's DM is "app"),
-// a group DM for its members.
+// notification reads: a DM named for its partner under the viewer's
+// display_real_names (an app's DM is "app"), a group DM for its members
+// (noteMpimTitle).
 func (b *backend) noteInfo(v core.Conv) *convInfo {
 	ci := &convInfo{ID: v.ID, Name: v.Name, Kind: v.Kind, User: v.User, Members: v.Members, Muted: v.Muted,
 		Archived: v.IsArchived, Preview: v.Preview, File: v.File, FileID: v.FileID, Doc: v.Doc}
@@ -136,11 +144,91 @@ func (b *backend) noteInfo(v core.Conv) *convInfo {
 				ci.Kind = "app"
 			}
 		}
+		if n, ok := b.core.S.PrefNameHeld(v.User); ok && n != "" { // getPrefCompliantMemberNameById
+			ci.Name = n
+		}
 		ci.Self = v.User == b.selfID
 	case "mpim":
-		ci.Name = b.mpimName(&v, b.selfID)
+		ci.Name = b.noteMpimTitle(&v, "")
 	}
 	return ci
+}
+
+// noteMpimName is getMpimDisplayNameAlphabetical (client-boot), the name
+// getDisplayNameForChannel gives a group DM's notification
+// (truncateMpimNames off: nothing is cut): its custom name (mpdm_naming),
+// else its members' names but the viewer's (isSelf), "Name hidden" for
+// one the viewer hid (isUserHidden), the others under the viewer's
+// display_real_names (getPrefCompliantMemberName), empty ones left out,
+// sorted as Slack's sorter does (en-US, numeric) and joined with ", ".
+// The members are read as the store holds them (RawUser: nothing asked;
+// the toast waited for them, noteMembers; a lookup here brought a second
+// users/info beside the toast's own, and its "names" a pass over
+// everything on screen), and one it doesn't hold is left out, as Slack
+// leaves out the unknown member's "". ok: something was named.
+func (b *backend) noteMpimName(v *core.Conv) (string, bool) {
+	if n, ok := b.core.MpdmCustomName(v.ID); ok && n != "" {
+		return n, true
+	}
+	var names []string
+	for _, id := range v.Members {
+		switch {
+		case id == b.selfID:
+		case b.core.UserHidden(id):
+			names = append(names, i18n.T("channels", "Name hidden"))
+		default:
+			if n, ok := b.core.S.PrefNameHeld(id); ok && n != "" {
+				names = append(names, n)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return "", false
+	}
+	views.SortNames(names)
+	return strings.Join(names, ", "), true
+}
+
+// noteMpimTitle is group DM v's name in a notification's title:
+// noteMpimName, else, with none of its members held (users/info failed or
+// outlasted the wait), row (the sidebar's name for it) when that names
+// people (they were held at its snapshot and left the store's cache
+// since), else the handles in its mpdm slug but the viewer's. Slack has
+// no such fallback: it leaves out every member it can't name, and the
+// title reads "New message in ".
+func (b *backend) noteMpimTitle(v *core.Conv, row string) string {
+	if n, ok := b.noteMpimName(v); ok {
+		return n
+	}
+	if r := strings.TrimSpace(row); r != "" && r != v.ID && r != v.Name && r != strings.TrimPrefix(v.Name, "mpdm-") {
+		return row
+	}
+	return b.noteSlugNames(v.Name)
+}
+
+// noteSlugNames is the handles in a group DM's name, "mpdm-a--b--c-1",
+// but the viewer's, sorted and joined with ", " ("" for a name of any
+// other form).
+func (b *backend) noteSlugNames(name string) string {
+	n, ok := strings.CutPrefix(name, "mpdm-")
+	if !ok {
+		return ""
+	}
+	if i := strings.LastIndex(n, "-"); i > 0 {
+		n = n[:i]
+	}
+	self := ""
+	if u, ok := b.core.S.RawUser(b.selfID); ok && u != nil {
+		self = u.Name
+	}
+	var out []string
+	for _, h := range strings.Split(n, "--") {
+		if h != "" && h != self {
+			out = append(out, h)
+		}
+	}
+	views.SortNames(out)
+	return strings.Join(out, ", ")
 }
 
 // channelToText is Slack's for a channel mention in a notification's
@@ -173,16 +261,16 @@ func (b *backend) channelToText(id, text string) string {
 // and its member mentions; the other spans keep their text. A member
 // mention is named from the store as the body is written, as Slack's
 // showNotification builds it (extractTextFromMessage over the store,
-// after ensureModelsArePresent), under the viewer's name pref
-// (store.MemberName: display_real_names, hidden_users): core announces a
-// message before anyone it names is fetched, so its conversion wrote a
-// member the store didn't hold yet as the id ("@U07DANA"), and the
-// store's copy, converted again once noteResolve fetched them
-// (noteFresh), is there only for a conversation whose messages it keeps
-// (no group DM or DM not opened lately, no thread it never loaded). One
-// still unknown after the wait, or past noteMembersMax, reads as nothing,
-// never the id (the views' mentionText), and one with a label of its own
-// keeps the label; an id that isn't a member's keeps its text.
+// after ensureModelsArePresent; userToText: noteMentionName, "Hidden
+// user" for someone the viewer hid): core announces a message before
+// anyone it names is fetched, so its conversion wrote a member the store
+// didn't hold yet as the id ("@U07DANA"), and the store's copy, converted
+// again once noteResolve fetched them (noteFresh), is there only for a
+// conversation whose messages it keeps (no group DM or DM not opened
+// lately, no thread it never loaded). One still unknown after the wait,
+// or past noteMembersMax, reads as nothing, never the id (the views'
+// mentionText), and one with a label of its own keeps the label; an id
+// that isn't a member's keeps its text.
 func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 	if s.ID == "" || b.core == nil {
 		return "", false
@@ -199,7 +287,7 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 			// viewer hid reads "Hidden user", no @
 			return i18n.T("channel_token", "Hidden user"), true
 		}
-		if n, ok := b.core.S.MemberNameHeld(s.ID); ok && n != "" { // waited for: nothing asked again
+		if n := b.noteMentionName(s.ID); n != "" {
 			return "@" + strings.TrimPrefix(n, "@"), true
 		}
 		// still unknown: the id the conversion fell back to reads as
@@ -207,6 +295,37 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 		return "", s.Text == "@"+s.ID
 	}
 	return "", false
+}
+
+// noteMentionName is userToText's name for a member mention (client-boot
+// DRDu; extractTextFromMessage turns useMentionsNamePref on): the real
+// name (getMemberRealName) when the viewer's mentions show real names
+// (resolveMemberMentionName under core.RealNamesInMentions), else
+// getMemberMentionName, the display name, else the real name, as the
+// rows name a mention (store.DisplayName: installMemberRead). Not
+// display_real_names, which names senders and titles: MessageNamesPref's
+// example keeps "@Meg". The member as the store holds it (the toast
+// waited for it: nothing asked again); "" for one it doesn't.
+func (b *backend) noteMentionName(id string) string {
+	u, ok := b.core.S.RawUser(id)
+	if !ok || u == nil {
+		return ""
+	}
+	if b.core.RealNamesInMentions() {
+		if n := memberRealName(u); n != "" {
+			return n
+		}
+	}
+	return store.DisplayName(u)
+}
+
+// memberRealName is getMemberRealName (hWCs wg): profile.real_name, else
+// real_name.
+func memberRealName(u *slack.User) string {
+	if u.Profile.RealName != "" {
+		return u.Profile.RealName
+	}
+	return u.RealName
 }
 
 // noteChannelKnown reports whether channelToText has what it needs for
@@ -244,8 +363,8 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 }
 
 // noteMembers are the people a notification names that the store doesn't
-// hold: its sender, the members its text mentions, and its conversation's
-// people, a DM's partner and a group DM's members, whose names title it
+// hold: its sender, its conversation's people (a DM's partner, a group
+// DM's members, whose names title it), then the members its text mentions
 // (at most noteMembersMax). Core announces a message the moment it
 // arrives, its rows asking for the people they draw; the notification
 // waits for them, as Slack's showNotification waits for

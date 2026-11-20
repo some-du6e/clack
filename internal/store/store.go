@@ -865,6 +865,20 @@ func (s *Store) MemberName(id string) (string, bool) { return s.memberName(s.Use
 // what it names was waited for (a notification's body).
 func (s *Store) MemberNameHeld(id string) (string, bool) { return s.memberName(s.RawUser, id) }
 
+// PrefNameHeld is the held member id's name under the viewer's
+// display_real_names (PrefName), nothing asked and no hidden check (the
+// caller's: core.UserHidden reads the locked hide_person_opt_out too).
+func (s *Store) PrefNameHeld(id string) (string, bool) {
+	u, ok := s.RawUser(id)
+	if !ok || u == nil {
+		return "", false
+	}
+	s.mu.RLock()
+	real := s.Prefs.DisplayRealNames
+	s.mu.RUnlock()
+	return PrefName(u, real), true
+}
+
 func (s *Store) memberName(look userLookup, id string) (string, bool) {
 	u, ok := look(id) // a miss is asked for
 	if !ok || u == nil {
