@@ -1510,7 +1510,12 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 }
 
 // MessageKeys is every ts and client_msg_id among ch's cached messages
-// (timeline and threads), in one pass.
+// (timeline, threads and the messages fetched by id), in one pass: what
+// the plugins' messages slice holds of core's (taut's injected check). The
+// slice holds the fetched copies, as Slack's one messages store does, and
+// none of them is a message a plugin injected: a conversation's list draws
+// its history (Slack's channelHistory), which a message fetched by id
+// never joins.
 func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1534,6 +1539,11 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 			}
 		}
 	}
+	for k, m := range s.fetched {
+		if m != nil && strings.HasPrefix(k, pre) {
+			add(m)
+		}
+	}
 	return ts, cids
 }
 
@@ -1541,9 +1551,10 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 type MsgKey struct{ TS, CID string }
 
 // Held reports, for each key, whether the store caches a message of ch
-// with its ts (or client_msg_id) in the timeline or a thread: Holds for
-// many at once, one pass over the store under one read lock (Holds per
-// message scanned the timeline and every cached thread once each).
+// with its ts (or client_msg_id) in the timeline, a thread or the messages
+// fetched by id (MessageKeys' set: taut's injected check): Holds for many
+// at once, one pass over the store under one read lock (Holds per message
+// scanned the timeline and every cached thread once each).
 func (s *Store) Held(ch string, keys []MsgKey) []bool {
 	out := make([]bool, len(keys))
 	if len(keys) == 0 {
@@ -1580,6 +1591,11 @@ func (s *Store) Held(ch string, keys []MsgKey) []bool {
 			for i := range th {
 				mark(&th[i])
 			}
+		}
+	}
+	for k, m := range s.fetched {
+		if m != nil && strings.HasPrefix(k, pre) {
+			mark(m)
 		}
 	}
 	return out

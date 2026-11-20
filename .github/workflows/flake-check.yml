@@ -1668,8 +1668,10 @@ jobs:
   # views-rewrites: a view a plugin rewrites outside the text (Censorship's
   # mask in blocks, ShowRealUser's sender) stands while the plugins' JS is
   # busy: a reaction never brings core's copy back in the views drawn from
-  # viewMsg; and a message fetched by id (Activity's hydration) reaches the
-  # plugins' messages slice. Dispatch with only=views-rewrites.
+  # viewMsg; a message fetched by id (Activity's hydration) reaches the
+  # plugins' messages slice, and a channel's list never draws it as one a
+  # plugin injected (a jump to it pages back). Dispatch with
+  # only=views-rewrites.
   views-rewrites:
     if: ${{ !inputs.only || startsWith('views-rewrites', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1685,7 +1687,10 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "views: rewritten views through a reaction while JS is busy (COUNT runs)"
         run: |
-          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages)$' ./internal/ui/views
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages)$' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestFetchedMessageStaysOutOfTheList$' ./internal/ui/messages || rc=1
+          exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
