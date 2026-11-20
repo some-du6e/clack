@@ -4,11 +4,13 @@ package messages
 // patch: withElementsFor's plugin branch) in two rows at once (a thread's
 // root in the channel and in the pane) keeps one drawing per row, as the
 // plain path does (blockkit.InView): at two widths each settles at its own
-// height, and the frames after go quiet (no relayout, no frame asked for).
+// height, and the frames after go quiet (no relayout, and no frame asked
+// of the host: the height transition asks through Invalidate).
 
 import (
 	"encoding/json"
 	"image"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,9 +26,19 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
+// invalHost is coreHost counting the frames asked of it (Invalidate, as
+// blockkit's height transition asks through me.changed()).
+type invalHost struct {
+	coreHost
+	n *atomic.Int32
+}
+
+func (h invalHost) Invalidate() { h.n.Add(1) }
+
 func TestAgentPluginPathViews(t *testing.T) {
 	app, _, _ := shotsApp(t)
-	host := coreHost{app: app, th: theme.New(false)}
+	var asked atomic.Int32
+	host := invalHost{coreHost: coreHost{app: app, th: theme.New(false)}, n: &asked}
 	fx := fakeslack.AgentFixtures()["plan-grow-title"] // a title that wraps differently at the two widths
 	raw, _ := json.Marshal(fx)
 	sm := slack.Message{Type: "message", TS: "1762520300.000100", User: fakeslack.AgentUserID, BotID: fakeslack.AgentBotID, Blocks: raw, Text: "plan"}
@@ -80,13 +92,13 @@ func TestAgentPluginPathViews(t *testing.T) {
 	}
 	me := blockkit.HostOf(ea)
 	v0 := me.ElementsVersion()
-	r.WakeupTime() // read what the frames so far asked for
+	n0 := asked.Load()
 	frame()
 	frame()
 	if v := me.ElementsVersion(); v != v0 {
 		t.Errorf("not quiet: the elements' version moved %d to %d (the two widths fight over one drawing)", v0, v)
 	}
-	if at, ok := r.WakeupTime(); ok {
-		t.Errorf("not quiet: a frame asked for another at %v", at.Sub(now))
+	if n := asked.Load() - n0; n != 0 {
+		t.Errorf("not quiet: the settled drawings asked the host for %d frames", n)
 	}
 }
