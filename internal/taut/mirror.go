@@ -1349,14 +1349,28 @@ func (m *mirror) history(key string) any {
 	var ts []string
 	reachedStart := false
 	if isThread {
-		msgs, ok := a.S.Thread(ch, thread)
+		// the thread's slices as its replies reads left them (store
+		// thread_slices.go: Slack's channelHistory[threadKey])
+		sls, rs, re, pre, ok := a.S.ThreadHistory(ch, thread)
 		if !ok {
 			return nil
 		}
-		for _, x := range msgs {
-			ts = append(ts, x.TS)
+		out := make([]any, 0, len(sls))
+		for _, x := range sls {
+			tss := x.TSs
+			if tss == nil {
+				tss = []string{}
+			}
+			sl := map[string]any{"timestamps": tss, "start": nil, "end": nil}
+			if x.Start != "" {
+				sl["start"] = x.Start
+			}
+			if x.End != "" {
+				sl["end"] = x.End
+			}
+			out = append(out, sl)
 		}
-		reachedStart = true
+		return map[string]any{"reachedStart": rs, "reachedEnd": re, "slices": out, "prevReachedEnd": pre}
 	} else {
 		tl := a.S.Timeline(ch)
 		if tl == nil {

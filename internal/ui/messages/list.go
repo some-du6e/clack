@@ -107,6 +107,7 @@ type listState struct {
 	openLastRead string // the "New" line position, fixed while open
 	opened       bool
 	thr          threadRead // the thread pane's read state (thread_unread.go)
+	tl           threadList // the thread list's paging (thread_load.go)
 	positioned   bool
 	markedTS     string
 	lastMark     time.Time
@@ -592,6 +593,11 @@ func (s *listState) build(h Host, now time.Time) {
 	unreadPlaced := false
 	if s.thread {
 		s.decideThreadRead()
+		// getThreadRowsAndKeys' "loading-start-<first reply>" row over a
+		// slice short of the thread's start (thread_load.go)
+		if len(msgs) > 0 && s.snap.loaded && !s.snap.th.reachedStart {
+			s.items = append(s.items, item{kind: itLoading, key: "loading-start-" + msgs[0].m.TS})
+		}
 	}
 	for i := 0; i < len(msgs); i++ {
 		m := &msgs[i].m
@@ -665,9 +671,10 @@ func (s *listState) build(h Host, now time.Time) {
 	if !s.thread && s.snap.loaded { // reachedEnd: Clack always holds the newest page
 		s.items = append(s.items, item{kind: itBottom, key: "bottomSpacer"})
 	}
-	if s.thread && !s.snap.loaded && len(msgs) > 0 && s.snap.err == nil {
+	if s.thread && len(msgs) > 0 && (!s.snap.loaded && s.snap.err == nil || s.snap.loaded && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd) {
 		// getThreadRowsAndKeys' "loading-end" row: some messages are in
-		// (the root, a live reply) before the replies are (thread.go)
+		// (the root, a live reply) before the replies are (thread.go), or
+		// the slice stops short of the thread's end (thread_load.go)
 		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
 	}
 	if cap(s.heights) < len(s.items) {
@@ -945,6 +952,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.pendingJump = ""
 	}
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
+	if s.thread {
+		s.threadPaging(gtx, h, size, now) // pages before and after the slice (thread_load.go)
+	}
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
 		if s.hb.loadOlder(s.m) {

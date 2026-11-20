@@ -326,11 +326,13 @@ type App struct {
 	teamIconShown string          // the last workspace icon URL that drew (kept while a new one loads)
 	mbar          menuBar         // the macOS menu bar's state (macmenu.go)
 
-	split       splitState    // Slack's split view (split.go)
-	pane        string        // the view container being drawn or acted on: "" main, paneSplit
-	navSrc      navSource     // the main window's container being laid out (secondary.go)
-	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
-	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
+	split splitState // Slack's split view (split.go)
+	// threadsShown is the threads a pane showed last frame (thread_close.go)
+	threadsShown map[string]bool
+	pane         string        // the view container being drawn or acted on: "" main, paneSplit
+	navSrc       navSource     // the main window's container being laid out (secondary.go)
+	overlayPane  []string      // the container each overlay was opened from (ShowOverlay)
+	clickMods    key.Modifiers // the modifiers of this frame's click (splitClick)
 
 	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
 	inspKey key.Filter    // its shortcut
@@ -803,6 +805,7 @@ func (a *App) frame(gtx layout.Context) {
 		return
 	}
 	defer a.startupFrame()
+	a.closeLeftThreads() // a thread pane that went: its unmount (thread_close.go)
 	// the inspect tool, before anything reads input: while a session runs
 	// the window lays out hover-only and the tool reads the clicks and
 	// keys (inspect_wire.go)

@@ -135,6 +135,9 @@ func (a *App) openThreadAt(ch, thread, ts string, prev Route) {
 		return
 	}
 	split := a.pane == paneSplit || a.splitClick() // OpenThread puts it in the split view
+	if !split {
+		a.threadStartAt(ch, thread, ts) // jumpToThreadReply, before the pane mounts (thread_close.go)
+	}
 	a.OpenThread(ch, thread)
 	s := &a.secondary
 	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
@@ -174,6 +177,9 @@ func (a *App) OpenThreadReply(ch, thread, ts string) {
 		return
 	}
 	split := a.pane == paneSplit || a.splitClick()
+	if !split {
+		a.threadStartAt(ch, thread, ts) // the pane starts at replyTs (thread_close.go)
+	}
 	a.OpenThread(ch, thread)
 	s := &a.secondary
 	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {

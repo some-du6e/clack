@@ -51,6 +51,7 @@ type Store struct {
 	Presence    map[string]string
 	timelines   map[string]*Timeline
 	threads     map[string][]slack.Message // key channel/ts
+	threadHist  map[string]*threadHist     // key channel/ts: the threads' history slices (thread_slices.go)
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
@@ -1444,6 +1445,7 @@ func (s *Store) removeLocked(ch, ts string) {
 		for i := range th {
 			if th[i].TS == ts {
 				s.threads[k] = append(th[:i], th[i+1:]...)
+				s.removeTimestampLocked(k, ts) // its history's removeTimestamp (thread_slices.go)
 				break
 			}
 		}
@@ -1648,6 +1650,7 @@ func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	s.threads[ch+"/"+ts] = msgs
+	s.setThreadWholeLocked(ch+"/"+ts, msgs) // the whole thread: one slice, both ends (thread_slices.go)
 	s.mu.Unlock()
 }
 
@@ -1688,6 +1691,9 @@ func (s *Store) addReplyLocked(ch string, m slack.Message) {
 			SortAsc(th)
 		}
 		s.threads[key] = th
+		if !replaced {
+			s.liveReplyLocked(key, m.TS) // its history's addTimestamps (thread_slices.go)
+		}
 	}
 }
 

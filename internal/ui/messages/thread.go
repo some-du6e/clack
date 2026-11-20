@@ -195,14 +195,19 @@ func (v *ThreadView) JumpToOwnSend(cid string, files bool) {
 // pane opens at a message (client-boot 6IaZ over CSo3 GC, from toThread's
 // replyTs and uiState.highlightTs): the list starts at ts (startTs) and,
 // with flash, ts is highlighted (highlightTs) the way a permalink's
-// message is (ChannelView.Highlight). The thread loads whole
-// (conversations.replies, every page), so a ts it doesn't hold is
-// dropped once it's in, and the pane keeps its own start position.
+// message is (ChannelView.Highlight). The pane draws the slice ts falls
+// in (thread_load.go): one that doesn't hold it gives way to the store's
+// slice at ts, read around ts (two pages of 28) when the store has none;
+// a ts the thread doesn't have is dropped once that is in, and the pane
+// keeps its own start position.
 func (v *ThreadView) JumpTo(ts string, flash bool) {
 	s := v.s
 	s.highlight = ""
 	if flash {
 		s.highlight, s.highlightAt = ts, time.Now()
+	}
+	if s.hb.jumpThread(s.m, ts) {
+		s.snap.rev = 0 // the slice at ts: rebuild from it
 	}
 	s.pendingJump = ts
 	for i, it := range s.items {
@@ -883,13 +888,16 @@ func (s *listState) threadLoading() bool {
 //     initializing = isEmpty(timestamps) and fetchReplies clears it, so a
 //     loading thread has no reply box;
 //   - with timestamps, until reachedEnd or prevReachedEnd: the
-//     "loading-end" row takes its place. Clack fetches every page at once,
-//     and a model stays loaded once it was (both ends reached);
+//     "loading-end" row takes its place (a slice short of the thread's
+//     end: thread_load.go);
 //   - ThreadsError or LargeOfflineIndicator replaces the whole pane.
 //
 // Signed out, the list's sign-in prompt keeps the old composer.
 func (v *ThreadView) HidesComposer() bool {
 	s := v.s
+	if s.thread && s.snap.loaded && len(s.snap.msgs) > 0 && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd {
+		return true // the "loading-end" row in its place
+	}
 	if !s.thread || s.snap.loaded {
 		return false
 	}

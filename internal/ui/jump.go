@@ -27,6 +27,9 @@ func (a *App) jumpToMessage(ch, ts, thread string) {
 	prev := a.router.Current()
 	switch {
 	case thread != "":
+		if ts != "" && a.pane != paneSplit && !a.splitClick() {
+			a.threadStartAt(ch, thread, ts) // jumpToThreadReply: before the pane mounts (thread_close.go)
+		}
 		a.Navigate("c/" + ch + "/t/" + thread)
 		if a.pane == paneSplit || a.router.Current().Channel() != ch {
 			return // the split view took it (OpenSplit): it has no reply to start at
@@ -56,6 +59,7 @@ func (a *App) JumpPane(ch, thread, ts string) {
 		return
 	}
 	if thread != "" {
+		a.threadStartAt(ch, thread, ts) // before convoFor mounts the pane (thread_close.go)
 		if j, ok := a.convoFor(ch, thread).list.(interface{ JumpTo(ts string, flash bool) }); ok {
 			j.JumpTo(ts, true)
 		}

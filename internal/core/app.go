@@ -365,7 +365,7 @@ func (a *App) pollOnce(ctx context.Context) {
 		}
 	}
 	for _, t := range threads {
-		if err := a.fetchThread(ctx, t.ch, t.ts); err != nil {
+		if err := a.pollThread(ctx, t.ch, t.ts); err != nil { // the page past its end (thread_pages.go)
 			log.Printf("poll: thread %s: %v", t.ch, err)
 		}
 	}
