@@ -1,10 +1,14 @@
 package richview
 
 import (
+	"image"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"gioui.org/op"
+	"gioui.org/op/paint"
 )
 
 // TestCallCardEdges: an external participant without an avatar_url shows
@@ -77,5 +81,68 @@ func TestCallFacepileOverflow(t *testing.T) {
 	}
 	if overlay == nil || overlay.layer != 2 {
 		t.Errorf("overlay %+v, want the 50%% black box on layer 2 (over the face, under the +2)", overlay)
+	}
+}
+
+// failImages fails every URL in bad and has every other one ready,
+// recording what was asked for.
+type failImages struct {
+	bad  map[string]bool
+	asks map[string]int
+}
+
+func (f *failImages) Get(url string, _ int) (paint.ImageOp, bool) {
+	f.asks[url]++
+	if f.bad[url] {
+		return paint.ImageOp{}, false
+	}
+	return paint.NewImageOp(image.NewRGBA(image.Rect(0, 0, 4, 4))), true
+}
+
+func (f *failImages) Failed(url string, _ int) bool { return f.bad[url] }
+
+// TestCallFaceLoadError: an external participant whose avatar_url fails
+// to load shows ava_0002 instead: Facepile's renderExternalAvatar is an Img
+// whose renderError is renderExternalAvatarFallback (ConnectedBaseAvatar
+// with no member), so the face doesn't wait on its broken image.
+func TestCallFaceLoadError(t *testing.T) {
+	defer setDefaultAvatar("local://ava_0002")()
+	st := newTestStyle()
+	imgs := &failImages{bad: map[string]bool{"https://call.test/broken.png": true}, asks: map[string]int{}}
+	st.Images = imgs
+	start := strconv.FormatInt(time.Now().Unix()-600, 10)
+	d := kitDoc(t, `[{"type":"call","call_id":"R3","call":{"v1":{"id":"R3","name":"Sync","date_start":`+start+`,
+		"join_url":"https://call.test/j","active_participants":[{"external_id":"g1","display_name":"Guest","avatar_url":"https://call.test/broken.png"}],
+		"all_participants":[]}}}]`)
+	v := New(d, Options{})
+	var ops op.Ops
+	v.Layout(testGtx(&ops, 800), st, &recHandler{})
+	ims := imgsWithURL(&v.d, "https://call.test/broken.png")
+	if len(ims) != 1 || ims[0].onFail != "local://ava_0002" {
+		t.Fatalf("guest face %+v, want its avatar_url with ava_0002 for a load error", ims)
+	}
+	if imgs.asks["local://ava_0002"] == 0 {
+		t.Errorf("the failed avatar didn't draw ava_0002 (asked %v)", imgs.asks)
+	}
+	for _, p := range v.pending {
+		if p >= 0 && v.d.imgs[p].url == "https://call.test/broken.png" {
+			t.Error("the face whose avatar failed is still waiting, with ava_0002 ready")
+		}
+	}
+}
+
+// TestCallIconGlyph: a call card without an app icon draws renderCallIcon's
+// glyph in its blue (or, ended, grey) square: the declined DM call's
+// call-declined, from the icon font.
+func TestCallIconGlyph(t *testing.T) {
+	st := newTestStyle()
+	d := kitDoc(t, `[{"type":"call","call_id":"R4","call":{"v1":{"id":"R4","is_dm_call":true,"was_rejected":true,"channels":["D1"],"created_by":"U9",
+		"date_start":1700000000,"date_end":1700000060,"all_participants":[{"slack_id":"U9"}]}}}]`)
+	v := layoutAt(st, d, Options{}, 800)
+	if ims := imgsWithURL(&v.d, iconURL+"call-declined-font"); len(ims) != 1 || ims[0].r.Dx() != 20 {
+		t.Errorf("declined DM call icon %+v, want the 20px call-declined glyph", ims)
+	}
+	if ims := imgsWithURL(&v.d, iconURL+"phone"); len(ims) != 0 {
+		t.Errorf("the declined DM call drew the phone glyph %+v", ims)
 	}
 }

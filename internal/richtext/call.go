@@ -78,6 +78,10 @@ type CallCard struct {
 	// blue square. Ended: the icon box is greyed (p-call_subtype__icon--ended).
 	Icon  string
 	Ended bool
+	// Glyph is the y8g2 font icon renderCallIcon draws without an app
+	// icon: phone, phone-flat once the call ended, call-missed or
+	// call-declined for a DM call the viewer missed or declined.
+	Glyph string
 	// Faces is the facepile (getMembersOfCall: everyone who joined once the
 	// call ended, else who is in it); nil when Slack hides it
 	// (hideFacepile).
@@ -143,6 +147,16 @@ func callCard(r Resolver, id string, v *bkCallV1, now time.Time) *CallCard {
 	}
 	cc := &CallCard{ID: firstNonEmpty(v.ID, id), Title: s.title(), Status: s.status(now.Location()),
 		Description: s.description(), MeetingID: v.DisplayID, JoinURL: SafeURL(v.JoinURL), Ended: v.DateEnd != 0}
+	cc.Glyph = "phone" // renderCallIcon (9CtN)
+	if v.DateEnd != 0 {
+		cc.Glyph = "phone-flat"
+	}
+	if v.IsDMCall && missed { // wasMissed: invite response missed or reject
+		cc.Glyph = "call-missed"
+	}
+	if v.IsDMCall && rejected {
+		cc.Glyph = "call-declined"
+	}
 	cc.Button, cc.Primary = s.button()
 	cc.Icon = callIcon(v.AppID, v.AppIconURLs)
 	hide := s.count == 0 || s.dm && s.count == 1 && !s.creator

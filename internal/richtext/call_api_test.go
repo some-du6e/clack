@@ -25,3 +25,13 @@ func callOf(d Doc) (callView, bool) {
 	}
 	return callView{}, false
 }
+
+// callGlyphOf is the call card's renderCallIcon glyph ("" without a card).
+func callGlyphOf(d Doc) string {
+	for _, b := range d.Blocks {
+		if b.Kind == CallBlock && b.Call != nil {
+			return b.Call.Glyph
+		}
+	}
+	return ""
+}

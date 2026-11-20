@@ -76,3 +76,25 @@ func TestCallBlock(t *testing.T) {
 		eq(t, c.name, got, c.want)
 	}
 }
+
+// TestCallGlyph: without an app icon the card draws renderCallIcon's
+// font icon (9CtN): phone, phone-flat once the call ended, and for a DM
+// call the viewer missed call-missed, declined call-declined (the invite
+// response: accepted wins, then reject, then missed).
+func TestCallGlyph(t *testing.T) {
+	call := func(v1 string) string {
+		return `[{"type":"call","call_id":"R1","call":{"v1":{"id":"R1","date_start":1700000000,` + v1 + `}}}]`
+	}
+	for _, c := range []struct{ name, v1, want string }{
+		{"running", `"date_end":0`, "phone"},
+		{"ended", `"date_end":1700000600`, "phone-flat"},
+		{"a missed DM call", `"date_end":1700000060,"is_dm_call":true,"was_missed":true`, "call-missed"},
+		{"a declined DM call", `"date_end":1700000060,"is_dm_call":true,"was_rejected":true`, "call-declined"},
+		{"a DM call accepted after all", `"date_end":1700000600,"is_dm_call":true,"was_accepted":true,"was_missed":true`, "phone-flat"},
+		{"missed but not a DM call", `"date_end":1700000060,"was_missed":true`, "phone-flat"},
+	} {
+		if got := callGlyphOf(*blocksMsg(t, call(c.v1))); got != c.want {
+			t.Errorf("%s: glyph %q, want %q", c.name, got, c.want)
+		}
+	}
+}

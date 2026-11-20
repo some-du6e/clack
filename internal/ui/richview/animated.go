@@ -150,6 +150,9 @@ func (v *View) drawImg(ops *op.Ops, st *Style, i int, static bool) {
 		return
 	}
 	img, ok := getImg(st, im, im.px)
+	if !ok && im.onFail != "" && st.Images != nil && imgFailed(st.Images, im.url, im.px) {
+		img, ok = st.Images.Get(im.onFail, im.px) // its own failed: the fallback
+	}
 	if ok && !im.fit {
 		if px := coverPx(img.Size(), im.r.Size(), im.px); px > im.px {
 			// cover: the copy scaled to px by its larger side is short of

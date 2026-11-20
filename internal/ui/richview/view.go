@@ -645,7 +645,8 @@ func (v *View) anyReady(st *Style) bool {
 	for _, p := range v.pending {
 		if p >= 0 {
 			im := &v.d.imgs[p]
-			if _, ok := st.Images.Get(im.url, im.px); ok {
+			// one whose own image failed is ready once its fallback is
+			if _, ok := st.Images.Get(imgSource(st.Images, im), im.px); ok {
 				return true
 			}
 		} else {

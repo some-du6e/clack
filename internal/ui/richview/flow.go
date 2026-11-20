@@ -128,6 +128,28 @@ type imgPrim struct {
 	// noUp (the scale: object-fit contain with max-width and max-height
 	// 100%, so at most its natural size in CSS px), centred in r
 	noUp float32
+	// onFail, once url failed to load, is drawn in its place (an external
+	// call face's ava_0002: Facepile's renderError)
+	onFail string
+}
+
+// failedImages is implemented by imgcache.Cache.
+type failedImages interface {
+	Failed(url string, px int) bool
+}
+
+// imgFailed reports whether url's load at px failed for good.
+func imgFailed(imgs Images, url string, px int) bool {
+	f, ok := imgs.(failedImages)
+	return ok && f.Failed(url, px)
+}
+
+// imgSource is the URL im draws: its own, or onFail once that failed.
+func imgSource(imgs Images, im *imgPrim) string {
+	if im.onFail != "" && imgFailed(imgs, im.url, im.px) {
+		return im.onFail
+	}
+	return im.url
 }
 
 // noUpRect is where an image of decoded size sz draws in box r when it

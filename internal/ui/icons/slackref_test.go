@@ -353,6 +353,9 @@ var fontRef = map[string]rune{
 	"broadcast":             0xE106,
 	"lock-o":                0xE029,
 	"vertical-ellipsis":     0xE148,
+	"phone-flat":            0xE122,
+	"call-missed-font":      0xE168,
+	"call-declined-font":    0xE167,
 }
 
 // inlineRef holds the icons drawn after a glyph Slack paints itself

@@ -86,7 +86,7 @@ func (l *lay) callCard(c *richtext.CallCard, x, y, w int) int {
 	} else {
 		gs := l.dp(20)
 		gr := image.Rect(0, 0, gs, gs).Add(image.Pt(ir.Min.X+(icon-gs)/2, ir.Min.Y+(icon-gs)/2))
-		l.d.imgs = append(l.d.imgs, imgPrim{r: gr, url: iconURL + "phone", target: -1, px: gs, tint: rgb(255, 255, 255)})
+		l.d.imgs = append(l.d.imgs, imgPrim{r: gr, url: iconURL + callGlyph(c.Glyph), target: -1, px: gs, tint: rgb(255, 255, 255)})
 	}
 	tx := ir.Max.X + l.dp(12)
 	tw2 := max(x+cw-bw-pad-tx, l.dp(40))
@@ -200,10 +200,24 @@ func (l *lay) callCard(c *richtext.CallCard, x, y, w int) int {
 	return y - y0
 }
 
+// callGlyph is the icon set's name for renderCallIcon's y8g2 font icon:
+// phone, else the font glyphs (icons/iconfont.go).
+func callGlyph(g string) string {
+	switch g {
+	case "phone-flat":
+		return "phone-flat"
+	case "call-missed":
+		return "call-missed-font"
+	case "call-declined":
+		return "call-declined-font"
+	}
+	return "phone"
+}
+
 // DefaultAvatar is the image URL of Slack's ava_0002 (messages sets it to
-// its embedded copy): an external call participant without an avatar_url
-// (Facepile's renderExternalAvatarFallback: getMemberProfileImage's isBot
-// branch).
+// its embedded copy): an external call participant without an avatar_url,
+// or whose avatar_url failed to load (Facepile's
+// renderExternalAvatarFallback: getMemberProfileImage's isBot branch).
 var DefaultAvatar string
 
 // facesShown is Facepile's maxNumFacesOverride (maxNumFaces 5): fewer
@@ -237,12 +251,19 @@ func (l *lay) facepile(c *richtext.CallCard, x, y, shown int) {
 		if f.UserID == "" {
 			rad = l.dp(3) // p-call_facepile__face--external img
 		}
-		avatar := f.Avatar
-		if avatar == "" && f.UserID == "" {
-			avatar = DefaultAvatar // renderExternalAvatarFallback: ConnectedBaseAvatar with no member
+		avatar, onFail := f.Avatar, ""
+		if f.UserID == "" {
+			// renderExternalAvatar: its avatar_url, whose renderError (and a
+			// face with none) is renderExternalAvatarFallback, ConnectedBaseAvatar
+			// with no member: ava_0002
+			if avatar == "" {
+				avatar = DefaultAvatar
+			} else {
+				onFail = DefaultAvatar
+			}
 		}
 		if avatar != "" {
-			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: avatar, radii: [4]int{rad, rad, rad, rad}, target: -1, px: s})
+			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: avatar, radii: [4]int{rad, rad, rad, rad}, target: -1, px: s, onFail: onFail})
 		} else {
 			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: l.st.Palette.Placeholder, target: -1})
 		}
