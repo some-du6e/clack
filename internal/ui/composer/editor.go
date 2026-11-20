@@ -1348,6 +1348,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 		}
 	}
 	e.scrollY = min(max(e.scrollY, 0), max(0, e.contentH-viewH))
+	cx = lay.caretLeft(cli, cx, lay.m.caretW)
 	e.caretRect = image.Rect(cx, cbase-casc-e.scrollY, cx+lay.m.caretW, cbase+cdesc-e.scrollY)
 	if e.resetBlink {
 		e.resetBlink = false

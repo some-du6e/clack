@@ -314,7 +314,11 @@ type tlPara struct {
 	top, bot   int
 	raw        []tlRawEmoji // unicode emoji left as text (code, other editors)
 	asc, desc  int          // primary font metrics
-	num        int          // Ordered: item number
+	// casc, cdesc are the caret's: the primary font's ascent and descent
+	// each rounded, as Blink's FontMetrics has them (the line's asc and
+	// desc are rounded up); caretInfo
+	casc, cdesc int
+	num         int // Ordered: item number
 	// boxTop/boxBot is the code block box; set on the last line of a
 	// code block group. groupTop is the box's top on every code line.
 	boxTop, boxBot int
@@ -397,6 +401,9 @@ type tlLayout struct {
 	h1Asc, h1Desc     int
 	h2Asc, h2Desc     int
 	h3Asc, h3Desc     int
+	// the caret's ascent and descent per font (tlPara.casc): lato, mono,
+	// h1, h2, h3
+	caretM [5][2]int
 
 	paintOK        bool
 	paintGen       uint64
@@ -442,6 +449,16 @@ func (l *tlLayout) build(d *Doc, st *EditorStyle, sh *text.Shaper, k tlKey) {
 	}
 	if l.h3Asc+l.h3Desc == 0 {
 		l.h3Asc, l.h3Desc = m.h3Ppem.Ceil(), m.h3Ppem.Ceil()/4
+	}
+	for i, f := range [5]struct {
+		asc, desc fixed.Int26_6
+		ca, cd    int
+	}{{lato.ascent, lato.descent, l.latoAsc, l.latoDesc}, {mono.ascent, mono.descent, l.monoAsc, l.monoDesc},
+		{h1.ascent, h1.descent, l.h1Asc, l.h1Desc}, {h2.ascent, h2.descent, l.h2Asc, l.h2Desc}, {h3.ascent, h3.descent, l.h3Asc, l.h3Desc}} {
+		l.caretM[i] = [2]int{f.asc.Round(), f.desc.Round()}
+		if f.asc+f.desc == 0 {
+			l.caretM[i] = [2]int{f.ca, f.cd} // the fallback above
+		}
 	}
 	l.paras = l.paras[:0]
 	l.lines = l.lines[:0]
@@ -495,18 +512,24 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 	if p.kind == CodeBlock {
 		right = m.border + m.prePad
 	}
+	cm := l.caretM[0]
 	switch p.kind {
 	case CodeBlock:
 		p.asc, p.desc = l.monoAsc, l.monoDesc
+		cm = l.caretM[1]
 	case Header1:
 		p.asc, p.desc = l.h1Asc, l.h1Desc
+		cm = l.caretM[2]
 	case Header2:
 		p.asc, p.desc = l.h2Asc, l.h2Desc
+		cm = l.caretM[3]
 	case Header3:
 		p.asc, p.desc = l.h3Asc, l.h3Desc
+		cm = l.caretM[4]
 	default:
 		p.asc, p.desc = l.latoAsc, l.latoDesc
 	}
+	p.casc, p.cdesc = cm[0], cm[1]
 	n := p.end - p.start
 	p.px = make([]fixed.Int26_6, n+1)
 	p.stop = make([]bool, n+1)
@@ -881,7 +904,10 @@ func (l *tlLayout) lineOf(pos int) int {
 	return p.l0
 }
 
-// caretInfo returns the caret x, baseline and font extent at pos.
+// caretInfo returns the caret x, baseline and font extent at pos: the
+// caret Blink draws is the font's height on the baseline, its ascent and
+// descent each rounded (ComputeLocalCaretRectAtTextOffset,
+// core/layout/inline/caret_rect.cc; platform/fonts/font_metrics.cc).
 func (l *tlLayout) caretInfo(pos int) (x, base, asc, desc, li int) {
 	if len(l.lines) == 0 {
 		return 0, 0, 0, 0, 0
@@ -889,7 +915,19 @@ func (l *tlLayout) caretInfo(pos int) (x, base, asc, desc, li int) {
 	li = l.lineOf(pos)
 	ln := &l.lines[li]
 	p := &l.paras[ln.para]
-	return l.vx(li, pos), ln.base, p.asc, p.desc, li
+	return l.vx(li, pos), ln.base, p.casc, p.cdesc, li
+}
+
+// caretLeft is the caret's left edge for a caret at x on line li, w px
+// wide: Blink's bar caret is centred on the caret's x (caret_left -=
+// caret_width / 2) and kept inside the line (ClampAndRound,
+// core/layout/inline/caret_rect.cc), so at a line's start it starts there.
+func (l *tlLayout) caretLeft(li, x, w int) int {
+	left := x - w/2
+	if li >= 0 && li < len(l.lines) {
+		left = max(left, l.vx(li, l.lines[li].a))
+	}
+	return left
 }
 
 // lineAtY returns the visual line at content y (nearest if between lines).

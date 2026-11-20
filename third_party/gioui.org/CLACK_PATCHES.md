@@ -2526,3 +2526,55 @@ hunk gives a workflow file GitHub rejects. Keep each job whole (each
 with its own `steps:` and `exit $rc`): the simplest way is one side's
 file with the other side's jobs appended whole, as this branch did with
 ui's `theme-contrast-4` and `fileurl-dotdot` in round 2.
+
+## 54. widget: a single-line editor centres its line, and the caret is Blink's
+
+`widget/text.go` (`textView.lineShift`, `caretRect`; `Layout`,
+`ScrollBounds`, `Dimensions` and `PaintCaret` use them).
+
+Karim, 2026-11-20 (Windows, alpha.112): channel details' "Add agents and
+apps to #clack" modal drew its search's caret from near the input's top
+padding down to the placeholder's x-height. The picker gives its editor
+a 28 dp row (`layout.W` keeps the minimum height), and Gio drew the line
+at the top of the view, so text and caret sat 5 px (1x) above the
+placeholder centred in the box. Every input that hands its editor a box
+taller than its line did the same.
+
+- A single-line view taller than its line now draws the line lower, by
+  `lineShift`: the baseline goes `(height - ascent - descent)/2 + ascent`
+  from the top, ascent and descent each rounded, the half-leading
+  floored. That is where Blink puts it: a single-line input centres its
+  inner editor (html.css,
+  `input::-webkit-textfield-decoration-container`, `align-items:
+  center`), its line puts the font's content area in the middle with
+  the leading floored (`CalculateLeadingSpace`,
+  core/layout/inline/inline_box_state.cc), and the placeholder takes the
+  editor's first baseline (`BlockLayoutAlgorithm::
+  HandleTextControlPlaceholder`, core/layout/block_layout_algorithm.cc).
+  The shift is the view's vertical scroll offset (negative), so text,
+  selection, `Regions`, the caret, the IME and pointer hits all move with
+  it; `ScrollBounds` pins it, and `Dimensions().Baseline` reports the
+  moved baseline. A view no taller than its text is as before.
+- The caret is Blink's bar caret (`ComputeLocalCaretRectAtTextOffset`,
+  core/layout/inline/caret_rect.cc; `LocalCaretRectForEmptyElement`,
+  core/layout/layout_box_model_object.cc): the font's height on the
+  baseline, ascent and descent each rounded (`FontMetrics`,
+  platform/fonts/font_metrics.cc: 18 px for Lato at 15 px, where Gio's
+  rounded-up 19), `LocalFrameView::BarCaretWidth` wide (max(1, device
+  scale) device px, pixel-snapped: 1 px at 1x, where Gio drew 2, and 2 at
+  1.5x and 2x), its left edge the caret's x less half its width, rounded
+  and kept inside the view (`ClampAndRound`), so at the start of a line
+  it starts there (Gio's was centred on x and cut in half by the view's
+  left edge: 1 px at 2x). `caretWidth` still pads the view's width.
+
+Clack's composer draws its own caret (internal/ui/composer) and takes
+the same rules there.
+
+Tests: `internal/ui/views` `TestCaretAlignViewsInputs` (the agents
+invite picker and the views' search box) and `internal/ui/popups`
+`TestCaretAlignPopupsField` (popups' `field`, 36/15 with an icon and
+44/18), at 1x, 1.5x and 2x in both themes, measure the caret's top,
+bottom, width and x against the placeholder's and the typed text's ink
+(`internal/ui/theme/carettest`), on llvmpipe, WARP and Metal:
+flake-check's `caret-align` job (dispatch with `only=caret-align`).
+Not in `UPSTREAM.patch`.
