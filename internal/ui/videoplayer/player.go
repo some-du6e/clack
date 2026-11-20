@@ -188,9 +188,12 @@ func (r *Row) key(f *richtext.File) key { return key{r.pane, r.ch, r.ts, f.ID} }
 
 // MediaVisible is how much of f's tile its scrollers showed in the last
 // frame (0..1). useScrollDockTrigger's IntersectionObserver (threshold
-// dockBelow) calls back as the tile crosses it, the first callback
-// skipped: a playing video that goes under it docks into the mini player
-// (pip.go) when it docks at all; otherwise it plays on.
+// dockBelow) calls back as the tile crosses it: a playing video that goes
+// under it docks into the mini player (pip.go) when it docks at all;
+// otherwise it plays on. Each mount of the VideoPlayer has its own
+// observer (the effect's target is its element), which skips its first
+// callback: a tile laid out again after a frame without it (EndFrame's
+// unmount) judges no crossing until its first report has come.
 func (r *Row) MediaVisible(f *richtext.File, frac float64) {
 	if f == nil {
 		return
@@ -575,6 +578,11 @@ func (c *Controller) EndFrame() {
 			delete(c.tiles, k)
 			continue
 		}
+		// the VideoPlayer unmounted, and its observer with it: the next
+		// mount's skips its first callback (Jump to message opened the
+		// conversation with the tile under 10% for a frame, and the old
+		// observer's last "seen" docked it again: TestVideoPipJump)
+		t.visible = false
 		if c.docksLocked(t) {
 			c.dockLocked(t, "navigate", true) // useNavigateDockTrigger: it plays on in the corner
 		} else if t.playing {

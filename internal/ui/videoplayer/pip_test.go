@@ -68,6 +68,32 @@ func TestPipDocksOnScroll(t *testing.T) {
 	}
 }
 
+// The observer goes with the VideoPlayer (useScrollDockTrigger's effect
+// cleanup, its target the player's element): laid out again after a frame
+// without it (its conversation left and opened again by Jump to message),
+// the tile's first report is the new observer's first callback, skipped,
+// whatever the old one last saw; a crossing after it docks.
+func TestPipObserverPerMount(t *testing.T) {
+	c, _ := fakeEnv(t)
+	r := c.Row("channel", "C1", "1.0", nil)
+	f := videoFile("F1")
+	playThen(t, c, r, f)
+	r.MediaVisible(f, 0.5) // seen
+	frame(c)               // another conversation: docks
+	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c); return pipPlaying(c) })
+	c.ClosePip(true) // Jump to message: the conversation opens again
+	waitFor(t, "the inline player playing on", 5*time.Second, func() bool { frame(c, [2]any{r, f}); return state(t, c, r, f).Playing })
+	r.MediaVisible(f, 0.05) // the list not at the message yet
+	if _, _, ok := c.Pip(); ok {
+		t.Fatalf("docked (%q) on the first report after it was laid out again", c.PipTrigger())
+	}
+	r.MediaVisible(f, 0.5)
+	r.MediaVisible(f, 0.05)
+	if _, _, ok := c.Pip(); !ok || c.PipTrigger() != "scroll" {
+		t.Errorf("under 10%% after the new observer saw it: docked %v by %q, want scroll", ok, c.PipTrigger())
+	}
+}
+
 // clips_pip_auto_dock false: a scrolled-away video plays on inline.
 func TestPipAutoDockOff(t *testing.T) {
 	c, p := fakeEnv(t)

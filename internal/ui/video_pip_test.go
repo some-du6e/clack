@@ -8,6 +8,7 @@ package ui
 // docks: a video scrolled away or left behind pauses there.
 
 import (
+	"fmt"
 	"image"
 	"os"
 	"strings"
@@ -45,6 +46,27 @@ func pipDock(t *testing.T, e *perfEnv, clk *time.Duration) (ts string, p pipView
 	e.until("the mini player playing", 10*time.Second, func() bool { v, ok := pipShown(e); return ok && v.playing && !v.rect.Empty() })
 	p, _ = pipShown(e)
 	return m.TS, p
+}
+
+// tileShare is how much of message ts's video tile the channel list shows
+// (its rects aren't clipped to it): what the scroll dock trigger judges.
+// -1: no tile.
+func tileShare(e *perfEnv, ts string) float64 {
+	var l channelList
+	if c := e.a.convos[fakeslack.FilesChannelID+"/"]; c != nil {
+		l, _ = c.list.(channelList)
+	}
+	if l.ChannelView == nil {
+		return -1
+	}
+	list := l.ListRect()
+	for _, r := range l.FileRects() {
+		if r.TS == ts && r.File.IsVideo && !r.R.Empty() {
+			in := r.R.Intersect(list)
+			return float64(in.Dx()*in.Dy()) / float64(r.R.Dx()*r.R.Dy())
+		}
+	}
+	return -1
 }
 
 func pipPress(e *perfEnv, p image.Point, k pointer.Kind, at time.Duration) {
@@ -122,21 +144,36 @@ func TestVideoPipJump(t *testing.T) {
 	at := p.elapsed
 	clk += time.Second
 	e.clickAt(vvMid(p.controls[1]), clk)
+	// the tile's share of the list in the frames after the jump, as it
+	// changed (a crossing under 10% after it was seen docks it again)
+	var shares []string
+	share := func() {
+		if v := fmt.Sprintf("%.2f", tileShare(e, ts)); len(shares) == 0 || shares[len(shares)-1] != v {
+			shares = append(shares, v)
+		}
+	}
 	for dl := time.Now().Add(10 * time.Second); ; {
+		share()
 		if pl, _, ok := inlineState(e, ts); ok && pl {
 			break
 		}
 		if time.Now().After(dl) {
 			pl, el, ok := inlineState(e, ts)
 			v, pip := pipShown(e)
-			t.Fatalf("after Jump to message the inline player: playing %v at %v (%v); route %q; mini player %v %+v",
-				pl, el, ok, e.a.router.Current(), pip, v)
+			t.Fatalf("after Jump to message the inline player: playing %v at %v (%v); route %q; mini player %v %+v; the tile's share of the list %v",
+				pl, el, ok, e.a.router.Current(), pip, v, shares)
 		}
 		e.frame()
 		time.Sleep(time.Millisecond)
 	}
-	if _, ok := pipShown(e); ok {
-		t.Error("the mini player stayed after Jump to message")
+	// it plays on there: not docked again as the list settles
+	for i := 0; i < 20; i++ {
+		e.frame()
+		share()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if v, ok := pipShown(e); ok {
+		t.Errorf("the mini player stayed after Jump to message, or docked again (%q); the tile's share of the list %v", v.trigger, shares)
 	}
 	if _, el, _ := inlineState(e, ts); el < at-100*time.Millisecond {
 		t.Errorf("the inline player plays from %v, the mini player was at %v", el, at)
