@@ -206,9 +206,9 @@ func (p *fakePlayer) Op(still paint.ImageOp, size image.Point) paint.ImageOp {
 	return liveOp(f, still)
 }
 
-// Snapshot is the frame shown now (Snapshotter): the frame's colour at
+// CopyFrame is the frame shown now (FrameCopier): the frame's colour at
 // the size Op last drew.
-func (p *fakePlayer) Snapshot() (*image.RGBA, bool) {
+func (p *fakePlayer) CopyFrame() (*image.RGBA, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.shown || p.last == nil {

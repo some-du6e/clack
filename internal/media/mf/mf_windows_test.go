@@ -437,7 +437,7 @@ func TestMFPausedFrameSurvivesResize(t *testing.T) {
 	}
 }
 
-// Paused, the frame it shows reads back (media.Snapshotter: a tile keeps
+// Paused, the frame it shows reads back (media.FrameCopier: a tile keeps
 // it when its idle player lets go, Chromium's idle suspend): light grey
 // at 1.5 s, at the ring's size.
 func TestMFSnapshot(t *testing.T) {
@@ -454,7 +454,7 @@ func TestMFSnapshot(t *testing.T) {
 			break
 		}
 	}
-	img, ok := r.p.Snapshot()
+	img, ok := r.p.CopyFrame()
 	if !ok {
 		t.Fatal("no snapshot of the paused frame")
 	}

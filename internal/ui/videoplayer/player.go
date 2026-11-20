@@ -101,7 +101,7 @@ var unmountAfter = 10 * time.Second
 // decoder's surfaces, AVPlayer, the 16 MB cache) and the tile keeps the
 // frame it showed, as Chromium's idle suspend does after its delegate's
 // 15 s idle timeout. The next play or scrub mounts it again from the
-// progress. Only a backend that reads its frame back (media.Snapshotter)
+// progress. Only a backend that reads its frame back (media.FrameCopier)
 // lets go.
 var idleAfter atomic.Int64
 
@@ -493,7 +493,7 @@ func (c *Controller) idleLocked(t *tile) {
 		}
 		return
 	}
-	if _, ok := t.h.Player.(media.Snapshotter); !ok || t.idle != nil {
+	if _, ok := t.h.Player.(media.FrameCopier); !ok || t.idle != nil {
 		return
 	}
 	h := t.h
@@ -511,7 +511,7 @@ func (c *Controller) releaseIdle(t *tile, h *media.Handle) {
 	if !ok {
 		return
 	}
-	img, got := h.Player.(media.Snapshotter).Snapshot()
+	img, got := h.Player.(media.FrameCopier).CopyFrame()
 	c.mu.Lock()
 	if !idle() {
 		c.mu.Unlock()

@@ -263,9 +263,9 @@ func (p *player) Texture(dev media.Device) (media.Texture, bool) {
 	return media.Texture{Handle: uintptr(tex), Key: uint64(key)}, true
 }
 
-// Snapshot is the frame shown now (media.Snapshotter): the newest pixel
+// CopyFrame is the frame shown now (media.FrameCopier): the newest pixel
 // buffer read back, at its size.
-func (p *player) Snapshot() (*image.RGBA, bool) {
+func (p *player) CopyFrame() (*image.RGBA, bool) {
 	p.objMu.RLock()
 	defer p.objMu.RUnlock()
 	if p.obj == nil {

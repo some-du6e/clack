@@ -328,9 +328,9 @@ func (p *player) Op(still paint.ImageOp, size image.Point) paint.ImageOp {
 	return p.frames.Op(still, size)
 }
 
-// Snapshot is the frame shown now (media.Snapshotter): the ring's newest
+// CopyFrame is the frame shown now (media.FrameCopier): the ring's newest
 // texture read back on the media thread, at the ring's size.
-func (p *player) Snapshot() (*image.RGBA, bool) {
+func (p *player) CopyFrame() (*image.RGBA, bool) {
 	type shot struct {
 		img *image.RGBA
 		ok  bool
