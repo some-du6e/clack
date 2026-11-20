@@ -501,27 +501,93 @@ var emailTLDs = append([]string{"aero", "app", "asia", "blog", "by", "cat", "clu
 	"immo", "ir", "is", "jobs", "kp", "law", "loan", "me", "menu", "mobi", "museum", "name", "online", "party", "post", "pro", "sd", "shop",
 	"site", "so", "space", "sy", "team", "tel", "top", "travel", "ve", "vip", "wang", "wtf", "xin", "xxx", "xyz"}, urlTLDs...)
 
-var emailRx = regexp.MustCompile(`(?i)(?:\b|_)([A-Z0-9][A-Z0-9._%+-]{0,69})@(?:([A-Z0-9-]{1,63})\.){1,125}([A-Z]{2,63})(\b|_)`)
+// emailAt is hlZ9's
+// /(?:\b|_)([A-Z0-9][A-Z0-9._%+-]{0,69})@(?:([A-Z0-9-]{1,63})\.){1,125}([A-Z]{2,63})(\b|_)/gi
+// tried at rune i, matched by hand (Go's regexp refuses the nested
+// repeat): the match's end, the TLD and whether a trailing "_" ended it.
+// The local part and each label can't backtrack (the characters after
+// them aren't in their classes), so only the number of labels does, from
+// the most down, and the TLD is the longest letter run that ends at a
+// word boundary or an underscore.
+func emailAt(rs []rune, i int) (end int, tld string, under bool, ok bool) {
+	word := func(r rune) bool { return urlASCIILetter(r) || r >= '0' && r <= '9' || r == '_' }
+	alnum := func(r rune) bool { return urlASCIILetter(r) || r >= '0' && r <= '9' }
+	try := func(l int) (int, string, bool, bool) {
+		if l >= len(rs) || !alnum(rs[l]) {
+			return 0, "", false, false
+		}
+		j := l + 1
+		for j < len(rs) && j-l-1 < 69 && (alnum(rs[j]) || strings.ContainsRune("._%+-", rs[j])) {
+			j++
+		}
+		if j >= len(rs) || rs[j] != '@' {
+			return 0, "", false, false
+		}
+		starts := []int{j + 1}
+		for p := j + 1; len(starts) <= 125; {
+			q := p
+			for q < len(rs) && q-p < 63 && (alnum(rs[q]) || rs[q] == '-') {
+				q++
+			}
+			if q == p || q >= len(rs) || rs[q] != '.' {
+				break
+			}
+			p = q + 1
+			starts = append(starts, p)
+		}
+		for k := len(starts) - 1; k >= 1; k-- {
+			t := starts[k]
+			e := t
+			for e < len(rs) && e-t < 63 && urlASCIILetter(rs[e]) {
+				e++
+			}
+			if e-t < 2 {
+				continue
+			}
+			switch {
+			case e == len(rs) || !word(rs[e]):
+				return e, string(rs[t:e]), false, true
+			case rs[e] == '_':
+				return e + 1, string(rs[t:e]), true, true
+			}
+		}
+		return 0, "", false, false
+	}
+	if boundary := (i == 0 || !word(rs[i-1])) != (i >= len(rs) || !word(rs[i])); boundary {
+		if e, t, u, ok := try(i); ok {
+			return e, t, u, true
+		}
+	}
+	if i < len(rs) && rs[i] == '_' {
+		return try(i + 1)
+	}
+	return 0, "", false, false
+}
 
 // detectEmails is hlZ9's.
 func detectEmails(s string) []linkMatch {
 	rs := []rune(s)
 	var out []linkMatch
-	for _, m := range emailRx.FindAllStringSubmatchIndex(s, -1) {
-		a := s[m[0]:m[1]]
-		if m[8] >= 0 && m[9] > m[8] {
-			a = a[:len(a)-(m[9]-m[8])]
-		}
-		if utf8.RuneCountInString(a) > 254 || !slices.Contains(emailTLDs, strings.ToLower(s[m[6]:m[7]])) {
+	for i := 0; i < len(rs); {
+		end, tld, under, ok := emailAt(rs, i)
+		if !ok {
+			i++
 			continue
 		}
-		at := utf8.RuneCountInString(s[:m[0]])
-		if a != "" && strings.ContainsRune("*`_~\uff0a\uff40\uff3f", []rune(a)[0]) { // maybeStripLeadingDelimiterFromEmail
-			_, size := utf8.DecodeRuneInString(a)
-			a = a[size:]
+		at := i
+		i = end
+		a := rs[at:end]
+		if under {
+			a = a[:len(a)-1]
+		}
+		if jsRunes(a) > 254 || !slices.Contains(emailTLDs, strings.ToLower(tld)) {
+			continue
+		}
+		if len(a) > 0 && strings.ContainsRune("*`_~\uff0a\uff40\uff3f", a[0]) { // maybeStripLeadingDelimiterFromEmail
+			a = a[1:]
 			at++
 		}
-		lm := linkMatch{kind: "email", at: at, n: utf8.RuneCountInString(a), text: a, url: "mailto:" + a}
+		lm := linkMatch{kind: "email", at: at, n: len(a), text: string(a), url: "mailto:" + string(a)}
 		if at > 0 && rs[at-1] == '@' {
 			continue
 		}
