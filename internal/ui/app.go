@@ -335,6 +335,14 @@ type App struct {
 	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
 	inspKey key.Filter    // its shortcut
 	konami  konami        // the code that turns it on and off
+	// inspOn mirrors insp != nil for huddleui's windows, which run tools
+	// of their own (InspectOn); liveHolds counts the frozen windows
+	// holding the animated images (InspectHold)
+	inspOn    atomic.Bool
+	liveHolds struct {
+		sync.Mutex
+		n int
+	}
 	// a freeze ended: the next frame starts the pointer state over first
 	// (inspectFirst); presses: key presses read for the Konami code before
 	// the frame's layout

@@ -548,7 +548,9 @@ jobs:
       # a rail peek's rows, the Ctrl+K switcher, a frozen tooltip, plugin
       # overlay roots and tree tooltips, a toast); a region's copy keys armed
       # once its review has been on screen 300 ms, a held Enter's repeats
-      # dropped
+      # dropped; the tool in the huddle window, a popped-out share, the
+      # presenter's panel, an invite window and the join preview (Karim,
+      # 2026-11-20, in a huddle on Windows: "no dev tools")
       - name: the inspect tool's pick to review, and the picker in popups (WARP, fakeslack)
         if: ${{ !cancelled() }}
         shell: bash # every go test counts (pwsh steps fail only on the last command)
@@ -557,9 +559,10 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
         run: |
           rc=0
-          go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast)$' ./internal/ui || rc=1
-          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestRegionCopyArms|TestHeldCopyKeyRepeats|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestDeliveriesInOrder|TestDeliveriesInOrderWithText|TestNoShotLogsAtOnce|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast|TestInspectSubWindowsGate)$' ./internal/ui || rc=1
+          go test -count=1 -v -run '^(TestReviewShotNextFrame|TestFreezeReviewShotNextFrame|TestEnterRightAfterPick|TestEscDuringPreparation|TestRegionEnterOpensReview|TestRegionCopyArms|TestHeldCopyKeyRepeats|TestEnterMidMarkKeepsIt|TestGiveUpDropsCapture|TestCloseLogsCapture|TestShooterSetWantedNeverWaits|TestShooterStartStopStart|TestShooterReleasesAfterShot|TestShooterFailedWindows|TestShooterTwoSessions|TestExperimentNotesFromTheRecorder|TestDeliveriesInOrder|TestDeliveriesInOrderWithText|TestNoShotLogsAtOnce|TestSaveUniqueStems|TestFreezeDeferredTooltip|TestBlurMatchesOld|TestPaintShotMatchesOld|TestBlurOutsideAllocs)$' ./internal/ui/inspect || rc=1
           go test -count=1 -v -run '^(TestInspectCardAfterContent|TestInspectCardMarkHoldsContent|TestInspectPluginOverlayLayer|TestInspectTreeTooltipEitherTheme)$' ./internal/ui/slackc || rc=1
+          go test -count=1 -v -timeout 10m -run '^(TestInspectHuddleWindow|TestInspectScreensharePopout|TestInspectPresenterPanel|TestInspectInviteWindow|TestInspectJoinPreview)$' ./internal/ui/huddleui || rc=1
           exit $rc
       - name: thread reply box gap (layout, fakeslack)
         if: ${{ !cancelled() }}

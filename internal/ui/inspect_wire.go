@@ -57,6 +57,7 @@ func (a *App) initInspect() {
 	}
 	a.inspKey = inspectFilter()
 	a.insp = inspect.New(inspectHost{a}, a.inspKey)
+	a.inspOn.Store(true) // huddleui's windows run theirs (InspectOn)
 }
 
 // setInspectTool turns the tool on or off at once, and for the next
@@ -73,7 +74,44 @@ func (a *App) setInspectTool(on bool) {
 		a.insp.Close() // a session, a pick's included, ends
 		a.insp = nil
 	}
+	a.inspOn.Store(false) // and huddleui's windows' (their next frame)
 	a.Toast("Inspect tool off")
+}
+
+// The tool in huddleui's windows (huddleui/inspect.go: the huddle window,
+// a screen share popped out, the presenter's panel, an invite window, the
+// join preview): each runs its own event loop, so each runs a tool of its
+// own, on while the main window's is. huddleui.InspectHost.
+
+// InspectOn reports that the tool is on (any goroutine).
+func (a *App) InspectOn() bool { return a.inspOn.Load() }
+
+// InspectKey is the tool's shortcut (inspectFilter).
+func (a *App) InspectKey() key.Filter { return inspectFilter() }
+
+// InspectConfigDir is where reports are saved.
+func (a *App) InspectConfigDir() string { return a.opts.ConfigDir }
+
+// InspectVersion is Clack's version for the reports.
+func (a *App) InspectVersion() string { return buildVersion }
+
+// InspectHold holds the animated images while a window is frozen (on) or
+// lets one window's hold go: the cache holds them while any window's
+// freeze does, the main window's included (any goroutine).
+func (a *App) InspectHold(on bool) {
+	h := &a.liveHolds
+	h.Lock()
+	defer h.Unlock()
+	switch {
+	case on:
+		if h.n++; h.n == 1 {
+			a.images.HoldLive(true)
+		}
+	case h.n > 0:
+		if h.n--; h.n == 0 {
+			a.images.HoldLive(false)
+		}
+	}
 }
 
 // konamiCode turns the inspect tool on, and again off.
@@ -253,7 +291,7 @@ func (h inspectHost) ConfigDir() string   { return h.a.opts.ConfigDir }
 // frozen frame's would play on) and, when the freeze ends, asks the next
 // frame to start the pointer state over (inspectFirst).
 func (h inspectHost) Frozen(on bool) {
-	h.a.images.HoldLive(on)
+	h.a.InspectHold(on)
 	if !on {
 		h.a.inspReset = true
 	}
