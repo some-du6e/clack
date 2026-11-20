@@ -27,7 +27,9 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}-${{ github.event.inputs.tag }}
-  cancel-in-progress: ${{ github.ref_type == 'branch' && github.event_name == 'push' }}
+  # dry runs (dispatched with no tag) on a ref replace each other; tag pushes
+  # and -f tag= republishes never cancel
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' && !github.event.inputs.tag }}
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
