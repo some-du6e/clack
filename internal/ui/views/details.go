@@ -31,6 +31,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
@@ -150,6 +151,7 @@ type ChannelDetails struct {
 	focusTopic   int
 	confirmLeave bool
 	topicEd      widget.Editor
+	texty        *composer.TextyInput // the topic or description input (startEdit)
 
 	find      *search
 	memFilter dirDropdown
@@ -224,11 +226,47 @@ func (d *ChannelDetails) EditTopic() {
 	}
 }
 
-// SetEditText replaces the open edit modal's text (tests).
-func (d *ChannelDetails) SetEditText(s string) { d.topicEd.SetText(s) }
+// EditPurpose is the About tab's Description "Edit": the "Edit
+// description" modal.
+func (d *ChannelDetails) EditPurpose() {
+	if inf, ok, _ := d.info.get(); ok {
+		d.startEdit(cdEditPurpose, inf.Conv.Purpose)
+	}
+}
 
-// EditText is the open edit modal's text.
-func (d *ChannelDetails) EditText() string { return d.topicEd.Text() }
+// SetEditText replaces the open edit modal's text (tests).
+func (d *ChannelDetails) SetEditText(s string) {
+	if in := d.textyInput(); in != nil {
+		in.SetText(s)
+		return
+	}
+	d.topicEd.SetText(s)
+}
+
+// EditText is what the open edit modal's input shows.
+func (d *ChannelDetails) EditText() string {
+	if in := d.textyInput(); in != nil {
+		return in.Text()
+	}
+	return d.topicEd.Text()
+}
+
+// textyInput is the open topic or description input (nil for the
+// channel name's).
+func (d *ChannelDetails) textyInput() *composer.TextyInput {
+	if d.editKind == cdEditName {
+		return nil
+	}
+	return d.texty
+}
+
+// editTag is the edit modal's input focus tag.
+func (d *ChannelDetails) editTag() event.Tag {
+	if in := d.textyInput(); in != nil {
+		return in.Tag()
+	}
+	return &d.topicEd
+}
 
 // SaveEdit is the edit modal's Save.
 func (d *ChannelDetails) SaveEdit() {
@@ -456,7 +494,7 @@ func (d *ChannelDetails) Escape() bool {
 // DeprecatedBaseDialog: the header's close button, the input, Cancel,
 // Save), trapped and wrapping.
 func (d *ChannelDetails) editStops() []any {
-	return []any{&d.editClose, &d.topicEd, &d.cancelTop, &d.saveTopic}
+	return []any{&d.editClose, d.editTag(), &d.cancelTop, &d.saveTopic}
 }
 
 // editKeys runs Tab / Shift+Tab in the edit dialog.
@@ -524,55 +562,28 @@ func (d *ChannelDetails) EditFocus(gtx C) (string, bool) {
 func (d *ChannelDetails) startEdit(kind int, cur string) {
 	d.editing, d.editKind, d.confirmLeave = true, kind, false
 	d.editRing = false
-	// The topic and description inputs are Texty fields whose onEnter
-	// (onTextyEnter) returns true: Texty then inserts a newline, and the
-	// dialog's Enter→go skips contentEditable targets, so Enter never
-	// saves there. The channel name stays a one-line input.
-	d.topicEd.SingleLine = kind == cdEditName
-	d.topicEd.Submit = kind == cdEditName
-	d.topicEd.MaxLen = 250
-	if kind == cdEditName {
-		d.topicEd.MaxLen = 80
-	}
+	// The topic and description inputs are Slack's Texty inputs over the
+	// stored text (useChannelTopicInput, useChannelPurposeInput:
+	// composer.TextyInput, its mentions as pills); their onEnter
+	// (onTextyEnter) returns true, so Enter adds a line, and the dialog's
+	// Enter→go skips contentEditable targets. The channel name stays a
+	// one-line input.
 	d.editErr = ""
 	if kind != cdEditName {
-		cur = cdEditableText(cur)
+		ph := nsChannelDetails.T("Add a topic")
+		if kind == cdEditPurpose {
+			ph = nsChannelDetails.T("Add a description")
+		}
+		d.texty = composer.NewTextyInput(d.h, cur, ph)
+		d.focusTopic = 3
+		return
 	}
+	d.texty = nil
+	d.topicEd.SingleLine, d.topicEd.Submit, d.topicEd.MaxLen = true, true, 80
 	d.topicEd.SetText(cur)
 	n := d.topicEd.Len()
 	d.topicEd.SetCaret(n, n)
 	d.focusTopic = 3
-}
-
-// cdEditableText is a topic or description as Slack's editor shows it:
-// links as their text (<https://x> and <https://x|https://x> become
-// https://x), the rest of the mrkdwn untouched.
-func cdEditableText(s string) string {
-	var b strings.Builder
-	for {
-		i := strings.Index(s, "<http")
-		if i < 0 {
-			b.WriteString(s)
-			return b.String()
-		}
-		j := strings.IndexByte(s[i:], '>')
-		if j < 0 {
-			b.WriteString(s)
-			return b.String()
-		}
-		inner := s[i+1 : i+j]
-		u, label, hasLabel := strings.Cut(inner, "|")
-		b.WriteString(s[:i])
-		switch {
-		case !hasLabel:
-			b.WriteString(u)
-		case label == u || "http://"+label == u || "https://"+label == u:
-			b.WriteString(label)
-		default:
-			b.WriteString(s[i : i+j+1])
-		}
-		s = s[i+j+1:]
-	}
 }
 
 // cdTopicError is Slack's getChannelTopicError for a setTopic error code.
@@ -621,11 +632,13 @@ func (d *ChannelDetails) saveTopicNow() {
 	var send func(ctx context.Context) error
 	switch kind {
 	case cdEditPurpose:
-		if t == inf.Conv.Purpose {
+		// handleSave: only a changed value() goes, as Slack cleans it
+		if d.texty == nil || !d.texty.Changed() {
 			return
 		}
+		t = d.texty.Submit()
 		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Purpose, v.Conv.PurposeDoc = t, nil })
-		send = func(ctx context.Context) error { return c.SetPurpose(ctx, id, t) }
+		send = func(ctx context.Context) error { return c.SubmitChannelPurpose(ctx, id, t) }
 	case cdEditName:
 		t = cdChannelName(t)
 		if t == "" || t == inf.Conv.Name {
@@ -634,11 +647,12 @@ func (d *ChannelDetails) saveTopicNow() {
 		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Name = t })
 		send = func(ctx context.Context) error { return c.Rename(ctx, id, t) }
 	default:
-		if t == inf.Conv.Topic {
+		if d.texty == nil || !d.texty.Changed() {
 			return
 		}
+		t = d.texty.Submit()
 		d.info.mutate(func(v *core.ChannelDetails) { v.Conv.Topic, v.Conv.TopicDoc = t, nil })
-		send = func(ctx context.Context) error { return c.SetTopic(ctx, id, t) }
+		send = func(ctx context.Context) error { return c.SubmitChannelTopic(ctx, id, t) }
 	}
 	d.prevConv, d.pendKind = inf.Conv, kind
 	d.topicPending = true
@@ -767,10 +781,10 @@ func (d *ChannelDetails) update(gtx C) {
 	}
 	if d.editing && d.focusTopic > 0 {
 		// The editor appears this frame; retry focusing for a few frames.
-		if gtx.Focused(&d.topicEd) {
+		if gtx.Focused(d.editTag()) {
 			d.focusTopic = 0
 		} else {
-			gtx.Execute(key.FocusCmd{Tag: &d.topicEd})
+			gtx.Execute(key.FocusCmd{Tag: d.editTag()})
 			gtx.Execute(op.InvalidateCmd{})
 			d.focusTopic--
 		}
@@ -1069,19 +1083,22 @@ func (d *ChannelDetails) topicInput(gtx C) D {
 	td := layout.Inset{Top: 8, Bottom: 8, Left: 12, Right: 12}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		gtx.Constraints.Min.Y = gtx.Sp(22)
+		if in := d.textyInput(); in != nil {
+			return in.Layout(gtx, d.th, d.p.Text)
+		}
 		return d.th.Editor(gtx, &d.topicEd, 15, d.p.Text, d.p.Mention)
 	})
 	call := m.Stop()
 	r := image.Rect(0, 0, w, td.Size.Y)
 	rad := gtx.Dp(8)
-	if gtx.Focused(&d.topicEd) {
+	if gtx.Focused(d.editTag()) {
 		ring := gtx.Dp(5)
 		rrect(gtx, r.Inset(-ring), rad+ring, flatten(theme.WithAlpha(d.p.Link, 0x4d), d.p.Surface))
 		one := max(1, gtx.Dp(1))
 		rrect(gtx, r.Inset(-one), rad+one, d.p.Link)
 	}
 	rrect(gtx, r, rad, d.p.Surface)
-	if !gtx.Focused(&d.topicEd) {
+	if !gtx.Focused(d.editTag()) {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.Faint)
 	}
 	call.Add(gtx.Ops)

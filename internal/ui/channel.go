@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -579,7 +580,9 @@ func (a *App) openTopicDialog(ch string, conv *convInfo) {
 	if conv.Kind == "channel" || conv.Kind == "private" {
 		name = "#" + conv.Name
 	}
-	a.ShowOverlay(popups.NewTopicDialog(a, ch, conv.Kind, name, conv.Topic))
+	a.ShowOverlay(popups.NewTopicDialog(a, ch, conv.Kind, name, conv.Topic, func(text, ph string) popups.TopicInput {
+		return composer.NewTextyInput(a, text, ph)
+	}))
 }
 
 // inlineSpans draws rich spans on one line (topic, previews): text, links

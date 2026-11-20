@@ -1107,6 +1107,20 @@ func (s *Server) SetTopic(id, topic string) {
 	}
 }
 
+// SetPurpose replaces a conversation's description in what
+// conversations.info and users.conversations answer.
+func (s *Server) SetPurpose(id, purpose string) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for _, cs := range [][]slack.Conversation{s.convs, s.others} {
+		for i := range cs {
+			if cs[i].ID == id {
+				cs[i].Purpose = &slack.Purpose{Value: purpose}
+			}
+		}
+	}
+}
+
 // UserListFilters returns the filter of every edge users/list call.
 func (s *Server) UserListFilters() []string {
 	s.convMu.Lock()

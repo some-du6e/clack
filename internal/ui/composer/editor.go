@@ -239,6 +239,11 @@ type Editor struct {
 	// plainText is Slack's plain_text_mode ("Format messages with
 	// markup"): no live markup, the characters stay as typed.
 	plainText bool
+	// textOnly is a plain Texty input (TextyInputWithAutocomplete without
+	// rich text: a topic or a description, texty_input.go): no formatting
+	// keys, Tab moves the focus on, and Enter adds a line (their onEnter,
+	// onTextyEnter, returns true).
+	textOnly bool
 	// Snippets is MessageInput's enableSnippetCreation: Mod+Shift+Enter
 	// reports EvSnippet instead of adding a line.
 	Snippets bool
