@@ -41,6 +41,63 @@ func (s *Store) VisitMessages(ch string, thread func(root string), f func(m *sla
 			f(&th[i])
 		}
 	}
+	// then the messages fetched by id, after a mark of their own: they are
+	// in the plugins' messages slice too (FetchedIn)
+	if fs := s.fetchedInLocked(ch); len(fs) > 0 {
+		thread("fetched")
+		for _, m := range fs {
+			f(m)
+		}
+	}
+}
+
+// FetchedIn returns copies of ch's messages fetched by id (Activity's and
+// Saved's hydration, the Threads view's getView: fetched.go), by ts. Slack
+// keeps one messages store: getMessageByTimestamp reads it, and a message
+// it doesn't hold is fetched by id (fetchObjectWithId) into the same store,
+// so the selectors and the plugins patching its slice see it beside the
+// windows' and threads' messages. The plugin mirror's messages slice holds
+// them too.
+func (s *Store) FetchedIn(ch string) []slack.Message {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	fs := s.fetchedInLocked(ch)
+	out := make([]slack.Message, len(fs))
+	for i, m := range fs {
+		out[i] = *m
+	}
+	return out
+}
+
+// FetchedChannels lists the conversations with messages fetched by id.
+func (s *Store) FetchedChannels() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := map[string]bool{}
+	for k := range s.fetched {
+		if i := strings.IndexByte(k, '/'); i > 0 {
+			seen[k[:i]] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for ch := range seen {
+		out = append(out, ch)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// fetchedInLocked is ch's messages fetched by id, by ts (s.mu held).
+func (s *Store) fetchedInLocked(ch string) []*slack.Message {
+	prefix := ch + "/"
+	var out []*slack.Message
+	for k, m := range s.fetched {
+		if m != nil && strings.HasPrefix(k, prefix) {
+			out = append(out, m)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
+	return out
 }
 
 // ThreadsIn returns copies of the cached threads of conversation ch, keyed

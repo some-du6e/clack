@@ -796,7 +796,7 @@ func (m *mirror) keys(slice string) []string {
 		m.mu.Unlock()
 		return a.S.UserIDs()
 	case "messages":
-		return a.S.MessageChannels()
+		return m.messageChannels()
 	case "channelHistory":
 		var out []string
 		for _, ch := range a.S.MessageChannels() {
@@ -809,7 +809,7 @@ func (m *mirror) keys(slice string) []string {
 	case "reactions":
 		// Slack's reactions slice: _rxn_key → the message's reactions
 		var out []string
-		for _, ch := range a.S.MessageChannels() {
+		for _, ch := range m.messageChannels() {
 			for ts, msg := range m.bucket(ch) {
 				if mm, ok := msg.(map[string]any); ok && mm["reactions"] != nil {
 					out = append(out, "message-"+ts+"-"+ch)
@@ -1318,12 +1318,36 @@ func pruneEmpty(v any, zeros bool) any {
 	return v
 }
 
-// bucket is messages[ch]: the cached timeline plus open threads' replies.
+// messageChannels are messages' keys: the conversations with a window or
+// a cached thread, and those with messages fetched by id.
+func (m *mirror) messageChannels() []string {
+	a := m.t.app
+	out := a.S.MessageChannels()
+	seen := make(map[string]bool, len(out))
+	for _, ch := range out {
+		seen[ch] = true
+	}
+	for _, ch := range a.S.FetchedChannels() {
+		if !seen[ch] {
+			out = append(out, ch)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// bucket is messages[ch]: the cached timeline, open threads' replies, and
+// the messages fetched by id. Slack keeps one messages store, and a message
+// fetched by id (fetchObjectWithId: Activity's and Saved's rows, the
+// Threads view) lands in it beside the windows', so a plugin patching the
+// slice (Censorship, ShowRealUser) reaches it there; built from the windows
+// and threads alone, such messages never got a view (store.FetchedIn).
 func (m *mirror) bucket(ch string) map[string]any {
 	a := m.t.app
 	tl := a.S.Timeline(ch)
 	threads := a.S.ThreadsIn(ch)
-	if tl == nil && len(threads) == 0 {
+	fetched := a.S.FetchedIn(ch)
+	if tl == nil && len(threads) == 0 && len(fetched) == 0 {
 		return nil
 	}
 	out := map[string]any{}
@@ -1337,6 +1361,11 @@ func (m *mirror) bucket(ch string) map[string]any {
 			if _, ok := out[msgs[i].TS]; !ok {
 				out[msgs[i].TS] = messageJSON(ch, &msgs[i])
 			}
+		}
+	}
+	for i := range fetched { // a window's or a thread's copy wins
+		if _, ok := out[fetched[i].TS]; !ok {
+			out[fetched[i].TS] = messageJSON(ch, &fetched[i])
 		}
 	}
 	return out
