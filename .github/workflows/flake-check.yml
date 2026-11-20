@@ -2013,5 +2013,8 @@ jobs:
           "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignViewsInputs)$' ./internal/ui/views || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignPopupsField)$' ./internal/ui/popups || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignEditorBox)$' ./internal/ui/theme/carettest || rc=1
-          if [ "$RUNNER_OS" = Linux ]; then "${x[@]}" go test -count=1 -timeout 15m gioui.org/widget || rc=1; fi
+          # Gio's own widget tests; these two fail on ui without this
+          # branch too (6db17b41: Clack's patches 2 and 6 move positions
+          # and allocate), so they are skipped here
+          if [ "$RUNNER_OS" = Linux ]; then "${x[@]}" go test -count=1 -timeout 15m -skip '^(TestNoFilterAllocs|TestIndexPositionRunes)$' gioui.org/widget || rc=1; fi
           exit $rc
