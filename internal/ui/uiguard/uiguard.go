@@ -77,6 +77,10 @@ func Reset() {
 	seen.Unlock()
 }
 
+// Goroutine is the calling goroutine's id (about a microsecond: for
+// checks, not hot paths).
+func Goroutine() int64 { return goid() }
+
 // goid is the current goroutine's id, from its stack header
 // ("goroutine 18 [running]:"). About a microsecond; only blocking paths
 // call it.

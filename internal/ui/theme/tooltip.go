@@ -69,7 +69,15 @@ func TooltipShape(gtx layout.Context, r image.Rectangle, rad int, a TooltipArrow
 	if a.Half > 0 {
 		paint.FillShape(gtx.Ops, bg, clip.Outline{Path: diamondPath(gtx, a, 0)}.Op())
 	}
+	if f := TooltipDrawn; f != nil {
+		f(gtx, r)
+	}
 }
+
+// TooltipDrawn hears of every tooltip box TooltipShape draws, r in the
+// current op coordinates: slackc sets it, for the inspect tool's record
+// (a tooltip is a popup the picker reaches, whoever draws it).
+var TooltipDrawn func(gtx layout.Context, r image.Rectangle)
 
 // tooltipGlow approximates drop-shadow(0 0 1px glow): the shape's alpha
 // blurred with a Gaussian of σ 0.5 CSS px, seen outside the opaque shape.

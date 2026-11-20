@@ -304,7 +304,7 @@ func TestVideoPrefsNoUnpromptedWrites(t *testing.T) {
 	e.settle(800 * time.Millisecond)
 	tile := e.videoTileInView(t, m.TS)
 	clk := time.Second
-	e.hoverAt(mid(tile.R), clk)
+	e.videoHover(mid(tile.R), clk)
 	e.frame()
 	e.frame()
 	none("hovered")
@@ -352,7 +352,7 @@ func TestVideoPrefsNoUnpromptedWrites(t *testing.T) {
 
 	tile = e.videoTileInView(t, m.TS)
 	clk += time.Second
-	e.hoverAt(mid(tile.R), clk)
+	e.videoHover(mid(tile.R), clk)
 	e.frame()
 	e.frame()
 	st, _ := e.videoState(m.TS)
@@ -366,7 +366,7 @@ func TestVideoPrefsNoUnpromptedWrites(t *testing.T) {
 	e.frame()
 	player("muted", true, 0.3)
 	clk += 300 * time.Millisecond
-	e.hoverAt(mute, clk) // resting on the mute: the slider opens
+	e.videoHover(mute, clk) // resting on the mute: the slider opens
 	e.until("the slider open", 3*time.Second, func() bool { st, _ := e.videoState(m.TS); return volumeOpen(st) })
 	st, _ = e.videoState(m.TS)
 	clk += 300 * time.Millisecond

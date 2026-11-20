@@ -94,7 +94,7 @@ func TestVideoThreadPane(t *testing.T) {
 	// More actions, from the pane: no "Open in thread"
 	tr = videoIn()
 	clk += 300 * time.Millisecond
-	e.hoverAt(mid(tr), clk)
+	e.videoHover(mid(tr), clk)
 	e.frame()
 	e.frame()
 	st, _ := inThread()

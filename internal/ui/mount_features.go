@@ -249,6 +249,9 @@ func (o detailsOverlay) Dismiss() {
 func (o detailsOverlay) Layout(gtx layout.Context) layout.Dimensions { return o.d.Layout(gtx) }
 func (o detailsOverlay) Dismissed() bool                             { return o.d.Closed() }
 
+// Rect is the dialog's (the inspect tool boxes the layer with it).
+func (o detailsOverlay) Rect() image.Rectangle { return o.d.Rect() }
+
 func toPopupItems(items []MenuItem) []popups.MenuItem {
 	out := make([]popups.MenuItem, 0, len(items))
 	for i, it := range items {

@@ -17,12 +17,10 @@ import (
 	"image"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
 	"time"
-	"weak"
 
 	"gioui.org/app"
 	"gioui.org/f32"
@@ -234,7 +232,12 @@ func TestInspectFreezeKeys(t *testing.T) {
 	if !e.a.images.Stats().LiveHeld {
 		t.Error("frozen, the animated images aren't held")
 	}
-	frozenOps := weak.Make(e.a.insp.FrozenOps())
+	// the frozen frames are drawn in the window's own ops (Gio numbers a
+	// Defer's state per op.Ops); the freeze lets go of what it held when
+	// it ends (inspect's TestFreezeDragsAndEnds)
+	if e.a.insp.FrozenOps() != &e.ops {
+		t.Error("the frozen frames aren't drawn in the window's ops")
+	}
 	// what's typed while frozen goes nowhere: no text in the draft, no send
 	e.typeAt("q")
 	e.key(key.NameReturn, 0)
@@ -264,10 +267,8 @@ func TestInspectFreezeKeys(t *testing.T) {
 	if got := e.called("chat.postMessage"); len(got) != 0 {
 		t.Errorf("a Return while frozen sent a message: %v", got)
 	}
-	runtime.GC()
-	runtime.GC()
-	if frozenOps.Value() != nil {
-		t.Error("the frozen frame's ops outlived the freeze")
+	if e.a.insp.FrozenOps() != nil {
+		t.Error("unfrozen, the tool still draws frozen frames")
 	}
 
 	// F, then Esc: unfrozen, the session on; Esc again ends it

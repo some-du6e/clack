@@ -738,6 +738,9 @@ func (p *EmojiPicker) layoutPopover(gtx layout.Context, pp slackc.Props) layout.
 	return childrenOr(gtx, pp, "EmojiPicker", p.pickerProps, p.layoutCard)
 }
 
+// Rect is the card's last laid-out rectangle (window coords).
+func (p *EmojiPicker) Rect() image.Rectangle { return p.rect }
+
 // layoutCard is EmojiPicker's native: the card at its window position.
 func (p *EmojiPicker) layoutCard(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	th := p.h.Theme()
@@ -759,6 +762,7 @@ func (p *EmojiPicker) layoutCard(gtx layout.Context, _ slackc.Props) layout.Dime
 	styledCardLook(gtx, st, epCard(cl, th.Dark), pos, sz, dp(gtx, 6), func(gtx layout.Context) {
 		p.layoutBody(gtx, th, cl, sz)
 	})
+	slackc.InspectCard(gtx, p.rect) // the inspect tool: the card is the picker's box
 	return layout.Dimensions{Size: win}
 }
 
@@ -816,9 +820,17 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 		// c-input_text on --dt_color-base-pry (the card's primary background)
 		return fieldOn(gtx, th, &p.ed, nsEmojiPicker.T("Search all emoji"), "", epInputH, 15, cl.EmojiBg)
 	})
+	if slackc.Inspecting() { // Slack's EmojiPickerInput, for the inspect tool
+		in := image.Rect(dp(gtx, epInputX), dp(gtx, p.inputY()), sz.X-dp(gtx, epInputX), dp(gtx, p.inputY())+dp(gtx, epInputH))
+		ic := slackc.InspectAs("EmojiPickerInput")
+		epInputClass.Inspect(0).EndAt(gtx, in)
+		ic.EndAt(gtx, in)
+	}
 	foot := dp(gtx, epFootH)
 	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, p.listY()), sz.X, sz.Y-foot))
+	fm := slackc.InspectAs("EmojiPickerFooter")
 	p.layoutFooter(gtx, th, cl, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
+	fm.EndAt(gtx, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
 	p.layoutTonePopover(gtx, th, cl, sz, sz.Y-foot)
 	cs.Pop()
 	if tab := p.activeTab(); tab != p.drawnTab && !p.embedded { // hideTabs: no tab row to catch up
@@ -976,6 +988,7 @@ func (p *EmojiPicker) layoutList(gtx layout.Context, th *theme.Theme, cl *Colors
 	p.viewH = vh
 	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
 	defer clip.Rect{Max: r.Size()}.Push(gtx.Ops).Pop()
+	defer slackc.InspectAs("EmojiList").End(gtx, r.Size()) // the inspect tool's record of Slack's EmojiList
 
 	p.ensureRows(gtx) // a tab click may have cleared the search this frame
 	p.gridEvents(gtx)
@@ -1089,8 +1102,18 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 		// .p-emoji_picker__heading: margin 0 6px in the row's 7+8px
 		// padding, line-height 1.5rem at the 27px row's top
 		p.headingText(gtx, th, cl, int(r.list), dp(gtx, 21), h-dp(gtx, epHdrH), dp(gtx, 24), w)
+		if slackc.Inspecting() { // Slack's EmojiListGroupItem, for the inspect tool
+			hr := image.Rect(dp(gtx, 6), h-dp(gtx, epHdrH), w-dp(gtx, 6), h)
+			gi := slackc.InspectAs("EmojiListGroupItem")
+			epHeadingClass.Inspect(0).EndAt(gtx, hr)
+			gi.EndAt(gtx, hr)
+		}
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	}
+	// Slack's EmojiListRow and each emoji's EmojiListEmojiButton, for the
+	// inspect tool (nothing styles see)
+	row := epRowClass.Inspect(0)
+	defer row.End(gtx, image.Pt(w, h))
 	cw, ch, isz := dp(gtx, epCellW), dp(gtx, epCellH), dp(gtx, epImgSz)
 	x0, y0, rad := dp(gtx, epCellX), dp(gtx, 1), dp(gtx, 6)
 	im := p.h.Images()
@@ -1113,6 +1136,18 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 			t := op.Offset(image.Pt(x+(cw-isz)/2, y0+dp(gtx, 4))).Push(gtx.Ops)
 			containImage(gtx, img, image.Pt(isz, isz))
 			t.Pop()
+		}
+		if slackc.Inspecting() {
+			mods := uint64(1) // --a11y-not-selected
+			if lit.row == i && lit.col == j {
+				mods = 0
+				if p.hover.row < 0 {
+					mods = 2 // key_selection: the keyboard's
+				}
+			}
+			eb := slackc.InspectAs("EmojiListEmojiButton")
+			epItemClass.Inspect(mods).EndAt(gtx, cell)
+			eb.EndAt(gtx, cell)
 		}
 	}
 	return layout.Dimensions{Size: image.Pt(w, h)}

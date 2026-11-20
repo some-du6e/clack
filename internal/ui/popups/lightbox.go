@@ -53,6 +53,7 @@ type lbItem struct {
 
 // Lightbox is the full-window image viewer.
 type Lightbox struct {
+	full image.Rectangle // the window it covers as last drawn (Rect)
 	base
 	h     Host
 	m     core.Message
@@ -300,6 +301,10 @@ func (lb *Lightbox) wheel(dy float32) {
 	lb.setZoom(lb.zoom * f)
 }
 
+// Rect is the window it covers as last drawn (window coords): the
+// lightbox's backdrop is its card.
+func (lb *Lightbox) Rect() image.Rectangle { return lb.full }
+
 // Layout draws the viewer.
 func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
@@ -338,6 +343,7 @@ func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 	}
 
 	full := image.Rectangle{Max: win}
+	lb.full = full
 	fill(gtx, full, cl.Backdrop)
 	m28 := dp(gtx, 28)
 	panel := full.Inset(m28)

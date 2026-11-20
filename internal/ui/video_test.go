@@ -85,7 +85,7 @@ func (e *perfEnv) videoState(ts string) (videoplayer.State, bool) {
 	return e.a.vids.TileState("channel", fakeslack.FilesChannelID, ts, fakeslack.FilesVideoID)
 }
 
-func (e *perfEnv) hoverAt(p image.Point, at time.Duration) {
+func (e *perfEnv) videoHover(p image.Point, at time.Duration) {
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y)), Time: at})
 }
 
@@ -266,7 +266,7 @@ func TestVideoPrefs(t *testing.T) {
 	m := e.filesMsg("video")
 	tile := e.videoTile(t, m.TS)
 	clk := time.Second
-	e.hoverAt(mid(tile.R), clk)
+	e.videoHover(mid(tile.R), clk)
 	e.frame()
 	e.frame()
 	st, _ := e.videoState(m.TS)
@@ -278,7 +278,7 @@ func TestVideoPrefs(t *testing.T) {
 	e.clickAt(mute, clk)
 	e.until("users.prefs.set media_muted=true", 10*time.Second, sent("media_muted=true"))
 	clk += 300 * time.Millisecond
-	e.hoverAt(mute, clk) // over the control: its slider shows
+	e.videoHover(mute, clk) // over the control: its slider shows
 	e.until("the volume slider", 3*time.Second, func() bool { st, _ := e.videoState(m.TS); return st.VolumeOpen })
 	st, _ = e.videoState(m.TS)
 	if st.Slider.Empty() {
