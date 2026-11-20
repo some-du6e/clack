@@ -126,7 +126,11 @@ func TestTriggerMovedUnderRestingPointer(t *testing.T) {
 	}
 	// moved out from under the pointer: its mouseleave, the 250ms close
 	e.off = image.Pt(500, 500)
-	e.wait(10 * time.Millisecond)
+	e.wait(10 * time.Millisecond) // laid out away: Gio's hit test owes it a Leave
+	e.wait(10 * time.Millisecond) // the Leave: the 250ms close starts
+	if _, _, open := e.c.Open(); !open {
+		t.Error("closed without the 250ms grace")
+	}
 	e.wait(HideDelay + 10*time.Millisecond)
 	if _, _, open := e.c.Open(); open {
 		t.Error("the card stayed open after the trigger moved out from under the pointer")
