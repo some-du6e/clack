@@ -76,9 +76,10 @@ func (e *trigEnv) rect() image.Rectangle { return image.Rectangle{Min: e.off, Ma
 
 // A trigger that isn't laid out for a frame never hears the Leave Gio
 // owed it (Router.Frame drops the handler). Drawn again with the pointer
-// elsewhere it must not report: before the fix it still thought it was
-// hovered and opened a card anchored at the old local position moved by
-// the pointer's travel (Karim's card over the Activity filter chips).
+// elsewhere it must not report. Trigger also clears on the Cancel Gio
+// gives the new handler, so this guards Missed rather than catching the
+// old bug; richview's TestBodyMissedFrameForgetsHover is the body that
+// opened Karim's card over the Activity filter chips.
 func TestTriggerMissedFrameForgetsHover(t *testing.T) {
 	e := newTrigEnv(t)
 	e.frame()

@@ -17,14 +17,18 @@ import (
 // it the card's anchor and whether the trigger is hovered at all:
 //
 //   - Gio forgets a handler that isn't in a frame's ops (Router.Frame
-//     deletes it, and the hit test skips its Leave). A trigger hidden
-//     for a frame (another Activity tab, a recycled row, a pane that
-//     replaced its page) and drawn again with the pointer elsewhere still
-//     thinks the pointer is on it, at the old local position: it reported
-//     an anchor of local + (window pointer now - local pointer then),
-//     anywhere in the window (Karim's #welcome-to-hack-club card over
-//     the Activity filter chips, 2026-11-20). Slack's trigger unmounts
-//     and mounts again unhovered. Probe.Missed says when that happened.
+//     deletes it, and the hit test skips its Leave); drawn again, the
+//     new handler gets only a Cancel (pointerHandler.ResetEvent). A
+//     message body (richview) clears its hover on a Leave, and a Cancel
+//     ends only a press, so a body hidden for a frame (another Activity
+//     tab, a recycled row, a pane that replaced its page) and drawn
+//     again with the pointer elsewhere still thought the pointer was on
+//     it, at the old local position: it reported an anchor of local +
+//     (window pointer now - local pointer then), anywhere in the window
+//     (Karim's #welcome-to-hack-club card over the Activity filter chips,
+//     2026-11-20). Slack's trigger unmounts and mounts again unhovered.
+//     Probe.Missed says when that happened (Trigger clears on the Cancel
+//     as well).
 //   - A layout that moves a trigger under a resting pointer sends it no
 //     event while the pointer stays inside its area (a message body:
 //     the mention under the pointer is now another word), so it keeps
