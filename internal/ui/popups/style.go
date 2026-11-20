@@ -715,9 +715,11 @@ func buttonGrp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind Bt
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
-	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+	d := st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return buttonNative(gtx, th, st, c, kind, size, label, iconName, minW, ring, grp)
 	})
+	slackc.InspectAreaInLayer(gtx, image.Rectangle{Max: d.Size}) // a popup's button, for the inspect tool
+	return d
 }
 
 // focusRing draws Slack's keyboard focus ring around r (radius rad):

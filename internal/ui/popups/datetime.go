@@ -11,6 +11,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -597,9 +598,16 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 			c.block.Layout(gtx, image.Rectangle{Max: sz})
 			c.drawBody(gtx, th, cl, sz, pad)
 		})
+		slackc.InspectCard(gtx, c.rect) // the inspect tool: the card is the picker's box
 	}
 	return layout.Dimensions{Size: win}
 }
+
+// Rect is the card as last laid out (window coords).
+func (c *dtCalendar) Rect() image.Rectangle { return c.rect }
+
+// InspectRole names the overlay for the inspect tool's report.
+func (c *dtCalendar) InspectRole() string { return "date picker" }
 
 // size is the calendar's size with pad around the month (the 7×6 grid of
 // 43×41 cells under the 48px header and the 30px weekday row; at least 350
@@ -1064,6 +1072,18 @@ func (t *dtTimeList) selectHover() {
 	t.sm.hovered = hov
 }
 
+// Rect is the card as last laid out (window coords).
+func (t *dtTimeList) Rect() image.Rectangle { return t.rect }
+
+// InspectRole names the overlay for the inspect tool's report: a time
+// picker's list, or a basic select's (NewSelectList).
+func (t *dtTimeList) InspectRole() string {
+	if t.sm != nil {
+		return "select list"
+	}
+	return "time picker"
+}
+
 // Layout draws the list.
 func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
@@ -1145,6 +1165,7 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 	pos := place(a, sz, win, dp(gtx, 8), Below)
 	t.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	card(gtx, cl, t.rect, dp(gtx, 4))
+	slackc.InspectCard(gtx, t.rect) // the inspect tool: the card is the list's box
 	t.block.Layout(gtx, t.rect)
 	keyTarget(gtx, t, t.rect)
 
