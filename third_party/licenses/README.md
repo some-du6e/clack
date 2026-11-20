@@ -13,6 +13,9 @@ Notices written out in full in a source file's own header (fontconfig's in types
 `fontscan/langset_gen.go`, wayland-protocols' in Gio's `app/wayland_*.c`, Psiphon's in uTLS's
 `u_prng.go`) aren't copied here: licenses.py takes them from that header, so they can't drift.
 
+The AppImage runtime's licences (`packaging/linux/appimage-runtime/`, see its README) are checked the same way
+(musl's from its GitHub mirror at v1.2.5, identical to git.musl-libc.org's).
+
 The `supply-chain` workflow fetches each file at the commit below (`path=copy`, copies relative
 to this directory) and diffs it against its copy:
 
@@ -22,4 +25,11 @@ Cyan4973/FiniteStateEntropy 9f30e0918f87bd835fa040d922a208d7b219e50b LICENSE=Fin
 tdewolff/canvas 891200a8cf2be9ef1245cdd063fbfe17d68e8aec LICENSE.md=tdewolff-canvas.LICENSE.md
 xiph/opus 22244de5a79bd1d6d623c32e72bf1954b56235be COPYING=libopus.COPYING
 iamcal/emoji-data e77759c296ed37beb0dbd63908b43d8619509c6d LICENSE=../../internal/emoji/LICENSE-emoji-data.txt
+AppImage/type2-runtime fedfad51acc2860b2916a1eef32ba4a500ff31ef LICENSE=../../packaging/linux/appimage-runtime/LICENSE.runtime
+ifduyue/musl 0784374d561435f7c787a555aeab8ede699ed298 COPYRIGHT=../../packaging/linux/appimage-runtime/LICENSE.musl
+libfuse/libfuse 6d08472ea47db895748d5ca7d3daf032c3fefcf8 LICENSE=../../packaging/linux/appimage-runtime/LICENSE.libfuse LGPL2.txt=../../packaging/linux/appimage-runtime/LICENSE.libfuse-LGPL2.txt
+vasi/squashfuse 775b4cc72ab47641637897f11ce0da15d5c1f115 LICENSE=../../packaging/linux/appimage-runtime/LICENSE.squashfuse
+facebook/zstd 794ea1b0afca0f020f4e57b6732332231fb23c70 LICENSE=../../packaging/linux/appimage-runtime/LICENSE.zstd
+madler/zlib da607da739fa6047df13e66a2af6b8bec7c2a498 LICENSE=../../packaging/linux/appimage-runtime/LICENSE.zlib
+microsoft/mimalloc 8c532c32c3c96e5ba1f2283e032f69ead8add00f LICENSE=../../packaging/linux/appimage-runtime/LICENSE.mimalloc
 ```

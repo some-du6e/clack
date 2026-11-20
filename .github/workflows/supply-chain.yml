@@ -97,6 +97,12 @@ jobs:
               echo "$repo@${commit:0:12} ${m%%=*} == ${m#*=}"
             done
           done < /tmp/licenses.upstream
+      - name: the AppImage runtime matches its recorded sha256
+        working-directory: packaging/linux/appimage-runtime
+        run: |
+          set -euo pipefail
+          awk '/^```sha256$/{f=1;next} /^```$/{f=0} f' README.md | sha256sum -c --strict -
+          ls runtime-* | sort | diff - <(awk '/^```sha256$/{f=1;next} /^```$/{f=0} f' README.md | awk '{print $2}' | sort)
       # every texts directory licenses.py names is in the upstream block or
       # vendored with its own check (jsrt/vendor), so a new one can't skip it
       - name: every extra licence text is checked

@@ -5,3 +5,10 @@ internal/desktop/unread-badge-resources.json -text
 internal/jsrt/jsrt.wasm -text
 internal/jsrt/js/*.js -text
 internal/jsrt/vendor/*.js -text
+# third-party licence texts, byte for byte (supply-chain diffs them against
+# upstream) and the AppImage runtime binaries
+internal/jsrt/vendor/LICENSE.* -text
+third_party/licenses/* -text
+internal/emoji/LICENSE-emoji-data.txt -text
+packaging/linux/appimage-runtime/LICENSE.* -text
+packaging/linux/appimage-runtime/runtime-* -text -diff
