@@ -208,6 +208,7 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 			h.cvc = popups.NewCanvasMentionCard(a, req.Anchor, req.ChannelID, req.CanvasFile, req.CanvasSection)
 			h.gen = gen
 		}
+		h.cvc.SetAnchor(req.Anchor) // the bubble follows its mention (hovercard's package comment)
 		g := gtx
 		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
 		h.cvc.Layout(g)

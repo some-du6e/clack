@@ -53,7 +53,8 @@ type ProfileCard struct {
 	// scrim, never takes focus and sits above anchorR (hovercard.Place).
 	hover   bool
 	anchorR image.Rectangle
-	sub     Overlay // a menu the card opened (holds a hover card open)
+	keep    hovercard.Keep // a hover card's position (Popover contentBounds)
+	sub     Overlay        // a menu the card opened (holds a hover card open)
 
 	asked   bool // EnsureUsers started
 	missing bool // EnsureUsers finished without the user
@@ -130,11 +131,14 @@ func NewTextyHoverCard(h Host, anchor image.Rectangle, userID string) *ProfileCa
 // the trigger (hovercard.Place), click cards at the click.
 func (p *ProfileCard) place(gtx layout.Context, sz, win image.Point) image.Point {
 	if p.texty {
-		pt, _ := theme.KeepInBounds(p.anchorR, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
-		return pt
+		return p.keep.At(sz, func() image.Point {
+			pt, _ := theme.KeepInBounds(p.anchorR, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
+			return pt
+		})
 	}
 	if p.hover {
-		return hovercard.Place(p.anchorR, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+		// placed once, again only when its size changes (hovercard.Keep)
+		return p.keep.Place(p.anchorR, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
 	}
 	return place(pointRect(p.anchor), sz, win, dp(gtx, 8), Below)
 }

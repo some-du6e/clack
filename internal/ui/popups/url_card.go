@@ -44,6 +44,7 @@ type URLHoverCard struct {
 	anchor image.Rectangle
 	url    string
 	rect   image.Rectangle
+	keep   hovercard.Keep // placed once, again only when its size changes
 
 	open, copy       widget.Clickable
 	openTip, copyTip TipState
@@ -151,7 +152,7 @@ func (p *URLHoverCard) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{Size: image.Pt(w, pad+b+gap+ud.Size.Y+pad)}
 	})
 	sz := image.Pt(w, d.Size.Y)
-	pos := hovercard.PlaceTop(p.anchor, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+	pos := p.keep.PlaceTop(p.anchor, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	bx := image.Rect(pad+inner-b, pad, pad+inner, pad+b).Add(pos)
 	p.copyR, p.openR = bx, bx.Sub(image.Pt(b+gap, 0))
