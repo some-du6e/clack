@@ -1902,7 +1902,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAUT_TESTS: '^(TestAPICallNotOkLikeSlack|TestAPICallResolvesLikeSlack|TestAPICallRateLimitedLikeSlack|TestAPICallRetriesLikeSlack|TestUserAPIErrorsLikeTaut)$'
-      SLICK_TESTS: '^(TestSlickAPICallErrorsLikeSlack)$'
+      SLICK_TESTS: '^(TestSlickAPICallErrorsLikeSlack|TestSlickReduxThunkNames)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

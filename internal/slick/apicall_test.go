@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,6 +33,14 @@ class APIProbe extends SlickPlugin {
   start() {
     const api = this.api;
     globalThis.__userAPIProbe = (method, params) => this.userAPIProbe(method, params);
+    globalThis.__thunkNames = () => {
+      try {
+        const names = api.redux.thunkNames();
+        return { names, defined: names.every((name) => typeof api.redux.getThunkCreator(name) === "function") };
+      } catch (err) {
+        return { error: String(err) };
+      }
+    };
     globalThis.__apiProbe = async (thunk, options) => {
       try {
         const res = await api.redux.dispatchThunk(thunk, options);
@@ -167,5 +176,31 @@ func TestSlickAPICallErrorsLikeSlack(t *testing.T) {
 	h.jsInto(`return await globalThis.__userAPIProbe('chat.postMessage', {channel: 'C0FAKE00001', text: 'userAPI 429'})`, &u)
 	if want := "[slick] userAPI chat.postMessage rate limited"; u.Message != want {
 		t.Errorf("userAPI 429: %q, want %q", u.Message, want)
+	}
+}
+
+// TestSlickReduxThunkNames: Slick's redux.thunkNames (src/app/slack/redux.ts,
+// SlickMCP's find_actions) lists the thunk creators there are, each one
+// getThunkCreator finds: in Clack the ones it defines.
+func TestSlickReduxThunkNames(t *testing.T) {
+	h := newHarness(t)
+	mustImport(t, h, apiProbeSlick)
+	if err := h.s.SetEnabled(h.ctx(), "APIProbe", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "the probe plugin", func() bool { return h.jsBool(`return typeof globalThis.__thunkNames === 'function'`) })
+	var got struct {
+		Names   []string `json:"names"`
+		Defined bool     `json:"defined"`
+		Error   string   `json:"error"`
+	}
+	h.jsInto(`return globalThis.__thunkNames()`, &got)
+	if got.Error != "" || !got.Defined {
+		t.Fatalf("redux.thunkNames(): %+v", got)
+	}
+	for _, want := range []string{"apiCall", "apiCallExpedited", "markLastRead", "navigate", "handleDeepLink"} {
+		if !slices.Contains(got.Names, want) {
+			t.Errorf("redux.thunkNames() has no %s: %v", want, got.Names)
+		}
 	}
 }

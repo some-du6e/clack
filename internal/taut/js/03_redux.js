@@ -642,6 +642,8 @@ T.setView = (channel, thread) => {
 }
 
 const getThunkCreator = (name) => thunkCreators.get(name)
+/** Slick's redux.thunkNames (src/app/slack/redux.ts): the names of the thunk creators there are (Clack's: the ones it defines) */
+const thunkNames = () => [...thunkCreators.keys()]
 function waitForThunkCreator(name) {
   const known = thunkCreators.get(name)
   if (known) return Promise.resolve(known)
@@ -853,4 +855,4 @@ defineModule('redux-store', {
   }),
 })
 
-Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, waitForThunkWithin, onAction, setLocalSlice, refresh })
+Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, waitForThunkWithin, onAction, setLocalSlice, refresh, thunkNames })

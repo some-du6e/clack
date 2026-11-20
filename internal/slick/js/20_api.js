@@ -477,7 +477,15 @@ function createScopedAPI(entry, id, scope) {
   const storage = new ScopedStorage(blobStore(`plugin:${id}`))
   const fileBlob = blobStore(`plugin:${id}`)
   const integrations = {
-    redux: () => ({ ...TA.redux, waitForThunkCreator, dispatchThunk, patchState: tracked(TA.redux.patchState), patchSlice: tracked(TA.redux.patchSlice), patchThunk: tracked(TA.redux.patchThunk) }),
+    redux: () => ({
+      ...TA.redux,
+      waitForThunkCreator,
+      dispatchThunk,
+      thunkNames: T.thunkNames,
+      patchState: tracked(TA.redux.patchState),
+      patchSlice: tracked(TA.redux.patchSlice),
+      patchThunk: tracked(TA.redux.patchThunk),
+    }),
     rtm: () => ({ on: tracked(onRtm) }),
     messages: () => ({ ...messagesBase, injectMessages: tracked(messagesBase.injectMessages) }),
     members: () => membersBase,
