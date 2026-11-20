@@ -44,7 +44,7 @@ class APIProbe extends SlickPlugin {
     globalThis.__apiProbe = async (thunk, options) => {
       try {
         const res = await api.redux.dispatchThunk(thunk, options);
-        return { settled: "resolved", keys: Object.keys(res), res };
+        return { settled: "resolved", keys: res && typeof res === "object" ? Object.keys(res) : [], res };
       } catch (err) {
         const own = {};
         for (const k of Object.keys(err)) own[k] = err[k] === undefined ? "<undefined>" : err[k];
@@ -201,6 +201,26 @@ func TestSlickReduxThunkNames(t *testing.T) {
 	for _, want := range []string{"apiCall", "apiCallExpedited", "markLastRead", "navigate", "handleDeepLink"} {
 		if !slices.Contains(got.Names, want) {
 			t.Errorf("redux.thunkNames() has no %s: %v", want, got.Names)
+		}
+	}
+}
+
+// TestSlickPresenceThunks: OnlineCount's and LastSeen's
+// addMemberToPresenceSubscription and removeMemberFromPresenceSubscription
+// are thunks Clack defines (Slack's presence manager, client-boot 4hlf),
+// so Slick's dispatchThunk resolves them, with undefined as Slack's do.
+func TestSlickPresenceThunks(t *testing.T) {
+	h := newHarness(t)
+	mustImport(t, h, apiProbeSlick)
+	if err := h.s.SetEnabled(h.ctx(), "APIProbe", true); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 10*time.Second, "the probe plugin", func() bool { return h.jsBool(`return typeof globalThis.__apiProbe === 'function'`) })
+	for _, thunk := range []string{"addMemberToPresenceSubscription", "removeMemberFromPresenceSubscription"} {
+		var got slickSettled
+		h.jsInto(fmt.Sprintf(`return await globalThis.__apiProbe(%q, 'U0FAKE00077')`, thunk), &got)
+		if got.Settled != "resolved" || got.Res != nil {
+			t.Errorf("%s: %+v, want it resolved with undefined", thunk, got)
 		}
 	}
 }

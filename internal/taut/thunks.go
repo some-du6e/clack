@@ -93,6 +93,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"openEditProfileModal", "{}", "ui/popups (profile)", "opening the edit-profile dialog"},
 	{"showSavedItemNotification", "{message, …}", "ui (notifications)", "a saved-item reminder notification"},
 	{"startHuddle", "{channelId, …}", "ui/views (huddles)", "starting a huddle (Clack has no huddle media)"},
+	{"addMemberToPresenceSubscription", "memberId", "taut", "Slack's presence manager (client-boot 4hlf): counts a subscriber of the member's presence (core.AddPresenceSubscription)"},
+	{"removeMemberFromPresenceSubscription", "memberId", "taut", "one subscriber fewer (core.RemovePresenceSubscription)"},
 }
 
 // SyncThunks return their result synchronously in Slack (plugins call the
@@ -463,6 +465,17 @@ func (tt *thunkTable) installDefaults() {
 		},
 		"saveMessageEdit": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			return nil, t.saveEdit(ctx, argObj(a))
+		},
+		// Slack's presence manager (client-boot 4hlf): the argument is the
+		// member's id; presence_sub follows a member's first subscriber
+		// and its last one leaving (core/presence_subs.go)
+		"addMemberToPresenceSubscription": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			t.app.AddPresenceSubscription(strArg(a, 0))
+			return nil, nil
+		},
+		"removeMemberFromPresenceSubscription": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			t.app.RemovePresenceSubscription(strArg(a, 0))
+			return nil, nil
 		},
 		"joinChannel": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			_, err := t.app.Join(ctx, argObj(a).str("channelId"))

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ const apiProbePlugin = `class APIProbe extends TautPlugin {
     globalThis.__apiProbe = async (thunk, options) => {
       try {
         const res = await api.redux.dispatchThunk(thunk, options)
-        return { settled: 'resolved', keys: Object.keys(res), res }
+        return { settled: 'resolved', keys: res && typeof res === 'object' ? Object.keys(res) : [], res }
       } catch (err) {
         const own = {}
         for (const k of Object.keys(err)) own[k] = err[k] === undefined ? '<undefined>' : err[k]
@@ -125,7 +126,7 @@ func newAPICallEnv(t *testing.T, timeout time.Duration) *apiCallEnv {
 func (e *apiCallEnv) answerWith(f func(form url.Values) any) { e.answer.Store(&f) }
 
 // probe dispatches thunk with options from the plugin.
-func (e *apiCallEnv) probe(thunk string, options map[string]any) apiSettled {
+func (e *apiCallEnv) probe(thunk string, options any) apiSettled {
 	e.t.Helper()
 	b, err := json.Marshal(options)
 	if err != nil {
@@ -467,4 +468,76 @@ func TestUserAPIErrorsLikeTaut(t *testing.T) {
 	e.fs.SetFault("chat.postMessage", fakeslack.Fault{HangUp: true})
 	want("no answer", e.userAPI("hang up", nil), "TypeError", "Failed to fetch")
 	e.fs.SetFault("chat.postMessage", fakeslack.Fault{})
+}
+
+// TestPresenceSubscriptionLikeSlack: Slack's presence manager (client-boot
+// 4hlf) through its thunks, as LastSeen and OnlineCount dispatch them: a
+// member's first subscriber sends presence_sub with the member in, 100 ms
+// on; another subscriber, and every one but the last leaving, send
+// nothing; the last one leaving sends it without the member; an id that
+// isn't a member's, USLACKBOT or none subscribes nothing.
+func TestPresenceSubscriptionLikeSlack(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	e := &apiCallEnv{fs: fs, harness: newBootedHarness(t, fs)}
+	e.install(pluginJS(apiProbePlugin), true)
+	eventually(t, renderWait(), "the probe plugin", func() bool {
+		var up bool
+		e.jsInto(`return typeof globalThis.__apiProbe === 'function'`, &up)
+		return up
+	})
+	subs := func() [][]string {
+		var out [][]string
+		for _, f := range e.fs.SocketFrames() {
+			var m struct {
+				Type string   `json:"type"`
+				IDs  []string `json:"ids"`
+			}
+			if json.Unmarshal([]byte(f), &m) == nil && m.Type == "presence_sub" {
+				out = append(out, m.IDs)
+			}
+		}
+		return out
+	}
+	eventually(t, 15*time.Second, "the socket's hello presence_sub", func() bool { return len(subs()) > 0 })
+	dispatch := func(thunk, id string) {
+		t.Helper()
+		if got := e.probe(thunk, id); got.Settled != "resolved" {
+			t.Fatalf("%s(%q): %+v", thunk, id, got)
+		}
+	}
+	const member = "U0FAKE00077" // not the viewer, not a DM partner
+	if s := subs(); slices.Contains(s[len(s)-1], member) {
+		t.Fatalf("%s is in Clack's own presence set already: %v", member, s)
+	}
+	n := len(subs())
+	dispatch("addMemberToPresenceSubscription", member)
+	eventually(t, 5*time.Second, "presence_sub with the member", func() bool {
+		s := subs()
+		return len(s) > n && slices.Contains(s[len(s)-1], member)
+	})
+	n = len(subs())
+	dispatch("addMemberToPresenceSubscription", member)      // 2 subscribers
+	dispatch("removeMemberFromPresenceSubscription", member) // 1
+	time.Sleep(400 * time.Millisecond)
+	if s := subs(); len(s) != n {
+		t.Errorf("a second subscriber and its leaving sent presence_sub: %v", s[n:])
+	}
+	dispatch("removeMemberFromPresenceSubscription", member) // none
+	eventually(t, 5*time.Second, "presence_sub without the member", func() bool {
+		s := subs()
+		return len(s) > n && !slices.Contains(s[len(s)-1], member)
+	})
+	n = len(subs())
+	for _, id := range []string{"C0FAKE00001", "USLACKBOT", "", "U123"} {
+		dispatch("addMemberToPresenceSubscription", id)
+	}
+	dispatch("removeMemberFromPresenceSubscription", "U0FAKE00078") // never subscribed
+	time.Sleep(400 * time.Millisecond)
+	if s := subs(); len(s) != n {
+		t.Errorf("ids that aren't members' or were never subscribed sent presence_sub: %v", s[n:])
+	}
 }

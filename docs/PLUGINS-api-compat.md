@@ -39,11 +39,11 @@ Status:
 |---|---:|---:|---:|---:|---:|
 | TautAPI | 198 | 142 | 133 | 9 | 0 |
 | SlickAPI | 119 | 90 | 80 | 10 | 0 (1, `redux.thunkNames`, fixed here) |
-| Slack thunks the plugins name | 46 | 46 | 36 (27 Clack defines, 9 its UI dispatches) | 1 | 9 |
+| Slack thunks the plugins name | 46 | 46 | 38 (29 Clack defines, 9 its UI dispatches) | 1 | 7 (9 before this branch) |
 
 By name nothing in either API object is missing now. What makes plugins
 feel half-supported is behaviour: how calls fail (apiCall and userAPI, fixed
-here), the Slack thunks Clack doesn't define (9 that plugins dispatch), and
+here), the Slack thunks Clack doesn't define (7 that plugins dispatch, 9 before this branch), and
 the components Clack draws through the bridge (Taut's in
 [PLUGINS-components.md](PLUGINS-components.md); Slick's 72 component names
 aren't catalogued yet).
@@ -123,6 +123,7 @@ the dummy request doesn't answer identical calls for its retry window
 | apiCall and apiCallExpedited settle as Slack's request does: `err.data`, Slack's messages, its retries and their errors, its response shape | internal/taut/js/05_slack.js:581-789, internal/taut/js/03_redux.js:599, internal/taut/thunks.go:613, internal/slack/attempts.go, internal/slack/client.go:744-790, internal/slack/apiq.go | TestAPICallNotOkLikeSlack, TestAPICallResolvesLikeSlack, TestAPICallRateLimitedLikeSlack, TestAPICallRetriesLikeSlack, TestSlickAPICallErrorsLikeSlack |
 | userAPI fails as Taut's and Slick's own do: the answer's JSON whole in "failed:", `[slick]` for Slick, no Clack-side 429 retries, `HTTP <status>:`, `res.json()`'s SyntaxError, fetch's `Failed to fetch`, the abort | internal/taut/js/05_slack.js:514-563, internal/taut/host.go:278, internal/slick/js/20_api.js:528 | TestUserAPIErrorsLikeTaut, TestSlickAPICallErrorsLikeSlack |
 | Slick's `redux.thunkNames` | internal/taut/js/03_redux.js:646, internal/slick/js/20_api.js:484 | TestSlickReduxThunkNames |
+| `addMemberToPresenceSubscription` / `removeMemberFromPresenceSubscription` (LastSeen, OnlineCount): Slack's presence manager (client-boot 4hlf): a count per member; its first subscriber and its last leaving each send `presence_sub`, 100 ms debounced, with every counted member in Clack's own set | internal/core/presence_subs.go, internal/core/app.go presenceIDs, internal/taut/thunks.go | TestPresenceSubscriptionLikeSlack (over the booted socket), TestSlickPresenceThunks |
 
 All of them run over internal/fakeslack, which can now answer a hook with any
 status, headers and body (`fakeslack.Reply`, internal/fakeslack/fakeslack.go:1398),
@@ -383,7 +384,7 @@ Unused by the 59 plugins (29 members), all present unless marked: `Store#.subscr
 | `showNotification` | patch: ShutUpSlackbot, StreamerMode | patch: Censorship, ShutUpSlackbot | present (Clack's UI dispatches it) |
 | `enqueueHuddleToast` | dispatch: HuddleActivity; patch: HuddleActivity | wait: HuddleMuteDetector | present (native) |
 | `handleDeepLink` |  | dispatch: ChatTabs, InstalledApps, SlickMCP | present (native) |
-| `addMemberToPresenceSubscription` |  | dispatch: LastSeen, OnlineCount | missing: never dispatched, patches never run; a dispatch rejects |
+| `addMemberToPresenceSubscription` |  | dispatch: LastSeen, OnlineCount | present (native; fixed here, was missing): Slack's presence manager, core/presence_subs.go |
 | `apiCall` |  | patch: MessageLogger, Nicknames | present (native) |
 | `autocompleteChannels` | patch: PrivateChannel | patch: PrivateChannelMapper | present (Clack's UI dispatches it) |
 | `autocompleteMembers` | patch: NativeAtChannel | dispatch: BetterHuddles | differs: Clack's UI dispatches it, so patches run; a plugin's own dispatch rejects ("Clack has no native autocompleteMembers") |
@@ -395,7 +396,7 @@ Unused by the 59 plugins (29 members), all present unless marked: `Store#.subscr
 | `joinChannel` | wait: QuickJoin | dispatch: QuickJoin | present (native) |
 | `markLastRead` | dispatch: ShutUpSlackbot | dispatch: BetterBlock | present (native) |
 | `prepareAndSendMessage` | patch: NativeAtChannel, OwlMode |  | present (Clack's UI dispatches it) |
-| `removeMemberFromPresenceSubscription` |  | dispatch: LastSeen, OnlineCount | missing: never dispatched, patches never run; a dispatch rejects |
+| `removeMemberFromPresenceSubscription` |  | dispatch: LastSeen, OnlineCount | present (native; fixed here, was missing): Slack's presence manager, core/presence_subs.go |
 | `setUserPrefByApi` | dispatch: SlimMessageBox; patch: SlimMessageBox |  | present (native) |
 | `submitView` | wait: NativeAtChannel, OwlMode |  | present (native) |
 | `addAndUploadPendingFile` | patch: AnonymizeFilenames |  | present (native) |
@@ -430,15 +431,15 @@ Unused by the 59 plugins (29 members), all present unless marked: `Store#.subscr
 
 ## Plan: what's left, most used first
 
-1. **Thunks plugins dispatch that Clack doesn't define** (9; see the thunk
-   table): the presence subscription pair (LastSeen, OnlineCount; Slack's is
-   client-boot `4hlf`, a per-team count of subscribers per member, sent
-   whole as `presence_sub`, 100 ms debounced, which core's add-only
-   `SubscribePresence` set doesn't model), `requestReplies` (BetterBlock),
+1. **Thunks plugins dispatch that Clack doesn't define** (7; see the thunk
+   table): `requestReplies` (BetterBlock),
    `getLink`, `notifyMember`, `showThread` (BetterHuddles),
    `openInSplitView`, `closeFlexpane` (ChatTabs) and `joinCodeChannel`
    (QuickJoin). Also `autocompleteMembers`, which a plugin can dispatch
-   (BetterHuddles) but which has no native.
+   (BetterHuddles) but which has no native, and the presence manager's
+   `getPresenceSubscriptionByTeamId` export, which OnlineCount looks up for
+   its 950-member cap (without it the cap counts nothing already
+   subscribed).
 2. **patchComponent / elements for Slick**: 110 uses in 41 Slick plugins
    name 72 components. They need the catalogue PLUGINS-components.md keeps
    for Taut's 52.

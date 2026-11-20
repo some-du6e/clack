@@ -345,6 +345,9 @@ type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
+	framesMu sync.Mutex
+	frames   []string // what clients sent the realtime gateway (SocketFrames)
+
 	actBadgeMu sync.Mutex
 	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
 	chanBadges map[string]int // client.counts channel_badges (SetChannelBadges)
@@ -2120,10 +2123,31 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.dropSocket(c)
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
-		if _, _, err := c.Read(ctx); err != nil {
+		_, b, err := c.Read(ctx)
+		if err != nil {
 			return
 		}
+		s.noteFrame(b)
 	}
+}
+
+// noteFrame keeps what a client sent the gateway (SocketFrames), the last
+// 500 frames.
+func (s *Server) noteFrame(b []byte) {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	s.frames = append(s.frames, string(b))
+	if len(s.frames) > 500 {
+		s.frames = s.frames[len(s.frames)-500:]
+	}
+}
+
+// SocketFrames is what clients sent the realtime gateway, oldest first
+// (presence_sub, typing, …; the last 500).
+func (s *Server) SocketFrames() []string {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	return append([]string(nil), s.frames...)
 }
 
 // WriteCreds writes the fake's credentials to path (for running the real
