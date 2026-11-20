@@ -684,15 +684,24 @@ func TestEmptyComposerPageKeys(t *testing.T) {
 		t.Fatal("the composer didn't take the focus")
 	}
 	cv := e.channelView(ch)
-	e.key(key.NamePageUp, 0)
+	if cv == nil {
+		t.Fatal("no channel view")
+	}
+	// the list's own PageUp, as the composer hands it over (PageKey)
+	cv.PageKey("PageUp")
 	e.settle(300 * time.Millisecond)
-	if cv == nil || cv.AtBottom() || drewRow(e.paneRows("", ch, ""), newest.TS) {
-		t.Fatalf("PageUp in the empty composer didn't page the list up: %s", drawnState(e.paneRows("", ch, "")))
+	if cv.AtBottom() || drewRow(e.paneRows("", ch, ""), newest.TS) {
+		t.Fatalf("the list's PageUp (PageKey) didn't page it up: %s", drawnState(e.paneRows("", ch, "")))
 	}
 	e.key(key.NameEnd, 0)
 	e.settle(300 * time.Millisecond)
 	if !cv.AtBottom() || !drewRow(e.paneRows("", ch, ""), newest.TS) {
-		t.Errorf("End in the empty composer didn't take the list to its end: %s", drawnState(e.paneRows("", ch, "")))
+		t.Fatalf("End in the empty composer didn't take the list to its end: %s", drawnState(e.paneRows("", ch, "")))
+	}
+	e.key(key.NamePageUp, 0)
+	e.settle(300 * time.Millisecond)
+	if cv.AtBottom() || drewRow(e.paneRows("", ch, ""), newest.TS) {
+		t.Errorf("PageUp in the empty composer didn't page the list up: %s", drawnState(e.paneRows("", ch, "")))
 	}
 }
 

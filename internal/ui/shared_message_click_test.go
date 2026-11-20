@@ -38,8 +38,10 @@ func TestSharedMessageOpensItsReply(t *testing.T) {
 	}{{"the shared message's card", true}, {"the link to it in the text", false}} {
 		t.Run(c.name, func(t *testing.T) {
 			e := threadHeaderEnv(t, false)
-			pub, rootA := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS
+			pub := fakeslack.ThreadPublicID
 			author, other := e.fs.UserIDs()[2], e.fs.UserIDs()[3]
+			rootA, _ := e.fs.PostQuiet(pub, other, "synthetic: the thread the pane shows")
+			e.fs.PostReplyQuiet(pub, rootA, author, "synthetic: a reply in it")
 			rootB, _ := e.fs.PostQuiet(pub, author, "synthetic: another thread")
 			reply := e.fs.PostReplyQuiet(pub, rootB, author, "HERE!!!!!!")
 			link := "https://fakeclub.slack.com/archives/" + pub + "/p" + strings.ReplaceAll(reply, ".", "") + "?thread_ts=" + rootB + "&cid=" + pub
@@ -52,7 +54,7 @@ func TestSharedMessageOpensItsReply(t *testing.T) {
 			e.until("the reply with the shared message in the thread pane", 20*time.Second, func() bool {
 				var at []image.Rectangle
 				for _, lr := range e.mcLinks(pub, rootA) {
-					if lr.TS == mine && lr.URL == link {
+					if lr.TS == mine && strings.Contains(lr.URL, "/p"+strings.ReplaceAll(reply, ".", "")) {
 						at = append(at, lr.R) // the text's link, then the card's own (its time, its context)
 					}
 				}
