@@ -567,6 +567,17 @@ func (a *App) Boot(ctx context.Context) error {
 	defer close(a.ready)
 	defer a.markDataReady() // a cold start's data is in (or Boot failed: what core holds is all there is)
 	t0 := time.Now()
+	// The unknown member fetcher and the channel and bot name resolver run
+	// from the first lookup, as Slack's UnknownFetchManagers do (client-
+	// boot 0mwJ, made in DOS4 H for members: isEnabled is on everywhere
+	// but Slack's own test runners), not once every call below has
+	// answered: a warm start draws the restored conversation from the
+	// boot data while they're out, and a DM's partner the metadata cache
+	// doesn't hold stayed BaseMissingMember's bar until boot's last call
+	// (a slow users.conversations, a rate-limited step), or for good when
+	// boot failed.
+	go a.resolveLoop(a.bg) // unresolved channel/bot names
+	go a.memberLoop(a.bg)  // members lookups missed (members.go)
 	// meta.json (the user directory, 65k emoji, usergroups) decodes
 	// alongside the calls instead of before them; the steps that depend
 	// on it wait for cacheDone.
@@ -828,8 +839,6 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.codeChannelCloserLoop(a.bg) // code_channels_auto_close (codechannel_close.go)
 	go a.pump()
 	go a.prefetch(a.bg)
-	go a.resolveLoop(a.bg) // unresolved channel/bot names
-	go a.memberLoop(a.bg)  // members lookups missed (members.go)
 	go a.membersLoop(a.bg) // the members cache's pass (members.go)
 	if a.C.Creds.EnterpriseID != "" {
 		go func() { _ = a.LoadEnterprisePrefs(a.bg) }() // enterprise_prefs.go

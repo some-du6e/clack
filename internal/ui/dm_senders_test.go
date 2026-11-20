@@ -246,7 +246,9 @@ func TestDMSendersLikeSlack(t *testing.T) {
 	// boot's calls are still out: Slack's UnknownFetchManager asks for a
 	// member the first frame misses, whatever the boot is doing. The
 	// partner isn't in the metadata cache (the last session never drew
-	// the DM).
+	// the DM), and the header's conversations.info, whose EnsureUsers
+	// names the partner on its own, is held too: the rows name the
+	// partner through the lazy fetcher alone, as Slack's do.
 	t.Run("restored", func(t *testing.T) {
 		fs, err := fakeslack.Start(fakeslack.Small)
 		if err != nil {
@@ -261,7 +263,7 @@ func TestDMSendersLikeSlack(t *testing.T) {
 		<-e1.a.data.stop() // meta.json and the boot data
 		e1.shutdown()
 		setUIRoute(t, home, "c/"+f.ch)
-		release, held := holdCalls(t, fs, "users.conversations") // boot can't finish
+		release, held := holdCalls(t, fs, "users.conversations", "conversations.info") // boot can't finish, nor the header read
 		e := startEnv(t, fs, home)
 		c := e.a.Core()
 		if _, ok := c.S.RawUser(f.partner); ok {
@@ -315,9 +317,14 @@ func TestDMSendersLikeSlack(t *testing.T) {
 		}
 		t.Cleanup(func() { fs.Close() })
 		f := addDMFixture(fs, "D0DMUANONE1", fs.UserIDs()[64])
+		// a bot nothing returns (no username, no bot_profile): getBotById's
+		// stub while bots.info is out, non-existent once it said nothing
+		const ghostBot = "B0DMUAGHOST1"
+		botTS := fs.PostBotQuiet(f.ch, ghostBot, "", "a synthetic line from a bot nobody knows")
 		bare, _ := fs.PostQuiet(f.ch, "", "a synthetic line nobody signed")
 		e := startEnv(t, fs, t.TempDir())
 		e.waitReady()
+		c := e.a.Core()
 		e.openChannel(f.ch)
 		dmToLatest(t, e, f, "userless")
 		waitNamed(t, e, f, "userless", 10*time.Second)
@@ -325,6 +332,13 @@ func TestDMSendersLikeSlack(t *testing.T) {
 		if sv := dmSenders(e, f.ch)[bare]; sv.Missing != core.MemberUnknown || sv.Name != "" {
 			t.Errorf("a message with no user, username or bot: %+v, want BaseMissingMember's unknown bar", sv)
 		}
-		noUnknownWord(t, e, f, "userless")
+		e.until("the unknown bot's non-existent bar", 10*time.Second, func() bool {
+			sv, ok := dmSenders(e, f.ch)[botTS]
+			return ok && sv.Missing == core.MemberNonExistent && sv.Name == ""
+		})
+		if _, ok := c.S.Bot(ghostBot); ok || !botGone(c, ghostBot) {
+			t.Errorf("the unknown bot: stored %v, non-existent %v", ok, botGone(c, ghostBot))
+		}
+		noUnknownWord(t, e, f, "userless", ghostBot)
 	})
 }

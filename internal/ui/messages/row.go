@@ -593,8 +593,10 @@ func (r *row) resolve(rc *rowCtx) {
 			}
 		}
 	}
-	if r.name == "" && m.User == "" {
-		r.name = "Unknown"
+	if m.User == "" {
+		// a sender with no member: the bot's state, or BaseMissingMember's
+		// bar when nothing names it, never a word (missing_member.go)
+		r.miss = userlessMiss(rc.h.Core(), m)
 	}
 	// getMsgSenderEntity's huddle sender: the status line, no badge, no
 	// profile, no custom status (huddle_msg.go)
