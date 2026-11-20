@@ -565,7 +565,7 @@ func (p *ChannelHoverCard) EntityCard(gtx layout.Context, maxW int) (layout.Dime
 	th := p.h.Theme()
 	cl := colorsOf(th)
 	w := min(maxW, dp(gtx, 428))
-	bw := max(1, dp(gtx, 1))
+	bw := border1(gtx)
 	rad := dp(gtx, 8)
 	m := op.Record(gtx.Ops)
 	d := func() layout.Dimensions {
