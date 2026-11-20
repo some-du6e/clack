@@ -112,9 +112,9 @@ type libraryPage struct {
 	// states are the entries' install states by libKey, read through their
 	// hosts (each read opens the plugin's files and hashes them) once, and
 	// again only when statesFor moves: a plugin system starts or stops, or
-	// says it changed (an install, an update, a removal: ChangeGen). A
-	// frame reads every row's state several times; scrolling read the
-	// files of all 71 every frame.
+	// its installed plugins change (an install, an update, a removal:
+	// PluginsGen). A frame reads every row's state several times;
+	// scrolling read the files of all 71 every frame.
 	states    map[string]pluginlib.State
 	statesFor libStatesKey
 	// groups is libraryGroups of groupsOf's entries, built once an index
@@ -125,7 +125,7 @@ type libraryPage struct {
 // libStatesKey is what the install states were read under.
 type libStatesKey struct {
 	up        [2]bool // Taut, Slick running
-	taut, sli uint64  // their ChangeGens
+	taut, sli uint64  // their PluginsGens
 	ix        *pluginlib.Index
 }
 
@@ -250,10 +250,10 @@ func (v *libraryPage) statesKey() libStatesKey {
 		k.up = [2]bool{v.a.Taut() != nil, v.a.Slick() != nil}
 	}
 	if t := v.a.Taut(); t != nil {
-		k.taut = t.ChangeGen()
+		k.taut = t.PluginsGen()
 	}
 	if s := v.a.Slick(); s != nil {
-		k.sli = s.ChangeGen()
+		k.sli = s.PluginsGen()
 	}
 	return k
 }
@@ -331,7 +331,7 @@ func (v *libraryPage) installEntry(e pluginlib.Entry, update bool) {
 		}
 		a.Post(func() {
 			delete(v.busy, k)
-			v.forgetStates() // the system's ChangeGen moves too; a failed install may have left files
+			v.forgetStates() // the system's PluginsGen moves too; a failed install may have left files
 			switch {
 			case err != nil:
 				v.status[k], v.failed[k] = err.Error(), true

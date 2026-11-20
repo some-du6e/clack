@@ -143,6 +143,7 @@ func (s *Slick) loadInstalled() {
 			p.hash = "" // describe on first use
 		}
 		s.plugins[id] = p
+		s.pluginsGen.Add(1)
 	}
 }
 
@@ -906,6 +907,7 @@ func (s *Slick) install(ctx context.Context, code, source, expectedID string) (s
 		s.plugins[id] = p
 	}
 	p.meta, p.hash = *meta, h
+	s.pluginsGen.Add(1) // a new plugin or a replaced one
 	p.inJS, p.mainInJS, p.startError = false, false, ""
 	if !isMain {
 		if source != "" {
@@ -938,6 +940,7 @@ func (s *Slick) Remove(ctx context.Context, id string) error {
 	s.mu.Lock()
 	rt := s.rt
 	delete(s.plugins, id)
+	s.pluginsGen.Add(1)
 	delete(s.sources, id)
 	delete(s.cfg.Plugins, id)
 	delete(s.cfg.PluginWorkspaces, id)
