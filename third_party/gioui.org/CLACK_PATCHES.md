@@ -157,7 +157,9 @@ rollbacks never reached the GPU, so nothing changes for them.
 
 Test: `gpu/headless` `TestClackRollbackKeys` (a rounded rect and a stroke
 drawn at three places, each after a rollback to the same checkpoint, pixel
-for pixel what a new window draws).
+for pixel what a new window draws; after each rollback only the overlay's
+two paths are built again, the content's path before the checkpoint stays
+cached: `ClackFrameStats().PathsBuilt` is 3 in the first frame, 2 after).
 
 ## 4. app: IgnoreGPUBlocklist
 
@@ -2493,7 +2495,9 @@ a session takes one.
 
 Tests: `gpu/headless/clack_size_test.go` (`TestClackSetSize`: frames of
 three sizes through one window are pixel for pixel what new windows of
-those sizes draw, on the same GPU; an empty size is refused), on ci's
+those sizes draw, on the same GPU; the two paths drawn in every frame are
+built once, not again after a SetSize: `ClackFrameStats().PathsBuilt` is 1
+after each, the frame's own path; an empty size is refused), on ci's
 linux-gio (llvmpipe), windows-applog (WARP) and macos (Metal) jobs. Not
 in `UPSTREAM.patch`.
 

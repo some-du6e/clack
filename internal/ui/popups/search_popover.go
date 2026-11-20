@@ -1441,10 +1441,10 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 
 // ---- layout ----
 
-// Layout draws the popover.
 // Rect is the card as last laid out (window coords).
 func (p *SearchPopover) Rect() image.Rectangle { return p.rect }
 
+// Layout draws the popover.
 func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if p.done {

@@ -1072,7 +1072,6 @@ func (t *dtTimeList) selectHover() {
 	t.sm.hovered = hov
 }
 
-// Layout draws the list.
 // Rect is the card as last laid out (window coords).
 func (t *dtTimeList) Rect() image.Rectangle { return t.rect }
 
@@ -1085,6 +1084,7 @@ func (t *dtTimeList) InspectRole() string {
 	return "time picker"
 }
 
+// Layout draws the list.
 func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if t.done {

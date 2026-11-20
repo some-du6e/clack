@@ -301,11 +301,11 @@ func dtColor(th *theme.Theme, name string) color.NRGBA {
 	return c
 }
 
-// Layout draws the popover over the whole window (an outside press or
-// Escape closes it).
 // Rect is the card as last laid out (window px).
 func (g *stickerGrid) Rect() image.Rectangle { return g.card }
 
+// Layout draws the popover over the whole window (an outside press or
+// Escape closes it).
 func (g *stickerGrid) Layout(gtx C) D {
 	if g.done {
 		return D{}

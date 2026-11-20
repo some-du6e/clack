@@ -292,11 +292,11 @@ func (lb *Lightbox) wheel(dy float32) {
 	lb.setZoom(lb.zoom * f)
 }
 
-// Layout draws the viewer.
 // Rect is the window it covers as last drawn (window coords): the
 // lightbox's backdrop is its card.
 func (lb *Lightbox) Rect() image.Rectangle { return lb.full }
 
+// Layout draws the viewer.
 func (lb *Lightbox) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if lb.done {

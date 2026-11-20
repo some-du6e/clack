@@ -116,11 +116,11 @@ func (q *quickPicker) place(gtx C, sz, win image.Point) image.Point {
 
 var qpClass = slackc.Class("c-menu p-huddle_quick_emoji_picker")
 
-// Layout draws the popover over the whole window (an outside press
-// closes it, as Popover's overlay does).
 // Rect is the card as last laid out (window px).
 func (q *quickPicker) Rect() image.Rectangle { return q.card }
 
+// Layout draws the popover over the whole window (an outside press
+// closes it, as Popover's overlay does).
 func (q *quickPicker) Layout(gtx C) D {
 	if q.done {
 		return D{}
