@@ -167,6 +167,13 @@ func TestNotifyDropsAMessageDeletedWhileItWaits(t *testing.T) {
 // the toast the backend showed.
 func noteToast(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, rec *noteRec, ch, user, ts, text string, slow time.Duration) *desktopNote {
 	t.Helper()
+	noteSend(t, a, ca, fs, ch, user, ts, text, slow)
+	return rec.wait(t, a, 1)
+}
+
+// noteSend is noteToast up to the backend taking core's announcement.
+func noteSend(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, ch, user, ts, text string, slow time.Duration) {
+	t.Helper()
 	fs.SetEdgeHook(func(method string, _ map[string]json.RawMessage) (any, bool) {
 		if method == "edge/users/info" {
 			time.Sleep(slow)
@@ -185,7 +192,7 @@ func noteToast(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, rec *no
 		case ev := <-evs:
 			if ev.Type == "message" && ev.Channel == ch && ev.TS == ts {
 				a.data.handle(a, ev)
-				return rec.wait(t, a, 1)
+				return
 			}
 		case <-dl:
 			t.Fatal("core never announced the message")
@@ -338,7 +345,38 @@ func TestNotifyNamesAHiddenMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := noteToast(t, a, ca, fs, rec, conv.ID, sender, "1762521000.000100", "<@"+hidden+"> joined the synthetic standup", 200*time.Millisecond)
-	if !strings.Contains(n.Body, "Hidden user joined the synthetic standup") || strings.Contains(n.Body, "Name hidden") || strings.Contains(n.Body, hidden) {
+	if !strings.HasSuffix(n.Body, ": Hidden user joined the synthetic standup") || strings.Contains(n.Body, "Name hidden") || strings.Contains(n.Body, hidden) {
 		t.Errorf("the toast's body %q: want the hidden member as \"Hidden user\", no @, no id", n.Body)
+	}
+}
+
+// A message from a member the viewer hid (hidden_users) shows no toast, in
+// a group DM or a DM, as Slack's maybeShowNotification gives up for a
+// hidden sender (isUserHidden, unless the org locked hide_person_opt_out):
+// Clack toasted their name and their text.
+func TestNotifyNamesNoToastFromAHiddenSender(t *testing.T) {
+	for _, dm := range []bool{false, true} {
+		name := map[bool]string{false: "group DM", true: "DM"}[dm]
+		t.Run(name, func(t *testing.T) {
+			a, ca, fs, rec := privNoteAppFS(t)
+			var ch, sender string
+			if dm {
+				d := fixtureConv(t, ca, fakeslack.ThreadDMID)
+				ca.S.PutConv(d)
+				ch, sender = d.ID, d.User
+			} else {
+				conv, s := groupDMFixture(t, ca)
+				ch, sender = conv.ID, s
+			}
+			fs.SetPrefs(map[string]any{"mute_sounds": true, "hidden_users": sender})
+			if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			noteSend(t, a, ca, fs, ch, sender, "1762521100.000100", "a synthetic message from someone hidden", 200*time.Millisecond)
+			quiet(a, rec) // past users/info
+			if n := quiet(a, rec); n != 0 {
+				t.Errorf("%s: %d toasts for a message from a member the viewer hid", name, n)
+			}
+		})
 	}
 }
