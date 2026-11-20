@@ -158,6 +158,21 @@ func (s *Server) PostQuiet(ch, user, text string) (ts string, ev map[string]any)
 		"client_msg_id": m.ClientMsgID}
 }
 
+// PostReplyAttachmentsQuiet is PostReplyQuiet for a reply carrying
+// attachments (a link's unfurl: a shared message's is_msg_unfurl card).
+func (s *Server) PostReplyAttachmentsQuiet(ch, root, user, text string, atts []slack.Attachment) string {
+	ts := s.PostReplyQuiet(ch, root, user, text)
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	rs := s.quietReplies[ch+"/"+root]
+	for i := range rs {
+		if rs[i].TS == ts {
+			rs[i].Attachments = atts
+		}
+	}
+	return ts
+}
+
 // PostQuietAt is PostQuiet at ts, where the history puts it (newest
 // first): a history whose messages are minutes apart, for date jumps.
 func (s *Server) PostQuietAt(ch, user, text, ts string) {

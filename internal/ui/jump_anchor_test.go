@@ -678,12 +678,11 @@ func TestEmptyComposerPageKeys(t *testing.T) {
 	e.openChannel(ch)
 	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
 	e.settle(500 * time.Millisecond)
-	c := e.a.convoFor(ch, "")
-	if c == nil || c.comp == nil {
-		t.Fatal("no composer for the conversation")
-	}
-	c.comp.Focus()
+	e.focusComposer(ch, "")
 	e.settle(200 * time.Millisecond)
+	if f, ok := e.a.convoFor(ch, "").comp.(interface{ Focused() bool }); !ok || !f.Focused() {
+		t.Fatal("the composer didn't take the focus")
+	}
 	cv := e.channelView(ch)
 	e.key(key.NamePageUp, 0)
 	e.settle(300 * time.Millisecond)
