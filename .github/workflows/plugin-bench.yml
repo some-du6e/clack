@@ -42,7 +42,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: plugin-bench-${{ github.ref }}
+  group: plugin-bench-${{ github.ref }}-${{ inputs.only }}
   cancel-in-progress: true
 
 env:
