@@ -137,6 +137,10 @@ func TestAgentTasksTabPauseHold(t *testing.T) {
 // before Confirm, Cancel deletes nothing, and Confirm sends both deletes.
 func TestAgentTasksTabRowButtons(t *testing.T) {
 	e, fs := agentTasksEnv(t, nil)
+	if e.gpu != nil { // no shots here: the pointer sweep's frames needn't go through llvmpipe (80 s in bk-agent-shots)
+		e.gpu.Release()
+		e.gpu = nil
+	}
 	dm := e.agentDM(t, "messages,about,tasks")
 	v := e.openTasks(t, dm, "list")
 	calls := func(m string) int {
@@ -147,6 +151,24 @@ func TestAgentTasksTabRowButtons(t *testing.T) {
 			}
 		}
 		return n
+	}
+	// the form a call went out with: the clicks reach their own row's task
+	form := func(m string) url.Values {
+		for _, c := range fs.AgentTasks().AgentTaskCalls() {
+			if c.Method == m {
+				return c.Form
+			}
+		}
+		return nil
+	}
+	standupTrigger := ""
+	for _, tk := range v.Tasks() {
+		if tk.WorkflowID == fakeslack.TaskStandup {
+			standupTrigger = tk.TriggerID
+		}
+	}
+	if standupTrigger == "" {
+		t.Fatal("no Standup notes task with a trigger")
 	}
 	// a row's button: hover down the tab's right side to the row, then
 	// along it to the button
@@ -171,6 +193,9 @@ func TestAgentTasksTabRowButtons(t *testing.T) {
 	}
 	e.click(find(fakeslack.TaskBriefing, "pause"))
 	e.until("Pause task sent", 10*time.Second, func() bool { return calls("functions.workflows.unpublish") == 1 })
+	if f := form("functions.workflows.unpublish"); f.Get("workflow_id") != fakeslack.TaskBriefing || f.Get("reason") != "slackbot-automation-item-pause" {
+		t.Errorf("Pause task sent %v, want the Briefing task's workflow_id %s, reason slackbot-automation-item-pause", f, fakeslack.TaskBriefing)
+	}
 
 	deleteMenu := func() *popups.Modal {
 		t.Helper()
@@ -220,6 +245,13 @@ func TestAgentTasksTabRowButtons(t *testing.T) {
 	e.until("both deletes", 10*time.Second, func() bool {
 		return calls("workflows.triggers.delete") == 1 && calls("functions.workflows.delete") == 1
 	})
+	const reason = "slackbot-automation-item-delete"
+	if f := form("workflows.triggers.delete"); f.Get("trigger_id") != standupTrigger || f.Get("reason") != reason {
+		t.Errorf("the trigger's delete sent %v, want the Standup task's trigger_id %s, reason %s", f, standupTrigger, reason)
+	}
+	if f := form("functions.workflows.delete"); f.Get("workflow_id") != fakeslack.TaskStandup || f.Get("reason") != reason {
+		t.Errorf("the workflow's delete sent %v, want the Standup task's workflow_id %s, reason %s", f, fakeslack.TaskStandup, reason)
+	}
 }
 
 // TestAgentTasksTabCardFailureQuiet: with the agent DM open and its app
@@ -245,6 +277,9 @@ func TestAgentTasksTabCardFailureQuiet(t *testing.T) {
 	e.a.Navigate("c/" + fakeslack.AgentTasksDMID)
 	e.until("the agent DM's tabs", 20*time.Second, func() bool { return blockkit.AppDMFor(e.a, fakeslack.AgentTasksDMID) != nil })
 	e.settle(1500 * time.Millisecond)
+	if d := 8*time.Second - time.Since(e.a.data.booted); d > 0 {
+		e.settle(d) // past core's boot loads (their id-less names event redraws ~5 s in)
+	}
 	var asked atomic.Int32
 	prev := invalidateHook
 	invalidateHook = func(*App) { asked.Add(1) }
