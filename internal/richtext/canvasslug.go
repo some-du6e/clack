@@ -47,6 +47,10 @@ type CanvasRef struct {
 	// Kind is the file's kind as files.info said: "canvas", "list" or ""
 	// (search_file_channel_messages reads a file channel as its file).
 	Kind string
+	// Blocked is a canvas Slack Connect keeps from the viewer (Slack's
+	// mode canvas_slack_connect_blocked): a jump opens it
+	// (isBlockedExternalCanvas), RedirectFileChannel doesn't (fileIsCanvas).
+	Blocked bool
 }
 
 // CanvasResolver is an optional Resolver extension (store.Store). ok and

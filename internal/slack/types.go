@@ -107,13 +107,15 @@ type MessageDocumentComment struct {
 	MostRecentEditor string      `json:"most_recent_editor,omitempty"`
 }
 
-// MessageDocumentMention is a canvas mention's document_mention: the
-// canvas, the section the mention sits in, and who mentioned the viewer.
+// MessageSlackList is a list record's comment-thread message's
+// slack_list: the list and the record whose thread it is.
 type MessageSlackList struct {
 	ListID       string `json:"list_id,omitempty"`
 	ListRecordID string `json:"list_record_id,omitempty"`
 }
 
+// MessageDocumentMention is a canvas mention's document_mention: the
+// canvas, the section the mention sits in, and who mentioned the viewer.
 type MessageDocumentMention struct {
 	FileID            string   `json:"file_id,omitempty"`
 	SectionID         string   `json:"section_id,omitempty"`

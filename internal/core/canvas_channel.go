@@ -131,6 +131,15 @@ func (a *App) FileChannelKind(ch, ts string) (fileID, kind string, wait bool) {
 	return fileID, "", true
 }
 
+// CanvasBlocked reports whether canvas fileID is one Slack Connect keeps
+// from the viewer (files.info's slack_connect_*_blocked): a jump opens it
+// (isBlockedExternalCanvas), RedirectFileChannel doesn't (fileIsCanvas
+// reads mode quip).
+func (a *App) CanvasBlocked(fileID string) bool {
+	ref, known := a.S.KnownCanvasRef(fileID)
+	return known && ref.Blocked
+}
+
 // CanvasOfJump is FileChannelKind for a canvas: the canvas a jump to
 // message ts of ch opens (Slack's jumpToMessage, isSpaceship), or wait.
 func (a *App) CanvasOfJump(ch, ts string) (fileID string, ok, wait bool) {
@@ -155,6 +164,11 @@ func (a *App) ListRecordOf(ch, thread, ts string) string {
 	root := thread
 	if root == "" {
 		root = ts
+		// a reply names its thread (jumpToMessage's getThreadTsToOpen:
+		// isReply → thread_ts)
+		if m, held := a.S.FindHeld(ch, ts); held && m.ThreadTS != "" && m.ThreadTS != ts {
+			root = m.ThreadTS
+		}
 	}
 	if root == "" {
 		return ""
@@ -175,6 +189,15 @@ func (a *App) ListRecordFetch(ctx context.Context, ch, thread, ts string) (rec s
 	}
 	got, answered := a.hydrateOK(ctx, map[string][]string{ch: {root}})
 	m, ok := got[ch+"/"+root]
+	if ok && thread == "" && m.ThreadTS != "" && m.ThreadTS != m.TS {
+		// a reply: its thread's root names the record
+		root = m.ThreadTS
+		if rec := a.ListRecordOf(ch, root, ""); rec != "" {
+			return rec, nil
+		}
+		got, answered = a.hydrateOK(ctx, map[string][]string{ch: {root}})
+		m, ok = got[ch+"/"+root]
+	}
 	switch {
 	case ok && m.SlackList != nil:
 		return m.SlackList.ListRecordID, nil
