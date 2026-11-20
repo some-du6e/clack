@@ -68,16 +68,14 @@ func TestBlockKitGallery(t *testing.T) {
 			e.settle(30 * time.Millisecond)
 		}
 		e.settle(600 * time.Millisecond)
-		var prev []byte
+		// the list's end ends the paging, not an unchanged frame: past the
+		// end the frames still differ by the composer's blinking caret
+		// (round 2's duplicate end pages)
+		list := e.ownSendList(ch)
 		for page := 1; page <= 30; page++ {
-			cur := snap("gallery-" + mode + "-" + twoDigits(page))
-			if cur == nil || bytes.Equal(cur, prev) {
-				if cur != nil {
-					_ = os.Remove(filepath.Join(dir, "gallery-"+mode+"-"+twoDigits(page)+".png"))
-				}
+			if snap("gallery-"+mode+"-"+twoDigits(page)) == nil || list.AtBottom() {
 				break
 			}
-			prev = cur
 			e.scroll(e.listPoint(), float32(e.size.Y-e.a.primaryOrigin.Y)*0.7)
 			e.settle(500 * time.Millisecond)
 		}
@@ -102,8 +100,7 @@ func TestBlockKitGallery(t *testing.T) {
 		})
 		e.settle(800 * time.Millisecond)
 		snap("gallery-thread-loading-" + mode)
-		// close it: the next pass pages the channel at its full width, and
-		// with no spinner on screen an unchanged page ends the paging
+		// close it: the next pass pages the channel at its full width
 		e.a.CloseSecondary()
 		e.settle(300 * time.Millisecond)
 	}
