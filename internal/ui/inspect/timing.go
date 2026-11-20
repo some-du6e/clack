@@ -112,9 +112,9 @@ func (m *capTimes) line() string {
 	if m.drawn > 0 {
 		fmt.Fprintf(&b, ", review drawn %s after the pick (%d frames)", dur(m.drawn), m.frames)
 	}
-	if m.compose > 0 || m.encode > 0 || m.clipbd > 0 || m.save > 0 {
+	if m.noShot || m.compose > 0 || m.encode > 0 || m.clipbd > 0 || m.save > 0 {
 		switch {
-		case m.noShot:
+		case m.noShot: // whatever its stages took (no folder to save in: 0 on Windows' clock)
 			b.WriteString("; no shot: copied as text at once:")
 		case m.atOnce:
 			b.WriteString("; copied at once:")

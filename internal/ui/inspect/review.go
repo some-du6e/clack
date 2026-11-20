@@ -309,11 +309,19 @@ func (r *review) toView(m image.Rectangle) image.Rectangle {
 // is drawn in a size px window: centred under the banner, as big as
 // fits, at most 3 times the window's own size of it and never past one
 // shot px per window px.
+//
+// A window too small for the banner's margins to leave it half its width
+// and height (the presenter's 60 dp panel in a huddle) gives the shot all
+// of itself, the banner over it: the review is never empty, so a region
+// there can still be reviewed and copied.
 func reviewView(size, s image.Point, k float32, top, side, bottom int) image.Rectangle {
 	if k <= 0 {
 		k = 1
 	}
 	avail := image.Pt(size.X-2*side, size.Y-top-bottom)
+	if avail.X < size.X/2 || avail.Y < size.Y/2 {
+		top, avail = 0, size
+	}
 	if avail.X <= 0 || avail.Y <= 0 || s.X <= 0 || s.Y <= 0 {
 		return image.Rectangle{}
 	}

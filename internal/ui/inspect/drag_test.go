@@ -227,8 +227,12 @@ func (e *dragEnv) releaseKey(name key.Name, mods key.Modifiers) {
 // copy keys work (review.go armDelay).
 const armDelayTest = 400 * time.Millisecond
 
-// wait is d passing with no input: the frames' clock d ahead, a frame.
+// wait is d passing with no input: a frame now, as the window's next
+// comes at once after one that drew a review (drawReview asks for it, and
+// it finds the review on screen: shownAt), then the frames' clock d ahead
+// and a frame.
 func (e *dragEnv) wait(d time.Duration) {
+	e.frame()
 	e.skew += d
 	e.frame()
 }
