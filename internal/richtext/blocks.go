@@ -877,6 +877,8 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 
 // richRunRe is insertTextBreakPlaceholders' paragraph run (kWQh m): two
 // or more newlines with only spaces, tabs and no-break spaces between.
+// eachRichText finds it with nextRun (rawtext.go), which its tests check
+// against this.
 var richRunRe = regexp.MustCompile(`(?:\n[ \t\x{00A0}]*)+\n`)
 
 // appendRichText appends a rich_text text element's text: its lines as

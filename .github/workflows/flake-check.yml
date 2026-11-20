@@ -1915,7 +1915,7 @@ jobs:
           cache: true
       - name: gio deps (Xvfb, Mesa llvmpipe)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
-      - name: TestGiantMessagesBounded (one verbose run, then COUNT)
+      - name: TestGiantMessagesBounded (COUNT runs, each against a fresh fakeslackd, the first verbose)
         env:
           CLACK_GIANT_MESSAGES: "100"
           CLACK_BENCH_GPU: "1"
@@ -1923,13 +1923,22 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           set +e
+          go build -o "$RUNNER_TEMP/fakeslackd" ./internal/fakeslack/fakeslackd || exit 1
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui || exit 1
           rc=0
-          mkdir -p "$RUNNER_TEMP/giant/1"
-          CLACK_GIANT_OUT="$RUNNER_TEMP/giant/1" xvfb-run -a -s "-screen 0 1440x900x24" go test -count=1 -v -timeout 30m -run '^TestGiantMessagesBounded$' ./internal/ui 2>&1 | tail -150
-          [ "${PIPESTATUS[0]}" = 0 ] || rc=1
-          if [ "$COUNT" -gt 1 ]; then
-            xvfb-run -a -s "-screen 0 1440x900x24" go test -count=$((COUNT - 1)) -timeout 60m -run '^TestGiantMessagesBounded$' ./internal/ui || rc=1
-          fi
+          for i in $(seq 1 "$COUNT"); do
+            # the fake in its own process: the RSS is the client's alone
+            "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8933 > "$RUNNER_TEMP/fakeslackd-$i.log" 2>&1 &
+            fp=$!
+            for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8933/img/1x1/x.png && break; sleep 0.1; done
+            mkdir -p "$RUNNER_TEMP/giant/$i"
+            v=""
+            [ "$i" = 1 ] && v="-test.v"
+            (cd internal/ui && CLACK_FAKESLACK_URL=http://127.0.0.1:8933/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/$i" \
+              xvfb-run -a -s "-screen 0 1440x900x24" "$RUNNER_TEMP/ui.test" -test.count 1 $v -test.timeout 20m -test.run '^TestGiantMessagesBounded$' 2>&1 | tail -150)
+            [ "${PIPESTATUS[0]}" = 0 ] || rc=1
+            kill $fp 2>/dev/null; wait $fp 2>/dev/null
+          done
           exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"runtime/metrics"
 	"runtime/pprof"
 	"sort"
@@ -147,6 +148,8 @@ func TestGiantMessagesBounded(t *testing.T) {
 	t.Logf("before #giant-wall: live heap %.0f MB, RSS %.0f MB", baseHeap, baseRSS)
 
 	// the watchdog: one frame that runs away can't take the runner with it
+	// (its panic shows every goroutine, the UI's frame among them)
+	debug.SetTraceback("all")
 	stop := make(chan struct{})
 	defer close(stop)
 	var peakRSS atomic.Int64
@@ -217,10 +220,23 @@ func TestGiantMessagesBounded(t *testing.T) {
 		r := giantProcStatus("VmRSS")["VmRSS"]
 		mems = append(mems, stageMem{name, h, r})
 		profile(name)
-		t.Logf("%s: live heap %.0f MB (+%.0f), RSS %.0f MB (+%.0f), %d messages loaded", name, h, h-baseHeap, r, r-baseRSS, e.loadedMessages(ch))
+		shown := 0
+		if l := list(); l != nil {
+			shown, _, _ = l.LayoutSig()
+		}
+		t.Logf("%s: live heap %.0f MB (+%.0f), RSS %.0f MB (+%.0f), %d messages in the list (core's window %d)", name, h, h-baseHeap, r, r-baseRSS, shown, e.loadedMessages(ch))
 	}
 
-	// 1. open it: the newest 50 messages, the newest at the bottom
+	// a CPU profile of everything from the open on
+	if out != "" {
+		if f, err := os.Create(filepath.Join(out, "frames.cpu.pprof")); err == nil {
+			if pprof.StartCPUProfile(f) == nil {
+				defer func() { pprof.StopCPUProfile(); f.Close() }()
+			}
+		}
+	}
+	// 1. open it: the newest 50 messages (it opens at the "New" line: the
+	// whole channel is unread)
 	e.a.Navigate("c/" + ch)
 	t0 := time.Now()
 	for dl := time.Now().Add(90 * time.Second); time.Now().Before(dl) && step("open"); {
@@ -237,6 +253,10 @@ func TestGiantMessagesBounded(t *testing.T) {
 	// what Slack draws: the whole newest message, 22px a line, its last
 	// line at the bottom
 	newest := fakeslack.GiantTS(0)
+	if l := list(); l != nil && aborted == "" {
+		l.ScrollToBottom()
+		settle("bottom", time.Second)
+	}
 	if aborted == "" {
 		if l := list(); l == nil {
 			t.Errorf("no list for #giant-wall")

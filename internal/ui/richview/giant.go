@@ -2,6 +2,8 @@ package richview
 
 import (
 	"image"
+	"slices"
+	"strings"
 
 	"github.com/some-du6e/clack/internal/richtext"
 )
@@ -183,11 +185,28 @@ func (l *lay) addRaw(sp *richtext.Span, fs *flowStyle) {
 		}
 		l.addSpan(&held, fs)
 	}
+	// a break as addSpan adds one (a Break has no style or part), without
+	// its per-span setup: a raw span is tens of thousands of them
+	kb := l.faceFor(fs.face, fs.size, 0)
+	// room for what it adds, at once rather than by doublings: an item a
+	// word and a break, a frag and a line box a line, its text
+	if fs.maxLines == 0 {
+		n := strings.Count(sp.Text, "\n") + 1
+		l.items = slices.Grow(l.items, 2*n)
+		l.d.frags = slices.Grow(l.d.frags, n)
+		l.d.lines = slices.Grow(l.d.lines, n)
+		l.d.plain = slices.Grow(l.d.plain, len(sp.Text))
+	}
 	richtext.Pieces(*sp, func(p richtext.Span) bool {
 		if p.Kind == richtext.Break {
 			end := p.Br != richtext.BrNone
 			flush(end)
-			l.addSpan(&p, fs)
+			if l.css != nil {
+				l.addSpan(&p, fs)
+			} else {
+				p0, p1 := l.plainAdd("\n")
+				l.items = append(l.items, item{kind: itBreak, face: kb, deco: -1, target: -1, p0: p0, p1: p1, br: p.Br})
+			}
 			if end {
 				fresh = true
 				ends++

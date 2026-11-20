@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode"
@@ -86,10 +87,24 @@ func rawTexts(n int) []string {
 	return out
 }
 
+// richLeadRunRe is the run a leading newline makes with the "\n" in front
+// of it: what richRunRe matches at the start of "\n"+s, less that "\n".
+var richLeadRunRe = regexp.MustCompile(`^(?:\n[ \t\x{00A0}]*)*\n`)
+
 // TestRichTextPieces: eachRichText cuts every text as the old
-// appendRichText did, and a raw span stands for exactly those spans.
+// appendRichText did, and a raw span stands for exactly those spans;
+// nextRun and runEnd find what richRunRe does.
 func TestRichTextPieces(t *testing.T) {
 	for _, s := range rawTexts(4000) {
+		want := richRunRe.FindStringIndex(s)
+		if got := nextRun(s); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%q: nextRun %v, richRunRe %v", s, got, want)
+		}
+		if strings.HasPrefix(s, "\n") {
+			if got, want := runEnd(s, 0), richLeadRunRe.FindStringIndex(s)[1]; got != want {
+				t.Fatalf("%q: runEnd %d, want %d", s, got, want)
+			}
+		}
 		for _, f := range [][2]bool{{false, false}, {true, false}, {true, true}} {
 			want := refAppendRichText(nil, s, f[0], f[1])
 			var got []Span

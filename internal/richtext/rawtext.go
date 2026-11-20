@@ -1,7 +1,6 @@
 package richtext
 
 import (
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -101,10 +100,45 @@ func Expand(spans []Span) []Span {
 	return out
 }
 
-// richLeadRunRe is the run a leading newline makes with the "\n"
-// insertTextBreakPlaceholders puts in front of it (isFirstElementInSection):
-// what richRunRe matches at the start of "\n"+s, less that "\n".
-var richLeadRunRe = regexp.MustCompile(`^(?:\n[ \t\x{00A0}]*)*\n`)
+// runEnd is where a run of newlines that starts with s[i] == '\n' ends:
+// past its last newline, each further one after nothing but spaces, tabs
+// and no-break spaces (richRunRe's repetition, greedy). end == i+1 is a
+// lone newline.
+func runEnd(s string, i int) int {
+	end := i + 1
+	for j := end; j < len(s); {
+		switch {
+		case s[j] == ' ' || s[j] == '\t':
+			j++
+		case s[j] == 0xc2 && j+1 < len(s) && s[j+1] == 0xa0:
+			j += 2
+		case s[j] == '\n':
+			j++
+			end = j
+		default:
+			return end
+		}
+	}
+	return end
+}
+
+// nextRun is richRunRe.FindStringIndex(s) without the regexp (it scanned
+// a 908,000-character text a byte at a time): the first newline a run of
+// two or more starts at, and the run's end; nil when there is none.
+func nextRun(s string) []int {
+	for i := 0; i < len(s); {
+		k := strings.IndexByte(s[i:], '\n')
+		if k < 0 {
+			return nil
+		}
+		i += k
+		if e := runEnd(s, i); e > i+1 {
+			return []int{i, e}
+		}
+		i++
+	}
+	return nil
+}
 
 // eachRichText cuts a rich_text text element's text s the way Slack's
 // BaseText draws it (BrKind): text calls for its pieces (some empty),
@@ -134,7 +168,7 @@ func eachRichText(s string, lead, first bool, text func(string) bool, brk func(B
 	// of its own), which makes a leading newline a run whose every
 	// newline is a c-mrkdwn__br
 	if lead && strings.HasPrefix(s, "\n") {
-		run := s[:richLeadRunRe.FindStringIndex(s)[1]]
+		run := s[:runEnd(s, 0)]
 		for _, ln := range strings.Split(run, "\n")[1:] {
 			if !brk(BrPara) || !text(ln) {
 				return false
@@ -143,7 +177,7 @@ func eachRichText(s string, lead, first bool, text func(string) bool, brk func(B
 		s = s[len(run):]
 	}
 	for s != "" {
-		loc := richRunRe.FindStringIndex(s)
+		loc := nextRun(s)
 		if loc == nil {
 			loc = []int{len(s), len(s)}
 		}
