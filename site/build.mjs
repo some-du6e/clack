@@ -84,7 +84,7 @@ const ctx = {
     short: short(release.tag),
     date: fmtDate(release.published),
     url: release.url,
-    packages: release.assets.filter((a) => !ASSETS.sums.test(a.name)).length,
+    packages: release.assets.filter((a) => !ASSETS.sums.test(a.name) && !/-source\.zip$/.test(a.name)).length, // not goh264's source
   },
   releases: { count: release.count },
   dl: downloads(release),

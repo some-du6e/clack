@@ -134,6 +134,16 @@ jobs:
           python3 tools/licenses.py --target "linux/$ARCH/cgo" --for "Clack for Linux ($ARCH)" -o build/linux/THIRD_PARTY_LICENSES.txt ./cmd/clack
           # the deb's /usr/share/doc/clack/copyright (nfpm.yaml)
           { printf 'Clack, https://github.com/some-du6e/clack\n\nClack itself:\n\n'; cat LICENSE; printf '\n\n'; cat build/linux/THIRD_PARTY_LICENSES.txt; } > build/linux/copyright
+      # LGPL-2.1 §6: goh264's source as Clack links it, the Go module zip
+      # proxy.golang.org serves, goes up with every release (once: amd64)
+      - name: goh264's source
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          v=$(go list -m -f '{{.Version}}' github.com/thesyncim/goh264)
+          z=$(go mod download -json "github.com/thesyncim/goh264@$v" | jq -r .Zip)
+          cp "$z" "dist/goh264-$v-source.zip"
+          unzip -l "dist/goh264-$v-source.zip" | grep -qF "github.com/thesyncim/goh264@$v/LICENSE"
       - name: desktop file
         run: desktop-file-validate packaging/linux/clack.desktop
       - name: deb + rpm
@@ -477,6 +487,9 @@ jobs:
           cp build/clack $app/Contents/MacOS/clack
           cp assets/icon/clack.icns $app/Contents/Resources/clack.icns
           cp LICENSE THIRD_PARTY_NOTICES.md build/THIRD_PARTY_LICENSES.txt $app/Contents/Resources/
+          # the About panel's credits (orderFrontStandardAboutPanel: reads them):
+          # goh264's LGPL and where the licence texts and source are
+          cp packaging/macos/Credits.rtf $app/Contents/Resources/
           sed "s/@VERSION@/$NUM/g" packaging/macos/Info.plist > $app/Contents/Info.plist
           printf 'APPL????' > $app/Contents/PkgInfo
           plutil -lint $app/Contents/Info.plist
@@ -511,7 +524,7 @@ jobs:
           t=$(mktemp -d)
           ditto -x -k "dist/Clack-${VERSION}-macos-universal.zip" "$t"
           codesign --verify --deep --strict "$t/Clack.app"
-          for f in LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt; do test -f "$t/Clack.app/Contents/Resources/$f"; done
+          for f in LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt Credits.rtf; do test -f "$t/Clack.app/Contents/Resources/$f"; done
           "$t/Clack.app/Contents/MacOS/clack" -version | grep -F "$TAG"
           hdiutil verify "dist/Clack-${VERSION}-macos-universal.dmg"
           mnt=$(mktemp -d)
