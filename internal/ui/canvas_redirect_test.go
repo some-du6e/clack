@@ -575,6 +575,16 @@ func TestHiddenFilesDontWait(t *testing.T) {
 			if r := string(e.a.router.Current()); r != c.want {
 				t.Errorf("the second navigation is at %q, want %q at once (the file is known)", r, c.want)
 			}
+			if c.name == "not_visible" {
+				// a thread there names the canvas the viewer can't see:
+				// SmallFileEntity's eye-closed icon
+				e.a.Navigate("activity")
+				e.frames(2)
+				e.a.OpenThread(fakeslack.CanvasMentionChannel, fakeslack.CanvasMentionTS)
+				if sub, _ := crHeader(e, fakeslack.CanvasMentionChannel, fakeslack.CanvasMentionTS, false, false); sub.Icon != "eye-closed" || sub.Text != "A hidden plan" {
+					t.Errorf("the hidden canvas's thread names %+v, want the eye-closed icon and the error's title", sub)
+				}
+			}
 		})
 	}
 }
