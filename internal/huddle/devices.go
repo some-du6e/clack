@@ -19,24 +19,46 @@ import (
 // (openMic, after the OS permission). A session on one test device
 // (Options.Device, CLACK_HUDDLE_TONE) has nothing to switch.
 func (s *Session) SwitchAudio(speakers, mic bool) {
-	if s.o.Device != nil || os.Getenv("CLACK_HUDDLE_TONE") != "" {
-		return
-	}
-	s.mu.Lock()
-	ended := s.ended
-	s.mu.Unlock()
-	if ended {
-		return
-	}
 	if speakers {
-		go s.switchSpeakers()
+		s.SwitchSpeakers(nil)
 	}
-	if mic {
+	if mic && s.canSwitch() {
 		go s.openMic()
 	}
 }
 
-// switchSpeakers opens the chosen output, then closes the old one.
+// SwitchSpeakers reopens the speakers on the output SelectAudioDevices
+// picked, and runs then (if not nil) once that output plays, on its own
+// goroutine: Slack's Speaker pick plays its test sound on the new device
+// (useAudioOutSettingsMenuItems: the pick is saved, then the sound plays
+// on the preferred sink). It returns at once. With a test device it runs
+// then at once.
+func (s *Session) SwitchSpeakers(then func()) {
+	if !s.canSwitch() {
+		if then != nil {
+			go then()
+		}
+		return
+	}
+	go func() {
+		s.switchSpeakers()
+		if then != nil {
+			then()
+		}
+	}()
+}
+
+func (s *Session) canSwitch() bool {
+	if s.o.Device != nil || os.Getenv("CLACK_HUDDLE_TONE") != "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.ended
+}
+
+// switchSpeakers opens the chosen output, then closes the old one, which
+// goes quiet as soon as the new one is opened (openSpeakers' outGen).
 func (s *Session) switchSpeakers() {
 	d := s.openSpeakers()
 	s.mu.Lock()

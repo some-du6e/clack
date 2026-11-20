@@ -94,6 +94,16 @@ type playBuffer struct {
 	local     []int16
 	localPos  int
 	localLoop bool
+	// sounds are the app's one-shot sounds on your speakers (Test
+	// Speaker), each its own voice as each of Slack's sounds is its own
+	// <audio> element (client-boot Ofe8: one cached element per URL), so
+	// they play over the music and one played again starts over
+	sounds map[string]*soundVoice
+}
+
+type soundVoice struct {
+	pcm []int16
+	pos int
 }
 
 func (p *playBuffer) push(pcm []int16) {
@@ -139,7 +149,39 @@ func (p *playBuffer) pull(out []int16) {
 		out[i] = int16(min(max(v, -32768), 32767))
 		p.localPos++
 	}
+	for name, v := range p.sounds {
+		n := min(len(out), len(v.pcm)-v.pos)
+		for i := 0; i < n; i++ {
+			s := int32(out[i]) + int32(v.pcm[v.pos+i])
+			out[i] = int16(min(max(s, -32768), 32767))
+		}
+		if v.pos += n; v.pos >= len(v.pcm) {
+			delete(p.sounds, name)
+		}
+	}
 	p.mu.Unlock()
+}
+
+// playSound starts name's sound (interleaved stereo, 48 kHz) on your
+// speakers from its start, whatever it was doing (Ofe8's ZH:
+// currentTime = 0, then play), beside the other sounds; nil stops it.
+func (p *playBuffer) playSound(name string, pcm []int16) {
+	p.mu.Lock()
+	if len(pcm) == 0 {
+		delete(p.sounds, name)
+	} else {
+		if p.sounds == nil {
+			p.sounds = map[string]*soundVoice{}
+		}
+		p.sounds[name] = &soundVoice{pcm: pcm}
+	}
+	p.mu.Unlock()
+}
+
+func (p *playBuffer) soundPlaying(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sounds[name] != nil
 }
 
 // playLocal mixes pcm (interleaved stereo, 48 kHz) into the speakers,

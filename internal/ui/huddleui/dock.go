@@ -707,7 +707,7 @@ func (c *Controller) dockClick(gtx C, id string, s *huddle.Session, st huddle.St
 			c.dock.audio = nil
 			break
 		}
-		c.dock.audio = popups.NewMenuOpts(ph, c.audioMenu(s), popups.MenuOpts{Anchor: r, Side: popups.Above,
+		c.dock.audio = popups.NewMenuOpts(ph, c.audioMenu(s, c.h.Theme(), true), popups.MenuOpts{Anchor: r, Side: popups.Above,
 			MenuClass: "p-huddle_more_actions_menu"})
 		ph.ShowOverlay(c.dock.audio)
 	case "videomenu": // Video settings

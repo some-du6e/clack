@@ -98,10 +98,20 @@ func (s *Session) openAudio() func(func(string, ...any)) (Device, error) {
 }
 
 func (s *Session) openSpeakers() Device {
+	// this device plays the huddle from now on; one opened before goes
+	// quiet (it's closed once this one runs: switchSpeakers)
+	gen := s.outGen.Add(1)
+	pull := func(out []int16) {
+		if s.outGen.Load() != gen {
+			clear(out)
+			return
+		}
+		s.play.pull(out)
+	}
 	if open := s.openAudio(); open != nil {
 		d, err := open(s.logf)
 		if err == nil {
-			if err = d.Start(nil, s.play.pull); err == nil {
+			if err = d.Start(nil, pull); err == nil {
 				return d
 			}
 			d.Close()
@@ -109,7 +119,7 @@ func (s *Session) openSpeakers() Device {
 		s.logf("huddle: speakers: %v (you won't hear the huddle)", err)
 	}
 	d := newNullDevice() // drains playback at real time
-	_ = d.Start(nil, s.play.pull)
+	_ = d.Start(nil, pull)
 	return d
 }
 

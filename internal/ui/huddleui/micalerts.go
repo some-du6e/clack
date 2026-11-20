@@ -352,30 +352,17 @@ func (c *Controller) switchMic(s *huddle.Session, id string) {
 	c.changed()
 }
 
-// switchSpeaker is the Speaker pick: the speakers reopen on it and play
-// the test sound (useAudioOutSettingsMenuItems awaits onTestAudioSelected).
+// switchSpeaker is the Speaker pick (useAudioOutSettingsMenuItems): the
+// pick is saved (reportDeviceSelected), the speakers reopen on it, and the
+// test sound plays there once they do (onTestAudioSelected on the
+// preferred sink), not on the old ones.
 func (c *Controller) switchSpeaker(s *huddle.Session, id string) {
 	mic, _ := huddle.SelectedAudioDevices()
 	huddle.SelectAudioDevices(mic, id)
 	if s != nil {
-		s.SwitchAudio(true, false)
-		c.testSpeaker(s)
+		s.SwitchSpeakers(func() { c.testSpeaker(s) })
 	}
 	c.changed()
-}
-
-// testSpeakerSound is Test Speaker's sound (BLe4 pW).
-const testSpeakerSound = "complete_quest_requirement-74d22f6.mp3"
-
-// testSpeaker plays it on your speakers only.
-func (c *Controller) testSpeaker(s *huddle.Session) {
-	go func() {
-		pcm, err := loadMusic(testSpeakerSound)
-		if err != nil || s == nil {
-			return
-		}
-		s.PlayLocal(pcm, false)
-	}()
 }
 
 // layoutNoAudio is the NoAudioDetected alert in the huddle window: the

@@ -453,7 +453,8 @@ jobs:
         run: go test -count=$COUNT -v -run '^TestCustomEmojiAnimatedWebPDraws$' ./internal/ui/richview
 
   # huddle-polish (2026-11-19, Karim's α.112 huddle report): the static
-  # (the transpiled libopus on a goroutine whose stack moves mid-call)
+  # (the transpiled libopus on a goroutine whose stack moves mid-call),
+  # Test Speaker, and the huddle window in your theme (pictures)
   huddle-polish:
     if: ${{ !inputs.only || startsWith('huddle-polish', inputs.only) }}
     runs-on: ubuntu-latest
@@ -465,10 +466,76 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: gio deps (internal/huddle's X11 screen share needs the headers)
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: gio deps, Xvfb and Mesa (internal/huddle's X11 screen share needs the headers)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "huddle: Opus frames don't depend on the caller's goroutine stack"
+        if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestOpusDecodeIgnoresCallerStack|TestOpusEncodeIgnoresCallerStack|TestCodecGoroutineStackStill)$' ./internal/huddle
+      - name: "huddleui: Test Speaker"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestTestSpeakerIconLikeSlack|TestTestSpeakerKeepsTheMusic|TestSpeakerPickPlaysOnTheNewOutput|TestAudioSettingsMenu)$' ./internal/ui/huddleui
+      - name: "huddleui: the huddle window in your theme (Mesa llvmpipe)"
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_SHOTS: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -v -run '^TestHuddleWindowFollowsYourTheme$' ./internal/ui/huddleui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: huddle-polish-shots
+          path: dist/shots
+          if-no-files-found: ignore
+
+  # and the docked bar after you close the huddle window, on a real
+  # window (Xvfb here, the runner's desktop below)
+  huddle-polish-dock:
+    if: ${{ !inputs.only || startsWith('huddle-polish-dock', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps, Xvfb and Mesa
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "huddleui: the bar after the huddle window closes"
+        env:
+          CLACK_HUDDLE_WINDOW_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -v -run '^TestDockAfterHuddleWindowCloses$' ./internal/ui/huddleui
+
+  huddle-polish-dock-win:
+    if: ${{ !inputs.only || startsWith('huddle-polish-dock-win', inputs.only) }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "huddleui: the bar after the huddle window closes (WM_CLOSE)"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog
+          CLACK_HUDDLE_WINDOW_TESTS: "1"
+        run: go test -count=$COUNT -v -run '^TestDockAfterHuddleWindowCloses$' ./internal/ui/huddleui
+      - name: "ui: the main window draws the bar after the huddle window closes (WM_CLOSE)"
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_HUDDLE_WINDOW_TESTS: "1"
+          CLACK_REAL_WINDOW_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 20m -run '^TestRealWindowHuddleBarAfterClose$' ./internal/ui
 
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}

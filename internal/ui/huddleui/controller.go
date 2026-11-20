@@ -83,7 +83,8 @@ type Controller struct {
 	MissedAfter time.Duration
 
 	mu      sync.Mutex
-	wt      winTheme // the main window's theme, for the huddle window (window_theme.go)
+	wt      winTheme    // the main window's theme, for the huddle window (window_theme.go)
+	spk     speakerTest // Test Speaker's icon animation (testspeaker.go)
 	s       *huddle.Session
 	logFP   logFP        // the event log taut last got (eventlog.go)
 	alerts  huddleAlerts // displayAlertMessage's alerts (eventlog.go)
