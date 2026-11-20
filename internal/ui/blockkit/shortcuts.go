@@ -186,6 +186,9 @@ func (p *picker) pick(i int) {
 // Rect is the card as last laid out (window coords).
 func (p *picker) Rect() image.Rectangle { return p.card }
 
+// InspectRole names the overlay for the inspect tool's report.
+func (p *picker) InspectRole() string { return "shortcuts picker" }
+
 func (p *picker) Layout(gtx C) D {
 	drain()
 	if p.done {

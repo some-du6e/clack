@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"image"
 	"log"
 	"reflect"
@@ -93,14 +92,18 @@ func overlayRect(o Overlay) image.Rectangle {
 	return image.Rectangle{}
 }
 
-// unboxedSeen are the overlay types whose layer ended a session's frame
-// with no box (UI goroutine): each is logged once.
+// unboxedSeen are the overlay layers (overlayLayerName: a wrapper's by
+// what it wraps) that ended a session's frame with no box (UI goroutine):
+// each is logged once.
 var unboxedSeen = map[string]bool{}
 
 func unboxedOverlay(o Overlay) {
-	if typ := fmt.Sprintf("%T", o); !unboxedSeen[typ] {
-		unboxedSeen[typ] = true
-		log.Printf("inspect: overlay %s drew no card box (no InspectCard, no Rect): picks on it report the window under it", typ)
+	if _, ok := unwrapOverlay(o).(interface{ InspectNoCard() }); ok {
+		return // no card by design (the profile preview's dim)
+	}
+	if name := overlayLayerName(o); !unboxedSeen[name] {
+		unboxedSeen[name] = true
+		log.Printf("inspect: overlay %s drew no card box (no InspectCard, no Rect): picks on it report the window under it", name)
 	}
 }
 

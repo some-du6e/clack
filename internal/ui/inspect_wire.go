@@ -243,12 +243,11 @@ func (a *App) inspectAfterFrame(ops *op.Ops, size image.Point) {
 // inspectHost is the App as the tool sees it.
 type inspectHost struct{ a *App }
 
-func (h inspectHost) Theme() *theme.Theme  { return h.a.th }
-func (h inspectHost) Toast(text string)    { h.a.Toast(text) }
-func (h inspectHost) CopyText(text string) { h.a.copyText(text) }
-func (h inspectHost) Post(f func())        { h.a.Post(f) }
-func (h inspectHost) Invalidate()          { h.a.Invalidate() }
-func (h inspectHost) ConfigDir() string    { return h.a.opts.ConfigDir }
+func (h inspectHost) Theme() *theme.Theme { return h.a.th }
+func (h inspectHost) Toast(text string)   { h.a.Toast(text) }
+func (h inspectHost) Post(f func())       { h.a.Post(f) }
+func (h inspectHost) Invalidate()         { h.a.Invalidate() }
+func (h inspectHost) ConfigDir() string   { return h.a.opts.ConfigDir }
 
 // Frozen holds the animated images while the window is frozen (the
 // frozen frame's would play on) and, when the freeze ends, asks the next
@@ -326,15 +325,21 @@ func (h inspectHost) Regions() []inspect.Region {
 // picker" …) and its Go type, as the report's overlays row names it
 // ("menu (popups.Menu)", "modal (blockkit.Stack)").
 func overlayLayerName(o Overlay) string {
+	o = unwrapOverlay(o)
+	typ := strings.TrimPrefix(fmt.Sprintf("%T", o), "*")
+	return overlayRole(o, typ) + " (" + typ + ")"
+}
+
+// unwrapOverlay is what o shows: through a wrapper (Block Kit's watch),
+// what it wraps.
+func unwrapOverlay(o Overlay) Overlay {
 	for {
-		w, ok := o.(interface{ Unwrap() popups.Overlay }) // a wrapper (Block Kit's watch): what it wraps
+		w, ok := o.(interface{ Unwrap() popups.Overlay })
 		if !ok {
-			break
+			return o
 		}
 		o = w.Unwrap()
 	}
-	typ := strings.TrimPrefix(fmt.Sprintf("%T", o), "*")
-	return overlayRole(o, typ) + " (" + typ + ")"
 }
 
 func overlayRole(o Overlay, typ string) string {

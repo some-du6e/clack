@@ -619,6 +619,9 @@ func (s *srFacetSelect) pick(i int) {
 // Rect is the card as last laid out (window coords).
 func (s *srFacetSelect) Rect() image.Rectangle { return s.rect }
 
+// InspectRole names the overlay for the inspect tool's report.
+func (s *srFacetSelect) InspectRole() string { return "filter select" }
+
 func (s *srFacetSelect) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
 	if s.done {
