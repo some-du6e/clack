@@ -900,6 +900,9 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	if ev.Msg.Streaming() && b.core.Experiment("defer_notification_3p_streaming") == "on" {
 		return
 	}
+	if b.core.UserHidden(ev.Msg.User) {
+		return // a member the viewer hid (isUserHidden): no notification, no lookups for one
+	}
 	if c, ok := b.core.MessageChange(ev.Channel, ev.TS); ok && c.Deleted {
 		return // deleted while the lookups it waited for ran: nothing to show, or open
 	}

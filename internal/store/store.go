@@ -921,14 +921,6 @@ func (s *Store) memberAvatar(look userLookup, id string) string {
 	return AvatarURL(u, 72, team)
 }
 
-// HiddenUser reports whether the viewer hid member id (the hidden_users
-// pref, People you've hidden: 0OuZ isUserHidden).
-func (s *Store) HiddenUser(id string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return hiddenUser(s.RawPrefs["hidden_users"], id)
-}
-
 // hiddenUser reports whether the hidden_users pref (a comma-separated
 // string of ids, People you've hidden) holds id.
 func hiddenUser(raw json.RawMessage, id string) bool {

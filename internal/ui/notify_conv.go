@@ -194,7 +194,7 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 		if !core.LooksLikeMemberID(s.ID) {
 			return "", false
 		}
-		if b.core.S.HiddenUser(s.ID) {
+		if b.core.UserHidden(s.ID) {
 			// userToText (client-boot DRDu) checks first: a member the
 			// viewer hid reads "Hidden user", no @
 			return i18n.T("channel_token", "Hidden user"), true

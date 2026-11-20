@@ -79,9 +79,13 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 		ThreadTS        string `json:"thread_ts"`
 		Content         string `json:"content"`
 		IsChannelInvite bool   `json:"is_channel_invite"`
+		User            string `json:"user"`
 	}
 	if json.Unmarshal(ev.Raw, &e) != nil || e.Channel == "" {
 		return
+	}
+	if b.core.UserHidden(e.User) {
+		return // from a member the viewer hid (isUserHidden): none
 	}
 	if !e.IsChannelInvite {
 		ts := e.TS
