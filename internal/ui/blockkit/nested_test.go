@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"image"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -111,5 +112,45 @@ func TestNestedElementsRichview(t *testing.T) {
 		if w := me.ws[k]; w == nil || w.main.sz == (image.Point{}) {
 			t.Errorf("%q isn't drawn", k)
 		}
+	}
+}
+
+// TestSurfaceNestedClick: in a modal a fallback payload's button and a
+// container child's button are the surface's own elements: Q5CE's
+// resolveFallback renders the payload, and Container its child_blocks,
+// with the view's onAction, so a press sends block_actions with the child
+// block's id and the view's container.
+func TestSurfaceNestedClick(t *testing.T) {
+	e := newBKEnv(t, false, false)
+	raw, _ := json.Marshal([]any{
+		map[string]any{"type": "container", "block_id": "c1", "title": map[string]any{"type": "plain_text", "text": "Deploy"},
+			"child_blocks": []any{map[string]any{"type": "actions", "block_id": "a1", "elements": []any{visBtn("go")}}}},
+		map[string]any{"type": "fallback_canary", "block_id": "f1", "fallback": []any{map[string]any{"type": "section", "block_id": "s1",
+			"text": map[string]any{"type": "mrkdwn", "text": "Approve?"}, "accessory": visBtn("ok")}}},
+	})
+	v := &core.View{ID: "V0FAKENEST", RootViewID: "V0FAKENEST", Type: "modal", Title: mustJSON(Text{Type: "plain_text", Text: "Nested"}),
+		Close: mustJSON(Text{Type: "plain_text", Text: "Cancel"}), Blocks: raw}
+	st := newStack(e.h, v)
+	e.h.ShowOverlay(st)
+	for range 3 {
+		e.frame()
+	}
+	s := st.views[len(st.views)-1]
+	n := len(e.fs.BlockActionCalls())
+	for _, c := range []struct{ bid, aid string }{{"s1", "ok"}, {"a1", "go"}} {
+		w := s.ws[c.bid+"\x00"+c.aid+"\x00button"]
+		if w == nil || w.main.sz == (image.Point{}) {
+			t.Fatalf("%s/%s isn't a drawn element of the modal (widget %v)", c.bid, c.aid, w)
+		}
+		w.press()
+		n++
+		got := e.calls(n)[n-1]
+		if len(got.Actions) != 1 || got.Actions[0]["block_id"] != c.bid || got.Actions[0]["action_id"] != c.aid || got.Actions[0]["type"] != "button" {
+			t.Errorf("%s: actions %v, want the button with block_id %s", c.aid, got.Actions, c.bid)
+		}
+		if got.Container["type"] != "view" || got.Container["view_id"] != "V0FAKENEST" {
+			t.Errorf("%s's container %v, want the view V0FAKENEST", c.aid, got.Container)
+		}
+		e.until(c.bid+"'s action answered", 10*time.Second, func() bool { e.frame(); return !s.loading(c.bid) })
 	}
 }
