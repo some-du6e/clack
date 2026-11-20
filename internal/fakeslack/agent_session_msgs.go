@@ -2,6 +2,7 @@ package fakeslack
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -26,6 +27,11 @@ const (
 	AgentSessPrivTS    = "1763600200.000400"
 	AgentSessPrivateID = "C0CODE00010" // #hotfix-payments, private, codeHidden until joined
 	AgentSessPrivName  = "hotfix-payments"
+	// a request the agent is still working on, no reply yet: the reply
+	// bar's agent nugget
+	AgentSessWorkingTS = "1763600300.000500"
+	// AgentSessWorkingLoading is its agent's loading_message
+	AgentSessWorkingLoading = "Reading the webhook client"
 )
 
 // AgentSessionRequest is the person's message to the agent.
@@ -71,6 +77,32 @@ func AgentSessionPrivateRequest() map[string]any {
 	m["attachments"] = []any{map[string]any{"id": 1, "fallback": "Code channel",
 		"agent_channel_unfurl": map[string]any{"channel_id": AgentSessPrivateID, "channel_name": AgentSessPrivName, "is_private": true,
 			"agent_bot_user_id": CodeAgentID, "joinable_from_channel_id": AgentSessChannelID}}}
+	return m
+}
+
+// AgentSessionWorkingRequest is a request its agent is still working on:
+// agent_session processing until an hour after now (the session's and the
+// agent's date_status_processing_expire), the agent's status stoppable
+// with a loading_message, and no reply yet.
+func AgentSessionWorkingRequest(now time.Time) map[string]any {
+	m := AgentSessionRequest()
+	for _, k := range []string{"thread_ts", "reply_count", "reply_users", "reply_users_count", "latest_reply", "subscribed"} {
+		delete(m, k)
+	}
+	m["ts"], m["client_msg_id"] = AgentSessWorkingTS, "c5e5a1f0-0000-4000-8000-00000000a005"
+	m["text"] = "<@" + CodeAgentID + "> add a retry budget to the webhook client"
+	m["blocks"] = []any{
+		map[string]any{"type": "rich_text", "block_id": "rq3", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{
+			map[string]any{"type": "user", "user_id": CodeAgentID},
+			map[string]any{"type": "text", "text": " add a retry budget to the webhook client"}}}}},
+		map[string]any{"type": "context", "block_id": "agent_session_context_rq3", "elements": []any{
+			map[string]any{"type": "mrkdwn", "text": "Started a code channel with the agent", "verbatim": false}}},
+	}
+	exp := now.Add(time.Hour).Unix()
+	m["agent_session"] = map[string]any{"status": "processing", "agent_bot_user_ids": []any{CodeAgentID},
+		"encoded_initiator_user_id": SelfID, "date_status_processing_expire": exp,
+		"agent_statuses": []any{map[string]any{"agent_bot_user_id": CodeAgentID, "status": "processing", "is_stoppable": true,
+			"loading_message": AgentSessWorkingLoading, "date_status_processing_expire": exp}}}
 	return m
 }
 
@@ -135,7 +167,7 @@ func AgentSessionLinkPost() map[string]any {
 // finds it.
 func (s *Server) addAgentSessionMessages() {
 	var msgs []slack.Message
-	for _, raw := range []map[string]any{AgentSessionPrivateRequest(), AgentSessionLinkPost(), AgentSessionRequest()} { // history is newest first
+	for _, raw := range []map[string]any{AgentSessionWorkingRequest(time.Now()), AgentSessionPrivateRequest(), AgentSessionLinkPost(), AgentSessionRequest()} { // history is newest first
 		b, _ := json.Marshal(raw)
 		var m slack.Message
 		if json.Unmarshal(b, &m) == nil {

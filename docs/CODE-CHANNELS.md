@@ -229,6 +229,26 @@ When someone asks an agent for work in a channel, their message gets an attachme
 
 Clack: `richtext` turns the attachment into an agent slot after the other attachments. `blockkit` (agent.go `agentChannel`) reads the unfurl's props once per revision of the attachments. `popups.ChannelHoverCard.EntityCard` makes kR8w's decision and draws either card, with `joinableCard` for the joinable one. `core.JoinCodeChannel` sends the join past the client's failure backoff (each Join is the viewer's own click). Tests: `TestAgentChannelUnfurlCard` (richtext), `TestJoinCodeChannel` (core), `TestAgentSessionRequestCard` and `TestAgentSessionJoinableCard` (ui, fakeslack `Size.AgentSessionRequests`: #agent-requests with a request for a public code channel and one for a private channel only `client.codeChannels.join` finds). The shots are `agent-session-{request,joinable,join-refused,joining}-{light,dark}.png` in bk-agent-shots.
 
+### The reply bar while the agent works
+
+A request the agent is still working on has no reply yet. Slack's ThreadReplies (r0Yq) gives a message with no reply, thread draft or scheduled reply, or a broadcast, no reply bar. Instead it draws AppSessionReplyNugget when all of these hold:
+
+- `app_thread_nugget_fe` is on;
+- the root's `agent_session.status` is processing, or an app's status shows in the thread (HQze `ZL`);
+- the thread isn't Slackbot's (HQze `zV`).
+
+`app_nugget_refinement` (on for the account) makes that AppSessionOpenThreadReplyNugget:
+
+- **The agents.** HQze `it` lists the root's `agent_statuses`, or the first of `agent_bot_user_ids` with the session's status. n7Jc re-reads each status: processing past its `date_status_processing_expire` counts as active.
+- **One processing agent.** It is a button, `.nugget`: 600px wide at most, margin-left -4px, padding 4px, radius 8, base-pry with an otl-ter border while hovered. It shows the agent's 24px icon, its `loading_message` (or "{app} is working") in the shimmer, and a caret that shows on hover. A click opens the thread.
+- **Two or more.** One button with the `ai-agents` tile, "Multiple agents are working".
+- **None processing.** The app's status as the same button: its loading messages in turn every 2.4 s, else "{app} is working".
+- **Neither.** Nothing.
+
+Without the refinement it is AppSessionStopReplyNugget: a row per processing agent, with Stop for one that `is_stoppable`. Stop runs stopAgentSession (IorE) with the channel, the thread ts, the bot user and reason `stopped-by-user`. Clack doesn't build that variant.
+
+Clack: `core.SessionReplyNugget` (agent_session_nugget.go) makes the decision. `messages` calls ThreadReplies for such a row through `SessionNuggetHost`, and `ui/agent_session_nugget.go` draws it with the footer nugget's shimmer and labels. Tests: `TestSessionReplyNugget` (core) and `TestAgentSessionProcessingNugget` (ui, fakeslack's working request). The shot is `agent-session-working-{light,dark}.png`.
+
 ## Agents & tools
 
 The rail's "Agents & tools" and the sidebar's "Agent sessions" link open the `CodeChannelsBrowser` page ("Agent sessions" / "Code Channels") only with `agent_sessions_synth_view` (and `code_channels_browse` for the public list). Both are off for the test account, so its Agents & tools tab shows no sessions. `channel_details_agents_apps_tab` (on) adds an "Agents & apps" tab to channel details. Not ported.

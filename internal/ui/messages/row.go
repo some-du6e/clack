@@ -1602,7 +1602,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 	}
 
 	// thread bar
-	if !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) && r.replyBarWanted(m.ReplyCount) {
+	if r.threadRepliesWanted(rc) {
 		d := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
 			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
@@ -1721,8 +1721,16 @@ func (r *row) layoutThreadReplies(gtx layout.Context, p slackc.Props) layout.Dim
 			}
 		}
 	}
-	if !r.replyBarWanted(count) {
+	if m.Broadcast || !r.replyBarWanted(count) {
+		// no reply bar: the agent nugget, when the thread has an agent at
+		// work (r0Yq's early branch for a root with no reply, draft or
+		// scheduled reply, or a broadcast), else nothing
 		r.replyN, r.replyLink = 0, ""
+		if nh, ok := r.rc.h.(SessionNuggetHost); ok {
+			if d, ok := nh.LayoutSessionNugget(gtx, m); ok {
+				return d
+			}
+		}
 		return layout.Dimensions{}
 	}
 	h := r.threadBar(gtx, r.rc, 0, 0, gtx.Constraints.Max.X, count, users, latest)
@@ -3223,7 +3231,7 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	y += box
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
-	if !rc.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS) && r.replyBarWanted(m.ReplyCount) {
+	if r.threadRepliesWanted(rc) {
 		d := at(gtx, cx, y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(cw, 1<<20)}
 			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
@@ -3283,6 +3291,37 @@ func (r *row) denseTombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimens
 // replyBarWanted is whether ThreadReplies draws a reply bar for a message
 // with count replies: also for a thread with a draft or scheduled replies
 // and none sent yet (reply_bar.go replyBarShown).
+// threadRepliesWanted reports whether the row draws ThreadReplies under
+// its body: a root's reply bar when it has replies, a draft or a scheduled
+// reply; for a root without, or a broadcast, the agent nugget when the
+// host has one to draw (SessionNuggetHost). A thread pane's rows draw
+// neither.
+func (r *row) threadRepliesWanted(rc *rowCtx) bool {
+	m := &r.m
+	if rc.thread {
+		return false
+	}
+	root := m.ThreadTS == "" || m.ThreadTS == m.TS
+	if root && r.replyBarWanted(m.ReplyCount) {
+		return true
+	}
+	if !root && !m.Broadcast || m.Pending || m.Tombstone || m.System {
+		return false
+	}
+	nh, ok := rc.h.(SessionNuggetHost)
+	return ok && nh.SessionNuggetShown(m)
+}
+
+// SessionNuggetHost is a Host that draws ThreadReplies' agent nugget
+// (r0Yq AppSessionReplyNugget): for a root with no reply, draft or
+// scheduled reply, or a broadcast, while its thread has an agent at work
+// (core.SessionReplyNugget). LayoutSessionNugget draws it at the origin,
+// as wide as the constraints, or reports false.
+type SessionNuggetHost interface {
+	SessionNuggetShown(m *core.Message) bool
+	LayoutSessionNugget(gtx layout.Context, m *core.Message) (layout.Dimensions, bool)
+}
+
 func (r *row) replyBarWanted(count int) bool {
 	if count > 0 {
 		return true

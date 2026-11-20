@@ -65,7 +65,11 @@ func (a *App) SessionReplyNugget(m *Message, now time.Time) (SessionNugget, bool
 		}
 	}
 	thread := root.TS
-	if st, ok := a.AssistantStatusFor(m.Channel, thread); ok && st.Status != "" && st.BotUserID == "USLACKBOT" {
+	st, hasSt := a.AssistantStatusFor(m.Channel, thread)
+	if root.AgentSession == nil && !hasSt {
+		return SessionNugget{}, false // most rows: no session, no app status
+	}
+	if hasSt && st.Status != "" && st.BotUserID == "USLACKBOT" {
 		return SessionNugget{}, false // isSlackbotAgentThread: Slackbot's status
 	}
 	agents := a.sessionAgents(root, now)

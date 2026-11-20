@@ -176,3 +176,26 @@ func TestAgentSessionJoinableCard(t *testing.T) {
 		t.Errorf("client.codeChannels.join sent %d times, want 2 (the refused one, then Join again)", n)
 	}
 }
+
+// A request its agent is still working on, with no reply yet, draws the
+// agent nugget in its reply bar's place (r0Yq ThreadReplies under
+// app_nugget_refinement: AppSessionOpenThreadReplyNugget): the agent's
+// loading_message, and a click opens the thread. The active request (a
+// reply, nothing processing) keeps its reply bar.
+func TestAgentSessionProcessingNugget(t *testing.T) {
+	_, e := agentSessEnv(t)
+	ch, ts := fakeslack.AgentSessChannelID, fakeslack.AgentSessWorkingTS
+	e.until("the working request's nugget", 10*time.Second, func() bool {
+		l, at := e.a.SessionNuggetLabel(ch, ts)
+		return l != "" && !at.IsZero()
+	})
+	if l, _ := e.a.SessionNuggetLabel(ch, ts); l != fakeslack.AgentSessWorkingLoading {
+		t.Errorf("the nugget reads %q, want the agent's loading_message %q", l, fakeslack.AgentSessWorkingLoading)
+	}
+	if l, _ := e.a.SessionNuggetLabel(ch, fakeslack.AgentSessRootTS); l != "" {
+		t.Errorf("the active request drew a nugget %q, want its reply bar", l)
+	}
+	e.appPlanShot(t, "agent-session-working")
+	e.a.sessionNuggetState(ch, ts).btn.Click()
+	e.until("the working request's thread open", 10*time.Second, func() bool { return e.threadView(ch, ts) != nil })
+}
