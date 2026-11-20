@@ -2894,8 +2894,17 @@ func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dime
 	return pl.count(gtx, slackc.Styled{})
 }
 
+// ReactionDrawnHook, when set (tests: a reaction's frame,
+// reactions_live_test.go), sees each reaction pill as it draws its count:
+// the message, the reaction, the count drawn, whether it draws as the
+// viewer's, and whether the row is a thread pane's. UI goroutine.
+var ReactionDrawnHook func(ch, ts, name string, count int, self, thread bool)
+
 func (pl *reactPill) count(gtx layout.Context, st slackc.Styled) layout.Dimensions {
 	rc := pl.r.rc
+	if h := ReactionDrawnHook; h != nil {
+		h(pl.r.m.Channel, pl.r.m.TS, pl.r.groups[pl.i].name, pl.r.groups[pl.i].count, pl.reacted(), rc.thread)
+	}
 	cs := textStyle{size: 12, col: rc.c.Text, lineH: 16}
 	if pl.reacted() {
 		cs.col, cs.weight = rc.c.ReactSelfText, theme.Bold

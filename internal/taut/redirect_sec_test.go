@@ -145,6 +145,10 @@ func TestPluginFetchRefusesSignOut(t *testing.T) {
 		"https://hackclub.enterprise.slack.com/api/auth.enterpriseSignout",
 		"https://hackclub.slack.com/api/%61uth.signout",
 		"https://hackclub.slack.com/api//auth.signout/",
+		// a query or ";" after the method name, and a fullwidth "a" that
+		// NFKC-folds to one: slack.SignOutURL reads both as auth.signout
+		"https://hackclub.slack.com/api/auth.signout%3Fx=1",
+		"https://hackclub.slack.com/api/%EF%BD%81uth.signout",
 	} {
 		for _, creds := range [][2]string{{"d=xoxd-1", ""}, {"", "Bearer xoxc-1"}} {
 			sent = nil

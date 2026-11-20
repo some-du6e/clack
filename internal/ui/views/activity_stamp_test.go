@@ -15,6 +15,7 @@ package views
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,8 +41,10 @@ func activityEntryWaits(t *testing.T, how string) {
 	kept, _ := fs.PostQuiet(ch, author, mention+"a synthetic question that stays")
 
 	// users/info answers after 1.5 s, as on a busy Grid
+	var asked atomic.Bool // the first entry waited for it
 	fs.SetEdgeHook(func(method string, _ map[string]json.RawMessage) (any, bool) {
 		if method == "edge/users/info" {
+			asked.Store(true)
 			time.Sleep(1500 * time.Millisecond)
 		}
 		return nil, false
@@ -91,6 +94,9 @@ func activityEntryWaits(t *testing.T, how string) {
 	})
 	if ghost {
 		t.Fatalf("%s: Activity listed the entry whose message was %s while it waited", how, how)
+	}
+	if !asked.Load() {
+		t.Fatal("no entry asked users/info: the second never waited behind the first, and the test checks nothing")
 	}
 	for i := 0; i < 10; i++ {
 		e.frame()
