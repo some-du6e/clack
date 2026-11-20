@@ -13,8 +13,9 @@ package ui
 //
 // The DM holds two links: one whose element has no author_id, to a
 // message of the same DM from the partner, and one whose author_id is a
-// member nobody has fetched, to that member's message in a DM the client
-// never opened. Synthetic people and text only.
+// member nobody has fetched or asked for, to that member's message in a
+// channel whose history the client never loaded. Synthetic people and
+// text only.
 
 import (
 	"encoding/json"
@@ -66,6 +67,13 @@ func dmRows(e *perfEnv, ch string) []messages.SenderView {
 	return out
 }
 
+// holdID makes a users/info request that asks for id wait until release.
+func (l *usersInfoLog) holdID(id string) {
+	l.mu.Lock()
+	l.hold[id] = true
+	l.mu.Unlock()
+}
+
 // waitSlug runs frames until rows() draws ts's slug as want, reporting
 // (not stopping the test) what it drew instead when d runs out.
 func waitSlug(t *testing.T, e *perfEnv, what string, rows func() []messages.SenderView, ts, want string, d time.Duration) bool {
@@ -111,31 +119,45 @@ func TestDMMessageSlugsLikeSlack(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
-	// other: a member boot doesn't fetch (TestDMSendersLikeSlack's
-	// opened case checks the same one), whose author_id the second link
-	// carries
-	partner, other := fs.UserIDs()[62], fs.UserIDs()[61]
-	const dm, far = "D0DMSLUG0001", "D0DMSLUG0002" // the open DM; another DM the client never opens
+	partner := fs.UserIDs()[62]
+	const dm = "D0DMSLUG0001" // a closed DM the test opens
 	fs.AddClosedDM(dm, partner)
-	fs.AddClosedDM(far, other)
+	users := watchUsersInfo(t, fs) // every users/info ask, from boot on
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
 	c := e.a.Core()
-	if _, ok := c.S.RawUser(other); ok {
-		t.Fatalf("%s was fetched at boot: the second link checks nothing", other)
+	// the second link's sender: a member nothing has fetched or asked
+	// for, posting in a public channel whose history nothing loaded (not
+	// the first channel, which a launch opens)
+	var other, ch string
+	for _, id := range fs.UserIDs()[1:] {
+		if _, held := c.S.RawUser(id); id != fakeslack.SelfID && id != partner && !held && !users.wasAsked(id) && !c.S.Nonexistent(id) {
+			other = id
+			break
+		}
 	}
-	// the messages, once the client is up: nothing could read them at
-	// boot (the links' members among them)
+	chans := fs.ChannelIDs()
+	for i := len(chans) - 1; i > 0; i-- {
+		if k, ok := c.S.ConvKind(chans[i]); ok && k == "public" && e.loadedMessages(chans[i]) == 0 {
+			ch = chans[i]
+			break
+		}
+	}
+	if other == "" || ch == "" {
+		t.Fatalf("no member nothing asked for (%q), or no public channel nothing loaded (%q)", other, ch)
+	}
+	users.holdID(other) // its users/info waits for the test
+	in := " in #" + strings.TrimPrefix(c.S.ChannelName(ch), "#")
+	// the messages, once the client is up: nothing could read them at boot
 	linked, _ := fs.PostQuiet(dm, partner, "a synthetic line the first link points at")
-	farTS, _ := fs.PostQuiet(far, other, "a synthetic line the second link points at")
+	farTS, _ := fs.PostQuiet(ch, other, "a synthetic line the second link points at")
 	noAuthor := fs.PostBlocksQuiet(dm, fakeslack.SelfID, slugPermalink(dm, linked), slugBlocks(dm, linked, ""))
-	withAuthor := fs.PostBlocksQuiet(dm, fakeslack.SelfID, slugPermalink(far, farTS), slugBlocks(far, farTS, other))
+	withAuthor := fs.PostBlocksQuiet(dm, fakeslack.SelfID, slugPermalink(ch, farTS), slugBlocks(ch, farTS, other))
 	fs.PostReplyQuiet(dm, noAuthor, partner, "a synthetic reply") // a thread to open on the first link
-	if _, ok := c.S.FindHeld(far, farTS); ok {
+	if _, ok := c.S.FindHeld(ch, farTS); ok {
 		t.Fatal("the second link's message is held before anything asked for it: the case checks nothing")
 	}
 	releaseList, listed := holdCalls(t, fs, "messages.list") // the messages fetch by id
-	users := watchUsersInfo(t, fs, other)                    // the second link's sender
 	rows := func() []messages.SenderView { return dmRows(e, dm) }
 
 	e.openChannel(dm)
@@ -169,7 +191,7 @@ func TestDMMessageSlugsLikeSlack(t *testing.T) {
 	// messages.list answers, users/info for its sender still out: the
 	// sender is the members fetch's unknown stub, "Unknown author"
 	releaseList()
-	waitSlug(t, e, "the message in, its sender's users/info out", rows, withAuthor, "Unknown author", 10*time.Second)
+	waitSlug(t, e, "the message in, its sender's users/info out", rows, withAuthor, "Unknown author"+in, 10*time.Second)
 	if !users.wasAsked(other) {
 		t.Error("nothing asked users/info for the second link's sender")
 	}
@@ -183,8 +205,8 @@ func TestDMMessageSlugsLikeSlack(t *testing.T) {
 	if on == "" {
 		t.Fatal("the second link's sender has no name to show")
 	}
-	if waitSlug(t, e, "both answered", rows, withAuthor, on, 10*time.Second) {
-		keepSlugs(t, e, "both answered", rows, map[string]string{noAuthor: pn, withAuthor: on}, 300*time.Millisecond)
+	if waitSlug(t, e, "both answered", rows, withAuthor, on+in, 10*time.Second) {
+		keepSlugs(t, e, "both answered", rows, map[string]string{noAuthor: pn, withAuthor: on + in}, 300*time.Millisecond)
 	}
 
 	// the thread pane on the first link's message draws it as its root
