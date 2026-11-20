@@ -50,7 +50,11 @@ func (n *nestedElements) ElementsSize(bs []richtext.Button, maxW int, accessory 
 	gtx := n.scratch(m, maxW)
 	switch {
 	case b.Type == "actions":
-		return image.Pt(maxW, n.s.flowRun(gtx, b, maxW, false)), false
+		h := n.s.flowRun(gtx, b, maxW, false)
+		if n.s.blkErr[b.BlockID] != "" { // its error line (Surface.block's)
+			h += dp(gtx, 24)
+		}
+		return image.Pt(maxW, h), false
 	case !accessory:
 		return n.row(gtx, bs, false), false
 	}
@@ -67,7 +71,13 @@ func (n *nestedElements) LayoutElements(gtx layout.Context, bs []richtext.Button
 	switch {
 	case b == nil || iconButtonHidden(e, n.s.selfID()):
 	case b.Type == "actions":
-		n.s.flowRun(gtx, b, sz.X, true)
+		// the Actions renderable's error line under a failed action
+		// (/jJF renderBlock: isError, actionError), as at the top level
+		h := n.s.flowRun(gtx, b, sz.X, true)
+		if msg := n.s.blkErr[b.BlockID]; msg != "" {
+			th := n.s.h.Theme()
+			at(gtx, image.Pt(0, h+dp(gtx, 4)), func(gtx C) D { return errorLine(gtx, th, colorsOf(th), sz.X, msg) })
+		}
 	case !accessory:
 		n.row(gtx, bs, true)
 	default:

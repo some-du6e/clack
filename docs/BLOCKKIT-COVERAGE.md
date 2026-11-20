@@ -217,6 +217,9 @@ Round 3's other fixes (the review's MINORs and NITs):
   - the ⋮ turns content-pry while hovered, and its menu opens from the button: `TestShortcutCardDetails`, `TestShortcutCardLayout`.
 - More actions puts Start workflow first for a link trigger (not for a guest; WjTy), and shows the VIP item only on a paid team (isPriorityVipAvailableForCurrentTeam).
 - Start Workflow ignores clicks while its trigger's trip is in flight (isTriggerRunning: `blockkit.TripRunning`), so a double click no longer trips twice. Its spinner and disabled look aren't drawn yet.
+- A container the viewer collapsed in a modal or App Home stays collapsed through a views.update or an App Home publish. The surface keeps each block's view by Slack's React key (Q5CE: block_id, else type-index), as ViewBlocks' SUIRenderer keeps its items; a new view starts over: `TestSurfaceCollapseSurvivesUpdate`.
+- A failed action from an actions block nested in a container or callout of a modal or App Home draws its error line under the buttons, as a top-level actions block does (`/jJF` renderBlock): `TestSurfaceNestedActionError`.
+- A card's buttons in a message are Card's one row (`.actionsLeft`/`.actionsRight`): every action shows and they shrink rather than wrap. They get no "+ N more" and no status icons; those belong to the Actions block. The right group ends at the content's right edge and the danger group starts at its left, 12px under the body: `TestCardButtonsOneRow` (blockkit), `TestCardActionSlots` (richview, the Elements-host path).
 
 ## Next
 

@@ -142,12 +142,16 @@ type Surface struct {
 	errs   map[string]string // block_id → error (response_action errors / validation)
 	ws     map[string]*ew
 	texts  map[string]*richview.View
-	hand   surfHandler
-	isHome bool
-	busy   map[string]bool
-	gen    uint32
-	blkErr map[string]string // block_id → action error under actions blocks
-	flying map[string]int    // block_id → actions in flight (elements disabled)
+	// prevTexts are the last view's block views, which a views.update
+	// takes over by key (textOf): ViewBlocks' SUIRenderer keeps each item
+	// by its React key, so ContainerBlock's collapse state survives
+	prevTexts map[string]*richview.View
+	hand      surfHandler
+	isHome    bool
+	busy      map[string]bool
+	gen       uint32
+	blkErr    map[string]string // block_id → action error under actions blocks
+	flying    map[string]int    // block_id → actions in flight (elements disabled)
 	// onAction lets the modal know an action went out (Slack clears a
 	// failed submit's banner on any action).
 	onAction func()
@@ -222,6 +226,10 @@ func (s *Surface) set(v *core.View, keep bool) {
 				}
 			}
 		}
+	}
+	s.prevTexts = nil
+	if keep {
+		s.prevTexts = s.texts
 	}
 	s.texts = map[string]*richview.View{}
 	s.errs = map[string]string{}
@@ -340,7 +348,10 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 	b.Action = action
 	b.State = s.vals.JSON(false)
 	bid := w.bid
-	delete(s.blkErr, bid)
+	if _, had := s.blkErr[bid]; had {
+		delete(s.blkErr, bid)
+		s.gen++ // a nested block's error line goes (ElementsVersion)
+	}
 	s.flying[bid]++
 	sendAction(s.h, b, func(err error) {
 		if s.flying[bid]--; s.flying[bid] <= 0 {
@@ -348,6 +359,7 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 		}
 		if err != nil {
 			s.blkErr[bid] = errMessage(err)
+			s.gen++ // a nested block lays its error line out (ElementsVersion)
 		}
 		done(err)
 	})
@@ -438,10 +450,27 @@ func (s *Surface) docOf(b *Block) richtext.Doc {
 func (s *Surface) textOf(key string, doc func() richtext.Doc) *richview.View {
 	v := s.texts[key]
 	if v == nil {
-		v = richview.New(doc(), richview.Options{FillBlocks: true}) // a view's blocks: no flex wrappers
+		o := richview.Options{FillBlocks: true}  // a view's blocks: no flex wrappers
+		if old := s.prevTexts[key]; old != nil { // a views.update: the block's view, its toggles kept
+			delete(s.prevTexts, key)
+			v = old
+			v.Set(doc(), o)
+		} else {
+			v = richview.New(doc(), o)
+		}
 		s.texts[key] = v
 	}
 	return v
+}
+
+// surfaceKey is block b's key (the i-th of the view), the way ViewBlocks'
+// SUIRenderer keys its items (Q5CE: block_id, else type-index), with its
+// type: React remounts an item whose component changes.
+func surfaceKey(b *Block, i int) string {
+	if b.BlockID != "" {
+		return "id\x00" + b.BlockID + "\x00" + b.Type
+	}
+	return "ix\x00" + strconv.Itoa(i) + "\x00" + b.Type
 }
 
 // Layout draws the surface at the constraint width; returns its height.
@@ -480,7 +509,7 @@ func (s *Surface) Layout(gtx C) D {
 func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 	th := s.h.Theme()
 	cl := colorsOf(th)
-	key := strconv.Itoa(i) + "\x00" + b.BlockID
+	key := surfaceKey(b, i)
 	switch b.Type {
 	case "input":
 		return s.inputBlock(gtx, b, key, w)

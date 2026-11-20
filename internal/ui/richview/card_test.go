@@ -3,6 +3,11 @@ package richview
 import (
 	"image"
 	"testing"
+
+	"gioui.org/layout"
+	"gioui.org/unit"
+
+	rt "github.com/some-du6e/clack/internal/richtext"
 )
 
 // TestCardLayout: a card lays out as Slack's Card (7Xkb on aJif,
@@ -69,5 +74,64 @@ func TestCardLayout(t *testing.T) {
 			}
 			break
 		}
+	}
+}
+
+// fixedElements is an Elements host whose button runs are 60×36 per
+// button, 8px apart, and draw nothing.
+type fixedElements struct{}
+
+func (fixedElements) ElementsSize(bs []rt.Button, maxW int, _ bool, _ unit.Metric) (image.Point, bool) {
+	return image.Pt(min(60*len(bs)+8*(len(bs)-1), maxW), 36), false
+}
+
+func (fixedElements) LayoutElements(gtx layout.Context, _ []rt.Button, _ bool) layout.Dimensions {
+	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+func (fixedElements) ElementsVersion() uint32 { return 0 }
+
+// TestCardActionSlots: in a message a card's buttons are the Elements
+// host's (they always have an action_id), placed as Card's
+// .actionsContainer places them: three or more put the danger ones in
+// .actionsLeft at the content's left edge (partitionActions, fWi9), the
+// rest in .actionsRight against its right edge, primary last; one row,
+// 12px under the body.
+func TestCardActionSlots(t *testing.T) {
+	st := newTestStyle()
+	d := kitDoc(t, `[{"type":"card","block_id":"c1","title":{"type":"plain_text","text":"Alpha"},"body":{"type":"mrkdwn","text":"Bravo"},
+		"actions":[{"type":"button","action_id":"no","text":{"type":"plain_text","text":"Decline"},"style":"danger"},
+		{"type":"button","action_id":"yes","text":{"type":"plain_text","text":"Accept"},"style":"primary"},
+		{"type":"button","action_id":"maybe","text":{"type":"plain_text","text":"Maybe"}}]}]`)
+	v := layoutAt(st, d, Options{Elements: fixedElements{}}, 800)
+	b := findFrag(t, &v.d, "Bravo")
+	if len(v.d.slots) != 2 {
+		t.Fatalf("%d slots, want the left group and the right one: %+v", len(v.d.slots), v.d.slots)
+	}
+	var left, right slot
+	for _, s := range v.d.slots {
+		if s.bs[0].ActionID == "no" {
+			left = s
+		} else {
+			right = s
+		}
+	}
+	ids := func(bs []rt.Button) (out []string) {
+		for _, bt := range bs {
+			out = append(out, bt.ActionID)
+		}
+		return
+	}
+	if got := ids(left.bs); len(got) != 1 || got[0] != "no" {
+		t.Errorf("left group %q, want [no]", got)
+	}
+	if got := ids(right.bs); len(got) != 2 || got[0] != "maybe" || got[1] != "yes" {
+		t.Errorf("right group %q, want [maybe yes] (primary last)", got)
+	}
+	if left.r != image.Rect(13, b.bot+12, 13+60, b.bot+12+36) {
+		t.Errorf("left group at %v, want 60×36 at (13, %d)", left.r, b.bot+12)
+	}
+	if right.r != image.Rect(340-13-128, b.bot+12, 340-13, b.bot+12+36) {
+		t.Errorf("right group at %v, want 128×36 ending at x %d, y %d", right.r, 340-13, b.bot+12)
 	}
 }

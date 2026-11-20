@@ -604,6 +604,9 @@ func (me *Message) ElementsSize(bs []richtext.Button, maxW int, accessory bool, 
 		}
 		return sz, false
 	}
+	if me.cardRun(bs) {
+		return me.cardRow(gtx, bs, maxW, false), false
+	}
 	return me.run(gtx, bs, maxW, false), false
 }
 
@@ -644,8 +647,65 @@ func (me *Message) LayoutElements(gtx layout.Context, bs []richtext.Button, acce
 		w.layout(fixed(gtx, esz), esz)
 		return D{Size: sz}
 	}
+	if me.cardRun(bs) {
+		me.cardRow(gtx, bs, sz.X, true)
+		return D{Size: sz}
+	}
 	me.run(gtx, bs, sz.X, true)
 	return D{Size: sz}
+}
+
+// cardRun reports whether bs are a card block's actions (one of its
+// .actionsLeft / .actionsRight groups).
+func (me *Message) cardRun(bs []richtext.Button) bool {
+	if len(bs) == 0 {
+		return false
+	}
+	w := me.widgetFor(&bs[0])
+	return w != nil && w.b != nil && w.b.Type == "card"
+}
+
+// cardRow lays out (and with draw, paints) a card's group of buttons as
+// Card (7Xkb) does: .actionsLeft / .actionsRight are one flex row with an
+// 8px column gap whose buttons (flex 0 auto, min-width 0) shrink to fit
+// rather than wrap; every action shows (no "+ N more"), and the Card
+// passes no loading state, so no status icons follow.
+func (me *Message) cardRow(gtx C, bs []richtext.Button, maxW int, draw bool) image.Point {
+	var ws []*ew
+	var szs []image.Point
+	total := 0
+	for i := range bs {
+		w := me.widgetFor(&bs[i])
+		if w == nil || bs[i].Invisible {
+			continue
+		}
+		sz := w.size(gtx, maxW, false)
+		if sz.X == 0 {
+			continue
+		}
+		ws, szs = append(ws, w), append(szs, sz)
+		total += sz.X
+	}
+	if len(ws) == 0 {
+		return image.Point{}
+	}
+	gap := dp(gtx, 8)
+	room := maxW - gap*(len(ws)-1)
+	x, h := 0, 0
+	for i, w := range ws {
+		sz := szs[i]
+		if total > room && total > 0 { // flex-shrink by width
+			sz.X = max(0, sz.X*room/total)
+		}
+		if draw {
+			w, sz := w, sz
+			w.slot = image.Pt(x, 0)
+			at(gtx, image.Pt(x, 0), func(gtx C) D { return w.layout(fixed(gtx, sz), sz) })
+		}
+		x += sz.X + gap
+		h = max(h, sz.Y)
+	}
+	return image.Pt(x-gap, h)
 }
 
 // statusW is the width of block bid's status icons (spinner, warning
