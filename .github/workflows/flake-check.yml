@@ -1896,6 +1896,7 @@ jobs:
           go test -count=$COUNT -v -run '^TestCanvasLinksFollowSlackLinks$' ./internal/ui/canvasview
           go test -count=$COUNT -v -run '^(TestSeeThroughFillsOverUnder|TestOpaqueFillsStayOverUnder)$' ./internal/ui/richview
           go test -count=$COUNT -v -run '^TestMirrorHoldsJumpWindows$' ./internal/taut
+          go test -count=$COUNT -v -run '^TestEmptyInputHandsPageKeysToList$' ./internal/ui/composer
           go test -count=$COUNT -v -run '^TestPluginLinksFollowSlackLinks$' ./internal/ui/slackc
       - name: the lookups and the log's tags (core, logtag, ui)
         if: ${{ !cancelled() }}
