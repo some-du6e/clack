@@ -82,7 +82,12 @@ func TestViewsKeepARewrittenAuthorWhileJSIsBusy(t *testing.T) {
 	raw, _ := json.Marshal(map[string]any{"type": "reaction_added", "user": "U0FAKE00002", "reaction": "tada",
 		"item": map[string]any{"type": "message", "channel": ch, "ts": relay.TS}})
 	app.Inject(slack.Event{Type: "reaction_added", Raw: raw})
-	time.Sleep(200 * time.Millisecond) // the mirror marks it: JS's copy isn't ready while JS is busy
+	// the mirror marks it: JS's copy isn't ready while JS is busy, which
+	// is the case the views must stand through
+	e.until(t, "the plugins' view not ready after the reaction", func() bool {
+		_, _, ready, ok := tt.MessageViewState(ch, relay.TS, false, 0)
+		return ok && !ready
+	})
 	sm, ok := app.S.Find(ch, relay.TS)
 	if !ok || len(sm.Reactions) == 0 {
 		t.Fatal("the reaction didn't reach core's copy")

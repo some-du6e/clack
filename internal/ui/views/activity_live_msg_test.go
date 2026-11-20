@@ -1144,8 +1144,8 @@ func TestActivityLiveVoteSlicePatchHeldReaction(t *testing.T) {
 	e.react(lmChan, lmVote, "U0FAKE00002", "tada", true)
 	for i := 0; i < 12; i++ {
 		e.frame()
-		if got := e.drawn(lmVote); strings.Contains(got, "Upvotes") {
-			t.Fatalf("frame %d after a reaction with the plugins' JS busy drew the vote without the plugin's patch: %q", i, got)
+		if got := e.drawn(lmVote); strings.Contains(got, "Upvotes") || !strings.Contains(got, "Ups: 1") {
+			t.Fatalf("frame %d after a reaction with the plugins' JS busy drew %q, not the vote with the plugin's patch", i, got)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
