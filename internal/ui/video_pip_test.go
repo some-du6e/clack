@@ -69,6 +69,27 @@ func tileShare(e *perfEnv, ts string) float64 {
 	return -1
 }
 
+// rowTop is message ts's row top under the channel list's top, and
+// whether the list shows its newest row (at its end, where Gio's List, as
+// Slack's bracketScrollTop, holds a jump's message lower than its anchor).
+func rowTop(e *perfEnv, ts string) (off int, atEnd, ok bool) {
+	var l channelList
+	if c := e.a.convos[fakeslack.FilesChannelID+"/"]; c != nil {
+		l, _ = c.list.(channelList)
+	}
+	if l.ChannelView == nil {
+		return 0, false, false
+	}
+	list := l.ListRect()
+	for _, r := range l.RowRects() {
+		if r.TS == ts {
+			off, ok = r.R.Min.Y-list.Min.Y, true
+		}
+	}
+	_, atEnd = l.NewestRowBottom()
+	return off, atEnd, ok
+}
+
 func pipPress(e *perfEnv, p image.Point, k pointer.Kind, at time.Duration) {
 	var btn pointer.Buttons
 	if k != pointer.Release {
@@ -173,6 +194,20 @@ func TestVideoPipJump(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Logf("the tile's share of the list in the frames after the jump: %v", shares)
+	// it shows the message as Slack's jump does: its top ANCHOR_OFFSET
+	// (64dp) under the list's top, or lower at the list's end, the video
+	// wholly on screen (two rows above it left 4% of the tile there)
+	sc := e.scale
+	if sc == 0 {
+		sc = 1
+	}
+	want := int(64*sc + 0.5)
+	if off, atEnd, ok := rowTop(e, ts); !ok || off < want-1 || (off > want+1 && !atEnd) {
+		t.Errorf("after Jump to message the message's top is %dpx under the list's top (%v; the list at its end %v), want %d", off, ok, atEnd, want)
+	}
+	if sh := tileShare(e, ts); sh < 1 {
+		t.Errorf("after Jump to message %.2f of the video is on screen, want all of it; its share in the frames after the jump %v", sh, shares)
+	}
 	if v, ok := pipShown(e); ok {
 		t.Errorf("the mini player stayed after Jump to message, or docked again (%q); the tile's share of the list %v", v.trigger, shares)
 	}

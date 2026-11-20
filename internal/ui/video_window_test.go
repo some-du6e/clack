@@ -159,11 +159,11 @@ func TestRealWindowVideoFrames(t *testing.T) {
 	if d := 8*time.Second - time.Since(start); d > 0 {
 		time.Sleep(d) // boot's loads settle (idle-tests-wait-boot-loads)
 	}
-	// the tile wholly in the list: a jump puts the two rows above the
-	// message at the list's top, and #files-gallery's are tall, so in this
-	// window the tile starts under the list or off the screen (a video
-	// under 10% visible pauses, and the GPU never draws an image off the
-	// screen)
+	// the tile wholly in the list: a jump puts the message 64dp under the
+	// list's top, and #files-gallery's rows are tall, so in a short window
+	// the tile may still start under the list or off the screen (a video
+	// under 10% visible docks or pauses, and the GPU never draws an image
+	// off the screen)
 	var tile, list image.Rectangle
 	for i := 0; ; i++ {
 		in := false
