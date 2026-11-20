@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -719,17 +720,35 @@ func crCommentReply(e *actShellEnv) {
 }
 
 // crLateCanvas is the Activity page with the persistent panel over the
-// canvas comment items, filtered to the reply, with the Launch plan
-// canvas's file channel known and its files.info held back (wait):
-// Activity hydrates every item's message and thread root (core
-// activityItems), so what a pane jump waits on is the file.
-func crLateCanvas(t *testing.T, wait time.Duration) *actShellEnv {
-	e := newActShell(t)
+// canvas comment items (and with lists the list comment's), filtered to
+// the reply, with the Launch plan canvas's file channel known and its
+// files.info held until release: Activity hydrates every item's message
+// and thread root (core activityItems), so what a pane jump waits on is
+// the file. The hold starts when the rows ask, the jump's wait at the
+// click, so the test decides when the wait ends.
+func crLateCanvas(t *testing.T, lists bool) (e *actShellEnv, release func()) {
+	e = newActShell(t)
 	e.fs.AddCanvasCommentActivity()
 	e.ca.S.PutConv(slack.Conversation{ID: fakeslack.FileChanLaunch, Name: "Launch plan", IsChannel: true, IsGroup: true,
 		IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 4})
 	e.a.data.fetched[fakeslack.FileChanLaunch] = time.Now()
-	e.fs.SetFault("files.info", fakeslack.Fault{Delay: wait})
+	if lists {
+		e.fs.AddListCommentActivity()
+		e.ca.S.PutConv(slack.Conversation{ID: fakeslack.FileChanKitchen, Name: "Launch tracker", IsChannel: true, IsGroup: true,
+			IsPrivate: true, IsFile: true, IsMember: true, NumMembers: 3})
+		e.ca.S.PutCanvasRef(fakeslack.ListKitchen, richtext.CanvasRef{Title: "Launch tracker", Status: "normal", Kind: "list"})
+		e.a.data.fetched[fakeslack.FileChanKitchen] = time.Now()
+	}
+	hold := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method == "files.info" && f.Get("file") == fakeslack.CanvasChannel {
+			<-hold
+		}
+		return nil, false
+	})
 	e.ca.ServeLookups()
 	t.Cleanup(e.ca.StopTraffic)
 	crNames(e)
@@ -737,42 +756,44 @@ func crLateCanvas(t *testing.T, wait time.Duration) *actShellEnv {
 	cmOpenActivity(e)
 	e.activity().Search("keep it on Wednesday")
 	e.frames(5)
-	return e
+	return e, release
+}
+
+// crCanvasKnown reports whether the held files.info has answered.
+func crCanvasKnown(e *actShellEnv) bool {
+	_, known := e.ca.S.KnownCanvasRef(fakeslack.CanvasChannel)
+	return known
 }
 
 // With the persistent detail panel, a click whose jump waits for the
-// canvas's files.info draws no canvas until files.info answers, and the
-// pane keeps what Primary showed meanwhile, as Slack's openDoc navigates
-// Primary only once it has run: for a first click the empty view, never
-// the item's preview card. Then the canvas, with the comment thread
-// beside it.
+// canvas's files.info draws no canvas until files.info answers, and every
+// frame meanwhile the pane keeps what Primary showed, as Slack's openDoc
+// navigates Primary only once it has run: for a first click the empty
+// view, never the item's preview card ("View thread" for the reply).
+// Then the canvas, with the comment thread beside it.
 func TestActivityPaneKeepsViewWhileJumpResolves(t *testing.T) {
-	e := crLateCanvas(t, 2*time.Second)
+	e, release := crLateCanvas(t, false)
 	crCommentReply(e)
-	if _, known := e.ca.S.KnownCanvasRef(fakeslack.CanvasChannel); known {
+	if crCanvasKnown(e) {
 		t.Fatalf("precondition: files.info answered before the click")
 	}
 	if _, waits := e.a.canvasJumpsOf().waiting[fakeslack.CanvasChannel]; !waits {
-		t.Errorf("the jump doesn't wait for the canvas's files.info")
+		t.Fatalf("the jump doesn't wait for the canvas's files.info")
 	}
-	empty := false
-	for {
+	for i := 0; i < 25; i++ {
 		drawn := cmLabels(e)
-		if _, known := e.ca.S.KnownCanvasRef(fakeslack.CanvasChannel); known {
-			break
+		if drawn["View thread"] || drawn["Open in channel"] {
+			t.Fatalf("frame %d: the pane drew the item's preview while its jump resolved", i)
 		}
-		if drawn["Open in channel"] {
-			t.Fatalf("the pane drew the item's preview while its jump resolved")
+		if !drawn["Select a notification to view the details."] {
+			t.Fatalf("frame %d: the pane didn't keep the empty view while the jump resolved", i)
 		}
 		if e.a.paneCanvasLive() != nil {
-			t.Fatalf("the pane drew the canvas before files.info answered")
+			t.Fatalf("frame %d: the pane drew the canvas before files.info answered", i)
 		}
-		empty = empty || drawn["Select a notification to view the details."]
 		time.Sleep(20 * time.Millisecond)
 	}
-	if !empty {
-		t.Errorf("the pane didn't keep the empty view while the jump resolved")
-	}
+	release()
 	e.until("the canvas in the pane", func() bool {
 		v := e.a.canvasJumpsOf().pane
 		return v != nil && v.ID() == fakeslack.CanvasChannel && e.a.paneCanvasLive() != nil
@@ -783,38 +804,93 @@ func TestActivityPaneKeepsViewWhileJumpResolves(t *testing.T) {
 	e.until("the comment thread beside it", crSecThread(e, fakeslack.FileChanLaunch, fakeslack.CommentOpen))
 }
 
-// A pane jump still waiting drops once another item is opened (here the
-// comment's thread_v2, which opens its thread in the pane): the canvas
-// never replaces the newer item's view, and the reply's comment thread
-// never opens.
-func TestActivityPaneJumpDroppedByAnotherItem(t *testing.T) {
-	e := crLateCanvas(t, 2*time.Second)
-	crCommentReply(e)
-	if _, waits := e.a.canvasJumpsOf().waiting[fakeslack.CanvasChannel]; !waits {
-		t.Fatalf("precondition: the jump doesn't wait for the canvas's files.info")
-	}
-	e.activity().Search("Booked it") // the comment's thread_v2, meanwhile
-	e.frames(5)
-	e.activity().StepItem(1, false)
-	next := e.activity().OpenedItem()
-	if next != fakeslack.CanvasCommentThreadKey {
-		t.Fatalf("precondition: opened %q, want the thread_v2 %s", next, fakeslack.CanvasCommentThreadKey)
-	}
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
+// crNothingLands checks, once files.info has answered, that a dropped
+// pane jump opened nothing: no canvas in the pane, no comment thread.
+func crNothingLands(t *testing.T, e *actShellEnv, release func(), why string) {
+	t.Helper()
+	release()
+	e.until("files.info's answer", func() bool { return crCanvasKnown(e) })
+	for i := 0; i < 30; i++ {
 		e.frame()
 		if v := e.a.paneCanvasLive(); v != nil && v.ID() == fakeslack.CanvasChannel {
-			t.Fatalf("the reply's canvas opened in the pane over the next item %s", next)
+			t.Fatalf("%s: the dropped jump's canvas opened in the pane", why)
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if _, known := e.ca.S.KnownCanvasRef(fakeslack.CanvasChannel); !known {
-		t.Fatalf("precondition: files.info never answered")
+		time.Sleep(15 * time.Millisecond)
 	}
 	if crSecThread(e, fakeslack.FileChanLaunch, fakeslack.CommentOpen)() {
-		t.Errorf("the reply's comment thread opened over the next item %s", next)
+		t.Errorf("%s: the dropped jump's comment thread opened", why)
 	}
-	if k := e.activity().OpenedItem(); k != next {
-		t.Errorf("opened %q, want the next item %q", k, next)
+}
+
+// A pane jump still waiting drops once another item is opened (here the
+// comment's thread_v2, which opens its thread in the pane), or once the
+// item is let go without opening anything (an Activity tab switch: no
+// navigation, so the jump's still() is what drops it).
+func TestActivityPaneJumpDropped(t *testing.T) {
+	t.Run("another item", func(t *testing.T) {
+		e, release := crLateCanvas(t, false)
+		crCommentReply(e)
+		e.activity().Search("Booked it") // the comment's thread_v2, meanwhile
+		e.frames(5)
+		e.activity().StepItem(1, false)
+		if next := e.activity().OpenedItem(); next != fakeslack.CanvasCommentThreadKey {
+			t.Fatalf("precondition: opened %q, want the thread_v2 %s", next, fakeslack.CanvasCommentThreadKey)
+		}
+		if crCanvasKnown(e) {
+			t.Fatalf("precondition: files.info answered before the second click")
+		}
+		crNothingLands(t, e, release, "another item")
+		if k := e.activity().OpenedItem(); k != fakeslack.CanvasCommentThreadKey {
+			t.Errorf("opened %q, want the thread_v2 still", k)
+		}
+	})
+	t.Run("tab switch", func(t *testing.T) {
+		e, release := crLateCanvas(t, false)
+		crCommentReply(e)
+		gen := e.a.canvasJumpsOf().gen
+		e.activity().ShowTab(1)
+		e.frames(3)
+		if k := e.activity().OpenedItem(); k != "" {
+			t.Fatalf("precondition: the tab switch left %q open", k)
+		}
+		if g := e.a.canvasJumpsOf().gen; g != gen {
+			t.Fatalf("precondition: the tab switch navigated (gen %d → %d); still() is what this checks", gen, g)
+		}
+		crNothingLands(t, e, release, "tab switch")
+	})
+}
+
+// While a pane jump waits, a pane that last drew a list record keeps
+// drawing that record: no canvas viewer is made on the list's file id.
+func TestActivityPaneKeepsListWhileJumpWaits(t *testing.T) {
+	e, release := crLateCanvas(t, true)
+	e.activity().Search("can you add the screenshots")
+	e.frames(5)
+	e.activity().StepItem(1, false)
+	e.until("the list record in the pane", func() bool {
+		st := e.a.canvasJumpsOf()
+		return st.paneKind == "list" && st.paneFile == fakeslack.ListKitchen && st.paneRec == fakeslack.ListKitchenRecord && st.list != nil
+	})
+	e.frames(5)
+	e.activity().Search("keep it on Wednesday")
+	e.frames(5)
+	e.activity().StepItem(1, false)
+	if k := e.activity().OpenedItem(); k != fakeslack.CanvasCommentKey {
+		t.Fatalf("precondition: opened %q, want the canvas comment's reply", k)
 	}
+	if crCanvasKnown(e) {
+		t.Fatalf("precondition: files.info answered before the click")
+	}
+	for i := 0; i < 20; i++ {
+		e.frame()
+		if v := e.a.canvasJumpsOf().pane; v != nil && v.ID() == fakeslack.ListKitchen {
+			t.Fatalf("frame %d: the pane made a canvas viewer on the list %s", i, fakeslack.ListKitchen)
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	release()
+	e.until("the canvas in the pane", func() bool {
+		v := e.a.paneCanvasLive()
+		return v != nil && v.ID() == fakeslack.CanvasChannel
+	})
 }
