@@ -2012,5 +2012,6 @@ jobs:
           rc=0
           "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignViewsInputs)$' ./internal/ui/views || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignPopupsField)$' ./internal/ui/popups || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignEditorBox)$' ./internal/ui/theme/carettest || rc=1
           if [ "$RUNNER_OS" = Linux ]; then "${x[@]}" go test -count=1 -timeout 15m gioui.org/widget || rc=1; fi
           exit $rc
