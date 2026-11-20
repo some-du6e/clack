@@ -73,13 +73,13 @@ var lodashEscape = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `
 var lodashUnescape = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", `"`, "&#39;", "'").Replace
 
 // tsfLines is TSF's line ending pass: \r\n, \r, U+2028 and U+2029 become \n.
-var tsfLines = strings.NewReplacer("\r\n", "\n", "\r", "\n", " ", "\n", " ", "\n").Replace
+var tsfLines = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u2028", "\n", "\u2029", "\n").Replace
 
-// tsfStripZWSP is TSF's /^[​]+|[​]+$/gm.
+// tsfStripZWSP is TSF's /^[U+200B]+|[U+200B]+$/gm.
 func tsfStripZWSP(s string) string {
 	ls := strings.Split(s, "\n")
 	for i, l := range ls {
-		ls[i] = strings.Trim(l, "​")
+		ls[i] = strings.Trim(l, "\u200b")
 	}
 	return strings.Join(ls, "\n")
 }
@@ -427,7 +427,7 @@ func TextyValue(d *Doc) string {
 // submitChannelPurpose call it (not an internal message).
 
 // tsfPlaceholderBase is TSF's placeholder_base before main() shuffles it.
-const tsfPlaceholderBase = "-"
+const tsfPlaceholderBase = "\ue022-\ue022"
 
 type tsfHold struct{ str, placeholder string }
 
@@ -725,7 +725,7 @@ func CleanMessageText(text string, emoticons bool) string {
 	if text == "" {
 		return ""
 	}
-	s := strings.NewReplacer(" ", " ", "\r", "\n").Replace(text) // Xsp0
+	s := strings.NewReplacer("\u00a0", " ", "\r", "\n").Replace(text) // Xsp0
 	var holds []tsfHold
 	s = tsfReplaceFormatContents(&holds, s)
 	var mentions [][2]string
@@ -818,8 +818,8 @@ func detectPhones(s string) []phoneMatch {
 			txt = txt[1:]
 		}
 		end := at + utf8.RuneCountInString(txt)
-		before := at == 0 || strings.ContainsRune(" 　\n([{'\"", u[at-1]) || cjkRune(u[at-1])
-		after := end == len(u) || strings.ContainsRune(" 　\n.)]}'\":?!;,", u[end]) || cjkRune(u[end])
+		before := at == 0 || strings.ContainsRune(" \u3000\n([{'\"", u[at-1]) || cjkRune(u[at-1])
+		after := end == len(u) || strings.ContainsRune(" \u3000\n.)]}'\":?!;,", u[end]) || cjkRune(u[end])
 		if before && after {
 			out = append(out, phoneMatch{at: at, n: end - at, text: txt, url: telURL(t)})
 		}
@@ -828,31 +828,26 @@ func detectPhones(s string) []phoneMatch {
 }
 
 // LinkifyPhoneNumbers is linkifyPhoneNumbers (cyvU): each phone number
-// detectLinks finds outside code and <…> becomes <tel:…|number>. Links
-// (the composer's URL finder, rtFindURLs) win over a phone number they
-// overlap, as detectLinks' mergeMatches keeps the URL.
+// detectLinks (nVll, texty_links.go) keeps, outside code and <…>, becomes
+// <tel:…|number>; one inside a URL or an e-mail address stays text.
 func LinkifyPhoneNumbers(s string) string {
 	u := []rune(s)
 	var skip [][2]int
 	for _, m := range phoneSkip.FindAllStringIndex(s, -1) {
 		skip = append(skip, [2]int{utf8.RuneCountInString(s[:m[0]]), utf8.RuneCountInString(s[:m[1]])})
 	}
-	urls := rtFindURLs(u)
-	var phones []phoneMatch
-	for _, p := range detectPhones(s) {
-		lo, hi := p.at, p.at+p.n
-		clash := false
-		for _, l := range urls { // mergeMatches
-			if lo == l.start || hi == l.end || (lo <= l.start && hi >= l.end) || (lo >= l.start && lo < l.end) || (hi >= l.start && hi < l.end) {
-				clash = true
-			}
+	var phones []linkMatch
+	for _, p := range detectLinks(s) {
+		if p.kind != "phone" {
+			continue
 		}
+		in := false
 		for _, k := range skip {
-			if lo < k[1] && hi > k[0] {
-				clash = true
+			if p.at < k[1] && p.at+p.n > k[0] {
+				in = true
 			}
 		}
-		if !clash {
+		if !in {
 			phones = append(phones, p)
 		}
 	}

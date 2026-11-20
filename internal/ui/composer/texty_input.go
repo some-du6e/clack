@@ -10,14 +10,17 @@ package composer
 // `t !== U`) and sends Submit.
 
 import (
+	"image"
 	"image/color"
 
 	"gioui.org/io/event"
 	"gioui.org/layout"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -31,16 +34,19 @@ type TextyHost interface {
 
 // TextyInput is one plain Texty input over a stored mrkdwn string.
 type TextyInput struct {
-	h    TextyHost
-	ed   *Editor
-	base string // convertContentsToString of the initialText (U)
-	ph   string
+	h       TextyHost
+	ed      *Editor
+	base    string // convertContentsToString of the initialText (U)
+	ph      string
+	maxLen  int // maxLength: past it TextyLengthWarning shows (no cap)
+	warn    widget.Clickable
+	warnTip popups.TipState
 }
 
 // NewTextyInput loads stored mrkdwn text into a new input with
-// placeholder ph, the caret at the end.
-func NewTextyInput(h TextyHost, text, ph string) *TextyInput {
-	t := &TextyInput{h: h, ph: ph}
+// placeholder ph and maxLength maxLen, the caret at the end.
+func NewTextyInput(h TextyHost, text, ph string, maxLen int) *TextyInput {
+	t := &TextyInput{h: h, ph: ph, maxLen: maxLen}
 	t.ed = NewEditor()
 	t.ed.textOnly, t.ed.plainText = true, true
 	var names TextyNames
@@ -98,6 +104,44 @@ func (t *TextyInput) Changed() bool { return t.Value() != t.base }
 func (t *TextyInput) Submit() string {
 	p := uipref.Get()
 	return LinkifyPhoneNumbers(CleanMessageText(t.Value(), p.ConvertEmoticons && !p.EmojiAsText))
+}
+
+// OverLimit is getNumCharsOverLimit for a plain Texty input: how far the
+// length of its text as shown (convertContentsToStringForDisplay, lgkT:
+// pills as their labels, emoji as :name:) is past maxLength, in
+// JavaScript string units. Like Slack it counts nothing past a limit
+// over 200 while the input holds fewer than half of it
+// (quill.getLength(), embeds counting one and the final newline). Texty
+// only warns: the text isn't cut, and Slack refuses it on save.
+func (t *TextyInput) OverLimit() int {
+	d := t.ed.Doc()
+	if t.maxLen <= 0 || t.maxLen > 200 && d.Len()+1 < t.maxLen/2 {
+		return 0
+	}
+	n := 0
+	for i, r := range d.Runes {
+		if a := d.Attrs[i].Atom; a != nil {
+			if a.Kind == AtomEmoji {
+				n += jsLen(":" + a.ID + ":")
+			} else {
+				n += jsLen(a.Text)
+			}
+			continue
+		}
+		n += jsRunes([]rune{r})
+	}
+	return max(n-t.maxLen, 0)
+}
+
+// LayoutWarning draws TextyLengthWarning's "-N" while the input is over
+// its limit. Outside the composer's wysiwyg container the pill has no
+// offsets (.c-texty_input_unstyled__warning: position absolute), so it
+// sits where the input's text starts: the caller puts the origin at the
+// box's inner top-left corner.
+func (t *TextyInput) LayoutWarning(gtx layout.Context, th *theme.Theme) {
+	if over := t.OverLimit(); over > 0 {
+		lengthWarningPill(gtx, th, over, &t.warn, &t.warnTip, func(image.Point) image.Point { return image.Point{} })
+	}
 }
 
 // Layout draws the input's text in Slack's 15/22 with col as its ink

@@ -959,7 +959,11 @@ func (e *Editor) pasteHTML(s, html string) {
 	}
 	d := e.doc
 	lo, hi := e.sel()
-	if u := strings.TrimSpace(s); hi > lo && edIsURL(u) {
+	// a URL pasted over a selection links it (Texty's acceptSingleUrl),
+	// only with formatting: Slack's gate is useWysiwyg && !usePlainTextMode,
+	// so under markup mode and in a plain Texty input (no link format) it
+	// replaces the selection as text
+	if u := strings.TrimSpace(s); hi > lo && edIsURL(u) && !e.plainText {
 		e.begin(edOther, false)
 		d.SetLink(lo, hi, transformLink(u))
 		e.anchor, e.caret = hi, hi

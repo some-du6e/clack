@@ -574,7 +574,7 @@ func (d *ChannelDetails) startEdit(kind int, cur string) {
 		if kind == cdEditPurpose {
 			ph = nsChannelDetails.T("Add a description")
 		}
-		d.texty = composer.NewTextyInput(d.h, cur, ph)
+		d.texty = composer.NewTextyInput(d.h, cur, ph, 250)
 		d.focusTopic = 3
 		return
 	}
@@ -819,9 +819,16 @@ func (d *ChannelDetails) update(gtx C) {
 					v.Conv.Purpose, v.Conv.PurposeDoc = prev.Purpose, prev.PurposeDoc
 					v.Conv.Name = prev.Name
 				})
-				if d.pendKind == cdEditTopic && d.editing {
+				switch {
+				case d.pendKind == cdEditTopic && d.editing:
 					d.editErr = cdTopicError(err) // the modal stays open, the error under the input
-				} else {
+				case d.pendKind == cdEditPurpose && d.editing:
+					// ChannelPurposeDialog (Gro7): handleSave returns the
+					// refused submitChannelPurpose (uqxK rethrows), and the
+					// DeprecatedBaseDialog (FlDO) closes only on a resolved
+					// onGo, so the dialog stays open with the typed text and
+					// no message (useChannelPurposeInput has no error state)
+				default:
 					d.editing = false
 					d.h.Toast("Couldn’t update the " + cdEditWhat[d.pendKind] + ": " + cdErr(err))
 				}
@@ -1102,6 +1109,12 @@ func (d *ChannelDetails) topicInput(gtx C) D {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.Faint)
 	}
 	call.Add(gtx.Ops)
+	if in := d.textyInput(); in != nil {
+		b := max(1, gtx.Dp(1))
+		t := op.Offset(image.Pt(b, b)).Push(gtx.Ops)
+		in.LayoutWarning(gtx, d.th) // TextyLengthWarning at the input's inner top-left
+		t.Pop()
+	}
 	return D{Size: r.Size()}
 }
 

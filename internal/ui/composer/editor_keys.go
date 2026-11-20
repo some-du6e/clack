@@ -272,8 +272,11 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		switch {
 		case shift:
 			e.Redo()
-		case e.doc.Len() == 0: // quill.getLength() === 1: nothing at all
-			e.emit(EvUndoEmpty) // Slack's onCmdZWhenEmpty: unsend the message just sent
+		case e.doc.Len() == 0 && !e.textOnly: // quill.getLength() === 1: nothing at all
+			// Slack's onCmdZWhenEmpty: unsend the message just sent. A
+			// text-only input passes none (LPC/ binds the empty-Z key only
+			// with it), so Quill's history undoes there
+			e.emit(EvUndoEmpty)
 		default:
 			e.Undo()
 		}

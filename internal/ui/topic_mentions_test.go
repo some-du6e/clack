@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -134,4 +135,51 @@ func TestTopicEditMentions(t *testing.T) {
 	}
 	edit("details' Edit topic", "conversations.setTopic", o.d.EditTopic)
 	edit("Edit description", "conversations.setPurpose", o.d.EditPurpose)
+}
+
+// Edit description past its 250 characters: Texty only warns (no cap),
+// Slack refuses the save (too_long), and ChannelPurposeDialog stays open
+// with what was typed (Gro7 over FlDO: onGo's rejection never closes it).
+func TestEditDescriptionTooLong(t *testing.T) {
+	e, fs := previewEnv(t)
+	var mu sync.Mutex
+	var sent []string
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
+		if method != "conversations.setPurpose" {
+			return nil, false
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		sent = append(sent, form.Get("purpose"))
+		return map[string]any{"ok": false, "error": "too_long"}, true
+	})
+	ch := fakeslackMemberChannel(e)
+	fs.SetPurpose(ch, "Short description")
+	e.a.OpenDetails(ch)
+	var o detailsOverlay
+	e.until("Edit description", 10*time.Second, func() bool {
+		var ok bool
+		if o, ok = topOverlay[detailsOverlay](e.a); !ok {
+			return false
+		}
+		o.d.EditPurpose()
+		return o.d.Editing()
+	})
+	e.settle(400 * time.Millisecond)
+	long := " " + strings.Repeat("x", 260)
+	e.typeText(long)
+	e.settle(150 * time.Millisecond)
+	want := "Short description" + long
+	if got := o.d.EditText(); got != want {
+		t.Fatalf("the input holds %d characters, want %d (no cap)", len([]rune(got)), len([]rune(want)))
+	}
+	o.d.SaveEdit()
+	e.until("setPurpose", 10*time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(sent) > 0 })
+	e.settle(500 * time.Millisecond)
+	if !o.d.Editing() {
+		t.Fatal("the refused description closed the dialog")
+	}
+	if got := o.d.EditText(); got != want {
+		t.Errorf("after the refusal the input holds %q", got)
+	}
 }

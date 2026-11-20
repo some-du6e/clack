@@ -581,7 +581,7 @@ func (a *App) openTopicDialog(ch string, conv *convInfo) {
 		name = "#" + conv.Name
 	}
 	a.ShowOverlay(popups.NewTopicDialog(a, ch, conv.Kind, name, conv.Topic, func(text, ph string) popups.TopicInput {
-		return composer.NewTextyInput(a, text, ph)
+		return composer.NewTextyInput(a, text, ph, 250) // useChannelTopicInput's maxLength
 	}))
 }
 

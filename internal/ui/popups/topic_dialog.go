@@ -43,6 +43,10 @@ type TopicInput interface {
 	SetText(s string) // tests
 	Changed() bool    // value() differs from the untouched input's
 	Submit() string   // the text Slack sends for it
+	OverLimit() int   // characters past maxLength (getNumCharsOverLimit)
+	// LayoutWarning draws TextyLengthWarning's pill at the origin, the
+	// box's inner top-left corner, while OverLimit > 0
+	LayoutWarning(gtx layout.Context, th *theme.Theme)
 }
 
 // TopicDialog is "Edit topic" for one conversation.
@@ -172,6 +176,11 @@ func (d *TopicDialog) layout(gtx layout.Context) layout.Dimensions {
 	at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
 		call.Add(gtx.Ops)
 		return td
+	})
+	b := border1(gtx)
+	at(gtx, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
+		d.in.LayoutWarning(gtx, th)
+		return layout.Dimensions{}
 	})
 	y := ih + dp(gtx, 6)
 	hd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {

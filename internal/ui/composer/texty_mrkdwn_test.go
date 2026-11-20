@@ -148,6 +148,48 @@ func TestTextyMrkdwnSlackOracle(t *testing.T) {
 			value: "",
 			sent:  "",
 			more:  "more"},
+		// phone numbers inside bare-domain URLs and e-mail addresses stay text
+		// (detectLinks merges detectUrls and detectEmails before the phones)
+		{in: "zoom.us/j/(555-123-4567) ok",
+			shown: "zoom.us/j/(555-123-4567) ok",
+			value: "zoom.us/j/(555-123-4567) ok",
+			sent:  "zoom.us/j/(555-123-4567) ok",
+			more:  "zoom.us/j/(555-123-4567) ok more"},
+		{in: "x e.co.uk/(555-123-4567) ok",
+			shown: "x e.co.uk/(555-123-4567) ok",
+			value: "x e.co.uk/(555-123-4567) ok",
+			sent:  "x e.co.uk/(555-123-4567) ok",
+			more:  "x e.co.uk/(555-123-4567) ok more"},
+		{in: "mail 555.123.4567.home@corp.com",
+			shown: "mail 555.123.4567.home@corp.com",
+			value: "mail 555.123.4567.home@corp.com",
+			sent:  "mail 555.123.4567.home@corp.com",
+			more:  "mail 555.123.4567.home@corp.com more"},
+		{in: "mail 555-123-4567.x@e.com now",
+			shown: "mail 555-123-4567.x@e.com now",
+			value: "mail 555-123-4567.x@e.com now",
+			sent:  "mail 555-123-4567.x@e.com now",
+			more:  "mail 555-123-4567.x@e.com now more"},
+		{in: "see example.com/?q='555-123-4567'",
+			shown: "see example.com/?q='555-123-4567'",
+			value: "see example.com/?q='555-123-4567'",
+			sent:  "see example.com/?q='555-123-4567'",
+			more:  "see example.com/?q='555-123-4567' more"},
+		{in: "Call 555-123-4567.com",
+			shown: "Call 555-123-4567.com",
+			value: "Call 555-123-4567.com",
+			sent:  "Call 555-123-4567.com",
+			more:  "Call 555-123-4567.com more"},
+		{in: "foo.bar/(555-123-4567)",
+			shown: "foo.bar/(555-123-4567)",
+			value: "foo.bar/(555-123-4567)",
+			sent:  "foo.bar/(<tel:5551234567|555-123-4567>)",
+			more:  "foo.bar/(<tel:5551234567|555-123-4567>) more"},
+		{in: "call (555) 123-4567 at acme.com",
+			shown: "call (555) 123-4567 at acme.com",
+			value: "call (555) 123-4567 at acme.com",
+			sent:  "call <tel:5551234567|(555) 123-4567> at acme.com",
+			more:  "call <tel:5551234567|(555) 123-4567> at acme.com more"},
 	}
 	for _, c := range cases {
 		d := MrkdwnTextyDoc(oracleNames{}, c.in, oracleEmoji, false)
@@ -163,6 +205,140 @@ func TestTextyMrkdwnSlackOracle(t *testing.T) {
 		}
 		if got := LinkifyPhoneNumbers(CleanMessageText(v+" more", true)); got != c.more {
 			t.Errorf("%q edited sends\n  %q, want\n  %q", c.in, got, c.more)
+		}
+	}
+}
+
+type linkWant struct {
+	kind string
+	at   int
+	text string
+}
+
+// detectLinks (nVll: detectUrls 7Jnr, detectEmails hlZ9, then the phones
+// of L9Ir, merged with a0ov) and linkifyPhoneNumbers (cyvU) against
+// Slack's own modules (harness/links.cjs over links_cases.json, lodash
+// some and inRange real): every match's kind, offset and text, and what
+// cyvU sends.
+func TestTextyLinksSlackOracle(t *testing.T) {
+	cases := []struct {
+		in    string
+		links []linkWant
+		sent  string
+	}{
+		{in: "zoom.us/j/(555-123-4567) ok",
+			links: []linkWant{{"url", 0, "zoom.us/j/(555-123-4567)"}},
+			sent:  "zoom.us/j/(555-123-4567) ok"},
+		{in: "x e.co.uk/(555-123-4567) ok",
+			links: []linkWant{{"url", 2, "e.co.uk/(555-123-4567)"}},
+			sent:  "x e.co.uk/(555-123-4567) ok"},
+		{in: "mail 555.123.4567.home@corp.com",
+			links: []linkWant{{"email", 5, "555.123.4567.home@corp.com"}},
+			sent:  "mail 555.123.4567.home@corp.com"},
+		{in: "mail 555-123-4567.x@e.com now",
+			links: []linkWant{{"email", 5, "555-123-4567.x@e.com"}},
+			sent:  "mail 555-123-4567.x@e.com now"},
+		{in: "see example.com/?q='555-123-4567'",
+			links: []linkWant{{"url", 4, "example.com/?q='555-123-4567'"}},
+			sent:  "see example.com/?q='555-123-4567'"},
+		{in: "Call 555-123-4567.com",
+			links: []linkWant{{"url", 5, "555-123-4567.com"}},
+			sent:  "Call 555-123-4567.com"},
+		{in: "foo.bar/(555-123-4567)",
+			links: []linkWant{{"phone", 9, "555-123-4567"}},
+			sent:  "foo.bar/(<tel:5551234567|555-123-4567>)"},
+		{in: "call (555) 123-4567 at acme.com",
+			links: []linkWant{{"phone", 5, "(555) 123-4567"}, {"url", 23, "acme.com"}},
+			sent:  "call <tel:5551234567|(555) 123-4567> at acme.com"},
+		{in: "see https://en.wikipedia.org/wiki/X_(555-123-4567) ok",
+			links: []linkWant{{"url", 4, "https://en.wikipedia.org/wiki/X_(555-123-4567)"}},
+			sent:  "see https://en.wikipedia.org/wiki/X_(555-123-4567) ok"},
+		{in: "www.example.org/(555-123-4567) x",
+			links: []linkWant{{"url", 0, "www.example.org/(555-123-4567)"}},
+			sent:  "www.example.org/(555-123-4567) x"},
+		{in: "ftp://files.example.net/(555-123-4567)",
+			links: []linkWant{{"url", 0, "ftp://files.example.net/(555-123-4567)"}},
+			sent:  "ftp://files.example.net/(555-123-4567)"},
+		{in: "mailto:555-123-4567@x.com",
+			links: []linkWant{{"email", 7, "555-123-4567@x.com"}},
+			sent:  "mailto:555-123-4567@x.com"},
+		{in: "_a.b@example.com and *c@d.io",
+			links: []linkWant{{"email", 1, "a.b@example.com"}, {"email", 22, "c@d.io"}},
+			sent:  "_a.b@example.com and *c@d.io"},
+		{in: "git@github.com:org/repo and 555-123-4567",
+			links: []linkWant{{"phone", 28, "555-123-4567"}},
+			sent:  "git@github.com:org/repo and <tel:5551234567|555-123-4567>"},
+		{in: "a@b.zz 555-123-4567",
+			links: []linkWant{{"phone", 7, "555-123-4567"}},
+			sent:  "a@b.zz <tel:5551234567|555-123-4567>"},
+		{in: "visit Example.CO or foo.sh or bar.SH now",
+			links: []linkWant{{"url", 6, "Example.CO"}},
+			sent:  "visit Example.CO or foo.sh or bar.SH now"},
+		{in: "http://x.com|(555) 123-4567",
+			links: []linkWant{{"url", 0, "http://x.com"}},
+			sent:  "http://x.com|(555) 123-4567"},
+		{in: "(see http://a.com/b) and [https://c.dev/d]",
+			links: []linkWant{{"url", 5, "http://a.com/b"}, {"url", 26, "https://c.dev/d"}},
+			sent:  "(see http://a.com/b) and [https://c.dev/d]"},
+		{in: "javascript:alert(1) and vbscript:x",
+			links: []linkWant{},
+			sent:  "javascript:alert(1) and vbscript:x"},
+		{in: "spotify:track:abc123 rdar://12345&6 daylite://Command=ShowObject&x",
+			links: []linkWant{{"url", 21, "rdar://12345&6"}, {"url", 36, "daylite://Command=ShowObject&x"}},
+			sent:  "spotify:track:abc123 rdar://12345&6 daylite://Command=ShowObject&x"},
+		{in: "host.local:8080/path, x.com:443/a?b#c.",
+			links: []linkWant{{"url", 22, "x.com:443/a?b#c"}},
+			sent:  "host.local:8080/path, x.com:443/a?b#c."},
+		{in: "foo..bar.com/x and a.com..",
+			links: []linkWant{{"url", 5, "bar.com/x"}, {"url", 19, "a.com"}},
+			sent:  "foo..bar.com/x and a.com.."},
+		{in: "_under.com and x_y.com/_z",
+			links: []linkWant{{"url", 1, "under.com"}, {"url", 15, "x_y.com/_z"}},
+			sent:  "_under.com and x_y.com/_z"},
+		{in: "cafe.co_uk and a.b.c.d.com/x",
+			links: []linkWant{{"url", 15, "a.b.c.d.com/x"}},
+			sent:  "cafe.co_uk and a.b.c.d.com/x"},
+		{in: "u@x.com/555-123-4567",
+			links: []linkWant{{"email", 0, "u@x.com"}},
+			sent:  "u@x.com/555-123-4567"},
+		{in: "1.2.3.4/555-123-4567 and 10.0.0.1",
+			links: []linkWant{},
+			sent:  "1.2.3.4/555-123-4567 and 10.0.0.1"},
+		{in: "https://\u4f8b\u3048.jp/(555-123-4567) \u6771\u4eacexample.com\u6771\u4eac",
+			links: []linkWant{{"url", 0, "https://\u4f8b\u3048.jp/(555-123-4567)"}},
+			sent:  "https://\u4f8b\u3048.jp/(555-123-4567) \u6771\u4eacexample.com\u6771\u4eac"},
+		{in: "call +44 20 7946 0958 or 555-123-4567.",
+			links: []linkWant{{"phone", 5, "+44 20 7946 0958"}, {"phone", 25, "555-123-4567"}},
+			sent:  "call <tel:+442079460958|+44 20 7946 0958> or <tel:5551234567|555-123-4567>."},
+		{in: "tel 555 123 4567 at x.io/ok",
+			links: []linkWant{{"phone", 4, "555 123 4567"}, {"url", 20, "x.io/ok"}},
+			sent:  "tel <tel:5551234567|555 123 4567> at x.io/ok"},
+		{in: "x.now and ms.now/a and y.zip",
+			links: []linkWant{{"url", 10, "ms.now/a"}},
+			sent:  "x.now and ms.now/a and y.zip"},
+		{in: "//www.x.com/(555-123-4567) //y.com/(555-123-4567)",
+			links: []linkWant{{"url", 0, "//www.x.com/(555-123-4567)"}, {"url", 27, "//y.com/(555-123-4567)"}},
+			sent:  "//www.x.com/(555-123-4567) //y.com/(555-123-4567)"},
+		{in: "go to https://x.com/a'b' and https://y.com/c'",
+			links: []linkWant{{"url", 6, "https://x.com/a'b'"}, {"url", 29, "https://y.com/c"}},
+			sent:  "go to https://x.com/a'b' and https://y.com/c'"},
+	}
+	for _, c := range cases {
+		var got []linkWant
+		for _, m := range detectLinks(c.in) {
+			got = append(got, linkWant{m.kind, m.at, m.text})
+		}
+		if len(got) != len(c.links) {
+			t.Errorf("%q links %v, want %v", c.in, got, c.links)
+		} else {
+			for i := range got {
+				if got[i] != c.links[i] {
+					t.Errorf("%q link %d %v, want %v", c.in, i, got[i], c.links[i])
+				}
+			}
+		}
+		if s := LinkifyPhoneNumbers(c.in); s != c.sent {
+			t.Errorf("%q sends\n  %q, want\n  %q", c.in, s, c.sent)
 		}
 	}
 }
