@@ -14,7 +14,6 @@ import (
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
-	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // ---- shared Host methods (docs/NATIVE.md) ----
