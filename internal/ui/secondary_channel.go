@@ -59,7 +59,7 @@ func (a *App) OpenChannelSecondary(ch string) {
 	if a.redirectInstead(ch, "", fileTo{
 		canvas: func(fid string) { a.OpenCanvasAt(fid, "", false) },
 		list:   a.OpenList,
-	}, func() { a.OpenChannelSecondary(ch) }) {
+	}, func() { a.OpenChannelSecondary(ch) }, a.activityStill()) {
 		return
 	}
 	s := &a.secondary

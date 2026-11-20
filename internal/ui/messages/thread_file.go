@@ -75,7 +75,7 @@ func (v *ThreadView) fileSubtitle(app *core.App, cv core.Conv) (HeaderSubtitle, 
 	if cv.IsArchived {
 		return HeaderSubtitle{}, false
 	}
-	sub := HeaderSubtitle{Icon: "file", Text: cv.Name}
+	sub := HeaderSubtitle{Icon: "file", Text: cv.Name, Spans: richtext.EmojiText(app.S, cv.Name)}
 	if _, kind, known := app.CanvasTitleOf(cv.FileID); known && kind == "list" {
 		sub.Icon = "lists"
 	}
@@ -101,17 +101,20 @@ func (v *ThreadView) fileEntityWidth(gtx layout.Context, th *theme.Theme, sub He
 
 // layoutFileEntity draws SmallFileEntity in col (the header link's 70%
 // foreground) on a 20px line (c-base_entity--small, its parts centred):
-// the 20px c-file_entity__icon box with the 16px icon centred, or the
-// 16px emoji at its left (c-file_entity_emoji_container), 8px, then the
-// title on one line with an ellipsis. The line's baseline is the title's.
+// the 20px c-file_entity__icon box with the icon centred, 1em of the
+// subtitle's 13px (SvgIcon's size inherit: [data-f1h] is 1em), or the
+// 16px emoji at its left (c-file_entity_emoji_container, c-emoji__small),
+// 8px, then the title on one line with an ellipsis. The line's baseline
+// is the title's.
 func (v *ThreadView) layoutFileEntity(gtx layout.Context, th *theme.Theme, sub HeaderSubtitle, col color.NRGBA) layout.Dimensions {
 	h, box, es := gtx.Sp(20), dp(gtx, 20), dp(gtx, 16)
 	switch {
 	case sub.Emoji != "":
 		drawEmoji(gtx, v.h, sub.Emoji, image.Rect(0, (h-es)/2, es, (h-es)/2+es))
 	case sub.Icon != "":
-		at(gtx, (box-es)/2, (h-es)/2, func(gtx layout.Context) layout.Dimensions {
-			return icons.Get(icons.Slack(sub.Icon))(gtx, unit.Dp(float32(es)/gtx.Metric.PxPerDp), col)
+		is := gtx.Sp(13)
+		at(gtx, (box-is)/2, (h-is)/2, func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(icons.Slack(sub.Icon))(gtx, unit.Dp(float32(is)/gtx.Metric.PxPerDp), col)
 		})
 	}
 	x := box + dp(gtx, 8)

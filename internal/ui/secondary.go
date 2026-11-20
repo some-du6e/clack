@@ -190,6 +190,7 @@ func (a *App) SecondaryBack() bool { return a.secondary.prev != nil }
 // GoSecondaryBack is FlexpaneBackButton: the pane shows the view the
 // profile opened over again (a thread keeps its route, as OpenThread).
 func (a *App) GoSecondaryBack() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	p := a.secondary.prev
 	if p == nil {
 		return

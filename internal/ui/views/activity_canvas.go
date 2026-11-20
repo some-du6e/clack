@@ -55,6 +55,11 @@ const (
 	// FileInPane is the Activity persistent detail panel's own pane:
 	// Slack's Primary, the inbox staying in the Sidebar.
 	FileInPane
+	// FileInSplit is the split view, where a jump that starts there stays
+	// (getTargetContainer: shouldForceOpenInSplitView for a Split source):
+	// a comment's thread on its back stack; the canvas and the list in the
+	// side panel, as Clack's split view holds conversations only.
+	FileInSplit
 )
 
 // FileOpener is optionally implemented by the Host: Slack's jumpToMessage

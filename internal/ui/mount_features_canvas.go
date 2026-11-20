@@ -117,6 +117,7 @@ var canvasShare func(a *App, id string)
 // OpenCanvas shows a canvas in the side panel, as Slack does for canvases
 // opened from a message, a link or a DM.
 func (a *App) OpenCanvas(id string) {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	if a.secondary.kind != secNone && !a.secondary.hidden {
 		if v, ok := a.secondary.view.(*canvasview.View); ok && v.ID() == id {
 			return

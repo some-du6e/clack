@@ -101,7 +101,7 @@ func (a *App) OpenMessageSecondary(ch, ts string) {
 	if ts != "" && a.redirectInstead(ch, ts, fileTo{
 		canvas: func(string) { a.openFileThread(ch, ts) },
 		list:   func(fid string) { a.listJump(fid, ch, "", ts, views.FileSide, nil) },
-	}, func() { a.OpenMessageSecondary(ch, ts) }) {
+	}, func() { a.OpenMessageSecondary(ch, ts) }, a.activityStill()) {
 		return
 	}
 	a.canvasNavigated() // a navigation still waiting (canvas_open.go) is dropped

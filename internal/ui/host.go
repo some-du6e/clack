@@ -83,24 +83,23 @@ func (a *App) Navigate(route string) {
 	}
 	a.canvasNavigated() // a navigation still waiting for its file or message is dropped (canvas_open.go)
 	split := r.Channel() != "" && a.SplitViewOK()
-	// Slack's split modifier click (maybeOpenInSurface) opens the route
-	// in the split view, a file channel's as the split view's
-	// RedirectFileChannel says (OpenSplit)
-	if split && a.splitClick() {
-		a.OpenSplit(route)
-		return
-	}
 	// a jump to a message or thread of a file channel (a link, a search
-	// result, a notification) is Slack's jumpToMessage, from wherever it
-	// starts (openDocWithThreadTs has no split routing; canvas_open.go):
-	// a canvas's opens the canvas (a mention at its section, a comment
-	// with its thread), a list's the list at the record
+	// result, a notification) is Slack's jumpToMessage (canvas_open.go): a
+	// canvas's opens the canvas (a mention at its section, a comment with
+	// its thread), a list's the list at the record, in the container the
+	// click came from (getTargetContainer: from the split view, its own
+	// stand-ins). The split modifier click on such a link is the same
+	// jump: openPermalinkInClient's "message" case doesn't pass
+	// shouldOpenInSplitView on
 	if ch, th, ts := r.Channel(), r.Thread(), r.Message(); ch != "" && (th != "" || ts != "") &&
-		a.jumpInstead(ch, th, ts, views.FileFull, func() { a.Navigate(route) }) {
+		a.jumpInstead(ch, th, ts, a.jumpWhere(), func() { a.Navigate(route) }) {
 		return
 	}
-	// a conversation opened from inside the split view stays there
-	if split && a.pane == paneSplit {
+	// Slack's split modifier click (maybeOpenInSurface) opens the route
+	// in the split view, a file channel's toChannel as the split view's
+	// RedirectFileChannel says (OpenSplit); a conversation opened from
+	// inside the split view stays there
+	if split && (a.splitClick() || a.pane == paneSplit) {
 		a.OpenSplit(route)
 		return
 	}
@@ -109,7 +108,7 @@ func (a *App) Navigate(route string) {
 	if ch := r.Channel(); ch != "" && r.Thread() == "" && r.Message() == "" && a.redirectInstead(ch, "", fileTo{
 		canvas: a.OpenCanvasFull,
 		list:   a.OpenListFull,
-	}, func() { a.Navigate(route) }) {
+	}, func() { a.Navigate(route) }, nil) {
 		return
 	}
 	if r.Page() == "search" {
@@ -145,6 +144,7 @@ func (a *App) openDefault() {
 
 // Back goes back in history.
 func (a *App) Back() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	prev := a.router.Current()
 	for {
 		r, ok := a.router.Back()
@@ -163,6 +163,7 @@ func (a *App) Back() {
 
 // Forward goes forward in history.
 func (a *App) Forward() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	prev := a.router.Current()
 	for {
 		r, ok := a.router.Forward()

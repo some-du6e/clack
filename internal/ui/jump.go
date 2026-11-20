@@ -24,13 +24,11 @@ func (a *App) jumpToMessage(ch, ts, thread string) {
 	if ch == "" {
 		return
 	}
-	// a file channel's message is its canvas or its list, from wherever
-	// the jump starts (canvas_open.go); the split modifier click takes the
-	// split view's rule instead (OpenSplit). This whole jump is the
-	// fallback for a file that turns out to be neither, so a thread still
-	// opens at the reply
-	if (thread != "" || ts != "") && !a.splitClick() &&
-		a.jumpInstead(ch, thread, ts, views.FileFull, func() { a.jumpToMessage(ch, ts, thread) }) {
+	// a file channel's message is its canvas or its list, in the
+	// container the jump starts in (canvas_open.go jumpWhere). This whole
+	// jump is the fallback for a file that turns out to be neither, so a
+	// thread still opens at the reply
+	if (thread != "" || ts != "") && a.jumpInstead(ch, thread, ts, a.jumpWhere(), func() { a.jumpToMessage(ch, ts, thread) }) {
 		return
 	}
 	prev := a.router.Current()

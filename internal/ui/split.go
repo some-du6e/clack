@@ -229,7 +229,7 @@ func (a *App) OpenSplit(route string) {
 			}
 			a.OpenList(fid)
 		},
-	}, func() { a.OpenSplit(route) }) {
+	}, func() { a.OpenSplit(route) }, nil) {
 		return
 	}
 	s := &a.split
@@ -257,6 +257,7 @@ func (a *App) OpenSplit(route string) {
 // the primary view. Its conversations save their drafts and go, as
 // Slack's view unmounts.
 func (a *App) CloseSplit() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	s := &a.split
 	if len(s.stack) == 0 {
 		return
@@ -303,6 +304,7 @@ func (a *App) PaneBack() bool {
 // GoPaneBack goes back in the split view or the secondary pane
 // (FlexpaneBackButton).
 func (a *App) GoPaneBack() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	if a.pane != paneSplit {
 		if a.secondary.kind == secThread && a.secondary.prev != nil {
 			a.leaveThreadRoute(a.secondary.channel, a.secondary.ts)

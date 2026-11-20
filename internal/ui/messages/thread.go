@@ -340,6 +340,8 @@ type HeaderSubtitle struct {
 	Link bool
 	// File: a canvas's SmallFileEntity, Icon in its 20px box or the image
 	// Emoji instead, then the title Spans (Text their plain text) in bold.
+	// Without File, Spans is another file channel's name with its emoji
+	// (ChannelName's FormatText), drawn in place of Text.
 	File  bool
 	Emoji string
 	Spans []richtext.Span
@@ -436,6 +438,13 @@ func (v *ThreadView) subtitleWidth(gtx layout.Context, th *theme.Theme) int {
 	}
 	ns := textStyle{size: 13, lineH: 18}
 	w := measure(gtx, th, ns, sub.Text).X
+	if len(sub.Spans) > 0 { // a file channel's name with its emoji (thread_file.go)
+		m := op.Record(gtx.Ops)
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(1<<20, gtx.Sp(unit.Sp(ns.lineH)))}
+		w = v.fileTitle(g, th, sub.Spans, ns).Size.X
+		m.Stop()
+	}
 	if sub.Icon != "" {
 		w += gtx.Sp(unit.Sp(ns.size)) + dp(gtx, 2)
 	}
@@ -722,6 +731,9 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 	if !ok || maxX <= x {
 		return
 	}
+	// a known file's permalink comes from the file, not the root
+	// (O+gL: getFilePermalink with focus_thread_ts)
+	link = link || sub.File || sub.Icon == "lists"
 	if link && v.nameBtn.Clicked(gtx) {
 		v.h.Navigate("c/" + v.ch + "/m/" + v.ts)
 	}
@@ -766,6 +778,9 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 			g.Constraints.Max.X = max(0, gtx.Constraints.Max.X-ix)
 			td := at(g, ix, 0, func(gtx layout.Context) layout.Dimensions {
 				name := func(gtx layout.Context) layout.Dimensions {
+					if len(sub.Spans) > 0 { // ChannelName formats a file channel's emoji (16px)
+						return v.fileTitle(gtx, th, sub.Spans, ns)
+					}
 					return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, sub.Text) })
 				}
 				if nst.Active() {

@@ -122,20 +122,27 @@ func Of(id string, ic core.InlineChannel, view func(name string) string) Ent {
 	if !ic.Private {
 		e.Disp = "#" + name
 	}
+	// getChannelIconType: archived (or frozen) first, then a file
+	// channel's file, then private
 	switch {
-	case ic.Doc == "canvas":
-		e.Icon = "canvas"
-	case ic.Doc == "list":
-		e.Icon = "lists"
 	case ic.Archived:
 		e.Icon, e.Text = "archive", name+" "+i18n.T("search", "(archived)")
 		if ic.Private {
 			e.Icon = "archive-filled"
 		}
+	case ic.Doc == "canvas":
+		e.Icon = "canvas"
+	case ic.Doc == "list":
+		e.Icon = "lists"
+	case ic.Doc == "file":
+		e.Icon = "file"
 	case ic.Private:
 		e.Icon = "lock-filled"
 	default:
 		e.Text = "#" + name
+	}
+	if ic.Doc != "" && !ic.Archived && name == ic.Name {
+		e.Spans = ic.Spans // ChannelName's title or emoji (a name a plugin changed is text)
 	}
 	return e
 }

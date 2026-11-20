@@ -93,6 +93,7 @@ type canvasJumpState struct {
 type fileWait struct {
 	gen      uint64
 	ch, at   string                 // the file channel, and the message whose document_mention may name its canvas
+	jump     bool                   // a jump (jumpToMessage), else a redirect (RedirectFileChannel)
 	open     func(fid, kind string) // the file is a canvas ("canvas") or a list ("list")
 	fallback func()                 // the conversation, when the file is neither or files.info never answers
 	still    func() bool            // whether the navigation still stands (Activity's item still open); nil: no such check
@@ -244,7 +245,15 @@ func (a *App) OpenSavedInHome(ch, ts string) bool {
 			a.openFileThreadAt(ch, root, ts)
 		},
 		list: func(fid string) { a.listJump(fid, ch, "", ts, views.FileFull, nil) },
-	}, func() { a.Navigate("c/" + ch + "/m/" + ts) })
+	}, func() { a.Navigate("c/" + ch + "/m/" + ts) }, nil)
+}
+
+// activityStill is a late navigation's still for the column: whether the
+// Activity item open now (an inbox click's) is still the open one; a
+// deselect, another item or a tab switch drops the navigation.
+func (a *App) activityStill() func() bool {
+	key := a.activityOpened()
+	return func() bool { return a.activityOpened() == key }
 }
 
 // activityOpened is the Activity page's open item ("" for none).
@@ -268,11 +277,14 @@ func (a *App) PaneFile() (string, bool) {
 // jump opened. Slack's openDoc and the list's itemDetailsInPrimary put it
 // in Primary and leave the inbox in the Sidebar.
 func (a *App) FilePane(fileID string) layout.Widget {
+	// what the jump opened, kept with the widget: the pane redraws it while
+	// the next jump resolves (Activity.pane), when the state says that one
+	st := a.canvasJumpsOf()
+	list, rec := st.paneKind == "list" && st.paneFile == fileID, st.paneRec
 	return func(gtx layout.Context) layout.Dimensions {
-		st := a.canvasJumpsOf()
 		st.paneSeq = a.FrameSeq()
-		if st.paneKind == "list" && st.paneFile == fileID {
-			return a.activityList(fileID, st.paneRec).Layout(gtx)
+		if list {
+			return a.activityList(fileID, rec).Layout(gtx)
 		}
 		return a.activityCanvas(fileID).Layout(gtx)
 	}
@@ -357,15 +369,18 @@ func (a *App) fileJumpOf(ch, thread, ts string, where views.FileWhere, fallback 
 // Channel view's toChannel, else its toMessage): to's canvas or list
 // opens instead, once the file is known. fallback is the navigation
 // itself, guards off, for a file that turns out to be neither. It reports
-// whether the navigation is the file's.
-func (a *App) redirectInstead(ch, ts string, to fileTo, fallback func()) bool {
-	return a.fileWaitFor(ch, ts, func(fid, kind string) {
+// whether the navigation is the file's. still is whether it still stands
+// when it ends late (nil: until the next navigation). A canvas Slack
+// Connect keeps from the viewer is no redirect (fileIsCanvas reads mode
+// quip): the conversation opens.
+func (a *App) redirectInstead(ch, ts string, to fileTo, fallback func(), still func() bool) bool {
+	return a.fileWaitForAs(ch, ts, false, func(fid, kind string) {
 		if kind == "list" {
 			to.list(fid)
 			return
 		}
 		to.canvas(fid)
-	}, fallback, nil)
+	}, fallback, still)
 }
 
 // fileWaitFor runs open on ch's file once its kind is known (core
@@ -373,17 +388,23 @@ func (a *App) redirectInstead(ch, ts string, to fileTo, fallback func()) bool {
 // reports false for a conversation that is no canvas's or list's file
 // channel, and while a fallback runs.
 func (a *App) fileWaitFor(ch, at string, open func(fid, kind string), fallback func(), still func() bool) bool {
+	return a.fileWaitForAs(ch, at, true, open, fallback, still)
+}
+
+// fileWaitForAs is fileWaitFor for a jump (jumpToMessage, which opens a
+// blocked canvas too: isBlockedExternalCanvas) or a redirect.
+func (a *App) fileWaitForAs(ch, at string, jump bool, open func(fid, kind string), fallback func(), still func() bool) bool {
 	c := a.Core()
 	st := a.canvasJumpsOf()
 	if c == nil || ch == "" || st.bypass {
 		return false
 	}
-	fid, kind, wait := c.FileChannelKind(ch, at)
+	fid, kind, wait := a.fileKind(ch, at, jump)
 	switch {
 	case wait:
 		st.gen++
 		gen := st.gen
-		st.waiting[fid] = fileWait{gen: gen, ch: ch, at: at, open: open, fallback: fallback, still: still, split: a.pane == paneSplit}
+		st.waiting[fid] = fileWait{gen: gen, ch: ch, at: at, jump: jump, open: open, fallback: fallback, still: still, split: a.pane == paneSplit}
 		time.AfterFunc(canvasWaitLimit, func() { a.Post(func() { a.canvasWaitOver(fid, gen) }) })
 		return true
 	case kind == "":
@@ -391,6 +412,17 @@ func (a *App) fileWaitFor(ch, at string, open func(fid, kind string), fallback f
 	}
 	open(fid, kind)
 	return true
+}
+
+// fileKind is core's FileChannelKind as a jump or a redirect reads it: a
+// redirect takes a canvas Slack Connect blocks for no canvas.
+func (a *App) fileKind(ch, at string, jump bool) (fid, kind string, wait bool) {
+	c := a.Core()
+	fid, kind, wait = c.FileChannelKind(ch, at)
+	if !jump && kind == "canvas" && c.CanvasBlocked(fid) {
+		return fid, "", false
+	}
+	return fid, kind, wait
 }
 
 // canvasJump opens canvas fid where a jump to ch's thread or message ts
@@ -437,6 +469,16 @@ func (a *App) openCanvasTarget(fid, ch, sec, comment string, where views.FileWhe
 		a.Invalidate()
 	case views.FileFull:
 		a.OpenCanvasAt(fid, sec, true)
+	case views.FileInSplit:
+		// a jump from the split view stays there: a comment's thread on its
+		// back stack (toQuipCommentThread), else the canvas in the side
+		// panel, Clack's split view holding conversations only
+		if comment != "" {
+			a.inSplitIf(true, func() { a.OpenSplit("c/" + ch + "/t/" + comment) })
+			return
+		}
+		a.OpenCanvasAt(fid, sec, false)
+		return
 	default:
 		a.OpenCanvasAt(fid, sec, false)
 	}
@@ -547,14 +589,26 @@ func (a *App) canvasFallback(f func()) {
 }
 
 // inSplitIf runs f in the split view when split (a navigation that
-// started there ends late) and the split view is still open: its back
-// stack keeps the view the navigation started from.
+// started there ends late), its back stack keeping the view the
+// navigation started from. A split view closed since drops the
+// navigation: it never reopens one, nor lands outside it.
 func (a *App) inSplitIf(split bool, f func()) {
-	if split && a.splitOpen() {
+	switch {
+	case !split:
+		f()
+	case a.splitOpen():
 		a.inPane(paneSplit, f)
-		return
 	}
-	f()
+}
+
+// jumpWhere is where a jump from the container being drawn opens a file
+// (getTargetContainer): the split view's stand-ins from the split view,
+// else the main view.
+func (a *App) jumpWhere() views.FileWhere {
+	if a.pane == paneSplit {
+		return views.FileInSplit
+	}
+	return views.FileFull
 }
 
 // canvasWaitOver ends a navigation that waited canvasWaitLimit for its
@@ -589,7 +643,7 @@ func (a *App) canvasJumpNames(ids []string) {
 		if w.gen != st.gen || w.still != nil && !w.still() {
 			continue // another navigation or click since
 		}
-		switch fid, kind, wait := a.Core().FileChannelKind(w.ch, w.at); {
+		switch fid, kind, wait := a.fileKind(w.ch, w.at, w.jump); {
 		case wait:
 			st.waiting[id] = w // still unknown: the next "names", or the wait's end
 		case kind != "":
