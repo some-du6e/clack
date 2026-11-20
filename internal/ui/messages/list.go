@@ -744,10 +744,23 @@ func (s *listState) sync(h Host, now time.Time) {
 	// it places the list itself.
 	var anchors []laidRow
 	stick, keep := false, false
+	// a place written since the last layout (the page keys, the
+	// scrollbar, ScrollPx) is where the list is: the last layout's rows
+	// on the line are where it was, and keeping one there took the list
+	// back. Its first item keeps the place, by key ("" with the place at
+	// the end: drawn back from the new last item).
+	written, writtenKey := false, ""
 	if s.laidOut && s.positioned && s.pendingJump == "" && s.place.key == "" {
-		if !handed && wasEnd && (!s.list.Position.BeforeEnd || s.gapNow() <= s.stickyPx) {
+		p := s.list.Position
+		switch {
+		case !handed && wasEnd && (!p.BeforeEnd || s.gapNow() <= s.stickyPx):
 			stick = true
-		} else {
+		case !samePos(p, s.laidPos):
+			written, keep = true, true
+			if p.First < len(s.items) {
+				writtenKey = s.items[max(0, p.First)].key
+			}
+		default:
 			anchors = s.lineRows(s.linePx) // items still index the previous snapshot; the key is the ts
 			keep = true
 		}
@@ -758,6 +771,14 @@ func (s *listState) sync(h Host, now time.Time) {
 	s.dayKey = dk
 	s.dense = dense
 	anchored := false
+	if written {
+		if writtenKey == "" {
+			s.list.Position.First, anchored = len(s.items), true
+		} else if i := s.itemOfKey(writtenKey); i >= 0 {
+			s.list.Position.First, anchored = i, true
+		}
+		s.list.Position.BeforeEnd = true
+	}
 	if !stick {
 		// findAnchor: the first of the rows from the line down that's
 		// still there keeps its place (a row deleted off the line: the one
