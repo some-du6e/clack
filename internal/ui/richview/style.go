@@ -282,6 +282,9 @@ type Style struct {
 	// wordBytes is roughly what the current generation's words hold
 	wordBytes int
 	space     map[faceKey]spaceMetrics
+	// bound is each face's width bound for a printable ASCII rune
+	// (advBound, giant.go)
+	bound map[faceKey]float32
 }
 
 // NewStyle builds a Style with Slack's defaults.

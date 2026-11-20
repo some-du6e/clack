@@ -63,7 +63,7 @@ const (
 // Span is one run of inline content.
 type Span struct {
 	Kind  SpanKind
-	Text  string // display text, already unescaped and resolved ("@karim", "#general", "@here", formatted date); never contains "\n" (see Break)
+	Text  string // display text, already unescaped and resolved ("@karim", "#general", "@here", formatted date); never contains "\n" (see Break) unless Br is a raw kind
 	Style Style
 	URL   string // Link: target. Emoji: image URL (custom or Slack CDN standard).
 	ID    string // User/Channel/Usergroup id; Emoji: name (with ::skin-tone-N); Broadcast: "here"|"channel"|"everyone"; Date: unix seconds
@@ -98,7 +98,9 @@ type Span struct {
 
 	// Br (Break) is how a rich_text newline draws (BrKind). Every "\n"
 	// stays one Break whatever its Br, so plain text, copy and the
-	// newline budgets count the newlines the message has.
+	// newline budgets count the newlines the message has. On a Text span
+	// a raw kind (BrRaw…) says Text is a long rich_text element's text
+	// kept whole (rawtext.go), its newlines in it.
 	Br BrKind
 
 	// Pending (User, Channel, Usergroup in a canvas): the store can't
@@ -142,6 +144,18 @@ const (
 	BrPara
 	// BrNone draws nothing (a newline Slack's placeholders swallow).
 	BrNone
+
+	// The raw kinds go on a Text span, never on a Break: its Text is a
+	// rich_text text element's text kept whole, newlines and all, and it
+	// stands for the Text and Break spans the element would be cut into
+	// (rawtext.go: RawLines, Pieces). BrRaw is an element after its
+	// section's first, BrRawLead isFirstElementInSection, BrRawFirst
+	// isFirstElementInFirstSection, BrRawPre a rich_text_preformatted
+	// element's text (rawLineBreaks: each "\n" a BrPlain Break).
+	BrRaw
+	BrRawLead
+	BrRawFirst
+	BrRawPre
 )
 
 // BlockKind says what a block is.

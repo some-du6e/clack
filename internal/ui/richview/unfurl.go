@@ -406,6 +406,7 @@ func (l *lay) v3TitleRow(a *richtext.Attachment, title []richtext.Span, author s
 
 // spansWidth is the one-line width of spans in fs (no layout recorded).
 func (l *lay) spansWidth(ss []richtext.Span, fs *flowStyle) int {
+	ss = richtext.Expand(ss) // a raw span's lines (rawtext.go)
 	w := 0
 	for _, s := range ss {
 		switch s.Kind {

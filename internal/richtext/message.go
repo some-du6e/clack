@@ -31,7 +31,7 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	if m.Subtype == "message_deleted" || m.Subtype == "tombstone" {
 		return Doc{Blocks: []Block{tombstone("This message was deleted.")}}
 	}
-	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS}
+	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS, msgText: m.Text}
 	c.hintsFrom(m)
 	if len(m.Files) > 0 {
 		c.files = make(map[string]*slack.File, len(m.Files))

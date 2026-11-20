@@ -53,7 +53,7 @@ func TextyDelta(d richtext.Doc) string {
 		add(label, a)
 	}
 	spans := func(sp []richtext.Span, nl map[string]any) {
-		for _, s := range sp {
+		for _, s := range richtext.Expand(sp) { // a raw span's lines (richtext/rawtext.go)
 			switch s.Kind {
 			case richtext.Break:
 				add("\n", nl)
