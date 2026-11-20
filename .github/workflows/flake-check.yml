@@ -474,6 +474,9 @@ jobs:
       - name: "huddleui: Test Speaker"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestTestSpeakerIconLikeSlack|TestTestSpeakerKeepsTheMusic|TestSpeakerPickPlaysOnTheNewOutput|TestAudioSettingsMenu)$' ./internal/ui/huddleui
+      - name: "huddleui: the docked bar's states (Slack's HuddleBottomBar rule)"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestDockStatesLikeSlack|TestDockHiddenForAnExternalGuestLikeSlack)$' ./internal/ui/huddleui
       - name: "huddleui: the huddle window in your theme (Mesa llvmpipe)"
         if: ${{ !cancelled() }}
         env:

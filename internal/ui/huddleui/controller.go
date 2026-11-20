@@ -82,16 +82,21 @@ type Controller struct {
 	// notice (0: Slack's 30 s).
 	MissedAfter time.Duration
 
-	mu      sync.Mutex
-	wt      winTheme    // the main window's theme, for the huddle window (window_theme.go)
-	spk     speakerTest // Test Speaker's icon animation (testspeaker.go)
-	s       *huddle.Session
-	logFP   logFP        // the event log taut last got (eventlog.go)
-	alerts  huddleAlerts // displayAlertMessage's alerts (eventlog.go)
-	joining string       // channel being joined
-	live    map[string]liveRoom
-	seeded  bool
-	gen     uint64 // bumps on every change, for cheap redraw checks
+	mu  sync.Mutex
+	wt  winTheme    // the main window's theme, for the huddle window (window_theme.go)
+	spk speakerTest // Test Speaker's icon animation (testspeaker.go)
+	// the docked bar's collapsed states (dock.go dockCollapsed): leaving is
+	// the session Leave is ending (ENDING), barJoined that it started and
+	// the window hasn't had it yet (HuddleBottomBarContent's H)
+	leaving   *huddle.Session
+	barJoined bool
+	s         *huddle.Session
+	logFP     logFP        // the event log taut last got (eventlog.go)
+	alerts    huddleAlerts // displayAlertMessage's alerts (eventlog.go)
+	joining   string       // channel being joined
+	live      map[string]liveRoom
+	seeded    bool
+	gen       uint64 // bumps on every change, for cheap redraw checks
 
 	win  *window
 	inv  *incoming      // the incoming invite (invite.go)
@@ -298,6 +303,7 @@ func (c *Controller) Start(channel string) {
 	}
 	old := c.s
 	c.joining = channel
+	c.barJoined = true // from STARTING: the bar stays collapsed until the window has the call (dock.go)
 	c.mu.Unlock()
 	c.changed()
 	app := c.h.Core()
@@ -640,6 +646,9 @@ func (c *Controller) peersTick(s *huddle.Session, st huddle.State) {
 // Leave leaves the huddle you're in.
 func (c *Controller) Leave() {
 	if s := c.Session(); s != nil {
+		c.mu.Lock()
+		c.leaving = s // ENDING until it's over: the docked bar collapses (dock.go)
+		c.mu.Unlock()
 		go c.leave(s)
 	}
 }
@@ -666,6 +675,7 @@ func (c *Controller) ended(err error) {
 	c.mu.Lock()
 	s := c.s
 	c.s = nil
+	c.leaving = nil
 	w := c.win
 	c.win = nil
 	c.mu.Unlock()

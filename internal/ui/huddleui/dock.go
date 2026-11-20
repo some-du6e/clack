@@ -84,14 +84,41 @@ func (d *dockState) tip(id string) *popups.TipState {
 	return t
 }
 
+// dockCollapsed is HuddleBottomBarContent's U = S || B || H (render nMFj):
+// the huddle window is open (S, isHuddleWindowOpen; minimised too), the
+// huddle is starting or ending (B, isHuddleTransitionState: STARTING,
+// PENDING, COMPLETING_PRE_JOIN, ENDING), or it has just started and the
+// window hasn't had it yet (H: the state the bar saw last, W, was a
+// transition, it's STARTED now and the window isn't open; W only becomes
+// STARTED once the window is open in the call). Then it's the 48px bar:
+// the headphones, the title, "Bring huddle to front" and Leave.
+func (c *Controller) dockCollapsed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	open := c.win != nil
+	switch {
+	case c.s == nil:
+		return open || c.joining != "" // STARTING, PENDING
+	case c.leaving == c.s:
+		return true // ENDING
+	case open:
+		c.barJoined = false // W = STARTED: the window has had the call
+		return true
+	}
+	return c.barJoined
+}
+
 // DockHeight is the room the docked bar takes at the bottom of the main
 // window (0 when you're not in a huddle).
 func (c *Controller) DockHeight(gtx C) int {
-	if !c.Active() {
+	// HuddleBottomBar (render nMFj): `!_ && (p || u || c)`, the bar
+	// whenever you're in a huddle, except for an external guest when
+	// external huddles are on (_ = SfHq U)
+	if !c.Active() || c.selfExternalGuest() {
 		return 0
 	}
 	h := gtx.Dp(dockBar)
-	if c.WindowOpen() {
+	if c.dockCollapsed() {
 		h = gtx.Dp(dockCollapsed)
 	}
 	aw := gtx.Constraints.Max.X - 2*gtx.Dp(dockPad)
@@ -139,7 +166,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 		c.mu.Unlock()
 	}
 	d := &c.dock
-	collapsed := c.WindowOpen()
+	collapsed := c.dockCollapsed()
 	if d.open.Clicked(gtx) || d.card.Clicked(gtx) || d.micRow.Clicked(gtx) {
 		c.openOrRaise()
 	}
@@ -231,7 +258,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 	}
 	ox := lx - gtx.Dp(8) - ow
 	openTip := nsHuddles.T("Open Huddle in new window")
-	if collapsed {
+	if c.WindowOpen() { // `S ? "Bring huddle to front" : …` (the window's state, not the bar's shape)
 		openTip = nsHuddles.T("Bring huddle to front")
 	}
 	at(gtx, image.Pt(ox, by), image.Pt(ow, btnH), func(gtx C) D {
