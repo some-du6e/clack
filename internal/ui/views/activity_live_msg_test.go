@@ -1104,6 +1104,25 @@ func TestActivityLiveVoteSlicePatch(t *testing.T) {
 	}
 }
 
+// The same patch over a vote Activity fetched by id, its conversation's
+// history never loaded and its thread not cached: the plugins' messages
+// slice holds it too, as Slack's one messages store holds a message
+// fetchObjectWithId fetched beside the windows', so the row draws the
+// plugin's patch. The mirror built the slice from the windows and threads
+// alone, and Censorship and ShowRealUser never reached most Activity
+// mentions, Saved items and followed threads (the reviews).
+func TestActivityLiveSlicePatchReachesFetchedMessages(t *testing.T) {
+	e := newLmEnv(t, lmOpts{texts: true})
+	e.e.until(t, "the vote fetched", func() bool {
+		_, held := e.app.S.FindHeld(lmChan, lmVote)
+		return held
+	})
+	if _, ok := e.app.S.Find(lmChan, lmVote); ok {
+		t.Fatal("a window or a cached thread holds the vote: the test checks nothing")
+	}
+	e.e.until(t, "the plugin's patch on the fetched vote", func() bool { return strings.Contains(e.drawn(lmVote), "Ups: 1") })
+}
+
 // The same patch over a vote whose text is a fallback (its counts in its
 // blocks alone, where the patch's "Ups" goes): a reaction while the
 // plugins' JS is busy leaves the row drawing the plugin's view, never the
