@@ -41,7 +41,9 @@ type AppDM struct {
 	aboutV  *richview.View
 	page    *popups.AboutPage // the About page (agent_about_page)
 	loading bool
-	opened  map[string]bool
+	// aboutLoading: the older About tab's profile is being fetched
+	aboutLoading bool
+	opened       map[string]bool
 	// cardWait: the app profile the Tasks tab's rule reads is being
 	// fetched (AppCardOf)
 	cardWait bool
@@ -416,10 +418,13 @@ func (d *AppDM) empty(gtx C, msg string) D {
 	return D{Size: sz}
 }
 
+// loadAbout asks for the older About tab's profile once: LayoutBody calls
+// it on every frame until the answer, so it returns while one is out.
 func (d *AppDM) loadAbout() {
-	if d.about != nil {
+	if d.about != nil || d.aboutLoading {
 		return
 	}
+	d.aboutLoading = true
 	bot, app := "", d.home.AppID
 	if c := d.h.Core(); c != nil {
 		if u, ok := c.User(d.user.ID); ok {
@@ -430,6 +435,7 @@ func (d *AppDM) loadAbout() {
 	run(d.h, 15*time.Second, func(ctx context.Context) (core.AppProfile, error) {
 		return ix.AppProfileOf(ctx, bot, app)
 	}, func(p core.AppProfile, err error) {
+		d.aboutLoading = false
 		if err != nil {
 			p = core.AppProfile{Name: firstNonEmpty(d.user.RealName, d.user.Name)}
 		}
