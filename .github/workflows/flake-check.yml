@@ -1459,7 +1459,14 @@ jobs:
   # answering after 1 s, its title naming the group's members (one the
   # sidebar already lists too); ten mentions at once; members still
   # unknown after the wait (no id, a label kept); a DM's partner; no toast
-  # for a message deleted while it waited. Dispatch with only=toast-names.
+  # for a message deleted while it waited. Names as Slack's: a group DM's
+  # title is getMpimDisplayNameAlphabetical (sorted, display_real_names,
+  # "Name hidden"), the sender and a DM's partner follow display_real_names,
+  # a mention getMemberMentionName or the mentions-real-names rule; a
+  # member the viewer hid reads "Hidden user" (no @) and sends no toast;
+  # members users/info never brought keep the sidebar's name or the slug's
+  # handles, never the slug; the title's people come before 100+ mentions.
+  # Dispatch with only=toast-names.
   toast-names:
     if: ${{ !inputs.only || startsWith('toast-names', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1476,8 +1483,8 @@ jobs:
       - name: "ui: a toast's mention of a member the store didn't hold (one verbose run, then COUNT)"
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestNotify(Names|Drops)' ./internal/ui || rc=1
-          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestNotify(Names|Drops)' ./internal/ui || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestNotify(Names|Drops|Members)' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestNotify(Names|Drops|Members)' ./internal/ui || rc=1
           exit $rc
 
   # activity-stamp: an activity entry whose message is deleted, or edited
@@ -1592,8 +1599,11 @@ jobs:
   # activity-edits: an edit of an Activity entry's message draws in its
   # row in the frame after the socket brings it (Slack's Activity row reads
   # the live message): someone's mention edited every 500 ms with the
-  # Activity page open, frames drawn when the app asks; natively and under
-  # messages-slice and component patches. Dispatch with only=activity-edits.
+  # Activity page open, frames drawn when the app asks; natively, under a
+  # messages-slice patch, and under a patch of the components an Activity
+  # row draws through (ActivityItem, ActivityThread, the row contents),
+  # where a JS tree of the revision before can hold an edit back.
+  # Dispatch with only=activity-edits.
   activity-edits:
     if: ${{ !inputs.only || startsWith('activity-edits', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1651,7 +1661,8 @@ jobs:
   # views-rewrites: a view a plugin rewrites outside the text (Censorship's
   # mask in blocks, ShowRealUser's sender) stands while the plugins' JS is
   # busy: a reaction never brings core's copy back in the views drawn from
-  # viewMsg. Dispatch with only=views-rewrites.
+  # viewMsg; and a message fetched by id (Activity's hydration) reaches the
+  # plugins' messages slice. Dispatch with only=views-rewrites.
   views-rewrites:
     if: ${{ !inputs.only || startsWith('views-rewrites', inputs.only) }}
     runs-on: ubuntu-latest

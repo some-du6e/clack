@@ -1071,10 +1071,19 @@ overflowed the 256-entry log the page read. Now:
   the message lists' row.sentFor keeps a set per level). A plugin's
   rewrite in ActivityItem (Slick Censorship's mask) is then never taken
   for props the row sent, also when another plugin patches the components
-  inside it (BetterBlock). Under a text patch of the messages slice
-  (Message Logger's kind), the row draws the plugins' view as the lists
-  do, converted again only for a new revision of the message: it follows
-  within a JS round trip, never drawing the text without the patch.
+  inside it (BetterBlock). Under a patch of the messages slice (Message
+  Logger's text mark, Censorship's mask, ShowRealUser's sender), the
+  views drawn from viewMsg (Activity, Threads, Saved, Pins, Unreads) take
+  the plugins' view as the lists' applyView does (views/taut.go). A
+  revision JS hasn't answered draws core's copy only when the plugins'
+  last view drew the same (viewDraws: the text, the sender's fields, the
+  edited stamp, the reply fields, the blocks' text); a view that rewrote
+  any of them stands until JS answers, so a reaction's or a reply's mark
+  never brings the relay bot's name or the masked word back. The
+  plugins' messages slice holds the messages fetched by id too
+  (Activity's and Saved's hydration, the Threads view's getView), as
+  Slack's one messages store does (taut/mirror.go bucket), so those
+  views' messages get the plugins' view at all.
 - The Threads view and the Saved page take each change into their data
   once (threads_live.go, later_live.go), with no per-frame copies, and a
   load that lands takes what changed after its request went out. A
