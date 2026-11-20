@@ -234,7 +234,12 @@ func TestThreadsBannerCloseLikeSlack(t *testing.T) {
 	v.list.Position = layout.Position{First: 1} // the read thread at the top, the unread one above the list
 	e.until(t, "↑ 1 unread thread", func() bool { return slices.Equal(v.ban.above, []string{key}) })
 	at := thrFind(t, e, &v.ban.up.jump)
-	e.click(thrHoverAt(t, e, &v.ban.up.close, at.Y))
+	p := thrHoverAt(t, e, &v.ban.up.close, at.Y)
+	clicked := time.Now()
+	e.click(p)
+	if h.framesAsked(clicked, time.Now()) == 0 {
+		t.Error("the close asked the window for no frame (the router mid-layout instead?)")
+	}
 	e.until(t, "subscriptions.thread.clearAll", func() bool { return fs.ThreadClears() == 1 })
 	e.until(t, "the thread read by the server's thread_marked", func() bool {
 		return v.lastRead(thrItemOf(v, key)) == "1762600200.000100"
@@ -256,6 +261,12 @@ func TestThreadsBannerCloseLikeSlack(t *testing.T) {
 		if w, ok := e.r.WakeupTime(); ok && !w.IsZero() && w.Sub(end).Abs() < 50*time.Millisecond {
 			t.Fatalf("the hide asks for a frame at its end (%v)", w)
 		}
+	}
+	// nor through the window (a timer for the 5 s): nothing else runs then
+	// (the counts refresh came 1.5 s after the close)
+	time.Sleep(time.Until(end.Add(150 * time.Millisecond)))
+	if n := h.framesAsked(end.Add(-20*time.Millisecond), end.Add(120*time.Millisecond)); n != 0 {
+		t.Errorf("the view asked the window for %d frames at the hide's end", n)
 	}
 }
 
@@ -415,10 +426,26 @@ func TestThreadsBannerJumpUnlaidCardLikeSlack(t *testing.T) {
 	if v.cards[key] != nil {
 		t.Fatal("the fourth thread's card was laid out before the jump")
 	}
-	e.click(thrFind(t, e, &v.ban.down.jump))
-	for range 3 {
-		e.frame()
+	// the click's frame (the jump to the card's top), then the frame that
+	// lays the card out and jumps again, asking the window for the next
+	pos := thrFind(t, e, &v.ban.down.jump)
+	pt := f32.Pt(float32(pos.X), float32(pos.Y))
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pt})
+	e.frame()
+	if v.ban.jumpRow == "" {
+		t.Fatal("the jump to a card never laid out left nothing to jump to again")
 	}
+	before := time.Now()
+	e.frame()
+	if v.ban.jumpRow != "" {
+		t.Error("the card's layout didn't bring the jump again")
+	}
+	if h.framesAsked(before, time.Now()) == 0 {
+		t.Error("the jump again asked the window for no frame to draw it")
+	}
+	e.frame()
 	row := key + "-" + reply
 	if y, ok, _ := v.kb.top(row); !ok || y < 99 || y > 101 {
 		t.Errorf("the jump left the divider at y=%d (laid out %v), want 100: Slack scrolls to the divider's key, not the card's top", y, ok)

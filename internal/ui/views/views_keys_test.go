@@ -36,9 +36,31 @@ type kbHost struct {
 	undos   []string
 	undo    func()
 	away    atomic.Bool // the window unfocused (UserAttention false)
+	frames  []time.Time // when the view asked the window for a frame (Invalidate)
 }
 
 func (h *kbHost) UserAttention() bool { return !h.away.Load() }
+
+// Invalidate notes the view asking the window for a frame.
+func (h *kbHost) Invalidate() {
+	h.mu.Lock()
+	h.frames = append(h.frames, time.Now())
+	h.mu.Unlock()
+}
+
+// framesAsked is how many frames the view asked the window for in
+// [from, to].
+func (h *kbHost) framesAsked(from, to time.Time) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, at := range h.frames {
+		if !at.Before(from) && !at.After(to) {
+			n++
+		}
+	}
+	return n
+}
 
 func (h *kbHost) Navigate(r string) {
 	h.mu.Lock()
