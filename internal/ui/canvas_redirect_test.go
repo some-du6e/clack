@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"gioui.org/gpu/headless"
+	"gioui.org/io/key"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -25,6 +26,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/canvasview"
 	"github.com/some-du6e/clack/internal/ui/listview"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
 
@@ -357,57 +359,155 @@ func TestListFileChannelOpensList(t *testing.T) {
 	}
 }
 
-// A comment link clicked inside the split view is jumpToMessage, which
-// opens the canvas with the comment thread wherever it starts
-// (openDocWithThreadTs has no split routing): the canvas's full view and
-// the thread in the column, the split view keeping its own view. Only the
-// split modifier click opens the thread in the split view.
-func TestCanvasCommentLinkInSplitOpensCanvas(t *testing.T) {
-	e := newActShell(t)
-	cmSeedComments(e)
-	e.a.Navigate("activity")
-	e.frames(3)
-	e.a.OpenSplit("c/" + fakeslack.ViewsChannel)
-	e.frames(3)
-	route := "c/" + fakeslack.FileChanLaunch + "/t/" + fakeslack.CommentUnread
-	e.a.inPane(paneSplit, func() { e.a.Navigate(route) })
-	fullCanvas(e, fakeslack.CanvasChannel)
-	e.until("the comment thread in the column", crSecThread(e, fakeslack.FileChanLaunch, fakeslack.CommentUnread))
-	if st := e.a.split.stack; len(st) != 1 || st[0] != Route("c/"+fakeslack.ViewsChannel) {
-		t.Errorf("the split view holds %v, want its own c/%s", st, fakeslack.ViewsChannel)
+// A jump clicked inside the split view stays there (getTargetContainer:
+// shouldForceOpenInSplitView for a Split source): a comment link's
+// thread goes on the split view's back stack, through Navigate or
+// jumpToMessage, and a mention link's canvas goes in the side panel at
+// the mention's section, Clack's split view holding conversations only.
+// The split modifier click on a file channel's link is the plain jump
+// (openPermalinkInClient's "message" case drops shouldOpenInSplitView).
+func TestFileLinkInSplitStaysInSplit(t *testing.T) {
+	base := Route("c/" + fakeslack.ViewsChannel)
+	comment := Route("c/" + fakeslack.FileChanLaunch + "/t/" + fakeslack.CommentUnread)
+	splitEnv := func(t *testing.T) *actShellEnv {
+		e := newActShell(t)
+		cmSeed(e)
+		cmSeedComments(e)
+		e.a.Navigate("activity")
+		e.frames(3)
+		e.a.OpenSplit(string(base))
+		e.frames(3)
+		return e
 	}
+	onStack := func(e *actShellEnv) func() bool {
+		return func() bool {
+			st := e.a.split.stack
+			return len(st) == 2 && st[0] == base && st[1] == comment
+		}
+	}
+	noCanvas := func(t *testing.T, e *actShellEnv) {
+		t.Helper()
+		if r := e.a.router.Current(); canvasRouteID(r) != "" {
+			t.Errorf("the main view went to the canvas %s", r)
+		}
+	}
+	t.Run("comment link", func(t *testing.T) {
+		e := splitEnv(t)
+		e.a.inPane(paneSplit, func() { e.a.Navigate(string(comment)) })
+		e.until("the comment thread on the split view's stack", onStack(e))
+		e.frames(5)
+		noCanvas(t, e)
+	})
+	t.Run("comment jump", func(t *testing.T) {
+		e := splitEnv(t)
+		e.a.inPane(paneSplit, func() {
+			e.a.jumpToMessage(fakeslack.FileChanLaunch, fakeslack.CommentUnread, fakeslack.CommentUnread)
+		})
+		e.until("the comment thread on the split view's stack", onStack(e))
+		e.frames(5)
+		noCanvas(t, e)
+	})
+	t.Run("mention link", func(t *testing.T) {
+		e := splitEnv(t)
+		e.a.inPane(paneSplit, func() {
+			e.a.Navigate("c/" + fakeslack.CanvasMentionChannel + "/m/" + fakeslack.CanvasMentionTS)
+		})
+		var v *canvasview.View
+		e.until("the canvas in the side panel", func() bool {
+			cv, ok := e.a.secondary.view.(*canvasview.View)
+			v = cv
+			return e.a.secondary.open() && ok && cv.ID() == fakeslack.CanvasMentionFile
+		})
+		cmScrolledTo(e, v)
+		if st := e.a.split.stack; len(st) != 1 || st[0] != base {
+			t.Errorf("the split view holds %v, want its own %s", st, base)
+		}
+		noCanvas(t, e)
+	})
+	t.Run("split click", func(t *testing.T) {
+		e := splitEnv(t)
+		e.a.WithClickMods(shortcut.Mod()|key.ModAlt, func() { e.a.Navigate(string(comment)) })
+		fullCanvas(e, fakeslack.CanvasChannel)
+		e.until("the comment thread in the column", crSecThread(e, fakeslack.FileChanLaunch, fakeslack.CommentUnread))
+		if st := e.a.split.stack; len(st) != 1 || st[0] != base {
+			t.Errorf("the split click put %v on the split view, want the plain jump", st)
+		}
+	})
 }
 
-// A split view navigation that waits for files.info and ends in the
-// conversation (no file, as files.info never answers) still goes on the
-// split view's back stack: Back returns to the view it started from.
+// A split view navigation that waits for files.info lands on the split
+// view's back stack, whichever way it ends: the conversation when
+// files.info never answers, the thread view on the message when it does.
+// A split view closed meanwhile drops it: nothing reopens it, nothing
+// opens elsewhere.
 func TestSplitFileWaitKeepsBackStack(t *testing.T) {
-	e := newActShell(t)
-	cmSeedConv(e)
-	e.fs.SetFault("files.info", fakeslack.Fault{HangUp: true})
-	e.ca.ServeLookups()
-	t.Cleanup(e.ca.StopTraffic)
-	e.a.Navigate("activity")
-	e.frames(3)
-	e.a.OpenSplit("c/" + fakeslack.ViewsChannel)
-	e.frames(3)
-	route := Route("c/" + fakeslack.CanvasMentionChannel)
-	e.a.inPane(paneSplit, func() { e.a.OpenSplit(string(route)) })
-	e.frames(2)
-	if n := len(e.a.split.stack); n != 1 {
-		t.Fatalf("the split view moved on before files.info: %v", e.a.split.stack)
+	base := Route("c/" + fakeslack.ViewsChannel)
+	splitEnv := func(t *testing.T, fault fakeslack.Fault) *actShellEnv {
+		e := newActShell(t)
+		cmSeedConv(e)
+		e.fs.SetFault("files.info", fault)
+		e.ca.ServeLookups()
+		t.Cleanup(e.ca.StopTraffic)
+		crNames(e)
+		e.a.Navigate("activity")
+		e.frames(3)
+		e.a.OpenSplit(string(base))
+		e.frames(3)
+		return e
 	}
-	deadline := time.Now().Add(canvasWaitLimit + 3*time.Second)
-	for len(e.a.split.stack) == 1 {
-		if time.Now().After(deadline) {
-			t.Fatalf("the split view still holds %v after the wait", e.a.split.stack)
+	top := func(e *actShellEnv) Route {
+		if n := len(e.a.split.stack); n > 0 {
+			return e.a.split.stack[n-1]
 		}
-		e.frame()
-		time.Sleep(20 * time.Millisecond)
+		return ""
 	}
-	if st := e.a.split.stack; len(st) != 2 || st[0] != Route("c/"+fakeslack.ViewsChannel) || st[1] != route {
-		t.Errorf("the split view holds %v, want [c/%s %s]", st, fakeslack.ViewsChannel, route)
-	}
+	t.Run("never answers", func(t *testing.T) {
+		e := splitEnv(t, fakeslack.Fault{HangUp: true})
+		route := Route("c/" + fakeslack.CanvasMentionChannel)
+		e.a.inPane(paneSplit, func() { e.a.OpenSplit(string(route)) })
+		e.frames(2)
+		if top(e) != base {
+			t.Fatalf("the split view moved on before files.info: %v", e.a.split.stack)
+		}
+		deadline := time.Now().Add(canvasWaitLimit + 3*time.Second)
+		for top(e) != route {
+			if time.Now().After(deadline) {
+				t.Fatalf("the split view holds %v after the wait, want %s on top", e.a.split.stack, route)
+			}
+			e.frame()
+			time.Sleep(20 * time.Millisecond)
+		}
+		if st := e.a.split.stack; len(st) != 2 || st[0] != base {
+			t.Errorf("the split view holds %v: the late conversation replaced its back stack", st)
+		}
+	})
+	t.Run("answers late", func(t *testing.T) {
+		e := splitEnv(t, fakeslack.Fault{Delay: 600 * time.Millisecond})
+		ch, ts := fakeslack.CanvasMentionChannel, fakeslack.CanvasMentionTS
+		e.a.inPane(paneSplit, func() { e.a.OpenSplit("c/" + ch + "/m/" + ts) })
+		want := Route("c/" + ch + "/t/" + ts)
+		e.until("the thread view on the split view's stack", func() bool { return top(e) == want })
+		if st := e.a.split.stack; len(st) != 2 || st[0] != base {
+			t.Errorf("the split view holds %v: the late thread view replaced its back stack", st)
+		}
+	})
+	t.Run("closed meanwhile", func(t *testing.T) {
+		e := splitEnv(t, fakeslack.Fault{Delay: 600 * time.Millisecond})
+		e.a.inPane(paneSplit, func() { e.a.OpenSplit("c/" + fakeslack.CanvasMentionChannel) })
+		e.frames(2)
+		e.a.CloseSplit()
+		e.until("files.info's answer", func() bool {
+			_, known := e.ca.S.KnownCanvasRef(fakeslack.CanvasMentionFile)
+			return known
+		})
+		e.frames(20)
+		if st := e.a.split.stack; len(st) != 0 {
+			t.Errorf("the closed split view reopened on %v", st)
+		}
+		if cv, ok := e.a.secondary.view.(*canvasview.View); ok && e.a.secondary.open() {
+			t.Errorf("the dropped navigation opened canvas %s in the side panel", cv.ID())
+		}
+	})
 }
 
 // crCommentReply opens the comment reply's item (AddCanvasCommentActivity:

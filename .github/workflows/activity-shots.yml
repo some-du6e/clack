@@ -103,7 +103,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack|TestActivityCanvasMention|TestActivityCanvasCommentClicks|TestCanvasMention|TestCanvasJump|TestCanvasCommentJumpOpensCanvas|TestCanvasCommentSplitOpensThread|TestCanvasTabTitleEmojiLate|TestResolveEmojiKeepsHiddenEmoji|TestFileChannelThreadHeader|TestListFileChannelOpensList|TestCanvasCommentLinkInSplitOpensCanvas|TestSplitFileWaitKeepsBackStack|TestActivityPane|TestSidebarDocsListsPinOnly|TestLaterRowOpensSavedCanvasMention' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack|TestActivityCanvasMention|TestActivityCanvasCommentClicks|TestCanvasMention|TestCanvasJump|TestCanvasCommentJumpOpensCanvas|TestCanvasCommentSplitOpensThread|TestCanvasTabTitleEmojiLate|TestResolveEmojiKeepsHiddenEmoji|TestFileChannelThreadHeader|TestListFileChannelOpensList|TestFileLinkInSplitStaysInSplit|TestSplitFileWaitKeepsBackStack|TestActivityPane|TestSidebarDocsListsPinOnly|TestLaterRowOpensSavedCanvasMention|TestNavigationWaitDropped|TestHiddenFilesDontWait|TestNotificationOpensCanvasUnfocused|TestFileChannelOpeners' ./internal/ui/
       - name: the rail's Activity badge
         # activity_v2 at boot, badge_counts_updated, client.counts and a
         # mark read; light and dark rail crops with 1, 9, 10 and 99+
