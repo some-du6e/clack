@@ -22,7 +22,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_bounds*.go`, `app/internal/windows/clack_bounds.go`,
 `app/cocoatest/`, `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
-`internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`, `op/clack_whole.go`,
+`internal/ops/clack_size.go`, `internal/ops/reader.go`, `op/clack_size.go`, `op/clip/clack_size.go`, `op/clack_whole.go`,
 `io/input/clack_hover.go`, `io/input/clack_hover_test.go`,
 `font/opentype/opentype.go`, `io/input/pointer.go`, `io/input/key.go`,
 `io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
@@ -56,7 +56,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
 `io/input/clack_inputidle_test.go`,
 `io/input/clack_reset.go`, `io/input/clack_reset_test.go`,
-`gesture/clack_reset_test.go` and
+`gesture/clack_reset_test.go`, `gpu/headless/clack_size.go`,
+`gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -139,6 +140,26 @@ in place.
 Test: `internal/ui/canvasview` `TestLayoutPanicRecovered` (a panic with
 pushed transforms, clips and an open macro inside a recording parent; the
 parent then pops and stops cleanly).
+
+Rollback's op keys (2026-11-19, inspect-blur-fast round 2; also
+`internal/ops/reader.go`). An op's key is its Ops, its offset there and
+the Ops' version, which only Reset bumps, and the GPU caches a path's
+vertices, bounds and hash by it. Clack's inspect tool draws each frozen
+frame as the frame's ops rolled back to their checkpoint with the tool's
+drawing appended: what it appends sits at the offsets the frame before's
+did, so a path there (a rounded rect, a stroke) would have been drawn as
+the one before it, cached by the same key (latent: the tool drew only
+plain rects, which aren't cached). Rollback now counts an epoch and keeps
+the lowest offset it went back to since the last Reset; the reader gives
+an op at or past that offset a key of the current epoch. Ops before it
+(the frozen frame itself) keep their keys and cache entries. canvasview's
+rollbacks never reached the GPU, so nothing changes for them.
+
+Test: `gpu/headless` `TestClackRollbackKeys` (a rounded rect and a stroke
+drawn at three places, each after a rollback to the same checkpoint, pixel
+for pixel what a new window draws; after each rollback only the overlay's
+two paths are built again, the content's path before the checkpoint stays
+cached: `ClackFrameStats().PathsBuilt` is 3 in the first frame, 2 after).
 
 ## 4. app: IgnoreGPUBlocklist
 
@@ -2453,3 +2474,55 @@ Enter and a its Leave. `gesture/clack_reset_test.go`
 `TestResetPointersClearsBodyHover`, slackc's `TestResetPointersLeavesTree`
 and `internal/ui`'s `TestInspectFreezeResetsHover`. On ci's linux-gio,
 windows-applog and macos jobs. Not in `UPSTREAM.patch`.
+
+## 52. gpu/headless: a window's framebuffer takes a new size
+
+`gpu/headless/clack_size.go` (new: `Window.SetSize`).
+
+A headless window had one size for its life: its framebuffer texture
+was made with it. Clack's inspect tool renders one shot per pick, each
+its own size, and made a window (a context, a device and a GPU) for
+every shot: 4 to 35 ms on WARP and llvmpipe, 1.2 s for the first in a
+process on llvmpipe (its shaders compiled), with its glyph paths and
+images uploaded afresh every time. `SetSize(width, height)` makes a
+framebuffer texture of that size on the window's device and lets the old
+one go; the context, the device and the GPU, with its caches, stay. A
+session of the tool makes its window as it starts, off the UI goroutine,
+and its one shot gives it the shot's size (`internal/ui/inspect`
+shooter.go): what the shot saves is the context made in the pick's wait.
+The kept caches would matter only to a session taking several shots, and
+a session takes one.
+
+Tests: `gpu/headless/clack_size_test.go` (`TestClackSetSize`: frames of
+three sizes through one window are pixel for pixel what new windows of
+those sizes draw, on the same GPU; the two paths drawn in every frame are
+built once, not again after a SetSize: `ClackFrameStats().PathsBuilt` is 1
+after each, the frame's own path; an empty size is refused), on ci's
+linux-gio (llvmpipe), windows-applog (WARP) and macos (Metal) jobs. Not
+in `UPSTREAM.patch`.
+
+Merging (2026-11-19). Patches 50 (thread-open-root), 51 (video-playback)
+and 52 were made side by side from the same ui, so the second branch to
+merge conflicts in this file (the file list at the top, and the sections
+at the end) and, with 51, on ci.yml's three `-run '^(…)$'
+gioui.org/gpu/headless` lists (linux-gio, windows-applog, macos), where 51
+adds `TestClackExternal*` and 52 `TestClackSetSize|TestClackRollbackKeys`.
+Keep both sides: both file lists' names, the sections in number order,
+and on each `-run` line the union of both alternations. Taking one side
+of a `-run` line leaves every job green with one patch's tests no longer
+run anywhere; `.github/scripts/headless-tests.py` (ci's linux-build)
+fails the push instead: every `TestClack` function in `gpu/headless`
+must be in all three lists, and the lists must match.
+
+As the branches stood on 2026-11-19: video-playback also carries §53
+(io/input, a tag's area: `io/input/clack_bounds*.go` in its file list),
+so its side of the closing hunk holds §51 and §53; split it to put §52
+between them (51, 52, 53). With thread-open-root, CLACK_PATCHES.md
+conflicts only in the closing sections, and flake-check.yml conflicts
+where both branches add jobs after the same one: the hunks interleave
+this branch's `inspect-blur-fast` job with thread-open-root's
+`thread-open-root` and `jump-reactions`, and keeping both sides hunk by
+hunk gives a workflow file GitHub rejects. Keep each job whole (each
+with its own `steps:` and `exit $rc`): the simplest way is one side's
+file with the other side's jobs appended whole, as this branch did with
+ui's `theme-contrast-4` and `fileurl-dotdot` in round 2.

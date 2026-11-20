@@ -87,6 +87,7 @@ type previewWindow struct {
 	devs   map[string][]huddle.AudioDevice
 	joined bool
 	fx     huddle.VideoEffect // the camera's background effect
+	insp   *winInspect        // the inspect tool in this window (inspect.go)
 }
 
 type previewClicks struct {
@@ -225,10 +226,12 @@ func (w *previewWindow) run() {
 	if closed {
 		ww.Perform(system.ActionClose)
 	}
+	w.insp = w.newInspect()
 	var ops op.Ops
 	for {
 		switch e := ww.Event().(type) {
 		case app.DestroyEvent:
+			w.insp.close()
 			w.p.Close()
 			w.c.mu.Lock()
 			if w.c.pwin == w {
@@ -237,12 +240,23 @@ func (w *previewWindow) run() {
 			w.c.mu.Unlock()
 			return
 		case app.FrameEvent:
-			gtx := app.NewContext(&ops, e)
-			w.th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
-			w.layout(gtx)
-			e.Frame(gtx.Ops)
+			w.frameEvent(e, &ops)
 		}
 	}
+}
+
+// newInspect makes the window's inspect tool (run, after w.th).
+func (w *previewWindow) newInspect() *winInspect {
+	return w.c.newWinInspect("huddle preview", "account", w.th, w.invalidate)
+}
+
+// frameEvent draws one frame (run; tests drive it with a router's frame
+// events), the window's inspect tool around it (inspect.go).
+func (w *previewWindow) frameEvent(e app.FrameEvent, ops *op.Ops) {
+	w.insp.frame(e, ops, func(gtx C) {
+		w.th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
+		w.layout(gtx)
+	})
 }
 
 // previewView is what the preview draws (a snapshot).

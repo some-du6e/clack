@@ -368,7 +368,12 @@ type menuLayer struct {
 	ctx   *menuCtx
 	scrim int
 	block int
+	rect  image.Rectangle // the menu as last drawn, window coords (Rect)
 }
+
+// Rect is the menu as last drawn (window coords), empty while a popups
+// menu draws it (MenuFromTemplate) or none is.
+func (l *menuLayer) Rect() image.Rectangle { return l.rect }
 
 func (l *menuLayer) Dismissed() bool { return l.ctx.closed }
 
@@ -383,6 +388,7 @@ func (l *menuLayer) Layout(gtx layout.Context) layout.Dimensions {
 	win := gtx.Constraints.Max
 	g := loose(gtx, win)
 	call, d := record(g, c.sub.Layout)
+	l.rect = image.Rectangle{}
 	if c.claimed {
 		// MenuFromTemplate opened a popups menu; the subtree only needs to
 		// stay laid out (it draws nothing itself).
@@ -424,6 +430,7 @@ func (l *menuLayer) Layout(gtx layout.Context) layout.Dimensions {
 		a.Max.X += gap
 	}
 	p := place(a, d.Size, win, dp(gtx, 8), c.side, c.align)
+	l.rect = image.Rectangle{Min: p, Max: p.Add(d.Size)}
 	t := op.Offset(p).Push(gtx.Ops)
 	bc := clip.Rect{Max: d.Size}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &l.block)

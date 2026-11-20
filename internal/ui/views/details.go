@@ -246,6 +246,10 @@ func (d *ChannelDetails) Tab() string {
 	return cdTabLabels[d.tabKinds[min(d.tab.Sel, len(d.tabKinds)-1)]]
 }
 
+// Rect is the dialog as last drawn (window coords): the inspect tool
+// boxes its overlay's layer with it.
+func (d *ChannelDetails) Rect() image.Rectangle { return d.cl.card }
+
 // Closed reports whether the dialog was dismissed (views.Closer). It also
 // drops the realtime subscription.
 func (d *ChannelDetails) Closed() bool {
@@ -916,6 +920,7 @@ func (d *ChannelDetails) Layout(gtx C) D {
 		return D{Size: full}
 	}
 	d.cl.dlg = image.Pt((full.X-dw)/2, (full.Y-dh)/2) // the overlay is at the window's origin
+	d.cl.card = image.Rectangle{Min: d.cl.dlg, Max: d.cl.dlg.Add(image.Pt(dw, dh))}
 	func() {
 		defer op.Offset(d.cl.dlg).Push(gtx.Ops).Pop()
 		r := image.Rect(0, 0, dw, dh)
@@ -1041,6 +1046,9 @@ func (d *ChannelDetails) editModal(gtx C, full image.Point) {
 	org := image.Pt((full.X-w)/2, (full.Y-h)/2)
 	defer op.Offset(org).Push(gtx.Ops).Pop()
 	r := image.Rect(0, 0, w, h)
+	// the inspect tool: the stacked dialog is Slack's SK modal, its card
+	// picked over the details card it sits on
+	defer popups.ModalClass.Inspect(0).EndAt(gtx, r)
 	rad := gtx.Dp(cdRadius)
 	theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
 	rrect(gtx, r, rad, d.p.Surface)

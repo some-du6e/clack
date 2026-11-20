@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
@@ -45,6 +46,13 @@ type review struct {
 
 	marks []image.Rectangle // shot px, oldest first
 
+	started     time.Time // startReview (the capture's stage times)
+	drawnFrames int       // frames that drew the shot (ShotDrawn)
+	// shownAt is the first frame read after one that drew the review (its
+	// input time): the review was on screen by then. A guarded capture's
+	// copy keys work from armDelay after it (Tool.armed).
+	shownAt time.Time
+
 	dragging bool
 	from, to f32.Point       // the drag, window px
 	view     image.Rectangle // where the shot was drawn last frame, window px
@@ -54,13 +62,38 @@ type review struct {
 // a click.
 const minMark = 4
 
+// armDelay is how long a guarded capture's review (a region, a region's
+// size) is on screen before Enter or Mod+C copies it: a reaction time, so
+// it never goes out unseen (review of a614d3b3: Enter was taken as soon as
+// a frame had recorded the review, still on its way to the screen, which
+// a software GPU takes a long while over).
+const armDelay = 300 * time.Millisecond
+
+// armed reports that r's copy keys work: always for an element's pick (its
+// margin is blurred anyway), for a guarded capture once the review has
+// been on screen armDelay (the frame's input time).
+func (t *Tool) armed(r *review) bool {
+	if !r.c.guarded() {
+		return true
+	}
+	return !r.shownAt.IsZero() && !t.inAt.Before(r.shownAt.Add(armDelay))
+}
+
 // startReview shows c's shot for blurring (UI goroutine, from
 // AfterFrame).
+// The shot as the copy shows it is made here, at once: the next frame
+// draws the review with it (Karim, 2026-11-18: "this shit takes to long
+// between a selection and the blur page"). Its margin's blur (paintShot,
+// blurOutside) computes only the margin, over the CPUs: milliseconds for
+// a 3200x2000 px shot that took the old whole-shot blur over a second.
+// The rects marked afterwards are blurred off the UI goroutine (redraw).
 func (t *Tool) startReview(c *capture, shot *image.RGBA) {
 	t.release()
-	r := &review{c: c, shot: shot}
+	r := &review{c: c, shot: shot, started: time.Now()}
+	img := shownImage(shot, nil, c.elem, c.scale*c.k)
+	r.shown, r.ready = paint.NewImageOp(img), true
+	c.tm.shown = time.Since(r.started)
 	t.state, t.rev = reviewing, r
-	t.redraw(r)
 	t.host.Invalidate()
 }
 
@@ -71,13 +104,15 @@ func (t *Tool) redraw(r *review) {
 	marks := append([]image.Rectangle(nil), r.marks...)
 	shot, elem, scale, h := r.shot, r.c.elem, r.c.scale*r.c.k, t.host
 	go func() {
-		img := image.NewRGBA(shot.Bounds())
-		paintShot(img, shot.Bounds().Min, Redacted(shot, marks, scale), elem, scale)
+		img := shownImage(shot, marks, elem, scale)
 		h.Post(func() {
 			if t.rev != r || v < r.shownV {
 				return
 			}
 			r.shown, r.shownV, r.ready = paint.NewImageOp(img), v, true
+			if r.c.tm.shown == 0 {
+				r.c.tm.shown = time.Since(r.started)
+			}
 			h.Invalidate()
 		})
 	}()
@@ -100,6 +135,10 @@ func (t *Tool) finishReview() {
 
 // dropReview ends the review with nothing saved or copied.
 func (t *Tool) dropReview() {
+	if r := t.rev; r != nil {
+		r.c.tm.outcome = "dropped"
+		logTimes(r.c)
+	}
 	t.stop()
 	t.host.Toast("Inspect report discarded: nothing copied")
 }
@@ -118,6 +157,16 @@ func (t *Tool) reviewKey(ke key.Event) {
 		}
 		t.dropReview()
 	case ke.Name == key.NameReturn || ke.Name == key.NameEnter || mod && ke.Name == "C":
+		if !t.armed(r) {
+			// a region (or a region's size) is copied only once its review
+			// has been on screen armDelay: before that the key is dropped,
+			// and held until it comes up, so it never goes out unseen
+			t.hold(ke)
+			return
+		}
+		// a rect still being dragged out goes with the copy: what the user
+		// was blurring never goes out sharp
+		r.endDrag(t.scale)
 		t.finishReview()
 	case ke.Name == key.NameDeleteBackward || ke.Name == key.NameDeleteForward || mod && ke.Name == "Z":
 		if r.dragging {
@@ -158,18 +207,33 @@ func (t *Tool) reviewPointer(pe pointer.Event) {
 	case pointer.Release:
 		if r.dragging && pe.Buttons&pointer.ButtonPrimary == 0 {
 			r.to = pe.Position
-			r.dragging = false
-			min := float32(minMark) * t.scale
-			if abs32(r.to.X-r.from.X) >= min && abs32(r.to.Y-r.from.Y) >= min {
-				if m := r.markFor(r.from, r.to); !m.Empty() {
-					r.marks = append(r.marks, m)
-					t.changed(r)
-				}
+			if r.endDrag(t.scale) {
+				t.changed(r)
 			}
 		}
 	case pointer.Cancel:
 		r.dragging = false
 	}
+}
+
+// endDrag ends the rect being dragged out at r.to (scale px per dp): it is
+// a mark if it's at least minMark dp each way (less was a click). It
+// reports whether a mark was added.
+func (r *review) endDrag(scale float32) bool {
+	if !r.dragging {
+		return false
+	}
+	r.dragging = false
+	min := float32(minMark) * scale
+	if abs32(r.to.X-r.from.X) < min || abs32(r.to.Y-r.from.Y) < min {
+		return false
+	}
+	m := r.markFor(r.from, r.to)
+	if m.Empty() {
+		return false
+	}
+	r.marks = append(r.marks, m)
+	return true
 }
 
 // Marks are the rects marked in the review so far (shot px), and the
@@ -179,6 +243,12 @@ func (t *Tool) Marks() (marks []image.Rectangle, shot image.Point, ok bool) {
 		return nil, image.Point{}, false
 	}
 	return append([]image.Rectangle(nil), t.rev.marks...), t.rev.shot.Bounds().Size(), true
+}
+
+// ShotDrawn reports that a review is up and a frame has drawn its shot
+// (tests: the review appears in the frame after the pick's).
+func (t *Tool) ShotDrawn() bool {
+	return t.state == reviewing && t.rev != nil && t.rev.drawnFrames > 0
 }
 
 // ReviewView is where the review shows the shot (window px), empty
@@ -239,11 +309,19 @@ func (r *review) toView(m image.Rectangle) image.Rectangle {
 // is drawn in a size px window: centred under the banner, as big as
 // fits, at most 3 times the window's own size of it and never past one
 // shot px per window px.
+//
+// A window too small for the banner's margins to leave it half its width
+// and height (the presenter's 60 dp panel in a huddle) gives the shot all
+// of itself, the banner over it: the review is never empty, so a region
+// there can still be reviewed and copied.
 func reviewView(size, s image.Point, k float32, top, side, bottom int) image.Rectangle {
 	if k <= 0 {
 		k = 1
 	}
 	avail := image.Pt(size.X-2*side, size.Y-top-bottom)
+	if avail.X < size.X/2 || avail.Y < size.Y/2 {
+		top, avail = 0, size
+	}
 	if avail.X <= 0 || avail.Y <= 0 || s.X <= 0 || s.Y <= 0 {
 		return image.Rectangle{}
 	}
@@ -272,6 +350,19 @@ func (t *Tool) drawReview(gtx layout.Context) {
 	r.view = reviewView(sz, r.shot.Bounds().Size(), r.c.k, gtx.Dp(52), gtx.Dp(24), gtx.Dp(24))
 	one := max(gtx.Dp(1), 1)
 	if r.ready && !r.view.Empty() {
+		if r.c.tm.drawn == 0 && !r.c.tm.pick.IsZero() {
+			r.c.tm.drawn, r.c.tm.frames = time.Since(r.c.tm.pick), t.frameN-r.c.tm.pickN
+		}
+		r.drawnFrames++
+		if r.c.guarded() && !t.armed(r) {
+			// a frame when it's on screen (the next: shownAt), then when it
+			// arms, for the banner's "Enter copy"
+			at := time.Time{}
+			if !r.shownAt.IsZero() {
+				at = r.shownAt.Add(armDelay)
+			}
+			gtx.Execute(op.InvalidateCmd{At: at})
+		}
 		s := r.shot.Bounds()
 		drawShot(gtx, r.shown, r.view, s)
 		if !r.c.region {
@@ -303,7 +394,7 @@ func (t *Tool) drawReview(gtx layout.Context) {
 	if th == nil || th.Shaper == nil {
 		return
 	}
-	t.banner(gtx, th, reviewHint(r.ready, len(r.marks)))
+	t.banner(gtx, th, reviewBanner(r.ready, len(r.marks), t.armed(r)))
 }
 
 // shownMarks is how many marks the shown image has blurred: all but
@@ -313,12 +404,20 @@ func (r *review) shownMarks() int {
 	return max(len(r.marks)-1, 0)
 }
 
-// reviewHint is the review's banner.
-func reviewHint(ready bool, n int) string {
-	msg := "Blur: drag over anything private · ⌫ undo · Enter copy · Esc cancel"
+// reviewHint is the review's banner, its copy keys armed.
+func reviewHint(ready bool, n int) string { return reviewBanner(ready, n, true) }
+
+// reviewBanner is the review's banner: "Enter copy" only once the copy
+// keys work (armed).
+func reviewBanner(ready bool, n int, armed bool) string {
+	cp := " · Enter copy"
+	if !armed {
+		cp = ""
+	}
+	msg := "Blur: drag over anything private · ⌫ undo" + cp + " · Esc cancel"
 	switch {
 	case !ready:
-		msg = "Blur: preparing the shot… · Enter copy · Esc cancel"
+		msg = "Blur: preparing the shot…" + cp + " · Esc cancel"
 	case n == 1:
 		msg += " · 1 blurred"
 	case n > 1:
