@@ -30,6 +30,12 @@ env:
 permissions:
   contents: read
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   workflows:
     runs-on: ubuntu-latest

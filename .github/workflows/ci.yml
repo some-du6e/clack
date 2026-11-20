@@ -10,6 +10,14 @@ env:
 permissions:
   contents: read
 
+# A newer run of the same kind (push, PR or dispatch) for the same branch,
+# tag or PR cancels this one while it is queued or running, so stale pushes
+# don't pile up in the shared queue. The event is part of the group so a push
+# never cancels a dispatched run, the only kind that runs full-test on a branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   # gofmt, vet and the linux binary. The linux work that used to be one
   # job (21 min, all of it serial) is these linux-* jobs, in parallel.

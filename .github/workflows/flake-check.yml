@@ -272,6 +272,13 @@ env:
   COUNT: ${{ inputs.count || '20' }}
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+# A dispatch with other inputs gets its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.count }}-${{ inputs.only }}
+  cancel-in-progress: true
+
 jobs:
   go:
     if: ${{ !inputs.only || startsWith('go', inputs.only) }}
