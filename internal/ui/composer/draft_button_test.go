@@ -281,16 +281,16 @@ func TestHintBarLikeSlack(t *testing.T) {
 	prev := popups.OpenPreferencesSection
 	popups.OpenPreferencesSection = func(sec string) { opened = append(opened, sec) }
 	t.Cleanup(func() { popups.OpenPreferencesSection = prev })
-	r := hintRect(c)
-	if r.Empty() {
-		t.Fatal("the visible hint takes no pointer")
-	}
-	p := r.Min.Add(r.Size().Div(2)).Add(image.Pt(0, c.top))
-	g.mouseMove(p)
-	g.mouseDown(p)
-	g.mouseUp(p)
-	if !reflect.DeepEqual(opened, []string{"advanced"}) {
-		t.Errorf("a click on the hint opened Preferences on %q, want [advanced]", opened)
+	if r := hintRect(c); r.Empty() {
+		t.Error("the visible hint takes no pointer (Slack's is a ButtonLink)")
+	} else {
+		p := r.Min.Add(r.Size().Div(2)).Add(image.Pt(0, c.top))
+		g.mouseMove(p)
+		g.mouseDown(p)
+		g.mouseUp(p)
+		if !reflect.DeepEqual(opened, []string{"advanced"}) {
+			t.Errorf("a click on the hint opened Preferences on %q, want [advanced]", opened)
+		}
 	}
 
 	// back to two characters: it fades out
