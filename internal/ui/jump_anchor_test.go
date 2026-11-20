@@ -632,6 +632,71 @@ func TestNewMessageNearEndSticks(t *testing.T) {
 	}
 }
 
+// TestNewMessageNearEndSticksDarkClean: STICKY_EPSILON is half the
+// default row height of the messages theme, 40px Clean and 30px Compact
+// (getMessageListLayout's "light" or "dense", MessagePane's xp33), not the
+// color mode: in dark mode a Clean list 35px from its end keeps to it when
+// a message arrives. Clack took 30px in dark mode.
+func TestNewMessageNearEndSticksDarkClean(t *testing.T) {
+	e := anchorEnv(t)
+	e.a.th.SetDark(true)
+	ch := longRead
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.settle(500 * time.Millisecond)
+	cv := e.channelView(ch)
+	if cv == nil || !cv.AtBottom() {
+		t.Fatal("the conversation didn't open at its end")
+	}
+	e.scroll(e.listPoint(), -float32(e.px(35)))
+	e.settle(300 * time.Millisecond)
+	if cv.AtBottom() {
+		t.Fatal("a 35px wheel up left the list at its end")
+	}
+	ts := fmt.Sprintf("%d.000700", time.Now().Unix())
+	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": e.fs.UserIDs()[3], "text": "synthetic new message 35px from the end", "ts": ts})
+	e.a.Core().Inject(slack.Event{Type: "message", Channel: json.RawMessage(strconv.Quote(ch)), Raw: raw})
+	e.waitDrawn(t, "the new message on screen", 10*time.Second, "", ch, "", func(rows []messages.SenderView) bool {
+		y, ok := topOf(rows, ts)
+		return ok && y < viewHOf(rows)
+	})
+	if !cv.AtBottom() {
+		t.Errorf("dark mode, Clean, 35px from the end when a message arrived: the list didn't keep to its end")
+	}
+}
+
+// TestEmptyComposerPageKeys: MessagePane's document keydown hands PageUp,
+// PageDown, Home and End to the message list while the channel's input
+// has the focus and is empty (AEjl's onKeyDown): PageUp from the empty
+// composer pages the list up, End takes it back to its end. They moved
+// the composer's caret, which had nowhere to go.
+func TestEmptyComposerPageKeys(t *testing.T) {
+	e := anchorEnv(t)
+	ch := longRead
+	newest, _ := e.fs.HistoryAt(ch, 0)
+	e.openChannel(ch)
+	e.waitDrawn(t, "the newest messages", 20*time.Second, "", ch, "", func(rows []messages.SenderView) bool { return drewRow(rows, newest.TS) })
+	e.settle(500 * time.Millisecond)
+	c := e.a.convoFor(ch, "")
+	if c == nil || c.comp == nil {
+		t.Fatal("no composer for the conversation")
+	}
+	c.comp.Focus()
+	e.settle(200 * time.Millisecond)
+	cv := e.channelView(ch)
+	e.key(key.NamePageUp, 0)
+	e.settle(300 * time.Millisecond)
+	if cv == nil || cv.AtBottom() || drewRow(e.paneRows("", ch, ""), newest.TS) {
+		t.Fatalf("PageUp in the empty composer didn't page the list up: %s", drawnState(e.paneRows("", ch, "")))
+	}
+	e.key(key.NameEnd, 0)
+	e.settle(300 * time.Millisecond)
+	if !cv.AtBottom() || !drewRow(e.paneRows("", ch, ""), newest.TS) {
+		t.Errorf("End in the empty composer didn't take the list to its end: %s", drawnState(e.paneRows("", ch, "")))
+	}
+}
+
 // betweenTS is a ts between messages k and k+1 back in ch (no message
 // has it: a message deleted since, a reply the history never holds), and
 // the newer of the two, the message a jump to it lands on.

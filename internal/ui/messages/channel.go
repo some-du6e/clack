@@ -246,6 +246,7 @@ func (v *ChannelView) Entered() {
 	s.leaveWindow()
 	s.pendingJump, s.aroundFor, s.place, s.jumpLazy = "", "", jumpPlace{}, false
 	s.list.Position = layout.Position{}
+	s.stopScroll()
 	s.positioned = true
 	v.h.Invalidate()
 }

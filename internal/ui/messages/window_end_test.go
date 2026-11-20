@@ -38,6 +38,17 @@ type winEnv struct {
 
 func newWinEnv(t *testing.T) *winEnv {
 	t.Helper()
+	e := newHistEnv(t)
+	e.v.Highlight(e.tss[40])
+	e.await(t, "the window around message 40", func() bool {
+		return e.v.InWindow() && e.drawn(e.tss[40]) && e.v.s.pendingJump == ""
+	})
+	return e
+}
+
+// newHistEnv is winEnv's channel, its list at its newest messages.
+func newHistEnv(t *testing.T) *winEnv {
+	t.Helper()
 	app, fs, _ := shotsApp(t)
 	ch := winEndChan
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "archive-walk", IsChannel: true, IsMember: true, NumMembers: 12})
@@ -50,11 +61,7 @@ func newWinEnv(t *testing.T) *winEnv {
 	}
 	e.v = NewChannelView(e.h, ch)
 	e.rt = newRouted(e.v, 900, 700)
-	e.await(t, "the newest messages", func() bool { return e.drawn(e.newest()) })
-	e.v.Highlight(e.tss[40])
-	e.await(t, "the window around message 40", func() bool {
-		return e.v.InWindow() && e.drawn(e.tss[40]) && e.v.s.pendingJump == ""
-	})
+	e.await(t, "the newest messages", func() bool { return e.drawn(e.newest()) && e.v.AtBottom() })
 	return e
 }
 

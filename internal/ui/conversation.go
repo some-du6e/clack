@@ -191,6 +191,13 @@ func (a *App) attachComposer(c *convo) {
 	if fl, ok := c.comp.(interface{ SetOnFocusList(func()) }); ok {
 		fl.SetOnFocusList(func() { a.focusList(c) })
 	}
+	if pk, ok := c.comp.(interface{ SetOnPageKeyEmpty(func(string)) }); ok {
+		pk.SetOnPageKeyEmpty(func(name string) {
+			if l, ok := c.list.(interface{ PageKey(string) }); ok {
+				l.PageKey(name)
+			}
+		})
+	}
 	if sn, ok := c.comp.(interface{ SetOnSend(func(string, bool)) }); ok {
 		sn.SetOnSend(func(cid string, files bool) { jumpToOwnSend(c, cid, files) })
 	}

@@ -130,18 +130,28 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 }
 
 // pageKey is BaseKeyboardNavigableList's PageUp, PageDown, Home and End
-// (client-boot FOmE): a page (the list's height) up or down, or the ends
-// of what's loaded; the keyboard's selection then goes to the first
-// message in view (PageUp, Home) or the last (PageDown, End), as Slack's
-// focusFirstItemInView and getNextLastFocusableItemInView do. Each writes
-// the scroll, so the list's anchoring starts from the new place.
+// (client-boot FOmE): a page (getPageHeight: the list's height less 21px)
+// up or down, or the ends of what's loaded; with keyboard focus the
+// selection then goes to the first message in view (PageUp, Home) or the
+// last (PageDown, End), as Slack's focusFirstItemInView and
+// getNextLastFocusableItemInView do. Each writes the scroll, so the list's
+// anchoring starts from the new place. End is MessageList's onEnd,
+// scrollToMostRecentMessage: a window short of the newest messages jumps
+// to them (jumpToTimestamp({ts: ""}), AEjl).
 func (s *listState) pageKey(name key.Name) {
+	if s.kb.on {
+		s.kb.page = name
+	}
+	if name == key.NameEnd && s.win != nil && s.snap.newestMissing {
+		s.jumpToLatest()
+		return
+	}
 	p := s.list.Position
 	switch name {
 	case key.NamePageUp:
-		p.BeforeEnd, p.Offset = true, p.Offset-s.size.Y
+		p.BeforeEnd, p.Offset = true, p.Offset-s.pageH
 	case key.NamePageDown:
-		p.BeforeEnd, p.Offset = true, p.Offset+s.size.Y
+		p.BeforeEnd, p.Offset = true, p.Offset+s.pageH
 	case key.NameHome:
 		p = layout.Position{BeforeEnd: true}
 	case key.NameEnd:
@@ -151,7 +161,15 @@ func (s *listState) pageKey(name key.Name) {
 		}
 	}
 	s.list.Position = p
-	s.kb.page = name
+	s.stopScroll()
+}
+
+// PageKey is MessagePane's PageUp, PageDown, Home or End (name) from the
+// channel's empty input: the list's onKeyDownPageUp and the rest (AEjl's
+// document keydown), as from the list.
+func (v *ChannelView) PageKey(name string) {
+	v.s.pageKey(key.Name(name))
+	v.h.Invalidate()
 }
 
 // pageSelect is pageKey's selection, after the layout that scrolled.

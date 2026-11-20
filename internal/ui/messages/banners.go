@@ -204,6 +204,7 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 			}()
 		} else if ui := s.unreadIndex(); ui >= 0 { // jumpToUnread
 			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, ui-1)}
+			s.stopScroll()
 		}
 		h.Invalidate()
 	}
