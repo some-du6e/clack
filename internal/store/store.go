@@ -2096,7 +2096,21 @@ func (s *Store) LoadCache() {
 		}
 	}
 	if len(d.Bots) > 0 {
-		s.bots = d.Bots
+		// under what this session stored or found gone meanwhile: that
+		// answer is newer than the disk's copy, and nothing would ask for
+		// the bot again (noteMissing records a bot once a session)
+		if len(s.bots)+len(s.botsGone) == 0 {
+			s.bots = d.Bots
+		} else {
+			if s.bots == nil {
+				s.bots = make(map[string]BotInfo, len(d.Bots))
+			}
+			for id, b := range d.Bots {
+				if _, ok := s.bots[id]; !ok && !s.botsGone[id] {
+					s.bots[id] = b
+				}
+			}
+		}
 	}
 	if d.Experiments != nil {
 		s.experiments = d.Experiments

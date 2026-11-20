@@ -25,6 +25,7 @@ type App struct {
 	RTM *slack.RTM
 
 	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
+	usersOut   usersOut   // the members users/info has out (members.go)
 
 	prio      prioState  // the VIP unreads section's open conversation (prefs_a.go)
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
@@ -567,17 +568,6 @@ func (a *App) Boot(ctx context.Context) error {
 	defer close(a.ready)
 	defer a.markDataReady() // a cold start's data is in (or Boot failed: what core holds is all there is)
 	t0 := time.Now()
-	// The unknown member fetcher and the channel and bot name resolver run
-	// from the first lookup, as Slack's UnknownFetchManagers do (client-
-	// boot 0mwJ, made in DOS4 H for members: isEnabled is on everywhere
-	// but Slack's own test runners), not once every call below has
-	// answered: a warm start draws the restored conversation from the
-	// boot data while they're out, and a DM's partner the metadata cache
-	// doesn't hold stayed BaseMissingMember's bar until boot's last call
-	// (a slow users.conversations, a rate-limited step), or for good when
-	// boot failed.
-	go a.resolveLoop(a.bg) // unresolved channel/bot names
-	go a.memberLoop(a.bg)  // members lookups missed (members.go)
 	// meta.json (the user directory, 65k emoji, usergroups) decodes
 	// alongside the calls instead of before them; the steps that depend
 	// on it wait for cacheDone.
@@ -591,6 +581,23 @@ func (a *App) Boot(ctx context.Context) error {
 		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
 		close(cacheDone)
+		// The unknown member fetcher and the channel and bot name resolver
+		// start once the persisted store is in, as Slack's first lookup
+		// comes only after it loaded (renderApp waits for dataSetupStore).
+		// Started before, an early bot answer was replaced by meta.json's
+		// bots (and never asked for again: noteMissing records a bot once
+		// a session), and members meta.json holds were asked for. What
+		// lookups missed until now waits in the store's queues. From here
+		// they run from the first lookup, as Slack's UnknownFetchManagers
+		// do (client-boot 0mwJ, made in DOS4 H for members: isEnabled is on
+		// everywhere but Slack's own test runners), not once every call
+		// below has answered: a warm start draws the restored conversation
+		// from the boot data while they're out, and a DM's partner the
+		// metadata cache doesn't hold stayed BaseMissingMember's bar until
+		// boot's last call (a slow users.conversations, a rate-limited
+		// step), or for good when boot failed.
+		go a.resolveLoop(a.bg) // unresolved channel/bot names
+		go a.memberLoop(a.bg)  // members lookups missed (members.go)
 	}()
 	// The warm boot: boot_data.json and headers.json load alongside, and
 	// once meta.json is in too the cached sidebar is installed and
@@ -962,18 +969,29 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 	return nil
 }
 
-// EnsureUsers fetches unknown users (edge cache, parallel batches of 100).
+// EnsureUsers fetches unknown users (edge cache, parallel batches of 100)
+// and returns once they're in. One another request has out (the unknown
+// member fetcher's, another EnsureUsers') isn't asked for again: this
+// waits for that answer (usersOut).
 func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 	miss := a.S.MissingUsers(ids)
 	if len(miss) == 0 {
 		return
 	}
-	a.usersAsked.Add(int64(len(miss)))
-	us, err := a.C.UsersInfoParallel(ctx, miss)
-	if err != nil {
-		log.Printf("users/info: %v", err)
-	}
-	a.S.PutUsers(us)
+	ask, wait, done := a.usersOut.claim(miss)
+	func() {
+		defer a.usersOut.release(ask, done) // before the wait: two requests never wait on each other
+		if len(ask) == 0 {
+			return
+		}
+		a.usersAsked.Add(int64(len(ask)))
+		us, err := a.C.UsersInfoParallel(ctx, ask)
+		if err != nil {
+			log.Printf("users/info: %v", err)
+		}
+		a.S.PutUsers(us)
+	}()
+	waitUsers(ctx, wait)
 }
 
 // prefetch warms the history of unread conversations so opening them is
