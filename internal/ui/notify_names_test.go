@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -322,5 +323,92 @@ func TestNotifyNamesTheDMPartner(t *testing.T) {
 	}
 	if !strings.Contains(n.Title, u.Name) || strings.Contains(n.Title, dm.User) {
 		t.Errorf("the toast's title %q doesn't name the DM's partner %q", n.Title, u.Name)
+	}
+}
+
+// A typed message mentions people as rich_text user elements, and its
+// toast's body comes from its blocks (richtext.NotificationText). A
+// member the store didn't hold is named once the toast's wait brought
+// them, after one users/info ask. One users/info answers too late for
+// (past noteResolveWait) reads as nothing, and the body's conversion
+// doesn't ask for them again: getContentForNotification runs after
+// ensureModelsArePresent and fetches no one.
+func TestNotifyNamesABlockMention(t *testing.T) {
+	for _, slow := range []bool{false, true} {
+		a, ca, fs, rec := privNoteAppFS(t)
+		conv, sender := groupDMFixture(t, ca)
+		var mentioned string
+		for _, id := range fs.UserIDs() {
+			in := false
+			for _, m := range conv.Members {
+				in = in || m == id
+			}
+			if _, held := ca.S.RawUser(id); !in && !held && id != fakeslack.SelfID {
+				mentioned = id
+				break
+			}
+		}
+		if mentioned == "" {
+			t.Fatal("the fixture has no member to mention")
+		}
+		var mu sync.Mutex
+		asks := 0
+		fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
+			if method == "edge/users/info" {
+				var up map[string]int
+				_ = json.Unmarshal(body["updated_ids"], &up)
+				if _, ok := up[mentioned]; ok {
+					mu.Lock()
+					asks++
+					mu.Unlock()
+					if slow {
+						time.Sleep(noteResolveWait + time.Second)
+					}
+				}
+			}
+			return nil, false
+		})
+		t.Cleanup(func() { fs.SetEdgeHook(nil) })
+		evs, stop := ca.Subscribe()
+		ts := "1762521000.000101"
+		if slow {
+			ts = "1762521000.000102"
+		}
+		raw, _ := json.Marshal(map[string]any{"type": "message", "channel": conv.ID, "user": sender, "ts": ts,
+			"text": "ping <@" + mentioned + "> please",
+			"blocks": []any{map[string]any{"type": "rich_text", "block_id": "b1", "elements": []any{map[string]any{"type": "rich_text_section",
+				"elements": []any{map[string]any{"type": "text", "text": "ping "}, map[string]any{"type": "user", "user_id": mentioned},
+					map[string]any{"type": "text", "text": " please"}}}}}}})
+		cj, _ := json.Marshal(conv.ID)
+		ca.Inject(slack.Event{Type: "message", Channel: cj, Raw: raw})
+		var n *desktopNote
+		for dl := time.After(10 * time.Second); n == nil; {
+			select {
+			case ev := <-evs:
+				if ev.Type == "message" && ev.Channel == conv.ID && ev.TS == ts {
+					a.data.handle(a, ev)
+					n = rec.wait(t, a, 1)
+				}
+			case <-dl:
+				t.Fatal("core never announced the message")
+			}
+		}
+		stop()
+		time.Sleep(1500 * time.Millisecond) // time for an ask the conversion might start
+		mu.Lock()
+		got := asks
+		mu.Unlock()
+		if strings.Contains(n.Body, mentioned) {
+			t.Errorf("slow %v: the toast's body %q carries the id %s", slow, n.Body, mentioned)
+		}
+		if !slow {
+			name, ok := ca.S.MemberName(mentioned)
+			if !ok || !strings.Contains(n.Body, "@"+name) {
+				t.Errorf("the toast's body %q doesn't name the mention (@%s)", n.Body, name)
+			}
+		}
+		if got != 1 {
+			t.Errorf("slow %v: users/info asked for the mentioned member %d times, want once (the toast's wait)", slow, got)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // What a notification names, as Slack's web client reads it (CDN build
@@ -197,6 +198,25 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 	}
 	return "", false
 }
+
+// noteNames is the resolver a notification's text is converted with
+// (NotificationText): getContentForNotification runs after
+// ensureModelsArePresent and asks for no one. A member the toast's wait
+// (noteResolve) brought has their name, which noteSpanText writes; one
+// still unknown stays unknown, never asked for again.
+type noteNames struct{ *store.Store }
+
+// MentionName is richtext.MentionNamer: the held member's name, without
+// a users/info ask (core's msgNames).
+func (r noteNames) MentionName(id string) string {
+	u, _ := r.RawUser(id)
+	return store.DisplayName(u)
+}
+
+// MemberDeleted is richtext.MemberStater for a share_shortcut's bot,
+// whose state a notification doesn't read (its title is the text): no
+// ask.
+func (noteNames) MemberDeleted(string) (bool, bool) { return false, true }
 
 // noteChannelKnown reports whether channelToText has what it needs for
 // a mention of id: the conversation by name, its name, or that the viewer

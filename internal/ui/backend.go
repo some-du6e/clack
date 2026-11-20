@@ -984,7 +984,7 @@ func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
 		// convertMessageToPlainText: conditions unexpanded, no fallbacks
 		sm := slack.Message{TS: m.TS, Channel: m.Channel, User: m.User, Text: m.Text, Blocks: m.Blocks}
 		_ = json.Unmarshal(m.Attachments, &sm.Attachments)
-		text = richtext.NotificationText(b.core.S, &sm, m.Doc, b.noteSpanText)
+		text = richtext.NotificationText(noteNames{b.core.S}, &sm, m.Doc, b.noteSpanText)
 	} else {
 		text = richtext.PlainTextWith(ev.Msg.Doc, b.noteSpanText)
 	}
