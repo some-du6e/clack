@@ -49,6 +49,9 @@ func newColorPopover(a *App, anchor image.Point, hex string, set func(string)) *
 
 func (p *colorPopover) Dismissed() bool { return p.done }
 
+// Rect is the card as last laid out (window coords).
+func (p *colorPopover) Rect() image.Rectangle { return p.card }
+
 // hex is the colour the controls show.
 func (p *colorPopover) hex() string {
 	c := hsvToRGB(p.h, p.s, p.v)

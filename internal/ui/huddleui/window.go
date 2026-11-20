@@ -17,6 +17,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/ui/inspect"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -74,6 +75,8 @@ type window struct {
 	// popout is the video key of the screen share this window pops out
 	// ("" = the huddle window; popout.go), popoutUser its presenter.
 	popout, popoutUser string
+
+	insp *winInspect // the inspect tool in this window (inspect.go)
 }
 
 // OpenWindow shows the huddle window (creating it), when you're in a huddle.
@@ -158,6 +161,7 @@ func (w *window) run() {
 	th.SetShapers(sh, sh)
 	th.Images, th.EmojiStyle = main.Images, main.EmojiStyle
 	w.th = th
+	w.insp = w.newInspect()
 	w.mu.Lock()
 	w.w = ww
 	closed := w.closed
@@ -179,6 +183,7 @@ func (w *window) run() {
 		caption.sync(ev, ww, hudCaption)
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			w.insp.close()
 			patch.Close()
 			if w.popout != "" {
 				w.c.popoutGone(w)
@@ -192,18 +197,77 @@ func (w *window) run() {
 			w.c.h.Invalidate()
 			return
 		case app.FrameEvent:
-			gtx := app.NewContext(&ops, e)
-			th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
-			// Slack's huddle components here are plugin patch points
-			// (slackc), shared with the main window: one frame at a time.
-			slackc.LockFrame()
-			restore := patch.FrameBg(gtx, "p-multi_view_window p-huddle_window", hudWhite, hudFrame)
-			w.layout(gtx)
-			restore()
-			slackc.UnlockFrame()
-			e.Frame(gtx.Ops)
+			w.frameEvent(e, &ops, &patch)
 		}
 	}
+}
+
+// frameEvent draws one frame (run; tests drive it with a router's frame
+// events), the window's inspect tool around it (inspect.go).
+func (w *window) frameEvent(e app.FrameEvent, ops *op.Ops, patch *slackc.SubWindow) {
+	w.insp.frame(e, ops, func(gtx C) {
+		w.th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
+		// Slack's huddle components here are plugin patch points
+		// (slackc), shared with the main window: one frame at a time
+		// (frame holds the frame lock)
+		restore := patch.FrameBg(gtx, "p-multi_view_window p-huddle_window", hudWhite, hudFrame)
+		w.layout(gtx)
+		restore()
+	})
+}
+
+// newInspect makes the window's inspect tool (run, after w.th).
+func (w *window) newInspect() *winInspect {
+	wi := w.c.newWinInspect(w.inspectKind(), "huddle", w.th, w.invalidate)
+	wi.regions, wi.popups = w.inspectRegions, w.inspectPopups
+	return wi
+}
+
+// inspectKind names the window in the inspect tool's reports.
+func (w *window) inspectKind() string {
+	if w.popout != "" {
+		return "screen share popout"
+	}
+	return "huddle window"
+}
+
+// inspectRegions are the huddle window's areas for the inspect tool: its
+// title bar and its toolbar (a popped-out share's window has neither).
+func (w *window) inspectRegions(sz image.Point, s float32) []inspect.Region {
+	if w.popout != "" {
+		return nil
+	}
+	out := []inspect.Region{{Name: "title bar", Rect: image.Rect(0, 0, sz.X, int(winTitleH*s+.5))}}
+	if w.barTop > 0 && w.barTop < sz.Y {
+		out = append(out, inspect.Region{Name: "toolbar", Rect: image.Rect(0, w.barTop, sz.X, sz.Y)})
+	}
+	return out
+}
+
+// inspectPopups are the window's open popups as they are drawn, bottom
+// first: the toolbar's menus and pickers (layoutMore), then its modals
+// (layoutOverlays).
+func (w *window) inspectPopups() []any {
+	var out []any
+	if w.stick != nil && !w.stick.Dismissed() {
+		out = append(out, w.stick)
+	}
+	if w.quick != nil && !w.quick.Dismissed() {
+		out = append(out, w.quick)
+	}
+	for _, m := range []*popups.Menu{w.video, w.leaveMenu, w.lounge.menu, w.more, w.audio} {
+		if m != nil && !m.Dismissed() {
+			out = append(out, m)
+		}
+	}
+	w.mu.Lock()
+	for _, o := range w.overlays {
+		if o != nil && !o.Dismissed() {
+			out = append(out, o)
+		}
+	}
+	w.mu.Unlock()
+	return out
 }
 
 // AppName is the window title suffix (the ui root sets it to its own).
