@@ -166,6 +166,35 @@ type MessageAgentStatus struct {
 	IconURL        string `json:"icon_url,omitempty"`
 	IconEmoji      string `json:"icon_emoji,omitempty"`
 	Username       string `json:"username,omitempty"`
+	// What the reply bar's nugget reads of each agent (HQze it): its own
+	// status, loading_message and is_stoppable, and when its processing
+	// lapses (date_status_processing_expire, unix seconds: ProcessingExpireSeconds).
+	Status         string          `json:"status,omitempty"`
+	LoadingMessage string          `json:"loading_message,omitempty"`
+	IsStoppable    bool            `json:"is_stoppable,omitempty"`
+	RawExpire      json.RawMessage `json:"date_status_processing_expire,omitempty"`
+}
+
+// ProcessingExpireSeconds is readProcessingExpireSeconds (wClv OV): the
+// expiry when it is a number above 0, else 0.
+func (s MessageAgentStatus) ProcessingExpireSeconds() int64 { return expireSeconds(s.RawExpire) }
+
+// ProcessingExpireSeconds is readProcessingExpireSeconds for the session.
+func (s *MessageAgentSession) ProcessingExpireSeconds() int64 {
+	if s == nil {
+		return 0
+	}
+	return expireSeconds(json.RawMessage(s.ProcessingExpire))
+}
+
+// expireSeconds reads a JSON number above 0 (a string or anything else is
+// none, as typeof "number" checks).
+func expireSeconds(raw json.RawMessage) int64 {
+	var f float64
+	if len(raw) == 0 || raw[0] == '"' || json.Unmarshal(raw, &f) != nil || f <= 0 {
+		return 0
+	}
+	return int64(f)
 }
 
 // PinnedInfo says who pinned a message (history / messages.list).
