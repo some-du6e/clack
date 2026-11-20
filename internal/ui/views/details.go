@@ -163,10 +163,11 @@ type ChannelDetails struct {
 	// Realtime: conv (joined elsewhere, renamed, topic/purpose changed via
 	// a refresh) and conv_removed (left elsewhere, archived) for this
 	// conversation. refreshDue defers a reload while a write is in flight.
-	evq dirEvents
-	// bodyKind is the tab the body drew last (remountMembers)
-	bodyKind   int
+	evq        dirEvents
 	refreshDue bool
+
+	// bodyKind is the tab the body drew last (remountMembers).
+	bodyKind int
 
 	// presIDs are the loaded members (the watch goroutine redraws on their
 	// presence_change); presN is how many were loaded when it was built.
