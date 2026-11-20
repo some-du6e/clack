@@ -245,3 +245,49 @@ func TestCanvasCardFollows(t *testing.T) {
 		}
 	}
 }
+
+// queue sends a Move to p without a frame.
+func (e *trigEnv) queue(p image.Point) {
+	e.ptr = p
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y))})
+}
+
+// Two Moves over the trigger between frames: the probe hears only the
+// first, the trigger both. Its position is the second's, so the anchor
+// is the trigger's box (23c6d543 kept the first: the anchor was off by
+// the second Move).
+func TestTriggerTwoMovesBetweenFrames(t *testing.T) {
+	e := newTrigEnv(t)
+	e.frame()
+	e.move(image.Pt(230, 310))
+	e.queue(image.Pt(240, 312))
+	e.queue(image.Pt(262, 317))
+	e.wait(10 * time.Millisecond)
+	e.wait(ShowDelay + 10*time.Millisecond)
+	req, _, open := e.c.Open()
+	if !open {
+		t.Fatal("no card with the pointer resting on the trigger")
+	}
+	if req.Anchor != e.rect() {
+		t.Errorf("anchor %v, want the trigger %v", req.Anchor, e.rect())
+	}
+}
+
+// A layout move, then a Move, read in one frame: the Move wins.
+func TestTriggerMoveAfterLayoutMoveWins(t *testing.T) {
+	e := newTrigEnv(t)
+	e.frame()
+	e.move(image.Pt(230, 310))
+	e.off = e.off.Add(image.Pt(-10, 4)) // still under the pointer
+	e.wait(10 * time.Millisecond)
+	e.queue(image.Pt(250, 318))
+	e.wait(10 * time.Millisecond)
+	e.wait(ShowDelay + 10*time.Millisecond)
+	req, _, open := e.c.Open()
+	if !open {
+		t.Fatal("no card with the pointer resting on the trigger")
+	}
+	if req.Anchor != e.rect() {
+		t.Errorf("anchor %v, want the trigger %v", req.Anchor, e.rect())
+	}
+}

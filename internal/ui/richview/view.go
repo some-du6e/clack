@@ -1182,6 +1182,16 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}()
+	// the layout moved the view under a resting pointer (the probe's
+	// Leave, at the pointer's position then): Chromium's hover update
+	// after a layout, as a Move there would. First, before the view's own
+	// events: those are newer (a Move after the layout moved it, or the
+	// later Moves of several between frames, the probe hearing only the
+	// first), so they win. Not during a drag, whose Drag events carry the
+	// pointer.
+	if pos, ok := v.probe.Moved(gtx); ok && v.hovering && !v.dragging {
+		v.pointerAt(gtx, st, pos)
+	}
 	for {
 		ev, ok := gtx.Event(
 			pointer.Filter{Target: v, Kinds: pointer.Press | pointer.Release | pointer.Drag | pointer.Move | pointer.Enter | pointer.Leave | pointer.Cancel},
@@ -1353,13 +1363,6 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.press = -1
 			}
 		}
-	}
-	// the layout moved the view under a resting pointer (the probe's
-	// Leave, at the pointer's position now): Chromium's hover update
-	// after a layout, as a Move there would. Not during a drag, whose
-	// Drag events carry the pointer.
-	if pos, ok := v.probe.Moved(gtx); ok && v.hovering && !v.dragging {
-		v.pointerAt(gtx, st, pos)
 	}
 }
 

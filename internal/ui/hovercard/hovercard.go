@@ -597,6 +597,11 @@ func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image
 			c.Left(t)
 		}
 	}
+	// the layout moved it under a resting pointer (the probe's Leave):
+	// first, so the trigger's own newer events win (probe.Moved)
+	if pos, ok := t.probe.Moved(gtx); ok && t.in {
+		t.pos = pos
+	}
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &t.tag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel | pointer.Press})
 		if !ok {
@@ -620,9 +625,6 @@ func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image
 				c.Pressed(t)
 			}
 		}
-	}
-	if pos, ok := t.probe.Moved(gtx); ok && t.in {
-		t.pos = pos // the layout moved it under a resting pointer
 	}
 	if c != nil {
 		c.Mounted(t)

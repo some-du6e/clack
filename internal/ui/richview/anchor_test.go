@@ -181,3 +181,80 @@ func TestBodyUnmountClosesCard(t *testing.T) {
 		t.Error("the card outlived its body's unmount")
 	}
 }
+
+// queue sends a Move to p without a frame (several land between frames).
+func (e *bodyEnv) queue(p image.Point) {
+	e.ptr = p
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y))})
+}
+
+// words is a point on the body's plain words, a line under the #channel.
+func (e *bodyEnv) words() image.Point {
+	m := e.mention()
+	return image.Pt(m.Max.X+40, m.Max.Y+m.Dy()/2+4)
+}
+
+// The probe's Leave is older than the body's own events in a frame: the
+// layout moved the body (the probe's Leave, at the pointer's place then)
+// and the pointer then moved onto the #channel. The Move wins: the card
+// pending is the channel's, over where it is. (23c6d543 read the probe
+// after the Move: the body went back to the words.)
+func TestBodyMoveAfterLayoutMoveWins(t *testing.T) {
+	e := newBodyEnv(t)
+	e.move(e.words())
+	if !e.v.Pointer() {
+		t.Fatal("the body isn't hovered")
+	}
+	if _, ok := e.c.Pending(); ok {
+		t.Fatal("the words reported a card")
+	}
+	e.off.Y += 5 // a layout move under the resting pointer
+	e.wait(10 * time.Millisecond)
+	m := e.mention()
+	e.queue(m.Min.Add(m.Size().Div(2))) // then onto the #channel
+	e.wait(10 * time.Millisecond)
+	p, ok := e.c.Pending()
+	if !ok || p.ChannelID != "C0GENERAL1" {
+		t.Fatalf("the pointer moved onto the #channel after the layout moved: pending %v %+v", ok, p)
+	}
+	if p.Anchor != m {
+		t.Errorf("anchor %v, the mention is at %v", p.Anchor, m)
+	}
+}
+
+// Two Moves between frames, the second off the #channel: the probe hears
+// only the first (it is off the probe from then on), the body both. The
+// body is on the words, and no card opens. (23c6d543 let the probe's
+// Leave, at the first Move, win: the body stayed on the #channel and its
+// card opened with the pointer on the words, anchored off by the second
+// Move.)
+func TestBodyTwoMovesBetweenFrames(t *testing.T) {
+	e := newBodyEnv(t)
+	m := e.mention()
+	at := m.Min.Add(m.Size().Div(2))
+	e.move(at)
+	if p, ok := e.c.Pending(); !ok || p.ChannelID != "C0GENERAL1" {
+		t.Fatalf("on the #channel: pending %v %+v", ok, p)
+	}
+	e.queue(at.Add(image.Pt(3, 0))) // still on it
+	e.queue(e.words())              // off it
+	e.wait(10 * time.Millisecond)
+	e.wait(10 * time.Millisecond)
+	if !e.v.Pointer() {
+		t.Fatal("the body isn't hovered")
+	}
+	if p, ok := e.c.Pending(); ok {
+		t.Fatalf("the pointer is on the words and the #channel's card is pending, anchored at %v", p.Anchor)
+	}
+	e.wait(hovercard.ShowDelay + 10*time.Millisecond)
+	if req, _, open := e.c.Open(); open {
+		t.Fatalf("a card opened with the pointer on the words: anchor %v (the mention is at %v)", req.Anchor, m)
+	}
+	// and the other way: two Moves ending on the #channel
+	e.queue(e.words().Add(image.Pt(5, 0)))
+	e.queue(at)
+	e.wait(10 * time.Millisecond)
+	if p, ok := e.c.Pending(); !ok || p.Anchor != m {
+		t.Fatalf("two Moves ending on the #channel: pending %v, anchor %v, the mention is at %v", ok, p.Anchor, m)
+	}
+}

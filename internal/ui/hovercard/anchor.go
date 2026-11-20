@@ -64,7 +64,10 @@ func (p *Probe) Missed() bool {
 
 // Moved returns the pointer's position (local) when the layout moved the
 // probe out from under it since the last frame (or the pointer moved,
-// which the trigger also hears as a Move there).
+// which the trigger also hears as a Move there). Read it before the
+// trigger's own events: the Leave is the probe's only event until it is
+// laid out again, so after several Moves between frames it carries the
+// first, and a Move after a layout move is newer than it.
 func (p *Probe) Moved(gtx layout.Context) (f32.Point, bool) {
 	var pos f32.Point
 	moved := false
