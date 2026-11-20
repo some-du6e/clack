@@ -224,6 +224,14 @@ func TestThreadsUnreadBannersLikeSlack(t *testing.T) {
 func TestThreadsBannerCloseLikeSlack(t *testing.T) {
 	ch := fakeslack.ViewsChannel
 	app, fs := vkFake(t, nil) // the views fixture's own handlers, over a live socket (vaFake serves offline)
+	// clearAll answered (and the server's thread_marked sent) 300ms after
+	// the click, so the frames asked for during the click's are its own
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method == "subscriptions.thread.clearAll" {
+			time.Sleep(300 * time.Millisecond)
+		}
+		return nil, false
+	})
 	h := newKBHost(app, false)
 	h.away.Store(true)
 	v := NewThreads(h)
