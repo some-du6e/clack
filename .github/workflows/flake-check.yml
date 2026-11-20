@@ -1343,7 +1343,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('activity-live-msg', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|EditsJSHeld|ThreadEditsJSHeld|ThreadNewReplyJSHeld|ThreadNewReplyFreshJSHeld|ThreadProjectionJSHeld|MaskedWithInnerPatches|MaskedThreadWithInnerPatches|SlicePatchNoReconvert|RootVoteAfterGap|RootRowsBesidePane|SearchIdle|FailedGroup|CopylessRefetch|EvictedRefetch|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote|Batch|EvictedRefetch|Floor)|TestSavedLive(Messages|BotUpdate|EvictedRefetch)|TestActivityThreadLeaves(WithItsDeletedReply|WhenItsReplyDropsTheMention)|TestActivityBadgesZero(ReadLocally|ThenLoad|InSocketOrder|Classic)|TestActivityFloorConvertsDrawnRows)$'
+      LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|VoteSlicePatchHeldReaction|EditsJSHeld|ThreadEditsJSHeld|ThreadNewReplyJSHeld|ThreadNewReplyFreshJSHeld|ThreadProjectionJSHeld|MaskedWithInnerPatches|MaskedThreadWithInnerPatches|SlicePatchNoReconvert|RootVoteAfterGap|RootRowsBesidePane|SearchIdle|FailedGroup|CopylessRefetch|EvictedRefetch|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote|Batch|EvictedRefetch|Floor)|TestSavedLive(Messages|BotUpdate|EvictedRefetch)|TestActivityThreadLeaves(WithItsDeletedReply|WhenItsReplyDropsTheMention)|TestActivityBadgesZero(ReadLocally|ThenLoad|InSocketOrder|Classic)|TestActivityFloorConvertsDrawnRows|TestViewsKeepARewrittenAuthorWhileJSIsBusy)$'
       STORE_TESTS: '^(TestFetchedMessages(TakeSocketChanges|KeepReactions|Bounded)|TestFetchedReplayTruncatedUsers|TestApplyReactionLastListed|TestFetchedSizeAfterMutate|TestRefreshRangeRead|TestWindowReadKeepsFetchedRevision)$'
       CORE_TESTS: '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords|TestFetchedRootAnnounced|TestReadRevisionAnnounced|TestWindowReadKeepsReactions|TestOlderRepliesStored|TestRemovesNotTakenByReactions|TestWindowReadKeepsSocketRevision|TestWindowReadAnnouncesRevision|TestThreadReadKeepsSocketWrites|TestReadRevisionOrderedWithSocket|TestOlderPageRead|TestThreadsUnreadLeavesDeleted|TestReadsAnnounce|TestRefetch(Batch|Gone|Backoff|RetriesByItself)|TestChangedOldMessageStaysOutOfWindow|TestHydrateDropsMissingFetched|TestReadRevisionKeepsPinDuringRead|TestWindowReadKeepsPageRevisionWithReaction|TestClassicBadgesZero)$'
       HUB_TESTS: '^TestHub(Update(OutsideLoadedHistory|AfterWholeEviction|DuringFirstLoad|AfterLocalCopyAtTop)|KeepLiveAfterStartOver|ReloadKeepsRangeAfterOldChange)$'
@@ -1636,6 +1636,27 @@ jobs:
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSliceFirstDraw$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestEditLatency$/^slice-text$' ./internal/ui || rc=1
           exit $rc
+
+  # views-rewrites: a view a plugin rewrites outside the text (Censorship's
+  # mask in blocks, ShowRealUser's sender) stands while the plugins' JS is
+  # busy: a reaction never brings core's copy back in the views drawn from
+  # viewMsg. Dispatch with only=views-rewrites.
+  views-rewrites:
+    if: ${{ !inputs.only || startsWith('views-rewrites', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "views: rewritten views through a reaction while JS is busy (COUNT runs)"
+        run: |
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch)$' ./internal/ui/views
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
   # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
