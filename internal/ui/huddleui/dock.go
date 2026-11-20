@@ -116,6 +116,7 @@ func (c *Controller) LayoutDock(gtx C, th *theme.Theme) D {
 	if sz.Y == 0 {
 		return D{}
 	}
+	c.noteMainTheme(th)                    // the huddle window follows it (window_theme.go)
 	if slackc.Patched("HuddleMiniPanel") { // LetMeSee adds after it
 		var room, ch string
 		if s := c.Session(); s != nil {
@@ -299,13 +300,13 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 					bg = ink.btnHov
 				}
 				if k.on {
-					bg = hudBtnOn
+					bg = ink.on
 				}
 				segFill(gtx, image.Rectangle{Max: image.Pt(cw, h)}, k.seg, gtx.Dp(8), bg)
 			}, func(gtx C) D {
 				fg := ink.text
 				if k.on {
-					fg = hudInk
+					fg = ink.onFg
 				}
 				if k.dim {
 					fg.A = 0x66
@@ -396,11 +397,13 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 
 // dockInk is the bar's theme tokens. It sits in the client's chrome, so in
 // light mode it takes the inverted (aubergine) scope like the sidebar.
-type dockInk struct{ bg, text, sec, btn, btnHov, divider color.NRGBA }
+type dockInk struct{ bg, text, sec, btn, btnHov, on, onFg, divider color.NRGBA }
 
 func dockInks(th *theme.Theme) dockInk {
 	p := th.C
-	return dockInk{bg: p.SidebarBg, text: p.SidebarTextUnread, sec: p.SidebarText, btn: p.SidebarButton, btnHov: p.SidebarHover, divider: p.SidebarDivider}
+	// .button.buttonToggledOn: theme-base-pry with theme-content-ter
+	return dockInk{bg: p.SidebarBg, text: p.SidebarTextUnread, sec: p.SidebarText, btn: p.SidebarButton, btnHov: p.SidebarHover,
+		on: p.ChromeBasePry, onFg: p.ChromeContentTer, divider: p.SidebarDivider}
 }
 
 // dockTitle is the bar's title: "Huddle with {name}" in a DM or group DM,

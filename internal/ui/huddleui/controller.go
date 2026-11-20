@@ -83,6 +83,7 @@ type Controller struct {
 	MissedAfter time.Duration
 
 	mu      sync.Mutex
+	wt      winTheme // the main window's theme, for the huddle window (window_theme.go)
 	s       *huddle.Session
 	logFP   logFP        // the event log taut last got (eventlog.go)
 	alerts  huddleAlerts // displayAlertMessage's alerts (eventlog.go)
@@ -286,7 +287,8 @@ func (c *Controller) toastFor(text, icon string, ms int) {
 // Start starts or joins the huddle in channel (a channel or DM id). If
 // you're in another huddle you leave it first, like Slack.
 func (c *Controller) Start(channel string) {
-	c.clearInvite(channel) // the orchestrator's start: clearInviteForChannelId first
+	c.noteMainTheme(c.h.Theme()) // the window opens in your theme (window_theme.go)
+	c.clearInvite(channel)       // the orchestrator's start: clearInviteForChannelId first
 	c.mu.Lock()
 	if c.joining != "" || (c.s != nil && c.s.Channel() == channel) {
 		c.mu.Unlock()
