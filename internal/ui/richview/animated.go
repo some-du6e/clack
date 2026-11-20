@@ -140,7 +140,9 @@ func getImg(st *Style, im *imgPrim, px int) (paint.ImageOp, bool) {
 func (v *View) drawImg(ops *op.Ops, st *Style, i int, static bool) {
 	im := &v.d.imgs[i]
 	if im.url == "" {
-		fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		if !im.bare {
+			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		}
 		return
 	}
 	if name, ok := strings.CutPrefix(im.url, iconURL); ok { // a vector icon (unfurl footers, placeholders)
@@ -165,7 +167,9 @@ func (v *View) drawImg(ops *op.Ops, st *Style, i int, static bool) {
 		}
 	}
 	if !ok {
-		fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		if !im.bare {
+			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		}
 		if static {
 			v.pending = append(v.pending, int32(i))
 		}

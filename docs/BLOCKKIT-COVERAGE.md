@@ -93,7 +93,7 @@ So the blocks Karim's workspaces use were already drawn. The gaps that showed up
 | fallback_canary (slack.ts) | none: always its fallback | absent (drew nothing) | **full** | |
 | file | `QRSm` FileLazy | partial | partial | remote file cards (not re-audited) |
 | header | `nN7E` | full | full | |
-| image | `8plt` | full | full | a `slack_file` given by `id` alone (Slack reads the file's thumbs) |
+| image | `8plt` | full | full; its image loads like Slack's (AttachmentImage `UvHM`: getImgProxyUrl `d0up`): directly only from https on Slack's hosts, through the image proxy (`slack-imgs.com/?c=1&o1=ro&url=`) from anywhere else, plain http included, and its box stays empty while the image loads or if it fails | a `slack_file` given by `id` alone (Slack reads the file's thumbs); a deleted or unreadable `slack_file`'s unable-to-load picture (`Ec61`); with no `image_width`/`image_height` (the API adds both) Slack's AspectBox draws the image 0×0, where Clack keeps a 360×240 box |
 | input | `h/Gw` InputBlock | full in modals and App Home; partial in messages (label + placeholder) | same | |
 | loading (slack.ts) | `KSQB` | absent | **full** | |
 | markdown | none in messages (server-translated) | Clack converts it itself | same | Slack's client would show the fallback card if one arrived untranslated. Kept, because the agent-thread fixture (Karim's report, 2026-11-12) stores one |
@@ -194,6 +194,13 @@ Round 1's review fixes, with tests that fail on `8126e895`:
   - odd `app_icon_urls`, channel and participant values no longer fail the card.
 - An inline file slug draws its label beside its icon. Round 2's first cut drew the icon alone, which the gallery shot showed: `TestFileSlugLabel` (richview).
 - A container's or a call card's toggle survives the message changing (a reaction, a reply, `chat.update`). The View keys it by the container's block_id (else its place among the message's containers) and by the call id. A change to `is_collapsible` or `default_collapsed` resets it, as ContainerBlock's `useEffect` does: `TestCollapseSurvivesUpdates`. A container `width` Slack lacks, or `null`, now draws full width, since "standard" is only the default for an absent field: `TestBoxedBlocks`.
+
+Round 3's fixes, with tests that fail on `f4a38c2c` (Karim's icon's on `f3fd8e49`, the first three's fix):
+
+- Alerts in modals and App Home fill the view. A view's block wrappers aren't flex (WSwB's wrapViewBlock and wrapAppHomeBlock), so `.c-alert` is full width there, as in a callout or a container: `TestSurfaceAlertFills` (blockkit), `TestAlertFillsViews` (richview).
+- A button in a container, callout or fallback inside an attachment sends the attachment's container, `{type: message_attachment, attachment_id}` (AttachmentBlocks' containerActionsPayload), not the message's: `TestNestedBlockElements`.
+- `share_shortcut` settles. With no bot, a bot id that isn't member-shaped, or one users.info didn't find, the bot is a non-existent member (getMemberById `DOS4`) and the card is enabled. Only a member-shaped id still being fetched is the loading card, and that one opens the details and has its actions bar: `TestShareShortcutBlock`, `TestShortcutCardLayout`, `TestMemberDeletedStates`.
+- Karim's weather icon (#clack, α.112): an image block on a plain-http host drew an empty box. Clack's image fetcher refused anything but https before it got to Slack's image proxy, which loads http as well. Such an image now loads through the proxy, and never from its own host. The gallery's `coverage/http image` is a message unfurl like Karim's (a 64×64 icon on `http://icons.example.net`, which only the fake's proxy serves): `TestHTTPImageBlockLoads` (richview, with the session's fetcher as cmd/clack builds it, `imgcache.SessionFetch`), `TestPublicFetchProxiesHTTP` and `TestSessionFetch` (imgcache). The box is empty while the image loads or if it fails: Slack draws the image as the box's CSS background, with only the 1px ring showing (`TestImageBlockEmptyUntilLoaded`, a pixel test in ci's list).
 
 ## Next
 

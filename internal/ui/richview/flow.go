@@ -120,6 +120,10 @@ type imgPrim struct {
 	tint   color.NRGBA // an iconURL image: the icon's color
 	alpha  float32     // < 1: drawn at this opacity (a pending upload, .5)
 	play   bool        // a still the viewer played: drawn playing (animated.go)
+	// bare: nothing under it while it loads or once it failed, an image
+	// block's (AttachmentImage's c-message_attachment__image is a CSS
+	// background on a transparent box: only its 1px ring shows)
+	bare bool
 }
 
 // removeBtn is an unfurl's remove ("x") button (unfurl.go): drawn while

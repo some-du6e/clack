@@ -1290,7 +1290,10 @@ func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
 	r := image.Rect(x, iy, x+iw, iy+ih)
 	rad := l.dp(8)
 	itg := l.d.addTarget(target{kind: tImage, img: img})
-	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: [4]int{rad, rad, rad, rad}, target: itg, px: max(iw, ih)})
+	// AttachmentImage (UvHM): its source is the URL through Slack's image
+	// proxy (imgcache.PublicFetch), drawn as the box's CSS background, so
+	// the box is empty while it loads and if it fails (bare)
+	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: [4]int{rad, rad, rad, rad}, target: itg, px: max(iw, ih), bare: true})
 	l.imageControls(img, len(l.d.imgs)-1, r) // AttachmentImage (animated.go)
 	l.d.hits = append(l.d.hits, hit{r: r, t: itg})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: max(1, l.dp(1)), target: -1, layer: 1})

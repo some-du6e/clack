@@ -15,11 +15,16 @@ import (
 
 func init() { RegisterGallery("12-coverage", galleryCoverage) }
 
+// GalleryHTTPImage is coverage/http image's image_url: one of the fake's
+// pictures on a third-party plain-http host, which only the image proxy
+// serves (ProxiedImageURL).
+var GalleryHTTPImage = ProxiedImageURL("http://icons.example.net", 64, 64, "weather-sunny")
+
 func galleryCoverage(e GalleryEnv) []GalleryMessage {
 	u1, u2, u3 := e.Users[0], e.Users[1], e.Users[min(2, len(e.Users)-1)]
 	now := time.Now().Unix()
 	at := func(sec int64) string { return strconv.FormatInt(sec, 10) }
-	r := strings.NewReplacer("{U1}", u1, "{U2}", u2, "{U3}", u3, "{ICON72}", e.Img(72, 72, "callapp"),
+	r := strings.NewReplacer("{U1}", u1, "{U2}", u2, "{U3}", u3, "{C1}", e.Channel, "{HTTPICON}", GalleryHTTPImage, "{ICON72}", e.Img(72, 72, "callapp"),
 		"{HERO}", e.Img(400, 300, "cardhero"), "{CARDICON}", e.Img(72, 72, "cardicon"),
 		"{RUN}", at(now-25*60), "{END}", at(1762506000), "{ENDS}", at(1762506000-47*60))
 	b := func(s string) string { return r.Replace(s) }
@@ -120,6 +125,18 @@ func galleryCoverage(e GalleryEnv) []GalleryMessage {
 				{"type":"rich_text_section","checked":false,"elements":[{"type":"text","text":"Send the agenda, a long item that wraps back under its checkbox when the column is narrow enough"}]}]},
 			{"type":"rich_text_list","style":"check","indent":1,"elements":[
 				{"type":"rich_text_section","elements":[{"type":"text","text":"Draft it first"}]}]}]}]`},
+		// a message unfurl whose image block is a 64×64 icon on a plain-http
+		// third-party host, with the sizes Slack's API adds (a weather
+		// bot's forecast, shared by link): Slack's client loads it through
+		// its image proxy (getImgProxyUrl), as Clack must
+		{Name: "coverage/http image", Text: "<https://fakeclub.slack.com/archives/{C1}/p1762500000000100>", From: u2,
+			Attachments: b(`[{"id":1,"is_msg_unfurl":true,"author_id":"{U1}","channel_id":"{C1}","ts":"1762500000.000100",
+			"from_url":"https://fakeclub.slack.com/archives/{C1}/p1762500000000100","original_url":"https://fakeclub.slack.com/archives/{C1}/p1762500000000100",
+			"fallback":"Forecast: sunny, 24°C","blocks":[
+			{"type":"image","block_id":"wx_icon","image_url":"{HTTPICON}","alt_text":"Sunny","title":{"type":"plain_text","text":"Sunny"},
+			 "image_width":64,"image_height":64,"image_bytes":1613,"is_animated":true},
+			{"type":"header","text":{"type":"plain_text","text":"Forecast"}},
+			{"type":"section","text":{"type":"mrkdwn","text":"*24°C*, clear all day"}}]}]`)},
 		{Name: "coverage/condition", Text: "condition", Blocks: `[{"type":"condition","cases":[
 			{"conditions":[{"type":"client","op":"=","value":"ios"}],"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"ios only"}}]},
 			{"conditions":[{"type":"client","op":"=","value":"desktop"}],"blocks":[{"type":"section","text":{"type":"mrkdwn","text":"*condition*: the desktop case drew"}}]}],
