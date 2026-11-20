@@ -172,6 +172,7 @@ func TestVideoPipJump(t *testing.T) {
 		share()
 		time.Sleep(10 * time.Millisecond)
 	}
+	t.Logf("the tile's share of the list in the frames after the jump: %v", shares)
 	if v, ok := pipShown(e); ok {
 		t.Errorf("the mini player stayed after Jump to message, or docked again (%q); the tile's share of the list %v", v.trigger, shares)
 	}

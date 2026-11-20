@@ -81,6 +81,7 @@ func frame(c *Controller, tiles ...[2]any) {
 		r, f := rt[0].(*Row), rt[1].(*richtext.File)
 		t := c.tileLocked(r.key(f), f)
 		t.laid = c.frame
+		c.pendingResumeLocked(t) // as the overlay's layout: a closed mini player's time
 	}
 	c.mu.Unlock()
 	c.EndFrame()
