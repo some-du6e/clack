@@ -15,7 +15,6 @@ package ui
 import (
 	"context"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
@@ -23,9 +22,6 @@ import (
 )
 
 func TestJumpWindowReactionsAfterLeaving(t *testing.T) {
-	if os.Getenv("CLACK_LATENCY_TESTS") == "" {
-		t.Skip("CLACK_LATENCY_TESTS not set: flake-check's jump-reactions job runs this")
-	}
 	e := longEnv(t)
 	c := e.a.Core()
 	c.SetRealtime(true)
