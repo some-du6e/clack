@@ -658,9 +658,19 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 	styledCard(gtx, st, cl, pos, sz, dp(gtx, 4), false, func(gtx layout.Context) {
 		m.layoutBody(gtx, th, cl, pos, boxes)
 	})
+	slackc.InspectCard(gtx, m.rect) // the inspect tool: the card is the menu's box
 	st.Leave()
 	if m.sub != nil && !m.done {
+		// a layer of its own for the inspect tool (a pick in it reports the
+		// submenu), with its own card
+		var sub, sm slackc.InspectMark
+		if slackc.Inspecting() {
+			sub = slackc.InspectOverlay("submenu (popups.Menu)")
+			sm = slackc.InspectAs("Menu") // the root menu's rows report theirs (its Menu boundary)
+		}
 		m.sub.layoutSub(gtx, win)
+		sm.EndCard(gtx)
+		sub.EndCard(gtx)
 	}
 }
 
@@ -756,7 +766,7 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 	switch {
 	case it.Separator:
 		st := menuSepClass.Enter(gtx, 0, 0)
-		defer st.Leave()
+		defer leaveRow(gtx, st, sz)
 		if st.Hidden() {
 			return layout.Dimensions{Size: sz}
 		}
@@ -767,7 +777,7 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 		})
 	case it.Header != "":
 		st := menuHdrClass.Enter(gtx, 0, 0)
-		defer st.Leave()
+		defer leaveRow(gtx, st, sz)
 		if st.Hidden() {
 			return layout.Dimensions{Size: sz}
 		}
@@ -802,7 +812,7 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 		def = menuRowDefsFor(it.Class).li
 	}
 	st := def.Enter(gtx, state, mods)
-	defer st.Leave()
+	defer leaveRow(gtx, st, sz)
 	if st.Hidden() {
 		return layout.Dimensions{Size: sz}
 	}
@@ -829,6 +839,13 @@ func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz im
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return m.itemRow(gtx, th, cl, st, i, sz, hl)
 	})
+}
+
+// leaveRow leaves a row's element, giving it its box for the inspect tool
+// first (a popup's own: slackc.InspectAreaInLayer).
+func leaveRow(gtx layout.Context, st slackc.Styled, sz image.Point) {
+	slackc.InspectAreaInLayer(gtx, image.Rectangle{Max: sz})
+	st.Leave()
 }
 
 // itemRow draws a plain item row (label, icon, hints, check, chevron).
