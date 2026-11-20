@@ -6,6 +6,13 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run huddle.yml --ref <branch>)
     paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'internal/core/dnd*.go', 'internal/fakeslack/huddles.go', 'internal/ui/notify*.go', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'internal/ui/screenlock/**', 'internal/ui/globalkey/**', 'third_party/rnnoise-go/**', 'internal/tflite/**', 'internal/ui/prefs_pages.go', 'internal/ui/huddle_av.go', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
   workflow_dispatch:
+
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   huddle:
     runs-on: ubuntu-latest
