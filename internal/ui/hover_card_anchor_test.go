@@ -171,11 +171,12 @@ func (e *hcaEnv) open(what string) (f32.Point, image.Rectangle, image.Rectangle)
 	}
 	card := e.a.hover.chc.Rect()
 	req, _, _ := e.ctl.Open()
-	if req.Anchor != link {
+	// the trigger's bounds are its words' and its pill's (2px padding)
+	if a := req.Anchor; !link.In(a) || a.Dx()-link.Dx() > 8 || a.Dy()-link.Dy() > 8 {
 		e.t.Errorf("%s: the card opened anchored at %v, the link is at %v", what, req.Anchor, link)
 	}
-	if card.Max.Y != link.Min.Y-hovercard.OffsetY && card.Min.Y != link.Max.Y+hovercard.OffsetY {
-		e.t.Errorf("%s: card %v isn't 12px above or below the link %v", what, card, link)
+	if a := req.Anchor; card.Max.Y != a.Min.Y-hovercard.OffsetY && card.Min.Y != a.Max.Y+hovercard.OffsetY {
+		e.t.Errorf("%s: card %v isn't 12px above or below the trigger %v", what, card, a)
 	}
 	return p, link, card
 }
