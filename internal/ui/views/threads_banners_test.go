@@ -356,7 +356,7 @@ func TestThreadsBannerJumpHiddenUnreadLikeSlack(t *testing.T) {
 				if _, err := app.Replies(context.Background(), ch, root); err != nil {
 					t.Fatal(err)
 				}
-				if got := app.S.ThreadTSs(ch, root); len(got) != 11 {
+				if got, _ := app.S.Thread(ch, root); len(got) != 11 {
 					t.Fatalf("core holds %d of the thread's messages after the pane's fetch, want the root and its 10 replies", len(got))
 				}
 			}
