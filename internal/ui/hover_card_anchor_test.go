@@ -37,10 +37,21 @@ import (
 // opens nothing.
 
 const (
-	hcaText  = "Synthetic notes for the week from every team, gathered so nobody misses a thing: <#" + fakeslack.ViewsChannel + "> has the plan, and this synthetic message runs on long enough to wrap onto a second line at any width the inbox takes, with more words after it."
+	// the #channel first: compact rows (the default density) clamp the
+	// body to one line
+	hcaText  = "<#" + fakeslack.ViewsChannel + "> has the synthetic notes for the week from every team, gathered so nobody misses a thing, and this message runs on long enough to wrap at any width the inbox takes."
 	hcaText2 = "A second synthetic mention, newer than the first."
 	hcaUser  = "U0FAKE00001"
 )
+
+// hcaMark is the words a body showing text draws (its #channel is drawn
+// by name, not as written).
+func hcaMark(text string) string {
+	if i := strings.Index(text, "> "); i >= 0 {
+		text = text[i+2:]
+	}
+	return text[:24]
+}
 
 // hcaEnv is the client on the Activity page with the mention row on top.
 type hcaEnv struct {
@@ -86,7 +97,7 @@ func (e *hcaEnv) activity() *views.Activity {
 // body is a painted view showing text (nil: none yet).
 func (e *hcaEnv) body(text string) *richview.View {
 	for v, s := range e.views {
-		if strings.HasPrefix(s, text[:30]) {
+		if strings.Contains(s, hcaMark(text)) {
 			return v
 		}
 	}
@@ -102,7 +113,7 @@ func (e *hcaEnv) locate(text string) (*richview.View, image.Rectangle) {
 		for _, x := range []int{220, 420, 620} {
 			e.move(f32.Pt(float32(x), float32(y)))
 			for v, s := range e.views {
-				if !strings.HasPrefix(s, text[:30]) || !v.Pointer() {
+				if !strings.Contains(s, hcaMark(text)) || !v.Pointer() {
 					continue
 				}
 				org, ok := v.WindowOrigin()
@@ -121,7 +132,7 @@ func (e *hcaEnv) locate(text string) (*richview.View, image.Rectangle) {
 			}
 		}
 	}
-	e.t.Fatalf("no body showing %q under the pointer anywhere", text[:30])
+	e.t.Fatalf("no body showing %q under the pointer anywhere", hcaMark(text))
 	return nil, image.Rectangle{}
 }
 
@@ -211,15 +222,15 @@ func (e *hcaEnv) check(what string, p f32.Point, card image.Rectangle) {
 	}
 }
 
-// Scrolling under a resting pointer: a line (the body moves, the mention
-// leaves the pointer, the body stays under it) and far (the row leaves
-// the list: its card goes at once, with the row).
+// Scrolling under a resting pointer: a little (the #channel stays under
+// it: the card stays where it opened) and far (the row leaves the list:
+// its card goes at once, with the row).
 func TestHoverCardAnchorActivityScroll(t *testing.T) {
 	e := newHCAEnv(t)
-	p, link, card := e.open("scroll a line")
-	e.scroll(image.Pt(int(p.X), int(p.Y)), float32(link.Dy()+4))
+	p, link, card := e.open("scroll a little")
+	e.scroll(image.Pt(int(p.X), int(p.Y)), float32(link.Dy()/3))
 	e.frame()
-	e.check("scroll a line", p, card)
+	e.check("scroll a little", p, card)
 
 	p, _, card = e.open("scroll away")
 	e.scroll(image.Pt(int(p.X), int(p.Y)), 2000)
@@ -244,7 +255,7 @@ func (e *hcaEnv) locateQuiet(text string) (*richview.View, bool) {
 	e.frame()
 	richview.PaintedHook = prev
 	for v := range drawn {
-		if strings.HasPrefix(e.views[v], text[:30]) {
+		if strings.Contains(e.views[v], hcaMark(text)) {
 			return v, true
 		}
 	}
