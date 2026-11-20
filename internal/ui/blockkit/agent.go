@@ -336,6 +336,7 @@ type agentAnim struct {
 }
 
 type agentState struct {
+	used   uint64 // agentUse at its last use (the cap of 8 drawings evicts the oldest)
 	parsed map[string]*agentParsed
 	open   map[string]bool // toggle key → expanded (absent: the default)
 	taps   map[string]*tap
@@ -372,7 +373,7 @@ type agentParsed struct {
 // caches and the feedback ratings.
 type agentMsgState struct {
 	insts  map[uint64]*agentState
-	order  []uint64
+	used   uint64 // agentUse at its last use (the cap of 400 messages evicts the oldest)
 	parsed map[string]*agentParsed
 	cuts   map[string]*agentCut
 	rating map[string]string
@@ -381,7 +382,7 @@ type agentMsgState struct {
 var (
 	agentMu     sync.Mutex
 	agentStates = map[string]*agentMsgState{}
-	agentOrder  []string
+	agentUse    uint64 // agentState's calls: the clock of last use
 )
 
 // agentState is the state of the agent blocks for the drawing instance
@@ -390,35 +391,41 @@ func (me *Message) agentState() *agentState {
 	k := me.m.Channel + "/" + me.m.TS
 	agentMu.Lock()
 	defer agentMu.Unlock()
+	agentUse++
 	am := agentStates[k]
 	if am == nil {
 		am = &agentMsgState{insts: map[uint64]*agentState{}, parsed: map[string]*agentParsed{}, cuts: map[string]*agentCut{},
 			rating: map[string]string{}}
 		agentStates[k] = am
-		agentOrder = append(agentOrder, k)
-		if len(agentOrder) > 400 {
-			delete(agentStates, agentOrder[0])
-			agentOrder = agentOrder[1:]
+		if len(agentStates) > 400 { // the message used longest ago goes: one drawn all along keeps its state
+			old, oldest := "", uint64(math.MaxUint64)
+			for ok, om := range agentStates {
+				if ok != k && om.used < oldest {
+					old, oldest = ok, om.used
+				}
+			}
+			delete(agentStates, old)
 		}
 	}
+	am.used = agentUse
 	st := am.insts[me.inst]
-	if st != nil { // the order is by last use: a drawing still on screen isn't the one evicted
-		if i := slices.Index(am.order, me.inst); i >= 0 && i != len(am.order)-1 {
-			am.order = append(append(am.order[:i:i], am.order[i+1:]...), me.inst)
-		}
-	}
 	if st == nil {
 		st = &agentState{parsed: am.parsed, open: map[string]bool{}, taps: map[string]*tap{},
 			tips: map[string]*popups.TipState{}, rating: am.rating, views: map[string]*agentText{},
 			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: am.cuts, touched: map[string]bool{},
 			cards: map[string]*popups.ChannelHoverCard{}}
 		am.insts[me.inst] = st
-		am.order = append(am.order, me.inst)
-		if len(am.order) > 8 { // the drawing used longest ago goes (its row is long gone)
-			delete(am.insts, am.order[0])
-			am.order = am.order[1:]
+		if len(am.insts) > 8 { // the drawing used longest ago goes (its row is long gone)
+			old, oldest := uint64(0), uint64(math.MaxUint64)
+			for id, os := range am.insts {
+				if id != me.inst && os.used < oldest {
+					old, oldest = id, os.used
+				}
+			}
+			delete(am.insts, old)
 		}
 	}
+	st.used = agentUse
 	return st
 }
 
