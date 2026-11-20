@@ -930,13 +930,18 @@ func (v *Threads) sendRead(t *thrItem) {
 		defer cancel()
 		if err := c.MarkThread(ctx, ch, root, ts); err != nil {
 			log.Printf("threads: failed to mark thread %s/%s: %v", ch, root, err)
+			// only while the read is still this one (markThread's
+			// uV() === D.current): read since, nothing is put back. The
+			// hand mark comes back only over none, as a pane's mark made
+			// meanwhile isn't in v.read until its thread_marked
 			v.notes.run(v.h, func() {
-				if v.read[key] == ts {
-					if had {
-						v.read[key] = prev
-					} else {
-						delete(v.read, key)
-					}
+				if v.read[key] != ts {
+					return
+				}
+				if had {
+					v.read[key] = prev
+				} else {
+					delete(v.read, key)
 				}
 				if prevMark != "" && c.ThreadMarkedUnread(ch, root) == "" {
 					c.RestoreThreadMarkedUnread(ch, root, prevMark)

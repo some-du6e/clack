@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -490,6 +491,48 @@ func TestThreadsMarkFailureLikeSlack(t *testing.T) {
 		}
 		if o := app.ThreadMarkedUnread(ch, thrA); o != "" {
 			t.Errorf("the hand mark came back (%q) after a read mark Slack counts done", o)
+		}
+	})
+	t.Run("read again while it was out", func(t *testing.T) {
+		var g thrGate
+		var asked atomic.Int32
+		app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
+			switch {
+			case method == "subscriptions.thread.mark" && f.Get("read") == "1":
+				asked.Add(1)
+				g.wait()
+				return map[string]any{"ok": false, "error": "internal_error"}, true
+			case method != "subscriptions.thread.getView":
+				return nil, false
+			}
+			return thrOrderAnswer(thrFixRead(ch, thrA, thrAReply, "U0FAKE00002", true, thrA),
+				thrFixRead(ch, thrC, thrCReply, fakeslack.SelfID, false, thrCReply)), true
+		})
+		t.Cleanup(g.open) // before the fake's Close, which waits for a held answer
+		h := newKBHost(app, false)
+		h.away.Store(true)
+		v := NewThreads(h)
+		e := thrViewEnv(t, v, 2)
+		e.frame()
+		key := ch + "/" + thrA
+		if err := app.MarkThreadUnreadFrom(ctx, ch, thrA, thrAReply, core.MarkedInThreadsView); err != nil {
+			t.Fatal(err)
+		}
+		g.hold()
+		c := v.cards[key]
+		c.reply.Click() // its box's focus marks the hand-marked thread read (onFooterInputFocus), the request held
+		e.until(t, "the read mark's request", func() bool { return asked.Load() > 0 })
+		if o := app.ThreadMarkedUnread(ch, thrA); o != "" {
+			t.Fatalf("the read mark left the hand mark from %q", o)
+		}
+		// another client reads it to its root before the mark fails
+		fs.Push(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": ch,
+			"thread_ts": thrA, "last_read": thrA, "active": true}, "event_ts": "1762699500.000100"})
+		e.until(t, "the other client's read", func() bool { return v.lastRead(thrItemOf(v, key)) == thrA })
+		g.open() // the read mark fails
+		thrBounded(e, 600*time.Millisecond, func() bool { return app.ThreadMarkedUnread(ch, thrA) != "" })
+		if o := app.ThreadMarkedUnread(ch, thrA); o != "" {
+			t.Errorf("the failed read mark put the hand mark back (%q) after the thread was read since; Slack's markThread puts nothing back then", o)
 		}
 	})
 	t.Run("already read", func(t *testing.T) {
