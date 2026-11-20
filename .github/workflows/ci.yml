@@ -399,12 +399,21 @@ jobs:
       # Idle: the client left alone for 10 s per surface (channel, thread,
       # Activity, Preferences, the sidebar with unreads, the huddle window),
       # with and without reduced motion; fails past a caret's blinks plus
-      # a clock tick, and logs who asked for every frame.
+      # a clock tick, and logs who asked for every frame. TestIdleFrames'
+      # groups each boot their own client, so they run at once in four
+      # processes of one test binary (fanout.sh checks each group ran once;
+      # one after another they took 11 min)
       - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}
         env:
           CLACK_IDLE_FRAMES: "1"
-        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
+          FANOUT_FLAGS: -test.timeout 20m
+        run: |
+          rc=0
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+          go test -count=1 -v -timeout 20m -run '^TestHuddleWindowIdleFrames$' ./internal/ui/huddleui || rc=1
+          (cd internal/ui && ../../.github/scripts/fanout.sh "$RUNNER_TEMP/ui.test" TestIdleFrames motion 'views|unreads' 'pointer|code' 'galleries|main') || rc=1
+          exit $rc
       # Gio patch 35 and ui's quiet frames on App.Run's real X11 window
       # (Xvfb, Mesa's llvmpipe): a frame only an animated emoji asked for
       # draws the last frame's ops again, without a layout; patch 46: a
@@ -1117,13 +1126,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # The idle-frame budget on Windows (see linux-idle).
+      # The idle-frame budget on Windows (see linux-idle: four processes).
       - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
         env:
           CGO_ENABLED: "0"
           CLACK_IDLE_FRAMES: "1"
-        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
+          FANOUT_FLAGS: -test.timeout 20m
+        run: |
+          rc=0
+          go test -c -o "$RUNNER_TEMP/ui.test.exe" ./internal/ui
+          go test -count=1 -v -timeout 20m -run '^TestHuddleWindowIdleFrames$' ./internal/ui/huddleui || rc=1
+          (cd internal/ui && ../../.github/scripts/fanout.sh "$RUNNER_TEMP/ui.test.exe" TestIdleFrames motion 'views|unreads' 'pointer|code' 'galleries|main') || rc=1
+          exit $rc
       # Gio patch 35 and ui's quiet frames on App.Run's real Direct3D
       # window: a frame only an animated emoji asked for draws the last
       # frame's ops again, without a layout; patch 46: a caret's blink is
@@ -1489,7 +1505,8 @@ jobs:
             echo "== $(basename "$f")"
             go tool pprof -top -nodecount=30 "$RUNNER_TEMP/ui-idle.test" "$f" 2>&1 | head -42
           done
-          CLACK_IDLE_FRAMES=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 25m -test.run '^TestIdleFrames$' || rc=1
+          # TestIdleFrames' groups in four processes at once (see linux-idle)
+          CLACK_IDLE_FRAMES=1 FANOUT_FLAGS='-test.timeout 25m' ../../.github/scripts/fanout.sh "$RUNNER_TEMP/ui-idle.test" TestIdleFrames motion 'views|unreads' 'pointer|code' 'galleries|main' || rc=1
           # Gio patch 35 and ui's quiet frames on Metal: a frame only an
           # animated emoji asked for draws the last frame's ops again
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
