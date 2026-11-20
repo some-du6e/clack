@@ -101,6 +101,9 @@ NEEDS_LICENCE = re.compile(r'\.(ttf|otf|ttc|woff2?|tflite|onnx|wasm|pack|bin|js|
 # copyright line (or the comment block matching pattern), with the next
 # blocks up to `blocks` in all.
 EXTRA = [
+    dict(module='github.com/thesyncim/goh264', when=['*.go'],
+         what="FFmpeg's copyright lines on the H.264 decoder files goh264 is ported from (tools/ffmpeg_copyrights.py)",
+         texts=[('file', 'third_party/licenses/goh264-ffmpeg.NOTICE')]),
     dict(module='github.com/kazzmir/opus-go', when=['opuscc/*.go', 'opusccenc/*.go'],
          what='libopus 1.6.1, which opus-go is transpiled from',
          texts=[('file', 'third_party/licenses/libopus.COPYING')]),

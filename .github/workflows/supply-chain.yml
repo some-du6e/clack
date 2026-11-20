@@ -109,6 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           for f in $(sed -n "s/.*('file', '\(third_party\/licenses\/[^']*\)').*/\1/p" tools/licenses.py); do
+            case $f in *.NOTICE) continue;; esac # generated: the licences job rebuilds and diffs them
             grep -qF "=${f#third_party/licenses/}" third_party/licenses/README.md || { echo "::error::$f isn't in third_party/licenses/README.md's upstream block"; exit 1; }
           done
 
@@ -131,6 +132,8 @@ jobs:
             python3 tools/licenses.py --target "$t" -o "/tmp/licences-${t//\//-}.txt" ./cmd/clack
           done
           python3 tools/licenses.py --target js/wasm -o /tmp/licences-js-wasm.txt ./cmd/clack-web
+      - name: goh264's FFmpeg notice matches FFmpeg at the tag goh264 names
+        run: python3 tools/ffmpeg_copyrights.py | diff third_party/licenses/goh264-ffmpeg.NOTICE -
 
   go-modules:
     runs-on: ubuntu-latest

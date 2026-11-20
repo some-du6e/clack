@@ -20,7 +20,7 @@ Clack is MIT licensed (see `LICENSE`). It includes or links the following third-
 | [React](https://react.dev), react-reconciler, scheduler (`internal/jsrt/vendor`) | plugin UI rendering | MIT (`internal/jsrt/vendor/LICENSE.*`) |
 | Unicode data (`internal/jsrt/vendor`) | text processing | Unicode License (`internal/jsrt/vendor/LICENSE.unicode`) |
 | [Pion WebRTC](https://github.com/pion/webrtc) and its modules (dtls, ice, interceptor, rtp, rtcp, sctp, sdp, srtp, stun, turn, transport, mdns, datachannel, logging, randutil) | huddle media | MIT (rtp's and mdns's LICENSE leave the holder blank; their files name the Pion community); transport's and stun's few files from Go are Go's BSD-3-Clause |
-| [goh264](https://github.com/thesyncim/goh264) | H.264 decoding (huddle screen shares) | LGPL-2.1 |
+| [goh264](https://github.com/thesyncim/goh264) | H.264 decoding (huddle screen shares) | LGPL-2.1 (goh264 is a port of FFmpeg n8.0.1's H.264 decoder; FFmpeg's copyright lines on the files it ports are in `third_party/licenses/goh264-ffmpeg.NOTICE`) |
 | [opus-go](https://github.com/kazzmir/opus-go) (libopus 1.6.1, transpiled to Go) | Opus audio | BSD-3-Clause (opus-go's and libopus's, `internal/huddle/opus/LICENSE-libopus.txt`) |
 | [malgo](https://github.com/gen2brain/malgo) (miniaudio) | audio devices | Unlicense (miniaudio: public domain / MIT-0) |
 | [go-mp3](https://github.com/hajimehoshi/go-mp3) | decoding Slack's notification and huddle-invite sounds (`internal/ui/huddleui/ring_mp3.go`) | Apache-2.0 (Hajime Hoshi) |

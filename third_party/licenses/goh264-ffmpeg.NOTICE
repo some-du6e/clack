@@ -1,0 +1,66 @@
+goh264 v0.0.0-20260714162114-14b36a2bfcc4, which Clack links for huddle screen shares, is a source-shaped port of
+FFmpeg's H.264 decoder at n8.0.1, under the same LGPL-2.1-or-later. goh264's own files
+keep only their SPDX id; the FFmpeg files they port carry these copyright lines
+
+libavcodec/cabac.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/cabac_functions.h
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/get_bits.h
+  Copyright (c) 2004 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/golomb.h
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+  Copyright (c) 2004 Alex Beregszaszi
+libavcodec/h264.h
+  (no copyright line in its header)
+libavcodec/h2645_parse.c
+  (no copyright line in its header)
+libavcodec/h2645_vui.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+  Copyright (C) 2012 - 2013 Guillaume Martres
+  Copyright (C) 2012 - 2013 Mickael Raulet
+  Copyright (C) 2012 - 2013 Gildas Cocherel
+  Copyright (C) 2013 Vittorio Giovara
+libavcodec/h264_cabac.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_cavlc.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_direct.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_loopfilter.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_mb.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_mc_template.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_mvpred.h
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_parse.c
+  (no copyright line in its header)
+libavcodec/h264_ps.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_refs.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_sei.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264_slice.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264addpx_template.c
+  Copyright (c) 2003-2011 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264chroma_template.c
+  Copyright (c) 2000, 2001 Fabrice Bellard
+  Copyright (c) 2002-2004 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264dec.c
+  Copyright (c) 2003 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264idct_template.c
+  Copyright (c) 2004-2011 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264pred_template.c
+  Copyright (c) 2003-2011 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/h264qpel_template.c
+  Copyright (c) 2003-2010 Michael Niedermayer <michaelni@gmx.at>
+libavcodec/mpegutils.h
+  (no copyright line in its header)
+libavcodec/put_bits.h
+  copyright (c) 2004 Michael Niedermayer <michaelni@gmx.at>
+libavutil/intmath.h
+  Copyright (c) 2010 Mans Rullgard <mans@mansr.com>
