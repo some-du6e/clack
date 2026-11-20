@@ -124,6 +124,22 @@ type imgPrim struct {
 	// block's (AttachmentImage's c-message_attachment__image is a CSS
 	// background on a transparent box: only its 1px ring shows)
 	bare bool
+	// noUp > 0: a fit image never drawn larger than its decoded size times
+	// noUp (the scale: object-fit contain with max-width and max-height
+	// 100%, so at most its natural size in CSS px), centred in r
+	noUp float32
+}
+
+// noUpRect is where an image of decoded size sz draws in box r when it
+// may not grow past sz×f: its own size, centred, when that is smaller than
+// r both ways (ok false: contained in r as usual).
+func noUpRect(r image.Rectangle, sz image.Point, f float32) (image.Rectangle, bool) {
+	w, h := int(float32(sz.X)*f+0.5), int(float32(sz.Y)*f+0.5)
+	if f <= 0 || w <= 0 || h <= 0 || w >= r.Dx() || h >= r.Dy() {
+		return r, false
+	}
+	at := r.Min.Add(image.Pt((r.Dx()-w)/2, (r.Dy()-h)/2))
+	return image.Rectangle{Min: at, Max: at.Add(image.Pt(w, h))}, true
 }
 
 // removeBtn is an unfurl's remove ("x") button (unfurl.go): drawn while
@@ -503,6 +519,12 @@ type lay struct {
 	// that colour, always underlined (.c-alert :any-link{color:inherit;
 	// text-decoration:underline})
 	ink, linkInk color.NRGBA
+	// attDepth counts the attachments being laid out: their rich text is
+	// in the message_attachment context (AttachmentBlocks; a forwarded
+	// message's renderTruncatedAttachmentBlocks), where RichTextList
+	// draws a check list as bullets (s3Wf sS allows checkboxes only in a
+	// message, a thread or a Slackbot message)
+	attDepth int
 	// filled counts the boxes whose Block Kit blocks fill the width rather
 	// than sit in a message's flex block wrapper (an alert shrinks to its
 	// content there): a callout's or a container's children (renderBlocks

@@ -99,6 +99,10 @@ func (l *lay) maxContentW(bs []richtext.Block) int {
 	}
 	saved, lead := l.d, l.lead
 	var scratch display
+	// the scratch pass numbers its components after the real display's,
+	// so a pill mention (modePills) reads the state the real pass will
+	// give it, not the message's first components'
+	scratch.comps = make([]compBox, len(saved.comps))
 	l.d, l.lead = &scratch, 0
 	l.nestedText(bs, 0, 0, 1<<20)
 	l.d, l.lead = saved, lead

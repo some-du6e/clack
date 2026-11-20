@@ -83,9 +83,14 @@ func (l *lay) card(cd *richtext.Card, x, y, w int) int {
 					l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(gx, gy, gx+gs, gy+gs), url: iconURL + name, target: -1, px: gs, tint: p.Text})
 				}
 			} else {
+				// .iconImageContainer: ThumbnailContainer's surface.secondary
+				// box (radius 8, overflow hidden) behind the image, which is
+				// object-fit contain at max 100%: never scaled up
 				rad := l.dp(8)
-				l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(ix, iy, ix+ic, iy+ic), url: cd.Icon, radii: [4]int{rad, rad, rad, rad},
-					fit: true, target: -1, px: ic})
+				ir := image.Rect(ix, iy, ix+ic, iy+ic)
+				l.d.boxes = append(l.d.boxes, box{kind: bFill, r: ir, radius: rad, fill: l.tok("surf-sec"), target: -1})
+				l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: cd.Icon, radii: [4]int{rad, rad, rad, rad},
+					fit: true, bare: true, noUp: l.scale, target: -1, px: ic})
 			}
 			lx += ic + l.dp(12)
 		}

@@ -717,6 +717,8 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if b.Att == nil {
 			return 0
 		}
+		l.attDepth++
+		defer func() { l.attDepth-- }()
 		if isWorkObjectBlock(b) {
 			// MessageAttachmentWorkObject is its own component, never
 			// MessageAttachment's (workobject.go)
@@ -792,7 +794,7 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 	// (the [data-indent] rules' 28px steps deeper), then the 16px icon and
 	// its 8px margin inline with the text, whose next lines wrap back
 	// under the icon (the section is display: contents)
-	check := b.Check && l.opts.CheckLists
+	check := b.Check && l.opts.CheckLists && l.attDepth == 0
 	if check {
 		cx = x + l.dp(4)
 		if b.Indent > 0 {

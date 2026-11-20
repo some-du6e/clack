@@ -135,3 +135,45 @@ func TestCardActionSlots(t *testing.T) {
 		t.Errorf("right group at %v, want 128×36 ending at x %d, y %d", right.r, 340-13, b.bot+12)
 	}
 }
+
+// TestCardIconBox: a card's icon image sits in Card's .iconImageContainer:
+// a 36px ThumbnailContainer with the surface.secondary background, radius
+// 8, and the image is object-fit contain at max-width/max-height 100%, so
+// a small icon keeps its natural size (CSS px), centred, instead of
+// growing to 36px.
+func TestCardIconBox(t *testing.T) {
+	st := newTestStyle()
+	d := kitDoc(t, `[{"type":"card","block_id":"c1","icon":{"type":"image","image_url":"https://img.test/i.png","alt_text":"i"},
+		"title":{"type":"plain_text","text":"Alpha"}}]`)
+	v := layoutAt(st, d, Options{}, 800)
+	icons := imgsWithURL(&v.d, "https://img.test/i.png")
+	if len(icons) != 1 || !icons[0].fit || !icons[0].bare || icons[0].noUp != 1 {
+		t.Fatalf("icon %+v, want one contained image that never grows (noUp 1 at scale 1), nothing under it", icons)
+	}
+	ir := icons[0].r
+	found := false
+	for _, b := range v.d.boxes {
+		if b.kind == bFill && b.r == ir && b.radius == 8 && b.fill == (&lay{st: st}).tok("surf-sec") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no surface.secondary box (radius 8) at the icon's %v", ir)
+	}
+	for _, c := range []struct {
+		r     image.Rectangle
+		sz    image.Point
+		f     float32
+		want  image.Rectangle
+		small bool
+	}{
+		{image.Rect(0, 0, 36, 36), image.Pt(16, 16), 1, image.Rect(10, 10, 26, 26), true},
+		{image.Rect(0, 0, 72, 72), image.Pt(16, 16), 2, image.Rect(20, 20, 52, 52), true}, // 16 CSS px at 2x
+		{image.Rect(0, 0, 36, 36), image.Pt(64, 16), 1, image.Rect(0, 0, 36, 36), false},  // wider than the box: contained
+		{image.Rect(0, 0, 36, 36), image.Pt(36, 36), 1, image.Rect(0, 0, 36, 36), false},
+	} {
+		if got, small := noUpRect(c.r, c.sz, c.f); got != c.want || small != c.small {
+			t.Errorf("noUpRect(%v, %v, %v) = %v %v, want %v %v", c.r, c.sz, c.f, got, small, c.want, c.small)
+		}
+	}
+}

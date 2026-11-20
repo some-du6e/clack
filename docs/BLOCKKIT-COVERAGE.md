@@ -220,6 +220,9 @@ Round 3's other fixes (the review's MINORs and NITs):
 - A container the viewer collapsed in a modal or App Home stays collapsed through a views.update or an App Home publish. The surface keeps each block's view by Slack's React key (Q5CE: block_id, else type-index), as ViewBlocks' SUIRenderer keeps its items; a new view starts over: `TestSurfaceCollapseSurvivesUpdate`.
 - A failed action from an actions block nested in a container or callout of a modal or App Home draws its error line under the buttons, as a top-level actions block does (`/jJF` renderBlock): `TestSurfaceNestedActionError`.
 - A card's buttons in a message are Card's one row (`.actionsLeft`/`.actionsRight`): every action shows and they shrink rather than wrap. They get no "+ N more" and no status icons; those belong to the Actions block. The right group ends at the content's right edge and the danger group starts at its left, 12px under the body: `TestCardButtonsOneRow` (blockkit), `TestCardActionSlots` (richview, the Elements-host path).
+- A check list in an attachment's blocks or in a forwarded message is a bullet list. That rich text renders in the message_attachment context, and RichTextList's checkboxes come only in a message, a thread or a Slackbot message (s3Wf sS): `TestCheckListInAttachments`.
+- A card's icon image sits on ThumbnailContainer's surface.secondary box (radius 8) and is never scaled up (object-fit contain at max 100%), so a small icon keeps its size, centred: `TestCardIconBox`.
+- An alert's max-content measure numbers its mention pills after the message's own, so in pill mode (CSS or patched mentions) each reads its own component state: `TestAlertMaxContentPills`.
 
 ## Next
 

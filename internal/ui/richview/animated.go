@@ -175,7 +175,13 @@ func (v *View) drawImg(ops *op.Ops, st *Style, i int, static bool) {
 		}
 		return
 	}
-	if im.fit {
+	if im.noUp > 0 {
+		if r, small := noUpRect(im.r, img.Size(), im.noUp); small {
+			drawImage(ops, img, r, [4]int{}, false)
+			return
+		}
+	}
+	if im.fit && !im.bare {
 		fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
 	}
 	if im.alpha > 0 && im.alpha < 1 {
