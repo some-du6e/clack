@@ -491,8 +491,8 @@ jobs:
 
   # and the docked bar after you close the huddle window, on a real
   # window (Xvfb here, the runner's desktop below)
-  huddle-polish-dock:
-    if: ${{ !inputs.only || startsWith('huddle-polish-dock', inputs.only) }}
+  huddle-bar:
+    if: ${{ !inputs.only || startsWith('huddle-bar', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -511,8 +511,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a go test -count=$COUNT -v -run '^TestDockAfterHuddleWindowCloses$' ./internal/ui/huddleui
 
-  huddle-polish-dock-win:
-    if: ${{ !inputs.only || startsWith('huddle-polish-dock-win', inputs.only) }}
+  huddle-bar-win:
+    if: ${{ !inputs.only || startsWith('huddle-bar-win', inputs.only) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
