@@ -104,10 +104,10 @@ type model struct {
 	// they're converted again once it lands (afterLoad)
 	reconv core.RefChange
 
-	// loadChanged are the messages a load's answer changed (setAll: a
-	// newer copy than the model's, which no event the hub applied
-	// brought): taut marks their views as an event's would
-	// (taut.MessagesChanged) before the answer is the model's
+	// loadChanged are the messages a load's answer changed or brought
+	// (setAll: a newer copy than the model's, or one the model didn't have,
+	// which no event the hub applied brought): taut marks their views as an
+	// event's would (taut.MessagesChanged) before the answer is the model's
 	loadChanged []string
 }
 
@@ -592,7 +592,12 @@ func (m *model) setAll(msgs []core.Message) {
 			out = append(out, entry{m: x, rev: o.rev, seq: o.seq})
 			continue
 		}
-		if had && len(m.loadChanged) < maxLoadChanged && !sameExceptDoc(&o.m, &x) {
+		// a message the model didn't have is marked too: the plugins' copy
+		// of the conversation, read before the load (a thread pane's
+		// replies, the channel's rows read earlier), lacked it, and its view
+		// waited for the mirror's sweep, ~650 ms on a thread pane's first
+		// open under a text patch (TestSliceFirstDraw)
+		if len(m.loadChanged) < maxLoadChanged && (!had || !sameExceptDoc(&o.m, &x)) {
 			m.loadChanged = append(m.loadChanged, x.TS)
 		}
 		out = append(out, entry{m: x, rev: m.bump(), seq: m.loadSeq})

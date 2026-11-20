@@ -10,10 +10,13 @@ package ui
 // reply: 218-266 ms, 12-15 frames, in runs 44591888895, 44596411773).
 // Pushes run it once (CLACK_SLICE_TEXT, flake-check's edit-latency job):
 // the pane opens on three threads, each after the app settled (boot's
-// loads landed, the mirror idle), and the median of their gaps is held to
-// sliceFirstDrawWall, each drawing the view at all, so the gap can't grow
-// unseen and one slow paint on a shared runner can't fail a push.
-// CLACK_SLICE_GAPS (slice-gaps, on request) allows no unmarked frame.
+// loads landed, the mirror idle), and each gap is held to
+// sliceFirstDrawWall. The first pane of a session drew core's copy for
+// ~650 ms (36-37 paints, runs 44828104385 and 44829338850), the next two
+// ~55 ms: its thread's first load brought replies the plugins' copy of the
+// conversation lacked and marked nothing (setAll marked only messages the
+// model had), so their views waited for the mirror's sweep; a median hid
+// it. CLACK_SLICE_GAPS (slice-gaps, on request) allows no unmarked frame.
 // Synthetic data only.
 
 import (
@@ -31,9 +34,9 @@ import (
 	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
-// sliceFirstDrawWall bounds the median of how long a newly shown row
-// draws core's copy before the plugins' view on pushes (~250 ms settled).
-const sliceFirstDrawWall = 400 * time.Millisecond
+// sliceFirstDrawWall bounds how long a newly shown row draws core's copy
+// before the plugins' view on pushes (a JS round trip: ~55 ms settled).
+const sliceFirstDrawWall = 300 * time.Millisecond
 
 func TestSliceFirstDraw(t *testing.T) {
 	strict := os.Getenv("CLACK_SLICE_GAPS") != ""
@@ -132,14 +135,16 @@ func TestSliceFirstDraw(t *testing.T) {
 		}
 		return lag
 	}
-	median := func(what string, lags []time.Duration) {
+	bound := func(what string, lags []time.Duration) {
 		t.Helper()
-		sort.Slice(lags, func(i, j int) bool { return lags[i] < lags[j] })
-		m := lags[len(lags)/2]
-		t.Logf("first draw, %s: median %v of %v", what, m.Round(time.Millisecond), lags)
-		if m > sliceFirstDrawWall {
-			t.Errorf("%s: drew core's copy for a median %v before the plugins' view, past %v (the known gap grew)", what, m.Round(time.Millisecond), sliceFirstDrawWall)
+		for i, lag := range lags {
+			if lag > sliceFirstDrawWall {
+				t.Errorf("%s (%d of %d): drew core's copy for %v before the plugins' view, past %v", what, i+1, len(lags), lag.Round(time.Millisecond), sliceFirstDrawWall)
+			}
 		}
+		sorted := append([]time.Duration(nil), lags...)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		t.Logf("first draw, %s: median %v of %v", what, sorted[len(sorted)/2].Round(time.Millisecond), lags)
 	}
 
 	newest := fmt.Sprintf("%s %d", rootText, len(threads)-1) // the channel's newest message
@@ -147,7 +152,7 @@ func TestSliceFirstDraw(t *testing.T) {
 	e.openChannel(ch)
 	e.until("the channel's history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
 	e.toLatest()
-	median("the channel opened", []time.Duration{settle("the channel opened", newest)})
+	bound("the channel opened", []time.Duration{settle("the channel opened", newest)})
 	var lags []time.Duration
 	for _, th := range threads {
 		// boot's loads landed and the mirror idle, as a pane opens in use
@@ -156,5 +161,5 @@ func TestSliceFirstDraw(t *testing.T) {
 		e.a.OpenThread(ch, th.root)
 		lags = append(lags, settle("the thread pane opened", th.reply))
 	}
-	median("the thread pane opened", lags)
+	bound("the thread pane opened", lags)
 }
