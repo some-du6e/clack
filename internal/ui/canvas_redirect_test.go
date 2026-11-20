@@ -10,6 +10,7 @@ package ui
 
 import (
 	"image"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/canvasview"
 	"github.com/some-du6e/clack/internal/ui/listview"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // crThread is the thread view on ch/ts in the main window's views, or
@@ -144,12 +146,13 @@ func TestActivityCanvasMentionOpensThread(t *testing.T) {
 }
 
 // Every direct toMessage into a canvas's file channel is that thread
-// view: Later's View message in the column, and the split view's
+// view: LaterLabel's View to-dos in the column (wRj5's R9), Later's menu's
+// Open in Home (e6's R9 with forceTab Home) and the split view's
 // c/<C>/m/<ts>, where the thread replaces nothing of the split view's back
-// stack. The canvas opens in neither.
+// stack. The canvas opens in none.
 func TestCanvasMentionMessageOpensThread(t *testing.T) {
 	ch, ts := fakeslack.CanvasMentionChannel, fakeslack.CanvasMentionTS
-	t.Run("later", func(t *testing.T) {
+	t.Run("label", func(t *testing.T) {
 		e := newActShell(t)
 		cmSeed(e)
 		e.a.ViewTodo(ch, ts, "")
@@ -159,6 +162,22 @@ func TestCanvasMentionMessageOpensThread(t *testing.T) {
 		}
 		if e.a.secondary.at != ts {
 			t.Errorf("the thread opened at %q, want the mention %s", e.a.secondary.at, ts)
+		}
+	})
+	t.Run("home", func(t *testing.T) {
+		e := newActShell(t)
+		cmSeed(e)
+		e.a.Navigate("later")
+		e.frames(3)
+		if !e.a.OpenSavedInHome(ch, ts) {
+			t.Fatalf("Open in Home didn't take the file channel's message")
+		}
+		e.until("the thread view on the mention", crSecThread(e, ch, ts))
+		if r := e.a.router.Current(); r.Page() == "later" || r.Channel() == ch {
+			t.Errorf("the main view is %q, want the Home tab's", r)
+		}
+		if cv, ok := e.a.secondary.view.(*canvasview.View); ok {
+			t.Errorf("the column shows canvas %s, want the thread view", cv.ID())
 		}
 	})
 	t.Run("split", func(t *testing.T) {
@@ -181,6 +200,61 @@ func TestCanvasMentionMessageOpensThread(t *testing.T) {
 			tv := crThread(e, ch, ts, true)
 			return tv != nil && tv.Highlighted() == ts
 		})
+	})
+}
+
+// A To-dos row on a saved canvas mention is Slack's jumpToSavedMessage
+// (vh7T → jumpToMessage, isSpaceship), not a toMessage: the canvas beside
+// the list (getTargetContainer: Secondary on the Later tab), at the
+// mention's section, never the thread view or the file channel's
+// messages, the route staying To-dos.
+func TestLaterRowOpensSavedCanvasMention(t *testing.T) {
+	e := newActShell(t)
+	cmSeed(e)
+	for _, x := range []string{"later_todos", "nested_secondary_view", "secondary_view_default_width"} {
+		e.ca.SetExperimentGroup(x, "on")
+	}
+	now := time.Now().Unix()
+	items := []map[string]any{{"item_id": fakeslack.CanvasMentionChannel, "item_type": "message", "ts": fakeslack.CanvasMentionTS,
+		"todo_state": "to_do", "date_created": now - 100}}
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		if method != "saved.list" {
+			return nil, false
+		}
+		if !strings.HasPrefix(f.Get("filter"), "todo") {
+			return map[string]any{"ok": true, "saved_items": []any{}}, true
+		}
+		return map[string]any{"ok": true, "saved_items": items, "counts": map[string]any{"todo_count": len(items)}}, true
+	})
+	e.a.Navigate("later")
+	e.until("the to-do", func() bool {
+		l, ok := e.a.views[Route("later")].(*views.Later)
+		return ok && l.PeekCount() == len(items)
+	})
+	e.frames(10)
+	side := func() *canvasview.View {
+		if cv, ok := e.a.secondary.view.(*canvasview.View); ok && e.a.secondary.open() && cv.ID() == fakeslack.CanvasMentionFile {
+			return cv
+		}
+		return nil
+	}
+	o := e.a.primaryOrigin
+	for y := o.Y + 60; y < e.sz.Y-40 && side() == nil; y += 20 {
+		e.click(image.Pt(o.X+8, y))
+		if crSecThread(e, fakeslack.CanvasMentionChannel, fakeslack.CanvasMentionTS)() {
+			t.Fatalf("the row opened the thread view on the mention, want the canvas")
+		}
+	}
+	v := side()
+	if v == nil {
+		t.Fatalf("no row click opened the canvas beside the list (the column shows %v %s/%s)", e.a.secondary.kind, e.a.secondary.channel, e.a.secondary.ts)
+	}
+	if r := string(e.a.router.Current()); r != "later" {
+		t.Errorf("the route is %q, want later", r)
+	}
+	e.until("the mention's section focused", func() bool {
+		pending, at := v.Focus()
+		return pending == fakeslack.CanvasMentionSection || at == fakeslack.CanvasMentionSection
 	})
 }
 

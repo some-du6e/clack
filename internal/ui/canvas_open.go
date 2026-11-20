@@ -41,6 +41,7 @@ package ui
 
 import (
 	"context"
+	"image"
 	"log"
 	"sync"
 	"time"
@@ -57,6 +58,7 @@ import (
 
 var (
 	_ views.FileOpener        = (*App)(nil)
+	_ views.SavedJumper       = (*App)(nil)
 	_ messages.FileThreadHost = (*App)(nil)
 )
 
@@ -201,6 +203,48 @@ func (a *App) OpenFileJump(ch, thread, ts string, where views.FileWhere) {
 	if !a.fileJumpOf(ch, thread, ts, where, fallback, still) {
 		a.canvasFallback(fallback)
 	}
+}
+
+// JumpToSaved is views.SavedJumper: Later's row and rail peek row on
+// message ts (in thread) of file channel ch, Slack's jumpToSavedMessage
+// (vh7T: a document comment root's openDocWithThreadTs, else
+// jumpToMessage): the canvas, at a mention's section or with a comment's
+// thread, or the list at the record, where says. A file that turns out to
+// be neither opens the message as Later opens any (savedBase.open).
+func (a *App) JumpToSaved(ch, thread, ts string, where views.FileWhere) bool {
+	fallback := func() {
+		switch {
+		case thread != "":
+			a.OpenThreadAt(ch, thread, ts)
+		case where == views.FileSide:
+			a.OpenMessageSecondary(ch, ts)
+		default:
+			a.Navigate("c/" + ch + "/m/" + ts)
+		}
+	}
+	return a.fileJumpOf(ch, thread, ts, where, fallback, nil)
+}
+
+// OpenSavedInHome is views.SavedJumper: Later's menu's Open in Home on
+// message ts of file channel ch, R9 toMessage with forceTab Home
+// (SavedItemActionsMenu e6, a file channel's reply too), which
+// RedirectFileChannel makes the thread view on the message, in the
+// column of the Home tab (a reply's at its thread's root, the reply
+// highlighted), or the list at the record (a List view: the main view).
+func (a *App) OpenSavedInHome(ch, ts string) bool {
+	return a.redirectInstead(ch, ts, fileTo{
+		canvas: func(string) {
+			root := ts
+			if c := a.Core(); c != nil {
+				if m, held := c.S.FindHeld(ch, ts); held && m.ThreadTS != "" && m.ThreadTS != ts {
+					root = m.ThreadTS
+				}
+			}
+			a.railClick("home", image.Point{}) // forceTab Home
+			a.openFileThreadAt(ch, root, ts)
+		},
+		list: func(fid string) { a.listJump(fid, ch, "", ts, views.FileFull, nil) },
+	}, func() { a.Navigate("c/" + ch + "/m/" + ts) })
 }
 
 // activityOpened is the Activity page's open item ("" for none).
@@ -460,14 +504,18 @@ func (a *App) openListTarget(fid, rec string, where views.FileWhere) {
 // without a comment thread, in the secondary column: the thread pane on
 // message ts of canvas file channel ch, the message its highlighted root
 // (threadTs, highlightTs).
-func (a *App) openFileThread(ch, ts string) {
-	a.OpenThread(ch, ts)
+func (a *App) openFileThread(ch, ts string) { a.openFileThreadAt(ch, ts, ts) }
+
+// openFileThreadAt is openFileThread for a message ts in thread root's
+// thread: the thread pane on the root, ts highlighted.
+func (a *App) openFileThreadAt(ch, root, ts string) {
+	a.OpenThread(ch, root)
 	s := &a.secondary
-	if s.kind != secThread || s.channel != ch || s.ts != ts || s.hidden {
+	if s.kind != secThread || s.channel != ch || s.ts != root || s.hidden {
 		return
 	}
 	s.at = ts
-	if j, ok := a.convoFor(ch, ts).list.(interface{ JumpTo(ts string, flash bool) }); ok {
+	if j, ok := a.convoFor(ch, root).list.(interface{ JumpTo(ts string, flash bool) }); ok {
 		j.JumpTo(ts, true)
 	}
 	a.Invalidate()
