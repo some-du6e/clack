@@ -8,6 +8,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
@@ -57,4 +58,11 @@ func setOnline(t *testing.T, on func() (bool, time.Time)) {
 	prev := recentlyOnline
 	recentlyOnline = func(Host) (bool, time.Time) { return on() }
 	t.Cleanup(func() { recentlyOnline = prev })
+}
+
+// hookIcons sends the name of each icon drawn to f until restore.
+func hookIcons(f func(name string)) (restore func()) {
+	prev := icons.DrawHook
+	icons.DrawHook = f
+	return func() { icons.DrawHook = prev }
 }

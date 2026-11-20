@@ -14,7 +14,6 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
-	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -28,10 +27,10 @@ type drawRec struct {
 func recordDrawn(t *testing.T) *drawRec {
 	t.Helper()
 	r := &drawRec{}
-	pt, pi := theme.DrawHook, icons.DrawHook
+	pt := theme.DrawHook
 	theme.DrawHook = func(s string) { r.mu.Lock(); r.texts = append(r.texts, s); r.mu.Unlock() }
-	icons.DrawHook = func(n string) { r.mu.Lock(); r.icons = append(r.icons, n); r.mu.Unlock() }
-	t.Cleanup(func() { theme.DrawHook, icons.DrawHook = pt, pi })
+	restore := hookIcons(func(n string) { r.mu.Lock(); r.icons = append(r.icons, n); r.mu.Unlock() })
+	t.Cleanup(func() { theme.DrawHook = pt; restore() })
 	return r
 }
 
