@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	"strings"
 	"testing"
@@ -138,13 +139,25 @@ func (e *hcaEnv) away() {
 func (e *hcaEnv) open(what string) (f32.Point, image.Rectangle, image.Rectangle) {
 	e.t.Helper()
 	e.away()
-	_, link := e.locate(hcaText)
+	v, link := e.locate(hcaText)
 	p := f32.Pt(float32(link.Min.X+link.Dx()/2), float32(link.Min.Y+link.Dy()/2))
 	e.move(p)
-	e.until(what+": the card", 5*time.Second, func() bool {
+	if !e.untilSoft(5*time.Second, func() bool {
 		req, _, open := e.ctl.Open()
 		return open && req.ChannelID == fakeslack.ViewsChannel && e.a.hover.chc != nil && !e.a.hover.chc.Rect().Empty()
-	})
+	}) {
+		req, _, open := e.ctl.Open()
+		pr, pend := e.ctl.Pending()
+		org, _ := v.WindowOrigin()
+		var ov []string
+		for _, o := range e.a.overlays {
+			if o != nil && !o.Dismissed() {
+				ov = append(ov, fmt.Sprintf("%T", o))
+			}
+		}
+		e.t.Fatalf("%s: no card over the link %v (pointer %v; body hovered %v, origin %v, links %+v); open %v %+v; pending %v %+v; blocked %v; overlays %v",
+			what, link, p, v.Pointer(), org, v.LinkRects(), open, req, pend, pr, e.a.hoverBlocked(), ov)
+	}
 	card := e.a.hover.chc.Rect()
 	req, _, _ := e.ctl.Open()
 	if req.Anchor != link {
