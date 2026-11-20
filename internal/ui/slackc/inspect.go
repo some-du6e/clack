@@ -15,6 +15,8 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Inspect mode, for Clack's inspect tool (internal/ui/inspect, a developer
@@ -57,6 +59,11 @@ const (
 	// InspectTree is the scope of a plugin's host tree: InspectFrame.Boxes
 	// finds its boxes under a point.
 	InspectTree
+	// InspectLayer is a popup's layer (an overlay, a menu's submenu, a
+	// tooltip; InspectOverlay): what is drawn in it reports Name as its
+	// region. Its box is its card's (InspectCard), none when the popup
+	// gave none.
+	InspectLayer
 )
 
 // InspectNode is one thing a frame drew.
@@ -71,6 +78,9 @@ type InspectNode struct {
 	Size image.Point
 	// Exps are the experiments read while it drew ("name=group", sorted).
 	Exps []string
+	// Over: a layer drawn over everything else whatever was recorded
+	// after it (a tooltip, drawn deferred)
+	Over bool
 
 	def   *ClassDef
 	mods  uint64
@@ -80,6 +90,10 @@ type InspectNode struct {
 	props func() Props
 	scope *scope
 	tag   *inspectTag
+	// box, when boxed, is the node's area in the op coordinates it was
+	// recorded at, in place of its native's size (InspectCard)
+	box   image.Rectangle
+	boxed bool
 }
 
 type inspectTag struct{ _ byte }
@@ -228,17 +242,25 @@ func (f *InspectFrame) beginComponent(name string, props func() Props) int {
 }
 
 func (f *InspectFrame) endComponent(gtx layout.Context, i int, d layout.Dimensions) {
-	// back to the component's depth: an element some native entered and
-	// never left stays inside it
+	f.popTo(i)
+	if i < len(f.Nodes) {
+		if n := &f.Nodes[i]; n.boxed {
+			f.areaAt(gtx, i, n.box) // a popup's boundary: its card (InspectCard)
+			return
+		}
+		f.Nodes[i].Size = d.Size
+		f.area(gtx, i, d.Size)
+	}
+}
+
+// popTo goes back to node i's depth, i popped: an element some native
+// entered and never left stays inside it.
+func (f *InspectFrame) popTo(i int) {
 	for n := len(f.stack); n > 0; n-- {
 		if f.stack[n-1] == i {
 			f.stack = f.stack[:n-1]
 			break
 		}
-	}
-	if i < len(f.Nodes) {
-		f.Nodes[i].Size = d.Size
-		f.area(gtx, i, d.Size)
 	}
 }
 
@@ -320,13 +342,183 @@ func (m InspectMark) EndAt(gtx layout.Context, r image.Rectangle) {
 	if i >= len(f.Nodes) {
 		return // the frame was recorded afresh since
 	}
-	for n := len(f.stack); n > 0; n-- {
-		if f.stack[n-1] == i {
-			f.stack = f.stack[:n-1]
+	f.popTo(i)
+	f.areaAt(gtx, i, r)
+}
+
+// InspectOverlay records a popup's layer named name (the region the
+// inspect tool reports for what is drawn in it: "menu (popups.Menu)")
+// around what the popup draws, for the inspect tool alone, as InspectAs:
+// the nodes recorded until its EndCard are inside it. Its box is its
+// card's (InspectCard). Outside inspect mode it is one atomic load.
+func InspectOverlay(name string) InspectMark {
+	if !inspecting.Load() {
+		return InspectMark{}
+	}
+	f := inspectF
+	if f == nil {
+		return InspectMark{}
+	}
+	return InspectMark{f.push(InspectNode{Kind: InspectLayer, Name: name}) + 1}
+}
+
+// EndCard closes the layer InspectOverlay recorded (or a component
+// InspectAs did around a popup's card), at the op origin it was recorded
+// at: its area is its card's box, none when the popup drew no card
+// (InspectCard).
+func (m InspectMark) EndCard(gtx layout.Context) {
+	m.EndCardOr(gtx, image.Rectangle{})
+}
+
+// EndCardOr is EndCard for a layer whose popup may have given it no box
+// (no InspectCard): it takes r then (the overlay's own Rect, its card in
+// the layer's op coordinates), so a pick on the card where nothing in it
+// was recorded is the layer's, under its own region, not the window's
+// under it. Empty r: none. It reports whether the layer has a box (true
+// for no mark: nothing to tell).
+func (m InspectMark) EndCardOr(gtx layout.Context, r image.Rectangle) bool {
+	f := inspectF
+	if m.i == 0 || f == nil {
+		return true
+	}
+	i := m.i - 1
+	if i >= len(f.Nodes) {
+		return true
+	}
+	f.popTo(i)
+	n := &f.Nodes[i]
+	if !n.boxed && !r.Empty() {
+		n.box, n.boxed = r, true
+	}
+	if n.boxed {
+		f.areaAt(gtx, i, n.box)
+	}
+	return n.boxed
+}
+
+// EndCardAt closes a popup's card element recorded for the inspect tool
+// alone (ClassDef.Inspect) before what the card holds was laid out, at r
+// in the op coordinates of the popup's layer (an overlay's: the window's
+// origin). A popup that lays its content out first and then draws the
+// card around it (ProfileCard, every popups.Popover) records the card
+// this way: the content is inside the card's element, so the content's
+// components are what the picker finds over them (it keeps the node
+// recorded last) and the card wherever nothing in it is. The element gets
+// its area at r, and the components around it up to the layer, and the
+// layer, take r as their box, as InspectCard gives them. Empty r (the
+// card wasn't drawn): no area.
+func (m InspectMark) EndCardAt(gtx layout.Context, r image.Rectangle) {
+	f := inspectF
+	if m.i == 0 || f == nil {
+		return
+	}
+	i := m.i - 1
+	if i >= len(f.Nodes) {
+		return
+	}
+	f.popTo(i)
+	if r.Empty() {
+		return
+	}
+	f.areaAt(gtx, i, r)
+	f.boxLayer(r)
+}
+
+// InspectCard gives a popup's card its box, r in the current op
+// coordinates, which must be the ones the popup's layer (InspectOverlay)
+// was recorded at: an overlay drawn at the window's origin. The innermost
+// element entered, the card's, gets its area there (InspectArea) when what
+// the card holds was recorded inside it, and the components around it up
+// to the layer, and the layer itself, take r as their box when they end,
+// in place of what their natives return: a popup's boundaries lay out over
+// the whole window, as its scrim does, and draw the card somewhere in it.
+// An element with nothing recorded after it gets no area: a popup that
+// laid its content out before it entered the card's element would have
+// the card picked over all of it (the picker keeps the node recorded
+// last); such a popup records its card first (EndCardAt). Outside a layer
+// only the element gets its area. Outside inspect mode it is one atomic
+// load.
+func InspectCard(gtx layout.Context, r image.Rectangle) {
+	if !inspecting.Load() {
+		return
+	}
+	f := inspectF
+	if f == nil || r.Empty() {
+		return
+	}
+	if i := f.top(); i >= 0 && i < len(f.Nodes)-1 && f.Nodes[i].Kind == InspectElement && f.Nodes[i].tag == nil {
+		f.areaAt(gtx, i, r)
+	}
+	f.boxLayer(r)
+}
+
+// boxLayer gives the components being recorded up to the innermost layer,
+// and that layer, r as their box (InspectCard); none outside a layer.
+func (f *InspectFrame) boxLayer(r image.Rectangle) {
+	layer := -1
+	for k := len(f.stack) - 1; k >= 0; k-- {
+		if f.Nodes[f.stack[k]].Kind == InspectLayer {
+			layer = k
 			break
 		}
 	}
-	f.areaAt(gtx, i, r)
+	if layer < 0 {
+		return
+	}
+	for k := len(f.stack) - 1; k >= layer; k-- {
+		if n := &f.Nodes[f.stack[k]]; (n.Kind == InspectComponent || n.Kind == InspectLayer) && !n.boxed {
+			n.box, n.boxed = r, true
+		}
+	}
+}
+
+// InspectAreaInLayer is InspectArea inside a popup's layer only
+// (InspectOverlay): the elements popups draw for themselves (a menu's
+// rows, a modal's buttons) get boxes there, while the window's elements
+// stay as the picker has known them.
+func InspectAreaInLayer(gtx layout.Context, r image.Rectangle) {
+	if !inspecting.Load() {
+		return
+	}
+	if f := inspectF; f != nil && f.inLayer() {
+		InspectArea(gtx, r)
+	}
+}
+
+// inLayer reports that a popup's layer is being recorded.
+func (f *InspectFrame) inLayer() bool {
+	for k := len(f.stack) - 1; k >= 0; k-- {
+		if f.Nodes[f.stack[k]].Kind == InspectLayer {
+			return true
+		}
+	}
+	return false
+}
+
+// tooltipTip is a tooltip's box (theme.TooltipShape), as Slack's
+// .c-tooltip__tip.
+var tooltipTip = Class("c-tooltip__tip", "role", "tooltip")
+
+func init() { theme.TooltipDrawn = inspectTooltip }
+
+// inspectTooltip records a tooltip theme.TooltipShape drew at r (op
+// coordinates): a layer of its own ("tooltip") and its c-tooltip__tip
+// inside it, both with r as their area (the text drawn after the box
+// adds nothing the picker reads).
+func inspectTooltip(gtx layout.Context, r image.Rectangle) {
+	if !inspecting.Load() {
+		return
+	}
+	f := inspectF
+	if f == nil || r.Empty() {
+		return
+	}
+	l := f.push(InspectNode{Kind: InspectLayer, Name: "tooltip", Over: true})
+	e := f.push(InspectNode{Kind: InspectElement, def: tooltipTip})
+	f.popTo(e)
+	f.areaAt(gtx, e, r)
+	f.popTo(l)
+	f.areaAt(gtx, l, r)
 }
 
 // InspectArea gives the innermost element entered (ClassDef.Enter, not

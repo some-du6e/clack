@@ -11,7 +11,9 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/inspect"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -55,6 +57,7 @@ func (a *App) initInspect() {
 	}
 	a.inspKey = inspectFilter()
 	a.insp = inspect.New(inspectHost{a}, a.inspKey)
+	a.inspOn.Store(true) // huddleui's windows run theirs (InspectOn)
 }
 
 // setInspectTool turns the tool on or off at once, and for the next
@@ -71,7 +74,44 @@ func (a *App) setInspectTool(on bool) {
 		a.insp.Close() // a session, a pick's included, ends
 		a.insp = nil
 	}
+	a.inspOn.Store(false) // and huddleui's windows' (their next frame)
 	a.Toast("Inspect tool off")
+}
+
+// The tool in huddleui's windows (huddleui/inspect.go: the huddle window,
+// a screen share popped out, the presenter's panel, an invite window, the
+// join preview): each runs its own event loop, so each runs a tool of its
+// own, on while the main window's is. huddleui.InspectHost.
+
+// InspectOn reports that the tool is on (any goroutine).
+func (a *App) InspectOn() bool { return a.inspOn.Load() }
+
+// InspectKey is the tool's shortcut (inspectFilter).
+func (a *App) InspectKey() key.Filter { return inspectFilter() }
+
+// InspectConfigDir is where reports are saved.
+func (a *App) InspectConfigDir() string { return a.opts.ConfigDir }
+
+// InspectVersion is Clack's version for the reports.
+func (a *App) InspectVersion() string { return buildVersion }
+
+// InspectHold holds the animated images while a window is frozen (on) or
+// lets one window's hold go: the cache holds them while any window's
+// freeze does, the main window's included (any goroutine).
+func (a *App) InspectHold(on bool) {
+	h := &a.liveHolds
+	h.Lock()
+	defer h.Unlock()
+	switch {
+	case on:
+		if h.n++; h.n == 1 {
+			a.images.HoldLive(true)
+		}
+	case h.n > 0:
+		if h.n--; h.n == 0 {
+			a.images.HoldLive(false)
+		}
+	}
 }
 
 // konamiCode turns the inspect tool on, and again off.
@@ -241,18 +281,17 @@ func (a *App) inspectAfterFrame(ops *op.Ops, size image.Point) {
 // inspectHost is the App as the tool sees it.
 type inspectHost struct{ a *App }
 
-func (h inspectHost) Theme() *theme.Theme  { return h.a.th }
-func (h inspectHost) Toast(text string)    { h.a.Toast(text) }
-func (h inspectHost) CopyText(text string) { h.a.copyText(text) }
-func (h inspectHost) Post(f func())        { h.a.Post(f) }
-func (h inspectHost) Invalidate()          { h.a.Invalidate() }
-func (h inspectHost) ConfigDir() string    { return h.a.opts.ConfigDir }
+func (h inspectHost) Theme() *theme.Theme { return h.a.th }
+func (h inspectHost) Toast(text string)   { h.a.Toast(text) }
+func (h inspectHost) Post(f func())       { h.a.Post(f) }
+func (h inspectHost) Invalidate()         { h.a.Invalidate() }
+func (h inspectHost) ConfigDir() string   { return h.a.opts.ConfigDir }
 
 // Frozen holds the animated images while the window is frozen (the
 // frozen frame's would play on) and, when the freeze ends, asks the next
 // frame to start the pointer state over (inspectFirst).
 func (h inspectHost) Frozen(on bool) {
-	h.a.images.HoldLive(on)
+	h.a.InspectHold(on)
 	if !on {
 		h.a.inspReset = true
 	}
@@ -303,7 +342,76 @@ func (h inspectHost) Regions() []inspect.Region {
 	if !a.split.col.Empty() {
 		out = append(out, inspect.Region{Name: "split view", Rect: a.split.col})
 	}
+	// the popups over the shell, bottom first: where the pointer is over
+	// one, it is the region (what a dragged region takes in, and what the
+	// picker outlines where nothing of the popup's was recorded)
+	for _, o := range a.overlays {
+		if o == nil || o.Dismissed() || invisible(o) {
+			continue
+		}
+		if rr, ok := o.(interface{ Rect() image.Rectangle }); ok {
+			if r := rr.Rect(); !r.Empty() {
+				out = append(out, inspect.Region{Name: overlayLayerName(o), Rect: r})
+			}
+		}
+	}
 	return out
+}
+
+// overlayLayerName names overlay o for the inspect tool, as the region a
+// pick in it reports: what it is ("menu", "modal", "popover", "emoji
+// picker" …) and its Go type, as the report's overlays row names it
+// ("menu (popups.Menu)", "modal (blockkit.Stack)").
+func overlayLayerName(o Overlay) string {
+	o = unwrapOverlay(o)
+	typ := strings.TrimPrefix(fmt.Sprintf("%T", o), "*")
+	return overlayRole(o, typ) + " (" + typ + ")"
+}
+
+// unwrapOverlay is what o shows: through a wrapper (Block Kit's watch),
+// what it wraps.
+func unwrapOverlay(o Overlay) Overlay {
+	for {
+		w, ok := o.(interface{ Unwrap() popups.Overlay })
+		if !ok {
+			return o
+		}
+		o = w.Unwrap()
+	}
+}
+
+func overlayRole(o Overlay, typ string) string {
+	if r, ok := o.(interface{ InspectRole() string }); ok {
+		return r.InspectRole() // an overlay naming itself (popups' date picker, time picker, select list)
+	}
+	switch o.(type) {
+	case *popups.EmojiPicker:
+		return "emoji picker"
+	case *popups.ProfileCard:
+		return "profile card"
+	case *popups.Menu:
+		return "menu"
+	case *popups.Popover:
+		return "popover"
+	case *popups.Modal, *blockkit.Stack:
+		return "modal"
+	}
+	name := typ[strings.LastIndex(typ, ".")+1:]
+	switch {
+	case strings.Contains(name, "Modal"), strings.Contains(name, "Dialog"):
+		return "modal"
+	case strings.Contains(name, "Menu"):
+		return "menu"
+	case strings.Contains(name, "Picker"):
+		return "picker"
+	case strings.Contains(name, "Card"):
+		return "card"
+	case strings.Contains(name, "Popover"), strings.Contains(name, "Peek"):
+		return "popover"
+	case strings.Contains(name, "Lightbox"):
+		return "lightbox"
+	}
+	return "overlay"
 }
 
 // Describer reads the report's window and page fields now (a frozen
