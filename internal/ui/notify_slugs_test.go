@@ -21,7 +21,7 @@ import (
 )
 
 func TestNotifyWritesMessageSlugsLikeSlack(t *testing.T) {
-	a, ca, fs, rec := privNoteAppFS(t)
+	a, ca, fs, rec := privNoteAppFS(t, func(sz *fakeslack.Size) { sz.MessagesByID = true }) // messages.list by ts
 	g := fakeslack.ThreadGroupDMID
 	conv := fixtureConv(t, ca, g)
 	ca.S.PutConv(conv) // the group DM, its history never loaded

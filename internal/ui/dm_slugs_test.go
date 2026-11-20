@@ -104,7 +104,9 @@ func keepSlugs(t *testing.T, e *perfEnv, what string, rows func() []messages.Sen
 }
 
 func TestDMMessageSlugsLikeSlack(t *testing.T) {
-	fs, err := fakeslack.Start(fakeslack.Small)
+	sz := fakeslack.Small
+	sz.MessagesByID = true // messages.list answers by ts, as Slack's does
+	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,17 +118,19 @@ func TestDMMessageSlugsLikeSlack(t *testing.T) {
 	const dm, far = "D0DMSLUG0001", "D0DMSLUG0002" // the open DM; another DM the client never opens
 	fs.AddClosedDM(dm, partner)
 	fs.AddClosedDM(far, other)
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	c := e.a.Core()
+	if _, ok := c.S.RawUser(other); ok {
+		t.Fatalf("%s was fetched at boot: the second link checks nothing", other)
+	}
+	// the messages, once the client is up: nothing could read them at
+	// boot (the links' members among them)
 	linked, _ := fs.PostQuiet(dm, partner, "a synthetic line the first link points at")
 	farTS, _ := fs.PostQuiet(far, other, "a synthetic line the second link points at")
 	noAuthor := fs.PostBlocksQuiet(dm, fakeslack.SelfID, slugPermalink(dm, linked), slugBlocks(dm, linked, ""))
 	withAuthor := fs.PostBlocksQuiet(dm, fakeslack.SelfID, slugPermalink(far, farTS), slugBlocks(far, farTS, other))
 	fs.PostReplyQuiet(dm, noAuthor, partner, "a synthetic reply") // a thread to open on the first link
-	e := startEnv(t, fs, t.TempDir())
-	e.waitReady()
-	c := e.a.Core()
-	if _, ok := c.S.RawUser(other); ok {
-		t.Fatalf("%s was fetched before the DM opened: the second link checks nothing", other)
-	}
 	if _, ok := c.S.FindHeld(far, farTS); ok {
 		t.Fatal("the second link's message is held before anything asked for it: the case checks nothing")
 	}
