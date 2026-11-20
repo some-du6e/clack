@@ -73,26 +73,24 @@ func (s *Store) FetchedIn(ch string) []slack.Message {
 func (s *Store) FetchedChannels() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	seen := map[string]bool{}
-	for k := range s.fetched {
-		if i := strings.IndexByte(k, '/'); i > 0 {
-			seen[k[:i]] = true
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for ch := range seen {
+	out := make([]string, 0, len(s.fetchedBy))
+	for ch := range s.fetchedBy {
 		out = append(out, ch)
 	}
 	sort.Strings(out)
 	return out
 }
 
-// fetchedInLocked is ch's messages fetched by id, by ts (s.mu held).
+// fetchedInLocked is ch's messages fetched by id, by ts (s.mu held): read
+// through fetchedBy, the channel's own, not a pass over every channel's.
 func (s *Store) fetchedInLocked(ch string) []*slack.Message {
-	prefix := ch + "/"
-	var out []*slack.Message
-	for k, m := range s.fetched {
-		if m != nil && strings.HasPrefix(k, prefix) {
+	by := s.fetchedBy[ch]
+	if len(by) == 0 {
+		return nil
+	}
+	out := make([]*slack.Message, 0, len(by))
+	for ts := range by {
+		if m := s.fetched[ch+"/"+ts]; m != nil {
 			out = append(out, m)
 		}
 	}

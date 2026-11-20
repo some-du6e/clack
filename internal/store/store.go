@@ -58,6 +58,7 @@ type Store struct {
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
 	fetched     map[string]*slack.Message  // key channel/ts: messages fetched by id (fetched.go)
+	fetchedBy   map[string]map[string]bool // fetched's ts by channel (fetched.go)
 	fetchedUse  map[string]fetchedUse      // fetched's last use and size (fetched.go)
 	fetchedQ    []fetchedTick              // fetched's uses, oldest first
 	fetchedN    uint64                     // fetched's uses so far
@@ -65,6 +66,7 @@ type Store struct {
 	reacts      map[string][]reactOp       // key channel/ts: realtime reactions (reacts.go)
 	reactQ      []string                   // reacts' keys, oldest first
 	readRevs    []ReadRevision             // revisions reads brought, for core (read_revisions.go)
+	fetchedNew  []MsgRef                   // messages a fetch by id brought that the store held no copy of, for core (fetched.go)
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
 	subQ        []string                   // subs' keys, oldest first
 	subSeq      uint64                     // subscription events seen
@@ -1539,10 +1541,8 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 			}
 		}
 	}
-	for k, m := range s.fetched {
-		if m != nil && strings.HasPrefix(k, pre) {
-			add(m)
-		}
+	for _, m := range s.fetchedInLocked(ch) {
+		add(m)
 	}
 	return ts, cids
 }
@@ -1593,10 +1593,8 @@ func (s *Store) Held(ch string, keys []MsgKey) []bool {
 			}
 		}
 	}
-	for k, m := range s.fetched {
-		if m != nil && strings.HasPrefix(k, pre) {
-			mark(m)
-		}
+	for _, m := range s.fetchedInLocked(ch) {
+		mark(m)
 	}
 	return out
 }

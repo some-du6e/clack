@@ -140,6 +140,19 @@ func (t *Taut) AfterMirrorEvent(f func(ev core.Event)) (restore func()) {
 	return func() { t.mirror.handled.Store(nil) }
 }
 
+// sweepEvery is how often the mirror compares what it sent JS with the
+// store (sweep): a change no event announces reaches JS within it.
+var sweepEvery atomic.Int64
+
+func init() { sweepEvery.Store(int64(750 * time.Millisecond)) }
+
+// SetSweepEvery (tests) makes the mirrors started from now sweep every d:
+// a long one leaves JS only what marks tell it.
+func SetSweepEvery(d time.Duration) (restore func()) {
+	prev := sweepEvery.Swap(int64(d))
+	return func() { sweepEvery.Store(prev) }
+}
+
 // jsTracked are the slices whose changes go to JS only for ids it holds.
 var jsTracked = map[string]bool{"members": true, "presence": true}
 
@@ -209,10 +222,17 @@ func (m *mirror) start() {
 	// (a new runtime holds nothing): handled
 	m.t.ui.views.noteSeen(m.t.app.EmitSeq())
 	raws, stopRaw := m.t.app.SubscribeRaw()
+	// a message a fetch by id brings that the store held no copy of has no
+	// change of its own to announce: marked as it lands, on the fetching
+	// goroutine before its caller draws it, as the hub marks what a
+	// window's load changed (MessagesChanged); the plugins' view of it
+	// waited for the sweep
+	unhook := m.t.app.SetFetchedHook(func(ch string, tss []string) { m.t.MessagesChanged(ch, tss) })
 	go func() {
 		defer stop()
 		defer stopRaw()
-		tick := time.NewTicker(750 * time.Millisecond)
+		defer unhook()
+		tick := time.NewTicker(time.Duration(sweepEvery.Load()))
 		defer tick.Stop()
 		for {
 			select {

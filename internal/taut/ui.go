@@ -1890,7 +1890,9 @@ func (v *viewCache) dropEvicted(ch string) {
 	// asked of core with mu released: the UI goroutine's lookups wait on it
 	var gone []string
 	for _, ts := range subs {
-		if !v.t.app.S.Holds(ch, ts, "") {
+		// a copy fetched by id is core's too (Activity's, Saved's): its
+		// view stays, as the pass never drops what those views draw
+		if !v.t.app.S.Keeps(ch, ts) {
 			gone = append(gone, ts)
 		}
 	}
