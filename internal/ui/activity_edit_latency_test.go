@@ -9,7 +9,9 @@ package ui
 // for one (Invalidate, the router's wake-up) and the window blurred, so an
 // edit that changes Activity's copy but asks for no frame shows as late as
 // the next unrelated one. Natively, under a plugin patching the messages
-// slice and under one patching the components a message draws through.
+// slice and under one patching the components an Activity row draws
+// through (ActivityItem, ActivityThread, the row contents: the row's text
+// then comes from a JS tree).
 // Synthetic data only. Channel and thread surfaces: edit_latency_test.go.
 
 import (
@@ -28,6 +30,29 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
+
+// actPassComponents patches what an Activity row draws through (the
+// views' lmPatches: ActivityItem, ActivityThread and the row contents) and
+// passes it through: the row's text then comes from a JS tree, which can
+// still be of the revision before an edit.
+const actPassComponents = `(() => {
+const TautPlugin = globalThis.TautPlugin
+class ActPassComponents extends TautPlugin {
+  static id = 'ActPassComponents'
+  static pluginName = 'Activity pass components'
+  static description = 'Patches the Activity row components, changing nothing'
+  static category = 'other'
+  static authors = ['test']
+  static defaultConfig = { enabled: false }
+  start() {
+    for (const name of ['ActivityItem', 'ActivityThread', 'ActivityRowContentMultiLine', 'ActivityRowContentDetailed']) {
+      this.api.patchComponent(name, (Original) => (props) => React.createElement(Original, props))
+    }
+  }
+  stop() {}
+}
+return ActPassComponents
+})()`
 
 func TestActivityEditLatency(t *testing.T) {
 	if os.Getenv("CLACK_LATENCY_TESTS") == "" {
@@ -71,7 +96,7 @@ func activityEditLatency(t *testing.T, mode string) {
 		tt := e.a.Taut()
 		code, id := editPassSlice, "EditPassSlice"
 		if mode == "components" {
-			code, id = editPassComponents, "EditPassComponents"
+			code, id = actPassComponents, "ActPassComponents"
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -85,7 +110,7 @@ func activityEditLatency(t *testing.T, mode string) {
 			if mode == "slice" {
 				return tt.SlicePatched("messages")
 			}
-			return slackc.Patched("Blocks") && slackc.Patched("MessageWrapper")
+			return slackc.Patched("ActivityItem") && slackc.Patched("ActivityRowContentDetailed")
 		})
 	}
 
@@ -152,11 +177,17 @@ func activityEditLatency(t *testing.T, mode string) {
 		}
 	}
 	e.settle(500 * time.Millisecond)
+	// core's deferred boot loads (5 s after boot, an id-less "names") are
+	// start-up, not edits
+	if d := 8*time.Second - time.Since(e.a.data.booted); d > 0 {
+		e.settle(d)
+	}
 	e.blur()
 	asked.Store(false)
 
 	// an edit every 500 ms for 10 s, each drawn when a frame draws its
 	// text and no older one
+	startFrames := frames
 	var ds []latDraw
 	n := 0
 	next := time.Now()
@@ -188,4 +219,9 @@ func activityEditLatency(t *testing.T, mode string) {
 		}
 	}
 	latStats(t, mode, "an Activity row", ds)
+	// the bound holds only while the page asks for frames for the edits
+	// alone: one drawing frames on its own would draw every edit in time
+	if n := len(ds); n > 0 && frames-startFrames > int64(3*n) {
+		t.Errorf("%s: %d frames for %d edits: the Activity page asks for frames of its own", mode, frames-startFrames, n)
+	}
 }
