@@ -164,11 +164,20 @@ func (s *listState) pageKey(name key.Name) {
 	s.stopScroll()
 }
 
-// PageKey is MessagePane's PageUp, PageDown, Home or End (name) from the
-// channel's empty input: the list's onKeyDownPageUp and the rest (AEjl's
-// document keydown), as from the list.
+// pageKeyNames maps the DOM's KeyboardEvent.key names that MessagePane's
+// keydown checks (what the composer hands over) to Gio's key names, which
+// are symbols.
+var pageKeyNames = map[string]key.Name{"PageUp": key.NamePageUp, "PageDown": key.NamePageDown, "Home": key.NameHome, "End": key.NameEnd}
+
+// PageKey is MessagePane's PageUp, PageDown, Home or End (name, the DOM's
+// key name) from the channel's empty input: the list's onKeyDownPageUp
+// and the rest (AEjl's document keydown), as from the list.
 func (v *ChannelView) PageKey(name string) {
-	v.s.pageKey(key.Name(name))
+	k, ok := pageKeyNames[name]
+	if !ok {
+		return
+	}
+	v.s.pageKey(k)
 	v.h.Invalidate()
 }
 

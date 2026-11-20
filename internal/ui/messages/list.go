@@ -745,7 +745,7 @@ func (s *listState) sync(h Host, now time.Time) {
 	var anchors []laidRow
 	stick, keep := false, false
 	if s.laidOut && s.positioned && s.pendingJump == "" && s.place.key == "" {
-		if !handed && wasEnd && (!s.list.Position.BeforeEnd || s.endGap <= s.stickyPx) {
+		if !handed && wasEnd && (!s.list.Position.BeforeEnd || s.gapNow() <= s.stickyPx) {
 			stick = true
 		} else {
 			anchors = s.lineRows(s.linePx) // items still index the previous snapshot; the key is the ts
@@ -2625,6 +2625,36 @@ func (s *listState) gapToEnd(p layout.Position) int {
 		gap += h
 	}
 	return max(0, gap)
+}
+
+// gapNow is how far the list sits above its end where it is now: the last
+// layout's gap (endGap), moved by as much as a place written since then
+// moved it (the page keys, the scrollbar, ScrollPx), by the heights the
+// last layout measured; MaxInt32 when they don't reach. setKeys's
+// stickToBottom reads the scrollTop such a write just set (dxC+): a new
+// message in the frame after PageUp from the end took the list back down.
+func (s *listState) gapNow() int {
+	p, q := s.list.Position, s.laidPos
+	if samePos(p, q) || s.endGap == math.MaxInt32 {
+		return s.endGap
+	}
+	if !p.BeforeEnd {
+		return 0 // a ScrollToEnd list's end
+	}
+	up := q.Offset - p.Offset // how much higher p sits than the last layout
+	for i := p.First; i < q.First; i++ {
+		if i >= len(s.heights) || s.heights[i] <= 0 {
+			return math.MaxInt32
+		}
+		up += s.heights[i]
+	}
+	for i := q.First; i < p.First; i++ {
+		if i >= len(s.heights) || s.heights[i] <= 0 {
+			return math.MaxInt32
+		}
+		up -= s.heights[i]
+	}
+	return max(0, s.endGap+up)
 }
 
 // stopScroll ends the reader's running scroll (a wheel curve, a fling)

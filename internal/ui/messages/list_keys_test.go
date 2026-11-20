@@ -5,6 +5,7 @@ package messages
 // AnchorLayout (dxC+). Synthetic history on the fake (winEnv).
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -73,6 +74,56 @@ func TestPageUpMovesAPageLess21(t *testing.T) {
 	y1, ok := e.top(key0)
 	if want := e.rt.h - 21; !ok || y1-y0 != want {
 		t.Errorf("PageUp moved message %d from %dpx to %dpx (drawn %v): %dpx, want the height less 21, %dpx", e.index(key0), y0, y1, ok, y1-y0, want)
+	}
+}
+
+// TestPageKeyTakesTheDOMNames: the empty composer hands MessagePane's
+// keydown names over (KeyboardEvent.key: "PageUp", "End"), and PageKey
+// pages the list by them as its own keys do. It read them as Gio's key
+// names, which are symbols, and did nothing.
+func TestPageKeyTakesTheDOMNames(t *testing.T) {
+	e := newHistEnv(t)
+	key0, y0 := "", 0
+	for _, r := range e.v.s.laid {
+		if e.index(r.key) >= 0 {
+			key0, y0 = r.key, r.y
+			break
+		}
+	}
+	if key0 == "" || y0 >= 21 {
+		t.Fatalf("no message row at the list's top to measure (%s)", e.state())
+	}
+	e.v.PageKey("PageUp")
+	for k := 0; k < 3; k++ {
+		e.rt.frame()
+	}
+	if y1, ok := e.top(key0); !ok || y1-y0 != e.rt.h-21 {
+		t.Fatalf("PageKey(PageUp) moved message %d from %dpx to %dpx (drawn %v), want a page (%dpx) down", e.index(key0), y0, y1, ok, e.rt.h-21)
+	}
+	e.v.PageKey("End")
+	e.await(t, "PageKey(End) back at the end", func() bool { return e.v.AtBottom() && e.drawn(e.newest()) })
+}
+
+// TestNewMessageAfterPageUpKeepsPlace: setKeys's stickToBottom reads the
+// scrollTop the reader just set (dxC+): a page up from the end, then a new
+// message before the next layout, leaves the list where the page put it.
+// Clack read the gap to the end from the layout before, at the end, and
+// the message took the list back down (PageUp, the scrollbar, the
+// toolbar's wheel and ScrollPx write the place between layouts).
+func TestNewMessageAfterPageUpKeepsPlace(t *testing.T) {
+	e := newHistEnv(t)
+	if !e.v.AtBottom() || !e.drawn(e.newest()) {
+		t.Fatalf("the list didn't open at its end (%s)", e.state())
+	}
+	e.v.ScrollPx(-(e.rt.h - 21)) // PageUp's page
+	ts := fmt.Sprintf("%d.000100", time.Now().Unix())
+	e.v.s.hb.apply(core.Event{Type: "message", Channel: winEndChan,
+		Msg: &core.Message{TS: ts, Channel: winEndChan, User: "UBEN00001", Text: "a new message"}})
+	for k := 0; k < 3; k++ {
+		e.rt.frame()
+	}
+	if e.v.AtBottom() || e.drawn(ts) {
+		t.Errorf("a page up from the end, then a new message before the next layout: the list went back to its end (%s)", e.state())
 	}
 }
 
