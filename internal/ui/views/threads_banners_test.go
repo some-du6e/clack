@@ -134,7 +134,7 @@ func TestThreadsUnreadBannersLikeSlack(t *testing.T) {
 		var out []string
 		for _, s := range drawnStrings(e) {
 			if strings.Contains(s, "unread thread") {
-				out = append(out, s)
+				out = append(out, strings.TrimSpace(s)) // the label's run starts with the button's " "
 			}
 		}
 		slices.Sort(out)
@@ -285,7 +285,7 @@ func TestThreadsBannerCloseLikeSlack(t *testing.T) {
 func TestThreadsUnreadBannerCountLikeSlack(t *testing.T) {
 	_, _, e, _ := thrBannerEnv(t, true, map[string]int{fakeslack.ViewsChannel: 9})
 	e.until(t, "the bottom banner's count from the server's", func() bool {
-		return slices.Contains(drawnStrings(e), "6 unread threads")
+		return slices.ContainsFunc(drawnStrings(e), func(s string) bool { return strings.TrimSpace(s) == "6 unread threads" })
 	})
 }
 

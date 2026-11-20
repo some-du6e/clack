@@ -132,10 +132,12 @@ func TestThreadsBannerPillDrawnLikeSlack(t *testing.T) {
 		if !near(ly0, 9, 1) || !near(ly1, 18, 1) || !near(label[0].x0, 35, 2) {
 			t.Errorf("%s's label inks rows %d-%d from column %d; Chrome draws it at rows 9-18 (its baseline at 19) from column 35", tc.name, ly0, ly1, label[0].x0)
 		}
-		// past the label's last ink: its 8px padding and the 38px close
-		// (Chrome 46; a 36px close gives 44)
-		if gap := pill.Dx() - 1 - label[len(label)-1].x1; !near(gap, 46, 1) {
-			t.Errorf("%s's label ends %dpx in from its right edge; with the label button's 8px padding and the 38px close it's 46", tc.name, gap)
+		// past the label's last ink: its 8px padding and the 38px close.
+		// The label inks to the same column in both, but Chrome's pill
+		// reads 178 wide here (its edge pixel at x.64 isn't counted), so
+		// Chrome reads 46 and Clack 47 on whole pixels; a 36px close gives 45
+		if gap := pill.Dx() - 1 - label[len(label)-1].x1; !near(gap, 47, 1) {
+			t.Errorf("%s's label ends %dpx in from its right edge; with the label button's 8px padding and the 38px close it's 47 (Chrome 46)", tc.name, gap)
 		}
 		if gap := pill.Dx() - 1 - closeX.x1; !near(closeX.y0, 12, 1) || !near(closeX.y1, 17, 1) || !near(gap, 17, 1) {
 			t.Errorf("%s's close inks rows %d-%d, %dpx in from the right; Chrome draws it at rows 12-17, 16px in at its x.64 (17 on whole pixels)", tc.name, closeX.y0, closeX.y1, gap)
