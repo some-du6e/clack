@@ -924,7 +924,7 @@ jobs:
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' }
           }
-          & $iscc /Qp '/DAppVersion=0.0.1' '/DAppVersionNum=0.0.1.0' "/DSourceExe=$PWD\build\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
+          & $iscc /Qp '/DAppVersion=0.0.1' '/DAppVersionNum=0.0.1.0' "/DSourceExe=$PWD\build\Clack.exe" '/DTestBuild=1' "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
           if ($LASTEXITCODE -ne 0) { throw 'iscc failed' }
           $key = 'HKCU:\Software\Classes\AppUserModelId\io.github.some-du6e.clack'
           $png = Join-Path $env:LOCALAPPDATA 'Clack\clack.png'

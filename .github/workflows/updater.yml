@@ -156,7 +156,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "choco install innosetup failed" }
           }
           foreach ($v in '0.0.1', '0.0.2') {
-            & $iscc /Qp "/DAppVersion=$v" "/DAppVersionNum=$v.0" "/DSourceExe=$PWD\build\$v\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
+            & $iscc /Qp "/DAppVersion=$v" "/DAppVersionNum=$v.0" "/DSourceExe=$PWD\build\$v\Clack.exe" '/DTestBuild=1' "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
             if ($LASTEXITCODE -ne 0) { throw "iscc $v failed" }
           }
           Get-ChildItem dist

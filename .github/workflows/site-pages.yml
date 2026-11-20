@@ -51,8 +51,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node build.mjs --refresh --strict --pages
-      - name: static checks (indexable, CNAME)
-        run: node tools/check.mjs --production --pages
+      # the deploy's guard too, so Pages can't ship TRY THE DEMO without the
+      # demo's program and licences: bring a green site run's site-demo
+      # artifact in with build.mjs --demo <dir> (site/README.md) before turning
+      # this workflow on
+      - name: static checks (indexable, CNAME, the demo)
+        run: node tools/check.mjs --production --pages --demo
       - name: page weight in headless Chrome
         run: node tools/weigh.mjs
       - name: Lighthouse, mobile

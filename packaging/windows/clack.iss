@@ -1,7 +1,8 @@
 ; Inno Setup script for the Clack installer (per-user, no admin rights).
 ;
 ; Built by .github/workflows/release.yml:
-;   iscc /DAppVersion=0.3.1 /DAppVersionNum=0.3.1.0 /DSourceExe=..\..\dist\Clack.exe /DOutputDir=..\..\dist packaging\windows\clack.iss
+;   iscc /DAppVersion=0.3.1 /DAppVersionNum=0.3.1.0 /DSourceExe=..\..\dist\Clack.exe /DLicensesTxt=..\..\dist\THIRD_PARTY_LICENSES.txt /DOutputDir=..\..\dist packaging\windows\clack.iss
+; (test installers, ci.yml's and updater.yml's, pass /DTestBuild=1 instead of /DLicensesTxt)
 ; Paths are relative to this file.
 
 #ifndef AppVersion
@@ -15,8 +16,11 @@
 #endif
 ; the licence texts of what SourceExe contains (tools/licenses.py, written
 ; beside it by release.yml's windows job, whose install check wants it);
-; test builds (ci.yml, updater.yml) leave it out
+; only a test build (/DTestBuild=1: ci.yml, updater.yml) may leave it out
 #ifndef LicensesTxt
+  #ifndef TestBuild
+    #error Pass /DLicensesTxt=<path to THIRD_PARTY_LICENSES.txt> (tools/licenses.py writes it), or /DTestBuild=1 for a test installer without it
+  #endif
   #define LicensesTxt ""
 #endif
 #ifndef OutputDir

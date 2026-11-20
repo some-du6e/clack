@@ -132,6 +132,8 @@ jobs:
       - name: licence texts (tools/licenses.py)
         run: |
           python3 tools/licenses.py --target "linux/$ARCH/cgo" --for "Clack for Linux ($ARCH)" -o build/linux/THIRD_PARTY_LICENSES.txt ./cmd/clack
+          # the deb's /usr/share/doc/clack/copyright (nfpm.yaml)
+          { printf 'Clack, https://github.com/some-du6e/clack\n\nClack itself:\n\n'; cat LICENSE; printf '\n\n'; cat build/linux/THIRD_PARTY_LICENSES.txt; } > build/linux/copyright
       - name: desktop file
         run: desktop-file-validate packaging/linux/clack.desktop
       - name: deb + rpm
@@ -148,6 +150,7 @@ jobs:
             dpkg-deb -c dist/*.deb | grep -q "\./usr/share/doc/clack/$f\$"
             rpm -qpl dist/*.rpm | grep -qx "/usr/share/doc/clack/$f"
           done
+          dpkg-deb -c dist/*.deb | grep -q '\./usr/share/doc/clack/copyright$'
           rpm -qip dist/*.rpm && rpm -qpl dist/*.rpm && rpm -qp --requires --recommends dist/*.rpm
       - name: AppImage
         run: |
@@ -193,6 +196,8 @@ jobs:
           test -f /usr/share/applications/clack.desktop
           test -f /usr/share/icons/hicolor/256x256/apps/clack.png
           test -f /usr/share/icons/hicolor/scalable/apps/clack.svg
+          # the deb's copyright file survives minimized images' doc filter
+          if command -v dpkg >/dev/null; then test -s /usr/share/doc/clack/copyright; fi
           if ldd /usr/bin/clack | grep 'not found'; then exit 1; fi
           for lib in libEGL.so.1 libGLESv2.so.2 libwayland-egl.so.1 libwayland-cursor.so.0 libxkbcommon-x11.so.0 libX11-xcb.so.1 libXcursor.so.1 libXfixes.so.3; do
             ldconfig -p | grep -qF "$lib" || { echo "missing $lib"; exit 1; }
