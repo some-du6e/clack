@@ -1173,6 +1173,9 @@ type toastState struct {
 	rich    bool
 	// linkHref is where the parts' <link> run goes (ToastLink)
 	linkHref string
+	// rect is the toast as last drawn (window coords): its box in the
+	// inspect tool's record
+	rect image.Rectangle
 }
 
 // Toast shows a short message at the bottom of the window.
@@ -1213,6 +1216,13 @@ func (a *App) layoutToast(gtx layout.Context) {
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{At: a.toast.until})
+	if slackc.Inspecting() {
+		// a layer of the inspect tool's record, boxed by the toast: a pick
+		// on it is the toast's, not the message or the column under it
+		lm := slackc.InspectOverlay("toast")
+		defer func() { lm.EndCardOr(gtx, a.toast.rect) }()
+	}
+	a.toast.rect = image.Rectangle{}
 	if a.toast.rich {
 		a.layoutRichToast(gtx)
 		return
@@ -1241,6 +1251,7 @@ func (a *App) layoutToast(gtx layout.Context) {
 	}
 	w, h := tw+uw+gtx.Dp(32), gtx.Dp(44)
 	r := image.Rect((sz.X-w)/2, sz.Y-h-gtx.Dp(28), (sz.X+w)/2, sz.Y-gtx.Dp(28))
+	a.toast.rect = r
 	theme.Shadow(gtx, r, gtx.Dp(8), gtx.Dp(6), theme.WithAlpha(c.PanelShadow, 0x40))
 	theme.RRect(gtx, r, gtx.Dp(8), c.Tooltip)
 	at(gtx, image.Pt(r.Min.X+gtx.Dp(16), r.Min.Y), image.Pt(tw, h), func(gtx layout.Context) layout.Dimensions {

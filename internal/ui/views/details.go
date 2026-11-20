@@ -1046,6 +1046,9 @@ func (d *ChannelDetails) editModal(gtx C, full image.Point) {
 	org := image.Pt((full.X-w)/2, (full.Y-h)/2)
 	defer op.Offset(org).Push(gtx.Ops).Pop()
 	r := image.Rect(0, 0, w, h)
+	// the inspect tool: the stacked dialog is Slack's SK modal, its card
+	// picked over the details card it sits on
+	defer popups.ModalClass.Inspect(0).EndAt(gtx, r)
 	rad := gtx.Dp(cdRadius)
 	theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
 	rrect(gtx, r, rad, d.p.Surface)
