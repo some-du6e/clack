@@ -1914,3 +1914,30 @@ jobs:
           go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
           go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
           exit $rc
+
+  # dm-senders: a DM's rows name their senders as Slack's do (Karim,
+  # 2026-11-19: "unknown author for dms"). A DM opened by its route, by a
+  # notification's jump and by a launch that restores it while boot's
+  # calls are out names its partner (unknown, users/info out: the loading
+  # bar), a partner users/info doesn't return is the non-existent bar, and
+  # a message with no user, username or bot is the unknown bar, never the
+  # word "Unknown". Dispatch with only=dm-senders.
+  dm-senders:
+    if: ${{ !inputs.only || startsWith('dm-senders', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: DM senders on every path (one verbose run, then COUNT)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
+          exit $rc
