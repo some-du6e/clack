@@ -716,11 +716,33 @@ func (me *Message) layoutAgentChannelCard(gtx C, st *agentState, ch string, maxW
 		card = popups.NewChannelHoverCard(me.h, image.Rectangle{}, ch, false, false)
 		st.cards[key] = card
 	}
-	d, ok := card.EntityCard(gtx, maxW)
+	d, ok := card.EntityCard(gtx, maxW, me.agentChannel(ch))
 	if !ok {
 		return image.Point{}
 	}
 	return d.Size
+}
+
+// agentChannel is the message's agent_channel_unfurl for channel ch as
+// CodeChannelEntityCard's props, the attachments read once: a host is one
+// revision of them (blocksSig).
+func (me *Message) agentChannel(ch string) popups.EntityProps {
+	if me.acu == nil {
+		me.acu = map[string]popups.EntityProps{}
+		var atts []struct {
+			U *slack.AgentChannelUnfurl `json:"agent_channel_unfurl"`
+		}
+		_ = json.Unmarshal(me.m.Attachments, &atts)
+		for _, a := range atts {
+			if u := a.U; u != nil && u.ChannelID != "" {
+				if _, dup := me.acu[u.ChannelID]; !dup {
+					me.acu[u.ChannelID] = popups.EntityProps{Name: u.ChannelName, AgentBotUserID: u.AgentBotUserID,
+						JoinableFrom: u.JoinableFromChannelID, Private: u.IsPrivate}
+				}
+			}
+		}
+	}
+	return me.acu[ch]
 }
 
 // layoutTaskBlock draws a plan or task_card (slim): the toggle line and,

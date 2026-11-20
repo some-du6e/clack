@@ -21,6 +21,11 @@ const (
 	AgentSessRootTS    = "1763600000.000100"
 	AgentSessReplyTS   = "1763600004.000200"
 	AgentSessLinkTS    = "1763600100.000300"
+	// a second request whose code channel is private and the viewer isn't
+	// in it: its card is the joinable one
+	AgentSessPrivTS    = "1763600200.000400"
+	AgentSessPrivateID = "C0CODE00010" // #hotfix-payments, private, codeHidden until joined
+	AgentSessPrivName  = "hotfix-payments"
 )
 
 // AgentSessionRequest is the person's message to the agent.
@@ -44,6 +49,43 @@ func AgentSessionRequest() map[string]any {
 		"is_locked": false, "thread_ts": AgentSessRootTS, "reply_count": 1, "reply_users": []any{CodeAgentID}, "reply_users_count": 1,
 		"latest_reply": AgentSessReplyTS, "subscribed": false,
 	}
+}
+
+// AgentSessionPrivateRequest is a request whose code channel is private
+// and that the viewer isn't in: the same shapes, its agent_channel_unfurl
+// is_private, joinable from #agent-requests.
+func AgentSessionPrivateRequest() map[string]any {
+	m := AgentSessionRequest()
+	for _, k := range []string{"thread_ts", "reply_count", "reply_users", "reply_users_count", "latest_reply", "subscribed"} {
+		delete(m, k)
+	}
+	m["ts"], m["client_msg_id"] = AgentSessPrivTS, "c5e5a1f0-0000-4000-8000-00000000a004"
+	m["text"] = "<@" + CodeAgentID + "> the payments webhook retries forever, find out why"
+	m["blocks"] = []any{
+		map[string]any{"type": "rich_text", "block_id": "rq2", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{
+			map[string]any{"type": "user", "user_id": CodeAgentID},
+			map[string]any{"type": "text", "text": " the payments webhook retries forever, find out why"}}}}},
+		map[string]any{"type": "context", "block_id": "agent_session_context_rq2", "elements": []any{
+			map[string]any{"type": "mrkdwn", "text": "Started a private code channel with the agent", "verbatim": false}}},
+	}
+	m["attachments"] = []any{map[string]any{"id": 1, "fallback": "Code channel",
+		"agent_channel_unfurl": map[string]any{"channel_id": AgentSessPrivateID, "channel_name": AgentSessPrivName, "is_private": true,
+			"agent_bot_user_id": CodeAgentID, "joinable_from_channel_id": AgentSessChannelID}}}
+	return m
+}
+
+// agentSessPrivateChannel is the private code channel, as
+// client.codeChannels.join answers it once the viewer is in.
+func agentSessPrivateChannel() slack.Conversation {
+	props, _ := json.Marshal(map[string]any{
+		"record_channel": map[string]any{"record_id": codeChannelRecord + AgentSessPrivateID, "record_type": "agent_channel",
+			"record_label": "Code Channel", "record_label_plural": "Code Channels"},
+		"code_channel":  map[string]any{"repo": "example/payments", "branch": "webhook-retries"},
+		"agent_session": map[string]any{"status": "active", "title": "Webhook retries", "agent_bot_user_ids": []any{}, "encoded_agent_bot_user_ids": []string{CodeAgentID}},
+	})
+	return slack.Conversation{ID: AgentSessPrivateID, Name: AgentSessPrivName, IsChannel: true, IsPrivate: true, IsMember: false,
+		Created: 1763600190, Creator: "U0FAKE00002", NumMembers: 2, ContextTeamID: TeamID, Properties: props,
+		Purpose: &slack.Purpose{Value: "Code channel"}}
 }
 
 // AgentSessionReply is the agent's reply in the request's thread.
@@ -87,11 +129,13 @@ func AgentSessionLinkPost() map[string]any {
 	}
 }
 
-// addAgentSessionMessages puts the request and the link post in
-// #agent-requests (the reply is AgentSessionReply's, for thread tests).
+// addAgentSessionMessages puts the requests and the link post in
+// #agent-requests (the reply is AgentSessionReply's, for thread tests),
+// and the private request's channel where only client.codeChannels.join
+// finds it.
 func (s *Server) addAgentSessionMessages() {
 	var msgs []slack.Message
-	for _, raw := range []map[string]any{AgentSessionLinkPost(), AgentSessionRequest()} { // history is newest first
+	for _, raw := range []map[string]any{AgentSessionPrivateRequest(), AgentSessionLinkPost(), AgentSessionRequest()} { // history is newest first
 		b, _ := json.Marshal(raw)
 		var m slack.Message
 		if json.Unmarshal(b, &m) == nil {
@@ -101,4 +145,7 @@ func (s *Server) addAgentSessionMessages() {
 	s.convs = append(s.convs, slack.Conversation{ID: AgentSessChannelID, Name: "agent-requests", IsChannel: true, IsMember: true,
 		Created: 1763000000, Creator: SelfID, NumMembers: 2, ContextTeamID: TeamID})
 	s.hist[AgentSessChannelID] = msgs
+	s.codeHidden = append(s.codeHidden, agentSessPrivateChannel())
+	s.hist[AgentSessPrivateID] = []slack.Message{{Type: "message", TS: "1763600210.000100", User: CodeAgentID, BotID: CodeAgentBotID,
+		Text: "Looking at the retry policy.", Blocks: json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Looking at the retry policy."}]}]}]`)}}
 }

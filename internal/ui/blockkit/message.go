@@ -106,6 +106,8 @@ type Message struct {
 	// resetKey generation).
 	gen uint32
 	ver atomic.Uint32
+	// acu is the agent_channel_unfurl props by channel (agentChannel)
+	acu map[string]popups.EntityProps
 	gtx layout.Context
 	ops op.Ops
 	// used is when the host was last looked up or drawn, drawn the frame

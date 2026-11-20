@@ -386,8 +386,11 @@ type Server struct {
 	// caKicks: conversations.kick out of them (channel → user ids)
 	caKicks map[string][]string
 	others  []slack.Conversation
-	Joins   []JoinCall
-	Leaves  []string // conversations.leave calls (LeaveCalls)
+	// codeHidden: private code channels the viewer isn't in and can't see
+	// (conversations.info: channel_not_found) until client.codeChannels.join
+	codeHidden []slack.Conversation
+	Joins      []JoinCall
+	Leaves     []string // conversations.leave calls (LeaveCalls)
 	// BulkLeaves are conversations.bulkLeave calls' channels (BulkLeaveCalls)
 	BulkLeaves [][]string
 	// listFilters: every edge users/list filter (UserListFilters).

@@ -183,6 +183,25 @@ func (v *ChannelView) CardRects() []CardRect {
 	return out
 }
 
+// SlotRect is a Block Kit element slot on screen (window coordinates):
+// an agent block's, or a code channel card's.
+type SlotRect struct {
+	TS string // the message
+	R  image.Rectangle
+}
+
+// ElementSlotRects lists the visible messages' element slots as of the
+// last frame, in window coordinates.
+func (v *ChannelView) ElementSlotRects() []SlotRect {
+	var out []SlotRect
+	v.s.eachBody(func(ts string, off image.Point, rv *richview.View) {
+		for _, r := range rv.ElementSlots() {
+			out = append(out, SlotRect{TS: ts, R: r.Add(off)})
+		}
+	})
+	return out
+}
+
 // WorkObjectRect is a work object card's box on screen (window
 // coordinates).
 type WorkObjectRect struct {
