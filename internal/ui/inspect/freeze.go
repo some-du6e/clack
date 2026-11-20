@@ -18,13 +18,19 @@ import (
 // leave it. FreezeKey holds the window on the frame on screen:
 //
 //   - That frame is the session's last laid-out one. End kept its ops as
-//     one call (Gio patch 31, Ops.Whole) before the tool drew over them,
-//     and Frame runs first in every frame, before the window would reset
-//     them. Each frame the window draws frozen is that call with the
-//     tool's drawing over it (freeze.show): nothing is laid out, so
-//     nothing the window shows changes, whatever lands meanwhile, and the
-//     hover states, tooltips, the caret's phase and the animated images
-//     (held: Host.Frozen) stay as they were drawn.
+//     one call (Gio patch 31, Ops.Whole) and the window's ops' end there
+//     (patch 3, Ops.Checkpoint) before the tool drew over them, and Frame
+//     runs first in every frame, before the window would reset them. Each
+//     frame the window draws frozen is the window's own ops rolled back to
+//     that end, with the tool's drawing after them: nothing is laid out,
+//     so nothing the window shows changes, whatever lands meanwhile, and
+//     the hover states, tooltips, the caret's phase and the animated
+//     images (held: Host.Frozen) stay as they were drawn. The tool draws
+//     into the window's ops, not ops of its own calling them: Gio numbers
+//     the state a Defer saves (op.Defer, ops.Save) per op.Ops, so a
+//     deferred tooltip in the frame and the tool's deferred drawing in
+//     ops of its own both had state 1, and the tooltip was drawn, and hit,
+//     at the tool's origin instead of its own (2026-11-18).
 //   - The picker outlines from that frame's record. Its areas are in the
 //     ops drawn again, with their tags, so Gio's own hit test still says
 //     what the pointer is over (slackc InspectFrame.Hold).
@@ -52,10 +58,11 @@ const noteFor = 3 * time.Second
 
 // freeze is a frozen frame.
 type freeze struct {
-	content op.CallOp // the frame on screen's ops, without the tool's drawing (End)
-	show    op.Ops    // each frozen frame: content and the tool's drawing over it
-	at      frameKey  // what the frame was laid out for
-	regions []Region  // the shell's areas then
+	content op.CallOp     // the frame on screen's ops, without the tool's drawing (End)
+	win     *op.Ops       // the window's ops: content, then each frozen frame the tool's drawing
+	cp      op.Checkpoint // win's end after content (End)
+	at      frameKey      // what the frame was laid out for
+	regions []Region      // the shell's areas then
 	// describe fills a report's window and page fields as they were
 	// (Host.Describer): the page, the pane, the overlays and the theme
 	describe func(r *Report, red *Redactor)
@@ -69,12 +76,14 @@ func (t *Tool) Frozen() bool { return t.fz != nil }
 // Frame starts a frame of a session. Call it first in every window frame,
 // before the window's ops are reset (they hold the frame on screen, which
 // the freeze key holds), and after the frame's posted work; gtx is the
-// frame's context (the one the window would lay out with), its Ops unused.
-// It reads the frame's input, which Begin then finds read. Frozen, it
-// draws the frozen frame and returns the ops to submit for this frame,
-// with nothing laid out; call AfterFrame after submitting them. Otherwise
-// it returns nil and the window lays out as usual, Begin to End.
+// frame's context (the one the window would lay out with), its Ops the
+// window's ops as the last frame left them. It reads the frame's input,
+// which Begin then finds read. Frozen, it draws the frozen frame into the
+// window's ops and returns them to submit for this frame, with nothing
+// laid out; call AfterFrame after submitting them. Otherwise it returns
+// nil and the window lays out as usual, Begin to End.
 func (t *Tool) Frame(gtx layout.Context) *op.Ops {
+	t.flushTexts(gtx) // a frozen frame lays nothing out: Begin doesn't run
 	if t.state == off {
 		t.contentOK = false
 		return nil
@@ -89,13 +98,16 @@ func (t *Tool) Frame(gtx layout.Context) *op.Ops {
 		t.contentOK = false // the window lays this frame out: the ops End kept are reset
 		return nil
 	}
-	fz.show.Reset()
-	fz.content.Add(&fz.show) // its transform state carries over, as onto End's drawing
-	g := gtx
-	g.Ops = &fz.show
+	// the window's ops back to the frame End finished, the tool's drawing
+	// after them
+	if gtx.Ops != fz.win || !fz.win.Rollback(fz.cp) {
+		t.unfreeze() // the window's ops were reset: the frame is gone
+		t.contentOK = false
+		return nil
+	}
 	keepFocus(gtx.Source)
-	t.overlay(g)
-	return &fz.show
+	t.overlay(gtx)
+	return fz.win
 }
 
 // freeze holds the frame on screen, the session inspecting: from this
@@ -107,7 +119,7 @@ func (t *Tool) freeze(gtx layout.Context) bool {
 	if t.fz != nil || t.state != inspecting || !t.contentOK || !t.rec || t.contentAt != at {
 		return false
 	}
-	t.fz = &freeze{content: t.content, at: at, regions: t.host.Regions(), describe: t.host.Describer()}
+	t.fz = &freeze{content: t.content, win: t.contentOps, cp: t.contentCP, at: at, regions: t.host.Regions(), describe: t.host.Describer()}
 	t.host.Frozen(true)
 	t.host.Invalidate()
 	return true
@@ -195,11 +207,11 @@ func (t *Tool) sessionHint(gtx layout.Context) string {
 	return HintFrozen
 }
 
-// FrozenOps are the ops the frozen frames are drawn from, nil while not
-// frozen (tests: they go when the freeze ends).
+// FrozenOps are the ops the frozen frames are drawn in (the window's),
+// nil while not frozen (tests).
 func (t *Tool) FrozenOps() *op.Ops {
 	if t.fz == nil {
 		return nil
 	}
-	return &t.fz.show
+	return t.fz.win
 }
