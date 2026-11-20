@@ -36,28 +36,42 @@ func newBuilder(r Resolver, m *slack.Message, ch string) *builder {
 	return c
 }
 
-// hasMessageBlocks is shouldRenderBlocksInsteadOfText (client-boot
-// iub5 hasMessageBlocks: a non-empty blocks array) with Blocks' (lby4)
-// check that they aren't all null or rich_text without elements.
+// hasMessageBlocks is shouldRenderBlocksInsteadOfText's test (client-boot
+// iub5 hasMessageBlocks: a non-empty blocks array). Slack then draws the
+// blocks instead of the text even when every block is null or a rich_text
+// without elements: Blocks (lby4) draws nothing for those, so the body is
+// empty.
 func hasMessageBlocks(raw json.RawMessage) bool {
 	var bs []json.RawMessage
-	if json.Unmarshal(raw, &bs) != nil {
+	return json.Unmarshal(raw, &bs) == nil && len(bs) > 0
+}
+
+// blocksDrawNothing is Blocks' (lby4) check before it renders anything:
+// every block null or a rich_text without elements. bs is raw parsed; a
+// block without a type ({}) isn't null, so the raw JSON decides those.
+func blocksDrawNothing(raw json.RawMessage, bs []bk) bool {
+	for i := range bs {
+		if b := &bs[i]; b.Type != "" && (b.Type != "rich_text" || len(b.Elements) > 0) {
+			return false
+		}
+	}
+	var parts []json.RawMessage
+	if json.Unmarshal(raw, &parts) != nil {
 		return false
 	}
-	for _, b := range bs {
-		if string(b) == "null" {
+	for _, p := range parts {
+		if string(p) == "null" {
 			continue
 		}
 		var rt struct {
 			Type     string            `json:"type"`
 			Elements []json.RawMessage `json:"elements"`
 		}
-		if json.Unmarshal(b, &rt) == nil && rt.Type == "rich_text" && len(rt.Elements) == 0 {
-			continue
+		if json.Unmarshal(p, &rt) != nil || rt.Type != "rich_text" || len(rt.Elements) > 0 {
+			return false
 		}
-		return true
 	}
-	return false
+	return true
 }
 
 // FromMessageIn is FromMessage for a message shown in channel ch (Slack's
@@ -72,7 +86,8 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	}
 	c := newBuilder(r, m, ch)
 	var d Doc
-	if bs := parseBlocks(c.expanded(m.Blocks)); len(bs) > 0 {
+	blocks := c.expanded(m.Blocks)
+	if bs := parseBlocks(blocks); len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
 	}

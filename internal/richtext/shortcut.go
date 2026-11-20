@@ -75,10 +75,20 @@ type bkShortcut struct {
 	ContainsAISteps bool   `json:"contains_ai_steps"`
 	OwningTeamID    string `json:"owning_team_id"`
 	AppID           string `json:"app_id"`
+	ServiceName     string `json:"service_name"`
 }
 
-// shortcutBlock converts a share_shortcut block.
+// triggerIDRe is looksLikeTriggerId (7GJl).
+var triggerIDRe = regexp.MustCompile(`^Ft[A-Z0-9]{7,}$`)
+
+// shortcutBlock converts a share_shortcut block. ShareShortcut (KrN7)
+// draws a function_trigger_id that isn't a trigger id as the text
+// "UNKNOWN SHORTCUT TYPE", no card (a notification still reads the
+// block's title: convertStringTitledBlockToPlainText).
 func (c *builder) shortcutBlock(b *bk) Block {
+	if !triggerIDRe.MatchString(b.FunctionTriggerID) && !c.notify {
+		return Block{Kind: Paragraph, BlockID: b.BlockID, Spans: []Span{{Kind: Text, Text: "UNKNOWN SHORTCUT TYPE"}}}
+	}
 	sc := &ShortcutCard{TriggerID: b.FunctionTriggerID, TriggerType: b.TriggerType, ShareURL: SafeURL(b.ShareURL),
 		WorkflowID: b.WorkflowID, BotUserID: b.BotUserID, AI: b.ContainsAISteps, State: "enabled"}
 	if sc.TriggerType == "" { // createShortcutFromBlock: no trigger_type is a link trigger
@@ -93,7 +103,7 @@ func (c *builder) shortcutBlock(b *bk) Block {
 	if sc.TriggerType == "shortcut" {
 		sc.URL = SafeURL(b.URL)
 	}
-	sc.Byline, sc.BylineIcon = triggerTypeLabel(sc.TriggerType, b.TriggerSubtype)
+	sc.Byline, sc.BylineIcon = triggerTypeLabel(sc.TriggerType, b.TriggerSubtype, b.ServiceName)
 	if f := workflowSlugs.Load(); f != nil && sc.TriggerID != "" {
 		if s, known := (*f)(sc.TriggerID); known && s.Error == "" {
 			sc.Icon = SafeImage(s.Icon)
@@ -154,11 +164,16 @@ var eventTriggers = map[string][2]string{
 // shortcut info made from a block: a link trigger has neither, nor does
 // an event trigger whose subtype isn't one of Slack's (1YeR G_ strips a
 // "slack#/events/" prefix and reads the first path part). The
-// WorkflowTriggerTypeLabel needs both, so either missing is no byline.
-// A service trigger's label names its service, which a block's info
-// lacks; it isn't ported (no byline).
-func triggerTypeLabel(typ, subtype string) (label, icon string) {
+// WorkflowTriggerTypeLabel needs both, so either missing is no byline. A
+// service trigger names the block's service_name (createShortcutFromBlock
+// keeps it as serviceName), else "a third party".
+func triggerTypeLabel(typ, subtype, service string) (label, icon string) {
 	switch typ {
+	case "service":
+		if service != "" {
+			return "Starts with a " + service + " event", "code"
+		}
+		return "Starts with a third party event", "code"
 	case "scheduled":
 		return "Starts on a schedule", "clock"
 	case "webhook":

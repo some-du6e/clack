@@ -17,8 +17,8 @@ import (
 // hover bar's ⋮ opens More actions.
 func TestShortcutCardLayout(t *testing.T) {
 	st := newTestStyle()
-	d := kitDoc(t, `[{"type":"share_shortcut","function_trigger_id":"Ft0001","title":"Alpha","description":"Bravo",
-		"trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0001/x","workflow_id":"Wf1","share_url":"https://slack.com/shortcuts/Ft0001/s","bot_user_id":"U1"}]`)
+	d := kitDoc(t, `[{"type":"share_shortcut","function_trigger_id":"Ft0SHORT01","title":"Alpha","description":"Bravo",
+		"trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0SHORT01/x","workflow_id":"Wf1","share_url":"https://slack.com/shortcuts/Ft0SHORT01/s","bot_user_id":"U1"}]`)
 	v := layoutAt(st, d, Options{}, 800)
 	var card *box
 	for i := range v.d.boxes {
@@ -51,9 +51,9 @@ func TestShortcutCardLayout(t *testing.T) {
 		t.Fatalf("Start Workflow button %+v, want 36px at x 17, 16px over the card's bottom %d", btn, card.r.Max.Y)
 	}
 	for _, c := range []struct{ act, want string }{
-		{"open", "open Ft0001 https://slack.com/shortcuts/Ft0001/x"},
-		{"start", "start Ft0001 https://slack.com/shortcuts/Ft0001/x"},
-		{"more", "more Ft0001 https://slack.com/shortcuts/Ft0001/x"},
+		{"open", "open Ft0SHORT01 https://slack.com/shortcuts/Ft0SHORT01/x"},
+		{"start", "start Ft0SHORT01 https://slack.com/shortcuts/Ft0SHORT01/x"},
+		{"more", "more Ft0SHORT01 https://slack.com/shortcuts/Ft0SHORT01/x"},
 	} {
 		got, ok := workflowAct(v, c.act)
 		if !ok || got != c.want {
@@ -63,8 +63,8 @@ func TestShortcutCardLayout(t *testing.T) {
 
 	// a bot still being fetched: the loading card, which still opens the
 	// details and has its actions bar (KrN7: interactive but when deleted)
-	m := slack.Message{TS: "1.0", Text: "x", Blocks: json.RawMessage(`[{"type":"share_shortcut","function_trigger_id":"Ft0002","title":"Soon",
-		"trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0002/x","bot_user_id":"U0BOT00009"}]`)}
+	m := slack.Message{TS: "1.0", Text: "x", Blocks: json.RawMessage(`[{"type":"share_shortcut","function_trigger_id":"Ft0SHORT02","title":"Soon",
+		"trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0SHORT02/x","bot_user_id":"U0BOT00009"}]`)}
 	v = layoutAt(st, rt.FromMessage(fetchingRes{}, &m), Options{}, 800)
 	if hasFrag(&v.d, "Soon") {
 		t.Error("the loading card drew its title (want the skeletons)")
@@ -75,7 +75,7 @@ func TestShortcutCardLayout(t *testing.T) {
 		}
 	}
 	// no bot at all: a non-existent member, the enabled card
-	d = kitDoc(t, `[{"type":"share_shortcut","function_trigger_id":"Ft0003","title":"Here","trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0003/x"}]`)
+	d = kitDoc(t, `[{"type":"share_shortcut","function_trigger_id":"Ft0SHORT03","title":"Here","trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0SHORT03/x"}]`)
 	v = layoutAt(st, d, Options{}, 800)
 	if !hasFrag(&v.d, "Here") || !hasFrag(&v.d, "Start") {
 		t.Errorf("a card with no bot: %q, want the enabled card with Start Workflow", fragStrings(&v.d))

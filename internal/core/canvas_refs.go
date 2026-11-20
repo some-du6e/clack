@@ -15,8 +15,9 @@ import (
 
 // resolveCanvases fills the store's canvas slug data (richtext.CanvasRef,
 // section rich text) for the lookups rendering missed, and returns the
-// ids it filled. Canvases come from files.info (getFileStatus: a file
-// that is gone is "deleted", one the viewer can't open "hidden");
+// ids it filled. Canvases come from files.info (getFileStatus,
+// richtext.FileStatusOf: a file that is gone is "deleted", one the viewer
+// can't open "hidden");
 // sections from quip.getCanvasBulkSectionIdsData {file_id, section_ids,
 // reason: "conditional-fetching"}, Slack's
 // fetchAndUpsertCanvasSectionRichText (client-boot AYsF): its sections'
@@ -82,6 +83,11 @@ func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 			Filetype     string          `json:"filetype"`
 			Mode         string          `json:"mode"`
 			PrettyType   string          `json:"pretty_type"`
+			FileAccess   string          `json:"file_access"`
+			HiddenLimit  bool            `json:"is_hidden_by_limit"`
+			Tombstoned   bool            `json:"is_tombstoned"`
+			IsSkill      bool            `json:"is_skill"`
+			FolderType   string          `json:"folder_type"`
 			ListMetadata struct {
 				Views []struct {
 					ID   string `json:"id"`
@@ -94,12 +100,11 @@ func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 	var se *slack.Error
 	switch {
 	case err == nil:
-		st := "normal"
-		if r.File.IsDeleted {
-			st = "deleted"
-		}
-		ref := richtext.CanvasRef{Title: r.File.Title, TitleBlocks: r.File.TitleBlocks, Status: st,
-			Name: r.File.Name, Filetype: r.File.Filetype, Mode: r.File.Mode, Subtype: r.File.Subtype}
+		f := &r.File
+		st := richtext.FileStatusOf(richtext.FileFacts{Mode: f.Mode, FileAccess: f.FileAccess, IsDeleted: f.IsDeleted,
+			HiddenByLimit: f.HiddenLimit, Tombstoned: f.Tombstoned})
+		ref := richtext.CanvasRef{Title: f.Title, TitleBlocks: f.TitleBlocks, Status: st,
+			Name: f.Name, Filetype: f.Filetype, Mode: f.Mode, Subtype: f.Subtype, FolderType: f.FolderType, IsSkill: f.IsSkill}
 		switch f := r.File; {
 		case f.Filetype == "list" || f.Mode == "list":
 			ref.Kind = "list"

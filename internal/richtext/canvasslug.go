@@ -48,8 +48,11 @@ type CanvasRef struct {
 	// (search_file_channel_messages reads a file channel as its file).
 	Kind string
 	// Name, Filetype, Mode and Subtype are the file's own (an inline
-	// rich_text file's slug: its name and icon, fileslug.go).
+	// rich_text file's slug: its name and icon, fileslug.go); FolderType
+	// is a folder's kind, IsSkill a skill canvas (which draws no slug).
 	Name, Filetype, Mode, Subtype string
+	FolderType                    string
+	IsSkill                       bool
 }
 
 // CanvasResolver is an optional Resolver extension (store.Store). ok and

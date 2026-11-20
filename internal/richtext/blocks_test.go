@@ -169,7 +169,7 @@ func (b Block) kindName() string {
 }
 
 func TestBlocksFallBackToText(t *testing.T) {
-	for _, blocks := range []string{`[]`, `null`, `"not an array"`, `[{"type":"rich_text","elements":[]}]`} {
+	for _, blocks := range []string{`[]`, `null`, `"not an array"`} {
 		d := blocksMsg(t, blocks)
 		eq(t, "fallback "+blocks, d.Blocks, []Block{para(tx("fallback text"))})
 	}

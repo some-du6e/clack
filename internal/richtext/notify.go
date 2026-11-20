@@ -1,41 +1,197 @@
 package richtext
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
 
 // NotificationText is the body Slack's notification shows for a message
-// with blocks. getContentForNotification (boot-shared Eley) reads it
-// through extractTextFromMessage and convertMessageToPlainText (client-boot
-// 2xQY), which expands condition blocks only for message summaries and
-// has no fallback chain: a condition, a fallback_canary and a type it has
-// no converter for add nothing, and blocks that add no text leave the
-// message text. d is m's Doc (FromMessage); what it draws after the
-// blocks (files, attachments) follows as drawn.
+// with blocks: extractTextFromMessage (boot-shared Eley), which reads
+// convertMessageToPlainText (client-boot 2xQY) with blockSpacing
+// "single" and the default verbosity. That converter expands condition
+// blocks only for message summaries and has no fallback chain: each block
+// goes through its own converter (its eh table, notifyBlock), a type it
+// has none for adds nothing, and blocks that add no text leave the
+// message text. Only when both are empty does the body come from what d
+// draws after the blocks (its files) or from the attachments: a message
+// unfurl's blocks, else the first attachment's fallback, text, pretext or
+// footer (textContentFromAttachments).
 func NotificationText(r Resolver, m *slack.Message, d Doc, st SpanText) string {
-	// d's own part: what FromMessageIn drew for the blocks (or the text)
+	nc := newBuilder(r, m, m.Channel)
+	nc.notify = true
+	if s := notifyBlocks(nc.blocks(parseBlocks(m.Blocks)), st); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(PlainTextWith(Doc{Blocks: FromMrkdwn(r, m.Text)}, st)); s != "" {
+		return s
+	}
+	// d's own part: what FromMessageIn drew for the blocks (or the text);
+	// its files follow (a file's title)
 	dc := newBuilder(r, m, m.Channel)
-	own := len(dc.blocks(parseBlocks(dc.expanded(m.Blocks))))
+	own := 0
+	if raw := dc.expanded(m.Blocks); !blocksDrawNothing(raw, parseBlocks(raw)) {
+		own = len(dc.blocks(parseBlocks(raw)))
+	}
 	if own == 0 && m.Text != "" && (!hasMessageBlocks(m.Blocks) || dc.missing) {
 		own = len(FromMrkdwn(r, m.Text))
 	}
-	nc := newBuilder(r, m, m.Channel)
-	nc.notify = true
-	s := strings.TrimSpace(PlainTextWith(Doc{Blocks: nc.blocks(parseBlocks(m.Blocks))}, st))
-	if s == "" {
-		s = PlainTextWith(Doc{Blocks: FromMrkdwn(r, m.Text)}, st)
-	}
-	if own < len(d.Blocks) {
-		if rest := PlainTextWith(Doc{Blocks: d.Blocks[own:]}, st); rest != "" {
-			if s != "" {
-				s += "\n"
-			}
-			s += rest
+	for _, b := range d.Blocks[min(own, len(d.Blocks)):] {
+		if b.Kind == FileBlock && b.File != nil {
+			return strings.TrimSpace(firstNonEmpty(b.File.Title, b.File.Name))
 		}
 	}
-	return s
+	for i := range m.Attachments { // getForwardedAttachmentBlocks
+		a := &m.Attachments[i]
+		if !a.IsMsgUnfurl {
+			continue
+		}
+		bs := a.Blocks
+		if len(parseBlocks(bs)) == 0 && len(a.MessageBlocks) > 0 {
+			bs = a.MessageBlocks[0].Message.Blocks
+		}
+		if s := notifyBlocks(nc.blocks(parseBlocks(bs)), st); s != "" {
+			return s
+		}
+		break
+	}
+	for i := range m.Attachments {
+		a := &m.Attachments[i]
+		if t := firstNonEmpty(a.Fallback, a.Text, a.Pretext, a.Footer); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// notifyBlocks is convertBlocksToPlainText with blockSpacing "single":
+// each block's text trimmed, the empty ones dropped, one per line.
+func notifyBlocks(bs []Block, st SpanText) string {
+	var out []string
+	for i := range bs {
+		if s := strings.TrimSpace(notifyBlock(&bs[i], st)); s != "" {
+			out = append(out, s)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// notifyBlock is a block's text by 2xQY's converters in the default
+// verbosity: a section its text and fields, a line each (no accessory); a
+// context its text elements joined by spaces (no images); an image block
+// its title (not its alt text); a table its rows, cells joined by ", "; a
+// container its title; a share_shortcut its title
+// (convertStringTitledBlockToPlainText); a rich_text list its items as
+// "• item." (notifyList). Actions, alerts, callouts, cards, calls,
+// loading, inputs, files, dividers and types with no converter add
+// nothing.
+func notifyBlock(b *Block, st SpanText) string {
+	switch b.Kind {
+	case Paragraph, Preformatted, Quote, Header, RichHeader, Tombstone, Agent:
+		return spansText(b.Spans, st)
+	case Section:
+		var parts []string
+		if len(b.Spans) > 0 {
+			parts = append(parts, spansText(b.Spans, st))
+		} else if len(b.Children) > 0 {
+			parts = append(parts, notifyBlocks(b.Children, st))
+		}
+		for _, f := range b.Fields {
+			if t := spansText(f, st); t != "" {
+				parts = append(parts, t)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case Context:
+		var parts []string
+		for i := range b.Children {
+			if c := &b.Children[i]; c.Kind == Paragraph {
+				if t := spansText(c.Spans, st); t != "" {
+					parts = append(parts, t)
+				}
+			}
+		}
+		return strings.Join(parts, " ")
+	case List:
+		return notifyList(b, st)
+	case ImageBlock:
+		if b.Image != nil {
+			return b.Image.Title
+		}
+	case Table:
+		rows := make([]string, 0, len(b.Rows))
+		for _, row := range b.Rows {
+			cells := make([]string, 0, len(row))
+			for _, cell := range row {
+				cells = append(cells, spansText(cell, st))
+			}
+			rows = append(rows, strings.Join(cells, ", "))
+		}
+		return strings.Join(rows, "\n")
+	case ContainerBlock: // convertPlainTextTitledBlockToPlainText
+		if b.Container != nil {
+			return spansText(b.Container.Title, st)
+		}
+	case ShortcutBlock:
+		if b.Shortcut != nil {
+			return b.Shortcut.Title
+		}
+	}
+	return ""
+}
+
+// notifyList is convertRichTextBlockToPlainText's list in the default
+// verbosity: each item "<marker> <text>." with no indent, the marker by
+// the list's indent (getUnorderedListCharacter: •, ◦, ■ in turn;
+// getOrderedListCharacter: 1., a., i. in turn, counted from offset+1). A
+// check list is an unordered list here.
+func notifyList(b *Block, st SpanText) string {
+	lines := make([]string, 0, len(b.Items))
+	for i, it := range b.Items {
+		text := spansText(it, st) + "."
+		if b.Ordered {
+			lines = append(lines, orderedMarker(b.Indent, b.Offset+i+1)+". "+text)
+			continue
+		}
+		lines = append(lines, []string{"\u2022", "\u25e6", "\u25a0"}[b.Indent%3]+" "+text)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// orderedMarker is getOrderedListCharacter: n, a letter run
+// (convertNumberToLetterIncrement) or a roman numeral
+// (convertNumberToRomanNumeral) by indent.
+func orderedMarker(indent, n int) string {
+	switch indent % 3 {
+	case 1:
+		s := ""
+		for ; n > 0; n /= 26 {
+			n--
+			s = string(rune('a'+n%26)) + s
+		}
+		return s
+	case 2:
+		return romanNumeral(n)
+	}
+	return strconv.Itoa(n)
+}
+
+// romanNumeral is convertNumberToRomanNumeral: lower case, thousands as
+// that many m's.
+func romanNumeral(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	digits := [3][10]string{
+		{"", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix"},
+		{"", "x", "xx", "xxx", "xl", "l", "lx", "lxx", "lxxx", "xc"},
+		{"", "c", "cc", "ccc", "cd", "d", "dc", "dcc", "dccc", "cm"},
+	}
+	s := digits[0][n%10]
+	s = digits[1][n/10%10] + s
+	s = digits[2][n/100%10] + s
+	return strings.Repeat("m", n/1000) + s
 }
 
 // SearchText is the plain text a search result shows for d. Slack's

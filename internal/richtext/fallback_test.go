@@ -45,6 +45,12 @@ func TestBlockFallbacks(t *testing.T) {
 		{"a lone empty fallback draws an empty body, not the text",
 			`[{"type":"mystery","fallback":[]}]`,
 			nil},
+		// Blocks (lby4) draws nothing when they're all null or rich_text
+		// without elements, and the text still doesn't draw: the array
+		// isn't empty (iub5 hasMessageBlocks)
+		{"blocks that are all null or empty rich_text draw an empty body, not the text",
+			`[null,{"type":"rich_text","elements":[]}]`,
+			nil},
 		{"a block Clack can't draw yet lets the text stand in",
 			`[{"type":"timeline","block_id":"t1"}]`,
 			[]Block{para(tx("fallback text"))}},
