@@ -25,6 +25,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -42,7 +43,6 @@ func (h *dragHost) Describer() func(*Report, *Redactor) {
 	return func(r *Report, red *Redactor) { r.Page = red.Route("c/C0123456789") }
 }
 func (h *dragHost) ConvKind(string) string { return "" }
-func (h *dragHost) CopyText(string)        {}
 func (h *dragHost) Invalidate()            {}
 func (h *dragHost) ConfigDir() string      { return "" }
 func (h *dragHost) Toast(s string)         { h.toasts = append(h.toasts, s) }
@@ -96,10 +96,20 @@ type dragEnv struct {
 	content func(gtx layout.Context)
 	// frozen: the last frame was drawn from the frozen frame (Frame)
 	frozen bool
+	// scale is the window's px per dp (0: 1)
+	scale float32
+	// onClip hears each text the window's clipboard took in a frame
+	onClip func(text string)
+	// skew puts the frames' clock ahead of time.Now (wait): the review
+	// arms a region's copy keys by frame time
+	skew time.Duration
 }
 
-func newDragEnv(t *testing.T) *dragEnv {
-	e := &dragEnv{t: t, size: image.Pt(900, 600), content: func(layout.Context) {}}
+func newDragEnv(t *testing.T) *dragEnv { return newDragEnvAt(t, image.Pt(900, 600), 1) }
+
+// newDragEnvAt is newDragEnv for a window size px at scale px per dp.
+func newDragEnvAt(t *testing.T, size image.Point, scale float32) *dragEnv {
+	e := &dragEnv{t: t, size: size, scale: scale, content: func(layout.Context) {}}
 	e.host = &dragHost{size: e.size}
 	e.tool = New(e.host, key.Filter{Name: "D", Required: key.ModShortcut | key.ModAlt | key.ModShift})
 	prevShoot, prevWrite := Shoot, WriteImage
@@ -120,7 +130,11 @@ func newDragEnv(t *testing.T) *dragEnv {
 // pointer reset a freeze's end asked for, then the layout.
 func (e *dragEnv) frame() {
 	e.host.drain()
-	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(e.size), Now: time.Now(), Source: e.r.Source()}
+	sc := e.scale
+	if sc <= 0 {
+		sc = 1
+	}
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc}, Constraints: layout.Exact(e.size), Now: time.Now().Add(e.skew), Source: e.r.Source(), Ops: &e.ops}
 	ops := e.tool.Frame(gtx)
 	if e.host.reset {
 		e.host.reset = false
@@ -129,6 +143,7 @@ func (e *dragEnv) frame() {
 	e.frozen = ops != nil
 	if ops != nil {
 		e.r.Frame(ops)
+		e.clip()
 		e.tool.AfterFrame(ops, e.size)
 		return
 	}
@@ -138,7 +153,15 @@ func (e *dragEnv) frame() {
 	e.content(g)
 	e.tool.End(gtx)
 	e.r.Frame(&e.ops)
+	e.clip()
 	e.tool.AfterFrame(&e.ops, e.size)
+}
+
+// clip is the window's clipboard taking the frame's text write, if any.
+func (e *dragEnv) clip() {
+	if _, b, ok := e.r.WriteClipboard(); ok && e.onClip != nil {
+		e.onClip(string(b))
+	}
 }
 
 func (e *dragEnv) queue(evs ...pointer.Event) {
@@ -188,6 +211,37 @@ func (e *dragEnv) startAt(p f32.Point, want string) {
 
 func (e *dragEnv) key(name key.Name, mods key.Modifiers) {
 	e.r.Queue(key.Event{Name: name, Modifiers: mods, State: key.Press}, key.Event{Name: name, Modifiers: mods, State: key.Release})
+}
+
+// pressKey is a key going down, or one of a held key's auto-repeats
+// (Windows' and macOS' come as presses with no release between them);
+// releaseKey is it coming up.
+func (e *dragEnv) pressKey(name key.Name, mods key.Modifiers) {
+	e.r.Queue(key.Event{Name: name, Modifiers: mods, State: key.Press})
+}
+func (e *dragEnv) releaseKey(name key.Name, mods key.Modifiers) {
+	e.r.Queue(key.Event{Name: name, Modifiers: mods, State: key.Release})
+}
+
+// armDelayTest is more than a region's review waits on screen before its
+// copy keys work (review.go armDelay).
+const armDelayTest = 400 * time.Millisecond
+
+// wait is d passing with no input: a frame now, as the window's next
+// comes at once after one that drew a review (drawReview asks for it, and
+// it finds the review on screen: shownAt), then the frames' clock d ahead
+// and a frame.
+func (e *dragEnv) wait(d time.Duration) {
+	e.frame()
+	e.skew += d
+	e.frame()
+}
+
+// drawPill is a 40x20 px component at (380,290) for the content to draw (a
+// pick there is an element's, its margin blurred)
+func drawPill(gtx layout.Context) {
+	defer op.Offset(image.Pt(380, 290)).Push(gtx.Ops).Pop()
+	slackc.InspectAs("Pill").End(gtx, image.Pt(40, 20))
 }
 
 // untilReady runs frames until the review shows its shot.
@@ -280,6 +334,7 @@ func TestDragGrabsRegion(t *testing.T) {
 	}
 	e.untilReady()
 	m := marks[0]
+	e.wait(armDelayTest) // a region's copy keys arm once its review has been on screen a while
 	e.key(key.NameReturn, 0)
 	e.frame()
 	e.tool.Wait()
@@ -513,6 +568,7 @@ func TestShiftClickSameAsReviewed(t *testing.T) {
 		t.Fatal("no review after the plain click")
 	}
 	e.untilReady()
+	e.wait(armDelayTest) // a region's copy keys arm once its review has been on screen a while
 	e.key("C", key.ModShortcut)
 	e.frame()
 	e.tool.Wait()

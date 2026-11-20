@@ -121,6 +121,7 @@ func (a *App) dismissAt(i int) {
 type shellMenu struct {
 	a      *App
 	anchor image.Point
+	rect   image.Rectangle // the menu as last drawn, window coords (Rect)
 	items  []MenuItem
 	clicks []widget.Clickable
 	done   bool
@@ -133,6 +134,9 @@ func newShellMenu(a *App, anchor image.Point, items []MenuItem) *shellMenu {
 
 func (m *shellMenu) Dismissed() bool { return m.done }
 func (m *shellMenu) Dismiss()        { m.done = true }
+
+// Rect is the menu as last drawn (window coords).
+func (m *shellMenu) Rect() image.Rectangle { return m.rect }
 
 func (m *shellMenu) Layout(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
@@ -187,6 +191,7 @@ func (m *shellMenu) Layout(gtx layout.Context) layout.Dimensions {
 		p.Y = gtx.Dp(8)
 	}
 	r := image.Rectangle{Min: p, Max: p.Add(image.Pt(w, h))}
+	m.rect = r
 	theme.Shadow(gtx, r, gtx.Dp(8), gtx.Dp(10), theme.WithAlpha(c.PanelShadow, 0x50))
 	theme.RRect(gtx, r, gtx.Dp(8), c.BgRaised)
 	theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), c.Border)
