@@ -33,9 +33,10 @@ func TestRichTextFileSlug(t *testing.T) {
 		"F4":  {Status: "hidden"},
 		"F6":  {Status: "deleted"},
 		"F10": {Status: "deleted", Kind: "canvas", Filetype: "quip"},
-		"F11": {Title: "Plan", Status: "normal", Kind: "canvas", Filetype: "quip", IsSkill: true},
-		"F12": {Name: "skills", Status: "normal", Filetype: "folder", FolderType: "skill_set"},
 	}}
+	for id, ref := range skillRefs() { // F11 a skill canvas, F12 a skill set folder
+		r.refs[id] = ref
+	}
 	el := func(id string) string {
 		return `{"type":"file","file_id":"` + id + `","url":"https://x.slack.com/files/U1/` + id + `/f","text":"ignored"}`
 	}

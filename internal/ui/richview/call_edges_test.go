@@ -118,7 +118,7 @@ func TestCallFaceLoadError(t *testing.T) {
 	var ops op.Ops
 	v.Layout(testGtx(&ops, 800), st, &recHandler{})
 	ims := imgsWithURL(&v.d, "https://call.test/broken.png")
-	if len(ims) != 1 || ims[0].onFail != "local://ava_0002" {
+	if len(ims) != 1 || imgOnFail(ims[0]) != "local://ava_0002" {
 		t.Fatalf("guest face %+v, want its avatar_url with ava_0002 for a load error", ims)
 	}
 	if imgs.asks["local://ava_0002"] == 0 {

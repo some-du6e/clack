@@ -147,7 +147,7 @@ func TestCardIconBox(t *testing.T) {
 		"title":{"type":"plain_text","text":"Alpha"}}]`)
 	v := layoutAt(st, d, Options{}, 800)
 	icons := imgsWithURL(&v.d, "https://img.test/i.png")
-	if len(icons) != 1 || !icons[0].fit || !icons[0].bare || icons[0].noUp != 1 {
+	if len(icons) != 1 || !icons[0].fit || !imgBare(icons[0]) || imgNoUp(icons[0]) != 1 {
 		t.Fatalf("icon %+v, want one contained image that never grows (noUp 1 at scale 1), nothing under it", icons)
 	}
 	ir := icons[0].r
@@ -172,7 +172,7 @@ func TestCardIconBox(t *testing.T) {
 		{image.Rect(0, 0, 36, 36), image.Pt(64, 16), 1, image.Rect(0, 0, 36, 36), false},  // wider than the box: contained
 		{image.Rect(0, 0, 36, 36), image.Pt(36, 36), 1, image.Rect(0, 0, 36, 36), false},
 	} {
-		if got, small := noUpRect(c.r, c.sz, c.f); got != c.want || small != c.small {
+		if got, small := noUpRectOf(c.r, c.sz, c.f); got != c.want || small != c.small {
 			t.Errorf("noUpRect(%v, %v, %v) = %v %v, want %v %v", c.r, c.sz, c.f, got, small, c.want, c.small)
 		}
 	}
