@@ -64,7 +64,7 @@ func TestDraftsButtonShots(t *testing.T) {
 		d.Insert(0, "hey", Attr{})
 		c.ed.SetDoc(d)
 		c.ed.SetSelection(3, 3)
-		const w, hh, boxH = 900, 420, 130
+		const w, hh, boxH = 900, 420, 150
 		var ops op.Ops
 		var r input.Router
 		frame := func(menu bool) {

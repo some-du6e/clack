@@ -63,7 +63,10 @@ func TestDraftsForLikeSlack(t *testing.T) {
 		t.Errorf("DraftFor(C1) = %s %v, want Dr4: the newest attached draft, not the composer draft Dr2", d.ID, ok)
 	}
 
-	f.reply["drafts.create"] = `{"ok":true,"draft":{"id":"Dr9","destinations":[{"channel_id":"C1"}],"last_updated_ts":"1700000009"}}`
+	// the reply carries the draft's blocks, as Slack's and the fake's do,
+	// but not is_from_composer or date_stashed: those come from what was sent
+	f.reply["drafts.create"] = `{"ok":true,"draft":{"id":"Dr9","destinations":[{"channel_id":"C1"}],"last_updated_ts":"1700000009","blocks":` +
+		text("saved from the composer") + `}}`
 	d, err := a.SaveDraft(ctx, DraftOpts{Channel: "C1", Text: "saved from the composer", DateStashed: 1700000009000})
 	if err != nil {
 		t.Fatal(err)
