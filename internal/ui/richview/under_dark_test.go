@@ -4,6 +4,8 @@ import (
 	"image/color"
 	"testing"
 
+	"gioui.org/op"
+
 	rt "github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -22,7 +24,7 @@ func TestOpaqueFillsStayOverUnder(t *testing.T) {
 	m := slack.Message{Type: "message", TS: "1762700000.000200", User: "U0", Text: "see `code` here",
 		Attachments: []slack.Attachment{{ID: 1, Fallback: "a note", Title: "A note", Text: "an attachment with no colour"}}}
 	v := New(rt.FromMessage(codeRes{}, &m), Options{})
-	v.relayout(st, 600, 1, 1)
+	v.Layout(testGtx(new(op.Ops), 600), st, nil) // a real layout: it takes the palette's see-through fills
 	code := rgba(232, 232, 232, 0.04)
 	for _, under := range []struct {
 		name string
