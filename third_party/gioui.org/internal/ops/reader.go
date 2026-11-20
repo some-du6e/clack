@@ -28,6 +28,9 @@ type Key struct {
 	ops     *Ops
 	pc      uint32
 	version uint32
+	// epoch is the Ops' rollback epoch for an op at or past what it was
+	// rolled back to (Clack patch 3), 0 for the others
+	epoch uint32
 }
 
 // Shadow of op.MacroOp.
@@ -104,6 +107,9 @@ func (r *Reader) Decode() (EncodedOp, bool) {
 			continue
 		}
 		key := Key{ops: r.ops, pc: r.pc.data, version: r.ops.version}
+		if r.ops.rolled && r.pc.data >= r.ops.rbPC {
+			key.epoch = r.ops.epoch // written after a rollback (Clack patch 3)
+		}
 		t := OpType(data[0])
 		n, nrefs := t.props()
 		data = data[:n]

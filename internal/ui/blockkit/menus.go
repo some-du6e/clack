@@ -18,6 +18,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -92,6 +93,18 @@ type watch struct {
 	popups.Overlay
 	onDone func()
 	fired  bool
+}
+
+// Unwrap is the overlay watched (the inspect tool names the layer by it).
+func (x *watch) Unwrap() popups.Overlay { return x.Overlay }
+
+// Rect is the watched overlay's (its card, window coords): the inspect
+// tool boxes the layer with it.
+func (x *watch) Rect() image.Rectangle {
+	if r, ok := x.Overlay.(interface{ Rect() image.Rectangle }); ok {
+		return r.Rect()
+	}
+	return image.Rectangle{}
 }
 
 func (x *watch) Layout(gtx C) D {
@@ -214,6 +227,7 @@ type selectMenu struct {
 	focus  bool
 	local  []item // conversations from the sidebar
 	tag    int
+	card   image.Rectangle // the options card, window coords (Rect)
 }
 
 func openSelect(w *ew, anchor image.Rectangle) {
@@ -228,6 +242,9 @@ func openSelect(w *ew, anchor image.Rectangle) {
 }
 
 func (m *selectMenu) Dismissed() bool { return m.done }
+
+// Rect is the options card as last laid out (window coords).
+func (m *selectMenu) Rect() image.Rectangle { return m.card }
 
 func (m *selectMenu) Dismiss() {
 	if m.done {
@@ -717,6 +734,8 @@ func (m *selectMenu) Layout(gtx C) D {
 			}
 		}
 	}
+	m.card = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(fw, ch))}
+	defer slackc.InspectCard(gtx, m.card) // the inspect tool: the options card is the dropdown's box
 	at(gtx, pos, func(gtx C) D {
 		r := image.Rect(0, 0, fw, ch)
 		theme.Shadow(gtx, r, dp(gtx, 8), dp(gtx, 12), cl.Shadow)
@@ -747,6 +766,7 @@ func (m *selectMenu) Layout(gtx C) D {
 					return D{Size: sz}
 				}
 				row := &m.rows[i]
+				defer bkOptionClass.Inspect(0).End(gtx, sz) // Slack's option, for the inspect tool
 				hot := i == m.sel && m.kbd || row.g.Hovered()
 				if row.g.Hovered() && !m.kbd {
 					m.sel = i
