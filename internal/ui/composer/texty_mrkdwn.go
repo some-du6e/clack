@@ -373,7 +373,13 @@ func contentsDoc(s string, look emojiLookup, emojiAsText bool) *Doc {
 	at := 0
 	for _, r := range rs {
 		if r.at < at {
-			continue // overlaps an earlier replacement
+			// an emoji code inside a pill's label (a member named
+			// "bob :smile: x"): Slack's forEach calls T.substring(k,
+			// e.index) with index < k, which swaps its arguments and
+			// writes the label's tail twice (shown "@bob :smile: x:smile:
+			// x> x>", sent with that tail). Clack keeps the pill alone, a
+			// deliberate departure from rKd0 for that one garbling case.
+			continue
 		}
 		d.Insert(d.Len(), s[at:r.at], Attr{})
 		d.InsertAtom(d.Len(), r.atom)

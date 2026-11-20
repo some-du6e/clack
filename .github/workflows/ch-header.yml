@@ -22,6 +22,9 @@ on:
       - "internal/ui/composer/editor.go"
       - "internal/ui/composer/paste.go"
       - "internal/ui/composer/chrome.go"
+      - "internal/ui/composer/texty_tip.go"
+      - "internal/ui/composer/group_tip.go"
+      - "internal/ui/composer/emoticon.go"
       - "internal/ui/views/details.go"
       - "internal/fakeslack/fakeslack.go"
       - "internal/core/manage.go"
@@ -63,7 +66,7 @@ jobs:
           mkdir -p "$PREVIEW_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestChannelNotifyAdvancedSettings$|TestHeaderBellIcon$|TestHeaderTopicEdit$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestTopicEditMentions$|TestEditDescriptionTooLong$' ./internal/ui/
       - name: topic and description text (Slack's oracle cases)
-        run: go test -count=1 -v -run 'TestTextyMrkdwnSlackOracle$|TestTextyLinksSlackOracle$|TestTexty(PasteURLOverSelection|UndoWhenEmpty|Keys|OverLimit)$' ./internal/ui/composer/
+        run: go test -count=1 -v -run 'TestTextyMrkdwnSlackOracle$|TestTextyLinksSlackOracle$|TestTexty(PasteURLOverSelection|UndoWhenEmpty|Keys|OverLimit|PillCutPaste|FiveLines|PasteLimitDialog)$' ./internal/ui/composer/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

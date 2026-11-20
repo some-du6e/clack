@@ -18,6 +18,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -41,7 +42,15 @@ type TextyInput struct {
 	maxLen  int // maxLength: past it TextyLengthWarning shows (no cap)
 	warn    widget.Clickable
 	warnTip popups.TipState
+	ttip    textyTip // Texty's tooltips over pills and emoji (texty_tip.go)
+	gtip    groupTip
 }
+
+// textyLines is BasicContainer's numMinLines and numMaxLines in both
+// inputs (5): .c-basic_container--size_medium gives the editor
+// min-height and the container max-height calc(5 * 22px + 16px), so the
+// box is five lines tall and longer text scrolls inside it.
+const textyLines = 5
 
 // NewTextyInput loads stored mrkdwn text into a new input with
 // placeholder ph and maxLength maxLen, the caret at the end.
@@ -147,11 +156,18 @@ func (t *TextyInput) LayoutWarning(gtx layout.Context, th *theme.Theme) {
 // Layout draws the input's text in Slack's 15/22 with col as its ink
 // (the dialog draws the box around it).
 func (t *TextyInput) Layout(gtx layout.Context, th *theme.Theme, col color.NRGBA) layout.Dimensions {
+	runRestores()
+	ph, _ := t.h.(popups.Host)
 	for {
-		if _, ok := t.ed.Update(gtx); !ok {
+		ev, ok := t.ed.Update(gtx)
+		if !ok {
 			break
 		}
+		if ev.Kind == EvPasteLimit && ph != nil {
+			t.pasteLimitDialog(ph)
+		}
 	}
+	gtx.Constraints.Min.Y = max(gtx.Constraints.Min.Y, min(gtx.Dp(textyLines*22), gtx.Constraints.Max.Y))
 	st := DefaultEditorStyle(th.Shaper)
 	p := &th.C
 	st.Color, st.Caret, st.Selection, st.Placeholder = col, col, p.Selection, p.FgSubtle
@@ -159,9 +175,52 @@ func (t *TextyInput) Layout(gtx layout.Context, th *theme.Theme, col color.NRGBA
 	st.BroadcastColor, st.BroadcastBg = p.Mention, p.SelfMention
 	st.CodeColor, st.CodeBg, st.CodeBorder = p.CodeFg, p.CodeBg, p.CodeBorder
 	st.PreBg, st.PreBorder, st.QuoteBar = p.PreBg, p.CodeBorder, p.QuoteBar
-	st.PlaceholderText, st.MaxHeight, st.EmojiSize = t.ph, 0, 22
+	st.PlaceholderText, st.MaxHeight, st.EmojiSize = t.ph, textyLines*22, 22
 	if im := t.h.Images(); im != nil {
 		st.Images = im.Get
 	}
-	return t.ed.Layout(gtx, st)
+	dims := t.ed.Layout(gtx, st)
+	if ph != nil { // showTextyTooltips: on for every Texty but search's
+		tipCtx{ed: t.ed, h: ph, app: t.h.Core(), owner: t, ttip: &t.ttip, gtip: &t.gtip}.layout(gtx)
+	}
+	return dims
+}
+
+// pasteLimitDialog is TextyInput's renderPasteLimitDialog (onPasteLimit
+// for a paste over 5e4 without a host handler): PasteLimitDialog (Jv6G),
+// a DeprecatedBaseDialog with Cancel and OK and the limit's explanation.
+func (t *TextyInput) pasteLimitDialog(h popups.Host) {
+	th := h.Theme()
+	m := popups.NewModal(h, popups.ModalOpts{
+		Title:        i18n.T("msg_input", pasteLimitTitle),
+		EnterSubmits: true,
+		Body: func(gtx layout.Context) layout.Dimensions {
+			return richLabel(gtx, th.Shaper, []richSpan{{i18n.T("msg_input", pasteLimitShort), textStyle{Size: 15, LineHeight: 22, Color: th.C.Fg}}})
+		},
+		Buttons: []*popups.ModalButton{
+			{Label: i18n.T("generic_dialog", "Cancel"), Kind: popups.BtnOutline},
+			{Label: i18n.T("msg_input", "OK"), Kind: popups.BtnPrimary, Do: func() bool { return true }},
+		},
+	}).OldDialog()
+	h.ShowOverlay(m)
+}
+
+// textOnlyDoc is what a text-only input keeps of its own copied slice
+// (Texty's slack/texty clipboard, limited to the input's formats:
+// slackmention and slackemoji): the text, mention and emoji pills, no
+// styles, links or block formats.
+func textOnlyDoc(src *Doc) *Doc {
+	d := NewDoc()
+	for i, r := range src.Runes {
+		at := src.Attrs[i].Atom
+		switch {
+		case at == nil:
+			d.Insert(d.Len(), string(r), Attr{})
+		case at.Kind == AtomUser || at.Kind == AtomChannel || at.Kind == AtomUsergroup || at.Kind == AtomBroadcast || at.Kind == AtomEmoji:
+			d.InsertAtom(d.Len(), at)
+		default: // a slug: its text
+			d.Insert(d.Len(), at.Text, Attr{})
+		}
+	}
+	return d
 }

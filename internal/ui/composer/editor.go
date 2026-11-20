@@ -975,7 +975,10 @@ func (e *Editor) pasteHTML(s, html string) {
 	d.Delete(lo, hi)
 	var end int
 	line := d.LineOf(lo)
-	own := !plain && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
+	// pasting back what this editor copied keeps its pills (Texty's
+	// slack/texty clipboard), in a text-only input too: there with only
+	// the formats it has (textOnlyDoc)
+	own := (!plain || e.textOnly) && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
 	var rich *Doc
 	if !plain && !own && a.Style&Code == 0 && d.Lines[line].Kind != CodeBlock {
 		if html != "" {
@@ -986,6 +989,8 @@ func (e *Editor) pasteHTML(s, html string) {
 		}
 	}
 	switch {
+	case own && e.textOnly:
+		end = d.InsertDoc(lo, textOnlyDoc(e.clipDoc))
 	case own:
 		end = d.InsertDoc(lo, e.clipDoc)
 	case rich != nil:

@@ -26,6 +26,7 @@ func TestTopicEditMentions(t *testing.T) {
 	e, fs := previewEnv(t)
 	var mu sync.Mutex
 	var sent []string // "method channel text"
+	var badArgs []string
 	fs.SetHook(func(method string, form url.Values) (any, bool) {
 		if method != "conversations.setTopic" && method != "conversations.setPurpose" {
 			return nil, false
@@ -33,8 +34,25 @@ func TestTopicEditMentions(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		sent = append(sent, method+" "+form.Get("channel")+" "+form.Get("topic")+form.Get("purpose"))
+		// submitChannelTopic's and submitChannelPurpose's own arguments
+		want := url.Values{"reason": {"submitChannelTopic"}}
+		if method == "conversations.setPurpose" {
+			want = url.Values{"reason": {"submitChannelPurpose"}, "name_tagging": {"true"}}
+		}
+		for k := range want {
+			if form.Get(k) != want.Get(k) {
+				badArgs = append(badArgs, method+" "+k+"="+form.Get(k))
+			}
+		}
 		return map[string]any{"ok": true}, true
 	})
+	defer func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(badArgs) > 0 {
+			t.Errorf("wrong arguments: %q", badArgs)
+		}
+	}()
 	calls := func() []string {
 		mu.Lock()
 		defer mu.Unlock()
