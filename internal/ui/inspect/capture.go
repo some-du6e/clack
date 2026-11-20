@@ -50,6 +50,16 @@ type capture struct {
 	copyNow bool
 }
 
+// guarded reports a capture that leaves only through its review, once
+// the review has been on screen a while (Tool.armed): a dragged region,
+// whose review is the only place it can be blurred, and a pick of no
+// component and no element (the shell's area under the pointer: a whole
+// column; a whole-window layer: the lightbox, the apps browser), a
+// region's size with no margin to blur (review of a614d3b3).
+func (c *capture) guarded() bool {
+	return c.region || c.rep != nil && c.rep.Component == "" && c.rep.Element == ""
+}
+
 // Shoot renders the part of a frame in region (window px), each px of it
 // drawn as k: a ShotSize(region, k) image. frame is the frame's ops as
 // one call (Gio patch 31, Ops.Whole). The window's GPU can't read its
@@ -359,6 +369,7 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	}
 	if err != nil {
 		log.Printf("inspect: no screenshot: %v", err)
+		c.tm.noShot = true
 		t.stop()
 		t.deliver(c, nil, err)
 		return

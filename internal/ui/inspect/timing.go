@@ -34,6 +34,7 @@ type capTimes struct {
 	frames int           // frames from the release's to that one
 
 	atOnce                                bool          // copied at once, no review (a Shift+click; Enter in an element pick's frame)
+	noShot                                bool          // no shot (it failed, or the pick was outside the window): copied as text at once
 	enter                                 time.Duration // from the review drawn (or the shot, with no review) to Enter
 	colors, compose, encode, save, clipbd time.Duration
 	outcome                               string
@@ -113,6 +114,8 @@ func (m *capTimes) line() string {
 	}
 	if m.compose > 0 || m.encode > 0 || m.clipbd > 0 || m.save > 0 {
 		switch {
+		case m.noShot:
+			b.WriteString("; no shot: copied as text at once:")
 		case m.atOnce:
 			b.WriteString("; copied at once:")
 		case m.drawn == 0:

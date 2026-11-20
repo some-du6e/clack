@@ -48,6 +48,10 @@ type review struct {
 
 	started     time.Time // startReview (the capture's stage times)
 	drawnFrames int       // frames that drew the shot (ShotDrawn)
+	// shownAt is the first frame read after one that drew the review (its
+	// input time): the review was on screen by then. A guarded capture's
+	// copy keys work from armDelay after it (Tool.armed).
+	shownAt time.Time
 
 	dragging bool
 	from, to f32.Point       // the drag, window px
@@ -57,6 +61,23 @@ type review struct {
 // minMark is the smallest drag that marks a rect, dp each way: less is
 // a click.
 const minMark = 4
+
+// armDelay is how long a guarded capture's review (a region, a region's
+// size) is on screen before Enter or Mod+C copies it: a reaction time, so
+// it never goes out unseen (review of a614d3b3: Enter was taken as soon as
+// a frame had recorded the review, still on its way to the screen, which
+// a software GPU takes a long while over).
+const armDelay = 300 * time.Millisecond
+
+// armed reports that r's copy keys work: always for an element's pick (its
+// margin is blurred anyway), for a guarded capture once the review has
+// been on screen armDelay (the frame's input time).
+func (t *Tool) armed(r *review) bool {
+	if !r.c.guarded() {
+		return true
+	}
+	return !r.shownAt.IsZero() && !t.inAt.Before(r.shownAt.Add(armDelay))
+}
 
 // startReview shows c's shot for blurring (UI goroutine, from
 // AfterFrame).
@@ -136,11 +157,11 @@ func (t *Tool) reviewKey(ke key.Event) {
 		}
 		t.dropReview()
 	case ke.Name == key.NameReturn || ke.Name == key.NameEnter || mod && ke.Name == "C":
-		if r.c.region && r.drawnFrames == 0 {
-			// a region is blurred only in its review: an Enter that came
-			// before the review was ever drawn (the frame after the
-			// release; on a software GPU, the seconds the shot took) is
-			// dropped, so the region never goes out unseen
+		if !t.armed(r) {
+			// a region (or a region's size) is copied only once its review
+			// has been on screen armDelay: before that the key is dropped,
+			// and held until it comes up, so it never goes out unseen
+			t.hold(ke)
 			return
 		}
 		// a rect still being dragged out goes with the copy: what the user
@@ -325,6 +346,15 @@ func (t *Tool) drawReview(gtx layout.Context) {
 			r.c.tm.drawn, r.c.tm.frames = time.Since(r.c.tm.pick), t.frameN-r.c.tm.pickN
 		}
 		r.drawnFrames++
+		if r.c.guarded() && !t.armed(r) {
+			// a frame when it's on screen (the next: shownAt), then when it
+			// arms, for the banner's "Enter copy"
+			at := time.Time{}
+			if !r.shownAt.IsZero() {
+				at = r.shownAt.Add(armDelay)
+			}
+			gtx.Execute(op.InvalidateCmd{At: at})
+		}
 		s := r.shot.Bounds()
 		drawShot(gtx, r.shown, r.view, s)
 		if !r.c.region {
@@ -356,7 +386,7 @@ func (t *Tool) drawReview(gtx layout.Context) {
 	if th == nil || th.Shaper == nil {
 		return
 	}
-	t.banner(gtx, th, reviewHint(r.ready, len(r.marks)))
+	t.banner(gtx, th, reviewBanner(r.ready, len(r.marks), t.armed(r)))
 }
 
 // shownMarks is how many marks the shown image has blurred: all but
@@ -366,12 +396,20 @@ func (r *review) shownMarks() int {
 	return max(len(r.marks)-1, 0)
 }
 
-// reviewHint is the review's banner.
-func reviewHint(ready bool, n int) string {
-	msg := "Blur: drag over anything private · ⌫ undo · Enter copy · Esc cancel"
+// reviewHint is the review's banner, its copy keys armed.
+func reviewHint(ready bool, n int) string { return reviewBanner(ready, n, true) }
+
+// reviewBanner is the review's banner: "Enter copy" only once the copy
+// keys work (armed).
+func reviewBanner(ready bool, n int, armed bool) string {
+	cp := " · Enter copy"
+	if !armed {
+		cp = ""
+	}
+	msg := "Blur: drag over anything private · ⌫ undo" + cp + " · Esc cancel"
 	switch {
 	case !ready:
-		msg = "Blur: preparing the shot… · Enter copy · Esc cancel"
+		msg = "Blur: preparing the shot…" + cp + " · Esc cancel"
 	case n == 1:
 		msg += " · 1 blurred"
 	case n > 1:

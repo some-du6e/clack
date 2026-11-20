@@ -42,6 +42,7 @@ import (
 	"image/color"
 	"math"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -151,9 +152,16 @@ type Tool struct {
 	lastDone chan struct{} // the last report's delivery (Wait)
 	lastRep  *Report       // the last report delivered (tests, after Wait)
 	texts    textCopies    // text copies on their way to the clipboard (textcopy.go)
-	inAt     time.Time     // the frame whose input was read (Frame, Begin)
-	recAt    time.Time     // the frame recorded into frames[cur]
-	upKey    string        // the innermost element t.up counts from (innerKey)
+	// held is a copy key (Return and Enter as one, or C) dropped because a
+	// guarded capture's review wasn't armed, until its release is read:
+	// its auto-repeats (presses with no release between them on Windows
+	// and macOS) copy nothing; heldAt is its last press
+	held   key.Name
+	heldAt time.Time
+	upNow  []key.Name // copy keys released in this frame (pickKeys holds no key already up)
+	inAt   time.Time  // the frame whose input was read (Frame, Begin)
+	recAt  time.Time  // the frame recorded into frames[cur]
+	upKey  string     // the innermost element t.up counts from (innerKey)
 	// the last press of FreezeKey and of Esc while it's down (repeat)
 	freezeDown, escDown time.Time
 	frameN              int // frames whose input was read (a capture's stage times count them)
@@ -266,6 +274,7 @@ func (t *Tool) start() {
 func (t *Tool) stop() {
 	t.dropCapture("dropped: the session ended before its shot")
 	t.state = off
+	t.held = ""
 	t.pend, t.rev = nil, nil
 	t.contentOK = false
 	t.unfreeze()
@@ -374,6 +383,11 @@ func (t *Tool) input(gtx layout.Context) {
 		t.scale = 1
 	}
 	last := &t.frames[t.cur] // the frame before recorded into frames[cur]
+	if r := t.rev; t.state == reviewing && r != nil && r.drawnFrames > 0 && r.shownAt.IsZero() {
+		// a frame drew the review and went out before this one began: on
+		// screen now, armed armDelay from here (armed)
+		r.shownAt = t.inAt
+	}
 	in := t.readPointer(gtx)
 	t.readKeys(gtx, in.released)
 	defer t.pickKeys(gtx) // the keys after this frame's release, once it's known what it picked
@@ -606,6 +620,7 @@ func (t *Tool) readPointer(gtx layout.Context) ptrRead {
 			// so the pointer stays where it was, only not known to be over
 			// anything until it moves (the outline goes, not to 0,0)
 			t.ptrIn = false
+			t.held = "" // the window lost the focus: the key's release goes elsewhere
 			if t.state == reviewing {
 				t.reviewPointer(pe)
 			} else if held || in.pressed {
@@ -685,13 +700,29 @@ func (t *Tool) SeedPointer(p image.Point) {
 // while pressing or dragging drops only that press (its release is then
 // ignored, nothing is shot), and the shortcut ends the session.
 func (t *Tool) readKeys(gtx layout.Context, released bool) {
+	t.upNow = t.upNow[:0]
 	for {
 		e, ok := gtx.Event(t.keyFilters()...)
 		if !ok {
 			break
 		}
 		ke, ok := e.(key.Event)
-		if !ok || t.repeat(ke) || ke.State != key.Press {
+		if !ok || t.repeat(ke) {
+			continue
+		}
+		if t.held != "" && heldName(ke) == t.held {
+			switch {
+			case ke.State != key.Press:
+				t.held = "" // up: its next press is a press
+				continue
+			case t.inAt.Sub(t.heldAt) < heldGap:
+				t.heldAt = t.inAt // an auto-repeat
+				continue
+			}
+			t.held = "" // a press long after the last (its release went elsewhere)
+		}
+		if ke.State != key.Press {
+			t.upNow = append(t.upNow, heldName(ke))
 			continue
 		}
 		if released && t.state != reviewing && enterKey(ke) {
@@ -707,6 +738,26 @@ func enterKey(ke key.Event) bool {
 	return ke.Name == key.NameReturn || ke.Name == key.NameEnter || ke.Modifiers.Contain(key.ModShortcut) && ke.Name == "C"
 }
 
+// heldName names a copy key for Tool.held: Return and Enter as one key.
+func heldName(ke key.Event) key.Name {
+	if ke.Name == key.NameEnter {
+		return key.NameReturn
+	}
+	return ke.Name
+}
+
+// hold drops copy key ke for a guarded capture not armed yet: it and its
+// auto-repeats copy nothing until it comes up.
+func (t *Tool) hold(ke key.Event) {
+	t.held, t.heldAt = heldName(ke), t.inAt
+}
+
+// heldGap is longer than any wait between a held key's auto-repeats (at
+// the slowest settings macOS repeats after about 1.8 s and then as often,
+// Windows after 1 s): a press of it later than that came after a release
+// the window didn't get (it went to another window).
+const heldGap = 2500 * time.Millisecond
+
 // pickKeys acts on the keys readKeys held for after this frame's release
 // (Enter, Mod+C): an element's pick waiting for its shot is copied as soon
 // as it's shot, with no review (AfterFrame: the image the review's Enter
@@ -718,11 +769,16 @@ func (t *Tool) pickKeys(gtx layout.Context) {
 	t.afterPick = t.afterPick[:0]
 	for _, ke := range keys {
 		switch c := t.capture; {
-		case t.state == picked && c != nil && !c.region:
+		case t.state == picked && c != nil && !c.guarded():
 			c.copyNow, c.tm.atOnce = true, true
 			c.tm.kind += " (Enter in its frame)"
 		case t.state == picked && c != nil:
-			// a region: reviewed first
+			// a region, or a region's size: reviewed first, and the key
+			// held until it comes up (its auto-repeats would copy once the
+			// review armed), unless it came up in this frame already
+			if !slices.Contains(t.upNow, heldName(ke)) {
+				t.hold(ke)
+			}
 		default:
 			t.key(gtx, ke)
 		}
