@@ -3,6 +3,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      only:
+        description: "run only the jobs whose id starts with this (empty: all). full-test: just full-test, for a branch whose push run (keep it, don't cancel it) ran the other jobs on the same sha; macos, windows, linux: one OS"
+        required: false
+        default: ""
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
@@ -14,14 +19,17 @@ permissions:
 # tag or PR cancels this one while it is queued or running, so stale pushes
 # don't pile up in the shared queue. The event is part of the group so a push
 # never cancels a dispatched run, the only kind that runs full-test on a branch.
+# A dispatch's `only` is in the group too, so -f only=full-test never cancels
+# a dispatched run of every job (or one OS's).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.only }}
   cancel-in-progress: true
 
 jobs:
   # gofmt, vet and the linux binary. The linux work that used to be one
   # job (21 min, all of it serial) is these linux-* jobs, in parallel.
   linux-build:
+    if: ${{ !inputs.only || startsWith('linux-build', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -70,6 +78,7 @@ jobs:
   # tests hashed by name into 4 shards (test-shard.py), every other package
   # in the rest shard. linux-coverage checks the shards ran every test.
   linux-test:
+    if: ${{ !inputs.only || startsWith('linux-test', inputs.only) }}
     runs-on: ubuntu-latest
     name: linux-test (${{ matrix.shard }})
     strategy:
@@ -104,7 +113,7 @@ jobs:
   # split packages' tests ran exactly once across the shards.
   linux-coverage:
     needs: linux-test
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.linux-test.result != 'skipped' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -127,7 +136,7 @@ jobs:
   # only (~18 min), or any branch by hand (gh workflow run ci.yml --ref
   # <branch>); a newer push to the same ref cancels the older run.
   full-test:
-    if: github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: ${{ (github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && (!inputs.only || startsWith('full-test', inputs.only)) }}
     runs-on: ubuntu-latest
     concurrency:
       group: ci-full-test-${{ github.ref }}
@@ -153,6 +162,7 @@ jobs:
   # linux-test shards. continue-on-error: it never fails ci yet, and the
   # runner exits 0 on divergences (--strict would gate).
   parity:
+    if: ${{ !inputs.only || startsWith('parity', inputs.only) }}
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -180,6 +190,7 @@ jobs:
 
   # Gio patches on the vendored gioui.org, Xvfb and Mesa's llvmpipe
   linux-gio:
+    if: ${{ !inputs.only || startsWith('linux-gio', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -318,6 +329,7 @@ jobs:
   # toolchain line is only a minimum, so a local build with a newer Go
   # takes this path; GOTOOLCHAIN=local keeps the runner's.
   newer-go:
+    if: ${{ !inputs.only || startsWith('newer-go', inputs.only) }}
     name: newer-go (${{ matrix.go }})
     runs-on: ubuntu-latest
     strategy:
@@ -338,6 +350,7 @@ jobs:
         run: go version && go test -count=1 -v ./internal/tracerec
 
   linux-race-taut:
+    if: ${{ !inputs.only || startsWith('linux-race-taut', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -353,6 +366,7 @@ jobs:
         run: go test -race -count=1 -timeout 30m ./internal/taut ./internal/slick
 
   linux-race-boot:
+    if: ${{ !inputs.only || startsWith('linux-race-boot', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -370,6 +384,7 @@ jobs:
         run: go test -race -count=20 -run 'TestPluginsStartBeforeBoot$' ./internal/taut
 
   linux-idle:
+    if: ${{ !inputs.only || startsWith('linux-idle', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -420,6 +435,7 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 15m -run '^TestInspectReviewTiming$' ./internal/ui
 
   windows:
+    if: ${{ !inputs.only || startsWith('windows', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -453,6 +469,7 @@ jobs:
   # registry, shell and Notification Center state (windows-shell) keep
   # their order.
   windows-applog:
+    if: ${{ !inputs.only || startsWith('windows-applog', inputs.only) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -638,6 +655,7 @@ jobs:
   # the tray, the tray's states and menu, the jump list, Focus Assist,
   # toasts, the taskbar
   windows-shell:
+    if: ${{ !inputs.only || startsWith('windows-shell', inputs.only) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1048,6 +1066,7 @@ jobs:
 
 
   windows-scroll:
+    if: ${{ !inputs.only || startsWith('windows-scroll', inputs.only) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1088,6 +1107,7 @@ jobs:
 
 
   windows-idle:
+    if: ${{ !inputs.only || startsWith('windows-idle', inputs.only) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -1160,6 +1180,7 @@ jobs:
 
 
   macos:
+    if: ${{ !inputs.only || startsWith('macos', inputs.only) }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
