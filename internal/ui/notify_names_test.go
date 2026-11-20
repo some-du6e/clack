@@ -208,13 +208,23 @@ func usersInfoAs(us map[string]slack.User, slow time.Duration) func(string, map[
 // noteSendHook is noteSend with hook answering the fake's edge calls.
 func noteSendHook(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, ch, user, ts, text string, hook func(string, map[string]json.RawMessage) (any, bool)) {
 	t.Helper()
+	noteSendRaw(t, a, ca, fs, map[string]any{"type": "message", "channel": ch, "user": user, "ts": ts, "text": text}, hook)
+}
+
+// noteSendRaw is noteSendHook for the socket message msg as given (its
+// channel and ts in it).
+func noteSendRaw(t *testing.T, a *App, ca *core.App, fs *fakeslack.Server, msg map[string]any, hook func(string, map[string]json.RawMessage) (any, bool)) {
+	t.Helper()
 	fs.SetEdgeHook(hook)
 	t.Cleanup(func() { fs.SetEdgeHook(nil) })
 	evs, stop := ca.Subscribe()
 	defer stop()
-	raw, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": user, "ts": ts, "text": text})
+	ch, _ := msg["channel"].(string)
+	ts, _ := msg["ts"].(string)
+	sub, _ := msg["subtype"].(string)
+	raw, _ := json.Marshal(msg)
 	cj, _ := json.Marshal(ch)
-	ca.Inject(slack.Event{Type: "message", Channel: cj, Raw: raw})
+	ca.Inject(slack.Event{Type: "message", Subtype: sub, Channel: cj, Raw: raw})
 	dl := time.After(10 * time.Second)
 	for {
 		select {
@@ -600,5 +610,72 @@ func TestNotifyNamesTheDMPartnerUnderThePref(t *testing.T) {
 		if n.Title != "New message from "+want || n.Body != "a synthetic question" {
 			t.Errorf("display_real_names %v: notified %q / %q, Slack %q / %q", real, n.Title, n.Body, "New message from "+want, "a synthetic question")
 		}
+	}
+}
+
+// A post with no user, a webhook's or a legacy bot's (bot_id and a
+// username), that mentions the viewer toasts its text alone: Slack's
+// getContentForNotification writes "{sender}: " from the message's user
+// (getPrefCompliantMemberNameById), and there is none. Clack wrote the
+// username as the sender, "deploy-bot: ..." (the reviews).
+func TestNotifyNamesABotPostHasNoSenderPrefix(t *testing.T) {
+	a, ca, fs, rec := privNoteAppFS(t)
+	a.data.selfID = fakeslack.SelfID
+	pub := fixtureConv(t, ca, fakeslack.ThreadPublicID)
+	ca.S.PutConv(pub)
+	a.data.m.Convs[pub.ID] = &convInfo{ID: pub.ID, Name: pub.Name, Kind: "channel"}
+	noteSendRaw(t, a, ca, fs, map[string]any{"type": "message", "subtype": "bot_message", "channel": pub.ID, "ts": "1762521600.000100",
+		"bot_id": "B0DEPLOY01", "username": "deploy-bot", "text": "<@" + fakeslack.SelfID + "> the synthetic deploy finished"},
+		usersInfoAs(nil, 0))
+	n := rec.wait(t, a, 1)
+	if n.Title != "New message in #"+pub.Name {
+		t.Errorf("titled %q, Slack \"New message in #%s\"", n.Title, pub.Name)
+	}
+	if strings.Contains(n.Body, "deploy-bot") || !strings.HasSuffix(n.Body, " the synthetic deploy finished") {
+		t.Errorf("the toast's body %q: want the text alone, no \"deploy-bot: \"", n.Body)
+	}
+}
+
+// A followed thread's reply (the server's desktop_notification) from a
+// member the viewer hid shows nothing (shouldShowNotificationForDesktop
+// Notification's 29: "user" in it and isUserHidden), after the reply's
+// own checks, and an invite from one still shows: Slack returns 0 for
+// is_channel_invite first. Clack checked the hidden sender first, so an
+// invite from a hidden member never showed (the reviews).
+func TestNotifyNamesNoThreadToastFromAHiddenSender(t *testing.T) {
+	const priv, root = fakeslack.ThreadPrivateID, "1762520000.000100"
+	for _, c := range []struct {
+		name           string
+		hidden, invite bool
+		toasts         bool
+	}{
+		{"a reply from someone hidden", true, false, false},
+		{"a reply from someone else", false, false, true},
+		{"an invite from someone hidden", true, true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, ca, fs, rec := privNoteAppFS(t)
+			ca.S.PutConv(fixtureConv(t, ca, priv))
+			const hidden, other = "U0FAKE00002", "U0FAKE00003"
+			fs.SetPrefs(map[string]any{"mute_sounds": true, "hidden_users": hidden})
+			if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			from := other
+			if c.hidden {
+				from = hidden
+			}
+			ev := map[string]any{"type": "desktop_notification", "channel": priv, "ts": "1762521700.000100", "msg": "1762521700.000100",
+				"thread_ts": root, "user": from, "content": "Robin Example: a synthetic reply", "title": "Thread in th-secret-plans"}
+			if c.invite {
+				ev = map[string]any{"type": "desktop_notification", "channel": priv, "is_channel_invite": true, "user": from,
+					"content": "Robin Example invited you", "title": "th-secret-plans"}
+			}
+			raw, _ := json.Marshal(ev)
+			a.data.handle(a, core.Event{Type: "desktop_notification", Channel: priv, Raw: raw})
+			if n := quiet(a, rec); (n > 0) != c.toasts {
+				t.Errorf("%d toasts, want %v", n, c.toasts)
+			}
+		})
 	}
 }

@@ -84,9 +84,8 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	if json.Unmarshal(ev.Raw, &e) != nil || e.Channel == "" {
 		return
 	}
-	if b.core.UserHidden(e.User) {
-		return // from a member the viewer hid (isUserHidden): none
-	}
+	// shouldShowNotificationForDesktopNotification's order: an invite
+	// shows (0) before any check of the reply's own (7, 16, 29, 20)
 	if !e.IsChannelInvite {
 		ts := e.TS
 		if ts == "" {
@@ -98,6 +97,9 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 		if a.focused && a.secondary.kind == secThread && a.secondary.open() &&
 			a.secondary.channel == e.Channel && a.secondary.ts == e.ThreadTS {
 			return // the thread is on screen (16)
+		}
+		if b.core.UserHidden(e.User) {
+			return // from a member the viewer hid ("user" in it: isUserHidden, 29)
 		}
 		if root, ok := b.core.S.Find(e.Channel, e.ThreadTS); ok && root.LastRead != "" && !tsBefore(root.LastRead, ts) {
 			return // read already (20)

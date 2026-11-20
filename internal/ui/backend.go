@@ -963,12 +963,21 @@ func (b *backend) setCount(id string, cnt core.Count) bool {
 }
 
 // notifyTitle is Slack's getNotificationTitle (gaJC) for one signed-in
-// account: "New message from {name}" in a DM, else "New message in
-// {channel}" (growl; notify_threads.go). A conversation core doesn't
-// know keeps the sender's form: its name isn't there to show.
+// account: "New message from {name}" in a DM, named as
+// getDisplayNameForChannel names it (the DM's user, never the message's
+// username: noteConv), else "New message in {channel}" (growl;
+// notify_threads.go). A conversation core doesn't know keeps the
+// sender's form: its name isn't there to show.
 func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
-	if c == nil || c.Kind == "im" || c.Kind == "app" {
-		return nsGrowl.T("New message from {name}", "name", b.notifySender(ev))
+	switch {
+	case c == nil:
+		return nsGrowl.T("New message from {name}", "name", b.notifyFrom(ev))
+	case c.Kind == "im" || c.Kind == "app":
+		name := c.Name
+		if !noteNamed(c) {
+			name = b.notifyFrom(ev)
+		}
+		return nsGrowl.T("New message from {name}", "name", name)
 	}
 	return nsGrowl.T("New message in {channel}", "channel", notifyChannelName(c))
 }
@@ -987,18 +996,28 @@ func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
 	return text
 }
 
-// notifySender is the sender's name, a body's "{sender}: " and a DM's
-// "New message from {name}": a member's under the viewer's
-// display_real_names (getContentForNotification's
-// getPrefCompliantMemberNameById, R6Qy), as the store holds them (the
-// toast waited for them: nothing asked again); a user-less bot's own name
-// (its username or the bot's: core's Message.Name).
+// notifySender is a body's "{sender}: " (getContentForNotification's
+// getPrefCompliantMemberNameById, R6Qy, over the message's user): the
+// member's name under the viewer's display_real_names, as the store holds
+// them (the toast waited for them: nothing asked again). "" for a message
+// with no user, a webhook's or a legacy bot's post: getMemberById has no
+// member for it, so Slack writes no prefix (Clack wrote the username).
 func (b *backend) notifySender(ev core.Event) string {
-	if ev.Msg.Name != "" {
-		return ev.Msg.Name
+	if ev.Msg.User == "" || b.core == nil {
+		return ""
 	}
 	n, _ := b.core.S.PrefNameHeld(ev.Msg.User)
 	return n
+}
+
+// notifyFrom names the sender for a title whose conversation can't name
+// it: notifySender, else a user-less bot's own name (its username or the
+// bot's: core's Message.Name).
+func (b *backend) notifyFrom(ev core.Event) string {
+	if n := b.notifySender(ev); n != "" {
+		return n
+	}
+	return ev.Msg.Name
 }
 
 func contains(s []string, v string) bool {
