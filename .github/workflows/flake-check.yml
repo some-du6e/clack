@@ -264,6 +264,9 @@ on:
       - "internal/fakeslack/react_live.go"
       - "internal/store/reacts.go"
       - "internal/ui/views/taut.go"
+      # the giant-messages job's own
+      - "internal/fakeslack/giant.go"
+      - "internal/ui/giant_messages_test.go"
 
 permissions:
   contents: read
@@ -271,6 +274,13 @@ permissions:
 env:
   COUNT: ${{ inputs.count || '20' }}
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+# A dispatch with other inputs gets its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.count }}-${{ inputs.only }}
+  cancel-in-progress: true
 
 jobs:
   go:
@@ -1882,6 +1892,66 @@ jobs:
           go test -race -count=1 -run '^TestRootTokensDeclares$' ./internal/ui/slackc/css || rc=1
           go test -race -count=1 -run '^(TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views || rc=1
           exit $rc
+
+  # Messages the shape of the channel Heliodex reported (2026-11-20:
+  # opening it took Clack to 13 GB): #giant-wall (fakeslack Size.Giant,
+  # synthetic text), 92 of its latest 100 messages each about 908,000
+  # characters in about 92,000 lines. TestGiantMessagesBounded opens it,
+  # scrolls, pages back to the 100th newest and jumps around, under the
+  # GPU renderer (llvmpipe), and fails past its live heap, peak RSS and
+  # frame time bounds or when a giant message doesn't draw what Slack
+  # draws. Its heap profiles and report are the giant-messages artifact.
+  # Dispatch with only=giant-messages.
+  giant-messages:
+    if: ${{ !inputs.only || startsWith('giant-messages', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps (Xvfb, Mesa llvmpipe)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: TestGiantMessagesBounded (COUNT runs, each against a fresh fakeslackd, the first verbose)
+        env:
+          CLACK_GIANT_MESSAGES: "100"
+          CLACK_BENCH_GPU: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          go build -o "$RUNNER_TEMP/fakeslackd" ./internal/fakeslack/fakeslackd || exit 1
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui || exit 1
+          rc=0
+          for i in $(seq 1 "$COUNT"); do
+            # the fake in its own process: the RSS is the client's alone
+            "$RUNNER_TEMP/fakeslackd" -small -giant 100 -addr 127.0.0.1:8933 > "$RUNNER_TEMP/fakeslackd-$i.log" 2>&1 &
+            fp=$!
+            for _ in $(seq 1 200); do curl -s -o /dev/null http://127.0.0.1:8933/img/1x1/x.png && break; sleep 0.1; done
+            mkdir -p "$RUNNER_TEMP/giant/$i"
+            v=""
+            [ "$i" = 1 ] && v="-test.v"
+            (cd internal/ui && CLACK_FAKESLACK_URL=http://127.0.0.1:8933/ CLACK_GIANT_OUT="$RUNNER_TEMP/giant/$i" \
+              xvfb-run -a -s "-screen 0 1440x900x24" "$RUNNER_TEMP/ui.test" -test.count 1 $v -test.timeout 20m -test.run '^TestGiantMessagesBounded$' 2>&1 | tail -150)
+            [ "${PIPESTATUS[0]}" = 0 ] || rc=1
+            kill $fp 2>/dev/null; wait $fp 2>/dev/null
+          done
+          # under a plugin that patches the messages slice (the fake in the
+          # test's process: the plugin bench's env needs it)
+          mkdir -p "$RUNNER_TEMP/giant/plugins"
+          (cd internal/ui && CLACK_GIANT_PLUGINS=1 CLACK_GIANT_OUT="$RUNNER_TEMP/giant/plugins" \
+            xvfb-run -a -s "-screen 0 1440x900x24" "$RUNNER_TEMP/ui.test" -test.count 1 -test.v -test.timeout 20m -test.run '^TestGiantMessagesPlugins$' 2>&1 | tail -150)
+          [ "${PIPESTATUS[0]}" = 0 ] || rc=1
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: giant-messages
+          path: ${{ runner.temp }}/giant
+          retention-days: 7
 
   # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
   # host's pages (files.slack.com/ssb/redirect), dot segments however many
