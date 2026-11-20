@@ -1575,6 +1575,11 @@ func (s *Store) Held(ch string, keys []MsgKey) []bool {
 			mark(&t.Msgs[i])
 		}
 	}
+	for _, w := range s.windows[ch] { // a jump's windows, which Holds reads too
+		for i := range w.Msgs {
+			mark(&w.Msgs[i])
+		}
+	}
 	pre := ch + "/"
 	for k, th := range s.threads {
 		if strings.HasPrefix(k, pre) {

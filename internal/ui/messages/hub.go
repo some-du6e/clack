@@ -766,6 +766,9 @@ func (hb *hub) loadWindow(m *model, ts string) {
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
+		if err == nil {
+			tautOf().WindowLoaded(m.ch) // the plugins see the window now (messages[ch], channelHistory)
+		}
 		hb.afterLoad(m)
 		hb.invalidate()
 	}()
@@ -846,6 +849,9 @@ func (hb *hub) loadWindowPage(m *model, older bool) bool {
 		m.markLoadChanged()
 		m.rev++
 		m.mu.Unlock()
+		if err == nil {
+			tautOf().WindowLoaded(m.ch) // the page's messages reach the plugins now
+		}
 		hb.afterLoad(m)
 		hb.invalidate()
 	}()

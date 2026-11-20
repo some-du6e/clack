@@ -1025,6 +1025,20 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 	}
 }
 
+// WindowLoaded tells taut that core took a jump's window of ch in (store
+// windows: a first load or a page): messages[ch] and channelHistory have
+// it now (mirror.bucket, history), and JS reads them again now rather than
+// at the mirror's next sweep, so the window's rows draw the plugins' view
+// one JS round trip after they land, as a new message's do.
+func (t *Taut) WindowLoaded(ch string) {
+	if t == nil || ch == "" || !t.SlicePatched("messages") {
+		return
+	}
+	t.mirror.invalidate("messages", ch)
+	t.mirror.invalidate("channelHistory")
+	t.mirror.invalidate("reactions")
+}
+
 // InjectedMessages lists messages plugins added to ch (injectMessages)
 // that core doesn't have, as UI messages. Non-blocking like MessageView,
 // and cheap: the fetch worker decodes the channel's bucket once per value

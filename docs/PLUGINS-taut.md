@@ -106,6 +106,7 @@ Files: `config.json` (Taut's format: only set options), `user.css`, `plugins/<id
 `internal/ui/huddleui` feeds the TautAPI's huddles from the native session (`internal/taut/huddle.go`):
 - `SetActiveHuddle(callID, channelID, selfAttendee, selfUser)` → `onActiveHuddle` / `getActiveHuddle` and the `getActiveHuddleCallId` / `getActiveHuddleChannelId` selectors.
 - `HuddlePeerMessage(huddle.PeerEvent)` → `onPeerMessage` listeners get `{message, kind, senderAttendeeId, selfAttendeeId}`, with protobuf-es field names (`reacji`, `muteRequest`, `fromPeerIdString`…) for the `data-channel`, `awareness-sync-channel` and `transcript-catchup` topics.
+- A jump's window is in the mirror as Slack's slices are (round 5 of thread-open-root): `messages[ch]` holds its messages and `channelHistory[ch]` lists it as a slice of its own, so a plugin patching the messages slice changes a window's rows as it does the newest ones. `t.WindowLoaded(ch)` sends it to JS as a window or its page lands; the fingerprint sweep covers it too. `store.Held` counts window messages, so `InjectedMessages` never takes them for a plugin's own; a window list merges only the injected messages its slice covers (withTimestamps' rule). TestMirrorHoldsJumpWindows, TestWindowRowsDrawPluginViews.
 - `SetHuddlePeers(attendee → user)` → the `peers` slice (`byId`, `leftById`), so `getAttendeeUserId` works.
 - `SetHuddleReaction(f)` → `sendReaction` / `sendReactionMessage` send a reacji through Chime.
 - `ENABLE_EVENT_LOG` / `DISABLE_EVENT_LOG` set `huddleEvents.enabled`.

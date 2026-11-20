@@ -12,8 +12,8 @@ import (
 )
 
 // VisitMessages calls f with each of ch's cached messages in place, under
-// the read lock: the timeline in order, then each cached thread by root
-// ts, thread(root) before its messages. f must not keep a message or call
+// the read lock: the timeline in order, then its windows' (windows.go),
+// then each cached thread by root ts, thread(root) before its messages. f must not keep a message or call
 // into the store. (The plugin mirror fingerprints every channel it
 // watches this way every 750 ms; copying each timeline and its threads
 // out, as Timeline and ThreadsIn do, made megabytes of garbage a sweep in
@@ -24,6 +24,11 @@ func (s *Store) VisitMessages(ch string, thread func(root string), f func(m *sla
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			f(&t.Msgs[i])
+		}
+	}
+	for _, w := range s.windows[ch] {
+		for i := range w.Msgs {
+			f(&w.Msgs[i])
 		}
 	}
 	prefix := ch + "/"
@@ -62,13 +67,19 @@ func (s *Store) ThreadsIn(ch string) map[string][]slack.Message {
 	return out
 }
 
-// MessageChannels lists the conversations with a cached timeline or thread.
+// MessageChannels lists the conversations with a cached timeline, window
+// or thread.
 func (s *Store) MessageChannels() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	seen := make(map[string]bool, len(s.timelines))
 	for ch := range s.timelines {
 		seen[ch] = true
+	}
+	for ch, ws := range s.windows {
+		if len(ws) > 0 {
+			seen[ch] = true
+		}
 	}
 	for k := range s.threads {
 		if i := strings.IndexByte(k, '/'); i > 0 {
@@ -139,4 +150,22 @@ func (s *Store) ThreadHas(ch, ts string, match func(*slack.Message) bool) bool {
 		}
 	}
 	return false
+}
+
+// WindowsIn is copies of ch's windows (windows.go), oldest first: a jump's
+// stretches apart from the timeline, which Slack's messages store and
+// channelHistory slices hold as they hold the newest messages.
+func (s *Store) WindowsIn(ch string) []Window {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ws := s.windows[ch]
+	if len(ws) == 0 {
+		return nil
+	}
+	out := make([]Window, 0, len(ws))
+	for _, w := range ws {
+		out = append(out, copyWindow(w))
+	}
+	sort.Slice(out, func(i, j int) bool { return TSLess(out[i].Start, out[j].Start) })
+	return out
 }
