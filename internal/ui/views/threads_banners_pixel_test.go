@@ -9,7 +9,10 @@ package views
 // from column 35; the close's times glyph in rows 12-17, its last column
 // 16px in from the pill's right edge (a 38px button). The pill is 178.72px
 // wide (8 + 20 + 4 + the label's 100.72 + 8 + the close's 38), the same
-// with either digit (Lato's are tabular).
+// with either digit (Lato's are tabular). Clack's pill sits on whole
+// pixels where Chrome's sits at x.64 (translate(-50%)), so Chrome's times
+// glyph inks one column further right: Clack's reads 17px in, Chrome's
+// 16. Every bound below has a pixel of margin over what Clack draws.
 
 import (
 	"image"
@@ -130,13 +133,12 @@ func TestThreadsBannerPillDrawnLikeSlack(t *testing.T) {
 			t.Errorf("%s's label inks rows %d-%d from column %d; Chrome draws it at rows 9-18 (its baseline at 19) from column 35", tc.name, ly0, ly1, label[0].x0)
 		}
 		// past the label's last ink: its 8px padding and the 38px close
-		// (Chrome 46, Clack's label a whole pixel wider at 47; a 36px close
-		// gives 45)
-		if gap := pill.Dx() - 1 - label[len(label)-1].x1; !near(gap, 47, 1) {
-			t.Errorf("%s's label ends %dpx in from its right edge; with the label button's 8px padding and the 38px close it's 46-47", tc.name, gap)
+		// (Chrome 46; a 36px close gives 44)
+		if gap := pill.Dx() - 1 - label[len(label)-1].x1; !near(gap, 46, 1) {
+			t.Errorf("%s's label ends %dpx in from its right edge; with the label button's 8px padding and the 38px close it's 46", tc.name, gap)
 		}
-		if gap := pill.Dx() - 1 - closeX.x1; !near(closeX.y0, 12, 1) || !near(closeX.y1, 17, 1) || !near(gap, 16, 1) {
-			t.Errorf("%s's close inks rows %d-%d, %dpx in from the right; Chrome draws it at rows 12-17, 16px in", tc.name, closeX.y0, closeX.y1, gap)
+		if gap := pill.Dx() - 1 - closeX.x1; !near(closeX.y0, 12, 1) || !near(closeX.y1, 17, 1) || !near(gap, 17, 1) {
+			t.Errorf("%s's close inks rows %d-%d, %dpx in from the right; Chrome draws it at rows 12-17, 16px in at its x.64 (17 on whole pixels)", tc.name, closeX.y0, closeX.y1, gap)
 		}
 	}
 }

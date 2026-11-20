@@ -387,7 +387,10 @@ func thrUnreadThreadsLabel(n int) string {
 // where Chrome puts it (thrLineBaseline). The label button has 8px sides:
 // the arrow-up or arrow-down c-icon, the icon font's glyph in a 20px box
 // whose baseline (the font's 1700/2000 ascent) sits on the line's, moved
-// 2px down (top:2px), then 4px, a space and the text. The close is the
+// 2px down (top:2px), then 4px and the label's run: the button's " " and
+// its text, measured and drawn as one, as Chrome lays out the text node
+// (100.72px for " 2 unread threads"; two rounded measures made the pill
+// 1.28px wider than Chrome's). The close is the
 // times-small c-icon: 36px wide plus its 2px right padding (content-box),
 // the glyph in the middle of the 36 and of the 28 under its 1px top
 // padding. A hovered button is #0b4c8c. The top banner sits 5px down the
@@ -397,8 +400,9 @@ func thrUnreadThreadsLabel(n int) string {
 func (v *Threads) bannerPill(gtx C, bb *thrBannerButtons, up bool, txt string, area image.Point) {
 	white := rgb(0xffffff)
 	bh, is := gtx.Dp(28), gtx.Dp(20)
-	tw, space := v.th.Measure(gtx, 13, wBold, txt), v.th.Measure(gtx, 13, wBold, " ")
-	jw := gtx.Dp(8) + is + gtx.Dp(4) + space + tw + gtx.Dp(8)
+	run := " " + txt
+	tw := v.th.Measure(gtx, 13, wBold, run)
+	jw := gtx.Dp(8) + is + gtx.Dp(4) + tw + gtx.Dp(8)
 	cw := gtx.Dp(36) + gtx.Dp(2)
 	w := jw + cw
 	y, icon := gtx.Dp(5), "arrow-up-font"
@@ -439,9 +443,9 @@ func (v *Threads) bannerPill(gtx C, bb *thrBannerButtons, up bool, txt string, a
 		m := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints.Min = image.Point{}
-		d := v.label(g, 13, wBold, white, txt)
+		d := v.label(g, 13, wBold, white, run)
 		call := m.Stop()
-		st = op.Offset(image.Pt(gtx.Dp(8)+is+gtx.Dp(4)+space, bl-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
+		st = op.Offset(image.Pt(gtx.Dp(8)+is+gtx.Dp(4), bl-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		st.Pop()
 	})
