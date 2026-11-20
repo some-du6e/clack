@@ -214,10 +214,16 @@ jobs:
           $stage = Join-Path $env:RUNNER_TEMP 'portable\.clack-update-ci'
           New-Item -ItemType Directory -Force $stage | Out-Null
           Copy-Item build\0.0.2\Clack.exe "$stage\Clack.exe"
+          # the zip's licence texts and README come along (Swap.Beside)
+          $beside = @('LICENSE.txt', 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_LICENSES.txt', 'README.txt')
+          foreach ($f in $beside) {
+            Set-Content -Path "$stage\$f" -Value "v0.0.2 $f" -Encoding utf8NoBOM
+            if ($f -ne 'THIRD_PARTY_LICENSES.txt') { Set-Content -Path "$dir\$f" -Value "v0.0.1 $f" -Encoding utf8NoBOM }
+          }
           $h = Join-Path $env:RUNNER_TEMP 'clack-update-helper-portable'
           New-Item -ItemType Directory -Force $h | Out-Null
           Copy-Item "$dir\Clack.exe" "$h\clack-updater.exe"
-          $plan = @{ pid = 0; tag = 'v0.0.2'; stage = $stage; swap = @{ target = "$dir\Clack.exe"; new = "$stage\Clack.exe" } } | ConvertTo-Json
+          $plan = @{ pid = 0; tag = 'v0.0.2'; stage = $stage; swap = @{ target = "$dir\Clack.exe"; new = "$stage\Clack.exe"; beside = $beside } } | ConvertTo-Json -Depth 4
           Set-Content -Path "$h\plan.json" -Value $plan -Encoding utf8NoBOM
           $p = Start-Process -Wait -PassThru -FilePath "$h\clack-updater.exe" -ArgumentList '-apply-update', "$h\plan.json"
           Get-Content "$h\update.log"
@@ -226,3 +232,7 @@ jobs:
           if (-not $v.Contains('v0.0.2')) { throw "want v0.0.2, got $v" }
           if (Test-Path $stage) { throw "stage left behind" }
           if (Test-Path "$dir\Clack.exe.clack-old") { throw "old exe left behind" }
+          foreach ($f in $beside) {
+            $got = (Get-Content "$dir\$f" -Raw).Trim()
+            if ($got -ne "v0.0.2 $f") { throw "$f beside the exe after the update: '$got'" }
+          }

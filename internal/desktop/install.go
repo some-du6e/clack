@@ -51,11 +51,18 @@ type Plan struct {
 	Stage string `json:"stage,omitempty"`
 }
 
-// Swap replaces Target with New.
+// Swap replaces Target with New. Beside are files staged in New's directory
+// (a portable copy's licence texts and README) that then replace their
+// namesakes next to Target.
 type Swap struct {
-	Target string `json:"target"`
-	New    string `json:"new"`
+	Target string   `json:"target"`
+	New    string   `json:"new"`
+	Beside []string `json:"beside,omitempty"`
 }
+
+// portableBeside are the files a portable Windows zip keeps next to
+// Clack/Clack.exe, which an update swaps in with it.
+var portableBeside = []string{"LICENSE.txt", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.txt", "README.txt"}
 
 // ErrManual: the package was opened in the system's installer (or Finder)
 // for the user to finish; Clack keeps running.
@@ -125,7 +132,15 @@ func Prepare(ctx context.Context, in Install, pkg Package) (Plan, error) {
 			os.RemoveAll(stage)
 			return Plan{}, err
 		}
-		p.Swap = &Swap{Target: in.Target, New: dst}
+		// the release's licence texts and README come with it (an older zip
+		// may lack some)
+		var beside []string
+		for _, name := range portableBeside {
+			if unzipFile(pkg.Path, "Clack/"+name, filepath.Join(stage, name), defaultMaxSize) == nil {
+				beside = append(beside, name)
+			}
+		}
+		p.Swap = &Swap{Target: in.Target, New: dst, Beside: beside}
 		p.Relaunch = []string{in.Target}
 		return p, nil
 	case KindAppImage:
@@ -404,6 +419,14 @@ func installPlan(p Plan) error {
 			return fmt.Errorf("update: putting the new copy in place: %w", err)
 		}
 		os.RemoveAll(old)
+		// then the files that go with it; none is locked, and one that can't
+		// move leaves the old one, with the update itself in
+		for _, name := range s.Beside {
+			if name != filepath.Base(name) || name == "." || name == ".." {
+				continue
+			}
+			_ = os.Rename(filepath.Join(filepath.Dir(s.New), name), filepath.Join(filepath.Dir(s.Target), name))
+		}
 	}
 	return nil
 }

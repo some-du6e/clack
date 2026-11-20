@@ -551,7 +551,12 @@ func TestPrepareWindowsPortable(t *testing.T) {
 	rc := record(t)
 	var zb bytes.Buffer
 	zw := zip.NewWriter(&zb)
-	for name, body := range map[string]string{"Clack/Clack.exe": "MZnew", "Clack/README.txt": "readme", "Clack.exe": "MZwrong"} {
+	beside := []string{"LICENSE.txt", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.txt", "README.txt"}
+	files := map[string]string{"Clack/Clack.exe": "MZnew", "Clack.exe": "MZwrong"}
+	for _, name := range beside {
+		files["Clack/"+name] = "new " + name
+	}
+	for name, body := range files {
 		w, _ := zw.Create(name)
 		w.Write([]byte(body))
 	}
@@ -560,6 +565,9 @@ func TestPrepareWindowsPortable(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "Clack.exe")
 	os.WriteFile(exe, []byte("MZold"), 0o755)
+	// a copy from before THIRD_PARTY_LICENSES.txt: the old notices and README
+	os.WriteFile(filepath.Join(dir, "THIRD_PARTY_NOTICES.md"), []byte("old"), 0o644)
+	os.WriteFile(filepath.Join(dir, "README.txt"), []byte("old"), 0o644)
 	in := Install{Kind: KindWinPortable, Exe: exe, Target: exe}
 	p, err := Prepare(context.Background(), in, pkg)
 	if err != nil {
@@ -576,9 +584,15 @@ func TestPrepareWindowsPortable(t *testing.T) {
 	if b, _ := os.ReadFile(exe); string(b) != "MZnew" {
 		t.Errorf("after the swap: %q", b)
 	}
+	// the release's licence texts and README came with it
+	for _, name := range beside {
+		if b, _ := os.ReadFile(filepath.Join(dir, name)); string(b) != "new "+name {
+			t.Errorf("%s after the swap: %q", name, b)
+		}
+	}
 	ents, _ := os.ReadDir(dir)
-	if len(ents) != 1 {
-		t.Errorf("left behind in Clack's folder: %v", ents)
+	if len(ents) != 1+len(beside) {
+		t.Errorf("Clack's folder after the swap: %v", ents)
 	}
 	if len(rc.started) != 1 || rc.started[0][0] != exe {
 		t.Errorf("relaunch %v", rc.started)
