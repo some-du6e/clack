@@ -1936,3 +1936,56 @@ jobs:
           go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
           go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
           exit $rc
+
+  # Preferences > Plugins > Plugin library scrolled by mouse-wheel notches
+  # (Karim, α.112 on Windows: "laggy?", "it feels capped"): each frame's
+  # cost, the frames a notch gets at 60 Hz, the rows a frame lays out, the
+  # install-state lookups, the GPU's whole and partial frame and a CPU
+  # profile (TestPrefsLibraryScrollCost), on WARP and llvmpipe. Dispatch
+  # with only=prefs-scroll.
+  prefs-scroll:
+    if: ${{ !inputs.only || startsWith('prefs-scroll', inputs.only) }}
+    name: "the plugin library's scroll (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the plugin library scrolled (TestPrefsLibraryScrollCost), then its CPU profile
+        shell: bash
+        env:
+          CLACK_GPU_COST: "1"
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_GPU_COST_SHOTS: ${{ runner.temp }}/scroll-shots
+          CLACK_SCROLL_PROFILE: ${{ runner.temp }}/scroll-prof
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUNS: ${{ inputs.count || '1' }}
+        run: |
+          set +e
+          mkdir -p "$CLACK_GPU_COST_SHOTS" "$CLACK_SCROLL_PROFILE"
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          "${x[@]}" go test -count="$RUNS" -v -timeout 40m -run '^TestPrefsLibraryScrollCost$' ./internal/ui
+          rc=$?
+          go tool pprof -top -nodecount=45 "$CLACK_SCROLL_PROFILE/prefs-library-scroll.cpu.pprof"
+          go tool pprof -top -cum -nodecount=70 "$CLACK_SCROLL_PROFILE/prefs-library-scroll.cpu.pprof"
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: prefs-scroll-${{ runner.os }}
+          path: |
+            ${{ runner.temp }}/scroll-shots
+            ${{ runner.temp }}/scroll-prof

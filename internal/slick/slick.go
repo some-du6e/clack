@@ -130,6 +130,8 @@ type Slick struct {
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
+	// changeGen counts changed()'s announcements (ChangeGen)
+	changeGen atomic.Uint64
 
 	updating  sync.Mutex
 	stopTimer chan struct{}
@@ -406,7 +408,13 @@ func (s *Slick) Subscribe() (<-chan struct{}, func()) {
 	}
 }
 
+// ChangeGen counts the changes the plugins' watchers hear of (a plugin
+// installed, replaced, removed, started or stopped, its settings): a
+// reader that keeps what it read of them reads again when it moves.
+func (s *Slick) ChangeGen() uint64 { return s.changeGen.Load() }
+
 func (s *Slick) changed() {
+	s.changeGen.Add(1)
 	s.changeMu.Lock()
 	for c := range s.changeCh {
 		select {

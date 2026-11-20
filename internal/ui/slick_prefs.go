@@ -444,36 +444,8 @@ func (p *slickPage) sselect(gtx layout.Context, k string, w, h int, cur string, 
 
 // card is Slick's titled section with a bordered, hairline-separated box.
 func (p *slickPage) card(f *flow, title, icon string, action func(gtx layout.Context) layout.Dimensions, rows []func(gtx layout.Context, w int) layout.Dimensions) {
-	cl := p.colors()
 	if title != "" || action != nil {
-		f.put(0, func(gtx layout.Context) layout.Dimensions {
-			x0, w := gtx.Dp(2), f.w-gtx.Dp(4)
-			h := gtx.Dp(28)
-			var ad layout.Dimensions
-			var acall op.CallOp
-			if action != nil {
-				m := op.Record(gtx.Ops)
-				ad = action(gtx)
-				acall = m.Stop()
-				h = max(h, ad.Size.Y)
-			}
-			x := x0
-			if icon != "" {
-				at(gtx, image.Pt(x, (h-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-					return icons.GetSlack(icon)(gtx, 16, cl.ter)
-				})
-				x += gtx.Dp(16 + 8)
-			}
-			at(gtx, image.Pt(x, 0), image.Pt(w-x-ad.Size.X-gtx.Dp(12), h), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return p.k.label(gtx, 15, theme.Bold, cl.pry, title) })
-			})
-			if action != nil {
-				st := op.Offset(image.Pt(x0+w-ad.Size.X, (h-ad.Size.Y)/2)).Push(gtx.Ops)
-				acall.Add(gtx.Ops)
-				st.Pop()
-			}
-			return layout.Dimensions{Size: image.Pt(f.w, h)}
-		})
+		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.cardTitle(gtx, f.w, title, icon, action) })
 		f.gap(8)
 	}
 	if len(rows) > 0 {
@@ -482,6 +454,73 @@ func (p *slickPage) card(f *flow, title, icon string, action func(gtx layout.Con
 		})
 	}
 	f.gap(24)
+}
+
+// cardTitle is a card's title row, w wide: its icon, its title in 15px
+// Bold and the action at the right.
+func (p *slickPage) cardTitle(gtx layout.Context, w int, title, icon string, action func(gtx layout.Context) layout.Dimensions) layout.Dimensions {
+	cl := p.colors()
+	x0, tw := gtx.Dp(2), w-gtx.Dp(4)
+	h := gtx.Dp(28)
+	var ad layout.Dimensions
+	var acall op.CallOp
+	if action != nil {
+		m := op.Record(gtx.Ops)
+		ad = action(gtx)
+		acall = m.Stop()
+		h = max(h, ad.Size.Y)
+	}
+	x := x0
+	if icon != "" {
+		at(gtx, image.Pt(x, (h-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+			return icons.GetSlack(icon)(gtx, 16, cl.ter)
+		})
+		x += gtx.Dp(16 + 8)
+	}
+	at(gtx, image.Pt(x, 0), image.Pt(tw-x-ad.Size.X-gtx.Dp(12), h), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return p.k.label(gtx, 15, theme.Bold, cl.pry, title) })
+	})
+	if action != nil {
+		st := op.Offset(image.Pt(x0+tw-ad.Size.X, (h-ad.Size.Y)/2)).Push(gtx.Ops)
+		acall.Add(gtx.Ops)
+		st.Pop()
+	}
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// cardRow is one row of cardBox's box drawn on its own (a list element):
+// the hairline above it unless it's the first, the row, and its slice of
+// the box's rounded clip and border, which run on past the edges a middle
+// row shares with its neighbours. The rows of one box drawn this way, one
+// under the other, are cardBox's pixels.
+func (p *slickPage) cardRow(gtx layout.Context, w int, first, last bool, row func(gtx layout.Context, w int) layout.Dimensions) layout.Dimensions {
+	cl := p.colors()
+	rad := gtx.Dp(12)
+	hair := 0
+	if !first {
+		hair = gtx.Dp(1)
+	}
+	m := op.Record(gtx.Ops)
+	d := at(gtx, image.Pt(0, hair), image.Pt(w, 1<<20), func(gtx layout.Context) layout.Dimensions { return row(gtx, w) })
+	call := m.Stop()
+	h := hair + d.Size.Y
+	box := image.Rect(0, 0, w, h)
+	if !first {
+		box.Min.Y = -rad - gtx.Dp(2)
+	}
+	if !last {
+		box.Max.Y = h + rad + gtx.Dp(2)
+	}
+	slice := clip.Rect(image.Rect(0, 0, w, h)).Push(gtx.Ops)
+	st := clip.UniformRRect(box, rad).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	if !first {
+		theme.Fill(gtx, image.Rect(0, 0, w, hair), cl.otlTer)
+	}
+	st.Pop()
+	theme.Border(gtx, box, rad, gtx.Dp(1), cl.otlTer)
+	slice.Pop()
+	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
 // cardBox lays rows out inside a 1px rounded border with hairlines.

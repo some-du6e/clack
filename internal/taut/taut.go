@@ -192,6 +192,8 @@ type Taut struct {
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
+	// changeGen counts changed()'s announcements (ChangeGen)
+	changeGen atomic.Uint64
 
 	running   atomic.Int32 // plugins with a live instance
 	crashes   []time.Time  // recent runtime crashes (restartAfterCrash; under mu)
@@ -504,7 +506,13 @@ func (t *Taut) Subscribe() (<-chan struct{}, func()) {
 	}
 }
 
+// ChangeGen counts the changes the plugins' watchers hear of (a plugin
+// installed, replaced, removed, started or stopped, its settings): a
+// reader that keeps what it read of them reads again when it moves.
+func (t *Taut) ChangeGen() uint64 { return t.changeGen.Load() }
+
 func (t *Taut) changed() {
+	t.changeGen.Add(1)
 	t.changeMu.Lock()
 	for c := range t.changeCh {
 		select {
