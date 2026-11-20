@@ -184,6 +184,12 @@ func New(c *slack.Client, s *store.Store) *App {
 		// a.RTM.LastConnectFast(). Without Fast every reconnect reloads
 		// the Threads view (TestThreadsFastReconnectLikeSlack); without
 		// its block slow connects miss its catch-up.
+		if up && !a.RTM.LastConnectFast() {
+			// Slack's onConnected "Resetting reachedEnd": every window's
+			// end goes stale before the lists hear of the connection, and
+			// the open one is read forward from it (reached_end.go)
+			a.resetReachedEnd()
+		}
 		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {

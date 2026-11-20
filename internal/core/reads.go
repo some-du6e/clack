@@ -58,6 +58,13 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		if t != nil {
 			msgs, hasMore = t.Msgs, t.HasMore
+			if t.EndStale {
+				// the window from before a slow connect, at once, as
+				// Slack draws its outdated slice; read forward in the
+				// background ("history_caught_up": reached_end.go)
+				source = "cache, catching up"
+				a.startCatchUp(ch)
+			}
 		}
 	} else {
 		source = "older"
@@ -68,8 +75,11 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		// what the socket changed, deleted or reacted while it was out
 		// stays, and a revision the store held another of reaches every
-		// copy and the views (store PrependOlderSince, read_changes.go)
-		kept := a.S.PrependOlderSince(ch, p.Messages, p.HasMore, live)
+		// copy and the views (store PrependOlderSince, read_changes.go);
+		// in front of a window read again since (one that starts after
+		// before) it would leave a hole, so it stays out of that one
+		// (store PrependOlderAt)
+		kept := a.S.PrependOlderAt(ch, before, p.Messages, p.HasMore, live)
 		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 		a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 		a.announceReads()                  // after the pins and subscriptions: the copies as they are now

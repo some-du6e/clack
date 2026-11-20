@@ -347,7 +347,9 @@ type Page struct {
 // emoji_changed, sidebar_changed, prefs, huddle, resync, poll (realtime
 // is off or down: refetch what is open), realtime (live updates turned
 // on/off, in Connected), activity_badges (the Activity badge counts
-// moved: ActivityBadgeCount), plus raw
+// moved: ActivityBadgeCount), history_caught_up (Channel's window, whose
+// end went stale at a slow connect, was read forward: its lists load it
+// again, reached_end.go), plus raw
 // passthroughs (thread_marked, update_thread_state, dnd_updated,
 // dnd_updated_user, pref_change, badge_counts_updated) in Raw.
 type Event struct {
@@ -364,6 +366,12 @@ type Event struct {
 	Reply    bool   // message: a thread reply
 	Mention  bool   // message: mentions the viewer
 	ConvKind string // message: kind of the conversation
+	// Ahead (message, update): a top-level message past the end of a
+	// window whose end went stale at a slow connect (store
+	// UpsertHeard): the channel's lists don't draw it until the window is
+	// read forward to it ("history_caught_up"), since after the window it
+	// left out what the socket missed (reached_end.go)
+	Ahead bool
 	// StreamDone marks the update (message_changed) that ends an app's chat
 	// stream: the stored copy was streaming_state in_progress and this one
 	// isn't. It carries UserID, User, Reply, Mention and ConvKind like a
