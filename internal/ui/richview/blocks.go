@@ -1100,7 +1100,10 @@ func (l *lay) cellWidth(cell []richtext.Span, k faceKey, comp0 int, next *int) f
 				}
 			}
 			*next++
-		case richtext.Usergroup, richtext.Broadcast, richtext.MessageMention, richtext.Canvas, richtext.ChannelTab:
+		case richtext.MessageMention:
+			ex += 2 * pad
+			txt, _, _, _ = slugShown(sp) // as it draws (slugs.go)
+		case richtext.Usergroup, richtext.Broadcast, richtext.Canvas, richtext.ChannelTab:
 			ex += 2 * pad
 		}
 		for j, part := range strings.Split(txt, "\n") {

@@ -2425,6 +2425,11 @@ func (r *row) rootPreview(rc *rowCtx) string {
 	}
 	if doc != nil {
 		text := func(sp richtext.Span) (string, bool) {
+			if sp.Kind == richtext.MessageMention {
+				// the slug's label as it draws (its answer is a "names":
+				// the users revision moves)
+				return richview.SlugText(sp)
+			}
 			t, ok := richview.MentionText(sp)
 			if sp.Kind == richtext.User && sp.ID != "" {
 				r.rootIDs, r.rootNames = append(r.rootIDs, sp.ID), append(r.rootNames, t)

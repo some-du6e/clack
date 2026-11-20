@@ -1948,3 +1948,32 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
           exit $rc
+
+  # dm-senders-slugs: a DM's message links ("💬" pills) name the linked
+  # message's own sender as Slack's getMessageSlugAttributes does, read
+  # from the messages store and fetched by id (messages.list) when it
+  # isn't there: "Private message" while that is out, "Unknown author"
+  # only while the sender's users/info is, never where Slack names them.
+  # A link with no author_id, one whose author_id nobody fetched, the
+  # thread pane, and a toast's text (the label, or the link for a message
+  # Slack doesn't have). Dispatch with only=dm-senders (with dm-senders)
+  # or only=dm-senders-slugs.
+  dm-senders-slugs:
+    if: ${{ !inputs.only || startsWith('dm-senders-slugs', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: message links in a DM, the thread pane and a toast (one verbose run, then COUNT)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
+          exit $rc
