@@ -90,7 +90,7 @@ env:
 
 concurrency:
   group: perf-${{ github.ref }}
-  cancel-in-progress: false # queue: every pushed commit gets its numbers
+  cancel-in-progress: false # one run at a time: at most one waits, and a newer run replaces the waiting one
 
 jobs:
   perf:
