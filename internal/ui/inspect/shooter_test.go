@@ -93,6 +93,9 @@ func useFakeWindows(t *testing.T, hook func(n int) error) *fakeWindows {
 		return w, nil
 	}
 	t.Cleanup(func() {
+		shots.wantMu.Lock()
+		shots.wanters = nil
+		shots.wantMu.Unlock()
 		shots.setWanted(false)
 		shots.settle()
 		newShotWindow = prev
@@ -206,6 +209,39 @@ func TestShooterReleasesAfterShot(t *testing.T) {
 	shots.settle()
 	if _, released := w.counts(); released != 1 || len(f.made()) != 1 {
 		t.Errorf("after the review: let go of %d times, %d windows made; want once, one", released, len(f.made()))
+	}
+}
+
+// TestShooterTwoSessions: two windows' sessions at once (each of Clack's
+// windows runs a tool of its own: the main window's, the huddle
+// window's): the first one's shot keeps the window the other's session
+// wants, the other's shot goes through it, and after both none is live.
+func TestShooterTwoSessions(t *testing.T) {
+	f := useFakeWindows(t, nil)
+	a, b := newDragEnv(t), newDragEnv(t)
+	Shoot = shootHeadless // the envs' cleanups put their own back
+	p := f32.Pt(400, 300)
+	a.startAt(p, "primary")
+	b.startAt(p, "primary")
+	shots.settle()
+	if n := len(f.made()); n != 1 {
+		t.Fatalf("two sessions made %d windows, want one", n)
+	}
+	a.shiftClick(p, false, false)
+	a.frame()
+	shots.settle()
+	if !a.tool.Reviewing() || f.live() != 1 {
+		t.Fatalf("after one session's shot: reviewing %v, %d live windows; want the review, the other session's window kept", a.tool.Reviewing(), f.live())
+	}
+	b.shiftClick(p, false, false)
+	b.frame()
+	shots.settle()
+	if !b.tool.Reviewing() || len(f.made()) != 1 || f.live() != 0 {
+		t.Errorf("after the other's shot: reviewing %v, %d windows made, %d live; want one made, through which it shot, none live", b.tool.Reviewing(), len(f.made()), f.live())
+	}
+	for _, e := range []*dragEnv{a, b} {
+		e.key(key.NameEscape, 0)
+		e.frame()
 	}
 }
 

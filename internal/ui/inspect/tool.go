@@ -44,6 +44,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
@@ -152,6 +154,8 @@ type Tool struct {
 	lastDone chan struct{} // the last report's delivery (Wait)
 	lastRep  *Report       // the last report delivered (tests, after Wait)
 	texts    textCopies    // text copies on their way to the clipboard (textcopy.go)
+	// observing: this tool's session observes experiments (observe)
+	observing bool
 	// held is a copy key (Return and Enter as one, or C) dropped because a
 	// guarded capture's review wasn't armed, until its release is read:
 	// its auto-repeats (presses with no release between them on Windows
@@ -265,9 +269,9 @@ func (t *Tool) start() {
 	t.state = inspecting
 	t.hover, t.up, t.rec, t.pend, t.capture, t.rev = nil, 0, false, nil, nil, nil
 	t.frames[0].Nodes, t.frames[1].Nodes = t.frames[0].Nodes[:0], t.frames[1].Nodes[:0]
-	core.ObserveExperiments(observeExperiment)
+	t.observe(true)
 	if ownShoot() {
-		shots.setWanted(true) // the shots' GPU, ready for the first pick (shooter.go)
+		shots.wantFor(t, true) // the shots' GPU, ready for the first pick (shooter.go)
 	}
 }
 
@@ -280,7 +284,7 @@ func (t *Tool) stop() {
 	t.unfreeze()
 	t.release()
 	if ownShoot() {
-		shots.setWanted(false)
+		shots.wantFor(t, false)
 	}
 }
 
@@ -303,7 +307,7 @@ func (t *Tool) dropCapture(outcome string) {
 // and the last frames' nodes (widgets, props funcs, scopes) let go of.
 func (t *Tool) release() {
 	t.hover, t.rec = nil, false
-	core.ObserveExperiments(nil)
+	t.observe(false)
 	for i := range t.frames {
 		t.frames[i].Release()
 	}
@@ -321,13 +325,44 @@ func (t *Tool) backToInspecting() {
 	// no outline until a frame is recorded again: the one shown was the
 	// press's, whose nodes are let go of
 	t.state, t.pend, t.rec, t.hover = inspecting, nil, false, nil
-	core.ObserveExperiments(observeExperiment)
+	t.observe(true)
 }
 
-// observeExperiment gives an experiment read on the UI goroutine to the
-// node drawing.
+// observers counts the tools whose sessions observe experiments: each of
+// Clack's windows runs a tool of its own (the main window's, huddleui's
+// windows'), and the observer stays while any of their sessions wants it.
+var observers struct {
+	mu sync.Mutex
+	n  int
+}
+
+// observe says t's session observes experiments (on) or no longer does.
+func (t *Tool) observe(on bool) {
+	if t.observing == on {
+		return
+	}
+	t.observing = on
+	observers.mu.Lock()
+	defer observers.mu.Unlock()
+	if on {
+		if observers.n++; observers.n == 1 {
+			core.ObserveExperiments(observeExperiment)
+		}
+	} else if observers.n--; observers.n == 0 {
+		core.ObserveExperiments(nil)
+	}
+}
+
+// recorder is the goroutine whose window's frame is being recorded (Begin
+// to End, under slackc's frame lock), 0 between: each window runs its
+// frames on its own goroutine, and only that one's experiment reads are
+// the frame's.
+var recorder atomic.Int64
+
+// observeExperiment gives an experiment read in the frame being recorded,
+// on the goroutine recording it, to the node drawing.
 func observeExperiment(name, group string) {
-	if !uiguard.OnUI() {
+	if g := recorder.Load(); g == 0 || g != uiguard.Goroutine() {
 		return
 	}
 	if f := slackc.CurrentInspectFrame(); f != nil {
@@ -364,6 +399,7 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 		// recorded afresh when the frame is laid out again (a click
 		// navigated mid-frame)
 		slackc.InspectBegin(&t.frames[t.cur], gtx.Source)
+		recorder.Store(uiguard.Goroutine())
 		t.rec = true
 	}
 	return hover
@@ -482,6 +518,7 @@ func (t *Tool) dragRect(p f32.Point) image.Rectangle {
 func (t *Tool) End(gtx layout.Context) {
 	if slackc.Inspecting() {
 		slackc.InspectEnd()
+		recorder.Store(0)
 	}
 	if t.state == off {
 		return

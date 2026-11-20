@@ -36,8 +36,13 @@ import (
 
 type shooter struct {
 	want atomic.Bool // a session wants a window (setWanted)
-	mu   sync.Mutex  // w, and the GPU work on it
-	w    shotWindow  // the session's, nil until made
+	// wanters are the tools whose sessions want it (wantFor): each window
+	// runs a tool of its own, and one's shot mustn't let go of the window
+	// another's session is about to shoot with
+	wantMu  sync.Mutex
+	wanters map[*Tool]bool
+	mu      sync.Mutex // w, and the GPU work on it
+	w       shotWindow // the session's, nil until made
 	// pending counts the reconciles running (settle: tests)
 	pending sync.WaitGroup
 }
@@ -84,6 +89,23 @@ func (s *shooter) setWanted(on bool) {
 		defer s.pending.Done()
 		s.reconcile()
 	}()
+}
+
+// wantFor says t's session wants the window (on: it started) or no longer
+// does (it took its shot, or ended): the window is wanted while any tool's
+// session wants it. Never waits (setWanted).
+func (s *shooter) wantFor(t *Tool, on bool) {
+	s.wantMu.Lock()
+	defer s.wantMu.Unlock() // the stores in order: the last asked is what's kept
+	if on {
+		if s.wanters == nil {
+			s.wanters = map[*Tool]bool{}
+		}
+		s.wanters[t] = true
+	} else {
+		delete(s.wanters, t)
+	}
+	s.setWanted(len(s.wanters) > 0)
 }
 
 // settle waits for the reconciles running (tests).

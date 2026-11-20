@@ -365,7 +365,7 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 		// a session takes one shot: its GPU window (the shot's
 		// framebuffer, ~31 MB for a whole-window one, and its caches) goes
 		// now, not after the review
-		shots.setWanted(false)
+		shots.wantFor(t, false)
 	}
 	if err != nil {
 		log.Printf("inspect: no screenshot: %v", err)
