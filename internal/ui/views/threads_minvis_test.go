@@ -78,9 +78,11 @@ func TestThreadsDefaultFirstReplyLikeSlack(t *testing.T) {
 	}
 }
 
-// thrViewEnvAt is thrViewEnv opened straight at size, so the cards below
-// the fold are never laid out (thrViewEnv's first frames, at 1100px, lay
-// every card out).
+// thrViewEnvAt is thrViewEnv opened straight at size, so no card below the
+// fold there is ever laid out. thrViewEnv opens at 1100px, where more of
+// them may be, but promises none: its until returns once the answer is
+// in, maybe before a frame draws it. A test that needs a card laid out
+// scrolls to it.
 func thrViewEnvAt(t *testing.T, v *Threads, n int, size image.Point) *vaEnv {
 	t.Helper()
 	e := &vaEnv{size: size}
