@@ -498,35 +498,72 @@ const workspace = {
 
 // ---- userAPI, RateLimit, fetch, cookies ----
 
-async function userAPI(method, params = {}, options = {}) {
-  const fields = {}
-  const files = {}
-  for (const [k, v] of Object.entries(params)) {
-    if (typeof Blob !== 'undefined' && v instanceof Blob) {
-      files[k] = { name: v.name ?? 'blob', type: v.type, data: Array.from(new Uint8Array(await v.arrayBuffer())) }
-    } else fields[k] = String(v)
-  }
-  const retries = options.rateLimitRetries ?? 0
-  for (let attempt = 0; ; attempt++) {
-    options.signal?.throwIfAborted?.()
-    const res = await go('api', method, fields, files)
-    if (res && res.status === 429) {
-      if (attempt >= retries) throw new Error(`[Taut] userAPI ${method} rate limited`)
-      await abortableSleep((res.retryAfter > 0 ? res.retryAfter : 2) * 1000, options.signal)
-      continue
+/**
+ * userAPI as Taut's (app/api/userAPI.ts) and Slick's (src/app/api/userAPI.ts)
+ * run it: a fetch of api/<method> as the signed-in user, its params a
+ * FormData, tried again after a 429 (Retry-After, else 2 s) or a rate-limit
+ * code (2 s) while rateLimitRetries allows, and rejected as theirs reject:
+ * "<prefix> userAPI <method> rate limited", "… HTTP <status>: <body>",
+ * "… failed: <the answer's JSON, whole>", res.json()'s SyntaxError for an
+ * answer that isn't JSON, fetch's TypeError when no answer came and the
+ * signal's reason once it aborts. Go sends each try (taut's userAPI host)
+ * and hands back its answer whole. Slick's goes on to the same login's
+ * workspace token after enterprise_is_restricted; Clack's client sends a
+ * method the enterprise refuses on to the workspace itself.
+ */
+function makeUserAPI(prefix) {
+  return async function userAPI(method, params = {}, options = {}) {
+    const fields = {}
+    const files = {}
+    for (const [k, v] of Object.entries(params)) {
+      if (typeof Blob !== 'undefined' && v instanceof Blob) {
+        files[k] = { name: v.name ?? 'blob', type: v.type, data: Array.from(new Uint8Array(await v.arrayBuffer())) }
+      } else fields[k] = `${v}` // FormData.set
     }
-    if (res && res.status && res.status !== 200) throw new Error(`[Taut] userAPI ${method} HTTP ${res.status}: ${res.text ?? ''}`)
-    const json = res?.json ?? res
-    if (!json?.ok) {
-      if ((json?.error === 'ratelimited' || json?.error === 'rate_limited') && attempt < retries) {
-        await abortableSleep(2000, options.signal)
+    const retries = options.rateLimitRetries ?? 0
+    for (let attempt = 0; ; attempt++) {
+      const res = await userAPIFetch(method, fields, files, attempt > 0, options.signal)
+      if (res.status === 429) {
+        if (attempt >= retries) throw new Error(`${prefix} userAPI ${method} rate limited`)
+        const header = Number(res.retryAfter)
+        const waitSec = Number.isFinite(header) && header > 0 ? header : 2
+        await abortableSleep(waitSec * 1000, options.signal)
         continue
       }
-      throw new Error(`[Taut] userAPI ${method} failed: ${JSON.stringify(json)}`)
+      if (!(res.status >= 200 && res.status < 300)) throw new Error(`${prefix} userAPI ${method} HTTP ${res.status}: ${res.body}`)
+      const json = JSON.parse(res.body) // res.json()
+      if (!json.ok) {
+        // careful, slack maybe gives rate limits with a 200 and an error string
+        if (json.error === 'ratelimited' || json.error === 'rate_limited') {
+          if (attempt < retries) {
+            await abortableSleep(2000, options.signal)
+            continue
+          }
+        }
+        throw new Error(`${prefix} userAPI ${method} failed: ${JSON.stringify(json)}`)
+      }
+      return json
     }
-    return json
   }
 }
+
+/** one try of userAPI's fetch: Go's answer, or fetch's rejection (no answer, or the signal aborted) */
+async function userAPIFetch(method, fields, files, retry, signal) {
+  signal?.throwIfAborted?.()
+  const sent = go('api', method, fields, files, retry)
+  const res = await (signal?.addEventListener
+    ? new Promise((resolve, reject) => {
+        const onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+        sent.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+      })
+    : sent)
+  if (res?.failed) throw new TypeError('Failed to fetch')
+  return { status: res?.status ?? 0, retryAfter: res?.retryAfter ?? '', body: res?.body ?? '' }
+}
+
+const userAPI = makeUserAPI('[Taut]')
+const slickUserAPI = makeUserAPI('[slick]')
 
 // ---- apiCall: Slack's API request, its response and its rejection ----
 // Slack's apiCall thunk (client-boot 0hZc H, build 35b42de8b870) makes a
@@ -2046,6 +2083,7 @@ Object.assign(T, {
   RateLimit,
   AccountSwitcher,
   userAPI,
+  slickUserAPI,
   bridgeFetch,
   cookies,
   setStyle,

@@ -51,8 +51,17 @@ const apiProbePlugin = `class APIProbe extends TautPlugin {
       }
     }
   }
+    globalThis.__userAPIProbe = async (method, params, options) => {
+      try {
+        return { settled: 'resolved', res: await api.userAPI(method, params, options) }
+      } catch (err) {
+        return { settled: 'rejected', ctor: err?.constructor?.name, name: err?.name, message: err?.message }
+      }
+    }
+  }
   stop() {
     delete globalThis.__apiProbe
+    delete globalThis.__userAPIProbe
   }
 }
 return APIProbe`
@@ -365,5 +374,98 @@ func TestAPICallRetriesLikeSlack(t *testing.T) {
 	e.fs.SetFault("chat.postMessage", fakeslack.Fault{Delay: 2 * time.Second})
 	got = e.probe("apiCall", postOptions("timeout"))
 	check("timeout", got, "Request timed out after 60 seconds.", "TIMEOUT", "", 3, 1000, 39000)
+	e.fs.SetFault("chat.postMessage", fakeslack.Fault{})
+}
+
+type userAPISettled struct {
+	Settled string         `json:"settled"`
+	Res     map[string]any `json:"res"`
+	Ctor    string         `json:"ctor"`
+	Name    string         `json:"name"`
+	Message string         `json:"message"`
+}
+
+func (e *apiCallEnv) userAPI(text string, options map[string]any) userAPISettled {
+	e.t.Helper()
+	if options == nil {
+		options = map[string]any{}
+	}
+	b, _ := json.Marshal(options)
+	var out userAPISettled
+	e.jsInto(fmt.Sprintf(`return await globalThis.__userAPIProbe('chat.postMessage', {channel: 'C0FAKE00001', text: %q}, %s)`, text, b), &out)
+	return out
+}
+
+// TestUserAPIErrorsLikeTaut: api.userAPI fails the way Taut's own
+// fetch-based userAPI does (app/api/userAPI.ts at TAUT_PIN): the answer's
+// JSON whole in "failed:", the page in "HTTP <status>:", a 429 thrown at
+// once unless rateLimitRetries asks for another try after its
+// Retry-After, a rate-limit code tried again after 2 s, res.json()'s
+// SyntaxError and fetch's TypeError. One request per try: nothing else
+// tries again.
+func TestUserAPIErrorsLikeTaut(t *testing.T) {
+	e := newAPICallEnv(t, 10*time.Second)
+	want := func(name string, got userAPISettled, ctor, message string) {
+		t.Helper()
+		if got.Settled != "rejected" || got.Ctor != ctor || (message != "" && got.Message != message) {
+			t.Errorf("%s: %s %s %q, want rejected with %s %q", name, got.Settled, got.Ctor, got.Message, ctor, message)
+		}
+	}
+	posts := func(name string, n int64) {
+		t.Helper()
+		if got := e.posts.Swap(0); got != n {
+			t.Errorf("%s: %d requests, want %d", name, got, n)
+		}
+	}
+	e.posts.Store(0)
+
+	body := `{"ok":false,"error":"invalid_blocks","errors":["downloading image failed [json-pointer:/blocks/2/accessory/image_url]"],"response_metadata":{"messages":["[ERROR] downloading image failed [json-pointer:/blocks/2/accessory/image_url]"]}}`
+	e.answerWith(func(url.Values) any { return []byte(body) })
+	want("not ok", e.userAPI("not ok", nil), "Error", "[Taut] userAPI chat.postMessage failed: "+body)
+	posts("not ok", 1)
+
+	page := "<html>Bad Gateway</html>"
+	e.answerWith(func(url.Values) any { return fakeslack.Reply{Status: http.StatusBadGateway, Body: []byte(page)} })
+	want("502", e.userAPI("502", nil), "Error", "[Taut] userAPI chat.postMessage HTTP 502: "+page)
+	posts("502", 1)
+
+	e.answerWith(func(url.Values) any {
+		return fakeslack.Reply{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"1"}}, Body: []byte(`{"ok":false,"error":"ratelimited"}`)}
+	})
+	want("429", e.userAPI("429", nil), "Error", "[Taut] userAPI chat.postMessage rate limited")
+	posts("429", 1)
+
+	// a 429, then the answer: one more try after Retry-After
+	var tries atomic.Int64
+	e.answerWith(func(url.Values) any {
+		if tries.Add(1) == 1 {
+			return fakeslack.Reply{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"1"}}}
+		}
+		return []byte(`{"ok":true,"ts":"1.2"}`)
+	})
+	t0 := time.Now()
+	got := e.userAPI("429 then ok", map[string]any{"rateLimitRetries": 1})
+	if got.Settled != "resolved" || got.Res["ts"] != "1.2" || time.Since(t0) < 900*time.Millisecond {
+		t.Errorf("429 then ok: %+v after %v, want the answer after Retry-After's second", got, time.Since(t0))
+	}
+	posts("429 then ok", 2)
+
+	// a rate-limit code: tried again after 2 s, then thrown with the answer
+	limited := `{"ok":false,"error":"ratelimited"}`
+	e.answerWith(func(url.Values) any { return []byte(limited) })
+	t0 = time.Now()
+	want("ratelimited", e.userAPI("ratelimited", map[string]any{"rateLimitRetries": 1}), "Error", "[Taut] userAPI chat.postMessage failed: "+limited)
+	if d := time.Since(t0); d < 1900*time.Millisecond {
+		t.Errorf("ratelimited: thrown after %v, want after the 2 s wait", d)
+	}
+	posts("ratelimited", 2)
+
+	e.answerWith(func(url.Values) any { return []byte("<html>Slack is down</html>") })
+	want("not JSON", e.userAPI("not json", nil), "SyntaxError", "")
+	posts("not JSON", 1)
+
+	e.answer.Store(nil)
+	e.fs.SetFault("chat.postMessage", fakeslack.Fault{HangUp: true})
+	want("no answer", e.userAPI("hang up", nil), "TypeError", "Failed to fetch")
 	e.fs.SetFault("chat.postMessage", fakeslack.Fault{})
 }

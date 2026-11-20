@@ -1901,7 +1901,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('plugin-api', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      TAUT_TESTS: '^(TestAPICallNotOkLikeSlack|TestAPICallResolvesLikeSlack|TestAPICallRateLimitedLikeSlack|TestAPICallRetriesLikeSlack)$'
+      TAUT_TESTS: '^(TestAPICallNotOkLikeSlack|TestAPICallResolvesLikeSlack|TestAPICallRateLimitedLikeSlack|TestAPICallRetriesLikeSlack|TestUserAPIErrorsLikeTaut)$'
       SLICK_TESTS: '^(TestSlickAPICallErrorsLikeSlack)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

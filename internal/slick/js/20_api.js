@@ -517,7 +517,7 @@ function createScopedAPI(entry, id, scope) {
     Store: TA.Store,
     fetch: bridgeFetch,
     loader: 'electron',
-    userAPI: T.userAPI,
+    userAPI: T.slickUserAPI, // Slick's own (src/app/api/userAPI.ts): its messages say [slick]
     id,
     signal: scope.signal,
     isActive: () => !scope.signal.aborted && plugins.get(id)?.scope === scope,

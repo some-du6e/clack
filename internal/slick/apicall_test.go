@@ -31,6 +31,7 @@ class APIProbe extends SlickPlugin {
   static description = "test";
   start() {
     const api = this.api;
+    globalThis.__userAPIProbe = (method, params) => this.userAPIProbe(method, params);
     globalThis.__apiProbe = async (thunk, options) => {
       try {
         const res = await api.redux.dispatchThunk(thunk, options);
@@ -44,6 +45,13 @@ class APIProbe extends SlickPlugin {
   }
   stop() {
     delete globalThis.__apiProbe;
+  }
+  async userAPIProbe(method, params) {
+    try {
+      return { settled: "resolved", res: await this.api.userAPI(method, params) };
+    } catch (err) {
+      return { settled: "rejected", ctor: err?.constructor?.name, message: err?.message };
+    }
   }
 }
 return APIProbe;
@@ -141,5 +149,23 @@ func TestSlickAPICallErrorsLikeSlack(t *testing.T) {
 	}
 	if want := []string{"method", "status", "response", "retryAfter", "attempts"}; !reflect.DeepEqual(got.Keys, want) {
 		t.Errorf("502: err keys %q, want %q", got.Keys, want)
+	}
+
+	// this.api.userAPI is Slick's own (src/app/api/userAPI.ts): its
+	// messages say [slick], with the answer's JSON whole
+	answerWith(func(url.Values) any { return body })
+	var u struct {
+		Settled string `json:"settled"`
+		Ctor    string `json:"ctor"`
+		Message string `json:"message"`
+	}
+	h.jsInto(`return await globalThis.__userAPIProbe('chat.postMessage', {channel: 'C0FAKE00001', text: 'userAPI'})`, &u)
+	if want := "[slick] userAPI chat.postMessage failed: " + string(body); u.Settled != "rejected" || u.Message != want {
+		t.Errorf("userAPI: %s %q, want rejected with %q", u.Settled, u.Message, want)
+	}
+	answerWith(func(url.Values) any { return fakeslack.Reply{Status: http.StatusTooManyRequests} })
+	h.jsInto(`return await globalThis.__userAPIProbe('chat.postMessage', {channel: 'C0FAKE00001', text: 'userAPI 429'})`, &u)
+	if want := "[slick] userAPI chat.postMessage rate limited"; u.Message != want {
+		t.Errorf("userAPI 429: %q, want %q", u.Message, want)
 	}
 }
