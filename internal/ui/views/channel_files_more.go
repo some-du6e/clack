@@ -531,7 +531,7 @@ func (v *ChannelFiles) openMedia(it fileItem) {
 		if m.ID == it.ID {
 			idx = len(items)
 		}
-		f := cfRich(m)
+		f := cfPlayable(m)
 		if m.IsVideo {
 			im := richtext.Image{URL: m.Thumb, Alt: m.title(), Title: m.title(), Proxy: true}
 			items = append(items, popups.GalleryItem{File: f, Img: im})
