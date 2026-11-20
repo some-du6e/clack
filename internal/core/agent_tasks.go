@@ -13,8 +13,9 @@ package core
 //     app is an agent app (OQHR dy: the app profile's legacy_app
 //     is_agent_app) shows [Home, Messages, (Sessions), About, Tasks]; Tasks
 //     needs wfb_3p_agent_tasks_tab on (YwqI qC), the app not turned off by
-//     an admin (o1P2 sQ: the team's ai_apps_settings app entry with
-//     is_agent_tasks_enabled false, or one of two built-in app ids), the
+//     an admin (o1P2 sQ: the ai_apps_settings app entry with
+//     is_agent_tasks_enabled false, the org's locked pref on Enterprise
+//     Grid and the team's pref elsewhere, or one of two built-in app ids), the
 //     plan (YwqI ro: featureAccess agent_tasks__write while the experiment
 //     is on), the developer's switch (SUqq: the app home's
 //     agent_tasks_enabled, on unless false) and the app shown as an agent
@@ -157,8 +158,9 @@ func (a *App) AgentTasksAgent(ch string) (user, app string) {
 	return user, ""
 }
 
-// agentTasksDisabled is o1P2 sQ: the two blocked apps, or the team's
-// ai_apps_settings entry for the app with is_agent_tasks_enabled false.
+// agentTasksDisabled is o1P2 sQ: the two blocked apps, or the
+// ai_apps_settings entry for the app with is_agent_tasks_enabled false
+// (the org's locked pref on Enterprise Grid, the team's pref elsewhere).
 func (a *App) agentTasksDisabled(appID string) bool {
 	if appID == "" {
 		return false
@@ -439,7 +441,6 @@ func promptText(raw json.RawMessage) string {
 	return strings.TrimRight(walk(v), "\n")
 }
 
-// agentTaskOf merges a workflow with its trigger (nil for none).
 // taskFrequencyOf is a trigger's schedule.frequency, with the keys it
 // came with (nil for none).
 func taskFrequencyOf(raw json.RawMessage) *TaskFrequency {
@@ -465,6 +466,7 @@ func taskFrequencyOf(raw json.RawMessage) *TaskFrequency {
 	return out
 }
 
+// agentTaskOf merges a workflow with its trigger (nil for none).
 func agentTaskOf(w rawTaskWorkflow, tr *rawTaskTrigger) AgentTask {
 	t := AgentTask{WorkflowID: w.ID, Title: w.Title, Description: w.Description, AppID: w.AppID,
 		Collaborators: w.Collaborators, CreationSourceID: w.CreationSourceID, DateUpdated: jsonInt64(w.DateUpdated), Empty: w.IsEmpty}
