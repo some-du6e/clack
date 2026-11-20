@@ -1829,6 +1829,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("results", res)
 	case "edge/users/counts":
+		if out, handled := s.rosterCounts(edge); handled { // roster.go
+			return out
+		}
 		if out, handled := s.channelAgentsCounts(edge); handled { // channel_agents.go
 			return out
 		}
@@ -1845,6 +1848,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		s.convMu.Lock()
 		s.listFilters = append(s.listFilters, filter)
 		s.convMu.Unlock()
+		if out, handled := s.rosterList(edge, filter); handled { // roster.go
+			return out
+		}
 		if out, handled := s.channelAgentsList(edge, filter); handled { // channel_agents.go
 			return out
 		}
