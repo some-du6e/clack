@@ -219,9 +219,26 @@ func activityEditLatency(t *testing.T, mode string) {
 		}
 	}
 	latStats(t, mode, "an Activity row", ds)
-	// the bound holds only while the page asks for frames for the edits
-	// alone: one drawing frames on its own would draw every edit in time
-	if n := len(ds); n > 0 && frames-startFrames > int64(3*n) {
+	// and with frames drawn only when asked, the first one after an edit is
+	// the one it asked for: Slack's row reads the live message, so the edit
+	// draws in it, past the odd one a frame already under way missed
+	// (natively the first edit, 2 frames). A JS tree of the revision before
+	// (components) drew every edit a frame late, within latStats's two
+	slow := 0
+	for _, d := range ds {
+		if !d.drawn.IsZero() && d.frames > 1 {
+			slow++
+		}
+	}
+	if slow > len(ds)/4 {
+		t.Errorf("%s: %d of %d edits drawn after the first frame following them: the row drew the revision before first", mode, slow, len(ds))
+	}
+	// the bounds hold only while the page asks for frames for the edits
+	// alone: an edit asks for its frame, the plugins' view turning ready for
+	// another (slice: 3 an edit, 61 for 20), where a page drawing on its own
+	// at 60 a second draws 30 an edit and every edit in time
+	t.Logf("%s: %d frames for %d edits", mode, frames-startFrames, len(ds))
+	if n := len(ds); n > 0 && frames-startFrames > int64(4*n) {
 		t.Errorf("%s: %d frames for %d edits: the Activity page asks for frames of its own", mode, frames-startFrames, n)
 	}
 }
