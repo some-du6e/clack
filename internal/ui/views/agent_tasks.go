@@ -99,10 +99,14 @@ type AgentTasks struct {
 	removed map[string]int
 	// override is the optimistic is_published of a Pause or Restart: in
 	// flight, and after its success until a list agrees or 30 s pass
-	// (vRD3 holdPublishedState); holds numbers each hold, so an old timer
-	// can't end a newer one
+	// (vRD3 holdPublishedState). holds is each held task's hold number,
+	// taken from holdSeq, which only grows: a hold's timer ends it only
+	// while that number is still its own (vRD3's release clears its own
+	// timeout), so an older hold's timer can't end a newer one, even after
+	// a list released the older
 	override map[string]bool
-	holds    map[string]int
+	holds    map[string]uint64
+	holdSeq  uint64
 	inflight map[string]bool
 	ui       []func() // results applied on the UI goroutine
 	subbed   bool
@@ -157,7 +161,7 @@ func (v *AgentTasks) ActionHoveredForTest(id, action string) bool {
 // NewAgentTasks makes the Tasks tab of the agent DM ch.
 func NewAgentTasks(h Host, ch string) *AgentTasks {
 	v := &AgentTasks{base: newBase(h), ch: ch, srch: newSearchIn(nsSlackbotAI, AgentTasksSearch),
-		removed: map[string]int{}, override: map[string]bool{}, holds: map[string]int{}, inflight: map[string]bool{}, rows: map[string]*taskRowUI{}}
+		removed: map[string]int{}, override: map[string]bool{}, holds: map[string]uint64{}, inflight: map[string]bool{}, rows: map[string]*taskRowUI{}}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -840,9 +844,10 @@ func (v *AgentTasks) setPublished(t core.AgentTask, publish bool) {
 				// markSucceeded: the state holds over a list that hasn't
 				// caught up, until one agrees or 30 s pass, then the task
 				// reads again
-				v.holds[id]++
-				n := v.holds[id]
-				time.AfterFunc(agentTaskHold, func() {
+				v.holdSeq++
+				n := v.holdSeq
+				v.holds[id] = n
+				AgentTaskAfterFunc(agentTaskHold, func() {
 					v.post(func() {
 						v.mu.Lock()
 						if v.holds[id] == n && !v.inflight[id] {
@@ -865,6 +870,10 @@ func (v *AgentTasks) setPublished(t core.AgentTask, publish bool) {
 // agentTaskHold is how long a Pause or Restart that succeeded holds its
 // state over lists that disagree (holdPublishedState's setTimeout 3e4).
 const agentTaskHold = 30 * time.Second
+
+// AgentTaskAfterFunc starts a hold's timer (time.AfterFunc; tests fire
+// the timers by hand).
+var AgentTaskAfterFunc = time.AfterFunc
 
 // releaseHolds ends the holds a list agrees with (v.mu held): a task it
 // reports in the requested state, with no request in flight.

@@ -8,6 +8,7 @@ import (
 	"image"
 	"net/url"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // TestAgentTasksTabDeleteStalePage: a list read that went out before a
@@ -298,4 +300,92 @@ func TestAgentTasksTabAfterAppEvent(t *testing.T) {
 	if n := fetches.Load() - before; n != 1 {
 		t.Errorf("apps_installed brought %d card fetches, want 1", n)
 	}
+}
+
+// TestAgentTasksTabHoldOutlivesOldTimer: a Pause a list agreed with, then
+// a Restart within the 30 s. The Pause's timer firing doesn't end the
+// Restart's hold (vRD3's release clears its own timeout), so lists that
+// haven't caught up with the Restart can't show the task paused before
+// the Restart's own timer; that one ends the hold. The hold timers are
+// fired by hand (views.AgentTaskAfterFunc).
+func TestAgentTasksTabHoldOutlivesOldTimer(t *testing.T) {
+	var mu sync.Mutex
+	var timers []func()
+	prev := views.AgentTaskAfterFunc
+	views.AgentTaskAfterFunc = func(_ time.Duration, f func()) *time.Timer {
+		mu.Lock()
+		timers = append(timers, f)
+		mu.Unlock()
+		return time.NewTimer(time.Hour) // fired by the test, not the clock
+	}
+	t.Cleanup(func() { views.AgentTaskAfterFunc = prev })
+	timer := func(i int) func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if i >= len(timers) {
+			return nil
+		}
+		return timers[i]
+	}
+	e, fs := agentTasksEnv(t, nil)
+	dm := e.agentDM(t, "messages,about,tasks")
+	v := e.openTasks(t, dm, "list")
+	st := fs.AgentTasks()
+	briefing := func() core.AgentTask {
+		for _, tk := range v.Tasks() {
+			if tk.WorkflowID == fakeslack.TaskBriefing {
+				return tk
+			}
+		}
+		t.Fatal("no Briefing task")
+		return core.AgentTask{}
+	}
+	lists := func() int {
+		n := 0
+		for _, c := range st.AgentTaskCalls() {
+			if c.Method == "functions.workflows.list" {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Pause; it succeeds and holds (timer 1); a list that agrees releases it
+	v.SetPublished(briefing(), false)
+	e.until("the pause's hold", 10*time.Second, func() bool { return timer(0) != nil })
+	n := lists()
+	v.Refresh()
+	e.until("a list that agrees", 10*time.Second, func() bool { return lists() > n })
+	e.settle(500 * time.Millisecond)
+	// Restart; it succeeds and holds (timer 2)
+	v.SetPublished(briefing(), true)
+	e.until("the restart's hold", 10*time.Second, func() bool { return timer(1) != nil })
+	e.settle(300 * time.Millisecond)
+	// from now on lists haven't caught up with the Restart
+	fs.SetHook(func(m string, _ url.Values) (any, bool) {
+		if m == "functions.workflows.list" {
+			st.Set(func(s *fakeslack.AgentTasksState) {
+				for _, tk := range s.Tasks {
+					if tk.ID == fakeslack.TaskBriefing {
+						tk.Published = false
+					}
+				}
+			})
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
+	// the Pause's timer fires, and a list reads again: the Restart stands
+	timer(0)()
+	e.settle(800 * time.Millisecond)
+	n = lists()
+	v.Refresh()
+	e.until("a list that hasn't caught up", 10*time.Second, func() bool { return lists() > n })
+	e.settle(800 * time.Millisecond)
+	if !briefing().Published {
+		t.Error("the Pause's timer ended the Restart's hold: a list that hasn't caught up shows the task paused")
+	}
+	// the Restart's own timer ends its hold: the list's state shows
+	timer(1)()
+	e.until("the Restart's hold over", 10*time.Second, func() bool { return !briefing().Published })
 }
