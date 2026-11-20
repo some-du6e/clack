@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // AppCard is what Slack's AppHoverCard (AppProfileCard, boot-render
@@ -77,23 +80,28 @@ type appCardEntry struct {
 	// doesn't see an app that stopped being an agent for a moment
 	last    AppCard
 	hasLast bool
-	// retry is when a fetch that failed (with no last card to keep) may
-	// run again: until then AppCardOf answers its error without asking
-	// the server (or the client's backoff) again
-	retry time.Time
+	// app is the app the fetch asked for with the bot (the user's
+	// api_app_id), so an app event finds an entry whose fetch failed
+	app string
 }
 
-// appCardRetry is how long a failed fetch is remembered before another.
-const appCardRetry = time.Minute
+// appCardAttempt is one apps.profile.get's limit and appCardTries how
+// many a fetch makes while they time out (UnknownFetchManager's
+// fetchWithRetries, 0mwJ: 65 s, three attempts; any other error ends it).
+var appCardAttempt = 65 * time.Second
+
+const appCardTries = 3
 
 // AppCardSettled is CachedAppCard for a reader that must not start a
 // fetch on every frame (the Tasks tab rule): known also holds, with no
-// card, while a failed fetch waits for its retry.
+// card, for an app whose fetch failed, which Slack keeps as non-existent
+// until a slow reconnect or an app event marks it stale.
 func (a *App) AppCardSettled(userID, botID string) (card AppCard, ok, known bool) {
 	k := a.appCardKey(userID, botID)
 	c := a.appCards()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	a.appCardsFreshLocked(c)
 	e := c.m[k]
 	switch {
 	case e == nil:
@@ -101,7 +109,7 @@ func (a *App) AppCardSettled(userID, botID string) (card AppCard, ok, known bool
 	case e.wait != nil:
 		return e.last, e.hasLast, e.hasLast
 	case e.err != nil:
-		return e.last, e.hasLast, e.hasLast || time.Now().Before(e.retry)
+		return AppCard{}, false, true
 	}
 	return e.card, true, true
 }
@@ -109,6 +117,9 @@ func (a *App) AppCardSettled(userID, botID string) (card AppCard, ok, known bool
 type appCardCache struct {
 	mu sync.Mutex
 	m  map[string]*appCardEntry
+	// epoch is the slow connection count the cards were read in
+	// (_maybeResetState's freshness epoch: 1 before any connect)
+	epoch int
 }
 
 var appCardIndex sync.Map // *App → *appCardCache
@@ -121,6 +132,109 @@ func (a *App) appCards() *appCardCache {
 	return v.(*appCardCache)
 }
 
+// appCardsFreshLocked is _maybeResetState for the cards (p7oS, which the
+// apps refetcher FftE runs with no max age and the default slow-reconnect
+// rule): a slow connection count other than the one the cards were read
+// in marks them all stale ("Connection count a -> n: marking all as
+// stale"). A fetch in flight runs its course. c.mu is held; it reports
+// whether any was marked.
+func (a *App) appCardsFreshLocked(c *appCardCache) bool {
+	n := max(int(a.slowConnectionCount().Load()), 1)
+	if c.epoch == 0 {
+		c.epoch = 1
+	}
+	if n == c.epoch {
+		return false
+	}
+	c.epoch = n
+	marked := false
+	for k, e := range c.m {
+		if e.wait == nil {
+			staleAppCardLocked(c, k, e)
+			marked = true
+		}
+	}
+	return marked
+}
+
+// staleAppCardLocked marks entry k stale (markObjectsAsStale): an app
+// remembered as non-existent is forgotten, so its next read asks again;
+// a card stays for its next read to refetch (kept while that runs).
+func staleAppCardLocked(c *appCardCache, k string, e *appCardEntry) {
+	if e.err != nil {
+		delete(c.m, k)
+		return
+	}
+	e.at = time.Time{}
+}
+
+// appCardsReconnected runs the cards' reset at a slow reconnect
+// (socketConnected), so what reads them (the Tasks tab rule) reads again
+// at once: an "app_card" event when any was marked stale.
+func (a *App) appCardsReconnected() {
+	c := a.appCards()
+	c.mu.Lock()
+	marked := a.appCardsFreshLocked(c)
+	c.mu.Unlock()
+	if marked {
+		a.emit(Event{Type: "app_card"})
+	}
+}
+
+// onAppCardEvent is boot-render's app events for the cards: apps_installed
+// and apps_changed (sharedUpsertAppFromImsg: markObjectsAsStale of
+// event.app.id), apps_uninstalled (sharedAppUninstalled:
+// markAsStaleByAppId of event.app_id) and bot_changed (botChanged: of
+// event.bot.app_id, or the bot). Each card of that app or bot is marked
+// stale, and an "app_card" event lets what reads them read again.
+func (a *App) onAppCardEvent(typ string, raw json.RawMessage) {
+	var e struct {
+		App *struct {
+			ID string `json:"id"`
+		} `json:"app"`
+		AppID string `json:"app_id"`
+		Bot   *struct {
+			ID    string `json:"id"`
+			AppID string `json:"app_id"`
+		} `json:"bot"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return
+	}
+	var app, bot string
+	switch typ {
+	case "apps_installed", "apps_changed":
+		if e.App != nil {
+			app = e.App.ID
+		}
+	case "apps_uninstalled":
+		app = e.AppID
+	case "bot_changed":
+		if e.Bot != nil {
+			app, bot = e.Bot.AppID, e.Bot.ID
+		}
+	}
+	if app == "" && bot == "" {
+		return
+	}
+	c := a.appCards()
+	c.mu.Lock()
+	marked := false
+	for k, en := range c.m {
+		if en.wait != nil {
+			continue
+		}
+		if app != "" && (en.app == app || en.card.AppID == app) || bot != "" && (k == "B:"+bot || en.card.BotID == bot) {
+			staleAppCardLocked(c, k, en)
+			marked = true
+		}
+	}
+	c.mu.Unlock()
+	if marked {
+		a.emit(Event{Type: "app_card"})
+	}
+}
+
 // CachedAppCard returns a card fetched before (AppCardOf) for the bot
 // user userID or the bot botID.
 func (a *App) CachedAppCard(userID, botID string) (AppCard, bool) {
@@ -128,6 +242,7 @@ func (a *App) CachedAppCard(userID, botID string) (AppCard, bool) {
 	c := a.appCards()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	a.appCardsFreshLocked(c)
 	e, ok := c.m[k]
 	if !ok {
 		return AppCard{}, false
@@ -154,8 +269,12 @@ func (a *App) appCardKey(userID, botID string) string {
 var ErrNotAnApp = errors.New("not an app")
 
 // AppCardOf reads the app card of the bot user userID or the bot botID
-// (apps.profile.get bot=…&app=…), cached for appCardTTL; concurrent
-// callers share one request.
+// (apps.profile.get bot=…&app=…), cached for appCardTTL. Concurrent
+// callers share one fetch, which runs on its own clock (runAppCardFetch):
+// a caller whose context ends stops waiting without ending it for the
+// others. An app whose fetch failed is Slack's non-existent app: every
+// caller gets the error without a request until a slow reconnect or an
+// app event marks it stale.
 func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, error) {
 	appID := ""
 	if userID != "" {
@@ -169,66 +288,91 @@ func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, err
 	}
 	k := a.appCardKey(userID, botID)
 	c := a.appCards()
-	if botID == "" && appID == "" { // remembered like a failed fetch: asked again after appCardRetry
-		c.mu.Lock()
+	c.mu.Lock()
+	a.appCardsFreshLocked(c)
+	if botID == "" && appID == "" { // no app to ask for (getAppById answers false): known, never fetched
 		if e, ok := c.m[k]; !ok || e.wait == nil {
-			c.m[k] = &appCardEntry{err: ErrNotAnApp, at: time.Now(), retry: time.Now().Add(appCardRetry)}
+			c.m[k] = &appCardEntry{err: ErrNotAnApp, at: time.Now()}
 		}
 		c.mu.Unlock()
 		return AppCard{}, ErrNotAnApp
 	}
-	c.mu.Lock()
-	if e, ok := c.m[k]; ok {
-		if w := e.wait; w != nil {
-			c.mu.Unlock()
-			select {
-			case <-w:
-			case <-ctx.Done():
-				return AppCard{}, ctx.Err()
-			}
-			c.mu.Lock()
-			e = c.m[k]
-			c.mu.Unlock()
-			if e == nil {
-				return AppCard{}, ErrNotAnApp
-			}
-			return e.card, e.err
+	e := c.m[k]
+	switch {
+	case e == nil || e.wait == nil && e.err == nil && time.Since(e.at) >= appCardTTL:
+		ne := &appCardEntry{wait: make(chan struct{}), app: appID}
+		if e != nil { // a stale card: kept while this one is fetched
+			ne.last, ne.hasLast = e.card, true
 		}
-		if e.err == nil && time.Since(e.at) < appCardTTL {
-			c.mu.Unlock()
-			return e.card, nil
-		}
-		if e.err != nil && time.Now().Before(e.retry) {
-			c.mu.Unlock()
-			return AppCard{}, e.err
-		}
+		c.m[k] = ne
+		e = ne
+		go a.runAppCardFetch(c, e, botID, appID, userID)
+	case e.wait == nil && e.err != nil: // non-existent until it is marked stale
+		c.mu.Unlock()
+		return AppCard{}, e.err
+	case e.wait == nil:
+		c.mu.Unlock()
+		return e.card, nil
 	}
-	e := &appCardEntry{wait: make(chan struct{})}
-	if old, ok := c.m[k]; ok && old.err == nil { // a stale card: kept while this one is fetched
-		e.last, e.hasLast = old.card, true
-	}
-	c.m[k] = e
+	w := e.wait
 	c.mu.Unlock()
+	select {
+	case <-w:
+	case <-ctx.Done():
+		return AppCard{}, ctx.Err()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return e.card, e.err
+}
 
-	card, err := a.fetchAppCard(ctx, botID, appID)
+// runAppCardFetch is UnknownFetchManager.fetchWithRetries for one card,
+// on the App's context: each apps.profile.get gets appCardAttempt, one
+// that times out is sent again (past the client's failure backoff) up to
+// appCardTries in all, and any other error ends the fetch. A fetch that
+// fails keeps the card it refetched (Slack's refetcher swallows the error
+// and marks the app fresh); with no card the app is non-existent
+// (upsertNonExistent, marked fresh with no max age) until it is marked
+// stale.
+func (a *App) runAppCardFetch(c *appCardCache, e *appCardEntry, botID, appID, userID string) {
+	var card AppCard
+	var err error
+	for try := 1; try <= appCardTries; try++ {
+		ctx := a.bg
+		if try > 1 {
+			ctx = slack.NoBackoff(ctx)
+		}
+		actx, cancel := context.WithTimeout(ctx, appCardAttempt)
+		card, err = a.fetchAppCard(actx, botID, appID)
+		cancel()
+		if !appCardTimedOut(err) {
+			break
+		}
+	}
 	if err == nil && card.AppUserID == "" {
 		card.AppUserID = userID
 	}
 	c.mu.Lock()
-	e.card, e.err, e.at = card, err, time.Now()
-	close(e.wait)
-	e.wait = nil
+	e.at = time.Now()
 	switch {
 	case err == nil:
-		e.last, e.hasLast = AppCard{}, false
-	case e.hasLast: // keep the last good card, and try again in a minute
+		e.card, e.err = card, nil
+	case e.hasLast:
 		e.card, e.err = e.last, nil
-		e.at = time.Now().Add(time.Minute - appCardTTL)
-	default: // remembered, so a reader asking every frame doesn't fetch every frame
-		e.retry = time.Now().Add(appCardRetry)
+	default:
+		e.card, e.err = AppCard{}, err
 	}
+	e.last, e.hasLast = AppCard{}, false
+	close(e.wait)
+	e.wait = nil
 	c.mu.Unlock()
-	return card, err
+}
+
+// appCardTimedOut is fetchWithRetries' TimeoutError test: the attempt ran
+// out of time, its own limit or the request's (the client's "timeout").
+func appCardTimedOut(err error) bool {
+	var ne net.Error
+	return err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout())
 }
 
 func (a *App) fetchAppCard(ctx context.Context, botID, appID string) (AppCard, error) {

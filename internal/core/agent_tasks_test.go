@@ -465,6 +465,13 @@ func TestAgentTasksFeatureAccessLive(t *testing.T) {
 	if shown, in := agentTabNow(t, a); !shown {
 		t.Fatalf("no tab before the change (%+v)", in)
 	}
+	if !a.FeatureAccess("user_groups__manage") {
+		t.Fatal("user_groups__manage off before the event; the fake's list has it on")
+	}
+	f := a.features()
+	f.mu.Lock()
+	readAt := f.at
+	f.mu.Unlock()
 	evs, stop := a.Subscribe()
 	defer stop()
 	b, _ := json.Marshal(map[string]any{"type": "feature_access_policies_updated",
@@ -481,6 +488,17 @@ func TestAgentTasksFeatureAccessLive(t *testing.T) {
 	}
 	if a.FeatureAccess("agent_tasks__write") {
 		t.Error("agent_tasks__write still on after the event turned it off")
+	}
+	// updateFeatureAccessStore merges: the policies the event leaves out
+	// keep their values, and the hourly read keeps its time
+	if !a.FeatureAccess("user_groups__manage") {
+		t.Error("user_groups__manage went off with an event that only named agent_tasks__write, want it kept (Slack merges)")
+	}
+	f.mu.Lock()
+	at := f.at
+	f.mu.Unlock()
+	if !at.Equal(readAt) {
+		t.Errorf("the event moved the policies' read time from %v to %v, want the hourly read left on its time", readAt, at)
 	}
 }
 

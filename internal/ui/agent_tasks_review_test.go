@@ -4,6 +4,7 @@ package ui
 // internal/fakeslack (Atlas). Synthetic only.
 
 import (
+	"encoding/json"
 	"image"
 	"net/url"
 	"slices"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 )
 
@@ -220,10 +222,14 @@ func TestAgentTasksTabRowButtons(t *testing.T) {
 
 // TestAgentTasksTabCardFailureQuiet: with the agent DM open and its app
 // card's fetch failing, the tab bar asks for the card once and then
-// waits (the failure is remembered for a minute), instead of fetching and
-// redrawing on every frame while the client's backoff answers each try at
-// once.
+// waits (Slack keeps the app non-existent until a reconnect or an app
+// event), instead of fetching and redrawing on every frame. The client's
+// failure backoff is 1 ms here, so a fetch on every frame would reach the
+// fake.
 func TestAgentTasksTabCardFailureQuiet(t *testing.T) {
+	prevBase := slack.BackoffBase
+	slack.BackoffBase = time.Millisecond
+	t.Cleanup(func() { slack.BackoffBase = prevBase })
 	e, fs := agentTasksEnv(t, nil)
 	var fetches atomic.Int32
 	fs.SetHook(func(m string, _ url.Values) (any, bool) {
@@ -248,5 +254,48 @@ func TestAgentTasksTabCardFailureQuiet(t *testing.T) {
 	}
 	if n := fetches.Load() - before; n > 1 {
 		t.Errorf("the app card was fetched %d more times in 2 s: want the failure remembered", n)
+	}
+}
+
+// TestAgentTasksTabAfterAppEvent: a card fetch that failed as the DM
+// opened leaves the app non-existent and the Tasks tab hidden until
+// something marks the app stale; apps_installed for Atlas does
+// (sharedUpsertAppFromImsg), and Tasks comes back at once, without a
+// reconnect or a timer.
+func TestAgentTasksTabAfterAppEvent(t *testing.T) {
+	e, fs := agentTasksEnv(t, nil)
+	var fetches atomic.Int32
+	refuse := atomic.Bool{}
+	refuse.Store(true)
+	fs.SetHook(func(m string, _ url.Values) (any, bool) {
+		if m == "apps.profile.get" {
+			fetches.Add(1)
+			if refuse.Load() {
+				return map[string]any{"ok": false, "error": "internal_error"}, true
+			}
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
+	e.agentDM(t, "messages,about")
+	e.until("the card's refused fetch", 10*time.Second, func() bool { return fetches.Load() >= 1 })
+	e.settle(500 * time.Millisecond)
+	dm := blockkit.AppDMFor(e.a, fakeslack.AgentTasksDMID)
+	if dm == nil {
+		t.Fatal("no agent DM")
+	}
+	if slices.Contains(dm.Tabs(), "tasks") {
+		t.Fatalf("with the card refused the tabs are %v, want no Tasks", dm.Tabs())
+	}
+	before := fetches.Load()
+	refuse.Store(false)
+	b, _ := json.Marshal(map[string]any{"type": "apps_installed", "app": map[string]any{"id": fakeslack.AgentTasksAppID}})
+	e.a.data.core.Inject(slack.Event{Type: "apps_installed", Raw: b})
+	e.until("Tasks after apps_installed", 5*time.Second, func() bool {
+		dm := blockkit.AppDMFor(e.a, fakeslack.AgentTasksDMID)
+		return dm != nil && slices.Contains(dm.Tabs(), "tasks")
+	})
+	if n := fetches.Load() - before; n != 1 {
+		t.Errorf("apps_installed brought %d card fetches, want 1", n)
 	}
 }

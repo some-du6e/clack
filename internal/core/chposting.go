@@ -489,9 +489,12 @@ func (a *App) loadFeatures(ctx context.Context) {
 }
 
 // onFeatureAccessUpdated is boot-render's featureAccessUpdate: the
-// event's feature_access_policies (the list's shape) replace the policies
+// event's feature_access_policies (the list's shape) go into the policies
 // at once, so what reads them (the Tasks tab's agent_tasks__write) follows
-// a plan change without waiting for the hourly read.
+// a plan change without waiting for the hourly read. They merge, as
+// updateFeatureAccessStore's reducer does (zxoU: {...state, ...event}): a
+// policy the event leaves out keeps its value, and the hourly read keeps
+// its time (and still runs first when the boot read hasn't).
 func (a *App) onFeatureAccessUpdated(raw json.RawMessage) {
 	var e struct {
 		Policies map[string]struct {
@@ -501,13 +504,14 @@ func (a *App) onFeatureAccessUpdated(raw json.RawMessage) {
 	if json.Unmarshal(raw, &e) != nil || e.Policies == nil {
 		return
 	}
-	on := map[string]bool{}
-	for k, v := range e.Policies {
-		on[k] = v.Enabled
-	}
 	f := a.features()
 	f.mu.Lock()
-	f.on, f.known, f.at = on, true, time.Now()
+	if f.on == nil {
+		f.on = map[string]bool{}
+	}
+	for k, v := range e.Policies {
+		f.on[k] = v.Enabled
+	}
 	f.mu.Unlock()
 	a.emit(Event{Type: "features"})
 }

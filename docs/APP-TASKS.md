@@ -105,6 +105,21 @@ Any failure deletes what was made: `workflows.triggers.delete` (VV9g) for a trig
 
 Clack's core emits both events as `Event{Type: "agent_task"}`. The tab drops a deleted task on the next frame and reads the list again for everything else.
 
+- `feature_access_policies_updated {feature_access_policies}` (**featureAccessUpdate**): updateFeatureAccessStore (zxoU) merges the event into the stored policies (`{...state, ...event}`), so a policy the event leaves out keeps its value. Clack merges too and leaves the hourly `features.access.policies.list` read on its time.
+
+### The app's profile (apps.profile.get)
+
+The tab rule needs the app's profile (`is_agent_app`, `is_shown_as_agent`). Slack fetches an app it doesn't have through UnknownFetchManager (0mwJ). Each attempt gets 65 s, and only a timeout is tried again, three attempts in all. Any other error, or the last timeout, stores the app as non-existent. The apps refetcher (FftE over p7oS) then marks it fresh with no max age, so every reader gets the non-existent app without a request. That lasts until something marks it stale:
+
+- a slow reconnect: `_maybeResetState` sees the slow connection count move ("Connection count a -> n: marking all as stale"), which marks every app stale;
+- `apps_installed` or `apps_changed` (sharedUpsertAppFromImsg), which marks `app.id` stale;
+- `apps_uninstalled` (sharedAppUninstalled), which marks `app_id` stale;
+- `bot_changed` (botChanged), which marks the bot's `app_id` stale.
+
+A refetch of an app Slack already has swallows its error, and the stored profile stays, fresh again.
+
+Clack's `AppCardOf` (core/app_card.go) follows the same rule. Its fetch runs on the App's context, so one caller's deadline ends only that caller's wait. A failure is remembered for every caller (the tab bar, the app hover card, App details, About) until one of the four events or a slow reconnect forgets it. Both emit `Event{Type: "app_card"}`, so the open DM draws a frame and the tab bar asks again. A failed refetch keeps the last card. The 10-minute refetch of a card that did load is Clack's own; Slack keeps a loaded profile until the same resets.
+
 ## Where else tasks show
 
 - The agent DM header button and peek (`feat_agents_dms`), described above.
