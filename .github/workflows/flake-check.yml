@@ -264,6 +264,9 @@ on:
       - "internal/fakeslack/react_live.go"
       - "internal/store/reacts.go"
       - "internal/ui/views/taut.go"
+      # the giant-messages job's own
+      - "internal/fakeslack/giant.go"
+      - "internal/ui/giant_messages_test.go"
 
 permissions:
   contents: read
@@ -1882,6 +1885,51 @@ jobs:
           go test -race -count=1 -run '^TestRootTokensDeclares$' ./internal/ui/slackc/css || rc=1
           go test -race -count=1 -run '^(TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views || rc=1
           exit $rc
+
+  # Messages the shape of the channel Heliodex reported (2026-11-20:
+  # opening it took Clack to 13 GB): #giant-wall (fakeslack Size.Giant,
+  # synthetic text), 92 of its latest 100 messages each about 908,000
+  # characters in about 92,000 lines. TestGiantMessagesBounded opens it,
+  # scrolls, pages back to the 100th newest and jumps around, under the
+  # GPU renderer (llvmpipe), and fails past its live heap, peak RSS and
+  # frame time bounds or when a giant message doesn't draw what Slack
+  # draws. Its heap profiles and report are the giant-messages artifact.
+  # Dispatch with only=giant-messages.
+  giant-messages:
+    if: ${{ !inputs.only || startsWith('giant-messages', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps (Xvfb, Mesa llvmpipe)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: TestGiantMessagesBounded (one verbose run, then COUNT)
+        env:
+          CLACK_GIANT_MESSAGES: "100"
+          CLACK_BENCH_GPU: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          mkdir -p "$RUNNER_TEMP/giant/1"
+          CLACK_GIANT_OUT="$RUNNER_TEMP/giant/1" xvfb-run -a -s "-screen 0 1440x900x24" go test -count=1 -v -timeout 30m -run '^TestGiantMessagesBounded$' ./internal/ui 2>&1 | tail -150
+          [ "${PIPESTATUS[0]}" = 0 ] || rc=1
+          if [ "$COUNT" -gt 1 ]; then
+            xvfb-run -a -s "-screen 0 1440x900x24" go test -count=$((COUNT - 1)) -timeout 60m -run '^TestGiantMessagesBounded$' ./internal/ui || rc=1
+          fi
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: giant-messages
+          path: ${{ runner.temp }}/giant
+          retention-days: 7
 
   # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
   # host's pages (files.slack.com/ssb/redirect), dot segments however many
