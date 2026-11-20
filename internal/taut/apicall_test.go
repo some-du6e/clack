@@ -50,7 +50,6 @@ const apiProbePlugin = `class APIProbe extends TautPlugin {
           message: err?.message, keys: Object.keys(err), hasData: 'data' in err, own }
       }
     }
-  }
     globalThis.__userAPIProbe = async (method, params, options) => {
       try {
         return { settled: 'resolved', res: await api.userAPI(method, params, options) }
