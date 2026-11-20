@@ -3264,10 +3264,11 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	top := dp(gtx, mt.padTop)
 	av := dp(gtx, mt.avatar)
 	sq := image.Rect(padX, top, padX+av, top+av)
-	rrect(gtx.Ops, sq, dp(gtx, 8), r.seeFill(c, c.BadgeBg, c.raw.BadgeBg))
+	sqFill := r.seeFill(c, c.TombBg, c.raw.TombBg)
+	rrect(gtx.Ops, sq, dp(gtx, 8), sqFill)
 	is := dp(gtx, 20)
 	at(gtx, padX+(av-is)/2, top+(av-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)
+		return icons.Get("trash")(gtx, unit.Dp(20), richview.Over(c.TombGlyph, sqFill))
 	})
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
 	// .c-message_kit__tombstone__right { margin: -4px 0 }; its

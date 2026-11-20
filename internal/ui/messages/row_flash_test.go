@@ -151,3 +151,30 @@ func TestFlashTintsSeeThroughFills(t *testing.T) {
 	}
 	t.Errorf("no reaction pill drawn in %v over the highlight %v; fills %v", want, c.Highlight, fills)
 }
+
+// TestTombstoneSquareLikeSlack: the deleted message's square is
+// .c-message_kit__tombstone__icon's rgba(fg_low,.13) in both modes, about
+// (226,226,226) over the light pane. Clack drew it in BadgeBg, 6% in light
+// mode: (241,241,241).
+func TestTombstoneSquareLikeSlack(t *testing.T) {
+	e := newCtxEnvSetup(t, tFlashCh, flashMsgs()[:1], nil)
+	until(t, 5*time.Second, "the deleted message's row", e.frame, func() bool { return e.row(tsFlashTomb) != nil })
+	type fill struct {
+		r image.Rectangle
+		c color.NRGBA
+	}
+	var fills []fill
+	rrectHook = func(r image.Rectangle, c color.NRGBA) { fills = append(fills, fill{r, c}) }
+	e.frame()
+	rrectHook = nil
+	want := richview.Over(rgba(0x1d1c1d, 0.13), rgb(0xffffff))
+	var squares []color.NRGBA
+	for _, f := range fills {
+		if f.r.Dx() == 36 && f.r.Dy() == 36 {
+			squares = append(squares, f.c)
+		}
+	}
+	if len(squares) != 1 || squares[0] != want {
+		t.Errorf("the deleted message's square drew %v; want rgba(fg_low,.13) over the pane, %v", squares, want)
+	}
+}
