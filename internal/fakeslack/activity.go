@@ -117,6 +117,20 @@ func activityAgentEntry() map[string]any {
 			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": ActivityAgentTS, "channel": ActivityAgentDM}}}}}}
 }
 
+// AddActivityMention puts an unread at_user entry key about ch's message
+// ts by user at the top of the feed (newest first, newer than the
+// fixture's): post the message first (PostQuiet) so messages.list
+// answers it. activity_invalidated makes a client read the feed again.
+func (s *Server) AddActivityMention(key, ch, ts, user string) {
+	v := s.views()
+	v.mu.Lock()
+	st := v.act()
+	st.mentions = append([]map[string]any{{"key": key, "feed_ts": ts, "is_unread": true, "is_bot": false,
+		"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": ts, "channel": ch, "author_user_id": user}}}}, st.mentions...)
+	sort.SliceStable(st.mentions, func(i, j int) bool { return st.mentions[i]["feed_ts"].(string) > st.mentions[j]["feed_ts"].(string) })
+	v.mu.Unlock()
+}
+
 // SetActivityAgentActions puts the agent entry (fa-agent) at the top of
 // the feed.
 func (s *Server) SetActivityAgentActions(on bool) {
@@ -214,10 +228,11 @@ type activityState struct {
 	sort      string            // activity.prefs.update's sort ("" = "newest")
 	viewDense map[string]string // activity.views.update's density by view id
 	saved     map[string]map[string]any
-	ignored   map[string]bool // invites ignored or accepted
-	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
-	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
-	agent     bool            // the agent entry first (SetActivityAgentActions)
+	ignored   map[string]bool  // invites ignored or accepted
+	inviteIDs bool             // external invites' item.invite is the id string (SetActivityInviteIDs)
+	bulk      int              // extra unread mentions, and a paged feed (SetActivityBulk)
+	agent     bool             // the agent entry first (SetActivityAgentActions)
+	mentions  []map[string]any // AddActivityMention's entries, newest first
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -351,6 +366,9 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		entries := activityEntries(s.URL)
 		if st.agent {
 			entries = append([]map[string]any{activityAgentEntry()}, entries...)
+		}
+		if len(st.mentions) > 0 {
+			entries = append(slices.Clone(st.mentions), entries...)
 		}
 		bulk := st.bulk
 		if bulk > 0 {
