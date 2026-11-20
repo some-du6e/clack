@@ -328,21 +328,19 @@ func (a *App) AppCardOf(ctx context.Context, userID, botID string) (AppCard, err
 
 // runAppCardFetch is UnknownFetchManager.fetchWithRetries for one card,
 // on the App's context: each apps.profile.get gets appCardAttempt, one
-// that times out is sent again (past the client's failure backoff) up to
-// appCardTries in all, and any other error ends the fetch. A fetch that
-// fails keeps the card it refetched (Slack's refetcher swallows the error
-// and marks the app fresh); with no card the app is non-existent
-// (upsertNonExistent, marked fresh with no max age) until it is marked
-// stale.
+// that times out is sent again up to appCardTries in all, and any other
+// error ends the fetch. A fetch that fails keeps the card it refetched
+// (Slack's refetcher swallows the error and marks the app fresh); with no
+// card the app is non-existent (upsertNonExistent, marked fresh with no
+// max age) until it is marked stale. Every attempt goes past the client's
+// failure backoff (slack.NoBackoff): the card's own rule decides when to
+// ask (a first read, a read after a reset, a stale card), and the guard
+// would answer the read after a reset with the failure it just forgot.
 func (a *App) runAppCardFetch(c *appCardCache, e *appCardEntry, botID, appID, userID string) {
 	var card AppCard
 	var err error
 	for try := 1; try <= appCardTries; try++ {
-		ctx := a.bg
-		if try > 1 {
-			ctx = slack.NoBackoff(ctx)
-		}
-		actx, cancel := context.WithTimeout(ctx, appCardAttempt)
+		actx, cancel := context.WithTimeout(slack.NoBackoff(a.bg), appCardAttempt)
 		card, err = a.fetchAppCard(actx, botID, appID)
 		cancel()
 		if !appCardTimedOut(err) {

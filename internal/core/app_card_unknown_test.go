@@ -230,3 +230,38 @@ func TestAppCardNotAnApp(t *testing.T) {
 		t.Errorf("a member with no bot sent %d apps.profile.get requests, want none", n)
 	}
 }
+
+// A reset asks again at once, even right after the failure it forgets:
+// with the client's failure backoff at its default, the read after an app
+// event or a slow reconnect still reaches the server (the guard would
+// answer it with the refusal it remembers).
+func TestAppCardResetAsksPastBackoff(t *testing.T) {
+	a, f := testApp(t)
+	a.S.PutUsers([]slack.User{{ID: "UBOT1", Name: "atlas1", IsBot: true, Profile: slack.Profile{BotID: "BBOT1", APIAppID: "ABOT1"}}})
+	ctx := context.Background()
+	a.socketConnected(false)
+	for i, reset := range []func(){
+		func() { a.handle(rtm("apps_changed", map[string]any{"app": map[string]any{"id": "ABOT1"}})) },
+		func() { a.socketConnected(false) },
+	} {
+		setCardReply(f, cardRefused, nil)
+		if _, err := a.AppCardOf(ctx, "UBOT1", ""); err == nil {
+			t.Fatalf("reset %d: the refused fetch answered a card", i)
+		}
+		before := f.count("apps.profile.get")
+		setCardReply(f, cardOK("ABOT1"), nil)
+		reset()
+		card, err := a.AppCardOf(ctx, "UBOT1", "")
+		if err != nil || card.AppID != "ABOT1" {
+			t.Errorf("reset %d: the read right after it answered %+v %v, want the card (sent past the backoff)", i, card, err)
+		}
+		if n := f.count("apps.profile.get") - before; n != 1 {
+			t.Errorf("reset %d: %d requests after the reset, want 1", i, n)
+		}
+		// make the card fail again for the next reset: stale, and no card to keep
+		c := a.appCards()
+		c.mu.Lock()
+		delete(c.m, a.appCardKey("UBOT1", ""))
+		c.mu.Unlock()
+	}
+}
