@@ -40,6 +40,17 @@ func TestNestedBlockElements(t *testing.T) {
 		sameJSON(t, c.aid+" container", got.Container, map[string]any{"type": "message", "message_ts": ts["nested"],
 			"channel_id": fakeslack.GalleryChannelID, "is_ephemeral": false})
 	}
+	// nested in an attachment's container: the attachment's container
+	// (AttachmentBlocks' containerActionsPayload: message_attachment with
+	// its attachment_id, for every action from its renderer)
+	e.idle("bk_nested_att_actions")
+	e.clickEl("bk_nested_att_actions", "nested_att_go")
+	n++
+	got := e.calls(n)[n-1]
+	sameJSON(t, "attachment's nested action", got.Actions, []any{map[string]any{"type": "button", "block_id": "bk_nested_att_actions",
+		"action_id": "nested_att_go", "text": pt("Deploy"), "value": "deploy"}})
+	sameJSON(t, "attachment's nested container", got.Container, map[string]any{"type": "message_attachment", "message_ts": ts["nested"],
+		"attachment_id": 1, "channel_id": fakeslack.GalleryChannelID, "is_ephemeral": false})
 }
 
 // TestCardElements: a card's action is a live element (Card's actions

@@ -575,6 +575,9 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
 		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+	if v.opts.FillBlocks {
+		l.filled = 1 // a view's blocks (FillBlocks)
+	}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
 		l.css = &v.css

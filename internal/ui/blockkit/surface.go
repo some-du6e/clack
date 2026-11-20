@@ -437,7 +437,7 @@ func (s *Surface) docOf(b *Block) richtext.Doc {
 func (s *Surface) textOf(key string, doc func() richtext.Doc) *richview.View {
 	v := s.texts[key]
 	if v == nil {
-		v = richview.New(doc(), richview.Options{})
+		v = richview.New(doc(), richview.Options{FillBlocks: true}) // a view's blocks: no flex wrappers
 		s.texts[key] = v
 	}
 	return v
@@ -493,7 +493,7 @@ func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 		if s.nested == nil {
 			s.nested = &nestedElements{s: s}
 		}
-		v.SetOptions(richview.Options{Elements: s.nested})
+		v.SetOptions(richview.Options{Elements: s.nested, FillBlocks: true})
 	}
 	d := v.Layout(gtx, st, &s.hand)
 	return d.Size.Y
@@ -696,7 +696,7 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 	}
 	if b.Hint != nil {
 		v := s.textOf(key+"\x00h", func() richtext.Doc { return docOfText(s.h, *b.Hint) })
-		v.SetOptions(richview.Options{Muted: true, Compact: true})
+		v.SetOptions(richview.Options{Muted: true, Compact: true, FillBlocks: true})
 		d := at(gtx, image.Pt(0, y+dp(gtx, 4)), func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 			return v.Layout(gtx, styleFor(th, s.h.Images()), &s.hand)

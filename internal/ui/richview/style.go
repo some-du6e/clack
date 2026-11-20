@@ -335,6 +335,10 @@ func (s *Style) Invalidate() {
 // Options are per-message rendering flags.
 type Options struct {
 	Edited bool // append "(edited)" after the last text block
+	// FillBlocks: the doc is a view's (a modal's, App Home's), whose block
+	// wrappers aren't flex (WSwB wrapViewBlock, wrapAppHomeBlock): an
+	// alert fills the width, as it does in a callout or a container
+	FillBlocks bool
 	// CheckLists: rich_text check lists draw their checkboxes, as the
 	// rich_text renderable allows in a message or a thread (allowCheckList:
 	// s3Wf sS's blocks container contexts); elsewhere they're bullet lists

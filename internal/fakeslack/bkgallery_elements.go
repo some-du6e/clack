@@ -317,9 +317,17 @@ func galleryElements(s *Server) []slack.Message {
 	var out []slack.Message
 	for _, name := range GalleryElementNames {
 		b, _ := json.Marshal(msgs[name])
-		out = append(out, slack.Message{Type: "message", Text: "Block Kit gallery: " + name, Blocks: b, ClientMsgID: "bk-elements-" + name,
+		m := slack.Message{Type: "message", Text: "Block Kit gallery: " + name, Blocks: b, ClientMsgID: "bk-elements-" + name,
 			BotID: GalleryBotID, BotProfile: &slack.BotProfile{ID: GalleryBotID, Name: "Gallery Bot", AppID: GalleryAppID,
-				UserID: GalleryBotUserID, TeamID: TeamID}})
+				UserID: GalleryBotUserID, TeamID: TeamID}}
+		if name == "nested" {
+			// an attachment's container: its button's actions carry the
+			// attachment's container (AttachmentBlocks), not the message's
+			ab, _ := json.Marshal([]map[string]any{{"type": "container", "block_id": "bk_nested_att_container", "title": pt("In an attachment"),
+				"child_blocks": []any{act("bk_nested_att_actions", btn("nested_att_go", "Deploy", "deploy"))}}})
+			m.Attachments = []slack.Attachment{{ID: 1, Color: "36a64f", Fallback: "A container in an attachment", Blocks: ab}}
+		}
+		out = append(out, m)
 	}
 	return out
 }

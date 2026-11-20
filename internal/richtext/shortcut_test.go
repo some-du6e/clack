@@ -5,15 +5,17 @@ import (
 	"testing"
 )
 
-// botStateRes is the fake resolver with members' deleted state (U1 and
-// U2 known, UDEL deleted; anyone else not loaded yet).
+// botStateRes is the fake resolver with members' state: U0BOT00001 and
+// U0BOT00002 loaded, U0BOTDELE1 deleted, U0GONE0001 not found by
+// users.info (Slack's non-existent member: known, not deleted); any other
+// member-shaped id is still being fetched.
 type botStateRes struct{ fakeRes }
 
 func (botStateRes) MemberDeleted(id string) (bool, bool) {
 	switch id {
-	case "U1", "U2":
+	case "U0BOT00001", "U0BOT00002", "U0GONE0001":
 		return false, true
-	case "UDEL":
+	case "U0BOTDELE1":
 		return true, true
 	}
 	return false, false
@@ -39,34 +41,45 @@ func TestShareShortcutBlock(t *testing.T) {
 		want         []string
 	}{
 		{"a link trigger: Start Workflow trips its url, no byline",
-			sc(`,"trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U1"`),
+			sc(`,"trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U0BOT00001"`),
 			[]string{"enabled shortcut Request a review|Asks the team for a review|url=https://slack.com/shortcuts/Ft0001/def|byline=|bicon=|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
 		{"no trigger_type is a link trigger; contains_ai_steps is the AI badge",
-			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U2","contains_ai_steps":true`),
+			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U0BOT00002","contains_ai_steps":true`),
 			[]string{"enabled shortcut Request a review|Asks the team for a review|url=https://slack.com/shortcuts/Ft0001/def|byline=|bicon=|icon=https://wf.test/app.png|ai=true|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
 		{"an event trigger words its event and has no Start button",
-			sc(`,"trigger_type":"event","trigger_subtype":"reaction_added","url":"https://slack.com/shortcuts/x","bot_user_id":"U1"`),
+			sc(`,"trigger_type":"event","trigger_subtype":"reaction_added","url":"https://slack.com/shortcuts/x","bot_user_id":"U0BOT00001"`),
 			[]string{"enabled event Request a review|Asks the team for a review|url=|byline=Starts when a reaction is used|bicon=add-reaction|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
 		{"an event subtype Slack doesn't know has no byline; a slack#/events/ prefix is stripped",
 			"", nil},
 		{"scheduled",
-			sc(`,"trigger_type":"scheduled","bot_user_id":"U1"`),
+			sc(`,"trigger_type":"scheduled","bot_user_id":"U0BOT00001"`),
 			[]string{"enabled scheduled Request a review|Asks the team for a review|url=|byline=Starts on a schedule|bicon=clock|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
-		{"the bot not loaded yet is the loading card; no bot at all too",
-			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U9"`),
+		{"a member-shaped bot still being fetched is the loading card (isUnknownObject)",
+			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U0BOT00009"`),
 			[]string{"loading shortcut Request a review|Asks the team for a review|url=https://slack.com/shortcuts/Ft0001/def|byline=|bicon=|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
+		// getMemberById: no id, an id that isn't member-shaped and a member
+		// users.info didn't find are non-existent members, not unknown
+		{"no bot at all is the enabled card",
+			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def"`),
+			[]string{"enabled shortcut Request a review|Asks the team for a review|url=https://slack.com/shortcuts/Ft0001/def|byline=|bicon=|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
+		{"a bot id that isn't member-shaped is the enabled card",
+			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U9"`),
+			[]string{"enabled shortcut Request a review|Asks the team for a review|url=https://slack.com/shortcuts/Ft0001/def|byline=|bicon=|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
+		{"a bot users.info didn't find is the enabled card",
+			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U0GONE0001"`),
+			[]string{"enabled shortcut Request a review|Asks the team for a review|url=https://slack.com/shortcuts/Ft0001/def|byline=|bicon=|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
 		{"a deleted bot: the workflow no longer exists",
-			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"UDEL"`),
+			sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U0BOTDELE1"`),
 			[]string{"deleted shortcut Request a review|Asks the team for a review|url=https://slack.com/shortcuts/Ft0001/def|byline=|bicon=|icon=https://wf.test/app.png|ai=false|share=https://slack.com/shortcuts/Ft0001/abc|wf=Wf0001"}},
 	}
 	for _, c := range cases {
 		if c.want == nil { // the prefixed subtype
-			d := FromMessage(botStateRes{}, msg(t, `{"ts":"1.0","text":"x","blocks":`+sc(`,"trigger_type":"event","trigger_subtype":"slack#/events/user_joined_channel/C1","bot_user_id":"U1"`)+`}`))
+			d := FromMessage(botStateRes{}, msg(t, `{"ts":"1.0","text":"x","blocks":`+sc(`,"trigger_type":"event","trigger_subtype":"slack#/events/user_joined_channel/C1","bot_user_id":"U0BOT00001"`)+`}`))
 			got := shortcutOf(d)
 			if len(got) != 1 || !strings.Contains(got[0], "byline=Starts when someone joins a channel|bicon=user-add") {
 				t.Errorf("%s: %q", c.name, got)
 			}
-			d = FromMessage(botStateRes{}, msg(t, `{"ts":"1.0","text":"x","blocks":`+sc(`,"trigger_type":"event","trigger_subtype":"weather_changed","bot_user_id":"U1"`)+`}`))
+			d = FromMessage(botStateRes{}, msg(t, `{"ts":"1.0","text":"x","blocks":`+sc(`,"trigger_type":"event","trigger_subtype":"weather_changed","bot_user_id":"U0BOT00001"`)+`}`))
 			if got := shortcutOf(d); len(got) != 1 || !strings.Contains(got[0], "byline=|bicon=|") {
 				t.Errorf("%s: unknown subtype %q", c.name, got)
 			}
@@ -77,7 +90,7 @@ func TestShareShortcutBlock(t *testing.T) {
 	}
 	// in an attachment, as the real one came (a shared workflow link's unfurl)
 	d := FromMessage(botStateRes{}, msg(t, `{"ts":"1.0","text":"<https://slack.com/shortcuts/Ft0001/abc>","attachments":[{"id":1,"from_url":"https://slack.com/shortcuts/Ft0001/abc","blocks":`+
-		sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U1"`)+`}]}`))
+		sc(`,"url":"https://slack.com/shortcuts/Ft0001/def","bot_user_id":"U0BOT00001"`)+`}]}`))
 	found := false
 	for _, b := range d.Blocks {
 		if b.Att != nil {

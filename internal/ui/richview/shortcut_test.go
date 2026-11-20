@@ -1,6 +1,12 @@
 package richview
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+
+	rt "github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
+)
 
 // TestShortcutCardLayout: a share_shortcut card lays out as Slack's
 // WorkflowEntity (boot-shared KrN7 on VLgN): 420 wide, radius 12; the
@@ -55,10 +61,28 @@ func TestShortcutCardLayout(t *testing.T) {
 		}
 	}
 
-	// no bot member to read: the loading card, nothing to click
-	d = kitDoc(t, `[{"type":"share_shortcut","function_trigger_id":"Ft0002","title":"Gone","trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0002/x"}]`)
+	// a bot still being fetched: the loading card, which still opens the
+	// details and has its actions bar (KrN7: interactive but when deleted)
+	m := slack.Message{TS: "1.0", Text: "x", Blocks: json.RawMessage(`[{"type":"share_shortcut","function_trigger_id":"Ft0002","title":"Soon",
+		"trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0002/x","bot_user_id":"U0BOT00009"}]`)}
+	v = layoutAt(st, rt.FromMessage(fetchingRes{}, &m), Options{}, 800)
+	if hasFrag(&v.d, "Soon") {
+		t.Error("the loading card drew its title (want the skeletons)")
+	}
+	for _, act := range []string{"open", "more"} {
+		if _, ok := workflowAct(v, act); !ok {
+			t.Errorf("the loading card has no %q target", act)
+		}
+	}
+	// no bot at all: a non-existent member, the enabled card
+	d = kitDoc(t, `[{"type":"share_shortcut","function_trigger_id":"Ft0003","title":"Here","trigger_type":"shortcut","url":"https://slack.com/shortcuts/Ft0003/x"}]`)
 	v = layoutAt(st, d, Options{}, 800)
-	if _, ok := workflowAct(v, "open"); ok {
-		t.Error("a loading card is clickable")
+	if !hasFrag(&v.d, "Here") || !hasFrag(&v.d, "Start") {
+		t.Errorf("a card with no bot: %q, want the enabled card with Start Workflow", fragStrings(&v.d))
 	}
 }
+
+// fetchingRes is codeRes whose members are all still being fetched.
+type fetchingRes struct{ codeRes }
+
+func (fetchingRes) MemberDeleted(string) (bool, bool) { return false, false }

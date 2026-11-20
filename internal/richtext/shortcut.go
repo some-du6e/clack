@@ -13,7 +13,10 @@ package richtext
 // card's state: not loaded yet, the loading skeleton; deleted, the
 // compact "This workflow no longer exists." card.
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // ShortcutCard is what a share_shortcut card shows.
 type ShortcutCard struct {
@@ -39,10 +42,27 @@ type ShortcutCard struct {
 }
 
 // MemberStater is an optional Resolver extension: whether a member is
-// deleted (known false while they aren't loaded; the resolver asks for
-// them and the Doc is rebuilt when they come).
+// deleted. known is false while a member-shaped id is still being fetched
+// (the resolver asks for it and the Doc is rebuilt when it comes); a
+// member users.info didn't find is known, and not deleted (Slack's
+// non-existent member).
 type MemberStater interface {
 	MemberDeleted(id string) (deleted, known bool)
+}
+
+var memberIDRe = regexp.MustCompile(`^@?(U|W)[A-Z0-9]{8,}$`)
+
+// LooksLikeMemberID is Slack's looksLikeMemberId (5oKS): Slackbot and
+// Slack's fixed members (USLACKBOT, USEARCH, UCHANNELEXPERT, USLACK,
+// UTBD), or "U" or "W" and eight or more of A-Z0-9, an "@" before it
+// allowed. getMemberById fetches only ids that look like this; any other
+// is a non-existent member at once.
+func LooksLikeMemberID(id string) bool {
+	switch id {
+	case "USLACKBOT", "USEARCH", "UCHANNELEXPERT", "USLACK", "UTBD":
+		return true
+	}
+	return memberIDRe.MatchString(id)
 }
 
 // bkShortcut is a share_shortcut block's fields (bk embeds it).
@@ -79,11 +99,14 @@ func (c *builder) shortcutBlock(b *bk) Block {
 			sc.Icon = SafeImage(s.Icon)
 		}
 	}
-	// WorkflowEntity's bot member (getMemberById): unknown is the loading
-	// card, deleted the "no longer exists" one
+	// WorkflowEntity's bot member (KrN7: getMemberById, then
+	// isUnknownObject and isDeleted). No id, or one that isn't
+	// member-shaped, is a non-existent member at once, as is a member
+	// users.info didn't find: the enabled card. Only a member-shaped id
+	// still being fetched is the unknown object, the loading card; a
+	// deleted member is the "no longer exists" one.
 	switch ms, ok := c.r.(MemberStater); {
-	case sc.BotUserID == "":
-		sc.State = "loading"
+	case sc.BotUserID == "" || !LooksLikeMemberID(sc.BotUserID):
 	case ok:
 		del, known := ms.MemberDeleted(sc.BotUserID)
 		switch {

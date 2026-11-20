@@ -430,8 +430,11 @@ func (me *Message) base() core.BlockAction {
 // attOf returns the attachment holding block id bid (nil: the message).
 func (me *Message) attOf(bid string) *attachment {
 	for i := range me.atts {
-		for j := range me.atts[i].Blocks {
-			if me.atts[i].Blocks[j].BlockID == bid {
+		// its blocks and the blocks nested in them (a container's, a
+		// callout's, a fallback's): AttachmentBlocks sends every action
+		// from its renderer with the attachment's container (SpAO)
+		for _, b := range allBlocks(me.atts[i].Blocks) {
+			if b.BlockID == bid {
 				return &me.atts[i]
 			}
 		}

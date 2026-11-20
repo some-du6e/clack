@@ -909,11 +909,14 @@ func firstNonEmptyName(v ...string) string {
 // deleted; known is false for a member not loaded yet, which is noted to
 // be fetched.
 func (s *Store) MemberDeleted(id string) (deleted, known bool) {
-	u, ok := s.User(id) // a miss is asked for
-	if !ok || u == nil {
-		return false, false
-	}
-	return u.Deleted, true
+	now := time.Now().UnixMilli()
+	s.mu.RLock()
+	u, known := s.lookupLocked(id, now)
+	s.mu.RUnlock()
+	s.afterLookup(id, known) // a miss is asked for
+	// a member users.info didn't find is known (Slack's non-existent
+	// member), and not deleted
+	return u != nil && u.Deleted, known
 }
 
 // MemberAvatar is richtext.MemberNamer: the member's own picture for a

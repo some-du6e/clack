@@ -55,7 +55,9 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 	bw := max(1, l.dp(1))
 	pad := l.dp(12)
 	enabled, loading, deleted := sc.State == "enabled", sc.State == "loading", sc.State == "deleted"
-	interactive := enabled && !l.opts.HoverCard
+	// KrN7: isInteractive and onClick for every state but deleted (the
+	// loading card opens the details and has its actions bar too)
+	interactive := !deleted && !l.opts.HoverCard
 	box0 := len(l.d.boxes)
 	card := int16(-1)
 	cardHit := -1
