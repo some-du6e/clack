@@ -35,6 +35,13 @@ env:
 permissions:
   contents: read
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
+# A dispatch with other inputs gets its own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.base }}-${{ inputs.count }}-${{ inputs.suite }}
+  cancel-in-progress: true
+
 jobs:
   compare:
     runs-on: ubuntu-latest
