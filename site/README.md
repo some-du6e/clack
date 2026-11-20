@@ -231,18 +231,24 @@ It's built and tested in CI only, by the site workflow's demo job:
    build.json is the same manifest, for the record. Go's LICENSE goes in
    beside `wasm_exec.js`.
 4. `tools/licenses.py --target js/wasm` writes `THIRD_PARTY_LICENSES.txt`.
-5. `tools/check.mjs --demo`.
+5. `tools/check.mjs --demo --untested`: everything the deploy's guard
+   checks but the stamp below.
 6. `tools/demo-test.mjs`: headless Chrome, with WebGL on SwiftShader as a
    machine without a GPU has it, opens the demo, waits for the first frame
    and the channel list, types a message into the composer, sends it with
    Enter and checks the fake has it, with no console error. Its screenshots
-   and timings are the run's `site-demo-test` artifact.
+   and timings are the run's `site-demo-test` artifact, whatever happened.
+   A pass writes `demo/tested.json`, the hash and commit of the program it
+   tested.
+7. The deploy's guard (`tools/check.mjs --production --demo`), from `site/`
+   and from the repo root.
 
-The run's `site-demo` artifact is `dist/demo/` with the program and its
-licences, ready to deploy. To deploy the site with it, from `site/`:
+Only a demo job where all of that passed uploads `site-demo`: `dist/demo/`
+with the program, its licences and the stamp, ready to deploy. To deploy
+the site with a green site run's artifact, from `site/`:
 
 ```sh
-gh run download <site run> --repo some-du6e/clack --name site-demo --dir <empty dir>
+gh run download <green site run> --repo some-du6e/clack --name site-demo --dir <empty dir>
 node build.mjs --refresh --demo <empty dir>
 npm run deploy
 ```
@@ -257,7 +263,10 @@ The deploy is guarded: `npm run deploy` runs `tools/check.mjs --production
 --demo` before `wrangler deploy`, and wrangler.jsonc's build command runs
 the same check before any `wrangler deploy`, so a `dist/` without the
 program and its licences (the page alone says the demo isn't in that
-build) never goes live behind TRY THE DEMO. wrangler runs that command in
+build) never goes live behind TRY THE DEMO. Nor does a program the browser
+test didn't pass: the guard wants `demo/tested.json` naming the manifest's
+hash. It also refuses any file in `dist/demo/` the packed demo doesn't
+have, since wrangler publishes everything there. wrangler runs that command in
 the shell's directory; it works from `site/` and from the repo root
 (`wrangler deploy -c site/wrangler.jsonc`, through `tools/check.mjs` there),
 and checks `site/dist` from either.

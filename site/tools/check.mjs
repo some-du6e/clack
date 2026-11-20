@@ -27,18 +27,22 @@
 //     licences beside it: LICENSE.txt, THIRD_PARTY_NOTICES.txt, the
 //     licence texts the demo job writes (THIRD_PARTY_LICENSES.txt,
 //     tools/licenses.py) and Go's LICENSE beside wasm_exec.js, whose
-//     header points at it. It is also the deploy's guard (wrangler.jsonc's
-//     build command, npm run deploy)
+//     header points at it; the browser test's stamp, demo/tested.json,
+//     naming the manifest's hash (tools/demo-test.mjs writes it when the
+//     demo passes, so a red run's program fails here; --untested is the
+//     demo job's own check before that test); and nothing else in demo/,
+//     since whatever is there gets published. It is also the deploy's guard
+//     (wrangler.jsonc's build command, npm run deploy)
 // Node built-ins only.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, normalize, resolve } from 'node:path';
+import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 
 const site = join(dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
-const mode = { production: argv.includes('--production'), preview: argv.includes('--preview'), pages: argv.includes('--pages'), demo: argv.includes('--demo') };
+const mode = { production: argv.includes('--production'), preview: argv.includes('--preview'), pages: argv.includes('--pages'), demo: argv.includes('--demo'), untested: argv.includes('--untested') };
 const dist = resolve(argv.find((a) => !a.startsWith('--')) ?? join(site, 'dist'));
 const HTML_GZIP_BUDGET = 30 * 1024;
 const errors = [];
@@ -149,6 +153,19 @@ function demoProgram() {
   if (!/^\/demo\/p\/\*\n\s+Cache-Control: public, max-age=31536000, immutable$/m.test(headers)) err('--demo: _headers doesn\'t serve /demo/p/* immutable');
   // the licences that go with it
   const text = (f) => (existsSync(join(dist, f)) ? readFileSync(join(dist, f), 'utf8') : '');
+  // the browser test passed this very program
+  if (!mode.untested) {
+    let t = null;
+    try { t = JSON.parse(text('demo/tested.json')); } catch { /* none */ }
+    if (!t || t.hash !== b.hash) err(`--demo: demo/tested.json ${t ? `names ${t.hash}, not ${b.hash}` : 'is missing'}: deploy only a green site run's site-demo artifact (tools/demo-test.mjs stamps the demo it passed)`);
+  }
+  // nothing else: whatever is in demo/ gets published
+  const allowed = new Set(['demo/index.html', 'demo/build.json', 'demo/LICENSE.txt', 'demo/THIRD_PARTY_NOTICES.txt',
+    'demo/THIRD_PARTY_LICENSES.txt', 'demo/tested.json', ...(b.parts || []).map((q) => `demo/${q.file}`),
+    ...['wasm_exec.js', 'fs.js', 'boot.js', 'LICENSE'].map((f) => `demo/${p}/${f}`)]);
+  for (const f of files.map((f) => f.split(sep).join('/')).filter((f) => f.startsWith('demo/'))) {
+    if (!allowed.has(f)) err(`--demo: ${f} isn't part of the packed demo (only the site-demo artifact's files go in dist/demo/)`);
+  }
   if (!text('demo/LICENSE.txt').includes('MIT License')) err('--demo: demo/LICENSE.txt isn\'t Clack\'s licence');
   if (!text('demo/THIRD_PARTY_NOTICES.txt').startsWith('# Third-party notices')) err('--demo: demo/THIRD_PARTY_NOTICES.txt is missing');
   const lic = text('demo/THIRD_PARTY_LICENSES.txt');

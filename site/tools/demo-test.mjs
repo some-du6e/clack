@@ -10,7 +10,10 @@
 // and, all along, that the console has no errors, the page throws nothing,
 // no request goes anywhere but the local server, and the program doesn't
 // stop. It saves a screenshot after each step and report.json with the
-// timings. CHROME_PATH picks Chrome.
+// timings. CHROME_PATH picks Chrome. A pass stamps the program it tested,
+// demo/tested.json (its manifest's hash and commit), which check.mjs
+// --demo, the deploy's guard, wants: a demo that never passed here can't
+// be deployed.
 //
 //   node tools/demo-test.mjs [dist] [--out demo-test]
 //
@@ -87,6 +90,8 @@ const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 mkdirSync(out, { recursive: true });
+const stamp = join(dist, 'demo', 'tested.json');
+rmSync(stamp, { force: true }); // an earlier pass's, on a dist used again
 const report = { url: `${origin}/demo/?probe`, steps: [], console: [], errors: [], requests: [] };
 let failed;
 try {
@@ -112,6 +117,11 @@ const md = ['### Web demo in headless Chrome', '', '| step | after |', '|---|---
 writeFileSync(join(out, 'report.md'), md);
 if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n', { flag: 'a' });
 console.log(md);
+if (!problems.length) {
+  const b = JSON.parse(readFileSync(join(dist, 'demo', 'build.json'), 'utf8'));
+  writeFileSync(stamp, JSON.stringify({ hash: b.hash, commit: b.commit, test: 'tools/demo-test.mjs',
+    steps: Object.fromEntries(report.steps.map((s) => [s.step, s.ms])) }) + '\n');
+}
 process.exit(problems.length ? 1 : 0);
 
 async function run() {

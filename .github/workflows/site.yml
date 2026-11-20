@@ -32,9 +32,13 @@ name: site
 # Static pages only: nothing here talks to Slack or deploys anything.
 on:
   push:
+    # like the other area workflows, not every agent branch: those dispatch
+    # it (wfmatch) when their files call for it; clack-site is the site's own
+    branches: [ui, main, clack-site]
     paths:
       - "site/**"
       - "assets/icon.svg"
+      - "assets/fonts/**"
       - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
       # the web demo: Clack's Go side, and the licences it ships with
@@ -51,6 +55,7 @@ on:
     paths:
       - "site/**"
       - "assets/icon.svg"
+      - "assets/fonts/**"
       - "internal/pluginlib/compat.go"
       - ".github/workflows/site.yml"
       - "cmd/clack-web/**"
@@ -67,8 +72,10 @@ on:
 permissions:
   contents: read
 
+# A newer run for the same branch, tag or PR cancels this one while it is
+# queued or running, so stale pushes don't pile up in the shared queue.
 concurrency:
-  group: site-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -222,6 +229,7 @@ jobs:
         run: node build.mjs --strict --pages
       - name: the demo's program (GOOS=js GOARCH=wasm)
         run: |
+          set -o pipefail # demo-pack's failures, through tee
           GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w -X main.version=$(git rev-parse --short HEAD)" -o site/dist/demo/main.wasm ./cmd/clack-web
           cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" site/dist/demo/
           # wasm_exec.js's licence: demo-pack puts it beside it, p/<hash>/LICENSE
@@ -234,23 +242,34 @@ jobs:
           python3 tools/licenses.py --target js/wasm -o site/dist/demo/THIRD_PARTY_LICENSES.txt \
             --for "Clack's browser demo, getclack.club/demo/ (main.wasm and wasm_exec.js)" ./cmd/clack-web
           sed -n '/^Contents$/,/^=====/p' site/dist/demo/THIRD_PARTY_LICENSES.txt | sed '$d'
+      # everything but the browser test's stamp, which it doesn't have yet
       - name: static checks, with the demo
         working-directory: site
-        run: node tools/check.mjs --production --pages --demo
+        run: node tools/check.mjs --production --pages --demo --untested
       # boots, draws the channel list, sends a typed message to the fake;
       # no console errors, no request off the local server
       - name: the demo in headless Chrome
         working-directory: site
         run: node tools/demo-test.mjs --out demo-test
+      # the deploy's guard as wrangler runs it, from site/ and (through
+      # tools/check.mjs there) from the repo root: it wants the stamp the
+      # browser test leaves on a pass
+      - name: the deploy guard, from site/ and from the repo root
+        run: |
+          (cd site && node tools/check.mjs --production --demo)
+          node tools/check.mjs --production --demo
+      # the screenshots and report, whatever happened
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: site-demo-test
           path: site/demo-test
           if-no-files-found: ignore
+      # the deployable demo: only when every step above passed, so a red
+      # run has no site-demo artifact to deploy
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ !cancelled() }}
+        if: ${{ success() }}
         with:
           name: site-demo
           path: site/dist/demo
-          if-no-files-found: ignore
+          if-no-files-found: error
