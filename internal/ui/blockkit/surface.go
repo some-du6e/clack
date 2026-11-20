@@ -18,6 +18,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -450,7 +451,12 @@ func (s *Surface) Layout(gtx C) D {
 		s.curY = y
 		at(gtx, image.Pt(0, y), func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+			var bm slackc.InspectMark // Slack's block wrapper, for the inspect tool
+			if slackc.Inspecting() {
+				bm = bkBlockClass.Inspect(blockMods(b.Type, i == 0))
+			}
 			bh = s.block(gtx, b, i, w, st)
+			bm.End(gtx, image.Pt(w, bh))
 			return D{}
 		})
 		y += bh

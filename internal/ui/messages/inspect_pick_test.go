@@ -59,7 +59,6 @@ func (h pickHost) Describer() func(*inspect.Report, *inspect.Redactor) {
 func (h pickHost) ConvKind(string) string    { return "" }
 func (h pickHost) Regions() []inspect.Region { return nil }
 func (h pickHost) Toast(string)              {}
-func (h pickHost) CopyText(string)           {}
 func (h pickHost) Post(f func())             {}
 func (h pickHost) Invalidate()               {}
 func (h pickHost) ConfigDir() string         { return "" }

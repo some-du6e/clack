@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"image"
+	"log"
 	"reflect"
 
 	"gioui.org/io/event"
@@ -47,6 +49,21 @@ func peeking(o Overlay) bool {
 // drawOverlay lays out overlay o as a layer: inside its area, so a focus
 // in it is in the layer, with its focus home when it has one.
 func (a *App) drawOverlay(gtx layout.Context, o Overlay) {
+	// a layer of the inspect tool's record too: what o draws reports o as
+	// its region, and its card is its box (slackc.InspectCard)
+	if slackc.Inspecting() && !invisible(o) {
+		lm := slackc.InspectOverlay(overlayLayerName(o))
+		// a popup that gave its layer no box (no InspectCard): its own
+		// Rect, so a pick on its card where nothing in it was recorded
+		// outlines the card under the popup's region. One with neither
+		// is logged once (TestOverlayKindsBoxTheirLayer finds them
+		// statically; this is for what it can't see)
+		defer func() {
+			if !lm.EndCardOr(gtx, overlayRect(o)) {
+				unboxedOverlay(o)
+			}
+		}()
+	}
 	if invisible(o) || peeking(o) || !reflect.TypeOf(o).Comparable() {
 		o.Layout(gtx)
 		return
@@ -64,6 +81,30 @@ func (a *App) drawOverlay(gtx layout.Context, o Overlay) {
 		spec.Home = h.FocusHome()
 	}
 	slackc.DrawLayer(gtx, l, spec, func(gtx layout.Context) { o.Layout(gtx) })
+}
+
+// overlayRect is o's card as it says (Rect, window coords), empty for an
+// overlay that doesn't.
+func overlayRect(o Overlay) image.Rectangle {
+	if r, ok := o.(interface{ Rect() image.Rectangle }); ok {
+		return r.Rect()
+	}
+	return image.Rectangle{}
+}
+
+// unboxedSeen are the overlay layers (overlayLayerName: a wrapper's by
+// what it wraps) that ended a session's frame with no box (UI goroutine):
+// each is logged once.
+var unboxedSeen = map[string]bool{}
+
+func unboxedOverlay(o Overlay) {
+	if _, ok := unwrapOverlay(o).(interface{ InspectNoCard() }); ok {
+		return // no card by design (the profile preview's dim)
+	}
+	if name := overlayLayerName(o); !unboxedSeen[name] {
+		unboxedSeen[name] = true
+		log.Printf("inspect: overlay %s drew no card box (no InspectCard, no Rect): picks on it report the window under it", name)
+	}
 }
 
 // pruneOverlayLayers forgets the layers of overlays no longer shown.
