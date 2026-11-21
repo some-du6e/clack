@@ -69,8 +69,15 @@ jobs:
       - name: test
         # one job runs every package (ci shards internal/ui across jobs);
         # internal/ui alone passed Go's 10m default on 2026-11-13 (v0.1.0-alpha.64's
-        # run 43503494822 timed out), so give the whole suite room
-        run: go test -timeout 30m ./...
+        # run 43503494822 timed out), so give the whole suite room; and as ci's
+        # full-test, whatever still runs 35 min in prints its goroutines inside
+        # the budget (the script from this run's own commit, as meta's)
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/dump-before-budget.sh" > "$RUNNER_TEMP/dump-before-budget.sh"
+          bash "$RUNNER_TEMP/dump-before-budget.sh" 35 & wd=$!
+          trap 'kill $wd 2>/dev/null' EXIT
+          go test -timeout 30m ./...
 
   linux:
     name: linux-${{ matrix.arch }}
