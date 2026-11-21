@@ -111,6 +111,10 @@ type Message struct {
 	// app's chat.postEphemeral, Slackbot's local ones), never in history
 	// and never a thread's read point (Slack's isRealMsg, 8GqV).
 	Ephemeral bool
+	// NoDisplay and NoNotifications are the server's no_display and
+	// no_notifications: no desktop notification for the message
+	// (client-boot Fpyc's reasons 4 and 5; ui/notify_dm.go).
+	NoDisplay, NoNotifications bool
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
