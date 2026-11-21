@@ -180,6 +180,9 @@ type builder struct {
 	chID   string                 // the message's channel (tabslug.go: a slug to its own tab is the tab alone)
 	// msgCh and msgTS are the message (its files' expandables)
 	msgCh, msgTS string
+	// keepEmoji: an emoji element the resolver doesn't know is an Emoji
+	// span without a URL, not its ":name:" text (CanvasTitle)
+	keepEmoji bool
 }
 
 func parseBlocks(raw json.RawMessage) []bk {
@@ -818,7 +821,14 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 			}
 			out = append(out, sp)
 		case "emoji":
-			out = append(out, richEmoji(c.r, e))
+			sp := richEmoji(c.r, e)
+			if c.keepEmoji && sp.Kind == Text {
+				// an emoji the resolver can't name yet stays one (a
+				// title converted before the emoji map loaded): the
+				// surface resolves it when it draws (CanvasTitle)
+				sp = Span{Kind: Emoji, ID: strings.Trim(sp.Text, ":"), Text: sp.Text}
+			}
+			out = append(out, sp)
 		case "message_mention":
 			out = append(out, messageMentionSpan(c.r, e))
 		case "canvas":

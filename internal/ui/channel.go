@@ -700,9 +700,36 @@ func withListViewName(t chTab) chTab {
 // with its :emoji: resolved (tabLabelSpans).
 func tabSpans(t core.Tab, label string, emoji func(name string) (url, text string, ok bool)) []richtext.Span {
 	if len(t.TitleSpans) > 0 {
-		return tabTitleSpans(t.TitleSpans)
+		return tabTitleSpansEmoji(t.TitleSpans, emoji)
 	}
 	return tabLabelSpans(label, emoji)
+}
+
+// resolveEmoji gives the emoji in sp that have no image yet (a title
+// converted before the store could name them: richtext.TitleBlocks keeps
+// them as Emoji spans without a URL) the store's image, as Slack's Emoji
+// component reads the emoji store on every render; sp is copied only when
+// one changes.
+func resolveEmoji(sp []richtext.Span, emoji func(name string) (url, text string, ok bool)) []richtext.Span {
+	if emoji == nil {
+		return sp
+	}
+	var out []richtext.Span
+	for i, s := range sp {
+		if !s.KeptEmoji() {
+			continue
+		}
+		if u, _, ok := emoji(s.ID); ok && u != "" {
+			if out == nil {
+				out = append([]richtext.Span(nil), sp...)
+			}
+			out[i].URL = u
+		}
+	}
+	if out == nil {
+		return sp
+	}
+	return out
 }
 
 // tabTitleSpans is a canvas title's spans in the tab bar: bold, and every
@@ -711,7 +738,13 @@ func tabSpans(t core.Tab, label string, emoji func(name string) (url, text strin
 // the member slugs draw an unlinked c-member_slug, which
 // .p-quip_title__blocks_simple gives color: inherit and no background.
 // Emoji stay images; the rest stops at the first line break.
-func tabTitleSpans(in []richtext.Span) []richtext.Span {
+func tabTitleSpans(in []richtext.Span) []richtext.Span { return tabTitleSpansEmoji(in, nil) }
+
+// tabTitleSpansEmoji is tabTitleSpans with the title's emoji that had no
+// image when it was converted resolved through emoji (resolveEmoji); one
+// the store still can't name reads as its ":name:".
+func tabTitleSpansEmoji(in []richtext.Span, emoji func(name string) (url, text string, ok bool)) []richtext.Span {
+	in = resolveEmoji(in, emoji)
 	out := make([]richtext.Span, 0, len(in))
 	for _, s := range in {
 		if s.Kind == richtext.Break {
