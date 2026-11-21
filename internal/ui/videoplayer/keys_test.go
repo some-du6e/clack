@@ -168,7 +168,7 @@ func TestCornerDockButton(t *testing.T) {
 	if _, _, ok := c.Pip(); !ok || c.PipTrigger() != "manual" {
 		t.Fatalf("the Dock to corner click: docked %v by %q", ok, c.PipTrigger())
 	}
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c, [2]any{g.r, g.f}); return pipPlaying(c) })
+	waitPipPlaying(t, c, [2]any{g.r, g.f})
 
 	off, _ := fakeEnvExp(t, func(name string) string {
 		if name == "clips_pip" {
