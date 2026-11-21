@@ -39,10 +39,13 @@ func (b *base) liveElements(m *core.Message) richview.Elements {
 	if !ok || m == nil {
 		return nil
 	}
+	if b.bkView == 0 {
+		b.bkView = blockkit.NewViewID()
+	}
 	k := liveKey{h: h, ch: m.Channel, ts: m.TS}
 	sig := blocksSig(m)
 	if e, ok := liveEls[k]; ok && e.sig == sig {
-		return e.el
+		return blockkit.InView(e.el, b.bkView)
 	}
 	var el richview.Elements
 	if me := blockkit.MessageElements(h, m); me != nil {
@@ -52,7 +55,7 @@ func (b *base) liveElements(m *core.Message) richview.Elements {
 		clear(liveEls)
 	}
 	liveEls[k] = liveEl{sig: sig, el: el}
-	return el
+	return blockkit.InView(el, b.bkView)
 }
 
 // blocksSig is FNV-1a over m's blocks and attachments (what the element

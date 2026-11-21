@@ -82,6 +82,12 @@ type msgChanges struct {
 	// refetching are the messages RefetchMessages asked Slack for
 	// (read_changes.go)
 	refetching map[MsgKey]refetch
+	// slugAsked are the ones a message slug asked for, whose answer a
+	// "names" announces (msg_slug.go); slugGone the ones whose fetch core
+	// gave up on, the messages UnknownFetchManager's non-existent stubs
+	// (its finally marks what a failed fetch didn't return), not asked
+	// for again
+	slugAsked, slugGone map[MsgKey]bool
 }
 
 // changeCopy is the change whose message a slot of msgChanges.copies keeps.

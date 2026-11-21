@@ -7,6 +7,7 @@ import (
 	"errors"
 	"image"
 	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,8 +82,11 @@ func (a *legacyAction) UnmarshalJSON(b []byte) error {
 // (richview.Elements): it maps richview's buttons back to the message's
 // Block Kit elements and draws them.
 type Message struct {
-	h      Host
-	m      core.Message
+	h Host
+	m core.Message
+	// inst is the drawing instance a call is for (InView: a row, a view's
+	// list; 0, the shared default), whose agent block state is its own
+	inst   uint64
 	sig    []byte
 	blocks []Block
 	atts   []attachment
@@ -103,6 +107,8 @@ type Message struct {
 	// resetKey generation).
 	gen uint32
 	ver atomic.Uint32
+	// acu is the agent_channel_unfurl props by channel (agentChannel)
+	acu map[string]popups.EntityProps
 	gtx layout.Context
 	ops op.Ops
 	// used is when the host was last looked up or drawn, drawn the frame
@@ -445,12 +451,29 @@ func (me *Message) fire(w *ew, action json.RawMessage, done func(error)) {
 		me.sendLegacy(w, lr, func(err error) { settle(err); done(err) })
 		return
 	}
-	settle := me.begin(key)
 	attID := 0
 	if a := me.attOf(w.bid); a != nil {
 		attID = a.ID
 	}
 	b := ix.MessageContainer(&me.m, attID)
+	if attID == 0 && b.ServiceID == "" {
+		// The message's onAction (boot-shared, the message blocks'
+		// renderer): canDispatch is !!serviceId (bot_id, or Slackbot's
+		// quip feedback), and without one an action goes nowhere unless
+		// its block is a widget: (Slackbot's). A person's message with
+		// blocks, like the template Block Kit Builder's Send to Slack
+		// posts as you, has no app behind its buttons: a click sends no
+		// blocks.actions, and the useBlockKitInteractiveState wrapper
+		// takes the loading state off in the same tick, so no spinner and
+		// no error. A url button still opens its link (press).
+		if !strings.HasPrefix(w.bid, "widget:") {
+			log.Printf("blockkit: no service for %s/%s: nothing sent", me.m.Channel, me.m.TS)
+			done(nil)
+			return
+		}
+		b.ServiceID = "BSLACKBOT"
+	}
+	settle := me.begin(key)
 	b.Action = action
 	b.State = me.vals.JSON(true)
 	sendAction(me.h, b, func(err error) {

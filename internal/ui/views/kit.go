@@ -324,6 +324,14 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// mediaPane names the view's video players (media.go): set, its
+	// messages' lone videos play in place, as in Slack's Threads, Unreads
+	// and Later views
+	mediaPane string
+	media     map[string]*viewMedia
+	// bkView is this view's drawing of its messages' elements
+	// (blockkit.InView, elements.go)
+	bkView uint64
 	// tt is the Host's Taut plugin system (nil without plugins); tgen/tmemo
 	// cache its patched member/channel/message views for one frame.
 	tt    *taut.Taut

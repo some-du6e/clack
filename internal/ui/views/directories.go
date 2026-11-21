@@ -130,6 +130,9 @@ type dirMemberNote struct {
 	seq    int
 	ev     bool // straight from an event (applies unless a write is in flight)
 	verify bool // a "conv" event: verify membership with a read
+	// channel details' member counts: stale (a join or a leave) or a new
+	// answer (core's "member_count_stale" and "member_count")
+	countStale, counted bool
 }
 
 // dirEvents queues realtime notes for the UI goroutine. start subscribes

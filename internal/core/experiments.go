@@ -277,6 +277,9 @@ var experimentReads = map[string][]string{
 	"channel_ia_header_refinements": on,
 	// bookmark folders' add menu (views/folder_tab_more.go: THeG, sUmX)
 	"unified_file_picker": on, "surfaces_skills_unipicker": on,
+	// the inline video player: a file titled "loop" loops (videoplayer, fIJO);
+	// clips_pip: the mini player (videoplayer/pip.go, yF7D, YPBt)
+	"looping_video_option": on, "clips_pip": on,
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	// the Activity badge's entry types (activity_badges.go)
@@ -308,6 +311,7 @@ var experimentReads = map[string][]string{
 	"show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
 	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},
 	"message_actions_truncate": on, "agent_identity_overrides": on,
+	"mentions_full_names_only_pref": on, // a message slug's DM partner (msg_slug.go: N1tw's k)
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
