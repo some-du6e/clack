@@ -7,6 +7,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Which messages get a desktop notification, and what it says, as Slack's
@@ -309,23 +310,18 @@ func noteMissingText(subtype string) string {
 }
 
 // notifyText is extractTextFromMessage over Clack's document of m. The
-// message's own text comes first: its blocks' (an image block is its
-// title, never its alt text), else its text. A message with neither
-// reads its files (their titles), then its attachments, then
-// noteMissingText. A ":simple_smile:" reads ":)".
-func notifyText(m *core.Message, text richtext.SpanText) string {
-	var own, files, atts []richtext.Block
+// message's own text comes first: its blocks', else its text
+// (noteBlocksText). A message with neither reads its files (their titles),
+// then its attachments (noteAttachmentsText, blocksText converting a
+// message unfurl's blocks), then noteMissingText. A ":simple_smile:" reads
+// ":)".
+func notifyText(m *core.Message, text richtext.SpanText, blocksText func(json.RawMessage) string) string {
+	var own, files []richtext.Block
 	for _, blk := range m.Doc.Blocks {
 		switch blk.Kind {
 		case richtext.FileBlock:
 			files = append(files, blk)
-		case richtext.AttachmentBlock:
-			atts = append(atts, blk)
-		case richtext.ImageBlock:
-			// convertImageBlockToPlainText: the title (PlainText writes it)
-			if blk.Image != nil && blk.Image.Title != "" {
-				own = append(own, blk)
-			}
+		case richtext.AttachmentBlock: // read from the attachments as sent, below
 		default:
 			own = append(own, blk)
 		}
@@ -335,7 +331,7 @@ func notifyText(m *core.Message, text richtext.SpanText) string {
 		s = noteBlocksText(files, text)
 	}
 	if s == "" {
-		s = noteBlocksText(atts, text)
+		s = noteAttachmentsText(m.Attachments, blocksText)
 	}
 	if s == "" {
 		s = noteMissingText(m.Subtype)
@@ -345,13 +341,86 @@ func notifyText(m *core.Message, text richtext.SpanText) string {
 
 // noteBlocksText is convertBlocksToPlainText with blockSpacing "single"
 // over Clack's blocks: each block's text trimmed, the empty ones dropped,
-// one line apart.
+// one line apart. An image block is its title (convertImageBlockToPlainText),
+// never its alt text; a context block its text elements a space apart, as
+// its Spans join them (its Children are the same elements, one box each,
+// for the layout).
 func noteBlocksText(bs []richtext.Block, text richtext.SpanText) string {
 	var out []string
-	for i := range bs {
-		if s := strings.TrimSpace(richtext.PlainTextWith(richtext.Doc{Blocks: bs[i : i+1]}, text)); s != "" {
+	for _, blk := range bs {
+		switch blk.Kind {
+		case richtext.ImageBlock:
+			if blk.Image == nil || blk.Image.Title == "" {
+				continue
+			}
+		case richtext.Context:
+			blk.Children = nil
+		case richtext.Unsupported:
+			continue // Clack's "could not be displayed" stand-in: Slack's converter writes none
+		}
+		if s := strings.TrimSpace(richtext.PlainTextWith(richtext.Doc{Blocks: []richtext.Block{blk}}, text)); s != "" {
 			out = append(out, s)
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// noteUnfurlText is a message unfurl's blocks as notifyText reads them
+// (noteAttachmentsText), named from the store.
+func (b *backend) noteUnfurlText(raw json.RawMessage) string {
+	if b.core == nil {
+		return ""
+	}
+	d := richtext.FromMessage(b.core.S, &slack.Message{Blocks: raw})
+	return noteBlocksText(d.Blocks, b.noteSpanText)
+}
+
+// noteAttachment is what extractTextFromMessage reads of an attachment.
+type noteAttachment struct {
+	IsMsgUnfurl   bool            `json:"is_msg_unfurl"`
+	Blocks        json.RawMessage `json:"blocks"`
+	MessageBlocks []struct {
+		Message struct {
+			Blocks json.RawMessage `json:"blocks"`
+		} `json:"message"`
+	} `json:"message_blocks"`
+	Fallback string `json:"fallback"`
+	Text     string `json:"text"`
+	Pretext  string `json:"pretext"`
+	Footer   string `json:"footer"`
+}
+
+// noteAttachmentsText is extractTextFromMessage's attachments, raw as sent.
+// First getForwardedAttachmentBlocks: the first message unfurl's
+// (isMsgUnfurlAttachment: is_msg_unfurl) blocks, else its message_blocks'
+// first message's, through blocksText. Then textContentFromAttachments:
+// the first fallback, text, pretext or footer an attachment has, as sent.
+func noteAttachmentsText(raw json.RawMessage, blocksText func(json.RawMessage) string) string {
+	var atts []noteAttachment
+	if len(raw) == 0 || json.Unmarshal(raw, &atts) != nil {
+		return ""
+	}
+	for _, at := range atts {
+		if !at.IsMsgUnfurl {
+			continue
+		}
+		bs := at.Blocks
+		if len(strings.TrimSpace(string(bs))) <= 2 && len(at.MessageBlocks) > 0 {
+			bs = at.MessageBlocks[0].Message.Blocks
+		}
+		if blocksText != nil && len(strings.TrimSpace(string(bs))) > 2 {
+			if s := blocksText(bs); s != "" {
+				return s
+			}
+		}
+		break // the first unfurl only
+	}
+	for _, at := range atts {
+		for _, s := range []string{at.Fallback, at.Text, at.Pretext, at.Footer} {
+			if s != "" {
+				return s
+			}
+		}
+	}
+	return ""
 }

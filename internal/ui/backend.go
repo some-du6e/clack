@@ -1031,7 +1031,7 @@ func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
 		}
 		return ""
 	}
-	text := notifyText(ev.Msg, b.noteSpanText)
+	text := notifyText(ev.Msg, b.noteSpanText, b.noteUnfurlText)
 	if dm {
 		return text
 	}
