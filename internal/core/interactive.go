@@ -201,6 +201,11 @@ type AppHome struct {
 	AppID, AppInstalledTeamID, ChannelID string
 	HomeTab, MessagesTab, MessagesRO     bool
 	HomeViewID                           string
+	// AgentTasks is SUqq getAppHomeFormatted's isAgentTasksEnabled: the
+	// app home's agent_tasks_enabled, on unless it is false (the app
+	// settings' "Show a Tasks tab", which the settings page turns off
+	// with the Messages tab). agent_tasks.go's tab rule reads it.
+	AgentTasks bool
 }
 
 // AppShortcut is one app shortcut (global or message action).
@@ -986,6 +991,7 @@ func (ix *Interactive) AppHome(ctx context.Context, ch string) (AppHome, *View, 
 			MessagesTab        bool   `json:"messages_tab_enabled"`
 			MessagesRO         bool   `json:"messages_tab_read_only_enabled"`
 			HomeViewID         string `json:"home_view_id"`
+			AgentTasks         *bool  `json:"agent_tasks_enabled"`
 		} `json:"app_home"`
 		HomeView json.RawMessage `json:"home_view"`
 	}
@@ -997,7 +1003,7 @@ func (ix *Interactive) AppHome(ctx context.Context, ch string) (AppHome, *View, 
 	}
 	h := AppHome{AppID: res.AppHome.AppID, AppInstalledTeamID: res.AppHome.AppInstalledTeamID, ChannelID: ch,
 		HomeTab: res.AppHome.HomeTab, MessagesTab: res.AppHome.MessagesTab, MessagesRO: res.AppHome.MessagesRO,
-		HomeViewID: res.AppHome.HomeViewID}
+		HomeViewID: res.AppHome.HomeViewID, AgentTasks: res.AppHome.AgentTasks == nil || *res.AppHome.AgentTasks}
 	var v *View
 	if pv, err := ParseView(res.HomeView); err == nil {
 		pv.ChannelID = ch

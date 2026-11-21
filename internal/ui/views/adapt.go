@@ -69,10 +69,16 @@ func previewWith(m *core.Message, plain func(richtext.Doc) string) string {
 // (richview's MemberRead): "@name", nothing for a member the store can't
 // name yet (BaseMissingMember's bar adds no text; the lookup asks, and
 // "names" draws it again), never the "@U…" the doc was built with. An id
-// that isn't a member's keeps the parsed text, as MemberSlug draws it.
+// that isn't a member's keeps the parsed text, as MemberSlug draws it. A
+// message slug reads its label the same way (richview.SlugText: the
+// linked message's sender, as SimpleMessagePreview's MessageMention
+// reads it).
 func (b *base) plainText(d richtext.Doc) string { return richtext.PlainTextWith(d, b.mentionText) }
 
 func (b *base) mentionText(s richtext.Span) (string, bool) {
+	if s.Kind == richtext.MessageMention {
+		return richview.SlugText(s)
+	}
 	if s.Kind != richtext.User || !core.LooksLikeMemberID(s.ID) {
 		return "", false
 	}
