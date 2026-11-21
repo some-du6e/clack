@@ -214,10 +214,11 @@ type activityState struct {
 	sort      string            // activity.prefs.update's sort ("" = "newest")
 	viewDense map[string]string // activity.views.update's density by view id
 	saved     map[string]map[string]any
-	ignored   map[string]bool // invites ignored or accepted
-	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
-	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
-	agent     bool            // the agent entry first (SetActivityAgentActions)
+	ignored   map[string]bool  // invites ignored or accepted
+	inviteIDs bool             // external invites' item.invite is the id string (SetActivityInviteIDs)
+	bulk      int              // extra unread mentions, and a paged feed (SetActivityBulk)
+	agent     bool             // the agent entry first (SetActivityAgentActions)
+	live      []map[string]any // UpsertActivity's entries, one per key (activity_live.go)
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -356,6 +357,7 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		if bulk > 0 {
 			entries = append(entries, activityBulk(bulk)...)
 		}
+		entries = activityWithLive(entries, st.live) // activity_live.go: newest first
 		for _, e := range entries {
 			key := e["key"].(string)
 			typ := e["item"].(map[string]any)["type"].(string)
