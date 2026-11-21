@@ -591,7 +591,8 @@ jobs:
           set +e
           rc=0
           xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/slackc/kit || rc=1
-          xvfb-run -a go test -count=$COUNT -v -run '^(TestOwl|TestPluginOwlMode)' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestTautViewOwlSaveButton$' ./internal/ui || rc=1
           exit $rc
 
   slick:
