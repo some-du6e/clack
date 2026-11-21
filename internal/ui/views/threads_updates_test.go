@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -297,6 +298,20 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			var state atomic.Int32 // the replies the server has
 			state.Store(2)
 			var g thrGate
+			// what the fake saw, in order: printed when a check fails
+			var traceMu sync.Mutex
+			var trace []string
+			t0 := time.Now()
+			note := func(format string, args ...any) {
+				traceMu.Lock()
+				trace = append(trace, fmt.Sprintf("%6dms ", time.Since(t0).Milliseconds())+fmt.Sprintf(format, args...))
+				traceMu.Unlock()
+			}
+			traced := func() string {
+				traceMu.Lock()
+				defer traceMu.Unlock()
+				return strings.Join(trace, "\n")
+			}
 			rootMsg := func(n int) slack.Message {
 				return slack.Message{Type: "message", Channel: ch, TS: root, ThreadTS: root, User: "U0FAKE00001", Text: "a synthetic root",
 					ReplyCount: n, ReplyUsers: []string{"U0FAKE00002"}, LatestReply: rs[n-1], Subscribed: true, LastRead: rs[n-1]}
@@ -305,7 +320,9 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 				switch method {
 				case "subscriptions.thread.getView":
 					n := int(state.Load()) // the answer as of the request's arrival
+					note("subscriptions.thread.getView read %d replies", n)
 					g.wait()
+					note("subscriptions.thread.getView answers with %d", n)
 					th := map[string]any{"root_msg": rootMsg(n), "latest_replies": []slack.Message{reply(rs[n-2]), reply(rs[n-1])}, "unread_replies": []slack.Message{}}
 					return thrOrderAnswer(thrFixRead(ch, thrA, thrAReply, "U0FAKE00002", true, thrA), th), true
 				case "conversations.replies":
@@ -314,6 +331,7 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 					}
 					oldest, latest, incl := f.Get("oldest"), f.Get("latest"), f.Get("inclusive") == "true"
 					n := int(state.Load())
+					note("conversations.replies oldest=%q latest=%q (%d replies)", oldest, latest, n)
 					msgs := []slack.Message{rootMsg(n)}
 					for _, ts := range rs[:n] {
 						if oldest != "" && !actTSLess(oldest, ts) && (!incl || ts != oldest) {
@@ -376,6 +394,7 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			g.open()
 			e.until(t, "the refresh after three replies", func() bool { return fs.CallCount("subscriptions.thread.getView") > n && !v.data.busy() })
 			e.frame()
+			note("after the refresh: the card has %v", shown())
 			if tc.fail {
 				e.until(t, "the card back to its window", func() bool { return slices.Equal(shown(), rs[3:5]) })
 				e.frame()
@@ -385,14 +404,21 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 				}
 				c.more.Click()
 			}
-			e.until(t, "every reply in the card", func() bool { return slices.Equal(shown(), rs[:5]) })
+			last := ""
+			e.until(t, "every reply in the card", func() bool {
+				if s := fmt.Sprint(shown()); s != last {
+					last = s
+					note("the card has %s", s)
+				}
+				return slices.Equal(shown(), rs[:5])
+			})
 			drawn(rs[:5])
 			if c := v.cards[key]; c == nil || c.moreText != "" {
 				t.Errorf("a \"Show N more replies\" row (%q) with every reply shown", c.moreText)
 			}
 			// the gap's fetch, and the failed card's older replies
 			if got, want := fs.CallCount("conversations.replies"), map[bool]int64{false: 1, true: 2}[tc.fail]; got != want {
-				t.Errorf("%d conversations.replies for one gap, want %d", got, want)
+				t.Errorf("%d conversations.replies for one gap, want %d; what the fake saw:\n%s", got, want, traced())
 			}
 			if tc.name != "burst" {
 				return

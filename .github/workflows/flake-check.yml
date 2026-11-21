@@ -307,6 +307,51 @@ jobs:
           go test -cpu 1 -count=$COUNT -run 'TestDraftKeepsAttachedFiles$' ./internal/ui/composer
           go test -cpu 1 -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
 
+  # TestThreadsRefreshGapLikeSlack/straddle (views): "0 conversations.replies
+  # for one gap, want 1" failed v0.1.0-alpha.114's release test job (run
+  # 44847694903) and a dry run on f2fb93ce, never ci's shards. Alone, under
+  # -race, on one CPU, and four processes of one test binary at once, as
+  # the release's go test ./... loads the runner; a failure prints what the
+  # fake saw, in order (the test's trace)
+  threads-refresh-gap:
+    if: ${{ !inputs.only || startsWith('threads-refresh-gap', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: alone
+        run: go test -count=$COUNT -run '^TestThreadsRefreshGapLikeSlack$' ./internal/ui/views
+      - name: race detector
+        if: ${{ !cancelled() }}
+        run: go test -race -count=$COUNT -timeout 30m -run '^TestThreadsRefreshGapLikeSlack$' ./internal/ui/views
+      - name: one CPU
+        if: ${{ !cancelled() }}
+        run: go test -cpu 1 -count=$COUNT -run '^TestThreadsRefreshGapLikeSlack$' ./internal/ui/views
+      - name: four at once (a loaded runner)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -c -o "$RUNNER_TEMP/views.test" ./internal/ui/views
+          cd internal/ui/views
+          pids=""
+          for i in 1 2 3 4; do
+            "$RUNNER_TEMP/views.test" -test.paniconexit0 -test.count=$COUNT -test.timeout 30m -test.run '^TestThreadsRefreshGapLikeSlack$' > "$RUNNER_TEMP/gap-$i.log" 2>&1 &
+            pids="$pids $!"
+          done
+          rc=0
+          i=0
+          for p in $pids; do
+            i=$((i + 1))
+            wait "$p" || { rc=1; echo "== process $i failed"; cat "$RUNNER_TEMP/gap-$i.log"; }
+          done
+          exit $rc
+
   # the members cache (store/members.go) and its unknown member fetcher
   # (core/members.go): eviction order, the pass's schedule, users/info's
   # chunks and pending ids, and every main view drawing its people again
