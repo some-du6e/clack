@@ -23,6 +23,7 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 | messages (store timelines and threads, the lists' models and rows, the plugin mirror) | 3,000 evictable messages or 3 MB of JSON, trimmed to 2,000 or 2 MB; evictable: read messages of conversations not on screen, everything in conversations the viewer isn't in, whole histories of quiet conversations not read for an hour; oldest first, recently read conversations last. Checked every 2 minutes (`core.EvictEvery`); a conversation read in the last 10 minutes is kept whole; a pass that lets 1,000 or more go is collected 2 s later (`core.AfterEvict`) | Slack's `messages` CacheManager (`getUnusedMessages`, `evictUncountedChannelHistories`) |
 | decoded images (`imgcache`) | 64 MB, unused for 60 s dropped. Animated GIFs count in it: each one's first frame like any image, its encoded bytes (at most a quarter of the budget, dropped first) and, only while something draws it, its player (below) | Clack |
 | downloaded files (`core.Fetch`, memory only) | 48 MB, unused for 5 minutes dropped | Clack |
+| a playing video's bytes (`media.RangeSource`, memory only) | 16 MB a player in 256 KB blocks (least recently read dropped first), read ahead at most 8 MB past the furthest byte read; freed when the player closes | Clack |
 | image loads waiting | a queue per lane, 8 loads at a time | Clack |
 | shaped words (`richview`) | two generations, each up to 8,000 words or 8 MB of glyphs and outlines | Clack |
 | native styles (`slackc`) | two generations of 2,048 | Clack |

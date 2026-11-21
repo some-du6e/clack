@@ -117,6 +117,10 @@ type ChannelHoverCard struct {
 	faceHover gesture.Hover
 	faceTip   TipState
 	pile      image.Rectangle // the facepile, card coordinates
+	// the joinable card (code_card.go joinableCard)
+	joinBtn   widget.Clickable
+	joining   bool // Join is loading: the join runs
+	joinAsked bool // the agent asked for
 }
 
 // NewChannelHoverCard is the card for the channel id over anchor (window

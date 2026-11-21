@@ -464,6 +464,12 @@ func (a *App) SetPref(ctx context.Context, name string, value any) error {
 	return nil
 }
 
+// MediaProgressUpdate tells Slack where the viewer is in a video (the
+// players' saveMediaProgress, gnNF and gBWG): offset_ms of duration_ms.
+func (a *App) MediaProgressUpdate(ctx context.Context, file string, offsetMS, durationMS int64) error {
+	return a.C.MediaProgressUpdate(ctx, file, offsetMS, durationMS)
+}
+
 // ---- search & directory ----
 
 // SearchUsers queries the org directory (edge users/search, ~80 ms): for
@@ -1149,21 +1155,30 @@ func (a *App) DND(ctx context.Context) (json.RawMessage, error) {
 // as its own ctx allows (onceCtx). A count that arrived or changed is
 // announced ("member_count"): the header repaints.
 func (a *App) loadMemberCount(ctx context.Context, ch string) {
-	_ = a.onceCtx(ctx, "mc:"+ch, func() error {
-		mc, err := a.MemberCounts(ctx, ch)
-		if err != nil {
-			return err
-		}
-		a.mu.Lock()
-		old, had := a.memberN[ch]
-		changed := !had || old != mc.People || a.memberA[ch] != mc.Apps
-		a.memberN[ch] = mc.People
-		a.memberG[ch] = mc.Guests
-		a.memberA[ch] = mc.Apps
-		a.mu.Unlock()
-		if changed {
-			a.memberCountChanged(ch) // history_side.go
-		}
-		return nil
-	})
+	_ = a.onceCtx(ctx, "mc:"+ch, func() error { return a.loadMemberCountNow(ctx, ch) })
+}
+
+// loadMemberCountNow reads ch's counts and caches them, without joining
+// a read already out: a stale count's refetch (membership_counts.go)
+// must not take the answer of a read that started before the join.
+func (a *App) loadMemberCountNow(ctx context.Context, ch string) error {
+	mc, err := a.MemberCounts(ctx, ch)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	old, had := a.memberN[ch]
+	changed := !had || old != mc.People || a.memberA[ch] != mc.Apps
+	a.memberN[ch] = mc.People
+	a.memberG[ch] = mc.Guests
+	a.memberA[ch] = mc.Apps
+	if a.memberMC == nil {
+		a.memberMC = map[string]MemberCounts{}
+	}
+	a.memberMC[ch] = mc
+	a.mu.Unlock()
+	if changed {
+		a.memberCountChanged(ch) // history_side.go
+	}
+	return nil
 }

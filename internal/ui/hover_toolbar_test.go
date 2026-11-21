@@ -186,7 +186,8 @@ func (e *perfEnv) checkToolbar(t *testing.T, what string, l rowsLister, ts, rowC
 // line: ANCHOR_OFFSET under the list's top). Hovering the root and its
 // neighbours, each toolbar is at Slack's place against its row; then the
 // row above the root, wheeled up to the list's top, has its card cut off
-// by the list's top edge.
+// by the list's top edge, and so has the root once it is scrolled there,
+// the rows under it in place.
 func TestHoverToolbarJumpFromActivity(t *testing.T) {
 	e := hoverToolbarEnv(t)
 	e.jumpFromActivityToolbars(t, "jump from Activity")
@@ -252,12 +253,15 @@ func (e *perfEnv) jumpFromActivityToolbars(t *testing.T, what string) {
 	e.pointerIn(l())
 	rows := l().RowRects()
 	list := l().ListRect()
-	i := -1
-	for k, r := range rows {
-		if r.TS == root {
-			i = k
+	rootAt := func() int {
+		for k, r := range rows {
+			if r.TS == root {
+				return k
+			}
 		}
+		return -1
 	}
+	i := rootAt()
 	if i < 1 || rows[i].R.Min.Y-list.Min.Y != e.anchorLine() {
 		t.Fatalf("%s: the jump didn't put the root on the anchor line, %dpx under the list's top (list %v, rows %v)", what, e.anchorLine(), list, rows)
 	}
@@ -279,6 +283,25 @@ func (e *perfEnv) jumpFromActivityToolbars(t *testing.T, what string) {
 	for _, k := range []int{i, i - 1, i + 1} {
 		if k < len(rows) {
 			e.checkToolbar(t, what, l(), rows[k].TS, "MessageWrapper", actsTopDefault)
+		}
+	}
+	// the root's row at the list's top, its card cut off by the edge, and
+	// the rows under it
+	rows, list = l().RowRects(), l().ListRect()
+	if i = rootAt(); i < 0 {
+		t.Fatalf("%s: the root isn't drawn after the wheel (list %v, rows %v)", what, list, rows)
+	}
+	by := rows[i].R.Min.Y - list.Min.Y
+	cl, _ := e.a.convoFor(ch, "").list.(channelList)
+	cl.ScrollPx(by)
+	e.pointerIn(l())
+	rows, list = l().RowRects(), l().ListRect()
+	if i = rootAt(); i < 0 || rows[i].R.Min.Y != list.Min.Y {
+		t.Fatalf("%s: scrolled %dpx to the root, it isn't at the list's top (list %v, rows %v)", what, by, list, rows)
+	}
+	for _, k := range []int{i, i + 1, i + 2} {
+		if k < len(rows) {
+			e.checkToolbar(t, what+" (scrolled)", l(), rows[k].TS, "MessageWrapper", actsTopDefault)
 		}
 	}
 }

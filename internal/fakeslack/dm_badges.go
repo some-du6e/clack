@@ -149,7 +149,7 @@ func (s *Server) dmBadgeCount(c slack.Conversation, e slack.CountEntry) slack.Co
 // fixture's own (and whatever PostQuiet added), else the generated
 // history's.
 func (s *Server) dmsLatest(id string) (slack.Message, bool) {
-	if _, ok := s.dmBadgeRead[id]; ok && s.Size.DMBadges {
+	if _, ok := s.dmBadgeRead[id]; ok && s.Size.DMBadges || id == SystemDMID && s.Size.SystemDM {
 		s.histMu.Lock()
 		defer s.histMu.Unlock()
 		if h := s.hist[id]; len(h) > 0 {

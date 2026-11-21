@@ -1324,6 +1324,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
+	s.reportMedia() // the video tiles' share on screen (file_rects.go)
 
 	// jumping to a message what the list shows doesn't reach: Slack's pane
 	// at startTs shows the slice holding it (windows.go): older than its

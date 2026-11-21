@@ -321,6 +321,7 @@ func (a *App) switchAccount(c slack.Creds) {
 		return
 	}
 	a.closeInspectSession() // its records are the account's views
+	a.closeVideos()         // and its videos (video.go)
 	if a.data != nil {
 		_ = a.data.stop()
 		a.data = nil
@@ -360,6 +361,7 @@ func (a *App) SignedOut() bool {
 // showLogin returns to the sign-in screen without deleting credentials.
 func (a *App) showLogin() {
 	a.closeInspectSession() // inspect_wire.go
+	a.closeVideos()         // nothing plays on behind the sign-in screen (video.go)
 	if a.data != nil {
 		_ = a.data.stop()
 		a.data = nil

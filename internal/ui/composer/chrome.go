@@ -893,6 +893,14 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 // right: 4px}` against the box's inner bottom-right corner (br), with
 // its tooltip "Your message is N characters too long".
 func (c *chrome) lengthWarning(gtx layout.Context, th *theme.Theme, st *chromeState, br image.Point) {
+	lengthWarningPill(gtx, th, st.OverLimit, &c.warn, &c.warnTip, func(sz image.Point) image.Point {
+		return image.Pt(br.X-gtx.Dp(4)-sz.X, br.Y-gtx.Dp(44)-sz.Y)
+	})
+}
+
+// lengthWarningPill draws TextyLengthWarning's pill for over characters
+// at place(its size), with warn as its hover area and tip its tooltip.
+func lengthWarningPill(gtx layout.Context, th *theme.Theme, over int, warn *widget.Clickable, tip *popups.TipState, place func(sz image.Point) image.Point) {
 	vars := css.SlackVars(th.Dark)
 	bg, ok := cssVarColor(vars, "--dt_color-base-inv-imp")
 	if !ok {
@@ -905,10 +913,10 @@ func (c *chrome) lengthWarning(gtx layout.Context, th *theme.Theme, st *chromeSt
 		}
 	}
 	s := textStyle{Size: 12, LineHeight: 18, Color: fg, MaxLines: 1}
-	call, d := crRec(gtx, th.Shaper, 1<<16, s, lengthWarningText(st.OverLimit))
+	call, d := crRec(gtx, th.Shaper, 1<<16, s, lengthWarningText(over))
 	padX := gtx.Dp(4)
 	sz := image.Pt(d.Size.X+2*padX, max(d.Size.Y, gtx.Dp(18)))
-	r := image.Rectangle{Min: image.Pt(br.X-gtx.Dp(4)-sz.X, br.Y-gtx.Dp(44)-sz.Y)}
+	r := image.Rectangle{Min: place(sz)}
 	r.Max = r.Min.Add(sz)
 	fillRRect(gtx, r, gtx.Dp(2), bg)
 	t := op.Offset(image.Pt(r.Min.X+padX, r.Min.Y+(sz.Y-d.Size.Y)/2)).Push(gtx.Ops)
@@ -917,8 +925,8 @@ func (c *chrome) lengthWarning(gtx layout.Context, th *theme.Theme, st *chromeSt
 	t = op.Offset(r.Min).Push(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Exact(sz)
-	c.warn.Layout(g, crPlainArea) // cursor: default
-	popups.Tooltip(gtx, th, &c.warnTip, c.warn.Hovered(), sz, popups.Above, lengthWarningTip(st.OverLimit), "")
+	warn.Layout(g, crPlainArea) // cursor: default
+	popups.Tooltip(gtx, th, tip, warn.Hovered(), sz, popups.Above, lengthWarningTip(over), "")
 	t.Pop()
 }
 

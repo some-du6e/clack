@@ -11,7 +11,7 @@ To see the whole diff against the release:
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
-`widget/text.go`, `widget/label.go`, `widget/clack_spans.go`,
+`widget/text.go`, `widget/label.go`, `widget/clack_spans.go`, `widget/clack_scale.go`,
 `text/shaper.go`, `text/gotext.go`, `text/lru.go`, `op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`,
 `app/clack_gpu.go`, `app/clack_panel.go`, `app/os.go`, `app/os_macos.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
@@ -56,8 +56,14 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
 `io/input/clack_inputidle_test.go`,
 `io/input/clack_reset.go`, `io/input/clack_reset_test.go`,
-`gesture/clack_reset_test.go`, `gpu/headless/clack_size.go`,
-`gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go` and
+`gesture/clack_reset_test.go`, `op/paint/clack_external.go`,
+`gpu/clack_external.go`, `gpu/clack_external_test.go`,
+`gpu/internal/driver/clack_external.go`,
+`gpu/internal/d3d11/clack_external_windows.go`,
+`gpu/internal/metal/clack_external_darwin.go`,
+`gpu/headless/clack_external_test.go`, `gpu/headless/clack_size.go`,
+`gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
+`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2505,6 +2511,103 @@ over two frames, and not after `StopScroll`), on ci's linux-gio job, and
 `internal/ui` `TestJumpHoldsThroughRowsGrowingAbove`. Not in
 `UPSTREAM.patch`.
 
+## 51. op/paint, gpu, gpu/internal: external images (a texture something else made, drawn in the frame)
+
+`op/paint/clack_external.go` (new: `ExternalImage`, `ExternalDevice`,
+`ExternalTexture`, `NewExternalImageOp`), `gpu/clack_external.go` (new:
+`resolveExternal`, `clearTexture`), `gpu/gpu.go` (`texHandle` asks an
+external image first; `renderer.clear1x1`), `gpu/clack_stats.go`
+(`FrameStats.Externals`, `ExternalWraps`),
+`gpu/internal/driver/clack_external.go` (new: `ClackExternal`,
+`ClackExternalTest`), `gpu/internal/d3d11/clack_external_windows.go` (new)
+and `d3d11_windows.go` (`Texture.external`, `Backend.extSamplers`,
+`Release`), `gpu/internal/metal/clack_external_darwin.go` (new) and
+`metal_darwin.go` (`Texture.external`, `Release`). Additions: no op that
+isn't an external image draws differently.
+
+Slack plays a message's video in place with Chromium's `<video>`, under
+its own controls. Clack plays it with the OS's decoder (Media Foundation,
+AVFoundation), whose frames are GPU textures; Gio could draw only the
+`*image.RGBA` of an `ImageOp`, and its Direct3D and Metal backends took a
+texture they didn't make only as a render target (releasing one
+panicked). Uploading every frame through the CPU, as huddle video does,
+makes each a new mipmapped texture, an upload and a mip generation.
+
+- `NewExternalImageOp(e, size, still)` is an `ImageOp` whose source is a
+  header with no pixels, `size` big: only its bounds are read, so clips,
+  opacity layers and transforms work on it as on any image. Its handle is
+  an `externalHandle`; `texHandle` asks it (`ClackExternal`, plain types,
+  as patch 35's `liveImage`) for the texture on the device drawing the
+  frame, once for each paint the frame shows (in `uploadImages`, after
+  `collect` dropped the paints outside the viewport and their clips), on
+  the goroutine drawing the frame. The device and API come from the
+  backend's `ClackDevice`; after the ask the backend forgets its state
+  cache (`ClackForgetState`: patch 37 trusts the context's state, and the
+  ask may have used the immediate context).
+- The ask hands out the texture with a reference of its own (AddRef'd,
+  `CFRetain`ed), taken under the image's lock: a producer closing on
+  another thread can't free the texture between the ask and Gio's use of
+  it (round 1's review). A texture is wrapped (`ClackWrap`: no upload, no
+  mipmaps, linear or nearest), which takes that reference over, and
+  cached under its native handle and `Key`: the same key draws the frame
+  before's wrapper and drops the ask's reference (`ClackDrop`), a new key
+  wraps again, and the old wrapper goes at the end of the first frame
+  that doesn't draw it (`textureCache.frame`), after the GPU finished the
+  frame that drew it last (Metal's `BeginFrame` waits for the previous
+  command buffer). Direct3D 11 samples the view with one of the
+  backend's two clamped samplers (MinLOD and MaxLOD 0: the view's first
+  level, whatever its count), releasing only the view; Metal samples the
+  texture with patch 37's shared sampler.
+- No texture (`ok` false, or a device that can't draw external textures:
+  OpenGL, Vulkan, which never ask) draws the still, stretched over the
+  op's size the same way. A still that is itself external, or live and
+  showing an external image (a viewer's player over the inline player's
+  last frame), is resolved in turn, at most four deep (`resolveImage`); a
+  zero or uniform still, one nested deeper, and any source whose pixels
+  are shorter than its bounds (an external op's header) draw nothing: a
+  1×1 transparent texture the renderer keeps (every image paint needs a
+  texture to bind), never an upload of the header.
+- The ask may copy, sync and query on the device's immediate context
+  (Media Foundation's ring is a `CopyResource` and keyed-mutex calls), and
+  must leave its pipeline state as it found it: `ClackForgetState` resets
+  patch 37's cache, not the rasterizer state Gio sets once.
+- The texture must be of an sRGB format (`R8G8B8A8_UNORM_SRGB`,
+  `BGRA8Unorm_sRGB`): Gio samples images decoded to linear light, as the
+  textures it makes are.
+
+`FrameStats.Externals` counts the asks and `ExternalWraps` the wrappers a
+frame made. `ClackExternalTest` lets tests make a texture on the device,
+see its handle (`ClackNative`), hand out a reference (`ClackRetain`), read
+its reference count (`ClackRefs`) and the wrappers held (`ClackWrapped`).
+Under patch 46's partial frames each wrapper has a texture id of its own
+for the ops' signatures (`cache.nextID` when it's made, the entry's on a
+hit, `clearID` for the 1×1): a new key (the decoder's next frame) damages
+only its op's rectangle, a frame drawn again with the same key nothing.
+
+Clack's callers are behind `internal/media`'s `gio_patch51.go` /
+`gio_patch51_stock.go` pair; a stock Gio build draws the still (the
+poster). Tests: `gpu/clack_external_test.go` (`TestDrawOpsExternalImage`:
+the renderer's own `uploadImages`/`texHandle` against a device that counts
+wraps, releases, drops, forgets and every native reference: one ask per
+paint shown and none outside the viewport, one wrap per key, each ask's
+reference kept by a wrapper or dropped, the old wrapper released, the
+still without a texture, nothing for a zero or uniform still, no ask on a
+device without the interface; `TestDrawOpsExternalNestedStill`: external
+and live stills resolved in turn, too deep drawing nothing), on ci's
+linux-gio job; `gpu/headless/clack_external_test.go`
+(`TestClackExternalImage`: a texture the device made, drawn through its
+native handle under a rounded clip, an opacity layer and a rotating,
+magnifying transform, gives every pixel of an `ImageOp` of the same image;
+`TestClackExternalKeys`: the same key wraps nothing, a new key once, new
+pixels under a new key show, no texture draws the still, a zero or uniform
+still nothing; both check the texture's native reference count is back
+where it was once the wrappers go; `TestClackExternalPartial`: with partial
+frames, the same ops and key again damage nothing, a new key only the op's
+rectangle, and that frame is the whole frame's pixels), on ci's
+windows-applog (Direct3D 11, WARP) and macos (Metal) jobs; on llvmpipe
+(linux-gio) they check that the op draws its still and never asks (the
+partial test skips there). Not in `UPSTREAM.patch`.
+
 ## 52. gpu/headless: a window's framebuffer takes a new size
 
 `gpu/headless/clack_size.go` (new: `Window.SetSize`).
@@ -2556,3 +2659,99 @@ hunk gives a workflow file GitHub rejects. Keep each job whole (each
 with its own `steps:` and `exit $rc`): the simplest way is one side's
 file with the other side's jobs appended whole, as this branch did with
 ui's `theme-contrast-4` and `fileurl-dotdot` in round 2.
+
+## 53. io/input: a tag's area, and what of it its clip areas show
+
+`io/input/clack_bounds.go` (new: `Router.AreaBounds`, `Source.AreaBounds`),
+`io/input/clack_bounds_test.go` (new). Additions only.
+
+A widget can't learn where Gio drew it: its ops don't know their
+transform, and a list positions its children with offsets they don't
+see. Clack's video tiles need their share of the scrolling list they're
+in, wherever that list is (the channel, a thread pane, the Threads and
+Unreads views, Later): Slack's useScrollDockTrigger docks a playing video
+scrolled under 10% visible (Clack pauses it until the mini player comes).
+The router already holds every frame's clip areas as a tree, with their
+transforms, for hit testing.
+
+- `AreaBounds(tag)` is the window rectangle of the clip area `tag` was
+  registered on with `event.Op` in the last frame, and that rectangle
+  clipped to each clip area above it (`ClipFor`): what of it showed. false
+  for a tag that had no area. A rounded or path clip counts as its
+  bounding rectangle, as in hit testing.
+- `Source.AreaBounds` is the router's, so a widget asks it through
+  `gtx.Source` during its layout (one frame late, which a scroll's pause
+  doesn't mind).
+
+Tested by `TestClackAreaBounds` (a tile half out of a scrolled viewport),
+in every job that runs `io/input`'s tests. Not in `UPSTREAM.patch`.
+
+## 54. widget: a single-line editor centres its line, and the caret is Blink's
+
+`widget/text.go` (`textView.lineShift`, `caretRect`; `Layout`,
+`ScrollBounds`, `Dimensions` and `PaintCaret` use them),
+`widget/clack_scale.go` (`SetDeviceScale`, `DeviceScale`).
+
+Karim, 2026-11-20 (Windows, alpha.112): channel details' "Add agents and
+apps to #clack" modal drew its search's caret from near the input's top
+padding down to the placeholder's x-height. The picker gives its editor
+a 28 dp row (`layout.W` keeps the minimum height), and Gio drew the line
+at the top of the view, so text and caret sat 5 px (1x) above the
+placeholder centred in the box. Every input that hands its editor a box
+taller than its line did the same.
+
+- A single-line view taller than its line now draws the line lower, by
+  `lineShift`: the baseline goes `(height - ascent - descent)/2 + ascent`
+  from the top, ascent and descent each rounded, the half-leading
+  floored. That is where Blink puts it: a single-line input centres its
+  inner editor (html.css,
+  `input::-webkit-textfield-decoration-container`, `align-items:
+  center`), its line puts the font's content area in the middle with
+  the leading floored (`CalculateLeadingSpace`,
+  core/layout/inline/inline_box_state.cc), and the placeholder takes the
+  editor's first baseline (`BlockLayoutAlgorithm::
+  HandleTextControlPlaceholder`, core/layout/block_layout_algorithm.cc).
+  The shift is the view's vertical scroll offset (negative), so text,
+  selection, `Regions`, the caret, the IME and pointer hits all move with
+  it; `ScrollBounds` pins it, and `Dimensions().Baseline` reports the
+  moved baseline. A view no taller than its text is as before.
+- The caret is Blink's bar caret (`ComputeLocalCaretRectAtTextOffset`,
+  core/layout/inline/caret_rect.cc; `LocalCaretRectForEmptyElement`,
+  core/layout/layout_box_model_object.cc): the font's height on the
+  baseline, ascent and descent each rounded (`FontMetrics`,
+  platform/fonts/font_metrics.cc: 18 px for Lato at 15 px, where Gio's
+  rounded-up 19), `LocalFrameView::BarCaretWidth` wide (max(1, device
+  scale) device px, pixel-snapped: 1 px at 1x, where Gio drew 2, and 2 at
+  1.5x and 2x), its left edge the caret's x less half its width, rounded
+  and kept inside the line box in the text's own coordinates
+  (`ClampAndRound`: from 0 to the wider of the view and the text), then
+  scrolled, so at the start of a line it starts there and a caret
+  scrolled out of the view is clipped, never pulled onto its edge (Gio's was centred on x and cut in half by the view's
+  left edge: 1 px at 2x). `caretWidth`, the narrowest a view is, is that
+  whole width (Gio's was half of it), so an empty field laid out at its
+  natural width holds the whole caret.
+
+The device scale is the screen's alone: `BarCaretWidth` is
+`WindowToViewportScalar(1)` (local_frame_view.cc), and page zoom (Slack's
+View > Zoom) never widens the caret. Clack zooms by scaling the window's
+Metric, so its window records the unzoomed `PxPerDp` each frame with
+`widget.SetDeviceScale` (a value on the window's router, patch 15), and
+`DeviceScale` reads it back, falling back to `PxPerDp`. At 2x zoomed to
+125% or 150% the caret is 2 px, not 3.
+
+Clack's composer draws its own caret (internal/ui/composer) and takes
+the same rules there: rounded metrics, the device scale's width, its
+left edge from the pen's unrounded x.
+
+Tests: `internal/ui/views` `TestCaretAlignViewsInputs` (the agents
+invite and posting permissions pickers, the line centred in their 28 dp
+row, and the views' search box) and `internal/ui/popups`
+`TestCaretAlignPopupsField` (popups' `field`, 36/15 with an icon and
+44/18), at 1x, 1.5x and 2x in both themes, measure the caret's top,
+bottom, width and x against the placeholder's and the typed text's ink
+(`internal/ui/theme/carettest`, whose `TestCaretAlignEditorBox`,
+`TestCaretAlignZoomedWidth` and `TestCaretScrolledOutOfView` cover the
+centred line's exact place, the zoomed width and a caret swiped out of
+view), on llvmpipe, WARP and Metal:
+flake-check's `caret-align` job (dispatch with `only=caret-align`).
+Not in `UPSTREAM.patch`.

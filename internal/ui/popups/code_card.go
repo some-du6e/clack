@@ -14,6 +14,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	gtext "gioui.org/text"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -543,4 +544,243 @@ func (p *ChannelHoverCard) codeClicks(gtx layout.Context) {
 		p.h.Navigate("c/" + p.id)
 		p.done = true
 	}
+}
+
+// EntityProps is what MessageKitAttachments hands CodeChannelEntityCard
+// from an agent_channel_unfurl besides the channel: its name, whether it
+// is private, the agent (agentBotUserId) and the channel the viewer may
+// join it from (joinableFromChannelId).
+type EntityProps struct {
+	Name, AgentBotUserID, JoinableFrom string
+	Private                            bool
+}
+
+// EntityCard draws the channel's CodeChannelEntityCard where a message
+// shows an agent_channel_unfurl attachment (MessageKitAttachments, surface
+// MessageUnfurl), u being the unfurl's props, as kR8w decides: nothing
+// without session_channels; the classic card (ICrU) for a channel the
+// viewer is in or a public one, when the store has it as a code channel;
+// for any other channel (the store lacks it, or it is private and the
+// viewer isn't in it) the joinable card when the unfurl says it is
+// private, names it, and the viewer is in the channel it may be joined
+// from, else nothing. Both have .card__iFien's border: 1px otl-ter on
+// base-pry, radius 8, at most 428px wide, margin-bottom 8px; otl-sec and
+// a 0 1px 2px #0000000c shadow while hovered (the joinable card also while
+// Join has focus: .joinableCard__lf8ff:focus-within). The whole card is a
+// button to the channel.
+func (p *ChannelHoverCard) EntityCard(gtx layout.Context, maxW int, u EntityProps) (layout.Dimensions, bool) {
+	c := p.h.Core()
+	if c == nil || c.Experiment("session_channels") != "on" {
+		return layout.Dimensions{}, false
+	}
+	cv, known := p.conv()
+	joinable := !known || !channelViewable(cv) // eE: neither in it nor a public channel
+	if joinable {
+		if !u.Private || u.Name == "" || !p.memberOf(u.JoinableFrom) {
+			return layout.Dimensions{}, false
+		}
+	} else if !p.codeChannelCard(cv) {
+		return layout.Dimensions{}, false
+	}
+	// the clicks before the buttons are laid out; Join lies above the
+	// card's button as its sibling, so a click on it is Join's alone
+	if joinable && !p.joining && p.joinBtn.Clicked(gtx) {
+		p.join(u)
+	}
+	if p.codeBtn.Clicked(gtx) {
+		p.h.Navigate("c/" + p.id)
+	}
+	th := p.h.Theme()
+	cl := colorsOf(th)
+	w := min(maxW, dp(gtx, 428))
+	bw := border1(gtx)
+	rad := dp(gtx, 8)
+	m := op.Record(gtx.Ops)
+	d := func() layout.Dimensions {
+		defer op.Offset(image.Pt(bw, bw)).Push(gtx.Ops).Pop()
+		if joinable {
+			return p.joinableCard(gtx, th, cl, u, w-2*bw)
+		}
+		return p.codeCard(gtx, th, cl, cv, w-2*bw)
+	}()
+	call := m.Stop()
+	r := image.Rect(0, 0, w, d.Size.Y+2*bw)
+	border := codeTok(th, "otl-ter")
+	hot := p.codeBtn.Hovered()
+	if joinable && !p.joining { // a loading Join takes no pointer (c-button--disabled)
+		hot = hot || p.joinBtn.Hovered() || gtx.Source.Focused(&p.joinBtn)
+	}
+	if hot {
+		border = codeTok(th, "otl-sec")
+		theme.Shadow(gtx, r.Add(image.Pt(0, dp(gtx, 1))), rad, dp(gtx, 2), color.NRGBA{A: 0x0c})
+	}
+	rrect(gtx, r, rad, border)
+	inner := r.Inset(bw)
+	rrect(gtx, inner, max(rad-bw, 0), codeTok(th, "base-pry"))
+	cs := clip.UniformRRect(inner, max(rad-bw, 0)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	cs.Pop()
+	return layout.Dimensions{Size: image.Pt(w, r.Dy()+dp(gtx, 8))}, true
+}
+
+// memberOf reports whether the store has the viewer in channel id
+// (isMemberOfChannel, the joinable card's test of its origin).
+func (p *ChannelHoverCard) memberOf(id string) bool {
+	c := p.h.Core()
+	if c == nil || id == "" {
+		return false
+	}
+	cv, ok := c.Conv(id)
+	return ok && cv.Member
+}
+
+// joinLoad asks once for the agent whose avatar the joinable card shows.
+func (p *ChannelHoverCard) joinLoad(agent string) {
+	if p.joinAsked || agent == "" {
+		return
+	}
+	p.joinAsked = true
+	c := p.h.Core()
+	if c == nil {
+		return
+	}
+	run(p.h, func(ctx context.Context) (struct{}, error) {
+		c.EnsureUsers(ctx, []string{agent})
+		return struct{}{}, nil
+	}, func(struct{}, error) {})
+}
+
+// join is the Join button's handler (kR8w tN): the button loads while core
+// joins the channel from u.JoinableFrom (joinCodeChannel,
+// client.codeChannels.join), then the channel opens; a failure ends the
+// loading and toasts "Couldn’t join the channel. Please try again."
+// (Slack's Toast at the bottom right, its 6s).
+func (p *ChannelHoverCard) join(u EntityProps) {
+	c := p.h.Core()
+	if c == nil || u.JoinableFrom == "" {
+		return
+	}
+	p.joining = true
+	id, from := p.id, u.JoinableFrom
+	run(p.h, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, c.JoinCodeChannel(ctx, id, from)
+	}, func(_ struct{}, err error) {
+		p.joining = false
+		if err != nil {
+			slackToast(p.h, nsCodeCard.T("Couldn’t join the channel. Please try again."), 6*time.Second)
+			return
+		}
+		p.h.Navigate("c/" + id)
+	})
+}
+
+// PartsToaster is a Host that shows Slack's Toast (c-toast at the bottom
+// right) with rt() parts, an optional icon, for d.
+type PartsToaster interface {
+	ToastParts(parts []i18n.Part, icon string, iconCol color.NRGBA, d time.Duration)
+}
+
+// slackToast shows text in Slack's Toast, no icon, for d where the host
+// can, else as a plain toast.
+func slackToast(h Host, text string, d time.Duration) {
+	if t, ok := h.(PartsToaster); ok {
+		t.ToastParts([]i18n.Part{{Text: text}}, "", color.NRGBA{}, d)
+		return
+	}
+	h.Toast(text)
+}
+
+// Joining reports whether the card's Join is loading (tests).
+func (p *ChannelHoverCard) Joining() bool { return p.joining }
+
+// joinableCard is kR8w's card for a private code channel the viewer isn't
+// in but may join (its eE branch, div.card__iFien.joinableCard__lf8ff), w
+// wide at the origin:
+//
+//   - the header is the card's button (.headerButton__Yz1Vf, whose ::after
+//     covers the card, so a click anywhere opens the channel): padding 8px
+//     12px, gap 12px, the 40px aubergine tile with the lock icon (20px),
+//     then the name (.channelName__IXL3G: 15px bold, nowrap, an ellipsis)
+//     over the subtitle (codeSubtitle: 13px content-sec);
+//   - no live preview (session_channels_live_previews isn't assigned);
+//   - the footer (.footer__EqD4q: border-top 1px otl-ter, padding 8px
+//     12px, gap 8px, centred): the agent's 24px avatar (not interactive,
+//     no presence) and Join (.joinButton__O5cDN: margin-left auto, so at
+//     the right, and z-index 1, above the header's ::after), a primary
+//     small LoadingButton. While the join runs it is loading: disabled,
+//     the 12px spinner in place of its label, and pointer-events none, so
+//     a click there is the card's.
+func (p *ChannelHoverCard) joinableCard(gtx layout.Context, th *theme.Theme, cl *Colors, u EntityProps, w int) layout.Dimensions {
+	p.joinLoad(u.AgentBotUserID)
+	pad := dp(gtx, 12)
+	tile := dp(gtx, 40)
+	cx := pad + tile + dp(gtx, 12)
+	cw := max(1, w-pad-cx)
+	titleH := dp(gtx, 22)  // 15px × 1.46668
+	subH := dp(gtx, 19.07) // 13px × 1.46668 (max-height 1.5em: one line)
+	colH := titleH + subH
+	rowH := max(tile, colH)
+	top := dp(gtx, 8)
+	tr := image.Rect(pad, top+(rowH-tile)/2, pad+tile, top+(rowH-tile)/2+tile)
+	rrect(gtx, tr, dp(gtx, 8), codeTok(th, "plt-aubergine-5"))
+	ig := dp(gtx, 20)
+	at(gtx, image.Pt(tr.Min.X+(tile-ig)/2, tr.Min.Y+(tile-ig)/2), func(gtx layout.Context) layout.Dimensions {
+		return icon(gtx, "lock", 20, codeTok(th, "plt-aubergine-60"))
+	})
+	cy := top + (rowH-colH)/2
+	at(gtx, image.Pt(cx, cy), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, titleH)}
+		return vcenter(gtx, titleH, func(gtx layout.Context) layout.Dimensions {
+			return th.Layout(gtx, theme.TextStyle{Size: 15, Weight: theme.Bold, Color: cl.Fg, LineHeight: 22, MaxLines: 1, Wrap: gtext.WrapGraphemes}, u.Name)
+		})
+	})
+	at(gtx, image.Pt(cx, cy+titleH), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(cw, subH)}
+		return vcenter(gtx, subH, func(gtx layout.Context) layout.Dimensions {
+			return th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Regular, Color: codeTok(th, "content-sec"), LineHeight: 19.07, MaxLines: 1}, p.codeSubtitle())
+		})
+	})
+	y := top + rowH + dp(gtx, 8)
+
+	// footer: border-top 1px otl-ter, padding 8px 12px
+	b1 := border1(gtx)
+	theme.Fill(gtx, image.Rect(0, y, w, y+b1), codeTok(th, "otl-ter"))
+	y += b1
+	fy := y + dp(gtx, 8)
+	join, jd := record(gtx, func(gtx layout.Context) layout.Dimensions {
+		if p.joining {
+			return loadingButtonGrp(gtx, th, &p.joinBtn, BtnSmall, 0, grpNone)
+		}
+		return Button(gtx, th, &p.joinBtn, BtnPrimary, BtnSmall, nsCodeCard.T("Join"), "", 0)
+	})
+	rowH = jd.Size.Y
+	if u.AgentBotUserID != "" {
+		av := dp(gtx, 24)
+		rowH = max(rowH, av)
+		url := ""
+		if c := p.h.Core(); c != nil {
+			if usr, ok := c.User(u.AgentBotUserID); ok {
+				url = pfAvatarURL(usr, false)
+			}
+		}
+		at(gtx, image.Pt(pad, fy+(rowH-av)/2), func(gtx layout.Context) layout.Dimensions {
+			return avatar(gtx, p.h, url, 24)
+		})
+	}
+	jat := image.Pt(w-pad-jd.Size.X, fy+(rowH-jd.Size.Y)/2)
+	y = fy + rowH + dp(gtx, 8)
+
+	// the header's ::after: a click anywhere opens the channel
+	sz := image.Pt(w, y)
+	func() {
+		defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+		gtx := gtx
+		gtx.Constraints = layout.Exact(sz)
+		p.codeBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			pointer.CursorPointer.Add(gtx.Ops)
+			return layout.Dimensions{Size: sz}
+		})
+	}()
+	macroAt(gtx, join, jat) // Join above it (z-index 1)
+	return layout.Dimensions{Size: sz}
 }

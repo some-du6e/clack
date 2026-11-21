@@ -906,6 +906,7 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 	rad := l.dp(8)
 	radii := [4]int{rad, rad, rad, rad}
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: rad, fill: p.Placeholder, target: -1})
+	poster, posterRadii := r, radii // where the poster sits (a video draws there)
 	if f.Thumb != nil && f.Thumb.URL != "" {
 		sc := float64(l.scale)
 		if sc <= 0 {
@@ -936,6 +937,7 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 		if ir.Empty() {
 			ir = r
 		}
+		poster, posterRadii = ir, radii
 		src := l.fileStill(f) // animations off: the deanimated still (animated.go)
 		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: src.URL, radii: radii, target: tg, px: max(ir.Dx(), ir.Dy())})
 		l.fileControls(f, len(l.d.imgs)-1, r)
@@ -946,7 +948,11 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 	l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: l.dp(1), target: -1, layer: 1})
 	l.plainAdd(fileName(f))
-	if f.IsVideo && !overflow {
+	// a playable video's VideoPlayer (Options.Media) draws its own pill,
+	// and the rest of its overlay, over the poster; the "+ N" tile stays
+	// as it is
+	media := !overflow && l.mediaTile(f, r, poster, posterRadii, n, overflow)
+	if f.IsVideo && !overflow && !media {
 		l.videoPill(f, r)
 	}
 	if !overflow { // FileGallery: the overflow tile's showActions is off

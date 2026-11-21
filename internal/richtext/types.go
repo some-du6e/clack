@@ -74,19 +74,17 @@ type Span struct {
 	Off  bool // the message or channel can't be shown ("Private message", "Private channel"): not a link
 	Pre  int  // MessageMention with Lock, ChannelTab: bytes of Text before the channel name
 
-	// ChannelID, ThreadTS (MessageMention): the element's channel_id and
-	// thread_ts (ID is its message_ts); Slack's MessageMention jumps with
-	// them.
-	ChannelID, ThreadTS string
-
 	// Canvas (canvasslug.go): the slug's icon and label (behind a
 	// pointer, so Spans stay comparable).
 	Icon  string
 	Parts *SpanParts
 
 	// ChannelTab (tabslug.go): the channel's icon before its name ("" for
-	// "#name") and the channel's name.
+	// "#name") and the channel's name. MessageMention (msgmention.go):
+	// Chan is the linked message's conversation id (ID its ts), ThreadTS
+	// its thread_ts; Slack's MessageMention jumps with the three.
 	ChIcon, Chan string
+	ThreadTS     string
 
 	// Hidden (User): a member the viewer hid, in a rollup or a system
 	// message's text (RollupName, boot-shared quVX): Text is "Name hidden"
@@ -352,7 +350,7 @@ type File struct {
 	Size                                    int64
 	URL, Download, Permalink                string
 	Thumb                                   *Image // best thumb for images/videos/pdfs
-	IsImage, IsVideo, IsAudio, IsSnippet    bool
+	IsImage, IsVideo, IsAudio, IsSnippet    bool   // IsVideo: Slack's fileIsPlayableVideo
 	Preview                                 string
 	Lines                                   int
 	DurationMS                              int
@@ -371,6 +369,15 @@ type File struct {
 	// FileActions' Expand need.
 	Still     *Image
 	Deanimate bool
+	// A playable video's (IsVideo; URL is its progressive source, mp4 ||
+	// url_private, and Thumb its poster, thumb_video_ts ?? thumb_video):
+	// where the viewer stopped watching it (media_progress.offset_ms) and
+	// whether they watched it to the end (media_watched), which make the
+	// player start there or at 0 (xnwb).
+	MediaOffsetMS int
+	MediaWatched  bool
+	// Salesforce is is_salesforce_file: its progress is never sent (9NKl)
+	Salesforce bool
 	// Pending: the viewer's own upload, not finished yet (drawn at .5
 	// with a spinner, c-pending_files__thumbnail--pending); Percent is its
 	// percentComplete.

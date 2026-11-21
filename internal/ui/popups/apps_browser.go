@@ -417,7 +417,7 @@ func (b *AppsBrowser) filter(gtx layout.Context, th *theme.Theme, cl *Colors) la
 		g := gtx
 		g.Constraints = layout.Exact(image.Pt(w-x-dp(gtx, 10), dp(gtx, 22)))
 		if b.q.Len() == 0 {
-			para(g, th, 15, 22, theme.Regular, cl.Placeholder, nsAppsBrowser.T("Search by app name or category"), 1)
+			th.EditorPlaceholder(g, 15, cl.Placeholder, nsAppsBrowser.T("Search by app name or category")) // on the editor's centred line (Gio patch 54)
 		}
 		th.Editor(g, &b.q, unit.Sp(15), cl.Fg, cl.FocusRing)
 	}()
