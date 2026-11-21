@@ -54,7 +54,7 @@ jobs:
             fi
           done
           if [ -z "$found" ]; then
-            echo "::error::only=\"$ONLY\" starts no job's id, so every job would be skipped: $(echo $ids)"
+            echo "::error::only=\"$ONLY\" starts no job's id, so every job would be skipped: $(echo "$ids" | tr '\n' ' ')"
             exit 1
           fi
           echo "only=$ONLY runs:$found"
