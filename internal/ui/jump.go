@@ -24,6 +24,13 @@ func (a *App) jumpToMessage(ch, ts, thread string) {
 	if ch == "" {
 		return
 	}
+	// a file channel's message is its canvas or its list, in the
+	// container the jump starts in (canvas_open.go jumpWhere). This whole
+	// jump is the fallback for a file that turns out to be neither, so a
+	// thread still opens at the reply
+	if (thread != "" || ts != "") && a.jumpInstead(ch, thread, ts, a.jumpWhere(), func() { a.jumpToMessage(ch, ts, thread) }) {
+		return
+	}
 	prev := a.router.Current()
 	switch {
 	case thread != "":
@@ -55,6 +62,7 @@ func (a *App) JumpPane(ch, thread, ts string) {
 	if ch == "" || ts == "" {
 		return
 	}
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if thread != "" {
 		if j, ok := a.convoFor(ch, thread).list.(interface{ JumpTo(ts string, flash bool) }); ok {
 			j.JumpTo(ts, true)

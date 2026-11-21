@@ -159,7 +159,9 @@ func TestSidebarDocRows(t *testing.T) {
 // lists_pin_to_sidebar alone: the list is a document row with the
 // bullet-list icon; the canvas stays a private channel row (Slack wants
 // programmable_sidebar for a canvas document row), its name as plain
-// text, and opens as a conversation.
+// text. Its click is the row's toChannel, which Slack's
+// RedirectFileChannel turns into the canvas once the file is known
+// (canvas_open.go): files.info has answered by then.
 func TestSidebarDocsListsPinOnly(t *testing.T) {
 	e := docsEnv(t, map[string]string{core.ExpListsPinToSidebar: "on"})
 	a := e.a
@@ -182,8 +184,15 @@ func TestSidebarDocsListsPinOnly(t *testing.T) {
 		t.Errorf("the canvas row didn't draw its name %q as text", fakeslack.CanvasSnacksTitle)
 	}
 	e.organizeShot(t, "sidebar-docs-lists-pin-light")
+	// the row's files.info is the redirect's too (Slack's one file store):
+	// the click asks no second files.info and doesn't wait
+	if _, known := a.Core().S.KnownCanvasRef(fakeslack.CanvasSnacks); !known {
+		t.Errorf("the sidebar's files.info answer isn't in the store the redirect reads")
+	}
 	e.clickWith(e.sbRowPoint(t, fakeslack.FileChanSnacks), 0)
-	e.until("the conversation", 10*time.Second, func() bool { return a.router.Current().Channel() == fakeslack.FileChanSnacks })
+	e.until("the canvas (RedirectFileChannel's toCanvas)", 10*time.Second, func() bool {
+		return string(a.router.Current()) == "docs/"+fakeslack.CanvasSnacks
+	})
 	e.clickWith(e.sbRowPoint(t, fakeslack.FileChanKitchen), 0)
 	e.until("the list view", 10*time.Second, func() bool { return string(a.router.Current()) == "lists/"+fakeslack.ListKitchen })
 	a.setDark(true)

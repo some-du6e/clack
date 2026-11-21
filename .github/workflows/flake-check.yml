@@ -1972,3 +1972,36 @@ jobs:
           go test -count=$COUNT -v -timeout 15m -run '^(TestInspectHuddleWindow|TestInspectScreensharePopout|TestInspectPresenterPanel|TestInspectInviteWindow|TestInspectJoinPreview)$' ./internal/ui/huddleui || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast|TestInspectSubWindowsGate)$' ./internal/ui || rc=1
           exit $rc
+
+  # canvas-mention: the timing tests of a navigation into a canvas's or a
+  # list's file channel (ui/canvas_open.go): files.info and messages.list
+  # held back, a 4 s wait that ends, jumps dropped by a newer click, the
+  # split view's back stack after a wait. Dispatch with only=canvas-jumps.
+  canvas-jumps:
+    # dispatch only: its tests' files aren't in the push paths
+    if: ${{ inputs.only != '' && startsWith('canvas-jumps', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      UI_TESTS: '^(TestCanvasJumpWaitsForFilesInfo|TestCanvasJumpWaitEnds|TestCanvasJumpDroppedByAnotherOpen|TestCanvasJumpFetchFailureOpensNothing|TestSplitFileWaitKeepsBackStack|TestActivityPaneKeepsViewWhileJumpResolves|TestActivityPaneJumpDropped|TestActivityPaneKeepsListWhileJumpWaits|TestActivityCanvasMentionOpensThread|TestCanvasMentionMessageOpensThread|TestListFileChannelOpensList|TestFileLinkInSplitStaysInSplit|TestNavigationWaitDropped|TestHiddenFilesDontWait)$'
+      VIEWS_TESTS: '^(TestActivityCanvasMentionRowLateFilesInfo|TestActivityFileItemFollowsLateView|TestActivityCanvasMentionClickInbox)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: ui, views (COUNT runs each)
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          rc=0
+          # one verbose pass names every test that ran, then COUNT quiet ones
+          xvfb-run -a go test -count=1 -v -timeout 20m -run "$UI_TESTS" ./internal/ui 2>&1 | grep -E '^(=== RUN|--- (PASS|FAIL)|FAIL|ok)|_test\.go:[0-9]+:' || true
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 20m -run "$VIEWS_TESTS" ./internal/ui/views || rc=1
+          exit $rc

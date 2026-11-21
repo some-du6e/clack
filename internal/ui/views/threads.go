@@ -40,6 +40,8 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/openurl"
@@ -122,8 +124,11 @@ type thrCard struct {
 	// card again (membersIn)
 	waits []string
 	// icon is getChannelIconType's name for a channel's header
-	// (InlineChannelEntity), "" for a DM or group DM
-	icon string
+	// (InlineChannelEntity), "" for a DM or group DM; spans the name a
+	// file channel's entity draws (ChannelName: a canvas's title, a
+	// name's emoji), nil for text
+	icon  string
+	spans []richtext.Span
 
 	comp  *composer.Composer // the real reply composer, made on first click
 	compY int                // composer top within the list element (px)
@@ -1308,6 +1313,13 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 			c.built = false
 		}
 	}
+	if c.built && c.icon == "file" && v.h.Core() != nil {
+		// a file channel whose file files.info hadn't named: again once it
+		// has (its "names" draws the page)
+		if _, known := v.h.Core().S.KnownCanvasRef(core.FileOfChannel(t.Channel)); known {
+			c.built = false
+		}
+	}
 	if c.built && len(c.waits) > 0 && v.waitOver(c.waits) {
 		// a member the card couldn't name is in the store now (or known
 		// not to exist) before a "names" said so: make it again
@@ -1336,7 +1348,16 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 		if isDMKind(kind) {
 			c.also = nsThreads.T("Also send as direct message")
 		}
-		c.icon = channelIcon(v.h.Core(), t.Channel, kind)
+		c.icon, c.spans = channelIcon(v.h.Core(), t.Channel, kind), nil
+		// a canvas's or a list's file channel is its InlineChannelEntity
+		// (getChannelIconType's file channel icon, ChannelName's title or
+		// emoji), never a private channel's lock and raw name
+		if app := v.h.Core(); app != nil && app.IsFileChannelID(t.Channel) {
+			if ic, ok := app.KnownChannel(t.Channel); ok {
+				e := chanent.Of(t.Channel, ic, nil)
+				c.icon, c.name, c.spans = e.Icon, e.Text, e.Spans
+			}
+		}
 		c.built = true
 	}
 	return c
@@ -1391,7 +1412,12 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef, y0 in
 								}
 								nst = thrHeaderEntity.Name(ent)
 							}
-							name := func(gtx C) D { return v.para(gtx, 15, 22, nameW, v.p.Text, 1, c.name) }
+							name := func(gtx C) D {
+								if len(c.spans) > 0 {
+									return v.canvasTitle(gtx, c.spans, 15, nameW, v.p.Text)
+								}
+								return v.para(gtx, 15, 22, nameW, v.p.Text, 1, c.name)
+							}
 							var d D
 							if nst.Active() {
 								d = nst.Wrap(gtx, name)
