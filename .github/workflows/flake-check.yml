@@ -307,6 +307,36 @@ jobs:
           go test -cpu 1 -count=$COUNT -run 'TestDraftKeepsAttachedFiles$' ./internal/ui/composer
           go test -cpu 1 -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
 
+  # The video players' concurrency under the race detector (round 3's
+  # review: Handle.loop's onEvent taking the controller's lock across the
+  # UI goroutine, handle goroutines and time.AfterFunc unmounts, the
+  # RangeSource's two GETs, the fake backend, Base.Emit/CloseEvents):
+  # internal/media and videoplayer whole, then ui's video tests on the
+  # fake backend. Dispatch with only=race-video (no other job's id starts
+  # with "race-video", nor this one with "video").
+  race-video:
+    if: ${{ !inputs.only || startsWith('race-video', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: media and videoplayer under -race
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -race -count=$n -timeout 30m ./internal/media/ ./internal/ui/videoplayer/
+      - name: ui's video tests under -race (the fake backend)
+        if: ${{ !cancelled() }}
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -race -count=$n -timeout 40m -run '^TestVideo' ./internal/ui/
+
   # the members cache (store/members.go) and its unknown member fetcher
   # (core/members.go): eviction order, the pass's schedule, users/info's
   # chunks and pending ids, and every main view drawing its people again
@@ -330,6 +360,32 @@ jobs:
         run: |
           go test -count=1 -v -timeout 20m -run 'TestEvictedMembersComeBack$' ./internal/ui
           go test -count=$COUNT -timeout 60m -run 'TestEvictedMembersComeBack$' ./internal/ui
+
+  # members-tab: channel details' Members tab after someone joins or leaves
+  # (core/membership_counts.go, views/details.go remountMembers): the tab's
+  # count follows at once and a burst of joins reads users/counts at most
+  # twice (2 s throttle); the list is fetched again when the tab is shown
+  # again; the rows' names under display_real_names.
+  members-tab:
+    if: ${{ !inputs.only || startsWith('members-tab', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: views (the Members tab over fakeslack's rosters), one verbose run then COUNT
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 10m -run '^TestMembersTab' ./internal/ui/views || rc=1
+          go test -count=$COUNT -timeout 40m -run '^TestMembersTab' ./internal/ui/views || rc=1
+          exit $rc
 
   image-send:
     if: ${{ !inputs.only || startsWith('image-send', inputs.only) }}
@@ -1448,6 +1504,30 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestThreadReplyLatency$' ./internal/ui || rc=1
           exit $rc
 
+  # agent-blocks: the agent block and label tests (app-tasks-tab rounds
+  # 2-3): plan and task content cut with Show more, MCP cards closing,
+  # height transitions on update, task icons, the stopped label, through
+  # core, richview, messages and blockkit. Dispatch with only=agent-blocks.
+  agent-blocks:
+    if: ${{ !inputs.only || startsWith('agent-blocks', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core, richview, messages, blockkit: the agent tests, COUNT times"
+        run: |
+          rc=0
+          go test -count=$COUNT -timeout 30m -run 'TestAgent' ./internal/core ./internal/ui/richview || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run 'TestAgent' ./internal/ui/messages ./internal/ui/blockkit || rc=1
+          exit $rc
+
   # toast-names: a toast names the members its message mentions, those the
   # store didn't hold when the message came too (α.110's review: "@U07DANA
   # can you join?"; core announces a message before fetching anyone it
@@ -1612,6 +1692,32 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -timeout 30m -run '^(TestDMsBadgeLikeSlack|TestDMBadgesClassicLikeSlack|TestDMBadgeMemberLoadsLate|TestTitleDockTaskbarAgreeLikeSlack|TestActivityRailBadgeLikeSlack)$' ./internal/ui
 
+  # The Slack system user's DM (Karim's 2026-11-21 "got a message from
+  # system slack and didnt notice until i opened normal slack"): its
+  # sidebar row under Apps, bold with its unread count as the badge (fgSa,
+  # 9dui), client.counts' IM and group DM rule (mtwS applyCountsToChannels:
+  # mention_count || has_unreads), an app's posts on the socket with no
+  # user, im_marked and a restart, over fakeslack's Size.SystemDM.
+  # Dispatch with only=system-dm-row.
+  system-dm-row:
+    if: ${{ !inputs.only || startsWith('system-dm-row', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "store: client.counts' IM and group DM unread count, COUNT runs"
+        run: go test -count=$COUNT -v -run '^TestCountsDMUnreadWithoutMentionsIsOne$' ./internal/store
+      - name: "ui: the system DM's row and counts over fakeslack's Size.SystemDM, COUNT runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -timeout 30m -run '^(TestSystemDMRowLikeSlack|TestSystemDMUnreadWithoutMentionsLikeSlack)$' ./internal/ui
+
   # plugin-render-2: a reply also sent to the channel, in the channel's list
   # and its thread pane, gets a plugin root per pane (one shared root got
   # each pane's props in turn and rendered every frame), and so does each
@@ -1652,6 +1758,74 @@ jobs:
           go test -count=$COUNT -v -timeout 20m -run '^(TestComposersDrawInTheirListsPanes|TestPatchedViewShowsUnderQuietFrames)$' ./internal/ui || rc=1
           exit $rc
 
+  # The inline video player on Clack's real window (internal/ui
+  # TestRealWindowVideoFrames): Media Foundation on windows-latest,
+  # AVFoundation on macos-latest play #files-gallery's video in App.Run's
+  # own window; quiet frames, partial frames inside the tile, the paused
+  # budget. One App per process, so each run is its own process; at most
+  # 3. Dispatch with only=rw-video.
+  rw-video:
+    if: ${{ !inputs.only || startsWith('rw-video', inputs.only) }}
+    name: "rw-video (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: the inline player on the real window (TestRealWindowVideoFrames)
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -c -o "$RUNNER_TEMP/ui-video.test" ./internal/ui || exit 1
+          cd internal/ui
+          rc=0
+          for i in $(seq 1 "$n"); do
+            CLACK_REAL_WINDOW_TESTS=1 CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-video.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowVideoFrames$' || rc=1
+          done
+          exit $rc
+
+  # Video playback's backends (internal/media/mf, internal/media/avf): the
+  # fixtures played by the OS's own decoder into a headless Gio window,
+  # Media Foundation on windows-latest (Direct3D 11 on the Basic Render
+  # Driver), AVFoundation on macos-latest (Metal): colours, metadata,
+  # events, seek, the paused budget, the end, close. At most 3 runs (each
+  # plays the fixture several times). Dispatch with only=video.
+  video:
+    if: ${{ !inputs.only || startsWith('video', inputs.only) }}
+    name: "video (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: the backends play the fixtures (internal/media/...)
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+        run: |
+          n=$COUNT; [ "$n" -gt 3 ] && n=3
+          go test -count=$n -v -timeout 30m ./internal/media/...
+
   # What one frame costs the GPU (branch gpu-frame-cost): Clack's window
   # rendered by each backend (Mesa llvmpipe's GL on Linux, WARP's Direct3D
   # 11 on Windows, the runner's Metal on macOS). The placement probe logs
@@ -1686,7 +1860,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
-          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPlacementNoise|TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects)$' gioui.org/gpu/headless
+          "${x[@]}" go test -count=1 -v -timeout 10m -run '^(TestClackPlacementNoise|TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial)$' gioui.org/gpu/headless
       - name: the shadows and the panel's corners, old and new (internal/ui/theme TestFrameCostPixels)
         if: ${{ !cancelled() }}
         shell: bash
@@ -1890,6 +2064,39 @@ jobs:
           go test -race -count=1 -run '^(TestDMsPeekCardTokens|TestThemeTokensCascadePerVariable|TestDMsListHoverByMode)$' ./internal/ui/views || rc=1
           exit $rc
 
+  # Plugins' Slack API calls settle the way Slack's API request does
+  # (client-boot 0hZc apiCall, QCxN, Umoo, 7quX; build 35b42de8b870): the
+  # response with its request ids, and every rejection (err.data the
+  # answer's JSON, Slack's messages, a 429's and internal_error's 3 tries,
+  # a rate-limit code failing at once, no answer, a timeout, a page that
+  # isn't JSON), for Taut and Slick plugins, over internal/fakeslack.
+  # Dispatch with only=plugin-api.
+  plugin-api:
+    if: ${{ !inputs.only || startsWith('plugin-api', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      TAUT_TESTS: '^(TestAPICallNotOkLikeSlack|TestAPICallResolvesLikeSlack|TestAPICallRateLimitedLikeSlack|TestAPICallRetriesLikeSlack|TestUserAPIErrorsLikeTaut|TestPresenceSubscriptionLikeSlack)$'
+      SLICK_TESTS: '^(TestSlickAPICallErrorsLikeSlack|TestSlickReduxThunkNames|TestSlickPresenceThunks)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: taut, slick (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=1 -v -run "$SLICK_TESTS" ./internal/slick || rc=1
+          go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=$COUNT -run "$SLICK_TESTS" ./internal/slick || rc=1
+          exit $rc
+
   # Session-cookie GETs stay on Slack's file paths (slack.FileURL): a file
   # host's pages (files.slack.com/ssb/redirect), dot segments however many
   # times a server decodes them, look-alike, NFKC and overlong dots and
@@ -1920,6 +2127,62 @@ jobs:
           go test -count=1 -v -run "$TAUT_TESTS" ./internal/taut || rc=1
           go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
           go test -count=$COUNT -run "$TAUT_TESTS" ./internal/taut || rc=1
+          exit $rc
+
+  # dm-senders: a DM's rows name their senders as Slack's do (Karim,
+  # 2026-11-19: "unknown author for dms"). A DM opened by its route, by a
+  # notification's jump and by a launch that restores it while boot's
+  # calls are out names its partner (unknown, users/info out: the loading
+  # bar), a partner users/info doesn't return is the non-existent bar, and
+  # a message with no user, username or bot is the unknown bar, never the
+  # word "Unknown". Dispatch with only=dm-senders.
+  dm-senders:
+    if: ${{ !inputs.only || startsWith('dm-senders', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: DM senders on every path (one verbose run, then COUNT)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestDMSendersLikeSlack$' ./internal/ui || rc=1
+          exit $rc
+
+  # dm-senders-slugs: a DM's message links ("💬" pills) name the linked
+  # message's own sender as Slack's getMessageSlugAttributes does, read
+  # from the messages store and fetched by id (messages.list) when it
+  # isn't there: "Private message" while that is out, "Unknown author"
+  # only while the sender's users/info is, never where Slack names them.
+  # A link with no author_id, one whose author_id nobody fetched, the
+  # thread pane, and a toast's text (the label, or the link for a message
+  # Slack doesn't have). Dispatch with only=dm-senders (with dm-senders)
+  # or only=dm-senders-slugs.
+  dm-senders-slugs:
+    if: ${{ !inputs.only || startsWith('dm-senders-slugs', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: message links in a DM, the thread pane and a toast (one verbose run, then COUNT)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
           exit $rc
 
   # inspect-blur-fast (2026-11-18, round 2 2026-11-19): the inspect tool's
@@ -2004,6 +2267,41 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 20m -run "$UI_TESTS" ./internal/ui 2>&1 | grep -E '^(=== RUN|--- (PASS|FAIL)|FAIL|ok)|_test\.go:[0-9]+:' || true
           xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run "$VIEWS_TESTS" ./internal/ui/views || rc=1
+          exit $rc
+
+  # system-dm-avatar (2026-11-21): the Slack system user (USLACK) drawn as
+  # Slack's bundled logo (getMemberProfileImage 6Knt: n8qp) everywhere:
+  # imgcache rasterizes that one shipped SVG and no other; the store's
+  # avatar rule; no badge on a USLACK message (JA+h memberIsHuman ||
+  # isSlackSystemUser); its card renders nothing and its presence is
+  # Slackbot's heart; the system DM's sidebar row, header and bot_message
+  # rows over fakeslack's fixture, pixels on the headless GPU.
+  # Dispatch with only=system-dm-avatar.
+  system-dm-avatar:
+    if: ${{ !inputs.only || startsWith('system-dm-avatar', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: imgcache, store, core, popups, ui (COUNT runs)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestBundledSlackLogoDraws|TestNetworkSVGStaysUndecodable|TestRasterSVGRefusesWhatItCannotDraw|TestParsePathData)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -v -run '^TestAvatarURLSlackSystemUser$' ./internal/store || rc=1
+          go test -count=$COUNT -v -run '^(TestSenderBadge|TestSenderIdentity)$' ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSlackSystemUserCard$' ./internal/ui/popups || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence)$' ./internal/ui || rc=1
           exit $rc
 
   # caret-align (2026-11-20): the caret in Clack's inputs against their

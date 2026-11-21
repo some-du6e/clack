@@ -107,8 +107,9 @@ func (h *botHosts) take() []string {
 // rest of the session. Slack's fetchBotsById asks the edge cache's
 // users/info first and bots.info only for the rest, with the messages'
 // app ids; Clack asks the team host once more for what the enterprise
-// host doesn't know, and forgets ids whose request failed on the way so
-// the next draw asks again.
+// host doesn't know, forgets ids whose request failed on the way so the
+// next draw asks again, and keeps the ones nothing returned as
+// non-existent bots, as the UnknownFetchManager's upsertNonExistent does.
 func TestResolveBotsLikeFetchBotsByID(t *testing.T) {
 	h := &botHosts{}
 	srv := h.serve(t)
@@ -130,8 +131,14 @@ func TestResolveBotsLikeFetchBotsByID(t *testing.T) {
 	_, bots := a.S.TakeMissingNames()
 	got := a.resolve(ctx, nil, nil, bots)
 	sort.Strings(got)
-	if want := []string{"BEDGE01", "BORG01", "BWS01"}; !slices.Equal(got, want) {
+	// BGONE01, which nothing returns, comes back as a non-existent bot (the
+	// UnknownFetchManager's upsertNonExistent): "names" draws again what
+	// drew it unknown
+	if want := []string{"BEDGE01", "BGONE01", "BORG01", "BWS01"}; !slices.Equal(got, want) {
 		t.Errorf("resolved %v, want %v", got, want)
+	}
+	if !a.S.BotNonexistent("BGONE01") {
+		t.Error("BGONE01, which neither host returned, isn't a non-existent bot")
 	}
 	want := []string{
 		"edge BEDGE01,BGONE01,BORG01,BWS01",        // the edge cache first, every id
@@ -141,8 +148,8 @@ func TestResolveBotsLikeFetchBotsByID(t *testing.T) {
 	if reqs := h.take(); !slices.Equal(reqs, want) {
 		t.Errorf("requests\n%s\nwant\n%s", strings.Join(reqs, "\n"), strings.Join(want, "\n"))
 	}
-	for _, id := range got {
-		if b, ok := a.S.Bot(id); !ok || b.Name != "bot "+id || b.Icon == "" {
+	for _, id := range []string{"BEDGE01", "BORG01", "BWS01"} {
+		if b, ok := a.S.Bot(id); !ok || b.Name != "bot "+id || b.Icon == "" || a.S.BotNonexistent(id) {
 			t.Errorf("%s stored as %+v %v", id, b, ok)
 		}
 	}
@@ -164,6 +171,9 @@ func TestResolveBotsLikeFetchBotsByID(t *testing.T) {
 	_, bots = a.S.TakeMissingNames()
 	if got := a.resolve(ctx, nil, nil, bots); len(got) != 0 {
 		t.Errorf("resolved %v through a failed request", got)
+	}
+	if a.S.BotNonexistent("BNET01") {
+		t.Error("a bot whose request failed is non-existent: it's asked again instead")
 	}
 	if reqs := h.take(); !slices.Equal(reqs, []string{"edge BNET01", "ent BNET01"}) {
 		t.Errorf("requests %v (no team host retry after a failed request)", reqs)

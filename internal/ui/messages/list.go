@@ -164,6 +164,8 @@ type listState struct {
 	sel               selection
 	sb                scrollbar
 	pendingJump       string
+	// metric is the last layout's (placeJump runs in sync, before it)
+	metric unit.Metric
 	// sendCID is the client_msg_id of the viewer's message from the
 	// composer beside the list, which the list jumps to once it's in
 	// (ChannelView.JumpToOwnSend); sendAt is when it went out.
@@ -738,6 +740,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.hb.ensureLoaded(s.m)
 		s.sync(h, now)
 	}
+	s.metric = gtx.Metric
 	s.placeSendJump(gtx, now)
 	sweepRows(now)
 	size := gtx.Constraints.Max
@@ -924,6 +927,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
 	area.Pop()
+	s.reportMedia() // the video tiles' share on screen (file_rects.go)
 
 	// jumping to a message older than what's loaded: page back until found
 	// (bounded), then sync() positions on it.
@@ -2114,22 +2118,39 @@ func (s *listState) editComposer() *composer.Composer {
 	return nil
 }
 
-// placeJump puts a pending jump's message near the top of the view
-// (two rows above it) once the built items hold it, and flashes it from
-// then.
+// placeJump puts a pending jump's message in place once the built items
+// hold it, and flashes it from then: in a conversation ANCHOR_OFFSET under
+// the list's top (jumpPosition), in a thread near the top of the view (two
+// rows above it).
 func (s *listState) placeJump(now time.Time) {
 	if s.pendingJump == "" {
 		return
 	}
 	for i, it := range s.items {
 		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == s.pendingJump {
-			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+			s.list.Position = s.jumpPosition(i)
 			s.positioned = true
 			s.pendingJump = ""
 			s.highlightAt = now
 			return
 		}
 	}
+}
+
+// jumpPosition is where a jump to item i puts the list. A conversation's
+// is BaseMessageList's anchor for its startTs: the message's top
+// ANCHOR_OFFSET under the list's top (getMessageListLayout, IY25: 64; 120
+// only for the degraded list), as a send's (sendJumpOffset), with Gio's
+// List clamping at the ends as bracketScrollTop does (a message near the
+// end sits lower, the end at the bottom). Two rows above it, as before,
+// put #files-gallery's video under its tall neighbours, 4% of it on
+// screen after the mini player's Jump to message (TestVideoPipJump). A
+// thread keeps two rows above it.
+func (s *listState) jumpPosition(i int) layout.Position {
+	if s.thread {
+		return layout.Position{BeforeEnd: true, First: max(0, i-2)}
+	}
+	return layout.Position{BeforeEnd: true, First: i, Offset: -s.metric.Dp(sendJumpOffset)}
 }
 
 // Sending from the composer under a channel (Slack's sendMessage thunk,

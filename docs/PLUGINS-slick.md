@@ -127,7 +127,7 @@ Everything in `SlickAPI` (src/app/pluginManager.ts) and `$slick`:
 | `addSendCheck(blocks, {channelId, threadTs})` | Taut's send checks; `ComposerContext.Blocks` carries the message |
 | `storage` (get/set/delete/clear/keys/entries), `Cache(name, ttl, max)`, `storedFileUrl` (stored blobs, or the `file` setting's path) | js over Taut's data store |
 | `settings.set` (saved now, applied after), `settings.addTab` | manager.go, Taut's Preferences tabs |
-| `userAPI`, `fetch` (`{status, body}`, no CORS), `loader` (`'electron'`), `Store`, `id` | Taut / jsrt |
+| `userAPI` (Slick's own: `[slick]` messages, the answer's JSON whole in `failed:`, its 429 and rate-limit retries, `res.json()`'s SyntaxError, fetch's `Failed to fetch`; 05_slack.js `makeUserAPI`), `fetch` (`{status, body}`, no CORS), `loader` (`'electron'`), `Store`, `id` | Taut / jsrt |
 | `main.call` / `main.on` | the main half in the same runtime, args and results cloned like IPC, Slick's error strings |
 | Slick's `SlickBridge` (`getBridge()`) for plugins bundling Slick's shared code | js/10_plugin.js |
 

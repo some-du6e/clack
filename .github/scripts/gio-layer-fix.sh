@@ -27,3 +27,7 @@ for p in "${pkgs[@]}"; do
 	fi
 	echo "$p on stock Gio v0.10.3: $(grep -m1 'panic: runtime error' "$stock/out")"
 done
+# internal/media's calls into patches 35 and 51 are behind its
+# gio_patch51*.go pair: it and its tests build on stock Gio too
+go vet -modfile="$stock/go.mod" -tags stockgio ./internal/media
+echo "internal/media builds on stock Gio v0.10.3"
