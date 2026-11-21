@@ -125,3 +125,65 @@ func TestBucketReadChunkEdges(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A whole message bucket read leaves the JS thread to the other work
+// between its chunks: a plain task (a render) posted while a bucket whose
+// messages are slow to encode is read waits about one chunk and the
+// in-order lane's slice, not the whole read. Read in one call, the
+// bucket's encoding held the thread for all of it: a send's checks
+// waited behind one that encoded a whole bucket (29 ms on the runners,
+// with Message Logger's injected messages).
+func TestBucketReadLeavesTheThreadTurns(t *testing.T) {
+	h := newHarness(t)
+	const n = 1000
+	msgs := make([]slack.Message, n)
+	for i := range msgs {
+		msgs[i] = slack.Message{Type: "message", TS: fmt.Sprintf("1700005%03d.000100", i), User: "UALICE", Text: fmt.Sprintf("message %d", i)}
+	}
+	h.app.S.SetLatest(chAnn, msgs, false)
+	// every fourth message costs a millisecond or two to encode (toJSON,
+	// which encode honours) once __slow is on: a 1001-entry bucket takes
+	// about 250 such
+	h.js(`globalThis.__injText = 'first'; globalThis.__slow = false; globalThis.__k = 0
+		globalThis.__un = api.messages.injectMessages(() => [{type: 'message', channel: '` + chAnn + `', ts: '1700006000.000100', user: 'UBOB', text: globalThis.__injText}])
+		globalThis.__un2 = T.redux.patchSlice('messages', (ch, b) => (b && typeof b === 'object' ? T.redux.mapEntries(b, (ts, m) => (!globalThis.__slow || !m || typeof m !== 'object' ? m : {
+			...m,
+			toJSON() {
+				if (globalThis.__k++ % 4 === 0) { const t0 = Date.now(); while (Date.now() - t0 < 2) {} }
+				return m
+			},
+		})) : b))
+		return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	eventually(t, 10*time.Second, "the injected message", func() bool { return injectedText(h, chAnn) == "first" })
+	// the next read maps every message again, slow to encode
+	h.js(`globalThis.__injText = 'second'; globalThis.__slow = true; api.redux.refresh(); return 1`)
+	r := h.rt()
+	t0 := time.Now()
+	h.tt.mirror.invalidate("messages", chAnn)
+	var worst time.Duration
+	probes := 0
+	for injectedText(h, chAnn) != "second" {
+		if time.Since(t0) > 30*time.Second {
+			t.Fatal("the bucket never came back")
+		}
+		p0 := time.Now()
+		ran := make(chan struct{})
+		r.rt.Post(func(*jsrt.Ctx) { close(ran) })
+		select {
+		case <-ran:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a plain task never ran")
+		}
+		worst = max(worst, time.Since(p0))
+		probes++
+	}
+	read := time.Since(t0)
+	t.Logf("a %d-entry bucket read in %v, slow to encode; %d plain tasks posted meanwhile, the longest waited %v", n+1, read.Round(time.Millisecond), probes, worst.Round(time.Millisecond))
+	if read < 200*time.Millisecond {
+		t.Fatalf("the read took %v: too fast to tell whether it held the thread", read)
+	}
+	if limit := 150 * time.Millisecond; worst > limit {
+		t.Errorf("a plain task waited %v while the bucket was read (want under %v): the read held the JS thread in one piece", worst, limit)
+	}
+}
