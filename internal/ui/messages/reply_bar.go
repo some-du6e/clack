@@ -18,9 +18,10 @@ import (
 // build 407aff01646b): the repliers' faces, "N replies", the last reply
 // ("View thread" on hover) and a caret.
 
-// ThreadComposerFocuser is optional: the reply bar opens the thread with
-// its reply composer focused (Slack's openThread sets focusInput for the
-// thread, and the pane's input focuses on mount).
+// ThreadComposerFocuser is optional: the find bar gives the focus back to
+// the thread's reply composer when it closes. (The reply bar's openThread
+// sets focusInput instead, popups.ThreadFocusInput: the box focuses as it
+// mounts.)
 type ThreadComposerFocuser interface {
 	FocusThreadComposer(channel, ts string)
 }
