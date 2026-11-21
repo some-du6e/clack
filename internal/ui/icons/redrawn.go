@@ -8,6 +8,9 @@ package icons
 // to its Slack glyph (slackRef names it) in light and dark at 1x and 2x.
 // A Clack name that differs from the Slack glyph's says which it
 // follows; Clack names that share a glyph reuse its parts.
+// presenceZ is the z every Slack DND presence glyph carries top right.
+const presenceZ = "M15.433 3.94a.75.75 0 0 0-.683-.44h-3.5a.75.75 0 0 0 0 1.5h1.847l-2.411 2.756A.75.75 0 0 0 11.25 9h3.5a.75.75 0 0 0 0-1.5h-1.847l2.412-2.756a.75.75 0 0 0 .118-.804Z"
+
 func init() {
 	reg("add-reaction", s("M18.25 4.5 H12.75"), s("M15.5 1.75 V7.25"), s("M9.75 3.79 A7.25 7.25 0 1 0 16.21 10.25"), disc(6.75, 9.25, 1.25), disc(11.25, 9.25, 1.25), fl("M11.32 12.75 A2.5 2.5 0 0 1 6.68 12.75 H11.32 Z"))
 	// Slack's ai-agents
@@ -341,6 +344,14 @@ func init() {
 	reg("star-filled", fl("M10 2.25 A1.85 1.85 0 0 1 11.36 3.39 A11.84 11.84 0 0 1 12.42 6.66 L13.11 7.14 A13.67 13.67 0 0 1 16.39 7.05 A1.44 1.44 0 0 1 17.69 7.86 A1.64 1.64 0 0 1 17.06 9.45 A11.56 11.56 0 0 1 14.36 11.25 L14.08 12.09 A13.5 13.5 0 0 1 15.38 16 A1.43 1.43 0 0 1 14.75 17.68 A2.18 2.18 0 0 1 13.14 17.25 A16.2 16.2 0 0 1 10.44 15 H9.56 A12.62 12.62 0 0 1 6.25 17.58 A1 1 0 0 1 4.67 17 A3.81 3.81 0 0 1 4.75 15.19 A15.92 15.92 0 0 1 5.91 12.09 L5.64 11.25 A11.11 11.11 0 0 1 2.81 9.35 A1.5 1.5 0 0 1 2.31 7.75 A1.57 1.57 0 0 1 3.61 7.04 A13.71 13.71 0 0 1 6.86 7.14 L7.55 6.66 A12.08 12.08 0 0 1 8.59 3.44 A1.9 1.9 0 0 1 10 2.25 Z"))
 	reg("status-member", s(circle(10, 10, 3.75)))
 	reg("ring", registry["status-member"].parts...)
+	// Slack's DND presence glyphs (MSOq getPresenceIconName with isDnd):
+	// the indicator with a quarter cut away and a small z in the gap.
+	// Slack's own outlines: each is one contour plus the z, so the nonzero
+	// fill draws what its evenodd does.
+	reg("status-member-dnd", f(presenceZ), f("M7 10a3 3 0 0 1 3-3V5.5a4.5 4.5 0 1 0 4.5 4.5H13a3 3 0 1 1-6 0"))
+	reg("status-member-dnd-filled", f(presenceZ), f("M9.557 6.768C10.18 6.055 10 5.5 9.406 5.54a4.5 4.5 0 1 0 5.067 4.96H11.25a2.25 2.25 0 0 1-1.693-3.73"))
+	reg("status-guest-dnd", f(presenceZ), f("M7.5 7.75a.25.25 0 0 1 .25-.25H10V6H7.75A1.75 1.75 0 0 0 6 7.75v4.5c0 .966.784 1.75 1.75 1.75h4.5A1.75 1.75 0 0 0 14 12.25V10h-1.5v2.25a.25.25 0 0 1-.25.25h-4.5a.25.25 0 0 1-.25-.25z"))
+	reg("status-guest-dnd-filled", f(presenceZ), f("M9.557 6.768A2.25 2.25 0 0 0 11.25 10.5H14v1.75A1.75 1.75 0 0 1 12.25 14h-4.5A1.75 1.75 0 0 1 6 12.25v-4.5C6 6.784 6.784 6 7.75 6h2.086c.164 0 .007.441-.28.768"))
 	// Slack's status-slackbot-filled, Slackbot's presence (TpPD
 	// getPresenceIconName: isSystemUser)
 	reg("status-slackbot-filled", fl("M9.11 6.55 L8.9 6.3 L8.61 6.05 L8.29 5.86 L8.02 5.77 L7.73 5.72 L7.36 5.74 L7.03 5.81 L6.7 5.95 L6.47 6.11 L6.24 6.34 L6.05 6.62 L5.91 6.93 L5.79 7.31 L5.73 7.67 L5.72 8.06 L5.75 8.47 L5.88 9.09 L6.12 9.74 L6.46 10.36 L6.95 11.04 L7.62 11.78 L8.31 12.4 L9.15 13.06 L10 13.64 L11.08 12.89 L12.05 12.08 L12.8 11.33 L13.36 10.62 L13.82 9.86 L14.12 9.09 L14.26 8.39 L14.28 7.94 L14.26 7.62 L14.19 7.25 L14.09 6.93 L13.95 6.63 L13.76 6.35 L13.58 6.15 L13.36 5.99 L13.11 5.86 L12.81 5.77 L12.35 5.72 L11.98 5.77 L11.64 5.89 L11.27 6.15 L11 6.42 L10.75 6.74 L10 8.08 L9.34 6.88 Z"))
