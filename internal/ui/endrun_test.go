@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -67,16 +68,35 @@ func endOfRunReport() {
 		ms.HeapAlloc>>20, ms.HeapInuse>>20, ms.Sys>>20, runtime.NumGoroutine())
 	live, made := liveTestApps()
 	fmt.Fprintf(&b, "startEnv's Apps: %d made, %d still live (the newest is the process's: one App per process)\n", made, len(live))
-	for _, l := range live[:min(len(live), 30)] {
-		fmt.Fprintf(&b, "  live: %s\n", l.what)
+	// by test (its subtests together), and the first App of each
+	var order []string
+	byTest := map[string][]retainTarget{}
+	for _, l := range live[:max(len(live)-1, 0)] { // the newest is the process's
+		top, _, _ := strings.Cut(strings.TrimPrefix(l.what, "the App of "), "/")
+		if byTest[top] == nil {
+			order = append(order, top)
+		}
+		byTest[top] = append(byTest[top], l)
 	}
-	// what holds the oldest few (CLACK_RETAIN_DUMP; a dump is as big as
-	// the heap, and reading it back takes about as much again)
-	if os.Getenv("CLACK_RETAIN_DUMP") != "" && len(live) > 1 {
+	for _, top := range order {
+		fmt.Fprintf(&b, "  live: %s ×%d\n", top, len(byTest[top]))
+	}
+	// what holds the first App of the first n tests (CLACK_RETAIN_DUMP=n,
+	// 3 if not a number; a dump is as big as the heap, and reading it back
+	// takes about as much again)
+	if v := os.Getenv("CLACK_RETAIN_DUMP"); v != "" && len(order) > 0 {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			n = 3
+		}
+		var targets []retainTarget
+		for _, top := range order[:min(len(order), n)] {
+			targets = append(targets, byTest[top][0])
+		}
 		if ms.HeapAlloc > 3<<30 {
 			fmt.Fprintf(&b, "(no heap dump: %d MiB live)\n", ms.HeapAlloc>>20)
 		} else if dir, err := os.MkdirTemp("", "retain"); err == nil {
-			b.WriteString(heapRetainers(dir, live[:min(len(live)-1, 3)]))
+			b.WriteString(heapRetainers(dir, targets, 3, 14))
 			_ = os.RemoveAll(dir)
 		}
 	}

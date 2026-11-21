@@ -41,12 +41,13 @@ func retainReport(t *testing.T, targets []retainTarget) string {
 	if ms.HeapAlloc > 1<<30 && os.Getenv("CLACK_RETAIN_DUMP") == "" {
 		return fmt.Sprintf("(no heap dump of what holds it: %d MiB live; CLACK_RETAIN_DUMP=1 writes one anyway)", ms.HeapAlloc>>20)
 	}
-	return heapRetainers(t.TempDir(), targets)
+	return heapRetainers(t.TempDir(), targets, 6, 30)
 }
 
 // heapRetainers writes a heap dump in dir and reads back what reaches
-// each target.
-func heapRetainers(dir string, targets []retainTarget) string {
+// each target: up to maxRoots roots each, each root's path (up to maxHops
+// objects) once.
+func heapRetainers(dir string, targets []retainTarget, maxRoots, maxHops int) string {
 	path := filepath.Join(dir, "heap.dump")
 	f, err := os.Create(path)
 	if err != nil {
@@ -68,8 +69,9 @@ func heapRetainers(dir string, targets []retainTarget) string {
 		// go test links its binary -s -w; go test -c keeps the symbols
 		b.WriteString("(the test binary has no symbol table, so globals are bare addresses: build it with go test -c to name them)\n")
 	}
+	seen := map[string]bool{}
 	for _, tg := range targets {
-		g.retainers(&b, tg.what, uint64(tg.addr), 6, 30)
+		g.retainers(&b, tg.what, uint64(tg.addr), maxRoots, maxHops, seen)
 	}
 	return b.String()
 }
@@ -387,8 +389,9 @@ func (g *heapGraph) reverse() {
 
 // retainers writes the roots that reach addr's object, up to maxRoots of
 // them (the shortest paths first, a frame's unmapped words last), each
-// with its path, up to maxHops objects of it.
-func (g *heapGraph) retainers(w io.Writer, what string, addr uint64, maxRoots, maxHops int) {
+// with its path, up to maxHops objects of it, unless seen has the root (an
+// earlier target's path showed it).
+func (g *heapGraph) retainers(w io.Writer, what string, addr uint64, maxRoots, maxHops int, seen map[string]bool) {
 	t := g.find(addr)
 	if t < 0 {
 		fmt.Fprintf(w, "%s (%#x): not in the dump\n", what, addr)
@@ -453,6 +456,11 @@ func (g *heapGraph) retainers(w io.Writer, what string, addr uint64, maxRoots, m
 		if h.r.guess {
 			note = " (a word outside the frame's stack map: an address-taken local, or stale)"
 		}
+		if seen[h.r.what] {
+			fmt.Fprintf(w, "  %s%s, %d hops (its path above)\n", h.r.what, note, h.hops)
+			continue
+		}
+		seen[h.r.what] = true
 		fmt.Fprintf(w, "  %s%s, %d hops:\n", h.r.what, note, h.hops)
 		k := 0
 		for o := int32(h.r.obj); o >= 0 && k < maxHops; o, k = next[o], k+1 {
