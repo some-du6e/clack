@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/taut"
 )
 
@@ -38,6 +39,7 @@ type memoEntry struct {
 	mem taut.MemberFields
 	ch  taut.ChannelFields
 	msg core.Message
+	src bool // viewMsg: draw core's copy, JS's not yet of its revision
 }
 
 func (b *base) memo(key string) (*memoEntry, bool) {
@@ -119,7 +121,13 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 	key := m.Channel + "/" + m.TS
 	e, hit := b.memo("m:" + key)
 	if !hit {
-		if rev := viewRevOf(m); b.vsrc[key] != rev {
+		fresh := false
+		if b.vsrc == nil || len(b.vsrc) > 4000 {
+			b.vsrc, b.vneed = map[string]viewRev{}, map[string]uint64{}
+			b.vready, b.vconv, b.vdiff = map[string]viewRev{}, map[string]uint64{}, map[string]bool{}
+		}
+		cur := viewRevOf(m)
+		if rev := cur; b.vsrc[key] != rev {
 			// a new revision of the message: its view is converted again
 			// now, as the message lists' rows have it (applyView's
 			// MessageViewConv fresh), and the view follows the plugins'
@@ -127,23 +135,61 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 			// is: a row hands over a fresh copy every frame (authorOf's
 			// override, a root's), which converted the plugins' message
 			// in every frame.
-			if b.vsrc == nil || len(b.vsrc) > 4000 {
-				b.vsrc = map[string]viewRev{}
-			}
 			b.vsrc[key] = rev
-			e.msg, e.ok = b.tt.MessageViewChanged(m.Channel, m.TS)
-		} else {
-			e.msg, e.ok = b.tt.MessageView(m.Channel, m.TS)
+			fresh = true
+			if c := b.h.Core(); c != nil {
+				b.vneed[key] = c.EmitSeq() // the event that brought it is no later
+			}
 		}
+		var ready bool
+		var conv uint64
+		e.msg, conv, ready, e.ok = b.tt.MessageViewState(m.Channel, m.TS, fresh, b.vneed[key])
 		// its reactions are core's, not the view's: Slack draws them from
 		// the reactions store by the message's reaction key, never from
 		// the messages slice (messages.applyView)
 		e.msg.Reactions = m.Reactions
+		e.src = false
+		answered, seen := b.vready[key]
+		switch {
+		case !e.ok:
+		case ready:
+			b.vready[key] = cur
+			if b.vconv[key] != conv {
+				b.vconv[key] = conv
+				b.vdiff[key] = !viewDraws(&e.msg, m)
+			}
+		case !seen || answered == cur:
+			// a view JS gave for this very revision (a reaction, a reply
+			// count or a sweep marked the message since: not ready, but
+			// nothing it draws moved), or the one it had when the message
+			// first showed: the view stands, the plugins' rewrite with it
+		case !b.vdiff[key]:
+			// a revision JS hasn't answered for, an edit: a message the
+			// plugins leave as it is draws core's new copy until JS's is of
+			// it, as the message lists' rows draw their new source
+			// (applyView's viewWait). Slack's Activity row reads the live
+			// message in the render after the edit; the view drew it a JS
+			// round trip later (three frames). One a plugin rewrites keeps
+			// its view, as a viewed row does: what it masks never shows
+			e.src = true
+		}
 	}
-	if !e.ok {
+	if !e.ok || e.src {
 		return m
 	}
 	return &e.msg
+}
+
+// viewDraws reports whether a view of a message draws as core's copy does
+// in the views: its text and its doc's (blocks, attachments), its sender
+// (a relay bot's post a plugin credits to the member, ShowRealUser's
+// sentBy), its edit and its replies (messages.applyView's sameView and
+// Doc compare).
+func viewDraws(v, src *core.Message) bool {
+	return v.Text == src.Text && v.User == src.User && v.BotID == src.BotID && v.Username == src.Username &&
+		v.Name == src.Name && v.Avatar == src.Avatar && v.EditedTS == src.EditedTS &&
+		v.ReplyCount == src.ReplyCount && v.LatestReply == src.LatestReply &&
+		richtext.PlainText(v.Doc) == richtext.PlainText(src.Doc)
 }
 
 // viewRev is what tells one revision of a message from another for its

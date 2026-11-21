@@ -112,8 +112,10 @@ type model struct {
 	// loadChanged are the messages a load's answer changed (setAll: a
 	// newer copy than the model's, which no event the hub applied
 	// brought): taut marks their views as an event's would
-	// (taut.MessagesChanged) before the answer is the model's
-	loadChanged []string
+	// (taut.MessagesChanged) before the answer is the model's. loadAdded
+	// are the ones it brought that the model didn't have, marked while JS
+	// holds an older copy of the conversation (taut.MessagesAdded)
+	loadChanged, loadAdded []string
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -587,7 +589,14 @@ func (m *model) setAll(msgs []core.Message) {
 			out = append(out, entry{m: x, rev: o.rev, seq: o.seq})
 			continue
 		}
-		if had && len(m.loadChanged) < maxLoadChanged && !sameExceptDoc(&o.m, &x) {
+		switch {
+		case !had && len(m.loadAdded) < maxLoadChanged:
+			// the plugins' copy of the conversation, read before the load (a
+			// thread pane's replies after the channel's rows), lacks it: its
+			// view waited for the mirror's sweep, ~650 ms on a thread pane's
+			// first open under a text patch (TestSliceFirstDraw)
+			m.loadAdded = append(m.loadAdded, x.TS)
+		case had && len(m.loadChanged) < maxLoadChanged && !sameExceptDoc(&o.m, &x):
 			m.loadChanged = append(m.loadChanged, x.TS)
 		}
 		out = append(out, entry{m: x, rev: m.bump(), seq: m.loadSeq})
@@ -609,13 +618,16 @@ const maxLoadChanged = 200
 // count N, N-1, N after a poll while the socket was down. Made before the
 // answer is the model's (callers hold mu), so no frame reads it first.
 func (m *model) markLoadChanged() {
-	tss := m.loadChanged
-	m.loadChanged = nil
-	if len(tss) == 0 {
+	tss, added := m.loadChanged, m.loadAdded
+	m.loadChanged, m.loadAdded = nil, nil
+	if len(tss) == 0 && len(added) == 0 {
 		return
 	}
 	if t := tautOf(); t != nil {
-		t.MessagesChanged(m.ch, tss)
+		if len(tss) > 0 {
+			t.MessagesChanged(m.ch, tss)
+		}
+		t.MessagesAdded(m.ch, added)
 	}
 }
 

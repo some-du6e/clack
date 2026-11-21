@@ -139,12 +139,15 @@ type lmFake struct {
 	mention    string
 	mention2   string
 	gone       map[string]bool
-	latest     bool   // the thread has lmLatest after the vote
-	unread     bool   // getView lists lmLatest as an unread reply
-	textVote   bool   // the vote's counts are its text alone
-	voteRoot   bool   // the feed lists a mention of the vote root
-	listGone   bool   // the feed still lists the mention its message went from
-	mentions   string // the mention entry's type (at_user)
+	latest     bool // the thread has lmLatest after the vote
+	unread     bool // getView lists lmLatest as an unread reply
+	textVote   bool // the vote's counts are its text alone
+	// voteFallback: the vote's text is a fallback ("a synthetic vote"), its
+	// counts in its blocks alone (lmOpts.voteFallback)
+	voteFallback bool
+	voteRoot     bool   // the feed lists a mention of the vote root
+	listGone     bool   // the feed still lists the mention its message went from
+	mentions     string // the mention entry's type (at_user)
 	// rootBare: messages.list has the vote root as it was before its
 	// first reply (no thread_ts, no reply count); rootThread: the feed
 	// lists the vote root's thread (thread_v2) after its mention
@@ -162,7 +165,11 @@ func (f *lmFake) voteLocked(n int) slack.Message {
 	if f.textVote {
 		return lmVoteTextMsg(n)
 	}
-	return lmVoteMsg(n)
+	m := lmVoteMsg(n)
+	if f.voteFallback {
+		m.Text = "a synthetic vote"
+	}
+	return m
 }
 
 func (f *lmFake) msgLocked(ts string) (slack.Message, bool) {
@@ -324,9 +331,12 @@ type lmOpts struct {
 	texts    bool     // a plugin's text patch over the messages slice (patchMessageText, as Message Logger's kind)
 	latest   bool     // a reply after the vote: the bundle's latest_ts, the vote its first unread
 	textVote bool     // the vote's counts in its text alone (its preview: what a stale tree can bring back)
-	voteRoot bool     // a mention of a vote app's thread root, in a channel whose window core holds
-	project  []string // the components a plugin wraps that hides U0FAKE00002's messages, drawing the vote in their place (Slick BetterBlock's thread projection)
-	setup    func(e *lmEnv)
+	// voteFallback: the vote's text a fallback, its counts in its blocks
+	// alone (a plugin's text patch then changes the blocks, not the text)
+	voteFallback bool
+	voteRoot     bool     // a mention of a vote app's thread root, in a channel whose window core holds
+	project      []string // the components a plugin wraps that hides U0FAKE00002's messages, drawing the vote in their place (Slick BetterBlock's thread projection)
+	setup        func(e *lmEnv)
 }
 
 type lmEnv struct {
@@ -348,7 +358,7 @@ func newLmEnv(t *testing.T, o lmOpts) *lmEnv {
 	t.Helper()
 	app, fs := vaFake(t)
 	f := &lmFake{rev: 1, rootRev: 5, mention: "<@" + fakeslack.SelfID + "> please read the synthetic standup notes", gone: map[string]bool{},
-		latest: o.latest, textVote: o.textVote, voteRoot: o.voteRoot}
+		latest: o.latest, textVote: o.textVote, voteRoot: o.voteRoot, voteFallback: o.voteFallback}
 	fs.SetHook(f.hook)
 	app.S.PutConv(slack.Conversation{ID: lmChan, Name: "live-votes", IsChannel: true, IsMember: true, NumMembers: 3})
 	app.S.PutConv(slack.Conversation{ID: lmBusy, Name: "live-busy", IsChannel: true, IsMember: true, NumMembers: 3})
@@ -406,6 +416,19 @@ func lmPatch(t *testing.T, app *core.App, names []string, texts bool) (*taut.Tau
 // everything sent to it so far.
 func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool, project ...string) (*taut.Taut, *jsrt.Runtime, func()) {
 	t.Helper()
+	return lmPluginWith(t, app, lmPluginJS(names, mask, texts, project...), func(tt *taut.Taut) bool {
+		all := !texts || tt.SlicePatched("messages")
+		for _, n := range append(append(slices.Clone(names), mask...), project...) {
+			all = all && slackc.Patched(n)
+		}
+		return all
+	}, names)
+}
+
+// lmPluginWith is lmPlugin for the plugin js, imported, enabled and waited
+// for until patched reports its patches in place (what: for the failure).
+func lmPluginWith(t *testing.T, app *core.App, js []byte, patched func(*taut.Taut) bool, what any) (*taut.Taut, *jsrt.Runtime, func()) {
+	t.Helper()
 	ui := &slickUI{trees: map[uint64][]byte{}}
 	dir := t.TempDir()
 	tt, err := taut.New(taut.Options{App: app, Dir: filepath.Join(dir, "taut"), CredsPath: filepath.Join(dir, "creds.json"), UI: ui.hooks(),
@@ -428,23 +451,16 @@ func lmPlugin(t *testing.T, app *core.App, names, mask []string, texts bool, pro
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	id, err := tt.Import(ctx, lmPluginJS(names, mask, texts, project...), "")
+	id, err := tt.Import(ctx, js, "")
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
 	if err := tt.SetEnabled(ctx, id, true); err != nil {
 		t.Fatalf("enable %s: %v", id, err)
 	}
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
-		all := !texts || tt.SlicePatched("messages")
-		for _, n := range append(append(slices.Clone(names), mask...), project...) {
-			all = all && slackc.Patched(n)
-		}
-		if all {
-			break
-		}
+	for deadline := time.Now().Add(10 * time.Second); !patched(tt); time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatalf("%v never patched", names)
+			t.Fatalf("%v never patched", what)
 		}
 	}
 	rt, err := tt.JS()
@@ -1085,6 +1101,53 @@ func TestActivityLiveVoteSlicePatch(t *testing.T) {
 			shown = max(shown, lmRev(got))
 			return lmRev(got) == n
 		})
+	}
+}
+
+// The same patch over a vote Activity fetched by id, its conversation's
+// history never loaded and its thread not cached: the plugins' messages
+// slice holds it too, as Slack's one messages store holds a message
+// fetchObjectWithId fetched beside the windows', so the row draws the
+// plugin's patch. The mirror built the slice from the windows and threads
+// alone, and Censorship and ShowRealUser never reached most Activity
+// mentions, Saved items and followed threads (the reviews).
+func TestActivityLiveSlicePatchReachesFetchedMessages(t *testing.T) {
+	e := newLmEnv(t, lmOpts{texts: true})
+	e.e.until(t, "the vote fetched", func() bool {
+		_, held := e.app.S.FindHeld(lmChan, lmVote)
+		return held
+	})
+	if _, ok := e.app.S.Find(lmChan, lmVote); ok {
+		t.Fatal("a window or a cached thread holds the vote: the test checks nothing")
+	}
+	e.e.until(t, "the plugin's patch on the fetched vote", func() bool { return strings.Contains(e.drawn(lmVote), "Ups: 1") })
+}
+
+// The same patch over a vote whose text is a fallback (its counts in its
+// blocks alone, where the patch's "Ups" goes): a reaction while the
+// plugins' JS is busy leaves the row drawing the plugin's view, never the
+// blocks without the patch. JS's view of this revision stands through the
+// marks that follow it; the views drew core's copy on any read that wasn't
+// ready, and a plugin's change outside the text flashed away on every
+// reaction (the reviews: Censorship's mask, ShowRealUser's sender).
+func TestActivityLiveVoteSlicePatchHeldReaction(t *testing.T) {
+	e := newLmEnv(t, lmOpts{texts: true, voteFallback: true, setup: func(e *lmEnv) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := e.app.RefreshReplies(ctx, lmChan, lmRoot); err != nil {
+			t.Fatal(err)
+		}
+	}})
+	e.e.until(t, "the plugin's patch drawn", func() bool { return strings.Contains(e.drawn(lmVote), "Ups: 1") })
+	release := e.holdJS()
+	defer release()
+	e.react(lmChan, lmVote, "U0FAKE00002", "tada", true)
+	for i := 0; i < 12; i++ {
+		e.frame()
+		if got := e.drawn(lmVote); strings.Contains(got, "Upvotes") || !strings.Contains(got, "Ups: 1") {
+			t.Fatalf("frame %d after a reaction with the plugins' JS busy drew %q, not the vote with the plugin's patch", i, got)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

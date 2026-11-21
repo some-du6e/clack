@@ -3,6 +3,7 @@ package store
 import (
 	"cmp"
 	"slices"
+	"strings"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -96,11 +97,45 @@ func (s *Store) putFetchedPageLocked(ch string, msgs []slack.Message, since uint
 			s.replayReactsLocked(ch, &m, since)
 			s.keepPinLocked(ch, &m, nil)
 		}
+		if s.fetched[k] == nil && s.heldLocked(ch, m.TS) == nil {
+			s.noteFetchedNewLocked(ch, m.TS)
+		}
 		s.noteReadLocked(ch, s.fetched[k], &m) // read_revisions.go
 		s.putFetchedLocked(k, m)
 		out = append(out, m)
 	}
 	return out
+}
+
+// noteFetchedNewLocked queues ch/ts, a message a fetch by id brought that
+// the store held no copy of, for core (TakeFetchedNew). A new revision of
+// one it held waits for core's "update" (noteReadLocked); this one has no
+// revision before it, so no change would tell the plugins' mirror, whose
+// copy of ch's messages then lacked it until its next sweep.
+func (s *Store) noteFetchedNewLocked(ch, ts string) {
+	s.fetchedNew = append(s.fetchedNew, MsgRef{Channel: ch, TS: ts})
+	if n := len(s.fetchedNew); n > maxReadRevs {
+		s.fetchedNew = append(s.fetchedNew[:0:0], s.fetchedNew[n-maxReadRevs:]...)
+	}
+}
+
+// TakeFetchedNew hands core the messages fetches by id brought that the
+// store held no copy of, since the last call, and forgets them.
+func (s *Store) TakeFetchedNew() []MsgRef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.fetchedNew
+	s.fetchedNew = nil
+	return out
+}
+
+// Keeps reports whether the store keeps a copy of ch/ts anywhere: a
+// window, a cached thread, or the messages fetched by id (FindHeld's
+// copies), without copying it out.
+func (s *Store) Keeps(ch, ts string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.findRefLocked(ch, ts, "") != nil || s.fetched[ch+"/"+ts] != nil
 }
 
 // PutFetchedAsked is PutFetched for a messages.list answer of ch, which
@@ -159,6 +194,15 @@ func (s *Store) putFetchedLocked(k string, m slack.Message) {
 	s.fetchedSize += u.size - s.fetchedUse[k].size
 	s.fetched[k] = &m
 	s.fetchedUse[k] = u
+	if ch, ts, ok := strings.Cut(k, "/"); ok {
+		if s.fetchedBy == nil {
+			s.fetchedBy = map[string]map[string]bool{}
+		}
+		if s.fetchedBy[ch] == nil {
+			s.fetchedBy[ch] = map[string]bool{}
+		}
+		s.fetchedBy[ch][ts] = true
+	}
 	s.fetchedQ = append(s.fetchedQ, fetchedTick{k, u.at})
 	for len(s.fetchedQ) > 0 && (len(s.fetched) > maxFetched || s.fetchedSize > maxFetchedSize && len(s.fetched) > 1) {
 		t := s.fetchedQ[0]
@@ -215,6 +259,14 @@ func (s *Store) dropFetchedLocked(k string) {
 	s.fetchedSize -= s.fetchedUse[k].size
 	delete(s.fetched, k)
 	delete(s.fetchedUse, k)
+	if ch, ts, ok := strings.Cut(k, "/"); ok {
+		if by := s.fetchedBy[ch]; by != nil {
+			delete(by, ts)
+			if len(by) == 0 {
+				delete(s.fetchedBy, ch)
+			}
+		}
+	}
 }
 
 // heldLocked is ch/ts as a cached window or thread holds it (Find's copy).

@@ -74,6 +74,7 @@ type slugPeek struct {
 	tab    core.SlugTab
 	body   tabPeekBody
 	rect   image.Rectangle
+	keep   hovercard.Keep // placed once, again only when its size changes
 	opened time.Time
 	done   bool
 }
@@ -107,6 +108,10 @@ func (a *App) tabPeekBodyFor(p *slugPeek, ch string, t core.SlugTab) tabPeekBody
 
 // Rect is the drawn card (window coordinates; empty when nothing shows).
 func (p *slugPeek) Rect() image.Rectangle { return p.rect }
+
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *slugPeek) Placement() *hovercard.Keep { return &p.keep }
 
 // Dismissed reports whether an action on it closed it.
 func (p *slugPeek) Dismissed() bool { return p.done }
@@ -145,7 +150,7 @@ func (p *slugPeek) Layout(gtx layout.Context) layout.Dimensions {
 		h = min(d.Size.Y, maxH)
 	}
 	sz := image.Pt(w, h)
-	pos := hovercard.PlaceTop(p.anchor, sz, win, gtx.Dp(hovercard.OffsetY), gtx.Dp(hovercard.AllowanceX), gtx.Dp(hovercard.AllowanceY))
+	pos := p.keep.PlaceTop(p.anchor, sz, win, gtx.Dp(hovercard.OffsetY), gtx.Dp(hovercard.AllowanceX), gtx.Dp(hovercard.AllowanceY))
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	if p.opened.IsZero() {
 		p.opened = gtx.Now

@@ -117,6 +117,20 @@ func activityAgentEntry() map[string]any {
 			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": ActivityAgentTS, "channel": ActivityAgentDM}}}}}}
 }
 
+// AddActivityMention puts an unread at_user entry key about ch's message
+// ts by user at the top of the feed (newest first, newer than the
+// fixture's): post the message first (PostQuiet) so messages.list
+// answers it. activity_invalidated makes a client read the feed again.
+func (s *Server) AddActivityMention(key, ch, ts, user string) {
+	v := s.views()
+	v.mu.Lock()
+	st := v.act()
+	st.extra = append([]map[string]any{{"key": key, "feed_ts": ts, "is_unread": true, "is_bot": false,
+		"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": ts, "channel": ch, "author_user_id": user}}}}, st.extra...)
+	sort.SliceStable(st.extra, func(i, j int) bool { return st.extra[i]["feed_ts"].(string) > st.extra[j]["feed_ts"].(string) })
+	v.mu.Unlock()
+}
+
 // SetActivityAgentActions puts the agent entry (fa-agent) at the top of
 // the feed.
 func (s *Server) SetActivityAgentActions(on bool) {

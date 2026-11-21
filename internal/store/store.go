@@ -75,6 +75,7 @@ type Store struct {
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
 	fetched     map[string]*slack.Message  // key channel/ts: messages fetched by id (fetched.go)
+	fetchedBy   map[string]map[string]bool // fetched's ts by channel (fetched.go)
 	fetchedUse  map[string]fetchedUse      // fetched's last use and size (fetched.go)
 	fetchedQ    []fetchedTick              // fetched's uses, oldest first
 	fetchedN    uint64                     // fetched's uses so far
@@ -82,6 +83,7 @@ type Store struct {
 	reacts      map[string][]reactOp       // key channel/ts: realtime reactions (reacts.go)
 	reactQ      []string                   // reacts' keys, oldest first
 	readRevs    []ReadRevision             // revisions reads brought, for core (read_revisions.go)
+	fetchedNew  []MsgRef                   // messages a fetch by id brought that the store held no copy of, for core (fetched.go)
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
 	subQ        []string                   // subs' keys, oldest first
 	subSeq      uint64                     // subscription events seen
@@ -902,6 +904,20 @@ func (s *Store) MemberName(id string) (string, bool) { return s.memberName(s.Use
 // what it names was waited for (a notification's body).
 func (s *Store) MemberNameHeld(id string) (string, bool) { return s.memberName(s.RawUser, id) }
 
+// PrefNameHeld is the held member id's name under the viewer's
+// display_real_names (PrefName), nothing asked and no hidden check (the
+// caller's: core.UserHidden reads the locked hide_person_opt_out too).
+func (s *Store) PrefNameHeld(id string) (string, bool) {
+	u, ok := s.RawUser(id)
+	if !ok || u == nil {
+		return "", false
+	}
+	s.mu.RLock()
+	real := s.Prefs.DisplayRealNames
+	s.mu.RUnlock()
+	return PrefName(u, real), true
+}
+
 func (s *Store) memberName(look userLookup, id string) (string, bool) {
 	u, ok := look(id) // a miss is asked for
 	if !ok || u == nil {
@@ -1594,7 +1610,12 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 }
 
 // MessageKeys is every ts and client_msg_id among ch's cached messages
-// (timeline and threads), in one pass.
+// (timeline, threads and the messages fetched by id), in one pass: what
+// the plugins' messages slice holds of core's (taut's injected check). The
+// slice holds the fetched copies, as Slack's one messages store does, and
+// none of them is a message a plugin injected: a conversation's list draws
+// its history (Slack's channelHistory), which a message fetched by id
+// never joins.
 func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1618,6 +1639,9 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 			}
 		}
 	}
+	for _, m := range s.fetchedInLocked(ch) {
+		add(m)
+	}
 	return ts, cids
 }
 
@@ -1625,9 +1649,10 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 type MsgKey struct{ TS, CID string }
 
 // Held reports, for each key, whether the store caches a message of ch
-// with its ts (or client_msg_id) in the timeline or a thread: Holds for
-// many at once, one pass over the store under one read lock (Holds per
-// message scanned the timeline and every cached thread once each).
+// with its ts (or client_msg_id) in the timeline, a thread or the messages
+// fetched by id (MessageKeys' set: taut's injected check): Holds for many
+// at once, one pass over the store under one read lock (Holds per message
+// scanned the timeline and every cached thread once each).
 func (s *Store) Held(ch string, keys []MsgKey) []bool {
 	out := make([]bool, len(keys))
 	if len(keys) == 0 {
@@ -1665,6 +1690,9 @@ func (s *Store) Held(ch string, keys []MsgKey) []bool {
 				mark(&th[i])
 			}
 		}
+	}
+	for _, m := range s.fetchedInLocked(ch) {
+		mark(m)
 	}
 	return out
 }

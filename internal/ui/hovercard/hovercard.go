@@ -62,6 +62,36 @@
 //     the offset negated (12px below the trigger's bottom edge) and uses it
 //     if it fits entirely. Otherwise it stays clamped.
 //   - The popover fades in over 80ms (shouldFade: "80ms").
+//
+// Where the card is once open (build 35b42de8b870, read from the public
+// CDN without a cookie): HoverCardTrigger (boot-shared pws8) measures the
+// trigger once, when the show delay ends (its open callback U:
+// F(T.current.getBoundingClientRect())), and hands that rect to the
+// Popover (client-boot TxLv) as targetBounds. The Popover places the card
+// from it in onOpen and again only when the rect prop changes
+// (componentDidUpdate's areBoundsNearlyEqual) or the card's own content
+// resizes (a ResizeObserver on popoverContent, getResizeObserverForWindow
+// yN2M); it listens for no scroll or window resize. So a card never
+// follows its trigger: the row scrolling, the list laying out again, a
+// pane opening and the window resizing all leave it where it opened
+// (Keep). What closes it is the pointer: Chromium recomputes the hover
+// after a scroll or a layout, so a trigger that moves out from under a
+// resting pointer gets its mouseleave (handleLeave: the 250ms close, or
+// a pending open dropped), which Probe makes Gio's hit test tell the
+// trigger. And the card is the trigger's child (a portal in its React
+// tree): a trigger that unmounts (a recycled row, another Activity tab,
+// another page) takes it down at once, and its pending open with it
+// (VmK6's timer is cleared on unmount). Mounted is how a trigger says it
+// is still there, and Seq how it learns it wasn't for a frame: Gio
+// forgets a handler that misses a frame, and with it the Leave the
+// handler was owed.
+//
+// A canvas's channel card is not that Popover. Quip's HovercardImpl
+// (quip-collab-webapp) shows a bubble whose anchorBoundsFn is measured
+// by the window's positioner registry (qsRV), which measures and places
+// every bubble again on resize, scroll, transitionend, visibilitychange,
+// any DOM mutation and font loads: that card follows its mention
+// (Frame takes a canvas trigger's rect as it reports it).
 package hovercard
 
 import (
@@ -135,6 +165,12 @@ type Request struct {
 	// (kQRT), HoverCardTrigger (0oEe) at position "top" with its
 	// defaults: offsetY -12, the 350ms open and 250ms close.
 	URL string
+	// Opposite: the trigger's Popover sits on the opposite side
+	// (usingOppositePosition). The Popover is the trigger's child and
+	// keeps its state while the trigger is mounted, open or not, so with
+	// stickyPosition the next card starts there (Keep.Start); the trigger
+	// keeps it (ReportSide, Placed).
+	Opposite bool
 	// Delay replaces ShowDelay when set.
 	Delay time.Duration
 }
@@ -163,6 +199,12 @@ type Controller struct {
 	cardTag  int
 
 	spent any // a trigger pressed while hovered: ignored until it is left
+
+	seq int // Frame calls so far (Seq)
+	// mounted: the open card's trigger said it is laid out since the last
+	// Frame; tracks: it has said so (a trigger that never calls Mounted
+	// keeps the 250ms close), for the open card and the pending one
+	mounted, tracks, pendTracks bool
 }
 
 var current *Controller
@@ -297,6 +339,68 @@ func (c *Controller) ReportURL(key any, url string, local image.Rectangle, ptr f
 	c.hasRep = true
 }
 
+// Seq counts the frames the controller ran (Frame calls). A trigger laid
+// out with Seq more than one past the Seq it last saw missed a frame:
+// Gio dropped its handler then, and with it any Leave (Probe.Missed).
+func (c *Controller) Seq() int { return c.seq }
+
+// OpenKey is the open card's trigger key, PendingKey the one waiting for
+// its show delay (nil: none), so a trigger can tell Mounted it is still
+// laid out.
+func (c *Controller) OpenKey() any {
+	if !c.isOpen {
+		return nil
+	}
+	return c.open.Key
+}
+
+// PendingKey: see OpenKey.
+func (c *Controller) PendingKey() any {
+	if !c.hasPend {
+		return nil
+	}
+	return c.pending.Key
+}
+
+// Mounted says key's trigger is laid out this frame. Once the open
+// card's trigger has said so, a frame without it closes the card at once
+// (Slack's card is the trigger's child: it unmounts with it).
+func (c *Controller) Mounted(key any) {
+	if key == nil {
+		return
+	}
+	if c.isOpen && c.open.Key == key {
+		c.mounted, c.tracks = true, true
+	}
+	if c.hasPend && c.pending.Key == key {
+		c.pendTracks = true
+	}
+}
+
+// ReportSide adds the trigger's Popover side (Request.Opposite) to its
+// report this frame.
+func (c *Controller) ReportSide(key any, opp bool) {
+	if c.hasRep && c.rep.Key == key {
+		c.rep.Opposite = opp
+	}
+}
+
+// SetPlaced is the open card's side once placed (Keep.Opp).
+func (c *Controller) SetPlaced(opp bool) {
+	if c.isOpen {
+		c.open.Opposite = opp
+	}
+}
+
+// Placed returns the side key's open card was placed on, for its trigger
+// to keep (ok: key's card is open).
+func (c *Controller) Placed(key any) (opp, ok bool) {
+	if key == nil || !c.isOpen || c.open.Key != key {
+		return false, false
+	}
+	return c.open.Opposite, true
+}
+
 // Pressed is a click on a trigger: Slack's handleClick closes the card,
 // and the trigger stays quiet until the pointer leaves it.
 func (c *Controller) Pressed(key any) {
@@ -324,6 +428,7 @@ func (c *Controller) Open() (Request, int, bool) {
 func (c *Controller) Show(r Request, now time.Time) {
 	c.open, c.isOpen = r, true
 	c.hasPend = false
+	c.mounted, c.tracks = false, false
 	c.hideAt = time.Time{}
 	c.openedAt = now.Add(-Fade)
 	c.overCard = false
@@ -349,6 +454,7 @@ func (c *Controller) closeCard() {
 	c.hideAt = time.Time{}
 	c.overCard = false
 	c.card = image.Rectangle{}
+	c.mounted, c.tracks = false, false
 }
 
 // Frame runs the timers once the frame's triggers have reported. blocked
@@ -358,6 +464,9 @@ func (c *Controller) closeCard() {
 func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	rep, has := c.rep, c.hasRep
 	c.hasRep = false
+	c.seq++
+	mounted := c.mounted
+	c.mounted = false
 	if hold && c.isOpen {
 		c.hasPend = false
 		c.hideAt = time.Time{}
@@ -367,6 +476,12 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 		c.Close()
 		return time.Time{}
 	}
+	if c.isOpen && c.tracks && !mounted && !(has && rep.Key == c.open.Key) {
+		c.closeCard() // its trigger unmounted (a recycled row, another tab or page)
+	}
+	if c.isOpen && c.open.Canvas && has && rep.Key == c.open.Key {
+		c.open.Anchor = rep.Anchor // Quip's positioners: the bubble follows its mention
+	}
 	onOpen := c.isOpen && (c.overCard || has && rep.Key == c.open.Key)
 	switch {
 	case onOpen:
@@ -375,6 +490,7 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	case has:
 		if !c.hasPend || c.pending.Key != rep.Key {
 			c.pending, c.hasPend = rep, true
+			c.pendTracks = false
 			c.showAt = now.Add(ShowDelay)
 			if rep.Delay > 0 {
 				c.showAt = now.Add(rep.Delay)
@@ -399,6 +515,7 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	}
 	if c.hasPend && !now.Before(c.showAt) {
 		c.open, c.isOpen = c.pending, true
+		c.mounted, c.tracks = false, c.pendTracks
 		c.hasPend = false
 		c.hideAt = time.Time{}
 		c.openedAt = now
@@ -468,28 +585,8 @@ func (c *Controller) OverCard() bool { return c.isOpen && c.overCard }
 // of size sz over anchor, in a window of size win. Distances are pixels:
 // gap is OffsetY, ax and ay the allowances, already scaled.
 func Place(anchor image.Rectangle, sz, win image.Point, gap, ax, ay int) image.Point {
-	left, right := ax, win.X-ax
-	top, bottom := ay, win.Y-ay
-	x := anchor.Min.X
-	if x < left {
-		x = left
-	} else if x+sz.X > right {
-		x = max(left, right-sz.X)
-	}
-	y0 := anchor.Min.Y - gap - sz.Y // top-left: above the trigger
-	y := y0
-	if y < top {
-		y = top
-	} else if y+sz.Y > bottom {
-		y = max(top, bottom-sz.Y)
-	}
-	if y != y0 {
-		// bottom-left with the offset negated: below the trigger
-		if oy := anchor.Max.Y + gap; oy >= top && oy+sz.Y <= bottom {
-			y = oy
-		}
-	}
-	return image.Pt(x, y)
+	p, _ := keepInBounds(false, anchor, sz, win, gap, ax, ay, false)
+	return p
 }
 
 // PlaceTop is keepInBounds for position "top" (a link preview's hover
@@ -498,36 +595,19 @@ func Place(anchor image.Rectangle, sz, win image.Point, gap, ax, ay int) image.P
 // move vertically, "bottom" with the offset negated (gap below the
 // trigger) if that fits entirely.
 func PlaceTop(anchor image.Rectangle, sz, win image.Point, gap, ax, ay int) image.Point {
-	left, right := ax, win.X-ax
-	top, bottom := ay, win.Y-ay
-	x := anchor.Min.X + (anchor.Dx()-sz.X)/2
-	if x < left {
-		x = left
-	} else if x+sz.X > right {
-		x = max(left, right-sz.X)
-	}
-	y0 := anchor.Min.Y - gap - sz.Y
-	y := y0
-	if y < top {
-		y = top
-	} else if y+sz.Y > bottom {
-		y = max(top, bottom-sz.Y)
-	}
-	if y != y0 {
-		if oy := anchor.Max.Y + gap; oy >= top && oy+sz.Y <= bottom {
-			y = oy
-		}
-	}
-	return image.Pt(x, y)
+	p, _ := keepInBounds(true, anchor, sz, win, gap, ax, ay, false)
+	return p
 }
 
 // Trigger is a profile trigger drawn by a widget: a pass-through area over
 // the widget that reports while the pointer is on it. Lay it out after the
 // widget, at the widget's origin.
 type Trigger struct {
-	tag int
-	in  bool
-	pos f32.Point
+	tag   int
+	in    bool
+	pos   f32.Point
+	probe Probe // where the pointer is on it, kept honest (anchor.go)
+	opp   bool  // its Popover's side (Request.Opposite), while it stays mounted
 }
 
 // Layout registers the trigger over size and reports it while hovered.
@@ -540,6 +620,23 @@ func (t *Trigger) Layout(gtx layout.Context, userID string, size image.Point) {
 // (botID: the message's bot_id). Both "" disables it.
 func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image.Point) {
 	c := current
+	if t.probe.Missed() {
+		// not laid out for a frame: Gio forgot the handler, and the Leave
+		// it was owed (Slack's trigger unmounted and mounts unhovered,
+		// with a new Popover)
+		t.opp = false
+		if t.in {
+			t.in = false
+			if c != nil {
+				c.Left(t)
+			}
+		}
+	}
+	// the layout moved it under a resting pointer (the probe's Leave):
+	// first, so the trigger's own newer events win (probe.Moved)
+	if pos, ok := t.probe.Moved(gtx); ok && t.in {
+		t.pos = pos
+	}
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &t.tag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel | pointer.Press})
 		if !ok {
@@ -564,12 +661,24 @@ func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image
 			}
 		}
 	}
+	if c != nil {
+		c.Mounted(t)
+		if o, ok := c.Placed(t); ok {
+			t.opp = o
+		}
+	}
 	if t.in && c != nil && (userID != "" || botID != "") {
 		c.ReportBot(t, userID, botID, image.Rectangle{Max: size}, t.pos)
+		c.ReportSide(t, t.opp)
 	}
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
-	event.Op(gtx.Ops, &t.tag)
+	func() {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+		event.Op(gtx.Ops, &t.tag)
+	}()
+	if t.in {
+		t.probe.Layout(gtx, t.pos)
+	}
 }
 
 // Hovered reports whether the pointer is on the trigger.

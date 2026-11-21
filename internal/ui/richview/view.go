@@ -94,6 +94,8 @@ type View struct {
 	dark     bool            // the last layout's Palette.Dark (MemberSlug's c-member_slug--dark)
 	hovMen   mentionKey      // the @mention last reported to the hover card
 	hovOn    bool
+	probe    hovercard.Probe // keeps ptr and hover honest when the layout moves (hovercard/anchor.go)
+	side     map[any]bool    // each trigger's Popover side (hovercard Request.Opposite), while drawn
 	// the link preview whose hover trigger was last reported, and each
 	// preview's hover card content (unfurl_hover.go)
 	prevKey  previewKey
@@ -302,6 +304,15 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if !v.recorded {
 		v.record(st)
 	}
+	if v.probe.Missed() {
+		// not laid out for a frame: Gio forgot the handler and the Leave
+		// it was owed (Slack's spans unmounted, and mount unhovered, with
+		// new Popovers)
+		clear(v.side)
+		if v.hovering {
+			v.left()
+		}
+	}
 	v.events(gtx, st, h)
 	v.hoverCard(st, h)
 
@@ -452,6 +463,10 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// Input areas: the whole view takes text-selection input; clickable
 	// things show the hand cursor.
 	event.Op(gtx.Ops, v)
+	if v.hovering {
+		v.probe.Layout(gtx, v.ptr)
+	}
+	v.mounted()
 	pointer.CursorText.Add(gtx.Ops)
 	for i := range v.d.hits {
 		hr := &v.d.hits[i]
@@ -1176,6 +1191,16 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}()
+	// the layout moved the view under a resting pointer (the probe's
+	// Leave, at the pointer's position then): Chromium's hover update
+	// after a layout, as a Move there would. First, before the view's own
+	// events: those are newer (a Move after the layout moved it, or the
+	// later Moves of several between frames, the probe hearing only the
+	// first), so they win. Not during a drag, whose Drag events carry the
+	// pointer.
+	if pos, ok := v.probe.Moved(gtx); ok && v.hovering && !v.dragging {
+		v.pointerAt(gtx, st, pos)
+	}
 	for {
 		ev, ok := gtx.Event(
 			pointer.Filter{Target: v, Kinds: pointer.Press | pointer.Release | pointer.Drag | pointer.Move | pointer.Enter | pointer.Leave | pointer.Cancel},
@@ -1209,31 +1234,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 		case pointer.Event:
 			switch e.Kind {
 			case pointer.Enter, pointer.Move:
-				v.hovering = true
-				v.hover = v.targetAt(e.Position)
-				v.ptr = e.Position
-				v.tipOrg.Learn(e.Position)
-				if b := v.copyButtonAt(e.Position) + 1; b != v.copyHot {
-					v.copyHot, v.copyTipAt = b, gtx.Now
-				}
-				if b := v.fileSecAt(e.Position) + 1; b != v.secHot {
-					v.secHot, v.copyTipAt = b, gtx.Now
-				}
-				if b := v.expandAt(st, e.Position) + 1; b != v.expHot {
-					v.expHot, v.copyTipAt = b, gtx.Now
-				}
-				if bar, btn, _ := v.barAt(e.Position); barKey(bar, btn) != v.barHot {
-					v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
-				}
-				if f := v.emojiAt(e.Position); f != v.tipFrag {
-					v.tipFrag, v.tipAt = f, gtx.Now
-				}
+				v.pointerAt(gtx, st, e.Position)
 			case pointer.Leave:
-				v.hovering = false
-				v.tipFrag = -1
-				if !v.dragging {
-					v.hover = -1
-				}
+				v.left()
 			case pointer.Cancel:
 				v.dragging = false
 				v.press = -1
@@ -1372,6 +1375,84 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 	}
 }
 
+// pointerAt is the pointer over the view at p (an Enter or a Move, or
+// the layout moving the view under it): what it is on, and where.
+func (v *View) pointerAt(gtx layout.Context, st *Style, p f32.Point) {
+	v.hovering = true
+	v.hover = v.targetAt(p)
+	v.ptr = p
+	v.tipOrg.Learn(p)
+	if b := v.copyButtonAt(p) + 1; b != v.copyHot {
+		v.copyHot, v.copyTipAt = b, gtx.Now
+	}
+	if b := v.fileSecAt(p) + 1; b != v.secHot {
+		v.secHot, v.copyTipAt = b, gtx.Now
+	}
+	if b := v.expandAt(st, p) + 1; b != v.expHot {
+		v.expHot, v.copyTipAt = b, gtx.Now
+	}
+	if bar, btn, _ := v.barAt(p); barKey(bar, btn) != v.barHot {
+		v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
+	}
+	if f := v.emojiAt(p); f != v.tipFrag {
+		v.tipFrag, v.tipAt = f, gtx.Now
+	}
+}
+
+// left is the pointer leaving the view (a Leave, or the view missing a
+// frame: Probe.Missed).
+func (v *View) left() {
+	v.hovering = false
+	v.tipFrag = -1
+	if !v.dragging {
+		v.hover = -1
+	}
+}
+
+// mounted tells the hover card controller this view is drawn, when the
+// open or pending card is one of its triggers' (Controller.Mounted).
+func (v *View) mounted() {
+	c := hovercard.Default()
+	if c == nil {
+		return
+	}
+	for _, k := range [2]any{c.OpenKey(), c.PendingKey()} {
+		switch k := k.(type) {
+		case mentionKey:
+			if k.v == v {
+				c.Mounted(k)
+				v.keepSide(c, k)
+			}
+		case previewKey:
+			if k.v == v {
+				c.Mounted(k)
+				v.keepSide(c, k)
+			}
+		}
+	}
+}
+
+// keepSide keeps the side k's open card was placed on (its Popover's
+// state, which lasts while the trigger is mounted).
+func (v *View) keepSide(c *hovercard.Controller, k any) {
+	if o, ok := c.Placed(k); ok {
+		if v.side == nil {
+			v.side = map[any]bool{}
+		}
+		v.side[k] = o
+	}
+}
+
+// WindowOrigin is the view's window origin as the pointer last showed it
+// (its tooltips' TipOrigin; tests).
+func (v *View) WindowOrigin() (image.Point, bool) {
+	b := v.tipOrg.Bounds()
+	if b.Empty() {
+		return image.Point{}, false
+	}
+	return b.Min.Mul(-1), true
+}
+
 // mentionKey identifies one @mention of a View to the hover card.
 type mentionKey struct {
 	v *View
@@ -1491,6 +1572,7 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		return
 	}
 	r := v.targetBounds(t)
+	defer func() { c.ReportSide(k, v.side[k]) }() // its Popover's side
 	if urlCard {
 		c.ReportURL(k, v.d.targets[t].url, r, v.ptr) // UrlHoverCardTrigger: UrlHoverCard, position "top"
 		return

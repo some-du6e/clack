@@ -42,7 +42,8 @@ import (
 //         notify anyway: dnd_override's _ignore_dnd) or a VIP sent it
 //         (shouldOverrideDndForMessage, Mvkl Wh);
 //       - a sender the viewer hid (29, shouldSupressHiddenSender:
-//         hidden_users, unless the org's locked hide_person_opt_out);
+//         hidden_users, unless the org's locked hide_person_opt_out;
+//         maybeNotifyAfter's core.UserHidden, before any lookup);
 //       - the canvas, tab, folder and assistant thread subtypes (30, 31,
 //         32, 34, 35).
 //     Two reasons don't reach Clack. 22, an email shared into Slackbot's
@@ -114,7 +115,7 @@ func (b *backend) noteDMHolds(a *App, ev core.Event, c *convInfo, ignoreDND bool
 	m := ev.Msg
 	switch {
 	case m.NoDisplay, ev.Reply, b.noteOnScreen(a, ev.Channel), m.User != "" && m.User == b.selfID,
-		c != nil && c.Muted, m.NoNotifications, b.noteDNDHolds(ev, c, ignoreDND), b.noteHiddenSender(m.User):
+		c != nil && c.Muted, m.NoNotifications, b.noteDNDHolds(ev, c, ignoreDND):
 		return true
 	}
 	// isAiAssistantRootMsg, isAiAssistantInitialMsg (32): a DM's only
@@ -138,7 +139,7 @@ func (b *backend) noteChannelHolds(a *App, ev core.Event, c *convInfo, ignoreDND
 	}
 	switch {
 	case m.NoDisplay, b.noteOnScreen(a, ev.Channel), m.User != "" && m.User == b.selfID, m.NoNotifications,
-		c != nil && c.Muted, b.noteDNDHolds(ev, c, ignoreDND), b.noteHiddenSender(m.User):
+		c != nil && c.Muted, b.noteDNDHolds(ev, c, ignoreDND):
 		return true
 	}
 	return noteQuietSubtypes[m.Subtype]
@@ -252,25 +253,6 @@ func (b *backend) notePrioritySound(ev core.Event, c *convInfo) bool {
 		return false
 	}
 	return noteIsDM(ev, c) || ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" || noteMentionsAny(m)
-}
-
-// noteHiddenSender is shouldSupressHiddenSender (QFH5): a member the
-// viewer hid (hidden_users), unless the org's locked hide_person_opt_out
-// is set.
-func (b *backend) noteHiddenSender(user string) bool {
-	if user == "" || noteTruthy(b.core.EnterpriseLockedPref("hide_person_opt_out")) {
-		return false
-	}
-	return slices.Contains(b.core.HiddenUsers(), user)
-}
-
-// noteTruthy is JavaScript's truthiness of a JSON value (absent: false).
-func noteTruthy(v json.RawMessage) bool {
-	switch s := strings.TrimSpace(string(v)); s {
-	case "", "null", "false", "0", `""`:
-		return false
-	}
-	return true
 }
 
 // noteShownMax is how many shown notifications Slack remembers
