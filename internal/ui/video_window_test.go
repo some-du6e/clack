@@ -155,7 +155,7 @@ func TestRealWindowVideoFrames(t *testing.T) {
 		})
 		return found
 	})
-	onUI(func() { a.jumpToMessage(ch, ts, "") })
+	onUI(func() { a.jumpToMessage(ch, ts, "", false) })
 	if d := 8*time.Second - time.Since(start); d > 0 {
 		time.Sleep(d) // boot's loads settle (idle-tests-wait-boot-loads)
 	}

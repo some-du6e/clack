@@ -504,7 +504,7 @@ func (a *App) pipJump(v *videoplayer.Controller, m videoplayer.PipMedia) {
 		thread = msg.ThreadTS
 	}
 	v.ClosePip(true)
-	a.jumpToMessage(m.Channel, m.TS, thread)
+	a.jumpToMessage(m.Channel, m.TS, thread, false)
 }
 
 // DockVideo is popups.VideoDocker's: the media viewer's Dock to corner
