@@ -108,9 +108,9 @@ func (a *App) OpenThread(channel, ts string) {
 	a.Invalidate()
 }
 
-// FocusThreadComposer focuses a thread's reply composer
-// (messages.ThreadComposerFocuser): the reply bar opens the thread with
-// its input focused, as Slack's openThread sets focusInput.
+// FocusThreadComposer focuses a thread's reply composer now
+// (messages.ThreadComposerFocuser: the find bar's restore). Opening a
+// thread with its box focused is SetThreadFocusInput (thread_focus_input.go).
 func (a *App) FocusThreadComposer(channel, ts string) {
 	if c := a.convoFor(channel, ts); c != nil && c.comp != nil {
 		c.comp.Focus()

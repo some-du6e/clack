@@ -148,6 +148,9 @@ func (v *ThreadView) openFind(restore bool) {
 		f.restore = restore
 	}
 	f.active, f.focus = true, true
+	if fi, ok := v.h.(popups.ThreadFocusInput); ok {
+		fi.ClearThreadFocusInput() // openThreadSearch resets focusInput
+	}
 	f.ed.SetText("")
 	v.setFindQuery("", time.Time{})
 	v.h.Invalidate()
