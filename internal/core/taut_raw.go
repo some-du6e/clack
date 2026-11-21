@@ -143,6 +143,12 @@ func (a *App) ServeOffline() {
 	close(a.ready)
 }
 
+// ServeLookups runs, for an app ServeOffline serves, the background
+// lookups Boot starts for what rendering couldn't name (resolveLoop:
+// channels, bots, canvases' files.info), until StopTraffic. Tests that
+// draw what the store learns late use it. Call it at most once.
+func (a *App) ServeLookups() { go a.resolveLoop(a.bg) }
+
 // Inject applies one realtime event as if the gateway had sent it (raw
 // subscribers first, then core's own handling and its typed events). For
 // offline use and tests; the live gateway goes through the same path.

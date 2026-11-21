@@ -88,6 +88,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -96,6 +97,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -247,6 +249,9 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 		top := iy + dp(gtx, (36-(22-4+2+15.6-8))/2-4)
 		at(gtx, image.Pt(tx, top-dp(gtx, 4)), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 22))}
+			if sp := srCanvasTitle(v.h, f); sp != nil {
+				return srTitleSpans(gtx, v.h, th, sp, 15, 22, theme.Bold, cl.Fg, tw)
+			}
 			return th.Layout(gtx, theme.TextStyle{Size: 15, Weight: theme.Bold, Color: cl.Fg, LineHeight: 22, MaxLines: 1}, srFileTitle(f))
 		})
 		at(gtx, image.Pt(tx, top+dp(gtx, 18+2)), func(gtx layout.Context) layout.Dimensions {
@@ -261,6 +266,72 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 		return layout.Dimensions{Size: sz}
 	})
 	return layout.Dimensions{Size: image.Pt(px+cw, srFileRowH(gtx))}
+}
+
+// srCanvasTitle is a canvas result's title as Slack's canvas titles draw
+// it (richtext.CanvasTitle: title_blocks, else the title's :emoji:), when
+// it holds an emoji; nil for any other result, whose title is text.
+func srCanvasTitle(h Host, f core.File) []richtext.Span {
+	if !f.IsCanvas || h.Core() == nil {
+		return nil
+	}
+	sp := richtext.CanvasTitle(h.Core().S, strings.TrimSpace(f.Title), f.TitleBlocks)
+	for _, s := range sp {
+		if s.Kind == richtext.Emoji {
+			return sp
+		}
+	}
+	return nil
+}
+
+// srTitleSpans draws a title's spans on one line, w wide at most: text in
+// col (a mention plain, as .p-quip_title__blocks_simple draws it) and
+// emoji as images at the line's height (.p-quip_title__blocks__base
+// .c-emoji--inline: 22px), one the store couldn't name when converted
+// resolved now, else its ":name:".
+func srTitleSpans(gtx layout.Context, h Host, th *theme.Theme, spans []richtext.Span, size, lh float32, wt font.Weight, col color.NRGBA, w int) layout.Dimensions {
+	x := 0
+	lineH := dp(gtx, lh)
+	es := dp(gtx, 22)
+	for _, sp := range spans {
+		if sp.Kind == richtext.Break || x >= w {
+			break
+		}
+		if sp.Kind == richtext.Emoji {
+			url := sp.URL
+			if sp.KeptEmoji() {
+				url = emojiURL(h, sp.ID)
+			}
+			if url != "" {
+				if x+es > w {
+					break
+				}
+				u := url
+				at(gtx, image.Pt(x, (lineH-es)/2), func(gtx layout.Context) layout.Dimensions {
+					if img, ok := h.Images().Get(u, es); ok {
+						return containImage(gtx, img, image.Pt(es, es))
+					}
+					return layout.Dimensions{Size: image.Pt(es, es)}
+				})
+				x += es
+				continue
+			}
+		}
+		s := sp.Text
+		if sp.Kind == richtext.Emoji && s == "" {
+			s = ":" + sp.ID + ":"
+		}
+		s = strings.ReplaceAll(s, "\n", " ")
+		if s == "" {
+			continue
+		}
+		d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, w-x), lineH)}
+			return th.Layout(gtx, theme.TextStyle{Size: unit.Sp(size), Weight: wt, Color: col, LineHeight: unit.Sp(lh), MaxLines: 1}, s)
+		})
+		x += d.Size.X
+	}
+	return layout.Dimensions{Size: image.Pt(min(x, w), lineH)}
 }
 
 // srFileTitle is the file's title, else its name.

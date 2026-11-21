@@ -79,6 +79,15 @@ type Message struct {
 	// getCanvasRootLastSeen, isDocumentCommentVisible; thrK most_recent_editor;
 	// v+tj authors).
 	DocumentComment *MessageDocumentComment `json:"document_comment,omitempty"`
+	// DocumentMention is a canvas mention (subtype document_mention, in
+	// the canvas's file channel): Slack's msg.document_mention {file_id,
+	// section_id, mentioning_user_ids}, which its jump to the message
+	// (lFpV openDocWithThreadTs) opens the canvas at, and Activity's
+	// header counts ("You were mentioned {mentionCount} times in {space}").
+	DocumentMention *MessageDocumentMention `json:"document_mention,omitempty"`
+	// SlackList is a list record's comment thread's message: its list and
+	// record (GMkG and wc0P read slack_list.list_record_id)
+	SlackList *MessageSlackList `json:"slack_list,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
@@ -96,6 +105,21 @@ type MessageDocumentComment struct {
 	IsVisible        bool        `json:"is_visible,omitempty"`
 	LastSeen         json.Number `json:"last_seen,omitempty"`
 	MostRecentEditor string      `json:"most_recent_editor,omitempty"`
+}
+
+// MessageSlackList is a list record's comment-thread message's
+// slack_list: the list and the record whose thread it is.
+type MessageSlackList struct {
+	ListID       string `json:"list_id,omitempty"`
+	ListRecordID string `json:"list_record_id,omitempty"`
+}
+
+// MessageDocumentMention is a canvas mention's document_mention: the
+// canvas, the section the mention sits in, and who mentioned the viewer.
+type MessageDocumentMention struct {
+	FileID            string   `json:"file_id,omitempty"`
+	SectionID         string   `json:"section_id,omitempty"`
+	MentioningUserIDs []string `json:"mentioning_user_ids,omitempty"`
 }
 
 // MessageAssistantThread is a message's assistant_app_thread.
