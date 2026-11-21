@@ -8,6 +8,10 @@ package icons
 // to its Slack glyph (slackRef names it) in light and dark at 1x and 2x.
 // A Clack name that differs from the Slack glyph's says which it
 // follows; Clack names that share a glyph reuse its parts.
+// presenceZ is the centreline of the z every Slack DND presence glyph
+// carries top right (Slack's outline is this line 1.5 wide).
+const presenceZ = "M11.25 4.25 H14.75 L11.25 8.25 H14.75"
+
 func init() {
 	reg("add-reaction", s("M18.25 4.5 H12.75"), s("M15.5 1.75 V7.25"), s("M9.75 3.79 A7.25 7.25 0 1 0 16.21 10.25"), disc(6.75, 9.25, 1.25), disc(11.25, 9.25, 1.25), fl("M11.32 12.75 A2.5 2.5 0 0 1 6.68 12.75 H11.32 Z"))
 	// Slack's ai-agents
@@ -367,6 +371,17 @@ func init() {
 	reg("star-filled", fl("M10 2.25 A1.85 1.85 0 0 1 11.36 3.39 A11.84 11.84 0 0 1 12.42 6.66 L13.11 7.14 A13.67 13.67 0 0 1 16.39 7.05 A1.44 1.44 0 0 1 17.69 7.86 A1.64 1.64 0 0 1 17.06 9.45 A11.56 11.56 0 0 1 14.36 11.25 L14.08 12.09 A13.5 13.5 0 0 1 15.38 16 A1.43 1.43 0 0 1 14.75 17.68 A2.18 2.18 0 0 1 13.14 17.25 A16.2 16.2 0 0 1 10.44 15 H9.56 A12.62 12.62 0 0 1 6.25 17.58 A1 1 0 0 1 4.67 17 A3.81 3.81 0 0 1 4.75 15.19 A15.92 15.92 0 0 1 5.91 12.09 L5.64 11.25 A11.11 11.11 0 0 1 2.81 9.35 A1.5 1.5 0 0 1 2.31 7.75 A1.57 1.57 0 0 1 3.61 7.04 A13.71 13.71 0 0 1 6.86 7.14 L7.55 6.66 A12.08 12.08 0 0 1 8.59 3.44 A1.9 1.9 0 0 1 10 2.25 Z"))
 	reg("status-member", s(circle(10, 10, 3.75)))
 	reg("ring", registry["status-member"].parts...)
+	// Slack's DND presence glyphs (MSOq getPresenceIconName with isDnd):
+	// the indicator with a quarter cut away and a small z in the gap. The
+	// z and the outline glyphs' bands are 1.5-wide strokes on Slack's
+	// centrelines (the arcs' ends pulled in 0.75 so the round caps end at
+	// Slack's square cuts); the filled glyphs' solids are fl() over their
+	// outlines inset by half the band. Plain fills of Slack's outlines
+	// read 13-20% heavy in dark (icon-shots, 2026-11-21).
+	reg("status-member-dnd", s(presenceZ), s("M9.255 6.325 A3.75 3.75 0 1 0 13.675 10.745"))
+	reg("status-member-dnd-filled", s(presenceZ), fl("M8.837 6.512 L8.952 6.371 L8.545 6.513 L8.319 6.616 L7.890 6.865 L7.689 7.011 L7.317 7.339 L6.991 7.714 L6.847 7.917 L6.602 8.348 L6.500 8.575 L6.344 9.046 L6.289 9.288 L6.228 9.781 L6.231 10.277 L6.258 10.524 L6.358 11.010 L6.433 11.247 L6.627 11.704 L6.746 11.922 L6.879 12.131 L7.185 12.522 L7.540 12.869 L7.734 13.025 L7.937 13.167 L8.370 13.410 L8.831 13.594 L9.069 13.664 L9.557 13.754 L9.805 13.775 L10.053 13.780 L10.548 13.740 L11.033 13.636 L11.270 13.561 L11.501 13.470 L11.943 13.243 L12.351 12.961 L12.719 12.627 L13.039 12.248 L13.180 12.044 L13.421 11.610 L13.576 11.220 L11.238 11.220 L10.851 11.193 L10.654 11.160 L10.269 11.053 L10.083 10.981 L9.727 10.799 L9.399 10.571 L9.104 10.302 L8.848 9.995 L8.636 9.657 L8.547 9.478 L8.407 9.104 L8.356 8.910 L8.293 8.516 L8.282 8.316 L8.300 7.917 L8.371 7.524 L8.495 7.144 L8.575 6.961 Z"))
+	reg("status-guest-dnd", s(presenceZ), s("M9.25 6.75 H7.75 A1 1 0 0 0 6.75 7.75 V12.25 A1 1 0 0 0 7.75 13.25 H12.25 A1 1 0 0 0 13.25 12.25 V10.75"))
+	reg("status-guest-dnd-filled", s(presenceZ), fl("M8.380 7.488 L8.016 7.488 L8.658 6.720 L7.644 6.726 L7.542 6.742 L7.350 6.802 L7.175 6.896 L6.956 7.096 L6.845 7.260 L6.767 7.444 L6.726 7.644 L6.720 7.768 L6.720 12.238 L6.729 12.384 L6.775 12.581 L6.858 12.765 L6.933 12.877 L7.123 13.067 L7.295 13.173 L7.549 13.260 L7.762 13.280 L12.317 13.277 L12.581 13.225 L12.765 13.142 L12.877 13.067 L12.978 12.978 L13.106 12.822 L13.201 12.644 L13.260 12.451 L13.280 12.238 L13.280 11.220 L11.238 11.220 L10.851 11.194 L10.459 11.113 L10.082 10.981 L9.726 10.800 L9.397 10.572 L9.102 10.302 L8.846 9.995 L8.734 9.829 L8.545 9.477 L8.405 9.103 L8.316 8.713 L8.280 8.315 L8.298 7.915 Z"))
 	// Slack's status-slackbot-filled, Slackbot's presence (TpPD
 	// getPresenceIconName: isSystemUser)
 	reg("status-slackbot-filled", fl("M9.11 6.55 L8.9 6.3 L8.61 6.05 L8.29 5.86 L8.02 5.77 L7.73 5.72 L7.36 5.74 L7.03 5.81 L6.7 5.95 L6.47 6.11 L6.24 6.34 L6.05 6.62 L5.91 6.93 L5.79 7.31 L5.73 7.67 L5.72 8.06 L5.75 8.47 L5.88 9.09 L6.12 9.74 L6.46 10.36 L6.95 11.04 L7.62 11.78 L8.31 12.4 L9.15 13.06 L10 13.64 L11.08 12.89 L12.05 12.08 L12.8 11.33 L13.36 10.62 L13.82 9.86 L14.12 9.09 L14.26 8.39 L14.28 7.94 L14.26 7.62 L14.19 7.25 L14.09 6.93 L13.95 6.63 L13.76 6.35 L13.58 6.15 L13.36 5.99 L13.11 5.86 L12.81 5.77 L12.35 5.72 L11.98 5.77 L11.64 5.89 L11.27 6.15 L11 6.42 L10.75 6.74 L10 8.08 L9.34 6.88 Z"))

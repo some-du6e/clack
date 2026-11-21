@@ -2296,6 +2296,35 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 30m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
           exit $rc
 
+  # profile-role-band (2026-11-21): the member hover card against Slack's
+  # MemberProfileHoverCard for every role fakeslack serves (roles.go): no
+  # role band on Grid (only Deactivated account), Workspace Owner/Admin
+  # off Grid, no org or guest label, the card and full profile alike; the
+  # real name; the DND presence from dnd.teamInfo; the status emoji by
+  # emoji_name and the text's emoji; core's ports of iz33/ue25/pH4l and
+  # dndV2. Dispatch with only=profile-role-band.
+  profile-role-band:
+    if: ${{ !inputs.only || startsWith('profile-role-band', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the hover card's roles, name, presence and status, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -run '^(TestHoverCardRoleBand|TestHoverCardOwnerHeightOnGrid|TestHoverCardShowsRealName|TestHoverCardStatusEmojiByName|TestHoverCardMemberDND|TestFullProfileNoRoleLabels|TestHoverCardVariants|TestHoverCardPronounsLikeSlack|TestSearchRowsPeople)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestIconCoverage|TestAllIconsParse)$' ./internal/ui/icons || rc=1
+          exit $rc
+
   # inspect-blur-fast (2026-11-18, round 2 2026-11-19): the inspect tool's
   # pick-to-review path at 1918x1080 (Karim's Windows window) at 1x and 2x,
   # on the headless GPU (llvmpipe, WARP): the review's shot drawn in the
