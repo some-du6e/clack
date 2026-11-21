@@ -307,6 +307,17 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 	if !slackTSRE.MatchString(thread) {
 		thread = ""
 	}
+	// a canvas's file channel without a thread: notificationClickedInVisitOrigin
+	// opens the document itself (openDoc, no section) before any
+	// jumpToMessage (a list goes the jump's way: Slack's openDoc there is
+	// the canvas viewer's)
+	if c := a.Core(); thread == "" && c != nil {
+		if fid, kind, _ := c.FileChannelKind(ch, ts); kind == "canvas" {
+			a.canvasNavigated()
+			a.OpenCanvasAt(fid, "", true)
+			return
+		}
+	}
 	a.jumpToMessage(ch, ts, thread)
 }
 
