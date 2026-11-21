@@ -116,7 +116,7 @@ func MemberTip(gtx layout.Context, h Host, userID string) layout.Dimensions {
 		g := dp(gtx, 9)
 		at(gtx, image.Pt(x, padT+(lineH-g)/2), func(gtx layout.Context) layout.Dimensions {
 			white := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
-			if pfIsSlackbot(u) {
+			if pfIsSystemUser(u) {
 				pfSlackbotHeart(gtx, 9, white)
 				return layout.Dimensions{}
 			}
