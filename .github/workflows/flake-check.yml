@@ -2416,8 +2416,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -v -run '^(TestHoverCardRoleBand|TestHoverCardOwnerHeightOnGrid|TestHoverCardShowsRealName|TestHoverCardStatusEmojiByName|TestHoverCardMemberDND|TestFullProfileNoRoleLabels|TestHoverCardVariants|TestHoverCardPronounsLikeSlack|TestSearchRowsPeople)$' ./internal/ui/popups || rc=1
-          go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestHoverCardRoleBand|TestHoverCardOwnerHeightOnGrid|TestHoverCardShowsRealName|TestHoverCardStatusEmojiByName|TestHoverCardMemberDND|TestHoverCardHuddleStatus|TestHoverCardBlankNameLink|TestFullProfileNoRoleLabels|TestHoverCardVariants|TestHoverCardPronounsLikeSlack|TestSearchRowsPeople)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND|TestMemberDNDOmittedAnswerIsFresh|TestMemberDNDStaleAfterSlowReconnect)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^(TestIconCoverage|TestAllIconsParse)$' ./internal/ui/icons || rc=1
           exit $rc
 

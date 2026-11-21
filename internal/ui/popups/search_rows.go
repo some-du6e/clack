@@ -1075,6 +1075,7 @@ func (v *SearchView) peopleRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 // personCard draws person i's UserProfileUnfurl w wide.
 func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
 	u := v.people[i]
+	pfWantDND(v.h, u, gtx.Now)
 	h := srPersonCardH(gtx, v.h, u)
 	sz := image.Pt(w, h)
 	r := image.Rectangle{Max: sz}
@@ -1112,7 +1113,7 @@ func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}
 	y := pad + dp(gtx, (72-(textH-8))/2-4)
 	at(gtx, image.Pt(colX, y), func(gtx layout.Context) layout.Dimensions {
-		return pfNameLine(gtx, v.h, th, nil, u, pfName(u), 15, 22, 10, colW)
+		return pfNameLine(gtx, v.h, th, nil, u, pfRealName(u), 15, 22, 10, colW)
 	})
 	y += lineH
 	if title != "" {

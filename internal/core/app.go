@@ -1320,8 +1320,9 @@ func (a *App) userOf(u *slack.User) User {
 	// emoji_name, not the list's first: status_emoji.go)
 	v.StatusEmojiInfo = parseStatusEmojiInfo(u.Profile.StatusEmojiDisplay)
 	if v.StatusEmoji != "" {
+		// StatusEmoji stays the profile's own code; the picture is the
+		// display form's (a display_alias, a custom display_url)
 		code, pic := EmojiDisplayInfo(v.StatusEmoji, v.StatusEmojiInfo)
-		v.StatusEmoji = code
 		if pic == "" {
 			pic, _, _ = a.S.Emoji(strings.Trim(code, ":"))
 		}

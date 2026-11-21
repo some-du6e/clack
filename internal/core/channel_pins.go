@@ -166,6 +166,7 @@ func (a *App) socketConnected(fast bool) {
 	}
 	a.slowConnectionCount().Add(1)
 	a.appCardsReconnected()
+	a.memberDNDReconnected() // dnd_members.go
 	v, ok := pinsTabs.Load(a)
 	if !ok {
 		return
