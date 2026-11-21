@@ -68,7 +68,8 @@ type backend struct {
 	chanDrafts map[string][]core.Draft
 
 	tabCache map[string][]chTab
-	tabsDone map[string]bool // the header shows what there is: opened() finished, or the header cache filled it (reveal.go)
+	tabSrc   map[string]tabRead // what each tab bar was built from (tabs)
+	tabsDone map[string]bool    // the header shows what there is: opened() finished, or the header cache filled it (reveal.go)
 	// headerReads is what this session's header reads of each
 	// conversation brought (opened): whether one answered every part (the
 	// header cache can't be newer then), the last tabs read and the
@@ -783,6 +784,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 		b.resnapshot(a)
 		a.refreshVisible()
 		a.Invalidate()
+		a.canvasJumpNames(ev.Users) // a jump that waited for its canvas's files.info (canvas_open.go)
 		for id := range b.ext {
 			// re-resolve closed-DM headers, keeping what they show until
 			// the new answer lands: forgetting them blanked the header and
@@ -1107,6 +1109,7 @@ func (b *backend) opened(ch string) {
 			changed := !b.tabsDone[ch]
 			switch {
 			case err == nil:
+				b.noteTabRead(ch, ts, notMember)
 				if !reflect.DeepEqual(b.tabCache[ch], tabs) {
 					a.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
 					changed = true
@@ -1265,6 +1268,7 @@ func (b *backend) headerFromCache(ch string) bool {
 		notMember = hr.notMember
 	}
 	tabs, bms := b.tabsOf(ts, notMember)
+	b.noteTabRead(ch, ts, notMember)
 	if !reflect.DeepEqual(b.tabCache[ch], tabs) {
 		if b.app != nil {
 			b.app.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
@@ -1406,7 +1410,48 @@ func (b *backend) retryOpened(ch string, fails int) {
 	})
 }
 
-func (b *backend) tabs(ch string) []chTab { return b.tabCache[ch] }
+// tabs is ch's tab bar. A bar built before the emoji map had a title's
+// emoji (the map still loading on a warm start, a custom emoji newer than
+// the cached map) is built again from the same reads once the map
+// changes, so its emoji draw as images and a leading one becomes the
+// tab's icon, as Slack's tab renders them from the emoji store each time.
+// UI goroutine.
+func (b *backend) tabs(ch string) []chTab {
+	if src, ok := b.tabSrc[ch]; ok && b.core != nil {
+		if v := b.core.EmojiVersion(); v != src.emoji {
+			src.emoji = v
+			b.tabSrc[ch] = src
+			if tabs, _ := b.tabsOf(src.tabs, src.notMember); !reflect.DeepEqual(b.tabCache[ch], tabs) {
+				if b.app != nil {
+					b.app.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
+				} else {
+					b.tabCache[ch] = tabs
+				}
+			}
+		}
+	}
+	return b.tabCache[ch]
+}
+
+// tabRead is what a channel's tab bar was built from (tabs): the tab
+// reads, the membership, and the emoji map's version then.
+type tabRead struct {
+	tabs      []core.Tab
+	notMember bool
+	emoji     uint64
+}
+
+// noteTabRead records what ch's tab bar is being built from (tabs).
+func (b *backend) noteTabRead(ch string, ts []core.Tab, notMember bool) {
+	if b.tabSrc == nil {
+		b.tabSrc = map[string]tabRead{}
+	}
+	var v uint64
+	if b.core != nil {
+		v = b.core.EmojiVersion()
+	}
+	b.tabSrc[ch] = tabRead{tabs: ts, notMember: notMember, emoji: v}
+}
 
 // resolved returns header info for a conversation that isn't in the sidebar
 // (a closed DM, a channel opened from search) via core.ResolveConv, fetched
