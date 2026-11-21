@@ -382,7 +382,7 @@ jobs:
           # a new sub-pixel offset is built there, atlas pages shrink and go;
           # patch 46: a partial frame is the whole frame's pixels, bit for bit;
           # patch 51: external images (TestClackExternal*), a new key's damage
-          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
+          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys|TestClackWindowOutlivesAnother)$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -592,7 +592,7 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys|TestClackWindowOutlivesAnother)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 10m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
@@ -1626,7 +1626,7 @@ jobs:
         env:
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys|TestClackWindowOutlivesAnother)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 19m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
