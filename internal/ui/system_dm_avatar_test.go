@@ -81,6 +81,21 @@ func TestSlackSystemDMAvatar(t *testing.T) {
 		t.Log("no GPU: pixels not checked")
 		return
 	}
+	// the row sits in the sidebar's lower part (an app DM, after 30-odd
+	// conversations): scroll it to the top of the list
+	row := -1
+	for i, r := range e.a.sidebar.rows {
+		if r.key == ch {
+			row = i
+		}
+	}
+	if row < 0 {
+		t.Fatal("the system DM has no sidebar row")
+	}
+	t.Logf("sidebar row %d of %d, list at %+v", row, len(e.a.sidebar.rows), e.a.sidebar.list.Position)
+	e.a.sidebar.list.Position.First, e.a.sidebar.list.Position.Offset = max(row-2, 0), 0
+	e.settle(300 * time.Millisecond)
+	t.Logf("list now at %+v", e.a.sidebar.list.Position)
 	img := image.NewRGBA(image.Rectangle{Max: e.size})
 	if err := e.gpu.Screenshot(img); err != nil {
 		t.Fatalf("screenshot: %v", err)
