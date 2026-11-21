@@ -218,6 +218,7 @@ func (s *Slick) Close() error {
 	if !s.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	defer s.closeSubscribers()
 	close(s.stopTimer)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*s.opts.LifecycleTimeout+time.Second)
 	defer cancel()
@@ -404,6 +405,18 @@ func (s *Slick) Subscribe() (<-chan struct{}, func()) {
 		delete(s.changeCh, c)
 		s.changeMu.Unlock()
 	}
+}
+
+// closeSubscribers closes every Subscribe channel (their range loops
+// end) and keeps no more: Close's, the Slick is done. Their goroutines
+// kept it, and the App they repainted, reachable for good (ci-speed-3).
+func (s *Slick) closeSubscribers() {
+	s.changeMu.Lock()
+	defer s.changeMu.Unlock()
+	for c := range s.changeCh {
+		close(c)
+	}
+	clear(s.changeCh)
 }
 
 func (s *Slick) changed() {

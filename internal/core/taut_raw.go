@@ -77,6 +77,9 @@ func (a *App) SubscribeRaw() (<-chan slack.Event, func()) {
 		once.Do(func() {
 			for {
 				cur := ptr.Load()
+				if cur == nil { // Release closed every tap
+					return
+				}
 				next := &rawTaps{subs: map[chan slack.Event]struct{}{}}
 				cur.mu.Lock()
 				for k := range cur.subs {

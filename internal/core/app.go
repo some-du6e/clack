@@ -494,9 +494,12 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 	return s.ch, func() {
 		once.Do(func() {
 			a.subMu.Lock()
+			_, live := a.subs[s] // Release closed it, if not
 			delete(a.subs, s)
 			a.subMu.Unlock()
-			close(s.ch)
+			if live {
+				close(s.ch)
+			}
 		})
 	}
 }

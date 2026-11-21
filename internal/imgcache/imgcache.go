@@ -85,6 +85,8 @@ type Fetcher func(ctx context.Context, url string) ([]byte, error)
 
 // Cache is safe for concurrent use.
 type Cache struct {
+	done       chan struct{} // closed by Close: sweepLoop returns
+	closeOnce  sync.Once
 	fetch      Fetcher
 	dir        string // the disk tier ("" for none); under mu
 	invalidate func()
@@ -353,6 +355,7 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		ctx:        context.Background(),
 		diskLimit:  DiskLimit,
 		animate:    true,
+		done:       make(chan struct{}),
 	}
 	go c.sweepLoop()
 	return c
@@ -466,9 +469,26 @@ func (c *Cache) trim(dir string) {
 func (c *Cache) sweepLoop() {
 	t := time.NewTicker(IdleAfter / 2)
 	defer t.Stop()
-	for range t.C {
-		c.sweep(time.Now().Add(-IdleAfter).UnixMilli())
+	for {
+		select {
+		case <-t.C:
+			c.sweep(time.Now().Add(-IdleAfter).UnixMilli())
+		case <-c.done:
+			return
+		}
 	}
+}
+
+// Close stops the cache's sweeps, its goroutine, for a cache nothing draws
+// from again: a finished App's (internal/ui's tests). The goroutine kept
+// the cache, every decoded image in it, reachable for good (ci-speed-3);
+// the process's own cache is never closed.
+func (c *Cache) Close() {
+	c.closeOnce.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
+	})
 }
 
 // sweep drops entries last used before cutoff (unix milliseconds).

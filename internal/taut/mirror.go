@@ -263,7 +263,10 @@ func (m *mirror) start() {
 				} else {
 					m.t.ui.views.noteSeen(ev.EmitSeq)
 				}
-			case ev := <-raws:
+			case ev, ok := <-raws:
+				if !ok { // the App was released (core.App.Release)
+					return
+				}
 				m.t.onRaw(ev)
 				m.noteRaw(ev)
 			case <-tick.C:

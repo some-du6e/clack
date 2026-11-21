@@ -28,6 +28,7 @@ func newPerApp() *perApp {
 // ends with it. Call it only once the App is done for good: an App that
 // runs on after it starts those maps' state over.
 func (a *App) Release() {
+	a.closeSubscribers()
 	for _, m := range perAppMaps {
 		m.Delete(a)
 	}
@@ -35,4 +36,37 @@ func (a *App) Release() {
 		appsByStore.Delete(a.S)
 	}
 	store.Release(a.S)
+}
+
+// closeSubscribers closes every channel the App handed out to
+// subscribers, Subscribe's, SubscribeRaw's and its Interactive's, so the
+// goroutines ranging over them end. Each such goroutine kept the App, and
+// what it subscribed for, reachable for good: internal/ui's tests left
+// hundreds (messages' hubs, composer's typing, blockkit, views' watchers,
+// core's own). Release calls it after the pump and the background work
+// stopped (Close follows StopTraffic), so no event is sent after.
+func (a *App) closeSubscribers() {
+	a.subMu.Lock()
+	subs := make([]*sub, 0, len(a.subs))
+	for s := range a.subs {
+		subs = append(subs, s)
+	}
+	clear(a.subs)
+	a.subMu.Unlock()
+	for _, s := range subs {
+		close(s.ch)
+	}
+	if p, ok := rawTapIndex.Load(a); ok {
+		if t := p.(*rawTapPtr).Swap(nil); t != nil {
+			t.mu.Lock() // a tap in flight on t finishes first
+			for c := range t.subs {
+				close(c)
+			}
+			t.subs = nil
+			t.mu.Unlock()
+		}
+	}
+	if v, ok := interactiveIndex.Load(a); ok {
+		v.(*Interactive).closeSubs()
+	}
 }

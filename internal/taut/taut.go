@@ -285,6 +285,7 @@ func (t *Taut) Close() error {
 		return nil
 	}
 	defer huddles.Delete(t) // its huddle state beside it (huddle.go)
+	defer t.closeSubscribers()
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
 	t.mu.Lock()
@@ -503,6 +504,18 @@ func (t *Taut) Subscribe() (<-chan struct{}, func()) {
 		delete(t.changeCh, c)
 		t.changeMu.Unlock()
 	}
+}
+
+// closeSubscribers closes every Subscribe channel (their range loops
+// end) and keeps no more: Close's, the Taut is done. Their goroutines kept
+// it, and the App they repainted, reachable for good (ci-speed-3).
+func (t *Taut) closeSubscribers() {
+	t.changeMu.Lock()
+	defer t.changeMu.Unlock()
+	for c := range t.changeCh {
+		close(c)
+	}
+	clear(t.changeCh)
 }
 
 func (t *Taut) changed() {

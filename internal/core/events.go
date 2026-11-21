@@ -18,10 +18,22 @@ import (
 
 var mentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)`)
 
-// pump applies realtime events to the store and forwards them to subscribers.
+// pump applies realtime events to the store and forwards them to
+// subscribers, until the session's traffic stops (StopTraffic, a sign-out)
+// or the realtime events end. It used to wait on the events alone, and an
+// App that never connected (no realtime) kept it, and itself, for good.
 func (a *App) pump() {
-	for ev := range a.RTM.Events {
-		a.handle(ev)
+	done := a.bg.Done()
+	for {
+		select {
+		case ev, ok := <-a.RTM.Events:
+			if !ok {
+				return
+			}
+			a.handle(ev)
+		case <-done:
+			return
+		}
 	}
 }
 

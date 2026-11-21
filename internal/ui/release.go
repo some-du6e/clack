@@ -33,4 +33,11 @@ func (a *App) release() {
 	if a.th != nil {
 		a.th.ForgetShapers()
 	}
+	// its goroutines: the invalidator, the image cache's sweeps
+	if a.invalDone != nil {
+		a.invalStop.Do(func() { close(a.invalDone) })
+	}
+	if a.images != nil {
+		a.images.Close()
+	}
 }

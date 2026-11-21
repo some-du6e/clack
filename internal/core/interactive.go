@@ -293,6 +293,17 @@ func (ix *Interactive) Subscribe() (<-chan ViewEvent, func()) {
 	}
 }
 
+// closeSubs closes every subscriber's channel (their range loops end):
+// the App is done (Release). A stop after it only deletes.
+func (ix *Interactive) closeSubs() {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	for c := range ix.subs {
+		close(c)
+	}
+	ix.subs = map[chan ViewEvent]struct{}{}
+}
+
 func (ix *Interactive) emit(e ViewEvent) {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
