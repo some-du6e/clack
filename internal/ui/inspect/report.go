@@ -55,8 +55,9 @@ type Report struct {
 	IDs    []string
 	Kinds  []string
 	Colors []string
-	// Capture is "dragged region" for a region dragged out, "" for an
-	// element picked; Redacted, how many rects the user blurred out of
+	// Capture is "dragged region" for a region dragged out, "whole
+	// window" for the window grabbed to draw on (P), "" for an element
+	// picked; Redacted, how many rects the user blurred out of
 	// the image in the review.
 	Capture  string
 	Redacted int

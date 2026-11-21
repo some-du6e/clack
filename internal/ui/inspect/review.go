@@ -56,6 +56,8 @@ type review struct {
 	dragging bool
 	from, to f32.Point       // the drag, window px
 	view     image.Rectangle // where the shot was drawn last frame, window px
+
+	pen pen // the lines drawn on the shot (draw.go)
 }
 
 // minMark is the smallest drag that marks a rect, dp each way: less is
@@ -93,6 +95,7 @@ func (t *Tool) startReview(c *capture, shot *image.RGBA) {
 	img := shownImage(shot, nil, c.elem, c.scale*c.k)
 	r.shown, r.ready = paint.NewImageOp(img), true
 	c.tm.shown = time.Since(r.started)
+	r.pen.on = c.pen // P in the session: the whole window, to draw on
 	t.state, t.rev = reviewing, r
 	t.host.Invalidate()
 }
@@ -129,6 +132,7 @@ func (t *Tool) finishReview() {
 	r := t.rev
 	r.c.redact = append([]image.Rectangle(nil), r.marks...)
 	r.c.rep.Redacted = len(r.marks)
+	r.c.strokes = append([]Stroke(nil), r.pen.strokes...)
 	t.stop()
 	t.deliver(r.c, r.shot, nil)
 }
@@ -150,6 +154,14 @@ func (t *Tool) reviewKey(ke key.Event) {
 	switch {
 	case comboPress(t.combo, ke):
 		t.dropReview()
+	case r.pen.on && t.penKey(ke):
+	case ke.Name == PenKey:
+		// the pen on: a rect still being dragged out is kept, as a copy
+		// keeps it
+		if r.endDrag(t.scale) {
+			t.changed(r)
+		}
+		r.pen.on = true
 	case ke.Name == key.NameEscape:
 		if r.dragging {
 			r.dragging = false // only the rect being drawn
@@ -165,8 +177,9 @@ func (t *Tool) reviewKey(ke key.Event) {
 			return
 		}
 		// a rect still being dragged out goes with the copy: what the user
-		// was blurring never goes out sharp
+		// was blurring never goes out sharp; so does a line being drawn
 		r.endDrag(t.scale)
+		r.pen.end(r, t.scale)
 		t.finishReview()
 	case ke.Name == key.NameDeleteBackward || ke.Name == key.NameDeleteForward || mod && ke.Name == "Z":
 		if r.dragging {
@@ -183,6 +196,10 @@ func (t *Tool) reviewKey(ke key.Event) {
 // takes back the newest rect under it.
 func (t *Tool) reviewPointer(pe pointer.Event) {
 	r := t.rev
+	if r.pen.on {
+		t.penPointer(pe)
+		return
+	}
 	switch pe.Kind {
 	case pointer.Press:
 		switch {
@@ -390,8 +407,15 @@ func (t *Tool) drawReview(gtx layout.Context) {
 			frame(gtx, v, one, markCol)
 		}
 	}
+	if r.ready {
+		t.drawStrokes(gtx)
+	}
 	th := t.host.Theme()
 	if th == nil || th.Shaper == nil {
+		return
+	}
+	if r.pen.on && r.ready {
+		t.banner(gtx, th, penBanner(&r.pen, t.armed(r)))
 		return
 	}
 	t.banner(gtx, th, reviewBanner(r.ready, len(r.marks), t.armed(r)))
@@ -414,7 +438,7 @@ func reviewBanner(ready bool, n int, armed bool) string {
 	if !armed {
 		cp = ""
 	}
-	msg := "Blur: drag over anything private · ⌫ undo" + cp + " · Esc cancel"
+	msg := "Blur: drag over anything private · ⌫ undo · P draw" + cp + " · Esc cancel"
 	switch {
 	case !ready:
 		msg = "Blur: preparing the shot…" + cp + " · Esc cancel"
