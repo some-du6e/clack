@@ -2028,10 +2028,15 @@ func (v *viewCache) dropEvicted(ch string) {
 	v.unindex(keys)
 }
 
+// viewChunk is how many entries one JS read of views takes at most
+// (fetch): a message's encode costs QuickJS a fraction of a ms, so a call
+// stays at a few ms, React's time slice.
+const viewChunk = 25
+
 // fetch asks JS for keys and decodes what changed of what comes back: one
-// JS read per (slice, key), each message bucket decoded once for all of
-// its messages asked for. have are the entries installed for keys: one
-// whose bytes come back as they were comes back same, nothing decoded or
+// read per (slice, key), each message bucket decoded once for all of its
+// messages asked for. have are the entries installed for keys: one whose
+// bytes come back as they were comes back same, nothing decoded or
 // converted (each event in the open channel had the worker decode every
 // message asked of its bucket again, and its injected messages, to find
 // most of them unchanged). failed: a call to JS failed (the keys it
@@ -2063,92 +2068,210 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 			failed = true
 		}
 	}
-	index := map[viewSK]int{}
-	var pairs [][2]any
-	for _, k := range plain {
-		p := viewSK{k.slice, k.key}
-		if _, ok := index[p]; ok {
-			continue
-		}
-		index[p] = len(pairs)
-		var key any = k.key
-		if k.key == "" {
-			key = nil
-		}
-		pairs = append(pairs, [2]any{k.slice, key})
+	// one read per (slice, key): the whole value, or the entries asked for
+	// (a message bucket's messages), at most viewChunk entries a JS task,
+	// so no read holds the thread long: a send's checks waited behind one
+	// that encoded a whole bucket (29 ms on the runners). The first chunk
+	// of each, and a whole message bucket's keys (its injected messages),
+	// go in one call; the rest then go together, each a task of its own,
+	// back to back: a bucket costs two trips through the queue, not one a
+	// chunk (13 behind a busy runtime for a 300-message timeline).
+	type pairReq struct {
+		whole bool
+		subs  []string
 	}
-	if len(pairs) == 0 {
+	reqs := map[viewSK]*pairReq{}
+	var order []viewSK
+	for _, k := range plain {
+		sk := viewSK{k.slice, k.key}
+		r := reqs[sk]
+		if r == nil {
+			r = &pairReq{}
+			reqs[sk] = r
+			order = append(order, sk)
+		}
+		if k.sub == "" {
+			r.whole = true
+		} else {
+			r.subs = append(r.subs, k.sub)
+		}
+	}
+	if len(order) == 0 {
 		return out, failed
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	var vals []json.RawMessage
-	// Merging msg-latency: this call goes on the runtime's in-order lane
-	// (an InOrder ctx), with the invalidate tasks. In-order tasks run
-	// ahead of the plain queue, so a plain fetch queued before an
-	// invalidate ran after it, and came back with the change's bytes at a
-	// ver below its last mark: ready only on the refetch, whose same bytes
-	// announce it (work). Guarded by
-	// TestViewedRowGoesBackWithOnlyInvalidateFrames.
-	if err := rt.call(ctx, "views", &vals, pairs); err != nil || len(vals) != len(pairs) {
+	jsKey := func(key string) any {
+		if key == "" {
+			return nil
+		}
+		return key
+	}
+	type part struct {
+		sk   viewSK
+		subs []string
+	}
+	const (
+		kindWhole = iota // the value in one piece
+		kindList         // a whole message bucket: its keys and first chunk
+		kindSubs         // the first chunk of the entries asked for
+	)
+	type spec struct {
+		sk   viewSK
+		kind int
+	}
+	var first [][3]any
+	var specs []spec
+	var rest []part
+	for _, sk := range order {
+		r := reqs[sk]
+		switch {
+		case r.whole && sk.slice == "messages" && sk.key != "":
+			first = append(first, [3]any{sk.slice, sk.key, map[string]int{"first": viewChunk}})
+			specs = append(specs, spec{sk, kindList})
+		case r.whole:
+			first = append(first, [3]any{sk.slice, jsKey(sk.key), nil})
+			specs = append(specs, spec{sk, kindWhole})
+		default:
+			first = append(first, [3]any{sk.slice, jsKey(sk.key), r.subs[:min(viewChunk, len(r.subs))]})
+			specs = append(specs, spec{sk, kindSubs})
+			for i := viewChunk; i < len(r.subs); i += viewChunk {
+				rest = append(rest, part{sk, r.subs[i:min(i+viewChunk, len(r.subs))]})
+			}
+		}
+	}
+	vals := map[viewSK]json.RawMessage{}
+	buckets := map[viewSK]map[string]json.RawMessage{}
+	chunked := map[viewSK]bool{} // whole message buckets read in chunks
+	torn := map[viewSK]bool{}    // a chunk didn't answer: asked again
+	merge := func(sk viewSK, raw json.RawMessage) {
+		var b map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &b)
+		m := buckets[sk]
+		if m == nil {
+			m = make(map[string]json.RawMessage, len(b))
+			buckets[sk] = m
+		}
+		for ts, x := range b {
+			m[ts] = x
+		}
+	}
+	// the reads go on the runtime's in-order lane, with the invalidate
+	// tasks (runtime.postWith): in-order tasks run ahead of the plain
+	// queue, so a plain read queued before an invalidate ran after it, and
+	// came back with the change's bytes at a ver below its last mark,
+	// ready only on the refetch, whose same bytes announce it (work).
+	// Guarded by TestViewedRowGoesBackWithOnlyInvalidateFrames
+	ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 3*time.Second)
+	var got []json.RawMessage
+	err := rt.call(ctx, "views", &got, first)
+	cancel()
+	if err != nil || len(got) != len(first) {
 		return out, true
 	}
-	sums := make(map[int]uint64)
-	sum := func(i int) uint64 {
-		s, ok := sums[i]
-		if !ok {
-			s = viewSum(vals[i])
-			sums[i] = s
+	for i, sp := range specs {
+		switch sp.kind {
+		case kindWhole:
+			vals[sp.sk] = got[i]
+		case kindSubs:
+			merge(sp.sk, got[i])
+		case kindList:
+			var lr struct {
+				Keys []string        `json:"keys"`
+				Part json.RawMessage `json:"part"`
+			}
+			_ = json.Unmarshal(got[i], &lr)
+			chunked[sp.sk] = true
+			merge(sp.sk, lr.Part)
+			for j := viewChunk; j < len(lr.Keys); j += viewChunk {
+				rest = append(rest, part{sp.sk, lr.Keys[j:min(j+viewChunk, len(lr.Keys))]})
+			}
 		}
-		return s
 	}
-	decoded := make(map[int]map[string]json.RawMessage)
-	bucket := func(i int) map[string]json.RawMessage {
-		b, ok := decoded[i]
+	if len(rest) > 0 {
+		type answer struct {
+			i   int
+			raw json.RawMessage
+			err error
+		}
+		answers := make(chan answer, len(rest))
+		for i, p := range rest {
+			ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 3*time.Second)
+			rt.rt.CallThen(ctx, "__taut.views", func(raw json.RawMessage, err error) {
+				cancel()
+				answers <- answer{i, raw, err}
+			}, [][3]any{{p.sk.slice, jsKey(p.sk.key), p.subs}})
+		}
+		for range rest {
+			a := <-answers
+			sk := rest[a.i].sk
+			var res []json.RawMessage
+			if a.err != nil || json.Unmarshal(a.raw, &res) != nil || len(res) != 1 {
+				torn[sk], failed = true, true
+				continue
+			}
+			merge(sk, res[0])
+		}
+	}
+	bucket := func(sk viewSK) map[string]json.RawMessage {
+		b, ok := buckets[sk]
 		if !ok {
-			_ = json.Unmarshal(vals[i], &b)
-			decoded[i] = b
+			_ = json.Unmarshal(vals[sk], &b)
+			buckets[sk] = b
 		}
 		return b
 	}
+	// a whole message bucket read in chunks, as one value: its entries
+	// encoded again (json sorts a map's keys, so the same entries make the
+	// same bytes), which the same-bytes check compares as it compared JS's
+	// encoding of the bucket whole
+	wholes := map[viewSK]json.RawMessage{}
+	whole := func(sk viewSK) json.RawMessage {
+		w, ok := wholes[sk]
+		if !ok {
+			w, _ = json.Marshal(bucket(sk))
+			wholes[sk] = w
+		}
+		return w
+	}
 	for _, k := range plain {
-		i := index[viewSK{k.slice, k.key}]
+		sk := viewSK{k.slice, k.key}
 		cur := have[k]
-		if k.slice == "messages" && k.key != "" {
-			// decoded from the very bytes this bucket has now (merging
-			// msg-latency: its chunked read hands back a bucket in parts;
-			// this compares the checksum of the bucket assembled whole,
-			// which the chunked read supplies, never one part's)
-			if cur != nil && cur.blen == len(vals[i]) && cur.bsum == sum(i) &&
-				(k.sub != "" && cur.sm != nil || k.sub == "" && v.sameHeld(k.key, cur.inj, cur.bkeys)) {
-				out[k] = &viewEntry{same: true, bsum: sum(i), blen: len(vals[i])}
+		var raw json.RawMessage
+		switch {
+		case torn[sk] && (k.sub == "" || bucket(sk)[k.sub] == nil):
+			continue // its chunk didn't answer: asked again
+		case k.sub != "":
+			raw = bucket(sk)[k.sub] // one message of a bucket
+		case chunked[sk]:
+			raw = whole(sk) // the bucket whole again
+			// decoded from the very bytes this bucket has now, its
+			// injected list from what core held then
+			if cur != nil && cur.blen == len(raw) && cur.bsum == viewSum(raw) && v.sameHeld(k.key, cur.inj, cur.bkeys) {
+				out[k] = &viewEntry{same: true, bsum: viewSum(raw), blen: len(raw)}
 				continue
 			}
-		}
-		raw := vals[i]
-		if k.sub != "" {
-			raw = bucket(i)[k.sub] // one message of a bucket
+		default:
+			raw = vals[sk]
 		}
 		e := &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
 		switch k.slice {
 		case "messages":
-			e.bsum, e.blen = sum(i), len(vals[i])
 			if k.sub != "" {
 				// decoded and converted, the bytes aren't needed again:
 				// a hash tells a refetch of the same value
 				e.raw, e.sum = nil, viewSum(raw)
 				if cur != nil && cur.sm != nil && cur.sum == e.sum && cur.rawLen == e.rawLen {
-					out[k] = &viewEntry{same: true, bsum: e.bsum, blen: e.blen} // this message's bytes as they were
+					out[k] = &viewEntry{same: true} // this message's bytes as they were
 					continue
 				}
 				e.sm = decodeMessage(raw)
 				e.size = 3*len(raw) + 256 // the decoded message and its conversion
 			} else if k.key != "" {
+				e.bsum, e.blen = viewSum(raw), len(raw)
 				var prev []*viewInj
 				if cur != nil {
 					prev = cur.inj
 				}
-				b := bucket(i)
+				b := bucket(sk)
 				e.inj = v.injected(k.key, b, prev)
 				e.bkeys = make([]store.MsgKey, 0, len(b))
 				for ts, raw := range b {
