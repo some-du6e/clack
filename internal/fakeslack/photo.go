@@ -299,8 +299,17 @@ func (s *Server) asSlackHost(w http.ResponseWriter, r *http.Request) bool {
 		}
 	case host == "slack-imgs.com":
 		u, err := url.Parse(r.URL.Query().Get("url"))
-		if err != nil {
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			http.NotFound(w, r)
+			return true
+		}
+		// the proxy fetches the original, http or https: one of the
+		// fake's /img/ pictures (ProxiedImageURL) on whatever host it
+		// names
+		if strings.HasPrefix(u.Path, "/img/") {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path, r2.URL.RawQuery = u.Path, ""
+			s.img(w, r2)
 			return true
 		}
 		name = path.Base(u.Path)
@@ -313,6 +322,14 @@ func (s *Server) asSlackHost(w http.ResponseWriter, r *http.Request) bool {
 		http.NotFound(w, r)
 	}
 	return true
+}
+
+// ProxiedImageURL is a w×h picture of the fake's (its /img/ server's) on
+// a third-party origin ("http://icons.example.net"): Clack must load it
+// the way Slack's client does, through the image proxy, which serves it
+// under HostsTransport (RouteSlackHosts); the origin itself answers 404.
+func ProxiedImageURL(origin string, w, h int, seed string) string {
+	return fmt.Sprintf("%s/img/%dx%d/%s.png", strings.TrimSuffix(origin, "/"), w, h, seed)
 }
 
 // HostsTransport sends every request to the fake: one for the fake's own
