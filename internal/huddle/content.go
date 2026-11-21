@@ -462,12 +462,17 @@ func (c *contentConn) sendAudio(done <-chan struct{}) {
 	if c.stereo {
 		ch, app, bps = 2, opus.ApplicationAudio, shareAudioBps
 	}
-	enc, err := opus.NewEncoder(sampleRate, ch, app)
+	var enc *opus.Encoder
+	var err error
+	codecCall(func() { // the transpiled libopus runs on the codec goroutine (codecstack.go)
+		if enc, err = opus.NewEncoder(sampleRate, ch, app); err == nil {
+			_ = enc.SetBitrate(bps)
+		}
+	})
 	if err != nil {
 		c.s.logf("huddle: screen share opus encoder: %v", err)
 		return
 	}
-	_ = enc.SetBitrate(bps)
 	silence := make([]int16, frameSamples*ch)
 	mono := make([]int16, frameSamples)
 	buf := make([]byte, 1500)
@@ -508,13 +513,15 @@ func (c *contentConn) sendAudio(done <-chan struct{}) {
 	}
 }
 
-// encodeOpus is one frame through enc, a libopus abort turned into an
-// error (the transpiled libopus panics on its assertions).
+// encodeOpus is one frame through enc on the codec goroutine
+// (codecstack.go), a libopus abort turned into an error (the transpiled
+// libopus panics on its assertions).
 func encodeOpus(enc *opus.Encoder, pcm []int16, out []byte) (n int, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			n, err = 0, fmt.Errorf("opus encoder: %v", r)
 		}
 	}()
-	return enc.Encode(pcm, frameSamples, out)
+	codecCall(func() { n, err = enc.Encode(pcm, frameSamples, out) })
+	return n, err
 }

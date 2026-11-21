@@ -231,7 +231,7 @@ func (d *RenameMpdmDialog) layout(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		gtx.Constraints.Min.Y = gtx.Sp(22)
 		if d.ed.Len() == 0 {
-			text(gtx, th, 15, theme.Regular, cl.Muted, nsChDetails.T("Add a name"))
+			th.EditorPlaceholder(gtx, 15, cl.Muted, nsChDetails.T("Add a name")) // on the editor's centred line (Gio patch 54)
 		}
 		return th.Editor(gtx, &d.ed, 15, cl.Fg, theme.WithAlpha(cl.Link, 0x40))
 	})

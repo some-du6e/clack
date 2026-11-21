@@ -7,7 +7,7 @@
     {"id": "composer-links", "name": "Composer: link and message slugs", "audit": "docs/COMPOSER-AUDIT.md", "gaps": "The elements' shapes only. Slack's server computes a link slug's display_url, so Clack has nothing of its own to compare there; fakeslack's copy of it is checked as a fake-server check."},
     {"id": "composer-send", "name": "Composer: sending, editing, drafts and scheduling", "audit": "docs/COMPOSER-AUDIT.md"},
     {"id": "messages", "name": "Messages: rich text, Block Kit, attachments and unfurls", "audit": "docs/MESSAGES-AUDIT.md"},
-    {"id": "file-previews", "name": "Files and snippet previews", "audit": "docs/FILES-AUDIT.md", "gaps": "Only the snippet HTML cut (html-truncate) is differential."},
+    {"id": "file-previews", "name": "Files and snippet previews", "audit": "docs/FILES-AUDIT.md", "gaps": "Only the snippet HTML cut (html-truncate) is differential. The inline video player's rules (fileIsPlayableVideo, the pill's time, the mute and volume prefs) are read from Slack's code; no check compares them with Slack's output."},
     {"id": "threads", "name": "Threads", "audit": "docs/THREADS-AUDIT.md"},
     {"id": "sidebar", "name": "Sidebar sections and rows", "docs": "docs/SIDEBAR-RULES.md"},
     {"id": "channels", "name": "Channel header, details and browser", "audit": "docs/CHANNELS-AUDIT.md"},

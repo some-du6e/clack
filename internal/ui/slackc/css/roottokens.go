@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // RootTokens are the custom properties in scope at the document root:
@@ -15,13 +16,14 @@ import (
 // `:root,html,body,.sk-client-theme--dark,…{--dt_color-base-pry:…}` lands
 // here, and so does a user.css `body{--x:…}`.
 //
-// Build one with Engine.RootTokens when sheets change, not per frame; a
-// RootTokens memoizes lookups and is for one goroutine.
+// Build one with Engine.RootTokens when sheets change, not per frame. A
+// RootTokens memoizes lookups, and its methods are safe for concurrent use:
+// the main window's theme hands its tokens to the huddle windows
+// (huddleui), which resolve them on their own goroutines.
 type RootTokens struct {
 	raw  map[string]string // Slack's raw tokens + sheet overrides
 	own  map[string]bool   // names a sheet declared
 	deep map[string]bool   // names a sheet declared on body or below, not only on html
-	memo map[string]tokenVal
 	dark bool
 	// copied: raw is this RootTokens' own map (else shared, read-only)
 	copied bool
@@ -29,7 +31,12 @@ type RootTokens struct {
 	eng    *Engine
 	env    Env
 	client *rootEl
-	chain  []Style // computed html, body, .p-client_container (lazy)
+
+	// mu guards what lookups fill in as they go; raw, own and deep don't
+	// change once the RootTokens is built
+	mu    sync.Mutex
+	memo  map[string]tokenVal
+	chain []Style // computed html, body, .p-client_container (lazy)
 }
 
 type tokenVal struct {
@@ -139,7 +146,10 @@ func (t *RootTokens) Scope(path ...string) *RootTokens {
 	if t == nil || t.eng.Empty() {
 		return t
 	}
-	s := &RootTokens{raw: t.raw, dark: t.dark, eng: t.eng, env: t.env, client: t.client, chain: t.chain}
+	t.mu.Lock()
+	chain := t.chain
+	t.mu.Unlock()
+	s := &RootTokens{raw: t.raw, dark: t.dark, eng: t.eng, env: t.env, client: t.client, chain: chain}
 	pel := t.client
 	for _, cls := range path {
 		el := &rootEl{tag: "div", classes: strings.Fields(cls), parent: pel}
@@ -162,17 +172,21 @@ func (t *RootTokens) Background(path ...string) (color.NRGBA, bool) {
 	if t == nil || t.eng.Empty() || len(path) == 0 {
 		return color.NRGBA{}, false
 	}
+	t.mu.Lock()
 	if t.chain == nil {
-		t.chain = make([]Style, 0, 3)
+		chain := make([]Style, 0, 3)
 		var parent *Style
 		for _, el := range []*rootEl{t.client.parent.parent, t.client.parent, t.client} {
 			c := t.eng.Cascade(el, PseudoNone, nil, t.env)
 			st := Compute(&c, parent, t.env)
-			t.chain = append(t.chain, st)
-			parent = &t.chain[len(t.chain)-1]
+			chain = append(chain, st)
+			parent = &chain[len(chain)-1]
 		}
+		t.chain = chain
 	}
-	parent := &t.chain[len(t.chain)-1]
+	chain := t.chain // never changes once built
+	t.mu.Unlock()
+	parent := &chain[len(chain)-1]
 	pel := t.client
 	var c Cascaded
 	var st Style
@@ -238,7 +252,7 @@ func (t *RootTokens) Declares(name string) bool {
 }
 
 // lookup resolves one token; own reports that a sheet's declaration was
-// used for it or anywhere in its var() chain.
+// used for it or anywhere in its var() chain. t.mu is held (Value).
 func (t *RootTokens) lookup(name string, depth int) tokenVal {
 	if r, ok := t.memo[name]; ok {
 		return r
@@ -272,6 +286,8 @@ func (t *RootTokens) Value(expr string) (v string, own, ok bool) {
 	if !hasVar(expr) {
 		return expr, false, true
 	}
+	t.mu.Lock() // lookup fills the memo (its cycle guard included)
+	defer t.mu.Unlock()
 	v, ok = substVars(expr, func(n string) (string, bool) {
 		x := t.lookup(n, 0)
 		own = own || x.own

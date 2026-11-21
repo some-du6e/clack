@@ -3,6 +3,7 @@ package huddleui
 import (
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The mute button in the huddle window and the bottom bar
@@ -18,7 +19,7 @@ import (
 //	Speaker               (header; the desktop app always lists them)
 //	  ◉ each output       (QdEk: picking one also plays Test Speaker)
 //	────
-//	Test Speaker          (complete_quest_requirement, on your speakers)
+//	Test Speaker          (complete_quest_requirement on your speakers; testspeaker.go)
 //	[────  Enable noise suppression]   (huddles_noise_suppression_awareness, NS off)
 //	────
 //	Audio & video preferences          (yBJd: Preferences › Audio & video)
@@ -44,8 +45,12 @@ func (c *Controller) micCtls(st huddle.State, menuOpen bool) []ctl {
 	return []ctl{main, caret}
 }
 
-// audioMenu is HuddleAVDevicesMenu's rows for s.
-func (c *Controller) audioMenu(s *huddle.Session) []popups.MenuItem {
+// audioMenu is HuddleAVDevicesMenu's rows for s, drawn in th. In the
+// bottom bar (inBar) the caret's popover closes on any pick
+// (HuddleToolbarMuteButton AX6C: onMenuItemSelected); the huddle window's
+// devices menu stays open on Test Speaker and the noise suppression box
+// (HuddleCompactDeviceMenuOverlay EN94 passes no onMenuItemSelected).
+func (c *Controller) audioMenu(s *huddle.Session, th *theme.Theme, inBar bool) []popups.MenuItem {
 	mics, _ := listAudioDevices(true)
 	outs, _ := listAudioDevices(false)
 	micSel, outSel := huddle.SelectedAudioDevices()
@@ -64,12 +69,12 @@ func (c *Controller) audioMenu(s *huddle.Session) []popups.MenuItem {
 		items = append(items, popups.MenuItem{Key: "av-speaker-device-menu-item_" + d.Name, Label: d.Name, Radio: true,
 			Checked: inUse(d, outSel), Do: func() { c.switchSpeaker(s, id) }})
 	}
-	items = append(items, popups.Sep(), popups.MenuItem{Key: "test-audio", Label: nsHuddles.T("Test Speaker"), Icon: "sound",
-		KeepOpen: true, Do: func() { c.testSpeaker(s) }})
+	items = append(items, popups.Sep(), popups.MenuItem{Key: "test-audio", Label: nsHuddles.T("Test Speaker"),
+		LabelText: c.testSpeakerLabel(th), KeepOpen: !inBar, Do: func() { c.testSpeaker(s) }}) // testspeaker.go
 	if s != nil && c.on(ExpNoiseSuppAwareness) {
 		if _, ns := s.MicProcessing(); !ns { // useShowNoiseSuppressionMenuItem: only while it's off
 			items = append(items, popups.Sep(), popups.MenuItem{Key: "noise-suppression", Label: nsHuddles.T("Enable noise suppression"),
-				Checked: ns, KeepOpen: true, Do: func() { c.setNoiseSuppression(s, true) }})
+				Checked: ns, KeepOpen: !inBar, Do: func() { c.setNoiseSuppression(s, true) }})
 		}
 	}
 	items = append(items, popups.Sep(), popups.MenuItem{Key: "av-preferences", Label: nsHuddles.T("Audio & video preferences"), External: true, Do: func() {

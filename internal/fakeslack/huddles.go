@@ -34,7 +34,9 @@ type huddleState struct {
 	ims       map[string]string
 	responses []url.Values // rooms.inviteResponse forms
 	dnd       map[string]any
-	page      huddlePageState // the Huddles page's API (huddles_page.go)
+	memberDND map[string][2]int64 // dnd.teamInfo: next_dnd_start_ts, next_dnd_end_ts
+	teamInfo  []string            // dnd.teamInfo users params
+	page      huddlePageState     // the Huddles page's API (huddles_page.go)
 }
 
 // InviteResponses returns the rooms.inviteResponse calls so far.
@@ -49,6 +51,24 @@ func (s *Server) SetDND(status map[string]any) {
 	s.hud.mu.Lock()
 	s.hud.dnd = status
 	s.hud.mu.Unlock()
+}
+
+// SetMemberDND sets the DND window dnd.teamInfo answers for member id
+// (next_dnd_start_ts, next_dnd_end_ts); other members have none (1, 1).
+func (s *Server) SetMemberDND(id string, start, end int64) {
+	s.hud.mu.Lock()
+	if s.hud.memberDND == nil {
+		s.hud.memberDND = map[string][2]int64{}
+	}
+	s.hud.memberDND[id] = [2]int64{start, end}
+	s.hud.mu.Unlock()
+}
+
+// DNDTeamInfoCalls returns dnd.teamInfo's users params so far.
+func (s *Server) DNDTeamInfoCalls() []string {
+	s.hud.mu.Lock()
+	defer s.hud.mu.Unlock()
+	return append([]string(nil), s.hud.teamInfo...)
 }
 
 // SetCalendarConnected makes calendar.user.status answer with (true, the
@@ -120,6 +140,22 @@ func (s *Server) handleHuddles(method string, f url.Values) (any, bool) {
 		}
 		h.mu.Unlock()
 		return out, true
+	case "dnd.teamInfo": // the members' DND windows (Glrq Rs: users=a,b,…)
+		h.mu.Lock()
+		h.teamInfo = append(h.teamInfo, f.Get("users"))
+		users := map[string]any{}
+		for _, id := range strings.Split(f.Get("users"), ",") {
+			if id == "" {
+				continue
+			}
+			w, set := h.memberDND[id]
+			if !set {
+				w = [2]int64{1, 1}
+			}
+			users[id] = map[string]any{"dnd_enabled": set, "next_dnd_start_ts": w[0], "next_dnd_end_ts": w[1]}
+		}
+		h.mu.Unlock()
+		return ok("users", users), true
 	case "huddles.scheduled.new":
 		h.mu.Lock()
 		h.scheduled = append(h.scheduled, ScheduledHuddle{Form: f})

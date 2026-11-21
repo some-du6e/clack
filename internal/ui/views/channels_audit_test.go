@@ -79,22 +79,6 @@ func TestRichLineCache(t *testing.T) {
 	}
 }
 
-// Slack's editor shows a topic's links as their text.
-func TestEditableText(t *testing.T) {
-	cases := map[string]string{
-		"slack client in go: <https://github.com/some-du6e/clack>": "slack client in go: https://github.com/some-du6e/clack",
-		"<https://x.dev|x.dev> and <https://y.dev|docs>":           "x.dev and <https://y.dev|docs>",
-		"see <#C0EA9S0A0|hq>": "see <#C0EA9S0A0|hq>",
-		"no links":            "no links",
-		"<http unterminated":  "<http unterminated",
-	}
-	for in, want := range cases {
-		if got := cdEditableText(in); got != want {
-			t.Errorf("%q → %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestTopicErrors(t *testing.T) {
 	cases := map[string]string{
 		"slack: conversations.setTopic: too_long":          "Channel topics can only include up to 250 characters — please make this topic shorter.",

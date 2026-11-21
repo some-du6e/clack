@@ -218,11 +218,12 @@ type activityState struct {
 	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
 	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
 	agent     bool            // the agent entry first (SetActivityAgentActions)
-	// extra are entries a test added (AddCanvasMention), newest first,
-	// before the fixture's; extraMsgs the messages messages.list answers
-	// for them
+	// extra are entries a test added (AddCanvasMention), which
+	// activity.feed answers with the fixture's (newest feed_ts first);
+	// extraMsgs the messages messages.list answers for them
 	extra     []map[string]any
 	extraMsgs []slack.Message
+	live      []map[string]any // UpsertActivity's entries, one per key (activity_live.go)
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -364,6 +365,7 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		if bulk > 0 {
 			entries = append(entries, activityBulk(bulk)...)
 		}
+		entries = activityWithLive(entries, st.live) // activity_live.go: newest first
 		for _, e := range entries {
 			key := e["key"].(string)
 			typ := e["item"].(map[string]any)["type"].(string)
@@ -397,6 +399,11 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			items = append(items, e)
 		}
 		v.mu.Unlock()
+		if f.Get("mode") == "priority_unreads_first_v1" {
+			// the VIP sort: the unread entries from a VIP first, each
+			// part newest first (activity_live.go activityVIPFirst)
+			sort.SliceStable(items, func(i, j int) bool { return activityVIPFirst(items[i]) && !activityVIPFirst(items[j]) })
+		}
 		next := ""
 		if bulk > 0 {
 			// pages of limit, the cursor an offset

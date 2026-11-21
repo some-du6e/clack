@@ -296,6 +296,11 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var state atomic.Int32 // the replies the server has
 			state.Store(2)
+			// read is how many getView answers have read state: the fake
+			// counts a call (CallCount) before the hook runs, so a wait on
+			// the count let the test move state before the answer read it
+			// (the straddle then had no gap: full-test, 2026-11-21)
+			var read atomic.Int32
 			var g thrGate
 			rootMsg := func(n int) slack.Message {
 				return slack.Message{Type: "message", Channel: ch, TS: root, ThreadTS: root, User: "U0FAKE00001", Text: "a synthetic root",
@@ -305,6 +310,7 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 				switch method {
 				case "subscriptions.thread.getView":
 					n := int(state.Load()) // the answer as of the request's arrival
+					read.Add(1)
 					g.wait()
 					th := map[string]any{"root_msg": rootMsg(n), "latest_replies": []slack.Message{reply(rs[n-2]), reply(rs[n-1])}, "unread_replies": []slack.Message{}}
 					return thrOrderAnswer(thrFixRead(ch, thrA, thrAReply, "U0FAKE00002", true, thrA), th), true
@@ -359,6 +365,7 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			v.w.last = time.Time{}
 			v.w.mu.Unlock()
 			n := fs.CallCount("subscriptions.thread.getView")
+			reads := read.Load()
 			if tc.straddle {
 				g.hold()
 			}
@@ -366,7 +373,7 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			fs.Push(thrReplyEvent(ch, root, rs[2]))
 			fs.Push(thrRepliedEvent(ch, root, rs[2], 3))
 			if tc.straddle {
-				e.until(t, "the refresh's request", func() bool { return fs.CallCount("subscriptions.thread.getView") > n })
+				e.until(t, "the refresh's request", func() bool { return read.Load() > reads })
 			}
 			state.Store(5)
 			for _, i := range []int{3, 4} {

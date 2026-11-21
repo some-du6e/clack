@@ -324,6 +324,14 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// mediaPane names the view's video players (media.go): set, its
+	// messages' lone videos play in place, as in Slack's Threads, Unreads
+	// and Later views
+	mediaPane string
+	media     map[string]*viewMedia
+	// bkView is this view's drawing of its messages' elements
+	// (blockkit.InView, elements.go)
+	bkView uint64
 	// tt is the Host's Taut plugin system (nil without plugins); tgen/tmemo
 	// cache its patched member/channel/message views for one frame.
 	tt    *taut.Taut
@@ -1201,6 +1209,14 @@ type async[T any] struct {
 // load starts f (cancelling any in-flight run). keep retains the previous
 // value while loading (pagination, refresh).
 func (a *async[T]) load(h Host, keep bool, f func(ctx context.Context) (T, error)) {
+	a.loadMerge(h, keep, f, nil)
+}
+
+// loadMerge is load with f's answer joined to the value held when it
+// lands (merge runs under the lock, given that value and the answer)
+// instead of replacing it: what mutate changed while f ran reaches the
+// merge. A failed f keeps load's rules.
+func (a *async[T]) loadMerge(h Host, keep bool, f func(ctx context.Context) (T, error), merge func(cur, got T) T) {
 	a.mu.Lock()
 	if a.cancel != nil {
 		a.cancel()
@@ -1221,7 +1237,9 @@ func (a *async[T]) load(h Host, keep bool, f func(ctx context.Context) (T, error
 		a.mu.Lock()
 		if gen == a.gen {
 			a.loading = false
-			if err == nil || !keep {
+			if err == nil && merge != nil {
+				a.val = merge(a.val, v)
+			} else if err == nil || !keep {
 				a.val = v
 			}
 			a.err = err

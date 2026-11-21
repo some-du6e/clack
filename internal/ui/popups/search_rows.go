@@ -1021,28 +1021,15 @@ func srPeopleGrid(gtx layout.Context, w int) (cols, cell int) {
 // (padding 12, the 72px avatar), the secondary block with a local time
 // (1 + 12 + 22 + 12), the banner (8 + 19 + 8: 13px at the unfurl's
 // line-height 1.46668).
-func srPersonCardH(gtx layout.Context, u core.User) int {
+func srPersonCardH(gtx layout.Context, hst Host, u core.User) int {
 	h := dp(gtx, 96)
 	if pfHasClock(u) && !u.IsBot {
 		h += border1(gtx) + dp(gtx, 12+22+12)
 	}
-	if srBannerLabel(u) != "" {
+	if label, _ := pfRoleBanner(hst, u); label != "" {
 		h += dp(gtx, 35)
 	}
 	return h
-}
-
-// srBannerLabel is MemberProfileHoverBanner's text.
-func srBannerLabel(u core.User) string {
-	switch {
-	case u.IsOwner:
-		return i18n.T("team", "Workspace Owner")
-	case u.IsAdmin:
-		return i18n.T("team", "Workspace Admin")
-	case u.Deleted:
-		return i18n.T("team", "Deactivated account")
-	}
-	return ""
 }
 
 // srPeopleRowH is grid row j's height: its tallest card, and the 20px gap
@@ -1052,7 +1039,7 @@ func srBannerLabel(u core.User) string {
 func (v *SearchView) srPeopleRowH(gtx layout.Context, j, cols int) int {
 	h := srPeopleRowTop(gtx, j)
 	for i := j * cols; i < min(len(v.people), (j+1)*cols); i++ {
-		h = max(h, srPeopleRowTop(gtx, j)+srPersonCardH(gtx, v.people[i]))
+		h = max(h, srPeopleRowTop(gtx, j)+srPersonCardH(gtx, v.h, v.people[i]))
 	}
 	if (j+1)*cols < len(v.people) {
 		h += dp(gtx, 20)
@@ -1088,7 +1075,7 @@ func (v *SearchView) peopleRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 // personCard draws person i's UserProfileUnfurl w wide.
 func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
 	u := v.people[i]
-	h := srPersonCardH(gtx, u)
+	h := srPersonCardH(gtx, v.h, u)
 	sz := image.Pt(w, h)
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 8)
@@ -1125,7 +1112,7 @@ func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}
 	y := pad + dp(gtx, (72-(textH-8))/2-4)
 	at(gtx, image.Pt(colX, y), func(gtx layout.Context) layout.Dimensions {
-		return pfNameLine(gtx, v.h, th, nil, u, 15, 22, 10, colW)
+		return pfNameLine(gtx, v.h, th, nil, u, pfName(u), 15, 22, 10, colW)
 	})
 	y += lineH
 	if title != "" {
@@ -1157,21 +1144,22 @@ func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors,
 		})
 		by = ly + lineH + pad
 	}
-	if label := srBannerLabel(u); label != "" {
+	if label, deact := pfRoleBanner(v.h, u); label != "" {
 		defer op.Offset(image.Pt(0, by)).Push(gtx.Ops).Pop()
-		srBanner(gtx, th, u, label, w)
+		srBanner(gtx, th, label, deact, w, tokBasePry.of(th))
 	}
 	return layout.Dimensions{Size: sz}
 }
 
-// srBanner is MemberProfileHoverBanner w wide: padding 8 16, the 13px
+// srBanner is MemberProfileHoverBanner (client-boot-shared 1onU) w wide,
+// over base (the card's background), in UserProfileUnfurl and the hover
+// card alike: padding 8 16, the 13px
 // bold label (the deactivated one after archive-filled 12, margin-right
 // 8); light: sk_foreground_min .04 (deactivated: sk_foreground_low .13 and
 // .7 text), dark: sk_foreground_low_solid.
-func srBanner(gtx layout.Context, th *theme.Theme, u core.User, label string, w int) {
+func srBanner(gtx layout.Context, th *theme.Theme, label string, deact bool, w int, base color.NRGBA) layout.Dimensions {
 	fg := srTokFgPry.of(th)
 	bg := chipTok{"rgba(var(--sk_foreground_min),0.04)", rgba8(0x1d1c1d, 0x0a), rgba8(0xe8e8e8, 0x0a)}.of(th)
-	deact := !u.IsOwner && !u.IsAdmin && u.Deleted
 	if deact {
 		fg = srTokFgMax70.of(th)
 		bg = srTokFgLow13.of(th)
@@ -1179,7 +1167,6 @@ func srBanner(gtx layout.Context, th *theme.Theme, u core.User, label string, w 
 	if th != nil && th.Dark {
 		bg = chipTok{"rgb(var(--sk_foreground_low_solid))", rgb(0xdddddd), rgb(0x35373b)}.of(th)
 	}
-	base := tokBasePry.of(th)
 	lh := dp(gtx, 19)
 	h := dp(gtx, 8)*2 + lh
 	fill(gtx, image.Rect(0, 0, w, h), theme.Over(bg, base))
@@ -1194,6 +1181,7 @@ func srBanner(gtx layout.Context, th *theme.Theme, u core.User, label string, w 
 		gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, w-x-dp(gtx, 16)), lh)}
 		return th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Bold, Color: fg, LineHeight: 19, MaxLines: 1}, label)
 	})
+	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
 // handlePeople opens a clicked card's member profile (onCellClick:

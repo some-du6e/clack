@@ -131,7 +131,7 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 		ClientMsgID: cid, Reply: !isTopLevel(&local), ConvKind: a.kindOf(o.Channel)})
 
 	m, err := a.C.Post(ctx, slack.PostOpts{Channel: o.Channel, Text: o.Text, ThreadTS: o.ThreadTS,
-		Broadcast: o.Broadcast, Blocks: o.Blocks, Attachments: o.Attachments, ClientMsgID: cid})
+		Broadcast: o.Broadcast, Blocks: o.Blocks, Attachments: o.Attachments, ClientMsgID: cid, BlocksOnly: o.BlocksOnly})
 	if err != nil {
 		a.mu.Lock()
 		confirmed := p.confirmed
@@ -144,7 +144,16 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 				return a.message(o.Channel, &got), nil
 			}
 		}
-		if fm, ok := a.S.Find(o.Channel, p.ts); ok {
+		fm, ok := a.S.Find(o.Channel, p.ts)
+		if !ok {
+			// its copy went meanwhile (a newest page that started the
+			// window over, an eviction): Slack's sendMessage puts the
+			// failed message back at the end (addMsgToEnd) so it can be
+			// retried
+			a.putLocal(o.Channel, local)
+			fm, ok = a.S.Find(o.Channel, p.ts)
+		}
+		if ok {
 			fv := a.message(o.Channel, &fm)
 			a.emit(Event{Type: "update", Channel: o.Channel, TS: p.ts, ThreadTS: o.ThreadTS, Msg: &fv, ClientMsgID: cid})
 		}

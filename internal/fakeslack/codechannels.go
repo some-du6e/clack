@@ -308,7 +308,7 @@ func (s *Server) handleCodeChannels(method string, f url.Values) (any, bool) {
 	switch method {
 	case "client.codeChannels.action", "agents.sessions.stop", "client.codeChannels.getBlockKitView",
 		"client.codeChannels.getDiff", "client.codeChannels.getPullRequest", "client.codeChannels.getView",
-		"recordChannels.open":
+		"client.codeChannels.join", "recordChannels.open":
 	case "conversations.close": // closing a code channel (closeChannelApi); DMs fall through
 		if !s.isCodeFixture(f.Get("channel")) {
 			return nil, false
@@ -349,6 +349,8 @@ func (s *Server) handleCodeChannels(method string, f url.Values) (any, bool) {
 			}
 		}
 		return map[string]any{"ok": false, "error": "channel_not_found"}, true
+	case "client.codeChannels.join":
+		return s.joinCodeChannel(f), true
 	case "client.codeChannels.getView":
 		if f.Get("view_id") != CodeHTMLViewID {
 			return map[string]any{"ok": false, "error": "view_not_found"}, true
@@ -357,4 +359,40 @@ func (s *Server) handleCodeChannels(method string, f url.Values) (any, bool) {
 			"csp", map[string]any{"resource_domains": []any{}}), true
 	}
 	return ok(), true
+}
+
+// joinCodeChannel is client.codeChannels.join {channel_id,
+// origin_channel_id} (Slack's joinCodeChannel from an unfurl): a private
+// code channel the viewer can't see (codeHidden) moves into their
+// conversations, a member, when they are in the origin channel; one they
+// are already in answers as it is.
+func (s *Server) joinCodeChannel(f url.Values) any {
+	id, origin := f.Get("channel_id"), f.Get("origin_channel_id")
+	if id == "" || origin == "" {
+		return map[string]any{"ok": false, "error": "invalid_arguments"}
+	}
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	inOrigin := false
+	for _, c := range s.convs {
+		if c.ID == id {
+			return ok("channel", c)
+		}
+		if c.ID == origin && c.IsMember {
+			inOrigin = true
+		}
+	}
+	for i, c := range s.codeHidden {
+		if c.ID != id {
+			continue
+		}
+		if !inOrigin {
+			return map[string]any{"ok": false, "error": "not_allowed"}
+		}
+		c.IsMember = true
+		s.codeHidden = append(s.codeHidden[:i:i], s.codeHidden[i+1:]...)
+		s.convs = append(s.convs, c)
+		return ok("channel", c)
+	}
+	return map[string]any{"ok": false, "error": "channel_not_found"}
 }

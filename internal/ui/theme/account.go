@@ -207,6 +207,21 @@ const (
 // pltShades are Slack's shade labels; ramps are indexed in this order.
 var pltShades = []string{"0", "5", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}
 
+// PltColor is Slack's --dt_color-plt-<palette>-<shade> in the light or
+// dark client theme (opaque; black for an unknown palette).
+func PltColor(palette, shade string, dark bool) color.NRGBA {
+	rs, ok := pltRamps[palette]
+	if !ok {
+		return color.NRGBA{A: 0xff}
+	}
+	m := 0
+	if dark {
+		m = 1
+	}
+	v := rs[m][shadeIndex(shade)]
+	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+}
+
 func shadeIndex(s string) int {
 	for i, x := range pltShades {
 		if x == s {
@@ -571,7 +586,8 @@ var accountFields = map[string]func(*Palette) *color.NRGBA{
 	"ChromePressed": func(p *Palette) *color.NRGBA { return &p.ChromePressed },
 	"ChromeBasePry": func(p *Palette) *color.NRGBA { return &p.ChromeBasePry }, "ChromeContentTer": func(p *Palette) *color.NRGBA { return &p.ChromeContentTer },
 	"ChromeBasePryHover": func(p *Palette) *color.NRGBA { return &p.ChromeBasePryHover },
-	"SidebarTextTer":     func(p *Palette) *color.NRGBA { return &p.SidebarTextTer }, "SidebarRule": func(p *Palette) *color.NRGBA { return &p.SidebarRule },
+	"ChromeSurfInvTer":   func(p *Palette) *color.NRGBA { return &p.ChromeSurfInvTer }, "ChromeOtlInvPry": func(p *Palette) *color.NRGBA { return &p.ChromeOtlInvPry },
+	"SidebarTextTer": func(p *Palette) *color.NRGBA { return &p.SidebarTextTer }, "SidebarRule": func(p *Palette) *color.NRGBA { return &p.SidebarRule },
 	"SidebarBg": func(p *Palette) *color.NRGBA { return &p.SidebarBg }, "SidebarText": func(p *Palette) *color.NRGBA { return &p.SidebarText },
 	"SidebarTextUnread": func(p *Palette) *color.NRGBA { return &p.SidebarTextUnread }, "SidebarHover": func(p *Palette) *color.NRGBA { return &p.SidebarHover },
 	"SidebarActive": func(p *Palette) *color.NRGBA { return &p.SidebarActive }, "SidebarActiveText": func(p *Palette) *color.NRGBA { return &p.SidebarActiveText },
@@ -708,6 +724,10 @@ func (t IATheme) scopeFields(out map[string]color.NRGBA, m themeMode, chrome boo
 		out["ChromeBasePry"], out["ChromeContentTer"] = bp, t.token(pr, "content-ter", m)
 		out["ChromeBasePryHover"] = t.hoverOver(m, bp)
 		out["RailBadge"], out["RailBadgeText"] = badge, badgeText
+		// the huddle window's HuddleToolbar (useInvertedTheme "chrome"):
+		// its buttons' :hover and the segmented buttons' divider
+		out["ChromeSurfInvTer"] = withA(t.token(pr, "surf-inv-ter", m), al("surf-inv-ter"))
+		out["ChromeOtlInvPry"] = withA(t.token(pr, "otl-inv-pry", m), al("otl-inv-pry"))
 		return
 	}
 	out["SidebarTextUnread"], out["SidebarText"], out["SidebarButton"] = inv, sec, act

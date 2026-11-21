@@ -1,7 +1,8 @@
 name: bk-agent-shots
 # Renders Slack's agent blocks (plan, task_card, context_actions with
-# feedback_buttons / icon_button) in every state, and a streamed reply
-# frame by frame, light and dark, with the GPU renderer (Mesa llvmpipe)
+# feedback_buttons / icon_button) in every state, a streamed reply frame
+# by frame, and an agent DM's Tasks tab (rows, hover actions, paused,
+# delete confirm, empty and error states), light and dark, with the GPU renderer (Mesa llvmpipe)
 # against internal/fakeslack's synthetic agent fixtures, and uploads the
 # PNGs. Also runs the agent tests across richtext, core, composer and
 # blockkit. Synthetic only: nothing here talks to Slack.
@@ -11,9 +12,14 @@ on:
     paths:
       - "internal/ui/blockkit/agent*.go"
       - "internal/richtext/agent*.go"
-      - "internal/ui/richview/agent.go"
+      - "internal/ui/richview/agent*.go"
+      - "internal/ui/messages/agent*.go"
       - "internal/core/agent*.go"
       - "internal/fakeslack/agents.go"
+      - "internal/fakeslack/agent_tasks.go"
+      - "internal/ui/views/agent_tasks.go"
+      - "internal/ui/agent_tasks_tab*.go"
+      - "internal/ui/blockkit/apphome.go"
       - "internal/ui/messages/plan_block_test.go"
       - "internal/ui/app_plan_test.go"
       - "internal/ui/composer/typing*.go"
@@ -47,19 +53,20 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: agent tests
         run: |
-          go test -count=1 -run 'TestAgent|TestStringTitle' ./internal/richtext ./internal/core
+          go test -count=1 -run 'TestAgent|TestStringTitle' ./internal/richtext ./internal/core ./internal/ui/richview
           go test -count=1 -run 'TestAssistantStatusLine' ./internal/ui/composer
       - name: agent block screenshots (light and dark)
         env:
           BK_AGENT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          AGENT_TASKS_SHOTS_DIR: ${{ github.workspace }}/dist/shots # the agent DM's Tasks tab (agent_tasks_tab_test.go)
           CLACK_PIXEL_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$BK_AGENT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestAgent' ./internal/ui/blockkit
-          xvfb-run -a go test -count=1 -v -run 'TestAppPlanRows' ./internal/ui/messages
-          xvfb-run -a go test -count=1 -v -run 'TestAppPlanWindow' ./internal/ui
+          xvfb-run -a go test -count=1 -v -run 'TestAppPlanRows|TestAgent' ./internal/ui/messages
+          xvfb-run -a go test -count=1 -v -run 'TestAppPlanWindow|TestAgentTasks|TestAgentSession' ./internal/ui
           ls -l "$BK_AGENT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
