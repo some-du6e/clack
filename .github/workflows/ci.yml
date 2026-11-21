@@ -31,6 +31,7 @@ jobs:
   linux-build:
     if: ${{ !inputs.only || startsWith('linux-build', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 4.2): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -82,6 +83,7 @@ jobs:
   linux-test:
     if: ${{ !inputs.only || startsWith('linux-test', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 6.8; 5.2 once packed by time): docs/CI-SPEED.md
     name: linux-test (${{ matrix.shard }})
     strategy:
       fail-fast: false
@@ -117,6 +119,7 @@ jobs:
     needs: linux-test
     if: ${{ !cancelled() && needs.linux-test.result != 'skipped' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 0.2): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -140,6 +143,7 @@ jobs:
   full-test:
     if: ${{ (github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && (!inputs.only || startsWith('full-test', inputs.only)) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (p95 21.6; its go test -timeout is 30m): docs/CI-SPEED.md
     concurrency:
       group: ci-full-test-${{ github.ref }}
       cancel-in-progress: true
@@ -166,6 +170,7 @@ jobs:
   parity:
     if: ${{ !inputs.only || startsWith('parity', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 2.8): docs/CI-SPEED.md
     continue-on-error: true
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -194,6 +199,7 @@ jobs:
   linux-gio:
     if: ${{ !inputs.only || startsWith('linux-gio', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (p95 8.1): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -334,6 +340,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('newer-go', inputs.only) }}
     name: newer-go (${{ matrix.go }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 0.5): docs/CI-SPEED.md
     strategy:
       fail-fast: false
       matrix:
@@ -354,6 +361,7 @@ jobs:
   linux-race-taut:
     if: ${{ !inputs.only || startsWith('linux-race-taut', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 6.9): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -370,6 +378,7 @@ jobs:
   linux-race-boot:
     if: ${{ !inputs.only || startsWith('linux-race-boot', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 3.4): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -388,6 +397,7 @@ jobs:
   linux-idle:
     if: ${{ !inputs.only || startsWith('linux-idle', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20 # budget, min (p95 14.5; 6.3 in 4 idle processes): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -448,6 +458,7 @@ jobs:
   windows:
     if: ${{ !inputs.only || startsWith('windows', inputs.only) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget, min (p95 6.9): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -482,6 +493,7 @@ jobs:
   windows-applog:
     if: ${{ !inputs.only || startsWith('windows-applog', inputs.only) }}
     runs-on: windows-latest
+    timeout-minutes: 20 # budget, min (p95 10.5): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -668,6 +680,7 @@ jobs:
   windows-shell:
     if: ${{ !inputs.only || startsWith('windows-shell', inputs.only) }}
     runs-on: windows-latest
+    timeout-minutes: 20 # budget, min (p95 10.4): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -1079,6 +1092,7 @@ jobs:
   windows-scroll:
     if: ${{ !inputs.only || startsWith('windows-scroll', inputs.only) }}
     runs-on: windows-latest
+    timeout-minutes: 15 # budget, min (p95 3.9): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -1120,6 +1134,7 @@ jobs:
   windows-idle:
     if: ${{ !inputs.only || startsWith('windows-idle', inputs.only) }}
     runs-on: windows-latest
+    timeout-minutes: 20 # budget, min (p95 17.2; 9.8 in 4 idle processes): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -1200,6 +1215,7 @@ jobs:
   macos:
     if: ${{ !inputs.only || startsWith('macos', inputs.only) }}
     runs-on: macos-latest
+    timeout-minutes: 25 # budget, min (p95 33.1 before macos-idle and the idle processes): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -1481,6 +1497,7 @@ jobs:
   macos-idle:
     if: ${{ !inputs.only || startsWith('macos-idle', inputs.only) }}
     runs-on: macos-latest
+    timeout-minutes: 25 # budget, min (the old macos job p95 33.1, about half of it here): docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
