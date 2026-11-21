@@ -107,11 +107,13 @@ func (b *backend) noteConv(ch string) (c *convInfo, named bool) {
 			// a group DM is named for its members as the store holds them
 			// now (the toast waited for them: noteMembers), not as the
 			// sidebar's snapshot did: a closed group DM's members are never
-			// read for the sidebar, so its row named only those held then
+			// read for the sidebar, so its row named only those held then.
+			// None known: "" (getMpimDisplayNameAlphabetical leaves out
+			// every member it can't name; the title reads "New message in ")
 			if v, ok := b.core.Conv(ch); ok {
 				ci := *c
-				ci.Name = b.noteMpimTitle(&v, c.Name)
-				return &ci, noteNamed(&ci)
+				ci.Name, _ = b.noteMpimName(&v)
+				return &ci, ci.Name != ""
 			}
 		}
 		return c, true
@@ -130,7 +132,7 @@ func (b *backend) noteConv(ch string) (c *convInfo, named bool) {
 // noteInfo is what apply makes of core's conversation, for the fields a
 // notification reads: a DM named for its partner under the viewer's
 // display_real_names (an app's DM is "app"), a group DM for its members
-// (noteMpimTitle).
+// (noteMpimName).
 func (b *backend) noteInfo(v core.Conv) *convInfo {
 	ci := &convInfo{ID: v.ID, Name: v.Name, Kind: v.Kind, User: v.User, Members: v.Members, Muted: v.Muted,
 		Archived: v.IsArchived, Preview: v.Preview, File: v.File, FileID: v.FileID, Doc: v.Doc}
@@ -149,7 +151,7 @@ func (b *backend) noteInfo(v core.Conv) *convInfo {
 		}
 		ci.Self = v.User == b.selfID
 	case "mpim":
-		ci.Name = b.noteMpimTitle(&v, "")
+		ci.Name, _ = b.noteMpimName(&v)
 	}
 	return ci
 }
@@ -187,48 +189,6 @@ func (b *backend) noteMpimName(v *core.Conv) (string, bool) {
 	}
 	views.SortNames(names)
 	return strings.Join(names, ", "), true
-}
-
-// noteMpimTitle is group DM v's name in a notification's title:
-// noteMpimName, else, with none of its members held (users/info failed or
-// outlasted the wait), row (the sidebar's name for it) when that names
-// people (they were held at its snapshot and left the store's cache
-// since), else the handles in its mpdm slug but the viewer's. Slack has
-// no such fallback: it leaves out every member it can't name, and the
-// title reads "New message in ".
-func (b *backend) noteMpimTitle(v *core.Conv, row string) string {
-	if n, ok := b.noteMpimName(v); ok {
-		return n
-	}
-	if r := strings.TrimSpace(row); r != "" && r != v.ID && r != v.Name && r != strings.TrimPrefix(v.Name, "mpdm-") {
-		return row
-	}
-	return b.noteSlugNames(v.Name)
-}
-
-// noteSlugNames is the handles in a group DM's name, "mpdm-a--b--c-1",
-// but the viewer's, sorted and joined with ", " ("" for a name of any
-// other form).
-func (b *backend) noteSlugNames(name string) string {
-	n, ok := strings.CutPrefix(name, "mpdm-")
-	if !ok {
-		return ""
-	}
-	if i := strings.LastIndex(n, "-"); i > 0 {
-		n = n[:i]
-	}
-	self := ""
-	if u, ok := b.core.S.RawUser(b.selfID); ok && u != nil {
-		self = u.Name
-	}
-	var out []string
-	for _, h := range strings.Split(n, "--") {
-		if h != "" && h != self {
-			out = append(out, h)
-		}
-	}
-	views.SortNames(out)
-	return strings.Join(out, ", ")
 }
 
 // channelToText is Slack's for a channel mention in a notification's

@@ -1212,6 +1212,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	}
 	if s.viewsOn && len(it.group) == 0 {
 		s.applyView(tautOf(), r, rc.now)
+		if !r.heldTil.IsZero() {
+			gtx.Execute(op.InvalidateCmd{At: r.heldTil}) // the hold's end draws core's copy if JS hasn't answered
+		}
 	}
 	r.rv.External = true
 	r.drawn = rc.now

@@ -133,6 +133,9 @@ type uiState struct {
 	patchedSlices atomic.Pointer[statePatchInfo]
 	hooks         atomic.Pointer[composerHooks]
 	actionable    atomic.Bool
+	// textRewrites: a patch of the messages slice rewrote a message's text
+	// since the patched slices last changed (NoteTextRewrite)
+	textRewrites atomic.Bool
 
 	roots   map[uint64]*jsrt.Root // slackc root → jsrt root
 	rootsMu sync.Mutex
@@ -181,6 +184,9 @@ func (u *uiState) setStatePatched(s statePatchInfo) {
 	moved := u.state.All != s.All || !slices.Equal(u.state.Slices, s.Slices)
 	u.state = s
 	u.mu.Unlock()
+	if moved {
+		u.textRewrites.Store(false) // what rewrote text may be gone: seen again if not
+	}
 	if !s.All && len(s.Slices) == 0 {
 		u.patchedSlices.Store(nil)
 	} else {
@@ -955,6 +961,30 @@ func (t *Taut) ActionableMessage(ctx context.Context, ch, ts string) (slack.Mess
 }
 
 // ---- patched views for native rendering ----
+
+// EditHold bounds how long a row whose message a plugin may rewrite holds
+// the view of the revision before an edit while JS answers for the edit (a
+// JS round trip, ~35 ms): past it the row draws core's copy of the edit
+// (messages.applyView, views.viewMsg).
+const EditHold = 200 * time.Millisecond
+
+// NoteTextRewrite records that a view the UI compared with its message
+// had another text: a patch of the messages slice rewrites text (a word
+// Censorship masks, Message Logger's marks). Such a patch can rewrite an
+// edit that brings what it rewrites into a message it left alone, so the
+// rows hold the text they drew while JS answers for an edit (TextRewrites),
+// as Slack's patched selector draws the edit already rewritten in the
+// render after it. One that only rewrites senders (ShowRealUser's sentBy)
+// or nothing never sets it, and an edit draws in the next frame.
+func (t *Taut) NoteTextRewrite() {
+	if t != nil {
+		t.ui.textRewrites.Store(true)
+	}
+}
+
+// TextRewrites reports whether a patch of the messages slice rewrote any
+// message's text since the patched slices last changed (NoteTextRewrite).
+func (t *Taut) TextRewrites() bool { return t != nil && t.ui.textRewrites.Load() }
 
 // SlicePatched reports whether plugins change how slice reads (cheap).
 func (t *Taut) SlicePatched(slice string) bool {
