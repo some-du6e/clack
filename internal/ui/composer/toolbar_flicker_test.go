@@ -188,10 +188,13 @@ func (tc tbCase) margin() int {
 
 // tbSlack is where Slack puts the footer's buttons for a composer w px
 // wide at 1x: TextyButtons and TextyButtonOverflow (build 1f2d42be66b2),
-// under Taut 3.7.2's TextyButtonOverflow patch when the composer has
-// plugin buttons. It returns the toolbar's width, whether it folds, and
-// the chrome-local left edges of Run shortcut (unfolded) and of ⋯
-// (folded).
+// with Taut 3.7.2's composer.addButton buttons after Slack's. It returns
+// the toolbar's width, whether it folds, and the chrome-local left edges
+// of Run shortcut (unfolded) and of ⋯ (folded). The toolbar folds when
+// its buttons don't fit, plugin buttons or not: Taut's own patch counts
+// only the slots that render, so with one or two plugin buttons Slack
+// leaves the row unfolded at these widths and runs it under the send
+// group, where [/] and the plugin buttons can't be clicked (overflow.go).
 func tbSlack(tc tbCase, w int) (eq int, fold bool, slash, more int) {
 	m := tc.margin()
 	left := m + 1 // the box's border
@@ -204,10 +207,6 @@ func tbSlack(tc tbCase, w int) (eq int, fold bool, slash, more int) {
 			moved++
 		}
 	}
-	n := 15 // TextyButtonOverflow's children, the false slots counted
-	if tc.plug > 0 {
-		n = tc.plug + moved + 2 // Children.toArray's: those, the divider and [/]
-	}
 	// inlineButtonsWidth: from .c-texty_buttons' left edge, Aa 2+28+2,
 	// emoji 2+28+2, mention 2+28, the divider 6+1+6, [/] 2+28, then the
 	// plugin buttons that render (2 + their width)
@@ -215,7 +214,7 @@ func tbSlack(tc tbCase, w int) (eq int, fold bool, slash, more int) {
 	if tc.plugW > 0 {
 		inline += 2 + tc.plugW
 	}
-	fold = n >= 5 && eq > 0 && eq < inline
+	fold = eq > 0 && eq < inline // 15 slots and the plugin buttons: over 5
 	slash = left + 6 + 28 + 109
 	more = left + [...]int{132, 102, 70, 38}[moved]
 	return
@@ -352,15 +351,16 @@ type tbSig struct {
 	eq, suf    int
 	shown      uint32
 	rects      [len(tbIDs)]image.Rectangle
+	plug       image.Rectangle // Taut's buttons in the toolbar
 }
 
-var tbIDs = [...]crBtn{crAttach, crAa, crEmoji, crMention, crShortcut, crFootMore, crSend}
+var tbIDs = [...]crBtn{crAttach, crAa, crEmoji, crMention, crShortcut, crFootMore, crSend, crSchedule}
 
-var tbNames = [len(tbIDs)]string{"+", "Aa", "emoji", "@", "[/]", "…", "send"}
+var tbNames = [len(tbIDs)]string{"+", "Aa", "emoji", "@", "[/]", "…", "send", "caret"}
 
 func (g *tbRig) sig() tbSig {
 	u := &g.c.ui
-	s := tbSig{fold: u.f.fold, open: u.more.open, eq: u.f.eq, suf: u.sufW}
+	s := tbSig{fold: u.f.fold, open: u.more.open, eq: u.f.eq, suf: u.sufW, plug: tbPlugRect(g.c)}
 	for i, id := range tbIDs {
 		if u.liveShown&(1<<id) != 0 {
 			s.shown |= 1 << id
@@ -388,6 +388,9 @@ func (s tbSig) String() string {
 		if s.has(id) {
 			fmt.Fprintf(&b, " %s%v", tbNames[i], s.rects[i])
 		}
+	}
+	if !s.plug.Empty() {
+		fmt.Fprintf(&b, " plugins%v", s.plug)
 	}
 	return b.String()
 }
@@ -430,8 +433,9 @@ func (g *tbRig) at(id crBtn) image.Point {
 }
 
 // check watches the footer at width w for n frames: it must draw the same
-// in every frame, send JS nothing once settled, and put Run shortcut and
-// ⋯ where Slack does.
+// in every frame, send JS nothing once settled, put Run shortcut and ⋯
+// where Slack does, and keep every toolbar button out from under the send
+// group (drawn after the toolbar, it covers them and takes their clicks).
 func (g *tbRig) check(w, n int) (failed bool) {
 	g.t.Helper()
 	g.w = w
@@ -460,6 +464,13 @@ func (g *tbRig) check(w, n int) (failed bool) {
 		errs = append(errs, fmt.Sprintf("… at x %d, Slack's %d", first.rect(crFootMore).Min.X, more))
 	case !fold && first.rect(crShortcut).Min.X != slash:
 		errs = append(errs, fmt.Sprintf("Run shortcut at x %d, Slack's %d", first.rect(crShortcut).Min.X, slash))
+	}
+	send := first.rect(crSend).Union(first.rect(crSchedule))
+	if first.has(crShortcut) && first.rect(crShortcut).Overlaps(send) {
+		errs = append(errs, fmt.Sprintf("Run shortcut %v is under the send group %v", first.rect(crShortcut), send))
+	}
+	if first.plug.Overlaps(send) {
+		errs = append(errs, fmt.Sprintf("the plugin buttons %v are under the send group %v", first.plug, send))
 	}
 	if len(errs) > 0 {
 		g.t.Errorf("%s, %d px composer (%s): %s; drew %v", g.tc.name, w, mode, strings.Join(errs, "; "), first)

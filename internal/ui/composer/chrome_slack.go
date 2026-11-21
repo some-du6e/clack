@@ -318,15 +318,17 @@ func (c *chrome) layoutTextyButtons(gtx layout.Context, p slackc.Props) layout.D
 			c.f.minOverflow = int(n)
 		}
 	}
-	if c.inlineW <= 0 {
-		c.f.inlineGuess = c.inlineGuess(gtx)
-	}
-	c.f.fold = c.foldFooter()
 	tb := crToolbarClass.Enter(gtx, 0, 0)
 	defer tb.Leave()
 	ts := crTextyButtonsClass.Enter(gtx, 0, 0)
 	defer ts.Leave()
 	c.f.toolbarHidden = tb.Hidden() || ts.Hidden()
+	// after the toolbar's own elements (the native's root is the first
+	// it enters), inside them as its buttons are
+	if c.inlineW <= 0 {
+		c.f.inlineGuess = c.inlineGuess(gtx, ts)
+	}
+	c.f.fold = c.foldFooter()
 	if e, patched := kid(p, "TextyButtonOverflow"); patched {
 		return slackc.LayoutElement(gtx, e)
 	}
@@ -467,18 +469,34 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 	// children (native, then end): after Slack's buttons, and in the
 	// overflow's row when it's folded (layoutMoreRow). Free while no
 	// plugin adds one for this composer.
-	if c.f.plugBtns > 0 && !c.f.fold {
+	c.plugRect = image.Rectangle{}
+	switch {
+	case c.f.plugBtns > 0 && !c.f.fold:
 		for _, pl := range crPlugPlacements {
 			if call, d := c.plugRender(gtx, pl); d.Size.X > 0 {
 				x += gtx.Dp(2)
-				c.place(gtx, call, image.Pt(x, (bs-d.Size.Y)/2), 0)
+				at := image.Pt(x, (bs-d.Size.Y)/2)
+				c.place(gtx, call, at, 0)
+				c.plugRect = c.plugRect.Union(image.Rectangle{Min: at, Max: at.Add(d.Size)}.Add(c.base))
 				right = x + d.Size.X
 				x += d.Size.X + gtx.Dp(2)
 			}
 		}
+	case c.f.plugBtns > 0 && !c.more.open:
+		// folded with the row shut: measured, not drawn, so their roots
+		// stay mounted and the row opens with them in it
+		g := gtx.Disabled()
+		for _, pl := range crPlugPlacements {
+			c.plugRender(g, pl)
+		}
 	}
-	if !c.f.fold && right > left {
-		c.inlineW = right - left // kept while folded, as Slack keeps its measure
+	if !c.f.fold && right > left && c.inlineW != right-left {
+		// kept while folded, as Slack keeps its measure; a measure that no
+		// longer fits (a plugin's button arrived) folds in the next frame
+		c.inlineW = right - left
+		if c.foldFooter() {
+			c.f.h.Invalidate()
+		}
 	}
 
 	c.suf = c.suf[:0]
@@ -647,10 +665,7 @@ func (c *chrome) footItem(gtx layout.Context, id crBtn) layout.Dimensions {
 	if c.btn[id].Hovered() {
 		cs |= css.StateHover
 	}
-	var mods uint64
-	if id == crAa && c.cur.ShowFormatting {
-		mods = 1
-	}
+	mods := c.btnMods(id)
 	var s slackc.Styled
 	if id == crAttach {
 		qa := "shortcuts_menu_trigger__Channel"
@@ -673,6 +688,15 @@ func (c *chrome) footItem(gtx layout.Context, id crBtn) layout.Dimensions {
 		return s.Wrap(gtx, c.wFoot[id])
 	}
 	return c.drawFoot(gtx, id)
+}
+
+// btnMods are footer button id's class modifiers: Aa's pressed state
+// while the formatting bar shows.
+func (c *chrome) btnMods(id crBtn) uint64 {
+	if id == crAa && c.cur.ShowFormatting {
+		return 1
+	}
+	return 0
 }
 
 func (c *chrome) drawFoot(gtx layout.Context, id crBtn) layout.Dimensions {

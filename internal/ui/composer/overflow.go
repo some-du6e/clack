@@ -44,14 +44,20 @@ import (
 //   - Taut's composer.addButton (app/slack/composer/buttons.tsx, Taut
 //     3.7.2) patches TextyButtonOverflow where a button is registered for
 //     the composer's kind: its children become [...Children.toArray
-//     (children), ...native buttons, ...submit, ...end buttons]. toArray
-//     drops the false slots, so the count is the slots that render plus
-//     the plugin buttons (each a ComposerButtonView, a real child whatever
-//     its render returns): a thread composer with OwlMode has the
-//     shortcuts divider, Run shortcut and OwlMode's button, 3, under 5,
-//     and never folds unless the narrow moves add 2 more. The plugin
-//     buttons draw after Slack's in the toolbar, before the send group,
-//     and fold into the row with them.
+//     (children), ...native buttons, ...submit, ...end buttons], so the
+//     plugin buttons draw after Slack's in the toolbar, before the send
+//     group, and fold into the row with them. toArray drops the false
+//     slots, so there the count is the slots that render plus the plugin
+//     buttons: with one or two it stays under 5 until the narrow moves
+//     add the rest, and a toolbar narrower than its buttons (137px, and
+//     30 more per plugin button) doesn't fold. The footer is a flex row
+//     with no clip (.c-texty_buttons is only container: inline-size), so
+//     [/] and the plugin buttons run under the send group, which is later
+//     in the tree and position: relative, and takes their clicks once the
+//     composer has text (disabled, it has pointer-events: none). Clack
+//     counts the plugin buttons on top of Slack's 15 slots instead: the
+//     toolbar folds whenever its buttons don't fit, as Slack's own rule
+//     means it to.
 //   - Folded, a click on ⋯ toggles .c-texty_buttons--overflow, a row of the
 //     same children: position absolute, top −40px, right −36px of the
 //     button's container, padding 4px, base-sec, radius 4, box-shadow 0 0 0
@@ -186,31 +192,13 @@ func (c *chrome) plugButtons() int {
 
 // overflowKids is TextyButtonOverflow's React.Children.count and whether
 // one of the children is a real button: Slack's 15 slots, false ones
-// included, or under Taut's patch Children.toArray's (the slots that
-// render) and the plugin buttons, each a real child.
+// included, and Taut's plugin buttons after them, each a real child
+// whatever its render returns. (Taut's own patch counts only the slots
+// that render: see above for why Clack doesn't copy that.)
 func (c *chrome) overflowKids() (n int, real bool) {
 	var buf [len(crFootOverflow)]crBtn
-	real = len(c.overflowButtons(buf[:0])) > 0
-	p := c.f.plugBtns
-	if p == 0 {
-		return crOverflowKids, real
-	}
-	n = p
-	for _, id := range [...]crBtn{crAa, crEmoji, crMention} {
-		if !c.hidden(id) && c.moved(id) {
-			n++
-		}
-	}
-	switch {
-	case !c.hidden(crVideo) || !c.hidden(crAudio):
-		n++ // the clips fragment, its dividers inside
-	case !c.hidden(crShortcut):
-		n++ // the shortcuts divider
-	}
-	if !c.hidden(crShortcut) {
-		n++
-	}
-	return n, true
+	real = len(c.overflowButtons(buf[:0])) > 0 || c.f.plugBtns > 0
+	return crOverflowKids + c.f.plugBtns, real
 }
 
 // foldFooter is TextyButtonOverflow's choice: fold behind ⋯ when one of
@@ -248,8 +236,11 @@ func (c *chrome) foldAt(n int) int {
 // inlineGuess is inlineButtonsWidth before TextyButtons first measures
 // it (Slack measures it before its first paint): from the toolbar's left
 // edge to the right edge of the last of Slack's buttons and dividers
-// this composer shows, laid out in a row with crRow's margins.
-func (c *chrome) inlineGuess(gtx layout.Context) int {
+// this composer shows, laid out in a row with crRow's margins. ts is
+// .c-texty_buttons' style (layoutTextyButtons): a button plugin CSS hides
+// there (SlimMessageBox's emoji) takes no room, as the guess would
+// otherwise overshoot, fold the toolbar and never let it be measured.
+func (c *chrome) inlineGuess(gtx layout.Context, ts slackc.Styled) int {
 	x, right := 0, 0
 	for _, it := range crRow {
 		if it.div == 0 && (it.id == crAttach || it.id == crFootMore) {
@@ -257,11 +248,11 @@ func (c *chrome) inlineGuess(gtx layout.Context) int {
 		}
 		w := gtx.Dp(28)
 		if it.div != 0 {
-			if !c.dividerOn(it.div) {
+			if !c.dividerOn(it.div) || ts.Child(crDividerClass, 0).Hidden() {
 				continue
 			}
 			w = max(gtx.Dp(1), 1)
-		} else if !c.inlineOn(it.id) {
+		} else if !c.inlineOn(it.id) || ts.Child(crBtnClass[it.id], c.btnMods(it.id)).Hidden() {
 			continue
 		}
 		x += gtx.Dp(it.l)

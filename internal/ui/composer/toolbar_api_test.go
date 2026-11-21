@@ -14,3 +14,7 @@ func tbMoreRow(c *Composer) image.Rectangle {
 	gtx := layout.Context{Metric: unit.Metric{PxPerDp: px, PxPerSp: px}}
 	return crMoreRowRectW(gtx, c.ui.rect[crFootMore], c.ui.more.w)
 }
+
+// tbPlugRect is where Taut's composer.addButton buttons were last laid out
+// in the toolbar (the chrome's coordinates; empty when they weren't).
+func tbPlugRect(c *Composer) image.Rectangle { return c.ui.plugRect }

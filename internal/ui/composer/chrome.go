@@ -395,13 +395,16 @@ type chrome struct {
 	// (a measure pass) lays out no footer, and its zero must not reach JS.
 	inlineW int
 	toolW   int
-	pxPerDp float32
-	wBox    layout.Widget
-	wFoot   [crNumBtn]layout.Widget
-	one     [1]*slackc.Node
-	suf     []crSuf
-	inlOne  [1]*slackc.Node // layoutInline's (it may run inside a row item)
-	inl     []crSuf
+	// plugRect is where Taut's composer.addButton buttons were last laid
+	// out in the toolbar (composer-local; empty when folded or none)
+	plugRect image.Rectangle
+	pxPerDp  float32
+	wBox     layout.Widget
+	wFoot    [crNumBtn]layout.Widget
+	one      [1]*slackc.Node
+	suf      []crSuf
+	inlOne   [1]*slackc.Node // layoutInline's (it may run inside a row item)
+	inl      []crSuf
 }
 
 var crSpaceSizes = [3]unit.Sp{15, 12, 10.5}
@@ -1196,10 +1199,7 @@ func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 	}
 	c.toolW = c.f.eq
 	c.f.plugBtns = c.plugButtons()
-	if c.inlineW <= 0 {
-		c.f.inlineGuess = c.inlineGuess(gtx)
-	}
-	c.f.fold = c.foldFooter()
+	c.f.fold = c.foldFooter() // layoutTextyButtons decides, inside the toolbar's classes
 	c.f.sufX = x1 - gtx.Dp(6)
 	org := image.Pt(x0, y)
 	g := gtx
