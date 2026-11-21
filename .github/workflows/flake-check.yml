@@ -1995,9 +1995,14 @@ jobs:
           cache: true
       - name: gio deps
         if: ${{ runner.os == 'Linux' }}
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: "composer: the footer toolbar's fold, its row and tooltips, under plugins and without, COUNT runs"
         shell: bash
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
-          go test -count=$COUNT -v -timeout 20m -run '^TestComposerToolbar' ./internal/ui/composer
+          "${x[@]}" go test -count=$COUNT -v -timeout 20m -run '^TestComposerToolbar' ./internal/ui/composer
