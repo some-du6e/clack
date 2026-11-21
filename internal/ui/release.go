@@ -33,6 +33,15 @@ func (a *App) release() {
 	if a.th != nil {
 		a.th.ForgetShapers()
 	}
+	// the process-wide listeners it registered: i18n's locale change, the
+	// OS scheme's
+	a.unhooks.Lock()
+	unhooks := a.unhooks.fns
+	a.unhooks.fns = nil
+	a.unhooks.Unlock()
+	for _, f := range unhooks {
+		f()
+	}
 	// its goroutines: the invalidator, the image cache's sweeps
 	if a.invalDone != nil {
 		a.invalStop.Do(func() { close(a.invalDone) })
@@ -40,4 +49,18 @@ func (a *App) release() {
 	if a.images != nil {
 		a.images.Close()
 	}
+}
+
+// unhooks are the stops of an App's process-wide listeners (i18n's, the OS
+// scheme's): each list kept every App ever made reachable.
+type unhooks struct {
+	sync.Mutex
+	fns []func()
+}
+
+// unhookAtRelease keeps a process-wide listener's stop for release.
+func (a *App) unhookAtRelease(stop func()) {
+	a.unhooks.Lock()
+	a.unhooks.fns = append(a.unhooks.fns, stop)
+	a.unhooks.Unlock()
 }

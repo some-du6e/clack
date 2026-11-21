@@ -302,6 +302,7 @@ type App struct {
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
 	invalDone        chan struct{}              // closed by release: invalidator returns
 	invalStop        sync.Once
+	unhooks          unhooks                   // the process-wide listeners New and Run registered: release removes them
 	update           updateState               // "Update available" banner
 	updatesOff       atomic.Bool               // prefs.NoUpdateCheck, for updateLoop
 	updNow           chan struct{}             // Check now → updateLoop (cap 1)

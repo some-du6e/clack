@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 	"weak"
 
 	"gioui.org/text"
@@ -22,7 +23,8 @@ import (
 // maps keyed by *App, fakeslack's by *Server, the message hubs, the
 // caches keyed by shaper, and goroutines ranging over channels nobody
 // closed), and ui.test held 9 GB live by its end. A failure lists the
-// goroutines the two sessions left running.
+// goroutines the two sessions left running, and what holds the session:
+// the roots a heap dump shows reaching it (retainReport).
 func TestFinishedSessionIsCollected(t *testing.T) {
 	before := goroutineStacks()
 	var (
@@ -73,5 +75,22 @@ func TestFinishedSessionIsCollected(t *testing.T) {
 	if h := held(); len(h) > 0 {
 		t.Errorf("the first session still reachable 10 s after the next one ended: %s; goroutines the two sessions left:\n%s",
 			strings.Join(h, ", "), goroutinesAdded(before, 80))
+		t.Log(retainReport(t, sessionTargets(app, ca, srv, sh)))
 	}
+}
+
+// sessionTargets are the addresses of a session's objects still live, for
+// retainReport: no pointer to them stays on this goroutine's stack.
+func sessionTargets(app weak.Pointer[App], ca weak.Pointer[core.App], srv weak.Pointer[fakeslack.Server], sh weak.Pointer[text.Shaper]) []retainTarget {
+	var ts []retainTarget
+	add := func(what string, p unsafe.Pointer) {
+		if p != nil {
+			ts = append(ts, retainTarget{what, uintptr(p)})
+		}
+	}
+	add("the App", unsafe.Pointer(app.Value()))
+	add("its core App", unsafe.Pointer(ca.Value()))
+	add("the fake server", unsafe.Pointer(srv.Value()))
+	add("its shaper", unsafe.Pointer(sh.Value()))
+	return ts
 }
