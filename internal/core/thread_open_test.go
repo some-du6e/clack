@@ -158,8 +158,11 @@ func TestRepliesForReplyKeyedByParent(t *testing.T) {
 	if p, ok := a.ReplyParent("C1", reply); !ok || p != root {
 		t.Errorf("ReplyParent: %q (%v), want %s", p, ok, root)
 	}
-	if got, err := a.Replies(ctx, "C1", root); err != nil || len(got) != 2 {
-		t.Errorf("the parent's thread: %d messages (%v)", len(got), err)
+	// the parent's pane the reply's hands on to starts at the reply
+	// (ReplyAsThreadRoot's openThreadAtIn: threadStartAt), and draws the
+	// page the reply's ts read
+	if sl, err := a.ThreadAt(ctx, "C1", root, reply); err != nil || len(sl.Msgs) == 0 || sl.Root == nil || sl.Root.TS != root {
+		t.Errorf("the parent's thread at the reply: %d messages (%v)", len(sl.Msgs), err)
 	}
 	if n := countCalls(f, "conversations.replies"); n != 1 {
 		t.Errorf("%d conversations.replies requests, want 1 (the parent's pane reads the answer)", n)

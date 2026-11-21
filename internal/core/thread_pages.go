@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 )
@@ -105,7 +106,16 @@ func (a *App) threadOriginalLastRead(ch, ts string) string {
 // ThreadSliceAt is the slice of thread ch/ts the pane started at start
 // draws, from memory (no request): getPotentiallyOutdatedTimestamps over
 // the thread's history, with the messages and the root the store holds.
+//
+// A reply's ts is its parent's thread at the reply: conversations.replies
+// answers a reply's ts with its parent's thread, which repliesOne and
+// repliesAround keep under the parent's key (replyRooted), so a pane
+// opened with the reply's ts draws the reply in its parent's slice and
+// hands on to the parent's thread (the list's ReplyAsThreadRoot).
 func (a *App) ThreadSliceAt(ch, ts, start string) ThreadSlice {
+	if p, ok := a.ReplyParent(ch, ts); ok {
+		ts = p
+	}
 	sl, held := a.S.ThreadSliceAt(ch, ts, start)
 	out := ThreadSlice{Start: sl.Start, End: sl.End, ReachedStart: sl.ReachedStart, ReachedEnd: sl.ReachedEnd,
 		PrevReachedEnd: sl.PrevReachedEnd, Held: held}
@@ -138,6 +148,9 @@ func (a *App) threadRoot(ch, ts string) (slack.Message, bool) {
 // (pollOnce) and notes its use (the eviction's order), as History does a
 // channel's.
 func (a *App) ThreadAt(ctx context.Context, ch, ts, start string) (ThreadSlice, error) {
+	if p, ok := a.ReplyParent(ch, ts); ok {
+		return a.ThreadAt(ctx, ch, p, ts) // a reply's ts: its parent's thread at the reply, watched as the parent's
+	}
 	a.watch(ch, ts)
 	a.noteAccess(ch + "/" + ts)
 	if start == "" {
@@ -233,7 +246,7 @@ func (a *App) fetchReplies(ctx context.Context, ch, ts, oldest, latest, reason s
 	pg := repliesPage{since: a.S.LiveSeq(), pins: a.S.PinSeq(), subs: a.S.SubSeq()}
 	t0 := time.Now()
 	err := a.C.Call(ctx, "conversations.replies", p, &r)
-	log.Printf("replies %s/%s %s: %d (%s)", ch, ts, reason, len(r.Messages), time.Since(t0).Round(time.Millisecond))
+	log.Printf("replies %s/%s %s: %d (%s)", logtag.ID(ch), logtag.ID(ts), reason, len(r.Messages), time.Since(t0).Round(time.Millisecond))
 	if err != nil {
 		return pg, err
 	}
