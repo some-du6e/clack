@@ -17,7 +17,7 @@ name: go-cache
 # tests run, nothing talks to Slack.
 on:
   push:
-    branches: [ui, main, ci-speed] # ui pushes skip the jobs: only main's entries reach every branch
+    branches: [ui, main, ci-speed] # the jobs run on main only: only main's entries reach every branch
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,9 @@ env:
 
 jobs:
   seed:
-    if: github.ref != 'refs/heads/ui'
+    # main only: the entries a branch can restore are main's (a dispatch on
+    # a branch, or ui's push, would build into a scope nobody else reads)
+    if: github.ref == 'refs/heads/main'
     name: seed (${{ matrix.os }})
     strategy:
       fail-fast: false
