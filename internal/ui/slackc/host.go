@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"gioui.org/f32"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/imgcache"
@@ -25,7 +26,56 @@ type HostComponent func(gtx layout.Context, h *Host) layout.Dimensions
 var hosts struct {
 	sync.RWMutex
 	m      map[string]HostComponent
+	el     map[string]*HostElement
 	warned map[string]bool
+}
+
+// HostElement is the DOM element a Slack component renders at its root,
+// for the CSS that styles it. A host component registered with one
+// (RegisterHostElement) matches selectors as that element does in
+// Slack's DOM: its tag, and the classes Slack's component adds beside the
+// className a plugin passes (Button is button.c-button.c-button--outline
+// .c-button--small…, so OwlMode's .taut-owl-save__button.c-button--outline
+// reaches it). Its box is a host node for the host base sheet too: Slack's
+// rules for those classes, and for the Slack classes a plugin puts on it
+// (.p-block_kit_button_element), style it.
+type HostElement struct {
+	Tag string
+	// Classes are the classes Slack's component adds for these props
+	// (nil: none).
+	Classes func(p Props) []string
+	// OwnBox marks a component that draws its own padding, borders and
+	// background (kit's Button, Slack's c-button look): the layout engine
+	// sizes and places its border box and leaves those to it, reading
+	// what CSS sets through Host.Style and Host.Has.
+	OwnBox bool
+	// Style, when set, gives the element its own look where no rule set a
+	// property (has reports the ones a rule set), as a UA stylesheet and
+	// Slack's own rules give Slack's element: its font and colour, which
+	// its children inherit (a button's icon and label are its colour, at
+	// its size and weight). It runs whenever the box is styled.
+	Style func(p Props, st *css.Style, has func(prop string) bool)
+}
+
+// RegisterHostElement declares the element behind host components
+// registered under names. Call it before trees with them are styled
+// (with RegisterHost).
+func RegisterHostElement(el HostElement, names ...string) {
+	hosts.Lock()
+	defer hosts.Unlock()
+	if hosts.el == nil {
+		hosts.el = map[string]*HostElement{}
+	}
+	e := el
+	for _, n := range names {
+		hosts.el[n] = &e
+	}
+}
+
+func lookupHostElement(name string) *HostElement {
+	hosts.RLock()
+	defer hosts.RUnlock()
+	return hosts.el[name]
 }
 
 // RegisterHost registers fn for name and any aliases (e.g. "Avatar" and
@@ -73,6 +123,43 @@ type Host struct {
 
 	view *View
 	fr   *frame
+	set  propSet // the properties a rule set on the node (Has)
+}
+
+// Has reports whether a rule set prop ("color", "padding-left",
+// "border-color"…) on the component's own box: a plugin's or the user's,
+// or Slack's for a class the component carries (the host base sheet), as
+// opposed to a value it inherited or the property's initial one. A
+// component that draws its own look (HostElement.OwnBox) uses CSS where
+// this is true and its own defaults elsewhere. Some properties share a
+// bit: a border's widths and styles (its colours have their own),
+// min/max sizes, a side's padding longhands and shorthands.
+func (h *Host) Has(prop string) bool {
+	b, ok := propBits[prop]
+	return ok && h.set&b != 0
+}
+
+// PlaceChildren tells the layout engine where the component drew what
+// Children laid out this frame: at is the children's top-left in px from
+// the component's own top-left. Their window rects (getBoundingClientRect,
+// ResizeObserver, Host.WindowRect inside) follow it from the next frame;
+// without it they sit at the component's corner.
+func (h *Host) PlaceChildren(at image.Point) {
+	if h.view == nil || h.Node == nil {
+		return
+	}
+	b := h.view.boxOf(h.Node)
+	if b == nil {
+		return
+	}
+	s := h.view.subs[subKey{b: b, kind: 1}]
+	if s == nil {
+		return
+	}
+	if p := f32.Pt(float32(at.X), float32(at.Y)); p != s.place {
+		s.place = p
+		s.rectsDirty = true
+	}
 }
 
 // Theme is Clack's theme.
