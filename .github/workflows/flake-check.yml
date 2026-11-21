@@ -2011,9 +2011,10 @@ jobs:
   # Slack's title, body and icon, the click, the frame flash and the
   # badge, and the prefs that hold it back (desktop push, mute, Do Not
   # Disturb, notify anyway, a VIP), then the real toast in Windows'
-  # Notification Center. Dispatch with only=system-dm-toast (both jobs).
-  system-dm-toast:
-    if: ${{ inputs.only != '' && startsWith('system-dm-toast', inputs.only) }}
+  # Notification Center. Dispatch with only=system-dm-toast (both jobs),
+  # only=system-dm-toast-linux or only=system-dm-toast-windows (one).
+  system-dm-toast-linux:
+    if: ${{ inputs.only != '' && startsWith('system-dm-toast-linux', inputs.only) }}
     runs-on: ubuntu-latest
     env:
       UI_TESTS: '^(TestSystemDMToast|TestMacNotifierSystemDM|TestWantsNotify|TestThreadsAudit|TestDeferStreamingNotification|TestNotify|TestToast|TestMacNotifier)'

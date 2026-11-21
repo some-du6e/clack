@@ -141,23 +141,6 @@ func sysToast(t *testing.T, e *perfEnv, rec *noteRec, n int, ts, what string) *d
 	return note
 }
 
-// sysQuiet runs frames for a while and fails when rec got more than n
-// toasts: a post a pref holds back shows none. (The next case's toast
-// must be its own post's, so a late one shows there too.)
-func sysQuiet(t *testing.T, e *perfEnv, rec *noteRec, n int, what string) {
-	t.Helper()
-	e.settle(1500 * time.Millisecond)
-	if got := sysNotes(rec); got != n {
-		last := &desktopNote{}
-		rec.mu.Lock()
-		if got > 0 {
-			last = rec.notes[got-1]
-		}
-		rec.mu.Unlock()
-		t.Fatalf("%s: %d toasts, want %d (the last %q / %q)", what, got, n, last.Title, last.Body)
-	}
-}
-
 // TestSystemDMToastLikeSlack: two posts come over the socket into the
 // system DM, one with one section and one in the welcome post's shape.
 // Each gets a toast titled with the DM's name, the blocks' text as the
@@ -275,12 +258,44 @@ func TestSystemDMToastPrefs(t *testing.T) {
 		posts++
 		return fmt.Sprintf("A synthetic %s number %d.", kind, posts)
 	}
-	toast := func(what, title, body string) {
+	// Each case reports what differs from Slack and goes on, counting the
+	// toasts there are, so one run shows every case that differs.
+	// arrived waits up to d for a toast after the shown ones and returns
+	// it (nil: none came).
+	arrived := func(d time.Duration) *desktopNote {
+		dl := time.Now().Add(d)
+		for {
+			e.frame()
+			rec.mu.Lock()
+			var n *desktopNote
+			if len(rec.notes) > shown {
+				n = rec.notes[shown]
+			}
+			rec.mu.Unlock()
+			if n != nil || time.Now().After(dl) {
+				return n
+			}
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	resync := func() {
+		rec.mu.Lock()
+		shown = len(rec.notes)
+		rec.mu.Unlock()
+	}
+	// check is a toast case for post ts: one toast, that post's, with
+	// title and body ("=" for the post's text).
+	check := func(what, ts, text, title, body string) {
 		t.Helper()
-		text := next("notice")
-		ts := sysPost(fs, text, nil)
+		n := arrived(15 * time.Second)
+		if n == nil {
+			t.Errorf("%s: no toast, Slack shows one", what)
+			return
+		}
 		shown++
-		n := sysToast(t, e, rec, shown, ts, what)
+		if n.Channel != fakeslack.SystemDMID || n.Msg != ts {
+			t.Errorf("%s: the toast is for %s/%s, want the post %s", what, n.Channel, n.Msg, ts)
+		}
 		if n.Title != title {
 			t.Errorf("%s: titled %q, Slack %q", what, n.Title, title)
 		}
@@ -290,11 +305,28 @@ func TestSystemDMToastPrefs(t *testing.T) {
 		if n.Body != body {
 			t.Errorf("%s: the body is %q, Slack %q", what, n.Body, body)
 		}
+		e.settle(100 * time.Millisecond)
+		rec.mu.Lock()
+		extra := len(rec.notes) - shown
+		rec.mu.Unlock()
+		if extra > 0 {
+			t.Errorf("%s: %d toasts for one post", what, extra+1)
+		}
+		resync()
+	}
+	toast := func(what, title, body string) {
+		t.Helper()
+		text := next("notice")
+		check(what, sysPost(fs, text, nil), text, title, body)
 	}
 	none := func(what string) string {
 		t.Helper()
 		ts := sysPost(fs, next("notice held back"), nil)
-		sysQuiet(t, e, rec, shown, what)
+		if n := arrived(1500 * time.Millisecond); n != nil {
+			t.Errorf("%s: a toast (%q / %q), Slack holds it back", what, n.Title, n.Body)
+		}
+		e.settle(100 * time.Millisecond)
+		resync()
 		return ts
 	}
 	must := func(what string, err error) {
@@ -350,18 +382,15 @@ func TestSystemDMToastPrefs(t *testing.T) {
 	snooze := time.Now().Add(time.Hour).Unix()
 	fs.SetDND(map[string]any{"dnd_enabled": false, "snooze_enabled": true, "snooze_endtime": snooze})
 	c.SetDNDStatus(core.DNDStatus{SnoozeEnabled: true, SnoozeEnd: snooze})
+	heldText := fmt.Sprintf("A synthetic notice held back number %d.", posts+1)
 	held := none("Do Not Disturb")
 	fs.Push(map[string]any{"type": "dnd_override", "channel": dm, "timestamp": held})
-	shown++
-	n := sysToast(t, e, rec, shown, held, "notify anyway")
-	if want := "Slack is trying to reach you"; n.Title != want {
-		t.Errorf("notify anyway: titled %q, Slack %q", n.Title, want)
-	}
-	if !strings.HasPrefix(n.Body, "A synthetic notice held back") {
-		t.Errorf("notify anyway: the body is %q, want the held post's text", n.Body)
-	}
+	check("notify anyway (dnd_override)", held, heldText, "Slack is trying to reach you", "=")
 	fs.Push(map[string]any{"type": "dnd_override", "channel": dm, "timestamp": held})
-	sysQuiet(t, e, rec, shown, "a second notify anyway for the same post")
+	if n := arrived(1500 * time.Millisecond); n != nil {
+		t.Errorf("a second notify anyway for the same post: a toast (%q), Slack shows it once", n.Title)
+	}
+	resync()
 	// a VIP's post comes through (shouldOverrideDndForMessage): a
 	// bot_message whose bot_profile.user_id is a VIP, "Messages from VIPs,
 	// even if notifications are paused" on
