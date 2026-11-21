@@ -286,6 +286,15 @@ var (
 	hubs   = map[*core.App]*hub{}
 )
 
+// ForgetCore drops app's hub (its conversations' models, the host it
+// drew for): for a core App that's done, a stopped session's. A hub's
+// entry kept the session reachable for good (ci-speed-3).
+func ForgetCore(app *core.App) {
+	hubsMu.Lock()
+	delete(hubs, app)
+	hubsMu.Unlock()
+}
+
 const maxModels = 40
 
 func hubFor(h Host) *hub {

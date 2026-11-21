@@ -76,17 +76,18 @@ func perfServer(tb testing.TB) *fakeslack.Server {
 }
 
 type perfEnv struct {
-	tb    testing.TB
-	fs    *fakeslack.Server
-	a     *App
-	home  string
-	r     input.Router
-	ops   op.Ops
-	size  image.Point
-	gpu   *headless.Window
-	now   time.Time
-	start time.Time
-	scale float32 // px per dp (0: 1)
+	stopped bool // shutdown ran
+	tb      testing.TB
+	fs      *fakeslack.Server
+	a       *App
+	home    string
+	r       input.Router
+	ops     op.Ops
+	size    image.Point
+	gpu     *headless.Window
+	now     time.Time
+	start   time.Time
+	scale   float32 // px per dp (0: 1)
 	// frozen: the ops the last frame submitted when it was a frozen
 	// inspect session's (inspectFirst), nil when it was laid out
 	frozen *op.Ops
@@ -218,16 +219,32 @@ func pinNetwork(c *core.App) {
 	}
 }
 
-// shutdown stops the session's background work so it can be collected.
+// shutdown stops the session's background work, then ends it as a
+// sign-out does (backend.stop: plugins stopped, blockkit's realtime views,
+// core.Close and its Release), and drops what the process-wide registries
+// keep of the App (release), so all of it can be collected: before
+// ci-speed-3 nothing of a test's session was, and ui.test held 9 GB live
+// by its end. Each call after the first does nothing.
 func (e *perfEnv) shutdown() {
-	if e.a == nil || e.a.data == nil {
+	if e.a == nil || e.a.data == nil || e.stopped {
 		return
 	}
+	e.stopped = true
 	if e.a.data.cancel != nil {
 		e.a.data.cancel()
 	}
 	if c, ok := any(e.a.data.core).(interface{ Shutdown() }); ok { // core.App.Shutdown (absent in the baseline tree)
 		c.Shutdown()
+	}
+	if b, ok := any(e.a.data).(interface{ stop() <-chan struct{} }); ok {
+		select {
+		case <-b.stop():
+		case <-time.After(20 * time.Second):
+			e.tb.Logf("the session's stop didn't finish within 20 s")
+		}
+	}
+	if r, ok := any(e.a).(interface{ release() }); ok { // absent in the baseline tree
+		r.release()
 	}
 	if e.gpu != nil {
 		e.gpu.Release()

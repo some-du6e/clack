@@ -138,7 +138,7 @@ type canvasState struct {
 	infos    map[string]CanvasInfo // the last files.info of each canvas read (KnownCanvasInfo)
 }
 
-var canvasStates sync.Map // *App -> *canvasState
+var canvasStates = newPerApp() // *App -> *canvasState
 
 func (a *App) canvases() *canvasState {
 	if v, ok := canvasStates.Load(a); ok {

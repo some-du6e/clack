@@ -1,0 +1,36 @@
+package ui
+
+import (
+	"sync"
+
+	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/views"
+)
+
+// release drops a finished App's entries in the process-wide registries
+// keyed by it or by its parts: the package's maps keyed by *App, popups'
+// and views' keyed by their Host (the App), its session's message hub and
+// the caches keyed by its shapers. Each entry kept the App reachable, and
+// through it its session, images and parsed fonts. The process's one App
+// never needs it: internal/ui's tests, which make hundreds of Apps in one
+// process, call it at each one's end, after its session's stop
+// (perfEnv.shutdown). ci-speed-3: ui.test held 9 GB live by its end.
+func (a *App) release() {
+	for _, m := range []*sync.Map{&wfRunStates, &tabCtxTags, &tabsMoreState, &tabDrags, &canvasJumps, &canvasTabs, &listTabs, &agentTasksTabs} {
+		m.Delete(a)
+	}
+	// the UI goroutine's
+	delete(focusModes, a)
+	delete(railStatusTabs, a)
+	delete(createStrips, a)
+	delete(appNuggets, a)
+	popups.ForgetHost(a)
+	views.ForgetHost(a)
+	if a.data != nil && a.data.core != nil {
+		messages.ForgetCore(a.data.core)
+	}
+	if a.th != nil {
+		a.th.ForgetShapers()
+	}
+}

@@ -73,7 +73,7 @@ type assistantState struct {
 	prompts map[string]SuggestedPrompts
 }
 
-var assistants sync.Map // *App → *assistantState
+var assistants = newPerApp() // *App → *assistantState
 
 func (a *App) assistant() *assistantState {
 	if v, ok := assistants.Load(a); ok {

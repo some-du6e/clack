@@ -812,12 +812,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 
 // Close stops the server.
 func (s *Server) Close() error {
-	searchLogs.Delete(s)
-	pageLogs.Delete(s)
-	viewsStates.Delete(s)
-	threadsAuditStates.Delete(s)
-	agentDMStates.Delete(s)
-	photoStores.Delete(s)
+	s.forget() // its state beside it, in every perServer map (perserver.go)
 	if s.srv == nil {
 		return nil
 	}

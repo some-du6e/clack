@@ -20,7 +20,7 @@ type enterprisePrefs struct {
 	locked map[string]json.RawMessage
 }
 
-var entPrefsIndex sync.Map // *App → *enterprisePrefs
+var entPrefsIndex = newPerApp() // *App → *enterprisePrefs
 
 func (a *App) entPrefs() *enterprisePrefs {
 	v, _ := entPrefsIndex.LoadOrStore(a, &enterprisePrefs{})

@@ -284,6 +284,7 @@ func (t *Taut) Close() error {
 	if !t.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	defer huddles.Delete(t) // its huddle state beside it (huddle.go)
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
 	t.mu.Lock()

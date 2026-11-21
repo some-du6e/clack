@@ -915,7 +915,9 @@ func (a *App) Close() error {
 	a.saves.Wait()
 	a.checkpointClosedCodeChannels() // the closed code channels' watermarks (codechannel_close.go)
 	a.SaveWarm()
-	return a.S.SaveCache()
+	err := a.S.SaveCache()
+	a.Release() // done for good: its process-wide state goes too (perapp.go)
+	return err
 }
 
 func (a *App) loadEmoji(ctx context.Context) error {

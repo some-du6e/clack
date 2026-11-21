@@ -122,7 +122,7 @@ type appCardCache struct {
 	epoch int
 }
 
-var appCardIndex sync.Map // *App → *appCardCache
+var appCardIndex = newPerApp() // *App → *appCardCache
 
 // appCardTTL is how long a fetched card is reused.
 const appCardTTL = 10 * time.Minute

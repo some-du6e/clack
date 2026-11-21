@@ -17,6 +17,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -379,7 +380,12 @@ func (b *backend) stop() <-chan struct{} {
 		// (flushPendingChannelSectionCollapsedSync on teardown)
 		b.core.FlushSectionCollapsed()
 		closeTaut(s, t)
-		_ = b.core.Close()
+		_ = b.core.Close() // and its Release: core's maps keyed by the App
+		// what the UI's packages keep of the session beside it: its
+		// message hub, its plugin credit names (each kept the session in
+		// memory for good after a sign-out or a switch; ci-speed-3)
+		messages.ForgetCore(b.core)
+		forgetCreditNames(b.core.S)
 	}()
 	return done
 }

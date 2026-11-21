@@ -71,7 +71,7 @@ type canvasStore struct {
 	shared  bool // the shared canvas's message is in the history
 }
 
-var canvasStores sync.Map // *Server -> *canvasStore
+var canvasStores = newPerServer() // *Server -> *canvasStore
 
 func (s *Server) canvasStore() *canvasStore {
 	if v, ok := canvasStores.Load(s); ok {

@@ -62,7 +62,7 @@ type chPermEntry struct {
 	at      time.Time
 }
 
-var chPermIndex sync.Map // *App → *chPermCache
+var chPermIndex = newPerApp() // *App → *chPermCache
 
 func (a *App) chPerms() *chPermCache {
 	if v, ok := chPermIndex.Load(a); ok {

@@ -249,7 +249,7 @@ type Interactive struct {
 	feedback map[string][]string
 }
 
-var interactiveIndex sync.Map // *App → *Interactive
+var interactiveIndex = newPerApp() // *App → *Interactive
 
 // Interactive returns the App's interaction service (created on first
 // use; it starts listening for view and ephemeral events right away).

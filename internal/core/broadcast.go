@@ -294,7 +294,7 @@ type permEntry struct {
 	at time.Time
 }
 
-var permIndex sync.Map // *App → *permCache
+var permIndex = newPerApp() // *App → *permCache
 
 func (a *App) perms() *permCache {
 	if v, ok := permIndex.Load(a); ok {

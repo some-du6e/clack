@@ -93,7 +93,7 @@ type AgentTasksState struct {
 	Calls     []AgentTaskCall
 }
 
-var agentTaskStates sync.Map // *Server → *AgentTasksState
+var agentTaskStates = newPerServer() // *Server → *AgentTasksState
 
 // AgentTasks is the fixture's state (Size.AgentTasks).
 func (s *Server) AgentTasks() *AgentTasksState {

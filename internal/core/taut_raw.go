@@ -21,7 +21,7 @@ type rawTaps struct {
 
 type rawTapPtr = atomic.Pointer[rawTaps]
 
-var rawTapIndex sync.Map // *App → *rawTapPtr
+var rawTapIndex = newPerApp() // *App → *rawTapPtr
 
 func (a *App) rawTapPtr() *rawTapPtr {
 	if p, ok := rawTapIndex.Load(a); ok {

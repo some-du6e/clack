@@ -306,6 +306,7 @@ func closeTaut(s *slick.Slick, t *taut.Taut) {
 	}
 	if t != nil {
 		_ = t.Close()
+		composer.ForgetTaut(t) // composer's mark that it extended t
 	}
 }
 

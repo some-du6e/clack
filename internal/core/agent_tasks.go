@@ -613,7 +613,7 @@ type agentTaskIndex struct {
 	byTrigger map[string]string // trigger id → workflow id
 }
 
-var agentTaskIndexes sync.Map // *App → *agentTaskIndex
+var agentTaskIndexes = newPerApp() // *App → *agentTaskIndex
 
 func (a *App) agentTaskIndex() *agentTaskIndex {
 	v, _ := agentTaskIndexes.LoadOrStore(a, &agentTaskIndex{byTrigger: map[string]string{}})

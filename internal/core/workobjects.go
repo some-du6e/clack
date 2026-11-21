@@ -158,7 +158,7 @@ type woStore struct {
 
 // woStates holds each App's work object store (kept off the App struct,
 // as lists.go keeps its state, so parallel branches don't collide on it).
-var woStates sync.Map
+var woStates = newPerApp() // *App → its state
 
 func (a *App) wo() *woStore {
 	if v, ok := woStates.Load(a); ok {

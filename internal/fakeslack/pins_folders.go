@@ -57,7 +57,7 @@ type pfState struct {
 	seq   int
 }
 
-var pfStates sync.Map // *Server -> *pfState
+var pfStates = newPerServer() // *Server -> *pfState
 
 func (s *Server) pf() *pfState {
 	v, _ := pfStates.LoadOrStore(s, &pfState{forms: map[string][]url.Values{}})

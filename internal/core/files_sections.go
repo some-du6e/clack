@@ -135,7 +135,7 @@ type fileCollectionStore struct {
 	recentsCollapsed bool
 }
 
-var fileCollectionStores sync.Map // *App -> *fileCollectionStore
+var fileCollectionStores = newPerApp() // *App -> *fileCollectionStore
 
 func (a *App) fileCollections() *fileCollectionStore {
 	if v, ok := fileCollectionStores.Load(a); ok {
@@ -664,7 +664,7 @@ type openFileStore struct {
 	save    func(display, cache []string)
 }
 
-var openFileStores sync.Map // *App -> *openFileStore
+var openFileStores = newPerApp() // *App -> *openFileStore
 
 func (a *App) openFiles() *openFileStore {
 	if v, ok := openFileStores.Load(a); ok {
@@ -818,7 +818,7 @@ type teamPlan struct {
 	plan, enterpriseID string
 }
 
-var teamPlans sync.Map // *App -> *teamPlan
+var teamPlans = newPerApp() // *App -> *teamPlan
 
 func (a *App) teamPlan() *teamPlan {
 	if v, ok := teamPlans.Load(a); ok {
