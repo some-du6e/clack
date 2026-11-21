@@ -18,6 +18,13 @@ import (
 func TestMirrorHoldsJumpWindows(t *testing.T) {
 	h := newHarness(t)
 	m := h.tt.mirror
+	// the timeline with older pages beyond it: a whole history (no older
+	// page) takes any older stretch in (timelineMeets), leaving no window
+	tl := h.app.S.Timeline(chGen)
+	if tl == nil {
+		t.Fatalf("no timeline for %s", chGen)
+	}
+	h.app.S.SetLatest(chGen, tl.Msgs, true)
 	fp := m.messagesFP(chGen)
 	old := []slack.Message{
 		{Type: "message", TS: "1600000100.000100", User: "UALICE", Text: "an old message"},
