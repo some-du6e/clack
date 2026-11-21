@@ -183,6 +183,14 @@ type scope struct {
 	rectsDirty bool
 	rehover    bool
 	dropdown   dropState
+	// kids marks a scope laying out its host's own children
+	// (Host.Children): when CSS makes the host's box a flex or grid
+	// container, its root is that container (hostContainer).
+	kids bool
+	// place is where the host's native drew this scope, from the host
+	// box's content edge (Host.PlaceChildren): window origins and the
+	// rects JS reads follow it.
+	place f32.Point
 }
 
 type scopeKey struct {
@@ -422,7 +430,7 @@ func (s *scope) windowOrigin() (float32, float32) {
 	}
 	if s.host != nil && s.host.scope != nil && s.host.scope != s {
 		hx, hy := s.host.scope.windowOrigin()
-		return hx + s.host.ax + s.host.bd[3] + s.host.pad[3], hy + s.host.ay + s.host.bd[0] + s.host.pad[0]
+		return hx + s.host.ax + s.host.bd[3] + s.host.pad[3] + s.place.X, hy + s.host.ay + s.host.bd[0] + s.host.pad[0] + s.place.Y
 	}
 	return 0, 0
 }
@@ -486,7 +494,11 @@ func (s *scope) layout() {
 	// native are as wide as their content too: the native places the
 	// tree as one more item (the help button's caller right-aligns it).
 	flexItems := v.topFlex && v.topStyle != nil && (v.topStyle.Display == css.DisplayFlex || v.topStyle.Display == css.DisplayInlineFlex)
-	if s.exact || !flexItems && !s.inlineRoot() && maxW < inf/2 {
+	// A native's own children are its items when CSS makes its box a flex
+	// or grid container (hostContainer); the native places them, so the
+	// container is as wide as they are, like FlexItems' root.
+	hostBox := s.hostContainer()
+	if s.exact || !flexItems && !hostBox && !s.inlineRoot() && maxW < inf/2 {
 		c.fixedW, c.fixW = true, maxW
 	} else {
 		c.shrink = true
@@ -501,6 +513,14 @@ func (s *scope) layout() {
 		root.st.FlexDirection, root.st.FlexWrap = ps.FlexDirection, ps.FlexWrap
 		root.st.JustifyContent, root.st.AlignItems, root.st.AlignContent = ps.JustifyContent, ps.AlignItems, ps.AlignContent
 		root.st.RowGap, root.st.ColGap = ps.RowGap, ps.ColGap
+	} else if ps := &s.src; hostBox {
+		root.st.Display = css.DisplayFlex
+		if isGrid(ps.Display) {
+			root.st.Display = css.DisplayGrid
+		}
+		root.st.FlexDirection, root.st.FlexWrap = ps.FlexDirection, ps.FlexWrap
+		root.st.JustifyContent, root.st.AlignItems, root.st.AlignContent = ps.JustifyContent, ps.AlignItems, ps.AlignContent
+		root.st.RowGap, root.st.ColGap, root.st.GridColumns = ps.RowGap, ps.ColGap, ps.GridColumns
 	}
 	root.lastOK = false
 	v.layout(root, c)
@@ -557,6 +577,20 @@ func flatContents(boxes []*box) []*box {
 		out = append(out, b)
 	}
 	return out
+}
+
+// hostContainer reports a Host.Children scope whose host box CSS makes a
+// flex or grid container: in the browser the component's element lays
+// its children out as its items (Slack's .c-button is inline-flex;
+// OwlMode's Save in Taut is display:flex with gap 6px, an icon and a bare
+// text run). buildLayoutKids already wrapped the host's text runs into
+// anonymous items, which a block root would stack.
+func (s *scope) hostContainer() bool {
+	if !s.kids || !s.srcOK {
+		return false
+	}
+	d := s.src.Display
+	return isFlex(d) && s.src.LineClamp == 0 || isGrid(d)
 }
 
 // inlineRoot reports a scope whose in-flow top-level boxes are all
@@ -691,7 +725,7 @@ func (s *scope) callNative(gtx layout.Context, b *box) layout.Dimensions {
 				return v.fr.native(gtx, nativeProps(b))
 			}
 		case b.hostFn != nil:
-			b.host = Host{Node: b.n, Props: b.n.P, Style: &b.st, view: v, fr: &v.fr}
+			b.host = Host{Node: b.n, Props: b.n.P, Style: &b.st, view: v, fr: &v.fr, set: b.set}
 			return b.hostFn(gtx, &b.host)
 		}
 		return layout.Dimensions{}
@@ -819,7 +853,8 @@ func sameStyleShallow(a, b *css.Style) bool {
 		a.LineHeight == b.LineHeight && a.WhiteSpace == b.WhiteSpace && a.TextAlign == b.TextAlign &&
 		a.FontFamily == b.FontFamily && a.LetterSpacing == b.LetterSpacing && a.Display == b.Display &&
 		a.FlexDirection == b.FlexDirection && a.AlignItems == b.AlignItems && a.JustifyContent == b.JustifyContent &&
-		a.ColGap == b.ColGap && a.RowGap == b.RowGap && a.TextTransform == b.TextTransform && a.Cursor == b.Cursor
+		a.ColGap == b.ColGap && a.RowGap == b.RowGap && a.TextTransform == b.TextTransform && a.Cursor == b.Cursor &&
+		a.FlexWrap == b.FlexWrap && a.AlignContent == b.AlignContent && a.GridColumns == b.GridColumns && a.LineClamp == b.LineClamp
 }
 
 func (v *View) runSub(gtx layout.Context, s *scope, host *box) layout.Dimensions {
@@ -839,6 +874,7 @@ func (v *View) layoutKids(gtx layout.Context, fr *frame, n *Node, st *css.Style)
 		return layout.Dimensions{}
 	}
 	s := v.sub(subKey{b: b, kind: 1}, b, st)
+	s.kids = true
 	if s.boxes == nil || len(s.boxes) != len(b.lk) || len(b.lk) > 0 && &s.boxes[0] != &b.lk[0] {
 		s.boxes = b.lk
 		s.root.lk = b.lk

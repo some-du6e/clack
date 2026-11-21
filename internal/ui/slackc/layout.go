@@ -79,9 +79,18 @@ func snapBorder(px float32) float32 {
 	return float32(math.Floor(float64(px)))
 }
 
-// edges resolves margins, padding and borders against cbW.
+// edges resolves margins, padding and borders against cbW. A native that
+// draws its own box (HostElement.OwnBox) has neither: it is its border
+// box, and draws the padding and borders CSS gives it itself.
 func (v *View) edges(b *box, cbW float32) {
 	st := &b.st
+	if b.ownBox() {
+		for i := 0; i < 4; i++ {
+			b.m[i] = v.length(st.Margin[i], cbW)
+			b.pad[i], b.bd[i] = 0, 0
+		}
+		return
+	}
 	for i := 0; i < 4; i++ {
 		b.m[i] = v.length(st.Margin[i], cbW)
 		p := v.length(st.Padding[i], cbW)
