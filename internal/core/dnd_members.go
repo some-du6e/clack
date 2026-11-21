@@ -145,17 +145,18 @@ func (a *App) LoadMemberDND(ctx context.Context, ids []string) error {
 			e, _ := v.End.Int64()
 			a.mdnd.m[id] = memberDND{start: s, end: e, at: now}
 		}
-		// asked and not answered (a failed request, a member the answer
-		// left out): no schedule until maxAge passes, so a card doesn't ask
-		// every frame; a schedule already held stays
+		// every member asked is fresh now, whatever the answer held (the
+		// conditional fetch manager's _updateAfterRefetch, p7oS): one the
+		// answer left out, or a failed request, keeps the schedule already
+		// held (none if there was none) until maxAge passes, so an open
+		// card doesn't ask again every round trip
 		for _, id := range batch {
-			if d, ok := a.mdnd.m[id]; !ok || err != nil {
-				if !ok {
-					d = memberDND{start: 1, end: 1}
-				}
-				d.at = now
-				a.mdnd.m[id] = d
+			d, ok := a.mdnd.m[id]
+			if !ok {
+				d = memberDND{start: 1, end: 1}
 			}
+			d.at = now
+			a.mdnd.m[id] = d
 		}
 		a.mdnd.mu.Unlock()
 	}
@@ -185,6 +186,19 @@ func (a *App) onDNDUpdatedUser(raw json.RawMessage) {
 	if d, ok := a.mdnd.m[ev.User]; ok {
 		d.at = time.Time{}
 		a.mdnd.m[ev.User] = d
+	}
+	a.mdnd.mu.Unlock()
+}
+
+// memberDNDReconnected is the dndV2 manager's markStaleAfterSlowReconnect
+// (the conditional fetch manager's default): after a slow (full)
+// reconnect every member's DND is stale, so the next read asks again; the
+// schedules stay until it answers.
+func (a *App) memberDNDReconnected() {
+	a.mdnd.mu.Lock()
+	for id, d := range a.mdnd.m {
+		d.at = time.Time{}
+		a.mdnd.m[id] = d
 	}
 	a.mdnd.mu.Unlock()
 }

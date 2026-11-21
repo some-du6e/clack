@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/applog"
@@ -26,6 +27,8 @@ type App struct {
 
 	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
 	usersOut   usersOut   // the members users/info has out (members.go)
+
+	fetchedHook atomic.Pointer[func(ch string, tss []string)] // told of the messages fetches by id brought (read_changes.go)
 
 	prio      prioState  // the VIP unreads section's open conversation (prefs_a.go)
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
@@ -1320,8 +1323,9 @@ func (a *App) userOf(u *slack.User) User {
 	// emoji_name, not the list's first: status_emoji.go)
 	v.StatusEmojiInfo = parseStatusEmojiInfo(u.Profile.StatusEmojiDisplay)
 	if v.StatusEmoji != "" {
+		// StatusEmoji stays the profile's own code; the picture is the
+		// display form's (a display_alias, a custom display_url)
 		code, pic := EmojiDisplayInfo(v.StatusEmoji, v.StatusEmojiInfo)
-		v.StatusEmoji = code
 		if pic == "" {
 			pic, _, _ = a.S.Emoji(strings.Trim(code, ":"))
 		}

@@ -27,6 +27,53 @@ func (a *App) announceReads() {
 	for _, r := range a.S.TakeReadRevisions() {
 		a.announceHeld(r.Channel, r.Msg.TS)
 	}
+	a.tellFetched()
+}
+
+// tellFetched tells the fetched hook (SetFetchedHook) of the messages
+// fetches by id brought that the store held no copy of
+// (store.TakeFetchedNew), by channel. A new revision of a message the
+// store held goes out as an "update"; one it held nowhere has no change to
+// announce, and taut's mirror, which marks the plugins' copies of a
+// conversation's messages from core's events, drew its plugins' view only
+// at its next sweep (Slack's fetchObjectWithId puts the message in its
+// one store, and the patched selector reads it in the same render). Called
+// on the fetching goroutine before the fetch's answer goes to its caller,
+// so a view of one never reads the plugins' copy as ready before the mark.
+func (a *App) tellFetched() {
+	refs := a.S.TakeFetchedNew()
+	if len(refs) == 0 {
+		return
+	}
+	f := a.fetchedHook.Load()
+	if f == nil {
+		return
+	}
+	by := map[string][]string{}
+	var order []string
+	for _, r := range refs {
+		if _, ok := by[r.Channel]; !ok {
+			order = append(order, r.Channel)
+		}
+		by[r.Channel] = append(by[r.Channel], r.TS)
+	}
+	for _, ch := range order {
+		(*f)(ch, by[ch])
+	}
+}
+
+// SetFetchedHook makes f hear of the messages each fetch by id brings that
+// the store held no copy of (Activity's and Saved's hydration, the Threads
+// view's getView, a thread's replies), by channel, on the fetching
+// goroutine: taut's mirror marks them for the plugins. nil removes it;
+// restore puts back the hook it replaced.
+func (a *App) SetFetchedHook(f func(ch string, tss []string)) (restore func()) {
+	var p *func(ch string, tss []string)
+	if f != nil {
+		p = &f
+	}
+	prev := a.fetchedHook.Swap(p)
+	return func() { a.fetchedHook.CompareAndSwap(p, prev) }
 }
 
 // announceHeld emits an "update" of ch/ts as the store holds it now, in

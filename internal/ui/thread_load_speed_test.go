@@ -255,6 +255,9 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 				return e.a.secondary.open() && e.a.secondary.kind == secThread
 			})
 		})
+		if h := e.threadView(ch, root).Highlighted(); h != midTS {
+			t.Errorf("the mention's reply isn't flashing (highlighted %q): jumpToThreadReply's highlightTs from Activity", h)
+		}
 		got := reqs()[before:]
 		sorted := append([]string(nil), got...)
 		sort.Strings(sorted)
@@ -353,6 +356,76 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 		}
 		closed(t, "activity")
 		t.Logf("replies requests over the three opens: %d (all of the thread would be about %d at 200 a page)", len(reqs()), n/200+1)
+		for k := range inbox {
+			inbox[k] = nil // the experiments as the account has them again
+		}
+		app.SetExperimentGroups(inbox)
+	})
+
+	// 4. a jump to a reply deep in the thread while the pane shows it from
+	// its root (a notification's click, a reply's permalink, a shared
+	// message: jumpToMessage, then openThreadAt's JumpTo): the pane loads
+	// the page that holds the reply (the two reads around it, as Slack's
+	// jumpToThreadReply sets the start the slice is read around) and
+	// lands on it, flashing it, instead of dropping a jump its slice
+	// doesn't hold or showing the newest page
+	t.Run("jump", func(t *testing.T) {
+		// without the nested secondary view a jump from the thread's own
+		// channel highlights its reply (jumpToThreadReply's highlight rule,
+		// openThreadAt); under it, only one from elsewhere does
+		app.SetExperimentGroup("nested_secondary_view", "")
+		defer app.ClearExperimentGroup("nested_secondary_view")
+		e.a.Navigate("c/" + ch)
+		e.until("the channel", 20*time.Second, func() bool {
+			c := e.a.convos[ch+"/"]
+			if c == nil {
+				return false
+			}
+			l, ok := c.list.(channelList)
+			return ok && l.ChannelView.RowText(root) != ""
+		})
+		opened(t, "jump: the thread from its root", reply(1), func() { e.a.OpenThread(ch, root) })
+		e.settle(300 * time.Millisecond)
+		deep := n / 3
+		deepTS := reply(deep)
+		before := len(reqs())
+		t0 := time.Now()
+		e.a.jumpToMessage(ch, deepTS, root)
+		landed := e.untilSoft(20*time.Second, func() bool {
+			tv := e.threadView(ch, root)
+			if tv == nil {
+				return false
+			}
+			for _, r := range tv.RowRects() {
+				if r.TS == deepTS {
+					return true
+				}
+			}
+			return false
+		})
+		el := time.Since(t0)
+		tv := e.threadView(ch, root)
+		first, last, _, _ := tv.SliceRange()
+		if !landed {
+			t.Fatalf("the jump to reply %d never landed on it (%v; %d requests since: %v; the pane draws %s..%s)",
+				deep, el.Round(time.Millisecond), len(reqs())-before, reqs()[before:], first, last)
+		}
+		t.Logf("jump to reply %d: on screen %v after the jump, %d requests", deep, el.Round(time.Millisecond), len(reqs())-before)
+		if h := tv.Highlighted(); h != deepTS {
+			t.Errorf("the reply jumped to isn't flashing (highlighted %q)", h)
+		}
+		got := append([]string(nil), reqs()[before:]...)
+		sort.Strings(got)
+		if want := []string{page("latest", deepTS), page("oldest", deepTS)}; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+			t.Errorf("the jump asked %v; want the two reads around the reply, %v", got, want)
+		}
+		r := tv.ListRect()
+		for _, rr := range tv.RowRects() {
+			if rr.TS == deepTS && rr.R.Min.Y > r.Min.Y+r.Dy()/2 {
+				t.Errorf("the reply landed at y %d, below the middle of the list (%v)", rr.R.Min.Y, r)
+			}
+		}
+		closed(t, "jump")
 	})
 }
 

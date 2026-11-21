@@ -587,8 +587,14 @@ func copyMessage(gtx layout.Context, m core.Message) {
 	if t := richclip.TextyDelta(m.Doc); t != "" {
 		c.Custom = map[string]string{"slack/texty": t}
 	}
-	go func() { _ = richclip.Write(context.Background(), c) }()
+	write := writeRich
+	go func() { _ = write(context.Background(), c) }()
 }
+
+// writeRich is richclip.Write: the copy goes to the system clipboard off
+// the UI goroutine, not through Gio's clipboard, so the menu tests read
+// Copy message's copy through this (menu_keys_test.go's newMkEnv).
+var writeRich = richclip.Write
 
 func actMsgText(m core.Message) string {
 	if s := richtext.PlainText(m.Doc); strings.TrimSpace(s) != "" {

@@ -1050,6 +1050,22 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 	}
 }
 
+// MessagesAdded is MessagesChanged for messages a load brought that the
+// UI's model of ch didn't have (a thread pane's replies, an older page):
+// marked only while JS holds a copy of ch's messages it read before, which
+// lacks them, so their views waited for the mirror's sweep (a thread
+// pane's first open under a text patch drew core's copy ~650 ms). JS that
+// never read the conversation reads them all fresh with the first view
+// asked for, and marking a first window's every message held each of its
+// views a JS round trip more (a channel's settled first draw took 124 ms,
+// not 17).
+func (t *Taut) MessagesAdded(ch string, tss []string) {
+	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
+		return
+	}
+	t.MessagesChanged(ch, tss)
+}
+
 // InjectedMessages lists messages plugins added to ch (injectMessages)
 // that core doesn't have, as UI messages. Non-blocking like MessageView,
 // and cheap: the fetch worker decodes the channel's bucket once per value
@@ -1915,7 +1931,9 @@ func (v *viewCache) dropEvicted(ch string) {
 	// asked of core with mu released: the UI goroutine's lookups wait on it
 	var gone []string
 	for _, ts := range subs {
-		if !v.t.app.S.Holds(ch, ts, "") {
+		// a copy fetched by id is core's too (Activity's, Saved's): its
+		// view stays, as the pass never drops what those views draw
+		if !v.t.app.S.Keeps(ch, ts) {
 			gone = append(gone, ts)
 		}
 	}

@@ -268,6 +268,8 @@ on:
       - "internal/ui/reactions_live_test.go"
       - "internal/fakeslack/uptime.go"
       - "internal/fakeslack/react_live.go"
+      - "internal/fakeslack/edit_live.go"
+      - "internal/ui/activity_edit_latency_test.go"
       - "internal/store/reacts.go"
       - "internal/ui/views/taut.go"
       # the history-gap job's own
@@ -278,6 +280,12 @@ on:
       - "internal/ui/messages/reached_end_test.go"
       - "internal/ui/reached_end_list_test.go"
       - "internal/fakeslack/count_posts.go"
+      # the readiness the latency guards wait on, and where Activity reads it
+      - "internal/taut/ui.go"
+      - "internal/taut/mirror.go"
+      - "internal/store/taut_mirror.go"
+      - "internal/ui/views/adapt.go"
+      - "internal/ui/views/activity_rows.go"
 
 permissions:
   contents: read
@@ -444,6 +452,49 @@ jobs:
       - name: core, slow runner (one CPU)
         if: ${{ !cancelled() }}
         run: go test -cpu 1 -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
+
+  # 2026-11-21's flakes, fixed on ci-speed: TestWarmWindowWritesSurviveBoot
+  # (core) wrote before Boot's sections call reached the fake, so
+  # MoveToSection's own reread was the call held; TestRailPeekDMsRowMenu
+  # (ui) could end its 60 ms wait before the peek's throttled check ran;
+  # TestSpellcheckNeverBlocksFrame (composer) timed frames on a shared
+  # runner. COUNT runs each, as loaded runners ran them: core under -race,
+  # composer on one CPU, ui in four processes at once
+  flakes-1121:
+    if: ${{ !inputs.only || startsWith('flakes-1121', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core (writes on the warm window while Boot's answers are out), race detector
+        run: go test -race -count=$COUNT -timeout 30m -run '^TestWarmWindowWritesSurviveBoot$' ./internal/core
+      - name: composer (a slow spell engine never holds a frame), one CPU
+        if: ${{ !cancelled() }}
+        run: go test -cpu 1 -count=$COUNT -timeout 30m -run '^TestSpellcheckNeverBlocksFrame$' ./internal/ui/composer
+      - name: ui (the DMs peek's row menu), four processes at once
+        if: ${{ !cancelled() }}
+        run: |
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+          cd internal/ui
+          pids=""
+          for i in 1 2 3 4; do
+            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=$COUNT -test.timeout 30m -test.run '^TestRailPeekDMsRowMenu$' > "$RUNNER_TEMP/peek-$i.log" 2>&1 &
+            pids="$pids $!"
+          done
+          rc=0
+          i=0
+          for p in $pids; do
+            i=$((i + 1))
+            wait "$p" || { rc=1; echo "== process $i failed"; tail -n 80 "$RUNNER_TEMP/peek-$i.log"; }
+          done
+          exit $rc
 
   # imgcache's decode memory (emoji-load-6): Copy image copies the
   # original however long it takes and its thumbnail only when the original
@@ -1576,7 +1627,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('activity-live-msg', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|EditsJSHeld|ThreadEditsJSHeld|ThreadNewReplyJSHeld|ThreadNewReplyFreshJSHeld|ThreadProjectionJSHeld|MaskedWithInnerPatches|MaskedThreadWithInnerPatches|SlicePatchNoReconvert|RootVoteAfterGap|RootRowsBesidePane|SearchIdle|FailedGroup|CopylessRefetch|EvictedRefetch|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote|Batch|EvictedRefetch|Floor)|TestSavedLive(Messages|BotUpdate|EvictedRefetch)|TestActivityThreadLeaves(WithItsDeletedReply|WhenItsReplyDropsTheMention)|TestActivityBadgesZero(ReadLocally|ThenLoad|InSocketOrder|Classic)|TestActivityFloorConvertsDrawnRows)$'
+      LIVE_TESTS: '^(TestActivityLive(VoteCounts|VoteJSHeld|VoteSlicePatchHeldReaction|SlicePatchReachesFetchedMessages|EditsJSHeld|ThreadEditsJSHeld|ThreadNewReplyJSHeld|ThreadNewReplyFreshJSHeld|ThreadProjectionJSHeld|MaskedWithInnerPatches|MaskedThreadWithInnerPatches|SlicePatchNoReconvert|RootVoteAfterGap|RootRowsBesidePane|SearchIdle|FailedGroup|CopylessRefetch|EvictedRefetch|VoteSlicePatch|VoteBesideThread|Edit|Delete|MissingMessage|Reaction|WindowEvicted|EntryWhileHidden|ManyChangesHidden|RemovedDuringLoad|Preview)|TestThreadsLive(Messages|Vote|Batch|EvictedRefetch|Floor)|TestSavedLive(Messages|BotUpdate|EvictedRefetch)|TestActivityThreadLeaves(WithItsDeletedReply|WhenItsReplyDropsTheMention)|TestActivityBadgesZero(ReadLocally|ThenLoad|InSocketOrder|Classic)|TestActivityFloorConvertsDrawnRows|TestViewsKeepARewrittenAuthorWhileJSIsBusy)$'
       STORE_TESTS: '^(TestFetchedMessages(TakeSocketChanges|KeepReactions|Bounded)|TestFetchedReplayTruncatedUsers|TestApplyReactionLastListed|TestFetchedSizeAfterMutate|TestRefreshRangeRead|TestWindowReadKeepsFetchedRevision)$'
       CORE_TESTS: '^(TestMessageChangeTable|TestMessageChangeTableForgets|TestReactionReachesFetchedMessage|TestHydrateKeepsReactionsDuringFetch|TestMessageChangedRemoves|TestMentionsViewerRichKeywords|TestFetchedRootAnnounced|TestReadRevisionAnnounced|TestWindowReadKeepsReactions|TestOlderRepliesStored|TestRemovesNotTakenByReactions|TestWindowReadKeepsSocketRevision|TestWindowReadAnnouncesRevision|TestThreadReadKeepsSocketWrites|TestReadRevisionOrderedWithSocket|TestOlderPageRead|TestThreadsUnreadLeavesDeleted|TestReadsAnnounce|TestRefetch(Batch|Gone|Backoff|RetriesByItself)|TestChangedOldMessageStaysOutOfWindow|TestHydrateDropsMissingFetched|TestReadRevisionKeepsPinDuringRead|TestWindowReadKeepsPageRevisionWithReaction|TestClassicBadgesZero)$'
       HUB_TESTS: '^TestHub(Update(OutsideLoadedHistory|AfterWholeEviction|DuringFirstLoad|AfterLocalCopyAtTop)|KeepLiveAfterStartOver|ReloadKeepsRangeAfterOldChange)$'
@@ -1656,7 +1707,10 @@ jobs:
   # root of its open thread pane, and both at once; natively and under
   # pass-through plugins (the messages slice, the components a message
   # draws through). Frames are drawn when the app asks for one, as a
-  # window does. Dispatch with only=edit-latency.
+  # window does. Its first run adds the known slice gaps held to bounds
+  # that pass today (CLACK_SLICE_TEXT: a rewriting plugin's view of each
+  # edit within 4 frames and 80 ms, a newly shown row's first draw within
+  # 500 ms), so they can't grow unseen. Dispatch with only=edit-latency.
   edit-latency:
     if: ${{ !inputs.only || startsWith('edit-latency', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1675,7 +1729,7 @@ jobs:
           CLACK_LATENCY_TESTS: "1"
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestEditLatency$' ./internal/ui || rc=1
+          CLACK_SLICE_TEXT=1 xvfb-run -a go test -count=1 -v -timeout 25m -run '^(TestEditLatency|TestSliceFirstDraw)$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 50m -run '^TestEditLatency$' ./internal/ui || rc=1
           exit $rc
 
@@ -1742,7 +1796,14 @@ jobs:
   # answering after 1 s, its title naming the group's members (one the
   # sidebar already lists too); ten mentions at once; members still
   # unknown after the wait (no id, a label kept); a DM's partner; no toast
-  # for a message deleted while it waited. Dispatch with only=toast-names.
+  # for a message deleted while it waited. Names as Slack's: a group DM's
+  # title is getMpimDisplayNameAlphabetical (sorted, display_real_names,
+  # "Name hidden"), the sender and a DM's partner follow display_real_names,
+  # a mention getMemberMentionName or the mentions-real-names rule; a
+  # member the viewer hid reads "Hidden user" (no @) and sends no toast;
+  # members users/info never brought keep the sidebar's name or the slug's
+  # handles, never the slug; the title's people come before 100+ mentions.
+  # Dispatch with only=toast-names.
   toast-names:
     if: ${{ !inputs.only || startsWith('toast-names', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1759,8 +1820,8 @@ jobs:
       - name: "ui: a toast's mention of a member the store didn't hold (one verbose run, then COUNT)"
         run: |
           rc=0
-          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestNotify(Names|Drops)' ./internal/ui || rc=1
-          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestNotify(Names|Drops)' ./internal/ui || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 10m -run '^TestNotify(Names|Drops|Members)' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 20m -run '^TestNotify(Names|Drops|Members)' ./internal/ui || rc=1
           exit $rc
 
   # activity-stamp: an activity entry whose message is deleted, or edited
@@ -1870,6 +1931,96 @@ jobs:
           go test -count=$COUNT -v -run '^(TestReactionAddedKeepsItsURL|TestMalformedReactionChangesNothing)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^TestReactionURLSurvivesAFetch$' ./internal/store || rc=1
           xvfb-run -a go test -count=$COUNT -v -run '^TestPinsTabReactionsAreCoresUnderSlicePatch$' ./internal/ui/views || rc=1
+          exit $rc
+
+  # activity-edits: an edit of an Activity entry's message draws in its
+  # row in the frame after the socket brings it (Slack's Activity row reads
+  # the live message): someone's mention edited every 500 ms with the
+  # Activity page open, frames drawn when the app asks; natively, under a
+  # messages-slice patch, and under a patch of the components an Activity
+  # row draws through (ActivityItem, ActivityThread, the row contents),
+  # where a JS tree of the revision before can hold an edit back.
+  # Dispatch with only=activity-edits.
+  activity-edits:
+    if: ${{ !inputs.only || startsWith('activity-edits', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: each edit to the Activity row's frame (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestActivityEditLatency$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestActivityEditLatency$' ./internal/ui || rc=1
+          exit $rc
+
+  # slice-gaps: known gaps, run only on request (only=slice-gaps, never on
+  # a push): under a plugin rewriting messages through the messages slice,
+  # a thread pane's newly shown reply draws the plugins' view from its
+  # first frame (Clack's draws core's copy until JS's is ready: ~250 ms),
+  # and each edit's rewritten view draws in the frame after the socket
+  # (Clack's: a JS round trip, 3 frames). Slack renders the patched slice
+  # in the render itself. Red until those change.
+  slice-gaps:
+    if: ${{ inputs.only == 'slice-gaps' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: a newly shown row's first frame, and each edit's rewritten view, under a slice patch (COUNT runs)"
+        env:
+          CLACK_SLICE_GAPS: "1"
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          set -o pipefail # the tests' status, not tee's
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSliceFirstDraw$' ./internal/ui 2>&1 | tee "$RUNNER_TEMP/first-draw.log" || rc=1
+          grep -q "first draw, the thread pane opened:" "$RUNNER_TEMP/first-draw.log" || { echo "the first-draw test measured nothing"; rc=1; }
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestEditLatency$/^slice-text$' ./internal/ui 2>&1 | tee "$RUNNER_TEMP/slice-text.log" || rc=1
+          grep -q "slice-text, channel:" "$RUNNER_TEMP/slice-text.log" || { echo "the slice-text mode ran nothing"; rc=1; }
+          exit $rc
+
+  # views-rewrites: a view a plugin rewrites outside the text (Censorship's
+  # mask in blocks, ShowRealUser's sender) stands while the plugins' JS is
+  # busy: a reaction never brings core's copy back in the views drawn from
+  # viewMsg; a message fetched by id (Activity's hydration) reaches the
+  # plugins' messages slice, marked as it lands (no sweep waited for), and
+  # a channel's list never draws it as one a plugin injected (a jump to it
+  # pages back). Dispatch with only=views-rewrites.
+  views-rewrites:
+    if: ${{ !inputs.only || startsWith('views-rewrites', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "views: rewritten views through a reaction while JS is busy (COUNT runs)"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages|TestActivityFetchedViewWithoutTheSweep)$' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestFetchedMessageStaysOutOfTheList$' ./internal/ui/messages || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
@@ -2416,8 +2567,8 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -v -run '^(TestHoverCardRoleBand|TestHoverCardOwnerHeightOnGrid|TestHoverCardShowsRealName|TestHoverCardStatusEmojiByName|TestHoverCardMemberDND|TestFullProfileNoRoleLabels|TestHoverCardVariants|TestHoverCardPronounsLikeSlack|TestSearchRowsPeople)$' ./internal/ui/popups || rc=1
-          go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestHoverCardRoleBand|TestHoverCardOwnerHeightOnGrid|TestHoverCardShowsRealName|TestHoverCardStatusEmojiByName|TestHoverCardMemberDND|TestHoverCardHuddleStatus|TestHoverCardBlankNameLink|TestFullProfileNoRoleLabels|TestHoverCardVariants|TestHoverCardPronounsLikeSlack|TestSearchRowsPeople)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND|TestMemberDNDOmittedAnswerIsFresh|TestMemberDNDStaleAfterSlowReconnect)$' ./internal/core || rc=1
           go test -count=$COUNT -v -run '^(TestIconCoverage|TestAllIconsParse)$' ./internal/ui/icons || rc=1
           exit $rc
 

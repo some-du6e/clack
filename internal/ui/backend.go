@@ -547,11 +547,8 @@ func defaultSectionName(t string) string {
 	return "Section"
 }
 
-func (b *backend) mpimName(c *core.Conv, self string) string {
-	return b.mpimNameBy(c, self, b.core.User)
-}
-
-// mpimNameBy is mpimName reading the members with user.
+// mpimNameBy is a group DM's name for the sidebar: its custom name, else
+// its members' names but self's, read with user, else its mpdm slug.
 func (b *backend) mpimNameBy(c *core.Conv, self string, user func(string) (core.User, bool)) string {
 	if n, ok := b.core.MpdmCustomName(c.ID); ok { // mpdm_naming (core/mpdm_name.go)
 		return n
@@ -910,6 +907,9 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	if ev.Msg.Streaming() && b.core.Experiment("defer_notification_3p_streaming") == "on" {
 		return
 	}
+	if b.core.UserHidden(ev.Msg.User) {
+		return // a member the viewer hid (isUserHidden): no notification, no lookups for one
+	}
 	if c, ok := b.core.MessageChange(ev.Channel, ev.TS); ok && c.Deleted {
 		return // deleted while the lookups it waited for ran: nothing to show, or open
 	}
@@ -975,12 +975,21 @@ func (b *backend) setCount(id string, cnt core.Count) bool {
 }
 
 // notifyTitle is Slack's getNotificationTitle (gaJC) for one signed-in
-// account: "New message from {name}" in a DM, else "New message in
-// {channel}" (growl; notify_threads.go). A conversation core doesn't
-// know keeps the sender's form: its name isn't there to show.
+// account: "New message from {name}" in a DM, named as
+// getDisplayNameForChannel names it (the DM's user, never the message's
+// username: noteConv), else "New message in {channel}" (growl;
+// notify_threads.go). A conversation core doesn't know keeps the
+// sender's form: its name isn't there to show.
 func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
-	if c == nil || c.Kind == "im" || c.Kind == "app" {
-		return nsGrowl.T("New message from {name}", "name", b.notifySender(ev))
+	switch {
+	case c == nil:
+		return nsGrowl.T("New message from {name}", "name", b.notifyFrom(ev))
+	case c.Kind == "im" || c.Kind == "app":
+		name := c.Name
+		if !noteNamed(c) {
+			name = b.notifyFrom(ev)
+		}
+		return nsGrowl.T("New message from {name}", "name", name)
 	}
 	return nsGrowl.T("New message in {channel}", "channel", notifyChannelName(c))
 }
@@ -999,15 +1008,28 @@ func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
 	return text
 }
 
-// notifySender is the sender's name (getMemberName; a bot's username).
+// notifySender is a body's "{sender}: " (getContentForNotification's
+// getPrefCompliantMemberNameById, R6Qy, over the message's user): the
+// member's name under the viewer's display_real_names, as the store holds
+// them (the toast waited for them: nothing asked again). "" for a message
+// with no user, a webhook's or a legacy bot's post: getMemberById has no
+// member for it, so Slack writes no prefix (Clack wrote the username).
 func (b *backend) notifySender(ev core.Event) string {
-	name := ev.Msg.Name
-	if name == "" {
-		if u, ok := b.core.User(ev.Msg.User); ok {
-			name = u.Name
-		}
+	if ev.Msg.User == "" || b.core == nil {
+		return ""
 	}
-	return name
+	n, _ := b.core.S.PrefNameHeld(ev.Msg.User)
+	return n
+}
+
+// notifyFrom names the sender for a title whose conversation can't name
+// it: notifySender, else a user-less bot's own name (its username or the
+// bot's: core's Message.Name).
+func (b *backend) notifyFrom(ev core.Event) string {
+	if n := b.notifySender(ev); n != "" {
+		return n
+	}
+	return ev.Msg.Name
 }
 
 func contains(s []string, v string) bool {

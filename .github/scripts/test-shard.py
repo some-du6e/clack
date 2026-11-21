@@ -2,16 +2,23 @@
 """ci.yml's `go test ./...`, split over parallel jobs, and the check that
 the split dropped nothing.
 
-  test-shard.py run  --heavy PKG,PKG --shard K/N --out DIR
+  test-shard.py run  --heavy PKG,PKG --shard K/N [--times FILE] --out DIR
   test-shard.py run  --heavy PKG,PKG --rest      --out DIR
   test-shard.py check [--baseline FILE.jsonl] DIR...
+  test-shard.py times [--heavy PKG,PKG] DIR... > .github/test-times.json
 
 The heavy packages' top-level tests (Test*, Fuzz*, Example*: what
-`go test` runs without -bench) are hashed by name into N shards, so a
-new test lands in one shard and the shards stay about even as tests are
-added. --rest runs every other package of `go list ./...` whole. Each
-run writes DIR/shard.json (the package list, the heavy packages' test
-lists, this shard's share) and DIR/*.jsonl (`go test -json`).
+`go test` runs without -bench) are split into N shards. With --times
+(a JSON object of "PKG Test": seconds, from earlier runs' `go test -json`)
+each package's tests are packed by their recorded times, longest first,
+each into the shard with the least so far, so the shards take about as
+long; a test with no recorded time counts as its package's median.
+Without it they are hashed by name. Every shard computes the same split
+from the same test lists and file. --rest runs every other package of
+`go list ./...` whole. Each run writes DIR/shard.json (the package list,
+the heavy packages' test lists, this shard's share) and DIR/*.jsonl
+(`go test -json`). `times` reads shard DIRs (test-shard-* artifacts) and
+prints their tests' times, averaged over the DIRs that ran each.
 
 check reads every shard's DIR and fails unless all shards saw the same
 packages and test lists, every package finished in the shards that own
@@ -46,6 +53,21 @@ def go_test_list(pkg):
 
 def shard_of(pkg, name, n):
     return zlib.crc32(f'{pkg}.{name}'.encode()) % n
+
+
+def pack(pkg, names, n, times):
+    """{name: shard} for one package's tests: longest recorded first, each
+    into the least loaded shard (the lowest on a tie); a test with no
+    recorded time counts as the package's median."""
+    known = sorted(times[f'{pkg} {t}'] for t in names if f'{pkg} {t}' in times)
+    default = known[len(known) // 2] if known else 1.0
+    load = [0.0] * n
+    out = {}
+    for t in sorted(names, key=lambda t: (-times.get(f'{pkg} {t}', default), t)):
+        k = min(range(n), key=lambda i: (load[i], i))
+        out[t] = k
+        load[k] += times.get(f'{pkg} {t}', default)
+    return out, load
 
 
 def summarize(path):
@@ -123,13 +145,24 @@ def run(args):
             t.start()
         for t in ts:
             t.join()
+        times = None
+        if args.times:
+            with open(args.times) as f:
+                times = json.load(f)
+            meta['times'] = args.times
         for p in heavy:
             if p not in lists:
                 raise SystemExit(f'no test list for {p}')
-            mine = [t for t in lists[p] if shard_of(p, t, n) == k - 1]
+            if times is None:
+                mine = [t for t in lists[p] if shard_of(p, t, n) == k - 1]
+                est = ''
+            else:
+                at, load = pack(p, lists[p], n, times)
+                mine = [t for t in lists[p] if at[t] == k - 1]
+                est = f' (recorded {load[k - 1]:.0f}s of {sum(load):.0f}s; shards {", ".join(f"{x:.0f}" for x in load)})'
             meta['lists'][p] = lists[p]
             meta['assigned'][p] = mine
-            print(f'{p}: {len(mine)} of {len(lists[p])} tests in shard {k}/{n}')
+            print(f'{p}: {len(mine)} of {len(lists[p])} tests in shard {k}/{n}{est}')
             if mine:
                 jobs.append((p.rsplit('/', 1)[-1], ['go', 'test', '-json', '-run', '^(' + '|'.join(mine) + ')$', p]))
     with open(os.path.join(args.out, 'shard.json'), 'w') as f:
@@ -254,6 +287,24 @@ def check(args):
     return 1 if errs else 0
 
 
+def times(args):
+    """every top-level test's elapsed seconds, averaged over the DIRs"""
+    heavy = [p for p in (args.heavy or '').split(',') if p]
+    got = {}
+    for d in args.dirs:
+        paths = [os.path.join(d, x) for x in sorted(os.listdir(d)) if x.endswith('.jsonl')]
+        for path in paths:
+            for e in events(path):
+                t = e.get('Test', '')
+                if t and '/' not in t and e.get('Action') in ('pass', 'fail', 'skip') and e.get('Elapsed') is not None:
+                    if not heavy or e['Package'] in heavy:
+                        got.setdefault(f"{e['Package']} {t}", []).append(e['Elapsed'])
+    out = {k: round(sum(v) / len(v), 2) for k, v in sorted(got.items())}
+    json.dump(out, sys.stdout, indent=0, sort_keys=True)
+    sys.stdout.write('\n')
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -262,12 +313,16 @@ def main():
     g = r.add_mutually_exclusive_group(required=True)
     g.add_argument('--shard')
     g.add_argument('--rest', action='store_true')
+    r.add_argument('--times')
     r.add_argument('--out', required=True)
     c = sub.add_parser('check')
     c.add_argument('--baseline')
     c.add_argument('dirs', nargs='+')
+    tm = sub.add_parser('times')
+    tm.add_argument('--heavy', help='only these packages (comma-separated)')
+    tm.add_argument('dirs', nargs='+')
     args = ap.parse_args()
-    sys.exit(run(args) if args.cmd == 'run' else check(args))
+    sys.exit({'run': run, 'check': check, 'times': times}[args.cmd](args))
 
 
 if __name__ == '__main__':

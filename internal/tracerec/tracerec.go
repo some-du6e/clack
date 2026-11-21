@@ -8,8 +8,8 @@
 // byte that x/exp's parser rejects, and its error path calls trace.Stop on
 // the tracer's own reader goroutine, which deadlocks it, and with it every
 // later WriteTo and Stop (Go 1.25 likely breaks it too, differently).
-// go.mod's toolchain line is only a minimum, so a local build with a newer
-// Go would; the go1.25 build tag gives that build the runtime's recorder.
+// go.mod's go line is only a minimum, so a local build with a newer Go
+// would; the go1.25 build tag gives that build the runtime's recorder.
 // ci's newer-go job runs this package's tests on Go 1.25 and the newest Go.
 package tracerec
 

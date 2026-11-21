@@ -27,3 +27,21 @@ func TestReactionURLSurvivesAFetch(t *testing.T) {
 		t.Errorf("an add by nobody: found %v, changed %v", found, changed)
 	}
 }
+
+// An existing reaction gains a url the way cBAo sets h.url before its
+// isEqual: an add by someone listed bringing one changes only the url, an
+// add by someone else counts them and takes theirs, and the same url
+// again changes nothing.
+func TestReactionGainsAURL(t *testing.T) {
+	const x, y = "https://emoji.slack-edge.com/T0PARTNER/partner-wave/x.png", "https://emoji.slack-edge.com/T0PARTNER/partner-wave/y.png"
+	m := slack.Message{TS: "900.000002", Reactions: []slack.Reaction{{Name: "partner-wave", Count: 1, Users: []string{"U0A"}}}}
+	if !ApplyReactionURL(&m, "partner-wave", "U0A", x, true) || m.Reactions[0].URL != x || m.Reactions[0].Count != 1 {
+		t.Fatalf("a listed person's add with a url: %+v", m.Reactions)
+	}
+	if !ApplyReactionURL(&m, "partner-wave", "U0B", y, true) || m.Reactions[0].URL != y || m.Reactions[0].Count != 2 {
+		t.Fatalf("another person's add with a url: %+v", m.Reactions)
+	}
+	if ApplyReactionURL(&m, "partner-wave", "U0A", y, true) || m.Reactions[0].Count != 2 {
+		t.Fatalf("the same url again changed %+v", m.Reactions)
+	}
+}

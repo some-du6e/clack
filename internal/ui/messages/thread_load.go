@@ -390,6 +390,7 @@ func (hb *hub) jumpThread(m *model, ts string) bool {
 			m.setThreadSlice(sl, nil)
 			m.loaded = true
 			m.fetched = time.Now()
+			m.markLoadChanged() // the slice's messages new to the model, for the plugins' copy (setAll)
 		}
 		m.th.lastPre = ""
 		m.rev++

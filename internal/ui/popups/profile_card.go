@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/io/key"
@@ -54,7 +55,8 @@ type ProfileCard struct {
 	// scrim, never takes focus and sits above anchorR (hovercard.Place).
 	hover   bool
 	anchorR image.Rectangle
-	sub     Overlay // a menu the card opened (holds a hover card open)
+	keep    hovercard.Keep // a hover card's position (Popover contentBounds)
+	sub     Overlay        // a menu the card opened (holds a hover card open)
 
 	asked   bool // EnsureUsers started
 	missing bool // EnsureUsers finished without the user
@@ -134,11 +136,14 @@ func NewTextyHoverCard(h Host, anchor image.Rectangle, userID string) *ProfileCa
 // the trigger (hovercard.Place), click cards at the click.
 func (p *ProfileCard) place(gtx layout.Context, sz, win image.Point) image.Point {
 	if p.texty {
-		pt, _ := theme.KeepInBounds(p.anchorR, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
-		return pt
+		return p.keep.At(sz, func() image.Point {
+			pt, _ := theme.KeepInBounds(p.anchorR, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
+			return pt
+		})
 	}
 	if p.hover {
-		return hovercard.Place(p.anchorR, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+		// placed once, again only when its size changes (hovercard.Keep)
+		return p.keep.Place(p.anchorR, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
 	}
 	return place(pointRect(p.anchor), sz, win, dp(gtx, 8), Below)
 }
@@ -165,6 +170,10 @@ func (p *ProfileCard) ensureTeam(u core.User) {
 
 // Rect is the card's bounds in window coordinates (after a Layout).
 func (p *ProfileCard) Rect() image.Rectangle { return p.rect }
+
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *ProfileCard) Placement() *hovercard.Keep { return &p.keep }
 
 // NameRect is the header's name line (the name, then the presence dot) and
 // PresenceRect the dot, in window px as last drawn, empty before the card
@@ -239,9 +248,7 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 		pfTick(gtx)
 		// ConnectedPresence's isDnd reads the member's DND, which asks
 		// dnd.teamInfo when it isn't fresh (core.ClaimMemberDND)
-		if c := p.h.Core(); c != nil && pfShowsPresence(u) && c.ClaimMemberDND(u.ID, gtx.Now) {
-			pfLoadDND(p.h, u.ID)
-		}
+		pfWantDND(p.h, u, gtx.Now)
 	}
 
 	w := dp(gtx, 340)
@@ -416,11 +423,11 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 	}
 	// BaseCustomStatus renders nothing without a status emoji (T1ap's
 	// resolved emoji is falsy), whatever the text
-	if pfHasStatus(u, gtx.Now) && u.StatusEmoji != "" {
+	if su := pfCardStatusOf(p.h, u, gtx.Now); pfHasStatus(su, gtx.Now) && su.StatusEmoji != "" {
 		margin(0)
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
-			return pfCardStatus(gtx, p.h, th, cl, u)
+			return pfCardStatus(gtx, p.h, th, cl, su)
 		})
 		y += d.Size.Y
 	}
@@ -774,6 +781,25 @@ func pfCardStatus(gtx layout.Context, h Host, th *theme.Theme, cl *Colors, u cor
 	return layout.Dimensions{Size: image.Pt(maxW, lineH)}
 }
 
+// pfCardStatusOf is u with BaseCustomStatus's emoji (T1ap) and text
+// (fWSH, client-boot build 35b42de8b870): without a preset
+// (status_text_canonical), a member in a huddle with no status emoji
+// (lxjN isCustomStatusAHuddlesStatus: huddle_state in_a_huddle, its
+// expiration ahead, unless huddles_status_ultra is on) shows :headphones:
+// and "In a huddle". Others' availability statuses (Xt: their
+// dnd_profile_status) aren't loaded.
+func pfCardStatusOf(h Host, u core.User, now time.Time) core.User {
+	if u.StatusCanonical != "" || !u.Huddle || u.HuddleExpires <= now.Unix() || u.StatusEmoji != "" {
+		return u
+	}
+	if c := h.Core(); c != nil && c.Experiment("huddles_status_ultra") == "on" {
+		return u
+	}
+	u.StatusEmoji, u.StatusEmojiURL, u.StatusText, u.StatusExp = ":headphones:", "", i18n.T("members", "In a huddle"), 0
+	u.StatusEmojiInfo = nil
+	return u
+}
+
 // pfUnescape is lodash's unescape (FormatTextWithEmoji's inputIsEscaped):
 // &amp; &lt; &gt; &quot; &#39; back to their characters.
 var pfUnescapeR = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&#39;", "'")
@@ -1106,12 +1132,40 @@ func pfSubscribe(h Host, id string) {
 	}, nil)
 }
 
-// pfLoadDND asks dnd.teamInfo for id's DND (claimed by ClaimMemberDND)
-// and repaints when it answers.
-func pfLoadDND(h Host, id string) {
+// pfDNDQueue is each core's members whose DND a presence read claimed
+// and no request has taken yet.
+var pfDNDQueue struct {
+	mu  sync.Mutex
+	ids map[*core.App][]string
+}
+
+// pfWantDND is a presence read of u's DND (ConnectedPresence's isDnd:
+// the hover card, the search people cards, a user group's rows): a stale
+// one is claimed (core.ClaimMemberDND) and asked for together with the
+// others read meanwhile, one dnd.teamInfo request for the lot
+// (fetchAndUpsertDndForUsers batches); the screen repaints when it
+// answers.
+func pfWantDND(h Host, u core.User, now time.Time) {
 	c := h.Core()
+	if c == nil || !pfShowsPresence(u) || !c.ClaimMemberDND(u.ID, now) {
+		return
+	}
+	pfDNDQueue.mu.Lock()
+	if pfDNDQueue.ids == nil {
+		pfDNDQueue.ids = map[*core.App][]string{}
+	}
+	first := len(pfDNDQueue.ids[c]) == 0
+	pfDNDQueue.ids[c] = append(pfDNDQueue.ids[c], u.ID)
+	pfDNDQueue.mu.Unlock()
+	if !first {
+		return // the queued request takes it
+	}
 	run(h, func(ctx context.Context) (struct{}, error) {
-		return struct{}{}, c.LoadMemberDND(ctx, []string{id})
+		pfDNDQueue.mu.Lock()
+		ids := pfDNDQueue.ids[c]
+		delete(pfDNDQueue.ids, c)
+		pfDNDQueue.mu.Unlock()
+		return struct{}{}, c.LoadMemberDND(ctx, ids)
 	}, func(struct{}, error) { h.Invalidate() })
 }
 
@@ -1299,21 +1353,34 @@ func pfImage(gtx layout.Context, h Host, url string, size, rad float32) layout.D
 }
 
 // pfNameLine draws the bold name (clickable via c) and the presence
-// indicator after it, within maxW.
+// indicator after it, within maxW. MemberProfileBaseEntity's name link
+// holds the name, a no-break space and the presence, so a blank name
+// (an empty real name) still leaves the space and the indicator, and the
+// link over them. The indicator reads the member's DND as it is now (the
+// lists hold users read before dnd.teamInfo answered).
 func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable, u core.User, name string, size, lh, dot float32, maxW int) layout.Dimensions {
 	cl := colorsOf(th)
 	lineH := dp(gtx, lh)
 	// unknown presence draws the hollow ring, like Slack; a deactivated
 	// member has none (MemberProfileBaseEntity: !isDeactivated)
 	hasDot := pfShowsPresence(u)
-	reserve := 0
+	reserve, gap := 0, dp(gtx, 6)
 	if hasDot {
-		reserve = dp(gtx, dot) + dp(gtx, 6)
+		reserve = dp(gtx, dot) + gap
+		if a := h.Core(); a != nil {
+			u.DND = a.MemberInDND(u.ID, gtx.Now)
+		}
 	}
 	nameMax := maxInt(1, maxW-reserve)
+	blank := pfBlank(name)
 	var nd layout.Dimensions
 	switch {
-	case pfBlank(name): // an empty name line (a blank real name): nothing to draw
+	case blank && c != nil && hasDot: // the link is the space and the indicator
+		nd = clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
+			return layout.Dimensions{Size: image.Pt(reserve, lineH)}
+		})
+		nd.Size.X = 0
+	case blank: // nothing to draw
 	case c != nil:
 		nd = clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(nameMax, lineH)}
@@ -1326,9 +1393,7 @@ func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable
 	}
 	x := nd.Size.X
 	if hasDot {
-		if x > 0 {
-			x += dp(gtx, 6)
-		}
+		x += gap // the no-break space, after an empty name too
 		d := at(gtx, image.Pt(x, (lineH-dp(gtx, dot))/2), func(gtx layout.Context) layout.Dimensions {
 			return pfPresence(gtx, h, th, u, dot, false, 0)
 		})
