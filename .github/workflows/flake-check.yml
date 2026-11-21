@@ -1739,6 +1739,32 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -timeout 30m -run '^(TestDMsBadgeLikeSlack|TestDMBadgesClassicLikeSlack|TestDMBadgeMemberLoadsLate|TestTitleDockTaskbarAgreeLikeSlack|TestActivityRailBadgeLikeSlack)$' ./internal/ui
 
+  # The Slack system user's DM (Karim's 2026-11-21 "got a message from
+  # system slack and didnt notice until i opened normal slack"): its
+  # sidebar row under Apps, bold with its unread count as the badge (fgSa,
+  # 9dui), client.counts' IM and group DM rule (mtwS applyCountsToChannels:
+  # mention_count || has_unreads), an app's posts on the socket with no
+  # user, im_marked and a restart, over fakeslack's Size.SystemDM.
+  # Dispatch with only=system-dm-row.
+  system-dm-row:
+    if: ${{ !inputs.only || startsWith('system-dm-row', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "store: client.counts' IM and group DM unread count, COUNT runs"
+        run: go test -count=$COUNT -v -run '^TestCountsDMUnreadWithoutMentionsIsOne$' ./internal/store
+      - name: "ui: the system DM's row and counts over fakeslack's Size.SystemDM, COUNT runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -timeout 30m -run '^(TestSystemDMRowLikeSlack|TestSystemDMUnreadWithoutMentionsLikeSlack)$' ./internal/ui
+
   # plugin-render-2: a reply also sent to the channel, in the channel's list
   # and its thread pane, gets a plugin root per pane (one shared root got
   # each pane's props in turn and rendered every frame), and so does each

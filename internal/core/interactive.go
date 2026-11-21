@@ -1100,6 +1100,11 @@ func (ix *Interactive) MessageContainer(m *Message, attachmentID int) BlockActio
 			b.ServiceID = m.BotProfile.ID
 		}
 	}
+	if b.ServiceID == "" && m.User == "USLACKBOT" && quipFeedbackBlocks(m.Blocks) {
+		// Slack's serviceId is bot_id || (isSlackbotMessage &&
+		// hasQuipMigrationFeedbackBlocks ? "BSLACKBOT")
+		b.ServiceID = "BSLACKBOT"
+	}
 	if b.ServiceTeamID == "" {
 		b.ServiceTeamID = ix.teamID()
 	}
@@ -1118,6 +1123,27 @@ func (ix *Interactive) MessageContainer(m *Message, attachmentID int) BlockActio
 	}
 	b.Container = c
 	return b
+}
+
+// quipFeedbackBlocks is Slack's hasQuipMigrationFeedbackBlocks: a block
+// whose block_id starts with "quip_migration_feedback".
+func quipFeedbackBlocks(raw json.RawMessage) bool {
+	if !strings.Contains(string(raw), "quip_migration_feedback") {
+		return false
+	}
+	var bs []struct {
+		BlockID json.RawMessage `json:"block_id"`
+	}
+	if json.Unmarshal(raw, &bs) != nil {
+		return false
+	}
+	for _, b := range bs {
+		var id string
+		if json.Unmarshal(b.BlockID, &id) == nil && strings.HasPrefix(id, "quip_migration_feedback") {
+			return true
+		}
+	}
+	return false
 }
 
 // ViewContainer builds the blocks.actions container of a view.

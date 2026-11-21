@@ -92,6 +92,11 @@ type Size struct {
 	// answers the generated DMs read (dm_badges.go): what the DM badges
 	// leave out and what they count.
 	DMBadges bool
+	// SystemDM adds the viewer's DM with the Slack system user (USLACK)
+	// in the real account's shape: the user, the org-shared IM and an
+	// app's bot_message posts with no user (system_dm.go, SystemDMID;
+	// PostSystemDMQuiet posts another).
+	SystemDM bool
 	// Embeds adds #embeds-gallery: one message per way Slack draws a
 	// link preview (embeds.go).
 	Embeds bool
@@ -367,6 +372,8 @@ type Server struct {
 	// dmBadgeRead: Size.DMBadges' DMs and their read cursors, set before
 	// serving (dm_badges.go)
 	dmBadgeRead map[string]string
+	// sysDM: Size.SystemDM's state (system_dm.go)
+	sysDM systemDMState
 
 	// OnPost, when set, runs inside chat.postMessage before it answers,
 	// with the posted form and the new message (tests push the realtime
@@ -762,6 +769,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.DMBadges {
 		s.addDMBadges() // dm_badges.go
+	}
+	if sz.SystemDM {
+		s.addSystemDM() // system_dm.go
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
@@ -1457,6 +1467,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go
+		return out
+	}
 	if s.Size.AgentTasks {
 		if out, handled := s.handleAgentTasks(method, f); handled { // agent_tasks.go
 			return out
@@ -1592,7 +1605,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if closedDM(c) { // closed_dms.go: read
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
-			e = s.dmBadgeCount(c, e) // dm_badges.go
+			e = s.dmBadgeCount(c, e)  // dm_badges.go
+			e = s.systemDMCount(c, e) // system_dm.go
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1863,8 +1877,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "edge/users/info":
 		var up map[string]int
 		_ = json.Unmarshal(edge["updated_ids"], &up)
-		var res []slack.User
+		var res []any
 		for id := range up {
+			if u, ok := s.systemDMUserJSON(id); ok { // system_dm.go: USLACK with the real answer's keys
+				res = append(res, u)
+				continue
+			}
 			if u, ok := s.userByID(id); ok {
 				res = append(res, u)
 			}
@@ -2045,6 +2063,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	}
 	if s.Size.ThreadHeader && id == ThreadAppUserID { // threadheader.go
 		return s.threadHeaderApp(), true
+	}
+	if u, ok := s.systemDMUser(id); ok { // system_dm.go
+		return u, true
 	}
 	if s.Size.AgentTasks && id == AgentTasksUserID { // agent_tasks.go
 		return s.agentTasksUser(), true
