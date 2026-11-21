@@ -183,12 +183,12 @@ Each change shipped as its own commit; "after" is from runs on `ci-speed`.
 | **release.yml without the meta job**: each job works out the tag, version and publish decision itself (`release-meta.sh`) | the 6 s meta job queued alone first: 26.1 / 31.6 min before any build job was even queued (α.112 / α.111) | all five build jobs queued at once; the linux builds started 30 s after the dispatch (dry run 44840095722) |
 | **TestIdleFrames in 4 processes**: its six groups are subtests, each on its own client; `fanout.sh` runs them from one test binary at once and checks each ran once | TestIdleFrames 658-663 s on each OS; linux-idle 13.4, windows-idle 16.8, macos 30.4 min (p50) | linux-idle 6.3, windows-idle 9.8, macos 23.2 min (run 44840062509): -21 runner-min a ci run |
 | **linux-test shards packed by recorded time** (`.github/test-times.json`, `test-shard.py --times`) | shard p50 4.7 / 5.1 / 8.4 / 4.2 min (internal/ui's share 144-409 s) | 5.1 / 5.2 / 4.9 / 5.2 min; linux-coverage: 92 packages, 3,959 top-level tests, each once |
-| **go.mod `go 1.24.9`** (no toolchain switch, so the cache restores) | every Linux and macOS restore failed | (measuring: run 44854132904) |
-| **go-cache.yml**: on each main push, a build of everything the jobs build replaces main's setup-go entry for every OS | main's entries: a 288 MB (Linux) and 156 MB (macOS) partial build from 11-16 | (measuring: runs 44854133106 and the push after it) |
-| **macos-idle beside macos** | macos 23.2 min with the idle processes (30.4 before) | (measuring: run 44854132904) |
+| **go.mod `go 1.24.9`** (no toolchain switch, so the cache restores) | every Linux and macOS job: `Failed to restore: tar ... exit code 2`, a miss, and a 300-680 MB save per branch | `Cache restored successfully` in every job checked (runs 44854132904, 44860564804); branches stop saving entries of their own |
+| **go-cache.yml**: on each main push, a build of everything the jobs build replaces main's setup-go entry for every OS | main's entries: a 288 MB (Linux) and 156 MB (macOS) partial build from 11-16 | the seed: 4.8 / 6.7 / 8.6 min (Windows / Linux / macOS), 561 / 833 / 588 MB, the same key and version setup-go restores (run 44854133106). Same code, jobs on the seed (44854132904) against main's old entry (44860564804): linux-build 0.9 vs 4.0 min, macos 8.9 vs 12.3, the windows build 1.0 vs 1.7, linux-test shards 5.1-5.3 vs 6.9-7.3 |
+| **macos-idle beside macos** | macos 30.4 min p50 (23.2 with the idle processes) | macos 8.9 and macos-idle 11.0 min at once (run 44854132904): the longest ci job is now ~11 min |
 | **apt.sh**: an update gets 5 min, an install 10, then the kernel.org mirror | 15 min a try, twice: 640-1,280 s steps | (a tail; shows over days) |
 | **budgets**: 106 jobs' `timeout-minutes` from their p95 (1.5 x p95 + 3, at least 15) | GitHub's 360 min | a job past its budget fails |
-| **menu-keys on macOS**: the test reads Copy message's rich copy (`writeRich`), which on macOS goes to the pasteboard, not through Gio | TestMenuKeysMessageActions and TestMenuTypeAhead red on every macOS run since 11-14 (35 failures, 14 branches) | (measuring: run 44854164035) |
+| **menu-keys on macOS**: the test reads Copy message's rich copy (`writeRich`), which on macOS goes to the pasteboard, not through Gio | TestMenuKeysMessageActions and TestMenuTypeAhead red on every macOS run since 11-14 (70 failure events, 15 branches, never resolved) | both pass, with `linux/context/C/Ctrl` and `darwin/context/C/⌘` (run 44854164035) |
 
 ## Ruled out on the numbers
 
@@ -211,11 +211,64 @@ Each change shipped as its own commit; "after" is from runs on `ci-speed`.
 - **Runner labels**: see the audit (the cap binds, so it only reorders).
 - **An apt .deb cache**: a restore step in ~100 jobs for ~5% of runner
   time; the timeouts come first. The next candidate.
+- **Splitting the other tests over 60 s.** TestIdleFrames (660 s) runs in
+  four processes. TestDemoSurfaces (134 s) stays whole: its steps share one
+  demo session's timeline (the pages first, so Unreads and Activity show
+  the demo as it starts), and time packing fits it in a 242 s shard.
+  TestMacIdleCPU (168 s), TestWheelFrameProbe (128 s), TestRealWindowMemory
+  (120 s) and the frame cost tests (60 s) measure CPU, frames or memory
+  over a period: their length is the measurement, and processes beside
+  them would change it.
 
 ## Tests: two weeks of failures
 
-(in progress: 1,961 failed runs, 2,307 failed jobs, 2026-11-06..20,
-flake-check and -red/-mut evidence branches left out)
+1,961 failed runs and 2,307 failed jobs, 2026-11-06..20 (flake-check and
+-red/-mut evidence branches left out). The failing tests come from the
+jobs' logs (top-level `--- FAIL`), 1,259 of those jobs so far, newest
+first: 2,319 failures of 608 tests. Each failure is classed by what
+happened next on its branch, the same workflow's next green run and the
+diff to it (`bin/classify.py`):
+
+| class | failures | share |
+|---|---|---|
+| code changed before it passed (a regression caught, or code finished) | 1,514 | 65% |
+| never green again on the branch (abandoned, or still red) | 397 | 17% |
+| only tests, testdata, goldens or CI changed (a change detected) | 272 | 12% |
+| the same sha passed later (a flake) | 136 | 6% |
+
+**No test is deleted.** A delete or merge needs at least 3 failures on at
+least 2 branches, every one ended by a test change alone; no test meets
+it. Every test-changed-only test is one branch's episode, a new test
+adjusted until it passed (TestThreadsUnreadRowEdgesLikeSlack, TestGIFShots,
+TestHuddleShots*: 4-5 failures, 1 branch each). The nearest,
+TestLoungeBannerLikeSlack (8 test-changed on 5 branches), also ended with
+code fixed 5 times: it catches regressions. Every flake event (136) is
+ui-slick's 15 TestSlickView* tests failing together on 2 branches: ui-slick
+builds Slick main, unpinned, so an upstream change reds every branch at
+once (pinning it, with Slick main as a ui/main-only job, is a choice for
+Karim: it would change what ui-slick checks).
+
+### Flakes fixed (each a bug in the test, found and fixed)
+
+| test | cause | fix |
+|---|---|---|
+| TestMenuKeysMessageActions, TestMenuTypeAhead (menu-keys, macOS) | read the clipboard through Gio's router; macOS's rich copy goes to the pasteboard off the UI goroutine | read it through `writeRich` (run 44854164035 green) |
+| TestWarmWindowWritesSurviveBoot (core) | held the first `users.channelSections.list`: when MoveToSection's own reread reached the fake before Boot's, the write waited on itself 60 s (8 failures, 6 branches) | the writes wait until Boot's four calls are held (`holdStale`'s `held`) |
+| TestRailPeekDMsRowMenu (ui) | `waitFor(60 ms)`'s frames could all land before the peek's 30 ms throttle's trailing check was due | `waitFor` ends with a frame after its wait (all 19 callers) |
+| TestSpellcheckNeverBlocksFrame (composer) | timed each frame's layout (48 ms against 40 on α.119's release runner) | the engine is held shut while the frames run: a frame that waited on it never returns |
+| TestThreadsRefreshGapLikeSlack/straddle (views) | reproduced on ci-speed under load (flake-check 44860567669: a getView before the hold) | fixed by history-gap on train-125c |
+
+flake-check's `flakes-1121` runs the first three fixes under load.
+
+### Flakes still open (no fix here yet)
+
+- TestMacIdleCPU "channel again: 20 frames in 10 s" (once, 11-21): read
+  the frames' requesters in the next failure's log.
+- TestTautZeroCost "51 allocs/frame (none: 50)": AllocsPerRun's integer
+  average flips on one background allocation.
+- TestRealWindowCaretCost, TestFrameCostDamage: CPU ratios and pixels on
+  loaded or slow runners.
+- ui-slick's TestSlickView* (unpinned upstream, above).
 
 ## For Karim: accounts and money
 
@@ -243,4 +296,20 @@ table (checked 2026-10-22); check each provider's page before buying.
 
 ## Totals
 
-(below)
+| | before | after |
+|---|---|---|
+| ci on a branch push, runner-minutes (sum of its jobs) | 133.6 (p50s) | 104.8 with the seed (44854132904); 118.5 on main's old entry (44860564804) |
+| ci's longest job (the branch's verdict, past the queue) | macos 30.4 min | macos-idle 11.0 min |
+| a pre-merge ci dispatch | 21 jobs, ~155 runner-min | `only=full-test`: 1 job, 19.0 |
+| a tag's release run, before its builds even queue | 26-32 min (meta's own queue) | 0 |
+| linux-test's slowest shard | 8.4 min | 5.2 |
+| a job's timeout | 360 min (GitHub's) | its budget, 15-40 min |
+| CI per day, runner-minutes | ~24,000 completed + ~4,000 cancelled | about 21,000 (est.: -4,900 pre-merge dispatches, -1,600 branch pushes, the seed on top) |
+| CI cost | $0: public, standard runners | $0 |
+
+The queue, the biggest bucket, falls with every runner-minute taken out:
+at the cap a job waits for the work ahead of it. A release candidate's
+full set (448-528 runner-minutes, 66-76 min of wall clock on 11-19) loses
+its ci dispatch's 136 minutes and gets the longest ci job down from 30 to
+11 minutes; perf (84 runner-minutes a dispatch, every branch: it has no
+`paths:`) and plugin-bench (45) are the next biggest per candidate.
