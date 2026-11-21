@@ -128,11 +128,12 @@ func TestBucketReadChunkEdges(t *testing.T) {
 
 // A whole message bucket read leaves the JS thread to the other work
 // between its chunks: a plain task (a render) posted while a bucket whose
-// messages are slow to encode is read waits about one chunk and the
-// in-order lane's slice, not the whole read. Read in one call, the
-// bucket's encoding held the thread for all of it: a send's checks
-// waited behind one that encoded a whole bucket (29 ms on the runners,
-// with Message Logger's injected messages).
+// messages are slow to encode is read waits for a chunk and the in-order
+// lane's slices (jsrt's orderedSlice; a new batch of plain tasks starts
+// the slice again, so about two), never for most of the read. Read in one
+// call, the bucket's encoding held the thread for all of it: a send's
+// checks waited behind one that encoded a whole bucket (29 ms on the
+// runners, with Message Logger's injected messages).
 func TestBucketReadLeavesTheThreadTurns(t *testing.T) {
 	h := newHarness(t)
 	const n = 1000
@@ -180,10 +181,12 @@ func TestBucketReadLeavesTheThreadTurns(t *testing.T) {
 	}
 	read := time.Since(t0)
 	t.Logf("a %d-entry bucket read in %v, slow to encode; %d plain tasks posted meanwhile, the longest waited %v", n+1, read.Round(time.Millisecond), probes, worst.Round(time.Millisecond))
-	if read < 200*time.Millisecond {
+	if read < 300*time.Millisecond {
 		t.Fatalf("the read took %v: too fast to tell whether it held the thread", read)
 	}
-	if limit := 150 * time.Millisecond; worst > limit {
-		t.Errorf("a plain task waited %v while the bucket was read (want under %v): the read held the JS thread in one piece", worst, limit)
+	// chunked, the longest wait was 112-175 ms of a 540 ms read on the
+	// runners; in one piece, 587 ms of 595
+	if limit := read / 2; worst > limit {
+		t.Errorf("a plain task waited %v while the bucket was read (want under half the read, %v): the read held the JS thread in one piece", worst.Round(time.Millisecond), limit.Round(time.Millisecond))
 	}
 }

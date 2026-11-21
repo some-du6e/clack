@@ -549,24 +549,23 @@ func (o *noteOrder) add(keys []string, then func()) *noteWait {
 }
 
 // done marks w's lookups answered and posts, in order, every waiting
-// notification no earlier one with a key in common holds back.
+// notification no earlier one with a key in common holds back. It posts
+// them before it lets go of o.mu: two lookups that answer together each
+// release a run of notifications, and the later run, posted first, went
+// out ahead of the earlier one (Post only queues them).
 func (o *noteOrder) done(a *App, w *noteWait) {
 	o.mu.Lock()
+	defer o.mu.Unlock()
 	w.done = true
-	var ready []func()
 	var held []*noteWait // in order: what still waits, or is held back
 	for _, x := range o.waits {
 		if x.done && !sharesKey(x, held) {
-			ready = append(ready, x.then)
+			a.Post(x.then)
 			continue
 		}
 		held = append(held, x)
 	}
 	o.waits = held
-	o.mu.Unlock()
-	for _, f := range ready {
-		a.Post(f)
-	}
 }
 
 func sharesKey(x *noteWait, ws []*noteWait) bool {
