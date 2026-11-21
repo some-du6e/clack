@@ -477,7 +477,15 @@ function createScopedAPI(entry, id, scope) {
   const storage = new ScopedStorage(blobStore(`plugin:${id}`))
   const fileBlob = blobStore(`plugin:${id}`)
   const integrations = {
-    redux: () => ({ ...TA.redux, waitForThunkCreator, dispatchThunk, patchState: tracked(TA.redux.patchState), patchSlice: tracked(TA.redux.patchSlice), patchThunk: tracked(TA.redux.patchThunk) }),
+    redux: () => ({
+      ...TA.redux,
+      waitForThunkCreator,
+      dispatchThunk,
+      thunkNames: T.thunkNames,
+      patchState: tracked(TA.redux.patchState),
+      patchSlice: tracked(TA.redux.patchSlice),
+      patchThunk: tracked(TA.redux.patchThunk),
+    }),
     rtm: () => ({ on: tracked(onRtm) }),
     messages: () => ({ ...messagesBase, injectMessages: tracked(messagesBase.injectMessages) }),
     members: () => membersBase,
@@ -517,7 +525,7 @@ function createScopedAPI(entry, id, scope) {
     Store: TA.Store,
     fetch: bridgeFetch,
     loader: 'electron',
-    userAPI: T.userAPI,
+    userAPI: T.slickUserAPI, // Slick's own (src/app/api/userAPI.ts): its messages say [slick]
     id,
     signal: scope.signal,
     isActive: () => !scope.signal.aborted && plugins.get(id)?.scope === scope,

@@ -184,8 +184,9 @@ func (e *perfEnv) checkToolbar(t *testing.T, what string, l rowsLister, ts, rowC
 // header's channel name opens the channel at the root (c/<id>/m/<root>,
 // the channel jumped to the message and flashing it). Hovering the root
 // and its neighbours, each toolbar is at Slack's place against its row,
-// the row at the list's top (the jump puts the root two rows down) too,
-// its card cut off by the list's top edge.
+// the row at the list's top too, its card cut off by the list's top edge
+// (the jump puts the root 64dp under the list's top, BaseMessageList's
+// ANCHOR_OFFSET, and the list is scrolled that far to bring it there).
 func TestHoverToolbarJumpFromActivity(t *testing.T) {
 	e := hoverToolbarEnv(t)
 	e.jumpFromActivityToolbars(t, "jump from Activity")
@@ -251,19 +252,43 @@ func (e *perfEnv) jumpFromActivityToolbars(t *testing.T, what string) {
 	e.pointerIn(l())
 	rows := l().RowRects()
 	list := l().ListRect()
-	i := -1
-	for k, r := range rows {
-		if r.TS == root {
-			i = k
+	rootAt := func() int {
+		for k, r := range rows {
+			if r.TS == root {
+				return k
+			}
 		}
+		return -1
 	}
-	if i < 2 || rows[i-2].R.Min.Y != list.Min.Y {
-		t.Fatalf("%s: the jump didn't put the root two rows down from the list's top (list %v, rows %v)", what, list, rows)
+	sc := e.scale
+	if sc == 0 {
+		sc = 1
+	}
+	anchor := int(64*sc + 0.5)
+	i := rootAt()
+	if i < 0 || rows[i].R.Min.Y-list.Min.Y != anchor {
+		t.Fatalf("%s: the jump didn't put the root %dpx under the list's top (list %v, rows %v)", what, anchor, list, rows)
 	}
 	e.inspectOn()
-	for _, k := range []int{i, i - 1, i + 1, i - 2} {
+	// where the jump put them: the root and the row under it (the row
+	// above is cut off past its toolbar's button)
+	for _, k := range []int{i, i + 1} {
 		if k < len(rows) {
 			e.checkToolbar(t, what, l(), rows[k].TS, "MessageWrapper", actsTopDefault)
+		}
+	}
+	// the root's row at the list's top, its card cut off by the edge, and
+	// the rows under it
+	cl, _ := e.a.convoFor(ch, "").list.(channelList)
+	cl.ScrollPx(anchor)
+	e.pointerIn(l())
+	rows, list = l().RowRects(), l().ListRect()
+	if i = rootAt(); i < 0 || rows[i].R.Min.Y != list.Min.Y {
+		t.Fatalf("%s: scrolled %dpx after the jump, the root isn't at the list's top (list %v, rows %v)", what, anchor, list, rows)
+	}
+	for _, k := range []int{i, i + 1, i + 2} {
+		if k < len(rows) {
+			e.checkToolbar(t, what+" (scrolled)", l(), rows[k].TS, "MessageWrapper", actsTopDefault)
 		}
 	}
 }

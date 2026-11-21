@@ -1045,7 +1045,10 @@ func (hb *hub) apply(ev core.Event) bool {
 			m.noteLive(ev.TS, true)
 			m.mu.Unlock()
 		}
-		return len(ms) > 0
+		// a message slug linking to it is "Private message" from now on
+		// (its conversion read the message: reconvert)
+		re := hb.reconvert(ev)
+		return len(ms) > 0 || re
 	case "evicted":
 		// core trimmed the conversation (or thread) to Slack's message
 		// cache budget (core/evict.go): its model drops the same messages,
@@ -1281,7 +1284,7 @@ func takeConverted(msg, f *core.Message) bool {
 func mergeRefChange(a, b core.RefChange) core.RefChange {
 	return core.RefChange{Members: append(a.Members, b.Members...), Channels: append(a.Channels, b.Channels...),
 		Files: append(a.Files, b.Files...), Bots: append(a.Bots, b.Bots...), Emoji: append(a.Emoji, b.Emoji...),
-		AnyMember: a.AnyMember || b.AnyMember, All: a.All || b.All}
+		Messages: append(a.Messages, b.Messages...), AnyMember: a.AnyMember || b.AnyMember, All: a.All || b.All}
 }
 
 // applyReactions is a reaction change: each model holding the message

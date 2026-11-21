@@ -2,6 +2,7 @@ package popups
 
 import (
 	"image"
+	"math"
 	"time"
 
 	"gioui.org/io/event"
@@ -221,6 +222,14 @@ type ModalOpts struct {
 	// (Slack's c-modal_speed_bump veils the dialog with its sheet; the
 	// list dialogs' footer access select).
 	Over func(gtx layout.Context)
+	// Peek, asked every frame, hides the scrim while it is true: Slack's
+	// Preferences on Appearance and Navigation (prefs-dialog tabs with
+	// peekSidebar) shows the client undimmed behind the dialog,
+	//   .c-sk-overlay.p-prefs_dialog--peek_sidebar.p-prefs_dialog__overlay--ia_layout:before{opacity:0}
+	// and the scrim fades out and back in as the tab changes,
+	//   .p-prefs_dialog__overlay--ia_layout:before{transition:opacity .16s}
+	// (client-boot-styles). Clicks outside the dialog still close it.
+	Peek func() bool
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -242,6 +251,48 @@ type Modal struct {
 	wasTop bool
 	ptr    int // pointer tag: a press anywhere hides the ring
 	frames int
+	// the scrim's opacity under Peek (1 shown, 0 peeking), easing from
+	// scrimFrom at scrimAt towards scrimTo
+	scrimInit          bool
+	scrimFrom, scrimTo float64
+	scrimAt            time.Time
+}
+
+// SetPeek sets ModalOpts.Peek on an open modal (Preferences sets it on
+// the frame mkPrefsModal built).
+func (m *Modal) SetPeek(f func() bool) { m.o.Peek = f }
+
+// scrimPeekFade is the ia_layout scrim's transition: opacity .16s (ease).
+const scrimPeekFade = 160 * time.Millisecond
+
+// scrimOpacity is the scrim's opacity this frame (1 without Peek).
+func (m *Modal) scrimOpacity(gtx layout.Context) float64 {
+	if m.o.Peek == nil {
+		return 1
+	}
+	to := 1.0
+	if m.o.Peek() {
+		to = 0
+	}
+	if !m.scrimInit { // opened on a peeking tab: no scrim from the start
+		m.scrimInit, m.scrimFrom, m.scrimTo = true, to, to
+	}
+	o := m.scrimTo
+	if !m.scrimAt.IsZero() {
+		x := float64(gtx.Now.Sub(m.scrimAt)) / float64(scrimPeekFade)
+		if x >= 1 {
+			m.scrimAt = time.Time{}
+		} else {
+			o = m.scrimFrom + (m.scrimTo-m.scrimFrom)*cubicBezierY(.25, .1, .25, 1, max(x, 0))
+		}
+	}
+	if to != m.scrimTo { // the tab changed: ease from where the scrim is
+		m.scrimFrom, m.scrimTo, m.scrimAt = o, to, gtx.Now
+	}
+	if !m.scrimAt.IsZero() {
+		m.h.Invalidate() // not a mid-frame InvalidateCmd: the dialog's handlers lay out after this
+	}
+	return o
 }
 
 // NewModal builds a modal; show it with h.ShowOverlay.
@@ -361,7 +412,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	// backdrop
-	fill(gtx, image.Rectangle{Max: win}, cl.Backdrop)
+	if o := m.scrimOpacity(gtx); o >= 1 {
+		fill(gtx, image.Rectangle{Max: win}, cl.Backdrop)
+	} else if o > 0 {
+		b := cl.Backdrop
+		b.A = uint8(math.Round(float64(b.A) * o))
+		fill(gtx, image.Rectangle{Max: win}, b)
+	}
 	if m.scrim.Layout(gtx) {
 		m.Dismiss()
 		return layout.Dimensions{}

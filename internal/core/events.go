@@ -171,8 +171,14 @@ func (a *App) handle(ev slack.Event) {
 		}
 	case "team_icon_change":
 		a.onTeamIconChange(ev.Raw)
+	case "feature_access_policies_updated":
+		a.onFeatureAccessUpdated(ev.Raw) // chposting.go
+	case "apps_installed", "apps_changed", "apps_uninstalled", "bot_changed":
+		a.onAppCardEvent(ev.Type, ev.Raw) // app_card.go: the app's card goes stale
 	case "team_pref_change":
 		a.onTeamPrefChange(ev.Raw) // teamprefs.go
+	case "workflow", "hermes_trigger_updated":
+		a.onAgentTaskEvent(ev.Type, ev.Raw) // agent_tasks.go: the Tasks tab
 	case "team_rename":
 		var e struct {
 			Name   string `json:"name"`
@@ -209,10 +215,15 @@ func (a *App) handle(ev slack.Event) {
 			User string `json:"user"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		// anyone's join: the channel's member counts are stale
+		// (batchProcessChannelMembers, membership_counts.go)
+		a.membershipChanged(ch)
 		if e.User != a.S.SelfID() {
 			return
 		}
 		a.refreshConv(ctx, ch)
+	case "member_left_channel":
+		a.membershipChanged(ch) // anyone's leave, as a join
 	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename",
 		"group_rename", "channel_unarchive", "im_open", "mpim_open":
 		var e struct {

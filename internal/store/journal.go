@@ -82,15 +82,18 @@ func (s *Store) CountChangedSince(ch string, since uint64) bool {
 //     the mention count never below the local one;
 //   - nothing: Slack's.
 //
-// It reports how many entries it merged: their state is partly older
-// than Slack's now, so the caller reads the counts once more.
+// An IM's or group DM's entry then takes Slack's unread count rule
+// (dmUnreadCount). It reports how many entries it merged: their state is
+// partly older than Slack's now, so the caller reads the counts once
+// more.
 func (s *Store) SetCountsSince(c *slack.Counts, since uint64) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old := s.Counts
 	s.Counts = make(map[string]*slack.CountEntry, len(old))
 	merged := 0
-	for _, l := range [][]slack.CountEntry{c.Channels, c.IMs, c.MPIMs} {
+	for li, l := range [][]slack.CountEntry{c.Channels, c.IMs, c.MPIMs} {
+		dm := li > 0 // the answer's ims and mpims (Slack's fetcher flags them is_im, is_mpim)
 		for i := range l {
 			e := l[i]
 			o, had := old[e.ID]
@@ -102,6 +105,9 @@ func (s *Store) SetCountsSince(c *slack.Counts, since uint64) int {
 					if m.LastRead == "" || TSLess(m.LastRead, e.Latest) {
 						m.HasUnreads = true
 					}
+				}
+				if dm {
+					m = dmUnreadCount(m, s.Muted[e.ID])
 				}
 				s.Counts[e.ID] = &m
 				merged++
@@ -115,6 +121,9 @@ func (s *Store) SetCountsSince(c *slack.Counts, since uint64) int {
 					e.MentionCount = max(e.MentionCount, o.MentionCount)
 				}
 				merged++
+			}
+			if dm {
+				e = dmUnreadCount(e, s.Muted[e.ID])
 			}
 			s.Counts[e.ID] = &e
 		}
@@ -130,6 +139,22 @@ func (s *Store) SetCountsSince(c *slack.Counts, since uint64) int {
 	s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
 	s.countsLive = true
 	return merged
+}
+
+// dmUnreadCount is client-boot mtwS applyCountsToChannels' rule for an IM
+// or a group DM in a client.counts answer: its unread count is
+// mention_count || has_unreads, and that count is an unmuted one's badge
+// (fgSa shouldUseUnreadCountAsMentionCount, 9dui
+// refreshFilteredUnreadChannelCounts). So an answer with has_unreads and
+// mention_count 0 is one unread message with a badge of 1, not a bold
+// row with none. A muted one keeps the answer's mention count: Slack
+// counts no unreads for it (fgSa shouldCountUnreadsInModel), and a muted
+// group DM badges on its mentions alone here (NoteMessage).
+func dmUnreadCount(e slack.CountEntry, muted bool) slack.CountEntry {
+	if e.HasUnreads && e.MentionCount == 0 && !muted {
+		e.MentionCount = 1
+	}
+	return e
 }
 
 // PutConvLocal is PutConv for a conversation this session changed
