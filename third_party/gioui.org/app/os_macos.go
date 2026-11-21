@@ -1486,6 +1486,22 @@ func gio_onCloseRequest(h C.uintptr_t) C.int {
 	return 1
 }
 
+// gio_onStartupPoint is gio_main's and the app delegate's startup points
+// (Clack patch, CLACK_PATCHES.md §55): 0 NSApplication made, 1 its run
+// loop about to start, 2 applicationWillFinishLaunching.
+//
+//export gio_onStartupPoint
+func gio_onStartupPoint(p C.int) {
+	switch p {
+	case 0:
+		startupAppKitApp.mark()
+	case 1:
+		startupAppKitRun.mark()
+	case 2:
+		startupWillFinish.mark()
+	}
+}
+
 //export gio_onFinishLaunching
 func gio_onFinishLaunching() {
 	startupLaunched.mark() // Clack patch (CLACK_PATCHES.md §55)
@@ -1506,7 +1522,8 @@ func newWindow(win *callbacks, options []Option) {
 	<-launched
 	res := make(chan struct{})
 	runOnMain(func() {
-		setCaretBlinkFromOS() // Clack patch (CLACK_PATCHES.md §47)
+		startupWindowCreate.mark() // Clack patch (CLACK_PATCHES.md §55)
+		setCaretBlinkFromOS()      // Clack patch (CLACK_PATCHES.md §47)
 		w := &window{
 			redraw: make(chan struct{}, 1),
 			w:      win,
@@ -1520,6 +1537,7 @@ func newWindow(win *callbacks, options []Option) {
 			w.ProcessEvent(DestroyEvent{Err: err})
 			return
 		}
+		startupWindowView.mark() // Clack patch (CLACK_PATCHES.md §55)
 		panel := C.int(0)
 		if cnf.panel {
 			panel = 1
@@ -1528,6 +1546,7 @@ func newWindow(win *callbacks, options []Option) {
 		// start, so the content is the size asked for.
 		hiddenTitlebar := boolInt(cnf.Decorated && cnf.hiddenTitleBar)
 		window := C.gio_createWindow(w.view, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y), panel, hiddenTitlebar)
+		startupWindowNS.mark() // Clack patch (CLACK_PATCHES.md §55)
 		// Release our reference now that the NSWindow has it.
 		C.CFRelease(w.view)
 		w.Configure(options)

@@ -50,11 +50,14 @@ import (
 //     header cache's (core header_cache.go), or none if it hasn't the
 //     channel (Slack renders whatever its persisted store has), else its
 //     reads;
-//   - the plugins enabled at start registered and their first renders
-//     delivered: Taut patches Slack's components before its first render,
-//     and those patches render synchronously with Slack's React; Clack's
-//     plugins render on their own thread, so the placeholder waits until
-//     their deliveries go quiet (pluginQuiet).
+//   - on a cold start, the plugins enabled at start registered and their
+//     first renders delivered: Taut patches Slack's components before its
+//     first render, and those patches render synchronously with Slack's
+//     React; Clack's plugins render on their own thread, so the
+//     placeholder waits until their deliveries go quiet (pluginQuiet). A
+//     warm start doesn't wait: the slots the plugins' trees took last
+//     session stay reserved until their first trees come (slackc
+//     reserve.go), so they fill space that was already there.
 //
 // Messages and images don't hold it (Slack shows its loading states).
 // pluginCap bounds the plugin/header wait after boot. Only the real
@@ -106,6 +109,14 @@ func (a *App) revealBlocker(now time.Time) string {
 	if a.rv.dataAt.IsZero() {
 		a.rv.dataAt = now
 		applog.Mark("data-ready", "")
+	}
+	// A warm start shows the last session's client at once, as Slack's
+	// renders straight from its persisted store: the plugins' first trees
+	// fill the slots their trees took last session, kept free meanwhile
+	// (slackc reserve.go), so nothing moves when they come. Waiting for
+	// them here held the launch past their 100 ms cap (launch-speed).
+	if !b.warmAt.IsZero() {
+		return ""
 	}
 	if now.Sub(a.rv.dataAt) > pluginCap {
 		return ""

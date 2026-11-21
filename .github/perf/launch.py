@@ -41,10 +41,11 @@ sys.dont_write_bytecode = True
 THEME = '{"primary":{"palette":"jade"},"highlight1":{"palette":"jade"},"highlight2":{"palette":"aubergine"},"important":{"palette":"jade"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}'
 ROUTE = os.environ.get("ROUTE", "C0FAKE00000")
 SYS = platform.system()  # Darwin, Linux, Windows
-COLS = ["exec", "main", "ui-new", "attached", "app-main", "run", "launched", "event-loop", "gio-init", "window-shown",
-        "config", "frame-event", "gpu-context", "gpu", "first-frame", "presented", "fonts", "cache-read",
+COLS = ["exec", "main", "ui-new", "attached", "app-main", "run", "appkit-app", "appkit-run", "will-finish-launching",
+        "launched", "window", "event-loop", "gio-init", "menu-bar", "window-create", "window-view", "window-ns", "config",
+        "window-shown", "frame-event", "gpu-context", "gpu", "first-frame", "presented", "fonts", "cache-read",
         "sidebar-cached", "data-ready", "first-text", "sidebar", "reveal", "real-frame", "js-runtime", "taut-started",
-        "slick-started", "plugins", "core-ready", "settled"]
+        "slick-started", "plugins", "messages", "core-ready", "sidebar-live", "settled"]
 
 
 def dirs():
@@ -211,7 +212,7 @@ def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_
     t = parse_timeline(text)
     if "start_ms" in t:
         t["exec"] = round(t["start_ms"] - t0)
-    t["run"], t["purged"] = name, did_purge
+    t["name"], t["purged"] = name, did_purge
     if "settled" not in t:
         t["missing"] = True
         print(f"  {name}: no timeline line (log {len(text)} bytes)", flush=True)
@@ -297,7 +298,7 @@ def main():
 
     report(a, runs, extra, plugins, cache)
     if a.budget_ms:
-        warm = [r for r in runs if r["run"].startswith("warm")]
+        warm = [r for r in runs if r["name"].startswith("warm")]
         got = [r[a.budget_mark] for r in warm if a.budget_mark in r]
         if len(got) < len(warm) or not got:
             print(f"::error::{a.label}: {len(warm) - len(got)} of {len(warm)} warm launches never reached {a.budget_mark}")
@@ -339,21 +340,29 @@ def seed_plugins(lib, cfg):
 
 
 def report(a, runs, extra, plugins, cache):
-    cols = [c for c in COLS if any(c in r for r in runs)]
+    warm = [r for r in runs if r["name"].startswith("warm")]
+
+    def med(c):
+        v = [r[c] for r in warm if c in r]
+        return statistics.median(v) if v else None
+    marks = [c for c in COLS if any(c in r for r in runs)]
+    marks += sorted({k for r in runs for k, v in r.items() if k not in marks and isinstance(v, int) and not isinstance(v, bool)
+                     and k not in ("pid", "start_ms", "relayouts")})
+    # in the order a warm launch reaches them (exec first)
+    marks.sort(key=lambda c: (c != "exec", med(c) if med(c) is not None else 1e9))
+    names = [r["name"] for r in runs]
     md = [f"## Launch timeline ({a.label})", "",
-          f"Clack.app launched as a user launches it ({'LaunchServices: open' if SYS == 'Darwin' else 'the binary'}) against "
-          f"fakeslackd ({a.latency} per API call), plugins: {plugins}. ms since the OS started the process; `exec` is the "
-          "launch call to the process start. `real-frame` is the first frame of the client itself (not the boot "
-          "placeholder). cold: nothing of Clack's on disk, OS file cache purged; warm: a normal start; purged: warm with "
-          "the OS file cache purged.", "",
-          "| run | " + " | ".join(cols) + " | reveal waited |", "|" + "---|" * (len(cols) + 2)]
-    for r in runs:
-        md.append(f"| {r['run']}{' (purged)' if r.get('purged') and r['run'] != 'cold' else ''} | "
-                  + " | ".join(cell(r, c) for c in cols) + f" | {r.get('reveal_why', '—')} |")
-    warm = [r for r in runs if r["run"].startswith("warm")]
-    if warm:
-        md += ["", "Warm medians: " + ", ".join(
-            f"{c} {statistics.median([r[c] for r in warm if c in r]):.0f}" for c in cols if any(c in r for r in warm))]
+          f"Clack launched as a user launches it ({'Clack.app through LaunchServices: open' if SYS == 'Darwin' else 'the binary'}) "
+          f"against fakeslackd ({a.latency} per API call), plugins: {plugins}. Each mark is ms since the OS started the "
+          "process (internal/applog/startup.go); `exec` is from the launch call to the process start. `launched` is "
+          "macOS finishing the launch (the Dock's bounce ends); `real-frame` is the first frame of the client itself, not "
+          "the boot placeholder. cold: nothing of Clack's on disk and the OS file cache purged; warm: a normal start; "
+          "purged: warm, with the OS file cache purged (a first launch after a reboot).", "",
+          "| mark | " + " | ".join(names) + " | **warm median** |", "|" + "---|" * (len(names) + 2)]
+    for c in marks:
+        m = med(c)
+        md.append(f"| {c} | " + " | ".join(cell(r, c) for r in runs) + f" | **{'—' if m is None else f'{m:,.0f}'}** |")
+    md.append("| reveal waited for | " + " | ".join(r.get("reveal_why", "—") for r in runs) + " | |")
     if extra.get("inits"):
         rows = extra["inits"]
         tot = sum(r[2] for r in rows)

@@ -194,7 +194,7 @@ func main() {
 	applog.MarkAt("main", mainAt, "")
 	// Gio's own startup points: macOS's finished launching (the Dock's
 	// bounce ends), the window on screen, the GPU's first frame
-	app.SetStartupMark(func(name string, at time.Time) { applog.MarkAt(name, at, "") })
+	app.SetStartupMark(func(name string, at time.Time) { go applog.MarkAt(name, at, "") }) // never the log on AppKit's main thread
 	// Go panics nothing recovers and the runtime's fatal errors go to fd 2
 	// only; the runtime also writes them to crash.log next to clack.log,
 	// and the next start copies the trace, redacted, into clack.log. That

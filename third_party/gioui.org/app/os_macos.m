@@ -822,6 +822,10 @@ void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle) {
 }
 
 @implementation GioAppDelegate
+// Clack patch (CLACK_PATCHES.md §55): the startup timeline's point
+- (void)applicationWillFinishLaunching:(NSNotification *)aNotification {
+	gio_onStartupPoint(2);
+}
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
 	[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 	[NSApp activateIgnoringOtherApps:YES];
@@ -883,6 +887,7 @@ void gio_main() {
 		[NSApplication sharedApplication];
 		GioAppDelegate *del = [[GioAppDelegate alloc] init];
 		[NSApp setDelegate:del];
+		gio_onStartupPoint(0); // Clack patch (CLACK_PATCHES.md §55): NSApplication made
 
 		NSMenuItem *mainMenu = [NSMenuItem new];
 
@@ -903,6 +908,7 @@ void gio_main() {
 		globalWindowDel = [[GioWindowDelegate alloc] init];
 		observeWorkspace(); // Clack patch (CLACK_PATCHES.md §32)
 
+		gio_onStartupPoint(1); // Clack patch (CLACK_PATCHES.md §55): the run loop starts
 		[NSApp run];
 	}
 }

@@ -509,12 +509,6 @@ func (a *App) Run() error {
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)
-	// where it was: Slack's mainWindowSettings (winbounds.go)
-	a.win.Option(a.mainWindowPlace()...)
-	if a.startHidden() { // Keep in Background after a login launch (tray.go)
-		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
-		a.win.Option(app.StartHidden(true))
-	}
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
@@ -553,6 +547,17 @@ func (a *App) Run() error {
 	wd.startRecorder(a.prefs.FlightRecorder)
 	a.wd = wd // drainIdle's stage
 	go wd.run()
+	// Where it was: Slack's mainWindowSettings (winbounds.go). Last before
+	// the window opens: on macOS the displays are AppKit's, read on its
+	// main thread, which answers only once NSApplication runs (the launch
+	// it finishes is the Dock's bounce), and everything above, the
+	// backend's disk reads and the plugin runtimes included, starts
+	// meanwhile instead of after it.
+	a.win.Option(a.mainWindowPlace()...)
+	if a.startHidden() { // Keep in Background after a login launch (tray.go)
+		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
+		a.win.Option(app.StartHidden(true))
+	}
 	applog.Mark("event-loop", "")
 	for {
 		ev := a.win.Event()

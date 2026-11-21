@@ -7,6 +7,7 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/applog"
 	"github.com/some-du6e/clack/internal/ui/menubar"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
@@ -235,6 +236,10 @@ func (a *App) startMenuBar() {
 		return
 	}
 	a.mbar.on = true
+	menubar.OnInstalled(func(took time.Duration) { // main thread: hand it on
+		at := time.Now()
+		go applog.MarkAt("menu-bar", at, "in "+took.Round(100*time.Microsecond).String())
+	})
 	menubar.Install(a.macMenus(), func(route string) { a.Post(func() { a.Navigate(route) }) })
 	a.syncMenuBar()
 }

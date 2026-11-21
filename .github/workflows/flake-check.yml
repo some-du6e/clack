@@ -2941,6 +2941,9 @@ jobs:
           codesign --verify --deep --strict "$app"
           ls -la "$app/Contents/MacOS"
           go build -o "$RUNNER_TEMP/launch/fakeslackd" ./internal/fakeslack/fakeslackd
+      - name: one bounce of the Dock's launch animation (bounce.sh, the budget's yardstick)
+        continue-on-error: true
+        run: .github/perf/bounce.sh "$RUNNER_TEMP/launch/out/bounce"
       - name: plugins (the Library's ChatTabs and five Taut plugins)
         run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
       - name: launch timeline (cold, warm x5, purged x2, inits, CPU profile, the Dock)
