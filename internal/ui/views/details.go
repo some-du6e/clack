@@ -772,6 +772,17 @@ func (d *ChannelDetails) update(gtx C) {
 	if (d.h.Core().Experiment("channel_details_agents_apps_tab") == "on") != d.tabsAgentsApps {
 		d.setTabs() // the group changed under the open dialog
 	}
+	if cdGroup(d.kind) != "channel" && d.settingsVisible() != slices.Contains(d.tabKinds, cdSettings) {
+		// a DM's Settings follows Message history and Export
+		// (details_retention.go), whose prefs and experiments may land
+		// after the dialog opened; Settings is last, so the selected tab
+		// keeps its place
+		sel := d.tab.Sel
+		d.setTabs()
+		if sel < len(d.tabKinds) {
+			d.tab.Sel = sel
+		}
+	}
 
 	d.updateAddApps(gtx) // "Add an App" / "Add agents and apps": the apps browser (details_more.go)
 	if d.call.Clicked(gtx) {

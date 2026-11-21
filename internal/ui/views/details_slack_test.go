@@ -47,6 +47,8 @@ type cdTestServer struct {
 	props   string // conversations.info properties (JSON)
 	org     string // enterprise.prefs.get org_prefs (JSON)
 	canSet  string // conversations.canSetProperties props (JSON list; "" the default)
+	// replies answer these methods as written, before the cases below
+	replies map[string]string
 	// recorded, when set, runs after newW14Env's extra answered a call
 	// and it was recorded
 	recorded func(cdTestCall)
@@ -80,7 +82,12 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.calls = append(s.calls, call)
 	people, allowed, props, org, canSet := s.people, s.allowed, s.props, s.org, s.canSet
+	reply, overridden := s.replies[call.method]
 	s.mu.Unlock()
+	if overridden {
+		_, _ = w.Write([]byte(reply))
+		return
+	}
 	if org == "" {
 		org = "{}"
 	}
