@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -336,4 +338,88 @@ func TestSocketGapMoreThanAPage(t *testing.T) {
 	// the newest page (50) holds the gap's newest; the window has no hole
 	// from its oldest on
 	e.whole(append(missed[len(missed)-40:], after)...)
+}
+
+// holdNewest holds the open conversation's next newest-page read
+// (conversations.history with neither oldest nor latest) until release:
+// held is closed once the read is in. The catch-up's forward read
+// (oldest) goes through.
+func (e *gapEnv) holdNewest() (held <-chan struct{}, release func()) {
+	in, out := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.fs.SetHook(func(method string, form url.Values) (any, bool) {
+		if method == "conversations.history" && form.Get("channel") == e.ch && form.Get("oldest") == "" && form.Get("latest") == "" {
+			once.Do(func() {
+				close(in)
+				<-out
+			})
+		}
+		return nil, false
+	})
+	var rel sync.Once
+	release = func() { rel.Do(func() { close(out) }) }
+	e.t.Cleanup(func() { release(); e.fs.SetHook(nil) })
+	return in, release
+}
+
+// The viewer's own send, sent and confirmed while the catch-up's newest
+// page is out (more than a page missed, so the window starts over at
+// the newest page), stays in the window: a send goes into the window past
+// whatever the socket missed, never waits, and no page read before it
+// holds it. The window the page made used to drop it (the review's
+// blocker): the message was gone from core and the list.
+func TestSocketGapOwnSendDuringNewestRead(t *testing.T) {
+	e := newGapEnv(t, false)
+	ctx := context.Background()
+	ups := e.ups()
+	e.fs.DropSockets()
+	e.waitDown(1)
+	missed := e.gap(40) // more than the forward page (28): the newest page is read
+	held, release := e.holdNewest()
+	e.waitUp(ups + 1)
+	select {
+	case <-held:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the catch-up never read the newest page")
+	}
+	m, err := e.a.Send(ctx, SendOpts{Channel: e.ch, Text: "synthetic: mine, sent while the newest page was out"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !e.holds(m.TS) {
+		t.Fatalf("the confirmed send %s isn't in the window before the page lands", m.TS)
+	}
+	release()
+	after := e.live("after the catch-up")
+	e.whole(append(missed[len(missed)-20:], m.TS, after)...)
+}
+
+// A send that failed before the gap (its Retry row) stays in the window
+// through a catch-up that starts over at the newest page: no race needed.
+func TestSocketGapFailedSendSurvives(t *testing.T) {
+	e := newGapEnv(t, false)
+	ctx := context.Background()
+	e.fs.SetFault("chat.postMessage", fakeslack.Fault{Error: "internal_error"})
+	if _, err := e.a.Send(ctx, SendOpts{Channel: e.ch, Text: "synthetic: mine, it failed"}); err == nil {
+		t.Fatal("the send didn't fail")
+	}
+	e.fs.SetFault("chat.postMessage", fakeslack.Fault{})
+	failed := ""
+	if tl := e.a.S.Timeline(e.ch); tl != nil {
+		for i := range tl.Msgs {
+			if tl.Msgs[i].Text == "synthetic: mine, it failed" {
+				failed = tl.Msgs[i].TS
+			}
+		}
+	}
+	if failed == "" {
+		t.Fatal("no failed copy in the window")
+	}
+	ups := e.ups()
+	e.fs.DropSockets()
+	e.waitDown(1)
+	missed := e.gap(40)
+	e.waitUp(ups + 1)
+	after := e.live("after the catch-up")
+	e.whole(append(missed[len(missed)-20:], failed, after)...)
 }

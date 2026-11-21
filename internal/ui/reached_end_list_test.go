@@ -16,25 +16,38 @@ package ui
 // too. Synthetic data only.
 
 import (
+	"context"
 	"fmt"
+	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 )
 
 func TestSocketGapListDrawsEveryMessage(t *testing.T) {
-	for _, jump := range []bool{false, true} {
-		name := "at the newest"
-		if jump {
-			name = "read back to an old message"
-		}
-		t.Run(name, func(t *testing.T) { socketGapList(t, jump) })
-	}
+	t.Run("at the newest", func(t *testing.T) { socketGapList(t, gapAtNewest) })
+	t.Run("read back to an old message", func(t *testing.T) { socketGapList(t, gapJump) })
+	t.Run("own send during the newest read", func(t *testing.T) { socketGapList(t, gapOwnSend) })
 }
 
-func socketGapList(t *testing.T, jump bool) {
+type gapMode int
+
+const (
+	gapAtNewest gapMode = iota
+	gapJump
+	// more than a page missed (the window starts over at the newest
+	// page), and the viewer's own send goes out and is confirmed while
+	// that page is out: the list keeps it (the review's blocker: core's
+	// new window dropped it, and the list with it)
+	gapOwnSend
+)
+
+func socketGapList(t *testing.T, mode gapMode) {
+	jump := mode == gapJump
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
@@ -88,11 +101,50 @@ func socketGapList(t *testing.T, jump bool) {
 	fs.DropSockets()
 	e.until("the client to see its socket go", 10*time.Second, func() bool { return !c.RTM.Connected() })
 	var must []string
-	for i := 0; i < 6; i++ {
-		must = append(must, post(ch, "while the socket was away"))
+	gaps := 6
+	if mode == gapOwnSend {
+		gaps = 60
+	}
+	for i := 0; i < gaps; i++ {
+		ts := post(ch, "while the socket was away")
+		if i >= gaps-6 {
+			must = append(must, ts)
+		}
 	}
 	post(other, "in another channel while the socket was away")
+	var release func()
+	held := make(chan struct{})
+	if mode == gapOwnSend {
+		// hold the catch-up's newest-page read (no oldest, no latest)
+		var once, rel sync.Once
+		out := make(chan struct{})
+		release = func() { rel.Do(func() { close(out) }) }
+		fs.SetHook(func(method string, form url.Values) (any, bool) {
+			if method == "conversations.history" && form.Get("channel") == ch && form.Get("oldest") == "" && form.Get("latest") == "" {
+				once.Do(func() { close(held); <-out })
+			}
+			return nil, false
+		})
+		t.Cleanup(func() { release(); fs.SetHook(nil) })
+	}
 	e.until("the socket back", 20*time.Second, func() bool { return c.RTM.Connected() && fs.Sockets() > 0 })
+	if mode == gapOwnSend {
+		e.until("the catch-up's newest read", 15*time.Second, func() bool {
+			select {
+			case <-held:
+				return true
+			default:
+				return false
+			}
+		})
+		m, err := c.Send(context.Background(), core.SendOpts{Channel: ch, Text: "synthetic: mine, sent while the newest page was out"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.until("the list drawing the send", 10*time.Second, func() bool { return holds(m.TS) })
+		release()
+		must = append(must, m.TS)
+	}
 	must = append(must, post(ch, "after the reconnect"))
 	if target != "" {
 		must = append(must, target)
