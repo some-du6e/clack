@@ -436,7 +436,7 @@ func (b *Bridge) CallEvent(fn int64, args []byte, done func(stopped bool)) {
 		path = "callFn"
 	}
 	b.withAnswer(done, func(r *runtime, answer func(bool)) {
-		r.rt.Post(func(js *jsrt.Ctx) {
+		r.rt.PostUserBlocking(func(js *jsrt.Ctx) { // the user's key (jsrt UserBlocking)
 			stopped := false
 			defer func() { answer(stopped) }()
 			a, err := js.ParseJSON(args)
@@ -580,10 +580,38 @@ func (b *Bridge) withAnswer(done func(bool), f func(r *runtime, answer func(bool
 	}()
 }
 
-// Call calls a JS function prop; done (optional) gets its JSON result.
+// Call calls a JS function prop; done (optional) gets its JSON result, on
+// another goroutine. The props Go calls are the user's: a control's
+// onClick, onChange, onSelect, a menu item, a plugin's
+// prepareAndSendMessage. They run on the user-blocking lane, in order with
+// the user's other input and sends (jsrt UserBlocking): a send after a
+// click sees what the click did (OwlMode's mode toggle, then Enter). With
+// the runtime running the call is queued before Call returns, on the
+// caller's goroutine, whatever the function and done: a menu item's Taut
+// function and a call with done went through a goroutine of their own
+// first, and a click after them could go ahead.
 func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)) {
 	if done == nil && !IsTautFn(fn) {
-		b.with(func(r *runtime) { r.rt.CallFn(int(fn), args) })
+		b.with(func(r *runtime) { r.rt.CallFnUserBlocking(int(fn), args) })
+		return
+	}
+	var a json.RawMessage = args
+	if len(a) == 0 {
+		a = json.RawMessage("[]")
+	}
+	path := "__taut.callHostFn"
+	if IsTautFn(fn) {
+		path = "__taut.callFn"
+	}
+	call := func(r *runtime) {
+		r.rt.CallThen(UserAction(context.Background()), path, func(res json.RawMessage, err error) {
+			if done != nil {
+				done(res, err)
+			}
+		}, float64(fn), a)
+	}
+	if r := b.t.liveRuntime(); r != nil {
+		call(r)
 		return
 	}
 	go func() {
@@ -594,18 +622,7 @@ func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)
 			}
 			return
 		}
-		var a json.RawMessage = args
-		if len(a) == 0 {
-			a = json.RawMessage("[]")
-		}
-		path := "__taut.callHostFn"
-		if IsTautFn(fn) {
-			path = "__taut.callFn"
-		}
-		res, err := r.rt.Call(context.Background(), path, float64(fn), a)
-		if done != nil {
-			done(res, err)
-		}
+		call(r)
 	}()
 }
 
@@ -734,12 +751,29 @@ func (t *Taut) HasSendChecks() bool { h := t.composer(); return h != nil && h.Se
 // confirm modal); false keeps the message in the composer. Call it off the
 // UI goroutine before sending, when HasSendChecks.
 func (t *Taut) SendCheck(ctx context.Context, c ComposerContext) bool {
+	answer := make(chan bool, 1)
+	t.sendCheck(ctx, c, func(ok bool) { answer <- ok }, false)
+	return <-answer
+}
+
+// SendCheckAsync is SendCheck answering done on another goroutine. With
+// the runtime running, the checks' JS call is queued before it returns,
+// on the caller's goroutine: the composer's, at Enter, ahead of its own
+// re-render after it, which the checks waited for when they were queued a
+// goroutine switch later (a user-blocking task runs ahead of the queued
+// ones, never of the one running).
+func (t *Taut) SendCheckAsync(ctx context.Context, c ComposerContext, done func(ok bool)) {
+	t.sendCheck(ctx, c, done, true)
+}
+
+func (t *Taut) sendCheck(ctx context.Context, c ComposerContext, answer func(bool), async bool) {
 	if !t.HasSendChecks() {
-		return true
-	}
-	rt, err := t.ensureRuntime()
-	if err != nil {
-		return true
+		if async {
+			go answer(true)
+		} else {
+			answer(true)
+		}
+		return
 	}
 	type result struct {
 		ok  bool
@@ -747,41 +781,67 @@ func (t *Taut) SendCheck(ctx context.Context, c ComposerContext) bool {
 	}
 	done := make(chan result, 1)
 	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() {
-		var ok bool
-		err := rt.call(cctx, "sendCheck", &ok, c)
-		done <- result{ok, err}
-	}()
-	// A check may wait for the user as long as they take (HaikuWarning's
-	// dialog). But when the runtime's watchdog interrupts a task, QuickJS
-	// leaves the promises that task would have settled pending forever, so
-	// a check it hit (or a promise checks share, like HaikuWarning's
-	// dictionary) never answers. Once that has happened, a check that stays
-	// pending with nothing open for the user fails like a check that threw:
-	// it is ignored.
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	var idle time.Duration
-	for {
-		select {
-		case r := <-done:
-			if r.err != nil {
-				t.logf("taut: send check: %v", r.err)
-				return true
+	call := func(rt *runtime) {
+		rt.rt.CallThen(cctx, "__taut.sendCheck", func(raw json.RawMessage, err error) {
+			var ok bool
+			if err == nil && len(raw) > 0 {
+				err = json.Unmarshal(raw, &ok)
 			}
-			return r.ok
-		case <-tick.C:
-			if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
-				idle = 0
-				continue
+			done <- result{ok, err}
+		}, c)
+	}
+	rt := t.liveRuntime()
+	if rt != nil {
+		call(rt) // queued now (CallThen)
+	}
+	wait := func() {
+		defer cancel()
+		if rt == nil {
+			var err error
+			if rt, err = t.ensureRuntime(); err != nil {
+				answer(true)
+				return
 			}
-			idle += time.Second
-			if idle >= sendCheckGrace {
-				t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
-				return true
+			call(rt)
+		}
+		// A check may wait for the user as long as they take (HaikuWarning's
+		// dialog). But when the runtime's watchdog interrupts a task, QuickJS
+		// leaves the promises that task would have settled pending forever, so
+		// a check it hit (or a promise checks share, like HaikuWarning's
+		// dictionary) never answers. Once that has happened, a check that stays
+		// pending with nothing open for the user fails like a check that threw:
+		// it is ignored.
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		var idle time.Duration
+		for {
+			select {
+			case r := <-done:
+				if r.err != nil {
+					t.logf("taut: send check: %v", r.err)
+					answer(true)
+					return
+				}
+				answer(r.ok)
+				return
+			case <-tick.C:
+				if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
+					idle = 0
+					continue
+				}
+				idle += time.Second
+				if idle >= sendCheckGrace {
+					t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
+					answer(true)
+					return
+				}
 			}
 		}
+	}
+	if async {
+		go wait()
+	} else {
+		wait()
 	}
 }
 
@@ -797,7 +857,9 @@ func (t *Taut) sendCheckWaiting(ctx context.Context, rt *runtime) bool {
 	if len(t.Overlays()) > 0 {
 		return true
 	}
-	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	// behind the queued work, as the check's own awaits may be: a busy
+	// runtime that can't answer in time counts as waiting
+	pctx, cancel := context.WithTimeout(jsrt.Ordinary(ctx), 2*time.Second)
 	defer cancel()
 	var open bool
 	if err := rt.call(pctx, "sendCheckWaiting", &open); err != nil {

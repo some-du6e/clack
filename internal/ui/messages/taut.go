@@ -102,22 +102,40 @@ type commitEditArgs struct {
 // file_ids.
 func commitEdit(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 	t := tautOf()
+	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", commitArgs(ch, ts, text, blocks, fileIDs), commitNative(t, app))
+	return err
+}
+
+// commitEditThen is commitEdit queuing its JS call before it returns
+// (taut.DispatchThen: the UI goroutine's, at Enter, ahead of a plugin
+// click after it); done hears the outcome on another goroutine.
+func commitEditThen(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
+	t := tautOf()
+	taut.DispatchThen(ctx, t, "commitMessageEdit", commitArgs(ch, ts, text, blocks, fileIDs), commitNative(t, app),
+		func(_ any, err error) { done(err) })
+}
+
+func commitArgs(ch, ts, text string, blocks json.RawMessage, fileIDs []string) commitEditArgs {
 	args := commitEditArgs{ChannelID: ch, TS: ts, Blocks: blocks, Text: text}
 	if fileIDs != nil {
 		args.FileIDs = &fileIDs
 	}
-	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", args,
-		func(ctx context.Context, a commitEditArgs) (any, error) {
-			b := a.Blocks
-			if t != nil && len(b) > 0 && t.HasSendTransforms() {
-				b = t.TransformSendBlocks(ctx, b)
-			}
-			if a.FileIDs != nil {
-				return nil, app.EditWithFiles(ctx, a.ChannelID, a.TS, a.Text, b, *a.FileIDs)
-			}
-			return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
-		})
-	return err
+	return args
+}
+
+// commitNative is commitMessageEdit's native: the plugins' send
+// transforms, then core's edit.
+func commitNative(t *taut.Taut, app *core.App) func(context.Context, commitEditArgs) (any, error) {
+	return func(ctx context.Context, a commitEditArgs) (any, error) {
+		b := a.Blocks
+		if t != nil && len(b) > 0 && t.HasSendTransforms() {
+			b = t.TransformSendBlocks(ctx, b)
+		}
+		if a.FileIDs != nil {
+			return nil, app.EditWithFiles(ctx, a.ChannelID, a.TS, a.Text, b, *a.FileIDs)
+		}
+		return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
+	}
 }
 
 // deleteArgs is Slack's chatDeleteFetcher {channel, ts}.
