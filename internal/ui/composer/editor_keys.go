@@ -31,8 +31,6 @@ func (e *Editor) keyFilters() []event.Filter {
 		transfer.TargetFilter{Target: e, Type: "application/text"},
 		key.Filter{Focus: e, Name: key.NameEnter, Optional: anyMod},
 		key.Filter{Focus: e, Name: key.NameReturn, Optional: anyMod},
-		key.Filter{Focus: e, Name: key.NameTab, Optional: key.ModShift},
-		key.Filter{Focus: e, Name: key.NameEscape, Optional: anyMod},
 
 		key.Filter{Focus: e, Name: "A", Required: sc},
 		key.Filter{Focus: e, Name: "B", Required: sc},
@@ -56,6 +54,12 @@ func (e *Editor) keyFilters() []event.Filter {
 		key.Filter{Focus: e, Name: key.NameRightArrow, Optional: move},
 		key.Filter{Focus: e, Name: key.NameUpArrow, Optional: move},
 		key.Filter{Focus: e, Name: key.NameDownArrow, Optional: move},
+	}
+	if !e.textOnly {
+		// a text-only input leaves Tab to the focus order and Escape to
+		// its dialog (Texty binds neither there)
+		fs = append(fs, key.Filter{Focus: e, Name: key.NameTab, Optional: key.ModShift},
+			key.Filter{Focus: e, Name: key.NameEscape, Optional: anyMod})
 	}
 	// Mod+Shift+. is the keyboard module's "blockquote-alt" (keyCode
 	// 190): "." or, shifted on X11, ">".
@@ -194,6 +198,17 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 
 // shortcut handles Ctrl/Cmd combinations; it reports whether name was one.
 func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bool {
+	if e.textOnly {
+		// a text-only input has no formats: the formatting keys do nothing
+		switch name {
+		case "B", "I", "U", "F", "7", "&", "8", "*", "9", "(", ".", ">":
+			return true
+		case "C", "X":
+			if shift {
+				return true
+			}
+		}
+	}
 	switch name {
 	case "A":
 		e.anchor, e.caret = 0, e.doc.Len()
@@ -257,8 +272,11 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		switch {
 		case shift:
 			e.Redo()
-		case e.doc.Len() == 0: // quill.getLength() === 1: nothing at all
-			e.emit(EvUndoEmpty) // Slack's onCmdZWhenEmpty: unsend the message just sent
+		case e.doc.Len() == 0 && !e.textOnly: // quill.getLength() === 1: nothing at all
+			// Slack's onCmdZWhenEmpty: unsend the message just sent. A
+			// text-only input passes none (LPC/ binds the empty-Z key only
+			// with it), so Quill's history undoes there
+			e.emit(EvUndoEmpty)
 		default:
 			e.Undo()
 		}
@@ -315,6 +333,10 @@ func (e *Editor) copySel(gtx layout.Context) bool {
 // Mod+Shift+Enter with snippets on (the snippet dialog) is caught before
 // this, in command.
 func (e *Editor) enter(mods key.Modifiers) {
+	if e.textOnly {
+		e.newline() // onTextyEnter returns true: Texty adds the line
+		return
+	}
 	meta := mods.Contain(key.ModCommand) || mods.Contain(key.ModSuper)
 	ctrl := mods.Contain(key.ModCtrl)
 	shift := mods.Contain(key.ModShift)

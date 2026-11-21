@@ -207,6 +207,21 @@ const (
 // pltShades are Slack's shade labels; ramps are indexed in this order.
 var pltShades = []string{"0", "5", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"}
 
+// PltColor is Slack's --dt_color-plt-<palette>-<shade> in the light or
+// dark client theme (opaque; black for an unknown palette).
+func PltColor(palette, shade string, dark bool) color.NRGBA {
+	rs, ok := pltRamps[palette]
+	if !ok {
+		return color.NRGBA{A: 0xff}
+	}
+	m := 0
+	if dark {
+		m = 1
+	}
+	v := rs[m][shadeIndex(shade)]
+	return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+}
+
 func shadeIndex(s string) int {
 	for i, x := range pltShades {
 		if x == s {

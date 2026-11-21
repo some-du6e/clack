@@ -536,11 +536,34 @@ func (v *ChannelFiles) openLinkMenu(l core.ChannelLink, btn image.Rectangle) {
 		Popover: "right-bottom", OffsetX: 4, TryOpposite: true}))
 }
 
-// cfRich is a row's file as a message attachment (DownloadFile's).
+// cfRich is a row's file as a message attachment (DownloadFile's): the
+// file itself, its URL and Download the file's own (url_private), which
+// Download saves; a video's poster is its thumb_video. The media viewer
+// plays a video's mp4 (cfPlayable).
 func cfRich(it *fileItem) *richtext.File {
-	return &richtext.File{ID: it.ID, Name: it.Name, Title: it.Title, Type: it.Filetype, PrettyType: it.PrettyType,
-		Mime: it.Mime, User: it.User, URL: it.URL, Permalink: it.Permalink, Size: it.Size, Created: it.Created,
-		IsImage: it.isImage()}
+	f := &richtext.File{ID: it.ID, Name: it.Name, Title: it.Title, Type: it.Filetype, PrettyType: it.PrettyType,
+		Mime: it.Mime, User: it.User, URL: it.URL, Download: it.URL, Permalink: it.Permalink, Size: it.Size,
+		Created: it.Created, IsImage: it.isImage()}
+	if it.IsVideo {
+		f.IsVideo = true
+		if it.Thumb != "" {
+			f.Thumb = &richtext.Image{URL: it.Thumb, Alt: it.title(), Title: it.title(), Proxy: true}
+		}
+	}
+	return f
+}
+
+// cfPlayable is cfRich for the media viewer: a video's URL is its
+// progressive source, mp4 || url_private as a message attachment's, and
+// its Download still the file itself, which the viewer's More actions
+// save. The mp4 in cfRich's URL had the Files tab's Download save Slack's
+// transcode instead of the file.
+func cfPlayable(it *fileItem) *richtext.File {
+	f := cfRich(it)
+	if it.IsVideo && it.MP4 != "" {
+		f.URL = it.MP4
+	}
+	return f
 }
 
 // ---- rows ----

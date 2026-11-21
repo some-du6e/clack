@@ -118,6 +118,8 @@ type Store struct {
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
+	// botsGone are bot ids nothing returned (PutNonexistentBots)
+	botsGone map[string]bool
 
 	// userSeen is when each user was last fetched (unix seconds; from the
 	// disk cache for users it restored): what SaveCache keeps.
@@ -1166,8 +1168,40 @@ func (s *Store) PutBot(id string, b BotInfo) {
 		s.bots = map[string]BotInfo{}
 	}
 	s.bots[id] = b
+	delete(s.botsGone, id)
 	s.mu.Unlock()
 	s.gen.Add(1)
+}
+
+// PutNonexistentBots records bots neither the edge cache nor bots.info
+// returned: the bots UnknownFetchManager's upsertNonExistent (client-boot
+// 0mwJ marks every id a fetch didn't return), whose stub getBotById
+// (Emf2 AF) answers from then on. Nothing asks for them again this
+// session (noteMissing records a bot once), and a message only such a bot
+// would name draws BaseMissingMember's non-existent bar.
+func (s *Store) PutNonexistentBots(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	for _, id := range ids {
+		if _, ok := s.bots[id]; ok || id == "" {
+			continue
+		}
+		if s.botsGone == nil {
+			s.botsGone = map[string]bool{}
+		}
+		s.botsGone[id] = true
+	}
+	s.mu.Unlock()
+}
+
+// BotNonexistent reports whether nothing returned bot id
+// (PutNonexistentBots): Slack's isNonExistent bot stub.
+func (s *Store) BotNonexistent(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.botsGone[id]
 }
 
 // BotName is richtext.BotNamer: the cached bot's name, or "" after
@@ -2062,7 +2096,21 @@ func (s *Store) LoadCache() {
 		}
 	}
 	if len(d.Bots) > 0 {
-		s.bots = d.Bots
+		// under what this session stored or found gone meanwhile: that
+		// answer is newer than the disk's copy, and nothing would ask for
+		// the bot again (noteMissing records a bot once a session)
+		if len(s.bots)+len(s.botsGone) == 0 {
+			s.bots = d.Bots
+		} else {
+			if s.bots == nil {
+				s.bots = make(map[string]BotInfo, len(d.Bots))
+			}
+			for id, b := range d.Bots {
+				if _, ok := s.bots[id]; !ok && !s.botsGone[id] {
+					s.bots[id] = b
+				}
+			}
+		}
 	}
 	if d.Experiments != nil {
 		s.experiments = d.Experiments

@@ -50,9 +50,71 @@ func TestMessageMentionElement(t *testing.T) {
 		{"type":"text","text":"see "},
 		{"type":"message_mention","message_ts":"1700000000.000100","channel_id":"C1","text":"https://ws.slack.com/archives/C1/p1700000000000100","url":"https://ws.slack.com/archives/C1/p1700000000000100","author_id":"U1"}]}]}]}`), &m)
 	d := FromMessage(kindRes{}, &m)
-	want := []Block{para(tx("see "), Span{Kind: MessageMention, Text: "alice in #general", URL: "https://ws.slack.com/archives/C1/p1700000000000100", ID: "1700000000.000100"})}
+	want := []Block{para(tx("see "), Span{Kind: MessageMention, Text: "alice in #general", URL: "https://ws.slack.com/archives/C1/p1700000000000100", ID: "1700000000.000100", Chan: "C1"})}
 	eq(t, "mention", d.Blocks, want)
 	eq(t, "mention plain", PlainText(d), "see alice in #general")
+}
+
+// slugRes reads the linked message itself (MessageSlugger), as core's
+// conversions do: msgs are the messages it holds, by channel/ts.
+type slugRes struct {
+	kindRes
+	msgs map[string]SlugMessage
+}
+
+func (r slugRes) SlugMessage(ch, ts string) (SlugMessage, bool) {
+	m, ok := r.msgs[ch+"/"+ts]
+	return m, ok
+}
+
+// With a resolver that reads the linked message, the label names that
+// message's sender, whatever the element's author_id says (or lacks): a
+// message it doesn't hold is "Private message", disabled, still carrying
+// its URL; a sender nothing names yet is "Unknown author"; a DM's name
+// can be the slugger's (mentions_full_names_only_pref's k).
+func TestMessageSlugLabelReadsTheMessage(t *testing.T) {
+	r := slugRes{msgs: map[string]SlugMessage{
+		"C1/1.000100": {Author: "bob"},
+		"C1/1.000200": {},
+		"D1/1.000300": {Author: "alice"},
+		"D1/1.000400": {Author: "me", Self: true},
+		"D1/1.000500": {Author: "me", Conv: "Alice Liddell", Self: true},
+		"G1/1.000600": {Author: "bob"},
+	}}
+	cases := []struct {
+		ch, ts, author string
+		label          string
+		off            bool
+	}{
+		{"C1", "1.000100", "U1", "bob in #general", false},
+		{"C1", "1.000100", "", "bob in #general", false},
+		{"C1", "1.000200", "U1", "Unknown author in #general", false},
+		{"D1", "1.000300", "", "alice", false},
+		{"D1", "1.000400", "", "me with alice", false},
+		{"D1", "1.000500", "", "me with Alice Liddell", false},
+		{"G1", "1.000600", "", "bob in secret", false},
+		{"C1", "1.000900", "U1", "Private message", true},
+		{"CNOPE", "1.000100", "", "Private message", true},
+	}
+	for _, c := range cases {
+		var m slack.Message
+		el := `{"type":"message_mention","message_ts":"` + c.ts + `","channel_id":"` + c.ch + `","url":"https://ws.slack.com/archives/` + c.ch + `/p1"`
+		if c.author != "" {
+			el += `,"author_id":"` + c.author + `"`
+		}
+		_ = json.Unmarshal([]byte(`{"ts":"2.0","blocks":[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[`+el+`}]}]}]}`), &m)
+		d := FromMessage(r, &m)
+		if len(d.Blocks) != 1 || len(d.Blocks[0].Spans) != 1 {
+			t.Fatalf("%s/%s: blocks %+v", c.ch, c.ts, d.Blocks)
+		}
+		sp := d.Blocks[0].Spans[0]
+		if sp.Text != c.label || sp.Off != c.off || sp.Chan != c.ch || sp.ID != c.ts || sp.URL == "" {
+			t.Errorf("%s/%s (author_id %q): %+v, want %q off=%v", c.ch, c.ts, c.author, sp, c.label, c.off)
+		}
+		if c.ch == "G1" && (!sp.Lock || sp.Text[sp.Pre:] != "secret") {
+			t.Errorf("private channel's lock: %+v", sp)
+		}
+	}
 }
 
 func TestMessageUnfurlCard(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/some-du6e/clack/internal/canvas"
+	"github.com/some-du6e/clack/internal/media/mediatest"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -744,6 +745,10 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 		if s.serveListDownload(w, r, id, kind) { // lists.go
 			return
 		}
+	}
+	if id == FilesVideoID { // the gallery's video: mediatest's fixture, with ranges (http.ServeContent)
+		mediatest.Handler(mediatest.GreyGreyRed, false).ServeHTTP(w, r)
+		return
 	}
 	if id == CanvasFile {
 		w.Header().Set("Content-Type", "application/pdf")

@@ -284,6 +284,34 @@ func (a *App) SetPurpose(ctx context.Context, ch, purpose string) error {
 	return nil
 }
 
+// SubmitChannelPurpose is submitChannelPurpose's call (boot-shared uqxK):
+// conversations.setPurpose with name_tagging and its reason, for a
+// description already cleaned the way the Edit description dialog does
+// (composer.TextyInput.Submit).
+func (a *App) SubmitChannelPurpose(ctx context.Context, ch, purpose string) error {
+	var res convResult
+	err := a.C.Call(ctx, "conversations.setPurpose", url.Values{"channel": {ch}, "purpose": {purpose},
+		"name_tagging": {"true"}, "reason": {"submitChannelPurpose"}}, &res)
+	if err != nil {
+		return err
+	}
+	a.refreshConv(ctx, ch)
+	return nil
+}
+
+// SubmitChannelTopic is submitChannelTopic's call (boot-shared s0VR):
+// conversations.setTopic with its reason, for a topic already cleaned the
+// way the Edit topic dialog does (composer.TextyInput.Submit).
+func (a *App) SubmitChannelTopic(ctx context.Context, ch, topic string) error {
+	var res convResult
+	err := a.C.Call(ctx, "conversations.setTopic", url.Values{"channel": {ch}, "topic": {topic}, "reason": {"submitChannelTopic"}}, &res)
+	if err != nil {
+		return err
+	}
+	a.convChanged(ctx, ch, &res)
+	return nil
+}
+
 // SetTopic sets a channel topic.
 func (a *App) SetTopic(ctx context.Context, ch, topic string) error {
 	var res convResult

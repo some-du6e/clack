@@ -18,6 +18,11 @@ func (l *lay) agent(b *richtext.Block, x, y, w int) int {
 		}
 		// the host can't draw it: the text fallback, never a blank body
 	}
+	if len(b.Buttons) > 0 && b.Buttons[0].Kind == richtext.AgentChannelUnfurlKind {
+		// MessageKitAttachments draws an agent_channel_unfurl as its
+		// code channel's card or not at all, never its fallback text
+		return 0
+	}
 	if len(b.Spans) == 0 {
 		return 0
 	}
