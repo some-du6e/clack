@@ -271,6 +271,12 @@ func (a *App) codeChannelsChecked() bool {
 func (a *App) refreshCountsAfterGap(ctx context.Context) {
 	since := a.S.Seq()
 	a.refreshCounts(ctx)
+	if ctx.Err() == nil {
+		// requestOfflineCounts' resetReachedEnd({}): what the socket would
+		// have added past each thread history's end is unknown, so a pane
+		// at its end reads the newer page again (store/thread_slices.go)
+		a.S.ResetThreadsReachedEnd("")
+	}
 	if ctx.Err() == nil && a.codeChannelsChecked() && a.reconcileClosedCodeChannels(since) {
 		a.emit(Event{Type: "sidebar_changed"})
 	}
