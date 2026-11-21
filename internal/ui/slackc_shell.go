@@ -398,7 +398,7 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		// badge in the icon's place (BaseChannelPrefixPresence)
 		s := gtx.Dp(10)
 		at(gtx, image.Pt((gtx.Dp(16)-s)/2, (rowH-s)/2), image.Pt(gtx.Dp(120), s), func(gtx layout.Context) layout.Dimensions {
-			return slackc.Component(gtx, "BasePresence", sbPresence{a: a, active: conv.Active, sel: e.sel, self: conv.Self, key: conv.ID}, sbPresence.props, sbPresence.layout)
+			return slackc.Component(gtx, "BasePresence", sbPresence{a: a, active: conv.Active, sel: e.sel, self: conv.Self, system: sbSystemUser(conv.User), key: conv.ID}, sbPresence.props, sbPresence.layout)
 		})
 	} else if kind == "im" || kind == "app" {
 		at(gtx, image.Pt(0, iy), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
@@ -408,7 +408,7 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 			s := gtx.Dp(10)
 			ctr := image.Pt(gtx.Dp(15), iy+gtx.Dp(14))
 			at(gtx, ctr.Sub(image.Pt(s/2, s/2)), image.Pt(gtx.Dp(120), s), func(gtx layout.Context) layout.Dimensions {
-				return slackc.Component(gtx, "BasePresence", sbPresence{a: a, active: conv.Active, sel: e.sel, self: conv.Self, key: conv.ID}, sbPresence.props, sbPresence.layout)
+				return slackc.Component(gtx, "BasePresence", sbPresence{a: a, active: conv.Active, sel: e.sel, self: conv.Self, system: sbSystemUser(conv.User), key: conv.ID}, sbPresence.props, sbPresence.layout)
 			})
 		}
 	} else if conv.Code != nil {
@@ -522,8 +522,15 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 type sbPresence struct {
 	a                 *App
 	active, sel, self bool
-	key               string
+	// system: the partner is Slackbot or the Slack system user
+	// (ConnectedPresence, client-boot Bh6F: isSystemUser for USLACKBOT and
+	// USLACK), whose BasePresence (MSOq) is the status-slackbot-filled heart
+	system bool
+	key    string
 }
+
+// sbSystemUser is ConnectedPresence's isSystemUser for a DM partner.
+func sbSystemUser(user string) bool { return user == "USLACKBOT" || user == "USLACK" }
 
 // props: Slack's BasePresence shape (props.md).
 func (s sbPresence) props() slackc.Props {
@@ -533,7 +540,7 @@ func (s sbPresence) props() slackc.Props {
 		"isActive":        s.active,
 		"isDnd":           false,
 		"isSelf":          s.self,
-		"isSystemUser":    false,
+		"isSystemUser":    s.system,
 		"userType":        "member",
 		"inline":          false,
 		"inheritIconSize": false,
@@ -562,14 +569,22 @@ func (s sbPresence) layout(gtx layout.Context, p slackc.Props) layout.Dimensions
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
+	system := s.system
+	if p != nil && p.Has("isSystemUser") {
+		system = p.Bool("isSystemUser")
+	}
 	d := gtx.Dp(10)
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-		a.presenceDot(gtx, image.Pt(d/2, d/2), active, s.sel)
+		if system {
+			a.presenceHeart(gtx, d, active, s.sel)
+		} else {
+			a.presenceDot(gtx, image.Pt(d/2, d/2), active, s.sel)
+		}
 		if !text {
 			return layout.Dimensions{Size: image.Pt(d, d)}
 		}
 		t := "Away"
-		if active {
+		if active || system { // getPresenceText (MSOq): a system user is "Active"
 			t = "Active"
 		}
 		fg := st.Color(a.sbPal.SidebarText)

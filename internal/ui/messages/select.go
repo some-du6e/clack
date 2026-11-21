@@ -108,6 +108,12 @@ func (s *listState) selPointer(gtx layout.Context, h Host, e pointer.Event, size
 		if r.rv.OnCopyButton(local) { // the code block's copy button (richview codecopy.go)
 			return
 		}
+		if r.rv.InMedia(image.Pt(int(local.X), int(local.Y))) {
+			// a video player's: no selection, no edge auto-scroll
+			// (the overlay is user-select: none; X7vT's mousedown
+			// preventDefaults)
+			return
+		}
 		if e.Time-s.sel.lastTap < 400*time.Millisecond {
 			s.sel.taps++
 		} else {

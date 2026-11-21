@@ -239,6 +239,18 @@ type BotProfile struct {
 	IsWorkflowBot bool `json:"is_workflow_bot,omitempty"`
 }
 
+// MediaProgress is a file's media_progress: where the viewer stopped
+// watching it (offset_ms), and whether they watched it to its end.
+type MediaProgress struct {
+	OffsetMS     int  `json:"offset_ms"`
+	MediaWatched bool `json:"media_watched"`
+}
+
+// FileVideo is a file's video (only its outputs are read).
+type FileVideo struct {
+	Outputs json.RawMessage `json:"outputs,omitempty"`
+}
+
 type File struct {
 	ID                 string          `json:"id"`
 	Name               string          `json:"name"`
@@ -291,11 +303,24 @@ type File struct {
 	Transcription      json.RawMessage `json:"transcription,omitempty"`
 	MP4                string          `json:"mp4"`
 	HLS                string          `json:"hls"`
-	IsExternal         bool            `json:"is_external"`
-	ExternalType       string          `json:"external_type"`
-	AudioWaveSamples   []int           `json:"audio_wave_samples"`
-	Subtype            string          `json:"subtype"`
-	FileAccess         string          `json:"file_access,omitempty"`
+	// A video's: the poster Slack draws (VideoControlsOverlay's
+	// thumb_video_ts ?? thumb_video), the HLS stream it prefers in
+	// Electron, its captions and its audio-only source (MediaViewerContent's
+	// audio ? aac : mp4), and how far the viewer watched it
+	// (media.progress.update): where a player starts (xnwb).
+	ThumbVideoTS  string         `json:"thumb_video_ts,omitempty"`
+	HLSEmbed      string         `json:"hls_embed,omitempty"`
+	VTT           string         `json:"vtt,omitempty"`
+	AAC           string         `json:"aac,omitempty"`
+	MediaProgress *MediaProgress `json:"media_progress,omitempty"`
+	// Video is the file's video, whose outputs only fileIsHosted reads: an
+	// external file with transcoded outputs plays as a hosted one.
+	Video            *FileVideo `json:"video,omitempty"`
+	IsExternal       bool       `json:"is_external"`
+	ExternalType     string     `json:"external_type"`
+	AudioWaveSamples []int      `json:"audio_wave_samples"`
+	Subtype          string     `json:"subtype"`
+	FileAccess       string     `json:"file_access,omitempty"`
 	// MediaDisplayType is Slack's media_display_type ("unknown" while an
 	// upload is still being processed). Slack's web client doesn't draw by
 	// it; Clack only reads it to spot unprocessed uploads.

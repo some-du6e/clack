@@ -1,0 +1,7 @@
+package popups
+
+import "github.com/some-du6e/clack/internal/richtext"
+
+// On the round-3 head (0cbe7e63) the video menu's Download handed the
+// file to DownloadFile as it was (f.URL, the mp4 the player streams).
+func videoDownloadOf(f *richtext.File) *richtext.File { return f }

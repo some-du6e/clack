@@ -445,6 +445,12 @@ func (a *App) SetPref(ctx context.Context, name string, value any) error {
 	return nil
 }
 
+// MediaProgressUpdate tells Slack where the viewer is in a video (the
+// players' saveMediaProgress, gnNF and gBWG): offset_ms of duration_ms.
+func (a *App) MediaProgressUpdate(ctx context.Context, file string, offsetMS, durationMS int64) error {
+	return a.C.MediaProgressUpdate(ctx, file, offsetMS, durationMS)
+}
+
 // ---- search & directory ----
 
 // SearchUsers queries the org directory (edge users/search, ~80 ms): for

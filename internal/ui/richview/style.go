@@ -382,6 +382,9 @@ type Options struct {
 	// Elements, if set, draws the doc's interactive elements (see
 	// Elements). Use a comparable (pointer) implementation.
 	Elements Elements
+	// Media, if set, draws the doc's playable video tiles (see Media).
+	// Use a comparable (pointer) implementation.
+	Media Media
 	// Truncate cuts long Block Kit section text (and each field) at 300
 	// characters or 5 line breaks with " Show more", as Slack's renderer
 	// does in its thread, activity, threads, unreads, saved and pinned

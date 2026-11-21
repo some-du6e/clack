@@ -1,6 +1,7 @@
 package taut
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Slack's named thunks are where plugins hook actions: SilentTyping wraps
@@ -82,8 +84,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"blocksFormatFetcher", "{blocks, reason}", "ui/composer (markdown mode)", "blocks.format"},
 	{"executeAppAction", "{actionId, appId, channelId, …}", "ui/popups (shortcuts)", "running an app shortcut"},
 	{"submitView", "{viewId, values, …}", "ui/popups (app modals)", "submitting an app modal"},
-	{"apiCall", "{method, args}", "taut", "a Slack API call"},
-	{"apiCallExpedited", "{method, args}", "taut", "a Slack API call"},
+	{"apiCall", "{method, args, …}", "taut", "a Slack API call, settled as Slack's SlackApiRequest settles (05_slack.js apiCallThunk)"},
+	{"apiCallExpedited", "{method, args, …}", "taut", "apiCall with EXPEDITED, through apiCall's creator"},
 	// used by Slick's plugins (docs/PLUGINS-slick.md)
 	{"handleDeepLink", "{uri}", "ui (shell)", "opening a slack:// deep link (UIHooks.DeepLink)"},
 	{"navigate", "{id, viewType, params?, uiState?, options?}", "ui (shell)", "Slack's multi-view navigation: a Channel, Thread or Profile view through its deep link (UIHooks.DeepLink); resolves undefined, as Slack's"},
@@ -91,6 +93,8 @@ var ThunkCatalogue = []ThunkSpec{
 	{"openEditProfileModal", "{}", "ui/popups (profile)", "opening the edit-profile dialog"},
 	{"showSavedItemNotification", "{message, …}", "ui (notifications)", "a saved-item reminder notification"},
 	{"startHuddle", "{channelId, …}", "ui/views (huddles)", "starting a huddle (Clack has no huddle media)"},
+	{"addMemberToPresenceSubscription", "memberId", "taut", "Slack's presence manager (client-boot 4hlf): counts a subscriber of the member's presence (core.AddPresenceSubscription)"},
+	{"removeMemberFromPresenceSubscription", "memberId", "taut", "one subscriber fewer (core.RemovePresenceSubscription)"},
 }
 
 // SyncThunks return their result synchronously in Slack (plugins call the
@@ -462,6 +466,17 @@ func (tt *thunkTable) installDefaults() {
 		"saveMessageEdit": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			return nil, t.saveEdit(ctx, argObj(a))
 		},
+		// Slack's presence manager (client-boot 4hlf): the argument is the
+		// member's id; presence_sub follows a member's first subscriber
+		// and its last one leaving (core/presence_subs.go)
+		"addMemberToPresenceSubscription": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			t.app.AddPresenceSubscription(strArg(a, 0))
+			return nil, nil
+		},
+		"removeMemberFromPresenceSubscription": func(ctx context.Context, a []json.RawMessage) (any, error) {
+			t.app.RemovePresenceSubscription(strArg(a, 0))
+			return nil, nil
+		},
 		"joinChannel": func(ctx context.Context, a []json.RawMessage) (any, error) {
 			_, err := t.app.Join(ctx, argObj(a).str("channelId"))
 			return nil, err
@@ -596,26 +611,83 @@ func (r *appRef) membershipInfo(ctx context.Context, a []json.RawMessage) (any, 
 	return found, nil
 }
 
+// apiCall sends the request of Slack's apiCall thunk, which 05_slack.js
+// (apiCallThunk) builds as Slack's does (client-boot 0hZc, build
+// 35b42de8b870): the form fields getFormData makes of its args, its file
+// parts, and BaseRequest's maxAttempts (1 for the methods apiCall never
+// retries). It is tried the way Slack's API queue tries a SlackApiRequest
+// (slack.SlackRetriesUpTo), and the answer is the last try, whole, for JS
+// to settle the thunk from as Slack's request settles (the response with
+// its request ids, or Slack's rejection with the answer's JSON as
+// err.data): {attempts, status, reqId, retryAfter, body}, status being
+// the HTTP status, "TIMEOUT" (no answer within RequestTimeout) or 0 (no
+// answer). A request Clack won't send (the session ended, a method that
+// would sign you out) rejects with Clack's reason.
 func (r *appRef) apiCall(ctx context.Context, a []json.RawMessage) (any, error) {
-	o := argObj(a)
-	method := o.str("method")
-	var args map[string]any
-	_ = json.Unmarshal(o["args"], &args)
-	vals := url.Values{}
-	for k, v := range args {
-		switch x := v.(type) {
-		case string:
-			vals.Set(k, x)
-		default:
-			b, _ := json.Marshal(x)
-			vals.Set(k, string(b))
+	var req struct {
+		Method string            `json:"method"`
+		Fields map[string]string `json:"fields"`
+		Files  []struct {
+			Field string `json:"field"`
+			File  File   `json:"file"`
+		} `json:"files"`
+		MaxAttempts int `json:"maxAttempts"`
+	}
+	if len(a) > 0 {
+		if err := json.Unmarshal(a[0], &req); err != nil {
+			return nil, fmt.Errorf("taut: apiCall: %w", err)
 		}
 	}
-	raw, err := r.t.app.C.Raw(ctx, method, vals)
-	if err != nil {
-		return nil, err
+	if req.MaxAttempts == 0 {
+		req.MaxAttempts = slack.SlackMaxAttempts
 	}
-	return json.RawMessage(raw), nil
+	if len(req.Files) > 1 {
+		return nil, errors.New("taut: apiCall: Clack sends one file part per call")
+	}
+	vals := url.Values{}
+	for k, v := range req.Fields {
+		vals.Set(k, v)
+	}
+	var last *slack.Attempt
+	tries := 0
+	ctx = slack.ObserveAttempts(slack.SlackRetriesUpTo(ctx, req.MaxAttempts), func(at slack.Attempt) {
+		if last != nil && last.URL != at.URL {
+			tries = 0 // Call sent it on to the other host: a request of its own
+		}
+		tries++
+		last = &at
+	})
+	var err error
+	if len(req.Files) == 0 {
+		_, err = r.t.app.C.Raw(ctx, req.Method, vals)
+	} else {
+		f := req.Files[0]
+		var out json.RawMessage
+		err = r.t.app.C.CallMultipartFile(ctx, req.Method, vals, slack.MultipartFile{Field: f.Field, Name: f.File.Name, Type: f.File.Type, Data: f.File.Data}, &out)
+	}
+	if last == nil {
+		// nothing went out: the backoff guard answered with the failure
+		// it holds (Slack would have sent it again, and been answered the
+		// same), or Clack refused to send it
+		at, ok := slack.AttemptOf(err)
+		if !ok {
+			if err == nil {
+				err = errors.New("taut: apiCall: no request was sent")
+			}
+			return nil, err
+		}
+		last, tries = &at, 1
+	}
+	var status any = last.Status
+	switch {
+	case last.Timeout:
+		status = "TIMEOUT"
+	case last.Err != nil:
+		status = 0
+	}
+	// XHR's text decodes the answer as UTF-8, dropping a byte order mark
+	body := bytes.TrimPrefix(last.Body, []byte("\xef\xbb\xbf"))
+	return map[string]any{"attempts": tries, "status": status, "reqId": last.ReqID, "retryAfter": last.RetryAfter, "body": string(body)}, nil
 }
 
 // fetchRawChannels is fetchRawChannelsById's native: core loads each

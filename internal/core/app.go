@@ -61,6 +61,8 @@ type App struct {
 
 	presSeen     map[string]time.Time
 	presWaiters  []chan struct{}
+	presSubs     map[string]int // Slack's presence manager's counts (presence_subs.go)
+	presSubTimer *time.Timer
 	countsTimer  *time.Timer
 	countsReread bool           // refreshCounts' next read is the one after a merged answer (it doesn't ask again)
 	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
@@ -171,7 +173,7 @@ type call struct {
 // New builds the service. Call Boot before using it.
 func New(c *slack.Client, s *store.Store) *App {
 	a := &App{C: c, S: s, ready: make(chan struct{}), inflight: map[string]*call{}, subs: map[*sub]struct{}{},
-		presSeen: map[string]time.Time{}, files: newFileCache(fileCacheBytes), pending: map[string]*pendingSend{},
+		presSeen: map[string]time.Time{}, presSubs: map[string]int{}, files: newFileCache(fileCacheBytes), pending: map[string]*pendingSend{},
 		saved: map[string]bool{}, starred: map[string]bool{}, memberN: map[string]int{}, memberG: map[string]int{}, memberA: map[string]int{}}
 	if s.SelfID() == "" {
 		s.Lock()
@@ -2088,6 +2090,9 @@ func (a *App) presenceIDs(add []string) []string {
 	a.S.RUnlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	for id := range a.presSubs { // members someone subscribed to (presence_subs.go)
+		base[id] = true
+	}
 	now := time.Now()
 	for _, id := range add {
 		if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {

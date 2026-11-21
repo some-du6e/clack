@@ -18,6 +18,8 @@ var sidebarExperiments = map[string]string{
 	"agents_in_dm_sidebar": "on", "agents_in_dm_sidebar_pref": "on",
 	"suggested_sections_auto_sort_v2": "on",
 	"lists_tabbing_navigation":        "on",
+	// the mini player (videoplayer/pip.go: a playing video docks)
+	"clips_pip": "on",
 	// channel details' Agents & apps / Automations tabs and Settings'
 	// tab permissions (views/details.go, details_more.go)
 	"channel_details_agents_apps_tab": "on", "move_channel_tabs_settings": "on",
