@@ -53,6 +53,7 @@ type cdCall struct {
 	size    image.Point     // the button as last drawn
 	row     image.Rectangle // the header's button row, in the dialog
 	dlg     image.Point     // the dialog's origin in the window
+	card    image.Rectangle // the dialog as last drawn, window coords (Rect)
 	menu    *popups.Menu
 	confirm *popups.Modal
 	mu      sync.Mutex

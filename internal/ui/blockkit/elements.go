@@ -670,6 +670,7 @@ func (w *ew) layoutSelect(gtx C, sz image.Point) {
 	}
 	drawField(gtx, w.th(), sz, w.lead(), txt, ph, w.open, true, fs, w.errored())
 	w.main.add(gtx, sz)
+	w.box = sz // ModalSelects (tests)
 }
 
 func (w *ew) errored() bool {

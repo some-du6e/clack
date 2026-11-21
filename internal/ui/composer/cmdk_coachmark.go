@@ -50,6 +50,7 @@ import (
 // under the card in --arrow-color (sk_inverted_foreground, the card's own
 // background), its :before outline 17px in rgba(sk_foreground_low,.13).
 type cmdKCoachmark struct {
+	rect  image.Rectangle // the card as last laid out (Rect)
 	c     *Composer
 	done  bool
 	scrim int // the overlay's press tag
@@ -248,6 +249,9 @@ func cmdKCardRect(gtx layout.Context, at image.Point, sz image.Point) image.Rect
 	return image.Rectangle{Min: image.Pt(at.X, top), Max: image.Pt(at.X+sz.X, top+sz.Y)}
 }
 
+// Rect is the card as last laid out (window coords).
+func (m *cmdKCoachmark) Rect() image.Rectangle { return m.rect }
+
 func (m *cmdKCoachmark) Layout(gtx layout.Context) layout.Dimensions {
 	if m.done {
 		return layout.Dimensions{}
@@ -271,6 +275,7 @@ func (m *cmdKCoachmark) Layout(gtx layout.Context) layout.Dimensions {
 	lines := cmdKLines(gtx, th, runs, gtx.Dp(cmdKW-2*cmdKPadX))
 	sz := cmdKCardSize(gtx, lines)
 	card := cmdKCardRect(gtx, at, sz)
+	m.rect = card
 
 	// input: a press on the overlay closes; the card swallows its own
 	for {

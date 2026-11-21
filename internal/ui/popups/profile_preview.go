@@ -260,6 +260,11 @@ func (d *pfPreviewDim) Layout(gtx layout.Context) layout.Dimensions {
 
 func (d *pfPreviewDim) Dismissed() bool { return d.done || d.v.preview == pfPreviewNone }
 
+// InspectNoCard says the dim has no card of its own: what shows through
+// it is the window, which the inspect tool's picks report, so a session's
+// frame over it logs no missing box.
+func (d *pfPreviewDim) InspectNoCard() {}
+
 // Dismiss is Escape: Slack's keyup listener exits the preview.
 func (d *pfPreviewDim) Dismiss() {
 	d.done = true

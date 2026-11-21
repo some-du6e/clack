@@ -144,7 +144,9 @@ func Compose(shot *image.RGBA, elem image.Rectangle, scale float32, lines []Line
 
 // paintShot draws shot onto dst with its top-left at at: blurred
 // MarginBlur dp (scale px per dp) everywhere but elem (shot px), which
-// stays sharp. A shot that is all elem (a dragged region) is copied.
+// stays sharp. A shot that is all elem (a dragged region) is copied. Only
+// the margin's pixels are blurred (blurOutside): what the whole shot's
+// blur would leave there, bit for bit.
 func paintShot(dst *image.RGBA, at image.Point, shot *image.RGBA, elem image.Rectangle, scale float32) {
 	sb := shot.Bounds()
 	r := image.Rectangle{Min: at, Max: at.Add(sb.Size())}
@@ -152,10 +154,20 @@ func paintShot(dst *image.RGBA, at image.Point, shot *image.RGBA, elem image.Rec
 	if sb.In(elem) {
 		return
 	}
-	blur(dst, r, max(int(math.Round(float64(MarginBlur*scale))), 1))
-	if c := elem.Intersect(sb); !c.Empty() {
+	c := elem.Intersect(sb)
+	blurOutside(dst, r, max(int(math.Round(float64(MarginBlur*scale))), 1), c.Sub(sb.Min).Add(at))
+	if !c.Empty() {
 		draw.Draw(dst, c.Sub(sb.Min).Add(at), shot, c.Min, draw.Src)
 	}
+}
+
+// shownImage is the shot as the copy will show it, the rects in marks
+// painted over (Redacted) and the margin around elem blurred (paintShot):
+// what the review draws.
+func shownImage(shot *image.RGBA, marks []image.Rectangle, elem image.Rectangle, scale float32) *image.RGBA {
+	img := image.NewRGBA(shot.Bounds())
+	paintShot(img, shot.Bounds().Min, Redacted(shot, marks, scale), elem, scale)
+	return img
 }
 
 // Redacted is shot with the rects in redact (px in shot) painted over
@@ -296,56 +308,6 @@ func outline(img *image.RGBA, r image.Rectangle, scale float32) {
 	ring(img, r.Inset(-sw-hw), hw, haloCol)
 	ring(img, r.Inset(-sw), sw, outlineCol)
 	ring(img, r, hw, haloCol)
-}
-
-// blur box-blurs img inside r three times, rad px each way, rows then
-// columns (edges clamped: nothing outside r comes in).
-func blur(img *image.RGBA, r image.Rectangle, rad int) {
-	r = r.Intersect(img.Bounds())
-	w, h := r.Dx(), r.Dy()
-	if w == 0 || h == 0 || rad <= 0 {
-		return
-	}
-	n := max(w, h)
-	line := make([]uint8, 4*n)
-	tmp := make([]uint8, 4*n)
-	d := 2*rad + 1
-	// pass blurs line's first l pixels once
-	pass := func(l int) {
-		for c := 0; c < 4; c++ {
-			at := func(i int) int { return int(line[4*min(max(i, 0), l-1)+c]) }
-			sum := 0
-			for i := -rad; i <= rad; i++ {
-				sum += at(i)
-			}
-			for i := 0; i < l; i++ {
-				tmp[4*i+c] = uint8((sum + d/2) / d)
-				sum += at(i+rad+1) - at(i-rad)
-			}
-		}
-		copy(line[:4*l], tmp[:4*l])
-	}
-	for y := r.Min.Y; y < r.Max.Y; y++ {
-		o := img.PixOffset(r.Min.X, y)
-		copy(line, img.Pix[o:o+4*w])
-		for range 3 {
-			pass(w)
-		}
-		copy(img.Pix[o:o+4*w], line[:4*w])
-	}
-	for x := r.Min.X; x < r.Max.X; x++ {
-		for y := range h {
-			o := img.PixOffset(x, r.Min.Y+y)
-			copy(line[4*y:4*y+4], img.Pix[o:o+4])
-		}
-		for range 3 {
-			pass(h)
-		}
-		for y := range h {
-			o := img.PixOffset(x, r.Min.Y+y)
-			copy(img.Pix[o:o+4], line[4*y:4*y+4])
-		}
-	}
 }
 
 // ring strokes w px inside r.
