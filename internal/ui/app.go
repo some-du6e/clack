@@ -249,6 +249,8 @@ type App struct {
 	// winEvented: the window delivered its first event (its driver is
 	// up: perform may call Window.Perform from any goroutine)
 	winEvented atomic.Bool
+	// cacheRested: core heard the first real frame (FirstFrameDone)
+	cacheRested bool
 
 	title       string
 	firstPaint  bool
@@ -737,6 +739,10 @@ func (a *App) Run() error {
 					// launch is for (launch.py's budget)
 					a.realFramed = true
 					applog.Mark("real-frame", a.paletteNote())
+				}
+				if b := a.data; b != nil && !a.cacheRested {
+					a.cacheRested = true
+					b.core.FirstFrameDone() // meta.json's custom emoji and user groups now (core DeferCacheRest)
 				}
 				if b := a.data; b != nil && b.tautDeferJS {
 					b.startDeferredTaut(a) // the launch's first real frame is up (backend.start)

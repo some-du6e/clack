@@ -221,6 +221,11 @@ func (b *backend) start(a *App) {
 			// nothing (started hidden) after tautDeferMax.
 			if !a.rv.done { // the launch's reveal, not a sign-in's later (it clears them)
 				slackc.SetExpected(a.prefs.PluginPatched)
+				// meta.json's custom emoji and user groups (6.6 MB and
+				// 0.4 MB on Hack Club) load after the first real frame:
+				// it doesn't draw them (the boot data has the few it
+				// does), and decoding them took the CPU it needs
+				b.core.DeferCacheRest()
 			}
 			if len(a.prefs.PluginPatched) == 0 && !a.prefs.PluginStyled {
 				b.tautDeferJS = true

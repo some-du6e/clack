@@ -6,7 +6,9 @@
 # warm (.github/perf/launch.py), with a Slick theme and user CSS seeded and
 # plugins that show nothing of their own (NoTrack, ShutUpSlackbot: a warm
 # launch never waits for them; flake-check's launch-speed-* jobs measure
-# Karim's set, whose patches and CSS the reveal may wait for).
+# Karim's set, whose patches and CSS the reveal may wait for), against a
+# fakeslackd whose account caches what Karim's does: meta.json with 6.6 MB
+# of packed custom emoji and 2,000 user groups (launch.py --emoji).
 #
 # Karim (2026-11-21): "Make launching the app take less than a Mac app
 # bounce." macOS bounces the Dock icon from the launch until the app
@@ -20,7 +22,8 @@
 #   - the fastest warm launch shows the client within one bounce of the
 #     launch call (LaunchServices' exec included): the fastest, as the
 #     runners' speed varies about 2x from run to run (two VMs a host).
-#     LAUNCH_SOFT_BOUNCE=1 (ci's macos job) makes this one a warning: a
+#     Over it, seven more warm launches run once (the fastest of all
+#     counts). LAUNCH_SOFT_BOUNCE=1 (ci's macos job) makes it a warning: a
 #     slow runner must not turn an unrelated branch red; flake-check's
 #     launch-budget job keeps it a failure.
 #
@@ -40,5 +43,5 @@ go build -o "$w/fakeslackd" ./internal/fakeslack/fakeslackd
 soft=()
 [ "${LAUNCH_SOFT_BOUNCE:-}" = 1 ] && soft=(--soft-bounce)
 python3 -I .github/perf/launch.py --app "$app" --fake "$w/fakeslackd" --out "$w/out" --library "$w/library" \
-  --plugins quiet --theme-check --warm 7 --bounce-ms "${LAUNCH_BOUNCE_MS:-700}" --placeholder-ms "${LAUNCH_PLACEHOLDER_MS:-16}" \
+  --plugins quiet --theme-check --warm 7 --bounce-ms "${LAUNCH_BOUNCE_MS:-700}" --bounce-retry --placeholder-ms "${LAUNCH_PLACEHOLDER_MS:-16}" \
   ${soft[@]+"${soft[@]}"} --label "macOS launch budget"

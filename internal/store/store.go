@@ -10,6 +10,7 @@ package store
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"math"
@@ -164,6 +165,10 @@ type Store struct {
 	savedEmo  uint64
 	emojiAt   time.Time // when the cached emoji map was fetched (emoji.list)
 	emojiAtMu sync.Mutex
+
+	// cachePending: LoadCacheBase installed meta.json's first part and its
+	// rest hasn't run: SaveCache writes nothing meanwhile
+	cachePending atomic.Bool
 
 	missMu     sync.Mutex
 	missSeen   map[string]bool
@@ -2187,34 +2192,72 @@ func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 }
 
 func (s *Store) LoadCache() {
-	if s.cacheDir == "" || s.dropped.Load() {
-		return
+	if rest := s.LoadCacheBase(); rest != nil {
+		rest()
 	}
+}
+
+// LoadCacheBase reads and installs the part of meta.json a launch's first
+// frame reads: the users, the prefs, the channel names, the bots and the
+// experiments (metaLayout). The returned rest reads and installs the
+// custom emoji and the user groups (6.6 MB and 0.4 MB on Hack Club), once
+// (nil: no cache, or none of it loaded). Until rest has run SaveCache
+// writes nothing, as a save then would lose what rest installs. A file
+// whose first part is cut short loads nothing; one cut inside the rest
+// keeps its first part (Boot fetches the emoji then: the map is empty).
+func (s *Store) LoadCacheBase() (rest func()) {
+	if s.cacheDir == "" || s.dropped.Load() {
+		return nil
+	}
+	t0 := time.Now()
 	f, err := os.Open(filepath.Join(s.cacheDir, "meta.json"))
 	if err != nil {
-		return
+		return nil
 	}
 	var d diskCache
 	var users []*slack.User
-	err = readDiskCache(bufio.NewReaderSize(f, 64<<10), &d, func(u *slack.User) { users = append(users, u) })
-	f.Close()
-	if err != nil {
-		return
+	m := newMetaDecoder(bufio.NewReaderSize(f, 64<<10), &d, func(u *slack.User) { users = append(users, u) })
+	if err := m.base(); err != nil {
+		f.Close()
+		return nil
 	}
+	s.cachePending.Store(true)
+	s.installCacheBase(&d, users)
+	gen := s.gen.Load() // what the store holds now is what is on disk, so far
+	tBase := time.Since(t0)
+	return func() {
+		defer s.cachePending.Store(false)
+		t1 := time.Now()
+		err := m.rest()
+		f.Close()
+		if err != nil || s.dropped.Load() {
+			return // the first part stays; the next save writes the store whole
+		}
+		packed := len(d.EmojiPacked)
+		s.installCacheRest(&d)
+		s.saveMu.Lock()
+		if s.gen.Load() == gen || !s.saved { // nothing else changed between the parts
+			s.saved, s.savedGen, s.savedEmo = true, s.gen.Load(), s.CustomEmoji.Version()
+		}
+		s.saveMu.Unlock()
+		if f := cacheLoadLog; f != nil {
+			f(fmt.Sprintf("cache: meta.json (layout %d) %d users, prefs and names in %s; %d emoji (%.1f MB packed) and %d user groups in %s",
+				m.layout, len(users), tBase.Round(time.Millisecond), s.CustomEmoji.Len(), float64(packed)/(1<<20), len(d.Usergroups),
+				time.Since(t1).Round(time.Millisecond)))
+		}
+	}
+}
+
+// cacheLoadLog hears LoadCacheBase's timing line (core logs it as a debug
+// line: the startup timeline's cache-read detail).
+var cacheLoadLog func(string)
+
+// SetCacheLoadLog sets cacheLoadLog (core, before Boot).
+func SetCacheLoadLog(f func(string)) { cacheLoadLog = f }
+
+// installCacheBase installs LoadCacheBase's part.
+func (s *Store) installCacheBase(d *diskCache, users []*slack.User) {
 	s.putUserPtrs(users, d.UserSeen)
-	if d.EmojiPacked != "" {
-		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
-	} else if len(d.Emoji) > 0 {
-		s.CustomEmoji.Set(d.Emoji)
-	}
-	if d.EmojiAt > 0 {
-		s.emojiAtMu.Lock()
-		s.emojiAt = time.Unix(d.EmojiAt, 0)
-		s.emojiAtMu.Unlock()
-	}
-	if len(d.Usergroups) > 0 {
-		s.SetUsergroups(d.Usergroups)
-	}
 	s.mu.Lock()
 	if len(d.Names) > 0 {
 		if s.names == nil {
@@ -2255,10 +2298,24 @@ func (s *Store) LoadCache() {
 		s.prefsCached = true
 		s.mu.Unlock()
 	}
-	// what was just read is what is on disk
-	s.saveMu.Lock()
-	s.saved, s.savedGen, s.savedEmo = true, s.gen.Load(), s.CustomEmoji.Version()
-	s.saveMu.Unlock()
+}
+
+// installCacheRest installs the rest's part: the custom emoji (over the
+// boot data's few, InstallBootEmoji) and the user groups.
+func (s *Store) installCacheRest(d *diskCache) {
+	if d.EmojiPacked != "" {
+		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
+	} else if len(d.Emoji) > 0 {
+		s.CustomEmoji.Set(d.Emoji)
+	}
+	if d.EmojiAt > 0 {
+		s.emojiAtMu.Lock()
+		s.emojiAt = time.Unix(d.EmojiAt, 0)
+		s.emojiAtMu.Unlock()
+	}
+	if len(d.Usergroups) > 0 {
+		s.SetUsergroups(d.Usergroups)
+	}
 }
 
 // SetEmojiList installs a fresh emoji.list result, compacted the way the
@@ -2331,8 +2388,8 @@ func unpackEmoji(p string) map[string]string {
 }
 
 func (s *Store) SaveCache() error {
-	if s.cacheDir == "" {
-		return nil
+	if s.cacheDir == "" || s.cachePending.Load() {
+		return nil // pending: the emoji and the user groups aren't in yet (LoadCacheBase)
 	}
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()

@@ -3125,6 +3125,45 @@ jobs:
           name: launch-budget
           path: ${{ runner.temp }}/launch/out
 
+  # temporary (launch-speed): meta.json's custom emoji and user groups
+  # after the first frame (A) against the whole file before the warm
+  # snapshot (B, CLACK_CACHE_WHOLE=1), with Hack Club's 6.6 MB of packed
+  # emoji, alternating on one runner
+  launch-cache-ab:
+    if: ${{ inputs.only != '' && startsWith('launch-cache-ab', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Clack.app (perfharness) and fakeslackd
+        run: |
+          set -eu
+          app="$RUNNER_TEMP/launch/Clack.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          CGO_ENABLED=1 go build -tags perfharness -trimpath -ldflags="-s -w" -o "$app/Contents/MacOS/clack" ./cmd/clack 2> "$RUNNER_TEMP/build.log" || { cat "$RUNNER_TEMP/build.log"; exit 1; }
+          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
+          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
+          go build -o "$RUNNER_TEMP/launch/fakeslackd" ./internal/fakeslack/fakeslackd
+      - name: plugins (the Library's)
+        run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
+      - name: launch timeline, A/B (warm x6, purged x2 each)
+        run: python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.app" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --plugins quiet --theme --warm 6 --purged 2 --ab CLACK_CACHE_WHOLE=1 --label "macOS meta.json A/B"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: launch-cache-ab
+          path: ${{ runner.temp }}/launch/out
+
   launch-speed-linux:
     if: ${{ inputs.only != '' && startsWith('launch-speed-linux', inputs.only) }}
     runs-on: ubuntu-latest
