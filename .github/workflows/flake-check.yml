@@ -3022,6 +3022,8 @@ jobs:
           rc=0
           xvfb-run -a go test -count=1 -v -timeout 15m -run '^(TestSystemDMToast|TestMacNotifierSystemDM)' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 30m -run "$UI_TESTS" ./internal/ui || rc=1
+          # notify-file-meta (2026-11-21): the toast text's file and clip lines
+          go test -count=$COUNT -timeout 10m -run '^(TestFileTypeLikeSlack|TestNoteFilesOf|TestNoteFileTitle|TestNotificationText)' ./internal/richtext || rc=1
           exit $rc
   system-dm-toast-windows:
     if: ${{ inputs.only != '' && startsWith('system-dm-toast-windows', inputs.only) }}
