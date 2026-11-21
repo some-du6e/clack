@@ -2964,13 +2964,13 @@ jobs:
           name: launch-mac
           path: ${{ runner.temp }}/launch/out
 
-  # temporary (launch-speed's A/B): the backend's start before AppKit's
-  # launch (A) against the old order (B, CLACK_LAUNCH_BACKEND=late), warm
-  # and with the file cache purged, alternating on one runner
-  launch-speed-mac-ab:
-    if: ${{ inputs.only != '' && startsWith('launch-speed-mac-ab', inputs.only) }}
+
+  # ci's macos launch budget alone (.github/perf/launch-budget.sh), for a
+  # quick round or a red run on an old commit: only=launch-budget
+  launch-budget:
+    if: ${{ inputs.only != '' && startsWith('launch-budget', inputs.only) }}
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
@@ -2981,25 +2981,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Clack.app (perfharness) and fakeslackd
-        run: |
-          set -eu
-          app="$RUNNER_TEMP/launch/Clack.app"
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          CGO_ENABLED=1 go build -tags perfharness -trimpath -ldflags="-s -w" -o "$app/Contents/MacOS/clack" ./cmd/clack
-          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
-          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
-          printf 'APPL????' > "$app/Contents/PkgInfo"
-          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
-          go build -o "$RUNNER_TEMP/launch/fakeslackd" ./internal/fakeslack/fakeslackd
-      - name: plugins (the Library's ChatTabs and five Taut plugins)
-        run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
-      - name: launch timeline, A/B (warm x5, purged x3 each)
-        run: python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.app" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --purged 3 --ab CLACK_LAUNCH_BACKEND=late --label "macOS A/B"
+      - name: launch budget (Clack.app through LaunchServices, within one Dock bounce)
+        run: .github/perf/launch-budget.sh "$RUNNER_TEMP/launch"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
-          name: launch-mac-ab
+          name: launch-budget
           path: ${{ runner.temp }}/launch/out
 
   launch-speed-linux:

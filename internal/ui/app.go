@@ -518,11 +518,6 @@ func (a *App) Run() error {
 	// starts, and the window takes them just before it opens.
 	place := make(chan []app.Option, 1)
 	go func() { place <- a.mainWindowPlace() }()
-	backendLate := os.Getenv("CLACK_LAUNCH_BACKEND") == "late" // launch-speed's A/B: the old order (temporary)
-	if backendLate {
-		a.win.Option(<-place...)
-		place <- nil
-	}
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)

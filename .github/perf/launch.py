@@ -31,8 +31,16 @@ engine's compile cache, ui.json's theme and plugin slots), then N purged
 --extra adds two direct runs: GODEBUG=inittrace=1 (every package's init)
 and CLACK_CPUPROFILE (the first 3 s).
 
-With --budget-ms, the median of the warm runs' --budget-mark must be
-within it, and every warm run must reach it: else exit 1.
+The launch budget (ci.yml's macos job, flake-check's launch-budget):
+  --bounce-ms N      the fastest warm launch, from the launch call (exec
+                     included) to its first real frame, within N ms: one
+                     bounce of the Dock's launch animation (bounce.sh
+                     measured 700 ms on the runner)
+  --placeholder-ms N the median warm launch shows the boot placeholder at
+                     most N ms before the client (real-frame - first-frame):
+                     a warm launch's first frame is the client itself
+  --budget-ms N      the median warm launch's --budget-mark within N ms
+Every warm run must reach real-frame. Any of them missed: exit 1.
 """
 import argparse, json, os, platform, re, shutil, signal, statistics, subprocess, sys, time
 
@@ -263,6 +271,8 @@ def main():
     ap.add_argument("--screenshot", action="store_true")
     ap.add_argument("--latency", default="150ms")
     ap.add_argument("--budget-ms", type=int, default=0)
+    ap.add_argument("--bounce-ms", type=int, default=0)
+    ap.add_argument("--placeholder-ms", type=int, default=None)
     ap.add_argument("--budget-mark", default="real-frame")
     ap.add_argument("--label", default=SYS)
     ap.add_argument("--ab", default="", help="NAME=VALUE: each warm and purged run again with it set (the B side)")
@@ -316,18 +326,45 @@ def main():
         fake.terminate()
 
     report(a, runs, extra, plugins, cache)
+    return budget(a, [r for r in runs if re.fullmatch(r"warm\d+", r["name"])])
+
+
+def budget(a, warm):
+    """The launch budget's checks (see the top); 1 when one failed."""
+    if not (a.budget_ms or a.bounce_ms or a.placeholder_ms is not None):
+        return 0
+    rc, lines = 0, []
+    reached = [r for r in warm if "real-frame" in r and "first-frame" in r]
+    if not warm or len(reached) < len(warm):
+        print(f"::error::{a.label}: {len(warm) - len(reached)} of {len(warm)} warm launches never showed the client (no real-frame)")
+        return 1
+    if a.bounce_ms:
+        total = [r["real-frame"] + max(0, r.get("exec", 0)) for r in reached]
+        best = min(total)
+        ok = best <= a.bounce_ms
+        lines.append(f"{'ok' if ok else 'OVER'}: the fastest warm launch showed the client {best} ms after the launch call "
+                     f"(budget {a.bounce_ms} ms, one Dock bounce; all: {total})")
+        rc |= 0 if ok else 1
+    if a.placeholder_ms is not None:
+        held = [r["real-frame"] - r["first-frame"] for r in reached]
+        med = statistics.median(held)
+        ok = med <= a.placeholder_ms
+        lines.append(f"{'ok' if ok else 'OVER'}: the median warm launch showed the boot placeholder {med:.0f} ms before the client "
+                     f"(budget {a.placeholder_ms} ms; all: {held})")
+        rc |= 0 if ok else 1
     if a.budget_ms:
-        warm = [r for r in runs if r["name"].startswith("warm")]
         got = [r[a.budget_mark] for r in warm if a.budget_mark in r]
-        if len(got) < len(warm) or not got:
-            print(f"::error::{a.label}: {len(warm) - len(got)} of {len(warm)} warm launches never reached {a.budget_mark}")
-            return 1
-        med = statistics.median(got)
-        if med > a.budget_ms:
-            print(f"::error::{a.label}: warm launch to {a.budget_mark} took {med:.0f} ms (median of {got}), over the {a.budget_ms} ms budget")
-            return 1
-        print(f"{a.label}: warm launch to {a.budget_mark}: {med:.0f} ms (median of {got}), within the {a.budget_ms} ms budget")
-    return 0
+        med = statistics.median(got) if got else float("inf")
+        ok = len(got) == len(warm) and med <= a.budget_ms
+        lines.append(f"{'ok' if ok else 'OVER'}: the median warm launch reached {a.budget_mark} at {med:.0f} ms "
+                     f"(budget {a.budget_ms} ms; all: {got})")
+        rc |= 0 if ok else 1
+    for l in lines:
+        print((f"::error::{a.label}: " if l.startswith("OVER") else f"{a.label}: ") + l)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+            f.write("\n### Launch budget\n\n" + "\n".join(f"- {l}" for l in lines) + "\n")
+    return rc
 
 
 def seed_plugins(lib, cfg):

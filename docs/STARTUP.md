@@ -1,8 +1,8 @@
-# Startup: the timeline, the cold path and the boot placeholder
+# Startup: the timeline, the launch, the cold path and the boot placeholder
 
 ## Timeline
 
-Every start logs its milestones to clack.log (`internal/applog/startup.go`). `debug:` lines are on for the first 60 s, and always with `CLACK_DEBUG=1`:
+Every start logs its milestones to clack.log (`internal/applog/startup.go`), in ms since the OS started the process (`applog.ProcessStart`: the kernel's start time on macOS, /proc on Linux, GetProcessTimes on Windows), so the loader, the Go runtime and every package's init count too (before 2026-11-21 the zero was main). `debug:` lines are on for the first 60 s, and always with `CLACK_DEBUG=1`:
 
 ```
 debug: startup +3ms window
@@ -17,8 +17,17 @@ startup: timeline settled=937ms window=1ms first-text=83ms js-runtime=172ms … 
 
 | milestone | when |
 |---|---|
-| `window` | the window exists |
+| `main` | main started: the loader, the runtime and the package inits are done |
+| `single-instance`, `creds`, `ui-new`, `attached`, `app-main` | main's steps: no other Clack runs, the credentials read, ui.New, the session attached, the main thread enters the OS's loop (macOS: AppKit) |
+| `run`, `window`, `event-loop` | App.Run started; the window's Go side exists; its event loop starts |
+| `appkit-app`, `appkit-run`, `will-finish-launching`, `launched` | macOS (Gio patch 55): NSApplication made, its run loop starts, applicationWillFinishLaunching, NSApplication finished launching (the Dock's bounce ends) |
+| `gio-init`, `window-create`, `window-view`, `window-ns`, `window-shown` | the window: Gio's Window.init; macOS: the main thread starts making it, its view (the Metal layer), its NSWindow; the OS window on screen (makeKeyAndOrderFront, ShowWindow, XMapWindow) |
+| `config`, `frame-event` | the window's first ConfigEvent and FrameEvent |
+| `gpu-context`, `gpu`, `presented` | the first GPU context, the first gpu.New, the first Present |
+| `fonts` | the text shaper is built (the UI font, the system font index) |
 | `first-frame` | the first frame was submitted (background only while fonts load) |
+| `real-frame` | the first frame of the client itself, not the boot placeholder: what a launch is for |
+| `menu-bar` | macOS: the menu bar installed on the main thread (after the first frame) |
 | `first-text` | the first frame with text |
 | `theme` | the first frame with the account's own theme (`account`) or Slack's default when the account has none |
 | `sidebar` | the first frame showing sidebar rows |
@@ -36,7 +45,22 @@ startup: timeline settled=937ms window=1ms first-text=83ms js-runtime=172ms … 
 
 `relayouts` counts frames where something already painted moved, by kind: `sidebar` (rows added, removed, reordered or relabelled), `unreads` (a row's unread or mention state), `messages` (a visible message row moved or resized), `theme` (the account theme changed after the first frame, the default-theme flash of a cold start).
 
-The perf workflow (`.github/perf/startup.sh`) runs cold and warm starts of the base and HEAD against a Hack Club-sized fakeslackd answering every API call after 150 ms and every image after 40 ms, with a non-default account theme. `cold` starts have nothing on disk (no metadata cache, no boot data, no compiled JS engine, no saved theme or plugin slots), `warm` starts what a normal start has; every frame's layout and total time is logged too (`CLACK_FRAMELOG`). The table is on the run page ("Startup timeline"). `CLACK_NO_WARM_BOOT=1` starts cold even with boot data on disk (and reads no header cache).
+`.github/perf/launch.py` launches the real app as a user does (macOS: Clack.app through LaunchServices) and tabulates these per run, cold, warm and with the OS file cache purged (flake-check's `launch-speed-mac`, `-linux`, `-windows`; see the launch, below). The perf workflow (`.github/perf/startup.sh`) runs cold and warm starts of the base and HEAD against a Hack Club-sized fakeslackd answering every API call after 150 ms and every image after 40 ms, with a non-default account theme. `cold` starts have nothing on disk (no metadata cache, no boot data, no compiled JS engine, no saved theme or plugin slots), `warm` starts what a normal start has; every frame's layout and total time is logged too (`CLACK_FRAMELOG`). The table is on the run page ("Startup timeline"). `CLACK_NO_WARM_BOOT=1` starts cold even with boot data on disk (and reads no header cache).
+
+## The launch
+
+Karim (2026-11-21): "Make launching the app take less than a Mac app bounce." macOS bounces an app's Dock icon from the launch until the app finishes launching; one bounce on CI's runner is 700 ms (`.github/perf/bounce.sh` films an app that takes 6 s to finish launching and times the icon: 8 bounces, each 683-717 ms). So the window must show the client from the cache within that, and Clack's own work must never hold AppKit's main thread before the window.
+
+What a macOS launch does, in order: the loader and the runtime (`main`, ~35 ms warm on CI), main's setup (~2 ms), then the main thread enters AppKit (`app-main`): NSApplication (~45 ms), its launch (`launched`, ~120 ms after `app-main`, LaunchServices' part included), the window (`window-create` to `window-shown`, ~35 ms, most of it AppKit's NSWindow), the first frame (layout ~18 ms, the GPU ~55 ms on the runner's virtual GPU). Meanwhile, off the main thread:
+
+- App.Run starts the backend (the boot data, header cache and meta.json reads, core.Boot's calls) at once, before the window's place is known: on macOS the displays are AppKit's, which answers only once NSApplication runs, so reading them first (as before) held every disk read until after the launch. The displays are asked for at the top of Run and come from `applicationWillFinishLaunching` (Gio patch 55 reads the screens there; the main thread serves its queue only after the launch), so the window opens the moment NSApplication finished launching.
+- The fonts load from ui.New on (`fonts`), the warm data in `cache-read`; both land well before the first frame on a warm launch.
+- The menu bar installs after the first frame (`firstFrameDone`): its install took the main thread 9-13 ms warm, 35-80 ms with a cold file cache, between `launched` and the window.
+- The real window's plugin runtimes (the JS engine, then Taut's and Slick's plugins) start after its first real frame, so they don't take the CPU that frame needs; a cold start starts them at once (its placeholder waits for them), a window started hidden after 2 s.
+
+CI's numbers (macOS 26 runner, M1 VM with 3 cores, fakeslackd at 150 ms per call, ChatTabs and five Taut plugins; ms since exec, warm medians): before (cd583d6c with the marks) the window was on screen at 197, its first frame at 269 and the client at 407, after the boot placeholder had waited out the plugins' 100 ms cap on every warm launch; after, the client is the first frame, at ~290 (runner speed varies about 2x between runs: the same commit measured 292 and 485 on two runners). Linux (Xvfb, llvmpipe) and Windows went from 606 to 312 and from 567 to 290. LaunchServices adds 25-70 ms from the launch call to the process start when warm.
+
+The launch budget (ci.yml's macos job, flake-check's `launch-budget`; `.github/perf/launch-budget.sh`): Clack.app launched through LaunchServices, once cold and five times warm; the fastest warm launch must show the client within one bounce (700 ms) of the launch call, and the median warm launch may show the boot placeholder at most one frame (16 ms) before the client. cd583d6c showed it 97-147 ms on every warm launch.
 
 ## The cold path
 
@@ -51,7 +75,7 @@ Everything a start needs goes out at once (core.Boot and backend.start):
 
 Slack's page holds `div.p-client_container_placeholder` (a theme background, a sidebar block and a content panel) under `div.p-client_container`. client-boot's "Render Placeholder" hook (`renderBootPlaceholder`) colours it from what the last session stored for the team at renderComplete ("Save channel sidebar and team switcher colors"): the stored iaTheming's window gradient (the flat primary without window gradients), the sidebar block `rgba(255,255,255,.9)` (`.11` for an inverted light sidebar, `rgba(16,18,20,.6)` dark) as wide as the last sidebar, the content panel `#fff` (`rgb(26,29,33)` dark). With nothing stored it is page.html's `#bbbabb` (`#282828` dark). React mounts the client over it in renderApp ("Render React"), after bootDataFinished ("Finish waiting for boot data"), or from the persisted store on a warm boot; the channel then shows its own loading state until its history arrives.
 
-Clack draws exactly that placeholder (`internal/ui/reveal.go`, from the first frame, before fonts are loaded) and keeps the account theme in ui.json (`acct_theme`) the way Slack keeps its colours per device. It renders the client once the sidebar's data is in (the boot data on a warm start, below; else core booted), the restored channel's header is in (Slack's boot data carries it in the channel object; on a warm start the header cache has it), and the plugins enabled at start registered and delivered their first renders (Taut's patches render synchronously with Slack's React; Clack's plugins render on their own thread, so it waits for their deliveries to go quiet, at most 100 ms after the data). Messages and images don't hold it. Re-layouts are counted only after it.
+Clack draws exactly that placeholder (`internal/ui/reveal.go`, from the first frame, before fonts are loaded) and keeps the account theme in ui.json (`acct_theme`) the way Slack keeps its colours per device. It renders the client once the sidebar's data is in (the boot data on a warm start, below; else core booted), the restored channel's header is in (Slack's boot data carries it in the channel object; on a warm start the header cache has it), and, on a cold start, the plugins enabled at start registered and delivered their first renders (Taut's patches render synchronously with Slack's React; Clack's plugins render on their own thread, so it waits for their deliveries to go quiet, at most 100 ms after the data). A warm start doesn't wait for plugins: their slots from the last session stay reserved (below), so their first trees fill space that is already there, and the window shows the client from its first frame. Messages and images don't hold it. Re-layouts are counted only after it.
 
 ## Warm boot
 
@@ -90,6 +114,6 @@ The real network isn't 150 ms per call. Karim's clack.log (2026-11-15, Hack Club
 
 ## Plugins at start
 
-The JS engine starts at t=0. With its compile cache (`taut/cache`) it is up in ~170 ms on a CI runner; without one (the first start ever, or after a wazero or engine change) wazero compiles the 1 MB engine for ~1.3 s. Plugins start 30–150 ms after the engine. Their first renders mount component by component (ChatTabs, WhoReacted, LastSeen… ~70 roots for 50 messages), one layout per step: under the placeholder each step is a layout only, the placeholder alone goes to the GPU.
+The JS engine starts at t=0 for a cold start and in headless tests; the real window's launch starts it after its first real frame (the launch, above). With its compile cache (`taut/cache`) it is up in ~170 ms on a CI runner; without one (the first start ever, or after a wazero or engine change) wazero compiles the 1 MB engine for ~1.3 s. Plugins start 30–150 ms after the engine. Their first renders mount component by component (ChatTabs, WhoReacted, LastSeen… ~70 roots for 50 messages), one layout per step: under the placeholder each step is a layout only, the placeholder alone goes to the GPU.
 
-The placeholder waits for plugins at most 100 ms after the data is ready. A plugin that renders later doesn't move anything when it wraps a component it wrapped last session: the insets of the original inside the plugin's tree are kept in ui.json (`plugin_slots`), and until the plugin's first tree arrives the native component draws inside them (`internal/ui/slackc/reserve.go`). Slots are released once the plugins started and their renders were quiet for a second (10 s at most), and the learned ones are saved.
+On a cold start the placeholder waits for plugins at most 100 ms after the data is ready; a warm start doesn't wait. A plugin that renders later doesn't move anything when it wraps a component it wrapped last session: the insets of the original inside the plugin's tree are kept in ui.json (`plugin_slots`), and until the plugin's first tree arrives the native component draws inside them (`internal/ui/slackc/reserve.go`). Slots are released once the plugins started and their renders were quiet for a second (10 s at most), and the learned ones are saved.

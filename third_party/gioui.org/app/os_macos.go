@@ -1488,7 +1488,8 @@ func gio_onCloseRequest(h C.uintptr_t) C.int {
 
 // gio_onStartupPoint is gio_main's and the app delegate's startup points
 // (Clack patch, CLACK_PATCHES.md §55): 0 NSApplication made, 1 its run
-// loop about to start, 2 applicationWillFinishLaunching.
+// loop about to start, 2 applicationWillFinishLaunching, where the screens
+// are read for the launch's first displays.
 //
 //export gio_onStartupPoint
 func gio_onStartupPoint(p C.int) {
@@ -1499,6 +1500,7 @@ func gio_onStartupPoint(p C.int) {
 		startupAppKitRun.mark()
 	case 2:
 		startupWillFinish.mark()
+		snapshotLaunchScreens() // the launch's first displays (clack_bounds_macos.go)
 	}
 }
 
