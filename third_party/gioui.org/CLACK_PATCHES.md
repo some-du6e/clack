@@ -63,7 +63,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gpu/internal/metal/clack_external_darwin.go`,
 `gpu/headless/clack_external_test.go`, `gpu/headless/clack_size.go`,
 `gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
-`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go` and
+`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go`,
+`app/clack_startup.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2725,3 +2726,29 @@ centred line's exact place, the zoomed width and a caret swiped out of
 view), on llvmpipe, WARP and Metal:
 flake-check's `caret-align` job (dispatch with `only=caret-align`).
 Not in `UPSTREAM.patch`.
+
+## 55. app: the driver's startup points, for the app's launch timeline
+
+`app/clack_startup.go` (new: `SetStartupMark`), `app/window.go`
+(`init`, `validateAndProcess`), `app/os_macos.go`
+(`gio_onFinishLaunching`, `newWindow`), `app/os_windows.go`
+(`Configure`), `app/os_x11.go` (`newX11Window`). Additions only.
+
+Karim, 2026-11-21: "Make launching the app take less than a Mac app
+bounce." macOS bounces an app's Dock icon from the launch until it
+finishes launching, so a launch's timeline needs the points only the
+driver sees: when NSApplication finished launching, when the window
+went on screen, when the GPU's first context and pipelines were made and
+the first frame presented. `SetStartupMark(f)` makes `f(name, at)` hear
+each of them once per process, the first time any window reaches it:
+`gio-init` (Window.init done), `launched` (macOS:
+`NSApplicationDidFinishLaunchingNotification`), `window-shown`
+(`makeKeyAndOrderFront:`, `ShowWindow` or `XMapWindow` returned),
+`gpu-context` (the first `NewContext`), `gpu` (the first `gpu.New`) and
+`presented` (the first `Present` that didn't fail). Each point is an
+atomic flag; the hook runs on the thread that reached it (the AppKit
+main thread for `launched` and `window-shown` on macOS) and must not
+block. cmd/clack sets it to `applog.MarkAt`; nothing else does.
+
+Read by `.github/perf/launch.py` (flake-check's `launch-speed-*` jobs and
+ci's macos launch budget). Not in `UPSTREAM.patch`.

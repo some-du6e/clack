@@ -34,7 +34,21 @@ import (
 	"github.com/some-du6e/clack/internal/ui"
 )
 
-var started = time.Now()
+// mainAt is when package main's variables were set: the loader, the Go
+// runtime and every package's init had run by then.
+var mainAt = time.Now()
+
+// started is the startup timeline's zero: when the OS started the process
+// (applog.ProcessStart), so every milestone counts what a launch waits
+// for, the time before main included; mainAt where the OS doesn't say.
+var started = processStarted()
+
+func processStarted() time.Time {
+	if t, ok := applog.ProcessStart(); ok && !t.After(mainAt) {
+		return t
+	}
+	return mainAt
+}
 
 // version is set at release builds (-ldflags "-X main.version=v0.1.0").
 var version = "dev"
@@ -177,6 +191,10 @@ func main() {
 	// The startup timeline (applog/startup.go) counts from the process
 	// start; its debug lines are on for the first minute.
 	applog.StartTimeline(started)
+	applog.MarkAt("main", mainAt, "")
+	// Gio's own startup points: macOS's finished launching (the Dock's
+	// bounce ends), the window on screen, the GPU's first frame
+	app.SetStartupMark(func(name string, at time.Time) { applog.MarkAt(name, at, "") })
 	// Go panics nothing recovers and the runtime's fatal errors go to fd 2
 	// only; the runtime also writes them to crash.log next to clack.log,
 	// and the next start copies the trace, redacted, into clack.log. That
@@ -254,6 +272,9 @@ func main() {
 	}
 
 	log.Printf("clack %s starting (%s/%s, %s)", version, runtime.GOOS, runtime.GOARCH, runtime.Version())
+	// the launch harness (.github/perf/launch.py) reads the process and its
+	// start from this line
+	log.Printf("startup: process %d started at unix ms %d, main after %v", os.Getpid(), started.UnixMilli(), mainAt.Sub(started).Round(100*time.Microsecond))
 	if crashNote != "" {
 		log.Print(crashNote)
 	}
@@ -352,6 +373,7 @@ func main() {
 	store.SweepAccounts(croot, keep)
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
+	applog.Mark("ui-new", "")
 	// A slack:// link is a navigation, except a magic-login link, which
 	// is Slack's browser handing "the Slack app" a sign-in: that signs in
 	// (on the sign-in screen only; see ui.App.SignInWithLink).
@@ -445,6 +467,7 @@ func main() {
 	} else {
 		a.SetLogin(login)
 	}
+	applog.Mark("attached", "")
 	if link != "" {
 		log.Printf("desktop: started with a slack:// %s", linkKind(link))
 		openLink(link)
@@ -507,6 +530,7 @@ func main() {
 	// queues work for the main thread and waits for it, so calling it here
 	// deadlocked: Clack beachballed when a browser handed it a sign-in link
 	// while it was running (2026-11-08). Do nothing here but hand off.
+	applog.Mark("app-main", "")
 	for e := range app.Events {
 		if u, ok := e.(app.URLEvent); ok && u.URL != nil {
 			link := u.URL.String()

@@ -1488,6 +1488,7 @@ func gio_onCloseRequest(h C.uintptr_t) C.int {
 
 //export gio_onFinishLaunching
 func gio_onFinishLaunching() {
+	startupLaunched.mark() // Clack patch (CLACK_PATCHES.md §55)
 	close(launched)
 }
 
@@ -1547,6 +1548,7 @@ func newWindow(win *callbacks, options []Option) {
 		} else {
 			C.makeKeyAndOrderFront(window)
 		}
+		startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §55)
 	})
 	<-res
 }

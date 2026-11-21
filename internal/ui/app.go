@@ -242,6 +242,10 @@ type App struct {
 	pipWake time.Time
 	vidTips map[any]*popups.TipState
 
+	// the startup timeline's first FrameEvent and first frame of the
+	// client itself, not the boot placeholder (real-frame)
+	frameEvented, realFramed bool
+
 	title       string
 	firstPaint  bool
 	frameStats  frameStats
@@ -408,6 +412,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 		// one collection serves both modes; the UI font when its files
 		// are on this computer, else Lato until it has loaded
 		sh, o, pending := startupShaper(stored)
+		applog.Mark("fonts", "in "+time.Since(t).Round(time.Millisecond).String())
 		if h := a.opts.shaperHold; h != nil {
 			<-h
 		}
@@ -497,6 +502,7 @@ func mainWindowOptions() []app.Option {
 
 // Run opens the window and blocks until it closes.
 func (a *App) Run() error {
+	applog.Mark("run", "")
 	a.timing("run", a.opts.Started)
 	setFrameMode()           // partial frames, unless CLACK_FULL_FRAMES (partial_frames.go)
 	startCaretBlinkWatcher() // Linux: GTK's caret blink, as Chromium's (caretblink_linux.go)
@@ -547,6 +553,7 @@ func (a *App) Run() error {
 	wd.startRecorder(a.prefs.FlightRecorder)
 	a.wd = wd // drainIdle's stage
 	go wd.run()
+	applog.Mark("event-loop", "")
 	for {
 		ev := a.win.Event()
 		// The OS waits while this goroutine handles ev (macOS: the AppKit
@@ -598,6 +605,7 @@ func (a *App) Run() error {
 			a.layoutDue.Store(true)
 			a.drainIdle()
 		case app.ConfigEvent:
+			applog.Mark("config", "")
 			a.layoutDue.Store(true)
 			a.winMode = e.Config.Mode
 			a.noteWindowPlace(e.Config) // mainWindowSettings (winbounds.go)
@@ -623,6 +631,10 @@ func (a *App) Run() error {
 			a.drainIdle()
 		case app.FrameEvent:
 			t0 := time.Now()
+			if !a.frameEvented {
+				a.frameEvented = true
+				applog.Mark("frame-event", "")
+			}
 			if a.th.Shaper == nil && !a.takeShaper() {
 				// The shaper (fonts) is still loading: paint the window's
 				// background and come back when it's ready, instead of
@@ -706,6 +718,12 @@ func (a *App) Run() error {
 			} else {
 				e.Frame(gtx.Ops)
 				a.inspectAfterFrame(gtx.Ops, e.Size) // a pick's screenshot (inspect_wire.go)
+				if !a.realFramed {
+					// the client itself, not the boot placeholder: what a
+					// launch is for (launch.py's budget)
+					a.realFramed = true
+					applog.Mark("real-frame", "")
+				}
 			}
 			if !a.firstPaint {
 				a.timing("first layout", t0)
