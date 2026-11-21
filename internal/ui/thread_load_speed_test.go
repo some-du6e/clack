@@ -83,7 +83,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 		open()
 		frames := 1
 		e.frame()
-		e.until(what+": the first replies drawn", 20*time.Second, func() bool {
+		drawn := e.untilSoft(20*time.Second, func() bool {
 			frames++
 			tv := e.threadView(ch, root)
 			if tv == nil {
@@ -97,6 +97,15 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 			return false
 		})
 		el := time.Since(t0)
+		if !drawn {
+			rows := 0
+			if tv := e.threadView(ch, root); tv != nil {
+				rows = len(tv.RowRects())
+			}
+			held, _ := app.S.Thread(ch, root)
+			t.Fatalf("%s: no first replies drawn %v after the open (%d frames): %d replies requests so far, %d rows on screen, the store holds %d of the thread",
+				what, el.Round(time.Millisecond), frames, len(fs.HugeThreadRequests()), rows, len(held))
+		}
 		t.Logf("%s: first replies drawn %v after the open, in %d frames; %d replies requests so far", what, el.Round(time.Millisecond), frames, len(fs.HugeThreadRequests()))
 		if el > 5*time.Second {
 			t.Errorf("%s: the first replies took %v (a 10-reply thread's open draws in well under a second)", what, el)
