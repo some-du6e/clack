@@ -129,40 +129,64 @@ type moveKey struct {
 // task (postMove).
 type queuedMove struct {
 	ev  []byte
-	gen uint64
+	seq uint64 // enqN when its task was queued; 0 until then (movesMu)
 }
 
-// postMove queues a continuous event (a move, a scroll, a hover) in order
-// with the user's input, one task per target and type at a time: while
-// the JS thread is behind, a newer one replaces the event its task waits
-// with, as Chromium coalesces the continuous events it hasn't dispatched
-// yet. Each one queued a task of its own, 60 a second, and the user's next
-// key or send ran behind them all. Never across the user's input: a move
-// after a click is a task of its own, after it.
+// coalescedEvents are the continuous events a newer one of the same target
+// and type may stand in for while its task waits: the pointer's moves and
+// a scroller's scroll, whose newest says all an older one did. The
+// boundary events (mouseover, mouseout, mouseenter, mouseleave and the
+// pointer ones) never are: each says the pointer crossed a box, and a later
+// one doesn't undo an earlier one (leave, enter, leave merged into leave,
+// enter left a box hovered with the pointer outside it, and nothing more
+// came to clear it); nor is a wheel event, whose delta adds to the ones
+// before it (Chromium sums them), so each goes out with its own.
+var coalescedEvents = map[string]bool{
+	"mousemove": true, "pointermove": true, "touchmove": true, "drag": true, "dragover": true, "scroll": true,
+}
+
+// postMove queues a continuous event (a move, a scroll, a hover, a wheel)
+// in order with the user's input. While the JS thread is behind, a move or
+// a scroll replaces the event its target's task waits with, but only while
+// that task is the newest queued, as Chromium coalesces an event only with
+// the last one queued: each used to queue a task of its own, 60 a second,
+// and the user's next key or send ran behind them all. Coalesced across
+// anything queued since (another target's move, a boundary event, the
+// user's input), the newer event ran ahead of what came before it: A at
+// p1, B at p2, A at p3 reached JS as A at p3, then B at p2, and a drag
+// ended at p2.
 func (r *Runtime) postMove(target int, ev []byte) {
-	k := moveKey{target, eventType(ev)}
-	gen := r.coalesce.Load()
+	typ := eventType(ev)
+	k := moveKey{target, typ}
+	merge := coalescedEvents[typ]
 	r.movesMu.Lock()
-	if q := r.movesQ[k]; q != nil && q.gen == gen {
-		q.ev = ev
+	if q := r.movesQ[k]; merge && q != nil && q.seq != 0 && q.seq == r.enqN.Load() {
+		q.ev = ev // its task is still the newest queued: nothing came between
 		r.movesMu.Unlock()
 		return
 	}
-	q := &queuedMove{ev: ev, gen: gen}
-	if r.movesQ == nil {
-		r.movesQ = map[moveKey]*queuedMove{}
+	q := &queuedMove{ev: ev}
+	if merge {
+		if r.movesQ == nil {
+			r.movesQ = map[moveKey]*queuedMove{}
+		}
+		r.movesQ[k] = q
 	}
-	r.movesQ[k] = q
 	r.movesMu.Unlock()
-	r.PostInOrder(func(js *Ctx) {
+	n := r.enqueue(task{kind: "Post", what: typ, pc: callerPC(1), ordered: true, f: func() {
 		r.movesMu.Lock()
 		ev := q.ev
 		if r.movesQ[k] == q {
 			delete(r.movesQ, k)
 		}
 		r.movesMu.Unlock()
-		_, _ = js.dispatch(target, ev)
-	})
+		_, _ = r.js.dispatch(target, ev)
+	}})
+	r.movesMu.Lock()
+	if r.movesQ[k] == q {
+		q.seq = n // not yet run: a newer move may join it while nothing is queued after it
+	}
+	r.movesMu.Unlock()
 }
 
 // eventType is the event JSON's type ("" for none).
