@@ -253,9 +253,9 @@ func TestSearchRowsPeople(t *testing.T) {
 	v.setTab(srTabPeople)
 	d.until(t, "people", func() bool { return !v.loading && len(v.people) > 4 })
 	x := srJoined(d.scan())
-	for _, u := range v.people[:4] {
-		if !strings.Contains(x, pfName(u)) {
-			t.Errorf("%q not drawn: %q", pfName(u), x)
+	for _, u := range v.people[:4] { // MemberProfileBaseEntity's name: the real name
+		if !strings.Contains(x, pfRealName(u)) {
+			t.Errorf("%q not drawn: %q", pfRealName(u), x)
 		}
 	}
 	var opened string

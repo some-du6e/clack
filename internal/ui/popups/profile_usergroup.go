@@ -589,6 +589,7 @@ func (v *UserGroupView) membersTab(gtx layout.Context, th *theme.Theme, cl *Colo
 			ny = ry + (rowH-dp(gtx, 40))/2
 		}
 		at(gtx, image.Pt(tx, ny), func(gtx layout.Context) layout.Dimensions {
+			pfWantDND(v.h, u, gtx.Now)
 			return pfNameLine(gtx, v.h, th, nil, u, pfName(u), 15, 22, 9, tw)
 		})
 		if !pfBlank(sub) {

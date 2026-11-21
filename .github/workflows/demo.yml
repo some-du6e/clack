@@ -35,6 +35,7 @@ concurrency:
 jobs:
   demo:
     runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget: 1.5 x p95 (14.1 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

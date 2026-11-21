@@ -255,6 +255,11 @@ func (a *App) UserHidden(user string) bool {
 	return hs.set[user]
 }
 
+// RealNamesInMentions is shouldDisplayRealNamesInMentions
+// (realNamesInMentions, msg_slug.go) for the UI: a notification's mention
+// names the member's real name under it (resolveMemberMentionName).
+func (a *App) RealNamesInMentions() bool { return a.realNamesInMentions() }
+
 // hiddenState is the hidden-people state message rows read: the parsed
 // hidden_users and the messages shown anyway.
 type hiddenState struct {

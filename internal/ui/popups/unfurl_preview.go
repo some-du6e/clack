@@ -64,6 +64,7 @@ type PreviewCard struct {
 	anchor image.Rectangle
 	c      PreviewContent
 	rect   image.Rectangle
+	keep   hovercard.Keep // placed once, again only when its size changes
 }
 
 // NewPreviewCard is the hover card for the trigger at anchor (window
@@ -81,7 +82,7 @@ func (p *PreviewCard) Layout(gtx layout.Context) layout.Dimensions {
 	g.Constraints = layout.Constraints{Max: image.Pt(win.X, 1<<20)}
 	d := p.c.Layout(g)
 	call := m.Stop()
-	pos := hovercard.PlaceTop(p.anchor, d.Size, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+	pos := p.keep.PlaceTop(p.anchor, d.Size, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
 	rad := dp(gtx, 8)
 	card(gtx, cl, p.rect, rad)
@@ -96,3 +97,7 @@ func (p *PreviewCard) Layout(gtx layout.Context) layout.Dimensions {
 
 // Rect is the drawn card (window coordinates).
 func (p *PreviewCard) Rect() image.Rectangle { return p.rect }
+
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *PreviewCard) Placement() *hovercard.Keep { return &p.keep }

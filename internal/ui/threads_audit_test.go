@@ -108,22 +108,33 @@ func (noResolver) Emoji(string) (url, text string, found bool) { return "", "", 
 func (noResolver) SelfID() string                              { return "" }
 
 func TestThreadsAuditNotificationTitles(t *testing.T) {
-	b := &backend{}
-	ev := core.Event{Type: "message", Msg: &core.Message{Name: "Robin Example", Doc: richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, "the synthetic plan")}}}
+	_, ca, _ := fakePrefsApp(t)
+	b := &backend{core: ca}
+	const robin = "U0ROBIN0001"
+	ca.S.PutUsers([]slack.User{{ID: robin, Name: "robin", Profile: slack.Profile{DisplayName: "Robin Example", RealName: "Robin Example"}}})
+	doc := richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, "the synthetic plan")}
+	ev := core.Event{Type: "message", Msg: &core.Message{User: robin, Doc: doc}}
+	// a webhook's or a legacy bot's post: no user, its username core's
+	// Name (getContentForNotification writes no "{sender}: " for it, and
+	// a DM is titled with its own user, never the username)
+	bot := core.Event{Type: "message", Msg: &core.Message{BotID: "B0DEPLOY01", Name: "deploy-bot", Doc: doc}}
 	for _, c := range []struct {
+		ev          core.Event
 		conv        *convInfo
 		title, body string
 	}{
-		{&convInfo{Kind: "channel", Name: "th-audit"}, "New message in #th-audit", "Robin Example: the synthetic plan"},
-		{&convInfo{Kind: "private", Name: "th-secret-plans"}, "New message in th-secret-plans", "Robin Example: the synthetic plan"},
-		{&convInfo{Kind: "mpim", Name: "alex, robin"}, "New message in alex, robin", "Robin Example: the synthetic plan"},
-		{&convInfo{Kind: "im", Name: "Robin Example"}, "New message from Robin Example", "the synthetic plan"},
+		{ev, &convInfo{Kind: "channel", Name: "th-audit"}, "New message in #th-audit", "Robin Example: the synthetic plan"},
+		{ev, &convInfo{Kind: "private", Name: "th-secret-plans"}, "New message in th-secret-plans", "Robin Example: the synthetic plan"},
+		{ev, &convInfo{Kind: "mpim", Name: "alex, robin"}, "New message in alex, robin", "Robin Example: the synthetic plan"},
+		{ev, &convInfo{Kind: "im", Name: "Robin Example", User: robin}, "New message from Robin Example", "the synthetic plan"},
+		{bot, &convInfo{Kind: "channel", Name: "th-audit"}, "New message in #th-audit", "the synthetic plan"},
+		{bot, &convInfo{Kind: "app", Name: "Deploy App", User: "U0DEPLOYAPP"}, "New message from Deploy App", "the synthetic plan"},
 	} {
-		if got := b.notifyTitle(ev, c.conv); got != c.title {
-			t.Errorf("%s: title %q, Slack %q", c.conv.Kind, got, c.title)
+		if got := b.notifyTitle(c.ev, c.conv); got != c.title {
+			t.Errorf("%s (%s): title %q, Slack %q", c.conv.Kind, c.ev.Msg.Name, got, c.title)
 		}
-		if got := b.notifyBody(ev, c.conv); got != c.body {
-			t.Errorf("%s: body %q, Slack %q", c.conv.Kind, got, c.body)
+		if got := b.notifyBody(c.ev, c.conv); got != c.body {
+			t.Errorf("%s (%s): body %q, Slack %q", c.conv.Kind, c.ev.Msg.Name, got, c.body)
 		}
 	}
 }

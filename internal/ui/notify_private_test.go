@@ -32,6 +32,10 @@ import (
 func privNoteApp(t *testing.T) (*App, *core.App, *noteRec) {
 	t.Helper()
 	a, ca, _, rec := privNoteAppFS(t)
+	// noteMsg's sender, held as a toast's sender is once it waited for
+	// them (noteMembers): "{sender}: " is the member's name
+	// (getPrefCompliantMemberNameById), never the message's own name
+	ca.S.PutUsers([]slack.User{{ID: "U0FAKEUSER1", Name: "ada", Profile: slack.Profile{DisplayName: "Ada", RealName: "Ada Lovelace"}}})
 	return a, ca, rec
 }
 
