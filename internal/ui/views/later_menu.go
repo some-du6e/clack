@@ -85,10 +85,18 @@ func (s *savedBase) savedMenu(ph popups.Host, it core.SavedItem) []popups.MenuIt
 	}
 	key := laterKey(&it)
 
+	// e6: a reply outside a file channel opens its thread (toThread), any
+	// other message its conversation at the message (R9 with forceTab
+	// Home), which for a canvas's or a list's file channel RedirectFileChannel
+	// makes the thread view on it or the record (SavedJumper)
 	openInHome := popups.MenuItem{Key: "open_in_home", Label: nsLater.T("Open in Home"), Icon: "home", Do: func() {
-		route := "c/" + ch
+		if sj, ok := s.h.(SavedJumper); ok && sj.OpenSavedInHome(ch, ts) {
+			closePeek()
+			return
+		}
+		route := "c/" + ch + "/m/" + ts
 		if m := it.Msg; m != nil && m.ThreadTS != "" && m.ThreadTS != m.TS {
-			route += "/t/" + m.ThreadTS
+			route = "c/" + ch + "/t/" + m.ThreadTS
 		}
 		s.h.Navigate(route)
 		closePeek()
@@ -97,7 +105,9 @@ func (s *savedBase) savedMenu(ph popups.Host, it core.SavedItem) []popups.MenuIt
 		if peek || !msg {
 			return popups.MenuItem{}, false
 		}
-		mi, ok := popups.SplitViewItem(ph, "c/"+ch, false)
+		// ta: openInSplitView of the message's R9 (the split view's
+		// RedirectFileChannel makes a file channel's its thread view)
+		mi, ok := popups.SplitViewItem(ph, "c/"+ch+"/m/"+ts, false)
 		if ok {
 			mi.Label, mi.Icon = nsLater.T("Open in split view"), "move-to-split-view"
 		}
