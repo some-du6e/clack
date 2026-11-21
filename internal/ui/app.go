@@ -789,6 +789,9 @@ func (a *App) frameContext(e app.FrameEvent) layout.Context {
 // level), so everything lays out larger or smaller.
 func (a *App) newContext(ops *op.Ops, e app.FrameEvent) layout.Context {
 	gtx := app.NewContext(ops, e)
+	// the caret is one device px wide whatever the zoom, as Blink's
+	// BarCaretWidth (Gio patch 54)
+	widget.SetDeviceScale(gtx.Source, e.Metric.PxPerDp)
 	if f := a.zoomFactor(); f != 1 {
 		gtx.Metric.PxPerDp *= f
 		gtx.Metric.PxPerSp *= f

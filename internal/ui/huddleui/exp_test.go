@@ -240,7 +240,7 @@ func TestAudioSettingsMenu(t *testing.T) {
 	e := newExpEnv(t, nil)
 	e.set(ExpNoiseSuppAwareness, "on")
 	s := e.joinHuddle()
-	items := e.c.audioMenu(s)
+	items := e.c.audioMenu(s, e.c.h.Theme(), false)
 	want := "# Microphone | Built-in Microphone | USB Mic | --- | # Speaker | Speakers | Headphones | --- | Test Speaker | --- | Enable noise suppression | --- | Audio & video preferences"
 	if got := labels(items); got != want {
 		t.Fatalf("menu\n got %s\nwant %s", got, want)
@@ -252,7 +252,7 @@ func TestAudioSettingsMenu(t *testing.T) {
 	if mic, _ := huddle.SelectedAudioDevices(); mic != "m2" {
 		t.Fatalf("picked %q", mic)
 	}
-	items = e.c.audioMenu(s)
+	items = e.c.audioMenu(s, e.c.h.Theme(), false)
 	if items[1].Checked || !items[2].Checked {
 		t.Fatal("the pick isn't the checked one")
 	}
@@ -261,7 +261,7 @@ func TestAudioSettingsMenu(t *testing.T) {
 		t.Fatalf("picked speaker %q", out)
 	}
 	e.set(ExpNoiseSuppAwareness, "off")
-	if got := labels(e.c.audioMenu(s)); strings.Contains(got, "noise suppression") {
+	if got := labels(e.c.audioMenu(s, e.c.h.Theme(), false)); strings.Contains(got, "noise suppression") {
 		t.Fatalf("NS row without the experiment: %s", got)
 	}
 	s.Leave()

@@ -27,6 +27,7 @@ import (
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slackasset"
 )
 
 // Timeline is a contiguous window of a conversation's newest messages.
@@ -238,6 +239,9 @@ func (s *Store) UserAvatar(id string) string { return userAvatar(s.User, id) }
 
 func userAvatar(look userLookup, id string) string {
 	if u, ok := look(id); ok && u != nil {
+		if u.ID == SlackSystemUserID { // getMemberProfileImage's n8qp (AvatarURL)
+			return slackasset.SlackLogoMark
+		}
 		return u.Profile.Image48
 	}
 	return ""
@@ -799,10 +803,25 @@ func PrefName(u *slack.User, displayRealNames bool) string {
 	return u.RealName
 }
 
+// SlackSystemUserID is the Slack system user (Slack's isSlackSystemUser,
+// client-boot iXFk: id "USLACK"), the partner of the DM Slack's own
+// notices and apps acting for Slack post in.
+const SlackSystemUserID = "USLACK"
+
 // AvatarURL is u's picture for a slot of size px: the profile image that
 // covers it, else the ca.slack-edge.com picture of avatar_hash under
 // avatarTeam, else Slack's default. viewerTeam is the viewer's team.
+//
+// The Slack system user (USLACK, the DM apps post Slack's own notices in)
+// is Slack's logo at every size: getMemberProfileImage (client-boot 6Knt)
+// returns its bundled slack_logo_mark (n8qp) for memberId "USLACK" before
+// it reads anything else. Its profile has an avatar_hash, whose
+// ca.slack-edge.com picture is the generic blue person, and image_* SVGs
+// of the same logo.
 func AvatarURL(u *slack.User, size int, viewerTeam string) string {
+	if u.ID == SlackSystemUserID {
+		return slackasset.SlackLogoMark
+	}
 	p := u.Profile
 	switch {
 	case size <= 72 && p.Image72 != "":

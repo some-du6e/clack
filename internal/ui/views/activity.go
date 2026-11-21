@@ -12,8 +12,8 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"maps"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -379,7 +379,13 @@ type Activity struct {
 	showCleared bool
 	plusC       []widget.Clickable // the "+" menu's rows (plusItems)
 
-	data     async[core.ActivityPage]
+	data async[core.ActivityPage]
+	// live is the keys realtime entries upserted since the latest load
+	// went out (liveUpsert writes them, that load's merge reads them)
+	live struct {
+		mu   sync.Mutex
+		keys map[string]bool
+	}
 	list     widget.List
 	pk       actPeek // the rail's Activity peek (activity_peek.go)
 	rows     map[string]*actRow
@@ -1053,17 +1059,38 @@ func (v *Activity) load(mode actLoad) {
 		v.vis = v.vis[:0]
 		v.dirty = true
 	}
-	sticky := opts.Unread
-	unreadMarks := map[string]bool{} // pendingUnreadMarkKeys: rows you marked unread here
-	for k, read := range v.override {
-		if !read {
-			unreadMarks[k] = true
+	// how the answer joins the list (tsND O upsertActivityItems,
+	// activity_order.go), as it is when the answer lands: a page is merged
+	// in, the page's copies winning (but a realtime entry's newer one), and
+	// the list sorted. A reload keeps actReloadKeeps' rows besides the page
+	// (the list's keys now: keysBeforeRefresh; under Unreads the rows you
+	// marked unread here: pendingUnreadMarkKeys). A fresh list starts
+	// empty, so it keeps only what came in on the socket while the request
+	// was out.
+	up := actUpsertOpts{reload: mode == actRefresh, sticky: opts.Unread, vip: v.sortVIP()}
+	if mode == actRefresh {
+		up.before = make(map[string]bool, len(old.Items))
+		for i := range old.Items {
+			up.before[actKey(&old.Items[i])] = true
+		}
+		if opts.Unread {
+			up.unreadMarks = map[string]bool{}
+			for k, read := range v.override {
+				if !read {
+					up.unreadMarks[k] = true
+				}
+			}
 		}
 	}
+	// the keys a realtime entry upserts from here on (liveUpsert): newer
+	// than this request's answer
+	v.live.mu.Lock()
+	clear(v.live.keys)
+	v.live.mu.Unlock()
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
 	v.loads++ // zeroRead: what this load's answer lists is the server's state from now
 	load := v.loads
-	v.data.load(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
+	v.data.loadMerge(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
 		if none {
 			return core.ActivityPage{}, nil
 		}
@@ -1072,18 +1099,14 @@ func (v *Activity) load(mode actLoad) {
 			return p, err
 		}
 		v.noteFresh(load, p.Items)
-		switch mode {
-		case actMore:
-			return actAppend(old, p), nil
-		case actRefresh:
-			if sticky {
-				// Unreads: the fresh unread page, plus the rows Slack keeps
-				// on a refresh (getItemsRetainedOnRefresh)
-				return actRetained(p, old, unreadMarks), nil
-			}
-			return actMerge(p, old, opts.Mode == ""), nil // "": chrono_v1, newest first; the VIP sort isn't in time order
-		}
 		return p, nil
+	}, func(cur, p core.ActivityPage) core.ActivityPage {
+		v.live.mu.Lock()
+		if len(v.live.keys) > 0 {
+			up.touched = maps.Clone(v.live.keys)
+		}
+		v.live.mu.Unlock()
+		return actUpsertPage(p, cur, up)
 	})
 }
 
@@ -1105,110 +1128,6 @@ func (v *Activity) noteFresh(load uint64, items []core.ActivityItem) {
 		v.fresh = actAnswered{load: load, keys: keys}
 	}
 	v.freshMu.Unlock()
-}
-
-// actAppend adds the next page after old, skipping duplicates.
-func actAppend(old, p core.ActivityPage) core.ActivityPage {
-	seen := make(map[string]bool, len(old.Items))
-	items := make([]core.ActivityItem, 0, len(old.Items)+len(p.Items))
-	for i := range old.Items {
-		seen[actKey(&old.Items[i])] = true
-		items = append(items, old.Items[i])
-	}
-	for i := range p.Items {
-		if !seen[actKey(&p.Items[i])] {
-			items = append(items, p.Items[i])
-		}
-	}
-	return core.ActivityPage{Items: items, Next: p.Next, Convs: actRefs(old.Convs, p.Convs)}
-}
-
-// actMerge replaces the first page with fresh and keeps the older pages
-// already loaded, so a refresh (realtime, the peek's) doesn't lose the
-// scroll position: the old rows after the one fresh ends with, in the old
-// list's order, and the old cursor. Where fresh ends is found by key, not
-// by time: the feed isn't always in time order (the VIP sort lists VIP
-// unreads first, then the rest by time), and a time cutoff dropped later
-// pages' rows while keeping the cursor past them. When the old list
-// doesn't hold fresh's last row (more new rows than a page), the later
-// pages go and the cursor is fresh's, so the next page continues right
-// after fresh with nothing skipped.
-//
-// In time order a row of the old first page that fresh doesn't hold is
-// gone (deleted, cleared): a row only moves up, with newer activity. Out
-// of it (timeOrder false: the VIP sort) a row can move down too: one the
-// viewer just read leaves the VIP unreads for the rest, a page further on,
-// possibly past the cursor. Then the later pages go and the cursor is
-// fresh's, so paging brings it back where it now belongs.
-func actMerge(fresh, old core.ActivityPage, timeOrder bool) core.ActivityPage {
-	if len(fresh.Items) == 0 || len(old.Items) <= len(fresh.Items) {
-		return fresh
-	}
-	lastKey := actKey(&fresh.Items[len(fresh.Items)-1])
-	end := -1
-	for i := range old.Items {
-		if actKey(&old.Items[i]) == lastKey {
-			end = i
-			break
-		}
-	}
-	if end < 0 {
-		return fresh
-	}
-	seen := make(map[string]bool, len(fresh.Items))
-	items := make([]core.ActivityItem, 0, len(old.Items)+len(fresh.Items))
-	for i := range fresh.Items {
-		seen[actKey(&fresh.Items[i])] = true
-		items = append(items, fresh.Items[i])
-	}
-	if !timeOrder {
-		for i := 0; i < end; i++ {
-			if !seen[actKey(&old.Items[i])] { // moved down (or gone): page again from fresh
-				return fresh
-			}
-		}
-	}
-	for i := end + 1; i < len(old.Items); i++ {
-		if it := &old.Items[i]; !seen[actKey(it)] {
-			items = append(items, *it)
-		}
-	}
-	return core.ActivityPage{Items: items, Next: old.Next, Convs: actRefs(old.Convs, fresh.Convs)}
-}
-
-// actRetained is the Unreads refresh, P0K2's refreshItems upsert
-// (build c07ab895506f): the fresh unread page, then the rows loaded
-// before that getItemsRetainedOnRefresh keeps: newer than the page's
-// newest row, or marked unread here (pendingUnreadMarkKeys) and still
-// unread. The rest, read rows included, goes with the old list; its
-// cursor is the fresh page's.
-func actRetained(fresh, old core.ActivityPage, unreadMarks map[string]bool) core.ActivityPage {
-	newest := ""
-	for i := range fresh.Items {
-		if ts := fresh.Items[i].FeedTS; newest == "" || actTSLess(newest, ts) {
-			newest = ts
-		}
-	}
-	seen := make(map[string]bool, len(fresh.Items))
-	items := make([]core.ActivityItem, 0, len(fresh.Items))
-	for i := range fresh.Items {
-		seen[actKey(&fresh.Items[i])] = true
-		items = append(items, fresh.Items[i])
-	}
-	for i := range old.Items {
-		it := &old.Items[i]
-		k := actKey(it)
-		if seen[k] {
-			continue
-		}
-		// unreadMarks holds the rows whose local state is unread (the
-		// store's isUnread after the optimistic mark)
-		if unreadMarks[k] || newest != "" && actTSLess(newest, it.FeedTS) {
-			items = append(items, *it)
-		}
-	}
-	sort.SliceStable(items, func(i, j int) bool { return actTSLess(items[j].FeedTS, items[i].FeedTS) })
-	return core.ActivityPage{Items: items, Next: fresh.Next, Convs: actRefs(old.Convs, fresh.Convs)}
 }
 
 // actTSLess compares Slack timestamps ("1730000000.123456") numerically.

@@ -154,12 +154,19 @@ type User struct {
 	// DisplaySet: profile.display_name is set, so Name is it and Slack's
 	// member rows (MediumMemberEntity) show RealName after it as the
 	// secondary name; otherwise Name is the real name and there is none.
-	DisplaySet                       bool
-	Avatar, Avatar192, Avatar512     string
-	Title, Pronouns                  string
-	Email                            string // only when Slack shows it (Hack Club: the viewer's own)
-	StatusText, StatusEmoji          string
-	StatusEmojiURL                   string
+	DisplaySet                   bool
+	Avatar, Avatar192, Avatar512 string
+	Title, Pronouns              string
+	Email                        string // only when Slack shows it (Hack Club: the viewer's own)
+	StatusText, StatusEmoji      string
+	StatusEmojiURL               string
+	// StatusEmojiInfo is profile.status_emoji_display_info by emoji_name
+	// (Slack's statusEmojiDisplayInfo): the pictures for the status emoji
+	// and the :codes: in StatusText (StatusTextParts).
+	StatusEmojiInfo map[string]StatusEmojiDisplay
+	// DND: the member's notifications are paused (BasePresence's isDnd,
+	// MemberInDND when the User was read).
+	DND                              bool
 	StatusCanonical                  string // profile.status_text_canonical (a preset's key)
 	StatusExp                        int64
 	TZ, TZLabel                      string

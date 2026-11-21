@@ -930,9 +930,15 @@ func (v *Activity) clearAllBefore(ph popups.Host, before string) {
 					if err := c.ClearActivityBefore(ctx, before, f); err != nil {
 						return err
 					}
-					// reload on the UI goroutine
+					// the rows it cleared leave, the later pages' too (a
+					// reload keeps those: actReloadKeeps), then the reload,
+					// on the UI goroutine
+					unreadOnly := f != nil && f.UnreadOnly
 					v.notes.mu.Lock()
-					v.notes.fns = append(v.notes.fns, func() { v.load(actRefresh) })
+					v.notes.fns = append(v.notes.fns, func() {
+						v.clearedBefore(before, unreadOnly)
+						v.load(actRefresh)
+					})
 					v.notes.mu.Unlock()
 					v.h.Invalidate()
 					return nil
@@ -941,6 +947,23 @@ func (v *Activity) clearAllBefore(ph popups.Host, before string) {
 			}},
 		},
 	}))
+}
+
+// clearedBefore marks cleared here the loaded rows activity.clearBefore
+// {before_ts} took: older than before (its unread ones under Unreads; the
+// list holds the view's types and channels only).
+func (v *Activity) clearedBefore(before string, unreadOnly bool) {
+	if v.showCleared {
+		return
+	}
+	page, _, _ := v.data.get()
+	for i := range page.Items {
+		it := &page.Items[i]
+		if k := actKey(it); it.FeedTS != "" && actTSLess(it.FeedTS, before) && (!unreadOnly || v.isUnread(it, k)) {
+			v.cleared[k] = true
+			v.dirty = true
+		}
+	}
 }
 
 // clearFilters is uby+ o: the view's filters as activity.clearBefore takes
