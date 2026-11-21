@@ -500,8 +500,13 @@ func (t *Taut) Subscribe() (<-chan struct{}, func()) {
 	t.changeCh[c] = struct{}{}
 	t.changeMu.Unlock()
 	return c, func() {
+		// whoever takes c out closes it (changed sends under changeMu): its
+		// range loop ends whether stop or Close comes first
 		t.changeMu.Lock()
-		delete(t.changeCh, c)
+		if _, live := t.changeCh[c]; live {
+			delete(t.changeCh, c)
+			close(c)
+		}
 		t.changeMu.Unlock()
 	}
 }

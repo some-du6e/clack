@@ -405,8 +405,13 @@ func (s *Slick) Subscribe() (<-chan struct{}, func()) {
 	s.changeCh[c] = struct{}{}
 	s.changeMu.Unlock()
 	return c, func() {
+		// whoever takes c out closes it (changed sends under changeMu): its
+		// range loop ends whether stop or Close comes first
 		s.changeMu.Lock()
-		delete(s.changeCh, c)
+		if _, live := s.changeCh[c]; live {
+			delete(s.changeCh, c)
+			close(c)
+		}
 		s.changeMu.Unlock()
 	}
 }

@@ -286,15 +286,21 @@ func (ix *Interactive) Subscribe() (<-chan ViewEvent, func()) {
 	var once sync.Once
 	return c, func() {
 		once.Do(func() {
+			// whoever takes c out closes it (emit sends under ix.mu): a
+			// stop before Release used to leave blockkit's range loop, and
+			// the App it posts to, waiting for good (ci-speed-3)
 			ix.mu.Lock()
-			delete(ix.subs, c)
+			if _, live := ix.subs[c]; live {
+				delete(ix.subs, c)
+				close(c)
+			}
 			ix.mu.Unlock()
 		})
 	}
 }
 
 // closeSubs closes every subscriber's channel (their range loops end):
-// the App is done (Release). A stop after it only deletes.
+// the App is done (Release). A stop after it finds nothing to close.
 func (ix *Interactive) closeSubs() {
 	ix.mu.Lock()
 	defer ix.mu.Unlock()

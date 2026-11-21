@@ -58,6 +58,10 @@ func retainReport(t *testing.T, targets []retainTarget) string {
 	defer g.f.Close()
 	var b strings.Builder
 	fmt.Fprintf(&b, "what holds it, from a heap dump (%d objects, %d roots):\n", len(g.starts), len(g.roots))
+	if len(g.syms.addrs) == 0 {
+		// go test links its binary -s -w; go test -c keeps the symbols
+		b.WriteString("(the test binary has no symbol table, so globals are bare addresses: build it with go test -c to name them)\n")
+	}
 	for _, tg := range targets {
 		g.retainers(&b, tg.what, uint64(tg.addr), 6, 30)
 	}
@@ -466,8 +470,12 @@ func (g *heapGraph) describe(o, to int) string {
 		if v == 0 {
 			continue
 		}
-		if s, ok := g.syms.byAddr[v]; ok && len(hints) < 4 {
-			hints = append(hints, fmt.Sprintf("+%d %s", off, s))
+		if len(hints) < 4 {
+			if s, ok := g.syms.byAddr[v]; ok {
+				hints = append(hints, fmt.Sprintf("+%d %s", off, s))
+			} else if fn := runtime.FuncForPC(uintptr(v)); fn != nil && fn.Entry() == uintptr(v) {
+				hints = append(hints, fmt.Sprintf("+%d %s", off, shortSym(fn.Name()))) // a closure's code
+			}
 		}
 		if to >= 0 && via == "" && g.find(v) == to {
 			via = fmt.Sprintf(", +%d →", off)

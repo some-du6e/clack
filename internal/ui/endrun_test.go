@@ -61,8 +61,12 @@ func goroutinesMentioning(sub string, max int) string {
 func goroutineStacks() map[string]int {
 	var b bytes.Buffer
 	_ = pprof.Lookup("goroutine").WriteTo(&b, 1)
+	// past the "goroutine profile: total N" line: it shares the first
+	// stack's chunk, which was skipped (the biggest group: blockkit's
+	// goroutines, every session's, went unlisted)
+	_, prof, _ := strings.Cut(b.String(), "\n")
 	out := map[string]int{}
-	for _, st := range strings.Split(b.String(), "\n\n") {
+	for _, st := range strings.Split(prof, "\n\n") {
 		head, rest, ok := strings.Cut(st, "\n")
 		if !ok || !strings.Contains(head, " @ ") {
 			continue
