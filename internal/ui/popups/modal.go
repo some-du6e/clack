@@ -258,9 +258,6 @@ type Modal struct {
 	scrimAt            time.Time
 }
 
-// Rect is the dialog card's rectangle in the window at the last frame.
-func (m *Modal) Rect() image.Rectangle { return m.rect }
-
 // SetPeek sets ModalOpts.Peek on an open modal (Preferences sets it on
 // the frame mkPrefsModal built).
 func (m *Modal) SetPeek(f func() bool) { m.o.Peek = f }
