@@ -343,6 +343,9 @@ type Page struct {
 	HasMore  bool      // older messages exist
 	LastRead string
 	Conv     *Conv
+	// Epoch is the window's (store.Timeline.Epoch): a newest page that
+	// didn't meet the window started a new one, which a list takes whole
+	Epoch uint64
 }
 
 // Event is a realtime change. Type is one of: message, update, delete,

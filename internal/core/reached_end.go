@@ -46,7 +46,7 @@ var catchUpRetries = []time.Duration{2 * time.Second, 5 * time.Second, 15 * time
 // conversation's is read forward at once (Slack's open view asks for
 // newer messages as it draws).
 func (a *App) resetReachedEnd() {
-	n := a.S.ResetReachedEnd(a.localCopies())
+	n := a.S.ResetReachedEnd(a.trackedSends())
 	if n == 0 {
 		return
 	}
@@ -59,15 +59,40 @@ func (a *App) resetReachedEnd() {
 	}
 }
 
-// localCopies is "ch/ts" of the viewer's unconfirmed and failed sends:
-// their copies are no part of Slack's history, so no window's end.
-func (a *App) localCopies() map[string]bool {
+// trackedSends is "ch/ts" of the viewer's sends core still tracks:
+// pending and failed copies (local ts) and confirmed ones (Slack's ts,
+// for two minutes after). None marks a window's end: a send goes in past
+// the window whatever the socket missed, as the Web API works while the
+// socket is dead (Karim's 9:53 PM message went out that way).
+func (a *App) trackedSends() map[string]bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	out := map[string]bool{}
 	for _, p := range a.pending {
 		if !p.confirmed {
 			out[p.opts.Channel+"/"+p.ts] = true
+		} else if p.realTS != "" {
+			out[p.opts.Channel+"/"+p.realTS] = true
+		}
+	}
+	return out
+}
+
+// sendsIn is the ts of the viewer's sends in ch core still tracks
+// (trackedSends): a newest page keeps them in the window
+// (store.SetLatestReadAt).
+func (a *App) sendsIn(ch string) map[string]bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := map[string]bool{}
+	for _, p := range a.pending {
+		if p.opts.Channel != ch {
+			continue
+		}
+		if !p.confirmed {
+			out[p.ts] = true
+		} else if p.realTS != "" {
+			out[p.realTS] = true
 		}
 	}
 	return out

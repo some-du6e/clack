@@ -43,6 +43,11 @@ type Timeline struct {
 	End      string          // EndStale: the newest message from Slack the window held then
 	Ahead    []slack.Message // EndStale: the socket's messages past End, ascending
 	EndGen   uint64          // the reset (ResetReachedEnd) the window's end last went stale at
+	// Epoch is which window this is: a newest page that doesn't meet the
+	// window it replaces starts a new one (SetLatestReadAt), and a list
+	// holding an older epoch's messages takes this one whole instead of
+	// keeping its own in front (Slack keeps such a page a slice of its own)
+	Epoch uint64
 }
 
 type Store struct {
@@ -64,6 +69,7 @@ type Store struct {
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
 	endGen      uint64                     // ResetReachedEnd calls so far (reached_end.go)
+	epochs      uint64                     // windows started so far (Timeline.Epoch)
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
@@ -1292,7 +1298,13 @@ func (s *Store) TimelineIDs() []string {
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
-	s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+	t := &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, EndGen: s.endGen}
+	if old := s.timelines[ch]; old != nil {
+		t.Epoch = old.Epoch // the same window, written whole (a test's)
+	} else {
+		t.Epoch = s.newEpochLocked()
+	}
+	s.timelines[ch] = t
 	s.mu.Unlock()
 }
 
@@ -1316,7 +1328,7 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
 	if t == nil {
-		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, EndGen: s.endGen, Epoch: s.newEpochLocked()}
 		return msgs
 	}
 	merged := append(append([]slack.Message(nil), msgs...), t.Msgs...)

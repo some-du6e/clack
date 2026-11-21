@@ -42,10 +42,14 @@ const maxAhead = 100
 
 // ResetReachedEnd is Slack's resetReachedEnd for every cached window, at
 // a connect that wasn't a fast reconnect: each window's end goes stale,
-// End its newest message from Slack (local is "ch/ts" of the viewer's
-// unconfirmed and failed sends, which are no part of Slack's history;
-// nor is an ephemeral message). It reports how many windows it reset.
-func (s *Store) ResetReachedEnd(local map[string]bool) int {
+// End its newest message from Slack the socket or a read brought. Not an
+// ephemeral message, and none of the viewer's sends core still tracks
+// (mine: "ch/ts" of the unconfirmed and failed copies and the confirmed
+// ones): a send goes in past the window whatever the socket missed (the
+// Web API works while the socket is dead), so it says nothing about what
+// came before it, and a window read forward from it would skip the gap.
+// It reports how many windows it reset.
+func (s *Store) ResetReachedEnd(mine map[string]bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.endGen++
@@ -57,7 +61,7 @@ func (s *Store) ResetReachedEnd(local map[string]bool) int {
 		}
 		t.EndStale, t.End, t.Ahead = true, "", nil
 		for i := len(t.Msgs) - 1; i >= 0; i-- {
-			if m := &t.Msgs[i]; !m.IsEphemeral && !local[ch+"/"+m.TS] {
+			if m := &t.Msgs[i]; !m.IsEphemeral && !mine[ch+"/"+m.TS] {
 				t.End = m.TS
 				break
 			}
@@ -146,15 +150,15 @@ func (s *Store) aheadLocked(ch string, t *Timeline, m slack.Message) bool {
 
 // CatchUp takes a page of ch read forward from from (conversations.history
 // oldest=from inclusive) whose request began at LiveSeq since, into a
-// window whose end went stale at from at reset gen (EndOf): the page
-// joins the window (what the socket changed or deleted while it was out
-// keeps the socket's state, and the read's hooks run over what it keeps,
-// as every window read: readWindowLocked), and End moves to the page's
-// newest message. With nothing newer left (hasMore false) the window
-// reaches the end again: the messages waiting in Ahead join it, and it
-// reports joined; unless the socket went and came back while the page
-// was out (a later reset than gen), when what it missed then is after
-// the page: the end stays stale and the window is read forward again. A
+// window whose end went stale at from at reset gen (EndOf). With nothing
+// newer left (hasMore false) the page joins the window (what the socket
+// changed or deleted while it was out keeps the socket's state, and the
+// read's hooks run over what it keeps, as every window read:
+// readWindowLocked), the window reaches the end again, the messages
+// waiting in Ahead join it, and it reports joined. A page with more left,
+// or one read while the socket went and came back again (a later reset
+// than gen: what that gap missed is after the page), leaves the window as
+// it was: the caller reads the newest page, or forward again. A
 // confirmed copy of one of the viewer's sends in the page takes the
 // place of the local one (same client_msg_id). ok is false when the
 // window isn't the one the page was read for any more (a newest page
@@ -167,6 +171,17 @@ func (s *Store) CatchUp(ch, from string, gen uint64, msgs []slack.Message, hasMo
 	t := s.timelines[ch]
 	if t == nil || !t.EndStale || t.End != from {
 		return false, false
+	}
+	newest := newestTS(msgs)
+	if newest == "" {
+		newest = from // from itself went, and nothing came after it
+	}
+	if hasMore || t.EndGen != gen {
+		// not the end: the window stays as it is, so nothing the lists
+		// draw goes past its old end (an update to one of this page's
+		// messages would otherwise draw it there), and the next read
+		// starts from the same end
+		return false, true
 	}
 	out := s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, out, since)
@@ -186,16 +201,6 @@ func (s *Store) CatchUp(ch, from string, gen uint64, msgs []slack.Message, hasMo
 		kept = append(kept, t.Msgs[i])
 	}
 	t.Msgs = dedupe(append(kept, out...))
-	newest := newestTS(msgs)
-	if newest == "" {
-		newest = from // from itself went, and nothing came after it
-	}
-	if hasMore || t.EndGen != gen {
-		if TSLess(t.End, newest) {
-			t.End = newest
-		}
-		return false, true
-	}
 	t.Msgs = joinAhead(t.Msgs, newest, t.Ahead)
 	t.EndStale, t.End, t.Ahead = false, "", nil
 	return true, true
@@ -269,4 +274,145 @@ func (s *Store) PrependOlderAt(ch, before string, msgs []slack.Message, hasMore 
 		t.Msgs = t.Msgs[len(t.Msgs)-5000:]
 	}
 	return msgs
+}
+
+// EndGen is the resets so far (ResetReachedEnd): a newest-page read takes
+// it as it starts (SetLatestReadAt).
+func (s *Store) EndGen() uint64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.endGen
+}
+
+// newEpochLocked numbers a new window (Timeline.Epoch; s.mu held).
+func (s *Store) newEpochLocked() uint64 {
+	s.epochs++
+	return s.epochs
+}
+
+// SetLatestReadAt is SetLatestRead for a newest page of ch whose request
+// began at LiveSeq since and at reset gen (EndGen), mine being the ts of
+// the viewer's sends in ch that core still tracks (pending, failed and
+// confirmed copies). The page replaces the window, and:
+//   - the viewer's sends the window held and the page doesn't stay: a
+//     send confirmed after the page was read, a pending or failed copy.
+//     No read brings a local copy, and Slack keeps a failed send whatever
+//     a read does (sendMessage's addMsgToEnd). One whose confirmed copy
+//     the page holds (its client_msg_id) is that copy.
+//   - what waited past a stale end joins it (the newest page is the end),
+//   - unless the socket went and came back while the page was out (a
+//     reset after gen): what that gap missed is after the page, so the
+//     window's end stays stale at the page's newest message, and what
+//     waited past that still waits.
+//   - a page that doesn't meet the window (more history before it, and
+//     its oldest message newer than the window's newest from Slack: its
+//     stale End, or its newest message that isn't one of the viewer's
+//     sends) starts a new window (Epoch): a list keeps nothing of the old
+//     one in front of it, where the messages between were missing.
+func (s *Store) SetLatestReadAt(ch string, msgs []slack.Message, hasMore bool, since, gen uint64, mine map[string]bool) {
+	SortAsc(msgs)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.liveKeepLocked(ch, msgs, since)
+	s.readWindowLocked(ch, out, since)
+	old := s.timelines[ch]
+	newest := newestTS(msgs)
+	t := &Timeline{HasMore: hasMore, Loaded: true, EndGen: s.endGen}
+	if old != nil {
+		out = carrySends(out, old.Msgs, mine)
+		t.Epoch = old.Epoch
+	}
+	if !reaches(old, msgs, hasMore, mine) {
+		t.Epoch = s.newEpochLocked()
+	}
+	if s.endGen != gen {
+		end := ""
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if !msgs[i].IsEphemeral {
+				end = msgs[i].TS
+				break
+			}
+		}
+		var now, later []slack.Message
+		if old != nil {
+			for _, m := range old.Ahead {
+				if end != "" && !m.IsEphemeral && TSLess(end, m.TS) {
+					later = append(later, m)
+				} else {
+					now = append(now, m)
+				}
+			}
+		}
+		out = joinAhead(out, newest, now)
+		t.EndStale, t.End, t.Ahead = true, end, later
+	} else if old != nil {
+		out = joinAhead(out, newest, old.Ahead)
+	}
+	t.Msgs = out
+	s.timelines[ch] = t
+}
+
+// reaches reports whether a newest page meets the window old it replaces:
+// it holds the whole history (no hasMore), or its oldest message from
+// Slack is at or before the window's newest one (the stale End, since
+// what came past it is no part of the old history, nor are the viewer's
+// sends). A page for no window starts one.
+func reaches(old *Timeline, msgs []slack.Message, hasMore bool, mine map[string]bool) bool {
+	if old == nil {
+		return false
+	}
+	if !hasMore {
+		return true
+	}
+	oldest := ""
+	for i := range msgs {
+		if !msgs[i].IsEphemeral {
+			oldest = msgs[i].TS
+			break
+		}
+	}
+	if oldest == "" {
+		return true
+	}
+	newest := ""
+	if old.EndStale {
+		newest = old.End
+	} else {
+		for i := len(old.Msgs) - 1; i >= 0; i-- {
+			if m := &old.Msgs[i]; !m.IsEphemeral && !mine[m.TS] {
+				newest = m.TS
+				break
+			}
+		}
+	}
+	return newest != "" && !TSLess(newest, oldest)
+}
+
+// carrySends is out with the viewer's sends (mine) the window held that
+// out doesn't: a send whose confirmed copy out holds (the same
+// client_msg_id) is that copy. Ascending.
+func carrySends(out, held []slack.Message, mine map[string]bool) []slack.Message {
+	if len(mine) == 0 {
+		return out
+	}
+	have, cids := map[string]bool{}, map[string]bool{}
+	for i := range out {
+		have[out[i].TS] = true
+		if out[i].ClientMsgID != "" {
+			cids[out[i].ClientMsgID] = true
+		}
+	}
+	added := false
+	for i := range held {
+		m := &held[i]
+		if !mine[m.TS] || have[m.TS] || m.ClientMsgID != "" && cids[m.ClientMsgID] {
+			continue
+		}
+		out = append(out, *m)
+		added = true
+	}
+	if added {
+		SortAsc(out)
+	}
+	return out
 }

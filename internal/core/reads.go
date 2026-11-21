@@ -44,6 +44,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	}
 	var msgs []slack.Message
 	var hasMore bool
+	var epoch uint64
 	if before == "" {
 		t := a.S.Timeline(ch)
 		if t == nil {
@@ -57,7 +58,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 			waitSide(conv)
 		}
 		if t != nil {
-			msgs, hasMore = t.Msgs, t.HasMore
+			msgs, hasMore, epoch = t.Msgs, t.HasMore, t.Epoch
 			if t.EndStale {
 				// the window from before a slow connect, at once, as
 				// Slack draws its outdated slice; read forward in the
@@ -91,7 +92,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		msgs, hasMore = kept, p.HasMore
 	}
-	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
+	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore, Epoch: epoch}
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
 	}
