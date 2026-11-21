@@ -105,7 +105,7 @@ func srDenseOf(h Host, m *core.Message, terms []string) srDense {
 		if app := h.Core(); app != nil && app.S != nil {
 			raw, _ := json.Marshal(kept)
 			doc := richtext.FromMessage(app.S, &slack.Message{Type: "message", TS: m.TS, User: m.User, Text: m.Text, Blocks: raw})
-			if s := richtext.PlainText(doc); strings.TrimSpace(s) != "" {
+			if s := richtext.SearchText(doc); strings.TrimSpace(s) != "" {
 				body = s
 			}
 		}

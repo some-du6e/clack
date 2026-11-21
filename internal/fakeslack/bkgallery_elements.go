@@ -147,7 +147,7 @@ func (s *Server) GalleryElementsTS() map[string]string {
 }
 
 // GalleryElementNames is the elements gallery, in order.
-var GalleryElementNames = []string{"buttons", "overflow", "selects", "people", "multi", "pickers", "options", "inputs", "workflow", "more"}
+var GalleryElementNames = []string{"buttons", "overflow", "selects", "people", "multi", "pickers", "options", "inputs", "workflow", "more", "nested"}
 
 func galleryElements(s *Server) []slack.Message {
 	pt := func(t string) map[string]any { return map[string]any{"type": "plain_text", "text": t, "emoji": true} }
@@ -292,13 +292,42 @@ func galleryElements(s *Server) []slack.Message {
 			act("bk_seven", btn("seven_1", "One", "1"), btn("seven_2", "Two", "2"), btn("seven_3", "Three", "3"), btn("seven_4", "Four", "4"),
 				btn("seven_5", "Five", "5"), btn("seven_6", "Six", "6"), btn("seven_7", "Seven", "7")),
 		},
+		// elements inside other blocks: Slack renders a container's and a
+		// callout's child_blocks and a fallback's payload through the same
+		// renderables, so their buttons are live
+		"nested": {
+			sec("bk_nested_intro", "*Nested* — a container's actions, a callout's accessory and a fallback's accessory."),
+			{"type": "container", "block_id": "bk_nested_container", "title": pt("Deploy"),
+				"child_blocks": []any{act("bk_nested_actions", btn("nested_go", "Ship it", "go"), btn("nested_wait", "Wait", "wait"))}},
+			{"type": "callout", "block_id": "bk_nested_callout", "background_color": "blue",
+				"child_blocks": []any{func() map[string]any {
+					b := sec("bk_nested_callout_sec", "A callout's section with a button")
+					b["accessory"] = btn("nested_callout", "Approve", "yes")
+					return b
+				}()}},
+			{"type": "future_widget", "block_id": "bk_nested_future",
+				"fallback": []any{func() map[string]any {
+					b := sec("bk_nested_fallback", "A fallback's section with a button")
+					b["accessory"] = btn("nested_fallback", "Retry", "retry")
+					return b
+				}()}},
+			{"type": "card", "block_id": "bk_nested_card", "title": md("A card's action"), "actions": []any{btn("nested_card", "Open", "open")}},
+		},
 	}
 	var out []slack.Message
 	for _, name := range GalleryElementNames {
 		b, _ := json.Marshal(msgs[name])
-		out = append(out, slack.Message{Type: "message", Text: "Block Kit gallery: " + name, Blocks: b, ClientMsgID: "bk-elements-" + name,
+		m := slack.Message{Type: "message", Text: "Block Kit gallery: " + name, Blocks: b, ClientMsgID: "bk-elements-" + name,
 			BotID: GalleryBotID, BotProfile: &slack.BotProfile{ID: GalleryBotID, Name: "Gallery Bot", AppID: GalleryAppID,
-				UserID: GalleryBotUserID, TeamID: TeamID}})
+				UserID: GalleryBotUserID, TeamID: TeamID}}
+		if name == "nested" {
+			// an attachment's container: its button's actions carry the
+			// attachment's container (AttachmentBlocks), not the message's
+			ab, _ := json.Marshal([]map[string]any{{"type": "container", "block_id": "bk_nested_att_container", "title": pt("In an attachment"),
+				"child_blocks": []any{act("bk_nested_att_actions", btn("nested_att_go", "Deploy", "deploy"))}}})
+			m.Attachments = []slack.Attachment{{ID: 1, Color: "36a64f", Fallback: "A container in an attachment", Blocks: ab}}
+		}
+		out = append(out, m)
 	}
 	return out
 }

@@ -15,8 +15,9 @@ import (
 
 // resolveCanvases fills the store's canvas slug data (richtext.CanvasRef,
 // section rich text) for the lookups rendering missed, and returns the
-// ids it filled. Canvases come from files.info (getFileStatus: a file
-// that is gone is "deleted", one the viewer can't open "hidden");
+// ids it filled. Canvases come from files.info (getFileStatus,
+// richtext.FileStatusOf: a file that is gone is "deleted", one the viewer
+// can't open "hidden");
 // sections from quip.getCanvasBulkSectionIdsData {file_id, section_ids,
 // reason: "conditional-fetching"}, Slack's
 // fetchAndUpsertCanvasSectionRichText (client-boot AYsF): its sections'
@@ -80,8 +81,16 @@ type filesInfoFile struct {
 	Mode            string          `json:"mode"`
 	PrettyType      string          `json:"pretty_type"`
 	Name            string          `json:"name"`
+	Subtype         string          `json:"subtype"`
 	LinkedChannelID string          `json:"linked_channel_id"`
-	ListMetadata    struct {
+	// getFileStatus's other inputs (richtext.FileStatusOf), and a skill
+	// canvas's and a folder's kinds (the inline file slug)
+	FileAccess   string `json:"file_access"`
+	HiddenLimit  bool   `json:"is_hidden_by_limit"`
+	Tombstoned   bool   `json:"is_tombstoned"`
+	IsSkill      bool   `json:"is_skill"`
+	FolderType   string `json:"folder_type"`
+	ListMetadata struct {
 		Views []struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
@@ -91,11 +100,11 @@ type filesInfoFile struct {
 
 // canvasRefOf is the CanvasRef files.info's file f makes.
 func canvasRefOf(f *filesInfoFile) richtext.CanvasRef {
-	st := "normal"
-	if f.IsDeleted {
-		st = "deleted"
-	}
-	ref := richtext.CanvasRef{Title: f.Title, TitleBlocks: f.TitleBlocks, Status: st, Kind: fileKindOf(f.Filetype, f.Mode, f.PrettyType)}
+	st := richtext.FileStatusOf(richtext.FileFacts{Mode: f.Mode, FileAccess: f.FileAccess, IsDeleted: f.IsDeleted,
+		HiddenByLimit: f.HiddenLimit, Tombstoned: f.Tombstoned})
+	ref := richtext.CanvasRef{Title: f.Title, TitleBlocks: f.TitleBlocks, Status: st, Kind: fileKindOf(f.Filetype, f.Mode, f.PrettyType),
+		Name: f.Name, Filetype: f.Filetype, Mode: f.Mode, Subtype: f.Subtype, FolderType: f.FolderType, IsSkill: f.IsSkill,
+		Blocked: f.Mode == "canvas_slack_connect_blocked"} // isBlockedExternalCanvas's mode
 	for _, v := range f.ListMetadata.Views {
 		if ref.Views == nil {
 			ref.Views = map[string]string{}

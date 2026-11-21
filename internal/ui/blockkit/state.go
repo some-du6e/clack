@@ -238,11 +238,10 @@ func (vs Values) set(blockID, actionID string, v *Value) {
 	b[actionID] = v
 }
 
-// initValues fills the state of every stateful element of bs (keeping
-// values already there).
+// initValues fills the state of every stateful element of bs and the
+// blocks nested in them (keeping values already there).
 func initValues(vs Values, bs []Block) {
-	for i := range bs {
-		b := &bs[i]
+	for _, b := range allBlocks(bs) {
 		for _, e := range elementsOf(b) {
 			if !stateful(e.Type) {
 				continue

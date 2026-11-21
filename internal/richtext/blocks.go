@@ -3,6 +3,7 @@ package richtext
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ type bk struct {
 	Type      string `json:"type"`
 	BlockID   string `json:"block_id"`
 	Elements  []bk   `json:"elements"`
-	Rows      [][]bk `json:"rows"` // table
+	Rows      bkRows `json:"rows"` // table
 	ColumnSet []struct {
 		Align     string `json:"align"`
 		IsWrapped bool   `json:"is_wrapped"`
@@ -39,14 +40,14 @@ type bk struct {
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
-	Name        string          `json:"name"`
+	Name        bkStr           `json:"name"` // emoji; auth_provider's is a text object
 	Unicode     string          `json:"unicode"`
 	SkinTone    int             `json:"skin_tone"`
 	Range       string          `json:"range"`
 	Timestamp   json.RawMessage `json:"timestamp"`
 	Format      string          `json:"format"`
 	Fallback    bkFallback      `json:"fallback"`
-	Value       string          `json:"value"`
+	Value       bkStr           `json:"value"` // a string (buttons, colors) or a number (raw_number cells)
 	Indent      int             `json:"indent"`
 	Offset      int             `json:"offset"`
 	Border      int             `json:"border"`
@@ -56,8 +57,15 @@ type bk struct {
 	AltText     string          `json:"alt_text"`
 	Title       *textObj        `json:"title"`
 	ActionID    string          `json:"action_id"`
-	Placeholder *textObj        `json:"placeholder"`
-	Options     []struct {
+	VisibleTo   []string        `json:"visible_to_user_ids"` // button, checkboxes, icon_button (actionHidden)
+	Checked     *bool           `json:"checked"`             // a check list's, or one of its items'
+	Checklist   bool            `json:"checklist"`
+	// a citation element's details.citation_type (either spelling): only
+	// then does Slack's Citation take it (unknownInline)
+	CitationType      json.RawMessage `json:"citation_type"`
+	CitationTypeCamel json.RawMessage `json:"citationType"`
+	Placeholder       *textObj        `json:"placeholder"`
+	Options           []struct {
 		Text  textObj `json:"text"`
 		Value string  `json:"value"`
 	} `json:"options"`
@@ -84,21 +92,23 @@ type bk struct {
 	FileID     string   `json:"file_id"`
 	Source     string   `json:"source"`
 	Expand     bool     `json:"expand"` // section: never truncate
-	Level      int      `json:"level"`  // header: 1–4 (Slack's Header: p-header_block--level_N)
+	Level      bkLevel  `json:"level"`  // header: 1–4 (Slack's Header: p-header_block--level_N); alert: a severity (kitcards.go)
 	CallID     string   `json:"call_id"`
-	Call       *struct {
-		V1 struct {
-			Name        string `json:"name"`
-			JoinURL     string `json:"join_url"`
-			DateStart   int64  `json:"date_start"`
-			DateEnd     int64  `json:"date_end"`
-			AppIconURLs struct {
-				Image32 string `json:"image_32"`
-			} `json:"app_icon_urls"`
-		} `json:"v1"`
-	} `json:"call"`
+	Call       *bkCall  `json:"call"` // call.go
+	// callout, container (kitcards.go)
+	ChildBlocks      []bk            `json:"child_blocks"`
+	BackgroundColor  string          `json:"background_color"`
+	RichTextTitle    *bk             `json:"rich_text_title"`
+	Subtitle         *textObj        `json:"subtitle"`
+	Icon             json.RawMessage `json:"icon"`  // container: an image element (icon_button: a name)
+	Width            json.RawMessage `json:"width"` // container: a width class (canvas_table cells: px)
+	IsCollapsible    bool            `json:"is_collapsible"`
+	DefaultCollapsed bool            `json:"default_collapsed"`
+	HasHeaderDivider bool            `json:"has_header_divider"`
 
 	bkWorkflow // workflow_mention (workflow_mention.go)
+	bkShortcut // share_shortcut (shortcut.go)
+	bkCard     // card (card.go)
 }
 
 type textObj struct {
@@ -180,6 +190,19 @@ type builder struct {
 	chID   string                 // the message's channel (tabslug.go: a slug to its own tab is the tab alone)
 	// msgCh and msgTS are the message (its files' expandables)
 	msgCh, msgTS string
+	// depth is how deep resolveFallback is in fallbacks, noCard how deep
+	// in callouts' children (no fallback card there, fallback.go)
+	depth, noCard int
+	// titles is how many canvas titles deep the builder is (titleBlocks)
+	titles int
+	// containers counts the message's container blocks (Container.Key)
+	containers int
+	// missing: a block Slack draws but Clack can't yet drew nothing (the
+	// message text then stands in, FromMessageIn)
+	missing bool
+	// notify converts for a notification's text (NotificationText): a
+	// type with no renderable adds nothing, with no fallback chain
+	notify bool
 	// keepEmoji: an emoji element the resolver doesn't know is an Emoji
 	// span without a URL, not its ":name:" text (CanvasTitle)
 	keepEmoji bool
@@ -212,7 +235,7 @@ func parseBlocks(raw json.RawMessage) []bk {
 
 // bkFallback is a "fallback" field: a string (a date element's text) or,
 // on a block, the payload Slack draws when it can't draw the block (one
-// block or a list; resolveFallback).
+// block or a list; resolveFallback, fallback.go).
 type bkFallback struct {
 	Text string
 	raw  json.RawMessage
@@ -226,28 +249,51 @@ func (f *bkFallback) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-func (f bkFallback) blocks() []bk {
-	if len(f.raw) == 0 {
+// bkRows is a table's "rows": arrays of cells, decoded as strictly as
+// before. Other blocks' rows aren't arrays (canvas_table's and layout's
+// are objects): those are no rows rather than a failed block.
+type bkRows [][]bk
+
+func (r *bkRows) UnmarshalJSON(b []byte) error {
+	var rows []json.RawMessage
+	if err := json.Unmarshal(b, &rows); err != nil {
+		*r = nil
 		return nil
 	}
-	var one bk
-	if f.raw[0] == '{' {
-		if json.Unmarshal(f.raw, &one) == nil && one.Type != "" && slackBlockTypes[one.Type] {
-			return []bk{one}
-		}
-		return nil
-	}
-	var list []bk
-	if json.Unmarshal(f.raw, &list) != nil {
-		return nil
-	}
-	out := list[:0]
-	for _, b := range list {
-		if b.Type != "" && slackBlockTypes[b.Type] { // a nested unknown block doesn't recurse
-			out = append(out, b)
+	for _, row := range rows {
+		if len(row) == 0 || row[0] != '[' {
+			*r = nil
+			return nil
 		}
 	}
-	return out
+	var rs [][]bk
+	if err := json.Unmarshal(b, &rs); err != nil {
+		return err
+	}
+	*r = rs
+	return nil
+}
+
+// bkStr is a field that is usually a string but may come as another
+// JSON scalar (a raw_number cell's numeric "value"): it keeps the
+// scalar's text instead of failing the whole block.
+type bkStr string
+
+func (v *bkStr) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*v = bkStr(s)
+		return nil
+	}
+	if string(b) == "null" || len(b) == 0 || b[0] == '{' || b[0] == '[' {
+		*v = ""
+		return nil
+	}
+	*v = bkStr(b)
+	return nil
 }
 
 // badBlock marks a block that didn't decode.
@@ -347,7 +393,7 @@ func flatten(bs []Block) []Span {
 			for i, it := range b.Items {
 				bullet := "• "
 				if b.Ordered {
-					bullet = strconv.Itoa(b.Offset+i+1) + ". "
+					bullet = strconv.Itoa(ListNumber(&b, i)) + ". "
 				}
 				add(append([]Span{{Kind: Text, Text: strings.Repeat("    ", b.Indent) + bullet}}, it...))
 			}
@@ -379,26 +425,11 @@ func (c *builder) blocks(bs []bk) []Block {
 // with Slack's p-*_block margins (rich_text has none of its own).
 func kitLayout(t string) bool {
 	switch t {
-	case "section", "context", "header", "divider", "image", "actions", "table", "input", badBlock:
+	case "section", "context", "header", "divider", "image", "actions", "table", "input", "call",
+		"alert", "callout", "loading", "container", "share_shortcut", "card", badBlock:
 		return true
 	}
 	return false
-}
-
-// slackBlockTypes is every block type Slack's client knows (its block
-// type enum, client-boot, build a84662d2d135); any other type draws
-// UnsupportedBlockFallback (UnknownBlock).
-var slackBlockTypes = map[string]bool{}
-
-func init() {
-	for _, t := range strings.Fields(`callout canvas_table context context_actions section image divider actions file
-		message expandable canvas error rich_text call input group header prototype table loading event contact_card
-		share_shortcut share_prompt share_skill share_workflow video message_embed condition channel_set channel_section
-		timeline plan task_card alert card related_automation_decorator carousel data_table container
-		salesforce_record_card search_top_results mcp_app data_visualization layout page auth_provider
-		attachment_reference fallback_canary markdown`) {
-		slackBlockTypes[t] = true
-	}
 }
 
 // unsupported is Slack's per-block error fallback.
@@ -423,10 +454,17 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			blk.FieldShort = append(blk.FieldShort, true)
 		}
 		if a := b.Accessory; a != nil {
-			if a.Type == "image" {
+			// Section (bzDH) draws its accessory for every member; only
+			// an icon_button hides itself (X2Vm). Slack keeps that one's
+			// empty accessory box (8px left margin); Clack draws nothing.
+			switch {
+			case a.Type == "image":
 				blk.Image = c.imageOf(a)
-			} else if btn, ok := c.element(a, b.BlockID); ok {
-				blk.Buttons = append(blk.Buttons, btn)
+			case a.Type == "icon_button" && iconButtonHidden(a.VisibleTo, c.r.SelfID()):
+			default:
+				if btn, ok := c.element(a, b.BlockID); ok {
+					blk.Buttons = append(blk.Buttons, btn)
+				}
 			}
 		}
 		if blk.Spans == nil && blk.Children == nil && blk.Fields == nil && blk.Image == nil && blk.Buttons == nil {
@@ -473,7 +511,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		if len(ss) == 0 {
 			return out
 		}
-		return append(out, Block{Kind: Header, Spans: ss, Level: b.Level})
+		return append(out, Block{Kind: Header, Spans: ss, Level: b.Level.N})
 	case "divider":
 		return append(out, Block{Kind: Divider})
 	case "image":
@@ -488,8 +526,11 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		return append(out, Block{Kind: ImageBlock, Image: img})
 	case "actions":
 		blk := Block{Kind: Actions}
+		self := c.r.SelfID()
 		for i := range b.Elements {
-			if btn, ok := c.element(&b.Elements[i], b.BlockID); ok {
+			e := &b.Elements[i]
+			if btn, ok := c.element(e, b.BlockID); ok {
+				btn.Invisible = actionHidden(e, self)
 				blk.Buttons = append(blk.Buttons, btn)
 			}
 		}
@@ -519,19 +560,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		}
 		return append(out, Block{Kind: FileBlock, File: &File{ID: id, Type: b.Source}})
 	case "call":
-		a := &Attachment{ServiceName: "Call", IsUnfurl: true}
-		name := "Call"
-		if b.Call != nil {
-			name = firstNonEmpty(b.Call.V1.Name, name)
-			a.TitleLink = SafeURL(b.Call.V1.JoinURL)
-			a.ServiceIcon = SafeImage(b.Call.V1.AppIconURLs.Image32)
-			a.TS = b.Call.V1.DateStart
-			if b.Call.V1.DateEnd > 0 {
-				a.Text = []Block{{Kind: Paragraph, Spans: []Span{{Kind: Text, Text: "Ended"}}}}
-			}
-		}
-		a.Title = []Span{{Kind: Text, Text: name}}
-		return append(out, Block{Kind: AttachmentBlock, Att: a})
+		return append(out, c.callBlock(b))
 	case "input":
 		blk := Block{Kind: Section, Spans: c.textSpans(b.Label)}
 		for i := range blk.Spans {
@@ -543,27 +572,73 @@ func (c *builder) block(out []Block, b *bk) []Block {
 			}
 		}
 		return append(out, blk)
+	case "alert":
+		return append(out, c.alertBlock(b))
+	case "callout":
+		return append(out, c.calloutBlock(b))
+	case "loading":
+		return append(out, Block{Kind: LoadingBlock})
+	case "container":
+		return append(out, c.containerBlock(b))
+	case "share_shortcut":
+		return append(out, c.shortcutBlock(b))
+	case "card":
+		return append(out, c.cardBlock(b))
 	case "markdown":
 		return append(out, markdownBlocks(c.r, b.textString())...)
+	case "mrkdwn", "plain_text":
+		// a text object as a block: the mrkdwn (nABn) and plain_text
+		// (CnXr) renderables draw it, with no block margins
+		t := &textObj{Type: b.Type, Text: b.textString()}
+		if o := b.textObj(); o != nil {
+			t = o
+			t.Type = b.Type
+		}
+		return append(out, c.textBlocks(t)...)
 	case "table":
 		return append(out, c.table(b))
 	case "plan", "task_card", "context_actions":
 		return c.agentBlock(out, b)
 	case badBlock:
 		return append(out, unsupported())
+	case "rich_text_section", "rich_text_list", "rich_text_quote", "rich_text_preformatted", "rich_text_header", "rich_text_divider":
+		// a rich_text piece at the top level (or as a fallback payload)
+		// draws through its own renderable, as inside a rich_text
+		return append(out, c.richText([]bk{*b})...)
 	}
-	if !slackBlockTypes[b.Type] {
-		// SUIRendererItem: no renderer for the type, so the block's own
-		// fallback payload (a block or a list), else UnsupportedBlockFallback
-		if fb := b.Fallback.blocks(); len(fb) > 0 {
-			return append(out, c.blocks(fb)...)
+	if !messageRenderables[b.Type] {
+		if c.notify { // convertMessageToPlainText: no converter, no text
+			return out
 		}
-		return append(out, Block{Kind: UnknownBlock, Spans: []Span{{Kind: Text, Text: "This message can’t be fully displayed."}}})
+		// SUIRendererItem: no renderable for the type (fallback.go)
+		return c.resolveFallback(out, b)
 	}
+	// an inline element at the top level draws as it does in a section
+	if inlineTypes[b.Type] {
+		if bs := c.richText([]bk{{Type: "rich_text_section", Elements: []bk{*b}}}); len(bs) > 0 {
+			return append(out, bs...)
+		}
+		return out
+	}
+	// a type Slack draws that Clack doesn't yet: its text object, if any
+	// (docs/BLOCKKIT-COVERAGE.md)
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
 	}
+	c.missing = true
 	return out
+}
+
+// inlineTypes are the inline rich text elements Slack's renderables take
+// at any level (jBv3's list): one at the top level draws as in a section.
+var inlineTypes = map[string]bool{}
+
+func init() {
+	for _, t := range strings.Fields(`text emoji link channel user usergroup broadcast color date variable workflowtoken
+		workflow_mention work_object_mention tag canvas canvas_user_mention message_mention list_record skill rich_text_file
+		folder_mention salesforce_data_field citation attachment_mention`) {
+		inlineTypes[t] = true
+	}
 }
 
 // markdownBlocks converts a "markdown" block (standard Markdown, which
@@ -603,7 +678,7 @@ func markdownBlocks(r Resolver, s string) []Block {
 		case mdItemRe.MatchString(ln):
 			flush()
 			m := mdItemRe.FindStringSubmatch(ln)
-			indent := len(strings.ReplaceAll(m[1], "\t", "  ")) / 2
+			indent := listIndent(len(strings.ReplaceAll(m[1], "\t", "  ")) / 2)
 			ordered := m[2] != "-" && m[2] != "*" && m[2] != "+"
 			item := flatten(FromMrkdwn(r, mdInline(m[3])))
 			if n := len(out); n > 0 && out[n-1].Kind == List && out[n-1].Indent == indent && out[n-1].Ordered == ordered {
@@ -613,7 +688,7 @@ func markdownBlocks(r Resolver, s string) []Block {
 			blk := Block{Kind: List, Ordered: ordered, Indent: indent, Items: [][]Span{item}}
 			if ordered {
 				if v, err := strconv.Atoi(strings.TrimRight(m[2], ".)")); err == nil && v > 1 {
-					blk.Offset = v - 1
+					blk.Offset = listOffset(v - 1)
 				}
 			}
 			out = append(out, blk)
@@ -665,9 +740,31 @@ func (c *builder) imageOf(b *bk) *Image {
 	return image(u, b.AltText, b.ImageWidth, b.ImageHeight)
 }
 
+// actionHidden is whether an Actions block's element e isn't drawn for
+// the viewer self (Button.Invisible). Only the Actions block reads
+// visible_to_user_ids (boot-shared /jJF maybeRenderActionsElement): a
+// button or checkboxes whose list is set, with a viewer known, who isn't
+// in it. Section accessories and input elements draw for everyone. An
+// icon_button hides itself wherever it is (iconButtonHidden).
+func actionHidden(e *bk, self string) bool {
+	switch e.Type {
+	case "button", "checkboxes":
+		return len(e.VisibleTo) > 0 && self != "" && !slices.Contains(e.VisibleTo, self)
+	case "icon_button":
+		return iconButtonHidden(e.VisibleTo, self)
+	}
+	return false
+}
+
+// iconButtonHidden is IconButton's own check (boot-shared X2Vm): a list
+// that leaves out the current user, or any list while there's none.
+func iconButtonHidden(ids []string, self string) bool {
+	return len(ids) > 0 && (self == "" || !slices.Contains(ids, self))
+}
+
 // element converts an interactive element into a Button.
 func (c *builder) element(e *bk, blockID string) (Button, bool) {
-	btn := Button{Kind: e.Type, ActionID: e.ActionID, Value: e.Value, BlockID: blockID}
+	btn := Button{Kind: e.Type, ActionID: e.ActionID, Value: string(e.Value), BlockID: blockID}
 	switch e.Type {
 	case "button", "workflow_button":
 		btn.Kind = "button"
@@ -725,18 +822,43 @@ func (c *builder) richText(els []bk) []Block {
 			if ss := c.richInline(e.Elements, brSection(i == 0)); len(ss) > 0 {
 				out = append(out, Block{Kind: Paragraph, Spans: ss})
 			}
+		case "rich_text_header":
+			// RichTextHeader: nothing without elements; the level
+			// classes 1–3 (4 draws as 3, anything else as 2)
+			if len(e.Elements) > 0 {
+				lv := e.Level.N
+				if lv < 1 || lv > 4 {
+					lv = 2
+				}
+				out = append(out, Block{Kind: RichHeader, Spans: c.richInline(e.Elements, brMode{lead: true}), Level: lv, First: i == 0})
+			}
+		case "rich_text_divider":
+			out = append(out, Block{Kind: RichDivider})
 		case "rich_text_preformatted":
 			out = append(out, Block{Kind: Preformatted, Spans: c.richInline(e.Elements, brRaw), Border: e.Border > 0})
 		case "rich_text_quote":
 			out = append(out, Block{Kind: Quote, Spans: c.richInline(e.Elements, brSection(false)), Border: e.Border > 0})
 		case "rich_text_list":
-			blk := Block{Kind: List, Ordered: e.styleString() == "ordered", Indent: e.Indent, Offset: e.Offset, Border: e.Border > 0}
+			blk := Block{Kind: List, Ordered: e.styleString() == "ordered", Indent: listIndent(e.Indent), Offset: listOffset(e.Offset), Border: e.Border > 0}
+			// a check list (BS) draws checkboxes or, where they aren't
+			// allowed, bullets: never the ordered markers
+			blk.Check = e.Checklist || e.styleString() == "check"
+			if blk.Check {
+				blk.Ordered = false
+			}
 			for j := range e.Elements {
 				it := &e.Elements[j]
 				if it.Type == "rich_text_section" {
 					blk.Items = append(blk.Items, c.richInline(it.Elements, brSection(false)))
 				} else {
 					blk.Items = append(blk.Items, c.richInline([]bk{*it}, brSection(false)))
+				}
+				if blk.Check { // e.checked ?? the list's
+					on := it.Checked
+					if on == nil {
+						on = e.Checked
+					}
+					blk.Checked = append(blk.Checked, on != nil && *on)
 				}
 			}
 			out = append(out, blk)
@@ -833,6 +955,10 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 			out = append(out, messageMentionSpan(c.r, e))
 		case "canvas":
 			out = append(out, c.canvasSpan(e))
+		case "file", "rich_text_file": // fileslug.go
+			if sp, ok := c.fileSlugSpan(e); ok {
+				out = append(out, sp)
+			}
 		case "workflow_mention": // workflow_mention.go
 			if sp, ok := c.workflowMentionSpan(e); ok {
 				out = append(out, sp)
@@ -854,17 +980,13 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 			}
 			out = append(out, sp)
 		case "color":
-			sp := Span{Kind: Text, Text: e.Value}
-			if hexColorRe.MatchString(e.Value) {
+			sp := Span{Kind: Text, Text: string(e.Value)}
+			if hexColorRe.MatchString(string(e.Value)) {
 				sp.Kind = ColorSwatch
 			}
 			out = append(out, sp)
-		case "team":
-			out = append(out, Span{Kind: Text, Text: firstNonEmpty(e.Value, e.TeamID)})
 		default:
-			if t := e.textString(); t != "" {
-				out = append(out, Span{Kind: Text, Text: t})
-			}
+			out = append(out, c.unknownInline(e, m)...)
 		}
 		for k := n; k < len(out); k++ {
 			if out[k].Kind != Break {
@@ -873,6 +995,76 @@ func (c *builder) richInline(els []bk, m brMode) []Span {
 		}
 	}
 	return out
+}
+
+// richTextTypes are Slack's rich text element types (N8wa Lv's values):
+// UnknownElement's text and url gates (BeP8, tlJF) refuse them.
+var richTextTypes = map[string]bool{}
+
+func init() {
+	for _, t := range strings.Fields(`rich_text expanded_rich_text rich_text_section rich_text_header rich_text_divider
+		rich_text_quote rich_text_preformatted rich_text_list text user usergroup channel broadcast emoji link date color
+		workflowtoken truncation unknown file canvas message_mention workflow_mention canvas_message_unfurl list_record skill
+		citation tag salesforce_data_field canvas_user_mention attachment_mention work_object_mention _edited_label
+		_stopped_label _emoji_group _quote_group _theme_install_button _truncation_expand_button
+		_truncation_collapse_button _file_mention _canvas_mention _unfurl_mention _canvas_user_mention _variable
+		slackhorizontalrule`) {
+		richTextTypes[t] = true
+	}
+}
+
+// unknownInline draws an inline element none of Clack's renderers take.
+//
+// One Slack draws with its own component (messageRenderables) keeps its
+// text and link here, save a citation without details.citation_type,
+// which Slack's Citation doesn't take: it falls through to the last
+// branches below, where Lv's gate leaves it empty.
+//
+// A type Slack has no renderer for either (team among them) gets
+// RichTextRenderer's (J825) last branches: a null fallback draws
+// nothing, an object fallback draws in its place (nesting up to
+// maxFallbackDepth), else UnknownElement (Dvg3) with the element's text
+// and url only when each is a string and the type isn't one of Slack's
+// rich text types (BeP8, tlJF against richTextTypes): a link to the url,
+// else the text, else nothing.
+func (c *builder) unknownInline(e *bk, m brMode) []Span {
+	if messageRenderables[e.Type] {
+		if e.Type != "citation" || e.Details != nil && (len(e.Details.CitationType) > 0 || len(e.Details.CitationTypeCamel) > 0) {
+			return unknownElement(e.textString(), e.URL)
+		}
+	}
+	switch fb := e.Fallback.raw; {
+	case string(fb) == "null":
+		return nil
+	case len(fb) > 0 && fb[0] == '{':
+		if c.depth >= maxFallbackDepth {
+			return nil
+		}
+		c.depth++
+		defer func() { c.depth-- }()
+		return c.richInline([]bk{decodeBlock(fb)}, m)
+	}
+	if richTextTypes[e.Type] {
+		return nil
+	}
+	text := ""
+	if len(e.Text) > 0 && e.Text[0] == '"' {
+		text = e.textString()
+	}
+	return unknownElement(text, e.URL)
+}
+
+// unknownElement is UnknownElement (Dvg3): a link to url (labelled with
+// the text, else the url), else the text, else nothing. Inside
+// preformatted text the link stays a link.
+func unknownElement(text, url string) []Span {
+	switch {
+	case url != "":
+		return []Span{linkSpan(url, firstNonEmpty(text, url))}
+	case text != "":
+		return []Span{{Kind: Text, Text: text}}
+	}
+	return nil
 }
 
 // richRunRe is insertTextBreakPlaceholders' paragraph run (kWQh m): two
@@ -949,7 +1141,7 @@ func appendRichText(out []Span, s string, lead, first bool) []Span {
 }
 
 func richEmoji(r Resolver, e *bk) Span {
-	name := e.Name
+	name := string(e.Name)
 	if e.SkinTone >= 2 && e.SkinTone <= 6 {
 		name += "::skin-tone-" + strconv.Itoa(e.SkinTone)
 	}
@@ -966,8 +1158,8 @@ func richEmoji(r Resolver, e *bk) Span {
 	if sp, ok := emojiSpan(r, name); ok {
 		return sp
 	}
-	if name != e.Name {
-		if sp, ok := emojiSpan(r, e.Name); ok {
+	if name != string(e.Name) {
+		if sp, ok := emojiSpan(r, string(e.Name)); ok {
 			return sp
 		}
 	}
@@ -1042,7 +1234,9 @@ func (c *builder) tableCell(cell *bk) []Span {
 	switch cell.Type {
 	case "rich_text":
 		return flattenSpans(c.richText(cell.Elements))
-	case "raw_text", "plain_text":
+	case "raw_text", "plain_text", "raw_number", "cell_text":
+		// bx/I renders raw_text, cell_text and raw_number cells by their
+		// text (BaseText)
 		if t := cell.textString(); t != "" {
 			return []Span{{Kind: Text, Text: t}}
 		}

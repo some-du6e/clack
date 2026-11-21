@@ -11,8 +11,14 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/localimg"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
+
+// the share_shortcut card's last-resort icon (richview shortcut.go): the
+// same bundled image, served from memory
+func init() { richview.DefaultAppIcon = localimg.Put(defaultAppIconPNG) }
 
 // Slack's default app icon: getAppIcon (client-boot i+lO) falls back to
 // module OYli, default_new_app_icon-936d613.png from the web client's own
