@@ -68,6 +68,9 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 				`"alt_text":"a synthetic clip","title":{"type":"plain_text","text":"A synthetic video title"},` +
 				`"description":{"type":"plain_text","text":"Its synthetic description"}}]}`,
 			"A synthetic video title"},
+		{"a text-only message as written: a mention that reads as nothing leaves its space",
+			`{"type":"message","user":"U0SYNTH0001","text":"<@U0NOBODY01> the synthetic deploy finished"}`,
+			" the synthetic deploy finished"},
 		{"nothing to show",
 			`{"type":"message","subtype":"bot_message","bot_id":"B0SYNTH0001","text":"","blocks":[` +
 				`{"type":"actions","elements":[{"type":"button","action_id":"a","text":{"type":"plain_text","text":"Go"}}]}]}`,
@@ -83,9 +86,13 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 			Blocks: func(raw json.RawMessage) string {
 				return noteBlocksText(richtext.FromMessage(noResolver{}, &slack.Message{Blocks: raw}).Blocks, nil)
 			},
-			Mrkdwn: func(text string) string { return noteBlocksText(richtext.FromMrkdwn(noResolver{}, text), nil) },
+			Mrkdwn: func(text string) string {
+				return richtext.PlainTextWith(richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, text)}, nil)
+			},
 		}
-		if got := notifyText(cm, nil, of); got != c.want {
+		// a member the store doesn't hold reads as nothing (noteSpanText)
+		unknown := func(s richtext.Span) (string, bool) { return "", s.Kind == richtext.User }
+		if got := notifyText(cm, unknown, of); got != c.want {
 			t.Errorf("%s: %q, Slack %q", c.name, got, c.want)
 		}
 	}

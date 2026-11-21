@@ -356,9 +356,10 @@ type noteTextOf struct {
 
 // notifyText is extractTextFromMessage over Clack's document of m. The
 // message's own text comes first (convertMessageToPlainText): its blocks'
-// (noteBlocksText; a video block, which Clack draws as an attachment, is
-// its title), else its text, also when its blocks give none (Clack's
-// document holds the text only for a message without blocks). A message
+// (noteBlocksText: each block trimmed; a video block, which Clack draws as
+// an attachment, is its title), else its text as written (getMessageText,
+// untrimmed), also when its blocks give none (Clack's document holds the
+// text only for a message without blocks). A message
 // with neither reads its files (their titles), then its attachments
 // (noteAttachmentsText, of.Blocks converting a message unfurl's blocks),
 // then noteMissingText. A ":simple_smile:" reads ":)".
@@ -374,9 +375,16 @@ func notifyText(m *core.Message, text richtext.SpanText, of noteTextOf) string {
 			own = append(own, blk)
 		}
 	}
-	s := noteBlocksText(own, text)
-	if s == "" && of.Mrkdwn != nil && strings.TrimSpace(m.Text) != "" {
-		s = strings.TrimSpace(of.Mrkdwn(m.Text))
+	var s string
+	if noteHasBlocks(m) {
+		// convertBlocksToPlainText, each block trimmed; getMessageText
+		// when they give nothing
+		if s = noteBlocksText(own, text); s == "" && of.Mrkdwn != nil && m.Text != "" {
+			s = of.Mrkdwn(m.Text)
+		}
+	} else {
+		// no blocks: getMessageText, the text as written (untrimmed)
+		s = richtext.PlainTextWith(richtext.Doc{Blocks: own}, text)
 	}
 	if s == "" {
 		s = noteBlocksText(files, text)
@@ -388,6 +396,13 @@ func notifyText(m *core.Message, text richtext.SpanText, of noteTextOf) string {
 		s = noteMissingText(m.Subtype)
 	}
 	return strings.Replace(s, ":simple_smile:", ":)", 1)
+}
+
+// noteHasBlocks reports whether m's document holds its blocks
+// (FromMessageIn writes the text only for a message without them).
+func noteHasBlocks(m *core.Message) bool {
+	b := strings.TrimSpace(string(m.Blocks))
+	return len(b) > 2 && b != "null"
 }
 
 // noteBlocksText is convertBlocksToPlainText with blockSpacing "single"
@@ -434,12 +449,12 @@ func (b *backend) noteUnfurlText(raw json.RawMessage) string {
 }
 
 // noteMrkdwnText is a message's text as getMessageText writes it
-// (notifyText), named from the store.
+// (notifyText), named from the store, as written (untrimmed).
 func (b *backend) noteMrkdwnText(text string) string {
 	if b.core == nil {
 		return ""
 	}
-	return noteBlocksText(richtext.FromMrkdwn(b.core.S, text), b.noteSpanText)
+	return richtext.PlainTextWith(richtext.Doc{Blocks: richtext.FromMrkdwn(b.core.S, text)}, b.noteSpanText)
 }
 
 // noteAttachment is what extractTextFromMessage reads of an attachment.
