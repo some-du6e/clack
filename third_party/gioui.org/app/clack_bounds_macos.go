@@ -105,7 +105,7 @@ import (
 // displays is Displays on macOS: NSScreen.screens, read on the main
 // thread. The main thread serves its queue only once NSApplication
 // finished launching, so the launch's first call takes the screens
-// applicationWillFinishLaunching read (Clack patch, CLACK_PATCHES.md §55)
+// applicationWillFinishLaunching read (Clack patch, CLACK_PATCHES.md §56)
 // when they come first: a window placed from them waits for nothing but
 // the launch itself.
 func displays() []Display {
@@ -134,7 +134,7 @@ func readScreens() []Display {
 }
 
 // The screens at applicationWillFinishLaunching, for the launch's first
-// displays (once; Clack patch, CLACK_PATCHES.md §55).
+// displays (once; Clack patch, CLACK_PATCHES.md §56).
 var (
 	launchScreensReady = make(chan struct{})
 	launchScreens      atomic.Pointer[[]Display]

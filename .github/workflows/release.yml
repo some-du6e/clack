@@ -54,7 +54,12 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
-        run: .github/scripts/release-meta.sh
+        # the script as this run's workflow has it, from its own commit: a tag
+        # cut before it (a republish with -f tag=) has none in its tree
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/release-meta.sh" > "$RUNNER_TEMP/release-meta.sh"
+          bash "$RUNNER_TEMP/release-meta.sh"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -64,8 +69,20 @@ jobs:
       - name: test
         # one job runs every package (ci shards internal/ui across jobs);
         # internal/ui alone passed Go's 10m default on 2026-11-13 (v0.1.0-alpha.64's
-        # run 43503494822 timed out), so give the whole suite room
-        run: go test -timeout 30m ./...
+        # run 43503494822 timed out), so give the whole suite room; and as ci's
+        # full-test, whatever still runs 35 min in prints its goroutines inside
+        # the budget, and runner-load.sh logs the runner's memory and load
+        # each minute (the scripts from this run's own commit, as meta's)
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          for s in dump-before-budget runner-load; do
+            git show "$GITHUB_SHA:.github/scripts/$s.sh" > "$RUNNER_TEMP/$s.sh"
+          done
+          bash "$RUNNER_TEMP/dump-before-budget.sh" 35 & wd=$!
+          bash "$RUNNER_TEMP/runner-load.sh" 60 & rl=$!
+          trap 'kill $wd $rl 2>/dev/null' EXIT
+          # as ci's full-test: the suite reached 15.7 of the runner's 16 GB
+          GOMEMLIMIT=11GiB go test -timeout 30m ./...
 
   linux:
     name: linux-${{ matrix.arch }}
@@ -91,7 +108,12 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
-        run: .github/scripts/release-meta.sh
+        # the script as this run's workflow has it, from its own commit: a tag
+        # cut before it (a republish with -f tag=) has none in its tree
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/release-meta.sh" > "$RUNNER_TEMP/release-meta.sh"
+          bash "$RUNNER_TEMP/release-meta.sh"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -197,7 +219,12 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
-        run: .github/scripts/release-meta.sh
+        # the script as this run's workflow has it, from its own commit: a tag
+        # cut before it (a republish with -f tag=) has none in its tree
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/release-meta.sh" > "$RUNNER_TEMP/release-meta.sh"
+          bash "$RUNNER_TEMP/release-meta.sh"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -264,7 +291,12 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
-        run: .github/scripts/release-meta.sh
+        # the script as this run's workflow has it, from its own commit: a tag
+        # cut before it (a republish with -f tag=) has none in its tree
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/release-meta.sh" > "$RUNNER_TEMP/release-meta.sh"
+          bash "$RUNNER_TEMP/release-meta.sh"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-amd64-exe
@@ -388,7 +420,12 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
-        run: .github/scripts/release-meta.sh
+        # the script as this run's workflow has it, from its own commit: a tag
+        # cut before it (a republish with -f tag=) has none in its tree
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/release-meta.sh" > "$RUNNER_TEMP/release-meta.sh"
+          bash "$RUNNER_TEMP/release-meta.sh"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -486,7 +523,12 @@ jobs:
         shell: bash
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
-        run: .github/scripts/release-meta.sh
+        # the script as this run's workflow has it, from its own commit: a tag
+        # cut before it (a republish with -f tag=) has none in its tree
+        run: |
+          git fetch -q --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/release-meta.sh" > "$RUNNER_TEMP/release-meta.sh"
+          bash "$RUNNER_TEMP/release-meta.sh"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: dist-*

@@ -68,7 +68,7 @@ jobs:
       - name: formatter table, key ids, no hard-coded hints
         run: go test -count=1 -v ./internal/ui/shortcut
       - name: menu keys through the router
-        run: go test -count=1 -v -timeout 15m -run "$MENU_TESTS" ./internal/ui/popups
+        run: go test -count=1 -v -timeout 10m -run "$MENU_TESTS" ./internal/ui/popups
       - name: bindings and the menu bar's accelerators
         run: |
           go test -count=1 -v -run 'TestParseCombo|TestNav|TestCreateChannelEntryPoints' ./internal/ui
@@ -80,7 +80,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$MENU_KEYS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMenuKeysShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 8m -run 'TestMenuKeysShots$' ./internal/ui/
           ls -l "$MENU_KEYS_SHOTS_DIR"
       # the message menu's Slack rows, the menu tag and badge, the select
       # toggles and the v2 Button over internal/fakeslack; the tooltip's
@@ -95,7 +95,7 @@ jobs:
           mkdir -p "$EXP_MENUS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestTooltip|TestButtonV2' ./internal/ui/theme
           xvfb-run -a go test -count=1 -v -run 'TestEmojiTooltip|TestCSSEmojiTooltip' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMessageMenuSlack|TestClientExtras|TestSessionToggleGroups|TestSlackKitV2Button|TestForwardPicker|TestSelectListToggles|TestMenuTagAndBadge|TestTooltipColorsFromTheme|TestNotifyCustomized|TestMenuTagTemplate|TestExpMenusShots' ./internal/ui/popups
+          xvfb-run -a go test -count=1 -v -timeout 7m -run 'TestMessageMenuSlack|TestClientExtras|TestSessionToggleGroups|TestSlackKitV2Button|TestForwardPicker|TestSelectListToggles|TestMenuTagAndBadge|TestTooltipColorsFromTheme|TestNotifyCustomized|TestMenuTagTemplate|TestExpMenusShots' ./internal/ui/popups
           ls -l "$EXP_MENUS_SHOTS_DIR"
       # message actions (branch message-actions-2): the right-click menu's
       # share row, the share dialog (title, Copy Link's Copied!, 32px rows,
@@ -113,8 +113,8 @@ jobs:
           mkdir -p "$EXP_MENUS_SHOTS_DIR"
           go test -count=1 -v -run 'TestFlagContentCall|TestContentReviewEnabled|TestTriggerPreviewsStore|TestWorkflowDetailsData|TestSaveDraftNoDestination|TestExperimentReadsListed' ./internal/core
           go test -count=1 -v -run 'TestShareScheduleMenuLikeSlack' ./internal/ui/composer
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestContextMenuShareRowLikeSlack|TestForwardDialogChromeLikeSlack|TestForwardSaveDraftLikeSlack|TestForwardScheduleLikeSlack|TestMessageMenuFlagRowLikeSlack|TestFlagMessageDialogLikeSlack|TestMessageMenuWorkflowRowsLikeSlack|TestMessageContextMenuThreadAction|TestMessageActionsShots' ./internal/ui/popups
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMessageActionsHooksWired|TestWorkflowDetailsPaneLikeSlack|TestWorkflowDetailsGlyphsResolve' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 7m -run 'TestContextMenuShareRowLikeSlack|TestForwardDialogChromeLikeSlack|TestForwardSaveDraftLikeSlack|TestForwardScheduleLikeSlack|TestMessageMenuFlagRowLikeSlack|TestFlagMessageDialogLikeSlack|TestMessageMenuWorkflowRowsLikeSlack|TestMessageContextMenuThreadAction|TestMessageActionsShots' ./internal/ui/popups
+          xvfb-run -a go test -count=1 -v -timeout 8m -run 'TestMessageActionsHooksWired|TestWorkflowDetailsPaneLikeSlack|TestWorkflowDetailsGlyphsResolve' ./internal/ui/
           ls -l "$EXP_MENUS_SHOTS_DIR"
       # popup borders: 1 CSS px snapped as Chromium snaps border widths
       # (floor, at least one device pixel), the drawn width per scale, and
@@ -150,6 +150,6 @@ jobs:
       - name: native macOS (Mod is ⌘, the delete key is Backspace)
         run: |
           go test -count=1 -v ./internal/ui/shortcut
-          go test -count=1 -v -timeout 15m -run "$MENU_TESTS" ./internal/ui/popups
+          go test -count=1 -v -timeout 10m -run "$MENU_TESTS" ./internal/ui/popups
           go test -count=1 -v -run 'TestParseCombo|TestNav' ./internal/ui
           go test -count=1 -v ./internal/ui/menubar

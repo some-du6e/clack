@@ -62,6 +62,7 @@ type View struct {
 	maxH           int
 	pendingImg     bool
 	frameNo        uint64
+	paintSeq       uint64 // numbers scope paints (scope.paintSeq)
 	layGen         uint32 // generation of the scope being laid out
 	genSeq         uint32
 
@@ -170,8 +171,15 @@ type scope struct {
 
 	natives []*box
 	hits    []hitEntry
-	painted []*box
-	bounds  rectF
+	// painted is the boxes the scope painted this frame (flushRects),
+	// reset by its first paint in a frame only: a scope painted again in
+	// the same frame (its host drawn again) paints boxes already listed,
+	// which painter.rect doesn't list twice. paintSeq numbers the paint
+	// (View.paintSeq), so a box painted again takes the later paint's rect
+	painted   []*box
+	paintedFr uint64
+	paintSeq  uint64
+	bounds    rectF
 
 	ptag, ctag, stag int // pointer handler, cursor areas, shields (addresses used)
 
@@ -653,13 +661,21 @@ func (s *scope) measureNative(b *box, cs layout.Constraints) dimsF {
 	g := s.gtx.Disabled()
 	g.Constraints = cs
 	m := op.Record(g.Ops)
-	d := s.callNative(g, b)
+	d := s.measureCall(g, b)
 	m.Stop()
 	df := dimsOf(d)
 	e := &b.natMeas[b.natMeasN%uint8(len(b.natMeas))]
 	b.natMeasN++
 	e.ok, e.ck, e.d = true, k, df
 	return df
+}
+
+// measureCall is callNative inside a measure pass (measuring), which ends
+// even if the native panics.
+func (s *scope) measureCall(g layout.Context, b *box) layout.Dimensions {
+	measuring++
+	defer func() { measuring-- }()
+	return s.callNative(g, b)
 }
 
 func dimsOf(d layout.Dimensions) dimsF {
@@ -771,7 +787,13 @@ func (s *scope) paint() {
 	gtx := s.gtx
 	p := painter{v: s.v, s: s, gtx: gtx, ops: gtx.Ops, clip: noClip}
 	s.hits = s.hits[:0]
-	s.painted = s.painted[:0]
+	if measuring == 0 {
+		if s.paintedFr != s.v.frameNo {
+			s.painted, s.paintedFr = s.painted[:0], s.v.frameNo
+		}
+		s.v.paintSeq++
+		s.paintSeq = s.v.paintSeq
+	}
 	s.bounds = rectF{}
 	p.filt = s.v.filtBuf[:0]
 	p.paintBox(&s.root, 0, 0)
@@ -989,8 +1011,14 @@ func (v *View) layoutText(gtx layout.Context, fr *frame, txt string, st *css.Sty
 
 var pendingRects map[int64][4]float32
 
+// measuring counts the native measure passes in progress (measureNative;
+// UI goroutine): what they lay out and paint is discarded, so the scopes
+// they run (a host's children) leave the boxes' rects, and the rects JS
+// has, as the frame's draw put them.
+var measuring int
+
 func (s *scope) flushRects() {
-	if bridge() == nil {
+	if bridge() == nil || measuring > 0 {
 		return
 	}
 	// A sub scope's origin follows its host, painted after the native

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Clack patch (CLACK_PATCHES.md §55): the driver's startup points, for
+// Clack patch (CLACK_PATCHES.md §56): the driver's startup points, for
 // the app's startup timeline. Each point is reported once per process,
 // the first time any window reaches it:
 //

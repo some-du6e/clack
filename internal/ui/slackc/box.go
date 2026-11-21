@@ -144,6 +144,8 @@ type box struct {
 	vis    bool
 	rect   rectF
 	rectFr uint64
+	// rectPaint is the scope paint (scope.paintSeq) rect is from
+	rectPaint uint64
 }
 
 type rectF struct{ x0, y0, x1, y1 float32 }
@@ -304,6 +306,11 @@ func (b *box) State() css.State { return b.state }
 // declares the element it stands for (RegisterHostElement: kit's Button
 // is Slack's button.c-button, which those rules style in Slack).
 func (b *box) HostNode() bool { return b.kind == kElem || b.kind == kComp && b.hostEl != nil }
+
+// OwnBox keeps the host element sheet's rules (Slack's full c-button
+// look) off a host component that draws its own box (kit's Button): it
+// draws that look itself, and would take Slack's rules as a plugin's.
+func (b *box) OwnBox() bool { return b.kind == kComp && b.hostEl != nil && b.hostEl.OwnBox }
 
 // Modal reports an open <dialog> JS showed with showModal() (:modal).
 func (b *box) Modal() bool {
@@ -857,6 +864,12 @@ func (v *View) uaDefaults(b *box, c *css.Cascaded, parent *css.Style) {
 		}
 		if !has(c, "text-align") {
 			st.TextAlign = css.TextCenter
+		}
+		// Chromium's html.css sizes a button's border box (button
+		// {box-sizing: border-box}): Slack's .c-button--small height:28px
+		// is 28 with its padding and border
+		if !has(c, "box-sizing") {
+			st.BoxSizing = css.BorderBox
 		}
 	case "hr":
 		setM(0.5*em, 0.5*em)

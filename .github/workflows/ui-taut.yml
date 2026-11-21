@@ -108,8 +108,10 @@ jobs:
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
+          "$GITHUB_WORKSPACE/.github/scripts/dump-before-budget.sh" 12 & wd=$!
+          trap 'kill $wd 2>/dev/null' EXIT
           mkdir -p "$TAUT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -timeout 25m -v -run 'TestTaut|TestSlick|TestDeepLink|TestLibrary' ./internal/ui/
+          xvfb-run -a go test -count=1 -timeout 13m -v -run 'TestTaut|TestSlick|TestDeepLink|TestLibrary' ./internal/ui/
           # Taut's huddle plugins on the native call over the fake Chime (loopback only)
           xvfb-run -a go test -count=1 -timeout 10m -v -run 'TestTautHuddle' ./internal/ui/huddleui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

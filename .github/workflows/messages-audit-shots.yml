@@ -143,7 +143,7 @@ jobs:
           go test -count=1 -v ./internal/workobject
           go test -count=1 -v -run 'TestWorkObject' ./internal/richtext ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestWorkObject' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestWorkObjectFlexpane' ./internal/ui
+          xvfb-run -a go test -count=1 -timeout 11m -v -run 'TestWorkObjectFlexpane' ./internal/ui
           # the hover toolbar (toolbar_tilt.go, toolbar_scroll.go): the
           # tests, then the shots here and on ui (the shots test uses only
           # what ui has)

@@ -106,6 +106,8 @@ const nativeCSS = `
 // centred and unwrapped, as Slack's Button lays out an icon and a label),
 // because kit's Button draws the rest of Slack's c-button look itself and
 // takes any padding, border colour or colour a rule sets as an override.
+// A plugin's own <button class="c-button …"> gets the rest from
+// pluginButtonCSS.
 const pluginElementCSS = `
 @layer sk.foundation, sk.components, sk.core;
 .c-button{-webkit-user-select:none;user-select:none;text-align:center;white-space:nowrap;justify-content:center;align-items:center;display:inline-flex}
@@ -164,8 +166,58 @@ const pluginElementCSS = `
 .p-top_nav__windows_controls_container{position:relative}
 `
 
+// pluginButtonCSS is Slack's c-button look (client-boot-styles, 2026-11:
+// cf726c4f2eaecc74), verbatim and in Slack's source order, for the
+// buttons plugins render as elements of their own: SlickMCP's toolbars
+// (button.c-button.c-button--primary|outline.c-button--small) and
+// SelfCare's submit (c-button--primary c-button--medium) draw as Slack's
+// 28 px outline and green buttons, not as bare text. It is the engine's
+// host element sheet: its rules skip kit's Button (a host component that
+// draws its own box, OwnBox), which draws this look itself and would take
+// them as a plugin's overrides. It comes before pluginElementCSS, as
+// these rules come before the Block Kit and actions-row ones in Slack's
+// file (.p-block_kit_button_element's 8px sides beat .c-button--small's
+// 12px). Left out: the kinds' :after (an invisible, absolutely placed
+// overlay) and the grouped-button rules (selectors of a grouped toolbar
+// no plugin builds).
+const pluginButtonCSS = `
+.c-button{--sk_button-styles-radius:4px;-webkit-user-select:none;user-select:none;cursor:pointer;border-radius:var(--sk_button-styles-radius);text-align:center;white-space:nowrap;appearance:none;-webkit-tap-highlight-color:transparent;border:none;outline:none;justify-content:center;align-items:center;text-decoration:none;transition-property:color,background-color,border-color;transition-duration:80ms;transition-timing-function:cubic-bezier(.36,.19,.29,1);display:inline-flex;position:relative}
+.c-button:is(:hover,:active,:focus){text-decoration:none}
+.c-button--primary{background-color:var(--dt_color-base-inv-hgl-2);color:var(--dt_color-constants-white);font-weight:var(--custom-font-weight-bold,700);box-shadow:none}
+.c-button--primary:any-link{color:var(--dt_color-constants-white)}
+.c-button--primary:hover{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-hgl-2-hover), var(--dt_color-base-inv-hgl-2-hover));color:var(--dt_color-constants-white);box-shadow:0 1px 3px #00000019,0 1px 2px -1px #00000019}
+.c-button--primary:active{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-hgl-2-pressed), var(--dt_color-base-inv-hgl-2-pressed));box-shadow:none}
+.c-button--danger{background-color:var(--dt_color-base-inv-imp);color:var(--dt_color-constants-white);font-weight:var(--custom-font-weight-bold,700);box-shadow:none}
+.c-button--danger:any-link{color:var(--dt_color-constants-white)}
+.c-button--danger:hover{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-imp-hover), var(--dt_color-base-inv-imp-hover));color:var(--dt_color-constants-white);box-shadow:0 1px 3px #00000019,0 1px 2px -1px #00000019}
+.c-button--danger:active{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-inv-imp-pressed), var(--dt_color-base-inv-imp-pressed));box-shadow:none}
+.c-button--ghost{color:var(--dt_color-content-pry);font-weight:var(--custom-font-weight-bold,700);box-shadow:none;background-color:#0000}
+.c-button--ghost:any-link{color:var(--dt_color-content-pry)}
+.c-button--ghost:hover{background-color:var(--dt_color-base-sec);color:var(--dt_color-content-pry)}
+.c-button--ghost:active{background-color:var(--dt_color-surf-pry)}
+.c-button--outline{background-color:var(--dt_color-base-pry);border:1px solid var(--dt_color-otl-sec);color:var(--dt_color-content-pry);font-weight:var(--custom-font-weight-bold,700);background-clip:padding-box}
+.c-button--outline:any-link{color:var(--dt_color-content-pry)}
+.c-button--outline:hover{background-color:var(--dt_color-base-sec);box-shadow:0 1px 3px #00000019,0 1px 2px -1px #00000019}
+.c-button--outline:active{background-color:var(--dt_color-base-sec);box-shadow:none}
+.c-button--outline.c-button--focus-visible:focus,.c-button--outline.focus-ring:focus:not(:hover){background-clip:initial;border:1px solid #0000}
+.c-button--small{min-width:56px;height:28px;padding:0 12px 1px;font-size:13px}
+.c-button--medium{--sk_button-styles-radius:8px;min-width:80px;height:36px;padding:0 12px 1px;font-size:15px}
+.c-button--large{--sk_button-styles-radius:12px;font-size:18px;font-weight:var(--custom-font-weight-bold,700);min-width:96px;height:44px;padding:0 16px 3px}
+.c-button--disabled{box-shadow:none;background-color:var(--dt_color-base-ter);color:var(--dt_color-content-sec);cursor:default;pointer-events:none;text-shadow:none;background-clip:initial;border-color:#0000}
+.c-button--disabled:is(:hover,:active,:focus){box-shadow:none;background-color:var(--dt_color-base-ter);color:var(--dt_color-content-sec);background-blend-mode:normal;background-image:none}
+.c-button--icon{min-width:0;padding:0}
+.c-button--icon .c-deprecated-icon:before{line-height:1;display:block}
+.c-button--icon.c-button--small{width:20px;height:20px}
+.c-button--icon.c-button--small .c-deprecated-icon:before{font-size:12px}
+.c-button--icon.c-button--medium{width:28px;height:28px}
+.c-button--icon.c-button--medium .c-deprecated-icon:before{font-size:16px}
+.c-button--icon.c-button--large{width:32px;height:32px}
+.c-button--icon.c-button--large .c-deprecated-icon:before{font-size:20px}
+`
+
 func init() {
 	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue) + NativeTransitionsCSS)
+	Styles.SetHostElementBase(pluginButtonCSS)
 	Styles.SetHostBase(pluginElementCSS)
 }
 

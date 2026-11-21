@@ -88,7 +88,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p dist/bench dist/shots
-          xvfb-run -a go test -count=1 -timeout 55m -v -run 'TestPluginBench$' ./internal/ui/ 2>&1 | tee dist/bench-${{ matrix.shard }}.log
+          xvfb-run -a go test -count=1 -timeout 54m -v -run 'TestPluginBench$' ./internal/ui/ 2>&1 | tee dist/bench-${{ matrix.shard }}.log
       - name: summary
         if: ${{ !cancelled() }}
         run: grep -E 'winner|^\s+(taut|slick) |\[(true|false)\]|console:|--- (PASS|FAIL)' dist/bench-${{ matrix.shard }}.log || true

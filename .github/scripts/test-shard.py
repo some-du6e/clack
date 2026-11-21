@@ -133,7 +133,7 @@ def run(args):
         meta['shard'] = 'rest'
         rest = [p for p in pkgs if p not in heavy]
         meta['rest'] = rest
-        jobs.append(('rest', ['go', 'test', '-json', *rest]))
+        jobs.append(('rest', ['go', 'test', '-json', '-count=1', *rest]))
     else:
         k, n = (int(x) for x in args.shard.split('/'))
         if not 1 <= k <= n:
@@ -164,7 +164,7 @@ def run(args):
             meta['assigned'][p] = mine
             print(f'{p}: {len(mine)} of {len(lists[p])} tests in shard {k}/{n}{est}')
             if mine:
-                jobs.append((p.rsplit('/', 1)[-1], ['go', 'test', '-json', '-run', '^(' + '|'.join(mine) + ')$', p]))
+                jobs.append((p.rsplit('/', 1)[-1], ['go', 'test', '-json', '-count=1', '-run', '^(' + '|'.join(mine) + ')$', p]))
     with open(os.path.join(args.out, 'shard.json'), 'w') as f:
         json.dump(meta, f, indent=1)
     # one go test per heavy package (a -run across packages would also run
@@ -199,6 +199,18 @@ def events(path):
                 yield e
 
 
+def cached(paths):
+    """the packages whose result go test replayed from its cache (an "ok
+    ... (cached)" line): their tests didn't run. -count=1 keeps every one
+    running; this catches a run without it."""
+    out = set()
+    for path in paths:
+        for e in events(path):
+            if e.get('Action') == 'output' and not e.get('Test') and '(cached)' in e.get('Output', ''):
+                out.add(e.get('Package', '?'))
+    return out
+
+
 def ran(paths):
     """{(pkg, top-level test): count} of tests that finished, and the set
     of packages that finished."""
@@ -224,6 +236,8 @@ def check(args):
             meta = json.load(f)
         paths = [os.path.join(d, x) for x in sorted(os.listdir(d)) if x.endswith('.jsonl')]
         shards.append((d, meta, *ran(paths)))
+        for p in sorted(cached(paths)):
+            errs.append(f'{d}: {p} was replayed from the test cache, not run')
     if not shards:
         raise SystemExit('no shards')
     pkgs, heavy = shards[0][1]['packages'], shards[0][1]['heavy']

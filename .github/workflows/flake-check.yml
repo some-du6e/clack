@@ -729,8 +729,10 @@ jobs:
   # button's c-button box with what CSS sets on it, its icon and label
   # as a flex row; a composer.addButton toggle as Slack's composer
   # button; a plugin's ring round its ReactionBar's pills; and Taut's
-  # OwlMode itself under (demo) Owl's DM confirmation. Layout from the
-  # rects JS reads and LayoutShape, and the pixels (Mesa llvmpipe).
+  # OwlMode itself under (demo) Owl's DM confirmation; what a rule adds to
+  # a Button's box (shadows, images, wide borders) and a plugin's own
+  # button.c-button elements. Layout from the rects JS reads and
+  # LayoutShape, and the pixels (Mesa llvmpipe).
   # Dispatch with only=owl-save.
   owl-save:
     if: ${{ !inputs.only || startsWith('owl-save', inputs.only) }}
@@ -766,7 +768,7 @@ jobs:
         run: |
           set +e
           rc=0
-          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/slackc/kit || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run '^(TestOwl|TestButtonCSS|TestPluginCButton)' ./internal/ui/slackc/kit || rc=1
           xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/messages || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestTautViewOwlSaveButton$' ./internal/ui || rc=1
           exit $rc
@@ -2711,12 +2713,13 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
+          set +e
           rc=0
-          go test -count=$COUNT -v -run '^(TestBundledSlackLogoDraws|TestNetworkSVGStaysUndecodable|TestRasterSVGRefusesWhatItCannotDraw|TestParsePathData)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -v -run '^(TestBundledSlackLogoDraws|TestNetworkSVGStaysUndecodable|TestRasterSVGRefusesWhatItCannotDraw|TestRasterSVGChargesItsBuffers|TestRasterSVGBoundsItsInput|TestParsePathData)$' ./internal/imgcache || rc=1
           go test -count=$COUNT -v -run '^TestAvatarURLSlackSystemUser$' ./internal/store || rc=1
           go test -count=$COUNT -v -run '^(TestSenderBadge|TestSenderIdentity)$' ./internal/core || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSlackSystemUserCard$' ./internal/ui/popups || rc=1
-          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence)$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence|TestSidebarAvatarSystemUserNoPresence)$' ./internal/ui || rc=1
           exit $rc
 
   # caret-align (2026-11-20): the caret in Clack's inputs against their

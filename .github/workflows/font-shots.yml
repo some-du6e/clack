@@ -109,7 +109,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FONT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -timeout 15m -v -run 'TestFontShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -timeout 6m -v -run 'TestFontShots$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -293,7 +293,7 @@ jobs:
           RAIL_SHOTS_DIR: ${{ github.workspace }}\dist\sidebar-rows
         run: |
           New-Item -ItemType Directory -Force -Path $env:SIDEBAR_ROWS_DIR | Out-Null
-          go test -count=1 -v -timeout 20m -run 'TestSidebarRowShots$|TestRailShots$' ./internal/ui/
+          go test -count=1 -v -timeout 10m -run 'TestSidebarRowShots$|TestRailShots$' ./internal/ui/
       - name: Slack's rows in Chrome, measured
         shell: pwsh
         run: |

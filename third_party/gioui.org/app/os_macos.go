@@ -1488,7 +1488,7 @@ func gio_onCloseRequest(h C.uintptr_t) C.int {
 }
 
 // gio_onStartupPoint is gio_main's and the app delegate's startup points
-// (Clack patch, CLACK_PATCHES.md §55): 0 NSApplication made, 1 its run
+// (Clack patch, CLACK_PATCHES.md §56): 0 NSApplication made, 1 its run
 // loop about to start, 2 applicationWillFinishLaunching, where the screens
 // are read for the launch's first displays.
 //
@@ -1507,7 +1507,7 @@ func gio_onStartupPoint(p C.int) {
 
 //export gio_onFinishLaunching
 func gio_onFinishLaunching() {
-	startupLaunched.mark() // Clack patch (CLACK_PATCHES.md §55)
+	startupLaunched.mark() // Clack patch (CLACK_PATCHES.md §56)
 	close(launched)
 }
 
@@ -1522,7 +1522,7 @@ func gio_onOpenURI(uri C.CFTypeRef) {
 }
 
 // Windows asked for before NSApplication finished launching open in its
-// applicationDidFinishLaunching (Clack patch, CLACK_PATCHES.md §55), the
+// applicationDidFinishLaunching (Clack patch, CLACK_PATCHES.md §56), the
 // moment the launch is done and the app active, instead of after the main
 // thread's queue gets to them (AppKit serves it only once its post-launch
 // work is done: 30-50 ms on CI).
@@ -1563,7 +1563,7 @@ func gio_onLaunchActivated() {
 func newWindow(win *callbacks, options []Option) {
 	res := make(chan struct{})
 	open := func() {
-		startupWindowCreate.mark() // Clack patch (CLACK_PATCHES.md §55)
+		startupWindowCreate.mark() // Clack patch (CLACK_PATCHES.md §56)
 		setCaretBlinkFromOS()      // Clack patch (CLACK_PATCHES.md §47)
 		w := &window{
 			redraw: make(chan struct{}, 1),
@@ -1578,7 +1578,7 @@ func newWindow(win *callbacks, options []Option) {
 			w.ProcessEvent(DestroyEvent{Err: err})
 			return
 		}
-		startupWindowView.mark() // Clack patch (CLACK_PATCHES.md §55)
+		startupWindowView.mark() // Clack patch (CLACK_PATCHES.md §56)
 		panel := C.int(0)
 		if cnf.panel {
 			panel = 1
@@ -1587,7 +1587,7 @@ func newWindow(win *callbacks, options []Option) {
 		// start, so the content is the size asked for.
 		hiddenTitlebar := boolInt(cnf.Decorated && cnf.hiddenTitleBar)
 		window := C.gio_createWindow(w.view, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y), panel, hiddenTitlebar)
-		startupWindowNS.mark() // Clack patch (CLACK_PATCHES.md §55)
+		startupWindowNS.mark() // Clack patch (CLACK_PATCHES.md §56)
 		// Release our reference now that the NSWindow has it.
 		C.CFRelease(w.view)
 		w.Configure(options)
@@ -1608,9 +1608,9 @@ func newWindow(win *callbacks, options []Option) {
 		} else {
 			C.makeKeyAndOrderFront(window)
 		}
-		startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §55)
+		startupWindowShown.mark() // Clack patch (CLACK_PATCHES.md §56)
 	}
-	if !openAtLaunch(open) { // Clack patch (CLACK_PATCHES.md §55)
+	if !openAtLaunch(open) { // Clack patch (CLACK_PATCHES.md §56)
 		<-launched
 		runOnMain(open)
 	}

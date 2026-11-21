@@ -81,4 +81,4 @@ jobs:
       - name: popups Taut tests
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
-        run: go test -count=1 -timeout 10m -v -run 'TestTaut' ./internal/ui/popups/
+        run: go test -count=1 -timeout 9m -v -run 'TestTaut' ./internal/ui/popups/

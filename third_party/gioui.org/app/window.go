@@ -157,7 +157,7 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 				if err != nil {
 					return err
 				}
-				startupGPUContext.mark() // Clack patch (CLACK_PATCHES.md §55)
+				startupGPUContext.mark() // Clack patch (CLACK_PATCHES.md §56)
 				sync = true
 			}
 		}
@@ -189,7 +189,7 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 				return err
 			}
 			w.gpu = gpu
-			startupGPU.mark() // Clack patch (CLACK_PATCHES.md §55)
+			startupGPU.mark() // Clack patch (CLACK_PATCHES.md §56)
 		}
 		if w.gpu != nil {
 			if err := w.frame(frame, size); err != nil {
@@ -230,7 +230,7 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 			err = w.ctx.Present()
 			w.ctx.Unlock()
 			if err == nil {
-				startupPresented.mark() // Clack patch (CLACK_PATCHES.md §55)
+				startupPresented.mark() // Clack patch (CLACK_PATCHES.md §56)
 			}
 		}
 		return err
@@ -875,7 +875,7 @@ func (w *Window) init() {
 	w.decorations.height = decoHeight
 	w.imeState.compose = key.Range{Start: -1, End: -1}
 	w.semantic.ids = make(map[input.SemanticID]input.SemanticNode)
-	startupGioInit.mark() // Clack patch (CLACK_PATCHES.md §55)
+	startupGioInit.mark() // Clack patch (CLACK_PATCHES.md §56)
 	newWindow(&callbacks{w}, options)
 	for _, acts := range w.initialActions {
 		w.Perform(acts)
