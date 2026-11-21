@@ -186,6 +186,8 @@ func TestShownRetentionLikeSlack(t *testing.T) {
 func TestRetentionCalls(t *testing.T) {
 	a, f := retApp(t, retViewer{})
 	f.reply["conversations.getRetention"] = `{"ok":true,"retention":{"retention_type":"1","retention_duration":45}}`
+	f.reply["conversations.setRetention"] = `{"ok":true}`
+	f.reply["conversations.export"] = `{"ok":true}`
 	r, err := retGet(a, "C5")
 	if err != nil || r != (Retention{Type: 1, Duration: 45}) {
 		t.Fatalf("getRetention: %+v %v", r, err)

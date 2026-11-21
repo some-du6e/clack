@@ -57,7 +57,7 @@ func TestDetailsRetentionSections(t *testing.T) {
 		}
 	})
 	t.Run("owner, public channel", func(t *testing.T) {
-		e := retOpen(t, &cdTestServer{people: 3}, "C1", func(e *cdTestEnv) { retPaid(e); retViewerAs(e, true, false) })
+		e := retOpen(t, &cdTestServer{people: 3, self: `"is_owner":true`}, "C1", func(e *cdTestEnv) { retPaid(e); retViewerAs(e, true, false) })
 		if !retHistoryShown(e) {
 			t.Fatal("no Message history for a workspace owner")
 		}
@@ -110,7 +110,7 @@ func TestDetailsRetentionSections(t *testing.T) {
 }
 
 func TestDetailsRetentionModal(t *testing.T) {
-	srv := &cdTestServer{people: 3, replies: map[string]string{
+	srv := &cdTestServer{people: 3, self: `"is_owner":true`, replies: map[string]string{
 		"conversations.getRetention": `{"ok":true,"retention":{"retention_type":1,"retention_duration":30}}`,
 	}}
 	open := func(t *testing.T) *cdTestEnv {
