@@ -41,6 +41,20 @@ on:
       - "internal/fakeslack/unreads.go"
       - "internal/ui/views/kit.go"
       - "internal/ui/theme/account.go"
+      # canvas mentions and comments in Activity (activity_canvas.go): the
+      # row's canvas entity, the jump into the canvas, the fixtures
+      - "internal/ui/views/channel_entity.go"
+      - "internal/ui/chanent/**"
+      - "internal/ui/canvas_open.go"
+      - "internal/ui/canvas_mention_open_test.go"
+      - "internal/ui/canvas_redirect_test.go"
+      - "internal/ui/views/later_beside.go"
+      - "internal/ui/views/later_peek.go"
+      - "internal/ui/views/later_menu.go"
+      - "internal/ui/messages/thread_file.go"
+      - "internal/core/canvas_channel.go"
+      - "internal/fakeslack/canvas_mention.go"
+      - "internal/fakeslack/canvas_comments.go"
       - ".github/scripts/activity_ref.py"
       - ".github/workflows/activity-shots.yml"
   workflow_dispatch:
@@ -79,7 +93,7 @@ jobs:
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
           go test -count=1 -v -run 'TestActivityItemShapes|TestActivityFakeslack|TestActivityClearBefore|TestActivityFeedParams|TestActivityDensityRoundTrip|TestActivityInvite|TestActivityReminderWrites|TestActivityClearAllViewsAndSuppress|TestActivityRepliedReacted|TestConnectChannelAccept|TestActivityStringInvite|TestActivityOddEntries|TestActivityRealtimeOddShape|TestActivityBadgeAgreesWithPagedList' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestActivity' ./internal/ui/views
+          xvfb-run -a go test -count=1 -v -run 'TestActivity|TestLaterFileChannel|TestThreadsFileChannel' ./internal/ui/views
       - name: the Activity tab in the whole window
         # the inbox with an item open beside it in the app's secondary
         # column, and Slack's global keys there (activity_shell_test.go)
@@ -89,7 +103,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack|TestActivityCanvasMention|TestActivityCanvasCommentClicks|TestCanvasMention|TestCanvasJump|TestCanvasCommentJumpOpensCanvas|TestCanvasCommentSplitOpensThread|TestCanvasTabTitleEmojiLate|TestResolveEmojiKeepsHiddenEmoji|TestFileChannelThreadHeader|TestListFileChannelOpensList|TestFileLinkInSplitStaysInSplit|TestSplitFileWaitKeepsBackStack|TestActivityPane|TestSidebarDocsListsPinOnly|TestLaterRowOpensSavedCanvasMention|TestNavigationWaitDropped|TestHiddenFilesDontWait|TestNotificationOpensCanvasUnfocused|TestFileChannelOpeners|TestCommentThreadBesidePaneCanvas' ./internal/ui/
       - name: the rail's Activity badge
         # activity_v2 at boot, badge_counts_updated, client.counts and a
         # mark read; light and dark rail crops with 1, 9, 10 and 99+
