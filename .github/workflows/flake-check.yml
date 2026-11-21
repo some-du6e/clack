@@ -184,6 +184,12 @@ on:
       - "internal/core/search_recents.go"
       - "internal/core/search_recents_test.go"
       - "internal/core/manage.go"
+      - "internal/ui/views/activity_order.go"
+      - "internal/ui/views/activity_order_test.go"
+      - "internal/ui/views/activity_order_live_test.go"
+      - "internal/ui/views/activity_order_reload_test.go"
+      - "internal/ui/views/activity_order_reload_live_test.go"
+      - "internal/fakeslack/activity_live.go"
       - "internal/core/create_test.go"
       - "internal/ui/create_channel_test.go"
       - "internal/ui/popups/create_channel.go"
@@ -1598,6 +1604,41 @@ jobs:
           go test -race -count=3 -run "$STORE_TESTS" ./internal/store || rc=1
           go test -race -count=3 -run "$CORE_TESTS" ./internal/core || rc=1
           xvfb-run -a go test -race -count=3 -run "$HUB_TESTS" ./internal/ui/messages || rc=1
+          exit $rc
+
+  # activity-order: Activity's rows in Slack's order (views/activity_order.go,
+  # tsND's upserts; Karim 2026-11-21: a thread's new reply left its row where
+  # it was, "Just now" at the bottom). Over the socket a mention, a reaction
+  # a minute later and a reply in each of two threads: each thread's bundle
+  # comes again with the reply's ts and goes to the top; the order, times,
+  # senders and texts after each event, after activity_invalidated's reload
+  # and after a restart on the saved cache; the reducer port against Slack's
+  # own upserts; what a reload keeps (an answered invitation leaves, the
+  # later pages stay on a type tab and under the VIP sort, a thread twin,
+  # the socket's newer copy); the live updates, Unreads and paging around
+  # it. Dispatch with only=activity-order.
+  activity-order:
+    if: ${{ !inputs.only || startsWith('activity-order', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      ORDER_TESTS: '^(TestActivityOrder(LikeSlack|MatchesSlacksReducer)|TestActivityRtmUpsertNewSlice|TestActivityPlainReload|TestActivityReload(DropsTheNewestRowGone|ThreadTwinKeepsLaterPages|KeepsTheSocketsCopy|KeepsLaterPages)|TestActivityMergeKeepsLaterPagesOutOfTimeOrder|TestActivityAnsweredInviteLeaves|TestActivityUnreadsRefreshRetains|TestActivityUnreadsShowsOnlyUnread|TestActivityLiveUpdatesLikeSlack|TestActivityPagedListShowsEveryEntry|TestActivityLiveRemovedDuringLoad|TestActivityBadgesZeroThenLoad)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "views: Activity's order (one verbose run, then COUNT, then 3 under -race)"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -race -count=3 -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
           exit $rc
 
   # edit-latency: an app's message edited every 500 ms over the socket
