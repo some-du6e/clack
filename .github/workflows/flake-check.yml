@@ -1972,3 +1972,32 @@ jobs:
           go test -count=$COUNT -v -timeout 15m -run '^(TestInspectHuddleWindow|TestInspectScreensharePopout|TestInspectPresenterPanel|TestInspectInviteWindow|TestInspectJoinPreview)$' ./internal/ui/huddleui || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast|TestInspectSubWindowsGate)$' ./internal/ui || rc=1
           exit $rc
+
+  # 2026-11-20 (Karim, α.113): "i swear i just saw the [/] icon flicker
+  # like crazy" in a thread composer under OwlMode's patches. The footer's
+  # layout across a sweep of widths, frame after frame, with and without
+  # plugin buttons, and the overflow row with its tooltips.
+  composer-toolbar:
+    if: ${{ !inputs.only || startsWith('composer-toolbar', inputs.only) }}
+    name: "composer-toolbar (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "composer: the footer toolbar's fold, its row and tooltips, under plugins and without, COUNT runs"
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          go test -count=$COUNT -v -timeout 20m -run '^TestComposerToolbar' ./internal/ui/composer
