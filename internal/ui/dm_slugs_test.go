@@ -191,9 +191,17 @@ func TestDMMessageSlugsLikeSlack(t *testing.T) {
 	// messages.list answers, users/info for its sender still out: the
 	// sender is the members fetch's unknown stub, "Unknown author"
 	releaseList()
-	waitSlug(t, e, "the message in, its sender's users/info out", rows, withAuthor, "Unknown author"+in, 10*time.Second)
-	if !users.wasAsked(other) {
-		t.Error("nothing asked users/info for the second link's sender")
+	if waitSlug(t, e, "the message in, its sender's users/info out", rows, withAuthor, "Unknown author"+in, 10*time.Second) {
+		// the label's read asks for the sender (getMemberById), on the
+		// member fetcher's next tick; the pill stays the unknown stub's
+		// while that is out
+		for dl := time.Now().Add(10 * time.Second); !users.wasAsked(other) && time.Now().Before(dl); time.Sleep(5 * time.Millisecond) {
+			e.frame()
+		}
+		if !users.wasAsked(other) {
+			t.Error("nothing asked users/info for the second link's sender")
+		}
+		keepSlugs(t, e, "its sender's users/info out", rows, map[string]string{noAuthor: pn, withAuthor: "Unknown author" + in}, 300*time.Millisecond)
 	}
 
 	// users/info answers: the pill names the sender, and from then on no
