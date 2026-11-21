@@ -214,7 +214,9 @@ Round 3's other fixes (the review's MINORs and NITs):
   - the Uses AI badge sits 20px after the wider label, in every state;
   - the description's newlines collapse, and the title and caption take Panda's 22.5px and 16.25px lines;
   - Start Workflow sits 16px from the card's outer edge;
-  - the ⋮ turns content-pry while hovered, and its menu opens from the button: `TestShortcutCardDetails`, `TestShortcutCardLayout`.
+  - the ⋮ turns content-pry while hovered, and its menu opens from the button;
+  - the deleted card gets the otl-sec border while hovered, as every state does (withHover), with no click: `TestShortcutCardDetails`, `TestShortcutCardLayout`.
+- A card's title and subtitle take Panda's body and caption lines, 22.5px and 16.25px (StackedLabels): `TestCardLabelLines`.
 - More actions puts Start workflow first for a link trigger (not for a guest; WjTy), and shows the VIP item only on a paid team (isPriorityVipAvailableForCurrentTeam).
 - Start Workflow ignores clicks while its trigger's trip is in flight (isTriggerRunning: `blockkit.TripRunning`), so a double click no longer trips twice. Its spinner and disabled look aren't drawn yet.
 - share_shortcut's ui wiring has tests. Through a row's richHandler, the card opens the details view for its trigger, the ⋮ opens More actions at the button (window coordinates), and Start Workflow trips the link from the message, once while that trip is in flight (`TestWorkflowCardHandler`, messages). Through the ui root, More actions' items and order, its Start workflow's trip, and the details view are covered by `TestShareShortcutCardWiring`; `TestMessageActionsHooksWired` checks the More actions hook too.

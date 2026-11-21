@@ -177,3 +177,16 @@ func TestCardIconBox(t *testing.T) {
 		}
 	}
 }
+
+// TestCardLabelLines: a card's title and subtitle are StackedLabels in
+// Panda's text styles, body 15px/1.5 (a 22.5px line) and caption
+// 13px/1.25 (16.25px).
+func TestCardLabelLines(t *testing.T) {
+	st := newTestStyle()
+	d := kitDoc(t, `[{"type":"card","block_id":"c1","title":{"type":"plain_text","text":"Alpha"},"subtitle":{"type":"plain_text","text":"Bravo"}}]`)
+	v := layoutAt(st, d, Options{}, 800)
+	a, b := findFrag(t, &v.d, "Alpha"), findFrag(t, &v.d, "Bravo")
+	if a.bot-a.top != 23 || b.bot-b.top != 16 || b.top != a.bot {
+		t.Errorf("title line %d-%d, subtitle %d-%d; want 23px and 16px lines, one under the other", a.top, a.bot, b.top, b.bot)
+	}
+}

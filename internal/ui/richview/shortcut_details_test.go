@@ -13,7 +13,9 @@ package richview
 //     12px column gap, .badge's 8px margin), in every state;
 //   - the description is a text node without pre-wrap: newlines collapse;
 //   - the ⋮ turns content-pry while it is hovered (ActionButton's _hover),
-//     and its menu opens from the button.
+//     and its menu opens from the button;
+//   - withHover in every state: the deleted card's otl-sec border while
+//     hovered (it has no click).
 //
 // Synthetic blocks.
 
@@ -116,6 +118,26 @@ func TestShortcutCardDetails(t *testing.T) {
 	v = layoutAt(st, rt.FromMessage(deletedBotRes{}, &m), Options{}, 800)
 	if f := findFrag(t, &v.d, "exists."); f.col != tok("content-ter") {
 		t.Errorf("deleted caption color %v, want content-ter %v", f.col, tok("content-ter"))
+	}
+	// withHover in every state: the deleted card's otl-sec border while
+	// hovered, and no click
+	hovered := false
+	for i, tg := range v.d.targets {
+		if tg.kind != tWorkflowCard {
+			continue
+		}
+		if !tg.menuOnly {
+			t.Errorf("the deleted card has a clickable %q target", tg.id)
+			continue
+		}
+		for _, b := range v.d.boxes {
+			if b.kind == bBorder && b.stroke == tok("otl-sec") && b.hov > 0 && v.d.hovers[b.hov-1].shown(int16(i)) {
+				hovered = true
+			}
+		}
+	}
+	if !hovered {
+		t.Error("no otl-sec border shown while the deleted card is hovered")
 	}
 }
 

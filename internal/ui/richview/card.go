@@ -58,10 +58,12 @@ func (l *lay) card(cd *richtext.Card, x, y, w int) int {
 	if len(cd.Title) > 0 || len(cd.Subtitle) > 0 || hasIcon {
 		next()
 		ic := l.dp(36)
+		// StackedLabels' Panda text styles: body 15px/1.5, caption 13px/1.25
 		ts := l.bodyStyle()
 		ts.face.Weight = font.Bold
+		ts.lineH = int(l.dpf(22.5) + 0.5)
 		ts.maxLines, ts.ellipsis = 1, true
-		ss := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: l.dp(18), col: l.tok("content-ter"),
+		ss := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: int(l.dpf(16.25) + 0.5), col: l.tok("content-ter"),
 			emoji: l.dp(16), maxLines: 1, ellipsis: true}
 		labelsH := 0
 		if len(cd.Title) > 0 {

@@ -193,6 +193,15 @@ func (l *lay) shortcutCard(sc *richtext.ShortcutCard, x, y, w int) int {
 	if cardHit >= 0 {
 		l.d.hits[cardHit].r = r
 	}
+	if deleted && !l.opts.HoverCard {
+		// withHover on the deleted card too (KrN7 sets it in every state):
+		// the otl-sec border while hovered, with no click (menuOnly)
+		tg := l.d.addTarget(target{kind: tWorkflowCard, id: "deleted", key: sc, menuOnly: true})
+		l.d.hits = append(l.d.hits, hit{r: r, t: tg})
+		border := l.newHover()
+		l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: l.dp(12), stroke: l.tok("otl-sec"), bw: bw, target: -1, hov: int16(border)})
+		l.d.hovers[border-1].card, l.d.hovers[border-1].cardTo = tg, tg
+	}
 
 	// ---- Start Workflow ----
 	if start {
