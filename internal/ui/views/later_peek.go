@@ -103,6 +103,16 @@ func (s *savedBase) openFromPeek(it *core.SavedItem) {
 	if it.Channel == "" {
 		return
 	}
+	// a canvas's or a list's file channel: the To-dos tab, the file beside
+	// it (jumpToMessage's isSpaceship, isList: SavedJumper); View to-dos'
+	// toMessage below is LaterLabel's, which RedirectFileChannel makes the
+	// thread view
+	if sj, ok := s.h.(SavedJumper); ok && it.TS != "" && s.h.Core() != nil && s.h.Core().IsFileChannelID(it.Channel) {
+		s.h.Navigate("later")
+		if sj.JumpToSaved(it.Channel, laterThreadTS(it), it.TS, FileSide) {
+			return
+		}
+	}
 	if v, ok := s.h.(interface{ ViewTodo(ch, ts, thread string) }); ok { // the To-dos tab, the message beside it
 		v.ViewTodo(it.Channel, it.TS, laterThreadTS(it))
 		return

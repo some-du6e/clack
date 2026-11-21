@@ -43,6 +43,9 @@ type File struct {
 	// LastRead is when the viewer last opened it (last_read: milliseconds
 	// or seconds, 0 never), for the collections' Last viewed sort.
 	LastRead int64
+	// TitleBlocks is a canvas's title_blocks: its title as rich text,
+	// emoji included (richtext.CanvasTitle).
+	TitleBlocks json.RawMessage
 }
 
 type FilePage struct {
@@ -293,6 +296,8 @@ type browseFileRaw struct {
 	Mode       string          `json:"mode"`
 	IsDeleted  bool            `json:"is_deleted"`
 	FileAccess string          `json:"file_access"`
+	// a canvas's title as rich text (its :emoji: as emoji elements)
+	TitleBlocks json.RawMessage `json:"title_blocks"`
 	// fileIsImage's other thumbs and its Salesforce case (slack.FileIsImage)
 	Thumb360GIF      string `json:"thumb_360_gif"`
 	Thumb800         string `json:"thumb_800"`
@@ -322,6 +327,9 @@ func (r *browseFileRaw) file() File {
 	var lr json.Number
 	if len(r.LastRead) > 0 && json.Unmarshal(r.LastRead, &lr) == nil {
 		f.LastRead, _ = lr.Int64()
+	}
+	if f.IsCanvas {
+		f.TitleBlocks = r.TitleBlocks
 	}
 	return f
 }
@@ -1066,13 +1074,9 @@ func (a *App) tabTitleSpans(ctx context.Context, blocks json.RawMessage, title s
 	case "", "null", "[]":
 		return nil
 	}
-	build := func() []richtext.Span {
-		d := richtext.FromMessage(a.S, &slack.Message{Text: title, Blocks: blocks})
-		if len(d.Blocks) == 0 {
-			return nil
-		}
-		return d.Blocks[0].Spans
-	}
+	// an emoji the store can't name yet stays an Emoji span (the tab bar
+	// and the canvas header resolve it when they draw)
+	build := func() []richtext.Span { return richtext.TitleBlocks(a.S, title, blocks) }
 	sp := build()
 	var users []string
 	fetched := false

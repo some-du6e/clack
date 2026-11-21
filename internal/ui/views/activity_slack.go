@@ -665,6 +665,10 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	}
 	conv, _ := c.Conv(it.Channel)
 	isDM := conv.Kind == "im" || strings.HasPrefix(it.Channel, "D") && conv.Kind == ""
+	// ITY6's isCanvasRelated: the message's conversation is a file channel
+	// (a canvas's or a list's, gxWy isFileChannelById), whose items have
+	// neither Remind me about this nor Open in home
+	canvasRelated := c.IsFileChannelID(ch) || actDocMention(&it) != nil
 	muted := it.Channel != "" && popups.IsMuted(ph, it.Channel)
 	var groups [][]popups.MenuItem
 
@@ -719,7 +723,7 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	groups = append(groups, g1)
 
 	var g2 []popups.MenuItem
-	if m != nil && ch != "" && ts != "" {
+	if m != nil && ch != "" && ts != "" && !canvasRelated { // remind_submenu: if(f||k)return[]
 		var sub []popups.MenuItem
 		for _, p := range laterPresets {
 			p := p
@@ -813,15 +817,19 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		if thread != "" {
 			route += "/t/" + thread
 		}
-		// open_in_home ends with maybeClosePeek: from the rail's peek the
-		// card closes too
-		closePeek := v.peekCloser()
-		g := []popups.MenuItem{{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() {
-			closePeek()
-			v.h.Navigate(route)
-		}}}
-		// open_in_split_view (not in Simplified layout mode): the thread or
-		// the channel, with the ⌘⌥-click hint
+		var g []popups.MenuItem
+		if !canvasRelated { // open_in_home: if(!s||f||k)return[]
+			// open_in_home ends with maybeClosePeek: from the rail's peek
+			// the card closes too
+			closePeek := v.peekCloser()
+			g = append(g, popups.MenuItem{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() {
+				closePeek()
+				v.h.Navigate(route)
+			}})
+		}
+		// open_in_split_view (not in Simplified layout mode): toThread or
+		// toChannel in the split view (a canvas's file channel there is its
+		// canvas, or its comment thread: ui/split.go), with the ⌘⌥-click hint
 		if split, ok := popups.SplitViewItem(ph, route, true); ok {
 			g = append(g, split)
 		}

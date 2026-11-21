@@ -75,6 +75,7 @@ func (a *App) OpenCanvasComments(fileID, filter string) {
 // OpenCommentThread is views.CommentThreadOpener: the comment thread at
 // ts in file channel ch, the stream it was opened from as its back stack.
 func (a *App) OpenCommentThread(file, ch, ts string) {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	cur := a.secondary
 	var prev *secondaryState
 	if cur.open() {
@@ -103,6 +104,9 @@ func (a *App) canvasViews(file string) []*canvasview.View {
 		add(p.view)
 	}
 	add(a.views[Route("docs/"+file)])
+	if p := a.paneCanvasLive(); p != nil { // the Activity pane's while it draws it (canvas_open.go)
+		add(p)
+	}
 	if m, ok := canvasTabs.Load(a); ok {
 		for _, v := range m.(map[string]*canvasview.View) {
 			add(v)

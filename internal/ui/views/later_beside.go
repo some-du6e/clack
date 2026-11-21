@@ -55,6 +55,27 @@ type SavedSecondary interface {
 	SecondaryAt() (ch, ts string)
 }
 
+// SavedJumper is optionally implemented by the Host: Later's ways into a
+// canvas's or a list's file channel (ui/canvas_open.go). Slack's rows and
+// the rail peek's run jumpToSavedMessage (vh7T: openDocWithThreadTs for a
+// document comment root, else jumpToMessage, whose isSpaceship and isList
+// open the file), never the file channel's conversation; the menu's Open
+// in Home is a toMessage, which RedirectFileChannel makes the thread view
+// on the message.
+type SavedJumper interface {
+	// JumpToSaved is jumpToSavedMessage on message ts (in thread) of file
+	// channel ch: the canvas, at a mention's section or with a comment's
+	// thread, or the list at the record, where says. ok is false for any
+	// other conversation, which opens as any message does.
+	JumpToSaved(ch, thread, ts string, where FileWhere) bool
+	// OpenSavedInHome is SavedItemActionsMenu's Open in Home (e6: R9
+	// toMessage with forceTab Home, a file channel's reply too) on message
+	// ts of file channel ch: the thread view on it, the Home tab beside
+	// it, or the list at the record. ok is false for any other
+	// conversation.
+	OpenSavedInHome(ch, ts string) bool
+}
+
 // rowClick is a row's click (ZrhC F, the peek's 2vyW): LaterRemoveModal
 // for a deleted message, else the item opens (jumpToSavedMessage; the
 // peek closes first).
@@ -80,6 +101,18 @@ func (s *savedBase) open(it *core.SavedItem) {
 		return
 	}
 	ch, ts, thread := it.Channel, it.TS, laterThreadTS(it)
+	// a canvas's or a list's file channel: jumpToMessage opens the file
+	// (isSpaceship, isList), beside the list as any view but the page
+	// there (getTargetContainer), else in the page's place
+	if sj, ok := s.h.(SavedJumper); ok {
+		where := FileFull
+		if s.besideList() {
+			where = FileSide
+		}
+		if sj.JumpToSaved(ch, thread, ts, where) {
+			return
+		}
+	}
 	sec, ok := s.h.(SavedSecondary)
 	switch {
 	case thread != "" && ok:
