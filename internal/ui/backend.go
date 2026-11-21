@@ -1064,7 +1064,7 @@ func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 }
 
 // notifyBody is getContentForNotification: the message's text
-// (notifyText: extractTextFromMessage, richtext.NotificationText, named by
+// (notifyText: extractTextFromMessage, richtext.NotificationMessageText, named by
 // noteNames), after "{sender}: " outside DMs, with its mentions written as
 // Slack's userToText and channelToText write them (notify_conv.go: never
 // the raw id). With no_text_in_notifications (shouldHideNotificationText)

@@ -325,6 +325,11 @@ type File struct {
 	AudioWaveSamples []int      `json:"audio_wave_samples"`
 	Subtype          string     `json:"subtype"`
 	FileAccess       string     `json:"file_access,omitempty"`
+	// InitialComment is whether the file carries an initial_comment (an
+	// old file_share's comment), which a notification's meta line reads
+	// (chooseFileMetaTemplate: "uploaded and commented on this file"). The
+	// comment itself isn't kept.
+	InitialComment Present `json:"initial_comment,omitempty"`
 	// What getFileStatus (SRWA) reads besides mode and file_access: a
 	// deleted file, one hidden by the free plan's storage limit, one DLP
 	// tombstoned. IsSkill marks a skill canvas, FolderType a folder's kind
