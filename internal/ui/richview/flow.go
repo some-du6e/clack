@@ -261,6 +261,9 @@ type display struct {
 	// names are the user mentions laid out and the plugin labels they
 	// used (members.go)
 	names []nameUse
+	// slugs are the message slugs laid out and the labels they read
+	// (slugs.go)
+	slugs []slugUse
 	// pending are the ids of the canvas mentions drawn as Quip's loading
 	// skeleton (canvasMissing), in order
 	pending []string
@@ -324,6 +327,7 @@ func (d *display) reset() {
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
 	d.names = d.names[:0]
+	d.slugs = d.slugs[:0]
 	d.pending = d.pending[:0]
 	d.hovers = d.hovers[:0]
 	d.plays = d.plays[:0]

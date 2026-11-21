@@ -71,6 +71,10 @@ type Size struct {
 	// Views adds the rail list views' fixtures (views.go): followed
 	// threads, scheduled drafts, recorded activity writes.
 	Views bool
+	// MessagesByID answers messages.list as Slack does without Views'
+	// fixtures: any message of the fake's by its ts (messages_list.go),
+	// for what fetches a message by id (a message slug's).
+	MessagesByID bool
 	// ListRecordsInLater answers saved.list with the saved list records
 	// alone (lists_records.go): two of Launch tracker's items, one a
 	// to-do with a reminder, one saved.
@@ -1927,6 +1931,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	}
 	if out, handled := s.handleCodeChannels(method, f); handled && s.Size.CodeChannels { // codechannels.go
 		return out
+	}
+	if method == "messages.list" && s.Size.MessagesByID && !s.Size.Views { // messages_list.go (Views' answers include its feed's)
+		if out, handled := s.messagesByID(f); handled {
+			return out
+		}
 	}
 	if s.Size.Views {
 		if out, handled := s.handleViews(method, f); handled { // views.go

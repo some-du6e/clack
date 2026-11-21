@@ -936,8 +936,10 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// and the people it names core doesn't hold (core announced the
 		// message without them; notify_conv.go noteMembers)
 		people := b.noteMembers(ev.Msg)
-		if len(ids) > 0 || len(people) > 0 {
-			b.noteResolve(a, ids, people, func() {
+		// and the messages its slugs link to (noteSlugs)
+		msgs := b.noteSlugs(ev.Msg.Doc)
+		if len(ids) > 0 || len(people) > 0 || len(msgs) > 0 {
+			b.noteResolve(a, ids, people, msgs, func() {
 				if len(people) > 0 {
 					ev = b.noteFresh(ev)
 				}
