@@ -136,13 +136,17 @@ const (
 
 // InlineChannel is a channel as InlineChannelEntity and
 // getDisplayNameForChannel read it (the header above). Name is set when
-// State is ChannelKnown; Private, Archived and Doc when the store knows
-// (Doc: a canvas's or list's conversation, "canvas" | "list", whose icon
-// getChannelIconType draws instead of the hash or lock).
+// State is ChannelKnown; Private, Archived and Doc when the store knows.
+// Doc is a file channel's file as getChannelIconType's file channel case
+// reads it (/HhV): "canvas", "list", or "file" while files.info hasn't
+// answered (it is asked), drawn instead of the hash or lock; Spans is
+// then ChannelName's name: a canvas's title (renderQuipTitle over its
+// title_blocks), else the channel's name with its emoji (FormatText).
 type InlineChannel struct {
 	Name              string
 	Private, Archived bool
 	Doc               string
+	Spans             []richtext.Span
 	State             ChannelState
 }
 
@@ -167,6 +171,24 @@ func (a *App) InlineChannel(id string) InlineChannel {
 	return InlineChannel{State: ChannelNonExistent} // the fetch didn't return it
 }
 
+// fileChannelEntity is file channel id's InlineChannelEntity: the file's
+// kind (getChannelIconType: "canvas", "list", "file" while files.info
+// hasn't answered; it is asked) and ChannelName's name, a canvas's title
+// from its title_blocks or the channel's name, with emoji spans.
+func (a *App) fileChannelEntity(id, name string) (doc, title string, spans []richtext.Span) {
+	ref, known := a.S.CanvasRef(FileOfChannel(id))
+	switch {
+	case known && ref.Kind == "canvas":
+		if sp := richtext.CanvasTitle(a.S, ref.Title, ref.TitleBlocks); len(sp) > 0 {
+			return "canvas", richtext.PlainSpans(sp), sp
+		}
+		return "canvas", name, richtext.EmojiText(a.S, name)
+	case known && ref.Kind == "list":
+		return "list", name, richtext.EmojiText(a.S, name)
+	}
+	return "file", name, richtext.EmojiText(a.S, name)
+}
+
 // KnownChannel is InlineChannel without the lookup: ok false when the
 // store can't name id (yet).
 func (a *App) KnownChannel(id string) (InlineChannel, bool) {
@@ -180,7 +202,7 @@ func (a *App) KnownChannel(id string) (InlineChannel, bool) {
 		}
 		ic := InlineChannel{Name: c.Name, Private: c.Kind == "private", Archived: c.IsArchived, State: ChannelKnown}
 		if c.File {
-			ic.Doc = c.Doc
+			ic.Doc, ic.Name, ic.Spans = a.fileChannelEntity(id, c.Name)
 		}
 		return ic, true
 	}
