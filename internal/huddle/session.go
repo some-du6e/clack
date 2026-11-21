@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -204,6 +205,14 @@ type Session struct {
 	dev    Device // speakers (and the microphone for Options.Device)
 	micDev Device // the default microphone, once the OS allowed it
 	play   playBuffer
+	// outReq numbers the speakers' opens (the join's, each Speaker pick:
+	// SwitchSpeakers), outGen is the one playing the huddle: each output
+	// pulls the playback buffer only while outGen is its own, so the old
+	// output plays until the new one is swapped in (installSpeakers) and
+	// the two never take turns at the one buffer, and an open a later
+	// pick replaced is never swapped in, however late it finishes
+	outReq atomic.Uint64
+	outGen atomic.Uint64
 	mic    *micFramer
 	apm    *micProcessor // the microphone's AGC and noise suppression (apm.go)
 
@@ -547,6 +556,14 @@ func (s *Session) PlayLocal(pcm []int16, loop bool) { s.play.playLocal(pcm, loop
 
 // LocalPlaying reports whether a PlayLocal sound is still playing.
 func (s *Session) LocalPlaying() bool { return s.play.localPlaying() }
+
+// PlaySound plays one of the app's sounds (interleaved stereo, 48 kHz) on
+// your speakers, from its start each time, beside the huddle and the
+// PlayLocal music (Test Speaker; name is its file). nil stops it.
+func (s *Session) PlaySound(name string, pcm []int16) { s.play.playSound(name, pcm) }
+
+// SoundPlaying reports whether name's PlaySound sound is still playing.
+func (s *Session) SoundPlaying(name string) bool { return s.play.soundPlaying(name) }
 
 // SetDeafened stops (or resumes) playing the huddle's audio. Deafening
 // also mutes you, like Slack.

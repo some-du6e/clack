@@ -27,6 +27,7 @@ import (
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slackasset"
 )
 
 // Timeline is a contiguous window of a conversation's newest messages.
@@ -118,6 +119,8 @@ type Store struct {
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
+	// botsGone are bot ids nothing returned (PutNonexistentBots)
+	botsGone map[string]bool
 
 	// userSeen is when each user was last fetched (unix seconds; from the
 	// disk cache for users it restored): what SaveCache keeps.
@@ -236,6 +239,9 @@ func (s *Store) UserAvatar(id string) string { return userAvatar(s.User, id) }
 
 func userAvatar(look userLookup, id string) string {
 	if u, ok := look(id); ok && u != nil {
+		if u.ID == SlackSystemUserID { // getMemberProfileImage's n8qp (AvatarURL)
+			return slackasset.SlackLogoMark
+		}
 		return u.Profile.Image48
 	}
 	return ""
@@ -797,10 +803,25 @@ func PrefName(u *slack.User, displayRealNames bool) string {
 	return u.RealName
 }
 
+// SlackSystemUserID is the Slack system user (Slack's isSlackSystemUser,
+// client-boot iXFk: id "USLACK"), the partner of the DM Slack's own
+// notices and apps acting for Slack post in.
+const SlackSystemUserID = "USLACK"
+
 // AvatarURL is u's picture for a slot of size px: the profile image that
 // covers it, else the ca.slack-edge.com picture of avatar_hash under
 // avatarTeam, else Slack's default. viewerTeam is the viewer's team.
+//
+// The Slack system user (USLACK, the DM apps post Slack's own notices in)
+// is Slack's logo at every size: getMemberProfileImage (client-boot 6Knt)
+// returns its bundled slack_logo_mark (n8qp) for memberId "USLACK" before
+// it reads anything else. Its profile has an avatar_hash, whose
+// ca.slack-edge.com picture is the generic blue person, and image_* SVGs
+// of the same logo.
 func AvatarURL(u *slack.User, size int, viewerTeam string) string {
+	if u.ID == SlackSystemUserID {
+		return slackasset.SlackLogoMark
+	}
 	p := u.Profile
 	switch {
 	case size <= 72 && p.Image72 != "":
@@ -1166,8 +1187,40 @@ func (s *Store) PutBot(id string, b BotInfo) {
 		s.bots = map[string]BotInfo{}
 	}
 	s.bots[id] = b
+	delete(s.botsGone, id)
 	s.mu.Unlock()
 	s.gen.Add(1)
+}
+
+// PutNonexistentBots records bots neither the edge cache nor bots.info
+// returned: the bots UnknownFetchManager's upsertNonExistent (client-boot
+// 0mwJ marks every id a fetch didn't return), whose stub getBotById
+// (Emf2 AF) answers from then on. Nothing asks for them again this
+// session (noteMissing records a bot once), and a message only such a bot
+// would name draws BaseMissingMember's non-existent bar.
+func (s *Store) PutNonexistentBots(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	for _, id := range ids {
+		if _, ok := s.bots[id]; ok || id == "" {
+			continue
+		}
+		if s.botsGone == nil {
+			s.botsGone = map[string]bool{}
+		}
+		s.botsGone[id] = true
+	}
+	s.mu.Unlock()
+}
+
+// BotNonexistent reports whether nothing returned bot id
+// (PutNonexistentBots): Slack's isNonExistent bot stub.
+func (s *Store) BotNonexistent(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.botsGone[id]
 }
 
 // BotName is richtext.BotNamer: the cached bot's name, or "" after
@@ -2062,7 +2115,21 @@ func (s *Store) LoadCache() {
 		}
 	}
 	if len(d.Bots) > 0 {
-		s.bots = d.Bots
+		// under what this session stored or found gone meanwhile: that
+		// answer is newer than the disk's copy, and nothing would ask for
+		// the bot again (noteMissing records a bot once a session)
+		if len(s.bots)+len(s.botsGone) == 0 {
+			s.bots = d.Bots
+		} else {
+			if s.bots == nil {
+				s.bots = make(map[string]BotInfo, len(d.Bots))
+			}
+			for id, b := range d.Bots {
+				if _, ok := s.bots[id]; !ok && !s.botsGone[id] {
+					s.bots[id] = b
+				}
+			}
+		}
 	}
 	if d.Experiments != nil {
 		s.experiments = d.Experiments

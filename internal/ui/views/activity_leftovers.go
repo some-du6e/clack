@@ -159,18 +159,19 @@ func (r *actRow) agentActions(m *core.Message) (string, richtext.Block, bool) {
 // element it drew.
 type actActionsEls struct {
 	me  *blockkit.Message
+	el  richview.Elements // the view's drawing of me (blockkit.InView)
 	bid string
 	tag *struct{}
 }
 
 func (e *actActionsEls) ElementsSize(bs []richtext.Button, maxW int, accessory bool, m unit.Metric) (image.Point, bool) {
-	return e.me.ElementsSize(bs, maxW, accessory, m)
+	return e.el.ElementsSize(bs, maxW, accessory, m)
 }
 
 func (e *actActionsEls) ElementsVersion() uint32 { return e.me.ElementsVersion() }
 
 func (e *actActionsEls) LayoutElements(gtx layout.Context, bs []richtext.Button, accessory bool) layout.Dimensions {
-	d := e.me.LayoutElements(gtx, bs, accessory)
+	d := e.el.LayoutElements(gtx, bs, accessory)
 	for _, r := range e.me.RunRects(e.bid) {
 		area := clip.Rect(r).Push(gtx.Ops)
 		pass := pointer.PassOp{}.Push(gtx.Ops)
@@ -188,9 +189,9 @@ var _ richview.Elements = (*actActionsEls)(nil)
 func (v *Activity) agentActions(gtx C, r *actRow, m *core.Message, bid string, blk richtext.Block) D {
 	o := richview.Options{Channel: m.Channel, TS: m.TS}
 	if el := v.liveElements(m); el != nil {
-		if me, ok := el.(*blockkit.Message); ok {
+		if me := blockkit.HostOf(el); me != nil {
 			if r.actEls == nil || r.actEls.me != me || r.actEls.bid != bid {
-				r.actEls = &actActionsEls{me: me, bid: bid, tag: &r.actTag}
+				r.actEls = &actActionsEls{me: me, el: el, bid: bid, tag: &r.actTag}
 			}
 			o.Elements = r.actEls
 		} else {

@@ -38,6 +38,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
@@ -48,19 +49,38 @@ type textyTip struct {
 	mtip popups.TipState // an app's or bot's member tooltip
 }
 
-// textyKey identifies a slug's hover card trigger across frames.
+// textyKey identifies a slug's hover card trigger across frames: the
+// input that owns it (a *Composer or a *TextyInput) and the id.
 type textyKey struct {
-	c  *Composer
-	id string
+	owner any
+	id    string
+}
+
+// tipCtx is one Texty's tooltips: its editor, host, core, owner and
+// tooltip states (the composer's, or a TextyInput's).
+type tipCtx struct {
+	ed    *Editor
+	h     popups.Host
+	app   *core.App
+	owner any
+	ttip  *textyTip
+	gtip  *groupTip
+}
+
+// tips is the composer's tooltip context.
+func (c *Composer) tips() tipCtx {
+	return tipCtx{ed: c.ed, h: c.h, app: c.api.a, owner: c, ttip: &c.ttip, gtip: &c.gtip}
 }
 
 // layoutTextyTip shows what Texty shows for the atom under the pointer,
 // the editor laid out at the origin.
-func (c *Composer) layoutTextyTip(gtx layout.Context) {
+func (c *Composer) layoutTextyTip(gtx layout.Context) { c.tips().layout(gtx) }
+
+func (c tipCtx) layout(gtx layout.Context) {
 	c.layoutGroupTip(gtx)
 	at, r, ok := c.ed.HoverAtom()
 	th := c.h.Theme()
-	t := &c.ttip
+	t := c.ttip
 	t.tip.Texty = true
 	if ok && at.Kind == AtomUser {
 		c.reportSlugCard(at, r)
@@ -79,8 +99,8 @@ func (c *Composer) layoutTextyTip(gtx layout.Context) {
 
 // reportSlugCard reports a person's slug to the root's hover card
 // (TextyTooltip: renderMemberProfileHoverCard for a human member).
-func (c *Composer) reportSlugCard(at *Atom, r image.Rectangle) {
-	app := c.api.a
+func (c tipCtx) reportSlugCard(at *Atom, r image.Rectangle) {
+	app := c.app
 	ctl := hovercard.Default()
 	if app == nil || ctl == nil || at.ID == "" {
 		return
@@ -92,12 +112,12 @@ func (c *Composer) reportSlugCard(at *Atom, r image.Rectangle) {
 	if !in {
 		return
 	}
-	ctl.ReportTexty(textyKey{c, at.ID}, at.ID, r, f32.Pt(float32(pt.X), float32(pt.Y)))
+	ctl.ReportTexty(textyKey{c.owner, at.ID}, at.ID, r, f32.Pt(float32(pt.X), float32(pt.Y)))
 }
 
 // reportChannelCard reports a channel slug to the root's hover card
 // (TextyTooltip: renderHoverCard(ChannelHoverCard)).
-func (c *Composer) reportChannelCard(at *Atom, r image.Rectangle) {
+func (c tipCtx) reportChannelCard(at *Atom, r image.Rectangle) {
 	ctl := hovercard.Default()
 	if ctl == nil || at.ID == "" {
 		return
@@ -106,16 +126,16 @@ func (c *Composer) reportChannelCard(at *Atom, r image.Rectangle) {
 	if !in {
 		return
 	}
-	ctl.ReportTextyChannel(textyKey{c, at.ID}, at.ID, r, f32.Pt(float32(pt.X), float32(pt.Y)))
+	ctl.ReportTextyChannel(textyKey{c.owner, at.ID}, at.ID, r, f32.Pt(float32(pt.X), float32(pt.Y)))
 }
 
 // layoutMemberTip shows renderComposerAppHoverCard's fallback tooltip over
 // an app's or bot's slug, the editor laid out at the origin.
-func (c *Composer) layoutMemberTip(gtx layout.Context, at *Atom, r image.Rectangle, ok bool) {
-	t := &c.ttip
+func (c tipCtx) layoutMemberTip(gtx layout.Context, at *Atom, r image.Rectangle, ok bool) {
+	t := c.ttip
 	t.mtip.Texty = true
 	th := c.h.Theme()
-	app := c.api.a
+	app := c.app
 	show := ok && at.Kind == AtomUser && at.ID != "" && app != nil
 	if show {
 		// not getMemberIsHuman: an app or bot, or a member not loaded yet
