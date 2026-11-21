@@ -70,8 +70,12 @@ def load(d):
             heap_v = float(heap)
         except ValueError:
             heap_v = None
+        try:
+            cpu_v = float(f[8]) if len(f) > 8 and f[8] else None
+        except ValueError:
+            cpu_v = None
         proc.append(dict(run=run, paint=paint_t, rows=rows_n, ready=ready, boot=boot_t, cache=cache_t,
-                         rss=num_or(rss), hwm=num_or(hwm), anon=num_or(anon), heap=heap_v))
+                         rss=num_or(rss), hwm=num_or(hwm), anon=num_or(anon), heap=heap_v, cpu=cpu_v))
     size = read(d, "binsize.txt").strip()
     m = re.search(r"\((\d+) bytes\)", size)
     packages = {}
@@ -98,6 +102,7 @@ def headline(data):
         "idle RSS (95 s)": (one("idle95", "rss"), "MB"),
         "anon RSS (95 s)": (one("idle95", "anon"), "MB"),
         "Go heap (95 s)": (one("idle95", "heap"), "MB"),
+        "idle CPU (20-95 s)": (one("idle95", "cpu"), "ms/s"),
         "peak RSS (cold)": (one("cold", "hwm"), "MB"),
         "binary (stripped)": (data["size_bytes"] / 1048576 if data["size_bytes"] else None, "MB"),
         "session heap": (g("BenchmarkSessionMemory", "heap-MB"), "MB"),

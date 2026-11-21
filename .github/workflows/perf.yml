@@ -47,13 +47,17 @@ on:
   workflow_dispatch:
     inputs:
       base:
-        description: "baseline (tag, branch or sha); empty = newest v* release tag before HEAD"
+        description: "baseline (tag, branch or sha); empty = where this branch left ui (ui, main: the newest v* release tag before HEAD)"
         required: false
         default: ""
       jobs:
-        description: "all, scale (only the Hack Club-scale memory jobs) or plugins (only scroll frames under a plugin set like Karim's, base vs head)"
+        description: "all, perf (only the gated perf job), scale (only the Hack Club-scale memory jobs) or plugins (only scroll frames under a plugin set like Karim's, base vs head)"
         required: false
         default: "all"
+      force:
+        description: "true: run even when the diff from the base is only docs, tests and CI files (a harness change; base-vs-base noise runs)"
+        required: false
+        default: "false"
       scale_base:
         description: "scale jobs: also measure this commit (sha, branch or tag) as the before side; empty = HEAD only"
         required: false
@@ -93,26 +97,47 @@ concurrency:
   cancel-in-progress: false # one run at a time: at most one waits, and a newer run replaces the waiting one
 
 jobs:
+  # The base, and whether the diff from it can move a number: a dispatch
+  # that changes only docs, tests or CI files skips every job below, and
+  # says so (affects.py; -f force=true runs them anyway). Pushes always run.
+  affects:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      perf: ${{ steps.diff.outputs.perf }}
+      base: ${{ steps.diff.outputs.base }}
+      label: ${{ steps.diff.outputs.label }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # tags (the default base) and origin/ui (a branch's)
+          persist-credentials: false
+      - id: diff
+        env:
+          BASE: ${{ inputs.base }}
+          FORCE: ${{ inputs.force }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: python3 .github/perf/affects.py
+
   perf:
-    if: ${{ inputs.jobs != 'scale' && inputs.jobs != 'plugins' }}
+    needs: affects
+    if: ${{ needs.affects.outputs.perf == 'true' && inputs.jobs != 'scale' && inputs.jobs != 'plugins' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          fetch-depth: 0 # tags (default base) and any dispatched base
+          fetch-depth: 0 # the base, whichever it is
       - name: base tree
         id: base
         env:
-          BASE: ${{ inputs.base }}
+          BASE_SHA: ${{ needs.affects.outputs.base }}
+          BASE_LABEL: ${{ needs.affects.outputs.label }}
         run: |
-          if [ -z "$BASE" ]; then
-            BASE=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || echo HEAD^)
-          fi
-          sha=$(git rev-parse -q --verify "$BASE^{commit}" || git rev-parse -q --verify "origin/$BASE^{commit}") || { echo "::error::base $BASE not found"; exit 1; }
-          git worktree add -q --detach "$RUNNER_TEMP/base-tree" "$sha"
-          echo "label=$BASE ($(git rev-parse --short "$sha"))" >> "$GITHUB_OUTPUT"
-          echo "base: $BASE = $(git log --oneline -1 "$sha")"
+          git worktree add -q --detach "$RUNNER_TEMP/base-tree" "$BASE_SHA"
+          echo "label=$BASE_LABEL" >> "$GITHUB_OUTPUT"
+          echo "base: $BASE_LABEL = $(git log --oneline -1 "$BASE_SHA")"
           echo "head: $(git log --oneline -1 HEAD)"
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -201,6 +226,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           cat perf-out/compare.md
           [ -f perf-out/startup.md ] && cat perf-out/startup.md || true
+          # this run's gated metrics, base and head: a base-vs-base run's
+          # is a noise sample (gate.py calibrate)
+          python3 .github/perf/gate.py sample perf-out > perf-out/gate-sample.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -211,6 +239,14 @@ jobs:
             !perf-out/*/clack*
             !perf-out/fakeslackd
             !perf-out/library
+      # The regression gate (gate.py): a dispatch fails when a head metric is
+      # worse than base's past that metric's noise band (noise.json, measured
+      # from base-vs-base runs); the summary says which metric and by how
+      # much. Pushes report only: their base is the last release, not a
+      # branch point.
+      - name: regression gate
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: python3 .github/perf/gate.py check perf-out .github/perf/noise.json
       - name: append to perf-history
         if: github.event_name == 'push'
         run: |
@@ -242,7 +278,8 @@ jobs:
   # and a heap profile (inuse_space and alloc_space). Design notes:
   # .github/perf/README.md.
   scale-linux:
-    if: ${{ inputs.jobs != 'plugins' && inputs.scale_platforms != 'windows' }}
+    needs: affects
+    if: ${{ needs.affects.outputs.perf == 'true' && inputs.jobs != 'plugins' && inputs.jobs != 'perf' && inputs.scale_platforms != 'windows' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     strategy:
@@ -324,7 +361,8 @@ jobs:
             !scale-out/library
 
   scale-windows:
-    if: ${{ inputs.jobs != 'plugins' && inputs.scale_platforms != 'linux' }}
+    needs: affects
+    if: ${{ needs.affects.outputs.perf == 'true' && inputs.jobs != 'plugins' && inputs.jobs != 'perf' && inputs.scale_platforms != 'linux' }}
     runs-on: windows-latest
     timeout-minutes: 150
     strategy:
@@ -423,8 +461,8 @@ jobs:
   # Both platforms on one page, and a row each in docs/perf-scale-history.md
   # on the perf-history branch (pushes, and dispatches of the scale jobs).
   scale-report:
-    needs: [scale-linux, scale-windows]
-    if: ${{ !cancelled() && inputs.jobs != 'plugins' }}
+    needs: [affects, scale-linux, scale-windows]
+    if: ${{ !cancelled() && needs.affects.outputs.perf == 'true' && inputs.jobs != 'plugins' && inputs.jobs != 'perf' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -483,7 +521,8 @@ jobs:
   # commit to compare against, default the merge base with ui).
   # Third-party plugin code runs here: read-only token, no shared Go cache.
   plugins:
-    if: ${{ inputs.jobs == 'plugins' }}
+    needs: affects
+    if: ${{ needs.affects.outputs.perf == 'true' && inputs.jobs == 'plugins' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
