@@ -118,12 +118,14 @@ func contains(s, sub string) bool {
 // TestAlertMaxContentPills: an alert's max-content measure (maxContentW,
 // a scratch layout) numbers its mention pills after the message's own,
 // so in pill mode each reads its own component state: a plugin widening
-// the mention before the alert leaves the alert's width alone.
+// the mention before the alert leaves the alert's width alone. (The
+// widening is a pad after the pill, so text follows the alert's mention:
+// the measure reads where the text ends.)
 func TestAlertMaxContentPills(t *testing.T) {
 	patchAll(t)
 	st := newTestStyle()
 	d := kitDoc(t, `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"before "},{"type":"user","user_id":"U1"}]}]},
-		{"type":"alert","level":"info","text":{"type":"mrkdwn","text":"hi <@U2>"}}]`)
+		{"type":"alert","level":"info","text":{"type":"mrkdwn","text":"hi <@U2> there"}}]`)
 	v := layoutAt(st, d, Options{TS: "1.2", Channel: "C9"}, 800)
 	alertW := func() int {
 		hi := findFrag(t, &v.d, "hi")
