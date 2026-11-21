@@ -453,6 +453,49 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -cpu 1 -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
 
+  # 2026-11-21's flakes, fixed on ci-speed: TestWarmWindowWritesSurviveBoot
+  # (core) wrote before Boot's sections call reached the fake, so
+  # MoveToSection's own reread was the call held; TestRailPeekDMsRowMenu
+  # (ui) could end its 60 ms wait before the peek's throttled check ran;
+  # TestSpellcheckNeverBlocksFrame (composer) timed frames on a shared
+  # runner. COUNT runs each, as loaded runners ran them: core under -race,
+  # composer on one CPU, ui in four processes at once
+  flakes-1121:
+    if: ${{ !inputs.only || startsWith('flakes-1121', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core (writes on the warm window while Boot's answers are out), race detector
+        run: go test -race -count=$COUNT -timeout 30m -run '^TestWarmWindowWritesSurviveBoot$' ./internal/core
+      - name: composer (a slow spell engine never holds a frame), one CPU
+        if: ${{ !cancelled() }}
+        run: go test -cpu 1 -count=$COUNT -timeout 30m -run '^TestSpellcheckNeverBlocksFrame$' ./internal/ui/composer
+      - name: ui (the DMs peek's row menu), four processes at once
+        if: ${{ !cancelled() }}
+        run: |
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+          cd internal/ui
+          pids=""
+          for i in 1 2 3 4; do
+            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=$COUNT -test.timeout 30m -test.run '^TestRailPeekDMsRowMenu$' > "$RUNNER_TEMP/peek-$i.log" 2>&1 &
+            pids="$pids $!"
+          done
+          rc=0
+          i=0
+          for p in $pids; do
+            i=$((i + 1))
+            wait "$p" || { rc=1; echo "== process $i failed"; tail -n 80 "$RUNNER_TEMP/peek-$i.log"; }
+          done
+          exit $rc
+
   # imgcache's decode memory (emoji-load-6): Copy image copies the
   # original however long it takes and its thumbnail only when the original
   # can't be decoded at all, the viewer shows the thumbnail for an original

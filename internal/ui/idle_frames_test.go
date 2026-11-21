@@ -64,241 +64,251 @@ func TestIdleFrames(t *testing.T) {
 		override int
 	}{{"motion", -1}, {"reduced motion", 1}} {
 		t.Run(motion.name, func(t *testing.T) {
-			// the main view, a thread, Activity, Preferences
-			sz := fakeslack.Small
-			sz.Unread = 0
-			sz.ThreadHeader = true
-			e := newIdleEnv(t, sz, motion.override)
-			measured.Store(e.a)
-			ch := fakeslack.ThreadPublicID
-			e.openChannel(ch)
-			e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
-			e.focusComposer(ch, "")
-			e.idle(t, p, "channel", true)
-			e.blur()
-			e.idle(t, p, "channel, window in the background", false)
-			e.unblur()
-			e.a.OpenThread(ch, fakeslack.ThreadRootTS)
-			e.frame()
-			e.focusComposer(ch, fakeslack.ThreadRootTS)
-			e.idle(t, p, "thread", true)
-			e.a.CloseSecondary()
-			e.a.Navigate("activity")
-			e.frame()
-			e.idle(t, p, "activity", false)
-			e.openChannel(ch)
-			e.frame()
-			e.a.openPrefs()
-			e.frame()
-			e.idle(t, p, "preferences", false)
-			for e.a.dismissTop() {
-			}
-			e.shutdown()
-
-			// the sidebar with unread channels and mentions
-			sz = fakeslack.Small
-			sz.Unreads = true
-			e = newIdleEnv(t, sz, motion.override)
-			measured.Store(e.a)
-			ch = e.fs.ChannelIDs()[0]
-			e.openChannel(ch)
-			e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
-			e.focusComposer(ch, "")
-			e.idle(t, p, "sidebar with unreads", true)
-			e.shutdown()
-
-			// the rail's and the sidebar's views, with their fixtures
-			sz = fakeslack.Small
-			sz.Views = true
-			sz.DMsTab = true
-			sz.Unreads = true
-			sz.ThreadHeader = true
-			e = newIdleEnv(t, sz, motion.override)
-			measured.Store(e.a)
-			ch = fakeslack.ThreadPublicID
-			e.openChannel(ch)
-			e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
-			for _, page := range []string{"threads", "later", "dms", "files", "huddles", "unreads", "drafts", "saved"} {
-				e.a.Navigate(page)
+			// Each group boots its own client on its own fake, so ci runs the
+			// groups in parallel processes (.github/scripts/fanout.sh); run whole,
+			// they run one after another.
+			t.Run("main", func(t *testing.T) {
+				// the main view, a thread, Activity, Preferences
+				sz := fakeslack.Small
+				sz.Unread = 0
+				sz.ThreadHeader = true
+				e := newIdleEnv(t, sz, motion.override)
+				measured.Store(e.a)
+				ch := fakeslack.ThreadPublicID
+				e.openChannel(ch)
+				e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+				e.focusComposer(ch, "")
+				e.idle(t, p, "channel", true)
+				e.blur()
+				e.idle(t, p, "channel, window in the background", false)
+				e.unblur()
+				e.a.OpenThread(ch, fakeslack.ThreadRootTS)
 				e.frame()
-				e.idle(t, p, page, false)
-			}
-			// Activity on the fixture's feed with its search open on a
-			// query and the first row it lists open beside the inbox
-			// (Alt+Down): the search's rows were described again every
-			// frame once an item opened. The inbox's experiments as the
-			// account has them (fakeslack's experiments.getByUser doesn't
-			// list them: newActShellOn forces the same)
-			on := "on"
-			inbox := map[string]*string{"activity_inbox": &on, "nested_secondary_view": &on, "secondary_view_default_width": &on,
-				"activity_inbox_remove_persistent_detail_panel": &on, "activity_entry_layout_revisions_2": &on, "activity_global_settings": &on}
-			e.a.Core().SetExperimentGroups(inbox)
-			e.a.Navigate("activity")
-			e.frame()
-			e.until("the activity feed", 20*time.Second, func() bool { return e.fs.CallCount("activity.feed") > 0 })
-			e.settle(time.Second)
-			act, _ := e.a.views[Route("activity")].(*views.Activity)
-			if act == nil {
-				t.Fatal("no Activity view")
-			}
-			act.Search("e")
-			e.frame()
-			// Alt+Down until a row opens: on a slow runner the search may
-			// list nothing yet a frame after it opened
-			e.until("an Activity item open with the search open", 20*time.Second, func() bool {
-				if !e.a.secondary.open() {
-					act.StepItem(1, false)
+				e.focusComposer(ch, fakeslack.ThreadRootTS)
+				e.idle(t, p, "thread", true)
+				e.a.CloseSecondary()
+				e.a.Navigate("activity")
+				e.frame()
+				e.idle(t, p, "activity", false)
+				e.openChannel(ch)
+				e.frame()
+				e.a.openPrefs()
+				e.frame()
+				e.idle(t, p, "preferences", false)
+				for e.a.dismissTop() {
 				}
-				return e.a.secondary.open()
+				e.shutdown()
 			})
-			e.idle(t, p, "activity, searching, an item open", true)
-			e.a.CloseSecondary()
-			for k := range inbox {
-				inbox[k] = nil // as experiments.getByUser had them again
-			}
-			e.a.Core().SetExperimentGroups(inbox)
-			e.a.Navigate("directories")
-			e.frame()
-			e.idle(t, p, "directories", true) // Slack focuses its search field
+			t.Run("unreads", func(t *testing.T) {
+				// the sidebar with unread channels and mentions
+				sz := fakeslack.Small
+				sz.Unreads = true
+				e := newIdleEnv(t, sz, motion.override)
+				measured.Store(e.a)
+				ch := e.fs.ChannelIDs()[0]
+				e.openChannel(ch)
+				e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+				e.focusComposer(ch, "")
+				e.idle(t, p, "sidebar with unreads", true)
+				e.shutdown()
+			})
+			t.Run("views", func(t *testing.T) {
+				// the rail's and the sidebar's views, with their fixtures
+				sz := fakeslack.Small
+				sz.Views = true
+				sz.DMsTab = true
+				sz.Unreads = true
+				sz.ThreadHeader = true
+				e := newIdleEnv(t, sz, motion.override)
+				measured.Store(e.a)
+				ch := fakeslack.ThreadPublicID
+				e.openChannel(ch)
+				e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+				for _, page := range []string{"threads", "later", "dms", "files", "huddles", "unreads", "drafts", "saved"} {
+					e.a.Navigate(page)
+					e.frame()
+					e.idle(t, p, page, false)
+				}
+				// Activity on the fixture's feed with its search open on a
+				// query and the first row it lists open beside the inbox
+				// (Alt+Down): the search's rows were described again every
+				// frame once an item opened. The inbox's experiments as the
+				// account has them (fakeslack's experiments.getByUser doesn't
+				// list them: newActShellOn forces the same)
+				on := "on"
+				inbox := map[string]*string{"activity_inbox": &on, "nested_secondary_view": &on, "secondary_view_default_width": &on,
+					"activity_inbox_remove_persistent_detail_panel": &on, "activity_entry_layout_revisions_2": &on, "activity_global_settings": &on}
+				e.a.Core().SetExperimentGroups(inbox)
+				e.a.Navigate("activity")
+				e.frame()
+				e.until("the activity feed", 20*time.Second, func() bool { return e.fs.CallCount("activity.feed") > 0 })
+				e.settle(time.Second)
+				act, _ := e.a.views[Route("activity")].(*views.Activity)
+				if act == nil {
+					t.Fatal("no Activity view")
+				}
+				act.Search("e")
+				e.frame()
+				// Alt+Down until a row opens: on a slow runner the search may
+				// list nothing yet a frame after it opened
+				e.until("an Activity item open with the search open", 20*time.Second, func() bool {
+					if !e.a.secondary.open() {
+						act.StepItem(1, false)
+					}
+					return e.a.secondary.open()
+				})
+				e.idle(t, p, "activity, searching, an item open", true)
+				e.a.CloseSecondary()
+				for k := range inbox {
+					inbox[k] = nil // as experiments.getByUser had them again
+				}
+				e.a.Core().SetExperimentGroups(inbox)
+				e.a.Navigate("directories")
+				e.frame()
+				e.idle(t, p, "directories", true) // Slack focuses its search field
+				e.shutdown()
+			})
 			if motion.override >= 0 {
 				return // the rest with full motion only
 			}
-			e.shutdown()
-
-			// a pointer resting over the window: hover states (a row's
-			// background and actions, the sidebar's row, tooltips after
-			// their delays) settle, and nothing keeps animating
-			sz = fakeslack.Small
-			sz.Unread = 0
-			sz.ThreadHeader = true
-			e = newIdleEnv(t, sz, motion.override)
-			measured.Store(e.a)
-			ch = fakeslack.ThreadPublicID
-			e.openChannel(ch)
-			e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
-			for _, at := range []struct {
-				name string
-				x, y float32
-			}{
-				{"pointer on the newest message", 900, 720},
-				{"pointer on the message list", 900, 400},
-				{"pointer on a sidebar row", 160, 260},
-				{"pointer on the channel header", 800, 64},
-				{"pointer on the top nav", 700, 18},
-				{"pointer on the rail", 34, 180},
-			} {
-				e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(at.x, at.y)})
+			t.Run("pointer", func(t *testing.T) {
+				// a pointer resting over the window: hover states (a row's
+				// background and actions, the sidebar's row, tooltips after
+				// their delays) settle, and nothing keeps animating
+				sz := fakeslack.Small
+				sz.Unread = 0
+				sz.ThreadHeader = true
+				e := newIdleEnv(t, sz, motion.override)
+				measured.Store(e.a)
+				ch := fakeslack.ThreadPublicID
+				e.openChannel(ch)
+				e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+				for _, at := range []struct {
+					name string
+					x, y float32
+				}{
+					{"pointer on the newest message", 900, 720},
+					{"pointer on the message list", 900, 400},
+					{"pointer on a sidebar row", 160, 260},
+					{"pointer on the channel header", 800, 64},
+					{"pointer on the top nav", 700, 18},
+					{"pointer on the rail", 34, 180},
+				} {
+					e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(at.x, at.y)})
+					e.frame()
+					e.idle(t, p, at.name, true) // opening the channel focused its composer
+				}
+				e.r.Queue(pointer.Event{Kind: pointer.Leave, Source: pointer.Mouse, Position: f32.Pt(-1, -1)})
 				e.frame()
-				e.idle(t, p, at.name, true) // opening the channel focused its composer
-			}
-			e.r.Queue(pointer.Event{Kind: pointer.Leave, Source: pointer.Mouse, Position: f32.Pt(-1, -1)})
-			e.frame()
 
-			// a busy workspace's socket about nothing on screen: people
-			// Clack never drew changing their profiles and presence, new
-			// custom emoji, typing in another channel (Hack Club's stream
-			// while the client sits in one channel); ten events a second
-			other := ""
-			for _, id := range e.fs.ChannelIDs() {
-				if id != ch {
-					other = id
-					break
+				// a busy workspace's socket about nothing on screen: people
+				// Clack never drew changing their profiles and presence, new
+				// custom emoji, typing in another channel (Hack Club's stream
+				// while the client sits in one channel); ten events a second
+				other := ""
+				for _, id := range e.fs.ChannelIDs() {
+					if id != ch {
+						other = id
+						break
+					}
 				}
-			}
-			stop := make(chan struct{})
-			go func() {
-				select { // idle's settle
-				case <-time.After(2500 * time.Millisecond):
-				case <-stop:
-					return
-				}
-				tick := time.NewTicker(100 * time.Millisecond)
-				defer tick.Stop()
-				for i := 0; ; i++ {
-					select {
+				stop := make(chan struct{})
+				go func() {
+					select { // idle's settle
+					case <-time.After(2500 * time.Millisecond):
 					case <-stop:
 						return
-					case <-tick.C:
 					}
-					u := fmt.Sprintf("U0IDLETR%03d", i%40)
-					switch i % 4 {
-					case 0:
-						e.fs.Push(map[string]any{"type": "user_change", "user": map[string]any{"id": u, "name": "idle" + u, "real_name": "Idle " + u,
-							"profile": map[string]any{"display_name": "idle" + u, "status_emoji": ":wave:", "status_text": fmt.Sprintf("away %d", i)}}})
-					case 1:
-						pr := "active"
-						if i%8 == 1 {
-							pr = "away"
+					tick := time.NewTicker(100 * time.Millisecond)
+					defer tick.Stop()
+					for i := 0; ; i++ {
+						select {
+						case <-stop:
+							return
+						case <-tick.C:
 						}
-						e.fs.Push(map[string]any{"type": "presence_change", "user": u, "presence": pr})
-					case 2:
-						e.fs.Push(map[string]any{"type": "emoji_changed", "subtype": "add", "name": fmt.Sprintf("idle-emoji-%d", i),
-							"value": "https://emoji.slack-edge.com/T0/idle/1.png", "event_ts": fmt.Sprintf("%d.000100", time.Now().Unix())})
-					case 3:
-						e.fs.Push(map[string]any{"type": "user_typing", "channel": other, "user": u})
+						u := fmt.Sprintf("U0IDLETR%03d", i%40)
+						switch i % 4 {
+						case 0:
+							e.fs.Push(map[string]any{"type": "user_change", "user": map[string]any{"id": u, "name": "idle" + u, "real_name": "Idle " + u,
+								"profile": map[string]any{"display_name": "idle" + u, "status_emoji": ":wave:", "status_text": fmt.Sprintf("away %d", i)}}})
+						case 1:
+							pr := "active"
+							if i%8 == 1 {
+								pr = "away"
+							}
+							e.fs.Push(map[string]any{"type": "presence_change", "user": u, "presence": pr})
+						case 2:
+							e.fs.Push(map[string]any{"type": "emoji_changed", "subtype": "add", "name": fmt.Sprintf("idle-emoji-%d", i),
+								"value": "https://emoji.slack-edge.com/T0/idle/1.png", "event_ts": fmt.Sprintf("%d.000100", time.Now().Unix())})
+						case 3:
+							e.fs.Push(map[string]any{"type": "user_typing", "channel": other, "user": u})
+						}
 					}
+				}()
+				e.idle(t, p, "realtime events about nothing on screen", true)
+				close(stop)
+
+				// a huddle on in the open channel and in another (the header's
+				// button, the sidebar's Huddles link and rows)
+				if users := e.fs.GroupDMUsers(); len(users) >= 4 {
+					now := time.Now().Unix()
+					e.fs.PushHuddleRoom("sh_room_join", ch, "R0IDLE0001", []string{users[0].ID, users[1].ID, users[2].ID}, now-120, nil)
+					e.fs.PushHuddleRoom("sh_room_join", other, "R0IDLE0002", []string{users[3].ID}, now-60, nil)
+					hud := e.a.huddles()
+					e.untilSoft(10*time.Second, func() bool { _, on := hud.Live(ch); return on })
+					e.idle(t, p, "huddles on in the channel and another", true)
 				}
-			}()
-			e.idle(t, p, "realtime events about nothing on screen", true)
-			close(stop)
-
-			// a huddle on in the open channel and in another (the header's
-			// button, the sidebar's Huddles link and rows)
-			if users := e.fs.GroupDMUsers(); len(users) >= 4 {
-				now := time.Now().Unix()
-				e.fs.PushHuddleRoom("sh_room_join", ch, "R0IDLE0001", []string{users[0].ID, users[1].ID, users[2].ID}, now-120, nil)
-				e.fs.PushHuddleRoom("sh_room_join", other, "R0IDLE0002", []string{users[3].ID}, now-60, nil)
-				hud := e.a.huddles()
-				e.untilSoft(10*time.Second, func() bool { _, on := hud.Live(ch); return on })
-				e.idle(t, p, "huddles on in the channel and another", true)
-			}
-			e.shutdown()
-
-			// every fixture gallery's messages laid out at once (a window
-			// tall enough for most of them): Block Kit, link previews,
-			// files, an agent's thread, work objects, workflows, pins, bot
-			// and app senders
-			sz = fakeslack.Small
-			sz.Unread = 0
-			sz.Gallery, sz.Embeds, sz.Files, sz.AgentThread = true, true, true, true
-			sz.WorkObjects, sz.Workflows, sz.PinsFolders, sz.Identity = true, true, true, true
-			e = newIdleEnv(t, sz, motion.override)
-			measured.Store(e.a)
-			e.size = image.Pt(1440, 4000)
-			for _, g := range []struct{ name, ch string }{
-				{"#blockkit-gallery", fakeslack.GalleryChannelID},
-				{"#embeds-gallery", fakeslack.EmbedsChannelID},
-				{"#files-gallery", fakeslack.FilesChannelID},
-				{"the agent's DM", fakeslack.AgentDMID},
-				{"#work-objects", fakeslack.WorkObjectsChannelID},
-				{"#workflows-gallery", fakeslack.WorkflowsChannelID},
-				{"#pins-gallery", fakeslack.PinsChannelID},
-				{"#identity-fixtures", fakeslack.IdentityChannelID},
-			} {
-				e.openChannel(g.ch)
-				if !e.untilSoft(20*time.Second, func() bool { return e.loadedMessages(g.ch) > 0 }) {
-					t.Logf("%s: no history loaded", g.name)
+				e.shutdown()
+			})
+			t.Run("galleries", func(t *testing.T) {
+				// every fixture gallery's messages laid out at once (a window
+				// tall enough for most of them): Block Kit, link previews,
+				// files, an agent's thread, work objects, workflows, pins, bot
+				// and app senders
+				sz := fakeslack.Small
+				sz.Unread = 0
+				sz.Gallery, sz.Embeds, sz.Files, sz.AgentThread = true, true, true, true
+				sz.WorkObjects, sz.Workflows, sz.PinsFolders, sz.Identity = true, true, true, true
+				e := newIdleEnv(t, sz, motion.override)
+				measured.Store(e.a)
+				e.size = image.Pt(1440, 4000)
+				for _, g := range []struct{ name, ch string }{
+					{"#blockkit-gallery", fakeslack.GalleryChannelID},
+					{"#embeds-gallery", fakeslack.EmbedsChannelID},
+					{"#files-gallery", fakeslack.FilesChannelID},
+					{"the agent's DM", fakeslack.AgentDMID},
+					{"#work-objects", fakeslack.WorkObjectsChannelID},
+					{"#workflows-gallery", fakeslack.WorkflowsChannelID},
+					{"#pins-gallery", fakeslack.PinsChannelID},
+					{"#identity-fixtures", fakeslack.IdentityChannelID},
+				} {
+					e.openChannel(g.ch)
+					if !e.untilSoft(20*time.Second, func() bool { return e.loadedMessages(g.ch) > 0 }) {
+						t.Logf("%s: no history loaded", g.name)
+					}
+					e.idle(t, p, g.name, true)
 				}
-				e.idle(t, p, g.name, true)
-			}
-			e.shutdown()
-
-			// a code channel whose agent works: the sidebar's dot is
-			// Slack's slow spinner, pulsing, which turns while the window
-			// is active and holds still in the background (indicatorFrame;
-			// it drew 30 frames a second there)
-			sz = fakeslack.Small
-			sz.Unread = 0
-			sz.CodeChannels = true
-			e = newIdleEnv(t, sz, motion.override)
-			measured.Store(e.a)
-			ch = e.fs.ChannelIDs()[0]
-			e.openChannel(ch)
-			e.untilSoft(20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
-			e.idle(t, p, "a working code channel in the sidebar", true, "ui.codeSpinner")
-			e.blur()
-			e.idle(t, p, "a working code channel in the sidebar, window in the background", false)
-			e.unblur()
+				e.shutdown()
+			})
+			t.Run("code", func(t *testing.T) {
+				// a code channel whose agent works: the sidebar's dot is
+				// Slack's slow spinner, pulsing, which turns while the window
+				// is active and holds still in the background (indicatorFrame;
+				// it drew 30 frames a second there)
+				sz := fakeslack.Small
+				sz.Unread = 0
+				sz.CodeChannels = true
+				e := newIdleEnv(t, sz, motion.override)
+				measured.Store(e.a)
+				ch := e.fs.ChannelIDs()[0]
+				e.openChannel(ch)
+				e.untilSoft(20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+				e.idle(t, p, "a working code channel in the sidebar", true, "ui.codeSpinner")
+				e.blur()
+				e.idle(t, p, "a working code channel in the sidebar, window in the background", false)
+				e.unblur()
+			})
 		})
 	}
 }

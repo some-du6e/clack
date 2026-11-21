@@ -49,6 +49,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15 # budget: 1.5 x p95 (4.5 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -70,6 +71,7 @@ jobs:
     # action card, restart dialog, message boxes) in each state, light and
     # dark; then the whole window against the fake Slack
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (4.7 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -97,6 +99,7 @@ jobs:
 
   windows-installer-upgrade:
     runs-on: windows-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (6.4 min) + 3, docs/CI-SPEED.md
     defaults:
       run:
         shell: pwsh
