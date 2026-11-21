@@ -2,7 +2,7 @@ package taut
 
 import (
 	"os"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -18,12 +18,14 @@ import (
 func TestDataFlushWaitsForOneWriting(t *testing.T) {
 	d := newDataStore(t.TempDir())
 	writing, release := make(chan struct{}), make(chan struct{})
-	var once sync.Once
+	// the first flush to get here is held; any other passes (a sync.Once
+	// would hold them all: its Do waits for the first call)
+	var held atomic.Bool
 	hold := func() {
-		once.Do(func() {
+		if held.CompareAndSwap(false, true) {
 			close(writing)
 			<-release
-		})
+		}
 	}
 	dataFlushHook.Store(&hold)
 	t.Cleanup(func() { dataFlushHook.Store(nil) })
