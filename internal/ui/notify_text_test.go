@@ -81,7 +81,7 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 			t.Fatalf("%s: %v", c.name, err)
 		}
 		cm := &core.Message{TS: "1762520000.000100", User: m.User, Subtype: m.Subtype, Text: m.Text,
-			Doc: richtext.FromMessage(noResolver{}, &m), Attachments: m.RawAttachments}
+			Doc: richtext.FromMessage(noResolver{}, &m), Blocks: m.Blocks, Attachments: m.RawAttachments}
 		of := noteTextOf{
 			Blocks: func(raw json.RawMessage) string {
 				return noteBlocksText(richtext.FromMessage(noResolver{}, &slack.Message{Blocks: raw}).Blocks, nil)
