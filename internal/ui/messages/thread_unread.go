@@ -70,12 +70,17 @@ type AttentionHost interface {
 	UserAttention() bool
 }
 
-// threadRoot is the loaded root message.
+// threadRoot is the root message (rootMsg): the slice's first when the
+// slice starts with it, else the store's copy the model keeps
+// (thread_load.go), wherever the slice is.
 func (s *listState) threadRoot() (*core.Message, bool) {
-	if len(s.snap.msgs) == 0 || s.snap.msgs[0].m.TS != s.ts {
-		return nil, false
+	if len(s.snap.msgs) > 0 && s.snap.msgs[0].m.TS == s.ts {
+		return &s.snap.msgs[0].m, true
 	}
-	return &s.snap.msgs[0].m, true
+	if r := s.snap.th.root; r != nil && r.TS == s.ts && (s.snap.loaded || len(s.snap.msgs) > 0) {
+		return r, true
+	}
+	return nil, false
 }
 
 // threadSub is use_thread_subscription: followed, and its lastRead.

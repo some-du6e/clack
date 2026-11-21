@@ -133,6 +133,9 @@ type model struct {
 	// are the ones it brought that the model didn't have, marked while JS
 	// holds an older copy of the conversation (taut.MessagesAdded)
 	loadChanged, loadAdded []string
+
+	// th is a thread model's slice of the thread (thread_load.go)
+	th threadState
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -423,8 +426,10 @@ func (hb *hub) ensureLoaded(m *model) {
 	now := time.Now()
 	m.mu.Lock()
 	// a window loads with loadWindow and its pages (never from the newest
-	// page, which would leave a gap)
-	if m.win || m.loading || (m.loaded && now.Sub(m.fetched) < 30*time.Second) || now.Before(m.retryAt) {
+	// page, which would leave a gap); a thread's page out waits for it
+	// (thread_load.go)
+	if m.win || m.loading || (m.loaded && now.Sub(m.fetched) < 30*time.Second) || now.Before(m.retryAt) ||
+		m.threadTS != "" && (m.older || m.th.newer) {
 		m.mu.Unlock()
 		return
 	}
@@ -436,30 +441,7 @@ func (hb *hub) ensureLoaded(m *model) {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
 		if m.threadTS != "" {
-			msgs, err := hb.app.Replies(ctx, m.ch, m.threadTS)
-			seq := hb.app.EmitSeq()
-			if f := loadLanded.Load(); f != nil {
-				(*f)(m)
-			}
-			m.mu.Lock()
-			m.loadSeq = seq
-			m.loading = false
-			m.err = err
-			live := m.takeLive()
-			if err == nil {
-				m.setAll(msgs)
-				m.dropped = false // setAll is core's thread whole
-				m.keepLive(live)
-				m.loaded = true
-				m.fetched = time.Now()
-				m.fails, m.retryAt = 0, time.Time{}
-			} else {
-				m.failed(hb, err, false, time.Now())
-			}
-			m.markLoadChanged()
-			m.rev++
-			m.mu.Unlock()
-			hb.afterLoad(m)
+			hb.loadThreadSlice(ctx, m) // the slice at its start (thread_load.go)
 		} else {
 			p, err := hb.app.History(ctx, m.ch, "")
 			seq := hb.app.EmitSeq()
@@ -527,7 +509,7 @@ func HoldLoad(ch, threadTS string) (release func()) {
 func (hb *hub) afterLoad(m *model) {
 	m.mu.Lock()
 	c := m.reconv
-	if !m.loading && !m.older && !m.newer {
+	if !m.loading && !m.older && !m.newer && !m.th.newer {
 		m.reconv = core.RefChange{}
 	} else {
 		c = core.RefChange{} // another load is still out: it does this
@@ -1068,11 +1050,11 @@ func (m *model) upsert(msg core.Message, seq uint64) {
 
 // recording reports whether a load is out whose answer replaces what the
 // model holds, so the events meanwhile are kept for it (takeLive,
-// keepLive): a first load, and a window's page, whose answer is core's
-// whole window as it was when the page landed in core (WindowOlder,
-// WindowNewer). The conversation's older page only goes in front.
-// Callers hold m.mu.
-func (m *model) recording() bool { return m.loading || m.win && (m.older || m.newer) }
+// keepLive): a first load and a thread's page (loadOut, thread_load.go),
+// and a window's page, whose answer is core's whole window as it was when
+// the page landed in core (WindowOlder, WindowNewer). The conversation's
+// older page only goes in front. Callers hold m.mu.
+func (m *model) recording() bool { return m.loadOut() || m.win && (m.older || m.newer) }
 
 // noteLive records that an event changed (or deleted) ts while a load is
 // out (callers hold m.mu).
@@ -1214,6 +1196,9 @@ func (m *model) inRange(ts string) bool {
 // from Slack (msg-latency's oldestFromSlack), and the range is the same
 // (callers hold m.mu).
 func (m *model) covers(ts string) bool {
+	if m.threadTS != "" {
+		return m.threadCovers(ts) // the slice's range (thread_load.go)
+	}
 	if !m.hasMore {
 		return true
 	}
@@ -1363,23 +1348,19 @@ func (hb *hub) apply(ev core.Event) bool {
 			chm.mu.Unlock()
 		}
 		if thm != nil {
+			// the slice the pane draws takes it where it reaches
+			// (thread_load.go)
 			thm.mu.Lock()
-			thm.upsert(*ev.Msg, ev.EmitSeq)
-			thm.noteLive(ev.Msg.TS, false)
-			if ev.Type == "message" {
-				delete(thm.typing, ev.Msg.User)
+			if thm.applyThreadMsg(*ev.Msg, ev.EmitSeq, ev.Type == "message") {
+				changed = true
 			}
-			thm.rev++
 			thm.mu.Unlock()
-			changed = true
 		}
 		// A parent update (reply count) also refreshes an open thread's parent.
 		if ev.Msg.ThreadTS == "" || ev.Msg.ThreadTS == ev.Msg.TS {
 			if _, t2 := hb.models(ev.Channel, ev.Msg.TS); t2 != nil {
 				t2.mu.Lock()
-				t2.upsert(*ev.Msg, ev.EmitSeq)
-				t2.noteLive(ev.Msg.TS, false)
-				t2.rev++
+				t2.applyThreadMsg(*ev.Msg, ev.EmitSeq, false) // rootMsg, and its row where the slice holds it
 				t2.mu.Unlock()
 				changed = true
 			}
@@ -1398,11 +1379,15 @@ func (hb *hub) apply(ev core.Event) bool {
 				continue
 			}
 			m.mu.Lock()
+			held := false
 			if ev.ReplacesTS != "" && ev.ReplacesTS != ev.Msg.TS && m.find(ev.ReplacesTS) >= 0 {
 				m.remove(ev.ReplacesTS)
 				m.renames = append(m.renames, [2]string{ev.ReplacesTS, ev.Msg.TS})
+				held = true
 			}
-			m.upsert(*ev.Msg, ev.EmitSeq)
+			if m != thm || held || m.find(ev.Msg.TS) >= 0 || m.loaded && m.threadCovers(ev.Msg.TS) {
+				m.upsert(*ev.Msg, ev.EmitSeq) // a thread's slice: where it reaches (thread_load.go)
+			}
 			m.rev++
 			m.mu.Unlock()
 		}
@@ -1447,7 +1432,15 @@ func (hb *hub) apply(ev core.Event) bool {
 			return false
 		}
 		m.mu.Lock()
-		m.evict(ev.TS)
+		if m.threadTS != "" {
+			// a thread's slice lost messages wherever they were: the next
+			// draw reads the store's slice again (thread_load.go)
+			start := m.th.start
+			m.evict("")
+			m.th = threadState{start: start, root: m.th.root, gen: m.th.gen + 1}
+		} else {
+			m.evict(ev.TS)
+		}
 		m.mu.Unlock()
 		return true
 	case "typing":
@@ -1544,6 +1537,10 @@ func (hb *hub) apply(ev core.Event) bool {
 			m.fetched = time.Time{}
 			if ev.Type == "connection" && ev.Connected {
 				m.fails, m.retryAt, m.olderFails, m.olderRetryAt = 0, time.Time{}, 0, time.Time{}
+				if !ev.Fast {
+					m.th.newerFails, m.th.newerRetryAt = 0, time.Time{}
+					m.staleThreadEnd() // the slow connect's reset, as core's store made it (thread_load.go)
+				}
 			}
 			m.refreshQ = true
 			m.rev++
@@ -1752,6 +1749,8 @@ type snap struct {
 	around        string // the window's load is out for this message
 	newer         bool   // loading the page after the window
 	merged        bool   // the window met the newest messages: the list goes back to them
+	// th is a thread model's slice as it was (thread_load.go)
+	th threadState
 }
 
 func (m *model) snapshot(dst *snap) bool {
@@ -1763,6 +1762,7 @@ func (m *model) snapshot(dst *snap) bool {
 	dst.msgs = append(dst.msgs[:0], m.msgs...)
 	dst.hasMore, dst.lastRead, dst.loaded, dst.loading, dst.older, dst.err = m.hasMore, m.lastRead, m.loaded, m.loading, m.older, m.err
 	dst.newestMissing, dst.around, dst.newer, dst.merged = m.newestMissing, m.around, m.newer, m.merged
+	dst.th = m.th
 	dst.typing = dst.typing[:0]
 	now := time.Now()
 	for id, t := range m.typing {

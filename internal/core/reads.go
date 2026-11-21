@@ -113,79 +113,68 @@ func (a *App) Refresh(ctx context.Context, ch string) (Page, error) {
 	return a.History(ctx, ch, "")
 }
 
-// Replies returns a thread, parent first. Cached threads are live-updated
-// from realtime events; fresh forces a refetch. A reply's ts reads its
-// parent's thread (conversations.replies answers a reply's ts with it):
-// the pane opened with the reply's ts hands on to the parent's, which
-// then has it without a second fetch, and the reply is never watched,
-// polled or kept as a thread of its own.
+// Replies returns a thread as its pane would open on it, root first: the
+// slice at its default start (the last read of a followed thread, else
+// the root; thread_pages.go), from memory when held, else one or two
+// replies reads of 28 (requestReplies). It never reads the whole thread.
+// A reply's ts reads its parent's thread at the reply: conversations.replies
+// answers a reply's ts with its parent's thread, which repliesOne and
+// repliesAround keep under the parent's key (replyRooted), so the pane
+// opened with the reply's ts finds the reply in what it draws and hands
+// on to the parent's (ReplyAsThreadRoot), which then has the page without
+// a second read, and the reply is never watched, polled or kept as a
+// thread of its own.
 func (a *App) Replies(ctx context.Context, ch, ts string) ([]Message, error) {
-	key := ts
 	if p, ok := a.ReplyParent(ch, ts); ok {
-		key = p
+		return a.repliesAt(ctx, ch, p, ts)
 	}
-	a.watch(ch, key)
-	a.noteAccess(ch + "/" + key)
-	msgs, ok := a.S.Thread(ch, key)
-	if !ok {
-		if err := a.fetchThread(ctx, ch, key); err != nil {
-			return nil, err
-		}
-		if p, ok := a.ReplyParent(ch, key); ok { // the fetch found ts was a reply
-			key = p
-		}
-		msgs, _ = a.S.Thread(ch, key)
+	sl, err := a.ThreadAt(ctx, ch, ts, a.threadDefaultStart(ch, ts))
+	if err != nil {
+		return nil, err
 	}
-	a.SubscribePresence(rowUsers(msgs))
-	return a.messages(ch, msgs), nil
+	if p, ok := a.ReplyParent(ch, ts); ok { // the read found ts was a reply
+		return a.repliesAt(ctx, ch, p, ts)
+	}
+	return threadMsgs(sl, ts), nil
 }
 
-// RefreshReplies refetches a thread (replacing the cached copy).
+// repliesAt is Replies for thread ts of ch started at its reply start.
+func (a *App) repliesAt(ctx context.Context, ch, ts, start string) ([]Message, error) {
+	sl, err := a.ThreadAt(ctx, ch, ts, start)
+	if err != nil {
+		return nil, err
+	}
+	return threadMsgs(sl, ts), nil
+}
+
+// RefreshReplies reads the thread's default start again from the server
+// (requestReplies around it, the answers over the cached copies), then
+// returns it as Replies does.
 func (a *App) RefreshReplies(ctx context.Context, ch, ts string) ([]Message, error) {
-	if err := a.fetchThread(ctx, ch, ts); err != nil {
+	start := a.threadDefaultStart(ch, ts)
+	if err := a.RequestReplies(ctx, ch, ts, start, start); err != nil {
 		return nil, err
 	}
 	return a.Replies(ctx, ch, ts)
 }
 
-func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
-	return a.once("r:"+ch+"/"+ts, func() error {
-		pins, live, subs := a.S.PinSeq(), a.S.LiveSeq(), a.S.SubSeq()
-		var all []slack.Message
-		cursor := ""
-		for {
-			page, next, err := a.C.Replies(ctx, ch, ts, cursor)
-			if err != nil {
-				return err
-			}
-			all = append(all, page...)
-			if next == "" {
-				break
-			}
-			cursor = next
+// ThreadNewest is the newest slice of a thread, root first: the last
+// slice of a history that reached its end, else the page up to the
+// root's latest_reply (requestReplies around it). Undoing the viewer's
+// last send reads it.
+func (a *App) ThreadNewest(ctx context.Context, ch, ts string) ([]Message, error) {
+	sl := a.ThreadSliceAt(ch, ts, "")
+	if sl.Empty() {
+		start := ts
+		if r, ok := a.threadRoot(ch, ts); ok && r.LatestReply != "" {
+			start = r.LatestReply
 		}
-		// the replies' people are asked for as rows draw them (lazy_users.go)
-		// the root's thread subscription, as the answer has it unless an
-		// event moved it meanwhile (store/thread_subs.go)
-		a.S.SyncSubs(ch, subs, all)
-		key := ts
-		if parent := replyParentIn(all, ts); parent != "" { // a reply's ts: its parent's thread
-			a.replyRooted(ch, ts, parent)
-			key = parent
+		var err error
+		if sl, err = a.ThreadAt(ctx, ch, ts, start); err != nil {
+			return nil, err
 		}
-		// a reply changed, deleted or posted while the request was out
-		// keeps the socket's copy (store/live.go)
-		a.S.SetThreadSince(ch, key, all, live)
-		all, _ = a.S.Thread(ch, key)
-		a.S.SyncPins(ch, pins, all)
-		a.announceReads() // a revision the store held another of, pinned as it is now (read_changes.go)
-		for i := range all {
-			if needsFileInfo(&all[i]) {
-				go a.fillFiles(ch, all[i].TS)
-			}
-		}
-		return nil
-	})
+	}
+	return threadMsgs(sl, ts), nil
 }
 
 // hydrate fetches messages by (channel, ts): memory first, then one

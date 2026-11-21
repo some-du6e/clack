@@ -120,6 +120,7 @@ type listState struct {
 	// opens again (ThreadView.Reopen) and when the list lets go of its
 	// messages (releaseEvicted)
 	rootHandedOn bool
+	tl           threadList // the thread list's paging (thread_load.go)
 	positioned   bool
 	markedTS     string
 	lastMark     time.Time
@@ -893,6 +894,11 @@ func (s *listState) build(h Host, now time.Time) {
 	unreadPlaced := false
 	if s.thread {
 		s.decideThreadRead()
+		// getThreadRowsAndKeys' "loading-start-<first reply>" row over a
+		// slice short of the thread's start (thread_load.go)
+		if len(msgs) > 0 && s.snap.loaded && !s.snap.th.reachedStart {
+			s.items = append(s.items, item{kind: itLoading, key: "loading-start-" + msgs[0].m.TS})
+		}
 	}
 	for i := 0; i < len(msgs); i++ {
 		m := &msgs[i].m
@@ -972,9 +978,10 @@ func (s *listState) build(h Host, now time.Time) {
 	if !s.thread && s.snap.newer {
 		s.items = append(s.items, item{kind: itLoading, key: "loading-newer"})
 	}
-	if s.thread && !s.snap.loaded && len(msgs) > 0 && s.snap.err == nil {
+	if s.thread && len(msgs) > 0 && (!s.snap.loaded && s.snap.err == nil || s.snap.loaded && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd) {
 		// getThreadRowsAndKeys' "loading-end" row: some messages are in
-		// (the root, a live reply) before the replies are (thread.go)
+		// (the root, a live reply) before the replies are (thread.go), or
+		// the slice stops short of the thread's end (thread_load.go)
 		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
 	}
 	if cap(s.heights) < len(s.items) {
@@ -1349,11 +1356,15 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	if s.pendingJump != "" && s.thread && s.snap.loaded && !s.snap.loading && s.built == s.snap.rev {
-		// a thread loads whole (ThreadView.JumpTo): sync() placed the
-		// jump if the thread holds it, so it isn't coming
+		// the slice the jump moved the pane to is in (ThreadView.JumpTo,
+		// thread_load.go): sync() placed the jump if the slice holds it,
+		// so it isn't coming
 		s.pendingJump = ""
 	}
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
+	if s.thread {
+		s.threadPaging(gtx, h, size, now) // pages before and after the slice (thread_load.go)
+	}
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
 		if s.hb.loadOlder(s.m) {
@@ -2586,13 +2597,15 @@ func (s *listState) placeJump(now time.Time) {
 }
 
 // placeThreadJump is a thread pane's jump (ThreadView.JumpTo) once the
-// whole thread is in: a pane that just opened starts at
-// getThreadStartPosition's message (threadStart: the reply 100px under the
-// top, or at the top when it's an unread one at or before the last read),
-// and one already showing the thread scrolls that message's top to the
-// list's top unless its top is on screen (scrollToKey lazy, the thread
-// list's anchor line at the top). A ts the thread doesn't hold starts it
-// at the newest message at or before it, else at its top.
+// slice it asked for is in (jumpThread: the store's slice at the reply,
+// read around it when the store has none; thread_load.go): a pane that
+// just opened starts at getThreadStartPosition's message (threadStart:
+// the reply 100px under the top, or at the top when it's an unread one at
+// or before the last read), and one already showing the thread scrolls
+// that message's top to the list's top unless its top is on screen
+// (scrollToKey lazy, the thread list's anchor line at the top). A ts the
+// slice doesn't hold starts it at the newest message at or before it,
+// else at its top.
 func (s *listState) placeThreadJump(now time.Time) {
 	if s.pendingJump == "" || !s.snap.loaded || s.snap.loading || s.built != s.snap.rev {
 		return

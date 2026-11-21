@@ -74,6 +74,8 @@ func (a *App) threadFocusUnmount() {
 		split = r.Channel() + "/" + r.Thread()
 	}
 	f := &a.threadFocus
+	a.threadPaneLeft(f.pane, side, split) // its history (thread_close.go)
+	a.threadPaneLeft(f.split, split, side)
 	if f.pane != "" && side == "" {
 		a.cancelThreadFocusInput(f.pane)
 	}

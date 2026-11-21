@@ -140,6 +140,9 @@ func (a *App) jumpViaRoutes(ch, ts, thread string) {
 	prev := a.router.Current()
 	switch {
 	case thread != "":
+		if ts != "" && a.pane != paneSplit && !a.splitClick() {
+			a.threadStartAt(ch, thread, ts) // jumpToThreadReply: before the pane mounts (thread_close.go)
+		}
 		// highlightRoot gives the primary a startTs (the root), so the
 		// navigation isn't an entry without one (determineTimestamps)
 		a.navHasStart = true
@@ -471,6 +474,7 @@ func (a *App) JumpPane(ch, thread, ts string) {
 	}
 	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if thread != "" {
+		a.threadStartAt(ch, thread, ts) // before convoFor mounts the pane (thread_close.go)
 		if j, ok := a.convoFor(ch, thread).list.(interface{ JumpTo(ts string, flash bool) }); ok {
 			j.JumpTo(ts, true)
 		}

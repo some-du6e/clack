@@ -822,6 +822,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 func (s *Server) Close() error {
 	searchLogs.Delete(s)
 	pageLogs.Delete(s)
+	hugeStates.Delete(s) // huge_thread.go
 	viewsStates.Delete(s)
 	threadsAuditStates.Delete(s)
 	agentDMStates.Delete(s)
@@ -1476,6 +1477,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleHugeThread(method, f); handled { // huge_thread.go
+		return out
+	}
 	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go
 		return out
 	}

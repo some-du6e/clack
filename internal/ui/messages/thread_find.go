@@ -270,7 +270,14 @@ func (v *ThreadView) findGo(gtx layout.Context, i int) {
 	}
 	f.index = i
 	ts := f.results[i]
-	v.s.scrollToFind(ts, dp(gtx, 200))
+	v.s.tl.findPend = ""
+	if !v.s.scrollToFind(ts, dp(gtx, 200)) {
+		// loadAndScrollToTs: the slice doesn't hold it, older pages until
+		// it does (thread_load.go threadPaging), then the scroll and the
+		// flash
+		v.s.tl.findPend, v.s.tl.findOff = ts, dp(gtx, 200)
+		return
+	}
 	v.s.findFlash, v.s.findFlashAt = ts, gtx.Now
 }
 
