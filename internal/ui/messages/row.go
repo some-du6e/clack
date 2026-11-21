@@ -61,9 +61,14 @@ import (
 type row struct {
 	ts  string
 	rev uint32
-	bk  bkState      // live Block Kit elements (blockkit.go)
-	src core.Message // the message as core has it
-	m   core.Message // what the row draws: src, or src with a plugin's msg
+	bk  bkState // live Block Kit elements (blockkit.go)
+	// bkView is the row's drawing of its message's elements
+	// (blockkit.InView): its plans' toggles and height transitions are
+	// its own, apart from the same message elsewhere (a thread's root in
+	// the channel and in the pane)
+	bkView uint64
+	src    core.Message // the message as core has it
+	m      core.Message // what the row draws: src, or src with a plugin's msg
 
 	rv      *richview.View
 	handler richHandler
@@ -453,8 +458,28 @@ func (r *row) rvOpts() richview.Options {
 	if o.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 		o.EditedBy = r.editedBy()
+	} else if r.m.Stopped { // insertMessageLabelIntoBlocks: "(stopped)" only without "(edited)"
+		o.Stopped, o.StoppedBy = true, r.stoppedBy()
 	}
 	return o
+}
+
+// stoppedBy is the name in StoppedLabel's "(stopped by {name})" (J825):
+// under agents_streaming_stop_button_fe, when someone other than the
+// viewer stopped the stream; "" draws "(stopped)".
+func (r *row) stoppedBy() string {
+	id := r.m.StoppedBy
+	if id == "" || r.rc == nil || r.rc.h == nil || id == r.rc.selfID {
+		return ""
+	}
+	app := r.rc.h.Core()
+	if app == nil || app.Experiment("agents_streaming_stop_button_fe") != "on" {
+		return ""
+	}
+	if u, ok := app.User(id); ok && u.Name != "" {
+		return u.Name
+	}
+	return "" // the lookup asked for the member; "names" draws it again
 }
 
 // displaysEdited is Slack's shouldDisplayAsEdited (core.Message.DisplaysEdited):

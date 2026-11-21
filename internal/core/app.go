@@ -1551,6 +1551,9 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	v.StreamingState = m.StreamingState
 	v.WorkflowID, v.TriggerID = m.WorkflowID, m.TriggerID
 	v.AgentSession, v.AssistantThread = m.AgentSession, m.AssistantAppThread
+	if c := m.AIContext; c != nil && c.ResultStatus == "stopped_by_user" { // vshb getMessageLabelValues
+		v.Stopped, v.StoppedBy = true, c.StoppedByUserID
+	}
 	v.FunctionExecutionID = m.FunctionExecutionID
 	v.Locked, v.LockedByTeam = m.IsLocked, m.LockedByTeamID
 	if dc := m.DocumentComment; dc != nil {

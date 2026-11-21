@@ -60,6 +60,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	if a.chBodyW > 0 && a.chBodyW < sz.X {
 		body.Max.X = a.chBodyW
 	}
+	if dm != nil && dm.Tab() == "tasks" { // an agent's Tasks tab (agent_tasks_tab.go)
+		atExact(gtx, body.Min, body.Size(), a.agentTasksTab(ch).Layout)
+		return layout.Dimensions{Size: sz}
+	}
 	if dm != nil && dm.Tab() != "messages" {
 		atExact(gtx, body.Min, body.Size(), dm.LayoutBody)
 		return layout.Dimensions{Size: sz}

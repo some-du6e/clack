@@ -47,7 +47,10 @@ func (r *row) withElements(h Host) {
 		return
 	}
 	o := r.rvOpts()
-	o.Elements = el
+	if r.bkView == 0 {
+		r.bkView = blockkit.NewViewID()
+	}
+	o.Elements = blockkit.InView(el, r.bkView)
 	r.rv.SetOptions(o)
 }
 
@@ -88,7 +91,10 @@ func (r *row) withElementsFor(h Host, msg slackc.Props) {
 		return
 	}
 	o := r.rvOpts()
-	o.Elements = r.ovEl.el
+	if r.bkView == 0 {
+		r.bkView = blockkit.NewViewID()
+	}
+	o.Elements = blockkit.InView(r.ovEl.el, r.bkView) // the row's own drawing, as withElements'
 	r.rv.SetOptions(o)
 }
 

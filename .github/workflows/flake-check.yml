@@ -1482,6 +1482,30 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestThreadReplyLatency$' ./internal/ui || rc=1
           exit $rc
 
+  # agent-blocks: the agent block and label tests (app-tasks-tab rounds
+  # 2-3): plan and task content cut with Show more, MCP cards closing,
+  # height transitions on update, task icons, the stopped label, through
+  # core, richview, messages and blockkit. Dispatch with only=agent-blocks.
+  agent-blocks:
+    if: ${{ !inputs.only || startsWith('agent-blocks', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core, richview, messages, blockkit: the agent tests, COUNT times"
+        run: |
+          rc=0
+          go test -count=$COUNT -timeout 30m -run 'TestAgent' ./internal/core ./internal/ui/richview || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run 'TestAgent' ./internal/ui/messages ./internal/ui/blockkit || rc=1
+          exit $rc
+
   # toast-names: a toast names the members its message mentions, those the
   # store didn't hold when the message came too (α.110's review: "@U07DANA
   # can you join?"; core announces a message before fetching anyone it

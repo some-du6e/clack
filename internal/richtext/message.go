@@ -68,8 +68,20 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 			d.Blocks = append(d.Blocks, c.fileBlock(&m.Files[i]))
 		}
 	}
+	var agentChannels []Block
 	for i := range m.Attachments {
 		a := &m.Attachments[i]
+		if u := a.AgentChannelUnfurl; u != nil && u.ChannelID != "" {
+			// MessageKitAttachments: an agent_channel_unfurl is never a
+			// legacy attachment; it is a CodeChannelEntityCard (surface
+			// MessageUnfurl), after the message's other attachments. The
+			// element host draws it (Buttons[0]: kind agent_channel_unfurl,
+			// the channel id); Spans is the fallback without one.
+			agentChannels = append(agentChannels, Block{Kind: Agent,
+				Buttons: []Button{{Kind: AgentChannelUnfurlKind, BlockID: u.ChannelID}},
+				Spans:   plainSpans(c.r, firstNonEmpty(a.Fallback, u.ChannelName))})
+			continue
+		}
 		if b, ok := c.attachment(a); ok {
 			if at := b.Att; at != nil {
 				if a.ID != 0 {
@@ -82,6 +94,7 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 			d.Blocks = append(d.Blocks, b)
 		}
 	}
+	d.Blocks = append(d.Blocks, agentChannels...)
 	if e, ok := r.(emojiTexter); ok && e.EmojiAsText() { // emoji_mode as_text (highlight.go)
 		EmojiToText(d.Blocks)
 		d.Jumbo = false

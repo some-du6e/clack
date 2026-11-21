@@ -81,8 +81,11 @@ func (a *legacyAction) UnmarshalJSON(b []byte) error {
 // (richview.Elements): it maps richview's buttons back to the message's
 // Block Kit elements and draws them.
 type Message struct {
-	h      Host
-	m      core.Message
+	h Host
+	m core.Message
+	// inst is the drawing instance a call is for (InView: a row, a view's
+	// list; 0, the shared default), whose agent block state is its own
+	inst   uint64
 	sig    []byte
 	blocks []Block
 	atts   []attachment
@@ -103,6 +106,8 @@ type Message struct {
 	// resetKey generation).
 	gen uint32
 	ver atomic.Uint32
+	// acu is the agent_channel_unfurl props by channel (agentChannel)
+	acu map[string]popups.EntityProps
 	gtx layout.Context
 	ops op.Ops
 	// used is when the host was last looked up or drawn, drawn the frame

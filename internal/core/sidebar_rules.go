@@ -158,6 +158,9 @@ var defaultExperimentGroups = map[string]string{
 	"slackified_checkbox": "on", "slack_kit_v2_button": "on", "status_improvements": "on",
 	"unarchive_channel_banner_polish": "on", "unified_files_3p_primary_custom_sections": "on",
 	"updated_scheduled_sends_desktop": "on", "vip_section_pref": "on", "workflow_execution_window": "on",
+	// an agent task's schedule line (agent_task_schedule.go)
+	"wfb_schedule_on_last_day_of_month": "on", "wfb_scheduled_trigger_time_buckets": "on",
+	"slackbot_mcp_tasks_card_auto_collapse_when_complete": "on", // a task card closes when done (ui/blockkit/agent.go)
 }
 
 func (a *App) sidebarExperiments() sidebarExp {
