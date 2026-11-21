@@ -258,7 +258,8 @@ func (s *Server) handleHugeThread(method string, f url.Values) (any, bool) {
 		}
 		ts := h.replyTS(i)
 		item := map[string]any{"key": "fa-huge-thread", "feed_ts": ts, "is_unread": true, "is_bot": false,
-			"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": ts, "channel": h.t.Channel, "author_user_id": author}}}
+			"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": ts, "channel": h.t.Channel, "thread_ts": h.t.Root,
+				"is_broadcast": false, "author_user_id": author}}}
 		return ok("items", []any{item}, "response_metadata", map[string]any{"next_cursor": ""}), true
 	case "messages.list":
 		var want []struct {

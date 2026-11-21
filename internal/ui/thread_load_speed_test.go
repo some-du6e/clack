@@ -74,21 +74,27 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 	heap0 := liveHeapMB()
 	t.Logf("heap before any open: %.1f MB", heap0)
 
-	// opened runs frames from the open until the pane draws ts, and logs
-	// how long that took and in how many frames
+	// opened runs frames from the open until the pane lays ts's row out
+	// on screen (a frame after the open: a closed pane keeps its rows),
+	// and logs how long that took and in how many frames
 	opened := func(what, ts string, open func()) {
 		t.Helper()
 		t0 := time.Now()
 		open()
-		frames := 0
+		frames := 1
+		e.frame()
 		e.until(what+": the first replies drawn", 20*time.Second, func() bool {
 			frames++
 			tv := e.threadView(ch, root)
 			if tv == nil {
 				return false
 			}
-			_, _, ok := tv.RowText(ts)
-			return ok
+			for _, r := range tv.RowRects() {
+				if r.TS == ts {
+					return true
+				}
+			}
+			return false
 		})
 		el := time.Since(t0)
 		t.Logf("%s: first replies drawn %v after the open, in %d frames; %d replies requests so far", what, el.Round(time.Millisecond), frames, len(fs.HugeThreadRequests()))

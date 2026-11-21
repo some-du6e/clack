@@ -138,8 +138,8 @@ func TestThreadOpensLikeSlack(t *testing.T) {
 	if s0 := a.ThreadSliceAt(ch, root, root); len(s0.Msgs) != 56 {
 		t.Errorf("the root's slice: %d messages", len(s0.Msgs))
 	}
-	if all := len(fs.HugeThreadRequests()); all != 6 {
-		t.Errorf("%d replies reads in all, want 6", all)
+	if all := len(fs.HugeThreadRequests()); all != 5 {
+		t.Errorf("%d replies reads in all, want 5 (the root's page, loadPost, two around the reply, loadPre)", all)
 	}
 	// the messages store holds only what was read: the root and 55+82 replies
 	if held, _ := a.S.Thread(ch, root); len(held) != 1+55+82 {

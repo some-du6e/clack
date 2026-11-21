@@ -288,6 +288,8 @@ var experimentReads = map[string][]string{
 	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,
 	"activity_bot_item_type_reads": on, "activity_automations_only": on, "exclude_automations_filter": on,
 	"agent_status_in_activity": on, "agent_command_center": on,
+	// the thread pane's first page (thread_pages.go: requestReplies, gOq3)
+	"threads_perf_quality": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on,
