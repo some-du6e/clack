@@ -1,7 +1,10 @@
 package css
 
 import (
+	"fmt"
 	"image/color"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -132,5 +135,54 @@ func TestRootTokensDeclares(t *testing.T) {
 	// Color's own still follows the chain
 	if _, own, ok := dark.Color("var(--dt_color-theme-content-imp)"); !ok || !own {
 		t.Errorf("content-imp over the declared ramp: own=%v ok=%v", own, ok)
+	}
+}
+
+// The main window's theme hands its tokens to the huddle windows (huddleui
+// window_theme.go, invitewin.go, preview.go), which resolve them on their
+// own goroutines while the main window goes on resolving them on its own.
+// A lookup fills the memo, so two goroutines' first lookups wrote one map
+// at once: "fatal error: concurrent map writes" takes the whole client
+// down, and -race reports it. Every goroutine gets every token right.
+func TestRootTokensConcurrentUse(t *testing.T) {
+	const names, goroutines, rounds = 600, 8, 12
+	var sheet strings.Builder
+	sheet.WriteString(themeSel + "{--dt_color-base-pry:#2e3440 !important;")
+	for i := 0; i < names; i++ {
+		fmt.Fprintf(&sheet, "--clack-x%d:var(--dt_color-base-pry);", i)
+	}
+	sheet.WriteString("}\n.p-theme_background{background:#2e3440 !important;}")
+	e := NewEngine()
+	e.Set("slick:theme", sheet.String())
+	want := color.NRGBA{0x2e, 0x34, 0x40, 0xff}
+	for r := 0; r < rounds; r++ {
+		tk := e.RootTokens(Env{Dark: true}) // a fresh memo each round
+		start := make(chan struct{})
+		errs := make(chan string, goroutines)
+		var wg sync.WaitGroup
+		for g := 0; g < goroutines; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				if c, ok := tk.Background("p-theme_background"); !ok || c != want {
+					errs <- fmt.Sprintf("the window background is %v %v", c, ok)
+					return
+				}
+				for i := 0; i < names; i++ {
+					n := (i*7 + g*names/goroutines) % names // each goroutine starts elsewhere
+					if c, own, ok := tk.Color(fmt.Sprintf("var(--clack-x%d)", n)); !ok || !own || c != want {
+						errs <- fmt.Sprintf("--clack-x%d = %v own=%v ok=%v", n, c, own, ok)
+						return
+					}
+				}
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for msg := range errs {
+			t.Fatalf("round %d: %s, want %v", r, msg, want)
+		}
 	}
 }

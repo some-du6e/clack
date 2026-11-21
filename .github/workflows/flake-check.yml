@@ -454,7 +454,9 @@ jobs:
 
   # huddle-polish (2026-11-19, Karim's α.112 huddle report): the static
   # (the transpiled libopus on a goroutine whose stack moves mid-call),
-  # Test Speaker, and the huddle window in your theme (pictures)
+  # Test Speaker, the docked bar's states, the huddle window in your theme
+  # (pictures) and the stylesheet tokens its theme shares with the main
+  # window's
   huddle-polish:
     if: ${{ !inputs.only || startsWith('huddle-polish', inputs.only) }}
     runs-on: ubuntu-latest
@@ -476,7 +478,7 @@ jobs:
         run: go test -count=$COUNT -v -run '^(TestTestSpeakerIconLikeSlack|TestTestSpeakerKeepsTheMusic|TestSpeakerPickPlaysOnTheNewOutput|TestAudioSettingsMenu)$' ./internal/ui/huddleui
       - name: "huddleui: the docked bar's states (Slack's HuddleBottomBar rule)"
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -run '^(TestDockStatesLikeSlack|TestDockHiddenForAnExternalGuestLikeSlack)$' ./internal/ui/huddleui
+        run: go test -count=$COUNT -v -run '^(TestDockStatesLikeSlack|TestDockHiddenForAnExternalGuestLikeSlack|TestExternalGuestWindowFollowsYourTheme)$' ./internal/ui/huddleui
       - name: "huddleui: the huddle window in your theme (Mesa llvmpipe)"
         if: ${{ !cancelled() }}
         env:
@@ -485,6 +487,13 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a go test -count=$COUNT -v -run '^TestHuddleWindowFollowsYourTheme$' ./internal/ui/huddleui
+      - name: "css: a stylesheet's root tokens resolved on several goroutines at once (the huddle windows share the main window's; plain and -race)"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^TestRootTokensConcurrentUse$' ./internal/ui/slackc/css || rc=1
+          go test -race -count=$COUNT -v -run '^TestRootTokensConcurrentUse$' ./internal/ui/slackc/css || rc=1
+          exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

@@ -53,7 +53,9 @@ type winTheme struct {
 
 // noteMainTheme keeps a copy of the main window's theme for the huddle
 // window, and redraws the window when it changed. The main window's
-// goroutine: Start, and the docked bar's every frame (LayoutDock).
+// goroutine: Start, and every frame of the main window (DockHeight, with
+// or without a bar). The palette is a copy; the stylesheet tokens are the
+// main window's own (css.RootTokens are safe for concurrent use).
 func (c *Controller) noteMainTheme(th *theme.Theme) {
 	if th == nil {
 		return

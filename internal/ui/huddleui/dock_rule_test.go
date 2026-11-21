@@ -84,3 +84,33 @@ func TestDockHiddenForAnExternalGuestLikeSlack(t *testing.T) {
 		t.Error("with external huddles off an external guest lost the bar")
 	}
 }
+
+// An external guest has no bar, so the main window draws none, and the
+// huddle window must still follow the main window's theme: the main
+// window's every frame asks DockHeight first, which notes it
+// (window_theme.go).
+func TestExternalGuestWindowFollowsYourTheme(t *testing.T) {
+	e := newShotEnv(t, false)
+	e.join(nil, nil)
+	app := e.h.app
+	me, ok := app.S.User(huddle.FakeSelfUser)
+	if !ok {
+		t.Fatal("no self user")
+	}
+	g := *me
+	g.IsRestricted, g.RestrictedUserType = true, "external_guest"
+	app.S.PutUsers([]slack.User{g})
+	app.SetExperimentGroup(extHuddles, "on")
+	main := e.h.th
+	var ops op.Ops
+	frame := func() int { return e.c.DockHeight(shotCtx(&ops, 1000, 200)) }
+	if h := frame(); h != 0 {
+		t.Fatalf("an external guest has a %d px bar", h)
+	}
+	main.SetDark(!main.Dark) // you switch the mode mid-huddle
+	frame()
+	if wt := e.c.mainTheme(); !wt.set || wt.dark != main.Dark || wt.gen != main.Gen {
+		t.Errorf("the huddle window has your theme as dark=%v, gen %d (set %v); the main window's is dark=%v, gen %d",
+			wt.dark, wt.gen, wt.set, main.Dark, main.Gen)
+	}
+}

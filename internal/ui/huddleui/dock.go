@@ -111,10 +111,16 @@ func (c *Controller) dockCollapsed() bool {
 // DockHeight is the room the docked bar takes at the bottom of the main
 // window (0 when you're not in a huddle).
 func (c *Controller) DockHeight(gtx C) int {
+	if !c.Active() {
+		return 0
+	}
+	// the main window's every frame asks this first, bar or none: the
+	// huddle window follows its theme (window_theme.go)
+	c.noteMainTheme(c.h.Theme())
 	// HuddleBottomBar (render nMFj): `!_ && (p || u || c)`, the bar
 	// whenever you're in a huddle, except for an external guest when
 	// external huddles are on (_ = SfHq U)
-	if !c.Active() || c.selfExternalGuest() {
+	if c.selfExternalGuest() {
 		return 0
 	}
 	h := gtx.Dp(dockBar)
@@ -143,7 +149,7 @@ func (c *Controller) LayoutDock(gtx C, th *theme.Theme) D {
 	if sz.Y == 0 {
 		return D{}
 	}
-	c.noteMainTheme(th)                    // the huddle window follows it (window_theme.go)
+	c.noteMainTheme(th)                    // the theme the bar draws in (DockHeight noted the host's)
 	if slackc.Patched("HuddleMiniPanel") { // LetMeSee adds after it
 		var room, ch string
 		if s := c.Session(); s != nil {
