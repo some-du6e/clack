@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"sync/atomic"
 
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 )
@@ -115,13 +116,7 @@ var slackInternalBots = map[string]bool{"B01": true, "BSLACKBOT": true, "B03": t
 // UTBD), or "U" or "W" and eight or more of A-Z0-9, an "@" before it
 // allowed. getMemberById fetches only ids that look like this; any other
 // is a non-existent member at once.
-func LooksLikeMemberID(id string) bool {
-	switch id {
-	case "USLACKBOT", "USEARCH", "UCHANNELEXPERT", "USLACK", "UTBD":
-		return true
-	}
-	return navMemberID.MatchString(id)
-}
+func LooksLikeMemberID(id string) bool { return richtext.LooksLikeMemberID(id) }
 
 // msgNames is the resolver message docs are built with: a user mention
 // takes the member's name if the store holds it, without asking for a

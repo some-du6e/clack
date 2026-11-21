@@ -24,6 +24,9 @@ func (l *lay) bodyStyle() flowStyle {
 	if l.opts.Color.A != 0 {
 		col = l.opts.Color
 	}
+	if l.ink.A != 0 {
+		col = l.ink
+	}
 	size, lh := l.st.TextSize, l.st.LineHeight
 	if l.opts.Compact {
 		size, lh = 13, 19.5
@@ -87,6 +90,8 @@ func isTextual(k richtext.BlockKind) bool {
 //	actions       elements 8px top, block 8px bottom
 //	table         padding 4px 0 (tableMargin)
 //	error         0 0 6px             ("This content could not be displayed.")
+//	alert         8px 0               (kept on the first block)
+//	call, callout, loading            none of their own
 //
 // rich_text has none of its own; its quotes and pre blocks keep their 4px.
 func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
@@ -96,6 +101,17 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 			return l.dp(4), 0, l.dp(4)
 		case richtext.FileBlock, richtext.AttachmentBlock:
 			return l.dp(4), 0, l.dp(8)
+		case richtext.RichHeader: // .p-rich_text_header{margin:1em 0 4px}, none above the block's first
+			top := l.dp(15)
+			if b.Level == 1 {
+				top = l.dp(18)
+			}
+			if b.First {
+				top = 0
+			}
+			return top, top, l.dp(4)
+		case richtext.RichDivider: // .p-rich_text_divider{margin:8px 0}
+			return l.dp(8), l.dp(8), l.dp(8)
 		}
 		return 0, 0, 0
 	}
@@ -104,7 +120,12 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return l.dp(8), 0, l.dp(4)
 	case richtext.Header:
 		return l.dp(15), l.dp(4), l.dp(4)
-	case richtext.Divider, richtext.Actions:
+	case richtext.Actions:
+		if actionsEmpty(b.Buttons) { // .p-actions_block{margin-bottom:8px}: the 8px above is its elements'
+			return 0, 0, l.dp(8)
+		}
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.Divider:
 		return l.dp(8), l.dp(8), l.dp(8)
 	case richtext.Context, richtext.Table:
 		return l.dp(4), l.dp(4), l.dp(4)
@@ -114,12 +135,24 @@ func (l *lay) margins(b *richtext.Block) (top, first, bottom int) {
 		return 0, 0, l.dp(6)
 	case richtext.UnknownBlock:
 		return l.dp(8), 0, l.dp(8)
+	case richtext.AlertBlock: // .alertBlock (kitcards.go); the first block keeps it
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.CardBlock: // .card{margin:8px 0}, kept on the first block
+		return l.dp(8), l.dp(8), l.dp(8)
+	case richtext.ContainerBlock: // .containerBlock{margin-top:16px;margin-bottom:8px}, kept on the first block
+		return l.dp(16), l.dp(16), l.dp(8)
 	}
-	return 0, 0, 0
+	return 0, 0, 0 // call, callout, loading: no margins of their own
 }
 
 // gapBetween is the vertical space between two consecutive blocks.
 func (l *lay) gapBetween(prev, cur *richtext.Block) int {
+	if !prev.Kit && !cur.Kit && (richMargined(prev.Kind) || richMargined(cur.Kind)) {
+		// siblings in one rich_text block: their margins collapse
+		_, _, b := l.margins(prev)
+		t, _, _ := l.margins(cur)
+		return max(b, t)
+	}
 	if prev.Kit || cur.Kit {
 		_, _, b := l.margins(prev)
 		t, _, _ := l.margins(cur)
@@ -142,11 +175,17 @@ func (l *lay) gap(prev, cur richtext.BlockKind) int {
 	return l.dp(4)
 }
 
+// richMargined is a rich_text element with margins of its own (a header,
+// a divider).
+func richMargined(k richtext.BlockKind) bool {
+	return k == richtext.RichHeader || k == richtext.RichDivider
+}
+
 // lastTextual returns the index of the block that gets the "(edited)" label.
 func lastTextual(bs []richtext.Block) int {
 	for i := len(bs) - 1; i >= 0; i-- {
 		switch bs[i].Kind {
-		case richtext.Paragraph, richtext.Quote, richtext.List, richtext.Section, richtext.Header, richtext.Preformatted:
+		case richtext.Paragraph, richtext.Quote, richtext.List, richtext.Section, richtext.Header, richtext.Preformatted, richtext.RichHeader:
 			if len(bs[i].Children) > 0 {
 				return -1
 			}
@@ -189,7 +228,7 @@ func editedPlace(bs []richtext.Block) (in, after int) {
 	}
 	switch b := &bs[last]; {
 	case b.Kit:
-	case b.Kind == richtext.Paragraph || b.Kind == richtext.Quote || b.Kind == richtext.List || b.Kind == richtext.Preformatted:
+	case b.Kind == richtext.Paragraph || b.Kind == richtext.Quote || b.Kind == richtext.List || b.Kind == richtext.Preformatted || b.Kind == richtext.RichHeader:
 		if len(b.Children) == 0 {
 			return last, -1
 		}
@@ -306,7 +345,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	}
 	editedDone := false
 	var gal []*richtext.File
-	if top && len(bs) > 0 && bs[0].Kit {
+	if top && len(bs) > 0 && (bs[0].Kit || richMargined(bs[0].Kind)) {
 		_, first, _ := l.margins(&bs[0])
 		y += first
 	}
@@ -447,7 +486,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		h, _ := l.flow(x, y, w, &fs)
 		y += h
 	}
-	if top && len(bs) > 0 && bs[len(bs)-1].Kit && !(editedDone && editedAfter == len(bs)-1) {
+	if top && len(bs) > 0 && (bs[len(bs)-1].Kit || richMargined(bs[len(bs)-1].Kind)) && !(editedDone && editedAfter == len(bs)-1) {
 		_, _, bottom := l.margins(&bs[len(bs)-1])
 		y += bottom
 	}
@@ -581,6 +620,28 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		h, _ := l.flow(x, y, w, &fs)
 		return h
 
+	case richtext.RichHeader:
+		// .p-rich_text_header--level_1 18px/1.33334 black, --level_2
+		// 15px/1.46668 black, --level_3 15px/1.46668 bold
+		fs := l.bodyStyle()
+		fs.face.Weight = font.Black
+		switch b.Level {
+		case 1:
+			fs.size, fs.lineH = l.sp(18), l.dp(24)
+		case 3, 4:
+			fs.face.Weight = font.Bold
+		}
+		l.addSpans(b.Spans, &fs)
+		if edited {
+			l.addEdited()
+		}
+		h, _ := l.flow(x, y, w, &fs)
+		return h
+
+	case richtext.RichDivider: // its margins are the element's (margins)
+		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, y, x+w, y+l.dp(1)), fill: p.Divider, target: -1})
+		return l.dp(1)
+
 	case richtext.Divider:
 		m := l.dp(8)
 		if b.Kit { // the margins are the block's (margins)
@@ -643,6 +704,27 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.Agent:
 		return l.agent(b, x, y, w)
 
+	case richtext.CallBlock:
+		return l.callCard(b.Call, x, y, w)
+
+	case richtext.AlertBlock:
+		return l.alert(b, x, y, w)
+
+	case richtext.CalloutBlock:
+		return l.callout(b, x, y, w)
+
+	case richtext.LoadingBlock:
+		return l.loading(x, y, w)
+
+	case richtext.ContainerBlock:
+		return l.container(b, x, y, w)
+
+	case richtext.ShortcutBlock:
+		return l.shortcutCard(b.Shortcut, x, y, w)
+
+	case richtext.CardBlock:
+		return l.card(b.Card, x, y, w)
+
 	case richtext.Table:
 		return l.table(b, x, y, w)
 
@@ -650,6 +732,8 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if b.Att == nil {
 			return 0
 		}
+		l.attDepth++
+		defer func() { l.attDepth-- }()
 		if isWorkObjectBlock(b) {
 			// MessageAttachmentWorkObject is its own component, never
 			// MessageAttachment's (workobject.go)
@@ -700,18 +784,10 @@ func toAlpha(n int) string {
 	return s
 }
 
-func toRoman(n int) string {
-	vals := []int{1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1}
-	syms := []string{"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"}
-	var sb strings.Builder
-	for i, v := range vals {
-		for n >= v {
-			sb.WriteString(syms[i])
-			n -= v
-		}
-	}
-	return sb.String()
-}
+// toRoman is the lower-roman marker the browser draws: decimal outside
+// its 1-3999 range (richtext.LowerRoman), never a run of "m" a sender's
+// offset can make a gigabyte long.
+func toRoman(n int) string { return richtext.LowerRoman(n) }
 
 func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 	p := &l.st.Palette
@@ -720,6 +796,20 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 	cx := x + indentW*(b.Indent+1)
 	if b.Border {
 		cx += l.dp(11) // .p-rich_text_list[data-border="1"] padding-inline-start
+	}
+	// a check list's item (.p-rich_text_list__check>li): 4px in at indent 0
+	// (the [data-indent] rules' 28px steps deeper), then the 16px icon and
+	// its 8px margin inline with the text, whose next lines wrap back
+	// under the icon (the section is display: contents)
+	check := b.Check && l.opts.CheckLists && l.attDepth == 0
+	if check {
+		cx = x + l.dp(4)
+		if b.Indent > 0 {
+			cx = x + indentW*(b.Indent+1)
+		}
+		if b.Border {
+			cx += l.dp(11)
+		}
 	}
 	fs := l.bodyStyle()
 	for i, it := range b.Items {
@@ -732,6 +822,20 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			l.addEdited()
 		}
 		lineStart := len(l.d.lines)
+		if check {
+			gs := l.dp(16)
+			name := "square"
+			if i < len(b.Checked) && b.Checked[i] {
+				name = "checkbox-filled"
+			}
+			gy := y + (fs.lineH-gs)/2
+			l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(cx, gy, cx+gs, gy+gs), url: iconURL + name, target: -1, px: gs, tint: fs.col})
+			l.lead = float32(gs + l.dp(8))
+			h, _ := l.flow(cx, y, x+w-cx, &fs)
+			l.leave(li)
+			y += max(h, fs.lineH)
+			continue
+		}
 		h, _ := l.flow(cx, y, x+w-cx, &fs)
 		if h == 0 {
 			h = fs.lineH
@@ -756,7 +860,7 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			// none). The outside ::marker is "N. " (the counter style's ". "
 			// suffix, white-space pre) with its end at the li's border box,
 			// 8px before the text: the period sits a space short of it.
-			n := b.Offset + i + 1
+			n := richtext.ListNumber(b, i)
 			var label string
 			switch b.Indent % 3 {
 			case 1:
@@ -1198,7 +1302,10 @@ func (l *lay) kitImage(img *richtext.Image, x, y, w int) int {
 	r := image.Rect(x, iy, x+iw, iy+ih)
 	rad := l.dp(8)
 	itg := l.d.addTarget(target{kind: tImage, img: img})
-	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: [4]int{rad, rad, rad, rad}, target: itg, px: max(iw, ih)})
+	// AttachmentImage (UvHM): its source is the URL through Slack's image
+	// proxy (imgcache.PublicFetch), drawn as the box's CSS background, so
+	// the box is empty while it loads and if it fails (bare)
+	l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: img.URL, radii: [4]int{rad, rad, rad, rad}, target: itg, px: max(iw, ih), bare: true})
 	l.imageControls(img, len(l.d.imgs)-1, r) // AttachmentImage (animated.go)
 	l.d.hits = append(l.d.hits, hit{r: r, t: itg})
 	l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: rad, stroke: p.Border, bw: max(1, l.dp(1)), target: -1, layer: 1})
@@ -1303,6 +1410,21 @@ func (l *lay) button(bt richtext.Button, x, y int) int {
 	return bh
 }
 
+// actionsEmpty is an Actions block none of whose elements draws an
+// action box: each is Invisible, and none an icon_button (whose empty box
+// stays, Button.Invisible). Seven or more draw "+ N more".
+func actionsEmpty(bs []richtext.Button) bool {
+	if len(bs) >= 7 {
+		return false
+	}
+	for i := range bs {
+		if !bs[i].Invisible || bs[i].Kind == "icon_button" {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *lay) buttons(bs []richtext.Button, x, y, w int) int {
 	if el := l.opts.Elements; el != nil {
 		sz, _ := el.ElementsSize(bs, w, false, l.metric())
@@ -1312,6 +1434,12 @@ func (l *lay) buttons(bs []richtext.Button, x, y, w int) int {
 	cx, cy := x, y
 	rowH := 0
 	for _, bt := range bs {
+		if bt.Invisible {
+			if bt.Kind == "icon_button" { // its empty action box's 8px right margin
+				cx += l.dp(8)
+			}
+			continue
+		}
 		bw := l.buttonWidth(bt)
 		if cx > x && cx+bw > x+w {
 			cx = x

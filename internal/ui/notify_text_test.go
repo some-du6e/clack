@@ -10,12 +10,14 @@ import (
 )
 
 // TestNotifyTextLikeSlack: a notification's text is Slack's
-// extractTextFromMessage (Eley; notify_dm.go): convertMessageToPlainText
-// with blockSpacing single (2xQY) over the blocks, else the text (also
-// when the blocks give none; a video block gives its title); only a
-// message with neither reads its attachments (a message unfurl's blocks,
+// extractTextFromMessage (Eley; richtext.NotificationText, notify_dm.go):
+// convertMessageToPlainText with blockSpacing single (2xQY) over the
+// blocks, else the text as written (also when the blocks give none; a
+// video block gives its title); only a message with neither reads its
+// first file's title, then its attachments (a message unfurl's blocks,
 // else the first fallback, text, pretext or footer); with nothing at all,
-// "message {subtype} (message missing text)". Synthetic messages.
+// "message {subtype} (message missing text)", but never for a message
+// with attachments. Synthetic messages.
 func TestNotifyTextLikeSlack(t *testing.T) {
 	rich := func(s string) string {
 		return `{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"` + s + `"}]}]}`
@@ -71,6 +73,12 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 		{"a text-only message as written: a mention that reads as nothing leaves its space",
 			`{"type":"message","user":"U0SYNTH0001","text":"<@U0NOBODY01> the synthetic deploy finished"}`,
 			" the synthetic deploy finished"},
+		{"no text: the file's title",
+			`{"type":"message","text":"","files":[{"id":"F0SYNTH0001","name":"report.pdf","title":"A synthetic report","mimetype":"application/pdf","filetype":"pdf"}]}`,
+			"A synthetic report"},
+		{"attachments with nothing to read: no body (textContentFromAttachments), not the missing text",
+			`{"type":"message","subtype":"bot_message","bot_id":"B0SYNTH0001","text":"","attachments":[{"id":1,"image_url":"https://example.invalid/i.png"}]}`,
+			""},
 		{"nothing to show",
 			`{"type":"message","subtype":"bot_message","bot_id":"B0SYNTH0001","text":"","blocks":[` +
 				`{"type":"actions","elements":[{"type":"button","action_id":"a","text":{"type":"plain_text","text":"Go"}}]}]}`,
@@ -81,18 +89,10 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 			t.Fatalf("%s: %v", c.name, err)
 		}
 		cm := &core.Message{TS: "1762520000.000100", User: m.User, Subtype: m.Subtype, Text: m.Text,
-			Doc: richtext.FromMessage(noResolver{}, &m), Blocks: m.Blocks, Attachments: m.RawAttachments}
-		of := noteTextOf{
-			Blocks: func(raw json.RawMessage) string {
-				return noteBlocksText(richtext.FromMessage(noResolver{}, &slack.Message{Blocks: raw}).Blocks, nil)
-			},
-			Mrkdwn: func(text string) string {
-				return richtext.PlainTextWith(richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, text)}, nil)
-			},
-		}
+			Doc: richtext.FromMessage(noResolver{}, &m), Blocks: m.Blocks, Attachments: m.RawAttachments, BotID: m.BotID}
 		// a member the store doesn't hold reads as nothing (noteSpanText)
 		unknown := func(s richtext.Span) (string, bool) { return "", s.Kind == richtext.User }
-		if got := notifyText(cm, unknown, of); got != c.want {
+		if got := notifyText(noResolver{}, cm, unknown); got != c.want {
 			t.Errorf("%s: %q, Slack %q", c.name, got, c.want)
 		}
 	}

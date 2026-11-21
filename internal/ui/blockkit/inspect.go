@@ -76,8 +76,7 @@ func (s *Stack) fields() []FieldInfo {
 	}
 	sf := s.top()
 	var out []FieldInfo
-	for i := range sf.blocks {
-		b := &sf.blocks[i]
+	for _, b := range allBlocks(sf.blocks) {
 		if b.Type != "input" || b.Element == nil || !isTextInput(b.Element.Type) {
 			continue
 		}

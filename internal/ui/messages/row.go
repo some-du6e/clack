@@ -154,12 +154,17 @@ type row struct {
 
 	// plugin view of the message (taut patchMessageText…), see applyView;
 	// viewConv: the serial of the view's conversion it last compared
-	viewAt    time.Time
-	viewRev   uint32
-	viewed    bool
-	vmsg      *core.Message // the view itself (viewed): what the overrides lay over
-	viewWait  bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
-	viewReady bool          // the view it last read was ready (MessageViewState)
+	viewAt   time.Time
+	viewRev  uint32
+	viewed   bool
+	vmsg     *core.Message // the view itself (viewed): what the overrides lay over
+	viewWait bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
+	// heldTil: an edit's row the plugins left alone draws the view of
+	// the revision before (the text it drew) while JS answers for the
+	// edit under plugins that rewrite text (taut TextRewrites), until then
+	// at most (taut.EditHold)
+	heldTil   time.Time
+	viewReady bool // the view it last read was ready (MessageViewState)
 	viewConv  uint64
 	// need is the EmitSeq of the core event that wrote its message
 	// (entry.seq; a load's: core's EmitSeq as it came back): JS's copy is
@@ -458,7 +463,7 @@ func (r *row) setDoc() {
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
 	o := richview.Options{Edited: displaysEdited(&r.m), Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
-		FindFocused: r.findFocused, Media: r.media}
+		FindFocused: r.findFocused, CheckLists: true, Media: r.media}
 	if o.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 		o.EditedBy = r.editedBy()

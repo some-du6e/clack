@@ -480,6 +480,37 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 	}
 }
 
+// WorkflowCard is a share_shortcut card (richview.WorkflowCardHandler):
+// the card opens the workflow details view (WorkflowEntity's onClick),
+// Start Workflow trips the link trigger from the message
+// (WorkflowStartButton: workflowsTriggersTrip with the message context),
+// the ⋮ opens More actions.
+func (r *richHandler) WorkflowCard(act string, c *richtext.ShortcutCard, at image.Rectangle) {
+	m := r.m
+	if m == nil || c == nil {
+		return
+	}
+	switch act {
+	case "open":
+		if popups.OpenWorkflowDetails != nil && c.TriggerID != "" {
+			popups.OpenWorkflowDetails(c.TriggerID, m.Channel)
+		}
+	case "start":
+		// BaseWorkflowStartButton is disabled while the trigger runs
+		// (isTriggerRunning): no second trip until the first is answered
+		if c.URL != "" && !blockkit.TripRunning(c.TriggerID) {
+			blockkit.TripWorkflow(r.h, c.URL, core.MessageTripContext(m.Channel, m.TS), "")
+		}
+	case "more":
+		if popups.WorkflowCardMenu != nil {
+			if r.anchor != nil {
+				at = image.Rectangle{Min: r.anchor(at.Min), Max: r.anchor(at.Max)}
+			}
+			popups.WorkflowCardMenu(r.h, at, c, m.Channel, m.TS)
+		}
+	}
+}
+
 // JoinHuddle is a huddle message's Join Huddle (richview.HuddleJoiner):
 // Slack's HuddleMsgJoinButton runs startHuddle with entryPoint
 // huddle_message_button, which the ui root's huddle controller does.

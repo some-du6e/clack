@@ -112,12 +112,14 @@ func TestThreadsAuditNotificationTitles(t *testing.T) {
 	b := &backend{core: ca}
 	const robin = "U0ROBIN0001"
 	ca.S.PutUsers([]slack.User{{ID: robin, Name: "robin", Profile: slack.Profile{DisplayName: "Robin Example", RealName: "Robin Example"}}})
-	doc := richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, "the synthetic plan")}
-	ev := core.Event{Type: "message", Msg: &core.Message{User: robin, Doc: doc}}
+	// the body reads the message as sent (its text), as Slack's does
+	const text = "the synthetic plan"
+	doc := richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, text)}
+	ev := core.Event{Type: "message", Msg: &core.Message{User: robin, Text: text, Doc: doc}}
 	// a webhook's or a legacy bot's post: no user, its username core's
 	// Name (getContentForNotification writes no "{sender}: " for it, and
 	// a DM is titled with its own user, never the username)
-	bot := core.Event{Type: "message", Msg: &core.Message{BotID: "B0DEPLOY01", Name: "deploy-bot", Doc: doc}}
+	bot := core.Event{Type: "message", Msg: &core.Message{BotID: "B0DEPLOY01", Name: "deploy-bot", Text: text, Doc: doc}}
 	for _, c := range []struct {
 		ev          core.Event
 		conv        *convInfo

@@ -357,6 +357,11 @@ type base struct {
 	vready map[string]viewRev
 	vconv  map[string]uint64
 	vdiff  map[string]bool
+	// vheld is when viewMsg first saw a message's current revision: a hold
+	// of the revision before's view lasts taut.EditHold from it, the frame
+	// at its end asked for once (vwake)
+	vheld map[string]time.Time
+	vwake map[string]bool
 	// rec, while a row is described (recording), notes the members it
 	// drew without a name (missing_member.go); reads (recordingReads)
 	// every member it looked up

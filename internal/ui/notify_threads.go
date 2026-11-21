@@ -45,14 +45,16 @@ func replyNotifies(app *core.App, ev core.Event) bool {
 // notifyChannelName is getDisplayNameForChannel for the title
 // (imIncludeAtSign off): "#name" for a public channel, a private
 // channel's bare name, a group DM's members; formatChannelName's
-// "unknown-channel" for one whose name isn't known, never the raw id
-// (notify_conv.go).
+// "unknown-channel" for a channel whose name isn't known, never the raw
+// id (notify_conv.go). A group DM's name is its members' alone
+// (getMpimDisplayNameAlphabetical, which never goes through
+// formatChannelName): "" when none of them is known.
 func notifyChannelName(c *convInfo) string {
 	if c == nil {
 		return ""
 	}
 	name := c.Name
-	if !noteNamed(c) {
+	if !noteNamed(c) && c.Kind != "mpim" {
 		name = noteUnknownChannel()
 	}
 	if c.Kind == "channel" {

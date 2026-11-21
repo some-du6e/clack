@@ -340,8 +340,16 @@ type Options struct {
 	// "(edited)"); StoppedBy, when set, makes it "(stopped by {name})".
 	Stopped   bool
 	StoppedBy string
-	Muted     bool // system message: body in the secondary color
-	Dim       bool // pending/failed: draw at reduced opacity
+	// FillBlocks: the doc is a view's (a modal's, App Home's), whose block
+	// wrappers aren't flex (WSwB wrapViewBlock, wrapAppHomeBlock): an
+	// alert fills the width, as it does in a callout or a container
+	FillBlocks bool
+	// CheckLists: rich_text check lists draw their checkboxes, as the
+	// rich_text renderable allows in a message or a thread (allowCheckList:
+	// s3Wf sS's blocks container contexts); elsewhere they're bullet lists
+	CheckLists bool
+	Muted      bool // system message: body in the secondary color
+	Dim        bool // pending/failed: draw at reduced opacity
 	// CompactFiles is MessageFiles' shouldUseCompactStack: the files
 	// without FilesMetaTextWrapper's title line (filemeta.go).
 	CompactFiles bool

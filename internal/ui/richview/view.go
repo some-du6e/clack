@@ -123,9 +123,17 @@ type View struct {
 
 	// expanded: attachments whose collapsed text was expanded (truncate.go)
 	expanded map[*richtext.Attachment]bool
-	// collapsed: image blocks hidden with their title-row toggle
-	collapsed map[*richtext.Image]bool
-	redraw    bool // ask for a frame after this frame's events
+	// collapsed: image blocks hidden with their title-row toggle (keys
+	// *richtext.Image), and call cards and containers toggled by the
+	// viewer, by keys that outlive a rebuilt Doc ("call:" + the call id,
+	// "container:" + Container.Key): the row's View keeps them through
+	// reactions, replies and chat.update, as Slack's component state and
+	// its redux expandables do. collapseDefs is the is_collapsible and
+	// default_collapsed each container key was last laid out with: a
+	// change resets its toggle (ContainerBlock's useEffect).
+	collapsed    map[any]bool
+	collapseDefs map[string]uint8
+	redraw       bool // ask for a frame after this frame's events
 
 	// lead: the first line's start (SetLead)
 	lead int
@@ -575,7 +583,8 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 		v.expanded = map[*richtext.Attachment]bool{}
 	}
 	if v.collapsed == nil {
-		v.collapsed = map[*richtext.Image]bool{}
+		v.collapsed = map[any]bool{}
+		v.collapseDefs = map[string]uint8{}
 	}
 	if v.playing == nil {
 		v.playing = map[string]bool{}
@@ -584,7 +593,10 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+		expanded: v.expanded, collapsed: v.collapsed, collapseDefs: v.collapseDefs, playing: v.playing, noAnim: uipref.Get().NoAnimations}
+	if v.opts.FillBlocks {
+		l.filled = 1 // a view's blocks (FillBlocks)
+	}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
 		l.css = &v.css
@@ -652,7 +664,8 @@ func (v *View) anyReady(st *Style) bool {
 	for _, p := range v.pending {
 		if p >= 0 {
 			im := &v.d.imgs[p]
-			if _, ok := st.Images.Get(im.url, im.px); ok {
+			// one whose own image failed is ready once its fallback is
+			if _, ok := st.Images.Get(imgSource(st.Images, im), im.px); ok {
 				return true
 			}
 		} else {
@@ -1668,6 +1681,16 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 	v.activateTarget(&v.d.targets[t], v.targetText(t), anchor, h)
 }
 
+// targetRect is tg's (first) hit box, in the View's coordinates.
+func (v *View) targetRect(tg *target) (image.Rectangle, bool) {
+	for _, h := range v.d.hits {
+		if h.t >= 0 && int(h.t) < len(v.d.targets) && &v.d.targets[h.t] == tg {
+			return h.r, true
+		}
+	}
+	return image.Rectangle{}, false
+}
+
 // activateTarget is a click on tg (text: what it draws).
 func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Handler) {
 	if tg.cardOnly || tg.menuOnly {
@@ -1717,13 +1740,29 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		if wh, ok := h.(WorkObjectHandler); ok && tg.att != nil {
 			wh.WorkObject(v.woEvent(tg, anchor))
 		}
+	case tWorkflowCard: // a share_shortcut card (shortcut.go)
+		if wh, ok := h.(WorkflowCardHandler); ok {
+			if c, ok := tg.key.(*richtext.ShortcutCard); ok {
+				r := image.Rectangle{Min: anchor, Max: anchor}
+				if tg.id == "more" { // the menu opens from the ⋮ button itself (uJed: LeftBottom)
+					if hr, ok := v.targetRect(tg); ok {
+						r = hr
+					}
+				}
+				wh.WorkflowCard(tg.id, c, r)
+			}
+		}
 	case tSnippet: // a snippet's Show more / Show less (snippet.go)
 		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
 			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})
 		}
 	case tCollapse:
-		if tg.img != nil && v.collapsed != nil {
-			v.collapsed[tg.img] = !v.collapsed[tg.img]
+		var k any = tg.img
+		if tg.key != nil {
+			k = tg.key
+		}
+		if (tg.img != nil || tg.key != nil) && v.collapsed != nil {
+			v.collapsed[k] = !v.collapsed[k]
 			v.dirty = true
 			v.redraw = true
 		}
