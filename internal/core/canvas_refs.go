@@ -71,49 +71,93 @@ func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2
 	return done
 }
 
+// filesInfoFile is files.info's file, as a CanvasRef reads it.
+type filesInfoFile struct {
+	Title           string          `json:"title"`
+	TitleBlocks     json.RawMessage `json:"title_blocks"`
+	IsDeleted       bool            `json:"is_deleted"`
+	Filetype        string          `json:"filetype"`
+	Mode            string          `json:"mode"`
+	PrettyType      string          `json:"pretty_type"`
+	Name            string          `json:"name"`
+	LinkedChannelID string          `json:"linked_channel_id"`
+	ListMetadata    struct {
+		Views []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"views"`
+	} `json:"list_metadata"`
+}
+
+// canvasRefOf is the CanvasRef files.info's file f makes.
+func canvasRefOf(f *filesInfoFile) richtext.CanvasRef {
+	st := "normal"
+	if f.IsDeleted {
+		st = "deleted"
+	}
+	ref := richtext.CanvasRef{Title: f.Title, TitleBlocks: f.TitleBlocks, Status: st, Kind: fileKindOf(f.Filetype, f.Mode, f.PrettyType)}
+	for _, v := range f.ListMetadata.Views {
+		if ref.Views == nil {
+			ref.Views = map[string]string{}
+		}
+		ref.Views[v.ID] = v.Name
+	}
+	return ref
+}
+
+// fileKindOf is a file's kind: "list", "canvas" or "" (another kind).
+func fileKindOf(filetype, mode, prettyType string) string {
+	switch {
+	case filetype == "list" || mode == "list":
+		return "list"
+	case IsCanvasFile(filetype, mode, prettyType):
+		return "canvas"
+	}
+	return ""
+}
+
+// Slack Connect's refusals of a canvas or a list (fetchFileById's
+// canvas_slack_connect_blocked and lists_slack_connect_blocked, IqFK).
+var (
+	canvasBlockedErrors = map[string]bool{"slack_connect_team_blocked": true, "slack_connect_canvas_sharing_blocked": true}
+	listBlockedErrors   = map[string]bool{"slack_connect_lists_team_blocked": true, "slack_connect_lists_sharing_blocked": true}
+)
+
 func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 	var r struct {
-		File struct {
-			Title        string          `json:"title"`
-			TitleBlocks  json.RawMessage `json:"title_blocks"`
-			IsDeleted    bool            `json:"is_deleted"`
-			Filetype     string          `json:"filetype"`
-			Mode         string          `json:"mode"`
-			PrettyType   string          `json:"pretty_type"`
-			ListMetadata struct {
-				Views []struct {
-					ID   string `json:"id"`
-					Name string `json:"name"`
-				} `json:"views"`
-			} `json:"list_metadata"`
-		} `json:"file"`
+		File filesInfoFile `json:"file"`
 	}
 	err := a.C.Call(ctx, "files.info", url.Values{"file": {id}, "count": {"0"}}, &r)
+	if err == nil {
+		a.S.PutCanvasRef(id, canvasRefOf(&r.File))
+		return true
+	}
+	// fetchFileById keeps a file it can't read as a known object (client-
+	// boot 548 20Mt j), so nothing waits on it again: the error's own
+	// filetype and title (make_external_access_denied, make_not_visible)
+	// say a canvas or a list the viewer can't see
 	var se *slack.Error
-	switch {
-	case err == nil:
-		st := "normal"
-		if r.File.IsDeleted {
-			st = "deleted"
-		}
-		ref := richtext.CanvasRef{Title: r.File.Title, TitleBlocks: r.File.TitleBlocks, Status: st}
-		switch f := r.File; {
-		case f.Filetype == "list" || f.Mode == "list":
-			ref.Kind = "list"
-		case IsCanvasFile(f.Filetype, f.Mode, f.PrettyType):
-			ref.Kind = "canvas"
-		}
-		for _, v := range r.File.ListMetadata.Views {
-			if ref.Views == nil {
-				ref.Views = map[string]string{}
-			}
-			ref.Views[v.ID] = v.Name
-		}
-		a.S.PutCanvasRef(id, ref)
-	case errors.As(err, &se) && (se.Code == "file_not_found" || se.Code == "file_deleted"):
+	if !errors.As(err, &se) {
+		log.Printf("canvas slug %s: files.info: %v", id, err)
+		a.S.ForgetCanvas(id)
+		return false
+	}
+	var body struct {
+		Filetype string `json:"filetype"`
+		Title    string `json:"title"`
+	}
+	_ = json.Unmarshal(se.Body, &body)
+	switch code := se.Code; {
+	case code == "file_not_found" || code == "file_deleted":
 		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "deleted"})
-	case errors.As(err, &se) && (se.Code == "access_denied" || se.Code == "not_allowed" || se.Code == "file_access_denied"):
+	case code == "access_denied" || code == "not_allowed" || code == "file_access_denied":
+		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden", Kind: fileKindOf(body.Filetype, "", "")})
+	case code == "not_visible":
+		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden", Title: body.Title, Kind: fileKindOf(body.Filetype, "", "")})
+	case code == "hidden_by_limit", listBlockedErrors[code]:
 		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden"})
+	case canvasBlockedErrors[code]:
+		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "hidden", Kind: "canvas", Blocked: true})
 	default:
 		log.Printf("canvas slug %s: files.info: %v", id, err)
 		a.S.ForgetCanvas(id)
