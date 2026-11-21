@@ -58,6 +58,7 @@ var (
 	mrkdwnElemClass  = slackc.Class("p-mrkdwn_element").Tag("span")
 	tombstoneClass   = slackc.Class("c-message__body c-message__body--tombstone")
 	editedClass      = slackc.Class("c-message__edited_label").Tag("span")
+	stoppedClass     = slackc.Class("c-message__stopped_label").Tag("span")
 
 	boldClass      = slackc.Class("", "data-stringify-type", "bold").Tag("b")
 	italicClass    = slackc.Class("", "data-stringify-type", "italic").Tag("i")

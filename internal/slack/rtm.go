@@ -86,6 +86,38 @@ const ReconnectURLMaxAge = 285 * time.Second
 // URL and doesn't count a failure.
 var errStaleURL = errors.New("rtm: reconnect_url refused")
 
+// The socket's liveness check, Slack's SlackSocket (client-boot Kot3
+// _onSocketOpen): a ping every rtmPingEvery, and once rtmPongTimeout has
+// passed since the socket opened or a pong last answered one, the socket
+// closes with 4998 "Too long since we received a pong" and Run connects
+// again. Slack's clock there is Date.now(), so a sleep counts. A socket
+// that goes quiet without a close frame (a sleep, a NAT mapping or a
+// Wi-Fi network that went away, a half-open TCP connection) otherwise
+// blocks Read for as long as the kernel keeps the connection, and every
+// event the gateway sends meanwhile is lost with nobody noticing: Karim's
+// #clack drew nothing from 00:54Z to 03:53Z on 2026-11-20. Vars for
+// tests.
+var rtmPingEvery, rtmPongTimeout atomic.Int64 // nanoseconds
+
+func init() {
+	rtmPingEvery.Store(int64(10 * time.Second))
+	rtmPongTimeout.Store(int64(90 * time.Second))
+}
+
+// SetPingTimers sets the liveness check's ping interval and pong timeout
+// (Slack's 10 s and 90 s) and returns the undo: for tests, which can't
+// wait 90 s for a socket that went quiet.
+func SetPingTimers(every, timeout time.Duration) (restore func()) {
+	e, t := rtmPingEvery.Swap(int64(every)), rtmPongTimeout.Swap(int64(timeout))
+	return func() { rtmPingEvery.Store(e); rtmPongTimeout.Store(t) }
+}
+
+// pongTimeout is the close reason Slack's socket gives (status 4998).
+const pongTimeout = "Too long since we received a pong"
+
+// errPongTimeout: the socket was closed by the liveness check.
+var errPongTimeout = errors.New("rtm: " + pongTimeout)
+
 // session is how one connect went.
 type session struct {
 	hello bool          // the gateway said hello: the connect worked
@@ -266,16 +298,32 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 
 	cctx, stop := context.WithCancel(ctx)
 	defer stop()
+	// the liveness check (rtmPongTimeout): the last pong, on the wall
+	// clock, from the socket's open on as Slack's timer is
+	var pongMu sync.Mutex
+	lastPong := upAt
+	var noPong atomic.Bool
 	go func() {
-		t := time.NewTicker(10 * time.Second)
+		t := time.NewTicker(time.Duration(rtmPingEvery.Load()))
 		defer t.Stop()
 		for {
 			select {
 			case <-cctx.Done():
 				return
 			case <-t.C:
-				_ = r.Send(map[string]any{"type": "ping"})
 			}
+			pongMu.Lock()
+			quiet := ReadClock().WallSince(lastPong)
+			pongMu.Unlock()
+			if quiet > time.Duration(rtmPongTimeout.Load()) {
+				log.Printf("rtm: no pong for %s, closing the socket (4998 %s)", quiet.Round(time.Second), pongTimeout)
+				noPong.Store(true)
+				// the close handshake waits for a peer that may be gone (5 s
+				// at most), then drops the connection, which ends Read
+				_ = conn.Close(websocket.StatusCode(4998), pongTimeout)
+				return
+			}
+			_ = r.Send(map[string]any{"type": "ping"})
 		}
 	}()
 
@@ -283,6 +331,9 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		_, data, err := conn.Read(cctx)
 		if err != nil {
 			s.err = err
+			if noPong.Load() {
+				s.err = errPongTimeout
+			}
 			return s
 		}
 		var ev Event
@@ -316,6 +367,12 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 			}
 			continue
 		case "pong":
+			// a ping's answer: the socket is alive (Slack's send() resolves
+			// the ping on its reply, and the timer starts over)
+			at := ReadClock()
+			pongMu.Lock()
+			lastPong = at
+			pongMu.Unlock()
 			continue
 		case "":
 			// reply to one of our frames; surface failures only

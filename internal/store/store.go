@@ -34,6 +34,15 @@ type Timeline struct {
 	Msgs    []slack.Message // ascending by ts
 	HasMore bool            // older messages exist beyond Msgs[0]
 	Loaded  bool
+	// EndStale: the window may stop short of the conversation's newest
+	// message. Slack's resetReachedEnd at every slow connect
+	// (reached_end.go): nothing the socket missed meanwhile is in it, so
+	// it is read forward from End before it is the newest window again,
+	// and what the socket brings past End waits in Ahead until then.
+	EndStale bool
+	End      string          // EndStale: the newest message from Slack the window held then
+	Ahead    []slack.Message // EndStale: the socket's messages past End, ascending
+	EndGen   uint64          // the reset (ResetReachedEnd) the window's end last went stale at
 }
 
 type Store struct {
@@ -54,6 +63,7 @@ type Store struct {
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
+	endGen      uint64                     // ResetReachedEnd calls so far (reached_end.go)
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
@@ -118,6 +128,8 @@ type Store struct {
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
+	// botsGone are bot ids nothing returned (PutNonexistentBots)
+	botsGone map[string]bool
 
 	// userSeen is when each user was last fetched (unix seconds; from the
 	// disk cache for users it restored): what SaveCache keeps.
@@ -1166,8 +1178,40 @@ func (s *Store) PutBot(id string, b BotInfo) {
 		s.bots = map[string]BotInfo{}
 	}
 	s.bots[id] = b
+	delete(s.botsGone, id)
 	s.mu.Unlock()
 	s.gen.Add(1)
+}
+
+// PutNonexistentBots records bots neither the edge cache nor bots.info
+// returned: the bots UnknownFetchManager's upsertNonExistent (client-boot
+// 0mwJ marks every id a fetch didn't return), whose stub getBotById
+// (Emf2 AF) answers from then on. Nothing asks for them again this
+// session (noteMissing records a bot once), and a message only such a bot
+// would name draws BaseMissingMember's non-existent bar.
+func (s *Store) PutNonexistentBots(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	for _, id := range ids {
+		if _, ok := s.bots[id]; ok || id == "" {
+			continue
+		}
+		if s.botsGone == nil {
+			s.botsGone = map[string]bool{}
+		}
+		s.botsGone[id] = true
+	}
+	s.mu.Unlock()
+}
+
+// BotNonexistent reports whether nothing returned bot id
+// (PutNonexistentBots): Slack's isNonExistent bot stub.
+func (s *Store) BotNonexistent(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.botsGone[id]
 }
 
 // BotName is richtext.BotNamer: the cached bot's name, or "" after
@@ -1263,6 +1307,7 @@ func (s *Store) Timeline(ch string) *Timeline {
 	}
 	cp := *t
 	cp.Msgs = append([]slack.Message(nil), t.Msgs...)
+	cp.Ahead = append([]slack.Message(nil), t.Ahead...)
 	return &cp
 }
 
@@ -1362,6 +1407,9 @@ func (s *Store) UpsertInRange(ch string, m slack.Message) {
 			return
 		}
 	}
+	if s.aheadLocked(ch, t, m) { // past a window whose end went stale (reached_end.go)
+		return
+	}
 	if t.HasMore {
 		oldest := ""
 		for i := range t.Msgs {
@@ -1394,6 +1442,14 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			if t.Msgs[i].TS == ts {
 				f(&t.Msgs[i])
 				out, found = t.Msgs[i], true
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == ts {
+				f(&t.Ahead[i])
+				if !found {
+					out, found = t.Ahead[i], true
+				}
 			}
 		}
 	}
@@ -1433,6 +1489,12 @@ func (s *Store) removeLocked(ch, ts string) {
 		for i := range t.Msgs {
 			if t.Msgs[i].TS == ts {
 				t.Msgs = append(t.Msgs[:i], t.Msgs[i+1:]...)
+				break
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == ts {
+				t.Ahead = append(t.Ahead[:i], t.Ahead[i+1:]...)
 				break
 			}
 		}
@@ -1479,6 +1541,11 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 		for i := range t.Msgs {
 			if match(&t.Msgs[i]) {
 				return &t.Msgs[i]
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if match(&t.Ahead[i]) {
+				return &t.Ahead[i]
 			}
 		}
 	}
@@ -2062,7 +2129,21 @@ func (s *Store) LoadCache() {
 		}
 	}
 	if len(d.Bots) > 0 {
-		s.bots = d.Bots
+		// under what this session stored or found gone meanwhile: that
+		// answer is newer than the disk's copy, and nothing would ask for
+		// the bot again (noteMissing records a bot once a session)
+		if len(s.bots)+len(s.botsGone) == 0 {
+			s.bots = d.Bots
+		} else {
+			if s.bots == nil {
+				s.bots = make(map[string]BotInfo, len(d.Bots))
+			}
+			for id, b := range d.Bots {
+				if _, ok := s.bots[id]; !ok && !s.botsGone[id] {
+					s.bots[id] = b
+				}
+			}
+		}
 	}
 	if d.Experiments != nil {
 		s.experiments = d.Experiments

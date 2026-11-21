@@ -38,3 +38,30 @@ func TestNamesBotsAndExtConvsCache(t *testing.T) {
 		t.Errorf("missing = %v", chans)
 	}
 }
+
+// A bot this session stored, or found gone, before meta.json was read
+// keeps that answer: LoadCache merges the disk's bots in under it (the
+// session's is newer, and nothing asks for a bot twice in a session).
+func TestLoadCacheKeepsSessionBots(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	s.PutBot("B1", BotInfo{Name: "older"})
+	s.PutBot("B2", BotInfo{Name: "cached"})
+	s.PutBot("B3", BotInfo{Name: "gone since"})
+	if err := s.SaveCache(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := New(dir)
+	s2.PutBot("B1", BotInfo{Name: "newer"}) // answered while meta.json was decoding
+	s2.PutBot("B4", BotInfo{Name: "fresh"}) // a bot meta.json doesn't hold
+	s2.PutNonexistentBots([]string{"B3"})
+	s2.LoadCache()
+	for id, want := range map[string]string{"B1": "newer", "B2": "cached", "B4": "fresh"} {
+		if b, ok := s2.Bot(id); !ok || b.Name != want {
+			t.Errorf("%s = %+v %v, want %q", id, b, ok, want)
+		}
+	}
+	if _, ok := s2.Bot("B3"); ok || !s2.BotNonexistent("B3") {
+		t.Error("a bot this session found gone came back from the disk cache")
+	}
+}

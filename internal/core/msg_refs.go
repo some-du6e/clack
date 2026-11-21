@@ -22,22 +22,28 @@ import (
 // Slack's selectors re-render just the components that read a member or
 // a channel when it changes; a Doc is converted once and kept (the UI's
 // message models, taut's view cache), so each conversion records what it
-// read, and a change to a member, a conversation or a file is converted
-// again only in the messages that read it (RefsChanged). User mentions
-// aren't recorded: richview draws their names from the store as it lays
-// them out (MemberRead), the Doc's text is only its fallback.
+// read, and a change to a member, a conversation, a file or a message a
+// slug links to is converted again only in the messages that read it
+// (RefsChanged). User mentions aren't recorded: richview draws their
+// names from the store as it lays them out (MemberRead), the Doc's text
+// is only its fallback. A message slug is both: richview reads its label
+// as it draws it (SlugRead, msg_slug.go), and the Doc's label, read from
+// the store at conversion, follows the linked message's answer.
 
 // MsgRefs are the members, conversations, files, bots and emoji a
 // message's conversion was built from: every id (and emoji name) it
-// asked the resolver or the store about.
+// asked the resolver or the store about. Messages are the messages its
+// message slugs link to, as "channel/ts" (MsgKey.String: msg_slug.go).
 type MsgRefs struct {
 	Members, Channels, Files, Bots, Emoji []string
+	Messages                              []string
 }
 
 // RefChange is what an event changed of what conversions read
 // (RefsChanged).
 type RefChange struct {
 	Members, Channels, Files, Bots, Emoji []string
+	Messages                              []string // as "channel/ts"
 	// AnyMember: how messages name every member changed (the
 	// display_real_names or hidden_users pref)
 	AnyMember bool
@@ -48,25 +54,25 @@ type RefChange struct {
 
 // Empty reports whether c changes nothing a conversion read.
 func (c RefChange) Empty() bool {
-	return !c.All && !c.AnyMember && len(c.Members)+len(c.Channels)+len(c.Files)+len(c.Bots)+len(c.Emoji) == 0
+	return !c.All && !c.AnyMember && len(c.Members)+len(c.Channels)+len(c.Files)+len(c.Bots)+len(c.Emoji)+len(c.Messages) == 0
 }
 
 // IDs are c's ids, every kind together (they never collide: U…/W…,
-// C…/G…/D…, F…, B…; an emoji's name as ":name"), as RefIDs gives a
-// conversion's.
+// C…/G…/D…, F…, B…; an emoji's name as ":name"; a message as
+// "channel/ts"), as RefIDs gives a conversion's.
 func (c RefChange) IDs() []string {
-	return refIDs(c.Members, c.Channels, c.Files, c.Bots, c.Emoji)
+	return refIDs(c.Members, c.Channels, c.Files, c.Bots, c.Emoji, c.Messages)
 }
 
 // RefIDs are r's ids, every kind together, as RefChange.IDs gives a
 // change's.
 func (r *MsgRefs) RefIDs() []string {
-	return refIDs(r.Members, r.Channels, r.Files, r.Bots, r.Emoji)
+	return refIDs(r.Members, r.Channels, r.Files, r.Bots, r.Emoji, r.Messages)
 }
 
-func refIDs(members, channels, files, bots, emoji []string) []string {
-	out := make([]string, 0, len(members)+len(channels)+len(files)+len(bots)+len(emoji))
-	for _, l := range [][]string{members, channels, files, bots} {
+func refIDs(members, channels, files, bots, emoji, msgs []string) []string {
+	out := make([]string, 0, len(members)+len(channels)+len(files)+len(bots)+len(emoji)+len(msgs))
+	for _, l := range [][]string{members, channels, files, bots, msgs} {
 		for _, id := range l {
 			if !slices.Contains(out, id) {
 				out = append(out, id)
@@ -87,7 +93,7 @@ func (r *MsgRefs) Reads(c RefChange) bool {
 		return true
 	}
 	for _, p := range [...]struct{ read, changed []string }{{r.Members, c.Members}, {r.Channels, c.Channels},
-		{r.Files, c.Files}, {r.Bots, c.Bots}, {r.Emoji, c.Emoji}} {
+		{r.Files, c.Files}, {r.Bots, c.Bots}, {r.Emoji, c.Emoji}, {r.Messages, c.Messages}} {
 		for _, id := range p.changed {
 			if slices.Contains(p.read, id) {
 				return true
@@ -106,10 +112,12 @@ func addRef(l *[]string, id string) {
 // RefsChanged is what ev changed of what conversions read: the member of
 // a profile change, the conversation of a channel change or its tabs'
 // ("conv", "conv_removed", "tabs"), the ids lookups resolved ("names":
-// members, conversations, bots, canvases and lists, so as any kind; with
-// none, the viewer's user groups, which every mention's highlight
-// follows), an emoji added or removed ("emoji_changed"), a canvas or a
-// list whose content changed ("canvas", "list", "list_record_info"),
+// members, conversations, bots, canvases and lists, and the messages
+// message slugs asked for, so as any kind; with none, the viewer's user
+// groups, which every mention's highlight follows), a deleted message a
+// slug links to ("delete"), an emoji added or removed ("emoji_changed"),
+// a canvas or a list whose content changed ("canvas", "list",
+// "list_record_info"),
 // every member's name under a names pref and every message under one
 // every Doc reads ("prefs": NamePrefs, DocPrefs), the experiment groups
 // (a huddle's sentence, the emoji set). A profile change that left the
@@ -130,7 +138,11 @@ func RefsChanged(ev Event) RefChange {
 		if len(ev.Users) == 0 {
 			return RefChange{All: true}
 		}
-		return RefChange{Members: ev.Users, Channels: ev.Users, Files: ev.Users, Bots: ev.Users}
+		return RefChange{Members: ev.Users, Channels: ev.Users, Files: ev.Users, Bots: ev.Users, Messages: ev.Users}
+	case "delete":
+		if ev.Channel != "" && ev.TS != "" {
+			return RefChange{Messages: []string{MsgKey{ev.Channel, ev.TS}.String()}}
+		}
 	case "conv", "conv_removed", "tabs":
 		id := ev.Channel
 		if id == "" && ev.Conv != nil {

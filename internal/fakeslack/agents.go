@@ -100,11 +100,68 @@ func AgentFixtures() map[string][]any {
 			"details": agentRich("Looked for Block Kit plan blocks."), "output": agentRich("Found ", bold("2"), " pages."), "sources": src}},
 		"task-card-error": {map[string]any{"type": "task_card", "block_id": "c4", "task_id": "k4", "title": "Deploy failed", "status": "error", "output": agentRich("exit status 1")}},
 		"task-card-mcp":   {map[string]any{"type": "task_card", "block_id": "mcp_task_1", "task_id": "k5", "title": "Called a tool", "status": "complete", "output": agentRich("42 rows")}},
+		// a plan whose tasks' details run past Slack's 3 lines / 250
+		// characters (TaskItem cuts them, with Show more)
+		"plan-long-details": {map[string]any{"type": "plan", "block_id": "p5", "title": "Thinking completed", "tasks": []any{
+			agentTask("t1", "Read the failing tests", "complete", map[string]any{"details": agentRich(AgentLongDetail)}),
+			agentTask("t2", "Traced the clock", "complete", map[string]any{"details": agentRich("Opened the fixture.\nFound the start date.\nIt is a year early.\nEvery relative date shifts.\nFixed the seed.")}),
+			agentTask("t3", "Ran them again", "complete", map[string]any{"details": agentRich("All green.")}),
+		}}},
+		// a plan an app updates with chat.update (the same block, as the
+		// plan posts in the account's channels are): its first task
+		// running; then done, with details, and a second one running; and
+		// collapsed, its title grown past a line
+		"plan-grow-1": {map[string]any{"type": "plan", "block_id": "p6", "title": "Checking the release", "tasks": []any{
+			agentTask("t1", "Read the changelog", "in_progress", nil)}}},
+		"plan-grow-2": {map[string]any{"type": "plan", "block_id": "p6", "title": "Checking the release", "tasks": []any{
+			agentTask("t1", "Read the changelog", "complete", map[string]any{"details": agentRich("Three fixes and one new setting.")}),
+			agentTask("t2", "Run the smoke tests", "in_progress", nil)}}},
+		"plan-grow-title": {map[string]any{"type": "plan", "block_id": "p6", "title": "Checking the release: the changelog, the smoke tests, the migration notes and the rollout plan for every region", "tasks": []any{
+			agentTask("t1", "Read the changelog", "in_progress", nil)}}},
+		// a plan whose tasks carry icons (TaskIcon draws a known one for a
+		// task neither running nor failed): a rocket, a bug, one running
+		// and one failed (their status wins), a lightbulb (Slack's
+		// emoji-objects), a name Block Kit doesn't know and a bare string
+		"plan-icons": {map[string]any{"type": "plan", "block_id": "p7", "title": "Shipping the release", "tasks": []any{
+			agentTask("t1", "Built the release", "complete", map[string]any{"icon": map[string]any{"name": "rocket"}}),
+			agentTask("t2", "Filed the regression", "pending", map[string]any{"icon": map[string]any{"name": "bug"}}),
+			agentTask("t3", "Checking the mirrors", "in_progress", map[string]any{"icon": map[string]any{"name": "globe"}}),
+			agentTask("t4", "Tagging failed", "error", map[string]any{"icon": map[string]any{"name": "flag"}}),
+			agentTask("t5", "Wrote the notes", "complete", map[string]any{"icon": map[string]any{"name": "lightbulb"}}),
+			agentTask("t6", "Cleaned up", "complete", map[string]any{"icon": map[string]any{"name": "not-an-icon"}}),
+			agentTask("t7", "Shared it", "complete", map[string]any{"icon": "share"}),
+		}}},
+		// a plan task's header with its caret: a one-line title of x-height
+		// letters only, and one that wraps
+		"plan-caret": {map[string]any{"type": "plan", "block_id": "p8", "title": "Reviewed", "tasks": []any{
+			agentTask("t1", "run some scans", "complete", map[string]any{"details": agentRich("All clear.")})}}},
+		"plan-caret-wrap": {map[string]any{"type": "plan", "block_id": "p9", "title": "Reviewed", "tasks": []any{
+			agentTask("t1", "Read every failing test, traced the clock in the fixture, checked the seed and ran the suite again", "complete",
+				map[string]any{"details": agentRich("All clear.")})}}},
+		// a plan whose update puts a task ahead of the others (the same
+		// block, chat.update)
+		"plan-follow-1": {map[string]any{"type": "plan", "block_id": "p10", "title": "Checking the release", "tasks": []any{
+			agentTask("t1", "Read the changelog", "complete", map[string]any{"details": agentRich("Three fixes.")}),
+			agentTask("t2", "Ran the smoke tests", "complete", map[string]any{"details": agentRich("All green.")})}}},
+		"plan-follow-2": {map[string]any{"type": "plan", "block_id": "p10", "title": "Checking the release", "tasks": []any{
+			agentTask("t0", "Fetched the branch", "complete", map[string]any{"details": agentRich("Up to date.")}),
+			agentTask("t1", "Read the changelog", "complete", map[string]any{"details": agentRich("Three fixes.")}),
+			agentTask("t2", "Ran the smoke tests", "complete", map[string]any{"details": agentRich("All green.")})}}},
+		// an MCP task's card while it runs, and once it is done (same
+		// block: the stream's update)
+		"task-card-mcp-running": {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "in_progress", "output": agentRich("Reading the orders table.")}},
+		"task-card-mcp-done":    {map[string]any{"type": "task_card", "block_id": "mcp_task_2", "task_id": "k6", "title": "Querying the warehouse", "status": "complete", "output": agentRich("Read 1,204 orders.")}},
 		"reply-feedback": append([]any{map[string]any{"type": "rich_text", "block_id": "r1", "elements": []any{
 			map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": "Sure, here's the answer. "},
 				map[string]any{"type": "emoji", "name": "sweat_smile", "unicode": "1f605"}}}}}}, AgentFeedback()...),
 	}
 }
+
+// AgentLongDetail is plan-long-details' first task's details: past the
+// 250 characters a slim task shows before Show more.
+const AgentLongDetail = "Read the three failing tests and the stack traces from the last CI run, then traced each failure back to the helper " +
+	"that builds the fake workspace: the fixture's clock starts a year early, so every relative date in the assertions is off by " +
+	"twelve months, which is why only the tests that print a date fail and the rest of the suite stays green."
 
 // AgentMessage wraps fixture blocks as the agent's thread reply.
 func AgentMessage(ts string, blocks []any, streaming string) map[string]any {
@@ -114,6 +171,16 @@ func AgentMessage(ts string, blocks []any, streaming string) map[string]any {
 	if streaming != "" {
 		m["streaming_state"] = streaming
 	}
+	return m
+}
+
+// AgentStoppedReply is the agent's reply whose stream the viewer stopped:
+// ai_context result_status stopped_by_user (Slack's StoppedLabel).
+func AgentStoppedReply(ts string) map[string]any {
+	m := AgentMessage(ts, []any{map[string]any{"type": "rich_text", "block_id": "sr", "elements": []any{
+		map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": "Here is the start of an answer"}}}}}},
+		"completed")
+	m["ai_context"] = map[string]any{"result_status": "stopped_by_user", "stopped_by_user_id": SelfID}
 	return m
 }
 
