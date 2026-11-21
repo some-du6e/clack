@@ -7,7 +7,43 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"strings"
+	"sync"
+	"unsafe"
+	"weak"
 )
+
+// testApps are the Apps startEnv made, weakly, each with its test's name:
+// the end-of-run report counts those still live and asks a heap dump
+// what holds the oldest.
+var testApps struct {
+	sync.Mutex
+	l []testApp
+}
+
+type testApp struct {
+	test string
+	p    weak.Pointer[App]
+}
+
+func trackTestApp(test string, a *App) {
+	testApps.Lock()
+	testApps.l = append(testApps.l, testApp{test, weak.Make(a)})
+	testApps.Unlock()
+}
+
+// liveTestApps is the tracked Apps still live, oldest first, as addresses
+// (no pointer to them stays on the caller's stack), and how many were
+// made.
+func liveTestApps() (live []retainTarget, made int) {
+	testApps.Lock()
+	defer testApps.Unlock()
+	for _, ta := range testApps.l {
+		if p := unsafe.Pointer(ta.p.Value()); p != nil {
+			live = append(live, retainTarget{"the App of " + ta.test, uintptr(p)})
+		}
+	}
+	return live, len(testApps.l)
+}
 
 // endOfRunReport writes, after all of the package's tests, what the test
 // binary still holds of them: its live heap once collected and the
@@ -26,6 +62,21 @@ func endOfRunReport() {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "end of the tests: live heap %d MiB (heap in use %d MiB, from the OS %d MiB), %d goroutines\n",
 		ms.HeapAlloc>>20, ms.HeapInuse>>20, ms.Sys>>20, runtime.NumGoroutine())
+	live, made := liveTestApps()
+	fmt.Fprintf(&b, "startEnv's Apps: %d made, %d still live (the newest is the process's: one App per process)\n", made, len(live))
+	for _, l := range live[:min(len(live), 30)] {
+		fmt.Fprintf(&b, "  live: %s\n", l.what)
+	}
+	// what holds the oldest few (CLACK_RETAIN_DUMP; a dump is as big as
+	// the heap, and reading it back takes about as much again)
+	if os.Getenv("CLACK_RETAIN_DUMP") != "" && len(live) > 1 {
+		if ms.HeapAlloc > 3<<30 {
+			fmt.Fprintf(&b, "(no heap dump: %d MiB live)\n", ms.HeapAlloc>>20)
+		} else if dir, err := os.MkdirTemp("", "retain"); err == nil {
+			b.WriteString(heapRetainers(dir, live[:min(len(live)-1, 3)]))
+			_ = os.RemoveAll(dir)
+		}
+	}
 	_ = pprof.Lookup("goroutine").WriteTo(&b, 1)
 	_ = os.WriteFile(path, b.Bytes(), 0o644)
 	if hp := os.Getenv("CLACK_TEST_HEAP_PROFILE"); hp != "" {

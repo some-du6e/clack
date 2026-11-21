@@ -488,13 +488,13 @@ jobs:
           cd internal/ui
           rc=0
           start=$(date +%s)
-          CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" \
+          CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" CLACK_RETAIN_DUMP=1 \
             "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
           echo "internal/ui: exit $rc after $(( $(date +%s) - start )) s"
           grep -E -- '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/ui.log" | head -20 || true
           grep -A 40 -- '--- FAIL: TestFinishedSessionIsCollected' "$RUNNER_TEMP/ui.log" | head -60 || true
           head -1 "$RUNNER_TEMP/heap-report.txt" || true
-          sed -n 2,60p "$RUNNER_TEMP/heap-report.txt" || true
+          sed -n 2,200p "$RUNNER_TEMP/heap-report.txt" || true
           [ -f "$RUNNER_TEMP/heap.pprof" ] && go tool pprof -sample_index=inuse_space -top -nodecount=25 "$RUNNER_TEMP/ui.test" "$RUNNER_TEMP/heap.pprof" 2>&1 | head -35
           exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -41,7 +41,13 @@ func retainReport(t *testing.T, targets []retainTarget) string {
 	if ms.HeapAlloc > 1<<30 && os.Getenv("CLACK_RETAIN_DUMP") == "" {
 		return fmt.Sprintf("(no heap dump of what holds it: %d MiB live; CLACK_RETAIN_DUMP=1 writes one anyway)", ms.HeapAlloc>>20)
 	}
-	path := filepath.Join(t.TempDir(), "heap.dump")
+	return heapRetainers(t.TempDir(), targets)
+}
+
+// heapRetainers writes a heap dump in dir and reads back what reaches
+// each target.
+func heapRetainers(dir string, targets []retainTarget) string {
+	path := filepath.Join(dir, "heap.dump")
 	f, err := os.Create(path)
 	if err != nil {
 		return "heap dump: " + err.Error()

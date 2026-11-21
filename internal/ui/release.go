@@ -3,6 +3,7 @@ package ui
 import (
 	"sync"
 
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/views"
@@ -27,8 +28,10 @@ func (a *App) release() {
 	delete(appNuggets, a)
 	popups.ForgetHost(a)
 	views.ForgetHost(a)
+	blockkit.ForgetHost(a)
 	if a.data != nil && a.data.core != nil {
 		messages.ForgetCore(a.data.core)
+		blockkit.ForgetCore(a.data.core)
 	}
 	if a.th != nil {
 		a.th.ForgetShapers()
