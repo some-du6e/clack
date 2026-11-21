@@ -442,7 +442,7 @@ func (b *Bridge) CallEvent(fn int64, args []byte, done func(stopped bool)) {
 		path = "callFn"
 	}
 	b.withAnswer(done, func(r *runtime, answer func(bool)) {
-		r.rt.Post(func(js *jsrt.Ctx) {
+		r.rt.PostUserBlocking(func(js *jsrt.Ctx) { // the user's key (jsrt UserBlocking)
 			stopped := false
 			defer func() { answer(stopped) }()
 			a, err := js.ParseJSON(args)
@@ -480,9 +480,12 @@ var ErrFnGone = errors.New("taut: the JS function is gone")
 // sees it, right away (a Promise is truthy and isn't awaited), or threw
 // (a handler the runtime interrupted, past its task timeout, counts as
 // one); err when no handler answered: no runtime could start, it shut
-// down first, or the function is gone (ErrFnGone). Like a click in
-// Slack's page, the call waits its turn on the JS thread. Args carrying
-// {"$event": fields} give the handler React's synthetic event.
+// down first, or the function is gone (ErrFnGone). It is the user's input
+// (a message menu's pick: Slick's onSelectAction), on the user-blocking
+// lane as Call and CallEvent are: ahead of the queued renders, in order
+// with the user's other input; on the plain lane, a pick waited behind the
+// runtime's backlog. Args carrying {"$event": fields} give the handler
+// React's synthetic event.
 func (b *Bridge) CallTruthy(fn int64, args []byte, done func(truthy, threw bool, err error)) {
 	path := "callHostFnTruthy"
 	if IsTautFn(fn) {
@@ -504,7 +507,7 @@ func (b *Bridge) CallTruthy(fn int64, args []byte, done func(truthy, threw bool,
 			case <-answered:
 			}
 		}()
-		r.rt.Post(func(js *jsrt.Ctx) {
+		r.rt.PostUserBlocking(func(js *jsrt.Ctx) {
 			a, err := js.ParseJSON(args)
 			if err != nil {
 				answer(false, false, err)
@@ -586,10 +589,38 @@ func (b *Bridge) withAnswer(done func(bool), f func(r *runtime, answer func(bool
 	}()
 }
 
-// Call calls a JS function prop; done (optional) gets its JSON result.
+// Call calls a JS function prop; done (optional) gets its JSON result, on
+// another goroutine. The props Go calls are the user's: a control's
+// onClick, onChange, onSelect, a menu item, a plugin's
+// prepareAndSendMessage. They run on the user-blocking lane, in order with
+// the user's other input and sends (jsrt UserBlocking): a send after a
+// click sees what the click did (OwlMode's mode toggle, then Enter). With
+// the runtime running the call is queued before Call returns, on the
+// caller's goroutine, whatever the function and done: a menu item's Taut
+// function and a call with done went through a goroutine of their own
+// first, and a click after them could go ahead.
 func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)) {
 	if done == nil && !IsTautFn(fn) {
-		b.with(func(r *runtime) { r.rt.CallFn(int(fn), args) })
+		b.with(func(r *runtime) { r.rt.CallFnUserBlocking(int(fn), args) })
+		return
+	}
+	var a json.RawMessage = args
+	if len(a) == 0 {
+		a = json.RawMessage("[]")
+	}
+	path := "__taut.callHostFn"
+	if IsTautFn(fn) {
+		path = "__taut.callFn"
+	}
+	call := func(r *runtime) {
+		r.rt.CallThen(UserAction(context.Background()), path, func(res json.RawMessage, err error) {
+			if done != nil {
+				done(res, err)
+			}
+		}, float64(fn), a)
+	}
+	if r := b.t.liveRuntime(); r != nil {
+		call(r)
 		return
 	}
 	go func() {
@@ -600,18 +631,7 @@ func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)
 			}
 			return
 		}
-		var a json.RawMessage = args
-		if len(a) == 0 {
-			a = json.RawMessage("[]")
-		}
-		path := "__taut.callHostFn"
-		if IsTautFn(fn) {
-			path = "__taut.callFn"
-		}
-		res, err := r.rt.Call(context.Background(), path, float64(fn), a)
-		if done != nil {
-			done(res, err)
-		}
+		call(r)
 	}()
 }
 
@@ -740,12 +760,29 @@ func (t *Taut) HasSendChecks() bool { h := t.composer(); return h != nil && h.Se
 // confirm modal); false keeps the message in the composer. Call it off the
 // UI goroutine before sending, when HasSendChecks.
 func (t *Taut) SendCheck(ctx context.Context, c ComposerContext) bool {
+	answer := make(chan bool, 1)
+	t.sendCheck(ctx, c, func(ok bool) { answer <- ok }, false)
+	return <-answer
+}
+
+// SendCheckAsync is SendCheck answering done on another goroutine. With
+// the runtime running, the checks' JS call is queued before it returns,
+// on the caller's goroutine: the composer's, at Enter, ahead of its own
+// re-render after it, which the checks waited for when they were queued a
+// goroutine switch later (a user-blocking task runs ahead of the queued
+// ones, never of the one running).
+func (t *Taut) SendCheckAsync(ctx context.Context, c ComposerContext, done func(ok bool)) {
+	t.sendCheck(ctx, c, done, true)
+}
+
+func (t *Taut) sendCheck(ctx context.Context, c ComposerContext, answer func(bool), async bool) {
 	if !t.HasSendChecks() {
-		return true
-	}
-	rt, err := t.ensureRuntime()
-	if err != nil {
-		return true
+		if async {
+			go answer(true)
+		} else {
+			answer(true)
+		}
+		return
 	}
 	type result struct {
 		ok  bool
@@ -753,41 +790,67 @@ func (t *Taut) SendCheck(ctx context.Context, c ComposerContext) bool {
 	}
 	done := make(chan result, 1)
 	cctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go func() {
-		var ok bool
-		err := rt.call(cctx, "sendCheck", &ok, c)
-		done <- result{ok, err}
-	}()
-	// A check may wait for the user as long as they take (HaikuWarning's
-	// dialog). But when the runtime's watchdog interrupts a task, QuickJS
-	// leaves the promises that task would have settled pending forever, so
-	// a check it hit (or a promise checks share, like HaikuWarning's
-	// dictionary) never answers. Once that has happened, a check that stays
-	// pending with nothing open for the user fails like a check that threw:
-	// it is ignored.
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	var idle time.Duration
-	for {
-		select {
-		case r := <-done:
-			if r.err != nil {
-				t.logf("taut: send check: %v", r.err)
-				return true
+	call := func(rt *runtime) {
+		rt.rt.CallThen(cctx, "__taut.sendCheck", func(raw json.RawMessage, err error) {
+			var ok bool
+			if err == nil && len(raw) > 0 {
+				err = json.Unmarshal(raw, &ok)
 			}
-			return r.ok
-		case <-tick.C:
-			if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
-				idle = 0
-				continue
+			done <- result{ok, err}
+		}, c)
+	}
+	rt := t.liveRuntime()
+	if rt != nil {
+		call(rt) // queued now (CallThen)
+	}
+	wait := func() {
+		defer cancel()
+		if rt == nil {
+			var err error
+			if rt, err = t.ensureRuntime(); err != nil {
+				answer(true)
+				return
 			}
-			idle += time.Second
-			if idle >= sendCheckGrace {
-				t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
-				return true
+			call(rt)
+		}
+		// A check may wait for the user as long as they take (HaikuWarning's
+		// dialog). But when the runtime's watchdog interrupts a task, QuickJS
+		// leaves the promises that task would have settled pending forever, so
+		// a check it hit (or a promise checks share, like HaikuWarning's
+		// dictionary) never answers. Once that has happened, a check that stays
+		// pending with nothing open for the user fails like a check that threw:
+		// it is ignored.
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		var idle time.Duration
+		for {
+			select {
+			case r := <-done:
+				if r.err != nil {
+					t.logf("taut: send check: %v", r.err)
+					answer(true)
+					return
+				}
+				answer(r.ok)
+				return
+			case <-tick.C:
+				if rt.rt.Interrupts() == 0 || t.sendCheckWaiting(ctx, rt) {
+					idle = 0
+					continue
+				}
+				idle += time.Second
+				if idle >= sendCheckGrace {
+					t.logf("taut: send check: pending %v with nothing open for the user after the JS runtime interrupted a task (an interrupted promise never settles); ignoring it", idle)
+					answer(true)
+					return
+				}
 			}
 		}
+	}
+	if async {
+		go wait()
+	} else {
+		wait()
 	}
 }
 
@@ -803,7 +866,9 @@ func (t *Taut) sendCheckWaiting(ctx context.Context, rt *runtime) bool {
 	if len(t.Overlays()) > 0 {
 		return true
 	}
-	pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	// behind the queued work, as the check's own awaits may be: a busy
+	// runtime that can't answer in time counts as waiting
+	pctx, cancel := context.WithTimeout(jsrt.Ordinary(ctx), 2*time.Second)
 	defer cancel()
 	var open bool
 	if err := rt.call(pctx, "sendCheckWaiting", &open); err != nil {
@@ -1996,10 +2061,15 @@ func (v *viewCache) dropEvicted(ch string) {
 	v.unindex(keys)
 }
 
+// viewChunk is how many entries one JS read of views takes at most
+// (fetch): a message's encode costs QuickJS a fraction of a ms, so a call
+// stays at a few ms, React's time slice.
+const viewChunk = 25
+
 // fetch asks JS for keys and decodes what changed of what comes back: one
-// JS read per (slice, key), each message bucket decoded once for all of
-// its messages asked for. have are the entries installed for keys: one
-// whose bytes come back as they were comes back same, nothing decoded or
+// read per (slice, key), each message bucket decoded once for all of its
+// messages asked for. have are the entries installed for keys: one whose
+// bytes come back as they were comes back same, nothing decoded or
 // converted (each event in the open channel had the worker decode every
 // message asked of its bucket again, and its injected messages, to find
 // most of them unchanged). failed: a call to JS failed (the keys it
@@ -2025,98 +2095,223 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 		if k.key == "" {
 			key = nil
 		}
-		if raw, err := rt.rt.Call(context.Background(), "__taut.viewIn", float64(id), k.slice, key); err == nil {
+		// on the in-order lane with the invalidates, as the views' reads
+		// below: a plain read runs whenever the in-order work gives the
+		// plain queue a turn (orderedSlice), ahead of an older invalidate
+		// still queued, and came back with the state from before it
+		ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 3*time.Second)
+		raw, err := rt.rt.Call(ctx, "__taut.viewIn", float64(id), k.slice, key)
+		cancel()
+		if err == nil {
 			out[k] = &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
 		} else {
 			failed = true
 		}
 	}
-	index := map[viewSK]int{}
-	var pairs [][2]any
-	for _, k := range plain {
-		p := viewSK{k.slice, k.key}
-		if _, ok := index[p]; ok {
-			continue
-		}
-		index[p] = len(pairs)
-		var key any = k.key
-		if k.key == "" {
-			key = nil
-		}
-		pairs = append(pairs, [2]any{k.slice, key})
+	// one read per (slice, key): the whole value, or the entries asked for
+	// (a message bucket's messages), at most viewChunk entries a JS task,
+	// so no read holds the thread long: a send's checks waited behind one
+	// that encoded a whole bucket (29 ms on the runners). The first chunk
+	// of each, and a whole message bucket's keys (its injected messages),
+	// go in one call; the rest then go together, each a task of its own,
+	// back to back: a bucket costs two trips through the queue, not one a
+	// chunk (13 behind a busy runtime for a 300-message timeline).
+	type pairReq struct {
+		whole bool
+		subs  []string
 	}
-	if len(pairs) == 0 {
+	reqs := map[viewSK]*pairReq{}
+	var order []viewSK
+	for _, k := range plain {
+		sk := viewSK{k.slice, k.key}
+		r := reqs[sk]
+		if r == nil {
+			r = &pairReq{}
+			reqs[sk] = r
+			order = append(order, sk)
+		}
+		if k.sub == "" {
+			r.whole = true
+		} else {
+			r.subs = append(r.subs, k.sub)
+		}
+	}
+	if len(order) == 0 {
 		return out, failed
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	var vals []json.RawMessage
-	// Merging msg-latency: this call goes on the runtime's in-order lane
-	// (an InOrder ctx), with the invalidate tasks. In-order tasks run
-	// ahead of the plain queue, so a plain fetch queued before an
-	// invalidate ran after it, and came back with the change's bytes at a
-	// ver below its last mark: ready only on the refetch, whose same bytes
-	// announce it (work). Guarded by
-	// TestViewedRowGoesBackWithOnlyInvalidateFrames.
-	if err := rt.call(ctx, "views", &vals, pairs); err != nil || len(vals) != len(pairs) {
+	jsKey := func(key string) any {
+		if key == "" {
+			return nil
+		}
+		return key
+	}
+	type part struct {
+		sk   viewSK
+		subs []string
+	}
+	const (
+		kindWhole = iota // the value in one piece
+		kindList         // a whole message bucket: its keys and first chunk
+		kindSubs         // the first chunk of the entries asked for
+	)
+	type spec struct {
+		sk   viewSK
+		kind int
+	}
+	var first [][3]any
+	var specs []spec
+	var rest []part
+	for _, sk := range order {
+		r := reqs[sk]
+		switch {
+		case r.whole && sk.slice == "messages" && sk.key != "":
+			first = append(first, [3]any{sk.slice, sk.key, map[string]int{"first": viewChunk}})
+			specs = append(specs, spec{sk, kindList})
+		case r.whole:
+			first = append(first, [3]any{sk.slice, jsKey(sk.key), nil})
+			specs = append(specs, spec{sk, kindWhole})
+		default:
+			first = append(first, [3]any{sk.slice, jsKey(sk.key), r.subs[:min(viewChunk, len(r.subs))]})
+			specs = append(specs, spec{sk, kindSubs})
+			for i := viewChunk; i < len(r.subs); i += viewChunk {
+				rest = append(rest, part{sk, r.subs[i:min(i+viewChunk, len(r.subs))]})
+			}
+		}
+	}
+	vals := map[viewSK]json.RawMessage{}
+	buckets := map[viewSK]map[string]json.RawMessage{}
+	chunked := map[viewSK]bool{} // whole message buckets read in chunks
+	torn := map[viewSK]bool{}    // a chunk didn't answer: asked again
+	merge := func(sk viewSK, raw json.RawMessage) {
+		var b map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &b)
+		m := buckets[sk]
+		if m == nil {
+			m = make(map[string]json.RawMessage, len(b))
+			buckets[sk] = m
+		}
+		for ts, x := range b {
+			m[ts] = x
+		}
+	}
+	// the reads go on the runtime's in-order lane, with the invalidate
+	// tasks (runtime.postWith): in-order tasks run ahead of the plain
+	// queue, so a plain read queued before an invalidate ran after it, and
+	// came back with the change's bytes at a ver below its last mark,
+	// ready only on the refetch, whose same bytes announce it (work).
+	// Guarded by TestViewedRowGoesBackWithOnlyInvalidateFrames
+	ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 3*time.Second)
+	var got []json.RawMessage
+	err := rt.call(ctx, "views", &got, first)
+	cancel()
+	if err != nil || len(got) != len(first) {
 		return out, true
 	}
-	sums := make(map[int]uint64)
-	sum := func(i int) uint64 {
-		s, ok := sums[i]
-		if !ok {
-			s = viewSum(vals[i])
-			sums[i] = s
+	for i, sp := range specs {
+		switch sp.kind {
+		case kindWhole:
+			vals[sp.sk] = got[i]
+		case kindSubs:
+			merge(sp.sk, got[i])
+		case kindList:
+			var lr struct {
+				Keys []string        `json:"keys"`
+				Part json.RawMessage `json:"part"`
+			}
+			_ = json.Unmarshal(got[i], &lr)
+			chunked[sp.sk] = true
+			merge(sp.sk, lr.Part)
+			for j := viewChunk; j < len(lr.Keys); j += viewChunk {
+				rest = append(rest, part{sp.sk, lr.Keys[j:min(j+viewChunk, len(lr.Keys))]})
+			}
 		}
-		return s
 	}
-	decoded := make(map[int]map[string]json.RawMessage)
-	bucket := func(i int) map[string]json.RawMessage {
-		b, ok := decoded[i]
+	if len(rest) > 0 {
+		type answer struct {
+			i   int
+			raw json.RawMessage
+			err error
+		}
+		answers := make(chan answer, len(rest))
+		for i, p := range rest {
+			ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 3*time.Second)
+			rt.rt.CallThen(ctx, "__taut.views", func(raw json.RawMessage, err error) {
+				cancel()
+				answers <- answer{i, raw, err}
+			}, [][3]any{{p.sk.slice, jsKey(p.sk.key), p.subs}})
+		}
+		for range rest {
+			a := <-answers
+			sk := rest[a.i].sk
+			var res []json.RawMessage
+			if a.err != nil || json.Unmarshal(a.raw, &res) != nil || len(res) != 1 {
+				torn[sk], failed = true, true
+				continue
+			}
+			merge(sk, res[0])
+		}
+	}
+	bucket := func(sk viewSK) map[string]json.RawMessage {
+		b, ok := buckets[sk]
 		if !ok {
-			_ = json.Unmarshal(vals[i], &b)
-			decoded[i] = b
+			_ = json.Unmarshal(vals[sk], &b)
+			buckets[sk] = b
 		}
 		return b
 	}
+	// a whole message bucket read in chunks, as one value: its entries
+	// encoded again (json sorts a map's keys, so the same entries make the
+	// same bytes), which the same-bytes check compares as it compared JS's
+	// encoding of the bucket whole
+	wholes := map[viewSK]json.RawMessage{}
+	whole := func(sk viewSK) json.RawMessage {
+		w, ok := wholes[sk]
+		if !ok {
+			w, _ = json.Marshal(bucket(sk))
+			wholes[sk] = w
+		}
+		return w
+	}
 	for _, k := range plain {
-		i := index[viewSK{k.slice, k.key}]
+		sk := viewSK{k.slice, k.key}
 		cur := have[k]
-		if k.slice == "messages" && k.key != "" {
-			// decoded from the very bytes this bucket has now (merging
-			// msg-latency: its chunked read hands back a bucket in parts;
-			// this compares the checksum of the bucket assembled whole,
-			// which the chunked read supplies, never one part's)
-			if cur != nil && cur.blen == len(vals[i]) && cur.bsum == sum(i) &&
-				(k.sub != "" && cur.sm != nil || k.sub == "" && v.sameHeld(k.key, cur.inj, cur.bkeys)) {
-				out[k] = &viewEntry{same: true, bsum: sum(i), blen: len(vals[i])}
+		var raw json.RawMessage
+		switch {
+		case torn[sk] && (k.sub == "" || bucket(sk)[k.sub] == nil):
+			continue // its chunk didn't answer: asked again
+		case k.sub != "":
+			raw = bucket(sk)[k.sub] // one message of a bucket
+		case chunked[sk]:
+			raw = whole(sk) // the bucket whole again
+			// decoded from the very bytes this bucket has now, its
+			// injected list from what core held then
+			if cur != nil && cur.blen == len(raw) && cur.bsum == viewSum(raw) && v.sameHeld(k.key, cur.inj, cur.bkeys) {
+				out[k] = &viewEntry{same: true, bsum: viewSum(raw), blen: len(raw)}
 				continue
 			}
-		}
-		raw := vals[i]
-		if k.sub != "" {
-			raw = bucket(i)[k.sub] // one message of a bucket
+		default:
+			raw = vals[sk]
 		}
 		e := &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
 		switch k.slice {
 		case "messages":
-			e.bsum, e.blen = sum(i), len(vals[i])
 			if k.sub != "" {
 				// decoded and converted, the bytes aren't needed again:
 				// a hash tells a refetch of the same value
 				e.raw, e.sum = nil, viewSum(raw)
 				if cur != nil && cur.sm != nil && cur.sum == e.sum && cur.rawLen == e.rawLen {
-					out[k] = &viewEntry{same: true, bsum: e.bsum, blen: e.blen} // this message's bytes as they were
+					out[k] = &viewEntry{same: true} // this message's bytes as they were
 					continue
 				}
 				e.sm = decodeMessage(raw)
 				e.size = 3*len(raw) + 256 // the decoded message and its conversion
 			} else if k.key != "" {
+				e.bsum, e.blen = viewSum(raw), len(raw)
 				var prev []*viewInj
 				if cur != nil {
 					prev = cur.inj
 				}
-				b := bucket(i)
+				b := bucket(sk)
 				e.inj = v.injected(k.key, b, prev)
 				e.bkeys = make([]store.MsgKey, 0, len(b))
 				for ts, raw := range b {

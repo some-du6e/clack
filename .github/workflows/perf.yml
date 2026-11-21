@@ -565,6 +565,12 @@ jobs:
           mkdir -p perf-out
           go test -c -o perf-out/head.test ./internal/ui
           (cd "$RUNNER_TEMP/base-tree" && go test -c -o "$GITHUB_WORKSPACE/perf-out/base.test" ./internal/ui) || echo "::warning::the base tree's ui tests didn't build; head numbers only"
+          # the message latency passes run on the base tree too, built on
+          # their own: a base before the latency harness can't build it,
+          # and the scroll passes' base column must not go with it
+          cp internal/ui/msg_latency_test.go internal/ui/perf_latency_test.go "$RUNNER_TEMP/base-tree/internal/ui/"
+          (cd "$RUNNER_TEMP/base-tree" && go test -c -o "$GITHUB_WORKSPACE/perf-out/base-latency.test" ./internal/ui) || echo "::warning::the base tree doesn't build the latency harness; latency numbers are head only"
+          rm -f "$RUNNER_TEMP/base-tree/internal/ui/msg_latency_test.go" "$RUNNER_TEMP/base-tree/internal/ui/perf_latency_test.go"
       - name: scroll passes (base and head interleaved, 3 rounds)
         env:
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
@@ -588,6 +594,37 @@ jobs:
               echo "::endgroup::"
             done
           done
+      # Message latency (internal/ui/perf_latency_test.go): a socket event
+      # to the frame that draws its row, others' messages and own sends,
+      # quiet and under a busy workspace's socket, with the same plugins;
+      # users/info answers after 250 ms. Base and head interleaved, 2
+      # rounds; the distributions go to the summary.
+      - name: message latency (socket event to row; base and head interleaved, 2 rounds)
+        if: ${{ !cancelled() }}
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          for r in 1 2; do
+            for s in base head; do
+              bin=perf-out/$s.test
+              [ "$s" = base ] && bin=perf-out/base-latency.test
+              [ -x "$bin" ] || continue
+              MSG_LATENCY_OUT="$PWD/perf-out/latency-$s.jsonl" xvfb-run -a "$bin" -test.run '^TestPerfMessageLatency$' -test.v -test.count 1 -test.timeout 15m > perf-out/latency-$s-$r.log 2>&1 || echo "::warning::$s latency round $r failed"
+              grep -E 'latency |lookups |running [0-9]+ plugins|--- |panic' perf-out/latency-$s-$r.log || true
+            done
+          done
+          {
+            echo "### Message latency: socket event (or Enter) to the frame that draws the row"
+            echo
+            echo '```'
+            for s in base head; do
+              for r in 1 2; do
+                [ -f perf-out/latency-$s-$r.log ] && grep -h -o -E '(latency|lookups) .*' perf-out/latency-$s-$r.log | sed -E "s/^(latency|lookups) /$s r$r: \1 /"
+              done
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: profiles (round 1; CPU per pass, then mutex and block waits)
         if: ${{ !cancelled() }}
         run: |
@@ -621,5 +658,6 @@ jobs:
           name: perf-plugins
           path: |
             perf-out/*.json
+            perf-out/*.jsonl
             perf-out/*.log
             perf-out/*.pprof
