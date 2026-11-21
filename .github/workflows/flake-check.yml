@@ -2943,10 +2943,12 @@ jobs:
           go test -c -o "$env:RUNNER_TEMP\ui.test.exe" ./internal/ui
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Push-Location internal/ui
-          & "$env:RUNNER_TEMP\ui.test.exe" -test.v "-test.count=$env:COUNT" -test.timeout 30m -test.run '^TestWinQuotePaste$' *> "$env:RUNNER_TEMP\test.log"
+          # each flag quoted: PowerShell splits a bare -test.v at the dot
+          & "$env:RUNNER_TEMP\ui.test.exe" '-test.v' "-test.count=$env:COUNT" '-test.timeout=30m' '-test.run=^TestWinQuotePaste$' *> "$env:RUNNER_TEMP\test.log"
           $rc = $LASTEXITCODE
           Pop-Location
           Get-Content "$env:RUNNER_TEMP\test.log" | Select-String -Pattern '^(=== RUN|--- (PASS|FAIL)|PASS|FAIL|ok|panic|fatal error|Exception)|_test\.go:\d+:' | Select-Object -Last 120 | ForEach-Object { $_.Line }
+          Get-Content "$env:RUNNER_TEMP\test.log" -TotalCount 3
           Get-Content "$env:RUNNER_TEMP\test.log" -Tail 60
           "the test binary's exit code: {0} (0x{1:X8})" -f $rc, $rc
           if ($rc -ne 0) { exit 1 }
