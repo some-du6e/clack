@@ -76,6 +76,11 @@ def check(out, noise_path):
     vals = values(out)
     if noise is None:
         lines.append(f'No noise bands ({noise_path}): this run reports, it doesn\'t gate.')
+    nobase = noise is not None and all(b is None for b, _ in vals.values())
+    if nobase:
+        # the base tree didn't build or run: nothing to compare is no pass
+        fails += 1
+        lines.append('- ❌ **the base side has no numbers** (see the "build base" step): the gate can\'t compare')
     for k, (b, h) in vals.items():
         what, unit = METRICS[k][0], METRICS[k][1]
         band = (noise or {}).get(k)
@@ -102,6 +107,8 @@ def check(out, noise_path):
             lines.append(f'- ✅ {what}: {txt}')
     if noise is None:
         head = '### Perf gate: report only (no noise bands yet)'
+    elif nobase:
+        head = '### Perf gate: ❌ no base numbers to compare with'
     elif fails:
         head = f'### Perf gate: ❌ {fails} metric{"s" if fails != 1 else ""} worse than base past {"its" if fails == 1 else "their"} noise band'
     else:
