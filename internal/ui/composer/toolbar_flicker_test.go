@@ -138,6 +138,18 @@ func (b *tbBridge) counts() string {
 
 const tbThreadTS = "1700000000.000100"
 
+// tbComposerButton stands in for slackc/kit's ComposerButton, which a
+// composer test can't link (kit imports this package): kit draws each
+// composer.addButton entry as a "small" IconButtonBase, 28dp square.
+// Without a host the node draws nothing, and plugin buttons that render
+// would take no room in these tests.
+func tbComposerButton(gtx layout.Context, h *slackc.Host) layout.Dimensions {
+	s := gtx.Dp(28)
+	return layout.Dimensions{Size: image.Pt(s, s)}
+}
+
+func tbNoHost(layout.Context, *slackc.Host) layout.Dimensions { return layout.Dimensions{} }
+
 // tbCase is a composer and the plugins it runs under.
 type tbCase struct {
 	name    string
@@ -249,6 +261,10 @@ func newTBRig(t *testing.T, tc tbCase, w int) *tbRig {
 			}
 		}
 		e.patched(tc.patched...)
+		if tc.plugW > 0 {
+			slackc.RegisterHost(tbComposerButton, "ComposerButton")
+			t.Cleanup(func() { slackc.RegisterHost(tbNoHost, "ComposerButton") })
+		}
 		g.rec = &tbBridge{Bridge: e.tt.Bridge()}
 		slackc.SetBridge(g.rec)
 		rt, err := e.tt.JS()
