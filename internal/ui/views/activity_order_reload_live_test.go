@@ -100,6 +100,10 @@ func TestActivityReloadKeepsLaterPages(t *testing.T) {
 			if len(loaded.Items) <= actLimit {
 				t.Fatalf("precondition: %d rows loaded, want more than a page (%d)", len(loaded.Items), actLimit)
 			}
+			// back at the top, so the list asks for no page while the
+			// reload is out (an end of list in view pages cut rows back)
+			v.list.Position = layout.Position{}
+			e.frame()
 			// a reload: the peek opening, Undo or ⌘Z after a Clear, an
 			// invitation's answer, activity_invalidated
 			feeds := fs.CallCount("activity.feed")
