@@ -209,7 +209,10 @@ func (x *rfEnv) drawnScan(pts []image.Point, sub string, want ...string) (image.
 }
 
 // toolbarReply hovers row ts and returns the hover toolbar's Reply in
-// thread button (data-qa start_thread) as drawn, the pointer on it.
+// thread button as drawn, the pointer on it. The card is a row of 32px
+// buttons 4px in (quick reactions, then Add reaction, Reply in thread,
+// ...); the outline names only Add reaction's
+// (MessageActionButtonReaction), and Reply in thread is the next one.
 func (x *rfEnv) toolbarReply(ts string) image.Point {
 	x.t.Helper()
 	r, ok := x.row(ts)
@@ -224,16 +227,21 @@ func (x *rfEnv) toolbarReply(ts string) image.Point {
 	if !ok || tts != ts {
 		x.t.Fatalf("hovering row %s at %v drew the toolbar over %q (%v)", ts, in, tts, ok)
 	}
+	const pad, bs = 4, 32
 	var pts []image.Point
-	for px := tb.Min.X + 6; px < tb.Max.X; px += 8 {
+	for px := tb.Min.X + pad + bs/2; px < tb.Max.X-pad; px += bs {
 		pts = append(pts, image.Pt(px, (tb.Min.Y+tb.Max.Y)/2))
 	}
-	// a point between buttons widens to the card and stops there
-	btn, ok := x.drawnScan(pts, "[data-qa=start_thread]", "button.", "MessageActions")
+	react, ok := x.drawnScan(pts, "MessageActionButtonReaction", "MessageActionButtonReaction")
 	if !ok {
-		x.t.Fatalf("no Reply in thread button ([data-qa=start_thread]) drawn on the toolbar %v", tb)
+		x.t.Fatalf("no Add reaction button (MessageActionButtonReaction) drawn on the toolbar %v", tb)
 	}
-	return btn.Min.Add(btn.Max).Div(2)
+	p := image.Pt(react.Max.X+bs/2, (react.Min.Y+react.Max.Y)/2)
+	if !p.In(tb) {
+		x.t.Fatalf("Add reaction %v is the toolbar's (%v) last button", react, tb)
+	}
+	x.move(f32.Pt(float32(p.X), float32(p.Y)))
+	return p
 }
 
 // replyBar returns the root's reply bar ("2 replies") as drawn.
@@ -249,11 +257,12 @@ func (x *rfEnv) replyBar() image.Point {
 	for d := 0; d <= 24; d += 4 {
 		pts = append(pts, image.Pt(r.Min.X+120, r.Max.Y-25+d), image.Pt(r.Min.X+120, r.Max.Y-25-d))
 	}
-	bar, ok := x.drawnScan(pts[1:], "c-message__reply_bar", "div.c-message__reply_bar")
+	// the outline is the ThreadReplies component's, its root element the bar
+	bar, ok := x.drawnScan(pts[1:], "", "ThreadReplies", "div.c-message__reply_bar")
 	if !ok {
 		x.t.Fatalf("no reply bar drawn in the root's row %v", r)
 	}
-	return image.Pt(bar.Min.X+bar.Dx()/3, (bar.Min.Y+bar.Max.Y)/2)
+	return image.Pt(bar.Min.X+min(60, bar.Dx()/3), (bar.Min.Y+bar.Max.Y)/2)
 }
 
 // clickMods is a primary click with modifiers (Slack's split click).
