@@ -55,3 +55,44 @@ func goroutinesMentioning(sub string, max int) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// goroutineStacks is the goroutine profile's stacks, each with how many
+// goroutines are on it.
+func goroutineStacks() map[string]int {
+	var b bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&b, 1)
+	out := map[string]int{}
+	for _, st := range strings.Split(b.String(), "\n\n") {
+		head, rest, ok := strings.Cut(st, "\n")
+		if !ok || !strings.Contains(head, " @ ") {
+			continue
+		}
+		var n int
+		fmt.Sscanf(strings.TrimSpace(head), "%d", &n)
+		// the stack's lines without the addresses, which the counts' line has
+		out[rest] += n
+	}
+	return out
+}
+
+// goroutinesAdded is the stacks with more goroutines now than in before,
+// each with how many more, at most max lines.
+func goroutinesAdded(before map[string]int, max int) string {
+	var out []string
+	for st, n := range goroutineStacks() {
+		if d := n - before[st]; d > 0 && !strings.Contains(st, "goroutineStacks") {
+			out = append(out, fmt.Sprintf("%d more:", d))
+			out = append(out, strings.Split(st, "\n")...)
+		}
+		if len(out) >= max {
+			break
+		}
+	}
+	if len(out) > max {
+		out = out[:max]
+	}
+	if len(out) == 0 {
+		return "\tnone"
+	}
+	return strings.Join(out, "\n")
+}
