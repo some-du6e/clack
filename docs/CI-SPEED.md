@@ -223,24 +223,28 @@ Each change shipped as its own commit; "after" is from runs on `ci-speed`.
 ## Tests: two weeks of failures
 
 1,961 failed runs and 2,307 failed jobs, 2026-11-06..20 (flake-check and
--red/-mut evidence branches left out). The failing tests come from the
-jobs' logs (top-level `--- FAIL`), 1,259 of those jobs so far, newest
-first: 2,319 failures of 608 tests. Each failure is classed by what
-happened next on its branch, the same workflow's next green run and the
-diff to it (`bin/classify.py`):
+-red/-mut evidence branches left out). The failing tests come from every
+one of those jobs' logs (top-level `--- FAIL`; 1,625 of the 1,953 that ran
+tests named one): 3,093 failures of 752 tests. Each failure is classed by
+what happened next on its branch, the same workflow's next green run and
+the diff to it (`bin/classify.py`):
 
 | class | failures | share |
 |---|---|---|
-| code changed before it passed (a regression caught, or code finished) | 1,514 | 65% |
-| never green again on the branch (abandoned, or still red) | 397 | 17% |
-| only tests, testdata, goldens or CI changed (a change detected) | 272 | 12% |
-| the same sha passed later (a flake) | 136 | 6% |
+| code changed before it passed (a regression caught, or code finished) | 2,082 | 67% |
+| never green again on the branch (abandoned, or still red) | 471 | 15% |
+| only tests, testdata, goldens or CI changed (a change detected) | 404 | 13% |
+| the same sha passed later (a flake) | 136 | 4% |
 
 **No test is deleted.** A delete or merge needs at least 3 failures on at
-least 2 branches, every one ended by a test change alone; no test meets
-it. Every test-changed-only test is one branch's episode, a new test
-adjusted until it passed (TestThreadsUnreadRowEdgesLikeSlack, TestGIFShots,
-TestHuddleShots*: 4-5 failures, 1 branch each). The nearest,
+least 2 branches, every one ended by a test change alone. One test meets
+that: TestSlickViewThemeOverlays, and only because ui-taut and ui-slick
+both run it. Its two episodes are the theme-overlays branch writing it
+(11-08) and prefs-colors (11-09) changing a colour it checks: one intended
+change detected, so it stays. Every other test-changed-only test is one
+branch's episode, a new test adjusted until it passed
+(TestThreadsUnreadRowEdgesLikeSlack, TestGIFShots, TestHuddleShots*: 4-5
+failures on one branch each). The nearest after it,
 TestLoungeBannerLikeSlack (8 test-changed on 5 branches), also ended with
 code fixed 5 times: it catches regressions. Every flake event (136) is
 ui-slick's 15 TestSlickView* tests failing together on 2 branches: ui-slick
@@ -269,6 +273,13 @@ flake-check's `flakes-1121` runs the first three fixes under load.
 - TestRealWindowCaretCost, TestFrameCostDamage: CPU ratios and pixels on
   loaded or slow runners.
 - ui-slick's TestSlickView* (unpinned upstream, above).
+- TestMessageMenuOldMenuRows (popups) "timed out waiting for the old row
+  next to Act one: the old row's click", once, in ci-speed's full-test
+  (run 44896761367, 2026-11-21): the same log has "the plugin answered
+  message menu pick "copy_link" after 451ms: not running it", so under the
+  full suite's load the plugin engine answered after Clack's pick deadline.
+  First failure in the two weeks; no ci-speed change touches it (a rich
+  copy is the only popups change, and Linux has none).
 
 ## For Karim: accounts and money
 
@@ -298,8 +309,8 @@ table (checked 2026-10-22); check each provider's page before buying.
 
 | | before | after |
 |---|---|---|
-| ci on a branch push, runner-minutes (sum of its jobs) | 133.6 (p50s) | 104.8 with the seed (44854132904); 118.5 on main's old entry (44860564804) |
-| ci's longest job (the branch's verdict, past the queue) | macos 30.4 min | macos-idle 11.0 min |
+| ci on a branch push, runner-minutes (sum of its jobs) | 133.6 (p50s) | 104.8 with the seed (44854132904); 118.5 on main's old entry (44860564804), and 119.1 merged with α.122's ui (44896761533: its windows-idle has the video steps) |
+| ci's longest job (the branch's verdict, past the queue) | macos 30.4 min | macos-idle 11.0 min with the seed, 14.1 on main's old entry |
 | a pre-merge ci dispatch | 21 jobs, ~155 runner-min | `only=full-test`: 1 job, 19.0 |
 | a tag's release run, before its builds even queue | 26-32 min (meta's own queue) | 0 |
 | linux-test's slowest shard | 8.4 min | 5.2 |
