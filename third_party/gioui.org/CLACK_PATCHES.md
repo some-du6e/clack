@@ -2565,7 +2565,9 @@ taller than its line did the same.
   1.5x and 2x), its left edge the caret's x less half its width, rounded
   and kept inside the view (`ClampAndRound`), so at the start of a line
   it starts there (Gio's was centred on x and cut in half by the view's
-  left edge: 1 px at 2x). `caretWidth` still pads the view's width.
+  left edge: 1 px at 2x). `caretWidth`, the narrowest a view is, is that
+  whole width (Gio's was half of it), so an empty field laid out at its
+  natural width holds the whole caret.
 
 Clack's composer draws its own caret (internal/ui/composer) and takes
 the same rules there.

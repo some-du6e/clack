@@ -407,10 +407,11 @@ func (e *textView) PaintText(gtx layout.Context, material op.CallOp) {
 }
 
 // caretWidth returns the width occupied by the caret for the current
-// gtx.
+// gtx: Blink's (Clack patch 54, caretRect), so an empty view laid out at
+// its natural width holds the whole caret (Gio's was half of it: an
+// empty field's caret was cut to 1 px at 2x).
 func (e *textView) caretWidth(gtx layout.Context) int {
-	carWidth2 := max(gtx.Dp(1)/2, 1)
-	return carWidth2
+	return int(math.Floor(max(1, float64(gtx.Metric.PxPerDp)) + .5))
 }
 
 // PaintCaret clips and paints the caret rectangle, adding material immediately
@@ -443,7 +444,7 @@ func (e *textView) PaintCaret(gtx layout.Context, material op.CallOp) {
 func (e *textView) caretRect(gtx layout.Context) image.Rectangle {
 	caretStart := e.closestToRune(e.caret.start)
 	w := max(1, float64(gtx.Metric.PxPerDp))
-	wpx := int(math.Floor(w + .5))
+	wpx := e.caretWidth(gtx)
 	x := float64(caretStart.x)/64 - float64(e.scrollOff.X)
 	left := int(math.Floor(x - w/2 + .5))
 	left = max(min(left, e.viewSize.X-wpx), 0)
