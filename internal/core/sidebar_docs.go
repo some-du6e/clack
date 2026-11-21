@@ -140,31 +140,26 @@ func (a *App) ensureSidebarFile(fileID string) {
 		ctx, cancel := context.WithTimeout(a.bg, 20*time.Second)
 		defer cancel()
 		var r struct {
-			File struct {
-				Filetype        string `json:"filetype"`
-				Mode            string `json:"mode"`
-				PrettyType      string `json:"pretty_type"`
-				Title           string `json:"title"`
-				Name            string `json:"name"`
-				LinkedChannelID string `json:"linked_channel_id"`
-			} `json:"file"`
+			File filesInfoFile `json:"file"`
 		}
 		err := a.C.Call(ctx, "files.info", url.Values{"file": {fileID}, "count": {"0"}}, &r)
 		f := &sidebarFile{done: true}
 		if err == nil {
 			ff := r.File
-			switch {
-			case ff.Filetype == "list" || ff.Mode == "list":
-				f.typ = "list"
-			case IsCanvasFile(ff.Filetype, ff.Mode, ff.PrettyType):
-				f.typ = "canvas"
-			}
+			f.typ = fileKindOf(ff.Filetype, ff.Mode, ff.PrettyType)
 			f.title, f.linked = strings.TrimSpace(ff.Title), ff.LinkedChannelID
 		}
 		st.mu.Lock()
 		st.files[fileID] = f
 		st.mu.Unlock()
 		if err == nil {
+			// Slack's one file store: the row's file is the redirect's and
+			// the slugs' too (RedirectFileChannel reads the same
+			// getFileById), so a click on the row doesn't ask again
+			if _, known := a.S.KnownCanvasRef(fileID); !known {
+				a.S.PutCanvasRef(fileID, canvasRefOf(&r.File))
+				a.emit(Event{Type: "names", Users: []string{fileID}})
+			}
 			a.emit(Event{Type: "sidebar_changed"})
 		}
 	}()
