@@ -453,7 +453,7 @@ func (a *App) handle(ev slack.Event) {
 
 func (a *App) emitUpdate(ch string, m *slack.Message) {
 	v := a.message(ch, m)
-	a.emit(Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
+	a.emit(Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v, Ahead: a.S.IsAhead(ch, m.TS)})
 }
 
 // openStreams remembers the messages last seen with streaming_state
@@ -705,8 +705,20 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if isReply {
 		a.S.AddReplyNoted(ch, m) // a replies answer older than this reply keeps it (store/live.go)
 	}
+	ahead := false
 	if !isReply || m.Subtype == "thread_broadcast" {
-		a.S.Upsert(ch, m)
+		// past the end of a window whose end went stale at a slow
+		// connect it waits until the window is read forward to it
+		// (store/reached_end.go): appended now, it drew right after the
+		// window with what the socket missed left out
+		if ahead = a.S.UpsertHeard(ch, m); ahead {
+			a.mu.Lock()
+			open := a.watchCh == ch
+			a.mu.Unlock()
+			if open {
+				a.startCatchUp(ch) // reached_end.go
+			}
+		}
 	}
 	self := a.S.SelfID()
 	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
@@ -728,7 +740,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	v := a.message(ch, &m)
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
-		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch)}
+		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch), Ahead: ahead}
 	// the sender as the store has them, nothing asked: messageReceived asks
 	// for no one, the rows ask as they draw (row.resolve's User), the
 	// notification for itself (the UI's noteMembers). Read through

@@ -195,6 +195,12 @@ func New(c *slack.Client, s *store.Store) *App {
 		// a.RTM.LastConnectFast(). Without Fast every reconnect reloads
 		// the Threads view (TestThreadsFastReconnectLikeSlack); without
 		// its block slow connects miss its catch-up.
+		if up && !a.RTM.LastConnectFast() {
+			// Slack's onConnected "Resetting reachedEnd": every window's
+			// end goes stale before the lists hear of the connection, and
+			// the open one is read forward from it (reached_end.go)
+			a.resetReachedEnd()
+		}
 		a.emit(Event{Type: "connection", Connected: up, Fast: up && a.RTM.LastConnectFast()})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
@@ -1080,7 +1086,7 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// message cache budget: Slack resets a quiet conversation's history
 	// only an hour after it was last used (evict.go)
 	a.noteLoaded(ch)
-	pins, subs, live := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq()
+	pins, subs, live, gen := a.S.PinSeq(), a.S.SubSeq(), a.S.LiveSeq(), a.S.EndGen()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
@@ -1089,7 +1095,11 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	// reactions the socket brought while the request was out stay, and a
 	// revision the store held another of reaches every copy and the views
 	// (store/read_revisions.go, read_changes.go)
-	a.S.SetLatestRead(ch, p.Messages, p.HasMore, live)
+	// the viewer's sends the window holds and the page doesn't stay (one
+	// confirmed after the page was read, a pending or failed copy), and a
+	// slow connect while the page was out leaves the end stale
+	// (store/reached_end.go SetLatestReadAt)
+	a.S.SetLatestReadAt(ch, p.Messages, p.HasMore, live, gen, a.sendsIn(ch))
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 	a.announceReads()                  // after the pins and subscriptions: the copies as they are now

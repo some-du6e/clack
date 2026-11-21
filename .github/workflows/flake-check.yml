@@ -270,6 +270,14 @@ on:
       - "internal/fakeslack/react_live.go"
       - "internal/store/reacts.go"
       - "internal/ui/views/taut.go"
+      # the history-gap job's own
+      - "internal/slack/rtm.go"
+      - "internal/slack/rtm_pong_test.go"
+      - "internal/store/reached_end*.go"
+      - "internal/core/reached_end*.go"
+      - "internal/ui/messages/reached_end_test.go"
+      - "internal/ui/reached_end_list_test.go"
+      - "internal/fakeslack/count_posts.go"
 
 permissions:
   contents: read
@@ -2612,3 +2620,54 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
           if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
           "${x[@]}" go test -count=$COUNT -v -timeout 20m -run '^TestComposerToolbar' ./internal/ui/composer
+
+  # A socket gap leaves no hole (Karim's #clack on α.112, 2026-11-20: 6:54
+  # PM, then 9:53 PM, the three hours between missing): a socket that goes
+  # silent is closed after Slack's 90 s without a pong (client-boot Kot3);
+  # at a slow connect every window's end goes stale (Slack's
+  # resetReachedEnd) and the open one is read forward from it, or starts
+  # over at the newest page; the socket's messages past it wait meanwhile.
+  # Silent, dropped and slept sockets, a window paged back to an old
+  # message, more than a page missed, and the list drawing every message
+  # with the other channel unread. Dispatch with only=history-gap.
+  history-gap:
+    if: ${{ !inputs.only || startsWith('history-gap', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      SLACK_TESTS: '^(TestRTMClosesSilentSocket|TestRTMPongTimeoutCountsSleep|TestRTMPongIsAnyReplyToThePing)$'
+      STORE_TESTS: '^(TestResetReachedEndHoldsTheSocketsMessages|TestCatchUpJoinsTheWindow|TestCatchUpTakesTheConfirmedSend|TestNewestPageJoinsTheWaitingMessages|TestOlderPageJoinsOnlyWhereTheWindowStarts|TestNewestPageKeepsTheViewersSends|TestNewestPageReadAcrossAResetStaysStale|TestNewestPageThatMissesStartsANewEpoch)$'
+      CORE_TESTS: '^TestSocketGap'
+      HUB_TESTS: '^TestNewestPageOfAnotherWindowIsTakenWhole$'
+      UI_TESTS: '^TestSocketGapListDrawsEveryMessage$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: slack, store, core, messages, ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=1 -v -run "$STORE_TESTS" ./internal/store || rc=1
+          go test -count=1 -v -timeout 10m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=1 -v -run "$HUB_TESTS" ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 15m -run "$UI_TESTS" ./internal/ui || rc=1
+          go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=$COUNT -run "$STORE_TESTS" ./internal/store || rc=1
+          go test -count=$COUNT -timeout 20m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -run "$HUB_TESTS" ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run "$UI_TESTS" ./internal/ui || rc=1
+          exit $rc
+      - name: core, -race
+        run: |
+          set +e
+          rc=0
+          go test -race -count=1 -timeout 15m -run "$CORE_TESTS" ./internal/core || rc=1
+          go test -race -count=1 -run "$SLACK_TESTS|$STORE_TESTS" ./internal/slack ./internal/store || rc=1
+          exit $rc
