@@ -126,10 +126,6 @@ func (a *App) bootAccount() (team, user string) {
 	return firstNonEmpty(a.C.Creds.Team, a.C.Creds.EnterpriseID), a.C.Creds.UserID
 }
 
-// cacheWhole (CLACK_CACHE_WHOLE=1, launch-speed's A/B, temporary) loads
-// meta.json whole before the warm snapshot, as before the two parts.
-var cacheWhole = os.Getenv("CLACK_CACHE_WHOLE") != ""
-
 // cacheRestMax is how long meta.json's custom emoji and user groups wait
 // at most for the window's first real frame (one started hidden draws
 // none).
@@ -149,7 +145,7 @@ func (a *App) FirstFrameDone() { a.warm.restOnce.Do(func() { close(a.warm.restRe
 // waitCacheRest waits, when the UI deferred it, for the first real frame
 // (FirstFrameDone), at most cacheRestMax.
 func (a *App) waitCacheRest(ctx context.Context) {
-	if !a.warm.deferRest.Load() || cacheWhole {
+	if !a.warm.deferRest.Load() {
 		return
 	}
 	t := time.NewTimer(cacheRestMax)

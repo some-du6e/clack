@@ -634,13 +634,10 @@ func (a *App) Boot(ctx context.Context) error {
 		close(cacheDone)
 	}()
 	// The warm boot: boot_data.json and headers.json load alongside, and
-	// once meta.json is in too the cached sidebar is installed and
-	// DataReady closes, long before the calls below answer (warmboot.go).
-	warmWait := cacheBase
-	if cacheWhole { // launch-speed's A/B (temporary): the warm snapshot after all of meta.json, as before
-		warmWait = cacheDone
-	}
-	go a.loadWarm(warmWait)
+	// once meta.json's first part is in too (the users, prefs and names:
+	// LoadCacheBase) the cached sidebar is installed and DataReady closes,
+	// long before the calls below answer (warmboot.go).
+	go a.loadWarm(cacheBase)
 	var (
 		wg       sync.WaitGroup
 		tmu      sync.Mutex
