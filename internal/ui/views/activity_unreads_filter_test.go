@@ -119,9 +119,10 @@ func TestActivityUnreadsShowsOnlyUnread(t *testing.T) {
 	})
 }
 
-// The Unreads refresh (P0K2 refreshItems, getItemsRetainedOnRefresh):
-// the fresh page, plus the old rows newer than its newest row or marked
-// unread here; old rows read since (or just loaded before) go.
+// The Unreads refresh (tsND O refreshItems, getItemsRetainedOnRefresh):
+// the fresh page, plus the old rows newer than its newest row, marked
+// unread here or listed since the request went out; old rows read since
+// (or just loaded before) go.
 func TestActivityUnreadsRefreshRetains(t *testing.T) {
 	it := func(key, ts string, unread bool) core.ActivityItem {
 		return core.ActivityItem{Key: key, Type: "at_user", FeedTS: ts, Unread: unread}
@@ -137,7 +138,12 @@ func TestActivityUnreadsRefreshRetains(t *testing.T) {
 		it("new-unread", "1700000006.000100", true),
 		it("kept-unread", "1700000005.000100", true),
 	}}
-	got := actRetained(fresh, old, map[string]bool{"marked-unread": true})
+	before := map[string]bool{}
+	for i := range old.Items {
+		before[old.Items[i].Key] = true
+	}
+	o := actUpsertOpts{refresh: true, before: before, unreadMarks: map[string]bool{"marked-unread": true}}
+	got := actUpsertPage(fresh, old, o)
 	var keys []string
 	for i := range got.Items {
 		keys = append(keys, got.Items[i].Key)
@@ -150,7 +156,7 @@ func TestActivityUnreadsRefreshRetains(t *testing.T) {
 		t.Errorf("cursor %q, want the fresh page's", got.Next)
 	}
 	// an empty page keeps only the rows marked unread here
-	got = actRetained(core.ActivityPage{}, old, map[string]bool{"marked-unread": true})
+	got = actUpsertPage(core.ActivityPage{}, old, o)
 	if len(got.Items) != 1 || got.Items[0].Key != "marked-unread" {
 		t.Errorf("empty refresh kept %v", got.Items)
 	}
