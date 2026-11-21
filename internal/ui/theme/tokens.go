@@ -138,6 +138,9 @@ var paletteTokens = []struct {
 	// .p-control_strip__circle_button:active / --active
 	{func(p *Palette) *color.NRGBA { return &p.ChromeBasePry }, Tok{"rgb(var(--dt_color-plt-aubergine-0))", "var(--dt_color-theme-base-pry)"}},
 	{func(p *Palette) *color.NRGBA { return &p.ChromeContentTer }, Tok{"rgb(var(--dt_color-plt-aubergine-100))", "var(--dt_color-theme-content-ter)"}},
+	// the huddle window's toolbar: .button:hover and .segmentedButtonMain:after
+	{func(p *Palette) *color.NRGBA { return &p.ChromeSurfInvTer }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.08)", "var(--dt_color-theme-surf-inv-ter)"}},
+	{func(p *Palette) *color.NRGBA { return &p.ChromeOtlInvPry }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.22)", "var(--dt_color-theme-otl-inv-pry)"}},
 
 	// sidebar: .p-view_contents--sidebar, .p-channel_sidebar__channel…
 	{func(p *Palette) *color.NRGBA { return &p.SidebarBg }, Tok{"rgba(var(--dt_color-plt-aubergine-0),0.11)", "var(--dt_color-theme-surf-inv-sec)"}},

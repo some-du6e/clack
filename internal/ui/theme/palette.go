@@ -26,6 +26,13 @@ type Palette struct {
 	// mode is on, + while the Create menu is open), ChromeBasePryHover the
 	// fill with :hover's blended surf-inv-pry-hover layer over it.
 	ChromeBasePry, ChromeContentTer, ChromeBasePryHover color.NRGBA
+	// ChromeSurfInvTer and ChromeOtlInvPry are theme-surf-inv-ter and
+	// theme-otl-inv-pry in the chrome's scope: the huddle window's toolbar
+	// buttons' :hover and its segmented buttons' divider (HuddleToolbar
+	// paints in useInvertedTheme({view: "chrome"}), which isn't the
+	// sidebar's scope in a light theme at a dark brightness with Darker
+	// sidebars off: Fields).
+	ChromeSurfInvTer, ChromeOtlInvPry color.NRGBA
 
 	// Sidebar (translucent over the chrome gradient).
 	SidebarBg         color.NRGBA
@@ -129,9 +136,11 @@ var LightPalette = Palette{
 	SearchBg:        rgba(0xf9edff, 0x40),
 	SearchText:      rgb(0xffffff),
 
-	ChromeBasePry:      rgb(0xf9edff), // the inverted scope's aubergine-0
-	ChromeContentTer:   rgb(0x39063a), // aubergine-100
-	ChromeBasePryHover: rgb(0xefdef6), // aubergine-70 at .08 multiplied over it
+	ChromeBasePry:      rgb(0xf9edff),        // the inverted scope's aubergine-0
+	ChromeContentTer:   rgb(0x39063a),        // aubergine-100
+	ChromeBasePryHover: rgb(0xefdef6),        // aubergine-70 at .08 multiplied over it
+	ChromeSurfInvTer:   rgba(0xf9edff, 0x14), // the inverted scope's, as SidebarHover
+	ChromeOtlInvPry:    rgba(0xf9edff, 0x38), // as SidebarDivider
 
 	SidebarBg:         rgba(0xf9edff, 0x1c),
 	SidebarText:       rgba(0xf6e4ff, 0xe6),
@@ -206,9 +215,11 @@ var DarkPalette = Palette{
 	SearchBg:        rgba(0xefe1f5, 0x40),
 	SearchText:      rgb(0xf8f8f8),
 
-	ChromeBasePry:      rgb(0xe3ceeb), // aubergine-90
-	ChromeContentTer:   rgb(0x200221), // aubergine-0
-	ChromeBasePryHover: rgb(0xe4d0ec), // aubergine-100 at .08, lighten over it
+	ChromeBasePry:      rgb(0xe3ceeb),        // aubergine-90
+	ChromeContentTer:   rgb(0x200221),        // aubergine-0
+	ChromeBasePryHover: rgb(0xe4d0ec),        // aubergine-100 at .08, lighten over it
+	ChromeSurfInvTer:   rgba(0xefe1f5, 0x14), // as SidebarHover
+	ChromeOtlInvPry:    rgba(0xefe1f5, 0x38), // as SidebarDivider
 
 	SidebarBg:         rgba(0x101214, 0x99),
 	SidebarText:       rgba(0xe3ceeb, 0xcc),

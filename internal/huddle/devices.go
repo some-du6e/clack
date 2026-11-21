@@ -19,39 +19,78 @@ import (
 // (openMic, after the OS permission). A session on one test device
 // (Options.Device, CLACK_HUDDLE_TONE) has nothing to switch.
 func (s *Session) SwitchAudio(speakers, mic bool) {
-	if s.o.Device != nil || os.Getenv("CLACK_HUDDLE_TONE") != "" {
-		return
-	}
-	s.mu.Lock()
-	ended := s.ended
-	s.mu.Unlock()
-	if ended {
-		return
-	}
 	if speakers {
-		go s.switchSpeakers()
+		s.SwitchSpeakers(nil)
 	}
-	if mic {
+	if mic && s.canSwitch() {
 		go s.openMic()
 	}
 }
 
-// switchSpeakers opens the chosen output, then closes the old one.
-func (s *Session) switchSpeakers() {
-	d := s.openSpeakers()
+// SwitchSpeakers reopens the speakers on the output SelectAudioDevices
+// picked, and runs then (if not nil) once that output plays, on its own
+// goroutine: Slack's Speaker pick plays its test sound on the new device
+// (useAudioOutSettingsMenuItems: the pick is saved, then the sound plays
+// on the preferred sink). It returns at once. With a test device it runs
+// then at once.
+//
+// Picks can overlap (a slow output, Bluetooth's, still opening when you
+// pick again): the newest pick wins whichever open finishes last, and
+// then runs only for the pick whose output is swapped in.
+func (s *Session) SwitchSpeakers(then func()) {
+	if !s.canSwitch() {
+		if then != nil {
+			go then()
+		}
+		return
+	}
+	gen := s.outReq.Add(1) // this pick; a later one replaces it
+	go func() {
+		if s.switchSpeakers(gen) && then != nil {
+			then()
+		}
+	}()
+}
+
+func (s *Session) canSwitch() bool {
+	if s.o.Device != nil || os.Getenv("CLACK_HUDDLE_TONE") != "" {
+		return false
+	}
 	s.mu.Lock()
-	if s.ended {
+	defer s.mu.Unlock()
+	return !s.ended
+}
+
+// switchSpeakers opens the chosen output for pick gen and swaps it in
+// (installSpeakers). It reports whether that output plays now: false when
+// a later pick replaced gen or the huddle ended meanwhile.
+func (s *Session) switchSpeakers(gen uint64) bool {
+	if !s.installSpeakers(s.openSpeakers(gen), gen) {
+		return false
+	}
+	s.changed()
+	return true
+}
+
+// installSpeakers makes d, opened for gen, the speakers, and closes the
+// output it replaces, which played until now; from here d pulls the
+// playback buffer (outGen), so nothing backs up while an output opens. A
+// gen a later pick replaced, or a huddle that ended, closes d instead.
+func (s *Session) installSpeakers(d Device, gen uint64) bool {
+	s.mu.Lock()
+	if s.ended || s.outReq.Load() != gen {
 		s.mu.Unlock()
 		d.Close()
-		return
+		return false
 	}
 	old := s.dev
 	s.dev = d
+	s.outGen.Store(gen)
 	s.mu.Unlock()
 	if old != nil {
 		old.Close()
 	}
-	s.changed()
+	return true
 }
 
 // ---- your audio level, as Slack measures it ----

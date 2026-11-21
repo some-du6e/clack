@@ -646,6 +646,11 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 // its card says "Built by Slack" and has no buttons).
 func pfIsSlackbot(u core.User) bool { return u.ID == "USLACKBOT" }
 
+// pfIsSystemUser is ConnectedPresence's isSystemUser (client-boot Bh6F):
+// Slackbot or the Slack system user (USLACK). BasePresence (MSOq) draws
+// either as status-slackbot-filled.
+func pfIsSystemUser(u core.User) bool { return u.ID == "USLACKBOT" || u.ID == "USLACK" }
+
 // pfRoleBanner is MemberProfileHoverBanner's text (client-boot-shared
 // 1onU, build 35b42de8b870): "Workspace Owner" when isOwner, else
 // "Workspace Admin" when isAdmin, else "Deactivated account" (deactivated
@@ -923,7 +928,7 @@ func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot floa
 			return layout.Dimensions{Size: image.Pt(col, rowH)}
 		}
 		label := "Away"
-		if active {
+		if active || pfIsSystemUser(u) { // getPresenceText (MSOq): a system user is "Active"
 			label = "Active"
 		}
 		x := dp(gtx, 28)
@@ -948,8 +953,9 @@ func pfShowsPresence(u core.User) bool {
 
 // pfPresenceGlyph is BasePresence's icon (getPresenceIconName) at about
 // dot dp: the DND glyph when the member's notifications are paused
-// (u.DND), Slackbot's heart (isSystemUser: status-slackbot-filled, drawn
-// whatever its presence), the rounded square of an external member or
+// (u.DND), Slackbot's and the Slack system user's heart (isSystemUser:
+// status-slackbot-filled, drawn whatever its presence), the rounded
+// square of an external member or
 // guest (status-guest / -filled), else the member circle. Active is
 // #2bac76 (c-presence--active), away the hollow gray.
 func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bool, dot float32) layout.Dimensions {
@@ -980,7 +986,9 @@ func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bo
 // pfPresenceIconName is getPresenceIconName (client-boot MSOq, build
 // 35b42de8b870) for u: an external member or a guest (getMemberType "ra"
 // / "external") gets status-guest, paused notifications (isDnd) the -dnd
-// glyph, which for a member wins over Slackbot's heart (isSystemUser),
+// glyph, which for a member wins over the system users' heart
+// (isSystemUser: Slackbot and USLACK, neither of which core ever asks
+// dnd.teamInfo about),
 // and an active one the -filled glyph. Clack draws a Single-Channel
 // Guest ("ura": status-single-channel-guest) as a guest.
 func pfPresenceIconName(u core.User, active bool) string {
@@ -988,7 +996,7 @@ func pfPresenceIconName(u core.User, active bool) string {
 	switch {
 	case u.External || u.Guest:
 		name = "status-guest"
-	case !u.DND && pfIsSlackbot(u):
+	case !u.DND && pfIsSystemUser(u):
 		return "status-slackbot-filled"
 	}
 	if u.DND {
@@ -1246,7 +1254,7 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 				actDo(h, "You're set to away", func(ctx context.Context, a *core.App) error { return a.SetPresence(ctx, "away") })
 			}}.In(nsProfile))
 		}
-	} else if !u.IsBot || pfIsSlackbot(u) {
+	} else if (!u.IsBot || pfIsSlackbot(u)) && u.ID != "USLACK" { // oGjw: none for isProfileOnlyUser or iXFk
 		sep()
 		items = append(items, files("View files"))
 	}

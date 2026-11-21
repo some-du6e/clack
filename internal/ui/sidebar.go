@@ -790,6 +790,27 @@ func (a *App) presenceDot(gtx layout.Context, center image.Point, active, sel bo
 	theme.Circle(gtx, center, gtx.Dp(4), ring)
 }
 
+// presenceHeart is presenceDot for Slackbot and the Slack system user:
+// BasePresence's status-slackbot-filled (isSystemUser) in the d×d box,
+// colored like the dot. Every presence glyph is drawn in the same 20-unit
+// box, where the member circle is 9 units across, so the heart's box is
+// the 7dp dot's ·20/9, centred on it.
+func (a *App) presenceHeart(gtx layout.Context, d int, active, sel bool) {
+	c := &a.sbPal
+	col := c.SidebarText
+	if sel {
+		col = c.SidebarActiveText
+	}
+	if active {
+		col = c.Presence
+	}
+	sz := float32(7) * 20 / 9
+	off := (gtx.Dp(unit.Dp(sz)) - d) / 2
+	t := op.Offset(image.Pt(-off, -off)).Push(gtx.Ops)
+	icons.Get("status-slackbot-filled")(gtx, unit.Dp(sz), col)
+	t.Pop()
+}
+
 var _ color.NRGBA
 
 // sbRowState is what layoutSidebarRow resolved for a row.

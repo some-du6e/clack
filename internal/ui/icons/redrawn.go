@@ -352,6 +352,12 @@ func init() {
 	reg("sort", s("M7.25 9.25 V2.75 M3.75 6.25 L7.25 2.75 L10.75 6.25 M12.75 10.75 V17.25 M9.25 13.75 L12.75 17.25 L16.25 13.75"))
 	// Slack's sound
 	reg("volume", s("M10.5 16.5 L10.25 14.85 V5.15 L10.5 3.5"), s("M10.5 3.5 C8.7 4.35 7.37 5.8 5.84 7 C4.75 7.5 3.42 7 2.34 7.57 L1.88 7.94 L1.75 9.39 V11.79 L2.25 12.39 C3.35 13 4.68 12.5 5.75 12.96 C7.35 14.15 8.67 15.65 10.5 16.5"), s("M13.75 16.37 A6.75 6.75 0 0 0 13.75 3.62"), s("M13.75 7 A3.85 3.85 0 0 1 13.75 13"))
+	// Slack's sound-filled, sound-medium-filled and sound-down-filled (Test
+	// Speaker's animation, huddleui testspeaker.go): the speaker's body is
+	// Slack's outline 0.72 inside (fl), the waves volume's centrelines
+	reg("sound-filled", fl(soundBody), s("M13.75 16.37 A6.75 6.75 0 0 0 13.75 3.62"), s("M13.75 7 A3.85 3.85 0 0 1 13.75 13"))
+	reg("sound-medium-filled", fl(soundBody), s("M13.75 7 A3.85 3.85 0 0 1 13.75 13"), s("M12.13 8.92 A1.25 1.25 0 0 1 12.13 11.08"))
+	reg("sound-down-filled", fl(soundBody), s("M12.13 8.92 A1.25 1.25 0 0 1 12.13 11.08"))
 	// the video player's mute button (lGYe): sound-up at volume .6 or
 	// more, sound-medium at .3 or more, sound-down under it (Slack's
 	// speaker with its smallest arc, then the next ones)
@@ -429,6 +435,11 @@ func init() {
 func with(name string, more ...part) []part {
 	return append(append([]part{}, registry[name].parts...), more...)
 }
+
+// soundBody is the sound-*-filled icons' speaker: Slack's outline (M11
+// 3.25a.75.75 0 0 0-1.238-.57L5.306 6.5H3.25A2.25 2.25 0 0 0 1 8.75v2.5…)
+// inset by 0.72.
+const soundBody = "M10.28 16.74 L10.26 3.22 L10.22 3.23 L5.72 7.09 L5.59 7.16 L5.38 7.22 L3.14 7.22 L2.94 7.25 L2.65 7.34 L2.32 7.54 L1.98 7.9 L1.77 8.34 L1.72 8.76 L1.73 11.46 L1.88 11.93 L2.17 12.33 L2.57 12.62 L3.04 12.77 L5.31 12.78 L5.52 12.81 L5.66 12.87 L10.25 16.78 Z"
 
 var (
 	subtaskArms  = s("M2.25 1.75 V11 A4 4 0 0 0 6.25 15 H11 M2.25 5.25 H11")

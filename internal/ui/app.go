@@ -187,6 +187,7 @@ type App struct {
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
+	threadFocus     threadFocusState       // a thread's pending reply-box focus (thread_focus_input.go)
 	drop            dropState              // an OS file drag over the window (drop_overlay.go)
 	folderDrops     map[string]*folderDrop // the folder tabs' drop zones (drop_folder.go)
 	chAgents        map[string]*agentApps  // channels' agents and apps (agent_count.go)
@@ -789,6 +790,9 @@ func (a *App) frameContext(e app.FrameEvent) layout.Context {
 // level), so everything lays out larger or smaller.
 func (a *App) newContext(ops *op.Ops, e app.FrameEvent) layout.Context {
 	gtx := app.NewContext(ops, e)
+	// the caret is one device px wide whatever the zoom, as Blink's
+	// BarCaretWidth (Gio patch 54)
+	widget.SetDeviceScale(gtx.Source, e.Metric.PxPerDp)
 	if f := a.zoomFactor(); f != 1 {
 		gtx.Metric.PxPerDp *= f
 		gtx.Metric.PxPerSp *= f
@@ -881,6 +885,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	slackc.RouteEscape(gtx)   // an Escape no widget took goes to the overlay layers (slackc layers.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
+	a.threadFocusUnmount()    // the side pane's thread unmounted: its pending reply-box focus goes (thread_focus_input.go)
 	a.releaseHidden(gtx)      // composers taken off the screen let go of the focus (composer_release.go)
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame

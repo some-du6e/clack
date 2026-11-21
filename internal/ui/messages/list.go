@@ -1757,6 +1757,10 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			_ = rc
 			h.ShowOverlay(popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil))
 		case tbReply:
+			// RwAt.onComment: the comment thunk with threadTs =
+			// msg.thread_ts, so the key is the thread's even for a
+			// broadcast reply, and its box takes the focus as it mounts
+			popups.SetThreadFocusInput(h, m.Channel, threadRoot(&m))
 			h.OpenThread(m.Channel, threadRoot(&m))
 		case tbForward:
 			h.ShowOverlay(popups.NewForwardModal(h, m))
