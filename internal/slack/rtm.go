@@ -1,9 +1,11 @@
 package slack
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -172,8 +174,10 @@ func (r *RTM) Run(ctx context.Context) {
 			log.Printf("rtm: gateway refused the reconnect_url, connecting with a fresh URL")
 		case s.hello:
 			log.Printf("rtm: disconnected (%v) after %s (fast=%v), retrying in %s", s.err, s.up.Round(time.Second), r.fast.Load(), wait)
-			if connReset(s.err) {
-				r.c.ResetConns() // the path that reset the socket reset the pooled API connections too
+			if connReset(s.err) || errors.Is(s.err, errPongTimeout) {
+				// the path that reset the socket, or went quiet under it,
+				// took the pooled API connections with it too
+				r.c.ResetConns()
 			}
 		case r.fails == MaxRTMFails:
 			log.Printf("rtm: connect failed (%v); %d failed connects in a row, retrying every %s until one works", s.err, r.fails, rtmBackoffLong)
@@ -299,10 +303,34 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 	cctx, stop := context.WithCancel(ctx)
 	defer stop()
 	// the liveness check (rtmPongTimeout): the last pong, on the wall
-	// clock, from the socket's open on as Slack's timer is
+	// clock, from the socket's open on as Slack's timer is; pings holds
+	// the ids of the pings out
 	var pongMu sync.Mutex
 	lastPong := upAt
+	pings := map[int64]bool{}
 	var noPong atomic.Bool
+	// Slack's timer starts over when a ping's promise resolves: any reply
+	// whose reply_to is the ping's id and whose ok isn't false, whatever
+	// its type (SlackSocket _onSocketMessage → handleReply)
+	pingAnswered := func(data []byte) {
+		if !bytes.Contains(data, []byte(`"reply_to"`)) {
+			return
+		}
+		var rep struct {
+			OK      *bool `json:"ok"`
+			ReplyTo int64 `json:"reply_to"`
+		}
+		if json.Unmarshal(data, &rep) != nil || rep.OK != nil && !*rep.OK {
+			return
+		}
+		at := ReadClock()
+		pongMu.Lock()
+		if pings[rep.ReplyTo] {
+			delete(pings, rep.ReplyTo)
+			lastPong = at
+		}
+		pongMu.Unlock()
+	}
 	go func() {
 		t := time.NewTicker(time.Duration(rtmPingEvery.Load()))
 		defer t.Stop()
@@ -323,7 +351,17 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 				_ = conn.Close(websocket.StatusCode(4998), pongTimeout)
 				return
 			}
-			_ = r.Send(map[string]any{"type": "ping"})
+			ping := map[string]any{"type": "ping"}
+			if r.Send(ping) == nil {
+				if id, ok := ping["id"].(int64); ok {
+					pongMu.Lock()
+					if len(pings) >= 64 { // pings never answered
+						clear(pings)
+					}
+					pings[id] = true
+					pongMu.Unlock()
+				}
+			}
 		}
 	}()
 
@@ -332,10 +370,11 @@ func (r *RTM) connect(ctx context.Context) (s session) {
 		if err != nil {
 			s.err = err
 			if noPong.Load() {
-				s.err = errPongTimeout
+				s.err = fmt.Errorf("%w (%w)", errPongTimeout, err)
 			}
 			return s
 		}
+		pingAnswered(data)
 		var ev Event
 		if json.Unmarshal(data, &ev) != nil {
 			continue

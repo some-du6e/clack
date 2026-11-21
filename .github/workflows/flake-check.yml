@@ -2027,7 +2027,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('history-gap', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      SLACK_TESTS: '^(TestRTMClosesSilentSocket|TestRTMPongTimeoutCountsSleep)$'
+      SLACK_TESTS: '^(TestRTMClosesSilentSocket|TestRTMPongTimeoutCountsSleep|TestRTMPongIsAnyReplyToThePing)$'
       STORE_TESTS: '^(TestResetReachedEndHoldsTheSocketsMessages|TestCatchUpJoinsTheWindow|TestCatchUpTakesTheConfirmedSend|TestNewestPageJoinsTheWaitingMessages|TestOlderPageJoinsOnlyWhereTheWindowStarts|TestNewestPageKeepsTheViewersSends|TestNewestPageReadAcrossAResetStaysStale|TestNewestPageThatMissesStartsANewEpoch)$'
       CORE_TESTS: '^TestSocketGap'
       HUB_TESTS: '^TestNewestPageOfAnotherWindowIsTakenWhole$'

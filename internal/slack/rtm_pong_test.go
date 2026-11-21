@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +23,9 @@ import (
 type pongGateway struct {
 	srv    *httptest.Server
 	answer atomic.Bool
+	// reply, when set, is the answer's shape instead of a pong:
+	// `{"ok":true,"reply_to":%d}` (any frame with the ping's reply_to)
+	reply  atomic.Value
 	dials  atomic.Int32
 	closed chan websocket.CloseError
 	conns  chan *websocket.Conn
@@ -62,6 +66,9 @@ func newPongGateway(t *testing.T) (*pongGateway, *Client) {
 				}
 				if json.Unmarshal(data, &f) == nil && f.Type == "ping" && g.answer.Load() {
 					b, _ := json.Marshal(map[string]any{"type": "pong", "reply_to": f.ID})
+					if shape, _ := g.reply.Load().(string); shape != "" {
+						b = []byte(fmt.Sprintf(shape, f.ID))
+					}
 					_ = c.Write(ctx, websocket.MessageText, b)
 				}
 			}
@@ -174,5 +181,28 @@ func TestRTMPongTimeoutCountsSleep(t *testing.T) {
 	}
 	if !r.Connected() {
 		t.Error("not connected again after the wake")
+	}
+}
+
+// Slack's timer starts over on any reply to the ping (its reply_to), not
+// only a frame of type pong: SlackSocket's send() resolves the ping on its
+// reply whatever the type, unless the reply says ok:false. A socket whose
+// pings get such replies lives on; one whose replies refuse them is closed.
+func TestRTMPongIsAnyReplyToThePing(t *testing.T) {
+	fastBackoff(t)
+	pongTimers(t, 10*time.Millisecond, 300*time.Millisecond)
+	g, c := newPongGateway(t)
+	g.reply.Store(`{"ok":true,"reply_to":%d}`)
+	r := c.NewRTM()
+	runRTM(t, r)
+	g.nextConn(t)
+	select {
+	case ce := <-g.closed:
+		t.Fatalf("a socket whose pings got replies was closed (%d %q)", ce.Code, ce.Reason)
+	case <-time.After(1200 * time.Millisecond):
+	}
+	g.reply.Store(`{"ok":false,"reply_to":%d,"error":{"msg":"no"}}`)
+	if ce := g.nextClose(t, 5*time.Second); ce.Code != 4998 {
+		t.Errorf("a socket whose pings were refused was closed with %d %q, want 4998", ce.Code, ce.Reason)
 	}
 }
