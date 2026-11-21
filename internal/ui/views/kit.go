@@ -899,6 +899,9 @@ func (b *base) emojiImg(gtx C, url string, size unit.Dp) D {
 	s := gtx.Dp(size)
 	if url != "" && b.h.Images() != nil {
 		if img, ok := b.h.Images().Get(url, s); ok {
+			if emojiDrawn != nil {
+				emojiDrawn(url, s)
+			}
 			return theme.Image(gtx, img, image.Pt(s, s), 0)
 		}
 	}

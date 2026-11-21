@@ -1518,6 +1518,17 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 		c.Authors = append([]string(nil), dc.Authors...)
 		v.DocumentComment = &c
 	}
+	if dm := m.DocumentMention; dm != nil {
+		c := *dm
+		c.MentioningUserIDs = append([]string(nil), dm.MentioningUserIDs...)
+		v.DocumentMention = &c
+		if dm.FileID != "" {
+			// maybePrefetchCanvasFromNotification (boot-render): the
+			// mention's canvas is asked for (files.info), so a jump to the
+			// mention opens it and Activity names it (canvas_channel.go)
+			a.S.CanvasRef(dm.FileID)
+		}
+	}
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)
 	}
@@ -1603,6 +1614,10 @@ func (a *App) Mrkdwn(text string) []richtext.Block { return richtext.FromMrkdwn(
 
 // Emoji resolves an emoji name (custom or standard) to an image URL.
 func (a *App) Emoji(name string) (url, text string, ok bool) { return a.S.Emoji(name) }
+
+// EmojiVersion changes whenever the custom emoji map does (emoji.list,
+// emoji_changed): a surface that converted emoji earlier converts again.
+func (a *App) EmojiVersion() uint64 { return a.S.CustomEmoji.Version() }
 
 // CustomEmoji returns the workspace's custom emoji: name -> URL or
 // "alias:other". The map must not be modified.
