@@ -12,13 +12,14 @@ package messages
 //
 // Here a channel's pills (custom and unicode emoji, counts of 1, 2 and 3
 // digits, one of each the viewer's) are drawn natively, then under a
-// pass-through ReactionBar patch with no CSS and under OwlMode's shape
-// (its reaction rules installed, the message outside its threads), light
-// and dark: every pill's emoji box, bounds and count ink must be the
-// native's, and the bar the same pixels. In OwlMode's thread its own
-// rules must reach the pills: the ring in the owl's colour, the reacted
-// pill's fill and its content-pry count. Synthetic data; the emoji are
-// solid green (custom) and solid blue (unicode) pictures.
+// pass-through ReactionBar patch with no CSS and under an OwlMode-shaped
+// plugin (rules for its own class installed, the messages outside its
+// thread), light and dark: every pill's emoji box, bounds and count ink
+// must be the native's, and the bar the same pixels. In its thread its
+// rules must reach the pills: the ring in its colour (a <body> variable
+// with a dark value), the reacted pill's fill and its content-pry count.
+// Synthetic data; the emoji are solid green (custom) and solid blue
+// (unicode) pictures.
 
 import (
 	"bytes"
@@ -55,7 +56,7 @@ const (
 	rpChan   = "C0PILLROW1"
 	rpCustom = "1700001100.000100" // custom emoji pills: 1, 13 (yours), 137
 	rpUni    = "1700001101.000100" // unicode emoji pills: 1, 13 (yours), 137
-	rpOwlTS  = "1700001102.000100" // OwlMode's thread: its rules reach these
+	rpOwlTS  = "1700001102.000100" // the owl-shaped plugin's thread: its rules reach these
 	rpW, rpH = 900, 700
 )
 
@@ -79,38 +80,24 @@ class PillPass extends TautPlugin {
 }
 return PillPass`)
 
-// rpOwlCSS is OwlMode's setStyle for reactions (jeremy46231/taut
-// plugins/OwlMode.tsx, start()), verbatim.
-const rpOwlCSS = `
-      body {
-        --taut-owl: 26, 73, 214;
-      }
-      body.sk-client-theme--dark {
-        --taut-owl: 120, 150, 255;
-      }
-      .c-reaction_bar.taut-owl-reactions .c-reaction,
-      .c-reaction_bar.taut-owl-reactions [data-qa="add_reaction_button"] {
-        box-shadow: 0 0 0 1px rgba(var(--taut-owl), 1);
-      }
-      .c-reaction_bar.taut-owl-reactions .c-reaction:hover,
-      .c-reaction_bar.taut-owl-reactions [data-qa="add_reaction_button"]:hover {
-        background-color: rgba(var(--taut-owl), 0.08);
-      }
-      .c-reaction_bar.taut-owl-reactions .c-reaction--reacted,
-      .c-reaction_bar.taut-owl-reactions .c-reaction--reacted:hover {
-        background-color: rgba(var(--taut-owl), 0.15);
-        color: var(--dt_color-content-pry);
-      }
-`
+// rpOwlCSS is rules of the kind OwlMode installs for the pills in its
+// threads, in this test's own names and colours (Taut is GPLv3; its
+// source isn't copied): a colour on <body> with a dark theme's own value,
+// a 1px ring round every pill of a bar that carries the plugin's class,
+// and your pill filled with the colour at 15%, its count content-pry.
+const rpOwlCSS = `body { --x-owl: 150, 40, 190 }
+body.sk-client-theme--dark { --x-owl: 210, 140, 255 }
+.c-reaction_bar.x-owl-pills .c-reaction { box-shadow: 0 0 0 1px rgba(var(--x-owl), 1) }
+.c-reaction_bar.x-owl-pills .c-reaction--reacted { background-color: rgba(var(--x-owl), 0.15); color: var(--dt_color-content-pry) }`
 
-// rpOwl is OwlMode's ReactionBar patch: the bar of a message in an owl
-// thread gets taut-owl-reactions in its className, every other bar is
-// passed on as it is.
+// rpOwl patches ReactionBar the way OwlMode does: the bar of a message in
+// its thread gets the plugin's class in its className, every other bar
+// is passed on as it is.
 var rpOwl = pluginJS(`
-class PillOwl extends TautPlugin {
-  static id = 'PillOwl'
+class OwlShapedPills extends TautPlugin {
+  static id = 'OwlShapedPills'
   static pluginName = 'Owl-shaped reaction bar (test)'
-  static description = 'test: OwlMode\'s reaction rules and ReactionBar patch'
+  static description = 'test: a class on one message\'s ReactionBar, and rules for its pills'
   static authors = ['clack']
   static category = 'messages'
   static defaultConfig = { enabled: true }
@@ -118,11 +105,11 @@ class PillOwl extends TautPlugin {
     this.api.setStyle(` + strconv.Quote(rpOwlCSS) + `)
     this.api.patchComponent('ReactionBar', (O) => (p) => {
       if (p.reactionKey !== 'message-` + rpOwlTS + `-` + rpChan + `') return React.createElement(O, p)
-      return React.createElement(O, { ...p, className: (p.className ?? '') + ' taut-owl-reactions' })
+      return React.createElement(O, { ...p, className: (p.className ?? '') + ' x-owl-pills' })
     })
   }
 }
-return PillOwl`)
+return OwlShapedPills`)
 
 // rpHost is coreHost with the image cache the pills' emoji load from.
 type rpHost struct {
@@ -182,9 +169,9 @@ func rpSeed(s *store.Store) {
 }
 
 // rpEnv is pluginEnv with the pills' channel, the emoji pictures and the
-// document's <html> and <body> (OwlMode's --taut-owl is on <body>, which
-// slackc.Frame puts at the bottom of the element stack, as the ui root
-// does every frame).
+// document's <html> and <body> (the owl-shaped plugin's colour is on
+// <body>, which slackc.Frame puts at the bottom of the element stack, as
+// the ui root does every frame).
 func rpEnv(t *testing.T, dark bool) (*taut.Taut, *pluginUI, rpHost) {
 	app, _ := newTestApp(t)
 	rpSeed(app.S)
@@ -438,7 +425,7 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 				return false
 			}
 		}
-		return plug != "owl" || u.anyTree("taut-owl-reactions")
+		return plug != "owl" || u.anyTree("x-owl-pills")
 	})
 	for i := 0; i < 10; i++ {
 		frame()
@@ -449,7 +436,7 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 	t.Logf("%s/%s: CSS installed %v", mode, plug, !slackc.Styles.Empty())
 
 	// the custom and unicode bars (the owl thread's last two pills are
-	// OwlMode's own look in the owl variant)
+	// the plugin's own look in the owl variant)
 	cmp := 6
 	if plug == "pass" {
 		cmp = 8
@@ -485,10 +472,11 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 		return
 	}
 
-	// OwlMode's thread: its rules reach the pills inside the patched bar
-	owl := color.RGBA{R: 26, G: 73, B: 214, A: 0xff}
+	// the plugin's thread: its rules reach the pills inside the patched
+	// bar, in its <body> colour for the theme
+	owl := color.RGBA{R: 150, G: 40, B: 190, A: 0xff}
 	if dark {
-		owl = color.RGBA{R: 120, G: 150, B: 255, A: 0xff}
+		owl = color.RGBA{R: 210, G: 140, B: 255, A: 0xff}
 	}
 	var ring image.Rectangle
 	for _, p := range patched[6:] {
@@ -504,7 +492,7 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 	}
 	t.Logf("%s/owl: %d px of the owl ring around the owl thread's pills %v", mode, ringPx, ring)
 	if ringPx < 100 {
-		t.Errorf("%s/owl: %d px in the owl's colour %v around the owl thread's pills, want its 1px ring round both (OwlMode's box-shadow)", mode, ringPx, owl)
+		t.Errorf("%s/owl: %d px in the owl's colour %v around the owl thread's pills, want its 1px ring round both (the plugin's box-shadow)", mode, ringPx, owl)
 	}
 	re := patched[7] // tada, yours
 	if dark {
@@ -529,13 +517,13 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 		ws := color.RGBA{R: srgb(owl.R, bg.R), G: srgb(owl.G, bg.G), B: srgb(owl.B, bg.B), A: 0xff}
 		wl := color.RGBA{R: linear(owl.R, bg.R), G: linear(owl.G, bg.G), B: linear(owl.B, bg.B), A: 0xff}
 		if rpDist(re.fill, ws) > 24 && rpDist(re.fill, wl) > 24 {
-			t.Errorf("%s/owl: your pill's fill %v, want OwlMode's rgba(owl, .15) over the row %v: %v (sRGB) or %v (linear)", mode, re.fill, bg, ws, wl)
+			t.Errorf("%s/owl: your pill's fill %v, want the plugin's rgba(owl, .15) over the row %v: %v (sRGB) or %v (linear)", mode, re.fill, bg, ws, wl)
 		}
 		return
 	}
 	// its count in var(--dt_color-content-pry), not your pill's #1264a3
 	pry := color.RGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff}
 	if rpDist(re.text, pry) > 60 {
-		t.Errorf("%s/owl: your pill's count in %v, want OwlMode's content-pry %v", mode, re.text, pry)
+		t.Errorf("%s/owl: your pill's count in %v, want the plugin's content-pry %v", mode, re.text, pry)
 	}
 }
