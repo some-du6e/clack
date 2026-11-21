@@ -63,6 +63,10 @@ type desktopNote struct {
 	// no_text_in_notifications applied (notifyBody). notifyShow applies
 	// the global ones only to the rest.
 	pushChecked, textChecked bool
+	// soundThroughDND: a VIP sent the message and it came through Do Not
+	// Disturb (shouldOverrideDndForMessage), its sound too (canPlaySound);
+	// prioritySound: it plays priority_desktop_sound (Mvkl Tk).
+	soundThroughDND, prioritySound bool
 }
 
 // noteButton is one of actionButtons: buildNotificationActionButtons'

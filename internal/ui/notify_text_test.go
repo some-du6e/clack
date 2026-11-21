@@ -11,7 +11,8 @@ import (
 
 // TestNotifyTextLikeSlack: a notification's text is Slack's
 // extractTextFromMessage (Eley; notify_dm.go): convertMessageToPlainText
-// with blockSpacing single (2xQY) over the blocks, else the text; only a
+// with blockSpacing single (2xQY) over the blocks, else the text (also
+// when the blocks give none; a video block gives its title); only a
 // message with neither reads its attachments (a message unfurl's blocks,
 // else the first fallback, text, pretext or footer); with nothing at all,
 // "message {subtype} (message missing text)". Synthetic messages.
@@ -58,6 +59,15 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 		{"rich text blocks over the text",
 			`{"type":"message","user":"U0SYNTH0001","text":"the fallback","blocks":[` + rich("the rich words") + `]}`,
 			"the rich words"},
+		{"blocks that give nothing: the text",
+			`{"type":"message","subtype":"bot_message","bot_id":"B0SYNTH0001","text":"A synthetic *request* to approve","blocks":[` +
+				`{"type":"actions","elements":[{"type":"button","action_id":"a","text":{"type":"plain_text","text":"Approve"}}]}]}`,
+			"A synthetic request to approve"},
+		{"a video block is its title",
+			`{"type":"message","text":"","blocks":[{"type":"video","video_url":"https://example.invalid/v.mp4","thumbnail_url":"https://example.invalid/t.png",` +
+				`"alt_text":"a synthetic clip","title":{"type":"plain_text","text":"A synthetic video title"},` +
+				`"description":{"type":"plain_text","text":"Its synthetic description"}}]}`,
+			"A synthetic video title"},
 		{"nothing to show",
 			`{"type":"message","subtype":"bot_message","bot_id":"B0SYNTH0001","text":"","blocks":[` +
 				`{"type":"actions","elements":[{"type":"button","action_id":"a","text":{"type":"plain_text","text":"Go"}}]}]}`,
@@ -69,10 +79,13 @@ func TestNotifyTextLikeSlack(t *testing.T) {
 		}
 		cm := &core.Message{TS: "1762520000.000100", User: m.User, Subtype: m.Subtype, Text: m.Text,
 			Doc: richtext.FromMessage(noResolver{}, &m), Attachments: m.RawAttachments}
-		unfurl := func(raw json.RawMessage) string {
-			return noteBlocksText(richtext.FromMessage(noResolver{}, &slack.Message{Blocks: raw}).Blocks, nil)
+		of := noteTextOf{
+			Blocks: func(raw json.RawMessage) string {
+				return noteBlocksText(richtext.FromMessage(noResolver{}, &slack.Message{Blocks: raw}).Blocks, nil)
+			},
+			Mrkdwn: func(text string) string { return noteBlocksText(richtext.FromMrkdwn(noResolver{}, text), nil) },
 		}
-		if got := notifyText(cm, nil, unfurl); got != c.want {
+		if got := notifyText(cm, nil, of); got != c.want {
 			t.Errorf("%s: %q, Slack %q", c.name, got, c.want)
 		}
 	}

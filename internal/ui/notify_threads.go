@@ -84,8 +84,8 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 		return
 	}
 	key := noteShownKey(e.Channel, e.Msg) // a desktop_notification's msg (notify_dm.go)
-	if !resolved && b.noteWasShown(key) {
-		return // shown already: the reply's own message event came first
+	if b.noteWasShown(key) {
+		return // shown already: the reply's own message event came first (it may have while a lookup ran)
 	}
 	if !b.notePushOn(e.Channel) {
 		return // maybeShowNotification's "Skip pref-disabled push notification" (notify_dm.go)

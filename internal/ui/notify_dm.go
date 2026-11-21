@@ -122,12 +122,18 @@ func (b *backend) noteDMHolds(a *App, ev core.Event, c *convInfo, ignoreDND bool
 }
 
 // noteChannelHolds is rr for any other conversation's message: its
-// level (wantsNotify; a group DM's message counts as a mention, Clack's
-// reading of global_mpdm_desktop), a reply only when it mentions the
-// viewer (notify_threads.go), and the holds RM shares with it.
+// level (a channel's wantsNotify, a group DM's noteGroupDMLevel), a reply
+// only when it mentions the viewer (notify_threads.go), and the holds RM
+// shares with it.
 func (b *backend) noteChannelHolds(a *App, ev core.Event, c *convInfo, ignoreDND bool) bool {
 	m := ev.Msg
-	if !b.wantsNotify(ev.Channel, ev.Mention || ev.ConvKind == "mpim") || !replyNotifies(b.core, ev) {
+	wants := ev.Mention
+	if ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" {
+		wants = wants || b.noteGroupDMLevel(ev.Channel) == "everything"
+	} else {
+		wants = b.wantsNotify(ev.Channel, ev.Mention)
+	}
+	if !wants || !replyNotifies(b.core, ev) {
 		return true
 	}
 	switch {
@@ -136,6 +142,25 @@ func (b *backend) noteChannelHolds(a *App, ev core.Event, c *convInfo, ignoreDND
 		return true
 	}
 	return noteQuietSubtypes[m.Subtype]
+}
+
+// noteGroupDMLevel is getCalculatedDesktopNotifySetting for group DM ch,
+// which rr reads as a channel's: the group DM's own desktop override,
+// else global_mpdm_desktop (getDefaultNotifySetting's
+// getGlobalDmNotifySetting, everything when unset). "nothing" reads as
+// mentions_dms either way, so the level is everything or mentions; a
+// "default" override is none, as wantsNotify reads it.
+func (b *backend) noteGroupDMLevel(ch string) string {
+	level := b.core.Prefs().ChannelNotify[ch].Desktop
+	if level == "" || level == "default" {
+		if level = b.core.GlobalNotifyString("global_mpdm_desktop"); level == "" {
+			level = "everything"
+		}
+	}
+	if level == "nothing" {
+		level = "mentions_dms"
+	}
+	return level
 }
 
 // noteOnScreen is shouldSuppressNotificationInActiveChannel: the
@@ -189,9 +214,12 @@ func (b *backend) noteVIPOverride(ev core.Event, c *convInfo) bool {
 	if m.User == "" || !slices.Contains(vips, m.User) {
 		return false
 	}
-	if noteIsDM(ev, c) || ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" {
-		return true
-	}
+	return noteIsDM(ev, c) || ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" || noteMentionsAny(m)
+}
+
+// noteMentionsAny reports whether m mentions anyone: a member, a user
+// group or a channel (s1s/ Z's channelIds, userGroupIds and userIds).
+func noteMentionsAny(m *core.Message) bool {
 	mentions := false
 	richtext.PlainTextWith(m.Doc, func(s richtext.Span) (string, bool) {
 		switch s.Kind {
@@ -201,6 +229,29 @@ func (b *backend) noteVIPOverride(ev core.Event, c *convInfo) bool {
 		return "", false
 	})
 	return mentions
+}
+
+// notePrioritySound is Mvkl Tk, getNewMsgSoundPath's choice of
+// priority_desktop_sound over desktop_sound: VIPs set, both sounds set
+// and the priority one not "none" while the other isn't; then a bot
+// message whose bot_profile.user_id is a VIP, or a VIP's message in a DM
+// or group DM or that mentions anyone, with a priority sound that isn't
+// "none".
+func (b *backend) notePrioritySound(ev core.Event, c *convInfo) bool {
+	cr := b.core
+	vips := cr.VIPs()
+	n, p := cr.GlobalNotifyString("desktop_sound"), cr.GlobalNotifyString("priority_desktop_sound")
+	if len(vips) == 0 || n == "" || p == "" || n != "none" && p == "none" {
+		return false
+	}
+	m := ev.Msg
+	if m.Subtype == "bot_message" && m.BotProfile != nil && m.BotProfile.UserID != "" && slices.Contains(vips, m.BotProfile.UserID) {
+		return true
+	}
+	if m.User == "" || !slices.Contains(vips, m.User) || p == "none" {
+		return false
+	}
+	return noteIsDM(ev, c) || ev.ConvKind == "mpim" || c != nil && c.Kind == "mpim" || noteMentionsAny(m)
 }
 
 // noteHiddenSender is shouldSupressHiddenSender (QFH5): a member the
@@ -267,33 +318,36 @@ func (b *backend) noteDNDIgnored(ch, ts string) bool { return b.noteIgnoreDND[ch
 // noteDNDOverride is handleDndOverride: a sender's "notify anyway" for a
 // message DND held back. It shows that message's notification with DND
 // ignored, at most once (a message that already ignores it changes
-// nothing). Slack reads the message from its store, which keeps every
-// message the socket brings. Clack's keeps a conversation's messages only
-// while a window of it is loaded, so the UI keeps the message events DND
-// held back (noteDNDHolds) and reads the store for any other. A message
-// that was shown isn't shown again (noteWasShown), and the other holds
-// still apply, so a held-back one is the only kind that can show.
+// nothing). Slack reads the message as its store has it now (an edit
+// since shows). Clack's store keeps a conversation's messages only while
+// a window of it is loaded, so when it has none the UI's copy of the
+// event DND held back stands in (noteDNDHolds). A message that was shown
+// isn't shown again (noteWasShown), and the other holds still apply, so a
+// held-back one is the only kind that can show.
 func (b *backend) noteDNDOverride(a *App, ev core.Event) {
 	k := ev.Channel + "/" + ev.TS
 	if ev.Channel == "" || ev.TS == "" || b.noteIgnoreDND[k] {
 		return
 	}
-	held, ok := b.noteDNDHeld[k]
-	if !ok {
-		m, found := b.core.HeldMessage(ev.Channel, ev.TS)
-		if !found {
-			return // Slack's getMessage finds nothing to show
-		}
-		kind := ""
+	held, kept := b.noteDNDHeld[k]
+	if m, found := b.core.HeldMessage(ev.Channel, ev.TS); found {
+		kind := held.ConvKind
 		if v, known := b.core.Conv(ev.Channel); known {
 			kind = v.Kind
 		}
 		held = core.Event{Type: "message", Channel: ev.Channel, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User,
 			Msg: &m, Reply: m.ThreadTS != "" && m.ThreadTS != m.TS, Mention: b.core.MentionsViewer(&m), ConvKind: kind}
+	} else if !kept {
+		return // Slack's getMessage finds nothing to show
 	}
 	if b.noteIgnoreDND == nil {
 		b.noteIgnoreDND = map[string]bool{}
 	}
+	if len(b.noteIgnoreDNDOrder) >= noteShownMax {
+		delete(b.noteIgnoreDND, b.noteIgnoreDNDOrder[0])
+		b.noteIgnoreDNDOrder = b.noteIgnoreDNDOrder[1:]
+	}
+	b.noteIgnoreDNDOrder = append(b.noteIgnoreDNDOrder, k)
 	b.noteIgnoreDND[k] = true
 	b.maybeNotify(a, held)
 }
@@ -309,29 +363,44 @@ func noteMissingText(subtype string) string {
 	return "message " + subtype + " " + nsGrowl.T("(message missing text)")
 }
 
+// noteTextOf converts what notifyText reads besides the message's
+// document: a message unfurl's blocks (Blocks: convertBlocksToPlainText)
+// and the message's text (Mrkdwn: getMessageText). A nil one gives
+// nothing.
+type noteTextOf struct {
+	Blocks func(json.RawMessage) string
+	Mrkdwn func(string) string
+}
+
 // notifyText is extractTextFromMessage over Clack's document of m. The
-// message's own text comes first: its blocks', else its text
-// (noteBlocksText). A message with neither reads its files (their titles),
-// then its attachments (noteAttachmentsText, blocksText converting a
-// message unfurl's blocks), then noteMissingText. A ":simple_smile:" reads
-// ":)".
-func notifyText(m *core.Message, text richtext.SpanText, blocksText func(json.RawMessage) string) string {
+// message's own text comes first (convertMessageToPlainText): its blocks'
+// (noteBlocksText; a video block, which Clack draws as an attachment, is
+// its title), else its text, also when its blocks give none (Clack's
+// document holds the text only for a message without blocks). A message
+// with neither reads its files (their titles), then its attachments
+// (noteAttachmentsText, of.Blocks converting a message unfurl's blocks),
+// then noteMissingText. A ":simple_smile:" reads ":)".
+func notifyText(m *core.Message, text richtext.SpanText, of noteTextOf) string {
 	var own, files []richtext.Block
 	for _, blk := range m.Doc.Blocks {
-		switch blk.Kind {
-		case richtext.FileBlock:
+		switch {
+		case blk.Kind == richtext.FileBlock:
 			files = append(files, blk)
-		case richtext.AttachmentBlock: // read from the attachments as sent, below
+		case blk.Kind == richtext.AttachmentBlock && (blk.Att == nil || blk.Att.VideoURL == ""):
+			// an attachment: read from the attachments as sent, below
 		default:
 			own = append(own, blk)
 		}
 	}
 	s := noteBlocksText(own, text)
+	if s == "" && of.Mrkdwn != nil && strings.TrimSpace(m.Text) != "" {
+		s = strings.TrimSpace(of.Mrkdwn(m.Text))
+	}
 	if s == "" {
 		s = noteBlocksText(files, text)
 	}
 	if s == "" {
-		s = noteAttachmentsText(m.Attachments, blocksText)
+		s = noteAttachmentsText(m.Attachments, of.Blocks)
 	}
 	if s == "" {
 		s = noteMissingText(m.Subtype)
@@ -357,6 +426,13 @@ func noteBlocksText(bs []richtext.Block, text richtext.SpanText) string {
 			blk.Children = nil
 		case richtext.Unsupported:
 			continue // Clack's "could not be displayed" stand-in: Slack's converter writes none
+		case richtext.AttachmentBlock:
+			// a video block (VideoURL: Clack's attachment for it):
+			// convertVideoBlockToPlainText, its title
+			if blk.Att == nil || blk.Att.VideoURL == "" {
+				continue
+			}
+			blk = richtext.Block{Kind: richtext.Paragraph, Spans: blk.Att.Title}
 		}
 		if s := strings.TrimSpace(richtext.PlainTextWith(richtext.Doc{Blocks: []richtext.Block{blk}}, text)); s != "" {
 			out = append(out, s)
@@ -373,6 +449,15 @@ func (b *backend) noteUnfurlText(raw json.RawMessage) string {
 	}
 	d := richtext.FromMessage(b.core.S, &slack.Message{Blocks: raw})
 	return noteBlocksText(d.Blocks, b.noteSpanText)
+}
+
+// noteMrkdwnText is a message's text as getMessageText writes it
+// (notifyText), named from the store.
+func (b *backend) noteMrkdwnText(text string) string {
+	if b.core == nil {
+		return ""
+	}
+	return noteBlocksText(richtext.FromMrkdwn(b.core.S, text), b.noteSpanText)
 }
 
 // noteAttachment is what extractTextFromMessage reads of an attachment.

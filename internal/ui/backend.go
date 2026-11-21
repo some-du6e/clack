@@ -111,11 +111,12 @@ type backend struct {
 	// its order) the message events DND held back lately, which a
 	// dnd_override can show; noteShown and noteShownOrder the
 	// notifications shown lately (notify_dm.go). UI goroutine.
-	noteIgnoreDND    map[string]bool
-	noteDNDHeld      map[string]core.Event
-	noteDNDHeldOrder []string
-	noteShown        map[string]bool
-	noteShownOrder   []string
+	noteIgnoreDND      map[string]bool
+	noteIgnoreDNDOrder []string
+	noteDNDHeld        map[string]core.Event
+	noteDNDHeldOrder   []string
+	noteShown          map[string]bool
+	noteShownOrder     []string
 }
 
 // A core call that waits for Boot on the UI goroutine freezes the window
@@ -981,10 +982,18 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	// the conversation's desktop push and the message preview pref were
 	// applied here (notePushOn, notifyBody): notifyShow leaves them be
 	note.pushChecked, note.textChecked = true, true
+	note.soundThroughDND, note.prioritySound = b.noteVIPOverride(ev, c), b.notePrioritySound(ev, c)
+	// with message previews off Slack writes the body from the message the
+	// plugins pass and then hides it (shouldHideNotificationText): a
+	// plugin's rewrite of the text never shows either
+	hidden := b.notifyHiddenBody(ev, c)
 	a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
-			if t, b, ok := notificationText(args, msg, body); ok {
-				a.notifyMessage(t, b, note)
+			if t, text, ok := notificationText(args, msg, body); ok {
+				if b.core.Prefs().NoTextInNotifications {
+					text = hidden
+				}
+				a.notifyMessage(t, text, note)
 			}
 			return nil, nil
 		})
@@ -1034,21 +1043,30 @@ func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 // (shouldHideNotificationText) a DM's body is empty and any other's is
 // "a message from {sender}".
 func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
-	dm := c == nil || c.Kind == "im" || c.Kind == "app"
 	if b.core != nil && b.core.Prefs().NoTextInNotifications {
-		if name := b.notifySender(ev); !dm && name != "" {
-			return nsGrowl.T("a message from {name}", "name", name)
-		}
-		return ""
+		return b.notifyHiddenBody(ev, c)
 	}
-	text := notifyText(ev.Msg, b.noteSpanText, b.noteUnfurlText)
-	if dm {
+	text := notifyText(ev.Msg, b.noteSpanText, noteTextOf{Blocks: b.noteUnfurlText, Mrkdwn: b.noteMrkdwnText})
+	if c == nil || c.Kind == "im" || c.Kind == "app" {
 		return text
 	}
 	if name := b.notifySender(ev); name != "" {
 		return name + ": " + text
 	}
 	return text
+}
+
+// notifyHiddenBody is getContentForNotification under "Include a preview
+// of the message" off (shouldHideNotificationText): nothing in a DM, "a
+// message from {sender}" elsewhere (nothing for a message with no user).
+func (b *backend) notifyHiddenBody(ev core.Event, c *convInfo) string {
+	if c == nil || c.Kind == "im" || c.Kind == "app" {
+		return ""
+	}
+	if name := b.notifySender(ev); name != "" {
+		return nsGrowl.T("a message from {name}", "name", name)
+	}
+	return ""
 }
 
 // notifySender is getContentForNotification's sender,

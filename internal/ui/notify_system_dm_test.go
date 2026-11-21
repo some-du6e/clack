@@ -465,3 +465,50 @@ func TestMacNotifierSystemDM(t *testing.T) {
 		return cv != nil && cv.JumpPending() == "" && cv.Highlighted() == ts
 	})
 }
+
+// TestSystemDMToastPreviewsHidePluginText: a plugin's rewrite of the
+// toast's text (a showNotification wrapper changing message.text, as
+// Censorship does) shows with message previews on. With "Include a
+// preview of the message" off nothing of the text shows, the plugin's
+// included: Slack writes the body from the message the wrappers pass
+// (sharedNotificationOptions, getContentForNotification) and
+// shouldHideNotificationText empties a DM's.
+func TestSystemDMToastPreviewsHidePluginText(t *testing.T) {
+	e, fs, rec, _ := sysDMEnv(t)
+	a := e.a
+	c := a.Core()
+	e.until("the plugins' runtime", 20*time.Second, func() bool { return a.Taut() != nil })
+	rt, err := a.Taut().JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rewritten = "A synthetic rewritten text."
+	if _, err := rt.Eval("sysdm-rewrite.js", `globalThis.__taut.redux.patchThunk('showNotification', (original) => (args, ...rest) =>
+		original({...args, message: {...((args && args.message) || {}), text: '`+rewritten+`'}}, ...rest))`); err != nil {
+		t.Fatal(err)
+	}
+	e.until("showNotification wrapped", 10*time.Second, func() bool { return a.Taut().ThunkPatched("showNotification") })
+
+	ts := sysPost(fs, "A synthetic original text.", nil)
+	if n := sysToast(t, e, rec, 1, ts, "previews on"); n.Body != rewritten {
+		t.Errorf("previews on: the body is %q, want the plugin's %q", n.Body, rewritten)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if err := c.SetGlobalNotifyPref(ctx, "no_text_in_notifications", true); err != nil {
+		t.Fatal(err)
+	}
+	e.until("uipref seeing previews off", 10*time.Second, func() bool { return uipref.Get().NoTextInNotifications })
+	ts = sysPost(fs, "A synthetic second original text.", nil)
+	n := sysToast(t, e, rec, 2, ts, "previews off")
+	if n.Body != "" {
+		t.Errorf("previews off: the body is %q, want nothing (the plugin's text hidden too)", n.Body)
+	}
+	if n.Title != "New message from Slack" {
+		t.Errorf("previews off: titled %q, want \"New message from Slack\" (the title stays)", n.Title)
+	}
+	if x := n.toastXML(sysLogo); strings.Contains(x, toastEscape(rewritten)) {
+		t.Errorf("previews off: the toast carries the plugin's text: %s", x)
+	}
+}
