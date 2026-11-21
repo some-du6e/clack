@@ -549,21 +549,31 @@ server pushes next to each bundle are dropped (Gfjq's allow-list), as
 Clack logs. Both upserts deduplicate with 1Cyf v first: a thread_v2 whose
 feed_ts is a mention's, and a dm or channel entry whose latest_ts is one,
 stay out (the mention stands for them). Feed pages are merged into the
-list as it is when they land, the page's copies winning, and the list
-sorted, with the page's cursor. A reload of a view with filters (9OWn Wk)
-or under the VIP sort keeps only getItemsRetainedOnRefresh's rows (in on
-the socket meanwhile, marked unread here under Unreads, newer than the
-page); Slack's plain list keeps every row, Clack's drops the rows within
-the page's span that it no longer lists (its clear-before, invitation and
-restore flows read the reload) and keeps the later pages loaded
-(actPlainReload). `activity_invalidated` fetches the feed again;
+list as it is when they land, the page's copies winning (but a copy a
+realtime entry brought while the request was out, when its read state
+differs or its feed_ts is newer), and the list sorted, with the page's
+cursor. Slack's reloads keep every row of the plain list and
+getItemsRetainedOnRefresh's of a filtered one, and take rows out locally
+(removeBulkItems, the invitations' tombstones, wJvP's restore); Clack's
+flows read the reload instead (the peek, Undo and ⌘Z after a Clear, the
+invitation answers, Clear all before this, which also marks the rows it
+took), so a reload keeps ui's rows (actReloadKeeps): the page's span is
+the page's (a row it no longer lists is gone, the newest too), what came
+in or changed on the socket meanwhile stays, and but under Unreads the
+later pages loaded stay with their cursor when the page reaches them
+(the page's last row the list can hold, past a thread twin the mention
+dedupe keeps out); under the VIP sort, read in the feed's order (VIP
+unreads first), a row that moved down sends paging back to the page.
+`activity_invalidated` fetches the feed again;
 `activity_deleted` drops the entry. An unread entry newer than the last
 one while scrolled down, a thread's new reply included, raises "New
 activity ↑" (ActivityUnreadsBanner: 28px `#1264a3` pill 12px from the
 top). Clack no longer reloads the feed on mention and count events (Slack
 doesn't). Tests: TestActivityOrderLikeSlack (Karim's sequence over the
 socket, then a reload and a restart), TestActivityOrderMatchesSlacksReducer
-(the port against Slack's own upserts) and TestActivityPlainReload.
+(the port against Slack's own upserts), TestActivityPlainReload,
+TestActivityMergeKeepsLaterPagesOutOfTimeOrder and the reload tests in
+activity_order_reload_test.go / activity_order_reload_live_test.go.
 
 **Tests and screenshots.** `TestActivityViewsRoundTrip`,
 `TestActivityViewsEvent`, `TestActivityBulkAndFilters` (core, fakeslack);

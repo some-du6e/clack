@@ -2,11 +2,11 @@ package views
 
 // The order Slack's activityIA4 store keeps (activity_order.go) against
 // Slack's own code: every expected list here is what client-boot tsND's
-// getUpsertedActivityRtmItems / getUpsertedActivityItems /
-// getItemsRetainedOnRefresh, 1Cyf v and um/L Y (build 35b42de8b870,
-// copied verbatim, lodash's compact and uniqBy stubbed, en-US ICU) answer
-// for the same steps (the oracle in
-// /root/clack-ops/scratch/activity-order/oracle). Synthetic data.
+// getUpsertedActivityRtmItems / getUpsertedActivityItems, 1Cyf v and
+// um/L Y (build 35b42de8b870, copied verbatim, lodash's compact and
+// uniqBy stubbed, en-US ICU) answer for the same steps (the oracle in
+// /root/clack-ops/scratch/activity-order/oracle). Reloads keep ui's rows
+// instead of Slack's (activity_order_reload_test.go). Synthetic data.
 
 import (
 	"slices"
@@ -16,17 +16,12 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 )
 
-// actOrderStep is a realtime entry (rtm) or a feed page; a page with
-// refresh joins as a refresh of a view with filters, before being the
-// list's keys when it went out (nil: the list's keys at the step) and
-// marks the rows marked unread here.
+// actOrderStep is a realtime entry (rtm) or a feed page that joins the
+// list (a first page or the next one).
 type actOrderStep struct {
-	rtm     *core.ActivityItem
-	page    []core.ActivityItem
-	refresh bool
-	before  []string
-	marks   []string
-	want    string // key@feedTs, ...
+	rtm  *core.ActivityItem
+	page []core.ActivityItem
+	want string // key@feedTs, ...
 }
 
 func actOI(key, typ, feed string) core.ActivityItem {
@@ -106,25 +101,13 @@ func TestActivityOrderMatchesSlacksReducer(t *testing.T) {
 			{rtm: rtm(actOI("aa", "keyword", "10.000000")),
 				want: "z@11,a@10.000000,a_x@10.000000,a-x@10.000000,A1@10.000000,a10@10.000000,a9@10.000000,aa@10.000000,ax@10.000000,b@10.000000,B@10.000000,nofeed@undefined"},
 		}},
-		// the plain list's reload: every row stays, the page's copies win
-		{"root-refresh-keeps-every-row", []core.ActivityItem{
+		// a page joins every row the list holds, the page's copies winning
+		{"a-page-keeps-every-row", []core.ActivityItem{
 			actOI("n1", "at_user", "90.000000"), actOI("gone", "at_user", "80.000000"), actOI("n2", "at_user", "70.000000"),
 			actOI("p2a", "at_user", "40.000000"), actOI("p2b", "at_user", "30.000000"),
 		}, []actOrderStep{
 			{page: []core.ActivityItem{actOI("new", "at_user", "95.000000"), actOI("n2", "at_user", "92.000000"), actOI("n1", "at_user", "90.000000")},
 				want: "new@95.000000,n2@92.000000,n1@90.000000,gone@80.000000,p2a@40.000000,p2b@30.000000"},
-		}},
-		// a filtered view's reload: getItemsRetainedOnRefresh
-		{"filtered-refresh-retains", []core.ActivityItem{
-			actOI("newer", "at_user", "1700000009.000100"), actOI("kept-unread", "at_user", "1700000005.000100"),
-			actOI("read-since", "at_user", "1700000004.000100"), actOI("marked-unread", "at_user", "1700000003.000100"),
-			actOI("socket", "at_user", "1700000001.000100"), actOI("older-unread", "at_user", "1700000002.000100"),
-		}, []actOrderStep{
-			{refresh: true, before: []string{"newer", "kept-unread", "read-since", "marked-unread", "older-unread"}, marks: []string{"marked-unread"},
-				page: []core.ActivityItem{actOI("new-unread", "at_user", "1700000006.000100"), actOI("kept-unread", "at_user", "1700000005.000100")},
-				want: "newer@1700000009.000100,new-unread@1700000006.000100,kept-unread@1700000005.000100,marked-unread@1700000003.000100,socket@1700000001.000100"},
-			{refresh: true, before: []string{"newer", "new-unread", "kept-unread", "marked-unread", "socket"}, marks: []string{"marked-unread"},
-				page: []core.ActivityItem{}, want: "marked-unread@1700000003.000100"},
 		}},
 		// a page out of time order (the VIP sort's) is stored by feedTs
 		{"unsorted-page", nil, []actOrderStep{
@@ -141,17 +124,7 @@ func TestActivityOrderMatchesSlacksReducer(t *testing.T) {
 			if s.rtm != nil {
 				list = actUpsertRtm(list, *s.rtm)
 			} else {
-				o := actUpsertOpts{refresh: s.refresh}
-				if s.refresh {
-					o.before, o.unreadMarks = map[string]bool{}, map[string]bool{}
-					for _, k := range s.before {
-						o.before[k] = true
-					}
-					for _, k := range s.marks {
-						o.unreadMarks[k] = true
-					}
-				}
-				got := actUpsertPage(core.ActivityPage{Items: s.page, Next: "page-cursor"}, core.ActivityPage{Items: list, Next: "old-cursor"}, o)
+				got := actUpsertPage(core.ActivityPage{Items: s.page, Next: "page-cursor"}, core.ActivityPage{Items: list, Next: "old-cursor"}, actUpsertOpts{})
 				if got.Next != "page-cursor" {
 					t.Errorf("%s step %d: cursor %q, want the page's", c.name, i, got.Next)
 				}
@@ -181,7 +154,7 @@ func TestActivityRtmUpsertNewSlice(t *testing.T) {
 	}
 }
 
-// A reload of the plain list in time order (actPlainReload): a row within
+// A reload of the plain list in time order (actReloadKeeps): a row within
 // the page's span the page no longer lists is gone, what came in on the
 // socket meanwhile stays, the later pages loaded stay with their cursor
 // when the page reaches them; a page that doesn't (more new rows than a
@@ -192,8 +165,7 @@ func TestActivityPlainReload(t *testing.T) {
 		actOI("a", "at_user", "100.0"), actOI("gone", "at_user", "90.0"), actOI("b", "at_user", "80.0"),
 		actOI("c", "at_user", "70.0"), actOI("d", "at_user", "60.0"), actOI("e", "at_user", "50.0"),
 	}}
-	before := map[string]bool{"a": true, "gone": true, "b": true, "c": true, "d": true, "e": true}
-	o := actUpsertOpts{plain: true, before: before}
+	view := actReloadCase{before: []string{"a", "gone", "b", "c", "d", "e"}}
 	for _, c := range []struct {
 		name       string
 		page       []core.ActivityItem
@@ -210,7 +182,7 @@ func TestActivityPlainReload(t *testing.T) {
 			"sock@105.0,a@100.0,b@80.0", ""},
 		{"nothing left", nil, "", "sock@105.0", ""},
 	} {
-		got := actUpsertPage(core.ActivityPage{Items: c.page, Next: c.next}, cur, o)
+		got := actReloadTest(core.ActivityPage{Items: c.page, Next: c.next}, cur, view)
 		if k := actOrderKeys(got.Items); k != c.want || got.Next != c.cur2 {
 			t.Errorf("%s:\n got %s (cursor %q)\nwant %s (cursor %q)", c.name, k, got.Next, c.want, c.cur2)
 		}

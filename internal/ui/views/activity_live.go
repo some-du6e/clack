@@ -117,6 +117,12 @@ func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 	// goes in at its feedTs, so a thread with a new reply leaves its old
 	// place for the top; an entry older than every row loaded goes last
 	p.Items = actUpsertRtm(p.Items, in)
+	v.live.mu.Lock() // a load out now answers with an older copy (actUpsertPage)
+	if v.live.keys == nil {
+		v.live.keys = map[string]bool{}
+	}
+	v.live.keys[key] = true
+	v.live.mu.Unlock()
 	if at >= 0 {
 		if r := v.rows[key]; r != nil {
 			r.built = false

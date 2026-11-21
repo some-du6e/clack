@@ -399,6 +399,11 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			items = append(items, e)
 		}
 		v.mu.Unlock()
+		if f.Get("mode") == "priority_unreads_first_v1" {
+			// the VIP sort: the unread entries from a VIP first, each
+			// part newest first (activity_live.go activityVIPFirst)
+			sort.SliceStable(items, func(i, j int) bool { return activityVIPFirst(items[i]) && !activityVIPFirst(items[j]) })
+		}
 		next := ""
 		if bulk > 0 {
 			// pages of limit, the cursor an offset

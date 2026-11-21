@@ -140,6 +140,12 @@ func (s *Server) ReplyAtQuiet(ch, root, ts, user, text string) slack.Message {
 	return m
 }
 
+// activityVIPFirst reports whether activity.feed's priority_unreads_first_v1
+// (the VIP sort) lists entry first: an unread one from a VIP.
+func activityVIPFirst(e map[string]any) bool {
+	return e["priority"] != nil && e["is_unread"] == true
+}
+
 // tsAfterEq reports whether Slack timestamp a is at or after b.
 func tsAfterEq(a, b string) bool {
 	fa, _ := strconv.ParseFloat(a, 64)

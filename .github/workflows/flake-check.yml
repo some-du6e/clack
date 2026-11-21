@@ -187,6 +187,8 @@ on:
       - "internal/ui/views/activity_order.go"
       - "internal/ui/views/activity_order_test.go"
       - "internal/ui/views/activity_order_live_test.go"
+      - "internal/ui/views/activity_order_reload_test.go"
+      - "internal/ui/views/activity_order_reload_live_test.go"
       - "internal/fakeslack/activity_live.go"
       - "internal/core/create_test.go"
       - "internal/ui/create_channel_test.go"
@@ -1397,13 +1399,15 @@ jobs:
   # comes again with the reply's ts and goes to the top; the order, times,
   # senders and texts after each event, after activity_invalidated's reload
   # and after a restart on the saved cache; the reducer port against Slack's
-  # own upserts; the live updates, Unreads and paging around it. Dispatch
-  # with only=activity-order.
+  # own upserts; what a reload keeps (an answered invitation leaves, the
+  # later pages stay on a type tab and under the VIP sort, a thread twin,
+  # the socket's newer copy); the live updates, Unreads and paging around
+  # it. Dispatch with only=activity-order.
   activity-order:
     if: ${{ !inputs.only || startsWith('activity-order', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      ORDER_TESTS: '^(TestActivityOrder(LikeSlack|MatchesSlacksReducer)|TestActivityRtmUpsertNewSlice|TestActivityPlainReload|TestActivityUnreadsRefreshRetains|TestActivityUnreadsShowsOnlyUnread|TestActivityLiveUpdatesLikeSlack|TestActivityPagedListShowsEveryEntry|TestActivityLiveRemovedDuringLoad|TestActivityBadgesZeroThenLoad)$'
+      ORDER_TESTS: '^(TestActivityOrder(LikeSlack|MatchesSlacksReducer)|TestActivityRtmUpsertNewSlice|TestActivityPlainReload|TestActivityReload(DropsTheNewestRowGone|ThreadTwinKeepsLaterPages|KeepsTheSocketsCopy|KeepsLaterPages)|TestActivityMergeKeepsLaterPagesOutOfTimeOrder|TestActivityAnsweredInviteLeaves|TestActivityUnreadsRefreshRetains|TestActivityUnreadsShowsOnlyUnread|TestActivityLiveUpdatesLikeSlack|TestActivityPagedListShowsEveryEntry|TestActivityLiveRemovedDuringLoad|TestActivityBadgesZeroThenLoad)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

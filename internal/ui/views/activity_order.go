@@ -19,19 +19,20 @@ package views
 //   - A feed page (eP2o / Ueic fetchActivityFeed → tsND O
 //     upsertActivityItems) goes through getUpsertedActivityItems: [page,
 //     ...existing] deduplicated the same way (the page's copy wins) and
-//     sorted. A fetch from the top (fetchNew) on a view with filters
-//     (9OWn Wk, `$`: types, Unreads, VIP, Cleared, automations, In) is a
-//     refresh (PY/r refreshItems: T && !!b): the existing rows are only
-//     getItemsRetainedOnRefresh's, the ones the list didn't hold when the
-//     request went out (keysBeforeRefresh: they came in on the socket
-//     since), the ones marked unread here and still unread
-//     (pendingUnreadMarkKeys, Unreads only) and the ones newer than the
-//     page's newest. The cursor is the page's. On the plain list every row
-//     stays in Slack's (actPlainReload says where Clack's differs).
+//     sorted, with the page's cursor. A fetch from the top on a view with
+//     filters (9OWn Wk) is a refresh there (getItemsRetainedOnRefresh
+//     keeps the rows in on the socket meanwhile, marked unread here or
+//     newer than the page); on the plain list every row stays. Slack
+//     takes rows out locally (removeBulkItems, the invites' tombstones,
+//     wJvP's restore) where Clack reloads, so Clack's reloads keep ui's
+//     rows instead (actReloadKeeps): what changed on the socket while the
+//     request was out, and the later pages loaded, while the page's span
+//     is the page's.
 //   - The VIP sort draws the stored order split in two (9OWn Y,
 //     actVIPOrder): the unread VIP rows, then the rest, each by Y.
 
 import (
+	"slices"
 	"sort"
 	"sync"
 
@@ -188,100 +189,99 @@ func actUpsertRtm(items []core.ActivityItem, in core.ActivityItem) []core.Activi
 	return append(out, r[lo:]...)
 }
 
-// actUpsertOpts is how a page joins the list (tsND O's payload).
+// actUpsertOpts is how a page joins the list (tsND O's payload, and
+// Clack's reload rule).
 type actUpsertOpts struct {
-	// refresh is refreshItems: a fetch from the top on a view with
-	// filters; the list keeps only getItemsRetainedOnRefresh's rows
-	refresh bool
-	// before is keysBeforeRefresh: the list's keys when the request went
-	// out
+	// reload is a fetch from the top (actRefresh): the list keeps only
+	// actReloadKeeps' rows besides the page
+	reload bool
+	// before is the list's keys when the request went out
+	// (keysBeforeRefresh)
 	before map[string]bool
+	// touched is the keys a realtime entry upserted while the request was
+	// out: their copies are newer than the request
+	touched map[string]bool
 	// unreadMarks is pendingUnreadMarkKeys (Unreads only): the rows
 	// marked unread here, kept while they are
 	unreadMarks map[string]bool
-	// plain is a reload of the plain list in time order (activityReload):
-	// the retained rows, and the rows past the page (later pages loaded)
-	plain bool
+	// sticky is Unreads: a reload keeps no later pages (ui's actRetained,
+	// Slack's filtered refresh)
+	sticky bool
+	// vip is the VIP sort: activity.feed answers priority_unreads_first_v1
+	vip bool
 }
 
-// actRetainedOnRefresh is getItemsRetainedOnRefresh: of the rows the list
-// holds, the ones it didn't hold when the request went out, the ones
-// marked unread here (still unread: unreadMarks holds the rows whose
-// local state is unread) and the ones newer than the page's newest.
-func actRetainedOnRefresh(cur, page []core.ActivityItem, o actUpsertOpts) []core.ActivityItem {
-	newest, some := "", len(page) > 0
-	for i := range page {
-		if ts := page[i].FeedTS; newest == "" || actTSLess(newest, ts) {
-			newest = ts
+// actServerCompare is the order activity.feed answers in: chrono_v1's um/L
+// Y, or under the VIP sort (priority_unreads_first_v1) the unread VIP
+// entries first, each part by Y.
+func actServerCompare(a, b *core.ActivityItem, vip bool) int {
+	if vip {
+		if ga, gb := a.Priority && a.Unread, b.Priority && b.Unread; ga != gb {
+			if ga {
+				return -1
+			}
+			return 1
 		}
 	}
-	if newest == "" {
-		newest = "0"
-	}
-	var out []core.ActivityItem
-	for i := range cur {
-		it := &cur[i]
-		k := actKey(it)
-		ts := it.FeedTS
-		if ts == "" {
-			ts = "0"
-		}
-		if !o.before[k] || o.unreadMarks[k] || some && actTSLess(newest, ts) {
-			out = append(out, *it)
-		}
-	}
-	return out
+	return actFeedCompare(a, b)
 }
 
-// actUpsertPage is upsertActivityItems: the page joined to the list cur
-// holds (the rows retained on a refresh), deduplicated with the page's
-// copies first, sorted, and the page's cursor.
-func actUpsertPage(page, cur core.ActivityPage, o actUpsertOpts) core.ActivityPage {
-	existing, next := cur.Items, page.Next
-	switch {
-	case o.refresh:
-		existing = actRetainedOnRefresh(cur.Items, page.Items, o)
-	case o.plain:
-		existing, next = actPlainReload(cur, page, o)
+// actReloadKeeps is the rows a reload keeps besides its page, and its
+// cursor: ui's rule (actMerge, actRetained) over the list in Slack's
+// order. Kept are the rows the list didn't hold when the request went out
+// and the ones a realtime entry changed meanwhile (both newer than the
+// page's read), the ones marked unread here (Unreads), and, but under
+// Unreads, the later pages loaded past the page with their cursor: when
+// the page reaches the rows loaded before (its last row the list can
+// hold, 1Cyf v over the page and the list, was one of them) and isn't the
+// feed's last. Every other row in the page's span is the page's to list:
+// one it doesn't list is gone (an ignored or accepted invitation, a
+// cleared or deleted entry). Under the VIP sort the pages aren't in time
+// order and a read row moves down: when a row loaded before the page's
+// last, in the feed's order, isn't on the page, the later pages go too
+// and paging continues from the page.
+func actReloadKeeps(cur, page core.ActivityPage, o actUpsertOpts) ([]core.ActivityItem, string) {
+	var kept []core.ActivityItem
+	in := map[string]bool{}
+	for i := range cur.Items {
+		it := &cur.Items[i]
+		if k := actKey(it); !o.before[k] || o.touched[k] || o.unreadMarks[k] {
+			kept = append(kept, *it)
+			in[k] = true
+		}
 	}
-	items := actDeduped(page.Items, existing)
-	actSortFeed(items)
-	return core.ActivityPage{Items: items, Next: next, Convs: actRefs(cur.Convs, page.Convs)}
-}
-
-// actPlainReload is the rows a reload of the plain list in time order
-// keeps besides the page, and its cursor. Slack's keeps every row the
-// list holds (refreshItems is off there): its reducers take out a row
-// cleared, ignored or accepted here, where Clack's Clear all before
-// this, invitation and restore flows read the reload instead. So a row
-// within the page's span that the page no longer lists is gone, and the
-// rest is getItemsRetainedOnRefresh's (what came in on the socket
-// meanwhile, newer than the page) and, when the page reaches into the
-// rows loaded before and isn't the feed's last, the later pages loaded
-// past it, with their cursor. A page that doesn't reach them (more new
-// rows than a page) keeps none, its cursor continuing right after it.
-func actPlainReload(cur, page core.ActivityPage, o actUpsertOpts) ([]core.ActivityItem, string) {
-	kept := actRetainedOnRefresh(cur.Items, page.Items, o)
-	if len(page.Items) == 0 || page.Next == "" {
+	if o.sticky || len(page.Items) == 0 || page.Next == "" {
 		return kept, page.Next
 	}
-	last := &page.Items[0]
-	for i := range page.Items {
-		if actFeedCompare(&page.Items[i], last) > 0 {
+	all := make([]core.ActivityItem, 0, len(page.Items)+len(cur.Items))
+	all = append(append(all, page.Items...), cur.Items...)
+	stands := actMentionStands(all)
+	var last *core.ActivityItem
+	for i := len(page.Items) - 1; i >= 0; i-- {
+		if stands[i] {
 			last = &page.Items[i]
+			break
 		}
 	}
-	if !o.before[actKey(last)] {
-		return kept, page.Next
+	if last == nil || !o.before[actKey(last)] {
+		return kept, page.Next // more new rows than a page: continue right after it
 	}
-	in := make(map[string]bool, len(kept))
-	for i := range kept {
-		in[actKey(&kept[i])] = true
+	listed := make(map[string]bool, len(page.Items))
+	for i := range page.Items {
+		listed[actKey(&page.Items[i])] = true
+	}
+	if o.vip {
+		for i := range cur.Items {
+			it := &cur.Items[i]
+			if k := actKey(it); !in[k] && !listed[k] && actServerCompare(it, last, true) < 0 {
+				return kept, page.Next // moved down (or gone): page again from the page
+			}
+		}
 	}
 	later := false
 	for i := range cur.Items {
 		it := &cur.Items[i]
-		if k := actKey(it); !in[k] && actFeedCompare(last, it) < 0 {
+		if k := actKey(it); !in[k] && !listed[k] && actServerCompare(last, it, o.vip) < 0 {
 			kept = append(kept, *it)
 			in[k], later = true, true
 		}
@@ -290,4 +290,43 @@ func actPlainReload(cur, page core.ActivityPage, o actUpsertOpts) ([]core.Activi
 		return kept, cur.Next
 	}
 	return kept, page.Next
+}
+
+// actUpsertPage is upsertActivityItems: the page joined to the list cur
+// holds (on a reload, the rows actReloadKeeps keeps), deduplicated with
+// the page's copies first, sorted, and the page's cursor (a reload that
+// keeps the later pages, theirs). A row a realtime entry changed while the
+// request was out keeps its copy over the page's when the copies' read
+// state differs or its feed_ts is newer (WWrp applyNewerActivityRtmItems
+// does the first: the page was read before it).
+func actUpsertPage(page, cur core.ActivityPage, o actUpsertOpts) core.ActivityPage {
+	existing, next := cur.Items, page.Next
+	if o.reload {
+		existing, next = actReloadKeeps(cur, page, o)
+	}
+	items := page.Items
+	if len(o.touched) > 0 {
+		at := make(map[string]int, len(o.touched))
+		for i := range cur.Items {
+			if k := actKey(&cur.Items[i]); o.touched[k] {
+				at[k] = i
+			}
+		}
+		copied := false
+		for i := range items {
+			j, ok := at[actKey(&items[i])]
+			if !ok {
+				continue
+			}
+			if c := &cur.Items[j]; c.Unread != items[i].Unread || actTSLess(items[i].FeedTS, c.FeedTS) {
+				if !copied {
+					items, copied = slices.Clone(items), true
+				}
+				items[i] = *c
+			}
+		}
+	}
+	all := actDeduped(items, existing)
+	actSortFeed(all)
+	return core.ActivityPage{Items: all, Next: next, Convs: actRefs(cur.Convs, page.Convs)}
 }

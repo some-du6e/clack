@@ -12,6 +12,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"maps"
 	"math"
 	"strconv"
 	"strings"
@@ -378,7 +379,13 @@ type Activity struct {
 	showCleared bool
 	plusC       []widget.Clickable // the "+" menu's rows (plusItems)
 
-	data     async[core.ActivityPage]
+	data async[core.ActivityPage]
+	// live is the keys realtime entries upserted since the latest load
+	// went out (liveUpsert writes them, that load's merge reads them)
+	live struct {
+		mu   sync.Mutex
+		keys map[string]bool
+	}
 	list     widget.List
 	pk       actPeek // the rail's Activity peek (activity_peek.go)
 	rows     map[string]*actRow
@@ -1050,16 +1057,13 @@ func (v *Activity) load(mode actLoad) {
 	}
 	// how the answer joins the list (tsND O upsertActivityItems,
 	// activity_order.go), as it is when the answer lands: a page is merged
-	// in, the page's copies winning, and the list sorted. A fetch from the
-	// top on a view with filters is a refresh, which keeps only
-	// getItemsRetainedOnRefresh's rows (keysBeforeRefresh: the list's
-	// keys now; pendingUnreadMarkKeys under Unreads: the rows you marked
-	// unread here); so does one under the VIP sort, whose pages aren't in
-	// time order, and the plain list's keeps the later pages too
-	// (actPlainReload). A fresh list starts empty, so it keeps only what
-	// came in on the socket while the request was out.
-	filt, vip := v.filteredList(), v.sortVIP()
-	up := actUpsertOpts{refresh: mode == actRefresh && (filt || vip), plain: mode == actRefresh && !filt && !vip}
+	// in, the page's copies winning (but a realtime entry's newer one), and
+	// the list sorted. A reload keeps actReloadKeeps' rows besides the page
+	// (the list's keys now: keysBeforeRefresh; under Unreads the rows you
+	// marked unread here: pendingUnreadMarkKeys). A fresh list starts
+	// empty, so it keeps only what came in on the socket while the request
+	// was out.
+	up := actUpsertOpts{reload: mode == actRefresh, sticky: opts.Unread, vip: v.sortVIP()}
 	if mode == actRefresh {
 		up.before = make(map[string]bool, len(old.Items))
 		for i := range old.Items {
@@ -1074,6 +1078,11 @@ func (v *Activity) load(mode actLoad) {
 			}
 		}
 	}
+	// the keys a realtime entry upserts from here on (liveUpsert): newer
+	// than this request's answer
+	v.live.mu.Lock()
+	clear(v.live.keys)
+	v.live.mu.Unlock()
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
 	v.loads++ // zeroRead: what this load's answer lists is the server's state from now
 	load := v.loads
@@ -1088,20 +1097,13 @@ func (v *Activity) load(mode actLoad) {
 		v.noteFresh(load, p.Items)
 		return p, nil
 	}, func(cur, p core.ActivityPage) core.ActivityPage {
+		v.live.mu.Lock()
+		if len(v.live.keys) > 0 {
+			up.touched = maps.Clone(v.live.keys)
+		}
+		v.live.mu.Unlock()
 		return actUpsertPage(p, cur, up)
 	})
-}
-
-// filteredList is 9OWn Wk ($): the view has filters (z: Unreads,
-// Exclude automations, Automations only, activity types, In channels or
-// sections, VIP, Cleared items; unlike filtered's, the search isn't one)
-// or shows the In filter (showFilterIn). Its list is Slack's
-// filteredList, which a fetch from the top refreshes (PY/r refreshItems:
-// T && !!b).
-func (v *Activity) filteredList() bool {
-	types, none := v.types()
-	return none || types != "" || v.dmOnly() || v.unread.Value || v.vip || v.showCleared || v.exclAuto || v.autoOnly ||
-		len(v.sections) > 0 || len(v.channels) > 0 || v.showIn
 }
 
 // actAnswered is a load's answer's keys: the rows it read from the server.
