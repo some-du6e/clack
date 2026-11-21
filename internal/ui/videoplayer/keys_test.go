@@ -160,7 +160,7 @@ func TestCornerDockButton(t *testing.T) {
 		t.Fatalf("the corner: Expand %v, Dock %v, More %v, want them in a row 2px apart", z.expand, z.dock, z.more)
 	}
 	click(c, g.r, g.f)
-	waitFor(t, "playing", 10*time.Second, func() bool { g.frame(); return state(t, c, g.r, g.f).Playing })
+	waitTilePlaying(t, c, g.r, g.f, g.frame)
 	d := z.dock.Min.Add(z.dock.Max).Div(2)
 	g.ev(pointer.Move, d, 0)
 	g.ev(pointer.Press, d, pointer.ButtonPrimary)

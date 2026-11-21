@@ -18,8 +18,40 @@ func playThen(t *testing.T, c *Controller, r *Row, f *richtext.File) {
 	t.Helper()
 	frame(c, [2]any{r, f})
 	click(c, r, f)
-	waitFor(t, "playing", 5*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	waitTilePlaying(t, c, r, f, nil)
 	time.Sleep(300 * time.Millisecond)
+}
+
+// waitTilePlaying waits for f's tile in r to play, on the tile's own state
+// rather than a span of wall time: while it loads (from the click until
+// it plays) it waits on, up to a minute for a hang; a tile that neither
+// loads nor plays for 5 s fails. draw, when set, runs a frame each time.
+// The fixed waits ran out under a loaded runner with the video on its
+// way (α.133's release test job, run 44948141967).
+func waitTilePlaying(t *testing.T, c *Controller, r *Row, f *richtext.File, draw func()) {
+	t.Helper()
+	hang := time.Now().Add(time.Minute)
+	var still time.Time // since the tile last loaded or played
+	for {
+		if draw != nil {
+			draw()
+		}
+		st := state(t, c, r, f)
+		switch {
+		case st.Playing && !st.Loading:
+			return
+		case st.Loading:
+			still = time.Time{}
+		case still.IsZero():
+			still = time.Now()
+		case time.Since(still) > 5*time.Second:
+			t.Fatalf("the video neither loads nor plays for 5 s (media error %d)", st.Err)
+		}
+		if time.Now().After(hang) {
+			t.Fatalf("the video still loading after a minute (media error %d)", st.Err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // pipFrame is a full layout drawing tiles and the mini player.
