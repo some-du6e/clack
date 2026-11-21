@@ -40,14 +40,18 @@ type Message struct {
 	PinnedInfo     *PinnedInfo     `json:"pinned_info,omitempty"`
 	ClientMsgID    string          `json:"client_msg_id,omitempty"`
 	Hidden         bool            `json:"hidden,omitempty"`
-	IsEphemeral    bool            `json:"is_ephemeral,omitempty"` // Slack's addEphemeralMessage (local, never from history)
-	Root           *Message        `json:"root,omitempty"`         // thread_broadcast
-	ReplyBroadcast bool            `json:"reply_broadcast,omitempty"`
-	Upload         bool            `json:"upload,omitempty"`
-	DisplayAsBot   bool            `json:"display_as_bot,omitempty"`
-	Room           json.RawMessage `json:"room,omitempty"` // huddles
-	Channel        string          `json:"channel,omitempty"`
-	Inviter        string          `json:"inviter,omitempty"`
+	// NoDisplay and NoNotifications hold the message's desktop
+	// notification back (client-boot Fpyc's reasons 4 and 5).
+	NoDisplay       bool            `json:"no_display,omitempty"`
+	NoNotifications bool            `json:"no_notifications,omitempty"`
+	IsEphemeral     bool            `json:"is_ephemeral,omitempty"` // Slack's addEphemeralMessage (local, never from history)
+	Root            *Message        `json:"root,omitempty"`         // thread_broadcast
+	ReplyBroadcast  bool            `json:"reply_broadcast,omitempty"`
+	Upload          bool            `json:"upload,omitempty"`
+	DisplayAsBot    bool            `json:"display_as_bot,omitempty"`
+	Room            json.RawMessage `json:"room,omitempty"` // huddles
+	Channel         string          `json:"channel,omitempty"`
+	Inviter         string          `json:"inviter,omitempty"`
 	// System messages' own fields: channel_topic's topic, channel_purpose's
 	// purpose, channel_name's old_name and name (the new one).
 	Topic          string `json:"topic,omitempty"`
@@ -321,6 +325,15 @@ type File struct {
 	AudioWaveSamples []int      `json:"audio_wave_samples"`
 	Subtype          string     `json:"subtype"`
 	FileAccess       string     `json:"file_access,omitempty"`
+	// What getFileStatus (SRWA) reads besides mode and file_access: a
+	// deleted file, one hidden by the free plan's storage limit, one DLP
+	// tombstoned. IsSkill marks a skill canvas, FolderType a folder's kind
+	// ("skill_set": a skill set).
+	IsDeleted       bool   `json:"is_deleted,omitempty"`
+	IsHiddenByLimit bool   `json:"is_hidden_by_limit,omitempty"`
+	IsTombstoned    bool   `json:"is_tombstoned,omitempty"`
+	IsSkill         bool   `json:"is_skill,omitempty"`
+	FolderType      string `json:"folder_type,omitempty"`
 	// MediaDisplayType is Slack's media_display_type ("unknown" while an
 	// upload is still being processed). Slack's web client doesn't draw by
 	// it; Clack only reads it to spot unprocessed uploads.

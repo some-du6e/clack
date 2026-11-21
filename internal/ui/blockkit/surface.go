@@ -142,12 +142,16 @@ type Surface struct {
 	errs   map[string]string // block_id → error (response_action errors / validation)
 	ws     map[string]*ew
 	texts  map[string]*richview.View
-	hand   surfHandler
-	isHome bool
-	busy   map[string]bool
-	gen    uint32
-	blkErr map[string]string // block_id → action error under actions blocks
-	flying map[string]int    // block_id → actions in flight (elements disabled)
+	// prevTexts are the last view's block views, which a views.update
+	// takes over by key (textOf): ViewBlocks' SUIRenderer keeps each item
+	// by its React key, so ContainerBlock's collapse state survives
+	prevTexts map[string]*richview.View
+	hand      surfHandler
+	isHome    bool
+	busy      map[string]bool
+	gen       uint32
+	blkErr    map[string]string // block_id → action error under actions blocks
+	flying    map[string]int    // block_id → actions in flight (elements disabled)
 	// onAction lets the modal know an action went out (Slack clears a
 	// failed submit's banner on any action).
 	onAction func()
@@ -160,13 +164,15 @@ type Surface struct {
 	// last drew it; curY the y of the block being laid out (ModalFields).
 	org  image.Point
 	curY int
+	// nested hosts the elements of blocks richview draws (Surface.block)
+	nested *nestedElements
 }
 
 // dirty reports whether the user changed any input since the view was
 // shown (Slack compares initialViewState.values with the block state).
 func (s *Surface) dirty() bool {
-	for i := range s.blocks {
-		for _, e := range elementsOf(&s.blocks[i]) {
+	for _, b := range allBlocks(s.blocks) {
+		for _, e := range elementsOf(b) {
 			if stateful(e.Type) {
 				return string(s.vals.JSON(false)) != s.initial
 			}
@@ -188,11 +194,10 @@ func (s *Surface) set(v *core.View, keep bool) {
 	old := s.vals
 	s.view = v
 	s.isHome = v != nil && v.Type == "home"
-	s.blocks = ParseBlocks(v.Blocks)
+	s.blocks = ParseBlocks(expandConditions(s.h, v.Blocks))
 	s.vals = Values{}
 	if keep && old != nil {
-		for i := range s.blocks {
-			b := &s.blocks[i]
+		for _, b := range allBlocks(s.blocks) {
 			for _, e := range elementsOf(b) {
 				if pv := old.get(b.BlockID, e.ActionID); pv != nil && pv.Type == e.Type {
 					s.vals.set(b.BlockID, e.ActionID, pv)
@@ -212,8 +217,7 @@ func (s *Surface) set(v *core.View, keep bool) {
 	oldWS := s.ws
 	s.ws = map[string]*ew{}
 	if keep {
-		for i := range s.blocks {
-			b := &s.blocks[i]
+		for _, b := range allBlocks(s.blocks) {
 			for _, e := range elementsOf(b) {
 				k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
 				if w := oldWS[k]; w != nil && s.vals.get(b.BlockID, e.ActionID) == old.get(b.BlockID, e.ActionID) {
@@ -222,6 +226,10 @@ func (s *Surface) set(v *core.View, keep bool) {
 				}
 			}
 		}
+	}
+	s.prevTexts = nil
+	if keep {
+		s.prevTexts = s.texts
 	}
 	s.texts = map[string]*richview.View{}
 	s.errs = map[string]string{}
@@ -340,7 +348,10 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 	b.Action = action
 	b.State = s.vals.JSON(false)
 	bid := w.bid
-	delete(s.blkErr, bid)
+	if _, had := s.blkErr[bid]; had {
+		delete(s.blkErr, bid)
+		s.gen++ // a nested block's error line goes (ElementsVersion)
+	}
 	s.flying[bid]++
 	sendAction(s.h, b, func(err error) {
 		if s.flying[bid]--; s.flying[bid] <= 0 {
@@ -348,6 +359,7 @@ func (s *Surface) fire(w *ew, action json.RawMessage, done func(error)) {
 		}
 		if err != nil {
 			s.blkErr[bid] = errMessage(err)
+			s.gen++ // a nested block lays its error line out (ElementsVersion)
 		}
 		done(err)
 	})
@@ -370,6 +382,8 @@ func (s *Surface) widget(b *Block, e *Element) *ew {
 // Slack's client does; it reports whether the form may go.
 func (s *Surface) validate() bool {
 	ok := true
+	// top-level inputs only: one nested in a container or a callout draws
+	// through richview (a section with its element), with no error line
 	for i := range s.blocks {
 		b := &s.blocks[i]
 		if b.Type != "input" || b.Element == nil {
@@ -415,7 +429,15 @@ func (s *Surface) validate() bool {
 
 func atof(s string) float64 { f, _ := strconv.ParseFloat(s, 64); return f }
 
-// textOfBlock is a non-interactive block as a richtext doc.
+// selfID is the viewer's member id ("" without a workspace).
+func (s *Surface) selfID() string {
+	if c := s.h.Core(); c != nil && c.S != nil {
+		return c.S.SelfID()
+	}
+	return ""
+}
+
+// docOf is a non-interactive block as a richtext doc.
 func (s *Surface) docOf(b *Block) richtext.Doc {
 	c := s.h.Core()
 	if c == nil {
@@ -428,10 +450,27 @@ func (s *Surface) docOf(b *Block) richtext.Doc {
 func (s *Surface) textOf(key string, doc func() richtext.Doc) *richview.View {
 	v := s.texts[key]
 	if v == nil {
-		v = richview.New(doc(), richview.Options{})
+		o := richview.Options{FillBlocks: true}  // a view's blocks: no flex wrappers
+		if old := s.prevTexts[key]; old != nil { // a views.update: the block's view, its toggles kept
+			delete(s.prevTexts, key)
+			v = old
+			v.Set(doc(), o)
+		} else {
+			v = richview.New(doc(), o)
+		}
 		s.texts[key] = v
 	}
 	return v
+}
+
+// surfaceKey is block b's key (the i-th of the view), the way ViewBlocks'
+// SUIRenderer keys its items (Q5CE: block_id, else type-index), with its
+// type: React remounts an item whose component changes.
+func surfaceKey(b *Block, i int) string {
+	if b.BlockID != "" {
+		return "id\x00" + b.BlockID + "\x00" + b.Type
+	}
+	return "ix\x00" + strconv.Itoa(i) + "\x00" + b.Type
 }
 
 // Layout draws the surface at the constraint width; returns its height.
@@ -470,7 +509,7 @@ func (s *Surface) Layout(gtx C) D {
 func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 	th := s.h.Theme()
 	cl := colorsOf(th)
-	key := strconv.Itoa(i) + "\x00" + b.BlockID
+	key := surfaceKey(b, i)
 	switch b.Type {
 	case "input":
 		return s.inputBlock(gtx, b, key, w)
@@ -485,6 +524,12 @@ func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 		return s.section(gtx, b, key, w, st)
 	}
 	v := s.textOf(key, func() richtext.Doc { return s.docOf(b) })
+	if len(b.Nested) > 0 || len(b.Elements) > 0 { // child blocks, a fallback's payload, a card's actions: live elements
+		if s.nested == nil {
+			s.nested = &nestedElements{s: s}
+		}
+		v.SetOptions(richview.Options{Elements: s.nested, FillBlocks: true})
+	}
 	d := v.Layout(gtx, st, &s.hand)
 	return d.Size.Y
 }
@@ -501,14 +546,21 @@ func errorLine(gtx C, th *theme.Theme, cl colors, w int, msg string) D {
 // flow lays out an actions block's elements, wrapping, 8px apart. In
 // modals Slack makes it a grid: two equal columns, every element (28px
 // tall) filling its column, rows 8px apart.
-func (s *Surface) flow(gtx C, b *Block, w int) int {
+func (s *Surface) flow(gtx C, b *Block, w int) int { return s.flowRun(gtx, b, w, true) }
+
+// flowRun is flow; without draw it only measures (nestedElements).
+func (s *Surface) flowRun(gtx C, b *Block, w int, draw bool) int {
 	x, y, rowH := 0, 0, 0
 	gap := dp(gtx, 8)
+	self := s.selfID()
 	if s.modal() {
 		colW := (w - gap) / 2
 		n := 0
 		for i := range b.Elements {
 			e := &b.Elements[i]
+			if hiddenFrom(e, self) {
+				continue
+			}
 			ew := s.widget(b, e)
 			sz := ew.size(gtx, colW, false)
 			if sz.X == 0 {
@@ -524,7 +576,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 				y += rowH + gap
 				rowH = 0
 			}
-			at(gtx, image.Pt(cx, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+			if draw {
+				at(gtx, image.Pt(cx, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+			}
 			rowH = max(rowH, sz.Y)
 			n++
 		}
@@ -532,6 +586,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 	}
 	for i := range b.Elements {
 		e := &b.Elements[i]
+		if hiddenFrom(e, self) {
+			continue
+		}
 		ew := s.widget(b, e)
 		sz := ew.size(gtx, w, false)
 		if sz.X == 0 {
@@ -542,7 +599,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 			y += rowH + gap
 			rowH = 0
 		}
-		at(gtx, image.Pt(x, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+		if draw {
+			at(gtx, image.Pt(x, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
+		}
 		x += sz.X + gap
 		rowH = max(rowH, sz.Y)
 	}
@@ -551,6 +610,9 @@ func (s *Surface) flow(gtx C, b *Block, w int) int {
 
 func (s *Surface) section(gtx C, b *Block, key string, w int, st *richview.Style) int {
 	acc := b.Accessory
+	if iconButtonHidden(acc, s.selfID()) { // Section (bzDH) draws the accessory; IconButton hides itself
+		acc = nil
+	}
 	var accW, accH int
 	var aw *ew
 	stack := false
@@ -669,7 +731,7 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 	}
 	if b.Hint != nil {
 		v := s.textOf(key+"\x00h", func() richtext.Doc { return docOfText(s.h, *b.Hint) })
-		v.SetOptions(richview.Options{Muted: true, Compact: true})
+		v.SetOptions(richview.Options{Muted: true, Compact: true, FillBlocks: true})
 		d := at(gtx, image.Pt(0, y+dp(gtx, 4)), func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 			return v.Layout(gtx, styleFor(th, s.h.Images()), &s.hand)

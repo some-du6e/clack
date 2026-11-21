@@ -2,9 +2,11 @@ package blockkit
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // Text is a Block Kit text object.
@@ -100,6 +102,10 @@ type Element struct {
 	URL   string `json:"url"`
 	Style string `json:"style"`
 	Icon  string `json:"icon"` // icon_button
+	// VisibleTo is visible_to_user_ids: an actions block's button or
+	// checkboxes the viewer isn't listed in isn't drawn, and an
+	// icon_button hides itself (hiddenFrom)
+	VisibleTo []string `json:"visible_to_user_ids"`
 
 	Placeholder         *Text `json:"placeholder"`
 	Confirm             *Confirm
@@ -175,6 +181,29 @@ func (e *Element) allOptions() []Option {
 	return out
 }
 
+// hiddenFrom reports whether an actions block's element e isn't drawn
+// for the viewer self. Only the Actions block reads visible_to_user_ids
+// (boot-shared /jJF maybeRenderActionsElement): a button or checkboxes
+// whose list is set, with a viewer known, who isn't in it. A section's
+// accessory and an input's element draw for everyone; an icon_button
+// hides itself wherever it is (iconButtonHidden).
+func hiddenFrom(e *Element, self string) bool {
+	if e == nil {
+		return false
+	}
+	switch e.Type {
+	case "button", "checkboxes":
+		return len(e.VisibleTo) > 0 && self != "" && !slices.Contains(e.VisibleTo, self)
+	}
+	return iconButtonHidden(e, self)
+}
+
+// iconButtonHidden is IconButton's own check (boot-shared X2Vm): a list
+// that leaves out the current user, or any list while there's none.
+func iconButtonHidden(e *Element, self string) bool {
+	return e != nil && e.Type == "icon_button" && len(e.VisibleTo) > 0 && (self == "" || !slices.Contains(e.VisibleTo, self))
+}
+
 // Kinds of elements.
 func isSelect(t string) bool {
 	switch t {
@@ -220,45 +249,123 @@ type Block struct {
 	Optional       bool            `json:"optional"`
 	DispatchAction bool            `json:"dispatch_action"`
 	Raw            json.RawMessage `json:"-"`
+	// Nested is the blocks richtext draws inside this one: a container's
+	// or a callout's child_blocks, or the fallback payload of a type with
+	// no renderable (richtext.FallbackItems). Slack draws them through
+	// the same renderables with the surface's onAction (Container yWQF's
+	// childBlocks slot, Callout's createRenderBlocks a+Oj, Q5CE
+	// resolveFallback), so their elements are the surface's own: find,
+	// initValues and the view's state walk them (allBlocks).
+	Nested []Block `json:"-"`
+	// kids are Nested's blocks as UnmarshalJSON found them, until
+	// parseBlocks decodes them at their depth (nest).
+	kids []json.RawMessage
 }
+
+// maxNesting is how deep blocks inside blocks are followed (containers'
+// and callouts' child_blocks, fallback payloads), as richtext follows
+// fallbacks (maxFallbackDepth); deeper ones are dropped. Without it a
+// sender's containers nested 30 deep held the UI goroutine.
+const maxNesting = 8
 
 func (b *Block) UnmarshalJSON(raw []byte) error {
 	type plain Block
 	var p struct {
 		plain
-		Elements json.RawMessage `json:"elements"`
+		Elements    json.RawMessage `json:"elements"`
+		Actions     json.RawMessage `json:"actions"` // a card's buttons
+		ChildBlocks json.RawMessage `json:"child_blocks"`
+		Fallback    json.RawMessage `json:"fallback"`
 	}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return err
 	}
 	*b = Block(p.plain)
 	b.Raw = append(json.RawMessage(nil), raw...)
-	if b.Type == "actions" && len(p.Elements) > 0 {
+	switch {
+	case b.Type == "actions" && len(p.Elements) > 0:
 		_ = json.Unmarshal(p.Elements, &b.Elements)
+	case b.Type == "card" && len(p.Actions) > 0: // Card's actions (7Xkb), its block id theirs
+		_ = json.Unmarshal(p.Actions, &b.Elements)
+	}
+	// the nested blocks wait for parseBlocks, which knows their depth
+	switch {
+	case b.Type == "container" || b.Type == "callout":
+		b.kids = blockParts(p.ChildBlocks)
+	case len(p.Fallback) > 0:
+		b.kids = richtext.FallbackItems(b.Type, p.Fallback)
 	}
 	return nil
 }
 
-// ParseBlocks decodes a Block Kit blocks array (unknown fields ignored).
-func ParseBlocks(raw json.RawMessage) []Block {
+// blockParts splits a blocks array into its blocks, undecoded (nil for
+// anything but an array).
+func blockParts(raw json.RawMessage) []json.RawMessage {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	var bs []Block
-	if json.Unmarshal(raw, &bs) != nil {
-		// one bad block shouldn't drop the rest
-		var parts []json.RawMessage
-		if json.Unmarshal(raw, &parts) != nil {
-			return nil
+	var parts []json.RawMessage
+	if json.Unmarshal(raw, &parts) != nil {
+		return nil
+	}
+	return parts
+}
+
+// parseBlocks decodes each of parts on its own (one bad block doesn't drop
+// the rest, and nothing is decoded twice) and the blocks nested in them,
+// depth levels down so far, to maxNesting.
+func parseBlocks(parts []json.RawMessage, depth int) []Block {
+	if parts == nil {
+		return nil
+	}
+	bs := make([]Block, 0, len(parts))
+	for _, p := range parts {
+		var b Block
+		if json.Unmarshal(p, &b) != nil {
+			continue
 		}
-		for _, p := range parts {
-			var b Block
-			if json.Unmarshal(p, &b) == nil {
-				bs = append(bs, b)
-			}
+		kids := b.kids
+		b.kids = nil
+		if len(kids) > 0 && depth < maxNesting {
+			b.Nested = parseBlocks(kids, depth+1)
 		}
+		bs = append(bs, b)
 	}
 	return bs
+}
+
+// allBlocks is every block of bs with the blocks nested in it, each
+// before its own (Block.Nested): the tree richtext draws.
+func allBlocks(bs []Block) []*Block {
+	var out []*Block
+	var walk func(bs []Block)
+	walk = func(bs []Block) {
+		for i := range bs {
+			out = append(out, &bs[i])
+			walk(bs[i].Nested)
+		}
+	}
+	walk(bs)
+	return out
+}
+
+// expandConditions is richtext.ExpandConditions with the viewer's
+// workspace: every Block Kit surface (InteractiveBlocks, ReadonlyBlocks,
+// AppHomeBlocks, ViewBlocks) expands condition blocks before drawing.
+func expandConditions(h Host, raw json.RawMessage) json.RawMessage {
+	var team, ent string
+	if h != nil {
+		if c := h.Core(); c != nil && c.S != nil {
+			team, ent = c.S.TeamIDs()
+		}
+	}
+	return richtext.ExpandConditions(raw, team, ent)
+}
+
+// ParseBlocks decodes a Block Kit blocks array (unknown fields ignored),
+// block by block, with the blocks nested in them (parseBlocks).
+func ParseBlocks(raw json.RawMessage) []Block {
+	return parseBlocks(blockParts(raw), 0)
 }
 
 // ref is one element's place in a surface.
@@ -271,7 +378,7 @@ type ref struct {
 func elementsOf(b *Block) []*Element {
 	var out []*Element
 	switch b.Type {
-	case "actions":
+	case "actions", "card":
 		for i := range b.Elements {
 			out = append(out, &b.Elements[i])
 		}
@@ -290,8 +397,7 @@ func elementsOf(b *Block) []*Element {
 // find returns the element with blockID/actionID (actionID may be empty
 // when the app didn't set one: then the first of its type at index n).
 func find(bs []Block, blockID, actionID string) (ref, bool) {
-	for i := range bs {
-		b := &bs[i]
+	for _, b := range allBlocks(bs) {
 		if blockID != "" && b.BlockID != blockID {
 			continue
 		}

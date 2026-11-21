@@ -4203,10 +4203,21 @@ func (b *base) actPillColors(r *core.Reaction) (bg, fg color.NRGBA) {
 
 // actPillBox draws a pill's rounded fill (and the reacted border) at size.
 func (b *base) actPillBox(gtx C, r *core.Reaction, size image.Point) {
+	b.actPillBoxStyled(gtx, r, size, slackc.Styled{})
+}
+
+// actPillBoxStyled is actPillBox for the pill styled st: a rule's
+// background replaces the fill and its box-shadow the reacted border
+// (OwlMode rings every pill in its colour), painted once by st's
+// WrapRounded; filled here again, a translucent one showed twice as
+// strong.
+func (b *base) actPillBoxStyled(gtx C, r *core.Reaction, size image.Point, st slackc.Styled) {
 	rect := image.Rectangle{Max: size}
 	bg, _ := b.actPillColors(r)
-	rrect(gtx, rect, size.Y/2, bg)
-	if r.Self {
+	if !st.Has("background-color") {
+		rrect(gtx, rect, size.Y/2, bg)
+	}
+	if r.Self && !st.Has("box-shadow") {
 		border(gtx, rect, size.Y/2, max(1, gtx.Dp(1)), rgb(0x1d9bd1))
 	}
 }

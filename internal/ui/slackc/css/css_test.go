@@ -1555,3 +1555,44 @@ func TestHostBaseSheet(t *testing.T) {
 		t.Errorf("plugin rule lost to the host base: %q", got)
 	}
 }
+
+// ownBoxLike is a host component that draws its own box (kit's Button).
+type ownBoxLike struct{ *fakeEl }
+
+func (ownBoxLike) HostNode() bool { return true }
+func (ownBoxLike) OwnBox() bool   { return true }
+
+// The host element sheet (SetHostElementBase: Slack's c-button look for a
+// plugin's own <button class="c-button">) matches host nodes that don't
+// draw their own box: not kit's Button (OwnBox), not a native. It comes
+// before the host base sheet (Slack's .c-button--small precedes
+// .p-block_kit_button_element), never makes the engine non-empty, and
+// HostStyled names its subject classes.
+func TestHostElementSheet(t *testing.T) {
+	e := NewEngine()
+	e.SetHostElementBase(`.c-button--small{height:28px;padding:0 12px 1px}`)
+	e.SetHostBase(`.p-block_kit_button_element{padding:0 8px 1px}`)
+	if !e.Empty() {
+		t.Fatal("the host element sheet made the engine non-empty")
+	}
+	el := n("button.c-button.c-button--small.p-block_kit_button_element")
+	host := hostLike{el}
+	if got := val(t, e.Cascade(host, 0, nil, testEnv), "height"); got != "28px" {
+		t.Errorf("a plugin's button: height %q, want Slack's 28px", got)
+	}
+	if got := val(t, e.Cascade(host, 0, nil, testEnv), "padding-left"); got != "8px" {
+		t.Errorf("a plugin's button: padding-left %q, want the later Block Kit rule's 8px", got)
+	}
+	if c := e.Cascade(ownBoxLike{el}, 0, nil, testEnv); c.Has("height") {
+		t.Error("an OwnBox component matched a host element rule")
+	}
+	if got := val(t, e.Cascade(ownBoxLike{el}, 0, nil, testEnv), "padding-left"); got != "8px" {
+		t.Errorf("an OwnBox component: padding-left %q, want the host base sheet's 8px", got)
+	}
+	if c := e.Cascade(el, 0, nil, testEnv); c.Has("height") {
+		t.Error("a native matched a host element rule")
+	}
+	if !e.HostStyled(hostLike{n("button.c-button--small")}) {
+		t.Error("HostStyled: false for a host element rule's subject class")
+	}
+}

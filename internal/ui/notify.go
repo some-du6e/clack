@@ -58,11 +58,21 @@ func (a *App) notifyMessage(title, body string, n *desktopNote) {
 	if c == nil || c.PrefBool("mute_sounds", false) {
 		return
 	}
-	file := messageSound(c.GlobalNotifyString("desktop_sound"))
+	// getNewMsgSoundPath: a VIP's message plays priority_desktop_sound
+	// (Mvkl Tk); canPlaySound: one that came through Do Not Disturb plays
+	// through it too (shouldOverrideDndForMessage)
+	pref, throughDND := "desktop_sound", false
+	if n != nil {
+		throughDND = n.soundThroughDND
+		if n.prioritySound {
+			pref = "priority_desktop_sound"
+		}
+	}
+	file := messageSound(c.GlobalNotifyString(pref))
 	go func() { // dnd.info the first time: off the UI goroutine
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if !c.DNDActive(ctx) && soundPlayback() {
+		if (throughDND || !c.DNDActive(ctx)) && soundPlayback() {
 			huddleui.PlaySlackSound(file)
 		}
 	}()
@@ -91,10 +101,12 @@ func messageSound(v string) string {
 }
 
 func (a *App) notifyShow(title, body string, n *desktopNote) bool {
-	if a.inert || !a.notifyOn() || uipref.Get().NoDesktopPush { // Notifications > Desktop notifications
+	// Notifications > Desktop notifications; a message's own conversation
+	// decided already (desktop_push_enabled: notePushOn)
+	if a.inert || !a.notifyOn() || (n == nil || !n.pushChecked) && uipref.Get().NoDesktopPush {
 		return false
 	}
-	if uipref.Get().NoTextInNotifications { // Notifications: no message preview
+	if uipref.Get().NoTextInNotifications && (n == nil || !n.textChecked) { // Notifications: no message preview
 		body = ""
 	}
 	if a.notify == nil {

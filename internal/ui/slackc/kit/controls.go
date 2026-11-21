@@ -266,12 +266,16 @@ func buttonStyle(p slackc.Props, st *css.Style, has func(string) bool) {
 // .p-block_kit_button_element{padding:0 8px 1px} gives a plugin's Block
 // Kit-style button 8px sides.
 type btnBox struct {
-	h      int    // border-box height
-	pad    [4]int // padding: top, right, bottom, left
-	bw     int    // border width: an outline button's 1px
-	rad    int
-	fs     float32 // label size, CSS px
-	weight int     // label weight, CSS 100..900
+	h   int    // border-box height
+	pad [4]int // padding: top, right, bottom, left
+	// bd is the border's widths (top, right, bottom, left): an outline
+	// button's 1px, or what a rule's border widths and styles say
+	// (cssBorder), for any kind
+	bd        [4]int
+	cssBorder bool
+	rad       int
+	fs        float32 // label size, CSS px
+	weight    int     // label weight, CSS 100..900
 }
 
 func btnBoxOf(gtx layout.Context, h *slackc.Host, kind string, size int) btnBox {
@@ -279,11 +283,25 @@ func btnBoxOf(gtx layout.Context, h *slackc.Host, kind string, size int) btnBox 
 	b := btnBox{h: dp(gtx, hh), rad: dp(gtx, rad), fs: fs, weight: 700}
 	b.pad = [4]int{0, dp(gtx, pad), dp(gtx, btnPadBottom(size)), dp(gtx, pad)}
 	if kind == "outline" {
-		b.bw = dp(gtx, 1) // .c-button--outline{border:1px solid …}
+		w := dp(gtx, 1) // .c-button--outline{border:1px solid …}
+		b.bd = [4]int{w, w, w, w}
 	}
 	s := h.Style
 	if s == nil {
 		return b
+	}
+	// a rule's border widths or styles (border: 2px solid; border: none)
+	// replace Slack's, on any kind; its colour alone keeps the outline's
+	// 1px (OwlMode)
+	if h.Has("border-width") {
+		b.cssBorder = true
+		for i := range b.bd {
+			b.bd[i] = 0
+			if st := s.BorderStyle[i]; st != css.BorderNone && st != css.BorderHidden && s.BorderWidth[i] > 0 {
+				// as the engine snaps a border (at least 1px, whole px)
+				b.bd[i] = max(int(s.BorderWidth[i]*gtx.Metric.PxPerDp), 1)
+			}
+		}
 	}
 	for i, prop := range [4]string{"padding-top", "padding-right", "padding-bottom", "padding-left"} {
 		if h.Has(prop) {
@@ -341,6 +359,20 @@ func btnCSSColors(h *slackc.Host, cl *colors, kind string, disabled, hover bool,
 	return bg, fg, border
 }
 
+// cssBorderColor is the colour of the border a rule gives a Button
+// (btnBox.cssBorder): its own border-color when it set one (zero: the
+// engine paints the rule's colours, side by side), else an outline
+// button's own border colour, else currentColor, as CSS's initial value.
+func cssBorderColor(h *slackc.Host, kind string, border, fg color.NRGBA) color.NRGBA {
+	switch {
+	case h.Has("border-color"):
+		return color.NRGBA{}
+	case kind == "outline" && border.A > 0:
+		return border
+	}
+	return fg
+}
+
 // btnColors returns background, text and border for a button kind.
 func btnColors(cl *colors, kind string, disabled, hover bool) (bg, fg, border color.NRGBA) {
 	if disabled {
@@ -377,7 +409,9 @@ func btnColors(cl *colors, kind string, disabled, hover bool) (bg, fg, border co
 // buttonComp is Slack's Button: a <button class="c-button c-button--<type>
 // c-button--<size> …"> (buttonClasses; RegisterHostElement makes CSS see
 // it as one), drawn with Slack's c-button look and what rules set on it
-// (btnBoxOf, btnCSSColors). Plain text children are its label. Element
+// (btnBoxOf, btnCSSColors), and the layers of its box a rule adds that
+// Slack's look has none of, painted as the engine paints any box's
+// (Host.PaintBox): box-shadow, background-image, a border's own widths. Plain text children are its label. Element
 // children (an icon and a label) go through the host tree, as the items
 // of the button's flex box: Slack's .c-button is an inline-flex row,
 // centred (the host base sheet), and a plugin may restyle it (OwlMode's
@@ -404,8 +438,8 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	bg, fg, border = btnCSSColors(h, cl, kind, disabled, hover, bg, fg, border)
 
 	// the content box
-	padX := bx.pad[1] + bx.pad[3] + 2*bx.bw
-	padY := bx.pad[0] + bx.pad[2] + 2*bx.bw
+	padX := bx.pad[1] + bx.pad[3] + bx.bd[1] + bx.bd[3]
+	padY := bx.pad[0] + bx.pad[2] + bx.bd[0] + bx.bd[2]
 	// Slack's c-button height is definite: a flex line's stretch doesn't
 	// reach it, only a rule's height does (the engine's exact constraints)
 	H := bx.h
@@ -453,18 +487,43 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		H = cd.Size.Y + padY
 		inH = cd.Size.Y
 	}
-	at := image.Pt(bx.bw+bx.pad[3]+(w-padX-cd.Size.X)/2, bx.bw+bx.pad[0]+(inH-cd.Size.Y)/2)
+	at := image.Pt(bx.bd[3]+bx.pad[3]+(w-padX-cd.Size.X)/2, bx.bd[0]+bx.pad[0]+(inH-cd.Size.Y)/2)
 	if elems {
 		h.PlaceChildren(at)
 	}
 	sz := image.Pt(w, H)
+	layers := h.BoxLayersSet()
 	draw := func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: sz}
+		// CSS paint order (a rule's outer shadows went first, below): the
+		// background colour and images (an enabled outline button's inside
+		// its border: background-clip padding-box), inset shadows, the
+		// border, content
+		fill, frad := r, bx.rad
+		if kind == "outline" && !disabled {
+			fill = image.Rect(bx.bd[3], bx.bd[0], sz.X-bx.bd[1], sz.Y-bx.bd[2])
+			frad = max(bx.rad-max(bx.bd[0], bx.bd[3]), 0)
+		}
 		switch {
+		case bx.cssBorder:
+			if bg.A > 0 {
+				theme.RRect(gtx, fill, frad, bg)
+			}
 		case border.A > 0:
-			ring(gtx, r, bx.rad, max(bx.bw, 1), border, bg)
+			ring(gtx, r, bx.rad, max(bx.bd[0], 1), border, bg)
 		case bg.A > 0:
 			theme.RRect(gtx, r, bx.rad, bg)
+		}
+		if layers&slackc.BoxImages != 0 {
+			cs := clip.UniformRRect(fill, frad).Push(gtx.Ops)
+			h.PaintBox(gtx, sz, bx.rad, bx.bd, bg, color.NRGBA{}, slackc.BoxImages)
+			cs.Pop()
+		}
+		if layers&slackc.BoxInsetShadows != 0 {
+			h.PaintBox(gtx, sz, bx.rad, bx.bd, bg, color.NRGBA{}, slackc.BoxInsetShadows)
+		}
+		if bx.cssBorder {
+			h.PaintBox(gtx, sz, bx.rad, bx.bd, bg, cssBorderColor(h, kind, border, fg), slackc.BoxBorder)
 		}
 		callAt(gtx, call, at)
 		if !disabled {
@@ -472,6 +531,11 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		}
 		ctlAriaLabel(gtx, p)
 		return layout.Dimensions{Size: sz}
+	}
+	// a rule's outer shadows, under the button and outside it: before the
+	// clickable, which clips what it lays out to its size
+	if layers&slackc.BoxShadows != 0 {
+		h.PaintBox(gtx, sz, bx.rad, bx.bd, bg, color.NRGBA{}, slackc.BoxShadows)
 	}
 	if disabled {
 		return draw(gtx)

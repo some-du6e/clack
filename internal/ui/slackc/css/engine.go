@@ -63,6 +63,11 @@ type Decl struct {
 	// value has var(): Value is then the shorthand's value, expanded in
 	// Compute after substitution ("pending-substitution value").
 	Shorthand string
+	// Base marks a declaration of the base sheet (Engine.SetBase): Slack's
+	// own rule for a native widget's element, a value the widget draws
+	// itself (NativeValue) or one it keeps for what it lays out inside
+	// it (its children's inherited text, its flex layout).
+	Base bool
 }
 
 // Decls is a declaration list in source order.

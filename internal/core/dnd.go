@@ -50,12 +50,25 @@ type dndState struct {
 	mu     sync.Mutex
 	known  bool
 	status DNDStatus
+	at     time.Time // when status was set
+	asked  time.Time // the last refetch DNDHeld started
 }
 
-// SetDNDStatus replaces the viewer's DND status (tests, the demo).
+// dndMaxAge is how long the viewer's DND status stays fresh: Slack keeps
+// it in a conditional fetch manager (client-boot Z/ON, storeKey dndV2)
+// whose maxAge is 600 s, and getDndStatusByMemberId's read refetches an
+// older one in the background (maybeRefetch). A dnd_updated the socket
+// missed (it was down) is caught that way.
+const dndMaxAge = 10 * time.Minute
+
+// dndRetry spaces DNDHeld's refetches while dnd.info fails.
+const dndRetry = time.Minute
+
+// SetDNDStatus replaces the viewer's DND status (dnd.info, dnd_updated;
+// tests, the demo).
 func (a *App) SetDNDStatus(d DNDStatus) {
 	a.dnd.mu.Lock()
-	a.dnd.known, a.dnd.status = true, d
+	a.dnd.known, a.dnd.status, a.dnd.at = true, d, time.Now()
 	a.dnd.mu.Unlock()
 }
 
@@ -84,6 +97,32 @@ func (a *App) DNDProfile() (DNDProfileStatus, bool) {
 		return DNDProfileStatus{}, false
 	}
 	return *a.dnd.status.ProfileStatus, true
+}
+
+// DNDHeld is getCurrentMemberDndStatus (client-boot d4YN ux) as the store
+// holds it: whether the viewer's notifications are paused now, without
+// waiting (false until dnd.info or dnd_updated brought a status, as
+// Slack's store reads before its dnd.info answers). A status older than
+// dndMaxAge, or none, is asked for again in the background (dndRetry
+// apart), as Slack's read refetches one. Any goroutine: the notification
+// decisions read it on the UI goroutine.
+func (a *App) DNDHeld() bool {
+	now := time.Now()
+	a.dnd.mu.Lock()
+	known, st := a.dnd.known, a.dnd.status
+	refetch := (!known || now.Sub(a.dnd.at) > dndMaxAge) && now.Sub(a.dnd.asked) > dndRetry
+	if refetch {
+		a.dnd.asked = now
+	}
+	a.dnd.mu.Unlock()
+	if refetch && a.C != nil {
+		go func() { // maybeRefetch: this read takes the status as held
+			ctx, cancel := context.WithTimeout(a.bg, 15*time.Second)
+			defer cancel()
+			_ = a.LoadDND(ctx)
+		}()
+	}
+	return known && st.Active(now)
 }
 
 // DNDActive reports whether the viewer's notifications are paused now,

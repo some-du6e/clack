@@ -4,6 +4,7 @@ import (
 	"image"
 
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/icons"
 )
 
 // canvasSlug lays out a rich_text canvas element (richtext canvasslug.go):
@@ -30,6 +31,11 @@ func (l *lay) canvasSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) 
 	icon := sp.Icon
 	if icon == "" {
 		icon = "canvas-content"
+	}
+	if !icons.Has(icon) && !icons.HasSlack(icon) {
+		// a file type glyph Clack's set lacks (richtext FileTypeIcon):
+		// getFileTypeSvgIconName's own default, never the crossed box
+		icon = "file"
 	}
 	l.addIcon(icon, fs.size, k, fg, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // svg margin-right 4 (the icon item ends with 1px)

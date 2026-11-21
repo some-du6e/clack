@@ -142,11 +142,14 @@ func (h *Host) Has(prop string) bool {
 // PlaceChildren tells the layout engine where the component drew what
 // Children laid out this frame: at is the children's top-left in px from
 // the component's own top-left. Their window rects (getBoundingClientRect,
-// ResizeObserver, Host.WindowRect inside) follow it from the next frame;
-// without it they sit at the component's corner.
+// ResizeObserver, Host.WindowRect inside) follow it in this frame: the
+// children's scope flushed its rects as Children returned, before the
+// component knew where it would centre them, so the engine flushes them
+// again when it paints the component, where the frame's layout has put
+// it (painter.native). Without it they sit at the component's corner.
 func (h *Host) PlaceChildren(at image.Point) {
-	if h.view == nil || h.Node == nil {
-		return
+	if h.view == nil || h.Node == nil || measuring > 0 {
+		return // a measure pass places nothing (measuring)
 	}
 	b := h.view.boxOf(h.Node)
 	if b == nil {
@@ -324,6 +327,60 @@ func LayoutElement(gtx layout.Context, e Element) layout.Dimensions {
 		parent = e.Nodes[0].parent
 	}
 	return c.view.layoutNodes(gtx, c.fr, e.Nodes, parent, c.st)
+}
+
+// LayoutChildren is LayoutElement for the children a native lays out
+// inside the element it draws itself, d with mods, as Slack's DOM has
+// them there: that element is their CSS parent, they inherit its text,
+// and when it is a flex container (Slack's own rule for it in the base
+// sheet, or a plugin's) they are its flex items under its flex
+// properties. The reaction pill's emoji and count, handed back by a
+// patched ReactionBar, are .c-reaction's inline-flex items, 4px apart
+// and centred, in 12px text; laid out as one inline run they touched
+// and sat on the baseline of a line box with the row's 15px strut. The
+// native has entered d with mods (Enter); with no CSS installed Enter
+// pushes nothing, and d's element goes on the stack for the layout.
+func (d *ClassDef) LayoutChildren(gtx layout.Context, mods uint64, e Element) layout.Dimensions {
+	c := curRender
+	if c == nil || len(e.Nodes) == 0 {
+		return layout.Dimensions{}
+	}
+	parent := c.n
+	if e.Nodes[0].parent != nil {
+		parent = e.Nodes[0].parent
+	}
+	pushed := false
+	if !d.entered(c) {
+		k := nsKey{def: d, mods: mods}
+		var pe *stackEntry
+		if n := len(stack); n > 0 {
+			pe = &stack[n-1]
+			k.parent = pe.key
+		}
+		stack = append(stack, lookupNative(k, pe).entry())
+		pushed = true
+	}
+	st := stack[len(stack)-1].style
+	dims := c.view.layoutNodesIn(gtx, c.fr, e.Nodes, parent, st, true)
+	if pushed {
+		stack = stack[:len(stack)-1]
+	}
+	return dims
+}
+
+// entered reports that the element on top of the stack is d's, entered
+// by the native c is drawing.
+func (d *ClassDef) entered(c *renderCtx) bool {
+	if len(stack) <= c.depth {
+		return false
+	}
+	switch el := stack[len(stack)-1].el.(type) {
+	case *nativeEl:
+		return el.def == d
+	case *kidsEl:
+		return el.def == d
+	}
+	return false
 }
 
 // InheritText is the text style a native's own DOM gives a React-node

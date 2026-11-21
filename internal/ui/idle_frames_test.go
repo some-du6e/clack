@@ -352,6 +352,7 @@ func newIdleEnv(t *testing.T, sz fakeslack.Size, motion int) *perfEnv {
 	e.a.focused = true // App.Run: the first ConfigEvent of a shown window
 	cache := filepath.Join(home, "cache")
 	svc := core.New(slack.New(fs.Creds()), store.New(cache))
+	pinNetwork(svc)
 	e.a.Attach(svc, cache)
 	images.SetInvalidate(e.a.Invalidate) // what Run does once the window exists
 	e.a.th.Images = images

@@ -958,6 +958,20 @@ func firstNonEmptyName(v ...string) string {
 	return ""
 }
 
+// MemberDeleted is richtext.MemberStater: whether the member is
+// deleted; known is false for a member not loaded yet, which is noted to
+// be fetched.
+func (s *Store) MemberDeleted(id string) (deleted, known bool) {
+	now := time.Now().UnixMilli()
+	s.mu.RLock()
+	u, known := s.lookupLocked(id, now)
+	s.mu.RUnlock()
+	s.afterLookup(id, known) // a miss is asked for
+	// a member users.info didn't find is known (Slack's non-existent
+	// member), and not deleted
+	return u != nil && u.Deleted, known
+}
+
 // MemberAvatar is richtext.MemberNamer: the member's own picture for a
 // 36px avatar (ConnectedBaseAvatar asks for twice that), the image
 // message rows draw; "" for a member not loaded yet.
@@ -1303,6 +1317,18 @@ func (s *Store) SelfID() string {
 	return s.Self.ID
 }
 
+// TeamIDs is the viewer's workspace and enterprise ids (richtext's
+// TeamResolver: Slack's selectTeamId and selectEnterpriseId, which a
+// condition block's "team" conditions compare against).
+func (s *Store) TeamIDs() (team, enterprise string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if eu := s.Self.EnterpriseUser; eu != nil {
+		enterprise = eu.EnterpriseID
+	}
+	return s.TeamID, enterprise
+}
+
 // ---- conversations ----
 
 func (s *Store) PutConv(c slack.Conversation) {
@@ -1335,6 +1361,17 @@ func (s *Store) Conv(id string) (*slack.Conversation, bool) {
 	defer s.mu.RUnlock()
 	c, ok := s.Convs[id]
 	return c, ok
+}
+
+// DMUser is an IM's other member (richtext's DMResolver: a DM call's
+// card names them, getOtherMemberNameInDmCall).
+func (s *Store) DMUser(id string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if c, ok := s.Convs[id]; ok && c.IsIM && c.User != "" {
+		return c.User, true
+	}
+	return "", false
 }
 
 // ---- timelines ----

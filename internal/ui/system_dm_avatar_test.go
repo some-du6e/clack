@@ -9,8 +9,10 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slackasset"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // Karim (2026-11-21, α.113, Windows): the DM with the Slack system user
@@ -161,5 +163,84 @@ func TestSidebarSystemUserPresence(t *testing.T) {
 		if p.Bool("isSystemUser") != c.system {
 			t.Errorf("%s: BasePresence props isSystemUser %v, want %v", c.user, p.Bool("isSystemUser"), c.system)
 		}
+	}
+}
+
+// With show_sidebar_avatars on (fakeslack's default) a DM row's prefix is
+// its partner's avatar, and BaseAvatar (client-boot YN+Y) badges it with
+// presence only for a member who isn't a system user: renderBadgeOrPresence
+// draws the presence `if (showPresence && !isSystemUser)`, and
+// ConnectedBaseAvatar (+JEQ) passes isSystemUser for USLACKBOT and USLACK.
+// So the system DM's row has the logo alone, where Clack drew a heart over
+// its corner, while a person's DM row keeps its dot.
+func TestSidebarAvatarSystemUserNoPresence(t *testing.T) {
+	sz := fakeslack.Small
+	sz.SystemDM = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	ch := fakeslack.SystemDMID
+	e.until("the system DM's row with avatars on", 20*time.Second, func() bool {
+		c := e.a.model().conv(ch)
+		return c != nil && c.Avatar != "" && uipref.Get().SidebarAvatars
+	})
+	// keys are the sidebar rows a frame drew (ListChannelEntity's $key) and
+	// the badges it drew on them (BasePresence's "sb:" + the row's)
+	drawn := func(row int) map[string]bool {
+		e.a.sidebar.list.Position.First, e.a.sidebar.list.Position.Offset = max(row-2, 0), 0
+		e.settle(200 * time.Millisecond)
+		var f slackc.InspectFrame
+		slackc.InspectBegin(&f, e.r.Source())
+		e.frame()
+		slackc.InspectEnd()
+		keys := map[string]bool{}
+		for i := range f.Nodes {
+			n := &f.Nodes[i]
+			if n.Kind != slackc.InspectComponent || (n.Name != "ListChannelEntity" && n.Name != "BasePresence") {
+				continue
+			}
+			if p := n.Props(); p != nil {
+				keys[n.Name+" "+p.StrOr("$key", "")] = true
+			}
+		}
+		return keys
+	}
+	rowOf := func(id string) int {
+		for i, r := range e.a.sidebar.rows {
+			if r.key == id {
+				return i
+			}
+		}
+		return -1
+	}
+	if rowOf(ch) < 0 {
+		t.Fatalf("the system DM %s has no sidebar row", ch)
+	}
+	keys := drawn(rowOf(ch))
+	if !keys["ListChannelEntity "+ch] {
+		t.Fatalf("the frame drew no row for the system DM %s: %v", ch, keys)
+	}
+	if keys["BasePresence sb:"+ch] {
+		t.Errorf("the system DM's avatar row draws a presence badge; Slack's BaseAvatar draws none for a system user")
+	}
+	// a person's DM row still has its badge
+	person := ""
+	for _, r := range e.a.sidebar.rows {
+		c := e.a.model().conv(r.key)
+		if c != nil && c.Kind == "im" && !c.Bot && !c.Self && c.User != "" && !sbSystemUser(c.User) {
+			person = c.ID
+			break
+		}
+	}
+	if person == "" {
+		t.Fatal("no DM with a person")
+	}
+	keys = drawn(rowOf(person))
+	if !keys["ListChannelEntity "+person] || !keys["BasePresence sb:"+person] {
+		t.Errorf("a person's DM row %s: drew row %v, badge %v; want both", person, keys["ListChannelEntity "+person], keys["BasePresence sb:"+person])
 	}
 }
