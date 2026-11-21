@@ -442,6 +442,7 @@ var (
 	_GlobalAlloc      = kernel32.NewProc("GlobalAlloc")
 	_GlobalFree       = kernel32.NewProc("GlobalFree")
 	_GlobalLock       = kernel32.NewProc("GlobalLock")
+	_GlobalSize       = kernel32.NewProc("GlobalSize") // Clack patch (CLACK_PATCHES.md §55)
 	_GlobalUnlock     = kernel32.NewProc("GlobalUnlock")
 
 	user32                        = syscall.NewLazySystemDLL("user32.dll")
@@ -854,6 +855,13 @@ func GlobalLock(h syscall.Handle) (unsafe.Pointer, error) {
 
 func GlobalUnlock(h syscall.Handle) {
 	_GlobalUnlock.Call(uintptr(h))
+}
+
+// GlobalSize is the size of global memory block h in bytes, 0 when Windows
+// can't tell (Clack patch, CLACK_PATCHES.md §55).
+func GlobalSize(h syscall.Handle) uintptr {
+	r, _, _ := _GlobalSize.Call(uintptr(h))
+	return r
 }
 
 func KillTimer(hwnd syscall.Handle, nIDEvent uintptr) error {

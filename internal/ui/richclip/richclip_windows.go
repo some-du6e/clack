@@ -5,19 +5,16 @@ package richclip
 import (
 	"context"
 	"errors"
-	"runtime"
-	"time"
 	"unicode/utf16"
 	"unsafe"
 
+	"gioui.org/app/winclip"
 	"golang.org/x/sys/windows"
 )
 
 var (
 	rcUser32                     = windows.NewLazySystemDLL("user32.dll")
 	rcKernel32                   = windows.NewLazySystemDLL("kernel32.dll")
-	rcOpenClipboard              = rcUser32.NewProc("OpenClipboard")
-	rcCloseClipboard             = rcUser32.NewProc("CloseClipboard")
 	rcEmptyClipboard             = rcUser32.NewProc("EmptyClipboard")
 	rcSetClipboardData           = rcUser32.NewProc("SetClipboardData")
 	rcGetClipboardData           = rcUser32.NewProc("GetClipboardData")
@@ -50,52 +47,43 @@ func register(name string) uintptr {
 	return f
 }
 
-// open opens the clipboard on a locked thread; the caller defers close
-// and UnlockOSThread.
-func open(ctx context.Context) error {
-	for i := 0; ; i++ {
-		if r, _, _ := rcOpenClipboard.Call(0); r != 0 {
-			return nil
-		}
-		if i == 20 || ctx.Err() != nil {
-			return errors.New("the clipboard is busy")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
+// Every open of the clipboard is a winclip.Session: the process's one at
+// a time. Two of a paste's reads at once, each opening it with no window,
+// let one's close free the copy the other was still reading (Karim's
+// crash, 2026-11-21: 0xc0000374 in GlobalSize).
 
 func write(ctx context.Context, c Copy) error {
 	if !supported() {
 		return ErrUnsupported
-	}
-	runtime.LockOSThread() // the clipboard belongs to the thread that opened it
-	defer runtime.UnlockOSThread()
-	if err := open(ctx); err != nil {
-		return err
-	}
-	defer rcCloseClipboard.Call()
-	if r, _, _ := rcEmptyClipboard.Call(); r == 0 {
-		return errors.New("couldn't empty the clipboard")
 	}
 	u := utf16.Encode([]rune(c.Text))
 	tb := make([]byte, 2*len(u)+2)
 	for i, v := range u {
 		tb[2*i], tb[2*i+1] = byte(v), byte(v>>8)
 	}
-	if err := setData(cfUnicodeText, tb); err != nil {
-		return err
-	}
+	var html, custom []byte
+	var fHTML, fCustom uintptr
 	if c.HTML != "" {
-		if f := register(fmtHTML); f != 0 {
-			_ = setData(f, append(CFHTML(c.HTML), 0))
-		}
+		html, fHTML = append(CFHTML(c.HTML), 0), register(fmtHTML)
 	}
 	if len(c.Custom) > 0 {
-		if f := register(fmtCustom); f != 0 {
-			_ = setData(f, EncodeCustom(c.Custom))
-		}
+		custom, fCustom = EncodeCustom(c.Custom), register(fmtCustom)
 	}
-	return nil
+	return winclip.Session(ctx, 0, func() error {
+		if r, _, _ := rcEmptyClipboard.Call(); r == 0 {
+			return errors.New("couldn't empty the clipboard")
+		}
+		if err := setData(cfUnicodeText, tb); err != nil {
+			return err
+		}
+		if fHTML != 0 {
+			_ = setData(fHTML, html)
+		}
+		if fCustom != 0 {
+			_ = setData(fCustom, custom)
+		}
+		return nil
+	})
 }
 
 func setData(f uintptr, data []byte) error {
@@ -130,26 +118,27 @@ func readCustom(ctx context.Context) (map[string]string, error) {
 	if ok, _, _ := rcIsClipboardFormatAvailable.Call(f); ok == 0 {
 		return nil, nil
 	}
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	if err := open(ctx); err != nil {
+	var b []byte
+	err := winclip.Session(ctx, 0, func() error {
+		h, _, _ := rcGetClipboardData.Call(f)
+		if h == 0 {
+			return nil
+		}
+		n, _, _ := rcGlobalSize.Call(h)
+		if n == 0 || n > maxCustom {
+			return nil
+		}
+		p, _, _ := rcGlobalLock.Call(h)
+		if p == 0 {
+			return nil
+		}
+		defer rcGlobalUnlock.Call(h)
+		b = make([]byte, n)
+		rcRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
+		return nil
+	})
+	if err != nil || b == nil {
 		return nil, err
 	}
-	defer rcCloseClipboard.Call()
-	h, _, _ := rcGetClipboardData.Call(f)
-	if h == 0 {
-		return nil, nil
-	}
-	n, _, _ := rcGlobalSize.Call(h)
-	if n == 0 || n > maxCustom {
-		return nil, nil
-	}
-	p, _, _ := rcGlobalLock.Call(h)
-	if p == 0 {
-		return nil, nil
-	}
-	b := make([]byte, n)
-	rcRtlMoveMemory.Call(uintptr(unsafe.Pointer(&b[0])), p, n)
-	rcGlobalUnlock.Call(h)
 	return DecodeCustom(b)
 }

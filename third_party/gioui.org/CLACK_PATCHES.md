@@ -63,7 +63,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gpu/internal/metal/clack_external_darwin.go`,
 `gpu/headless/clack_external_test.go`, `gpu/headless/clack_size.go`,
 `gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
-`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go` and
+`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go`,
+`app/winclip/` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2725,3 +2726,48 @@ centred line's exact place, the zoomed width and a caret swiped out of
 view), on llvmpipe, WARP and Metal:
 flake-check's `caret-align` job (dispatch with `only=caret-align`).
 Not in `UPSTREAM.patch`.
+
+## 55. app/winclip: one clipboard session at a time (Windows)
+
+`app/winclip/winclip.go`, `app/winclip/winclip_windows.go` (new),
+`app/os_windows.go` (`readClipboard`, `writeClipboard`, `clipWait`),
+`app/internal/windows/windows.go` (`GlobalSize`).
+
+Karim, 2026-11-21 (Windows, alpha.113): a quote started in the composer,
+then Ctrl+V, and Clack was gone, twice, with nothing in clack.log or
+crash.log. CI's windows-applog runner reproduced it (TestWinQuotePaste),
+and Windows' dump of the test binary showed why: `KERNELBASE!GlobalSize`
+called from Clack's `richclip.readCustom` on the handle `GetClipboardData`
+had just returned, and the heap ending the process
+(`ntdll!RtlReportFatalFailure`, STATUS_HEAP_CORRUPTION 0xc0000374, a
+fail-fast no exception handler sees, Go's included). A paste reads the
+clipboard on two goroutines at once (the rich text, and the files and
+picture), and each opened it with no window. Windows lets a second
+thread open the clipboard that way while another holds it open, and the
+handle `GetClipboardData` gives is the reader's own copy, owned by the
+clipboard and good only while it is open: one reader's `CloseClipboard`
+freed the copy the other was reading.
+
+- `winclip.Session(ctx, owner, f)` is the process's one way to open the
+  clipboard: a one-slot semaphore (taken before the open, given back
+  after the close), a locked OS thread, `OpenClipboard(owner)` retried for
+  up to half a second while another app holds it (`ErrBusy` after that or
+  when ctx ends), `f`, `CloseClipboard`. `f` copies out what it reads.
+  Clack's readers and writers (`internal/ui/richclip`,
+  `internal/ui/composer`'s HTML read and file probe, `internal/ui/clipimg`)
+  all go through it, and richclip's `TestClipboardOpensAreSessions` fails
+  on a Go file that opens the clipboard any other way.
+- A window's own text paste and copy are sessions too, owned by its HWND.
+  The window thread waits at most `clipWait` (250 ms) for another
+  session: a thread holding one may be sending this window a message (an
+  `EmptyClipboard` sends `WM_DESTROYCLIPBOARD` to the owner Gio's copy
+  made), which the window thread takes only back in its message loop. The
+  paste's text is copied out within the block's `GlobalSize` (up to its
+  first NUL, where `UTF16PtrToString` read on past an unterminated block),
+  and the `DataEvent` goes to the window after the clipboard closed, so no
+  other session waits on the app.
+
+Composer's `TestWinClipboardReadersOneAtATime` (four readers at once for
+4 s on the real clipboard, in a child process) and ui's
+`TestWinQuotePaste` (App.Run's window, SendInput) run on windows-applog
+and in flake-check's `quote-paste-win` job. Not in `UPSTREAM.patch`.

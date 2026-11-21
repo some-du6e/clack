@@ -559,6 +559,19 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
+      # Karim's 2026-11-21 crash (α.113): a quote started in the composer
+      # (">" typed, or the Blockquote button), then Ctrl+V with each kind of
+      # copy on the real clipboard, in App.Run's own window (SendInput,
+      # PowerShell's WinForms clipboard): the window lives, and each paste
+      # lands as Slack's composer lands it. The step above runs the paste's
+      # clipboard readers four at a time (Gio patch 55: one session at a
+      # time in the process).
+      - name: paste into a quote (App.Run's window, the real clipboard)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run '^TestWinQuotePaste$' ./internal/ui
       # A copy as Slack's desktop app makes it: text, "HTML Format" and the
       # custom types (slack/html, slack/texty) in Chromium's web custom data.
       - name: rich copy (CF_UNICODETEXT, HTML Format, Chromium Web Custom MIME Data Format)

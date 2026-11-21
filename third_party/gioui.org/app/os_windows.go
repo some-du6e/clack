@@ -3,6 +3,7 @@
 package app
 
 import (
+	stdcontext "context" // the package has a context type of its own
 	"errors"
 	"fmt"
 	"gioui.org/io/transfer"
@@ -18,10 +19,12 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 	"unsafe"
 
 	"gioui.org/app/internal/windows"
+	"gioui.org/app/winclip"
 	"gioui.org/op"
 	"gioui.org/unit"
 	gowindows "golang.org/x/sys/windows"
@@ -980,29 +983,46 @@ func (w *window) ReadClipboard() {
 	w.readClipboard()
 }
 
-func (w *window) readClipboard() (cerr error) {
-	defer func() {
-		if cerr != nil {
-			w.processDataEvent("")
-		}
-	}()
+// Clack patch (CLACK_PATCHES.md §55): the window's clipboard sessions are
+// the process's (winclip.Session), one at a time, and the text is copied
+// out, bounded by its block, before the clipboard closes; the paste goes
+// to the window only after it closed. clipWait bounds the window thread's
+// wait for another session: a thread holding one may be sending this
+// window a message (an EmptyClipboard's WM_DESTROYCLIPBOARD to the owner
+// Gio's copy made), which the window thread takes only once it is back in
+// its message loop.
+const clipWait = 250 * time.Millisecond
 
-	if err := windows.OpenClipboard(w.hwnd); err != nil {
-		return err
-	}
-	defer windows.CloseClipboard()
-	mem, err := windows.GetClipboardData(windows.CF_UNICODETEXT)
+func (w *window) readClipboard() error {
+	var content string
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), clipWait)
+	defer cancel()
+	err := winclip.Session(ctx, uintptr(w.hwnd), func() error {
+		mem, err := windows.GetClipboardData(windows.CF_UNICODETEXT)
+		if err != nil {
+			return err
+		}
+		n := windows.GlobalSize(mem) / 2
+		ptr, err := windows.GlobalLock(mem)
+		if err != nil {
+			return err
+		}
+		defer windows.GlobalUnlock(mem)
+		u := unsafe.Slice((*uint16)(ptr), n)
+		for i, c := range u {
+			if c == 0 {
+				u = u[:i]
+				break
+			}
+		}
+		content = string(utf16.Decode(u))
+		return nil
+	})
 	if err != nil {
-		return err
+		content = ""
 	}
-	ptr, err := windows.GlobalLock(mem)
-	if err != nil {
-		return err
-	}
-	defer windows.GlobalUnlock(mem)
-	content := gowindows.UTF16PtrToString((*uint16)(unsafe.Pointer(ptr)))
 	w.processDataEvent(content)
-	return nil
+	return err
 }
 
 func (w *window) processDataEvent(content string) {
@@ -1166,35 +1186,35 @@ func (w *window) WriteClipboard(mime string, s []byte) {
 }
 
 func (w *window) writeClipboard(s string) error {
-	if err := windows.OpenClipboard(w.hwnd); err != nil {
-		return err
-	}
-	defer windows.CloseClipboard()
-	if err := windows.EmptyClipboard(); err != nil {
-		return err
-	}
 	u16, err := gowindows.UTF16FromString(s)
 	if err != nil {
 		return err
 	}
-	n := len(u16) * int(unsafe.Sizeof(u16[0]))
-	mem, err := windows.GlobalAlloc(n)
-	if err != nil {
-		return err
-	}
-	ptr, err := windows.GlobalLock(mem)
-	if err != nil {
-		windows.GlobalFree(mem)
-		return err
-	}
-	u16v := unsafe.Slice((*uint16)(ptr), len(u16))
-	copy(u16v, u16)
-	windows.GlobalUnlock(mem)
-	if err := windows.SetClipboardData(windows.CF_UNICODETEXT, mem); err != nil {
-		windows.GlobalFree(mem)
-		return err
-	}
-	return nil
+	ctx, cancel := stdcontext.WithTimeout(stdcontext.Background(), clipWait)
+	defer cancel()
+	return winclip.Session(ctx, uintptr(w.hwnd), func() error {
+		if err := windows.EmptyClipboard(); err != nil {
+			return err
+		}
+		n := len(u16) * int(unsafe.Sizeof(u16[0]))
+		mem, err := windows.GlobalAlloc(n)
+		if err != nil {
+			return err
+		}
+		ptr, err := windows.GlobalLock(mem)
+		if err != nil {
+			windows.GlobalFree(mem)
+			return err
+		}
+		u16v := unsafe.Slice((*uint16)(ptr), len(u16))
+		copy(u16v, u16)
+		windows.GlobalUnlock(mem)
+		if err := windows.SetClipboardData(windows.CF_UNICODETEXT, mem); err != nil {
+			windows.GlobalFree(mem)
+			return err
+		}
+		return nil
+	})
 }
 
 func (w *window) SetCursor(cursor pointer.Cursor) {

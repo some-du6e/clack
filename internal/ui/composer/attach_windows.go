@@ -6,10 +6,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"runtime"
-	"time"
 	"unsafe"
 
+	"gioui.org/app/winclip"
 	"golang.org/x/sys/windows"
 
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -24,8 +23,6 @@ import (
 var (
 	attUser32               = windows.NewLazySystemDLL("user32.dll")
 	attKernel32             = windows.NewLazySystemDLL("kernel32.dll")
-	attOpenClipboard        = attUser32.NewProc("OpenClipboard")
-	attCloseClipboard       = attUser32.NewProc("CloseClipboard")
 	attEnumClipboardFormats = attUser32.NewProc("EnumClipboardFormats")
 	attGetClipboardData     = attUser32.NewProc("GetClipboardData")
 	attGetClipFormatName    = attUser32.NewProc("GetClipboardFormatNameW")
@@ -55,28 +52,21 @@ type attWinFormat struct {
 	name string
 }
 
-// attWithClipboard opens the clipboard for f. Another app (or Gio reading
-// the text of the same Ctrl+V) may hold it for a moment, so opening
-// retries for up to half a second.
+// attWithClipboard opens the clipboard for f, in a winclip.Session: the
+// process's one at a time. The paste's rich read (paste_windows.go,
+// richclip) and Gio reading its text open it at the same moment, and
+// another app may hold it for a moment too, so the open waits for up to
+// half a second.
 func attWithClipboard(ctx context.Context, f func() error) error {
-	uiguard.OffUI("OpenClipboard")
+	uiguard.OffUI("a clipboard session")
 	if attUser32.Load() != nil || attKernel32.Load() != nil {
 		return errAttClipNone
 	}
-	// The clipboard belongs to the thread that opened it.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	for i := 0; ; i++ {
-		if r, _, _ := attOpenClipboard.Call(0); r != 0 {
-			break
-		}
-		if i == 50 || ctx.Err() != nil {
-			return errors.New("The clipboard is busy. Try pasting again.")
-		}
-		time.Sleep(10 * time.Millisecond)
+	err := winclip.Session(ctx, 0, f)
+	if errors.Is(err, winclip.ErrBusy) {
+		return errors.New("The clipboard is busy. Try pasting again.")
 	}
-	defer attCloseClipboard.Call()
-	return f()
+	return err
 }
 
 // attClipFormats lists the clipboard's formats in the order the owner put
