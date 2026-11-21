@@ -2725,3 +2725,23 @@ centred line's exact place, the zoomed width and a caret swiped out of
 view), on llvmpipe, WARP and Metal:
 flake-check's `caret-align` job (dispatch with `only=caret-align`).
 Not in `UPSTREAM.patch`.
+
+## 55. internal/egl: EGL_DEFAULT_DISPLAY stays initialized for the process
+
+Every headless window (`gpu/headless` on Linux and the BSDs) opens its
+context on `EGL_DEFAULT_DISPLAY`, one display for the whole process, and
+`Context.Release` ended with `eglTerminate` on it. So releasing one window
+took the display away from every other one (their next frame failed with
+`eglMakeCurrent` 0x3008: the inspect tool's per-shot window took a test's
+long-lived window down, 2026-11-14), and each new window brought the
+display up again, a new connection to the X server and a new driver load
+each time (train-129's linux-gio job 136849179543 had Mesa fail one of
+them, `eglInitialize` 0x3001, in `TestClackRollbackKeys`). A context on
+`EGL_DEFAULT_DISPLAY` (asked for, or fallen back to) now leaves it
+initialized on Release; a second `eglInitialize` of an initialized display
+is a no-op in EGL. Contexts on a window's own native display (the app's
+X11 and Wayland windows) still terminate it.
+
+Tests: `gpu/headless` `TestClackWindowOutlivesAnother` (two windows, the
+second released, the first still draws: red before the patch). Not in
+`UPSTREAM.patch`.
