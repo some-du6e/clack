@@ -144,6 +144,8 @@ type box struct {
 	vis    bool
 	rect   rectF
 	rectFr uint64
+	// rectPaint is the scope paint (scope.paintSeq) rect is from
+	rectPaint uint64
 }
 
 type rectF struct{ x0, y0, x1, y1 float32 }

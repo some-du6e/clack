@@ -148,8 +148,8 @@ func (h *Host) Has(prop string) bool {
 // again when it paints the component, where the frame's layout has put
 // it (painter.native). Without it they sit at the component's corner.
 func (h *Host) PlaceChildren(at image.Point) {
-	if h.view == nil || h.Node == nil {
-		return
+	if h.view == nil || h.Node == nil || measuring > 0 {
+		return // a measure pass places nothing (measuring)
 	}
 	b := h.view.boxOf(h.Node)
 	if b == nil {

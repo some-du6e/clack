@@ -125,11 +125,17 @@ func (p *painter) rect(b *box, r rectF) {
 	if p.hasXf {
 		sr = xfRect(p.xf, r)
 	}
-	if b.rectFr != p.v.frameNo || b.scope != p.s {
-		b.rect, b.rectFr = sr, p.v.frameNo
+	switch {
+	case measuring > 0:
+		// a measure pass (measureNative): its layout is discarded
+	case b.rectFr != p.v.frameNo || b.scope != p.s:
+		b.rect, b.rectFr, b.rectPaint = sr, p.v.frameNo, p.s.paintSeq
 		p.s.painted = append(p.s.painted, b)
-	} else {
-		b.rect = b.rect.union(sr)
+	case b.rectPaint != p.s.paintSeq:
+		// painted again this frame (its host drawn again): the later layout
+		b.rect, b.rectPaint = sr, p.s.paintSeq
+	default:
+		b.rect = b.rect.union(sr) // another fragment of this paint
 	}
 	if !p.hasXf {
 		sr = sr.inter(p.clip)
