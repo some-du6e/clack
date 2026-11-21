@@ -26,8 +26,8 @@ package views
 //     request went out (keysBeforeRefresh: they came in on the socket
 //     since), the ones marked unread here and still unread
 //     (pendingUnreadMarkKeys, Unreads only) and the ones newer than the
-//     page's newest. On the plain list every row stays. The cursor is the
-//     page's either way.
+//     page's newest. The cursor is the page's. On the plain list every row
+//     stays in Slack's (actPlainReload says where Clack's differs).
 //   - The VIP sort draws the stored order split in two (9OWn Y,
 //     actVIPOrder): the unread VIP rows, then the rest, each by Y.
 
@@ -199,6 +199,9 @@ type actUpsertOpts struct {
 	// unreadMarks is pendingUnreadMarkKeys (Unreads only): the rows
 	// marked unread here, kept while they are
 	unreadMarks map[string]bool
+	// plain is a reload of the plain list in time order (activityReload):
+	// the retained rows, and the rows past the page (later pages loaded)
+	plain bool
 }
 
 // actRetainedOnRefresh is getItemsRetainedOnRefresh: of the rows the list
@@ -234,11 +237,57 @@ func actRetainedOnRefresh(cur, page []core.ActivityItem, o actUpsertOpts) []core
 // holds (the rows retained on a refresh), deduplicated with the page's
 // copies first, sorted, and the page's cursor.
 func actUpsertPage(page, cur core.ActivityPage, o actUpsertOpts) core.ActivityPage {
-	existing := cur.Items
-	if o.refresh {
+	existing, next := cur.Items, page.Next
+	switch {
+	case o.refresh:
 		existing = actRetainedOnRefresh(cur.Items, page.Items, o)
+	case o.plain:
+		existing, next = actPlainReload(cur, page, o)
 	}
 	items := actDeduped(page.Items, existing)
 	actSortFeed(items)
-	return core.ActivityPage{Items: items, Next: page.Next, Convs: actRefs(cur.Convs, page.Convs)}
+	return core.ActivityPage{Items: items, Next: next, Convs: actRefs(cur.Convs, page.Convs)}
+}
+
+// actPlainReload is the rows a reload of the plain list in time order
+// keeps besides the page, and its cursor. Slack's keeps every row the
+// list holds (refreshItems is off there): its reducers take out a row
+// cleared, ignored or accepted here, where Clack's Clear all before
+// this, invitation and restore flows read the reload instead. So a row
+// within the page's span that the page no longer lists is gone, and the
+// rest is getItemsRetainedOnRefresh's (what came in on the socket
+// meanwhile, newer than the page) and, when the page reaches into the
+// rows loaded before and isn't the feed's last, the later pages loaded
+// past it, with their cursor. A page that doesn't reach them (more new
+// rows than a page) keeps none, its cursor continuing right after it.
+func actPlainReload(cur, page core.ActivityPage, o actUpsertOpts) ([]core.ActivityItem, string) {
+	kept := actRetainedOnRefresh(cur.Items, page.Items, o)
+	if len(page.Items) == 0 || page.Next == "" {
+		return kept, page.Next
+	}
+	last := &page.Items[0]
+	for i := range page.Items {
+		if actFeedCompare(&page.Items[i], last) > 0 {
+			last = &page.Items[i]
+		}
+	}
+	if !o.before[actKey(last)] {
+		return kept, page.Next
+	}
+	in := make(map[string]bool, len(kept))
+	for i := range kept {
+		in[actKey(&kept[i])] = true
+	}
+	later := false
+	for i := range cur.Items {
+		it := &cur.Items[i]
+		if k := actKey(it); !in[k] && actFeedCompare(last, it) < 0 {
+			kept = append(kept, *it)
+			in[k], later = true, true
+		}
+	}
+	if later {
+		return kept, cur.Next
+	}
+	return kept, page.Next
 }

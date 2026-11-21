@@ -1049,15 +1049,18 @@ func (v *Activity) load(mode actLoad) {
 		v.dirty = true
 	}
 	// how the answer joins the list (tsND O upsertActivityItems,
-	// activity_order.go): a fetch from the top on a view with filters is a
-	// refresh, which keeps only getItemsRetainedOnRefresh's rows
-	// (keysBeforeRefresh: the list's keys now; pendingUnreadMarkKeys under
-	// Unreads: the rows you marked unread here); otherwise every row the
-	// list holds when the answer lands stays, the page's copies winning.
-	// A fresh list starts empty, so it keeps only what came in on the
-	// socket while the request was out.
-	up := actUpsertOpts{refresh: mode == actRefresh && v.filteredList()}
-	if up.refresh {
+	// activity_order.go), as it is when the answer lands: a page is merged
+	// in, the page's copies winning, and the list sorted. A fetch from the
+	// top on a view with filters is a refresh, which keeps only
+	// getItemsRetainedOnRefresh's rows (keysBeforeRefresh: the list's
+	// keys now; pendingUnreadMarkKeys under Unreads: the rows you marked
+	// unread here); so does one under the VIP sort, whose pages aren't in
+	// time order, and the plain list's keeps the later pages too
+	// (actPlainReload). A fresh list starts empty, so it keeps only what
+	// came in on the socket while the request was out.
+	filt, vip := v.filteredList(), v.sortVIP()
+	up := actUpsertOpts{refresh: mode == actRefresh && (filt || vip), plain: mode == actRefresh && !filt && !vip}
+	if mode == actRefresh {
 		up.before = make(map[string]bool, len(old.Items))
 		for i := range old.Items {
 			up.before[actKey(&old.Items[i])] = true

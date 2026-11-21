@@ -180,3 +180,39 @@ func TestActivityRtmUpsertNewSlice(t *testing.T) {
 		t.Error("the upsert reused the old list's array")
 	}
 }
+
+// A reload of the plain list in time order (actPlainReload): a row within
+// the page's span the page no longer lists is gone, what came in on the
+// socket meanwhile stays, the later pages loaded stay with their cursor
+// when the page reaches them; a page that doesn't (more new rows than a
+// page) or that ends the feed keeps none.
+func TestActivityPlainReload(t *testing.T) {
+	cur := core.ActivityPage{Next: "old-cursor", Items: []core.ActivityItem{
+		actOI("sock", "at_user", "105.0"), // in on the socket while the request was out
+		actOI("a", "at_user", "100.0"), actOI("gone", "at_user", "90.0"), actOI("b", "at_user", "80.0"),
+		actOI("c", "at_user", "70.0"), actOI("d", "at_user", "60.0"), actOI("e", "at_user", "50.0"),
+	}}
+	before := map[string]bool{"a": true, "gone": true, "b": true, "c": true, "d": true, "e": true}
+	o := actUpsertOpts{plain: true, before: before}
+	for _, c := range []struct {
+		name       string
+		page       []core.ActivityItem
+		next       string
+		want, cur2 string
+	}{
+		{"reaches the later pages", []core.ActivityItem{actOI("new", "at_user", "110.0"), actOI("a", "at_user", "100.0"),
+			actOI("b", "at_user", "80.0"), actOI("c", "at_user", "70.0")}, "page-2",
+			"new@110.0,sock@105.0,a@100.0,b@80.0,c@70.0,d@60.0,e@50.0", "old-cursor"},
+		{"more new rows than a page", []core.ActivityItem{actOI("n1", "at_user", "200.0"), actOI("n2", "at_user", "190.0"),
+			actOI("n3", "at_user", "180.0")}, "page-2",
+			"n1@200.0,n2@190.0,n3@180.0,sock@105.0", "page-2"},
+		{"the feed's last page", []core.ActivityItem{actOI("a", "at_user", "100.0"), actOI("b", "at_user", "80.0")}, "",
+			"sock@105.0,a@100.0,b@80.0", ""},
+		{"nothing left", nil, "", "sock@105.0", ""},
+	} {
+		got := actUpsertPage(core.ActivityPage{Items: c.page, Next: c.next}, cur, o)
+		if k := actOrderKeys(got.Items); k != c.want || got.Next != c.cur2 {
+			t.Errorf("%s:\n got %s (cursor %q)\nwant %s (cursor %q)", c.name, k, got.Next, c.want, c.cur2)
+		}
+	}
+}
