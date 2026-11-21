@@ -71,12 +71,16 @@ jobs:
         # internal/ui alone passed Go's 10m default on 2026-11-13 (v0.1.0-alpha.64's
         # run 43503494822 timed out), so give the whole suite room; and as ci's
         # full-test, whatever still runs 35 min in prints its goroutines inside
-        # the budget (the script from this run's own commit, as meta's)
+        # the budget, and runner-load.sh logs the runner's memory and load
+        # each minute (the scripts from this run's own commit, as meta's)
         run: |
           git fetch -q --depth=1 origin "$GITHUB_SHA"
-          git show "$GITHUB_SHA:.github/scripts/dump-before-budget.sh" > "$RUNNER_TEMP/dump-before-budget.sh"
+          for s in dump-before-budget runner-load; do
+            git show "$GITHUB_SHA:.github/scripts/$s.sh" > "$RUNNER_TEMP/$s.sh"
+          done
           bash "$RUNNER_TEMP/dump-before-budget.sh" 35 & wd=$!
-          trap 'kill $wd 2>/dev/null' EXIT
+          bash "$RUNNER_TEMP/runner-load.sh" 60 & rl=$!
+          trap 'kill $wd $rl 2>/dev/null' EXIT
           go test -timeout 30m ./...
 
   linux:

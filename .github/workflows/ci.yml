@@ -198,10 +198,13 @@ jobs:
         # its goroutines inside the 40 min budget, in whichever package: go
         # test's -timeout runs from each package's own start, and one that
         # starts after minute 8 runs out past the budget (train-130's
-        # attempt 2, run 44906863062: stopped at 40 min, nothing printed)
+        # attempt 2, run 44906863062: stopped at 40 min, nothing printed);
+        # runner-load.sh logs the runner's memory and load each minute (two
+        # full-test jobs lost their runner on 2026-11-21 with no word on why)
         run: |
           .github/scripts/dump-before-budget.sh 35 & wd=$!
-          trap 'kill $wd 2>/dev/null' EXIT
+          .github/scripts/runner-load.sh 60 & rl=$!
+          trap 'kill $wd $rl 2>/dev/null' EXIT
           go test -timeout 30m ./...
 
   # Report-only (docs/PARITY.md): tools/parity.py runs the Slack-parity
