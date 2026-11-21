@@ -14,7 +14,7 @@ func TestTruthy(t *testing.T) {
 		{"", false}, {"null", false}, {"false", false}, {`""`, false}, {"0", false}, {"-0", false}, {"0.0", false}, {" 0 ", false},
 		{"true", true}, {"{}", true}, {"[]", true}, {`"0"`, true}, {`" "`, true}, {"1", true}, {"-1.5", true}, {`{"comment":""}`, true},
 	} {
-		if got := Truthy(json.RawMessage(c.v)); got != c.want {
+		if got := truthy(json.RawMessage(c.v)); got != c.want {
 			t.Errorf("%q: %v, JavaScript %v", c.v, got, c.want)
 		}
 	}
@@ -28,7 +28,7 @@ func TestFileInitialCommentKept(t *testing.T) {
 	if err := json.Unmarshal([]byte(in), &f); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(f.InitialComment); got != `{"id":"Fc1","comment":"","created":0,"user":"U1"}` {
+	if got := initialComment(&f); got != `{"id":"Fc1","comment":"","created":0,"user":"U1"}` {
 		t.Errorf("initial_comment kept as %s", got)
 	}
 	var none File
