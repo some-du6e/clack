@@ -212,8 +212,10 @@ func TestRetentionCalls(t *testing.T) {
 	if err := retExport(a, "C5"); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.last("conversations.export"); got.Get("channel") != "C5" || len(got) != 1 {
-		t.Errorf("export form %v", got)
+	got := f.last("conversations.export")
+	got.Del("token") // the session's, in every form
+	if got.Get("channel") != "C5" || len(got) != 1 {
+		t.Errorf("export form %v, want {channel}", got)
 	}
 }
 

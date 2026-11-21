@@ -38,6 +38,17 @@ func manageChannel(t *testing.T, e *perfEnv, kind string) string {
 	return ""
 }
 
+// onlyChannelArg: the call's arguments are {channel} (the session token
+// rides along in every form).
+func onlyChannelArg(f url.Values) bool {
+	for k := range f {
+		if k != "channel" && k != "token" {
+			return false
+		}
+	}
+	return f.Has("channel")
+}
+
 func manageHooks(fs *fakeslack.Server, allowed ...string) {
 	fs.SetHook(func(method string, form url.Values) (any, bool) {
 		switch method {
@@ -74,7 +85,7 @@ func TestChannelDetailsManageState(t *testing.T) {
 	press("to-private", "to-private")
 	d.Press("ok") // Change to Private
 	e.until("conversations.convertToPrivate", 10*time.Second, func() bool { return len(fs.ManageCallsTo("conversations.convertToPrivate")) == 1 })
-	if c := fs.ManageCallsTo("conversations.convertToPrivate")[0]; c.Channel != ch || len(c.Form) != 1 {
+	if c := fs.ManageCallsTo("conversations.convertToPrivate")[0]; c.Channel != ch || !onlyChannelArg(c.Form) {
 		t.Errorf("convertToPrivate form %v, want {channel: %s}", c.Form, ch)
 	}
 	e.until("the stored channel is private", 10*time.Second, func() bool {
@@ -96,7 +107,7 @@ func TestChannelDetailsManageState(t *testing.T) {
 	press("archive", "archive")
 	d.Press("ok") // Archive Channel
 	e.until("conversations.archive", 10*time.Second, func() bool { return len(fs.ManageCallsTo("conversations.archive")) == 1 })
-	if c := fs.ManageCallsTo("conversations.archive")[0]; c.Channel != ch || len(c.Form) != 1 {
+	if c := fs.ManageCallsTo("conversations.archive")[0]; c.Channel != ch || !onlyChannelArg(c.Form) {
 		t.Errorf("archive form %v, want {channel: %s}", c.Form, ch)
 	}
 	e.until("the details close", 10*time.Second, func() bool { _, open := topOverlay[detailsOverlay](e.a); return !open })
