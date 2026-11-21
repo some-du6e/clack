@@ -2747,8 +2747,8 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 				border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
 			}
 			col = rgb(0xecb22e)
-		} else {
-			rrect(gtx.Ops, rr, ph/2, st.Background(c.ReactBg))
+		} else if !st.Has("background-color") { // a rule's fill WrapRounded paints, once
+			rrect(gtx.Ops, rr, ph/2, c.ReactBg)
 		}
 		col = st.Color(col)
 		is := dp(gtx, 18)
@@ -2842,24 +2842,33 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 		// (.c-reaction--reacted, .c-reaction:hover); a rule's box-shadow
 		// replaces them (OwlMode rings every pill in its colour)
 		ring := !st.Has("box-shadow")
+		// and its fills the element's background: a rule's (OwlMode's
+		// reacted and hover tints) WrapRounded paints, once, under the
+		// pill; filled here again, a translucent one showed twice as
+		// strong
+		fill := func(col color.NRGBA) {
+			if !st.Has("background-color") {
+				rrect(gtx.Ops, rr, rad, col)
+			}
+		}
 		switch {
 		case self && hov:
-			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
+			fill(c.ReactSelfHoverBg)
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
 		case self:
-			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfBg))
+			fill(c.ReactSelfBg)
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
 		case hov:
-			rrect(gtx.Ops, rr, rad, st.Background(colorNone))
+			fill(colorNone)
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 			}
 		default:
-			rrect(gtx.Ops, rr, rad, st.Background(c.ReactBg))
+			fill(c.ReactBg)
 		}
 		t := op.Offset(image.Pt(dp(gtx, 8), cy)).Push(gtx.Ops)
 		content.Add(gtx.Ops)
