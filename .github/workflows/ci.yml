@@ -49,6 +49,10 @@ jobs:
       # (third_party/gioui.org/CLACK_PATCHES.md, patch 52's "Merging")
       - name: every Gio patch test in gpu/headless runs on all three GPUs
         run: python3 .github/scripts/headless-tests.py
+      # a Go test timeout at or past its job's budget lets GitHub stop a hung
+      # test before Go prints its panic and goroutine dump (docs/CI-SPEED.md)
+      - name: every Go test timeout ends inside its job's budget
+        run: python3 -I .github/scripts/budget-check.py .github/workflows/*.yml
       - name: vet
         run: go vet ./...
       # The app must not link golang.org/x/image/webp: its init would
@@ -386,7 +390,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: plugins start in parallel with boot (race detector; the JS engine is one wasm instance)
-        run: go test -race -count=1 -timeout 30m ./internal/taut ./internal/slick
+        run: go test -race -count=1 -timeout 12m ./internal/taut ./internal/slick # under the 15 min budget, so a hang's dump prints
 
   linux-race-boot:
     if: ${{ !inputs.only || startsWith('linux-race-boot', inputs.only) }}
@@ -432,13 +436,23 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           CLACK_IDLE_FRAMES: "1"
-          FANOUT_FLAGS: -test.timeout 20m
+          # each process ends in ~4 min: 10 leaves a hung one's panic and goroutine
+          # dump time to print inside the job's budget (it was the budget, so
+          # GitHub stopped the job first and the dump never came)
+          FANOUT_FLAGS: -test.timeout 10m
         run: |
           rc=0
           go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
-          go test -count=1 -v -timeout 20m -run '^TestHuddleWindowIdleFrames$' ./internal/ui/huddleui || rc=1
+          go test -count=1 -v -timeout 5m -run '^TestHuddleWindowIdleFrames$' ./internal/ui/huddleui || rc=1
           (cd internal/ui && ../../.github/scripts/fanout.sh "$RUNNER_TEMP/ui.test" TestIdleFrames motion 'views|unreads' 'pointer|code' 'galleries|main') || rc=1
           exit $rc
+      # a hung group's output, if its budget stopped the job before Go did
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ failure() || cancelled() }}
+        with:
+          name: fanout-logs-linux-idle
+          path: ${{ runner.temp }}/fanout.*
+          if-no-files-found: ignore
       # Gio patch 35 and ui's quiet frames on App.Run's real X11 window
       # (Xvfb, Mesa's llvmpipe): a frame only an animated emoji asked for
       # draws the last frame's ops again, without a layout; patch 46: a
@@ -533,7 +547,7 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
         run: |
           go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
-          go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
+          go test -count=1 -v -timeout 12m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
       - name: awake clock (QueryUnbiasedInterruptTime)
@@ -1126,7 +1140,7 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WHEEL_PROBE: "1"
           CLACK_BENCH_GPU: "1"
-        run: go test -count=1 -v -timeout 30m -run '^TestWheelFrameProbe$' ./internal/ui
+        run: go test -count=1 -v -timeout 10m -run '^TestWheelFrameProbe$' ./internal/ui # under the 15 min budget, so a hang's dump prints
 
       # Middle-click autoscroll (Gio patch 14), on by default on Windows as
       # in Chromium: the router tests, Chromium's panning cursors made from
@@ -1165,13 +1179,23 @@ jobs:
         env:
           CGO_ENABLED: "0"
           CLACK_IDLE_FRAMES: "1"
-          FANOUT_FLAGS: -test.timeout 20m
+          # each process ends in ~4 min: 10 leaves a hung one's panic and goroutine
+          # dump time to print inside the job's budget (it was the budget, so
+          # GitHub stopped the job first and the dump never came)
+          FANOUT_FLAGS: -test.timeout 10m
         run: |
           rc=0
           go test -c -o "$RUNNER_TEMP/ui.test.exe" ./internal/ui
-          go test -count=1 -v -timeout 20m -run '^TestHuddleWindowIdleFrames$' ./internal/ui/huddleui || rc=1
+          go test -count=1 -v -timeout 5m -run '^TestHuddleWindowIdleFrames$' ./internal/ui/huddleui || rc=1
           (cd internal/ui && ../../.github/scripts/fanout.sh "$RUNNER_TEMP/ui.test.exe" TestIdleFrames motion 'views|unreads' 'pointer|code' 'galleries|main') || rc=1
           exit $rc
+      # a hung group's output, if its budget stopped the job before Go did
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ failure() || cancelled() }}
+        with:
+          name: fanout-logs-windows-idle
+          path: ${{ runner.temp }}/fanout.*
+          if-no-files-found: ignore
       # Gio patch 35 and ui's quiet frames on App.Run's real Direct3D
       # window: a frame only an animated emoji asked for draws the last
       # frame's ops again, without a layout; patch 46: a caret's blink is
@@ -1593,7 +1617,7 @@ jobs:
             go tool pprof -top -nodecount=30 "$RUNNER_TEMP/ui-idle.test" "$f" 2>&1 | head -42
           done
           # TestIdleFrames' groups in four processes at once (see linux-idle)
-          CLACK_IDLE_FRAMES=1 FANOUT_FLAGS='-test.timeout 25m' ../../.github/scripts/fanout.sh "$RUNNER_TEMP/ui-idle.test" TestIdleFrames motion 'views|unreads' 'pointer|code' 'galleries|main' || rc=1
+          CLACK_IDLE_FRAMES=1 FANOUT_FLAGS='-test.timeout 10m' ../../.github/scripts/fanout.sh "$RUNNER_TEMP/ui-idle.test" TestIdleFrames motion 'views|unreads' 'pointer|code' 'galleries|main' || rc=1
           # Gio patch 35 and ui's quiet frames on Metal: a frame only an
           # animated emoji asked for draws the last frame's ops again
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
@@ -1602,3 +1626,10 @@ jobs:
           # the inline video player (AVFoundation) on the real window
           CLACK_MACOS_WINDOW_TESTS=1 CLACK_MEDIA_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowVideoFrames$' || rc=1
           exit $rc
+      # a hung group's output, if its budget stopped the job before Go did
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ failure() || cancelled() }}
+        with:
+          name: fanout-logs-macos-idle
+          path: ${{ runner.temp }}/fanout.*
+          if-no-files-found: ignore
