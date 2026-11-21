@@ -37,7 +37,21 @@ func TestBlockKitGallery(t *testing.T) {
 	ch := fakeslack.GalleryChannelID
 	n := len(fs.Gallery())
 	e.openChannel(ch)
-	e.until("gallery history", 20*time.Second, func() bool { return e.loadedMessages(ch) >= n })
+	// the whole gallery before the shots: the list opens at its newest
+	// messages, at its end from its first layout (toEnd), and reads the
+	// older page once it nears its top (infinite scroll), as Slack's reads
+	// older only within 400px of its top: the wheel takes it there
+	var wheeled time.Time
+	e.until("gallery history", 20*time.Second, func() bool {
+		if e.loadedMessages(ch) >= n {
+			return true
+		}
+		if time.Since(wheeled) > 50*time.Millisecond {
+			e.scroll(e.listPoint(), -4000)
+			wheeled = time.Now()
+		}
+		return false
+	})
 	e.settle(800 * time.Millisecond) // images
 
 	// snap saves the frame and returns its PNG bytes (nil without a GPU).
