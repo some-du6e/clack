@@ -232,10 +232,23 @@ func (e *nativeEl) Classes() []string {
 		return e.def.classes
 	}
 	out := append([]string(nil), e.def.classes...)
-	out = append(out, e.extra...)
+	// a plugin's className usually repeats the widget's own classes
+	// (OwlMode's ReactionBar: `${props.className} taut-owl-reactions`):
+	// each is the element's once, as in Slack's DOM
+	add := func(x string) {
+		for _, y := range out {
+			if y == x {
+				return
+			}
+		}
+		out = append(out, x)
+	}
+	for _, x := range e.extra {
+		add(x)
+	}
 	for i, x := range e.def.mods {
 		if e.mods&(1<<uint(i)) != 0 {
-			out = append(out, x)
+			add(x)
 		}
 	}
 	return out
