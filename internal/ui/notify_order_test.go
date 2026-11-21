@@ -243,6 +243,12 @@ func (r *timedNotes) NotifyNote(n *desktopNote) error {
 // ShutUpSlackbot is on by default) and the plugin JS behind, a burst of
 // DMs must neither come out of order nor queue each behind the last.
 func TestNotificationsDontWaitForEachOther(t *testing.T) {
+	// a CLACK_HOME of its own: Taut keeps its plugins in $CLACK_HOME/taut
+	// (else ~/.config/clack/taut, shared by every test in the process and
+	// on the runner), and enabled there the plugin ran in every later
+	// test's App (TestPreviewFooterUnderComposerPlugin lost slackc's bridge
+	// to its runtime) and -count's next run couldn't import it again
+	t.Setenv("CLACK_HOME", t.TempDir())
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
@@ -257,8 +263,7 @@ func TestNotificationsDontWaitForEachOther(t *testing.T) {
 	tt := e.a.Taut()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	// an id of its own each run: the plugins outlive a test's App in the
-	// process (-count runs it again)
+	// an id of its own each run too, whatever else outlives the App
 	pluginID := fmt.Sprintf("NotifyPassThrough%d", time.Now().UnixNano())
 	id, err := tt.Import(ctx, []byte(`(() => {
 const TautPlugin = globalThis.TautPlugin
