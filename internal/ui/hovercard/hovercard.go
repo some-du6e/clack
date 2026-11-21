@@ -90,12 +90,26 @@
 // (quip-collab-webapp) shows a bubble whose anchorBoundsFn is measured
 // by the window's positioner registry (qsRV), which measures and places
 // every bubble again on resize, scroll, transitionend, visibilitychange,
-// any DOM mutation and font loads: that card follows its mention
-// (Frame takes a canvas trigger's rect as it reports it).
+// any DOM mutation and font loads: that card follows its mention.
+// HovercardImpl hands the bubble its mention's element (an Anchor whose
+// boundsInViewport is measured each time), and BubbleImpl's measure
+// dismisses the card only when that element has left the document, or
+// has measured 0x0 for 30 tries in a row. A mention that moves or scrolls
+// out of the canvas's view keeps its card, placed by it (shifted into the
+// window only when no side fits): the card goes with it, and once it has
+// slid out from under a resting pointer, the bubble's mouseleave starts
+// dismissDelayMs (250). So Frame takes a canvas trigger's rect as it
+// reports it while the pointer is on the mention, and as its layout puts
+// it (Follow) while the pointer rests on the card. A wheel on the card
+// scrolls nothing: the bubble is in the document's body, outside the
+// canvas's scroller (CardArea). Clack's canvas lays out only the rows it
+// shows, so a mention whose row scrolls out entirely is unmounted, and
+// closes its card at once as any trigger's does.
 package hovercard
 
 import (
 	"image"
+	"math"
 	"time"
 
 	"gioui.org/f32"
@@ -197,6 +211,9 @@ type Controller struct {
 	card     image.Rectangle // the drawn card, window coordinates
 	overCard bool
 	cardTag  int
+
+	fol    image.Rectangle // the open canvas card's mention, laid out this frame (Follow)
+	hasFol bool
 
 	spent any // a trigger pressed while hovered: ignored until it is left
 
@@ -306,6 +323,25 @@ func (c *Controller) ReportCanvasMention(key any, channelID, file, section strin
 	if c.hasRep && c.rep.Key == key {
 		c.rep.Canvas, c.rep.Buttons, c.rep.Delay = true, false, CanvasShowDelay
 		c.rep.CanvasFile, c.rep.CanvasSection = file, section
+	}
+}
+
+// Follows reports whether key's card is open and follows its mention
+// while the pointer rests on the card (Request.Canvas: Quip's
+// positioners; see the package comment). Its trigger then says where it
+// is each frame it is laid out (Follow).
+func (c *Controller) Follows(key any) bool {
+	return key != nil && c.isOpen && c.open.Canvas && c.open.Key == key
+}
+
+// Follow says where key's mention is this frame, in window coordinates,
+// as its layout put it (not as a pointer event paired it): a
+// collaborator's edit moves a mention while the pointer rests on its
+// card, with no pointer event on the mention. A report (the pointer on
+// the mention) wins over it.
+func (c *Controller) Follow(key any, r image.Rectangle) {
+	if c.Follows(key) {
+		c.fol, c.hasFol = r, true
 	}
 }
 
@@ -464,6 +500,8 @@ func (c *Controller) closeCard() {
 func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	rep, has := c.rep, c.hasRep
 	c.hasRep = false
+	fol, hasFol := c.fol, c.hasFol
+	c.hasFol = false
 	c.seq++
 	mounted := c.mounted
 	c.mounted = false
@@ -479,8 +517,13 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 	if c.isOpen && c.tracks && !mounted && !(has && rep.Key == c.open.Key) {
 		c.closeCard() // its trigger unmounted (a recycled row, another tab or page)
 	}
-	if c.isOpen && c.open.Canvas && has && rep.Key == c.open.Key {
-		c.open.Anchor = rep.Anchor // Quip's positioners: the bubble follows its mention
+	if c.isOpen && c.open.Canvas {
+		// Quip's positioners: the bubble follows its mention
+		if has && rep.Key == c.open.Key {
+			c.open.Anchor = rep.Anchor
+		} else if hasFol {
+			c.open.Anchor = fol
+		}
 	}
 	onOpen := c.isOpen && (c.overCard || has && rep.Key == c.open.Key)
 	switch {
@@ -548,10 +591,19 @@ func (c *Controller) Opacity(now time.Time) float32 {
 
 // CardArea registers the drawn card's bounds r (window coordinates, gtx at
 // the window origin) so the pointer resting on the card keeps it open. It
-// is pass-through: the card's own buttons sit under it.
+// is pass-through: the card's own buttons sit under it. A canvas card
+// takes the wheel: Quip's bubble is in the document's body, outside the
+// canvas's scroller, so a wheel on it scrolls nothing, and the canvas
+// scrolling under it would carry it off with its mention.
 func (c *Controller) CardArea(gtx layout.Context, r image.Rectangle) {
+	f := pointer.Filter{Target: &c.cardTag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel}
+	if c.isOpen && c.open.Canvas {
+		all := pointer.ScrollRange{Min: math.MinInt32, Max: math.MaxInt32}
+		f.Kinds |= pointer.Scroll
+		f.ScrollX, f.ScrollY = all, all
+	}
 	for {
-		e, ok := gtx.Event(pointer.Filter{Target: &c.cardTag, Kinds: pointer.Enter | pointer.Leave | pointer.Move | pointer.Cancel})
+		e, ok := gtx.Event(f)
 		if !ok {
 			break
 		}

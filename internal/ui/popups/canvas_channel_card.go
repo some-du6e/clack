@@ -348,8 +348,8 @@ func canvasBubblePlace(anchor image.Rectangle, sz, win image.Point) image.Point 
 	if y := anchor.Max.Y; y+sz.Y <= win.Y {
 		return image.Pt(x, y)
 	}
-	if y := anchor.Min.Y - sz.Y; y >= 0 {
-		return image.Pt(x, y)
+	if y := anchor.Min.Y - sz.Y; y >= 0 && anchor.Min.Y <= win.Y {
+		return image.Pt(x, y) // over it, all in the window (a mention below the window's edge fits neither side)
 	}
 	return image.Pt(x, max(0, min(anchor.Max.Y, win.Y-sz.Y)))
 }
