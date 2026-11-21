@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/color"
 	"strconv"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -1115,25 +1116,71 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 
 // ---- ComposerButton ----
 
+type composerBtnState struct {
+	press ctlPress
+	tip   tooltipState
+}
+
 // composerButton draws one composer.addButton entry (taut-api renders
 // each as "@ComposerButton" with {id, icon, label, pressed, onClick,
-// tooltip}) as Slack's composer icon button.
+// tooltip}; children: a custom icon) as Taut does in Slack's composer:
+// IconButtonBase (className c-wysiwyg_container__button, aria-pressed
+// from pressed) around an 18px SvgIcon, in a Tooltip (top, offsetY -7,
+// delay 500). Slack's composer makes it 28px with a 4px radius
+// (client-boot-styles: .c-wysiwyg_container .c-wysiwyg_container__button
+// {border-radius:4px;width:28px;height:28px}) and colours it as
+// c-icon_button--default (content-sec, hover content-pry on base-ter),
+// like the composer's own buttons, whose palette this is
+// (composer.crMakePal: FgMuted, Fg, the hover tile). Slack gives it no
+// pressed look (its [aria-pressed=true] rules are the formatting bar's,
+// .p-composer__button--sticky and --floating): a toggle shows its state
+// by its icon (OwlMode's glasses-filled).
 func composerButton(gtx layout.Context, h *slackc.Host) layout.Dimensions {
+	th := thm()
 	p := h.Props
-	q := make(slackc.Props, len(p)+3)
-	for k, v := range p {
-		q[k] = v
+	st := stateOf[composerBtnState](h)
+	if ok, mods := st.press.update(gtx, h, true); ok {
+		ctlFireClick(gtx, h, mods)
 	}
-	q["size"] = "small"
-	if p.Bool("pressed") {
-		q["aria-pressed"] = "true"
+	hover := st.press.click.Hovered() || st.press.click.Pressed()
+	ink, tile := th.C.FgMuted, color.NRGBA{}
+	if hover {
+		ink = th.C.Fg
+		tile = rgb(0xeaeaea)
+		if th.Dark {
+			tile = theme.Over(color.NRGBA{R: th.C.Fg.R, G: th.C.Fg.G, B: th.C.Fg.B, A: 0x1a}, th.C.Bg)
+		}
 	}
-	if l, ok := p.Str("label"); ok && !p.Has("aria-label") {
-		q["aria-label"] = l
+	var call op.CallOp
+	var cd layout.Dimensions
+	if h.HasChildren() {
+		call, cd = record(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = image.Point{}
+			return children(gtx, h, ink, 0, 0)
+		})
+	} else if ic := p.StrOr("icon", ""); ic != "" {
+		call, cd = record(gtx, func(gtx layout.Context) layout.Dimensions { return drawIcon(gtx, ic, 18, ink) })
 	}
-	h.Props = q
-	defer func() { h.Props = p }()
-	return iconButtonBase(gtx, h)
+	side := dp(gtx, 28)
+	sz := image.Pt(ctlMax(side, cd.Size.X), ctlMax(side, cd.Size.Y))
+	radius := dp(gtx, 4)
+	d := st.press.layout(gtx, h, radius, func(gtx layout.Context) layout.Dimensions {
+		if tile.A > 0 {
+			theme.RRect(gtx, image.Rectangle{Max: sz}, radius, tile)
+		}
+		callAt(gtx, call, image.Pt((sz.X-cd.Size.X)/2, (sz.Y-cd.Size.Y)/2))
+		cursor(gtx, sz, pointer.CursorPointer)
+		if l := p.StrOr("aria-label", p.StrOr("label", "")); l != "" {
+			semantic.LabelOp(l).Add(gtx.Ops)
+		}
+		return layout.Dimensions{Size: sz}
+	})
+	tipProp := "tooltip"
+	if !h.HasElement(tipProp) {
+		tipProp = "label"
+	}
+	st.tip.show(gtx, h, d.Size, hover, tipOpts{prop: tipProp, pos: "top", offY: -7, hasY: true, delay: 500 * time.Millisecond})
+	return d
 }
 
 func init() { add(composerButton, "ComposerButton") }
