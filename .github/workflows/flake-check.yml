@@ -2825,9 +2825,12 @@ jobs:
 
   # plugin-reaction-pill: reaction pills under a patched ReactionBar (a
   # pass-through patch with no CSS, and OwlMode's shape with its rules)
-  # against the native pills: emoji box, bounds, count ink and the bar's
-  # pixels, light and dark, and OwlMode's ring and colours in its thread
-  # (reaction-pill-shots artifact). Dispatch with only=reaction-pill.
+  # and under a plugin's class on the pill's button against the native
+  # pills: emoji box, bounds, count ink and the bar's pixels, light and
+  # dark, and the plugins' rings and colours where they name the pills
+  # (reaction-pill-shots artifact). pill-views: the same in the Threads,
+  # Unreads and Activity views, and a plugin's own .c-reaction as Slack's.
+  # Dispatch with only=reaction-pill.
   reaction-pill:
     if: ${{ !inputs.only || startsWith('reaction-pill', inputs.only) }}
     runs-on: ubuntu-latest
@@ -2849,7 +2852,11 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
-          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
+          go test -count=$COUNT -v -run '^TestPluginOwnReactionLikeSlack$' ./internal/ui/slackc || rc=1
+          exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

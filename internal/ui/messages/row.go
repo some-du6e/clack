@@ -2804,7 +2804,10 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	if pl.reacted() {
 		mods = 1
 	}
-	st := reactionClass.Enter(gtx, btnState(gtx, &pl.btn), mods)
+	// the className the button was rendered with: a class a plugin adds
+	// to it (an UnstyledButton or Reaction patch) is the pill's, and its
+	// .<class> rules reach the pill as in Slack
+	st := reactionClass.EnterClass(gtx, btnState(gtx, &pl.btn), mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
