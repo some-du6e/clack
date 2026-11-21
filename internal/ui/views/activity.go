@@ -1056,7 +1056,7 @@ func (v *Activity) load(mode actLoad) {
 	// list holds when the answer lands stays, the page's copies winning.
 	// A fresh list starts empty, so it keeps only what came in on the
 	// socket while the request was out.
-	up := actUpsertOpts{refresh: mode == actRefresh && v.filtered()}
+	up := actUpsertOpts{refresh: mode == actRefresh && v.filteredList()}
 	if up.refresh {
 		up.before = make(map[string]bool, len(old.Items))
 		for i := range old.Items {
@@ -1089,12 +1089,13 @@ func (v *Activity) load(mode actLoad) {
 	})
 }
 
-// filtered is 9OWn Wk ($): the view has filters (z: Unreads, Exclude
-// automations, Automations only, activity types, In channels or
-// sections, VIP, Cleared items; the search isn't one) or shows the In
-// filter (showFilterIn). Its list is Slack's filteredList, which a fetch
-// from the top refreshes (PY/r refreshItems: T && !!b).
-func (v *Activity) filtered() bool {
+// filteredList is 9OWn Wk ($): the view has filters (z: Unreads,
+// Exclude automations, Automations only, activity types, In channels or
+// sections, VIP, Cleared items; unlike filtered's, the search isn't one)
+// or shows the In filter (showFilterIn). Its list is Slack's
+// filteredList, which a fetch from the top refreshes (PY/r refreshItems:
+// T && !!b).
+func (v *Activity) filteredList() bool {
 	types, none := v.types()
 	return none || types != "" || v.dmOnly() || v.unread.Value || v.vip || v.showCleared || v.exclAuto || v.autoOnly ||
 		len(v.sections) > 0 || len(v.channels) > 0 || v.showIn
