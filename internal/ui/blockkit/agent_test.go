@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,14 +40,15 @@ import (
 )
 
 type agentHost struct {
-	app *core.App
-	th  *theme.Theme
+	app   *core.App
+	th    *theme.Theme
+	inval atomic.Int32 // frames asked of the host (Invalidate)
 }
 
 func (h *agentHost) Core() *core.App                           { return h.app }
 func (h *agentHost) Theme() *theme.Theme                       { return h.th }
 func (h *agentHost) Images() *imgcache.Cache                   { return nil }
-func (h *agentHost) Invalidate()                               {}
+func (h *agentHost) Invalidate()                               { h.inval.Add(1) }
 func (h *agentHost) Navigate(string)                           {}
 func (h *agentHost) OpenThread(string, string)                 {}
 func (h *agentHost) CloseSecondary()                           {}
