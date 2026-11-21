@@ -311,9 +311,11 @@ func rpMeasure(img *image.RGBA, e image.Rectangle) rpPill {
 		y1++
 	}
 	p.box = image.Rect(x0, y0, x1, y1)
-	// the count: the pixel furthest from the fill is the text's colour
-	// (off the pill's edge and a plugin's ring round it)
-	cr := image.Rect(e.Max.X, y0+1, x1-3, y1-1)
+	// the count: the pixel furthest from the fill is the text's colour.
+	// Its window keeps 3px off the pill's top and bottom and 7px off its
+	// end, inside the round end's border (your pill's ring, in the count's
+	// colour) and a plugin's ring round the pill.
+	cr := image.Rect(e.Max.X, y0+3, x1-7, y1-3)
 	far := -1
 	for y := cr.Min.Y; y < cr.Max.Y; y++ {
 		for x := cr.Min.X; x < cr.Max.X; x++ {
