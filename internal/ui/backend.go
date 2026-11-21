@@ -19,6 +19,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -31,9 +32,13 @@ type backend struct {
 	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
 	// tautStarting: startTautAsync is building the runtimes
 	tautStarting bool
-	// tautDeferred: the real window's plugin runtimes wait for the
-	// launch's first real frame (startDeferredTaut)
-	tautDeferred bool
+	// tautDeferJS: the real window's plugins (the JS engine) start after
+	// the launch's first real frame (startDeferredTaut); the runtimes
+	// themselves, with the theme and the user CSS, are made at once
+	tautDeferJS bool
+	// pluginStyled: this session's plugins added CSS of their own
+	// (ui.json's plugin_styled for the next start)
+	pluginStyled atomic.Bool
 
 	m       model
 	started bool
@@ -199,17 +204,28 @@ func (b *backend) start(a *App) {
 		// the introduction's preview renderer: no plugin system at all (no
 		// Taut or Slick runtime, plugin config, storage or slots)
 		b.pluginsOnce.Do(func() { close(b.pluginsReady) })
-	case a.rv.inRun:
-		// The real window's launch: the runtimes start after its first
-		// real frame (Run), so the JS engine and the plugins' starts don't
-		// take the CPU that frame needs; a warm start shows the client
-		// without them (reveal.go) and their trees fill the slots they
-		// took last session. A cold start (no boot data) starts them at
-		// once below, as its placeholder waits for them, and a window
-		// that draws nothing (started hidden) after tautDeferMax.
-		b.tautDeferred = true
-		time.AfterFunc(tautDeferMax, func() { a.Post(func() { b.startDeferredTaut(a) }) })
 	default:
+		if a.rv.inRun {
+			// The real window's launch. The runtimes are made at once:
+			// taut.New and slick.New install the user CSS and the Slick
+			// theme (Go only, ms), which the reveal waits for, so the
+			// client's first frame is in the theme. What last session's
+			// plugins showed decides the rest (reveal.go): the components
+			// they patched are watched for in the first frames, and when
+			// they showed nothing (no patch, no CSS of their own) the
+			// plugins (the JS engine) start after the first real frame,
+			// so they don't take the CPU it needs; otherwise at once, as
+			// the reveal may wait for them. A cold start (no boot data)
+			// starts them at once too (below), and a window that draws
+			// nothing (started hidden) after tautDeferMax.
+			if !a.rv.done { // the launch's reveal, not a sign-in's later (it clears them)
+				slackc.SetExpected(a.prefs.PluginPatched)
+			}
+			if len(a.prefs.PluginPatched) == 0 && !a.prefs.PluginStyled {
+				b.tautDeferJS = true
+				time.AfterFunc(tautDeferMax, func() { a.Post(func() { b.startDeferredTaut(a) }) })
+			}
+		}
 		b.startTautAsync(a)
 	}
 	b.startBlockkit(a)
@@ -281,14 +297,26 @@ func (b *backend) start(a *App) {
 // for its first real frame (a window started hidden draws none).
 const tautDeferMax = 2 * time.Second
 
-// startDeferredTaut starts the plugin runtimes start left for later, once
-// (UI goroutine).
+// startDeferredTaut starts the plugins the launch left for later, once
+// (UI goroutine): now when the runtimes are in, else as installTaut puts
+// them in (startTautAsync).
 func (b *backend) startDeferredTaut(a *App) {
-	if !b.tautDeferred || a.data != b || b.ctx.Err() != nil {
+	if !b.tautDeferJS || a.data != b || b.ctx.Err() != nil {
 		return
 	}
-	b.tautDeferred = false
-	b.startTautAsync(a)
+	b.tautDeferJS = false
+	startRuntimes(b.taut, b.slick)
+}
+
+// startRuntimes starts Taut's and Slick's plugins (made with DeferStart;
+// a no-op for runtimes already started).
+func startRuntimes(t *taut.Taut, s *slick.Slick) {
+	if t != nil {
+		t.Start()
+	}
+	if s != nil {
+		s.Start()
+	}
 }
 
 // maybePresencePrompt is maybeOpenPresencePromptDialog: once connected,

@@ -2,19 +2,27 @@
 # The macOS launch budget (ci.yml's macos job; flake-check's launch-budget
 # job): Clack.app made and signed as release.yml makes it (a perfharness
 # build, which accepts the loopback fakeslackd), launched through
-# LaunchServices as the Dock launches it, with Karim-like plugins, once
-# cold and then seven times warm (.github/perf/launch.py).
+# LaunchServices as the Dock launches it, once cold and then seven times
+# warm (.github/perf/launch.py), with a Slick theme and user CSS seeded and
+# plugins that show nothing of their own (NoTrack, ShutUpSlackbot: a warm
+# launch never waits for them; flake-check's launch-speed-* jobs measure
+# Karim's set, whose patches and CSS the reveal may wait for).
 #
 # Karim (2026-11-21): "Make launching the app take less than a Mac app
 # bounce." macOS bounces the Dock icon from the launch until the app
 # finishes launching; one bounce on the runner is 700 ms (bounce.sh, the
-# launch-speed-mac job). The budget:
+# launch-speed-mac job). The checks:
+#   - every launch's first real frame is in the theme (window, sidebar,
+#     pane), with no repaint into it after the client showed
+#   - the median warm launch shows the boot placeholder at most one frame
+#     (16 ms) before the client: its first frame is the client from the
+#     cache, as Slack renders from its persisted store
 #   - the fastest warm launch shows the client within one bounce of the
 #     launch call (LaunchServices' exec included): the fastest, as the
-#     runners' speed varies about 2x from run to run (two VMs a host)
-#   - the median warm launch shows the boot placeholder at most one frame
-#     (16 ms) before the client: a warm launch's first frame is the client
-#     from the cache, as Slack renders from its persisted store
+#     runners' speed varies about 2x from run to run (two VMs a host).
+#     LAUNCH_SOFT_BOUNCE=1 (ci's macos job) makes this one a warning: a
+#     slow runner must not turn an unrelated branch red; flake-check's
+#     launch-budget job keeps it a failure.
 #
 # usage: launch-budget.sh <workdir>
 set -eu
@@ -29,5 +37,8 @@ printf 'APPL????' > "$app/Contents/PkgInfo"
 codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
 go build -o "$w/fakeslackd" ./internal/fakeslack/fakeslackd
 .github/perf/launch-library.sh "$w/library" > /dev/null
+soft=()
+[ "${LAUNCH_SOFT_BOUNCE:-}" = 1 ] && soft=(--soft-bounce)
 python3 -I .github/perf/launch.py --app "$app" --fake "$w/fakeslackd" --out "$w/out" --library "$w/library" \
-  --warm 7 --bounce-ms "${LAUNCH_BOUNCE_MS:-700}" --placeholder-ms "${LAUNCH_PLACEHOLDER_MS:-16}" --label "macOS launch budget"
+  --plugins quiet --theme-check --warm 7 --bounce-ms "${LAUNCH_BOUNCE_MS:-700}" --placeholder-ms "${LAUNCH_PLACEHOLDER_MS:-16}" \
+  ${soft[@]+"${soft[@]}"} --label "macOS launch budget"

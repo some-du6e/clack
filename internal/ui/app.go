@@ -246,6 +246,9 @@ type App struct {
 	// client itself, not the boot placeholder (real-frame); firstFramed:
 	// the first frame of any kind went to the GPU (firstFrameDone)
 	frameEvented, realFramed, firstFramed bool
+	// winEvented: the window delivered its first event (its driver is
+	// up: perform may call Window.Perform from any goroutine)
+	winEvented atomic.Bool
 
 	title       string
 	firstPaint  bool
@@ -565,6 +568,7 @@ func (a *App) Run() error {
 	applog.Mark("event-loop", "")
 	for {
 		ev := a.win.Event()
+		a.winEvented.Store(true) // perform's Window.Perform (desktop.go)
 		// The OS waits while this goroutine handles ev (macOS: the AppKit
 		// main thread, every event and frame), so the watchdog times it.
 		wd.begin(&stageEvent)
@@ -732,9 +736,9 @@ func (a *App) Run() error {
 					// the client itself, not the boot placeholder: what a
 					// launch is for (launch.py's budget)
 					a.realFramed = true
-					applog.Mark("real-frame", "")
+					applog.Mark("real-frame", a.paletteNote())
 				}
-				if b := a.data; b != nil && b.tautDeferred {
+				if b := a.data; b != nil && b.tautDeferJS {
 					b.startDeferredTaut(a) // the launch's first real frame is up (backend.start)
 				}
 			}

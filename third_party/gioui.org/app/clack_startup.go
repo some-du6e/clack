@@ -32,6 +32,19 @@ import (
 
 var startupHook atomic.Pointer[func(name string, at time.Time)]
 
+var quitHook atomic.Pointer[func()]
+
+// SetQuitHandler makes f the macOS stub menu's Quit (Cmd+Q until an app
+// installs a menu of its own), run on its own goroutine; nil, the default,
+// is NSApplication's terminate:, which exits at once. Elsewhere a no-op.
+func SetQuitHandler(f func()) {
+	if f == nil {
+		quitHook.Store(nil)
+		return
+	}
+	quitHook.Store(&f)
+}
+
 // SetStartupMark makes f hear the startup points (nil: none). Set it
 // before the first window (and before Main or Events, for launched).
 func SetStartupMark(f func(name string, at time.Time)) {

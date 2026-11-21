@@ -2982,7 +2982,7 @@ jobs:
       - name: plugins (the Library's ChatTabs and five Taut plugins)
         run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
       - name: launch timeline (cold, warm x5, purged x2, inits, CPU profile, the Dock)
-        run: python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.app" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --purged 2 --extra --screenshot --label macOS
+        run: python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.app" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --purged 2 --extra --screenshot --theme --label macOS
       - name: the CPU profile's top (the first 3 s of a warm start)
         if: ${{ !cancelled() }}
         run: |
@@ -3055,7 +3055,7 @@ jobs:
         run: |
           Xvfb :98 -screen 0 1440x900x24 > /dev/null 2>&1 &
           for i in $(seq 1 50); do [ -e /tmp/.X11-unix/X98 ] && break; sleep 0.1; done
-          DISPLAY=:98 python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/clack" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --purged 2 --extra --label "Linux (Xvfb, llvmpipe)"
+          DISPLAY=:98 python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/clack" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --purged 2 --extra --theme --label "Linux (Xvfb, llvmpipe)"
       - name: the CPU profile's top (the first 3 s of a warm start)
         if: ${{ !cancelled() }}
         run: |
@@ -3093,7 +3093,7 @@ jobs:
         run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
       - name: launch timeline (cold, warm x5, inits, CPU profile)
         shell: bash
-        run: python -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.exe" --fake "$RUNNER_TEMP/launch/fakeslackd.exe" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --extra --label Windows
+        run: python -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.exe" --fake "$RUNNER_TEMP/launch/fakeslackd.exe" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --extra --theme --label Windows
       - name: the CPU profile's top (the first 3 s of a warm start)
         if: ${{ !cancelled() }}
         shell: bash

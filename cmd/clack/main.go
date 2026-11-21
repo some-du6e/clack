@@ -45,7 +45,10 @@ var started = processStarted()
 
 func processStarted() time.Time {
 	if t, ok := applog.ProcessStart(); ok && !t.After(mainAt) {
-		return t
+		// mainAt's monotonic reading, moved back by the wall-clock gap:
+		// durations from it stay monotonic (a clock step in the first
+		// minute moves neither the timeline nor its timeouts)
+		return mainAt.Add(t.Sub(mainAt))
 	}
 	return mainAt
 }
@@ -376,6 +379,9 @@ func main() {
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	applog.Mark("ui-new", "")
+	// macOS: Cmd+Q in the stub menu (before Clack's menu bar installs,
+	// after the first frame) quits as Clack's own Quit does
+	app.SetQuitHandler(a.Quit)
 	// A slack:// link is a navigation, except a magic-login link, which
 	// is Slack's browser handing "the Slack app" a sign-in: that signs in
 	// (on the sign-in screen only; see ui.App.SignInWithLink).

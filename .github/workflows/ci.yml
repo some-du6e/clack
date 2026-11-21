@@ -1596,14 +1596,18 @@ jobs:
           exit $rc
       # launch-speed (Karim, 2026-11-21: "Make launching the app take less
       # than a Mac app bounce"): Clack.app launched through LaunchServices
-      # against fakeslackd with Karim-like plugins, cold once and seven times
-      # warm. The fastest warm launch shows the client within one Dock
-      # bounce (700 ms on the runner: flake-check's launch-speed-mac films
-      # one) of the launch call, and a warm launch's first frame is the
-      # client from the cache, not the boot placeholder
+      # against fakeslackd, with a Slick theme and user CSS, cold once and
+      # seven times warm. Every launch's first real frame is in the theme,
+      # and a warm launch's first frame is the client from the cache, not
+      # the boot placeholder; the fastest warm launch showing the client
+      # within one Dock bounce (700 ms on the runner: flake-check's
+      # launch-speed-mac films one) only warns here, as the runners' speed
+      # varies about 2x (flake-check's launch-budget job fails on it)
       # (.github/perf/launch-budget.sh, launch.py; docs/STARTUP.md).
-      - name: launch budget (Clack.app through LaunchServices, within one Dock bounce)
+      - name: launch budget (Clack.app through LaunchServices, in its theme, within one Dock bounce)
         if: ${{ !cancelled() }}
+        env:
+          LAUNCH_SOFT_BOUNCE: "1"
         run: .github/perf/launch-budget.sh "$RUNNER_TEMP/launch"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

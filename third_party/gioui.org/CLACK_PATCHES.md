@@ -2756,7 +2756,8 @@ second released, the first still draws: red before the patch). Not in
 `applicationWillFinishLaunching:` and `applicationDidFinishLaunching:`),
 `app/clack_bounds_macos.go`
 (`displays`, `readScreens`, `snapshotLaunchScreens`), `app/os_windows.go`
-(`Configure`), `app/os_x11.go` (`newX11Window`).
+(`Configure`), `app/os_x11.go` (`newX11Window`); `SetQuitHandler` and
+the stub menu's Window items (`gio_main`, `gioQuit:`).
 
 Karim, 2026-11-21: "Make launching the app take less than a Mac app
 bounce." macOS bounces an app's Dock icon from the launch until it
@@ -2796,6 +2797,14 @@ regular and active (`openAtLaunch`, `gio_onLaunchActivated`): the
 canonical place for an app's first window. The queued block waited for
 AppKit's post-launch work, 30-50 ms on CI. A window asked for later opens
 as before.
+
+The stub menu `gio_main` makes (until an app installs its own; Clack's
+installs after its first frame) has, besides Hide, a Window menu with
+Minimize (Cmd+M, `performMiniaturize:`) and Close (Cmd+W,
+`performClose:`, the red button's path), and its Quit (Cmd+Q) is
+`gioQuit:`: the app's `SetQuitHandler` function on its own goroutine when
+one is set (Clack's Quit: the window closes, the session and logs flush),
+`terminate:` otherwise.
 
 Read by `.github/perf/launch.py` (flake-check's `launch-speed-*` jobs and
 ci's macos launch budget). Not in `UPSTREAM.patch`.

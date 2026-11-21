@@ -1505,6 +1505,19 @@ func gio_onStartupPoint(p C.int) {
 	}
 }
 
+// gio_onQuit is the stub menu's Quit (Clack patch, CLACK_PATCHES.md §56):
+// 1 when the app's SetQuitHandler took it (on its own goroutine: never
+// the main thread's wait), 0 for terminate:.
+//
+//export gio_onQuit
+func gio_onQuit() C.int {
+	if f := quitHook.Load(); f != nil {
+		go (*f)()
+		return 1
+	}
+	return 0
+}
+
 //export gio_onFinishLaunching
 func gio_onFinishLaunching() {
 	startupLaunched.mark() // Clack patch (CLACK_PATCHES.md §56)

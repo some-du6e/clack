@@ -831,6 +831,12 @@ void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle) {
 	[NSApp activateIgnoringOtherApps:YES];
 	gio_onLaunchActivated(); // Clack patch (CLACK_PATCHES.md §56): the windows asked for during the launch open now
 }
+// Clack patch (CLACK_PATCHES.md §56): the stub menu's Quit (gio_main)
+- (void)gioQuit:(id)sender {
+	if (!gio_onQuit()) {
+		[NSApp terminate:sender];
+	}
+}
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
 	for (NSURL *url in urls) {
 		gio_onOpenURI((__bridge CFTypeRef)url.absoluteString);
@@ -897,13 +903,26 @@ void gio_main() {
 															  action:@selector(hide:)
 													   keyEquivalent:@"h"];
 		[menu addItem:hideMenuItem];
+		// Clack patch (CLACK_PATCHES.md §56): Quit asks the app first
+		// (gioQuit:, SetQuitHandler), and the window's Minimize and Close
+		// keys work from the start, before an app's own menu is in
 		NSMenuItem *quitMenuItem = [[NSMenuItem alloc] initWithTitle:@"Quit"
-															  action:@selector(terminate:)
+															  action:@selector(gioQuit:)
 													   keyEquivalent:@"q"];
 		[menu addItem:quitMenuItem];
 		[mainMenu setSubmenu:menu];
+		NSMenuItem *windowItem = [NSMenuItem new];
+		NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+		[windowMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Minimize"
+													   action:@selector(performMiniaturize:)
+												keyEquivalent:@"m"]];
+		[windowMenu addItem:[[NSMenuItem alloc] initWithTitle:@"Close"
+													   action:@selector(performClose:)
+												keyEquivalent:@"w"]];
+		[windowItem setSubmenu:windowMenu];
 		NSMenu *menuBar = [NSMenu new];
 		[menuBar addItem:mainMenu];
+		[menuBar addItem:windowItem];
 		[NSApp setMainMenu:menuBar];
 
 		globalWindowDel = [[GioWindowDelegate alloc] init];

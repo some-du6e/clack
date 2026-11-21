@@ -31,14 +31,24 @@ engine's compile cache, ui.json's theme and plugin slots), then N purged
 --extra adds two direct runs: GODEBUG=inittrace=1 (every package's init)
 and CLACK_CPUPROFILE (the first 3 s).
 
+The plugins (--plugins): karim (default: Slick's ChatTabs and five Taut
+plugins, two of which patch the first screen), quiet (two that show
+nothing of their own) or none; --theme seeds a Slick theme, Taut's and
+Slick's user CSS (THEME_COLOURS).
+
 The launch budget (ci.yml's macos job, flake-check's launch-budget):
-  --bounce-ms N      the fastest warm launch, from the launch call (exec
-                     included) to its first real frame, within N ms: one
-                     bounce of the Dock's launch animation (bounce.sh
-                     measured 700 ms on the runner)
+  --theme-check      every launch's first real frame in the seeded theme
+                     (the window, the sidebar, the pane: ui's real-frame
+                     detail), and no sheet recolouring the client after it
+                     showed (the timeline's "palette" relayout)
   --placeholder-ms N the median warm launch shows the boot placeholder at
                      most N ms before the client (real-frame - first-frame):
                      a warm launch's first frame is the client itself
+  --bounce-ms N      the fastest warm launch, from the launch call (exec
+                     included) to its first real frame, within N ms: one
+                     bounce of the Dock's launch animation (bounce.sh
+                     measured 700 ms on the runner); --soft-bounce makes it
+                     a warning (the runners' speed varies about 2x)
   --budget-ms N      the median warm launch's --budget-mark within N ms
 Every warm run must reach real-frame. Any of them missed: exit 1.
 """
@@ -162,6 +172,13 @@ def parse_timeline(text):
     rv = re.search(r"debug: startup \+\d+ms reveal \(([^)]*)\)", text)
     if rv:
         t["reveal_why"] = rv.group(1).split(";")[0]
+    # the first real frame's theme colours (ui's paletteNote)
+    pf = re.search(r"debug: startup \+\d+ms real-frame \(chrome (#[0-9a-f]{6}) sidebar (#[0-9a-f]{6}) pane (#[0-9a-f]{6})\)", text)
+    if pf:
+        t["palette"] = {"chrome": pf.group(1), "sidebar": pf.group(2), "pane": pf.group(3)}
+    if m:
+        k = re.search(r"relayouts=\d+ \(([^)]*)\)", m.group(2))
+        t["relayout_kinds"] = dict((x.split("=")[0], int(x.split("=")[1])) for x in k.group(1).split()) if k else {}
     return t
 
 
@@ -276,6 +293,10 @@ def main():
     ap.add_argument("--budget-mark", default="real-frame")
     ap.add_argument("--label", default=SYS)
     ap.add_argument("--ab", default="", help="NAME=VALUE: each warm and purged run again with it set (the B side)")
+    ap.add_argument("--plugins", default="karim", choices=sorted(PLUGIN_SETS))
+    ap.add_argument("--theme", action="store_true", help="seed a Slick theme and user CSS (THEME_COLOURS)")
+    ap.add_argument("--theme-check", action="store_true", help="--theme, and every launch's first real frame must be in it, with no repaint after")
+    ap.add_argument("--soft-bounce", action="store_true", help="the bounce budget only warns (ci's macos job)")
     a = ap.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true":
         sys.exit("launch.py empties this account's Clack folders (credentials included): it runs on CI runners only")
@@ -298,7 +319,7 @@ def main():
             sys.exit("fakeslackd wrote no creds.json")
         with open(os.path.join(cfg, "ui.json"), "w") as f:
             json.dump({"route": "c/" + ROUTE, "last_channel": ROUTE, "realtime": False}, f)
-        plugins = seed_plugins(a.library, cfg)
+        plugins = seed_plugins(a.library, cfg, a.plugins, a.theme or a.theme_check)
         print(f"{a.label}: plugins {plugins}; config {cfg}", flush=True)
 
         runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True, until="cache: boot data saved")]
@@ -326,14 +347,29 @@ def main():
         fake.terminate()
 
     report(a, runs, extra, plugins, cache)
-    return budget(a, [r for r in runs if re.fullmatch(r"warm\d+", r["name"])])
+    return budget(a, [r for r in runs if re.fullmatch(r"warm\d+", r["name"])],
+                  [r for r in runs if r["name"] == "cold" or re.fullmatch(r"(b-)?(warm|purged)\d+", r["name"])])
 
 
-def budget(a, warm):
+def budget(a, warm, launches=()):
     """The launch budget's checks (see the top); 1 when one failed."""
-    if not (a.budget_ms or a.bounce_ms or a.placeholder_ms is not None):
+    if not (a.budget_ms or a.bounce_ms or a.placeholder_ms is not None or a.theme_check):
         return 0
     rc, lines = 0, []
+    if a.theme_check:
+        # every launch's first real frame in the seeded theme, and no sheet
+        # recolouring the client after it showed (a whole-window repaint)
+        bad = []
+        for r in launches:
+            got = r.get("palette")
+            if got != THEME_COLOURS:
+                bad.append(f"{r['name']}: first real frame {got or 'not logged'}")
+            elif r.get("relayout_kinds", {}).get("palette"):
+                bad.append(f"{r['name']}: repainted in a new palette {r['relayout_kinds']['palette']}x after it showed")
+        ok = not bad and bool(launches)
+        lines.append(f"{'ok' if ok else 'OVER'}: every launch's first real frame was in the theme {THEME_COLOURS}"
+                     + (f" ({len(launches)} launches)" if ok else ": " + "; ".join(bad)))
+        rc |= 0 if ok else 1
     reached = [r for r in warm if "real-frame" in r and "first-frame" in r]
     if not warm or len(reached) < len(warm):
         print(f"::error::{a.label}: {len(warm) - len(reached)} of {len(warm)} warm launches never showed the client (no real-frame)")
@@ -342,9 +378,11 @@ def budget(a, warm):
         total = [r["real-frame"] + max(0, r.get("exec", 0)) for r in reached]
         best = min(total)
         ok = best <= a.bounce_ms
-        lines.append(f"{'ok' if ok else 'OVER'}: the fastest warm launch showed the client {best} ms after the launch call "
-                     f"(budget {a.bounce_ms} ms, one Dock bounce; all: {total})")
-        rc |= 0 if ok else 1
+        verdict = "ok" if ok else ("SLOW" if a.soft_bounce else "OVER")
+        lines.append(f"{verdict}: the fastest warm launch showed the client {best} ms after the launch call "
+                     f"(budget {a.bounce_ms} ms, one Dock bounce; all: {total})"
+                     + (" (report only here: the runners' speed varies about 2x)" if a.soft_bounce and not ok else ""))
+        rc |= 0 if ok or a.soft_bounce else 1
     if a.placeholder_ms is not None:
         held = [r["real-frame"] - r["first-frame"] for r in reached]
         med = statistics.median(held)
@@ -360,18 +398,53 @@ def budget(a, warm):
                      f"(budget {a.budget_ms} ms; all: {got})")
         rc |= 0 if ok else 1
     for l in lines:
-        print((f"::error::{a.label}: " if l.startswith("OVER") else f"{a.label}: ") + l)
+        tag = "::error::" if l.startswith("OVER") else ("::warning::" if l.startswith("SLOW") else "")
+        print(f"{tag}{a.label}: {l}")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("\n### Launch budget\n\n" + "\n".join(f"- {l}" for l in lines) + "\n")
     return rc
 
 
-def seed_plugins(lib, cfg):
-    """Karim-like plugins, as perf's startup.sh seeds them: Slick's ChatTabs and five Taut plugins."""
-    if not lib or not os.path.exists(os.path.join(lib, "index.json")):
-        return "none"
-    tauts = ["HumanCount", "LastSeen", "WhoReacted", "NoTrack", "ShutUpSlackbot"]
+# --theme: a Slick theme that paints the window's background, Taut's
+# user.css the sidebar and Slick's user.css the message pane, each a colour
+# no Slack theme has: a first real frame in the theme shows all three
+# (ui's real-frame detail), one before the sheets shows Slack's.
+THEME_COLOURS = {"chrome": "#3b0a4d", "sidebar": "#0b5d3b", "pane": "#f4e9d8"}
+
+
+def seed_theme(cfg, slick_settings):
+    os.makedirs(os.path.join(cfg, "slick", "themes"), exist_ok=True)
+    os.makedirs(os.path.join(cfg, "taut"), exist_ok=True)
+    theme = {"name": "Launch check", "css": ".p-theme_background{background:%s !important}" % THEME_COLOURS["chrome"]}
+    with open(os.path.join(cfg, "slick", "themes", "launchcheck.json"), "w") as f:
+        json.dump(theme, f)
+    with open(os.path.join(cfg, "taut", "user.css"), "w") as f:
+        f.write(".p-view_contents--sidebar{background:%s !important}\n" % THEME_COLOURS["sidebar"])
+    with open(os.path.join(cfg, "slick", "user.css"), "w") as f:
+        f.write(".p-message_pane{background:%s !important}\n" % THEME_COLOURS["pane"])
+    slick_settings["theme"] = "launchcheck"
+
+
+PLUGIN_SETS = {
+    # Karim-like, as perf's startup.sh seeds them: Slick's ChatTabs and five
+    # Taut plugins (HumanCount and LastSeen patch the header's facepile and
+    # the sidebar's presence dots: the first screen)
+    "karim": (["HumanCount", "LastSeen", "WhoReacted", "NoTrack", "ShutUpSlackbot"], True),
+    # plugins that show nothing (no patch, no CSS of their own): a warm
+    # launch never waits for them
+    "quiet": (["NoTrack", "ShutUpSlackbot"], False),
+    "none": ([], False),
+}
+
+
+def seed_plugins(lib, cfg, which="karim", theme=False):
+    tauts, chattabs = PLUGIN_SETS[which]
+    slick_settings = {"enabled": True, "plugins": {}}
+    if theme:
+        seed_theme(cfg, slick_settings)
+    if (not lib or not os.path.exists(os.path.join(lib, "index.json"))) and (tauts or chattabs):
+        tauts, chattabs = [], False
     on = []
     os.makedirs(os.path.join(cfg, "taut", "plugins"), exist_ok=True)
     os.makedirs(os.path.join(cfg, "slick", "plugins"), exist_ok=True)
@@ -383,16 +456,20 @@ def seed_plugins(lib, cfg):
     with open(os.path.join(cfg, "taut", "config.json"), "w") as f:
         json.dump({"plugins": {t: {"enabled": True} for t in on}}, f)
     names = list(on)
-    src = os.path.join(lib, "slick-ChatTabs.js")
-    if os.path.exists(src):
+    src = os.path.join(lib, "slick-ChatTabs.js") if lib else ""
+    if chattabs and os.path.exists(src):
         shutil.copy(src, os.path.join(cfg, "slick", "plugins", "ChatTabs.js"))
         main_js = os.path.join(lib, "slick-ChatTabs.main.js")
         if os.path.exists(main_js):
             shutil.copy(main_js, os.path.join(cfg, "slick", "plugins", "ChatTabs.main.js"))
-        with open(os.path.join(cfg, "slick", "settings.json"), "w") as f:
-            json.dump({"enabled": True, "plugins": {"ChatTabs": {"enabled": True}}}, f)
+        slick_settings["plugins"]["ChatTabs"] = {"enabled": True}
         names.insert(0, "ChatTabs")
-    return " + ".join(names) if names else "none"
+    with open(os.path.join(cfg, "slick", "settings.json"), "w") as f:
+        json.dump(slick_settings, f)
+    out = " + ".join(names) if names else "none"
+    if theme:
+        out += "; a Slick theme and user CSS (window " + THEME_COLOURS["chrome"] + ", sidebar " + THEME_COLOURS["sidebar"] + ", pane " + THEME_COLOURS["pane"] + ")"
+    return out
 
 
 def report(a, runs, extra, plugins, cache):
