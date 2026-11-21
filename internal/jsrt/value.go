@@ -517,11 +517,17 @@ func (c *Ctx) NewPromise() (p Value, resolve func(any), reject func(error)) {
 	p = c.r.wrap(ph)
 	resV, rejV := c.r.wrap(rs), c.r.wrap(rj)
 	var once onceFlag
+	// it settles on the lane of the task that made it: a user-blocking
+	// task's await of a Go function continues ahead of the queue
+	var root lane
+	if c.r.onJSThread() {
+		root = c.r.chainLane()
+	}
 	resolve = func(x any) {
 		if !once.take() {
 			return
 		}
-		c.r.Post(func(js *Ctx) {
+		c.r.postChain(root, func(js *Ctx) {
 			if _, err := resV.Call(x); err != nil {
 				_, _ = rejV.Call(js.NewError(err))
 			}
@@ -533,7 +539,7 @@ func (c *Ctx) NewPromise() (p Value, resolve func(any), reject func(error)) {
 		if !once.take() {
 			return
 		}
-		c.r.Post(func(js *Ctx) {
+		c.r.postChain(root, func(js *Ctx) {
 			_, _ = rejV.Call(js.NewError(err))
 			resV.Free()
 			rejV.Free()

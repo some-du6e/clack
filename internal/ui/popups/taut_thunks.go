@@ -193,12 +193,25 @@ func React(h Host, ch, ts, name string, add bool) {
 		}
 		h.Invalidate()
 	}
+	var res chan error
+	if t != nil {
+		// the user's pick: its JS call queued now, on the UI goroutine, on
+		// the user's lane (DispatchThen), in order with their clicks; from
+		// run's goroutine a plugin click in the same frame could go first
+		res = make(chan error, 1)
+		taut.DispatchThen(taut.UserAction(context.Background()), t, "submitAddOrRemoveReaction", args, native,
+			func(_ any, err error) { res <- tautErr(err) })
+	}
 	run(h, func(ctx context.Context) (struct{}, error) {
 		if t == nil {
 			return struct{}{}, call(ctx)
 		}
-		_, err := taut.Dispatch(ctx, t, "submitAddOrRemoveReaction", args, native)
-		return struct{}{}, tautErr(err)
+		select {
+		case err := <-res:
+			return struct{}{}, err
+		case <-ctx.Done():
+			return struct{}{}, ctx.Err()
+		}
 	}, func(_ struct{}, err error) {
 		if err != nil {
 			h.Toast(reactionError(add, err))

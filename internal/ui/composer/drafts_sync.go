@@ -112,6 +112,10 @@ func runDraftOp(key string, op draftOp) {
 	if v, ok := serverDraftIDs.Load(key); ok {
 		cur = v.(string)
 	}
+	// in order with the user's input (a dispatch's default, taut's
+	// inOrder): a plugin click after it can't go ahead (OwlMode decides in
+	// the draft's patch whether it syncs), and it doesn't jump the renders
+	// or a send queued before it
 	ctx := context.Background()
 	if op.del != nil {
 		if cur == "" {

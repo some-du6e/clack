@@ -200,11 +200,14 @@ func (r *Runtime) installHost() {
 		return nil, nil
 	})
 	def("clearTimer", func(js *Ctx, _ Value, a []Value) (any, error) {
-		r.timers.remove(int(num(a, 0)))
+		r.removeTimer(int(num(a, 0)))
 		return nil, nil
 	})
 	def("wake", func(js *Ctx, _ Value, a []Value) (any, error) {
-		// a macrotask for setImmediate / MessageChannel / scheduler
+		// a macrotask for setImmediate / MessageChannel / scheduler, on
+		// the queue: React's scheduler runs its work loop through it, and
+		// a user-blocking task's renders would keep the user's lane for
+		// every chunk after
 		r.enqueue(task{kind: "setImmediate", f: func() {
 			fn := r.js.Global().Get("__jr").Get("runImmediates")
 			if fn.IsFunction() {
@@ -547,8 +550,9 @@ var signOutMethods = map[string]bool{
 func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, body []byte) {
 	ctx, cancel := context.WithCancel(r.ctx)
 	r.fetches[id] = cancel
+	root := r.chainLane() // its answer comes back on the lane of the task that asked
 	fail := func(err error) {
-		r.Post(func(js *Ctx) {
+		r.postChain(root, func(js *Ctx) {
 			delete(r.fetches, id)
 			cancel()
 			name := "TypeError"
@@ -610,7 +614,7 @@ func (r *Runtime) startFetch(id int, method, url string, headers [][2]string, bo
 			}
 		}
 		meta, _ := json.Marshal(res)
-		r.Post(func(js *Ctx) {
+		r.postChain(root, func(js *Ctx) {
 			delete(r.fetches, id)
 			cancel()
 			fn := js.Global().Get("__jr").Get("fetchDone")
