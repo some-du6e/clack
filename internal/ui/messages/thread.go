@@ -221,7 +221,7 @@ func (v *ThreadView) JumpTo(ts string, flash bool) {
 	s := v.s
 	opening := s.thrOpening || !s.positioned
 	s.thrOpening = false
-	if !flash && opening && s.positioned && s.laidOut {
+	if !flash && opening && (s.positioned && s.laidOut || s.thrMark.key != "") {
 		s.highlight = ""
 		return // no highlight: the reopened pane's own place (getThreadStartPosition's scrollmark)
 	}
@@ -984,7 +984,9 @@ func (s *listState) threadLoading() bool {
 //     loading thread has no reply box;
 //   - with timestamps, until reachedEnd or prevReachedEnd: the
 //     "loading-end" row takes its place (a slice short of the thread's
-//     end: thread_load.go);
+//     end: thread_load.go); a pane that was at the end when a slow
+//     connect made it stale keeps the box until its read past the old end
+//     lands (endGap: list.go build);
 //   - ThreadsError or LargeOfflineIndicator replaces the whole pane.
 //
 // Signed out, the list's sign-in prompt keeps the old composer.
@@ -993,7 +995,7 @@ func (v *ThreadView) HidesComposer() bool {
 	if s.replyRoot() != "" {
 		return true // a reply as the root: loading until the Host moves on (layoutList)
 	}
-	if s.thread && s.snap.loaded && len(s.snap.msgs) > 0 && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd {
+	if s.thread && s.snap.loaded && len(s.snap.msgs) > 0 && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd && !s.snap.th.endGap {
 		return true // the "loading-end" row in its place
 	}
 	if !s.thread || s.snap.loaded {

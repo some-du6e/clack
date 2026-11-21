@@ -272,9 +272,17 @@ func (v *ThreadView) findGo(gtx layout.Context, i int) {
 	ts := f.results[i]
 	v.s.tl.findPend = ""
 	if !v.s.scrollToFind(ts, dp(gtx, 200)) {
-		// loadAndScrollToTs: the slice doesn't hold it, older pages until
-		// it does (thread_load.go threadPaging), then the scroll and the
-		// flash
+		// a result the slice doesn't hold: the slice at it, as a jump to a
+		// reply reads it (jumpThread: the store's slice there, else two
+		// pages of 28 around it), then the scroll and the flash once its
+		// row is in (thread_load.go threadPaging). Slack's loadAndScrollToTs
+		// pages older from the slice's start until the row shows or the
+		// thread's start is reached (boot-shared l6n6
+		// loadMoreForPendingScroll, checkPendingScrollToTs): a result newer
+		// than the slice never lands there, and an old one in Karim's
+		// 1,078,423-reply thread is thousands of pages away
+		v.s.hb.jumpThread(v.s.m, ts)
+		v.s.snap.rev = 0 // the model at ts, even where its slice holds it: re-read
 		v.s.tl.findPend, v.s.tl.findOff = ts, dp(gtx, 200)
 		return
 	}

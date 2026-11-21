@@ -60,7 +60,6 @@ type threadState struct {
 	settleAt     time.Time
 	newerFails   int
 	newerRetryAt time.Time
-	lastPre      string // the latest a loadPre asked for (loadMoreForPendingScroll's lastLoadedEarliestTs)
 	// endGap: the slice had reached the thread's end when a slow connect
 	// made it stale, and no read has reached it since: the viewer's sends
 	// past the slice stay drawn (setThreadSlice)
@@ -282,7 +281,6 @@ func (hb *hub) threadPage(m *model, older, newer bool) bool {
 	case older:
 		latest = first
 		m.older = true
-		t.lastPre = first
 	default:
 		oldest = last
 		t.newer = true
@@ -392,7 +390,6 @@ func (hb *hub) jumpThread(m *model, ts string) bool {
 			m.fetched = time.Now()
 			m.markLoadChanged() // the slice's messages new to the model, for the plugins' copy (setAll)
 		}
-		m.th.lastPre = ""
 		m.rev++
 	}
 	m.mu.Unlock()
@@ -422,9 +419,13 @@ func SetThreadStart(app *core.App, ch, thread, ts string) {
 // CloseThread is a thread pane leaving ch/thread: truncateThreadHistory
 // (core.CloseThread), and with unmount (the pane unmounted, not switched
 // to another thread) clearStartTs too (a later open starts at
-// getThreadStartTs again). When the store let any of the thread go, the
-// model and the panes' lists start over, as a pane mounted afresh does.
-// UI goroutine.
+// getThreadStartTs again). When the pane unmounted, or the store let any
+// of the thread go, the model and the panes' lists start over, as a pane
+// mounted afresh does: Slack's next ThreadsFlexpane is a new component,
+// which draws the store's slice at getThreadStartTs (empty: loadAround)
+// from getThreadStartPosition. A page or a load out meanwhile lands
+// nowhere (the model's gen moves), so it can't make the model's
+// messages a slice at no start, or a cut history's. UI goroutine.
 func CloseThread(app *core.App, ch, thread string, unmount bool) {
 	if app == nil || ch == "" || thread == "" {
 		return
@@ -437,33 +438,49 @@ func CloseThread(app *core.App, ch, thread string, unmount bool) {
 	hb.mu.Lock()
 	m := hb.thread[ch+"/"+thread]
 	hb.mu.Unlock()
-	if m == nil {
+	if m == nil || !cut && !unmount {
 		return
 	}
 	m.mu.Lock()
-	if cut && !m.loadOut() {
-		m.msgs = nil
-		m.loaded, m.hasMore = false, false
-		m.fetched = time.Time{}
-		m.th = threadState{root: m.th.root, gen: m.th.gen + 1}
-		m.rev++
-	} else if unmount {
-		m.th.start = ""
-		m.th.lastPre = ""
-	}
+	m.msgs = nil
+	m.loaded, m.hasMore = false, false
+	m.fetched = time.Time{}
+	m.live, m.livePlace, m.liveReact = nil, nil, nil
+	m.th = threadState{root: m.th.root, gen: m.th.gen + 1}
+	m.rev++
 	m.mu.Unlock()
-	if !cut {
-		return
+	// maybeSaveThreadScrollmarks (componentWillUnmount): where the reader
+	// was, by message, for the next mount, except in a public channel the
+	// viewer isn't in
+	mark := unmount && !cut
+	if c, ok := app.Conv(ch); ok && c.Kind == "channel" && c.Preview {
+		mark = false
 	}
 	for _, s := range listCache {
 		if s.hb == hb && s.thread && s.ch == ch && s.ts == thread {
+			s.thrMark = threadMark{}
+			if i := s.list.Position.First; mark && s.positioned && s.laidOut && i >= 0 && i < len(s.items) && s.items[i].kind == itMsg {
+				s.thrMark = threadMark{key: s.items[i].key, off: s.list.Position.Offset}
+			}
 			s.positioned = false
 			s.thr = threadRead{}
 			s.pendingJump = ""
+			s.place = jumpPlace{}
 			s.snap.rev = 0
 			s.tl = threadList{}
 		}
 	}
+}
+
+// threadMark is a thread list's scrollmark, saved as its pane unmounts
+// (maybeSaveThreadScrollmarks): the message at the list's top and its
+// offset. The next mount starts there when nothing is highlighted and
+// the slice it draws holds that message (getThreadStartPosition's first
+// rule), else at the thread's start position: a list's place is a
+// message, never a row index into a slice it no longer draws.
+type threadMark struct {
+	key string
+	off int
 }
 
 // threadList is the thread list's paging state (listState.tl).
@@ -472,11 +489,17 @@ type threadList struct {
 	// layout knows only the items on screen, and loadMore measures what
 	// lies above and below them
 	h map[string]int
-	// findPend is a find result the slice doesn't hold yet:
-	// loadAndScrollToTs pages back (loadMoreForPendingScroll) until it
-	// does, or the slice reaches the thread's start
+	// findPend is a find result the slice didn't hold: findGo moved the
+	// model's start to it (jumpThread), and the list scrolls to it and
+	// flashes it once its row is in (threadPaging), or lets it go once the
+	// slice at it is in without it. A bar closed meanwhile leaves it, as
+	// Slack's pendingScrollToTs outlives the bar: the slice is the
+	// result's already, and nothing reads for it but that one load
 	findPend string
 	findOff  int
+	// noted is the replies on screen core was last told of
+	// (NoteThreadView), first and last
+	noted [2]string
 }
 
 // threadEdgeNear is akeQ loadMore's 400px.
@@ -528,9 +551,10 @@ func (s *listState) itemH(i, est int) int {
 // threadPaging is loadMore for the thread list, after its layout: pages
 // before or after the slice as the list nears an end (one at a time,
 // 250ms apart: a frame is asked for when that wait ends), and a find
-// result the slice doesn't hold paged back to. A list whose slice stops
-// short of the thread's end never sits at its end: the newer page lands
-// under the reader.
+// result findGo moved the slice to scrolled to once it's in. A list whose
+// slice stops short of the thread's end never sits at its end: the newer
+// page lands under the reader. Core hears which replies are on screen
+// (noteThreadView).
 func (s *listState) threadPaging(gtx layout.Context, h Host, size image.Point, now time.Time) {
 	t := &s.snap.th
 	if !t.reachedEnd && !s.list.Position.BeforeEnd {
@@ -540,15 +564,16 @@ func (s *listState) threadPaging(gtx layout.Context, h Host, size image.Point, n
 	if !s.snap.loaded || len(s.snap.msgs) == 0 || s.snap.err != nil && !s.snap.loading {
 		return
 	}
-	// a find result past the slice: older pages until it's in
+	s.noteThreadView()
+	// a find result past the slice: the slice at it (findGo), then the
+	// scroll and the flash
 	if f := s.tl.findPend; f != "" {
-		if s.scrollToFind(f, s.tl.findOff) {
+		switch {
+		case s.scrollToFind(f, s.tl.findOff):
 			s.tl.findPend = ""
 			s.findFlash, s.findFlashAt = f, now
-		} else if t.reachedStart {
-			s.tl.findPend = "" // not in the thread's replies: nothing to show
-		} else if first := firstNonEmpty(t.sliceStart, s.snap.msgs[0].m.TS); t.lastPre != first {
-			s.askThreadPage(gtx, true, false, now) // lastLoadedEarliestTs: once per earliest ts
+		case t.start == f && !s.snap.loading:
+			s.tl.findPend = "" // the slice at it is in, and it isn't a reply drawn: nothing to show
 		}
 	}
 	above, below := s.threadEdges(dp(gtx, 40))
@@ -564,6 +589,29 @@ func (s *listState) threadPaging(gtx layout.Context, h Host, size image.Point, n
 	}
 }
 
+// noteThreadView tells core which replies the pane has on screen, first
+// to last, as that changes: what a poll reads again while the socket is
+// away (core NoteThreadView, pollThread).
+func (s *listState) noteThreadView() {
+	if s.hb == nil || s.hb.app == nil {
+		return
+	}
+	var v [2]string
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if it := s.items[i]; it.kind == itMsg {
+			if v[0] == "" {
+				v[0] = it.key
+			}
+			v[1] = it.key
+		}
+	}
+	if v[0] == "" || v == s.tl.noted {
+		return
+	}
+	s.tl.noted = v
+	s.hb.app.NoteThreadView(s.ch, s.ts, v[0], v[1])
+}
+
 // askThreadPage asks the hub for the page(s), and for a frame when the
 // 250ms after the last page ends (loadMore runs again then).
 func (s *listState) askThreadPage(gtx layout.Context, older, newer bool, now time.Time) {
@@ -577,14 +625,6 @@ func (s *listState) askThreadPage(gtx layout.Context, older, newer bool, now tim
 	if !out && now.Before(at) {
 		gtx.Execute(op.InvalidateCmd{At: at})
 	}
-}
-
-// firstNonEmpty is a if set, else b.
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 // SliceRange is the slice the pane drew last: its first and last

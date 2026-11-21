@@ -192,6 +192,9 @@ type listState struct {
 	// thrOpening: the thread pane just opened (ThreadView.Reopen), so a jump
 	// starts it at getThreadStartPosition's message
 	thrOpening bool
+	// thrMark: the scrollmark the pane saved as it unmounted (CloseThread),
+	// for its first positioning (threadStartPosition)
+	thrMark threadMark
 	// place is a jump's placement, made in the next layout: the item keyed
 	// place.key place.off under the list's top (placeJump). Nothing holds
 	// it there after: Slack's anchor drops at its own scroll's echo, and
@@ -982,10 +985,17 @@ func (s *listState) build(h Host, now time.Time) {
 	if !s.thread && s.snap.newer {
 		s.items = append(s.items, item{kind: itLoading, key: "loading-newer"})
 	}
-	if s.thread && len(msgs) > 0 && (!s.snap.loaded && s.snap.err == nil || s.snap.loaded && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd) {
+	if s.thread && len(msgs) > 0 && (!s.snap.loaded && s.snap.err == nil ||
+		s.snap.loaded && !s.snap.th.reachedEnd && !s.snap.th.prevReachedEnd && !s.snap.th.endGap) {
 		// getThreadRowsAndKeys' "loading-end" row: some messages are in
 		// (the root, a live reply) before the replies are (thread.go), or
-		// the slice stops short of the thread's end (thread_load.go)
+		// the slice stops short of the thread's end (thread_load.go). A
+		// pane that was at the end when a slow connect made it stale keeps
+		// the reply box (endGap) until its read past the old end lands,
+		// even once a reply the socket brought makes the store's slice for
+		// it no longer the last (prevReachedEnd false): Slack's input is
+		// one of the list's rows, scrolled away with it, but Clack's box
+		// is drawn under the list and may hold what's being typed
 		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
 	}
 	if cap(s.heights) < len(s.items) {
