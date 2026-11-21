@@ -299,11 +299,22 @@ func TestSnapshotsWhileBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = r.Do(func(js *Ctx) error { r.eng.call("jr_gc"); return nil })
-	var found bool
-	for _, s := range Snapshots() {
-		if s.GCs > 0 && s.Heap > 0 && s.Task == 0 {
-			found = true
+	// Do returns once its function has; the runtime is idle when the task's
+	// microtask checkpoint and the bookkeeping after it are done too
+	// (runTask), so wait for that rather than read the next instant: under
+	// the whole suite's load it was 2 ms busy still (release dry run
+	// 44942336766, and run 44928390402)
+	idle := func() bool {
+		for _, s := range Snapshots() {
+			if s.GCs > 0 && s.Heap > 0 && s.Task == 0 {
+				return true
+			}
 		}
+		return false
+	}
+	found := idle()
+	for dl := time.Now().Add(5 * time.Second); !found && time.Now().Before(dl); found = idle() {
+		time.Sleep(5 * time.Millisecond)
 	}
 	if !found {
 		t.Errorf("no idle runtime with a collection and a heap size: %+v", Snapshots())
