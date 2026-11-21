@@ -202,7 +202,7 @@ func (a *app) onEvent(ev core.ViewEvent) {
 			a.stack.update(ev.View)
 		}
 	case "home":
-		homeUpdated(ev.Channel, ev.View)
+		homeUpdated(a.h.Core(), ev.Channel, ev.View)
 	case "dialog":
 		openDialog(a.h, ev.Dialog)
 	case "ephemeral":

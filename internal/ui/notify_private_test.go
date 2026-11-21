@@ -36,10 +36,13 @@ func privNoteApp(t *testing.T) (*App, *core.App, *noteRec) {
 }
 
 // privNoteAppFS is privNoteApp with its fakeslack.
-func privNoteAppFS(t *testing.T) (*App, *core.App, *fakeslack.Server, *noteRec) {
+func privNoteAppFS(t *testing.T, opts ...func(*fakeslack.Size)) (*App, *core.App, *fakeslack.Server, *noteRec) {
 	t.Helper()
 	sz := fakeslack.Small
 	sz.ThreadHeader = true
+	for _, o := range opts {
+		o(&sz)
+	}
 	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
