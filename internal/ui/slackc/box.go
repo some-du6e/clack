@@ -553,7 +553,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		if sl, ok := SlotOf(n); ok {
 			b.native, b.slotOwn = true, sl.OwnBox
 		} else if v.name != "" && n.N == v.name {
-			b.native = true
+			b.native, b.slotOwn = true, v.ownRoot
 		} else if fn, ok := LookupHost(n.N); ok {
 			b.native, b.hostFn = true, fn
 			if he := lookupHostElement(n.N); he != nil {

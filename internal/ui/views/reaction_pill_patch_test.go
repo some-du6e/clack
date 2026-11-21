@@ -121,8 +121,16 @@ const vpClsCSS = `body { --v-ring: 200, 60, 20 }
 body.sk-client-theme--dark { --v-ring: 255, 160, 90 }
 .c-reaction.v-own-pill { box-shadow: 0 0 0 1px rgba(var(--v-ring), 1) }`
 
-// vpCls adds its own class to every reaction pill's UnstyledButton.
-var vpCls = vpPluginJS(`
+// vpClsJS adds its own class to every reaction pill's UnstyledButton;
+// with bar it also passes ReactionBar on, so the buttons are slots in the
+// bars' trees (patched alone, each button is a tree of its own, its root
+// the pill).
+func vpClsJS(bar bool) []byte {
+	pass := ""
+	if bar {
+		pass = "    this.api.patchComponent('ReactionBar', (O) => (p) => React.createElement(O, p))\n"
+	}
+	return vpPluginJS(`
 class ViewOwnPill extends TautPlugin {
   static id = 'ViewOwnPill'
   static pluginName = 'A class on the pill (views test)'
@@ -132,11 +140,12 @@ class ViewOwnPill extends TautPlugin {
   static defaultConfig = { enabled: true }
   start() {
     this.api.setStyle(` + strconv.Quote(vpClsCSS) + `)
-    this.api.patchComponent('UnstyledButton', (O) => (p) => p['data-qa'] !== 'reactji' ? React.createElement(O, p) :
+` + pass + `    this.api.patchComponent('UnstyledButton', (O) => (p) => p['data-qa'] !== 'reactji' ? React.createElement(O, p) :
       React.createElement(O, { ...p, className: (p.className ?? '') + ' v-own-pill' }))
   }
 }
 return ViewOwnPill`)
+}
 
 // vpHost is slickHost with the image cache the pills' emoji load from.
 type vpHost struct {
@@ -237,17 +246,15 @@ func vpEnv(t *testing.T, dark bool) (*taut.Taut, *slickUI, vpHost) {
 	return tt, ui, vpHost{slickHost: &slickHost{app: app, th: th, tt: tt}, imgs: imgs}
 }
 
-func (u *slickUI) treeHas(sub string) bool { return u.countTrees(sub) > 0 }
+func (u *slickUI) treeHas(sub string) bool { return u.countIn(sub) > 0 }
 
-// countTrees counts the delivered trees that contain sub.
-func (u *slickUI) countTrees(sub string) int {
+// countIn counts sub in the delivered trees.
+func (u *slickUI) countIn(sub string) int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	n := 0
 	for _, tr := range u.trees {
-		if strings.Contains(string(tr), sub) {
-			n++
-		}
+		n += strings.Count(string(tr), sub)
 	}
 	return n
 }
@@ -461,7 +468,7 @@ func TestViewsPatchedReactionPillLikeNative(t *testing.T) {
 		if dark {
 			mode = "dark"
 		}
-		for _, plug := range []string{"pass", "owl", "cls"} {
+		for _, plug := range []string{"pass", "owl", "cls", "cls-bar"} {
 			for _, vw := range vpViews {
 				t.Run(mode+"/"+plug+"/"+vw.name, func(t *testing.T) { vpCompare(t, dark, plug, vw) })
 			}
@@ -517,8 +524,8 @@ func vpCompare(t *testing.T, dark bool, plug string, vw vpView) {
 	switch plug {
 	case "owl":
 		js = vpOwl
-	case "cls":
-		js, patch = vpCls, "UnstyledButton"
+	case "cls", "cls-bar":
+		js, patch = vpClsJS(plug == "cls-bar"), "UnstyledButton"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -529,12 +536,15 @@ func vpCompare(t *testing.T, dark bool, plug string, vw vpView) {
 	if err := tt.SetEnabled(ctx, id, true); err != nil {
 		t.Fatalf("enable %s: %v", id, err)
 	}
-	waitFor("the "+patch+" patch", func() bool { return slackc.Patched(patch) })
+	cls := strings.HasPrefix(plug, "cls")
+	waitFor("the "+patch+" patch", func() bool {
+		return slackc.Patched(patch) && (plug != "cls-bar" || slackc.Patched("ReactionBar"))
+	})
 	// every pill drawn through its tree (the plugin's class in it)
 	waitFor("the trees", func() bool {
 		switch plug {
-		case "cls":
-			return u.countTrees("v-own-pill") >= 8
+		case "cls", "cls-bar":
+			return u.countIn("v-own-pill") >= 8
 		case "owl":
 			if !u.treeHas("v-hoot-bar") {
 				return false
@@ -558,7 +568,7 @@ func vpCompare(t *testing.T, dark bool, plug string, vw vpView) {
 	// all; a ring round a pill (the owl message's, every one under cls)
 	// leaves its emoji where it was, and under cls (no colours of its
 	// own) its count
-	ringed := func(i int) bool { return plug == "cls" || plug == "owl" && i >= 6 }
+	ringed := func(i int) bool { return cls || plug == "owl" && i >= 6 }
 	var bar image.Rectangle
 	for i := range native {
 		n, p := native[i], patched[i]
@@ -584,7 +594,7 @@ func vpCompare(t *testing.T, dark bool, plug string, vw vpView) {
 			bar = bar.Union(n.box.Inset(-3))
 		}
 	}
-	if plug != "cls" {
+	if !cls {
 		// the bars, the add buttons after the pills included, pixel for
 		// pixel
 		bar.Max.X += 48
@@ -606,7 +616,7 @@ func vpCompare(t *testing.T, dark bool, plug string, vw vpView) {
 	if dark {
 		ring = color.RGBA{R: 120, G: 230, B: 160, A: 0xff}
 	}
-	if plug == "cls" {
+	if cls {
 		ring = color.RGBA{R: 200, G: 60, B: 20, A: 0xff}
 		if dark {
 			ring = color.RGBA{R: 255, G: 160, B: 90, A: 0xff}
@@ -629,10 +639,12 @@ func vpCompare(t *testing.T, dark bool, plug string, vw vpView) {
 		if px < 30 {
 			t.Errorf("%s: %d px in the plugin's colour %v around pill %d, want its 1px ring round it (the plugin's box-shadow)", name, px, ring, i)
 		}
-		// the pill's box's corners, outside its round ends, are the row's
+		// the pill's box's corners, outside its round ends, are the
+		// row's, and so are the pixels diagonally out from them (a
+		// square ring's)
 		x0, y0, y1 := p.emoji.Min.X-6, p.emoji.Min.Y-4, p.emoji.Max.Y+4
 		row := pimg.RGBAAt(2, (y0+y1)/2)
-		for _, c := range []image.Point{{x0 + 1, y0 + 1}, {x0 + 1, y1 - 2}} {
+		for _, c := range []image.Point{{x0 + 1, y0 + 1}, {x0 + 1, y1 - 2}, {x0 - 1, y0 - 1}, {x0 - 1, y1}} {
 			if got := pimg.RGBAAt(c.X, c.Y); vpDist(got, row) > 16 {
 				t.Errorf("%s: pill %d: %v at its box's corner %v, outside its round end, where the row is %v", name, i, got, c, row)
 			}

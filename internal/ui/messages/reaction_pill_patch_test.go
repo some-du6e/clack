@@ -116,10 +116,17 @@ const rpClsCSS = `body { --x-ring: 200, 60, 20 }
 body.sk-client-theme--dark { --x-ring: 255, 160, 90 }
 .c-reaction.x-own-pill { box-shadow: 0 0 0 1px rgba(var(--x-ring), 1) }`
 
-// rpCls adds its own class to every reaction pill's UnstyledButton: the
+// rpClsJS adds its own class to every reaction pill's UnstyledButton: the
 // pill must take it (Slack's DOM has it on the button), so its rule rings
-// every pill.
-var rpCls = pluginJS(`
+// every pill, once and round. With bar it also passes ReactionBar on, so
+// the buttons are slots in the bars' trees (patched alone, each button is
+// a tree of its own, its root the pill).
+func rpClsJS(bar bool) []byte {
+	pass := ""
+	if bar {
+		pass = "    this.api.patchComponent('ReactionBar', (O) => (p) => React.createElement(O, p))\n"
+	}
+	return pluginJS(`
 class OwnPillClass extends TautPlugin {
   static id = 'OwnPillClass'
   static pluginName = 'A class on the pill (test)'
@@ -129,11 +136,12 @@ class OwnPillClass extends TautPlugin {
   static defaultConfig = { enabled: true }
   start() {
     this.api.setStyle(` + strconv.Quote(rpClsCSS) + `)
-    this.api.patchComponent('UnstyledButton', (O) => (p) => p['data-qa'] !== 'reactji' ? React.createElement(O, p) :
+` + pass + `    this.api.patchComponent('UnstyledButton', (O) => (p) => p['data-qa'] !== 'reactji' ? React.createElement(O, p) :
       React.createElement(O, { ...p, className: (p.className ?? '') + ' x-own-pill' }))
   }
 }
 return OwnPillClass`)
+}
 
 // rpHost is coreHost with the image cache the pills' emoji load from.
 type rpHost struct {
@@ -400,7 +408,7 @@ func TestPatchedReactionPillLikeNative(t *testing.T) {
 		if dark {
 			mode = "dark"
 		}
-		for _, plug := range []string{"pass", "owl", "cls"} {
+		for _, plug := range []string{"pass", "owl", "cls", "cls-bar"} {
 			t.Run(mode+"/"+plug, func(t *testing.T) { rpCompare(t, dark, mode, plug) })
 		}
 	}
@@ -439,16 +447,18 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 	switch plug {
 	case "owl":
 		js = rpOwl
-	case "cls":
-		js, patch = rpCls, "UnstyledButton"
+	case "cls", "cls-bar":
+		js, patch = rpClsJS(plug == "cls-bar"), "UnstyledButton"
 	}
 	install(t, tt, js)
-	until(t, 10*time.Second, "the "+patch+" patch", frame, func() bool { return slackc.Patched(patch) })
+	until(t, 10*time.Second, "the "+patch+" patch", frame, func() bool {
+		return slackc.Patched(patch) && (plug != "cls-bar" || slackc.Patched("ReactionBar"))
+	})
 	// every bar drawn through its tree (the plugin's className in the owl
 	// thread's), or under cls every pill's button with the plugin's class
 	until(t, 15*time.Second, "the bars' trees", frame, func() bool {
-		if plug == "cls" {
-			return u.countTrees("x-own-pill") >= 8
+		if plug == "cls" || plug == "cls-bar" {
+			return u.countIn("x-own-pill") >= 8
 		}
 		for _, ts := range []string{rpCustom, rpUni, rpOwlTS} {
 			if !u.anyTree(`"reactionKey":"message-` + ts + `-` + rpChan + `"`) {
@@ -480,7 +490,7 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 		if p.emoji != n.emoji {
 			t.Errorf("%s/%s pill %d: emoji at %v, native %v", mode, plug, i, p.emoji, n.emoji)
 		}
-		if plug != "cls" && p.box != n.box {
+		if !strings.HasPrefix(plug, "cls") && p.box != n.box {
 			t.Errorf("%s/%s pill %d: pill %v, native %v", mode, plug, i, p.box, n.box)
 		}
 		if p.ink != n.ink {
@@ -492,8 +502,8 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 		}
 		bar = bar.Union(n.box.Inset(-3))
 	}
-	if plug == "cls" {
-		rpRinged(t, mode+"/cls", pimg, patched, rpRingColour(dark, true))
+	if strings.HasPrefix(plug, "cls") {
+		rpRinged(t, mode+"/"+plug, pimg, patched, rpRingColour(dark, true))
 		return
 	}
 	// the bars, the add buttons after the pills included, pixel for pixel
@@ -562,9 +572,10 @@ func rpRingColour(dark, cls bool) color.RGBA {
 // rpRinged checks a plugin's ring round each of pills, in ring: its flat
 // top and bottom alone are about 2 x 19 px of the 43px pills (light: ~50
 // px each, dark ~78); and that the ring and the fill follow the pill's
-// round ends: its box's corners, outside them, are the row's (the
-// UnstyledButton "@" box carries the plugin's className too; painted as
-// a box of its own, its fill and ring were square).
+// round ends: its box's corners, outside them, are the row's, and so are
+// the pixels diagonally out from them (the UnstyledButton "@" box carries
+// the plugin's className too; painted as a box of its own, its fill and
+// ring were square).
 func rpRinged(t *testing.T, what string, img *image.RGBA, pills []rpPill, ring color.RGBA) {
 	t.Helper()
 	for i, p := range pills {
@@ -583,7 +594,7 @@ func rpRinged(t *testing.T, what string, img *image.RGBA, pills []rpPill, ring c
 		}
 		x0, y0, y1 := p.emoji.Min.X-8, p.emoji.Min.Y-4, p.emoji.Max.Y+4
 		row := img.RGBAAt(2, (y0+y1)/2)
-		for _, c := range []image.Point{{x0 + 1, y0 + 1}, {x0 + 1, y1 - 2}} {
+		for _, c := range []image.Point{{x0 + 1, y0 + 1}, {x0 + 1, y1 - 2}, {x0 - 1, y0 - 1}, {x0 - 1, y1}} {
 			if got := img.RGBAAt(c.X, c.Y); rpDist(got, row) > 16 {
 				t.Errorf("%s: pill %d: %v at its box's corner %v, outside its round end, where the row is %v", what, i, got, c, row)
 			}
@@ -591,15 +602,13 @@ func rpRinged(t *testing.T, what string, img *image.RGBA, pills []rpPill, ring c
 	}
 }
 
-// countTrees counts the delivered trees that contain sub.
-func (u *pluginUI) countTrees(sub string) int {
+// countIn counts sub in the delivered trees.
+func (u *pluginUI) countIn(sub string) int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	n := 0
 	for _, tr := range u.trees {
-		if strings.Contains(string(tr), sub) {
-			n++
-		}
+		n += strings.Count(string(tr), sub)
 	}
 	return n
 }

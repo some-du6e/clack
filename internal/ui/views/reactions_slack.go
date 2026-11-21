@@ -101,8 +101,12 @@ func (a *actBar) layout(gtx C, p slackc.Props) D {
 	}
 	lay := func(gtx C) D {
 		if e, ok := slackc.PropChildren(p); ok {
+			// each a flex item on the bar's 24px rows, as a channel's
+			// bar places them (messages' flowPills): laid out as an
+			// element, a pill's box came back as a line box 4px taller
+			// (the bar's strut under its baseline)
 			items := slackc.Items(e)
-			return a.b.actFlow(gtx, len(items), func(gtx C, i int) D { return slackc.LayoutElement(gtx, items[i]) })
+			return a.b.actFlowRows(gtx, len(items), gtx.Dp(24), func(gtx C, i int) D { return slackc.LayoutElement(gtx, items[i]) })
 		}
 		n := len(a.m.Reactions)
 		all := n + 1
@@ -125,6 +129,12 @@ func (a *actBar) layout(gtx C, p slackc.Props) D {
 // actFlow places n pill-like items left to right, 4px apart, wrapping; an
 // item a plugin rendered as nothing takes no place.
 func (b *base) actFlow(gtx C, n int, item func(gtx C, i int) D) D {
+	return b.actFlowRows(gtx, n, 0, item)
+}
+
+// actFlowRows is actFlow on rows rowH tall (0: as tall as their tallest
+// item).
+func (b *base) actFlowRows(gtx C, n, rowH int, item func(gtx C, i int) D) D {
 	maxW := gtx.Constraints.Max.X
 	gap := gtx.Dp(4)
 	x, y, lineH := 0, 0, 0
@@ -145,6 +155,9 @@ func (b *base) actFlow(gtx C, n int, item func(gtx C, i int) D) D {
 		st.Pop()
 		x += d.Size.X + gap
 		lineH = max(lineH, d.Size.Y)
+		if rowH > 0 {
+			lineH = rowH
+		}
 	}
 	return D{Size: image.Pt(maxW, y+lineH)}
 }
@@ -290,7 +303,8 @@ func (a *actReact) layout(gtx C, p slackc.Props) D {
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e)
 	}
-	return slackc.Component(gtx, "UnstyledButton", a, (*actReact).buttonProps, (*actReact).layoutButton)
+	// the pill draws its box itself (slackc.ComponentBox, as ChildBox)
+	return slackc.ComponentBox(gtx, "UnstyledButton", a, (*actReact).buttonProps, (*actReact).layoutButton)
 }
 
 // layoutButton is the pill (.c-reaction, --reacted for the viewer's
