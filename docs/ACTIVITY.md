@@ -1083,7 +1083,12 @@ overflowed the 256-entry log the page read. Now:
   plugins' messages slice holds the messages fetched by id too
   (Activity's and Saved's hydration, the Threads view's getView), as
   Slack's one messages store does (taut/mirror.go bucket), so those
-  views' messages get the plugins' view at all.
+  views' messages get the plugins' view at all. One the store held no
+  copy of is marked for the plugins as it lands (core SetFetchedHook),
+  so its view comes a JS round trip later, not at the mirror's next
+  sweep; and none of them is a message a plugin injected: a
+  conversation's list draws its history, which a message fetched by id
+  never joins (store MessageKeys, Held).
 - The Threads view and the Saved page take each change into their data
   once (threads_live.go, later_live.go), with no per-frame copies, and a
   load that lands takes what changed after its request went out. A
