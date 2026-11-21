@@ -108,7 +108,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 		e.a.CloseSecondary()
 		e.frame()
 		e.frame()
-		if app.S.ThreadHeld(ch, root) {
+		if threadHistoryHeld(app, ch, root) {
 			t.Errorf("%s: the closed thread's history stayed (a public channel the viewer isn't in: removeAllTimestamps)", what)
 		}
 		if held, ok := app.S.Thread(ch, root); ok && len(held) > 1 {
@@ -300,7 +300,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 			release()
 			e.until("older page landed", 10*time.Second, func() bool {
 				frame()
-				first, _, _, _ := e.threadView(ch, root).SliceRange()
+				first := paneSliceFirst(e.threadView(ch, root))
 				return first == reply(start-27)
 			})
 			for i := 0; i < 3; i++ {
