@@ -38,14 +38,14 @@ func (a *App) handle(ev slack.Event) {
 			Value string `json:"value"`
 		}
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" {
-			_ = a.LoadFrecencyPrefs(ctx)
+			a.pumpLater(func(ctx context.Context) { _ = a.LoadFrecencyPrefs(ctx) }) // pump_later.go
 		}
 	case "search_recents": // handleSearchRecentsPrefsUpdate (search_recents.go)
 		var e struct {
 			Value string `json:"value"`
 		}
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" && a.RecentsReadEnabled() {
-			_ = a.LoadRecentsPrefs(ctx)
+			a.pumpLater(func(ctx context.Context) { _ = a.LoadRecentsPrefs(ctx) }) // pump_later.go
 		}
 	case "reaction_added", "reaction_removed":
 		var e struct {
@@ -221,7 +221,7 @@ func (a *App) handle(ev slack.Event) {
 		if e.User != a.S.SelfID() {
 			return
 		}
-		a.refreshConv(ctx, ch)
+		a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, ch) }) // pump_later.go
 	case "member_left_channel":
 		a.membershipChanged(ch) // anyone's leave, as a join
 	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename",
@@ -244,7 +244,7 @@ func (a *App) handle(ev slack.Event) {
 			// a code channel no longer counts (codechannel_close.go)
 			a.forgetCodeChannelClosed(id)
 		}
-		a.refreshConv(ctx, id)
+		a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, id) }) // pump_later.go
 	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
 		a.onRecordChannelClose(ch)
 	case "record_channel_open": // recordChannelOpened
@@ -260,7 +260,8 @@ func (a *App) handle(ev slack.Event) {
 		if e.ConvertedTo != "" { // group DM turned into a private channel
 			a.S.DropConv(ch)
 			a.emit(Event{Type: "conv_removed", Channel: ch})
-			a.refreshConv(ctx, e.ConvertedTo)
+			to := e.ConvertedTo
+			a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, to) }) // pump_later.go
 			return
 		}
 		a.emit(Event{Type: "sidebar_changed"})
@@ -310,7 +311,10 @@ func (a *App) handle(ev slack.Event) {
 	case "thread_marked", "update_thread_state", "dnd_updated", "dnd_updated_user", "pref_change", "badge_counts_updated",
 		"channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		if ev.Type == "dnd_updated" {
-			a.onDNDUpdated(ctx, ev.Raw) // before the UI hears of it
+			a.onDNDUpdated(nil, ev.Raw) // the event's status, before the UI hears of it
+			if raw := ev.Raw; a.dndUpdateLoads(raw) {
+				a.pumpLater(func(ctx context.Context) { _ = a.LoadDND(ctx) }) // then dnd.info (pump_later.go)
+			}
 		}
 		if ev.Type == "dnd_updated_user" {
 			a.onDNDUpdatedUser(ev.Raw) // stale: the next presence read asks dnd.teamInfo again
@@ -328,18 +332,39 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
+			// the store's sections as of this event (SetSectionsSince), read
+			// off the pump (pump_later.go)
 			since := a.S.Seq()
-			if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
-				a.emit(Event{Type: "sidebar_changed"})
-			}
+			a.pumpLater(func(ctx context.Context) {
+				if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
+					a.emit(Event{Type: "sidebar_changed"})
+				}
+			})
 		case "thread_marked", "update_thread_state", "badge_counts_updated":
 			a.refreshCountsSoon()
 		case "pref_change":
 			var pc struct {
-				Name string `json:"name"`
+				Name  string          `json:"name"`
+				Value json.RawMessage `json:"value"`
 			}
 			_ = json.Unmarshal(ev.Raw, &pc)
-			if raw, err := a.C.Prefs(ctx); err == nil {
+			if pc.Name != "" && len(pc.Value) > 0 && pc.Name != prefFrecency && pc.Name != prefEmojiUse && pc.Name != prefChannelSections {
+				// Slack's prefChange sets the event's value at once: the
+				// messages right behind it notify and draw with it, not
+				// with the prefs from before users.prefs answers. The
+				// frecency and the sections' collapse state wait for the
+				// read, which keeps a frecency only a named fetch carries
+				// (keepFrecency) and a collapse write still out
+				// (sectionCollapsePending)
+				a.mergePrefs(map[string]json.RawMessage{pc.Name: pc.Value})
+				p := a.Prefs()
+				a.emit(Event{Type: "prefs", Prefs: &p})
+			}
+			a.pumpLater(func(ctx context.Context) { // pump_later.go
+				raw, err := a.C.Prefs(ctx)
+				if err != nil {
+					return
+				}
 				a.installPrefs(raw)
 				if pc.Name == prefFrecency || pc.Name == prefEmojiUse {
 					// Slack upserts the event's value; the full map keeps
@@ -350,7 +375,7 @@ func (a *App) handle(ev slack.Event) {
 				}
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
-			}
+			})
 		}
 	case "subteam_created", "subteam_updated", "subteam_members_changed", "subteam_self_added", "subteam_self_removed":
 		var e struct {
@@ -372,7 +397,10 @@ func (a *App) handle(ev slack.Event) {
 			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
 	case "saved_added", "saved_updated", "saved_deleted":
-		a.onSavedEvent(ctx, ev.Type, ev.Raw)
+		// its message's lookup, and the saved events after it in order
+		// (pump_later.go)
+		typ, raw := ev.Type, ev.Raw
+		a.pumpLater(func(ctx context.Context) { a.onSavedEvent(ctx, typ, raw) })
 	case "draft_create", "draft_update", "draft_delete", "draft_send":
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
@@ -568,15 +596,163 @@ func (a *App) knownNonMember(ch string) bool {
 }
 
 func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
-	var e struct {
-		Subtype   string         `json:"subtype"`
-		Message   *slack.Message `json:"message"`
-		Previous  *slack.Message `json:"previous_message"`
-		DeletedTS string         `json:"deleted_ts"`
-	}
+	var e msgSubEvent
 	if json.Unmarshal(ev.Raw, &e) != nil {
 		return
 	}
+	switch e.Subtype {
+	case "message_changed", "message_deleted", "message_locked", "message_replied":
+		// A change to a message of a conversation whose messages wait for
+		// its lookup (holdForConv) waits behind them, as Slack's
+		// preprocessRtmMessage holds each of the conversation's message
+		// events until it is fetched: applied at once, a deletion came
+		// before the reply it deleted, whose late announcement put it back
+		// in the open thread, and an edit before the copy announced as it
+		// was (pump_later.go)
+		if a.holdBehindConv(ch) {
+			raw := ev.Raw
+			a.convLater(ch, func(ctx context.Context) {
+				defer a.releaseConv(ch)
+				a.onMessageChange(ctx, ch, &e, raw)
+			})
+			return
+		}
+		a.onMessageChange(ctx, ch, &e, ev.Raw)
+		return
+	}
+	var m slack.Message
+	if json.Unmarshal(ev.Raw, &m) != nil || m.TS == "" {
+		return
+	}
+	// appendMessages merges a socket message into the stored one: a pin
+	// that came first stays (store/pins.go), and a thread's subscription
+	// changes only with a "subscribed" of the copy's own (thread_subs.go)
+	a.S.KeepPin(ch, &m)
+	a.S.SlurpSub(ch, &m)
+	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
+	// the DM badges read the member of the IM this makes unread (members.go
+	// readBadgePerson: the badge's own ask, which names them)
+	if m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" {
+		a.readBadgePerson(ch)
+	}
+	// Nobody the message names is fetched or asked for on its way out:
+	// Slack's messageReceived puts it into the store the moment it
+	// arrives, its rows ask for the people they draw (row.resolve's User,
+	// a mention's MemberRead; the conversion and the event read the store
+	// as it is: msgNames, RawUser), and only the desktop notification
+	// waits for them (showNotification's ensureModelsArePresent: the UI's
+	// maybeNotify, noteMembers). Fetched here, on the event pump, a reply
+	// from someone the client never saw waited for users/info, and every
+	// event behind it with it: an open thread drew replies seconds late,
+	// after Activity had them (Karim, 2026-11-18, "threads are a shit show
+	// rn"); asked for here, every sender in any channel brought a "names"
+	// pass for people nothing drew.
+	if needsFileInfo(&m) { // the echo of the viewer's own upload too
+		go a.fillFiles(ch, m.TS)
+	}
+	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
+	// a broadcast's root carries its parent's reply metadata; a plain
+	// reply leaves the parent to message_replied (thread_meta.go)
+	a.mergeBroadcastRoot(ch, &m, ev.Raw)
+	// Echo of our own optimistic send: swap the pending row instead of
+	// announcing a second message.
+	if a.confirmPending(ch, &m) {
+		if isTopLevel(&m) {
+			a.S.NoteMessage(ch, &m, false)
+			a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
+		}
+		return
+	}
+	if a.wasConfirmed(&m) { // late echo after the API reply confirmed it
+		a.putLocal(ch, m)
+		a.emitUpdate(ch, &m)
+		return
+	}
+	if isReply {
+		a.S.AddReplyNoted(ch, m) // a replies answer older than this reply keeps it (store/live.go)
+	}
+	ahead := false
+	if !isReply || m.Subtype == "thread_broadcast" {
+		// past the end of a window whose end went stale at a slow
+		// connect it waits until the window is read forward to it
+		// (store/reached_end.go): appended now, it drew right after the
+		// window with what the socket missed left out
+		if ahead = a.S.UpsertHeard(ch, m); ahead {
+			a.mu.Lock()
+			open := a.watchCh == ch
+			a.mu.Unlock()
+			if open {
+				a.startCatchUp(ch) // reached_end.go
+			}
+		}
+	}
+	self := a.S.SelfID()
+	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
+	if !isReply || m.Subtype == "thread_broadcast" {
+		a.S.NoteMessage(ch, &m, mention)
+		a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
+	} else if m.User != self {
+		a.refreshCountsSoon() // thread unread state lives server-side
+	}
+	// a conversation core doesn't know yet is looked up first
+	// (conversations.info), as Slack's preprocessRtmMessage fetches an
+	// unknown channel before the message: off the pump, so no other
+	// conversation's events wait for it, and the later messages and changes
+	// of the same conversation wait behind it in order (pump_later.go). The
+	// store holds the message already (above): only its announcement waits
+	if a.holdForConv(ch) {
+		mm := m
+		a.convLater(ch, func(ctx context.Context) {
+			defer a.releaseConv(ch)
+			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
+				a.refreshConv(ctx, ch)
+			}
+			a.announceMessage(ch, &mm, isReply, mention, ahead)
+		})
+		return
+	}
+	a.announceMessage(ch, &m, isReply, mention, ahead)
+}
+
+// announceMessage is onMessage's last part: the message event, once its
+// conversation is known.
+func (a *App) announceMessage(ch string, mp *slack.Message, isReply, mention, ahead bool) {
+	m := *mp
+	if !isReply || m.Subtype == "thread_broadcast" {
+		if a.reopenActive() { // a new message brings a closed DM back
+			a.emit(Event{Type: "sidebar_changed"})
+		}
+	}
+	a.clearAssistantStatusOnMessage(ch, m.ThreadTS) // agent.go
+	v := a.message(ch, &m)
+	cv := a.Count(ch)
+	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
+		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch), Ahead: ahead}
+	// the sender as the store has them, nothing asked: messageReceived asks
+	// for no one, the rows ask as they draw (row.resolve's User), the
+	// notification for itself (the UI's noteMembers). Read through
+	// getMemberById, every never-fetched sender in any channel went to
+	// users/info, and its "names" answer made the UI read every
+	// conversation on screen again (a resnapshot, the open channel's
+	// history converted afresh, every row resolved again) for people
+	// nothing drew (α.110's review)
+	if u, ok := a.RawUser(m.User); ok {
+		ev2.User = &u
+	}
+	a.emit(ev2)
+}
+
+// msgSubEvent is a message event's fields for its change subtypes.
+type msgSubEvent struct {
+	Subtype   string         `json:"subtype"`
+	Message   *slack.Message `json:"message"`
+	Previous  *slack.Message `json:"previous_message"`
+	DeletedTS string         `json:"deleted_ts"`
+}
+
+// onMessageChange is onMessage for the subtypes that change a message the
+// store may hold: an edit, a deletion, a thread's lock or its replies.
+func (a *App) onMessageChange(ctx context.Context, ch string, e *msgSubEvent, raw json.RawMessage) {
 	switch e.Subtype {
 	case "message_changed":
 		if e.Message == nil {
@@ -658,111 +834,12 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":
-		a.onMessageLocked(ch, ev.Raw)
+		a.onMessageLocked(ch, raw)
 		return
 	case "message_replied":
-		a.onMessageReplied(ctx, ch, ev.Raw) // thread_meta.go
+		a.onMessageReplied(ctx, ch, raw) // thread_meta.go
 		return
 	}
-	var m slack.Message
-	if json.Unmarshal(ev.Raw, &m) != nil || m.TS == "" {
-		return
-	}
-	// appendMessages merges a socket message into the stored one: a pin
-	// that came first stays (store/pins.go), and a thread's subscription
-	// changes only with a "subscribed" of the copy's own (thread_subs.go)
-	a.S.KeepPin(ch, &m)
-	a.S.SlurpSub(ch, &m)
-	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
-	// the DM badges read the member of the IM this makes unread (members.go
-	// readBadgePerson: the badge's own ask, which names them)
-	if m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" {
-		a.readBadgePerson(ch)
-	}
-	// Nobody the message names is fetched or asked for on its way out:
-	// Slack's messageReceived puts it into the store the moment it
-	// arrives, its rows ask for the people they draw (row.resolve's User,
-	// a mention's MemberRead; the conversion and the event read the store
-	// as it is: msgNames, RawUser), and only the desktop notification
-	// waits for them (showNotification's ensureModelsArePresent: the UI's
-	// maybeNotify, noteMembers). Fetched here, on the event pump, a reply
-	// from someone the client never saw waited for users/info, and every
-	// event behind it with it: an open thread drew replies seconds late,
-	// after Activity had them (Karim, 2026-11-18, "threads are a shit show
-	// rn"); asked for here, every sender in any channel brought a "names"
-	// pass for people nothing drew.
-	if needsFileInfo(&m) { // the echo of the viewer's own upload too
-		go a.fillFiles(ch, m.TS)
-	}
-	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
-	// a broadcast's root carries its parent's reply metadata; a plain
-	// reply leaves the parent to message_replied (thread_meta.go)
-	a.mergeBroadcastRoot(ch, &m, ev.Raw)
-	// Echo of our own optimistic send: swap the pending row instead of
-	// announcing a second message.
-	if a.confirmPending(ch, &m) {
-		if isTopLevel(&m) {
-			a.S.NoteMessage(ch, &m, false)
-			a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
-		}
-		return
-	}
-	if a.wasConfirmed(&m) { // late echo after the API reply confirmed it
-		a.putLocal(ch, m)
-		a.emitUpdate(ch, &m)
-		return
-	}
-	if isReply {
-		a.S.AddReplyNoted(ch, m) // a replies answer older than this reply keeps it (store/live.go)
-	}
-	ahead := false
-	if !isReply || m.Subtype == "thread_broadcast" {
-		// past the end of a window whose end went stale at a slow
-		// connect it waits until the window is read forward to it
-		// (store/reached_end.go): appended now, it drew right after the
-		// window with what the socket missed left out
-		if ahead = a.S.UpsertHeard(ch, m); ahead {
-			a.mu.Lock()
-			open := a.watchCh == ch
-			a.mu.Unlock()
-			if open {
-				a.startCatchUp(ch) // reached_end.go
-			}
-		}
-	}
-	self := a.S.SelfID()
-	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
-	if !isReply || m.Subtype == "thread_broadcast" {
-		a.S.NoteMessage(ch, &m, mention)
-		a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
-	} else if m.User != self {
-		a.refreshCountsSoon() // thread unread state lives server-side
-	}
-	if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
-		a.refreshConv(ctx, ch)
-	}
-	if !isReply || m.Subtype == "thread_broadcast" {
-		if a.reopenActive() { // a new message brings a closed DM back
-			a.emit(Event{Type: "sidebar_changed"})
-		}
-	}
-	a.clearAssistantStatusOnMessage(ch, m.ThreadTS) // agent.go
-	v := a.message(ch, &m)
-	cv := a.Count(ch)
-	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
-		Reply: isReply, Mention: mention, ConvKind: a.kindOf(ch), Ahead: ahead}
-	// the sender as the store has them, nothing asked: messageReceived asks
-	// for no one, the rows ask as they draw (row.resolve's User), the
-	// notification for itself (the UI's noteMembers). Read through
-	// getMemberById, every never-fetched sender in any channel went to
-	// users/info, and its "names" answer made the UI read every
-	// conversation on screen again (a resnapshot, the open channel's
-	// history converted afresh, every row resolved again) for people
-	// nothing drew (α.110's review)
-	if u, ok := a.RawUser(m.User); ok {
-		ev2.User = &u
-	}
-	a.emit(ev2)
 }
 
 // mentionsSelf reports whether m mentions the viewer directly or via

@@ -149,6 +149,8 @@ func TestPreviewFooterChannelCreatedElsewhere(t *testing.T) {
 		})
 	}
 	inject("channel_created")
+	// conversations.info answers off the event pump (core pump_later.go)
+	e.until("the created channel looked up", 10*time.Second, func() bool { _, ok := svc.Conv(gomiID); return ok })
 	if _, member := svc.S.Conv(gomiID); member {
 		t.Fatal("channel_created by someone else put the channel in the member set")
 	}
@@ -159,7 +161,10 @@ func TestPreviewFooterChannelCreatedElsewhere(t *testing.T) {
 	if e.sidebarHas(gomiID) {
 		t.Error("a channel the viewer isn't in got a sidebar row")
 	}
+	n := fs.CallCount("conversations.info")
 	inject("channel_rename")
+	e.until("the renamed channel looked up", 10*time.Second, func() bool { return fs.CallCount("conversations.info") > n })
+	e.settle(200 * time.Millisecond) // its answer stored
 	if _, member := svc.S.Conv(gomiID); member {
 		t.Fatal("channel_rename put the channel in the member set")
 	}

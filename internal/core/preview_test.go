@@ -161,11 +161,11 @@ func TestChannelJoinedTempExpiry(t *testing.T) {
 	a, f := previewApp(t)
 	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"C9","name":"lounge","is_channel":true,"is_member":true}}`
 	exp := time.Now().Add(24 * time.Hour).Unix()
-	a.handle(rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "C9", "name": "lounge"}, "temp_membership_expiration_ts": exp}))
+	a.handleNow(t, rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "C9", "name": "lounge"}, "temp_membership_expiration_ts": exp}))
 	if a.TempExpiry("C9") != exp {
 		t.Errorf("temp expiry %d, want %d", a.TempExpiry("C9"), exp)
 	}
-	a.handle(rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "C9"}, "temp_membership_expiration_ts": 0}))
+	a.handleNow(t, rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "C9"}, "temp_membership_expiration_ts": 0}))
 	if a.TempExpiry("C9") != 0 {
 		t.Error("expiration 0 kept the temporary membership")
 	}

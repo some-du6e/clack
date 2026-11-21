@@ -91,6 +91,14 @@ type App struct {
 	actLaterMu sync.Mutex
 	actLaterQ  []func(context.Context)
 	actLaterOn bool
+	// the other socket events' lookups, off the event pump (pump_later.go)
+	pumpQ laterQueue
+	// convQs order the events held for their conversation's lookup, one
+	// queue per conversation, and convHold counts them (pump_later.go
+	// holdForConv)
+	convHoldMu sync.Mutex
+	convQs     map[string]*laterQueue
+	convHold   map[string]int
 
 	pending   map[string]*pendingSend // client_msg_id -> optimistic send
 	fileEvs   *fileEvents             // file_created seen / awaited (upload_send.go)
