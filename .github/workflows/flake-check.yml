@@ -460,6 +460,51 @@ jobs:
   # TestSpellcheckNeverBlocksFrame (composer) timed frames on a shared
   # runner. COUNT runs each, as loaded runners ran them: core under -race,
   # composer on one CPU, ui in four processes at once
+  # internal/ui's memory: the test binary alone, its peak (runner-load.sh),
+  # and what it still holds after its last test, collected: the live heap,
+  # the goroutines still running and the heap profile's top
+  # (CLACK_TEST_HEAP_REPORT, endrun_test.go). Once a run, whatever count
+  # says. ci-speed-3: every test's session stayed reachable, 9 GB live by
+  # the end, 15.7 of the runner's 16 GB at the peak.
+  ui-heap:
+    if: ${{ !inputs.only || startsWith('ui-heap', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: internal/ui alone, its peak and what it holds at its end
+        run: |
+          .github/scripts/runner-load.sh 60 & rl=$!
+          trap 'kill $rl 2>/dev/null' EXIT
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+          cd internal/ui
+          rc=0
+          start=$(date +%s)
+          CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" \
+            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
+          echo "internal/ui: exit $rc after $(( $(date +%s) - start )) s"
+          grep -E -- '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/ui.log" | head -20 || true
+          grep -A 40 -- '--- FAIL: TestFinishedSessionIsCollected' "$RUNNER_TEMP/ui.log" | head -60 || true
+          head -1 "$RUNNER_TEMP/heap-report.txt" || true
+          sed -n 2,60p "$RUNNER_TEMP/heap-report.txt" || true
+          [ -f "$RUNNER_TEMP/heap.pprof" ] && go tool pprof -sample_index=inuse_space -top -nodecount=25 "$RUNNER_TEMP/ui.test" "$RUNNER_TEMP/heap.pprof" 2>&1 | head -35
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: ui-heap
+          path: |
+            ${{ runner.temp }}/heap-report.txt
+            ${{ runner.temp }}/heap.pprof
+            ${{ runner.temp }}/ui.log
   flakes-1121:
     if: ${{ !inputs.only || startsWith('flakes-1121', inputs.only) }}
     runs-on: ubuntu-latest
