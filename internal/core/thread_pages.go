@@ -33,8 +33,10 @@ import (
 //     {latest: the slice's start}, near the bottom loadPost {oldest: its
 //     end}. fetchReplies (rGEL $b) sends {channel, ts, inclusive: true,
 //     limit} with the limit determineDefaultHistoryLimit gives a thread:
-//     28. Each answer holds the root as well; a page short of the thread's
-//     start leaves it out of the slice (the messages store keeps it).
+//     28. Each answer holds the root as well, and the limit counts only
+//     replies (live Slack answers 29 messages: the root and 28 replies,
+//     the bound itself among them); a page short of the thread's start
+//     leaves the root out of the slice (the messages store keeps it).
 //   - Closing the pane is truncateThreadHistory (l6n6 eY): an archived
 //     channel's or a public channel's the viewer isn't in thread history
 //     goes (removeAllTimestamps), any other keeps its newest 1,000

@@ -79,6 +79,9 @@
     ]},
     {"id": "slug-display", "area": "composer-links", "tier": "fixture", "what": "fakeslack's link slug display_url, which tests that paste links run against.", "checks": [
       {"package": "internal/fakeslack", "test": "TestSlugDisplayURL", "snapshot": "internal/fakeslack/testdata/parity/slug-display.json", "compares": "fakeslack's display_url for each URL against the live chat.slugifyUrl answer for it.", "notes": "Clack shows the server's display_url. This checks the fake server other tests run against, not Clack."}
+    ]},
+    {"id": "thread-history", "area": "threads", "tier": "product", "what": "The thread pane's history: how each replies read's page goes into the thread's slices, and which slice the pane draws from its start.", "checks": [
+      {"package": "internal/store", "test": "TestThreadHistoryLikeSlack", "compares": "The slices and reachedStart, reachedEnd and prevReachedEnd after each page, live reply, deletion, disconnect and truncation, and the slice getPotentiallyOutdatedTimestamps picks at a dozen starts, for six page sequences.", "oracle": {"kind": "slack-js", "source": "client-boot 6Yed (addTimestamps, removeTimestamp, resetReachedEnd, truncateChannelHistory) over om2Z, and dTxY's getTimestampsByChannelId and getPotentiallyOutdatedTimestamps", "build": "35b42de8b870", "captured": "2026-11-20 (branch thread-load-speed)", "harness": "tools/oracles/thread_history.cjs"}}
     ]}
   ],
   "deliberate": [

@@ -534,3 +534,13 @@ func firstNonEmpty(a, b string) string {
 	}
 	return b
 }
+
+// SliceRange is the slice the pane drew last: its first and last
+// message, and whether it reaches the thread's start and its end.
+func (v *ThreadView) SliceRange() (first, last string, reachedStart, reachedEnd bool) {
+	s := v.s
+	if n := len(s.snap.msgs); n > 0 {
+		first, last = s.snap.msgs[0].m.TS, s.snap.msgs[n-1].m.TS
+	}
+	return first, last, s.snap.th.reachedStart, s.snap.th.reachedEnd
+}
