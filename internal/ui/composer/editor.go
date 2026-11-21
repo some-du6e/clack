@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -1362,7 +1363,12 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 		}
 	}
 	e.scrollY = min(max(e.scrollY, 0), max(0, e.contentH-viewH))
-	e.caretRect = image.Rect(cx, cbase-casc-e.scrollY, cx+lay.m.caretW, cbase+cdesc-e.scrollY)
+	// Blink's bar caret: max(1, device scale) wide (the zoom left out),
+	// snapped, centred on the pen's x (Gio patch 54's rules)
+	cwf := max(1, float64(widget.DeviceScale(gtx)))
+	cw := int(math.Floor(cwf + .5))
+	cx = lay.caretLeft(cli, e.caret, cwf)
+	e.caretRect = image.Rect(cx, cbase-casc-e.scrollY, cx+cw, cbase+cdesc-e.scrollY)
 	if e.resetBlink {
 		e.resetBlink = false
 		e.blinkStart = gtx.Now
@@ -1431,7 +1437,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 		lay.paintPlaceholder(gtx, st.PlaceholderText, st.Placeholder)
 	}
 	if showCaret && gtx.Enabled() {
-		fillRect(gtx, image.Rect(cx, cbase-casc, cx+lay.m.caretW, cbase+cdesc), st.Caret)
+		fillRect(gtx, image.Rect(cx, cbase-casc, cx+cw, cbase+cdesc), st.Caret)
 	}
 	t.Pop()
 	return layout.Dimensions{Size: size}

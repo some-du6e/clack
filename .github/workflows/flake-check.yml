@@ -2303,3 +2303,50 @@ jobs:
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSlackSystemUserCard$' ./internal/ui/popups || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence)$' ./internal/ui || rc=1
           exit $rc
+
+  # caret-align (2026-11-20): the caret in Clack's inputs against their
+  # placeholders and text, by Blink's rules (internal/ui/theme/carettest:
+  # the font's rounded height on the placeholder's baseline, 1 CSS px
+  # wide, snapped, at the text's start), in views' agents invite picker
+  # and search box and popups' field, at 1x, 1.5x and 2x in both themes,
+  # on llvmpipe, WARP and Metal (Gio patch 54); and Gio's own widget
+  # tests on Linux. Dispatch with only=caret-align.
+  caret-align:
+    if: ${{ !inputs.only || startsWith('caret-align', inputs.only) }}
+    name: "caret-align (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "the caret against the placeholder and the text, COUNT runs"
+        shell: bash
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          rc=0
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignViewsInputs)$' ./internal/ui/views || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignPopupsField)$' ./internal/ui/popups || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignEditorBox|TestCaretAlignZoomedWidth|TestCaretScrolledOutOfView)$' ./internal/ui/theme/carettest || rc=1
+          # Gio's own widget tests; these two fail on ui without this
+          # branch too (6db17b41: TestNoFilterAllocs gets 1 alloc per op,
+          # TestIndexPositionRunes/many_newlines 42 positions for 41), so
+          # they are skipped here
+          if [ "$RUNNER_OS" = Linux ]; then "${x[@]}" go test -count=1 -timeout 15m -skip '^(TestNoFilterAllocs|TestIndexPositionRunes)$' gioui.org/widget || rc=1; fi
+          exit $rc

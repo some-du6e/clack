@@ -22,6 +22,7 @@ import (
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	"golang.org/x/image/math/fixed"
 
 	"github.com/some-du6e/clack/assets/fonts"
 )
@@ -370,6 +371,51 @@ func (t *Theme) Editor(gtx layout.Context, e *widget.Editor, size unit.Sp, col, 
 	d := e.Layout(gtx, t.Shaper, f, size, TextMaterial(gtx, col), Material(gtx, selection))
 	EditorEmoji(gtx, t.Shaper, e, size, d)
 	return d
+}
+
+// EditorPlaceholder draws txt (Regular, one ellipsized line) on the
+// baseline a single-line Editor laid out with the same gtx puts its
+// line: an editor in a box taller than its line centres the line (Gio
+// patch 54: widget/text.go lineShift), and Blink puts an input's
+// placeholder on its editor's first baseline (BlockLayoutAlgorithm::
+// HandleTextControlPlaceholder). A label draws at its box's top whatever
+// the minimum height, so a placeholder drawn as a Label in the editor's
+// own box would sit above the text. Draw it just before the editor.
+func (t *Theme) EditorPlaceholder(gtx layout.Context, size unit.Sp, col color.NRGBA, txt string) layout.Dimensions {
+	minY := gtx.Constraints.Min.Y
+	g := gtx
+	g.Constraints.Min = image.Point{}
+	m := op.Record(gtx.Ops)
+	d := t.Label(g, size, Regular, col, txt)
+	call := m.Stop()
+	shift := 0
+	if free := minY - d.Size.Y; free > 0 {
+		asc, desc := t.lineMetrics(gtx, size)
+		b0 := d.Size.Y - d.Baseline
+		shift = min(max((minY-asc-desc)/2+asc-b0, 0), free)
+	}
+	st := op.Offset(image.Pt(0, shift)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	st.Pop()
+	h := max(minY, d.Size.Y)
+	return layout.Dimensions{Size: image.Pt(d.Size.X, h), Baseline: h - (d.Size.Y - d.Baseline + shift)}
+}
+
+// lineMetrics is the UI font's ascent and descent at size, each rounded
+// (Blink's FontMetrics), as an editor's line has them.
+func (t *Theme) lineMetrics(gtx layout.Context, size unit.Sp) (asc, desc int) {
+	sh := t.Shaper
+	if sh == nil {
+		return 0, 0
+	}
+	sh.LayoutString(text.Parameters{Font: EditorFont(Font(Regular)), PxPerEm: fixed.I(gtx.Sp(size)), MaxWidth: 1 << 20, MaxLines: 1}, "x")
+	first := true
+	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
+		if first {
+			asc, desc, first = g.Ascent.Round(), g.Descent.Round(), false
+		}
+	}
+	return asc, desc
 }
 
 // ---- drawing helpers ----
