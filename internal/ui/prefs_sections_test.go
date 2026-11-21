@@ -213,6 +213,9 @@ func TestPrefsEventUpdatesSnapshot(t *testing.T) {
 }
 
 // Notifications > Desktop notifications drives Clack's own notifications.
+// A level of "nothing", the global's or the channel's, reads as
+// mentions_dms (getCalculatedNotifySetting, getGlobalChannelNotifySetting:
+// notify_dm.go); the desktop push switch turns notifications off.
 func TestWantsNotify(t *testing.T) {
 	s := store.New("")
 	b := &backend{core: core.New(slack.New(slack.Creds{Token: "xoxc-test"}), s)}
@@ -231,10 +234,13 @@ func TestWantsNotify(t *testing.T) {
 		{"mentions_dms", "", false, false},
 		{"", "", true, true},
 		{"everything", "", false, true},
-		{"nothing", "", true, false},
+		{"nothing", "", true, true},
+		{"nothing", "", false, false},
 		{"mentions_dms", "everything", false, true},
-		{"everything", "nothing", true, false},
-		{"nothing", "default", true, false},
+		{"everything", "nothing", true, true},
+		{"everything", "nothing", false, false},
+		{"nothing", "default", true, true},
+		{"nothing", "default", false, false},
 	} {
 		set(c.global, c.override)
 		if got := b.wantsNotify("C1", c.mention); got != c.want {

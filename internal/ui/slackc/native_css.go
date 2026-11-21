@@ -22,6 +22,16 @@ import (
 // the UA rules (b, i) are :where() so any author rule beats them, as the
 // user-agent origin does. It's installed as the engine's base sheet, so it
 // never makes the CSS engine non-empty (no cost while no CSS is set).
+//
+// The rules with values are Slack's own (client-boot-styles, 2026-11:
+// cf726c4f2eaecc74) for elements natives draw and lay plugin content out
+// in: the top nav's right container and the thread header's row (a
+// patched component's tree under them, ClassDef.FlexItems), and the
+// reaction pill's button (.c-reaction: the children a patched
+// ReactionBar hands back, ClassDef.LayoutChildren), reduced there to what
+// lays its children out and the text they inherit (its box, its 8px
+// padding, 24px height, fill and radius, the native draws). They are the
+// natives' own (nativeSets): they never make a widget Active.
 const nativeCSS = `
 :where(b, strong) { font-weight: N }
 :where(i, em) { font-style: N }
@@ -50,6 +60,8 @@ const nativeCSS = `
 .p-ia4_client .p-ia4_top_nav__right_container{flex:1 0 auto;justify-content:flex-end;align-items:center;margin-right:4px;display:flex}
 .p-flexpane_header__primary{font-size:18px;line-height:1.33334;font-weight:var(--custom-font-weight-black,900);letter-spacing:var(--custom-font-tracking-subtitle,inherit);align-items:center;gap:8px;display:flex}
 .p-flexpane--ia_details_popover .p-flexpane_header.p-flexpane_header--smaller .p-flexpane_header__primary{gap:4px}
+.c-reaction{justify-content:center;align-items:center;gap:4px;font-size:12px;line-height:1;display:inline-flex}
+.c-reaction--reacted{font-weight:var(--custom-font-weight-bold,700)}
 `
 
 // pluginElementCSS is Slack's own rules (client-boot-styles, 2026-11:
@@ -136,11 +148,16 @@ func init() {
 // stripNative drops the base sheet's NativeValue winners from a host
 // node's cascade: a plugin's own element with a Slack class has no native
 // look to keep, so for it they are as if absent (the property inherits or
-// takes its initial value, as before, and UA defaults still apply).
-func stripNative(c *css.Cascaded) {
+// takes its initial value, as before, and UA defaults still apply). From
+// a Slack component's "@" node (comp) it drops every base-sheet winner:
+// Slack's own rules there are for the element the component's native
+// draws, which keeps them (ClassDef.LayoutChildren lays the children it
+// is handed out under them), not for the box around the native.
+func stripNative(c *css.Cascaded, comp bool) {
+	drop := func(d *css.Decl) bool { return d.Value == css.NativeValue || comp && d.Base }
 	n := 0
 	for i := range c.Decls {
-		if c.Decls[i].Value == css.NativeValue {
+		if drop(&c.Decls[i]) {
 			n++
 		}
 	}
@@ -148,9 +165,9 @@ func stripNative(c *css.Cascaded) {
 		return
 	}
 	out := make(css.Decls, 0, len(c.Decls)-n)
-	for _, d := range c.Decls {
-		if d.Value != css.NativeValue {
-			out = append(out, d)
+	for i := range c.Decls {
+		if !drop(&c.Decls[i]) {
+			out = append(out, c.Decls[i])
 		}
 	}
 	c.Decls = out

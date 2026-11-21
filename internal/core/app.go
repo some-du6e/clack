@@ -1593,6 +1593,7 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	}
 	v.Pending, v.Failed = a.pendingState(m)
 	v.Ephemeral = m.IsEphemeral
+	v.NoDisplay, v.NoNotifications = m.NoDisplay, m.NoNotifications
 	if m.PinnedInfo != nil {
 		// getMessagePinnedInfo (client-boot): the label's pinnedBy is pinned_info.pinned_by
 		v.PinnedBy = m.PinnedInfo.PinnedBy

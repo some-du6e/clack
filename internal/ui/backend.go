@@ -105,6 +105,18 @@ type backend struct {
 	warmAt    time.Time
 	onSignOut func()
 	app       *App
+
+	// noteIgnoreDND are the messages ("channel/ts") a dnd_override showed
+	// with Do Not Disturb ignored, Slack's _ignore_dnd; noteDNDHeld (and
+	// its order) the message events DND held back lately, which a
+	// dnd_override can show; noteShown and noteShownOrder the
+	// notifications shown lately (notify_dm.go). UI goroutine.
+	noteIgnoreDND      map[string]bool
+	noteIgnoreDNDOrder []string
+	noteDNDHeld        map[string]core.Event
+	noteDNDHeldOrder   []string
+	noteShown          map[string]bool
+	noteShownOrder     []string
 }
 
 // A core call that waits for Boot on the UI goroutine freezes the window
@@ -641,23 +653,21 @@ func (b *backend) recount() {
 	}
 }
 
-// wantsNotify applies Notifications > Desktop notifications (users.prefs
-// all_notifications_prefs: the channel's desktop override, else
-// global_desktop): everything, mentions_dms (DMs, mentions and keywords:
-// mention) or nothing.
+// wantsNotify is a channel's level, getCalculatedDesktopNotifySetting
+// (users.prefs all_notifications_prefs: the channel's desktop override,
+// else global_desktop): everything, or mentions_dms (mentions and
+// keywords: mention). "nothing" reads as mentions_dms, the override's
+// and the global's alike (getCalculatedNotifySetting,
+// getGlobalChannelNotifySetting; notify_dm.go): the desktop push switch,
+// not the level, turns notifications off. A DM has no level
+// (shouldShowNotificationForDirectMessage).
 func (b *backend) wantsNotify(ch string, mention bool) bool {
 	p := b.core.Prefs()
 	level := p.GlobalDesktop
 	if o := p.ChannelNotify[ch].Desktop; o != "" && o != "default" {
 		level = o
 	}
-	switch level {
-	case "everything":
-		return true
-	case "nothing":
-		return false
-	}
-	return mention
+	return level == "everything" || mention
 }
 
 // handle applies one realtime event to the model.
@@ -703,6 +713,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "desktop_notification": // a followed thread's reply (notify_threads.go)
 		b.desktopNotification(a, ev)
+	case "dnd_override": // a sender's notify anyway (notify_dm.go)
+		b.noteDNDOverride(a, ev)
 	case "marked", "counts":
 		if ev.Count != nil && ev.Channel != "" {
 			changed = b.setCount(ev.Channel, *ev.Count)
@@ -892,7 +904,9 @@ func (b *backend) notePeople() {
 // stream's update): ephemerals (Slackbot's "you can't @channel here")
 // never notify, and under defer_notification_3p_streaming neither does a
 // message still streaming ("Skip notification for in-progress streaming
-// message"); the rest follow the viewer's notification prefs. The
+// message"). A conversation whose desktop push is off never does, a DM's
+// message follows shouldShowNotificationForDirectMessage and any other's
+// shouldShowNotificationForChannelMessage (notify_dm.go). The
 // conversation comes from core, not the sidebar's rows, and what the
 // notification names is looked up first when the store can't name it
 // yet (notify_conv.go).
@@ -901,8 +915,15 @@ func (b *backend) maybeNotify(a *App, ev core.Event) { b.maybeNotifyAfter(a, ev,
 // maybeNotifyAfter is maybeNotify; resolved: the lookups it needed ran
 // (noteResolve), so it shows what it has.
 func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
-	if ev.Msg == nil || ev.Msg.User == b.selfID || ev.Msg.System || b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
+	if ev.Msg == nil || ev.Msg.System || b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
 		return
+	}
+	key := noteShownKey(ev.Channel, ev.TS)
+	if !resolved && b.noteWasShown(key) {
+		return // shown already (notify_dm.go)
+	}
+	if !b.notePushOn(ev.Channel) {
+		return // "Skip pref-disabled push notification"
 	}
 	if ev.Msg.Streaming() && b.core.Experiment("defer_notification_3p_streaming") == "on" {
 		return
@@ -913,16 +934,21 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	if c, ok := b.core.MessageChange(ev.Channel, ev.TS); ok && c.Deleted {
 		return // deleted while the lookups it waited for ran: nothing to show, or open
 	}
-	cur := a.router.Current().Channel()
 	c, named := b.noteConv(ev.Channel)
 	if c != nil && c.Preview {
 		return // a channel the viewer isn't in (isMemberOfChannel: reason 2)
 	}
-	direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
-	if !b.wantsNotify(ev.Channel, ev.Mention || direct) || (c != nil && c.Muted) || (cur == ev.Channel && a.focused) ||
-		!replyNotifies(b.core, ev) { // a reply only when it mentions the viewer (notify_threads.go)
+	ignoreDND := b.noteDNDIgnored(ev.Channel, ev.TS)
+	if noteIsDM(ev, c) {
+		if b.noteDMHolds(a, ev, c, ignoreDND) {
+			return
+		}
+	} else if b.noteChannelHolds(a, ev, c, ignoreDND) {
 		return
 	}
+	// Slack records it as the showNotification thunk goes out, before the
+	// models it waits for (ensureModelsArePresent: noteResolve here) land
+	b.noteMarkShown(key)
 	if !resolved {
 		// a conversation core doesn't know was looked up for this very
 		// message (core onMessage's refreshConv); one it knows without a
@@ -953,10 +979,21 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
 	msg := notificationMessage(a.Taut(), ev)
 	note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS) // the toast's payload (notify.go)
+	// the conversation's desktop push and the message preview pref were
+	// applied here (notePushOn, notifyBody): notifyShow leaves them be
+	note.pushChecked, note.textChecked = true, true
+	note.soundThroughDND, note.prioritySound = b.noteVIPOverride(ev, c), b.notePrioritySound(ev, c)
+	// with message previews off Slack writes the body from the message the
+	// plugins pass and then hides it (shouldHideNotificationText): a
+	// plugin's rewrite of the text never shows either
+	hidden := b.notifyHiddenBody(ev, c)
 	a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
-			if t, b, ok := notificationText(args, msg, body); ok {
-				a.notifyMessage(t, b, note)
+			if t, text, ok := notificationText(args, msg, body); ok {
+				if b.core.Prefs().NoTextInNotifications {
+					text = hidden
+				}
+				a.notifyMessage(t, text, note)
 			}
 			return nil, nil
 		})
@@ -974,10 +1011,12 @@ func (b *backend) setCount(id string, cnt core.Count) bool {
 	return true
 }
 
-// notifyTitle is Slack's getNotificationTitle (gaJC) for one signed-in
+// notifyTitle is Slack's getNotificationTitle (Eley) for one signed-in
 // account: "New message from {name}" in a DM, named as
 // getDisplayNameForChannel names it (the DM's user, never the message's
-// username: noteConv), else "New message in {channel}" (growl;
+// username: noteConv; an app posting into the Slack system user's DM
+// included), or "{name} is trying to reach you" when the message ignores
+// Do Not Disturb (dnd_override); else "New message in {channel}" (growl;
 // notify_threads.go). A conversation core doesn't know keeps the
 // sender's form: its name isn't there to show.
 func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
@@ -989,16 +1028,25 @@ func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 		if !noteNamed(c) {
 			name = b.notifyFrom(ev)
 		}
+		if b.noteDNDIgnored(ev.Channel, ev.TS) {
+			return nsGrowl.T("{name} is trying to reach you", "name", name)
+		}
 		return nsGrowl.T("New message from {name}", "name", name)
 	}
 	return nsGrowl.T("New message in {channel}", "channel", notifyChannelName(c))
 }
 
-// notifyBody is getContentForNotification: the text, after "{sender}: "
-// outside DMs, its channel mentions as Slack's channelToText writes them
-// (notify_conv.go: never the raw id).
+// notifyBody is getContentForNotification: the message's text
+// (notifyText, extractTextFromMessage), after "{sender}: " outside DMs,
+// with its channel mentions written as Slack's channelToText writes them
+// (notify_conv.go: never the raw id). With no_text_in_notifications
+// (shouldHideNotificationText) a DM's body is empty and any other's is
+// "a message from {sender}".
 func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
-	text := richtext.PlainTextWith(ev.Msg.Doc, b.noteSpanText)
+	if b.core != nil && b.core.Prefs().NoTextInNotifications {
+		return b.notifyHiddenBody(ev, c)
+	}
+	text := notifyText(ev.Msg, b.noteSpanText, noteTextOf{Blocks: b.noteUnfurlText, Mrkdwn: b.noteMrkdwnText})
 	if c == nil || c.Kind == "im" || c.Kind == "app" {
 		return text
 	}
@@ -1006,6 +1054,19 @@ func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
 		return name + ": " + text
 	}
 	return text
+}
+
+// notifyHiddenBody is getContentForNotification under "Include a preview
+// of the message" off (shouldHideNotificationText): nothing in a DM, "a
+// message from {sender}" elsewhere (nothing for a message with no user).
+func (b *backend) notifyHiddenBody(ev core.Event, c *convInfo) string {
+	if c == nil || c.Kind == "im" || c.Kind == "app" {
+		return ""
+	}
+	if name := b.notifySender(ev); name != "" {
+		return nsGrowl.T("a message from {name}", "name", name)
+	}
+	return ""
 }
 
 // notifySender is a body's "{sender}: " (getContentForNotification's

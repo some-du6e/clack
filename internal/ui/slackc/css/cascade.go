@@ -88,9 +88,14 @@ func (e *Engine) Set(key, src string) {
 // only the base sheet installed, callers skip all CSS work. Clack uses it
 // for Slack's own rules on native widgets (value NativeValue: "the
 // widget's own value"), so a plugin rule beats them exactly when it would
-// beat Slack's stylesheet in the browser.
+// beat Slack's stylesheet in the browser. Its declarations carry Base.
 func (e *Engine) SetBase(src string) {
 	sh := parseSheet(src)
+	for _, r := range sh.rules {
+		for i := range r.decls {
+			r.decls[i].Base = true
+		}
+	}
 	im := &e.impl
 	im.mu.Lock()
 	defer im.mu.Unlock()

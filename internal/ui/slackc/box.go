@@ -79,8 +79,10 @@ type box struct {
 	// component's own and then the className a plugin passed.
 	hostEl *HostElement
 	cls    []string
-	nprops Props     // n.P plus "children" (the rendered children) for natives
-	rctx   renderCtx // curRender while this native draws
+	// slotOwn: the Slot behind the "@" box draws its own box (Slot.OwnBox)
+	slotOwn bool
+	nprops  Props     // n.P plus "children" (the rendered children) for natives
+	rctx    renderCtx // curRender while this native draws
 
 	// topLayer: a modal <dialog> (showModal): positioned against the
 	// window and painted above everything else in its tree, over
@@ -338,9 +340,9 @@ func (b *box) HasText() bool {
 func (b *box) isElem() bool { return b.kind == kElem || b.kind == kComp }
 
 // ownBox reports a native that draws its own box from its CSS
-// (HostElement.OwnBox): the engine leaves its padding, borders and
-// background to it.
-func (b *box) ownBox() bool { return b.native && b.hostEl != nil && b.hostEl.OwnBox }
+// (HostElement.OwnBox, Slot.OwnBox): the engine leaves its padding,
+// borders, background and shadows to it.
+func (b *box) ownBox() bool { return b.native && (b.slotOwn || b.hostEl != nil && b.hostEl.OwnBox) }
 
 // k returns the node's host id (0 for text/generated boxes).
 func (b *box) k() int64 {
@@ -544,12 +546,12 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 	b.topLayer, b.backdrop = false, nil
 	b.listMarker = 0
 	b.key = mix(uint64(n.K)*0x9e3779b97f4a7c15 ^ v.root<<17 ^ uint64(v.styleGen)<<1 ^ uint64(b.n.index))
-	b.native, b.hostFn = false, nil
+	b.native, b.hostFn, b.slotOwn = false, nil, false
 	el := b.hostEl
 	b.hostEl = nil
 	if b.kind == kComp {
-		if _, ok := SlotOf(n); ok {
-			b.native = true
+		if sl, ok := SlotOf(n); ok {
+			b.native, b.slotOwn = true, sl.OwnBox
 		} else if v.name != "" && n.N == v.name {
 			b.native = true
 		} else if fn, ok := LookupHost(n.N); ok {
@@ -582,7 +584,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		return
 	}
 	c := Styles.Cascade(b, css.PseudoNone, n.Style, *e)
-	stripNative(&c)
+	stripNative(&c, b.kind == kComp)
 	b.st = css.Compute(&c, parent, *e)
 	b.set = propsOf(&c)
 	v.uaDefaults(b, &c, parent)

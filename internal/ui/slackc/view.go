@@ -184,8 +184,10 @@ type scope struct {
 	rehover    bool
 	dropdown   dropState
 	// kids marks a scope laying out its host's own children
-	// (Host.Children): when CSS makes the host's box a flex or grid
-	// container, its root is that container (hostContainer).
+	// (Host.Children), or the children a native lays out inside its own
+	// element (ClassDef.LayoutChildren; src is then that element's
+	// style): when CSS makes that box a flex or grid container, its root
+	// is that container (hostContainer).
 	kids bool
 	// place is where the host's native drew this scope, from the host
 	// box's content edge (Host.PlaceChildren): window origins and the
@@ -582,10 +584,12 @@ func flatContents(boxes []*box) []*box {
 }
 
 // hostContainer reports a Host.Children scope whose host box CSS makes a
-// flex or grid container: in the browser the component's element lays
-// its children out as its items (Slack's .c-button is inline-flex;
-// OwlMode's Save in Taut is display:flex with gap 6px, an icon and a bare
-// text run). buildLayoutKids already wrapped the host's text runs into
+// flex or grid container, or a ClassDef.LayoutChildren scope whose
+// element is one: in the browser the element lays its children out as
+// its items (Slack's .c-button is inline-flex; OwlMode's Save in Taut is
+// display:flex with gap 6px, an icon and a bare text run; the reaction
+// pill's .c-reaction is inline-flex, its emoji and count 4px apart and
+// centred). buildLayoutKids already wrapped the host's text runs into
 // anonymous items, which a block root would stack.
 func (s *scope) hostContainer() bool {
 	if !s.kids || !s.srcOK {
@@ -886,6 +890,13 @@ func (v *View) layoutKids(gtx layout.Context, fr *frame, n *Node, st *css.Style)
 }
 
 func (v *View) layoutNodes(gtx layout.Context, fr *frame, nodes []*Node, parent *Node, st *css.Style) layout.Dimensions {
+	return v.layoutNodesIn(gtx, fr, nodes, parent, st, false)
+}
+
+// layoutNodesIn is layoutNodes; kids: the nodes are the children of a
+// native's own element whose style is st (ClassDef.LayoutChildren), a
+// flex container's flex items (hostContainer).
+func (v *View) layoutNodesIn(gtx layout.Context, fr *frame, nodes []*Node, parent *Node, st *css.Style, kids bool) layout.Dimensions {
 	if len(nodes) == 0 {
 		return layout.Dimensions{}
 	}
@@ -927,6 +938,9 @@ func (v *View) layoutNodes(gtx layout.Context, fr *frame, nodes []*Node, parent 
 		s.boxes = x.boxes
 		s.root.lk = x.boxes
 		s.ok = false
+	}
+	if s.kids != kids {
+		s.kids, s.ok = kids, false
 	}
 	if up != nil {
 		// The stack already ends in the native's own elements; pushing

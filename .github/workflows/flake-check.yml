@@ -2822,3 +2822,84 @@ jobs:
           go test -race -count=1 -timeout 15m -run "$CORE_TESTS" ./internal/core || rc=1
           go test -race -count=1 -run "$SLACK_TESTS|$STORE_TESTS" ./internal/slack ./internal/store || rc=1
           exit $rc
+
+  # plugin-reaction-pill: reaction pills under a patched ReactionBar (a
+  # pass-through patch with no CSS, and OwlMode's shape with its rules)
+  # against the native pills: emoji box, bounds, count ink and the bar's
+  # pixels, light and dark, and OwlMode's ring and colours in its thread
+  # (reaction-pill-shots artifact). Dispatch with only=reaction-pill.
+  reaction-pill:
+    if: ${{ !inputs.only || startsWith('reaction-pill', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: patched reaction pills against the native ones, COUNT runs
+        env:
+          MESSAGES_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: reaction-pill-shots
+          path: dist/shots
+
+  # system-dm-toast (2026-11-21): the toast for an app's post in the DM
+  # with Slack's system user (ui/notify_dm.go, notify_system_dm_test.go):
+  # Slack's title, body and icon, the click, the frame flash and the
+  # badge, and the prefs that hold it back (desktop push, mute, Do Not
+  # Disturb, notify anyway, a VIP), then the real toast in Windows'
+  # Notification Center. Dispatch with only=system-dm-toast (both jobs),
+  # only=system-dm-toast-linux or only=system-dm-toast-windows (one).
+  system-dm-toast-linux:
+    if: ${{ inputs.only != '' && startsWith('system-dm-toast-linux', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      UI_TESTS: '^(TestSystemDMToast|TestMacNotifierSystemDM|TestWantsNotify|TestThreadsAudit|TestDeferStreamingNotification|TestNotify|TestToast|TestMacNotifier)'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: the system DM's toast (one verbose run, then COUNT)"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 15m -run '^(TestSystemDMToast|TestMacNotifierSystemDM)' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run "$UI_TESTS" ./internal/ui || rc=1
+          exit $rc
+  system-dm-toast-windows:
+    if: ${{ inputs.only != '' && startsWith('system-dm-toast-windows', inputs.only) }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "ui: the system DM's toast in Notification Center (COUNT runs)"
+        shell: bash # $COUNT is the job's env (pwsh would read its own variable)
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
+

@@ -92,10 +92,14 @@ func TestOwlReactionsRing(t *testing.T) {
 		}
 		return image.Rectangle{}
 	}
+	// one 1px ring round the 43px pill: its flat top and bottom (2 x 19
+	// px) and the strongest pixels of its round ends. 60 held only while
+	// the UnstyledButton "@" box painted a second, square ring under the
+	// pill's own (slackc.Slot.OwnBox).
 	until(t, 10*time.Second, "the pill ringed in the rule's red", frame, func() bool {
 		img = pixeltest.Render(t, w, hgt, ops)
 		n, ring = ringPixels(img, rowRect(), ringRed, 40)
-		return n >= 60
+		return n >= 30
 	})
 	// one pill: the 24px pill and the 1px ring around it
 	if ring.Dy() < 25 || ring.Dy() > 27 || ring.Dx() < 30 || ring.Dx() > 80 {
