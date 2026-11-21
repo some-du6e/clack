@@ -165,6 +165,12 @@ type Request struct {
 	// (kQRT), HoverCardTrigger (0oEe) at position "top" with its
 	// defaults: offsetY -12, the 350ms open and 250ms close.
 	URL string
+	// Opposite: the trigger's Popover sits on the opposite side
+	// (usingOppositePosition). The Popover is the trigger's child and
+	// keeps its state while the trigger is mounted, open or not, so with
+	// stickyPosition the next card starts there (Keep.Start); the trigger
+	// keeps it (ReportSide, Placed).
+	Opposite bool
 	// Delay replaces ShowDelay when set.
 	Delay time.Duration
 }
@@ -369,6 +375,30 @@ func (c *Controller) Mounted(key any) {
 	if c.hasPend && c.pending.Key == key {
 		c.pendTracks = true
 	}
+}
+
+// ReportSide adds the trigger's Popover side (Request.Opposite) to its
+// report this frame.
+func (c *Controller) ReportSide(key any, opp bool) {
+	if c.hasRep && c.rep.Key == key {
+		c.rep.Opposite = opp
+	}
+}
+
+// SetPlaced is the open card's side once placed (Keep.Opp).
+func (c *Controller) SetPlaced(opp bool) {
+	if c.isOpen {
+		c.open.Opposite = opp
+	}
+}
+
+// Placed returns the side key's open card was placed on, for its trigger
+// to keep (ok: key's card is open).
+func (c *Controller) Placed(key any) (opp, ok bool) {
+	if key == nil || !c.isOpen || c.open.Key != key {
+		return false, false
+	}
+	return c.open.Opposite, true
 }
 
 // Pressed is a click on a trigger: Slack's handleClick closes the card,
@@ -577,6 +607,7 @@ type Trigger struct {
 	in    bool
 	pos   f32.Point
 	probe Probe // where the pointer is on it, kept honest (anchor.go)
+	opp   bool  // its Popover's side (Request.Opposite), while it stays mounted
 }
 
 // Layout registers the trigger over size and reports it while hovered.
@@ -589,12 +620,16 @@ func (t *Trigger) Layout(gtx layout.Context, userID string, size image.Point) {
 // (botID: the message's bot_id). Both "" disables it.
 func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image.Point) {
 	c := current
-	if t.probe.Missed() && t.in {
+	if t.probe.Missed() {
 		// not laid out for a frame: Gio forgot the handler, and the Leave
-		// it was owed (Slack's trigger unmounted and mounts unhovered)
-		t.in = false
-		if c != nil {
-			c.Left(t)
+		// it was owed (Slack's trigger unmounted and mounts unhovered,
+		// with a new Popover)
+		t.opp = false
+		if t.in {
+			t.in = false
+			if c != nil {
+				c.Left(t)
+			}
 		}
 	}
 	// the layout moved it under a resting pointer (the probe's Leave):
@@ -628,9 +663,13 @@ func (t *Trigger) LayoutBot(gtx layout.Context, userID, botID string, size image
 	}
 	if c != nil {
 		c.Mounted(t)
+		if o, ok := c.Placed(t); ok {
+			t.opp = o
+		}
 	}
 	if t.in && c != nil && (userID != "" || botID != "") {
 		c.ReportBot(t, userID, botID, image.Rectangle{Max: size}, t.pos)
+		c.ReportSide(t, t.opp)
 	}
 	func() {
 		defer pointer.PassOp{}.Push(gtx.Ops).Pop()

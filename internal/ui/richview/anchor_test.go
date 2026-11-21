@@ -258,3 +258,34 @@ func TestBodyTwoMovesBetweenFrames(t *testing.T) {
 		t.Fatalf("two Moves ending on the #channel: pending %v, anchor %v, the mention is at %v", ok, p.Anchor, m)
 	}
 }
+
+// A body keeps each trigger's Popover side while it is drawn (Slack's
+// Popover state, under stickyPosition), and drops it when it misses a
+// frame (its spans unmounted).
+func TestBodyKeepsPopoverSide(t *testing.T) {
+	e := newBodyEnv(t)
+	m := e.mention()
+	at := m.Min.Add(m.Size().Div(2))
+	e.move(at)
+	e.wait(hovercard.ShowDelay + 10*time.Millisecond)
+	if _, _, open := e.c.Open(); !open {
+		t.Fatal("no card")
+	}
+	e.c.SetPlaced(true) // the root placed it on the opposite side
+	e.wait(10 * time.Millisecond)
+	e.move(e.words())
+	e.wait(hovercard.HideDelay + 10*time.Millisecond)
+	e.move(at)
+	if p, ok := e.c.Pending(); !ok || !p.Opposite {
+		t.Fatalf("back on the #channel: pending %v, opposite %v; want the side its card was left on", ok, p.Opposite)
+	}
+	e.move(e.words())
+	e.show = false
+	e.wait(10 * time.Millisecond)
+	e.show = true
+	e.wait(10 * time.Millisecond)
+	e.move(at)
+	if p, ok := e.c.Pending(); !ok || p.Opposite {
+		t.Fatalf("after a missed frame: pending %v, opposite %v; want a new Popover's side", ok, p.Opposite)
+	}
+}

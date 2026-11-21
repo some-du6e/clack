@@ -291,3 +291,66 @@ func TestTriggerMoveAfterLayoutMoveWins(t *testing.T) {
 		t.Errorf("anchor %v, want the trigger %v", req.Anchor, e.rect())
 	}
 }
+
+// place is what the ui root does with an open card: placed through a
+// Keep that starts from the trigger's side, then the side handed back.
+func (e *trigEnv) place(k *Keep) image.Point {
+	req, _, _ := e.c.Open()
+	k.Start(req.Opposite)
+	p := k.PlaceTop(req.Anchor, image.Pt(340, 200), image.Pt(1000, 800), OffsetY, AllowanceX, AllowanceY)
+	e.c.SetPlaced(k.Opp())
+	return p
+}
+
+// Slack's Popover is the trigger's child: its usingOppositePosition lasts
+// while the trigger is mounted, open or closed, so a card flipped below
+// its trigger starts below the next time (stickyPosition), even where it
+// would fit above. A trigger that unmounts comes back with a new Popover.
+func TestStickySideLastsWhileMounted(t *testing.T) {
+	e := newTrigEnv(t)
+	e.off = image.Pt(200, 60) // no room above
+	e.frame()
+	open := func() {
+		t.Helper()
+		e.move(e.off.Add(image.Pt(30, 10)))
+		e.wait(ShowDelay + 10*time.Millisecond)
+		if _, _, ok := e.c.Open(); !ok {
+			t.Fatal("no card")
+		}
+	}
+	leave := func() {
+		e.move(image.Pt(900, 700))
+		e.wait(10 * time.Millisecond)
+		e.wait(HideDelay + 10*time.Millisecond)
+		if _, _, ok := e.c.Open(); ok {
+			t.Fatal("the card didn't close")
+		}
+	}
+	open()
+	var k1 Keep
+	if p := e.place(&k1); p.Y != e.rect().Max.Y+OffsetY {
+		t.Fatalf("near the top: placed at %v, want below the trigger %v", p, e.rect())
+	}
+	e.wait(10 * time.Millisecond) // the trigger keeps the side
+	leave()
+	e.off = image.Pt(200, 400) // room above now
+	e.wait(10 * time.Millisecond)
+	open()
+	if req, _, _ := e.c.Open(); !req.Opposite {
+		t.Error("the reopened card doesn't start from the side its Popover was left on")
+	}
+	var k2 Keep
+	if p := e.place(&k2); p.Y != e.rect().Max.Y+OffsetY {
+		t.Errorf("reopened at %v, want below the trigger %v (stickyPosition: below fits)", p, e.rect())
+	}
+	e.wait(10 * time.Millisecond)
+	leave()
+	e.show = false // unmounted: a new Popover
+	e.wait(10 * time.Millisecond)
+	e.show = true
+	e.wait(10 * time.Millisecond)
+	open()
+	if req, _, _ := e.c.Open(); req.Opposite {
+		t.Error("a remounted trigger's card starts from the opposite side")
+	}
+}

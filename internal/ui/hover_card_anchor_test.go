@@ -60,6 +60,9 @@ type hcaEnv struct {
 	ctl   *hovercard.Controller
 	views map[*richview.View]string // the painted bodies, by their text
 	rest  f32.Point                 // the rail: no hover cards there
+	// the card open() opened: its trigger and generation (check)
+	openKey any
+	openGen int
 }
 
 func newHCAEnv(t *testing.T) *hcaEnv {
@@ -170,7 +173,8 @@ func (e *hcaEnv) open(what string) (f32.Point, image.Rectangle, image.Rectangle)
 			what, link, p, v.Pointer(), org, v.LinkRects(), open, req, pend, pr, e.a.hoverBlocked(), ov)
 	}
 	card := e.a.hover.chc.Rect()
-	req, _, _ := e.ctl.Open()
+	req, gen, _ := e.ctl.Open()
+	e.openKey, e.openGen = req.Key, gen
 	// the trigger's bounds are its words' and its pill's (2px padding)
 	if a := req.Anchor; !link.In(a) || a.Dx()-link.Dx() > 8 || a.Dy()-link.Dy() > 8 {
 		e.t.Errorf("%s: the card opened anchored at %v, the link is at %v", what, req.Anchor, link)
@@ -186,13 +190,14 @@ func (e *hcaEnv) open(what string) (f32.Point, image.Rectangle, image.Rectangle)
 type hcaState struct {
 	open, pend bool
 	key        any
+	gen        int // the open card's (a card closed and reopened has another)
 	card       image.Rectangle
 }
 
 func (e *hcaEnv) state() hcaState {
 	var s hcaState
-	if req, _, open := e.ctl.Open(); open {
-		s.open, s.key = true, req.Key
+	if req, gen, open := e.ctl.Open(); open {
+		s.open, s.key, s.gen = true, req.Key, gen
 		if e.a.hover.chc != nil {
 			s.card = e.a.hover.chc.Rect()
 		}
@@ -220,6 +225,14 @@ func (e *hcaEnv) check(what string, p f32.Point, card image.Rectangle) {
 	}
 	if got.open && got.card != card && got.key != nil && want.key == got.key {
 		e.t.Errorf("%s: the open card moved from %v to %v (Slack's stays where it opened)", what, card, got.card)
+	}
+	// a card still open over the same trigger is the one that opened: not
+	// closed by a missed frame and opened again by the resting pointer
+	if got.open && got.key == e.openKey && got.gen != e.openGen {
+		e.t.Errorf("%s: the card over the same trigger closed and opened again (generation %d, opened as %d)", what, got.gen, e.openGen)
+	}
+	if got.open && want.open && want.key == got.key && want.gen != got.gen {
+		e.t.Errorf("%s: a fresh move closed and reopened the card (generation %d, then %d)", what, got.gen, want.gen)
 	}
 }
 

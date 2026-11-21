@@ -131,6 +131,10 @@ func NewChannelHoverCard(h Host, anchor image.Rectangle, id string, buttons, tex
 // Rect is the drawn card (window coordinates).
 func (p *ChannelHoverCard) Rect() image.Rectangle { return p.rect }
 
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *ChannelHoverCard) Placement() *hovercard.Keep { return &p.keep }
+
 // Dismissed reports whether an action on it closed it (View Channel).
 func (p *ChannelHoverCard) Dismissed() bool { return p.done }
 

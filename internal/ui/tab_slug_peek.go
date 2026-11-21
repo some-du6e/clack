@@ -109,6 +109,10 @@ func (a *App) tabPeekBodyFor(p *slugPeek, ch string, t core.SlugTab) tabPeekBody
 // Rect is the drawn card (window coordinates; empty when nothing shows).
 func (p *slugPeek) Rect() image.Rectangle { return p.rect }
 
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *slugPeek) Placement() *hovercard.Keep { return &p.keep }
+
 // Dismissed reports whether an action on it closed it.
 func (p *slugPeek) Dismissed() bool { return p.done }
 
