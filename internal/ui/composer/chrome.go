@@ -387,6 +387,14 @@ type chrome struct {
 	footNat int         // the footer row's own width as last laid out (a row-flex body, layoutBox)
 	sufW    int         // the submit group's width as last laid out (the toolbar's width, overflow.go)
 	more    crMore      // TextyButtonOverflow's open state (overflow.go)
+	// inlineW is TextyButtons' inlineButtonsWidth (px, 0 until measured):
+	// the toolbar's buttons laid out in a row, measured whenever nothing
+	// is folded and kept while folded (overflow.go). toolW is the
+	// toolbar's width as last laid out, TextyButtonOverflow's
+	// containerOffsetWidth prop: a Layout that reuses the box's draw
+	// (a measure pass) lays out no footer, and its zero must not reach JS.
+	inlineW int
+	toolW   int
 	pxPerDp float32
 	wBox    layout.Widget
 	wFoot   [crNumBtn]layout.Widget
@@ -985,6 +993,12 @@ func crPlainArea(gtx layout.Context) layout.Dimensions {
 
 // tooltip shows button id's Slack tooltip above it while hovered.
 func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, id crBtn, r image.Rectangle) {
+	hov := c.btn[id].Hovered()
+	if id == crFootMore && c.more.open {
+		// TextyButtonOverflow's tipClassName display_none while its row
+		// is open: no tooltip, and it waits its delay again after
+		hov = false
+	}
 	label, keys := crInfo[id].tip, crInfo[id].keys
 	if id == crAa {
 		label = "Show formatting"
@@ -1003,7 +1017,7 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 		return
 	}
 	t := op.Offset(r.Min).Push(gtx.Ops)
-	popups.Tooltip(gtx, th, &c.tip[id], c.btn[id].Hovered(), r.Size(), popups.Above, label, keys)
+	popups.Tooltip(gtx, th, &c.tip[id], hov, r.Size(), popups.Above, label, keys)
 	t.Pop()
 }
 
@@ -1187,6 +1201,11 @@ func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 	c.f.eq = 0
 	if !c.f.oneLine {
 		c.f.eq = c.toolbarWidth(gtx, x1-x0)
+	}
+	c.toolW = c.f.eq
+	c.f.plugBtns = c.plugButtons()
+	if c.inlineW <= 0 {
+		c.f.inlineGuess = c.inlineGuess(gtx)
 	}
 	c.f.fold = c.foldFooter()
 	c.f.sufX = x1 - gtx.Dp(6)

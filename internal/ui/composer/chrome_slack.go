@@ -38,6 +38,8 @@ type crFrame struct {
 	minOverflow            int
 	eq                     int // .c-texty_buttons' offsetWidth (TextyButtons' containerOffsetWidth), px; 0 beside the editor
 	fold                   bool
+	plugBtns               int  // Taut's composer.addButton buttons among the toolbar's children (overflow.go)
+	inlineGuess            int  // inlineButtonsWidth before the first measure (overflow.go), px
 	oneLine                bool // the footer sits beside the editor (layoutBox)
 	rowH, textH, attH      int  // layoutBox's editor row, text area and attachments heights
 	toolbarHidden          bool
@@ -316,6 +318,9 @@ func (c *chrome) layoutTextyButtons(gtx layout.Context, p slackc.Props) layout.D
 			c.f.minOverflow = int(n)
 		}
 	}
+	if c.inlineW <= 0 {
+		c.f.inlineGuess = c.inlineGuess(gtx)
+	}
 	c.f.fold = c.foldFooter()
 	tb := crToolbarClass.Enter(gtx, 0, 0)
 	defer tb.Leave()
@@ -355,15 +360,29 @@ func (c *chrome) overflowProps() slackc.Props {
 			return c.layoutSubmit(gtx, p)
 		}))
 	}
+	// The widths TextyButtons measured, as the toolbar was last laid out:
+	// these props are built before this frame's layout, and a Layout that
+	// reused the box's draw left c.f.eq 0 (that zero sent JS a new render).
 	pr := slackc.Props{
 		"$key":                 c.cur.Key,
-		"containerOffsetWidth": float64(c.f.eq) * float64(px),
+		"containerOffsetWidth": float64(c.toolW) * float64(px),
 		"textyHasFocus":        c.cur.Focused,
 		"children":             kids,
 	}
-	if c.f.minOverflow != crOverflowDefault {
-		pr["minButtonsForOverflow"] = c.f.minOverflow
+	if c.inlineW > 0 {
+		pr["inlineButtonsWidth"] = float64(c.inlineW) * float64(px)
 	}
+	// No minButtonsForOverflow: Slack's TextyButtons passes on its own
+	// (MessageInput gives it only Slackbot's composer, never one of
+	// Clack's), and a plugin's comes in through TextyButtons' props or
+	// this component's (layoutTextyButtons, layoutOverflow). Sending
+	// c.f.minOverflow, which layoutOverflow sets from these props as the
+	// tree hands them back, fed the tree its own echo: JS answers a frame
+	// later, so each frame's props came from those two frames before, and
+	// a first frame's zero (minOverflow before any Layout) against the
+	// native draw's 5 kept two sequences apart for good. InputContainer
+	// rendered again every frame and the fold flipped every frame between
+	// 220px and 580px (Karim's [/] flickering under OwlMode, α.113).
 	return pr
 }
 
@@ -407,12 +426,15 @@ type crSuf struct {
 	ids  uint32
 }
 
-// layoutRow lays the toolbar out left to right from the row origin, and
-// the submit group (and whatever follows it, e.g. composer.addButton
-// "end" buttons) right-aligned 6px inside the box. Each item is recorded
+// layoutRow lays the toolbar out left to right from the row origin (the
+// + prefix, Slack's buttons, Taut's composer.addButton buttons), and the
+// submit group right-aligned 6px inside the box. Each item is recorded
 // and then placed; the hit rects of the buttons it drew move with it.
+// Items are as wide as they lay out (a plugin's node too, whatever the
+// row's own constraints).
 func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool) layout.Dimensions {
 	W := gtx.Constraints.Max.X
+	gtx.Constraints.Min = image.Point{}
 	bs := gtx.Dp(28)
 	n, suffix := len(crRow), len(crRow)
 	if patched {
@@ -425,6 +447,9 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 		}
 	}
 	x := 0
+	// measureInlineButtons: the right edge of the toolbar's last button
+	// or divider (right of the + prefix), with nothing folded
+	left, right := crToolbarLeft(gtx), 0
 	for i := 0; i < suffix; i++ {
 		call, d, l, r, ids := c.rowItem(gtx, kids, patched, i)
 		if d.Size.X <= 0 {
@@ -433,18 +458,27 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 		}
 		x += gtx.Dp(l)
 		c.place(gtx, call, image.Pt(x, (bs-d.Size.Y)/2), ids)
+		if !c.isPrefix(kids, patched, i) {
+			right = x + d.Size.X
+		}
 		x += d.Size.X + gtx.Dp(r)
 	}
-	// taut's composer.addButton buttons ("native" placement) follow the
-	// toolbar; free while no plugin adds one.
-	if slackc.Patched(tautButtons) {
-		m := op.Record(gtx.Ops)
-		d := slackc.Render(gtx, tautButtons, c.tautButtonsProps("native"), noNative)
-		if call := m.Stop(); d.Size.X > 0 {
-			x += gtx.Dp(2)
-			c.place(gtx, call, image.Pt(x, (bs-d.Size.Y)/2), 0)
-			x += d.Size.X + gtx.Dp(2)
+	// Taut's composer.addButton buttons are TextyButtonOverflow's last
+	// children (native, then end): after Slack's buttons, and in the
+	// overflow's row when it's folded (layoutMoreRow). Free while no
+	// plugin adds one for this composer.
+	if c.f.plugBtns > 0 && !c.f.fold {
+		for _, pl := range crPlugPlacements {
+			if call, d := c.plugRender(gtx, pl); d.Size.X > 0 {
+				x += gtx.Dp(2)
+				c.place(gtx, call, image.Pt(x, (bs-d.Size.Y)/2), 0)
+				right = x + d.Size.X
+				x += d.Size.X + gtx.Dp(2)
+			}
 		}
+	}
+	if !c.f.fold && right > left {
+		c.inlineW = right - left // kept while folded, as Slack keeps its measure
 	}
 
 	c.suf = c.suf[:0]
@@ -465,11 +499,6 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 				c.suf = append(c.suf, crSuf{call: call, size: d.Size, l: gtx.Dp(l), r: gtx.Dp(r), ids: ids})
 			}
 		}
-	}
-	if !ss.Hidden() && slackc.Patched(tautButtons) {
-		m := op.Record(gtx.Ops)
-		d := slackc.Render(gtx, tautButtons, c.tautButtonsProps("end"), noNative)
-		c.suf = append(c.suf, crSuf{call: m.Stop(), size: d.Size, l: gtx.Dp(4)})
 	}
 	ss.Leave()
 	for _, s := range c.suf {
@@ -504,6 +533,15 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 		sx += s.size.X + s.r
 	}
 	return layout.Dimensions{Size: image.Pt(W, bs)}
+}
+
+// isPrefix reports whether item i is the + (ShortcutsMenuTriggerButton,
+// the footer's prefix, not one of .c-texty_buttons' buttons).
+func (c *chrome) isPrefix(kids slackc.Element, patched bool, i int) bool {
+	if !patched {
+		return crRow[i].div == 0 && crRow[i].id == crAttach
+	}
+	return holdsSlot(kids.Nodes[i], crSlotName(crItem{id: crAttach}))
 }
 
 // rowItem records item i at the row origin.
@@ -566,13 +604,23 @@ func (c *chrome) rowNative(gtx layout.Context, it crItem) layout.Dimensions {
 // itemVisible: what the footer shows in this mode, fold state and with
 // the buttons plugins turned off.
 func (c *chrome) itemVisible(id crBtn) bool {
-	if c.hidden(id) || c.f.toolbarHidden {
-		return false
-	}
-	edit := c.cur.Mode == modeEdit
 	if c.f.fold && c.inOverflow(id) {
 		return false // in TextyButtonOverflow's row (overflow.go)
 	}
+	if id == crFootMore {
+		return !c.hidden(id) && !c.f.toolbarHidden && c.cur.Mode != modeEdit && c.f.fold
+	}
+	return c.inlineOn(id)
+}
+
+// inlineOn reports whether the footer shows button id with nothing
+// folded: what the mode shows, less the buttons plugins turned off. ⋯
+// is never there then.
+func (c *chrome) inlineOn(id crBtn) bool {
+	if c.hidden(id) || c.f.toolbarHidden || id == crFootMore {
+		return false
+	}
+	edit := c.cur.Mode == modeEdit
 	if c.cur.Mode == modeField {
 		// RichTextInputElement: enableEmojiButton and enableComposerButton
 		// in the footer, the formatting bar's own buttons
@@ -584,8 +632,6 @@ func (c *chrome) itemVisible(id crBtn) bool {
 	case crAttach:
 		// cjbg enableShortcutsButton: !fileAttachAfterSendDisabled
 		return !edit || !c.cur.NoEditFiles
-	case crFootMore:
-		return !edit && c.f.fold
 	}
 	return true
 }
@@ -643,10 +689,7 @@ func (c *chrome) drawFoot(gtx layout.Context, id crBtn) layout.Dimensions {
 // footDivider draws divider 1 (before video/audio) or 2 (before Run
 // shortcut) in wide composers; SlimMessageBox hides them with CSS.
 func (c *chrome) footDivider(gtx layout.Context, which uint8) layout.Dimensions {
-	if c.f.fold || c.f.toolbarHidden || c.cur.Mode == modeEdit || c.cur.Mode == modeField {
-		return layout.Dimensions{}
-	}
-	if which == 1 && c.hidden(crVideo) && c.hidden(crAudio) || which == 2 && c.hidden(crShortcut) {
+	if c.f.fold || !c.dividerOn(which) {
 		return layout.Dimensions{}
 	}
 	s := crDividerClass.Enter(gtx, 0, 0)
@@ -657,6 +700,15 @@ func (c *chrome) footDivider(gtx layout.Context, which uint8) layout.Dimensions 
 	sz := image.Pt(max(gtx.Dp(1), 1), gtx.Dp(20))
 	fillRect(gtx, image.Rectangle{Max: sz}, s.Background(c.fpal.sepFoot))
 	return layout.Dimensions{Size: sz}
+}
+
+// dividerOn reports whether the footer shows divider which with nothing
+// folded.
+func (c *chrome) dividerOn(which uint8) bool {
+	if c.f.toolbarHidden || c.cur.Mode == modeEdit || c.cur.Mode == modeField {
+		return false
+	}
+	return !(which == 1 && c.hidden(crVideo) && c.hidden(crAudio) || which == 2 && c.hidden(crShortcut))
 }
 
 // layoutSubmit is the submit group: the send split button (SendButton),
@@ -881,14 +933,7 @@ const tautButtons = "TautComposerButtons"
 
 func (c *chrome) tautButtonsProps(placement string) slackc.Props {
 	st := &c.cur
-	kind := "channel"
-	switch {
-	case st.Mode == modeEdit:
-		kind = "edit"
-	case st.ThreadTS != "":
-		kind = "thread"
-	}
-	ctx := slackc.Props{"kind": kind, "channelId": st.Channel}
+	ctx := slackc.Props{"kind": c.tautKind(), "channelId": st.Channel}
 	if st.ThreadTS != "" {
 		ctx["threadTs"] = st.ThreadTS
 		// Taut's ComposerContext.broadcast: {active, channelType, set}.
