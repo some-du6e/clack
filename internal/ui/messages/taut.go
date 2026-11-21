@@ -244,7 +244,7 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// viewRefresh: the frame that came for a change within 250 ms of the
 	// row's last read skipped it, and an idle window drew no other
 	ep := t.ViewEpoch()
-	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev && r.viewEpoch == ep {
+	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev && r.viewEpoch == ep && (r.heldTil.IsZero() || now.Before(r.heldTil)) {
 		return
 	}
 	// taut keeps each view converted until something it reads changes;
@@ -294,6 +294,13 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// it caught up (Karim, 2026-11-19: "reactions are not syncing", "in a
 	// channel for another")
 	mv.Reactions = r.src.Reactions
+	if ready && mv.Text != r.src.Text && !t.TextRewrites() {
+		// JS's copy of this revision says another text: the plugins rewrite
+		// text. The text alone, which a rewrite changes (Censorship's mask
+		// is in it, Message Logger's marks): the Doc of a view converted at
+		// another moment can name a mention otherwise and say nothing
+		t.NoteTextRewrite()
+	}
 	// A row drawing the view takes one converted again (or the fresh one
 	// of a new revision) that differs only in its Doc, past what sameView
 	// compares: a name in it (a file's uploader, a tab slug), which taut
@@ -318,6 +325,21 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		// conversion: JS's answer of the same bytes as the copy it took
 		// while not ready makes no new conversion, and the row stayed
 		// viewed, its next update drawn late from JS's old copy
+		// An edit of a message the plugins rewrite keeps its view of the
+		// revision before while JS answers, however long (what it masks
+		// never shows, a rewritten author never flashes back: the rows'
+		// trade-off, held through a stalled JS). One the plugins left alone,
+		// held for its old text under plugins that rewrite text (below),
+		// holds for EditHold at most, then draws core's copy of the edit.
+		switch {
+		case ready:
+			r.heldTil = time.Time{}
+		case !r.heldTil.IsZero() && !now.Before(r.heldTil):
+			r.heldTil = time.Time{}
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
+			return
+		}
 		turned := ready && !wasReady
 		if !again && !changed && !turned {
 			return
@@ -348,7 +370,19 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		// change to it still queued for JS): the row draws its new source
 		// until JS's copy of it comes, on every read, not the revision
 		// before. On the read after the update only, a first reaction
-		// showed, went, and came back; a vote's count went N, N-1, N
+		// showed, went, and came back; a vote's count went N, N-1, N.
+		// Unless the plugins rewrite text (one rewrote a message's text:
+		// taut TextRewrites): an edit may bring in what they rewrite (a word
+		// Censorship masks) to a message they left alone, which Slack's
+		// patched selector draws already rewritten in the render after the
+		// edit. Its row draws JS's copy of the revision before, the text it
+		// drew, until JS's copy of the edit comes or EditHold passes. A
+		// patch that rewrites no text (ShowRealUser's sender) holds
+		// nothing: the edit draws in the next frame
+		if changed && t.TextRewrites() {
+			r.viewed, r.vmsg, r.heldTil = true, &mv, now.Add(taut.EditHold)
+			r.recompose()
+		}
 		return
 	}
 	r.viewWait = false

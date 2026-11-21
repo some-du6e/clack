@@ -14,7 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -585,53 +585,44 @@ func TestNotifyNamesTheGroupDMAsSlackDoes(t *testing.T) {
 }
 
 // A group DM whose members users/info never brought (none held after the
-// wait): its toast keeps the sidebar's name when that names people (they
-// were held at the sidebar's snapshot and left the store's cache since),
-// else it reads the handles in its mpdm slug but the viewer's, never the
-// slug itself ("alice--bob--carol-1": the viewer's handle and a counter
-// in it). Slack leaves out every member it can't name ("New message in ").
+// wait) is titled as Slack titles it: getMpimDisplayNameAlphabetical
+// leaves out every member it can't name, and getNotificationTitle reads
+// "New message in " with nothing after it. Never the sidebar's name for
+// it, the handles in its mpdm slug or formatChannelName's
+// "unknown-channel" (none of them Slack's), and no conversations.info for
+// it: its name is its members', the people the toast waited for. Clack
+// titled it from the sidebar's row or the slug (the reviews).
 func TestNotifyNamesTheGroupDMWhoseMembersNeverCame(t *testing.T) {
 	for _, named := range []bool{true, false} {
 		t.Run(map[bool]string{true: "the sidebar named it", false: "the sidebar has its slug"}[named], func(t *testing.T) {
 			a, ca, fs, rec := privNoteAppFS(t)
 			a.data.selfID = fakeslack.SelfID
 			conv, sender := groupDMFixture(t, ca)
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			ca.EnsureUsers(ctx, []string{fakeslack.SelfID}) // the viewer, whom a session holds
-			self, ok := ca.S.RawUser(fakeslack.SelfID)
-			if !ok || self.Name == "" {
-				t.Fatal("the store doesn't hold the viewer")
-			}
-			slug := strings.TrimPrefix(conv.Name, "mpdm-")
 			row := "alex"
 			if !named {
-				row = slug
+				row = strings.TrimPrefix(conv.Name, "mpdm-")
 			}
 			a.data.m.Convs[conv.ID] = &convInfo{ID: conv.ID, Name: row, Kind: "mpim", Members: conv.Members}
+			var mu sync.Mutex
+			lookups := 0
+			fs.SetHook(func(method string, form url.Values) (any, bool) {
+				if method == "conversations.info" && form.Get("channel") == conv.ID {
+					mu.Lock()
+					lookups++
+					mu.Unlock()
+				}
+				return nil, false
+			})
+			t.Cleanup(func() { fs.SetHook(nil) })
 			noteSendHook(t, a, ca, fs, conv.ID, sender, "1762521300.000100", "a synthetic hello", usersInfoAs(nil, 0))
 			n := rec.wait(t, a, 1)
-			names, ok := strings.CutPrefix(n.Title, "New message in ")
-			if !ok || strings.Contains(n.Title, "mpdm-") || strings.Contains(n.Title, slug) {
-				t.Fatalf("titled %q: never the slug %q", n.Title, slug)
+			if n.Title != "New message in " {
+				t.Errorf("titled %q, Slack \"New message in \" (no member it can name)", n.Title)
 			}
-			if named {
-				if names != "alex" {
-					t.Errorf("titled %q, want the sidebar's name: \"New message in alex\"", n.Title)
-				}
-				return
-			}
-			var want []string
-			for _, h := range strings.Split(slug[:strings.LastIndex(slug, "-")], "--") {
-				if h != self.Name {
-					want = append(want, h)
-				}
-			}
-			got := strings.Split(names, ", ")
-			sort.Strings(got)
-			sort.Strings(want)
-			if strings.Join(got, ",") != strings.Join(want, ",") {
-				t.Errorf("titled %q: want the slug's handles but the viewer's (%q), %v", n.Title, self.Name, want)
+			mu.Lock()
+			defer mu.Unlock()
+			if lookups > 0 {
+				t.Errorf("%d conversations.info lookups of the group DM for its title: its name is its members'", lookups)
 			}
 		})
 	}

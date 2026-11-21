@@ -953,9 +953,10 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// a conversation core doesn't know was looked up for this very
 		// message (core onMessage's refreshConv); one it knows without a
 		// name, and the channels the text mentions that nobody named
-		// yet, are looked up now
+		// yet, are looked up now. Not a group DM: its name is its members'
+		// (the people below), and Slack looks nothing else up for it
 		var ids []string
-		if c != nil && !named && c.Kind != "im" && c.Kind != "app" {
+		if c != nil && !named && c.Kind != "im" && c.Kind != "app" && c.Kind != "mpim" {
 			ids = append(ids, ev.Channel)
 		}
 		ids = append(ids, b.noteMentions(ev.Msg.Doc)...)

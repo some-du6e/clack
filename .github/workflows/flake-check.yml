@@ -1801,8 +1801,8 @@ jobs:
   # "Name hidden"), the sender and a DM's partner follow display_real_names,
   # a mention getMemberMentionName or the mentions-real-names rule; a
   # member the viewer hid reads "Hidden user" (no @) and sends no toast;
-  # members users/info never brought keep the sidebar's name or the slug's
-  # handles, never the slug; the title's people come before 100+ mentions.
+  # a group DM whose members users/info never brought reads "New message
+  # in " as Slack's does; the title's people come before 100+ mentions.
   # Dispatch with only=toast-names.
   toast-names:
     if: ${{ !inputs.only || startsWith('toast-names', inputs.only) }}
@@ -2002,7 +2002,9 @@ jobs:
   # viewMsg; a message fetched by id (Activity's hydration) reaches the
   # plugins' messages slice, marked as it lands (no sweep waited for), and
   # a channel's list never draws it as one a plugin injected (a jump to it
-  # pages back). Dispatch with only=views-rewrites.
+  # pages back); an edit bringing a word a plugin masks into a message it
+  # left alone never draws the word, and one under a sender-only patch
+  # draws at once. Dispatch with only=views-rewrites.
   views-rewrites:
     if: ${{ !inputs.only || startsWith('views-rewrites', inputs.only) }}
     runs-on: ubuntu-latest
@@ -2019,8 +2021,8 @@ jobs:
       - name: "views: rewritten views through a reaction while JS is busy (COUNT runs)"
         run: |
           rc=0
-          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages|TestActivityFetchedViewWithoutTheSweep)$' ./internal/ui/views || rc=1
-          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestFetchedMessageStaysOutOfTheList$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages|TestActivityFetchedViewWithoutTheSweep|TestViewsEditBringingAMaskedWordNeverShowsIt|TestViewsEditUnderASenderPatchDrawsAtOnce)$' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestFetchedMessageStaysOutOfTheList|TestEditBringingAMaskedWordNeverShowsIt|TestEditHoldEndsAtEditHold|TestEditUnderASenderPatchDrawsNextFrame)$' ./internal/ui/messages || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
