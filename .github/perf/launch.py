@@ -47,8 +47,9 @@ The launch budget (ci.yml's macos job, flake-check's launch-budget):
   --bounce-ms N      the fastest warm launch, from the launch call (exec
                      included) to its first real frame, within N ms: one
                      bounce of the Dock's launch animation (bounce.sh
-                     measured 700 ms on the runner); --soft-bounce makes it
-                     a warning (the runners' speed varies about 2x)
+                     measured 700 ms on the runner), at the speed of the
+                     fastest runner seen (runner_speed: a runner 3x slower
+                     gets 3x the time); --soft-bounce makes it a warning
   --budget-ms N      the median warm launch's --budget-mark within N ms
 Every warm run must reach real-frame. Any of them missed: exit 1.
 """
@@ -144,6 +145,29 @@ def stop(pid, proc=None):
         pass
 
 
+def quit_app(pid, name):
+    """Quits Clack as a user does (macOS: the quit Apple Event, the Dock's
+    Quit and Cmd+Q's path), so it saves what it saves on quitting: meta.json
+    with the user groups, which load 5 s after boot and which only the 5
+    minute save or quitting writes. A SIGTERM ends it without saving. True
+    once it exited; False: stop() it."""
+    if SYS != "Darwin" or not pid:
+        return False
+    if not alive(pid):  # gone already (the event would launch it again)
+        return True
+    r = subprocess.run(["osascript", "-e", 'tell application id "io.github.some-du6e.clack" to quit'],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        print(f"  {name}: the quit Apple Event failed ({r.returncode}): {r.stderr.strip()[:200]}", flush=True)
+        return False
+    for _ in range(300):
+        if not alive(pid):
+            return True
+        time.sleep(0.1)
+    print(f"  {name}: still running 30 s after the quit Apple Event", flush=True)
+    return False
+
+
 def leftovers(binpath):
     """Clack processes from an earlier run (none expected)."""
     if SYS == "Windows":
@@ -191,7 +215,7 @@ def parse_timeline(text):
     return t
 
 
-def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_secs=0.0, purged=False, shots=(), until=""):
+def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_secs=0.0, purged=False, shots=(), until="", quit=False):
     binpath = binary(a.app)
     leftovers(binpath)
     for f in ("clack.log", "clack.log.1", "clack.log.2"):
@@ -246,7 +270,8 @@ def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_
             print(f"  {name}: no {until!r} in the log after 90 s", flush=True)
         time.sleep(1)  # the rest of what the save writes
     t = parse_timeline(text)
-    stop(t.get("pid") if proc is None else None, proc)
+    if not (quit and quit_app(t.get("pid") if proc is None else proc.pid, name)):
+        stop(t.get("pid") if proc is None else None, proc)
     try:
         with open(log, encoding="utf-8", errors="replace") as f:
             text = f.read()
@@ -337,7 +362,7 @@ def main():
         plugins = seed_plugins(a.library, cfg, a.plugins, a.theme or a.theme_check)
         print(f"{a.label}: plugins {plugins}; config {cfg}", flush=True)
 
-        runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True, until="cache: boot data saved")]
+        runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True, until="cache: boot data saved", quit=True)]
         ab = dict([a.ab.split("=", 1)]) if a.ab else None
         for i in range(a.warm):
             runs.append(one(f"warm{i + 1}", a, cfg, logdir, a.out))
@@ -347,7 +372,7 @@ def main():
             # the bounce budget once more on OVER: seven more warm launches,
             # the fastest of all counts (a runner's slow minute)
             warm = [r for r in runs if re.fullmatch(r"warm\d+", r["name"]) and "real-frame" in r]
-            if warm and min(r["real-frame"] + max(0, r.get("exec", 0)) for r in warm) > a.bounce_ms:
+            if warm and bounce_limit(a, warm)[1] > bounce_limit(a, warm)[2]:
                 print(f"{a.label}: over the bounce budget: {a.warm} warm launches more", flush=True)
                 for i in range(a.warm, 2 * a.warm):
                     runs.append(one(f"warm{i + 1}", a, cfg, logdir, a.out))
@@ -374,6 +399,36 @@ def main():
                   [r for r in runs if r["name"] == "cold" or re.fullmatch(r"(b-)?(warm|purged)\d+", r["name"])])
 
 
+# The runner's own part of a launch, which neither Clack's code nor its
+# data decides: LaunchServices' exec (the launch call to the process start)
+# plus AppKit's finishLaunching (will-finish-launching to launched). The
+# macOS runners' speed varies 3-4x from run to run (two VMs a host), and
+# all of a launch slows with it, macOS's part and Clack's alike: on the
+# fastest runner seen (ci's macos job on 9d20140f) the fastest warm
+# launch's part was 71 ms and its client showed 225 ms after the launch
+# call; on slow runners 202-232 ms and 723-787 ms. The bounce budget is one
+# bounce at that runner's speed: here, one bounce times the fastest part
+# over 71 ms (never less than one bounce).
+REF_RUNNER_MS = 71
+
+
+def runner_speed(runs):
+    """How much slower this runner launches an app than the fastest one seen
+    (1.0 off macOS, or when no launch logged AppKit's marks)."""
+    parts = [max(0, r.get("exec", 0)) + r["launched"] - r["will-finish-launching"]
+             for r in runs if "launched" in r and "will-finish-launching" in r]
+    if SYS != "Darwin" or not parts:
+        return 1.0, None
+    return max(1.0, min(parts) / REF_RUNNER_MS), min(parts)
+
+
+def bounce_limit(a, warm):
+    """The fastest warm launch (launch call to client), and its budget."""
+    total = [r["real-frame"] + max(0, r.get("exec", 0)) for r in warm]
+    speed, part = runner_speed(warm)
+    return total, min(total), round(a.bounce_ms * speed), speed, part
+
+
 def budget(a, warm, launches=()):
     """The launch budget's checks (see the top); 1 when one failed."""
     if not (a.budget_ms or a.bounce_ms or a.placeholder_ms is not None or a.theme_check):
@@ -398,13 +453,15 @@ def budget(a, warm, launches=()):
         print(f"::error::{a.label}: {len(warm) - len(reached)} of {len(warm)} warm launches never showed the client (no real-frame)")
         return 1
     if a.bounce_ms:
-        total = [r["real-frame"] + max(0, r.get("exec", 0)) for r in reached]
-        best = min(total)
-        ok = best <= a.bounce_ms
+        total, best, limit, speed, part = bounce_limit(a, reached)
+        ok = best <= limit
         verdict = "ok" if ok else ("SLOW" if a.soft_bounce else "OVER")
+        pace = (f"; this runner's own launch work (exec + AppKit's finishLaunching) took {part} ms against {REF_RUNNER_MS} ms "
+                f"on the fastest runner seen: x{speed:.2f}, so {best / speed:.0f} ms at that speed, budget {limit} ms here"
+                if part is not None and speed > 1 else "")
         lines.append(f"{verdict}: the fastest warm launch showed the client {best} ms after the launch call "
-                     f"(budget {a.bounce_ms} ms, one Dock bounce; all: {total})"
-                     + (" (report only here: the runners' speed varies about 2x)" if a.soft_bounce and not ok else ""))
+                     f"(budget {a.bounce_ms} ms, one Dock bounce, at the fastest runner's speed{pace}; all: {total})"
+                     + (" (report only here)" if a.soft_bounce and not ok else ""))
         rc |= 0 if ok or a.soft_bounce else 1
     if a.placeholder_ms is not None:
         held = [r["real-frame"] - r["first-frame"] for r in reached]

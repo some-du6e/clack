@@ -20,11 +20,14 @@
 #     (16 ms) before the client: its first frame is the client from the
 #     cache, as Slack renders from its persisted store
 #   - the fastest warm launch shows the client within one bounce of the
-#     launch call (LaunchServices' exec included): the fastest, as the
-#     runners' speed varies about 2x from run to run (two VMs a host).
-#     Over it, seven more warm launches run once (the fastest of all
-#     counts). LAUNCH_SOFT_BOUNCE=1 (ci's macos job) makes it a warning: a
-#     slow runner must not turn an unrelated branch red; flake-check's
+#     launch call (LaunchServices' exec included), at the speed of the
+#     fastest runner seen: the runners' speed varies 3-4x from run to run
+#     (two VMs a host), macOS's own part of a launch as much as Clack's, so
+#     a runner whose exec + AppKit finishLaunching takes 3x the fastest
+#     runner's 71 ms gets 3x the bounce (launch.py's runner_speed). Over it,
+#     seven more warm launches run once (the fastest of all counts).
+#     LAUNCH_SOFT_BOUNCE=1 (ci's macos job) makes it a warning: a slow
+#     runner must not turn an unrelated branch red; flake-check's
 #     launch-budget job keeps it a failure.
 #
 # usage: launch-budget.sh <workdir>

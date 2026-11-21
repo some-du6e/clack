@@ -169,6 +169,8 @@ type Store struct {
 	// cachePending: LoadCacheBase installed meta.json's first part and its
 	// rest hasn't run: SaveCache writes nothing meanwhile
 	cachePending atomic.Bool
+	// emojiPartial: the emoji map is the boot data's few only
+	emojiPartial atomic.Bool
 
 	missMu     sync.Mutex
 	missSeen   map[string]bool
@@ -2305,8 +2307,10 @@ func (s *Store) installCacheBase(d *diskCache, users []*slack.User) {
 func (s *Store) installCacheRest(d *diskCache) {
 	if d.EmojiPacked != "" {
 		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
+		s.emojiPartial.Store(false)
 	} else if len(d.Emoji) > 0 {
 		s.CustomEmoji.Set(d.Emoji)
+		s.emojiPartial.Store(false)
 	}
 	if d.EmojiAt > 0 {
 		s.emojiAtMu.Lock()
@@ -2322,6 +2326,7 @@ func (s *Store) installCacheRest(d *diskCache) {
 // disk cache stores it (see diskCache.EmojiPacked), and stamps its age.
 func (s *Store) SetEmojiList(m map[string]string) {
 	s.CustomEmoji.Set(unpackEmoji(packEmoji(m)))
+	s.emojiPartial.Store(false)
 	s.emojiAtMu.Lock()
 	s.emojiAt = time.Now()
 	s.emojiAtMu.Unlock()
@@ -2332,6 +2337,7 @@ func (s *Store) SetEmojiList(m map[string]string) {
 // share the one string.
 func (s *Store) SetEmojiPacked(p string) {
 	s.CustomEmoji.Set(unpackEmoji(p))
+	s.emojiPartial.Store(false)
 	s.emojiAtMu.Lock()
 	s.emojiAt = time.Now()
 	s.emojiAtMu.Unlock()

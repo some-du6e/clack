@@ -174,8 +174,17 @@ func (s *Store) InstallBootEmoji(m map[string]string) {
 	for k, v := range m {
 		cp[k] = v
 	}
-	s.CustomEmoji.Set(cp)
+	// partial before the map: a full map installed in between clears it
+	// again (installCacheRest, SetEmojiPacked)
+	s.emojiPartial.Store(true)
+	if !s.CustomEmoji.SetIfEmpty(cp) {
+		s.emojiPartial.Store(false)
+	}
 }
+
+// EmojiPartial reports whether the emoji map is only the boot data's few
+// (InstallBootEmoji): meta.json had none, so emoji.list is due.
+func (s *Store) EmojiPartial() bool { return s.emojiPartial.Load() }
 
 // BootEmoji is the custom emoji map's entries for names (":" trimmed),
 // with each alias's targets: the boot data's few (BootData.Emoji).
