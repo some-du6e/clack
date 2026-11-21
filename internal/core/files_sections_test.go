@@ -203,11 +203,11 @@ func TestFilesViewOrderKeys(t *testing.T) {
 
 // The browser's fileType filter and sort reach search.modules.files.
 func TestFilesViewSearchParams(t *testing.T) {
-	p := filesParams(FilesOpts{Types: []string{"quip", "images"}, Sort: "timestamp", Page: 2}, "U1")
+	p := filesParams(FilesOpts{Types: []string{"quip", "images"}, Sort: "timestamp", Page: 2}, "U1", nil)
 	if q := p.Get("query"); q != "type:quip type:images" || p.Get("sort") != "timestamp" || p.Get("page") != "2" {
 		t.Errorf("params %v", p)
 	}
-	if p := filesParams(FilesOpts{Query: "plan"}, "U1"); p.Get("sort") != "score" || !strings.HasPrefix(p.Get("query"), fileTypesAll) {
+	if p := filesParams(FilesOpts{Query: "plan"}, "U1", nil); p.Get("sort") != "score" || p.Get("query") != "plan "+fileTypesAll {
 		t.Errorf("search params %v", p)
 	}
 }

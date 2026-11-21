@@ -61,7 +61,7 @@ func TestFilesParamsAndParsing(t *testing.T) {
 		mine                string
 	}{
 		{FilesOpts{Kind: "canvases"}, "type:quip", "last_engaged", "0", "false"},
-		{FilesOpts{Kind: "lists", Query: " roadmap "}, "type:lists roadmap", "score", "0", "false"},
+		{FilesOpts{Kind: "lists", Query: " roadmap "}, "roadmap type:lists", "score", "0", "false"},
 		{FilesOpts{Mine: true}, fileTypesOwned + " creator:<@USELF>", "timestamp", "0", "false"},
 		{FilesOpts{Kind: "canvases", Mine: true, Page: 3}, "type:quip creator:<@USELF>", "timestamp", "0", "false"},
 		{FilesOpts{SharedWithMe: true}, fileTypesOwned, "score", "1", "true"},

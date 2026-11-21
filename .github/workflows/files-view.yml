@@ -60,6 +60,11 @@ on:
       - "internal/slack/file_is_image.go"
       - "internal/core/file_is_image_test.go"
       - "internal/ui/views/files_unthumbed_test.go"
+      - "internal/ui/views/files_filters_test.go"
+      - "internal/ui/popups/files_filters.go"
+      - "internal/ui/popups/usergroup_select.go"
+      - "internal/core/browse.go"
+      - "internal/core/files_filters_test.go"
       - ".github/workflows/files-view.yml"
   workflow_dispatch:
 
