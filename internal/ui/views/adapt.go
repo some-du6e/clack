@@ -396,6 +396,7 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 		Channel: m.Channel, TS: m.TS, Truncate: true}
 	if live {
 		o.Elements = b.liveElements(m)
+		o.Media = b.mediaFor(orig) // a lone video plays in place (media.go)
 	}
 	return b.richDoc(gtx, key, ver, m.Doc, o, maxLines)
 }

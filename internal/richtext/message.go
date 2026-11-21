@@ -197,13 +197,21 @@ func convertFile(f *slack.File) *File {
 			out.Still = st
 		}
 		out.Deanimate = f.Deanimate != ""
-	case strings.HasPrefix(mime, "video/"):
+	case slack.FileIsPlayableVideo(f):
+		// fileIsPlayableVideo; any other video/* is a plain file card
 		out.IsVideo = true
 		out.URL = SafeURL(firstNonEmpty(f.MP4, f.URLPrivate))
 		// FileGalleryVideoFile: original_w || thumb_video_w for the box,
-		// thumb_video_w || original_w for the poster's own size
-		out.Thumb = image(f.ThumbVideo, f.Name, firstPos(f.ThumbVideoW, f.OriginalW), firstPos(f.ThumbVideoH, f.OriginalH))
+		// thumb_video_w || original_w for the poster's own size; the poster
+		// is thumb_video_ts ?? thumb_video (an https URL only)
+		out.Thumb = image(videoPoster(f), f.Name, firstPos(f.ThumbVideoW, f.OriginalW), firstPos(f.ThumbVideoH, f.OriginalH))
 		out.OrigW, out.OrigH = firstPos(f.OriginalW, f.ThumbVideoW), firstPos(f.OriginalH, f.ThumbVideoH)
+		if p := f.MediaProgress; p != nil {
+			out.MediaOffsetMS, out.MediaWatched = p.OffsetMS, p.MediaWatched
+		}
+		if f.IsSalesforceFile {
+			out.Salesforce = true
+		}
 	case strings.HasPrefix(mime, "audio/") || f.Subtype == "slack_audio":
 		out.IsAudio = true
 		if f.MP4 != "" {

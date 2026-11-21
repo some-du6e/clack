@@ -40,6 +40,30 @@ func (r *row) elements(h Host) *blockkit.Message {
 	return r.bk.el
 }
 
+// withMedia hands the row's video players (MediaHost) to the body's
+// richview: a lone playable video plays in place.
+func (r *row) withMedia(rc *rowCtx) {
+	mh, ok := rc.h.(MediaHost)
+	if !ok || r.rv == nil {
+		return
+	}
+	pane := "channel"
+	if rc.thread {
+		pane = "thread"
+	}
+	if rc.list != nil && rc.list.container != "" {
+		pane += ":" + rc.list.container
+	}
+	k := pane + "\x00" + r.m.Channel + "\x00" + r.m.TS
+	if r.media == nil || r.mediaKey != k {
+		r.media, r.mediaKey = mh.MessageMedia(pane, r.m.Channel, r.m.TS, &r.handler), k
+	}
+	if o := r.rv.Options(); o.Media != r.media {
+		o.Media = r.media
+		r.rv.SetOptions(o)
+	}
+}
+
 // withElements hands the element host to the body's richview.
 func (r *row) withElements(h Host) {
 	el := r.elements(h)

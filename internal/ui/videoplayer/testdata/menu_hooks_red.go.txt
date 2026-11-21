@@ -1,0 +1,6 @@
+package videoplayer
+
+// On the round-3 head (0cbe7e63) the overlay's controls showed while it
+// was hovered, scrubbed or its volume dragged: hot was t.hover || t.scrub
+// || t.vol, and TileState's Hover is t.hover.
+func tileActive(st State) bool { return st.Hover }

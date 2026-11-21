@@ -277,6 +277,9 @@ var experimentReads = map[string][]string{
 	"channel_ia_header_refinements": on,
 	// bookmark folders' add menu (views/folder_tab_more.go: THeG, sUmX)
 	"unified_file_picker": on, "surfaces_skills_unipicker": on,
+	// the inline video player: a file titled "loop" loops (videoplayer, fIJO);
+	// clips_pip: the mini player (videoplayer/pip.go, yF7D, YPBt)
+	"looping_video_option": on, "clips_pip": on,
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	// the Activity badge's entry types (activity_badges.go)

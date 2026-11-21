@@ -108,6 +108,14 @@ func (p *ProfileCard) loadApp() {
 	if card, ok := c.CachedAppCard(p.id, p.bot); ok {
 		p.app.card = &card
 	}
+	if u, ok := c.User(p.id); ok && p.app.card == nil && p.bot == "" && u.BotID == "" && u.AppID == "" {
+		// a non-human member with no bot or app (the Slack system user,
+		// USLACK): useProfileHoverApp (MB9A) finds no app and isHuman is
+		// false, so ProfileHoverCard (JM3T) renders nothing, not even
+		// AppHoverCard's loading state (AppCardOf: ErrNotAnApp)
+		p.app.failed = true
+		return
+	}
 	uid, bid := p.id, p.bot
 	type res struct {
 		card       core.AppCard

@@ -62,6 +62,10 @@ type row struct {
 	ts  string
 	rev uint32
 	bk  bkState // live Block Kit elements (blockkit.go)
+	// media is the row's video players (MediaHost), for mediaKey's list,
+	// conversation and message
+	media    richview.Media
+	mediaKey string
 	// bkView is the row's drawing of its message's elements
 	// (blockkit.InView): its plans' toggles and height transitions are
 	// its own, apart from the same message elsewhere (a thread's root in
@@ -454,7 +458,7 @@ func (r *row) setDoc() {
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
 	o := richview.Options{Edited: displaysEdited(&r.m), Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
-		FindFocused: r.findFocused}
+		FindFocused: r.findFocused, Media: r.media}
 	if o.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 		o.EditedBy = r.editedBy()
@@ -1526,7 +1530,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 
 	// body (or the inline edit composer)
 	r.handler.h, r.handler.m = rc.h, m
-	r.handler.anchor = rc.origin
+	r.handler.anchor, r.handler.thread = rc.origin, rc.thread
 	var body layout.Dimensions
 	if r.edit != nil {
 		ed := r.edit
@@ -1855,6 +1859,7 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 		return layout.Dimensions{}
 	}
 	r.withElementsFor(rc.h, msg)
+	r.withMedia(rc)
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.rv.Layout(gtx, rc.st, &r.handler) })
 	}

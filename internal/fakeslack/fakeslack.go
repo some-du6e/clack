@@ -361,6 +361,9 @@ type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
+	framesMu sync.Mutex
+	frames   []string // what clients sent the realtime gateway (SocketFrames)
+
 	actBadgeMu sync.Mutex
 	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
 	chanBadges map[string]int // client.counts channel_badges (SetChannelBadges)
@@ -1416,6 +1419,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back
 	}
+	if r, ok := out.(Reply); ok {
+		r.write(w)
+		return
+	}
 	b, isBytes := out.([]byte)
 	if !isBytes {
 		var buf bytes.Buffer
@@ -1429,6 +1436,26 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		s.noteAnswer(method, form, answerForeign, m)
 	}
 	w.Write(b)
+}
+
+// Reply is an answer a hook (SetHook) gives as written: its HTTP status
+// (0: 200), headers over the usual Content-Type, and body (the failures a
+// client must hand on whole: a 429 with Retry-After, a 5xx page, an answer
+// that isn't JSON, an {"ok":false} with details).
+type Reply struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+func (r Reply) write(w http.ResponseWriter) {
+	for k, v := range r.Header {
+		w.Header()[k] = v
+	}
+	if r.Status != 0 {
+		w.WriteHeader(r.Status)
+	}
+	_, _ = w.Write(r.Body)
 }
 
 func ok(kv ...any) map[string]any {
@@ -1675,6 +1702,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		s.prefsMu.Unlock()
 		return ok("prefs", m)
+	case "media.progress.update": // the videos' saveMediaProgress (gnNF): accepted
+		return map[string]any{"ok": true}
 	case "users.prefs.set":
 		if n := f.Get("name"); n != "" {
 			s.setPref(n, f.Get("value"))
@@ -2170,10 +2199,31 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.dropSocket(c)
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
-		if _, _, err := c.Read(ctx); err != nil {
+		_, b, err := c.Read(ctx)
+		if err != nil {
 			return
 		}
+		s.noteFrame(b)
 	}
+}
+
+// noteFrame keeps what a client sent the gateway (SocketFrames), the last
+// 500 frames.
+func (s *Server) noteFrame(b []byte) {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	s.frames = append(s.frames, string(b))
+	if len(s.frames) > 500 {
+		s.frames = s.frames[len(s.frames)-500:]
+	}
+}
+
+// SocketFrames is what clients sent the realtime gateway, oldest first
+// (presence_sub, typing, …; the last 500).
+func (s *Server) SocketFrames() []string {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	return append([]string(nil), s.frames...)
 }
 
 // WriteCreds writes the fake's credentials to path (for running the real
