@@ -662,9 +662,13 @@ func (v *Activity) watchItems() {
 }
 
 // actConvIDs reports whether ids hold a conversation's (a "names" event
-// after a channel lookup; the member fetcher's carry users).
+// after a channel lookup; the member fetcher's carry users, a message
+// slug's answer "channel/ts": the slug reads it as it draws).
 func actConvIDs(ids []string) bool {
 	for _, id := range ids {
+		if core.IsMessageKey(id) {
+			continue
+		}
 		if strings.HasPrefix(id, "C") || strings.HasPrefix(id, "G") || strings.HasPrefix(id, "D") {
 			return true
 		}

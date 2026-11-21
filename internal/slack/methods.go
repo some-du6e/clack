@@ -152,10 +152,17 @@ type PostOpts struct {
 	Blocks                  json.RawMessage
 	Attachments             json.RawMessage // e.g. a shared section's [{blocks: [channel_section]}]
 	ClientMsgID             string
+	// BlocksOnly posts the blocks as Slack's sendMessage does for a
+	// message it built from a Delta (Run task now): no text, link_names
+	// or unfurl_links; the server makes the text from the blocks
+	BlocksOnly bool
 }
 
 func (c *Client) Post(ctx context.Context, o PostOpts) (*Message, error) {
 	p := url.Values{"channel": {o.Channel}, "text": {o.Text}, "link_names": {"true"}, "unfurl_links": {"true"}}
+	if o.BlocksOnly && len(o.Blocks) > 0 {
+		p = url.Values{"channel": {o.Channel}}
+	}
 	if o.ThreadTS != "" {
 		p.Set("thread_ts", o.ThreadTS)
 		if o.Broadcast {

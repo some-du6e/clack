@@ -1,0 +1,25 @@
+package ui
+
+// The stand-in for video_pip_hooks_test.go on ui, which has no mini
+// player: a playing video scrolled under 10% visible or left behind
+// pauses, and the media viewer has no Dock to corner.
+
+import (
+	"image"
+	"time"
+)
+
+type pipView struct {
+	rect     image.Rectangle
+	controls []image.Rectangle
+	corner   string
+	playing  bool
+	elapsed  time.Duration
+	trigger  string
+}
+
+func pipShown(*perfEnv) (pipView, bool) { return pipView{}, false }
+
+func inlineInPip(*perfEnv, string) bool { return false }
+
+func viewerDock(*perfEnv) image.Rectangle { return image.Rectangle{} }

@@ -79,6 +79,11 @@ type Message struct {
 	// AssistantThread is an assistant thread root's assistant_app_thread
 	// (nil for other messages).
 	AssistantThread *slack.MessageAssistantThread
+	// Stopped is an agent reply whose stream the person stopped
+	// (ai_context.result_status "stopped_by_user": Slack's StoppedLabel);
+	// StoppedBy is ai_context.stopped_by_user_id.
+	Stopped   bool
+	StoppedBy string
 	// ThreadLastRead is a followed thread's last read reply (root
 	// messages; the subscription's last_read from conversations.replies,
 	// thread_marked and subscriptions.thread.mark): Slack's
@@ -436,6 +441,9 @@ type SendOpts struct {
 	// Attachments go out as chat.postMessage attachments (prepareAndSendMessage's
 	// channelSectionBlocks: [{blocks: [channel_section]}]).
 	Attachments json.RawMessage
+	// BlocksOnly posts Blocks alone (slack.PostOpts.BlocksOnly); Text is
+	// then the optimistic local copy's only.
+	BlocksOnly bool
 	// ClientMsgID is the message's client_msg_id, as sendMessage's
 	// caller may pass one (`client_msg_id || uuid()`); "" makes one. The
 	// composer passes its own so its message list can find the message

@@ -169,7 +169,7 @@ func TestFilesClickOpensViewer(t *testing.T) {
 	e.until("the thread's files", 15*time.Second, func() bool { return len(e.threadFiles(ch, root)) >= 2 })
 	e.settle(300 * time.Millisecond)
 	replies := e.fs.FilesReplies(root)
-	if len(replies) != 3 {
+	if len(replies) != 4 {
 		t.Fatalf("thread fixture: %d messages", len(replies))
 	}
 	c := e.a.data.core

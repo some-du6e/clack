@@ -224,6 +224,11 @@ jobs:
       - name: Gio pointer state reset (vendored gioui.org/io/input, gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture
+      # Gio patch 53: a tag's area in the window, and what of it its clip
+      # areas show (the video tiles' share of their list)
+      - name: Gio area bounds (vendored gioui.org/io/input)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackAreaBounds$' gioui.org/io/input
       # Gio patches 37-44: a rounded clip's interior and a stroked one's
       # hole, ops split around them, a clip path's stencil regions, layers
       # of one depth on one atlas page, the sub-pixel path cache key, GL's
@@ -254,9 +259,13 @@ jobs:
       # it (an Invalidate asks nothing), and a frame drawn again keeps the
       # handlers' filters and the key log (ui's quiet frames); the X11
       # window's and the real GPU's are below, under Xvfb
-      - name: Gio live images and what a frame was asked for (vendored gioui.org/op/paint, gpu, app)
+      # Gio patch 51: an external image (a texture something else made, as
+      # a video decoder's frame) asks once per paint shown, wraps once per
+      # key, draws its still without one (the renderer's uploads; the real
+      # devices' pixels are windows-applog's and macos's)
+      - name: Gio live and external images and what a frame was asked for (vendored gioui.org/op/paint, gpu, app)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked$|TestReplayKeeps' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
+        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestDrawOpsExternal|TestFrameEventAsked$|TestReplayKeeps' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
       # Gio patch 22: what each point of a window with a hidden title bar
       # is (the caption buttons, the top band, the caption, the client);
       # the Windows codes on real windows are windows-applog's. Patch 24:
@@ -302,8 +311,9 @@ jobs:
           # Gio patches 37-44 in pixels: the state caches change none, shared
           # layer pages and splits under a transform none, a cached path at
           # a new sub-pixel offset is built there, atlas pages shrink and go;
-          # patch 46: a partial frame is the whole frame's pixels, bit for bit
-          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
+          # patch 46: a partial frame is the whole frame's pixels, bit for bit;
+          # patch 51: external images (TestClackExternal*), a new key's damage
+          xvfb-run -a go test -count=1 -v -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -468,8 +478,10 @@ jobs:
       # pixel, the window's drawing held to the old way (theme's
       # TestFrameCostPixels), shared layer pages, sub-pixel paths, atlas
       # pages; patch 46: partial frames are the whole frame's pixels, the
-      # frame texture's copy included (TestClackPartial*); linux-gio runs
-      # them on llvmpipe, macos on Metal
+      # frame texture's copy included (TestClackPartial*); patch 51: a
+      # shader resource view the device made, drawn as an external image,
+      # gives an ImageOp's pixels, wrapped once per key, a new key damaging
+      # only its op; linux-gio runs them on llvmpipe, macos on Metal
       - name: Gio frame cost on Direct3D 11 (WARP)
         if: ${{ !cancelled() }}
         shell: bash
@@ -477,7 +489,7 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 25m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       # Go's monotonic clock counts sleep on Windows; awake reads
       # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
@@ -1114,6 +1126,25 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_REAL_WINDOW_TESTS: "1"
         run: go test -count=1 -v -timeout 10m -run '^(TestRealWindowQuietFrames|TestRealWindowCaretCost)$' ./internal/ui
+      # Video playback's backend (internal/media/mf): the fixtures played
+      # by Media Foundation into a headless Gio window (Direct3D 11 on the
+      # Basic Render Driver), with cgo, which the steps above leave off
+      - name: video playback (Media Foundation, internal/media/...)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count=1 -v -timeout 15m ./internal/media/...
+      # The inline player on the real window: Media Foundation plays
+      # #files-gallery's video in App.Run's own window (quiet frames, its
+      # partial frames inside the tile, nothing while paused)
+      - name: the inline video player on the real window (TestRealWindowVideoFrames, Media Foundation)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "1"
+          CLACK_MEDIA_TESTS: "1"
+          CLACK_REAL_WINDOW_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run '^TestRealWindowVideoFrames$' ./internal/ui
       # patch 46's memory on Karim's window (a 1918x1080 client area at 1x,
       # his light custom theme, a thread open), with partial frames and
       # without, a process each, three pairs: the pairs' median difference
@@ -1243,13 +1274,15 @@ jobs:
       # change no pixel, the window's drawing held to the old way, shared
       # layer pages, sub-pixel paths, atlas pages; patch 46: partial frames
       # are the whole frame's pixels, the frame texture's draw into the
-      # target included (TestClackPartial*)
+      # target included (TestClackPartial*); patch 51: an MTLTexture the
+      # device made, drawn as an external image, gives an ImageOp's
+      # pixels, retained once per key, a new key damaging only its op
       - name: Gio frame cost on Metal
         if: ${{ !cancelled() }}
         env:
           CLACK_PIXEL_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackExternalImage|TestClackExternalKeys|TestClackExternalPartial|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
           go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
       - name: macOS freeze guards (no blocking work on the AppKit main thread)
         run: |
@@ -1455,6 +1488,13 @@ jobs:
       # Then TestIdleFrames headless, as linux-idle runs it, and the quiet
       # frames of an animated emoji on the real window
       # (TestRealWindowQuietFrames, Gio patch 35).
+      # Video playback's backend (internal/media/avf): the fixtures played
+      # by AVFoundation into a headless Gio window on Metal
+      - name: video playback (AVFoundation, internal/media/...)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count=1 -v -timeout 15m ./internal/media/...
       - name: idle on the real window (TestMacIdleCPU), idle frames (TestIdleFrames), quiet frames (TestRealWindowQuietFrames)
         if: ${{ !cancelled() }}
         run: |
@@ -1474,6 +1514,8 @@ jobs:
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowQuietFrames$' || rc=1
           # Gio patch 46 on Metal: a caret's blink is a partial frame
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' || rc=1
+          # the inline video player (AVFoundation) on the real window
+          CLACK_MACOS_WINDOW_TESTS=1 CLACK_MEDIA_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowVideoFrames$' || rc=1
           exit $rc
       - name: build
         if: ${{ !cancelled() }}
