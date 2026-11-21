@@ -42,8 +42,9 @@ def med(xs):
 
 
 def load(d):
-    """Parses a side dir: go benchmarks, process runs, binary size."""
-    bench = {}
+    """Parses a side dir: go benchmarks (a benchmark run more than once is
+    each metric's median of its runs), process runs, binary size."""
+    reps = {}
     for line in read(d, "bench.txt").splitlines():
         if not line.startswith("Benchmark"):
             continue
@@ -56,7 +57,9 @@ def load(d):
             except ValueError:
                 pass
         if vals:
-            bench[name] = vals
+            reps.setdefault(name, []).append(vals)
+    bench = {name: {k: statistics.median([v[k] for v in vs if k in v]) for k in {k for v in vs for k in v}}
+             for name, vs in reps.items()}
     proc = []
     for line in read(d, "process/process.tsv").splitlines():
         f = line.split("\t")
