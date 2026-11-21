@@ -417,36 +417,47 @@ func TestSpellcheckPrefOff(t *testing.T) {
 // would never return, so the frames must finish within 30 s; one that
 // waited a while and gave up would only be slow. Wall time on a shared
 // runner can't bound that (a loaded one made 48 ms of layout alone,
-// α.119's release test job, run 44883236514), so the frames with answers
-// out are measured against the same run's frames with every answer in:
-// their median within 4× the other's, plus 10 ms. (Frames waiting up to
-// 250 ms each passed the 30 s alone: ci-speed-2.)
+// α.119's release test job, run 44883236514), so typing with the answers
+// out is measured against the same run's typing with every answer in: its
+// median frame within 4× the other's plus 10 ms. (Frames that waited up
+// to 250 ms each passed the 30 s alone: ci-speed-2.)
 func TestSpellcheckNeverBlocksFrame(t *testing.T) {
 	e := newSpellEnv(t, 50*time.Millisecond)
-	// every answer in: correct words, all checked
-	free := NewDoc()
-	free.Insert(0, strings.Repeat("the quick fox jumps over the dog say hi ", 6), Attr{})
-	e.ed.SetDoc(free)
-	e.settle(1500 * time.Millisecond)
-	n := len(e.took)
-	for i := 0; i < 80; i++ {
-		e.frame()
+	const in, out = " say hi to the dog", " sya ih ot teh dgo" // typed, the same shape
+	text := func(s string) *Doc {
+		d := NewDoc()
+		d.Insert(0, s, Attr{})
+		return d
 	}
-	in := medianTook(e.took[n:])
+	// every answer in: the text's words, and each prefix of in's
+	known := strings.Repeat("the quick world jumps over the dog ", 6)
+	var prefixes []string
+	for _, w := range strings.Fields(in) {
+		for i := 1; i <= len(w); i++ {
+			prefixes = append(prefixes, w[:i])
+		}
+	}
+	e.ed.SetDoc(text(known + strings.Join(prefixes, " ")))
+	e.settle(1500 * time.Millisecond)
+	e.ed.SetDoc(text(known))
+	e.settle(100 * time.Millisecond)
+	n := len(e.took)
+	e.typ(in)
+	answered := medianTook(e.took[n:])
 	// every answer out: new words, the engine answering nothing
 	open := e.eng.hold()
 	t.Cleanup(open) // before the service stops (cleanups run last first)
-	d := NewDoc()
-	d.Insert(0, strings.Repeat("teh quick wrold jumps ovr the dog ", 6), Attr{})
-	e.ed.SetDoc(d)
-	n = len(e.took)
+	e.ed.SetDoc(text(strings.Repeat("teh quick wrold jumps oevr the dog ", 6)))
 	framed := make(chan struct{})
+	var held time.Duration
 	go func() { // the frames, while the engine can't answer
 		defer close(framed)
 		for i := 0; i < 80; i++ {
 			e.frame()
 		}
-		e.typ(" more wrods hrere")
+		n := len(e.took)
+		e.typ(out)
+		held = medianTook(e.took[n:])
 	}()
 	select {
 	case <-framed:
@@ -455,15 +466,14 @@ func TestSpellcheckNeverBlocksFrame(t *testing.T) {
 		<-framed
 		t.Fatal("frames waited on the spell engine: they finished only once it could answer")
 	}
-	out := medianTook(e.took[n : n+80])
 	open()
 	e.settle(1500 * time.Millisecond)
 	if !slices.Contains(e.bad(), "wrold") {
 		t.Errorf("the slow answers never arrived: %q", e.bad())
 	}
-	t.Logf("median frame %v with every answer in, %v with them out; the slowest %v", in, out, e.slow)
-	if lim := 4*in + 10*time.Millisecond; out > lim {
-		t.Errorf("the frames with answers out took a median %v, over 4× the %v of those with every answer in plus 10 ms (%v): they wait on the engine", out, in, lim)
+	t.Logf("typing's median frame %v with every answer in, %v with them out; the slowest frame %v", answered, held, e.slow)
+	if lim := 4*answered + 10*time.Millisecond; held > lim {
+		t.Errorf("typing with the answers out took a median %v a frame, over 4× the %v with every answer in plus 10 ms (%v): frames wait on the engine", held, answered, lim)
 	}
 }
 
