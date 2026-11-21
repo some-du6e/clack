@@ -94,6 +94,16 @@ type playBuffer struct {
 	local     []int16
 	localPos  int
 	localLoop bool
+	// sounds are the app's one-shot sounds on your speakers (Test
+	// Speaker), each its own voice as each of Slack's sounds is its own
+	// <audio> element (client-boot Ofe8: one cached element per URL), so
+	// they play over the music and one played again starts over
+	sounds map[string]*soundVoice
+}
+
+type soundVoice struct {
+	pcm []int16
+	pos int
 }
 
 func (p *playBuffer) push(pcm []int16) {
@@ -139,7 +149,39 @@ func (p *playBuffer) pull(out []int16) {
 		out[i] = int16(min(max(v, -32768), 32767))
 		p.localPos++
 	}
+	for name, v := range p.sounds {
+		n := min(len(out), len(v.pcm)-v.pos)
+		for i := 0; i < n; i++ {
+			s := int32(out[i]) + int32(v.pcm[v.pos+i])
+			out[i] = int16(min(max(s, -32768), 32767))
+		}
+		if v.pos += n; v.pos >= len(v.pcm) {
+			delete(p.sounds, name)
+		}
+	}
 	p.mu.Unlock()
+}
+
+// playSound starts name's sound (interleaved stereo, 48 kHz) on your
+// speakers from its start, whatever it was doing (Ofe8's ZH:
+// currentTime = 0, then play), beside the other sounds; nil stops it.
+func (p *playBuffer) playSound(name string, pcm []int16) {
+	p.mu.Lock()
+	if len(pcm) == 0 {
+		delete(p.sounds, name)
+	} else {
+		if p.sounds == nil {
+			p.sounds = map[string]*soundVoice{}
+		}
+		p.sounds[name] = &soundVoice{pcm: pcm}
+	}
+	p.mu.Unlock()
+}
+
+func (p *playBuffer) soundPlaying(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sounds[name] != nil
 }
 
 // playLocal mixes pcm (interleaved stereo, 48 kHz) into the speakers,
@@ -203,16 +245,24 @@ func level(pcm []int16) float64 {
 	return math.Sqrt(s / float64(len(pcm)))
 }
 
+// opusEnc and opusDec run every call into the transpiled libopus on the
+// codec goroutine (codecstack.go): its C keeps Go stack addresses as
+// uintptr, and on any other goroutine a stack that grows mid-call turns
+// the frame into noise.
+
 type opusEnc struct{ e *opus.Encoder }
 
-func newOpusEnc() (*opusEnc, error) {
-	e, err := opus.NewEncoder(sampleRate, 1, opus.ApplicationVoIP)
-	if err != nil {
-		return nil, err
-	}
-	_ = e.SetBitrate(32000)
-	_ = e.SetComplexity(5)
-	return &opusEnc{e: e}, nil
+func newOpusEnc() (enc *opusEnc, err error) {
+	codecCall(func() {
+		var e *opus.Encoder
+		if e, err = opus.NewEncoder(sampleRate, 1, opus.ApplicationVoIP); err != nil {
+			return
+		}
+		_ = e.SetBitrate(32000)
+		_ = e.SetComplexity(5)
+		enc = &opusEnc{e: e}
+	})
+	return enc, err
 }
 
 func (o *opusEnc) encode(pcm []int16, out []byte) (pkt []byte, err error) {
@@ -226,7 +276,8 @@ func (o *opusEnc) encode(pcm []int16, out []byte) (pkt []byte, err error) {
 			}
 		}
 	}()
-	n, err := o.e.Encode(pcm, frameSamples, out[:cap(out)])
+	var n int
+	codecCall(func() { n, err = o.e.Encode(pcm, frameSamples, out[:cap(out)]) })
 	if err != nil {
 		return nil, err
 	}
@@ -238,12 +289,15 @@ type opusDec struct {
 	pcm []int16
 }
 
-func newOpusDec() (*opusDec, error) {
-	d, err := opus.NewDecoder(sampleRate, playChannels)
-	if err != nil {
-		return nil, err
-	}
-	return &opusDec{d: d, pcm: make([]int16, 120*sampleRate/1000*playChannels)}, nil
+func newOpusDec() (dec *opusDec, err error) {
+	codecCall(func() {
+		var d *opus.Decoder
+		if d, err = opus.NewDecoder(sampleRate, playChannels); err != nil {
+			return
+		}
+		dec = &opusDec{d: d, pcm: make([]int16, 120*sampleRate/1000*playChannels)}
+	})
+	return dec, err
 }
 
 // decode returns interleaved stereo PCM (valid until the next call). A nil
@@ -264,7 +318,8 @@ func (o *opusDec) decode(pkt []byte) (pcm []int16, err error) {
 	if pkt == nil {
 		frame = frameSamples
 	}
-	n, err := o.d.Decode(pkt, o.pcm, frame, false)
+	var n int
+	codecCall(func() { n, err = o.d.Decode(pkt, o.pcm, frame, false) })
 	if err != nil {
 		return nil, err
 	}

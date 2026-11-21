@@ -61,9 +61,18 @@ import (
 type row struct {
 	ts  string
 	rev uint32
-	bk  bkState      // live Block Kit elements (blockkit.go)
-	src core.Message // the message as core has it
-	m   core.Message // what the row draws: src, or src with a plugin's msg
+	bk  bkState // live Block Kit elements (blockkit.go)
+	// media is the row's video players (MediaHost), for mediaKey's list,
+	// conversation and message
+	media    richview.Media
+	mediaKey string
+	// bkView is the row's drawing of its message's elements
+	// (blockkit.InView): its plans' toggles and height transitions are
+	// its own, apart from the same message elsewhere (a thread's root in
+	// the channel and in the pane)
+	bkView uint64
+	src    core.Message // the message as core has it
+	m      core.Message // what the row draws: src, or src with a plugin's msg
 
 	rv      *richview.View
 	handler richHandler
@@ -449,12 +458,32 @@ func (r *row) setDoc() {
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
 	o := richview.Options{Edited: displaysEdited(&r.m), Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
-		FindFocused: r.findFocused, CheckLists: true}
+		FindFocused: r.findFocused, CheckLists: true, Media: r.media}
 	if o.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 		o.EditedBy = r.editedBy()
+	} else if r.m.Stopped { // insertMessageLabelIntoBlocks: "(stopped)" only without "(edited)"
+		o.Stopped, o.StoppedBy = true, r.stoppedBy()
 	}
 	return o
+}
+
+// stoppedBy is the name in StoppedLabel's "(stopped by {name})" (J825):
+// under agents_streaming_stop_button_fe, when someone other than the
+// viewer stopped the stream; "" draws "(stopped)".
+func (r *row) stoppedBy() string {
+	id := r.m.StoppedBy
+	if id == "" || r.rc == nil || r.rc.h == nil || id == r.rc.selfID {
+		return ""
+	}
+	app := r.rc.h.Core()
+	if app == nil || app.Experiment("agents_streaming_stop_button_fe") != "on" {
+		return ""
+	}
+	if u, ok := app.User(id); ok && u.Name != "" {
+		return u.Name
+	}
+	return "" // the lookup asked for the member; "names" draws it again
 }
 
 // displaysEdited is Slack's shouldDisplayAsEdited (core.Message.DisplaysEdited):
@@ -593,8 +622,10 @@ func (r *row) resolve(rc *rowCtx) {
 			}
 		}
 	}
-	if r.name == "" && m.User == "" {
-		r.name = "Unknown"
+	if m.User == "" {
+		// a sender with no member: the bot's state, or BaseMissingMember's
+		// bar when nothing names it, never a word (missing_member.go)
+		r.miss = userlessMiss(rc.h.Core(), m)
 	}
 	// getMsgSenderEntity's huddle sender: the status line, no badge, no
 	// profile, no custom status (huddle_msg.go)
@@ -1499,7 +1530,7 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 
 	// body (or the inline edit composer)
 	r.handler.h, r.handler.m = rc.h, m
-	r.handler.anchor = rc.origin
+	r.handler.anchor, r.handler.thread = rc.origin, rc.thread
 	var body layout.Dimensions
 	if r.edit != nil {
 		ed := r.edit
@@ -1828,6 +1859,7 @@ func (r *row) layoutBlocks(gtx layout.Context, p slackc.Props) layout.Dimensions
 		return layout.Dimensions{}
 	}
 	r.withElementsFor(rc.h, msg)
+	r.withMedia(rc)
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.rv.Layout(gtx, rc.st, &r.handler) })
 	}
@@ -2423,6 +2455,11 @@ func (r *row) rootPreview(rc *rowCtx) string {
 	}
 	if doc != nil {
 		text := func(sp richtext.Span) (string, bool) {
+			if sp.Kind == richtext.MessageMention {
+				// the slug's label as it draws (its answer is a "names":
+				// the users revision moves)
+				return richview.SlugText(sp)
+			}
 			t, ok := richview.MentionText(sp)
 			if sp.Kind == richtext.User && sp.ID != "" {
 				r.rootIDs, r.rootNames = append(r.rootIDs, sp.ID), append(r.rootNames, t)
@@ -2463,7 +2500,9 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 	r.reactAs = p.StrOr("currentUser", "")
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
-	st := reactionBarClass.Enter(gtx, 0, 0)
+	// the className a plugin passes on (OwlMode's taut-owl-reactions, which
+	// its .c-reaction_bar.taut-owl-reactions .c-reaction rules need)
+	st := reactionBarClass.EnterClass(gtx, 0, 0, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -2690,7 +2729,8 @@ func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensi
 	}
 	gtx.Constraints = layout.Exact(size)
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
+		// .c-reaction_add is a 9999px pill: a rule's box-shadow rings it
+		return st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
 	}
 	return r.addButton(gtx, st, size)
 }
@@ -2703,7 +2743,9 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 		pointerCursor(gtx, rr)
 		col := c.Text
 		if r.addReact.Hovered() {
-			border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
+			if !st.Has("box-shadow") { // Slack's hover ring is a box-shadow a rule replaces
+				border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
+			}
 			col = rgb(0xecb22e)
 		} else {
 			rrect(gtx.Ops, rr, ph/2, st.Background(c.ReactBg))
@@ -2779,7 +2821,9 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	size := image.Pt(dp(gtx, 8)+cd.Size.X+dp(gtx, 8), ph)
 	gtx.Constraints = layout.Exact(size)
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return pl.pill(gtx, st, content, size, cy) })
+		// .c-reaction is a 9999px pill: a rule's box-shadow (OwlMode's owl
+		// ring) and background follow its round ends
+		return st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return pl.pill(gtx, st, content, size, cy) })
 	}
 	return pl.pill(gtx, st, content, size, cy)
 }
@@ -2792,16 +2836,26 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 		pointerCursor(gtx, rr)
 		rad := size.Y / 2
 		hov := pl.btn.Hovered()
+		// Slack's reacted and hover rings are box-shadows
+		// (.c-reaction--reacted, .c-reaction:hover); a rule's box-shadow
+		// replaces them (OwlMode rings every pill in its colour)
+		ring := !st.Has("box-shadow")
 		switch {
 		case self && hov:
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
-			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			if ring {
+				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			}
 		case self:
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfBg))
-			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			if ring {
+				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			}
 		case hov:
 			rrect(gtx.Ops, rr, rad, st.Background(colorNone))
-			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
+			if ring {
+				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
+			}
 		default:
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactBg))
 		}
@@ -3280,9 +3334,15 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 	}
 	bx := x - dp(gtx, 5)
 	if r.threadBtn.Clicked(gtx) {
+		// openThread (r0Yq.js:271-294): a split click (PQz7 shouldSplit)
+		// opens the split view and returns before setFocusInput; otherwise
+		// the thread opens with focusInput set, so its box focuses as it
+		// mounts (an open thread's box mounts nothing: no focus)
+		sc, ok := rc.h.(interface{ SplitClick() bool })
+		split := ok && sc.SplitClick()
 		rc.h.OpenThread(m.Channel, m.TS)
-		if f, ok := rc.h.(ThreadComposerFocuser); ok { // openThread's setFocusInput (reply_bar.go)
-			f.FocusThreadComposer(m.Channel, m.TS)
+		if !split {
+			popups.SetThreadFocusInput(rc.h, m.Channel, m.TS)
 		}
 	}
 	bs := replyBarClass.Enter(gtx, btnState(gtx, &r.threadBtn), 0)

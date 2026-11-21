@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"gioui.org/text"
 
@@ -28,6 +29,65 @@ import (
 // list can open popups' modals and menus and embed the inline edit composer.
 type Host interface {
 	popups.Host
+}
+
+// MediaHost is optional on the Host: a message's playable videos play in
+// place (internal/ui/videoplayer, through richview.Media). pane names the
+// list ("channel", "thread", with its container), h is the row's
+// handler.
+type MediaHost interface {
+	MessageMedia(pane, ch, ts string, h MediaRowHost) richview.Media
+}
+
+// MediaRowHost is what a row gives its videos: its handler's file
+// actions (the corner's More actions) and its OpenFile.
+type MediaRowHost interface {
+	OpenFile(f *richtext.File)
+	FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle)
+}
+
+// VideoViewerOpener is optional on the Host: the media viewer at f, one
+// of m's files (a gallery's video, fIJO's tE; Expand, its tR), from at,
+// playing unless !autoplay; false where videos don't play.
+type VideoViewerOpener interface {
+	OpenVideoViewer(f *richtext.File, m core.Message, at time.Duration, autoplay bool) bool
+}
+
+// OpenFileMenu is the video player's More actions
+// (videoplayer.MenuOpener): VideoActionsButton's menu under the button
+// (win when Gio said where, else view from the row's anchor), onClose once
+// it closes.
+func (r *richHandler) OpenFileMenu(f *richtext.File, win, view image.Rectangle, onClose func()) bool {
+	ph, ok := r.h.(popups.Host)
+	if !ok || r.m == nil || f == nil {
+		return false
+	}
+	btn := win
+	if btn.Empty() {
+		btn = view
+		if r.anchor != nil {
+			min := r.anchor(view.Min)
+			btn = image.Rectangle{Min: min, Max: min.Add(view.Size())}
+		}
+	}
+	mn := popups.NewVideoActionsMenuClosing(ph, btn, *r.m, f, r.thread, onClose)
+	if mn == nil {
+		return false
+	}
+	ph.ShowOverlay(mn)
+	return true
+}
+
+// ExpandVideo is the inline player's Expand (videoplayer.Expander).
+func (r *richHandler) ExpandVideo(f *richtext.File, at time.Duration, autoplay bool) bool {
+	vo, ok := r.h.(VideoViewerOpener)
+	return ok && r.m != nil && vo.OpenVideoViewer(f, *r.m, at, autoplay)
+}
+
+// mediaVisibility is optional on a row's richview.Media: the share of a
+// video tile the list showed as it laid out.
+type mediaVisibility interface {
+	MediaVisible(f *richtext.File, frac float64)
 }
 
 // CanvasOpener is optional: the ui root shows canvases natively (canvas
@@ -192,6 +252,7 @@ type richHandler struct {
 	h      Host
 	m      *core.Message
 	anchor func(p image.Point) image.Point
+	thread bool // the row is in a thread pane
 }
 
 func (r *richHandler) OpenURL(url string) {
@@ -284,6 +345,11 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 		}
 		r.h.OpenLightbox(img, *r.m)
 		return
+	}
+	if f.IsVideo { // a gallery's video: the media viewer, playing (tE)
+		if vo, ok := r.h.(VideoViewerOpener); ok && vo.OpenVideoViewer(f, *r.m, 0, true) {
+			return
+		}
 	}
 	if f.Permalink != "" {
 		openURL(f.Permalink)
@@ -391,6 +457,12 @@ func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn im
 			r.h.Invalidate()
 		}()
 	case richview.FileMore:
+		if ph != nil && f.IsVideo { // a video player's corner (internal/ui/videoplayer)
+			if mn := popups.NewVideoActionsMenu(ph, btn, *m, f, r.thread); mn != nil {
+				ph.ShowOverlay(mn)
+			}
+			return
+		}
 		if ph != nil {
 			gallery := f.IsImage && f.Thumb != nil
 			if mn := popups.NewFileActionsMenu(ph, btn, *m, f, gallery); mn != nil {

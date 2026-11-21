@@ -420,7 +420,7 @@ func (p *painter) content(b *box, x, y float32) {
 	}
 	saveU, saveUSet := p.under, p.uset
 	defer func() { p.under, p.uset = saveU, saveUSet }()
-	if visible {
+	if visible && !b.ownBox() { // a native drawing its own box paints these itself
 		p.shadows(b, r, rad, false)
 		p.background(b, r, rad)
 		p.coverWith(st.Background.Color) // what the box's content is painted over

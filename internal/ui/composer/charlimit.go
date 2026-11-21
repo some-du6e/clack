@@ -28,6 +28,9 @@ const pasteMaxLength = 50000
 // snippet dialog with the paste) and OK.
 const (
 	pasteLimitTitle = "That’s a bit too long to paste"
+	// pasteLimitShort is PasteLimitDialog's (Jv6G) text: a Texty input
+	// without MessageInput's snippet offer.
+	pasteLimitShort = "To keep things running smoothly, there\u2019s a limit on the number of characters you can paste into Slack."
 	pasteLimitText  = "To keep things running smoothly, there’s a limit on the number of characters you can paste into Slack. If you’d like you could "
 	pasteLimitBold  = "create a snippet"
 	pasteLimitAfter = " instead."

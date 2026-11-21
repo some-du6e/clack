@@ -606,7 +606,7 @@ func (v *View) layoutToolbar(gtx layout.Context, d *core.ListDoc, lv *lists.View
 			})
 			return at(gtx, image.Pt(gtx.Dp(30), (s.Y-gtx.Dp(20))/2), image.Pt(s.X-gtx.Dp(38), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
 				if v.search.Len() == 0 {
-					th.Label(gtx, 13, theme.Regular, c.FgSubtle, nsLists.T("Search"))
+					th.EditorPlaceholder(gtx, 13, c.FgSubtle, nsLists.T("Search")) // on the editor's centred line (Gio patch 54)
 				}
 				return th.Editor(gtx, &v.search, 13, c.Fg, c.Selection)
 			})

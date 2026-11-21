@@ -14,7 +14,10 @@ import (
 //     "{author} in 🔒private", "{author}" in a DM ("{author} with {name}"
 //     for your own DM message), "{author} with {names}" in a group DM,
 //     "Private message" (disabled) when the message can't be shown, and
-//     "Unknown author" when the author has no name.
+//     "Unknown author" when the author has no name. The author is the
+//     linked message's own sender, read from the store (MessageSlugger:
+//     core/msg_slug.go), not the element's author_id, which only a
+//     resolver that can't read messages falls back to.
 //   - is_msg_unfurl attachments render as MessageAttachmentSlackMessageCard
 //     (the forward_message_card layout): avatar, author, compact time,
 //     getFooterTextData's context line, the message, its files. With an
@@ -37,16 +40,57 @@ type Namer interface {
 	ChannelName(id string) string
 }
 
-// MessageMentionLabel is Slack's message slug label for a message by
-// author in channel. lock: the channel is private (Slack draws a lock
-// before the name; pre is the label's bytes before the name). off: the
-// message can't be shown ("Private message").
-func MessageMentionLabel(r Namer, channel, author string) (label string, lock bool, pre int, off bool) {
-	kind, known := "public", true
-	if ck, ok := r.(ConvKinder); ok {
-		kind, known = ck.ConvKind(channel)
+// SlugMessage is the message a message slug links to, as
+// getMessageSlugAttributes (client-boot N1tw) reads it for the label.
+type SlugMessage struct {
+	// Author is messageAuthorName short of its fallback: the sender
+	// getMsgSenderEntity (hVKV) finds, named as
+	// getMessageSenderNameFromState (xbeB) names them, or a DM partner as
+	// mentions name them (Conv); "" while nothing names them yet (the
+	// members fetch's unknown stub has no name): "Unknown author".
+	Author string
+	// Conv is plainTextChannelName's own name for a DM under the
+	// mentions_full_names_only_pref experiment, the partner as mentions
+	// name them (N1tw's k); "" for the conversation's name.
+	Conv string
+	// Self: the viewer sent it (isFromCurrentUser).
+	Self bool
+}
+
+// MessageSlugger is an optional Resolver extension: the message a slug
+// links to, read the way getMessageSlugAttributes reads it, from the
+// messages store (wClv getMessageByTimestamp), never from the element:
+// its author_id is only what the composer knew when it made the slug. ok
+// is false while the store doesn't hold the message (the messages
+// UnknownFetchManager's unknown stub while messages.list is out: Za0J)
+// and once Slack said there is none (the non-existent stub): both are
+// the Unavailable variant, "Private message", disabled.
+type MessageSlugger interface {
+	SlugMessage(channel, ts string) (SlugMessage, bool)
+}
+
+// MessageSlugLabel is getMessageSlugAttributes' label for the message ts
+// of channel as ms reads it: MessageMentionLabel's variants, named for
+// the linked message's own sender.
+func MessageSlugLabel(r Namer, ms MessageSlugger, channel, ts string) (label string, lock bool, pre int, off bool) {
+	if channel == "" {
+		return "Private message", false, 0, true
 	}
-	if !known || channel == "" {
+	m, ok := ms.SlugMessage(channel, ts)
+	if !ok {
+		return "Private message", false, 0, true
+	}
+	return slugLabel(r, channel, m.Author, m.Conv, m.Self)
+}
+
+// MessageMentionLabel is Slack's message slug label for a message by
+// author in channel, for a resolver that can't read the message itself
+// (MessageSlugger): the author is the element's author_id. lock: the
+// channel is private (Slack draws a lock before the name; pre is the
+// label's bytes before the name). off: the message can't be shown
+// ("Private message").
+func MessageMentionLabel(r Namer, channel, author string) (label string, lock bool, pre int, off bool) {
+	if channel == "" {
 		return "Private message", false, 0, true
 	}
 	// the author: getMessageSenderNameFromState (4ubN), the member's
@@ -57,17 +101,39 @@ func MessageMentionLabel(r Namer, channel, author string) (label string, lock bo
 	} else if author != "" {
 		name = strings.TrimPrefix(r.UserName(author), "@")
 	}
-	if name == "" || name == author {
+	if name == author {
+		name = ""
+	}
+	self := ""
+	if s, ok := r.(interface{ SelfID() string }); ok {
+		self = s.SelfID()
+	}
+	return slugLabel(r, channel, name, "", author != "" && author == self)
+}
+
+// slugLabel is the label's variants for a message in channel whose
+// author reads name ("Unknown author" when it is empty): "{author}" in a
+// DM ("{author} with {name}" for the viewer's own), "{author} with
+// {names}" in a group DM, "{author} in 🔒name" for a private channel,
+// "{author} in #name" otherwise, "Private message" for a conversation the
+// viewer can't see. conv, when set, is the conversation's name.
+func slugLabel(r Namer, channel, name, conv string, fromSelf bool) (label string, lock bool, pre int, off bool) {
+	kind, known := "public", true
+	if ck, ok := r.(ConvKinder); ok {
+		kind, known = ck.ConvKind(channel)
+	}
+	if !known {
+		return "Private message", false, 0, true
+	}
+	if name == "" {
 		name = "Unknown author"
 	}
-	conv := strings.TrimPrefix(r.ChannelName(channel), "#")
+	if conv == "" {
+		conv = strings.TrimPrefix(r.ChannelName(channel), "#")
+	}
 	switch kind {
 	case "im":
-		self := ""
-		if s, ok := r.(interface{ SelfID() string }); ok {
-			self = s.SelfID()
-		}
-		if author != "" && author == self {
+		if fromSelf {
 			return name + " with " + conv, false, 0, false
 		}
 		return name, false, 0, false
@@ -93,14 +159,25 @@ func mpimNames(n string) string {
 	return strings.Join(strings.Split(s, "--"), ", ")
 }
 
-// messageMentionSpan converts a message_mention element.
+// messageMentionSpan converts a message_mention element: labelled for the
+// linked message when the resolver can read it (MessageSlugger: core's
+// conversions), else for the element's author_id. The span keeps the
+// channel (Chan) and the ts (ID), so what draws it can read the label
+// again as it draws (Slack's MessageMention reads it on every render),
+// and the URL even when the slug is disabled, which a notification
+// writes in its place (messageMentionToText's convertUnknownSlugToUrl);
+// a disabled slug isn't a link (richview).
 func messageMentionSpan(r Resolver, e *bk) Span {
-	label, lock, pre, off := MessageMentionLabel(r, e.ChannelID, e.AuthorID)
-	sp := Span{Kind: MessageMention, Text: label, ID: e.MessageTS, Lock: lock, Pre: pre, Off: off}
-	if !off {
-		sp.URL = SafeURL(e.URL)
+	var label string
+	var lock, off bool
+	var pre int
+	if ms, ok := r.(MessageSlugger); ok {
+		label, lock, pre, off = MessageSlugLabel(r, ms, e.ChannelID, e.MessageTS)
+	} else {
+		label, lock, pre, off = MessageMentionLabel(r, e.ChannelID, e.AuthorID)
 	}
-	return sp
+	return Span{Kind: MessageMention, Text: label, ID: e.MessageTS, Chan: e.ChannelID, URL: SafeURL(e.URL),
+		Lock: lock, Pre: pre, Off: off}
 }
 
 // msgCard fills att for an is_msg_unfurl attachment (Slack's

@@ -287,6 +287,9 @@ func (s *Server) asSlackHost(w http.ResponseWriter, r *http.Request) bool {
 	ps.mu.Lock()
 	ps.loads = append(ps.loads, PhotoLoad{URL: "https://" + host + r.URL.RequestURI(), Host: host, Cookie: cookie})
 	ps.mu.Unlock()
+	if s.serveSystemDMAsset(w, r, host) { // system_dm.go
+		return true
+	}
 	name := path.Base(r.URL.Path)
 	switch {
 	case host == "files.slack.com":

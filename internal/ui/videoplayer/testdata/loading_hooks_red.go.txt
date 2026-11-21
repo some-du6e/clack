@@ -1,0 +1,5 @@
+package videoplayer
+
+// On the round-3 head (0cbe7e63) the pill showed while the tile wasn't
+// playing or was hovered (!playing || hot); State had no Pill.
+func pillShown(st State) bool { return !st.Playing || st.Hover }

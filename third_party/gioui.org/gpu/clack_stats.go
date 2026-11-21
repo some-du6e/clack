@@ -71,6 +71,10 @@ type FrameStats struct {
 	// from the frame texture's.
 	CopyChecked    bool
 	CopyMismatchPx int64
+	// Externals are the external images' paints the frame asked for their
+	// texture, ExternalWraps the textures it wrapped: an image whose key
+	// the frame before drew costs none (Clack patch 51).
+	Externals, ExternalWraps int
 	// DeviceTextureBytes and DeviceBufferBytes are the bytes of the
 	// textures and buffers the GPU's device holds at the frame's end, where
 	// its backend counts them (Direct3D 11; -1 elsewhere): the coverage

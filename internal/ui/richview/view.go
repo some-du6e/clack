@@ -299,6 +299,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if v.namesChanged() {
 		v.dirty = true // a mention's plugin label changed (members.go)
 	}
+	if v.slugsChanged() {
+		v.dirty = true // a message slug's label reads otherwise now (slugs.go)
+	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
@@ -515,6 +518,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			opac.Pop()
 		}
 	}
+	v.layoutMedia(gtx) // video tiles (Options.Media), likewise over the rest
 	d := layout.Dimensions{Size: size}
 	if b := v.d.firstBaseline(); b >= 0 && b <= size.Y {
 		d.Baseline = size.Y - b
@@ -1519,7 +1523,9 @@ func (v *View) hoverCard(st *Style, h Handler) {
 	c.Report(k, v.d.targets[t].id, r, v.ptr)
 }
 
-// inSlot reports whether p is on an element run drawn by Options.Elements.
+// inSlot reports whether p is on an element run drawn by Options.Elements
+// or a video tile Options.Media draws: their widgets take their own
+// presses.
 func (v *View) inSlot(p f32.Point) bool {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.slots {
@@ -1527,7 +1533,7 @@ func (v *View) inSlot(p f32.Point) bool {
 			return true
 		}
 	}
-	return false
+	return v.inMedia(pt)
 }
 
 // targetText is the text a link target draws (its frags' plain text).

@@ -94,6 +94,11 @@ func (s *Store) spreadLocked(ch string, m *slack.Message) {
 				put(&t.Msgs[i])
 			}
 		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == m.TS {
+				put(&t.Ahead[i])
+			}
+		}
 	}
 	for k, th := range s.threads {
 		if len(k) <= len(ch) || k[:len(ch)+1] != ch+"/" {
@@ -219,14 +224,10 @@ func FileStub(f *slack.File) bool {
 // began at LiveSeq since: a message the socket changed meanwhile keeps
 // the store's copy (the socket's), one it deleted stays out
 // (liveKeepLocked), then the window read's hooks run over what it keeps
-// (readWindowLocked).
+// (readWindowLocked). It is SetLatestReadAt for a read no reset can have
+// crossed, with none of the viewer's sends to carry.
 func (s *Store) SetLatestRead(ch string, msgs []slack.Message, hasMore bool, since uint64) {
-	SortAsc(msgs)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := s.liveKeepLocked(ch, msgs, since)
-	s.readWindowLocked(ch, out, since)
-	s.timelines[ch] = &Timeline{Msgs: out, HasMore: hasMore, Loaded: true}
+	s.SetLatestReadAt(ch, msgs, hasMore, since, s.EndGen(), nil)
 }
 
 // liveKeepLocked is what a read of ch's messages begun at LiveSeq since

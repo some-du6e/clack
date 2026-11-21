@@ -142,6 +142,11 @@ func TestMessageMenuPickSplitClick(t *testing.T) {
 	if got := e.jsString("globalThis.__passed"); got != "comment" {
 		t.Errorf("the plugin was asked about %q, want comment", got)
 	}
+	// the main window got no conversation for it (one holding a focus
+	// request would focus the box when the side pane next shows it)
+	if c := e.a.convos[ttGen+"/"+ts]; c != nil {
+		t.Errorf("the split click left a main-window conversation for %s/%s", ttGen, ts)
+	}
 	if s := e.a.secondary; s.kind != main.kind || s.channel != main.channel || s.ts != main.ts {
 		t.Errorf("the main view's secondary changed: %v %s/%s, was %v %s/%s", s.kind, s.channel, s.ts, main.kind, main.channel, main.ts)
 	}

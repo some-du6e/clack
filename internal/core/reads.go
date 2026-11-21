@@ -44,6 +44,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	}
 	var msgs []slack.Message
 	var hasMore bool
+	var epoch uint64
 	if before == "" {
 		t := a.S.Timeline(ch)
 		if t == nil {
@@ -57,7 +58,14 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 			waitSide(conv)
 		}
 		if t != nil {
-			msgs, hasMore = t.Msgs, t.HasMore
+			msgs, hasMore, epoch = t.Msgs, t.HasMore, t.Epoch
+			if t.EndStale {
+				// the window from before a slow connect, at once, as
+				// Slack draws its outdated slice; read forward in the
+				// background ("history_caught_up": reached_end.go)
+				source = "cache, catching up"
+				a.startCatchUp(ch)
+			}
 		}
 	} else {
 		source = "older"
@@ -68,8 +76,11 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		// what the socket changed, deleted or reacted while it was out
 		// stays, and a revision the store held another of reaches every
-		// copy and the views (store PrependOlderSince, read_changes.go)
-		kept := a.S.PrependOlderSince(ch, p.Messages, p.HasMore, live)
+		// copy and the views (store PrependOlderSince, read_changes.go);
+		// in front of a window read again since (one that starts after
+		// before) it would leave a hole, so it stays out of that one
+		// (store PrependOlderAt)
+		kept := a.S.PrependOlderAt(ch, before, p.Messages, p.HasMore, live)
 		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 		a.S.SyncSubs(ch, subs, p.Messages) // the roots' thread subscriptions (store/thread_subs.go)
 		a.announceReads()                  // after the pins and subscriptions: the copies as they are now
@@ -81,7 +92,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 		msgs, hasMore = kept, p.HasMore
 	}
-	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore}
+	page := Page{Messages: a.timeline(ch, msgs), HasMore: hasMore, Epoch: epoch}
 	if c, ok := a.Conv(ch); ok {
 		page.Conv = &c
 	}
@@ -443,6 +454,12 @@ func (a *App) SetPref(ctx context.Context, name string, value any) error {
 	p := a.Prefs()
 	a.emit(Event{Type: "prefs", Prefs: &p})
 	return nil
+}
+
+// MediaProgressUpdate tells Slack where the viewer is in a video (the
+// players' saveMediaProgress, gnNF and gBWG): offset_ms of duration_ms.
+func (a *App) MediaProgressUpdate(ctx context.Context, file string, offsetMS, durationMS int64) error {
+	return a.C.MediaProgressUpdate(ctx, file, offsetMS, durationMS)
 }
 
 // ---- search & directory ----
@@ -1130,21 +1147,30 @@ func (a *App) DND(ctx context.Context) (json.RawMessage, error) {
 // as its own ctx allows (onceCtx). A count that arrived or changed is
 // announced ("member_count"): the header repaints.
 func (a *App) loadMemberCount(ctx context.Context, ch string) {
-	_ = a.onceCtx(ctx, "mc:"+ch, func() error {
-		mc, err := a.MemberCounts(ctx, ch)
-		if err != nil {
-			return err
-		}
-		a.mu.Lock()
-		old, had := a.memberN[ch]
-		changed := !had || old != mc.People || a.memberA[ch] != mc.Apps
-		a.memberN[ch] = mc.People
-		a.memberG[ch] = mc.Guests
-		a.memberA[ch] = mc.Apps
-		a.mu.Unlock()
-		if changed {
-			a.memberCountChanged(ch) // history_side.go
-		}
-		return nil
-	})
+	_ = a.onceCtx(ctx, "mc:"+ch, func() error { return a.loadMemberCountNow(ctx, ch) })
+}
+
+// loadMemberCountNow reads ch's counts and caches them, without joining
+// a read already out: a stale count's refetch (membership_counts.go)
+// must not take the answer of a read that started before the join.
+func (a *App) loadMemberCountNow(ctx context.Context, ch string) error {
+	mc, err := a.MemberCounts(ctx, ch)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	old, had := a.memberN[ch]
+	changed := !had || old != mc.People || a.memberA[ch] != mc.Apps
+	a.memberN[ch] = mc.People
+	a.memberG[ch] = mc.Guests
+	a.memberA[ch] = mc.Apps
+	if a.memberMC == nil {
+		a.memberMC = map[string]MemberCounts{}
+	}
+	a.memberMC[ch] = mc
+	a.mu.Unlock()
+	if changed {
+		a.memberCountChanged(ch) // history_side.go
+	}
+	return nil
 }
