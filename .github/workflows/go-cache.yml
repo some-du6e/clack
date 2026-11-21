@@ -36,7 +36,7 @@ jobs:
   seed:
     # main only: the entries a branch can restore are main's (a dispatch on
     # a branch, or ui's push, would build into a scope nobody else reads)
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci-speed'
+    if: github.ref == 'refs/heads/main'
     name: seed (${{ matrix.os }})
     strategy:
       fail-fast: false
