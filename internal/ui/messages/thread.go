@@ -169,8 +169,10 @@ func (v *ThreadView) EditComposer() *composer.Composer { return v.s.editComposer
 // Typing returns the "X is typing" text for this thread.
 func (v *ThreadView) Typing() string { return typingText(v.s.snap.typing) }
 
-// ScrollToBottom jumps to the newest reply.
-func (v *ThreadView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
+// ScrollToBottom jumps to the newest reply drawn: the list's end (toEnd:
+// Position{} is the top of a slice short of the thread's end, which
+// doesn't keep to its end).
+func (v *ThreadView) ScrollToBottom() { v.s.toEnd() }
 
 // JumpToOwnSend is the pane's reply box sending the viewer's reply, with
 // or without files (composer.OnSend): the list goes to its end, and its
@@ -188,7 +190,7 @@ func (v *ThreadView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 // list is, so the send puts the list where Slack's is when you send.
 func (v *ThreadView) JumpToOwnSend(cid string, files bool) {
 	s := v.s
-	s.list.Position = layout.Position{}
+	s.toEnd() // the list's end, kept to or not (a slice short of the thread's end)
 	s.positioned = true
 	s.pendingJump = "" // a JumpTo still waiting for its reply
 	s.place = jumpPlace{}

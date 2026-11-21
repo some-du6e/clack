@@ -694,7 +694,11 @@ func (s *listState) sync(h Host, now time.Time) {
 	// (wasEnd): the page that meets the newest messages lands under the
 	// reader too, and only later changes stick.
 	wasEnd := s.list.ScrollToEnd
-	s.list.ScrollToEnd = !s.snap.newestMissing
+	// a thread's slice short of the thread's end never keeps to its end
+	// either (thread_load.go: setStickToBottom(reachedEnd)), so a newer
+	// page lands under the reader; kept there, the list read page after
+	// page on its own
+	s.list.ScrollToEnd = !s.snap.newestMissing && (!s.thread || s.snap.th.reachedEnd)
 	if changed {
 		s.sysUsers, s.sysHidden = s.hb.usersRev(), hk
 		s.sysMissing = s.adjustSystem(h, sysOn)

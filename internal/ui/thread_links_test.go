@@ -416,10 +416,13 @@ func TestReplyRouteLeavesNoHistory(t *testing.T) {
 
 // TestReplyRootedPaneFetchesThreadOnce: a pane opened with a reply's ts
 // core doesn't hold (slack://channel?thread_ts=<reply>) asks
-// conversations.replies once; the answer, the reply's whole thread,
-// goes under the parent's ts, so the parent's pane it hands on to has
-// the thread without asking again, and nothing is kept under the reply's
-// ts. Clack fetched the thread twice and kept a copy under the reply.
+// conversations.replies for it once; the answer, its parent's thread from
+// the reply on, goes under the parent's ts, so the parent's pane it hands
+// on to starts at the reply with that page (threadStartAt) and reads it
+// no more: what it reads after is a page before the reply (loadPre, the
+// replies between the root and the reply, as a thread reads a page at a
+// time), and nothing is kept under the reply's ts. Clack fetched the
+// thread twice and kept a copy under the reply.
 func TestReplyRootedPaneFetchesThreadOnce(t *testing.T) {
 	e := threadHeaderEnv(t, false)
 	pub, root, reply := fakeslack.ThreadPublicID, fakeslack.ThreadRootTS, fakeslack.ThreadReplyTS(1)
@@ -435,8 +438,16 @@ func TestReplyRootedPaneFetchesThreadOnce(t *testing.T) {
 	e.a.OpenURL("slack://channel?team=" + fakeslack.TeamID + "&id=" + pub + "&thread_ts=" + reply)
 	e.waitParentThread(t, "slack://channel?thread_ts=<a reply>", pub, root, reply)
 	e.settle(500 * time.Millisecond)
-	if got := calls.of("conversations.replies", pub, "ts"); !slices.Equal(got, []string{"ts=" + reply}) {
-		t.Errorf("conversations.replies for %s: %q, want one call, for the reply's ts (it answers the whole thread)", pub, got)
+	got := calls.of("conversations.replies", pub, "ts", "oldest", "latest")
+	if len(got) == 0 || !strings.HasPrefix(got[0], "ts="+reply+" ") {
+		t.Errorf("conversations.replies for %s: %q, want the first for the reply's ts (it answers its parent's thread)", pub, got)
+	}
+	for _, c := range got[min(1, len(got)):] {
+		latest, ok := strings.CutPrefix(c, "ts="+root+" oldest= latest=")
+		if !ok || latest == "" || tsBefore(reply, latest) {
+			t.Errorf("conversations.replies for %s: %q; after the hand-on only a page before the reply (ts=%s, latest at or before %s)", pub, got, root, reply)
+			break
+		}
 	}
 	if th, ok := e.a.Core().S.Thread(pub, reply); ok {
 		t.Errorf("core keeps %d messages under the reply's ts as a thread of its own", len(th))
