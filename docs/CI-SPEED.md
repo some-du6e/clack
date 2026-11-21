@@ -406,7 +406,15 @@ worse.
   its floor (5% for frame times, 10% for idle CPU, 2% for allocations, 3%
   for memory, with an absolute floor each). `gate.py sample` leaves each
   run's numbers in its artifact (`gate-sample.json`) and `gate.py
-  calibrate` turns samples into the file. NOISERUNS
+  calibrate` turns samples into the file. Six base-vs-base runs
+  (44934859075, 44934861506, 44934864117, 44934866471, 44934868863,
+  44934870872) gave: frame medians and p95s ±5 to 11.5% (the typing frame's
+  median ±21.5%: one run's head had two of its three typing passes in a slow
+  stretch; its p95 is ±5%), allocations ±2 to 5%, memory ±3 to 10%, idle CPU
+  ±76% (about 1 ms/s, ±0.5), idle frames exact. Four earlier runs of single
+  passes (44932200567, 44932203634, 44932207050, 44932210304) were wider
+  still, up to 13.4% on a frame median, which is why the gated benchmarks
+  now run three times a side.
 - **The skip**: a first job (`affects.py`) works out the base and fails
   nothing: a dispatch whose diff from it touches only docs, tests (`*_test.go`,
   testdata) and CI files (`.github/`) can't move a number (both sides run
