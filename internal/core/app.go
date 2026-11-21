@@ -994,7 +994,16 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.S.SetUsergroups(gs)
+	if a.S.SetUsergroups(gs) {
+		// meta.json keeps them now, as loadEmoji's list: they load 5 s
+		// after boot, and only the 5 minute save or Quit's would write
+		// them (the Dock's Quit and a kill skip that)
+		a.saves.Add(1)
+		go func() {
+			defer a.saves.Done()
+			_ = a.S.SaveCache()
+		}()
+	}
 	// updateUserGroups: the viewer's groups (usergroups.membership), what
 	// a group mention's highlight follows (UserGroup fg3x isUserInGroup)
 	if mine, err := a.C.UsergroupMembership(ctx); err == nil && a.S.SetMyUsergroups(mine) {

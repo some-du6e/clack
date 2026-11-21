@@ -2019,7 +2019,6 @@ func (s *Store) HasCachedPrefs() bool {
 	return s.prefsCached
 }
 
-// SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
 // SetMyUsergroups replaces the viewer's user groups
 // (bulkSetUserGroupMembership).
 func (s *Store) SetMyUsergroups(ids []string) (changed bool) {
@@ -2174,12 +2173,14 @@ func (s *Store) InUsergroup(id string) bool {
 	return s.MyGroups[id]
 }
 
-func (s *Store) SetUsergroups(gs []slack.Usergroup) {
+// SetUsergroups installs usergroups (for <!subteam^> names and
+// autocomplete) and reports whether they changed.
+func (s *Store) SetUsergroups(gs []slack.Usergroup) (changed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groupsLoaded = true
 	if s.sameGroups(gs) {
-		return // the usual refresh: nothing to install or save
+		return false // the usual refresh: nothing to install or save
 	}
 	s.Groups = s.Groups[:0]
 	for _, g := range gs {
@@ -2191,6 +2192,7 @@ func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 	}
 	s.gen.Add(1)
 	s.ugGen.Add(1)
+	return true
 }
 
 func (s *Store) LoadCache() {

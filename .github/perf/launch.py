@@ -145,29 +145,6 @@ def stop(pid, proc=None):
         pass
 
 
-def quit_app(pid, name):
-    """Quits Clack as a user does (macOS: the quit Apple Event, the Dock's
-    Quit and Cmd+Q's path), so it saves what it saves on quitting: meta.json
-    with the user groups, which load 5 s after boot and which only the 5
-    minute save or quitting writes. A SIGTERM ends it without saving. True
-    once it exited; False: stop() it."""
-    if SYS != "Darwin" or not pid:
-        return False
-    if not alive(pid):  # gone already (the event would launch it again)
-        return True
-    r = subprocess.run(["osascript", "-e", 'tell application id "io.github.some-du6e.clack" to quit'],
-                       capture_output=True, text=True, timeout=30)
-    if r.returncode != 0:
-        print(f"  {name}: the quit Apple Event failed ({r.returncode}): {r.stderr.strip()[:200]}", flush=True)
-        return False
-    for _ in range(300):
-        if not alive(pid):
-            return True
-        time.sleep(0.1)
-    print(f"  {name}: still running 30 s after the quit Apple Event", flush=True)
-    return False
-
-
 def leftovers(binpath):
     """Clack processes from an earlier run (none expected)."""
     if SYS == "Windows":
@@ -215,7 +192,7 @@ def parse_timeline(text):
     return t
 
 
-def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_secs=0.0, purged=False, shots=(), until="", quit=False):
+def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_secs=0.0, purged=False, shots=(), until=""):
     binpath = binary(a.app)
     leftovers(binpath)
     for f in ("clack.log", "clack.log.1", "clack.log.2"):
@@ -270,8 +247,7 @@ def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_
             print(f"  {name}: no {until!r} in the log after 90 s", flush=True)
         time.sleep(1)  # the rest of what the save writes
     t = parse_timeline(text)
-    if not (quit and quit_app(t.get("pid") if proc is None else proc.pid, name)):
-        stop(t.get("pid") if proc is None else None, proc)
+    stop(t.get("pid") if proc is None else None, proc)
     try:
         with open(log, encoding="utf-8", errors="replace") as f:
             text = f.read()
@@ -357,12 +333,12 @@ def main():
             time.sleep(0.1)
         else:
             sys.exit("fakeslackd wrote no creds.json")
-        with open(os.path.join(cfg, "ui.json"), "w") as f:
+        with open(os.path.join(cfg, "ui.json"), "w", encoding="utf-8") as f:
             json.dump({"route": "c/" + ROUTE, "last_channel": ROUTE, "realtime": False}, f)
         plugins = seed_plugins(a.library, cfg, a.plugins, a.theme or a.theme_check)
         print(f"{a.label}: plugins {plugins}; config {cfg}", flush=True)
 
-        runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True, until="cache: boot data saved", quit=True)]
+        runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True, until="cache: boot data saved")]
         ab = dict([a.ab.split("=", 1)]) if a.ab else None
         for i in range(a.warm):
             runs.append(one(f"warm{i + 1}", a, cfg, logdir, a.out))
@@ -481,7 +457,7 @@ def budget(a, warm, launches=()):
         tag = "::error::" if l.startswith("OVER") else ("::warning::" if l.startswith("SLOW") else "")
         print(f"{tag}{a.label}: {l}")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
             f.write("\n### Launch budget\n\n" + "\n".join(f"- {l}" for l in lines) + "\n")
     return rc
 
@@ -497,11 +473,11 @@ def seed_theme(cfg, slick_settings):
     os.makedirs(os.path.join(cfg, "slick", "themes"), exist_ok=True)
     os.makedirs(os.path.join(cfg, "taut"), exist_ok=True)
     theme = {"name": "Launch check", "css": ".p-theme_background{background:%s !important}" % THEME_COLOURS["chrome"]}
-    with open(os.path.join(cfg, "slick", "themes", "launchcheck.json"), "w") as f:
+    with open(os.path.join(cfg, "slick", "themes", "launchcheck.json"), "w", encoding="utf-8") as f:
         json.dump(theme, f)
-    with open(os.path.join(cfg, "taut", "user.css"), "w") as f:
+    with open(os.path.join(cfg, "taut", "user.css"), "w", encoding="utf-8") as f:
         f.write(".p-view_contents--sidebar{background:%s !important}\n" % THEME_COLOURS["sidebar"])
-    with open(os.path.join(cfg, "slick", "user.css"), "w") as f:
+    with open(os.path.join(cfg, "slick", "user.css"), "w", encoding="utf-8") as f:
         f.write(".p-message_pane{background:%s !important}\n" % THEME_COLOURS["pane"])
     slick_settings["theme"] = "launchcheck"
 
@@ -533,7 +509,7 @@ def seed_plugins(lib, cfg, which="karim", theme=False):
         if os.path.exists(src):
             shutil.copy(src, os.path.join(cfg, "taut", "plugins", f"{t}.js"))
             on.append(t)
-    with open(os.path.join(cfg, "taut", "config.json"), "w") as f:
+    with open(os.path.join(cfg, "taut", "config.json"), "w", encoding="utf-8") as f:
         json.dump({"plugins": {t: {"enabled": True} for t in on}}, f)
     names = list(on)
     src = os.path.join(lib, "slick-ChatTabs.js") if lib else ""
@@ -544,7 +520,7 @@ def seed_plugins(lib, cfg, which="karim", theme=False):
             shutil.copy(main_js, os.path.join(cfg, "slick", "plugins", "ChatTabs.main.js"))
         slick_settings["plugins"]["ChatTabs"] = {"enabled": True}
         names.insert(0, "ChatTabs")
-    with open(os.path.join(cfg, "slick", "settings.json"), "w") as f:
+    with open(os.path.join(cfg, "slick", "settings.json"), "w", encoding="utf-8") as f:
         json.dump(slick_settings, f)
     out = " + ".join(names) if names else "none"
     if theme:
@@ -604,12 +580,12 @@ def report(a, runs, extra, plugins, cache):
         md += ["```", "</details>"]
     text = "\n".join(md) + "\n"
     print(text, flush=True)
-    with open(os.path.join(a.out, "launch.md"), "w") as f:
+    with open(os.path.join(a.out, "launch.md"), "w", encoding="utf-8") as f:
         f.write(text)
-    with open(os.path.join(a.out, "launch.json"), "w") as f:
+    with open(os.path.join(a.out, "launch.json"), "w", encoding="utf-8") as f:
         json.dump({"label": a.label, "runs": runs, "inits": extra.get("inits", [])}, f, indent=1)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
             f.write(text)
 
 
