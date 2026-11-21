@@ -14,18 +14,22 @@ package ui
 // draws its box unfocused.
 //
 // The key outlives the focus it gives (Slack keeps it), and goes when:
-//   - the thread pane unmounts showing that thread (cancelFocusInput in
-//     ThreadsFlexpane.componentWillUnmount): threadFocusUnmount;
+//   - a thread pane unmounts showing that thread (cancelFocusInput in
+//     ThreadsFlexpane.componentWillUnmount): threadFocusUnmount, for the
+//     side pane and the split view's thread alike (client-thread-view
+//     renders the same ThreadsFlexpane in the split container, with the
+//     window's windowId);
 //   - thread search opens (openThreadSearch): ClearThreadFocusInput.
 //
 // Clack has one main window, so one key; the split view's thread reads the
 // same one, as a Slack tile shares its window's.
 
-// threadFocusState is the App's focusInput and what the side pane showed
-// last frame (the pane's unmount).
+// threadFocusState is the App's focusInput and the threads its two
+// ThreadsFlexpanes showed last frame (their unmounts).
 type threadFocusState struct {
-	key  string // ch+"/"+ts, as a.convos; "" none
-	pane string // the side pane's thread last frame ("" none shown)
+	key   string // ch+"/"+ts, as a.convos; "" none
+	pane  string // the side pane's thread last frame ("" none shown)
+	split string // the split view's thread last frame ("" none shown)
 }
 
 // SetThreadFocusInput is setFocusInput (JhVT.js:229-244): the thread's box
@@ -56,16 +60,25 @@ func (a *App) threadFocusWanted(c *convo) bool {
 }
 
 // threadFocusUnmount runs once a frame: when the side pane stops showing a
-// thread (closed, hidden, or another kind of pane), ThreadsFlexpane
-// unmounts and cancels the key for the thread it showed. A switch from one
-// thread to another remounts only the list, so it cancels nothing.
+// thread (closed, hidden, or another kind of pane), or the split view does
+// (closed, back to a channel), that ThreadsFlexpane unmounts and cancels
+// the key for the thread it showed. A switch from one thread to another
+// remounts only the list, so it cancels nothing.
 func (a *App) threadFocusUnmount() {
-	cur := ""
+	side := ""
 	if a.secondary.kind == secThread && a.secondary.open() {
-		cur = a.secondary.channel + "/" + a.secondary.ts
+		side = a.secondary.channel + "/" + a.secondary.ts
 	}
-	if prev := a.threadFocus.pane; prev != "" && cur == "" {
-		a.cancelThreadFocusInput(prev)
+	split := ""
+	if r := a.splitTop(); a.splitOpen() && r.Thread() != "" {
+		split = r.Channel() + "/" + r.Thread()
 	}
-	a.threadFocus.pane = cur
+	f := &a.threadFocus
+	if f.pane != "" && side == "" {
+		a.cancelThreadFocusInput(f.pane)
+	}
+	if f.split != "" && split == "" {
+		a.cancelThreadFocusInput(f.split)
+	}
+	f.pane, f.split = side, split
 }

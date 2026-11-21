@@ -11,6 +11,7 @@ import (
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
@@ -35,6 +36,7 @@ type rfEnv struct {
 	ch, root string
 	bc       string        // a broadcast reply to root, also in the channel ("" none)
 	clk      time.Duration // pointer event times
+	inSplit  bool          // the rows are the split view's channel's (cv)
 }
 
 // newRFEnv opens #th-launch-notes with its root (and the broadcast) on
@@ -87,8 +89,18 @@ func (x *rfEnv) tick() time.Duration {
 }
 
 // row is message ts's row in the channel's list, when the list shows it.
+// cv is the channel's list: the main view's, or with inSplit the split
+// view's (its conversations are its pane's, split.go inPane).
+func (x *rfEnv) cv() (cv *messages.ChannelView) {
+	if !x.inSplit {
+		return x.channelView(x.ch)
+	}
+	x.a.inPane(paneSplit, func() { cv = x.channelView(x.ch) })
+	return cv
+}
+
 func (x *rfEnv) row(ts string) (image.Rectangle, bool) {
-	cv := x.channelView(x.ch)
+	cv := x.cv()
 	if cv == nil {
 		return image.Rectangle{}, false
 	}
@@ -227,7 +239,7 @@ func (x *rfEnv) toolbarReply(ts string) image.Point {
 	if !ok {
 		x.t.Fatalf("row %s isn't on screen", ts)
 	}
-	cv := x.channelView(x.ch)
+	cv := x.cv()
 	in := rowPoint(r, cv.ListRect())
 	x.move(f32.Pt(float32(in.X), float32(in.Y)))
 	x.settle(300 * time.Millisecond)
@@ -471,4 +483,49 @@ func TestThreadsAuditReplyFocusReplyBarSplitNot(t *testing.T) {
 	x.waitThreadBox("the thread in the side pane")
 	x.settle(300 * time.Millisecond)
 	x.wantNoThreadFocus("the side pane's thread after the reply bar's split click")
+}
+
+// The toolbar's Reply with the split modifier opens the thread in the
+// split view with focusInput set (0yz+ sets it on the tile branch too).
+// Closing the split unmounts that ThreadsFlexpane, which cancels the key:
+// the thread's route afterwards opens it in the side pane unfocused.
+func TestThreadsAuditReplyFocusToolbarSplitNot(t *testing.T) {
+	x := newRFEnv(t, true, false)
+	p := x.toolbarReply(x.root)
+	x.clickMods(p, shortcut.Mod()|key.ModAlt)
+	route := Route("c/" + x.ch + "/t/" + x.root)
+	x.until("the thread in the split view", 8*time.Second, func() bool { return x.a.splitTop() == route })
+	x.settle(300 * time.Millisecond)
+	x.a.CloseSplit()
+	x.settle(200 * time.Millisecond)
+	x.focusComposer(x.ch, "")
+	x.a.Navigate(string(route))
+	x.waitThreadBox("the thread in the side pane")
+	x.settle(300 * time.Millisecond)
+	x.wantNoThreadFocus("the side pane's thread after the toolbar's split Reply and the split closed")
+}
+
+// The reply bar inside the split view's channel opens the thread there
+// with focusInput set; going back to the channel unmounts its
+// ThreadsFlexpane and cancels the key, so the thread's route in the main
+// window opens it unfocused.
+func TestThreadsAuditReplyFocusSplitReplyBarNot(t *testing.T) {
+	x := newRFEnv(t, true, false)
+	x.a.OpenSplit("c/" + x.ch)
+	x.inSplit = true
+	x.until("the root in the split view", 15*time.Second, func() bool { _, ok := x.row(x.root); return ok })
+	x.settle(300 * time.Millisecond)
+	p := x.replyBar()
+	x.click(p)
+	route := Route("c/" + x.ch + "/t/" + x.root)
+	x.until("the thread in the split view", 8*time.Second, func() bool { return x.a.splitTop() == route })
+	x.settle(300 * time.Millisecond)
+	x.a.inPane(paneSplit, x.a.GoPaneBack)
+	x.until("the split view back on the channel", 5*time.Second, func() bool { return x.a.splitTop() == Route("c/"+x.ch) })
+	x.settle(200 * time.Millisecond)
+	x.focusComposer(x.ch, "")
+	x.a.Navigate(string(route))
+	x.waitThreadBox("the thread in the side pane")
+	x.settle(300 * time.Millisecond)
+	x.wantNoThreadFocus("the side pane's thread after the split view's reply bar and Back")
 }

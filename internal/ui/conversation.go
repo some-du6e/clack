@@ -277,13 +277,17 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 	// focusInputOnMount, l6n6.js:10074, KafO.js:880): a thread focusInput
 	// names takes the focus. No box this pass (loading, ThreadsError, a
 	// footer) is no row yet; an edit composer standing in leaves it alone.
+	// Under an open modal or menu the box mounts unfocused: Slack's
+	// componentDidMount focuses regardless, but a modal's focus trap takes
+	// the focus straight back, and Clack's overlays have none (as
+	// focusKnown's focus above).
 	mounted := false
 	switch {
 	case comp == nil:
 		c.inputShown = false
 	case comp == c.comp && !c.inputShown:
 		c.inputShown = true
-		if a.threadFocusWanted(c) {
+		if a.threadFocusWanted(c) && !a.overlayOpen() {
 			c.comp.Focus()
 			mounted = true
 		}
