@@ -242,8 +242,8 @@ jobs:
       # of one depth on one atlas page, the sub-pixel path cache key, GL's
       # attribute query; patch 46: a frame's damage, sticky atlas places
       # (the pixels: gpu/headless's TestClack* and theme's
-      # TestFrameCostPixels below, and the macos and windows-applog jobs'
-      # Gio frame cost steps on Metal and Direct3D 11)
+      # TestFrameCostPixels below, and the macos-idle and windows-applog
+      # jobs' Gio frame cost steps on Metal and Direct3D 11)
       - name: Gio frame cost (vendored gioui.org/op/clip, gpu)
         if: ${{ !cancelled() }}
         run: |
@@ -421,7 +421,7 @@ jobs:
       # draws the last frame's ops again, without a layout; patch 46: a
       # caret's blink is a partial frame of its pixels, at a fraction of a
       # whole frame's draws and CPU; the same on Metal and Direct3D are the
-      # macos and windows-idle jobs'
+      # macos-idle and windows-idle jobs'
       - name: quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost, Xvfb)
         if: ${{ !cancelled() }}
         env:
@@ -497,7 +497,7 @@ jobs:
       # TestFrameCostPixels), shared layer pages, sub-pixel paths, atlas
       # pages; patch 46: partial frames are the whole frame's pixels, the
       # frame texture's copy included (TestClackPartial*); linux-gio runs
-      # them on llvmpipe, macos on Metal
+      # them on llvmpipe, macos-idle on Metal
       - name: Gio frame cost on Direct3D 11 (WARP)
         if: ${{ !cancelled() }}
         shell: bash
@@ -1274,29 +1274,6 @@ jobs:
         with:
           name: intro-preview-macos
           path: ${{ runner.temp }}/intro-shots
-      - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
-        env:
-          CLACK_PIXEL_TESTS: "1"
-        run: .github/scripts/gio-layer-fix.sh
-      # Gio patches 37-44 on Metal: the state caches and command batching
-      # change no pixel, the window's drawing held to the old way, shared
-      # layer pages, sub-pixel paths, atlas pages; patch 46: partial frames
-      # are the whole frame's pixels, the frame texture's draw into the
-      # target included (TestClackPartial*)
-      - name: Gio frame cost on Metal
-        if: ${{ !cancelled() }}
-        env:
-          CLACK_PIXEL_TESTS: "1"
-        run: |
-          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
-          go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
-      - name: macOS freeze guards (no blocking work on the AppKit main thread)
-        run: |
-          go test -count=1 -v ./internal/ui/uiguard
-          go test -count=1 -v -run 'TestThemeMapping|TestHCTSolveBounded|TestParseIAThemeJunk|FuzzIATheme' ./internal/ui/theme
-          go test -count=1 -v -run 'TestNoExecOnUIPaths|TestOSPrefersDarkOffUI|TestOSSchemeFollow|TestWatchdogReport|TestTakeShaperDoesNotWait|TestAccountTheme|TestAppearancePageDraws|TestFormatWithMarkupPref' ./internal/ui
-          go test -count=1 -timeout 20m -v -run 'TestStartupStatesNeverBlock|TestStartupWithHangingTools|TestEveryExecSetsWaitDelay' ./internal/ui
-          go test -count=1 -v -run 'Paste|TestAttRunHangingChild' ./internal/ui/composer
       # docs/GAPS-2026-11-14.md gap 1 (W33). usernotifyprobe's tests run
       # from Clack.app bundles built the way release.yml builds one, each with
       # its own bundle id so each starts undecided. TestUserNotifyProbe logs
@@ -1487,6 +1464,54 @@ jobs:
             "$RUNNER_TEMP/ui-bounds.test" -test.v -test.count=1 -test.timeout 10m -test.run "^$t\$" || rc=1
           done
           exit $rc
+      - name: build
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-darwin-arm64 ./cmd/clack
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: clack-darwin-arm64
+          path: dist/clack-darwin-arm64
+
+  # The macOS checks that measure frames, CPU and pixels: Gio's drawLayers
+  # fix and frame cost on Metal, the freeze guards, idle (TestMacIdleCPU,
+  # TestIdleFrames, quiet frames, the caret's partial frames). A job of
+  # their own beside macos, so the two take ~12 min at once, not ~26 in a row.
+  macos-idle:
+    if: ${{ !inputs.only || startsWith('macos-idle', inputs.only) }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+        run: .github/scripts/gio-layer-fix.sh
+      # Gio patches 37-44 on Metal: the state caches and command batching
+      # change no pixel, the window's drawing held to the old way, shared
+      # layer pages, sub-pixel paths, atlas pages; patch 46: partial frames
+      # are the whole frame's pixels, the frame texture's draw into the
+      # target included (TestClackPartial*)
+      - name: Gio frame cost on Metal
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+        run: |
+          go test -count=1 -v -timeout 15m -run '^(TestClackAtlasShrinks|TestClackAtlasShrinksUsedNowAndThen|TestClackAtlasGrowKeepsSize|TestClackStateCacheIdentical|TestClackLayerPages|TestClackSubPixelCache|TestClackSplitsUnderTransform|TestClackPartialFrames|TestClackPartialSameOps|TestClackPartialDamageRects|TestClackPartialSpinner|TestClackSetSize|TestClackRollbackKeys)$' gioui.org/gpu/headless
+          go test -count=1 -v -timeout 20m -run '^(TestFrameCostPixels|TestFrameCostSeams)$' ./internal/ui/theme
+      - name: macOS freeze guards (no blocking work on the AppKit main thread)
+        run: |
+          go test -count=1 -v ./internal/ui/uiguard
+          go test -count=1 -v -run 'TestThemeMapping|TestHCTSolveBounded|TestParseIAThemeJunk|FuzzIATheme' ./internal/ui/theme
+          go test -count=1 -v -run 'TestNoExecOnUIPaths|TestOSPrefersDarkOffUI|TestOSSchemeFollow|TestWatchdogReport|TestTakeShaperDoesNotWait|TestAccountTheme|TestAppearancePageDraws|TestFormatWithMarkupPref' ./internal/ui
+          go test -count=1 -timeout 20m -v -run 'TestStartupStatesNeverBlock|TestStartupWithHangingTools|TestEveryExecSetsWaitDelay' ./internal/ui
+          go test -count=1 -v -run 'Paste|TestAttRunHangingChild' ./internal/ui/composer
       # Idle on the real macOS window (TestMacIdleCPU): App.Run's window
       # with Metal and the AppKit glue, signed in to the fake with realtime
       # on, left alone on each surface and then hidden; each period's
@@ -1515,12 +1540,3 @@ jobs:
           # Gio patch 46 on Metal: a caret's blink is a partial frame
           CLACK_MACOS_WINDOW_TESTS=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' || rc=1
           exit $rc
-      - name: build
-        if: ${{ !cancelled() }}
-        run: |
-          mkdir -p dist
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-darwin-arm64 ./cmd/clack
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: clack-darwin-arm64
-          path: dist/clack-darwin-arm64
