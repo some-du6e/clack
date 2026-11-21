@@ -305,6 +305,11 @@ func (b *box) State() css.State { return b.state }
 // is Slack's button.c-button, which those rules style in Slack).
 func (b *box) HostNode() bool { return b.kind == kElem || b.kind == kComp && b.hostEl != nil }
 
+// OwnBox keeps the host element sheet's rules (Slack's full c-button
+// look) off a host component that draws its own box (kit's Button): it
+// draws that look itself, and would take Slack's rules as a plugin's.
+func (b *box) OwnBox() bool { return b.kind == kComp && b.hostEl != nil && b.hostEl.OwnBox }
+
 // Modal reports an open <dialog> JS showed with showModal() (:modal).
 func (b *box) Modal() bool {
 	if b.kind != kElem || b.n == nil || !b.n.Modal || b.n.T != "dialog" {
