@@ -94,6 +94,11 @@ func (s *Store) spreadLocked(ch string, m *slack.Message) {
 				put(&t.Msgs[i])
 			}
 		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == m.TS {
+				put(&t.Ahead[i])
+			}
+		}
 	}
 	for k, th := range s.threads {
 		if len(k) <= len(ch) || k[:len(ch)+1] != ch+"/" {
@@ -226,6 +231,11 @@ func (s *Store) SetLatestRead(ch string, msgs []slack.Message, hasMore bool, sin
 	defer s.mu.Unlock()
 	out := s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, out, since)
+	if t := s.timelines[ch]; t != nil && len(t.Ahead) > 0 {
+		// the newest page is the end: what the socket brought past a
+		// stale end joins it (reached_end.go)
+		out = joinAhead(out, newestTS(msgs), t.Ahead)
+	}
 	s.timelines[ch] = &Timeline{Msgs: out, HasMore: hasMore, Loaded: true}
 }
 
