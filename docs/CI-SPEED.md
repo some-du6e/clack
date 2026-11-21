@@ -275,11 +275,10 @@ flake-check's `flakes-1121` runs the first three fixes under load.
 - ui-slick's TestSlickView* (unpinned upstream, above).
 - TestMessageMenuOldMenuRows (popups) "timed out waiting for the old row
   next to Act one: the old row's click", once, in ci-speed's full-test
-  (run 44896761367, 2026-11-21): the same log has "the plugin answered
-  message menu pick "copy_link" after 451ms: not running it", so under the
-  full suite's load the plugin engine answered after Clack's pick deadline.
-  First failure in the two weeks; no ci-speed change touches it (a rich
-  copy is the only popups change, and Linux has none).
+  (run 44896761367, 2026-11-21). First failure in the two weeks; no
+  ci-speed change touches it. (Round 2: the "copy_link after 451ms" line in
+  that log is TestMessageMenuStalePickDoesNotRun's own, which sets the
+  deadline to 150 ms; it says nothing about this failure.)
 
 ## For Karim: accounts and money
 
@@ -324,3 +323,122 @@ full set (448-528 runner-minutes, 66-76 min of wall clock on 11-19) loses
 its ci dispatch's 136 minutes and gets the longest ci job down from 30 to
 11 minutes; perf (84 runner-minutes a dispatch, every branch: it has no
 `paths:`) and plugin-bench (45) are the next biggest per candidate.
+
+## Round 2
+
+Branch `ci-speed-2` (2026-11-21), on train-130 (α.127, ci-speed's squash)
+and then ui. Each item has a run that shows the old behaviour (red) and
+one that shows the new (green), on evidence branches `ci-speed-2-*` that
+carry a mutant or an injected fault and are deleted afterwards; the runs
+stay.
+
+| item | change | red | green |
+|---|---|---|---|
+| 1. a hung idle group's dump | the idle jobs' fanout `-test.timeout 10m` (it was their budget: 20, 25); `fanout.sh` streams each process's lines marked `[i]`; a failed or cancelled idle step uploads `$RUNNER_TEMP/fanout.*` | 44916667648: a hung TestIdleFrames group; the job stopped at its 20 min budget, no panic, none of the group's output | 44916670354: `panic: test timed out after 10m0s` and every goroutine, streamed, at minute 12.5 of 20; artifact fanout-logs-linux-idle |
+| 1. full-test, release's test job | `dump-before-budget.sh 35`: the test binaries still running 35 min into the step get SIGQUIT, so each prints its goroutines and go test its output. Its packages start up to 5 min in (`-json` run 44920029289: ui at 2.5, the last at 5.0), so 30 min from there was ~36 of the 40, and later on a slow runner (train-130's attempt 2: stopped at 40, nothing printed) | 44922855172: train-130's full-test with a hung `ui/views` test that starts late (5 min of slowness first): "exceeded the maximum execution time of 40m0s", nothing printed | 44922860457: 35 min into the step, SIGQUIT to `views.test` (running 23:47) and its goroutines, the hang's TestTodosSectionListsLikeSlack among them; the job over at 35.4 of its 40 min |
+| 1. every Go timeout in every job | `budget-check.py` (linux-build) counts a timeout from when its binary starts: the step's recorded start (`.github/step-starts.json`, written by `budget-check.py record` from `gh api .../runs/ID/jobs`) a quarter slower, plus the build; a later command in a step from the step's recorded end; a step with no record from minute 4 if it is the job's first, else from the job's p95. 83 timeouts lowered to the most that still dumps in time (never under twice the step's slowest recorded run, plus a minute), 4 steps given `dump-before-budget.sh` (Linux and macOS), windows-idle's budget 20 to 22 | on train-130's workflows: 88 timeouts whose dump prints past the budget | 0 |
+| 2. a republished old tag | the jobs run `release-meta.sh` from the run's own commit (`git show $GITHUB_SHA:...`), not the tag's tree | 44917159512, job meta-from-the-tags-tree: no `release-meta.sh` in v0.1.0-alpha.126's tree | the same run, meta-from-the-runs-commit: TAG v0.1.0-alpha.126, publish true |
+| 3. a frame that waits a while | TestSpellcheckNeverBlocksFrame: the median frame over still text with the engine's answers held back within 4x a keystroke's frame (its layout, the same run) plus 2 ms. Keystrokes look up no word being typed, so typing frames never wait (a version that compared them passed a mutant: 44919645996) | 44918439106: train-130's test passes frames that wait up to 250 ms each | 44920636274: fails them (median 250.9 ms, bound 4.5 ms); 44920639031: x5 on the real editor, held frames 47-73 µs against keystrokes 447-746 µs |
+| 4. a typo in `only` | `only-check` fails when `only` starts no job's id; `run-name: ci only=<only>` | 44921857436: train-130's ci.yml, `only=fulltest`: all 17 jobs skipped, the run "skipped", titled "ci" | 44921860168: `only="fulltest" starts no job's id, so every job would be skipped`, titled "ci only=fulltest" |
+| 5. a cached result counted as a run | `test-shard.py` runs `go test -count=1`, and `check` fails on any package replayed from the cache | train-130's checker passes shards with an `ok ... (cached)` package | `check` fails on it, passes the real shards |
+| 6. the warm-window test's held answers | `held` waits until each held call's answer is computed; `stale(at)` fails the test when one was computed after the writes began, or still was being | 44917808169: train-130's test with a 2 s answer and marks not journaled passes (the answer carried the writes); 44917813724: the old `held` trips the new check ("still being computed") | 44917810968: the new test fails the same broken merge ("C0FAKE00001 marked read is unread again"); 44917816778: passes with a 2 s answer |
+
+### Flakes (round 2)
+
+| test | cause | fix | red | green |
+|---|---|---|---|---|
+| TestTautZeroCost | `testing.AllocsPerRun` counts the whole process's allocations: one burst elsewhere during the count raised its integer mean | the fewest of five counts, each side | 44924146874: train-130's test, a 300-allocation burst during the count: 53 vs 50 | 44924153026: the same burst, 50 vs 50; 44923396796: an idle Taut that allocates every frame still fails (54 vs 50) |
+| TestClackRollbackKeys, `eglInitialize` 0x3001 | every headless window brought `EGL_DEFAULT_DISPLAY` up (a new X connection) and its Release terminated it, under any other window too; Mesa failed one of those inits (train-129, linux-gio 136849179543; none in ~500, 44922213522) | gio patch 55: the default display stays initialized for the process | 44924405540: TestClackWindowOutlivesAnother on the old egl.go, `eglMakeCurrent error 0x3008` | 44924410293: it passes, and gpu/headless's TestClack tests 20 times over |
+| TestFrameCostDamage | `:explodes:` in view moved on between draws of the same ops on a slow WARP runner (44434705984) despite `SetAnimate(false)` | `images.HoldLive(true)` through the still scenes, off before the emoji's part | not reproduced on Linux: the old test passed with animations on (44923877407) | 44923882764 (Linux); all three OSes: 44925245368 |
+| TestMessageMenuOldMenuRows | not reproduced | the test now says what its click aimed at and what the rows are when the click never comes | | |
+| TestRealWindowCaretCost | a second failure seen: "readback: no blink's partial frame in 2.4s" at 1440x900 (Linux, 44923882764), after its whole-frames turns; 3 of 13 partial frames there damaged more than a caret | open | | |
+| TestMacIdleCPU | "channel again: 20 frames in 10 s" (once, 11-21) | open | | |
+| TestSnapshotsWhileBusy (jsrt), new | read the runtime's snapshot the instant its Do returned, but the task's microtask checkpoint and bookkeeping run after (`runTask`): 2 ms busy still under the full suite (44928390402, release dry run 44942336766) | wait for the runtime to go idle | 44945131657: train-130's test against a runtime still busy 20 ms after its Do: 3 of 3 fail at the idle check | 44945137083: 3 of 3 pass |
+
+### The runners lost on 2026-11-21
+
+Two full-test jobs lost their runner: train-126's (136813058254) "lost
+communication with the server" after 66 min, its log gone (404), and
+train-130's attempt 1 (136854209282) "the runner has received a shutdown
+signal", exit 143, at 22.1 min. Nothing in either log tells infra loss from
+the suite starving the runner: no memory or load was recorded. The other 41
+full-test jobs of the day ran 21.7-24.9 min; their five failures were tests
+(TestSocketGapListDrawsEveryMessage, TestPreviewFooterUnderComposerPlugin,
+TestReadsAnnounce and two more), not runners. full-test and release's test
+job now log the runner's memory, swap, load and three biggest processes
+each minute (`runner-load.sh`), and the first run with it says it's the
+suite. In a normal green full-test (44925236847) the memory in use climbed
+to **15,686 MiB of the runner's 15,983, with no swap**, near minute 22:
+ui.test alone at 13.9 GB, the minute train-130's attempt 1 lost its runner.
+internal/ui alone (flake-check, 44928443199) climbs the same way, and its
+heap profile at the end still holds 9,053 MB: every test's op buffers
+(2.3 GB), font faces (1.3 GB), images (0.7 GB), App subscriptions (0.6 GB),
+rich text styles, fakeslack histories. The ui tests' Apps are never let go.
+full-test and release's test job now run go test with `GOMEMLIMIT=11GiB`,
+above ui.test's live heap: the peak was 11,612 MiB, internal/ui took
+1,196 s against 1,187 and the job 23.0 min (44942313462; again green in
+44942310732). 7GiB held it to 10,330 MiB (44928390402), but under the live
+heap the GC ran back to back at half the CPU in the ui tests' last minutes,
+and TestJoinBanner's 10 s wait ran out (44939446171). The fix after this
+one is to let each test's App go.
+
+### Item 8: perf.yml as a regression gate
+
+Karim (#clack): "What about adding stuff like codspeed or an action to see
+if you regressed". perf.yml already ran base and head interleaved on one
+runner (`.github/perf/README.md`), but nothing failed when a number got
+worse.
+
+- **The gate** (`.github/perf/gate.py`, the perf job's last step on a
+  dispatch): each gated metric, head against base, fails when head is worse
+  by more than that metric's noise band, relative and absolute. Lower is
+  better for all of them; only worse fails. The summary has a line per
+  metric: which one, base → head, by how much, and its band. The metrics:
+  frame time p50 and p95 of a scroll, a typing and an idle frame (new:
+  `frameTimes` in `internal/ui/perf_test.go` records each op; each side
+  runs those three benchmarks three times, interleaved, and the gate reads
+  its median: in four runs of single passes, one slow stretch of the runner
+  put an unchanged tree's typing frame 13.4% apart), idle CPU
+  (new: the real binary's CPU from 20 to 95 s idle, `process.sh`), idle
+  frames (BenchmarkIdleFrame's frames that ask for another), allocations a
+  frame (the three), and memory (the real binary's idle RSS and Go heap at
+  95 s, BenchmarkSessionMemory's heap). Pushes to ui and main report and
+  don't gate: their base is the last release, not a branch point.
+- **The bands** (`.github/perf/noise.json`): from base-vs-base runs (both
+  sides the same commit: `-f base=<its sha> -f force=true -f jobs=perf`),
+  each metric's band is 1.5 times the widest gap they showed, never under
+  its floor (5% for frame times, 10% for idle CPU, 2% for allocations, 3%
+  for memory, with an absolute floor each). `gate.py sample` leaves each
+  run's numbers in its artifact (`gate-sample.json`) and `gate.py
+  calibrate` turns samples into the file. Six base-vs-base runs
+  (44934859075, 44934861506, 44934864117, 44934866471, 44934868863,
+  44934870872) gave: frame medians and p95s ±5 to 11.5% (the typing frame's
+  median ±21.5%: one run's head had two of its three typing passes in a slow
+  stretch; its p95 is ±5%), allocations ±2 to 5%, memory ±3 to 10%, idle CPU
+  ±76% (about 1 ms/s, ±0.5), idle frames exact. Four earlier runs of single
+  passes (44932200567, 44932203634, 44932207050, 44932210304) were wider
+  still, up to 13.4% on a frame median, which is why the gated benchmarks
+  now run three times a side.
+- **The skip**: a first job (`affects.py`) works out the base and fails
+  nothing: a dispatch whose diff from it touches only docs, tests (`*_test.go`,
+  testdata) and CI files (`.github/`) can't move a number (both sides run
+  HEAD's harness and fakeslackd), so every perf job skips and the summary
+  says why; `-f force=true` runs them anyway. A branch's default base is now
+  where it left ui (as the plugins job's already was), so the numbers say
+  what the branch changed; ui and main keep the newest release tag.
+  `-f jobs=perf` runs the gated job alone (no scale or plugins jobs).
+- **Red/green** (count 3 each): a 20 ms sleep at the top of `App.frame`
+  failed the gate in all three runs, at the gate step alone (44939402075:
+  5 metrics, scroll median +18.8%, scroll p95 +19.1%, typing p95 +16.1%,
+  idle median +13.3%, idle p95 +11.9%; 44939406672: 4; 44939411243: 5);
+  the unchanged tree passed all three (44939404419, 44939409028,
+  44939413760: every metric inside its band, the widest scroll p95 at
+  -6.2% of ±11.5%). ci-speed-2's own perf run against where it left ui
+  passed (44939450567).
+
+**CodSpeed, considered and not used.** Its Go support measures wall time
+only and is early, its numbers are stable on its own bare-metal runners
+(on GitHub's shared ones they'd have the noise this gate measures), and it
+reports on pull requests, where Clack works on branches and dispatches.
+perf.yml already has what a gate needs: both sides on one runner,
+interleaved, each built from its own tree.

@@ -107,10 +107,10 @@ jobs:
           RUN: ${{ inputs.run }}
         run: |
           set -o pipefail
-          go test -count=1 -timeout 20m -v ${RUN:+-run "$RUN"} ./internal/slick/... 2>&1 | tee dist/slick-test.log
+          go test -count=1 -timeout 10m -v ${RUN:+-run "$RUN"} ./internal/slick/... 2>&1 | tee dist/slick-test.log
       - name: acceptance summary
         if: ${{ !cancelled() }}
         run: |
           grep -E '^\s*--- (PASS|FAIL|SKIP)|^(ok|FAIL)\b|ACCEPT' dist/slick-test.log | tail -150 || true
       - name: taut tests still green (shared runtime)
-        run: go test -count=1 -timeout 15m ./internal/taut/...
+        run: go test -count=1 -timeout 9m ./internal/taut/...

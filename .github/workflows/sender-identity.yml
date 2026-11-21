@@ -67,7 +67,7 @@ jobs:
           mkdir -p "$IDENTITY_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestSenderIdentityRender|TestSlackMessageUserWinsOverBotProfile|TestPinGlyphLean' ./internal/ui/messages
           xvfb-run -a go test -count=1 -v -run 'TestSlackSystemUserCard' ./internal/ui/popups
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestSlackSystemDMAvatar|TestSidebarSystemUserPresence|TestSidebarAvatarSystemUserNoPresence' ./internal/ui
+          xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestSlackSystemDMAvatar|TestSidebarSystemUserPresence|TestSidebarAvatarSystemUserNoPresence' ./internal/ui
           ls -la "$IDENTITY_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

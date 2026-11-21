@@ -22,19 +22,36 @@ import (
 )
 
 // spellFake is an engine with a small word list; delay slows every check
-// (the frame must not notice), and gate, when set before the service
-// starts, holds every check and suggestion until it is closed.
+// (the frame must not notice), and after hold every check and suggestion
+// waits until hold's open runs.
 type spellFake struct {
 	mu    sync.Mutex
 	good  map[string]bool
 	delay time.Duration
-	gate  chan struct{}
+	gate  chan struct{} // hold's (mu)
+}
+
+// hold makes every check and suggestion from now on wait until open runs.
+func (f *spellFake) hold() (open func()) {
+	g := make(chan struct{})
+	f.mu.Lock()
+	f.gate = g
+	f.mu.Unlock()
+	var once sync.Once
+	return func() { once.Do(func() { close(g) }) }
+}
+
+func (f *spellFake) held() {
+	f.mu.Lock()
+	g := f.gate
+	f.mu.Unlock()
+	if g != nil {
+		<-g
+	}
 }
 
 func (f *spellFake) Check(w string) bool {
-	if f.gate != nil {
-		<-f.gate
-	}
+	f.held()
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
@@ -43,9 +60,7 @@ func (f *spellFake) Check(w string) bool {
 	return f.good[strings.ToLower(w)]
 }
 func (f *spellFake) Suggest(w string) []string {
-	if f.gate != nil {
-		<-f.gate
-	}
+	f.held()
 	switch w {
 	case "teh":
 		return []string{"the", "tea", "ten"}
@@ -79,6 +94,7 @@ type spellEnv struct {
 	host  *keysHost
 	items []popups.MenuItem
 	slow  time.Duration            // the slowest frame
+	took  []time.Duration          // every frame's layout, in order
 	scale float32                  // px per dp (0: 1)
 	size  image.Point              // the editor's size in dp (0: 600×120)
 	paint func(gtx layout.Context) // draws before the editor (shots)
@@ -135,7 +151,9 @@ func (e *spellEnv) frame() {
 	}
 	start := time.Now()
 	e.ed.Layout(g, e.st)
-	if d := time.Since(start); d > e.slow {
+	d := time.Since(start)
+	e.took = append(e.took, d)
+	if d > e.slow {
 		e.slow = d
 	}
 	e.r.Frame(&e.ops)
@@ -394,20 +412,45 @@ func TestSpellcheckPrefOff(t *testing.T) {
 }
 
 // A slow engine (50 ms a word) never shows in a frame: frames only read
-// the cache, and the underlines arrive later. The engine answers nothing
-// until the frames and the typing are done, so a frame that waited on it
-// (a check, or a lock held across one) would never return: no frame time
-// is measured, which a loaded runner made 48 ms of layout alone (α.119's
-// release test job, run 44883236514).
+// the cache, and the underlines arrive later. While the engine answers
+// nothing, a frame that waited on it (a check, or a lock held across one)
+// would never return, so the frames must finish within 30 s; one that
+// waited a while and gave up would only be slow. Wall time on a shared
+// runner can't bound that (a loaded one made 48 ms of layout alone,
+// α.119's release test job, run 44883236514), so the frames with answers
+// out are measured against the same run's keystrokes: their median within
+// 4× a keystroke's frame (its layout) plus 2 ms. A keystroke looks up no
+// word being typed, so only frames over still text wait on missing answers
+// (frames that waited up to 250 ms each passed the 30 s alone: ci-speed-2).
 func TestSpellcheckNeverBlocksFrame(t *testing.T) {
-	gate := make(chan struct{})
-	var opened sync.Once
-	open := func() { opened.Do(func() { close(gate) }) }
-	e := newSpellEnv(t, 50*time.Millisecond, func(e *spellEnv) { e.eng.gate = gate })
+	e := newSpellEnv(t, 50*time.Millisecond)
+	text := func(s string) *Doc {
+		d := NewDoc()
+		d.Insert(0, s, Attr{})
+		return d
+	}
+	// a keystroke's frame, every answer in: the text's words and each
+	// prefix of what's typed checked first
+	const typed = " say hi to the dog"
+	known := strings.Repeat("the quick world jumps over the dog ", 6)
+	var prefixes []string
+	for _, w := range strings.Fields(typed) {
+		for i := 1; i <= len(w); i++ {
+			prefixes = append(prefixes, w[:i])
+		}
+	}
+	e.ed.SetDoc(text(known + strings.Join(prefixes, " ")))
+	e.settle(1500 * time.Millisecond)
+	e.ed.SetDoc(text(known))
+	e.settle(100 * time.Millisecond)
+	n := len(e.took)
+	e.typ(typed)
+	keystroke := medianTook(e.took[n:])
+	// the frames over text with every answer out, the engine answering nothing
+	open := e.eng.hold()
 	t.Cleanup(open) // before the service stops (cleanups run last first)
-	d := NewDoc()
-	d.Insert(0, strings.Repeat("teh quick wrold jumps ovr the dog ", 6), Attr{})
-	e.ed.SetDoc(d)
+	e.ed.SetDoc(text(strings.Repeat("teh quick wrold jumps ovr the dog ", 6)))
+	n = len(e.took)
 	framed := make(chan struct{})
 	go func() { // the frames, while the engine can't answer
 		defer close(framed)
@@ -423,10 +466,20 @@ func TestSpellcheckNeverBlocksFrame(t *testing.T) {
 		<-framed
 		t.Fatal("frames waited on the spell engine: they finished only once it could answer")
 	}
+	held := medianTook(e.took[n : n+80])
 	open()
 	e.settle(1500 * time.Millisecond)
 	if !slices.Contains(e.bad(), "wrold") {
 		t.Errorf("the slow answers never arrived: %q", e.bad())
 	}
-	t.Logf("the slowest frame took %v (not checked: wall time on a shared runner)", e.slow)
+	t.Logf("median frame with the answers out %v, a keystroke's %v; the slowest frame %v", held, keystroke, e.slow)
+	if lim := 4*keystroke + 2*time.Millisecond; held > lim {
+		t.Errorf("frames with the answers out took a median %v, over 4× a keystroke's %v plus 2 ms (%v): they wait on the engine", held, keystroke, lim)
+	}
+}
+
+func medianTook(ds []time.Duration) time.Duration {
+	s := slices.Clone(ds)
+	slices.Sort(s)
+	return s[len(s)/2]
 }
