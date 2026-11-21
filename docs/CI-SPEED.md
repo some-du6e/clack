@@ -219,7 +219,27 @@ flake-check and -red/-mut evidence branches left out)
 
 ## For Karim: accounts and money
 
-(below)
+Nothing here was done: each needs an account, a secret or money. Clack is
+public, so GitHub's standard runners cost nothing per minute; what limits
+CI is the account's 40 concurrent jobs (5 macOS), which the queue above
+measures. Volume before these changes: ~16,000 Linux, ~5,400 Windows and
+~2,800 macOS runner-minutes a day (completed runs; cancelled ones add
+~4,000, mostly Linux).
+
+| # | what | needs | about a month | what it buys |
+|---|---|---|---|---|
+| 1 | ask GitHub Support to raise the concurrent-job cap (GitHub's limits page: "You can ask GitHub Support to raise these caps") | a ticket from Karim's account | $0 | the queue, the biggest bucket, shrinks with every slot added |
+| 2 | move clack into an organization on GitHub Team | an org, a seat | ~$4 (one seat) | 60 concurrent jobs instead of 40 (macOS stays at 5) |
+| 3 | GitHub Enterprise Cloud for that org | a plan | ~$21 (one seat) | 500 concurrent jobs, 50 macOS: today's peak (~250 queued + 40 running) fits with no queue |
+| 4 | Namespace's open-source program | Karim applies | $0 if accepted | Linux, Windows and macOS runners outside GitHub's cap |
+| 5 | a self-hosted Linux runner machine (8-16 cores, 4-8 runners) | a machine and a runner registration token (a secret) | ~$40-60 rented, $0 on Karim's own hardware | 4-8 Linux slots outside the cap; first set fork pull requests to need approval for all outside contributors |
+| 6 | a self-hosted Mac mini (M4) | ~$600 once, a token | ~$5 power | macOS jobs about twice as fast as GitHub's 3-core M1, outside the 5-job macOS cap |
+| 7 | per-minute runners (Ubicloud, Blacksmith, WarpBuild) | an account, a card | Linux only: ~$620-960 (Ubicloud, $0.0013-0.002/min) to ~$1,900 (Blacksmith, $0.004/min); macOS adds ~$6,700 at $0.08/min | no cap for what moves there |
+| 8 | make ui the default branch (a setting) | Karim's say | $0 | branches restore ui's caches (fresher than main's) and a workflow on ui can be dispatched before a release; but main stops being what the repo page shows |
+
+Prices are list prices from GitHub's docs and compiler.dev's runner price
+table (checked 2026-10-22); check each provider's page before buying.
+1-3 need no change to any workflow; 4-7 need `runs-on` labels.
 
 ## Totals
 
