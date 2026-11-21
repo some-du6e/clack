@@ -366,8 +366,10 @@ func TestHeaderCacheKeepsRecent(t *testing.T) {
 // sections list) can reach the fake first and be the one held, its write
 // waiting until the client gives up (60 s), with release behind it; before
 // its answer is computed, a write can still land in it, and the answer is
-// no longer stale. lastAnswer is when the last of them was computed.
-func holdStale(t *testing.T, fs *fakeslack.Server, methods ...string) (release func(), held func(d time.Duration), lastAnswer func() time.Time) {
+// no longer stale. stale fails the test unless every held answer was
+// computed before at: one computed after it, or still being computed,
+// carries what was written since.
+func holdStale(t *testing.T, fs *fakeslack.Server, methods ...string) (release func(), held func(d time.Duration), stale func(at time.Time)) {
 	t.Helper()
 	ch := make(chan struct{})
 	var once sync.Once
@@ -413,18 +415,21 @@ func holdStale(t *testing.T, fs *fakeslack.Server, methods ...string) (release f
 			}
 		}
 	}
-	lastAnswer = func() time.Time {
+	stale = func(at time.Time) {
+		t.Helper()
 		mu.Lock()
 		defer mu.Unlock()
-		var last time.Time
-		for _, at := range answered {
-			if at.After(last) {
-				last = at
+		for _, m := range methods {
+			done, ok := answered[m]
+			if !ok {
+				t.Fatalf("the held answer to %s was still being computed after the writes began: it isn't stale", m)
+			}
+			if done.After(at) {
+				t.Fatalf("the held answer to %s was computed %v after the writes began: it isn't stale", m, done.Sub(at))
 			}
 		}
-		return last
 	}
-	return release, held, lastAnswer
+	return release, held, stale
 }
 
 // The window is usable from the boot data while Boot's calls are out
@@ -478,7 +483,7 @@ func TestWarmWindowWritesSurviveBoot(t *testing.T) {
 		t.Fatalf("the fixture lacks a case: section %q unread %q left %q moved %q dm %q", section, unread, left, moved, openDM)
 	}
 
-	release, held, lastAnswer := holdStale(t, fs, "users.conversations", "client.counts", "sidebar.dms", "users.channelSections.list")
+	release, held, stale := holdStale(t, fs, "users.conversations", "client.counts", "sidebar.dms", "users.channelSections.list")
 	a := New(slack.New(fs.Creds()), store.New(dir))
 	t.Cleanup(a.Shutdown)
 	ctx := context.Background()
@@ -519,9 +524,7 @@ func TestWarmWindowWritesSurviveBoot(t *testing.T) {
 	}
 	// every held answer was Slack's before the writes: one computed after
 	// them would carry them, and Boot's merge would have nothing to keep
-	if last := lastAnswer(); last.After(writes) {
-		t.Fatalf("a held answer was computed %v after the writes began: it isn't stale", last.Sub(writes))
-	}
+	stale(writes)
 	release()
 	if err := <-booted; err != nil {
 		t.Fatal(err)
