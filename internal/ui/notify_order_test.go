@@ -257,10 +257,13 @@ func TestNotificationsDontWaitForEachOther(t *testing.T) {
 	tt := e.a.Taut()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
+	// an id of its own each run: the plugins outlive a test's App in the
+	// process (-count runs it again)
+	pluginID := fmt.Sprintf("NotifyPassThrough%d", time.Now().UnixNano())
 	id, err := tt.Import(ctx, []byte(`(() => {
 const TautPlugin = globalThis.TautPlugin
 class NotifyPassThrough extends TautPlugin {
-  static id = 'NotifyPassThrough'
+  static id = '`+pluginID+`'
   static pluginName = 'Notify pass-through'
   static description = 'Wraps showNotification and changes nothing'
   static category = 'notifications'
