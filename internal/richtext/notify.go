@@ -156,7 +156,7 @@ func notifyList(b *Block, st SpanText) string {
 	for i, it := range b.Items {
 		text := spansText(it, st) + "."
 		if b.Ordered {
-			lines = append(lines, orderedMarker(b.Indent, b.Offset+i+1)+". "+text)
+			lines = append(lines, orderedMarker(b.Indent, ListNumber(b, i))+". "+text)
 			continue
 		}
 		lines = append(lines, []string{"\u2022", "\u25e6", "\u25a0"}[b.Indent%3]+" "+text)
@@ -165,8 +165,10 @@ func notifyList(b *Block, st SpanText) string {
 }
 
 // orderedMarker is getOrderedListCharacter: n, a letter run
-// (convertNumberToLetterIncrement) or a roman numeral
-// (convertNumberToRomanNumeral) by indent.
+// (convertNumberToLetterIncrement) or a roman numeral by indent. The
+// roman numeral is CSS lower-roman's (LowerRoman: decimal above 3999, as
+// the list itself draws), not convertNumberToRomanNumeral's run of one
+// "m" per thousand, which a sender's offset turns into gigabytes.
 func orderedMarker(indent, n int) string {
 	switch indent % 3 {
 	case 1:
@@ -177,26 +179,9 @@ func orderedMarker(indent, n int) string {
 		}
 		return s
 	case 2:
-		return romanNumeral(n)
+		return LowerRoman(n)
 	}
 	return strconv.Itoa(n)
-}
-
-// romanNumeral is convertNumberToRomanNumeral: lower case, thousands as
-// that many m's.
-func romanNumeral(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	digits := [3][10]string{
-		{"", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix"},
-		{"", "x", "xx", "xxx", "xl", "l", "lx", "lxx", "lxxx", "xc"},
-		{"", "c", "cc", "ccc", "cd", "d", "dc", "dcc", "dccc", "cm"},
-	}
-	s := digits[0][n%10]
-	s = digits[1][n/10%10] + s
-	s = digits[2][n/100%10] + s
-	return strings.Repeat("m", n/1000) + s
 }
 
 // SearchText is the plain text a search result shows for d. Slack's

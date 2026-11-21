@@ -784,18 +784,10 @@ func toAlpha(n int) string {
 	return s
 }
 
-func toRoman(n int) string {
-	vals := []int{1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1}
-	syms := []string{"m", "cm", "d", "cd", "c", "xc", "l", "xl", "x", "ix", "v", "iv", "i"}
-	var sb strings.Builder
-	for i, v := range vals {
-		for n >= v {
-			sb.WriteString(syms[i])
-			n -= v
-		}
-	}
-	return sb.String()
-}
+// toRoman is the lower-roman marker the browser draws: decimal outside
+// its 1-3999 range (richtext.LowerRoman), never a run of "m" a sender's
+// offset can make a gigabyte long.
+func toRoman(n int) string { return richtext.LowerRoman(n) }
 
 func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 	p := &l.st.Palette
@@ -868,7 +860,7 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			// none). The outside ::marker is "N. " (the counter style's ". "
 			// suffix, white-space pre) with its end at the li's border box,
 			// 8px before the text: the period sits a space short of it.
-			n := b.Offset + i + 1
+			n := richtext.ListNumber(b, i)
 			var label string
 			switch b.Indent % 3 {
 			case 1:

@@ -391,7 +391,7 @@ func flatten(bs []Block) []Span {
 			for i, it := range b.Items {
 				bullet := "• "
 				if b.Ordered {
-					bullet = strconv.Itoa(b.Offset+i+1) + ". "
+					bullet = strconv.Itoa(ListNumber(&b, i)) + ". "
 				}
 				add(append([]Span{{Kind: Text, Text: strings.Repeat("    ", b.Indent) + bullet}}, it...))
 			}
@@ -676,7 +676,7 @@ func markdownBlocks(r Resolver, s string) []Block {
 		case mdItemRe.MatchString(ln):
 			flush()
 			m := mdItemRe.FindStringSubmatch(ln)
-			indent := len(strings.ReplaceAll(m[1], "\t", "  ")) / 2
+			indent := listIndent(len(strings.ReplaceAll(m[1], "\t", "  ")) / 2)
 			ordered := m[2] != "-" && m[2] != "*" && m[2] != "+"
 			item := flatten(FromMrkdwn(r, mdInline(m[3])))
 			if n := len(out); n > 0 && out[n-1].Kind == List && out[n-1].Indent == indent && out[n-1].Ordered == ordered {
@@ -686,7 +686,7 @@ func markdownBlocks(r Resolver, s string) []Block {
 			blk := Block{Kind: List, Ordered: ordered, Indent: indent, Items: [][]Span{item}}
 			if ordered {
 				if v, err := strconv.Atoi(strings.TrimRight(m[2], ".)")); err == nil && v > 1 {
-					blk.Offset = v - 1
+					blk.Offset = listOffset(v - 1)
 				}
 			}
 			out = append(out, blk)
@@ -837,7 +837,7 @@ func (c *builder) richText(els []bk) []Block {
 		case "rich_text_quote":
 			out = append(out, Block{Kind: Quote, Spans: c.richInline(e.Elements, brSection(false)), Border: e.Border > 0})
 		case "rich_text_list":
-			blk := Block{Kind: List, Ordered: e.styleString() == "ordered", Indent: e.Indent, Offset: e.Offset, Border: e.Border > 0}
+			blk := Block{Kind: List, Ordered: e.styleString() == "ordered", Indent: listIndent(e.Indent), Offset: listOffset(e.Offset), Border: e.Border > 0}
 			// a check list (BS) draws checkboxes or, where they aren't
 			// allowed, bullets: never the ordered markers
 			blk.Check = e.Checklist || e.styleString() == "check"

@@ -48,7 +48,7 @@ func writeBlock(b *strings.Builder, blk *Block, text SpanText) {
 		for i, it := range blk.Items {
 			bullet := "• "
 			if blk.Ordered {
-				bullet = strconv.Itoa(blk.Offset+i+1) + ". "
+				bullet = strconv.Itoa(ListNumber(blk, i)) + ". "
 			}
 			b.WriteString(strings.Repeat("    ", blk.Indent) + bullet + spansText(it, text) + "\n")
 		}
