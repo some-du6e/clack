@@ -2045,7 +2045,7 @@ jobs:
           rc=0
           "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignViewsInputs)$' ./internal/ui/views || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignPopupsField)$' ./internal/ui/popups || rc=1
-          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignEditorBox)$' ./internal/ui/theme/carettest || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignEditorBox|TestCaretAlignZoomedWidth|TestCaretScrolledOutOfView)$' ./internal/ui/theme/carettest || rc=1
           # Gio's own widget tests; these two fail on ui without this
           # branch too (6db17b41: TestNoFilterAllocs gets 1 alloc per op,
           # TestIndexPositionRunes/many_newlines 42 positions for 41), so

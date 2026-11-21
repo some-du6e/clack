@@ -62,6 +62,13 @@ type Field struct {
 	// Size, as Clack's inputs draw theirs).
 	Placeholder string
 	Th          *theme.Theme
+	// DeviceScale is the screen's px per dp when Scale includes a zoom
+	// (0: Scale): Blink's caret is max(1, device scale) wide at any zoom.
+	DeviceScale float32
+	// LineBox, when set, is the box the editor's line is centred in (px):
+	// the caret's top must be (height - ascent - descent)/2 below its top,
+	// exactly, as Blink centres a single-line input's line.
+	LineBox image.Rectangle
 }
 
 // Geometry is what Check measured, in px.
@@ -125,7 +132,16 @@ func Check(t *testing.T, f Field) Geometry {
 		t.Fatalf("%s: no ink (placeholder %v, text %v in %v)", f.Name, g.Placeholder, g.Text, ink)
 	}
 
-	wantW := int(math.Floor(math.Max(1, float64(f.Scale)) + .5))
+	dev := f.DeviceScale
+	if dev == 0 {
+		dev = f.Scale
+	}
+	wantW := int(math.Floor(math.Max(1, float64(dev)) + .5))
+	if lb := f.LineBox; !lb.Empty() {
+		if top := lb.Min.Y + (lb.Dy()-r.asc-r.desc)/2; g.Caret.Min.Y != top {
+			t.Errorf("%s @%gx: the caret's top is y %d, want %d: the line centred in its box %v (font %d+%d)", f.Name, f.Scale, g.Caret.Min.Y, top, lb, r.asc, r.desc)
+		}
+	}
 	for _, c := range []struct {
 		what string
 		r    image.Rectangle

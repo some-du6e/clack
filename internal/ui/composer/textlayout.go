@@ -3,6 +3,7 @@ package composer
 import (
 	"image"
 	"image/color"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -918,16 +919,21 @@ func (l *tlLayout) caretInfo(pos int) (x, base, asc, desc, li int) {
 	return l.vx(li, pos), ln.base, p.casc, p.cdesc, li
 }
 
-// caretLeft is the caret's left edge for a caret at x on line li, w px
-// wide: Blink's bar caret is centred on the caret's x (caret_left -=
-// caret_width / 2) and kept inside the line (ClampAndRound,
+// caretLeft is the left edge of a caret at pos on line li, w px wide
+// before snapping (Blink's BarCaretWidth: the device scale): Blink centres
+// the bar caret on the caret's x (caret_left -= caret_width / 2), rounds
+// it and keeps it inside the line (ClampAndRound,
 // core/layout/inline/caret_rect.cc), so at a line's start it starts there.
-func (l *tlLayout) caretLeft(li, x, w int) int {
-	left := x - w/2
-	if li >= 0 && li < len(l.lines) {
-		left = max(left, l.vx(li, l.lines[li].a))
+// The x is the pen's, unrounded.
+func (l *tlLayout) caretLeft(li, pos int, w float64) int {
+	if li < 0 || li >= len(l.lines) {
+		return 0
 	}
-	return left
+	ln := &l.lines[li]
+	p := &l.paras[ln.para]
+	q := min(max(pos, p.start), p.end)
+	x := float64(p.left) + float64(p.px[q-p.start]-p.px[ln.a-p.start])/64
+	return max(int(math.Floor(x-w/2+.5)), p.left)
 }
 
 // lineAtY returns the visual line at content y (nearest if between lines).

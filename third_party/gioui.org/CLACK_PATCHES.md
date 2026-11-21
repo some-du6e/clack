@@ -11,7 +11,7 @@ To see the whole diff against the release:
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
-`widget/text.go`, `widget/label.go`, `widget/clack_spans.go`,
+`widget/text.go`, `widget/label.go`, `widget/clack_spans.go`, `widget/clack_scale.go`,
 `text/shaper.go`, `text/gotext.go`, `text/lru.go`, `op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`,
 `app/clack_gpu.go`, `app/clack_panel.go`, `app/os.go`, `app/os_macos.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
@@ -2530,7 +2530,8 @@ ui's `theme-contrast-4` and `fileurl-dotdot` in round 2.
 ## 54. widget: a single-line editor centres its line, and the caret is Blink's
 
 `widget/text.go` (`textView.lineShift`, `caretRect`; `Layout`,
-`ScrollBounds`, `Dimensions` and `PaintCaret` use them).
+`ScrollBounds`, `Dimensions` and `PaintCaret` use them),
+`widget/clack_scale.go` (`SetDeviceScale`, `DeviceScale`).
 
 Karim, 2026-11-20 (Windows, alpha.112): channel details' "Add agents and
 apps to #clack" modal drew its search's caret from near the input's top
@@ -2563,20 +2564,35 @@ taller than its line did the same.
   rounded-up 19), `LocalFrameView::BarCaretWidth` wide (max(1, device
   scale) device px, pixel-snapped: 1 px at 1x, where Gio drew 2, and 2 at
   1.5x and 2x), its left edge the caret's x less half its width, rounded
-  and kept inside the view (`ClampAndRound`), so at the start of a line
-  it starts there (Gio's was centred on x and cut in half by the view's
+  and kept inside the line box in the text's own coordinates
+  (`ClampAndRound`: from 0 to the wider of the view and the text), then
+  scrolled, so at the start of a line it starts there and a caret
+  scrolled out of the view is clipped, never pulled onto its edge (Gio's was centred on x and cut in half by the view's
   left edge: 1 px at 2x). `caretWidth`, the narrowest a view is, is that
   whole width (Gio's was half of it), so an empty field laid out at its
   natural width holds the whole caret.
 
+The device scale is the screen's alone: `BarCaretWidth` is
+`WindowToViewportScalar(1)` (local_frame_view.cc), and page zoom (Slack's
+View > Zoom) never widens the caret. Clack zooms by scaling the window's
+Metric, so its window records the unzoomed `PxPerDp` each frame with
+`widget.SetDeviceScale` (a value on the window's router, patch 15), and
+`DeviceScale` reads it back, falling back to `PxPerDp`. At 2x zoomed to
+125% or 150% the caret is 2 px, not 3.
+
 Clack's composer draws its own caret (internal/ui/composer) and takes
-the same rules there.
+the same rules there: rounded metrics, the device scale's width, its
+left edge from the pen's unrounded x.
 
 Tests: `internal/ui/views` `TestCaretAlignViewsInputs` (the agents
-invite picker and the views' search box) and `internal/ui/popups`
+invite and posting permissions pickers, the line centred in their 28 dp
+row, and the views' search box) and `internal/ui/popups`
 `TestCaretAlignPopupsField` (popups' `field`, 36/15 with an icon and
 44/18), at 1x, 1.5x and 2x in both themes, measure the caret's top,
 bottom, width and x against the placeholder's and the typed text's ink
-(`internal/ui/theme/carettest`), on llvmpipe, WARP and Metal:
+(`internal/ui/theme/carettest`, whose `TestCaretAlignEditorBox`,
+`TestCaretAlignZoomedWidth` and `TestCaretScrolledOutOfView` cover the
+centred line's exact place, the zoomed width and a caret swiped out of
+view), on llvmpipe, WARP and Metal:
 flake-check's `caret-align` job (dispatch with `only=caret-align`).
 Not in `UPSTREAM.patch`.

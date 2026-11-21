@@ -84,8 +84,24 @@ func TestCaretAlignViewsInputs(t *testing.T) {
 				shot() // sizes pick
 				in := dp(3)
 				box := image.Rect(20, 20, 20+dp(440), 20+max(pick.Size.Y, dp(44))).Inset(in)
+				// the editor's row: 28dp inside the 6/8dp inset
+				row := image.Rect(20+dp(8), 20+dp(6), 20+dp(440)-dp(8), 20+dp(6)+dp(28))
 				carettest.Check(t, carettest.Field{Name: "agents picker", Ed: &a.q.ed, Shot: shot, Box: box,
-					Size: 15, Scale: sc, Placeholder: a.q.placeholder(), Th: th})
+					Size: 15, Scale: sc, Placeholder: a.q.placeholder(), Th: th, LineBox: row})
+
+				// channel settings' posting permissions picker
+				// (cdPeoplePick: "Select people…", a 40dp field)
+				var k cdPeoplePick
+				k.init(nsChanOptions.T("Select people…"))
+				shot = caretShooter(t, sc, w, h, &k.q.ed, func() color.NRGBA { return d.p.Surface }, func(gtx C) {
+					d.base.frame()
+					gtx.Constraints.Max.X = dp(440)
+					pick = k.layout(gtx, d)
+				})
+				shot()
+				box = image.Rect(20, 20, 20+dp(440), 20+max(pick.Size.Y, dp(40))).Inset(in)
+				carettest.Check(t, carettest.Field{Name: "posting picker", Ed: &k.q.ed, Shot: shot, Box: box,
+					Size: 15, Scale: sc, Placeholder: k.q.placeholder(), Th: th, LineBox: row})
 
 				// the views' search box (kit.go searchBox: Find members,
 				// the directories, Files, huddles)

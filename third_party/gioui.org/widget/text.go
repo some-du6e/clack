@@ -411,7 +411,7 @@ func (e *textView) PaintText(gtx layout.Context, material op.CallOp) {
 // its natural width holds the whole caret (Gio's was half of it: an
 // empty field's caret was cut to 1 px at 2x).
 func (e *textView) caretWidth(gtx layout.Context) int {
-	return int(math.Floor(max(1, float64(gtx.Metric.PxPerDp)) + .5))
+	return int(math.Floor(max(1, float64(DeviceScale(gtx))) + .5))
 }
 
 // PaintCaret clips and paints the caret rectangle, adding material immediately
@@ -443,11 +443,14 @@ func (e *textView) PaintCaret(gtx layout.Context, material op.CallOp) {
 // left.
 func (e *textView) caretRect(gtx layout.Context) image.Rectangle {
 	caretStart := e.closestToRune(e.caret.start)
-	w := max(1, float64(gtx.Metric.PxPerDp))
+	w := max(1, float64(DeviceScale(gtx)))
 	wpx := e.caretWidth(gtx)
-	x := float64(caretStart.x)/64 - float64(e.scrollOff.X)
-	left := int(math.Floor(x - w/2 + .5))
-	left = max(min(left, e.viewSize.X-wpx), 0)
+	// clamped in the text's own coordinates, inside its line box (from
+	// 0 to the wider of the view and the text), then scrolled: a caret
+	// scrolled out of the view is clipped, not pulled onto its edge
+	left := int(math.Floor(float64(caretStart.x)/64 - w/2 + .5))
+	left = max(min(left, max(e.viewSize.X, e.dims.Size.X)-wpx), 0)
+	left -= e.scrollOff.X
 	y := caretStart.y - e.scrollOff.Y
 	return image.Rect(left, y-caretStart.ascent.Round(), left+wpx, y+caretStart.descent.Round())
 }
