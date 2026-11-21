@@ -2917,7 +2917,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('pump-lookups', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      CORE_TESTS: '^(TestSocketLookupsLeaveThePump|TestPrefChangeValueAppliesAtOnce|TestHeldReplyDeletionWaitsForIt|TestHeldMessagesKeepTheirOrder|TestHeldDMDoesntWaitForPrefs)$'
+      CORE_TESTS: '^(TestSocketLookupsLeaveThePump|TestPrefChangeValueAppliesAtOnce|TestHeldReplyDeletionWaitsForIt|TestHeldMessagesKeepTheirOrder|TestHeldDMDoesntWaitForPrefs|TestNewGroupDMsFirstMessageBadges|TestSectionRereadsTakeTheNewest|TestLeftChannelStaysLeft|TestOlderDNDAnswerGivesWay|TestSavedStateBeforeItsLookup|TestRemovesNotTakenByReactions)$'
       UI_TESTS: '^(TestMessageBehindLookupLatency|TestPreviewFooterChannelCreatedElsewhere)$'
       CLACK_LATENCY_TESTS: "1"
     steps:
