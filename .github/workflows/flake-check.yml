@@ -2976,6 +2976,38 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
           exit $rc
 
+  # threads-ship (2026-11-21): the review of thread-load-speed's blockers
+  # (wf_15e6e96d-4f5): a List item's comments page like the thread pane,
+  # a poll with the socket away refreshes the pane's rows, a pane closed
+  # or hidden while it pages starts over as a pane mounted afresh (its
+  # scrollmark by message), a followed thread opens at its last read with
+  # no window holding its root, Mod+Z and Up read the newest slice, the
+  # reply box stays through a slow connect, and find in thread lands a
+  # result outside the slice. Dispatch with only=thread-load (or
+  # only=thread-load-ship for these alone).
+  thread-load-ship:
+    if: ${{ !inputs.only || startsWith('thread-load-ship', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core, messages, listview and ui: the threads-ship blockers, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadStartTsFollowedWithoutRoot|TestThreadPollRefreshesPaneRows)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadReplyBoxStaysAfterSlowConnect|TestFindInThreadNewerResultLands|TestFindInThreadClosedStopsReading)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^TestItemCommentsPageLikeSlack$' ./internal/ui/listview || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 25m -run '^(TestThreadPaneClosedWhilePageLoads|TestThreadPaneHiddenAndShownKeepsPaging|TestThreadReopenAfterJumpStartsAtItsStart|TestThreadPaneRefreshesAtPoll|TestUndoAndEditLastReadTheNewestSlice)$' ./internal/ui || rc=1
+          exit $rc
+
   # thread-open-root (2026-11-17, round 2 2026-11-18): a thread pane never
   # shows a reply as its root (Karim, α.105: a link to a reply in a bot's
   # digest of active threads opened the reply alone, as the root), and the
