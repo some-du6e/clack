@@ -25,6 +25,9 @@ func refsMsg(a *App) slack.Message {
 	a.S.PutConv(slack.Conversation{ID: "C0OPS0001", Name: "ops", IsChannel: true, IsMember: true, Properties: props})
 	a.S.PutConv(slack.Conversation{ID: "D0BOB0001", IsIM: true, User: "U0BOB0001", IsMember: true})
 	a.S.PutCanvasRef("F0RUNBOOK", richtext.CanvasRef{Title: "Runbook", Status: "normal"})
+	// the message the slug links to, held (fetched by id): its label reads
+	// it, and the DM it's in
+	a.S.PutFetched("D0BOB0001", []slack.Message{{Type: "message", TS: "1700000000.000050", User: "USELF", Text: "an earlier line"}}, 0)
 	el := func(m map[string]any) map[string]any { return m }
 	blocks, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "block_id": "r", "elements": []any{map[string]any{"type": "rich_text_section",
 		"elements": []any{
@@ -65,6 +68,9 @@ func TestMessageRefs(t *testing.T) {
 	if !slices.Contains(v.Refs.Files, "F0RUNBOOK") {
 		t.Errorf("files read %v; want the canvas that titles the tab", v.Refs.Files)
 	}
+	if !slices.Contains(v.Refs.Messages, "D0BOB0001/1700000000.000050") || !v.Refs.Reads(RefChange{Messages: []string{"D0BOB0001/1700000000.000050"}}) {
+		t.Errorf("messages read %v; want the one the slug links to", v.Refs.Messages)
+	}
 	if !v.Refs.Reads(RefChange{Members: []string{"U0CARA001"}}) || !v.Refs.Reads(RefChange{Channels: []string{"C0OPS0001"}}) ||
 		!v.Refs.Reads(RefChange{Files: []string{"F0RUNBOOK"}}) || !v.Refs.Reads(RefChange{AnyMember: true}) ||
 		v.Refs.Reads(RefChange{Members: []string{"U0DAN0001"}, Channels: []string{"C0GEN0001"}}) {
@@ -83,7 +89,13 @@ func TestMessageRefs(t *testing.T) {
 		{Event{Type: "tabs", Channel: "C0OPS0001"}, RefChange{Channels: []string{"C0OPS0001"}}},
 		{Event{Type: "tabs", Channel: "C0OPS0001", SameNames: true}, RefChange{}},
 		{Event{Type: "names", Users: []string{"U0CARA001", "F0RUNBOOK"}}, RefChange{Members: []string{"U0CARA001", "F0RUNBOOK"},
-			Channels: []string{"U0CARA001", "F0RUNBOOK"}, Files: []string{"U0CARA001", "F0RUNBOOK"}, Bots: []string{"U0CARA001", "F0RUNBOOK"}}},
+			Channels: []string{"U0CARA001", "F0RUNBOOK"}, Files: []string{"U0CARA001", "F0RUNBOOK"}, Bots: []string{"U0CARA001", "F0RUNBOOK"},
+			Messages: []string{"U0CARA001", "F0RUNBOOK"}}},
+		// a message slug's message answered (msg_slug.go), and one deleted
+		{Event{Type: "names", Users: []string{"D0BOB0001/1700000000.000050"}}, RefChange{Members: []string{"D0BOB0001/1700000000.000050"},
+			Channels: []string{"D0BOB0001/1700000000.000050"}, Files: []string{"D0BOB0001/1700000000.000050"},
+			Bots: []string{"D0BOB0001/1700000000.000050"}, Messages: []string{"D0BOB0001/1700000000.000050"}}},
+		{Event{Type: "delete", Channel: "D0BOB0001", TS: "1700000000.000050"}, RefChange{Messages: []string{"D0BOB0001/1700000000.000050"}}},
 		{Event{Type: "names"}, RefChange{All: true}}, // the viewer's user groups
 		{Event{Type: "emoji_changed", Name: "partyparrot"}, RefChange{Emoji: []string{"partyparrot"}}},
 		{Event{Type: "emoji_changed"}, RefChange{All: true}},
@@ -103,7 +115,7 @@ func TestMessageRefs(t *testing.T) {
 		got := RefsChanged(c.ev)
 		if !slices.Equal(got.Members, c.want.Members) || !slices.Equal(got.Channels, c.want.Channels) ||
 			!slices.Equal(got.Files, c.want.Files) || !slices.Equal(got.Bots, c.want.Bots) || !slices.Equal(got.Emoji, c.want.Emoji) ||
-			got.AnyMember != c.want.AnyMember || got.All != c.want.All {
+			!slices.Equal(got.Messages, c.want.Messages) || got.AnyMember != c.want.AnyMember || got.All != c.want.All {
 			t.Errorf("RefsChanged(%+v) = %+v; want %+v", c.ev, got, c.want)
 		}
 	}

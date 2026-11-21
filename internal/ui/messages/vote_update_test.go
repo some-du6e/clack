@@ -168,7 +168,7 @@ func (p *votePane) buttons(ts string, bids ...string) (map[string]image.Rectangl
 		if r == nil || r.rv == nil {
 			return nil, nil, false
 		}
-		el, _ := r.rv.Options().Elements.(*blockkit.Message)
+		el := blockkit.HostOf(r.rv.Options().Elements)
 		slots := r.rv.ElementSlots()
 		if el == nil || len(slots) != len(bids) {
 			return nil, el, false

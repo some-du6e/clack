@@ -42,6 +42,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
+	"github.com/some-du6e/clack/internal/ui/videoplayer"
 )
 
 // AppName is the product name (Karim picked "Clack" on 2026-11-06). The
@@ -157,7 +158,8 @@ type App struct {
 	win    *app.Window
 	th     *theme.Theme
 	images *imgcache.Cache
-	data   *backend // nil until signed in
+	vids   *videoplayer.Controller // the inline video players, once a list asked (video.go)
+	data   *backend                // nil until signed in
 
 	caption captionState // Windows: the window's HWND and DWM attributes (caption_windows.go)
 	wco     wcoBar       // Windows: the caption buttons over the top nav (titlebar.go)
@@ -227,6 +229,17 @@ type App struct {
 
 	// hud, for the image cache's goroutines (imagesReady, huddle_wire.go)
 	hudLive atomic.Pointer[huddleui.Controller]
+	// hudPings are animReady's calls into the huddle windows (tests: a
+	// video's frames never make them draw, videoFrameReady)
+	hudPings atomic.Int64
+	// videoRepaints are the layouts the players asked for (their state
+	// changing: a play, a pause, a loop's seek), video.go
+	videoRepaints atomic.Int64
+	// the mini player's window part (video_pip.go) and its next wake;
+	// the players' controls' tooltips (video.go)
+	pip     pipUI
+	pipWake time.Time
+	vidTips map[any]*popups.TipState
 
 	title       string
 	firstPaint  bool
@@ -555,6 +568,7 @@ func (a *App) Run() error {
 		case app.DestroyEvent:
 			wd.end()
 			wd.stop()
+			a.closeVideos()   // no sound after the window is gone (video.go)
 			a.shutdownIntro() // the introduction's preview renderer and its folder (intro_preview.go)
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
@@ -803,6 +817,10 @@ func (a *App) frame(gtx layout.Context) {
 		return
 	}
 	defer a.startupFrame()
+	if v := a.vids; v != nil { // which players this layout drew (video.go)
+		v.BeginFrame()
+		defer v.EndFrame()
+	}
 	// the inspect tool, before anything reads input: while a session runs
 	// the window lays out hover-only and the tool reads the clicks and
 	// keys (inspect_wire.go)
@@ -848,6 +866,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.syncSplitWindow(gtx) // the split view's minimum window width (split.go)
 
 	a.layoutSwipe(gtx, primary)
+	a.layoutVideoPip(gtx)  // the mini player: over the content, under the overlays (video_pip.go)
 	a.layoutHoverCard(gtx) // above the content, under the overlays
 	a.layoutOverlays(gtx)
 	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers

@@ -1,0 +1,34 @@
+package ui
+
+// The stand-in for video_viewer_hooks_test.go on ui (files-shots' before-ui
+// run): ui has no video player, so no viewer item is ever a video.
+
+import (
+	"image"
+	"testing"
+	"time"
+)
+
+type vvState struct {
+	idx, n                int
+	video                 bool
+	file                  string
+	playing, muted, shown bool
+	elapsed               time.Duration
+	play, mute, bar       image.Rectangle
+}
+
+func viewerVideos(t *testing.T) {}
+
+func viewerState(e *perfEnv) (vvState, bool) {
+	if vvLightbox(e) == nil {
+		return vvState{}, false
+	}
+	return vvState{n: 1}, true
+}
+
+func vvPlayers(e *perfEnv) int { return 0 }
+
+func inlineState(e *perfEnv, ts string) (bool, time.Duration, bool) { return false, 0, false }
+
+func inlineExpand(e *perfEnv, ts string) (image.Rectangle, bool) { return image.Rectangle{}, false }

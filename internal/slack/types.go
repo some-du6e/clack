@@ -64,6 +64,10 @@ type Message struct {
 	// (assistant_app_thread: {title, …}); the thread pane's header reads
 	// its title (srGL renderThreadTitle, Aa1F AssistantThreadTitleLabel).
 	AssistantAppThread *MessageAssistantThread `json:"assistant_app_thread,omitempty"`
+	// AIContext is an agent's reply's ai_context: result_status
+	// "stopped_by_user" when the person stopped its stream (Slack's
+	// getMessageLabelValues isStopped, stopped_by_user_id).
+	AIContext *MessageAIContext `json:"ai_context,omitempty"`
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`
@@ -235,6 +239,18 @@ type BotProfile struct {
 	IsWorkflowBot bool `json:"is_workflow_bot,omitempty"`
 }
 
+// MediaProgress is a file's media_progress: where the viewer stopped
+// watching it (offset_ms), and whether they watched it to its end.
+type MediaProgress struct {
+	OffsetMS     int  `json:"offset_ms"`
+	MediaWatched bool `json:"media_watched"`
+}
+
+// FileVideo is a file's video (only its outputs are read).
+type FileVideo struct {
+	Outputs json.RawMessage `json:"outputs,omitempty"`
+}
+
 type File struct {
 	ID                 string          `json:"id"`
 	Name               string          `json:"name"`
@@ -287,11 +303,24 @@ type File struct {
 	Transcription      json.RawMessage `json:"transcription,omitempty"`
 	MP4                string          `json:"mp4"`
 	HLS                string          `json:"hls"`
-	IsExternal         bool            `json:"is_external"`
-	ExternalType       string          `json:"external_type"`
-	AudioWaveSamples   []int           `json:"audio_wave_samples"`
-	Subtype            string          `json:"subtype"`
-	FileAccess         string          `json:"file_access,omitempty"`
+	// A video's: the poster Slack draws (VideoControlsOverlay's
+	// thumb_video_ts ?? thumb_video), the HLS stream it prefers in
+	// Electron, its captions and its audio-only source (MediaViewerContent's
+	// audio ? aac : mp4), and how far the viewer watched it
+	// (media.progress.update): where a player starts (xnwb).
+	ThumbVideoTS  string         `json:"thumb_video_ts,omitempty"`
+	HLSEmbed      string         `json:"hls_embed,omitempty"`
+	VTT           string         `json:"vtt,omitempty"`
+	AAC           string         `json:"aac,omitempty"`
+	MediaProgress *MediaProgress `json:"media_progress,omitempty"`
+	// Video is the file's video, whose outputs only fileIsHosted reads: an
+	// external file with transcoded outputs plays as a hosted one.
+	Video            *FileVideo `json:"video,omitempty"`
+	IsExternal       bool       `json:"is_external"`
+	ExternalType     string     `json:"external_type"`
+	AudioWaveSamples []int      `json:"audio_wave_samples"`
+	Subtype          string     `json:"subtype"`
+	FileAccess       string     `json:"file_access,omitempty"`
 	// MediaDisplayType is Slack's media_display_type ("unknown" while an
 	// upload is still being processed). Slack's web client doesn't draw by
 	// it; Clack only reads it to spot unprocessed uploads.
@@ -361,12 +390,15 @@ type Attachment struct {
 	IsAppUnfurl   bool              `json:"is_app_unfurl,omitempty"`
 	Hidden        bool              `json:"hidden,omitempty"`
 	IsMsgUnfurl   bool              `json:"is_msg_unfurl"`
-	IsShare       bool              `json:"is_share"`
-	ChannelID     string            `json:"channel_id"`
-	ChannelName   string            `json:"channel_name"`
-	MsgSubtype    string            `json:"msg_subtype"`
-	Blocks        json.RawMessage   `json:"blocks,omitempty"`
-	MessageBlocks []struct {
+	// AgentChannelUnfurl is the card of a code channel an agent made
+	// (MessageKitAttachments draws it as CodeChannelEntityCard)
+	AgentChannelUnfurl *AgentChannelUnfurl `json:"agent_channel_unfurl,omitempty"`
+	IsShare            bool                `json:"is_share"`
+	ChannelID          string              `json:"channel_id"`
+	ChannelName        string              `json:"channel_name"`
+	MsgSubtype         string              `json:"msg_subtype"`
+	Blocks             json.RawMessage     `json:"blocks,omitempty"`
+	MessageBlocks      []struct {
 		Message struct {
 			Blocks json.RawMessage `json:"blocks"`
 		} `json:"message"`
@@ -660,4 +692,23 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		m.SubscribedSet = json.Unmarshal(aux.RawSub, &m.Subscribed) == nil
 	}
 	return nil
+}
+
+// MessageAIContext is a message's ai_context (the fields Slack's client
+// reads).
+type MessageAIContext struct {
+	ResultStatus    string `json:"result_status,omitempty"`
+	StoppedByUserID string `json:"stopped_by_user_id,omitempty"`
+}
+
+// AgentChannelUnfurl is an attachment's agent_channel_unfurl: the code
+// channel an agent session made.
+type AgentChannelUnfurl struct {
+	ChannelID             string `json:"channel_id"`
+	ChannelName           string `json:"channel_name"`
+	AgentBotUserID        string `json:"agent_bot_user_id"`
+	IsPrivate             bool   `json:"is_private"`
+	JoinableFromChannelID string `json:"joinable_from_channel_id"`
+	WorkflowName          string `json:"workflow_name,omitempty"`
+	WorkflowTriggerID     string `json:"workflow_trigger_id,omitempty"`
 }

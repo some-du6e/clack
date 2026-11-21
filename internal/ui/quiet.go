@@ -85,7 +85,25 @@ func (a *App) animReady() {
 	default: // one is already queued; it covers this one
 	}
 	if h := a.hudLive.Load(); h != nil {
+		a.hudPings.Add(1)
 		h.ImagesChanged()
+	}
+}
+
+// videoFrameReady is a video player's new frame, or its spinner's (any
+// goroutine): a quiet frame of the main window alone, which the GPU draws
+// only where the frame changed (the tile). The huddle call window and
+// the screen share popouts never draw inline videos: animReady's
+// ImagesChanged would make each of them draw a frame, and then the main
+// window's next frame couldn't be quiet (whyOtherWindow).
+func (a *App) videoFrameReady() {
+	a.animDue.Store(true)
+	if h := invalidateHook; h != nil {
+		h(a)
+	}
+	select {
+	case a.inval <- struct{}{}:
+	default: // one is already queued; it covers this one
 	}
 }
 

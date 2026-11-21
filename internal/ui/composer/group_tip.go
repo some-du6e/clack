@@ -46,10 +46,10 @@ type groupTip struct {
 
 // layoutGroupTip shows the tooltip over the @group slug under the
 // pointer, the editor laid out at the origin.
-func (c *Composer) layoutGroupTip(gtx layout.Context) {
-	g := &c.gtip
+func (c tipCtx) layoutGroupTip(gtx layout.Context) {
+	g := c.gtip
 	g.tip.Texty = true
-	app := c.api.a
+	app := c.app
 	at, r, ok := c.ed.HoverAtom()
 	id := ""
 	if ok && at.Kind == AtomUsergroup && app != nil {
@@ -67,7 +67,7 @@ func (c *Composer) layoutGroupTip(gtx layout.Context) {
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
 				_, _, _ = app.UsergroupUsers(ctx, grp, "") // a failure stays silent (catch {})
-				c.later(func() { delete(g.busy, id) })
+				uiLater(c.h, func() { delete(g.busy, id) })
 			}()
 		}
 	}

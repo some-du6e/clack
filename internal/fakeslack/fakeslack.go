@@ -68,9 +68,17 @@ type Size struct {
 	// CodeChannels adds the code channel fixtures (codechannels.go): one
 	// per agent status, an archived one and one the viewer isn't in.
 	CodeChannels bool
+	// AgentSessionRequests adds, with CodeChannels, #agent-requests: an
+	// agent session request whose agent_channel_unfurl is the working
+	// code channel, and a post linking it (agent_session_msgs.go)
+	AgentSessionRequests bool
 	// Views adds the rail list views' fixtures (views.go): followed
 	// threads, scheduled drafts, recorded activity writes.
 	Views bool
+	// MessagesByID answers messages.list as Slack does without Views'
+	// fixtures: any message of the fake's by its ts (messages_list.go),
+	// for what fetches a message by id (a message slug's).
+	MessagesByID bool
 	// ListRecordsInLater answers saved.list with the saved list records
 	// alone (lists_records.go): two of Launch tracker's items, one a
 	// to-do with a reminder, one saved.
@@ -99,6 +107,9 @@ type Size struct {
 	// ThreadAssistantTitle, and the app DM's bot an agent app
 	// (apps.profile.get is_agent_app, is_shown_as_agent left out).
 	ThreadAgentTitles bool
+	// AgentTasks adds Atlas, a third-party agent app with the Tasks tab
+	// on, the viewer's DM with it and its tasks (agent_tasks.go).
+	AgentTasks bool
 	// SlackConnectDM (with ThreadHeader) adds an open DM with ExternalID,
 	// Partner Co's member: the sidebar's external DM row
 	// (SlackConnectDMID).
@@ -345,6 +356,9 @@ type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
+	framesMu sync.Mutex
+	frames   []string // what clients sent the realtime gateway (SocketFrames)
+
 	actBadgeMu sync.Mutex
 	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
 	chanBadges map[string]int // client.counts channel_badges (SetChannelBadges)
@@ -379,8 +393,11 @@ type Server struct {
 	// caKicks: conversations.kick out of them (channel → user ids)
 	caKicks map[string][]string
 	others  []slack.Conversation
-	Joins   []JoinCall
-	Leaves  []string // conversations.leave calls (LeaveCalls)
+	// codeHidden: private code channels the viewer isn't in and can't see
+	// (conversations.info: channel_not_found) until client.codeChannels.join
+	codeHidden []slack.Conversation
+	Joins      []JoinCall
+	Leaves     []string // conversations.leave calls (LeaveCalls)
 	// BulkLeaves are conversations.bulkLeave calls' channels (BulkLeaveCalls)
 	BulkLeaves [][]string
 	// listFilters: every edge users/list filter (UserListFilters).
@@ -712,6 +729,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.CodeChannels {
 		s.addCodeChannels() // codechannels.go
+		if sz.AgentSessionRequests {
+			s.addAgentSessionMessages() // agent_session_msgs.go
+		}
 	}
 	if sz.Files {
 		s.addFilesChannel() // files.go
@@ -724,6 +744,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.ThreadHeader {
 		s.addThreadHeader() // threadheader.go
+	}
+	if sz.AgentTasks {
+		s.addAgentTasks() // agent_tasks.go
 	}
 	if sz.ThreadsAudit {
 		s.addThreadsAudit() // threads_audit.go
@@ -1107,6 +1130,20 @@ func (s *Server) SetTopic(id, topic string) {
 	}
 }
 
+// SetPurpose replaces a conversation's description in what
+// conversations.info and users.conversations answer.
+func (s *Server) SetPurpose(id, purpose string) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for _, cs := range [][]slack.Conversation{s.convs, s.others} {
+		for i := range cs {
+			if cs[i].ID == id {
+				cs[i].Purpose = &slack.Purpose{Value: purpose}
+			}
+		}
+	}
+}
+
 // UserListFilters returns the filter of every edge users/list call.
 func (s *Server) UserListFilters() []string {
 	s.convMu.Lock()
@@ -1372,6 +1409,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back
 	}
+	if r, ok := out.(Reply); ok {
+		r.write(w)
+		return
+	}
 	b, isBytes := out.([]byte)
 	if !isBytes {
 		var buf bytes.Buffer
@@ -1387,6 +1428,26 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
+// Reply is an answer a hook (SetHook) gives as written: its HTTP status
+// (0: 200), headers over the usual Content-Type, and body (the failures a
+// client must hand on whole: a 429 with Retry-After, a 5xx page, an answer
+// that isn't JSON, an {"ok":false} with details).
+type Reply struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+func (r Reply) write(w http.ResponseWriter) {
+	for k, v := range r.Header {
+		w.Header()[k] = v
+	}
+	if r.Status != 0 {
+		w.WriteHeader(r.Status)
+	}
+	_, _ = w.Write(r.Body)
+}
+
 func ok(kv ...any) map[string]any {
 	m := map[string]any{"ok": true}
 	for i := 0; i+1 < len(kv); i += 2 {
@@ -1396,6 +1457,11 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if s.Size.AgentTasks {
+		if out, handled := s.handleAgentTasks(method, f); handled { // agent_tasks.go
+			return out
+		}
+	}
 	if out, handled := s.handleComments(method, f); handled { // canvas_comments.go
 		return out
 	}
@@ -1622,6 +1688,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		s.prefsMu.Unlock()
 		return ok("prefs", m)
+	case "media.progress.update": // the videos' saveMediaProgress (gnNF): accepted
+		return map[string]any{"ok": true}
 	case "users.prefs.set":
 		if n := f.Get("name"); n != "" {
 			s.setPref(n, f.Get("value"))
@@ -1829,6 +1897,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("results", res)
 	case "edge/users/counts":
+		if out, handled := s.rosterCounts(edge); handled { // roster.go
+			return out
+		}
 		if out, handled := s.channelAgentsCounts(edge); handled { // channel_agents.go
 			return out
 		}
@@ -1845,6 +1916,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		s.convMu.Lock()
 		s.listFilters = append(s.listFilters, filter)
 		s.convMu.Unlock()
+		if out, handled := s.rosterList(edge, filter); handled { // roster.go
+			return out
+		}
 		if out, handled := s.channelAgentsList(edge, filter); handled { // channel_agents.go
 			return out
 		}
@@ -1906,6 +1980,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleCodeChannels(method, f); handled && s.Size.CodeChannels { // codechannels.go
 		return out
 	}
+	if method == "messages.list" && s.Size.MessagesByID && !s.Size.Views { // messages_list.go (Views' answers include its feed's)
+		if out, handled := s.messagesByID(f); handled {
+			return out
+		}
+	}
 	if s.Size.Views {
 		if out, handled := s.handleViews(method, f); handled { // views.go
 			return out
@@ -1966,6 +2045,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	}
 	if s.Size.ThreadHeader && id == ThreadAppUserID { // threadheader.go
 		return s.threadHeaderApp(), true
+	}
+	if s.Size.AgentTasks && id == AgentTasksUserID { // agent_tasks.go
+		return s.agentTasksUser(), true
 	}
 	if u, ok := s.dmBadgeUser(id); ok { // dm_badges.go
 		return u, true
@@ -2096,10 +2178,31 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.dropSocket(c)
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
-		if _, _, err := c.Read(ctx); err != nil {
+		_, b, err := c.Read(ctx)
+		if err != nil {
 			return
 		}
+		s.noteFrame(b)
 	}
+}
+
+// noteFrame keeps what a client sent the gateway (SocketFrames), the last
+// 500 frames.
+func (s *Server) noteFrame(b []byte) {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	s.frames = append(s.frames, string(b))
+	if len(s.frames) > 500 {
+		s.frames = s.frames[len(s.frames)-500:]
+	}
+}
+
+// SocketFrames is what clients sent the realtime gateway, oldest first
+// (presence_sub, typing, …; the last 500).
+func (s *Server) SocketFrames() []string {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	return append([]string(nil), s.frames...)
 }
 
 // WriteCreds writes the fake's credentials to path (for running the real
