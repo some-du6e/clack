@@ -17,7 +17,7 @@ name: go-cache
 # tests run, nothing talks to Slack.
 on:
   push:
-    branches: [ui, main, ci-speed] # the jobs run on main only: only main's entries reach every branch
+    branches: [ui, main] # the jobs run on main only: only main's entries reach every branch
   workflow_dispatch:
 
 permissions:
