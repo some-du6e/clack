@@ -346,28 +346,25 @@ func noteMissingText(subtype string) string {
 }
 
 // notifyText is getContentForNotification's text for m (Eley):
-// extractTextFromMessage over the message as sent
-// (richtext.NotificationText: its blocks, each trimmed, else its text as
-// written, else its first file's title, else its attachments), with
-// noteMissingText for a message that has nothing to read and no files or
-// attachments, and the first ":simple_smile:" a ":)".
+// extractTextFromMessage over the message as sent: its converted text
+// (richtext.NotificationMessageText: its blocks, each trimmed, else its
+// text as written); the files' line (noteFilesText, notify_file.go: a
+// clip's line, else, with no text or under a file subtype, the first
+// file's title or meta line); else the text; else its attachments
+// (richtext.NotificationAttachmentText); with noteMissingText for a
+// message that has nothing to read and no files or attachments. The
+// first ":simple_smile:" becomes ":)".
 func notifyText(r richtext.Resolver, m *core.Message, st richtext.SpanText) string {
 	sm := slack.Message{TS: m.TS, Channel: m.Channel, User: m.User, BotID: m.BotID, Subtype: m.Subtype, Text: m.Text, Blocks: m.Blocks}
 	_ = json.Unmarshal(m.Attachments, &sm.Attachments)
-	s := richtext.NotificationText(r, &sm, m.Doc, st)
-	if s == "" && len(sm.Attachments) == 0 && !noteHasFiles(m.Doc) {
-		s = noteMissingText(m.Subtype)
-	}
-	return strings.Replace(s, ":simple_smile:", ":)", 1)
-}
-
-// noteHasFiles reports whether d draws a file (extractTextFromMessage's
-// t.files: a file's title, or nothing, never the missing text).
-func noteHasFiles(d richtext.Doc) bool {
-	for _, blk := range d.Blocks {
-		if blk.Kind == richtext.FileBlock {
-			return true
+	s := richtext.NotificationMessageText(r, &sm, st)
+	if fs, ok := noteFilesText(r, m, s); ok {
+		s = fs
+	} else if s == "" {
+		s = richtext.NotificationAttachmentText(r, &sm, st)
+		if s == "" && len(sm.Attachments) == 0 {
+			s = noteMissingText(m.Subtype)
 		}
 	}
-	return false
+	return strings.Replace(s, ":simple_smile:", ":)", 1)
 }
