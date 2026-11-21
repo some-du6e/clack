@@ -273,7 +273,16 @@ func LinearAlpha(c, bg color.NRGBA) color.NRGBA {
 			continue
 		}
 		want := float64(ch[0])*a + float64(ch[1])*(1-a)
-		lw := srgbLin(uint8(math.Round(want)))
+		w8 := math.Round(want)
+		lw := srgbLin(uint8(w8))
+		if w8 == float64(ch[0]) || w8 == float64(ch[1]) {
+			// The 8-bit blend lands on c or bg itself (c close to bg,
+			// or an alpha near 0 or 1), so the rounded value says the
+			// alpha is 1 or 0: Verdant Circuit's scrim rgba(13,24,16,.98)
+			// over its #101d14 card came out opaque and hid the app.
+			// The exact blend keeps the alpha.
+			lw = srgbLinF(want / 255)
+		}
 		best, bestD = (lw-lb)/(lc-lb), d
 	}
 	best = math.Max(0, math.Min(1, best))
@@ -281,8 +290,10 @@ func LinearAlpha(c, bg color.NRGBA) color.NRGBA {
 	return c
 }
 
-func srgbLin(v uint8) float64 {
-	c := float64(v) / 255
+func srgbLin(v uint8) float64 { return srgbLinF(float64(v) / 255) }
+
+// srgbLinF is srgbLin for c in [0, 1].
+func srgbLinF(c float64) float64 {
 	if c <= 0.04045 {
 		return c / 12.92
 	}
