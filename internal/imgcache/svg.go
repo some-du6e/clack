@@ -38,6 +38,19 @@ import (
 // svgMaxSide bounds a rasterized asset (ScaleBudget's default bound).
 const svgMaxSide = 2048
 
+// What parseSVG reads, and rasterSVG draws, at most. Only Clack's own
+// assets reach them (the logo: 883 bytes, 8 paths, 2 levels, 66 commands,
+// coordinates within 0-256), but the bounds hold for any input: the work a
+// document costs is at most svgMaxShapes full-size passes and svgMaxSegs
+// segments, each crossing at most svgMaxDevice rows either side.
+const (
+	svgMaxBytes  = 64 << 10
+	svgMaxDepth  = 16
+	svgMaxShapes = 64
+	svgMaxCoord  = 1e5            // user units, after relative commands add up
+	svgMaxDevice = 4 * svgMaxSide // px from the viewport's origin
+)
+
 var errSVG = errors.New("imgcache: unsupported SVG")
 
 func svgErr(format string, a ...any) error {
@@ -68,6 +81,23 @@ type svgDoc struct {
 	shapes []svgShape
 }
 
+// svgFloatAbove is x/image/vector's floatingPointMathThreshold: a
+// rasterizer wider or taller than it accumulates in float32s.
+const svgFloatAbove = 512
+
+// svgRasterBytes is what rasterSVG allocates at iw×ih: the picture (4 bytes
+// a pixel) and the rasterizer's buffers. Up to svgFloatAbove a side that is
+// one uint32 a pixel; above it, Reset allocates a float32 a pixel and the
+// first Draw a uint32 mask besides (vector's accumulateMask), 12 bytes in
+// all.
+func svgRasterBytes(iw, ih int) int64 {
+	px := rgbaBytes(image.Pt(iw, ih)) // 4 a pixel
+	if iw > svgFloatAbove || ih > svgFloatAbove {
+		return 3 * px
+	}
+	return 2 * px
+}
+
 // rasterSVG draws data at size px on its longer side (its intrinsic size
 // when size is 0), everything it allocates charged to b.
 func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
@@ -90,9 +120,7 @@ func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
 	if iw > svgMaxSide || ih > svgMaxSide {
 		return nil, ErrTooBig
 	}
-	// the picture, and the rasterizer's accumulation buffer (a float32 or
-	// uint32 a pixel)
-	if err := b.Charge(2 * rgbaBytes(image.Pt(iw, ih))); err != nil {
+	if err := b.Charge(svgRasterBytes(iw, ih)); err != nil {
 		return nil, budgetErr(err)
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, iw, ih))
@@ -102,6 +130,19 @@ func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
 	ty := (float64(ih)-doc.vb[3]*k)/2 - doc.vb[1]*k
 	pt := func(p [2]float64) (float32, float32) {
 		return float32(p[0]*k + tx), float32(p[1]*k + ty)
+	}
+	// a point far outside the viewport (a tiny viewBox, a huge coordinate)
+	// would have the rasterizer walk every row between: refuse it
+	far := func(p [2]float64) bool {
+		x, y := p[0]*k+tx, p[1]*k+ty
+		return !(math.Abs(x) <= svgMaxDevice && math.Abs(y) <= svgMaxDevice)
+	}
+	for _, s := range doc.shapes {
+		for _, g := range s.d {
+			if g.op != 'Z' && (far(g.p0) || (g.op == 'C' && (far(g.p1) || far(g.p2)))) {
+				return nil, svgErr("path point outside the drawable area")
+			}
+		}
 	}
 	z := vector.NewRasterizer(iw, ih)
 	z.DrawOp = draw.Over
@@ -143,12 +184,16 @@ func rasterSVG(data []byte, size int, b *Budget) (*image.RGBA, error) {
 
 // parseSVG reads the subset rasterSVG draws (see the top of this file).
 func parseSVG(data []byte) (*svgDoc, error) {
+	if len(data) > svgMaxBytes {
+		return nil, svgErr("%d bytes", len(data))
+	}
 	dec := xml.NewDecoder(bytes.NewReader(data))
 	dec.Strict = true
 	var (
 		doc   *svgDoc
 		fills []svgFill // the inherited fill at each open element
 		depth int
+		segs  int // every path's commands
 	)
 	for {
 		tok, err := dec.Token()
@@ -162,6 +207,9 @@ func parseSVG(data []byte) (*svgDoc, error) {
 		case xml.StartElement:
 			if t.Name.Space != "" && t.Name.Space != "http://www.w3.org/2000/svg" {
 				return nil, svgErr("element %s:%s", t.Name.Space, t.Name.Local)
+			}
+			if depth >= svgMaxDepth {
+				return nil, svgErr("elements nested deeper than %d", svgMaxDepth)
 			}
 			parent := svgFill{c: color.NRGBA{A: 0xff}} // fill's initial value: black
 			if len(fills) > 0 {
@@ -197,9 +245,15 @@ func parseSVG(data []byte) (*svgDoc, error) {
 				if r, ok := attrs["fill-rule"]; ok && strings.TrimSpace(r) != "nonzero" {
 					return nil, svgErr("fill-rule %q", r)
 				}
+				if len(doc.shapes) >= svgMaxShapes {
+					return nil, svgErr("more than %d paths", svgMaxShapes)
+				}
 				d, err := parsePathData(attrs["d"])
 				if err != nil {
 					return nil, err
+				}
+				if segs += len(d); segs > svgMaxSegs {
+					return nil, svgErr("paths too long")
 				}
 				doc.shapes = append(doc.shapes, svgShape{d: d, fill: f})
 			default:
@@ -251,7 +305,7 @@ func svgRoot(attrs map[string]string) (*svgDoc, error) {
 	}
 	for i, s := range vb {
 		v, err := strconv.ParseFloat(s, 64)
-		if err != nil || math.IsInf(v, 0) || math.IsNaN(v) {
+		if err != nil || !(math.Abs(v) <= svgMaxCoord) {
 			return nil, svgErr("viewBox %q", attrs["viewBox"])
 		}
 		doc.vb[i] = v
@@ -311,7 +365,8 @@ func svgFillOf(attrs map[string]string, parent svgFill) (svgFill, error) {
 	return svgFill{}, svgErr("fill %q", s)
 }
 
-// svgMaxSegs bounds one path's commands (the assets have a few dozen).
+// svgMaxSegs bounds a document's path commands, and one path's (the assets
+// have a few dozen).
 const svgMaxSegs = 1 << 14
 
 // parsePathData reads SVG path data (the full grammar: M L H V C S Q T A Z,
@@ -331,6 +386,11 @@ func parsePathData(d string) ([]svgSeg, error) {
 	add := func(s svgSeg) error {
 		if len(out) >= svgMaxSegs {
 			return svgErr("path too long")
+		}
+		for _, p := range [...][2]float64{s.p0, s.p1, s.p2} {
+			if !(math.Abs(p[0]) <= svgMaxCoord && math.Abs(p[1]) <= svgMaxCoord) {
+				return svgErr("path data: coordinate beyond %g", svgMaxCoord)
+			}
 		}
 		out = append(out, s)
 		return nil

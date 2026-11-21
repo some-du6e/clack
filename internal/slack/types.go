@@ -325,6 +325,15 @@ type File struct {
 	AudioWaveSamples []int      `json:"audio_wave_samples"`
 	Subtype          string     `json:"subtype"`
 	FileAccess       string     `json:"file_access,omitempty"`
+	// What getFileStatus (SRWA) reads besides mode and file_access: a
+	// deleted file, one hidden by the free plan's storage limit, one DLP
+	// tombstoned. IsSkill marks a skill canvas, FolderType a folder's kind
+	// ("skill_set": a skill set).
+	IsDeleted       bool   `json:"is_deleted,omitempty"`
+	IsHiddenByLimit bool   `json:"is_hidden_by_limit,omitempty"`
+	IsTombstoned    bool   `json:"is_tombstoned,omitempty"`
+	IsSkill         bool   `json:"is_skill,omitempty"`
+	FolderType      string `json:"folder_type,omitempty"`
 	// MediaDisplayType is Slack's media_display_type ("unknown" while an
 	// upload is still being processed). Slack's web client doesn't draw by
 	// it; Clack only reads it to spot unprocessed uploads.

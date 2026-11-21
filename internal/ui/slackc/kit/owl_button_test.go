@@ -139,6 +139,12 @@ func newOwlEnv(t *testing.T, dark, saved bool) *owlEnv {
 // newOwlEnvTree is newOwlEnv with any tree.
 func newOwlEnvTree(t *testing.T, dark bool, js string) *owlEnv {
 	t.Helper()
+	return newOwlEnvFrames(t, dark, js, 4)
+}
+
+// newOwlEnvFrames is newOwlEnvTree after frames frames.
+func newOwlEnvFrames(t *testing.T, dark bool, js string, frames int) *owlEnv {
+	t.Helper()
 	Register()
 	e := &owlEnv{t: t, th: theme.New(dark), log: &rectLog{}, v: slackc.NewView(905), now: time.Unix(3000, 0)}
 	prev := slackc.CurrentEnv()
@@ -164,7 +170,7 @@ func newOwlEnvTree(t *testing.T, dark bool, js string) *owlEnv {
 		t.Fatal(err)
 	}
 	e.nodes = nodes
-	for i := 0; i < 4; i++ { // the children's placement reaches their rects a frame later
+	for i := 0; i < frames; i++ {
 		e.frame()
 	}
 	return e
@@ -234,6 +240,36 @@ func TestOwlSaveButtonLayout(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The rects JS reads for a Button's children are where the frame that laid
+// them out drew them: the icon 9px in from the first frame on, and again
+// in the first frame after a new tree (setTree drops the sub scopes, so
+// their placement starts over). The children's scope flushes its rects
+// while the button lays them out, before it knows where it centres them
+// (Host.PlaceChildren), and they stayed at the content box's corner, 9px
+// left, until some later frame flushed them again: nothing asks for one,
+// so a quiet DM kept them there. JS gets a frame's rects as the next
+// frame starts (slackc.Frame), so each check reads them after one more
+// frame, before that frame's own rects are sent.
+func TestOwlSaveButtonChildRectsSameFrame(t *testing.T) {
+	e := newOwlEnvFrames(t, false, owlRowJS(false), 2)
+	check := func(when string) {
+		t.Helper()
+		btn, icon := e.rect(4), e.rect(5)
+		if ix, iy := icon[0]-btn[0], icon[1]-btn[1]; !owlNear(ix, 9) || !owlNear(iy, 5.5) {
+			t.Errorf("%s: icon at %+.1f,%+.1f in the button, want +9,+5.5", when, ix, iy)
+		}
+	}
+	check("first frame")
+	nodes, err := slackc.ParseTree([]byte(owlRowJS(true)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.nodes = nodes
+	e.frame()
+	e.frame()
+	check("first frame of a new tree")
 }
 
 // Once saved, the disabled Saved in Taut button and Forget sit side by

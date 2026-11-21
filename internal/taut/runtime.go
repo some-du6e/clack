@@ -152,15 +152,19 @@ func (r *runtime) call(ctx context.Context, fn string, out any, args ...any) err
 	return json.Unmarshal(raw, out)
 }
 
-// post runs __taut.<fn>(args…) without waiting (events, invalidations).
+// post runs __taut.<fn>(args…) without waiting (events, invalidations):
+// in order with the user's work queued after it (jsrt PostInOrder), as a
+// browser's store holds every earlier event when an input handler or a
+// send reads it.
 func (r *runtime) post(fn string, args ...any) {
 	r.postWith(fn, func() []any { return args })
 }
 
 // postWith is post with the arguments taken when the task runs, on the
-// JS thread (postInvalidate gathers what came meanwhile).
+// JS thread (postInvalidate gathers what came meanwhile), on the same
+// in-order lane.
 func (r *runtime) postWith(fn string, argsAt func() []any) {
-	r.rt.Post(func(js *jsrt.Ctx) {
+	r.rt.PostInOrderAs(fn, func(js *jsrt.Ctx) {
 		args := argsAt()
 		f := js.Global().Get("__taut").Get(fn)
 		if !f.IsFunction() {

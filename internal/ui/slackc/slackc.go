@@ -257,24 +257,38 @@ func Component[T any](gtx layout.Context, name string, recv T, props func(T) Pro
 	if patched.Load() == nil && reserved.Load() == nil && !inspecting.Load() { // inlined: the native becomes a direct call
 		return native(recv, gtx, nil)
 	}
-	return componentSlow(gtx, name, recv, props, native)
+	return componentSlow(gtx, name, recv, props, native, false)
 }
 
-func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+// ComponentBox is Component for a native that draws its element's box
+// itself, as ChildBox is Child for one (Slot.OwnBox): patched, the root
+// "@" box its tree renders it as leaves the fill, ring, borders and
+// padding a rule gives the element to the native, which paints them
+// once and round. The reaction pill's UnstyledButton under an
+// UnstyledButton patch that adds a class: painted by the "@" box as well,
+// the class's ring was a square one round the round one.
+func ComponentBox[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+	if patched.Load() == nil && reserved.Load() == nil && !inspecting.Load() {
+		return native(recv, gtx, nil)
+	}
+	return componentSlow(gtx, name, recv, props, native, true)
+}
+
+func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions, own bool) layout.Dimensions {
 	if f := CurrentInspectFrame(); f != nil { // the inspect tool (inspect.go)
 		var pf func() Props
 		if props != nil {
 			pf = func() Props { return props(recv) }
 		}
 		i := f.beginComponent(name, pf)
-		d := componentSlow0(gtx, name, recv, props, native)
+		d := componentSlow0(gtx, name, recv, props, native, own)
 		f.endComponent(gtx, i, d)
 		return d
 	}
-	return componentSlow0(gtx, name, recv, props, native)
+	return componentSlow0(gtx, name, recv, props, native, own)
 }
 
-func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions, own bool) layout.Dimensions {
 	if unpatched > 0 { // drawn without plugins (guard.go)
 		return native(recv, gtx, nil)
 	}
@@ -284,17 +298,17 @@ func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T
 		}
 		return native(recv, gtx, nil)
 	}
-	return componentPatched(gtx, name, recv, props, native)
+	return componentPatched(gtx, name, recv, props, native, own)
 }
 
-func componentPatched[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+func componentPatched[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions, own bool) layout.Dimensions {
 	var p Props
 	if props != nil {
 		p = props(recv)
 	}
-	return renderPatched(gtx, name, p, nil, func(gtx layout.Context, p Props) layout.Dimensions {
+	return renderPatchedBox(gtx, name, p, nil, func(gtx layout.Context, p Props) layout.Dimensions {
 		return native(recv, gtx, p)
-	})
+	}, own)
 }
 
 // --- patched instances (UI goroutine) ---
@@ -431,6 +445,12 @@ func now(gtx layout.Context) time.Time {
 // inside the insets, ClientPrimaryView learns its origin from the pointer
 // as under a patch.
 func renderPatched(gtx layout.Context, name string, props, pre Props, native Native) layout.Dimensions {
+	return renderPatchedBox(gtx, name, props, pre, native, false)
+}
+
+// renderPatchedBox is renderPatched; own: the native draws its element's
+// box itself (ComponentBox).
+func renderPatchedBox(gtx layout.Context, name string, props, pre Props, native Native, own bool) layout.Dimensions {
 	b := bridge()
 	if b == nil {
 		return native(gtx, pre)
@@ -462,6 +482,7 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	if created {
 		in = &inst{root: newRoot(), name: name, key: k, slots: map[string]int64{}}
 		in.view = NewView(in.root)
+		in.view.ownRoot = own
 		insts[k] = in
 		rootsMu.Lock()
 		roots[in.root] = in

@@ -356,13 +356,17 @@ func (s *Slick) call(ctx context.Context, rt *jsrt.Runtime, fn string, out any, 
 }
 
 func (s *Slick) post(rt *jsrt.Runtime, fn string, args ...any) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if _, err := rt.Call(ctx, "__slick."+fn, args...); err != nil {
+	// queued now, on the caller's goroutine, in order with the user's
+	// later input (jsrt.InOrder): a click in the conversation the user
+	// just opened reads the new route, as a browser handles the
+	// navigation before the input after it
+	ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 5*time.Second)
+	rt.CallThen(ctx, "__slick."+fn, func(_ json.RawMessage, err error) {
+		cancel()
+		if err != nil {
 			log.Printf("slick: %s: %v", fn, err)
 		}
-	}()
+	}, args...)
 }
 
 // SetRoute tells plugins which workspace, conversation and thread the

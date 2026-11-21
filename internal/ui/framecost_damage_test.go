@@ -102,8 +102,13 @@ func TestFrameCostDamage(t *testing.T) {
 		// frames are drawn several times from the same ops, and a live
 		// image moving on between them (a GIF that finished loading on a
 		// slow runner) changes pixels no op did (Slack's "Allow
-		// animations" off: stills). After boot, whose prefs set it.
+		// animations" off: stills). After boot, whose prefs set it. And
+		// the live images held on the frame they show (the inspect
+		// freeze's hold): a slow WARP runner had :explodes: in view move
+		// on between draws of the same ops anyway (flake-check
+		// 44434705984, 2026-11-19: 132 px by 80 levels in its colours).
 		e.a.images.SetAnimate(false)
+		e.a.images.HoldLive(true)
 		e.costSettle(t, c.name)
 		e.gpu = nil // the frames below draw only what's measured
 		var a, b op.Ops
@@ -158,6 +163,7 @@ func TestFrameCostDamage(t *testing.T) {
 			e.layProbed(o, now, nil, shift)
 		}, true, damageLimits{frac: 0.05})
 		// the animated emoji: a message with it, at the bottom
+		e.a.images.HoldLive(false)
 		e.a.images.SetAnimate(true)
 		self := e.a.Core().Self().ID
 		ts, ev := fs.PostQuiet(ch, self, "boom :"+name+": boom")

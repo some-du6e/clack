@@ -102,22 +102,40 @@ type commitEditArgs struct {
 // file_ids.
 func commitEdit(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 	t := tautOf()
+	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", commitArgs(ch, ts, text, blocks, fileIDs), commitNative(t, app))
+	return err
+}
+
+// commitEditThen is commitEdit queuing its JS call before it returns
+// (taut.DispatchThen: the UI goroutine's, at Enter, ahead of a plugin
+// click after it); done hears the outcome on another goroutine.
+func commitEditThen(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
+	t := tautOf()
+	taut.DispatchThen(ctx, t, "commitMessageEdit", commitArgs(ch, ts, text, blocks, fileIDs), commitNative(t, app),
+		func(_ any, err error) { done(err) })
+}
+
+func commitArgs(ch, ts, text string, blocks json.RawMessage, fileIDs []string) commitEditArgs {
 	args := commitEditArgs{ChannelID: ch, TS: ts, Blocks: blocks, Text: text}
 	if fileIDs != nil {
 		args.FileIDs = &fileIDs
 	}
-	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", args,
-		func(ctx context.Context, a commitEditArgs) (any, error) {
-			b := a.Blocks
-			if t != nil && len(b) > 0 && t.HasSendTransforms() {
-				b = t.TransformSendBlocks(ctx, b)
-			}
-			if a.FileIDs != nil {
-				return nil, app.EditWithFiles(ctx, a.ChannelID, a.TS, a.Text, b, *a.FileIDs)
-			}
-			return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
-		})
-	return err
+	return args
+}
+
+// commitNative is commitMessageEdit's native: the plugins' send
+// transforms, then core's edit.
+func commitNative(t *taut.Taut, app *core.App) func(context.Context, commitEditArgs) (any, error) {
+	return func(ctx context.Context, a commitEditArgs) (any, error) {
+		b := a.Blocks
+		if t != nil && len(b) > 0 && t.HasSendTransforms() {
+			b = t.TransformSendBlocks(ctx, b)
+		}
+		if a.FileIDs != nil {
+			return nil, app.EditWithFiles(ctx, a.ChannelID, a.TS, a.Text, b, *a.FileIDs)
+		}
+		return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
+	}
 }
 
 // deleteArgs is Slack's chatDeleteFetcher {channel, ts}.
@@ -244,7 +262,7 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// viewRefresh: the frame that came for a change within 250 ms of the
 	// row's last read skipped it, and an idle window drew no other
 	ep := t.ViewEpoch()
-	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev && r.viewEpoch == ep {
+	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev && r.viewEpoch == ep && (r.heldTil.IsZero() || now.Before(r.heldTil)) {
 		return
 	}
 	// taut keeps each view converted until something it reads changes;
@@ -294,6 +312,13 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// it caught up (Karim, 2026-11-19: "reactions are not syncing", "in a
 	// channel for another")
 	mv.Reactions = r.src.Reactions
+	if ready && mv.Text != r.src.Text && !t.TextRewrites() {
+		// JS's copy of this revision says another text: the plugins rewrite
+		// text. The text alone, which a rewrite changes (Censorship's mask
+		// is in it, Message Logger's marks): the Doc of a view converted at
+		// another moment can name a mention otherwise and say nothing
+		t.NoteTextRewrite()
+	}
 	// A row drawing the view takes one converted again (or the fresh one
 	// of a new revision) that differs only in its Doc, past what sameView
 	// compares: a name in it (a file's uploader, a tab slug), which taut
@@ -318,6 +343,21 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		// conversion: JS's answer of the same bytes as the copy it took
 		// while not ready makes no new conversion, and the row stayed
 		// viewed, its next update drawn late from JS's old copy
+		// An edit of a message the plugins rewrite keeps its view of the
+		// revision before while JS answers, however long (what it masks
+		// never shows, a rewritten author never flashes back: the rows'
+		// trade-off, held through a stalled JS). One the plugins left alone,
+		// held for its old text under plugins that rewrite text (below),
+		// holds for EditHold at most, then draws core's copy of the edit.
+		switch {
+		case ready:
+			r.heldTil = time.Time{}
+		case !r.heldTil.IsZero() && !now.Before(r.heldTil):
+			r.heldTil = time.Time{}
+			r.viewed, r.vmsg = false, nil
+			r.recompose()
+			return
+		}
 		turned := ready && !wasReady
 		if !again && !changed && !turned {
 			return
@@ -348,7 +388,19 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		// change to it still queued for JS): the row draws its new source
 		// until JS's copy of it comes, on every read, not the revision
 		// before. On the read after the update only, a first reaction
-		// showed, went, and came back; a vote's count went N, N-1, N
+		// showed, went, and came back; a vote's count went N, N-1, N.
+		// Unless the plugins rewrite text (one rewrote a message's text:
+		// taut TextRewrites): an edit may bring in what they rewrite (a word
+		// Censorship masks) to a message they left alone, which Slack's
+		// patched selector draws already rewritten in the render after the
+		// edit. Its row draws JS's copy of the revision before, the text it
+		// drew, until JS's copy of the edit comes or EditHold passes. A
+		// patch that rewrites no text (ShowRealUser's sender) holds
+		// nothing: the edit draws in the next frame
+		if changed && t.TextRewrites() {
+			r.viewed, r.vmsg, r.heldTil = true, &mv, now.Add(taut.EditHold)
+			r.recompose()
+		}
 		return
 	}
 	r.viewWait = false

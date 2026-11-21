@@ -117,9 +117,10 @@ func (a *App) notifyShow(title, body string, n *desktopNote) bool {
 			n = a.plainNote()
 		}
 		n.Title, n.Body = title, body
-		go func() { _ = nn.NotifyNote(n) }()
+		sendNote(func() { _ = nn.NotifyNote(n) }) // in order (notify_conv.go)
 	} else {
-		go func() { _ = a.notify.Notify(title, body) }()
+		nf := a.notify
+		sendNote(func() { _ = nf.Notify(title, body) })
 	}
 	a.bounceDock()        // mac_ssb_bounce
 	a.notificationShown() // Windows: the frame flash (windowFlashBehavior)

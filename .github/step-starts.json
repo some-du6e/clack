@@ -1,0 +1,516 @@
+{
+ "bk-elements.yml": {
+  "bk-elements": {
+   "screenshots": [
+    1.7,
+    2.1
+   ]
+  }
+ },
+ "ci.yml": {
+  "linux-gio": {
+   "XDND file drops and what a frame was asked for, on Xvfb (Gio patches 11, 35)": [
+    1.0,
+    1.3
+   ]
+  },
+  "linux-idle": {
+   "idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)": [
+    0.7,
+    6.0
+   ],
+   "quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost, Xvfb)": [
+    6.0,
+    7.1
+   ],
+   "the inspect tool's pick to review (TestInspectReviewTiming, llvmpipe)": [
+    7.1,
+    7.3
+   ]
+  },
+  "linux-race-taut": {
+   "plugins start in parallel with boot (race detector; the JS engine is one wasm instance)": [
+    0.8,
+    7.0
+   ]
+  },
+  "macos": {
+   "macOS keys through AppKit (Gio patch 29, the inspect tool)": [
+    9.7,
+    10.1
+   ],
+   "macOS notification click jumps to the message": [
+    8.8,
+    9.7
+   ],
+   "macOS paste from the pasteboard (P6)": [
+    10.1,
+    10.3
+   ],
+   "macOS wake, sleep and occlusion (Gio patch 32)": [
+    8.6,
+    8.8
+   ],
+   "macOS window (Gio patch 24, W35)": [
+    7.3,
+    8.6
+   ],
+   "macOS window place (Gio patch 25, W40)": [
+    10.6,
+    11.1
+   ],
+   "macOS ⌘V into the composer (P6b)": [
+    10.3,
+    10.6
+   ],
+   "notifications from ad-hoc signed bundles (UNUserNotificationCenter)": [
+    6.6,
+    7.3
+   ],
+   "the inspect freeze's pointer reset (Gio patch 49, fakeslack)": [
+    4.7,
+    4.8
+   ],
+   "the introduction's preview renderer (Clack.app's clack intro-preview, Metal, never an app)": [
+    5.7,
+    6.6
+   ]
+  },
+  "macos-idle": {
+   "Gio frame cost on Metal": [
+    1.4,
+    2.8
+   ],
+   "idle on the real window (TestMacIdleCPU), idle frames (TestIdleFrames), quiet frames (TestRealWindowQuietFrames)": [
+    6.1,
+    14.1
+   ],
+   "macOS freeze guards (no blocking work on the AppKit main thread)": [
+    2.8,
+    5.5
+   ],
+   "video playback (AVFoundation, internal/media/...)": [
+    5.5,
+    6.1
+   ]
+  },
+  "windows-applog": {
+   "Gio frame cost on Direct3D 11 (WARP)": [
+    1.0,
+    5.7
+   ],
+   "OS file drops (IDropTarget across processes, WM_DROPFILES)": [
+    6.5,
+    6.6
+   ],
+   "the inspect freeze's pointer reset (Gio patch 49, fakeslack)": [
+    6.6,
+    7.4
+   ],
+   "the inspect tool's pick to review, and the picker in popups (WARP, fakeslack)": [
+    7.4,
+    8.2
+   ],
+   "the title bar (HiddenTitleBar, Clack's caption buttons over the top nav)": [
+    8.4,
+    8.7
+   ],
+   "the window's place (Bounds and Displays, Slack's mainWindowSettings)": [
+    8.8,
+    9.0
+   ],
+   "thread reply box gap (layout, fakeslack)": [
+    8.2,
+    8.4
+   ],
+   "typed text on a focused list (SendInput, WM_KEYDOWN then WM_CHAR)": [
+    6.6,
+    6.6
+   ]
+  },
+  "windows-idle": {
+   "idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)": [
+    0.9,
+    6.5
+   ],
+   "partial frames' memory on a 1918x1080 window (TestRealWindowMemory)": [
+    10.2,
+    12.2
+   ],
+   "quiet frames and the caret's partial frames on the real window (TestRealWindowQuietFrames, TestRealWindowCaretCost)": [
+    6.5,
+    7.5
+   ],
+   "the inline video player on the real window (TestRealWindowVideoFrames, Media Foundation)": [
+    8.9,
+    10.2
+   ],
+   "video playback (Media Foundation, internal/media/...)": [
+    7.5,
+    8.9
+   ]
+  },
+  "windows-scroll": {
+   "middle-click autoscroll (TestPanCursors, internal/ui/autoscroll, SendInput on Clack's window)": [
+    2.6,
+    2.9
+   ],
+   "wheel scrolling frame times (internal/ui TestWheelFrameProbe)": [
+    0.7,
+    2.6
+   ]
+  },
+  "windows-shell": {
+   "Clack's toasts (a fakeslack DM's toast clicked opens the DM; the reply box sends)": [
+    6.2,
+    7.2
+   ],
+   "Focus Assist's modes (Do not disturb switched through IQuietHoursSettings, then put back)": [
+    7.6,
+    8.1
+   ],
+   "close to the tray (Window.Hide, the tray balloon, runFromTray in App.Run, the caret blink time)": [
+    4.5,
+    4.8
+   ],
+   "taskbar (the unread badge overlay, the frame flash, windowFlashBehavior's close and revive)": [
+    7.2,
+    7.6
+   ],
+   "the introduction's preview renderer (Clack.exe intro-preview)": [
+    2.9,
+    4.5
+   ],
+   "the tray's states and menu, the jump list, Focus Assist, Keep in Background": [
+    4.8,
+    5.2
+   ],
+   "toasts (app id registration, Notification Center, a click through UI Automation)": [
+    5.3,
+    5.6
+   ]
+  }
+ },
+ "command-modals.yml": {
+  "command-modals": {
+   "tests and screenshots": [
+    0.8,
+    2.8
+   ]
+  }
+ },
+ "composer-audit-shots.yml": {
+  "composer-audit": {
+   "live theme switch vs a fresh start (Mesa llvmpipe)": [
+    3.0,
+    3.1
+   ]
+  }
+ },
+ "composer-taut.yml": {
+  "composer-taut": {
+   "composer plugin tests": [
+    0.7,
+    1.9
+   ]
+  }
+ },
+ "create-channel.yml": {
+  "create-channel": {
+   "flow + screenshots": [
+    1.8,
+    3.3
+   ],
+   "invite modal screenshots (light, dark)": [
+    3.3,
+    3.4
+   ]
+  }
+ },
+ "demo.yml": {
+  "demo": {
+   "every surface answered (TestDemoSurfaces)": [
+    2.5,
+    4.8
+   ],
+   "screenshots (Mesa llvmpipe)": [
+    4.8,
+    10.8
+   ]
+  }
+ },
+ "dialog-keys.yml": {
+  "linux": {
+   "Block Kit confirm and modal": [
+    1.1,
+    1.2
+   ],
+   "Edit topic over channel details": [
+    1.2,
+    1.2
+   ],
+   "Notify N people over a real composer editor": [
+    1.2,
+    1.2
+   ],
+   "popups dialogs through the router": [
+    0.9,
+    1.1
+   ],
+   "screenshots (the focus ring, light and dark)": [
+    1.2,
+    1.8
+   ]
+  }
+ },
+ "embeds-shots.yml": {
+  "embeds-shots": {
+   "screenshots": [
+    2.8,
+    3.9
+   ]
+  }
+ },
+ "experiments.yml": {
+  "plugins": {
+   "core and Taut experiment tests": [
+    0.9,
+    1.6
+   ],
+   "the Experiments plugins drive Clack": [
+    1.6,
+    2.9
+   ]
+  }
+ },
+ "files-shots.yml": {
+  "files-shots": {
+   "screenshots": [
+    2.5,
+    3.5
+   ],
+   "the media viewer plays videos, and the same checks on ui (before-ui)": [
+    3.5,
+    8.8
+   ]
+  }
+ },
+ "font-shots.yml": {
+  "font-shots": {
+   "screenshots": [
+    4.0,
+    4.3
+   ]
+  },
+  "sidebar-rows-linux": {
+   "Clack's rows (Mesa llvmpipe)": [
+    0.6,
+    4.0
+   ]
+  },
+  "sidebar-rows-windows": {
+   "Clack's rows (D3D11)": [
+    0.8,
+    5.7
+   ]
+  }
+ },
+ "huddles-audit-shots.yml": {
+  "huddles-audit": {
+   "the sidebar's Huddles link (the whole client over fakeslack; Mesa llvmpipe)": [
+    1.8,
+    2.5
+   ]
+  }
+ },
+ "i18n.yml": {
+  "i18n": {
+   "no English left, the Language pref, the rail's wrapped labels": [
+    0.6,
+    1.7
+   ],
+   "screenshots (es-ES, ja-JP)": [
+    1.7,
+    3.3
+   ]
+  }
+ },
+ "image-send.yml": {
+  "image-send": {
+   "render": [
+    1.7,
+    3.0
+   ],
+   "screenshots": [
+    3.0,
+    4.5
+   ]
+  }
+ },
+ "login-shots.yml": {
+  "intro-video": {
+   "render the introduction and the sign-in card (headless, 60 fps)": [
+    0.7,
+    6.9
+   ]
+  }
+ },
+ "menu-keys.yml": {
+  "linux": {
+   "menu keys through the router": [
+    0.8,
+    1.4
+   ],
+   "menu rows, selects, v2 Button and tooltips": [
+    2.9,
+    3.0
+   ],
+   "message actions (share, flag, workflow details)": [
+    3.0,
+    3.3
+   ],
+   "screenshots (mac glyphs and Ctrl, light and dark)": [
+    2.2,
+    2.9
+   ]
+  },
+  "macos": {
+   "native macOS (Mod is ⌘, the delete key is Backspace)": [
+    0.7,
+    3.5
+   ]
+  }
+ },
+ "messages-audit-shots.yml": {
+  "messages-audit-shots": {
+   "audit tests and screenshots": [
+    0.4,
+    3.8
+   ]
+  }
+ },
+ "messages-taut.yml": {
+  "plugins": {
+   "plugin acceptance + zero cost": [
+    0.6,
+    1.9
+   ]
+  }
+ },
+ "plugin-bench.yml": {
+  "gaps": {
+   "host gap tests": [
+    0.9,
+    2.5
+   ]
+  }
+ },
+ "popups-taut.yml": {
+  "popups-taut": {
+   "popups Taut tests": [
+    1.4,
+    1.7
+   ]
+  }
+ },
+ "prefs-audit-shots.yml": {
+  "prefs-audit-shots": {
+   "Preferences screenshots": [
+    1.8,
+    2.5
+   ]
+  }
+ },
+ "prefs-colors.yml": {
+  "prefs-colors": {
+   "Preferences colour screenshots": [
+    1.5,
+    1.7
+   ],
+   "the DMs rows, drawn and sampled (the peek card and the page)": [
+    1.3,
+    1.5
+   ],
+   "the account theme's draw sites (sidebar lines, filter box, app menu, control strip), drawn and sampled": [
+    1.2,
+    1.3
+   ]
+  }
+ },
+ "release.yml": {
+  "test": {
+   "test": [
+    0.5,
+    23.5
+   ]
+  }
+ },
+ "section-menus.yml": {
+  "section-menus": {
+   "menus, actions + screenshots": [
+    0.7,
+    2.2
+   ]
+  }
+ },
+ "sender-identity.yml": {
+  "sender-identity": {
+   "render tests and screenshots": [
+    1.1,
+    1.6
+   ]
+  }
+ },
+ "sidebar-experiments.yml": {
+  "sidebar-experiments": {
+   "sidebar, bell menu + screenshots": [
+    0.7,
+    2.5
+   ]
+  }
+ },
+ "slick.yml": {
+  "plugins": {
+   "slick unit + acceptance tests": [
+    1.0,
+    1.4
+   ],
+   "taut tests still green (shared runtime)": [
+    1.4,
+    2.8
+   ]
+  }
+ },
+ "taut.yml": {
+  "plugins": {
+   "unit + acceptance tests": [
+    1.1,
+    3.2
+   ]
+  }
+ },
+ "ui-taut.yml": {
+  "ui-taut": {
+   "ui Taut tests": [
+    0.8,
+    4.1
+   ]
+  }
+ },
+ "updater.yml": {
+  "prefs-shots": {
+   "Updates screenshots": [
+    0.6,
+    1.6
+   ]
+  }
+ },
+ "workflows-shots.yml": {
+  "workflows": {
+   "screenshots": [
+    1.9,
+    2.4
+   ]
+  }
+ }
+}

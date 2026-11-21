@@ -104,6 +104,10 @@ type Composer struct {
 	// every file the message keeps, in order (saveMessageEditWithFiles:
 	// chat.update's file_ids).
 	SaveEdit func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error
+	// SaveEditThen is SaveEdit queuing its JS work before it returns (UI
+	// goroutine) and telling done the outcome on another goroutine; the
+	// composer prefers it.
+	SaveEditThen func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error))
 
 	// editFiles0 is an edit's initialFileIds (the message's files)
 	editFiles0 []string
@@ -145,7 +149,7 @@ type Composer struct {
 	paneP, inputP slackc.Props
 	sendJS        slackc.JSFunc // a patched prepareAndSendMessage (send checks)
 	pane          string        // the slackc pane LayoutIn drew it in ("" outside one)
-	pending       *outgoing     // the message sendJS is deciding on
+	pending       []*outgoing   // the messages sendJS is deciding on, oldest first (sendViaJS)
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
 	sbar          scheduledBar  // the scheduled-send context bar (schedule_bar.go)
@@ -873,8 +877,7 @@ func (c *Composer) changed() {
 	} else if time.Since(c.lastTyping) > 3*time.Second {
 		c.lastTyping = time.Now()
 		c.typingOn = true
-		api, ch, ts := c.api, c.ch, c.ts
-		go sendTyping(api, ch, ts)
+		startTyping(c.api, c.ch, c.ts) // queued now, ahead of an Enter after it
 	}
 }
 
@@ -1232,9 +1235,23 @@ func (c *Composer) submit() {
 
 	if c.edit != nil {
 		m := c.edit
+		if then := c.SaveEditThen; then != nil {
+			// the edit's thunks and transforms are the user's: queued now,
+			// on the UI goroutine (taut.UserAction, DispatchThen), so a
+			// plugin click after Enter comes after them
+			then(taut.UserAction(context.Background()), m.Channel, m.TS, text, blocks, nil, func(err error) {
+				if err != nil {
+					c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+				}
+			})
+			c.finishEdit()
+			return
+		}
 		save := c.SaveEdit
 		go func() {
-			ctx := context.Background()
+			// the edit's thunks and transforms are the user's, ahead of the
+			// queued renders, after the user's earlier input
+			ctx := taut.UserAction(context.Background())
 			var err error
 			if save != nil {
 				err = save(ctx, m.Channel, m.TS, text, blocks, nil)
@@ -1314,7 +1331,7 @@ func (c *Composer) submit() {
 		o.gifs = c.att.takeGifs()
 		o.attachments = gifAttachments(o.gifs, gifPickerOn(c.api.a))
 	}
-	c.clearAfterSend()
+	after := c.clearForSend()
 	switch {
 	case c.sendJS.ID != 0:
 		c.sendViaJS(o)
@@ -1323,6 +1340,7 @@ func (c *Composer) submit() {
 	default:
 		c.send(o)
 	}
+	after()
 }
 
 // outgoing is a message on its way out of the composer.
@@ -1338,6 +1356,9 @@ type outgoing struct {
 	// delta is the delta a plugin handed back to the composer's
 	// prepareAndSendMessage (bChannel's "/bchannel …"); nil: doc's
 	delta map[string]any
+	// viaJS is its id while a plugin's prepareAndSendMessage decides on
+	// it (sendViaJS)
+	viaJS int64
 }
 
 // send posts the message (with any attached files) through Slack's
@@ -1347,9 +1368,39 @@ type outgoing struct {
 // gone and the placeholder message shows them while their uploads
 // finish); a failed send puts them back.
 func (c *Composer) send(o *outgoing) {
+	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
+		// a plugin's prepareAndSendMessage: its JS call queued now, on the
+		// UI goroutine (taut.DispatchThen), in order with the clicks after
+		// Enter; from the send's goroutine a click in the same frame could
+		// go first
+		job, finish := c.newSendJob(o)
+		taut.DispatchThen(taut.SendLane(context.Background(), t), t, thPrepareAndSend, job.patchArgs(job.args()), job.native,
+			func(_ any, err error) { finish(err) })
+		return
+	}
+	go c.startSend(o)()
+}
+
+// startSend is send's part on the UI goroutine (the attached files leave
+// the composer, the job is built); it returns the rest, to run on any
+// goroutine but the UI's.
+func (c *Composer) startSend(o *outgoing) (run func()) {
+	job, finish := c.newSendJob(o)
+	return func() {
+		// its send transforms and thunks are the user's: ahead of the JS
+		// work queued before them, held together when the native goes back
+		// into JS (taut.SendLane)
+		finish(job.run(taut.SendLane(context.Background(), currentTaut())))
+	}
+}
+
+// newSendJob is startSend's part on the UI goroutine: the attached files
+// leave the composer and the job is built. finish takes the send's
+// outcome, on any goroutine.
+func (c *Composer) newSendJob(o *outgoing) (job *sendJob, finish func(error)) {
 	batch := c.att.takeForSend()
 	hasFiles := !batch.empty()
-	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
+	job = &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
 		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
 	job.sent = func(cid string, files bool) {
 		c.later(func() {
@@ -1358,13 +1409,12 @@ func (c *Composer) send(o *outgoing) {
 			}
 		})
 	}
-	go func() {
-		err := job.run(context.Background())
+	return job, func(err error) {
 		if hasFiles && err != nil {
 			c.later(func() {
 				// the placeholder is gone and nothing was posted: the
-				// message (restore, below) and its files go back into the
-				// draft, and Slack's FileUploadErrorDialog says so (a
+				// message (restoreSend, below) and its files go back into
+				// the draft, and Slack's FileUploadErrorDialog says so (a
 				// dismissed warning or Slackbot's answer needs no dialog)
 				c.att.putBack(batch.chips)
 				if !isQuietSendStop(err) {
@@ -1375,15 +1425,14 @@ func (c *Composer) send(o *outgoing) {
 			c.later(func() { c.h.Toast("Message not sent: " + err.Error()) })
 		}
 		if err != nil {
-			c.restore(o.doc)
-			c.later(func() { c.att.putBackGifs(o.gifs) })
+			c.restoreSend(o)
 			return
 		}
 		c.later(func() {
 			c.unsendBy = time.Now().Add(unsendWindow)
 			c.att.dropPreviews(batch.chips...) // sent: no viewer shows them any more
 		})
-	}()
+	}
 }
 
 // unsendWindow is how long Mod+Z can unsend a message (15e3 ms).
@@ -1486,23 +1535,53 @@ type sendJob struct {
 }
 
 func (j *sendJob) run(ctx context.Context) error {
+	args := j.args()
+	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
+		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, j.patchArgs(args), j.native)
+		return err
+	}
+	return j.prepareAndSend(ctx, args)
+}
+
+// checkThenRun is run behind the plugins' send checks c, in one JS call
+// with the prepareAndSendMessage patches (taut.CheckThenDispatch), queued
+// before it returns (UI goroutine), ahead of the composer's re-render:
+// Slack's prepareAndSendMessage awaits its checks and dispatches
+// sendMessage in one task, and the pending copy shows in the frame after
+// they ran. The checks' answer went through Go to dispatch the thunk, and
+// a render the loop started between the two held the send. done hears,
+// on another goroutine, whether the checks let the message go, and the
+// send's error.
+func (j *sendJob) checkThenRun(ctx context.Context, t *taut.Taut, c taut.ComposerContext, done func(sent bool, err error)) {
+	taut.CheckThenDispatch(ctx, t, c, thPrepareAndSend, j.patchArgs(j.args()), j.native, func(sent bool, _ any, err error) {
+		done(sent, err)
+	})
+}
+
+// args are prepareAndSendMessage's options for the job.
+func (j *sendJob) args() prepareSendArgs {
 	delta := j.o.delta
 	if delta == nil {
 		delta = j.o.doc.Delta()
 	}
-	args := prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
+	return prepareSendArgs{ChannelID: j.ch, ReplyToTs: j.ts, Delta: delta, Text: j.o.text, Blocks: j.o.blocks,
 		ShouldBroadcast: j.o.broadcast, Broadcast: j.o.broadcast, DraftID: j.draftID, ViewContext: j.view,
 		IncludeBroadcastKeywordWarning: j.warn}
-	if t := currentTaut(); t.ThunkPatched(thPrepareAndSend) {
-		for _, p := range j.prepared {
-			args.FileIDs = append(args.FileIDs, p.ID)
-		}
-		_, err := taut.Dispatch(ctx, t, thPrepareAndSend, args, func(ctx context.Context, a prepareSendArgs) (any, error) {
-			return nil, j.prepareAndSend(ctx, a) // broadcast.go
-		})
-		return err
+}
+
+// patchArgs are args as the plugins' patches see them: with the files'
+// ids.
+func (j *sendJob) patchArgs(args prepareSendArgs) prepareSendArgs {
+	for _, p := range j.prepared {
+		args.FileIDs = append(args.FileIDs, p.ID)
 	}
-	return j.prepareAndSend(ctx, args)
+	return args
+}
+
+// native is prepareAndSendMessage's native core, where the patches call
+// the original.
+func (j *sendJob) native(ctx context.Context, a prepareSendArgs) (any, error) {
+	return nil, j.prepareAndSend(ctx, a) // broadcast.go
 }
 
 // deliver is prepareAndSendMessage's native: share the files with the
@@ -1531,14 +1610,48 @@ func (c *Composer) checkThenSend(o *outgoing) {
 		c.send(o)
 		return
 	}
-	check(SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}, func(ok bool) {
-		c.later(func() {
-			if ok {
-				c.send(o)
-			} else {
-				c.restore(o.doc)
+	// A message without files goes out from the checks' answer: its UI
+	// goroutine part is done now, and the rest starts as the answer comes,
+	// so the pending copy shows in the frame after it, as Slack's
+	// prepareAndSendMessage dispatches sendMessage when its checks resolve.
+	// It waited for the next composer frame first: with any plugin's send
+	// check an own message showed three frames after Enter (msg-latency).
+	// Files stay in the composer until the checks pass (a check may ask
+	// the user first).
+	m := SendCheck{ChannelID: c.ch, ThreadTS: c.ts, Blocks: o.blocks, Text: o.text}
+	if c.att.Len() == 0 && checkThenSendInJS() {
+		// the checks and the plugins' prepareAndSendMessage in one JS
+		// call (checkThenRun)
+		job, finish := c.newSendJob(o)
+		t := currentTaut()
+		job.checkThenRun(taut.SendLane(context.Background(), t), t, checkContext(m), func(sent bool, err error) {
+			if !sent {
+				c.restoreSend(o) // held back (done(false)): the message goes back
+				return
 			}
+			finish(err)
 		})
+		return
+	}
+	var run func()
+	if c.att.Len() == 0 {
+		run = c.startSend(o)
+	}
+	check(m, func(ok bool) {
+		switch {
+		case run != nil && ok:
+			go run() // never on the caller's goroutine: a check may answer on the UI's
+		case run != nil:
+			c.restoreSend(o) // held back (done(false)): the message goes back
+		default:
+			c.later(func() {
+				if ok {
+					c.send(o)
+				} else {
+					c.restoreSend(o)
+				}
+			})
+		}
 	})
 }
 
@@ -1546,26 +1659,55 @@ func (c *Composer) checkThenSend(o *outgoing) {
 // checks wrap it on MessagePaneInput / InputContainer). It calls back
 // into prepareAndSend to really send; a thrown error or rejected promise
 // puts the message back.
+//
+// Each message waits in c.pending until the plugin's call comes back with
+// it: the opts carry the message's own id (sendViaJSKey), which a plugin
+// that passes them on keeps, and a call without one takes the oldest. One
+// slot for all of them gave a second send's call the first message, and
+// lost the first (SlimMessageBox's Hidden thread replies behind a JS
+// backlog). The call runs on the user-blocking lane like a send's checks
+// (taut's Bridge.Call).
 func (c *Composer) sendViaJS(o *outgoing) {
-	c.pending = o
+	sendViaJSN++
+	o.viaJS = sendViaJSN
+	c.pending = append(c.pending, o)
 	opts := slackc.Props{
 		"delta":           o.doc.Delta(),
 		"channelId":       c.ch,
 		"shouldBroadcast": o.broadcast,
 		"blocks":          o.blocks,
 		"text":            o.text,
+		sendViaJSKey:      float64(o.viaJS),
 	}
 	if c.ts != "" {
 		opts["replyToTs"] = c.ts
 	}
 	c.sendJS.CallResult(func(_ any, err error) {
-		if c.pending == o {
-			c.pending = nil // a plugin sent it itself, or held it back
-		}
-		if err != nil {
-			c.restore(o.doc)
+		// still pending: the plugin sent it itself, or held it back; a
+		// message its call already passed on (prepareAndSend) is on its
+		// way, and an error after that leaves it there
+		if c.takePending(o.viaJS) != nil && err != nil {
+			c.restoreSend(o)
 		}
 	}, opts)
+}
+
+// sendViaJSKey is the opts key carrying a sendViaJS message's id.
+const sendViaJSKey = "clackSendId"
+
+// sendViaJSN numbers sendViaJS's messages (UI goroutine).
+var sendViaJSN int64
+
+// takePending removes and returns the pending message with id, or with
+// id 0 the oldest (UI goroutine).
+func (c *Composer) takePending(id int64) *outgoing {
+	for i, o := range c.pending {
+		if id == 0 || o.viaJS == id {
+			c.pending = append(c.pending[:i:i], c.pending[i+1:]...)
+			return o
+		}
+	}
+	return nil
 }
 
 // prepareAndSend is the prepareAndSendMessage({delta, channelId,
@@ -1574,8 +1716,11 @@ func (c *Composer) sendViaJS(o *outgoing) {
 // plugin's shouldBroadcast override (SlimMessageBox) and delta (bChannel
 // turns the message into its /bchannel command; sendJob runs it as one).
 func (c *Composer) prepareAndSend(opts slackc.Props) {
-	o := c.pending
-	c.pending = nil
+	var id int64
+	if v, ok := opts[sendViaJSKey].(float64); ok {
+		id = int64(v)
+	}
+	o := c.takePending(id) // its own (a plugin passed the opts on), else the oldest
 	if o == nil {
 		return
 	}
@@ -1588,24 +1733,53 @@ func (c *Composer) prepareAndSend(opts slackc.Props) {
 	c.checkThenSend(o)
 }
 
-func (c *Composer) clearAfterSend() {
+func (c *Composer) clearAfterSend() { c.clearForSend()() }
+
+// clearForSend is clearAfterSend for a message about to go out: the
+// composer clears now, and what that tells the plugins and Slack (the
+// server draft's deletion, the plugins' live draft, the typing's end) goes
+// when after is called, once the send's own JS call is queued. Slack's
+// MessagePaneInput.sendMessage clears the draft and the input first and
+// then dispatches prepareAndSendMessage, all in one task, so its plugins
+// see an empty draft in the send's checks and patches and the re-render
+// the clear causes comes after the send. Clack queues the clear's JS work
+// after the send's call to keep that re-render behind it: queued before,
+// the drafts' store update re-rendered the patched components ahead of
+// the send and the pending copy missed its frame.
+func (c *Composer) clearForSend() (after func()) {
 	c.ed.SetDoc(NewDoc())
 	c.lastVer = c.ed.Version()
-	c.deleteServerDraft("message_sent")
-	c.clearLiveDraft()
 	c.broadcast = false
 	c.lastTyping = time.Time{}
-	c.typingStopped()
 	clearDraft(c.ch, c.ts)
 	c.h.Invalidate()
+	return func() {
+		c.deleteServerDraft("message_sent")
+		c.clearLiveDraft()
+		c.typingStopped()
+	}
 }
 
 // restore puts an unsent message back if the user hasn't typed since.
-func (c *Composer) restore(d *Doc) {
+func (c *Composer) restore(d *Doc) { c.restoreWith(d, nil) }
+
+// restoreSend puts an unsent message back with its GIFs, if the user
+// hasn't typed since: the GIFs went back into a composer the user had
+// typed a new message in, and went out with it.
+func (c *Composer) restoreSend(o *outgoing) {
+	c.restoreWith(o.doc, func() { c.att.putBackGifs(o.gifs) })
+}
+
+// restoreWith is restore, running also (UI goroutine) once the message
+// is back.
+func (c *Composer) restoreWith(d *Doc, also func()) {
 	c.later(func() {
 		if c.ed.Empty() {
 			c.ed.SetDoc(d)
 			c.lastVer = c.ed.Version()
+			if also != nil {
+				also()
+			}
 			c.saveDraft()
 		}
 	})

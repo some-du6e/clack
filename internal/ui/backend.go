@@ -45,6 +45,7 @@ type backend struct {
 	selfID string
 	domain string
 	teamID string
+	notes  noteOrder            // notifications waiting for their lookups, in order (notify_conv.go)
 	ext    map[string]*convInfo // ResolveConv results for convs outside the sidebar
 	// extGen counts forgetExt calls per conversation: a resolve that
 	// started before one is stale and must not land (resolved).
@@ -953,9 +954,10 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// a conversation core doesn't know was looked up for this very
 		// message (core onMessage's refreshConv); one it knows without a
 		// name, and the channels the text mentions that nobody named
-		// yet, are looked up now
+		// yet, are looked up now. Not a group DM: its name is its members'
+		// (the people below), and Slack looks nothing else up for it
 		var ids []string
-		if c != nil && !named && c.Kind != "im" && c.Kind != "app" {
+		if c != nil && !named && c.Kind != "im" && c.Kind != "app" && c.Kind != "mpim" {
 			ids = append(ids, ev.Channel)
 		}
 		ids = append(ids, b.noteMentions(ev.Msg.Doc)...)
@@ -965,12 +967,17 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// and the messages its slugs link to (noteSlugs)
 		msgs := b.noteSlugs(ev.Msg.Doc)
 		if len(ids) > 0 || len(people) > 0 || len(msgs) > 0 {
-			b.noteResolve(a, ids, people, msgs, func() {
+			b.noteResolve(a, ev.Channel, ids, people, msgs, func() {
 				if len(people) > 0 {
 					ev = b.noteFresh(ev)
 				}
 				b.maybeNotifyAfter(a, ev, true)
 			})
+			return
+		}
+		// nothing to look up: now, unless an earlier notification of the
+		// conversation still waits for its lookups or is queued (noteOrder)
+		if b.notes.later(a, ev.Channel, func() { b.maybeNotifyAfter(a, ev, true) }) {
 			return
 		}
 	}
@@ -987,7 +994,8 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	// plugins pass and then hides it (shouldHideNotificationText): a
 	// plugin's rewrite of the text never shows either
 	hidden := b.notifyHiddenBody(ev, c)
-	a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
+	// in order with the other notifications (showNotification: taut.DispatchSeq)
+	a.showNotification(map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
 			if t, text, ok := notificationText(args, msg, body); ok {
 				if b.core.Prefs().NoTextInNotifications {
@@ -997,6 +1005,25 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 			}
 			return nil, nil
 		})
+}
+
+// showNotification dispatches Slack's showNotification thunk for one
+// notification (UI goroutine): plugins may change or drop it, and native
+// shows it. Each goes out as it comes, without waiting for the ones
+// before, as Slack's messageReceived dispatches it for every message: its
+// JS call is queued now, in order with the socket's events and the store
+// updates before it (a dispatch's in-order lane, ahead of the queued
+// renders, as Slack shows the toast in the socket event's task; not the
+// user's lane, which is for input), and the natives run in the order the
+// plugins' patches call them, or the order of the calls with none
+// (taut.DispatchSeq). A goroutine each (App.dispatch) could show two in
+// reverse. However late its JS runs, its native still shows it.
+func (a *App) showNotification(args map[string]any, native func(context.Context, map[string]any) (any, error)) {
+	taut.DispatchSeq(context.Background(), a.Taut(), "showNotification", args, native, func(_ any, err error) {
+		if err != nil {
+			log.Printf("ui: showNotification: %v", err)
+		}
+	})
 }
 
 func (b *backend) setCount(id string, cnt core.Count) bool {
@@ -1037,16 +1064,19 @@ func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 }
 
 // notifyBody is getContentForNotification: the message's text
-// (notifyText, extractTextFromMessage), after "{sender}: " outside DMs,
-// with its channel mentions written as Slack's channelToText writes them
-// (notify_conv.go: never the raw id). With no_text_in_notifications
-// (shouldHideNotificationText) a DM's body is empty and any other's is
-// "a message from {sender}".
+// (notifyText: extractTextFromMessage, richtext.NotificationText, named by
+// noteNames), after "{sender}: " outside DMs, with its mentions written as
+// Slack's userToText and channelToText write them (notify_conv.go: never
+// the raw id). With no_text_in_notifications (shouldHideNotificationText)
+// a DM's body is empty and any other's is "a message from {sender}".
 func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
-	if b.core != nil && b.core.Prefs().NoTextInNotifications {
+	if b.core == nil || b.core.S == nil {
+		return "" // no session to read the message with
+	}
+	if b.core.Prefs().NoTextInNotifications {
 		return b.notifyHiddenBody(ev, c)
 	}
-	text := notifyText(ev.Msg, b.noteSpanText, noteTextOf{Blocks: b.noteUnfurlText, Mrkdwn: b.noteMrkdwnText})
+	text := notifyText(noteNames{b.core.S, b}, ev.Msg, b.noteSpanText)
 	if c == nil || c.Kind == "im" || c.Kind == "app" {
 		return text
 	}

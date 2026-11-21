@@ -1567,6 +1567,23 @@ T.sendCheck = async (ctx) => {
   }
   return true
 }
+/**
+ * Go → JS: the send checks, then (when they let the message go) thunk `name`
+ * through every patch with Go's native work at the core (T.dispatchThunk):
+ * one JS chain, as Slack's prepareAndSendMessage awaits its checks and
+ * dispatches its thunks in one task. A check that throws counts as passed.
+ */
+T.checkThenDispatch = async (ctx, name, args, nativeId, sync) => {
+  let ok = true
+  try {
+    ok = await T.sendCheck(ctx)
+  } catch (err) {
+    error('Send check failed:', err)
+  }
+  if (ok === false) return { sent: false }
+  go('checksPassed', nativeId) // the send checks' grace is over: what follows is the dispatch
+  return { sent: true, result: await T.dispatchThunk(name, args, nativeId, sync) }
+}
 /** Go → JS: whether a dialog a pending send check may be waiting on is open */
 T.sendCheckWaiting = () => !!G.document?.querySelector?.('dialog[open], [role=dialog], [role=alertdialog], [aria-modal=true]')
 T.transformLink = (url, ctx) => {

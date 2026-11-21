@@ -729,8 +729,10 @@ jobs:
   # button's c-button box with what CSS sets on it, its icon and label
   # as a flex row; a composer.addButton toggle as Slack's composer
   # button; a plugin's ring round its ReactionBar's pills; and Taut's
-  # OwlMode itself under (demo) Owl's DM confirmation. Layout from the
-  # rects JS reads and LayoutShape, and the pixels (Mesa llvmpipe).
+  # OwlMode itself under (demo) Owl's DM confirmation; what a rule adds to
+  # a Button's box (shadows, images, wide borders) and a plugin's own
+  # button.c-button elements. Layout from the rects JS reads and
+  # LayoutShape, and the pixels (Mesa llvmpipe).
   # Dispatch with only=owl-save.
   owl-save:
     if: ${{ !inputs.only || startsWith('owl-save', inputs.only) }}
@@ -766,7 +768,7 @@ jobs:
         run: |
           set +e
           rc=0
-          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/slackc/kit || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run '^(TestOwl|TestButtonCSS|TestPluginCButton)' ./internal/ui/slackc/kit || rc=1
           xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/messages || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestTautViewOwlSaveButton$' ./internal/ui || rc=1
           exit $rc
@@ -1801,8 +1803,8 @@ jobs:
   # "Name hidden"), the sender and a DM's partner follow display_real_names,
   # a mention getMemberMentionName or the mentions-real-names rule; a
   # member the viewer hid reads "Hidden user" (no @) and sends no toast;
-  # members users/info never brought keep the sidebar's name or the slug's
-  # handles, never the slug; the title's people come before 100+ mentions.
+  # a group DM whose members users/info never brought reads "New message
+  # in " as Slack's does; the title's people come before 100+ mentions.
   # Dispatch with only=toast-names.
   toast-names:
     if: ${{ !inputs.only || startsWith('toast-names', inputs.only) }}
@@ -2002,7 +2004,9 @@ jobs:
   # viewMsg; a message fetched by id (Activity's hydration) reaches the
   # plugins' messages slice, marked as it lands (no sweep waited for), and
   # a channel's list never draws it as one a plugin injected (a jump to it
-  # pages back). Dispatch with only=views-rewrites.
+  # pages back); an edit bringing a word a plugin masks into a message it
+  # left alone never draws the word, and one under a sender-only patch
+  # draws at once. Dispatch with only=views-rewrites.
   views-rewrites:
     if: ${{ !inputs.only || startsWith('views-rewrites', inputs.only) }}
     runs-on: ubuntu-latest
@@ -2019,8 +2023,8 @@ jobs:
       - name: "views: rewritten views through a reaction while JS is busy (COUNT runs)"
         run: |
           rc=0
-          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages|TestActivityFetchedViewWithoutTheSweep)$' ./internal/ui/views || rc=1
-          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestFetchedMessageStaysOutOfTheList$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestActivityLiveVoteSlicePatchHeldReaction|TestViewsKeepARewrittenAuthorWhileJSIsBusy|TestActivityLiveVoteSlicePatch|TestActivityLiveSlicePatchReachesFetchedMessages|TestActivityFetchedViewWithoutTheSweep|TestViewsEditBringingAMaskedWordNeverShowsIt|TestViewsEditUnderASenderPatchDrawsAtOnce)$' ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^(TestFetchedMessageStaysOutOfTheList|TestEditBringingAMaskedWordNeverShowsIt|TestEditHoldEndsAtEditHold|TestEditUnderASenderPatchDrawsNextFrame)$' ./internal/ui/messages || rc=1
           exit $rc
 
   # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
@@ -2376,6 +2380,32 @@ jobs:
           go test -count=$COUNT -v -timeout 40m -run '^(TestInspectFreeze\w*|TestInspectSessionEndsAtSignIn|TestInspectFileDropsIgnored|TestInspectFrozenReportDescribesFrozenFrame|TestInspectReactionPill)$' ./internal/ui || rc=1
           exit $rc
 
+  # inspect-draw (2026-11-21): the inspect review's pen (draw.go): lines
+  # burned into the copy where and as wide as they were drawn at 1x and
+  # 2x, undo, Esc back to blurring with the app's input intact after, and
+  # nothing of it with the tool off; the review's other tests alongside.
+  # Dispatch with only=inspect-draw -f count=3.
+  inspect-draw:
+    if: ${{ !inputs.only || startsWith('inspect-draw', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the pen and the review, COUNT runs"
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestPen\w*|TestDragGrabsRegion|TestCaptureOpensReview|TestClickStillPicksAndEscDrops|TestFreezeCapturesTheFrozenFrame|TestComposeRegionAsIs|TestComposeRedactKeepsNothingInside)$' ./internal/ui/inspect || rc=1
+          go test -race -count=$COUNT -run '^TestPen\w*$' ./internal/ui/inspect || rc=1
+          exit $rc
+
   # theme-contrast round 4: the fade's continuity, the cascade per variable,
   # the DMs rows drawn (activity_inbox on and off, the peek card's scope),
   # the control strip's held press. Dispatch with only=theme-contrast-4
@@ -2683,12 +2713,13 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
+          set +e
           rc=0
-          go test -count=$COUNT -v -run '^(TestBundledSlackLogoDraws|TestNetworkSVGStaysUndecodable|TestRasterSVGRefusesWhatItCannotDraw|TestParsePathData)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -v -run '^(TestBundledSlackLogoDraws|TestNetworkSVGStaysUndecodable|TestRasterSVGRefusesWhatItCannotDraw|TestRasterSVGChargesItsBuffers|TestRasterSVGBoundsItsInput|TestParsePathData)$' ./internal/imgcache || rc=1
           go test -count=$COUNT -v -run '^TestAvatarURLSlackSystemUser$' ./internal/store || rc=1
           go test -count=$COUNT -v -run '^(TestSenderBadge|TestSenderIdentity)$' ./internal/core || rc=1
           xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSlackSystemUserCard$' ./internal/ui/popups || rc=1
-          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence)$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence|TestSidebarAvatarSystemUserNoPresence)$' ./internal/ui || rc=1
           exit $rc
 
   # caret-align (2026-11-20): the caret in Clack's inputs against their
@@ -2823,11 +2854,114 @@ jobs:
           go test -race -count=1 -run "$SLACK_TESTS|$STORE_TESTS" ./internal/slack ./internal/store || rc=1
           exit $rc
 
+  # msg-latency-2's lanes (jsrt UserBlocking, UserChain, the in-order lane,
+  # CallThen): a send's checks, transforms and thunk run ahead of the
+  # plugin runtime's backlog, a checked send goes out with no composer
+  # frame after Enter, typing goes out before its message, a native
+  # dispatch and a click keep their order, a plugin send via JS keeps each
+  # message, a frame's move goes before its press; the plugins' state
+  # views are read in chunks (a whole bucket behind a backlog in about one
+  # queue trip). Dispatch with only=msg-lanes.
+  msg-lanes:
+    if: ${{ !inputs.only || startsWith('msg-lanes', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      JSRT_TESTS: '^(TestBoundaryEventsKeepTheirOrder|TestMovesAcrossTargetsKeepTheirOrder|TestWheelDeltasAddUp|TestUserTimerLeavesThePlainQueueItsTurns|TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations|TestUserBlockingChainEnds|TestUserTimerAfterInOrderTasks|TestInOrderCallBeforeLaterInput|TestSendChainHoldsTheQueue|TestUserYieldLoopLetsTheQueueRun|TestInOrderRunsAheadOfRenders|TestQueuedRectsAndMovesCoalesce|TestMoveBeforeLaterUpUnderBacklog)$'
+      TAUT_TESTS: '^(TestCallTruthyAheadOfBacklog|TestBucketReadBehindBacklog|TestBucketReadChunkEdges|TestBucketReadLeavesTheThreadTurns|TestDispatchSeqOutlivesItsContext|TestCheckThenDispatchGraceCoversTheChecksOnly|TestInjectedMessagesDecodedOnce|TestSendCheckKilledByTheWatchdog)$'
+      COMPOSER_TESTS: '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage|TestNativeDispatchBeforeLaterClick|TestSendViaJSKeepsEachMessage|TestSendViaJSOnTheUserLane|TestSendViaJSHeldBackPutsTheMessageBack|TestSendViaJSErrorAfterSendKeepsItSent|TestEditOnTheUserLane|TestRuntimePostsStayAheadOfASend)$'
+      SLACKC_TESTS: '^TestFrameMoveBeforePress$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: jsrt, taut, composer, slackc (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -run "$JSRT_TESTS" ./internal/jsrt || rc=1
+          go test -count=1 -v -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=1 -v -timeout 10m -run "$COMPOSER_TESTS" ./internal/ui/composer || rc=1
+          go test -count=1 -v -run "$SLACKC_TESTS" ./internal/ui/slackc || rc=1
+          go test -count=$COUNT -run "$JSRT_TESTS" ./internal/jsrt || rc=1
+          go test -count=$COUNT -timeout 20m -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=$COUNT -timeout 30m -run "$COMPOSER_TESTS" ./internal/ui/composer || rc=1
+          go test -count=$COUNT -run "$SLACKC_TESTS" ./internal/ui/slackc || rc=1
+          exit $rc
+
+  # msg-latency-2's notifications in order: a burst notifies in the order
+  # its messages came (nothing to wait for, or each waiting for its
+  # sender's one users/info), messages from a new person in order with the
+  # person asked for once, a notification names the new people it waited
+  # for, and under a showNotification patch with the plugin JS behind they
+  # neither swap nor queue behind each other. Dispatch with
+  # only=notify-order.
+  notify-order:
+    if: ${{ !inputs.only || startsWith('notify-order', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      UI_TESTS: '^(TestNotificationsOfAConversationKeepTheirOrder|TestNotificationBurstInOrder|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestNotificationsDontWaitForEachOther)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run "$UI_TESTS" ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
+          exit $rc
+
+  # msg-latency-2's harness: a socket event (or Enter) to the frame that
+  # draws its row, the whole client over the fake's socket with frames
+  # drawn as the window draws them, without plugins: others' messages
+  # from people it holds and people it never fetched, own sends and their
+  # echoes, quiet and under a busy workspace's socket (Karim's α.102 "like
+  # a second and they come in clumped"). One verbose run, then COUNT.
+  # Dispatch with only=msg-latency.
+  msg-latency:
+    if: ${{ !inputs.only || startsWith('msg-latency', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      CLACK_LATENCY_TESTS: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui || rc=1
+          exit $rc
+
   # plugin-reaction-pill: reaction pills under a patched ReactionBar (a
   # pass-through patch with no CSS, and OwlMode's shape with its rules)
-  # against the native pills: emoji box, bounds, count ink and the bar's
-  # pixels, light and dark, and OwlMode's ring and colours in its thread
-  # (reaction-pill-shots artifact). Dispatch with only=reaction-pill.
+  # and under a plugin's class on the pill's button against the native
+  # pills: emoji box, bounds, count ink and the bar's pixels, light and
+  # dark, and the plugins' rings and colours where they name the pills
+  # (reaction-pill-shots artifact). pill-views: the same in the Threads,
+  # Unreads and Activity views, and a plugin's own .c-reaction as Slack's.
+  # Dispatch with only=reaction-pill.
   reaction-pill:
     if: ${{ !inputs.only || startsWith('reaction-pill', inputs.only) }}
     runs-on: ubuntu-latest
@@ -2849,7 +2983,11 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
-          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
+          go test -count=$COUNT -v -run '^TestPluginOwnReactionLikeSlack$' ./internal/ui/slackc || rc=1
+          exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -2902,7 +3040,6 @@ jobs:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
-
 
   # msg-latency-3: the socket events' lookups run off the event pump
   # (core pump_later.go): users.prefs after a pref_change or a

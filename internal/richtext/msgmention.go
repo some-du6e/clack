@@ -209,12 +209,12 @@ func (c *builder) msgCard(a *slack.Attachment, att *Attachment) {
 	att.Color, att.Footer, att.FooterIcon = "", nil, ""
 	// the message: its blocks (unfurls carry them as blocks, shares as
 	// message_blocks), else its mrkdwn text
-	if bs := parseBlocks(a.Blocks); len(bs) > 0 {
+	if bs := parseBlocks(c.expanded(a.Blocks)); len(bs) > 0 {
 		att.Text = c.blocks(bs)
 	}
 	for _, mb := range a.MessageBlocks {
 		if len(att.Text) == 0 {
-			att.Text = append(att.Text, c.blocks(parseBlocks(mb.Message.Blocks))...)
+			att.Text = append(att.Text, c.topBlocks(mb.Message.Blocks)...)
 		}
 	}
 	if len(att.Text) == 0 && a.Text != "" {

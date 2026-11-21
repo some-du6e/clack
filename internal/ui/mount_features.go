@@ -199,6 +199,9 @@ func init() {
 		}
 		popups.OpenScheduleDialog = func(h popups.Host, ch string, pick func(time.Time)) { composer.ShareScheduleDialog(h, ch, pick) }
 		popups.OpenWorkflowDetails = func(trigger, ch string) { a.OpenWorkflowDetails(trigger, ch) } // workflow_details.go
+		popups.WorkflowCardMenu = func(h popups.Host, anchor image.Rectangle, c *richtext.ShortcutCard, ch, ts string) {
+			a.workflowCardMenu(h, anchor, c, ch, ts) // workflow_details.go
+		}
 		// the search page's work object cards draw with the rows' style (workobject_pane.go)
 		popups.RichStyle = func(h popups.Host) *richview.Style { return messages.RichStyle(h) }
 	}

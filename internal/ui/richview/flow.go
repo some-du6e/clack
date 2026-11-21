@@ -120,6 +120,48 @@ type imgPrim struct {
 	tint   color.NRGBA // an iconURL image: the icon's color
 	alpha  float32     // < 1: drawn at this opacity (a pending upload, .5)
 	play   bool        // a still the viewer played: drawn playing (animated.go)
+	// bare: nothing under it while it loads or once it failed, an image
+	// block's (AttachmentImage's c-message_attachment__image is a CSS
+	// background on a transparent box: only its 1px ring shows)
+	bare bool
+	// noUp > 0: a fit image never drawn larger than its decoded size times
+	// noUp (the scale: object-fit contain with max-width and max-height
+	// 100%, so at most its natural size in CSS px), centred in r
+	noUp float32
+	// onFail, once url failed to load, is drawn in its place (an external
+	// call face's ava_0002: Facepile's renderError)
+	onFail string
+}
+
+// failedImages is implemented by imgcache.Cache.
+type failedImages interface {
+	Failed(url string, px int) bool
+}
+
+// imgFailed reports whether url's load at px failed for good.
+func imgFailed(imgs Images, url string, px int) bool {
+	f, ok := imgs.(failedImages)
+	return ok && f.Failed(url, px)
+}
+
+// imgSource is the URL im draws: its own, or onFail once that failed.
+func imgSource(imgs Images, im *imgPrim) string {
+	if im.onFail != "" && imgFailed(imgs, im.url, im.px) {
+		return im.onFail
+	}
+	return im.url
+}
+
+// noUpRect is where an image of decoded size sz draws in box r when it
+// may not grow past sz×f: its own size, centred, when that is smaller than
+// r both ways (ok false: contained in r as usual).
+func noUpRect(r image.Rectangle, sz image.Point, f float32) (image.Rectangle, bool) {
+	w, h := int(float32(sz.X)*f+0.5), int(float32(sz.Y)*f+0.5)
+	if f <= 0 || w <= 0 || h <= 0 || w >= r.Dx() || h >= r.Dy() {
+		return r, false
+	}
+	at := r.Min.Add(image.Pt((r.Dx()-w)/2, (r.Dy()-h)/2))
+	return image.Rectangle{Min: at, Max: at.Add(image.Pt(w, h))}, true
 }
 
 // removeBtn is an unfurl's remove ("x") button (unfurl.go): drawn while
@@ -154,12 +196,15 @@ const (
 	tButton
 	tCard       // whole-card click (opens URL)
 	tExpand     // attachment "Show more" / "Show less" (id: attachment number)
-	tCollapse   // image block's hide / show toggle (img: the image)
+	tCollapse   // a hide / show toggle (img: an image block's image, else key: a call card, a container)
 	tRemove     // an unfurl's remove button (id: the attachment id)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
 	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
 	tSnippet    // a snippet's Show more / Show less (file, act; snippet.go)
+	// tWorkflowCard is a share_shortcut card's click, Start Workflow or
+	// ⋮ (id: "open", "start", "more"; key: the card; shortcut.go)
+	tWorkflowCard
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -173,6 +218,7 @@ type target struct {
 	url  string
 	id   string
 	img  *richtext.Image
+	key  any // tCollapse: what the toggle hides when it isn't img (a call card, a container)
 	file *richtext.File
 	btn  *richtext.Button
 	// underline on hover (links)
@@ -477,8 +523,10 @@ type lay struct {
 	// expandKey, when set, is the section whose "Show more" is being laid
 	// out (its key in kitExpanded).
 	expandKey string
-	// collapsed holds the image blocks hidden with their toggle (View state).
-	collapsed map[*richtext.Image]bool
+	// collapsed holds the image blocks, call cards and containers toggled
+	// by the viewer, collapseDefs the containers' defaults (View state).
+	collapsed    map[any]bool
+	collapseDefs map[string]uint8
 	// playing holds the stills the viewer played (View state, animated.go);
 	// noAnim: Accessibility > "Allow animations" is off
 	playing map[string]bool
@@ -494,6 +542,23 @@ type lay struct {
 	ctr     partPath
 	curPart uint8
 	inBlock bool // inside a .p-rich_text_block
+	// ink, when set, is the text colour bodyStyle gives (an alert's
+	// .c-alert--boxed content-pry); linkInk, when set, is the links':
+	// that colour, always underlined (.c-alert :any-link{color:inherit;
+	// text-decoration:underline})
+	ink, linkInk color.NRGBA
+	// attDepth counts the attachments being laid out: their rich text is
+	// in the message_attachment context (AttachmentBlocks; a forwarded
+	// message's renderTruncatedAttachmentBlocks), where RichTextList
+	// draws a check list as bullets (s3Wf sS allows checkboxes only in a
+	// message, a thread or a Slackbot message)
+	attDepth int
+	// filled counts the boxes whose Block Kit blocks fill the width rather
+	// than sit in a message's flex block wrapper (an alert shrinks to its
+	// content there): a callout's or a container's children (renderBlocks
+	// draws them bare) and a shared message's text
+	// (.p-embedded_message_content's wrappers are display:block)
+	filled int
 }
 
 func (l *lay) dp(v float32) int      { return int(v*l.scale + 0.5) }
@@ -731,6 +796,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			if st&richtext.Code == 0 {
 				col = p.Link
+				if l.linkInk.A != 0 {
+					col, st = l.linkInk, st|richtext.Underline
+				}
 			}
 		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
 			if sp.Pending && l.opts.Canvas {

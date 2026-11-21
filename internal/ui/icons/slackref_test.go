@@ -5,6 +5,9 @@ package icons
 // them). The redrawn ones say so in redrawn.go; the formatting bar and
 // section-menu glyphs are in icons.go and slack.go.
 var slackRef = map[string]string{
+	// a rich_text check list's checkboxes (checklist.go)
+	"checkbox-filled": "checkbox-filled",
+	"square":          "square",
 	// the search switcher's toolbar (search.go)
 	"quick-switch":        "quick-switch",
 	"emoji-celebration":   "emoji-celebration", // More > Celebration (gap-w6)
@@ -365,6 +368,9 @@ var fontRef = map[string]rune{
 	"broadcast":             0xE106,
 	"lock-o":                0xE029,
 	"vertical-ellipsis":     0xE148,
+	"phone-flat":            0xE122,
+	"call-missed-font":      0xE168,
+	"call-declined-font":    0xE167,
 }
 
 // inlineRef holds the icons drawn after a glyph Slack paints itself

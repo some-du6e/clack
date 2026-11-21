@@ -638,7 +638,7 @@ func TestToAlphaToRoman(t *testing.T) {
 			t.Errorf("toAlpha(%d) = %q, want %q", n, got, want)
 		}
 	}
-	roman := map[int]string{0: "", 1: "i", 3: "iii", 4: "iv", 5: "v", 9: "ix", 14: "xiv", 40: "xl", 90: "xc", 400: "cd", 1994: "mcmxciv", 3999: "mmmcmxcix"}
+	roman := map[int]string{0: "0", 1: "i", 3: "iii", 4: "iv", 5: "v", 9: "ix", 14: "xiv", 40: "xl", 90: "xc", 400: "cd", 1994: "mcmxciv", 3999: "mmmcmxcix", 4000: "4000", 2147483647: "2147483647"}
 	for n, want := range roman {
 		if got := toRoman(n); got != want {
 			t.Errorf("toRoman(%d) = %q, want %q", n, got, want)

@@ -14,6 +14,9 @@ type engineImpl struct {
 	sheets   []keyedSheet
 	base     *sheet // SetBase: first in the cascade, never makes the engine non-empty
 	hostBase *sheet // SetHostBase: after base; its rules match host-tree nodes only
+	// SetHostElementBase: between base and hostBase; host-tree nodes that
+	// don't draw their own box only
+	hostElem *sheet
 	snap     atomic.Pointer[snapshot]
 }
 
@@ -32,6 +35,9 @@ type entry struct {
 	imp   bool   // the rule has !important declarations
 	norm  bool   // the rule has normal declarations
 	host  bool   // from the host base sheet: the subject must be a HostElement
+	// hostElem: from the host element sheet: the subject must be a
+	// HostElement that doesn't draw its own box (OwnBoxElement)
+	hostElem bool
 }
 
 // ruleIndex buckets entries by the subject compound's most selective
@@ -120,15 +126,45 @@ func (e *Engine) SetHostBase(src string) {
 	e.rebuild()
 }
 
+// SetHostElementBase installs the host element sheet: Slack's own rules
+// for the look of an element a plugin renders itself that a host
+// component draws natively (Slack's c-button: its size, kind, colours,
+// border and hover, which kit's Button draws, taking a rule's values as
+// overrides). They match host-tree nodes as the host base sheet's do,
+// except those that draw their own box (OwnBoxElement), which would
+// otherwise take Slack's look as a plugin's override. It comes before the
+// host base sheet in source order (Slack's c-button rules precede the
+// Block Kit and actions-row rules there).
+func (e *Engine) SetHostElementBase(src string) {
+	sh := parseSheet(src)
+	im := &e.impl
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	im.hostElem = sh
+	e.rebuild()
+}
+
 // HostElement is implemented by host-tree nodes, the elements a plugin's
 // React tree renders; the host base sheet's rules match only them.
 type HostElement interface {
 	HostNode() bool
 }
 
+// OwnBoxElement is implemented by host-tree nodes that may draw their own
+// box (a host component such as kit's Button, which is Slack's
+// button.c-button): the host element sheet's rules skip those.
+type OwnBoxElement interface {
+	OwnBox() bool
+}
+
 func isHost(el Element) bool {
 	h, ok := el.(HostElement)
 	return ok && h.HostNode()
+}
+
+func isOwnBox(el Element) bool {
+	o, ok := el.(OwnBoxElement)
+	return ok && o.OwnBox()
 }
 
 // HostStyled reports whether a host base rule may apply to el (a host
@@ -183,10 +219,13 @@ func (e *Engine) rebuild() {
 		kids []string
 	}
 	all := im.sheets
-	if im.base != nil || im.hostBase != nil {
-		all = make([]keyedSheet, 0, len(im.sheets)+2)
+	if im.base != nil || im.hostBase != nil || im.hostElem != nil {
+		all = make([]keyedSheet, 0, len(im.sheets)+3)
 		if im.base != nil {
 			all = append(all, keyedSheet{key: "\x00base", sh: im.base})
+		}
+		if im.hostElem != nil {
+			all = append(all, keyedSheet{key: "\x00hostel", sh: im.hostElem})
 		}
 		if im.hostBase != nil {
 			all = append(all, keyedSheet{key: "\x00host", sh: im.hostBase})
@@ -254,11 +293,11 @@ func (e *Engine) rebuild() {
 					continue
 				}
 				ord := min(order, 1<<24-1)
-				en := &entry{sel: sel, r: r, imp: hasImp, norm: hasNorm, host: ks.sh == im.hostBase,
+				en := &entry{sel: sel, r: r, imp: hasImp, norm: hasNorm, host: ks.sh == im.hostBase, hostElem: ks.sh == im.hostElem,
 					key:  lr<<48 | uint64(sel.spec)<<24 | ord,
 					ikey: (maxRank-lr)<<48 | uint64(sel.spec)<<24 | ord}
 				s.idx[sel.pseudo].add(en)
-				if en.host {
+				if en.host || en.hostElem {
 					if k, keys := bucketKeys(&sel.comps[0]); k == 'c' {
 						if s.hostClasses == nil {
 							s.hostClasses = map[string]bool{}
@@ -270,7 +309,7 @@ func (e *Engine) rebuild() {
 						s.hostAll = true
 					}
 				}
-				if ks.sh != im.base && ks.sh != im.hostBase {
+				if ks.sh != im.base && ks.sh != im.hostBase && ks.sh != im.hostElem {
 					total++
 				}
 			}
@@ -492,7 +531,7 @@ func (ix *ruleIndex) collect(el Element, env Env, ms []match) []match {
 					continue
 				}
 			}
-			if en.host && !isHost(el) || !matchSel(en.sel, el, nil) {
+			if en.host && !isHost(el) || en.hostElem && (!isHost(el) || isOwnBox(el)) || !matchSel(en.sel, el, nil) {
 				continue
 			}
 			ok := true

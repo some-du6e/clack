@@ -142,11 +142,14 @@ func (h *Host) Has(prop string) bool {
 // PlaceChildren tells the layout engine where the component drew what
 // Children laid out this frame: at is the children's top-left in px from
 // the component's own top-left. Their window rects (getBoundingClientRect,
-// ResizeObserver, Host.WindowRect inside) follow it from the next frame;
-// without it they sit at the component's corner.
+// ResizeObserver, Host.WindowRect inside) follow it in this frame: the
+// children's scope flushed its rects as Children returned, before the
+// component knew where it would centre them, so the engine flushes them
+// again when it paints the component, where the frame's layout has put
+// it (painter.native). Without it they sit at the component's corner.
 func (h *Host) PlaceChildren(at image.Point) {
-	if h.view == nil || h.Node == nil {
-		return
+	if h.view == nil || h.Node == nil || measuring > 0 {
+		return // a measure pass places nothing (measuring)
 	}
 	b := h.view.boxOf(h.Node)
 	if b == nil {

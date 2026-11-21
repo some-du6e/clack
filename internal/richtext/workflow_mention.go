@@ -43,6 +43,9 @@ type bkWorkflow struct {
 type WorkflowSlug struct {
 	Title string // trigger.workflow.title ("" falls back to the element's text)
 	Error string // the lookup's error ("" for a trigger that loaded)
+	// Icon is the trigger's workflow app's icon (ShortcutIcon's first
+	// choice: a share_shortcut card's, shortcut.go)
+	Icon string
 }
 
 // WorkflowSlugResolver resolves a mention's trigger; known is false

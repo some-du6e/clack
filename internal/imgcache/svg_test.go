@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 	"github.com/some-du6e/clack/internal/slackasset"
 )
 
@@ -156,6 +157,74 @@ func TestRasterSVGRefusesWhatItCannotDraw(t *testing.T) {
 	} {
 		if _, err := rasterSVG([]byte(s), 16, b); err == nil {
 			t.Errorf("%s: drawn, want refused", name)
+		}
+	}
+}
+
+// rasterSVG charges what it allocates: the RGBA picture (4 bytes a pixel)
+// and x/image/vector's buffers, one uint32 a pixel up to 512 px a side, and
+// above that a float32 accumulator plus a uint32 mask (12 bytes in all).
+func TestRasterSVGChargesItsBuffers(t *testing.T) {
+	const sq = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M0 0h16v16H0z"/></svg>`
+	for _, c := range []struct {
+		size  int
+		perPx int64
+	}{{16, 8}, {512, 8}, {513, 12}, {600, 12}, {svgMaxSide, 12}} {
+		b := budget.NewLocal(1 << 30)
+		img, err := rasterSVG([]byte(sq), c.size, b)
+		if err != nil {
+			t.Fatalf("%d px: %v", c.size, err)
+		}
+		if img.Bounds().Dx() != c.size {
+			t.Fatalf("%d px: drew %v", c.size, img.Bounds())
+		}
+		if got, want := b.Used(), c.perPx*int64(c.size)*int64(c.size); got != want {
+			t.Errorf("%d px: charged %d bytes (%d a pixel), want %d (%d a pixel)", c.size, got, got/int64(c.size*c.size), want, c.perPx)
+		}
+		b.Release()
+	}
+}
+
+// parseSVG and rasterSVG bound the work a document can ask for: bytes,
+// nesting, paths, commands across paths, and coordinates in user units
+// and on the canvas.
+func TestRasterSVGBoundsItsInput(t *testing.T) {
+	const head = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">`
+	square := `<path d="M0 0h16v16H0z"/>`
+	b := NewBudget()
+	defer b.Release()
+	// up to each bound it draws
+	if _, err := rasterSVG([]byte(head+strings.Repeat(square, svgMaxShapes)+`</svg>`), 16, b); err != nil {
+		t.Fatalf("%d paths: %v", svgMaxShapes, err)
+	}
+	// svg, g×14, path: 16 levels
+	nest := strings.Repeat(`<g>`, svgMaxDepth-2) + square + strings.Repeat(`</g>`, svgMaxDepth-2)
+	if _, err := rasterSVG([]byte(head+nest+`</svg>`), 16, b); err != nil {
+		t.Fatalf("%d levels: %v", svgMaxDepth, err)
+	}
+	big := `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 100000 100000"><path d="M0 0L100000 100000H0z"/></svg>`
+	if _, err := rasterSVG([]byte(big), 16, b); err != nil {
+		t.Fatalf("coordinates at the bound: %v", err)
+	}
+	// an arc whose radii overflow lands nowhere near its endpoints
+	if _, err := parsePathData("M0 0A1e300 1e300 0 0 1 16 16z"); !errors.Is(err, errSVG) {
+		t.Errorf("overflowing arc: err %v, want refused", err)
+	}
+	// half the commands in each of two paths: within one path's cap, over
+	// the document's
+	long := `<path d="M0 0` + strings.Repeat(` h1`, svgMaxSegs/2) + `"/>`
+	for name, s := range map[string]string{
+		"bytes":        head + `<!--` + strings.Repeat("x", svgMaxBytes) + `-->` + square + `</svg>`,
+		"paths":        head + strings.Repeat(square, svgMaxShapes+1) + `</svg>`,
+		"depth":        head + `<g>` + nest + `</g></svg>`,
+		"commands":     head + long + long + `</svg>`,
+		"coordinate":   head + `<path d="M0 -200000L0 16H8z"/></svg>`,
+		"relative sum": head + `<path d="M0 0` + strings.Repeat(` l60000 0`, 2) + `z"/></svg>`,
+		"viewBox":      `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 1e6 16">` + square + `</svg>`,
+		"tiny viewBox": `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 0.0001 0.0001"><path d="M0 -1L0 1H1z"/></svg>`,
+	} {
+		if _, err := rasterSVG([]byte(s), 16, b); !errors.Is(err, errSVG) {
+			t.Errorf("%s: err %v, want refused", name, err)
 		}
 	}
 }
