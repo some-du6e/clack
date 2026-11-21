@@ -74,10 +74,14 @@ func acRows(t *testing.T, app *core.App, ch, text string) []string {
 		for _, f := range fs {
 			f()
 		}
-		ac.Update(d, d.Len())
+		// settled is read before Update, so the rows returned come from
+		// an Update that ran after every source landed. Read after it, a
+		// source landing mid-Update reads as settled with rows built
+		// before it (#general's @here @channel @everyone missing).
 		ac.mu.Lock()
 		settled := ac.perms.Known && ac.members != nil && ac.groups != nil
 		ac.mu.Unlock()
+		ac.Update(d, d.Len())
 		names = names[:0]
 		items, _ := ac.Items()
 		for _, it := range items {
