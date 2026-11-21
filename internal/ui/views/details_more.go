@@ -2073,6 +2073,9 @@ func (d *ChannelDetails) addPeoplePicker(gtx C, a *cdAddPeople) D {
 			gtx.Constraints.Min.Y = gtx.Dp(28)
 			return layout.W.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				if a.q.text() == "" && len(a.picked) == 0 { // on the editor's centred line (Gio patch 54)
+					d.th.EditorPlaceholder(gtx, 15, d.p.Faint, a.q.ph)
+				}
 				if a.addRoom() <= 0 {
 					return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(28))} // full: typing is blocked
 				}
@@ -2095,9 +2098,6 @@ func (d *ChannelDetails) addPeoplePicker(gtx C, a *cdAddPeople) D {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.BorderStr)
 	}
 	call.Add(gtx.Ops)
-	if a.q.text() == "" && len(a.picked) == 0 {
-		dirAt(gtx, image.Pt(gtx.Dp(8), (r.Dy()-gtx.Sp(22))/2), func(gtx C) D { return d.label(gtx, 15, wReg, d.p.Faint, a.q.ph) })
-	}
 	if a.q.text() != "" {
 		// the results menu opens below the field (drawn over the dialog)
 		top := gtx.Dp(70)

@@ -152,6 +152,7 @@ func NewUnreads(h Host) *Unreads {
 		rng: rand.New(rand.NewSource(time.Now().UnixNano()))}
 	v.list.Axis = layout.Vertical
 	v.pickEmpty()
+	v.mediaPane = "unreads"
 	return v
 }
 

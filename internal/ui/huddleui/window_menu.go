@@ -180,7 +180,7 @@ func (w *window) toggleAudio(s *huddle.Session) {
 	}
 	w.closeMenus()
 	anchor := w.audioBtn.Add(image.Pt(0, w.barTop))
-	w.audio = popups.NewMenuOpts(winHost{w}, w.c.audioMenu(s), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
+	w.audio = popups.NewMenuOpts(winHost{w}, w.c.audioMenu(s, w.th, false), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
 		MenuClass: "p-huddle_more_actions_menu"})
 }
 

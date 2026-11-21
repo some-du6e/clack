@@ -676,6 +676,10 @@ func (m *mirror) noteConv(ev core.Event) {
 		if ev.Channel != "" && ts != "" {
 			m.t.ui.views.bumpConv(ev.Channel, ts)
 		}
+		if ev.Type == "delete" {
+			// and the message slugs linking to it (core.RefsChanged)
+			m.t.ui.views.bumpChange(core.RefsChanged(ev))
+		}
 	}
 	// the rest name a message with nothing in it a conversion reads: a
 	// mark (each read of the open channel's newest message, then Slack's

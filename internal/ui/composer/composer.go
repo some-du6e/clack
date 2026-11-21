@@ -1612,11 +1612,15 @@ func (c *Composer) restore(d *Doc) {
 }
 
 // later runs f on the UI goroutine at the next composer Layout.
-func (c *Composer) later(f func()) {
+func (c *Composer) later(f func()) { uiLater(c.h, f) }
+
+// uiLater runs f on the UI goroutine at the next Layout of a composer or
+// a TextyInput (runRestores), waking h.
+func uiLater(h interface{ Invalidate() }, f func()) {
 	restoreQ.Lock()
 	restoreQ.fns = append(restoreQ.fns, f)
 	restoreQ.Unlock()
-	c.h.Invalidate()
+	h.Invalidate()
 }
 
 // editFilesChanged is prepareAndSaveEditMessage's C: the edit's files
