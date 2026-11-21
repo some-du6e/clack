@@ -100,6 +100,7 @@ func (a *App) OpenThread(channel, ts string) { a.openThread(channel, ts, "", fal
 // log's), resolved that ts is known to be a root (OpenThread's guard
 // sent it), so it isn't looked up again.
 func (a *App) openThread(channel, ts, at string, resolved bool) {
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if !resolved && a.data != nil && a.data.core != nil {
 		if root, found := a.data.core.CachedReplyThread(channel, ts, false); found && root != "" {
 			// the reply asked for, highlighted: no navigation of Slack's
@@ -263,6 +264,7 @@ func (a *App) SecondaryBack() bool { return a.secondary.prev != nil }
 // GoSecondaryBack is FlexpaneBackButton: the pane shows the view the
 // profile opened over again (a thread keeps its route, as OpenThread).
 func (a *App) GoSecondaryBack() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	p := a.secondary.prev
 	if p == nil {
 		return
@@ -313,6 +315,7 @@ func (a *App) searchInChannel(ch string) {
 // message input takes the focus; the pane's composer lets go of it at the
 // end of the frame (composer_release.go).
 func (a *App) CloseSecondary() {
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit {
 		a.CloseSplit()
 		return

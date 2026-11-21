@@ -57,8 +57,10 @@ func newActShell(t *testing.T) *actShellEnv {
 }
 
 // newActShellOn is newActShell over an already started fakeslack (Views
-// on): two shells on one server see the same synthetic data.
-func newActShellOn(t *testing.T, fs *fakeslack.Server) *actShellEnv {
+// on): two shells on one server see the same synthetic data. Images fail
+// (offline) unless fetch is given (fs.Fetch: the fake's pictures, for a
+// shot).
+func newActShellOn(t *testing.T, fs *fakeslack.Server, fetch ...imgcache.Fetcher) *actShellEnv {
 	t.Helper()
 	t.Setenv("CLACK_HOME", t.TempDir())
 	s := store.New("")
@@ -89,6 +91,9 @@ func newActShellOn(t *testing.T, fs *fakeslack.Server) *actShellEnv {
 	})
 	ca.ServeOffline()
 	images := imgcache.New(func(ctx context.Context, url string) ([]byte, error) { return nil, errors.New("offline") }, "", nil)
+	if len(fetch) > 0 {
+		images = imgcache.New(fetch[0], "", nil)
+	}
 	a := New(Options{ConfigDir: t.TempDir(), NoRealtime: true}, images)
 	sh := theme.NewShaper()
 	a.th.SetShapers(sh, sh)
