@@ -157,7 +157,7 @@ func TestSidebarSystemUserPresence(t *testing.T) {
 		if got := sbSystemUser(c.user); got != c.system {
 			t.Errorf("sbSystemUser(%s) = %v, want %v", c.user, got, c.system)
 		}
-		p := sbPresence{system: sbSystemUser(c.user), key: "D1"}.props()
+		p := sbPresencePropsFor(c.user)
 		if p.Bool("isSystemUser") != c.system {
 			t.Errorf("%s: BasePresence props isSystemUser %v, want %v", c.user, p.Bool("isSystemUser"), c.system)
 		}
