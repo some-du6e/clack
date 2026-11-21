@@ -169,6 +169,10 @@ func (p *ProfileCard) ensureTeam(u core.User) {
 // Rect is the card's bounds in window coordinates (after a Layout).
 func (p *ProfileCard) Rect() image.Rectangle { return p.rect }
 
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *ProfileCard) Placement() *hovercard.Keep { return &p.keep }
+
 // NameRect is the header's name line (the name, then the presence dot) and
 // PresenceRect the dot, in window px as last drawn, empty before the card
 // is drawn or with no dot (tests; a plugin's header draws its own).

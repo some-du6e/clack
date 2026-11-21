@@ -81,6 +81,10 @@ func (p *URLHoverCard) URL() string { return p.url }
 // Rect is the drawn card (window coordinates).
 func (p *URLHoverCard) Rect() image.Rectangle { return p.rect }
 
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *URLHoverCard) Placement() *hovercard.Keep { return &p.keep }
+
 // CopyTip is the copy button's tooltip text now: "Copied!" for 2s after a
 // click, else "Copy link".
 func (p *URLHoverCard) CopyTip(now time.Time) string {

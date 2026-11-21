@@ -97,3 +97,7 @@ func (p *PreviewCard) Layout(gtx layout.Context) layout.Dimensions {
 
 // Rect is the drawn card (window coordinates).
 func (p *PreviewCard) Rect() image.Rectangle { return p.rect }
+
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *PreviewCard) Placement() *hovercard.Keep { return &p.keep }

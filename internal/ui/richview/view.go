@@ -95,6 +95,7 @@ type View struct {
 	hovMen   mentionKey      // the @mention last reported to the hover card
 	hovOn    bool
 	probe    hovercard.Probe // keeps ptr and hover honest when the layout moves (hovercard/anchor.go)
+	side     map[any]bool    // each trigger's Popover side (hovercard Request.Opposite), while drawn
 	// the link preview whose hover trigger was last reported, and each
 	// preview's hover card content (unfurl_hover.go)
 	prevKey  previewKey
@@ -300,10 +301,14 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	if !v.recorded {
 		v.record(st)
 	}
-	if v.probe.Missed() && v.hovering {
+	if v.probe.Missed() {
 		// not laid out for a frame: Gio forgot the handler and the Leave
-		// it was owed (Slack's spans unmounted, and mount unhovered)
-		v.left()
+		// it was owed (Slack's spans unmounted, and mount unhovered, with
+		// new Popovers)
+		clear(v.side)
+		if v.hovering {
+			v.left()
+		}
 	}
 	v.events(gtx, st, h)
 	v.hoverCard(st, h)
@@ -1412,12 +1417,25 @@ func (v *View) mounted() {
 		case mentionKey:
 			if k.v == v {
 				c.Mounted(k)
+				v.keepSide(c, k)
 			}
 		case previewKey:
 			if k.v == v {
 				c.Mounted(k)
+				v.keepSide(c, k)
 			}
 		}
+	}
+}
+
+// keepSide keeps the side k's open card was placed on (its Popover's
+// state, which lasts while the trigger is mounted).
+func (v *View) keepSide(c *hovercard.Controller, k any) {
+	if o, ok := c.Placed(k); ok {
+		if v.side == nil {
+			v.side = map[any]bool{}
+		}
+		v.side[k] = o
 	}
 }
 
@@ -1550,6 +1568,7 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		return
 	}
 	r := v.targetBounds(t)
+	defer func() { c.ReportSide(k, v.side[k]) }() // its Popover's side
 	if urlCard {
 		c.ReportURL(k, v.d.targets[t].url, r, v.ptr) // UrlHoverCardTrigger: UrlHoverCard, position "top"
 		return

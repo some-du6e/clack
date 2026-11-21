@@ -113,6 +113,18 @@ func (k *Keep) PlaceTop(anchor image.Rectangle, sz, win image.Point, gap, ax, ay
 	return k.place(true, anchor, sz, win, gap, ax, ay)
 }
 
+// Start sets the side a new card starts from (Request.Opposite: the
+// trigger's Popover was left on the opposite side), before it is first
+// placed.
+func (k *Keep) Start(opp bool) {
+	if !k.set {
+		k.opp = opp
+	}
+}
+
+// Opp reports whether the card sits on the opposite side.
+func (k *Keep) Opp() bool { return k.opp }
+
 // At keeps what place computes for a card of size sz.
 func (k *Keep) At(sz image.Point, place func() image.Point) image.Point {
 	if !k.set || sz != k.sz {
@@ -125,7 +137,7 @@ func (k *Keep) place(centre bool, anchor image.Rectangle, sz, win image.Point, g
 	if k.set && sz == k.sz {
 		return k.pos
 	}
-	pos, opp := keepInBounds(centre, anchor, sz, win, gap, ax, ay, k.set && k.opp)
+	pos, opp := keepInBounds(centre, anchor, sz, win, gap, ax, ay, k.opp)
 	k.sz, k.pos, k.opp, k.set = sz, pos, opp, true
 	return pos
 }
