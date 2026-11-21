@@ -22,6 +22,16 @@ import (
 // the UA rules (b, i) are :where() so any author rule beats them, as the
 // user-agent origin does. It's installed as the engine's base sheet, so it
 // never makes the CSS engine non-empty (no cost while no CSS is set).
+//
+// The rules with values are Slack's own (client-boot-styles, 2026-11:
+// cf726c4f2eaecc74) for elements natives draw and lay plugin content out
+// in: the top nav's right container and the thread header's row (a
+// patched component's tree under them, ClassDef.FlexItems), and the
+// reaction pill's button (.c-reaction: the children a patched
+// ReactionBar hands back, ClassDef.LayoutChildren), reduced there to what
+// lays its children out and the text they inherit (its box, its 8px
+// padding, 24px height, fill and radius, the native draws). They are the
+// natives' own (nativeSets): they never make a widget Active.
 const nativeCSS = `
 :where(b, strong) { font-weight: N }
 :where(i, em) { font-style: N }
@@ -50,6 +60,8 @@ const nativeCSS = `
 .p-ia4_client .p-ia4_top_nav__right_container{flex:1 0 auto;justify-content:flex-end;align-items:center;margin-right:4px;display:flex}
 .p-flexpane_header__primary{font-size:18px;line-height:1.33334;font-weight:var(--custom-font-weight-black,900);letter-spacing:var(--custom-font-tracking-subtitle,inherit);align-items:center;gap:8px;display:flex}
 .p-flexpane--ia_details_popover .p-flexpane_header.p-flexpane_header--smaller .p-flexpane_header__primary{gap:4px}
+.c-reaction{justify-content:center;align-items:center;gap:4px;font-size:12px;line-height:1;display:inline-flex}
+.c-reaction--reacted{font-weight:var(--custom-font-weight-bold,700)}
 `
 
 // pluginElementCSS is Slack's own rules (client-boot-styles, 2026-11:
@@ -66,16 +78,28 @@ const nativeCSS = `
 // an unfurl's media with the legacy icon font's play glyph (ClickToLoad's
 // placeholder: c-message_attachment__audio > __video_thumb >
 // __video_buttons > button.c-message_attachment__video_play >
-// i.c-deprecated-icon.c-icon--play; legacy_icons.go draws the glyph).
+// i.c-deprecated-icon.c-icon--play; legacy_icons.go draws the glyph),
+// and the actions row a plugin builds like a Block Kit actions block
+// around Slack's Button (OwlMode's Save in Taut and Forget:
+// .p-actions_block > .p-actions_block_elements > .p-actions_block__action
+// > Button.p-block_kit_button_element), whose flex rows keep each button
+// as wide as its content.
 // It is the engine's host base
 // sheet: its rules match only host-tree elements, never a native that
 // carries the same class (the native add-reaction button, the thread
-// pane's close button), which draws its own look. Rules are verbatim, in
-// Slack's source order and cascade layers (sk.foundation, sk.components,
-// sk.core, as the file first names them); only those whose subject is a
-// class here.
+// pane's close button), which draws its own look. The exception is a host
+// component that declares the element it is (RegisterHostElement): kit's
+// Button is Slack's button.c-button, so these rules style its box as they
+// do Slack's. Rules are verbatim, in Slack's source order and cascade
+// layers (sk.foundation, sk.components, sk.core, as the file first names
+// them); only those whose subject is a class here. One is reduced:
+// .c-button keeps only what lays out its children (an inline-flex row,
+// centred and unwrapped, as Slack's Button lays out an icon and a label),
+// because kit's Button draws the rest of Slack's c-button look itself and
+// takes any padding, border colour or colour a rule sets as an override.
 const pluginElementCSS = `
 @layer sk.foundation, sk.components, sk.core;
+.c-button{-webkit-user-select:none;user-select:none;text-align:center;white-space:nowrap;justify-content:center;align-items:center;display:inline-flex}
 @layer sk.foundation{.c-button-unstyled{color:inherit;font-family:inherit;font-size:inherit;font-stretch:inherit;font-style:inherit;font-variant:inherit;font-weight:inherit;line-height:inherit;overflow:initial;text-align:initial;vertical-align:initial;cursor:pointer;background:0 0;border:0;margin:0;padding:0}.c-button-unstyled:hover,.c-button-unstyled:focus,.c-button-unstyled:active{outline:none}}
 @layer sk.core{.c-icon_button{--sk_button-styles-radius:8px;border-radius:var(--sk_button-styles-radius);height:var(--sk_button-size);width:var(--sk_button-size);font-size:calc(.5 * var(--sk_button-size) + 2px);justify-content:center;align-items:center;transition-property:color,background-color,border-color;transition-duration:80ms;transition-timing-function:cubic-bezier(.36,.19,.29,1);display:inline-flex;position:relative}.c-icon_button:link{text-decoration:none}.c-icon_button--size_small{--sk_button-size:28px}.c-icon_button--size_smedium{--sk_button-size:32px}.c-icon_button--size_medium{--sk_button-size:36px}.c-icon_button--size_large{--sk_button-size:44px}.c-icon_button.c-button--disabled{opacity:.5}.c-icon_button--default,.c-icon_button--ghost,.c-icon_button--default:link,.c-icon_button--ghost:link{color:var(--dt_color-content-sec)}.c-icon_button--default:hover,.c-icon_button--ghost:hover,.c-icon_button--default:link:hover,.c-icon_button--ghost:link:hover{color:var(--dt_color-content-pry);background-color:var(--dt_color-base-ter)}.c-icon_button--default:active,.c-icon_button--ghost:active,.c-icon_button--default:link:active,.c-icon_button--ghost:link:active{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-ter-pressed), var(--dt_color-base-ter-pressed))}}
 .c-deprecated-icon:before{vertical-align:middle;font-family:Slack v2;font-size:20px;font-style:normal;font-weight:400;display:inline-block}
@@ -83,6 +107,10 @@ const pluginElementCSS = `
 .c-icon--play:before{content:"\e134 "}
 .c-icon_button--default.c-button--disabled,.c-icon_button--ghost.c-button--disabled,.c-icon_button--themeGhost.c-button--disabled,.c-icon_button--light.c-button--disabled,.c-icon_button--dark.c-button--disabled,.c-icon_button--outline.c-button--disabled{background-color:#0000}
 .c-message_attachment__image,.c-message_attachment__thumb,.c-message_attachment__video_thumb{box-shadow:0 0 0 1px var(--dt_color-otl-ter) inset;background-position:50%;background-repeat:no-repeat;background-size:contain;border-radius:8px}
+.p-block_kit_button_element{padding:0 8px 1px;display:block}
+.p-actions_block{align-items:center;margin-bottom:8px;display:flex;position:relative}
+.p-actions_block_elements{flex-wrap:wrap;align-items:end;display:flex}
+.p-actions_block__action{margin:8px 8px 0 0}
 .c-message_attachment__video_thumb{justify-content:center;align-items:center;width:100%;height:100%;display:flex;overflow:hidden}
 .c-message_attachment__video_buttons{text-align:center;background-color:#0006;border-radius:.7rem;width:100%;min-width:150px;max-width:225px}
 .c-message_attachment__video_play{text-align:center;vertical-align:initial}
@@ -120,11 +148,16 @@ func init() {
 // stripNative drops the base sheet's NativeValue winners from a host
 // node's cascade: a plugin's own element with a Slack class has no native
 // look to keep, so for it they are as if absent (the property inherits or
-// takes its initial value, as before, and UA defaults still apply).
-func stripNative(c *css.Cascaded) {
+// takes its initial value, as before, and UA defaults still apply). From
+// a Slack component's "@" node (comp) it drops every base-sheet winner:
+// Slack's own rules there are for the element the component's native
+// draws, which keeps them (ClassDef.LayoutChildren lays the children it
+// is handed out under them), not for the box around the native.
+func stripNative(c *css.Cascaded, comp bool) {
+	drop := func(d *css.Decl) bool { return d.Value == css.NativeValue || comp && d.Base }
 	n := 0
 	for i := range c.Decls {
-		if c.Decls[i].Value == css.NativeValue {
+		if drop(&c.Decls[i]) {
 			n++
 		}
 	}
@@ -132,9 +165,9 @@ func stripNative(c *css.Cascaded) {
 		return
 	}
 	out := make(css.Decls, 0, len(c.Decls)-n)
-	for _, d := range c.Decls {
-		if d.Value != css.NativeValue {
-			out = append(out, d)
+	for i := range c.Decls {
+		if !drop(&c.Decls[i]) {
+			out = append(out, c.Decls[i])
 		}
 	}
 	c.Decls = out

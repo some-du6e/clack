@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/color"
 	"strconv"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -22,11 +23,13 @@ import (
 
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 func init() {
 	add(buttonComp, "Button")
+	addElement(slackc.HostElement{Tag: "button", Classes: buttonClasses, OwnBox: true, Style: buttonStyle}, "Button")
 	add(iconButtonBase, "IconButtonBase")
 	add(filterPill, "FilterPill")
 	add(tagComp, "Tag")
@@ -195,6 +198,149 @@ func btnMetrics(size int) (h, fs, rad, pad, isz float32) {
 	return 36, 15, 8, 16, 18
 }
 
+// btnPadBottom is the bottom padding of Slack's c-button sizes
+// (client-boot-styles cf726c4f: .c-button--small and --medium
+// {padding:0 12px 1px}, --large {padding:0 16px 3px}): the label sits that
+// much above the button's middle.
+func btnPadBottom(size int) float32 {
+	if size == 2 {
+		return 3
+	}
+	return 1
+}
+
+// buttonClasses are the classes Slack's Button (client-boot module Clgr,
+// ButtonGeneric) puts on its <button> before the className a plugin
+// passes: c-button, c-button--disabled, the type's and the size's
+// modifiers.
+func buttonClasses(p slackc.Props) []string {
+	out := []string{"c-button"}
+	if ctlDisabled(p) {
+		out = append(out, "c-button--disabled")
+	}
+	switch k := p.StrOr("type", "outline"); k {
+	case "primary", "danger", "outline", "ghost", "themeInverse", "themeGhost":
+		out = append(out, "c-button--"+k)
+	}
+	switch sizeOf(p, 1) {
+	case 0:
+		out = append(out, "c-button--small")
+	case 2:
+		out = append(out, "c-button--large")
+	default:
+		out = append(out, "c-button--medium")
+	}
+	return out
+}
+
+// buttonStyle is Slack's c-button text on the button's box, which its
+// icon and label inherit: the size's font size (.c-button--small 13px…),
+// bold (700, every kind), the kind's colour; each unless a rule set it. A
+// translucent colour a rule sets (OwlMode's 70% owl label once saved) is
+// mixed over the button's background, where Chrome blends it.
+func buttonStyle(p slackc.Props, st *css.Style, has func(string) bool) {
+	cl := colorsOf(thm())
+	_, fs, _, _, _ := btnMetrics(sizeOf(p, 1))
+	if !has("font-size") {
+		st.FontSize = fs
+	}
+	if !has("font-weight") {
+		st.FontWeight = 700
+	}
+	bg, fg, _ := btnColors(cl, p.StrOr("type", "outline"), ctlDisabled(p), false)
+	if !has("color") {
+		st.Color = fg
+		return
+	}
+	if st.Color.A < 0xff {
+		if has("background-color") {
+			bg = st.Background.Color
+		}
+		st.Color = theme.Over(st.Color, theme.Over(bg, cl.Bg))
+	}
+}
+
+// btnBox is a Button's box in px: Slack's c-button metrics with what a
+// rule sets on the button laid over them (Host.Has), as such a rule beats
+// Slack's own c-button rule in the browser. Slack's
+// .p-block_kit_button_element{padding:0 8px 1px} gives a plugin's Block
+// Kit-style button 8px sides.
+type btnBox struct {
+	h      int    // border-box height
+	pad    [4]int // padding: top, right, bottom, left
+	bw     int    // border width: an outline button's 1px
+	rad    int
+	fs     float32 // label size, CSS px
+	weight int     // label weight, CSS 100..900
+}
+
+func btnBoxOf(gtx layout.Context, h *slackc.Host, kind string, size int) btnBox {
+	hh, fs, rad, pad, _ := btnMetrics(size)
+	b := btnBox{h: dp(gtx, hh), rad: dp(gtx, rad), fs: fs, weight: 700}
+	b.pad = [4]int{0, dp(gtx, pad), dp(gtx, btnPadBottom(size)), dp(gtx, pad)}
+	if kind == "outline" {
+		b.bw = dp(gtx, 1) // .c-button--outline{border:1px solid …}
+	}
+	s := h.Style
+	if s == nil {
+		return b
+	}
+	for i, prop := range [4]string{"padding-top", "padding-right", "padding-bottom", "padding-left"} {
+		if h.Has(prop) {
+			b.pad[i] = dp(gtx, max(s.Padding[i].Resolve(0, 0, 0, 0), 0))
+		}
+	}
+	if h.Has("border-radius") {
+		b.rad = dp(gtx, s.Radius[0].Resolve(float32(b.h)/gtx.Metric.PxPerDp, 0, 0, float32(rad)))
+	}
+	if h.Has("font-size") && s.FontSize > 0 {
+		b.fs = s.FontSize
+	}
+	if h.Has("font-weight") {
+		b.weight = s.FontWeight
+	}
+	return b
+}
+
+// btnCSSColors lays the colours a rule sets on the button over Slack's
+// (btnColors): color in every state; background-color except while
+// hovered or pressed (Slack's .c-button--outline:hover out-specifies a
+// plugin's one-class rule); border-color on an outline button, the kind
+// with a border (OwlMode's .taut-owl-save__button.c-button--outline and
+// --disabled rules). A translucent colour is mixed over the button's own
+// background, where Chrome blends it, except an enabled outline button's
+// border, which its padding-box background leaves over the page.
+func btnCSSColors(h *slackc.Host, cl *colors, kind string, disabled, hover bool, bg, fg, border color.NRGBA) (color.NRGBA, color.NRGBA, color.NRGBA) {
+	s := h.Style
+	if s == nil {
+		return bg, fg, border
+	}
+	if h.Has("background-color") && !hover {
+		bg = s.Background.Color
+	}
+	over := bg
+	if over.A < 0xff {
+		over = theme.Over(over, cl.Bg)
+	}
+	if h.Has("color") && s.Color.A > 0 {
+		fg = s.Color
+		if fg.A < 0xff {
+			fg = theme.Over(fg, over)
+		}
+	}
+	if kind == "outline" && h.Has("border-color") {
+		border = s.BorderColor[0]
+		if border.A > 0 && border.A < 0xff {
+			if disabled {
+				border = theme.Over(border, over)
+			} else {
+				border = theme.LinearAlpha(border, cl.Bg)
+			}
+		}
+	}
+	return bg, fg, border
+}
+
 // btnColors returns background, text and border for a button kind.
 func btnColors(cl *colors, kind string, disabled, hover bool) (bg, fg, border color.NRGBA) {
 	if disabled {
@@ -228,6 +374,14 @@ func btnColors(cl *colors, kind string, disabled, hover bool) (bg, fg, border co
 	return bg, fg, border
 }
 
+// buttonComp is Slack's Button: a <button class="c-button c-button--<type>
+// c-button--<size> …"> (buttonClasses; RegisterHostElement makes CSS see
+// it as one), drawn with Slack's c-button look and what rules set on it
+// (btnBoxOf, btnCSSColors). Plain text children are its label. Element
+// children (an icon and a label) go through the host tree, as the items
+// of the button's flex box: Slack's .c-button is an inline-flex row,
+// centred (the host base sheet), and a plugin may restyle it (OwlMode's
+// Save in Taut: display:flex, align-items:center, gap 6px).
 func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	th := thm()
 	cl := colorsOf(th)
@@ -235,7 +389,9 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	st := stateOf[ctlPress](h)
 	disabled := ctlDisabled(p)
 	kind := p.StrOr("type", "outline")
-	hh, fs, rad, pad, isz := btnMetrics(sizeOf(p, 1))
+	size := sizeOf(p, 1)
+	_, _, _, _, isz := btnMetrics(size)
+	bx := btnBoxOf(gtx, h, kind, size)
 
 	if ok, mods := st.update(gtx, h, !disabled); ok {
 		ctlFireClick(gtx, h, mods)
@@ -245,49 +401,82 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	}
 	hover := (st.click.Hovered() || st.click.Pressed()) && !disabled
 	bg, fg, border := btnColors(cl, kind, disabled, hover)
+	bg, fg, border = btnCSSColors(h, cl, kind, disabled, hover, bg, fg, border)
+
+	// the content box
+	padX := bx.pad[1] + bx.pad[3] + 2*bx.bw
+	padY := bx.pad[0] + bx.pad[2] + 2*bx.bw
+	// Slack's c-button height is definite: a flex line's stretch doesn't
+	// reach it, only a rule's height does (the engine's exact constraints)
+	H := bx.h
+	if c := gtx.Constraints; h.Has("height") && c.Min.Y == c.Max.Y && c.Max.Y > 0 {
+		H = c.Max.Y
+	}
+	inW := max(gtx.Constraints.Max.X-padX, 0)
+	inH := max(H-padY, 0)
 
 	icon := p.StrOr("icon", "")
-	lbl := ctlChildLabel(h, th, fs, true, fg)
+	_, plain := plainChildren(h)
+	elems := h.HasChildren() && !plain && icon == ""
+	var call op.CallOp
+	var cd layout.Dimensions
 	cg := gtx
-	cg.Constraints.Max.X -= 2 * dp(gtx, pad)
-	if cg.Constraints.Max.X < 0 {
-		cg.Constraints.Max.X = 0
+	if elems {
+		// The button's flex box lays its items out across the content box
+		// (justify-content, align-items); any other display is a block
+		// flow, which Chromium centres in a button.
+		flexBox := h.Style != nil && (h.Style.Display == css.DisplayFlex || h.Style.Display == css.DisplayInlineFlex ||
+			h.Style.Display == css.DisplayGrid || h.Style.Display == css.DisplayInlineGrid)
+		cg.Constraints = layout.Constraints{Max: image.Pt(inW, gtx.Constraints.Max.Y)}
+		if flexBox {
+			cg.Constraints.Min = image.Pt(min(max(gtx.Constraints.Min.X-padX, 0), inW), inH)
+			cg.Constraints.Max.Y = inH
+		}
+		call, cd = record(cg, func(gtx layout.Context) layout.Dimensions {
+			return children(gtx, h, fg, bx.fs, bx.weight)
+		})
+	} else {
+		lbl := ctlChildLabel(h, th, bx.fs, bx.weight >= 600, fg)
+		cg.Constraints.Max.X = inW
+		call, cd = record(cg, func(gtx layout.Context) layout.Dimensions {
+			return ctlIconLabel(gtx, icon, isz, fg, dp(gtx, 4), lbl)
+		})
 	}
-	call, cd := record(cg, func(gtx layout.Context) layout.Dimensions {
-		return ctlIconLabel(gtx, icon, isz, fg, dp(gtx, 4), lbl)
-	})
-	H := dp(gtx, hh)
-	w := cd.Size.X + 2*dp(gtx, pad)
-	if lbl == nil {
+	w := cd.Size.X + padX
+	if !h.HasChildren() {
 		w = ctlMax(H, cd.Size.X+dp(gtx, 8)) // icon-only: square
 	}
 	if gtx.Constraints.Min.X > w {
 		w = gtx.Constraints.Min.X
 	}
-	if cd.Size.Y+dp(gtx, 4) > H { // wrapped element children grow the button
-		H = cd.Size.Y + dp(gtx, 4)
+	if cd.Size.Y > inH { // wrapped element children grow the button
+		H = cd.Size.Y + padY
+		inH = cd.Size.Y
 	}
-	size := image.Pt(w, H)
+	at := image.Pt(bx.bw+bx.pad[3]+(w-padX-cd.Size.X)/2, bx.bw+bx.pad[0]+(inH-cd.Size.Y)/2)
+	if elems {
+		h.PlaceChildren(at)
+	}
+	sz := image.Pt(w, H)
 	draw := func(gtx layout.Context) layout.Dimensions {
-		r := image.Rectangle{Max: size}
-		radius := dp(gtx, rad)
+		r := image.Rectangle{Max: sz}
 		switch {
 		case border.A > 0:
-			ring(gtx, r, radius, 1, border, bg)
+			ring(gtx, r, bx.rad, max(bx.bw, 1), border, bg)
 		case bg.A > 0:
-			theme.RRect(gtx, r, radius, bg)
+			theme.RRect(gtx, r, bx.rad, bg)
 		}
-		callAt(gtx, call, image.Pt((w-cd.Size.X)/2, (H-cd.Size.Y)/2))
+		callAt(gtx, call, at)
 		if !disabled {
-			cursor(gtx, size, pointer.CursorPointer)
+			cursor(gtx, sz, pointer.CursorPointer)
 		}
 		ctlAriaLabel(gtx, p)
-		return layout.Dimensions{Size: size}
+		return layout.Dimensions{Size: sz}
 	}
 	if disabled {
 		return draw(gtx)
 	}
-	return st.layout(gtx, h, dp(gtx, rad), draw)
+	return st.layout(gtx, h, bx.rad, draw)
 }
 
 // ---- IconButtonBase ----
@@ -927,25 +1116,71 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 
 // ---- ComposerButton ----
 
+type composerBtnState struct {
+	press ctlPress
+	tip   tooltipState
+}
+
 // composerButton draws one composer.addButton entry (taut-api renders
 // each as "@ComposerButton" with {id, icon, label, pressed, onClick,
-// tooltip}) as Slack's composer icon button.
+// tooltip}; children: a custom icon) as Taut does in Slack's composer:
+// IconButtonBase (className c-wysiwyg_container__button, aria-pressed
+// from pressed) around an 18px SvgIcon, in a Tooltip (top, offsetY -7,
+// delay 500). Slack's composer makes it 28px with a 4px radius
+// (client-boot-styles: .c-wysiwyg_container .c-wysiwyg_container__button
+// {border-radius:4px;width:28px;height:28px}) and colours it as
+// c-icon_button--default (content-sec, hover content-pry on base-ter),
+// like the composer's own buttons, whose palette this is
+// (composer.crMakePal: FgMuted, Fg, the hover tile). Slack gives it no
+// pressed look (its [aria-pressed=true] rules are the formatting bar's,
+// .p-composer__button--sticky and --floating): a toggle shows its state
+// by its icon (OwlMode's glasses-filled).
 func composerButton(gtx layout.Context, h *slackc.Host) layout.Dimensions {
+	th := thm()
 	p := h.Props
-	q := make(slackc.Props, len(p)+3)
-	for k, v := range p {
-		q[k] = v
+	st := stateOf[composerBtnState](h)
+	if ok, mods := st.press.update(gtx, h, true); ok {
+		ctlFireClick(gtx, h, mods)
 	}
-	q["size"] = "small"
-	if p.Bool("pressed") {
-		q["aria-pressed"] = "true"
+	hover := st.press.click.Hovered() || st.press.click.Pressed()
+	ink, tile := th.C.FgMuted, color.NRGBA{}
+	if hover {
+		ink = th.C.Fg
+		tile = rgb(0xeaeaea)
+		if th.Dark {
+			tile = theme.Over(color.NRGBA{R: th.C.Fg.R, G: th.C.Fg.G, B: th.C.Fg.B, A: 0x1a}, th.C.Bg)
+		}
 	}
-	if l, ok := p.Str("label"); ok && !p.Has("aria-label") {
-		q["aria-label"] = l
+	var call op.CallOp
+	var cd layout.Dimensions
+	if h.HasChildren() {
+		call, cd = record(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints.Min = image.Point{}
+			return children(gtx, h, ink, 0, 0)
+		})
+	} else if ic := p.StrOr("icon", ""); ic != "" {
+		call, cd = record(gtx, func(gtx layout.Context) layout.Dimensions { return drawIcon(gtx, ic, 18, ink) })
 	}
-	h.Props = q
-	defer func() { h.Props = p }()
-	return iconButtonBase(gtx, h)
+	side := dp(gtx, 28)
+	sz := image.Pt(ctlMax(side, cd.Size.X), ctlMax(side, cd.Size.Y))
+	radius := dp(gtx, 4)
+	d := st.press.layout(gtx, h, radius, func(gtx layout.Context) layout.Dimensions {
+		if tile.A > 0 {
+			theme.RRect(gtx, image.Rectangle{Max: sz}, radius, tile)
+		}
+		callAt(gtx, call, image.Pt((sz.X-cd.Size.X)/2, (sz.Y-cd.Size.Y)/2))
+		cursor(gtx, sz, pointer.CursorPointer)
+		if l := p.StrOr("aria-label", p.StrOr("label", "")); l != "" {
+			semantic.LabelOp(l).Add(gtx.Ops)
+		}
+		return layout.Dimensions{Size: sz}
+	})
+	tipProp := "tooltip"
+	if !h.HasElement(tipProp) {
+		tipProp = "label"
+	}
+	st.tip.show(gtx, h, d.Size, hover, tipOpts{prop: tipProp, pos: "top", offY: -7, hasY: true, delay: 500 * time.Millisecond})
+	return d
 }
 
 func init() { add(composerButton, "ComposerButton") }

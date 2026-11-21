@@ -335,8 +335,21 @@ func (s *Style) Invalidate() {
 // Options are per-message rendering flags.
 type Options struct {
 	Edited bool // append "(edited)" after the last text block
-	Muted  bool // system message: body in the secondary color
-	Dim    bool // pending/failed: draw at reduced opacity
+	// Stopped appends StoppedLabel's "(stopped)" where "(edited)" would go
+	// (insertMessageLabelIntoBlocks: only when the message shows no
+	// "(edited)"); StoppedBy, when set, makes it "(stopped by {name})".
+	Stopped   bool
+	StoppedBy string
+	// FillBlocks: the doc is a view's (a modal's, App Home's), whose block
+	// wrappers aren't flex (WSwB wrapViewBlock, wrapAppHomeBlock): an
+	// alert fills the width, as it does in a callout or a container
+	FillBlocks bool
+	// CheckLists: rich_text check lists draw their checkboxes, as the
+	// rich_text renderable allows in a message or a thread (allowCheckList:
+	// s3Wf sS's blocks container contexts); elsewhere they're bullet lists
+	CheckLists bool
+	Muted      bool // system message: body in the secondary color
+	Dim        bool // pending/failed: draw at reduced opacity
 	// CompactFiles is MessageFiles' shouldUseCompactStack: the files
 	// without FilesMetaTextWrapper's title line (filemeta.go).
 	CompactFiles bool
@@ -377,6 +390,9 @@ type Options struct {
 	// Elements, if set, draws the doc's interactive elements (see
 	// Elements). Use a comparable (pointer) implementation.
 	Elements Elements
+	// Media, if set, draws the doc's playable video tiles (see Media).
+	// Use a comparable (pointer) implementation.
+	Media Media
 	// Truncate cuts long Block Kit section text (and each field) at 300
 	// characters or 5 line breaks with " Show more", as Slack's renderer
 	// does in its thread, activity, threads, unreads, saved and pinned

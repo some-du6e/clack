@@ -238,6 +238,10 @@ var nameCollator struct {
 	c *collate.Collator
 }
 
+// SortNames sorts names as Slack's QJub sorter does (en-US, numeric): a
+// group DM's members in its name (getMpimDisplayNameAlphabetical).
+func SortNames(names []string) { sortNames(names) }
+
 // sortNames sorts names as QJub's sorter does.
 func sortNames(names []string) {
 	if len(names) < 2 {

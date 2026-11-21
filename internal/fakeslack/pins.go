@@ -153,6 +153,7 @@ func (s *Server) PostQuiet(ch, user, text string) (ts string, ev map[string]any)
 	ts = fmt.Sprintf("%d.%06d", sec, us)
 	m := slack.Message{Type: "message", TS: ts, User: user, Text: text, ClientMsgID: "quiet-" + ts}
 	s.hist[ch] = append([]slack.Message{m}, h...)
+	s.notePosted(ch, ts) // client.counts' latest under CountsFollowPosts (count_posts.go)
 	return ts, map[string]any{"type": "message", "channel": ch, "user": user, "text": text, "ts": ts, "event_ts": ts,
 		"client_msg_id": m.ClientMsgID}
 }

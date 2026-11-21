@@ -114,3 +114,36 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// TestAlertMaxContentPills: an alert's max-content measure (maxContentW,
+// a scratch layout) numbers its mention pills after the message's own,
+// so in pill mode each reads its own component state: a plugin widening
+// the mention before the alert leaves the alert's width alone. (The
+// widening is a pad after the pill, so text follows the alert's mention:
+// the measure reads where the text ends.)
+func TestAlertMaxContentPills(t *testing.T) {
+	patchAll(t)
+	st := newTestStyle()
+	d := kitDoc(t, `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"before "},{"type":"user","user_id":"U1"}]}]},
+		{"type":"alert","level":"info","text":{"type":"mrkdwn","text":"hi <@U2> there"}}]`)
+	v := layoutAt(st, d, Options{TS: "1.2", Channel: "C9"}, 800)
+	alertW := func() int {
+		hi := findFrag(t, &v.d, "hi")
+		w := 0
+		for _, b := range v.d.boxes {
+			if b.r.Min.X <= int(hi.x) && b.r.Max.X > int(hi.x) && b.r.Min.Y <= hi.top && b.r.Max.Y >= hi.bot && (w == 0 || b.r.Dx() < w) {
+				w = b.r.Dx()
+			}
+		}
+		return w
+	}
+	before := alertW()
+	if before == 0 || len(v.cs) < 2 {
+		t.Fatalf("no alert box (%d) or %d component states, want the two mentions'", before, len(v.cs))
+	}
+	v.cs[0].extra = 200 // the mention before the alert: a plugin's wider pill
+	v.relayout(st, 800, 1, 1)
+	if got := alertW(); got != before {
+		t.Errorf("alert %dpx wide after the other mention grew, want %d (its own mention's state)", got, before)
+	}
+}

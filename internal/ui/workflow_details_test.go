@@ -12,13 +12,13 @@ import (
 
 // The message actions' hooks reach the ui root: the share dialog's
 // schedule caret uses the composer's ScheduleSendMenu and
-// ScheduleMessageDialog, and "View workflow details" opens the details
-// view.
+// ScheduleMessageDialog, "View workflow details" opens the details view,
+// and a share_shortcut card's ⋮ opens its More actions.
 func TestMessageActionsHooksWired(t *testing.T) {
 	e, _ := workflowsEnv(t)
 	_ = e
-	if popups.ScheduleSendMenu == nil || popups.OpenScheduleDialog == nil || popups.OpenWorkflowDetails == nil {
-		t.Fatal("the share dialog's schedule hooks or the workflow details hook aren't set")
+	if popups.ScheduleSendMenu == nil || popups.OpenScheduleDialog == nil || popups.OpenWorkflowDetails == nil || popups.WorkflowCardMenu == nil {
+		t.Fatal("the share dialog's schedule hooks, the workflow details hook or a workflow card's More actions hook aren't set")
 	}
 	var _ popups.IconToaster = e.a // ScheduleForwardToast's icon toast
 }

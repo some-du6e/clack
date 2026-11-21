@@ -37,6 +37,7 @@ concurrency:
 jobs:
   login-shots:
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (3.8 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -62,7 +63,7 @@ jobs:
 
   intro-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20 # budget: 1.5 x p95 (10.3 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

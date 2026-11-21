@@ -108,6 +108,18 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 			label = "Reply to thread"
 		}
 		items = append(items, MenuItem{Action: "comment", Label: label, Icon: "threads", Hint: nsMessage.T("T"), Keys: KeyComment, Do: func() {
+			// the comment thunk (0yz+, default branch): setFocusInput for
+			// channel-(threadTs || ts), then the thread opens. The
+			// threadTs is the one the menu's container passes: none from a
+			// channel's list (AEjl), so a broadcast reply's key is its own
+			// ts and its parent's box stays unfocused, as in Slack; the
+			// Threads view passes the row's thread (aQNV). Not the wrap
+			// props' threadTs, which Clack sets for any reply.
+			key := ts
+			if where == InThreadsView && m.ThreadTS != "" {
+				key = m.ThreadTS
+			}
+			SetThreadFocusInput(h, ch, key)
 			if o.OnReply != nil {
 				o.OnReply()
 				return

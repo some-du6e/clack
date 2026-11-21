@@ -83,6 +83,7 @@ func (a *App) ActiveThread() (channel, ts string) {
 // split view, or with Slack's split modifier click (⌘⌥, Ctrl+Alt), it
 // goes in the split view instead (split.go).
 func (a *App) OpenThread(channel, ts string) {
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit || a.splitClick() {
 		a.OpenSplit("c/" + channel + "/t/" + ts)
 		return
@@ -107,9 +108,9 @@ func (a *App) OpenThread(channel, ts string) {
 	a.Invalidate()
 }
 
-// FocusThreadComposer focuses a thread's reply composer
-// (messages.ThreadComposerFocuser): the reply bar opens the thread with
-// its input focused, as Slack's openThread sets focusInput.
+// FocusThreadComposer focuses a thread's reply composer now
+// (messages.ThreadComposerFocuser: the find bar's restore). Opening a
+// thread with its box focused is SetThreadFocusInput (thread_focus_input.go).
 func (a *App) FocusThreadComposer(channel, ts string) {
 	if c := a.convoFor(channel, ts); c != nil && c.comp != nil {
 		c.comp.Focus()
@@ -189,6 +190,7 @@ func (a *App) SecondaryBack() bool { return a.secondary.prev != nil }
 // GoSecondaryBack is FlexpaneBackButton: the pane shows the view the
 // profile opened over again (a thread keeps its route, as OpenThread).
 func (a *App) GoSecondaryBack() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	p := a.secondary.prev
 	if p == nil {
 		return
@@ -239,6 +241,7 @@ func (a *App) searchInChannel(ch string) {
 // message input takes the focus; the pane's composer lets go of it at the
 // end of the frame (composer_release.go).
 func (a *App) CloseSecondary() {
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit {
 		a.CloseSplit()
 		return

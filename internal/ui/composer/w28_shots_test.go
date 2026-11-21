@@ -142,7 +142,7 @@ func TestW28Shots(t *testing.T) {
 			d := NewDoc()
 			d.Insert(0, "A narrow composer", Attr{})
 			c.ed.SetDoc(d)
-			w, hh := 560, 220 // a 520px composer box: the toolbar is 414px, under 580
+			w, hh := 260, 220 // a 220px composer box: the toolbar is 114px, narrower than its 137px of buttons
 			var ops op.Ops
 			var r input.Router
 			for i := 0; i < 6; i++ {

@@ -3,6 +3,7 @@ package views
 import (
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -10,6 +11,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -58,6 +60,15 @@ func (b *base) chanEntity(gtx C, e chanent.Ent, size unit.Sp, w font.Weight, col
 		base := d.Size.Y - d.Baseline
 		rrect(gtx, image.Rect(d.Size.X, base-gtx.Dp(8), d.Size.X+bw, base), gtx.Dp(4), b.p.Skel)
 		return D{Size: image.Pt(d.Size.X+bw, d.Size.Y), Baseline: d.Baseline}
+	case len(e.Spans) > 0:
+		// a canvas's file channel: the canvas icon, then its title
+		// (chanent.Canvas)
+		return row(gtx, layout.Middle,
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Right: 2}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icons.Slack(e.Icon), unit.Dp(size), col) })
+			}),
+			layout.Rigid(func(gtx C) D { return b.canvasTitle(gtx, e.Spans, size, w, col) }),
+		)
 	case e.Icon == "":
 		return b.label(gtx, size, w, col, e.Text)
 	}
@@ -95,4 +106,62 @@ func (b *base) privateChip(gtx C, e chanent.Ent, size unit.Sp, w font.Weight) D 
 	rrect(gtx, image.Rectangle{Max: d.Size}, gtx.Dp(3), bg)
 	call.Add(gtx.Ops)
 	return d
+}
+
+// canvasTitle draws a canvas title as the channel entity's
+// renderQuipTitle does at caption size, on one line ellipsized at the
+// max width: the text in col and weight w (a mention in it plain text:
+// .p-quip_title__blocks_simple's c-member_slug inherits the colour and has
+// no background), the emoji as 16px images (.p-quip_title__blocks__caption
+// .c-emoji--inline) centred on the line. An emoji the store couldn't name
+// when the title was converted is resolved now (Slack's Emoji component
+// reads the emoji store on every render), else drawn as its ":name:".
+func (b *base) canvasTitle(gtx C, spans []richtext.Span, size unit.Sp, w font.Weight, col color.NRGBA) D {
+	gtx.Constraints.Min = image.Point{}
+	maxW := gtx.Constraints.Max.X
+	m := op.Record(gtx.Ops)
+	line := b.label(gtx, size, w, col, "Ag") // the line box a label of this size has
+	m.Stop()
+	es := gtx.Dp(16)
+	h := max(line.Size.Y, es)
+	top := (h - line.Size.Y) / 2 // the text's place in a line an emoji makes taller
+	x := 0
+	app := b.h.Core()
+	for _, s := range spans {
+		if s.Kind == richtext.Break || x >= maxW {
+			break
+		}
+		if s.Kind == richtext.Emoji {
+			url := s.URL
+			if s.KeptEmoji() && app != nil {
+				url, _, _ = app.Emoji(s.ID)
+			}
+			if url != "" {
+				if x+es > maxW {
+					break
+				}
+				u := url
+				dirAt(gtx, image.Pt(x, (h-es)/2), func(gtx C) D { return b.emojiImg(gtx, u, unit.Dp(float32(es)/gtx.Metric.PxPerDp)) })
+				x += es
+				continue
+			}
+		}
+		txt := s.Text
+		if s.Kind == richtext.Emoji && txt == "" {
+			txt = ":" + s.ID + ":"
+		}
+		txt = strings.ReplaceAll(txt, "\n", " ")
+		if txt == "" {
+			continue
+		}
+		t := op.Offset(image.Pt(x, top)).Push(gtx.Ops)
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(maxW-x, line.Size.Y)}
+		d := b.label(g, size, w, col, txt)
+		t.Pop()
+		x += d.Size.X
+	}
+	// Baseline is from the bottom: the gap under the text's box, then
+	// the label's own
+	return D{Size: image.Pt(min(x, maxW), h), Baseline: h - top - line.Size.Y + line.Baseline}
 }

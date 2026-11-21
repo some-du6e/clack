@@ -79,6 +79,11 @@ type Message struct {
 	// AssistantThread is an assistant thread root's assistant_app_thread
 	// (nil for other messages).
 	AssistantThread *slack.MessageAssistantThread
+	// Stopped is an agent reply whose stream the person stopped
+	// (ai_context.result_status "stopped_by_user": Slack's StoppedLabel);
+	// StoppedBy is ai_context.stopped_by_user_id.
+	Stopped   bool
+	StoppedBy string
 	// ThreadLastRead is a followed thread's last read reply (root
 	// messages; the subscription's last_read from conversations.replies,
 	// thread_marked and subscriptions.thread.mark): Slack's
@@ -99,10 +104,17 @@ type Message struct {
 	// DocumentComment is a canvas comment root's document_comment (nil
 	// for other messages; canvas_comments.go).
 	DocumentComment *slack.MessageDocumentComment
+	// DocumentMention is a canvas mention's document_mention (nil for
+	// other messages): the canvas and section a jump to it opens.
+	DocumentMention *slack.MessageDocumentMention
 	// Ephemeral is is_ephemeral: an "Only visible to you" message (an
 	// app's chat.postEphemeral, Slackbot's local ones), never in history
 	// and never a thread's read point (Slack's isRealMsg, 8GqV).
 	Ephemeral bool
+	// NoDisplay and NoNotifications are the server's no_display and
+	// no_notifications: no desktop notification for the message
+	// (client-boot Fpyc's reasons 4 and 5; ui/notify_dm.go).
+	NoDisplay, NoNotifications bool
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
@@ -146,12 +158,19 @@ type User struct {
 	// DisplaySet: profile.display_name is set, so Name is it and Slack's
 	// member rows (MediumMemberEntity) show RealName after it as the
 	// secondary name; otherwise Name is the real name and there is none.
-	DisplaySet                       bool
-	Avatar, Avatar192, Avatar512     string
-	Title, Pronouns                  string
-	Email                            string // only when Slack shows it (Hack Club: the viewer's own)
-	StatusText, StatusEmoji          string
-	StatusEmojiURL                   string
+	DisplaySet                   bool
+	Avatar, Avatar192, Avatar512 string
+	Title, Pronouns              string
+	Email                        string // only when Slack shows it (Hack Club: the viewer's own)
+	StatusText, StatusEmoji      string
+	StatusEmojiURL               string
+	// StatusEmojiInfo is profile.status_emoji_display_info by emoji_name
+	// (Slack's statusEmojiDisplayInfo): the pictures for the status emoji
+	// and the :codes: in StatusText (StatusTextParts).
+	StatusEmojiInfo map[string]StatusEmojiDisplay
+	// DND: the member's notifications are paused (BasePresence's isDnd,
+	// MemberInDND when the User was read).
+	DND                              bool
 	StatusCanonical                  string // profile.status_text_canonical (a preset's key)
 	StatusExp                        int64
 	TZ, TZLabel                      string
@@ -340,6 +359,9 @@ type Page struct {
 	HasMore  bool      // older messages exist
 	LastRead string
 	Conv     *Conv
+	// Epoch is the window's (store.Timeline.Epoch): a newest page that
+	// didn't meet the window started a new one, which a list takes whole
+	Epoch uint64
 }
 
 // Event is a realtime change. Type is one of: message, update, delete,
@@ -347,7 +369,9 @@ type Page struct {
 // emoji_changed, sidebar_changed, prefs, huddle, resync, poll (realtime
 // is off or down: refetch what is open), realtime (live updates turned
 // on/off, in Connected), activity_badges (the Activity badge counts
-// moved: ActivityBadgeCount), plus raw
+// moved: ActivityBadgeCount), history_caught_up (Channel's window, whose
+// end went stale at a slow connect, was read forward: its lists load it
+// again, reached_end.go), plus raw
 // passthroughs (thread_marked, update_thread_state, dnd_updated,
 // dnd_updated_user, pref_change, badge_counts_updated) in Raw.
 type Event struct {
@@ -364,6 +388,12 @@ type Event struct {
 	Reply    bool   // message: a thread reply
 	Mention  bool   // message: mentions the viewer
 	ConvKind string // message: kind of the conversation
+	// Ahead (message, update): a top-level message past the end of a
+	// window whose end went stale at a slow connect (store
+	// UpsertHeard): the channel's lists don't draw it until the window is
+	// read forward to it ("history_caught_up"), since after the window it
+	// left out what the socket missed (reached_end.go)
+	Ahead bool
 	// StreamDone marks the update (message_changed) that ends an app's chat
 	// stream: the stored copy was streaming_state in_progress and this one
 	// isn't. It carries UserID, User, Reply, Mention and ConvKind like a
@@ -433,6 +463,9 @@ type SendOpts struct {
 	// Attachments go out as chat.postMessage attachments (prepareAndSendMessage's
 	// channelSectionBlocks: [{blocks: [channel_section]}]).
 	Attachments json.RawMessage
+	// BlocksOnly posts Blocks alone (slack.PostOpts.BlocksOnly); Text is
+	// then the optimistic local copy's only.
+	BlocksOnly bool
 	// ClientMsgID is the message's client_msg_id, as sendMessage's
 	// caller may pass one (`client_msg_id || uuid()`); "" makes one. The
 	// composer passes its own so its message list can find the message

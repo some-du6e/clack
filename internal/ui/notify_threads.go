@@ -79,10 +79,20 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 		ThreadTS        string `json:"thread_ts"`
 		Content         string `json:"content"`
 		IsChannelInvite bool   `json:"is_channel_invite"`
+		User            string `json:"user"`
 	}
 	if json.Unmarshal(ev.Raw, &e) != nil || e.Channel == "" {
 		return
 	}
+	key := noteShownKey(e.Channel, e.Msg) // a desktop_notification's msg (notify_dm.go)
+	if b.noteWasShown(key) {
+		return // shown already: the reply's own message event came first (it may have while a lookup ran)
+	}
+	if !b.notePushOn(e.Channel) {
+		return // maybeShowNotification's "Skip pref-disabled push notification" (notify_dm.go)
+	}
+	// shouldShowNotificationForDesktopNotification's order: an invite
+	// shows (0) before any check of the reply's own (7, 16, 29, 20)
 	if !e.IsChannelInvite {
 		ts := e.TS
 		if ts == "" {
@@ -95,13 +105,16 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 			a.secondary.channel == e.Channel && a.secondary.ts == e.ThreadTS {
 			return // the thread is on screen (16)
 		}
+		if b.core.UserHidden(e.User) {
+			return // from a member the viewer hid ("user" in it: isUserHidden, 29)
+		}
 		if root, ok := b.core.S.Find(e.Channel, e.ThreadTS); ok && root.LastRead != "" && !tsBefore(root.LastRead, ts) {
 			return // read already (20)
 		}
 	}
 	c, named := b.noteConv(e.Channel)
 	if !named && !resolved && b.core != nil {
-		b.noteResolve(a, []string{e.Channel}, nil, func() { b.desktopNotificationAfter(a, ev, true) })
+		b.noteResolve(a, []string{e.Channel}, nil, nil, func() { b.desktopNotificationAfter(a, ev, true) })
 		return
 	}
 	if c == nil {
@@ -116,6 +129,8 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	}
 	body := e.Content
 	note := a.messageNote(e.Channel, e.TS, e.ThreadTS) // the toast's payload (notify.go)
+	note.pushChecked = true                            // notePushOn above
+	b.noteMarkShown(key)
 	a.dispatch("showNotification", map[string]any{"title": title, "message": body, "body": body, "channelId": e.Channel, "ts": e.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
 			if t, bd, ok := notificationText(args, nil, body); ok {

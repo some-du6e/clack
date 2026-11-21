@@ -25,8 +25,19 @@ import (
 
 // icon draws a named vector icon from internal/ui/icons.
 func (b *base) icon(gtx C, name string, size unit.Dp, col color.NRGBA) D {
+	if iconDrawn != nil {
+		iconDrawn(name)
+	}
 	return icons.Get(name)(gtx, size, col)
 }
+
+// iconDrawn and emojiDrawn, when set (tests, UI goroutine), see every icon
+// b.icon draws and every emoji image b.emojiImg draws (its URL and pixel
+// size): what one row drew, not what it described.
+var (
+	iconDrawn  func(name string)
+	emojiDrawn func(url string, px int)
+)
 
 // body draws a document as plain text (for docs without a message key,
 // e.g. drafts) clipped to maxLines (0 = all). Prefer msgBody for messages.
@@ -58,10 +69,16 @@ func previewWith(m *core.Message, plain func(richtext.Doc) string) string {
 // (richview's MemberRead): "@name", nothing for a member the store can't
 // name yet (BaseMissingMember's bar adds no text; the lookup asks, and
 // "names" draws it again), never the "@U…" the doc was built with. An id
-// that isn't a member's keeps the parsed text, as MemberSlug draws it.
+// that isn't a member's keeps the parsed text, as MemberSlug draws it. A
+// message slug reads its label the same way (richview.SlugText: the
+// linked message's sender, as SimpleMessagePreview's MessageMention
+// reads it).
 func (b *base) plainText(d richtext.Doc) string { return richtext.PlainTextWith(d, b.mentionText) }
 
 func (b *base) mentionText(s richtext.Span) (string, bool) {
+	if s.Kind == richtext.MessageMention {
+		return richview.SlugText(s)
+	}
 	if s.Kind != richtext.User || !core.LooksLikeMemberID(s.ID) {
 		return "", false
 	}
@@ -379,6 +396,7 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 		Channel: m.Channel, TS: m.TS, Truncate: true}
 	if live {
 		o.Elements = b.liveElements(m)
+		o.Media = b.mediaFor(orig) // a lone video plays in place (media.go)
 	}
 	return b.richDoc(gtx, key, ver, m.Doc, o, maxLines)
 }

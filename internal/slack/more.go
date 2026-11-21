@@ -651,6 +651,15 @@ func (c *Client) SetPref(ctx context.Context, name, value string) error {
 	return c.Call(ctx, "users.prefs.set", url.Values{"name": {name}, "value": {value}}, nil)
 }
 
+// MediaProgressUpdate is media.progress.update (mediaProgressUpdateFetcher,
+// /AqV, which gnNF's saveMediaProgress calls): where the viewer is in a
+// video, offset_ms of duration_ms. The generated fetcher snake-cases its
+// arguments; Clack leaves out its _x_reason (media-progress-updated).
+func (c *Client) MediaProgressUpdate(ctx context.Context, file string, offsetMS, durationMS int64) error {
+	return c.Call(ctx, "media.progress.update", url.Values{"file": {file},
+		"offset_ms": {strconv.FormatInt(offsetMS, 10)}, "duration_ms": {strconv.FormatInt(durationMS, 10)}}, nil)
+}
+
 // Command is a slash command from commands.list.
 type Command struct {
 	Name    string         `json:"name"`

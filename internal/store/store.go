@@ -27,6 +27,7 @@ import (
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slackasset"
 )
 
 // Timeline is a contiguous window of a conversation's newest messages.
@@ -34,6 +35,20 @@ type Timeline struct {
 	Msgs    []slack.Message // ascending by ts
 	HasMore bool            // older messages exist beyond Msgs[0]
 	Loaded  bool
+	// EndStale: the window may stop short of the conversation's newest
+	// message. Slack's resetReachedEnd at every slow connect
+	// (reached_end.go): nothing the socket missed meanwhile is in it, so
+	// it is read forward from End before it is the newest window again,
+	// and what the socket brings past End waits in Ahead until then.
+	EndStale bool
+	End      string          // EndStale: the newest message from Slack the window held then
+	Ahead    []slack.Message // EndStale: the socket's messages past End, ascending
+	EndGen   uint64          // the reset (ResetReachedEnd) the window's end last went stale at
+	// Epoch is which window this is: a newest page that doesn't meet the
+	// window it replaces starts a new one (SetLatestReadAt), and a list
+	// holding an older epoch's messages takes this one whole instead of
+	// keeping its own in front (Slack keeps such a page a slice of its own)
+	Epoch uint64
 }
 
 type Store struct {
@@ -54,10 +69,13 @@ type Store struct {
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
+	endGen      uint64                     // ResetReachedEnd calls so far (reached_end.go)
+	epochs      uint64                     // windows started so far (Timeline.Epoch)
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
 	fetched     map[string]*slack.Message  // key channel/ts: messages fetched by id (fetched.go)
+	fetchedBy   map[string]map[string]bool // fetched's ts by channel (fetched.go)
 	fetchedUse  map[string]fetchedUse      // fetched's last use and size (fetched.go)
 	fetchedQ    []fetchedTick              // fetched's uses, oldest first
 	fetchedN    uint64                     // fetched's uses so far
@@ -65,6 +83,7 @@ type Store struct {
 	reacts      map[string][]reactOp       // key channel/ts: realtime reactions (reacts.go)
 	reactQ      []string                   // reacts' keys, oldest first
 	readRevs    []ReadRevision             // revisions reads brought, for core (read_revisions.go)
+	fetchedNew  []MsgRef                   // messages a fetch by id brought that the store held no copy of, for core (fetched.go)
 	subs        map[string]subRec          // key channel/thread_ts: thread subscriptions (thread_subs.go)
 	subQ        []string                   // subs' keys, oldest first
 	subSeq      uint64                     // subscription events seen
@@ -118,6 +137,8 @@ type Store struct {
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
+	// botsGone are bot ids nothing returned (PutNonexistentBots)
+	botsGone map[string]bool
 
 	// userSeen is when each user was last fetched (unix seconds; from the
 	// disk cache for users it restored): what SaveCache keeps.
@@ -236,6 +257,9 @@ func (s *Store) UserAvatar(id string) string { return userAvatar(s.User, id) }
 
 func userAvatar(look userLookup, id string) string {
 	if u, ok := look(id); ok && u != nil {
+		if u.ID == SlackSystemUserID { // getMemberProfileImage's n8qp (AvatarURL)
+			return slackasset.SlackLogoMark
+		}
 		return u.Profile.Image48
 	}
 	return ""
@@ -797,10 +821,25 @@ func PrefName(u *slack.User, displayRealNames bool) string {
 	return u.RealName
 }
 
+// SlackSystemUserID is the Slack system user (Slack's isSlackSystemUser,
+// client-boot iXFk: id "USLACK"), the partner of the DM Slack's own
+// notices and apps acting for Slack post in.
+const SlackSystemUserID = "USLACK"
+
 // AvatarURL is u's picture for a slot of size px: the profile image that
 // covers it, else the ca.slack-edge.com picture of avatar_hash under
 // avatarTeam, else Slack's default. viewerTeam is the viewer's team.
+//
+// The Slack system user (USLACK, the DM apps post Slack's own notices in)
+// is Slack's logo at every size: getMemberProfileImage (client-boot 6Knt)
+// returns its bundled slack_logo_mark (n8qp) for memberId "USLACK" before
+// it reads anything else. Its profile has an avatar_hash, whose
+// ca.slack-edge.com picture is the generic blue person, and image_* SVGs
+// of the same logo.
 func AvatarURL(u *slack.User, size int, viewerTeam string) string {
+	if u.ID == SlackSystemUserID {
+		return slackasset.SlackLogoMark
+	}
 	p := u.Profile
 	switch {
 	case size <= 72 && p.Image72 != "":
@@ -865,6 +904,20 @@ func (s *Store) MemberName(id string) (string, bool) { return s.memberName(s.Use
 // what it names was waited for (a notification's body).
 func (s *Store) MemberNameHeld(id string) (string, bool) { return s.memberName(s.RawUser, id) }
 
+// PrefNameHeld is the held member id's name under the viewer's
+// display_real_names (PrefName), nothing asked and no hidden check (the
+// caller's: core.UserHidden reads the locked hide_person_opt_out too).
+func (s *Store) PrefNameHeld(id string) (string, bool) {
+	u, ok := s.RawUser(id)
+	if !ok || u == nil {
+		return "", false
+	}
+	s.mu.RLock()
+	real := s.Prefs.DisplayRealNames
+	s.mu.RUnlock()
+	return PrefName(u, real), true
+}
+
 func (s *Store) memberName(look userLookup, id string) (string, bool) {
 	u, ok := look(id) // a miss is asked for
 	if !ok || u == nil {
@@ -903,6 +956,20 @@ func firstNonEmptyName(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// MemberDeleted is richtext.MemberStater: whether the member is
+// deleted; known is false for a member not loaded yet, which is noted to
+// be fetched.
+func (s *Store) MemberDeleted(id string) (deleted, known bool) {
+	now := time.Now().UnixMilli()
+	s.mu.RLock()
+	u, known := s.lookupLocked(id, now)
+	s.mu.RUnlock()
+	s.afterLookup(id, known) // a miss is asked for
+	// a member users.info didn't find is known (Slack's non-existent
+	// member), and not deleted
+	return u != nil && u.Deleted, known
 }
 
 // MemberAvatar is richtext.MemberNamer: the member's own picture for a
@@ -1166,8 +1233,40 @@ func (s *Store) PutBot(id string, b BotInfo) {
 		s.bots = map[string]BotInfo{}
 	}
 	s.bots[id] = b
+	delete(s.botsGone, id)
 	s.mu.Unlock()
 	s.gen.Add(1)
+}
+
+// PutNonexistentBots records bots neither the edge cache nor bots.info
+// returned: the bots UnknownFetchManager's upsertNonExistent (client-boot
+// 0mwJ marks every id a fetch didn't return), whose stub getBotById
+// (Emf2 AF) answers from then on. Nothing asks for them again this
+// session (noteMissing records a bot once), and a message only such a bot
+// would name draws BaseMissingMember's non-existent bar.
+func (s *Store) PutNonexistentBots(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	s.mu.Lock()
+	for _, id := range ids {
+		if _, ok := s.bots[id]; ok || id == "" {
+			continue
+		}
+		if s.botsGone == nil {
+			s.botsGone = map[string]bool{}
+		}
+		s.botsGone[id] = true
+	}
+	s.mu.Unlock()
+}
+
+// BotNonexistent reports whether nothing returned bot id
+// (PutNonexistentBots): Slack's isNonExistent bot stub.
+func (s *Store) BotNonexistent(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.botsGone[id]
 }
 
 // BotName is richtext.BotNamer: the cached bot's name, or "" after
@@ -1218,6 +1317,18 @@ func (s *Store) SelfID() string {
 	return s.Self.ID
 }
 
+// TeamIDs is the viewer's workspace and enterprise ids (richtext's
+// TeamResolver: Slack's selectTeamId and selectEnterpriseId, which a
+// condition block's "team" conditions compare against).
+func (s *Store) TeamIDs() (team, enterprise string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if eu := s.Self.EnterpriseUser; eu != nil {
+		enterprise = eu.EnterpriseID
+	}
+	return s.TeamID, enterprise
+}
+
 // ---- conversations ----
 
 func (s *Store) PutConv(c slack.Conversation) {
@@ -1252,6 +1363,17 @@ func (s *Store) Conv(id string) (*slack.Conversation, bool) {
 	return c, ok
 }
 
+// DMUser is an IM's other member (richtext's DMResolver: a DM call's
+// card names them, getOtherMemberNameInDmCall).
+func (s *Store) DMUser(id string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if c, ok := s.Convs[id]; ok && c.IsIM && c.User != "" {
+		return c.User, true
+	}
+	return "", false
+}
+
 // ---- timelines ----
 
 func (s *Store) Timeline(ch string) *Timeline {
@@ -1263,6 +1385,7 @@ func (s *Store) Timeline(ch string) *Timeline {
 	}
 	cp := *t
 	cp.Msgs = append([]slack.Message(nil), t.Msgs...)
+	cp.Ahead = append([]slack.Message(nil), t.Ahead...)
 	return &cp
 }
 
@@ -1281,7 +1404,13 @@ func (s *Store) TimelineIDs() []string {
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
-	s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+	t := &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, EndGen: s.endGen}
+	if old := s.timelines[ch]; old != nil {
+		t.Epoch = old.Epoch // the same window, written whole (a test's)
+	} else {
+		t.Epoch = s.newEpochLocked()
+	}
+	s.timelines[ch] = t
 	s.mu.Unlock()
 }
 
@@ -1305,7 +1434,7 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
 	if t == nil {
-		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, EndGen: s.endGen, Epoch: s.newEpochLocked()}
 		return msgs
 	}
 	merged := append(append([]slack.Message(nil), msgs...), t.Msgs...)
@@ -1362,6 +1491,9 @@ func (s *Store) UpsertInRange(ch string, m slack.Message) {
 			return
 		}
 	}
+	if s.aheadLocked(ch, t, m) { // past a window whose end went stale (reached_end.go)
+		return
+	}
 	if t.HasMore {
 		oldest := ""
 		for i := range t.Msgs {
@@ -1394,6 +1526,14 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			if t.Msgs[i].TS == ts {
 				f(&t.Msgs[i])
 				out, found = t.Msgs[i], true
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == ts {
+				f(&t.Ahead[i])
+				if !found {
+					out, found = t.Ahead[i], true
+				}
 			}
 		}
 	}
@@ -1433,6 +1573,12 @@ func (s *Store) removeLocked(ch, ts string) {
 		for i := range t.Msgs {
 			if t.Msgs[i].TS == ts {
 				t.Msgs = append(t.Msgs[:i], t.Msgs[i+1:]...)
+				break
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == ts {
+				t.Ahead = append(t.Ahead[:i], t.Ahead[i+1:]...)
 				break
 			}
 		}
@@ -1481,6 +1627,11 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 				return &t.Msgs[i]
 			}
 		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if match(&t.Ahead[i]) {
+				return &t.Ahead[i]
+			}
+		}
 	}
 	pre := ch + "/"
 	for k, th := range s.threads {
@@ -1496,7 +1647,12 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 }
 
 // MessageKeys is every ts and client_msg_id among ch's cached messages
-// (timeline and threads), in one pass.
+// (timeline, threads and the messages fetched by id), in one pass: what
+// the plugins' messages slice holds of core's (taut's injected check). The
+// slice holds the fetched copies, as Slack's one messages store does, and
+// none of them is a message a plugin injected: a conversation's list draws
+// its history (Slack's channelHistory), which a message fetched by id
+// never joins.
 func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1520,6 +1676,9 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 			}
 		}
 	}
+	for _, m := range s.fetchedInLocked(ch) {
+		add(m)
+	}
 	return ts, cids
 }
 
@@ -1527,9 +1686,10 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 type MsgKey struct{ TS, CID string }
 
 // Held reports, for each key, whether the store caches a message of ch
-// with its ts (or client_msg_id) in the timeline or a thread: Holds for
-// many at once, one pass over the store under one read lock (Holds per
-// message scanned the timeline and every cached thread once each).
+// with its ts (or client_msg_id) in the timeline, a thread or the messages
+// fetched by id (MessageKeys' set: taut's injected check): Holds for many
+// at once, one pass over the store under one read lock (Holds per message
+// scanned the timeline and every cached thread once each).
 func (s *Store) Held(ch string, keys []MsgKey) []bool {
 	out := make([]bool, len(keys))
 	if len(keys) == 0 {
@@ -1567,6 +1727,9 @@ func (s *Store) Held(ch string, keys []MsgKey) []bool {
 				mark(&th[i])
 			}
 		}
+	}
+	for _, m := range s.fetchedInLocked(ch) {
+		mark(m)
 	}
 	return out
 }
@@ -2062,7 +2225,21 @@ func (s *Store) LoadCache() {
 		}
 	}
 	if len(d.Bots) > 0 {
-		s.bots = d.Bots
+		// under what this session stored or found gone meanwhile: that
+		// answer is newer than the disk's copy, and nothing would ask for
+		// the bot again (noteMissing records a bot once a session)
+		if len(s.bots)+len(s.botsGone) == 0 {
+			s.bots = d.Bots
+		} else {
+			if s.bots == nil {
+				s.bots = make(map[string]BotInfo, len(d.Bots))
+			}
+			for id, b := range d.Bots {
+				if _, ok := s.bots[id]; !ok && !s.botsGone[id] {
+					s.bots[id] = b
+				}
+			}
+		}
 	}
 	if d.Experiments != nil {
 		s.experiments = d.Experiments

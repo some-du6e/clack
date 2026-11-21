@@ -387,13 +387,24 @@ type chrome struct {
 	footNat int         // the footer row's own width as last laid out (a row-flex body, layoutBox)
 	sufW    int         // the submit group's width as last laid out (the toolbar's width, overflow.go)
 	more    crMore      // TextyButtonOverflow's open state (overflow.go)
-	pxPerDp float32
-	wBox    layout.Widget
-	wFoot   [crNumBtn]layout.Widget
-	one     [1]*slackc.Node
-	suf     []crSuf
-	inlOne  [1]*slackc.Node // layoutInline's (it may run inside a row item)
-	inl     []crSuf
+	// inlineW is TextyButtons' inlineButtonsWidth (px, 0 until measured):
+	// the toolbar's buttons laid out in a row, measured whenever nothing
+	// is folded and kept while folded (overflow.go). toolW is the
+	// toolbar's width as last laid out, TextyButtonOverflow's
+	// containerOffsetWidth prop: a Layout that reuses the box's draw
+	// (a measure pass) lays out no footer, and its zero must not reach JS.
+	inlineW int
+	toolW   int
+	// plugRect is where Taut's composer.addButton buttons were last laid
+	// out in the toolbar (composer-local; empty when folded or none)
+	plugRect image.Rectangle
+	pxPerDp  float32
+	wBox     layout.Widget
+	wFoot    [crNumBtn]layout.Widget
+	one      [1]*slackc.Node
+	suf      []crSuf
+	inlOne   [1]*slackc.Node // layoutInline's (it may run inside a row item)
+	inl      []crSuf
 }
 
 var crSpaceSizes = [3]unit.Sp{15, 12, 10.5}
@@ -893,6 +904,14 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 // right: 4px}` against the box's inner bottom-right corner (br), with
 // its tooltip "Your message is N characters too long".
 func (c *chrome) lengthWarning(gtx layout.Context, th *theme.Theme, st *chromeState, br image.Point) {
+	lengthWarningPill(gtx, th, st.OverLimit, &c.warn, &c.warnTip, func(sz image.Point) image.Point {
+		return image.Pt(br.X-gtx.Dp(4)-sz.X, br.Y-gtx.Dp(44)-sz.Y)
+	})
+}
+
+// lengthWarningPill draws TextyLengthWarning's pill for over characters
+// at place(its size), with warn as its hover area and tip its tooltip.
+func lengthWarningPill(gtx layout.Context, th *theme.Theme, over int, warn *widget.Clickable, tip *popups.TipState, place func(sz image.Point) image.Point) {
 	vars := css.SlackVars(th.Dark)
 	bg, ok := cssVarColor(vars, "--dt_color-base-inv-imp")
 	if !ok {
@@ -905,10 +924,10 @@ func (c *chrome) lengthWarning(gtx layout.Context, th *theme.Theme, st *chromeSt
 		}
 	}
 	s := textStyle{Size: 12, LineHeight: 18, Color: fg, MaxLines: 1}
-	call, d := crRec(gtx, th.Shaper, 1<<16, s, lengthWarningText(st.OverLimit))
+	call, d := crRec(gtx, th.Shaper, 1<<16, s, lengthWarningText(over))
 	padX := gtx.Dp(4)
 	sz := image.Pt(d.Size.X+2*padX, max(d.Size.Y, gtx.Dp(18)))
-	r := image.Rectangle{Min: image.Pt(br.X-gtx.Dp(4)-sz.X, br.Y-gtx.Dp(44)-sz.Y)}
+	r := image.Rectangle{Min: place(sz)}
 	r.Max = r.Min.Add(sz)
 	fillRRect(gtx, r, gtx.Dp(2), bg)
 	t := op.Offset(image.Pt(r.Min.X+padX, r.Min.Y+(sz.Y-d.Size.Y)/2)).Push(gtx.Ops)
@@ -917,8 +936,8 @@ func (c *chrome) lengthWarning(gtx layout.Context, th *theme.Theme, st *chromeSt
 	t = op.Offset(r.Min).Push(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Exact(sz)
-	c.warn.Layout(g, crPlainArea) // cursor: default
-	popups.Tooltip(gtx, th, &c.warnTip, c.warn.Hovered(), sz, popups.Above, lengthWarningTip(st.OverLimit), "")
+	warn.Layout(g, crPlainArea) // cursor: default
+	popups.Tooltip(gtx, th, tip, warn.Hovered(), sz, popups.Above, lengthWarningTip(over), "")
 	t.Pop()
 }
 
@@ -977,6 +996,12 @@ func crPlainArea(gtx layout.Context) layout.Dimensions {
 
 // tooltip shows button id's Slack tooltip above it while hovered.
 func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, id crBtn, r image.Rectangle) {
+	hov := c.btn[id].Hovered()
+	if id == crFootMore && c.more.open {
+		// TextyButtonOverflow's tipClassName display_none while its row
+		// is open: no tooltip, and it waits its delay again after
+		hov = false
+	}
 	label, keys := crInfo[id].tip, crInfo[id].keys
 	if id == crAa {
 		label = "Show formatting"
@@ -995,7 +1020,7 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 		return
 	}
 	t := op.Offset(r.Min).Push(gtx.Ops)
-	popups.Tooltip(gtx, th, &c.tip[id], c.btn[id].Hovered(), r.Size(), popups.Above, label, keys)
+	popups.Tooltip(gtx, th, &c.tip[id], hov, r.Size(), popups.Above, label, keys)
 	t.Pop()
 }
 
@@ -1180,7 +1205,9 @@ func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 	if !c.f.oneLine {
 		c.f.eq = c.toolbarWidth(gtx, x1-x0)
 	}
-	c.f.fold = c.foldFooter()
+	c.toolW = c.f.eq
+	c.f.plugBtns = c.plugButtons()
+	c.f.fold = c.foldFooter() // layoutTextyButtons decides, inside the toolbar's classes
 	c.f.sufX = x1 - gtx.Dp(6)
 	org := image.Pt(x0, y)
 	g := gtx

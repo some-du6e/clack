@@ -328,7 +328,11 @@ type HTTPError struct {
 	// RetryAfter is the answer's Retry-After in whole seconds (0: none or
 	// not a number), as Slack's BaseRequest reads it.
 	RetryAfter int
-	text       string
+	// Body is the answer (memory only, never logged) when the call's
+	// observer asked for answers (ObserveAttempts): Slack's request hands
+	// it on as the error's response.
+	Body []byte
+	text string
 }
 
 func (e *HTTPError) Error() string { return e.text }
@@ -737,15 +741,17 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		HonestHeaders(req.Header) // no Origin, no client hints (ua.go)
 		resp, err := c.do(req, method, body)
 		if err != nil {
+			unanswered(ctx, u, err)
 			return &transportError{scrubErr(err)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests && slackRetrying(ctx) {
-			resp.Body.Close() // Slack's queue's schedule, in post
-			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+			b := observedBody(ctx, resp) // Slack's queue's schedule, in post
+			answered(ctx, u, resp, b)
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: b,
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
-			resp.Body.Close()
+			answered(ctx, u, resp, observedBody(ctx, resp))
 			if attempt >= 4 {
 				return RateLimited
 			}
@@ -764,10 +770,12 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		data, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
+			unanswered(ctx, u, err) // cut off before the whole answer came
 			return &transportError{scrubErr(err)}
 		}
+		answered(ctx, u, resp, data)
 		if resp.StatusCode >= 400 && resp.StatusCode != 200 {
-			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")),
+			return &HTTPError{Method: method, Status: resp.StatusCode, RetryAfter: retryAfterSecs(resp.Header.Get("Retry-After")), Body: kept(ctx, data),
 				text: fmt.Sprintf("slack %s: http %d", method, resp.StatusCode)}
 		}
 		// {"ok":true…: no need to parse the whole body (7 MB for
@@ -778,7 +786,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 				Error string `json:"error"`
 			}
 			if err := json.Unmarshal(data, &head); err != nil {
-				return fmt.Errorf("slack %s: bad json: %w", method, err)
+				return &ParseError{Method: method, Body: kept(ctx, data), Err: err}
 			}
 			if head.OK != nil && !*head.OK {
 				return &Error{Method: method, Code: head.Error, Body: data, Status: resp.StatusCode}
@@ -823,6 +831,16 @@ func (c *Client) do(req *http.Request, method string, body []byte) (*http.Respon
 // Download fetches an authenticated URL (files.slack.com etc) with the session
 // cookie. It refuses any URL credsOK rejects (ErrUntrustedHost).
 func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, error) {
+	req, err := c.fileRequest(ctx, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	return c.fileResponse(req)
+}
+
+// fileRequest is a GET of a file URL with the session cookie, or Download's
+// refusal: signed out, a host that doesn't get credentials, a Slack page.
+func (c *Client) fileRequest(ctx context.Context, rawURL string) (*http.Request, error) {
 	if c.SignedOut() {
 		return nil, ErrSignedOut
 	}
@@ -838,7 +856,45 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 	}
 	req.Header.Set("Cookie", c.cookieHeader())
 	HonestHeaders(req.Header)
-	resp, err := c.HTTP.Do(req)
+	return req, nil
+}
+
+// idleBody cuts a streaming body that brings nothing for its timer's
+// length, and ends the request when closed.
+type idleBody struct {
+	io.ReadCloser
+	timer  *time.Timer
+	cancel context.CancelFunc
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.timer.Reset(StreamIdleTimeout)
+	}
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.timer.Stop()
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+// RetryAfterDuration is the answer's Retry-After, 0 for none.
+func (e *HTTPError) RetryAfterDuration() time.Duration {
+	return time.Duration(e.RetryAfter) * time.Second
+}
+
+// fileResponse sends a fileRequest (checkRedirect refuses hops off Slack
+// and to its pages) and refuses an answer that is a page.
+func (c *Client) fileResponse(req *http.Request) (*http.Response, error) {
+	return c.fileResponseWith(c.HTTP, req)
+}
+
+func (c *Client) fileResponseWith(hc *http.Client, req *http.Request) (*http.Response, error) {
+	resp, err := hc.Do(req)
 	if err != nil {
 		return resp, scrubErr(err)
 	}
@@ -850,6 +906,128 @@ func (c *Client) Download(ctx context.Context, rawURL string) (*http.Response, e
 		return nil, ErrNotAFile
 	}
 	return resp, nil
+}
+
+// RangeInfo is what a ranged download was answered (DownloadRange).
+type RangeInfo struct {
+	// Status is the answer's HTTP status: 206 for the range, 200 for the
+	// whole file.
+	Status int
+	// Start is the answer's first byte: the offset asked for on a 206, 0
+	// on a 200.
+	Start int64
+	// Total is the file's size, from Content-Range on a 206 and
+	// Content-Length on a 200; -1 when the answer doesn't say.
+	Total int64
+	// Seekable is whether the server answers ranges (a 206): another offset
+	// can be asked for.
+	Seekable bool
+	// ETag and LastModified are the answer's validators: a later answer
+	// with others is another version of the file.
+	ETag, LastModified string
+}
+
+// The streaming GET's timers (DownloadRange): the client's RequestTimeout
+// would cut a body that plays for more than a minute, so a ranged
+// download has none; it waits at most StreamHeaderTimeout for its answer
+// and is cut when its body brings nothing for StreamIdleTimeout.
+var (
+	StreamHeaderTimeout = RequestTimeout
+	StreamIdleTimeout   = 30 * time.Second
+)
+
+// DownloadRange is Download with Range: bytes=off- (end < 0) or
+// bytes=off-end. It keeps every guard of Download (signed out, credsOK,
+// FileURL, the text/html refusal, checkRedirect refusing /ssb/ and hops
+// off Slack) and returns the total from Content-Range. A 200 is the whole
+// file from byte 0: not seekable. Any other status is an *HTTPError (a
+// 416's RangeInfo still has the total), and the body is closed. Media
+// requests ask for no content coding, as Chromium's media loader does: the
+// offsets are the file's.
+func (c *Client) DownloadRange(ctx context.Context, rawURL string, off, end int64) (*http.Response, RangeInfo, error) {
+	info := RangeInfo{Total: -1}
+	if off < 0 || (end >= 0 && end < off) {
+		return nil, info, fmt.Errorf("slack: DownloadRange: bad range %d-%d", off, end)
+	}
+	req, err := c.fileRequest(ctx, rawURL)
+	if err != nil {
+		return nil, info, err
+	}
+	rng := "bytes=" + strconv.FormatInt(off, 10) + "-"
+	if end >= 0 {
+		rng += strconv.FormatInt(end, 10)
+	}
+	req.Header.Set("Range", rng)
+	req.Header.Set("Accept-Encoding", "identity;q=1, *;q=0")
+	// the client's transport and redirect checks, without its timeout
+	stream := &http.Client{Transport: c.HTTP.Transport, CheckRedirect: c.HTTP.CheckRedirect, Jar: c.HTTP.Jar}
+	sctx, cancel := context.WithCancel(ctx)
+	timer := time.AfterFunc(StreamHeaderTimeout, cancel)
+	resp, err := c.fileResponseWith(stream, req.WithContext(sctx))
+	if err != nil {
+		timer.Stop()
+		cancel()
+		return nil, info, err
+	}
+	timer.Reset(StreamIdleTimeout)
+	resp.Body = &idleBody{ReadCloser: resp.Body, timer: timer, cancel: cancel}
+	info.Status = resp.StatusCode
+	info.ETag, info.LastModified = resp.Header.Get("ETag"), resp.Header.Get("Last-Modified")
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		start, _, total, ok := parseContentRange(resp.Header.Get("Content-Range"))
+		if !ok || start != off {
+			resp.Body.Close()
+			return nil, info, fmt.Errorf("slack: DownloadRange: answered %q for bytes %d-", resp.Header.Get("Content-Range"), off)
+		}
+		info.Start, info.Total, info.Seekable = start, total, true
+		return resp, info, nil
+	case http.StatusOK:
+		info.Total = resp.ContentLength
+		return resp, info, nil
+	case http.StatusRequestedRangeNotSatisfiable:
+		if _, _, total, ok := parseContentRange(resp.Header.Get("Content-Range")); ok {
+			info.Total = total
+		}
+	}
+	resp.Body.Close()
+	he := NewHTTPError(resp.StatusCode, fmt.Sprintf("slack: DownloadRange: http %d", resp.StatusCode))
+	he.RetryAfter = retryAfterSecs(resp.Header.Get("Retry-After"))
+	return nil, info, he
+}
+
+// parseContentRange reads "bytes first-last/total" (total -1 for "*"), or
+// a 416's "bytes */total" (first and last -1).
+func parseContentRange(v string) (first, last, total int64, ok bool) {
+	unit, rest, found := strings.Cut(strings.TrimSpace(v), " ")
+	if !found || !strings.EqualFold(unit, "bytes") {
+		return 0, 0, 0, false
+	}
+	span, size, found := strings.Cut(rest, "/")
+	if !found {
+		return 0, 0, 0, false
+	}
+	total = -1
+	if size != "*" {
+		n, err := strconv.ParseInt(size, 10, 64)
+		if err != nil || n < 0 {
+			return 0, 0, 0, false
+		}
+		total = n
+	}
+	if span == "*" {
+		return -1, -1, total, total >= 0
+	}
+	a, b, found := strings.Cut(span, "-")
+	if !found {
+		return 0, 0, 0, false
+	}
+	first, err1 := strconv.ParseInt(a, 10, 64)
+	last, err2 := strconv.ParseInt(b, 10, 64)
+	if err1 != nil || err2 != nil || first < 0 || last < first || (total >= 0 && last >= total) {
+		return 0, 0, 0, false
+	}
+	return first, last, total, true
 }
 
 // ErrNotAFile is returned by Download for a slack.com URL that isn't a file

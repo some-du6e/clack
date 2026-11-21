@@ -681,6 +681,31 @@ func (t *Taut) ComposerButtons() bool {
 	return h != nil && len(h.Buttons) > 0
 }
 
+// ComposerButtonsFor is how many composer.addButton buttons are for
+// composers of kind (channel | thread | edit | draft | other): Taut's
+// TextyButtonOverflow patch puts each among the toolbar's children,
+// whether or not its render returns null (app/slack/composer/
+// buttons.tsx), so they count toward the toolbar's fold. Nil-safe.
+func (t *Taut) ComposerButtonsFor(kind string) int {
+	if t == nil {
+		return 0
+	}
+	h := t.composer()
+	if h == nil {
+		return 0
+	}
+	n := 0
+	for _, b := range h.Buttons {
+		for _, k := range b.Kinds {
+			if k == kind {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
 // ComposerContext is Taut's ComposerContext: kind channel | thread | edit
 // | draft | other, with Broadcast for a thread composer's checkbox.
 type ComposerContext struct {
@@ -1023,6 +1048,22 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 			t.mirror.invalidateMsg(ch, ts)
 		}
 	}
+}
+
+// MessagesAdded is MessagesChanged for messages a load brought that the
+// UI's model of ch didn't have (a thread pane's replies, an older page):
+// marked only while JS holds a copy of ch's messages it read before, which
+// lacks them, so their views waited for the mirror's sweep (a thread
+// pane's first open under a text patch drew core's copy ~650 ms). JS that
+// never read the conversation reads them all fresh with the first view
+// asked for, and marking a first window's every message held each of its
+// views a JS round trip more (a channel's settled first draw took 124 ms,
+// not 17).
+func (t *Taut) MessagesAdded(ch string, tss []string) {
+	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
+		return
+	}
+	t.MessagesChanged(ch, tss)
 }
 
 // InjectedMessages lists messages plugins added to ch (injectMessages)
@@ -1890,7 +1931,9 @@ func (v *viewCache) dropEvicted(ch string) {
 	// asked of core with mu released: the UI goroutine's lookups wait on it
 	var gone []string
 	for _, ts := range subs {
-		if !v.t.app.S.Holds(ch, ts, "") {
+		// a copy fetched by id is core's too (Activity's, Saved's): its
+		// view stays, as the pass never drops what those views draw
+		if !v.t.app.S.Keeps(ch, ts) {
 			gone = append(gone, ts)
 		}
 	}

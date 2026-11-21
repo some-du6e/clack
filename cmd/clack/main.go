@@ -26,6 +26,8 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/imgcache"
+	_ "github.com/some-du6e/clack/internal/media/avf" // video on macOS: AVFoundation
+	_ "github.com/some-du6e/clack/internal/media/mf"  // video on Windows: Media Foundation (cgo builds)
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/store"
@@ -403,20 +405,17 @@ func main() {
 		if err := c.EnableDPoP(filepath.Dir(*credsPath)); err != nil {
 			log.Printf("slack: %v", err)
 		}
-		images.SetFetcher(func(ctx context.Context, raw string) ([]byte, error) {
-			// https slack.com hosts (files.slack.com, …) need the session
-			// cookie and stay in memory (core.Fetch). Everything else is
-			// fetched with no credentials (imgcache.PublicFetch): https only,
-			// Slack's CDNs directly, any other host (unfurls, attachment and
-			// block images, bot icons, plugin CSS) through Slack's image
-			// proxy so a sender never sees your IP address, and never from a
-			// private address.
-			if c.CredentialsOK(raw) {
-				b, _, err := svc.Fetch(ctx, raw)
-				return b, err
-			}
-			return imgcache.PublicFetch(ctx, raw)
-		})
+		// https slack.com hosts (files.slack.com, …) need the session
+		// cookie and stay in memory (core.Fetch). Everything else is
+		// fetched with no credentials (imgcache.PublicFetch): https on
+		// Slack's CDNs directly, any other host and any http URL (unfurls,
+		// attachment and block images, bot icons, plugin CSS) through
+		// Slack's image proxy so a sender never sees your IP address, and
+		// never from a private address.
+		images.SetFetcher(imgcache.SessionFetch(c.CredentialsOK, func(ctx context.Context, raw string) ([]byte, error) {
+			b, _, err := svc.Fetch(ctx, raw)
+			return b, err
+		}))
 		return svc
 	}
 	connect := func(creds slack.Creds) { a.Attach(build(creds), cacheDir) }

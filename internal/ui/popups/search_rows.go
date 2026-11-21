@@ -88,6 +88,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -96,6 +97,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -247,6 +249,9 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 		top := iy + dp(gtx, (36-(22-4+2+15.6-8))/2-4)
 		at(gtx, image.Pt(tx, top-dp(gtx, 4)), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 22))}
+			if sp := srCanvasTitle(v.h, f); sp != nil {
+				return srTitleSpans(gtx, v.h, th, sp, 15, 22, theme.Bold, cl.Fg, tw)
+			}
 			return th.Layout(gtx, theme.TextStyle{Size: 15, Weight: theme.Bold, Color: cl.Fg, LineHeight: 22, MaxLines: 1}, srFileTitle(f))
 		})
 		at(gtx, image.Pt(tx, top+dp(gtx, 18+2)), func(gtx layout.Context) layout.Dimensions {
@@ -261,6 +266,72 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 		return layout.Dimensions{Size: sz}
 	})
 	return layout.Dimensions{Size: image.Pt(px+cw, srFileRowH(gtx))}
+}
+
+// srCanvasTitle is a canvas result's title as Slack's canvas titles draw
+// it (richtext.CanvasTitle: title_blocks, else the title's :emoji:), when
+// it holds an emoji; nil for any other result, whose title is text.
+func srCanvasTitle(h Host, f core.File) []richtext.Span {
+	if !f.IsCanvas || h.Core() == nil {
+		return nil
+	}
+	sp := richtext.CanvasTitle(h.Core().S, strings.TrimSpace(f.Title), f.TitleBlocks)
+	for _, s := range sp {
+		if s.Kind == richtext.Emoji {
+			return sp
+		}
+	}
+	return nil
+}
+
+// srTitleSpans draws a title's spans on one line, w wide at most: text in
+// col (a mention plain, as .p-quip_title__blocks_simple draws it) and
+// emoji as images at the line's height (.p-quip_title__blocks__base
+// .c-emoji--inline: 22px), one the store couldn't name when converted
+// resolved now, else its ":name:".
+func srTitleSpans(gtx layout.Context, h Host, th *theme.Theme, spans []richtext.Span, size, lh float32, wt font.Weight, col color.NRGBA, w int) layout.Dimensions {
+	x := 0
+	lineH := dp(gtx, lh)
+	es := dp(gtx, 22)
+	for _, sp := range spans {
+		if sp.Kind == richtext.Break || x >= w {
+			break
+		}
+		if sp.Kind == richtext.Emoji {
+			url := sp.URL
+			if sp.KeptEmoji() {
+				url = emojiURL(h, sp.ID)
+			}
+			if url != "" {
+				if x+es > w {
+					break
+				}
+				u := url
+				at(gtx, image.Pt(x, (lineH-es)/2), func(gtx layout.Context) layout.Dimensions {
+					if img, ok := h.Images().Get(u, es); ok {
+						return containImage(gtx, img, image.Pt(es, es))
+					}
+					return layout.Dimensions{Size: image.Pt(es, es)}
+				})
+				x += es
+				continue
+			}
+		}
+		s := sp.Text
+		if sp.Kind == richtext.Emoji && s == "" {
+			s = ":" + sp.ID + ":"
+		}
+		s = strings.ReplaceAll(s, "\n", " ")
+		if s == "" {
+			continue
+		}
+		d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, w-x), lineH)}
+			return th.Layout(gtx, theme.TextStyle{Size: unit.Sp(size), Weight: wt, Color: col, LineHeight: unit.Sp(lh), MaxLines: 1}, s)
+		})
+		x += d.Size.X
+	}
+	return layout.Dimensions{Size: image.Pt(min(x, w), lineH)}
 }
 
 // srFileTitle is the file's title, else its name.
@@ -950,28 +1021,15 @@ func srPeopleGrid(gtx layout.Context, w int) (cols, cell int) {
 // (padding 12, the 72px avatar), the secondary block with a local time
 // (1 + 12 + 22 + 12), the banner (8 + 19 + 8: 13px at the unfurl's
 // line-height 1.46668).
-func srPersonCardH(gtx layout.Context, u core.User) int {
+func srPersonCardH(gtx layout.Context, hst Host, u core.User) int {
 	h := dp(gtx, 96)
 	if pfHasClock(u) && !u.IsBot {
 		h += border1(gtx) + dp(gtx, 12+22+12)
 	}
-	if srBannerLabel(u) != "" {
+	if label, _ := pfRoleBanner(hst, u); label != "" {
 		h += dp(gtx, 35)
 	}
 	return h
-}
-
-// srBannerLabel is MemberProfileHoverBanner's text.
-func srBannerLabel(u core.User) string {
-	switch {
-	case u.IsOwner:
-		return i18n.T("team", "Workspace Owner")
-	case u.IsAdmin:
-		return i18n.T("team", "Workspace Admin")
-	case u.Deleted:
-		return i18n.T("team", "Deactivated account")
-	}
-	return ""
 }
 
 // srPeopleRowH is grid row j's height: its tallest card, and the 20px gap
@@ -981,7 +1039,7 @@ func srBannerLabel(u core.User) string {
 func (v *SearchView) srPeopleRowH(gtx layout.Context, j, cols int) int {
 	h := srPeopleRowTop(gtx, j)
 	for i := j * cols; i < min(len(v.people), (j+1)*cols); i++ {
-		h = max(h, srPeopleRowTop(gtx, j)+srPersonCardH(gtx, v.people[i]))
+		h = max(h, srPeopleRowTop(gtx, j)+srPersonCardH(gtx, v.h, v.people[i]))
 	}
 	if (j+1)*cols < len(v.people) {
 		h += dp(gtx, 20)
@@ -1017,7 +1075,8 @@ func (v *SearchView) peopleRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 // personCard draws person i's UserProfileUnfurl w wide.
 func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
 	u := v.people[i]
-	h := srPersonCardH(gtx, u)
+	pfWantDND(v.h, u, gtx.Now)
+	h := srPersonCardH(gtx, v.h, u)
 	sz := image.Pt(w, h)
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 8)
@@ -1054,7 +1113,7 @@ func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}
 	y := pad + dp(gtx, (72-(textH-8))/2-4)
 	at(gtx, image.Pt(colX, y), func(gtx layout.Context) layout.Dimensions {
-		return pfNameLine(gtx, v.h, th, nil, u, 15, 22, 10, colW)
+		return pfNameLine(gtx, v.h, th, nil, u, pfRealName(u), 15, 22, 10, colW)
 	})
 	y += lineH
 	if title != "" {
@@ -1086,21 +1145,22 @@ func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors,
 		})
 		by = ly + lineH + pad
 	}
-	if label := srBannerLabel(u); label != "" {
+	if label, deact := pfRoleBanner(v.h, u); label != "" {
 		defer op.Offset(image.Pt(0, by)).Push(gtx.Ops).Pop()
-		srBanner(gtx, th, u, label, w)
+		srBanner(gtx, th, label, deact, w, tokBasePry.of(th))
 	}
 	return layout.Dimensions{Size: sz}
 }
 
-// srBanner is MemberProfileHoverBanner w wide: padding 8 16, the 13px
+// srBanner is MemberProfileHoverBanner (client-boot-shared 1onU) w wide,
+// over base (the card's background), in UserProfileUnfurl and the hover
+// card alike: padding 8 16, the 13px
 // bold label (the deactivated one after archive-filled 12, margin-right
 // 8); light: sk_foreground_min .04 (deactivated: sk_foreground_low .13 and
 // .7 text), dark: sk_foreground_low_solid.
-func srBanner(gtx layout.Context, th *theme.Theme, u core.User, label string, w int) {
+func srBanner(gtx layout.Context, th *theme.Theme, label string, deact bool, w int, base color.NRGBA) layout.Dimensions {
 	fg := srTokFgPry.of(th)
 	bg := chipTok{"rgba(var(--sk_foreground_min),0.04)", rgba8(0x1d1c1d, 0x0a), rgba8(0xe8e8e8, 0x0a)}.of(th)
-	deact := !u.IsOwner && !u.IsAdmin && u.Deleted
 	if deact {
 		fg = srTokFgMax70.of(th)
 		bg = srTokFgLow13.of(th)
@@ -1108,7 +1168,6 @@ func srBanner(gtx layout.Context, th *theme.Theme, u core.User, label string, w 
 	if th != nil && th.Dark {
 		bg = chipTok{"rgb(var(--sk_foreground_low_solid))", rgb(0xdddddd), rgb(0x35373b)}.of(th)
 	}
-	base := tokBasePry.of(th)
 	lh := dp(gtx, 19)
 	h := dp(gtx, 8)*2 + lh
 	fill(gtx, image.Rect(0, 0, w, h), theme.Over(bg, base))
@@ -1123,6 +1182,7 @@ func srBanner(gtx layout.Context, th *theme.Theme, u core.User, label string, w 
 		gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, w-x-dp(gtx, 16)), lh)}
 		return th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Bold, Color: fg, LineHeight: 19, MaxLines: 1}, label)
 	})
+	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
 // handlePeople opens a clicked card's member profile (onCellClick:

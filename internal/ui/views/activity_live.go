@@ -1,19 +1,20 @@
 package views
 
 // Live updates, as Slack's activity inbox takes realtime `activity`
-// events (gantry client-boot-render sD/F handleActivityRTMEvent):
+// events (boot-shared Gfjq handleActivityRTMEvent, build 35b42de8b870):
 //
-//   - activity_updated (activityUpdatedV2 → 46Vh pushActivityItemToStore
-//     → P0K2 LE / F): an entry already listed is replaced (its read state
-//     included); a new one goes into the list at its feed_ts, unless the
-//     view can't show it: reminders and DMs while they're off in
-//     Activity, a cleared entry outside Cleared items (or the reverse: it
-//     leaves the list), a reaction under Unreads, an entry that isn't a
-//     VIP's under the VIP filter, an automation's under "Exclude
-//     automations" (activity_bot_item_type_reads) or a person's under
-//     "Automations only" (activity_automations_only), another type than
-//     the view's types, or a conversation outside its channels and
-//     sections.
+//   - activity_updated (activityUpdatedV2 → PY/r pushActivityItemToStore
+//     → tsND LE, upsertActivityRtmItem; activity_order.go): an entry
+//     already listed is replaced (its read state included) and moves to
+//     its feed_ts, as a thread does when a reply comes in; a new one goes
+//     into the list at its feed_ts, unless the view can't show it:
+//     reminders and DMs while they're off in Activity, a cleared entry
+//     outside Cleared items (or the reverse: it leaves the list), a
+//     reaction under Unreads, an entry that isn't a VIP's under the VIP
+//     filter, an automation's under "Exclude automations"
+//     (activity_bot_item_type_reads) or a person's under "Automations
+//     only" (activity_automations_only), another type than the view's
+//     types, or a conversation outside its channels and sections.
 //   - activity_deleted drops the entry; activity_invalidated fetches the
 //     feed again; activity_views_updated (its own event) replaces the
 //     saved views (activity_views.go).
@@ -87,49 +88,51 @@ func (v *Activity) liveAccepts(it *core.ActivityItem) bool {
 // slice: a load in flight may still read the old one).
 func (v *Activity) liveUpsert(p *core.ActivityPage, in core.ActivityItem) {
 	key := actKey(&in)
+	at := -1
 	for i := range p.Items {
-		if actKey(&p.Items[i]) != key {
-			continue
-		}
-		delete(v.override, key)
-		delete(v.zeroRead, key) // the server's state, newer than the zero
-		if in.Archived != v.showCleared {
-			// activityUpdatedV2: cleared elsewhere (or restored) leaves the list
-			p.Items = slices.Delete(slices.Clone(p.Items), i, i+1)
-			return
-		}
-		if in.Msg == nil {
-			// the copies it had, current as of when they were read
-			old := &p.Items[i]
-			in.Msg, in.Root, in.MsgGone, in.RootGone = old.Msg, old.Root, old.MsgGone, old.RootGone
-			in.MsgSeq = min(in.MsgSeq, old.MsgSeq)
-		}
-		items := slices.Clone(p.Items)
-		items[i] = in
-		p.Items = items
-		if r := v.rows[key]; r != nil {
-			r.built = false
-		}
-		return
-	}
-	if !v.liveAccepts(&in) {
-		return
-	}
-	at := len(p.Items)
-	for i := range p.Items {
-		if actTSLess(p.Items[i].FeedTS, in.FeedTS) {
+		if actKey(&p.Items[i]) == key {
 			at = i
 			break
 		}
 	}
-	if at == len(p.Items) && p.Next != "" {
-		return // older than everything loaded: a later page has it
+	if at >= 0 {
+		delete(v.override, key)
+		delete(v.zeroRead, key) // the server's state, newer than the zero
+		if in.Archived != v.showCleared {
+			// activityUpdatedV2: cleared elsewhere (or restored) leaves the list
+			p.Items = slices.Delete(slices.Clone(p.Items), at, at+1)
+			return
+		}
+		if in.Msg == nil {
+			// the copies it had, current as of when they were read
+			old := &p.Items[at]
+			in.Msg, in.Root, in.MsgGone, in.RootGone = old.Msg, old.Root, old.MsgGone, old.RootGone
+			in.MsgSeq = min(in.MsgSeq, old.MsgSeq)
+		}
+	} else if !v.liveAccepts(&in) {
+		return
 	}
-	p.Items = slices.Insert(slices.Clone(p.Items), at, in)
-	if v.serverAll {
+	// tsND N upsertActivityRtmItem (getUpsertedActivityRtmItems,
+	// activity_order.go): the entry takes its copy's place in the list and
+	// goes in at its feedTs, so a thread with a new reply leaves its old
+	// place for the top; an entry older than every row loaded goes last
+	p.Items = actUpsertRtm(p.Items, in)
+	v.live.mu.Lock() // a load out now answers with an older copy (actUpsertPage)
+	if v.live.keys == nil {
+		v.live.keys = map[string]bool{}
+	}
+	v.live.keys[key] = true
+	v.live.mu.Unlock()
+	if at >= 0 {
+		if r := v.rows[key]; r != nil {
+			r.built = false
+		}
+	} else if v.serverAll {
 		v.picked[key] = true // eP2o: new rows join select-all
 	}
-	// ActivityUnreadsBanner: a newer unread entry (hasNewUnreadsFeedTs)
+	// ActivityUnreadsBanner: activityUpdatedV2 takes any unread entry it
+	// pushed that's newer than the one before (hasNewUnreadsFeedTs: e <
+	// T.feed_ts), a thread's new reply too
 	if in.Unread && (v.newUnreadTS == "" || actTSLess(v.newUnreadTS, in.FeedTS)) {
 		v.newUnreadTS = in.FeedTS
 	}
