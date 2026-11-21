@@ -31,6 +31,9 @@ type backend struct {
 	slick *slick.Slick // Slick plugins, on Taut's runtime (nil until boot)
 	// tautStarting: startTautAsync is building the runtimes
 	tautStarting bool
+	// tautDeferred: the real window's plugin runtimes wait for the
+	// launch's first real frame (startDeferredTaut)
+	tautDeferred bool
 
 	m       model
 	started bool
@@ -191,11 +194,22 @@ func (b *backend) start(a *App) {
 	// "booted"), Block Kit, the restored channel's header (tabs, bookmarks,
 	// member count and facepile) and the drafts' sidebar markers. The
 	// window stays covered until they're in (reveal.go).
-	if a.inert {
+	switch {
+	case a.inert:
 		// the introduction's preview renderer: no plugin system at all (no
 		// Taut or Slick runtime, plugin config, storage or slots)
 		b.pluginsOnce.Do(func() { close(b.pluginsReady) })
-	} else {
+	case a.rv.inRun:
+		// The real window's launch: the runtimes start after its first
+		// real frame (Run), so the JS engine and the plugins' starts don't
+		// take the CPU that frame needs; a warm start shows the client
+		// without them (reveal.go) and their trees fill the slots they
+		// took last session. A cold start (no boot data) starts them at
+		// once below, as its placeholder waits for them, and a window
+		// that draws nothing (started hidden) after tautDeferMax.
+		b.tautDeferred = true
+		time.AfterFunc(tautDeferMax, func() { a.Post(func() { b.startDeferredTaut(a) }) })
+	default:
 		b.startTautAsync(a)
 	}
 	b.startBlockkit(a)
@@ -223,6 +237,9 @@ func (b *backend) start(a *App) {
 				if a.router.Current() == "" {
 					a.openDefault()
 				}
+			}
+			if b.warmAt.IsZero() {
+				b.startDeferredTaut(a) // not a warm start: its placeholder waits for the plugins
 			}
 			if ch := a.router.Current().Channel(); ch != "" {
 				b.headerFromCache(ch)
@@ -258,6 +275,20 @@ func (b *backend) start(a *App) {
 			b.a11yNewUserDefaults(a) // a11y_defaults.go
 		})
 	}()
+}
+
+// tautDeferMax is how long the real window's plugin runtimes wait at most
+// for its first real frame (a window started hidden draws none).
+const tautDeferMax = 2 * time.Second
+
+// startDeferredTaut starts the plugin runtimes start left for later, once
+// (UI goroutine).
+func (b *backend) startDeferredTaut(a *App) {
+	if !b.tautDeferred || a.data != b || b.ctx.Err() != nil {
+		return
+	}
+	b.tautDeferred = false
+	b.startTautAsync(a)
 }
 
 // maybePresencePrompt is maybeOpenPresencePromptDialog: once connected,

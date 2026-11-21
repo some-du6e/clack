@@ -41,7 +41,7 @@ sys.dont_write_bytecode = True
 THEME = '{"primary":{"palette":"jade"},"highlight1":{"palette":"jade"},"highlight2":{"palette":"aubergine"},"important":{"palette":"jade"},"brightness":6,"sidebarInverted":true,"useCustomHex":false}'
 ROUTE = os.environ.get("ROUTE", "C0FAKE00000")
 SYS = platform.system()  # Darwin, Linux, Windows
-COLS = ["exec", "main", "ui-new", "attached", "app-main", "run", "appkit-app", "appkit-run", "will-finish-launching",
+COLS = ["exec", "main", "single-instance", "creds", "ui-new", "attached", "app-main", "run", "appkit-app", "appkit-run", "will-finish-launching",
         "launched", "window", "event-loop", "gio-init", "menu-bar", "window-create", "window-view", "window-ns", "config",
         "window-shown", "frame-event", "gpu-context", "gpu", "first-frame", "presented", "fonts", "cache-read",
         "sidebar-cached", "data-ready", "first-text", "sidebar", "reveal", "real-frame", "js-runtime", "taut-started",
@@ -157,7 +157,7 @@ def parse_timeline(text):
     return t
 
 
-def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_secs=0.0, purged=False, shots=()):
+def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_secs=0.0, purged=False, shots=(), until=""):
     binpath = binary(a.app)
     leftovers(binpath)
     for f in ("clack.log", "clack.log.1", "clack.log.2"):
@@ -196,8 +196,20 @@ def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_
         if proc is not None and proc.poll() is not None:
             break
         time.sleep(0.1)
-    while time.time() - t0 / 1000 < min_secs:  # the cold run: past the boot data's save (20 s after boot)
+    while time.time() - t0 / 1000 < min_secs:
         time.sleep(0.5)
+    if until:  # the cold run: until the boot data is on disk (20 s after boot), for the warm runs
+        end = time.time() + 90
+        while time.time() < end and until not in text:
+            time.sleep(0.5)
+            try:
+                with open(log, encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            except FileNotFoundError:
+                pass
+        if until not in text:
+            print(f"  {name}: no {until!r} in the log after 90 s", flush=True)
+        time.sleep(1)  # the rest of what the save writes
     t = parse_timeline(text)
     stop(t.get("pid") if proc is None else None, proc)
     try:
@@ -245,7 +257,7 @@ def main():
     ap.add_argument("--library", default="")
     ap.add_argument("--warm", type=int, default=5)
     ap.add_argument("--purged", type=int, default=0)
-    ap.add_argument("--cold-secs", type=float, default=25.0)
+    ap.add_argument("--cold-secs", type=float, default=12.0)  # plugin slots are learned within 10 s
     ap.add_argument("--extra", action="store_true")
     ap.add_argument("--screenshot", action="store_true")
     ap.add_argument("--latency", default="150ms")
@@ -277,7 +289,7 @@ def main():
         plugins = seed_plugins(a.library, cfg)
         print(f"{a.label}: plugins {plugins}; config {cfg}", flush=True)
 
-        runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True)]
+        runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True, until="cache: boot data saved")]
         for i in range(a.warm):
             runs.append(one(f"warm{i + 1}", a, cfg, logdir, a.out))
         for i in range(a.purged):
@@ -290,7 +302,7 @@ def main():
             runs.append(one("inittrace", a, cfg, logdir, a.out, mode="direct", env={"GODEBUG": "inittrace=1"}))
             extra["inits"] = inits(os.path.join(a.out, "inittrace.stderr"))
             prof = os.path.join(a.out, "cpu-warm.pprof")
-            runs.append(one("cpuprofile", a, cfg, logdir, a.out, mode="direct",
+            runs.append(one("cpuprofile", a, cfg, logdir, a.out, mode="direct", min_secs=4.5,  # the profile ends at 3 s
                             env={"CLACK_CPUPROFILE": prof, "CLACK_CPUPROFILE_SECS": "3"}))
             time.sleep(0.5)
     finally:

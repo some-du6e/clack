@@ -305,6 +305,7 @@ func main() {
 		}
 		return
 	}
+	applog.Mark("single-instance", "")
 	// The image cache's disk tier is the signed-in account's (build sets it).
 	images := imgcache.New(imgcache.PublicFetch, "", nil)
 	croot := cacheRoot(cfg)
@@ -371,6 +372,7 @@ func main() {
 		keep = store.AccountDir(croot, firstNonEmpty(creds.Team, creds.EnterpriseID), creds.UserID)
 	}
 	store.SweepAccounts(croot, keep)
+	applog.Mark("creds", "")
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	applog.Mark("ui-new", "")

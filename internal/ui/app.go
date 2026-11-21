@@ -243,8 +243,9 @@ type App struct {
 	vidTips map[any]*popups.TipState
 
 	// the startup timeline's first FrameEvent and first frame of the
-	// client itself, not the boot placeholder (real-frame)
-	frameEvented, realFramed bool
+	// client itself, not the boot placeholder (real-frame); firstFramed:
+	// the first frame of any kind went to the GPU (firstFrameDone)
+	frameEvented, realFramed, firstFramed bool
 
 	title       string
 	firstPaint  bool
@@ -536,7 +537,6 @@ func (a *App) Run() error {
 	if startNavGlue != nil {
 		startNavGlue(a)
 	}
-	a.startMenuBar()
 	if a.data != nil {
 		a.data.start(a)
 	}
@@ -661,6 +661,7 @@ func (a *App) Run() error {
 				}
 				e.Frame(gtx.Ops)
 				applog.Mark("first-frame", "background, fonts loading")
+				a.firstFrameDone()
 				break
 			}
 			// patch points (slackc) are shared with the huddle call window
@@ -729,7 +730,11 @@ func (a *App) Run() error {
 					a.realFramed = true
 					applog.Mark("real-frame", "")
 				}
+				if b := a.data; b != nil && b.tautDeferred {
+					b.startDeferredTaut(a) // the launch's first real frame is up (backend.start)
+				}
 			}
+			a.firstFrameDone()
 			if !a.firstPaint {
 				a.timing("first layout", t0)
 				a.timing("first GPU submit", tl)
@@ -750,6 +755,19 @@ func (a *App) Run() error {
 		}
 		wd.end()
 	}
+}
+
+// firstFrameDone runs once the window's first frame went to the GPU: what
+// the launch leaves until then. The macOS menu bar's install runs on
+// AppKit's main thread (9-13 ms warm, 35-80 ms with a cold file cache on
+// CI), which would otherwise build it after NSApplication finished
+// launching and before it made the window.
+func (a *App) firstFrameDone() {
+	if a.firstFramed {
+		return
+	}
+	a.firstFramed = true
+	a.startMenuBar()
 }
 
 // takeShaper installs the text shaper once New's goroutine built it, without
