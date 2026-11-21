@@ -28,6 +28,14 @@ const (
 	ListKitchen = "F0LIST00001" // every column type, four views (table, board, filtered table, grouped table)
 	ListTodos   = "F0LIST00002" // a to-do list, C0FAKE00001's list tab
 	ListTabChan = "C0FAKE00001" // the channel whose tab bar has ListTodos
+	// ListKitchenRecord is the kitchen list's first record, whose comment
+	// thread is ListKitchenThread in the list's file channel (FileChanKitchen)
+	ListKitchenRecord = "Rec0ITEM001"
+	ListKitchenThread = "1762500000.000300"
+	// ListCommentKey is AddListCommentActivity's item, a reply in that
+	// thread that mentions the viewer (ListCommentTS)
+	ListCommentKey = "fa-list-comment"
+	ListCommentTS  = "1762500300.000100"
 )
 
 // FakeList is one list the fake holds.
@@ -70,8 +78,8 @@ func (s *Server) listStore() *listStore {
 	t := todoList(now)
 	ls.byID[t.ID] = t
 	ls.order = []string{k.ID, t.ID}
-	root := slack.Message{Type: "message", Subtype: "list_record_comment", User: "U0FAKE00001", TS: "1762500000.000300",
-		ThreadTS: "1762500000.000300", Text: ""}
+	root := slack.Message{Type: "message", Subtype: "list_record_comment", User: "U0FAKE00001", TS: ListKitchenThread,
+		ThreadTS: ListKitchenThread, Text: "", SlackList: &slack.MessageSlackList{ListID: ListKitchen, ListRecordID: ListKitchenRecord}}
 	ch := ListCommentsChannelOf(ListKitchen)
 	ls.comments[ch+"/"+root.TS] = []slack.Message{root,
 		{Type: "message", User: "U0FAKE00002", TS: "1762500100.000100", ThreadTS: root.TS, Text: "Can we get the screenshots in by Friday?"},
@@ -83,6 +91,49 @@ func (s *Server) listStore() *listStore {
 
 // ListCommentsChannelOf is a list's comments channel (C + the id's tail).
 func ListCommentsChannelOf(id string) string { return "C" + strings.TrimPrefix(id, "F") }
+
+// listCommentAt is message ts of a list's comments channel ch (a
+// record's thread root or a reply), as messages.list finds it by id.
+func (s *Server) listCommentAt(ch, ts string) (slack.Message, bool) {
+	ls := s.listStore()
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	for k, msgs := range ls.comments {
+		if !strings.HasPrefix(k, ch+"/") {
+			continue
+		}
+		for _, m := range msgs {
+			if m.TS == ts {
+				m.Channel = ch
+				return m, true
+			}
+		}
+	}
+	return slack.Message{}, false
+}
+
+// AddListCommentActivity adds an Activity item in the kitchen list's file
+// channel: a reply in its first record's comment thread that mentions the
+// viewer (ListCommentKey), which messages.list answers.
+func (s *Server) AddListCommentActivity() {
+	ch := ListCommentsChannelOf(ListKitchen)
+	reply := slack.Message{Type: "message", User: "U0FAKE00002", TS: ListCommentTS, ThreadTS: ListKitchenThread,
+		Text: "<@" + SelfID + "> can you add the screenshots to this one?"}
+	ls := s.listStore()
+	ls.mu.Lock()
+	ls.comments[ch+"/"+ListKitchenThread] = append(ls.comments[ch+"/"+ListKitchenThread], reply)
+	ls.mu.Unlock()
+	reply.Channel = ch
+	v := s.views()
+	v.mu.Lock()
+	st := v.act()
+	st.extra = append(st.extra,
+		map[string]any{"key": ListCommentKey, "feed_ts": ListCommentTS, "is_unread": true, "is_bot": false,
+			"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": ListCommentTS, "channel": ch,
+				"thread_ts": ListKitchenThread, "author_user_id": "U0FAKE00002"}}})
+	st.extraMsgs = append(st.extraMsgs, reply)
+	v.mu.Unlock()
+}
 
 func sp(s string) *string { return &s }
 func bp(b bool) *bool     { return &b }

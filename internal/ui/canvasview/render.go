@@ -185,6 +185,21 @@ func (v *View) nameMentions(d *core.CanvasDoc) {
 	if a == nil {
 		return
 	}
+	// the title's emoji the store couldn't name when files.info's
+	// title_blocks were converted (richtext.TitleBlocks keeps them as
+	// Emoji spans without an image): its image once the map has it, as
+	// Slack's QuipTitleParsedId reads the emoji store on every render
+	v.emojiVer = a.EmojiVersion()
+	for i := range d.Info.TitleSpans {
+		s := &d.Info.TitleSpans[i]
+		if !s.KeptEmoji() {
+			continue
+		}
+		if u, _, ok := a.Emoji(s.ID); ok && u != "" {
+			s.URL = u
+			v.title = nil
+		}
+	}
 	d.Doc.Walk(func(b *canvas.Block) bool {
 		for i := range b.Spans {
 			s := &b.Spans[i]
@@ -208,6 +223,9 @@ func (v *View) mentionsMoved() bool {
 	a := v.h.Core()
 	if a == nil {
 		return false
+	}
+	if a.EmojiVersion() != v.emojiVer {
+		return true // a title emoji may have its image now (nameMentions)
 	}
 	for _, s := range v.mentions {
 		n := *s

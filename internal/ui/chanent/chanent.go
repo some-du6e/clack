@@ -19,6 +19,11 @@
 //   - getDisplayNameForChannel's text (W+Ke SB, default options): "#name"
 //     for a public channel, a private one's bare name, formatChannelName's
 //     "unknown-channel" (ZuZy, message) when there's no name.
+//   - A canvas's file channel (core canvas_channel.go): the canvas icon
+//     and the canvas's title as ChannelName swaps it in (g5tH:
+//     renderQuipTitle, caption size: its title_blocks with emoji as 16px
+//     images, mentions plain text), never the channel's own name or a
+//     private channel's lock (Canvas).
 package chanent
 
 import (
@@ -26,6 +31,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
 )
 
 // Ent is one channel as the entities draw it.
@@ -45,6 +51,23 @@ type Ent struct {
 	// Exists: the store has the channel (isExistent), named or not; the
 	// huddle invite's notification names only one that does.
 	Exists bool
+	// Spans is a canvas's title as the entity draws it in place of Text
+	// (Canvas): text and emoji, an emoji the store couldn't name when the
+	// title was converted without an image yet.
+	Spans []richtext.Span
+}
+
+// Canvas is a canvas's file channel as InlineChannelEntity draws it once
+// the canvas's files.info is known: getChannelIconType's "canvas" icon
+// and ChannelName's renderQuipTitle over title (core.CanvasTitleOf);
+// "Untitled" for a canvas without one (QuipTitleParsedId).
+func Canvas(title []richtext.Span) Ent {
+	text := richtext.PlainSpans(title)
+	if text == "" {
+		text = i18n.T("files", "Untitled") // QuipTitleParsedId (GF/w): I18n("files")
+		title = []richtext.Span{{Kind: richtext.Text, Text: text}}
+	}
+	return Ent{Text: text, Icon: "canvas", Disp: text, Exists: true, Spans: title}
 }
 
 // Loading reports whether e is the unknown stub (the MissingText bar).
@@ -99,20 +122,27 @@ func Of(id string, ic core.InlineChannel, view func(name string) string) Ent {
 	if !ic.Private {
 		e.Disp = "#" + name
 	}
+	// getChannelIconType: archived (or frozen) first, then a file
+	// channel's file, then private
 	switch {
-	case ic.Doc == "canvas":
-		e.Icon = "canvas"
-	case ic.Doc == "list":
-		e.Icon = "lists"
 	case ic.Archived:
 		e.Icon, e.Text = "archive", name+" "+i18n.T("search", "(archived)")
 		if ic.Private {
 			e.Icon = "archive-filled"
 		}
+	case ic.Doc == "canvas":
+		e.Icon = "canvas"
+	case ic.Doc == "list":
+		e.Icon = "lists"
+	case ic.Doc == "file":
+		e.Icon = "file"
 	case ic.Private:
 		e.Icon = "lock-filled"
 	default:
 		e.Text = "#" + name
+	}
+	if ic.Doc != "" && !ic.Archived && name == ic.Name {
+		e.Spans = ic.Spans // ChannelName's title or emoji (a name a plugin changed is text)
 	}
 	return e
 }
