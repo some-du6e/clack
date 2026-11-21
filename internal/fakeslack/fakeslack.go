@@ -2080,6 +2080,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 			return s.users[n], true
 		}
 	}
+	if u, ok := s.synthMember(id); ok { // synth_members.go
+		return u, true
+	}
 	return slack.User{}, false
 }
 

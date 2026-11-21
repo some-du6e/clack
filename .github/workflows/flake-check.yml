@@ -2903,3 +2903,41 @@ jobs:
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
 
+
+  # msg-latency-3: the socket events' lookups run off the event pump
+  # (core pump_later.go): users.prefs after a pref_change or a
+  # search_frecency/search_recents, the sections reread, conversations.info
+  # after a self-join, a channel_joined, a group DM's conversion or a
+  # message in a conversation core doesn't know, dnd.info after the
+  # viewer's dnd_updated, a saved message's messages.list and an assistant
+  # status's bot's users/info. A message right behind one draws in the next
+  # frame; a held conversation's messages, edits and deletions keep the
+  # socket's order. Dispatch with only=pump-lookups.
+  pump-lookups:
+    if: ${{ !inputs.only || startsWith('pump-lookups', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      CORE_TESTS: '^(TestSocketLookupsLeaveThePump|TestPrefChangeValueAppliesAtOnce|TestHeldReplyDeletionWaitsForIt|TestHeldMessagesKeepTheirOrder|TestHeldDMDoesntWaitForPrefs)$'
+      UI_TESTS: '^(TestMessageBehindLookupLatency|TestPreviewFooterChannelCreatedElsewhere)$'
+      CLACK_LATENCY_TESTS: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core, ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 10m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 15m -run "$UI_TESTS" ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 20m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
+          exit $rc
+      - name: core, -race
+        run: go test -race -count=1 -timeout 15m -run "$CORE_TESTS" ./internal/core
