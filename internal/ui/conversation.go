@@ -148,6 +148,10 @@ type convo struct {
 	// channel's membership was unknown (footPending); the first frame that
 	// knows it gives the composer the focus, if it has one
 	focusKnown bool
+	// inputShown: the reply box drew last pass (Slack's thread 'input'
+	// row is mounted). The pass that first draws it again gives it a
+	// pending focusInput's focus (thread_focus_input.go).
+	inputShown bool
 }
 
 func (a *App) convoFor(ch, ts string) *convo {
@@ -269,6 +273,25 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		compH = d.Size.Y
 		c.compH = compH
 	}
+	// the input row mounts (InputContainer.componentDidMount with
+	// focusInputOnMount, l6n6.js:10074, KafO.js:880): a thread focusInput
+	// names takes the focus. No box this pass (loading, ThreadsError, a
+	// footer) is no row yet; an edit composer standing in leaves it alone.
+	// Under an open modal or menu the box mounts unfocused: Slack's
+	// componentDidMount focuses regardless, but a modal's focus trap takes
+	// the focus straight back, and Clack's overlays have none (as
+	// focusKnown's focus above).
+	mounted := false
+	switch {
+	case comp == nil:
+		c.inputShown = false
+	case comp == c.comp && !c.inputShown:
+		c.inputShown = true
+		if a.threadFocusWanted(c) && !a.overlayOpen() {
+			c.comp.Focus()
+			mounted = true
+		}
+	}
 	if comp != nil {
 		// Edit composers draw just the box: give them the same side and
 		// bottom margins as the normal composer (20px channel, 16px thread).
@@ -295,6 +318,9 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		d := layoutComposerIn(comp, g, pane)
 		if a.composerHeight(gtx, g, c, comp, d.Size.Y) { // no height: a new composer (composer_guard.go)
 			comp = c.comp
+			if mounted {
+				comp.Focus() // the box mounting now is the new one
+			}
 			comp.SetOrigin(origin.Add(image.Pt(mx, guess)))
 			a.composerRoadblock(c, comp)
 			d = layoutComposerIn(comp, g, pane)

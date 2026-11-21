@@ -30,6 +30,23 @@ type Overlay = interface {
 	Dismissed() bool
 }
 
+// ThreadFocusInput is optional on a Host: Slack's thread focusInput
+// (threadMetadata.focus, JhVT). SetThreadFocusInput is setFocusInput: the
+// thread's reply box takes the focus when it next mounts.
+// ClearThreadFocusInput is openThreadSearch's reset. messages.Host is a
+// Host, so both packages assert it.
+type ThreadFocusInput interface {
+	SetThreadFocusInput(channel, ts string)
+	ClearThreadFocusInput()
+}
+
+// SetThreadFocusInput is setFocusInput on h when the ui root has it.
+func SetThreadFocusInput(h any, channel, ts string) {
+	if f, ok := h.(ThreadFocusInput); ok {
+		f.SetThreadFocusInput(channel, ts)
+	}
+}
+
 // Host is what popups needs from the ui root (docs/NATIVE.md names, so one
 // *ui.App satisfies every package's Host).
 type Host interface {
