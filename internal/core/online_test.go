@@ -215,3 +215,69 @@ func TestNetworkChangeReconnects(t *testing.T) {
 		t.Error("reconnected on a reconnect_url after waking")
 	}
 }
+
+// PinNetwork keeps the host's network out of the session: with the
+// machine's addresses changing and its probe saying offline, a pinned App
+// never redials, never flushes the API pool and stays online (no
+// client_online). The ui tests over a loopback fakeslack pin theirs: on
+// 2026-11-21 a macOS runner's address went away for two seconds inside a
+// TestIdleFrames window, and the two reconnects drew its frames.
+func TestPinNetworkKeepsTheHostOut(t *testing.T) {
+	var addrs atomic.Value
+	addrs.Store("en0=192.168.100.166")
+	var online atomic.Bool
+	online.Store(true)
+	oldProbe, oldPoll, oldFP := clientOnlineProbe, clientOnlinePoll, networkFingerprint
+	clientOnlineProbe = func() bool { return online.Load() }
+	clientOnlinePoll = 20 * time.Millisecond
+	networkFingerprint = func() string { return addrs.Load().(string) }
+	t.Cleanup(func() { clientOnlineProbe, clientOnlinePoll, networkFingerprint = oldProbe, oldPoll, oldFP })
+
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	c := slack.New(fs.Creds())
+	var closes atomic.Int32
+	c.HTTP.Transport = closeCounting{c.HTTP.Transport, &closes}
+	a := New(c, store.New(t.TempDir()))
+	defer a.Shutdown()
+	a.PinNetwork()
+	evs, stop := a.Subscribe()
+	defer stop()
+	if err := a.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.SetRealtime(true)
+	waitEvent(t, evs, 5*time.Second, func(ev Event) bool { return ev.Type == "connection" && ev.Connected })
+	for fs.Sockets() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !a.ClientOnline() {
+		t.Fatal("a pinned App reads offline")
+	}
+
+	addrs.Store("en0=192.168.100.166 utun4=172.16.0.2") // a VPN up
+	online.Store(false)                                 // and the probe offline
+	deadline := time.After(400 * time.Millisecond)      // twenty polls
+	for done := false; !done; {
+		select {
+		case ev := <-evs:
+			if ev.Type == "client_online" || ev.Type == "connection" && !ev.Connected {
+				t.Fatalf("a pinned App reacted to the host's network: %s (connected %v)", ev.Type, ev.Connected)
+			}
+		case <-deadline:
+			done = true
+		}
+	}
+	if n := fs.CallCount("ws"); n != 1 {
+		t.Errorf("ws dials = %d with the host's network changing, want 1 (pinned)", n)
+	}
+	if n := closes.Load(); n != 0 {
+		t.Errorf("%d API pool flushes with the host's network changing, want none (pinned)", n)
+	}
+	if !a.ClientOnline() {
+		t.Error("a pinned App went offline with the host")
+	}
+}
