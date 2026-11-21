@@ -1100,10 +1100,14 @@ func init() {
 		{[]string{"opacity"}, false},
 		{[]string{"filter"}, false},
 		{[]string{"transform", "translate", "scale", "rotate"}, false},
-		{[]string{"border", "border-width", "border-color", "border-style", "border-top", "border-right", "border-bottom", "border-left",
+		// a border's widths and styles; its colours apart, so a native that
+		// keeps its own border takes just a rule's colour (kit's Button:
+		// OwlMode's border-color on Slack's 1px outline). "border" is both.
+		{[]string{"border", "border-width", "border-style", "border-top", "border-right", "border-bottom", "border-left",
 			"border-top-width", "border-right-width", "border-bottom-width", "border-left-width",
-			"border-top-color", "border-right-color", "border-bottom-color", "border-left-color",
 			"border-top-style", "border-right-style", "border-bottom-style", "border-left-style"}, false},
+		{[]string{"border", "border-color", "border-top", "border-right", "border-bottom", "border-left",
+			"border-top-color", "border-right-color", "border-bottom-color", "border-left-color"}, false},
 		{[]string{"border-radius", "border-top-left-radius", "border-top-right-radius", "border-bottom-left-radius", "border-bottom-right-radius"}, false},
 		{[]string{"box-shadow"}, false},
 		{[]string{"background-image"}, false},

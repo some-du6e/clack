@@ -312,6 +312,9 @@ func (a *App) handle(ev slack.Event) {
 		if ev.Type == "dnd_updated" {
 			a.onDNDUpdated(ctx, ev.Raw) // before the UI hears of it
 		}
+		if ev.Type == "dnd_updated_user" {
+			a.onDNDUpdatedUser(ev.Raw) // stale: the next presence read asks dnd.teamInfo again
+		}
 		if ev.Type == "thread_marked" {
 			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it
 		}

@@ -184,6 +184,12 @@ on:
       - "internal/core/search_recents.go"
       - "internal/core/search_recents_test.go"
       - "internal/core/manage.go"
+      - "internal/ui/views/activity_order.go"
+      - "internal/ui/views/activity_order_test.go"
+      - "internal/ui/views/activity_order_live_test.go"
+      - "internal/ui/views/activity_order_reload_test.go"
+      - "internal/ui/views/activity_order_reload_live_test.go"
+      - "internal/fakeslack/activity_live.go"
       - "internal/core/create_test.go"
       - "internal/ui/create_channel_test.go"
       - "internal/ui/popups/create_channel.go"
@@ -516,6 +522,117 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^TestCustomEmojiAnimatedWebPDraws$' ./internal/ui/richview
 
+  # huddle-polish (2026-11-19, Karim's α.112 huddle report): the static
+  # (the transpiled libopus on a goroutine whose stack moves mid-call),
+  # Test Speaker, the docked bar's states, the huddle window in your theme
+  # (pictures) and the stylesheet tokens its theme shares with the main
+  # window's
+  huddle-polish:
+    if: ${{ !inputs.only || startsWith('huddle-polish', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps, Xvfb and Mesa (internal/huddle's X11 screen share needs the headers)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "huddle: Opus frames don't depend on the caller's goroutine stack"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestOpusDecodeIgnoresCallerStack|TestOpusEncodeIgnoresCallerStack|TestCodecGoroutineStackStill)$' ./internal/huddle
+      - name: "huddle: Speaker picks (the output you're on plays until the new one is in; overlapping picks: the newest plays)"
+        if: ${{ !cancelled() }}
+        run: go test -race -gcflags=all=-d=checkptr=0 -count=$COUNT -v -run '^(TestOverlappingSpeakerPicks|TestSwitchAudio)$' ./internal/huddle
+      - name: "huddleui: Test Speaker"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestTestSpeakerIconLikeSlack|TestTestSpeakerKeepsTheMusic|TestSpeakerPickPlaysOnTheNewOutput|TestAudioSettingsMenu)$' ./internal/ui/huddleui
+      - name: "huddleui: the docked bar's states (Slack's HuddleBottomBar rule)"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestDockStatesLikeSlack|TestDockHiddenForAnExternalGuestLikeSlack|TestExternalGuestWindowFollowsYourTheme|TestDockFullAfterAnUnseenWindowLikeSlack)$' ./internal/ui/huddleui
+      - name: "huddleui, theme: the toolbar's and the caption's inks in the chrome's scope (Slack's theme oracle)"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestHuddleToolbarInksLikeSlack|TestHuddleWindowCaptionReads)$' ./internal/ui/huddleui || rc=1
+          go test -count=$COUNT -v -run '^(TestThemeInkMatchesSlack|TestIAThemeDefaultMatchesMeasured|TestThemeMappingPresetsAndPalettes)$' ./internal/ui/theme || rc=1
+          exit $rc
+      - name: "huddleui: the huddle window in your theme (Mesa llvmpipe)"
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_SHOTS: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -v -run '^TestHuddleWindowFollowsYourTheme$' ./internal/ui/huddleui
+      - name: "css: a stylesheet's root tokens resolved on several goroutines at once (the huddle windows share the main window's; plain and -race)"
+        if: ${{ !cancelled() }}
+        # each test in its own process: a crash in one (a fatal concurrent
+        # map write, an index out of range) doesn't hide the other
+        run: |
+          rc=0
+          for t in TestRootTokensConcurrentColor TestRootTokensConcurrentBackground; do
+            go test -count=$COUNT -v -run "^$t\$" ./internal/ui/slackc/css || rc=1
+            go test -race -count=$COUNT -v -run "^$t\$" ./internal/ui/slackc/css || rc=1
+          done
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: huddle-polish-shots
+          path: dist/shots
+          if-no-files-found: ignore
+
+  # and the docked bar after you close the huddle window, on a real
+  # window (Xvfb here, the runner's desktop below)
+  huddle-bar:
+    if: ${{ !inputs.only || startsWith('huddle-bar', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps, Xvfb and Mesa
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "huddleui: the bar after the huddle window closes"
+        env:
+          CLACK_HUDDLE_WINDOW_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -v -run '^(TestDockAfterHuddleWindowCloses|TestDockAfterAnUnseenHuddleWindowCloses)$' ./internal/ui/huddleui
+
+  huddle-bar-win:
+    if: ${{ !inputs.only || startsWith('huddle-bar-win', inputs.only) }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "huddleui: the bar after the huddle window closes (WM_CLOSE)"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog
+          CLACK_HUDDLE_WINDOW_TESTS: "1"
+        run: go test -count=$COUNT -v -run '^(TestDockAfterHuddleWindowCloses|TestDockAfterAnUnseenHuddleWindowCloses)$' ./internal/ui/huddleui
+      - name: "ui: the main window draws the bar after the huddle window closes (WM_CLOSE)"
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_HUDDLE_WINDOW_TESTS: "1"
+          CLACK_REAL_WINDOW_TESTS: "1"
+        run: go test -count=$COUNT -v -timeout 20m -run '^TestRealWindowHuddleBarAfterClose$' ./internal/ui
+
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
     runs-on: ubuntu-latest
@@ -555,6 +672,53 @@ jobs:
           mkdir -p "$CLACK_SHOTS"
           xvfb-run -a go test -count=$COUNT -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestHuddleShotsTiles' \
             ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/huddleui
+
+  # A plugin's Block Kit-style button row (OwlMode's Save in Taut and
+  # Forget) as Slack lays it out and draws it: the row's flex rules, the
+  # button's c-button box with what CSS sets on it, its icon and label
+  # as a flex row; a composer.addButton toggle as Slack's composer
+  # button; a plugin's ring round its ReactionBar's pills; and Taut's
+  # OwlMode itself under (demo) Owl's DM confirmation. Layout from the
+  # rects JS reads and LayoutShape, and the pixels (Mesa llvmpipe).
+  # Dispatch with only=owl-save.
+  owl-save:
+    if: ${{ !inputs.only || startsWith('owl-save', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: build Taut's OwlMode (the reviewed TAUT_PIN; GPLv3, never committed)
+        env:
+          TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
+          cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          npm run -s build:user-plugin -- plugins/OwlMode.tsx "$GITHUB_WORKSPACE/dist/taut-plugins/OwlMode.js"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "kit + messages: the row's layout and pixels (light and dark), OwlMode's own Save in Taut, the composer button, the reaction ring, COUNT runs"
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/slackc/kit || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestTautViewOwlSaveButton$' ./internal/ui || rc=1
+          exit $rc
 
   slick:
     if: ${{ !inputs.only || startsWith('slick', inputs.only) }}
@@ -1450,6 +1614,41 @@ jobs:
           xvfb-run -a go test -race -count=3 -run "$HUB_TESTS" ./internal/ui/messages || rc=1
           exit $rc
 
+  # activity-order: Activity's rows in Slack's order (views/activity_order.go,
+  # tsND's upserts; Karim 2026-11-21: a thread's new reply left its row where
+  # it was, "Just now" at the bottom). Over the socket a mention, a reaction
+  # a minute later and a reply in each of two threads: each thread's bundle
+  # comes again with the reply's ts and goes to the top; the order, times,
+  # senders and texts after each event, after activity_invalidated's reload
+  # and after a restart on the saved cache; the reducer port against Slack's
+  # own upserts; what a reload keeps (an answered invitation leaves, the
+  # later pages stay on a type tab and under the VIP sort, a thread twin,
+  # the socket's newer copy); the live updates, Unreads and paging around
+  # it. Dispatch with only=activity-order.
+  activity-order:
+    if: ${{ !inputs.only || startsWith('activity-order', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      ORDER_TESTS: '^(TestActivityOrder(LikeSlack|MatchesSlacksReducer)|TestActivityRtmUpsertNewSlice|TestActivityPlainReload|TestActivityReload(DropsTheNewestRowGone|ThreadTwinKeepsLaterPages|KeepsTheSocketsCopy|KeepsLaterPages)|TestActivityMergeKeepsLaterPagesOutOfTimeOrder|TestActivityAnsweredInviteLeaves|TestActivityUnreadsRefreshRetains|TestActivityUnreadsShowsOnlyUnread|TestActivityLiveUpdatesLikeSlack|TestActivityPagedListShowsEveryEntry|TestActivityLiveRemovedDuringLoad|TestActivityBadgesZeroThenLoad)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "views: Activity's order (one verbose run, then COUNT, then 3 under -race)"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -race -count=3 -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          exit $rc
+
   # edit-latency: an app's message edited every 500 ms over the socket
   # (Karim's uptime monitor, 2026-11-18: a plan block whose title is the
   # outage's duration, "updates really slowly like every 33 seconds") draws
@@ -1699,6 +1898,32 @@ jobs:
       - name: "ui: the DM badges, the DMs page, the classic Activity and app badges over fakeslack's DMs, COUNT runs"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -timeout 30m -run '^(TestDMsBadgeLikeSlack|TestDMBadgesClassicLikeSlack|TestDMBadgeMemberLoadsLate|TestTitleDockTaskbarAgreeLikeSlack|TestActivityRailBadgeLikeSlack)$' ./internal/ui
+
+  # The Slack system user's DM (Karim's 2026-11-21 "got a message from
+  # system slack and didnt notice until i opened normal slack"): its
+  # sidebar row under Apps, bold with its unread count as the badge (fgSa,
+  # 9dui), client.counts' IM and group DM rule (mtwS applyCountsToChannels:
+  # mention_count || has_unreads), an app's posts on the socket with no
+  # user, im_marked and a restart, over fakeslack's Size.SystemDM.
+  # Dispatch with only=system-dm-row.
+  system-dm-row:
+    if: ${{ !inputs.only || startsWith('system-dm-row', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "store: client.counts' IM and group DM unread count, COUNT runs"
+        run: go test -count=$COUNT -v -run '^TestCountsDMUnreadWithoutMentionsIsOne$' ./internal/store
+      - name: "ui: the system DM's row and counts over fakeslack's Size.SystemDM, COUNT runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -timeout 30m -run '^(TestSystemDMRowLikeSlack|TestSystemDMUnreadWithoutMentionsLikeSlack)$' ./internal/ui
 
   # plugin-render-2: a reply also sent to the channel, in the channel's list
   # and its thread pane, gets a plugin root per pane (one shared root got
@@ -2167,6 +2392,35 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 30m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
           exit $rc
 
+  # profile-role-band (2026-11-21): the member hover card against Slack's
+  # MemberProfileHoverCard for every role fakeslack serves (roles.go): no
+  # role band on Grid (only Deactivated account), Workspace Owner/Admin
+  # off Grid, no org or guest label, the card and full profile alike; the
+  # real name; the DND presence from dnd.teamInfo; the status emoji by
+  # emoji_name and the text's emoji; core's ports of iz33/ue25/pH4l and
+  # dndV2. Dispatch with only=profile-role-band.
+  profile-role-band:
+    if: ${{ !inputs.only || startsWith('profile-role-band', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the hover card's roles, name, presence and status, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -run '^(TestHoverCardRoleBand|TestHoverCardOwnerHeightOnGrid|TestHoverCardShowsRealName|TestHoverCardStatusEmojiByName|TestHoverCardMemberDND|TestFullProfileNoRoleLabels|TestHoverCardVariants|TestHoverCardPronounsLikeSlack|TestSearchRowsPeople)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestIconCoverage|TestAllIconsParse)$' ./internal/ui/icons || rc=1
+          exit $rc
+
   # inspect-blur-fast (2026-11-18, round 2 2026-11-19): the inspect tool's
   # pick-to-review path at 1918x1080 (Karim's Windows window) at 1x and 2x,
   # on the headless GPU (llvmpipe, WARP): the review's shot drawn in the
@@ -2249,6 +2503,88 @@ jobs:
           xvfb-run -a go test -count=1 -v -timeout 20m -run "$UI_TESTS" ./internal/ui 2>&1 | grep -E '^(=== RUN|--- (PASS|FAIL)|FAIL|ok)|_test\.go:[0-9]+:' || true
           xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run "$VIEWS_TESTS" ./internal/ui/views || rc=1
+          exit $rc
+
+  # system-dm-avatar (2026-11-21): the Slack system user (USLACK) drawn as
+  # Slack's bundled logo (getMemberProfileImage 6Knt: n8qp) everywhere:
+  # imgcache rasterizes that one shipped SVG and no other; the store's
+  # avatar rule; no badge on a USLACK message (JA+h memberIsHuman ||
+  # isSlackSystemUser); its card renders nothing and its presence is
+  # Slackbot's heart; the system DM's sidebar row, header and bot_message
+  # rows over fakeslack's fixture, pixels on the headless GPU.
+  # Dispatch with only=system-dm-avatar.
+  system-dm-avatar:
+    if: ${{ !inputs.only || startsWith('system-dm-avatar', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: imgcache, store, core, popups, ui (COUNT runs)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestBundledSlackLogoDraws|TestNetworkSVGStaysUndecodable|TestRasterSVGRefusesWhatItCannotDraw|TestParsePathData)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -v -run '^TestAvatarURLSlackSystemUser$' ./internal/store || rc=1
+          go test -count=$COUNT -v -run '^(TestSenderBadge|TestSenderIdentity)$' ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSlackSystemUserCard$' ./internal/ui/popups || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence)$' ./internal/ui || rc=1
+          exit $rc
+
+  # caret-align (2026-11-20): the caret in Clack's inputs against their
+  # placeholders and text, by Blink's rules (internal/ui/theme/carettest:
+  # the font's rounded height on the placeholder's baseline, 1 CSS px
+  # wide, snapped, at the text's start), in views' agents invite picker
+  # and search box and popups' field, at 1x, 1.5x and 2x in both themes,
+  # on llvmpipe, WARP and Metal (Gio patch 54); and Gio's own widget
+  # tests on Linux. Dispatch with only=caret-align.
+  caret-align:
+    if: ${{ !inputs.only || startsWith('caret-align', inputs.only) }}
+    name: "caret-align (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "the caret against the placeholder and the text, COUNT runs"
+        shell: bash
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          rc=0
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignViewsInputs)$' ./internal/ui/views || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignPopupsField)$' ./internal/ui/popups || rc=1
+          "${x[@]}" go test -count=$COUNT -v -timeout 30m -run '^(TestCaretAlignEditorBox|TestCaretAlignZoomedWidth|TestCaretScrolledOutOfView)$' ./internal/ui/theme/carettest || rc=1
+          # Gio's own widget tests; these two fail on ui without this
+          # branch too (6db17b41: TestNoFilterAllocs gets 1 alloc per op,
+          # TestIndexPositionRunes/many_newlines 42 positions for 41), so
+          # they are skipped here
+          if [ "$RUNNER_OS" = Linux ]; then "${x[@]}" go test -count=1 -timeout 15m -skip '^(TestNoFilterAllocs|TestIndexPositionRunes)$' gioui.org/widget || rc=1; fi
           exit $rc
 
   # A socket gap leaves no hole (Karim's #clack on α.112, 2026-11-20: 6:54

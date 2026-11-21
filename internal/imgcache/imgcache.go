@@ -21,6 +21,7 @@
 package imgcache
 
 import (
+	"bytes"
 	"container/list"
 	"context"
 	"crypto/sha256"
@@ -52,6 +53,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache/internal/webp"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/slackasset"
 )
 
 // WebP is decoded by the vendored, budget-charging decoder in
@@ -1244,6 +1246,18 @@ func (c *Cache) loadFrom(k key, h held) (paint.ImageOp, image.Point, int, *gifSo
 func (c *Cache) decodeLoad(k key, data []byte, save func()) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
 	b := NewBudget()
 	defer b.Release()
+	if slackasset.IsSVG(k.url) {
+		// a bundled SVG (svg.go), drawn at the size asked for; only the
+		// shipped bytes, never ones fetched for that URL
+		if want, _ := slackasset.Get(k.url); !bytes.Equal(data, want) {
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(errUnsupported)
+		}
+		rgba, err := rasterSVG(data, k.size, b)
+		if err != nil {
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+		}
+		return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, []*image.RGBA{rgba}, nil
+	}
 	if isAnim(data) {
 		fail := func(err error) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
 			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(budgetErr(err))
@@ -1396,6 +1410,9 @@ func (c *Cache) raw(u string) ([]byte, func(), error) {
 			return b, nop, nil
 		}
 		return nil, nop, errors.New("imgcache: local image gone")
+	}
+	if b, ok := slackasset.Get(u); ok { // one of Slack's bundled assets: shipped
+		return b, nop, nil
 	}
 	c.mu.Lock()
 	dir := c.dir

@@ -132,7 +132,7 @@ func hudSurfaces(t *testing.T) []hudSurface {
 					out = append(out, sub.Label, sub.Header)
 				}
 			}
-			for _, it := range c.audioMenu(s) {
+			for _, it := range c.audioMenu(s, c.h.Theme(), false) {
 				out = append(out, it.Label, it.Header)
 			}
 			// Video settings and Leave options (window_camera.go, leave_options.go)

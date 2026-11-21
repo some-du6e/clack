@@ -69,6 +69,9 @@ type window struct {
 	shareAlert alertState // the screen share alert's link and close (share.go)
 	panel      panelState // the Captions side panel (captions_panel.go)
 	theme      bgShown    // the huddle theme on the stage (background.go)
+	bg         themeBg    // .p-theme_background behind it all (window_theme.go)
+	themeGen   uint64     // the main window's theme it took last (syncTheme)
+	themed     bool
 
 	tweak func(*huddle.State) // tests: edits each frame's state
 
@@ -87,9 +90,20 @@ func (c *Controller) OpenWindow() {
 		return
 	}
 	w := &window{c: c, clicks: map[string]*widget.Clickable{}}
-	c.win = w
+	c.attachWindow(w)
 	c.mu.Unlock()
 	go w.run()
+}
+
+// attachWindow makes w the huddle window. c.mu is held. Opened in the
+// call, the window has had it: the docked bar's H is over (dock.go
+// dockCollapsed; HuddleBottomBarContent's effect sets W to STARTED while
+// isHuddleWindowOpen, whether or not the main window draws).
+func (c *Controller) attachWindow(w *window) {
+	c.win = w
+	if w != nil && c.s != nil {
+		c.barJoined = false
+	}
 }
 
 // WindowOpen reports whether the huddle window is showing.
@@ -180,7 +194,11 @@ func (w *window) run() {
 	patch.SetWake(w.invalidate) // an Escape JS passed on to its overlay layers
 	for {
 		ev := ww.Event()
-		caption.sync(ev, ww, hudCaption)
+		look := hudCaption
+		if w.popout == "" && w.themed { // the window's own colours (window_theme.go)
+			look = windowInks(w.th).caption()
+		}
+		caption.sync(ev, ww, look)
 		switch e := ev.(type) {
 		case app.DestroyEvent:
 			w.insp.close()
@@ -210,7 +228,13 @@ func (w *window) frameEvent(e app.FrameEvent, ops *op.Ops, patch *slackc.SubWind
 		// Slack's huddle components here are plugin patch points
 		// (slackc), shared with the main window: one frame at a time
 		// (frame holds the frame lock)
-		restore := patch.FrameBg(gtx, "p-multi_view_window p-huddle_window", hudWhite, hudFrame)
+		w.syncTheme() // your light or dark mode and theme colours (window_theme.go)
+		fg, bg := hudWhite, hudFrame
+		if w.popout == "" && w.themed {
+			k := windowInks(w.th)
+			fg, bg = k.title, k.bgA
+		}
+		restore := patch.FrameBg(gtx, "p-multi_view_window p-huddle_window", fg, bg)
 		w.layout(gtx)
 		restore()
 	})
@@ -303,6 +327,7 @@ const (
 )
 
 func (w *window) layout(gtx C) {
+	w.syncTheme() // your light or dark mode and theme colours (window_theme.go)
 	// the Captions side panel, while the event log's side-by-side view is
 	// on (captions_panel.go): the call keeps the rest of the window
 	if pw := w.captionsPanelW(gtx); pw > 0 {
@@ -320,10 +345,15 @@ func (w *window) layout(gtx C) {
 func (w *window) layoutCall(gtx C) {
 	w.runPosts()
 	sz := gtx.Constraints.Max
-	theme.Fill(gtx, image.Rectangle{Max: sz}, hudFrame)
+	ink := w.inks()
+	if w.popout == "" {
+		w.bg.paint(gtx, sz, ink.bgA, ink.bgB) // .p-theme_background (window_theme.go)
+	} else {
+		theme.Fill(gtx, image.Rectangle{Max: sz}, hudFrame)
+	}
 	s := w.c.Session()
 	if s == nil {
-		huddleLoading(gtx, w.th, sz)
+		huddleLoading(gtx, w.th, sz, ink.title)
 		w.layoutOverlays(gtx)
 		return
 	}
@@ -345,19 +375,19 @@ func (w *window) layoutCall(gtx C) {
 	// the window is in compact mode (getIsCompactMode).
 	titleH := gtx.Dp(winTitleH)
 	title, _ := w.c.windowTitle(st)
-	ink := theme.WithAlpha(hudWhite, 0xcc)
+	tink := theme.WithAlpha(ink.title, 0xcc)
 	tg := gtx
 	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, sz.X-gtx.Dp(24)-gtx.Dp(120)), titleH)}
 	tm := op.Record(gtx.Ops)
 	td := slackc.Render(tg, "HuddleMvaWindowTitle", w.titleProps(s, st, title, ""), func(gtx C, p slackc.Props) D {
-		t := w.th.Label(gtx, 13, theme.Bold, ink, p.StrOr("title", title))
+		t := w.th.Label(gtx, 13, theme.Bold, tink, p.StrOr("title", title))
 		sb := p.StrOr("subtitle", "")
 		if sb == "" {
 			return t
 		}
 		so := op.Offset(image.Pt(t.Size.X+gtx.Dp(8), 0)).Push(gtx.Ops)
 		gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-t.Size.X-gtx.Dp(8))
-		sd := w.th.Label(gtx, 13, theme.Regular, ink, sb)
+		sd := w.th.Label(gtx, 13, theme.Regular, tink, sb)
 		so.Pop()
 		return D{Size: image.Pt(t.Size.X+gtx.Dp(8)+sd.Size.X, max(t.Size.Y, sd.Size.Y)), Baseline: t.Baseline}
 	})
@@ -365,7 +395,7 @@ func (w *window) layoutCall(gtx C) {
 	ts := td.Size
 	ix := (sz.X - ts.X - gtx.Dp(24)) / 2
 	at(gtx, image.Pt(ix, (titleH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx C) D {
-		iconAt(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)), "headphones", 16, ink)
+		iconAt(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)), "headphones", 16, tink)
 		return D{Size: image.Pt(gtx.Dp(16), gtx.Dp(16))}
 	})
 	tt := op.Offset(image.Pt(ix+gtx.Dp(24), (titleH-ts.Y)/2)).Push(gtx.Ops)
@@ -789,6 +819,7 @@ const (
 // doesn't have (huddle canvases in the window, Slack AI), so they aren't
 // drawn (docs/HUDDLES-AUDIT.md).
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
+	ink := w.inks()
 	// HuddleToolbarMuteButton, segmented in the window (audiomenu.go)
 	mics := w.c.micCtls(st, w.audio != nil)
 	// HuddleToolbarSegmentedStickerPickerButton: your sticker (or the
@@ -874,18 +905,18 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 		}
 		at(gtx, image.Pt(x, y), image.Pt(cw, h), func(gtx C) D {
 			return button(gtx, cl, image.Pt(cw, h), func(gtx C, hov bool) {
-				bg := hudBtn
+				bg := ink.btn // HuddleToolbar's .button (window_theme.go)
 				if hov {
-					bg = hudBtnHover
+					bg = ink.btnHov
 				}
 				if c.on {
-					bg = hudBtnOn
+					bg = ink.btnOn
 				}
 				segFill(gtx, image.Rectangle{Max: image.Pt(cw, h)}, c.seg, gtx.Dp(8), bg)
 			}, func(gtx C) D {
-				fg := hudWhite
+				fg := ink.icon
 				if c.on {
-					fg = hudInk
+					fg = ink.onFg
 				}
 				if c.dim {
 					fg.A = 0x66
@@ -896,17 +927,17 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 				}
 				switch {
 				case c.label != "":
-					centerLabel(gtx, w.th, image.Pt(cw, h), 15, theme.Bold, hudWhite, c.label)
+					centerLabel(gtx, w.th, image.Pt(cw, h), 15, theme.Bold, ink.icon, c.label)
 				case c.emoji != "":
 					centerLabel(gtx, w.th, image.Pt(cw, h), 18, theme.Regular, fg, c.emoji)
 				default:
 					iconAt(gtx, image.Pt(cw, h), icon, 20, fg)
 				}
 				if c.seg == segMain { // .segmentedButtonMain:after, 20px tall
-					theme.Fill(gtx, image.Rect(cw-max(1, gtx.Dp(1)), (h-gtx.Dp(20))/2, cw, (h+gtx.Dp(20))/2), segDivider)
+					theme.Fill(gtx, image.Rect(cw-max(1, gtx.Dp(1)), (h-gtx.Dp(20))/2, cw, (h+gtx.Dp(20))/2), ink.divider)
 				}
 				if c.warn {
-					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14))
+					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14), ink.bgA)
 				}
 				return D{}
 			})
@@ -969,6 +1000,16 @@ func segFill(gtx C, r image.Rectangle, seg, rad int, bg color.NRGBA) {
 
 // segDivider is .segmentedButtonMain:after's otl-inv-pry.
 var segDivider = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x33}
+
+// inks is the window's colours: your theme's chrome tokens (window_theme.go),
+// or the screen share popout's own dark look.
+func (w *window) inks() winInk {
+	if w.popout == "" && w.themed {
+		return windowInks(w.th)
+	}
+	return winInk{bgA: hudFrame, bgB: hudFrame, title: hudWhite, btn: hudBtn, btnHov: hudBtnHover, btnOn: hudBtnOn, onFg: hudInk,
+		icon: hudWhite, divider: segDivider}
+}
 
 // leaveShortcut is addJoinLeaveKeyboardShortcuts' hint: Mod+Shift+H on
 // macOS, Mod+Alt+Shift+H elsewhere.

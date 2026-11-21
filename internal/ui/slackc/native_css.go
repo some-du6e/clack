@@ -66,16 +66,28 @@ const nativeCSS = `
 // an unfurl's media with the legacy icon font's play glyph (ClickToLoad's
 // placeholder: c-message_attachment__audio > __video_thumb >
 // __video_buttons > button.c-message_attachment__video_play >
-// i.c-deprecated-icon.c-icon--play; legacy_icons.go draws the glyph).
+// i.c-deprecated-icon.c-icon--play; legacy_icons.go draws the glyph),
+// and the actions row a plugin builds like a Block Kit actions block
+// around Slack's Button (OwlMode's Save in Taut and Forget:
+// .p-actions_block > .p-actions_block_elements > .p-actions_block__action
+// > Button.p-block_kit_button_element), whose flex rows keep each button
+// as wide as its content.
 // It is the engine's host base
 // sheet: its rules match only host-tree elements, never a native that
 // carries the same class (the native add-reaction button, the thread
-// pane's close button), which draws its own look. Rules are verbatim, in
-// Slack's source order and cascade layers (sk.foundation, sk.components,
-// sk.core, as the file first names them); only those whose subject is a
-// class here.
+// pane's close button), which draws its own look. The exception is a host
+// component that declares the element it is (RegisterHostElement): kit's
+// Button is Slack's button.c-button, so these rules style its box as they
+// do Slack's. Rules are verbatim, in Slack's source order and cascade
+// layers (sk.foundation, sk.components, sk.core, as the file first names
+// them); only those whose subject is a class here. One is reduced:
+// .c-button keeps only what lays out its children (an inline-flex row,
+// centred and unwrapped, as Slack's Button lays out an icon and a label),
+// because kit's Button draws the rest of Slack's c-button look itself and
+// takes any padding, border colour or colour a rule sets as an override.
 const pluginElementCSS = `
 @layer sk.foundation, sk.components, sk.core;
+.c-button{-webkit-user-select:none;user-select:none;text-align:center;white-space:nowrap;justify-content:center;align-items:center;display:inline-flex}
 @layer sk.foundation{.c-button-unstyled{color:inherit;font-family:inherit;font-size:inherit;font-stretch:inherit;font-style:inherit;font-variant:inherit;font-weight:inherit;line-height:inherit;overflow:initial;text-align:initial;vertical-align:initial;cursor:pointer;background:0 0;border:0;margin:0;padding:0}.c-button-unstyled:hover,.c-button-unstyled:focus,.c-button-unstyled:active{outline:none}}
 @layer sk.core{.c-icon_button{--sk_button-styles-radius:8px;border-radius:var(--sk_button-styles-radius);height:var(--sk_button-size);width:var(--sk_button-size);font-size:calc(.5 * var(--sk_button-size) + 2px);justify-content:center;align-items:center;transition-property:color,background-color,border-color;transition-duration:80ms;transition-timing-function:cubic-bezier(.36,.19,.29,1);display:inline-flex;position:relative}.c-icon_button:link{text-decoration:none}.c-icon_button--size_small{--sk_button-size:28px}.c-icon_button--size_smedium{--sk_button-size:32px}.c-icon_button--size_medium{--sk_button-size:36px}.c-icon_button--size_large{--sk_button-size:44px}.c-icon_button.c-button--disabled{opacity:.5}.c-icon_button--default,.c-icon_button--ghost,.c-icon_button--default:link,.c-icon_button--ghost:link{color:var(--dt_color-content-sec)}.c-icon_button--default:hover,.c-icon_button--ghost:hover,.c-icon_button--default:link:hover,.c-icon_button--ghost:link:hover{color:var(--dt_color-content-pry);background-color:var(--dt_color-base-ter)}.c-icon_button--default:active,.c-icon_button--ghost:active,.c-icon_button--default:link:active,.c-icon_button--ghost:link:active{background-blend-mode:var(--dt_blend-mode-interaction);background-image:linear-gradient(var(--dt_color-base-ter-pressed), var(--dt_color-base-ter-pressed))}}
 .c-deprecated-icon:before{vertical-align:middle;font-family:Slack v2;font-size:20px;font-style:normal;font-weight:400;display:inline-block}
@@ -83,6 +95,10 @@ const pluginElementCSS = `
 .c-icon--play:before{content:"\e134 "}
 .c-icon_button--default.c-button--disabled,.c-icon_button--ghost.c-button--disabled,.c-icon_button--themeGhost.c-button--disabled,.c-icon_button--light.c-button--disabled,.c-icon_button--dark.c-button--disabled,.c-icon_button--outline.c-button--disabled{background-color:#0000}
 .c-message_attachment__image,.c-message_attachment__thumb,.c-message_attachment__video_thumb{box-shadow:0 0 0 1px var(--dt_color-otl-ter) inset;background-position:50%;background-repeat:no-repeat;background-size:contain;border-radius:8px}
+.p-block_kit_button_element{padding:0 8px 1px;display:block}
+.p-actions_block{align-items:center;margin-bottom:8px;display:flex;position:relative}
+.p-actions_block_elements{flex-wrap:wrap;align-items:end;display:flex}
+.p-actions_block__action{margin:8px 8px 0 0}
 .c-message_attachment__video_thumb{justify-content:center;align-items:center;width:100%;height:100%;display:flex;overflow:hidden}
 .c-message_attachment__video_buttons{text-align:center;background-color:#0006;border-radius:.7rem;width:100%;min-width:150px;max-width:225px}
 .c-message_attachment__video_play{text-align:center;vertical-align:initial}
