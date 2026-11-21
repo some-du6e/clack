@@ -43,7 +43,7 @@ func emoticonFollow(r []rune, i int) bool {
 		return true
 	}
 	c := r[i]
-	return unicode.IsSpace(c) || strings.ContainsRune("|?.,!", c)
+	return jsSpace(c) || strings.ContainsRune("|?.,!", c) // the lookahead's \s is JavaScript's
 }
 
 // lastEmoticon is the replace loop over the prefix: the start and text of
@@ -51,7 +51,7 @@ func emoticonFollow(r []rune, i int) bool {
 func lastEmoticon(prefix []rune) (int, string) {
 	at, found := -1, ""
 	for i := 0; i < len(prefix); {
-		if i > 0 && !unicode.IsSpace(prefix[i-1]) {
+		if i > 0 && !jsSpace(prefix[i-1]) {
 			i++
 			continue
 		}

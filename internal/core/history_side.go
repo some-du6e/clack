@@ -54,18 +54,22 @@ func (s *sideReads) wait() {
 }
 
 // historySide starts History's side reads for ch: the member count (edge
-// users/counts) when core has none for a channel, and the conversation
-// when it's outside the sidebar (a closed DM, a channel opened from a link
-// or a search: its header's name). count and conv close when each read
-// returned; nil for a read not started.
+// users/counts) when core has none for a channel, or a join or a leave
+// made it stale, and the conversation when it's outside the sidebar (a
+// closed DM, a channel opened from a link or a search: its header's name).
+// count and conv close when each read returned; nil for a read not
+// started.
 func (a *App) historySide(ch string) (count, conv <-chan struct{}) {
 	if a.bg.Err() != nil { // the session ended: nothing more goes out
 		return nil, nil
 	}
 	a.mu.Lock()
 	_, haveCount := a.memberN[ch]
+	stale := a.memberStale[ch]
 	a.mu.Unlock()
-	if c, ok := a.S.Conv(ch); ok && !haveCount && !c.IsIM && !c.IsMPIM {
+	if stale { // a join or a leave since it was read: the header's draw refetches it (membership_counts.go)
+		a.RefreshMemberCount(ch)
+	} else if c, ok := a.S.Conv(ch); ok && !haveCount && !c.IsIM && !c.IsMPIM {
 		count = a.sideRead(ch, "users/counts", func(ctx context.Context) { a.loadMemberCount(ctx, ch) })
 	}
 	if _, ok := a.Conv(ch); !ok {

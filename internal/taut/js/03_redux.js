@@ -593,6 +593,12 @@ function nativeThunk(name) {
       return undefined
     })
   }
+  // Slack's apiCall settles as its API request does (05_slack.js
+  // apiCallThunk); apiCallExpedited (client-boot 0hZc T) dispatches
+  // apiCall's creator, patches and all, with EXPEDITED
+  if (name === 'apiCall') return defineThunk(name, (args, d, getState) => apiCallThunk(args[0], getState))
+  if (name === 'apiCallExpedited')
+    return defineThunk(name, (args, d) => d((thunkCreators.get('apiCall') ?? nativeThunk('apiCall'))({ ...args[0], EXPEDITED: true })))
   const changes = THUNK_CHANGES[name]
   if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(nativeArgs(name, args)))))
   return defineThunk(name, async (args) => {
@@ -636,6 +642,8 @@ T.setView = (channel, thread) => {
 }
 
 const getThunkCreator = (name) => thunkCreators.get(name)
+/** Slick's redux.thunkNames (src/app/slack/redux.ts): the names of the thunk creators there are (Clack's: the ones it defines) */
+const thunkNames = () => [...thunkCreators.keys()]
 function waitForThunkCreator(name) {
   const known = thunkCreators.get(name)
   if (known) return Promise.resolve(known)
@@ -847,4 +855,4 @@ defineModule('redux-store', {
   }),
 })
 
-Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, waitForThunkWithin, onAction, setLocalSlice, refresh })
+Object.assign(T, { redux, store, getState, getRawState, dispatch, defineThunk, nativeThunk, waitForThunkWithin, onAction, setLocalSlice, refresh, thunkNames })

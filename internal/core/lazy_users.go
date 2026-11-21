@@ -1,6 +1,7 @@
 package core
 
 import (
+	"regexp"
 	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -78,6 +79,36 @@ func (a *App) MemberStateOf(id string) MemberState {
 	}
 	return a.MissingMember(id)
 }
+
+// MissingBot is bot id's state for a sender core can't name otherwise (a
+// user-less message with no username or bot_profile), as getBotById
+// (client-boot Emf2 AF) answers the connected MessageSender: a bot the
+// store holds is known; one nothing returned is the bots
+// UnknownFetchManager's non-existent stub; any other id that looks like a
+// bot's (looksLikeBotId, 13v0) is asked for (senderOf noted it) and is
+// the unknown stub until bots.info answers. Slack's own bots
+// (slackInternalBots) and ids that don't look like a bot's are never
+// fetched: no bot at all, so no bar (and no name).
+func (a *App) MissingBot(id string) MemberState {
+	if _, ok := a.S.Bot(id); ok {
+		return MemberKnown
+	}
+	if a.S.BotNonexistent(id) {
+		return MemberNonExistent
+	}
+	if slackInternalBots[id] || !botIDRe.MatchString(id) {
+		return MemberKnown
+	}
+	return MemberUnknown
+}
+
+// botIDRe is looksLikeBotId (13v0): "B", eight or more of A-Z0-9, an "@"
+// before it allowed.
+var botIDRe = regexp.MustCompile(`^@?B[A-Z0-9]{8,}$`)
+
+// slackInternalBots are the bot ids getBotById never fetches (Emf2's d):
+// Slack's own.
+var slackInternalBots = map[string]bool{"B01": true, "BSLACKBOT": true, "B03": true, "BSLACKSECURITY": true, "BCHANNELEXPERT": true}
 
 // LooksLikeMemberID is Slack's looksLikeMemberId (5oKS): Slackbot and
 // Slack's fixed members (USLACKBOT, USEARCH, UCHANNELEXPERT, USLACK,
