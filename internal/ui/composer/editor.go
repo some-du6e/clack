@@ -939,7 +939,11 @@ func (e *Editor) paste(s string) { e.pasteHTML(s, "") }
 // HTML's formatting, a list if the text looks like one, else plain text.
 // Code blocks and inline code take plain text, as does Shift (paste and
 // match style).
-func (e *Editor) pasteHTML(s, html string) {
+func (e *Editor) pasteHTML(s, html string) { e.pasteClip(s, html, nil) }
+
+// pasteClip is pasteHTML with what the clipboard's rich read found:
+// Slack's own copy (slack/texty, as textyDoc reads it) before the HTML.
+func (e *Editor) pasteClip(s, html string, texty *Doc) {
 	e.init()
 	// Under "Format messages with markup" the composer shows no
 	// formatting, so pastes go in as text like typing does.
@@ -973,6 +977,9 @@ func (e *Editor) pasteHTML(s, html string) {
 	}
 	e.begin(edOther, false)
 	a := e.typingAttr(lo, hi)
+	// Texty's getLineAtCursor, read before the selection goes: whether the
+	// caret's line has anything on it (pasteQuoted)
+	lineHasText := d.LineEnd(d.LineOf(lo)) > d.LineStart(d.LineOf(lo))
 	d.Delete(lo, hi)
 	var end int
 	line := d.LineOf(lo)
@@ -982,7 +989,10 @@ func (e *Editor) pasteHTML(s, html string) {
 	own := (!plain || e.textOnly) && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
 	var rich *Doc
 	if !plain && !own && a.Style&Code == 0 && d.Lines[line].Kind != CodeBlock {
-		if html != "" {
+		switch {
+		case texty != nil:
+			rich = texty
+		case html != "":
 			rich = docFromHTML(html)
 		}
 		if rich == nil {
@@ -992,10 +1002,14 @@ func (e *Editor) pasteHTML(s, html string) {
 	switch {
 	case own && e.textOnly:
 		end = d.InsertDoc(lo, textOnlyDoc(e.clipDoc))
+	case own && d.Lines[line].Kind == Quote:
+		// the composer's own copy is slack/texty in Slack: into a quote
+		// the same way as any other
+		end = d.pasteQuoted(lo, e.clipDoc.Clone(), lineHasText)
 	case own:
 		end = d.InsertDoc(lo, e.clipDoc)
 	case rich != nil:
-		end = e.pasteRich(lo, rich)
+		end = e.pasteRich(lo, rich, lineHasText)
 		if LinkTransforms != nil {
 			end = transformPastedLinks(d, lo, end)
 		}

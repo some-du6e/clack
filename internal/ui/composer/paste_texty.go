@@ -2,7 +2,6 @@ package composer
 
 import (
 	"encoding/json"
-	"html"
 	"strings"
 )
 
@@ -11,73 +10,115 @@ import (
 // blocks through convertBlocksToDelta), and the selection as "slack/html"
 // (the clipboard handler SC+N: the DOM with its data-stringify marks).
 // Chromium keeps both in its web custom data (internal/ui/richclip).
-// Texty pastes them before text/html, so a mention stays a mention.
+// Texty pastes them before text/html, so a mention stays a mention and a
+// quote a quote.
 //
-// textyHTML turns a slack/texty delta into the HTML docFromHTML reads:
-// text with its inline formats, each slackmention as Slack's
-// data-stringify mention element, newlines as line breaks, embedded
-// emoji as their :name:. "" for anything that isn't a delta.
-func textyHTML(s string) string {
+// textyDoc reads a slack/texty delta the way Quill applies it: each op's
+// text with its inline formats (bold, italic, strike, code, underline, a
+// link), a slackmention as its mention, an embedded emoji as its :name:
+// (the paste's convertEmoji makes it the emoji again), a divider
+// (slackhorizontalrule) a plain line break (prepareDeltaForPaste, +hBz,
+// with no portable content), and each "\n" ending its line with that
+// line's format: a quote, a list item and its indent, a code line, a list
+// or code line inside a quote (border). The delta's last "\n" ends the
+// last line. nil for anything that isn't a delta.
+func textyDoc(s string) *Doc {
 	if s == "" || len(s) > phMaxHTML {
-		return ""
+		return nil
 	}
 	var d struct {
 		Ops []struct {
 			Insert     json.RawMessage `json:"insert"`
-			Attributes struct {
-				Bold, Italic, Strike, Code bool
-				Link                       string
-				Mention                    *struct {
-					ID    string `json:"id"`
-					Label string `json:"label"`
-				} `json:"slackmention"`
-			} `json:"attributes"`
+			Attributes map[string]any  `json:"attributes"`
 		} `json:"ops"`
 	}
 	if json.Unmarshal([]byte(s), &d) != nil || len(d.Ops) == 0 {
-		return ""
+		return nil
 	}
-	var b strings.Builder
+	doc := &Doc{}
+	endsLine := false // the last rune is a line's closing "\n"
+	endLine := func(at qAttrs) {
+		doc.Lines = append(doc.Lines, qLine(at))
+		doc.Runes = append(doc.Runes, '\n')
+		doc.Attrs = append(doc.Attrs, Attr{})
+		endsLine = true
+	}
 	for _, op := range d.Ops {
+		at := textyAttrs(op.Attributes)
 		var text string
 		if json.Unmarshal(op.Insert, &text) != nil {
 			var emb struct {
 				Emoji *struct {
 					Text string `json:"text"`
 				} `json:"slackemoji"`
+				Rule any `json:"slackhorizontalrule"`
 			}
-			if json.Unmarshal(op.Insert, &emb) != nil || emb.Emoji == nil {
+			switch {
+			case json.Unmarshal(op.Insert, &emb) != nil:
+				continue
+			case emb.Emoji != nil:
+				text, at = emb.Emoji.Text, nil
+			case truthy(emb.Rule):
+				endLine(nil)
+				continue
+			default:
 				continue
 			}
-			text = emb.Emoji.Text
 		}
-		at := op.Attributes
-		if m := at.Mention; m != nil && m.ID != "" {
-			b.WriteString(`<span data-stringify-type="mention" data-stringify-id="` + html.EscapeString(m.ID) +
-				`" data-stringify-label="` + html.EscapeString(m.Label) + `">` + html.EscapeString(text) + `</span>`)
-			continue
-		}
-		open, close := "", ""
-		wrap := func(o, c string, on bool) {
-			if on {
-				open, close = open+o, c+close
+		if m, ok := op.Attributes["slackmention"].(map[string]any); ok && !strings.Contains(text, "\n") {
+			id, _ := m["id"].(string)
+			label, _ := m["label"].(string)
+			if label == "" {
+				label = text
+			}
+			if a := mentionAtom(strings.TrimSpace(id), strings.TrimSpace(label)); a != nil && len(id) <= 64 && len(label) <= 256 {
+				doc.Runes = append(doc.Runes, ObjRune)
+				doc.Attrs = append(doc.Attrs, Attr{Atom: a})
+				endsLine = false
+				continue
 			}
 		}
-		wrap("<b>", "</b>", at.Bold)
-		wrap("<i>", "</i>", at.Italic)
-		wrap("<s>", "</s>", at.Strike)
-		wrap("<code>", "</code>", at.Code)
-		if at.Link != "" {
-			open, close = open+`<a href="`+html.EscapeString(at.Link)+`">`, "</a>"+close
+		a := qAttr(at)
+		for _, r := range text {
+			switch r {
+			case '\n':
+				endLine(at)
+				continue
+			case '\r', ObjRune:
+				r = ' '
+			}
+			doc.Runes = append(doc.Runes, r)
+			doc.Attrs = append(doc.Attrs, a)
+			endsLine = false
 		}
-		for i, part := range strings.Split(text, "\n") {
-			if i > 0 {
-				b.WriteString("<br>")
-			}
-			if part != "" {
-				b.WriteString(open + strings.ReplaceAll(html.EscapeString(part), "  ", " &nbsp;") + close)
-			}
+		if len(doc.Runes) > phMaxRunes {
+			return nil
 		}
 	}
-	return b.String()
+	if endsLine {
+		// the delta's last "\n" closes the last line: no line after it
+		doc.Runes, doc.Attrs = doc.Runes[:len(doc.Runes)-1], doc.Attrs[:len(doc.Attrs)-1]
+	} else {
+		doc.Lines = append(doc.Lines, Line{}) // no closing "\n": a paragraph
+	}
+	if len(doc.Runes) == 0 && len(doc.Lines) == 1 {
+		return nil
+	}
+	return doc
+}
+
+// textyAttrs are a delta op's attributes as the composer's delta reads
+// them: JSON numbers (an indent, a border, a header level) as ints.
+func textyAttrs(m map[string]any) qAttrs {
+	if len(m) == 0 {
+		return nil
+	}
+	at := make(qAttrs, len(m))
+	for k, v := range m {
+		if f, ok := v.(float64); ok {
+			v = int(f)
+		}
+		at[k] = v
+	}
+	return at
 }

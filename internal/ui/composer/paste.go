@@ -22,10 +22,12 @@ import (
 // clipboard requests (on X11 Clack may own the selection itself).
 const clipHTMLWait = 300 * time.Millisecond
 
-// clipRead is one in-flight read of the clipboard's HTML.
+// clipRead is one in-flight read of the clipboard's rich text: Slack's
+// own copy (texty), else the HTML.
 type clipRead struct {
-	done chan struct{}
-	html string
+	done  chan struct{}
+	html  string
+	texty *Doc
 }
 
 // startClipHTML starts reading the clipboard's HTML, or returns nil where
@@ -42,8 +44,8 @@ func startClipHTML() *clipRead {
 		// Slack's own copy first (slack/texty, then slack/html, in
 		// Chromium's web custom data: paste_texty.go), then text/html
 		if m, _ := richclip.ReadCustom(ctx); m != nil {
-			if h := textyHTML(m["slack/texty"]); h != "" {
-				r.html = h
+			if d := textyDoc(m["slack/texty"]); d != nil {
+				r.texty = d
 				return
 			}
 			if h := m["slack/html"]; h != "" && len(h) <= phMaxHTML {
@@ -59,13 +61,13 @@ func startClipHTML() *clipRead {
 	return r
 }
 
-// result returns the HTML once the read finished.
-func (r *clipRead) result() (string, bool) {
+// result returns what the read found once it finished.
+func (r *clipRead) result() (html string, texty *Doc, done bool) {
 	select {
 	case <-r.done:
-		return r.html, true
+		return r.html, r.texty, true
 	default:
-		return "", false
+		return "", nil, false
 	}
 }
 
@@ -135,8 +137,9 @@ func (e *Editor) flushPaste(gtx layout.Context) {
 		return
 	}
 	html, done := "", true
+	var texty *Doc
 	if e.richRead != nil {
-		html, done = e.richRead.result()
+		html, texty, done = e.richRead.result()
 	}
 	took, fdone := false, true
 	if e.filesRead != nil {
@@ -152,15 +155,17 @@ func (e *Editor) flushPaste(gtx layout.Context) {
 		return
 	}
 	e.scrollCaret = true
-	e.pasteHTML(p.text, html)
+	e.pasteClip(p.text, html, texty)
 }
 
 // pasteRich inserts src at lo (after deleting the selection) and returns
 // the end of the pasted text. A first line with a block format (a list,
 // a quote) starts its own line: at the start of a paragraph that line
 // takes the format, mid-line the line is split first. Lists pasted into
-// a list nest under the current item.
-func (e *Editor) pasteRich(lo int, src *Doc) int {
+// a list nest under the current item, and a paste into a quote goes in
+// as Slack's does (pasteQuoted). lineHasText is whether the caret's line
+// had anything on it before the selection was deleted.
+func (e *Editor) pasteRich(lo int, src *Doc, lineHasText bool) int {
 	d := e.doc
 	src = src.Clone()
 	if LinkTransforms != nil {
@@ -180,6 +185,9 @@ func (e *Editor) pasteRich(lo int, src *Doc) int {
 	}
 	line := d.LineOf(lo)
 	cur := d.Lines[line]
+	if cur.Kind == Quote {
+		return d.pasteQuoted(lo, src, lineHasText)
+	}
 	first := src.Lines[0]
 	switch {
 	case rtIsList(cur.Kind) && rtIsList(first.Kind):
@@ -197,4 +205,89 @@ func (e *Editor) pasteRich(lo int, src *Doc) int {
 		d.Lines[line] = first
 	}
 	return d.InsertDoc(lo, src)
+}
+
+// pasteQuoted pastes src at lo in a quote line the way Slack's composer
+// does, and returns the end of the paste (where the caret goes): Texty's
+// handleOnPaste runs prepareDeltaForPaste (+hBz) with the caret's formats,
+// then insertContentsAtCursor's matchBlockFormat (LPC/
+// convertDeltaToBlockFormat) with its block format, {blockquote: true}.
+//
+//   - With anything on the caret's line, a paste holding one list item
+//     loses its last line's format (prepare's w.slice(0, length - 1): the
+//     delta's last newline), and a paste starting with a code line starts
+//     on a line of its own ("\n" before it), or, a lone code line of text,
+//     goes in as text.
+//   - Each op then takes blockquote, or border 1 where it was a quote, a
+//     list or code, and the block format makes every line a quote line,
+//     but a list item one inside the quote ({blockquote: false, border: 1,
+//     list, indent}) and a code line one too ({blockquote: false, border:
+//     1, code-block}). A pasted quote, heading or paragraph is a quote
+//     line. A list item keeps its indent up to 4, except when the paste
+//     holds exactly two items (getRelativeIndent: both at 0).
+//   - Quill's newline carries a line's format, so the first pasted line's
+//     format is the caret line's from the caret back, and what was after
+//     the caret ends the last pasted line. When that line is a list item
+//     or a code line, convertDeltaToBlockFormat keeps the paste's final
+//     newline: what was after the caret stays a quote line of its own.
+func (d *Doc) pasteQuoted(lo int, src *Doc, lineHasText bool) int {
+	if len(src.Runes) == 0 && len(src.Lines) <= 1 {
+		return lo
+	}
+	items := func() int {
+		n := 0
+		for _, l := range src.Lines {
+			if rtIsList(l.Kind) {
+				n++
+			}
+		}
+		return n
+	}
+	last := len(src.Lines) - 1
+	if lineHasText {
+		if items() == 1 {
+			src.Lines[last] = Line{}
+		}
+		if src.Lines[0].Kind == CodeBlock {
+			atoms := false
+			for _, a := range src.Attrs {
+				atoms = atoms || a.Atom != nil
+			}
+			if last > 0 || atoms {
+				src.Runes = append([]rune{'\n'}, src.Runes...)
+				src.Attrs = append([]Attr{{}}, src.Attrs...)
+				src.Lines = append([]Line{{}}, src.Lines...)
+				last++
+			} else {
+				src.Lines[0] = Line{}
+			}
+		}
+	}
+	n := items()
+	for i, l := range src.Lines {
+		switch {
+		case rtIsList(l.Kind):
+			indent := min(l.Indent, 4)
+			if n == 2 {
+				indent = 0
+			}
+			src.Lines[i] = Line{Kind: l.Kind, Indent: min(max(indent, 0), edMaxIndent), Quoted: true}
+		case l.Kind == CodeBlock:
+			src.Lines[i] = Line{Kind: CodeBlock, Quoted: true}
+		default:
+			src.Lines[i] = Line{Kind: Quote}
+		}
+	}
+	keep := rtIsList(src.Lines[last].Kind) || src.Lines[last].Kind == CodeBlock
+	line := d.LineOf(d.clamp(lo))
+	quote := d.Lines[line]
+	end := d.InsertDoc(lo, src)
+	copy(d.Lines[line:], src.Lines)
+	if keep {
+		end = d.Insert(end, "\n", Attr{})
+		d.Lines[line+last+1] = quote
+	} else {
+		d.Lines[line+last] = quote
+	}
+	return end
 }

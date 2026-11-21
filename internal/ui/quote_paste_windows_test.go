@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -15,13 +16,17 @@ import (
 	"testing"
 	"time"
 	"unicode/utf16"
+	"unsafe"
 
 	"gioui.org/app"
+	"gioui.org/app/winclip"
 	"gioui.org/io/event"
+	"golang.org/x/sys/windows"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/composer"
@@ -152,6 +157,43 @@ func qpClip(t *testing.T, text *string, fs []qpFormat, extra string) {
 const qpBitmap = "$b = New-Object System.Drawing.Bitmap 3, 2, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)\n" +
 	"$b.SetPixel(0, 0, [System.Drawing.Color]::FromArgb(255, 255, 0, 0))\n" +
 	"$b.SetPixel(1, 1, [System.Drawing.Color]::FromArgb(255, 0, 0, 255))\n"
+
+// qpClipText is the clipboard's CF_UNICODETEXT ("" when it has none),
+// read in a session like every reader in the process.
+func qpClipText(t *testing.T) string {
+	t.Helper()
+	gcd := asTestUser32.NewProc("GetClipboardData")
+	k32 := windows.NewLazySystemDLL("kernel32.dll")
+	lock, unlock, size := k32.NewProc("GlobalLock"), k32.NewProc("GlobalUnlock"), k32.NewProc("GlobalSize")
+	move := k32.NewProc("RtlMoveMemory")
+	var out string
+	err := winclip.Session(context.Background(), 0, func() error {
+		h, _, _ := gcd.Call(13) // CF_UNICODETEXT
+		if h == 0 {
+			return nil
+		}
+		n, _, _ := size.Call(h)
+		p, _, _ := lock.Call(h)
+		if p == 0 || n < 2 {
+			return nil
+		}
+		defer unlock.Call(h)
+		u := make([]uint16, n/2)
+		move.Call(uintptr(unsafe.Pointer(&u[0])), p, uintptr(2*len(u)))
+		for i, c := range u {
+			if c == 0 {
+				u = u[:i]
+				break
+			}
+		}
+		out = string(utf16.Decode(u))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
 
 // qpWin is App.Run's window on the desktop, signed in to fakeslack.
 type qpWin struct {
@@ -402,25 +444,49 @@ func TestWinQuotePaste(t *testing.T) {
 	texty := `{"ops":[{"insert":"quoted from slack"},{"attributes":{"blockquote":true},"insert":"\n"},{"insert":"and a ` +
 		`line after it"},{"insert":"\n"}]}`
 	slackText := "quoted from slack\nand a line after it"
+	// Clack's own Copy message (popups' copyMessage): the message's text
+	// and its delta (richclip.TextyDelta) through richclip.Write
+	clackMsg := richtext.Doc{Blocks: []richtext.Block{
+		{Kind: richtext.Quote, Spans: []richtext.Span{{Text: "quoted in clack"}}},
+		{Kind: richtext.List, Items: [][]richtext.Span{{{Text: "an item"}}}},
+		{Kind: richtext.Paragraph, Spans: []richtext.Span{{Text: "after it", Style: richtext.Bold}}},
+	}}
+	// the composer's own copy: Ctrl+C on a list and a line in the
+	// composer (copySel), pasted back (its rich slice)
+	ownDoc := &composer.Doc{Runes: []rune("item one\nitem two\nafter")}
+	ownDoc.Attrs = make([]composer.Attr, len(ownDoc.Runes))
+	ownDoc.Lines = []composer.Line{{Kind: composer.Bullet}, {Kind: composer.Bullet}, {}}
+	copyOwn := func() {
+		reset()
+		w.on(t, func() {
+			ed.SetDoc(ownDoc.Clone())
+			ed.SetSelection(0, ownDoc.Len())
+			comp.Focus()
+		})
+		w.settle(t)
+		qpChord(t, 0x43, qpVKControl) // Ctrl+C
+		w.until(t, "the composer's copy on the clipboard", func() bool { return qpClipText(t) == "item one\nitem two\nafter" })
+	}
 	file := filepath.Join(t.TempDir(), "notes.txt")
 	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
 		name  string
+		first func() // before the composer is reset (the composer's own copy)
 		clip  func()
 		want  []qpLine // nil: the composer keeps its empty quote line
 		files int
 	}{
-		{"one line", func() { qpClip(t, str("quoted words"), nil, "") }, qline("quoted words"), 0},
-		{"several lines", func() { qpClip(t, str("first line\nsecond line\nthird line"), nil, "") },
+		{"one line", nil, func() { qpClip(t, str("quoted words"), nil, "") }, qline("quoted words"), 0},
+		{"several lines", nil, func() { qpClip(t, str("first line\nsecond line\nthird line"), nil, "") },
 			qline("first line", "second line", "third line"), 0},
-		{"CRLF line ends", func() { qpClip(t, str("first line\r\nsecond line\r\nthird line"), nil, "") },
+		{"CRLF line ends", nil, func() { qpClip(t, str("first line\r\nsecond line\r\nthird line"), nil, "") },
 			qline("first line", "second line", "third line"), 0},
-		{"a trailing newline", func() { qpClip(t, str("ends with a break\r\n"), nil, "") },
+		{"a trailing newline", nil, func() { qpClip(t, str("ends with a break\r\n"), nil, "") },
 			qline("ends with a break", ""), 0},
-		{"a long text", func() { qpClip(t, str(long.String()), nil, "") }, qline(longLines...), 0},
-		{"a web page from Chromium (HTML Format)", func() {
+		{"a long text", nil, func() { qpClip(t, str(long.String()), nil, "") }, qline(longLines...), 0},
+		{"a web page from Chromium (HTML Format)", nil, func() {
 			qpClip(t, str(pageText), []qpFormat{{"HTML Format", append(richclip.CFHTML(pageHTML), 0)}}, "")
 		}, []qpLine{
 			{quote, "A paragraph with bold words"},
@@ -430,26 +496,44 @@ func TestWinQuotePaste(t *testing.T) {
 			{composer.Line{Kind: composer.CodeBlock, Quoted: true}, "code line"},
 			{quote, "the end"},
 		}, 0},
-		{"Slack's Copy message (slack/texty)", func() {
+		{"Slack's Copy message (slack/texty)", nil, func() {
 			qpClip(t, str(slackText), []qpFormat{{"Chromium Web Custom MIME Data Format",
 				richclip.EncodeCustom(map[string]string{"slack/texty": texty})}}, "")
 		}, qline("quoted from slack", "and a line after it"), 0},
-		{"a picture (CF_BITMAP, CF_DIB, CF_DIBV5)", func() {
+		{"Clack's Copy message (richclip.Write)", nil, func() {
+			c := richclip.Copy{Text: richtext.PlainText(clackMsg), Custom: map[string]string{"slack/texty": richclip.TextyDelta(clackMsg)}}
+			if err := richclip.Write(context.Background(), c); err != nil {
+				t.Fatal(err)
+			}
+		}, []qpLine{
+			{quote, "quoted in clack"},
+			{composer.Line{Kind: composer.Bullet, Quoted: true}, "an item"},
+			{quote, "after it"},
+		}, 0},
+		{"Clack's composer copy (Ctrl+C)", copyOwn, func() {}, []qpLine{
+			{composer.Line{Kind: composer.Bullet, Quoted: true}, "item one"},
+			{composer.Line{Kind: composer.Bullet, Quoted: true}, "item two"},
+			{quote, "after"},
+		}, 0},
+		{"a picture (CF_BITMAP, CF_DIB, CF_DIBV5)", nil, func() {
 			qpClip(t, nil, nil, qpBitmap+"$do.SetImage($b)\n")
 		}, nil, 1},
-		{`a picture with a "PNG"`, func() {
+		{`a picture with a "PNG"`, nil, func() {
 			qpClip(t, nil, nil, qpBitmap+"$ms = New-Object System.IO.MemoryStream\n"+
 				"$b.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)\n$do.SetData('PNG', $false, $ms)\n$do.SetImage($b)\n")
 		}, nil, 1},
-		{"a file from Explorer (CF_HDROP)", func() {
+		{"a file from Explorer (CF_HDROP)", nil, func() {
 			qpClip(t, nil, nil, "$fl = New-Object System.Collections.Specialized.StringCollection\n"+
 				"[void]$fl.Add("+qpPS(file)+")\n$do.SetFileDropList($fl)\n")
 		}, nil, 1},
-		{"an empty clipboard", func() { qpPowerShell(t, "[System.Windows.Forms.Clipboard]::Clear()\n") }, nil, 0},
+		{"an empty clipboard", nil, func() { qpPowerShell(t, "[System.Windows.Forms.Clipboard]::Clear()\n") }, nil, 0},
 	}
 	// controls: the same pastes into a plain line (no quote)
-	for _, c := range cases[:7] {
+	for _, c := range cases[:9] {
 		name := "a plain line, " + c.name
+		if c.first != nil {
+			c.first()
+		}
 		reset()
 		t.Logf("%s: the clipboard", name)
 		c.clip()
@@ -462,6 +546,9 @@ func TestWinQuotePaste(t *testing.T) {
 	for _, way := range ways {
 		for _, c := range cases {
 			name := way.name + ", " + c.name
+			if c.first != nil {
+				c.first()
+			}
 			reset()
 			t.Logf("%s: starting the quote", name)
 			way.quote()
