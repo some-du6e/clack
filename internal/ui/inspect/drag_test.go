@@ -916,6 +916,11 @@ func TestPenOffAddsNothing(t *testing.T) {
 	e := newDragEnv(t)
 	check := func(when string) {
 		t.Helper()
+		// the router holds an InvalidateCmd until WakeupTime reads it (the
+		// window reads it after every frame; the env doesn't): the
+		// session's last review frame asked for one
+		e.frame()
+		e.r.WakeupTime()
 		for range 2 {
 			e.frame()
 		}
