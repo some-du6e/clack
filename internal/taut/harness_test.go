@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 )
@@ -194,13 +195,51 @@ func (h *harness) jsLogged() []string {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	api := newFakeAPI(t)
-	c := slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test%2Fcookie", UserID: selfID, Team: teamID, EnterpriseID: entID,
-		TeamURL: api.srv.URL + "/", EnterpriseURL: api.srv.URL + "/"})
+	return newHarnessOn(t, api, slack.New(slack.Creds{Token: "xoxc-test", Cookie: "xoxd-test%2Fcookie", UserID: selfID, Team: teamID, EnterpriseID: entID,
+		TeamURL: api.srv.URL + "/", EnterpriseURL: api.srv.URL + "/"}))
+}
+
+// newHarnessOn is newHarness with Clack's client c (on another fake
+// Slack, e.g. internal/fakeslack's); api still answers plugin fetches of
+// its own URL.
+func newHarnessOn(t *testing.T, api *fakeAPI, c *slack.Client) *harness {
+	t.Helper()
 	s := store.New("")
 	seed(s)
 	app := core.New(c, s)
 	app.S.Self = *mustUser(s, selfID)
 	app.ServeOffline()
+	return newHarnessApp(t, api, app)
+}
+
+// newBootedHarness is the harness with core booted over fs (its own
+// workspace, not seed's) and the realtime socket open, so what the client
+// sends the gateway can be checked (fs.SocketFrames).
+func newBootedHarness(t *testing.T, fs *fakeslack.Server) *harness {
+	t.Helper()
+	app := core.New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	t.Cleanup(app.Shutdown)
+	evs, stop := app.Subscribe()
+	if err := app.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	app.SetRealtime(true)
+	deadline := time.After(15 * time.Second)
+	for connected := false; !connected; {
+		select {
+		case ev := <-evs:
+			connected = ev.Type == "connection" && ev.Connected
+		case <-deadline:
+			t.Fatal("timed out waiting for the realtime socket")
+		}
+	}
+	stop()
+	return newHarnessApp(t, newFakeAPI(t), app)
+}
+
+// newHarnessApp is the harness's Taut and UI over app.
+func newHarnessApp(t *testing.T, api *fakeAPI, app *core.App) *harness {
+	t.Helper()
 	h := &harness{t: t, app: app, api: api, dir: t.TempDir(), fetches: map[string]string{},
 		ui: &testUI{trees: map[uint64][]byte{}, treeCh: make(chan uint64, 64), styles: map[string]string{}, inputs: map[string]string{}}}
 	tt, err := New(Options{

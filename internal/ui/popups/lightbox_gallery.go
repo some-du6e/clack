@@ -13,11 +13,19 @@ type GalleryItem struct {
 // 0e695dd18302: MediaViewer viWS builds its queue from the info's files,
 // the ones fileIsViewableInMediaViewer keeps, and opens at the clicked
 // file): ← / → and the arrow buttons step through the channel's loaded
-// media instead of one message's images. Clack's viewer shows images, so
-// the caller passes those (its videos still open their page).
+// media instead of one message's images, its playable videos too (where
+// videos play in place; lightbox_video.go).
 func NewFileGallery(h Host, items []GalleryItem, idx int) *Lightbox {
 	lb := &Lightbox{h: h, zoom: 1}
 	for _, it := range items {
+		if f := it.File; f != nil && f.IsVideo && f.URL != "" && lbVideos(h) != nil {
+			vi := lbVideoItem(f)
+			if it.Img.URL != "" {
+				vi.img = it.Img
+			}
+			lb.items = append(lb.items, vi)
+			continue
+		}
 		if it.Img.URL == "" {
 			continue
 		}

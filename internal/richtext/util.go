@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // SafeURL returns u (trimmed) if its scheme is safe to open, else "".
@@ -227,4 +229,14 @@ func tsSeconds(raw []byte) int64 {
 	}
 	n, _ := strconv.ParseInt(s, 10, 64)
 	return n
+}
+
+// videoPoster is the poster VideoControlsOverlay draws, thumb_video_ts ??
+// thumb_video: Slack's code uses thumb_video_ts as an image URL (the API
+// docs call it a timestamp), so it's taken only when it's an https URL.
+func videoPoster(f *slack.File) string {
+	if u, err := url.Parse(strings.TrimSpace(f.ThumbVideoTS)); err == nil && strings.EqualFold(u.Scheme, "https") && u.Host != "" {
+		return strings.TrimSpace(f.ThumbVideoTS)
+	}
+	return f.ThumbVideo
 }

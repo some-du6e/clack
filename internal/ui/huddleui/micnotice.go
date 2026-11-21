@@ -201,10 +201,12 @@ func recordPara(gtx C, th *theme.Theme, wt font.Weight, txt string) recorded {
 	return recorded{call: m.Stop(), size: d.Size}
 }
 
-// warnBadge is the yellow "!" dot on a control's top-right corner at p.
-func warnBadge(gtx C, p image.Point, d int) {
+// warnBadge is the yellow "!" dot on a control's top-right corner at p,
+// cut out of the control by a ring in ring, what lies behind the control
+// (the huddle window's background, the docked bar's card).
+func warnBadge(gtx C, p image.Point, d int, ring color.NRGBA) {
 	c := image.Pt(p.X-d/2+gtx.Dp(2), p.Y+d/2-gtx.Dp(2))
-	theme.Circle(gtx, c, d+gtx.Dp(2), hudFrame)
+	theme.Circle(gtx, c, d+gtx.Dp(2), ring)
 	theme.Circle(gtx, c, d, hudWarn)
 	at(gtx, c.Sub(image.Pt(d/2, d/2)), image.Pt(d, d), func(gtx C) D {
 		iconAt(gtx, image.Pt(d, d), "warning", 9, hudInk)

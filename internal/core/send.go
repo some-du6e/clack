@@ -131,7 +131,7 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 		ClientMsgID: cid, Reply: !isTopLevel(&local), ConvKind: a.kindOf(o.Channel)})
 
 	m, err := a.C.Post(ctx, slack.PostOpts{Channel: o.Channel, Text: o.Text, ThreadTS: o.ThreadTS,
-		Broadcast: o.Broadcast, Blocks: o.Blocks, Attachments: o.Attachments, ClientMsgID: cid})
+		Broadcast: o.Broadcast, Blocks: o.Blocks, Attachments: o.Attachments, ClientMsgID: cid, BlocksOnly: o.BlocksOnly})
 	if err != nil {
 		a.mu.Lock()
 		confirmed := p.confirmed

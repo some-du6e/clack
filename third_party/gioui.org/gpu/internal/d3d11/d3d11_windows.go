@@ -46,6 +46,11 @@ type Backend struct {
 	// scissorOn which one is set (Clack patch 46)
 	raster    [2]*d3d11.RasterizerState
 	scissorOn bool
+
+	// Clack patch 51: the samplers of wrapped textures (linear, nearest),
+	// shared by all of them, and how many aren't released yet.
+	extSamplers [2]*d3d11.SamplerState
+	wrapped     int
 	// texBytes and bufBytes are what the textures and buffers this
 	// backend made and hasn't released take (Clack patch 46:
 	// ClackResourceBytes)
@@ -103,6 +108,10 @@ type Texture struct {
 	height  int
 	mipmap  bool
 	foreign bool
+	// external is a shader resource view someone else made (ClackWrap,
+	// Clack patch 51): the texture holds a reference to it, and samples it
+	// with the backend's shared sampler
+	external bool
 	// bytes is what the texture takes, its mipmaps included (Clack patch
 	// 46: ClackResourceBytes)
 	bytes int64
@@ -351,6 +360,11 @@ func (b *Backend) IsTimeContinuous() bool {
 
 func (b *Backend) Release() {
 	b.releaseRaster()
+	for _, s := range b.extSamplers {
+		if s != nil {
+			d3d11.IUnknownRelease(unsafe.Pointer(s), s.Vtbl.Release)
+		}
+	}
 	d3d11.IUnknownRelease(unsafe.Pointer(b.ctx), b.ctx.Vtbl.Release)
 	*b = Backend{}
 }
@@ -842,6 +856,14 @@ func (t *Texture) Upload(offset, size image.Point, pixels []byte, stride int) {
 }
 
 func (t *Texture) Release() {
+	if t.external {
+		// the view's reference ClackWrap took; the sampler is the
+		// backend's (Clack patch 51)
+		d3d11.IUnknownRelease(unsafe.Pointer(t.resView), t.resView.Vtbl.Release)
+		t.backend.wrapped--
+		*t = Texture{}
+		return
+	}
 	if t.foreign {
 		panic("texture not created by NewTexture")
 	}

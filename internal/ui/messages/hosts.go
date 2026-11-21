@@ -9,6 +9,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -80,6 +81,9 @@ type docHost struct {
 	handler richHandler
 	msg     core.Message
 	el      richview.Elements // the message's Block Kit (blockkit.go hostElements)
+	// view is this tree's drawing of the message's elements
+	// (blockkit.InView): its plans' state is its own
+	view uint64
 }
 
 func docState(h *slackc.Host) *docHost {
@@ -137,9 +141,14 @@ func hostBlocks(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		d.el = hostElements(lastHost, hostCore(), msg)
 		return parseMessage(hostCore(), msg)
 	})
-	if o := d.v.Options(); d.el != nil && o.Elements != d.el {
-		o.Elements = d.el
-		d.v.SetOptions(o)
+	if d.view == 0 {
+		d.view = blockkit.NewViewID()
+	}
+	if want := blockkit.InView(d.el, d.view); d.el != nil {
+		if o := d.v.Options(); o.Elements != want {
+			o.Elements = want
+			d.v.SetOptions(o)
+		}
 	}
 	st := blocksClass.Enter(gtx, 0, 0)
 	defer st.Leave()

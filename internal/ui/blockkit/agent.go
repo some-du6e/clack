@@ -48,14 +48,17 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
 	"gioui.org/font"
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/text"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
@@ -94,7 +97,88 @@ type AgentTask struct {
 	// plan_block_coding_enhancements a plan task shows its content
 	// without its title line.
 	HideTitle bool `json:"hide_title"`
+	// Icon is the task's icon ({"name": ...}, a Block Kit icon name): kept
+	// raw, so a stray shape costs only the icon, never the block
+	Icon json.RawMessage `json:"icon"`
 }
+
+// taskIconNames is Qw/u deriveIconName: the Block Kit icon names a task's
+// icon may use, as Slack's icon set names them.
+var taskIconNames = map[string]string{
+	"archive":     "archive",
+	"book":        "book",
+	"bookmark":    "bookmark",
+	"bot":         "bot",
+	"bug":         "bug",
+	"calendar":    "calendar",
+	"call":        "call",
+	"caret-left":  "caret-left",
+	"caret-right": "caret-right",
+	"check":       "check",
+	"clipboard":   "copy",
+	"code":        "code",
+	"comment":     "comment",
+	"compass":     "explore",
+	"copy":        "copy",
+	"cube":        "blocks",
+	"download":    "download",
+	"edit":        "edit",
+	"email":       "email",
+	"eye-closed":  "eye-closed",
+	"eye-open":    "eye-open",
+	"file":        "file",
+	"flag":        "flag",
+	"folder":      "folder",
+	"gear":        "settings",
+	"globe":       "globe",
+	"heart":       "heart",
+	"help":        "help",
+	"image":       "image",
+	"info":        "info",
+	"key":         "key",
+	"lightbulb":   "emoji-objects",
+	"link":        "link",
+	"map":         "map",
+	"mobile":      "mobile",
+	"new-window":  "new-window",
+	"pin":         "pin",
+	"plus":        "plus",
+	"refine":      "refine",
+	"refresh":     "refresh",
+	"rocket":      "rocket",
+	"save":        "save",
+	"screen":      "screen",
+	"share":       "share",
+	"sparkle":     "sparkles",
+	"star":        "star",
+	"star-filled": "star-filled",
+	"tag":         "tag",
+	"thumbs-down": "thumbs-down",
+	"thumbs-up":   "thumbs-up",
+	"trash":       "trash",
+	"upload":      "file-upload",
+	"user":        "user",
+	"warning":     "warning",
+}
+
+// taskIconName is the icon TaskIcon (IDPB) draws for t instead of its
+// status glyph: the task's own icon, when it has one Block Kit knows and
+// the task is neither in progress nor failed; "" otherwise.
+func taskIconName(t *AgentTask) string {
+	if len(t.Icon) == 0 || t.Status == StatusInProgress || t.Status == StatusError {
+		return ""
+	}
+	var ic struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(t.Icon, &ic) != nil {
+		return ""
+	}
+	return taskIconNames[ic.Name]
+}
+
+// agentIconHook, when set (tests), sees each task icon drawn, by name.
+var agentIconHook func(name string)
 
 func (t *AgentTask) hasContent() bool {
 	return isRichText(t.Details) || isRichText(t.Output) || len(t.Sources) > 0
@@ -197,13 +281,13 @@ func isRichText(raw json.RawMessage) bool {
 
 // isAgentKind reports whether a richview button names an agent block.
 func isAgentKind(k string) bool {
-	return k == "plan" || k == "task_card" || k == "context_actions"
+	return k == "plan" || k == "task_card" || k == "context_actions" || k == richtext.AgentChannelUnfurlKind
 }
 
 // hasAgentBlocks reports whether blocks (or attachments) carry one.
 func hasAgentBlocks(raw json.RawMessage) bool {
 	return bytes.Contains(raw, []byte(`"plan"`)) || bytes.Contains(raw, []byte(`"task_card"`)) ||
-		bytes.Contains(raw, []byte(`"context_actions"`))
+		bytes.Contains(raw, []byte(`"context_actions"`)) || bytes.Contains(raw, []byte(`"agent_channel_unfurl"`))
 }
 
 // ---- payloads (blocks.actions actions[0]) ----
@@ -240,9 +324,15 @@ func IconButtonPayload(blockID string, e *AgentElement) json.RawMessage {
 
 // ---- per-message state ----
 
+// agentAnim is a running height transition.
 type agentAnim struct {
 	from, to int
 	start    time.Time
+	// CSS transitions: the reversing-adjusted start value (where a
+	// transition back to it came from) and the reversing shortening factor
+	// (the share of the duration it runs for)
+	adj    int
+	factor float64
 }
 
 type agentState struct {
@@ -254,6 +344,20 @@ type agentState struct {
 	views  map[string]*agentText
 	anim   map[string]*agentAnim
 	shown  map[string]int // block → height last drawn (animation start)
+	target map[string]int // block → the height it was last laid out to reach
+	// cuts caches each task content's truncated copy (agent_truncate.go)
+	cuts map[string]*agentCut
+	// cards are the agent_channel_unfurl attachments' code channel cards
+	cards map[string]*popups.ChannelHoverCard
+	// touched: the viewer toggled the block (a task card the viewer
+	// opened or closed isn't auto-collapsed when it completes)
+	touched map[string]bool
+}
+
+// agentCut is a task content's truncated copy, for its raw bytes.
+type agentCut struct {
+	raw, cut  []byte
+	truncated bool
 }
 
 type agentParsed struct {
@@ -261,30 +365,115 @@ type agentParsed struct {
 	b   *AgentBlock
 }
 
+// agentMsgState is a message's agent block state: one agentState per drawing
+// instance (a message shows in the channel and, as a thread's root, in
+// the thread pane; each of Slack's rendered PlanBlocks has its own React
+// state: open, taps, text, height transition), sharing the parse and cut
+// caches and the feedback ratings.
+type agentMsgState struct {
+	insts  map[uint64]*agentState
+	order  []uint64
+	parsed map[string]*agentParsed
+	cuts   map[string]*agentCut
+	rating map[string]string
+}
+
 var (
 	agentMu     sync.Mutex
-	agentStates = map[string]*agentState{}
+	agentStates = map[string]*agentMsgState{}
 	agentOrder  []string
 )
 
+// agentState is the state of the agent blocks for the drawing instance
+// the call is for (me.inst).
 func (me *Message) agentState() *agentState {
 	k := me.m.Channel + "/" + me.m.TS
 	agentMu.Lock()
 	defer agentMu.Unlock()
-	st := agentStates[k]
-	if st == nil {
-		st = &agentState{parsed: map[string]*agentParsed{}, open: map[string]bool{}, taps: map[string]*tap{},
-			tips: map[string]*popups.TipState{}, rating: map[string]string{}, views: map[string]*agentText{},
-			anim: map[string]*agentAnim{}, shown: map[string]int{}}
-		agentStates[k] = st
+	am := agentStates[k]
+	if am == nil {
+		am = &agentMsgState{insts: map[uint64]*agentState{}, parsed: map[string]*agentParsed{}, cuts: map[string]*agentCut{},
+			rating: map[string]string{}}
+		agentStates[k] = am
 		agentOrder = append(agentOrder, k)
 		if len(agentOrder) > 400 {
 			delete(agentStates, agentOrder[0])
 			agentOrder = agentOrder[1:]
 		}
 	}
+	st := am.insts[me.inst]
+	if st != nil { // the order is by last use: a drawing still on screen isn't the one evicted
+		if i := slices.Index(am.order, me.inst); i >= 0 && i != len(am.order)-1 {
+			am.order = append(append(am.order[:i:i], am.order[i+1:]...), me.inst)
+		}
+	}
+	if st == nil {
+		st = &agentState{parsed: am.parsed, open: map[string]bool{}, taps: map[string]*tap{},
+			tips: map[string]*popups.TipState{}, rating: am.rating, views: map[string]*agentText{},
+			anim: map[string]*agentAnim{}, shown: map[string]int{}, target: map[string]int{}, cuts: am.cuts, touched: map[string]bool{},
+			cards: map[string]*popups.ChannelHoverCard{}}
+		am.insts[me.inst] = st
+		am.order = append(am.order, me.inst)
+		if len(am.order) > 8 { // the drawing used longest ago goes (its row is long gone)
+			delete(am.insts, am.order[0])
+			am.order = am.order[1:]
+		}
+	}
 	return st
 }
+
+var viewSeq atomic.Uint64
+
+// NewViewID is a fresh drawing-instance id for InView (a message row, a
+// view's list).
+func NewViewID() uint64 { return viewSeq.Add(1) }
+
+// InView is el drawn as instance id: richview's calls go through it, so a
+// plan's or task card's toggles, taps, text and height transition there
+// are that drawing's own. el is returned as is when it isn't a message's
+// element host, or id is 0.
+func InView(el richview.Elements, id uint64) richview.Elements {
+	if me, ok := el.(*Message); ok && me != nil && id != 0 {
+		return elemView{me: me, id: id}
+	}
+	return el
+}
+
+// HostOf is the message element host behind el (InView's or the host
+// itself), nil for anything else.
+func HostOf(el richview.Elements) *Message {
+	switch v := el.(type) {
+	case *Message:
+		return v
+	case elemView:
+		return v.me
+	}
+	return nil
+}
+
+// elemView is one drawing of a message's elements (InView).
+type elemView struct {
+	me *Message
+	id uint64
+}
+
+func (v elemView) ElementsSize(bs []richtext.Button, maxW int, accessory bool, m unit.Metric) (image.Point, bool) {
+	prev := v.me.inst
+	v.me.inst = v.id
+	defer func() { v.me.inst = prev }()
+	return v.me.ElementsSize(bs, maxW, accessory, m)
+}
+
+func (v elemView) LayoutElements(gtx layout.Context, bs []richtext.Button, accessory bool) layout.Dimensions {
+	prev := v.me.inst
+	v.me.inst = v.id
+	defer func() { v.me.inst = prev }()
+	return v.me.LayoutElements(gtx, bs, accessory)
+}
+
+func (v elemView) ElementsVersion() uint32 { return v.me.ElementsVersion() }
+
+var _ richview.Elements = elemView{}
 
 func (st *agentState) tap(k string) *tap {
 	t := st.taps[k]
@@ -495,6 +684,9 @@ const agentLH = 19 // 13px × Slack's 1.46668 line height
 // agentSize / agentDraw: one function lays out (and with a real gtx,
 // draws) an agent block; ElementsSize calls it on scratch ops.
 func (me *Message) agentRun(gtx C, bt *richtext.Button, maxW int) image.Point {
+	if bt.Kind == richtext.AgentChannelUnfurlKind {
+		return me.layoutAgentChannelCard(gtx, me.agentState(), bt.BlockID, maxW)
+	}
 	b := me.agentBlock(bt)
 	if b == nil {
 		return image.Point{}
@@ -510,6 +702,47 @@ func (me *Message) agentRun(gtx C, bt *richtext.Button, maxW int) image.Point {
 		return me.layoutContextActions(gtx, st, b, maxW)
 	}
 	return image.Point{}
+}
+
+// layoutAgentChannelCard is an agent_channel_unfurl attachment, the code
+// channel an agent session made: MessageKitAttachments'
+// CodeChannelEntityCard (surface MessageUnfurl), the classic card with its
+// border (popups.ChannelHoverCard.EntityCard), one per drawing; nothing
+// where Slack draws none.
+func (me *Message) layoutAgentChannelCard(gtx C, st *agentState, ch string, maxW int) image.Point {
+	key := "acu\x00" + ch
+	card := st.cards[key]
+	if card == nil {
+		card = popups.NewChannelHoverCard(me.h, image.Rectangle{}, ch, false, false)
+		st.cards[key] = card
+	}
+	d, ok := card.EntityCard(gtx, maxW, me.agentChannel(ch))
+	if !ok {
+		return image.Point{}
+	}
+	return d.Size
+}
+
+// agentChannel is the message's agent_channel_unfurl for channel ch as
+// CodeChannelEntityCard's props, the attachments read once: a host is one
+// revision of them (blocksSig).
+func (me *Message) agentChannel(ch string) popups.EntityProps {
+	if me.acu == nil {
+		me.acu = map[string]popups.EntityProps{}
+		var atts []struct {
+			U *slack.AgentChannelUnfurl `json:"agent_channel_unfurl"`
+		}
+		_ = json.Unmarshal(me.m.Attachments, &atts)
+		for _, a := range atts {
+			if u := a.U; u != nil && u.ChannelID != "" {
+				if _, dup := me.acu[u.ChannelID]; !dup {
+					me.acu[u.ChannelID] = popups.EntityProps{Name: u.ChannelName, AgentBotUserID: u.AgentBotUserID,
+						JoinableFrom: u.JoinableFromChannelID, Private: u.IsPrivate}
+				}
+			}
+		}
+	}
+	return me.acu[ch]
 }
 
 // layoutTaskBlock draws a plan or task_card (slim): the toggle line and,
@@ -530,18 +763,24 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 		status, title, hasContent = PlanStatus(b.Tasks), PlanTitle(b), len(b.Tasks) > 0
 	} else {
 		status, title, hasContent = CardStatus(b.Status), b.Title, b.hasContent()
-		def = strings.HasPrefix(b.BlockID, "mcp_task_")
+		def = me.taskCardDefault(st, b, key)
 	}
 	open := hasContent && st.isOpen(key, def)
 
-	// toggle line
+	// toggle line (the height transition follows in animated)
 	t := st.tap(key)
 	if hasContent && t.clicked(gtx, me.h) {
 		st.open[key] = !open
 		open = !open
-		st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
+		st.touched[key] = true
+		if !open { // the content unmounts: its tasks and Show more start over when reopened
+			st.resetUnder(b)
+		}
 		me.changed()
 	}
+	// the toggle line and, open, the content, drawn whole and then clipped
+	// to the height on screen
+	whole := op.Record(gtx.Ops)
 	y := top
 	td := at(gtx, image.Pt(0, y), func(gtx C) D {
 		return me.toggleLine(gtx, pal, status, title, hasContent, open, w)
@@ -556,53 +795,119 @@ func (me *Message) layoutTaskBlock(gtx C, st *agentState, b *AgentBlock, first b
 	y += hh
 	full := y
 	if open {
-		m := op.Record(gtx.Ops)
+		off := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		var ch int
 		if b.Type == "plan" {
 			ch = me.planTasks(gtx, st, pal, b, w)
 		} else {
 			ch = me.cardBody(gtx, st, pal, b, w)
 		}
-		call := m.Stop()
-		full = y + ch
-		h := me.animated(gtx, st, key, y, full)
-		cl := clip.Rect{Max: image.Pt(w, h)}.Push(gtx.Ops)
-		off := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
-		call.Add(gtx.Ops)
 		off.Pop()
-		cl.Pop()
-		st.shown[key] = h
-		return image.Pt(w, h+bottom)
+		full = y + ch
 	}
-	h := me.animated(gtx, st, key, y, y)
+	call := whole.Stop()
+	h := me.animated(gtx, st, key, full)
+	// .blockSlim: overflow clip, with overflow-clip-margin 8px (what runs
+	// past the block during its height transition shows 8px further)
+	m := dp(gtx, 8)
+	cl := clip.Rect{Min: image.Pt(-m, top-m), Max: image.Pt(w+m, h+m)}.Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	cl.Pop()
 	st.shown[key] = h
 	return image.Pt(w, h+bottom)
 }
 
-// animated is the block height during Slack's 250ms height transition
-// (from what was last shown to target); it keeps frames and relayouts
-// coming while it runs.
-func (me *Message) animated(gtx C, st *agentState, key string, min0, target int) int {
-	a := st.anim[key]
-	if a == nil {
-		return target
-	}
-	if a.to != target {
-		a.to = target
-	}
+// animated is the block's height on screen for target, the height its
+// content takes now. ExpandableContent (cQd1) sets .block's height to its
+// content's measured height (slim, or open), and .block has transition:
+// height .25s: so once the block has been drawn, every change of that
+// height runs the transition from the height on screen, whatever made it
+// (a toggle, an MCP card closing, an update that adds a task or wraps the
+// title anew). A change during a transition starts a new one from where
+// it got to; one back to where the running one came from runs for the
+// share of it that had run (CSS's reversing shortening factor). It keeps
+// frames and relayouts coming while one runs.
+func (me *Message) animated(gtx C, st *agentState, key string, target int) int {
 	// .block's transition: height .25s (slackc.NativeTransitionsCSS),
 	// through the cascade: a rule over it (Slick's Snappy) shortens it
 	dur, delay := slackc.CurrentScope().Child(clsAgentBlock, 0).Transition("height", 250*time.Millisecond, 0)
-	p, done := slackc.TransitionProgress(a.start, gtx.Now, dur, delay)
+	a := st.anim[key]
+	last, seen := st.target[key]
+	st.target[key] = target
+	if seen && last != target && st.shown[key] > 0 && !gtx.Now.IsZero() {
+		cur := st.shown[key]
+		n := &agentAnim{from: cur, to: target, start: gtx.Now, adj: cur, factor: 1}
+		if a != nil {
+			if p, done := slackc.TransitionProgress(a.start, gtx.Now, scaleDur(dur, a.factor), delay); !done {
+				e := easeCSS(float64(p))
+				cur = a.from + int(math.Round(float64(a.to-a.from)*e))
+				n.from, n.adj = cur, cur
+				if target == a.adj { // going back: the reversing shortening factor
+					n.factor = math.Min(math.Abs(e*a.factor+1-a.factor), 1)
+					n.adj = a.to
+				}
+			}
+		}
+		a = n
+		st.anim[key] = a
+	}
+	if a == nil {
+		return target
+	}
+	p, done := slackc.TransitionProgress(a.start, gtx.Now, scaleDur(dur, a.factor), delay)
 	if done || a.from == 0 || gtx.Now.IsZero() {
 		delete(st.anim, key)
 		return target
 	}
 	f := easeCSS(float64(p))
 	h := a.from + int(math.Round(float64(target-a.from)*f))
-	me.ver.Add(1) // size changes: relayout next frame
-	gtx.Execute(op.InvalidateCmd{})
-	return max(h, min0)
+	// size changes: relayout and a frame next, asked of the host, not an
+	// op.InvalidateCmd mid-layout (the router would replay the frame's
+	// unread events)
+	me.changed()
+	return h
+}
+
+// IndicatorActive, when set (the ui package: its main window's focus), is
+// whether a spinner may ask for its next frame: an inactive window's
+// indicators hold still and ask for none (ui's indicatorFrame), and its
+// activation draws them on again.
+var IndicatorActive func() bool
+
+// indicatorFrame asks for a spinner's or shimmer's next frame d from now
+// while the window is active.
+func indicatorFrame(gtx C, d time.Duration) {
+	if IndicatorActive != nil && !IndicatorActive() {
+		return
+	}
+	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(d)})
+}
+
+// scaleDur is d × f.
+func scaleDur(d time.Duration, f float64) time.Duration {
+	if f <= 0 || f >= 1 {
+		return d
+	}
+	return time.Duration(float64(d) * f)
+}
+
+// taskCardDefault is whether a task_card starts open (TaskCard 1+vf, slim
+// or not): an MCP task's card (block id mcp_task_…) does, unless it is
+// already done under slackbot_mcp_tasks_card_auto_collapse_when_complete.
+// Under it a card the viewer hasn't toggled also closes when its task
+// completes or fails (once, when first seen done; animated runs the
+// height transition from the height on screen).
+func (me *Message) taskCardDefault(st *agentState, b *AgentBlock, key string) bool {
+	mcp := strings.HasPrefix(b.BlockID, "mcp_task_")
+	done := b.Status == StatusComplete || b.Status == StatusError
+	auto := me.mcpAutoCollapse()
+	if mcp && auto && done && !st.touched[key] && !st.touched[key+"\x00auto"] {
+		st.touched[key+"\x00auto"] = true
+		if st.isOpen(key, true) {
+			st.open[key] = false
+		}
+	}
+	return mcp && !(auto && done)
 }
 
 // clsAgentBlock is the plan / task_card block's element (CSS module
@@ -671,6 +976,14 @@ func (me *Message) toggleLine(gtx C, pal agentPal, status, title string, hasCont
 		if open {
 			name = "caret-down"
 		}
+		if len(lines) > 0 && lastW+caretW > max(w-ix, 1) {
+			// the caret (.toggleBarCaretInline, inline-flex) is an atomic
+			// inline: where the title's last line leaves it no room it
+			// breaks onto a line of its own and the bar grows, never past
+			// the block's edge (its clip would hide it)
+			lastW = 0
+			y += lh
+		}
 		cx := ix + lastW + dp(gtx, 4)
 		at(gtx, image.Pt(cx, y-lh+(lh-dp(gtx, 13))/2), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
 		maxW = max(maxW, lastW+caretW)
@@ -724,7 +1037,7 @@ func agentSpinner(gtx C, d int, pal agentPal) {
 	tail := float32(2 * math.Pi * cubicBezier(.41, .24, .64, .69, t))
 	circle(base+ring, dash, pal.blue)
 	circle(base+tail, dash, pal.blue)
-	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	indicatorFrame(gtx, 33*time.Millisecond)
 }
 
 // wrapText breaks s into lines of at most w px (13px regular), keeping
@@ -774,10 +1087,11 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 	lineW := max(dp(gtx, 1), 1)
 	y := 0
 	n := len(b.Tasks)
+	keys := taskKeys(b)
 	for i := range b.Tasks {
 		task := &b.Tasks[i]
 		first, last := i == 0, i == n-1
-		key := "task\x00" + b.BlockID + "\x00" + task.TaskID + "\x00" + itoa(i)
+		key := keys[i]
 		has := task.hasContent()
 		noTitle := enh && task.HideTitle
 		open := st.isOpen(key, true)
@@ -806,18 +1120,27 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 			if has {
 				caret = dp(gtx, 4) + dp(gtx, 13)
 			}
-			lines := wrapText(gtx, th, 13, task.Title, cw, caret)
+			// .taskHeaderSlim in the step content: a fit-content flex row
+			// (padding 4px 0, gap 4px) of the title (margin 2px 0), which
+			// wraps in what the caret leaves, and the caret (.taskHeaderCaret:
+			// align-self start, margin-top 6px), so 10px down, after the
+			// title's box: the line's width, or all of it once it wraps
+			lines := wrapText(gtx, th, 13, task.Title, max(cw-caret, 1), 0)
 			if len(lines) == 0 {
 				lines = []string{""}
 			}
 			ty := y + cy + pad + mar
-			lastW := 0
+			lineW := 0
 			for _, ln := range lines {
 				at(gtx, image.Pt(cx, ty), func(gtx C) D {
 					return vcenter(gtx, lh, func(gtx C) D { return label(gtx, th, 13, font.Normal, pal.ter, ln) })
 				})
-				lastW = measure(gtx, th, 13, font.Normal, ln)
+				lineW = measure(gtx, th, 13, font.Normal, ln)
 				ty += lh
+			}
+			titleW := lineW
+			if len(lines) > 1 {
+				titleW = max(cw-caret, 1)
 			}
 			headH := pad + mar + len(lines)*lh + mar + pad
 			if has {
@@ -825,10 +1148,9 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 				if open {
 					name = "caret-down"
 				}
-				// align-self start, margin-top 6px
-				at(gtx, image.Pt(cx+lastW+dp(gtx, 4), y+cy+dp(gtx, 6)), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
+				at(gtx, image.Pt(cx+titleW+dp(gtx, 4), y+cy+pad+dp(gtx, 6)), func(gtx C) D { return agentIcon(gtx, name, 13, pal.ter) })
 				at(gtx, image.Pt(cx, y+cy), func(gtx C) D {
-					t.add(gtx, image.Pt(lastW+caret, headH))
+					t.add(gtx, image.Pt(titleW+caret, headH))
 					return D{}
 				})
 			}
@@ -852,7 +1174,7 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 		rrect(gtx, image.Rect(lx, y, lx+lineW, y+top), 0, pal.line)
 		iy := y + top + gap + dp(gtx, 2) // icon box: margin 2px 0, height 8
 		ic := iy + dp(gtx, 4)
-		at(gtx, image.Pt(0, ic-dp(gtx, 6)), func(gtx C) D { return stepIcon(gtx, pal, task.Status, gut) })
+		at(gtx, image.Pt(0, ic-dp(gtx, 6)), func(gtx C) D { return stepIcon(gtx, pal, task, gut) })
 		below := iy + dp(gtx, 8) + dp(gtx, 2) + gap
 		showLine := !last || (open && has)
 		if itemH < below-y {
@@ -869,8 +1191,24 @@ func (me *Message) planTasks(gtx C, st *agentState, pal agentPal, b *AgentBlock,
 // stepIcon is the secondary slim TaskIcon in a gutter-wide, 12px-tall
 // box: spinner in progress, warning on error, else the placeholder dot
 // (5px; content-sec when complete, tertiary when pending).
-func stepIcon(gtx C, pal agentPal, status string, gut int) D {
+func stepIcon(gtx C, pal agentPal, task *AgentTask, gut int) D {
 	h := dp(gtx, 12)
+	status := task.Status
+	if name := taskIconName(task); name != "" {
+		// .taskIconSlim in the step indicator: the content's 13px, centred
+		// on its 8px box (overflow visible); content-sec when complete,
+		// else the block's content-ter
+		c := pal.ter
+		if status == StatusComplete {
+			c = pal.sec
+		}
+		s := dp(gtx, 13)
+		at(gtx, image.Pt((gut-s)/2, (h-s)/2), func(gtx C) D { return icon(gtx, name, 13, c) })
+		if agentIconHook != nil {
+			agentIconHook(name)
+		}
+		return D{Size: image.Pt(gut, h)}
+	}
 	switch status {
 	case StatusInProgress:
 		at(gtx, image.Pt((gut-h)/2, 0), func(gtx C) D { agentSpinner(gtx, h, pal); return D{} })
@@ -903,17 +1241,108 @@ func (me *Message) taskContent(gtx C, st *agentState, pal agentPal, key string, 
 		h += dh
 	}
 	if isRichText(t.Details) {
-		tv := me.agentRich(st, key+"\x00d", t.Details)
-		add(at(gtx, image.Pt(x, y+h+gapIf(h, gap)), func(gtx C) D { return D{Size: image.Pt(w, tv.layoutAgent(gtx, w))} }).Size.Y)
+		add(me.slimRich(gtx, st, pal, key+"\x00d", t.Details, x, y+h+gapIf(h, gap), w))
 	}
 	if isRichText(t.Output) {
-		tv := me.agentRich(st, key+"\x00o", t.Output)
-		add(at(gtx, image.Pt(x, y+h+gapIf(h, gap)), func(gtx C) D { return D{Size: image.Pt(w, tv.layoutAgent(gtx, w))} }).Size.Y)
+		add(me.slimRich(gtx, st, pal, key+"\x00o", t.Output, x, y+h+gapIf(h, gap), w))
 	}
 	if len(t.Sources) > 0 {
 		add(me.sources(gtx, st, pal, key, t.Sources, x, y+h+gapIf(h, gap), w))
 	}
 	return h
+}
+
+// slimRich is a slim TaskItem's details or output (its q: ZJNP
+// TruncatedBlocks, maxLines 3, maxChars 250, block-level expand button):
+// the rich text cut by Slack's rules (agent_truncate.go) with "Show more"
+// under it, the whole of it with "Show less" once opened
+// (c-rich_text_expand_button / _collapse_button: c-link--button, the
+// content's 13px in --dt_color-content-hgl-1, underlined on hover, a line
+// of its own).
+func (me *Message) slimRich(gtx C, st *agentState, pal agentPal, key string, raw json.RawMessage, x, y, w int) int {
+	c := st.cuts[key]
+	if c == nil || !bytes.Equal(c.raw, raw) {
+		cut, ok := truncateTaskContent(raw)
+		c = &agentCut{raw: append([]byte(nil), raw...), cut: cut, truncated: ok}
+		st.cuts[key] = c
+	}
+	moreKey := key + "\x00more"
+	open := st.isOpen(moreKey, false)
+	src, vk := raw, key+"\x00full"
+	if c.truncated && !open {
+		src, vk = c.cut, key+"\x00cut"
+	}
+	tv := me.agentRich(st, vk, src)
+	h := at(gtx, image.Pt(x, y), func(gtx C) D { return D{Size: image.Pt(w, tv.layoutAgent(gtx, w))} }).Size.Y
+	if !c.truncated {
+		return h
+	}
+	th := me.h.Theme()
+	txt := searchNS.T("Show more")
+	if open {
+		txt = searchNS.T("Show less")
+	}
+	t := st.tap(moreKey)
+	if t.clicked(gtx, me.h) {
+		st.open[moreKey] = !open
+		me.changed()
+	}
+	lh := dp(gtx, agentLH)
+	lw := min(measure(gtx, th, 13, font.Normal, txt), w)
+	at(gtx, image.Pt(x, y+h), func(gtx C) D {
+		return vcenter(gtx, lh, func(gtx C) D { return label(gtx, th, 13, font.Normal, pal.link, txt) })
+	})
+	at(gtx, image.Pt(x, y+h), func(gtx C) D {
+		t.add(gtx, image.Pt(max(lw, 1), lh))
+		return D{}
+	})
+	if t.g.Hovered() {
+		rrect(gtx, image.Rect(x, y+h+lh-dp(gtx, 3), x+lw, y+h+lh-dp(gtx, 2)), 0, pal.link)
+	}
+	return h + lh
+}
+
+// taskKeys are a plan's tasks' state keys (open, Show more): Slack's
+// PlanTaskList keys its items by task_id (hTrF InteractiveList's key ??
+// e.id), so a task's state follows it across an update wherever it moves;
+// the index stands in only for a task with no task_id, or one that
+// repeats in the plan.
+func taskKeys(b *AgentBlock) []string {
+	n := map[string]int{}
+	for i := range b.Tasks {
+		n[b.Tasks[i].TaskID]++
+	}
+	keys := make([]string, len(b.Tasks))
+	for i := range b.Tasks {
+		if id := b.Tasks[i].TaskID; id != "" && n[id] == 1 {
+			keys[i] = "task\x00" + b.BlockID + "\x00" + id
+		} else {
+			keys[i] = "task\x00" + b.BlockID + "\x00#" + itoa(i)
+		}
+	}
+	return keys
+}
+
+// resetUnder forgets the open states under a block that closed: Slack
+// unmounts its content (PlanTaskList's TaskItems, their truncated text),
+// so reopening it shows each task open and its text cut again.
+func (st *agentState) resetUnder(b *AgentBlock) {
+	pre := "task\x00" + b.BlockID + "\x00"
+	if b.Type != "plan" {
+		pre = "card\x00" + b.BlockID + "\x00" // not another card's whose id starts with this one's
+	}
+	for k := range st.open {
+		if strings.HasPrefix(k, pre) {
+			delete(st.open, k)
+		}
+	}
+}
+
+// mcpAutoCollapse is slackbot_mcp_tasks_card_auto_collapse_when_complete
+// (mGJN sn).
+func (me *Message) mcpAutoCollapse() bool {
+	c := me.h.Core()
+	return c != nil && c.Experiment("slackbot_mcp_tasks_card_auto_collapse_when_complete") == "on"
 }
 
 func gapIf(h, gap int) int {
@@ -970,16 +1399,14 @@ func (me *Message) cardBody(gtx C, st *agentState, pal agentPal, b *AgentBlock, 
 	key := "card\x00" + b.BlockID
 	y := 0
 	if isRichText(b.Details) {
-		tv := me.agentRich(st, key+"\x00d", b.Details)
-		h := at(gtx, image.Pt(pad, y), func(gtx C) D { return D{Size: image.Pt(cw, tv.layoutAgent(gtx, cw))} }).Size.Y
+		h := me.slimRich(gtx, st, pal, key+"\x00d", b.Details, pad, y, cw)
 		rrect(gtx, image.Rect(gut/2, y, gut/2+lineW, y+h), 0, pal.line)
 		y += h
 	}
 	start := y
 	h := 0
 	if isRichText(b.Output) {
-		tv := me.agentRich(st, key+"\x00o", b.Output)
-		h = at(gtx, image.Pt(pad, y), func(gtx C) D { return D{Size: image.Pt(cw, tv.layoutAgent(gtx, cw))} }).Size.Y
+		h = me.slimRich(gtx, st, pal, key+"\x00o", b.Output, pad, y, cw)
 		h += dp(gtx, 4) // .taskContentOutput margin-bottom
 	}
 	if len(b.Sources) > 0 {

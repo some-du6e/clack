@@ -278,6 +278,15 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 	switch s.Kind {
 	case richtext.Channel:
 		return b.channelToText(s.ID, s.Text), true
+	case richtext.MessageMention:
+		// messageMentionToText: the label as the store has it now (the
+		// notification waited for the linked message and the element's
+		// author: noteSlugs, noteMembers), fetching nothing; the link
+		// itself when the slug is disabled (convertUnknownSlugToUrl)
+		if s.Chan == "" {
+			return "", false
+		}
+		return b.core.MessageSlugText(s.Chan, s.ID, s.URL), true
 	case richtext.User:
 		if !core.LooksLikeMemberID(s.ID) {
 			return "", false
@@ -343,7 +352,9 @@ func (b *backend) noteChannelKnown(id string) bool {
 }
 
 // noteMentions are the channels d mentions that the store can't name yet
-// (at most noteResolveMax).
+// (at most noteResolveMax): its channel mentions', and its message
+// slugs' channels (getMessageMentions adds a slug's channel_id to the
+// channels ensureModelsArePresent fetches).
 func (b *backend) noteMentions(d richtext.Doc) []string {
 	if b.core == nil {
 		return nil
@@ -351,10 +362,43 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 	var out []string
 	seen := map[string]bool{}
 	richtext.PlainTextWith(d, func(s richtext.Span) (string, bool) {
-		if s.Kind == richtext.Channel && s.ID != "" && !seen[s.ID] {
-			seen[s.ID] = true
-			if len(out) < noteResolveMax && !b.noteChannelKnown(s.ID) {
-				out = append(out, s.ID)
+		id := ""
+		switch s.Kind {
+		case richtext.Channel:
+			id = s.ID
+		case richtext.MessageMention:
+			id = s.Chan
+		}
+		if id != "" && !seen[id] {
+			seen[id] = true
+			if len(out) < noteResolveMax && !b.noteChannelKnown(id) {
+				out = append(out, id)
+			}
+		}
+		return "", false
+	})
+	return out
+}
+
+// noteSlugs are the messages d's message slugs link to that the store
+// doesn't hold (at most noteResolveMax): ensureModelsArePresent's
+// messageIds (client-boot Eley te, DHDI), fetched by id before the
+// notification writes their labels.
+func (b *backend) noteSlugs(d richtext.Doc) []core.MsgKey {
+	if b.core == nil {
+		return nil
+	}
+	var out []core.MsgKey
+	seen := map[core.MsgKey]bool{}
+	richtext.PlainTextWith(d, func(s richtext.Span) (string, bool) {
+		if s.Kind != richtext.MessageMention || s.Chan == "" || s.ID == "" {
+			return "", false
+		}
+		k := core.MsgKey{Channel: s.Chan, TS: s.ID}
+		if !seen[k] && len(out) < noteResolveMax {
+			seen[k] = true
+			if _, ok := b.core.S.FindHeld(k.Channel, k.TS); !ok {
+				out = append(out, k)
 			}
 		}
 		return "", false
@@ -365,7 +409,7 @@ func (b *backend) noteMentions(d richtext.Doc) []string {
 // noteMembers are the people a notification names that the store doesn't
 // hold: its sender, its conversation's people (a DM's partner, a group
 // DM's members, whose names title it), then the members its text mentions
-// (at most noteMembersMax). Core announces a message the moment it
+// and its message slugs' authors (at most noteMembersMax). Core announces a message the moment it
 // arrives, its rows asking for the people they draw; the notification
 // waits for them, as Slack's showNotification waits for
 // ensureModelsArePresent (which adds a DM's user and a group DM's
@@ -398,6 +442,8 @@ func (b *backend) noteMembers(m *core.Message) []string {
 		}
 		return "", false
 	})
+	// and its message slugs' author_ids (getMessageMentions' userIds)
+	ids = append(ids, core.SlugAuthors(m)...)
 	if len(ids) == 0 {
 		return nil
 	}
@@ -428,7 +474,7 @@ func (b *backend) noteFresh(ev core.Event) core.Event {
 // notification's channel and people when it builds the notification;
 // Clack's may learn them a beat later, so the notification waits for the
 // lookups instead of showing ids.
-func (b *backend) noteResolve(a *App, ids, people []string, then func()) {
+func (b *backend) noteResolve(a *App, ids, people []string, msgs []core.MsgKey, then func()) {
 	parent := b.ctx
 	if parent == nil {
 		parent = context.Background()
@@ -450,6 +496,13 @@ func (b *backend) noteResolve(a *App, ids, people []string, then func()) {
 			go func() {
 				defer wg.Done()
 				c.EnsureUsers(ctx, people)
+			}()
+		}
+		if len(msgs) > 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				c.EnsureMessages(ctx, msgs) // the message slugs' messages (noteSlugs)
 			}()
 		}
 		wg.Wait()

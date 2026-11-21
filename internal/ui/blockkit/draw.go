@@ -252,7 +252,7 @@ func spinner(gtx C, d int, c color.NRGBA) {
 	paint.ColorOp{Color: c}.Add(gtx.Ops)
 	paint.PaintOp{}.Add(gtx.Ops)
 	st.Pop()
-	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	indicatorFrame(gtx, 33*time.Millisecond) // held still in an inactive window
 }
 
 // handCursor sets the pointer cursor over r.

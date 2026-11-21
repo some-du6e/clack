@@ -21,7 +21,12 @@ type caretGPUFrame struct {
 	// pixels of it that differed from the frame texture's
 	copyChecked    bool
 	copyMismatchPx int64
-	atlasPx        int64 // the coverage atlas's pages
+	// externals are the external images' paints the frame asked for a
+	// texture (Gio patch 51), wraps the textures it wrapped
+	externals, wraps int
+	// damageRects are a partial frame's damage rectangles
+	damageRects int
+	atlasPx     int64 // the coverage atlas's pages
 }
 
 // caretGPUHook has f called for every frame a window draws (on the
@@ -33,7 +38,7 @@ func caretGPUHook(f func(caretGPUFrame)) (stop func()) {
 			copyPx -= s.DamagePx
 		}
 		f(caretGPUFrame{partial: s.Partial, damagePx: s.DamagePx, draws: s.Draws, apiCalls: s.APICalls, copyPx: copyPx,
-			copyChecked: s.CopyChecked, copyMismatchPx: s.CopyMismatchPx, atlasPx: s.AtlasPx})
+			copyChecked: s.CopyChecked, copyMismatchPx: s.CopyMismatchPx, externals: s.Externals, wraps: s.ExternalWraps, damageRects: s.DamageRects, atlasPx: s.AtlasPx})
 	})
 	return func() { app.SetGPUFrameHook(nil) }
 }
