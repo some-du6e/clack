@@ -128,8 +128,10 @@ func TestSurfaceNestedClick(t *testing.T) {
 		map[string]any{"type": "fallback_canary", "block_id": "f1", "fallback": []any{map[string]any{"type": "section", "block_id": "s1",
 			"text": map[string]any{"type": "mrkdwn", "text": "Approve?"}, "accessory": visBtn("ok")}}},
 	})
-	v := &core.View{ID: "V0FAKENEST", RootViewID: "V0FAKENEST", Type: "modal", Title: mustJSON(Text{Type: "plain_text", Text: "Nested"}),
-		Close: mustJSON(Text{Type: "plain_text", Text: "Cancel"}), Blocks: raw}
+	// a view's actions go out with its app's bot as the service
+	// (ViewContainer: bot_id, else invalid_service_id before any request)
+	v := &core.View{ID: "V0FAKENEST", RootViewID: "V0FAKENEST", Type: "modal", BotID: "B0FAKENEST", AppID: "A0FAKENEST",
+		Title: mustJSON(Text{Type: "plain_text", Text: "Nested"}), Close: mustJSON(Text{Type: "plain_text", Text: "Cancel"}), Blocks: raw}
 	st := newStack(e.h, v)
 	e.h.ShowOverlay(st)
 	for range 3 {
