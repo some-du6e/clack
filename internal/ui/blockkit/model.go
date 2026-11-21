@@ -257,7 +257,16 @@ type Block struct {
 	// resolveFallback), so their elements are the surface's own: find,
 	// initValues and the view's state walk them (allBlocks).
 	Nested []Block `json:"-"`
+	// kids are Nested's blocks as UnmarshalJSON found them, until
+	// parseBlocks decodes them at their depth (nest).
+	kids []json.RawMessage
 }
+
+// maxNesting is how deep blocks inside blocks are followed (containers'
+// and callouts' child_blocks, fallback payloads), as richtext follows
+// fallbacks (maxFallbackDepth); deeper ones are dropped. Without it a
+// sender's containers nested 30 deep held the UI goroutine.
+const maxNesting = 8
 
 func (b *Block) UnmarshalJSON(raw []byte) error {
 	type plain Block
@@ -279,18 +288,50 @@ func (b *Block) UnmarshalJSON(raw []byte) error {
 	case b.Type == "card" && len(p.Actions) > 0: // Card's actions (7Xkb), its block id theirs
 		_ = json.Unmarshal(p.Actions, &b.Elements)
 	}
+	// the nested blocks wait for parseBlocks, which knows their depth
 	switch {
 	case b.Type == "container" || b.Type == "callout":
-		b.Nested = ParseBlocks(p.ChildBlocks)
+		b.kids = blockParts(p.ChildBlocks)
 	case len(p.Fallback) > 0:
-		for _, it := range richtext.FallbackItems(b.Type, p.Fallback) {
-			var nb Block
-			if json.Unmarshal(it, &nb) == nil {
-				b.Nested = append(b.Nested, nb)
-			}
-		}
+		b.kids = richtext.FallbackItems(b.Type, p.Fallback)
 	}
 	return nil
+}
+
+// blockParts splits a blocks array into its blocks, undecoded (nil for
+// anything but an array).
+func blockParts(raw json.RawMessage) []json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var parts []json.RawMessage
+	if json.Unmarshal(raw, &parts) != nil {
+		return nil
+	}
+	return parts
+}
+
+// parseBlocks decodes each of parts on its own (one bad block doesn't drop
+// the rest, and nothing is decoded twice) and the blocks nested in them,
+// depth levels down so far, to maxNesting.
+func parseBlocks(parts []json.RawMessage, depth int) []Block {
+	if parts == nil {
+		return nil
+	}
+	bs := make([]Block, 0, len(parts))
+	for _, p := range parts {
+		var b Block
+		if json.Unmarshal(p, &b) != nil {
+			continue
+		}
+		kids := b.kids
+		b.kids = nil
+		if len(kids) > 0 && depth < maxNesting {
+			b.Nested = parseBlocks(kids, depth+1)
+		}
+		bs = append(bs, b)
+	}
+	return bs
 }
 
 // allBlocks is every block of bs with the blocks nested in it, each
@@ -321,26 +362,10 @@ func expandConditions(h Host, raw json.RawMessage) json.RawMessage {
 	return richtext.ExpandConditions(raw, team, ent)
 }
 
-// ParseBlocks decodes a Block Kit blocks array (unknown fields ignored).
+// ParseBlocks decodes a Block Kit blocks array (unknown fields ignored),
+// block by block, with the blocks nested in them (parseBlocks).
 func ParseBlocks(raw json.RawMessage) []Block {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var bs []Block
-	if json.Unmarshal(raw, &bs) != nil {
-		// one bad block shouldn't drop the rest
-		var parts []json.RawMessage
-		if json.Unmarshal(raw, &parts) != nil {
-			return nil
-		}
-		for _, p := range parts {
-			var b Block
-			if json.Unmarshal(p, &b) == nil {
-				bs = append(bs, b)
-			}
-		}
-	}
-	return bs
+	return parseBlocks(blockParts(raw), 0)
 }
 
 // ref is one element's place in a surface.
