@@ -49,13 +49,15 @@ func hasMessageBlocks(raw json.RawMessage) bool {
 // rendersBlocks is shouldRenderBlocksInsteadOfText (client-boot iub5)
 // without its experiment-gated cases (a retention message under
 // system_messages_redesign_m1, the meeting-channel and system-metadata
-// redesigns): a meeting's artifacts DM draws its text; a canvas share its
-// blocks only when it carries no files; a channel tab or folder message,
-// an automated subtype (h3YX isAutomatedSubtype), a huddle (a room, with
-// no subtype, a broadcast's or a huddle's) or its notes, a scheduled or
-// canceled huddle, a list record's or a surface card's comment root, a
-// calendar event and a meeting reminder (a meeting_join_ accessory) its
-// text; anything else its blocks when it has any (hasMessageBlocks).
+// redesigns). It is false for the messages MessageText leaves to another
+// renderer and draws the text of: a meeting's artifacts DM, a canvas share
+// that carries files, a channel tab or folder message, an automated
+// subtype (h3YX isAutomatedSubtype), a huddle (a room, with no subtype, a
+// broadcast's or a huddle's) or its notes, a scheduled or canceled
+// huddle, a list record's or a surface card's comment root, a calendar
+// event and a meeting reminder (a meeting_join_ accessory); anything else
+// draws its blocks when it has any (hasMessageBlocks). FromMessageIn lets
+// the text stand in for blocks that draw nothing by it.
 func rendersBlocks(m *slack.Message) bool {
 	if metaEventType(m.Metadata) == "slack_system.meeting.artifacts_ready" {
 		return false
@@ -209,18 +211,19 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	c := newBuilder(r, m, ch)
 	var d Doc
 	blocks := c.expanded(m.Blocks)
-	useBlocks := rendersBlocks(m)
-	if bs := parseBlocks(blocks); useBlocks && len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
+	if bs := parseBlocks(blocks); len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
 	}
 	// Slack draws the blocks instead of the text whenever the message has
 	// any (shouldRenderBlocksInsteadOfText), even if they draw nothing (a
 	// condition with no case for the desktop, an empty fallback list),
-	// unless it's one of the messages whose text it always draws
-	// (rendersBlocks). The text stands in too when a block Clack can't
-	// draw yet drew nothing.
-	if len(d.Blocks) == 0 && m.Text != "" && (!useBlocks || c.missing) {
+	// except for the messages another renderer draws (rendersBlocks: the
+	// automated subtypes' MessageAutomatedSubtype, which shows
+	// agent_view_added's blocks through GenericSystemMessage, huddles,
+	// calendar events…): for those the text stands in when the blocks draw
+	// nothing. It does too when a block Clack can't draw yet drew nothing.
+	if len(d.Blocks) == 0 && m.Text != "" && (!rendersBlocks(m) || c.missing) {
 		d.Blocks = FromMrkdwn(r, m.Text)
 		d.Jumbo = onlyEmoji(r, m.Text)
 	}
