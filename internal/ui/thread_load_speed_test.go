@@ -77,7 +77,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 	// opened runs frames from the open until the pane lays ts's row out
 	// on screen (a frame after the open: a closed pane keeps its rows),
 	// and logs how long that took and in how many frames
-	opened := func(what, ts string, open func()) {
+	opened := func(t *testing.T, what, ts string, open func()) {
 		t.Helper()
 		t0 := time.Now()
 		open()
@@ -112,7 +112,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 		}
 	}
 	// closed closes the pane and checks the store let the thread go
-	closed := func(what string) {
+	closed := func(t *testing.T, what string) {
 		t.Helper()
 		// truncateThreadHistory reads the channel (conversations.info,
 		// which opening it asked for)
@@ -130,7 +130,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 			t.Errorf("%s: the store kept %d of the closed thread's messages", what, len(held))
 		}
 	}
-	checkHeld := func(what string, max int) {
+	checkHeld := func(t *testing.T, what string, max int) {
 		t.Helper()
 		held, _ := app.S.Thread(ch, root)
 		t.Logf("%s: the store holds %d of the thread's messages", what, len(held))
@@ -155,7 +155,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 			l, ok := c.list.(channelList)
 			return ok && l.ChannelView.RowText(root) != ""
 		})
-		opened("permalink", reply(1), func() {
+		opened(t, "permalink", reply(1), func() {
 			e.a.OpenThread(ch, root) // the reply bar's click
 			e.a.FocusThreadComposer(ch, root)
 		})
@@ -176,8 +176,8 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 		if !tv.HidesComposer() {
 			t.Error("the reply box shows over a slice short of the thread's end (getThreadRowsAndKeys: loading-end, no input)")
 		}
-		checkHeld("permalink", 1+28*len(reqs()))
-		closed("permalink")
+		checkHeld(t, "permalink", 1+28*len(reqs()))
+		closed(t, "permalink")
 	})
 
 	// 2. the channel's reply bar, then three pages down
@@ -192,7 +192,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 			return ok && l.ChannelView.RowText(root) != ""
 		})
 		before := len(reqs())
-		opened("channel", reply(1), func() {
+		opened(t, "channel", reply(1), func() {
 			e.a.OpenThread(ch, root)
 			e.a.FocusThreadComposer(ch, root)
 		})
@@ -227,8 +227,8 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 		if !tv.HidesComposer() {
 			t.Error("the reply box shows over a slice short of the thread's end")
 		}
-		checkHeld("channel", 1+28*len(got))
-		closed("channel")
+		checkHeld(t, "channel", 1+28*len(got))
+		closed(t, "channel")
 	})
 
 	// 3. Activity: the mention in the middle of the thread, then older
@@ -247,7 +247,7 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 			t.Fatal("no Activity view")
 		}
 		before := len(reqs())
-		opened("activity", midTS, func() {
+		opened(t, "activity", midTS, func() {
 			e.until("the mention open beside the feed", 20*time.Second, func() bool {
 				if !e.a.secondary.open() {
 					act.StepItem(1, false) // Alt+Down: the item opens as its click opens it
@@ -345,13 +345,13 @@ func TestHugeThreadLoadsLikeSlack(t *testing.T) {
 		if p95 > 150*time.Millisecond || ds[len(ds)-1] > time.Second {
 			t.Errorf("frames while scrolling up: p95 %v, longest %v", p95, ds[len(ds)-1])
 		}
-		checkHeld("activity", 1+28*len(got))
+		checkHeld(t, "activity", 1+28*len(got))
 		heap := liveHeapMB()
 		t.Logf("heap with %d older pages read: %.1f MB (%.1f MB over before any open)", pages, heap, heap-heap0)
 		if heap-heap0 > 96 {
 			t.Errorf("the heap grew %.1f MB for a few pages of one thread", heap-heap0)
 		}
-		closed("activity")
+		closed(t, "activity")
 		t.Logf("replies requests over the three opens: %d (all of the thread would be about %d at 200 a page)", len(reqs()), n/200+1)
 	})
 }
