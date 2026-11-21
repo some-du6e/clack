@@ -2028,9 +2028,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SLACK_TESTS: '^(TestRTMClosesSilentSocket|TestRTMPongTimeoutCountsSleep)$'
-      STORE_TESTS: '^(TestResetReachedEndHoldsTheSocketsMessages|TestCatchUpJoinsTheWindow|TestCatchUpTakesTheConfirmedSend|TestNewestPageJoinsTheWaitingMessages|TestOlderPageJoinsOnlyWhereTheWindowStarts)$'
+      STORE_TESTS: '^(TestResetReachedEndHoldsTheSocketsMessages|TestCatchUpJoinsTheWindow|TestCatchUpTakesTheConfirmedSend|TestNewestPageJoinsTheWaitingMessages|TestOlderPageJoinsOnlyWhereTheWindowStarts|TestNewestPageKeepsTheViewersSends|TestNewestPageReadAcrossAResetStaysStale|TestNewestPageThatMissesStartsANewEpoch)$'
       CORE_TESTS: '^TestSocketGap'
-      HUB_TESTS: '^TestNewestPageThatMissesTheListStartsItOver$'
+      HUB_TESTS: '^TestNewestPageOfAnotherWindowIsTakenWhole$'
       UI_TESTS: '^TestSocketGapListDrawsEveryMessage$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

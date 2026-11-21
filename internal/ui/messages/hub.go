@@ -59,6 +59,7 @@ type model struct {
 	// was out ("history_caught_up"): the list loads again once that one
 	// lands, which may have read the window from before
 	caughtUp bool
+	epoch    uint64      // core's window the model holds (Page.Epoch, takeNewest)
 	renames  [][2]string // pending ts -> confirmed ts, consumed by views
 	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
 	// newestMissing: the window misses the newest page (snap.newestMissing)
@@ -427,20 +428,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			m.err = err
 			live := m.takeLive()
 			if err == nil {
-				if m.dropped {
-					// core's window as it is now (dropped), whole: setAll
-					// keeps the revisions of the messages it already had, as
-					// they were. No older page was asked meanwhile (loadOlder
-					// refuses a dropped model's), and keepLive below puts back
-					// only what's in this window. (msg-latency: this branch
-					// takes the window's epoch too, m.epoch = p.Epoch, or
-					// every older page after it is turned away as another
-					// window's until the next reload.)
-					m.setAll(p.Messages)
-					m.hasMore, m.dropped = p.HasMore, false
-				} else {
-					m.mergeNewest(p.Messages, p.HasMore)
-				}
+				m.takeNewest(p)
 				m.keepLive(live)
 				if !m.loaded {
 					m.lastRead = p.LastRead
@@ -642,22 +630,6 @@ func (m *model) mergeNewest(page []core.Message, hasMore bool) {
 		m.hasMore = hasMore
 		return
 	}
-	// A newest page that starts after the newest message the list holds
-	// from Slack, with more history before it, doesn't meet the list:
-	// Slack's channel history keeps such a page a slice of its own (om2Z
-	// insert: the two don't intersect) and its newest view draws the
-	// newest slice alone (dTxY getTimestampsByChannelId). Kept in front of
-	// it, the list's messages drew as one list with the ones between
-	// them and the page left out, and nothing to show it: a newest page
-	// read after the socket missed more than a page (core's catch-up
-	// starting the window over, a poll while the socket was down).
-	if hasMore {
-		if newest, oldest := newestFromSlack(m.msgs), oldestFromSlack(page); newest != "" && oldest != "" && tsLess(newest, oldest) {
-			m.setAll(page)
-			m.hasMore = hasMore
-			return
-		}
-	}
 	first := page[0].TS
 	var keep []core.Message
 	for _, e := range m.msgs {
@@ -671,26 +643,28 @@ func (m *model) mergeNewest(page []core.Message, hasMore bool) {
 	m.setAll(append(keep, page...))
 }
 
-// newestFromSlack is the newest message of msgs from Slack: no local copy
-// (a pending or failed send) or ephemeral one, which no history page
-// holds ("" for none).
-func newestFromSlack(msgs []entry) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if x := &msgs[i].m; !x.Pending && !x.Failed && !x.Ephemeral {
-			return x.TS
-		}
+// takeNewest puts a newest page core read (its window) into the model
+// (callers hold m.mu). A dropped model takes core's window as it is now,
+// whole: setAll keeps the revisions of the messages it already had, as
+// they were; no older page was asked meanwhile (loadOlder refuses a
+// dropped model's), and keepLive puts back only what's in this window. A
+// model holding another window's messages (core started the window over
+// at a newest page that didn't meet it: Page.Epoch) takes it whole too,
+// as Slack's newest view draws the newest slice alone: kept in front of
+// it, the old messages drew as one list with the ones between missing.
+// Any other keeps what it loaded before the window (mergeNewest).
+func (m *model) takeNewest(p core.Page) {
+	switch {
+	case m.dropped:
+		m.setAll(p.Messages)
+		m.hasMore, m.dropped = p.HasMore, false
+	case m.loaded && p.Epoch != m.epoch:
+		m.setAll(p.Messages)
+		m.hasMore = p.HasMore
+	default:
+		m.mergeNewest(p.Messages, p.HasMore)
 	}
-	return ""
-}
-
-// oldestFromSlack is the oldest message of page from Slack ("" for none).
-func oldestFromSlack(page []core.Message) string {
-	for i := range page {
-		if x := &page[i]; !x.Pending && !x.Failed && !x.Ephemeral {
-			return x.TS
-		}
-	}
-	return ""
+	m.epoch = p.Epoch
 }
 
 // evict drops the messages before oldest, or everything when oldest is ""
@@ -1015,6 +989,9 @@ func (hb *hub) apply(ev core.Event) bool {
 			// mirror to have handled the event (MessageViewState's need)
 			switch {
 			case ahead && chm.find(ev.Msg.TS) < 0:
+				if ev.Type == "message" { // it comes with the window; its sender stopped typing
+					delete(chm.typing, ev.Msg.User)
+				}
 			case ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inRange(ev.Msg.TS):
 				chm.upsert(*ev.Msg, ev.EmitSeq)
 				chm.noteLive(ev.Msg.TS, false)
