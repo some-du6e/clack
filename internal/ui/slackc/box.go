@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"image/color"
+	"slices"
 	"strings"
 
 	"gioui.org/op"
@@ -73,8 +74,13 @@ type box struct {
 	native     bool   // "@" drawn by a Clack widget (<Original> or a registered host)
 	hostFn     HostComponent
 	host       Host
-	nprops     Props     // n.P plus "children" (the rendered children) for natives
-	rctx       renderCtx // curRender while this native draws
+	// hostEl is the DOM element a registered host draws as (Slack's
+	// button.c-button for Button); cls is then its classes, Slack's
+	// component's own and then the className a plugin passed.
+	hostEl *HostElement
+	cls    []string
+	nprops Props     // n.P plus "children" (the rendered children) for natives
+	rctx   renderCtx // curRender while this native draws
 
 	// topLayer: a modal <dialog> (showModal): positioned against the
 	// window and painted above everything else in its tree, over
@@ -191,6 +197,9 @@ func (b *box) Tag() string {
 	case kElem:
 		return b.n.T
 	case kComp:
+		if b.hostEl != nil && b.hostEl.Tag != "" {
+			return b.hostEl.Tag
+		}
 		return "div"
 	}
 	return ""
@@ -204,10 +213,7 @@ func (b *box) ID() string {
 }
 
 func (b *box) HasClass(c string) bool {
-	if b.n == nil {
-		return false
-	}
-	for _, x := range b.n.Class {
+	for _, x := range b.Classes() {
 		if x == c {
 			return true
 		}
@@ -216,6 +222,9 @@ func (b *box) HasClass(c string) bool {
 }
 
 func (b *box) Classes() []string {
+	if b.hostEl != nil {
+		return b.cls
+	}
 	if b.n == nil {
 		return nil
 	}
@@ -289,8 +298,10 @@ func (b *box) State() css.State { return b.state }
 
 // HostNode marks a plugin's own elements for the host base sheet
 // (Slack's rules for the classes plugins put on them, pluginElementCSS);
-// a Slack component ("@") in the tree draws its own look.
-func (b *box) HostNode() bool { return b.kind == kElem }
+// a Slack component ("@") in the tree draws its own look, unless its host
+// declares the element it stands for (RegisterHostElement: kit's Button
+// is Slack's button.c-button, which those rules style in Slack).
+func (b *box) HostNode() bool { return b.kind == kElem || b.kind == kComp && b.hostEl != nil }
 
 // Modal reports an open <dialog> JS showed with showModal() (:modal).
 func (b *box) Modal() bool {
@@ -325,6 +336,11 @@ func (b *box) HasText() bool {
 
 // isElem reports a host element or component (event targets, CSS).
 func (b *box) isElem() bool { return b.kind == kElem || b.kind == kComp }
+
+// ownBox reports a native that draws its own box from its CSS
+// (HostElement.OwnBox): the engine leaves its padding, borders and
+// background to it.
+func (b *box) ownBox() bool { return b.native && b.hostEl != nil && b.hostEl.OwnBox }
 
 // k returns the node's host id (0 for text/generated boxes).
 func (b *box) k() int64 {
@@ -529,6 +545,8 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 	b.listMarker = 0
 	b.key = mix(uint64(n.K)*0x9e3779b97f4a7c15 ^ v.root<<17 ^ uint64(v.styleGen)<<1 ^ uint64(b.n.index))
 	b.native, b.hostFn = false, nil
+	el := b.hostEl
+	b.hostEl = nil
 	if b.kind == kComp {
 		if _, ok := SlotOf(n); ok {
 			b.native = true
@@ -536,6 +554,12 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 			b.native = true
 		} else if fn, ok := LookupHost(n.N); ok {
 			b.native, b.hostFn = true, fn
+			if he := lookupHostElement(n.N); he != nil {
+				if he != el || b.cls == nil {
+					b.cls = hostClasses(he, n)
+				}
+				b.hostEl = he
+			}
 		}
 	}
 	if styleHook != nil {
@@ -553,6 +577,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		b.set = 0
 		v.uaDefaults(b, nil, parent)
 		v.uaPost(b, nil, parent)
+		b.hostStyle()
 		v.topLayerStyle(b, e)
 		return
 	}
@@ -589,7 +614,38 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		}
 	}
 	v.uaPost(b, &c, parent)
+	b.hostStyle()
 	v.topLayerStyle(b, e)
+}
+
+// hostStyle gives a declared host element its own look where no rule set
+// a property (HostElement.Style), before its children inherit from it.
+func (b *box) hostStyle() {
+	if b.hostEl == nil || b.hostEl.Style == nil {
+		return
+	}
+	set := b.set
+	b.hostEl.Style(b.n.P, &b.st, func(prop string) bool { return set&propBits[prop] != 0 })
+	b.cursor = b.st.Cursor
+}
+
+// hostClasses is the class list of a host element: the classes Slack's
+// component adds for n's props, then the className the plugin passed (as
+// clsx joins them: Button's "c-button", its modifiers, then className).
+// Never nil, so it is computed once per box.
+func hostClasses(e *HostElement, n *Node) []string {
+	var own []string
+	if e.Classes != nil {
+		own = e.Classes(n.P)
+	}
+	out := make([]string, 0, len(own)+len(n.Class))
+	out = append(out, own...)
+	for _, c := range n.Class {
+		if !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // topLayerStyle puts an open modal dialog in the top layer and computes

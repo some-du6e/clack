@@ -67,43 +67,61 @@ func tooltip(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	st := stateOf[tooltipState](h)
 	d := h.Children(gtx)
 	hovered := st.hover.layout(gtx, d.Size)
-	st.org.track(gtx, image.Rectangle{Max: d.Size})
-	if !hovered || !h.HasElement("tip") {
+	o := tipOpts{prop: "tip", pos: h.Props.StrOr("position", "top"), delay: popups.TipDelay}
+	if ms, ok := h.Props.Num("delay"); ok && ms >= 0 {
+		o.delay = time.Duration(ms) * time.Millisecond
+	}
+	o.offX, o.hasX = h.Props.Num("offsetX")
+	o.offY, o.hasY = h.Props.Num("offsetY")
+	st.show(gtx, h, d.Size, hovered, o)
+	return d
+}
+
+// tipOpts are a tooltip's tip (the host prop holding it, a string or an
+// element) and Tooltip's position, offsetX, offsetY (CSS px) and delay.
+type tipOpts struct {
+	prop, pos  string
+	offX, offY float64
+	hasX, hasY bool
+	delay      time.Duration
+}
+
+// show draws the tip of a trigger of size sz at the gtx origin while it
+// is hovered, after the delay: Slack's BaseTooltip, as Tooltip draws it.
+func (st *tooltipState) show(gtx layout.Context, h *slackc.Host, sz image.Point, hovered bool, opt tipOpts) {
+	st.org.track(gtx, image.Rectangle{Max: sz})
+	if !hovered || !h.HasElement(opt.prop) {
 		st.on = false
-		return d
+		return
 	}
 	if !st.on {
 		st.on = true
 		st.since = gtx.Now
 	}
-	delay := popups.TipDelay
-	if ms, ok := h.Props.Num("delay"); ok && ms >= 0 {
-		delay = time.Duration(ms) * time.Millisecond
-	}
-	if wait := st.since.Add(delay); gtx.Now.Before(wait) {
+	if wait := st.since.Add(opt.delay); gtx.Now.Before(wait) {
 		gtx.Execute(op.InvalidateCmd{At: wait})
-		return d
+		return
 	}
 	th := thm()
 	cl := colorsOf(th)
-	o := theme.BaseTooltip(gtx, tipPosition(h.Props.StrOr("position", "top")))
-	if v, ok := h.Props.Num("offsetX"); ok {
-		o.OffsetX = dp(gtx, float32(v))
+	o := theme.BaseTooltip(gtx, tipPosition(opt.pos))
+	if opt.hasX {
+		o.OffsetX = dp(gtx, float32(opt.offX))
 	}
-	if v, ok := h.Props.Num("offsetY"); ok {
-		o.OffsetY = dp(gtx, float32(v))
+	if opt.hasY {
+		o.OffsetY = dp(gtx, float32(opt.offY))
 	}
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
 	maxW := dp(gtx, 320)
 	content, cs := record(loose(gtx, image.Pt(maxW, 1<<20)), func(gtx layout.Context) layout.Dimensions {
-		return textOrElement(gtx, h, "tip", th, 13, 18, theme.Bold, cl.TooltipText, 0)
+		return textOrElement(gtx, h, opt.prop, th, 13, 18, theme.Bold, cl.TooltipText, 0)
 	})
 	box := image.Pt(cs.Size.X+2*padX, cs.Size.Y+2*padY)
 	var bounds image.Rectangle
 	if st.org.ok {
 		bounds = theme.WindowBounds(st.org.get())
 	}
-	pl := theme.PlaceTooltip(gtx, image.Rectangle{Max: d.Size}, box, bounds, o)
+	pl := theme.PlaceTooltip(gtx, image.Rectangle{Max: sz}, box, bounds, o)
 	m := op.Record(gtx.Ops)
 	// box and arrow, outlined together in dark mode (theme/tooltip.go)
 	var glow color.NRGBA
@@ -116,7 +134,6 @@ func tooltip(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		return layout.Dimensions{Size: box}
 	})
 	op.Defer(gtx.Ops, m.Stop())
-	return d
 }
 
 // tipPosition is a Tooltip position prop as TooltipTip's position
@@ -290,7 +307,10 @@ func confirmationModal(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			focus = nil
 		}
 		st.m = popups.NewModal(ph, popups.ModalOpts{
-			Title:     title,
+			Title: title,
+			// Slack's ConfirmationModal titles are ModalTitleBar's h1 in
+			// .c-sk-modal_title_bar__text, which wraps (client-boot Fj8r, H4iZ)
+			TitleWrap: true,
 			Buttons:   btns,
 			AutoFocus: focus,
 			OnClose:   func() { st.h.Call("onClose") },

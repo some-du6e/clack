@@ -115,6 +115,7 @@ type App struct {
 	secCol     sectionCollapseState // the channel_sections collapse write's debounce (section_collapse.go)
 	drafts     draftCache           // the viewer's server drafts (drafts.go), memory only
 	dnd        dndState             // the viewer's Do Not Disturb (dnd.go)
+	mdnd       memberDNDState       // other members' Do Not Disturb (dnd_members.go)
 	mega       megaphoneState       // megaphone spaces, global and per channel (megaphone.go)
 	ssugg      searchSuggState      // the window's last search's filter suggestions (search_suggest.go)
 	selected   string               // the open conversation (SetSelected, preview.go)
@@ -1285,7 +1286,7 @@ func avatarURL(u *slack.User, size int, viewerTeam string) string {
 func (a *App) userOf(u *slack.User) User {
 	viewer := firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
 	v := User{
-		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(u.Profile.RealName), Handle: u.Name,
+		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(firstNonEmpty(u.Profile.RealName, u.RealName)), Handle: u.Name,
 		DisplaySet: strings.TrimSpace(u.Profile.DisplayName) != "",
 		Avatar:     avatarURL(u, 72, viewer), Avatar192: avatarURL(u, 192, viewer), Avatar512: avatarURL(u, 512, viewer),
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
@@ -1305,17 +1306,18 @@ func (a *App) userOf(u *slack.User) User {
 	if v.RealName == "​" {
 		v.RealName = ""
 	}
+	// the status emoji through its status_emoji_display_info entry (by
+	// emoji_name, not the list's first: status_emoji.go)
+	v.StatusEmojiInfo = parseStatusEmojiInfo(u.Profile.StatusEmojiDisplay)
 	if v.StatusEmoji != "" {
-		v.StatusEmojiURL, _, _ = a.S.Emoji(strings.Trim(v.StatusEmoji, ":"))
-		if len(u.Profile.StatusEmojiDisplay) > 2 {
-			var di []struct {
-				DisplayURL string `json:"display_url"`
-			}
-			if json.Unmarshal(u.Profile.StatusEmojiDisplay, &di) == nil && len(di) > 0 && di[0].DisplayURL != "" {
-				v.StatusEmojiURL = di[0].DisplayURL
-			}
+		code, pic := EmojiDisplayInfo(v.StatusEmoji, v.StatusEmojiInfo)
+		v.StatusEmoji = code
+		if pic == "" {
+			pic, _, _ = a.S.Emoji(strings.Trim(code, ":"))
 		}
+		v.StatusEmojiURL = pic
 	}
+	v.DND = a.MemberInDND(u.ID, time.Now())
 	a.S.RLock()
 	v.Presence = a.S.Presence[u.ID]
 	a.S.RUnlock()
