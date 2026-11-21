@@ -35,6 +35,20 @@ type Timeline struct {
 	Msgs    []slack.Message // ascending by ts
 	HasMore bool            // older messages exist beyond Msgs[0]
 	Loaded  bool
+	// EndStale: the window may stop short of the conversation's newest
+	// message. Slack's resetReachedEnd at every slow connect
+	// (reached_end.go): nothing the socket missed meanwhile is in it, so
+	// it is read forward from End before it is the newest window again,
+	// and what the socket brings past End waits in Ahead until then.
+	EndStale bool
+	End      string          // EndStale: the newest message from Slack the window held then
+	Ahead    []slack.Message // EndStale: the socket's messages past End, ascending
+	EndGen   uint64          // the reset (ResetReachedEnd) the window's end last went stale at
+	// Epoch is which window this is: a newest page that doesn't meet the
+	// window it replaces starts a new one (SetLatestReadAt), and a list
+	// holding an older epoch's messages takes this one whole instead of
+	// keeping its own in front (Slack keeps such a page a slice of its own)
+	Epoch uint64
 }
 
 type Store struct {
@@ -55,6 +69,8 @@ type Store struct {
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
+	endGen      uint64                     // ResetReachedEnd calls so far (reached_end.go)
+	epochs      uint64                     // windows started so far (Timeline.Epoch)
 	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
 	liveQ       []string                   // live's keys, oldest first
 	liveSeq     uint64                     // realtime message changes seen
@@ -1316,6 +1332,7 @@ func (s *Store) Timeline(ch string) *Timeline {
 	}
 	cp := *t
 	cp.Msgs = append([]slack.Message(nil), t.Msgs...)
+	cp.Ahead = append([]slack.Message(nil), t.Ahead...)
 	return &cp
 }
 
@@ -1334,7 +1351,13 @@ func (s *Store) TimelineIDs() []string {
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
-	s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+	t := &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, EndGen: s.endGen}
+	if old := s.timelines[ch]; old != nil {
+		t.Epoch = old.Epoch // the same window, written whole (a test's)
+	} else {
+		t.Epoch = s.newEpochLocked()
+	}
+	s.timelines[ch] = t
 	s.mu.Unlock()
 }
 
@@ -1358,7 +1381,7 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
 	if t == nil {
-		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true}
+		s.timelines[ch] = &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, EndGen: s.endGen, Epoch: s.newEpochLocked()}
 		return msgs
 	}
 	merged := append(append([]slack.Message(nil), msgs...), t.Msgs...)
@@ -1415,6 +1438,9 @@ func (s *Store) UpsertInRange(ch string, m slack.Message) {
 			return
 		}
 	}
+	if s.aheadLocked(ch, t, m) { // past a window whose end went stale (reached_end.go)
+		return
+	}
 	if t.HasMore {
 		oldest := ""
 		for i := range t.Msgs {
@@ -1447,6 +1473,14 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			if t.Msgs[i].TS == ts {
 				f(&t.Msgs[i])
 				out, found = t.Msgs[i], true
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == ts {
+				f(&t.Ahead[i])
+				if !found {
+					out, found = t.Ahead[i], true
+				}
 			}
 		}
 	}
@@ -1486,6 +1520,12 @@ func (s *Store) removeLocked(ch, ts string) {
 		for i := range t.Msgs {
 			if t.Msgs[i].TS == ts {
 				t.Msgs = append(t.Msgs[:i], t.Msgs[i+1:]...)
+				break
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if t.Ahead[i].TS == ts {
+				t.Ahead = append(t.Ahead[:i], t.Ahead[i+1:]...)
 				break
 			}
 		}
@@ -1532,6 +1572,11 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 		for i := range t.Msgs {
 			if match(&t.Msgs[i]) {
 				return &t.Msgs[i]
+			}
+		}
+		for i := range t.Ahead { // past a stale end (reached_end.go)
+			if match(&t.Ahead[i]) {
+				return &t.Ahead[i]
 			}
 		}
 	}

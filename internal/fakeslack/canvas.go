@@ -174,22 +174,32 @@ func (s *Server) ViewCanvasAsOther(id, user string, open bool) {
 }
 
 // Sockets is how many realtime sockets are connected: Push reaches only
-// those, so a test pushing right after boot waits for one.
+// those, so a test pushing right after boot waits for one. A socket
+// StallSockets silenced isn't counted.
 func (s *Server) Sockets() int {
 	cs := s.canvasStore()
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	return len(cs.sockets)
+	n := 0
+	for _, live := range cs.sockets {
+		if live {
+			n++
+		}
+	}
+	return n
 }
 
-// Push sends a realtime event to every connected socket.
+// Push sends a realtime event to every connected socket (not a stalled
+// one: StallSockets).
 func (s *Server) Push(ev any) {
 	b, _ := json.Marshal(ev)
 	cs := s.canvasStore()
 	cs.mu.Lock()
 	var conns []*websocket.Conn
-	for c := range cs.sockets {
-		conns = append(conns, c)
+	for c, live := range cs.sockets {
+		if live {
+			conns = append(conns, c)
+		}
 	}
 	cs.mu.Unlock()
 	for _, c := range conns {
@@ -215,6 +225,31 @@ func (s *Server) dropSocket(c *websocket.Conn) {
 	cs.mu.Lock()
 	delete(cs.sockets, c)
 	cs.mu.Unlock()
+}
+
+// StallSockets silences every realtime socket connected now, as a
+// socket does that died without a close (a laptop's sleep, a Wi-Fi
+// network or a NAT mapping gone, a half-open TCP connection): the fake
+// stops answering its pings, and nothing pushed reaches it, but it isn't
+// closed, so the client hears nothing at all. The client's liveness
+// check (Slack's 90 s without a pong) is what ends it; the sockets it
+// connects next are live.
+func (s *Server) StallSockets() {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	for c := range cs.sockets {
+		cs.sockets[c] = false
+	}
+	cs.mu.Unlock()
+}
+
+// liveSocket reports whether c is a connected socket StallSockets hasn't
+// silenced.
+func (s *Server) liveSocket(c *websocket.Conn) bool {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return cs.sockets[c]
 }
 
 // DropSockets cuts every realtime socket, as a network drop does (no

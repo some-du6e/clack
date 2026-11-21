@@ -692,7 +692,11 @@ func (v *Activity) ignoreThis(ph popups.Host, it core.ActivityItem) {
 					if err := c.IgnoreConnectInvite(ctx, id, channel); err != nil {
 						return err
 					}
-					v.load(actRefresh)
+					// the reload, on the UI goroutine (load reads the view's state)
+					v.notes.mu.Lock()
+					v.notes.fns = append(v.notes.fns, func() { v.load(actRefresh) })
+					v.notes.mu.Unlock()
+					v.h.Invalidate()
 					return nil
 				}, func() {})
 				_ = key
@@ -749,9 +753,10 @@ func (v *Activity) ignoreAll(ph popups.Host, it core.ActivityItem) {
 							},
 							Buttons: []*popups.ModalButton{{Label: nsIntro.T("Got It"), Kind: popups.BtnOutline}},
 						}))
+						v.load(actRefresh) // on the UI goroutine, as the modal
 					})
 					v.notes.mu.Unlock()
-					v.load(actRefresh)
+					v.h.Invalidate()
 					return nil
 				}, func() {})
 				return true

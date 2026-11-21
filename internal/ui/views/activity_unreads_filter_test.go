@@ -119,15 +119,19 @@ func TestActivityUnreadsShowsOnlyUnread(t *testing.T) {
 	})
 }
 
-// The Unreads refresh (P0K2 refreshItems, getItemsRetainedOnRefresh):
-// the fresh page, plus the old rows newer than its newest row or marked
-// unread here; old rows read since (or just loaded before) go.
+// The Unreads refresh (ui's actRetained, Slack's refreshItems with
+// getItemsRetainedOnRefresh): the fresh page, plus the old rows a
+// realtime entry brought or changed while the request was out (newer
+// than the page's read) or marked unread here; old rows read since (or
+// just loaded before) go, and so does one the server stopped listing
+// that nothing changed, the newest too.
 func TestActivityUnreadsRefreshRetains(t *testing.T) {
 	it := func(key, ts string, unread bool) core.ActivityItem {
 		return core.ActivityItem{Key: key, Type: "at_user", FeedTS: ts, Unread: unread}
 	}
 	old := core.ActivityPage{Next: "old-cursor", Items: []core.ActivityItem{
 		it("newer", "1700000009.000100", true),
+		it("dropped", "1700000008.000100", true),
 		it("kept-unread", "1700000005.000100", true),
 		it("read-since", "1700000004.000100", false),
 		it("marked-unread", "1700000003.000100", false),
@@ -137,7 +141,8 @@ func TestActivityUnreadsRefreshRetains(t *testing.T) {
 		it("new-unread", "1700000006.000100", true),
 		it("kept-unread", "1700000005.000100", true),
 	}}
-	got := actRetained(fresh, old, map[string]bool{"marked-unread": true})
+	view := actReloadCase{unreads: true, touched: []string{"newer"}, marks: []string{"marked-unread"}}
+	got := actReloadTest(fresh, old, view)
 	var keys []string
 	for i := range got.Items {
 		keys = append(keys, got.Items[i].Key)
@@ -149,9 +154,10 @@ func TestActivityUnreadsRefreshRetains(t *testing.T) {
 	if got.Next != "fresh-cursor" {
 		t.Errorf("cursor %q, want the fresh page's", got.Next)
 	}
-	// an empty page keeps only the rows marked unread here
-	got = actRetained(core.ActivityPage{}, old, map[string]bool{"marked-unread": true})
-	if len(got.Items) != 1 || got.Items[0].Key != "marked-unread" {
+	// an empty page keeps only the rows marked unread here and the newer
+	// copies the socket brought
+	got = actReloadTest(core.ActivityPage{}, old, view)
+	if len(got.Items) != 2 || got.Items[0].Key != "newer" || got.Items[1].Key != "marked-unread" {
 		t.Errorf("empty refresh kept %v", got.Items)
 	}
 }
