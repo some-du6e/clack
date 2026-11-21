@@ -158,7 +158,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test
-        run: go test -timeout 30m ./...
+        run: go test -count=1 -timeout 5m ./internal/richtext/... ./internal/ui/richview/... ./internal/ui/blockkit/... # RED EVIDENCE ONLY (bkc-131-red3): the review fixes' packages, short timeout so a loop prints its dump
 
   # Report-only (docs/PARITY.md): tools/parity.py runs the Slack-parity
   # tests (tools/parity_checks.json) against Slack's committed output and
