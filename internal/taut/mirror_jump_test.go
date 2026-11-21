@@ -2,6 +2,7 @@ package taut
 
 import (
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -55,5 +56,39 @@ func TestMirrorHoldsJumpWindows(t *testing.T) {
 	}
 	if held := h.app.S.Held(chGen, []store.MsgKey{{TS: old[0].TS}, {TS: old[1].TS}}); !held[0] || !held[1] {
 		t.Errorf("Held %v for the window's messages: InjectedMessages takes them for a plugin's own", held)
+	}
+}
+
+// TestFetchedMessageMarkedOnce: a load that brings a message the plugins'
+// slice holds as a copy fetched by id (a jump's window around the message
+// its thread lookup fetched: core.ReplyThread hydrates it first) doesn't
+// mark it again: it was in JS's copy already (the bucket holds fetched
+// copies; one new to the store was marked as it landed, the fetched hook),
+// and a second mark held its view a JS round trip more. A message the
+// slice lacks is marked, as edit-latency's MessagesAdded has it.
+func TestFetchedMessageMarkedOnce(t *testing.T) {
+	h := newHarness(t)
+	h.js(`globalThis.__un = T.redux.patchSlice('messages', (ch, b) => b); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	m := h.tt.mirror
+	m.watch("messages", chGen, m.messagesFP(chGen)) // JS read #general's messages before the load
+	const fetched, fresh = "1600000100.000100", "1600000200.000100"
+	h.app.S.PutFetched(chGen, []slack.Message{{Type: "message", TS: fetched, User: "UALICE", Text: "fetched by id"}}, h.app.S.LiveSeq())
+	if b := m.bucket(chGen); b[fetched] == nil {
+		t.Fatalf("messages[%s] lacks the message fetched by id", chGen)
+	}
+	v := &h.tt.ui.views
+	ver := func(ts string) uint64 {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return v.msgVer[msgKey{chGen, ts}]
+	}
+	f0, n0 := ver(fetched), ver(fresh)
+	h.tt.MessagesAdded(chGen, []string{fetched, fresh})
+	if ver(fetched) != f0 {
+		t.Errorf("a message fetched by id, in the plugins' slice already, was marked again")
+	}
+	if ver(fresh) == n0 {
+		t.Errorf("a message the plugins' slice lacked wasn't marked")
 	}
 }

@@ -96,6 +96,7 @@ type ChannelHoverCard struct {
 	texty   bool
 
 	rect image.Rectangle
+	keep hovercard.Keep // where it sits: placed once, again only when its size changes
 	done bool
 
 	resolving, missing bool
@@ -133,6 +134,10 @@ func NewChannelHoverCard(h Host, anchor image.Rectangle, id string, buttons, tex
 
 // Rect is the drawn card (window coordinates).
 func (p *ChannelHoverCard) Rect() image.Rectangle { return p.rect }
+
+// Placement is where the card sits (hovercard.Keep): its trigger's
+// Popover side carries over (Request.Opposite).
+func (p *ChannelHoverCard) Placement() *hovercard.Keep { return &p.keep }
 
 // Dismissed reports whether an action on it closed it (View Channel).
 func (p *ChannelHoverCard) Dismissed() bool { return p.done }
@@ -326,9 +331,12 @@ func (p *ChannelHoverCard) Layout(gtx layout.Context) layout.Dimensions {
 	sz := image.Pt(w, d.Size.Y)
 	var pos image.Point
 	if p.texty {
-		pos, _ = theme.KeepInBounds(p.anchor, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
+		pos = p.keep.At(sz, func() image.Point {
+			pos, _ := theme.KeepInBounds(p.anchor, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
+			return pos
+		})
 	} else {
-		pos = hovercard.PlaceTop(p.anchor, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
+		pos = p.keep.PlaceTop(p.anchor, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
 	}
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	rad := dp(gtx, 8)

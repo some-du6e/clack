@@ -125,6 +125,10 @@ func SectionLink(permalink, section string) string {
 // Rect is the drawn card (window coordinates).
 func (p *CanvasChannelCard) Rect() image.Rectangle { return p.rect }
 
+// SetAnchor moves the trigger's bounds (window coordinates): Quip's
+// positioners place the bubble again whenever its mention moves.
+func (p *CanvasChannelCard) SetAnchor(r image.Rectangle) { p.anchor = r }
+
 // Dismissed reports whether an action on it closed it.
 func (p *CanvasChannelCard) Dismissed() bool { return p.done }
 

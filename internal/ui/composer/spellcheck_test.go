@@ -22,14 +22,19 @@ import (
 )
 
 // spellFake is an engine with a small word list; delay slows every check
-// (the frame must not notice).
+// (the frame must not notice), and gate, when set before the service
+// starts, holds every check and suggestion until it is closed.
 type spellFake struct {
 	mu    sync.Mutex
 	good  map[string]bool
 	delay time.Duration
+	gate  chan struct{}
 }
 
 func (f *spellFake) Check(w string) bool {
+	if f.gate != nil {
+		<-f.gate
+	}
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
@@ -38,6 +43,9 @@ func (f *spellFake) Check(w string) bool {
 	return f.good[strings.ToLower(w)]
 }
 func (f *spellFake) Suggest(w string) []string {
+	if f.gate != nil {
+		<-f.gate
+	}
 	switch w {
 	case "teh":
 		return []string{"the", "tea", "ten"}
@@ -386,25 +394,39 @@ func TestSpellcheckPrefOff(t *testing.T) {
 }
 
 // A slow engine (50 ms a word) never shows in a frame: frames only read
-// the cache, and the underlines arrive later.
+// the cache, and the underlines arrive later. The engine answers nothing
+// until the frames and the typing are done, so a frame that waited on it
+// (a check, or a lock held across one) would never return: no frame time
+// is measured, which a loaded runner made 48 ms of layout alone (α.119's
+// release test job, run 44883236514).
 func TestSpellcheckNeverBlocksFrame(t *testing.T) {
-	e := newSpellEnv(t, 50*time.Millisecond)
+	gate := make(chan struct{})
+	var opened sync.Once
+	open := func() { opened.Do(func() { close(gate) }) }
+	e := newSpellEnv(t, 50*time.Millisecond, func(e *spellEnv) { e.eng.gate = gate })
+	t.Cleanup(open) // before the service stops (cleanups run last first)
 	d := NewDoc()
 	d.Insert(0, strings.Repeat("teh quick wrold jumps ovr the dog ", 6), Attr{})
 	e.ed.SetDoc(d)
-	e.slow = 0
-	for i := 0; i < 80; i++ {
-		e.frame()
+	framed := make(chan struct{})
+	go func() { // the frames, while the engine can't answer
+		defer close(framed)
+		for i := 0; i < 80; i++ {
+			e.frame()
+		}
+		e.typ(" more wrods hrere")
+	}()
+	select {
+	case <-framed:
+	case <-time.After(30 * time.Second):
+		open()
+		<-framed
+		t.Fatal("frames waited on the spell engine: they finished only once it could answer")
 	}
-	e.typ(" more wrods hrere")
-	if e.slow > 40*time.Millisecond {
-		t.Errorf("a frame took %v with a 50 ms engine", e.slow)
-	}
+	open()
 	e.settle(1500 * time.Millisecond)
 	if !slices.Contains(e.bad(), "wrold") {
 		t.Errorf("the slow answers never arrived: %q", e.bad())
 	}
-	if e.slow > 40*time.Millisecond {
-		t.Errorf("a frame took %v", e.slow)
-	}
+	t.Logf("the slowest frame took %v (not checked: wall time on a shared runner)", e.slow)
 }

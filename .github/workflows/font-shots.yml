@@ -82,6 +82,7 @@ jobs:
   font-shots:
     if: ${{ inputs.only != 'text-render' && inputs.only != 'sidebar-rows' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (5.4 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -118,6 +119,7 @@ jobs:
   text-render-linux:
     if: ${{ inputs.only != 'sidebar-rows' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (2.5 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -169,6 +171,7 @@ jobs:
   text-render-windows:
     if: ${{ inputs.only != 'sidebar-rows' }}
     runs-on: windows-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (3.0 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -237,6 +240,7 @@ jobs:
   sidebar-rows-linux:
     if: ${{ inputs.only != 'text-render' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget: 1.5 x p95 (15.5 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -273,6 +277,7 @@ jobs:
   sidebar-rows-windows:
     if: ${{ inputs.only != 'text-render' }}
     runs-on: windows-latest
+    timeout-minutes: 15 # budget: 1.5 x p95 (7.8 min) + 3, docs/CI-SPEED.md
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

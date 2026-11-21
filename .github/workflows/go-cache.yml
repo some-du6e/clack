@@ -1,0 +1,129 @@
+name: go-cache
+# The Go build and module caches every job starts from (docs/CI-SPEED.md).
+#
+# actions/setup-go (cache: true, in nearly every job) keys its cache on the
+# OS, the Go version and go.sum only, and never saves over an entry it
+# restored. A branch push can restore only its own branch's caches and the
+# default branch's, so main's entry for the key is what every branch and
+# ui build on, and it was whatever the first job to finish on some main
+# push had built: on 2026-11-20, 288 MB (Linux) and 156 MB (macOS) saved on
+# 11-16, against 500-680 MB that a job's own build left. This builds what
+# ci and the area workflows build, on each OS, and replaces main's entry
+# for the key with it, so a branch's first job compiles only what changed
+# since the release.
+#
+# On main pushes (each release) and by hand on main
+# (gh workflow run go-cache.yml --ref main). Synthetic: builds only, no
+# tests run, nothing talks to Slack.
+on:
+  push:
+    branches: [ui, main] # the jobs run on main only: only main's entries reach every branch
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # gh cache delete: the entry being replaced
+
+# a newer push to main replaces an older seed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+
+jobs:
+  seed:
+    # main only: the entries a branch can restore are main's (a dispatch on
+    # a branch, or ui's push, would build into a scope nobody else reads)
+    if: github.ref == 'refs/heads/main'
+    name: seed (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # a clean build of this tree, nothing older
+      - name: gio deps, mingw (linux)
+        if: runner.os == 'Linux'
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS gcc-mingw-w64-x86-64
+      # setup-go's key and paths: setup-go-<RUNNER_OS>-<arch>-<ImageOS>-
+      # (Linux only)go-<go version>-<hash of go.sum>, over GOMODCACHE and
+      # GOCACHE in that order (the paths make the entry's version)
+      - id: key
+        env:
+          SUM: ${{ hashFiles('go.sum') }}
+        run: |
+          set -eu
+          arch=$(echo "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')
+          lv=""; [ "$RUNNER_OS" != Linux ] || lv="$ImageOS-"
+          key="setup-go-$RUNNER_OS-$arch-${lv}go-$(go env GOVERSION | sed 's/^go//')-$SUM"
+          echo "key=$key" | tee -a "$GITHUB_OUTPUT"
+          echo "mod=$(go env GOMODCACHE)" | tee -a "$GITHUB_OUTPUT"
+          echo "build=$(go env GOCACHE)" | tee -a "$GITHUB_OUTPUT"
+      # every build the jobs make, in their own configurations: the tests of
+      # every package (and Gio's that linux-gio, windows-applog and macos
+      # run), vet, the release-style binary, -race, the Windows variants
+      - name: build (linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -eux
+          go mod download
+          go vet ./...
+          go build ./...
+          go test -c -o /dev/null ./...
+          go test -c -o /dev/null gioui.org/app gioui.org/gesture gioui.org/gpu gioui.org/gpu/headless gioui.org/gpu/internal/opengl gioui.org/io/input gioui.org/layout gioui.org/op/clip gioui.org/op/paint gioui.org/text
+          go build -trimpath -ldflags="-s -w" -o /dev/null ./cmd/clack
+          go test -race -c -o /dev/null ./internal/core ./internal/taut ./internal/slick
+          go install github.com/tc-hib/go-winres@v0.3.3
+          CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -H windowsgui" -o /dev/null ./cmd/clack
+      - name: build (windows)
+        if: runner.os == 'Windows'
+        run: |
+          set -eux
+          go mod download
+          # no C toolchain on the runner: cgo is off with or without CGO_ENABLED=0
+          CGO_ENABLED=0 go build ./...
+          CGO_ENABLED=0 go test -c -o NUL ./...
+          CGO_ENABLED=0 go test -c -o NUL gioui.org/app gioui.org/gesture gioui.org/gpu/headless gioui.org/io/input
+          go install github.com/tc-hib/go-winres@v0.3.3
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -H windowsgui" -o NUL ./cmd/clack
+      - name: build (macos)
+        if: runner.os == 'macOS'
+        run: |
+          set -eux
+          go mod download
+          go build ./...
+          go test -c -o /dev/null ./...
+          go test -c -o /dev/null gioui.org/app gioui.org/gesture gioui.org/gpu/headless gioui.org/io/input
+          GOARCH=amd64 go test -c -o /dev/null ./internal/jsrt
+          go build -trimpath -ldflags="-s -w" -o /dev/null ./cmd/clack
+      - name: sizes
+        env:
+          MOD: ${{ steps.key.outputs.mod }}
+          BUILD: ${{ steps.key.outputs.build }}
+        run: du -sh "$MOD" "$BUILD" || true
+      # setup-go saves only when its restore missed and actions/cache never
+      # overwrites a key, so the old entry goes first (this ref's only)
+      - name: drop this ref's old entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ steps.key.outputs.key }}
+        run: gh cache delete "$KEY" --ref "$GITHUB_REF" -R "$GITHUB_REPOSITORY" || echo "no $KEY on $GITHUB_REF yet"
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: |
+            ${{ steps.key.outputs.mod }}
+            ${{ steps.key.outputs.build }}

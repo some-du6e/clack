@@ -313,3 +313,34 @@ func TestFullProfileNoRoleLabels(t *testing.T) {
 		}
 	}
 }
+
+// A member in a huddle with no status emoji and no preset shows
+// :headphones: and "In a huddle" (T1ap / fWSH), unless
+// huddles_status_ultra is on (Karim's account), when the row is empty.
+func TestHoverCardHuddleStatus(t *testing.T) {
+	h, _, _ := hrEnv(t, true)
+	const id = "U0HUDDLE01"
+	h.a.S.PutUsers([]slack.User{{ID: id, TeamID: fakeslack.TeamID, Name: "hal.u", RealName: "Hal Udd",
+		Profile: slack.Profile{RealName: "Hal Udd", HuddleState: "in_a_huddle", HuddleExpires: time.Now().Add(time.Hour).Unix()}}})
+	for _, ultra := range []string{"off", "on"} {
+		h.a.SetExperimentGroup("huddles_status_ultra", ultra)
+		drawn, _ := hrDrawn(t, h, id)
+		if got, want := hrHas(drawn, "In a huddle"), ultra == "off"; got != want {
+			t.Errorf("huddles_status_ultra %s: \"In a huddle\" drawn %v, want %v (%q)", ultra, got, want, drawn)
+		}
+	}
+}
+
+// A blank real name still leaves the presence after a space, and the
+// name's link over it (MemberProfileBaseEntity's link holds the name,
+// the no-break space and the presence).
+func TestHoverCardBlankNameLink(t *testing.T) {
+	h, _, _ := hrEnv(t, true)
+	const id = "U0BLANKNM1"
+	h.a.S.PutUsers([]slack.User{{ID: id, TeamID: fakeslack.TeamID, Name: "zw", Profile: slack.Profile{DisplayName: "zw", RealName: "​"}}})
+	p := NewHoverCard(h, image.Rect(120, 600, 200, 622), id, "")
+	r := hcLayout(t, p)
+	if d := p.PresenceRect(); d.Empty() || d.Min.X <= r.Min.X+16+72+12 {
+		t.Errorf("presence %v, want it a space after the empty name (column at x %d)", d, r.Min.X+16+72+12)
+	}
+}

@@ -72,6 +72,12 @@ func (e *perfEnv) waitFor(d time.Duration) {
 		e.frame()
 		time.Sleep(3 * time.Millisecond)
 	}
+	// and one frame after d: the frames above can all land before a timer
+	// due within d (the peek's 30 ms throttle's trailing check) when a
+	// loaded runner makes one frame take most of d, and then nothing ran it
+	// (TestRailPeekDMsRowMenu, "entering and leaving the card didn't close
+	// it", train-117 and system-dm-avatar on 2026-11-21)
+	e.frame()
 }
 
 func platformPeek(e *perfEnv) *tabPeekState {

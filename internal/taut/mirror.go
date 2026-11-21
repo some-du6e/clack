@@ -140,6 +140,19 @@ func (t *Taut) AfterMirrorEvent(f func(ev core.Event)) (restore func()) {
 	return func() { t.mirror.handled.Store(nil) }
 }
 
+// sweepEvery is how often the mirror compares what it sent JS with the
+// store (sweep): a change no event announces reaches JS within it.
+var sweepEvery atomic.Int64
+
+func init() { sweepEvery.Store(int64(750 * time.Millisecond)) }
+
+// SetSweepEvery (tests) makes the mirrors started from now sweep every d:
+// a long one leaves JS only what marks tell it.
+func SetSweepEvery(d time.Duration) (restore func()) {
+	prev := sweepEvery.Swap(int64(d))
+	return func() { sweepEvery.Store(prev) }
+}
+
 // jsTracked are the slices whose changes go to JS only for ids it holds.
 var jsTracked = map[string]bool{"members": true, "presence": true}
 
@@ -209,10 +222,17 @@ func (m *mirror) start() {
 	// (a new runtime holds nothing): handled
 	m.t.ui.views.noteSeen(m.t.app.EmitSeq())
 	raws, stopRaw := m.t.app.SubscribeRaw()
+	// a message a fetch by id brings that the store held no copy of has no
+	// change of its own to announce: marked as it lands, on the fetching
+	// goroutine before its caller draws it, as the hub marks what a
+	// window's load changed (MessagesChanged); the plugins' view of it
+	// waited for the sweep
+	unhook := m.t.app.SetFetchedHook(func(ch string, tss []string) { m.t.MessagesChanged(ch, tss) })
 	go func() {
 		defer stop()
 		defer stopRaw()
-		tick := time.NewTicker(750 * time.Millisecond)
+		defer unhook()
+		tick := time.NewTicker(time.Duration(sweepEvery.Load()))
 		defer tick.Stop()
 		for {
 			select {
@@ -451,6 +471,16 @@ func (m *mirror) postInvalidate(rt *runtime, out []change) {
 		m.qmu.Unlock()
 		return []any{batch}
 	})
+}
+
+// watching reports whether JS holds key of slice as it read it last with
+// no change told since (watch): an invalidation forgets it until JS reads
+// again, and that read takes whatever changed meanwhile.
+func (m *mirror) watching(slice, key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.watched[slice][key]
+	return ok
 }
 
 // watch records what JS just read, so sweep can tell when it changes
@@ -800,7 +830,7 @@ func (m *mirror) keys(slice string) []string {
 		m.mu.Unlock()
 		return a.S.UserIDs()
 	case "messages":
-		return a.S.MessageChannels()
+		return m.messageChannels()
 	case "channelHistory":
 		var out []string
 		for _, ch := range a.S.MessageChannels() {
@@ -813,7 +843,7 @@ func (m *mirror) keys(slice string) []string {
 	case "reactions":
 		// Slack's reactions slice: _rxn_key → the message's reactions
 		var out []string
-		for _, ch := range a.S.MessageChannels() {
+		for _, ch := range m.messageChannels() {
 			for ts, msg := range m.bucket(ch) {
 				if mm, ok := msg.(map[string]any); ok && mm["reactions"] != nil {
 					out = append(out, "message-"+ts+"-"+ch)
@@ -1322,15 +1352,41 @@ func pruneEmpty(v any, zeros bool) any {
 	return v
 }
 
-// bucket is messages[ch]: the cached timeline, a jump's windows (Slack's
-// messages store holds every channelHistory slice's messages: a plugin
-// patching the slice sees a jump's too) and open threads' replies.
+// messageChannels are messages' keys: the conversations with a timeline,
+// a jump's window or a cached thread, and those with messages fetched by
+// id.
+func (m *mirror) messageChannels() []string {
+	a := m.t.app
+	out := a.S.MessageChannels()
+	seen := make(map[string]bool, len(out))
+	for _, ch := range out {
+		seen[ch] = true
+	}
+	for _, ch := range a.S.FetchedChannels() {
+		if !seen[ch] {
+			out = append(out, ch)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// bucket is messages[ch]: the cached timeline, a jump's windows, open
+// threads' replies, and the messages fetched by id. Slack keeps one
+// messages store: every channelHistory slice's messages are in it, and a
+// message fetched by id (fetchObjectWithId: Activity's and Saved's rows,
+// the Threads view) lands in it beside them, so a plugin patching the
+// slice (Censorship, ShowRealUser) reaches all of them there; built from
+// the timeline and threads alone, a jump's window and such messages never
+// got a view (store.WindowsIn, store.FetchedIn). A message several hold
+// is the timeline's, a window's, a thread's, then the fetched copy.
 func (m *mirror) bucket(ch string) map[string]any {
 	a := m.t.app
 	tl := a.S.Timeline(ch)
 	wins := a.S.WindowsIn(ch)
 	threads := a.S.ThreadsIn(ch)
-	if tl == nil && len(wins) == 0 && len(threads) == 0 {
+	fetched := a.S.FetchedIn(ch)
+	if tl == nil && len(wins) == 0 && len(threads) == 0 && len(fetched) == 0 {
 		return nil
 	}
 	out := map[string]any{}
@@ -1351,6 +1407,11 @@ func (m *mirror) bucket(ch string) map[string]any {
 			if _, ok := out[msgs[i].TS]; !ok {
 				out[msgs[i].TS] = messageJSON(ch, &msgs[i])
 			}
+		}
+	}
+	for i := range fetched { // a window's or a thread's copy wins
+		if _, ok := out[fetched[i].TS]; !ok {
+			out[fetched[i].TS] = messageJSON(ch, &fetched[i])
 		}
 	}
 	return out
