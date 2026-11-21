@@ -91,10 +91,12 @@ func messageSound(v string) string {
 }
 
 func (a *App) notifyShow(title, body string, n *desktopNote) bool {
-	if a.inert || !a.notifyOn() || uipref.Get().NoDesktopPush { // Notifications > Desktop notifications
+	// Notifications > Desktop notifications; a message's own conversation
+	// decided already (desktop_push_enabled: notePushOn)
+	if a.inert || !a.notifyOn() || (n == nil || !n.pushChecked) && uipref.Get().NoDesktopPush {
 		return false
 	}
-	if uipref.Get().NoTextInNotifications { // Notifications: no message preview
+	if uipref.Get().NoTextInNotifications && (n == nil || !n.textChecked) { // Notifications: no message preview
 		body = ""
 	}
 	if a.notify == nil {

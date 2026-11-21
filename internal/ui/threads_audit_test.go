@@ -109,7 +109,10 @@ func (noResolver) SelfID() string                              { return "" }
 
 func TestThreadsAuditNotificationTitles(t *testing.T) {
 	b := &backend{}
-	ev := core.Event{Type: "message", Msg: &core.Message{Name: "Robin Example", Doc: richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, "the synthetic plan")}}}
+	// a member's message (a message with no user has no "{sender}: ":
+	// getPrefCompliantMemberNameById of its user, notify_dm.go)
+	ev := core.Event{Type: "message", Msg: &core.Message{User: "U0ROBINEX01", Name: "Robin Example",
+		Doc: richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, "the synthetic plan")}}}
 	for _, c := range []struct {
 		conv        *convInfo
 		title, body string
@@ -149,14 +152,17 @@ func TestThreadsAuditDesktopNotification(t *testing.T) {
 		t.Errorf("notified %q / %q, Slack \"New message in #th-audit\" with the event's content", ts[0], bs[0])
 	}
 	push(root, root) // not a reply (7)
+	// later replies: the one shown is never shown again (notify_dm.go's
+	// shown keys), which would hide what these check
+	const rep2, rep3 = "1762700400.000100", "1762700500.000100"
 	// the thread open in the pane with the window focused (16)
 	a.focused = true
 	a.secondary = secondaryState{kind: secThread, channel: ch, ts: root}
-	push(rep, root)
+	push(rep2, root)
 	a.focused, a.secondary = false, secondaryState{}
 	// read already (20)
-	ca.S.SetThread(ch, root, []slack.Message{{TS: root, ThreadTS: root, LastRead: rep}})
-	push(rep, root)
+	ca.S.SetThread(ch, root, []slack.Message{{TS: root, ThreadTS: root, LastRead: rep3}})
+	push(rep3, root)
 	time.Sleep(200 * time.Millisecond)
 	a.drain()
 	if ts, _ := n.got(); len(ts) != 1 {
