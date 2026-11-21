@@ -353,6 +353,7 @@ stay.
 | TestMessageMenuOldMenuRows | not reproduced | the test now says what its click aimed at and what the rows are when the click never comes | | |
 | TestRealWindowCaretCost | a second failure seen: "readback: no blink's partial frame in 2.4s" at 1440x900 (Linux, 44923882764), after its whole-frames turns; 3 of 13 partial frames there damaged more than a caret | open | | |
 | TestMacIdleCPU | "channel again: 20 frames in 10 s" (once, 11-21) | open | | |
+| TestSnapshotsWhileBusy (jsrt), new | read the runtime's snapshot the instant its Do returned, but the task's microtask checkpoint and bookkeeping run after (`runTask`): 2 ms busy still under the full suite (44928390402, release dry run 44942336766) | wait for the runtime to go idle | 44945131657: train-130's test against a runtime still busy 20 ms after its Do: 3 of 3 fail at the idle check | 44945137083: 3 of 3 pass |
 
 ### The runners lost on 2026-11-21
 
@@ -373,10 +374,13 @@ internal/ui alone (flake-check, 44928443199) climbs the same way, and its
 heap profile at the end still holds 9,053 MB: every test's op buffers
 (2.3 GB), font faces (1.3 GB), images (0.7 GB), App subscriptions (0.6 GB),
 rich text styles, fakeslack histories. The ui tests' Apps are never let go.
-full-test and release's test job now run go test with `GOMEMLIMIT=7GiB`:
-the peak was 10,330 MiB, for 25.8 min against 23.9 (44928390402; its one
-failure, jsrt TestSnapshotsWhileBusy at minute 4, came while every binary
-was far under the limit). The fix after that is to let each test's App go.
+full-test and release's test job now run go test with `GOMEMLIMIT=11GiB`,
+above ui.test's live heap: the peak was 11,612 MiB, internal/ui took
+1,196 s against 1,187 and the job 23.0 min (44942313462; again green in
+44942310732). 7GiB held it to 10,330 MiB (44928390402), but under the live
+heap the GC ran back to back at half the CPU in the ui tests' last minutes,
+and TestJoinBanner's 10 s wait ran out (44939446171). The fix after this
+one is to let each test's App go.
 
 ### Item 8: perf.yml as a regression gate
 
@@ -423,7 +427,14 @@ worse.
   where it left ui (as the plugins job's already was), so the numbers say
   what the branch changed; ui and main keep the newest release tag.
   `-f jobs=perf` runs the gated job alone (no scale or plugins jobs).
-- **Red/green** (count 3 each): GATERUNS
+- **Red/green** (count 3 each): a 20 ms sleep at the top of `App.frame`
+  failed the gate in all three runs, at the gate step alone (44939402075:
+  5 metrics, scroll median +18.8%, scroll p95 +19.1%, typing p95 +16.1%,
+  idle median +13.3%, idle p95 +11.9%; 44939406672: 4; 44939411243: 5);
+  the unchanged tree passed all three (44939404419, 44939409028,
+  44939413760: every metric inside its band, the widest scroll p95 at
+  -6.2% of ±11.5%). ci-speed-2's own perf run against where it left ui
+  passed (44939450567).
 
 **CodSpeed, considered and not used.** Its Go support measures wall time
 only and is early, its numbers are stable on its own bare-metal runners
