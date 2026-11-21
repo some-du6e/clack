@@ -1972,3 +1972,32 @@ jobs:
           go test -count=$COUNT -v -timeout 15m -run '^(TestInspectHuddleWindow|TestInspectScreensharePopout|TestInspectPresenterPanel|TestInspectInviteWindow|TestInspectJoinPreview)$' ./internal/ui/huddleui || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast|TestInspectSubWindowsGate)$' ./internal/ui || rc=1
           exit $rc
+
+  # Karim's 2026-11-21 crash (Windows, α.113): a quote started in the
+  # composer (">" typed, or the Blockquote button), then Ctrl+V with each
+  # kind of copy on the real clipboard; App.Run's own window, SendInput,
+  # PowerShell's WinForms clipboard. GOTRACEBACK=all: a native fault on a
+  # Go thread prints every goroutine (runtime winthrow).
+  quote-paste-win:
+    if: ${{ !inputs.only || startsWith('quote-paste-win', inputs.only) }}
+    name: "quote-paste TestWinQuotePaste (windows-applog)"
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "TestWinQuotePaste, COUNT runs"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+          GOTRACEBACK: all
+          TEST: TestWinQuotePaste
+          PKG: ./internal/ui
+          FLAKE_TAIL: "200"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"

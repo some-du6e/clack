@@ -1908,6 +1908,11 @@ func (c *Composer) DocText() string { return c.ed.Doc().Text() }
 func (c *Composer) SendRect() image.Rectangle     { return c.winRect(crSend) }
 func (c *Composer) ScheduleRect() image.Rectangle { return c.winRect(crSchedule) }
 
+// QuoteRect is the formatting bar's Blockquote button in window
+// coordinates as of the last frame, empty when not drawn (folded into the
+// bar's ⋯, or the bar hidden); tests click it like a user.
+func (c *Composer) QuoteRect() image.Rectangle { return c.winRect(crQuote) }
+
 // BoxRect is the input box (its border included) in window coordinates
 // as of the last frame, empty before it was drawn (tests measure the space
 // above it).
