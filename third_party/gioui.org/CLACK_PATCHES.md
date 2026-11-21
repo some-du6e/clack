@@ -2733,7 +2733,8 @@ Not in `UPSTREAM.patch`.
 (`init`, `validateAndProcess`), `app/os_macos.go`
 (`gio_onStartupPoint`, `gio_onFinishLaunching`, `newWindow`),
 `app/os_macos.m` (`gio_main`, `GioAppDelegate`'s
-`applicationWillFinishLaunching:`), `app/clack_bounds_macos.go`
+`applicationWillFinishLaunching:` and `applicationDidFinishLaunching:`),
+`app/clack_bounds_macos.go`
 (`displays`, `readScreens`, `snapshotLaunchScreens`), `app/os_windows.go`
 (`Configure`), `app/os_x11.go` (`newX11Window`).
 
@@ -2748,7 +2749,8 @@ each of them once per process, the first time any window reaches it:
 made, its delegate set), `appkit-run` (`[NSApp run]` about to start),
 `will-finish-launching` (the delegate's
 `applicationWillFinishLaunching:`), `launched`
-(`NSApplicationDidFinishLaunchingNotification`), `window-create`,
+(`NSApplicationDidFinishLaunchingNotification`), `activated` (the end of
+the delegate's `applicationDidFinishLaunching:`), `window-create`,
 `window-view` and `window-ns` (newWindow's main-thread block starting,
 its view with the Metal layer and display link, its NSWindow), then
 `window-shown` (`makeKeyAndOrderFront:`, `ShowWindow` or `XMapWindow`
@@ -2766,7 +2768,14 @@ takes them when they come before its own main-thread read does (once;
 later calls read afresh). Clack reads the displays for the main window's
 place (winbounds.go), so the window is created the moment the launch
 finishes instead of one main-queue round trip later (15-70 ms on CI).
-The new delegate method is the only change to what AppKit sees.
+
+A window asked for before the launch finished (newWindow, which waited
+for `launched` and then queued its main-thread block) now opens inside
+the delegate's `applicationDidFinishLaunching:`, after it made the app
+regular and active (`openAtLaunch`, `gio_onLaunchActivated`): the
+canonical place for an app's first window. The queued block waited for
+AppKit's post-launch work, 30-50 ms on CI. A window asked for later opens
+as before.
 
 Read by `.github/perf/launch.py` (flake-check's `launch-speed-*` jobs and
 ci's macos launch budget). Not in `UPSTREAM.patch`.

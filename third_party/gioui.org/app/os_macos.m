@@ -829,6 +829,7 @@ void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle) {
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
 	[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 	[NSApp activateIgnoringOtherApps:YES];
+	gio_onLaunchActivated(); // Clack patch (CLACK_PATCHES.md §55): the windows asked for during the launch open now
 }
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
 	for (NSURL *url in urls) {

@@ -50,7 +50,7 @@ THEME = '{"primary":{"palette":"jade"},"highlight1":{"palette":"jade"},"highligh
 ROUTE = os.environ.get("ROUTE", "C0FAKE00000")
 SYS = platform.system()  # Darwin, Linux, Windows
 COLS = ["exec", "main", "single-instance", "creds", "ui-new", "attached", "app-main", "run", "appkit-app", "appkit-run", "will-finish-launching",
-        "launched", "window", "event-loop", "gio-init", "menu-bar", "window-create", "window-view", "window-ns", "config",
+        "launched", "activated", "window", "event-loop", "gio-init", "menu-bar", "window-create", "window-view", "window-ns", "config",
         "window-shown", "frame-event", "gpu-context", "gpu", "first-frame", "presented", "fonts", "cache-read",
         "sidebar-cached", "data-ready", "first-text", "sidebar", "reveal", "real-frame", "js-runtime", "taut-started",
         "slick-started", "plugins", "messages", "core-ready", "sidebar-live", "settled"]

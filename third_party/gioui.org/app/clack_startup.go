@@ -15,6 +15,9 @@ import (
 //	will-finish-launching  macOS: applicationWillFinishLaunching
 //	launched      macOS: NSApplication finished launching (the Dock
 //	              stops bouncing the icon)
+//	activated     macOS: the delegate's applicationDidFinishLaunching made
+//	              the app regular and active; windows asked for during the
+//	              launch open right after
 //	window-create macOS: the main thread starts making the window
 //	window-view   macOS: its view (the Metal layer, the display link)
 //	window-ns     macOS: its NSWindow
@@ -59,6 +62,7 @@ var (
 	startupAppKitRun    = &startupPoint{name: "appkit-run"}
 	startupWillFinish   = &startupPoint{name: "will-finish-launching"}
 	startupLaunched     = &startupPoint{name: "launched"}
+	startupActivated    = &startupPoint{name: "activated"}
 	startupWindowCreate = &startupPoint{name: "window-create"}
 	startupWindowView   = &startupPoint{name: "window-view"}
 	startupWindowNS     = &startupPoint{name: "window-ns"}
