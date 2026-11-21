@@ -346,7 +346,9 @@ func TestThreadsUnreadLeavesDeleted(t *testing.T) {
 // PrependOlderAt in History's older pages.
 func TestReadsAnnounce(t *testing.T) {
 	reads := map[string]bool{"SetLatestRead": true, "SetLatestSince": true, "SetThreadSince": true, "PutFetched": true,
-		"PutFetchedAsked": true, "PrependOlderSince": true, "PrependOlderAt": true, "RefreshRange": true}
+		"PutFetchedAsked": true, "PrependOlderSince": true, "PrependOlderAt": true, "RefreshRange": true,
+		"AddThreadPageSince": true,                  // a replies read's page (thread_pages.go)
+		"SetLatestReadAt":    true, "CatchUp": true} // a newest page and a catch-up past a stale end (reached_end.go)
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

@@ -106,6 +106,10 @@ type box struct {
 	tgTo    int16 // > target: targets target..tgTo all hover the box (a card's links)
 	part    uint8 // CSS part (css.go): its background (or color, colFill) replaces fill
 	colFill bool  // fill is the part's text color (list markers)
+	// see, seeHover: the rgba fill and hover are flattened from when
+	// they're the palette's see-through fills (Palette.raw), zero when
+	// opaque: over a View's own under (SetUnder) they composite over it
+	see, seeHover color.NRGBA
 }
 
 type imgPrim struct {
@@ -228,6 +232,13 @@ type target struct {
 	// slug: a message_mention pill (.p-rich_text_slug), never underlined,
 	// not even by the "underline links" preference
 	slug bool
+	// msgCh, msgThread: a message_mention pill's channel_id and thread_ts
+	// (id is its message_ts): MessageMention jumps with them (p9lB)
+	msgCh, msgThread string
+	// mrkdwn: a mrkdwn or rich_text link, which Slack draws with
+	// BaseMrkdwnLink (kQRT): its click passes openThreadForRootMessage, so
+	// a link to a thread's parent opens the thread (MrkdwnLinkHandler)
+	mrkdwn bool
 	// website: a link the "underline links" preference underlines, which
 	// in Slack are only those marked data-stringify-link (links in message
 	// text, mrkdwn and rich text: boot-shared kQRT renderDefaultLink) and
@@ -420,6 +431,7 @@ const (
 type deco struct {
 	kind   uint8 // 1 pill, 2 code, 3 highlight, 4 colour swatch, decoMissing, decoMissingGone, decoCanvasMissing
 	bg     color.NRGBA
+	see    color.NRGBA // bg's rgba when it's a see-through palette fill (box.see)
 	border color.NRGBA
 	padL   float32
 	padR   float32
@@ -792,7 +804,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 			} else {
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true})
+				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true, mrkdwn: true})
 			}
 			if st&richtext.Code == 0 {
 				col = p.Link
@@ -849,15 +861,15 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID, self: sp.Self})
 			} // a hidden channel with a fallback name: plain text, no card (BaseMrkdwnChannel returns the span before the trigger)
-			bg, fg := p.MentionBg, p.MentionText
+			bg, fg, see := p.MentionBg, p.MentionText, p.raw.MentionBg
 			if sp.Self {
 				// c-member_slug--mention / c-mrkdwn__user_group--mention
 				// over the --link look: surf-hgl-3, the link color (content-
 				// hgl-3 in dark)
-				bg, fg = p.SelfMentionBg, p.SelfLinkText
+				bg, fg, see = p.SelfMentionBg, p.SelfLinkText, p.raw.SelfMentionBg
 			}
 			if sp.Kind == richtext.Broadcast {
-				bg, fg = p.SelfMentionBg, p.SelfMentionText
+				bg, fg, see = p.SelfMentionBg, p.SelfMentionText, p.raw.SelfMentionBg
 				k = l.faceFor(base, size, st|richtext.Bold)
 				if pt != 0 {
 					k = l.partFace(k, pt)
@@ -868,7 +880,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			if fs.pre || st&richtext.Code != 0 {
 				pad, padV = 0, 0
 			}
-			l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast, part: pt})
+			l.decos = append(l.decos, deco{kind: 1, bg: bg, see: see, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: sp.Self || sp.Kind == richtext.Broadcast, part: pt})
 			dc = int16(len(l.decos) - 1)
 			if l.mode&modePills != 0 && !l.inAtt && (sp.Kind == richtext.User || sp.Kind == richtext.Channel) {
 				kind := compUser
@@ -904,18 +916,18 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 		}
 		if st&richtext.Code != 0 && !fs.pre && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
+			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, see: p.raw.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
 			dc = int16(len(l.decos) - 1)
 		} else if st&richtext.FindHighlight != 0 && dc < 0 {
 			// over a keyword highlight: only the find span draws
-			bg := p.FindHighlight
+			bg, see := p.FindHighlight, p.raw.FindHighlight
 			if l.opts.FindFocused {
-				bg = p.FindFocused
+				bg, see = p.FindFocused, p.raw.FindFocused
 			}
-			l.decos = append(l.decos, deco{kind: 3, bg: bg, face: k, target: -1, part: pt})
+			l.decos = append(l.decos, deco{kind: 3, bg: bg, see: see, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)
 		} else if st&richtext.Highlight != 0 && dc < 0 {
-			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, face: k, target: -1, part: pt})
+			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, see: p.raw.Highlight, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)
 		}
 		if pill && ps.edge[0] != 0 {
@@ -1378,13 +1390,13 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 			rr := image.Rect(int(r.x+0.5), int(top+0.5), int(x1+0.5), int(bot+0.5))
 			switch dc.kind {
 			case 2:
-				bx := box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1, part: dc.part, inline: true}
+				bx := box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, see: dc.see, stroke: dc.border, bw: l.dp(1), target: -1, part: dc.part, inline: true}
 				dl[r.decoI].slice(&bx, r.line, dc.radius)
 				d.boxes = append(d.boxes, bx)
 			default:
-				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target, comp: dc.comp, part: dc.part, inline: true}
+				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, see: dc.see, target: dc.target, comp: dc.comp, part: dc.part, inline: true}
 				if dc.kind == 1 && !dc.self && !l.d.cardOnly(dc.target) {
-					bx.hover, bx.hoverOver = l.st.Palette.MentionHoverBg, true
+					bx.hover, bx.seeHover, bx.hoverOver = l.st.Palette.MentionHoverBg, l.st.Palette.raw.MentionHoverBg, true
 				}
 				if dc.kind == 1 {
 					dl[r.decoI].slice(&bx, r.line, dc.radius)

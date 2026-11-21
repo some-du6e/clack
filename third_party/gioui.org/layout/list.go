@@ -153,6 +153,19 @@ func (l *List) Dragging() bool {
 	return l.scroll.State() == gesture.StateDragging
 }
 
+// ScrollDelta is the distance, in pixels, the list's own scrolling (a
+// wheel, a drag, a fling) moved it in the last Layout: 0 when only a
+// change to Position or to its children's sizes moved it. Clack patch 50.
+func (l *List) ScrollDelta() int {
+	return l.scrollDelta
+}
+
+// StopScroll ends the list's own running scroll (a wheel notch's curve,
+// a fling), as a programmatic scroll does a browser's. Clack patch 50.
+func (l *List) StopScroll() {
+	l.scroll.Stop()
+}
+
 func (l *List) update(gtx Context) {
 	min, max := int(-inf), int(inf)
 	if l.Position.First == 0 {

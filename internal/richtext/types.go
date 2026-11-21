@@ -81,8 +81,10 @@ type Span struct {
 
 	// ChannelTab (tabslug.go): the channel's icon before its name ("" for
 	// "#name") and the channel's name. MessageMention (msgmention.go):
-	// Chan is the linked message's conversation id (ID its ts).
+	// Chan is the linked message's conversation id (ID its ts), ThreadTS
+	// its thread_ts; Slack's MessageMention jumps with the three.
 	ChIcon, Chan string
+	ThreadTS     string
 
 	// Hidden (User): a member the viewer hid, in a rollup or a system
 	// message's text (RollupName, boot-shared quVX): Text is "Name hidden"

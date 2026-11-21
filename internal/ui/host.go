@@ -223,6 +223,14 @@ func (a *App) afterRoute(prev, r Route) {
 			a.secondary = secondaryState{width: w}
 		}
 	}
+	if ch != "" && r.Message() == "" && prev.Channel() != ch && !a.navHasStart {
+		// entered with no message to start at (a sidebar click, Back):
+		// Slack's determineTimestamps, the newest messages when there are
+		// unreads, else where the conversation was left (ChannelView.Entered)
+		if e, ok := a.convoFor(ch, "").list.(interface{ Entered() }); ok {
+			e.Entered()
+		}
+	}
 	if ts := r.Thread(); ts != "" {
 		a.OpenThread(ch, ts)
 	}

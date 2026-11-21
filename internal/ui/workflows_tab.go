@@ -20,6 +20,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -863,7 +864,7 @@ func (a *App) confirmUnfeatureWorkflow(ch string, t core.WorkflowTrigger, bookma
 				defer cancel()
 				ids, _ := json.Marshal([]string{t.ID})
 				if err := c.C.Call(ctx, "workflows.featured.remove", url.Values{"trigger_ids": {string(ids)}, "channel_id": {ch}}, nil); err != nil {
-					log.Printf("workflows: unfeature %s in %s: %v", t.ID, ch, err)
+					log.Printf("workflows: unfeature %s in %s: %v", t.ID, logtag.ID(ch), err)
 					return
 				}
 				a.Post(func() {
@@ -893,7 +894,7 @@ func (a *App) confirmRemoveWorkflowBookmark(ch string, bm core.TabWorkflow) {
 				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 				defer cancel()
 				if err := c.RemoveFolderBookmark(ctx, ch, b); err != nil {
-					log.Printf("workflows: remove bookmark %s in %s: %v", b.ID, ch, err)
+					log.Printf("workflows: remove bookmark %s in %s: %v", b.ID, logtag.ID(ch), err)
 					return
 				}
 				a.Post(func() {

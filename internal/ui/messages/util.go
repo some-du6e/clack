@@ -186,25 +186,59 @@ func repliesLabel(n int) string {
 }
 
 // slackLink recognizes links to Slack messages and channels
-// (https://x.slack.com/archives/C123/p1700000000123456?thread_ts=…).
-func slackLink(raw string) (ch, ts string, ok bool) {
+// (https://x.slack.com/archives/C123/p1700000000123456?thread_ts=…): the
+// conversation, the message's ts and the ?thread_ts= it names ("" none).
+func slackLink(raw string) (ch, ts, thread string, ok bool) {
 	u, err := url.Parse(raw)
 	if err != nil || !strings.HasSuffix(u.Host, ".slack.com") {
-		return "", "", false
+		return "", "", "", false
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] != "archives" {
-		return "", "", false
+		return "", "", "", false
 	}
 	ch = parts[1]
 	if len(parts) >= 3 && strings.HasPrefix(parts[2], "p") && len(parts[2]) > 7 {
 		p := parts[2][1:]
 		ts = p[:len(p)-6] + "." + p[len(p)-6:]
-		if tt := u.Query().Get("thread_ts"); tt != "" {
-			ts = tt
+	}
+	if thread = u.Query().Get("thread_ts"); !isMessageTS(thread) {
+		thread = "" // only a timestamp: a route takes it as it is
+	}
+	return ch, ts, thread, true
+}
+
+// isMessageTS is a message timestamp as Slack writes one
+// ("1700000000.000100").
+func isMessageTS(s string) bool {
+	a, b, ok := strings.Cut(s, ".")
+	if !ok || len(a) != 10 || len(b) != 6 {
+		return false
+	}
+	for _, r := range a + b {
+		if r < '0' || r > '9' {
+			return false
 		}
 	}
-	return ch, ts, true
+	return true
+}
+
+// slackLinkRoute is where a Slack link goes for a Host without
+// openPermalink: the thread the link names, else the conversation at the
+// message (a permalink's route), else the conversation. A message's own
+// ts is never a thread's root: without a lookup a reply can't be told
+// from a root.
+func slackLinkRoute(raw string) (string, bool) {
+	ch, ts, thread, ok := slackLink(raw)
+	switch {
+	case !ok:
+		return "", false
+	case thread != "":
+		return "c/" + ch + "/t/" + thread, true
+	case ts != "":
+		return "c/" + ch + "/m/" + ts, true
+	}
+	return "c/" + ch, true
 }
 
 // permalink builds a message link for copy/forward.
@@ -218,6 +252,15 @@ func permalink(domain, ch, ts string) string {
 // openURL opens a link in the system browser without blocking (http,
 // https and mailto only; see openurl.Check). A var so tests can catch it.
 var openURL = func(u string) { _ = openurl.Open(u) }
+
+// SwapOpenURL makes f what opens a message's link in the browser and
+// returns the undo (tests outside the package: a link Slack's client
+// doesn't open itself, as openPermalink's new tab).
+func SwapOpenURL(f func(u string)) (restore func()) {
+	prev := openURL
+	openURL = f
+	return func() { openURL = prev }
+}
 
 // avatarRadius is Slack's clamp(4px, min(22.222%, 12px), 12px).
 func avatarRadius(px int) int {

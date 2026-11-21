@@ -107,7 +107,32 @@ func (tv *textView) setMuted(m bool) {
 // surfHandler routes clicks in surface text.
 type surfHandler struct{ h Host }
 
-func (s *surfHandler) OpenURL(u string) {
+func (s *surfHandler) OpenURL(u string) { s.follow(u, false) }
+
+// OpenMrkdwnLink is a mrkdwn link's click (surface text renders through
+// Slack's BaseMrkdwnLink: openThreadForRootMessage).
+func (s *surfHandler) OpenMrkdwnLink(u, _ string) { s.follow(u, true) }
+
+// OpenMessageMention is a message_mention pill's click: MessageMention
+// (p9lB) is the same component in a surface as in a message,
+// jumpToMessage with the pill's own channel_id, message_ts and thread_ts.
+// It never opens the element's url.
+func (s *surfHandler) OpenMessageMention(ch, ts, thread, _ string) {
+	if mj, ok := s.h.(interface{ JumpToMessage(ch, ts, thread string) }); ok {
+		mj.JumpToMessage(ch, ts, thread)
+	}
+}
+
+// follow is Slack's Link click (the ui root's FollowLink: a slack: link
+// to handleDeepLink, a permalink through openPermalink), else the
+// browser; without the ui root a slack: link does nothing.
+func (s *surfHandler) follow(u string, openRoot bool) {
+	if lf, ok := s.h.(interface{ FollowLink(string, bool) bool }); ok {
+		if !lf.FollowLink(u, openRoot) && !strings.HasPrefix(u, "slack://") {
+			openURL(u)
+		}
+		return
+	}
 	if strings.HasPrefix(u, "slack://") {
 		return
 	}

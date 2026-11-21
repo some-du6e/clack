@@ -20,7 +20,7 @@ func FileIsPlayableVideo(f *File) bool {
 	if f.Subtype == "slack_video" || f.Subtype == "video_story" {
 		return true
 	}
-	if !fileIsHosted(f) {
+	if !FileIsHosted(f) {
 		return false
 	}
 	switch strings.ToLower(f.Filetype) {
@@ -40,9 +40,9 @@ func fileIsAudioClip(f *File) bool {
 	return false
 }
 
-// fileIsHosted is Slack's fileIsHosted: not external, or external with
+// FileIsHosted is Slack's fileIsHosted: not external, or external with
 // non-empty video.outputs, or a Salesforce file.
-func fileIsHosted(f *File) bool {
+func FileIsHosted(f *File) bool {
 	if !f.IsExternal || f.ExternalType == "salesforce" {
 		return true
 	}

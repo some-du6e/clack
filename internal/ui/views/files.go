@@ -2015,9 +2015,10 @@ func openFile(h Host, it fileItem) {
 	if u == "" {
 		return
 	}
-	if o, ok := h.(interface{ OpenURL(string) }); ok {
-		o.OpenURL(u)
-	}
+	// the file's page: in the browser (Clack has no viewer for it), or a
+	// link the client opens itself (hostHandler's follow), never the
+	// deep-link handler, which opens only slack: links
+	hostHandler{h}.follow(u, false)
 }
 
 // fileFromRich is a message attachment as a Files item, for openFile.

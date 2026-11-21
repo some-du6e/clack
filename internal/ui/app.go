@@ -247,6 +247,10 @@ type App struct {
 	frameStats  frameStats
 	frameSeq    atomic.Uint64 // frames laid out (FrameSeq)
 	lastChannel string
+	// navHasStart: the navigation under way gives the primary a startTs
+	// (jumpViaRoutes' highlightRoot), so afterRoute doesn't enter the
+	// conversation as one without (ChannelView.Entered)
+	navHasStart bool
 	dock        dockState // the macOS Dock badge last set (dock.go)
 	// previewFrom is the channel-browser route previewFromCh was opened
 	// from ("Back to All channels", joinpane.go)
@@ -343,6 +347,7 @@ type App struct {
 	split       splitState    // Slack's split view (split.go)
 	pane        string        // the view container being drawn or acted on: "" main, paneSplit
 	navSrc      navSource     // the main window's container being laid out (secondary.go)
+	openVia     string        // the navigation's source for clack.log ("": its caller; navlog.go)
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 

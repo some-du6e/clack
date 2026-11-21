@@ -429,9 +429,12 @@ func (v *ChannelFiles) openShare(it fileItem) {
 	m := popups.NewShareFileModal(ph, popups.ShareFileOpts{ID: it.ID, Title: it.title(), Permalink: it.Permalink,
 		Preview: func(gtx C) D { return v.sharePreview(gtx, &tile) },
 		Shared: func(ch, ts string) {
-			// navigate to the destination at the share (same team)
+			// navigate to the destination at the share (same team):
+			// jumpToMessage({ts, channelId}) after shareMessageOrFile
+			// (boot-shared RybN), the conversation at the new message,
+			// never a thread with the share as its root
 			if ts != "" {
-				v.h.Navigate("c/" + ch + "/t/" + ts)
+				v.h.Navigate("c/" + ch + "/m/" + ts)
 			} else {
 				v.h.Navigate("c/" + ch)
 			}

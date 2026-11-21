@@ -2481,6 +2481,36 @@ Enter and a its Leave. `gesture/clack_reset_test.go`
 and `internal/ui`'s `TestInspectFreezeResetsHover`. On ci's linux-gio,
 windows-applog and macos jobs. Not in `UPSTREAM.patch`.
 
+## 50. layout: what the list's own scrolling moved it, and ending it
+
+`layout/list.go` (`List.ScrollDelta`, `List.StopScroll`). Accessors:
+nothing upstream behaves differently.
+
+Slack's message list keeps the row on its anchor line (AnchorLayout's
+`ANCHOR_OFFSET`: 64px in a conversation, the top in a thread) where it is
+while rows above it change height: `setHeight` moves the scroll by what
+such a row grew. Clack's message list does the same each frame
+(`internal/ui/messages` `lineRow`), and in a frame where the reader also
+scrolled it has to tell the two apart: the row should be where the
+reader's scroll put it, and only the rest is a height change to make up
+for. `ScrollDelta` is the distance `List.update` took from the gesture (a
+wheel notch's curve, a precise delta, a drag, a fling, middle-click
+autoscroll) in the last `Layout`; comparing positions can't, since the
+rows' sizes and the end clamps move `Position` too.
+
+`StopScroll` ends a running wheel curve or fling. A jump writes the
+scroll (Slack's `scrollToOffset` sets `scrollTop`), and a browser cancels
+the reader's running scroll animation on such a write; without it, a
+jump made while a notch's curve or a fling was still running landed and
+then slid on with the rest of it.
+
+Tests: `layout/clack_list_test.go` `TestListScrollDelta` (0 on the first
+layout, 7 for a 7px precise wheel, 0 when `Position` and the children's
+sizes changed) and `TestListStopScroll` (a notch's curve moves the list
+over two frames, and not after `StopScroll`), on ci's linux-gio job, and
+`internal/ui` `TestJumpHoldsThroughRowsGrowingAbove`. Not in
+`UPSTREAM.patch`.
+
 ## 51. op/paint, gpu, gpu/internal: external images (a texture something else made, drawn in the frame)
 
 `op/paint/clack_external.go` (new: `ExternalImage`, `ExternalDevice`,

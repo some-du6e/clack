@@ -37,7 +37,9 @@ func NewChannelView(h Host, channelID string) *ChannelView {
 // position and inline editors are its own.
 func NewChannelViewIn(h Host, channelID, pane string) *ChannelView {
 	v := &ChannelView{h: h, ch: channelID, s: stateIn(h, channelID, "", pane)}
-	v.s.hb.ensureLoaded(v.s.m)
+	// the load starts as the list first lays out (ensure): a route at a
+	// message highlights it first, and a conversation not loaded yet then
+	// loads only the window around it
 	v.s.closeEdits() // an editor left open when you navigated away is gone, like Slack
 	// Each open places the "New" line at the read cursor as it is now.
 	if app := h.Core(); app != nil {
@@ -144,9 +146,13 @@ func (v *ChannelView) JumpToOwnSend(cid string, files bool) {
 	}
 	s := v.s
 	s.sendCID, s.sendAt = cid, time.Now()
+	// sendMessage's jumpToTimestamp: a window short of the newest message
+	// gives way to the newest messages, where the send goes
+	s.jumpToLatest()
 	// the navigation replaces the view's startTs and highlightTs: a jump
 	// still paging back is dropped and a flashing message stops
 	s.pendingJump, s.pendingDate = "", time.Time{}
+	s.place = jumpPlace{}
 	s.highlight = ""
 	v.h.Invalidate()
 }
@@ -160,30 +166,40 @@ func (v *ChannelView) AtBottom() bool { return !v.s.list.Position.BeforeEnd }
 func (v *ChannelView) NewestRowBottom() (int, bool) { return v.s.newestBottom() }
 
 // Highlight scrolls to ts and flashes it (permalinks, search results,
-// route "c/<id>/m/<ts>"). Older messages are paged in until ts is loaded.
-// The jump stays pending until the list's next sync places it: a list
-// mounted in the background (the thread header's channel link with the
-// channel not on screen) rebuilds with the messages that arrived since it
-// last showed, and that rebuild's scroll anchoring, or an eviction's
-// reset, would otherwise put it back where it was last left.
-func (v *ChannelView) Highlight(ts string) {
-	v.s.highlight, v.s.highlightAt = ts, time.Now()
-	v.s.positioned = true
-	v.s.jumpPages = 0
-	v.s.pendingJump = ts
-	for i, it := range v.s.items {
-		if it.kind == itMsg && it.idx < len(v.s.snap.msgs) && v.s.snap.msgs[it.idx].m.TS == ts {
-			// there now; the next sync places it again after any rebuild
-			v.s.list.Position = v.s.jumpPosition(i)
-			break
-		}
+// route "c/<id>/m/<ts>"): in the conversation's newest messages, else in
+// the window around it (openWindow). The jump stays pending until the
+// list's next sync places it: a list mounted in the background (the
+// thread header's channel link with the channel not on screen) rebuilds
+// with the messages that arrived since it last showed, and that rebuild's
+// scroll anchoring, or an eviction's reset, would otherwise put it back
+// where it was last left.
+func (v *ChannelView) Highlight(ts string) { v.highlight(ts, false) }
+
+// HighlightLazy is Highlight for highlightRoot (jumpToThreadReply's
+// highlightLazy): a message whose top is on screen already flashes where
+// it is; one off screen or not loaded is scrolled to as Highlight's.
+func (v *ChannelView) HighlightLazy(ts string) { v.highlight(ts, true) }
+
+func (v *ChannelView) highlight(ts string, lazy bool) {
+	// a repeat jump to a message still flashing doesn't restart it (its
+	// highlight prop never turns from false to true: rFp4)
+	s := v.s
+	flashing := s.highlight == ts && time.Since(s.highlightAt) < highlightFor && s.mounted()
+	if !flashing {
+		s.highlight, s.highlightAt, s.hlSeen = ts, time.Now(), false
 	}
+	s.hlRestart = !flashing
+	v.s.highlightReq = ts
+	v.s.positioned = true
+	v.s.aroundFor = ""
+	v.s.pendingJump, v.s.jumpLazy = ts, lazy
+	v.s.place = jumpPlace{} // the next sync places it (placeJump)
 }
 
 // Highlighted is the message the list highlights now (Highlight's flash,
-// 4 s from when the jump was placed), "" for none.
+// 3 s from when the jump was placed), "" for none.
 func (v *ChannelView) Highlighted() string {
-	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < 4*time.Second {
+	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < highlightFor {
 		return s.highlight
 	}
 	return ""
@@ -192,12 +208,58 @@ func (v *ChannelView) Highlighted() string {
 // JumpPending is the message a Highlight waits to place ("" for none).
 func (v *ChannelView) JumpPending() string { return v.s.pendingJump }
 
-// Refresh refetches the newest messages in the background.
+// HighlightRequested is the message the list was last asked to highlight,
+// placed or not (a jump to a message it never holds gives up, but the
+// ui root still knows what it asked for: the hand-over's root highlight).
+func (v *ChannelView) HighlightRequested() string { return v.s.highlightReq }
+
+// InWindow reports whether the list shows a window away from the
+// conversation's newest messages.
+func (v *ChannelView) InWindow() bool { return v.s.win != nil }
+
+// LatestMessagesRect is the "Latest messages" pill (ArchivesBanner) as
+// drawn last frame, in window coordinates; empty while it isn't drawn.
+func (v *ChannelView) LatestMessagesRect() image.Rectangle {
+	if v.s.latestR.Empty() {
+		return image.Rectangle{}
+	}
+	return v.s.latestR.Add(v.s.origin)
+}
+
+// Entered is a navigation to the conversation with no message to start at
+// (a sidebar click, Back, a thread's route): Slack's determineTimestamps
+// (client-boot) clears the channel's scrollmark when it has unread
+// messages, so the pane shows its newest messages, where they are; else
+// the pane opens at the scrollmark, where it was left (MessagePane:
+// startTs || getScrollmark(state, channel).mark), a window too. The list
+// keeps its place the same way: it leaves a window for the newest
+// messages only when the conversation has unreads.
+func (v *ChannelView) Entered() {
+	app := v.h.Core()
+	if app == nil || !app.Count(v.ch).Unread {
+		return // where it was left: the row on the anchor line, the window too
+	}
+	// no scrollmark (determineTimestamps clears an unread conversation's,
+	// client-boot eCxs) and, with Mark as read's default prefs, no
+	// startTs: it opens at its newest messages, at their end
+	s := v.s
+	s.leaveWindow()
+	s.pendingJump, s.aroundFor, s.place, s.jumpLazy = "", "", jumpPlace{}, false
+	s.list.Position = layout.Position{}
+	s.stopScroll()
+	s.positioned = true
+	v.h.Invalidate()
+}
+
+// Refresh refetches the newest messages in the background. A list still
+// to open the window around a jump (core's names landed before its first
+// frame) opens the window instead, through the list's own load: the
+// conversation's newest page isn't the jump's (ensure).
 func (v *ChannelView) Refresh() {
 	v.s.m.mu.Lock()
 	v.s.m.fetched = time.Time{}
 	v.s.m.mu.Unlock()
-	v.s.hb.ensureLoaded(v.s.m)
+	v.s.ensure()
 }
 
 // LayoutSig describes what the list drew in its last layout, for the ui

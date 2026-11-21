@@ -89,7 +89,7 @@ A case's `in` can also set experiment groups over Karim's (`"experiments": {"emo
 
 A case where Clack differs, and that isn't being fixed in the same change, gets `"known": "<why>"` and `"clack": <what Clack gives now>`. The test then skips while Clack gives exactly that output. It fails when Clack matches Slack (drop the mark) or gives anything else (the rest of the case is still checked). The runner reports the dimension as `DIVERGES (known)`, never as `same`. This is horizon's `known_flaky` list turned around: every entry says why, and it shows up loudly in every run until the cause is fixed.
 
-Differences that are decisions, not bugs, go in the registry's `deliberate` list with who decided and when (today the Windows toast's layout, Karim on 2026-11-12). No check measures them, and the report lists them on every run.
+Differences that are decisions, not bugs, go in the registry's `deliberate` list with who decided and when (today the Windows toast's layout, Karim on 2026-11-12, and the guard for a `slack://channel?thread_ts=<reply>` link, thread-open-root's review on 2026-11-18: Slack's own ThreadView draws such a link as a broken pane, the reply as the root with its whole thread under it, where Clack opens the reply's thread at the reply and logs that it did). No check measures them, and the report lists them on every run.
 
 ## Add a check
 

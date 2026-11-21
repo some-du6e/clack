@@ -64,6 +64,20 @@ type LinkTextHandler interface {
 	OpenLink(url, text string)
 }
 
+// MrkdwnLinkHandler is a Handler that tells a mrkdwn or rich_text link's
+// click (Slack's BaseMrkdwnLink, which opens a thread's parent in its
+// thread: openThreadForRootMessage) from other links'.
+type MrkdwnLinkHandler interface {
+	OpenMrkdwnLink(url, text string)
+}
+
+// MessageMentionHandler is a Handler that opens a message_mention pill the
+// way Slack's MessageMention does: jumpToMessage with the element's
+// channel_id, message_ts and thread_ts (url is the pill's link).
+type MessageMentionHandler interface {
+	OpenMessageMention(ch, ts, thread, url string)
+}
+
 // Elements draws Block Kit interactive elements as live widgets
 // (internal/ui/blockkit). With Options.Elements set, every run of
 // elements (an actions block, a section accessory, an attachment's action
@@ -126,6 +140,20 @@ type Palette struct {
 	// Dark is the dark theme: MemberSlug's c-member_slug--{clientTheme}
 	// (light otherwise).
 	Dark bool
+	// raw holds the see-through fills (a mention's, code's, a pre
+	// block's...) as their rgba, before flat composited them over the
+	// panel; zero where one is opaque. The box or deco painting one carries
+	// it (box.see), and a View over a fill of its own (SetUnder: a hovered
+	// or flashing message row) composites that over it instead, as Slack's
+	// fills blend over the row's background. Found by its flattened color,
+	// an opaque fill of the same color blended too: dark mode's
+	// Placeholder is dark code's fill over the panel.
+	raw seeRaw
+}
+
+// seeRaw is a palette's see-through fills before flat.
+type seeRaw struct {
+	MentionBg, MentionHoverBg, SelfMentionBg, CodeBg, PreBg, Highlight, FindHighlight, FindFocused, FileIconBg color.NRGBA
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -146,10 +174,20 @@ func Over(c, bg color.NRGBA) color.NRGBA {
 }
 
 // flat pre-composites the palette's translucent fills over the card/pane
-// color (see Over).
+// color (see Over), keeping the see-through ones' rgba (raw). It runs once,
+// on a palette of rgba values (lightPalette, darkPalette).
 func (p Palette) flat() Palette {
-	for _, c := range []*color.NRGBA{&p.MentionBg, &p.MentionHoverBg, &p.SelfMentionBg, &p.CodeBg, &p.PreBg,
-		&p.Highlight, &p.FindHighlight, &p.FindFocused, &p.FileIconBg, &p.Border, &p.BorderHover, &p.QuoteBar, &p.Divider, &p.ButtonBorder,
+	r := &p.raw
+	for _, c := range []struct{ fill, raw *color.NRGBA }{{&p.MentionBg, &r.MentionBg}, {&p.MentionHoverBg, &r.MentionHoverBg},
+		{&p.SelfMentionBg, &r.SelfMentionBg}, {&p.CodeBg, &r.CodeBg}, {&p.PreBg, &r.PreBg}, {&p.Highlight, &r.Highlight},
+		{&p.FindHighlight, &r.FindHighlight}, {&p.FindFocused, &r.FindFocused}, {&p.FileIconBg, &r.FileIconBg}} {
+		*c.raw = color.NRGBA{}
+		if c.fill.A > 0 && c.fill.A < 255 {
+			*c.raw = *c.fill
+		}
+		*c.fill = Over(*c.fill, p.Panel)
+	}
+	for _, c := range []*color.NRGBA{&p.Border, &p.BorderHover, &p.QuoteBar, &p.Divider, &p.ButtonBorder,
 		&p.CodeBorder, &p.PreBorder} {
 		*c = Over(*c, p.Panel)
 	}
@@ -157,7 +195,10 @@ func (p Palette) flat() Palette {
 }
 
 // LightPalette is Slack's light theme.
-func LightPalette() Palette {
+func LightPalette() Palette { return lightPalette().flat() }
+
+// lightPalette is LightPalette's rgba values, before flat.
+func lightPalette() Palette {
 	return Palette{
 		Text: rgb(29, 28, 29), Text2: rgb(97, 96, 97), Text3: rgb(69, 68, 71), Link: rgb(18, 100, 163),
 		Edited: rgb(134, 134, 134), CardText: rgb(69, 68, 71), CardFooter: rgb(94, 93, 96),
@@ -182,12 +223,15 @@ func LightPalette() Palette {
 		HuddleJoinBorder: rgb(116, 219, 175),
 		Missing:          rgb(234, 234, 234), MissingLine: rgb(221, 221, 221),
 		HexBorder: rgb(97, 96, 97), // rgba(var(--sk_foreground_max_solid,97, 96, 97), 1)
-	}.flat()
+	}
 }
 
 // DarkPalette is Slack's dark theme.
-func DarkPalette() Palette {
-	p := LightPalette()
+func DarkPalette() Palette { return darkPalette().flat() }
+
+// darkPalette is DarkPalette's rgba values, before flat.
+func darkPalette() Palette {
+	p := lightPalette()
 	p.Text, p.Text2, p.Text3, p.Link = rgb(185, 186, 189), rgb(171, 171, 173), rgb(209, 210, 211), rgb(29, 155, 209)
 	p.Edited, p.CardText, p.CardFooter = rgb(134, 134, 134), rgb(209, 210, 211), rgb(171, 171, 173)
 	p.FileIconBg, p.FileIconText = rgba(232, 232, 232, 0.06), rgb(171, 171, 173)
@@ -216,7 +260,7 @@ func DarkPalette() Palette {
 	p.HuddleJoinBorder = rgb(0, 85, 61)
 	p.Missing, p.MissingLine = rgb(33, 36, 40), rgb(53, 55, 59) // base-ter #212428, foreground_low_solid
 	p.Dark = true
-	return p.flat()
+	return p
 }
 
 // Style is shared by every View of one window. It owns the word shaping

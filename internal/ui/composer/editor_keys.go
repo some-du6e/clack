@@ -168,18 +168,27 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		e.moveV(1, shift)
 		keepX = true
 	case key.NamePageUp:
+		if mods == 0 && e.doc.Len() == 0 {
+			e.emit(EvPageUpEmpty)
+		}
 		if e.PageKeysHandled && mods == 0 {
 			return
 		}
 		e.movePage(-1, shift)
 		keepX = true
 	case key.NamePageDown:
+		if mods == 0 && e.doc.Len() == 0 {
+			e.emit(EvPageDownEmpty)
+		}
 		if e.PageKeysHandled && mods == 0 {
 			return
 		}
 		e.movePage(1, shift)
 		keepX = true
 	case key.NameHome:
+		if mods == 0 && e.doc.Len() == 0 {
+			e.emit(EvHomeEmpty)
+		}
 		// onHome / onEnd: on macOS Home and End go to the start and end
 		// of the whole message; elsewhere the browser's line motion
 		if short || edMacHomeEnd {
@@ -188,6 +197,9 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 			e.moveTo(e.visualLineStart(e.caret), shift)
 		}
 	case key.NameEnd:
+		if mods == 0 && e.doc.Len() == 0 {
+			e.emit(EvEndEmpty)
+		}
 		if short || edMacHomeEnd {
 			e.moveTo(e.doc.Len(), shift)
 		} else {
