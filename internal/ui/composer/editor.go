@@ -239,6 +239,11 @@ type Editor struct {
 	// plainText is Slack's plain_text_mode ("Format messages with
 	// markup"): no live markup, the characters stay as typed.
 	plainText bool
+	// textOnly is a plain Texty input (TextyInputWithAutocomplete without
+	// rich text: a topic or a description, texty_input.go): no formatting
+	// keys, Tab moves the focus on, and Enter adds a line (their onEnter,
+	// onTextyEnter, returns true).
+	textOnly bool
 	// Snippets is MessageInput's enableSnippetCreation: Mod+Shift+Enter
 	// reports EvSnippet instead of adding a line.
 	Snippets bool
@@ -954,7 +959,11 @@ func (e *Editor) pasteHTML(s, html string) {
 	}
 	d := e.doc
 	lo, hi := e.sel()
-	if u := strings.TrimSpace(s); hi > lo && edIsURL(u) {
+	// a URL pasted over a selection links it (Texty's acceptSingleUrl),
+	// only with formatting: Slack's gate is useWysiwyg && !usePlainTextMode,
+	// so under markup mode and in a plain Texty input (no link format) it
+	// replaces the selection as text
+	if u := strings.TrimSpace(s); hi > lo && edIsURL(u) && !e.plainText {
 		e.begin(edOther, false)
 		d.SetLink(lo, hi, transformLink(u))
 		e.anchor, e.caret = hi, hi
@@ -966,7 +975,10 @@ func (e *Editor) pasteHTML(s, html string) {
 	d.Delete(lo, hi)
 	var end int
 	line := d.LineOf(lo)
-	own := !plain && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
+	// pasting back what this editor copied keeps its pills (Texty's
+	// slack/texty clipboard), in a text-only input too: there with only
+	// the formats it has (textOnlyDoc)
+	own := (!plain || e.textOnly) && e.clipDoc != nil && s == strings.ReplaceAll(e.clipText, "\r\n", "\n")
 	var rich *Doc
 	if !plain && !own && a.Style&Code == 0 && d.Lines[line].Kind != CodeBlock {
 		if html != "" {
@@ -977,6 +989,8 @@ func (e *Editor) pasteHTML(s, html string) {
 		}
 	}
 	switch {
+	case own && e.textOnly:
+		end = d.InsertDoc(lo, textOnlyDoc(e.clipDoc))
 	case own:
 		end = d.InsertDoc(lo, e.clipDoc)
 	case rich != nil:

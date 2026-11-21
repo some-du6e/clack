@@ -174,7 +174,7 @@ func (v *ChannelView) Highlight(ts string) {
 	for i, it := range v.s.items {
 		if it.kind == itMsg && it.idx < len(v.s.snap.msgs) && v.s.snap.msgs[it.idx].m.TS == ts {
 			// there now; the next sync places it again after any rebuild
-			v.s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+			v.s.list.Position = v.s.jumpPosition(i)
 			break
 		}
 	}
