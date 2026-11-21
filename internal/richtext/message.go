@@ -46,6 +46,128 @@ func hasMessageBlocks(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &bs) == nil && len(bs) > 0
 }
 
+// rendersBlocks is shouldRenderBlocksInsteadOfText (client-boot iub5)
+// without its experiment-gated cases (a retention message under
+// system_messages_redesign_m1, the meeting-channel and system-metadata
+// redesigns): a meeting's artifacts DM draws its text; a canvas share its
+// blocks only when it carries no files; a channel tab or folder message,
+// an automated subtype (h3YX isAutomatedSubtype), a huddle (a room, with
+// no subtype, a broadcast's or a huddle's) or its notes, a scheduled or
+// canceled huddle, a list record's or a surface card's comment root, a
+// calendar event and a meeting reminder (a meeting_join_ accessory) its
+// text; anything else its blocks when it has any (hasMessageBlocks).
+func rendersBlocks(m *slack.Message) bool {
+	if metaEventType(m.Metadata) == "slack_system.meeting.artifacts_ready" {
+		return false
+	}
+	if m.Subtype == "canvas_sharing_message" {
+		return m.Files == nil
+	}
+	switch m.Subtype {
+	case "channel_tab_added", "channel_tab_added_unread_ignore", "folder_item_added", "folder_item_added_unread_ignore",
+		"folders_organized", "folders_organized_unread_ignore",
+		"huddle_notes_started", "scheduled_huddle_message", "scheduled_huddle_canceled", "surface_card_comment":
+		return false
+	case "list_record_comment":
+		if m.SlackList != nil {
+			return false
+		}
+	}
+	if automatedSubtypes[m.Subtype] {
+		return false
+	}
+	if len(m.Room) > 2 && (m.Subtype == "" || m.Subtype == "thread_broadcast" || m.Subtype == "huddle_message" || m.Subtype == "huddle_thread") {
+		return false
+	}
+	if hasCalendarEvent(m.RawAttachments) || meetingReminder(m.Blocks) {
+		return false
+	}
+	return hasMessageBlocks(m.Blocks)
+}
+
+// automatedSubtypes is h3YX's list (isAutomatedSubtype).
+var automatedSubtypes = map[string]bool{}
+
+func init() {
+	for _, s := range strings.Fields(`agent_view_added code_channel_review_submitted code_channel_lifecycle channel_join
+		channel_join_request channel_leave channel_topic channel_purpose channel_archive channel_unarchive
+		channel_convert_to_private channel_convert_to_public channel_convert_to_linked_private
+		channel_convert_to_linked_private_read channel_convert_to_linked_private_edit
+		channel_convert_to_linked_private_transfer channel_convert_shared group_join group_leave group_topic
+		group_purpose group_archive group_unarchive group_name channel_name play_sound pinned_item unpinned_item
+		sh_room_shared sh_room_created bot_enable bot_disable bot_add bot_remove bot_updated reminder_add
+		reminder_delete reply_broadcast app_conversation_join app_conversation_leave app_conversation_created
+		channel_posting_permissions retention_threshold joiner_notification joiner_notification_for_inviter
+		prejoin_dm_welcome_party_notification slack_connect_dm_acceptance canvas mpdm_move canvas_open_by_default
+		canvas_editing_permissions_changed channel_canvas_updated channel_canvas_updated_unread_ignore
+		tabbed_canvas_updated tabbed_canvas_updated_unread_ignore automatic_ai_huddle_notes_enabled
+		automatic_ai_huddle_notes_disabled workflow_channel_opt_in_enabled workflow_channel_opt_in_disabled
+		welcome_party`) {
+		automatedSubtypes[s] = true
+	}
+}
+
+// metaEventType is a message's metadata.event_type ("" without one).
+func metaEventType(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var md struct {
+		EventType string `json:"event_type"`
+	}
+	_ = json.Unmarshal(raw, &md)
+	return md.EventType
+}
+
+// hasCalendarEvent is isCalendarEventMessage: an attachment with a
+// calendar_event.
+func hasCalendarEvent(raw json.RawMessage) bool {
+	if !strings.Contains(string(raw), `"calendar_event"`) {
+		return false
+	}
+	var as []struct {
+		CalendarEvent json.RawMessage `json:"calendar_event"`
+	}
+	if json.Unmarshal(raw, &as) != nil {
+		return false
+	}
+	for _, a := range as {
+		switch string(a.CalendarEvent) { // JS truthiness
+		case "", "null", "false", `""`, "0":
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// meetingReminder is isMeetingReminderMsg (kbmb): a block whose
+// accessory's action_id starts with "meeting_join_".
+func meetingReminder(raw json.RawMessage) bool {
+	if !strings.Contains(string(raw), "meeting_join_") {
+		return false
+	}
+	var parts []json.RawMessage
+	if json.Unmarshal(raw, &parts) != nil {
+		return false
+	}
+	for _, p := range parts { // each block on its own: one odd accessory doesn't hide the rest
+		var b struct {
+			Accessory struct {
+				ActionID json.RawMessage `json:"action_id"`
+			} `json:"accessory"`
+		}
+		if json.Unmarshal(p, &b) != nil {
+			continue
+		}
+		var id string
+		if json.Unmarshal(b.Accessory.ActionID, &id) == nil && strings.HasPrefix(id, "meeting_join_") {
+			return true
+		}
+	}
+	return false
+}
+
 // blocksDrawNothing is Blocks' (lby4) check before it renders anything:
 // every block null or a rich_text without elements. bs is raw parsed; a
 // block without a type ({}) isn't null, so the raw JSON decides those.
@@ -87,15 +209,18 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	c := newBuilder(r, m, ch)
 	var d Doc
 	blocks := c.expanded(m.Blocks)
-	if bs := parseBlocks(blocks); len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
+	useBlocks := rendersBlocks(m)
+	if bs := parseBlocks(blocks); useBlocks && len(bs) > 0 && !blocksDrawNothing(blocks, bs) {
 		d.Blocks = c.blocks(bs)
 		d.Jumbo = richOnlyEmoji(bs)
 	}
 	// Slack draws the blocks instead of the text whenever the message has
 	// any (shouldRenderBlocksInsteadOfText), even if they draw nothing (a
-	// condition with no case for the desktop, an empty fallback list). The
-	// text stands in when a block Clack can't draw yet drew nothing.
-	if len(d.Blocks) == 0 && m.Text != "" && (!hasMessageBlocks(m.Blocks) || c.missing) {
+	// condition with no case for the desktop, an empty fallback list),
+	// unless it's one of the messages whose text it always draws
+	// (rendersBlocks). The text stands in too when a block Clack can't
+	// draw yet drew nothing.
+	if len(d.Blocks) == 0 && m.Text != "" && (!useBlocks || c.missing) {
 		d.Blocks = FromMrkdwn(r, m.Text)
 		d.Jumbo = onlyEmoji(r, m.Text)
 	}

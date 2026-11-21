@@ -1,6 +1,7 @@
 package richtext
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -176,6 +177,45 @@ func TestBlocksFallBackToText(t *testing.T) {
 	// a block type Slack doesn't know draws its card, not the message text
 	d := blocksMsg(t, `[{"type":"mystery"}]`)
 	eq(t, "unknown block", d.Blocks, []Block{{Kind: UnknownBlock, Spans: []Span{tx("This message can’t be fully displayed.")}}})
+}
+
+// TestTextOverBlocksLikeSlack: shouldRenderBlocksInsteadOfText (iub5)
+// draws some messages' text whatever their blocks, an empty rich_text
+// among them: automated subtypes (h3YX), channel tab and folder messages,
+// huddle notes, list record roots, calendar events, meeting reminders, a
+// meeting's artifacts DM and a canvas share that carries files. A plain
+// message and a canvas share without files draw their blocks, even when
+// those draw nothing.
+func TestTextOverBlocksLikeSlack(t *testing.T) {
+	const empty = `[{"type":"rich_text","elements":[]}]`
+	const section = `[{"type":"section","text":{"type":"mrkdwn","text":"the blocks"}}]`
+	reminder := `[{"type":"section","text":{"type":"mrkdwn","text":"the blocks"},"accessory":{"type":"button","action_id":"meeting_join_42","text":{"type":"plain_text","text":"Join"}}}]`
+	for _, c := range []struct {
+		name, extra, blocks string
+		text                bool // the message text draws, not the blocks
+	}{
+		{"a plain message", ``, empty, false},
+		{"a plain message's section", ``, section, false},
+		{"an automated subtype", `"subtype":"bot_add",`, empty, true},
+		{"an automated subtype's section", `"subtype":"pinned_item",`, section, true},
+		{"a channel tab message", `"subtype":"channel_tab_added",`, section, true},
+		{"huddle notes", `"subtype":"huddle_notes_started",`, empty, true},
+		{"a list record's root", `"subtype":"list_record_comment","slack_list":{"list_id":"F0LIST","list_record_id":"Rec1"},`, section, true},
+		{"a calendar event", `"attachments":[{"id":1,"calendar_event":{"title":"Sync"}}],`, section, true},
+		{"a meeting reminder", ``, reminder, true},
+		{"a meeting's artifacts DM", `"metadata":{"event_type":"slack_system.meeting.artifacts_ready","event_payload":{}},`, section, true},
+		{"a canvas share with files", `"subtype":"canvas_sharing_message","files":[{"id":"F0CANVAS","title":"Plan"}],`, section, true},
+		{"a canvas share without files", `"subtype":"canvas_sharing_message",`, empty, false},
+	} {
+		d := FromMessage(R, msg(t, `{"ts":"1.0",`+c.extra+`"text":"fallback text","blocks":`+c.blocks+`}`))
+		got := len(d.Blocks) > 0 && d.Blocks[0].Kind == Paragraph && PlainText(Doc{Blocks: d.Blocks[:1]}) == "fallback text"
+		if got != c.text {
+			t.Errorf("%s: draws the text %v, Slack %v (%s)", c.name, got, c.text, dump(d.Blocks))
+		}
+		if !c.text && strings.Contains(PlainText(d), "fallback text") {
+			t.Errorf("%s: the text drew beside its blocks (%s)", c.name, dump(d.Blocks))
+		}
+	}
 }
 
 func TestMarkdownBlock(t *testing.T) {

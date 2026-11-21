@@ -31,10 +31,11 @@ func NotificationText(r Resolver, m *slack.Message, d Doc, st SpanText) string {
 	// its files follow (a file's title)
 	dc := newBuilder(r, m, m.Channel)
 	own := 0
-	if raw := dc.expanded(m.Blocks); !blocksDrawNothing(raw, parseBlocks(raw)) {
+	use := rendersBlocks(m)
+	if raw := dc.expanded(m.Blocks); use && !blocksDrawNothing(raw, parseBlocks(raw)) {
 		own = len(dc.blocks(parseBlocks(raw)))
 	}
-	if own == 0 && m.Text != "" && (!hasMessageBlocks(m.Blocks) || dc.missing) {
+	if own == 0 && m.Text != "" && (!use || dc.missing) {
 		own = len(FromMrkdwn(r, m.Text))
 	}
 	for _, b := range d.Blocks[min(own, len(d.Blocks)):] {
