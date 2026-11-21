@@ -601,3 +601,5 @@ One row per platform per run of perf.yml's scale jobs (fakeslackd -scale: 65,846
 | 2026-11-21 | `66f5920` | plugin-reaction-pill | windows | 250 MB | 260 MB | 786 MB | 725 MB | 705 MB | 403 MB | 2 MB |
 | 2026-11-21 | `8dae9fa` | thread-load-speed | linux | 247 MB | 378 MB | 934 MB | 912 MB | 725 MB | 453 MB | 2 MB |
 | 2026-11-21 | `8dae9fa` | thread-load-speed | windows | 250 MB | 273 MB | 792 MB | 722 MB | 706 MB | 425 MB | 2 MB |
+| 2026-11-21 | `5fe8a2b` | edit-latency-r6 | linux | 230 MB | 575 MB | 762 MB | 776 MB | 679 MB | 368 MB | 2 MB |
+| 2026-11-21 | `5fe8a2b` | edit-latency-r6 | windows | 212 MB | 256 MB | 777 MB | 696 MB | 684 MB | 392 MB | 2 MB |
