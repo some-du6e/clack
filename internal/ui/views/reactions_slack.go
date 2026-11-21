@@ -101,12 +101,8 @@ func (a *actBar) layout(gtx C, p slackc.Props) D {
 	}
 	lay := func(gtx C) D {
 		if e, ok := slackc.PropChildren(p); ok {
-			// each a flex item on the bar's 24px rows, as a channel's
-			// bar places them (messages' flowPills): laid out as an
-			// element, a pill's box came back as a line box 4px taller
-			// (the bar's strut under its baseline)
 			items := slackc.Items(e)
-			return a.b.actFlowRows(gtx, len(items), gtx.Dp(24), func(gtx C, i int) D { return slackc.LayoutElement(gtx, items[i]) })
+			return a.b.actFlow(gtx, len(items), func(gtx C, i int) D { return slackc.LayoutElement(gtx, items[i]) })
 		}
 		n := len(a.m.Reactions)
 		all := n + 1
@@ -126,17 +122,16 @@ func (a *actBar) layout(gtx C, p slackc.Props) D {
 	return lay(gtx)
 }
 
-// actFlow places n pill-like items left to right, 4px apart, wrapping; an
-// item a plugin rendered as nothing takes no place.
+// actFlow places n pill-like items left to right, 4px apart, wrapping, on
+// the bar's 24px rows, as a channel's bar places them (messages'
+// flowPills): a pill drawn through a plugin's tree (a patched bar's
+// children, a patched pill) came back as its line box, 4px taller (the
+// strut under its baseline). An item a plugin rendered as nothing takes
+// no place.
 func (b *base) actFlow(gtx C, n int, item func(gtx C, i int) D) D {
-	return b.actFlowRows(gtx, n, 0, item)
-}
-
-// actFlowRows is actFlow on rows rowH tall (0: as tall as their tallest
-// item).
-func (b *base) actFlowRows(gtx C, n, rowH int, item func(gtx C, i int) D) D {
 	maxW := gtx.Constraints.Max.X
 	gap := gtx.Dp(4)
+	rowH := gtx.Dp(24)
 	x, y, lineH := 0, 0, 0
 	for i := 0; i < n; i++ {
 		m := op.Record(gtx.Ops)
@@ -154,10 +149,7 @@ func (b *base) actFlowRows(gtx C, n, rowH int, item func(gtx C, i int) D) D {
 		call.Add(gtx.Ops)
 		st.Pop()
 		x += d.Size.X + gap
-		lineH = max(lineH, d.Size.Y)
-		if rowH > 0 {
-			lineH = rowH
-		}
+		lineH = rowH
 	}
 	return D{Size: image.Pt(maxW, y+lineH)}
 }
