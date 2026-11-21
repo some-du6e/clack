@@ -169,15 +169,18 @@ func (b *base) viewMsg(m *core.Message) *core.Message {
 			// count or a sweep marked the message since: not ready, but
 			// nothing it draws moved), or the one it had when the message
 			// first showed: the view stands, the plugins' rewrite with it
-		case b.vdiff[key] || b.tt.TextRewrites():
+		case b.vdiff[key]:
 			// a revision JS hasn't answered for, an edit, of a message a
-			// plugin rewrites, or under plugins that rewrite text (one
-			// rewrote a message's text: an edit may bring what they mask
-			// into a message they left alone, which Slack's patched selector
-			// draws masked in the render after the edit): the view of the
-			// revision before stands while JS answers, as a viewed row's
-			// does (messages.applyView), what it masks never shown, at most
-			// taut.EditHold; then core's copy of the edit
+			// plugin rewrites: its view stands while JS answers, however
+			// long, as a viewed row's does (messages.applyView): what it
+			// masks never shows, a rewritten author never flashes back
+		case b.tt.TextRewrites():
+			// one the plugins left alone, under plugins that rewrite text
+			// (one rewrote a message's text: an edit may bring what they
+			// mask into it, which Slack's patched selector draws masked in
+			// the render after the edit): the view of the revision before
+			// stands while JS answers, at most taut.EditHold; then core's
+			// copy of the edit
 			held := time.Since(b.vheld[key])
 			switch {
 			case held >= taut.EditHold:

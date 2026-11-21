@@ -159,10 +159,10 @@ type row struct {
 	viewed   bool
 	vmsg     *core.Message // the view itself (viewed): what the overrides lay over
 	viewWait bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
-	// heldTil: an edit's row draws the view of the revision before (the
-	// text it drew) while JS answers for the edit, until then at most
-	// (taut.EditHold): plugins that rewrite text (taut TextRewrites), or a
-	// view that's a rewrite itself
+	// heldTil: an edit's row the plugins left alone draws the view of
+	// the revision before (the text it drew) while JS answers for the
+	// edit under plugins that rewrite text (taut TextRewrites), until then
+	// at most (taut.EditHold)
 	heldTil   time.Time
 	viewReady bool // the view it last read was ready (MessageViewState)
 	viewConv  uint64

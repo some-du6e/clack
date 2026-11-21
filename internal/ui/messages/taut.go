@@ -325,16 +325,16 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		// conversion: JS's answer of the same bytes as the copy it took
 		// while not ready makes no new conversion, and the row stayed
 		// viewed, its next update drawn late from JS's old copy
+		// An edit of a message the plugins rewrite keeps its view of the
+		// revision before while JS answers, however long (what it masks
+		// never shows, a rewritten author never flashes back: the rows'
+		// trade-off, held through a stalled JS). One the plugins left alone,
+		// held for its old text under plugins that rewrite text (below),
+		// holds for EditHold at most, then draws core's copy of the edit.
 		switch {
 		case ready:
 			r.heldTil = time.Time{}
-		case changed && r.heldTil.IsZero():
-			// an edit of a message the plugins rewrite: its view of the
-			// revision before stands while JS answers (what it masks never
-			// shows), at most EditHold
-			r.heldTil = now.Add(taut.EditHold)
 		case !r.heldTil.IsZero() && !now.Before(r.heldTil):
-			// JS didn't answer within EditHold: core's copy of the edit
 			r.heldTil = time.Time{}
 			r.viewed, r.vmsg = false, nil
 			r.recompose()
