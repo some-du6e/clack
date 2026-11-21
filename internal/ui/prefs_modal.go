@@ -157,8 +157,21 @@ func (a *App) showPrefs(section string) {
 	if mkPrefsModal != nil {
 		mk = mkPrefsModal
 	}
-	a.ShowOverlay(mk(a, pt("Preferences"), p.layout, p.close))
+	ov := mk(a, pt("Preferences"), p.layout, p.close)
+	if pk, ok := ov.(interface{ SetPeek(func() bool) }); ok {
+		pk.SetPeek(p.peek)
+	}
+	a.ShowOverlay(ov)
 }
+
+// peek is Slack's peekSidebar: on Appearance and Navigation the client
+// shows undimmed behind the dialog, so a theme or tab change can be seen
+// as it is made (prefs-dialog's tabs: themes and tab_rail have
+// peekSidebar:!0, which classes the overlay p-prefs_dialog--peek_sidebar;
+// popups.ModalOpts.Peek has the CSS). Slick's tabs, Themes included, keep
+// the scrim: Slick tells the dialog it is on "advanced" (settings.tsx
+// onTabChange → hostTab.id), which has no peekSidebar.
+func (p *prefsModal) peek() bool { return p.section == "appearance" || p.section == "navigation" }
 
 // close unmounts the JS roots the dialog mounted (Taut editors, data
 // panels, plugin tabs).
