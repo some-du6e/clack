@@ -233,7 +233,13 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		}
 		l.expandAt = k
 		ct := l.enter(attTextClass)
+		if a.IsShare {
+			l.filled++
+		}
 		row(l.blocks(text, cx, cy, cw, false))
+		if a.IsShare {
+			l.filled--
+		}
 		l.leave(ct)
 		l.expandAt = nil
 		l.plainAdd("\n")

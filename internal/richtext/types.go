@@ -176,14 +176,45 @@ const (
 	// viewer's uploads finish (PendingFilesMetaTextWrapper,
 	// c-message_kit__file__meta): Spans holds "Uploading…" and the like.
 	FileStatus
+	// CallBlock is a call block (call.go): Call holds what Slack's
+	// PlatformCallSubtype card shows.
+	CallBlock
+	// AlertBlock is an alert block (kitcards.go): Slack's c-alert box,
+	// Tone its level, Children the text.
+	AlertBlock
+	// CalloutBlock is a callout block: a tinted box (Tone the colour)
+	// around its child blocks (Children).
+	CalloutBlock
+	// LoadingBlock is a loading block: the jumbo spinner.
+	LoadingBlock
+	// RichHeader is a rich_text_header (Slack's RichTextHeader, h1–h3 by
+	// Level, p-rich_text_header--level_N); First marks the rich_text
+	// block's first element, which loses its top margin.
+	RichHeader
+	// RichDivider is a rich_text_divider: .p-rich_text_divider's rule.
+	RichDivider
+	// ContainerBlock is a container block (kitcards.go): Container holds
+	// its header, Children its child blocks.
+	ContainerBlock
+	// ShortcutBlock is a share_shortcut block (shortcut.go): Shortcut
+	// holds the workflow card.
+	ShortcutBlock
+	// CardBlock is a card block (card.go): Card holds its parts.
+	CardBlock
 )
 
 // Block is one vertical unit of a document.
 type Block struct {
-	Kind       BlockKind
-	Spans      []Span   // inline content (Paragraph, Preformatted, Quote, Header, Context, Section text, Tombstone)
-	Items      [][]Span // List items
-	Ordered    bool     // List
+	Kind    BlockKind
+	Spans   []Span   // inline content (Paragraph, Preformatted, Quote, Header, Context, Section text, Tombstone)
+	Items   [][]Span // List items
+	Ordered bool     // List
+	// Check: a check list (N8wa BS: checklist true or style "check");
+	// Checked is each item's state (its checked, else the list's). Slack
+	// draws its checkboxes only where the rich_text renderable allows them
+	// (richview Options.CheckLists), bullets elsewhere.
+	Check      bool     // List
+	Checked    []bool   // List
 	Indent     int      // List
 	Offset     int      // List
 	Border     bool     // List (also Quote/Preformatted from rich_text border)
@@ -210,6 +241,36 @@ type Block struct {
 	// Level is a header block's level (1–4, 0 for none): Slack's Header
 	// (/WQN) classes its text p-header_block--level_1/2/3 (4 draws as 3).
 	Level int
+	// Call is a CallBlock's call (call.go).
+	Call *CallCard
+	// Tone is an AlertBlock's level (default, info, success, warning,
+	// error) or a CalloutBlock's background colour (kitcards.go).
+	Tone string
+	// First: a RichHeader that is its rich_text block's first element.
+	First bool
+	// Container is a ContainerBlock's header and options (kitcards.go).
+	Container *Container
+	// Shortcut is a ShortcutBlock's workflow card (shortcut.go).
+	Shortcut *ShortcutCard
+	// Card is a CardBlock's parts (card.go).
+	Card *Card
+}
+
+// Container is a container block's header and options (Slack's
+// ContainerBlock, boot-shared yWQF).
+type Container struct {
+	Title, Subtitle []Span // one line each
+	Icon            string // 36px image ("" none)
+	// Width is narrow, standard, wide or full (the max-width class).
+	Width string
+	// Collapsible: the header toggles the content, which starts hidden
+	// with DefaultCollapsed. HeaderDivider draws a rule under a fixed
+	// header.
+	Collapsible, DefaultCollapsed, HeaderDivider bool
+	// Key names the container within its message across rebuilds: its
+	// block_id, else "#n", its place among the message's containers
+	// (richview keeps the collapse state by it).
+	Key string
 }
 
 // Image is a remote image reference.
@@ -231,6 +292,13 @@ type Button struct {
 	Value    string
 	BlockID  string
 	Kind     string // addition: "button", "overflow", "select", "datepicker", "timepicker", "datetimepicker", "input", "checkboxes", "radio_buttons"
+	// Invisible: an Actions block's element whose visible_to_user_ids
+	// leave the viewer out (blocks.go actionHidden). It isn't drawn, but
+	// it keeps its place: Slack's Actions block counts it for "+ N more"
+	// and for the five shown before it. A hidden icon_button keeps its
+	// empty action box (X2Vm hides only itself); a button or checkboxes
+	// leaves none (maybeRenderActionsElement).
+	Invisible bool
 }
 
 // Attachment is a legacy attachment, link unfurl or shared/forwarded message.

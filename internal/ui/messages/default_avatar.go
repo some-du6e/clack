@@ -9,6 +9,9 @@ import (
 	"sync"
 
 	"gioui.org/op/paint"
+
+	"github.com/some-du6e/clack/internal/localimg"
+	"github.com/some-du6e/clack/internal/ui/richview"
 )
 
 // Slack's default bot avatar (getMemberProfileImage's isBot fallback,
@@ -19,6 +22,9 @@ import (
 //
 //go:embed assets/ava_0002-72.png
 var defaultBotAvatarPNG []byte
+
+// richview draws it for an external call participant without an avatar
+func init() { richview.DefaultAvatar = localimg.Put(defaultBotAvatarPNG) }
 
 var (
 	defaultBotOnce sync.Once

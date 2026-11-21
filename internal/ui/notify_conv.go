@@ -306,6 +306,36 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 	return "", false
 }
 
+// noteNames is the resolver a notification's text is converted with
+// (NotificationText): getContentForNotification runs after
+// ensureModelsArePresent and asks for no one. It names a member the way
+// noteSpanText writes the mention (userToText), so a mention reads the
+// same whether the toast's body comes from the blocks or from the text.
+// A member the toast's wait (noteResolve) brought has their name; one
+// still unknown stays unknown, never asked for again.
+type noteNames struct {
+	*store.Store
+	b *backend
+}
+
+// MentionName is richtext.MentionNamer: noteMentionName's name for the
+// member as the store holds them (the real name when the viewer's
+// mentions show real names, else the display name), without a users/info
+// ask. A member the viewer hid has none here: noteSpanText writes their
+// mention "Hidden user", with no @ (the one answer a span's "@"+name
+// can't give), and neither their name nor their id gets in.
+func (r noteNames) MentionName(id string) string {
+	if r.b.core.UserHidden(id) {
+		return ""
+	}
+	return r.b.noteMentionName(id)
+}
+
+// MemberDeleted is richtext.MemberStater for a share_shortcut's bot,
+// whose state a notification doesn't read (its title is the text): no
+// ask.
+func (noteNames) MemberDeleted(string) (bool, bool) { return false, true }
+
 // noteMentionName is userToText's name for a member mention (client-boot
 // DRDu; extractTextFromMessage turns useMentionsNamePref on): the real
 // name (getMemberRealName) when the viewer's mentions show real names

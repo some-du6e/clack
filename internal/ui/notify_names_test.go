@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -372,6 +373,93 @@ func TestNotifyNamesTheDMPartner(t *testing.T) {
 	}
 }
 
+// A typed message mentions people as rich_text user elements, and its
+// toast's body comes from its blocks (richtext.NotificationText). A
+// member the store didn't hold is named once the toast's wait brought
+// them, after one users/info ask. One users/info answers too late for
+// (past noteResolveWait) reads as nothing, and the body's conversion
+// doesn't ask for them again: getContentForNotification runs after
+// ensureModelsArePresent and fetches no one.
+func TestNotifyNamesABlockMention(t *testing.T) {
+	for _, slow := range []bool{false, true} {
+		a, ca, fs, rec := privNoteAppFS(t)
+		conv, sender := groupDMFixture(t, ca)
+		var mentioned string
+		for _, id := range fs.UserIDs() {
+			in := false
+			for _, m := range conv.Members {
+				in = in || m == id
+			}
+			if _, held := ca.S.RawUser(id); !in && !held && id != fakeslack.SelfID {
+				mentioned = id
+				break
+			}
+		}
+		if mentioned == "" {
+			t.Fatal("the fixture has no member to mention")
+		}
+		var mu sync.Mutex
+		asks := 0
+		fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
+			if method == "edge/users/info" {
+				var up map[string]int
+				_ = json.Unmarshal(body["updated_ids"], &up)
+				if _, ok := up[mentioned]; ok {
+					mu.Lock()
+					asks++
+					mu.Unlock()
+					if slow {
+						time.Sleep(noteResolveWait + time.Second)
+					}
+				}
+			}
+			return nil, false
+		})
+		t.Cleanup(func() { fs.SetEdgeHook(nil) })
+		evs, stop := ca.Subscribe()
+		ts := "1762521000.000101"
+		if slow {
+			ts = "1762521000.000102"
+		}
+		raw, _ := json.Marshal(map[string]any{"type": "message", "channel": conv.ID, "user": sender, "ts": ts,
+			"text": "ping <@" + mentioned + "> please",
+			"blocks": []any{map[string]any{"type": "rich_text", "block_id": "b1", "elements": []any{map[string]any{"type": "rich_text_section",
+				"elements": []any{map[string]any{"type": "text", "text": "ping "}, map[string]any{"type": "user", "user_id": mentioned},
+					map[string]any{"type": "text", "text": " please"}}}}}}})
+		cj, _ := json.Marshal(conv.ID)
+		ca.Inject(slack.Event{Type: "message", Channel: cj, Raw: raw})
+		var n *desktopNote
+		for dl := time.After(10 * time.Second); n == nil; {
+			select {
+			case ev := <-evs:
+				if ev.Type == "message" && ev.Channel == conv.ID && ev.TS == ts {
+					a.data.handle(a, ev)
+					n = rec.wait(t, a, 1)
+				}
+			case <-dl:
+				t.Fatal("core never announced the message")
+			}
+		}
+		stop()
+		time.Sleep(1500 * time.Millisecond) // time for an ask the conversion might start
+		mu.Lock()
+		got := asks
+		mu.Unlock()
+		if strings.Contains(n.Body, mentioned) {
+			t.Errorf("slow %v: the toast's body %q carries the id %s", slow, n.Body, mentioned)
+		}
+		if !slow {
+			name, ok := ca.S.MemberName(mentioned)
+			if !ok || !strings.Contains(n.Body, "@"+name) {
+				t.Errorf("the toast's body %q doesn't name the mention (@%s)", n.Body, name)
+			}
+		}
+		if got != 1 {
+			t.Errorf("slow %v: users/info asked for the mentioned member %d times, want once (the toast's wait)", slow, got)
+		}
+	}
+}
+
 // A member the viewer hid (hidden_users) reads "Hidden user" in a toast's
 // body, with no @ and never their name or id, as Slack's userToText
 // writes them.
@@ -677,5 +765,82 @@ func TestNotifyNamesNoThreadToastFromAHiddenSender(t *testing.T) {
 				t.Errorf("%d toasts, want %v", n, c.toasts)
 			}
 		})
+	}
+}
+
+// A toast's body names a mention the same whether it comes from the
+// message's blocks (richtext.NotificationText with noteNames: a rich_text
+// user element, a Block Kit section's mrkdwn) or from its text: userToText
+// (noteMentionName), the display name unless the viewer's mentions show
+// real names (the team's display_real_names_in_mentions under
+// mentions_full_names_only_pref), and "Hidden user", no @ and never their
+// name or id, for a member the viewer hid (hidden_users). Synthetic
+// people.
+func TestNotifyNamesABlockMentionLikeItsText(t *testing.T) {
+	inMentions := map[string]json.RawMessage{"display_real_names_in_mentions": json.RawMessage("true")}
+	const tail = " took the synthetic notes"
+	for _, c := range []struct {
+		name       string
+		team       map[string]json.RawMessage
+		experiment string
+		adam, body string // noteNames' name for adam, the toast's body
+	}{
+		{"display names", nil, "", "adam", "zoe: @adam and Hidden user" + tail},
+		{"the team's real names in mentions", inMentions, "on", "Adam Apple", "zoe: @Adam Apple and Hidden user" + tail},
+	} {
+		for _, src := range []string{"rich_text", "section", "text"} {
+			t.Run(c.name+"/"+src, func(t *testing.T) {
+				a, ca, fs, rec := privNoteAppFS(t)
+				a.data.selfID = fakeslack.SelfID // a session's snapshot sets it
+				conv, _ := groupDMFixture(t, ca)
+				var others []string
+				for _, id := range conv.Members {
+					if id != fakeslack.SelfID {
+						others = append(others, id)
+					}
+				}
+				if len(others) < 3 {
+					t.Fatalf("the group DM has %d members besides the viewer, want 3", len(others))
+				}
+				zoe, hidden, adam := others[0], others[1], others[2]
+				us := map[string]slack.User{
+					zoe:    namedUser(zoe, "zoe.z", "zoe", "Zoe Zimmer"),
+					hidden: namedUser(hidden, "mia.m", "mia", "Mia Moss"),
+					adam:   namedUser(adam, "adam.a", "adam", "Adam Apple"),
+				}
+				fs.SetPrefs(map[string]any{"hidden_users": hidden})
+				if _, err := ca.RefreshPrefs(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if c.team != nil {
+					ca.SetTeamPrefs(c.team)
+				}
+				ca.SetExperimentGroup("mentions_full_names_only_pref", c.experiment)
+				text := "<@" + adam + "> and <@" + hidden + ">" + tail
+				msg := map[string]any{"type": "message", "channel": conv.ID, "user": zoe, "ts": "1762521300.000100", "text": text}
+				switch src {
+				case "rich_text":
+					msg["blocks"] = []any{map[string]any{"type": "rich_text", "block_id": "b1", "elements": []any{map[string]any{
+						"type": "rich_text_section", "elements": []any{
+							map[string]any{"type": "user", "user_id": adam}, map[string]any{"type": "text", "text": " and "},
+							map[string]any{"type": "user", "user_id": hidden}, map[string]any{"type": "text", "text": tail}}}}}}
+				case "section":
+					msg["blocks"] = []any{map[string]any{"type": "section", "block_id": "s1",
+						"text": map[string]any{"type": "mrkdwn", "text": text}}}
+				}
+				noteSendRaw(t, a, ca, fs, msg, usersInfoAs(us, 200*time.Millisecond))
+				n := rec.wait(t, a, 1)
+				if n.Body != c.body || strings.Contains(n.Body, hidden) || strings.Contains(n.Body, "Mia") || strings.Contains(n.Body, "mia") {
+					t.Errorf("the toast's body %q, Slack %q", n.Body, c.body)
+				}
+				r := noteNames{ca.S, a.data}
+				if got := r.MentionName(adam); got != c.adam {
+					t.Errorf("noteNames names adam %q, want %q (noteMentionName's)", got, c.adam)
+				}
+				if got := r.MentionName(hidden); got != "" {
+					t.Errorf("noteNames names the hidden member %q, want nothing", got)
+				}
+			})
+		}
 	}
 }

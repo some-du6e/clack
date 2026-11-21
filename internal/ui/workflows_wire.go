@@ -197,7 +197,7 @@ func (m *wfMentions) slug(id string) (richtext.WorkflowSlug, bool) {
 		return s, ok
 	}
 	if t, ok := m.c.Interactive().Trigger(id); ok && t.Error == "" {
-		s = richtext.WorkflowSlug{Title: t.WorkflowTitle}
+		s = richtext.WorkflowSlug{Title: t.WorkflowTitle, Icon: t.Icon}
 		m.mu.Lock()
 		m.got[id] = s
 		m.mu.Unlock()
@@ -211,7 +211,7 @@ func (m *wfMentions) fetch(id string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	t, err := m.c.Interactive().TriggerInfo(ctx, id)
-	s := richtext.WorkflowSlug{Title: t.WorkflowTitle}
+	s := richtext.WorkflowSlug{Title: t.WorkflowTitle, Icon: t.Icon}
 	if err != nil {
 		if s.Error = core.ErrCode(err); s.Error == "" {
 			s.Error = "error"

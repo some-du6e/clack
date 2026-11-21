@@ -1037,16 +1037,19 @@ func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 }
 
 // notifyBody is getContentForNotification: the message's text
-// (notifyText, extractTextFromMessage), after "{sender}: " outside DMs,
-// with its channel mentions written as Slack's channelToText writes them
-// (notify_conv.go: never the raw id). With no_text_in_notifications
-// (shouldHideNotificationText) a DM's body is empty and any other's is
-// "a message from {sender}".
+// (notifyText: extractTextFromMessage, richtext.NotificationText, named by
+// noteNames), after "{sender}: " outside DMs, with its mentions written as
+// Slack's userToText and channelToText write them (notify_conv.go: never
+// the raw id). With no_text_in_notifications (shouldHideNotificationText)
+// a DM's body is empty and any other's is "a message from {sender}".
 func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
-	if b.core != nil && b.core.Prefs().NoTextInNotifications {
+	if b.core == nil || b.core.S == nil {
+		return "" // no session to read the message with
+	}
+	if b.core.Prefs().NoTextInNotifications {
 		return b.notifyHiddenBody(ev, c)
 	}
-	text := notifyText(ev.Msg, b.noteSpanText, noteTextOf{Blocks: b.noteUnfurlText, Mrkdwn: b.noteMrkdwnText})
+	text := notifyText(noteNames{b.core.S, b}, ev.Msg, b.noteSpanText)
 	if c == nil || c.Kind == "im" || c.Kind == "app" {
 		return text
 	}
