@@ -40,6 +40,11 @@ type File struct {
 	// IsImage is Slack's fileIsImage (slack.FileIsImage): image/* with
 	// thumbs, so an image Slack made no thumbs for is a plain file.
 	IsImage bool
+	// IsVideo is Slack's fileIsPlayableVideo (slack.FileIsPlayableVideo):
+	// a video/* file that won't play (an mkv with no mp4 yet) is a plain
+	// file. MP4 is its transcode, the media viewer's source with URL.
+	IsVideo bool
+	MP4     string
 	// LastRead is when the viewer last opened it (last_read: milliseconds
 	// or seconds, 0 never), for the collections' Last viewed sort.
 	LastRead int64
@@ -290,6 +295,10 @@ type browseFileRaw struct {
 	Thumb360H  int             `json:"thumb_360_h"`
 	ThumbPDF   string          `json:"thumb_pdf"`
 	ThumbVideo string          `json:"thumb_video"`
+	MP4        string          `json:"mp4"`
+	Subtype    string          `json:"subtype"`
+	IsExternal bool            `json:"is_external"`
+	ExtType    string          `json:"external_type"`
 	Channels   []string        `json:"channels"`
 	Groups     []string        `json:"groups"`
 	IMs        []string        `json:"ims"`
@@ -324,6 +333,11 @@ func (r *browseFileRaw) file() File {
 	// channel Files tab (getMainFileAction "download", not the viewer)
 	f.IsImage = slack.FileIsImage(&slack.File{Mimetype: r.Mimetype, Filetype: r.Filetype, Thumb360: r.Thumb360,
 		Thumb360GIF: r.Thumb360GIF, Thumb800: r.Thumb800, IsSalesforceFile: r.IsSalesforceFile})
+	f.IsVideo = slack.FileIsPlayableVideo(&slack.File{Mimetype: r.Mimetype, Filetype: r.Filetype, MP4: r.MP4, Subtype: r.Subtype,
+		Mode: r.Mode, IsExternal: r.IsExternal, ExternalType: r.ExtType})
+	if f.IsVideo {
+		f.MP4 = r.MP4
+	}
 	var lr json.Number
 	if len(r.LastRead) > 0 && json.Unmarshal(r.LastRead, &lr) == nil {
 		f.LastRead, _ = lr.Int64()

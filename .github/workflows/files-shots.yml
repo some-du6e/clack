@@ -32,6 +32,10 @@ on:
       - "internal/ui/richview/view.go"
       - "internal/ui/popups/actions_context.go"
       - "internal/ui/popups/lightbox.go"
+      - "internal/ui/popups/lightbox_video.go"
+      - "internal/ui/video_viewer_test.go"
+      - "internal/ui/video_pip*.go"
+      - "internal/ui/videoplayer/pip*.go"
       - "internal/ui/files_shots_test.go"
       - "internal/ui/drop_overlay.go"
       - "internal/ui/drop_overlay_test.go"
@@ -58,6 +62,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # ui as it is, for the media viewer's video checks run on it too
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ui
+          path: before-ui
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -80,6 +90,42 @@ jobs:
           mkdir -p "$FILES_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$' ./internal/ui/
           ls -la "$FILES_SHOTS_DIR"
+      - name: the media viewer plays videos, and the same checks on ui (before-ui)
+        if: ${{ !cancelled() }}
+        env:
+          FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          mkdir -p "$FILES_SHOTS_DIR"
+          rc=0
+          # the branch: a gallery's video, Expand and the Files tab open the
+          # viewer playing; its keys, auto-hide and end; shots *-after.png
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ || rc=1
+          go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ || rc=1
+          # ui, where there's no player (the stand-in hooks): every check
+          # fails and the shots (*-before.png) show what ui does. Until ui
+          # has the viewer's videos (NewVideoViewer), a ui run that fails
+          # none of them fails this step: the comparison is the evidence.
+          cp internal/ui/video_viewer_test.go internal/ui/video_pip_test.go before-ui/internal/ui/
+          cp internal/ui/testdata/video_viewer_hooks_ui.go.txt before-ui/internal/ui/video_viewer_hooks_test.go
+          cp internal/ui/testdata/video_pip_hooks_ui.go.txt before-ui/internal/ui/video_pip_hooks_test.go
+          cp internal/ui/views/channel_files_video_test.go before-ui/internal/ui/views/
+          (cd before-ui && git log -1 --format='before = ui at %H' && VIDEO_VIEWER_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ > "$FILES_SHOTS_DIR/video-viewer-before-ui.log" 2>&1)
+          (cd before-ui && go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ > "$FILES_SHOTS_DIR/video-viewer-before-views.log" 2>&1)
+          fixed=0
+          grep -q 'func NewVideoViewer' before-ui/internal/ui/popups/lightbox_video.go 2>/dev/null && grep -q 'func (c \*Controller) PipOn' before-ui/internal/ui/videoplayer/pip.go 2>/dev/null && fixed=1
+          for f in "$FILES_SHOTS_DIR"/video-viewer-before-*.log; do
+            echo "== $f (ui): results, then one report per failing check (numbers folded)"
+            grep -E '^\s*--- (PASS|FAIL)|^(ok|FAIL)\b' "$f" || true
+            grep -E '_test.go:[0-9]+: ' "$f" | awk '{k=$0; sub(/^[^:]*:[0-9]+: /, "", k); gsub(/[0-9]+(\.[0-9]+)?/, "#", k); if (!seen[k]++) print}' | head -40 || true
+            if [ "$fixed" = 0 ] && ! grep -q -- '--- FAIL' "$f"; then
+              echo "::error::$f: ui passed every copied check (or didn't build): the comparison shows nothing"
+              rc=1
+            fi
+          done
+          ls -la "$FILES_SHOTS_DIR"
+          exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
