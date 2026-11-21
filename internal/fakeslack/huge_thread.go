@@ -47,6 +47,44 @@ type hugeState struct {
 	older   []slack.Message // the channel's messages before the root, newest first
 	reqs    []url.Values
 	mention int // the reply activity.feed names (0: none)
+	// find is what search.inline's find_in_thread answers for a query
+	// (SetHugeThreadFind): reply numbers
+	find map[string][]int
+}
+
+// SetHugeThreadFind makes search.inline's find_in_thread over the huge
+// thread answer query (lowercased, trimmed, as the bar sends it) with
+// replies, made up like every other (the fake searches no text of its
+// own).
+func (s *Server) SetHugeThreadFind(query string, replies ...int) {
+	h := s.hugeThread()
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.find == nil {
+		h.find = map[string][]int{}
+	}
+	h.find[strings.ToLower(strings.TrimSpace(query))] = append([]int(nil), replies...)
+}
+
+// hugeThreadFind is find_in_thread's hits in the huge thread ch/ts for q
+// (SetHugeThreadFind's), ok false when ch/ts isn't it.
+func (s *Server) hugeThreadFind(ch, ts, q string) ([]slack.Message, bool) {
+	h := s.hugeThread()
+	if h == nil || ch != h.t.Channel || ts != h.t.Root {
+		return nil, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []slack.Message
+	for _, i := range h.find[q] {
+		if i >= 1 && i <= h.t.Replies {
+			out = append(out, h.reply(i))
+		}
+	}
+	return out, true
 }
 
 var hugeStates sync.Map // *Server -> *hugeState

@@ -191,7 +191,9 @@ func (s *Server) findInThread(f url.Values) any {
 	q := strings.ToLower(strings.TrimSpace(f.Get("query")))
 	ch, ts := f.Get("channel"), f.Get("thread_ts")
 	var hits []slack.Message
-	if s.Size.ThreadHeader && s.isThreadHeaderConv(ch) && ts == ThreadRootTS && q != "" {
+	if h, ok := s.hugeThreadFind(ch, ts, q); ok {
+		hits = h // huge_thread.go's
+	} else if s.Size.ThreadHeader && s.isThreadHeaderConv(ch) && ts == ThreadRootTS && q != "" {
 		for _, t := range []string{ThreadRootTS, ThreadReplyTS(0), ThreadReplyTS(1)} {
 			if m := s.threadHeaderMsg(ch, t); strings.Contains(strings.ToLower(m.Text), q) {
 				hits = append(hits, m)

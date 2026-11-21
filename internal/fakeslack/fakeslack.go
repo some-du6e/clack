@@ -391,6 +391,12 @@ type Server struct {
 	// page through a short thread.
 	FindInThreadPage int
 
+	// PagedReplies makes conversations.replies of a thread the test
+	// posted (PostReplyQuiet) answer a page at a time as live Slack does
+	// (replies_paging.go) instead of the whole thread at once. Set it
+	// before the client reads.
+	PagedReplies bool
+
 	srv   *http.Server
 	ln    net.Listener
 	users []slack.User
@@ -1853,6 +1859,10 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		if msgs, found := s.quietThread(f.Get("channel"), f.Get("ts")); found {
+			if s.PagedReplies {
+				page, more, next := pageReplies(msgs, f)
+				return ok("messages", page, "has_more", more, "response_metadata", map[string]any{"next_cursor": next})
+			}
 			return ok("messages", msgs, "has_more", false)
 		}
 		if root := s.quietRootOf(f.Get("channel"), f.Get("ts")); root != "" { // a reply's ts: its thread (messages_list.go)
