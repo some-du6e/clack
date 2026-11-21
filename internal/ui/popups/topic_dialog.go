@@ -15,20 +15,39 @@ package popups
 //     your conversation."
 //
 // or, after conversations.setTopic failed, getChannelTopicError's text
-// (the dialog stays open). Save with the text unchanged just closes.
+// (the dialog stays open). The input is a Texty input over the stored
+// topic (composer.TextyInput: its mentions as pills, not raw mrkdwn).
+// handleSave sends only a changed value (`t !== U`), and what it sends is
+// submitChannelTopic's (boot-shared s0VR) cleaned text; unchanged, Save
+// just closes.
 
 import (
 	"context"
 	"image"
+	"image/color"
 	"strings"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
-	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
+
+// TopicInput is the dialog's Texty input over the stored text
+// (composer.TextyInput; popups can't import the composer).
+type TopicInput interface {
+	Layout(gtx layout.Context, th *theme.Theme, col color.NRGBA) layout.Dimensions
+	Tag() event.Tag
+	Text() string     // what it shows
+	SetText(s string) // tests
+	Changed() bool    // value() differs from the untouched input's
+	Submit() string   // the text Slack sends for it
+	OverLimit() int   // characters past maxLength (getNumCharsOverLimit)
+	// LayoutWarning draws TextyLengthWarning's pill at the origin, the
+	// box's inner top-left corner, while OverLimit > 0
+	LayoutWarning(gtx layout.Context, th *theme.Theme)
+}
 
 // TopicDialog is "Edit topic" for one conversation.
 type TopicDialog struct {
@@ -36,26 +55,24 @@ type TopicDialog struct {
 	ch      string
 	kind    string // channel | private | im | mpim | app
 	name    string // #name, or the DM's display name
-	topic0  string
 	modal   *Modal
-	ed      widget.Editor
+	in      TopicInput
 	err     string
 	pending bool
 	focused bool
 }
 
 // NewTopicDialog opens "Edit topic" for ch (kind and name as the header
-// shows them, topic the current topic).
-func NewTopicDialog(h Host, ch, kind, name, topic string) *TopicDialog {
-	d := &TopicDialog{h: h, ch: ch, kind: kind, name: name, topic0: topic}
-	d.ed.SetText(topic)
-	d.ed.SetCaret(len([]rune(topic)), len([]rune(topic)))
-	d.ed.MaxLen = 250
+// shows them, topic the current topic); input makes the Texty input over
+// a text with a placeholder.
+func NewTopicDialog(h Host, ch, kind, name, topic string, input func(text, placeholder string) TopicInput) *TopicDialog {
+	d := &TopicDialog{h: h, ch: ch, kind: kind, name: name}
+	d.in = input(topic, nsChDetails.T("Add a topic"))
 	// useChannelTopicInput's modal (the channel_details I18n)
 	save := &ModalButton{Label: nsChDetails.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return !d.pending }, Do: func() bool { return d.Save() }}
 	d.modal = NewModal(h, ModalOpts{Title: nsChDetails.T("Edit topic"), Body: d.layout, PadX: 24, HeadH: 68,
 		Buttons:    []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, save},
-		FocusStops: func() []event.Tag { return []event.Tag{&d.ed} }}).OldDialog()
+		FocusStops: func() []event.Tag { return []event.Tag{d.in.Tag()} }}).OldDialog()
 	return d
 }
 
@@ -63,26 +80,27 @@ func (d *TopicDialog) Layout(gtx layout.Context) layout.Dimensions { return d.mo
 func (d *TopicDialog) Dismissed() bool                             { return d.modal.Dismissed() }
 func (d *TopicDialog) Dismiss()                                    { d.modal.Dismiss() }
 
-// SetText types into the input; Text reads it; Error is the error under it.
-func (d *TopicDialog) SetText(s string) { d.ed.SetText(s) }
-func (d *TopicDialog) Text() string     { return d.ed.Text() }
+// SetText replaces the input's text; Text is what it shows; Error is the
+// error under it.
+func (d *TopicDialog) SetText(s string) { d.in.SetText(s) }
+func (d *TopicDialog) Text() string     { return d.in.Text() }
 func (d *TopicDialog) Error() string    { return d.err }
 
-// Save is the dialog's go button: conversations.setTopic when the text
+// Save is the dialog's go button: conversations.setTopic when the value
 // changed (handleSave), closing once Slack took it. It reports whether
 // the dialog closes now.
 func (d *TopicDialog) Save() bool {
-	t := d.ed.Text()
-	if t == d.topic0 {
+	if !d.in.Changed() {
 		return true
 	}
+	t := d.in.Submit()
 	a := d.h.Core()
 	if a == nil || d.pending {
 		return false
 	}
 	d.pending, d.err = true, ""
 	ch := d.ch
-	run(d.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SetTopic(ctx, ch, t) },
+	run(d.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.SubmitChannelTopic(ctx, ch, t) },
 		func(_ struct{}, err error) {
 			d.pending = false
 			if err != nil {
@@ -133,19 +151,19 @@ func (d *TopicDialog) layout(gtx layout.Context) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	if !d.focused {
 		d.focused = true
-		gtx.Execute(key.FocusCmd{Tag: &d.ed})
+		gtx.Execute(key.FocusCmd{Tag: d.in.Tag()})
 	}
 	m := gtx
 	m.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 24), 1<<20)}
 	call, td := record(m, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		gtx.Constraints.Min.Y = gtx.Sp(22)
-		return th.Editor(gtx, &d.ed, 15, cl.Fg, theme.WithAlpha(cl.Link, 0x40))
+		return d.in.Layout(gtx, th, cl.Fg)
 	})
 	ih := td.Size.Y + dp(gtx, 16)
 	r := image.Rect(0, 0, w, ih)
 	rad := dp(gtx, 8)
-	if gtx.Focused(&d.ed) {
+	if gtx.Focused(d.in.Tag()) {
 		ring := dp(gtx, 5)
 		rrect(gtx, r.Inset(-ring), rad+ring, cl.FocusRing)
 		one := maxInt(1, dp(gtx, 1))
@@ -158,6 +176,11 @@ func (d *TopicDialog) layout(gtx layout.Context) layout.Dimensions {
 	at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
 		call.Add(gtx.Ops)
 		return td
+	})
+	b := border1(gtx)
+	at(gtx, image.Pt(b, b), func(gtx layout.Context) layout.Dimensions {
+		d.in.LayoutWarning(gtx, th)
+		return layout.Dimensions{}
 	})
 	y := ih + dp(gtx, 6)
 	hd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {

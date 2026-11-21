@@ -159,12 +159,13 @@ func (a *App) slowConnectionCount() *atomic.Int64 {
 // socketConnected is the socket store's connected(isFast): a slow
 // connect bumps slowConnectionCount. The open Pins tabs read again (the
 // store update reruns their selectors), and so refetch when the count
-// moved.
+// moved; so do the app cards (app_card.go).
 func (a *App) socketConnected(fast bool) {
 	if fast {
 		return
 	}
 	a.slowConnectionCount().Add(1)
+	a.appCardsReconnected()
 	v, ok := pinsTabs.Load(a)
 	if !ok {
 		return

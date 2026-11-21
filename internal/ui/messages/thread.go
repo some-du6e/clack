@@ -25,6 +25,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -328,7 +329,8 @@ type PrimaryHost interface {
 // Slack's threads Header (client-boot-shared NCqL). Channels draw
 // InlineChannelEntity (an icon from getChannelIconType, then the name,
 // " (archived)" after an archived one's); a DM the partner's name; a
-// group DM "Direct message with N others" with the members in a tooltip.
+// group DM "Direct message with N others" with the members in a tooltip;
+// a canvas's file channel the canvas (thread_file.go).
 type HeaderSubtitle struct {
 	Icon string // Slack icon name, "" for DMs
 	Text string
@@ -336,6 +338,13 @@ type HeaderSubtitle struct {
 	// Link: the name links to the root's permalink (once the root is
 	// loaded, like Slack's permalink prop).
 	Link bool
+	// File: a canvas's SmallFileEntity, Icon in its 20px box or the image
+	// Emoji instead, then the title Spans (Text their plain text) in bold.
+	// Without File, Spans is another file channel's name with its emoji
+	// (ChannelName's FormatText), drawn in place of Text.
+	File  bool
+	Emoji string
+	Spans []richtext.Span
 }
 
 // subtitle is what the header shows after "Thread", false for nothing:
@@ -354,7 +363,7 @@ type HeaderSubtitle struct {
 // be, is looked up through core (ResolveConv) and an unknown DM partner
 // with users.info.
 func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
-	if ph, ok := v.h.(PrimaryHost); ok && ph.PrimaryChannel() == v.ch {
+	if v.besideCanvas() { // hideChannelName (thread_file.go)
 		return HeaderSubtitle{}, false
 	}
 	app := v.h.Core()
@@ -394,6 +403,12 @@ func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
 		n, names := mpimMembers(app, cv) // members it misses are asked for
 		return HeaderSubtitle{Text: "Direct message with " + strconv.Itoa(n-1) + " others", Tip: names}, true
 	}
+	// a canvas's or list's conversation names its file (thread_file.go)
+	if cv.File {
+		if sub, ok := v.fileSubtitle(app, cv); ok {
+			return sub, true
+		}
+	}
 	// getChannelIconType: archived (or frozen) first, then private, else
 	// the channel hash; InlineChannelIcon asks for the filled variant for a
 	// private channel. Shared channels draw the same icons. ChannelName
@@ -418,8 +433,18 @@ func (v *ThreadView) subtitleWidth(gtx layout.Context, th *theme.Theme) int {
 	if !ok {
 		return 0
 	}
+	if sub.File {
+		return v.fileEntityWidth(gtx, th, sub)
+	}
 	ns := textStyle{size: 13, lineH: 18}
 	w := measure(gtx, th, ns, sub.Text).X
+	if len(sub.Spans) > 0 { // a file channel's name with its emoji (thread_file.go)
+		m := op.Record(gtx.Ops)
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(1<<20, gtx.Sp(unit.Sp(ns.lineH)))}
+		w = v.fileTitle(g, th, sub.Spans, ns).Size.X
+		m.Stop()
+	}
 	if sub.Icon != "" {
 		w += gtx.Sp(unit.Sp(ns.size)) + dp(gtx, 2)
 	}
@@ -706,14 +731,28 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 	if !ok || maxX <= x {
 		return
 	}
+	// a known file's permalink comes from the file, not the root
+	// (O+gL: getFilePermalink with focus_thread_ts)
+	link = link || sub.File || sub.Icon == "lists"
 	if link && v.nameBtn.Clicked(gtx) {
 		v.h.Navigate("c/" + v.ch + "/m/" + v.ts)
 	}
 	ns := textStyle{size: 13, col: c.Text2, lineH: 18}
+	if sub.File { // SmallFileEntity's 20px line
+		ns.lineH = 20
+	}
 	top := bl - cssBaseline(gtx, ns.size, ns.lineH)
 	d := at(gtx, x, top, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, gtx.Sp(unit.Sp(ns.lineH)))}
 		w := func(gtx layout.Context) layout.Dimensions {
+			if sub.File {
+				d := v.layoutFileEntity(gtx, th, sub, ns.col)
+				if link {
+					defer clip.Rect{Max: d.Size}.Push(gtx.Ops).Pop()
+					pointer.CursorPointer.Add(gtx.Ops)
+				}
+				return d
+			}
 			// a channel is Slack's InlineChannelEntity (className
 			// p-threads_flexpane__header_channel_name, truncate): its icon
 			// and name are the elements plugins' rules see (StreamerMode
@@ -739,6 +778,9 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 			g.Constraints.Max.X = max(0, gtx.Constraints.Max.X-ix)
 			td := at(g, ix, 0, func(gtx layout.Context) layout.Dimensions {
 				name := func(gtx layout.Context) layout.Dimensions {
+					if len(sub.Spans) > 0 { // ChannelName formats a file channel's emoji (16px)
+						return v.fileTitle(gtx, th, sub.Spans, ns)
+					}
 					return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, sub.Text) })
 				}
 				if nst.Active() {

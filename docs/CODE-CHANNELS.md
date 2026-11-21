@@ -210,6 +210,25 @@ The html view is the only one Clack can't draw. Clack has no web view, and rende
 
 **Where Clack differs.** The pane's PR view uses `CodeTabView` with `getPullRequest` (Slack's artifact-tab PR layout) instead of the GitHub work-object flexpane, because Clack has no work-object renderer. Both are hidden for the test account, since PR views are off. PR views need `session_channels_code_tab_pr`, which also turns on artifact tabs and so hides the pane. In Slack a PR view therefore only opens as a channel tab, and Clack hasn't ported those tabs. With the experiment forced on, Clack still opens a PR view in the pane when asked directly (`OpenCodeChannelView`). The file tree is a full-height column next to the list rather than sticky inside it, and its width isn't resizable. Long lines clip instead of scrolling sideways, and split mode doesn't wrap. The PR comment composer, reviews, reactions, commit picker, find in diff, Jump to file, Conversations and expanding context lines are not ported, nor is the "Files and links" tab, the GitHub Enterprise connect alert, the html view's "Share", or the `agent_view_added` inline cards. Messages with tab slugs link to the pane instead.
 
+## The card in a message (agent_channel_unfurl)
+
+When someone asks an agent for work in a channel, their message gets an attachment that is only `agent_channel_unfurl {channel_id, channel_name, is_private, agent_bot_user_id, joinable_from_channel_id, workflow_name?, workflow_trigger_id?}` (shapes read from the message Karim flagged on 2026-11-20). MessageKitAttachments (moBr) never draws that attachment as a legacy one. It renders CodeChannelEntityCard (kR8w, surface MessageUnfurl) after the message's other attachments, with the unfurl's fields as props. kR8w then decides what to draw:
+
+- Nothing without `session_channels`.
+- The classic card for a channel the viewer is in, or a public one the client has (isMemberOfChannel, isPublicChannel). This is the hover card's body with `.card__iFien`'s border: 1px otl-ter on base-pry, radius 8, at most 428px wide, margin-bottom 8px, and otl-sec with a `0 1px 2px #0000000c` shadow while hovered. The whole card opens the channel.
+- For any other channel, nothing, unless the unfurl says it is private, names it, and the viewer is in `joinable_from_channel_id`. Then it draws the joinable card (`.joinableCard__lf8ff`):
+  - The header button (`.headerButton__Yz1Vf`) has an `::after` that covers the card, so a click anywhere opens the channel. Inside it are the 40px aubergine tile with the `lock` icon (20px), the name (15px bold, nowrap, ellipsis) and "Code channel" (13px content-sec; "Session channel" without `code_channels_naming`).
+  - The footer (border-top 1px otl-ter, padding 8px 12px, gap 8px) holds the agent's 24px avatar and Join. Join is a primary small LoadingButton with `margin-left: auto` and `z-index: 1`, so it sits above the header's `::after`.
+  - The border goes otl-sec on hover and while Join has focus (`:focus-within`).
+  - No live preview: `session_channels_live_previews` isn't assigned to the account, and neither is `session_channels_unfurls_redesign`.
+- Join (tN) loads while joinCodeChannel (e0) runs:
+  - The viewer already in the channel: nothing is sent.
+  - Otherwise `client.codeChannels.join {channel_id, origin_channel_id}` runs (reason `join_code_channel_from_unfurl`, which Clack doesn't send), the answer's channel is upserted, and the channel opens.
+  - A failure ends the loading and shows Slack's Toast at the bottom right, "Couldn’t join the channel. Please try again.", for its 6 s.
+  - While loading, the button is `c-button--disabled`, whose `pointer-events: none` lets a click through to the card, which opens the channel.
+
+Clack: `richtext` turns the attachment into an agent slot after the other attachments. `blockkit` (agent.go `agentChannel`) reads the unfurl's props once per revision of the attachments. `popups.ChannelHoverCard.EntityCard` makes kR8w's decision and draws either card, with `joinableCard` for the joinable one. `core.JoinCodeChannel` sends the join past the client's failure backoff (each Join is the viewer's own click). Tests: `TestAgentChannelUnfurlCard` (richtext), `TestJoinCodeChannel` (core), `TestAgentSessionRequestCard` and `TestAgentSessionJoinableCard` (ui, fakeslack `Size.AgentSessionRequests`: #agent-requests with a request for a public code channel and one for a private channel only `client.codeChannels.join` finds). The shots are `agent-session-{request,joinable,join-refused,joining}-{light,dark}.png` in bk-agent-shots.
+
 ## Agents & tools
 
 The rail's "Agents & tools" and the sidebar's "Agent sessions" link open the `CodeChannelsBrowser` page ("Agent sessions" / "Code Channels") only with `agent_sessions_synth_view` (and `code_channels_browse` for the public list). Both are off for the test account, so its Agents & tools tab shows no sessions. `channel_details_agents_apps_tab` (on) adds an "Agents & apps" tab to channel details. Not ported.

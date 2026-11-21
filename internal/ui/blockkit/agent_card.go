@@ -122,14 +122,17 @@ func (me *Message) layoutTaskCard(gtx C, st *agentState, b *AgentBlock, first bo
 		status, title, hasContent = PlanStatus(b.Tasks), PlanTitle(b), len(b.Tasks) > 0
 	} else {
 		status, title, hasContent = CardStatus(b.Status), b.Title, b.hasContent()
-		def = strings.HasPrefix(b.BlockID, "mcp_task_")
+		def = me.taskCardDefault(st, b, key)
 	}
 	open := hasContent && st.isOpen(key, def)
 	t := st.tap(key)
 	if hasContent && t.clicked(gtx, me.h) {
 		st.open[key] = !open
 		open = !open
-		st.anim[key] = &agentAnim{from: st.shown[key], start: gtx.Now}
+		st.touched[key] = true
+		if !open {
+			st.resetUnder(b)
+		}
 		me.changed()
 	}
 	cw := min(w, dp(gtx, 480))
@@ -156,7 +159,7 @@ func (me *Message) layoutTaskCard(gtx C, st *agentState, b *AgentBlock, first bo
 	if !open && b.Type == "plan" {
 		target = dp(gtx, 40) // initialHeight; a plan doesn't fit its collapsed height to the bar
 	}
-	h := me.animated(gtx, st, key, min(barH, target), target)
+	h := me.animated(gtx, st, key, target) // .block: overflow hidden
 	st.shown[key] = h
 	r := image.Rect(0, top, cw, top+h+2*bw)
 	rad := dp(gtx, 12)
@@ -220,7 +223,7 @@ func (me *Message) cardBar(gtx C, cp cardPal, t *tap, status, title string, hasC
 		t.add(gtx, image.Pt(w, h))
 	}
 	if shimmer {
-		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+		indicatorFrame(gtx, 33*time.Millisecond)
 	}
 	return h
 }
@@ -231,9 +234,10 @@ func (me *Message) cardPlanTasks(gtx C, st *agentState, cp cardPal, b *AgentBloc
 	th := me.h.Theme()
 	enh := me.planCodingEnhancements()
 	y := 0
+	keys := taskKeys(b)
 	for i := range b.Tasks {
 		task := &b.Tasks[i]
-		key := "task\x00" + b.BlockID + "\x00" + task.TaskID + "\x00" + itoa(i)
+		key := keys[i]
 		// .taskItem padding 1px; .taskHeader margin 0 8px, padding-left 1px
 		itemX := dp(gtx, 1)
 		x := itemX + dp(gtx, 8) + dp(gtx, 1)
@@ -243,7 +247,7 @@ func (me *Message) cardPlanTasks(gtx C, st *agentState, cp cardPal, b *AgentBloc
 		lines := wrapWeight(gtx, th, 15, theme.Bold, task.Title, max(w-tx-dp(gtx, 2)-dp(gtx, 9), 1))
 		n := max(len(lines), 1)
 		head := max(dp(gtx, 2)+dp(gtx, 20)+dp(gtx, 2), dp(gtx, 2)+n*lh+dp(gtx, 2))
-		at(gtx, image.Pt(x, iy+dp(gtx, 2)), func(gtx C) D { return me.cardTaskIcon(gtx, cp, task.Status, enh) })
+		at(gtx, image.Pt(x, iy+dp(gtx, 2)), func(gtx C) D { return me.cardTaskIcon(gtx, cp, task, enh) })
 		ty := iy + dp(gtx, 2)
 		for _, ln := range lines {
 			at(gtx, image.Pt(tx, ty), func(gtx C) D {
@@ -262,8 +266,17 @@ func (me *Message) cardPlanTasks(gtx C, st *agentState, cp cardPal, b *AgentBloc
 // box: hourglass, ai-sparkle-filled (shimmering, theme-base-pry, until
 // plan_block_coding_enhancements), check-filled, warning-filled
 // (content-sec), 15px (size inherit).
-func (me *Message) cardTaskIcon(gtx C, cp cardPal, status string, enh bool) D {
+func (me *Message) cardTaskIcon(gtx C, cp cardPal, task *AgentTask, enh bool) D {
 	box := dp(gtx, 20)
+	status := task.Status
+	if n := taskIconName(task); n != "" { // the task's own icon, in the header's colour
+		s := dp(gtx, 15)
+		at(gtx, image.Pt((box-s)/2, (box-s)/2), func(gtx C) D { return icon(gtx, n, 15, cp.pry) })
+		if agentIconHook != nil {
+			agentIconHook(n)
+		}
+		return D{Size: image.Pt(box, box)}
+	}
 	name, col := "check-filled", cp.pry
 	switch status {
 	case StatusPending:
@@ -274,7 +287,7 @@ func (me *Message) cardTaskIcon(gtx C, cp cardPal, status string, enh bool) D {
 			col = cp.themePry
 			if !me.noAnimations() {
 				col = shimmerColor(gtx.Now, 0, 2, cp.themePry, cp.themeSec)
-				gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+				indicatorFrame(gtx, 33*time.Millisecond)
 			}
 		}
 	case StatusError:
@@ -501,5 +514,5 @@ func cardSpinner(gtx C, d int, col color.NRGBA) {
 	base := float32(-90.0/219.9*2*math.Pi) - float32(math.Pi/4)
 	arc(base+float32(2*math.Pi*cubicBezier(.25, .29, .54, .86, t)), dash, col)
 	arc(base+float32(2*math.Pi*cubicBezier(.41, .24, .64, .69, t)), dash, col)
-	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
+	indicatorFrame(gtx, 33*time.Millisecond)
 }

@@ -49,8 +49,17 @@ func (a *App) OpenChannelSecondary(ch string) {
 	if ch == "" {
 		return
 	}
+	a.canvasNavigated() // a navigation still waiting (canvas_open.go) is dropped
 	if a.pane == paneSplit {
 		a.OpenSplit("c/" + ch)
+		return
+	}
+	// a file channel (Slack's RedirectFileChannel, canvas_open.go): its
+	// canvas (toCanvas) or its list (toList) in the column
+	if a.redirectInstead(ch, "", fileTo{
+		canvas: func(fid string) { a.OpenCanvasAt(fid, "", false) },
+		list:   a.OpenList,
+	}, func() { a.OpenChannelSecondary(ch) }, a.activityStill()) {
 		return
 	}
 	s := &a.secondary
@@ -108,6 +117,7 @@ func (a *App) OpenDetailSecondary(key string, draw layout.Widget) {
 	if key == "" || draw == nil {
 		return
 	}
+	a.canvasNavigated() // a canvas jump still waiting (canvas_open.go) is dropped
 	a.secondary = secondaryState{kind: secActivity, width: a.secondary.width, page: a.router.Current().Page()}
 	a.secondary.view = &secDetailPane{key: key, draw: draw}
 	a.Invalidate()
