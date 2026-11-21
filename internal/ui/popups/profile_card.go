@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/openurl"
@@ -236,6 +237,11 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 			return layout.Dimensions{}
 		}
 		pfTick(gtx)
+		// ConnectedPresence's isDnd reads the member's DND, which asks
+		// dnd.teamInfo when it isn't fresh (core.ClaimMemberDND)
+		if c := p.h.Core(); c != nil && pfShowsPresence(u) && c.ClaimMemberDND(u.ID, gtx.Now) {
+			pfLoadDND(p.h, u.ID)
+		}
 	}
 
 	w := dp(gtx, 340)
@@ -408,7 +414,9 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 		y += dp(gtx, 28) + pad
 		return layout.Dimensions{Size: image.Pt(w, y)}
 	}
-	if pfHasStatus(u, gtx.Now) {
+	// BaseCustomStatus renders nothing without a status emoji (T1ap's
+	// resolved emoji is falsy), whatever the text
+	if pfHasStatus(u, gtx.Now) && u.StatusEmoji != "" {
 		margin(0)
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, 1<<20)}
@@ -454,9 +462,9 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 }
 
 // header is MemberProfileBaseEntity's primary block: Slack's
-// MemberProfileHoverBanner (Workspace Owner / Workspace Admin /
-// Deactivated account) across the top, then avatar, name, presence,
-// title and pronouns, full card width, paddings included.
+// MemberProfileHoverBanner (pfRoleBanner) across the top, then avatar,
+// name, presence, title and pronouns, full card width, paddings
+// included.
 func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int) layout.Dimensions {
 	bh := 0
 	if ok {
@@ -465,10 +473,12 @@ func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 		if u.External {
 			bh = pfExternalBanner(gtx, p.h, th, cl, p.teamName, p.teamIcon, w).Size.Y
 		}
-		func() {
-			defer op.Offset(image.Pt(0, bh)).Push(gtx.Ops).Pop()
-			bh += pfBanner(gtx, th, cl, u, w).Size.Y
-		}()
+		if label, deact := pfRoleBanner(p.h, u); label != "" {
+			func() {
+				defer op.Offset(image.Pt(0, bh)).Push(gtx.Ops).Pop()
+				bh += srBanner(gtx, th, label, deact, w, cl.Bg).Size.Y
+			}()
+		}
 	}
 	defer op.Offset(image.Pt(0, bh)).Push(gtx.Ops).Pop()
 	pad := dp(gtx, 16)
@@ -549,7 +559,7 @@ func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 	y := 0
 	// name + presence
 	nd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-		return pfNameLine(gtx, p.h, th, &p.nameBtn, u, 15, 22, 10, colW)
+		return pfNameLine(gtx, p.h, th, &p.nameBtn, u, pfRealName(u), 15, 22, 10, colW)
 	})
 	p.nameLine, p.dotLine = image.Rect(0, 0, nd.Size.X, lineH), image.Rectangle{}
 	if pfShowsPresence(u) { // the dot ends the line (pfNameLine), centred in it
@@ -641,48 +651,31 @@ func pfIsSlackbot(u core.User) bool { return u.ID == "USLACKBOT" }
 // either as status-slackbot-filled.
 func pfIsSystemUser(u core.User) bool { return u.ID == "USLACKBOT" || u.ID == "USLACK" }
 
-// pfBanner is Slack's MemberProfileHoverBanner (client-boot-shared B0lO)
-// across the card's top: "Workspace Owner", else "Workspace Admin", else
-// (deactivated) an archive icon and "Deactivated account". Padding 8px
-// 16px, 13px bold, one line. Light: rgba(29,28,29,.04) (deactivated .13,
-// text .7); dark: #ddd behind the same dark text.
-func pfBanner(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, w int) layout.Dimensions {
-	var label, ic string
+// pfRoleBanner is MemberProfileHoverBanner's text (client-boot-shared
+// 1onU, build 35b42de8b870): "Workspace Owner" when isOwner, else
+// "Workspace Admin" when isAdmin, else "Deactivated account" (deactivated
+// true: the archive icon and the dimmed colours). MemberProfileBaseEntity
+// (vCze) passes isAdmin = isWorkspaceAdmin and isOwner = ltQJ Jm, which
+// read the member's is_admin / is_owner only without account types
+// (HQMn hasAccountTypes: Sonic and an enterprise). On Enterprise Grid
+// they read state.accountTypes[selfTeamIds.teamId] instead, and that key
+// is the org: team.admins.list is never asked for an E… id (HQMn fetch
+// skips looksLikeEnterpriseTeamId) and "Set role to match member" (boot-
+// render KT) skips members with an enterprise_id, so nothing fills it and
+// a Grid card never shows a role. No other role has a label: the
+// primary owner is an owner (is_owner), and org admins and owners
+// (enterprise_user), guests, external people and bots get none here.
+func pfRoleBanner(h Host, u core.User) (label string, deactivated bool) {
+	grid := h != nil && h.Core() != nil && h.Core().IsEnterprise()
 	switch {
-	case u.IsOwner && !u.Deleted:
-		label = "Workspace Owner"
-	case u.IsAdmin && !u.Deleted:
-		label = "Workspace Admin"
+	case !grid && u.IsOwner:
+		return i18n.T("team", "Workspace Owner"), false
+	case !grid && u.IsAdmin:
+		return i18n.T("team", "Workspace Admin"), false
 	case u.Deleted:
-		label, ic = "Deactivated account", "archive-filled"
-	default:
-		return layout.Dimensions{}
+		return i18n.T("team", "Deactivated account"), true
 	}
-	fg := rgb(0x1d1c1d)
-	bg := rgba(0x1d1c1d, 0.04)
-	if u.Deleted {
-		fg = rgba(0x1d1c1d, 0.7)
-		bg = rgba(0x1d1c1d, 0.13)
-	}
-	if th != nil && th.Dark {
-		bg = rgb(0xdddddd)
-	}
-	padX, padY := dp(gtx, 16), dp(gtx, 8)
-	lh := dp(gtx, 18)
-	h := padY + lh + padY
-	fill(gtx, image.Rect(0, 0, w, h), bg)
-	x := padX
-	if ic != "" {
-		at(gtx, image.Pt(x, padY+(lh-dp(gtx, 12))/2-dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
-			return icon(gtx, ic, 12, fg)
-		})
-		x += dp(gtx, 12) + dp(gtx, 8)
-	}
-	at(gtx, image.Pt(x, padY), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x-padX), lh)}
-		return para(gtx, th, 13, 18, theme.Bold, fg, label, 1)
-	})
-	return layout.Dimensions{Size: image.Pt(w, h)}
+	return "", false
 }
 
 // pfExternalBanner is AppExternalTeamBanner inside the member card
@@ -713,27 +706,79 @@ func pfExternalBanner(gtx layout.Context, h Host, th *theme.Theme, cl *Colors, n
 	return layout.Dimensions{Size: image.Pt(w, hh)}
 }
 
-// pfCardStatus is the card's custom status (BaseCustomStatus with
-// .p-member_profile_hover_card__status): a 20px emoji, a space, and the
-// text on one line, cut with an ellipsis.
+// pfCardStatus is the card's custom status: MemberProfileHoverCard's
+// BaseCustomStatus (tooltip off, insertTextSpacing; client-boot X/OW,
+// build 35b42de8b870) as BaseCustomStatusTooltipContent in
+// .p-member_profile_hover_card__status (one line, nowrap, cut with an
+// ellipsis). The status emoji (BaseCustomStatusEmoji, 20px by the card's
+// .c-emoji rule), then the text 8px after it (margin_left_50) with its own
+// :codes: drawn as 20px emoji (BaseCustomStatusText → FormatTextWithEmoji,
+// the text unescaped first), every code through the member's
+// status_emoji_display_info (core.EmojiDisplayInfo). A code with no
+// picture stays text.
 func pfCardStatus(gtx layout.Context, h Host, th *theme.Theme, cl *Colors, u core.User) layout.Dimensions {
 	maxW := gtx.Constraints.Max.X
 	lineH := dp(gtx, 22)
+	em := dp(gtx, 20)
 	x := 0
-	if u.StatusEmoji != "" || u.StatusEmojiURL != "" {
-		at(gtx, image.Pt(0, (lineH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+	if u.StatusEmoji != "" {
+		at(gtx, image.Pt(0, (lineH-em)/2), func(gtx layout.Context) layout.Dimensions {
 			return pfStatusEmoji(gtx, h, u, 20)
 		})
-		x = dp(gtx, 20) + dp(gtx, 4)
+		x = em
 	}
-	if !pfBlank(u.StatusText) {
-		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+	if u.StatusText == "" {
+		return layout.Dimensions{Size: image.Pt(maxW, lineH)}
+	}
+	x += dp(gtx, 8)
+	textRun := func(s string) bool { // false once the line is full
+		d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, maxW-x), lineH)}
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, u.StatusText, 1)
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, s, 1)
 		})
+		x += d.Size.X
+		return x < maxW
+	}
+	for _, part := range core.StatusTextParts(pfUnescape(u.StatusText), u.StatusEmojiInfo) {
+		if x >= maxW {
+			break
+		}
+		if part.Code == "" {
+			if !textRun(part.Text) {
+				break
+			}
+			continue
+		}
+		url := part.URL
+		if url == "" {
+			url = emojiURL(h, part.Code)
+		}
+		if url == "" {
+			if !textRun(part.Code) {
+				break
+			}
+			continue
+		}
+		if x+em > maxW { // the emoji doesn't fit: the line ends in its ellipsis
+			textRun("…")
+			break
+		}
+		at(gtx, image.Pt(x, (lineH-em)/2), func(gtx layout.Context) layout.Dimensions {
+			if img, ok := h.Images().Get(url, em); ok {
+				return containImage(gtx, img, image.Pt(em, em))
+			}
+			return layout.Dimensions{Size: image.Pt(em, em)}
+		})
+		x += em
 	}
 	return layout.Dimensions{Size: image.Pt(maxW, lineH)}
 }
+
+// pfUnescape is lodash's unescape (FormatTextWithEmoji's inputIsEscaped):
+// &amp; &lt; &gt; &quot; &#39; back to their characters.
+var pfUnescapeR = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&#39;", "'")
+
+func pfUnescape(s string) string { return pfUnescapeR.Replace(s) }
 
 // pfLocalTimeLabel is Slack's LocalTime text (useProfileMemberLocalTime
 // with useAtlasI18nLocalTimeLabels): "3:42 PM local time", or "3:42 PM
@@ -907,8 +952,10 @@ func pfShowsPresence(u core.User) bool {
 }
 
 // pfPresenceGlyph is BasePresence's icon (getPresenceIconName) at about
-// dot dp: Slackbot's and the Slack system user's heart (isSystemUser:
-// status-slackbot-filled, drawn whatever its presence), the rounded square of an external member or
+// dot dp: the DND glyph when the member's notifications are paused
+// (u.DND), Slackbot's and the Slack system user's heart (isSystemUser:
+// status-slackbot-filled, drawn whatever its presence), the rounded
+// square of an external member or
 // guest (status-guest / -filled), else the member circle. Active is
 // #2bac76 (c-presence--active), away the hollow gray.
 func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bool, dot float32) layout.Dimensions {
@@ -917,9 +964,10 @@ func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bo
 	if active {
 		col = cl.Presence
 	}
+	if n := pfPresenceIconName(u, active); n == "status-slackbot-filled" || strings.Contains(n, "-dnd") {
+		return pfPresenceIcon(gtx, n, dot, col)
+	}
 	switch {
-	case pfIsSystemUser(u):
-		return pfSlackbotHeart(gtx, dot, col)
 	case u.External || u.Guest:
 		px := dp(gtx, dot*8/9) // an 8-unit square where the circle is 9
 		off := (dp(gtx, dot) - px) / 2
@@ -935,17 +983,42 @@ func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bo
 	return presenceDot(gtx, th, active, dot)
 }
 
-// pfSlackbotHeart draws Slackbot's presence, the SvgIcon
-// status-slackbot-filled, in the dot×dot box the member circle fills:
-// BasePresence draws every presence glyph in the same 20-unit box, and
-// the circle (status-member-filled) is 9 units across, so the icon is
-// dot·20/9 with its centre on the box's.
-func pfSlackbotHeart(gtx layout.Context, dot float32, col color.NRGBA) layout.Dimensions {
+// pfPresenceIconName is getPresenceIconName (client-boot MSOq, build
+// 35b42de8b870) for u: an external member or a guest (getMemberType "ra"
+// / "external") gets status-guest, paused notifications (isDnd) the -dnd
+// glyph, which for a member wins over the system users' heart
+// (isSystemUser: Slackbot and USLACK, neither of which core ever asks
+// dnd.teamInfo about),
+// and an active one the -filled glyph. Clack draws a Single-Channel
+// Guest ("ura": status-single-channel-guest) as a guest.
+func pfPresenceIconName(u core.User, active bool) string {
+	name := "status-member"
+	switch {
+	case u.External || u.Guest:
+		name = "status-guest"
+	case !u.DND && pfIsSystemUser(u):
+		return "status-slackbot-filled"
+	}
+	if u.DND {
+		name += "-dnd"
+	}
+	if active {
+		name += "-filled"
+	}
+	return name
+}
+
+// pfPresenceIcon draws a presence SvgIcon (Slackbot's
+// status-slackbot-filled, the DND glyphs) in the dot×dot box the member
+// circle fills: BasePresence draws every presence glyph in the same
+// 20-unit box, and the circle (status-member-filled) is 9 units across,
+// so the icon is dot·20/9 with its centre on the box's.
+func pfPresenceIcon(gtx layout.Context, name string, dot float32, col color.NRGBA) layout.Dimensions {
 	s := dot * 20 / 9
 	d := dp(gtx, dot)
 	off := (dp(gtx, s) - d) / 2
 	t := op.Offset(image.Pt(-off, -off)).Push(gtx.Ops)
-	icons.Get("status-slackbot-filled")(gtx, unit.Dp(s), col)
+	icons.Get(name)(gtx, unit.Dp(s), col)
 	t.Pop()
 	return layout.Dimensions{Size: image.Pt(d, d)}
 }
@@ -961,6 +1034,13 @@ const pfBlankCut = " \t\n\u200b\u200c\u200d\u2060\ufeff"
 func pfBlank(s string) bool {
 	return strings.Trim(s, pfBlankCut) == ""
 }
+
+// pfRealName is the name MemberProfileBaseEntity shows (vCze: hWCs wg
+// getMemberRealName, profile.real_name else the member's real_name, else
+// nothing): the hover card and the search people cards print the real
+// name whatever the display-name preferences, and a blank one leaves the
+// name empty (Karim's U+200B real name: core keeps it "").
+func pfRealName(u core.User) string { return u.RealName }
 
 // pfName is the name Slack shows for u, skipping blank display names.
 func pfName(u core.User) string {
@@ -1024,6 +1104,15 @@ func pfSubscribe(h Host, id string) {
 		c.SubscribePresence([]string{id})
 		return struct{}{}, nil
 	}, nil)
+}
+
+// pfLoadDND asks dnd.teamInfo for id's DND (claimed by ClaimMemberDND)
+// and repaints when it answers.
+func pfLoadDND(h Host, id string) {
+	c := h.Core()
+	run(h, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, c.LoadMemberDND(ctx, []string{id})
+	}, func(struct{}, error) { h.Invalidate() })
 }
 
 // pfEnsure fetches an unknown user and reports whether it arrived.
@@ -1211,10 +1300,9 @@ func pfImage(gtx layout.Context, h Host, url string, size, rad float32) layout.D
 
 // pfNameLine draws the bold name (clickable via c) and the presence
 // indicator after it, within maxW.
-func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable, u core.User, size, lh, dot float32, maxW int) layout.Dimensions {
+func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable, u core.User, name string, size, lh, dot float32, maxW int) layout.Dimensions {
 	cl := colorsOf(th)
 	lineH := dp(gtx, lh)
-	name := pfName(u)
 	// unknown presence draws the hollow ring, like Slack; a deactivated
 	// member has none (MemberProfileBaseEntity: !isDeactivated)
 	hasDot := pfShowsPresence(u)
@@ -1224,12 +1312,14 @@ func pfNameLine(gtx layout.Context, h Host, th *theme.Theme, c *widget.Clickable
 	}
 	nameMax := maxInt(1, maxW-reserve)
 	var nd layout.Dimensions
-	if c != nil {
+	switch {
+	case pfBlank(name): // an empty name line (a blank real name): nothing to draw
+	case c != nil:
 		nd = clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(nameMax, lineH)}
 			return para(gtx, th, size, lh, theme.Black, cl.Fg, name, 1)
 		})
-	} else {
+	default:
 		g := gtx
 		g.Constraints = layout.Constraints{Max: image.Pt(nameMax, lineH)}
 		nd = para(g, th, size, lh, theme.Black, cl.Fg, name, 1)

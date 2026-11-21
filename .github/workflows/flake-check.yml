@@ -184,6 +184,12 @@ on:
       - "internal/core/search_recents.go"
       - "internal/core/search_recents_test.go"
       - "internal/core/manage.go"
+      - "internal/ui/views/activity_order.go"
+      - "internal/ui/views/activity_order_test.go"
+      - "internal/ui/views/activity_order_live_test.go"
+      - "internal/ui/views/activity_order_reload_test.go"
+      - "internal/ui/views/activity_order_reload_live_test.go"
+      - "internal/fakeslack/activity_live.go"
       - "internal/core/create_test.go"
       - "internal/ui/create_channel_test.go"
       - "internal/ui/popups/create_channel.go"
@@ -264,6 +270,14 @@ on:
       - "internal/fakeslack/react_live.go"
       - "internal/store/reacts.go"
       - "internal/ui/views/taut.go"
+      # the history-gap job's own
+      - "internal/slack/rtm.go"
+      - "internal/slack/rtm_pong_test.go"
+      - "internal/store/reached_end*.go"
+      - "internal/core/reached_end*.go"
+      - "internal/ui/messages/reached_end_test.go"
+      - "internal/ui/reached_end_list_test.go"
+      - "internal/fakeslack/count_posts.go"
 
 permissions:
   contents: read
@@ -701,6 +715,53 @@ jobs:
           mkdir -p "$CLACK_SHOTS"
           xvfb-run -a go test -count=$COUNT -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestHuddleShotsTiles' \
             ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/huddleui
+
+  # A plugin's Block Kit-style button row (OwlMode's Save in Taut and
+  # Forget) as Slack lays it out and draws it: the row's flex rules, the
+  # button's c-button box with what CSS sets on it, its icon and label
+  # as a flex row; a composer.addButton toggle as Slack's composer
+  # button; a plugin's ring round its ReactionBar's pills; and Taut's
+  # OwlMode itself under (demo) Owl's DM confirmation. Layout from the
+  # rects JS reads and LayoutShape, and the pixels (Mesa llvmpipe).
+  # Dispatch with only=owl-save.
+  owl-save:
+    if: ${{ !inputs.only || startsWith('owl-save', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: build Taut's OwlMode (the reviewed TAUT_PIN; GPLv3, never committed)
+        env:
+          TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
+          cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          npm run -s build:user-plugin -- plugins/OwlMode.tsx "$GITHUB_WORKSPACE/dist/taut-plugins/OwlMode.js"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "kit + messages: the row's layout and pixels (light and dark), OwlMode's own Save in Taut, the composer button, the reaction ring, COUNT runs"
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/slackc/kit || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestTautViewOwlSaveButton$' ./internal/ui || rc=1
+          exit $rc
 
   slick:
     if: ${{ !inputs.only || startsWith('slick', inputs.only) }}
@@ -1596,6 +1657,41 @@ jobs:
           xvfb-run -a go test -race -count=3 -run "$HUB_TESTS" ./internal/ui/messages || rc=1
           exit $rc
 
+  # activity-order: Activity's rows in Slack's order (views/activity_order.go,
+  # tsND's upserts; Karim 2026-11-21: a thread's new reply left its row where
+  # it was, "Just now" at the bottom). Over the socket a mention, a reaction
+  # a minute later and a reply in each of two threads: each thread's bundle
+  # comes again with the reply's ts and goes to the top; the order, times,
+  # senders and texts after each event, after activity_invalidated's reload
+  # and after a restart on the saved cache; the reducer port against Slack's
+  # own upserts; what a reload keeps (an answered invitation leaves, the
+  # later pages stay on a type tab and under the VIP sort, a thread twin,
+  # the socket's newer copy); the live updates, Unreads and paging around
+  # it. Dispatch with only=activity-order.
+  activity-order:
+    if: ${{ !inputs.only || startsWith('activity-order', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      ORDER_TESTS: '^(TestActivityOrder(LikeSlack|MatchesSlacksReducer)|TestActivityRtmUpsertNewSlice|TestActivityPlainReload|TestActivityReload(DropsTheNewestRowGone|ThreadTwinKeepsLaterPages|KeepsTheSocketsCopy|KeepsLaterPages)|TestActivityMergeKeepsLaterPagesOutOfTimeOrder|TestActivityAnsweredInviteLeaves|TestActivityUnreadsRefreshRetains|TestActivityUnreadsShowsOnlyUnread|TestActivityLiveUpdatesLikeSlack|TestActivityPagedListShowsEveryEntry|TestActivityLiveRemovedDuringLoad|TestActivityBadgesZeroThenLoad)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "views: Activity's order (one verbose run, then COUNT, then 3 under -race)"
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 20m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          xvfb-run -a go test -race -count=3 -timeout 40m -run "$ORDER_TESTS" ./internal/ui/views || rc=1
+          exit $rc
+
   # edit-latency: an app's message edited every 500 ms over the socket
   # (Karim's uptime monitor, 2026-11-18: a plan block whose title is the
   # outage's duration, "updates really slowly like every 33 seconds") draws
@@ -2339,6 +2435,35 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 30m -run '^(TestDMMessageSlugsLikeSlack|TestNotifyWritesMessageSlugsLikeSlack)$' ./internal/ui || rc=1
           exit $rc
 
+  # profile-role-band (2026-11-21): the member hover card against Slack's
+  # MemberProfileHoverCard for every role fakeslack serves (roles.go): no
+  # role band on Grid (only Deactivated account), Workspace Owner/Admin
+  # off Grid, no org or guest label, the card and full profile alike; the
+  # real name; the DND presence from dnd.teamInfo; the status emoji by
+  # emoji_name and the text's emoji; core's ports of iz33/ue25/pH4l and
+  # dndV2. Dispatch with only=profile-role-band.
+  profile-role-band:
+    if: ${{ !inputs.only || startsWith('profile-role-band', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "the hover card's roles, name, presence and status, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -run '^(TestHoverCardRoleBand|TestHoverCardOwnerHeightOnGrid|TestHoverCardShowsRealName|TestHoverCardStatusEmojiByName|TestHoverCardMemberDND|TestFullProfileNoRoleLabels|TestHoverCardVariants|TestHoverCardPronounsLikeSlack|TestSearchRowsPeople)$' ./internal/ui/popups || rc=1
+          go test -count=$COUNT -v -run '^(TestEmojiDisplayInfoLikeSlack|TestStatusTextPartsLikeSlack|TestUserStatusEmojiByName|TestMemberDND)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -run '^(TestIconCoverage|TestAllIconsParse)$' ./internal/ui/icons || rc=1
+          exit $rc
+
   # inspect-blur-fast (2026-11-18, round 2 2026-11-19): the inspect tool's
   # pick-to-review path at 1918x1080 (Karim's Windows window) at 1x and 2x,
   # on the headless GPU (llvmpipe, WARP): the review's shot drawn in the
@@ -2503,4 +2628,89 @@ jobs:
           # TestIndexPositionRunes/many_newlines 42 positions for 41), so
           # they are skipped here
           if [ "$RUNNER_OS" = Linux ]; then "${x[@]}" go test -count=1 -timeout 15m -skip '^(TestNoFilterAllocs|TestIndexPositionRunes)$' gioui.org/widget || rc=1; fi
+          exit $rc
+
+  # 2026-11-20 (Karim, α.113): "i swear i just saw the [/] icon flicker
+  # like crazy" in a thread composer under OwlMode's patches. The footer's
+  # layout across a sweep of widths, frame after frame, with and without
+  # plugin buttons, and the overflow row with its tooltips.
+  composer-toolbar:
+    if: ${{ !inputs.only || startsWith('composer-toolbar', inputs.only) }}
+    name: "composer-toolbar (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "composer: the footer toolbar's fold, its row and tooltips, under plugins and without, COUNT runs"
+        shell: bash
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          "${x[@]}" go test -count=$COUNT -v -timeout 20m -run '^TestComposerToolbar' ./internal/ui/composer
+
+  # A socket gap leaves no hole (Karim's #clack on α.112, 2026-11-20: 6:54
+  # PM, then 9:53 PM, the three hours between missing): a socket that goes
+  # silent is closed after Slack's 90 s without a pong (client-boot Kot3);
+  # at a slow connect every window's end goes stale (Slack's
+  # resetReachedEnd) and the open one is read forward from it, or starts
+  # over at the newest page; the socket's messages past it wait meanwhile.
+  # Silent, dropped and slept sockets, a window paged back to an old
+  # message, more than a page missed, and the list drawing every message
+  # with the other channel unread. Dispatch with only=history-gap.
+  history-gap:
+    if: ${{ !inputs.only || startsWith('history-gap', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      SLACK_TESTS: '^(TestRTMClosesSilentSocket|TestRTMPongTimeoutCountsSleep|TestRTMPongIsAnyReplyToThePing)$'
+      STORE_TESTS: '^(TestResetReachedEndHoldsTheSocketsMessages|TestCatchUpJoinsTheWindow|TestCatchUpTakesTheConfirmedSend|TestNewestPageJoinsTheWaitingMessages|TestOlderPageJoinsOnlyWhereTheWindowStarts|TestNewestPageKeepsTheViewersSends|TestNewestPageReadAcrossAResetStaysStale|TestNewestPageThatMissesStartsANewEpoch)$'
+      CORE_TESTS: '^TestSocketGap'
+      HUB_TESTS: '^TestNewestPageOfAnotherWindowIsTakenWhole$'
+      UI_TESTS: '^TestSocketGapListDrawsEveryMessage$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: slack, store, core, messages, ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=1 -v -run "$STORE_TESTS" ./internal/store || rc=1
+          go test -count=1 -v -timeout 10m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=1 -v -run "$HUB_TESTS" ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 15m -run "$UI_TESTS" ./internal/ui || rc=1
+          go test -count=$COUNT -run "$SLACK_TESTS" ./internal/slack || rc=1
+          go test -count=$COUNT -run "$STORE_TESTS" ./internal/store || rc=1
+          go test -count=$COUNT -timeout 20m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -run "$HUB_TESTS" ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run "$UI_TESTS" ./internal/ui || rc=1
+          exit $rc
+      - name: core, -race
+        run: |
+          set +e
+          rc=0
+          go test -race -count=1 -timeout 15m -run "$CORE_TESTS" ./internal/core || rc=1
+          go test -race -count=1 -run "$SLACK_TESTS|$STORE_TESTS" ./internal/slack ./internal/store || rc=1
           exit $rc
