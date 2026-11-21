@@ -2835,8 +2835,8 @@ jobs:
     if: ${{ !inputs.only || startsWith('msg-lanes', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      JSRT_TESTS: '^(TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations|TestUserBlockingChainEnds|TestUserTimerAfterInOrderTasks|TestInOrderCallBeforeLaterInput|TestSendChainHoldsTheQueue|TestUserYieldLoopLetsTheQueueRun|TestInOrderRunsAheadOfRenders|TestQueuedRectsAndMovesCoalesce|TestMoveBeforeLaterUpUnderBacklog)$'
-      TAUT_TESTS: '^(TestBucketReadBehindBacklog|TestBucketReadChunkEdges|TestBucketReadLeavesTheThreadTurns|TestDispatchSeqOutlivesItsContext|TestCheckThenDispatchGraceCoversTheChecksOnly|TestInjectedMessagesDecodedOnce|TestSendCheckKilledByTheWatchdog)$'
+      JSRT_TESTS: '^(TestBoundaryEventsKeepTheirOrder|TestMovesAcrossTargetsKeepTheirOrder|TestWheelDeltasAddUp|TestUserTimerLeavesThePlainQueueItsTurns|TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations|TestUserBlockingChainEnds|TestUserTimerAfterInOrderTasks|TestInOrderCallBeforeLaterInput|TestSendChainHoldsTheQueue|TestUserYieldLoopLetsTheQueueRun|TestInOrderRunsAheadOfRenders|TestQueuedRectsAndMovesCoalesce|TestMoveBeforeLaterUpUnderBacklog)$'
+      TAUT_TESTS: '^(TestCallTruthyAheadOfBacklog|TestBucketReadBehindBacklog|TestBucketReadChunkEdges|TestBucketReadLeavesTheThreadTurns|TestDispatchSeqOutlivesItsContext|TestCheckThenDispatchGraceCoversTheChecksOnly|TestInjectedMessagesDecodedOnce|TestSendCheckKilledByTheWatchdog)$'
       COMPOSER_TESTS: '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage|TestNativeDispatchBeforeLaterClick|TestSendViaJSKeepsEachMessage|TestSendViaJSOnTheUserLane|TestSendViaJSHeldBackPutsTheMessageBack|TestSendViaJSErrorAfterSendKeepsItSent|TestEditOnTheUserLane|TestRuntimePostsStayAheadOfASend)$'
       SLACKC_TESTS: '^TestFrameMoveBeforePress$'
     steps:
@@ -2874,7 +2874,7 @@ jobs:
     if: ${{ !inputs.only || startsWith('notify-order', inputs.only) }}
     runs-on: ubuntu-latest
     env:
-      UI_TESTS: '^(TestNotificationBurstInOrder|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestNotificationsDontWaitForEachOther)$'
+      UI_TESTS: '^(TestNotificationsOfAConversationKeepTheirOrder|TestNotificationBurstInOrder|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestNotificationsDontWaitForEachOther)$'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

@@ -316,7 +316,15 @@ func dispatchThen[A, R any](ctx context.Context, t *Taut, name string, args A, n
 	}
 	rt := t.liveRuntime()
 	if rt == nil {
-		go func() { done(Dispatch(ctx, t, name, args, native)) }()
+		run := func() { done(Dispatch(ctx, t, name, args, native)) }
+		if seq {
+			// in order with the dispatches around it while the runtime
+			// is down too: a goroutine each could show two toasts in
+			// reverse (the dispatch waits for a runtime that starts)
+			t.thunks.seqGo.run(run)
+		} else {
+			go run()
+		}
 		return
 	}
 	ctx = inOrder(ctx)

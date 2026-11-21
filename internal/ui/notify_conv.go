@@ -476,14 +476,14 @@ func (b *backend) noteFresh(ev core.Event) core.Event {
 // lookups instead of showing ids. The notifications that waited go in the
 // order they came among those that wait for a common conversation, member
 // or message (noteOrder).
-func (b *backend) noteResolve(a *App, ids, people []string, msgs []core.MsgKey, then func()) {
+func (b *backend) noteResolve(a *App, ch string, ids, people []string, msgs []core.MsgKey, then func()) {
 	parent := b.ctx
 	if parent == nil {
 		parent = context.Background()
 	}
 	c := b.core
-	keys := make([]string, 0, len(ids)+len(people)+len(msgs))
-	keys = append(append(keys, ids...), people...)
+	keys := make([]string, 0, 1+len(ids)+len(people)+len(msgs))
+	keys = append(append(append(keys, ch), ids...), people...) // ch: every toast of it in order (noteOrder)
 	for _, k := range msgs {
 		keys = append(keys, k.Channel+" "+k.TS)
 	}
@@ -519,16 +519,23 @@ func (b *backend) noteResolve(a *App, ids, people []string, msgs []core.MsgKey, 
 }
 
 // noteOrder lets the notifications that waited for lookups go in the
-// order their messages came, among those waiting for a common member,
-// conversation or message: Slack's waits share the one fetch per model
-// (core's EnsureUsers shares a member's users/info the same way), and
-// their continuations run in the order they began, so two messages from a
-// new person notify in order; the goroutine each waited on posted them in
-// whatever order they woke. One that waits for nothing another waits for
-// goes as soon as its own lookups answer.
+// order their messages came, among those of one conversation or waiting
+// for a common member or message: Slack's waits share the one fetch per
+// model (core's EnsureUsers shares a member's users/info the same way),
+// and their continuations run in the order they began, so two messages
+// from a new person notify in order; the goroutine each waited on posted
+// them in whatever order they woke. A notification with nothing to look
+// up goes through it too (later): at once while nothing of its
+// conversation waits, else behind it. One that waits for nothing another
+// waits for goes as soon as its own lookups answer.
 type noteOrder struct {
 	mu    sync.Mutex
 	waits []*noteWait
+	// posted counts, by key, the notifications released to the UI
+	// goroutine that haven't run yet: one with nothing to look up waits
+	// for them too, or it would show ahead of an earlier one already
+	// queued
+	posted map[string]int
 }
 
 type noteWait struct {
@@ -557,15 +564,67 @@ func (o *noteOrder) done(a *App, w *noteWait) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	w.done = true
+	o.releaseLocked(a)
+}
+
+// releaseLocked posts, in order, every done notification no earlier
+// waiting one with a key in common holds back (mu held).
+func (o *noteOrder) releaseLocked(a *App) {
 	var held []*noteWait // in order: what still waits, or is held back
 	for _, x := range o.waits {
 		if x.done && !sharesKey(x, held) {
-			a.Post(x.then)
+			o.postLocked(a, x)
 			continue
 		}
 		held = append(held, x)
 	}
 	o.waits = held
+}
+
+// postLocked hands x's notification to the UI goroutine, its keys counted
+// in posted until it runs (mu held).
+func (o *noteOrder) postLocked(a *App, x *noteWait) {
+	if o.posted == nil {
+		o.posted = map[string]int{}
+	}
+	for k := range x.keys {
+		o.posted[k]++
+	}
+	then := x.then
+	a.Post(func() {
+		o.mu.Lock()
+		for k := range x.keys {
+			if o.posted[k]--; o.posted[k] <= 0 {
+				delete(o.posted, k)
+			}
+		}
+		o.mu.Unlock()
+		then()
+	})
+}
+
+// later queues then, a notification of ch with nothing to look up (UI
+// goroutine), behind the notifications of ch that wait for their lookups
+// or are released and queued, and reports true; with none it queues
+// nothing and reports false, and the caller shows it now. Shown at once
+// while one waited, a toast went out ahead of an earlier one of its
+// conversation still waiting for its sender.
+func (o *noteOrder) later(a *App, ch string, then func()) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	busy := o.posted[ch] > 0
+	for _, x := range o.waits {
+		if busy {
+			break
+		}
+		busy = x.keys[ch]
+	}
+	if !busy {
+		return false
+	}
+	o.waits = append(o.waits, &noteWait{keys: map[string]bool{ch: true}, done: true, then: then})
+	o.releaseLocked(a)
+	return true
 }
 
 func sharesKey(x *noteWait, ws []*noteWait) bool {
@@ -582,14 +641,16 @@ func sharesKey(x *noteWait, ws []*noteWait) bool {
 // noteSends hands the desktop notifications to the system in the order
 // they were made, off the caller's goroutine: a goroutine each could hand
 // two over in reverse order. One the system takes longer than noteSendCap
-// to take doesn't hold the next ones back.
+// to take doesn't hold the next ones back: the call the system answers
+// in milliseconds keeps its place, and a hung one (a notification daemon
+// that doesn't answer) holds the queue half a second, not the 3 s it took.
 var noteSends struct {
 	mu sync.Mutex
 	q  []func()
 	on bool
 }
 
-const noteSendCap = 3 * time.Second
+const noteSendCap = 500 * time.Millisecond
 
 func sendNote(f func()) {
 	s := &noteSends

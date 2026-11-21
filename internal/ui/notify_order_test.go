@@ -215,6 +215,34 @@ func TestNotificationsFromNewPersonInOrder(t *testing.T) {
 	}
 }
 
+// Every notification of a conversation keeps its place: one with nothing
+// to look up waits behind an earlier one of the same conversation still
+// waiting for its sender (noteOrder, by conversation). Shown at once, the
+// known sender's toast went out ahead of the new person's before it.
+func TestNotificationsOfAConversationKeepTheirOrder(t *testing.T) {
+	a, ca, fs, rec := noteApp(t)
+	ch := fs.ChannelIDs()[2]
+	ca.S.PutConv(slack.Conversation{ID: ch, Name: "order", IsChannel: true, IsMember: true})
+	known := fs.UserIDs()[3]
+	ca.S.PutUsers([]slack.User{{ID: fakeslack.SelfID, Name: "self"}, {ID: known, Name: "ada", Profile: slack.Profile{DisplayName: "ada"}}})
+	fs.SetFault("edge/users/info", fakeslack.Fault{Delay: 300 * time.Millisecond})
+	newbie := fakeslack.SynthMemberID(71)
+	var evs []map[string]any
+	for i, c := range []struct{ user, text string }{{newbie, "first, from someone new"}, {known, "second, from someone known"}} {
+		ts := fmt.Sprintf("1762520499.0001%02d", i)
+		evs = append(evs, map[string]any{"type": "message", "channel": ch, "user": c.user, "ts": ts, "event_ts": ts,
+			"text": "<@" + fakeslack.SelfID + "> " + c.text})
+	}
+	for _, e := range noteEvents(t, ca, evs...) {
+		a.data.handle(a, e)
+	}
+	rec.wait(t, a, 2)
+	got := noteBodies(rec)
+	if len(got) != 2 || !strings.Contains(got[0], "first") || !strings.Contains(got[1], "second") {
+		t.Errorf("the notifications came as %q, want the new person's first", got)
+	}
+}
+
 // timedNotes records when each desktop notification reached the system.
 type timedNotes struct {
 	mu    sync.Mutex

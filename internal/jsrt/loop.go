@@ -311,6 +311,10 @@ func (r *Runtime) do(t task, f func(js *Ctx) error) error {
 // before it starts, it never runs and doCtx returns ctx's error, so a
 // synchronous caller's deadline (the composer's 150 ms for a plugin's
 // inline markup) caps its wait. Once the task runs, doCtx waits for it.
+// Skipped, not run late, on purpose: a caller its deadline left with an
+// error has gone on without the call (the composer drew the native
+// markup, a dispatch ran its native), and the call run late applied its
+// effect on top of what the caller did instead.
 func (r *Runtime) doCtx(ctx context.Context, t task, f func(js *Ctx) error) error {
 	if ctx.Done() == nil || r.onJSThread() {
 		return r.do(t, f)
@@ -626,8 +630,10 @@ func (r *Runtime) heldAwait() {
 // (JS thread). It reports false once the runtime closed.
 func (r *Runtime) runUrgent() bool {
 	// the user's timers due now, not those their callbacks set meanwhile:
-	// a setTimeout(0) yield loop gives the queue its turns
+	// a setTimeout(0) yield loop gives the queue its turns; and only the
+	// in-order tasks queued before them come first (cut)
 	round := time.Now()
+	cut := r.enqN.Load() + 1
 	for {
 		for r.urgentN.Load() > 0 {
 			fresh := make([]task, 0, 8) // outside the lock (enqueue's rule); u runs below
@@ -649,9 +655,13 @@ func (r *Runtime) runUrgent() bool {
 		if r.urgentTimers == 0 || !r.dueUrgentTimerAt(round) {
 			return true
 		}
-		// a user's timer runs after the in-order tasks queued before it,
-		// as any of the user's work does
-		if r.promoteOrdered() {
+		// a user's timer runs after the in-order tasks queued before it
+		// came due, as any of the user's work does; not after the ones
+		// queued since: promoting every in-order task waiting, again after
+		// each batch, a steady stream of them (socket events, store
+		// updates) held the timer, and every plain task with it (the
+		// renders, the views' reads), until the stream paused
+		if r.promoteOrderedBefore(cut) {
 			continue
 		}
 		if !r.fireUrgentTimer(round) {
@@ -660,19 +670,20 @@ func (r *Runtime) runUrgent() bool {
 	}
 }
 
-// promoteOrdered moves the in-order tasks waiting to the user-blocking
-// queue (promoteOrderedLocked) and reports whether there were any. As
-// enqueue, it allocates nothing while it holds mu.
-func (r *Runtime) promoteOrdered() bool {
+// promoteOrderedBefore moves the in-order tasks queued before cutoff
+// (enqN) to the user-blocking queue (promoteOrderedLocked) and reports
+// whether there were any. As enqueue, it allocates nothing while it holds
+// mu.
+func (r *Runtime) promoteOrderedBefore(cutoff uint64) bool {
 	for {
 		r.mu.Lock()
 		n := len(r.ordQ) - r.ordAt
-		if n == 0 {
+		if n == 0 || r.ordQ[r.ordAt].seq >= cutoff {
 			r.mu.Unlock()
 			return false
 		}
 		if len(r.urgent)+n <= cap(r.urgent) {
-			moved := r.promoteOrderedLocked(r.enqN.Load() + 1)
+			moved := r.promoteOrderedLocked(cutoff)
 			r.urgentN.Add(int32(moved))
 			r.mu.Unlock()
 			return moved > 0

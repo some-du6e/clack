@@ -940,12 +940,17 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		// and the messages its slugs link to (noteSlugs)
 		msgs := b.noteSlugs(ev.Msg.Doc)
 		if len(ids) > 0 || len(people) > 0 || len(msgs) > 0 {
-			b.noteResolve(a, ids, people, msgs, func() {
+			b.noteResolve(a, ev.Channel, ids, people, msgs, func() {
 				if len(people) > 0 {
 					ev = b.noteFresh(ev)
 				}
 				b.maybeNotifyAfter(a, ev, true)
 			})
+			return
+		}
+		// nothing to look up: now, unless an earlier notification of the
+		// conversation still waits for its lookups or is queued (noteOrder)
+		if b.notes.later(a, ev.Channel, func() { b.maybeNotifyAfter(a, ev, true) }) {
 			return
 		}
 	}

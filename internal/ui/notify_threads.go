@@ -107,7 +107,12 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	}
 	c, named := b.noteConv(e.Channel)
 	if !named && !resolved && b.core != nil {
-		b.noteResolve(a, []string{e.Channel}, nil, nil, func() { b.desktopNotificationAfter(a, ev, true) })
+		b.noteResolve(a, e.Channel, []string{e.Channel}, nil, nil, func() { b.desktopNotificationAfter(a, ev, true) })
+		return
+	}
+	// in order with the conversation's notifications still waiting for
+	// their lookups (noteOrder)
+	if !resolved && b.notes.later(a, e.Channel, func() { b.desktopNotificationAfter(a, ev, true) }) {
 		return
 	}
 	if c == nil {

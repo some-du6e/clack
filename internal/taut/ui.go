@@ -474,9 +474,12 @@ var ErrFnGone = errors.New("taut: the JS function is gone")
 // sees it, right away (a Promise is truthy and isn't awaited), or threw
 // (a handler the runtime interrupted, past its task timeout, counts as
 // one); err when no handler answered: no runtime could start, it shut
-// down first, or the function is gone (ErrFnGone). Like a click in
-// Slack's page, the call waits its turn on the JS thread. Args carrying
-// {"$event": fields} give the handler React's synthetic event.
+// down first, or the function is gone (ErrFnGone). It is the user's input
+// (a message menu's pick: Slick's onSelectAction), on the user-blocking
+// lane as Call and CallEvent are: ahead of the queued renders, in order
+// with the user's other input; on the plain lane, a pick waited behind the
+// runtime's backlog. Args carrying {"$event": fields} give the handler
+// React's synthetic event.
 func (b *Bridge) CallTruthy(fn int64, args []byte, done func(truthy, threw bool, err error)) {
 	path := "callHostFnTruthy"
 	if IsTautFn(fn) {
@@ -498,7 +501,7 @@ func (b *Bridge) CallTruthy(fn int64, args []byte, done func(truthy, threw bool,
 			case <-answered:
 			}
 		}()
-		r.rt.Post(func(js *jsrt.Ctx) {
+		r.rt.PostUserBlocking(func(js *jsrt.Ctx) {
 			a, err := js.ParseJSON(args)
 			if err != nil {
 				answer(false, false, err)
@@ -2062,7 +2065,14 @@ func (v *viewCache) fetch(keys []viewKey, have map[viewKey]*viewEntry) (out map[
 		if k.key == "" {
 			key = nil
 		}
-		if raw, err := rt.rt.Call(context.Background(), "__taut.viewIn", float64(id), k.slice, key); err == nil {
+		// on the in-order lane with the invalidates, as the views' reads
+		// below: a plain read runs whenever the in-order work gives the
+		// plain queue a turn (orderedSlice), ahead of an older invalidate
+		// still queued, and came back with the state from before it
+		ctx, cancel := context.WithTimeout(jsrt.InOrder(context.Background()), 3*time.Second)
+		raw, err := rt.rt.Call(ctx, "__taut.viewIn", float64(id), k.slice, key)
+		cancel()
+		if err == nil {
 			out[k] = &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
 		} else {
 			failed = true
