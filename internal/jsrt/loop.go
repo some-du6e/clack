@@ -631,9 +631,10 @@ func (r *Runtime) heldAwait() {
 func (r *Runtime) runUrgent() bool {
 	// the user's timers due now, not those their callbacks set meanwhile:
 	// a setTimeout(0) yield loop gives the queue its turns; and only the
-	// in-order tasks queued before them come first (cut)
+	// in-order tasks queued before the round found them due come first
+	// (cut, set then)
 	round := time.Now()
-	cut := r.enqN.Load() + 1
+	var cut uint64
 	for {
 		for r.urgentN.Load() > 0 {
 			fresh := make([]task, 0, 8) // outside the lock (enqueue's rule); u runs below
@@ -661,6 +662,9 @@ func (r *Runtime) runUrgent() bool {
 		// each batch, a steady stream of them (socket events, store
 		// updates) held the timer, and every plain task with it (the
 		// renders, the views' reads), until the stream paused
+		if cut == 0 {
+			cut = r.enqN.Load() + 1
+		}
 		if r.promoteOrderedBefore(cut) {
 			continue
 		}
