@@ -170,16 +170,24 @@ func (x *rfEnv) wantThreadFocus(what string) {
 	if x.focused(x.ch, "") {
 		x.t.Errorf("%s: the channel's composer still has the focus", what)
 	}
+	// drafts are the process's (composer.drafts): compare with what the
+	// boxes held, and take the text out again after
 	const s = "rf-typed-text"
+	thr, chn := x.box(x.ch, x.root).DocText(), x.box(x.ch, "").DocText()
 	x.typeText(s)
 	x.frame()
 	x.frame()
-	if got := x.box(x.ch, x.root).DocText(); !strings.Contains(got, s) {
-		x.t.Errorf("%s: typing put %q in the thread's box, want it to hold %q", what, got, s)
+	if got := x.box(x.ch, x.root).DocText(); got == thr || !strings.Contains(got, s) {
+		x.t.Errorf("%s: typing left the thread's box %q (was %q), want it to take %q", what, got, thr, s)
 	}
-	if got := x.box(x.ch, "").DocText(); strings.Contains(got, s) {
-		x.t.Errorf("%s: typing went into the channel's composer (%q)", what, got)
+	if got := x.box(x.ch, "").DocText(); got != chn {
+		x.t.Errorf("%s: typing went into the channel's composer (%q, was %q)", what, got, chn)
 	}
+	for range len(s) {
+		x.key(key.NameDeleteBackward, 0)
+	}
+	x.frame()
+	x.frame()
 }
 
 // wantNoThreadFocus checks the thread's box was left unfocused.
