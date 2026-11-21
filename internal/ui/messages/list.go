@@ -947,8 +947,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		}
 	}
 	if s.pendingJump != "" && s.thread && s.snap.loaded && !s.snap.loading && s.built == s.snap.rev {
-		// a thread loads whole (ThreadView.JumpTo): sync() placed the
-		// jump if the thread holds it, so it isn't coming
+		// the slice the jump moved the pane to is in (ThreadView.JumpTo,
+		// thread_load.go): sync() placed the jump if the slice holds it,
+		// so it isn't coming
 		s.pendingJump = ""
 	}
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
