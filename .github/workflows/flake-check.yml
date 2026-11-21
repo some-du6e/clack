@@ -1972,3 +1972,34 @@ jobs:
           go test -count=$COUNT -v -timeout 15m -run '^(TestInspectHuddleWindow|TestInspectScreensharePopout|TestInspectPresenterPanel|TestInspectInviteWindow|TestInspectJoinPreview)$' ./internal/ui/huddleui || rc=1
           "${x[@]}" go test -count=$COUNT -v -timeout 40m -run '^(TestInspectReviewTiming|TestInspectPicksBlockKitModal|TestInspectPicksMenu|TestInspectPicksPopover|TestInspectPicksProfileCard|TestInspectPicksPeek|TestInspectPicksSwitcher|TestInspectPicksSelectMenu|TestInspectPicksPickers|TestOverlayKindsBoxTheirLayer|TestInspectFreezeHoldsPopups|TestInspectRegionArming|TestInspectPicksToast|TestInspectSubWindowsGate)$' ./internal/ui || rc=1
           exit $rc
+
+  # thread-load: a thread of 1,078,423 synthetic replies (Karim, 2026-11-20:
+  # "make this thread load really fucking fast") opens and pages the way
+  # Slack's thread pane does: the store's slices against Slack's own
+  # reducer (TestThreadHistoryLikeSlack), core's requests (one page of 28
+  # from the root, two around a reply, loadPre and loadPost), and the pane
+  # opened through the permalink, from the channel and from Activity, then
+  # scrolled through older pages (time to the first replies, requests,
+  # heap, frames). Dispatch with only=thread-load.
+  thread-load:
+    if: ${{ !inputs.only || startsWith('thread-load', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "store, core and ui: the huge thread's pages, COUNT runs (one verbose)"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadHistoryLikeSlack|TestThreadPageKeepsRootOutOfSlice)$' ./internal/store || rc=1
+          go test -count=$COUNT -v -timeout 15m -run '^(TestThreadOpensLikeSlack|TestThreadNewestPageLikeSlack)$' ./internal/core || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
+          exit $rc
