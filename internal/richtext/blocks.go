@@ -200,7 +200,7 @@ type builder struct {
 	// missing: a block Slack draws but Clack can't yet drew nothing (the
 	// message text then stands in, FromMessageIn)
 	missing bool
-	// notify converts for a notification's text (NotificationText): a
+	// notify converts for a notification's text (NotificationMessageText): a
 	// type with no renderable adds nothing, with no fallback chain
 	notify bool
 	// keepEmoji: an emoji element the resolver doesn't know is an Emoji
