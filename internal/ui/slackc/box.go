@@ -863,6 +863,12 @@ func (v *View) uaDefaults(b *box, c *css.Cascaded, parent *css.Style) {
 		if !has(c, "text-align") {
 			st.TextAlign = css.TextCenter
 		}
+		// Chromium's html.css sizes a button's border box (button
+		// {box-sizing: border-box}): Slack's .c-button--small height:28px
+		// is 28 with its padding and border
+		if !has(c, "box-sizing") {
+			st.BoxSizing = css.BorderBox
+		}
 	case "hr":
 		setM(0.5*em, 0.5*em)
 		if !has(c, "border", "border-top", "border-width", "border-top-width", "border-style", "border-color") {

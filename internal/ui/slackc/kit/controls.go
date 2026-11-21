@@ -495,12 +495,10 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	layers := h.BoxLayersSet()
 	draw := func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: sz}
-		// CSS paint order: a rule's outer shadows, the background colour
-		// and images (an enabled outline button's inside its border:
-		// background-clip padding-box), inset shadows, the border, content
-		if layers&slackc.BoxShadows != 0 {
-			h.PaintBox(gtx, sz, bx.rad, bx.bd, bg, color.NRGBA{}, slackc.BoxShadows)
-		}
+		// CSS paint order (a rule's outer shadows went first, below): the
+		// background colour and images (an enabled outline button's inside
+		// its border: background-clip padding-box), inset shadows, the
+		// border, content
 		fill, frad := r, bx.rad
 		if kind == "outline" && !disabled {
 			fill = image.Rect(bx.bd[3], bx.bd[0], sz.X-bx.bd[1], sz.Y-bx.bd[2])
@@ -533,6 +531,11 @@ func buttonComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		}
 		ctlAriaLabel(gtx, p)
 		return layout.Dimensions{Size: sz}
+	}
+	// a rule's outer shadows, under the button and outside it: before the
+	// clickable, which clips what it lays out to its size
+	if layers&slackc.BoxShadows != 0 {
+		h.PaintBox(gtx, sz, bx.rad, bx.bd, bg, color.NRGBA{}, slackc.BoxShadows)
 	}
 	if disabled {
 		return draw(gtx)
