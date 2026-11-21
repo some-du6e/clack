@@ -55,6 +55,11 @@ type model struct {
 	used     time.Time
 	fetched  time.Time // last full refresh
 	refreshQ bool
+	// caughtUp: core read the channel's stale end forward while a load
+	// was out ("history_caught_up"): the list loads again once that one
+	// lands, which may have read the window from before
+	caughtUp bool
+	epoch    uint64      // core's window the model holds (Page.Epoch, takeNewest)
 	renames  [][2]string // pending ts -> confirmed ts, consumed by views
 	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
 	// newestMissing: the window misses the newest page (snap.newestMissing)
@@ -268,7 +273,7 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 // connection's changes every list reads.
 func (hb *hub) redraws(ev core.Event) bool {
 	switch ev.Type {
-	case "message", "update", "sent", "delete", "evicted":
+	case "message", "update", "sent", "delete", "evicted", "history_caught_up":
 		return hb.onScreen(ev.Channel)
 	}
 	return true
@@ -423,20 +428,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			m.err = err
 			live := m.takeLive()
 			if err == nil {
-				if m.dropped {
-					// core's window as it is now (dropped), whole: setAll
-					// keeps the revisions of the messages it already had, as
-					// they were. No older page was asked meanwhile (loadOlder
-					// refuses a dropped model's), and keepLive below puts back
-					// only what's in this window. (msg-latency: this branch
-					// takes the window's epoch too, m.epoch = p.Epoch, or
-					// every older page after it is turned away as another
-					// window's until the next reload.)
-					m.setAll(p.Messages)
-					m.hasMore, m.dropped = p.HasMore, false
-				} else {
-					m.mergeNewest(p.Messages, p.HasMore)
-				}
+				m.takeNewest(p)
 				m.keepLive(live)
 				if !m.loaded {
 					m.lastRead = p.LastRead
@@ -444,6 +436,9 @@ func (hb *hub) ensureLoaded(m *model) {
 				m.loaded = true
 				m.fetched = time.Now()
 				m.fails, m.retryAt = 0, time.Time{}
+				if m.caughtUp { // the answer may be the window from before the catch-up
+					m.caughtUp, m.fetched, m.refreshQ = false, time.Time{}, true
+				}
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
@@ -646,6 +641,30 @@ func (m *model) mergeNewest(page []core.Message, hasMore bool) {
 		m.hasMore = hasMore
 	}
 	m.setAll(append(keep, page...))
+}
+
+// takeNewest puts a newest page core read (its window) into the model
+// (callers hold m.mu). A dropped model takes core's window as it is now,
+// whole: setAll keeps the revisions of the messages it already had, as
+// they were; no older page was asked meanwhile (loadOlder refuses a
+// dropped model's), and keepLive puts back only what's in this window. A
+// model holding another window's messages (core started the window over
+// at a newest page that didn't meet it: Page.Epoch) takes it whole too,
+// as Slack's newest view draws the newest slice alone: kept in front of
+// it, the old messages drew as one list with the ones between missing.
+// Any other keeps what it loaded before the window (mergeNewest).
+func (m *model) takeNewest(p core.Page) {
+	switch {
+	case m.dropped:
+		m.setAll(p.Messages)
+		m.hasMore, m.dropped = p.HasMore, false
+	case m.loaded && p.Epoch != m.epoch:
+		m.setAll(p.Messages)
+		m.hasMore = p.HasMore
+	default:
+		m.mergeNewest(p.Messages, p.HasMore)
+	}
+	m.epoch = p.Epoch
 }
 
 // evict drops the messages before oldest, or everything when oldest is ""
@@ -954,6 +973,10 @@ func (hb *hub) apply(ev core.Event) bool {
 		thread := ev.Msg.ThreadTS
 		chm, thm := hb.models(ev.Channel, thread)
 		changed := false
+		// past the end of core's window, stale since a slow connect: drawn
+		// after the list it left out what the socket missed; it comes with
+		// the window once that is read forward ("history_caught_up")
+		ahead := chm != nil && (ev.Ahead || hb.app != nil && hb.app.IsAhead(ev.Channel, ev.Msg.TS))
 		if chm != nil {
 			chm.mu.Lock()
 			// an update changes the list's message where it holds it, and
@@ -965,6 +988,10 @@ func (hb *hub) apply(ev core.Event) bool {
 			// takes the event's EmitSeq: a row drawing it waits for the
 			// mirror to have handled the event (MessageViewState's need)
 			switch {
+			case ahead && chm.find(ev.Msg.TS) < 0:
+				if ev.Type == "message" { // it comes with the window; its sender stopped typing
+					delete(chm.typing, ev.Msg.User)
+				}
 			case ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inRange(ev.Msg.TS):
 				chm.upsert(*ev.Msg, ev.EmitSeq)
 				chm.noteLive(ev.Msg.TS, false)
@@ -1126,6 +1153,21 @@ func (hb *hub) apply(ev core.Event) bool {
 		// core: the session is gone (signed out, token revoked). Stop
 		// loading anything until the connection is back or Retry.
 		hb.authFailed.Store(true)
+		return true
+	case "history_caught_up":
+		// core read the channel's window forward from the end it had at
+		// a slow connect (core reached_end.go): the list loads it again
+		hb.mu.Lock()
+		m := hb.chans[ev.Channel]
+		hb.mu.Unlock()
+		if m == nil {
+			return false
+		}
+		m.mu.Lock()
+		m.fetched, m.refreshQ = time.Time{}, true
+		m.caughtUp = m.loading
+		m.rev++
+		m.mu.Unlock()
 		return true
 	case "resync", "connection", "poll":
 		if ev.Type == "connection" && ev.Connected {

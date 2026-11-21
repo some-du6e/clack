@@ -30,11 +30,14 @@ func TestHideBits(t *testing.T) {
 	}
 }
 
-// TestFoldFooter is TextyButtonOverflow's choice (overflow.go): with
-// MessageInput's default minButtonsForOverflow (5) and TextyButtons' 15
-// slots it folds under a 580px toolbar; under 5 the threshold is 220;
-// over 15 nothing folds; with no real button to fold (no clips, Run
-// shortcut off) it doesn't, until the mention button moves in at 160.
+// TestFoldFooter is TextyButtonOverflow's choice (overflow.go) before
+// TextyButtons has measured its buttons (inlineButtonsWidth null: Slack
+// measures it before the first paint, TestComposerToolbarFoldRule has the
+// measured rule): with MessageInput's default minButtonsForOverflow (5)
+// and TextyButtons' 15 slots it folds under a 580px toolbar; under 5 the
+// threshold is 220; over 15 nothing folds; with no real button to fold
+// (no clips, Run shortcut off) it doesn't, until the mention button moves
+// in at 160.
 func TestFoldFooter(t *testing.T) {
 	var c chrome
 	c.pxPerDp = 1
@@ -90,8 +93,9 @@ func TestFoldFooter(t *testing.T) {
 // TestToolbarWidth is the footer's flex layout measured in Chrome with
 // Slack's rules (overflow.go): the toolbar is the box's content width less
 // 106px with the 60px send group; a 686px box (684 inside its border)
-// gives 580, so the footer folds below 686. A wider submit group (the
-// character count) narrows it; no + prefix leaves it 0.
+// gives 580, so before its buttons are measured the footer folds below
+// 686. A wider submit group (the character count) narrows it; no +
+// prefix leaves it 0.
 func TestToolbarWidth(t *testing.T) {
 	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
 	var c chrome

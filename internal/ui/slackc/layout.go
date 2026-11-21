@@ -24,10 +24,17 @@ type lc struct {
 	autoMinW bool // flex: an automatic minimum width is being computed
 }
 
-// lres is what a layout produces for the box itself.
+// lres is what a layout produces for the box itself. A native's
+// constraints and size are part of it: a cached result restores the
+// constraints its size came from, so the native is drawn under the ones
+// its box was laid out with. Without them a measure served from the cache
+// left the native with the last computed measure's (a min-content
+// one: OwlMode's Save in Taut drew 18px wide, clipped, in its 110px box).
 type lres struct {
 	w, h, base, lastBase, mtc, mbc, contentW, contentH float32
 	m, pad, bd                                         [4]float32
+	natCons                                            consKey
+	natLaid                                            dimsF
 }
 
 type measEntry struct {
@@ -37,12 +44,15 @@ type measEntry struct {
 }
 
 func (b *box) res() lres {
-	return lres{b.w, b.h, b.base, b.lastBase, b.mtc, b.mbc, b.contentW, b.contentH, b.m, b.pad, b.bd}
+	return lres{b.w, b.h, b.base, b.lastBase, b.mtc, b.mbc, b.contentW, b.contentH, b.m, b.pad, b.bd, b.natCons, b.natLaid}
 }
 
 func (b *box) setRes(r lres) {
 	b.w, b.h, b.base, b.lastBase, b.mtc, b.mbc, b.contentW, b.contentH = r.w, r.h, r.base, r.lastBase, r.mtc, r.mbc, r.contentW, r.contentH
 	b.m, b.pad, b.bd = r.m, r.pad, r.bd
+	if b.native {
+		b.natCons, b.natLaid = r.natCons, r.natLaid
+	}
 }
 
 // length resolves l in device px; percentages against base (device px).
@@ -79,9 +89,18 @@ func snapBorder(px float32) float32 {
 	return float32(math.Floor(float64(px)))
 }
 
-// edges resolves margins, padding and borders against cbW.
+// edges resolves margins, padding and borders against cbW. A native that
+// draws its own box (HostElement.OwnBox) has neither: it is its border
+// box, and draws the padding and borders CSS gives it itself.
 func (v *View) edges(b *box, cbW float32) {
 	st := &b.st
+	if b.ownBox() {
+		for i := 0; i < 4; i++ {
+			b.m[i] = v.length(st.Margin[i], cbW)
+			b.pad[i], b.bd[i] = 0, 0
+		}
+		return
+	}
 	for i := 0; i < 4; i++ {
 		b.m[i] = v.length(st.Margin[i], cbW)
 		p := v.length(st.Padding[i], cbW)

@@ -287,8 +287,8 @@ func actSameItems(a, b []core.ActivityItem) bool {
 // take what core changed of them after the item was read (its MsgSeq): a
 // realtime entry announced before a change the page took in a frame
 // before it was upserted, a load's answer read before a change, the
-// older pages a refresh keeps (actMerge), and the entries core's changes
-// removed meanwhile, which stay out.
+// rows a load's answer joins (actUpsertPage), and the entries core's
+// changes removed meanwhile, which stay out.
 func (v *Activity) landMsgs(c *core.App, page *core.ActivityPage) {
 	m := &v.msgs
 	refs := make(map[actMsgKey]actRef, 3*len(page.Items)+3)
