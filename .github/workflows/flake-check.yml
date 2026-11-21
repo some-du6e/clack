@@ -659,6 +659,53 @@ jobs:
           xvfb-run -a go test -count=$COUNT -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestHuddleShotsTiles' \
             ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/huddleui
 
+  # A plugin's Block Kit-style button row (OwlMode's Save in Taut and
+  # Forget) as Slack lays it out and draws it: the row's flex rules, the
+  # button's c-button box with what CSS sets on it, its icon and label
+  # as a flex row; a composer.addButton toggle as Slack's composer
+  # button; a plugin's ring round its ReactionBar's pills; and Taut's
+  # OwlMode itself under (demo) Owl's DM confirmation. Layout from the
+  # rects JS reads and LayoutShape, and the pixels (Mesa llvmpipe).
+  # Dispatch with only=owl-save.
+  owl-save:
+    if: ${{ !inputs.only || startsWith('owl-save', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: build Taut's OwlMode (the reviewed TAUT_PIN; GPLv3, never committed)
+        env:
+          TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
+          cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          npm run -s build:user-plugin -- plugins/OwlMode.tsx "$GITHUB_WORKSPACE/dist/taut-plugins/OwlMode.js"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "kit + messages: the row's layout and pixels (light and dark), OwlMode's own Save in Taut, the composer button, the reaction ring, COUNT runs"
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/slackc/kit || rc=1
+          xvfb-run -a go test -count=$COUNT -v -run '^TestOwl' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestTautViewOwlSaveButton$' ./internal/ui || rc=1
+          exit $rc
+
   slick:
     if: ${{ !inputs.only || startsWith('slick', inputs.only) }}
     runs-on: ubuntu-latest
