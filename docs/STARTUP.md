@@ -60,7 +60,7 @@ What a macOS launch does, in order: the loader and the runtime (`main`, ~35 ms w
 
 CI's numbers (macOS 26 runner, M1 VM with 3 cores, fakeslackd at 150 ms per call, ChatTabs and five Taut plugins; ms since exec, warm medians): before (cd583d6c with the marks) the window was on screen at 197, its first frame at 269 and the client at 407, after the boot placeholder had waited out the plugins' 100 ms cap on every warm launch; after, the client is the first frame, at ~290 (runner speed varies about 2x between runs: the same commit measured 292 and 485 on two runners). Linux (Xvfb, llvmpipe) and Windows went from 606 to 312 and from 567 to 290. LaunchServices adds 25-70 ms from the launch call to the process start when warm.
 
-The launch budget (ci.yml's macos job, flake-check's `launch-budget`; `.github/perf/launch-budget.sh`): Clack.app launched through LaunchServices, once cold and five times warm; the fastest warm launch must show the client within one bounce (700 ms) of the launch call, and the median warm launch may show the boot placeholder at most one frame (16 ms) before the client. cd583d6c showed it 97-147 ms on every warm launch.
+The launch budget (ci.yml's macos job, flake-check's `launch-budget`; `.github/perf/launch-budget.sh`): Clack.app launched through LaunchServices, once cold and seven times warm; the fastest warm launch (the runners' speed varies about 2x from run to run) must show the client within one bounce (700 ms) of the launch call, and the median warm launch may show the boot placeholder at most one frame (16 ms) before the client. cd583d6c showed it 97-147 ms on every warm launch.
 
 ## The cold path
 

@@ -3,14 +3,15 @@
 # job): Clack.app made and signed as release.yml makes it (a perfharness
 # build, which accepts the loopback fakeslackd), launched through
 # LaunchServices as the Dock launches it, with Karim-like plugins, once
-# cold and then five times warm (.github/perf/launch.py).
+# cold and then seven times warm (.github/perf/launch.py).
 #
 # Karim (2026-11-21): "Make launching the app take less than a Mac app
 # bounce." macOS bounces the Dock icon from the launch until the app
 # finishes launching; one bounce on the runner is 700 ms (bounce.sh, the
 # launch-speed-mac job). The budget:
 #   - the fastest warm launch shows the client within one bounce of the
-#     launch call (LaunchServices' exec included)
+#     launch call (LaunchServices' exec included): the fastest, as the
+#     runners' speed varies about 2x from run to run (two VMs a host)
 #   - the median warm launch shows the boot placeholder at most one frame
 #     (16 ms) before the client: a warm launch's first frame is the client
 #     from the cache, as Slack renders from its persisted store
@@ -29,4 +30,4 @@ codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlemen
 go build -o "$w/fakeslackd" ./internal/fakeslack/fakeslackd
 .github/perf/launch-library.sh "$w/library" > /dev/null
 python3 -I .github/perf/launch.py --app "$app" --fake "$w/fakeslackd" --out "$w/out" --library "$w/library" \
-  --warm 5 --bounce-ms "${LAUNCH_BOUNCE_MS:-700}" --placeholder-ms "${LAUNCH_PLACEHOLDER_MS:-16}" --label "macOS launch budget"
+  --warm 7 --bounce-ms "${LAUNCH_BOUNCE_MS:-700}" --placeholder-ms "${LAUNCH_PLACEHOLDER_MS:-16}" --label "macOS launch budget"

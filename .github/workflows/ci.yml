@@ -1518,7 +1518,7 @@ jobs:
           exit $rc
       # launch-speed (Karim, 2026-11-21: "Make launching the app take less
       # than a Mac app bounce"): Clack.app launched through LaunchServices
-      # against fakeslackd with Karim-like plugins, cold once and five times
+      # against fakeslackd with Karim-like plugins, cold once and seven times
       # warm. The fastest warm launch shows the client within one Dock
       # bounce (700 ms on the runner: flake-check's launch-speed-mac films
       # one) of the launch call, and a warm launch's first frame is the
