@@ -457,6 +457,7 @@ type User struct {
 	TZOffset          int     `json:"tz_offset,omitempty"`
 	IsAdmin           bool    `json:"is_admin,omitempty"`
 	IsOwner           bool    `json:"is_owner,omitempty"`
+	IsPrimaryOwner    bool    `json:"is_primary_owner,omitempty"`
 	IsBot             bool    `json:"is_bot,omitempty"`
 	IsAppUser         bool    `json:"is_app_user,omitempty"`
 	IsSlackbot        bool    `json:"is_slackbot,omitempty"` // gmjA: Slackbot (with id USLACKBOT)
@@ -487,6 +488,7 @@ type EnterpriseUser struct {
 	Teams          []string `json:"teams,omitempty"`
 	IsAdmin        bool     `json:"is_admin,omitempty"`
 	IsOwner        bool     `json:"is_owner,omitempty"`
+	IsPrimaryOwner bool     `json:"is_primary_owner,omitempty"`
 }
 
 type Profile struct {

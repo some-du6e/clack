@@ -57,14 +57,14 @@ func TestSearchRowsMetrics(t *testing.T) {
 		}
 	}
 	u := core.User{ID: "U1", TZ: "Europe/Berlin"}
-	if h := srPersonCardH(gtx, u); h != 96+1+46 {
+	if h := srPersonCardH(gtx, nil, u); h != 96+1+46 {
 		t.Errorf("card with a local time %d", h)
 	}
-	u.IsAdmin = true
-	if h := srPersonCardH(gtx, u); h != 96+1+46+35 {
+	u.IsAdmin = true // no host: a plain workspace, so the admin keeps its band
+	if h := srPersonCardH(gtx, nil, u); h != 96+1+46+35 {
 		t.Errorf("admin card %d", h)
 	}
-	if h := srPersonCardH(gtx, core.User{ID: "U2"}); h != 96 {
+	if h := srPersonCardH(gtx, nil, core.User{ID: "U2"}); h != 96 {
 		t.Errorf("card without a time zone %d", h)
 	}
 }
