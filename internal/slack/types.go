@@ -40,14 +40,18 @@ type Message struct {
 	PinnedInfo     *PinnedInfo     `json:"pinned_info,omitempty"`
 	ClientMsgID    string          `json:"client_msg_id,omitempty"`
 	Hidden         bool            `json:"hidden,omitempty"`
-	IsEphemeral    bool            `json:"is_ephemeral,omitempty"` // Slack's addEphemeralMessage (local, never from history)
-	Root           *Message        `json:"root,omitempty"`         // thread_broadcast
-	ReplyBroadcast bool            `json:"reply_broadcast,omitempty"`
-	Upload         bool            `json:"upload,omitempty"`
-	DisplayAsBot   bool            `json:"display_as_bot,omitempty"`
-	Room           json.RawMessage `json:"room,omitempty"` // huddles
-	Channel        string          `json:"channel,omitempty"`
-	Inviter        string          `json:"inviter,omitempty"`
+	// NoDisplay and NoNotifications hold the message's desktop
+	// notification back (client-boot Fpyc's reasons 4 and 5).
+	NoDisplay       bool            `json:"no_display,omitempty"`
+	NoNotifications bool            `json:"no_notifications,omitempty"`
+	IsEphemeral     bool            `json:"is_ephemeral,omitempty"` // Slack's addEphemeralMessage (local, never from history)
+	Root            *Message        `json:"root,omitempty"`         // thread_broadcast
+	ReplyBroadcast  bool            `json:"reply_broadcast,omitempty"`
+	Upload          bool            `json:"upload,omitempty"`
+	DisplayAsBot    bool            `json:"display_as_bot,omitempty"`
+	Room            json.RawMessage `json:"room,omitempty"` // huddles
+	Channel         string          `json:"channel,omitempty"`
+	Inviter         string          `json:"inviter,omitempty"`
 	// System messages' own fields: channel_topic's topic, channel_purpose's
 	// purpose, channel_name's old_name and name (the new one).
 	Topic          string `json:"topic,omitempty"`

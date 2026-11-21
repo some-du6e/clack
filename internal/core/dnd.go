@@ -86,6 +86,18 @@ func (a *App) DNDProfile() (DNDProfileStatus, bool) {
 	return *a.dnd.status.ProfileStatus, true
 }
 
+// DNDHeld is getCurrentMemberDndStatus (client-boot d4YN ux) as the store
+// holds it: whether the viewer's notifications are paused now, asking
+// nothing (false until dnd.info or dnd_updated brought a status, as
+// Slack's store reads before its dnd.info answers). Any goroutine: the
+// notification decisions read it on the UI goroutine.
+func (a *App) DNDHeld() bool {
+	a.dnd.mu.Lock()
+	known, st := a.dnd.known, a.dnd.status
+	a.dnd.mu.Unlock()
+	return known && st.Active(time.Now())
+}
+
 // DNDActive reports whether the viewer's notifications are paused now,
 // asking dnd.info the first time. Off the UI goroutine.
 func (a *App) DNDActive(ctx context.Context) bool {
