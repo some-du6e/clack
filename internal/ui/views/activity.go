@@ -4209,7 +4209,9 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	if len(m.Doc.Blocks) == 0 {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
+	o := richview.Options{Muted: m.System}
+	b.messageLabel(m, &o)
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, b.msgVerOf(m), m.Doc, o, 0)
 }
 
 // actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue

@@ -33,3 +33,18 @@ func (a *App) PreviewDoc(m *Message) (richtext.Doc, bool) {
 // archived too). Every view that draws a message's label follows it;
 // Activity's previews (SimpleMessagePreview) draw no label at all.
 func (m *Message) DisplaysEdited() bool { return m.Edited && m.BotID == "" }
+
+// StoppedByName is the name in StoppedLabel's "(stopped by {name})" (J825)
+// for a reply whose stream was stopped (ai_context result_status
+// stopped_by_user): under agents_streaming_stop_button_fe, when someone
+// other than the viewer stopped it, their name; "" draws "(stopped)". A
+// member not loaded yet reads "" (the lookup asks; "names" draws it again).
+func (a *App) StoppedByName(m *Message) string {
+	if m == nil || !m.Stopped || m.StoppedBy == "" || m.StoppedBy == a.S.Self.ID || a.experiment("agents_streaming_stop_button_fe") != "on" {
+		return ""
+	}
+	if u, ok := a.User(m.StoppedBy); ok && u.Name != "" {
+		return u.Name
+	}
+	return ""
+}

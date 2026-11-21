@@ -375,12 +375,28 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 	// Activity, Threads and Later are Slack's activity / all_threads /
 	// starred_message block contexts: long sections truncate.
 	// "(edited)": shouldDisplayAsEdited (none on an app's message)
-	o := richview.Options{Edited: m.DisplaysEdited(), Compact: compact, Muted: m.System, Secondary: muted && !m.System,
+	o := richview.Options{Compact: compact, Muted: m.System, Secondary: muted && !m.System,
 		Channel: m.Channel, TS: m.TS, Truncate: true}
+	b.messageLabel(m, &o)
 	if live {
 		o.Elements = b.liveElements(m)
 	}
 	return b.richDoc(gtx, key, ver, m.Doc, o, maxLines)
+}
+
+// messageLabel is a body's label as messages' rows draw it
+// (insertMessageLabelIntoBlocks): "(edited)" where shouldDisplayAsEdited,
+// else StoppedLabel's "(stopped)" (or "(stopped by {name})") for an agent
+// reply whose stream was stopped. Threads, Activity and Later draw
+// MessageKit bodies, labels included.
+func (b *base) messageLabel(m *core.Message, o *richview.Options) {
+	o.Edited = m.DisplaysEdited()
+	if !o.Edited && m.Stopped {
+		o.Stopped = true
+		if c := b.h.Core(); c != nil {
+			o.StoppedBy = c.StoppedByName(m)
+		}
+	}
 }
 
 // richDoc draws any document under a stable key.

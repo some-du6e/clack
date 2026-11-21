@@ -468,18 +468,13 @@ func (r *row) rvOpts() richview.Options {
 // under agents_streaming_stop_button_fe, when someone other than the
 // viewer stopped the stream; "" draws "(stopped)".
 func (r *row) stoppedBy() string {
-	id := r.m.StoppedBy
-	if id == "" || r.rc == nil || r.rc.h == nil || id == r.rc.selfID {
+	if r.rc == nil || r.rc.h == nil || r.m.StoppedBy == r.rc.selfID {
 		return ""
 	}
-	app := r.rc.h.Core()
-	if app == nil || app.Experiment("agents_streaming_stop_button_fe") != "on" {
-		return ""
+	if app := r.rc.h.Core(); app != nil {
+		return app.StoppedByName(&r.m)
 	}
-	if u, ok := app.User(id); ok && u.Name != "" {
-		return u.Name
-	}
-	return "" // the lookup asked for the member; "names" draws it again
+	return ""
 }
 
 // displaysEdited is Slack's shouldDisplayAsEdited (core.Message.DisplaysEdited):
