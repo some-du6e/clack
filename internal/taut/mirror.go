@@ -1298,6 +1298,19 @@ func messageJSON(ch string, sm *slack.Message) map[string]any {
 	}
 	if files, ok := e["files"]; ok {
 		e["files"] = pruneEmpty(files, true)
+		// a file's initial_comment is Slack's own object (an old
+		// file_share's comment), not pruned: empty fields in it stay
+		if fs, ok := e["files"].([]any); ok && len(fs) == len(sm.Files) {
+			for i := range sm.Files {
+				f, ok := fs[i].(map[string]any)
+				if raw := sm.Files[i].InitialComment; ok && len(raw) > 0 {
+					var v any
+					if json.Unmarshal(raw, &v) == nil {
+						f["initial_comment"] = v
+					}
+				}
+			}
+		}
 	}
 	if bp, ok := e["bot_profile"]; ok {
 		e["bot_profile"] = pruneEmpty(bp, false)

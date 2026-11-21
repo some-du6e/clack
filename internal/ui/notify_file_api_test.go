@@ -11,7 +11,7 @@ import (
 func noteTestMessage(m *slack.Message) *core.Message {
 	return &core.Message{TS: m.TS, User: m.User, Subtype: m.Subtype, Text: m.Text, ThreadTS: m.ThreadTS,
 		Doc: richtext.FromMessage(noResolver{}, m), Blocks: m.Blocks, Attachments: m.RawAttachments, BotID: m.BotID,
-		NoteFiles: richtext.NoteFilesOf(m.Files), Upload: m.Upload}
+		NoteFiles: core.NoteFilesOf(m), Upload: m.Upload}
 }
 
 // notePossessiveOf is notePossessive (red branches stub it).
