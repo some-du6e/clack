@@ -1181,6 +1181,12 @@ func (s *Store) PutExtConv(c slack.Conversation) {
 		return
 	}
 	s.mu.Lock()
+	s.putExtConvLocked(c)
+	s.mu.Unlock()
+}
+
+// putExtConvLocked is PutExtConv's body (s.mu held).
+func (s *Store) putExtConvLocked(c slack.Conversation) {
 	if s.ext == nil {
 		s.ext = map[string]*slack.Conversation{}
 	}
@@ -1192,7 +1198,6 @@ func (s *Store) PutExtConv(c slack.Conversation) {
 		s.names[c.ID] = c.Name
 		s.gen.Add(1)
 	}
-	s.mu.Unlock()
 }
 
 // ExtConv returns a non-sidebar conversation.
@@ -1881,15 +1886,52 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 		return *e
 	}
 	e.HasUnreads = true
-	c := s.Convs[ch]
-	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
-	if isDM && c != nil && c.IsMPIM && s.Muted[ch] {
-		isDM = false // a muted group DM badges on mentions only (Slack's unreadHighlightCnt)
-	}
-	if mentionsSelf || isDM {
+	if mentionsSelf || s.countsAsDMLocked(ch) {
 		e.MentionCount++
 	}
 	return *e
+}
+
+// countsAsDMLocked reports whether NoteMessage counts every message from
+// others in ch as a mention, the way Slack badges a DM: an IM, or a group
+// DM that isn't muted (a muted one badges on mentions only: Slack's
+// unreadHighlightCnt). s.mu held.
+func (s *Store) countsAsDMLocked(ch string) bool {
+	c := s.Convs[ch]
+	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
+	if isDM && c != nil && c.IsMPIM && s.Muted[ch] {
+		isDM = false
+	}
+	return isDM
+}
+
+// CountsAsDM is countsAsDMLocked for the conversation as the store holds it
+// now.
+func (s *Store) CountsAsDM(ch string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.countsAsDMLocked(ch)
+}
+
+// NoteLateDM is NoteMessage's DM rule for message m of ch, counted before
+// the store knew ch (core held the message for its conversations.info):
+// one mention more once ch turns out to be an IM or a group DM, unless the
+// viewer read past it meanwhile or it is the viewer's own.
+func (s *Store) NoteLateDM(ch string, m *slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.Counts[ch]
+	if !ok || !e.HasUnreads || !s.countsAsDMLocked(ch) {
+		return
+	}
+	if self := s.Self.ID; m.User == self && self != "" {
+		return
+	}
+	if e.LastRead != "" && !TSLess(e.LastRead, m.TS) {
+		return
+	}
+	s.noteMessageLocked(ch) // newer than a counts answer still out, as NoteMessage's
+	e.MentionCount++
 }
 
 // ---- disk cache (metadata only) ----

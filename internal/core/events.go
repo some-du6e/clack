@@ -221,7 +221,10 @@ func (a *App) handle(ev slack.Event) {
 		if e.User != a.S.SelfID() {
 			return
 		}
-		a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, ch) }) // pump_later.go
+		// off the pump (pump_later.go); a leave the pump applies meanwhile
+		// stands (refreshConvSince)
+		since := a.S.Seq()
+		a.pumpLater(func(ctx context.Context) { a.refreshConvSince(ctx, ch, since) })
 	case "member_left_channel":
 		a.membershipChanged(ch) // anyone's leave, as a join
 	case "channel_joined", "group_joined", "im_created", "mpim_joined", "channel_created", "channel_rename",
@@ -244,7 +247,12 @@ func (a *App) handle(ev slack.Event) {
 			// a code channel no longer counts (codechannel_close.go)
 			a.forgetCodeChannelClosed(id)
 		}
-		a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, id) }) // pump_later.go
+		// the conversation as the event has it, now (noteJoinedConv); its
+		// conversations.info after, off the pump, unless the pump changes
+		// it meanwhile (a leave, an archive: refreshConvSince)
+		a.noteJoinedConv(ev.Type, e.Channel, id)
+		since := a.S.Seq()
+		a.pumpLater(func(ctx context.Context) { a.refreshConvSince(ctx, id, since) }) // pump_later.go
 	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
 		a.onRecordChannelClose(ch)
 	case "record_channel_open": // recordChannelOpened
@@ -260,8 +268,8 @@ func (a *App) handle(ev slack.Event) {
 		if e.ConvertedTo != "" { // group DM turned into a private channel
 			a.S.DropConv(ch)
 			a.emit(Event{Type: "conv_removed", Channel: ch})
-			to := e.ConvertedTo
-			a.pumpLater(func(ctx context.Context) { a.refreshConv(ctx, to) }) // pump_later.go
+			to, since := e.ConvertedTo, a.S.Seq()
+			a.pumpLater(func(ctx context.Context) { a.refreshConvSince(ctx, to, since) }) // pump_later.go
 			return
 		}
 		a.emit(Event{Type: "sidebar_changed"})
@@ -313,7 +321,10 @@ func (a *App) handle(ev slack.Event) {
 		if ev.Type == "dnd_updated" {
 			a.onDNDUpdated(nil, ev.Raw) // the event's status, before the UI hears of it
 			if raw := ev.Raw; a.dndUpdateLoads(raw) {
-				a.pumpLater(func(ctx context.Context) { _ = a.LoadDND(ctx) }) // then dnd.info (pump_later.go)
+				// then dnd.info (pump_later.go), whose answer gives way to a
+				// newer dnd_updated (loadDNDAfter)
+				gen := a.dndEvents()
+				a.pumpLater(func(ctx context.Context) { _ = a.loadDNDAfter(ctx, gen) })
 			}
 		}
 		if ev.Type == "dnd_updated_user" {
@@ -332,10 +343,14 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
-			// the store's sections as of this event (SetSectionsSince), read
-			// off the pump (pump_later.go)
-			since := a.S.Seq()
+			// read off the pump (pump_later.go), one reread at a time, each
+			// as of when it starts: a section write this session makes
+			// while it is out stays (SetSectionsSince). Taken when the event
+			// came, the journal position was older than the install of the
+			// reread queued before it, and a second sections event's newer
+			// list was always thrown away
 			a.pumpLater(func(ctx context.Context) {
+				since := a.S.Seq()
 				if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
 					a.emit(Event{Type: "sidebar_changed"})
 				}
@@ -397,10 +412,12 @@ func (a *App) handle(ev slack.Event) {
 			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
 	case "saved_added", "saved_updated", "saved_deleted":
-		// its message's lookup, and the saved events after it in order
+		// the store's saved state now, on the pump; its message's lookup
+		// and the event after it, in order with the saved events before
 		// (pump_later.go)
 		typ, raw := ev.Type, ev.Raw
-		a.pumpLater(func(ctx context.Context) { a.onSavedEvent(ctx, typ, raw) })
+		it := a.noteSavedEvent(typ, raw)
+		a.pumpLater(func(ctx context.Context) { a.announceSaved(ctx, typ, raw, it) })
 	case "draft_create", "draft_update", "draft_delete", "draft_send":
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
@@ -489,9 +506,14 @@ func (a *App) handle(ev slack.Event) {
 	}
 }
 
-func (a *App) emitUpdate(ch string, m *slack.Message) {
+func (a *App) emitUpdate(ch string, m *slack.Message) { a.emitUpdateWith(ch, m, false) }
+
+// emitUpdateWith is emitUpdate; removes: the update removes the Activity
+// entries about the message (Event.Removes: an edit took the viewer's
+// mention out).
+func (a *App) emitUpdateWith(ch string, m *slack.Message, removes bool) {
 	v := a.message(ch, m)
-	a.emit(Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v, Ahead: a.S.IsAhead(ch, m.TS)})
+	a.emit(Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v, Ahead: a.S.IsAhead(ch, m.TS), Removes: removes})
 }
 
 // openStreams remembers the messages last seen with streaming_state
@@ -530,10 +552,13 @@ func (o *openStreams) seen(ch, ts string, open bool) bool {
 
 // emitStreamDone is emitUpdate for the message_changed that ends a chat
 // stream, with what a message event carries for its notification.
-func (a *App) emitStreamDone(ch string, m *slack.Message) {
+func (a *App) emitStreamDone(ch string, m *slack.Message) { a.emitStreamDoneWith(ch, m, false) }
+
+// emitStreamDoneWith is emitStreamDone; removes as emitUpdateWith's.
+func (a *App) emitStreamDoneWith(ch string, m *slack.Message, removes bool) {
 	v := a.message(ch, m)
 	self := a.S.SelfID()
-	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, StreamDone: true,
+	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, StreamDone: true, Removes: removes,
 		Reply:    m.ThreadTS != "" && m.ThreadTS != m.TS,
 		Mention:  mentionsSelf(m, self) || (m.User != self && keywordMention(m, a.S.HighlightWords())),
 		ConvKind: a.kindOf(ch)}
@@ -564,6 +589,68 @@ func (a *App) refreshConv(ctx context.Context, id string) {
 	// itself (the UI's noteMembers).
 	v := a.conv(c)
 	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
+}
+
+// refreshConvSince is refreshConv for a lookup queued off the event pump
+// (pump_later.go) at journal position since: the answer stays out when the
+// pump changed the conversation after since (a channel_left's or an
+// archive's DropConv, a join's PutConvLocal: store PutInfoSince). Read
+// before a leave the pump applied meanwhile, it put the left channel back
+// in the member set: its sidebar row, the composer, not_in_channel on send.
+func (a *App) refreshConvSince(ctx context.Context, id string, since uint64) {
+	if id == "" {
+		return
+	}
+	c, err := a.C.ConversationInfo(ctx, id)
+	if err != nil {
+		return
+	}
+	if c.ID == "" {
+		c.ID = id
+	}
+	if !a.S.PutInfoSince(*c, since) {
+		return
+	}
+	v := a.conv(c)
+	a.emit(Event{Type: "conv", Channel: id, Conv: &v})
+}
+
+// noteJoinedConv puts the conversation a join or an open names into the
+// member set now, ahead of its conversations.info (refreshConvSince): the
+// event's own channel object for channel_joined, group_joined, im_created
+// and mpim_joined (Slack's channelJoined upserts it), or for im_open and
+// mpim_open the closed DM the store keeps outside the sidebar. On ui the
+// lookup ran on the pump before the next event; queued, the messages right
+// behind it came first, and a new group DM's first message counted as a
+// channel's (no badge: NoteMessage) and waited for its own lookup. A
+// conversation the member set holds already stays as it is until the lookup
+// answers.
+func (a *App) noteJoinedConv(typ string, c slack.Conversation, id string) {
+	switch typ {
+	case "channel_joined", "group_joined":
+		c.IsMember = true
+	case "im_created":
+		c.IsIM = true
+	case "mpim_joined":
+		c.IsMPIM = true
+	case "im_open", "mpim_open":
+		x, ok := a.S.ExtConv(id)
+		if !ok || !x.IsIM && !x.IsMPIM {
+			return
+		}
+		c = *x
+	default:
+		return
+	}
+	if c.ID == "" || c.ID != id {
+		return
+	}
+	if _, member := a.S.Conv(c.ID); member {
+		return
+	}
+	a.S.PutConvLocal(c)
+	v := a.conv(&c)
+	a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})
 }
 
 // putInfo stores a conversations.info answer. Its is_member is the
@@ -701,11 +788,18 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	// of the same conversation wait behind it in order (pump_later.go). The
 	// store holds the message already (above): only its announcement waits
 	if a.holdForConv(ch) {
-		mm := m
+		mm, since := m, a.S.Seq()
+		countedDM := mention || a.S.CountsAsDM(ch) // as NoteMessage counted it, above
 		a.convLater(ch, func(ctx context.Context) {
 			defer a.releaseConv(ch)
 			if _, known := a.S.Conv(ch); !known && !a.knownNonMember(ch) {
-				a.refreshConv(ctx, ch)
+				a.refreshConvSince(ctx, ch, since)
+			}
+			if !countedDM && (!isReply || mm.Subtype == "thread_broadcast") {
+				// counted before the store knew ch: a group DM's message
+				// counts as one (NoteLateDM), as it would have on ui, where
+				// the lookup ran first
+				a.S.NoteLateDM(ch, &mm)
 			}
 			a.announceMessage(ch, &mm, isReply, mention, ahead)
 		})
@@ -810,14 +904,16 @@ func (a *App) onMessageChange(ctx context.Context, ch string, e *msgSubEvent, ra
 			go a.fillFiles(ch, m.TS)
 		}
 		a.woMessageUpdated(ch, &m) // a work object's refreshed unfurl (workobjects.go)
-		if a.removesActivity(e.Previous, &m) {
-			a.removesNext(ch, m.TS) // its update says so (activity_removes.go)
-		}
+		// the update says it removes the Activity entries about the message
+		// (activity_removes.go) on itself: through one slot App-wide, a
+		// held conversation's edit and another's, applied at once on two
+		// goroutines, could take each other's
+		removes := a.removesActivity(e.Previous, &m)
 		if streamed && m.StreamingState != "in_progress" {
-			a.emitStreamDone(ch, &m)
+			a.emitStreamDoneWith(ch, &m, removes)
 			return
 		}
-		a.emitUpdate(ch, &m)
+		a.emitUpdateWith(ch, &m, removes)
 		return
 	case "message_deleted":
 		// Slack's setMessageDeleted just removes the message; the parent's
