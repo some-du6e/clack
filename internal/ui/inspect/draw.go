@@ -275,7 +275,7 @@ func penBanner(p *pen, armed bool) string {
 	if p.arrow {
 		shape = "A freehand"
 	}
-	msg := "Draw: drag to draw · ⇧ rectangle · " + shape + " · 1 2 3 colour · Z undo · Esc back to blur"
+	msg := "Draw: drag to draw · Shift rectangle · " + shape + " · 1 2 3 colour · Z undo · Esc back to blur"
 	if armed {
 		msg += " · Enter copy"
 	}
