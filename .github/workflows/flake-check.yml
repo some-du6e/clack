@@ -2679,7 +2679,9 @@ jobs:
   # from the root, two around a reply, loadPre and loadPost), and the pane
   # opened through the permalink, from the channel and from Activity, then
   # scrolled through older pages (time to the first replies, requests,
-  # heap, frames). Dispatch with only=thread-load.
+  # heap, frames), and after a slow connect a thread at its end goes stale
+  # with the channels and its read past the old end joins what the socket
+  # brought. Dispatch with only=thread-load.
   thread-load:
     if: ${{ !inputs.only || startsWith('thread-load', inputs.only) }}
     runs-on: ubuntu-latest
@@ -2697,8 +2699,9 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadHistoryLikeSlack|TestThreadPageKeepsRootOutOfSlice)$' ./internal/store || rc=1
-          go test -count=$COUNT -v -timeout 15m -run '^(TestThreadOpensLikeSlack|TestThreadNewestPageLikeSlack)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadHistoryLikeSlack|TestThreadPageKeepsRootOutOfSlice|TestResetReachedEndCoversThreads)$' ./internal/store || rc=1
+          go test -count=$COUNT -v -timeout 15m -run '^(TestThreadOpensLikeSlack|TestThreadNewestPageLikeSlack|TestSocketGapThreadAtItsEnd)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadPaneAfterSlowConnect|TestThreadLoadingRepliesRow)$' ./internal/ui/messages || rc=1
           xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
           exit $rc
