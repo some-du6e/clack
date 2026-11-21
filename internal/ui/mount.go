@@ -44,6 +44,9 @@ func (a *App) mountChannel(ch string) View {
 // mountThread is the secondary-pane thread: the thread list with its
 // composer, on a floating card.
 func (a *App) mountThread(ch, ts string) View {
+	if c := a.convos[ch+"/"+ts]; c != nil {
+		c.inputShown = false // a new pane: its input row mounts again (thread_focus_input.go)
+	}
 	return &threadPane{a: a, ch: ch, ts: ts}
 }
 
