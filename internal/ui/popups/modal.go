@@ -244,6 +244,9 @@ type Modal struct {
 	frames int
 }
 
+// Rect is the dialog card's rectangle in the window at the last frame.
+func (m *Modal) Rect() image.Rectangle { return m.rect }
+
 // NewModal builds a modal; show it with h.ShowOverlay.
 func NewModal(h Host, o ModalOpts) *Modal {
 	m := &Modal{h: h, o: o}
