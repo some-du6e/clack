@@ -142,3 +142,24 @@ func countNear(img *image.RGBA, r image.Rectangle, c color.NRGBA, tol int) int {
 	}
 	return n
 }
+
+// With show_sidebar_avatars off a DM row's prefix is its partner's
+// presence (BaseChannelPrefixPresence → ConnectedPresence, client-boot
+// Bh6F), which passes isSystemUser for Slackbot and the Slack system user:
+// BasePresence (MSOq) draws them status-slackbot-filled, "Active" with
+// showText. Before, the row's BasePresence props said isSystemUser false
+// for everyone.
+func TestSidebarSystemUserPresence(t *testing.T) {
+	for _, c := range []struct {
+		user   string
+		system bool
+	}{{fakeslack.SlackUserID, true}, {fakeslack.SlackbotID, true}, {fakeslack.SelfID, false}, {"U0PERSON001", false}} {
+		if got := sbSystemUser(c.user); got != c.system {
+			t.Errorf("sbSystemUser(%s) = %v, want %v", c.user, got, c.system)
+		}
+		p := sbPresence{system: sbSystemUser(c.user), key: "D1"}.props()
+		if p.Bool("isSystemUser") != c.system {
+			t.Errorf("%s: BasePresence props isSystemUser %v, want %v", c.user, p.Bool("isSystemUser"), c.system)
+		}
+	}
+}
