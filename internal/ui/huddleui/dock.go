@@ -90,22 +90,22 @@ func (d *dockState) tip(id string) *popups.TipState {
 // PENDING, COMPLETING_PRE_JOIN, ENDING), or it has just started and the
 // window hasn't had it yet (H: the state the bar saw last, W, was a
 // transition, it's STARTED now and the window isn't open; W only becomes
-// STARTED once the window is open in the call). Then it's the 48px bar:
-// the headphones, the title, "Bring huddle to front" and Leave.
+// STARTED once the window is open in the call: barJoined, which the
+// controller clears where that happens, not the bar's drawing, since the
+// main window may draw nothing meanwhile). Then it's the 48px bar: the
+// headphones, the title, "Bring huddle to front" and Leave.
 func (c *Controller) dockCollapsed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	open := c.win != nil
 	switch {
 	case c.s == nil:
-		return open || c.joining != "" // STARTING, PENDING
+		return c.win != nil || c.joining != "" // STARTING, PENDING
 	case c.leaving == c.s:
 		return true // ENDING
-	case open:
-		c.barJoined = false // W = STARTED: the window has had the call
-		return true
+	case c.win != nil:
+		return true // S
 	}
-	return c.barJoined
+	return c.barJoined // H
 }
 
 // DockHeight is the room the docked bar takes at the bottom of the main
@@ -357,7 +357,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 					theme.Fill(gtx, image.Rect(cw-max(1, gtx.Dp(1)), (h-gtx.Dp(20))/2, cw, (h+gtx.Dp(20))/2), ink.divider)
 				}
 				if k.warn {
-					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14))
+					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14), theme.Over(ink.bg, th.C.ChromeA)) // the card over the window
 				}
 				return D{}
 			})

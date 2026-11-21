@@ -87,7 +87,8 @@ type Controller struct {
 	spk speakerTest // Test Speaker's icon animation (testspeaker.go)
 	// the docked bar's collapsed states (dock.go dockCollapsed): leaving is
 	// the session Leave is ending (ENDING), barJoined that it started and
-	// the window hasn't had it yet (HuddleBottomBarContent's H)
+	// the window hasn't had it yet (HuddleBottomBarContent's H; cleared
+	// where the window gets the call: Start, attachWindow)
 	leaving   *huddle.Session
 	barJoined bool
 	s         *huddle.Session
@@ -349,6 +350,9 @@ func (c *Controller) Start(channel string) {
 		c.joining = ""
 		if err == nil {
 			c.s = s
+			if c.win != nil {
+				c.barJoined = false // the window has the call (attachWindow)
+			}
 		}
 		c.mu.Unlock()
 		if err != nil {

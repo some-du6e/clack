@@ -44,7 +44,16 @@ func until(t *testing.T, what string, d time.Duration, cond func() bool) {
 	}
 }
 
-func TestDockAfterHuddleWindowCloses(t *testing.T) {
+func TestDockAfterHuddleWindowCloses(t *testing.T) { dockAfterHuddleWindowCloses(t, true) }
+
+// The same with the main window drawing nothing while the huddle window
+// has the call: minimized, or closed to the tray (the invite window's Join
+// doesn't raise it). HuddleBottomBarContent's W became STARTED while the
+// window was open in the call (an effect, not a paint: nMFj ~:270), so the
+// bar the main window draws once it's back is the full one.
+func TestDockAfterAnUnseenHuddleWindowCloses(t *testing.T) { dockAfterHuddleWindowCloses(t, false) }
+
+func dockAfterHuddleWindowCloses(t *testing.T, seen bool) {
 	if os.Getenv("CLACK_HUDDLE_WINDOW_TESTS") == "" {
 		t.Skip("CLACK_HUDDLE_WINDOW_TESTS not set (opens a real huddle window)")
 	}
@@ -81,8 +90,10 @@ func TestDockAfterHuddleWindowCloses(t *testing.T) {
 	})
 	time.Sleep(time.Second) // its first frames
 	var ops op.Ops
-	if got, want := c.DockHeight(shotCtx(&ops, 1000, 200)), (dockCollapsed+dockPad)*shotScale; got != want {
-		t.Fatalf("with the window open the bar is %d px, want the collapsed %d", got, want)
+	if seen { // the main window draws the bar meanwhile
+		if got, want := c.DockHeight(shotCtx(&ops, 1000, 200)), (dockCollapsed+dockPad)*shotScale; got != want {
+			t.Fatalf("with the window open the bar is %d px, want the collapsed %d", got, want)
+		}
 	}
 
 	n0 := h.n.Load()
@@ -93,7 +104,7 @@ func TestDockAfterHuddleWindowCloses(t *testing.T) {
 	}
 	until(t, "the main window asked to draw the bar", 5*time.Second, func() bool { return h.n.Load() > n0 })
 	if got, want := c.DockHeight(shotCtx(&ops, 1000, 200)), (dockBar+dockPad)*shotScale; got != want {
-		t.Fatalf("with the window closed the bar is %d px, want the full %d", got, want)
+		t.Fatalf("with the window closed the bar is %d px, want the full %d (main window drawing while the huddle window was open: %v)", got, want, seen)
 	}
 	drawn := hudStrings(hudSurface{w: 1000, h: dockBar + dockPad, draw: func(gtx C) { c.LayoutDock(gtx, h.th) }})
 	for _, want := range []string{"Huddle in #huddle-test", "Leave"} {

@@ -473,12 +473,22 @@ jobs:
       - name: "huddle: Opus frames don't depend on the caller's goroutine stack"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestOpusDecodeIgnoresCallerStack|TestOpusEncodeIgnoresCallerStack|TestCodecGoroutineStackStill)$' ./internal/huddle
+      - name: "huddle: Speaker picks (the output you're on plays until the new one is in; overlapping picks: the newest plays)"
+        if: ${{ !cancelled() }}
+        run: go test -race -gcflags=all=-d=checkptr=0 -count=$COUNT -v -run '^(TestOverlappingSpeakerPicks|TestSwitchAudio)$' ./internal/huddle
       - name: "huddleui: Test Speaker"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestTestSpeakerIconLikeSlack|TestTestSpeakerKeepsTheMusic|TestSpeakerPickPlaysOnTheNewOutput|TestAudioSettingsMenu)$' ./internal/ui/huddleui
       - name: "huddleui: the docked bar's states (Slack's HuddleBottomBar rule)"
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -run '^(TestDockStatesLikeSlack|TestDockHiddenForAnExternalGuestLikeSlack|TestExternalGuestWindowFollowsYourTheme)$' ./internal/ui/huddleui
+        run: go test -count=$COUNT -v -run '^(TestDockStatesLikeSlack|TestDockHiddenForAnExternalGuestLikeSlack|TestExternalGuestWindowFollowsYourTheme|TestDockFullAfterAnUnseenWindowLikeSlack)$' ./internal/ui/huddleui
+      - name: "huddleui, theme: the toolbar's and the caption's inks in the chrome's scope (Slack's theme oracle)"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestHuddleToolbarInksLikeSlack|TestHuddleWindowCaptionReads)$' ./internal/ui/huddleui || rc=1
+          go test -count=$COUNT -v -run '^(TestThemeInkMatchesSlack|TestIAThemeDefaultMatchesMeasured|TestThemeMappingPresetsAndPalettes)$' ./internal/ui/theme || rc=1
+          exit $rc
       - name: "huddleui: the huddle window in your theme (Mesa llvmpipe)"
         if: ${{ !cancelled() }}
         env:
@@ -525,7 +535,7 @@ jobs:
           CLACK_HUDDLE_WINDOW_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -count=$COUNT -v -run '^TestDockAfterHuddleWindowCloses$' ./internal/ui/huddleui
+        run: xvfb-run -a go test -count=$COUNT -v -run '^(TestDockAfterHuddleWindowCloses|TestDockAfterAnUnseenHuddleWindowCloses)$' ./internal/ui/huddleui
 
   huddle-bar-win:
     if: ${{ !inputs.only || startsWith('huddle-bar-win', inputs.only) }}
@@ -543,7 +553,7 @@ jobs:
         env:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_HUDDLE_WINDOW_TESTS: "1"
-        run: go test -count=$COUNT -v -run '^TestDockAfterHuddleWindowCloses$' ./internal/ui/huddleui
+        run: go test -count=$COUNT -v -run '^(TestDockAfterHuddleWindowCloses|TestDockAfterAnUnseenHuddleWindowCloses)$' ./internal/ui/huddleui
       - name: "ui: the main window draws the bar after the huddle window closes (WM_CLOSE)"
         if: ${{ !cancelled() }}
         shell: bash

@@ -46,7 +46,7 @@ func TestDockStatesLikeSlack(t *testing.T) {
 		t.Errorf("just started, the window never had it: the bar is %d dp, Slack's collapsed %d (H)", got, collapsed)
 	}
 	e.c.mu.Lock()
-	e.c.win = e.w
+	e.c.attachWindow(e.w) // OpenWindow's
 	e.c.mu.Unlock()
 	if got := dp(); got != collapsed {
 		t.Errorf("the window open: the bar is %d dp, Slack's collapsed %d (S)", got, collapsed)

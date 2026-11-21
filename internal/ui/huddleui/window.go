@@ -90,9 +90,20 @@ func (c *Controller) OpenWindow() {
 		return
 	}
 	w := &window{c: c, clicks: map[string]*widget.Clickable{}}
-	c.win = w
+	c.attachWindow(w)
 	c.mu.Unlock()
 	go w.run()
+}
+
+// attachWindow makes w the huddle window. c.mu is held. Opened in the
+// call, the window has had it: the docked bar's H is over (dock.go
+// dockCollapsed; HuddleBottomBarContent's effect sets W to STARTED while
+// isHuddleWindowOpen, whether or not the main window draws).
+func (c *Controller) attachWindow(w *window) {
+	c.win = w
+	if w != nil && c.s != nil {
+		c.barJoined = false
+	}
 }
 
 // WindowOpen reports whether the huddle window is showing.
@@ -926,7 +937,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 					theme.Fill(gtx, image.Rect(cw-max(1, gtx.Dp(1)), (h-gtx.Dp(20))/2, cw, (h+gtx.Dp(20))/2), ink.divider)
 				}
 				if c.warn {
-					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14))
+					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14), ink.bgA)
 				}
 				return D{}
 			})

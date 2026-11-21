@@ -34,8 +34,9 @@ import (
 //     theme-surf-inv-ter, toggled theme-base-pry with theme-content-ter,
 //     the segment's line theme-otl-inv-pry) in the chrome's scope (shared
 //     +2Ig: useInvertedTheme({view: "chrome"}); vYdp: the inverted class
-//     only in light mode when the theme's brightness inverts the chrome),
-//     the tokens the docked bar reads (dockInks).
+//     only in light mode when the theme's brightness inverts the chrome):
+//     ChromeText, ChromeActive, ChromeSurfInvTer, ChromeBasePry,
+//     ChromeContentTer and ChromeOtlInvPry, never the sidebar's fields.
 //
 // What Slack keeps dark whatever the theme stays dark here: the screen
 // share's mini panel (/+fI HuddleMiniPanelMounter:
@@ -105,17 +106,44 @@ type winInk struct {
 	icon, divider color.NRGBA // theme-content-inv-pry, theme-otl-inv-pry
 }
 
+// windowInks is the window's colours: .p-theme_background's (the
+// background mode's, ChromeA and ChromeB), and every ink of the title and
+// the toolbar from the chrome's scope, never the sidebar's. The two differ
+// in a light theme at a dark brightness with Darker sidebars off (Ochin,
+// Clementine, Jade, Aubergine with Darker sidebars unticked…): the chrome
+// is inverted, white over the theme's dark window, while the sidebar's
+// scope stays light, its dark ink nearly invisible there.
 func windowInks(th *theme.Theme) winInk {
 	p := th.C
 	return winInk{bgA: p.ChromeA, bgB: p.ChromeB, title: p.ChromeText,
-		btn: p.SidebarButton, btnHov: p.SidebarHover, btnOn: p.ChromeBasePry, onFg: p.ChromeContentTer,
-		icon: p.SidebarTextUnread, divider: p.SidebarDivider}
+		btn: p.ChromeActive, btnHov: p.ChromeSurfInvTer, btnOn: p.ChromeBasePry, onFg: p.ChromeContentTer,
+		icon: p.ChromeText, divider: p.ChromeOtlInvPry}
 }
 
-// caption is the Windows caption for the window's colours (caption.go).
+// caption is the Windows caption for the window's colours (caption.go):
+// the window's colour, with the buttons' glyphs and the title's ink both
+// chosen by its lightness. The title keeps the chrome's ink when that
+// reads on the caption; an inverted chrome over a pale window (white ink:
+// Slack's own, over Karim's imported peach) gets Slack's dark text
+// instead, as a light caption's glyphs are dark. (Slack's huddle
+// titlebar is the legacy theme's top_nav_bg with top_nav_text,
+// useWindowThemedTitlebar; the window's colours stand in for them.)
 func (k winInk) caption() captionLook {
-	return captionLook{dark: luma(k.bgA) < 0.5, bg: k.bgA, text: k.title}
+	dark := luma(k.bgA) < 0.5
+	text := k.title
+	if (luma(text) < 0.5) == dark { // it would vanish into the caption
+		text = captionTextLight
+		if dark {
+			text = captionTextDark
+		}
+	}
+	return captionLook{dark: dark, bg: k.bgA, text: text}
 }
+
+var (
+	captionTextLight = color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff} // sk_primary_foreground
+	captionTextDark  = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
+)
 
 func luma(c color.NRGBA) float64 {
 	return (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
