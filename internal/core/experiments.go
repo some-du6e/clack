@@ -311,7 +311,7 @@ var experimentReads = map[string][]string{
 	"show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
 	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},
 	"message_actions_truncate": on, "agent_identity_overrides": on,
-	"mentions_full_names_only_pref": on, // a message slug's DM partner (msg_slug.go: N1tw's k)
+	"mentions_full_names_only_pref": on, // a message slug's DM partner, a mention's name (msg_slug.go: N1tw's k, realNamesInMentions)
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
@@ -348,9 +348,6 @@ var experimentReads = map[string][]string{
 	// prefs, status, focus, notifications, emoji picker
 	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
 	"defer_notification_3p_streaming": on,
-	// a mention's name in a notification (chdetails.go RealNamesInMentions:
-	// shouldDisplayRealNamesInMentions)
-	"mentions_full_names_only_pref": on,
 	// the standard emoji set everything reads (emoji_set.go)
 	ExpEmojiV17: on,
 	// desktop notifications (ui/notify.go, huddleui/invite.go): Slack's
