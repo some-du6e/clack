@@ -140,7 +140,7 @@ func caretReadback(t *testing.T, a *App, frames <-chan caretGPUFrame, blink time
 				if ok(f) {
 					return f, true
 				}
-				seen = append(seen, fmt.Sprintf("%v: partial %v, %d px damaged, %d draws", time.Since(t0).Round(time.Millisecond), f.partial, f.damagePx, f.draws))
+				seen = append(seen, fmt.Sprintf("%v: partial %v, %d px damaged, %d draws, whole: %q", time.Since(t0).Round(time.Millisecond), f.partial, f.damagePx, f.draws, f.whole))
 			case <-dl:
 				if len(seen) == 0 {
 					seen = []string{"none"}
