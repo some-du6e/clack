@@ -16,10 +16,11 @@ package ui
 // 44829338850), the next two ~55 ms: its thread's first load brought
 // replies the plugins' copy of the conversation lacked and marked nothing
 // (setAll marked only messages the model had), so their views waited for
-// the mirror's sweep; a median hid it. Marking every new message took the
-// channel's first draw to ~290 ms (run 44837771236): JS that never read a
-// conversation reads it fresh (taut.MessagesAdded). CLACK_SLICE_GAPS
-// (slice-gaps, on request) allows no unmarked frame. Synthetic data only.
+// the mirror's sweep; a median hid it. Marking every new message held a
+// channel's first window a JS round trip more, 124 ms settled against 17
+// (runs 44844149401 and 44846768356): JS that never read a conversation reads
+// it fresh (taut.MessagesAdded). CLACK_SLICE_GAPS (slice-gaps, on request)
+// allows no unmarked frame. Synthetic data only.
 
 import (
 	"context"

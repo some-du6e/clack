@@ -1032,8 +1032,8 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 // pane's first open under a text patch drew core's copy ~650 ms). JS that
 // never read the conversation reads them all fresh with the first view
 // asked for, and marking a first window's every message held each of its
-// views a JS round trip more (a channel's first draw took ~290 ms, not
-// ~50).
+// views a JS round trip more (a channel's settled first draw took 124 ms,
+// not 17).
 func (t *Taut) MessagesAdded(ch string, tss []string) {
 	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
 		return
