@@ -2463,7 +2463,9 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 	r.reactAs = p.StrOr("currentUser", "")
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
-	st := reactionBarClass.Enter(gtx, 0, 0)
+	// the className a plugin passed (OwlMode's taut-owl-reactions, which
+	// its rules for the pills inside select on)
+	st := reactionBarClass.EnterClass(gtx, 0, 0, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -2770,7 +2772,9 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	var cd layout.Dimensions
 	cy := 0
 	if e, ok := slackc.PropChildren(p); ok {
-		cd = slackc.LayoutElement(gtx, e)
+		// the children JS rendered (the emoji, the count, a plugin's
+		// own) as the button's: .c-reaction's centred inline-flex items
+		cd = reactionClass.LayoutChildren(gtx, mods, e)
 		cy = (ph - cd.Size.Y) / 2
 	} else {
 		cd = pl.content(gtx, st)
@@ -2854,9 +2858,18 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 }
 
 // layoutTruncation is the pill's "…" after ten emoji
-// (c-reaction__truncation).
+// (span.c-reaction__truncation): its 16px line box, as content places
+// it, in the colour CSS gives the pill's text, like the count.
 func (pl *reactPill) layoutTruncation(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return pl.truncation(gtx, slackc.Styled{})
+	return lineBox(pl.truncation(gtx, slackc.CurrentScope().Child(reactionTruncClass, 0)), dp(gtx, 16))
+}
+
+// lineBox is a label's dims d as the box of its h-tall line, the label
+// at the top: content draws the pill's count and "…" in the middle 16px
+// of the pill, from their top, and the same parts handed back by a
+// patched ReactionBar are flex items that size, centred the same way.
+func lineBox(d layout.Dimensions, h int) layout.Dimensions {
+	return layout.Dimensions{Size: image.Pt(d.Size.X, h), Baseline: h - (d.Size.Y - d.Baseline)}
 }
 
 func (pl *reactPill) truncation(gtx layout.Context, st slackc.Styled) layout.Dimensions {
@@ -2889,9 +2902,12 @@ func (pl *reactPill) emoji(gtx layout.Context, re *core.Reaction) layout.Dimensi
 	return layout.Dimensions{Size: image.Pt(es, es)}
 }
 
-// layoutCount is the pill's count slot.
+// layoutCount is the pill's count slot (span.c-reaction__count): its
+// 16px line box, as content places it, in the colour CSS gives the pill's
+// text (OwlMode's reacted pill: content-pry), as the native count takes
+// it from the pill.
 func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return pl.count(gtx, slackc.Styled{})
+	return lineBox(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
 }
 
 // ReactionDrawnHook, when set (tests: a reaction's frame,
