@@ -1484,7 +1484,6 @@ func (m *mirror) history(key string) any {
 		slices = append(slices, historySlice(ts, "", ""))
 		return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": slices, "prevReachedEnd": true}
 	}
-	return map[string]any{"reachedStart": reachedStart, "reachedEnd": true, "slices": []any{historySlice(ts, "", "")}, "prevReachedEnd": true}
 }
 
 // historySlice is a channelHistory slice: its timestamps, and its start
