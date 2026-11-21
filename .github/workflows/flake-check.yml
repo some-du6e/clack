@@ -1758,8 +1758,8 @@ jobs:
   # "Name hidden"), the sender and a DM's partner follow display_real_names,
   # a mention getMemberMentionName or the mentions-real-names rule; a
   # member the viewer hid reads "Hidden user" (no @) and sends no toast;
-  # members users/info never brought keep the sidebar's name or the slug's
-  # handles, never the slug; the title's people come before 100+ mentions.
+  # a group DM whose members users/info never brought reads "New message
+  # in " as Slack's does; the title's people come before 100+ mentions.
   # Dispatch with only=toast-names.
   toast-names:
     if: ${{ !inputs.only || startsWith('toast-names', inputs.only) }}
