@@ -3334,9 +3334,15 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 	}
 	bx := x - dp(gtx, 5)
 	if r.threadBtn.Clicked(gtx) {
+		// openThread (r0Yq.js:271-294): a split click (PQz7 shouldSplit)
+		// opens the split view and returns before setFocusInput; otherwise
+		// the thread opens with focusInput set, so its box focuses as it
+		// mounts (an open thread's box mounts nothing: no focus)
+		sc, ok := rc.h.(interface{ SplitClick() bool })
+		split := ok && sc.SplitClick()
 		rc.h.OpenThread(m.Channel, m.TS)
-		if f, ok := rc.h.(ThreadComposerFocuser); ok { // openThread's setFocusInput (reply_bar.go)
-			f.FocusThreadComposer(m.Channel, m.TS)
+		if !split {
+			popups.SetThreadFocusInput(rc.h, m.Channel, m.TS)
 		}
 	}
 	bs := replyBarClass.Enter(gtx, btnState(gtx, &r.threadBtn), 0)
