@@ -145,9 +145,25 @@ func (b *backend) noteOnScreen(a *App, ch string) bool {
 
 // noteDNDHolds is Do Not Disturb (13): paused notifications
 // (getCurrentMemberDndStatus, the viewer's held status: core.DNDHeld)
-// hold the message back unless it ignores them or a VIP sent it.
+// hold the message back unless it ignores them or a VIP sent it. A
+// message it holds back is kept for a dnd_override (noteDNDOverride).
 func (b *backend) noteDNDHolds(ev core.Event, c *convInfo, ignore bool) bool {
-	return !ignore && b.core.DNDHeld() && !b.noteVIPOverride(ev, c)
+	if ignore || !b.core.DNDHeld() || b.noteVIPOverride(ev, c) {
+		return false
+	}
+	k := ev.Channel + "/" + ev.TS
+	if _, ok := b.noteDNDHeld[k]; !ok {
+		if b.noteDNDHeld == nil {
+			b.noteDNDHeld = map[string]core.Event{}
+		}
+		if len(b.noteDNDHeldOrder) >= noteShownMax {
+			delete(b.noteDNDHeld, b.noteDNDHeldOrder[0])
+			b.noteDNDHeldOrder = b.noteDNDHeldOrder[1:]
+		}
+		b.noteDNDHeldOrder = append(b.noteDNDHeldOrder, k)
+	}
+	b.noteDNDHeld[k] = ev
+	return true
 }
 
 // noteVIPOverride is shouldOverrideDndForMessage (Mvkl Wh). It applies on
@@ -248,29 +264,37 @@ func (b *backend) noteMarkShown(key string) {
 func (b *backend) noteDNDIgnored(ch, ts string) bool { return b.noteIgnoreDND[ch+"/"+ts] }
 
 // noteDNDOverride is handleDndOverride: a sender's "notify anyway" for a
-// message DND held back. It shows the stored message's notification with
-// DND ignored, at most once (a message that already ignores it changes
-// nothing).
+// message DND held back. It shows that message's notification with DND
+// ignored, at most once (a message that already ignores it changes
+// nothing). Slack reads the message from its store, which keeps every
+// message the socket brings. Clack's keeps a conversation's messages only
+// while a window of it is loaded, so the UI keeps the message events DND
+// held back (noteDNDHolds) and reads the store for any other. A message
+// that was shown isn't shown again (noteWasShown), and the other holds
+// still apply, so a held-back one is the only kind that can show.
 func (b *backend) noteDNDOverride(a *App, ev core.Event) {
 	k := ev.Channel + "/" + ev.TS
 	if ev.Channel == "" || ev.TS == "" || b.noteIgnoreDND[k] {
 		return
 	}
-	m, ok := b.core.HeldMessage(ev.Channel, ev.TS)
+	held, ok := b.noteDNDHeld[k]
 	if !ok {
-		return // not in the store: Slack's getMessage finds nothing to show
+		m, found := b.core.HeldMessage(ev.Channel, ev.TS)
+		if !found {
+			return // Slack's getMessage finds nothing to show
+		}
+		kind := ""
+		if v, known := b.core.Conv(ev.Channel); known {
+			kind = v.Kind
+		}
+		held = core.Event{Type: "message", Channel: ev.Channel, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User,
+			Msg: &m, Reply: m.ThreadTS != "" && m.ThreadTS != m.TS, Mention: b.core.MentionsViewer(&m), ConvKind: kind}
 	}
 	if b.noteIgnoreDND == nil {
 		b.noteIgnoreDND = map[string]bool{}
 	}
 	b.noteIgnoreDND[k] = true
-	kind := ""
-	if v, ok := b.core.Conv(ev.Channel); ok {
-		kind = v.Kind
-	}
-	reply := m.ThreadTS != "" && m.ThreadTS != m.TS
-	b.maybeNotify(a, core.Event{Type: "message", Channel: ev.Channel, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User,
-		Msg: &m, Reply: reply, Mention: b.core.MentionsViewer(&m), ConvKind: kind})
+	b.maybeNotify(a, held)
 }
 
 // noteMissingText is extractTextFromMessage's last line, for a message

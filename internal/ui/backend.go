@@ -107,12 +107,15 @@ type backend struct {
 	app       *App
 
 	// noteIgnoreDND are the messages ("channel/ts") a dnd_override showed
-	// with Do Not Disturb ignored, Slack's _ignore_dnd; noteShown and
-	// noteShownOrder the notifications shown lately (notify_dm.go). UI
-	// goroutine.
-	noteIgnoreDND  map[string]bool
-	noteShown      map[string]bool
-	noteShownOrder []string
+	// with Do Not Disturb ignored, Slack's _ignore_dnd; noteDNDHeld (and
+	// its order) the message events DND held back lately, which a
+	// dnd_override can show; noteShown and noteShownOrder the
+	// notifications shown lately (notify_dm.go). UI goroutine.
+	noteIgnoreDND    map[string]bool
+	noteDNDHeld      map[string]core.Event
+	noteDNDHeldOrder []string
+	noteShown        map[string]bool
+	noteShownOrder   []string
 }
 
 // A core call that waits for Boot on the UI goroutine freezes the window
