@@ -478,21 +478,22 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 	if dark {
 		owl = color.RGBA{R: 210, G: 140, B: 255, A: 0xff}
 	}
-	var ring image.Rectangle
-	for _, p := range patched[6:] {
-		ring = ring.Union(p.box.Inset(-2))
-	}
-	ringPx := 0
-	for y := ring.Min.Y; y < ring.Max.Y; y++ {
-		for x := ring.Min.X; x < ring.Max.X; x++ {
-			if rpDist(pimg.RGBAAt(x, y), owl) <= 60 {
-				ringPx++
+	// the ring round each of them: its flat top and bottom alone are
+	// about 2 x 19 px of the 43px pills (light: ~50 px each, dark ~78)
+	for i, p := range patched[6:] {
+		ring := p.box.Inset(-2)
+		ringPx := 0
+		for y := ring.Min.Y; y < ring.Max.Y; y++ {
+			for x := ring.Min.X; x < ring.Max.X; x++ {
+				if rpDist(pimg.RGBAAt(x, y), owl) <= 60 {
+					ringPx++
+				}
 			}
 		}
-	}
-	t.Logf("%s/owl: %d px of the owl ring around the owl thread's pills %v", mode, ringPx, ring)
-	if ringPx < 100 {
-		t.Errorf("%s/owl: %d px in the owl's colour %v around the owl thread's pills, want its 1px ring round both (the plugin's box-shadow)", mode, ringPx, owl)
+		t.Logf("%s/owl: %d px of the owl ring around the owl thread's pill %d %v", mode, ringPx, i, ring)
+		if ringPx < 30 {
+			t.Errorf("%s/owl: %d px in the owl's colour %v around the owl thread's pill %d, want its 1px ring round it (the plugin's box-shadow)", mode, ringPx, owl, i)
+		}
 	}
 	// the ring and the fill follow the pill's round ends: its box's
 	// corners, outside them, are the row's (the UnstyledButton "@" box
