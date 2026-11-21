@@ -144,8 +144,9 @@ func (h *Host) Has(prop string) bool {
 // the component's own top-left. Their window rects (getBoundingClientRect,
 // ResizeObserver, Host.WindowRect inside) follow it in this frame: the
 // children's scope flushed its rects as Children returned, before the
-// component knew where it would centre them, so they're flushed again
-// here. Without it they sit at the component's corner.
+// component knew where it would centre them, so the engine flushes them
+// again when it paints the component, where the frame's layout has put
+// it (painter.native). Without it they sit at the component's corner.
 func (h *Host) PlaceChildren(at image.Point) {
 	if h.view == nil || h.Node == nil {
 		return
@@ -161,7 +162,6 @@ func (h *Host) PlaceChildren(at image.Point) {
 	if p := f32.Pt(float32(at.X), float32(at.Y)); p != s.place {
 		s.place = p
 		s.rectsDirty = true
-		s.flushRects() // the scope's boxes were painted this frame (Children)
 	}
 }
 

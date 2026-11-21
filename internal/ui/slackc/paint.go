@@ -1538,4 +1538,13 @@ func (p *painter) native(b *box, x, y float32) {
 	b.natCall.Add(p.ops)
 	o()
 	t.Pop()
+	// a host component's children (Host.Children) flushed their rects
+	// while it laid them out, before it placed them inside it
+	// (Host.PlaceChildren) and before this layout pass put it where it is
+	// now: flush them from here, this frame
+	if b.hostEl != nil {
+		if s := p.v.subs[subKey{b: b, kind: 1}]; s != nil {
+			s.flushRects()
+		}
+	}
 }

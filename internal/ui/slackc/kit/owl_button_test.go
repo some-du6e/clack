@@ -249,9 +249,11 @@ func TestOwlSaveButtonLayout(t *testing.T) {
 // while the button lays them out, before it knows where it centres them
 // (Host.PlaceChildren), and they stayed at the content box's corner, 9px
 // left, until some later frame flushed them again: nothing asks for one,
-// so a quiet DM kept them there.
+// so a quiet DM kept them there. JS gets a frame's rects as the next
+// frame starts (slackc.Frame), so each check reads them after one more
+// frame, before that frame's own rects are sent.
 func TestOwlSaveButtonChildRectsSameFrame(t *testing.T) {
-	e := newOwlEnvFrames(t, false, owlRowJS(false), 1)
+	e := newOwlEnvFrames(t, false, owlRowJS(false), 2)
 	check := func(when string) {
 		t.Helper()
 		btn, icon := e.rect(4), e.rect(5)
@@ -265,6 +267,7 @@ func TestOwlSaveButtonChildRectsSameFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.nodes = nodes
+	e.frame()
 	e.frame()
 	check("first frame of a new tree")
 }
