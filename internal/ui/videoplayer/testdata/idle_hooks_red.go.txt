@@ -1,0 +1,12 @@
+package videoplayer
+
+import (
+	"testing"
+	"time"
+)
+
+// On the round-3 head (0cbe7e63) a paused player stayed mounted for as
+// long as its tile was laid out: no idle release, no State.Still.
+func setIdleAfter(*testing.T, time.Duration) {}
+
+func tileStill(State) bool { return false }

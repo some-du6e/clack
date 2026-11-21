@@ -348,7 +348,7 @@ type File struct {
 	Size                                    int64
 	URL, Download, Permalink                string
 	Thumb                                   *Image // best thumb for images/videos/pdfs
-	IsImage, IsVideo, IsAudio, IsSnippet    bool
+	IsImage, IsVideo, IsAudio, IsSnippet    bool   // IsVideo: Slack's fileIsPlayableVideo
 	Preview                                 string
 	Lines                                   int
 	DurationMS                              int
@@ -367,6 +367,15 @@ type File struct {
 	// FileActions' Expand need.
 	Still     *Image
 	Deanimate bool
+	// A playable video's (IsVideo; URL is its progressive source, mp4 ||
+	// url_private, and Thumb its poster, thumb_video_ts ?? thumb_video):
+	// where the viewer stopped watching it (media_progress.offset_ms) and
+	// whether they watched it to the end (media_watched), which make the
+	// player start there or at 0 (xnwb).
+	MediaOffsetMS int
+	MediaWatched  bool
+	// Salesforce is is_salesforce_file: its progress is never sent (9NKl)
+	Salesforce bool
 	// Pending: the viewer's own upload, not finished yet (drawn at .5
 	// with a spinner, c-pending_files__thumbnail--pending); Percent is its
 	// percentComplete.

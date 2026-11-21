@@ -510,6 +510,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			opac.Pop()
 		}
 	}
+	v.layoutMedia(gtx) // video tiles (Options.Media), likewise over the rest
 	d := layout.Dimensions{Size: size}
 	if b := v.d.firstBaseline(); b >= 0 && b <= size.Y {
 		d.Baseline = size.Y - b
@@ -1509,7 +1510,9 @@ func (v *View) hoverCard(st *Style, h Handler) {
 	c.Report(k, v.d.targets[t].id, r, v.ptr)
 }
 
-// inSlot reports whether p is on an element run drawn by Options.Elements.
+// inSlot reports whether p is on an element run drawn by Options.Elements
+// or a video tile Options.Media draws: their widgets take their own
+// presses.
 func (v *View) inSlot(p f32.Point) bool {
 	pt := image.Pt(int(p.X), int(p.Y))
 	for i := range v.d.slots {
@@ -1517,7 +1520,7 @@ func (v *View) inSlot(p f32.Point) bool {
 			return true
 		}
 	}
-	return false
+	return v.inMedia(pt)
 }
 
 // targetText is the text a link target draws (its frags' plain text).

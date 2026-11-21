@@ -644,6 +644,12 @@ func (k *cdPeoplePick) layout(gtx C, d *ChannelDetails) D {
 	w := gtx.Constraints.Max.X
 	self := d.selfID()
 	c := d.h.Core()
+	shown := 0
+	for _, id := range k.ids {
+		if id != self {
+			shown++
+		}
+	}
 	m := op.Record(gtx.Ops)
 	dims := layout.Inset{Top: 6, Bottom: 6, Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -681,6 +687,9 @@ func (k *cdPeoplePick) layout(gtx C, d *ChannelDetails) D {
 			gtx.Constraints.Min.Y = gtx.Dp(28)
 			return layout.W.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				if k.q.text() == "" && shown == 0 { // on the editor's centred line (Gio patch 54)
+					d.th.EditorPlaceholder(gtx, 15, d.p.Faint, k.q.placeholder())
+				}
 				return d.th.Editor(gtx, &k.q.ed, 15, d.p.Text, d.p.Mention)
 			})
 		}))
@@ -701,15 +710,6 @@ func (k *cdPeoplePick) layout(gtx C, d *ChannelDetails) D {
 		border(gtx, r, rad, max(1, gtx.Dp(1)), d.p.BorderStr)
 	}
 	call.Add(gtx.Ops)
-	shown := 0
-	for _, id := range k.ids {
-		if id != self {
-			shown++
-		}
-	}
-	if k.q.text() == "" && shown == 0 {
-		dirAt(gtx, image.Pt(gtx.Dp(8), (r.Dy()-gtx.Sp(22))/2), func(gtx C) D { return d.label(gtx, 15, wReg, d.p.Faint, k.q.placeholder()) })
-	}
 	if k.q.text() != "" {
 		mm := op.Record(gtx.Ops)
 		op.Offset(image.Pt(0, r.Dy()+gtx.Dp(4))).Add(gtx.Ops)

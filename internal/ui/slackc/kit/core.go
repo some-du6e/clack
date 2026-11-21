@@ -254,15 +254,17 @@ func init() {
 	// Gio blends in linear light; pre-adjust translucent tokens so they
 	// read like CSS over the card background (as popups does).
 	for _, p := range []struct {
-		c  *colors
-		bg color.NRGBA
-	}{{&lightColors, rgb(0xffffff)}, {&darkColors, rgb(0x222529)}} {
+		c    *colors
+		bg   color.NRGBA
+		pane color.NRGBA // the message pane: what a modal's scrim covers
+	}{{&lightColors, rgb(0xffffff), rgb(0xffffff)}, {&darkColors, rgb(0x222529), rgb(0x1a1d21)}} {
 		c := p.c
-		for _, f := range []*color.NRGBA{&c.Ring, &c.Divider, &c.Shadow, &c.ModalShadow, &c.Backdrop,
+		for _, f := range []*color.NRGBA{&c.Ring, &c.Divider, &c.Shadow, &c.ModalShadow,
 			&c.BtnBorder, &c.GhostHover, &c.FocusRing, &c.InputBorder, &c.InputBorderHover, &c.CheckBorder,
 			&c.PillActiveBg, &c.TagBg, &c.InfoBg} {
 			*f = theme.LinearAlpha(*f, p.bg)
 		}
+		c.Backdrop = theme.LinearAlpha(c.Backdrop, p.pane) // as popups' (style.go)
 	}
 }
 
@@ -363,6 +365,8 @@ func themedKitColors(th *theme.Theme) *colors {
 		case x.p.A == 0xff:
 		case x.p == &c.Bg:
 			*x.p = theme.Over(*x.p, th.C.Bg)
+		case x.p == &c.Backdrop: // the scrim covers the app: its alpha holds over the pane
+			*x.p = theme.LinearAlpha(*x.p, th.C.Bg)
 		case x.lin:
 			*x.p = theme.LinearAlpha(*x.p, c.Bg)
 		default:

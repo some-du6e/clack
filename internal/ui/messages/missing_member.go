@@ -210,6 +210,9 @@ type SenderView struct {
 	// slots (an agent block's is its whole block), as laid out.
 	Body  image.Rectangle
 	Slots []image.Rectangle
+	// Avatar is the picture the row drew (its URL; "" for a row without
+	// one), Badge the app badge after the name ("" for none).
+	Avatar, Badge string
 }
 
 // Senders lists the senders of the visible messages as of the last frame.
@@ -238,6 +241,7 @@ func (s *listState) senders() []SenderView {
 			sv.Slots = r.rv.ElementSlots()
 		}
 		sv.Body = r.bodyRect
+		sv.Avatar, sv.Badge = r.avDrawn, r.badge
 		out = append(out, sv)
 	}
 	return out

@@ -92,6 +92,11 @@ type Size struct {
 	// answers the generated DMs read (dm_badges.go): what the DM badges
 	// leave out and what they count.
 	DMBadges bool
+	// SystemDM adds the viewer's DM with the Slack system user (USLACK)
+	// in the real account's shape: the user, the org-shared IM and an
+	// app's bot_message posts with no user (system_dm.go, SystemDMID;
+	// PostSystemDMQuiet posts another).
+	SystemDM bool
 	// Embeds adds #embeds-gallery: one message per way Slack draws a
 	// link preview (embeds.go).
 	Embeds bool
@@ -356,6 +361,9 @@ type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
+	framesMu sync.Mutex
+	frames   []string // what clients sent the realtime gateway (SocketFrames)
+
 	actBadgeMu sync.Mutex
 	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
 	chanBadges map[string]int // client.counts channel_badges (SetChannelBadges)
@@ -364,6 +372,8 @@ type Server struct {
 	// dmBadgeRead: Size.DMBadges' DMs and their read cursors, set before
 	// serving (dm_badges.go)
 	dmBadgeRead map[string]string
+	// sysDM: Size.SystemDM's state (system_dm.go)
+	sysDM systemDMState
 
 	// OnPost, when set, runs inside chat.postMessage before it answers,
 	// with the posted form and the new message (tests push the realtime
@@ -759,6 +769,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.DMBadges {
 		s.addDMBadges() // dm_badges.go
+	}
+	if sz.SystemDM {
+		s.addSystemDM() // system_dm.go
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
@@ -1406,6 +1419,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back
 	}
+	if r, ok := out.(Reply); ok {
+		r.write(w)
+		return
+	}
 	b, isBytes := out.([]byte)
 	if !isBytes {
 		var buf bytes.Buffer
@@ -1421,6 +1438,26 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
+// Reply is an answer a hook (SetHook) gives as written: its HTTP status
+// (0: 200), headers over the usual Content-Type, and body (the failures a
+// client must hand on whole: a 429 with Retry-After, a 5xx page, an answer
+// that isn't JSON, an {"ok":false} with details).
+type Reply struct {
+	Status int
+	Header http.Header
+	Body   []byte
+}
+
+func (r Reply) write(w http.ResponseWriter) {
+	for k, v := range r.Header {
+		w.Header()[k] = v
+	}
+	if r.Status != 0 {
+		w.WriteHeader(r.Status)
+	}
+	_, _ = w.Write(r.Body)
+}
+
 func ok(kv ...any) map[string]any {
 	m := map[string]any{"ok": true}
 	for i := 0; i+1 < len(kv); i += 2 {
@@ -1430,6 +1467,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleSystemDM(method, f); handled { // system_dm.go
+		return out
+	}
 	if s.Size.AgentTasks {
 		if out, handled := s.handleAgentTasks(method, f); handled { // agent_tasks.go
 			return out
@@ -1565,7 +1605,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if closedDM(c) { // closed_dms.go: read
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
-			e = s.dmBadgeCount(c, e) // dm_badges.go
+			e = s.dmBadgeCount(c, e)  // dm_badges.go
+			e = s.systemDMCount(c, e) // system_dm.go
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1661,6 +1702,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		s.prefsMu.Unlock()
 		return ok("prefs", m)
+	case "media.progress.update": // the videos' saveMediaProgress (gnNF): accepted
+		return map[string]any{"ok": true}
 	case "users.prefs.set":
 		if n := f.Get("name"); n != "" {
 			s.setPref(n, f.Get("value"))
@@ -1834,8 +1877,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "edge/users/info":
 		var up map[string]int
 		_ = json.Unmarshal(edge["updated_ids"], &up)
-		var res []slack.User
+		var res []any
 		for id := range up {
+			if u, ok := s.systemDMUserJSON(id); ok { // system_dm.go: USLACK with the real answer's keys
+				res = append(res, u)
+				continue
+			}
 			if u, ok := s.userByID(id); ok {
 				res = append(res, u)
 			}
@@ -2017,6 +2064,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	if s.Size.ThreadHeader && id == ThreadAppUserID { // threadheader.go
 		return s.threadHeaderApp(), true
 	}
+	if u, ok := s.systemDMUser(id); ok { // system_dm.go
+		return u, true
+	}
 	if s.Size.AgentTasks && id == AgentTasksUserID { // agent_tasks.go
 		return s.agentTasksUser(), true
 	}
@@ -2149,10 +2199,31 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.dropSocket(c)
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
-		if _, _, err := c.Read(ctx); err != nil {
+		_, b, err := c.Read(ctx)
+		if err != nil {
 			return
 		}
+		s.noteFrame(b)
 	}
+}
+
+// noteFrame keeps what a client sent the gateway (SocketFrames), the last
+// 500 frames.
+func (s *Server) noteFrame(b []byte) {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	s.frames = append(s.frames, string(b))
+	if len(s.frames) > 500 {
+		s.frames = s.frames[len(s.frames)-500:]
+	}
+}
+
+// SocketFrames is what clients sent the realtime gateway, oldest first
+// (presence_sub, typing, …; the last 500).
+func (s *Server) SocketFrames() []string {
+	s.framesMu.Lock()
+	defer s.framesMu.Unlock()
+	return append([]string(nil), s.frames...)
 }
 
 // WriteCreds writes the fake's credentials to path (for running the real

@@ -6,29 +6,30 @@ package icons
 // section-menu glyphs are in icons.go and slack.go.
 var slackRef = map[string]string{
 	// the search switcher's toolbar (search.go)
-	"quick-switch":       "quick-switch",
-	"emoji-celebration":  "emoji-celebration", // More > Celebration (gap-w6)
-	"posts":              "posts",
-	"app-directory":      "app-directory",
-	"surface":            "surface",
-	"cloud-offline":      "cloud-offline",
-	"spreadsheet":        "spreadsheet",
-	"kanban":             "kanban",
-	"activity":           "notifications",
-	"activity-filled":    "notifications-filled",
-	"add-channel-canvas": "add-channel-canvas",
-	"add-reaction":       "add-reaction",
-	"agents":             "ai-agents",
-	"agents-filled":      "ai-agents-filled",
-	"apps":               "apps",
-	"archive":            "archive",
-	"unarchive":          "unarchive",
-	"archive-filled":     "archive-filled",
-	"arrow-down":         "arrow-down",
-	"arrow-up":           "arrow-up",
-	"at":                 "mentions",
-	"attach":             "attachment",
-	"back":               "arrow-left",
+	"quick-switch":        "quick-switch",
+	"emoji-celebration":   "emoji-celebration", // More > Celebration (gap-w6)
+	"posts":               "posts",
+	"app-directory":       "app-directory",
+	"surface":             "surface",
+	"move-to-main-window": "move-to-main-window", // the mini player's Jump to message (pip.go)
+	"cloud-offline":       "cloud-offline",
+	"spreadsheet":         "spreadsheet",
+	"kanban":              "kanban",
+	"activity":            "notifications",
+	"activity-filled":     "notifications-filled",
+	"add-channel-canvas":  "add-channel-canvas",
+	"add-reaction":        "add-reaction",
+	"agents":              "ai-agents",
+	"agents-filled":       "ai-agents-filled",
+	"apps":                "apps",
+	"archive":             "archive",
+	"unarchive":           "unarchive",
+	"archive-filled":      "archive-filled",
+	"arrow-down":          "arrow-down",
+	"arrow-up":            "arrow-up",
+	"at":                  "mentions",
+	"attach":              "attachment",
+	"back":                "arrow-left",
 	// Simplified layout mode (bbm.go)
 	"sign-out":        "sign-out",
 	"caret-left-full": "caret-left-full",
@@ -298,6 +299,9 @@ var slackRef = map[string]string{
 	"video-off":                   "video-off",
 	"vip":                         "vip",
 	"volume":                      "sound",
+	"sound-up":                    "sound-up",
+	"sound-medium":                "sound-medium",
+	"sound-down":                  "sound-down",
 	"warning":                     "warning",
 	"warning-filled":              "warning-filled",
 	"workflow":                    "ai-workflow",
@@ -332,6 +336,7 @@ var slackRef = map[string]string{
 // TestIconsMatchSlack holds each to the font's outline, which the
 // icon-shots workflow dumps from the CDN's font.
 var fontRef = map[string]rune{
+	"pause-bold":            0xEA32, // the video pill's (fIJO)
 	"stop-screen-sharing":   0xE096,
 	"hash-small":            0xE125,
 	"bullet-list":           0xE157,
