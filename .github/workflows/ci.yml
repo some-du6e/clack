@@ -325,11 +325,11 @@ jobs:
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
 
   # The freeze watchdog's flight recorder (internal/tracerec) on newer Go
-  # than go.mod's toolchain: from Go 1.25 its go1.25 build tag takes
+  # than go.mod's: from Go 1.25 its go1.25 build tag takes
   # runtime/trace's FlightRecorder instead of golang.org/x/exp/trace's,
   # which deadlocks on Go 1.26's tracer (and with it, quitting). go.mod's
-  # toolchain line is only a minimum, so a local build with a newer Go
-  # takes this path; GOTOOLCHAIN=local keeps the runner's.
+  # go line is only a minimum, so a local build with a newer Go takes
+  # this path; GOTOOLCHAIN=local keeps the runner's.
   newer-go:
     if: ${{ !inputs.only || startsWith('newer-go', inputs.only) }}
     name: newer-go (${{ matrix.go }})
