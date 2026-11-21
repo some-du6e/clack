@@ -418,12 +418,13 @@ func SetThreadStart(app *core.App, ch, thread, ts string) {
 	hb.jumpThread(hb.threadModel(ch, thread), ts)
 }
 
-// CloseThread is the thread pane's unmount for ch/thread: clearStartTs
-// (a later open starts at getThreadStartTs again) and
-// truncateThreadHistory (core.CloseThread). When the store let any of the
-// thread go, the model and the panes' lists start over, as a pane mounted
-// afresh does. UI goroutine.
-func CloseThread(app *core.App, ch, thread string) {
+// CloseThread is a thread pane leaving ch/thread: truncateThreadHistory
+// (core.CloseThread), and with unmount (the pane unmounted, not switched
+// to another thread) clearStartTs too (a later open starts at
+// getThreadStartTs again). When the store let any of the thread go, the
+// model and the panes' lists start over, as a pane mounted afresh does.
+// UI goroutine.
+func CloseThread(app *core.App, ch, thread string, unmount bool) {
 	if app == nil || ch == "" || thread == "" {
 		return
 	}
@@ -445,7 +446,7 @@ func CloseThread(app *core.App, ch, thread string) {
 		m.fetched = time.Time{}
 		m.th = threadState{root: m.th.root, gen: m.th.gen + 1}
 		m.rev++
-	} else {
+	} else if unmount {
 		m.th.start = ""
 		m.th.lastPre = ""
 	}
