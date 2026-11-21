@@ -301,6 +301,9 @@ var slackRef = map[string]string{
 	"warning":                     "warning",
 	"warning-filled":              "warning-filled",
 	"workflow":                    "ai-workflow",
+	"workflow-filled":             "ai-workflow-filled", // the open Tasks tab (app DMs)
+	"play-line":                   "play",               // a task row's Run task now
+	"pause-line":                  "pause",              // a task row's Pause task
 	"x-circle":                    "close-circle",
 
 	// the Directories tabs (directory.go)

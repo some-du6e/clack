@@ -44,6 +44,10 @@ func (t *textObj) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// AgentChannelUnfurlKind is the Agent block kind of an
+// agent_channel_unfurl attachment: Buttons[0].BlockID is its channel.
+const AgentChannelUnfurlKind = "agent_channel_unfurl"
+
 // AgentFirst marks (Button.Style) an agent block that is the first block
 // of its list: Slack's .firstBlock drops the slim plan's top margin.
 const AgentFirst = "first"

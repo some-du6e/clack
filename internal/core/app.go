@@ -25,6 +25,7 @@ type App struct {
 	RTM *slack.RTM
 
 	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
+	usersOut   usersOut   // the members users/info has out (members.go)
 
 	prio      prioState  // the VIP unreads section's open conversation (prefs_a.go)
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
@@ -150,6 +151,13 @@ type App struct {
 
 	// tempMuteTimer is kickOffTempMuteTimer's timer (temp_mute.go).
 	tempMuteTimer *time.Timer
+
+	// memberMC is each conversation's last users/counts answer whole;
+	// memberStale the counts a join or a leave made stale and countThr
+	// their refetch throttles (membership_counts.go)
+	memberMC    map[string]MemberCounts
+	memberStale map[string]bool
+	countThr    map[string]*countThrottle
 }
 
 type watchedThread struct {
@@ -582,6 +590,23 @@ func (a *App) Boot(ctx context.Context) error {
 		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
 		close(cacheDone)
+		// The unknown member fetcher and the channel and bot name resolver
+		// start once the persisted store is in, as Slack's first lookup
+		// comes only after it loaded (renderApp waits for dataSetupStore).
+		// Started before, an early bot answer was replaced by meta.json's
+		// bots (and never asked for again: noteMissing records a bot once
+		// a session), and members meta.json holds were asked for. What
+		// lookups missed until now waits in the store's queues. From here
+		// they run from the first lookup, as Slack's UnknownFetchManagers
+		// do (client-boot 0mwJ, made in DOS4 H for members: isEnabled is on
+		// everywhere but Slack's own test runners), not once every call
+		// below has answered: a warm start draws the restored conversation
+		// from the boot data while they're out, and a DM's partner the
+		// metadata cache doesn't hold stayed BaseMissingMember's bar until
+		// boot's last call (a slow users.conversations, a rate-limited
+		// step), or for good when boot failed.
+		go a.resolveLoop(a.bg) // unresolved channel/bot names
+		go a.memberLoop(a.bg)  // members lookups missed (members.go)
 	}()
 	// The warm boot: boot_data.json and headers.json load alongside, and
 	// once meta.json is in too the cached sidebar is installed and
@@ -830,8 +855,6 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.codeChannelCloserLoop(a.bg) // code_channels_auto_close (codechannel_close.go)
 	go a.pump()
 	go a.prefetch(a.bg)
-	go a.resolveLoop(a.bg) // unresolved channel/bot names
-	go a.memberLoop(a.bg)  // members lookups missed (members.go)
 	go a.membersLoop(a.bg) // the members cache's pass (members.go)
 	if a.C.Creds.EnterpriseID != "" {
 		go func() { _ = a.LoadEnterprisePrefs(a.bg) }() // enterprise_prefs.go
@@ -955,18 +978,29 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 	return nil
 }
 
-// EnsureUsers fetches unknown users (edge cache, parallel batches of 100).
+// EnsureUsers fetches unknown users (edge cache, parallel batches of 100)
+// and returns once they're in. One another request has out (the unknown
+// member fetcher's, another EnsureUsers') isn't asked for again: this
+// waits for that answer (usersOut).
 func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 	miss := a.S.MissingUsers(ids)
 	if len(miss) == 0 {
 		return
 	}
-	a.usersAsked.Add(int64(len(miss)))
-	us, err := a.C.UsersInfoParallel(ctx, miss)
-	if err != nil {
-		log.Printf("users/info: %v", err)
-	}
-	a.S.PutUsers(us)
+	ask, wait, done := a.usersOut.claim(miss)
+	func() {
+		defer a.usersOut.release(ask, done) // before the wait: two requests never wait on each other
+		if len(ask) == 0 {
+			return
+		}
+		a.usersAsked.Add(int64(len(ask)))
+		us, err := a.C.UsersInfoParallel(ctx, ask)
+		if err != nil {
+			log.Printf("users/info: %v", err)
+		}
+		a.S.PutUsers(us)
+	}()
+	waitUsers(ctx, wait)
 }
 
 // prefetch warms the history of unread conversations so opening them is
@@ -1513,12 +1547,26 @@ func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	v.StreamingState = m.StreamingState
 	v.WorkflowID, v.TriggerID = m.WorkflowID, m.TriggerID
 	v.AgentSession, v.AssistantThread = m.AgentSession, m.AssistantAppThread
+	if c := m.AIContext; c != nil && c.ResultStatus == "stopped_by_user" { // vshb getMessageLabelValues
+		v.Stopped, v.StoppedBy = true, c.StoppedByUserID
+	}
 	v.FunctionExecutionID = m.FunctionExecutionID
 	v.Locked, v.LockedByTeam = m.IsLocked, m.LockedByTeamID
 	if dc := m.DocumentComment; dc != nil {
 		c := *dc
 		c.Authors = append([]string(nil), dc.Authors...)
 		v.DocumentComment = &c
+	}
+	if dm := m.DocumentMention; dm != nil {
+		c := *dm
+		c.MentioningUserIDs = append([]string(nil), dm.MentioningUserIDs...)
+		v.DocumentMention = &c
+		if dm.FileID != "" {
+			// maybePrefetchCanvasFromNotification (boot-render): the
+			// mention's canvas is asked for (files.info), so a jump to the
+			// mention opens it and Activity names it (canvas_channel.go)
+			a.S.CanvasRef(dm.FileID)
+		}
 	}
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)
@@ -1605,6 +1653,10 @@ func (a *App) Mrkdwn(text string) []richtext.Block { return richtext.FromMrkdwn(
 
 // Emoji resolves an emoji name (custom or standard) to an image URL.
 func (a *App) Emoji(name string) (url, text string, ok bool) { return a.S.Emoji(name) }
+
+// EmojiVersion changes whenever the custom emoji map does (emoji.list,
+// emoji_changed): a surface that converted emoji earlier converts again.
+func (a *App) EmojiVersion() uint64 { return a.S.CustomEmoji.Version() }
 
 // CustomEmoji returns the workspace's custom emoji: name -> URL or
 // "alias:other". The map must not be modified.

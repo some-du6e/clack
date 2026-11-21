@@ -676,7 +676,7 @@ func (d *ChannelDetails) agentRosterRow(gtx C, u core.User, self string, out boo
 	if u.Agent || u.Agentforce {
 		badge = core.BadgeAgent
 	}
-	full, disp := cdMemberNames(u, self)
+	full, disp := cdMemberNamesPref(u, self, d.h.Core().Prefs().DisplayRealNames) // MediumMemberEntity's names, as the Members rows
 	body := func(gtx C) D {
 		padR, pill := unit.Dp(cdPadX), func(C, image.Point) {}
 		if secondary {

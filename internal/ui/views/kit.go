@@ -324,6 +324,9 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// bkView is this view's drawing of its messages' elements
+	// (blockkit.InView, elements.go)
+	bkView uint64
 	// tt is the Host's Taut plugin system (nil without plugins); tgen/tmemo
 	// cache its patched member/channel/message views for one frame.
 	tt    *taut.Taut
@@ -899,6 +902,9 @@ func (b *base) emojiImg(gtx C, url string, size unit.Dp) D {
 	s := gtx.Dp(size)
 	if url != "" && b.h.Images() != nil {
 		if img, ok := b.h.Images().Get(url, s); ok {
+			if emojiDrawn != nil {
+				emojiDrawn(url, s)
+			}
 			return theme.Image(gtx, img, image.Pt(s, s), 0)
 		}
 	}

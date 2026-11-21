@@ -21,7 +21,11 @@ func init() {
 	prev := mkPage
 	mkPage = func(a *App, r Route) View {
 		if id := canvasRouteID(r); id != "" {
-			return a.newCanvasView(id, canvasview.Full)
+			v := a.newCanvasView(id, canvasview.Full)
+			if sec := a.takeCanvasFocus(id); sec != "" { // OpenCanvasAt's section (canvas_open.go)
+				v.FocusSection(sec)
+			}
+			return v
 		}
 		if prev != nil {
 			return prev(a, r)
@@ -113,6 +117,7 @@ var canvasShare func(a *App, id string)
 // OpenCanvas shows a canvas in the side panel, as Slack does for canvases
 // opened from a message, a link or a DM.
 func (a *App) OpenCanvas(id string) {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	if a.secondary.kind != secNone && !a.secondary.hidden {
 		if v, ok := a.secondary.view.(*canvasview.View); ok && v.ID() == id {
 			return
