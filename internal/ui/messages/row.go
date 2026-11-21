@@ -2793,7 +2793,9 @@ func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimension
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
 	}
-	return slackc.Component(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
+	// the pill draws its box itself: under an UnstyledButton patch a rule
+	// its className brings is painted once, round (slackc.ComponentBox)
+	return slackc.ComponentBox(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
 }
 
 // layoutButton is the pill: UnstyledButton data-qa="reactji", .c-reaction
@@ -2809,7 +2811,10 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	if pl.reacted() {
 		mods = 1
 	}
-	st := reactionClass.Enter(gtx, btnState(gtx, &pl.btn), mods)
+	// the className the button was rendered with: a class a plugin adds
+	// to it (an UnstyledButton or Reaction patch) is the pill's, and its
+	// .<class> rules reach the pill as in Slack
+	st := reactionClass.EnterClass(gtx, btnState(gtx, &pl.btn), mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}

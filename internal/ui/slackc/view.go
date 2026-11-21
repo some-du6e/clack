@@ -29,6 +29,9 @@ type View struct {
 
 	fr   frame
 	name string
+	// ownRoot: the native the tree renders as its root "@" node draws
+	// that element's box itself (ComponentBox), as a Slot.OwnBox does
+	ownRoot bool
 
 	nodes []*Node
 	top   []*box

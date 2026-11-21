@@ -31,7 +31,11 @@ import (
 // ReactionBar hands back, ClassDef.LayoutChildren), reduced there to what
 // lays its children out and the text they inherit (its box, its 8px
 // padding, 24px height, fill and radius, the native draws). They are the
-// natives' own (nativeSets): they never make a widget Active.
+// natives' own (nativeSets): they never make a widget Active. A plugin's
+// own element with one of these classes gets Slack's whole rule from the
+// host base sheet (pluginElementCSS: .c-reaction), later in source order
+// and with the same values for the properties kept here, so it looks as
+// in Slack and not as this reduced part of it.
 const nativeCSS = `
 :where(b, strong) { font-weight: N }
 :where(i, em) { font-style: N }
@@ -69,7 +73,12 @@ const nativeCSS = `
 // render themselves, so a plugin's banner or button looks like Slack's:
 // the context bar above the composer (HaikuWarning's and OwlMode's
 // BaseContextBarV2), the reaction bar's add-reaction pill (CopyReacted's
-// copy chip, button.c-button-unstyled.c-reaction_add), Slack Kit's icon
+// copy chip, button.c-button-unstyled.c-reaction_add) and reaction pill
+// (a plugin's own .c-reaction: Slack's whole look, the 24px round box,
+// 8px padding, fill, hover and reacted rings, where the base sheet's
+// .c-reaction is only the part the native pill's children lay out under,
+// ClassDef.LayoutChildren; the sidebar Activity's inverse colours too),
+// Slack Kit's icon
 // button in the thread header (ThreadJump's Jump in thread,
 // c-icon_button c-icon_button--size_medium c-icon_button--default
 // p-flexpane_header__control) and the top nav's help button
@@ -118,6 +127,21 @@ const pluginElementCSS = `
 .c-message_attachment__video_play:is(:focus,:hover),.c-message_attachment__video_link:is(:focus,:hover){color:var(--dt_color-constants-white);opacity:1}
 .c-message_attachment__audio{margin-top:5px}
 .p-activity_ia4_page__item__reactions_bar--add_button_hidden .c-reaction_add{display:none}
+.c-reaction{cursor:pointer;vertical-align:top;background-color:var(--dt_color-surf-pry);width:fit-content;height:24px;color:var(--dt_color-content-pry);border:0;border-radius:9999px;justify-content:center;align-items:center;gap:4px;margin-bottom:4px;margin-right:4px;padding-inline:8px;font-size:12px;line-height:1;display:inline-flex}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction{background-color:var(--dt_color-theme-surf-inv-pry);color:var(--dt_color-theme-content-inv-pry)}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction:hover{box-shadow:0 0 0 1px var(--dt_color-theme-content-inv-ter);background-color:#0000}
+.c-reaction:hover{box-shadow:0 0 0 1px var(--dt_color-otl-pry);background-color:#0000}
+.c-reaction:focus{border-radius:9999px}
+.c-reaction:active{transform:scale(.94)}
+.c-reaction:disabled{pointer-events:none}
+.c-reaction--reacted{font-weight:var(--custom-font-weight-bold,700)}
+.c-reaction--reacted,.c-reaction--reacted:is(:hover,:focus){color:var(--dt_color-content-hgl-1);background-color:var(--dt_color-base-hgl-1)}
+.c-reaction--reacted,.c-reaction--reacted:hover{box-shadow:0 0 0 1px var(--dt_color-base-inv-hgl-1)}
+.c-reaction--reacted:focus{border-radius:9999px}
+.sk-client-theme--dark .c-reaction--reacted{background-color:var(--dt_color-base-inv-hgl-1);box-shadow:none;color:var(--dt_color-content-pry)}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction--reacted{box-shadow:0 0 0 1px var(--dt_color-theme-content-inv-ter)}
+.p-view_contents--sidebar .p-activity_ia4_page:not(.p-activity_ia4_page--activity_inbox) .c-reaction--reacted:hover{background-color:var(--dt_color-theme-surf-inv-pry)}
+.c-reaction--zero{opacity:.5}
 .c-reaction_add,.c-reaction_expand{cursor:pointer;vertical-align:top;background-color:var(--dt_color-surf-pry);width:fit-content;height:24px;color:var(--dt_color-content-pry);border:0;border-radius:9999px;justify-content:center;align-items:center;gap:4px;margin-bottom:4px;margin-right:4px;padding-inline:8px;font-size:12px;line-height:1;display:inline-flex}
 .c-reaction_add:hover,.c-reaction_expand:hover{box-shadow:0 0 0 1px var(--dt_color-otl-pry);background-color:#0000}
 .c-reaction_add:focus,.c-reaction_expand:focus{border-radius:9999px}

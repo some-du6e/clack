@@ -166,6 +166,9 @@ type Tool struct {
 	inAt   time.Time  // the frame whose input was read (Frame, Begin)
 	recAt  time.Time  // the frame recorded into frames[cur]
 	upKey  string     // the innermost element t.up counts from (innerKey)
+	// grabNow: P came in this frame's keys, the whole window to be
+	// grabbed to draw on (grabWindow) once input has read the pointer
+	grabNow bool
 	// the last press of FreezeKey and of Esc while it's down (repeat)
 	freezeDown, escDown time.Time
 	frameN              int // frames whose input was read (a capture's stage times count them)
@@ -278,7 +281,7 @@ func (t *Tool) start() {
 func (t *Tool) stop() {
 	t.dropCapture("dropped: the session ended before its shot")
 	t.state = off
-	t.held = ""
+	t.held, t.grabNow = "", false
 	t.pend, t.rev = nil, nil
 	t.contentOK = false
 	t.unfreeze()
@@ -491,6 +494,12 @@ func (t *Tool) input(gtx layout.Context) {
 			t.capture.tm.pick, t.capture.tm.pickN, t.capture.tm.win = time.Now(), t.frameN, t.win
 		}
 	}
+	if t.grabNow {
+		t.grabNow = false
+		if t.state == inspecting { // not mid-press: a press goes on as it was
+			t.grabWindow(gtx)
+		}
+	}
 }
 
 // release0 stops recording for a press (its report is built): the
@@ -574,6 +583,14 @@ func (t *Tool) keyFilters() []event.Filter {
 		key.Filter{Name: "Z", Required: key.ModShortcut},
 		key.Filter{Name: "C", Required: key.ModShortcut},
 		key.Filter{Name: FreezeKey},
+		// the pen's (draw.go): no modifier, so Mod+Z and Mod+C stay the
+		// filters' above
+		key.Filter{Name: PenKey},
+		key.Filter{Name: "Z"},
+		key.Filter{Name: "A"},
+		key.Filter{Name: "1"},
+		key.Filter{Name: "2"},
+		key.Filter{Name: "3"},
 		t.combo,
 		// frozen, no widget asks for keys: every other press is the
 		// tool's too, so none goes unhandled (macOS beeps for one)
@@ -845,6 +862,8 @@ func (t *Tool) key(gtx layout.Context, ke key.Event) {
 		} else if !t.freeze(gtx) {
 			t.host.Toast("Inspect: nothing to freeze yet, try again")
 		}
+	case ke.Name == PenKey:
+		t.grabNow = true // once input has dealt with the last frame's capture
 	case ke.Name == key.NameUpArrow:
 		t.up++
 	case ke.Name == key.NameDownArrow:
@@ -1155,8 +1174,8 @@ func (t *Tool) drawHover(gtx layout.Context) {
 // The banner's hints: a session's, a frozen session's (freeze.go), a
 // drag's.
 const (
-	HintInspect = "Inspect: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · F freezes · Esc to stop"
-	HintFrozen  = "Frozen: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · F or Esc unfreezes"
+	HintInspect = "Inspect: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · F freezes · P draws · Esc to stop"
+	HintFrozen  = "Frozen: click or drag to blur, then copy · shift-click copies at once · ↑ ↓ parent · P draws · F or Esc unfreezes"
 	HintDrag    = "Inspect: release to grab this region · Esc cancels the drag"
 )
 
