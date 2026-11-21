@@ -205,9 +205,13 @@ type Session struct {
 	dev    Device // speakers (and the microphone for Options.Device)
 	micDev Device // the default microphone, once the OS allowed it
 	play   playBuffer
-	// outGen is which output device plays the huddle (openSpeakers): a
-	// device you switched away from sends silence until it's closed,
-	// rather than taking every other chunk from the one buffer
+	// outReq numbers the speakers' opens (the join's, each Speaker pick:
+	// SwitchSpeakers), outGen is the one playing the huddle: each output
+	// pulls the playback buffer only while outGen is its own, so the old
+	// output plays until the new one is swapped in (installSpeakers) and
+	// the two never take turns at the one buffer, and an open a later
+	// pick replaced is never swapped in, however late it finishes
+	outReq atomic.Uint64
 	outGen atomic.Uint64
 	mic    *micFramer
 	apm    *micProcessor // the microphone's AGC and noise suppression (apm.go)

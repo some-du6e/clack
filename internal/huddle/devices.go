@@ -33,6 +33,10 @@ func (s *Session) SwitchAudio(speakers, mic bool) {
 // (useAudioOutSettingsMenuItems: the pick is saved, then the sound plays
 // on the preferred sink). It returns at once. With a test device it runs
 // then at once.
+//
+// Picks can overlap (a slow output, Bluetooth's, still opening when you
+// pick again): the newest pick wins whichever open finishes last, and
+// then runs only for the pick whose output is swapped in.
 func (s *Session) SwitchSpeakers(then func()) {
 	if !s.canSwitch() {
 		if then != nil {
@@ -40,9 +44,9 @@ func (s *Session) SwitchSpeakers(then func()) {
 		}
 		return
 	}
+	gen := s.outReq.Add(1) // this pick; a later one replaces it
 	go func() {
-		s.switchSpeakers()
-		if then != nil {
+		if s.switchSpeakers(gen) && then != nil {
 			then()
 		}
 	}()
@@ -57,23 +61,36 @@ func (s *Session) canSwitch() bool {
 	return !s.ended
 }
 
-// switchSpeakers opens the chosen output, then closes the old one, which
-// goes quiet as soon as the new one is opened (openSpeakers' outGen).
-func (s *Session) switchSpeakers() {
-	d := s.openSpeakers()
+// switchSpeakers opens the chosen output for pick gen and swaps it in
+// (installSpeakers). It reports whether that output plays now: false when
+// a later pick replaced gen or the huddle ended meanwhile.
+func (s *Session) switchSpeakers(gen uint64) bool {
+	if !s.installSpeakers(s.openSpeakers(gen), gen) {
+		return false
+	}
+	s.changed()
+	return true
+}
+
+// installSpeakers makes d, opened for gen, the speakers, and closes the
+// output it replaces, which played until now; from here d pulls the
+// playback buffer (outGen), so nothing backs up while an output opens. A
+// gen a later pick replaced, or a huddle that ended, closes d instead.
+func (s *Session) installSpeakers(d Device, gen uint64) bool {
 	s.mu.Lock()
-	if s.ended {
+	if s.ended || s.outReq.Load() != gen {
 		s.mu.Unlock()
 		d.Close()
-		return
+		return false
 	}
 	old := s.dev
 	s.dev = d
+	s.outGen.Store(gen)
 	s.mu.Unlock()
 	if old != nil {
 		old.Close()
 	}
-	s.changed()
+	return true
 }
 
 // ---- your audio level, as Slack measures it ----
