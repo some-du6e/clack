@@ -216,8 +216,9 @@ func (a *App) genericChannels(ctx context.Context, ids []string) []slack.Convers
 // bots.info goes to the enterprise host on Grid (the team host answers
 // bots_not_found for org apps); ids it doesn't know (bots_not_found, or
 // left out of a partial answer) are asked once more on the team host,
-// which knows the workspace's own bots. An id neither answers is left
-// unresolved for the session, as Slack's upsertNonExistent leaves it; a
+// which knows the workspace's own bots. An id neither answers is a
+// non-existent bot for the session (store.PutNonexistentBots), as Slack's
+// upsertNonExistent leaves it, and comes back with the ids it named; a
 // request that failed outright (the network, a 5xx, a timeout) forgets
 // its ids so the next draw asks again.
 func (a *App) resolveBots(ctx context.Context, ids []string) []string {
@@ -256,7 +257,7 @@ func (a *App) resolveBots(ctx context.Context, ids []string) []string {
 		put(bs)
 	}
 	rest := left(ids)
-	var transient []string
+	var transient, gone []string
 	for i := 0; i < len(rest); i += 50 {
 		part := rest[i:min(i+50, len(rest))]
 		bs, err := a.botsInfo(ctx, part, a.C.Call)
@@ -276,12 +277,18 @@ func (a *App) resolveBots(ctx context.Context, ids []string) []string {
 		}
 		if err != nil && !isAPIError(err) {
 			transient = append(transient, missing...)
+		} else {
+			gone = append(gone, missing...)
 		}
 	}
 	if len(transient) > 0 {
 		a.S.ForgetMissing('b', transient...) // asked again at the next draw
 	}
-	return out
+	// what neither answered is a non-existent bot (the UnknownFetchManager's
+	// upsertNonExistent): the rows that drew it unknown draw it again, as
+	// BaseMissingMember's non-existent bar, so "names" lists it too
+	a.S.PutNonexistentBots(gone)
+	return append(out, gone...)
 }
 
 // edgeBots is fetchBotsById's flannel step: the bots users/info returns

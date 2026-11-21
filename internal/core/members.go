@@ -80,13 +80,87 @@ func (a *App) memberLoop(ctx context.Context) {
 	}
 }
 
+// usersOut is the members users/info has out, EnsureUsers' and the
+// unknown member fetcher's, each with a channel closed once its answer is
+// in. Slack has one members UnknownFetchManager per team (0mwJ, made in
+// DOS4 H): a member is asked for once at a time, and whoever wants one
+// already out waits for that answer. During boot Boot's EnsureUsers (the
+// DM rows' people, the viewer) and the fetcher (the sidebar's lookups of
+// the same people) asked users/info for them twice.
+type usersOut struct {
+	mu  sync.Mutex
+	out map[string]chan struct{}
+}
+
+// claim splits ids into those the caller asks for now, out under done
+// until it releases them, and the answers to wait for of those another
+// request has out.
+func (o *usersOut) claim(ids []string) (ask []string, wait []chan struct{}, done chan struct{}) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, id := range ids {
+		if ch, ok := o.out[id]; ok {
+			if ch != done && !slices.Contains(wait, ch) { // done: ids named twice
+				wait = append(wait, ch)
+			}
+			continue
+		}
+		if done == nil {
+			done = make(chan struct{})
+			if o.out == nil {
+				o.out = map[string]chan struct{}{}
+			}
+		}
+		o.out[id] = done
+		ask = append(ask, id)
+	}
+	return ask, wait, done
+}
+
+// release ends claim's ask: its answer is in (stored), or the request
+// gave up.
+func (o *usersOut) release(ask []string, done chan struct{}) {
+	if done == nil {
+		return
+	}
+	o.mu.Lock()
+	for _, id := range ask {
+		if o.out[id] == done {
+			delete(o.out, id)
+		}
+	}
+	o.mu.Unlock()
+	close(done)
+}
+
+// waitUsers waits for the answers claim handed back (false: ctx ended
+// first).
+func waitUsers(ctx context.Context, wait []chan struct{}) bool {
+	for _, ch := range wait {
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	return true
+}
+
 // fetchUnknownMembers is one fetchUnknownsForTeam: fetchMembersForTeamId
 // with fetchWithRetries, then the upserts, then "names" for the views.
 func (a *App) fetchUnknownMembers(ctx context.Context, ids []string) {
 	t0 := time.Now()
-	ask := a.S.MissingUsers(ids) // fetchMembersForTeamId: not the ones the store holds by now
+	// fetchMembersForTeamId: not the ones the store holds by now, nor the
+	// ones another request has out (EnsureUsers'): this waits for that
+	// answer instead
+	miss := a.S.MissingUsers(ids)
+	ask, wait, done := a.usersOut.claim(miss)
 	var users, missing, failed int
-	if len(ask) > 0 {
+	func() {
+		defer a.usersOut.release(ask, done) // before the wait: two requests never wait on each other
+		if len(ask) == 0 {
+			return
+		}
 		a.usersAsked.Add(int64(len(ask)))
 		for attempt := 1; ; attempt++ {
 			fctx, cancel := context.WithTimeout(ctx, memberTimeout)
@@ -110,10 +184,29 @@ func (a *App) fetchUnknownMembers(ctx context.Context, ids []string) {
 			}
 			break
 		}
+	}()
+	if len(wait) > 0 {
+		if !waitUsers(ctx, wait) {
+			return
+		}
+		// what that request didn't get (it failed, or isn't the fetcher:
+		// EnsureUsers marks nobody non-existent) is asked for again at the
+		// next lookup, as this one's failures are
+		var lost []string
+		for _, id := range miss {
+			if slices.Contains(ask, id) {
+				continue
+			}
+			if _, ok := a.S.RawUser(id); !ok && !a.S.Nonexistent(id) {
+				lost = append(lost, id)
+			}
+		}
+		a.S.ForgetMissing('u', lost...)
 	}
 	// the rows that drew unknown members draw them again (the answer's
 	// upserts re-render Slack's), and so do ones the answer doesn't
-	// change: an id the store got meanwhile drew unknown until now
+	// change: an id the store got meanwhile (another request's) drew
+	// unknown until now
 	var named []string
 	for _, id := range ids {
 		if _, ok := a.S.RawUser(id); ok || a.S.Nonexistent(id) {

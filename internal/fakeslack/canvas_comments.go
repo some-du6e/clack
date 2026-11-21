@@ -60,6 +60,21 @@ func (s *Server) comments() *commentStore {
 	return v.(*commentStore)
 }
 
+// commentAt is the comment (a root or a reply) ts of file channel ch, as
+// messages.list finds it by id.
+func (s *Server) commentAt(ch, ts string) (slack.Message, bool) {
+	cs := s.comments()
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	for _, m := range cs.msgs[ch] {
+		if m.TS == ts {
+			m.Channel = ch
+			return m, true
+		}
+	}
+	return slack.Message{}, false
+}
+
 func commentRoot(ts, user, editor, thread, text string, replies []slack.Message, resolved bool, seen string) []slack.Message {
 	root := slack.Message{Type: "message", Subtype: "document_comment_root", TS: ts, ThreadTS: ts, User: user, Text: text,
 		DocumentComment: &slack.MessageDocumentComment{ThreadID: thread, Authors: []string{user}, IsArchived: resolved,

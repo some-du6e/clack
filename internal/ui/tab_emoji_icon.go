@@ -84,7 +84,7 @@ func docTab(t core.Tab, label string, spans []richtext.Span, listViewNames bool,
 		return true, titleIcon(), label, spans
 	}
 	if len(t.TitleSpans) > 0 {
-		sp := append([]richtext.Span(nil), t.TitleSpans...)
+		sp := append([]richtext.Span(nil), resolveEmoji(t.TitleSpans, emoji)...)
 		stripped := false
 		if k := leadingTitleEmoji(sp); k >= 0 {
 			icon, stripped = sp[k].URL, true
@@ -101,7 +101,7 @@ func docTab(t core.Tab, label string, spans []richtext.Span, listViewNames bool,
 			}
 		}
 		if stripped {
-			spans = tabTitleSpans(sp)
+			spans = tabTitleSpansEmoji(sp, emoji)
 			label = richtext.PlainSpans(spans)
 		}
 		return true, icon, label, spans

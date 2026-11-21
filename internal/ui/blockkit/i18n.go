@@ -8,6 +8,7 @@ import "github.com/some-du6e/clack/internal/i18n"
 // "Submit" (app_dialog). Text an app sends is the app's and stays as sent.
 var (
 	appViewNS   = i18n.NS("app_view")
+	searchNS    = i18n.NS("search") // TruncationExpandButton / TruncationCollapseButton (a task's Show more, Show less)
 	appDialogNS = i18n.NS("app_dialog")
 )
 

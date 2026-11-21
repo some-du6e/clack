@@ -335,8 +335,13 @@ func (s *Style) Invalidate() {
 // Options are per-message rendering flags.
 type Options struct {
 	Edited bool // append "(edited)" after the last text block
-	Muted  bool // system message: body in the secondary color
-	Dim    bool // pending/failed: draw at reduced opacity
+	// Stopped appends StoppedLabel's "(stopped)" where "(edited)" would go
+	// (insertMessageLabelIntoBlocks: only when the message shows no
+	// "(edited)"); StoppedBy, when set, makes it "(stopped by {name})".
+	Stopped   bool
+	StoppedBy string
+	Muted     bool // system message: body in the secondary color
+	Dim       bool // pending/failed: draw at reduced opacity
 	// CompactFiles is MessageFiles' shouldUseCompactStack: the files
 	// without FilesMetaTextWrapper's title line (filemeta.go).
 	CompactFiles bool

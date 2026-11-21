@@ -55,6 +55,10 @@ type model struct {
 	used     time.Time
 	fetched  time.Time // last full refresh
 	refreshQ bool
+	// caughtUp: core read the channel's stale end forward while a load
+	// was out ("history_caught_up"): the list loads again once that one
+	// lands, which may have read the window from before
+	caughtUp bool
 	renames  [][2]string // pending ts -> confirmed ts, consumed by views
 	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
 	// newestMissing: the window misses the newest page (snap.newestMissing)
@@ -268,7 +272,7 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 // connection's changes every list reads.
 func (hb *hub) redraws(ev core.Event) bool {
 	switch ev.Type {
-	case "message", "update", "sent", "delete", "evicted":
+	case "message", "update", "sent", "delete", "evicted", "history_caught_up":
 		return hb.onScreen(ev.Channel)
 	}
 	return true
@@ -444,6 +448,9 @@ func (hb *hub) ensureLoaded(m *model) {
 				m.loaded = true
 				m.fetched = time.Now()
 				m.fails, m.retryAt = 0, time.Time{}
+				if m.caughtUp { // the answer may be the window from before the catch-up
+					m.caughtUp, m.fetched, m.refreshQ = false, time.Time{}, true
+				}
 			} else {
 				m.failed(hb, err, false, time.Now())
 			}
@@ -635,6 +642,22 @@ func (m *model) mergeNewest(page []core.Message, hasMore bool) {
 		m.hasMore = hasMore
 		return
 	}
+	// A newest page that starts after the newest message the list holds
+	// from Slack, with more history before it, doesn't meet the list:
+	// Slack's channel history keeps such a page a slice of its own (om2Z
+	// insert: the two don't intersect) and its newest view draws the
+	// newest slice alone (dTxY getTimestampsByChannelId). Kept in front of
+	// it, the list's messages drew as one list with the ones between
+	// them and the page left out, and nothing to show it: a newest page
+	// read after the socket missed more than a page (core's catch-up
+	// starting the window over, a poll while the socket was down).
+	if hasMore {
+		if newest, oldest := newestFromSlack(m.msgs), oldestFromSlack(page); newest != "" && oldest != "" && tsLess(newest, oldest) {
+			m.setAll(page)
+			m.hasMore = hasMore
+			return
+		}
+	}
 	first := page[0].TS
 	var keep []core.Message
 	for _, e := range m.msgs {
@@ -646,6 +669,28 @@ func (m *model) mergeNewest(page []core.Message, hasMore bool) {
 		m.hasMore = hasMore
 	}
 	m.setAll(append(keep, page...))
+}
+
+// newestFromSlack is the newest message of msgs from Slack: no local copy
+// (a pending or failed send) or ephemeral one, which no history page
+// holds ("" for none).
+func newestFromSlack(msgs []entry) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if x := &msgs[i].m; !x.Pending && !x.Failed && !x.Ephemeral {
+			return x.TS
+		}
+	}
+	return ""
+}
+
+// oldestFromSlack is the oldest message of page from Slack ("" for none).
+func oldestFromSlack(page []core.Message) string {
+	for i := range page {
+		if x := &page[i]; !x.Pending && !x.Failed && !x.Ephemeral {
+			return x.TS
+		}
+	}
+	return ""
 }
 
 // evict drops the messages before oldest, or everything when oldest is ""
@@ -954,6 +999,10 @@ func (hb *hub) apply(ev core.Event) bool {
 		thread := ev.Msg.ThreadTS
 		chm, thm := hb.models(ev.Channel, thread)
 		changed := false
+		// past the end of core's window, stale since a slow connect: drawn
+		// after the list it left out what the socket missed; it comes with
+		// the window once that is read forward ("history_caught_up")
+		ahead := chm != nil && (ev.Ahead || hb.app != nil && hb.app.IsAhead(ev.Channel, ev.Msg.TS))
 		if chm != nil {
 			chm.mu.Lock()
 			// an update changes the list's message where it holds it, and
@@ -965,6 +1014,7 @@ func (hb *hub) apply(ev core.Event) bool {
 			// takes the event's EmitSeq: a row drawing it waits for the
 			// mirror to have handled the event (MessageViewState's need)
 			switch {
+			case ahead && chm.find(ev.Msg.TS) < 0:
 			case ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) && chm.inRange(ev.Msg.TS):
 				chm.upsert(*ev.Msg, ev.EmitSeq)
 				chm.noteLive(ev.Msg.TS, false)
@@ -1045,7 +1095,10 @@ func (hb *hub) apply(ev core.Event) bool {
 			m.noteLive(ev.TS, true)
 			m.mu.Unlock()
 		}
-		return len(ms) > 0
+		// a message slug linking to it is "Private message" from now on
+		// (its conversion read the message: reconvert)
+		re := hb.reconvert(ev)
+		return len(ms) > 0 || re
 	case "evicted":
 		// core trimmed the conversation (or thread) to Slack's message
 		// cache budget (core/evict.go): its model drops the same messages,
@@ -1123,6 +1176,21 @@ func (hb *hub) apply(ev core.Event) bool {
 		// core: the session is gone (signed out, token revoked). Stop
 		// loading anything until the connection is back or Retry.
 		hb.authFailed.Store(true)
+		return true
+	case "history_caught_up":
+		// core read the channel's window forward from the end it had at
+		// a slow connect (core reached_end.go): the list loads it again
+		hb.mu.Lock()
+		m := hb.chans[ev.Channel]
+		hb.mu.Unlock()
+		if m == nil {
+			return false
+		}
+		m.mu.Lock()
+		m.fetched, m.refreshQ = time.Time{}, true
+		m.caughtUp = m.loading
+		m.rev++
+		m.mu.Unlock()
 		return true
 	case "resync", "connection", "poll":
 		if ev.Type == "connection" && ev.Connected {
@@ -1281,7 +1349,7 @@ func takeConverted(msg, f *core.Message) bool {
 func mergeRefChange(a, b core.RefChange) core.RefChange {
 	return core.RefChange{Members: append(a.Members, b.Members...), Channels: append(a.Channels, b.Channels...),
 		Files: append(a.Files, b.Files...), Bots: append(a.Bots, b.Bots...), Emoji: append(a.Emoji, b.Emoji...),
-		AnyMember: a.AnyMember || b.AnyMember, All: a.All || b.All}
+		Messages: append(a.Messages, b.Messages...), AnyMember: a.AnyMember || b.AnyMember, All: a.All || b.All}
 }
 
 // applyReactions is a reaction change: each model holding the message

@@ -64,6 +64,10 @@ type Message struct {
 	// (assistant_app_thread: {title, …}); the thread pane's header reads
 	// its title (srGL renderThreadTitle, Aa1F AssistantThreadTitleLabel).
 	AssistantAppThread *MessageAssistantThread `json:"assistant_app_thread,omitempty"`
+	// AIContext is an agent's reply's ai_context: result_status
+	// "stopped_by_user" when the person stopped its stream (Slack's
+	// getMessageLabelValues isStopped, stopped_by_user_id).
+	AIContext *MessageAIContext `json:"ai_context,omitempty"`
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`
@@ -79,6 +83,15 @@ type Message struct {
 	// getCanvasRootLastSeen, isDocumentCommentVisible; thrK most_recent_editor;
 	// v+tj authors).
 	DocumentComment *MessageDocumentComment `json:"document_comment,omitempty"`
+	// DocumentMention is a canvas mention (subtype document_mention, in
+	// the canvas's file channel): Slack's msg.document_mention {file_id,
+	// section_id, mentioning_user_ids}, which its jump to the message
+	// (lFpV openDocWithThreadTs) opens the canvas at, and Activity's
+	// header counts ("You were mentioned {mentionCount} times in {space}").
+	DocumentMention *MessageDocumentMention `json:"document_mention,omitempty"`
+	// SlackList is a list record's comment thread's message: its list and
+	// record (GMkG and wc0P read slack_list.list_record_id)
+	SlackList *MessageSlackList `json:"slack_list,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
@@ -96,6 +109,21 @@ type MessageDocumentComment struct {
 	IsVisible        bool        `json:"is_visible,omitempty"`
 	LastSeen         json.Number `json:"last_seen,omitempty"`
 	MostRecentEditor string      `json:"most_recent_editor,omitempty"`
+}
+
+// MessageSlackList is a list record's comment-thread message's
+// slack_list: the list and the record whose thread it is.
+type MessageSlackList struct {
+	ListID       string `json:"list_id,omitempty"`
+	ListRecordID string `json:"list_record_id,omitempty"`
+}
+
+// MessageDocumentMention is a canvas mention's document_mention: the
+// canvas, the section the mention sits in, and who mentioned the viewer.
+type MessageDocumentMention struct {
+	FileID            string   `json:"file_id,omitempty"`
+	SectionID         string   `json:"section_id,omitempty"`
+	MentioningUserIDs []string `json:"mentioning_user_ids,omitempty"`
 }
 
 // MessageAssistantThread is a message's assistant_app_thread.
@@ -362,12 +390,15 @@ type Attachment struct {
 	IsAppUnfurl   bool              `json:"is_app_unfurl,omitempty"`
 	Hidden        bool              `json:"hidden,omitempty"`
 	IsMsgUnfurl   bool              `json:"is_msg_unfurl"`
-	IsShare       bool              `json:"is_share"`
-	ChannelID     string            `json:"channel_id"`
-	ChannelName   string            `json:"channel_name"`
-	MsgSubtype    string            `json:"msg_subtype"`
-	Blocks        json.RawMessage   `json:"blocks,omitempty"`
-	MessageBlocks []struct {
+	// AgentChannelUnfurl is the card of a code channel an agent made
+	// (MessageKitAttachments draws it as CodeChannelEntityCard)
+	AgentChannelUnfurl *AgentChannelUnfurl `json:"agent_channel_unfurl,omitempty"`
+	IsShare            bool                `json:"is_share"`
+	ChannelID          string              `json:"channel_id"`
+	ChannelName        string              `json:"channel_name"`
+	MsgSubtype         string              `json:"msg_subtype"`
+	Blocks             json.RawMessage     `json:"blocks,omitempty"`
+	MessageBlocks      []struct {
 		Message struct {
 			Blocks json.RawMessage `json:"blocks"`
 		} `json:"message"`
@@ -659,4 +690,23 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 		m.SubscribedSet = json.Unmarshal(aux.RawSub, &m.Subscribed) == nil
 	}
 	return nil
+}
+
+// MessageAIContext is a message's ai_context (the fields Slack's client
+// reads).
+type MessageAIContext struct {
+	ResultStatus    string `json:"result_status,omitempty"`
+	StoppedByUserID string `json:"stopped_by_user_id,omitempty"`
+}
+
+// AgentChannelUnfurl is an attachment's agent_channel_unfurl: the code
+// channel an agent session made.
+type AgentChannelUnfurl struct {
+	ChannelID             string `json:"channel_id"`
+	ChannelName           string `json:"channel_name"`
+	AgentBotUserID        string `json:"agent_bot_user_id"`
+	IsPrivate             bool   `json:"is_private"`
+	JoinableFromChannelID string `json:"joinable_from_channel_id"`
+	WorkflowName          string `json:"workflow_name,omitempty"`
+	WorkflowTriggerID     string `json:"workflow_trigger_id,omitempty"`
 }
