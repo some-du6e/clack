@@ -89,7 +89,7 @@ jobs:
           mkdir -p "$PREVIEW_SHOTS_DIR"
           # huddles-link-{faces-tip,invite-off,badge,badge-2,seen}-{light,dark}: the link's facepile, an invite with
           # huddles_link_v2 unassigned and on, and the Huddles page marking the invites seen
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestHuddlesLinkInvites$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 9m -run 'TestHuddlesLinkInvites$' ./internal/ui/
           ls -la "$PREVIEW_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

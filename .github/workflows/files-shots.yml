@@ -89,7 +89,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FILES_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 13m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$' ./internal/ui/
           ls -la "$FILES_SHOTS_DIR"
       - name: the media viewer plays videos, and the same checks on ui (before-ui)
         if: ${{ !cancelled() }}
@@ -97,12 +97,14 @@ jobs:
           FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
+          "$GITHUB_WORKSPACE/.github/scripts/dump-before-budget.sh" 13 & wd=$!
+          trap 'kill $wd 2>/dev/null' EXIT
           set +e
           mkdir -p "$FILES_SHOTS_DIR"
           rc=0
           # the branch: a gallery's video, Expand and the Files tab open the
           # viewer playing; its keys, auto-hide and end; shots *-after.png
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 18m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ || rc=1
           go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ || rc=1
           # ui, where there's no player (the stand-in hooks): every check
           # fails and the shots (*-before.png) show what ui does. Until ui
@@ -112,7 +114,7 @@ jobs:
           cp internal/ui/testdata/video_viewer_hooks_ui.go.txt before-ui/internal/ui/video_viewer_hooks_test.go
           cp internal/ui/testdata/video_pip_hooks_ui.go.txt before-ui/internal/ui/video_pip_hooks_test.go
           cp internal/ui/views/channel_files_video_test.go before-ui/internal/ui/views/
-          (cd before-ui && git log -1 --format='before = ui at %H' && VIDEO_VIEWER_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ > "$FILES_SHOTS_DIR/video-viewer-before-ui.log" 2>&1)
+          (cd before-ui && git log -1 --format='before = ui at %H' && VIDEO_VIEWER_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -timeout 18m -run 'TestVideoViewer|TestVideoPip' ./internal/ui/ > "$FILES_SHOTS_DIR/video-viewer-before-ui.log" 2>&1)
           (cd before-ui && go test -count=1 -v -run 'TestChannelFilesVideoViewer$' ./internal/ui/views/ > "$FILES_SHOTS_DIR/video-viewer-before-views.log" 2>&1)
           fixed=0
           grep -q 'func NewVideoViewer' before-ui/internal/ui/popups/lightbox_video.go 2>/dev/null && grep -q 'func (c \*Controller) PipOn' before-ui/internal/ui/videoplayer/pip.go 2>/dev/null && fixed=1

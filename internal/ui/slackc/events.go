@@ -112,6 +112,21 @@ func (s *scope) events() {
 	}
 	moved := false
 	var last pointer.Event
+	// flushMove sends the frame's mousemove so far, coalesced to the newest
+	// position and to listening subtrees, before a discrete event: as a
+	// browser dispatches its pending coalesced moves ahead of the next
+	// mousedown or mouseup, a handler sees the pointer where it was pressed
+	// (a drag's start, a menu item's hover) before the press itself.
+	flushMove := func() {
+		if !moved {
+			return
+		}
+		moved = false
+		if t := s.hitTest(last.Position); t != nil && chainListens(t, lMove) {
+			v.dispatchPointer(s, t, "mousemove", &last, 0)
+			v.dispatchPointer(s, t, "pointermove", &last, 0)
+		}
+	}
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &s.ptag, Kinds: pointer.Move | pointer.Enter | pointer.Leave | pointer.Press | pointer.Release | pointer.Drag | pointer.Scroll | pointer.Cancel, ScrollX: sx, ScrollY: sy})
 		if !ok {
@@ -132,30 +147,29 @@ func (s *scope) events() {
 			moved = true
 			last = pe
 		case pointer.Leave:
+			flushMove()
 			if s.host == nil {
 				s.ptrIn = false
 				v.setHover(nil, s, &pe)
 			}
 		case pointer.Press:
+			flushMove()
 			s.ptr = pe.Position
 			s.press(&pe)
 		case pointer.Release:
+			flushMove()
 			s.release(&pe)
 		case pointer.Scroll:
+			flushMove()
 			s.ptr, s.ptrIn = pe.Position, true
 			s.scroll(&pe)
 		case pointer.Cancel:
+			flushMove()
 			v.pressK = 0
 			v.setActive(nil)
 		}
 	}
-	if moved {
-		// mousemove, throttled to one per frame and to listening subtrees
-		if t := s.hitTest(last.Position); t != nil && chainListens(t, lMove) {
-			v.dispatchPointer(s, t, "mousemove", &last, 0)
-			v.dispatchPointer(s, t, "pointermove", &last, 0)
-		}
-	}
+	flushMove()
 }
 
 func chainListens(t *box, bit uint32) bool {

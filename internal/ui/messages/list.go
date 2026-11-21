@@ -1021,28 +1021,30 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 		s.reactNow(h, app, key, name, add, self)
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		// Slack: the reaction button dispatches changeReactionFromUserAction,
-		// whose native submits submitAddOrRemoveReaction (plugins may wrap
-		// either; with none this is just core.React).
-		_, err := taut.Dispatch(ctx, tautOf(), "changeReactionFromUserAction", rxnUserArgs{Key: key, Name: name, Add: &add},
-			func(ctx context.Context, a rxnUserArgs) (any, error) {
-				on := !s.hasOwnReaction(a.Key, a.Name)
-				if a.Add != nil {
-					on = *a.Add
-				}
-				if on && !a.SkipFrecencyRecord {
-					// recordEmojiFrecencyEvent {emojiName, text: ""}
-					app.RecordEmojiFrecency(a.Name, "")
-				}
-				return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
-			})
-		if err != nil {
-			h.Toast("Couldn't update reaction")
-		}
-	}()
+	// Slack: the reaction button dispatches changeReactionFromUserAction,
+	// whose native submits submitAddOrRemoveReaction (plugins may wrap
+	// either; with none this is just core.React). The click's: its JS
+	// call is queued now, on the UI goroutine, on the user's lane
+	// (UserAction, DispatchThen), so a plugin click after it can't go
+	// ahead (OwlMode reads its mode in the reaction's patch).
+	ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 20*time.Second)
+	taut.DispatchThen(ctx, tautOf(), "changeReactionFromUserAction", rxnUserArgs{Key: key, Name: name, Add: &add},
+		func(ctx context.Context, a rxnUserArgs) (any, error) {
+			on := !s.hasOwnReaction(a.Key, a.Name)
+			if a.Add != nil {
+				on = *a.Add
+			}
+			if on && !a.SkipFrecencyRecord {
+				// recordEmojiFrecencyEvent {emojiName, text: ""}
+				app.RecordEmojiFrecency(a.Name, "")
+			}
+			return s.submitReaction(ctx, h, app, a.Key, a.Name, on, self)
+		}, func(_ any, err error) {
+			cancel()
+			if err != nil {
+				h.Toast("Couldn't update reaction")
+			}
+		})
 }
 
 // reactNow is a pill's click with neither reaction thunk wrapped:
@@ -1212,6 +1214,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	}
 	if s.viewsOn && len(it.group) == 0 {
 		s.applyView(tautOf(), r, rc.now)
+		if !r.heldTil.IsZero() {
+			gtx.Execute(op.InvalidateCmd{At: r.heldTil}) // the hold's end draws core's copy if JS hasn't answered
+		}
 	}
 	r.rv.External = true
 	r.drawn = rc.now
@@ -1905,7 +1910,8 @@ func (s *listState) startEdit(h Host, ts string) {
 	if t := tautOf(); t != nil && t.ActionablePatched() {
 		src, app := r.src, h.Core()
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// the user's ↑: on their lane, ahead of the queued renders
+			ctx, cancel := context.WithTimeout(taut.UserAction(context.Background()), 5*time.Second)
 			defer cancel()
 			m := src
 			if sm, ok := t.ActionableMessage(ctx, src.Channel, src.TS); ok && app != nil {
@@ -1946,6 +1952,9 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		h.Invalidate()
 	})
 	app := h.Core()
+	r.edit.SaveEditThen = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string, done func(error)) {
+		commitEditThen(ctx, app, ch, ts, text, blocks, fileIDs, done)
+	}
 	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 		return commitEdit(ctx, app, ch, ts, text, blocks, fileIDs)
 	}

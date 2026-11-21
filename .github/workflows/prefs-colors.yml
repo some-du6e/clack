@@ -82,14 +82,14 @@ jobs:
           CLACK_PIXEL_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 15m -run '^(TestAccountThemeDrawSites|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen|TestAccountThemeControlStripPress|TestPeekHeaderRule)$' ./internal/ui/
+        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 10m -run '^(TestAccountThemeDrawSites|TestAccountThemeFocusButtonActive|TestAccountThemeCreateButtonOpen|TestAccountThemeControlStripPress|TestPeekHeaderRule)$' ./internal/ui/
       - name: the DMs rows, drawn and sampled (the peek card and the page)
         if: ${{ !cancelled() }}
         env:
           CLACK_PIXEL_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 10m -run '^(TestDMsRowsDrawn|TestDMsListChromeScope|TestDMsPeekCardTokens|TestDMsListHoverByMode|TestThemeTokensCascadePerVariable)$' ./internal/ui/views/
+        run: xvfb-run -a go test -p 1 -count=1 -v -timeout 9m -run '^(TestDMsRowsDrawn|TestDMsListChromeScope|TestDMsPeekCardTokens|TestDMsListHoverByMode|TestThemeTokensCascadePerVariable)$' ./internal/ui/views/
       - name: Preferences colour screenshots
         env:
           PREFS_COLOR_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -97,7 +97,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREFS_COLOR_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestPrefsColorShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 9m -run 'TestPrefsColorShots$' ./internal/ui/
           ls "$PREFS_COLOR_SHOTS_DIR"
       - name: Account theme contrast screenshots (Karim's #FED4BE, a dark custom colour, the default)
         if: ${{ !cancelled() }}
@@ -107,7 +107,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREFS_COLOR_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestThemeContrastShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 8m -run 'TestThemeContrastShots$' ./internal/ui/
           ls "$PREFS_COLOR_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -116,13 +117,55 @@ type thunkTable struct {
 	patched atomic.Pointer[map[string]bool]
 
 	mu      sync.Mutex
-	natives map[string]NativeFunc // defaults for plugin-initiated dispatches
-	calls   map[int64]NativeFunc  // in-flight native cores of a Dispatch
+	natives map[string]NativeFunc  // defaults for plugin-initiated dispatches
+	calls   map[int64]NativeFunc   // in-flight native cores of a Dispatch
+	seq     map[int64]bool         // the calls whose natives run in JS's order (DispatchSeq)
+	checks  map[int64]*atomic.Bool // CheckThenDispatch's: its checks passed (checksPassed)
 	next    int64
+	// seqGo runs DispatchSeq's natives with no plugin, in the order they
+	// came
+	seqGo seqRunner
 }
 
+// seqRunner runs funcs one after another on a goroutine of its own, in the
+// order they came.
+type seqRunner struct {
+	mu sync.Mutex
+	q  []func()
+	on bool
+}
+
+func (s *seqRunner) run(f func()) {
+	s.mu.Lock()
+	s.q = append(s.q, f)
+	start := !s.on
+	s.on = true
+	s.mu.Unlock()
+	if !start {
+		return
+	}
+	go func() {
+		for {
+			s.mu.Lock()
+			if len(s.q) == 0 {
+				s.on, s.q = false, nil
+				s.mu.Unlock()
+				return
+			}
+			f := s.q[0]
+			s.q[0] = nil
+			s.q = s.q[1:]
+			s.mu.Unlock()
+			f()
+		}
+	}()
+}
+
+// noTautSeq is seqGo for DispatchSeq with no plugin system at all.
+var noTautSeq seqRunner
+
 func newThunkTable(t *Taut) *thunkTable {
-	tt := &thunkTable{t: t, natives: map[string]NativeFunc{}, calls: map[int64]NativeFunc{}}
+	tt := &thunkTable{t: t, natives: map[string]NativeFunc{}, calls: map[int64]NativeFunc{}, seq: map[int64]bool{}}
 	tt.installDefaults()
 	return tt
 }
@@ -199,7 +242,17 @@ func Dispatch[A, R any](ctx context.Context, t *Taut, name string, args A, nativ
 		return native(ctx, args)
 	}
 	var zero R
-	core := func(ctx context.Context, raw []json.RawMessage) (any, error) {
+	out, err := t.dispatchJS(ctx, name, []any{args}, nativeCore(name, native))
+	if err != nil {
+		return zero, err
+	}
+	return decodeDispatch[R](name, out)
+}
+
+// nativeCore is Dispatch's native as JS calls it back (callNative): its
+// args decoded from JSON.
+func nativeCore[A, R any](name string, native func(ctx context.Context, args A) (R, error)) NativeFunc {
+	return func(ctx context.Context, raw []json.RawMessage) (any, error) {
 		var a A
 		if len(raw) > 0 {
 			if err := json.Unmarshal(raw[0], &a); err != nil {
@@ -208,18 +261,93 @@ func Dispatch[A, R any](ctx context.Context, t *Taut, name string, args A, nativ
 		}
 		return native(ctx, a)
 	}
-	out, err := t.dispatchJS(ctx, name, []any{args}, core)
-	if err != nil {
-		return zero, err
-	}
-	if len(out) == 0 || string(out) == "null" {
-		return zero, nil
-	}
+}
+
+// decodeDispatch is a dispatch's JSON result as R.
+func decodeDispatch[R any](name string, out json.RawMessage) (R, error) {
 	var r R
+	if len(out) == 0 || string(out) == "null" {
+		return r, nil
+	}
 	if err := json.Unmarshal(out, &r); err != nil {
+		var zero R
 		return zero, fmt.Errorf("taut: %s result: %w", name, err)
 	}
 	return r, nil
+}
+
+// DispatchThen is Dispatch without the wait, for the user's input (a
+// keystroke's typing report): with the runtime running its JS call is
+// queued before DispatchThen returns, on the caller's goroutine, in order
+// with what the caller queues after it (the send at Enter: the typing
+// report a keystroke dispatched from a goroutine of its own could come
+// after the message). done (nil for none) hears the result on another
+// goroutine; unpatched, native runs on one.
+func DispatchThen[A, R any](ctx context.Context, t *Taut, name string, args A, native func(ctx context.Context, args A) (R, error), done func(R, error)) {
+	dispatchThen(ctx, t, name, args, native, done, false)
+}
+
+// DispatchSeq is DispatchThen for dispatches that each go out without
+// waiting for the ones before (Slack's messageReceived dispatches
+// showNotification for every message without awaiting the last), whose
+// natives run in the order their dispatches call them: in JS's order, one
+// after another, as Slack runs them in its one JS thread, and in the order
+// DispatchSeq was called with no plugin. A goroutine each could run two
+// in reverse. For natives that never wait long.
+func DispatchSeq[A, R any](ctx context.Context, t *Taut, name string, args A, native func(ctx context.Context, args A) (R, error), done func(R, error)) {
+	dispatchThen(ctx, t, name, args, native, done, true)
+}
+
+func dispatchThen[A, R any](ctx context.Context, t *Taut, name string, args A, native func(ctx context.Context, args A) (R, error), done func(R, error), seq bool) {
+	if done == nil {
+		done = func(R, error) {}
+	}
+	if !t.ThunkPatched(name) {
+		run := func() { done(native(ctx, args)) }
+		switch {
+		case seq && t != nil:
+			t.thunks.seqGo.run(run)
+		case seq:
+			noTautSeq.run(run)
+		default:
+			go run()
+		}
+		return
+	}
+	rt := t.liveRuntime()
+	if rt == nil {
+		run := func() { done(Dispatch(ctx, t, name, args, native)) }
+		if seq {
+			// in order with the dispatches around it while the runtime
+			// is down too: a goroutine each could show two toasts in
+			// reverse (the dispatch waits for a runtime that starts)
+			t.thunks.seqGo.run(run)
+		} else {
+			go run()
+		}
+		return
+	}
+	ctx = inOrder(ctx)
+	tt := t.thunks
+	id := tt.add(ctx, nativeCore(name, native))
+	if seq {
+		tt.mu.Lock()
+		tt.seq[id] = true
+		tt.mu.Unlock()
+	}
+	// the call waits for its JS whatever the caller's deadline (a toast
+	// behind a 30 s backlog still shows), and the native stays registered
+	// until that JS has run: one dropped at the deadline was gone when JS
+	// called it
+	rt.rt.CallThen(context.WithoutCancel(ctx), "__taut.dispatchThunk", func(out json.RawMessage, err error) {
+		tt.drop(id)
+		if err != nil {
+			var zero R
+			done(zero, err)
+			return
+		}
+		done(decodeDispatch[R](name, out))
+	}, name, []any{args}, id, SyncThunks[name])
 }
 
 // DispatchJSON is Dispatch with JSON in and out.
@@ -247,18 +375,104 @@ func (t *Taut) dispatchJS(ctx context.Context, name string, args []any, native N
 	if err != nil {
 		return nil, err
 	}
+	ctx = inOrder(ctx)
 	tt := t.thunks
+	id := tt.add(ctx, native)
+	defer tt.drop(id)
+	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id, SyncThunks[name])
+}
+
+// inOrder is ctx for a dispatch: the user's (UserAction) as it is, any
+// other in order with the user's later input (jsrt.InOrder). What the
+// native UI dispatches is the user's doing (a reaction, a draft sync, a
+// menu), and a plugin click after it went ahead of it when it waited in
+// the queue: OwlMode reads its mode in the reaction's patch, and a
+// reaction meant for Owl went out under the user's name.
+func inOrder(ctx context.Context) context.Context {
+	if jsrt.IsUserBlocking(ctx) || jsrt.IsInOrder(ctx) {
+		return ctx
+	}
+	return jsrt.InOrder(ctx)
+}
+
+// add registers an in-flight dispatch's native core for JS to call back
+// (callNative) and returns its id. JS calls it with a context of its own:
+// with a user-blocking ctx, the native's JS work (a send's transforms, the
+// thunks it dispatches in turn) is the user's too, ahead of the renders
+// queued meanwhile; with an in-order one, in order with the user's later
+// input.
+func (tt *thunkTable) add(ctx context.Context, native NativeFunc) int64 {
+	// the native's work is the user's (a post, a reaction): it outlives the
+	// plugin runtime that called it, which may close meanwhile (plugins
+	// turned off, the watchdog), keeping the chain it goes on with
+	inner := native
+	mark := func(c context.Context) context.Context { return c }
+	switch {
+	case jsrt.IsUserChain(ctx):
+		noHold := jsrt.IsNoChain(ctx)
+		mark = func(c context.Context) context.Context {
+			c = jsrt.UserChain(c)
+			if noHold {
+				c = jsrt.NoChain(c)
+			}
+			return c
+		}
+	case jsrt.IsUserBlocking(ctx):
+		mark = jsrt.UserBlocking
+	case jsrt.IsInOrder(ctx):
+		mark = jsrt.InOrder
+	}
+	native = func(c context.Context, raw []json.RawMessage) (any, error) {
+		return inner(mark(context.WithoutCancel(c)), raw)
+	}
 	tt.mu.Lock()
 	tt.next++
 	id := tt.next
 	tt.calls[id] = native
 	tt.mu.Unlock()
-	defer func() {
-		tt.mu.Lock()
-		delete(tt.calls, id)
-		tt.mu.Unlock()
-	}()
-	return rt.rt.Call(ctx, "__taut.dispatchThunk", name, args, id, SyncThunks[name])
+	return id
+}
+
+// drop forgets a finished dispatch's native core: JS calling it after
+// that fails ("that dispatch already finished").
+func (tt *thunkTable) drop(id int64) {
+	tt.mu.Lock()
+	delete(tt.calls, id)
+	delete(tt.seq, id)
+	delete(tt.checks, id)
+	tt.mu.Unlock()
+}
+
+// watchChecks is the flag checksPassed sets for dispatch id (a
+// CheckThenDispatch's call): its send checks let the message go, and what
+// follows is the dispatch.
+func (tt *thunkTable) watchChecks(id int64) *atomic.Bool {
+	f := new(atomic.Bool)
+	tt.mu.Lock()
+	if tt.checks == nil {
+		tt.checks = map[int64]*atomic.Bool{}
+	}
+	tt.checks[id] = f
+	tt.mu.Unlock()
+	return f
+}
+
+// checksPassed is JS saying dispatch id's checks passed (JS thread).
+func (tt *thunkTable) checksPassed(id int64) {
+	tt.mu.Lock()
+	f := tt.checks[id]
+	tt.mu.Unlock()
+	if f != nil {
+		f.Store(true)
+	}
+}
+
+// inSeq reports whether dispatch id's native runs in JS's order
+// (DispatchSeq; JS thread).
+func (tt *thunkTable) inSeq(id int64) bool {
+	tt.mu.Lock()
+	defer tt.mu.Unlock()
+	return tt.seq[id]
 }
 
 // callNative runs the native core of an in-flight Dispatch (JS → Go).

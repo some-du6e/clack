@@ -404,7 +404,10 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		at(gtx, image.Pt(0, iy), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 			return a.avatar(gtx, conv.Avatar, conv.Name, gtx.Dp(16), gtx.Dp(4))
 		})
-		if kind == "im" && !conv.Bot {
+		// BaseAvatar (YN+Y) badges presence only when showPresence &&
+		// !isSystemUser, and ConnectedBaseAvatar (+JEQ) passes isSystemUser
+		// for USLACKBOT and USLACK: their avatars carry no badge
+		if kind == "im" && !conv.Bot && !sbSystemUser(conv.User) {
 			s := gtx.Dp(10)
 			ctr := image.Pt(gtx.Dp(15), iy+gtx.Dp(14))
 			at(gtx, ctr.Sub(image.Pt(s/2, s/2)), image.Pt(gtx.Dp(120), s), func(gtx layout.Context) layout.Dimensions {

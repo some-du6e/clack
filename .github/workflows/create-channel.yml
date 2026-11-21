@@ -60,7 +60,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CREATE_CHANNEL_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestCreateChannelEntryPoints|TestCreateChannelFlow' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 9m -run 'TestCreateChannelEntryPoints|TestCreateChannelFlow' ./internal/ui/
           ls -l "$CREATE_CHANNEL_SHOTS_DIR"
       - name: invite modal screenshots (light, dark)
         if: ${{ !cancelled() }}
@@ -71,7 +71,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$INVITE_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestInviteShots$' ./internal/ui/popups
+          xvfb-run -a go test -count=1 -v -timeout 7m -run 'TestInviteShots$' ./internal/ui/popups
           ls -l "$INVITE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -45,14 +45,16 @@ func replyNotifies(app *core.App, ev core.Event) bool {
 // notifyChannelName is getDisplayNameForChannel for the title
 // (imIncludeAtSign off): "#name" for a public channel, a private
 // channel's bare name, a group DM's members; formatChannelName's
-// "unknown-channel" for one whose name isn't known, never the raw id
-// (notify_conv.go).
+// "unknown-channel" for a channel whose name isn't known, never the raw
+// id (notify_conv.go). A group DM's name is its members' alone
+// (getMpimDisplayNameAlphabetical, which never goes through
+// formatChannelName): "" when none of them is known.
 func notifyChannelName(c *convInfo) string {
 	if c == nil {
 		return ""
 	}
 	name := c.Name
-	if !noteNamed(c) {
+	if !noteNamed(c) && c.Kind != "mpim" {
 		name = noteUnknownChannel()
 	}
 	if c.Kind == "channel" {
@@ -114,7 +116,12 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	}
 	c, named := b.noteConv(e.Channel)
 	if !named && !resolved && b.core != nil {
-		b.noteResolve(a, []string{e.Channel}, nil, nil, func() { b.desktopNotificationAfter(a, ev, true) })
+		b.noteResolve(a, e.Channel, []string{e.Channel}, nil, nil, func() { b.desktopNotificationAfter(a, ev, true) })
+		return
+	}
+	// in order with the conversation's notifications still waiting for
+	// their lookups (noteOrder)
+	if !resolved && b.notes.later(a, e.Channel, func() { b.desktopNotificationAfter(a, ev, true) }) {
 		return
 	}
 	if c == nil {
@@ -131,7 +138,8 @@ func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool)
 	note := a.messageNote(e.Channel, e.TS, e.ThreadTS) // the toast's payload (notify.go)
 	note.pushChecked = true                            // notePushOn above
 	b.noteMarkShown(key)
-	a.dispatch("showNotification", map[string]any{"title": title, "message": body, "body": body, "channelId": e.Channel, "ts": e.TS},
+	// in order with the other notifications (backend.go showNotification)
+	a.showNotification(map[string]any{"title": title, "message": body, "body": body, "channelId": e.Channel, "ts": e.TS},
 		func(ctx context.Context, args map[string]any) (any, error) {
 			if t, bd, ok := notificationText(args, nil, body); ok {
 				a.notifyMessage(t, bd, note)
