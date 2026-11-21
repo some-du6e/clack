@@ -2046,6 +2046,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: "ui: the system DM's toast in Notification Center (COUNT runs)"
+        shell: bash # $COUNT is the job's env (pwsh would read its own variable)
         env:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
