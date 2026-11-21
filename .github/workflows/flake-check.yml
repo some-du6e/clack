@@ -489,10 +489,14 @@ jobs:
         run: xvfb-run -a go test -count=$COUNT -v -run '^TestHuddleWindowFollowsYourTheme$' ./internal/ui/huddleui
       - name: "css: a stylesheet's root tokens resolved on several goroutines at once (the huddle windows share the main window's; plain and -race)"
         if: ${{ !cancelled() }}
+        # each test in its own process: a crash in one (a fatal concurrent
+        # map write, an index out of range) doesn't hide the other
         run: |
           rc=0
-          go test -count=$COUNT -v -run '^TestRootTokensConcurrentUse$' ./internal/ui/slackc/css || rc=1
-          go test -race -count=$COUNT -v -run '^TestRootTokensConcurrentUse$' ./internal/ui/slackc/css || rc=1
+          for t in TestRootTokensConcurrentColor TestRootTokensConcurrentBackground; do
+            go test -count=$COUNT -v -run "^$t\$" ./internal/ui/slackc/css || rc=1
+            go test -race -count=$COUNT -v -run "^$t\$" ./internal/ui/slackc/css || rc=1
+          done
           exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
