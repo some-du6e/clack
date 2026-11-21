@@ -26,6 +26,12 @@ func TestAvatarURLSlackSystemUser(t *testing.T) {
 			}
 		}
 	}
+	// richtext's AvatarResolver (unfurl cards, mention chips)
+	st := New("")
+	st.PutUsers([]slack.User{*full})
+	if got := st.UserAvatar("USLACK"); got != slackasset.SlackLogoMark {
+		t.Errorf("UserAvatar(USLACK) = %q, want the logo", got)
+	}
 	// anyone else keeps their own picture
 	o := &slack.User{ID: "U0SLACK0001", TeamID: "T0266FRGM"}
 	o.Profile.AvatarHash = "abc"

@@ -237,6 +237,9 @@ func (s *Store) UserAvatar(id string) string { return userAvatar(s.User, id) }
 
 func userAvatar(look userLookup, id string) string {
 	if u, ok := look(id); ok && u != nil {
+		if u.ID == SlackSystemUserID { // getMemberProfileImage's n8qp (AvatarURL)
+			return slackasset.SlackLogoMark
+		}
 		return u.Profile.Image48
 	}
 	return ""
