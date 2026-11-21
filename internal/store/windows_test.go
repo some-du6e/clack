@@ -147,3 +147,29 @@ func TestHeldWindowsStay(t *testing.T) {
 		t.Errorf("a released window outlived the cap")
 	}
 }
+
+// TestWindowReachingNewestIsAnEpoch: a jump window that reaches the
+// newest messages with no timeline loaded becomes the timeline, a window
+// of its own as a newest page's read makes one (SetLatestReadAt): a new
+// Epoch, its end as of the resets so far (EndGen). It came with neither,
+// so a list holding another window's messages kept them in front of it
+// (takeNewest merges a page of its own epoch), and a catch-up took its end
+// for one read before the last reset.
+func TestWindowReachingNewestIsAnEpoch(t *testing.T) {
+	s := New("")
+	s.SetLatest("C2", msgsAt(1, 3), false) // another channel's window: epochs count from it
+	s.ResetReachedEnd(nil)
+	if _, merged := s.AddWindow("C1", msgsAt(100, 140), tsAt(100), tsAt(139), true, false, 0); !merged {
+		t.Fatal("a window reaching the newest messages stayed a window")
+	}
+	tl, other := s.Timeline("C1"), s.Timeline("C2")
+	if tl == nil || other == nil {
+		t.Fatalf("timelines: C1 %v, C2 %v", tl != nil, other != nil)
+	}
+	if tl.Epoch == 0 || tl.Epoch == other.Epoch {
+		t.Errorf("the timeline the window made has epoch %d (another channel's %d): not a window of its own", tl.Epoch, other.Epoch)
+	}
+	if tl.EndGen != s.EndGen() {
+		t.Errorf("its EndGen is %d after %d resets", tl.EndGen, s.EndGen())
+	}
+}

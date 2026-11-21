@@ -2592,7 +2592,9 @@ func (r *row) layoutReactionBar(gtx layout.Context, p slackc.Props) layout.Dimen
 	r.reactAs = p.StrOr("currentUser", "")
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}
-	st := reactionBarClass.Enter(gtx, 0, 0)
+	// the className a plugin passes on (OwlMode's taut-owl-reactions, which
+	// its .c-reaction_bar.taut-owl-reactions .c-reaction rules need)
+	st := reactionBarClass.EnterClass(gtx, 0, 0, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -2819,7 +2821,8 @@ func (r *row) layoutAddButton(gtx layout.Context, _ slackc.Props) layout.Dimensi
 	}
 	gtx.Constraints = layout.Exact(size)
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
+		// .c-reaction_add is a 9999px pill: a rule's box-shadow rings it
+		return st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return r.addButton(gtx, st, size) })
 	}
 	return r.addButton(gtx, st, size)
 }
@@ -2832,7 +2835,9 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 		pointerCursor(gtx, rr)
 		col := c.Text
 		if r.addReact.Hovered() {
-			border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
+			if !st.Has("box-shadow") { // Slack's hover ring is a box-shadow a rule replaces
+				border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
+			}
 			col = rgb(0xecb22e)
 		} else {
 			rrect(gtx.Ops, rr, ph/2, st.Background(r.seeFill(c, c.ReactBg, c.raw.ReactBg)))
@@ -2908,7 +2913,9 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	size := image.Pt(dp(gtx, 8)+cd.Size.X+dp(gtx, 8), ph)
 	gtx.Constraints = layout.Exact(size)
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return pl.pill(gtx, st, content, size, cy) })
+		// .c-reaction is a 9999px pill: a rule's box-shadow (OwlMode's owl
+		// ring) and background follow its round ends
+		return st.WrapRounded(gtx, unit.Dp(mt.reactH/2), func(gtx layout.Context) layout.Dimensions { return pl.pill(gtx, st, content, size, cy) })
 	}
 	return pl.pill(gtx, st, content, size, cy)
 }
@@ -2921,16 +2928,26 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 		pointerCursor(gtx, rr)
 		rad := size.Y / 2
 		hov := pl.btn.Hovered()
+		// Slack's reacted and hover rings are box-shadows
+		// (.c-reaction--reacted, .c-reaction:hover); a rule's box-shadow
+		// replaces them (OwlMode rings every pill in its colour)
+		ring := !st.Has("box-shadow")
 		switch {
 		case self && hov:
 			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
-			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			if ring {
+				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			}
 		case self:
 			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg)))
-			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			if ring {
+				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
+			}
 		case hov:
 			rrect(gtx.Ops, rr, rad, st.Background(colorNone))
-			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
+			if ring {
+				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
+			}
 		default:
 			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactBg, c.raw.ReactBg)))
 		}

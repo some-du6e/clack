@@ -681,6 +681,31 @@ func (t *Taut) ComposerButtons() bool {
 	return h != nil && len(h.Buttons) > 0
 }
 
+// ComposerButtonsFor is how many composer.addButton buttons are for
+// composers of kind (channel | thread | edit | draft | other): Taut's
+// TextyButtonOverflow patch puts each among the toolbar's children,
+// whether or not its render returns null (app/slack/composer/
+// buttons.tsx), so they count toward the toolbar's fold. Nil-safe.
+func (t *Taut) ComposerButtonsFor(kind string) int {
+	if t == nil {
+		return 0
+	}
+	h := t.composer()
+	if h == nil {
+		return 0
+	}
+	n := 0
+	for _, b := range h.Buttons {
+		for _, k := range b.Kinds {
+			if k == kind {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
 // ComposerContext is Taut's ComposerContext: kind channel | thread | edit
 // | draft | other, with Broadcast for a thread composer's checkbox.
 type ComposerContext struct {

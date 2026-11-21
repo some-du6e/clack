@@ -312,7 +312,7 @@ func (s *Server) variants() []slack.User {
 	x.Team = ExternalTeamID
 	xap := prof("", "Partner Bot", "", "xapp")
 	xap.Team, xap.BotID, xap.APIAppID = ExternalTeamID, ExternalAppBotID, ExternalAppAppID
-	return []slack.User{
+	return append([]slack.User{
 		{ID: ProfileID, TeamID: TeamID, Name: "robin", RealName: "Robin Example", TZ: "Europe/Berlin", TZLabel: "Central European Time", TZOffset: 3600, Profile: p, Presence: "active"},
 		{ID: AdminID, TeamID: TeamID, Name: "avery.admin", RealName: "Avery Admin", IsAdmin: true, TZ: "America/Los_Angeles", TZOffset: -28800, Profile: a},
 		{ID: DeactivatedID, TeamID: TeamID, Name: "gone.user", RealName: "Gone User", Deleted: true, TZ: "America/New_York", TZOffset: -18000, Profile: g},
@@ -321,7 +321,7 @@ func (s *Server) variants() []slack.User {
 		{ID: AppUserID, TeamID: TeamID, Name: "deploybot", RealName: "Deploy Bot", IsBot: true, Profile: ap, Presence: "active"},
 		{ID: ExternalID, TeamID: ExternalTeamID, Name: "sam.partner", RealName: "Sam Partner", TZ: "Asia/Tokyo", TZOffset: 32400, Profile: x, Presence: "active"},
 		{ID: ExternalAppUserID, TeamID: ExternalTeamID, Name: "partnerbot", RealName: "Partner Bot", IsBot: true, Profile: xap},
-	}
+	}, s.roleUsers(prof)...) // roles.go
 }
 
 // appProfile is apps.profile.get's app_profile for the fixed apps (the
@@ -518,6 +518,7 @@ type Server struct {
 	secs  secState        // sidebar sections, marks, channel notification prefs (sections.go)
 	hud   huddleState     // rooms.getLink, huddles.scheduled.new, calendar.* (huddles.go)
 	cem   callsEmailState // calls.request, conversations.emailaddresses.*, avatars.* (calls_email.go)
+	posts postState       // the newest message posted per conversation, for client.counts (count_posts.go)
 }
 
 // DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
@@ -1613,8 +1614,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if closedDM(c) { // closed_dms.go: read
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
-			e = s.dmBadgeCount(c, e)  // dm_badges.go
-			e = s.systemDMCount(c, e) // system_dm.go
+			e = s.dmBadgeCount(c, e)   // dm_badges.go
+			e = s.systemDMCount(c, e)  // system_dm.go
+			e = s.postedCount(c.ID, e) // count_posts.go: CountsFollowPosts
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -2202,7 +2204,9 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-// ws accepts the realtime gateway and says hello; it then idles.
+// ws accepts the realtime gateway and says hello; it then answers the
+// client's pings with pongs, as Slack's gateway does ({"type":"pong",
+// "reply_to":id}), until StallSockets silences it.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	s.count("ws")
 	// the client sends Origin: https://app.slack.com, like the web client
@@ -2217,11 +2221,21 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 	defer s.dropSocket(c)
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"hello"}`))
 	for {
-		_, b, err := c.Read(ctx)
+		_, data, err := c.Read(ctx)
 		if err != nil {
 			return
 		}
-		s.noteFrame(b)
+		s.noteFrame(data)
+		var f struct {
+			Type string `json:"type"`
+			ID   int64  `json:"id"`
+		}
+		if json.Unmarshal(data, &f) == nil && f.Type == "ping" && s.liveSocket(c) {
+			b, _ := json.Marshal(map[string]any{"type": "pong", "reply_to": f.ID})
+			wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			_ = c.Write(wctx, websocket.MessageText, b)
+			cancel()
+		}
 	}
 }
 

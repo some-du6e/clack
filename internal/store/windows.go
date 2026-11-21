@@ -147,7 +147,10 @@ func unionWindows(a, b *Window) *Window {
 func (s *Store) joinTimelineLocked(ch string, w *Window) {
 	t := s.timelines[ch]
 	if t == nil {
-		s.timelines[ch] = &Timeline{Msgs: w.Msgs, HasMore: w.HasOlder, Loaded: true}
+		// the newest messages' window, as a newest page's read makes one
+		// (SetLatestReadAt): a window of its own (Epoch), its end as of
+		// the resets so far (EndGen)
+		s.timelines[ch] = &Timeline{Msgs: w.Msgs, HasMore: w.HasOlder, Loaded: true, EndGen: s.endGen, Epoch: s.newEpochLocked()}
 		return
 	}
 	earlier := len(t.Msgs) == 0 || len(w.Msgs) > 0 && TSLess(w.Msgs[0].TS, t.Msgs[0].TS)
