@@ -1006,7 +1006,9 @@ func (pl *reactPill) props() slackc.Props {
 	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), true
 	// the pill button renders inside Reaction's React tree, so context a
 	// Reaction patch provides (WhoReacted's reactors) reaches the button
-	p["children"] = []any{slackc.Child("UnstyledButton", pl.buttonProps(), pl.layoutButton)}
+	// its native draws the pill's box (fill, ring) itself: a rule a
+	// plugin's className brings is painted once, round (slackc.ChildBox)
+	p["children"] = []any{slackc.ChildBox("UnstyledButton", pl.buttonProps(), pl.layoutButton)}
 	return pl.r.pane(p)
 }
 

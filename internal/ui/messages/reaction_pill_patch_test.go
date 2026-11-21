@@ -494,6 +494,19 @@ func rpCompare(t *testing.T, dark bool, mode, plug string) {
 	if ringPx < 100 {
 		t.Errorf("%s/owl: %d px in the owl's colour %v around the owl thread's pills, want its 1px ring round both (the plugin's box-shadow)", mode, ringPx, owl)
 	}
+	// the ring and the fill follow the pill's round ends: its box's
+	// corners, outside them, are the row's (the UnstyledButton "@" box
+	// carries the plugin's className too; painted as a box of its own, its
+	// fill and ring were square)
+	for i, p := range patched[6:] {
+		x0, y0, y1 := p.emoji.Min.X-8, p.emoji.Min.Y-4, p.emoji.Max.Y+4
+		row := pimg.RGBAAt(2, (y0+y1)/2)
+		for _, c := range []image.Point{{x0 + 1, y0 + 1}, {x0 + 1, y1 - 2}} {
+			if got := pimg.RGBAAt(c.X, c.Y); rpDist(got, row) > 16 {
+				t.Errorf("%s/owl: the owl thread's pill %d: %v at its box's corner %v, outside its round end, where the row is %v", mode, i, got, c, row)
+			}
+		}
+	}
 	re := patched[7] // tada, yours
 	if dark {
 		// its fill rgba(owl, .15) over the row (blended in sRGB as Chrome
