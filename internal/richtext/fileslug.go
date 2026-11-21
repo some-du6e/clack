@@ -84,7 +84,7 @@ func (c *builder) fileSlugSpan(e *bk) (Span, bool) {
 	if known && status == "normal" && !isAudioClip(ref.Subtype) && ref.Subtype != "video_story" && ref.Subtype != "slack_video" {
 		parts = titleSpans(c.r, label)
 		if isCanvasType(ref) {
-			if bs := c.blocks(parseBlocks(ref.TitleBlocks)); len(bs) > 0 {
+			if bs := c.titleBlocks(ref.TitleBlocks); len(bs) > 0 {
 				if t := firstLine(flatten(bs)); len(t) > 0 {
 					parts = t
 				}

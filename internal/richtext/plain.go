@@ -70,6 +70,11 @@ func writeBlock(b *strings.Builder, blk *Block, text SpanText) {
 		if f := blk.File; f != nil {
 			line(b, firstNonEmpty(f.Title, f.Name))
 		}
+	case CallBlock: // the card's header: its title and status lines
+		if c := blk.Call; c != nil {
+			line(b, c.Title)
+			line(b, c.Status)
+		}
 	case AttachmentBlock:
 		if a := blk.Att; a != nil {
 			line(b, spansText(a.Pretext, text))

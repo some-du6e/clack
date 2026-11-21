@@ -193,6 +193,8 @@ type builder struct {
 	// depth is how deep resolveFallback is in fallbacks, noCard how deep
 	// in callouts' children (no fallback card there, fallback.go)
 	depth, noCard int
+	// titles is how many canvas titles deep the builder is (titleBlocks)
+	titles int
 	// containers counts the message's container blocks (Container.Key)
 	containers int
 	// missing: a block Slack draws but Clack can't yet drew nothing (the

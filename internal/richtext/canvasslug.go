@@ -108,7 +108,7 @@ func (c *builder) canvasName(fileID string) (name []Span, status string, ok, fro
 			if ref.Status != "" && ref.Status != "normal" {
 				return nil, ref.Status, true, false
 			}
-			if bs := c.blocks(parseBlocks(ref.TitleBlocks)); len(bs) > 0 {
+			if bs := c.titleBlocks(ref.TitleBlocks); len(bs) > 0 {
 				if sp := firstLine(flatten(bs)); len(sp) > 0 {
 					return sp, "normal", true, true
 				}
@@ -163,6 +163,22 @@ func CanvasTitle(r Resolver, title string, blocks json.RawMessage) []Span {
 		return nil
 	}
 	return titleSpans(r, title)
+}
+
+// maxTitleDepth is how many canvas titles deep a slug's title_blocks are
+// followed: a title naming a canvas (itself, or one whose title names it
+// back) draws that canvas by its title string past it.
+const maxTitleDepth = 2
+
+// titleBlocks converts a canvas's title_blocks for a slug's name, or
+// nothing maxTitleDepth titles deep.
+func (c *builder) titleBlocks(raw json.RawMessage) []Block {
+	if c.titles >= maxTitleDepth || len(raw) == 0 {
+		return nil
+	}
+	c.titles++
+	defer func() { c.titles-- }()
+	return c.blocks(parseBlocks(raw))
 }
 
 func titleSpans(r Resolver, s string) []Span {

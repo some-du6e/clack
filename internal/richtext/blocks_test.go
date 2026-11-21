@@ -304,3 +304,18 @@ func TestRichTextNewlines(t *testing.T) {
 	d := blocksMsg(t, `[{"type":"rich_text","elements":[`+sec(txt(`a\n \n\nb\nc`))+`]}]`)
 	eq(t, "plain", SpansText(d.Blocks[0].Spans), "a\n \n\nb\nc")
 }
+
+// TestCallBlockPlainText: a call block's plain text (copy, a thread row's
+// text) is its card's header, its title and status lines, as ui read the
+// call attachment's title before the card.
+func TestCallBlockPlainText(t *testing.T) {
+	d := blocksMsg(t, `[{"type":"call","call_id":"R1","call":{"v1":{"id":"R1","name":"Synthetic sync","date_start":1700000000,"date_end":1700003600}}}]`)
+	if len(d.Blocks) != 1 || d.Blocks[0].Kind != CallBlock || d.Blocks[0].Call == nil || d.Blocks[0].Call.Title == "" {
+		t.Fatalf("blocks %s", dump(d.Blocks))
+	}
+	c := d.Blocks[0].Call
+	got := PlainText(*d)
+	if !strings.HasPrefix(got, c.Title) || (c.Status != "" && !strings.Contains(got, c.Status)) {
+		t.Errorf("plain text %q, want the card's %q and %q", got, c.Title, c.Status)
+	}
+}
