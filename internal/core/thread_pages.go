@@ -357,6 +357,7 @@ func (a *App) repliesOne(ctx context.Context, ch, ts, w, A, reason string, v boo
 		// the root, its own read up to itself: the history reaches the
 		// thread's start
 		a.S.AddThreadPageSince(ch, ts, []slack.Message{*o}, []string{ts}, store.ThreadPageBounds{Latest: ts, HasMore: false}, pg.since)
+		a.announceReads() // the root's revision, if the read brought another (read_changes.go)
 	}
 	return nil
 }
