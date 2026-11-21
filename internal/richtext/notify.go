@@ -82,10 +82,11 @@ func notifyBlocks(bs []Block, st SpanText) string {
 // context its text elements joined by spaces (no images); an image block
 // its title (not its alt text); a table its rows, cells joined by ", "; a
 // container its title; a share_shortcut its title
-// (convertStringTitledBlockToPlainText); a rich_text list its items as
-// "• item." (notifyList). Actions, alerts, callouts, cards, calls,
-// loading, inputs, files, dividers and types with no converter add
-// nothing.
+// (convertStringTitledBlockToPlainText); a video block its title
+// (convertVideoBlockToPlainText; Clack draws it as an attachment); a
+// rich_text list its items as "• item." (notifyList). Actions, alerts,
+// callouts, cards, calls, loading, inputs, files, dividers and types with
+// no converter add nothing.
 func notifyBlock(b *Block, st SpanText) string {
 	switch b.Kind {
 	case Paragraph, Preformatted, Quote, Header, RichHeader, Tombstone, Agent:
@@ -129,6 +130,10 @@ func notifyBlock(b *Block, st SpanText) string {
 			rows = append(rows, strings.Join(cells, ", "))
 		}
 		return strings.Join(rows, "\n")
+	case AttachmentBlock: // a video block: convertVideoBlockToPlainText
+		if b.Att != nil && b.Att.VideoURL != "" {
+			return spansText(b.Att.Title, st)
+		}
 	case ContainerBlock: // convertPlainTextTitledBlockToPlainText
 		if b.Container != nil {
 			return spansText(b.Container.Title, st)

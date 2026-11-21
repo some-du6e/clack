@@ -49,6 +49,10 @@ func TestNotificationText(t *testing.T) {
 		{"a share_shortcut is its workflow's title",
 			`{"ts":"1.0","text":"A workflow link","blocks":[{"type":"share_shortcut","function_trigger_id":"Ft0GALLERY1","title":"Request time off"}]}`,
 			"Request time off"},
+		{"a video block is its title (convertVideoBlockToPlainText), not its description",
+			`{"ts":"1.0","text":"","blocks":[{"type":"video","video_url":"https://v.test/v.mp4","thumbnail_url":"https://v.test/t.png","alt_text":"a clip",` +
+				`"title":{"type":"plain_text","text":"Launch recap"},"description":{"type":"plain_text","text":"Its description"}}]}`,
+			"Launch recap"},
 		{"an image block is its title, not its alt text",
 			`{"ts":"1.0","text":"t","blocks":[{"type":"image","image_url":"https://i.test/a.png","alt_text":"alt","title":{"type":"plain_text","text":"Chart"}},` +
 				`{"type":"image","image_url":"https://i.test/b.png","alt_text":"only alt"}]}`,
