@@ -191,6 +191,8 @@ type scope struct {
 	// box's content edge (Host.PlaceChildren): window origins and the
 	// rects JS reads follow it.
 	place f32.Point
+	// rectsAt is the window origin the rects JS has were flushed at
+	rectsAt f32.Point
 }
 
 type scopeKey struct {
@@ -971,12 +973,19 @@ func (v *View) layoutText(gtx layout.Context, fr *frame, txt string, st *css.Sty
 var pendingRects map[int64][4]float32
 
 func (s *scope) flushRects() {
-	if !s.rectsDirty || bridge() == nil {
+	if bridge() == nil {
+		return
+	}
+	// A sub scope's origin follows its host, painted after the native
+	// that runs the scope: when only the host moved (its first frame, a
+	// placement after the measures), its boxes' rects move too.
+	ox, oy := s.windowOrigin()
+	if !s.rectsDirty && ox == s.rectsAt.X && oy == s.rectsAt.Y {
 		return
 	}
 	s.rectsDirty = false
+	s.rectsAt = f32.Pt(ox, oy)
 	v := s.v
-	ox, oy := s.windowOrigin()
 	for _, b := range s.painted {
 		k := b.k()
 		if k == 0 || b.rectFr != v.frameNo {
