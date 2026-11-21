@@ -28,11 +28,11 @@ func (a *App) threadStartAt(ch, thread, ts string) {
 }
 
 // shownThreads is the threads a pane shows now, by "channel/ts": the
-// secondary view's (open or hidden by Ctrl+., which keeps it) and the
-// split view's.
+// secondary view's (a pane Ctrl+. hides unmounts, as thread-reply-focus's
+// threadFocusUnmount has it) and the split view's.
 func (a *App) shownThreads() map[string]bool {
 	out := map[string]bool{}
-	if s := &a.secondary; s.kind == secThread && s.channel != "" && s.ts != "" {
+	if s := &a.secondary; s.kind == secThread && s.open() && s.channel != "" && s.ts != "" {
 		out[s.channel+"/"+s.ts] = true
 	}
 	if st := a.split.stack; len(st) > 0 {

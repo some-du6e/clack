@@ -451,14 +451,18 @@ func (s *Store) TruncateThread(ch, ts string, drop bool) bool {
 	return true
 }
 
-// ResetThreadsReachedEnd is resetReachedEnd for every thread of ch (all
-// threads with ch ""): the client was disconnected, so what the socket
-// would have added past each history's end is unknown. prevReachedEnd
-// keeps that it had reached it (the pane keeps drawing its end and its
-// reply box: getPotentiallyOutdatedTimestamps).
-func (s *Store) ResetThreadsReachedEnd(ch string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// resetThreadEndsLocked is resetReachedEnd for every thread history (the
+// threads of ch, all with ch ""), the thread keys of the one reset Slack
+// makes at a slow connect (ResetReachedEnd: resetReachedEnd({}) covers
+// every key, a channel's and its threads'): what the socket would have
+// added past each end is unknown. prevReachedEnd keeps that it had
+// reached it (the pane keeps drawing its end and its reply box:
+// getPotentiallyOutdatedTimestamps), and a reply the socket brings now
+// makes a slice of its own (addTimestamps appends only while reachedEnd),
+// which the pane's loadPost joins. It reports how many it reset; s.mu
+// held.
+func (s *Store) resetThreadEndsLocked(ch string) int {
+	n := 0
 	for k, a := range s.threadHist {
 		if ch != "" && !strings.HasPrefix(k, ch+"/") {
 			continue
@@ -466,8 +470,10 @@ func (s *Store) ResetThreadsReachedEnd(ch string) {
 		if a.reachedEnd.isTrue() {
 			a.prevReachedEnd = true
 			a.reachedEnd = tUnset // null: neither true nor false
+			n++
 		}
 	}
+	return n
 }
 
 // ResetThreadReachedEnd is resetReachedEnd for the one thread ch/ts

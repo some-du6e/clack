@@ -1179,6 +1179,10 @@ func (hb *hub) apply(ev core.Event) bool {
 			m.fetched = time.Time{}
 			if ev.Type == "connection" && ev.Connected {
 				m.fails, m.retryAt, m.olderFails, m.olderRetryAt = 0, time.Time{}, 0, time.Time{}
+				if !ev.Fast {
+					m.th.newerFails, m.th.newerRetryAt = 0, time.Time{}
+					m.staleThreadEnd() // the slow connect's reset, as core's store made it (thread_load.go)
+				}
 			}
 			m.refreshQ = true
 			m.rev++

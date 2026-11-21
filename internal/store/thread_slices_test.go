@@ -215,3 +215,51 @@ func TestThreadPageKeepsRootOutOfSlice(t *testing.T) {
 		t.Error("removeAllTimestamps kept the thread's replies")
 	}
 }
+
+// TestResetReachedEndCoversThreads: the slow connect's one reset
+// (ResetReachedEnd, history-gap's) makes every thread history's end stale
+// along with the channels' windows, as Slack's resetReachedEnd({}) covers
+// every key: the pane keeps its slice (prevReachedEnd), a reply the socket
+// brings after it makes a slice of its own, and the read past the old end
+// that reaches the thread's end joins it.
+func TestResetReachedEndCoversThreads(t *testing.T) {
+	s := New(t.TempDir())
+	const ch, root = "C1", "1700000000.000100"
+	ts := func(i int) string { return fmt.Sprintf("%d.000100", 1700000000+i) }
+	s.SetLatest(ch, []slack.Message{{TS: root, ThreadTS: root, ReplyCount: 3}}, false) // the channel's window
+	msgs := []slack.Message{{TS: root, ThreadTS: root, ReplyCount: 3}}
+	tss := []string{root}
+	for i := 1; i <= 3; i++ {
+		msgs = append(msgs, slack.Message{TS: ts(i), ThreadTS: root})
+		tss = append(tss, ts(i))
+	}
+	s.AddThreadPageSince(ch, root, msgs, tss, ThreadPageBounds{Oldest: root, HasMore: false}, s.LiveSeq())
+	s.AddThreadPageSince(ch, root, msgs[:1], []string{root}, ThreadPageBounds{Latest: root, HasMore: false}, s.LiveSeq())
+	if sl, _ := s.ThreadSliceAt(ch, root, root); !sl.ReachedEnd || !sl.ReachedStart || len(sl.TSs) != 4 {
+		t.Fatalf("before the gap: %d timestamps, reachedStart %v reachedEnd %v; want the whole thread", len(sl.TSs), sl.ReachedStart, sl.ReachedEnd)
+	}
+	if n := s.ResetReachedEnd(nil); n != 2 {
+		t.Errorf("the reset covered %d, want the channel's window and the thread's history", n)
+	}
+	if _, _, stale := s.EndOf(ch); !stale {
+		t.Error("the channel's window end isn't stale")
+	}
+	sl, _ := s.ThreadSliceAt(ch, root, root)
+	if sl.ReachedEnd || !sl.PrevReachedEnd || len(sl.TSs) != 4 {
+		t.Fatalf("after the reset: %d timestamps, reachedEnd %v prevReachedEnd %v; want the slice kept, its end stale", len(sl.TSs), sl.ReachedEnd, sl.PrevReachedEnd)
+	}
+	s.AddReply(ch, slack.Message{TS: ts(5), ThreadTS: root}) // the socket's reply after the connect
+	if sl, _ := s.ThreadSliceAt(ch, root, root); len(sl.TSs) != 4 {
+		t.Errorf("the socket's reply past the stale end joined the pane's slice: %v", sl.TSs)
+	}
+	// the pane's read past the old end reaches the thread's end
+	page := []slack.Message{{TS: root, ThreadTS: root}, {TS: ts(3), ThreadTS: root}, {TS: ts(4), ThreadTS: root}, {TS: ts(5), ThreadTS: root}}
+	s.AddThreadPageSince(ch, root, page, []string{ts(3), ts(4), ts(5)}, ThreadPageBounds{Oldest: ts(3), HasMore: false}, s.LiveSeq())
+	sl, _ = s.ThreadSliceAt(ch, root, root)
+	if !sl.ReachedEnd || sl.PrevReachedEnd || len(sl.TSs) != 6 {
+		t.Errorf("after the read: %d timestamps, reachedEnd %v prevReachedEnd %v; want the gap's reply and the socket's joined, the end reached", len(sl.TSs), sl.ReachedEnd, sl.PrevReachedEnd)
+	}
+	if all, _, _, _, _ := s.ThreadHistory(ch, root); len(all) != 1 {
+		t.Errorf("%d slices after the read, want one", len(all))
+	}
+}

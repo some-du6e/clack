@@ -61,6 +61,10 @@ type threadState struct {
 	newerFails   int
 	newerRetryAt time.Time
 	lastPre      string // the latest a loadPre asked for (loadMoreForPendingScroll's lastLoadedEarliestTs)
+	// endGap: the slice had reached the thread's end when a slow connect
+	// made it stale, and no read has reached it since: the viewer's sends
+	// past the slice stay drawn (setThreadSlice)
+	endGap bool
 }
 
 // loadOut reports a load whose answer replaces the model's messages: the
@@ -86,16 +90,56 @@ func (m *model) threadCovers(ts string) bool {
 	return (t.reachedStart || !tsLess(ts, first)) && (t.reachedEnd || !tsLess(last, ts))
 }
 
+// staleThreadEnd is the hub's copy of the slow connect's reset
+// (store resetThreadEndsLocked, which core made before it told the lists
+// of the connection): a slice that reached the thread's end has only
+// prevReachedEnd now, so the socket's replies past it wait until the
+// pane's read joins them, and the list at its end reads forward
+// (loadPost). Callers hold mu.
+func (m *model) staleThreadEnd() {
+	if m.threadTS != "" && m.th.reachedEnd {
+		m.th.reachedEnd, m.th.prevReachedEnd, m.th.endGap = false, true, true
+	}
+}
+
 // setThreadSlice makes sl the model's messages and slice (callers hold
 // mu).
-func (m *model) setThreadSlice(sl core.ThreadSlice) {
-	m.setAll(sl.Msgs)
+//
+// own is the viewer's sends core tracks in the channel (core.TrackedSends:
+// confirmed ones for a while). A model at the thread's end (reached, or
+// had before a slow connect) keeps those of its messages past a slice
+// that no longer reaches the end, with its pending and failed copies:
+// after a socket gap a send lands in a slice of its own until the pane's
+// read past the stale end joins it, and the pane keeps it meanwhile, as
+// the channel list keeps the viewer's sends through its catch-up (core
+// reached_end.go).
+func (m *model) setThreadSlice(sl core.ThreadSlice, own map[string]bool) {
+	msgs := sl.Msgs
+	if (m.th.reachedEnd || m.th.prevReachedEnd || m.th.endGap) && !sl.ReachedEnd {
+		end := sl.End
+		if n := len(sl.Msgs); n > 0 && tsLess(end, sl.Msgs[n-1].TS) {
+			end = sl.Msgs[n-1].TS
+		}
+		var keep []core.Message
+		for i := range m.msgs {
+			if x := &m.msgs[i].m; (x.Pending || x.Failed || own[x.TS]) && (end == "" || tsLess(end, x.TS)) {
+				keep = append(keep, *x)
+			}
+		}
+		if len(keep) > 0 {
+			msgs = append(append(make([]core.Message, 0, len(sl.Msgs)+len(keep)), sl.Msgs...), keep...)
+		}
+	}
+	m.setAll(msgs)
 	if sl.Root != nil {
 		r := *sl.Root
 		m.th.root = &r
 	}
 	m.th.sliceStart, m.th.sliceEnd = sl.Start, sl.End
 	m.th.reachedStart, m.th.reachedEnd, m.th.prevReachedEnd = sl.ReachedStart, sl.ReachedEnd, sl.PrevReachedEnd
+	if sl.ReachedEnd {
+		m.th.endGap = false // the read joined the end: the slice holds the sends
+	}
 	m.hasMore = !sl.ReachedStart
 }
 
@@ -120,7 +164,10 @@ func (m *model) applyThreadMsg(msg core.Message, seq uint64, isNew bool) bool {
 		delete(m.typing, msg.User)
 	}
 	switch {
-	case m.find(msg.TS) >= 0, m.loaded && m.threadCovers(msg.TS):
+	case m.find(msg.TS) >= 0, m.loaded && m.threadCovers(msg.TS),
+		// the viewer's own pending or failed send, from the reply box at the
+		// thread's end: it stays drawn while a read past a stale end is out
+		m.loaded && (msg.Pending || msg.Failed) && (m.th.reachedEnd || m.th.prevReachedEnd || m.th.endGap):
 		m.upsert(msg, seq)
 		m.noteLive(msg.TS, false)
 	case !m.loaded:
@@ -144,6 +191,7 @@ func (hb *hub) loadThreadSlice(ctx context.Context, m *model) {
 		start = hb.app.ThreadStartTs(m.ch, m.threadTS, "", "", false)
 	}
 	sl, err := hb.app.ThreadAt(ctx, m.ch, m.threadTS, start)
+	own := hb.app.TrackedSends(m.ch)
 	seq := hb.app.EmitSeq()
 	if f := loadLanded.Load(); f != nil {
 		(*f)(m)
@@ -161,7 +209,7 @@ func (hb *hub) loadThreadSlice(ctx context.Context, m *model) {
 	live := m.takeLive()
 	if err == nil {
 		m.th.start = start
-		m.setThreadSlice(sl)
+		m.setThreadSlice(sl, own)
 		m.dropped = false // the store's slice, whole
 		m.keepLive(live)
 		m.loaded = true
@@ -248,8 +296,10 @@ func (hb *hub) threadPage(m *model, older, newer bool) bool {
 		defer cancel()
 		err := hb.app.RequestReplies(ctx, m.ch, m.threadTS, oldest, latest)
 		var sl core.ThreadSlice
+		var own map[string]bool
 		if err == nil {
 			sl = hb.app.ThreadSliceAt(m.ch, m.threadTS, start)
+			own = hb.app.TrackedSends(m.ch)
 		}
 		seq := hb.app.EmitSeq()
 		if f := loadLanded.Load(); f != nil {
@@ -270,7 +320,7 @@ func (hb *hub) threadPage(m *model, older, newer bool) bool {
 			// the start moved (a jump) or the hub let the model go: its
 			// own load reads the slice
 		case err == nil:
-			m.setThreadSlice(sl)
+			m.setThreadSlice(sl, own)
 			m.keepLive(live)
 			if older {
 				m.olderFails, m.olderRetryAt = 0, time.Time{}
@@ -337,7 +387,7 @@ func (hb *hub) jumpThread(m *model, ts string) bool {
 				m.th.root = &r
 			}
 		} else {
-			m.setThreadSlice(sl)
+			m.setThreadSlice(sl, nil)
 			m.loaded = true
 			m.fetched = time.Now()
 		}

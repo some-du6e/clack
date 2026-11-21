@@ -393,15 +393,25 @@ func (a *App) ThreadOlder(ctx context.Context, ch, ts, start string) error {
 // pollThread is what a poll (no socket: pollLoop) reads of a watched
 // thread: the page after the end of a history that had reached it, as
 // loadPost does once the socket is back (resetReachedEnd, then the list
-// at its end loads the newer page). A thread the pane reads elsewhere
+// at its end loads the newer page). The end goes stale first, as at the
+// connect: with no socket, what came past it is unknown, and a page that
+// leaves more after it keeps the history short of the end (a read past a
+// reached end would leave it reached). A thread the pane reads elsewhere
 // waits for its list to page there.
 func (a *App) pollThread(ctx context.Context, ch, ts string) error {
 	sl, _ := a.S.ThreadSliceAt(ch, ts, "")
 	if sl.Empty() || sl.End == "" || !(sl.ReachedEnd || sl.PrevReachedEnd) {
 		return nil
 	}
+	a.S.ResetThreadReachedEnd(ch, ts)
 	return a.RequestReplies(ctx, ch, ts, sl.End, "")
 }
+
+// TrackedSends is the ts of the viewer's sends in ch core still tracks
+// (pending and failed copies, confirmed ones for a while: sendsIn): a
+// thread pane keeps them through the read past a stale end, as the
+// channel list does (reached_end.go).
+func (a *App) TrackedSends(ch string) map[string]bool { return a.sendsIn(ch) }
 
 // CloseThread is truncateThreadHistory, as the thread pane shows the
 // thread no more: the history of a thread in an archived channel, or in a
