@@ -97,6 +97,9 @@ var (
 	envVal Env
 
 	bridgeVal atomic.Pointer[Bridge]
+	// bridgeGen counts SetBridge calls: a new bridge is a JS runtime that
+	// hasn't heard the window's viewport yet (Frame).
+	bridgeGen atomic.Uint64
 
 	// patched is nil until a plugin patches something: the fast path is
 	// one atomic load and a nil check.
@@ -128,6 +131,7 @@ func invalidate() {
 
 // SetBridge installs (or with nil removes) the JS side.
 func SetBridge(b Bridge) {
+	bridgeGen.Add(1)
 	if b == nil {
 		bridgeVal.Store(nil)
 		return
@@ -719,10 +723,16 @@ func Reset() {
 // positioning and SetViewport).
 var windowSize image.Point
 
+// lastViewport is what Frame last reported to JS, and to which bridge
+// (bridgeGen): a runtime started after it (plugins turned off and on
+// again) is told the viewport at its first frame, rather than keeping
+// its document's defaults (1280x800 at 1x, light: <body> without
+// sk-client-theme--dark) until the window changes.
 var lastViewport struct {
 	size image.Point
 	dpr  float32
 	dark bool
+	gen  uint64
 }
 
 // Frame is the ui root's per-frame hook, called before laying out the
@@ -742,8 +752,9 @@ func Frame(gtx layout.Context) {
 	}
 	pump()
 	dark := env().Theme != nil && env().Theme.Dark
-	if windowSize != lastViewport.size || gtx.Metric.PxPerDp != lastViewport.dpr || dark != lastViewport.dark {
-		lastViewport.size, lastViewport.dpr, lastViewport.dark = windowSize, gtx.Metric.PxPerDp, dark
+	gen := bridgeGen.Load()
+	if windowSize != lastViewport.size || gtx.Metric.PxPerDp != lastViewport.dpr || dark != lastViewport.dark || gen != lastViewport.gen {
+		lastViewport.size, lastViewport.dpr, lastViewport.dark, lastViewport.gen = windowSize, gtx.Metric.PxPerDp, dark, gen
 		s := gtx.Metric.PxPerDp
 		if s == 0 {
 			s = 1
