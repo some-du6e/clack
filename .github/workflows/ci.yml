@@ -1,4 +1,6 @@
 name: ci
+# a dispatch with `only` says so in the run list ("ci only=full-test")
+run-name: ${{ inputs.only && format('ci only={0}', inputs.only) || '' }}
 on:
   push:
   pull_request:
@@ -26,6 +28,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # `only` must start a job's id: a typo (fulltest, full_test, " full-test")
+  # started none, every job was skipped and the run was green
+  only-check:
+    if: ${{ inputs.only != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/workflows
+      - name: only starts a job's id
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          ids=$(awk '/^jobs:/ { j = 1; next } j && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { sub(/^  /, ""); sub(/:.*/, ""); print }' .github/workflows/ci.yml)
+          found=""
+          for id in $ids; do
+            # neither runs alone: this check, and the coverage of linux-test's shards
+            case $id in only-check | linux-coverage) continue ;; esac
+            # a literal prefix, as startsWith matches it (no glob)
+            if [ "${id#"$ONLY"}" != "$id" ]; then
+              found="$found $id"
+            fi
+          done
+          if [ -z "$found" ]; then
+            echo "::error::only=\"$ONLY\" starts no job's id, so every job would be skipped: $(echo $ids)"
+            exit 1
+          fi
+          echo "only=$ONLY runs:$found"
   # gofmt, vet and the linux binary. The linux work that used to be one
   # job (21 min, all of it serial) is these linux-* jobs, in parallel.
   linux-build:
