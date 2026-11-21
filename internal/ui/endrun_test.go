@@ -8,6 +8,7 @@ import (
 	"runtime/pprof"
 	"strings"
 	"sync"
+	"testing"
 	"unsafe"
 	"weak"
 )
@@ -25,10 +26,12 @@ type testApp struct {
 	p    weak.Pointer[App]
 }
 
-func trackTestApp(test string, a *App) {
-	testApps.Lock()
-	testApps.l = append(testApps.l, testApp{test, weak.Make(a)})
-	testApps.Unlock()
+func init() {
+	startEnvHook = func(tb testing.TB, a *App) {
+		testApps.Lock()
+		testApps.l = append(testApps.l, testApp{tb.Name(), weak.Make(a)})
+		testApps.Unlock()
+	}
 }
 
 // liveTestApps is the tracked Apps still live, oldest first, as addresses
