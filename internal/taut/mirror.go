@@ -473,6 +473,16 @@ func (m *mirror) postInvalidate(rt *runtime, out []change) {
 	})
 }
 
+// watching reports whether JS holds key of slice as it read it last with
+// no change told since (watch): an invalidation forgets it until JS reads
+// again, and that read takes whatever changed meanwhile.
+func (m *mirror) watching(slice, key string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.watched[slice][key]
+	return ok
+}
+
 // watch records what JS just read, so sweep can tell when it changes
 // without an event (a history page core loaded on the UI's request).
 func (m *mirror) watch(slice, key string, fp uint64) {

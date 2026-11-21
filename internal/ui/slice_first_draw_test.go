@@ -10,14 +10,16 @@ package ui
 // reply: 218-266 ms, 12-15 frames, in runs 44591888895, 44596411773).
 // Pushes run it once (CLACK_SLICE_TEXT, flake-check's edit-latency job):
 // the pane opens on three threads, each after the app settled (boot's
-// loads landed, the mirror idle), and each gap is held to
-// sliceFirstDrawWall. The first pane of a session drew core's copy for
-// ~650 ms (36-37 paints, runs 44828104385 and 44829338850), the next two
-// ~55 ms: its thread's first load brought replies the plugins' copy of the
-// conversation lacked and marked nothing (setAll marked only messages the
-// model had), so their views waited for the mirror's sweep; a median hid
-// it. CLACK_SLICE_GAPS (slice-gaps, on request) allows no unmarked frame.
-// Synthetic data only.
+// loads landed, the mirror idle), as does the channel before it, and
+// each gap is held to sliceFirstDrawWall. The first pane of a session
+// drew core's copy for ~650 ms (36-37 paints, runs 44828104385 and
+// 44829338850), the next two ~55 ms: its thread's first load brought
+// replies the plugins' copy of the conversation lacked and marked nothing
+// (setAll marked only messages the model had), so their views waited for
+// the mirror's sweep; a median hid it. Marking every new message took the
+// channel's first draw to ~290 ms (run 44837771236): JS that never read a
+// conversation reads it fresh (taut.MessagesAdded). CLACK_SLICE_GAPS
+// (slice-gaps, on request) allows no unmarked frame. Synthetic data only.
 
 import (
 	"context"
@@ -35,8 +37,11 @@ import (
 )
 
 // sliceFirstDrawWall bounds how long a newly shown row draws core's copy
-// before the plugins' view on pushes (a JS round trip: ~55 ms settled).
-const sliceFirstDrawWall = 300 * time.Millisecond
+// before the plugins' view on pushes: a JS round trip, the panes ~90 ms
+// and the channel 16-113 ms settled. Past it: a thread pane's replies
+// waiting for the mirror's sweep (~650 ms), a channel's first window
+// marked whole when JS reads it fresh anyway (~290 ms).
+const sliceFirstDrawWall = 200 * time.Millisecond
 
 func TestSliceFirstDraw(t *testing.T) {
 	strict := os.Getenv("CLACK_SLICE_GAPS") != ""
@@ -147,7 +152,10 @@ func TestSliceFirstDraw(t *testing.T) {
 		t.Logf("first draw, %s: median %v of %v", what, sorted[len(sorted)/2].Round(time.Millisecond), lags)
 	}
 
-	newest := fmt.Sprintf("%s %d", rootText, len(threads)-1) // the channel's newest message
+	// the channel's newest message, once boot's loads landed and the
+	// mirror is idle
+	newest := fmt.Sprintf("%s %d", rootText, len(threads)-1)
+	e.settle(2 * time.Second)
 	follow(newest)
 	e.openChannel(ch)
 	e.until("the channel's history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })

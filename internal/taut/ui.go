@@ -1025,6 +1025,22 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 	}
 }
 
+// MessagesAdded is MessagesChanged for messages a load brought that the
+// UI's model of ch didn't have (a thread pane's replies, an older page):
+// marked only while JS holds a copy of ch's messages it read before, which
+// lacks them, so their views waited for the mirror's sweep (a thread
+// pane's first open under a text patch drew core's copy ~650 ms). JS that
+// never read the conversation reads them all fresh with the first view
+// asked for, and marking a first window's every message held each of its
+// views a JS round trip more (a channel's first draw took ~290 ms, not
+// ~50).
+func (t *Taut) MessagesAdded(ch string, tss []string) {
+	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
+		return
+	}
+	t.MessagesChanged(ch, tss)
+}
+
 // InjectedMessages lists messages plugins added to ch (injectMessages)
 // that core doesn't have, as UI messages. Non-blocking like MessageView,
 // and cheap: the fetch worker decodes the channel's bucket once per value
