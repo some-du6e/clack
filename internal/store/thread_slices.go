@@ -719,6 +719,26 @@ func (s *Store) AddThreadPageSince(ch, ts string, msgs []slack.Message, tss []st
 	return out
 }
 
+// ThreadRepliesIn is the ts of the replies of thread ch/ts the messages
+// store holds from lo to hi ("": no bound), oldest first, but for those
+// the socket brought, changed or deleted after since (a fetch's LiveSeq
+// when it went out): what a replies answer covering lo to hi should have.
+func (s *Store) ThreadRepliesIn(ch, ts, lo, hi string, since uint64) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for _, m := range s.threads[ch+"/"+ts] {
+		if m.TS == ts || lo != "" && TSLess(m.TS, lo) || hi != "" && TSLess(hi, m.TS) {
+			continue
+		}
+		if r, ok := s.live[ch+"/"+m.TS]; ok && r.seq > since {
+			continue
+		}
+		out = append(out, m.TS)
+	}
+	return out
+}
+
 // setThreadWholeLocked makes msgs the thread's one slice, both ends
 // reached: SetThread's and SetThreadSince's whole thread.
 func (s *Store) setThreadWholeLocked(k string, msgs []slack.Message) {

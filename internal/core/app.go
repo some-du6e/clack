@@ -172,6 +172,9 @@ type App struct {
 type watchedThread struct {
 	ch, ts string
 	at     time.Time
+	// first and last: the replies its pane has on screen (NoteThreadView),
+	// what a poll reads again
+	first, last string
 }
 
 type call struct {
@@ -390,7 +393,7 @@ func (a *App) pollOnce(ctx context.Context) {
 		}
 	}
 	for _, t := range threads {
-		if err := a.pollThread(ctx, t.ch, t.ts); err != nil { // the page past its end (thread_pages.go)
+		if err := a.pollThread(ctx, t.ch, t.ts, t.first, t.last); err != nil { // its pane's rows, the page past its end (thread_pages.go)
 			log.Printf("poll: thread %s %s: %v", logtag.ID(t.ch), logtag.ID(t.ts), err)
 		}
 	}
@@ -423,7 +426,10 @@ func (a *App) watch(ch, threadTS string) {
 	}
 	th := []watchedThread{{ch: ch, ts: threadTS, at: time.Now()}}
 	for _, t := range a.watchTh {
-		if (t.ch != ch || t.ts != threadTS) && len(th) < 2 {
+		switch {
+		case t.ch == ch && t.ts == threadTS:
+			th[0].first, th[0].last = t.first, t.last // its pane's rows, as noted
+		case len(th) < 2:
 			th = append(th, t)
 		}
 	}

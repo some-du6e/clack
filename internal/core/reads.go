@@ -116,7 +116,11 @@ func (a *App) Refresh(ctx context.Context, ch string) (Page, error) {
 // Replies returns a thread as its pane would open on it, root first: the
 // slice at its default start (the last read of a followed thread, else
 // the root; thread_pages.go), from memory when held, else one or two
-// replies reads of 28 (requestReplies). It never reads the whole thread.
+// replies reads of 28 (requestReplies). It is one slice, never the whole
+// thread: the viewer's newest message reads the newest slice instead
+// (ThreadSliceAt with no start, as Slack's undo send and edit-last
+// selectors read dTxY tp(threadKey, null)), and a List item's comments
+// page as the thread pane's do (ui/listview item.go).
 // A reply's ts reads its parent's thread at the reply: conversations.replies
 // answers a reply's ts with its parent's thread, which repliesOne and
 // repliesAround keep under the parent's key (replyRooted), so the pane
@@ -156,25 +160,6 @@ func (a *App) RefreshReplies(ctx context.Context, ch, ts string) ([]Message, err
 		return nil, err
 	}
 	return a.Replies(ctx, ch, ts)
-}
-
-// ThreadNewest is the newest slice of a thread, root first: the last
-// slice of a history that reached its end, else the page up to the
-// root's latest_reply (requestReplies around it). Undoing the viewer's
-// last send reads it.
-func (a *App) ThreadNewest(ctx context.Context, ch, ts string) ([]Message, error) {
-	sl := a.ThreadSliceAt(ch, ts, "")
-	if sl.Empty() {
-		start := ts
-		if r, ok := a.threadRoot(ch, ts); ok && r.LatestReply != "" {
-			start = r.LatestReply
-		}
-		var err error
-		if sl, err = a.ThreadAt(ctx, ch, ts, start); err != nil {
-			return nil, err
-		}
-	}
-	return threadMsgs(sl, ts), nil
 }
 
 // hydrate fetches messages by (channel, ts): memory first, then one

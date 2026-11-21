@@ -89,15 +89,25 @@ func (a *App) ThreadStartTs(ch, ts, startTs, replyTs string, startAtTop bool) st
 	return ts
 }
 
-// threadOriginalLastRead is withOriginalLastRead's lastRead: the thread
-// subscription's last read when the viewer follows the thread, "" when
-// not.
+// threadOriginalLastRead is withOriginalLastRead's lastRead (boot-shared
+// l6n6): the thread subscription's last read when the viewer follows the
+// thread, "" when not. Slack's mapStateToProps reads the subscription by
+// the thread's key (getSubscriptionState, client-boot YFI6 nq), with no
+// need of the root message: the store's subscription, else the one a
+// copy of the root carries (slurpThreadSubscriptions takes it from every
+// message the client holds), a copy fetched by id among them (Pins,
+// Drafts, Activity and a file's thread hold their roots there, in no
+// window or cached thread).
 func (a *App) threadOriginalLastRead(ch, ts string) string {
-	m, ok := a.S.Find(ch, ts)
+	sub, ok := a.S.ThreadSub(ch, ts)
 	if !ok {
-		return ""
+		m, found := a.S.FindHeld(ch, ts)
+		if !found {
+			return ""
+		}
+		sub = a.S.ThreadSubOf(ch, &m)
 	}
-	if sub := a.S.ThreadSubOf(ch, &m); sub.Subscribed {
+	if sub.Subscribed {
 		return sub.LastRead
 	}
 	return ""
@@ -355,6 +365,14 @@ func (a *App) repliesOne(ctx context.Context, ch, ts, w, A, reason string, v boo
 	if err != nil {
 		return err
 	}
+	a.addOnePage(ch, ts, pg, w, A, v, S)
+	return nil
+}
+
+// addOnePage puts repliesOne's answer pg (read with oldest w and latest A)
+// in the store, as fetchAndAddReplies' one request does; it returns the
+// thread's key (the parent's, when ts was a reply's).
+func (a *App) addOnePage(ch, ts string, pg repliesPage, w, A string, v bool, S string) string {
 	if pg.parent != "" {
 		a.replyRooted(ch, ts, pg.parent) // a reply's ts: the answer is its parent's thread, kept under its key
 		ts = pg.parent
@@ -388,7 +406,7 @@ func (a *App) repliesOne(ctx context.Context, ch, ts, w, A, reason string, v boo
 		a.S.AddThreadPageSince(ch, ts, []slack.Message{*o}, []string{ts}, store.ThreadPageBounds{Latest: ts, HasMore: false}, pg.since)
 		a.announceReads() // the root's revision, if the read brought another (read_changes.go)
 	}
-	return nil
+	return ts
 }
 
 // addRepliesPage is addMessagesFromHistory for a replies read: the
@@ -420,21 +438,115 @@ func (a *App) ThreadOlder(ctx context.Context, ch, ts, start string) error {
 	return a.RequestReplies(ctx, ch, ts, "", start)
 }
 
-// pollThread is what a poll (no socket: pollLoop) reads of a watched
-// thread: the page after the end of a history that had reached it, as
-// loadPost does once the socket is back (resetReachedEnd, then the list
-// at its end loads the newer page). The end goes stale first, as at the
-// connect: with no socket, what came past it is unknown, and a page that
-// leaves more after it keeps the history short of the end (a read past a
-// reached end would leave it reached). A thread the pane reads elsewhere
-// waits for its list to page there.
-func (a *App) pollThread(ctx context.Context, ch, ts string) error {
+// pollThread is what a poll (no socket: pollLoop, Clack's own: Slack's
+// client reads nothing while its socket is away) reads of a watched
+// thread, so its pane shows what the socket would have told it:
+//
+//   - the replies the pane has on screen, first to last (NoteThreadView),
+//     read again over the store's copies (refreshThreadRange): an edit,
+//     a deletion or a reaction meanwhile shows within a poll, as each
+//     replies read of Slack's brings the changes in its range (fetchReplies'
+//     cached_latest_updates answer: the changed messages, and the deleted
+//     ones, which addMessagesFromHistory drops);
+//   - the page after the end of a history that had reached it, as
+//     loadPost does once the socket is back (resetReachedEnd, then the
+//     list at its end loads the newer page). The end goes stale first, as
+//     at the connect: with no socket, what came past it is unknown, and a
+//     page that leaves more after it keeps the history short of the end
+//     (a read past a reached end would leave it reached). A thread the
+//     pane reads elsewhere waits for its list to page there. A re-read of
+//     the rows that reached the thread's end read that page already.
+func (a *App) pollThread(ctx context.Context, ch, ts, first, last string) error {
+	if first != "" {
+		end, err := a.refreshThreadRange(ctx, ch, ts, first, last)
+		if err != nil || end {
+			return err
+		}
+	}
 	sl, _ := a.S.ThreadSliceAt(ch, ts, "")
 	if sl.Empty() || sl.End == "" || !(sl.ReachedEnd || sl.PrevReachedEnd) {
 		return nil
 	}
 	a.S.ResetThreadReachedEnd(ch, ts)
 	return a.RequestReplies(ctx, ch, ts, sl.End, "")
+}
+
+// maxPollPages caps the pages a poll reads again of a pane's rows: about
+// three screens of replies.
+const maxPollPages = 3
+
+// refreshThreadRange reads the replies of thread ch/ts from first to
+// last again, as loadPost reads (fetchReplies {oldest}, 28 a page, from
+// first), each answer over the store's copies (addOnePage): an edit or
+// a reaction shows. A reply the store holds within the range an answer
+// covers (from its oldest to its last reply, or on to the thread's end
+// when it has no more) that the answer lacks was deleted meanwhile
+// (dropThreadGone). It reports whether a page reached the thread's end.
+func (a *App) refreshThreadRange(ctx context.Context, ch, ts, first, last string) (bool, error) {
+	if last == "" || store.TSLess(last, first) {
+		last = first
+	}
+	cur := first
+	for range maxPollPages {
+		pg, err := a.fetchReplies(ctx, ch, ts, cur, "", "poll-refresh")
+		if err != nil {
+			return false, err
+		}
+		key := a.addOnePage(ch, ts, pg, cur, "", false, "")
+		replies := withoutTS(pg.msgs, key)
+		hi := ""
+		if pg.hasMore && len(replies) > 0 {
+			hi = replies[len(replies)-1].TS
+		}
+		a.dropThreadGone(ch, key, replies, cur, hi, pg.since)
+		if !pg.hasMore {
+			return true, nil
+		}
+		if len(replies) == 0 || !store.TSLess(replies[len(replies)-1].TS, last) {
+			return false, nil
+		}
+		cur = replies[len(replies)-1].TS
+	}
+	return false, nil
+}
+
+// dropThreadGone takes the deletions a replies answer shows: a reply of
+// thread ch/ts the store holds from lo to hi (hi "": on to the thread's
+// end) that the answer got lacks is gone, unless the socket brought it
+// after the request went out (since) or it is a send of the viewer's
+// core still tracks (sendsIn: a pending or failed copy the server never
+// had). Each goes as the socket's message_deleted takes it (the store's
+// copies, noted gone, and a "delete" event), as Slack's replies read
+// drops the deleted ts its answer lists (gOq3 hands rGEL fetchReplies'
+// deleted to addMessagesFromHistory).
+func (a *App) dropThreadGone(ch, ts string, got []slack.Message, lo, hi string, since uint64) {
+	have := make(map[string]bool, len(got))
+	for i := range got {
+		have[got[i].TS] = true
+	}
+	own := a.sendsIn(ch)
+	for _, t := range a.S.ThreadRepliesIn(ch, ts, lo, hi, since) {
+		if have[t] || own[t] || a.isLocalTS(t) {
+			continue
+		}
+		a.S.NoteRemove(ch, t)
+		a.emit(Event{Type: "delete", Channel: ch, TS: t, ThreadTS: ts})
+	}
+}
+
+// NoteThreadView notes the replies the pane of thread ch/ts has on
+// screen, first to last, for the poll that reads them again while the
+// socket is away (pollThread). The thread list calls it as what it shows
+// changes.
+func (a *App) NoteThreadView(ch, ts, first, last string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i := range a.watchTh {
+		if t := &a.watchTh[i]; t.ch == ch && t.ts == ts {
+			t.first, t.last = first, last
+			return
+		}
+	}
 }
 
 // TrackedSends is the ts of the viewer's sends in ch core still tracks
