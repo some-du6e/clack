@@ -379,11 +379,7 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 		// drew, until JS's copy of the edit comes or EditHold passes. A
 		// patch that rewrites no text (ShowRealUser's sender) holds
 		// nothing: the edit draws in the next frame
-		if changed && t.TextRewrites() {
-			r.viewed, r.vmsg, r.heldTil = true, &mv, now.Add(taut.EditHold)
-			r.recompose()
-		}
-		return
+		return // RED EVIDENCE: no hold
 	}
 	r.viewWait = false
 	r.viewed, r.vmsg = true, &mv
