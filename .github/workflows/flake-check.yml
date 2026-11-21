@@ -2268,3 +2268,38 @@ jobs:
           xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
           xvfb-run -a go test -count=$COUNT -timeout 20m -run "$VIEWS_TESTS" ./internal/ui/views || rc=1
           exit $rc
+
+  # system-dm-avatar (2026-11-21): the Slack system user (USLACK) drawn as
+  # Slack's bundled logo (getMemberProfileImage 6Knt: n8qp) everywhere:
+  # imgcache rasterizes that one shipped SVG and no other; the store's
+  # avatar rule; no badge on a USLACK message (JA+h memberIsHuman ||
+  # isSlackSystemUser); its card renders nothing and its presence is
+  # Slackbot's heart; the system DM's sidebar row, header and bot_message
+  # rows over fakeslack's fixture, pixels on the headless GPU.
+  # Dispatch with only=system-dm-avatar.
+  system-dm-avatar:
+    if: ${{ !inputs.only || startsWith('system-dm-avatar', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: imgcache, store, core, popups, ui (COUNT runs)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          rc=0
+          go test -count=$COUNT -v -run '^(TestBundledSlackLogoDraws|TestNetworkSVGStaysUndecodable|TestRasterSVGRefusesWhatItCannotDraw|TestParsePathData)$' ./internal/imgcache || rc=1
+          go test -count=$COUNT -v -run '^TestAvatarURLSlackSystemUser$' ./internal/store || rc=1
+          go test -count=$COUNT -v -run '^(TestSenderBadge|TestSenderIdentity)$' ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 20m -run '^TestSlackSystemUserCard$' ./internal/ui/popups || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 30m -run '^(TestSlackSystemDMAvatar|TestSidebarSystemUserPresence)$' ./internal/ui || rc=1
+          exit $rc

@@ -22,6 +22,10 @@ func identityApp(t *testing.T) *App {
 		{ID: "UAF", Name: "agentforce", IsBot: true, IsAgentforceBot: true},
 		{ID: "UAPPU", Name: "appuser", IsAppUser: true},
 		{ID: "USLACKBOT", Name: "slackbot", RealName: "Slackbot"},
+		// users.info's shape for the Slack system user (is_bot and
+		// is_app_user false)
+		{ID: "USLACK", Name: "slack", RealName: "Slack", TeamID: "T0266FRGM", Color: "757575",
+			Profile: slack.Profile{RealName: "Slack", DisplayName: "Slack", AvatarHash: "svb051040db2"}},
 	})
 	a.S.PutBot("BSTORE", store.BotInfo{Name: "Stored Bot", Icon: "https://img.example/store72.png", AppID: "ASTORE"})
 	a.S.PutBot("BWFB", store.BotInfo{Name: "Workflow Builder", Icon: "https://img.example/wfb72.png", AppID: "A0112L5RZ5E", Workflow: true})
@@ -58,6 +62,14 @@ func TestSenderIdentity(t *testing.T) {
 		{"user-less bot: the store bot's icon", slack.Message{BotID: "BSTORE", Subtype: "bot_message"}, "Stored Bot", "https://img.example/store72.png", true},
 		{"Workflow Builder prefers its own icon", slack.Message{BotID: "BWFB", Icons: &slack.Icons{Image72: "https://img.example/msg72.png"}},
 			"Workflow Builder", "https://img.example/wfb72.png", true},
+		// the Slack system user's DM (D… with USLACK): apps post Slack's
+		// notices as user-less bot_messages with a username, one icons
+		// image and a bot_profile of their own (clod's DM, 2026-11-21)
+		{"system DM: username + icons.image_48 over the bot_profile", slack.Message{BotID: "B0SYSAPP001", AppID: "A0SYSAPP001", Subtype: "bot_message",
+			Username: "Workspace notices", Icons: &slack.Icons{Image48: "https://img.example/notice48.png"},
+			BotProfile: &slack.BotProfile{ID: "B0SYSAPP001", Name: "Notices app", AppID: "A0SYSAPP001", UserID: "U0SYSAPP001",
+				Icons: slack.Icons{Image36: "https://img.example/bp36.png", Image48: "https://img.example/bp48.png", Image72: "https://img.example/bp72.png"}}},
+			"Workspace notices", "https://img.example/notice48.png", true},
 		{"user-less bot with no icons anywhere: Slack's ava_0002", slack.Message{BotID: "BNEW",
 			BotProfile: &slack.BotProfile{ID: "BNEW", Name: "Plain"}}, "Plain", DefaultBotAvatar, true},
 	} {
@@ -95,6 +107,7 @@ func TestSenderBadge(t *testing.T) {
 		{"U1", "", ""},                 // a person
 		{"U1", "BX", ""},               // an app posting as the person
 		{"USLACKBOT", "", ""},          // Slackbot is served is_bot false
+		{"USLACK", "", ""},             // the Slack system user: JA+h's memberIsHuman || isSlackSystemUser
 		{"UAGENT", "BAGENT", BadgeApp}, // agent_status alone isn't read (support_lots_of_agents off)
 		{"UWF", "", BadgeWorkflow},     // is_workflow_bot
 		{"UAF", "", BadgeAgentforce},   // is_agentforce_bot

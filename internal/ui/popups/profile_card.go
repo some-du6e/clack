@@ -636,6 +636,11 @@ func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, 
 // its card says "Built by Slack" and has no buttons).
 func pfIsSlackbot(u core.User) bool { return u.ID == "USLACKBOT" }
 
+// pfIsSystemUser is ConnectedPresence's isSystemUser (client-boot Bh6F):
+// Slackbot or the Slack system user (USLACK). BasePresence (MSOq) draws
+// either as status-slackbot-filled.
+func pfIsSystemUser(u core.User) bool { return u.ID == "USLACKBOT" || u.ID == "USLACK" }
+
 // pfBanner is Slack's MemberProfileHoverBanner (client-boot-shared B0lO)
 // across the card's top: "Workspace Owner", else "Workspace Admin", else
 // (deactivated) an archive icon and "Deactivated account". Padding 8px
@@ -878,7 +883,7 @@ func pfPresenceNative(gtx layout.Context, th *theme.Theme, u core.User, dot floa
 			return layout.Dimensions{Size: image.Pt(col, rowH)}
 		}
 		label := "Away"
-		if active {
+		if active || pfIsSystemUser(u) { // getPresenceText (MSOq): a system user is "Active"
 			label = "Active"
 		}
 		x := dp(gtx, 28)
@@ -902,8 +907,8 @@ func pfShowsPresence(u core.User) bool {
 }
 
 // pfPresenceGlyph is BasePresence's icon (getPresenceIconName) at about
-// dot dp: Slackbot's heart (isSystemUser: status-slackbot-filled, drawn
-// whatever its presence), the rounded square of an external member or
+// dot dp: Slackbot's and the Slack system user's heart (isSystemUser:
+// status-slackbot-filled, drawn whatever its presence), the rounded square of an external member or
 // guest (status-guest / -filled), else the member circle. Active is
 // #2bac76 (c-presence--active), away the hollow gray.
 func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bool, dot float32) layout.Dimensions {
@@ -913,7 +918,7 @@ func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bo
 		col = cl.Presence
 	}
 	switch {
-	case pfIsSlackbot(u):
+	case pfIsSystemUser(u):
 		return pfSlackbotHeart(gtx, dot, col)
 	case u.External || u.Guest:
 		px := dp(gtx, dot*8/9) // an 8-unit square where the circle is 9
@@ -1160,7 +1165,7 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 				actDo(h, "You're set to away", func(ctx context.Context, a *core.App) error { return a.SetPresence(ctx, "away") })
 			}}.In(nsProfile))
 		}
-	} else if !u.IsBot || pfIsSlackbot(u) {
+	} else if (!u.IsBot || pfIsSlackbot(u)) && u.ID != "USLACK" { // oGjw: none for isProfileOnlyUser or iXFk
 		sep()
 		items = append(items, files("View files"))
 	}
