@@ -137,9 +137,15 @@ func (d *fakeOutput) Close() { d.once.Do(func() { close(d.stop) }) }
 // TestSpeakerPickPlaysOnTheNewOutput: picking a Speaker saves it, reopens
 // the speakers on it and plays the test sound there, not on the output you
 // left (useAudioOutSettingsMenuItems: the sound plays on the preferred
-// sink, once it's the new one), and the old output goes quiet.
+// sink, once it's the new one). The old output plays the huddle until the
+// new one is swapped in, then goes quiet (huddle.TestOverlappingSpeakerPicks),
+// so what it played before the test sound began (the room's tone, which
+// can pass testSoundLevel's threshold at its peaks) doesn't count.
 func TestSpeakerPickPlaysOnTheNewOutput(t *testing.T) {
 	oldList, oldLoad := listAudioDevices, loadMusic
+	var firstOut atomic.Pointer[fakeOutput]
+	var soundAt atomic.Int64 // the old output's loud samples when the test sound was asked for
+	soundAt.Store(-1)
 	listAudioDevices = func(capture bool) ([]huddle.AudioDevice, error) {
 		if capture {
 			return []huddle.AudioDevice{{ID: "m1", Name: "Microphone", Default: true}}, nil
@@ -147,6 +153,9 @@ func TestSpeakerPickPlaysOnTheNewOutput(t *testing.T) {
 		return []huddle.AudioDevice{{ID: "o1", Name: "Speakers", Default: true}, {ID: "o2", Name: "Headphones"}}, nil
 	}
 	loadMusic = func(string) ([]int16, error) { // half a second the outputs can tell from the huddle's tone
+		if f := firstOut.Load(); f != nil {
+			soundAt.CompareAndSwap(-1, f.heard.Load())
+		}
 		pcm := make([]int16, 48000)
 		for i := range pcm {
 			pcm[i] = testSoundLevel
@@ -195,6 +204,7 @@ func TestSpeakerPickPlaysOnTheNewOutput(t *testing.T) {
 	if first == nil {
 		t.Fatal("the speakers didn't open")
 	}
+	firstOut.Store(first)
 
 	// Speaker › Headphones
 	var pick func()
@@ -214,9 +224,14 @@ func TestSpeakerPickPlaysOnTheNewOutput(t *testing.T) {
 	if head == nil {
 		t.Fatal("the speakers didn't reopen on Headphones")
 	}
-	if n := first.heard.Load(); n > 0 {
+	at := soundAt.Load()
+	if at < 0 {
+		t.Fatal("the test sound never played")
+	}
+	if n := first.heard.Load() - at; n > 0 {
 		t.Errorf("the test sound played %d samples on the Speakers you switched away from", n)
 	}
+	t.Logf("the Speakers played %d loud samples of the huddle before the test sound began", at)
 	if n := head.heard.Load(); n < 20000 {
 		t.Errorf("the Headphones played %d samples of the test sound, want it all (48000)", n)
 	}
