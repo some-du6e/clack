@@ -25,6 +25,10 @@ on:
         description: "taut git ref (branch, tag or sha); empty = TAUT_PIN"
         required: false
         default: ""
+      run:
+        description: "go test -run pattern for ./internal/ui (e.g. ^TestTautMessageLatency$ to run one test); empty = every Taut/Slick test"
+        required: false
+        default: ""
 
 # Taut is third-party code (GPLv3) built and run here: by default CI uses the
 # reviewed commit TAUT_PIN; dispatch with ref=main (or any ref) to test upstream.
@@ -40,7 +44,7 @@ permissions:
 # queued or running, so stale pushes don't pile up in the shared queue.
 # A dispatch with other inputs gets its own group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.run }}
   cancel-in-progress: true
 
 jobs:
@@ -107,11 +111,12 @@ jobs:
           TAUT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
           LIBGL_ALWAYS_SOFTWARE: "1"
+          TEST_RUN: ${{ inputs.run }}
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/dump-before-budget.sh" 12 & wd=$!
           trap 'kill $wd 2>/dev/null' EXIT
           mkdir -p "$TAUT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -timeout 13m -v -run 'TestTaut|TestSlick|TestDeepLink|TestLibrary' ./internal/ui/
+          xvfb-run -a go test -count=1 -timeout 13m -v -run "${TEST_RUN:-TestTaut|TestSlick|TestDeepLink|TestLibrary}" ./internal/ui/
           # Taut's huddle plugins on the native call over the fake Chime (loopback only)
           xvfb-run -a go test -count=1 -timeout 10m -v -run 'TestTautHuddle' ./internal/ui/huddleui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

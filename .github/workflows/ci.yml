@@ -509,6 +509,18 @@ jobs:
           name: fanout-logs-linux-idle
           path: ${{ runner.temp }}/fanout.*
           if-no-files-found: ignore
+      # Message latency: a socket event (or Enter) to the frame that draws
+      # its row, against Slack's next frame, over the fake's socket with
+      # frames drawn as the window draws them; its millisecond budgets want
+      # a runner to themselves, as the idle frames do (after them, the ui
+      # test binary the idle step built)
+      - name: message latency (TestMessageLatency)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          [ -x "$RUNNER_TEMP/ui.test" ] || go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+          cd internal/ui && "$RUNNER_TEMP/ui.test" -test.count=1 -test.v -test.timeout 10m -test.run '^TestMessageLatency$'
       # Gio patch 35 and ui's quiet frames on App.Run's real X11 window
       # (Xvfb, Mesa's llvmpipe): a frame only an animated emoji asked for
       # draws the last frame's ops again, without a layout; patch 46: a

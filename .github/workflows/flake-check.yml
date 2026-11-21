@@ -2899,6 +2899,106 @@ jobs:
           go test -race -count=1 -run "$SLACK_TESTS|$STORE_TESTS" ./internal/slack ./internal/store || rc=1
           exit $rc
 
+  # msg-latency-2's lanes (jsrt UserBlocking, UserChain, the in-order lane,
+  # CallThen): a send's checks, transforms and thunk run ahead of the
+  # plugin runtime's backlog, a checked send goes out with no composer
+  # frame after Enter, typing goes out before its message, a native
+  # dispatch and a click keep their order, a plugin send via JS keeps each
+  # message, a frame's move goes before its press; the plugins' state
+  # views are read in chunks (a whole bucket behind a backlog in about one
+  # queue trip). Dispatch with only=msg-lanes.
+  msg-lanes:
+    if: ${{ !inputs.only || startsWith('msg-lanes', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      JSRT_TESTS: '^(TestBoundaryEventsKeepTheirOrder|TestMovesAcrossTargetsKeepTheirOrder|TestWheelDeltasAddUp|TestUserTimerLeavesThePlainQueueItsTurns|TestUserBlockingRunsFirst|TestUserBlockingPreemptsBatch|TestUserBlockingAfterInOrderTasks|TestUserBlockingContinuations|TestUserBlockingChainEnds|TestUserTimerAfterInOrderTasks|TestInOrderCallBeforeLaterInput|TestSendChainHoldsTheQueue|TestUserYieldLoopLetsTheQueueRun|TestInOrderRunsAheadOfRenders|TestQueuedRectsAndMovesCoalesce|TestMoveBeforeLaterUpUnderBacklog)$'
+      TAUT_TESTS: '^(TestCallTruthyAheadOfBacklog|TestBucketReadBehindBacklog|TestBucketReadChunkEdges|TestBucketReadLeavesTheThreadTurns|TestDispatchSeqOutlivesItsContext|TestCheckThenDispatchGraceCoversTheChecksOnly|TestInjectedMessagesDecodedOnce|TestSendCheckKilledByTheWatchdog)$'
+      COMPOSER_TESTS: '^(TestSendCheckAheadOfJSBacklog|TestSendCheckedMessageGoesOutWithoutAFrame|TestSendThunkWorkAheadOfJSBacklog|TestSendSeesTheClickBeforeIt|TestTypingGoesOutBeforeTheMessage|TestNativeDispatchBeforeLaterClick|TestSendViaJSKeepsEachMessage|TestSendViaJSOnTheUserLane|TestSendViaJSHeldBackPutsTheMessageBack|TestSendViaJSErrorAfterSendKeepsItSent|TestEditOnTheUserLane|TestRuntimePostsStayAheadOfASend)$'
+      SLACKC_TESTS: '^TestFrameMoveBeforePress$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: jsrt, taut, composer, slackc (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -run "$JSRT_TESTS" ./internal/jsrt || rc=1
+          go test -count=1 -v -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=1 -v -timeout 10m -run "$COMPOSER_TESTS" ./internal/ui/composer || rc=1
+          go test -count=1 -v -run "$SLACKC_TESTS" ./internal/ui/slackc || rc=1
+          go test -count=$COUNT -run "$JSRT_TESTS" ./internal/jsrt || rc=1
+          go test -count=$COUNT -timeout 20m -run "$TAUT_TESTS" ./internal/taut || rc=1
+          go test -count=$COUNT -timeout 30m -run "$COMPOSER_TESTS" ./internal/ui/composer || rc=1
+          go test -count=$COUNT -run "$SLACKC_TESTS" ./internal/ui/slackc || rc=1
+          exit $rc
+
+  # msg-latency-2's notifications in order: a burst notifies in the order
+  # its messages came (nothing to wait for, or each waiting for its
+  # sender's one users/info), messages from a new person in order with the
+  # person asked for once, a notification names the new people it waited
+  # for, and under a showNotification patch with the plugin JS behind they
+  # neither swap nor queue behind each other. Dispatch with
+  # only=notify-order.
+  notify-order:
+    if: ${{ !inputs.only || startsWith('notify-order', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      UI_TESTS: '^(TestNotificationsOfAConversationKeepTheirOrder|TestNotificationBurstInOrder|TestNotificationWaitsForNewPeople|TestNotificationsFromNewPersonInOrder|TestNotificationsDontWaitForEachOther)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 10m -run "$UI_TESTS" ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
+          exit $rc
+
+  # msg-latency-2's harness: a socket event (or Enter) to the frame that
+  # draws its row, the whole client over the fake's socket with frames
+  # drawn as the window draws them, without plugins: others' messages
+  # from people it holds and people it never fetched, own sends and their
+  # echoes, quiet and under a busy workspace's socket (Karim's α.102 "like
+  # a second and they come in clumped"). One verbose run, then COUNT.
+  # Dispatch with only=msg-latency.
+  msg-latency:
+    if: ${{ !inputs.only || startsWith('msg-latency', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      CLACK_LATENCY_TESTS: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 20m -run '^TestMessageLatency$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 60m -run '^TestMessageLatency$' ./internal/ui || rc=1
+          exit $rc
+
   # plugin-reaction-pill: reaction pills under a patched ReactionBar (a
   # pass-through patch with no CSS, and OwlMode's shape with its rules)
   # and under a plugin's class on the pill's button against the native
@@ -2985,4 +3085,3 @@ jobs:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
-
