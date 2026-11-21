@@ -510,6 +510,19 @@ func (a *App) Run() error {
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)
+	// Where it was: Slack's mainWindowSettings (winbounds.go). On macOS
+	// the displays are AppKit's, read on its main thread, which answers
+	// only once NSApplication runs (the launch it finishes is the Dock's
+	// bounce): asked here, they come during that launch, while everything
+	// below (the backend's disk reads and the plugin runtimes included)
+	// starts, and the window takes them just before it opens.
+	place := make(chan []app.Option, 1)
+	go func() { place <- a.mainWindowPlace() }()
+	backendLate := os.Getenv("CLACK_LAUNCH_BACKEND") == "late" // launch-speed's A/B: the old order (temporary)
+	if backendLate {
+		a.win.Option(<-place...)
+		place <- nil
+	}
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
@@ -547,13 +560,9 @@ func (a *App) Run() error {
 	wd.startRecorder(a.prefs.FlightRecorder)
 	a.wd = wd // drainIdle's stage
 	go wd.run()
-	// Where it was: Slack's mainWindowSettings (winbounds.go). Last before
-	// the window opens: on macOS the displays are AppKit's, read on its
-	// main thread, which answers only once NSApplication runs (the launch
-	// it finishes is the Dock's bounce), and everything above, the
-	// backend's disk reads and the plugin runtimes included, starts
-	// meanwhile instead of after it.
-	a.win.Option(a.mainWindowPlace()...)
+	// the window's place (above): a.winPlace and a.winOpened are set once
+	// this receives
+	a.win.Option(<-place...)
 	if a.startHidden() { // Keep in Background after a login launch (tray.go)
 		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
 		a.win.Option(app.StartHidden(true))

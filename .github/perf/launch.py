@@ -173,8 +173,9 @@ def one(name, a, cfg, logdir, out, mode="open", env=None, settle_wait=60.0, min_
     proc = None
     t0 = now_ms()
     if SYS == "Darwin" and mode == "open":
-        # LaunchServices, as the Dock and Finder launch it
-        r = subprocess.run(["open", a.app], timeout=60, stdout=so, stderr=se)
+        # LaunchServices, as the Dock and Finder launch it (--env: an A/B's B side)
+        envs = [x for k, v in (env or {}).items() for x in ("--env", f"{k}={v}")]
+        r = subprocess.run(["open", *envs, a.app], timeout=60, stdout=so, stderr=se)
         if r.returncode != 0:
             print(f"  {name}: open exited {r.returncode}", flush=True)
     else:
@@ -264,6 +265,7 @@ def main():
     ap.add_argument("--budget-ms", type=int, default=0)
     ap.add_argument("--budget-mark", default="real-frame")
     ap.add_argument("--label", default=SYS)
+    ap.add_argument("--ab", default="", help="NAME=VALUE: each warm and purged run again with it set (the B side)")
     a = ap.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true":
         sys.exit("launch.py empties this account's Clack folders (credentials included): it runs on CI runners only")
@@ -290,10 +292,15 @@ def main():
         print(f"{a.label}: plugins {plugins}; config {cfg}", flush=True)
 
         runs = [one("cold", a, cfg, logdir, a.out, min_secs=a.cold_secs, purged=True, until="cache: boot data saved")]
+        ab = dict([a.ab.split("=", 1)]) if a.ab else None
         for i in range(a.warm):
             runs.append(one(f"warm{i + 1}", a, cfg, logdir, a.out))
+            if ab:
+                runs.append(one(f"b-warm{i + 1}", a, cfg, logdir, a.out, env=ab, mode="open" if SYS == "Darwin" else "direct"))
         for i in range(a.purged):
             runs.append(one(f"purged{i + 1}", a, cfg, logdir, a.out, purged=True))
+            if ab:
+                runs.append(one(f"b-purged{i + 1}", a, cfg, logdir, a.out, env=ab, purged=True, mode="open" if SYS == "Darwin" else "direct"))
         if a.screenshot and SYS == "Darwin":
             # can a capture see the Dock (its bounce)? CI's TCC may give the desktop alone
             runs.append(one("dock", a, cfg, logdir, a.out, shots=(150, 400, 700)))
@@ -352,10 +359,13 @@ def seed_plugins(lib, cfg):
 
 
 def report(a, runs, extra, plugins, cache):
-    warm = [r for r in runs if r["name"].startswith("warm")]
+    def group(prefix):
+        return [r for r in runs if re.fullmatch(prefix + r"\d+", r["name"])]
+    warm = group("warm")
+    groups = [(g, group(g)) for g in ("warm", "b-warm", "purged", "b-purged") if group(g)]
 
-    def med(c):
-        v = [r[c] for r in warm if c in r]
+    def med(c, rs=None):
+        v = [r[c] for r in (warm if rs is None else rs) if c in r]
         return statistics.median(v) if v else None
     marks = [c for c in COLS if any(c in r for r in runs)]
     marks += sorted({k for r in runs for k, v in r.items() if k not in marks and isinstance(v, int) and not isinstance(v, bool)
@@ -370,11 +380,15 @@ def report(a, runs, extra, plugins, cache):
           "macOS finishing the launch (the Dock's bounce ends); `real-frame` is the first frame of the client itself, not "
           "the boot placeholder. cold: nothing of Clack's on disk and the OS file cache purged; warm: a normal start; "
           "purged: warm, with the OS file cache purged (a first launch after a reboot).", "",
-          "| mark | " + " | ".join(names) + " | **warm median** |", "|" + "---|" * (len(names) + 2)]
+          "| mark | " + " | ".join(names) + "".join(f" | **{g} median**" for g, _ in groups) + " |",
+          "|" + "---|" * (len(names) + 1 + len(groups))]
     for c in marks:
-        m = med(c)
-        md.append(f"| {c} | " + " | ".join(cell(r, c) for r in runs) + f" | **{'—' if m is None else f'{m:,.0f}'}** |")
-    md.append("| reveal waited for | " + " | ".join(r.get("reveal_why", "—") for r in runs) + " | |")
+        ms = [med(c, rs) for _, rs in groups]
+        md.append(f"| {c} | " + " | ".join(cell(r, c) for r in runs)
+                  + "".join(f" | **{'—' if m is None else f'{m:,.0f}'}**" for m in ms) + " |")
+    md.append("| reveal waited for | " + " | ".join(r.get("reveal_why", "—") for r in runs) + " |" + " |" * len(groups))
+    if a.ab:
+        md += ["", f"b- runs: launched with {a.ab}."]
     if extra.get("inits"):
         rows = extra["inits"]
         tot = sum(r[2] for r in rows)
