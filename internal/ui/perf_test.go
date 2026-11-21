@@ -183,6 +183,7 @@ func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 	e.a = New(Options{ConfigDir: home, Started: e.start, NoRealtime: true}, images) // no first-run live-updates banner shifting the layout
 	cache := filepath.Join(home, "cache")
 	svc := core.New(slack.New(fs.Creds()), store.New(cache))
+	pinNetwork(svc)
 	e.a.Attach(svc, cache)
 	// what Run does once the window exists
 	images.SetInvalidate(func() {})
@@ -201,6 +202,19 @@ func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 	}
 	tb.Cleanup(e.shutdown)
 	return e
+}
+
+// pinNetwork keeps the host's own network out of a session over a
+// loopback fakeslack (core.App.PinNetwork: no reconnect when the
+// machine's addresses change, no client_online flips). On 2026-11-21 a
+// macOS runner lost its address for two seconds in the middle of
+// TestIdleFrames' "realtime events about nothing on screen": two
+// reconnects and their catch-up loads drew 8 frames that weren't the
+// session's. The baseline tree perf runs against has no PinNetwork.
+func pinNetwork(c *core.App) {
+	if p, ok := any(c).(interface{ PinNetwork() }); ok {
+		p.PinNetwork()
+	}
 }
 
 // shutdown stops the session's background work so it can be collected.
