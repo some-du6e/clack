@@ -275,11 +275,10 @@ flake-check's `flakes-1121` runs the first three fixes under load.
 - ui-slick's TestSlickView* (unpinned upstream, above).
 - TestMessageMenuOldMenuRows (popups) "timed out waiting for the old row
   next to Act one: the old row's click", once, in ci-speed's full-test
-  (run 44896761367, 2026-11-21): the same log has "the plugin answered
-  message menu pick "copy_link" after 451ms: not running it", so under the
-  full suite's load the plugin engine answered after Clack's pick deadline.
-  First failure in the two weeks; no ci-speed change touches it (a rich
-  copy is the only popups change, and Linux has none).
+  (run 44896761367, 2026-11-21). First failure in the two weeks; no
+  ci-speed change touches it. (Round 2: the "copy_link after 451ms" line in
+  that log is TestMessageMenuStalePickDoesNotRun's own, which sets the
+  deadline to 150 ms; it says nothing about this failure.)
 
 ## For Karim: accounts and money
 
@@ -324,3 +323,46 @@ full set (448-528 runner-minutes, 66-76 min of wall clock on 11-19) loses
 its ci dispatch's 136 minutes and gets the longest ci job down from 30 to
 11 minutes; perf (84 runner-minutes a dispatch, every branch: it has no
 `paths:`) and plugin-bench (45) are the next biggest per candidate.
+
+## Round 2
+
+Branch `ci-speed-2` (2026-11-21), on train-130 (α.127, ci-speed's squash)
+and then ui. Each item has a run that shows the old behaviour (red) and
+one that shows the new (green), on evidence branches `ci-speed-2-*` that
+carry a mutant or an injected fault and are deleted afterwards; the runs
+stay.
+
+| item | change | red | green |
+|---|---|---|---|
+| 1. a hung idle group's dump | the idle jobs' fanout `-test.timeout 10m` (it was their budget: 20, 25); `fanout.sh` streams each process's lines marked `[i]`; a failed or cancelled idle step uploads `$RUNNER_TEMP/fanout.*` | 44916667648: a hung TestIdleFrames group; the job stopped at its 20 min budget, no panic, none of the group's output | 44916670354: `panic: test timed out after 10m0s` and every goroutine, streamed, at minute 12.5 of 20; artifact fanout-logs-linux-idle |
+| 1. full-test, release's test job | `dump-before-budget.sh 35`: the test binaries still running 35 min into the step get SIGQUIT, so each prints its goroutines and go test its output. Its packages start up to 5 min in (`-json` run 44920029289: ui at 2.5, the last at 5.0), so 30 min from there was ~36 of the 40, and later on a slow runner (train-130's attempt 2: stopped at 40, nothing printed) | FTRED | FTGRN |
+| 1. every Go timeout in every job | `budget-check.py` (linux-build) counts a timeout from when its binary starts: the step's recorded start (`.github/step-starts.json`, written by `budget-check.py record` from `gh api .../runs/ID/jobs`) a quarter slower, plus the build; a later command in a step from the step's recorded end; a step with no record from minute 4 if it is the job's first, else from the job's p95. 83 timeouts lowered to the most that still dumps in time (never under twice the step's slowest recorded run, plus a minute), 4 steps given `dump-before-budget.sh` (Linux and macOS), windows-idle's budget 20 to 22 | on train-130's workflows: 88 timeouts whose dump prints past the budget | 0 |
+| 2. a republished old tag | the jobs run `release-meta.sh` from the run's own commit (`git show $GITHUB_SHA:...`), not the tag's tree | 44917159512, job meta-from-the-tags-tree: no `release-meta.sh` in v0.1.0-alpha.126's tree | the same run, meta-from-the-runs-commit: TAG v0.1.0-alpha.126, publish true |
+| 3. a frame that waits a while | TestSpellcheckNeverBlocksFrame: the median frame over still text with the engine's answers held back within 4x a keystroke's frame (its layout, the same run) plus 2 ms. Keystrokes look up no word being typed, so typing frames never wait (a version that compared them passed a mutant: 44919645996) | 44918439106: train-130's test passes frames that wait up to 250 ms each | 44920636274: fails them (median 250.9 ms, bound 4.5 ms); 44920639031: x5 on the real editor, held frames 47-73 µs against keystrokes 447-746 µs |
+| 4. a typo in `only` | `only-check` fails when `only` starts no job's id; `run-name: ci only=<only>` | 44921857436: train-130's ci.yml, `only=fulltest`: all 17 jobs skipped, the run "skipped", titled "ci" | 44921860168: `only="fulltest" starts no job's id, so every job would be skipped`, titled "ci only=fulltest" |
+| 5. a cached result counted as a run | `test-shard.py` runs `go test -count=1`, and `check` fails on any package replayed from the cache | train-130's checker passes shards with an `ok ... (cached)` package | `check` fails on it, passes the real shards |
+| 6. the warm-window test's held answers | `held` waits until each held call's answer is computed; `stale(at)` fails the test when one was computed after the writes began, or still was being | 44917808169: train-130's test with a 2 s answer and marks not journaled passes (the answer carried the writes); 44917813724: the old `held` trips the new check ("still being computed") | 44917810968: the new test fails the same broken merge ("C0FAKE00001 marked read is unread again"); 44917816778: passes with a 2 s answer |
+
+### Flakes (round 2)
+
+| test | cause | fix | red | green |
+|---|---|---|---|---|
+| TestTautZeroCost | `testing.AllocsPerRun` counts the whole process's allocations: one burst elsewhere during the count raised its integer mean | the fewest of five counts, each side | 44924146874: train-130's test, a 300-allocation burst during the count: 53 vs 50 | 44924153026: the same burst, 50 vs 50; 44923396796: an idle Taut that allocates every frame still fails (54 vs 50) |
+| TestClackRollbackKeys, `eglInitialize` 0x3001 | every headless window brought `EGL_DEFAULT_DISPLAY` up (a new X connection) and its Release terminated it, under any other window too; Mesa failed one of those inits (train-129, linux-gio 136849179543; none in ~500, 44922213522) | gio patch 55: the default display stays initialized for the process | 44924405540: TestClackWindowOutlivesAnother on the old egl.go, `eglMakeCurrent error 0x3008` | GRN11 |
+| TestFrameCostDamage | `:explodes:` in view moved on between draws of the same ops on a slow WARP runner (44434705984) despite `SetAnimate(false)` | `images.HoldLive(true)` through the still scenes, off before the emoji's part | not reproduced on Linux: the old test passed with animations on (44923877407) | 44923882764 (Linux); all three OSes: DMG3 |
+| TestMessageMenuOldMenuRows | not reproduced | the test now says what its click aimed at and what the rows are when the click never comes | | |
+| TestRealWindowCaretCost | a second failure seen: "readback: no blink's partial frame in 2.4s" at 1440x900 (Linux, 44923882764), after its whole-frames turns; 3 of 13 partial frames there damaged more than a caret | open | | |
+| TestMacIdleCPU | "channel again: 20 frames in 10 s" (once, 11-21) | open | | |
+
+### The runners lost on 2026-11-21
+
+Two full-test jobs lost their runner: train-126's (136813058254) "lost
+communication with the server" after 66 min, its log gone (404), and
+train-130's attempt 1 (136854209282) "the runner has received a shutdown
+signal", exit 143, at 22.1 min. Nothing in either log tells infra loss from
+the suite starving the runner: no memory or load was recorded. The other 41
+full-test jobs of the day ran 21.7-24.9 min; their five failures were tests
+(TestSocketGapListDrawsEveryMessage, TestPreviewFooterUnderComposerPlugin,
+TestReadsAnnounce and two more), not runners. full-test and release's test
+job now log the runner's memory, swap, load and three biggest processes
+each minute (`runner-load.sh`); RUNNERLOAD
