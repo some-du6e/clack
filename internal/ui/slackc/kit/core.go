@@ -44,20 +44,36 @@ type entry struct {
 }
 
 var (
-	entries []entry
-	regOnce sync.Once
+	entries  []entry
+	elements []elementEntry
+	regOnce  sync.Once
 )
+
+type elementEntry struct {
+	el    slackc.HostElement
+	names []string
+}
 
 // add queues a component for Register; component files call it from init.
 func add(fn slackc.HostComponent, names ...string) {
 	entries = append(entries, entry{fn: fn, names: names})
 }
 
+// addElement queues the DOM element Slack's component renders, for
+// Register (slackc.RegisterHostElement).
+func addElement(el slackc.HostElement, names ...string) {
+	elements = append(elements, elementEntry{el: el, names: names})
+}
+
 // Register registers every kit component with slackc under the names the
-// JS side uses (Slack's component names plus the api.elements aliases).
+// JS side uses (Slack's component names plus the api.elements aliases),
+// with the element each one is in Slack's DOM where CSS needs it.
 // Safe to call more than once.
 func Register() {
 	regOnce.Do(func() {
+		for _, e := range elements {
+			slackc.RegisterHostElement(e.el, e.names...)
+		}
 		for _, e := range entries {
 			slackc.RegisterHost(e.fn, e.names...)
 		}
