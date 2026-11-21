@@ -580,7 +580,7 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 	if vs := scopeVarsOf(&ns.el, ns.style.Vars); vs != nil {
 		ns.style.Vars = vs // a theme scope's tokens (scopevars.go)
 	}
-	ns.set, ns.native = propsOf(&c), nativesOf(&c)
+	ns.set, ns.native = nativeSets(&c)
 	ns.trans = hasTransition(&c)
 	// An inherited property Slack's own rule gives the widget (its link
 	// color, its bold name) stops an ancestor's value here, for its
@@ -1122,8 +1122,9 @@ func init() {
 	}
 }
 
-// propsOf is the properties a plugin or user rule set (Slack's own rules
-// in the base sheet, NativeValue, aren't CSS values for the native).
+// propsOf is the properties a rule set on a host node (NativeValue isn't
+// a value; Slack's own rules for the classes plugins put on their
+// elements are, as in the browser).
 func propsOf(c *css.Cascaded) propSet {
 	var s propSet
 	for _, d := range c.Decls {
@@ -1134,15 +1135,23 @@ func propsOf(c *css.Cascaded) propSet {
 	return s
 }
 
-// nativesOf is the properties Slack's own rule won for the element.
-func nativesOf(c *css.Cascaded) propSet {
-	var s propSet
+// nativeSets splits a native's winning declarations: set, the properties
+// a plugin or user rule set (CSS values for the native), and native, the
+// ones Slack's own rule in the base sheet won. Those are the widget's
+// own: NativeValue, which it draws itself, and real values (the reaction
+// pill's flex layout and 12px text) that it draws itself too and keeps
+// in its computed style only for what it lays out inside it
+// (ClassDef.LayoutChildren), so they never make it Active.
+func nativeSets(c *css.Cascaded) (set, native propSet) {
 	for _, d := range c.Decls {
-		if d.Value == css.NativeValue {
-			s |= propBits[d.Prop]
+		switch {
+		case d.Base:
+			native |= propBits[d.Prop]
+		case d.Value != css.NativeValue:
+			set |= propBits[d.Prop]
 		}
 	}
-	return s
+	return set, native
 }
 
 // ExtraClass is the className a plugin passed to <Original className=…>

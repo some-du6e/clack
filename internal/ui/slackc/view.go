@@ -172,14 +172,18 @@ type scope struct {
 
 	ptag, ctag, stag int // pointer handler, cursor areas, shields (addresses used)
 
-	origin     f32.Point
-	originOK   bool
-	ptr        f32.Point
-	ptrIn      bool
-	used       uint64
-	exact      bool
-	src        css.Style // the style a sub scope's root inherits from
-	srcOK      bool
+	origin   f32.Point
+	originOK bool
+	ptr      f32.Point
+	ptrIn    bool
+	used     uint64
+	exact    bool
+	src      css.Style // the style a sub scope's root inherits from
+	srcOK    bool
+	// cont is the style of the native's element the scope's boxes are
+	// the children of (ClassDef.LayoutChildren); a flex container's
+	// boxes are its flex items. nil: they are a block's contents.
+	cont       *css.Style
 	rectsDirty bool
 	rehover    bool
 	dropdown   dropState
@@ -486,17 +490,39 @@ func (s *scope) layout() {
 	// native are as wide as their content too: the native places the
 	// tree as one more item (the help button's caller right-aligns it).
 	flexItems := v.topFlex && v.topStyle != nil && (v.topStyle.Display == css.DisplayFlex || v.topStyle.Display == css.DisplayInlineFlex)
-	if s.exact || !flexItems && !s.inlineRoot() && maxW < inf/2 {
+	// The children of a native's own element (ClassDef.LayoutChildren)
+	// that is a flex container are its flex items: an inline-flex one's
+	// (the reaction pill's emoji and count) are as wide as they are, a
+	// block flex container fills the width.
+	cont := s.cont
+	if cont != nil && !isFlex(cont.Display) {
+		cont = nil
+	}
+	switch {
+	case s.exact:
 		c.fixedW, c.fixW = true, maxW
-	} else {
+	case cont != nil:
+		if cont.Display == css.DisplayFlex && maxW < inf/2 {
+			c.fixedW, c.fixW = true, maxW
+		} else {
+			c.shrink = true
+		}
+	case !flexItems && !s.inlineRoot() && maxW < inf/2:
+		c.fixedW, c.fixW = true, maxW
+	default:
 		c.shrink = true
 	}
 	if s.root.st.FontSize == 0 {
 		s.root.st = css.Initial(cssEnv().Fg)
 	}
 	root.st.Display = css.DisplayBlock
-	if ps := v.topStyle; flexItems {
-		// the parent native's flex items (ClassDef.FlexItems)
+	ps := v.topStyle
+	if cont != nil {
+		ps, flexItems = cont, true
+	}
+	if flexItems {
+		// the parent native's flex items (ClassDef.FlexItems), or the
+		// flex items of the native's own element (LayoutChildren)
 		root.st.Display = css.DisplayFlex
 		root.st.FlexDirection, root.st.FlexWrap = ps.FlexDirection, ps.FlexWrap
 		root.st.JustifyContent, root.st.AlignItems, root.st.AlignContent = ps.JustifyContent, ps.AlignItems, ps.AlignContent
@@ -848,6 +874,13 @@ func (v *View) layoutKids(gtx layout.Context, fr *frame, n *Node, st *css.Style)
 }
 
 func (v *View) layoutNodes(gtx layout.Context, fr *frame, nodes []*Node, parent *Node, st *css.Style) layout.Dimensions {
+	return v.layoutNodesIn(gtx, fr, nodes, parent, st, nil)
+}
+
+// layoutNodesIn is layoutNodes for the children of a native's own element
+// whose style is cont (ClassDef.LayoutChildren): a flex container's are
+// its flex items.
+func (v *View) layoutNodesIn(gtx layout.Context, fr *frame, nodes []*Node, parent *Node, st, cont *css.Style) layout.Dimensions {
 	if len(nodes) == 0 {
 		return layout.Dimensions{}
 	}
@@ -889,6 +922,9 @@ func (v *View) layoutNodes(gtx layout.Context, fr *frame, nodes []*Node, parent 
 		s.boxes = x.boxes
 		s.root.lk = x.boxes
 		s.ok = false
+	}
+	if s.cont != cont {
+		s.cont, s.ok = cont, false
 	}
 	if up != nil {
 		// The stack already ends in the native's own elements; pushing
