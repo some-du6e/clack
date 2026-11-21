@@ -109,6 +109,14 @@ Karim: the plugin settings page read like a thank-you page written for Slick. It
 | messages | ReactionBar enters `.c-reaction_bar` with the className a patch passes; the pills' and the add button's box effects follow their round ends, a rule's box-shadow replacing the reacted and hover rings | OwlMode |
 | kit | ConfirmationModal titles wrap, as Slack's ModalTitleBar does | all modal plugins |
 
+## Fixed in polish-1121 (2026-11-21)
+
+| Area | Fix | Plugins |
+|---|---|---|
+| kit, slackc | Button paints what a rule adds to its box as the engine paints any box's (`Host.PaintBox`): an outer and an inset `box-shadow`, a `background-image` (an outline button's clipped to its padding box), and a border of the rule's own widths on any kind, which also widens the button. The engine skips them for an `OwnBox` box, and kit drew none of them | every plugin that styles a Button; Slick themes (material's primary shadow, i-hate-myself's border and shadow) |
+| slackc | A Button's children's rects (getBoundingClientRect, ResizeObserver) are where the frame that laid them out drew them: `Host.PlaceChildren` flushes them again (they stayed 9px left, at the content box's corner, until a later frame) | OwlMode, CustomNameRecording, ThreadJump |
+| slackc, css | A plugin's own `<button class="c-button …">` has Slack's full c-button look: the host element sheet (`slackc.pluginButtonCSS`, Slack's c-button rules verbatim), which matches plugin elements but never an `OwnBox` component (kit's Button draws that look itself) | SlickMCP, SelfCare (Slick) |
+
 ## Left
 
 - **Audio in jsrt** (CustomNameRecording): `AudioContext.decodeAudioData` and `MediaRecorder`.

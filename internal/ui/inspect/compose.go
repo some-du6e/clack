@@ -71,6 +71,12 @@ const RedactBlur = 6
 // are the rects (px, in shot) the user marked in the review (review.go):
 // Redact paints them over, so the image holds nothing of what was there.
 func Compose(shot *image.RGBA, elem image.Rectangle, scale float32, lines []Line, redact ...image.Rectangle) (*image.RGBA, error) {
+	return compose(shot, elem, scale, lines, redact, nil)
+}
+
+// compose is Compose with the review's lines (draw.go, px in shot)
+// burned in over the shot last, over its blur and its outline.
+func compose(shot *image.RGBA, elem image.Rectangle, scale float32, lines []Line, redact []image.Rectangle, strokes []Stroke) (*image.RGBA, error) {
 	if err := loadFonts(); err != nil {
 		return nil, err
 	}
@@ -126,6 +132,7 @@ func Compose(shot *image.RGBA, elem image.Rectangle, scale float32, lines []Line
 	if !sb.In(elem) {
 		outline(out, el, scale)
 	}
+	burnStrokes(out, at, sb, strokes)
 	top := sb.Dy()
 	draw.Draw(out, image.Rect(0, top, W, top+band), image.NewUniform(outlineCol), image.Point{}, draw.Src)
 	top += band

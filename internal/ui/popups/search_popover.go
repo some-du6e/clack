@@ -2577,9 +2577,10 @@ func srAvatarNative(gtx layout.Context, h Host, m *core.Message, url string, siz
 
 // ---- shared helpers (popover and results view) ----
 
-// srBody is a message's plain text.
+// srBody is a message's plain text (the unsupported-block card adds
+// none: search previews suppress it).
 func srBody(m *core.Message) string {
-	if s := richtext.PlainText(m.Doc); strings.TrimSpace(s) != "" {
+	if s := richtext.SearchText(m.Doc); strings.TrimSpace(s) != "" {
 		return s
 	}
 	return m.Text

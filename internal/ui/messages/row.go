@@ -160,12 +160,17 @@ type row struct {
 
 	// plugin view of the message (taut patchMessageText…), see applyView;
 	// viewConv: the serial of the view's conversion it last compared
-	viewAt    time.Time
-	viewRev   uint32
-	viewed    bool
-	vmsg      *core.Message // the view itself (viewed): what the overrides lay over
-	viewWait  bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
-	viewReady bool          // the view it last read was ready (MessageViewState)
+	viewAt   time.Time
+	viewRev  uint32
+	viewed   bool
+	vmsg     *core.Message // the view itself (viewed): what the overrides lay over
+	viewWait bool          // unviewed, a new revision (or a new row): its source until JS's copy of it is ready
+	// heldTil: an edit's row the plugins left alone draws the view of
+	// the revision before (the text it drew) while JS answers for the
+	// edit under plugins that rewrite text (taut TextRewrites), until then
+	// at most (taut.EditHold)
+	heldTil   time.Time
+	viewReady bool // the view it last read was ready (MessageViewState)
 	viewConv  uint64
 	// need is the EmitSeq of the core event that wrote its message
 	// (entry.seq; a load's: core's EmitSeq as it came back): JS's copy is
@@ -464,7 +469,7 @@ func (r *row) setDoc() {
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
 	o := richview.Options{Edited: displaysEdited(&r.m), Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
-		FindFocused: r.findFocused, Media: r.media}
+		FindFocused: r.findFocused, CheckLists: true, Media: r.media}
 	if o.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 		o.EditedBy = r.editedBy()
@@ -1012,7 +1017,9 @@ func (pl *reactPill) props() slackc.Props {
 	p["currentUser"], p["reactionKey"], p["canReact"] = r.rc.selfID, reactionKey(&r.m), true
 	// the pill button renders inside Reaction's React tree, so context a
 	// Reaction patch provides (WhoReacted's reactors) reaches the button
-	p["children"] = []any{slackc.Child("UnstyledButton", pl.buttonProps(), pl.layoutButton)}
+	// its native draws the pill's box (fill, ring) itself: a rule a
+	// plugin's className brings is painted once, round (slackc.ChildBox)
+	p["children"] = []any{slackc.ChildBox("UnstyledButton", pl.buttonProps(), pl.layoutButton)}
 	return pl.r.pane(p)
 }
 
@@ -2839,8 +2846,8 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 				border(gtx.Ops, rr, ph/2, dp(gtx, 1), c.ReactHoverBorder)
 			}
 			col = rgb(0xecb22e)
-		} else {
-			rrect(gtx.Ops, rr, ph/2, st.Background(r.seeFill(c, c.ReactBg, c.raw.ReactBg)))
+		} else if !st.Has("background-color") { // a rule's fill WrapRounded paints, once
+			rrect(gtx.Ops, rr, ph/2, r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		col = st.Color(col)
 		is := dp(gtx, 18)
@@ -2878,7 +2885,9 @@ func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimension
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e) // the button JS rendered in Reaction's tree
 	}
-	return slackc.Component(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
+	// the pill draws its box itself: under an UnstyledButton patch a rule
+	// its className brings is painted once, round (slackc.ComponentBox)
+	return slackc.ComponentBox(gtx, "UnstyledButton", pl, (*reactPill).buttonProps, (*reactPill).layoutButton)
 }
 
 // layoutButton is the pill: UnstyledButton data-qa="reactji", .c-reaction
@@ -2894,7 +2903,10 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	if pl.reacted() {
 		mods = 1
 	}
-	st := reactionClass.Enter(gtx, btnState(gtx, &pl.btn), mods)
+	// the className the button was rendered with: a class a plugin adds
+	// to it (an UnstyledButton or Reaction patch) is the pill's, and its
+	// .<class> rules reach the pill as in Slack
+	st := reactionClass.EnterClass(gtx, btnState(gtx, &pl.btn), mods, slackc.ExtraClass(p))
 	defer st.Leave()
 	if st.Hidden() {
 		return layout.Dimensions{}
@@ -2904,7 +2916,9 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	var cd layout.Dimensions
 	cy := 0
 	if e, ok := slackc.PropChildren(p); ok {
-		cd = slackc.LayoutElement(gtx, e)
+		// the children JS rendered (the emoji, the count, a plugin's
+		// own) as the button's: .c-reaction's centred inline-flex items
+		cd = reactionClass.LayoutChildren(gtx, mods, e)
 		cy = (ph - cd.Size.Y) / 2
 	} else {
 		cd = pl.content(gtx, st)
@@ -2932,24 +2946,33 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 		// (.c-reaction--reacted, .c-reaction:hover); a rule's box-shadow
 		// replaces them (OwlMode rings every pill in its colour)
 		ring := !st.Has("box-shadow")
+		// and its fills the element's background: a rule's (OwlMode's
+		// reacted and hover tints) WrapRounded paints, once, under the
+		// pill; filled here again, a translucent one showed twice as
+		// strong
+		fill := func(col color.NRGBA) {
+			if !st.Has("background-color") {
+				rrect(gtx.Ops, rr, rad, col)
+			}
+		}
 		switch {
 		case self && hov:
-			rrect(gtx.Ops, rr, rad, st.Background(c.ReactSelfHoverBg))
+			fill(c.ReactSelfHoverBg)
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
 		case self:
-			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg)))
+			fill(pl.r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg))
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
 		case hov:
-			rrect(gtx.Ops, rr, rad, st.Background(colorNone))
+			fill(colorNone)
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 			}
 		default:
-			rrect(gtx.Ops, rr, rad, st.Background(pl.r.seeFill(c, c.ReactBg, c.raw.ReactBg)))
+			fill(pl.r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		t := op.Offset(image.Pt(dp(gtx, 8), cy)).Push(gtx.Ops)
 		content.Add(gtx.Ops)
@@ -3000,9 +3023,18 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 }
 
 // layoutTruncation is the pill's "…" after ten emoji
-// (c-reaction__truncation).
+// (span.c-reaction__truncation): its 16px line box, as content places
+// it, in the colour CSS gives the pill's text, like the count.
 func (pl *reactPill) layoutTruncation(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return pl.truncation(gtx, slackc.Styled{})
+	return pillLine(pl.truncation(gtx, slackc.CurrentScope().Child(reactionTruncClass, 0)), dp(gtx, 16))
+}
+
+// pillLine is a label's dims d as the box of its h-tall line, the label
+// at the top: content draws the pill's count and "…" in the middle 16px
+// of the pill, from their top, and the same parts handed back by a
+// patched ReactionBar are flex items that size, centred the same way.
+func pillLine(d layout.Dimensions, h int) layout.Dimensions {
+	return layout.Dimensions{Size: image.Pt(d.Size.X, h), Baseline: h - (d.Size.Y - d.Baseline)}
 }
 
 func (pl *reactPill) truncation(gtx layout.Context, st slackc.Styled) layout.Dimensions {
@@ -3035,9 +3067,12 @@ func (pl *reactPill) emoji(gtx layout.Context, re *core.Reaction) layout.Dimensi
 	return layout.Dimensions{Size: image.Pt(es, es)}
 }
 
-// layoutCount is the pill's count slot.
+// layoutCount is the pill's count slot (span.c-reaction__count): its
+// 16px line box, as content places it, in the colour CSS gives the pill's
+// text (OwlMode's reacted pill: content-pry), as the native count takes
+// it from the pill.
 func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return pl.count(gtx, slackc.Styled{})
+	return pillLine(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
 }
 
 // ReactionDrawnHook, when set (tests: a reaction's frame,

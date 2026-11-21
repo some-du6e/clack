@@ -79,8 +79,10 @@ type box struct {
 	// component's own and then the className a plugin passed.
 	hostEl *HostElement
 	cls    []string
-	nprops Props     // n.P plus "children" (the rendered children) for natives
-	rctx   renderCtx // curRender while this native draws
+	// slotOwn: the Slot behind the "@" box draws its own box (Slot.OwnBox)
+	slotOwn bool
+	nprops  Props     // n.P plus "children" (the rendered children) for natives
+	rctx    renderCtx // curRender while this native draws
 
 	// topLayer: a modal <dialog> (showModal): positioned against the
 	// window and painted above everything else in its tree, over
@@ -142,6 +144,8 @@ type box struct {
 	vis    bool
 	rect   rectF
 	rectFr uint64
+	// rectPaint is the scope paint (scope.paintSeq) rect is from
+	rectPaint uint64
 }
 
 type rectF struct{ x0, y0, x1, y1 float32 }
@@ -303,6 +307,11 @@ func (b *box) State() css.State { return b.state }
 // is Slack's button.c-button, which those rules style in Slack).
 func (b *box) HostNode() bool { return b.kind == kElem || b.kind == kComp && b.hostEl != nil }
 
+// OwnBox keeps the host element sheet's rules (Slack's full c-button
+// look) off a host component that draws its own box (kit's Button): it
+// draws that look itself, and would take Slack's rules as a plugin's.
+func (b *box) OwnBox() bool { return b.kind == kComp && b.hostEl != nil && b.hostEl.OwnBox }
+
 // Modal reports an open <dialog> JS showed with showModal() (:modal).
 func (b *box) Modal() bool {
 	if b.kind != kElem || b.n == nil || !b.n.Modal || b.n.T != "dialog" {
@@ -338,9 +347,9 @@ func (b *box) HasText() bool {
 func (b *box) isElem() bool { return b.kind == kElem || b.kind == kComp }
 
 // ownBox reports a native that draws its own box from its CSS
-// (HostElement.OwnBox): the engine leaves its padding, borders and
-// background to it.
-func (b *box) ownBox() bool { return b.native && b.hostEl != nil && b.hostEl.OwnBox }
+// (HostElement.OwnBox, Slot.OwnBox): the engine leaves its padding,
+// borders, background and shadows to it.
+func (b *box) ownBox() bool { return b.native && (b.slotOwn || b.hostEl != nil && b.hostEl.OwnBox) }
 
 // k returns the node's host id (0 for text/generated boxes).
 func (b *box) k() int64 {
@@ -544,14 +553,14 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 	b.topLayer, b.backdrop = false, nil
 	b.listMarker = 0
 	b.key = mix(uint64(n.K)*0x9e3779b97f4a7c15 ^ v.root<<17 ^ uint64(v.styleGen)<<1 ^ uint64(b.n.index))
-	b.native, b.hostFn = false, nil
+	b.native, b.hostFn, b.slotOwn = false, nil, false
 	el := b.hostEl
 	b.hostEl = nil
 	if b.kind == kComp {
-		if _, ok := SlotOf(n); ok {
-			b.native = true
+		if sl, ok := SlotOf(n); ok {
+			b.native, b.slotOwn = true, sl.OwnBox
 		} else if v.name != "" && n.N == v.name {
-			b.native = true
+			b.native, b.slotOwn = true, v.ownRoot
 		} else if fn, ok := LookupHost(n.N); ok {
 			b.native, b.hostFn = true, fn
 			if he := lookupHostElement(n.N); he != nil {
@@ -582,7 +591,7 @@ func (v *View) computeStyle(b *box, parent *css.Style, e *css.Env) {
 		return
 	}
 	c := Styles.Cascade(b, css.PseudoNone, n.Style, *e)
-	stripNative(&c)
+	stripNative(&c, b.kind == kComp)
 	b.st = css.Compute(&c, parent, *e)
 	b.set = propsOf(&c)
 	v.uaDefaults(b, &c, parent)
@@ -855,6 +864,12 @@ func (v *View) uaDefaults(b *box, c *css.Cascaded, parent *css.Style) {
 		}
 		if !has(c, "text-align") {
 			st.TextAlign = css.TextCenter
+		}
+		// Chromium's html.css sizes a button's border box (button
+		// {box-sizing: border-box}): Slack's .c-button--small height:28px
+		// is 28 with its padding and border
+		if !has(c, "box-sizing") {
+			st.BoxSizing = css.BorderBox
 		}
 	case "hr":
 		setM(0.5*em, 0.5*em)

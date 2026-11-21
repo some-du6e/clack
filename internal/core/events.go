@@ -427,6 +427,16 @@ func (a *App) handle(ev slack.Event) {
 		// client's message path skips replies that don't mention the
 		// viewer): the UI decides and shows it (ui/notify_threads.go)
 		a.emit(Event{Type: ev.Type, Channel: ch, Raw: ev.Raw})
+	case "dnd_override":
+		// a sender's "notify anyway" for a message Do Not Disturb held
+		// back (boot-render handleDndOverride): the UI shows the stored
+		// message's notification with DND ignored (ui/notify_dm.go)
+		var e struct {
+			Timestamp string `json:"timestamp"`
+		}
+		if json.Unmarshal(ev.Raw, &e) == nil && ch != "" && e.Timestamp != "" {
+			a.emit(Event{Type: ev.Type, Channel: ch, TS: e.Timestamp})
+		}
 	case "star_added", "star_removed":
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
 	case "file_change", "file_shared", "file_public":

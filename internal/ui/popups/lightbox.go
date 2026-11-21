@@ -978,9 +978,10 @@ func lbSlackHost(raw string) bool {
 }
 
 // lbGet downloads a public (non-Slack) image with no credentials:
-// imgcache.PublicFetchLimit refuses non-https, userinfo and private
-// addresses, then loads it through Slack's image proxy, so saving an unfurl
-// image doesn't reveal your IP address to its host. At most core.MaxFetch.
+// imgcache.PublicFetchLimit refuses anything but http(s), userinfo and
+// private addresses, then loads it through Slack's image proxy, so saving
+// an unfurl image doesn't reveal your IP address to its host. At most
+// core.MaxFetch.
 func lbGet(ctx context.Context, raw string) ([]byte, error) {
 	return imgcache.PublicFetchLimit(ctx, raw, core.MaxFetch)
 }

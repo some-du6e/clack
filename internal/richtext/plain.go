@@ -48,7 +48,7 @@ func writeBlock(b *strings.Builder, blk *Block, text SpanText) {
 		for i, it := range blk.Items {
 			bullet := "• "
 			if blk.Ordered {
-				bullet = strconv.Itoa(blk.Offset+i+1) + ". "
+				bullet = strconv.Itoa(ListNumber(blk, i)) + ". "
 			}
 			b.WriteString(strings.Repeat("    ", blk.Indent) + bullet + spansText(it, text) + "\n")
 		}
@@ -69,6 +69,11 @@ func writeBlock(b *strings.Builder, blk *Block, text SpanText) {
 	case FileBlock:
 		if f := blk.File; f != nil {
 			line(b, firstNonEmpty(f.Title, f.Name))
+		}
+	case CallBlock: // the card's header: its title and status lines
+		if c := blk.Call; c != nil {
+			line(b, c.Title)
+			line(b, c.Status)
 		}
 	case AttachmentBlock:
 		if a := blk.Att; a != nil {

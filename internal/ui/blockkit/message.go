@@ -23,6 +23,10 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
+// richview draws a card's slack_icon through deriveIconName (Card's
+// BlockKitIcon and icon_button share Qw/u): agenticons.go's table.
+func init() { richview.BlockKitIcon = func(name string) string { return blockKitIconNames[name] } }
+
 // maxVisible is how many elements of an actions block a message shows
 // before "+ N more", and truncateAt how many it takes to truncate: Slack's
 // Actions block shows every element up to six and, from seven, the first
@@ -310,8 +314,8 @@ func (me *Message) setMessage(m *core.Message, sig []byte) {
 	// sets and bumps the generation an answer must match.
 	me.sig = sig
 	me.gen++
-	me.blocks = ParseBlocks(m.Blocks)
-	me.atts = parseAttachments(m.Attachments)
+	me.blocks = ParseBlocks(expandConditions(me.h, m.Blocks))
+	me.atts = parseAttachments(me.h, m.Attachments)
 	me.vals = Values{}
 	initValues(me.vals, me.blocks)
 	for i := range me.atts {
@@ -349,7 +353,7 @@ func (me *Message) Probe(bid string) (gen uint32, w any, pressed, hovered bool) 
 	return me.gen, nil, false, false
 }
 
-func parseAttachments(raw json.RawMessage) []attachment {
+func parseAttachments(h Host, raw json.RawMessage) []attachment {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -364,7 +368,7 @@ func parseAttachments(raw json.RawMessage) []attachment {
 	}
 	out := make([]attachment, len(as))
 	for i, a := range as {
-		out[i] = attachment{ID: a.ID, CallbackID: a.CallbackID, Blocks: ParseBlocks(a.Blocks), Actions: a.Actions}
+		out[i] = attachment{ID: a.ID, CallbackID: a.CallbackID, Blocks: ParseBlocks(expandConditions(h, a.Blocks)), Actions: a.Actions}
 		if out[i].ID == 0 {
 			out[i].ID = i + 1
 		}
@@ -432,8 +436,11 @@ func (me *Message) base() core.BlockAction {
 // attOf returns the attachment holding block id bid (nil: the message).
 func (me *Message) attOf(bid string) *attachment {
 	for i := range me.atts {
-		for j := range me.atts[i].Blocks {
-			if me.atts[i].Blocks[j].BlockID == bid {
+		// its blocks and the blocks nested in them (a container's, a
+		// callout's, a fallback's): AttachmentBlocks sends every action
+		// from its renderer with the attachment's container (SpAO)
+		for _, b := range allBlocks(me.atts[i].Blocks) {
+			if b.BlockID == bid {
 				return &me.atts[i]
 			}
 		}
@@ -620,6 +627,9 @@ func (me *Message) ElementsSize(bs []richtext.Button, maxW int, accessory bool, 
 		}
 		return sz, false
 	}
+	if me.cardRun(bs) {
+		return me.cardRow(gtx, bs, maxW, false), false
+	}
 	return me.run(gtx, bs, maxW, false), false
 }
 
@@ -660,8 +670,65 @@ func (me *Message) LayoutElements(gtx layout.Context, bs []richtext.Button, acce
 		w.layout(fixed(gtx, esz), esz)
 		return D{Size: sz}
 	}
+	if me.cardRun(bs) {
+		me.cardRow(gtx, bs, sz.X, true)
+		return D{Size: sz}
+	}
 	me.run(gtx, bs, sz.X, true)
 	return D{Size: sz}
+}
+
+// cardRun reports whether bs are a card block's actions (one of its
+// .actionsLeft / .actionsRight groups).
+func (me *Message) cardRun(bs []richtext.Button) bool {
+	if len(bs) == 0 {
+		return false
+	}
+	w := me.widgetFor(&bs[0])
+	return w != nil && w.b != nil && w.b.Type == "card"
+}
+
+// cardRow lays out (and with draw, paints) a card's group of buttons as
+// Card (7Xkb) does: .actionsLeft / .actionsRight are one flex row with an
+// 8px column gap whose buttons (flex 0 auto, min-width 0) shrink to fit
+// rather than wrap; every action shows (no "+ N more"), and the Card
+// passes no loading state, so no status icons follow.
+func (me *Message) cardRow(gtx C, bs []richtext.Button, maxW int, draw bool) image.Point {
+	var ws []*ew
+	var szs []image.Point
+	total := 0
+	for i := range bs {
+		w := me.widgetFor(&bs[i])
+		if w == nil || bs[i].Invisible {
+			continue
+		}
+		sz := w.size(gtx, maxW, false)
+		if sz.X == 0 {
+			continue
+		}
+		ws, szs = append(ws, w), append(szs, sz)
+		total += sz.X
+	}
+	if len(ws) == 0 {
+		return image.Point{}
+	}
+	gap := dp(gtx, 8)
+	room := maxW - gap*(len(ws)-1)
+	x, h := 0, 0
+	for i, w := range ws {
+		sz := szs[i]
+		if total > room && total > 0 { // flex-shrink by width
+			sz.X = max(0, sz.X*room/total)
+		}
+		if draw {
+			w, sz := w, sz
+			w.slot = image.Pt(x, 0)
+			at(gtx, image.Pt(x, 0), func(gtx C) D { return w.layout(fixed(gtx, sz), sz) })
+		}
+		x += sz.X + gap
+		h = max(h, sz.Y)
+	}
+	return image.Pt(x-gap, h)
 }
 
 // statusW is the width of block bid's status icons (spinner, warning
@@ -766,12 +833,19 @@ func serverMessage(err error) string {
 // run lays out (and with draw, paints) an actions block / attachment
 // buttons: wrapping rows 8px apart, the first five then "+ N more", and
 // the error line.
+//
+// An Invisible element (visible_to_user_ids) isn't drawn but keeps its
+// index: it counts for truncateAt and "+ N more", and takes one of the
+// first five places. An Invisible icon_button keeps its empty action box,
+// so the next element sits 8px further on.
 func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.Point {
 	th := me.h.Theme()
 	var ws []*ew
+	var src []richtext.Button // ws[i]'s Button
 	for i := range bs {
 		if w := me.widgetFor(&bs[i]); w != nil {
 			ws = append(ws, w)
+			src = append(src, bs[i])
 		}
 	}
 	if len(ws) == 0 {
@@ -811,7 +885,13 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 			me.runAt[bid] = append(me.runAt[bid], image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+sz.X, y+sz.Y)})
 		}
 	}
-	for _, w := range ws[:n] {
+	for i, w := range ws[:n] {
+		if src[i].Invisible {
+			if src[i].Kind == "icon_button" {
+				place(image.Point{}, func(C) {})
+			}
+			continue
+		}
 		w := w
 		sz := w.size(gtx, maxW, false)
 		if sz.X == 0 {

@@ -76,11 +76,23 @@ Then (at once for a Shift+click, on Enter for the review) Clack:
 
 Where the system can't copy images (Linux without wl-copy or xclip) the report's text goes on the clipboard instead, and the image is still saved. Where there is no shot at all (the headless capture failed) the report's text is copied at once, with no review.
 
+### Drawing on it
+
+The review has a pen too (Karim, 2026-11-21: "also add an drawing thing to the dev tools, optional tho"). P in the review turns it on, and the banner turns to "Draw: …". P in a session, frozen or not, grabs the whole window as a region (the report's capture row says `whole window`) and opens its review with the pen already on.
+
+- Drag over the shot to draw a freehand line. Hold Shift at the press for a rectangle. A switches drags to arrows and back.
+- 1, 2 and 3 pick red (the default), yellow and blue for the next line. Every line is 3 dp wide: 3 px at 1x, 6 at 2x, and as wide in the copy.
+- Z, Mod+Z, ⌫ or Delete takes the last line back. Esc mid-line drops only that line.
+- Esc or P goes back to blurring and keeps the lines. Esc again drops the review as before.
+- Enter or Mod+C copies the image with the lines burned in, on top of the blur and the outline.
+
+The lines are kept in the shot's pixels, as the blurred rectangles are. The review draws them over the shot with Gio, and the copy draws them on the CPU (`burnStrokes` in `internal/ui/inspect/draw.go`). The report doesn't change: its colours come from the shot as it was shot, and no row mentions the lines. With the tool off none of this is in the window: no key filter, no pointer area, no frame. `TestPenStrokesInCopy`, `TestPenUndo`, `TestPenEscBackToBlur` and `TestPenOffAddsNothing` pin all of this, and flake-check's `inspect-draw` job runs them.
+
 ## What the report says
 
 | row | what |
 |---|---|
-| capture | `dragged region` for a drag; absent for a click |
+| capture | `dragged region` for a drag, `whole window` for P's grab to draw on; absent for a click |
 | component | the innermost Slack component boundary under the pointer (`slackc.Render`/`Component`), and whether a plugin patches it. A dragged region has none |
 | element | its root element as a selector, Slack's classes and `data-qa` included; for a chrome element picked itself, that element |
 | within | the enclosing components, innermost first |

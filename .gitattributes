@@ -5,3 +5,7 @@ internal/desktop/unread-badge-resources.json -text
 internal/jsrt/jsrt.wasm -text
 internal/jsrt/js/*.js -text
 internal/jsrt/vendor/*.js -text
+# Slack's bundled assets, byte for byte (imgcache rasterizes an SVG only
+# when its bytes equal the embedded ones; TestAvatarURLSlackSystemUser
+# checks the logo's length)
+internal/slackasset/assets/* -text

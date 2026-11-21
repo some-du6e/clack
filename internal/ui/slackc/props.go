@@ -110,11 +110,24 @@ type Slot struct {
 	Name   string
 	Props  Props
 	Native Native
+	// OwnBox: Native draws the element's box itself, its background,
+	// borders and shadows (Styled.Wrap), so the layout engine leaves the
+	// "@" box's to it, as it does a host component's (HostElement.OwnBox).
+	// The className a plugin passes on reaches both the "@" box and the
+	// element the native enters: painted by both, a rule's translucent
+	// fill showed twice as strong, and its ring square round a round pill.
+	OwnBox bool
 }
 
 // Child makes a Slot.
 func Child(name string, p Props, native Native) Slot {
 	return Slot{Name: name, Props: p, Native: native}
+}
+
+// ChildBox is Child for a native that draws its element's box (OwnBox):
+// the reaction pill's UnstyledButton.
+func ChildBox(name string, p Props, native Native) Slot {
+	return Slot{Name: name, Props: p, Native: native, OwnBox: true}
 }
 
 // SlotOf returns the native slot an "@" node renders (its "$slot" prop).
