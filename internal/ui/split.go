@@ -50,6 +50,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 // paneSplit names the split view's view container (App.pane).
@@ -205,6 +206,32 @@ func (a *App) OpenSplit(route string) {
 		a.Navigate(route)
 		return
 	}
+	a.canvasNavigated() // a navigation still waiting for its file or message is dropped (canvas_open.go)
+	// a file channel's Channel view (toChannel, toMessage): Slack's
+	// RedirectFileChannel runs in the split view too (canvas_open.go). A
+	// canvas's message is its thread view there, the message its
+	// highlighted root; the canvas itself (toCanvas) and a list's list
+	// (toList, toListRecordByThreadTs) go in the side panel, as Clack's
+	// split view holds conversations only. A thread (toThread) stays a
+	// thread in the split view, as the middleware leaves Thread views be.
+	if ts := r.Message(); r.Thread() == "" && a.redirectInstead(ch, ts, fileTo{
+		canvas: func(fid string) {
+			if ts != "" {
+				a.openSplitFileThread(ch, ts)
+				return
+			}
+			a.OpenCanvasAt(fid, "", false)
+		},
+		list: func(fid string) {
+			if ts != "" {
+				a.listJump(fid, ch, "", ts, views.FileSide, nil)
+				return
+			}
+			a.OpenList(fid)
+		},
+	}, func() { a.OpenSplit(route) }, nil) {
+		return
+	}
 	s := &a.split
 	if a.pane == paneSplit && len(s.stack) > 0 {
 		// navigating inside the split view: the old view is its back stack
@@ -230,6 +257,7 @@ func (a *App) OpenSplit(route string) {
 // the primary view. Its conversations save their drafts and go, as
 // Slack's view unmounts.
 func (a *App) CloseSplit() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	s := &a.split
 	if len(s.stack) == 0 {
 		return
@@ -276,6 +304,7 @@ func (a *App) PaneBack() bool {
 // GoPaneBack goes back in the split view or the secondary pane
 // (FlexpaneBackButton).
 func (a *App) GoPaneBack() {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	if a.pane != paneSplit {
 		if a.secondary.kind == secThread && a.secondary.prev != nil {
 			a.leaveThreadRoute(a.secondary.channel, a.secondary.ts)

@@ -165,6 +165,7 @@ func (a *App) listPeople() []string {
 // OpenList shows a list in the side panel, as Slack does for lists opened
 // from a message, a link or a DM.
 func (a *App) OpenList(id string) {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	if a.secondary.kind != secNone && !a.secondary.hidden {
 		if v, ok := a.secondary.view.(*listview.View); ok && v.ID() == id {
 			return
@@ -186,6 +187,7 @@ func (a *App) OpenListFull(id string) { a.Navigate("lists/" + id) }
 // OpenListItem shows an item's pane in the side panel (Slack's
 // ListRecordDetails secondary view).
 func (a *App) OpenListItem(listID, recID string) {
+	a.canvasNavigated() // a navigation still waiting for its file is dropped (canvas_open.go)
 	if a.secondary.kind != secNone && !a.secondary.hidden {
 		if v, ok := a.secondary.view.(*listview.Item); ok && v.ListID() == listID && v.RecordID() == recID {
 			return
