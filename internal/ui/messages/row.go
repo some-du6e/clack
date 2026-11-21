@@ -2861,14 +2861,14 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 // (span.c-reaction__truncation): its 16px line box, as content places
 // it, in the colour CSS gives the pill's text, like the count.
 func (pl *reactPill) layoutTruncation(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return lineBox(pl.truncation(gtx, slackc.CurrentScope().Child(reactionTruncClass, 0)), dp(gtx, 16))
+	return pillLine(pl.truncation(gtx, slackc.CurrentScope().Child(reactionTruncClass, 0)), dp(gtx, 16))
 }
 
-// lineBox is a label's dims d as the box of its h-tall line, the label
+// pillLine is a label's dims d as the box of its h-tall line, the label
 // at the top: content draws the pill's count and "…" in the middle 16px
 // of the pill, from their top, and the same parts handed back by a
 // patched ReactionBar are flex items that size, centred the same way.
-func lineBox(d layout.Dimensions, h int) layout.Dimensions {
+func pillLine(d layout.Dimensions, h int) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(d.Size.X, h), Baseline: h - (d.Size.Y - d.Baseline)}
 }
 
@@ -2907,7 +2907,7 @@ func (pl *reactPill) emoji(gtx layout.Context, re *core.Reaction) layout.Dimensi
 // text (OwlMode's reacted pill: content-pry), as the native count takes
 // it from the pill.
 func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return lineBox(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
+	return pillLine(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
 }
 
 // ReactionDrawnHook, when set (tests: a reaction's frame,
