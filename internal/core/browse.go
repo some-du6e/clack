@@ -74,6 +74,13 @@ type FilesOpts struct {
 	// last_engaged, or score with a query), "timestamp" (Last updated)
 	// or "score" (Most relevant).
 	Sort string
+	// The browser's advanced filters (useUnifiedFilesFilters'
+	// advancedFilters, which the Filters modal sets): From are people
+	// (from:<@U…>), In conversations or people (in:<#C…|name>, in:<#G…>
+	// for a group DM, in:<@U…> for a person or a DM), After and Before
+	// exclusive YYYY-MM-DD dates (after:, before:).
+	From, In      []string
+	After, Before string
 }
 
 // Huddle is an active or past huddle.
@@ -360,12 +367,12 @@ func (a *App) filePage(ctx context.Context, raws []browseFileRaw) []File {
 	return out
 }
 
-// filesParams builds search.modules.files params for the Files browser.
-func filesParams(o FilesOpts, self string) url.Values {
-	page := o.Page
-	if page < 1 {
-		page = 1
-	}
+// filesQuery is the browser's request query (client-boot nzlP
+// querySuggestionFromQueryAndFilter, then toString().trim()): the typed
+// query's tokens first, then the filters' tokens in Slack's order: from:,
+// in:, before:, after:, the type: tokens, creator:. in is how an in: value
+// is written (filesInValue; nil writes ids bare).
+func filesQuery(o FilesOpts, self string, in func(id string) string) string {
 	types := fileTypesAll
 	switch {
 	case o.Kind == "canvases":
@@ -381,23 +388,85 @@ func filesParams(o FilesOpts, self string) url.Values {
 	case o.Mine || o.SharedWithMe:
 		types = fileTypesOwned
 	}
-	parts := []string{types}
+	var parts []string
+	if q := strings.TrimSpace(o.Query); q != "" {
+		parts = append(parts, q)
+	}
+	for _, id := range o.From { // MemberFilterQuerySuggestionToken: from:<@U…>
+		parts = append(parts, "from:<@"+id+">")
+	}
+	for _, id := range o.In { // InQuerySuggestionToken
+		v := filesInBare(id)
+		if in != nil {
+			v = in(id)
+		}
+		parts = append(parts, "in:"+v)
+	}
+	if o.Before != "" { // DateQuerySuggestionToken: before: then after:
+		parts = append(parts, "before:"+o.Before)
+	}
+	if o.After != "" {
+		parts = append(parts, "after:"+o.After)
+	}
+	parts = append(parts, types)
+	if o.Mine {
+		parts = append(parts, "creator:<@"+self+">")
+	}
+	return strings.Join(parts, " ")
+}
+
+// filesInBare is an in: value with nothing known about id: <@U…> for a
+// person, <#…> for a conversation.
+func filesInBare(id string) string {
+	if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+		return "<@" + id + ">"
+	}
+	return "<#" + id + ">"
+}
+
+// filesInValue is InQuerySuggestionToken's toString for id
+// (_toStringInternal): a DM is its member, <@U…> (formatMember); a group
+// DM <#G…> (formatMpim); a channel <#C…|name>, its name with any ">"
+// taken out (sanitizeChannelRefName), or <#C…> without one; a person
+// <@U…>.
+func (a *App) filesInValue(id string) string {
+	if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+		return "<@" + id + ">"
+	}
+	r := a.ConvRef(id)
+	switch r.Kind {
+	case "im":
+		if r.User != "" {
+			return "<@" + r.User + ">"
+		}
+	case "mpim":
+		return "<#" + id + ">"
+	}
+	if name := strings.ReplaceAll(r.Name, ">", ""); name != "" {
+		return "<#" + id + "|" + name + ">"
+	}
+	return "<#" + id + ">"
+}
+
+// filesParams builds search.modules.files params for the Files browser
+// (in: as filesQuery).
+func filesParams(o FilesOpts, self string, in func(id string) string) url.Values {
+	page := o.Page
+	if page < 1 {
+		page = 1
+	}
 	sortBy := "last_engaged"
 	q := strings.TrimSpace(o.Query)
 	if q != "" || o.SharedWithMe {
 		sortBy = "score"
 	}
 	if o.Mine {
-		parts = append(parts, "creator:<@"+self+">")
 		sortBy = "timestamp"
 	}
 	if o.Sort != "" {
 		sortBy = o.Sort
 	}
-	if q != "" {
-		parts = append(parts, q)
-	}
-	p := url.Values{"module": {"files"}, "query": {strings.Join(parts, " ")}, "page": {strconv.Itoa(page)},
+	p := url.Values{"module": {"files"}, "query": {filesQuery(o, self, in)}, "page": {strconv.Itoa(page)},
 		"count": {"50"}, "sort": {sortBy}, "search_context": {"desktop_files_browser"},
 		"include_files_shares": {"1"}, "extracts": {"1"}, "highlight": {"1"}, "max_extract_len": {"200"},
 		"extra_message_data": {"1"}, "no_user_profile": {"1"}, "file_title_only": {"false"},
@@ -415,7 +484,7 @@ func filesParams(o FilesOpts, self string) url.Values {
 // unified files view calls it).
 func (a *App) Files(ctx context.Context, o FilesOpts) (FilePage, error) {
 	t0 := time.Now()
-	p := filesParams(o, a.S.SelfID())
+	p := filesParams(o, a.S.SelfID(), a.filesInValue)
 	var res struct {
 		Pagination searchPagination `json:"pagination"`
 		Items      []browseFileRaw  `json:"items"`

@@ -200,7 +200,7 @@ func Patched(name string) bool {
 // value passed here is heap-allocated on every call. Hot widgets use
 // Component, which is allocation-free when unpatched.
 func Render(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
-	if patched.Load() == nil && !inspecting.Load() { // inlined: two atomic loads
+	if patched.Load() == nil && expected.Load() == nil && !inspecting.Load() { // inlined: three atomic loads
 		return native(gtx, props)
 	}
 	return renderSlow(gtx, name, props, native)
@@ -218,6 +218,9 @@ func renderSlow(gtx layout.Context, name string, props Props, native Native) lay
 
 func renderSlow0(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
+		if unpatched == 0 {
+			noteExpected(name, false) // a launch's expected patch drawn native (expect.go)
+		}
 		return native(gtx, props)
 	}
 	return renderPatched(gtx, name, props, props, native)
@@ -225,7 +228,7 @@ func renderSlow0(gtx layout.Context, name string, props Props, native Native) la
 
 // RenderLazy is Render with props built only when name is patched.
 func RenderLazy(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
-	if patched.Load() == nil && !inspecting.Load() {
+	if patched.Load() == nil && expected.Load() == nil && !inspecting.Load() {
 		return native(gtx, nil)
 	}
 	return renderLazySlow(gtx, name, props, native)
@@ -245,6 +248,9 @@ func renderLazySlow(gtx layout.Context, name string, props func() Props, native 
 
 func renderLazySlow0(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
+		if unpatched == 0 {
+			noteExpected(name, false) // expect.go
+		}
 		return native(gtx, nil)
 	}
 	return renderPatched(gtx, name, props(), nil, native)
@@ -259,7 +265,7 @@ func renderLazySlow0(gtx layout.Context, name string, props func() Props, native
 // props may be nil (no props). native's Props argument is nil when
 // unpatched.
 func Component[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
-	if patched.Load() == nil && reserved.Load() == nil && !inspecting.Load() { // inlined: the native becomes a direct call
+	if patched.Load() == nil && reserved.Load() == nil && expected.Load() == nil && !inspecting.Load() { // inlined: the native becomes a direct call
 		return native(recv, gtx, nil)
 	}
 	return componentSlow(gtx, name, recv, props, native, false)
@@ -273,7 +279,7 @@ func Component[T any](gtx layout.Context, name string, recv T, props func(T) Pro
 // UnstyledButton patch that adds a class: painted by the "@" box as well,
 // the class's ring was a square one round the round one.
 func ComponentBox[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
-	if patched.Load() == nil && reserved.Load() == nil && !inspecting.Load() {
+	if patched.Load() == nil && reserved.Load() == nil && expected.Load() == nil && !inspecting.Load() {
 		return native(recv, gtx, nil)
 	}
 	return componentSlow(gtx, name, recv, props, native, true)
@@ -299,8 +305,10 @@ func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T
 	}
 	if m := patched.Load(); m == nil || !(*m)[name] {
 		if ins, ok := reservedFor(name); ok { // a plugin's slot kept free until it renders (reserve.go)
+			noteExpected(name, reserveCovers(gtx)) // expect.go
 			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions { return native(recv, g, nil) })
 		}
+		noteExpected(name, false) // expect.go
 		return native(recv, gtx, nil)
 	}
 	return componentPatched(gtx, name, recv, props, native, own)
@@ -458,6 +466,7 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 func renderPatchedBox(gtx layout.Context, name string, props, pre Props, native Native, own bool) layout.Dimensions {
 	b := bridge()
 	if b == nil {
+		noteExpected(name, false) // expect.go
 		return native(gtx, pre)
 	}
 	pump()
@@ -513,10 +522,12 @@ func renderPatchedBox(gtx layout.Context, name string, props, pre Props, native 
 	nodes := in.tree.Load()
 	if nodes == nil {
 		if ins, ok := reservedFor(name); ok { // its slot stays free until the tree arrives (reserve.go)
+			noteExpected(name, reserveCovers(gtx)) // expect.go
 			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions {
 				return probeNative(name, func() layout.Dimensions { return native(g, props) })
 			})
 		}
+		noteExpected(name, false) // expect.go
 		return probeNative(name, func() layout.Dimensions { return native(gtx, pre) })
 	}
 	unreserve(name)

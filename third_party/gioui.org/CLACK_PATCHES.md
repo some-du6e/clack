@@ -63,7 +63,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gpu/internal/metal/clack_external_darwin.go`,
 `gpu/headless/clack_external_test.go`, `gpu/headless/clack_size.go`,
 `gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
-`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go` and
+`io/input/clack_bounds.go`, `io/input/clack_bounds_test.go`,
+`app/clack_startup.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2775,3 +2776,65 @@ X11 and Wayland windows) still terminate it.
 Tests: `gpu/headless` `TestClackWindowOutlivesAnother` (two windows, the
 second released, the first still draws: red before the patch). Not in
 `UPSTREAM.patch`.
+
+## 56. app: the driver's startup points, for the app's launch timeline
+
+`app/clack_startup.go` (new: `SetStartupMark`), `app/window.go`
+(`init`, `validateAndProcess`), `app/os_macos.go`
+(`gio_onStartupPoint`, `gio_onFinishLaunching`, `newWindow`),
+`app/os_macos.m` (`gio_main`, `GioAppDelegate`'s
+`applicationWillFinishLaunching:` and `applicationDidFinishLaunching:`),
+`app/clack_bounds_macos.go`
+(`displays`, `readScreens`, `snapshotLaunchScreens`), `app/os_windows.go`
+(`Configure`), `app/os_x11.go` (`newX11Window`); `SetQuitHandler` and
+the stub menu's Window items (`gio_main`, `gioQuit:`).
+
+Karim, 2026-11-21: "Make launching the app take less than a Mac app
+bounce." macOS bounces an app's Dock icon from the launch until it
+finishes launching, so a launch's timeline needs the points only the
+driver sees: when NSApplication finished launching, when the window
+went on screen, when the GPU's first context and pipelines were made and
+the first frame presented. `SetStartupMark(f)` makes `f(name, at)` hear
+each of them once per process, the first time any window reaches it:
+`gio-init` (Window.init done), on macOS `appkit-app` (NSApplication
+made, its delegate set), `appkit-run` (`[NSApp run]` about to start),
+`will-finish-launching` (the delegate's
+`applicationWillFinishLaunching:`), `launched`
+(`NSApplicationDidFinishLaunchingNotification`), `activated` (the end of
+the delegate's `applicationDidFinishLaunching:`), `window-create`,
+`window-view` and `window-ns` (newWindow's main-thread block starting,
+its view with the Metal layer and display link, its NSWindow), then
+`window-shown` (`makeKeyAndOrderFront:`, `ShowWindow` or `XMapWindow`
+returned), `gpu-context` (the first `NewContext`), `gpu` (the first
+`gpu.New`) and `presented` (the first `Present` that didn't fail). Each
+point is an atomic flag; the hook runs on the thread that reached it (the
+AppKit main thread for the macOS points) and must not block. cmd/clack
+sets it to a goroutine calling `applog.MarkAt`; nothing else does.
+
+The launch's first `displays()` (macOS) no longer waits for the main
+thread's queue, which AppKit serves only once NSApplication finished
+launching: `applicationWillFinishLaunching:` reads the screens
+(`snapshotLaunchScreens`, on the main thread, once) and `displays()`
+takes them when they come before its own main-thread read does (once;
+later calls read afresh). Clack reads the displays for the main window's
+place (winbounds.go), so the window is created the moment the launch
+finishes instead of one main-queue round trip later (15-70 ms on CI).
+
+A window asked for before the launch finished (newWindow, which waited
+for `launched` and then queued its main-thread block) now opens inside
+the delegate's `applicationDidFinishLaunching:`, after it made the app
+regular and active (`openAtLaunch`, `gio_onLaunchActivated`): the
+canonical place for an app's first window. The queued block waited for
+AppKit's post-launch work, 30-50 ms on CI. A window asked for later opens
+as before.
+
+The stub menu `gio_main` makes (until an app installs its own; Clack's
+installs after its first frame) has, besides Hide, a Window menu with
+Minimize (Cmd+M, `performMiniaturize:`) and Close (Cmd+W,
+`performClose:`, the red button's path), and its Quit (Cmd+Q) is
+`gioQuit:`: the app's `SetQuitHandler` function on its own goroutine when
+one is set (Clack's Quit: the window closes, the session and logs flush),
+`terminate:` otherwise.
+
+Read by `.github/perf/launch.py` (flake-check's `launch-speed-*` jobs and
+ci's macos launch budget). Not in `UPSTREAM.patch`.

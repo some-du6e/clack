@@ -98,7 +98,14 @@ type Files struct {
 	sortBtn    widget.Clickable
 	sortScrim  widget.Clickable
 	sortClicks [2]widget.Clickable
-	filtersBtn widget.Clickable
+	// the Filters button (filter_file_types_main) and its modal's filters:
+	// the browser's from / in / after / before (adv) and the count the
+	// modal handed back (setUnifiedFilesFilterCount: the button's label)
+	filtersBtn   widget.Clickable
+	filtersTip   popups.TipState
+	adv          popups.FilesFilters
+	advCount     int
+	filtersModal *popups.FilesFiltersModal // the last one opened (tests)
 
 	retry  widget.Clickable
 	data   async[core.FilePage]
@@ -235,7 +242,8 @@ func (f *Files) start() {
 		f.startDeleted()
 		return
 	}
-	q := core.FilesOpts{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, SharedWithMe: f.seg == 2, Page: page, Sort: f.sortBy}
+	q := core.FilesOpts{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, SharedWithMe: f.seg == 2, Page: page, Sort: f.sortBy,
+		From: f.adv.From, In: f.adv.In, After: f.adv.After, Before: f.adv.Before}
 	if f.kind() == "" && !f.defaultTypes() {
 		q.Types = f.typeValues()
 	}
@@ -376,7 +384,7 @@ func (f *Files) update(gtx C) {
 		}
 	}
 	if f.filtersBtn.Clicked(gtx) {
-		f.h.Toast("Search filters aren't supported here yet; use search modifiers like from:@name")
+		f.openFilters()
 	}
 	if f.retry.Clicked(gtx) {
 		f.reload = true
@@ -385,6 +393,7 @@ func (f *Files) update(gtx C) {
 		for i := range f.typeOn {
 			f.typeOn[i] = true
 		}
+		f.adv, f.advCount = popups.FilesFilters{}, 0
 		f.reload = true
 	}
 	if t, changed, submit := f.search.update(gtx); changed || submit {
@@ -453,10 +462,11 @@ func (f *Files) update(gtx C) {
 type fileSortOption struct{ label, value string }
 
 // sortOptions are the sort select's options (useUnifiedFilesExplorer):
-// with a search, Most relevant and Last updated (the default); else
-// Recently viewed (not under Created by you) and Last updated.
+// with a search or advanced filters (tH), Most relevant and Last updated
+// (the default); else Recently viewed (not under Created by you) and Last
+// updated.
 func (f *Files) sortOptions() []fileSortOption {
-	if strings.TrimSpace(f.query) != "" {
+	if strings.TrimSpace(f.query) != "" || f.adv.Set() {
 		return []fileSortOption{{"Most relevant", "score"}, {"Last updated", "timestamp"}}
 	}
 	if f.seg == 1 {
@@ -967,24 +977,113 @@ func (f *Files) filterBar(gtx C) D {
 			return d
 		}),
 		hgap(8),
-		layout.Rigid(func(gtx C) D {
-			return f.filtersBtn.Layout(gtx, func(gtx C) D {
-				pointerCursor(gtx)
-				sz := image.Pt(gtx.Dp(42), gtx.Dp(28))
-				r := image.Rectangle{Max: sz}
-				rrect(gtx, r, gtx.Dp(4), f.p.Bg)
-				if f.filtersBtn.Hovered() {
-					rrect(gtx, r, gtx.Dp(4), f.p.Hover)
-				}
-				border(gtx, r, gtx.Dp(4), max(1, gtx.Dp(1)), f.p.SegLine)
-				g := gtx
-				g.Constraints = layout.Exact(sz)
-				layout.Center.Layout(g, func(gtx C) D { return f.icon(gtx, "filter-sliders", 18, f.p.Text) })
-				return D{Size: sz}
-			})
-		}),
+		layout.Rigid(func(gtx C) D { return f.filtersButton(gtx) }),
 	)
 	return row(gtx, layout.Middle, ch...)
+}
+
+// filtersLabel is the Filters control's value (filter_file_types_main):
+// "" with no count, else "{n} Filter(s) " (the trailing space collapses
+// at the end of the inline-flex button).
+func (f *Files) filtersLabel() string {
+	if f.advCount == 0 {
+		return ""
+	}
+	return strings.TrimSpace(nsBrowsers.T("{filterCount} {filterCount, plural, =1 {Filter} other {Filters}} ", "filterCount", f.advCount))
+}
+
+// filtersButton is ExplorerControls' "modal" control: a
+// p-explorer_controls__button (28px, padding 0 11px, radius 4, 13px bold)
+// with the 18px filters icon, then the value 4px after it
+// (margin_right_25); active (content-hgl-1, white) while the value isn't
+// the default "", and the "Filters" tooltip on top while it has no count
+// (hasTooltip).
+func (f *Files) filtersButton(gtx C) D {
+	label := f.filtersLabel()
+	active := label != ""
+	d := f.filtersBtn.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		fg := f.p.Text
+		if active {
+			fg = rgb(0xffffff)
+		}
+		h, pad, is := gtx.Dp(28), gtx.Dp(11), gtx.Dp(18)
+		lw, gap := 0, 0
+		if active {
+			m := op.Record(gtx.Ops)
+			lw = f.label(gtx, 13, wBold, fg, label).Size.X
+			m.Stop()
+			gap = gtx.Dp(4)
+		}
+		w := pad + is + gap + lw + pad
+		w += 2 * max(1, gtx.Dp(1)) // the 1px border each side
+		sz := image.Pt(max(w, gtx.Dp(32)), h)
+		r := image.Rectangle{Max: sz}
+		rad := gtx.Dp(4)
+		if active {
+			bg := f.lt(rgb(0x1264a3), rgb(0x0a77a7))
+			if f.filtersBtn.Hovered() {
+				bg = flatten(f.lt(argb(0x21122a59), argb(0x14d8eef6)), bg)
+			}
+			rrect(gtx, r, rad, bg)
+		} else {
+			rrect(gtx, r, rad, f.p.Bg)
+			if f.filtersBtn.Hovered() {
+				rrect(gtx, r, rad, f.p.Hover)
+			}
+			border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.SegLine)
+		}
+		x := (sz.X - (is + gap + lw)) / 2
+		func() {
+			defer opOffset(gtx, image.Pt(x, (h-is)/2)).Pop()
+			f.icon(gtx, "filter-sliders", 18, fg)
+		}()
+		if active {
+			func() {
+				defer opOffset(gtx, image.Pt(x+is+gap, 0)).Pop()
+				g := gtx
+				g.Constraints = layout.Exact(image.Pt(lw, h))
+				layout.W.Layout(g, func(gtx C) D { return f.label(gtx, 13, wBold, fg, label) })
+			}()
+		}
+		return D{Size: sz}
+	})
+	if !active {
+		popups.Tooltip(gtx, f.th, &f.filtersTip, f.filtersBtn.Hovered(), d.Size, popups.Above, nsBrowsers.T("Filters"), "")
+	}
+	return d
+}
+
+// openFilters is showAdvancedFilterModal: the Filters modal with the
+// browser's filters (no From under Created by you).
+func (f *Files) openFilters() {
+	ph, ok := f.h.(popups.Host)
+	if !ok {
+		return
+	}
+	f.filtersModal = popups.OpenFilesFilters(ph, f.adv, popups.FilesFiltersOpts{HideFrom: f.seg == 1,
+		OnSave: func(nf popups.FilesFilters, count int) { f.applyFilters(nf, count) }})
+}
+
+// applyFilters is the modal's onSave through useUnifiedFilesFilters (et,
+// then ea): the count goes to the button, and without a search the sort
+// follows the filters. The first filters set sort by Last updated
+// (NEWEST); taking the last ones off brings back the filter's default
+// (Recently viewed, Shared with you's relevance; Created by you keeps its
+// sort).
+func (f *Files) applyFilters(nf popups.FilesFilters, count int) {
+	f.advCount = count
+	if strings.TrimSpace(f.query) == "" {
+		was, now := f.adv.Set(), nf.Set()
+		switch {
+		case !was && now:
+			f.sortBy = "timestamp"
+		case was && !now && f.seg != 1:
+			f.sortBy = "" // last_engaged, or score under Shared with you (filesParams)
+		}
+	}
+	f.adv, f.reload = nf, true
+	f.h.Invalidate()
 }
 
 // segButton: h 28, padding 0 11px, radius 4, 13px bold. Active: #1264a3
@@ -1059,20 +1158,21 @@ func (f *Files) sortMenu(gtx C) D {
 // browse-unified-files-view useUnifiedFilesExplorer; jnm4
 // useUnifiedFilesFilters for the file types).
 //
-// All files: with every file type on (isAllFileTypesSelected) "No files
-// yet" / "Your recently viewed or updated files will be shown here.", or
-// with a search "No results" and the same line; with fewer types "No files
-// found" / "It may be that you don’t have any files yet, or that there
-// aren’t any that fit your current filters.", or with a search "No
-// results" / "You may want to try adjusting your filters.", both with an
-// outline "Clear Filters" that turns every type back on
-// (clearAdvancedFiltersAndShowAllFileTypes). Canvases and Lists without a
-// search: "No canvases yet" (the canvases explorer's own empty state) and
-// the lists NUX header "No lists yet", each with an outline + New Canvas /
-// New List; with one: "No results" / "You may want to try adjusting your
-// filters.".
+// All files: with every file type on (isAllFileTypesSelected) and no
+// advanced filters (hasAdvancedFiltersSet) "No files yet" / "Your
+// recently viewed or updated files will be shown here.", or with a search
+// "No results" and the same line; with fewer types "No files found" / "It
+// may be that you don’t have any files yet, or that there aren’t any that
+// fit your current filters."; with a search or advanced filters "No
+// results" / "You may want to try adjusting your filters."; the last two
+// with an outline "Clear Filters" that turns every type back on and the
+// advanced filters off (clearAdvancedFiltersAndShowAllFileTypes).
+// Canvases and Lists without a search or advanced filters: "No canvases
+// yet" (the canvases explorer's own empty state) and the lists NUX header
+// "No lists yet", each with an outline + New Canvas / New List; with
+// either: "No results" / "You may want to try adjusting your filters.".
 func (f *Files) empty(gtx C) D {
-	e := filesEmptyCopy(f.kind(), f.query != "", f.typeCount() == len(fileTypeMenu))
+	e := filesEmptyCopy(f.kind(), f.query != "", f.adv.Set(), f.typeCount() == len(fileTypeMenu))
 	var btn *widget.Clickable
 	switch e.button {
 	case "Clear Filters":
@@ -1080,7 +1180,7 @@ func (f *Files) empty(gtx C) D {
 	case "New Canvas", "New List":
 		btn = &f.emptyNew
 	}
-	ns := filesEmptyNS(f.kind(), f.query != "")
+	ns := filesEmptyNS(f.kind(), f.query != "" || f.adv.Set())
 	return f.filesEmpty(gtx, ns.T(e.title), ns.T(e.desc), btn, e.icon, ns.T(e.button))
 }
 
@@ -1105,30 +1205,31 @@ func filesEmptyNS(kind string, search bool) i18n.NS {
 // filesEmptyCopy picks Slack's empty state for a section ("" All files,
 // "canvases", "lists"), whether a search is on and whether every file type
 // is (see empty).
-func filesEmptyCopy(kind string, search, allTypes bool) filesEmptyState {
+func filesEmptyCopy(kind string, search, adv, allTypes bool) filesEmptyState {
 	const (
 		noResults = "No results"
 		recents   = "Your recently viewed or updated files will be shown here."
 		adjust    = "You may want to try adjusting your filters."
 	)
 	switch kind {
-	case "canvases":
-		if search {
+	case "canvases": // the zero state needs no search and no advanced filters (th)
+		if search || adv {
 			return filesEmptyState{noResults, adjust, "", ""}
 		}
 		return filesEmptyState{"No canvases yet", "Your recently viewed or updated canvases will show up here.", "plus", "New Canvas"}
 	case "lists":
-		if search {
+		if search || adv {
 			return filesEmptyState{noResults, adjust, "", ""}
 		}
 		return filesEmptyState{"No lists yet", "Your recently viewed or updated lists will be shown here.", "plus", "New List"}
 	}
+	// !ei || et || R: (ei && !et && R) / (et || R) / else; ei && !et && !R
 	switch {
-	case allTypes && search:
+	case allTypes && !adv && search:
 		return filesEmptyState{noResults, recents, "", ""}
-	case allTypes:
+	case allTypes && !adv:
 		return filesEmptyState{"No files yet", recents, "", ""}
-	case search:
+	case adv || search:
 		return filesEmptyState{noResults, adjust, "", "Clear Filters"}
 	}
 	return filesEmptyState{"No files found", "It may be that you don’t have any files yet, or that there aren’t any that fit your current filters.", "", "Clear Filters"}

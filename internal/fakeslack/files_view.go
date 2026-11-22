@@ -44,13 +44,36 @@ func (s *Server) filesBrowserImages(f url.Values) (any, bool) {
 	return ok("items", items, "pagination", map[string]any{"total_count": len(items), "page": 1, "page_count": 1}), true
 }
 
+// recordFilesBrowserSearch keeps each Files browser search
+// (search.modules.files with search_context desktop_files_browser) for
+// FilesBrowserSearches; it answers nothing.
+func (s *Server) recordFilesBrowserSearch(method string, f url.Values) {
+	if method != "search.modules.files" || f.Get("search_context") != "desktop_files_browser" {
+		return
+	}
+	fv := s.filesView()
+	fv.mu.Lock()
+	fv.searches = append(fv.searches, f)
+	fv.mu.Unlock()
+}
+
+// FilesBrowserSearches returns the Files browser's search.modules.files
+// forms, in order.
+func (s *Server) FilesBrowserSearches() []url.Values {
+	fv := s.filesView()
+	fv.mu.Lock()
+	defer fv.mu.Unlock()
+	return append([]url.Values(nil), fv.searches...)
+}
+
 type filesViewStore struct {
-	mu      sync.Mutex
-	starred []string          // files.favorites.add order, oldest first (as Slack's file_ids)
-	deleted map[string]bool   // files.delete
-	titles  map[string]string // files.edit titles
-	trash   map[string]trashed
-	calls   []FilesViewCall
+	mu       sync.Mutex
+	searches []url.Values      // the browser's searches (recordFilesBrowserSearch)
+	starred  []string          // files.favorites.add order, oldest first (as Slack's file_ids)
+	deleted  map[string]bool   // files.delete
+	titles   map[string]string // files.edit titles
+	trash    map[string]trashed
+	calls    []FilesViewCall
 	// file collections (files_sections.go): the custom ones, the starred
 	// files' positions and the starred collection's sort
 	colls             []*fakeCollection

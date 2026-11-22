@@ -345,7 +345,7 @@ func TestSearchRecentsReadGroups(t *testing.T) {
 	if err := a.C.SetPref(ctx, prefRecents, `{"search":[{"query":"from another device","type":"SLACK","timestamp":99999999999999}]}`); err != nil {
 		t.Fatal(err)
 	}
-	a.handle(slack.Event{Type: "search_recents", Raw: json.RawMessage(`{"type":"search_recents","value":"updated"}`)})
+	a.handleNow(t, slack.Event{Type: "search_recents", Raw: json.RawMessage(`{"type":"search_recents","value":"updated"}`)})
 	if hs, _ = a.RecentSearches(ctx, 10); len(hs) == 0 || hs[0].Query != "from another device" {
 		t.Errorf("search_recents update not reloaded: %+v", hs)
 	}

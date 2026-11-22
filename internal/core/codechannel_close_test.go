@@ -505,7 +505,7 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	}
 	// while it runs: rejoined, left, and a message in CSEEN heard on the
 	// socket with no reopen
-	a.handle(rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "CJOIN", "name": "cjoin"}}))
+	a.handleNow(t, rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "CJOIN", "name": "cjoin"}}))
 	a.handle(rtm("channel_left", map[string]any{"channel": "CLEFT"}))
 	ts := strconv.FormatInt(recent.Unix(), 10) + ".000100"
 	var counts []slack.CountEntry

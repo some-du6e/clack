@@ -242,6 +242,16 @@ type App struct {
 	pipWake time.Time
 	vidTips map[any]*popups.TipState
 
+	// the startup timeline's first FrameEvent and first frame of the
+	// client itself, not the boot placeholder (real-frame); firstFramed:
+	// the first frame of any kind went to the GPU (firstFrameDone)
+	frameEvented, realFramed, firstFramed bool
+	// winEvented: the window delivered its first event (its driver is
+	// up: perform may call Window.Perform from any goroutine)
+	winEvented atomic.Bool
+	// cacheRested: core heard the first real frame (FirstFrameDone)
+	cacheRested bool
+
 	title       string
 	firstPaint  bool
 	frameStats  frameStats
@@ -417,6 +427,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 		// one collection serves both modes; the UI font when its files
 		// are on this computer, else Lato until it has loaded
 		sh, o, pending := startupShaper(stored)
+		applog.Mark("fonts", "in "+time.Since(t).Round(time.Millisecond).String())
 		if h := a.opts.shaperHold; h != nil {
 			<-h
 		}
@@ -511,18 +522,21 @@ func mainWindowOptions() []app.Option {
 
 // Run opens the window and blocks until it closes.
 func (a *App) Run() error {
+	applog.Mark("run", "")
 	a.timing("run", a.opts.Started)
 	setFrameMode()           // partial frames, unless CLACK_FULL_FRAMES (partial_frames.go)
 	startCaretBlinkWatcher() // Linux: GTK's caret blink, as Chromium's (caretblink_linux.go)
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)
-	// where it was: Slack's mainWindowSettings (winbounds.go)
-	a.win.Option(a.mainWindowPlace()...)
-	if a.startHidden() { // Keep in Background after a login launch (tray.go)
-		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
-		a.win.Option(app.StartHidden(true))
-	}
+	// Where it was: Slack's mainWindowSettings (winbounds.go). On macOS
+	// the displays are AppKit's, read on its main thread, which answers
+	// only once NSApplication runs (the launch it finishes is the Dock's
+	// bounce): asked here, they come during that launch, while everything
+	// below (the backend's disk reads and the plugin runtimes included)
+	// starts, and the window takes them just before it opens.
+	place := make(chan []app.Option, 1)
+	go func() { place <- a.mainWindowPlace() }()
 	a.wcoEnable()            // Windows: the top nav draws the caption buttons
 	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
@@ -550,7 +564,6 @@ func (a *App) Run() error {
 	if startNavGlue != nil {
 		startNavGlue(a)
 	}
-	a.startMenuBar()
 	if a.data != nil {
 		a.data.start(a)
 	}
@@ -561,8 +574,17 @@ func (a *App) Run() error {
 	wd.startRecorder(a.prefs.FlightRecorder)
 	a.wd = wd // drainIdle's stage
 	go wd.run()
+	// the window's place (above): a.winPlace and a.winOpened are set once
+	// this receives
+	a.win.Option(<-place...)
+	if a.startHidden() { // Keep in Background after a login launch (tray.go)
+		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
+		a.win.Option(app.StartHidden(true))
+	}
+	applog.Mark("event-loop", "")
 	for {
 		ev := a.win.Event()
+		a.winEvented.Store(true) // perform's Window.Perform (desktop.go)
 		// The OS waits while this goroutine handles ev (macOS: the AppKit
 		// main thread, every event and frame), so the watchdog times it.
 		wd.begin(&stageEvent)
@@ -612,6 +634,7 @@ func (a *App) Run() error {
 			a.layoutDue.Store(true)
 			a.drainIdle()
 		case app.ConfigEvent:
+			applog.Mark("config", "")
 			a.layoutDue.Store(true)
 			a.winMode = e.Config.Mode
 			a.noteWindowPlace(e.Config) // mainWindowSettings (winbounds.go)
@@ -637,6 +660,10 @@ func (a *App) Run() error {
 			a.drainIdle()
 		case app.FrameEvent:
 			t0 := time.Now()
+			if !a.frameEvented {
+				a.frameEvented = true
+				applog.Mark("frame-event", "")
+			}
 			if a.th.Shaper == nil && !a.takeShaper() {
 				// The shaper (fonts) is still loading: paint the window's
 				// background and come back when it's ready, instead of
@@ -658,6 +685,7 @@ func (a *App) Run() error {
 				}
 				e.Frame(gtx.Ops)
 				applog.Mark("first-frame", "background, fonts loading")
+				a.firstFrameDone()
 				break
 			}
 			// patch points (slackc) are shared with the huddle call window
@@ -720,7 +748,21 @@ func (a *App) Run() error {
 			} else {
 				e.Frame(gtx.Ops)
 				a.inspectAfterFrame(gtx.Ops, e.Size) // a pick's screenshot (inspect_wire.go)
+				if !a.realFramed {
+					// the client itself, not the boot placeholder: what a
+					// launch is for (launch.py's budget)
+					a.realFramed = true
+					applog.Mark("real-frame", a.paletteNote())
+				}
+				if b := a.data; b != nil && !a.cacheRested {
+					a.cacheRested = true
+					b.core.FirstFrameDone() // meta.json's custom emoji and user groups now (core DeferCacheRest)
+				}
+				if b := a.data; b != nil && b.tautDeferJS {
+					b.startDeferredTaut(a) // the launch's first real frame is up (backend.start)
+				}
 			}
+			a.firstFrameDone()
 			if !a.firstPaint {
 				a.timing("first layout", t0)
 				a.timing("first GPU submit", tl)
@@ -741,6 +783,19 @@ func (a *App) Run() error {
 		}
 		wd.end()
 	}
+}
+
+// firstFrameDone runs once the window's first frame went to the GPU: what
+// the launch leaves until then. The macOS menu bar's install runs on
+// AppKit's main thread (9-13 ms warm, 35-80 ms with a cold file cache on
+// CI), which would otherwise build it after NSApplication finished
+// launching and before it made the window.
+func (a *App) firstFrameDone() {
+	if a.firstFramed {
+		return
+	}
+	a.firstFramed = true
+	a.startMenuBar()
 }
 
 // takeShaper installs the text shaper once New's goroutine built it, without

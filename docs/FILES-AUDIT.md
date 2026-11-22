@@ -343,6 +343,53 @@ Not done, and why:
   canvas or list and marks its row. Clack's docs/ and lists/ routes belong
   to Home, so a file row never shows as selected.
 
+## The Filters button's advanced filters (files-filters, 2026-11-21)
+
+Sources: CDN build 8f19be21ed7e (datamine capture of 2026-11-21) without a
+cookie: `gantry-v2-async-client-browse-unified-files-view` (lbOJ
+useUnifiedFilesExplorer: the `filter_file_types_main` control, the empty
+states), `…explorer_hooks_use-hosted-browser…` (te+0: jnm4
+useUnifiedFilesFilters with showAdvancedFilterModal, areAdvancedFiltersEqual
+and countAdvancedFilters, and BaseAdvancedSearchModal; qrHQ
+AdvancedSearchSelect, da0Y), `gantry-v2-async-client-boot-shared` (31Gm
+ExplorerControls' `modal` control), `client-boot` (nzlP
+querySuggestionFromQueryAndFilter, wBUp the browser fetch and
+getSearchAPIParams, pYM5 the query tokens, CNDf the query, mqlo, 7Nox,
+CniK SearchFilterDateRangeSelect, +hyT the range label, fhw7 the presets,
+fXsW ControlledMultiSelect behind YLpq, 4MqP, 4iNl getUserPref, iDUn
+Label, M6ch / P5wA / t/TJ / skWT / kXI9 / cC60 the modal parts) and
+`client-boot-styles.css` (cf726c4f2eaecc74). The expected queries in
+`TestFilesViewAdvancedFiltersQuery` are nzlP's own output, run in node over
+the same filters with pYM5's token toString code.
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| The button | ExplorerControls' `modal` control: p-explorer_controls__button (28px, padding 0 11px, radius 4, 13px bold) with the 18px `filters` icon and the value: "" or "{n} Filter(s) " (the filter count, setUnifiedFilesFilterCount), 4px after the icon (margin_right_25); `--active` (content-hgl-1 fill, white) while the value isn't "", and the "Filters" tooltip on top only while the count is 0 | an icon button that toasted "Search filters aren't supported here yet; use search modifiers like from:@name" | Slack's button, count, active fill and tooltip; it opens the modal |
+| Which filters | BaseAdvancedSearchModal with entity "files" draws From, In, With, Date, File types; useUnifiedFilesFilters excludes File types and With (filtersExcluded), and From too under "Created by you" | none | From, In and Date in that order; no From under Created by you |
+| The modal | c-sk-modal (520): "Filter by"; Labels (15px bold, 8px under) over each control, 12px under each (`.c-advanced_search_modal__select`); the footer (84px): "ⓘ Learn more about search" (HelpLink 202528808), Clear Filters (outline; hideFilterCount so no "(n)"; off while the count is 0) and Done (searchButtonText; off until something changes: the ax state) | none | the same (`popups/files_filters.go`) |
+| From / In | AdvancedSearchSelect: ControlledMultiSelect (tokens, medium, maxHeight 130, 32px rows), placeholders "ex. Zoe Maxwell" / "ex. #project-unicorn"; the Searcher over members (self, bots, deleted; no Slackbot) for From, and channels (public, private, group DMs, not archived), channel sections (none show: no includeTypes) and members for In; Backspace, Delete, ↑/↓, Enter, Escape as the multi-select has them | none | Clack's ugSelect (the user group dialogs' ControlledMultiSelect port, now taking people and channels in one list), ranked by the search box's Searcher port (srACRanker) with edge users/search and channels/search as its remote tier |
+| Date | SearchFilterDateRangeSelect behind an outline medium button (the label, weight 500, and caret-down 18; ↓ opens it): a 280px menu, bottom-left, offsetY -4: Any time (before: tomorrow), Today, Yesterday, Last 7 days, Last 30 days, Last 3 months, Last 12 months, Last 3 years (fhw7, months as dayjs counts them), the range's own row when no preset matches, a divider, On…, Before…, After…, Range…; the label is +hyT's ("Any time" when unset or before is tomorrow, "On Nov 3, 2026", "Nov 3 - Nov 10", Last 3 years within two days) | none | the same menu and labels; On…, Before…, After… pick on Clack's calendar (NewDatePickerRange: no day after today, After… no day after yesterday), Range… as two picks (start, then end). Slack asks those in a 358px dialog with a date input (675px for the range picker) |
+| The request | onSave → setAdvancedFilters: from, in, before, after (null when unset) on the browser; the fetch writes `querySuggestionFromQueryAndFilter(query, filters).toString().trim()`: the typed query's tokens, then from:<@U…>, in: (a channel `<#C…\|name>` with ">" taken out of the name, a group DM `<#G…>`, a DM or a person `<@U…>`), before:, after:, the type: tokens, creator:<@self>. getSearchAPIParams' files branch adds no params for them | from:/in: only by typing them, after the type: tokens | the same tokens in Slack's order (`core.FilesOpts` From / In / After / Before, `filesQuery`). The typed query now comes first too, as Slack's does (it was after the types) |
+| Sort | ea: with no query, the first filters switch to Last updated (NEWEST); taking the last ones off brings back the filter's default (Recently viewed; Shared with you's relevance; Created by you keeps its sort). With filters set the sort select offers Most relevant and Last updated (tH) | — | the same |
+| The count | aI: the search_exclude_bots pref (mapStateToProps' excludeBots) counts as a filter with From, In and the date; Clear Filters turns it off for that save only | — | the same, so with the pref on a date alone shows "2 Filters" |
+| Empty states | hasAdvancedFiltersSet (the filters differ from the browser's initial ones): All files "No results" / "You may want to try adjusting your filters." with Clear Filters even with every type on; Canvases and Lists leave their zero states for "No results" (th) | the empty states looked at the types and the search only | the same; Clear Filters (clearAdvancedFiltersAndShowAllFileTypes) also clears the filters and the count |
+
+Not done:
+
+- **The search box's tokens.** Slack parses the typed query into tokens
+  and drops typed from:, in:, before:, after: and type: tokens the filters
+  don't hold (queryTokenListForFromFilter and the rest keep only the
+  filters' own), and the modal starts from the omniswitcher's from: / in:
+  tokens when it has some. Clack sends the typed text as it is and starts
+  the modal from the browser's filters.
+- **A channel the client doesn't know.** InQuerySuggestionToken writes
+  `in:` with no value for one; Clack writes `in:<#C…>`. A picked channel
+  is always known.
+- **The date dialogs.** On…, Before…, After… and Range… use Clack's
+  calendar dropdown, not Slack's dialog with a typed date input.
+- **The compressed controls** (useCompressedControls: just the count) and
+  the footer's column layout under 640px wide.
+
 
 ## Files & links tab (files-links-tab, 2026-11-12)
 
