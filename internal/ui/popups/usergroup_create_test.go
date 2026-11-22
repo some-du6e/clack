@@ -1,6 +1,7 @@
 package popups
 
 import (
+	"image"
 	"net/url"
 	"strings"
 	"sync"
@@ -18,6 +19,32 @@ type ugCreateHost struct {
 }
 
 func (h *ugCreateHost) OpenUserGroup(id string) { h.opened = append(h.opened, id) }
+
+// clickButton clicks the dialog's footer button label once the frames
+// draw it settled: at the same rect two frames running, and enabled. A
+// state change (a check's error going, the step's body) moves the footer
+// a frame after the state itself, so a rect read at the state can be
+// stale and the click miss.
+func (e *ugRT) clickButton(label string) {
+	e.t.Helper()
+	var last image.Rectangle
+	e.until("the "+label+" button in place", func() bool {
+		var b *ModalButton
+		for _, x := range e.modal().o.Buttons {
+			if x.Label == label {
+				b = x
+			}
+		}
+		if b == nil {
+			return false
+		}
+		r := b.rect
+		ok := r == last && !r.Empty() && b.enabled()
+		last = r
+		return ok
+	})
+	e.click(last)
+}
 
 // pickMember types q in the members select and presses Enter on the
 // first match. It waits for the select's caret first: the MEMBERS step
@@ -68,7 +95,7 @@ func TestUserGroupCreateLikeSlack(t *testing.T) {
 		m.SetHandle("designcrew")
 		m.SetPurpose("Synthetic purpose")
 		e.until("Next on", func() bool { return m.CanSave() })
-		e.click(e.button("Next"))
+		e.clickButton("Next")
 		e.until("the MEMBERS step", func() bool { return m.Step() == 1 })
 		for _, method := range []string{"subteams.validateName", "subteams.validateHandle"} {
 			f := e.calls.get(method)
@@ -83,7 +110,7 @@ func TestUserGroupCreateLikeSlack(t *testing.T) {
 		e.until("the members select's caret", func() bool { return e.r.Source().Focused(&s.ed) })
 
 		// nobody: the alert, still open, nothing sent
-		e.click(e.button("Create Group"))
+		e.clickButton("Create Group")
 		x = e.texts()
 		if !m.NoMembersError() || m.CanSave() || m.Dismissed() || !hasText(x, "User groups need to have at least one member.") {
 			t.Errorf("%s nobody: alert %v, can go %v, dismissed %v", e.mode, m.NoMembersError(), m.CanSave(), m.Dismissed())
@@ -94,11 +121,11 @@ func TestUserGroupCreateLikeSlack(t *testing.T) {
 		e.shot("usergroup-create-members-empty")
 
 		// Back keeps the form; Next again
-		e.click(e.button("Back"))
+		e.clickButton("Back")
 		if m.Step() != 0 || m.name.Text() != "Design crew" || m.ButtonLabels() != "Cancel|Next" || m.Dismissed() {
 			t.Fatalf("%s Back: step %d, name %q, buttons %q", e.mode, m.Step(), m.name.Text(), m.ButtonLabels())
 		}
-		e.click(e.button("Next"))
+		e.clickButton("Next")
 		e.until("the MEMBERS step again", func() bool { return m.Step() == 1 })
 		e.until("the members select's caret again", func() bool { return e.r.Source().Focused(&s.ed) })
 		e.pickMember(s, "a")
@@ -109,7 +136,7 @@ func TestUserGroupCreateLikeSlack(t *testing.T) {
 		}
 		e.until("Create Group on", func() bool { return m.CanSave() })
 		e.shot("usergroup-create-members")
-		e.click(e.button("Create Group"))
+		e.clickButton("Create Group")
 		e.until("the toast", func() bool { return e.toasted("User group created!") })
 		f := e.calls.get("usergroups.create")
 		want := url.Values{"name": {"Design crew"}, "handle": {"designcrew"}, "description": {"Synthetic purpose"}, "team_id": {fakeslack.TeamID},
@@ -184,7 +211,7 @@ func TestUserGroupCreateKeepsClickedDetailsLikeSlack(t *testing.T) {
 	e := newUGRT(t, true, false, fakeslack.WorkspaceGroupID)
 	hold := make(chan struct{})
 	var mu sync.Mutex
-	holding := false
+	holding, held := false, 0
 	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
 		g := url.Values{}
 		for k, v := range f {
@@ -197,6 +224,9 @@ func TestUserGroupCreateKeepsClickedDetailsLikeSlack(t *testing.T) {
 		h := holding
 		mu.Unlock()
 		if h && method == "subteams.validateName" {
+			mu.Lock()
+			held++
+			mu.Unlock()
 			<-hold
 		}
 		return nil, false
@@ -214,7 +244,7 @@ func TestUserGroupCreateKeepsClickedDetailsLikeSlack(t *testing.T) {
 	holding = true
 	mu.Unlock()
 	m.Save()
-	e.until("the held check", func() bool { return len(e.calls.get("subteams.validateName")) > 0 })
+	e.until("Next's check held", func() bool { mu.Lock(); defer mu.Unlock(); return held > 0 })
 	m.SetName("Changed while checking")
 	m.SetPurpose("Changed too")
 	mu.Lock()
