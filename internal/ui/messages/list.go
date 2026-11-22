@@ -1784,7 +1784,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 				if s.tipRect.Empty() {
 					// a plugin's bar child holding several pills: the
 					// pill is where the pointer is, back by its place on it
-					pl := &r.pills[k]
+					pl := r.pills[k]
 					p := image.Pt(int(s.pointer.X-pl.pt.X), int(s.pointer.Y-pl.pt.Y)-s.pos[i])
 					s.tipRect = image.Rectangle{Min: p, Max: p.Add(pl.ptSize)}
 				}
@@ -2291,7 +2291,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		case tbAddReact:
 			_ = rc
 			o := popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil)
-			s.holdHover(o)
+			holdHover(s, o)
 			h.ShowOverlay(o)
 		case tbReply:
 			// RwAt.onComment: the comment thunk with threadTs =
@@ -2330,7 +2330,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 				Where:   where,
 				Trigger: trigger,
 			})
-			s.holdHover(o) // onMoreActionsMenuOpen: onPopoverOpen
+			holdHover(s, o) // onMoreActionsMenuOpen: onPopoverOpen
 			h.ShowOverlay(o)
 		}
 	}

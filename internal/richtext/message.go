@@ -265,6 +265,7 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 				if a.ID != 0 {
 					at.ID = strconv.Itoa(a.ID)
 				}
+				at.Index = i
 				at.BotID = firstNonEmpty(a.BotID, m.BotID)
 				at.BotName = botName(r, m, at.BotID)
 				at.LinkedInText = a.FromURL != "" && linksURL(m, a.FromURL)

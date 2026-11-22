@@ -54,6 +54,16 @@ func PreviewFromMessage(r Resolver, m *slack.Message) (Doc, bool) {
 	}
 	var raws []json.RawMessage
 	if len(m.Blocks) <= 2 || json.Unmarshal(m.Blocks, &raws) != nil || len(raws) == 0 {
+		// no blocks: SimpleMessagePreview draws getMessageRootText as
+		// mrkdwn (cjey's last return), never the attachments: a bot's
+		// message with only an unfurl or a legacy attachment previews
+		// their text, not the card. The other subtypes keep their own
+		// renderers (the caller's m.Doc).
+		if len(m.Attachments) > 0 && (m.Subtype == "" || m.Subtype == "bot_message") {
+			if text := messageRootText(m); strings.TrimSpace(text) != "" {
+				return Doc{Blocks: FromMrkdwn(r, text)}, true
+			}
+		}
 		return Doc{}, false
 	}
 	simple := simpleMessageUnfurl(m, raws)

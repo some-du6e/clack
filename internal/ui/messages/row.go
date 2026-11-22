@@ -144,12 +144,18 @@ type row struct {
 	pinnedHov          hovercard.Trigger
 	addReact           widget.Clickable
 	groups             []reactGroup // getReactionGroups over m.Reactions (reaction_groups.go), one pill each
-	pills              []reactPill
-	reactExpand        widget.Clickable // ReactionBar's "N more" / "Show less"
-	reactExpanded      bool             // the bar's isExpanded (Slack keeps it per message)
-	expandTip          popups.TipState
-	addTip             popups.TipState // ReactionAddButton's "Add reaction…"
-	tsTip, compactTip  tsTipper        // the header's and the gutter's Timestamp tooltips (timestamp_tip.go)
+	// pills are the groups' pills in group order, each kept by its
+	// group's emoji (pillBy) as Slack keys its Reaction elements: a pill
+	// pressed while another group comes or goes stays that emoji's, at
+	// the same address, so its release is its own click
+	pills         []*reactPill
+	pillBy        map[string]*reactPill
+	reactExpand   widget.Clickable // ReactionBar's "N more" / "Show less"
+	reactExpanded bool             // the bar's isExpanded (Slack keeps it per message)
+	expandTip     popups.TipState
+	addTip        popups.TipState // ReactionAddButton's "Add reaction…"
+	tsTip         tsTipper        // the header's Timestamp tooltip (timestamp_tip.go)
+	compactTip    tsTipper        // the gutter's
 
 	// the broadcast's root preview (rootPreview), looked up once per list
 	// snapshot
@@ -562,11 +568,31 @@ func (r *row) dimPending() bool {
 
 func (r *row) growPills() {
 	r.groups = groupReactions(r.groups, r.m.Reactions)
-	if n := len(r.groups); len(r.pills) < n {
-		r.pills = append(r.pills, make([]reactPill, n-len(r.pills))...)
+	if r.pillBy == nil {
+		if len(r.groups) == 0 {
+			r.pills = r.pills[:0]
+			return // no reactions: no map (most rows)
+		}
+		r.pillBy = map[string]*reactPill{}
 	}
-	for i := range r.pills {
-		r.pills[i].r, r.pills[i].i = r, i
+	r.pills = r.pills[:0]
+	for i := range r.groups {
+		name := r.groups[i].name
+		pl := r.pillBy[name]
+		if pl == nil {
+			pl = &reactPill{}
+			r.pillBy[name] = pl
+		}
+		pl.r, pl.i = r, i
+		r.pills = append(r.pills, pl)
+	}
+	if len(r.pillBy) > len(r.pills) { // a group went: its pill goes with it
+		for name, pl := range r.pillBy {
+			if pl.i >= len(r.groups) || r.groups[pl.i].name != name {
+				pl.i = -1 // gone: a plugin's stale tree may still call its natives (group)
+				delete(r.pillBy, name)
+			}
+		}
 	}
 }
 
@@ -1017,7 +1043,7 @@ func (r *row) reactionBarProps() slackc.Props {
 	m := &r.m
 	kids := make([]any, 0, len(r.groups)+1)
 	for i := range r.groups {
-		pl := &r.pills[i]
+		pl := r.pills[i]
 		kids = append(kids, slackc.Child("Reaction", pl.props(), pl.layout))
 	}
 	kids = append(kids, slackc.Child("ReactionAddButton", r.addButtonProps(), r.layoutAddButton))
@@ -1032,9 +1058,22 @@ func (r *row) addButtonProps() slackc.Props {
 
 // props are Reaction's: ReactionBar hands each one its group's name,
 // count, users and reactions (getReactionGroups).
+// group is the pill's reaction group, nil once its group went: a plugin's
+// ReactionBar tree from before the change may still call the dropped
+// pill's natives, which then draw nothing.
+func (pl *reactPill) group() *reactGroup {
+	if pl.r == nil || pl.i < 0 || pl.i >= len(pl.r.groups) {
+		return nil
+	}
+	return &pl.r.groups[pl.i]
+}
+
 func (pl *reactPill) props() slackc.Props {
 	r := pl.r
-	g := &r.groups[pl.i]
+	g := pl.group()
+	if g == nil {
+		return slackc.Props{}
+	}
 	rs := make([]any, len(g.idx))
 	for k, i := range g.idx {
 		rs[k] = slackReaction(&r.m.Reactions[i])
@@ -1054,7 +1093,10 @@ func (pl *reactPill) props() slackc.Props {
 // group's emoji (the first ten), "…" past ten, and the count.
 func (pl *reactPill) buttonProps() slackc.Props {
 	r := pl.r
-	g := &r.groups[pl.i]
+	g := pl.group()
+	if g == nil {
+		return slackc.Props{}
+	}
 	cls := "c-button-unstyled c-reaction"
 	self := pl.reacted()
 	if self {
@@ -2235,10 +2277,16 @@ func (r *row) hoverUser() string {
 	return r.m.User
 }
 
-// hoverBot is the bot a sender with no user opens AppHoverCard for (Slack
-// passes the message's bot_id as ProfileHoverTrigger's serviceId).
+// hoverBot is the bot the sender's hover card asks for with the member:
+// MessageSender (JA+h) hands BaseMessageSender botId = Od's bot (Emf2
+// maybeGetBotAndMemberByIds: the message's bot_id, else its bot_profile's)
+// with or without a user, and ProfileHoverTrigger passes it as serviceId.
+// A bot user posting with its app's newer bot (Hack Club's #new-bots)
+// opens that bot's app card, not the stale one its profile names; a
+// human's card is the member's either way (useProfileHoverApp: no app for
+// a human).
 func (r *row) hoverBot() string {
-	if r.custom || r.m.User != "" {
+	if r.custom {
 		return ""
 	}
 	if r.m.BotID != "" {
@@ -2691,7 +2739,7 @@ func (r *row) reactionPills(gtx layout.Context) layout.Dimensions {
 	return r.flowPills(gtx, shown+extra+1, func(gtx layout.Context, i int) layout.Dimensions {
 		switch {
 		case i < shown:
-			pl := &r.pills[i]
+			pl := r.pills[i]
 			return slackc.Component(gtx, "Reaction", pl, (*reactPill).props, (*reactPill).layout)
 		case i < shown+extra:
 			return r.expandButton(gtx, more, n-shown, sel)
@@ -2767,7 +2815,7 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 		return n, reactLess, false
 	}
 	for i := target; i < n; i++ {
-		if (&r.pills[i]).reacted() {
+		if r.pills[i].reacted() {
 			sel = true
 			break
 		}
@@ -2927,6 +2975,9 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 // group's reactions (the group's users include them; the viewer, unless
 // a plugin set ReactionBar's currentUser).
 func (pl *reactPill) reacted() bool {
+	if pl.group() == nil {
+		return false
+	}
 	r := pl.r
 	self := ""
 	if r.rc != nil {
@@ -2947,7 +2998,12 @@ func (pl *reactPill) reacted() bool {
 
 // layout is Reaction around the UnstyledButton pill.
 func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	pl.r.laidPill = pl.i // the bar child this slot is drawn in is this pill's
+	if pl.group() == nil {
+		return layout.Dimensions{}
+	}
+	// the bar child this slot is drawn in is this pill's: its group's
+	// index now (pl.i follows the pill through regrouping)
+	pl.r.laidPill = pl.i
 	pl.r.laidPills++
 	var d layout.Dimensions
 	if e, ok := slackc.PropChildren(p); ok {
@@ -2987,6 +3043,9 @@ func (pl *reactPill) pillPointer(gtx layout.Context, size image.Point) {
 // (--reacted for the viewer's own). Its children are the emoji and the
 // count; a plugin may append to them (WhoReacted's avatars).
 func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	if pl.group() == nil {
+		return layout.Dimensions{}
+	}
 	r := pl.r
 	rc := r.rc
 	if pl.btn.Clicked(gtx) && rc.onReactGroup != nil {
@@ -3102,7 +3161,10 @@ func (pl *reactPill) content(gtx layout.Context, st slackc.Styled) layout.Dimens
 // "emoji" prop names (the group's first without props).
 func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	r := pl.r
-	g := &r.groups[pl.i]
+	g := pl.group()
+	if g == nil || len(g.idx) == 0 {
+		return layout.Dimensions{}
+	}
 	re := &r.m.Reactions[g.idx[0]]
 	if name := p.StrOr("emoji", ""); name != "" {
 		for _, i := range g.idx {
@@ -3119,6 +3181,9 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 // (span.c-reaction__truncation): its 16px line box, as content places
 // it, in the colour CSS gives the pill's text, like the count.
 func (pl *reactPill) layoutTruncation(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	if pl.group() == nil {
+		return layout.Dimensions{}
+	}
 	return pillLine(pl.truncation(gtx, slackc.CurrentScope().Child(reactionTruncClass, 0)), dp(gtx, 16))
 }
 
@@ -3165,6 +3230,9 @@ func (pl *reactPill) emoji(gtx layout.Context, re *core.Reaction) layout.Dimensi
 // text (OwlMode's reacted pill: content-pry), as the native count takes
 // it from the pill.
 func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dimensions {
+	if pl.group() == nil {
+		return layout.Dimensions{}
+	}
 	return pillLine(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
 }
 
