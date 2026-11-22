@@ -44,7 +44,8 @@ func TestPinsTimeIsALink(t *testing.T) {
 	if r == nil {
 		t.Fatal("no row for the first pin")
 	}
-	full, _, ok := e.r.AreaBounds(r.time.Tag())
+	tl := pinTimeT(r)
+	full, _, ok := e.r.AreaBounds(tl.Tag())
 	if !ok || full.Empty() {
 		t.Fatalf("the first pin's time has no area (%v, %v)", full, ok)
 	}
@@ -61,7 +62,7 @@ func TestPinsTimeIsALink(t *testing.T) {
 		}
 	}
 	press(pointer.ButtonPrimary)
-	if !r.time.Hovered() {
+	if !tl.Hovered() {
 		t.Error("the pointer on the pin's time doesn't hover its link")
 	}
 	h.mu.Lock()

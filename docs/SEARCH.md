@@ -117,3 +117,24 @@ gets its request form ("from:<@U…>"); queries with refs open as tokens
 - `search_toolbar.go`: a picked row's secondary actions and Tab;
   Delete on a recent search calls `search.delete` (`core/search_delete.go`:
   searchDelete, and lwKM's forget for the recents pref).
+
+## Where else a result or a message preview is drawn (search-relatives)
+
+Slack's other surfaces that draw a search result or a message preview,
+from the web client (CDN build 36d315d11944), and how Clack draws each.
+Every result's controls are kept by the result, never by its index: Slack
+keys its list items by the result (`iid`, a file, channel or member id),
+and Gio routes a press by its handler's address, so a Clickable that
+moved when a page appended, or a row that changed under a held press,
+lost or misdirected the click.
+
+| Surface | Slack | Clack | Keyed by result | Test |
+|---|---|---|---|---|
+| Results page: messages | SearchMessage card (`message-result`, variant card) | the card (search_view.go, search_card*.go) | yes: the cards are pointers, kept as pages append | `TestSearchCardsKeepTheirPlaceAcrossPages` |
+| Results page: files, channels, people | their rows | their rows | yes (by id, from ui's 09a03631) | — |
+| Search in channel | SearchInChannelView: the same list renders `message-result` (variant card, keyed by `iid`; expanded per ts) | **the results page's card** (was rows of its own); clicks through the card's handlers | yes | `TestSearchInChannelDrawsResultCards` |
+| Popover: message suggestions, recent searches, people, channels | SearchAutocomplete rows | the popover's rows (search_popover.go) | yes (by row, from ui's 09a03631) | — |
+| Saved searches | none in the client (only a `SAVED_SEARCHES` enum constant in vendors) | none | — | — |
+| Pins tab / pinned message | PinnedItem: the message kit (`c-message_kit__message p-pinned_message`), not a search card; its time `MessageTimestamp` (clickable, full) | its own message renderer, as Slack's; **the time is now the permalink's link** (full date, no tooltip; handleTimestampClick; link menu) | yes (rows by pin) | `TestPinsTimeIsALink` |
+| Jump to a date | the unread banner's date picker: no message preview | no preview, as Slack | — | — |
+| A result's time | SearchMessage's renderTimestamp: link, full, the card's click | the link (tooltips-relatives) | — | `TestSearchCardTimeIsALink` |
