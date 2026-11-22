@@ -3741,7 +3741,7 @@ jobs:
           rc=0
           xvfb-run -a go test -count="$COUNT" -v -timeout 20m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot|TestClosedEmojiPickerReleasedFromToolbar)$' ./internal/ui || rc=1
           # the header after its root is deleted; a GIF tile held while the grid changes (thread-header-hover-2)
-          go test -count="$COUNT" -timeout 5m -run '^(TestThreadHeaderRootDeleted|TestThreadHeaderTombstoneRootDeleted)$' ./internal/ui/messages || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestThreadHeaderRootDeleted|TestThreadHeaderTombstoneRootDeleted|TestReactionPillStaleTreeAfterRemoval|TestRowHoverTarget)$' ./internal/ui/messages || rc=1
           go test -count="$COUNT" -timeout 5m -run '^TestGifTileClickSurvivesGridChanges$' ./internal/ui/popups || rc=1
           exit $rc
 
