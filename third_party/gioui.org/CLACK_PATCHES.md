@@ -56,7 +56,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
 `io/input/clack_inputidle_test.go`,
 `io/input/clack_reset.go`, `io/input/clack_reset_test.go`,
-`gesture/clack_reset_test.go`, `op/paint/clack_external.go`,
+`gesture/clack_reset_test.go`, `gesture/clack_hover_cancel_test.go`, `op/paint/clack_external.go`,
 `gpu/clack_external.go`, `gpu/clack_external_test.go`,
 `gpu/internal/driver/clack_external.go`,
 `gpu/internal/d3d11/clack_external_windows.go`,
@@ -3117,3 +3117,36 @@ Tests: `app/clack_exit_x11_test.go` (`TestX11ConnectionLost`,
 CLACK_X11_ASKED_TESTS on ci's linux-gio job): a helper process draws a
 window on a private Xvfb, the test kills that Xvfb, and the helper calls
 `X11ConnectionLost` and exits with status 1. Not in `UPSTREAM.patch`.
+
+## 60. gesture: a Hover ends on a Cancel of any pointer
+
+`gesture/gesture.go` (`Hover.Update`): a `pointer.Cancel` clears the
+hover whatever its `PointerID`; a Leave still has to name the pointer
+that entered. `Click` already ends its hover on any Cancel.
+
+A tag the router doesn't see in a frame's ops loses its handler, and the
+events queued for it go with it (`Router.Frame`). A Hover the pointer
+left in such a frame never reads that Leave: a message's gutter time is
+drawn only while its row is hovered, so moving off the time straight into
+the next row skips it, and a row scrolled away goes the same way. When
+the tag is laid out again the router makes a new handler, whose first
+event is `ResetEvent`'s `pointer.Event{Kind: pointer.Cancel}`, with
+pointer id 0. On Windows Gio numbers the mouse 1 (`EnableMouseInPointer`,
+GET_POINTERID_WPARAM), so Hover kept the dropped hover: the gutter time's
+tooltip came up at once over the next message and stayed (the
+patched-tooltips review, 2026-11-22). Patch 49 sends the mouse's own id
+for the inspect tool's reset; this is the router's reset of a single
+handler, which patch 49 doesn't reach. macOS and X11 number the mouse 0,
+so they never showed it.
+
+Every `gesture.Hover` in Clack takes the fix: the sidebar's headings,
+draft pencil and outbox, the thread title, the Activity, Later, Threads,
+Unreads and pins rows, the search list, invites, the channel card's face,
+the composer's attach menu and GIF picker, the huddle suffix, workflow,
+code-channel and agent nuggets.
+
+Tests: `gesture/clack_hover_cancel_test.go`
+(`TestClackHoverEndsOnResetCancel`: the pointer leaves in a frame that
+doesn't lay the Hover out, for mouse ids 0 and 1), in ci's linux-gio
+job. In Clack: `internal/ui/messages`' `TestGutterTimeTipEndsOnWindowsMouse`
+(the gutter time's own trigger). Not in `UPSTREAM.patch`.

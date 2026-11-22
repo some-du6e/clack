@@ -334,6 +334,11 @@ jobs:
       - name: Gio pointer state reset (vendored gioui.org/io/input, gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture
+      # Gio patch 60: a Hover ends on a Cancel of any pointer (a handler the
+      # router made again, Windows' mouse is pointer 1)
+      - name: Gio hover ends on a reset Cancel (vendored gioui.org/gesture)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackHoverEndsOnResetCancel$' gioui.org/gesture
       # Gio patch 53: a tag's area in the window, and what of it its clip
       # areas show (the video tiles' share of their list)
       - name: Gio area bounds (vendored gioui.org/io/input)

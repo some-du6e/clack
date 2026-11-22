@@ -53,10 +53,17 @@ func (h *Hover) Update(q input.Source) bool {
 			continue
 		}
 		switch e.Kind {
-		case pointer.Leave, pointer.Cancel:
+		case pointer.Leave:
 			if h.entered && h.pid == e.PointerID {
 				h.entered = false
 			}
+		case pointer.Cancel:
+			// Clack patch 60: a Cancel ends the hover whatever pointer
+			// it names, as it ends a Click's. The router's first event
+			// to a handler made again (pointerHandler.ResetEvent: a tag
+			// that missed a frame, its unread Leave dropped) is a
+			// Cancel of pointer 0, and on Windows the mouse is pointer 1.
+			h.entered = false
 		case pointer.Enter:
 			h.pid = e.PointerID
 			h.entered = true

@@ -254,6 +254,10 @@ func (st *TipState) Showing(now time.Time) bool {
 	return st.hovered && !now.Before(st.since.Add(st.delay()))
 }
 
+// Reset ends the hover: the next one waits the delay again (a target
+// that wasn't drawn this frame).
+func (st *TipState) Reset() { st.hovered = false }
+
 // delay is the tooltip's hover delay.
 func (st *TipState) delay() time.Duration {
 	switch {
