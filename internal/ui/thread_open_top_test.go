@@ -431,9 +431,9 @@ func TestThreadsAuditOpenFromToast(t *testing.T) {
 // thread's; maybeSaveThreadScrollmarks runs as the pane unmounts). The
 // thread was marked read as it showed, to the newest reply it held, so the
 // new list starts at that reply (bracketed at the end of what it holds):
-// the first frame shows it, and no frame the root. (The page after it
-// then lands under the reader: the anchor dropped at the start's scroll
-// echo, and AnchorLayout.setKeys keeps the row at the top.)
+// the first frame shows it, and no frame the root. The page after it is
+// held meanwhile: as it lands the reply box comes under Clack's list,
+// where Slack's input row is the list's own last row.
 func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 	x := openTopEnv(t)
 	x.root = fakeslack.ThreadOpenUnread
@@ -474,6 +474,10 @@ func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 			read = m.TS // the reply the pane marked it read to
 		}
 	}
+	// the page past it (loadPost) waits until the start has been looked at
+	// (a poll's read may come first: the next three wait)
+	x.fs.SetFault("conversations.replies", fakeslack.Fault{Delay: 2500 * time.Millisecond, Times: 3})
+	t.Cleanup(func() { x.fs.SetFault("conversations.replies", fakeslack.Fault{}) })
 	x.click(x.replyBar())
 	dl := time.Now().Add(20 * time.Second)
 	var since time.Time
