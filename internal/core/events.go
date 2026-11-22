@@ -442,6 +442,10 @@ func (a *App) handle(ev slack.Event) {
 		a.onDraftEvent(ev.Type, ev.Raw)
 	case "activity":
 		raw := ev.Raw
+		// the reply bar's channel lists take the item now, in the socket's
+		// order, ahead of the lookups its Activity row waits for
+		// (channel_thread_activity.go)
+		a.noteChannelThreadActivity(raw)
 		// stamped here, in socket order, not when its turn comes: a
 		// deletion or an edit dropping the viewer's mention that lands
 		// while the entry waits for the lookups ahead of it is newer than
@@ -750,15 +754,16 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		a.onMessageChange(ctx, ch, &e, ev.Raw)
 		return
 	}
+	// the notifications' maxTs takes every message the socket brings, as
+	// Slack's store adds them all (store/notifications_maxts.go): the
+	// desktop_notification for it that comes next isn't one for a
+	// message the client never took (19). Its ts alone, read before the
+	// whole message: one the typed decode below refuses was still heard
+	noteMsgTS(a.S, ev.Raw)
 	var m slack.Message
 	if json.Unmarshal(ev.Raw, &m) != nil || m.TS == "" {
 		return
 	}
-	// the notifications' maxTs takes every message the socket brings, as
-	// Slack's store adds them all (store/notifications_maxts.go): the
-	// desktop_notification for it that comes next isn't one for a
-	// message the client never took (19)
-	a.S.NoteAdded(m.TS)
 	// appendMessages merges a socket message into the stored one: a pin
 	// that came first stays (store/pins.go), and a thread's subscription
 	// changes only with a "subscribed" of the copy's own (thread_subs.go)
@@ -799,7 +804,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		return
 	}
 	if a.wasConfirmed(&m) { // late echo after the API reply confirmed it
-		a.putLocal(ch, m)
+		a.putSent(ch, m)
 		a.emitUpdate(ch, &m)
 		return
 	}

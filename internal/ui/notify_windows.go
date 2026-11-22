@@ -10,6 +10,7 @@ import (
 
 	"github.com/some-du6e/clack/assets/icon"
 	"github.com/some-du6e/clack/internal/desktop"
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 // toastNotifier shows Clack's Windows toasts (notify_toast.go: Chrome's
@@ -98,6 +99,9 @@ func (t *toastNotifier) NotifyNote(n *desktopNote) error {
 		n.When = time.Now()
 	}
 	act := n.Activated
+	// the decision log's "notify: show" is the rules' (notify_decisions.go);
+	// whether Windows shows the toast is logged here, with its tags
+	at := logtag.ID(n.Channel) + "/" + logtag.ID(n.Msg)
 	err := desktop.ShowToast(t.aumid, desktop.Toast{XML: n.toastXML(t.logo), Tag: n.ID, Group: n.GroupID,
 		Activated: func(args string, _ map[string]string) {
 			a, ok := parseToastActivation(args)
@@ -109,10 +113,17 @@ func (t *toastNotifier) NotifyNote(n *desktopNote) error {
 				act(a)
 			}
 		},
-		Failed: func(err error) { log.Printf("notify: Windows didn't show a toast: %v", err) },
+		Failed: func(err error) { log.Printf("notify: Windows didn't show the toast for %s: %v", at, err) },
 	})
 	if err != nil {
-		log.Printf("notify: toast: %v", err)
+		log.Printf("notify: the toast for %s didn't go to Windows: %v", at, err)
+		return err
+	}
+	// Windows takes a toast it won't show: say so next to the decision
+	if s, serr := desktop.ToastSetting(t.aumid); serr == nil && s != desktop.ToastEnabled {
+		log.Printf("notify: Windows has Clack's toasts off (setting %d): the toast for %s won't show", s, at)
+	} else if desktop.FocusAssistActive() {
+		log.Printf("notify: Focus Assist is on: the toast for %s goes to the notification center unshown", at)
 	}
 	return err
 }
