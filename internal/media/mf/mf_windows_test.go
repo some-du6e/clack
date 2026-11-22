@@ -216,7 +216,9 @@ func inOrder(got, want []media.EventKind) bool {
 // pts the frame's own presentation time (the transfer's), which its
 // colour is checked at. They part where the first frame came late: the
 // first one transferred then can be the engine's first frame (grey, pts 0)
-// with the clock already 1.6 s on (mf-first-frame's runs, 2 in 10).
+// with the clock already 1.6 s on (mf-first-frame's runs, 2 in 10). The
+// seconds are counted from the clock's position at the first frame drawn
+// (at), the frames in them by their own time.
 type sample struct {
 	at, pts time.Duration
 	c       color.RGBA
@@ -276,7 +278,7 @@ func checkColors(t *testing.T, samples []sample) {
 	if len(samples) == 0 {
 		t.Fatal("no frame drawn")
 	}
-	from := samples[0].pts
+	from := samples[0].at // where the clock was when the first frame was drawn
 	for i, w := range colorWindows {
 		n, bad := 0, 0
 		for _, s := range samples {
@@ -652,7 +654,7 @@ func checkRGBA(t *testing.T, samples []sample) {
 	if len(samples) == 0 {
 		t.Fatal("no frame drawn")
 	}
-	from := samples[0].pts
+	from := samples[0].at // where the clock was when the first frame was drawn
 	var by [3][]color.RGBA
 	for _, s := range samples {
 		for i, w := range colorWindows {
