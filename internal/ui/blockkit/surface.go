@@ -477,9 +477,13 @@ func (s *Surface) docOf(b *Block) richtext.Doc {
 }
 
 func (s *Surface) textOf(key string, doc func() richtext.Doc) *richview.View {
+	return s.textWith(key, richview.Options{FillBlocks: true}, doc) // a view's blocks: no flex wrappers
+}
+
+// textWith is textOf with o, the options the view is made with.
+func (s *Surface) textWith(key string, o richview.Options, doc func() richtext.Doc) *richview.View {
 	v := s.texts[key]
 	if v == nil {
-		o := richview.Options{FillBlocks: true}  // a view's blocks: no flex wrappers
 		if old := s.prevTexts[key]; old != nil { // a views.update: the block's view, its toggles kept
 			delete(s.prevTexts, key)
 			v = old
@@ -508,11 +512,24 @@ func (s *Surface) Layout(gtx C) D {
 	w := gtx.Constraints.Max.X
 	y := 0
 	st := styleFor(s.h.Theme(), s.h.Images())
+	prevBottom, afterContext := 0, false // a modal's: the last block's outer bottom margin, a context drawn
 	for i := range s.blocks {
 		b := &s.blocks[i]
 		gap := dp(gtx, 8)
 		if i == 0 {
 			gap = dp(gtx, 4)
+		}
+		if s.modal() {
+			// a modal's blocks are in block wrappers 12px apart whose
+			// margins collapse with the blocks' own (modalMargins)
+			top, bottom, inner := modalMargins(b, i == 0)
+			if i == 0 {
+				gap = dp(gtx, float32(top+inner)) // the dialog body's padding keeps it inside
+			} else {
+				gap = dp(gtx, float32(max(prevBottom, modalWrapperTop(b, afterContext), top)+inner))
+			}
+			prevBottom = bottom
+			afterContext = afterContext || b.Type == "context"
 		}
 		y += gap
 		var bh int
@@ -530,9 +547,83 @@ func (s *Surface) Layout(gtx C) D {
 		y += bh
 	}
 	if len(s.blocks) > 0 {
-		y += dp(gtx, 4)
+		if s.modal() {
+			y += dp(gtx, float32(prevBottom)) // the last block's margin, inside the body's padding
+		} else {
+			y += dp(gtx, 4)
+		}
 	}
 	return D{Size: image.Pt(w, y)}
+}
+
+// modalMargins are block b's margins in a modal, in dp, as Slack's modal
+// CSS gives them: top and bottom are its outer margins, which collapse
+// with its wrapper's (modalWrapperTop) and its neighbours', and inner is
+// the space inside it above what it draws. A section, a divider, an image
+// and a context have none there (their *_block_wrapper--modal_view
+// overrides: margin 0), nor has an input.
+func modalMargins(b *Block, first bool) (top, bottom, inner int) {
+	switch b.Type {
+	case "actions":
+		// .p-actions_block{margin-bottom:8px}, and every action 8px down
+		// inside the flex row (.p-actions_block_wrapper--modal_view
+		// .p-actions_block__action{margin:8px 0 0})
+		return 0, 8, 8
+	case "header":
+		// .p-header_block{margin:1em 0 4px} at 15px, the first block's
+		// 4px (:first-child .p-header_block)
+		if first {
+			return 4, 4, 0
+		}
+		return 15, 4, 0
+	case "rich_text":
+		// .p-rich_text_block has none in a modal (.c-message's 8px 0 -4px
+		// is a message's): its first and last elements' collapse through
+		// it, a code block's or a quote's 4px (.c-mrkdwn__pre, __quote)
+		f, l := richEdgeTypes(b.Raw)
+		return richEdgeMargin(f), richEdgeMargin(l), 0
+	}
+	return 0, 0, 0
+}
+
+// modalOwnsMargins: Layout draws a modal block of type t's outer margins
+// (modalMargins) and its richview doesn't (NoOuterMargins).
+func modalOwnsMargins(t string) bool {
+	switch t {
+	case "rich_text", "divider", "image", "context", "header":
+		return true
+	}
+	return false
+}
+
+// modalWrapperTop is a modal block wrapper's top margin, in dp: 12px
+// (.p-block_kit_modal .p-block_wrapper--modal_view:not(:first-of-type)),
+// 4px for a context's and for a divider's after a context.
+func modalWrapperTop(b *Block, afterContext bool) int {
+	if b.Type == "context" || b.Type == "divider" && afterContext {
+		return 4
+	}
+	return 12
+}
+
+// richEdgeTypes are a rich_text block's first and last elements' types.
+func richEdgeTypes(raw json.RawMessage) (first, last string) {
+	var rt struct {
+		Elements []struct {
+			Type string `json:"type"`
+		} `json:"elements"`
+	}
+	if json.Unmarshal(raw, &rt) != nil || len(rt.Elements) == 0 {
+		return "", ""
+	}
+	return rt.Elements[0].Type, rt.Elements[len(rt.Elements)-1].Type
+}
+
+func richEdgeMargin(t string) int {
+	if t == "rich_text_preformatted" || t == "rich_text_quote" {
+		return 4
+	}
+	return 0
 }
 
 func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
@@ -552,12 +643,16 @@ func (s *Surface) block(gtx C, b *Block, i int, w int, st *richview.Style) int {
 	case "section":
 		return s.section(gtx, b, key, w, st)
 	}
-	v := s.textOf(key, func() richtext.Doc { return s.docOf(b) })
+	// in a modal the block's outer margins are Layout's (modalMargins),
+	// to collapse with the block wrapper's as Slack's do
+	o := richview.Options{FillBlocks: true, NoOuterMargins: s.modal() && modalOwnsMargins(b.Type)}
+	v := s.textWith(key, o, func() richtext.Doc { return s.docOf(b) })
 	if len(b.Nested) > 0 || len(b.Elements) > 0 { // child blocks, a fallback's payload, a card's actions: live elements
 		if s.nested == nil {
 			s.nested = &nestedElements{s: s}
 		}
-		v.SetOptions(richview.Options{Elements: s.nested, FillBlocks: true})
+		o.Elements = s.nested
+		v.SetOptions(o)
 	}
 	d := v.Layout(gtx, st, &s.hand)
 	return d.Size.Y
@@ -583,34 +678,56 @@ func (s *Surface) flowRun(gtx C, b *Block, w int, draw bool) int {
 	gap := dp(gtx, 8)
 	self := s.selfID()
 	if s.modal() {
-		colW := (w - gap) / 2
-		n := 0
+		// a wrapping flex row (align-items: end) of actions calc(50% - 8px)
+		// wide with an 8px right margin, two to a row; checkboxes and radio
+		// buttons take the whole row (p-actions_block__action--full_width:
+		// width 100%). An action's 8px top margin is the gap between rows
+		// (Layout gives the first row its own).
+		colW := max(w/2-gap, 0)
+		type cell struct {
+			ew *ew
+			x  int
+			sz image.Point
+		}
+		var row []cell
+		place := func() {
+			if !draw {
+				return
+			}
+			for _, c := range row {
+				at(gtx, image.Pt(c.x, y+rowH-c.sz.Y), func(gtx C) D { return c.ew.layout(fixed(gtx, c.sz), c.sz) })
+			}
+		}
 		for i := range b.Elements {
 			e := &b.Elements[i]
 			if hiddenFrom(e, self) {
 				continue
 			}
+			full := e.Type == "checkboxes" || e.Type == "radio_buttons"
+			cw, adv := colW, colW+gap
+			if full {
+				cw, adv = w, w
+			}
 			ew := s.widget(b, e)
-			sz := ew.size(gtx, colW, false)
+			sz := ew.size(gtx, cw, false)
 			if sz.X == 0 {
 				continue
 			}
 			if !stacks(e) && !isTextInput(e.Type) && e.Type != "datetimepicker" {
-				sz.X = colW
+				sz.X = cw
 			} else {
-				sz.X = min(sz.X, colW)
+				sz.X = min(sz.X, cw)
 			}
-			cx := (n % 2) * (colW + gap)
-			if n%2 == 0 && n > 0 {
+			if len(row) > 0 && x+adv > w {
+				place()
 				y += rowH + gap
-				rowH = 0
+				x, rowH, row = 0, 0, row[:0]
 			}
-			if draw {
-				at(gtx, image.Pt(cx, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
-			}
+			row = append(row, cell{ew: ew, x: x, sz: sz})
+			x += adv
 			rowH = max(rowH, sz.Y)
-			n++
 		}
+		place()
 		return y + rowH
 	}
 	for i := range b.Elements {
