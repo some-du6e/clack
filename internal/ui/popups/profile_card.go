@@ -239,6 +239,15 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		return layout.Dimensions{Size: win}
 	}
+	if !ok && p.hover {
+		// ProfileHoverCard (JM3T) renders nothing for a member the store
+		// doesn't hold yet, or at all: isMemberHuman (Emf2) needs a loaded
+		// member, and with no bot there's no app to show. A bot user's
+		// card was the 340px member card's loading state first, then the
+		// app card's 380px one, then the app.
+		p.rect = image.Rectangle{}
+		return layout.Dimensions{Size: win}
+	}
 	if ok {
 		p.ensureTeam(u)
 		p.clicks(gtx, u)
