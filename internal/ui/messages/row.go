@@ -278,6 +278,17 @@ type reactPill struct {
 	r   *row
 	i   int // the group, r.groups[i]
 	btn widget.Clickable
+	// the native pill's parts as content laid them out last, in the
+	// pill's coordinates (reaction_menu.go): each emoji's <img> and the
+	// count's text; none when a plugin's children drew the pill
+	emojiAt []pillEmoji
+	countAt image.Rectangle
+}
+
+// pillEmoji is one emoji image in a reaction pill.
+type pillEmoji struct {
+	r   image.Rectangle
+	url string
 }
 
 // rowCtx carries per-frame inputs to a row layout.
@@ -2896,9 +2907,11 @@ func (pl *reactPill) layout(gtx layout.Context, p slackc.Props) layout.Dimension
 func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	r := pl.r
 	rc := r.rc
-	if pl.btn.Clicked(gtx) && rc.onReactGroup != nil {
+	// a macOS Ctrl+click is the pill's context click, not a toggle
+	if ctxclick.Clicked(gtx, &pl.btn) && rc.onReactGroup != nil {
 		rc.onReactGroup(r, r.groups[pl.i].name) // handleReactionClick (reaction_groups.go)
 	}
+	pl.emojiAt, pl.countAt = pl.emojiAt[:0], image.Rectangle{}
 	var mods uint64
 	if pl.reacted() {
 		mods = 1
@@ -2989,19 +3002,24 @@ func (pl *reactPill) content(gtx layout.Context, st slackc.Styled) layout.Dimens
 	gap := dp(gtx, 4)
 	g := &pl.r.groups[pl.i]
 	x := 0
+	// the content sits 8px in from the pill's left (layoutButton)
+	in := image.Pt(dp(gtx, 8), 0)
 	for k, i := range g.idx {
 		if k == reactEmojiMax {
 			break
 		}
 		re := &pl.r.m.Reactions[i]
 		at(gtx, x, (ph-es)/2, func(gtx layout.Context) layout.Dimensions { return pl.emoji(gtx, re) })
+		pl.emojiAt = append(pl.emojiAt, pillEmoji{r: image.Rect(x, (ph-es)/2, x+es, (ph-es)/2+es).Add(in), url: pl.emojiURL(re)})
 		x += es + gap
 	}
 	if len(g.idx) > reactEmojiMax {
 		d := at(gtx, x, (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return pl.truncation(gtx, st) })
 		x += d.Size.X + gap
 	}
-	d := at(gtx, x, (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return pl.count(gtx, st) })
+	cy := (ph - dp(gtx, 16)) / 2
+	d := at(gtx, x, cy, func(gtx layout.Context) layout.Dimensions { return pl.count(gtx, st) })
+	pl.countAt = image.Rect(x, cy, x+d.Size.X, cy+d.Size.Y).Add(in)
 	return layout.Dimensions{Size: image.Pt(x+d.Size.X, ph)}
 }
 
@@ -3045,6 +3063,16 @@ func (pl *reactPill) truncation(gtx layout.Context, st slackc.Styled) layout.Dim
 	}
 	cs.col = st.Color(cs.col)
 	return label(gtx, rc.th, cs, "\u2026")
+}
+
+// emojiURL is the image re's emoji draws: its custom emoji's, else the
+// standard emoji's on Slack's CDN.
+func (pl *reactPill) emojiURL(re *core.Reaction) string {
+	if re.URL != "" || pl.r.rc.h.Core() == nil {
+		return re.URL
+	}
+	u, _, _ := pl.r.rc.h.Core().Emoji(re.Name)
+	return u
 }
 
 // emoji draws re's emoji (its alt text while the image loads).

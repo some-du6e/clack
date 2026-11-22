@@ -197,22 +197,55 @@ func NewLinkMenu(h Host, at image.Point, l LinkMenu) *Menu {
 	}
 	if l.Image != "" {
 		items = append(items, Sep())
-		items = append(items, ctxImageItems(h, l.Image, l.Proxy)...)
+		items = append(items, ctxImageItems(h, l.Image, l.Image, l.Proxy)...)
 	}
-	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 220})
+	return NewMenuOpts(h, shellTail(items), MenuOpts{Anchor: pointRect(at), Width: 220})
 }
 
 // NewImageMenu is the desktop shell's image menu (buildMenuForImage):
 // Copy Image and Copy Image URL. Emoji get it too.
 func NewImageMenu(h Host, at image.Point, src string, proxy bool) *Menu {
-	return NewMenuOpts(h, ctxImageItems(h, src, proxy), MenuOpts{Anchor: pointRect(at), Width: 220})
+	return NewImageMenuFrom(h, at, src, src, proxy)
 }
 
-func ctxImageItems(h Host, src string, proxy bool) []MenuItem {
+// NewImageMenuFrom is NewImageMenu for an image whose <img src> (what
+// Copy Image URL copies) isn't the URL Clack draws it from (shown, what
+// Copy Image copies): the image viewer's proxied media items.
+func NewImageMenuFrom(h Host, at image.Point, shown, src string, proxy bool) *Menu {
+	return NewMenuOpts(h, shellTail(ctxImageItems(h, shown, src, proxy)), MenuOpts{Anchor: pointRect(at), Width: 220})
+}
+
+// ctxImageItems are addImageItems: Copy Image (webContents.copyImageAt:
+// the image's pixels on the clipboard) and Copy Image URL (its srcURL).
+func ctxImageItems(h Host, shown, src string, proxy bool) []MenuItem {
 	return []MenuItem{
-		{Label: "Copy Image", Do: func() { CopyImage(h, src, proxy, "") }},
+		{Label: "Copy Image", Do: func() { CopyImage(h, shown, proxy, "") }},
 		{Label: "Copy Image URL", DoCtx: func(gtx layout.Context) { copyText(gtx, src) }},
 	}
+}
+
+// ShellFullScreen and ShellExitFullScreen are the window's full screen
+// state and its way out, for the desktop shell's menus (set by the ui
+// root; nil in tests).
+var (
+	ShellFullScreen     func() bool
+	ShellExitFullScreen func()
+)
+
+// shellTail is what the desktop shell's menus end with after their own
+// items: addInspectElement only in its developer mode, and
+// addToggleFullScreen, a separator and "Exit Full Screen" while the
+// window is full screen (the same on macOS, Windows and Linux, Slack
+// 4.53.276).
+func shellTail(items []MenuItem) []MenuItem {
+	if f := ShellFullScreen; f == nil || !f() {
+		return items
+	}
+	return append(items, Sep(), MenuItem{Label: "Exit Full Screen", Do: func() {
+		if e := ShellExitFullScreen; e != nil {
+			e()
+		}
+	}})
 }
 
 // CopyImage puts the image at src on the clipboard (Slack-hosted images

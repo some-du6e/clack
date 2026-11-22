@@ -37,6 +37,11 @@ type Hit struct {
 	Emoji, EmojiURL string
 	// Text is true when the point is on a glyph of text.
 	Text bool
+	// Link is the link an image is the background of (Slack's
+	// AttachmentImage: an image block, an attachment's image_url), whose
+	// right-click is the desktop shell's link menu; "" for an image drawn
+	// as an <img> (it gets the image menu).
+	Link string
 }
 
 // HitAt reports what is at p (View coordinates, after the first Layout).
@@ -51,7 +56,9 @@ func (v *View) HitAt(p f32.Point) Hit {
 				h.Text = true
 			}
 		case fImage:
-			if h.EmojiURL == "" && f.url != "" && !strings.HasPrefix(f.url, iconURL) && p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
+			// an emoji's <img> (alt: its :name: text); a context block's
+			// image is BaseImageElement's background div, no image
+			if h.EmojiURL == "" && f.alt && f.url != "" && !strings.HasPrefix(f.url, iconURL) && p.X >= f.x && p.X < f.x+float32(f.size) && p.Y >= float32(f.y) && p.Y < float32(f.y+f.size) {
 				h.EmojiURL = f.url
 				if f.tip > 0 && int(f.tip) <= len(v.d.tips) {
 					h.Emoji = v.d.tips[f.tip-1]
@@ -77,9 +84,15 @@ func (v *View) HitAt(p f32.Point) Hit {
 	case tUsergroup:
 		h.Kind, h.ID = HitUsergroup, tg.id
 	case tImage:
+		if tg.elem {
+			return h // BaseImageElement: no image, no link
+		}
 		h.Kind, h.Image = HitImage, tg.img
 		if tg.inCard {
 			h.Kind = HitCard
+		}
+		if tg.href != "" && !v.playsAsImg(t) {
+			h.Link = tg.href
 		}
 	case tFile, tSnippet: // a snippet's pill and collapsed body are its file's too
 		h.Kind, h.File = HitFile, tg.file
@@ -177,4 +190,25 @@ func (v *View) LinkRects() []LinkRect {
 		}
 	}
 	return out
+}
+
+// playsAsImg reports whether target t's image is drawn under
+// PlayPauseAnimations now (animations off and the image animates):
+// AttachmentImage then renders an <img>, not its link (renderImage's
+// renderImageWithPlayControls).
+func (v *View) playsAsImg(t int16) bool {
+	for i := range v.d.plays {
+		c := &v.d.plays[i]
+		if c.img < 0 || c.img >= len(v.d.imgs) || v.d.imgs[c.img].target != t {
+			continue
+		}
+		if c.known {
+			return true
+		}
+		im := &v.d.imgs[c.img]
+		if im.play || isAnimation(v.hitImgs, im.url, im.px) {
+			return true
+		}
+	}
+	return false
 }
