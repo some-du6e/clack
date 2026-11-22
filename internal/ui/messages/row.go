@@ -3743,9 +3743,10 @@ func reactionTipLine(h TipHost, re *core.Reaction, selfID string, cut bool) stri
 				// getPrefCompliantMemberNameById (R6Qy I): "Name
 				// hidden" for someone hidden, else under
 				// display_real_names getMemberRealName (hWCs wg:
-				// profile.real_name || real_name, which keeps a lone
-				// U+200B as Slack prints it), else the display name;
-				// the sender line's rule (core.User.RealName)
+				// profile.real_name || real_name), else the display
+				// name; the sender line's rule (core.User.RealName,
+				// trimmed, and none for a lone U+200B, where Slack
+				// prints the invisible name)
 				n = u.Name
 				if app.UserHidden(id) {
 					n = membersNS.T("Name hidden")

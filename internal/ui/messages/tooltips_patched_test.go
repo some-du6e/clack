@@ -201,8 +201,9 @@ func TestReactionTipNamesFollowPrefs(t *testing.T) {
 		t.Errorf("display_real_names: %q, want the real name", got)
 	}
 	// a real name of ordinary spaces around it reads trimmed; a lone
-	// U+200B (Karim's) is getMemberRealName's truthy string, which Slack
-	// prints, as the sender line does
+	// U+200B (Karim's) is no real name to the sender line (core.User's
+	// RealName drops it), so the tip names the display name as the line
+	// does, where Slack's getMemberRealName would print the invisible one
 	zwsp := string(rune(0x200b))
 	app.S.PutUsers([]slack.User{
 		{ID: "UPAD", Name: "pad", Profile: slack.Profile{DisplayName: "pad", RealName: "  Pad Example "}},
@@ -213,8 +214,8 @@ func TestReactionTipNamesFollowPrefs(t *testing.T) {
 		t.Errorf("a real name with spaces around it: %q", got)
 	}
 	zw := core.Reaction{Name: "tada", Count: 2, Users: []string{"UZW", tSelf}}
-	if got := tipPlain(reactionTip(h, &zw, tSelf)); got != zwsp+" and you reacted with :tada:" {
-		t.Errorf("a U+200B real name: %q, want Slack's %q", got, zwsp+" and you reacted with :tada:")
+	if got := tipPlain(reactionTip(h, &zw, tSelf)); got != "karim and you reacted with :tada:" {
+		t.Errorf("a U+200B real name (%q): %q, want the display name, as the sender line", zwsp, got)
 	}
 	app.S.Lock()
 	if app.S.RawPrefs == nil {
