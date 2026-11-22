@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -244,24 +245,57 @@ func (r *rig) playThrough() ([]sample, time.Duration) {
 
 // checkColors: the frames drawn well inside each second are the
 // fixture's grey, light grey and red (the range, the sRGB texture, the
-// channel order), several in each second the test drew through. A second
-// the test's own draws stepped over doesn't count: on a loaded runner one
-// draw took longer than the second's 400 ms window (directories-
-// usergroups-2's push ci 44999661783: 129 draws, second 2 none, the clock
-// from before it to after it between two of them). A video that stops
-// still fails: the draws go on, showing the wrong colour.
+// channel order), several in each second the test drew through
+// (colorReport).
 func checkColors(t *testing.T, samples []sample) {
 	t.Helper()
+	errs, logs := colorReport(samples)
+	for _, l := range logs {
+		t.Log(l)
+	}
+	for _, e := range errs {
+		t.Error(e)
+	}
+}
+
+// colorReport is checkColors' verdict: each second's window (the 400 ms
+// well inside it, by the position each draw read) wants several draws,
+// each of the second's colour. A second the test's own draws stepped
+// over doesn't count: a gap of 300 ms or more between two draws where the
+// window lies (on a loaded runner one draw took longer than the second's
+// 400 ms window: directories-usergroups-2's push ci 44999661783, 129
+// draws and second 2 none; the gap can begin or end inside the window
+// too, TestAVFSilent's 2 draws in second 1, slack-connect-hub's push ci
+// 45034919995). Draws that go on while the position doesn't move through
+// the window (it stood, then jumped) still fail, and so does a video that
+// stops: the draws go on, showing the wrong colour. A short second logs
+// the draws around it, the position each read and when.
+func colorReport(samples []sample) (errs, logs []string) {
 	stepped := func(w [2]time.Duration) (time.Duration, bool) {
 		for i := 1; i < len(samples); i++ {
 			a, b := samples[i-1], samples[i]
-			if a.at < w[0] && b.at > w[1] {
+			if a.at < w[1] && b.at > w[0] {
 				if gap := b.wall.Sub(a.wall); gap >= 300*time.Millisecond {
 					return gap, true
 				}
 			}
 		}
 		return 0, false
+	}
+	around := func(w [2]time.Duration) string {
+		if len(samples) == 0 {
+			return "none"
+		}
+		t0 := samples[0].wall
+		var b strings.Builder
+		for i, s := range samples {
+			near := s.at >= w[0]-200*time.Millisecond && s.at <= w[1]+200*time.Millisecond
+			edge := i+1 < len(samples) && samples[i+1].at > w[0] && s.at < w[0] || i > 0 && samples[i-1].at < w[1] && s.at > w[1]
+			if near || edge {
+				fmt.Fprintf(&b, " %v@%v", s.at.Round(time.Millisecond), s.wall.Sub(t0).Round(time.Millisecond))
+			}
+		}
+		return strings.TrimSpace(b.String())
 	}
 	for i, w := range [][2]time.Duration{{300 * time.Millisecond, 700 * time.Millisecond}, {1300 * time.Millisecond, 1700 * time.Millisecond}, {2300 * time.Millisecond, 2700 * time.Millisecond}} {
 		n, bad := 0, 0
@@ -272,19 +306,91 @@ func checkColors(t *testing.T, samples []sample) {
 			n++
 			if !mediatest.Matches(s.at, s.c) {
 				if bad < 3 {
-					t.Errorf("at %v the frame drawn was %v, want %s", s.at, s.c, mediatest.Want(s.at))
+					errs = append(errs, fmt.Sprintf("at %v the frame drawn was %v, want %s", s.at, s.c, mediatest.Want(s.at)))
 				}
 				bad++
 			}
 		}
 		if n < 3 {
 			if gap, ok := stepped(w); ok {
-				t.Logf("second %d: %d frames drawn: the test didn't draw through it (one draw %v)", i+1, n, gap)
+				logs = append(logs, fmt.Sprintf("second %d: %d frames drawn: the test didn't draw through it (one draw %v); the draws around it (position@wall) %s", i+1, n, gap, around(w)))
 				continue
 			}
-			t.Errorf("second %d: %d frames drawn, want several", i+1, n)
+			errs = append(errs, fmt.Sprintf("second %d: %d frames drawn, want several; the draws around it (position@wall) %s", i+1, n, around(w)))
 		}
-		t.Logf("second %d: %d frames drawn, %d off", i+1, n, bad)
+		logs = append(logs, fmt.Sprintf("second %d: %d frames drawn, %d off", i+1, n, bad))
+	}
+	return errs, logs
+}
+
+// colorReport's rule on draws made up for it: a stall of the test's draws
+// across the whole window, or beginning inside it, or ending inside it,
+// isn't the video's; a position that stands still and then jumps while
+// the draws go on is, and so is a wrong colour.
+func TestColorReportStalls(t *testing.T) {
+	grey, light, red := color.RGBA{64, 64, 64, 255}, color.RGBA{192, 192, 192, 255}, color.RGBA{220, 30, 30, 255}
+	colorAt := func(at time.Duration) color.RGBA {
+		switch {
+		case at < time.Second:
+			return grey
+		case at < 2*time.Second:
+			return light
+		}
+		return red
+	}
+	t0 := time.Unix(0, 0)
+	// play draws every 15 ms of wall time, the position following the
+	// wall from 0 to 3 s, except where pos gives another (a position that
+	// stands) or skip says the test drew nothing then
+	play := func(skip func(time.Duration) bool, pos func(time.Duration) time.Duration) []sample {
+		var out []sample
+		for w := time.Duration(0); w <= 3*time.Second; w += 15 * time.Millisecond {
+			if skip != nil && skip(w) {
+				continue
+			}
+			at := w
+			if pos != nil {
+				at = pos(w)
+			}
+			out = append(out, sample{at: at, wall: t0.Add(w), c: colorAt(at)})
+		}
+		return out
+	}
+	between := func(a, b time.Duration) func(time.Duration) bool {
+		return func(w time.Duration) bool { return w > a && w < b }
+	}
+	for _, c := range []struct {
+		name    string
+		samples []sample
+		ok      bool
+	}{
+		{"every draw", play(nil, nil), true},
+		{"a stall across second 1's window", play(between(250*time.Millisecond, 750*time.Millisecond), nil), true},
+		{"a stall beginning inside it", play(between(310*time.Millisecond, 720*time.Millisecond), nil), true},
+		{"a stall ending inside it", play(between(280*time.Millisecond, 670*time.Millisecond), nil), true},
+		{"the position standing, then jumping", play(nil, func(w time.Duration) time.Duration {
+			if w > 100*time.Millisecond && w < 690*time.Millisecond {
+				return 100 * time.Millisecond
+			}
+			return w
+		}), false},
+		{"draws 210 ms apart in it (no gap of 300 ms)", play(func(w time.Duration) bool {
+			return w >= 290*time.Millisecond && w <= 700*time.Millisecond && w != 495*time.Millisecond
+		}, nil), false},
+	} {
+		errs, logs := colorReport(c.samples)
+		if ok := len(errs) == 0; ok != c.ok {
+			t.Errorf("%s: passes %v, want %v: %q (%q)", c.name, ok, c.ok, errs, logs)
+		}
+	}
+	wrong := play(nil, nil)
+	for i := range wrong {
+		if wrong[i].at > 1300*time.Millisecond && wrong[i].at < 1700*time.Millisecond {
+			wrong[i].c = grey // a video that stopped in second 1
+		}
+	}
+	if errs, _ := colorReport(wrong); len(errs) == 0 {
+		t.Error("a stopped video's second 2 passes")
 	}
 }
 
