@@ -411,10 +411,13 @@ func (c *Client) SearchUsers(ctx context.Context, query string, count int) ([]Us
 // from app.slack.com, 2026-11-08: count 30, search_email, top_users =
 // the frecency list, default_workspace).
 type UserSearchOpts struct {
-	Count            int
-	SearchEmail      bool
-	TopUsers         []string
-	DefaultWorkspace string
+	Count int
+	// Filter and ExternalTeam are getRemoteMembers' filter (the clauses
+	// joined by " AND ") and external_team (onlyFromExternalTeamId).
+	Filter, ExternalTeam string
+	SearchEmail          bool
+	TopUsers             []string
+	DefaultWorkspace     string
 	// CurrentChannel is the composer's conversation (getRemoteMembers'
 	// current_channel). search_email is only sent when set, as Slack does.
 	CurrentChannel string
@@ -444,6 +447,12 @@ func (c *Client) SearchUsersWith(ctx context.Context, query string, o UserSearch
 	if o.DefaultWorkspace != "" {
 		body["default_workspace"] = o.DefaultWorkspace
 	}
+	if o.Filter != "" {
+		body["filter"] = o.Filter
+	}
+	if o.ExternalTeam != "" {
+		body["external_team"] = o.ExternalTeam
+	}
 	err := c.Edge(ctx, "users/search", body, &r)
 	return r.Results, err
 }
@@ -455,6 +464,7 @@ type ChannelSearchOpts struct {
 	Filter           string
 	TopChannels      []string
 	DefaultWorkspace string
+	ExternalTeam     string // getRemoteChannels' external_team (onlyFromTeamId)
 }
 
 // SearchChannelsWith is edge channels/search with the omniswitcher's args.
@@ -476,6 +486,9 @@ func (c *Client) SearchChannelsWith(ctx context.Context, query string, o Channel
 	}
 	if o.DefaultWorkspace != "" {
 		body["default_workspace"] = o.DefaultWorkspace
+	}
+	if o.ExternalTeam != "" {
+		body["external_team"] = o.ExternalTeam
 	}
 	err := c.Edge(ctx, "channels/search", body, &r)
 	return r.Results, err

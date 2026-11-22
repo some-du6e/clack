@@ -1311,6 +1311,7 @@ type debounce struct {
 	at   time.Time
 	q    string
 	sent string
+	wk   *wake // dueVia's repaint
 }
 
 func (d *debounce) set(q string, now time.Time) { d.q, d.at = q, now }
@@ -1328,6 +1329,73 @@ func (d *debounce) due(gtx C, wait time.Duration) (string, bool) {
 	}
 	d.sent = d.q
 	return d.q, true
+}
+
+// dueVia is due with its repaint asked of the host (wake) rather than
+// an op.InvalidateCmd executed mid-layout.
+func (d *debounce) dueVia(h Host, gtx C, wait time.Duration) (string, bool) {
+	if d.q == d.sent {
+		return "", false
+	}
+	if left := wait - gtx.Now.Sub(d.at); left > 0 {
+		if d.wk == nil {
+			d.wk = &wake{}
+		}
+		d.wk.schedule(h, gtx.Now, d.at.Add(wait))
+		return "", false
+	}
+	d.sent = d.q
+	return d.q, true
+}
+
+// wake asks the host for a frame at a time: time.AfterFunc and
+// Host.Invalidate, once per time. An op.InvalidateCmd executed in the
+// middle of layout takes the router's immediate path and replays the
+// input no later handler has read yet, which loses clicks on whatever
+// lays out after the caller (overlay scrims, the secondary pane; the
+// composer's 11-17 bug).
+type wake struct {
+	mu      sync.Mutex
+	at      time.Time
+	pending bool
+}
+
+// schedule asks for a frame at at (now on the frame's clock): at once
+// when it's due, else one timer per time.
+func (w *wake) schedule(h Host, now, at time.Time) {
+	if !at.After(now) {
+		h.Invalidate()
+		return
+	}
+	w.mu.Lock()
+	if w.pending && w.at.Equal(at) {
+		w.mu.Unlock()
+		return
+	}
+	w.at, w.pending = at, true
+	w.mu.Unlock()
+	time.AfterFunc(at.Sub(now), func() {
+		w.mu.Lock()
+		if w.at.Equal(at) {
+			w.pending = false
+		}
+		w.mu.Unlock()
+		h.Invalidate()
+	})
+}
+
+// due reports the time a frame was asked for and whether its timer is
+// still out (tests).
+func (w *wake) due() (time.Time, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.at, w.pending
+}
+
+// tipWake is a TipState's Wake through w: the hover delay's repaint
+// asked of the host.
+func tipWake(h Host, w *wake) func(now, at time.Time) {
+	return func(now, at time.Time) { w.schedule(h, now, at) }
 }
 
 // ---- time ----
