@@ -286,6 +286,11 @@ on:
       - "internal/store/taut_mirror.go"
       - "internal/ui/views/adapt.go"
       - "internal/ui/views/activity_rows.go"
+      # the preview-footer job's own
+      - "internal/core/resolve.go"
+      - "internal/core/resolve_join_test.go"
+      - "internal/ui/preview_membership_test.go"
+      - "internal/ui/joinpane.go"
 
 permissions:
   contents: read
@@ -3408,3 +3413,39 @@ jobs:
         with:
           name: launch-windows
           path: ${{ runner.temp }}/launch/out
+
+
+  # preview-footer-race (2026-11-21): a ResolveConv joining another
+  # caller's conversations.info read the store before the owner stored the
+  # answer, and answered "unknown". The UI's lookup, joining History's side
+  # read for a channel opened from a link, then stopped waiting on its
+  # membership and drew the composer in a channel the viewer isn't in
+  # (TestPreviewFooterMembershipUnknownAtOpen: threads-ship, files-filters,
+  # alpha.135's release test job). The DM test holds the gap open (the
+  # owner's partner fetch) and failed every run on the old code; the
+  # channel test stresses the few-instruction gap the UI hit. Dispatch
+  # with only=preview-footer.
+  preview-footer:
+    if: ${{ !inputs.only || startsWith('preview-footer', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    env:
+      CORE_TESTS: '^(TestResolveConvJoinerGetsTheAnswer|TestResolveConvJoinersOfAChannel)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core's joiners (plain, -race), then the ui footer test (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 6m -run "$CORE_TESTS" ./internal/core || rc=1
+          go test -race -count=$COUNT -timeout 6m -run "$CORE_TESTS" ./internal/core || rc=1
+          go test -count=$COUNT -timeout 12m -run '^TestPreviewFooterMembershipUnknownAtOpen$' ./internal/ui || rc=1
+          exit $rc
