@@ -255,7 +255,11 @@ func TestUnreadsRowReachesTheBody(t *testing.T) {
 	// #unreads-launch (a mention, 31 unread) comes first: bring the
 	// design channel's frame on screen
 	e.until(t, "the frames", func() bool {
-		return v.built && len(v.rows) > 0 && v.rows[len(v.rows)-1].kind == unrFooter
+		if v.built && len(v.rows) > 0 && v.rows[len(v.rows)-1].kind == unrFooter {
+			return true
+		}
+		v.list.ScrollTo(len(v.rows)) // pages load as the list nears its end (unrEnv)
+		return false
 	})
 	hr, ok := unrHead(v, ch)
 	if !ok {
