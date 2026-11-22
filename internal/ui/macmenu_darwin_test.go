@@ -29,12 +29,20 @@ var macWindowTests = os.Getenv("CLACK_MACOS_WINDOW_TESTS") != ""
 
 func TestMain(m *testing.M) {
 	if macWindowTests {
-		go func() { os.Exit(m.Run()) }()
+		go func() {
+			code := m.Run()
+			endOfRunReport()
+			os.Exit(code)
+		}()
 		app.Main()
 		return
 	}
 	done := make(chan int)
-	go func() { done <- m.Run() }()
+	go func() {
+		code := m.Run()
+		endOfRunReport()
+		done <- code
+	}()
 	for {
 		select {
 		case f := <-mainQueue:

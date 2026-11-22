@@ -67,8 +67,11 @@ func TestMoreActionsMenu(t *testing.T) {
 	act := Actions{SideView: func() {}, Copy: func(string) {}, Menu: func([]MenuItem) {}}
 	v := e.openListView(fakeslack.ListKitchen, Full, act)
 
-	// lists_export_enrichment on (the account): Download opens the modal
-	if got := moreLabels(v.moreItems()); got != "Add to starred, ─, Save for later, ─, Copy link to list, Make a copy, Download, ─, Open in split view" {
+	// lists_export_enrichment on (the account): Download opens the modal.
+	// No star row: the header's section button stars a list now that file
+	// sections are everyone's (custom_file_sections dropped, the
+	// 2026-11-21 drift)
+	if got := moreLabels(v.moreItems()); got != "Save for later, ─, Copy link to list, Make a copy, Download, ─, Open in split view" {
 		t.Errorf("menu, on: %s", got)
 	}
 	d := v.Doc()
@@ -96,7 +99,7 @@ func TestMoreActionsMenu(t *testing.T) {
 	// off: Download CSV ▸ without / with archived items
 	e.h.a.SetExperimentGroup("lists_export_enrichment", "off")
 	items := v.moreItems()
-	if got := moreLabels(items); got != "Add to starred, ─, Save for later, ─, Copy link to list, Make a copy, Download CSV ▸ (Download without archived items, Download with archived items), ─, Open in split view" {
+	if got := moreLabels(items); got != "Save for later, ─, Copy link to list, Make a copy, Download CSV ▸ (Download without archived items, Download with archived items), ─, Open in split view" {
 		t.Errorf("menu, off: %s", got)
 	}
 	for _, it := range items {
@@ -128,17 +131,6 @@ func TestMoreActionsMenu(t *testing.T) {
 	e.h.mu.Unlock()
 	if !strings.HasPrefix(route, "lists/F0LISTNEW") {
 		t.Errorf("opened %q", route)
-	}
-
-	// star and Later
-	for _, it := range v.moreItems() {
-		if it.Label == "Add to starred" {
-			it.Do()
-		}
-	}
-	e.waitList(v, "the star", func() bool { return e.h.a.FileStarred(fakeslack.ListKitchen) })
-	if got := v.moreItems()[0].Label; got != "Remove from starred" {
-		t.Errorf("starred: %q", got)
 	}
 
 	// your own list can be deleted

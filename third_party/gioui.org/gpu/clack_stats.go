@@ -54,6 +54,10 @@ type FrameStats struct {
 	DamageRects int
 	DamagePx    int64
 	CopyPx      int64
+	// Whole, for a frame drawn whole, is why ("partial frames off", "the
+	// damage too big, straight in", "filling the frame texture", ...):
+	// what to look at when frames that should be partial aren't.
+	Whole string
 	// PackWork is the free spaces the coverage atlas's packer looked at,
 	// and the holes the sticky places looked through; StickySlots the
 	// slots of its sticky sequence (partial frames), of them StickyHoles

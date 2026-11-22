@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -111,7 +112,7 @@ func (e *perfEnv) splitDrag(x int) {
 	e.r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: to})
 	e.frame()
 	e.frame()
-	e.a.split.rz.lastPress = time.Time{} // the next press is no double click
+	e.a.split.rz.click = gesture.ClickRun{} // the next press is no double click
 }
 
 // The channel ⋮ menu's "Open in split view" puts the channel in the split

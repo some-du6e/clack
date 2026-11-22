@@ -364,7 +364,7 @@ type emailStore struct {
 	m  map[string]ChannelEmail // channelEmails
 }
 
-var emailIndex sync.Map // *App → *emailStore
+var emailIndex = newPerApp() // *App → *emailStore
 
 func (a *App) emails() *emailStore {
 	v, _ := emailIndex.LoadOrStore(a, &emailStore{m: map[string]ChannelEmail{}})

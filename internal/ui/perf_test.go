@@ -76,17 +76,18 @@ func perfServer(tb testing.TB) *fakeslack.Server {
 }
 
 type perfEnv struct {
-	tb    testing.TB
-	fs    *fakeslack.Server
-	a     *App
-	home  string
-	r     input.Router
-	ops   op.Ops
-	size  image.Point
-	gpu   *headless.Window
-	now   time.Time
-	start time.Time
-	scale float32 // px per dp (0: 1)
+	stopped bool // shutdown ran
+	tb      testing.TB
+	fs      *fakeslack.Server
+	a       *App
+	home    string
+	r       input.Router
+	ops     op.Ops
+	size    image.Point
+	gpu     *headless.Window
+	now     time.Time
+	start   time.Time
+	scale   float32 // px per dp (0: 1)
 	// frozen: the ops the last frame submitted when it was a frozen
 	// inspect session's (inspectFirst), nil when it was laid out
 	frozen *op.Ops
@@ -198,10 +199,18 @@ func copyTree(tb testing.TB, src, dst string) {
 	}
 }
 
+// startEnvHook, when set, sees each App startEnv makes (endrun_test.go
+// tracks them). A variable, so this file still builds on its own on an
+// older tree (perf.yml runs it on the base too).
+var startEnvHook func(tb testing.TB, a *App)
+
 func startEnv(tb testing.TB, fs *fakeslack.Server, home string) *perfEnv {
 	e := &perfEnv{tb: tb, fs: fs, home: home, size: image.Pt(1440, 900), now: time.Now(), start: time.Now()}
 	images := imgcache.New(fs.Fetch, "", nil)
 	e.a = New(Options{ConfigDir: home, Started: e.start, NoRealtime: true}, images) // no first-run live-updates banner shifting the layout
+	if startEnvHook != nil {
+		startEnvHook(tb, e.a)
+	}
 	cache := filepath.Join(home, "cache")
 	svc := core.New(slack.New(fs.Creds()), store.New(cache))
 	pinNetwork(svc)
@@ -238,16 +247,36 @@ func pinNetwork(c *core.App) {
 	}
 }
 
-// shutdown stops the session's background work so it can be collected.
+// shutdown stops the session's background work, then ends it as a
+// sign-out does (backend.stop: plugins stopped, blockkit's realtime views,
+// core.Close and its Release), and drops what the process-wide registries
+// keep of the App (release), so all of it can be collected: before
+// ci-speed-3 nothing of a test's session was, and ui.test held 9 GB live
+// by its end. Each call after the first does nothing.
 func (e *perfEnv) shutdown() {
-	if e.a == nil || e.a.data == nil {
+	if e.a == nil || e.stopped {
 		return
 	}
-	if e.a.data.cancel != nil {
-		e.a.data.cancel()
+	e.stopped = true
+	// a test that signed out or switched accounts has no session left (its
+	// own stop ran); the App is let go all the same
+	if e.a.data != nil {
+		if e.a.data.cancel != nil {
+			e.a.data.cancel()
+		}
+		if c, ok := any(e.a.data.core).(interface{ Shutdown() }); ok { // core.App.Shutdown (absent in the baseline tree)
+			c.Shutdown()
+		}
+		if b, ok := any(e.a.data).(interface{ stop() <-chan struct{} }); ok {
+			select {
+			case <-b.stop():
+			case <-time.After(20 * time.Second):
+				e.tb.Logf("the session's stop didn't finish within 20 s")
+			}
+		}
 	}
-	if c, ok := any(e.a.data.core).(interface{ Shutdown() }); ok { // core.App.Shutdown (absent in the baseline tree)
-		c.Shutdown()
+	if r, ok := any(e.a).(interface{ release() }); ok { // absent in the baseline tree
+		r.release()
 	}
 	if e.gpu != nil {
 		e.gpu.Release()

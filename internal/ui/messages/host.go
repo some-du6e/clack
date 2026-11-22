@@ -184,6 +184,14 @@ var (
 	styles   = map[*text.Shaper]*styleEntry{}
 )
 
+func init() { // a finished App's shapers leave the cache (theme.ForgetShaper)
+	theme.OnForgetShaper(func(sh *text.Shaper) {
+		stylesMu.Lock()
+		delete(styles, sh)
+		stylesMu.Unlock()
+	})
+}
+
 func styleFor(h Host) *richview.Style {
 	st := styleForTheme(h.Theme(), h.Images())
 	if app := h.Core(); app != nil {

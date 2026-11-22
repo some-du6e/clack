@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -68,10 +69,13 @@ type pipUI struct {
 	edgeAt   image.Point
 	edgeW    int // the width at the press, dp
 	edgeTags [3]int
-	lastEdge time.Time // the last press on a handle (its double click)
-	focused  bool
-	btns     [3]widget.Clickable
-	tips     [3]popups.TipState
+	// click counts the handles' presses by the platform's rule (their
+	// double click; gesture.ClickRun, Gio patch 48), in window px: a
+	// drag ends the run
+	click   gesture.ClickRun
+	focused bool
+	btns    [3]widget.Clickable
+	tips    [3]popups.TipState
 	// as the last frame drew them, in the window (tests)
 	rect     image.Rectangle
 	ctlRects []image.Rectangle // Expand, Jump to message (clips_pip), Close
@@ -419,12 +423,13 @@ func (a *App) pipInput(gtx layout.Context, v *videoplayer.Controller, p *pipUI, 
 				if pe.Buttons != pointer.ButtonPrimary {
 					continue
 				}
-				if !p.lastEdge.IsZero() && gtx.Now.Sub(p.lastEdge) < 500*time.Millisecond { // onDoubleClick: back to the default
+				wp := pe
+				wp.Position = layout.FPt(winPt(pe, p.origin))
+				if p.click.Press(gtx.Source, wp) == 2 { // onDoubleClick (a dblclick): back to the default
 					v.SetPipWidth(0)
-					p.lastEdge, p.edge = time.Time{}, ""
+					p.edge = ""
 					continue
 				}
-				p.lastEdge = gtx.Now
 				p.edge, p.edgeAt = e, winPt(pe, p.origin)
 				p.edgeW = int(float32(size.X) / sc)
 				gtx.Execute(pointer.GrabCmd{Tag: &p.edgeTags[i], ID: pe.PointerID})
@@ -432,10 +437,19 @@ func (a *App) pipInput(gtx layout.Context, v *videoplayer.Controller, p *pipUI, 
 				if p.edge != e {
 					continue
 				}
+				wp := pe
+				wp.Position = layout.FPt(winPt(pe, p.origin))
+				p.click.Dragged(wp)
 				d := winPt(pe, p.origin).Sub(p.edgeAt)
 				add := pipProject(e, float64(d.X)/float64(sc), float64(d.Y)/float64(sc), aspect)
 				v.SetPipWidth(int(math.Round(min(max(float64(p.edgeW)+add, float64(minW)), 1200))))
-			case pointer.Release, pointer.Cancel:
+			case pointer.Release:
+				wp := pe
+				wp.Position = layout.FPt(winPt(pe, p.origin))
+				p.click.Released(wp)
+				p.edge = ""
+			case pointer.Cancel:
+				p.click.Cancelled()
 				p.edge = ""
 			}
 		}

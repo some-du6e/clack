@@ -77,11 +77,11 @@ func TestControlsKeys(t *testing.T) {
 	if st := state(t, c, g.r, g.f); !near(st.Elapsed, time.Second) || !st.Mounted || st.Playing {
 		t.Errorf("→ on the scrubber: %+v, want the time at 1s, the player mounted, not playing", st)
 	}
-	waitFor(t, "the player at 1s", 5*time.Second, func() bool { g.frame(); return near(state(t, c, g.r, g.f).Elapsed, time.Second) })
+	waitForTile(t, c, g.r, g.f, "the player at 1s", 5*time.Second, func() bool { g.frame(); return near(state(t, c, g.r, g.f).Elapsed, time.Second) })
 	g.press(gkey.NameRightArrow, gkey.ModShift)
-	waitFor(t, "Shift+→: 1.1s", 5*time.Second, func() bool { g.frame(); return near(state(t, c, g.r, g.f).Elapsed, 1100*time.Millisecond) })
+	waitForTile(t, c, g.r, g.f, "Shift+→: 1.1s", 5*time.Second, func() bool { g.frame(); return near(state(t, c, g.r, g.f).Elapsed, 1100*time.Millisecond) })
 	g.press(gkey.NameHome, 0)
-	waitFor(t, "Home: the start", 5*time.Second, func() bool { g.frame(); return state(t, c, g.r, g.f).Elapsed < 60*time.Millisecond })
+	waitForTile(t, c, g.r, g.f, "Home: the start", 5*time.Second, func() bool { g.frame(); return state(t, c, g.r, g.f).Elapsed < 60*time.Millisecond })
 
 	// the volume: the mute's focus opens the slider; ↓ a hundredth,
 	// PageDown a tenth, Home mutes
@@ -117,9 +117,9 @@ func TestControlsKeys(t *testing.T) {
 	// the pill: Space plays, Enter pauses
 	g.focusOn(fPill)
 	g.press(gkey.NameSpace, 0)
-	waitFor(t, "playing from the pill's Space", 10*time.Second, func() bool { g.frame(); return state(t, c, g.r, g.f).Playing })
+	waitForTile(t, c, g.r, g.f, "playing from the pill's Space", 10*time.Second, func() bool { g.frame(); return state(t, c, g.r, g.f).Playing })
 	g.press(gkey.NameReturn, 0)
-	waitFor(t, "paused from the pill's Enter", 5*time.Second, func() bool { g.frame(); return !state(t, c, g.r, g.f).Playing })
+	waitForTile(t, c, g.r, g.f, "paused from the pill's Enter", 5*time.Second, func() bool { g.frame(); return !state(t, c, g.r, g.f).Playing })
 
 	// the corner: More actions and Expand by Enter
 	g.focusOn(fMore)
@@ -160,7 +160,7 @@ func TestCornerDockButton(t *testing.T) {
 		t.Fatalf("the corner: Expand %v, Dock %v, More %v, want them in a row 2px apart", z.expand, z.dock, z.more)
 	}
 	click(c, g.r, g.f)
-	waitFor(t, "playing", 10*time.Second, func() bool { g.frame(); return state(t, c, g.r, g.f).Playing })
+	waitTilePlaying(t, c, g.r, g.f, g.frame)
 	d := z.dock.Min.Add(z.dock.Max).Div(2)
 	g.ev(pointer.Move, d, 0)
 	g.ev(pointer.Press, d, pointer.ButtonPrimary)
@@ -168,7 +168,7 @@ func TestCornerDockButton(t *testing.T) {
 	if _, _, ok := c.Pip(); !ok || c.PipTrigger() != "manual" {
 		t.Fatalf("the Dock to corner click: docked %v by %q", ok, c.PipTrigger())
 	}
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c, [2]any{g.r, g.f}); return pipPlaying(c) })
+	waitPipPlaying(t, c, [2]any{g.r, g.f})
 
 	off, _ := fakeEnvExp(t, func(name string) string {
 		if name == "clips_pip" {

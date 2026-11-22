@@ -15,7 +15,7 @@ type modState struct {
 	flags []url.Values
 }
 
-var modStates sync.Map // *Server -> *modState
+var modStates = newPerServer() // *Server -> *modState
 
 func (s *Server) mod() *modState {
 	v, _ := modStates.LoadOrStore(s, &modState{})

@@ -49,7 +49,7 @@ type viewsState struct {
 	activity *activityState // activity.go
 }
 
-var viewsStates sync.Map // *Server -> *viewsState
+var viewsStates = newPerServer() // *Server -> *viewsState
 
 func (s *Server) views() *viewsState {
 	v, _ := viewsStates.LoadOrStore(s, &viewsState{})

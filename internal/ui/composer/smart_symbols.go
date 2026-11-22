@@ -7,9 +7,9 @@ import (
 )
 
 // Smart quotes and symbols, Preferences > Advanced > "Enable smart quotes
-// and symbols" (users.prefs disable_smart_symbols, behind the
-// composer_smart_symbols experiment). Slack's texty TextSubstitutionsModule
-// (modern.vendor, build a84662d2d135):
+// and symbols" (users.prefs disable_smart_symbols; the
+// composer_smart_symbols experiment that gated it is gone). Slack's texty
+// TextSubstitutionsModule (modern.vendor, build a84662d2d135):
 //
 //   - Space after "--" (not "---") turns it into "— " (onSmartSubstitution,
 //     /(^|[^-])--$/ → "— ").
@@ -26,8 +26,8 @@ import (
 // links), and each is its own undo step: undo brings back what was typed
 // (applySubstitution rewrites the history stack the same way).
 
-// smartSymbolsOn is getSmartSymbolsEnabled: the experiment on and the
-// pref not set. Tests may swap it.
+// smartSymbolsOn is getSmartSymbolsEnabled: the pref not set. Tests may
+// swap it.
 var smartSymbolsOn = func(a *core.App) bool { return a != nil && coreAPI{a}.smartSymbols() }
 
 // SmartSymbols reports whether the composer makes smart quotes and symbols.

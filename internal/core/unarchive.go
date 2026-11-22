@@ -28,7 +28,7 @@ type permAt struct {
 	at time.Time
 }
 
-var unarchiveIndex sync.Map // *App → *unarchivePerms
+var unarchiveIndex = newPerApp() // *App → *unarchivePerms
 
 func (a *App) unarchivePerms() *unarchivePerms {
 	if v, ok := unarchiveIndex.Load(a); ok {

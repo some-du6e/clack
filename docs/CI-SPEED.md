@@ -443,3 +443,120 @@ only and is early, its numbers are stable on its own bare-metal runners
 reports on pull requests, where Clack works on branches and dispatches.
 perf.yml already has what a gate needs: both sides on one runner,
 interleaved, each built from its own tree.
+
+## Round 3
+
+Branch `ci-speed-3` (2026-11-21), from ui at 821a5101 (α.133) and merged
+with ui since. As in round 2, each red and green run is on an evidence
+branch `ci-speed-3-*` whose head commit carries `[skip ci]`, so pushing it
+starts nothing; the branches are deleted afterwards and the runs stay.
+From the EGL item on, a proof is one run that passes only when the fix
+passes and its mutant fails as named (taut-flush-proof), so a red proof no
+longer shows up as a failed run.
+
+### The ui tests let each finished App go
+
+internal/ui's tests make over 500 Apps in one process, 509 from startEnv
+alone, and before this round none was ever collected. By the end ui.test
+held 9.1 GB live and the runner reached 15.6 of its 16 GB. Reading the code
+found the first roots. A tool found the rest. `internal/ui/retain_test.go`
+writes a heap dump with `runtime/debug.WriteHeapDump`, reads it back in the
+same process and prints every root that reaches a given object, with the
+shortest path. A root is a global, a goroutine's frame or a timer. It names each object
+on the path by the symbols its words hold: a closure's function, an itab
+like `go:itab.*ui.App,ui/messages.Host`. `go test` links its temporary
+binary with `-s -w`, so globals print as bare addresses there; build with
+`go test -c` to get their names.
+
+What held the Apps, in the order the dumps found it:
+
+1. Package maps keyed by the session: core's 33 maps keyed by `*App`
+   (now `newPerApp`, which `Release` empties), fakeslack's 27 keyed by
+   `*Server`, store's three keyed by `*Store`, the shaper caches in theme,
+   messages, blockkit and slackc/kit, messages' hubs, blockkit's app DMs
+   and message hosts, popups', views' and composer's registries, and
+   fourteen sync.Maps and four maps keyed by `*App` in internal/ui
+   (`release`; `TestReleaseCoversAppMaps` reads the package for any it
+   misses).
+2. Goroutines ranging over channels nobody closed: per App an invalidator,
+   an image cache sweep, core's pump, the Interactive's raw feed, messages'
+   hub, composer's typing, blockkit's views, the backend's Taut and Slick
+   watchers. Core's `Release` and Taut's and Slick's `Close` now close
+   every channel they handed out. A subscription's stop used to delete its
+   channel without closing it, so a consumer stopped before `Release`
+   (blockkit's, from `backend.stop`) waited forever. Now whoever takes a
+   channel out of the set closes it, under the lock its sends hold.
+3. Listener lists nothing removed from: `i18n.OnChange` and `onOSScheme`
+   kept every App's callback. Both return a stop now, and `release` runs
+   the App's.
+4. Caches keyed by conversation that kept the last session's entries:
+   composer's `attStore` and messages' `listCache` (with `lastChannel`,
+   `lastThread`, `paneLast`, `lastHost`). These held more Apps than any
+   other root in the first leak run. `composer.ForgetCore` and
+   `messages.ForgetCore` now drop them, from `backend.stop` too, so a
+   sign-out or an account switch lets the old session go in the real app
+   as well.
+5. Lookups after `Release` that put the App back. Something still ran
+   `LoadOrStore` for an App or a store after its `Release` (a goroutine
+   finishing late, or a stale list drawn). A released App's or store's
+   entries are no longer kept, and a late subscriber gets a closed
+   channel.
+6. Timers: core's temporary-mute expiry, and the image cache's animation
+   sweep, which re-arms itself while a kept player plays and nothing
+   draws. `Release` and `Cache.Close` stop them.
+
+`TestFinishedSessionIsCollected` guards all of it: two sessions in a row,
+and the first one's App, core App, fake server and shaper must be
+collected within 10 s. It checks the first of two because `ui.New` points
+process-wide hooks at the newest App (one App per process). On a failure it
+prints the goroutines the sessions left and the heap dump's roots. Red:
+44958300566 (blockkit's goroutine and `blockkit.notDM`), 44959106725
+(`blockkit.notDM`). Green: 44959763759.
+
+To see what holds the Apps across the whole package, flake-check's
+release-leaks job runs internal/ui in four parts by test name. Each part
+traces the first live App of every test that leaves one, and the end-of-run
+report (`CLACK_TEST_HEAP_REPORT`, `CLACK_RETAIN_DUMP=n`) groups the live
+Apps by test. Its first run (44962912991) found 265 of 509 Apps live and
+the roots in items 4 to 6. The second (44964925469) found 28.
+
+internal/ui alone, without GOMEMLIMIT (flake-check ui-heap):
+
+| run | what changed | live heap at the end | Apps live | ui.test peak | runner peak | time |
+|---|---|---|---|---|---|---|
+| 44950485950 | none, the measurement only | 9,106 MiB | all | 14,871 MiB | 15,628 MiB | 1,236 s |
+| 44950488360 | item 1, core and fakeslack | 8,577 MiB | | | 15,201 MiB | 1,227 s |
+| 44959766093 | items 1 to 3 | 4,846 MiB | 248 of 509 | 9,501 MiB | 10,315 MiB | 1,236 s |
+| 44964928177 | items 1 to 5, part of 6 | 1,846 MiB | 15 of 509 | 4,078 MiB | 4,946 MiB | 1,218 s |
+| 44966386962 | all six | 1,798 MiB | 13 of 509 | 4,206 MiB | 5,024 MiB | 1,231 s |
+
+full-test (`go test ./...`, one job), without GOMEMLIMIT:
+
+| run | what changed | runner peak | ui.test peak | job | internal/ui |
+|---|---|---|---|---|---|
+| 44925236847 (round 2, no limit) | none | 15,686 MiB | 13.9 GB | | |
+| 44960051436 | items 1 to 3 | 10,468 MiB | 9,575 MiB | 24.7 min | 1,239 s |
+| 44966389317 | all six | 8,124 MiB | 4,220 MiB | 23.9 min | 1,212 s |
+
+So the GOMEMLIMIT=11GiB stopgap from round 2 is gone from full-test and
+release's test job. Round 2's full-test with the limit peaked at 11,612 MiB
+in 23.0 min (44942313462). Without it, the peak minute is now other
+packages beside ui.test: messages.test at 3,400 MiB and views.test at
+2,575 MiB in 44966389317. Their own tests keep sessions the same way, and
+the same tools will find what holds them.
+
+The second leak run shows what's left. A few single slots hold the newest
+App that used them (`canvasview.copyText`, `slackc.stack`,
+`popups.epCoreApp`, `popups.stackCur`). wazero's compile cache is
+process-wide on purpose. A few tests end with an upload in flight or a
+Slick goroutine still running. That's a handful of Apps, not the package.
+
+### Flakes (round 3)
+
+| test | cause | fix | red | green |
+|---|---|---|---|---|
+| TestCornerDockButton (videoplayer), α.133's release test job (44948141967) | Not GC pressure. The sampler had the runner at 2.8 to 3.9 GB, ui.test at 0.5 to 1.3 GB and the load at 4.7 to 5.6 on 4 vCPUs while videoplayer ran: CPU. The test gave the mini player 5 s of wall time to play | the waits read the tile's own state: while it loads they wait (a minute for a hang), and one that neither loads nor plays for 5 s fails | 44953782259: a fake player whose second play takes 6 s, 3 of 3 fail | 44953787134: the same player, 3 of 3 pass |
+| TestOnePlaysAtATime (videoplayer), train-143's linux-test rest shard (44970400272), "no the second playing within 5s" | A tile is Playing from its play event, which the fake sends at once, before its data. The test clicked the second video on the first's play event, and when the first's data came its start paused the second, as Slack's coordinator does (an autoplay's start pauses the others). The second, paused while it waited, never played. A loaded runner made the first's metadata that late. Plain CPU load didn't (44973568440: 0 of 18 with the old waits under twice the CPUs busy) | the test waits for the first to play, its spinner gone. A subtest with the first's data late gives the order every time. Every tile wait in the package is now `waitForTile`: its limit counts only while the video neither loads nor is what the test waits for, and a failure prints the tile's and the player's state | 44974193400: the mutant, "no the second playing": the second paused, all its data in (ready 4), no event dropped | 44974193400: 10 times under -race, the package 3 times under load |
+| TestRealWindowCaretCost at 1440x900, "no blink's partial frame in 2.4s" | The readback started right after partial frames came back on. The window takes a few frames to settle: a fresh frame texture fills, the sticky atlas's first repack makes the next frame's damage too big (straight into the window), and two more fill the texture again. At 1440x900 that took four blinks, the whole wait. `gpu.FrameStats.Whole` (new) says why each frame was whole | the readback waits for the first partial frame first | 44960352218: 2 of 25; 44963639630: 1 of 25, with the four reasons. The earlier 0 of 35 (44950757123, 44952864910) ran the 800x600 mode | 44965770262: 0 of 25 |
+| TestPatchedReactionPillLikeNative/dark/cls (train-138, 44960329088) | Not EGL. linux-test has no display, so every pixel subtest gets `eglInitialize` 0x3001 and skips (all eight did). This one failed because its TempDir cleanup raced Taut's debounced data flush, "directory not empty". The timer's flush took the dirty data under the lock and wrote it after, so Close's last flush found nothing and returned while storage/ was still being written | Taut's flushes run one at a time, writes included, so Close returns with its data on disk. It also stops an older flush's rename from landing over a newer one's | 44963637245, the mutant: "a flush returned while another was still writing" | 44963637245: 20 times under -race |
+| TestMacIdleCPU | not reproduced | the count failures print the pass's frame timeline: each frame, when it came, what asked for it, and the caret's blink interval | | |

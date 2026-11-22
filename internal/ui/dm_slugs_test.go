@@ -123,9 +123,24 @@ func TestDMMessageSlugsLikeSlack(t *testing.T) {
 	const dm = "D0DMSLUG0001" // a closed DM the test opens
 	fs.AddClosedDM(dm, partner)
 	users := watchUsersInfo(t, fs) // every users/info ask, from boot on
+	// The launch channel's header reads its first members (edge
+	// users/list, as Slack's fetchChannelFirstNMembers does, whose
+	// processMembers puts them in the members store), sent as the boot
+	// opens the channel, right when waitReady returns. Picked while that
+	// read was out, the second link's sender was one of the members it
+	// brings, named as soon as it answered with their users/info still
+	// held: the pill read their name, never "Unknown author" (ci,
+	// 2026-11-22, on a loaded runner). The read answers 300 ms late here,
+	// so that order fails every run, and the pick waits for it.
+	fs.SetFault("edge/users/list", fakeslack.Fault{Delay: 300 * time.Millisecond})
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
 	c := e.a.Core()
+	e.until("the launch channel's header reads", 10*time.Second, func() bool {
+		launch := e.a.router.Current().Channel()
+		return launch != "" && e.a.data.tabsDone[launch]
+	})
+	fs.SetFault("edge/users/list", fakeslack.Fault{})
 	// the second link's sender: a member nothing has fetched or asked
 	// for, posting in a public channel whose history nothing loaded (not
 	// the first channel, which a launch opens)
@@ -186,6 +201,12 @@ func TestDMMessageSlugsLikeSlack(t *testing.T) {
 	}
 	if listed() == 0 {
 		t.Error("nothing asked messages.list for the second link's message (getMessageByTimestamp's fetch)")
+	}
+
+	// the case needs a sender only their users/info (held) names
+	if _, held := c.S.RawUser(other); held {
+		t.Fatalf("the second link's sender is in the store with their users/info held (%d edge users/list calls): something else fetched them, and the case checks nothing",
+			fs.CallCount("edge/users/list"))
 	}
 
 	// messages.list answers, users/info for its sender still out: the

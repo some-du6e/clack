@@ -15,6 +15,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/font/gofont"
 	"gioui.org/gpu"
+	"gioui.org/internal/clickrule"
 	"gioui.org/internal/debug"
 	"gioui.org/internal/ops"
 	"gioui.org/io/event"
@@ -693,6 +694,11 @@ func (w *Window) processEvent(e event.Event) bool {
 	case frameEvent:
 		if e2.Size == (image.Point{}) {
 			panic(errors.New("internal error: zero-sized Draw"))
+		}
+		if e2.Metric.PxPerDp != w.metric.PxPerDp {
+			// Clack patch 48: the window's scale for the gestures' tap
+			// rule, whose distances are dp (clickrule.Tap)
+			w.queue.Source().SetValue(clickrule.PxPerDp{}, e2.Metric.PxPerDp)
 		}
 		w.metric = e2.Metric
 		// Clack patch 35: what the window's own frames asked for (askFrame:
