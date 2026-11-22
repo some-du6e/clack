@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -299,7 +300,9 @@ func (s *ugSelect) events(gtx layout.Context) {
 				s.query(t)
 			}
 		case widget.SubmitEvent:
-			if s.active < len(opts) {
+			// only from a list that shows: with it closed (Escape) Enter
+			// picks nothing
+			if s.open && s.active < len(opts) {
 				s.Pick(opts[s.active])
 			}
 		}
@@ -389,6 +392,12 @@ func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
 // the options list goes on top of everything (op.Defer).
 func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	s.events(gtx)
+	if s.Expanded() {
+		// the expanded list has plain Escape first (onEscape): the shell's
+		// Close binding, read before the overlays next frame, leaves it to
+		// the dialog, whose OnEscape closes the list
+		shortcut.OwnEscape(&s.ed)
+	}
 	w := gtx.Constraints.Max.X
 	// multiSelectInput: min-height 36 (large 44), padding 0 28px 4px 4px
 	// (large: right 32), 15px (large 18px); with nothing picked (initial)

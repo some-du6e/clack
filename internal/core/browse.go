@@ -373,7 +373,7 @@ func (a *App) filePage(ctx context.Context, raws []browseFileRaw) []File {
 // kind only when the filter holds them, then the filters' tokens in
 // Slack's order: from:, in:, before:, after:, the type: tokens, creator:.
 // lk resolves the typed tokens and the in: values (nil: none resolve).
-func filesQuery(o FilesOpts, self string, lk filesLookup) string {
+func filesQuery(ctx context.Context, o FilesOpts, self string, lk filesLookup) string {
 	var types []string
 	switch {
 	case o.Kind == "canvases":
@@ -391,12 +391,12 @@ func filesQuery(o FilesOpts, self string, lk filesLookup) string {
 	if o.Mine {
 		creator = []string{self}
 	}
-	return filesQueryTokens(o.Query, o, types, creator, lk)
+	return filesQueryTokens(ctx, o.Query, o, types, creator, lk)
 }
 
 // filesParams builds search.modules.files params for the Files browser
-// (the query as filesQuery).
-func filesParams(o FilesOpts, self string, lk filesLookup) url.Values {
+// (the query as filesQuery; ctx stops a long query's tokenizing).
+func filesParams(ctx context.Context, o FilesOpts, self string, lk filesLookup) url.Values {
 	page := o.Page
 	if page < 1 {
 		page = 1
@@ -412,7 +412,7 @@ func filesParams(o FilesOpts, self string, lk filesLookup) url.Values {
 	if o.Sort != "" {
 		sortBy = o.Sort
 	}
-	p := url.Values{"module": {"files"}, "query": {filesQuery(o, self, lk)}, "page": {strconv.Itoa(page)},
+	p := url.Values{"module": {"files"}, "query": {filesQuery(ctx, o, self, lk)}, "page": {strconv.Itoa(page)},
 		"count": {"50"}, "sort": {sortBy}, "search_context": {"desktop_files_browser"},
 		"include_files_shares": {"1"}, "extracts": {"1"}, "highlight": {"1"}, "max_extract_len": {"200"},
 		"extra_message_data": {"1"}, "no_user_profile": {"1"}, "file_title_only": {"false"},
@@ -430,7 +430,10 @@ func filesParams(o FilesOpts, self string, lk filesLookup) url.Values {
 // unified files view calls it).
 func (a *App) Files(ctx context.Context, o FilesOpts) (FilePage, error) {
 	t0 := time.Now()
-	p := filesParams(o, a.S.SelfID(), appFilesLookup{a})
+	p := filesParams(ctx, o, a.S.SelfID(), newFilesLookup(a))
+	if err := ctx.Err(); err != nil { // the query's tokenizing stopped short
+		return FilePage{}, err
+	}
 	var res struct {
 		Pagination searchPagination `json:"pagination"`
 		Items      []browseFileRaw  `json:"items"`

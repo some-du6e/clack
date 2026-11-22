@@ -11,6 +11,7 @@ package core
 // before:2026-01-01 with Last 7 days set sends Last 7 days alone.
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"time"
@@ -34,14 +35,16 @@ var filesModifiers = []string{"has", "-has", "type", "-type", "from", "-from", "
 
 // filesTokenRe is getTokenRegex: a quoted phrase, a smart-quoted one, a
 // modifier and its value (one space allowed after the colon), a mention
-// (@… or <…>), or a word; then the rest.
+// (@… or <…>), or a word. Slack's regex also captures the rest, `(.*)$`,
+// and runs again on it; this one matches the token alone at an advancing
+// offset, so a long paste costs its length once, not once per token.
 var filesTokenRe = func() *regexp.Regexp {
 	mods := make([]string, len(filesModifiers))
 	for i, m := range filesModifiers {
 		mods[i] = regexp.QuoteMeta(m)
 	}
 	n := `(` + strings.Join(mods, "|") + `):\s?((?:[^<>\s]+|<[^>]+>)?)`
-	return regexp.MustCompile(`(?is)^\s*(("([^"]+)")|(“([^“”]+)”)|(` + n + `)|(@[^\s]+|<[^>]+>)|([^\s]+))(.*)$`)
+	return regexp.MustCompile(`(?is)^\s*(("([^"]+)")|(“([^“”]+)”)|(` + n + `)|(@[^\s]+|<[^>]+>)|([^\s]+))`)
 }()
 
 // filesTok is one QuerySuggestionToken: its kind (a modifier, "" for text
@@ -59,39 +62,50 @@ type filesRawToken struct {
 }
 
 // filesRawTokens is rawTokensFromString: consecutive words join with one
-// space.
-func filesRawTokens(q string) []filesRawToken {
+// space. It stops early (returning what it has) once ctx is done.
+func filesRawTokens(ctx context.Context, q string) []filesRawToken {
 	var out []filesRawToken
-	rest := strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(q)
-	for {
-		r := filesTokenRe.FindStringSubmatch(rest)
-		if r == nil {
-			break
-		}
-		if r[11] != "" && len(rest) == len(r[11]) {
-			break
-		}
-		rest = r[11]
-		switch {
-		case r[3] != "":
-			out = append(out, filesRawToken{phrase: true, s: r[3]})
-		case r[5] != "":
-			out = append(out, filesRawToken{phrase: true, smart: true, s: r[5]})
-		case r[6] != "":
-			out = append(out, filesRawToken{filter: true, s: r[6]})
-		case r[9] != "":
-			out = append(out, filesRawToken{member: true, s: r[9]})
-		case r[10] != "":
-			if n := len(out); n > 0 && out[n-1].word {
-				out[n-1].s += " " + r[10]
-			} else {
-				out = append(out, filesRawToken{word: true, s: r[10]})
-			}
-		}
-		if rest == "" {
-			break
+	var words []string // the word run being built, joined once it ends
+	flush := func() {
+		if len(words) > 0 {
+			out = append(out, filesRawToken{word: true, s: strings.Join(words, " ")})
+			words = words[:0]
 		}
 	}
+	rest := strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ").Replace(q)
+	for off, n := 0, 0; off < len(rest); n++ {
+		if n%256 == 255 && ctx.Err() != nil {
+			break
+		}
+		m := filesTokenRe.FindStringSubmatchIndex(rest[off:])
+		if m == nil || m[1] == 0 {
+			break
+		}
+		g := func(i int) string {
+			if m[2*i] < 0 {
+				return ""
+			}
+			return rest[off+m[2*i] : off+m[2*i+1]]
+		}
+		switch {
+		case g(3) != "":
+			flush()
+			out = append(out, filesRawToken{phrase: true, s: g(3)})
+		case g(5) != "":
+			flush()
+			out = append(out, filesRawToken{phrase: true, smart: true, s: g(5)})
+		case g(6) != "":
+			flush()
+			out = append(out, filesRawToken{filter: true, s: g(6)})
+		case g(9) != "":
+			flush()
+			out = append(out, filesRawToken{member: true, s: g(9)})
+		case g(10) != "":
+			words = append(words, g(10))
+		}
+		off += m[1]
+	}
+	flush()
 	return out
 }
 
@@ -107,9 +121,9 @@ var (
 )
 
 // filesTokens is tokenListFromString for the typed query.
-func filesTokens(q string, lk filesLookup) []filesTok {
+func filesTokens(ctx context.Context, q string, lk filesLookup) []filesTok {
 	var out []filesTok
-	for _, rt := range filesRawTokens(q) {
+	for _, rt := range filesRawTokens(ctx, q) {
 		switch {
 		case rt.phrase: // PhraseQuerySuggestionToken
 			if rt.smart {
@@ -372,8 +386,8 @@ func indexOf(xs []string, v string) int {
 // in, -in, before, after, on, type, -type (excludedFileType: the
 // browser's handlers all set it to []), has, hasmy, is, -is, with,
 // creator, -creator.
-func filesQueryTokens(query string, o FilesOpts, types, creator []string, lk filesLookup) string {
-	toks := filesTokens(query, lk)
+func filesQueryTokens(ctx context.Context, query string, o FilesOpts, types, creator []string, lk filesLookup) string {
+	toks := filesTokens(ctx, query, lk)
 	member := func(mod string) func(string) string { return func(id string) string { return mod + ":<@" + id + ">" } }
 	date := func(mod string) func(string) string { return func(d string) string { return mod + ":" + d } }
 	one := func(s string) []string {
@@ -402,26 +416,40 @@ func filesQueryTokens(query string, o FilesOpts, types, creator []string, lk fil
 	return strings.TrimSpace(strings.Join(parts, " "))
 }
 
-// appFilesLookup resolves typed tokens against the app's store.
-type appFilesLookup struct{ a *App }
-
-func (l appFilesLookup) memberKnown(id string) bool { _, ok := l.a.S.RawUser(id); return ok }
-
-// memberByName is getMemberByName: the name, display name or normalized
-// display name, case folded.
-func (l appFilesLookup) memberByName(name string) string {
-	n := strings.ToLower(name)
-	for _, id := range l.a.S.UserIDs() {
-		if u, ok := l.a.S.RawUser(id); ok && (strings.ToLower(u.Name) == n ||
-			u.Profile.DisplayName != "" && strings.ToLower(u.Profile.DisplayName) == n ||
-			u.Profile.DisplayNameNormalized != "" && strings.ToLower(u.Profile.DisplayNameNormalized) == n) {
-			return id
-		}
-	}
-	return ""
+// appFilesLookup resolves typed tokens against the app's store. One is
+// made per query: the name indexes are built once, on first use.
+type appFilesLookup struct {
+	a              *App
+	byName, byChan map[string]string
 }
 
-func (l appFilesLookup) conv(id string) (ConvRef, bool) {
+func newFilesLookup(a *App) *appFilesLookup { return &appFilesLookup{a: a} }
+
+func (l *appFilesLookup) memberKnown(id string) bool { _, ok := l.a.S.RawUser(id); return ok }
+
+// memberByName is getMemberByName: the name, display name or normalized
+// display name, case folded (the first member with it).
+func (l *appFilesLookup) memberByName(name string) string {
+	if l.byName == nil {
+		l.byName = map[string]string{}
+		for _, id := range l.a.S.UserIDs() {
+			u, ok := l.a.S.RawUser(id)
+			if !ok {
+				continue
+			}
+			for _, n := range []string{u.Name, u.Profile.DisplayName, u.Profile.DisplayNameNormalized} {
+				if k := strings.ToLower(n); k != "" {
+					if _, seen := l.byName[k]; !seen {
+						l.byName[k] = id
+					}
+				}
+			}
+		}
+	}
+	return l.byName[strings.ToLower(name)]
+}
+
+func (l *appFilesLookup) conv(id string) (ConvRef, bool) {
 	c, ok := l.a.Conv(id)
 	if !ok {
 		return ConvRef{}, false
@@ -430,14 +458,18 @@ func (l appFilesLookup) conv(id string) (ConvRef, bool) {
 }
 
 // convByName is getChannelByName: a channel's name, case folded.
-func (l appFilesLookup) convByName(name string) string {
-	n := strings.ToLower(name)
-	for _, id := range l.a.S.ConvIDs() {
-		if c, ok := l.a.S.Conv(id); ok && !c.IsIM && !c.IsMPIM && c.Name != "" && strings.ToLower(c.Name) == n {
-			return id
+func (l *appFilesLookup) convByName(name string) string {
+	if l.byChan == nil {
+		l.byChan = map[string]string{}
+		for _, id := range l.a.S.ConvIDs() {
+			if c, ok := l.a.S.Conv(id); ok && !c.IsIM && !c.IsMPIM && c.Name != "" {
+				if k := strings.ToLower(c.Name); l.byChan[k] == "" {
+					l.byChan[k] = id
+				}
+			}
 		}
 	}
-	return ""
+	return l.byChan[strings.ToLower(name)]
 }
 
-func (l appFilesLookup) self() string { return l.a.S.SelfID() }
+func (l *appFilesLookup) self() string { return l.a.S.SelfID() }

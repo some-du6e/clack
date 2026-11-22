@@ -1,7 +1,10 @@
 package core
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -98,5 +101,52 @@ func TestFilesViewTypedTokensQuery(t *testing.T) {
 		if got := formVal(f.last("search.modules.files"), "query"); got != c.want {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
 		}
+	}
+}
+
+// The list pickers (SearchLists: useListExplorer) resolve typed tokens
+// against the store too: from:, with: and in: go, @bob becomes <@U2>.
+// Expected: Slack's tokenizer and nzlP in node on testApp's store.
+func TestFilesViewListPickerTokens(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["search.modules.files"] = `{"ok":true,"items":[],"pagination":{"total_count":0,"page":1,"page_count":1}}`
+	if _, _, err := a.SearchLists(t.Context(), "from:@alice @bob with:@bob in:#general plan", 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := formVal(f.last("search.modules.files"), "query"); got != "<@U2> plan type:lists" {
+		t.Errorf("query %q", got)
+	}
+}
+
+// A 30 KB paste into the Files search tokenizes in one pass over it (the
+// token regex at an advancing offset, the name indexes built once), well
+// inside a second; a cancelled ctx stops the request.
+func TestFilesViewQueryLongPaste(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["search.modules.files"] = `{"ok":true,"items":[],"pagination":{"total_count":0,"page":1,"page_count":1}}`
+	const unit = `from:@alice report "q3 plan" @bob in:#general before:2026-01-01 type:pdfs word `
+	var b strings.Builder
+	n := 0
+	for b.Len() < 30<<10 {
+		b.WriteString(unit)
+		n++
+	}
+	t0 := time.Now()
+	if _, err := a.Files(t.Context(), FilesOpts{Query: b.String()}); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(t0); d > time.Second {
+		t.Errorf("a %d-byte query took %v", b.Len(), d)
+	}
+	q := formVal(f.last("search.modules.files"), "query")
+	if strings.Contains(q, "from:") || strings.Contains(q, "in:") || strings.Contains(q, "before:") ||
+		strings.Count(q, "<@U2>") != n || strings.Count(q, "type:pdfs") != 1 || !strings.HasSuffix(q, "type:folder_skill_set") {
+		t.Errorf("long query's tokens: %d bytes, %d <@U2>, %d type:pdfs, ends %q", len(q), strings.Count(q, "<@U2>"),
+			strings.Count(q, "type:pdfs"), q[max(0, len(q)-40):])
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := a.Files(ctx, FilesOpts{Query: b.String()}); err == nil {
+		t.Error("a cancelled search went out")
 	}
 }
