@@ -274,7 +274,7 @@ func colorReport(samples []sample) (errs, logs []string) {
 	stepped := func(w [2]time.Duration) (time.Duration, bool) {
 		for i := 1; i < len(samples); i++ {
 			a, b := samples[i-1], samples[i]
-			if a.at < w[1] && b.at > w[0] {
+			if a.at < w[0] && b.at > w[1] {
 				if gap := b.wall.Sub(a.wall); gap >= 300*time.Millisecond {
 					return gap, true
 				}

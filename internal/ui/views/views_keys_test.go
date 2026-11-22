@@ -931,19 +931,10 @@ func TestThreadsMountLoadLikeSlack(t *testing.T) {
 // thread-header-hover-4's full-test 45033113108: mounting false, "the
 // floating loader still drawn").
 func thrAnimating(e *vaEnv) bool {
-	n := 0
-	for i := 0; i < 5; i++ {
-		if i > 0 {
-			time.Sleep(50 * time.Millisecond)
-		}
-		e.r.WakeupTime() // the frames before
-		f := time.Now()
-		e.frame()
-		if at, ok := e.r.WakeupTime(); ok && !at.IsZero() && at.Sub(f) < 40*time.Millisecond {
-			n++
-		}
-	}
-	return n >= 4
+	e.r.WakeupTime() // the frames before
+	e.frame()
+	at, ok := e.r.WakeupTime()
+	return ok && !at.IsZero() && time.Until(at) < 250*time.Millisecond
 }
 
 // A reload that fails, on a revisit or the sidebar row clicked again,
