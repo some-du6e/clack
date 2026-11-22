@@ -119,7 +119,7 @@ func (b *backend) noteDMReason(a *App, ev core.Event, c *convInfo, ignoreDND boo
 		return noteSkipNoDisplay
 	case ev.Reply:
 		return noteSkipReply
-	case b.noteOnScreen(a, ev.Channel):
+	case b.noteOnScreen(a, ev):
 		return noteSkipOnScreen
 	case m.User != "" && m.User == b.selfID:
 		return noteSkipOwn
@@ -161,7 +161,7 @@ func (b *backend) noteChannelReason(a *App, ev core.Event, c *convInfo, ignoreDN
 	switch {
 	case !wants:
 		return noteSkipNoMention
-	case b.noteOnScreen(a, ev.Channel):
+	case b.noteOnScreen(a, ev):
 		return noteSkipOnScreen
 	case m.User != "" && m.User == b.selfID:
 		return noteSkipOwn
@@ -197,10 +197,35 @@ func (b *backend) noteGroupDMLevel(ch string) string {
 	return level
 }
 
-// noteOnScreen is shouldSuppressNotificationInActiveChannel: the
-// conversation is the one open, in the focused window.
-func (b *backend) noteOnScreen(a *App, ch string) bool {
-	return a.router.Current().Channel() == ch && a.focused
+// noteOnScreen is shouldSuppressNotificationInActiveChannel (client-boot
+// Fpyc, build 548618a2169f2a90): the message's conversation is the main
+// view of the focused window (ey.pA, the Primary container) showing its
+// messages (WatJ: no tab past Messages selected), unless its text holds an
+// at-command (containsAtCommand: @channel, @everyone, …; not @here) or it
+// is a thread reply the conversation's view doesn't show (_hidden_reply:
+// a reply that isn't also sent to the conversation), which notifies
+// whatever is on screen. Clack kept those three quiet too, so a reply that
+// mentioned the viewer in a thread of the conversation they were reading
+// never notified.
+func (b *backend) noteOnScreen(a *App, ev core.Event) bool {
+	m := ev.Msg
+	if m != nil && containsAtCommand(m.Text) {
+		return false
+	}
+	if !a.focused || a.router.Current().Channel() != ev.Channel {
+		return false
+	}
+	if _, other := a.selectedTab(ev.Channel); other {
+		return false // its canvas, files or another tab, not its messages
+	}
+	return m == nil || !noteHiddenReply(m)
+}
+
+// noteHiddenReply is the message formatter's _hidden_reply (client-boot,
+// "!!thread_ts && thread_ts !== ts && subtype !== thread_broadcast"): a
+// thread reply that isn't also sent to the conversation.
+func noteHiddenReply(m *core.Message) bool {
+	return m.ThreadTS != "" && m.ThreadTS != m.TS && m.Subtype != "thread_broadcast"
 }
 
 // noteDNDHolds is Do Not Disturb (13): paused notifications

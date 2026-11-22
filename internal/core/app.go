@@ -56,6 +56,11 @@ type App struct {
 	docs docState // what message Docs read, as the last events left it (msg_refs.go)
 
 	thrUnread threadsMarkedUnread // ThreadsMarkedUnread (message_menu.go)
+	// the reply bars' unread thread activity per channel
+	// (channel_thread_activity.go), under chActMu
+	chActMu  sync.Mutex
+	chActs   map[string]*chActList
+	chActSeq uint64
 
 	msgLog msgChanges // each message's latest change, for the views that keep copies of them (msg_changes.go)
 	// refetchQ is RefetchMessages' rounds (read_changes.go)
@@ -232,6 +237,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnHello = a.onHello
+	a.RTM.OnDrop = a.onDroppedEvent // a dropped message's ts still goes into maxTs (maxts_heard.go)
 	s.SetMembersOnline(a.membersOnline)
 	appsByStore.Store(s, a)
 	store.ExperimentGroup = experimentForStore

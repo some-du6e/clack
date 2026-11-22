@@ -7,69 +7,56 @@ import (
 )
 
 // The reply bar's "Unread" mark under unread_thread_indication_in_replybar
-// (Slack's client, build 4d0c78085232):
+// (Slack's client, build 548618a2169f2a90):
 //
 //   - MessagePane maybeFetchUnreadThreadActivity (boot-render bU1n) fetches
-//     the channel's unread thread activity (core.ChannelUnreadThreads) when
-//     client.counts says the channel has unread threads
-//     (threadsUnreadCountByChannel, core.ThreadsUnreadIn). Slack then keeps
-//     that list current from realtime activity items; Clack fetches it
-//     again whenever the channel's count changes (client.counts is read
-//     again after thread_marked and update_thread_state).
+//     the channel's unread thread activity (core.ChannelUnreadThreads) once
+//     per mount, while client.counts says the channel has unread threads
+//     (threadsUnreadCountByChannel, core.ThreadsUnreadIn) and its list
+//     holds no thread_v2 item (hasLoadedThreadActivityForChannel,
+//     core.ThreadActivityLoaded). From then on the socket's activity items
+//     keep the list current (core channel_thread_activity.go), so a
+//     reply's mark comes with its thread_v2 item, with no fetch: Clack
+//     fetched again whenever the channel's count changed, and the mark came
+//     an activity.feed round trip after the reply drew.
 //   - MessageWrapper hands ThreadReplies getUnreadThreadsCountForMessage
-//     (3x6A AY) for its ts, and ReplyBar draws renderUnreadThreadsIndicator
-//     ("Unread" after an 8px icon-placeholder-filled, gap 4,
-//     --dt_color-content-imp) while it's above 0, in the span hover hides
-//     (c-message__reply_bar_last_reply). Slack passes 0 for the thread open
-//     in a focused secondary view; Clack doesn't track that focus, so the
-//     mark stays until the thread is read.
+//     (3x6A AY, core.UnreadThreadsFor) for its ts, and ReplyBar draws
+//     renderUnreadThreadsIndicator ("Unread" after an 8px
+//     icon-placeholder-filled, gap 4, --dt_color-content-imp) while it's
+//     above 0, in the span hover hides (c-message__reply_bar_last_reply).
+//     Slack passes 0 for the thread open in a focused secondary view;
+//     Clack doesn't track that focus, so the mark stays until the thread
+//     is read.
 
-// unreadThreads is a channel list's unread thread activity.
+// unreadThreads is a channel list's fetch state (MessagePane's).
 type unreadThreads struct {
-	mu     sync.Mutex
-	counts map[string]int // thread ts → unread items
-	forN   int            // the channel's ThreadsUnreadIn it was fetched for
-	busy   bool
+	mu      sync.Mutex
+	fetched bool // hasFetchedUnreadThreads: asked once for this list
 }
 
-// updateUnreadThreads keeps the channel's list current (channel lists
+// updateUnreadThreads is maybeFetchUnreadThreadActivity (channel lists
 // only, with the experiment on). It never blocks: the fetch runs aside.
 func (s *listState) updateUnreadThreads(h Host) {
 	app := h.Core()
 	if app == nil || s.thread || app.Experiment("unread_thread_indication_in_replybar") != "on" {
 		return
 	}
-	n := app.ThreadsUnreadIn(s.ch)
+	if app.ThreadsUnreadIn(s.ch) == 0 || app.ThreadActivityLoaded(s.ch) {
+		return
+	}
 	u := &s.unreadTh
 	u.mu.Lock()
-	defer u.mu.Unlock()
-	if n == 0 {
-		u.counts, u.forN = nil, 0
+	if u.fetched {
+		u.mu.Unlock()
 		return
 	}
-	if u.busy || u.forN == n {
-		return
-	}
-	u.busy = true
+	u.fetched = true
+	u.mu.Unlock()
 	ch := s.ch
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		got, err := app.ChannelUnreadThreads(ctx, ch)
-		u.mu.Lock()
-		u.busy, u.forN = false, n // hasFetchedUnreadThreads: no retry until the count changes
-		if err == nil {
-			u.counts = got
-		}
-		u.mu.Unlock()
+		_, _ = app.ChannelUnreadThreads(ctx, ch) // into core's list for ch, which the rows read
 		h.Invalidate()
 	}()
-}
-
-// unreadThreadsFor is getUnreadThreadsCountForMessage for root ts.
-func (s *listState) unreadThreadsFor(ts string) int {
-	u := &s.unreadTh
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.counts[ts]
 }

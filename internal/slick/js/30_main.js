@@ -392,33 +392,40 @@ function syncFetchHook() {
   G.fetch = protocols.size || netRules.size ? ruledFetch : pageFetch
 }
 
-// ---- notifications: one filter chain over Slack's showNotification thunk ----
+// ---- notifications: the filter chain over the toasts Clack shows ----
+//
+// Slick patches Electron's Notification.prototype.show in Slack's main
+// process (src/desktop/pluginHost.ts installNotificationFilter): each
+// filter sees the notification as it is about to show (title, subtitle,
+// body, silent: Electron's NotificationConstructorOptions, after Slack's
+// renderer made them), and one that doesn't permit it keeps it from
+// showing; the sound and the dock bounce Slack's renderer starts stay.
+// Clack asks at the same point, before its toast goes to the system
+// (S.allowNotification from slick.AllowNotification, ui notify.go), and
+// tells Go how many filters there are, so no toast waits on JS while
+// none is. Filtering showNotification's arguments, a followed thread's
+// reply (Slack's {message: the event, modelObject, options}) had no title
+// or body for them.
 
 const notificationFilters = new Set()
-let unpatchNotifications
 function syncNotificationPatch() {
-  if (notificationFilters.size && !unpatchNotifications) {
-    unpatchNotifications = TA.redux.patchThunk('showNotification', (original) => (...args) => {
-      const opts = args[0] || {}
-      const message = opts.message
-      const body = typeof message === 'string' ? message : (message?.text ?? opts.body ?? '')
-      // Electron's NotificationConstructorOptions, from Slack's showNotification args
-      const options = { ...opts, title: opts.title ?? '', subtitle: opts.subtitle, body, silent: opts.silent }
-      for (const f of [...notificationFilters]) {
-        let ok = true
-        try {
-          ok = f.predicate(options) !== false
-        } catch (err) {
-          console.error(`[slick] ${f.id} notification filter threw:`, err)
-        }
-        if (!ok) return () => undefined
-      }
-      return original(...args)
-    })
-  } else if (!notificationFilters.size && unpatchNotifications) {
-    unpatchNotifications()
-    unpatchNotifications = undefined
+  try {
+    go('notificationFilters', notificationFilters.size)
+  } catch (err) {
+    console.error('[slick] notification filters:', err)
   }
+}
+S.allowNotification = (options) => {
+  for (const f of [...notificationFilters]) {
+    let permitted = true
+    try {
+      permitted = f.predicate(options)
+    } catch (err) {
+      console.error(`[slick] ${f.id} notification filter threw:`, err)
+    }
+    if (!permitted) return false
+  }
+  return true
 }
 
 // ---- the renderer side of main.call / main.on ----
