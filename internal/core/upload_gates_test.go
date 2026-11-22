@@ -73,6 +73,29 @@ func listPrefsFresh(a *App, ch string) bool {
 // rscm O: an externally shared conversation whose list prefs turn
 // can_upload_files off. The read fetches the prefs once (maybeRefetch)
 // and reads them after the answer; other conversations never ask.
+// can_upload_files null reads as allowed, as Slack's `?? true` reads it
+// (rscm O: !(Q(e, "can_upload_files", t) ?? !0)): a null pref is no pref,
+// and only false (or 0, "") blocks.
+func TestSlackConnectNullPrefAllowsUploads(t *testing.T) {
+	a, f := testApp(t)
+	const null, zero = "C0SHARED03", "C0SHARED04"
+	for _, id := range []string{null, zero} {
+		a.S.PutConv(slack.Conversation{ID: id, Name: "partners-" + id, IsChannel: true, IsMember: true, IsExtShared: true})
+	}
+	setListPrefs(f, `{"ok":true,"prefs":{"can_upload_files":null}}`)
+	a.SlackConnectFileSharingBlocked(null)
+	listPrefsSettled(t, a, null)
+	if a.SlackConnectFileSharingBlocked(null) {
+		t.Error("can_upload_files null: blocked, want allowed (?? true)")
+	}
+	setListPrefs(f, `{"ok":true,"prefs":{"can_upload_files":0}}`)
+	a.SlackConnectFileSharingBlocked(zero)
+	listPrefsSettled(t, a, zero)
+	if !a.SlackConnectFileSharingBlocked(zero) {
+		t.Error("can_upload_files 0: allowed, want blocked (falsy)")
+	}
+}
+
 func TestSlackConnectFileSharingBlockedLikeSlack(t *testing.T) {
 	a, f := testApp(t)
 	const shared, open, short, internal = "C0SHARED01", "C0SHARED02", "CSHORT", "C0INTERNAL"

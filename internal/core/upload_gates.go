@@ -227,14 +227,15 @@ func (a *App) onSlackConnectPrefChanged(raw json.RawMessage) {
 // SlackConnectFileSharingBlocked is rscm O for ch: an externally shared
 // conversation whose list prefs turn can_upload_files off. Reading it
 // for such a conversation fetches its list prefs when they aren't fresh;
-// a "list_prefs" event follows the answer.
+// a "list_prefs" event follows the answer. A missing or null pref is
+// allowed (`?? true`); any other falsy value blocks.
 func (a *App) SlackConnectFileSharingBlocked(ch string) bool {
 	c, ok := a.S.Conv(ch)
 	if !ok || !c.IsExtShared {
 		return false
 	}
 	v := a.conversationsListPref(ch, "can_upload_files")
-	return len(v) > 0 && !jsonTruthy(v)
+	return len(v) > 0 && string(v) != "null" && !jsonTruthy(v)
 }
 
 // jsonTruthy is JavaScript's truthiness for a JSON value (null, false, 0,
