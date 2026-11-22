@@ -467,29 +467,58 @@ func (e *plusEnv) queueAt(p image.Point, at, hold time.Duration) {
 		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: pos, Time: at + hold})
 }
 
+// pressAt and releaseAt queue the press and the release at p on the
+// pointer clock, which frame advances with the frame clock: a press held
+// across frames, as hands make one.
+func (e *plusEnv) pressAt(p image.Point) {
+	pos := f32.Pt(float32(p.X), float32(p.Y))
+	e.r.Queue(
+		pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pos, Time: e.ptr},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pos, Time: e.ptr})
+}
+
+func (e *plusEnv) releaseAt(p image.Point) {
+	e.r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y)), Time: e.ptr})
+}
+
 // A double click as people make one: each press held 100 ms, the second
-// 300 ms after the first, frames running between. That was two clicks
-// for gesture.Click's old fixed 200 ms; by the platform's rule (Gio patch
-// 48: Chromium's 500 ms here, Windows' GetDoubleClickTime) it's a double
-// click, and it lands 200 ms after the first release, while the menu's
-// scrim is still down (plusScrimDelay), as in Slack.
+// 300 ms after the first, 16 ms frames running all along, also while each
+// button is down. That was two clicks for gesture.Click's old fixed
+// 200 ms; by the platform's rule (Gio patch 48: Chromium's 500 ms here,
+// Windows' GetDoubleClickTime) it's a double click. The second press
+// lands 200 ms after the menu opened, while its scrim is still down
+// (plusScrimDelay), and comes up 300 ms after: the scrim stays down while
+// a press it let through is held, so the release reaches the + and isn't
+// a cancel under a scrim that came up meanwhile.
 func TestPlusDoubleClickAt300ms(t *testing.T) {
 	e := newPlusEnv(t)
 	e.open(tChGen, "")
 	p := e.plus()
 	t0 := e.ptr
-	e.queueAt(p, t0, 100*time.Millisecond)
+	hold := func() { // the button down for 100 ms of frames
+		e.frame()
+		e.frames(100*time.Millisecond - 32*time.Millisecond)
+	}
+	e.pressAt(p)
+	hold()
+	e.releaseAt(p)
 	e.frame() // the release: the menu opens
 	if !e.menuOpen() {
-		t.Fatal("the first click opened no menu")
+		t.Fatalf("the first click opened no menu: %s", e.diag())
 	}
-	e.frames(180 * time.Millisecond)
-	e.queueAt(p, t0+300*time.Millisecond, 100*time.Millisecond)
+	for e.ptr < t0+300*time.Millisecond {
+		e.frame()
+	}
+	down2 := e.ptr - t0
+	e.pressAt(p)
+	hold()
+	up2 := e.ptr - t0
+	e.releaseAt(p)
 	e.frame()
-	e.ptr = t0 + time.Second
+	e.frame()
 	if e.picks != 1 || e.menuOpen() || e.h.menus != 1 {
-		t.Fatalf("a 300 ms double click: %d choosers, menu %v, %d menus; want the chooser and the menu closed (double-click time %v)",
-			e.picks, e.menuOpen(), e.h.menus, gesture.DoubleClickTime())
+		t.Fatalf("a double click, each press held 100 ms (the second down %v and up %v after the first press): %d choosers, menu %v, %d menus; want the chooser and the menu closed (double-click time %v); %s",
+			down2, up2, e.picks, e.menuOpen(), e.h.menus, gesture.DoubleClickTime(), e.diag())
 	}
 }
 

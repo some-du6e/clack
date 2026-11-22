@@ -3,6 +3,7 @@ package popups
 import (
 	"image"
 	"image/color"
+	"slices"
 	"time"
 
 	"gioui.org/io/event"
@@ -161,7 +162,9 @@ type MenuOpts struct {
 	// frame: until then a press outside the card reaches what's under it,
 	// and the menu stays. The composer's + menu does this as Slack does
 	// (ShortcutsMenuTriggerButton sets its overlay's height to 0 for
-	// 250 ms) so a double click's second click lands on the button.
+	// 250 ms) so a double click's second click lands on the button. A
+	// press that began meanwhile keeps the scrim down until it comes up,
+	// so a slow second click still completes on the button.
 	ScrimAfter time.Duration
 
 	// Raw skips the MenuFromTemplate boundary: the items already came out
@@ -231,6 +234,11 @@ type Menu struct {
 	rowCtx int // the right-click area's tag (MenuItem.Context)
 
 	shownAt time.Time // the root's first frame (ScrimAfter)
+	// held are the pointers pressed while ScrimAfter held the scrim down
+	// that haven't come up (scrimUp), seen through heldTag's pass-through
+	// area over the window
+	held    []pointer.ID
+	heldTag int
 
 	ma    *maMenu           // Slack's MAMenu (MenuOpts.MAMenu)
 	boxes []image.Rectangle // rowBoxes' boxes, reused
@@ -616,7 +624,11 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 
 // scrimUp reports whether the root lays its scrim out this frame: always,
 // unless MenuOpts.ScrimAfter holds it down that long from the menu's
-// first frame. The frame it's due in is asked of the window, not with an
+// first frame, and after that while a press that began meanwhile is
+// still held. Otherwise the scrim would come up under that press (the
+// composer's +, a double click's second press): the router's next frame
+// moves the pressed pointer off its widget, whose release is then a
+// cancel. The frame the delay ends in is asked of the window, not with an
 // op.InvalidateCmd here: the rows read their events after this, and for
 // a command mid-frame the router replays the events no handler has read
 // yet, which lost clicks while the composer's + asked for its turn's
@@ -631,7 +643,35 @@ func (m *Menu) scrimUp(gtx layout.Context) bool {
 		m.shownAt = now
 		time.AfterFunc(d, m.h.Invalidate)
 	}
-	return !now.Before(m.shownAt.Add(d))
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &m.heldTag, Kinds: pointer.Press | pointer.Release | pointer.Cancel})
+		if !ok {
+			break
+		}
+		e, ok := ev.(pointer.Event)
+		if !ok {
+			continue
+		}
+		switch e.Kind {
+		case pointer.Press:
+			if !slices.Contains(m.held, e.PointerID) {
+				m.held = append(m.held, e.PointerID)
+			}
+		case pointer.Release:
+			m.held = slices.DeleteFunc(m.held, func(id pointer.ID) bool { return id == e.PointerID })
+		case pointer.Cancel:
+			m.held = m.held[:0]
+		}
+	}
+	if !now.Before(m.shownAt.Add(d)) && len(m.held) == 0 {
+		return true
+	}
+	// down: every press reaches what's under the menu, and this area sees
+	// it go by
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, &m.heldTag)
+	return false
 }
 
 func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
