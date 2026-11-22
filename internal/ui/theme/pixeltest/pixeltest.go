@@ -4,11 +4,13 @@
 package pixeltest
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"math"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,11 +25,11 @@ import (
 // many there were, so a runner with no working EGL reads as that, not as
 // a flake.
 func NewWindow(w, h int) (*headless.Window, error) {
-	win, err := headless.NewWindow(w, h)
+	win, err := newHeadless(w, h)
 	tries := 1
 	for ; err != nil && tries < 6; tries++ {
 		time.Sleep(time.Duration(200*tries) * time.Millisecond)
-		win, err = headless.NewWindow(w, h)
+		win, err = newHeadless(w, h)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%w (%d tries over %v: no working EGL on this machine)", err, tries, time.Duration(100*tries*(tries-1))*time.Millisecond)
@@ -35,22 +37,45 @@ func NewWindow(w, h int) (*headless.Window, error) {
 	return win, nil
 }
 
+// injectEGLFailures makes the next headless windows fail as Mesa's
+// eglInitialize does (tests of Render's retries).
+var injectEGLFailures atomic.Int32
+
+func newHeadless(w, h int) (*headless.Window, error) {
+	if injectEGLFailures.Load() > 0 {
+		injectEGLFailures.Add(-1)
+		return nil, errors.New("eglInitialize failed: 0x3001 (injected)")
+	}
+	return headless.NewWindow(w, h)
+}
+
+// gpu is the process's verdict on the headless GPU: 0 not known yet, 1 a
+// window came up, 2 none did (the first try, retried, failed).
+var gpu atomic.Int32
+
 // Render paints ops into a w×h image. Without a GPU context the test is
 // skipped, unless CLACK_PIXEL_TESTS is set (the CI step that installs
-// Mesa), where it fails.
+// Mesa), where it fails. Every window comes through NewWindow's retries:
+// a GPU that worked once in the process and fails now is Mesa's flaky
+// eglInitialize (0x3001) under the suite's load, not a missing GPU, and
+// skipping there ended a test halfway (its temp dir still in use:
+// "TempDir RemoveAll cleanup: directory not empty"; full-test's
+// TestPatchedReactionPillLikeNative and TestViewsPatchedReactionPillLikeNative,
+// 2026-11-22). Only a process whose first window never came up skips.
 func Render(t testing.TB, w, h int, ops *op.Ops) *image.RGBA {
 	t.Helper()
-	var win *headless.Window
-	var err error
-	if os.Getenv("CLACK_PIXEL_TESTS") != "" {
-		win, err = NewWindow(w, h)
-	} else {
-		win, err = headless.NewWindow(w, h) // no GPU expected: skip at once
+	pixel := os.Getenv("CLACK_PIXEL_TESTS") != ""
+	if gpu.Load() == 2 && !pixel {
+		t.Skip("no headless GPU in this process; CI runs this with CLACK_PIXEL_TESTS=1")
 	}
-	if err != nil {
-		if os.Getenv("CLACK_PIXEL_TESTS") != "" {
-			t.Fatalf("headless GPU: %v", err)
-		}
+	win, err := NewWindow(w, h)
+	switch {
+	case err == nil:
+		gpu.CompareAndSwap(0, 1)
+	case pixel || gpu.Load() == 1:
+		t.Fatalf("headless GPU: %v", err)
+	default:
+		gpu.Store(2)
 		t.Skipf("no headless GPU (%v); CI runs this with CLACK_PIXEL_TESTS=1", err)
 	}
 	defer win.Release()

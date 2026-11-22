@@ -430,11 +430,20 @@ func (a *App) PostingAtChannelLocked(ch string) bool { return a.stopped(nil, ch)
 
 // ---- features.access.policies.list ----
 
+// The featureAccess store (zxoU) is persisted and every answer merges into
+// it ({...state, ...policies}): a launch starts from the last one's
+// answer (installCachedFeatures, before the first frame), Boot reads the
+// list at once as Slack's blocking boot API does, and a failed read
+// changes nothing. A failed read is tried again after 30 s, doubling to
+// the hourly refresh.
 type featureCache struct {
 	mu      sync.Mutex
-	known   bool
+	known   bool // a read answered (featuresNow's "fresh")
+	cached  bool // seeded from the persisted store
 	loading bool
 	at      time.Time
+	retryAt time.Time
+	backoff time.Duration
 	on      map[string]bool
 }
 
@@ -445,23 +454,67 @@ func (a *App) features() *featureCache {
 	return v.(*featureCache)
 }
 
-// FeatureAccess is the featureAccess store's isEnabled(name) without
-// blocking: false until features.access.policies.list answered, which it
-// starts the first time (again after an hour). The answer emits a
-// "features" event.
-func (a *App) FeatureAccess(name string) bool {
+// installCachedFeatures seeds the store from meta.json's "features" (the
+// persisted featureAccess store); an answer already in wins.
+func (a *App) installCachedFeatures() {
+	cached := a.S.CachedFeatures()
+	if cached == nil {
+		return
+	}
 	f := a.features()
 	f.mu.Lock()
-	start := (!f.known || time.Since(f.at) > time.Hour) && !f.loading
+	if !f.known {
+		for k, v := range cached {
+			if _, ok := f.on[k]; !ok {
+				f.on[k] = v
+			}
+		}
+		f.cached = true
+	}
+	f.mu.Unlock()
+}
+
+// startFeatures starts the read unless one runs or is waiting out its
+// retry, or the last answer is under an hour old.
+func (a *App) startFeatures() {
+	f := a.features()
+	f.mu.Lock()
+	now := time.Now()
+	start := !f.loading && (f.known && now.Sub(f.at) > time.Hour || !f.known && !now.Before(f.retryAt))
 	if start {
 		f.loading = true
 	}
-	on := f.on[name]
 	f.mu.Unlock()
 	if start {
 		go a.loadFeatures(a.bg)
 	}
+}
+
+// FeatureAccess is the featureAccess store's isEnabled(name) without
+// blocking: the persisted answer until this launch's read answers (false
+// with neither). It starts the read when one is due. The answer emits a
+// "features" event.
+func (a *App) FeatureAccess(name string) bool {
+	on, _ := a.FeatureState(name)
 	return on
+}
+
+// FeatureState is FeatureAccess and whether anything says so: a read
+// answered or the persisted store has the answer of an earlier launch.
+func (a *App) FeatureState(name string) (on, known bool) {
+	a.startFeatures()
+	f := a.features()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.on[name], f.known || f.cached
+}
+
+// featureRetryAt is when a failed read is tried again (tests).
+func (a *App) featureRetryAt() time.Time {
+	f := a.features()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.retryAt
 }
 
 func (a *App) loadFeatures(ctx context.Context) {
@@ -474,18 +527,26 @@ func (a *App) loadFeatures(ctx context.Context) {
 	f := a.features()
 	f.mu.Lock()
 	f.loading = false
-	f.known, f.at = true, time.Now() // a failed read keeps every feature off for the hour, as Slack's boot does
-	if err == nil {
-		on := map[string]bool{}
-		for k, v := range r.Policies {
-			on[k] = v.Enabled
-		}
-		f.on = on
+	if err != nil { // the store stays as it is; again after the backoff
+		f.backoff = min(max(2*f.backoff, 30*time.Second), time.Hour)
+		f.retryAt = time.Now().Add(f.backoff)
+		f.mu.Unlock()
+		return
+	}
+	f.known, f.at, f.backoff = true, time.Now(), 0
+	if f.on == nil {
+		f.on = map[string]bool{}
+	}
+	for k, v := range r.Policies {
+		f.on[k] = v.Enabled
+	}
+	snap := make(map[string]bool, len(f.on))
+	for k, v := range f.on {
+		snap[k] = v
 	}
 	f.mu.Unlock()
-	if err == nil {
-		a.emit(Event{Type: "features"})
-	}
+	a.S.SetFeatureAccess(snap)
+	a.emit(Event{Type: "features"})
 }
 
 // onFeatureAccessUpdated is boot-render's featureAccessUpdate: the
@@ -504,6 +565,7 @@ func (a *App) onFeatureAccessUpdated(raw json.RawMessage) {
 	if json.Unmarshal(raw, &e) != nil || e.Policies == nil {
 		return
 	}
+	a.installCachedFeatures() // before any read: the event merges into the persisted store, not over it
 	f := a.features()
 	f.mu.Lock()
 	if f.on == nil {
@@ -512,7 +574,12 @@ func (a *App) onFeatureAccessUpdated(raw json.RawMessage) {
 	for k, v := range e.Policies {
 		f.on[k] = v.Enabled
 	}
+	snap := make(map[string]bool, len(f.on))
+	for k, v := range f.on {
+		snap[k] = v
+	}
 	f.mu.Unlock()
+	a.S.SetFeatureAccess(snap)
 	a.emit(Event{Type: "features"})
 }
 

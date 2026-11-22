@@ -15,7 +15,6 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run own-profile.yml --ref <branch>)
     paths:
       - "internal/ui/popups/profile_*.go"
-      - "internal/ui/popups/usergroup_*.go"
       - "internal/ui/popups/app_card.go"
       - "internal/ui/icons/profile.go"
       - "internal/core/profile_actions*.go"
@@ -81,7 +80,7 @@ jobs:
           go test -count=1 -v -run 'TestEmojiTofu' ./internal/ui/richview ./internal/ui/slackc
           xvfb-run -a go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane|TestProfileNameIsRealName|TestProfileMoreMenu|TestProfilePresenceColor|TestProfileDate|TestProfileVIPToggle|TestProfileMenuViewFiles|TestProfileFieldLink|TestProfileOpenFullWithoutHooks|TestProfileViewAs|TestAppAddToChannel|TestUserGroupPane|TestUserGroupCreate|TestProfilePaneBackButton|TestEditProfile|TestCropImageLikeChromium' ./internal/ui/popups
           # the user group dialogs' selects through the real shell (Escape)
-          go test -count=1 -v -run 'TestUserGroupEditEscapeThroughShell' ./internal/ui
+          go test -count=1 -v -run 'TestUserGroupEditEscapeThroughShell|TestUserGroupCreateEscapeThroughShell' ./internal/ui
           ls -la "$PROFILE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

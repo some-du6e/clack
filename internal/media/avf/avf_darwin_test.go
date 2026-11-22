@@ -199,9 +199,12 @@ func inOrder(got, want []media.EventKind) bool {
 	return i == len(want)
 }
 
+// sample is a drawn frame: at is the clock's position then, wall when
+// the test drew it.
 type sample struct {
-	at time.Duration
-	c  color.RGBA
+	at   time.Duration
+	wall time.Time
+	c    color.RGBA
 }
 
 // playThrough plays to the end, drawing every new frame, and returns what
@@ -232,7 +235,7 @@ func (r *rig) playThrough() ([]sample, time.Duration) {
 			if first == 0 {
 				first = time.Since(start)
 			}
-			samples = append(samples, sample{r.p.State().Pos, c})
+			samples = append(samples, sample{r.p.State().Pos, time.Now(), c})
 		}
 	}
 	r.t.Fatalf("no end within 15 s; events %v; state %+v; stats %+v", r.kinds(), r.p.State(), r.p.Stats())
@@ -241,9 +244,25 @@ func (r *rig) playThrough() ([]sample, time.Duration) {
 
 // checkColors: the frames drawn well inside each second are the
 // fixture's grey, light grey and red (the range, the sRGB texture, the
-// channel order).
+// channel order), several in each second the test drew through. A second
+// the test's own draws stepped over doesn't count: on a loaded runner one
+// draw took longer than the second's 400 ms window (directories-
+// usergroups-2's push ci 44999661783: 129 draws, second 2 none, the clock
+// from before it to after it between two of them). A video that stops
+// still fails: the draws go on, showing the wrong colour.
 func checkColors(t *testing.T, samples []sample) {
 	t.Helper()
+	stepped := func(w [2]time.Duration) (time.Duration, bool) {
+		for i := 1; i < len(samples); i++ {
+			a, b := samples[i-1], samples[i]
+			if a.at < w[0] && b.at > w[1] {
+				if gap := b.wall.Sub(a.wall); gap >= 300*time.Millisecond {
+					return gap, true
+				}
+			}
+		}
+		return 0, false
+	}
 	for i, w := range [][2]time.Duration{{300 * time.Millisecond, 700 * time.Millisecond}, {1300 * time.Millisecond, 1700 * time.Millisecond}, {2300 * time.Millisecond, 2700 * time.Millisecond}} {
 		n, bad := 0, 0
 		for _, s := range samples {
@@ -259,6 +278,10 @@ func checkColors(t *testing.T, samples []sample) {
 			}
 		}
 		if n < 3 {
+			if gap, ok := stepped(w); ok {
+				t.Logf("second %d: %d frames drawn: the test didn't draw through it (one draw %v)", i+1, n, gap)
+				continue
+			}
 			t.Errorf("second %d: %d frames drawn, want several", i+1, n)
 		}
 		t.Logf("second %d: %d frames drawn, %d off", i+1, n, bad)

@@ -397,8 +397,18 @@ func TestThreadsRefreshGapLikeSlack(t *testing.T) {
 			if c := v.cards[key]; c == nil || c.moreText != "" {
 				t.Errorf("a \"Show N more replies\" row (%q) with every reply shown", c.moreText)
 			}
-			// the gap's fetch, and the failed card's older replies
-			if got, want := fs.CallCount("conversations.replies"), map[bool]int64{false: 1, true: 2}[tc.fail]; got != want {
+			// the gap's fetch, and the failed card's older replies. Straddled,
+			// the replies sent while the refresh is out race its answer to the
+			// view: seen first, they make the answer stale, the next window
+			// starts after a hole and the gap is fetched; the answer first,
+			// it brings the third reply and the next window joins it, no gap
+			// and nothing to fetch (1 run in 20 under load: flakes-1122). The
+			// card ends the same either way; a gap is one fetch, never two.
+			got, want := fs.CallCount("conversations.replies"), map[bool]int64{false: 1, true: 2}[tc.fail]
+			switch {
+			case tc.straddle && got == 0:
+				t.Logf("straddle: the refresh's answer reached the view before its straddling replies: no gap to fetch")
+			case got != want:
 				t.Errorf("%d conversations.replies for one gap, want %d", got, want)
 			}
 			if tc.name != "burst" {
