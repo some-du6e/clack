@@ -6,6 +6,7 @@ package app
 
 import (
 	"image"
+	"slices"
 	"testing"
 	"time"
 
@@ -43,9 +44,30 @@ func TestDisplaysMac(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
 	}
-	ds := Displays()
+	// Displays and NSScreen are two reads, and the runner's Dock moves the
+	// visible frame between them (image-context-menu's push ci 44990293041:
+	// a work area 706 points down against NSScreen's 705; TestBoundsMac in
+	// the same run read 708). Compare a read of Displays taken between two
+	// NSScreen reads that agree: the screens held still across it.
+	screens := func() []cocoatest.Screen {
+		var ss []cocoatest.Screen
+		cocoatest.OnMain(func() { ss = cocoatest.Screens() })
+		return ss
+	}
+	var ds []Display
 	var ss []cocoatest.Screen
-	cocoatest.OnMain(func() { ss = cocoatest.Screens() })
+	for try := 0; ; try++ {
+		before := screens()
+		ds = Displays()
+		ss = screens()
+		if slices.Equal(before, ss) {
+			break
+		}
+		if try == 50 {
+			t.Fatalf("NSScreen never held still across a Displays read (50 tries): %+v, then %+v", before, ss)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	t.Logf("displays %+v; NSScreen %+v", ds, ss)
 	if len(ds) == 0 || len(ds) != len(ss) {
 		t.Fatalf("%d displays, NSScreen has %d", len(ds), len(ss))
