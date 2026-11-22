@@ -7,6 +7,7 @@ import (
 	"image"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,6 +68,38 @@ func fakeEnvExp(t *testing.T, exp func(string) string) (*Controller, *prefs) {
 	})
 	t.Cleanup(c.CloseAll)
 	return c, p
+}
+
+// fakeEnvSlow is fakeEnv with a source of its own per file, each file's
+// reads waiting slow[its id] (a network, or a runner, that slow).
+func fakeEnvSlow(t *testing.T, slow map[string]time.Duration) *Controller {
+	t.Helper()
+	var mu sync.Mutex
+	openers := map[string]*mediatest.Opener{}
+	p := &prefs{vals: map[string]json.RawMessage{}}
+	c := New(Env{
+		Manager: media.NewManager(media.NewFake(media.FakeOptions{Log: func(string, ...any) {}})),
+		Open: func(ctx context.Context, u string, off int64) (io.ReadCloser, media.Info, error) {
+			mu.Lock()
+			o := openers[u]
+			if o == nil {
+				_, o = mediatest.Source("FVP", mediatest.GreyGreyRed, false)
+				for id, d := range slow {
+					if strings.Contains(u, "-"+id+"/") {
+						o.Delay = d
+					}
+				}
+				openers[u] = o
+			}
+			mu.Unlock()
+			return o.Open(ctx, off)
+		},
+		Pref:       p.get,
+		SetPref:    p.set,
+		Experiment: func(string) string { return "on" },
+	})
+	t.Cleanup(c.CloseAll)
+	return c
 }
 
 func videoFile(id string) *richtext.File {
@@ -219,17 +252,34 @@ func TestClickMountsAndToggles(t *testing.T) {
 }
 
 // One video plays at a time (MediaPlaybackCoordinator): the second's play
-// pauses the first.
+// pauses the first. The first plays once its data is in: its play event
+// comes at once, and the spinner goes when it plays. Waiting only for the
+// play event, the test clicked the second while the first still loaded,
+// and when the first's data came its start paused the second, as Slack's
+// coordinator does (an autoplay's start pauses the others): the second,
+// paused while it waited, never played. A loaded runner's metadata came
+// that late (train-143, 44970400272: "no the second playing within 5s");
+// "late" gives that order every time.
 func TestOnePlaysAtATime(t *testing.T) {
-	c, _ := fakeEnv(t)
-	r1, r2 := c.Row("channel", "C1", "1.0", nil), c.Row("channel", "C1", "2.0", nil)
-	f := videoFile("F1")
-	frame(c, [2]any{r1, f}, [2]any{r2, f})
-	click(c, r1, f)
-	waitForTile(t, c, r1, f, "the first playing", 5*time.Second, func() bool { return state(t, c, r1, f).Playing })
-	click(c, r2, f)
-	waitForTile(t, c, r2, f, "the second playing", 5*time.Second, func() bool { return state(t, c, r2, f).Playing })
-	waitForTile(t, c, r1, f, "the first paused", 5*time.Second, func() bool { return !state(t, c, r1, f).Playing })
+	for _, tc := range []struct {
+		name         string
+		first, other time.Duration // each Read of the file's body waits this
+	}{
+		{"at once", 0, 0},
+		{"the first's data late", 300 * time.Millisecond, 600 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f1, f2 := videoFile("F1"), videoFile("F2")
+			c := fakeEnvSlow(t, map[string]time.Duration{f1.ID: tc.first, f2.ID: tc.other})
+			r1, r2 := c.Row("channel", "C1", "1.0", nil), c.Row("channel", "C1", "2.0", nil)
+			frame(c, [2]any{r1, f1}, [2]any{r2, f2})
+			click(c, r1, f1)
+			waitForTile(t, c, r1, f1, "the first playing", 5*time.Second, func() bool { st := state(t, c, r1, f1); return st.Playing && !st.Loading })
+			click(c, r2, f2)
+			waitForTile(t, c, r2, f2, "the second playing", 5*time.Second, func() bool { st := state(t, c, r2, f2); return st.Playing && !st.Loading })
+			waitForTile(t, c, r1, f1, "the first paused", 5*time.Second, func() bool { return !state(t, c, r1, f1).Playing })
+		})
+	}
 }
 
 // Without clips_pip (no mini player), a playing video the list shows
