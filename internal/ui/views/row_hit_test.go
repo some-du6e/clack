@@ -189,8 +189,8 @@ func (c *rhCase) check(linkTS, imgTS string) {
 	b := a.Add(f32.Pt(120, 0))
 	c.queue(pointer.Event{Kind: pointer.Move, Position: a},
 		pointer.Event{Kind: pointer.Press, Position: a, Buttons: pointer.ButtonPrimary},
-		pointer.Event{Kind: pointer.Drag, Position: a.Add(f32.Pt(40, 0)), Buttons: pointer.ButtonPrimary},
-		pointer.Event{Kind: pointer.Drag, Position: b, Buttons: pointer.ButtonPrimary},
+		pointer.Event{Kind: pointer.Move, Position: a.Add(f32.Pt(40, 0)), Buttons: pointer.ButtonPrimary},
+		pointer.Event{Kind: pointer.Move, Position: b, Buttons: pointer.ButtonPrimary},
 		pointer.Event{Kind: pointer.Release, Position: b})
 	if !lb.HasSelection() {
 		t.Error("a drag over the text selected nothing")
