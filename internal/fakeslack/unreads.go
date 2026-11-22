@@ -230,8 +230,9 @@ func (s *Server) PostUnread(ch, user, text string) string {
 
 // PutUnreadMessage adds m to fixture channel ch's history as its newest
 // message, unread, without a realtime event: for a test that wants a
-// message of its own shape (blocks, reactions) in place before the views
-// read the channel. m.TS is set when empty; it returns m's ts.
+// message of its own shape (blocks, reactions) in place before the app
+// boots (an Unreads frame ends at boot's client.counts latest). m.TS is
+// set when empty; it returns m's ts.
 func (s *Server) PutUnreadMessage(ch string, m slack.Message) string {
 	s.histMu.Lock()
 	defer s.histMu.Unlock()

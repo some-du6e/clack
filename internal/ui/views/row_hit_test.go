@@ -242,14 +242,27 @@ func TestThreadsRowReachesTheBody(t *testing.T) {
 }
 
 func TestUnreadsRowReachesTheBody(t *testing.T) {
-	app, fs := unrFake(t, nil)
 	ch := fakeslack.UnreadsDesignID
-	img := fs.PutUnreadMessage(ch, slack.Message{User: "U0FAKE00002", Text: "chart below", Blocks: rhImageBlocks})
-	link := fs.PutUnreadMessage(ch, slack.Message{User: "U0FAKE00001", Text: rhLinkText})
+	var img, link string
+	app, _ := unrFakeWith(t, nil, func(fs *fakeslack.Server) {
+		img = fs.PutUnreadMessage(ch, slack.Message{User: "U0FAKE00002", Text: "chart below", Blocks: rhImageBlocks})
+		link = fs.PutUnreadMessage(ch, slack.Message{User: "U0FAKE00001", Text: rhLinkText})
+	})
 	h := &rhVA{vaHost: &vaHost{slickHost: &slickHost{app: app, th: theme.New(false)}}}
 	v := NewUnreads(h)
 	e := &vaEnv{size: image.Pt(1100, 900)}
 	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+	// #unreads-launch (a mention, 31 unread) comes first: bring the
+	// design channel's frame on screen
+	e.until(t, "the frames", func() bool {
+		return v.built && len(v.rows) > 0 && v.rows[len(v.rows)-1].kind == unrFooter
+	})
+	hr, ok := unrHead(v, ch)
+	if !ok {
+		t.Fatalf("no frame for %s: %v", ch, v.Frames())
+	}
+	v.list.ScrollTo(v.headerRow(hr.f))
+	e.frame()
 	e.until(t, "the two messages drawn", func() bool {
 		return v.rich[ch+"/"+link] != nil && v.rich[ch+"/"+img] != nil
 	})
