@@ -325,6 +325,8 @@ type base struct {
 	th   *theme.Theme
 	p    *pal
 	rich richCache
+	// press is the last context press on a message body (content_menu.go)
+	press bodyPress
 	// mediaPane names the view's video players (media.go): set, its
 	// messages' lone videos play in place, as in Slack's Threads, Unreads
 	// and Later views
