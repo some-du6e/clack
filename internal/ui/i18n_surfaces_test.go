@@ -28,8 +28,9 @@ type i18nSurface struct {
 
 // surfacesUnkeyed are strings these surfaces draw unchanged that are fine
 // that way:
-//   - words of the fake account's messages, which search results draw one
-//     by one (Slack keys too: emoji keywords and the like);
+//   - words of the fake account's messages, which search results and the
+//     share and delete dialogs' previews (their mention slugs apart) draw
+//     one by one (Slack keys too: emoji keywords and the like);
 //   - "banner", a word of Slack's own es-ES "Verás un banner…" (the
 //     Advanced settings modal draws its descriptions word by word);
 //   - "Tab", the switcher footer's key chip: Slack's label is the
@@ -37,7 +38,7 @@ type i18nSurface struct {
 //
 // mainUnkeyed (the account's custom section names) counts as well.
 var surfacesUnkeyed = map[string]bool{
-	"build": true, "everyone": true, "from": true, "has": true, "new": true, "notes": true, "sync": true, "thanks": true,
+	"build": true, "everyone": true, "from": true, "has": true, "new": true, "notes": true, "Notes": true, "sync": true, "thanks": true,
 	"banner": true,
 	"Tab":    true,
 }

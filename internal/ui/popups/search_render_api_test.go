@@ -28,5 +28,9 @@ func scAttMatched(m *core.Message, key string) bool {
 	return m.SearchMatches != nil && m.SearchMatches.Attachments[key]
 }
 
+// scBuild builds card i's views, as its first frame would (a card below
+// the fold is never laid out by the list).
+func scBuild(v *SearchView, i int) { v.srRichOf(i) }
+
 // scRowSegs are a quick message row's (and a share preview's) segments.
 func scRowSegs(h Host, m *core.Message) []srSeg { return srRunSegs(srBodyRuns(h, m), nil, true) }

@@ -132,6 +132,9 @@ func TestSearchDensityCard(t *testing.T) {
 	if !scHasStyle(scBodyDoc(&v.cards[1]), fakeslack.SearchWord, richtext.Highlight) {
 		t.Errorf("%q isn't highlighted in %q", fakeslack.SearchWord, scText(&v.cards[1]))
 	}
+	for i := 4; i < len(v.cards); i++ { // below the fold: never laid out
+		scBuild(v, i)
+	}
 	// attachments and files without a match stay out (the pill counts them)
 	if c := &v.cards[4]; scHasExtra(c) || strings.Contains(scText(c), "Design doc") || strings.Contains(scText(c), "notes.txt") {
 		t.Errorf("unmatched attachments drawn: %q", scText(c))
