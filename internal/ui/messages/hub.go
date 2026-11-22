@@ -1421,6 +1421,14 @@ func (hb *hub) apply(ev core.Event) bool {
 				m.remove(ev.TS)
 				m.rev++
 			}
+			if m.threadTS != "" && ev.TS == m.threadTS && m.th.root != nil {
+				// the root's own delete (a root with no replies, or a
+				// tombstone whose last reply went): setMessageDeleted drops
+				// rootMsg, so the header links nothing and the ⋮ menu reads
+				// no root
+				m.th.root = nil
+				m.rev++
+			}
 			m.noteLive(ev.TS, true)
 			m.mu.Unlock()
 		}

@@ -29,7 +29,6 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
-	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
@@ -951,7 +950,6 @@ func TestSlickViewBetterGifs(t *testing.T) {
 		{ID: "synthGif02", Title: "synthetic wave", URL: "https://media2.giphy.com/media/synthGif02/giphy.webp",
 			Preview: "https://media2.giphy.com/media/synthGif02/200w.webp", Still: "https://media2.giphy.com/media/synthGif02/200w_s.gif", W: 300, H: 300},
 	}
-	g.tiles = make([]widget.Clickable, len(g.items))
 	slUntil(t, 15*time.Second, "the favourite star on the GIF tiles", slFrame(p), func() bool {
 		d := e.rec.dump("GifListItem")
 		return strings.Contains(d, ".slick-bg__native-card") && strings.Contains(d, "[aria-label=Favorite synthetic party]") &&
