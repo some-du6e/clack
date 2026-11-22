@@ -410,8 +410,8 @@ func editLastTarget(ctx context.Context, api coreAPI, ch, threadTS string) (core
 		if m.User != self || m.Subtype != "" && m.Subtype != "me_message" && m.Subtype != "thread_broadcast" {
 			continue
 		}
-		if m.Pending || !canEditOwnMessage(api, conv, m, msgs, self) {
-			return core.Message{}, false // isTempMsg, canEditMessage
+		if m.Pending || m.Failed || !canEditOwnMessage(api, conv, m, msgs, self) {
+			return core.Message{}, false // isTempMsg (a failed send keeps its temp ts), canEditMessage
 		}
 		return m, true
 	}
@@ -570,7 +570,7 @@ func (c *Composer) editLast(cmd editLastCmd, doc *Doc) {
 			c.restore(doc)
 			return
 		}
-		args := saveEditArgs{ChannelID: m.Channel, TS: m.TS, Text: prepared.Mrkdwn(), Blocks: prepared.RichTextBlocks()}
+		args := saveEditArgs{ChannelID: m.Channel, TS: m.TS, Text: prepared.Mrkdwn(), Blocks: withKeptBlocks(prepared.RichTextBlocks(), m.Blocks)}
 		if args.ChannelID == "" {
 			args.ChannelID = ch
 		}

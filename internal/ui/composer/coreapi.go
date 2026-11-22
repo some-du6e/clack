@@ -75,17 +75,26 @@ func (c coreAPI) edit(ctx context.Context, ch, ts, text string, blocks json.RawM
 
 // newestMessages is the conversation's newest loaded messages (the
 // channel's newest page, or the thread's newest slice with its root):
-// the list Slack's getLastEditableMessage reads. ok is false when the
-// channel's page didn't load.
+// the list Slack's getLastEditableMessage reads (dTxY tp(key, null):
+// the timestamps of the slice that reached the end). ok is false when the
+// channel's page didn't load, or while the window stops short of the end
+// (a slow connect's catch-up: Slack's list is empty until reachedEnd).
 func (c coreAPI) newestMessages(ctx context.Context, ch, threadTS string) ([]core.Message, bool) {
 	if threadTS == "" {
+		if c.a.EndStale(ch) {
+			return nil, false
+		}
 		p, err := c.a.History(ctx, ch, "")
 		if err != nil {
 			return nil, false
 		}
 		return p.Messages, true
 	}
-	return c.a.ThreadSliceAt(ch, threadTS, "").Msgs, true
+	sl := c.a.ThreadSliceAt(ch, threadTS, "")
+	if !sl.ReachedEnd {
+		return nil, false
+	}
+	return sl.Msgs, true
 }
 
 // experiment is the viewer's group in a client experiment ("" when none).
