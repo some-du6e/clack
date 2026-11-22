@@ -310,8 +310,8 @@ func TestEditLastKeepsFormatting(t *testing.T) {
 	if last := els[len(els)-1]; last["type"] != "text" || last["text"] != " off" {
 		t.Errorf("the last element is %v, want the text \" off\"", last)
 	}
-	if got := ups[0].Get("text"); strings.Contains(got, " of") || !strings.HasSuffix(got, " off") {
-		t.Errorf("chat.update text %q", got)
+	if got, want := ups[0].Get("text"), "*off* see <https://example.com/of|off> <@UALICE> off"; got != want {
+		t.Errorf("chat.update text %q, want %q", got, want)
 	}
 }
 
