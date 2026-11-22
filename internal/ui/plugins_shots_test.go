@@ -109,7 +109,9 @@ func publishShotLibrary(l *libServer) {
 	}
 	ix := pluginlib.Index{Schema: 1, Sources: src, Plugins: []pluginlib.Entry{
 		entry(pluginlib.Taut, "ClearURLs", "Clear URLs", "Removes tracking parameters from links you send", "messageBox", []byte("a")),
-		entry(pluginlib.Slick, "clearUrls", "ClearURLs", "Strips tracking junk from links", "privacy", []byte("b")),
+		// Slick's composer is Taut's Message box: both versions file the row
+		// there, so it stays put when the bench's pick (below) is Slick's
+		entry(pluginlib.Slick, "clearUrls", "ClearURLs", "Strips tracking junk from links", "composer", []byte("b")),
 		entry(pluginlib.Taut, "SilentTyping", "Silent Typing", "Don't tell others when you're typing", "messageBox", silent),
 		entry(pluginlib.Slick, "silentTyping", "Silent Typing", "Hide your typing indicator", "privacy", []byte("c")),
 		entry(pluginlib.Slick, "messageLinks", "Message Links", "Previews links to Slack messages", "messages", []byte("d")),
