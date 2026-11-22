@@ -86,6 +86,7 @@ type CanvasChannelCard struct {
 	more    widget.Clickable
 	moreTip TipState
 	moreR   image.Rectangle // the trigger, window coordinates
+	moreL   image.Rectangle // the trigger in the card (content)
 	sub     Overlay
 }
 
@@ -312,6 +313,7 @@ func (p *CanvasChannelCard) Layout(gtx layout.Context) layout.Dimensions {
 	sz := image.Pt(w, min(d.Size.Y, capH))
 	p.rect = image.Rectangle{Min: canvasBubblePlace(p.anchor, sz, win), Max: image.Point{}}
 	p.rect.Max = p.rect.Min.Add(sz)
+	p.moreR = p.moreL.Add(p.rect.Min) // this frame's place: a card following its mention moves
 	rad := dp(gtx, 8)
 	ring := tokOtlTer.of(th)
 	softShadow(gtx, p.rect, rad, dp(gtx, 4), dp(gtx, 12), color.NRGBA{A: 0x14})
@@ -345,11 +347,11 @@ func canvasBubblePlace(anchor image.Rectangle, sz, win image.Point) image.Point 
 	if x < 0 {
 		x = 0
 	}
-	if y := anchor.Max.Y; y+sz.Y <= win.Y {
-		return image.Pt(x, y)
+	if y := anchor.Max.Y; y >= 0 && y+sz.Y <= win.Y {
+		return image.Pt(x, y) // under it, all in the window (Quip checks all four sides)
 	}
-	if y := anchor.Min.Y - sz.Y; y >= 0 {
-		return image.Pt(x, y)
+	if y := anchor.Min.Y - sz.Y; y >= 0 && anchor.Min.Y <= win.Y {
+		return image.Pt(x, y) // over it, all in the window (a mention below the window's edge fits neither side)
 	}
 	return image.Pt(x, max(0, min(anchor.Max.Y, win.Y-sz.Y)))
 }
@@ -376,7 +378,7 @@ func (p *CanvasChannelCard) content(gtx layout.Context, th *theme.Theme, cl *Col
 			return layout.Dimensions{Size: br.Size()}
 		})
 	})
-	p.moreR = br.Add(p.rect.Min)
+	p.moreL = br // the card is placed after its content is measured (Layout)
 	return layout.Dimensions{Size: image.Pt(w, y+max(h, bs-dp(gtx, 6))+pad)}
 }
 

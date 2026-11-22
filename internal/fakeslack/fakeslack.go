@@ -2058,6 +2058,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleChannels(method, f); handled {
 		return out
 	}
+	if out, handled := s.handleChannelManage(method, f); handled { // channel_manage.go
+		return out
+	}
 	if method == "messages.list" { // what no fixture answered: any message the fake holds (messages_list.go)
 		return s.messagesList(f)
 	}
