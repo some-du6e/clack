@@ -4437,6 +4437,41 @@ jobs:
           TEST: TestNotifyRulesLikeSlack
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 5: the stall watchdogs (Karim's α.136, 45
+      # minutes without a line while the socket answered its pings)
+      - name: "slack: the socket's watchdog: a stalled pong check, an idle socket, a full buffer (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestRTMReconnectsWhenThePongCheckStalls|TestRTMKeepsAnIdleSocket|TestRTMBufferFullIsNotSilence)
+          PKG: ./internal/slack
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: a socket that sends nothing, a handler that blocks, an idle session (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestSocketThatSendsNothingConnectsAgain|TestStalledHandlerIsNamed|TestIdleSessionLogsNoStall)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 2: the message sound (Slack's debounce, none
+      # in a huddle) and a huddle invite where the level is Nothing
+      - name: "ui: one message sound per thread or conversation in 5 s, none in a huddle (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestMessageSoundDebounceLikeSlack|TestNoMessageSoundInAHuddle)
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "huddleui: a huddle invite notifies in a conversation set to Nothing (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestIncomingInviteNotifiesAtNothing
+          PKG: ./internal/ui/huddleui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      # notify-relatives part 3: a message's sidebar bold and mention badge
+      - name: "core: the sidebar's bold and mention badge for a message, as Slack counts them (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestSidebarMarksLikeSlack
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 

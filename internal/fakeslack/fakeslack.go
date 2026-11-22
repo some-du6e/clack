@@ -853,6 +853,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 
 // Close stops the server.
 func (s *Server) Close() error {
+	s.SendReconnectURLs(0)
 	s.forget() // its state beside it, in every perServer map (perserver.go)
 	if s.srv == nil {
 		return nil
