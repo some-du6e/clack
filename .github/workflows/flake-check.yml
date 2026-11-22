@@ -291,6 +291,12 @@ on:
       - "internal/core/resolve_join_test.go"
       - "internal/ui/preview_membership_test.go"
       - "internal/ui/joinpane.go"
+      # the menu-click job's own
+      - "internal/ui/slackc/view.go"
+      - "internal/ui/slackc/events.go"
+      - "internal/ui/slackc/rerender_click_test.go"
+      - "internal/ui/popups/slick_menu.go"
+      - "internal/ui/popups/slick_mamenu_pick_test.go"
 
 permissions:
   contents: read
@@ -3448,4 +3454,49 @@ jobs:
           go test -count=$COUNT -timeout 6m -run "$CORE_TESTS" ./internal/core || rc=1
           go test -race -count=$COUNT -timeout 6m -run "$CORE_TESTS" ./internal/core || rc=1
           go test -count=$COUNT -timeout 12m -run '^TestPreviewFooterMembershipUnknownAtOpen$' ./internal/ui || rc=1
+          exit $rc
+
+
+
+  # menu-click-rerender (2026-11-21): a new tree from JS dropped every
+  # slackc sub scope, and with it the pointer tag of the scope a press was
+  # in: a re-render between a press and its release sent the release to
+  # the outer scope, which clicked an ancestor. A plugin's row in the
+  # patched Menu lost its click (TestMessageMenuOldMenuRows, alpha.135's
+  # release test job, 2 of 59 runs under load in the DIAG run).
+  # TestClickSurvivesReRender re-renders between the two every run; the
+  # menu test runs alone and under load beside the popups package. Dispatch
+  # with only=menu-click.
+  menu-click:
+    if: ${{ !inputs.only || startsWith('menu-click', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: slackc (plain, -race), then the menu test alone and under load (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 6m -run '^TestClickSurvivesReRender$' ./internal/ui/slackc || rc=1
+          go test -race -count=$COUNT -timeout 6m -run '^TestClickSurvivesReRender$' ./internal/ui/slackc || rc=1
+          go test -c -o "$RUNNER_TEMP/popups.test" ./internal/ui/popups || exit 1
+          cd internal/ui/popups
+          T='^TestMessageMenuOldMenuRows$'
+          "$RUNNER_TEMP/popups.test" -test.count=$COUNT -test.timeout 12m -test.run "$T" > "$RUNNER_TEMP/alone.log" 2>&1 || rc=1
+          for i in 1 2 3 4; do (while :; do :; done) & done
+          ( "$RUNNER_TEMP/popups.test" -test.count=1 -test.timeout 15m > "$RUNNER_TEMP/pkg.log" 2>&1 ) &
+          "$RUNNER_TEMP/popups.test" -test.count=$COUNT -test.timeout 15m -test.run "$T" > "$RUNNER_TEMP/load.log" 2>&1 || rc=1
+          kill $(jobs -p) 2>/dev/null
+          for f in alone load; do
+            echo "== $f: $(grep -c -- '^--- FAIL' "$RUNNER_TEMP/$f.log") of $COUNT failed"
+            grep -E -- '^\s*--- FAIL|_test.go:[0-9]+:' "$RUNNER_TEMP/$f.log" | head -20
+          done
           exit $rc
