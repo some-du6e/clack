@@ -221,7 +221,16 @@ func inOrder(got, want []media.EventKind) bool {
 // (at), the frames in them by their own time.
 type sample struct {
 	at, pts time.Duration
-	c       color.RGBA
+	// prev is the frame transferred before pts's (-1: none): the drawn
+	// frame can be that one, a frame behind (the ring)
+	prev time.Duration
+	c    color.RGBA
+}
+
+// matches is whether the drawn colour is the fixture's at the frame's
+// time, or at the frame before's.
+func (s sample) matches() bool {
+	return mediatest.Matches(s.pts, s.c) || s.prev >= 0 && mediatest.Matches(s.prev, s.c)
 }
 
 // playThrough plays to the end, drawing every new frame, and returns what
@@ -253,11 +262,11 @@ func (r *rig) playThrough() ([]sample, time.Duration) {
 				first = time.Since(start)
 			}
 			pos := r.p.State().Pos
-			pts := pos
+			pts, prev := pos, time.Duration(-1)
 			if v := r.p.framePts.Load(); v >= 0 {
-				pts = time.Duration(v)
+				pts, prev = time.Duration(v), time.Duration(r.p.prevPts.Load())
 			}
-			samples = append(samples, sample{pos, pts, c})
+			samples = append(samples, sample{at: pos, pts: pts, prev: prev, c: c})
 		}
 	}
 	r.t.Fatalf("no end within 15 s; events %v; state %+v; stats %+v; the engine's events %s", r.kinds(), r.p.State(), r.p.Stats(), traceOf(r.id))
@@ -286,7 +295,7 @@ func checkColors(t *testing.T, samples []sample) {
 				continue
 			}
 			n++
-			if !mediatest.Matches(s.pts, s.c) {
+			if !s.matches() {
 				if bad < 3 {
 					t.Errorf("the frame of %v (drawn at %v) was %v, want %s", s.pts, s.at, s.c, mediatest.Want(s.pts))
 				}
@@ -655,11 +664,11 @@ func checkRGBA(t *testing.T, samples []sample) {
 		t.Fatal("no frame drawn")
 	}
 	from := samples[0].at // where the clock was when the first frame was drawn
-	var by [3][]color.RGBA
+	var by [3][]sample
 	for _, s := range samples {
 		for i, w := range colorWindows {
 			if s.pts > w[0] && s.pts < w[1] {
-				by[i] = append(by[i], s.c)
+				by[i] = append(by[i], s)
 			}
 		}
 	}
@@ -667,19 +676,19 @@ func checkRGBA(t *testing.T, samples []sample) {
 	if (len(grey) == 0 && colorWindows[0][1]-from >= partWindow) || (len(light) == 0 && colorWindows[1][1]-from >= partWindow) || len(red) < 3 {
 		t.Fatalf("%d, %d, %d frames drawn in the three seconds (the first frame drawn at %v)", len(grey), len(light), len(red), from)
 	}
-	for _, c := range red {
-		if !mediatest.Matches(2500*time.Millisecond, c) {
-			t.Errorf("the third second drew %v, want %s", c, mediatest.Want(2500*time.Millisecond))
+	for _, s := range red {
+		if !s.matches() {
+			t.Errorf("the third second drew %v (the frame of %v), want %s", s.c, s.pts, mediatest.Want(s.pts))
 			break
 		}
 	}
-	first := func(cs []color.RGBA) any {
-		if len(cs) == 0 {
+	first := func(ss []sample) any {
+		if len(ss) == 0 {
 			return "none (before the first frame)"
 		}
-		return cs[0]
+		return ss[0].c
 	}
-	t.Logf("RGBA frames: grey 64 reads %v, 192 reads %v, red %v", first(grey), first(light), red[0])
+	t.Logf("RGBA frames: grey 64 reads %v, 192 reads %v, red %v", first(grey), first(light), red[0].c)
 }
 
 // An engine refusing its first frame in its format (RGBA here) is made
