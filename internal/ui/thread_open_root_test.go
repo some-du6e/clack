@@ -354,7 +354,10 @@ func TestFollowedThreadToastOpensParentThread(t *testing.T) {
 	huddleui.PlayHook = func(string) {} // the message sound: no audio device
 	t.Cleanup(func() { huddleui.PlayHook = nil })
 	logs := captureLog(t)
-	// the server's event for the reply, as the socket sends it (msg, no ts)
+	// the server's event for the reply, as the socket sends it (msg, no ts),
+	// after the reply's own message (the notifications' maxTs took it:
+	// store/notifications_maxts.go, reason 19)
+	a.Core().S.NoteAdded(reply)
 	raw, _ := json.Marshal(map[string]any{"type": "desktop_notification", "channel": pub, "msg": reply, "thread_ts": root,
 		"content": "Robin Example: synthetic", "title": "Thread in #th-launch-notes"})
 	a.data.desktopNotification(a, core.Event{Type: "desktop_notification", Channel: pub, Raw: raw})

@@ -1,9 +1,11 @@
 package canvasview
 
-// custom_file_sections in the canvas header (section_button.go): on,
+// File sections in the canvas header (section_button.go):
 // FileSectionDropdownButton before the title in the side panel and the
-// full view (not in a channel tab), a click opens its menu; off, no
-// button. Light and dark shots with the canvas in the starred collection
+// full view (not in a channel tab), a click opens its menu, in every
+// group: Slack dropped custom_file_sections and kept its on path (the
+// 2026-11-21 drift), so the old gate forced off changes nothing. Light and
+// dark shots with the canvas in the starred collection
 // and in an emoji section (canvas-section-button-*.png).
 
 import (
@@ -45,9 +47,7 @@ func sectionLook(h *testHost, id string) (int, string, bool) {
 func TestSectionButton(t *testing.T) {
 	h, _ := newEnv(t, false)
 	a := h.a
-	if a.FileSectionsOn() {
-		t.Fatal("custom_file_sections is assigned in fakeslack; the test expects it unassigned (off)")
-	}
+	a.SetExperimentGroup("custom_file_sections", "off")
 	var menus []image.Rectangle
 	act := Actions{Close: func() {}, FullView: func() {},
 		SectionButton: func() (int, string, bool) { return sectionLook(h, fakeslack.CanvasShared) },
@@ -80,16 +80,6 @@ func TestSectionButton(t *testing.T) {
 		frame()
 		frame()
 	}
-	if v.sectionButtonShown() {
-		t.Error("off: the header draws the section button")
-	}
-	click()
-	if len(menus) != 0 {
-		t.Errorf("off: a click on the title opened the section menu %v", menus)
-	}
-
-	a.SetExperimentGroup("custom_file_sections", "on")
-	frame()
 	if !v.sectionButtonShown() {
 		t.Fatal("on: no section button")
 	}
@@ -106,8 +96,7 @@ func TestSectionButton(t *testing.T) {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		hh, fs2 := newEnv(t, dark)
 		launch := fs2.AddFileCollection("Launch", ":rocket:")
-		hh.a.SetExperimentGroup("custom_file_sections", "on")
-		if err := hh.a.FetchFileCollections(ctx); err != nil {
+		if err := hh.a.ForceFetchFileCollections(ctx); err != nil {
 			t.Fatal(err)
 		}
 		sact := act

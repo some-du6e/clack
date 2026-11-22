@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/f32"
@@ -155,6 +156,15 @@ type listState struct {
 	tipKey  string    // which pill (item key + name), to time the delay
 	tipAt   time.Time // when the pointer reached it
 
+	// the hovered sender status's tooltip (status_tip.go): its content,
+	// the icon's box in list coordinates, the row (item) and since when
+	stOn   bool
+	stTip  statusTip
+	stRect image.Rectangle
+	stItem int
+	stKey  string
+	stAt   time.Time
+
 	lastTyping time.Time
 
 	noMark      bool
@@ -238,6 +248,7 @@ type listState struct {
 	tbSize  image.Point
 	tbAt    int             // tbRow's MessageActions position (actionsAt)
 	tbHov   int             // hovered toolbar button, -1 none
+	tbHold  toolbarHold     // the popover a toolbar button opened, holding its row's hover
 	tbBtns  []int           // the buttons tbRow's toolbar has, in order (actions_rules.go)
 	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
 	tbQAs   [tbCount]string // … and data-qa
@@ -356,6 +367,53 @@ func (s *listState) onScreen() bool {
 	return false
 }
 
+// forgottenCores counts ForgetCore's calls; the next list drawn lets go
+// of the forgotten sessions' lists (dropForgottenLists).
+var forgottenCores atomic.Uint64
+
+// droppedAt is forgottenCores when the lists were last swept (UI goroutine).
+var droppedAt uint64
+
+// dropForgottenLists lets go of the lists, and the last-drawn slots, whose
+// hub is no longer its core's: a session ForgetCore let go of. The lists
+// are the UI goroutine's and ForgetCore runs on a session's stop, so the
+// next list drawn does it. Each kept its hub, and through it the session
+// and its App, reachable until another list took its key (ci-speed-3:
+// listCache held more finished tests' Apps than any root but one).
+func dropForgottenLists() {
+	n := forgottenCores.Load()
+	if n == droppedAt {
+		return
+	}
+	droppedAt = n
+	var hostCore *core.App
+	if lastHost != nil {
+		hostCore = lastHost.Core()
+	}
+	hubsMu.Lock()
+	defer hubsMu.Unlock()
+	stale := func(s *listState) bool { return s != nil && s.hb != nil && hubs[s.hb.app] != s.hb }
+	for k, s := range listCache {
+		if stale(s) {
+			delete(listCache, k)
+		}
+	}
+	if stale(lastChannel) {
+		lastChannel = nil
+	}
+	if stale(lastThread) {
+		lastThread = nil
+	}
+	for k, p := range paneLast {
+		if p != nil && stale(*p) {
+			delete(paneLast, k)
+		}
+	}
+	if _, ok := hubs[hostCore]; lastHost != nil && !ok {
+		lastHost = nil
+	}
+}
+
 // lastHost is the Host of the last message list drawn. Host components
 // (drawn inside plugin trees, possibly outside any list) reach core and
 // the popups through it; nil until a list has been drawn.
@@ -368,6 +426,7 @@ func stateFor(h Host, ch, ts string) *listState { return stateIn(h, ch, ts, "") 
 // rows, scroll position and inline editors over the shared conversation
 // model, so the same conversation can be open in both.
 func stateIn(h Host, ch, ts, pane string) *listState {
+	dropForgottenLists()
 	key := ch
 	if ts != "" {
 		key = ch + "/" + ts
@@ -1176,6 +1235,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			s.hoverIdx = i
 		}
 	}
+	if i, ok := s.tbHold.row(s); ok {
+		s.hoverIdx = i // a popover the row's toolbar opened holds its hover
+	}
 	if k := s.kbIndex(); k >= 0 {
 		s.hoverIdx = k // the keyboard-selected message draws as hovered
 	}
@@ -1248,6 +1310,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	s.activeTS = activeThreadIn(h, s.ch, s.thread)
 	s.origin, s.size = origin, size
 	s.tip = ""
+	s.stOn = false
 	ls := listClass.Enter(gtx, 0, 0)
 	defer ls.Leave()
 	lay := func() op.CallOp {
@@ -1701,12 +1764,30 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		r.rv.SetOptions(r.rvOpts())
 	}
 	gtx.Constraints.Min.X = w
+	r.statusDrawn = false
 	d := r.layout(gtx, rc)
+	// the sender status's tooltip: the icon's box is where the pointer
+	// is, back by its place in the icon
+	if rc.hovered && r.statusDrawn && r.statusHov {
+		p := image.Pt(int(s.pointer.X-r.statusPt.X), int(s.pointer.Y-r.statusPt.Y))
+		s.stOn, s.stItem, s.stRect = true, i, image.Rectangle{Min: p, Max: p.Add(r.statusSize)}
+		if s.items[i].key != s.stKey {
+			s.stKey, s.stAt = s.items[i].key, rc.now
+		}
+		s.stTip = r.statusTipFor(rc.now)
+	}
 	// hover tooltip for reaction pills
 	if rc.hovered {
 		for k := range r.pills {
 			if k < len(r.reactRects) && k < len(r.groups) && r.pills[k].btn.Hovered() {
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
+				if s.tipRect.Empty() {
+					// a plugin's bar child holding several pills: the
+					// pill is where the pointer is, back by its place on it
+					pl := r.pills[k]
+					p := image.Pt(int(s.pointer.X-pl.pt.X), int(s.pointer.Y-pl.pt.Y)-s.pos[i])
+					s.tipRect = image.Rectangle{Min: p, Max: p.Add(pl.ptSize)}
+				}
 				s.tipItem = i
 				if key := s.items[i].key + "\x00" + r.groups[k].name; key != s.tipKey {
 					s.tipKey, s.tipAt = key, rc.now
@@ -1918,6 +1999,19 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 			// deferred: the tip may reach past the pane, over the sidebar
 			m := op.Record(gtx.Ops)
 			reactionGroupTooltip(gtx, h, th, c, &s.tipG, r, theme.WindowBounds(s.origin))
+			op.Defer(gtx.Ops, m.Stop())
+		}
+	}
+
+	// the sender status's tooltip (BaseTooltip's 150 ms)
+	if !s.stOn {
+		s.stKey = ""
+	} else if s.stItem >= s.visible[0] && s.stItem < s.visible[1] {
+		if wait := s.stAt.Add(statusTipDelay); rc.now.Before(wait) {
+			gtx.Execute(op.InvalidateCmd{At: wait})
+		} else {
+			m := op.Record(gtx.Ops)
+			statusTooltip(gtx, h, th, c, s.stTip, s.stRect, theme.WindowBounds(s.origin))
 			op.Defer(gtx.Ops, m.Stop())
 		}
 	}
@@ -2196,7 +2290,9 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
 		case tbAddReact:
 			_ = rc
-			h.ShowOverlay(popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil))
+			o := popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil)
+			holdHover(s, o)
+			h.ShowOverlay(o)
 		case tbReply:
 			// RwAt.onComment: the comment thunk with threadTs =
 			// msg.thread_ts, so the key is the thread's even for a
@@ -2227,13 +2323,15 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			if s.thread {
 				where = popups.InThread
 			}
-			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
+			o := popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
 				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
 				Where:   where,
 				Trigger: trigger,
-			}))
+			})
+			holdHover(s, o) // onMoreActionsMenuOpen: onPopoverOpen
+			h.ShowOverlay(o)
 		}
 	}
 	hov := btn.Hovered()

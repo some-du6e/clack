@@ -31,8 +31,8 @@ import (
 //     (subtype slack_audio) comes back as Slack processes one: subtype,
 //     audio/mp4, media_display_type audio and the MP4's duration_ms.
 //   - drafts.create {blocks, client_msg_id, destinations, file_ids,
-//     attachments, is_from_composer} and drafts.update {draft_id, …,
-//     client_last_updated_ts, date_scheduled} → {draft}; drafts.list
+//     attachments, is_from_composer, date_stashed} and drafts.update
+//     {draft_id, …, client_last_updated_ts, date_scheduled} → {draft}; drafts.list
 //     {is_active, limit} → {drafts}; drafts.delete {draft_id,
 //     client_last_updated_ts, skip_file_deletion}. A draft answers its
 //     file_ids and the file objects (files).
@@ -53,6 +53,7 @@ type Draft struct {
 	DateScheduled  int64           `json:"date_scheduled"`
 	LastUpdatedTS  string          `json:"last_updated_ts"`
 	IsFromComposer bool            `json:"is_from_composer"`
+	DateStashed    int64           `json:"date_stashed"`
 	IsSent         bool            `json:"is_sent"`
 	IsDeleted      bool            `json:"is_deleted"`
 	// SkipFileDeletion is what drafts.delete was asked (deleted drafts only).
@@ -420,6 +421,7 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 	case method == "drafts.create":
 		d := &Draft{ID: s.newID("Dr"), ClientMsgID: f.Get("client_msg_id"), DateCreated: now.Unix(),
 			LastUpdatedTS: strconv.FormatInt(now.UnixMilli(), 10), IsFromComposer: f.Get("is_from_composer") == "true"}
+		d.DateStashed, _ = strconv.ParseInt(f.Get("date_stashed"), 10, 64)
 		if err := s.fillDraft(d, f); err != "" {
 			return fail(err), true
 		}
@@ -435,6 +437,12 @@ func (s *Server) handleDrafts(method string, f url.Values) (any, bool) {
 		}
 		if v := f.Get("date_scheduled"); v != "" {
 			d.DateScheduled, _ = strconv.ParseInt(v, 10, 64)
+		}
+		if v := f.Get("is_from_composer"); v != "" {
+			d.IsFromComposer = v == "true"
+		}
+		if v := f.Get("date_stashed"); v != "" {
+			d.DateStashed, _ = strconv.ParseInt(v, 10, 64)
 		}
 		d.LastUpdatedTS = strconv.FormatInt(now.UnixMilli(), 10)
 		return ok("draft", s.draftJSON(d)), true

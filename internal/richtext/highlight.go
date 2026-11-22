@@ -225,6 +225,52 @@ func highlightBlock(b *Block, ws [][]rune) {
 	}
 }
 
+// HighlightedCopy returns blocks with the runs find locates marked
+// Highlight (drawn as c-mrkdwn__highlight), copying what it changes:
+// blocks themselves stay as they were (the search results card highlights
+// the query in a message the channel view also draws). find gets each
+// piece of rich text as highlightSpans joins it: text and links their
+// text, a line break "\n", anything else (mentions, emoji) one space.
+func HighlightedCopy(blocks []Block, find func(text []rune) []Match) []Block {
+	if find == nil || len(blocks) == 0 {
+		return blocks
+	}
+	mark := func(ss []Span) []Span { return markSpansBy(ss, find, Highlight) }
+	out := make([]Block, len(blocks))
+	for i := range blocks {
+		out[i] = highlightCopy(blocks[i], mark)
+	}
+	return out
+}
+
+func highlightCopy(b Block, mark func([]Span) []Span) Block {
+	switch b.Kind {
+	case Paragraph, Quote, Preformatted, Header, Section, Context:
+		b.Spans = mark(b.Spans)
+	case List:
+		items := make([][]Span, len(b.Items))
+		for i := range b.Items {
+			items[i] = mark(b.Items[i])
+		}
+		b.Items = items
+	}
+	if len(b.Fields) > 0 {
+		fs := make([][]Span, len(b.Fields))
+		for i := range b.Fields {
+			fs[i] = mark(b.Fields[i])
+		}
+		b.Fields = fs
+	}
+	if len(b.Children) > 0 {
+		cs := make([]Block, len(b.Children))
+		for i := range b.Children {
+			cs[i] = highlightCopy(b.Children[i], mark)
+		}
+		b.Children = cs
+	}
+	return b
+}
+
 // highlightSpans is processChunk + the split: text and links contribute
 // their text, a line break "\n", anything else (mentions, emoji) one
 // space; matched runs of Text and Link spans get Style Highlight.
@@ -283,6 +329,16 @@ func locateSub(text []rune, ws [][]rune) []Match {
 // occurrence; else Slack's keyword rules) split off and given style st.
 // spans itself isn't modified.
 func markSpans(spans []Span, ws [][]rune, substring bool, st Style) []Span {
+	find := func(all []rune) []Match { return locate(all, ws, true) }
+	if substring {
+		find = func(all []rune) []Match { return locateSub(all, ws) }
+	}
+	return markSpansBy(spans, find, st)
+}
+
+// markSpansBy is markSpans with find locating the runs in the spans'
+// joined text.
+func markSpansBy(spans []Span, find func([]rune) []Match, st Style) []Span {
 	if len(spans) == 0 {
 		return spans
 	}
@@ -299,12 +355,7 @@ func markSpans(spans []Span, ws [][]rune, substring bool, st Style) []Span {
 			all = append(all, ' ')
 		}
 	}
-	var ms []Match
-	if substring {
-		ms = locateSub(all, ws)
-	} else {
-		ms = locate(all, ws, true)
-	}
+	ms := find(all)
 	if len(ms) == 0 {
 		return spans
 	}

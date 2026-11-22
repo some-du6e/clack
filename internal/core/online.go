@@ -59,6 +59,9 @@ type onlineState struct {
 	mu     sync.Mutex
 	on     bool
 	pinned bool // PinNetwork: the host's network is none of this App's business
+	// changed is the connectivity store's lastClientConnection: set at
+	// start and whenever clientOnline changes
+	changed time.Time
 }
 
 // PinNetwork takes the machine as online on one network that never
@@ -70,23 +73,45 @@ type onlineState struct {
 // before boot.
 func (a *App) PinNetwork() {
 	o := &a.online
-	o.once.Do(func() {}) // no first probe, no watcher
+	o.once.Do(func() { o.changed = time.Now() }) // no first probe, no watcher
 	o.mu.Lock()
 	o.pinned, o.on = true, true
 	o.mu.Unlock()
 }
+
+// recentlyOnlineGrace is how long wasRecentlyOnline outlasts a lost
+// connection (Vdrr TP: 1e4 ms).
+const recentlyOnlineGrace = 10 * time.Second
 
 // ClientOnline is isClientOnline: whether the machine has a network
 // connection.
 func (a *App) ClientOnline() bool {
 	o := &a.online
 	o.once.Do(func() {
-		o.on = clientOnlineProbe()
+		o.on, o.changed = clientOnlineProbe(), time.Now()
 		go a.watchOnline()
 	})
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.on
+}
+
+// RecentlyOnline is wasRecentlyOnline (client-boot Vdrr TP), which the
+// composer's hint bar reads: online (isOnline: the client has a network
+// and the service is up, Clack's nearest being a session that wasn't
+// ended, membersOnline), or clientOnline changed under 10s ago
+// (lastClientConnection, set at start too). until is when a lost
+// connection stops counting as recent (zero while online): Slack forces
+// a re-render then (refreshRecentlyOnline).
+func (a *App) RecentlyOnline() (on bool, until time.Time) {
+	if a.membersOnline() {
+		return true, time.Time{}
+	}
+	o := &a.online
+	o.mu.Lock()
+	until = o.changed.Add(recentlyOnlineGrace)
+	o.mu.Unlock()
+	return time.Now().Before(until), until
 }
 
 func (a *App) watchOnline() {
@@ -138,10 +163,13 @@ func (a *App) watchOnline() {
 // setClientOnline is setClientOnline: a change emits "client_online".
 func (a *App) setClientOnline(on bool) {
 	o := &a.online
-	o.once.Do(func() {}) // a test's value isn't overwritten by a first probe
+	o.once.Do(func() { o.changed = time.Now() }) // a test's value isn't overwritten by a first probe
 	o.mu.Lock()
 	was := o.on
 	o.on = on
+	if was != on {
+		o.changed = time.Now()
+	}
 	o.mu.Unlock()
 	if was != on {
 		a.emit(Event{Type: "client_online", Connected: on})

@@ -89,8 +89,10 @@ func sectionOfType(a *App, typ string) *sbSection {
 
 // Every section type's ⋯ and right-click menus, item for item, as Slack's
 // templates build them for an account with filter_dormant_channels,
-// sidebar_section_search, add_channels_channel_sections_slackathon,
-// mute_channel_edu and dm_recency_sort_rollout (the test account's groups).
+// sidebar_section_search, mute_channel_edu and dm_recency_sort_rollout
+// (the test account's groups). Manage conversations is in every group:
+// Slack dropped add_channels_channel_sections_slackathon (Ng9S
+// getManageConversationsMenuItem, build 8f19be21ed7e; 2026-11-21 drift).
 func TestSectionMenuTemplates(t *testing.T) {
 	e, _ := sectionEnv(t)
 	a := e.a
@@ -164,6 +166,13 @@ func TestSectionMenuTemplates(t *testing.T) {
 	if got := menuShape(menuFind(t, a.sectionMenuItems(dms), "Sort").Sub); got != "A–Z | Recency ✓ | Priority" {
 		t.Errorf("DM Sort ▸ %s", got)
 	}
+
+	// the dropped gate forced off changes nothing
+	a.Core().SetExperimentGroup("add_channels_channel_sections_slackathon", "off")
+	if got := menuShape(menuFind(t, a.sectionContextItems(custom), "Manage section").Sub); !strings.Contains(got, "Manage conversations") {
+		t.Errorf("add_channels_channel_sections_slackathon off hid Manage conversations: %s", got)
+	}
+	a.Core().ClearExperimentGroup("add_channels_channel_sections_slackathon")
 
 	// without filter_dormant_channels: Slack's older labels
 	a.Core().SetExperimentGroup("filter_dormant_channels", "off")

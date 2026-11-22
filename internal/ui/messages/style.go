@@ -416,7 +416,7 @@ func avatarFill(url string, c *colors) color.NRGBA {
 }
 
 // drawEmoji paints an emoji image contained in r.
-func drawEmoji(gtx layout.Context, h Host, url string, r image.Rectangle) bool {
+func drawEmoji(gtx layout.Context, h TipHost, url string, r image.Rectangle) bool {
 	if url == "" || h.Images() == nil {
 		return false
 	}
@@ -429,7 +429,7 @@ func drawEmoji(gtx layout.Context, h Host, url string, r image.Rectangle) bool {
 
 // drawEmojiAt is drawEmoji with the picture decoded at px (sharper under
 // a transform that grows it), else at r's size while that loads.
-func drawEmojiAt(gtx layout.Context, h Host, url string, r image.Rectangle, px int) bool {
+func drawEmojiAt(gtx layout.Context, h TipHost, url string, r image.Rectangle, px int) bool {
 	if url != "" && h.Images() != nil && px != r.Dx() {
 		if img, ok := h.Images().Get(url, px); ok {
 			richview.DrawImage(gtx.Ops, img, r, 0, false)

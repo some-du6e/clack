@@ -28,7 +28,7 @@ type listAdds struct {
 	full  map[string]bool             // channels whose tab bar is full (too_many_tabs)
 }
 
-var listAddStores sync.Map // *Server -> *listAdds
+var listAddStores = newPerServer() // *Server -> *listAdds
 
 func (s *Server) listAdds() *listAdds {
 	if v, ok := listAddStores.Load(s); ok {

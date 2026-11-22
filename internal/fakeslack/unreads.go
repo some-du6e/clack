@@ -83,7 +83,7 @@ func (s *Server) QueueJoinBanner(on bool) {
 	u.mu.Unlock()
 }
 
-var unreadsStates sync.Map // *Server -> *unreadsState
+var unreadsStates = newPerServer() // *Server -> *unreadsState
 
 func (s *Server) unreads() *unreadsState {
 	v, _ := unreadsStates.LoadOrStore(s, &unreadsState{lastRead: map[string]string{}, dismissed: map[string]bool{}})

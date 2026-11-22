@@ -233,7 +233,7 @@ func main() {
 	})
 	timed("usergroups search", func() (string, error) {
 		r, err := a.SearchUsergroups(ctx, core.UsergroupOpts{Sort: "member_count", Desc: true, Count: 5})
-		return fmt.Sprintf("groups=%d", len(r)), err
+		return fmt.Sprintf("groups=%d total=%d", len(r.Groups), r.Total), err
 	})
 	timed("scheduled", func() (string, error) {
 		r, err := a.ScheduledMessages(ctx, "")

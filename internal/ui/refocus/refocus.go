@@ -73,7 +73,16 @@ func Restore(tag event.Tag, from ...event.Tag) {
 	if st.pending == nil {
 		st.pending = map[event.Tag]restore{}
 	}
-	st.pending[tag] = restore{from: from, at: time.Now()}
+	// requests past their life go: a widget never drawn again (its window
+	// gone) never Takes its own, and each held the widget and the closed
+	// modal's tags, and with them their App (ci-speed-3)
+	now := time.Now()
+	for k, r := range st.pending {
+		if now.Sub(r.at) > live {
+			delete(st.pending, k)
+		}
+	}
+	st.pending[tag] = restore{from: from, at: now}
 }
 
 // Take reports whether tag should focus itself now (a Restore is pending

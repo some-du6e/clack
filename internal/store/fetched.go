@@ -80,6 +80,7 @@ func (s *Store) PutFetched(ch string, msgs []slack.Message, since uint64) []slac
 
 // putFetchedPageLocked is PutFetched with s.mu held.
 func (s *Store) putFetchedPageLocked(ch string, msgs []slack.Message, since uint64) []slack.Message {
+	s.noteAddedLocked(msgs)
 	out := make([]slack.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if m.TS == "" {

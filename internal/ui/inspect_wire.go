@@ -507,6 +507,8 @@ func secKindName(k secKind) string {
 		return "workflow"
 	case secWorkObject:
 		return "work object"
+	case secEmail:
+		return "email"
 	}
 	return fmt.Sprintf("kind %d", k)
 }

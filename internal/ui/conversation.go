@@ -402,6 +402,11 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		comp.SetOrigin(origin.Add(image.Pt(mx, compY))) // BoxRect, popups
 		top := origin.Add(image.Pt(0, compY))
 		c.compRect = image.Rectangle{Min: top, Max: top.Add(image.Pt(sz.X, compH-bannerH))}
+	} else {
+		// no composer this frame (a preview's or archived channel's
+		// footer, membership unknown, ThreadsError): the emoji picker
+		// anchors on the composer this frame drew, not one from before
+		c.compRect = image.Rectangle{}
 	}
 	switch {
 	case comp != nil || (foot != footNone && foot != footPending):

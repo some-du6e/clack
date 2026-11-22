@@ -13,6 +13,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/clipimg"
@@ -197,22 +198,55 @@ func NewLinkMenu(h Host, at image.Point, l LinkMenu) *Menu {
 	}
 	if l.Image != "" {
 		items = append(items, Sep())
-		items = append(items, ctxImageItems(h, l.Image, l.Proxy)...)
+		items = append(items, ctxImageItems(h, l.Image, l.Image, "", l.Proxy)...)
 	}
-	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 220})
+	return NewMenuOpts(h, shellTail(h, items), MenuOpts{Anchor: pointRect(at), Width: 220})
 }
 
 // NewImageMenu is the desktop shell's image menu (buildMenuForImage):
 // Copy Image and Copy Image URL. Emoji get it too.
 func NewImageMenu(h Host, at image.Point, src string, proxy bool) *Menu {
-	return NewMenuOpts(h, ctxImageItems(h, src, proxy), MenuOpts{Anchor: pointRect(at), Width: 220})
+	return NewImageMenuFrom(h, at, src, src, "", proxy)
 }
 
-func ctxImageItems(h Host, src string, proxy bool) []MenuItem {
+// NewImageMenuFrom is NewImageMenu for an image whose <img src> (what
+// Copy Image URL copies) isn't the URL Clack draws it from (shown, what
+// Copy Image copies): the image viewer's proxied media items. alt ("" for
+// none) is what Copy Image copies when shown can't be (the thumbnail the
+// viewer shows in an original's place: copyImage's stand-in).
+func NewImageMenuFrom(h Host, at image.Point, shown, src, alt string, proxy bool) *Menu {
+	return NewMenuOpts(h, shellTail(h, ctxImageItems(h, shown, src, alt, proxy)), MenuOpts{Anchor: pointRect(at), Width: 220})
+}
+
+// ctxImageItems are addImageItems: Copy Image (webContents.copyImageAt:
+// the image's pixels on the clipboard) and Copy Image URL (its srcURL).
+func ctxImageItems(h Host, shown, src, alt string, proxy bool) []MenuItem {
 	return []MenuItem{
-		{Label: "Copy Image", Do: func() { CopyImage(h, src, proxy, "") }},
+		{Label: "Copy Image", Do: func() { copyImage(h, shown, alt, proxy, "") }},
 		{Label: "Copy Image URL", DoCtx: func(gtx layout.Context) { copyText(gtx, src) }},
 	}
+}
+
+// ShellWindow is the window a desktop shell menu opens in, as the ui
+// root (the Host popups gets) answers for its own window: whether it is
+// full screen, and leaving full screen. A Host without it is never full
+// screen.
+type ShellWindow interface {
+	ShellFullScreen() bool
+	ExitShellFullScreen()
+}
+
+// shellTail is what the desktop shell's menus end with after their own
+// items: addInspectElement only in its developer mode, and
+// addToggleFullScreen, a separator and "Exit Full Screen" while the
+// window is full screen (the same on macOS, Windows and Linux, Slack
+// 4.53.276).
+func shellTail(h Host, items []MenuItem) []MenuItem {
+	w, ok := h.(ShellWindow)
+	if !ok || !w.ShellFullScreen() {
+		return items
+	}
+	return append(items, Sep(), MenuItem{Label: "Exit Full Screen", Do: w.ExitShellFullScreen})
 }
 
 // CopyImage puts the image at src on the clipboard (Slack-hosted images
@@ -324,6 +358,12 @@ func copyFrom(ctx context.Context, h Host, src string, proxy bool) error {
 // fetchBytes downloads src: through core for Slack's hosts (or when
 // viaCore), else publicly without credentials (lbGet).
 func fetchBytes(ctx context.Context, h Host, src string, viaCore bool) ([]byte, error) {
+	if localimg.Is(src) { // a file being uploaded (the pending viewer): its own bytes, as Slack's blob: URL
+		if b, ok := localimg.Get(src); ok {
+			return b, nil
+		}
+		return nil, errors.New("the image is gone")
+	}
 	if c := h.Core(); c != nil && (viaCore || lbSlackHost(src)) {
 		data, _, err := c.Fetch(ctx, src)
 		return data, err
@@ -619,7 +659,8 @@ func NewCodeMenu(h Host, at image.Point, code string, block bool) *Menu {
 		label = "Copy this code block"
 	}
 	items := []MenuItem{MenuItem{Label: label, DoCtx: func(gtx layout.Context) { copyText(gtx, code) }}.In(nsMessage)}
-	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 220})
+	// the shell's own menu under the trigger's item: its tail too
+	return NewMenuOpts(h, shellTail(h, items), MenuOpts{Anchor: pointRect(at), Width: 220})
 }
 
 // NewTextSelectionMenu is Slack's TextSelectionContextMenu: Copy text

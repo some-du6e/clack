@@ -8,11 +8,15 @@ package views
 //   - UnifiedFilesPeekContent runs its own browser (UNIFIED_FILES_PEEK:
 //     the default file types, sorted by LAST_ENGAGED, Recently viewed),
 //     separate from the Files tab's filters and search; with Starred on it
-//     lists the starred files instead (files.favorites.list).
+//     lists the files of every stored collection instead (boot-render's
+//     peek: u1Hg gU, the collections' files in order; bSR6, the old
+//     starred-files fetch, is a no-op since the 2026-11-21 drift).
 //   - The list (.unifiedFilesPeekTrigger) is the Files tab's file rows
 //     with useListStyling (p-explorer_result--list): square, full width,
 //     a line between rows, hover sk_foreground_min_solid, the detail
-//     "Last updated …", the star and ⋯ actions.
+//     "Last updated …", FileSectionDropdownButton (FileActions
+//     renderFavoriteButton, for every account since Slack dropped
+//     custom_file_sections) and ⋯.
 //   - While the browser loads: 13 file skeleton rows. With nothing:
 //     "📁 No files yet" / "Recently viewed canvases and lists will show up
 //     here.", or with Starred "⭐ No starred files yet" / "Click the star on
@@ -72,9 +76,7 @@ func (f *Files) PeekOpened(closePeek func()) {
 	pk.data.load(f.h, true, func(ctx context.Context) (core.FilePage, error) {
 		return a.Files(ctx, core.FilesOpts{Page: 1})
 	})
-	if pk.starred.Value {
-		f.loadStarred()
-	}
+	f.askCollections() // the section buttons and Starred read them
 }
 
 // LayoutPeekButtons is the Starred toggle.
@@ -87,9 +89,22 @@ func (f *Files) LayoutPeekButtons(gtx C) D {
 func (f *Files) peekKeys() ([]fileItem, bool) {
 	pk := &f.pk
 	if pk.starred.Value {
-		st, ok, _ := f.starred.get()
-		if !ok || f.starred.busy() && len(st) == 0 {
+		colls, ok := f.h.Core().FileCollections()
+		if !ok {
 			return nil, false
+		}
+		var st []core.File
+		seen := map[string]bool{}
+		for _, c := range colls {
+			for _, cf := range c.Files {
+				if seen[cf.ID] {
+					continue
+				}
+				seen[cf.ID] = true
+				if fl, ok := f.fileFor(cf.ID); ok && sidebarShows(fl) {
+					st = append(st, fl)
+				}
+			}
 		}
 		return f.cleanTitles(st), true
 	}
@@ -110,9 +125,6 @@ func (f *Files) LayoutPeek(gtx C) D {
 	if pk.starred.Update(gtx) || pk.starred.Value != pk.lastStar {
 		pk.lastStar = pk.starred.Value
 		pk.list.Position = layout.Position{}
-		if pk.starred.Value && !f.starred.busy() {
-			f.loadStarred()
-		}
 	}
 	size := gtx.Constraints.Max
 	gtx.Constraints = layout.Exact(size)
@@ -121,17 +133,20 @@ func (f *Files) LayoutPeek(gtx C) D {
 	items, ok := f.peekKeys()
 	for i := range items {
 		c := f.clicksOf(items[i].ID)
-		if c.row.Clicked(gtx) {
+		// the row's buttons hand their clicks to the row too: it opens the
+		// file only when neither took the click (files.go's rows)
+		star, menu := c.star.Clicked(gtx), c.menu.Clicked(gtx)
+		if c.row.Clicked(gtx) && !star && !menu {
 			it := items[i]
 			openFile(f.h, it) // then maybeClosePeek
 			if pk.close != nil {
 				pk.close()
 			}
 		}
-		if c.star.Clicked(gtx) {
-			f.toggleStar(items[i].File)
+		if star && f.sectionButtonShown(&items[i]) {
+			f.openMoveMenu(items[i], f.buttonRect(&c.star, c.starSize)) // FileSectionDropdownButton
 		}
-		if c.menu.Clicked(gtx) {
+		if menu {
 			f.openMenu(items[i], f.buttonRect(&c.menu, c.menuSize))
 		}
 	}
@@ -180,10 +195,10 @@ func (f *Files) peekRow(gtx C, it *fileItem, first bool) D {
 					)
 				}),
 				layout.Rigid(func(gtx C) D {
-					if f.h.Core().FileSectionsOn() || !it.isCanvas() && !it.isList() { // showStarredStatus: canvases and lists
+					if !f.sectionButtonShown(it) { // showStarredStatus: FileSectionDropdownButton
 						return D{}
 					}
-					return f.starButton(gtx, &c.star, f.h.Core().FileStarred(it.ID))
+					return f.sectionButton(gtx, c, it)
 				}),
 				layout.Rigid(func(gtx C) D {
 					d := f.iconButton(gtx, &c.menu, "kebab", 28, 18, f.p.Meta)

@@ -359,6 +359,19 @@ func (g *gpu) partialOn(target RenderTarget, viewport image.Point) bool {
 		g.partialRelease()
 		p.mode, p.epoch = mode, ep
 	}
+	if !on {
+		st := &g.renderer.stats
+		switch {
+		case clackPartial.off.Load():
+			st.Whole = "partial frames off"
+		case !capable:
+			st.Whole = "the device can't draw partial frames"
+		case viewport.X <= 0 || viewport.Y <= 0:
+			st.Whole = "no viewport"
+		default:
+			st.Whole = "a texture target"
+		}
+	}
 	return on
 }
 
@@ -388,13 +401,32 @@ func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, 
 	resized := p.haveSigs && p.viewport != viewport
 	same := p.haveSigs && p.key == key && p.viewport == viewport && g.drawOps.clear && p.color == g.drawOps.clearColor &&
 		!clackPartial.whole.Load()
+	// why, for the stats of a frame drawn whole: why it isn't small
+	why := ""
+	switch {
+	case !p.haveSigs:
+		why = "no frame before"
+	case p.key != key:
+		why = "another target"
+	case p.viewport != viewport:
+		why = "another size"
+	case !g.drawOps.clear:
+		why = "no clear"
+	case p.color != g.drawOps.clearColor:
+		why = "another clear colour"
+	case !same:
+		why = "drawn whole on purpose (ClackPartialWhole)"
+	}
 	p.cur = g.sigOps(p.cur[:0])
 	small := false
 	if same {
 		if d, ok := damage(p.sigs, p.cur, viewport, &p.diff); ok {
 			dmg, small = d, true
+		} else {
+			why = "the damage too big"
 		}
 	}
+	whole := why
 	p.sigs, p.cur = p.cur, p.sigs
 	p.haveSigs = true
 	p.key, p.viewport, p.color = key, viewport, g.drawOps.clearColor
@@ -404,6 +436,7 @@ func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, 
 		out.tex = tex
 		if !p.valid {
 			dmg = nil
+			whole = "the target's last frame not kept"
 		}
 	case resized || (!small && p.lastWhole) || (small && !p.valid && !p.lastSmall && p.lastWhole):
 		// straight into the target: no copy, the frame texture stale (and
@@ -416,24 +449,41 @@ func (g *gpu) partialBegin(on bool, target RenderTarget, defFBO driver.Texture, 
 		}
 		p.valid = false
 		dmg = nil
+		switch {
+		case resized:
+			whole = "a new size, straight in"
+		case !small:
+			whole = why + ", straight in (a whole frame after a whole one)"
+		default:
+			whole = "the first small frame after ones drawn straight in"
+		}
 	default:
 		ft := g.frameTexture(viewport)
 		if ft == nil {
 			g.partialRelease()
+			g.renderer.stats.Whole = "no frame texture"
 			return partialTarget{pass: defFBO}, nil
 		}
 		out = partialTarget{pass: ft, tex: ft, copy: true}
 		if !p.valid {
 			dmg = nil
+			whole = "filling the frame texture"
+			if why != "" {
+				whole += " (" + why + ")"
+			}
 		}
 	}
 	if dmg != nil && len(dmg) > 0 && !g.clearTexture(dmg) {
 		dmg = nil // no clear texture: the frame whole
+		whole = "no clear texture"
 	}
 	p.valid = false // until it's drawn (partialEnd)
 	p.lastWhole = dmg == nil
 	p.lastSmall = small
 	st := &g.renderer.stats
+	if dmg == nil {
+		st.Whole = whole
+	}
 	if dmg != nil {
 		st.Partial = true
 		st.DamageRects = len(dmg)

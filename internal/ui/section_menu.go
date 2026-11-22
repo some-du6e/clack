@@ -30,8 +30,8 @@ import (
 //     conversations); the browse page: "Browse channels", "Recent direct
 //     messages", "Browse apps".
 //  2. "Manage section": "Rename" (custom), "Create a new section", "Manage
-//     conversations" (custom and Starred,
-//     add_channels_channel_sections_slackathon).
+//     conversations" (custom and Starred; ungated since Slack dropped
+//     add_channels_channel_sections_slackathon, 2026-11-21 drift).
 //  3. "Section settings": "Filter" ▸ and "Sort" ▸, each showing its value.
 //     Filter under filter_dormant_channels: "Active only" ("New activity
 //     within the last 30 days" with mute_channel_edu), "Unreads",
@@ -236,7 +236,7 @@ func (a *App) createSectionItem(sec *sbSection) *MenuItem {
 }
 
 func (a *App) manageConversationsItem(sec *sbSection) *MenuItem {
-	if (sec.Type != "standard" && sec.Type != "stars") || a.exp("add_channels_channel_sections_slackathon") != "on" {
+	if sec.Type != "standard" && sec.Type != "stars" {
 		return nil
 	}
 	id := sec.ID
@@ -741,10 +741,11 @@ func (a *App) bulkMoveToast(m core.SectionMove) {
 
 // bulkMoveText is the toast's text: for one channel "Moved #x to S." /
 // "Removed #x from S." / "Moved #x."; for several conversations, or a DM,
-// "Moved N conversations to S." (with manage_conversations_strings
-// "Updated conversations in S."), "Removed N conversations from S." or
-// "Moved N conversations.". S counts only when it is the one custom
-// section or Starred moved into (out of).
+// "Updated conversations in S.", "Removed N conversations from S." or
+// "Moved N conversations." (qQEZ performBulkChannelMove; Slack dropped
+// manage_conversations_strings and kept its wording, 2026-11-21 drift).
+// S counts only when it is the one custom section or Starred moved into
+// (out of).
 func (a *App) bulkMoveText(m core.SectionMove) string {
 	md := a.model()
 	one := func(ids []string) *sbSection {
@@ -766,10 +767,8 @@ func (a *App) bulkMoveText(m core.SectionMove) string {
 	if w == nil || w.Kind == "im" || w.Kind == "mpim" || w.Kind == "app" {
 		n := m.Count
 		switch {
-		case to != nil && a.exp("manage_conversations_strings") == "on":
-			return t("Updated conversations in {channelSection}.", "channelSection", name(to))
 		case to != nil:
-			return t("Moved {numChannels, plural, =1{conversation} other {# conversations}} to {channelSection}.", "numChannels", n, "channelSection", name(to))
+			return t("Updated conversations in {channelSection}.", "channelSection", name(to))
 		case from != nil:
 			return t("Removed {numChannels, plural, =1{conversation} other {# conversations}} from {channelSection}.", "numChannels", n, "channelSection", name(from))
 		}

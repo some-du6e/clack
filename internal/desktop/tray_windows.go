@@ -77,6 +77,8 @@ const (
 	wmDestroy      = 0x0002
 	wmClose        = 0x0010
 	wmContextMenu  = 0x007B
+	wmQueryEndSess = 0x0011
+	wmEndSession   = 0x0016
 	wmLButtonDown  = 0x0201
 	wmLButtonDbl   = 0x0203
 	wmRButtonDown  = 0x0204
@@ -235,6 +237,7 @@ type Tray struct {
 	largeIcon      windows.Handle // the balloon's (SM_CXICON)
 	balloon        notifyIconData // the last Balloon's NIM_MODIFY, for tests
 	balloonText    [2]string      // title, content: Balloon → the tray thread
+	onEnd          func(why string)
 }
 
 var (
@@ -277,7 +280,10 @@ func (t *Tray) run(tooltip string, errc chan<- error) {
 		ClassName: cls,
 	}
 	wc.Size = uint32(unsafe.Sizeof(wc))
-	if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
+	// A tray started again in this process finds its class registered by
+	// the first (the class outlives the window; its WndProc is the same
+	// trayWndProc): that one serves.
+	if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 && !errors.Is(err, windows.ERROR_CLASS_ALREADY_EXISTS) {
 		errc <- err
 		return
 	}
@@ -497,6 +503,38 @@ func putUTF16(dst []uint16, s string) {
 	copy(dst, u)
 }
 
+// OnSessionEnd has f called, on the tray's thread, when Windows ends the
+// session Clack runs in: WM_ENDSESSION, which every top-level window gets
+// (the tray's hidden one included) when the user signs out, the computer
+// shuts down or restarts, or an installer's Restart Manager closes Clack
+// to replace its files. Windows ends the process once f returns, so f
+// logs why at once and starts the quit.
+func (t *Tray) OnSessionEnd(f func(why string)) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.onEnd = f
+	t.mu.Unlock()
+}
+
+// endSessionReason is WM_ENDSESSION's lParam (ENDSESSION_* flags) in
+// words, for the exit line.
+func endSessionReason(lp uintptr) string {
+	const closeApp, critical, logoff = 0x1, 0x40000000, 0x80000000
+	why := "Windows is shutting down or restarting"
+	switch {
+	case lp&closeApp != 0:
+		why = "an installer or update is replacing Clack's files (Windows Restart Manager closed it)"
+	case lp&logoff != 0:
+		why = "Windows is signing the user out"
+	}
+	if lp&critical != 0 {
+		why += ", forced"
+	}
+	return why + " (WM_ENDSESSION)"
+}
+
 // Close removes the icon and stops the tray thread.
 func (t *Tray) Close() {
 	if t == nil {
@@ -549,6 +587,18 @@ func trayWndProc(hwnd, m, wp, lp uintptr) uintptr {
 		t.mu.Unlock()
 		ok, _, _ := procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&n)))
 		return ok
+	case wmQueryEndSess:
+		return 1 // Clack may end with the session; WM_ENDSESSION says why
+	case wmEndSession:
+		if wp != 0 { // the session ends: the process goes once this returns
+			t.mu.Lock()
+			f := t.onEnd
+			t.mu.Unlock()
+			if f != nil {
+				f(endSessionReason(lp))
+			}
+		}
+		return 0
 	case wmClose:
 		procDestroyWindow.Call(hwnd)
 		return 0

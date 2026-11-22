@@ -840,11 +840,16 @@ type Later struct {
 
 	addBtn, emptyAdd, cleanBtn, filterBtn, sortBtn widget.Clickable
 	selAll                                         widget.Clickable
-	fclicks                                        [todoFilters]widget.Clickable
-	sclicks                                        [len(todoSortLabels)]widget.Clickable
-	cclicks                                        [len(todoCleanLabels)]widget.Clickable
-	scrim                                          widget.Clickable
-	popTag                                         int
+
+	// the last immediate clear's toast and how many clears it counts
+	// (immediateClearToast)
+	clearToastAt time.Time
+	clearToastN  int
+	fclicks      [todoFilters]widget.Clickable
+	sclicks      [len(todoSortLabels)]widget.Clickable
+	cclicks      [len(todoCleanLabels)]widget.Clickable
+	scrim        widget.Clickable
+	popTag       int
 
 	kb *vkList // TodosPage's InteractiveList keyboard (todoKey)
 
@@ -1974,8 +1979,12 @@ func (l *Later) todoKey(e key.Event, active string) bool {
 }
 
 // clearTodo is "Clear a saved item with a deferred, undoable toast"
-// (WHky): the row goes at once, "To-do cleared" offers Undo, and the
-// clear is sent once the toast is gone.
+// (PxoD clearSavedItemWithUndo): the row goes at once, "To-do cleared"
+// offers Undo, and the clear is sent once the toast is gone. Under
+// later_todos_immediate_clear (PxoD nz; build 8f19be21ed7e, the 2026-11-21
+// drift) it is clearSavedItemImmediately instead: saved.delete at once,
+// then LaterTodoToast's plain 3 s "To-do cleared", which a clear while it
+// shows counts onto ("{count} to-dos cleared", countOntoShowingToast).
 func (l *Later) clearTodo(it core.SavedItem) {
 	if it.Channel == "" || it.TS == "" {
 		return
@@ -1983,6 +1992,10 @@ func (l *Later) clearTodo(it core.SavedItem) {
 	k := laterKey(&it)
 	ch, ts := it.Channel, it.TS
 	l.remove(k)
+	if c := l.h.Core(); c != nil && c.Experiment(core.ExpLaterTodosImmediateClear) == "on" {
+		l.write(k, l.immediateClearToast(time.Now()), true, func(ctx context.Context, c *core.App) error { return c.ClearSaved(ctx, ch, ts) })
+		return
+	}
 	send := func() {
 		l.write(k, "", true, func(ctx context.Context, c *core.App) error { return c.Unsave(ctx, ch, ts) })
 	}
@@ -2009,3 +2022,23 @@ func (l *Later) clearTodo(it core.SavedItem) {
 
 // todoUndoFor is how long the Undo toast stays (App.ToastUndo).
 var todoUndoFor = 6 * time.Second
+
+// clearToastFor is LaterTodoToast's duration (3e3): a clear within it
+// counts onto the toast already showing.
+const clearToastFor = 3 * time.Second
+
+// immediateClearToast is the text of the toast an immediate clear at now
+// shows: "To-do cleared", or getClearCountLabel's "{count} to-dos cleared"
+// while the last one still shows.
+func (l *Later) immediateClearToast(now time.Time) string {
+	if now.Sub(l.clearToastAt) < clearToastFor {
+		l.clearToastN++
+	} else {
+		l.clearToastN = 1
+	}
+	l.clearToastAt = now
+	if l.clearToastN > 1 {
+		return nsLater.T("{count} to-dos cleared", "count", l.clearToastN)
+	}
+	return nsLater.T("To-do cleared")
+}

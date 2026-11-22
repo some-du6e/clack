@@ -257,6 +257,9 @@ type target struct {
 	// cardless: a channel target that opens no hover card (a work
 	// object's channel field)
 	cardless bool
+	// emailLink: a link in an email's body (EmailIframe's onMessage): an
+	// http(s) one asks first (EmailLinkHandler's Open Link modal)
+	emailLink bool
 	// urlCard: a link in message text (rich text's Link, mrkdwn's
 	// renderLink), BaseMrkdwnLink's renderDefaultLink: its hover is
 	// UrlHoverCard under truncated_url_hover_card (View.isURLCard)
@@ -269,6 +272,18 @@ type target struct {
 	// the image viewer; a right-click is the card's, as in Slack, where
 	// the image has no context menu of its own.
 	inCard bool
+	// href: a tImage that is Slack's AttachmentImage (UvHM renderLink):
+	// the image is the CSS background of an <a href>, so a right-click
+	// on it is the desktop shell's link menu for href, not its image
+	// menu (an image block's image_url; an attachment's
+	// getExternalSourceUrl or image_url). With animations off and an
+	// animated image it is an <img> under PlayPauseAnimations instead
+	// (View.HitAt).
+	href string
+	// elem: a tImage that is Block Kit's image element (BaseImageElement,
+	// a section's accessory): a div with a CSS background, no <img> and
+	// no link, so a right-click opens the message's menu
+	elem bool
 	// wob is a tWorkObject footer button's primary action.
 	wob *workobject.Button
 	// menuOnly: a file card that only has the file's context menu (a

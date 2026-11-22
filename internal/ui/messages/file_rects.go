@@ -120,7 +120,7 @@ func (s *listState) reactionRects() []ReactionRect {
 		}
 		off := s.origin.Add(image.Pt(0, s.pos[i]))
 		for k := range r.reactRects {
-			if k < len(r.groups) {
+			if k < len(r.groups) && !r.reactRects[k].Empty() { // a plugin's bar may leave a pill out
 				out = append(out, ReactionRect{TS: r.src.TS, Name: r.groups[k].name, R: r.reactRects[k].Add(off)})
 			}
 		}
@@ -290,6 +290,11 @@ func (s *listState) eachBody(f func(ts string, off image.Point, rv *richview.Vie
 // it over the hovered message, in window coordinates, and that message's
 // ts; ok false when the frame drew none.
 func (v *ChannelView) ToolbarRect() (ts string, r image.Rectangle, ok bool) {
+	return v.s.toolbarRect()
+}
+
+// ToolbarRect is ChannelView.ToolbarRect for the thread.
+func (v *ThreadView) ToolbarRect() (ts string, r image.Rectangle, ok bool) {
 	return v.s.toolbarRect()
 }
 

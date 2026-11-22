@@ -87,6 +87,9 @@ var accountExperiments = map[string]string{
 	"lists_file_backed_templates": "on",
 	"lists_export_enrichment":     "on",
 	"lists_grid_todos":            "on",
+	// email files draw as FileEmailV2 (core.ExpNewEmailRendering): the
+	// account's group, recorded in core/testdata/account_experiments.json
+	"new_email_rendering": "on",
 }
 
 // withAccountExperiments adds accountExperiments to an

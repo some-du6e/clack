@@ -559,12 +559,20 @@ func (v *ThreadView) RootLoaded() (isReply, loaded bool) {
 	return m.ThreadTS != "" && m.ThreadTS != m.TS, true
 }
 
-// root is the thread's parent message, once loaded.
+// root is the thread's parent message, once loaded: the slice's row when
+// the slice holds it, else the store's copy (rootMsg) wherever the slice
+// is, as Slack's thread Header reads getMessage(channel, threadTs) (O+gL
+// mapStateToProps) for its permalink. A thread opened at a reply far from
+// its root (a mention deep in a huge thread) never has the root in its
+// slice, and its header's name was no link.
 func (v *ThreadView) root() (core.Message, bool) {
 	for i := range v.s.snap.msgs {
 		if m := &v.s.snap.msgs[i].m; m.TS == v.ts {
 			return *m, true
 		}
+	}
+	if r, ok := v.s.threadRoot(); ok {
+		return *r, true
 	}
 	return core.Message{}, false
 }

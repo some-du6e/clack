@@ -177,6 +177,9 @@ func TestNotifyPrivateChannelTitle(t *testing.T) {
 func TestNotifyPrivateThreadReply(t *testing.T) {
 	const priv, root = fakeslack.ThreadPrivateID, "1762520000.000100"
 	push := func(a *App, ch, ts string) {
+		// the reply's own message came first, as the server sends them: the
+		// notifications' maxTs took it (store/notifications_maxts.go, reason 19)
+		a.Core().S.NoteAdded(ts)
 		raw, _ := json.Marshal(map[string]any{"type": "desktop_notification", "channel": ch, "ts": ts, "msg": ts, "thread_ts": root,
 			"content": "Robin Example: a synthetic reply", "title": "Thread in th-secret-plans"})
 		a.data.handle(a, core.Event{Type: "desktop_notification", Channel: ch, Raw: raw})

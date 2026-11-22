@@ -34,7 +34,7 @@ type gdmState struct {
 	renames []url.Values
 }
 
-var gdmStates sync.Map // *Server -> *gdmState
+var gdmStates = newPerServer() // *Server -> *gdmState
 
 func (s *Server) gdm() *gdmState {
 	v, _ := gdmStates.LoadOrStore(s, &gdmState{})

@@ -63,7 +63,7 @@ type listStore struct {
 	comments map[string][]slack.Message // "<channel>/<thread ts>" -> replies, root first
 }
 
-var listStores sync.Map // *Server -> *listStore
+var listStores = newPerServer() // *Server -> *listStore
 
 func (s *Server) listStore() *listStore {
 	if v, ok := listStores.Load(s); ok {

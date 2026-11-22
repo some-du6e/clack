@@ -327,6 +327,16 @@ var (
 	hubs   = map[*core.App]*hub{}
 )
 
+// ForgetCore drops app's hub (its conversations' models, the host it
+// drew for): for a core App that's done, a stopped session's. A hub's
+// entry kept the session reachable for good (ci-speed-3).
+func ForgetCore(app *core.App) {
+	hubsMu.Lock()
+	delete(hubs, app)
+	hubsMu.Unlock()
+	forgottenCores.Add(1) // and its lists, at the next one drawn
+}
+
 const maxModels = 40
 
 func hubFor(h Host) *hub {
@@ -1409,6 +1419,14 @@ func (hb *hub) apply(ev core.Event) bool {
 			m.mu.Lock()
 			if m.find(ev.TS) >= 0 {
 				m.remove(ev.TS)
+				m.rev++
+			}
+			if m.threadTS != "" && ev.TS == m.threadTS && m.th.root != nil {
+				// the root's own delete (a root with no replies, or a
+				// tombstone whose last reply went): setMessageDeleted drops
+				// rootMsg, so the header links nothing and the ⋮ menu reads
+				// no root
+				m.th.root = nil
 				m.rev++
 			}
 			m.noteLive(ev.TS, true)

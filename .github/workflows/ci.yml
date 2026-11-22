@@ -1,13 +1,24 @@
 name: ci
-# a dispatch with `only` says so in the run list ("ci only=full-test")
-run-name: ${{ inputs.only && format('ci only={0}', inputs.only) || '' }}
+# a dispatch with `only` says so in the run list ("ci only=full-test"), a
+# proof run (expect_fail) as one
+run-name: ${{ inputs.expect_fail && format('ci proof expect_fail={0}{1}', inputs.expect_fail, inputs.only && format(' only={0}', inputs.only) || '') || inputs.only && format('ci only={0}', inputs.only) || '' }}
 on:
   push:
+    # evidence branches (-redN, -mutN, ... as expect-fail's setup.sh matches
+    # them: tools/expectfail's TestEvidenceBranchesSkipPushRuns) prove a failure: their runs are
+    # dispatched with expect_fail, and a push run would only end red and
+    # ping Karim's phone (docs/CI-SPEED.md, "Proof runs")
+    branches-ignore: ["**-red", "**-red[0-9]+", "**-red[0-9]+[a-z]", "**-mut", "**-mut[0-9]+", "**-mut[0-9]+[a-z]", "**-r[0-9]+red", "**-r[0-9]+red[0-9]+", "**-r[0-9]+red[0-9]+[a-z]", "**-r[0-9]+mut", "**-r[0-9]+mut[0-9]+", "**-r[0-9]+mut[0-9]+[a-z]"]
+    tags: ["**"]
   pull_request:
   workflow_dispatch:
     inputs:
       only:
         description: "run only the jobs whose id starts with this (empty: all). full-test: just full-test, for a branch whose push run (keep it, don't cancel it) ran the other jobs on the same sha; macos, windows, linux: one OS"
+        required: false
+        default: ""
+      expect_fail:
+        description: "proof runs: the tests that must fail, comma-separated (TestA,TestB/sub); the run passes only if each fails and nothing else does (docs/CI-SPEED.md, Proof runs)"
         required: false
         default: ""
 
@@ -24,7 +35,7 @@ permissions:
 # A dispatch's `only` is in the group too, so -f only=full-test never cancels
 # a dispatched run of every job (or one OS's).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.only }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.only }}-${{ inputs.expect_fail }}
   cancel-in-progress: true
 
 jobs:
@@ -46,8 +57,8 @@ jobs:
           ids=$(awk '/^jobs:/ { j = 1; next } j && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { sub(/^  /, ""); sub(/:.*/, ""); print }' .github/workflows/ci.yml)
           found=""
           for id in $ids; do
-            # neither runs alone: this check, and the coverage of linux-test's shards
-            case $id in only-check | linux-coverage) continue ;; esac
+            # none runs alone: this check, the coverage of linux-test's shards, expect_fail's check
+            case $id in only-check | linux-coverage | expect-fail) continue ;; esac
             # a literal prefix, as startsWith matches it (no glob)
             if [ "${id#"$ONLY"}" != "$id" ]; then
               found="$found $id"
@@ -72,6 +83,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: gofmt
@@ -110,6 +125,8 @@ jobs:
         with:
           name: clack-linux-amd64
           path: dist/clack-linux-amd64
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # `go test ./...`, split: internal/ui's and internal/ui/messages' top-level
   # tests packed into 4 shards by their recorded times (test-shard.py,
@@ -133,6 +150,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test (${{ matrix.shard }})
@@ -148,6 +169,8 @@ jobs:
           name: test-shard-${{ strategy.job-index }}
           path: ${{ runner.temp }}/shard
           retention-days: 7
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Fails unless every package finished in its shard and each of the
   # split packages' tests ran exactly once across the shards.
@@ -191,6 +214,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # as release.yml: a clean module/build cache
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test
@@ -202,16 +229,17 @@ jobs:
         # runner-load.sh logs the runner's memory and load each minute (two
         # full-test jobs lost their runner on 2026-11-21 with no word on why:
         # it showed the suite at 15.7 of the runner's 16 GB, ui.test's live
-        # heap ~9 GB by its end, every test's App kept). GOMEMLIMIT: the GC
-        # keeps each test binary under 11 GiB until the ui tests stop
-        # keeping them. Not lower: under ui.test's live heap the GC runs back
-        # to back at half the CPU (7 GiB: TestJoinBanner's 10 s wait ran
-        # out, run 44939446171)
+        # heap ~9 GB by its end, every test's App kept). The ui tests let
+        # each finished App go since ci-speed-3 (TestFinishedSessionIsCollected
+        # guards it), so the GOMEMLIMIT=11GiB stopgap went: docs/CI-SPEED.md
+        # has the peaks
         run: |
           .github/scripts/dump-before-budget.sh 35 & wd=$!
           .github/scripts/runner-load.sh 60 & rl=$!
           trap 'kill $wd $rl 2>/dev/null' EXIT
-          GOMEMLIMIT=11GiB go test -timeout 30m ./...
+          go test -timeout 30m ./...
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Report-only (docs/PARITY.md): tools/parity.py runs the Slack-parity
   # tests (tools/parity_checks.json) against Slack's committed output and
@@ -233,6 +261,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: runner tests
@@ -247,6 +279,8 @@ jobs:
           path: ${{ runner.temp }}/parity
           if-no-files-found: ignore
           retention-days: 30
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Gio patches on the vendored gioui.org, Xvfb and Mesa's llvmpipe
   linux-gio:
@@ -261,6 +295,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       # Gio patch 11 (third_party/gioui.org/CLACK_PATCHES.md): OS file-drop
@@ -296,6 +334,11 @@ jobs:
       - name: Gio pointer state reset (vendored gioui.org/io/input, gesture)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run '^(TestResetPointers|TestHoverResetPointers)$' gioui.org/io/input gioui.org/gesture
+      # Gio patch 60: a Hover ends on a Cancel of any pointer (a handler the
+      # router made again, Windows' mouse is pointer 1)
+      - name: Gio hover ends on a reset Cancel (vendored gioui.org/gesture)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run '^TestClackHoverEndsOnResetCancel$' gioui.org/gesture
       # Gio patch 53: a tag's area in the window, and what of it its clip
       # areas show (the video tiles' share of their list)
       - name: Gio area bounds (vendored gioui.org/io/input)
@@ -348,6 +391,14 @@ jobs:
       - name: Gio hidden title bar hit test (vendored gioui.org/app)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption|TestTitlebarDoubleClickAction' gioui.org/app
+      # Gio patch 48: a run of clicks counts by the platform's rule, as
+      # Chromium's does (500 ms and 2 px here; the Windows and macOS rules
+      # with their settings stood in), not a fixed 200 ms, for the window
+      # whatever widget a press lands on; an Editor's double and triple
+      # clicks select as Blink's do
+      - name: Gio click counts (vendored gioui.org/gesture)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestMouseClicks|TestClackClick|TestClackEditor' gioui.org/gesture gioui.org/widget
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave).
       # Gio patch 35: on the X11 window, a frame only Window.Invalidate
@@ -366,6 +417,61 @@ jobs:
           # lets its frame texture go; XSETTINGS from a real settings manager
           xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop|TestUnmappedStopsFramesX11|TestClackXSettingsX11' gioui.org/app
           xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app
+          # patch 59: a window whose X server goes away says so first (its own private Xvfb)
+          go test -count=1 -v -timeout 3m -run '^TestX11ConnectionLost$' gioui.org/app
+      # Signals and Clack's exit line (review of karim-1118), the real
+      # binary on X11: under nohup a SIGHUP stays ignored (Notify would
+      # have made it quit Clack), and a SIGTERM ends Clack by its own quit,
+      # status 0, with "exit: signal: terminated" in clack.log and in its
+      # run record.
+      - name: Clack's signals and exit line on X11 (and when the X server goes)
+        if: ${{ !cancelled() }}
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          mkdir -p build && go build -o build/clack-signals ./cmd/clack || exit 1
+          Xvfb :93 -nolisten tcp -screen 0 1280x800x24 & xvfb=$!
+          for i in $(seq 1 40); do [ -S /tmp/.X11-unix/X93 ] && break; sleep 0.25; done
+          home="$RUNNER_TEMP/clack-sig-home"; logs="$RUNNER_TEMP/clack-sig-logs"
+          mkdir -p "$home" "$logs"
+          env -u WAYLAND_DISPLAY DISPLAY=:93 CLACK_HOME="$home" CLACK_LOG_DIR="$logs" CLACK_TIMING=1 nohup ./build/clack-signals > "$RUNNER_TEMP/clack-sig.out" 2>&1 &
+          pid=$!
+          for i in $(seq 1 240); do grep -q 'timing: main ready' "$logs/clack.log" 2>/dev/null && break; sleep 0.5; done
+          sleep 2
+          rc=0
+          kill -HUP $pid; sleep 3
+          if ! kill -0 $pid 2>/dev/null; then echo "a SIGHUP under nohup ended Clack"; rc=1; fi
+          kill -TERM $pid
+          for i in $(seq 1 60); do kill -0 $pid 2>/dev/null || break; sleep 0.5; done
+          if kill -0 $pid 2>/dev/null; then echo "Clack still runs 30 s after SIGTERM"; kill -9 $pid; rc=1; fi
+          wait $pid; code=$?
+          kill $xvfb
+          tail -40 "$logs/clack.log"
+          cat "$logs"/lastrun-*.txt
+          grep -F 'exit: signal: hangup' "$logs/clack.log" && { echo "SIGHUP was taken"; rc=1; }
+          grep -F 'exit: signal: terminated' "$logs/clack.log" || { echo "no exit line for SIGTERM"; rc=1; }
+          grep -F ': signal: terminated' "$logs"/lastrun-*.txt || { echo "no reason in the run record"; rc=1; }
+          [ "$code" = 0 ] || { echo "exit status $code"; rc=1; }
+          # the X server goes (Gio patch 59): the exit line, then Xlib's exit 1
+          Xvfb :94 -nolisten tcp -screen 0 1280x800x24 & xvfb2=$!
+          for i in $(seq 1 40); do [ -S /tmp/.X11-unix/X94 ] && break; sleep 0.25; done
+          home2="$RUNNER_TEMP/clack-x-home"; logs2="$RUNNER_TEMP/clack-x-logs"
+          mkdir -p "$home2" "$logs2"
+          env -u WAYLAND_DISPLAY DISPLAY=:94 CLACK_HOME="$home2" CLACK_LOG_DIR="$logs2" CLACK_TIMING=1 ./build/clack-signals > "$RUNNER_TEMP/clack-x.out" 2>&1 &
+          pid2=$!
+          for i in $(seq 1 240); do grep -q 'timing: main ready' "$logs2/clack.log" 2>/dev/null && break; sleep 0.5; done
+          sleep 2
+          kill -9 $xvfb2
+          for i in $(seq 1 60); do kill -0 $pid2 2>/dev/null || break; sleep 0.5; done
+          if kill -0 $pid2 2>/dev/null; then echo "Clack still runs 30 s after its X server went"; kill -9 $pid2; rc=1; fi
+          wait $pid2; code2=$?
+          tail -20 "$logs2/clack.log"; tail -5 "$RUNNER_TEMP/clack-x.out"
+          grep -F "exit: the X server's connection broke" "$logs2/clack.log" || { echo "no exit line when the X server went"; rc=1; }
+          grep -F "the X server's connection broke" "$logs2"/lastrun-*.txt || { echo "no reason in the run record when the X server went"; rc=1; }
+          [ "$code2" = 1 ] || { echo "exit status $code2 after the X server went, want 1 (Xlib's)"; rc=1; }
+          exit $rc
       - name: pixel tests (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -401,6 +507,8 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The freeze watchdog's flight recorder (internal/tracerec) on newer Go
   # than go.mod's: from Go 1.25 its go1.25 build tag takes
@@ -425,10 +533,16 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           cache: false
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: the flight recorder (internal/tracerec)
         env:
           GOTOOLCHAIN: local
         run: go version && go test -count=1 -v ./internal/tracerec
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   linux-race-taut:
     if: ${{ !inputs.only || startsWith('linux-race-taut', inputs.only) }}
@@ -442,6 +556,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: plugins start in parallel with boot (race detector; the JS engine is one wasm instance)
@@ -449,6 +567,8 @@ jobs:
           "$GITHUB_WORKSPACE/.github/scripts/dump-before-budget.sh" 12 & wd=$!
           trap 'kill $wd 2>/dev/null' EXIT
           go test -race -count=1 -timeout 12m ./internal/taut ./internal/slick # under the 15 min budget, so a hang's dump prints
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   linux-race-boot:
     if: ${{ !inputs.only || startsWith('linux-race-boot', inputs.only) }}
@@ -462,12 +582,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: sign-out stops all traffic (50 runs, race detector)
         run: go test -race -count=50 -run 'TestAuthFailedStopsCore$' ./internal/core
       - name: plugins start in parallel with boot, 20 runs (race detector)
         run: go test -race -count=20 -run 'TestPluginsStartBeforeBoot$' ./internal/taut
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   linux-idle:
     if: ${{ !inputs.only || startsWith('linux-idle', inputs.only) }}
@@ -481,6 +607,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       # Idle: the client left alone for 10 s per surface (channel, thread,
@@ -551,6 +681,8 @@ jobs:
         run: |
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
           xvfb-run -a go test -count=1 -v -timeout 7m -run '^TestInspectReviewTiming$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   windows:
     if: ${{ !inputs.only || startsWith('windows', inputs.only) }}
@@ -564,6 +696,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: resources (icon #1, manifest, version info)
         run: |
           go install github.com/tc-hib/go-winres@v0.3.3
@@ -578,6 +714,8 @@ jobs:
         with:
           name: clack-windows-amd64
           path: dist/clack-windows-amd64.exe
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating;
@@ -599,6 +737,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: applog tests
         run: go test -count=1 -v ./internal/applog
       # Gio patches 37-44 on Direct3D 11 (WARP): the state caches change no
@@ -641,6 +783,14 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
+      # The image menu's Copy Image (Slack's webContents.copyImageAt) on a
+      # fakeslack image: CF_DIB and "PNG" read back as its pixels.
+      - name: copy image (CF_DIB, "PNG")
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -run '^TestWinCopyImageRoundTrip$' ./internal/ui/popups
       # A copy as Slack's desktop app makes it: text, "HTML Format" and the
       # custom types (slack/html, slack/texty) in Chromium's web custom data.
       - name: rich copy (CF_UNICODETEXT, HTML Format, Chromium Web Custom MIME Data Format)
@@ -772,6 +922,19 @@ jobs:
             "$RUNNER_TEMP/ui-bounds.test.exe" -test.v -test.count=1 -test.timeout 6m -test.run "^$t\$" || rc=1
           done
           exit $rc
+      # Gio patch 48: SendInput clicks 400 ms apart are a double click by the
+      # Mouse settings' double-click time (500 ms), two clicks once
+      # SetDoubleClickTime makes it 300 ms (read again on every press). Last
+      # in the job: a step without a step-starts.json record in front of
+      # recorded ones drops theirs (budget-check.py)
+      - name: double clicks by GetDoubleClickTime (SendInput)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_DBLCLICK_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # Clack's slack:// registration and the single-instance hand-off, close to
   # the tray, the tray's states and menu, the jump list, Focus Assist,
@@ -788,6 +951,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
         if: ${{ !cancelled() }}
         env:
@@ -866,6 +1033,7 @@ jobs:
             Wait-Log 'desktop: another launch handed over a slack:// sign-in link' 'the running Clack getting the link'
             Wait-Log 'sign-in: a sign-in link came from outside Clack; signing in with it' 'the sign-in card taking it'
             Wait-Log "sign-in: couldn't read the team and token from the sign-in link" 'the sign-in attempt (the fake link stops it there)'
+            Wait-Log 'exit: handed this launch to the Clack already running' 'the launch that handed over saying why it ended'
             if ($p.HasExited) { throw "the first Clack exited ($($p.ExitCode))" }
             # the window's Clack processes: not the introduction's renderer
             # (Clack.exe intro-preview, which the first run's intro starts)
@@ -876,7 +1044,9 @@ jobs:
             if (Select-String -Path $log -SimpleMatch -Pattern 'magic-login/xyz' -Quiet) { throw 'the sign-in link is in the log' }
           } finally { Stop-Clack $p }
 
-          # 3. Another app takes the legacy key (as Slack desktop does at its start): Clack's next start leaves it
+          # 3. Another app takes the legacy key (as Slack desktop does at its start): Clack's next start leaves it.
+          # The Clack before it was killed (Stop-Process), so this start says that run ended without saying why;
+          # closing this one's window (the sign-in screen: a quit) leaves its reason, which the next start logs.
           $other = Join-Path $env:SystemRoot 'System32\cmd.exe'
           $otherCmd = "`"$other`" /c exit `"%1`""
           Set-ItemProperty -Path 'HKCU:\Software\Classes\slack\shell\open\command' -Name '(default)' -Value $otherCmd
@@ -884,9 +1054,20 @@ jobs:
           $p = Start-Process -PassThru -FilePath $exe
           try {
             Wait-Log 'has the default, so Windows asks which app to use' 'the registration beside another app'
+            Wait-Log 'applog: previous run ended without saying why' 'the start after a killed Clack'
             Assert-Reg 'HKCU\Software\Classes\slack\shell\open\command' '' $otherCmd
             Assert-Reg 'HKCU\Software\Classes\Clack.slack\shell\open\command' '' $cmd
             Assert-Reg 'HKCU\Software\RegisteredApplications' 'Clack' 'Software\Clack\Capabilities'
+            for ($i = 0; $i -lt 120 -and $p.MainWindowHandle -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 250; $p.Refresh() }
+            if (-not $p.CloseMainWindow()) { throw 'no window to close' }
+            if (-not $p.WaitForExit(60000)) { throw 'the close on the sign-in screen did not end Clack' }
+            Wait-Log 'exit: the window closed while signed out' 'the exit line of a close on the sign-in screen'
+          } finally { Stop-Clack $p }
+          Mark-Log
+          $p = Start-Process -PassThru -FilePath $exe
+          try {
+            Wait-Log ': the window closed while signed out' 'the start after it naming how the last run ended'
+            Get-Content $log | Select-Object -Skip $script:mark | Select-String -SimpleMatch 'applog: previous run' | ForEach-Object { $_.Line }
           } finally { Stop-Clack $p }
 
           # 4. -unregister-url-handler removes Clack's keys and leaves the other app's
@@ -951,7 +1132,7 @@ jobs:
         run: |
           rc=0
           go test -count=1 -v -timeout 10m -run 'TestHideAndRaise|TestHideWithoutDriver|TestCaretBlinkFromOS|TestOptionKeepsHiddenAndMinimized|TestInvalidateWhileHandling' gioui.org/app || rc=1
-          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop || rc=1
+          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16|TestTraySessionEnd' ./internal/desktop || rc=1
           go test -count=1 -v -timeout 12m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui || rc=1
           exit $rc
 
@@ -1186,6 +1367,8 @@ jobs:
           name: toast-shots
           path: ${{ runner.temp }}/toast-shots
           if-no-files-found: ignore
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   windows-scroll:
@@ -1200,6 +1383,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       # Wheel scrolling on Windows: frame times while synthetic mouse-wheel
       # notches scroll a long fakeslack channel at 60 Hz (layout, and the
       # Direct3D 11 render when the runner has a device). The numbers are
@@ -1228,6 +1415,8 @@ jobs:
           go test -count=1 -v ./internal/ui/autoscroll || rc=1
           go test -count=1 -v -timeout 8m -run '^(TestAutoscrollWindow|TestAutoscrollInClack)$' ./internal/ui || rc=1
           exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   windows-idle:
@@ -1242,6 +1431,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       # The idle-frame budget on Windows (see linux-idle: four processes).
       - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}
@@ -1338,6 +1531,8 @@ jobs:
           Add-Type -AssemblyName System.Windows.Forms
           Write-Host "the display: $([System.Windows.Forms.Screen]::PrimaryScreen.Bounds)"
           go test -count=1 -v -timeout 5m -run '^TestRealWindowMemory$' ./internal/ui
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
 
   macos:
@@ -1352,6 +1547,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: macOS-only tests (system fonts, AppKit glue, the menu bar)
         run: |
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
@@ -1497,12 +1696,55 @@ jobs:
         run: |
           set +e
           sw_vers
-          # and patch 47: the caret's blink period from the user defaults
-          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac' gioui.org/app
+          # and patch 47: the caret's blink period from the user defaults;
+          # patch 48: AppKit's click counts through a real window; patch 58:
+          # AppKit's terminate: asks the program (TerminateEvent)
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac|TestClackClickCountMac|TestTerminateEventMac' gioui.org/app
           gio=$?
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?
           exit $((gio | ui))
+      # Gio patch 58 (review of karim-1118: the Dock's Quit, log out,
+      # restart and a quit Apple Event ended Clack with no exit line). A
+      # signed-out Clack.app with a bundle id of its own, its own
+      # CLACK_HOME and log directory, is quit as the Dock quits it (a quit
+      # Apple Event; NSRunningApplication's terminate if osascript may not
+      # send one): it ends by itself, status 0, with the exit line in
+      # clack.log and the reason in its run record, not the 10 s fallback.
+      - name: macOS quit Apple Event (Gio patch 58)
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          mkdir -p build && go build -o build/clack-quit ./cmd/clack || exit 1
+          app="$GITHUB_WORKSPACE/build/quit/Clack.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp build/clack-quit "$app/Contents/MacOS/clack"
+          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
+          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.some-du6e.clack.probe-quit" "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
+          home="$RUNNER_TEMP/clack-quit-home"; logs="$RUNNER_TEMP/clack-quit-logs"
+          mkdir -p "$home" "$logs"
+          CLACK_HOME="$home" CLACK_LOG_DIR="$logs" CLACK_TIMING=1 "$app/Contents/MacOS/clack" > "$RUNNER_TEMP/clack-quit.out" 2>&1 &
+          pid=$!
+          for i in $(seq 1 240); do grep -q 'timing: main ready' "$logs/clack.log" 2>/dev/null && break; sleep 0.5; done
+          sleep 3 # the window and AppKit's run loop
+          rc=0
+          if ! osascript -e 'tell application id "io.github.some-du6e.clack.probe-quit" to quit'; then
+            echo "osascript couldn't send the quit Apple Event; NSRunningApplication's terminate instead"
+            printf 'import AppKit\nprint(NSRunningApplication(processIdentifier: %s)?.terminate() ?? false)\n' "$pid" | swift -
+          fi
+          for i in $(seq 1 60); do kill -0 $pid 2>/dev/null || break; sleep 0.5; done
+          if kill -0 $pid 2>/dev/null; then echo "Clack still runs 30 s after the quit"; kill -9 $pid; rc=1; fi
+          wait $pid; code=$?
+          tail -40 "$logs/clack.log"
+          cat "$logs"/lastrun-*.txt
+          grep -F 'exit: macOS asked Clack to quit' "$logs/clack.log" || { echo "no exit line for the quit"; rc=1; }
+          grep -F "didn't close within 10 s" "$logs/clack.log" && { echo "the 10 s fallback ended it"; rc=1; }
+          grep -F ': macOS asked Clack to quit' "$logs"/lastrun-*.txt || { echo "no reason in the run record"; rc=1; }
+          [ "$code" = 0 ] || { echo "exit status $code"; rc=1; }
+          exit $rc
       # Gio patch 32 (Karim's freezes after his Mac woke, 2026-11-16: the
       # main thread in -[CAMetalLayer nextDrawable] for seconds, minutes
       # while the screens slept). An occluded window (an opaque window over
@@ -1637,6 +1879,8 @@ jobs:
         with:
           name: clack-darwin-arm64
           path: dist/clack-darwin-arm64
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
 
   # The macOS checks that measure frames, CPU and pixels: Gio's drawLayers
   # fix and frame cost on Metal, the freeze guards, idle (TestMacIdleCPU,
@@ -1654,6 +1898,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -1725,3 +1973,51 @@ jobs:
           name: fanout-logs-macos-idle
           path: ${{ runner.temp }}/fanout.*
           if-no-files-found: ignore
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
+  # expect_fail's verdict across the jobs (docs/CI-SPEED.md, "Proof runs"):
+  # every listed test failed in some job and passed in none, nothing else
+  # failed, every job that ran succeeded. Proof runs only. A new job goes
+  # in its needs (tools/expectfail's TestWorkflowsWireExpectFail says so).
+  expect-fail:
+    needs:
+      - only-check
+      - linux-build
+      - linux-test
+      - linux-coverage
+      - full-test
+      - parity
+      - linux-gio
+      - newer-go
+      - linux-race-taut
+      - linux-race-boot
+      - linux-idle
+      - windows
+      - windows-applog
+      - windows-shell
+      - windows-scroll
+      - windows-idle
+      - macos
+      - macos-idle
+    if: ${{ always() && inputs.expect_fail != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/expectfail
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: expect-fail-*
+          path: ${{ runner.temp }}/xf
+      - name: every listed test failed, nothing else did
+        env:
+          EXPECT_FAIL: ${{ inputs.expect_fail }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: go run ./tools/expectfail -check "$RUNNER_TEMP/xf"

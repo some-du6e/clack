@@ -4,6 +4,7 @@ import (
 	"image"
 	"strings"
 
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
@@ -48,6 +49,31 @@ func OpenModal(h Host) (ModalInfo, bool) {
 		mi.Errors[k] = m
 	}
 	return mi, true
+}
+
+// ModalText is one text of the open modal's top view (a section's text,
+// a field, a hint) as last laid out: its blocks' kinds and the text it
+// drew.
+type ModalText struct {
+	Kinds []richtext.BlockKind
+	Drawn string
+}
+
+// ModalTexts lists the open modal's top view's texts, in no order.
+func ModalTexts(h Host) []ModalText {
+	s := openStack(h)
+	if s == nil {
+		return nil
+	}
+	var out []ModalText
+	for _, v := range s.top().texts {
+		var ks []richtext.BlockKind
+		for _, b := range v.Doc().Blocks {
+			ks = append(ks, b.Kind)
+		}
+		out = append(out, ModalText{Kinds: ks, Drawn: v.TextRange(0, v.PlainLen())})
+	}
+	return out
 }
 
 // FieldInfo is one text input of the open modal's top view.

@@ -211,7 +211,7 @@ type listState struct {
 	hlcCount int
 }
 
-var listStates sync.Map // *App -> *listState
+var listStates = newPerApp() // *App -> *listState
 
 func (a *App) lists() *listState {
 	if v, ok := listStates.Load(a); ok {

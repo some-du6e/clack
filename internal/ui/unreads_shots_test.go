@@ -184,8 +184,17 @@ func TestJoinBanner(t *testing.T) {
 	}
 	// close: slide away, record the dismissal; the place stays until the
 	// channel is left (the slide is a transform), then it's gone for good
+	// Leaving unmounted the banner (leaveJoinBanner) and c.bannerH kept its
+	// last height: wait for this visit's mount (a fresh ChannelJoinBanner,
+	// its close button new with it) before clicking, or the click lands on
+	// the state the mount then resets. A person can't press a banner the
+	// window hasn't drawn since they came back (dm-slugs-flake's push ci
+	// 44975471550: "timed out after 10s waiting for the banner slid away").
+	if c.banner.mounted {
+		t.Fatal("the banner stayed mounted after the channel was left")
+	}
 	e.openChannel(ch)
-	e.until("the banner again", 10*time.Second, func() bool { return c.bannerH > 0 })
+	e.until("the banner mounted again", 10*time.Second, func() bool { return c.banner.mounted && c.bannerH > 0 })
 	h := c.bannerH
 	c.banner.closeBtn.Click()
 	e.until("the banner slid away", 10*time.Second, func() bool { return c.banner.gone })

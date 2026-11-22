@@ -56,11 +56,12 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$BK_SURFACES_SHOTS_DIR"
-          go test -count=1 -v -run 'TestMessageMention|TestMessageUnfurlCard|TestAttachments' ./internal/richtext
+          go test -count=1 -v -run 'TestMessageMention|TestMessageUnfurlCard|TestAttachments|TestMrkdwnFences|TestFromMrkdwn|TestMrkdwnFuzzish' ./internal/richtext
           go test -count=1 -v -run 'TestMessageSlug|TestPastedSlackLinks|TestSlugAtom|TestParsePermalink' ./internal/ui/composer
           go test -count=1 -v -run 'TestGallerySurfaces' ./internal/fakeslack
           go test -count=1 -v -run 'TestSubmitView|TestViewEvents|TestShortcutsAndHome' ./internal/core
           go test -count=1 -v ./internal/ui/blockkit
+          go test -count=1 -v -run 'TestLegacyAttachmentPR' ./internal/ui/richview
           xvfb-run -a go test -count=1 -v -run 'TestBlockKitSurfaces$|TestBlockKitModalFieldsEdit$' ./internal/ui/
           ls -la "$BK_SURFACES_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

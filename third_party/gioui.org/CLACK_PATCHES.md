@@ -56,7 +56,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_focus_test.go`, `io/input/clack_inputidle.go`,
 `io/input/clack_inputidle_test.go`,
 `io/input/clack_reset.go`, `io/input/clack_reset_test.go`,
-`gesture/clack_reset_test.go`, `op/paint/clack_external.go`,
+`gesture/clack_reset_test.go`, `gesture/clack_hover_cancel_test.go`, `op/paint/clack_external.go`,
 `gpu/clack_external.go`, `gpu/clack_external_test.go`,
 `gpu/internal/driver/clack_external.go`,
 `gpu/internal/d3d11/clack_external_windows.go`,
@@ -65,7 +65,14 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
 `io/input/clack_bounds.go`, `io/input/clack_bounds_test.go`,
 `app/clack_startup.go`, `io/input/clack_follow.go`,
-`io/input/clack_follow_test.go` and
+`io/input/clack_follow_test.go`,
+`internal/clickrule/clickrule.go`, `gesture/clack_dblclick*.go`,
+`gesture/clack_clickrun_test.go`, `gesture/clack_windowcount_test.go`,
+`gesture/gesture_test.go`, `internal/clickrule/run.go`,
+`io/input/clack_clicks.go`, `io/input/pointer_test.go`,
+`widget/clack_words.go`, `widget/clack_editor_clicks*_test.go`,
+`app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
+`app/clack_titlebar_darwin_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2406,6 +2413,171 @@ again: one period alone, an on period over a minute, a negative one, both
 and nothing once the manager is gone); `internal/ui` `TestXSettingsBlink`
 and `TestCaretBlinkWatcherX11`. Not in `UPSTREAM.patch`.
 
+## 48. gesture, io/pointer, app: a run of clicks counts by the platform's rule, as Chromium's does
+
+`internal/clickrule/clickrule.go` (new: `Rule`, `Tap`, `PxPerDp`),
+`internal/clickrule/run.go` (new: `Run`, the counting), `io/input/clack_clicks.go`
+(new: `Router.countClick`) with a `clicks` field and its call in `Queue` in
+`io/input/router.go`, `gesture/gesture.go` (`Click`, `Click.Update`),
+`gesture/clack_dblclick.go` (`ClickRun`, `DoubleClickTime`),
+`io/pointer/pointer.go` (`Event.Clicks`), `app/os_macos.go` (`gio_onMouse`),
+`app/window.go` (the window's px per dp for the tap rule),
+`app/clack_dblclick_windows.go`, `app/internal/windows/clack_dblclick.go`,
+`app/clack_dblclick_macos.go`, `widget/editor.go` (multi-clicks, drags) with
+`widget/clack_words.go` (new).
+
+Upstream makes a press the next click of a run (`NumClicks` 2, 3, …) when
+it comes less than a fixed 200 ms after the last press, wherever it lands.
+Chromium, Slack's desktop app, counts by the platform, and most double
+clicks are slower than 200 ms: on Windows, whose default is 500 ms, two
+clicks 300 ms apart were two single clicks in Clack. The composer's +
+opened and closed its menu instead of running the file chooser (Karim,
+2026-11-17), and a double click on a word placed the caret.
+
+`Click` now counts each press by `clickrule.Current()`, which package app
+sets for its backend in an init:
+
+- Windows: Blink's `WebMouseEventBuilder::Build`
+  (`ui/events/blink/web_input_event_builders_win.cc`), where Chrome's
+  pages get their click counts. A press no later than `GetDoubleClickTime()`
+  after the last, and within half of `SM_CXDOUBLECLK` and `SM_CYDOUBLECLK`
+  of the run's first press, counts on, with no cap. A move or a leave out
+  of that box ends the run, so on Windows `Click` also asks for `Move` and
+  `Drag`. Chromium reads both settings on every event, and so does `Read`
+  on every press: a change in the Mouse settings applies to the next click.
+- macOS: Chromium takes AppKit's count (`[event clickCount]`,
+  `components/input/web_input_event_builders_mac.mm`), so `gio_onMouse`
+  passes it on in the new `pointer.Event.Clicks` and `Click` uses it as
+  is: AppKit's own time and distance, run across widgets as Chromium's is.
+  A press without it (a test's) counts on within
+  `NSEvent.doubleClickInterval`, read on every press, and 2 px.
+- X11, Wayland and the rest: `ui::MouseEvent::GetRepeatCount` and
+  `IsRepeatedClickEvent` (`ui/events/event.cc`), which every native mouse
+  event of Chromium's Linux backends goes through (`InitializeNative`):
+  500 ms (`kDoubleClickTimeMs`; Chromium doesn't read GTK's
+  gtk-double-click-time or XSETTINGS' Net/DoubleClickTime, and neither
+  does this), 2 px either way of the last press (`kDoubleClickWidth`,
+  `kDoubleClickHeight` 4), the same flags, so a press with other
+  modifiers starts over, and a fourth quick click is a single again
+  (`SetClickCount` stops at 3 and its triple-click flag makes the next
+  press's flags differ).
+
+A touch, or a pen (Gio reports both as `pointer.Touch`), counts by its own
+rule on every platform, `clickrule.Tap`, which the mouse's settings don't
+touch: Chromium's gesture detector (`ui/events/gesture_detection`
+`GestureDetector::IsRepeatedTap` and its single tap repeat count, with
+`GestureConfigurationAura`'s values from `gesture_configuration.h`). A press
+no later than 400 ms (`double_tap_timeout_in_ms`) after the last tap's
+release and nearer than 20 dp (`max_distance_between_taps_for_double_tap`,
+plus the detector's .05 epsilon) to that tap's press counts on, if that tap
+stayed within 15 dp (`max_touch_move_in_pixels_for_click`) of where it went
+down; the count goes 1, 2, 3 and round again (`max_tap_count`), and
+modifiers don't count. The first version counted taps by the mouse's rule:
+on Windows a second tap had to land within 2 px of the first, and the
+router's Leave after every touch release went through the box check, so a
+finger lifting a few px from where it went down ended the run; a double tap
+on a word in the composer placed the caret (composer-plus-dblclick review,
+2026-11-22). Distances are dp in the window's scale: `app.Window` keeps its
+px per dp in its router's values (patch 15, `clickrule.PxPerDp`); a router
+without one (a test's) counts 1.
+
+The count is the window's, whatever widget each press lands on. Blink
+takes a press's count from the platform's event
+(`EventHandler::HandleMousePressEvent`: `SetClickCount(mouse_event.click_count)`)
+and resets it for no element, and the platform counts by time and place
+alone (Windows' and X11's counters are process-wide statics, AppKit's per
+window). So the router keeps the window's run (`clickrule.Run`, fed every
+pointer event `Queue` gets, not the state replays) and stamps every press
+with its count in `pointer.Event.Clicks`, and every release with its
+press's, as AppKit does on macOS, where the backend's count stays. The
+first version counted per `Click`: on Linux and Windows the composer's +
+pressed, its menu's scrim pressed on the same spot, then the + again inside
+the double-click time made the + see a double click and open the file
+chooser, where Slack sees a triple click (detail 3, no dblclick) and only
+opens the menu again (composer-plus-dblclick review, 2026-11-22).
+`Click` no longer asks for `Move` and `Drag` on Windows: the router's run
+sees every move. A press of other buttons than the last starts a new run
+(`Run` keeps the buttons): Linux's `ui::MouseEvent::IsRepeatedClickEvent`
+compares the presses' flags, the buttons down with the modifiers, and
+Windows' `WebMouseEventBuilder` counts on only while `result.button ==
+s_last_click_button`. The run used to count any button's press, so a
+right (middle, back) click on a spot then a left click there was the left
+button's double click: the composer's + opened its file chooser, a column
+edge reset, a plugin element got a dblclick and message text selected a
+word (dblclick-relatives review, 2026-11-22).
+
+`ClickRun` gives the count to widgets that read their own pointer events
+(the window's, or for a press that comes without one its own by the
+platform's rule): `Click` gives it its presses, releases, cancels and
+leaves, and a widget that drags (Clack's column resizer, the video
+picture-in-picture's handles) also gives it its drags (`Dragged`). A drag
+past the platform's slop from the press (a tap's: 15 dp) ends the run, so
+the press after it is a single click however soon and near it comes; in
+Chromium a double click can't follow a drag either (Windows ends the run
+when the pointer leaves its box, Linux and AppKit count only a press near
+the last). The handles' first version counted any press within the
+double-click time of the last as a double click, and with a slow setting a
+handle taken again after a drag snapped back to its default width.
+
+An `Editor`'s clicks select as Blink's `SelectionController` does in an
+`<input>` or a `<textarea>` (`widget/clack_words.go`): 2 the word, its
+punctuation a word of its own, a run of spaces, or another character with
+its marks: the segment of ICU's word break iterator with Chromium's rules
+(`clackWordSegment`, UAX #29's WB3 to WB16 from `third_party/icu`'s
+`source/data/brkitr/rules/word.txt`): letters, digits, marks and
+connectors make words, joined over one apostrophe, curly quote, middle dot
+or other MidLetter or MidNumLet mark between letters and one period,
+comma, semicolon, apostrophe or other MidNum mark between digits. A period
+between letters doesn't join them (Chromium's `patches/wordbrk.patch`
+moves the full stops from MidNumLet to MidNum "so that FQDN labels can be
+split at '.'"), nor does a colon (ICU takes it out of MidLetter; Blink's
+`WordBreakSwedish`: "k:a" is two words in English): `fmt.Println`,
+`TODO:fix` and `www.google.com` are words apart. The first version joined
+both, by UAX #29's defaults (dblclick-relatives review). Kana and
+ideographs make runs of their own; ICU's dictionaries split those further
+and Gio has none. On Windows a word takes the whitespace after it
+(`settings.json5` `selectTrailingWhitespaceEnabled`). `ClackWordRange` is
+exported for Clack's rich text, which selects by the same rules. After the
+last word of a line that wraps (the caret at the line's end, or past it,
+where Gio puts the caret at the next line's start), a double click takes
+that word, as Blink's `ChooseWordSide` picks `kPreviousWordIfOnBoundary`
+at the end of a line that isn't its paragraph's (`selection_adjuster.cc`:
+"If the caret is after the last word in a soft-wrapped line ... select
+that last word"); it took the next line's first word.
+3 and more the paragraph with its break (`kParagraph`, "Include the
+paragraph break"), not the visual line. A drag after either extends by that
+granule, keeping the first (`ExtendSelectionAsDirectional`). Upstream
+selected the non-space run around the caret, then the visual line, and
+stopped the drag.
+
+Presses at the same time still count on: Chromium skips those as one
+native event processed twice, but in Gio they're a test's, and upstream
+counted them. `gesture.DoubleClickTime()` is the platform's interval now,
+for code that counts clicks itself (Clack's link clicks in richview, its
+plugin DOM's dblclick in slackc and the composer's seeded click; richview
+and slackc have stock-Gio shims,
+`gio_patch48*.go`). Tests: `gesture` `TestMouseClicks`,
+`TestClackClickRuleDefault`, `TestClackClickRuleWindows` (the rule read
+again after the setting changes), `TestClackClickOSCount`,
+`TestClackClickTaps` (taps under the Windows and Linux mouse rules: 6 and
+19 px apart, lifting 6 px, 400 and 410 ms after the release, the fourth a
+single, a mouse click after a tap), `TestClackClickTapScale` (the router's
+px per dp), `TestClackClickRunDrag` (jitter inside the slop, a drag past
+it, AppKit's count after a drag, a tap's drag); in Clack,
+`TestResizerDragEndsDoubleClick` and `TestPipDragEndsDoubleClick`;
+`TestClackClickWindowCount` (+, scrim, + on one spot: 1, 2, 3);
+`TestClackClickRunButtons` (right, middle or back, then left: a single;
+left, right, left: two singles); `widget` `TestClackEditorDoubleClickWord`,
+`TestClackEditorDoubleClickDragByWord`, `TestClackEditorTripleClickParagraph`,
+`TestClackEditorTrailingSpaceOnWindows`, `TestClackWordRangeLikeChromium`,
+`TestClackEditorDoubleClickWrappedLineEnd`;
+`io/input`'s `TestPartialEvent` expects its presses' count; on real
+windows, `TestClackDoubleClickWindows` (SendInput clicks 400 ms apart at
+`SetDoubleClickTime` 500 and 300; `CLACK_WINDOWS_DBLCLICK_TESTS`, ci's
+windows-applog job) and `TestClackClickCountMac` (AppKit's counts through
+`gio_onMouse`; `CLACK_MACOS_WINDOW_TESTS`, ci's macos job, with a click
+area added to the title bar tests' window).
+
 ## 49. io/input: every handler caught up with where the pointer is
 
 `io/input/clack_reset.go` (new: `Source.ResetPointers`, its command,
@@ -2885,3 +3057,96 @@ comes back; a move nothing read, another tag's area), in every job that
 runs `io/input`'s tests. In Clack: richview's canvas-card follow
 (`internal/ui/richview/gio_patch57.go`) and `internal/ui`'s
 `TestHoverCardAnchorCanvas*`. Not in `UPSTREAM.patch`.
+
+## 58. app: macOS's terminate: asks the program first (TerminateEvent)
+
+`app/os_macos.m` (`GioAppDelegate`'s `applicationShouldTerminate:`,
+`gio_replyToTerminate`), `app/clack_exit_macos.go` (new:
+`gio_onShouldTerminate`, `replyToTerminate`), `app/clack_exit.go` (new:
+`TerminateEvent`).
+
+The Dock's Quit, logging out, restarting and shutting down, and a quit
+Apple Event (`osascript -e 'quit app "Clack"'`, Activity Monitor's Quit)
+all reach `-[NSApplication terminate:]`. Gio's delegate had no
+`applicationShouldTerminate:`, so AppKit answered for it (terminate now)
+and called `exit()`: no Go code ran, and Clack ended with no exit line,
+no session flush and no window teardown; the next start blamed a kill or
+a crash (review of karim-1118, 2026-11-19). Electron, Slack's shell,
+overrides `terminate:` so the app's own quit runs
+(shell/browser/mac/electron_application.mm).
+
+Now the delegate asks the program: a program ranging over `app.Events`
+gets a `TerminateEvent` (delivered on the main thread, inside the
+callback, as `URLEvent`s are) and AppKit waits for it
+(`NSTerminateLater`), running the main run loop in its modal panel mode,
+which still serves the main dispatch queue (`runOnMain`, so
+`Window.Perform` and frames go on). The program quits as its own Quit
+does and the process ends when it exits; `replyToTerminate` answers
+AppKit for a program that carries on. One that took the event and
+neither ends nor answers within 15 s (a program ranging over `Events`
+that ignores it) is terminated then. A program that doesn't range over
+`Events` (`app.Main`) is terminated now, as before. Clack's main loop
+logs the reason and records it first, then quits (cmd/clack/main.go).
+
+Tests: `app/clack_exit_darwin_test.go` (`TestTerminateEventMac`,
+CLACK_MACOS_WINDOW_TESTS on ci's macos job): AppKit's `terminate:`
+(`cocoatest.Terminate`) brings a `TerminateEvent`, the main thread runs
+work while AppKit waits, and after `replyToTerminate(false)` a second
+`terminate:` asks again. Clack's end to end: ci's macos step "macOS quit
+Apple Event (Gio patch 58)" quits a signed-out Clack.app with
+`osascript` and finds its exit line in clack.log and in its run record.
+Not in `UPSTREAM.patch`.
+
+## 59. app: X11's IO error handler lets the program say why it ends (X11ConnectionLost)
+
+`app/clack_exit_x11.c` (new: `gio_x11IOError`,
+`gio_x11SetIOErrorHandler`), `app/clack_exit_x11.go` (new:
+`gio_onX11IOError`), `app/os_x11.go` (the handler installed after
+`XOpenDisplay`), `app/clack_exit.go` (new: `X11ConnectionLost`).
+
+With no handler of its own, a Gio program whose X server connection
+breaks (the X session ends before any SIGTERM comes, the server crashes
+or is killed, xkill) goes through Xlib's `_XDefaultIOError`, which
+prints "X connection … broken" and calls `exit(1)`: Clack ended with no
+exit line (review of karim-1118). Now Xlib's IO error handler calls
+`X11ConnectionLost` when it's set, then exits with status 1 as the
+default handler does: an IO error handler must not return. Clack logs
+and records its exit line there, flushing at most a second.
+
+Tests: `app/clack_exit_x11_test.go` (`TestX11ConnectionLost`,
+CLACK_X11_ASKED_TESTS on ci's linux-gio job): a helper process draws a
+window on a private Xvfb, the test kills that Xvfb, and the helper calls
+`X11ConnectionLost` and exits with status 1. Not in `UPSTREAM.patch`.
+
+## 60. gesture: a Hover ends on a Cancel of any pointer
+
+`gesture/gesture.go` (`Hover.Update`): a `pointer.Cancel` clears the
+hover whatever its `PointerID`; a Leave still has to name the pointer
+that entered. `Click` already ends its hover on any Cancel.
+
+A tag the router doesn't see in a frame's ops loses its handler, and the
+events queued for it go with it (`Router.Frame`). A Hover the pointer
+left in such a frame never reads that Leave: a message's gutter time is
+drawn only while its row is hovered, so moving off the time straight into
+the next row skips it, and a row scrolled away goes the same way. When
+the tag is laid out again the router makes a new handler, whose first
+event is `ResetEvent`'s `pointer.Event{Kind: pointer.Cancel}`, with
+pointer id 0. On Windows Gio numbers the mouse 1 (`EnableMouseInPointer`,
+GET_POINTERID_WPARAM), so Hover kept the dropped hover: the gutter time's
+tooltip came up at once over the next message and stayed (the
+patched-tooltips review, 2026-11-22). Patch 49 sends the mouse's own id
+for the inspect tool's reset; this is the router's reset of a single
+handler, which patch 49 doesn't reach. macOS and X11 number the mouse 0,
+so they never showed it.
+
+Every `gesture.Hover` in Clack takes the fix: the sidebar's headings,
+draft pencil and outbox, the thread title, the Activity, Later, Threads,
+Unreads and pins rows, the search list, invites, the channel card's face,
+the composer's attach menu and GIF picker, the huddle suffix, workflow,
+code-channel and agent nuggets.
+
+Tests: `gesture/clack_hover_cancel_test.go`
+(`TestClackHoverEndsOnResetCancel`: the pointer leaves in a frame that
+doesn't lay the Hover out, for mouse ids 0 and 1), in ci's linux-gio
+job. In Clack: `internal/ui/messages`' `TestGutterTimeTipEndsOnWindowsMouse`
+(the gutter time's own trigger). Not in `UPSTREAM.patch`.

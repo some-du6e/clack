@@ -55,15 +55,14 @@ var cdTabLabels = map[int]string{
 }
 
 const (
-	cdWidth       = 580 // dialog width
-	cdMaxH        = 765 // dialog height cap; window height minus 2x68 below that
-	cdMargin      = 68
-	cdRadius      = 8
-	cdPadX        = 28 // header, card and list side inset
-	cdHeadH       = 130
-	cdHeadDMH     = 188
-	cdLinkPrefix  = "https://hackclub.slack.com/archives/"
-	cdUnsupported = "Not supported yet"
+	cdWidth      = 580 // dialog width
+	cdMaxH       = 765 // dialog height cap; window height minus 2x68 below that
+	cdMargin     = 68
+	cdRadius     = 8
+	cdPadX       = 28 // header, card and list side inset
+	cdHeadH      = 130
+	cdHeadDMH    = 188
+	cdLinkPrefix = "https://hackclub.slack.com/archives/"
 )
 
 var cdTileBg = argb(0x1a1d9bd1) // #1d9bd1@0.1 icon tiles
@@ -504,6 +503,8 @@ func (d *ChannelDetails) Escape() bool {
 		if d.agents != nil {
 			d.agents.filt.open = false
 		}
+	case d.x.dlg.rt != nil && d.x.dlg.rt.unitDD.open: // the retention modal's Days / Years menu
+		d.x.dlg.rt.unitDD.open = false
 	case d.escapeDialog():
 	case d.editing:
 		d.editing, d.editErr = false, ""

@@ -53,6 +53,9 @@ type Timeline struct {
 }
 
 type Store struct {
+	// released: Release ran; the package's maps keyed by *Store keep it
+	// no more (a late reader gets state kept nowhere)
+	released    atomic.Bool
 	mu          sync.RWMutex
 	Self        slack.User
 	TeamID      string
@@ -129,6 +132,8 @@ type Store struct {
 	ThreadsUnread          bool
 	ThreadMentions         int
 	ThreadsUnreadByChannel map[string]int
+	// notesMaxTS is the notifications store's maxTs (notifications_maxts.go)
+	notesMaxTS string
 	// countsLive: a client.counts answer was installed (SetCounts*), so the
 	// boot data's thread state no longer applies (bootdata.go)
 	countsLive bool
@@ -138,6 +143,7 @@ type Store struct {
 	names       map[string]string
 	prefsCached bool
 	experiments map[string]string                 // the last experiments.getByUser groups (diskCache.Experiments)
+	entPrefs    json.RawMessage                   // the last enterprise.prefs.get answer (diskCache.EnterprisePrefs)
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
@@ -1232,6 +1238,23 @@ func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
 	return c, ok
 }
 
+// ConvJSON is the conversation the store holds for id, a sidebar one or
+// one outside it (ExtConv), as JSON written under the store's lock: what a
+// caller hands on whole to another goroutine, as showNotification's
+// modelObject.
+func (s *Store) ConvJSON(id string) (json.RawMessage, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.Convs[id]
+	if !ok || c == nil {
+		if c, ok = s.ext[id]; !ok || c == nil {
+			return nil, false
+		}
+	}
+	b, err := json.Marshal(c)
+	return b, err == nil
+}
+
 // ---- bots ----
 
 // BotInfo is a bot's display metadata (bots.info), cached on disk.
@@ -1240,6 +1263,7 @@ type BotInfo struct {
 	Icon     string `json:"icon,omitempty"`
 	AppID    string `json:"app_id,omitempty"`
 	Workflow bool   `json:"is_workflow_bot,omitempty"` // a Workflow Builder bot (badged WORKFLOW)
+	TeamID   string `json:"team_id,omitempty"`         // bots.info team_id (the hover card's bot_home_team)
 }
 
 func (s *Store) PutBot(id string, b BotInfo) {
@@ -1420,6 +1444,7 @@ func (s *Store) TimelineIDs() []string {
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
+	s.noteAddedLocked(msgs)
 	t := &Timeline{Msgs: msgs, HasMore: hasMore, Loaded: true, EndGen: s.endGen}
 	if old := s.timelines[ch]; old != nil {
 		t.Epoch = old.Epoch // the same window, written whole (a test's)
@@ -1447,6 +1472,7 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs)
 	msgs = s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
@@ -1469,6 +1495,7 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 func (s *Store) Upsert(ch string, m slack.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedTSLocked(m.TS)
 	t := s.timelines[ch]
 	if t == nil {
 		return
@@ -1890,6 +1917,7 @@ func (s *Store) Thread(ch, ts string) ([]slack.Message, bool) {
 func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 	SortAsc(msgs)
 	s.mu.Lock()
+	s.noteAddedLocked(msgs)
 	s.threads[ch+"/"+ts] = msgs
 	s.setThreadWholeLocked(ch+"/"+ts, msgs) // the whole thread: one slice, both ends (thread_slices.go)
 	s.mu.Unlock()
@@ -1915,6 +1943,7 @@ func (s *Store) AddReplyNoted(ch string, m slack.Message) {
 }
 
 func (s *Store) addReplyLocked(ch string, m slack.Message) {
+	s.noteAddedTSLocked(m.TS)
 	key := ch + "/" + m.ThreadTS
 	if th, ok := s.threads[key]; ok {
 		replaced := false
@@ -2072,6 +2101,14 @@ type diskCache struct {
 	// persistenceEnabled), so checks read the account's groups before the
 	// call answers again.
 	Experiments map[string]string `json:"experiments,omitempty"`
+	// EnterprisePrefs is the last enterprise.prefs.get answer as Slack
+	// sent it: its enterprisePrefs store is persisted (TI4y,
+	// persistenceEnabled), so the org's prefs hold from the first frame.
+	EnterprisePrefs json.RawMessage `json:"enterprise_prefs,omitempty"`
+	// NotificationsMaxTS is the notifications store's maxTs, which Slack
+	// persists too (storeKey "notifications", persistenceEnabled;
+	// notifications_maxts.go)
+	NotificationsMaxTS string `json:"notifications_max_ts,omitempty"`
 }
 
 // MaxSavedUsers bounds the users meta.json keeps: the most recently fetched
@@ -2109,6 +2146,24 @@ func (s *Store) SetExperimentGroups(g map[string]string) {
 	s.experiments = cp
 	s.mu.Unlock()
 	s.gen.Add(1)
+}
+
+// SetEnterprisePrefs keeps enterprise.prefs.get's answer for the disk
+// cache.
+func (s *Store) SetEnterprisePrefs(raw json.RawMessage) {
+	cp := append(json.RawMessage(nil), raw...)
+	s.mu.Lock()
+	s.entPrefs = cp
+	s.mu.Unlock()
+	s.gen.Add(1)
+}
+
+// CachedEnterprisePrefs returns the enterprise.prefs.get answer the disk
+// cache (or the last SetEnterprisePrefs) holds, nil when there is none.
+func (s *Store) CachedEnterprisePrefs() json.RawMessage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append(json.RawMessage(nil), s.entPrefs...)
 }
 
 // CachedExperimentGroups returns the experiment groups the disk cache (or
@@ -2402,8 +2457,14 @@ func (s *Store) installCacheBase(d *diskCache, users []*slack.User) {
 			}
 		}
 	}
+	if TSLess(s.notesMaxTS, d.NotificationsMaxTS) { // a session's newer one stays (it can't be older than the disk's)
+		s.notesMaxTS = d.NotificationsMaxTS
+	}
 	if d.Experiments != nil {
 		s.experiments = d.Experiments
+	}
+	if len(d.EnterprisePrefs) > 0 {
+		s.entPrefs = d.EnterprisePrefs
 	}
 	s.mu.Unlock()
 	if d.Prefs != nil {
@@ -2541,6 +2602,8 @@ func (s *Store) SaveCache() error {
 	if s.experiments != nil {
 		d.Experiments = s.experiments // replaced whole, never changed in place
 	}
+	d.EnterprisePrefs = s.entPrefs // replaced whole too
+	d.NotificationsMaxTS = s.notesMaxTS
 	// the stored users are never changed in place (PutUsers replaces
 	// them), so they're written after the lock is let go: the viewer, the
 	// people the sidebar names (DM partners, group DM members: a warm

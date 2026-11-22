@@ -18,8 +18,40 @@ func playThen(t *testing.T, c *Controller, r *Row, f *richtext.File) {
 	t.Helper()
 	frame(c, [2]any{r, f})
 	click(c, r, f)
-	waitFor(t, "playing", 5*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	waitTilePlaying(t, c, r, f, nil)
 	time.Sleep(300 * time.Millisecond)
+}
+
+// waitTilePlaying waits for f's tile in r to play, on the tile's own state
+// rather than a span of wall time: while it loads (from the click until
+// it plays) it waits on, up to a minute for a hang; a tile that neither
+// loads nor plays for 5 s fails. draw, when set, runs a frame each time.
+// The fixed waits ran out under a loaded runner with the video on its
+// way (α.133's release test job, run 44948141967).
+func waitTilePlaying(t *testing.T, c *Controller, r *Row, f *richtext.File, draw func()) {
+	t.Helper()
+	hang := time.Now().Add(time.Minute)
+	var still time.Time // since the tile last loaded or played
+	for {
+		if draw != nil {
+			draw()
+		}
+		st := state(t, c, r, f)
+		switch {
+		case st.Playing && !st.Loading:
+			return
+		case st.Loading:
+			still = time.Time{}
+		case still.IsZero():
+			still = time.Now()
+		case time.Since(still) > 5*time.Second:
+			t.Fatalf("the video neither loads nor plays for 5 s (media error %d)", st.Err)
+		}
+		if time.Now().After(hang) {
+			t.Fatalf("the video still loading after a minute (media error %d)", st.Err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // pipFrame is a full layout drawing tiles and the mini player.
@@ -31,6 +63,51 @@ func pipFrame(c *Controller, tiles ...[2]any) {
 }
 
 func pipPlaying(c *Controller) bool { _, _, p := c.PipPlayback(); return p }
+
+// waitPipPlaying waits for the docked mini player to play, on its own
+// state rather than a span of wall time: while its tile is loading (the
+// spinner, from the mount until it plays; a media error leaves it on) it
+// waits on, up to a minute for a hang; a tile that neither loads nor
+// plays for 5 s fails. Five seconds of wall time ran out under a loaded
+// runner with the mini player still on its way (α.133's release test job,
+// run 44948141967: TestCornerDockButton).
+func waitPipPlaying(t *testing.T, c *Controller, tiles ...[2]any) {
+	t.Helper()
+	hang := time.Now().Add(time.Minute)
+	var still time.Time // since the tile last loaded or played
+	for {
+		pipFrame(c, tiles...)
+		playing, loading, errCode, docked := pipTileState(c)
+		switch {
+		case playing:
+			return
+		case loading:
+			still = time.Time{}
+		case still.IsZero():
+			still = time.Now()
+		case time.Since(still) > 5*time.Second:
+			t.Fatalf("the mini player neither loads nor plays for 5 s (docked %v, media error %d)", docked, errCode)
+		}
+		if time.Now().After(hang) {
+			t.Fatalf("the mini player still loading after a minute (media error %d)", errCode)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// pipTileState is the mini player's tile's playing, loading and error, and
+// whether one is docked at all.
+func pipTileState(c *Controller) (playing, loading bool, errCode int, docked bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pip == nil {
+		return false, false, 0, false
+	}
+	if t := c.tiles[c.pip.k]; t != nil {
+		return t.playing, t.loading, t.errCode, true
+	}
+	return false, false, 0, true
+}
 
 // A playing video crossing under 10% visible docks (useScrollDockTrigger):
 // not on the observer's first report; the inline player pauses and shows
@@ -54,11 +131,11 @@ func TestPipDocksOnScroll(t *testing.T) {
 	if tr := c.PipTrigger(); tr != "scroll" {
 		t.Errorf("trigger %q, want scroll", tr)
 	}
-	waitFor(t, "the inline player paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player paused", 5*time.Second, func() bool { return !state(t, c, r, f).Playing })
 	if st := state(t, c, r, f); !st.InPip {
 		t.Errorf("the inline tile while docked: %+v, want it showing it's in the mini player", st)
 	}
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c, [2]any{r, f}); return pipPlaying(c) })
+	waitPipPlaying(t, c, [2]any{r, f})
 	at, _, _ := c.PipPlayback()
 	if at < left-100*time.Millisecond {
 		t.Errorf("the mini player is at %v, the inline player left at %v", at, left)
@@ -80,9 +157,9 @@ func TestPipObserverPerMount(t *testing.T) {
 	playThen(t, c, r, f)
 	r.MediaVisible(f, 0.5) // seen
 	frame(c)               // another conversation: docks
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c); return pipPlaying(c) })
+	waitPipPlaying(t, c)
 	c.ClosePip(true) // Jump to message: the conversation opens again
-	waitFor(t, "the inline player playing on", 5*time.Second, func() bool { frame(c, [2]any{r, f}); return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player playing on", 5*time.Second, func() bool { frame(c, [2]any{r, f}); return state(t, c, r, f).Playing })
 	r.MediaVisible(f, 0.05) // the list not at the message yet
 	if _, _, ok := c.Pip(); ok {
 		t.Fatalf("docked (%q) on the first report after it was laid out again", c.PipTrigger())
@@ -123,7 +200,7 @@ func TestPipDocksOnNavigate(t *testing.T) {
 	if _, _, ok := c.Pip(); !ok || c.PipTrigger() != "navigate" {
 		t.Fatalf("the message went while it played: no mini player (trigger %q)", c.PipTrigger())
 	}
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c); return pipPlaying(c) })
+	waitPipPlaying(t, c)
 	for i := 0; i < 10; i++ {
 		pipFrame(c)
 		time.Sleep(20 * time.Millisecond)
@@ -142,7 +219,7 @@ func TestPipCloseResumes(t *testing.T) {
 	playThen(t, c, r, f)
 	r.MediaVisible(f, 0.5)
 	r.MediaVisible(f, 0.05)
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c, [2]any{r, f}); return pipPlaying(c) })
+	waitPipPlaying(t, c, [2]any{r, f})
 	time.Sleep(200 * time.Millisecond)
 	at, _, _ := c.PipPlayback()
 	c.ClosePip(false) // Close
@@ -160,12 +237,12 @@ func TestPipCloseResumes(t *testing.T) {
 	// again, then Jump to message: it plays on inline from there
 	r.MediaVisible(f, 0.5)
 	click(c, r, f)
-	waitFor(t, "playing again", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "playing again", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	r.MediaVisible(f, 0.05)
-	waitFor(t, "docked and playing", 5*time.Second, func() bool { pipFrame(c, [2]any{r, f}); return pipPlaying(c) })
+	waitPipPlaying(t, c, [2]any{r, f})
 	at, _, _ = c.PipPlayback()
 	c.ClosePip(true)
-	waitFor(t, "the inline player playing on", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player playing on", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	if pos := state(t, c, r, f).Player.State().Pos; pos < at-100*time.Millisecond {
 		t.Errorf("Jump to message: the inline player at %v, the mini player was at %v", pos, at)
 	}
@@ -182,7 +259,7 @@ func TestPipViewerDockGallery(t *testing.T) {
 	if c.PipTrigger() != "manual" {
 		t.Fatalf("trigger %q, want manual", c.PipTrigger())
 	}
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c, [2]any{r, f}); return pipPlaying(c) })
+	waitPipPlaying(t, c, [2]any{r, f})
 	c.ClosePip(true)
 	time.Sleep(100 * time.Millisecond)
 	if st := state(t, c, r, f); st.Playing || st.Mounted {
@@ -205,11 +282,11 @@ func TestPipPendingResume(t *testing.T) {
 		_, ok := c.TileState("channel", "C1", "1.0", f.ID)
 		return !ok
 	})
-	waitFor(t, "the mini player playing", 5*time.Second, func() bool { pipFrame(c); return pipPlaying(c) })
+	waitPipPlaying(t, c)
 	at, _, _ := c.PipPlayback()
 	c.ClosePip(true) // Jump to message: the conversation opens again
 	frame(c, [2]any{r, f})
-	waitFor(t, "the inline player playing from there", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
+	waitForTile(t, c, r, f, "the inline player playing from there", 5*time.Second, func() bool { return state(t, c, r, f).Playing })
 	if pos := state(t, c, r, f).Player.State().Pos; pos < at-100*time.Millisecond {
 		t.Errorf("laid out again: the inline player at %v, the mini player was at %v", pos, at)
 	}

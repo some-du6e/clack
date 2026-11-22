@@ -87,7 +87,7 @@ func (s *Server) hugeThreadFind(ch, ts, q string) ([]slack.Message, bool) {
 	return out, true
 }
 
-var hugeStates sync.Map // *Server -> *hugeState
+var hugeStates = newPerServer() // *Server -> *hugeState
 
 func (s *Server) hugeThread() *hugeState {
 	v, ok := hugeStates.Load(s)

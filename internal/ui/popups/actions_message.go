@@ -609,6 +609,13 @@ func actMsgText(m core.Message) string {
 	return m.Text
 }
 
+// actPreviewSegs are actMsgPreview's text: the message, its files and
+// attachments after its text, with mentions as mention slugs and no raw
+// tokens (srPreviewRuns), its lines kept.
+func actPreviewSegs(h Host, m *core.Message) []srSeg {
+	return srRunSegs(srPreviewRuns(h, m), nil, false)
+}
+
 // actAuthor resolves the display name and avatar URL of m's author.
 func actAuthor(h Host, m core.Message) (name, av string) {
 	name, av = m.Name, m.Avatar
@@ -640,7 +647,8 @@ func actMsgPreview(gtx layout.Context, h Host, m core.Message, boxed bool) layou
 	innerW := maxInt(1, w-padL-padR)
 	name, av := actAuthor(h, m)
 	when := dayTime(tsTime(m.TS), time.Now())
-	body := actMsgText(m)
+	segs := actPreviewSegs(h, &m)
+	body := strings.TrimSpace(srSegsText(segs))
 
 	call, d := record(loose(gtx, image.Pt(innerW, 1<<20)), func(gtx layout.Context) layout.Dimensions {
 		avPx, gap := dp(gtx, 20), dp(gtx, 8)
@@ -662,7 +670,19 @@ func actMsgPreview(gtx layout.Context, h Host, m core.Message, boxed bool) layou
 			return layout.Dimensions{Size: image.Pt(innerW, y)}
 		}
 		bc, bd := record(loose(gtx, image.Pt(tw, 1<<20)), func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, body, 4)
+			lh := dp(gtx, 22)
+			ell := textW(gtx, th, 15, theme.Regular, "…")
+			toks, lines, over := srWrapFit(gtx, th, segs, tw, 4, ell)
+			srDrawToks(gtx, th, cl, toks, lh, cl.Fg)
+			if over {
+				last := lines - 1
+				at(gtx, image.Pt(srEndX(toks, last), last*lh), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+						return text(gtx, th, 15, theme.Regular, cl.Fg, "…")
+					})
+				})
+			}
+			return layout.Dimensions{Size: image.Pt(tw, lines*lh)}
 		})
 		macroAt(gtx, bc, image.Pt(x, y))
 		return layout.Dimensions{Size: image.Pt(innerW, y+bd.Size.Y)}
