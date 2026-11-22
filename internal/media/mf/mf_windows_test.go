@@ -289,7 +289,7 @@ func checkColors(t *testing.T, samples []sample) {
 	}
 	defer func() {
 		if t.Failed() {
-			trace(t, samples)
+			sampleTrace(t, samples)
 		}
 	}()
 	from := samples[0].at // where the clock was when the first frame was drawn
@@ -320,9 +320,9 @@ func checkColors(t *testing.T, samples []sample) {
 	}
 }
 
-// trace logs the samples (every nth, the last 8 whole) for a failed check:
+// sampleTrace logs the samples (every nth, the last 8 whole) for a failed check:
 // the clock's position, the frame's time and the one before, the colour.
-func trace(t *testing.T, samples []sample) {
+func sampleTrace(t *testing.T, samples []sample) {
 	t.Helper()
 	var b strings.Builder
 	n := max(len(samples)/40, 1)
@@ -684,7 +684,7 @@ func checkRGBA(t *testing.T, samples []sample) {
 	}
 	defer func() {
 		if t.Failed() {
-			trace(t, samples)
+			sampleTrace(t, samples)
 		}
 	}()
 	from := samples[0].at // where the clock was when the first frame was drawn
