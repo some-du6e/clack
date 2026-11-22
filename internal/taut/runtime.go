@@ -52,7 +52,14 @@ type runtime struct {
 // startRuntime creates the JS runtime, installs the host functions and
 // evaluates the TautAPI. It runs once, when the first plugin is enabled (or
 // a settings editor needs JS), never at Clack start without plugins.
+// startHook, when set, runs as a start begins (tests: a start held while
+// something else happens).
+var startHook func(*Taut)
+
 func (t *Taut) startRuntime() (*runtime, error) {
+	if startHook != nil {
+		startHook(t)
+	}
 	opts := jsrt.Options{
 		Fetch: t.opts.Fetch,
 		Storage: func(ns string) jsrt.KV {

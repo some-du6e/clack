@@ -312,6 +312,15 @@ func (t *Taut) Close() error {
 	}
 	defer huddles.Delete(t) // its huddle state beside it (huddle.go)
 	defer t.closeSubscribers()
+	// a start already under way finishes first: it holds startMu, and t.rt
+	// is nil until it ends, so this read none and returned while the boot
+	// went on writing its bytecode into CacheDir and then kept a live
+	// runtime on a closed Taut (TestPatchedReactionPillLikeNative's skip
+	// closed one mid-start: "TempDir RemoveAll cleanup: directory not
+	// empty", invalidate-relatives' full-test 45057092647). Started after
+	// closed is set, it sees it and closes what it made.
+	t.startMu.Lock()
+	t.startMu.Unlock()
 	t.startOnce.Do(func() { close(t.startDone) }) // never started (DeferStart): nothing waits for it
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
@@ -422,6 +431,16 @@ func (t *Taut) ensureRuntimeLocked() (*runtime, error) {
 	if t.rt != nil { // lost a race: keep the first
 		r.close()
 		return t.rt, nil
+	}
+	if t.closed.Load() { // Close came while it started: nothing keeps it
+		t.mu.Unlock()
+		r.close()
+		select {
+		case <-r.rt.Done():
+		case <-time.After(10 * time.Second):
+		}
+		t.mu.Lock()
+		return nil, jsrt.ErrClosed
 	}
 	t.rt = r
 	t.rtErr = nil

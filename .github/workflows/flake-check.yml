@@ -4875,6 +4875,40 @@ jobs:
           retention-days: 7
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
+  # flakes-1122d: Taut's Close waits for a runtime starting
+  # (TestCloseWaitsForAStartingRuntime holds the start), then the two
+  # reaction pill tests with no GPU, as full-test runs them (they skip;
+  # skipped mid-start, their TempDir's cleanup found the boot's file),
+  # COUNT each.
+  fl1122d-r-taut:
+    if: ${{ !inputs.only || startsWith('fl1122d-r-taut', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: taut, then the pill tests without a GPU (COUNT each)
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -timeout 10m -run '^TestCloseWaitsForAStartingRuntime$' ./internal/taut || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestPatchedReactionPillLikeNative$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -timeout 10m -run '^TestViewsPatchedReactionPillLikeNative$' ./internal/ui/views || rc=1
+          exit $rc
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   # flakes-1122c, macOS: Displays after the launch reads NSScreen afresh
   # (TestDisplaysMacAfterLaunchReadsLive), and TestDisplaysMac as the
   # process's first call, each in COUNT processes of its own (the launch's
@@ -5107,6 +5141,7 @@ jobs:
       - fl1122c-s-avf
       - fl1122c-r-views
       - fl1122c-s-displays
+      - fl1122d-r-taut
     if: ${{ always() && inputs.expect_fail != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10 # budget, min (a checkout, setup-go and the check)
