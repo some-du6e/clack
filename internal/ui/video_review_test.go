@@ -173,7 +173,7 @@ func TestVideoTenPercentPause(t *testing.T) {
 	e := filesEnv(t, image.Pt(1440, 900), false)
 	ch := fakeslack.FilesChannelID
 	m := e.filesMsg("video")
-	e.a.jumpToMessage(ch, m.TS, "")
+	e.a.jumpToMessage(ch, m.TS, "", false)
 	e.settle(800 * time.Millisecond)
 	tile := e.videoTileInView(t, m.TS)
 	l := e.filesList(t)
@@ -300,7 +300,7 @@ func TestVideoPrefsNoUnpromptedWrites(t *testing.T) {
 			t.Errorf("%s: the player is muted %v at %v, want muted %v at %v", step, ps.Muted, ps.Volume, muted, vol)
 		}
 	}
-	e.a.jumpToMessage(ch, m.TS, "")
+	e.a.jumpToMessage(ch, m.TS, "", false)
 	e.settle(800 * time.Millisecond)
 	tile := e.videoTileInView(t, m.TS)
 	clk := time.Second
@@ -322,7 +322,7 @@ func TestVideoPrefsNoUnpromptedWrites(t *testing.T) {
 		e.scroll(e.listPoint(), -600)
 		e.frame()
 	}
-	e.a.jumpToMessage(ch, m.TS, "")
+	e.a.jumpToMessage(ch, m.TS, "", false)
 	e.settle(800 * time.Millisecond)
 	none("scrolled away and back")
 	other := ""
@@ -335,7 +335,7 @@ func TestVideoPrefsNoUnpromptedWrites(t *testing.T) {
 	e.openChannel(other)
 	e.settle(300 * time.Millisecond)
 	e.openChannel(ch)
-	e.a.jumpToMessage(ch, m.TS, "")
+	e.a.jumpToMessage(ch, m.TS, "", false)
 	e.settle(800 * time.Millisecond)
 	none("left and back")
 	player("back", false, 1)

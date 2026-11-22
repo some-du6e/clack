@@ -32,6 +32,10 @@ import (
 type View struct {
 	doc  richtext.Doc
 	opts Options
+	// under is the opaque fill the View sits on when it isn't its
+	// palette's panel (SetUnder): the boxes' see-through fills (box.see)
+	// composite over it
+	under color.NRGBA
 
 	d       display
 	laidW   int
@@ -391,7 +395,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 					// Card hover: stronger border on top.
 					strokeRRect(gtx.Ops, b.r, b.radius, b.bw, b.hover)
 				default:
-					fillRadii(gtx.Ops, b.r, b.radii(), b.hover) // a wrapped pill's lines: square where it broke
+					fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover)) // a wrapped pill's lines: square where it broke
 				}
 			}
 		}
@@ -406,7 +410,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
 			if b := &v.d.boxes[i]; b.hoverOver && b.hov == 0 && b.comp == 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
-				fillRadii(gtx.Ops, b.r, b.radii(), b.hover)
+				fillRadii(gtx.Ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
 	}
@@ -722,7 +726,7 @@ func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
-				fillRadii(ops, b.r, b.radii(), b.hover)
+				fillRadii(ops, b.r, b.radii(), v.overUnder(b.hover, b.seeHover))
 			}
 		}
 	}
@@ -941,21 +945,66 @@ func (v *View) targetBounds(t int16) image.Rectangle {
 }
 
 // drawBox draws b, with its CSS part's fill when it has one.
+// SetUnder is the opaque fill the View is drawn over this frame, when it
+// isn't its palette's panel (a hovered or flashing message row; the zero
+// color: the panel). The palette's see-through fills (a mention's, code's,
+// a pre block's) composite over it, as Slack's rgba fills blend over the
+// row's own background: the jump highlight's yellow shows through them.
+func (v *View) SetUnder(c color.NRGBA) {
+	if c.A != 255 {
+		c = color.NRGBA{}
+	}
+	if c != v.under {
+		v.under = c
+		v.recorded = false // the fills are in the recording
+	}
+}
+
+// overUnder is fill over the View's under: see, the rgba a see-through
+// fill of the palette is flattened from (box.see), composited over it
+// (sRGB) instead of over the panel. An opaque fill (see zero) stays,
+// whatever its color.
+func (v *View) overUnder(fill, see color.NRGBA) color.NRGBA {
+	if v.under.A != 255 || see.A == 0 {
+		return fill
+	}
+	return Over(see, v.under)
+}
+
+// drawnFill is box b's fill as drawBox paints it (outside a hovered
+// component pill): its CSS part's background in its place (css), else its
+// own, composited over the View's under when it's see-through.
+func (v *View) drawnFill(b *box, css bool) color.NRGBA {
+	if !css || b.part == 0 {
+		return v.overUnder(b.fill, b.see)
+	}
+	if f := v.boxFill(b); f != b.fill {
+		return f // the part's own background, color or opacity, not the palette's fill
+	}
+	return v.overUnder(b.fill, b.see)
+}
+
 func (v *View) drawBox(ops *op.Ops, b *box, css bool) {
 	if b.hoverOver && b.comp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 && v.pillHoverFill(b) {
 		// a component pill, drawn each frame: hovered, its hover fill in
 		// place of its fill
 		bb := *b
-		bb.fill = b.hover
+		bb.fill = v.overUnder(b.hover, b.seeHover)
 		drawBox(ops, &bb)
 		return
 	}
 	if !css || b.part == 0 {
+		if f := v.drawnFill(b, false); f != b.fill {
+			bb := *b
+			bb.fill = f
+			drawBox(ops, &bb)
+			return
+		}
 		drawBox(ops, b)
 		return
 	}
 	bb := *b
-	bb.fill = v.boxFill(b)
+	bb.fill = v.drawnFill(b, true)
 	if ps := v.css.get(b.part); ps != nil {
 		bb.stroke = mulAlpha(bb.stroke, ps.alpha)
 	}
@@ -1698,7 +1747,17 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	}
 	switch tg.kind {
 	case tLink, tCard:
+		if tg.kind == tLink && tg.slug && tg.msgCh != "" && tg.id != "" {
+			if mh, ok := h.(MessageMentionHandler); ok {
+				mh.OpenMessageMention(tg.msgCh, tg.id, tg.msgThread, tg.url)
+				break
+			}
+		}
 		if tg.url == "" {
+			break
+		}
+		if mh, ok := h.(MrkdwnLinkHandler); ok && tg.kind == tLink && tg.mrkdwn {
+			mh.OpenMrkdwnLink(tg.url, text)
 			break
 		}
 		if lh, ok := h.(LinkTextHandler); ok && tg.kind == tLink {

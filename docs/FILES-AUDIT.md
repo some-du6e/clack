@@ -133,7 +133,6 @@ What TestRealWindowVideoFrames measured in those runs, playing the 320×180 fixt
 - Two copies of the same file don't sync their position while paused (fIJO's effect on `er`), and there's no Shift fine scrub with the mouse.
 - Audio still opens the file's page (no in-message audio player).
 - The visibility share comes from Gio patch 53 (io/input's Router.AreaBounds: the clipped area of a tag in the last frame), for every list.
-- A jump to a reply in a thread still puts two rows above it; Slack's thread list wasn't checked.
 
 ## Not changed, or still open
 

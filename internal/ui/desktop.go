@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/url"
 	"runtime"
+	"strings"
 
 	"gioui.org/io/system"
 	"gioui.org/widget"
@@ -26,11 +28,55 @@ func (a *App) OpenURL(uri string) {
 				u := argStr(args, "uri")
 				ok := a.openDeepLink(u)
 				if !ok {
-					log.Printf("ui: deep link not handled: %.80s", noQuery(u)) // the query can name a search or a message
+					log.Printf("ui: deep link not handled: %s", linkKind(u)) // its path and query can name a workspace or a message
 				}
 				return ok, nil
 			})
 	})
+}
+
+// linkKind is what a log line says of a link: its scheme, and a slack:
+// link's command, never its path or query (they can name a workspace, a
+// conversation or a message).
+func linkKind(u string) string {
+	p, err := url.Parse(u)
+	switch {
+	case err != nil || p.Scheme == "":
+		return "an unparsable link"
+	case p.Scheme == "slack":
+		if slackIDRE.MatchString(p.Host) && strings.ContainsAny(p.Host, "0123456789") {
+			return "slack://" + logTag(p.Host) // a team-scoped link's host is the workspace's id (slack://T…/magic-login)
+		}
+		return "slack://" + p.Host
+	}
+	return "a " + p.Scheme + " link"
+}
+
+// foreignTeam reports a slack:// link into another workspace: team= is
+// a workspace id (T…) that isn't this one's, and core doesn't know the
+// conversation (jumpToMessage's "Could not find suitable target
+// workspace").
+func (a *App) foreignTeam(uri, ch string) bool {
+	u, err := url.Parse(uri)
+	c := a.Core()
+	if err != nil || c == nil {
+		return false
+	}
+	team := u.Query().Get("team")
+	if team == "" || !strings.HasPrefix(team, "T") {
+		return false
+	}
+	c.S.RLock()
+	own := c.S.TeamID
+	c.S.RUnlock()
+	if own == "" || team == own {
+		return false
+	}
+	if _, ok := c.S.Conv(ch); ok {
+		return false
+	}
+	_, ok := c.S.ExtConv(ch)
+	return !ok
 }
 
 // openDeepLink is the shell's slack:// handler: it navigates (or opens a
@@ -43,13 +89,28 @@ func (a *App) openDeepLink(uri string) bool {
 		a.Post(func() { a.openChannelTab(ch, tab) })
 		return true
 	}
+	if ch, ts, thread, latest, ok := deepLinkMessage(uri); ok { // slack://channel?id=…&message=…&thread_ts=…
+		if a.foreignTeam(uri, ch) {
+			return false
+		}
+		a.Post(func() {
+			a.withVia("a deep link", func() {
+				if latest {
+					a.jumpLatest(ch, thread)
+				} else {
+					a.jumpToMessage(ch, ts, thread, false)
+				}
+			})
+		})
+		return true
+	}
 	route, user, ok := deepLinkRoute(uri)
 	if ok {
 		a.Post(func() {
 			if user != "" {
 				a.OpenUserProfile(user)
 			} else {
-				a.Navigate(route)
+				a.withVia("a deep link", func() { a.Navigate(route) })
 			}
 		})
 	}

@@ -110,6 +110,13 @@ func (s *Store) spreadLocked(ch string, m *slack.Message) {
 			}
 		}
 	}
+	for _, w := range s.windows[ch] { // a jump's window
+		for i := range w.Msgs {
+			if w.Msgs[i].TS == m.TS {
+				put(&w.Msgs[i])
+			}
+		}
+	}
 	if f := s.fetched[ch+"/"+m.TS]; f != nil {
 		put(f)
 		s.measureFetchedLocked(ch + "/" + m.TS)

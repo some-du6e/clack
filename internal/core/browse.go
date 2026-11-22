@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -972,7 +973,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer wg.Done()
 			bms, err := a.Bookmarks(ctx, ch)
 			if err != nil {
-				log.Printf("tabs %s: bookmarks.list: %v", ch, err)
+				log.Printf("tabs %s: bookmarks.list: %v", logtag.ID(ch), err)
 				for _, i := range folderTabs {
 					out[i].BookmarksUnknown = true
 				}
@@ -1000,7 +1001,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer func() { <-sem }()
 			f, err := a.tabFileTitle(ctx, t.FileID)
 			if err != nil {
-				log.Printf("tabs %s: files.info %s: %v", ch, t.FileID, err)
+				log.Printf("tabs %s: files.info %s: %v", logtag.ID(ch), logtag.ID(t.FileID), err)
 				t.TitleUnknown = true
 				return
 			}
@@ -1024,7 +1025,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 		}(&out[i])
 	}
 	wg.Wait()
-	log.Printf("tabs %s: %d tabs (%d files) in %s", ch, len(out), len(fileTabs), time.Since(t0).Round(time.Millisecond))
+	log.Printf("tabs %s: %d tabs (%d files) in %s", logtag.ID(ch), len(out), len(fileTabs), time.Since(t0).Round(time.Millisecond))
 	return out, nil
 }
 

@@ -378,7 +378,7 @@ func (l *lay) addSpansPlain(spans []richtext.Span, fs *flowStyle) {
 	for _, sp := range spans {
 		switch sp.Kind {
 		case richtext.Link: // a mrkdwn link (data-stringify-link)
-			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true})
+			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, mrkdwn: true})
 			k := l.faceFor(fs.face, fs.size, sp.Style)
 			l.addTextPart(&sp, fs, k, tg)
 		default:
@@ -1180,7 +1180,7 @@ func (l *lay) waveform(samples []int, x, y, w, h int) {
 
 func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 	p := &l.st.Palette
-	bg, fg := p.FileIconBg, p.FileIconText
+	bg, fg, see := p.FileIconBg, p.FileIconText, p.raw.FileIconBg
 	label := strings.ToUpper(f.Type)
 	switch strings.ToLower(f.Type) {
 	case "quip", "canvas": // Slack's canvas tile: a white sheet on blue
@@ -1191,9 +1191,9 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: sr, radius: l.dp(2), fill: rgb(255, 255, 255), target: -1})
 		return
 	case "pdf":
-		bg, fg = p.FileIconPDF, rgb(255, 255, 255)
+		bg, fg, see = p.FileIconPDF, rgb(255, 255, 255), color.NRGBA{}
 	case "zip", "gzip", "tar", "rar", "7z":
-		bg, fg = p.FileIconZip, rgb(255, 255, 255)
+		bg, fg, see = p.FileIconZip, rgb(255, 255, 255), color.NRGBA{}
 	}
 	if len(label) > 4 {
 		label = label[:4]
@@ -1202,7 +1202,7 @@ func (l *lay) fileIcon(f *richtext.File, x, y, s int) {
 		label = "FILE"
 	}
 	r := image.Rect(x, y, x+s, y+s)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, target: -1})
+	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, radius: l.dp(8), fill: bg, see: see, target: -1})
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face, Weight: font.Black}, size: l.sp(10), lineH: l.dp(12), col: fg, emoji: l.dp(12), maxLines: 1, noSelect: true}
 	k := l.faceFor(fs.face, fs.size, 0)
 	tw := int(l.measure(label, k) + 0.5)

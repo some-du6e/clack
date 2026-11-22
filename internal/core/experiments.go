@@ -291,6 +291,8 @@ var experimentReads = map[string][]string{
 	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,
 	"activity_bot_item_type_reads": on, "activity_automations_only": on, "exclude_automations_filter": on,
 	"agent_status_in_activity": on, "agent_command_center": on,
+	// the thread pane's first page (thread_pages.go: requestReplies, gOq3)
+	"threads_perf_quality": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on,
@@ -353,6 +355,9 @@ var experimentReads = map[string][]string{
 	// desktop notifications (ui/notify.go, huddleui/invite.go): Slack's
 	// notification ids and groups, translated buttons, an invite's Decline
 	"desktop_notification_actions": on,
+	// a thread link to its latest reply (ui/jump.go jumpLatest, cdTA Mz):
+	// on, the thread opens at its newest reply; off, at its root
+	"thread_latest_reply_permalink": on,
 	// files
 	"file_trash_updates": on,
 	// Edit profile's photo panes (ui/popups/profile_edit.go epPhotoComp):

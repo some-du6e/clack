@@ -1145,18 +1145,47 @@ func (t *Taut) MessagesChanged(ch string, tss []string) {
 	}
 }
 
+// WindowLoaded tells taut that core took a jump's window of ch in (store
+// windows: a first load or a page): channelHistory[ch] lists it as a slice
+// of its own now (mirror.history), and JS reads that again now. Its
+// messages are the load's (the model's markLoadChanged: MessagesAdded,
+// once, while JS holds an older copy of ch's messages, which lacks them),
+// and the mark that takes them to JS takes ch off the sweep's watch, so
+// nothing else would tell JS the history changed.
+func (t *Taut) WindowLoaded(ch string) {
+	if t == nil || ch == "" || !t.SlicePatched("messages") {
+		return
+	}
+	t.mirror.invalidate("channelHistory", ch)
+}
+
 // MessagesAdded is MessagesChanged for messages a load brought that the
-// UI's model of ch didn't have (a thread pane's replies, an older page):
-// marked only while JS holds a copy of ch's messages it read before, which
-// lacks them, so their views waited for the mirror's sweep (a thread
-// pane's first open under a text patch drew core's copy ~650 ms). JS that
-// never read the conversation reads them all fresh with the first view
-// asked for, and marking a first window's every message held each of its
-// views a JS round trip more (a channel's settled first draw took 124 ms,
-// not 17).
+// UI's model of ch didn't have (a thread pane's replies, an older page, a
+// jump's window): marked only while JS holds a copy of ch's messages it
+// read before, which lacks them, so their views waited for the mirror's
+// sweep (a thread pane's first open under a text patch drew core's copy
+// ~650 ms). JS that never read the conversation reads them all fresh with
+// the first view asked for, and marking a first window's every message
+// held each of its views a JS round trip more (a channel's settled first
+// draw took 124 ms, not 17). A message fetched by id is in JS's copy
+// already (the bucket holds the fetched copies, and one new to the store
+// was marked as it landed: the fetched hook), so a load that brings it
+// again (a jump's window around the message its thread lookup fetched)
+// doesn't mark it twice.
 func (t *Taut) MessagesAdded(ch string, tss []string) {
 	if t == nil || ch == "" || len(tss) == 0 || !t.SlicePatched("messages") || !t.mirror.watching("messages", ch) {
 		return
+	}
+	if held := t.app.S.FetchedHas(ch, tss); slices.Contains(held, true) {
+		var rest []string
+		for i, ts := range tss {
+			if !held[i] {
+				rest = append(rest, ts)
+			}
+		}
+		if tss = rest; len(tss) == 0 {
+			return
+		}
 	}
 	t.MessagesChanged(ch, tss)
 }
