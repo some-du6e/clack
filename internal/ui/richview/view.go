@@ -484,8 +484,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.drawCopyButtons(gtx, st)
 	v.drawFileSecs(gtx, st)
 	v.drawExpands(gtx, st)
-	v.drawPills(gtx, st)    // snippet.go
-	v.drawFileBars(gtx, st) // file_actions.go
+	v.drawPills(gtx, st)           // snippet.go
+	v.drawFileBars(gtx, st, false) // file_actions.go
 	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
 	if v.opts.Dim {
@@ -513,17 +513,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		pointer.CursorPointer.Add(gtx.Ops)
 		s.Pop()
 	}
-	for i := range v.d.bars { // the shown FileActions' buttons
-		if !v.barShown(i) {
-			continue
-		}
-		_, rs := v.barRects(i)
-		for _, r := range rs {
-			s := clip.Rect(r).Push(gtx.Ops)
-			pointer.CursorPointer.Add(gtx.Ops)
-			s.Pop()
-		}
-	}
+	v.barCursors(gtx, false) // the shown FileActions' buttons
 	for i := range v.d.codes {
 		if c := &v.d.codes[i]; c.block {
 			s := clip.Rect(v.copyButton(c)).Push(gtx.Ops)
@@ -559,6 +549,16 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.layoutMedia(gtx) // video tiles (Options.Media), likewise over the rest
+	// an audio card's FileActions, over its player (Slack's absolutely
+	// placed hover actions)
+	if v.opts.Dim {
+		opac = paint.PushOpacity(gtx.Ops, 0.5)
+	}
+	v.drawFileBars(gtx, st, true)
+	if v.opts.Dim {
+		opac.Pop()
+	}
+	v.barCursors(gtx, true)
 	d := layout.Dimensions{Size: size}
 	if b := v.d.firstBaseline(); b >= 0 && b <= size.Y {
 		d.Baseline = size.Y - b
@@ -1396,9 +1396,10 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						autoscrollVeto(gtx.Source, e)
 					}
 				}
-				if !ctxclick.Primary(e) || v.inSlot(e.Position) {
-					// element widgets take their own presses; a macOS
-					// Ctrl+click opens the owner's context menu instead
+				if !ctxclick.Primary(e) || v.inSlot(e.Position) && !v.onMediaBar(e.Position) {
+					// element widgets take their own presses (but an audio
+					// card's FileActions, over its player, are the doc's); a
+					// macOS Ctrl+click opens the owner's context menu instead
 					continue
 				}
 				if b := v.copyButtonAt(e.Position); b >= 0 { // a code block's copy button

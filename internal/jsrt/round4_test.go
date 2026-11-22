@@ -118,6 +118,40 @@ func TestQueuedRectsAndMovesCoalesce(t *testing.T) {
 	}
 }
 
+// The collector's cleanups queue a handle release between two moves
+// (releaseLater, on its own goroutine, after any collection): the moves
+// still go out as one, the newest. A release runs no JS, so nothing sees
+// the move run ahead of it; counted as a task queued after the move, it
+// split them (train-163's push ci 45025576198: 2 mousemoves, the last at
+// x=99, in TestQueuedRectsAndMovesCoalesce's 100).
+func TestMovesCoalesceAcrossAHandleRelease(t *testing.T) {
+	r := newTest(t)
+	if _, err := r.Eval("count.js", `globalThis.__moves = []
+		const dispatch = __clack.dispatch
+		__clack.dispatch = (k, e) => { if (e.type === 'mousemove') __moves.push(e.clientX); return dispatch(k, e) }
+		globalThis.moves = () => __moves`); err != nil {
+		t.Fatal(err)
+	}
+	hs := leaked(t, r, 1)
+	unblock := blockJS(t, r)
+	move := func(x int) {
+		ev, _ := json.Marshal(map[string]any{"type": "mousemove", "clientX": x, "clientY": 5})
+		r.DispatchEvent(0, ev)
+	}
+	move(1)
+	r.releaseLater(hs[0])
+	move(2)
+	unblock()
+	_ = r.Do(func(*Ctx) error { return nil })
+	raw, err := r.Call(context.Background(), "moves")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "[2]" {
+		t.Errorf("mousemoves dispatched at %s, want the newest alone ([2])", raw)
+	}
+}
+
 // A drag's last pointermove, dispatched before its pointerup, runs before
 // it however much plain work is queued: the pointerup goes on the user's
 // lane ahead of the queue and takes the move queued before it along, as a

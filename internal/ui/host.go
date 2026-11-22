@@ -678,7 +678,10 @@ func memberBotID(u core.User) string {
 func (a *App) OpenAppDetails(userID, botID string) {
 	cur := a.secondary
 	if cur.kind == secProfile && cur.user == userID && cur.open() {
-		if _, ok := cur.view.(*popups.AppDetailsView); ok {
+		// the same app's view already open: nothing to do. Another bot (a
+		// user-less bot's view and another's click, or a bot user's view
+		// and its member's message posted with another bot) is another app
+		if v, ok := cur.view.(*popups.AppDetailsView); ok && v.Bot() == botID {
 			return
 		}
 	}

@@ -574,7 +574,7 @@ jobs:
           rc=0
           start=$(date +%s)
           CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" CLACK_RETAIN_DUMP=1 \
-            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
           echo "internal/ui: exit $rc after $(( $(date +%s) - start )) s"
           grep -E -- '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/ui.log" | head -20 || true
           grep -A 40 -- '--- FAIL: TestFinishedSessionIsCollected' "$RUNNER_TEMP/ui.log" | head -60 || true
@@ -621,7 +621,7 @@ jobs:
           cd internal/ui
           pids=""
           for i in 1 2 3 4; do
-            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=$COUNT -test.timeout 30m -test.run '^TestRailPeekDMsRowMenu$' > "$RUNNER_TEMP/peek-$i.log" 2>&1 &
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=$COUNT -test.timeout 30m -test.run '^TestRailPeekDMsRowMenu$' > "$RUNNER_TEMP/peek-$i.log" 2>&1 &
             pids="$pids $!"
           done
           rc=0
@@ -1531,6 +1531,41 @@ jobs:
   # occlusion tests, each $COUNT times in one process (TestMain runs
   # app.Main): AppKit's occlusion reports, the layer's one-second drawable
   # timeout and the display link's restarts all have timing in them.
+  # The message audio player on AVFoundation (internal/media/avf's audio
+  # tests), COUNT times each. TestAVFAudioReplaysAt2x replays at 2x after
+  # the end and after a pause and a seek, which stalled while play started
+  # AVPlayer with play and then the rate (train-163, train-164). A proof
+  # run (expect_fail) runs the replay test alone. Dispatch only, with
+  # only=avf-audio: macos-idle runs these once on every push.
+  avf-audio:
+    if: ${{ inputs.only != '' && startsWith('avf-audio', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: TestAVFAudioReplaysAt2x
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count="$COUNT" -v -timeout 12m -run '^TestAVFAudioReplaysAt2x$' ./internal/media/avf
+      - name: the other audio tests
+        if: ${{ !cancelled() && inputs.expect_fail == '' }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count="$COUNT" -v -timeout 12m -run '^(TestAVFPlaysAudio|TestAVFAudioSeekAndRate|TestAVFOpusClipPlays)$' ./internal/media/avf
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   mac-wake:
     if: ${{ !inputs.only || startsWith('mac-wake', inputs.only) }}
     runs-on: macos-latest
@@ -4277,7 +4312,13 @@ jobs:
   # conversation's held messages (core and ui), each decision logs Slack's
   # reason, a desktop_notification ahead of its message is dropped (19),
   # plugins' showNotification gets Slack's arguments, and update_thread_state
-  # moves the Unread mark at once. Dispatch with only=thread-reply-toast.
+  # moves the Unread mark at once. Round 3: the checks read the event's own
+  # ts (a desktop_notification without one isn't 19), every add path and no
+  # local copy raises maxTs, the Threads view keeps a newer thread state,
+  # on-screen messages notify as Slack's do (an at-command, a hidden reply,
+  # another tab), the Threads link bolds and badges, Slick's filters see the
+  # toast, and the reply bar's mark is there in the frame its reply draws.
+  # Dispatch with only=thread-reply-toast.
   thread-reply-toast:
     if: ${{ !inputs.only || startsWith('thread-reply-toast', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4334,6 +4375,78 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           TEST: TestFollowedReplyNotificationArgsLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "store: every add path raises maxTs, local copies don't (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestNotificationsMaxTSEveryAddPath|TestLocalCopiesKeepMaxTS|TestThreadsViewStateSince)
+          PKG: ./internal/store
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: maxTs from a refused or dropped message, an optimistic send, the Threads view's state (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestMaxTSFromAMessageTheDecodeRefuses|TestOptimisticSendKeepsMaxTS|TestThreadsViewKeepsNewerThreadState|TestDroppedMessageRaisesMaxTS)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: the reply bar's channel lists as Slack keeps them (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestChannelThreadActivityLikeSlack
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "slick: notification filters run over the toast about to show (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestAllowNotificationRunsTheFilters
+          PKG: ./internal/slick
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: a desktop_notification without its own ts notifies (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestDesktopNotificationWithoutTSLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: on-screen messages notify as Slack's do (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestOnScreenNotificationsLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the Threads link bolds and badges (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestThreadsLinkLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: Slick's filters see the toast (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestSlickFiltersSeeTheToast
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's Unread mark is there in the reply's first frame (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyUnreadMarkInTheReplysFrame
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: a channel's reply bar list goes with its count, and keeps a mark from before it (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: (TestThreadActivityClearedWithItsCount|TestThreadActivityKeepsAMarkFromBeforeItsList)
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's marks after a slow reconnect (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyBarRefetchesAfterASlowReconnect
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: the reply bar's marks after a failed fetch (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestReplyBarRetriesAFailedFetch
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
       - if: ${{ always() && env.XF_ID }}
@@ -4597,6 +4710,18 @@ jobs:
           rc=0
           xvfb-run -a go test -count="$COUNT" -timeout 20m -run '^TestJoinBanner$' ./internal/ui || rc=1
           go test -count="$COUNT" -timeout 10m -run '^TestReactionPillClickSurvivesOtherReactions$' ./internal/ui/messages || rc=1
+          # thread-header-hover-4: search results' and the search popover's buttons by result; the
+          # sender's bot asked as getBotById does, the open card following its trigger; App details for another bot
+          go test -count="$COUNT" -timeout 5m -run '^(TestSearchRowClickSurvivesResultChanges|TestSearchPopoverRowButtonsFollowRows)$' ./internal/ui/popups || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestSenderBotAsksLikeSlack$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestOpenCardFollowsItsTrigger$' ./internal/ui/hovercard || rc=1
+          xvfb-run -a go test -count="$COUNT" -timeout 5m -run '^TestAppDetailsOtherBotOpensItsOwn$' ./internal/ui || rc=1
+          # the quick switcher's Show fewer clicked (a crash when it rebuilt mid-loop), each its own process:
+          # a panic would end the others; the Join… menu's channel; WORKFLOW from a bot_profile; the ask's frame
+          go test -count="$COUNT" -timeout 5m -run '^TestSearchPopoverShowFewerClick$' ./internal/ui/popups || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestSearchJoinMenuJoinsItsChannel$' ./internal/ui/popups || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestWorkflowBadgeFromBotProfile$' ./internal/core || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^TestTriggerAsksTheFramePointerArrives$' ./internal/ui/hovercard || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -4655,8 +4780,9 @@ jobs:
 
   # flakes-1122: TestLeftComposerLetsGoOfFocus (the reopened thread's reply
   # box) and TestFilesTabHideAndLinkDetails (a header read out across a
-  # Hide tab, its members call held: its race forced every run).
-  # Dispatch with only=fl1122.
+  # Hide tab, its members call held: its race forced every run);
+  # flakes-1122b: TestHeaderOlderReadLandsAfterNewerFails (the older read
+  # lands after a newer one failed). Dispatch with only=fl1122.
   fl1122-r-ui:
     if: ${{ !inputs.only || startsWith('fl1122-r-ui', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4675,18 +4801,20 @@ jobs:
           leg: ${{ github.job }}-${{ strategy.job-index }}
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
-      - name: ui, then messages' late names (COUNT each)
+      - name: ui, the reply box and the hidden tab's header read (COUNT each)
         run: |
           set +e
           rc=0
-          go test -count=$COUNT -timeout 20m -run '^(TestLeftComposerLetsGoOfFocus|TestFilesTabHideAndLinkDetails)$' ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 20m -run '^(TestLeftComposerLetsGoOfFocus|TestFilesTabHideAndLinkDetails|TestHeaderOlderReadLandsAfterNewerFails)$' ./internal/ui || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
 
   # flakes-1122: the per-App and per-Server map guards (permapguard), and
   # core's list refetch across an applied event (TestListRefetchKeepsALaterEdit
-  # holds the read; TestListEditRoundTrip, the flake it found), COUNT each.
+  # holds the read; TestListEditRoundTrip, the flake it found;
+  # TestListSetAsideReadReturnsTheCache, List's own caller), and jsrt's
+  # moves across a handle release (flakes-1122b), COUNT each.
   fl1122-r-guard:
     if: ${{ !inputs.only || startsWith('fl1122-r-guard', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4710,7 +4838,8 @@ jobs:
           go test -count=1 ./internal/permapguard || rc=1
           go test -count=1 -run '^TestReleaseCoversAppMaps$' ./internal/core || rc=1
           go test -count=1 -run '^TestForgetCoversServerMaps$' ./internal/fakeslack || rc=1
-          go test -count=$COUNT -timeout 10m -run '^(TestListRefetchKeepsALaterEdit|TestListEditRoundTrip)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 10m -run '^(TestListRefetchKeepsALaterEdit|TestListEditRoundTrip|TestListSetAsideReadReturnsTheCache)$' ./internal/core || rc=1
+          go test -count=$COUNT -timeout 5m -run '^(TestMovesCoalesceAcrossAHandleRelease|TestQueuedRectsAndMovesCoalesce)$' ./internal/jsrt || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
@@ -4816,7 +4945,7 @@ jobs:
           for i in 1 2; do (while :; do :; done) & done
           cd internal/ui
           for i in 1 2 3 4 5; do
-            "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' > "$RUNNER_TEMP/caret-$i.log" 2>&1 || rc=1
+            ${XF_BIN:+"$XF_BIN"} "$RUNNER_TEMP/ui.test" -test.v -test.count=1 -test.timeout 10m -test.run '^TestRealWindowCaretCost$' > "$RUNNER_TEMP/caret-$i.log" 2>&1 || rc=1
             grep -E 'caret_window_test.go:[0-9]+: a scroll.s frame costs|--- (PASS|FAIL)' "$RUNNER_TEMP/caret-$i.log"
           done
           cd "$GITHUB_WORKSPACE"
@@ -4857,10 +4986,10 @@ jobs:
         run: |
           set +e
           for i in 1 2; do (while :; do :; done) & done
-          go test -count=$COUNT -v -timeout 15m -run '^TestMFSeekAndPause$' ./internal/media/mf > "$RUNNER_TEMP/seek.log" 2>&1
+          go test -count=$COUNT -v -timeout 20m -run '^TestMFSeekAndPause$' ./internal/media/mf > "$RUNNER_TEMP/seek.log" 2>&1
           rc=$?
           kill $(jobs -p) 2>/dev/null
-          echo "== TestMFSeekAndPause: $(grep -c -- '^--- FAIL: TestMFSeekAndPause' "$RUNNER_TEMP/seek.log") of $COUNT failed"
+          echo "== TestMFSeekAndPause: $(grep -c -- '^--- FAIL: TestMFSeekAndPause ' "$RUNNER_TEMP/seek.log") of $COUNT failed"
           grep -E -B2 -A12 -- '^--- FAIL' "$RUNNER_TEMP/seek.log" | head -60
           exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -4947,6 +5076,7 @@ jobs:
   expect-fail:
     needs:
       - go
+      - avf-audio
       - race-video
       - members
       - members-tab

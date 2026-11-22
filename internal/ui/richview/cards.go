@@ -1098,10 +1098,17 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 	if f.DurationMS > 0 {
 		dur = durationText(f.DurationMS)
 	}
-	if f.Subtype == "slack_audio" {
+	// Options.Media plays it (FileAudio): the pillow here, the player in it
+	slot := l.opts.Media != nil && l.opts.Media.MediaTile(f, 1, false)
+	if audioMessage(f) {
 		bs := l.dp(34)
 		h := pad + bs + pad + l.dp(2)
 		l.cardFrame(x, y, cw, h, tg)
+		if slot {
+			l.audioSlot(f, image.Rect(x, y, x+cw, y+h))
+			l.plainAdd(fileName(f))
+			return h
+		}
 		cy := y + l.dp(1) + pad
 		bx := x + l.dp(1) + pad
 		l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(bx, cy, bx+bs, cy+bs), fill: rgb(18, 100, 163), target: -1})
@@ -1127,6 +1134,11 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 	// FileActions (file_actions.go); a voice clip has none (MessageFile's
 	// showActions is off for an audio message)
 	l.pillowBar(f, image.Rect(x, y, x+cw, y+h))
+	if slot {
+		l.audioSlot(f, image.Rect(x, y, x+cw, y+h))
+		l.plainAdd(fileName(f))
+		return h
+	}
 	bx, by := x+l.dp(1)+pad, y+l.dp(1)+pad
 	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(bx, by, bx+bs, by+bs), fill: rgb(0xe6, 0xef, 0xf6), target: -1})
 	l.playGlyph(image.Pt(bx+bs/2, by+bs/2), rgb(18, 100, 163))
@@ -1172,6 +1184,24 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 		l.plainFlow(dur, x+cw-l.dp(1)-pad-tws, ry, tws+l.dp(2), &ms, -1)
 	}
 	return h
+}
+
+// audioMessage is lqEY's isAudioMessage: an audio story, a voice clip or
+// a name pronunciation, whose player is the flat row (MessageFilePreview's
+// "default" style).
+func audioMessage(f *richtext.File) bool {
+	switch f.Subtype {
+	case "audio_story", "slack_audio", "slack_name_pronunciation":
+		return true
+	}
+	return false
+}
+
+// audioSlot hands pillow r to Options.Media, which draws the player in
+// it and takes its input.
+func (l *lay) audioSlot(f *richtext.File, r image.Rectangle) {
+	l.d.media = append(l.d.media, mediaSlot{r: r, s: MediaSlot{File: f, At: r.Min, Poster: image.Rectangle{Max: r.Size()}, Files: 1,
+		Radius: l.dp(12), Border: l.st.Palette.Border, BorderW: l.dp(1)}})
 }
 
 // playGlyph draws play-filled centered at c.
