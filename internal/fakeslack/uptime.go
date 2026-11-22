@@ -125,6 +125,18 @@ func (s *Server) FollowedReplyNotification(ch, root, ts, user, text string) map[
 		"is_shared": false, "is_channel_invite": false, "event_ts": ts}
 }
 
+// FollowedThreadState is the update_thread_state the server sends a
+// follower once a followed thread of ch has a new reply at ts: unread
+// threads, n of them in ch, none mentioning the viewer, as the org-wide
+// event a Grid client takes (fakeslack's team is a Grid's: org_wide true;
+// Slack's updateThreadState rejects an event whose org_wide isn't the
+// client's).
+func FollowedThreadState(ch, ts string, n int) map[string]any {
+	return map[string]any{"type": "update_thread_state", "has_unreads": true, "mention_count": 0,
+		"unread_count_by_channel": map[string]int{ch: n}, "mention_count_by_channel": map[string]int{},
+		"timestamp": ts, "org_wide": true}
+}
+
 func (s *Server) pushReplyLive(ch, root, user, text string, activityFirst, followed bool) string {
 	ts := s.PostReplyQuiet(ch, root, user, text)
 	var rm map[string]any
@@ -147,6 +159,7 @@ func (s *Server) pushReplyLive(ch, root, user, text string, activityFirst, follo
 		}
 		if followed {
 			s.Push(s.FollowedReplyNotification(ch, root, ts, user, text))
+			s.Push(FollowedThreadState(ch, ts, 1))
 		}
 	}
 	entries := func() {

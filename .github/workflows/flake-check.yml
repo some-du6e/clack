@@ -3416,7 +3416,11 @@ jobs:
   # the reply's message events, the desktop_notification Slack's client
   # toasts a reply without a mention from, and the thread's thread_v2
   # bundle, in both orders and with the thread open in a window without
-  # the focus. Dispatch with only=thread-reply-toast.
+  # the focus. Round 2: the reply's desktop_notification waits behind its
+  # conversation's held messages (core and ui), each decision logs Slack's
+  # reason, a desktop_notification ahead of its message is dropped (19),
+  # plugins' showNotification gets Slack's arguments, and update_thread_state
+  # moves the Unread mark at once. Dispatch with only=thread-reply-toast.
   thread-reply-toast:
     if: ${{ !inputs.only || startsWith('thread-reply-toast', inputs.only) }}
     runs-on: ubuntu-latest
@@ -3433,5 +3437,41 @@ jobs:
       - name: "ui: a reply in the viewer's own thread toasts and reaches Activity (COUNT runs)"
         env:
           TEST: TestReplyInOwnThreadToastsAndShowsInActivity
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: a held conversation's desktop_notification and dnd_override wait behind its messages (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestDesktopNotificationWaitsBehindHeldConversation
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: update_thread_state moves the threads' unread state at once (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestUpdateThreadStateAtOnce
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: a followed reply in a held group DM toasts after the message before it (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestFollowedReplyBehindAHeldConversation
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: each notification decision logs Slack's reason, ids only (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestNotifyDecisionLogLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: a desktop_notification ahead of its message is dropped, 19 (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestFollowedReplyNotificationAheadOfItsMessage
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: plugins' showNotification gets Slack's arguments (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestFollowedReplyNotificationArgsLikeSlack
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"

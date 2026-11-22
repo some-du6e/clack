@@ -107,6 +107,7 @@ func (s *Store) IsAhead(ch, ts string) bool {
 func (s *Store) UpsertHeard(ch string, m slack.Message) (ahead bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedTSLocked(m.TS)
 	t := s.timelines[ch]
 	if t == nil {
 		return false
@@ -256,6 +257,7 @@ func (s *Store) PrependOlderAt(ch, before string, msgs []slack.Message, hasMore 
 	SortAsc(msgs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.noteAddedLocked(msgs)
 	msgs = s.liveKeepLocked(ch, msgs, since)
 	s.readWindowLocked(ch, msgs, since)
 	t := s.timelines[ch]
