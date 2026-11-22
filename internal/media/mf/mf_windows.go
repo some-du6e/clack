@@ -102,7 +102,8 @@ func (b backend) New(src media.Source, frameReady func()) (media.Player, error) 
 		frameReady = func() {}
 	}
 	p := &player{src: src, frameReady: frameReady, wake: make(chan struct{}, 1), mfEv: make(chan mfEvent, 256),
-		bind: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), volume: 1, rate: 1, born: time.Now()}
+		bind: make(chan struct{}, 1), quit: make(chan struct{}), done: make(chan struct{}), volume: 1, rate: 1, born: time.Now(),
+		audioOnly: media.IsAudio(src)}
 	p.Init()
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	p.rs = media.NewRangeSource(src, media.RangeOptions{})
@@ -209,6 +210,10 @@ type player struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	born       time.Time // when New made it
+	// audioOnly: an audio file (a message's audio player): its engine is
+	// made with MF_MEDIA_ENGINE_AUDIOONLY, with no device of its own and no
+	// frames, so it opens without Gio's ask (nothing draws it)
+	audioOnly bool
 
 	askMu  sync.Mutex
 	c      *C.clackMF // nil once closed (under askMu)
@@ -542,8 +547,16 @@ func (p *player) ticker(t *time.Ticker) *time.Ticker {
 	}
 	seeking := p.seeking && now.Before(p.seekUntil)
 	want := p.opened && p.ringOK && !p.failed && ((playing && p.AskedWithin(time.Second)) || p.wantFrame || seeking || p.forceFrame)
+	if p.audioOnly {
+		// no frames: the poll is the clock's, for the position the
+		// timeupdates read, while it plays or seeks
+		want = p.opened && !p.failed && !p.reopening && (playing || seeking)
+	}
 	switch {
 	case want && t == nil:
+		if p.audioOnly {
+			return time.NewTicker(audioPoll)
+		}
 		fps := p.fps
 		if fps <= 0 || math.IsNaN(fps) {
 			fps = 30
@@ -627,9 +640,9 @@ func (p *player) doBind() {
 }
 
 // maybeOpen makes the engine once the file's size is known, Gio's device
-// is bound and the audio output is known.
+// is bound (not for an audio file) and the audio output is known.
 func (p *player) maybeOpen() {
-	if p.opened || p.failed || !p.bound || !p.infoOK || p.infoErr != nil || !p.audioKnown || p.c == nil {
+	if p.opened || p.failed || !p.bound && !p.audioOnly || !p.infoOK || p.infoErr != nil || !p.audioKnown || p.c == nil {
 		return
 	}
 	if p.info.Total <= 0 {
@@ -657,6 +670,9 @@ func (p *player) maybeOpen() {
 	if p.noAudio {
 		flags |= C.CLACK_MF_FORCEMUTE
 	}
+	if p.audioOnly {
+		flags |= C.CLACK_MF_AUDIOONLY
+	}
 	p.engineGen++
 	if hr := C.clack_me_open(p.c, C.int64_t(p.info.Total), seekable, (*C.uint16_t)(unsafe.Pointer(&u16[0])), C.uint32_t(p.format), flags, C.uint32_t(p.engineGen), &info); hr != 0 {
 		p.fail(media.ErrSrcNotSupported, fmt.Sprintf("the engine: %s: %s", C.GoString(&info.step[0]), hrString(int32(hr))))
@@ -666,6 +682,9 @@ func (p *player) maybeOpen() {
 	p.opened, p.okTransfers = true, 0
 	if p.tOpened.IsZero() {
 		p.tOpened = time.Now()
+		if p.audioOnly {
+			log.Printf("media: %s: Media Foundation, audio only (%s, %d bytes, seekable %v); audio: %s", p.src.FileID, ext, p.info.Total, p.info.Seekable, p.audio)
+		}
 	}
 	p.control(opVolume, p.volume)
 	p.control(opMuted, b2f(p.muted))
@@ -772,9 +791,19 @@ func fit(native, draw image.Point) (uint32, uint32) {
 	return uint32(w), uint32(h)
 }
 
-// tick is the media thread's poll for a new frame.
+// audioPoll is an audio file's poll of the engine's position while it
+// plays (a fifth of the timeupdates' period: each one reads a position at
+// most this old).
+const audioPoll = media.TimeUpdateEvery / 5
+
+// tick is the media thread's poll for a new frame (an audio file's: its
+// position).
 func (p *player) tick() {
 	p.NTicks.Add(1)
+	if p.audioOnly {
+		p.refresh()
+		return
+	}
 	if time.Since(p.lastRefresh) > media.TimeUpdateEvery {
 		p.refresh()
 	}

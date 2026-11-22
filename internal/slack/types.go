@@ -313,8 +313,11 @@ type File struct {
 	EditLink           string          `json:"edit_link,omitempty"`            // snippets and posts: the web editor
 	DurationMS         int             `json:"duration_ms"`
 	Transcription      json.RawMessage `json:"transcription,omitempty"`
-	MP4                string          `json:"mp4"`
-	HLS                string          `json:"hls"`
+	// IsTranscriptionRegionSupported is whether the file's region can be
+	// transcribed (MediaTranscriptPopoverButton shows only then).
+	IsTranscriptionRegionSupported bool   `json:"is_transcription_region_supported,omitempty"`
+	MP4                            string `json:"mp4"`
+	HLS                            string `json:"hls"`
 	// A video's: the poster Slack draws (VideoControlsOverlay's
 	// thumb_video_ts ?? thumb_video), the HLS stream it prefers in
 	// Electron, its captions and its audio-only source (MediaViewerContent's

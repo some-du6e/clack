@@ -118,6 +118,9 @@ static int mapError(NSError *e) {
 	_Atomic int64_t _lastAsk;
 	// the queue's
 	BOOL _closed, _ready, _wantPlay, _loop, _wantFrame, _firstFrame, _ended, _seekPending;
+	// _audioOnly: ready with no video track (a message's audio file): no
+	// output to make, so no watch while paused
+	BOOL _audioOnly;
 	double _rate, _volume, _pendingSeek;
 	// the frame asked for (_wantFrame): the one at _wantAt (NAN: the next
 	// one), until _wantUntilNS (0: no end); _lastPts is the display time of
@@ -308,9 +311,11 @@ static int mapError(NSError *e) {
 
 - (void)becameReady {
 	_ready = YES;
+	_audioOnly = _item.tracks.count > 0;
 	for (AVPlayerItemTrack *t in _item.tracks) {
 		if ([t.assetTrack.mediaType isEqualToString:AVMediaTypeVideo]) {
 			_fps = t.assetTrack.nominalFrameRate;
+			_audioOnly = NO;
 			break;
 		}
 	}
@@ -515,7 +520,7 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 		dispatch_source_cancel(_pull);
 		_pull = nil;
 	}
-	BOOL watch = !_closed && !_err && (!_ready || _output == nil || _wantPlay || _seekPending);
+	BOOL watch = !_closed && !_err && (!_ready || (_output == nil && !_audioOnly) || _wantPlay || _seekPending);
 	if (watch && _watch == nil) {
 		_watch = timerOn(_q, 50000000, ^{
 			[w check];
@@ -781,6 +786,16 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 	*h = atomic_load(&_pbH);
 }
 
+// watching is whether the state watch timer runs (tests), read on the
+// queue.
+- (BOOL)watching {
+	__block BOOL w = NO;
+	dispatch_sync(_q, ^{
+		w = self->_watch != nil;
+	});
+	return w;
+}
+
 // The setters, run on the queue.
 - (void)setVolumeTo:(double)v {
 	_volume = v;
@@ -894,6 +909,8 @@ void clack_avf_respond(void *p, uint64_t req, const void *bytes, int n) {
 void clack_avf_finish(void *p, uint64_t req, int failed) { [P(p) finish:req failed:failed]; }
 
 void clack_avf_counts(void *p, int64_t *pulls, int64_t *frames, uint32_t *w, uint32_t *h) { [P(p) counts:pulls frames:frames w:w h:h]; }
+
+int clack_avf_watching(void *p) { return [P(p) watching] ? 1 : 0; }
 
 // clack_avf_close ends the player: its queue lets go of everything, then
 // of the object itself (the reference clack_avf_new handed out).

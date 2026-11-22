@@ -23,8 +23,8 @@ each way Slack draws a shared file (internal/fakeslack/files.go). The
 | Image + video | One flex gallery | the video on its own block | One gallery |
 | Generic file | `c-pillow_file`: 12px padding, radius 12, 36px icon, name 16px Bold, `FileSize` = `pretty_type` only ("Arugula" → "Post") | `PDF · 2 KB` | `PDF` |
 | Several documents | `c-file_gallery__mixed_file_format`: 40px columns, each file spans 7 (328px); `--compact` (≤664) one column ≤426; 8px gaps | stacked block by block | Grid |
-| Audio file | `AudioPlayer` in a pillow: 36px play `#e6eff6`/`#1264a3`, name 15px Bold, "2:34 (900 KB)" 13px .7; 12px down the scrubber (4px `#ddd` track, 12px paused thumb) and the duration | 64px card, link-blue circle, "Audio" | Same as Slack |
-| Voice clip (`slack_audio`) | flat `c-audio_player--audio_message`: 34px blue play, waveform (3px dots, 6px pitch, `min(6+34·s,34)`), 13px Bold time | same as audio | Same as Slack |
+| Audio file | `AudioPlayer` in a pillow: 36px play `#e6eff6`/`#1264a3`, name 15px Bold, "2:34 (900 KB)" 13px .7; 12px down the scrubber (4px `#ddd` track, 12px paused thumb) and the duration | 64px card, link-blue circle, "Audio"; the click opened the file's page | Same as Slack, and it plays in place ("The audio player" below) |
+| Voice clip (`slack_audio`) | flat `c-audio_player--audio_message`: 34px blue play, waveform (3px dots, 6px pitch, `min(6+34·s,34)`), 13px Bold time | same as audio | Same as Slack, and it plays in place, with the speed control and More |
 | Snippet | `FileSnippet`: no pillow header (MessageFileHeader returns null for a snippet; corrected by file-pillows), CodeMirror at 13px/1.5 with a 32px numbered gutter; 4/8/18px edge padding; collapsed at 200px with a 40px fade when expandable; no max width | 560 wide, name + "N lines", 12px code, no gutter | Same as Slack, with the highlight and Show more ("File pillows" below) |
 | File ⋯ / right-click menu | `buildFileContextMenuItems` templates: image `[download] [share_file, copy_link_to_file, copy_image, save_for_later] [open_in, edit_image_details, view_file_details, create_external_link] [add_to_folder, add_to_section] [delete_file]`; video `[generate_transcript, expand] [download, share_file, copy_link, save_for_later] [open_in, edit_thumbnail, view_file_details] [folder, section] [delete_file]`; other `[share_file, copy_image, copy_link_to_file, download, save_for_later]` | no Save for later, no Delete file | + Save for later / Remove from Later (`saveFile`/`removeFile`: `saved.add`/`saved.delete` `{item_type: file, item_id}`, file items tracked from `saved.list` and `saved_*` events); + Delete file on your own image/video files, through `DeleteFileDialog` ("Delete file", "Are you sure you want to delete this file permanently?", the pillow with "You • time", "Yes, Delete This File") → `files.delete {file}` |
 | Upload: attach | `UploadQueue` eager upload: `files.getUploadURL {filename, length}` → `{file, upload_url}`; multipart POST of one `file` part (XHR); `files.completeUpload {files: [{id,title}]}`, no channel | `files.getUploadURLExternal` → POST → nothing until send | Slack's sequence |
@@ -131,8 +131,41 @@ What TestRealWindowVideoFrames measured in those runs, playing the 320×180 fixt
 - The idle release keeps a CPU copy of the frame (Chromium keeps its last video frame).
 - The media viewer's progress bar follows the 4 Hz time updates.
 - Two copies of the same file don't sync their position while paused (fIJO's effect on `er`), and there's no Shift fine scrub with the mouse.
-- Audio still opens the file's page (no in-message audio player).
 - The visibility share comes from Gio patch 53 (io/input's Router.AreaBounds: the clipped area of a tag in the last frame), for every list.
+
+## The audio player (audio-playback, 2026-11-22)
+
+Before this, nothing played on any OS: `messages.richHandler.OpenFile` sent an audio file's click to `openURL(f.Permalink)`, and richview's audio card was a static drawing. Sources: client-boot build 35b42de8b870, fetched without a cookie: `o/6F` (AudioPlayer), `pBrm` (FileAudio), `2bi5` (MessageFilePreview), `vITP` (fileIsPlayableAudio), `lqEY` (isAudioMessage), `upuT` (MediaPlaybackSpeedControl), `mWzn` (MediaTranscriptPopoverButton), `e+f5` (the speeds), `7foM` (secondsToAudioTime), `wfEe` (the playback coordinator), `nd` (use_media_elapsed) and `NlgV` (media progress).
+
+**Which files play.** `slack.FileIsPlayableAudio` is vITP: not a tombstone, hosted, and either an audio clip (`slack_audio`, `audio_story`, `slack_name_pronunciation`) of filetype m4a, mp3, wav, mp4, mov or webm, or a file of filetype m4a, mp3 or wav. Like Slack, an ogg, flac or aac upload stays a plain file card, and a webm upload that isn't a clip is a video. The player plays getMediaURL's `aac || url_private`. Where the `aac` rendition can't be decoded (no AAC decoder in Go, so Linux), the player tries `url_private` once.
+
+**What it draws** (`internal/ui/videoplayer/audio.go`, in the pillow richview reserves as a media slot). An audio message gets MessageFilePreview's "default" style, the flat row: the 34px play button, the waveform scrubber (`audio_wave_samples`; a track when there are none), the bold time, the transcript button, MediaPlaybackSpeedControl and More (AudioClipOverflowMenu: Download or Share clip…, Copy link to audio clip, View details, Delete clip). Every other audio file gets the "card": the 36px button, the name with "m:ss (size)", Buffering or Error, then the track scrubber and the time. The card gets the speed and transcript controls only with `transcribe_opt_in_ui_v2`. The card's hover FileActions (Download, Share, More) draw over the player and take their own clicks. The time is the duration until the player is used (play or scrub), then the position.
+
+**What it does.**
+- The play button toggles. The first click mounts the player, playing.
+- A press on the scrubber seeks there and plays (Scrubber's setTime); dragging seeks as it moves.
+- playbackRate is `media_playback_speed` (Cv: .25 to 2; any other value is 1) for an audio message or the flat style, else 1. The speed control writes the pref.
+- One plays at a time (the Manager's coordinator). Where the viewer stopped is kept and sent with `media.progress.update`, as for videos.
+- The transcript button shows only when the team allows media transcriptions (`allow_media_transcriptions`) and the file's `is_transcription_region_supported`.
+
+**The backends.** `ui.playersBackend` chains the OS backend with Go audio (`internal/media/goaudio`, `media.Chain`). A player that fails before its metadata because it can't read the file (MEDIA_ERR_SRC_NOT_SUPPORTED or MEDIA_ERR_DECODE) hands the file to the next backend, with every call made so far.
+- Windows: Media Foundation makes an audio file's engine with MF_MEDIA_ENGINE_AUDIOONLY, with no DXGI manager and no frames. Before this the engine opened only once Gio's GPU asked for a frame, which never happens for audio, so no audio file could have played. It polls the position every 50 ms while playing. With no audio output (the runners) it's made muted (FORCEMUTE).
+- macOS: AVFoundation (m4a, mp3, wav and aac types). A paused audio-only item runs no 50 ms state watch.
+- Go audio decodes WAV (PCM, float), MP3 (go-mp3), and Opus in Ogg, WebM and MP4 (plain and fragmented, as Chromium's MediaRecorder writes a clip) with the huddle's libopus. It trims each file's pre-skip, Matroska DiscardPadding, Ogg's last granule and MP4's sample durations. It resamples to 48 kHz stereo (windowed sinc) and keeps the pitch at any rate (WSOLA). It plays out of the speakers chosen in Audio & video (playback only, never the mic), opened only while playing. With no sound card it keeps real time on a clock. It's the only audio backend on Linux, and it goes first for WebM and Ogg on every OS.
+
+**Tests.**
+- goaudio: `TestDecodesTheFixtures`, `TestSeekLandsOnTheTone`, `TestAACIsNotSupported`, `TestResamplerKeepsTheTone`, `TestStretchKeepsThePitch`, `TestPlayerRendersTheFile`, `TestPlayerKeepsTimeWithoutASoundCard`, `TestPlayerRateAndEarlySeek`, `TestPlayerAACFails` and `TestChainFallsBackToGoAudio`. They run on mediatest's audio fixtures (testdata/gen-audio.sh: 3 s of 440, 660 and 880 Hz in each format), on Linux, Windows and macOS.
+- Media Foundation: `TestMFPlaysAudio` (AAC, MP3 and WAV with no window and no device) and `TestMFAudioSeekAndRate`. AVFoundation: `TestAVFPlaysAudio` and `TestAVFAudioSeekAndRate`. Each OS also logs what it does with a clip's Opus in MP4 (`TestMFOpusClipLogged`, `TestAVFOpusClipLogged`).
+- videoplayer: `TestAudioTiles`, `TestAudioClipPlaysAndFallsBack`, `TestAudioMP3Plays`, `TestAudioSpeedPref`, `TestAudioScrubPlaysFromThere`, `TestAudioShownTime`, `TestAudioLayout` and `TestAudioSource`. richview: `TestAudioCardSlot` and `TestAudioClipSlot`.
+- The App over fakeslack's #files-gallery: `TestAudioInlinePlay` clicks both players' play buttons, and they play with no page opened. files-shots saves `TestAudioPlayerShots` (idle, playing, paused and hovered, light and dark).
+
+**Divergences.**
+- The transcript button opens nothing: there's no transcript popover yet.
+- More leaves out Open in new window, Dock to corner and Report to Slack.
+- No mini player for audio: Slack docks a clip's audio.
+- The speed control's `margin_left_50` is taken as 8px.
+- Before the first click the duration comes from `duration_ms`, since Clack mounts no player before then (Slack's `<audio>` preloads its metadata).
+- Go audio decodes no AAC or Vorbis. On Linux an AAC upload with no other rendition can't play.
 
 ## Not changed, or still open
 
@@ -142,7 +175,6 @@ What TestRealWindowVideoFrames measured in those runs, playing the 320×180 fixt
 - **`files.edit` args:** the method and the thunk (`fileId, title`) are in the source, but the fetcher's argument names are in a chunk I didn't fetch. Clack sends `file` and `title`.
 - **Snippet syntax colours, Show more, hover actions on files:** done on branch file-pillows; see "File pillows" below.
 - **The pillow's hover meta swap** to "View **PDF** in Slack" / "Download **Zip**" (FileSize's `c-pillow_file__swap`, `getActionText`): not done.
-- **Audio in place:** clicking the audio player's play button opens the file's permalink. Videos play: a lone one in place, a gallery's in the media viewer ("The inline video player" above).
 - **View file details, external links, folders, sections, transcripts, edit image details:** not in the menu, because Clack has no screens for them.
 - **`attachments_and_unfurls_max_width`:** with this experiment on, Slack caps the flex gallery at 716. Clack always uses 936.
 - **PDF first-page thumbnail:** the PDF pillow uses the icon tile. I didn't check whether Slack's message pillow shows `thumb_pdf` (the `p-file_card__preview` card that does is used on the Files page).
