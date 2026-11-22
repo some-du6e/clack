@@ -1,6 +1,7 @@
 package views
 
 import (
+	"encoding/json"
 	"image"
 	"net/url"
 	"slices"
@@ -323,9 +324,23 @@ func TestRowLinkClicksAndCursorLikeSlack(t *testing.T) {
 		v, h, e, fs := vaFakeActivity(t, false)
 		const key, ts = "fa-reaction", "1762700500.000100"
 		ch := fakeslack.ViewsChannel
-		if !fs.EditLive(ch, ts, "a synthetic message people liked, see <"+rhLink+"|the doc> for more words to fill a line") {
-			t.Fatal("the fake doesn't hold the row's message")
+		// the row's message (fetched by id: messages.list) edited to
+		// carry a link, as the socket's message_changed brings it
+		m := slack.Message{Type: "message", Channel: ch, TS: ts, User: fakeslack.SelfID,
+			Text:      "a synthetic message people liked, see <" + rhLink + "|the doc> for more words to fill a line",
+			Edited:    &slack.Edited{User: fakeslack.SelfID, TS: "1762709000.000100"},
+			Reactions: []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"U0FAKE00001", "U0FAKE00002"}}}}
+		asMap := func(x slack.Message) map[string]any {
+			raw, _ := json.Marshal(x)
+			var out map[string]any
+			_ = json.Unmarshal(raw, &out)
+			out["channel"] = ch
+			return out
 		}
+		prev := m
+		prev.Text, prev.Edited = "a synthetic message people liked", nil
+		fs.Push(map[string]any{"type": "message", "subtype": "message_changed", "channel": ch, "hidden": true,
+			"ts": "1762709000.000100", "event_ts": "1762709000.000100", "message": asMap(m), "previous_message": asMap(prev)})
 		body := func() *richEntry {
 			for k, ent := range v.rich {
 				if strings.HasSuffix(k, ch+"/"+ts) && len(ent.v.LinkRects()) > 0 {
@@ -359,15 +374,16 @@ func TestRowLinkClicksAndCursorLikeSlack(t *testing.T) {
 	})
 	t.Run("pins", func(t *testing.T) {
 		app, fs := pfCore(t)
+		// the pin carries a link before the tab reads pins.list
+		ts := fakeslack.PinsTS(2)
+		if !fs.EditLive(fakeslack.PinsChannelID, ts, "The launch checklist is final, see <"+rhLink+"|the doc> before you edit it") {
+			t.Fatal("the fake doesn't hold the pin")
+		}
 		h := pfHostFor(t, app, fs, false)
 		v := NewChannelPins(h, fakeslack.PinsChannelID)
 		e := &vaEnv{size: image.Pt(1100, 900)}
 		pfDraw(e, h, v.Layout)
 		e.until(t, "the pins", func() bool { return v.Loaded() && len(v.Items()) == 4 })
-		ts := fakeslack.PinsTS(2)
-		if !fs.EditLive(fakeslack.PinsChannelID, ts, "The launch checklist is final, see <"+rhLink+"|the doc> before you edit it") {
-			t.Fatal("the fake doesn't hold the pin")
-		}
 		ent := func() *richEntry { return v.rich["pane:"+fakeslack.PinsChannelID+"/"+ts] }
 		e.until(t, "the edited pin's link", func() bool { return ent() != nil && len(ent().v.LinkRects()) > 0 })
 		e.frame()
