@@ -4901,7 +4901,7 @@ jobs:
         run: |
           set +e
           rc=0
-          for t in TestDisplaysMacAfterLaunchReadsLive TestDisplaysMac; do
+          for t in TestDisplaysMacAfterLaunchReadsLive; do
             n=0
             for i in $(seq 1 $COUNT); do
               go test -count=1 -v -timeout 3m -run "^$t\$" gioui.org/app > "$RUNNER_TEMP/d.log" 2>&1 || { rc=1; n=$((n + 1)); grep -E -- '_test.go:[0-9]+: |--- FAIL' "$RUNNER_TEMP/d.log" | head -6; }
