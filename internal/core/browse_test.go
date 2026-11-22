@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -393,8 +394,8 @@ func TestSearchUsergroupsGrid(t *testing.T) {
 	}
 	f.reply["usergroups.search"] = `{"ok":true,"usergroups":[],"num_found":2181,"next_cursor_mark":"AoIu"}`
 	pg, err = a.SearchUsergroups(ctx, UsergroupOpts{Sort: "member_count", Desc: true, Count: 10, Cursor: "AoIu", ExcludeDisabled: true})
-	if err != nil || pg.Next != "" {
-		t.Fatalf("a cursor answered with itself is the end: %+v %v", pg, err)
+	if err != nil || pg.Next != "AoIu" {
+		t.Fatalf("the answer's cursorMark is the next page's, as Slack keeps it: %+v %v", pg, err)
 	}
 	if p := f.last("usergroups.search"); formVal(p, "sort") != "member_count" || formVal(p, "sort_dir") != "desc" || formVal(p, "count") != "10" ||
 		formVal(p, "cursor_mark") != "AoIu" || formVal(p, "include_disabled") != "false" {
@@ -402,6 +403,76 @@ func TestSearchUsergroupsGrid(t *testing.T) {
 	}
 	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{Sort: "bogus"}); err != nil || formVal(f.last("usergroups.search"), "sort") != "name" {
 		t.Errorf("bogus sort not normalized: %v", err)
+	}
+}
+
+// upsertEntity ({...stored, ...answer}): an answer's keys replace the
+// stored group's, the keys it leaves out stay. search.team's items (off
+// a grid) carry no team_id, auto_type, is_section or date_update; a grid
+// answer's auto_type null clears it.
+func TestSearchUsergroupsMergesStored(t *testing.T) {
+	a, f := testApp(t)
+	a.S.PutUsergroup(slack.Usergroup{ID: "S1", Handle: "admins", Name: "Admins", TeamID: "T1", AutoType: "admin", IsSection: true, DateUpdate: 7, UserCount: 2})
+	f.reply["search.team"] = `{"ok":true,"items":[{"id":"S1","handle":"admins","name":"Team admins","user_count":3,"date_delete":0}],"num_found":1}`
+	ctx := context.Background()
+	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	g := a.StoredUsergroup("S1")
+	if g.Name != "Team admins" || g.UserCount != 3 || g.TeamID != "T1" || g.AutoType != "admin" || !g.IsSection || g.Updated != 7 {
+		t.Errorf("after search.team: %+v", g)
+	}
+	a.C.Creds.EnterpriseID = "E1"
+	f.reply["usergroups.search"] = `{"ok":true,"usergroups":[{"id":"S1","handle":"admins","name":"Team admins","team_id":"T1","auto_type":null,"is_section":false}],"num_found":1}`
+	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	// user_count is parseInt(user_count) || 0 whether or not the answer
+	// has it: 0 here
+	if g := a.StoredUsergroup("S1"); g.AutoType != "" || g.IsSection || g.Updated != 7 || g.UserCount != 0 {
+		t.Errorf("after usergroups.search: %+v", g)
+	}
+}
+
+// fetchPaginatedUserGroupsWithQuery (D8Wa TC): off a grid a failed
+// search.team is an empty page, not an error; only a cancelled fetch fails.
+func TestSearchUsergroupsOffGridErrorIsEmpty(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["search.team"] = `{"ok":false,"error":"internal_error"}`
+	pg, err := a.SearchUsergroups(context.Background(), UsergroupOpts{Query: "x"})
+	if err != nil || len(pg.Groups) != 0 || pg.Total != 0 || pg.Next != "" {
+		t.Errorf("a failed search.team: %+v %v, want an empty page", pg, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := a.SearchUsergroups(ctx, UsergroupOpts{}); err == nil {
+		t.Error("a cancelled fetch answered a page")
+	}
+}
+
+// The featureAccess store is persisted (zxoU persistenceEnabled): until
+// features.access.policies.list answers, FeatureAccess reads the last
+// answer the disk cache kept; each answer is kept for the next launch.
+func TestFeatureAccessFromCache(t *testing.T) {
+	a, f := testApp(t)
+	hold := make(chan struct{})
+	f.hooks["features.access.policies.list"] = func(url.Values) { <-hold }
+	f.reply["features.access.policies.list"] = `{"ok":true,"feature_policies":{"user_groups__manage":{"is_enabled":false}}}`
+	a.S.SetFeatureAccess(map[string]bool{FeatureUserGroupsManage: true})
+	a.installCachedFeatures() // Boot's, once meta.json's first part is in
+	if !a.FeatureAccess(FeatureUserGroupsManage) {
+		t.Error("the cached answer isn't read before the call answers")
+	}
+	close(hold)
+	deadline := time.Now().Add(5 * time.Second)
+	for a.FeatureAccess(FeatureUserGroupsManage) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if a.FeatureAccess(FeatureUserGroupsManage) {
+		t.Error("the server's answer didn't replace the cached one")
+	}
+	if on, ok := a.S.CachedFeatureAccess(FeatureUserGroupsManage); !ok || on {
+		t.Errorf("kept for the next launch: %v %v", on, ok)
 	}
 }
 

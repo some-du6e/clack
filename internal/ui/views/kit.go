@@ -588,6 +588,9 @@ type tabs struct {
 	// Labels keep the English sources (Slack's keys); a view's own data
 	// (a custom view's name) passes through unchanged.
 	Tr func(i int, s string) string
+	// Hidden, when set, leaves tab i out of the strip (Directories' tabs
+	// a guest doesn't get); its index keeps its meaning.
+	Hidden func(i int) bool
 }
 
 // label is tab i's text as drawn.
