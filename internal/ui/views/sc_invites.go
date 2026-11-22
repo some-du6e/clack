@@ -565,7 +565,7 @@ func (v *scInvites) card(gtx C, ci core.ConnectInvite) D {
 			v.act(ci, x)
 		}
 	}
-	left, when, icon, primary, secondary, foot, footText := v.cardText(ci, state, now)
+	left, when, tile, primary, secondary, foot, footText := v.cardText(ci, state, now)
 	line := dirRing(&d.base, d.p.Surface)
 	w := gtx.Constraints.Max.X
 	return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
@@ -591,7 +591,7 @@ func (v *scInvites) card(gtx C, ci core.ConnectInvite) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D {
-						return layout.Inset{Top: 2, Bottom: 2, Right: 12}.Layout(gtx, func(gtx C) D { return v.cardIcon(gtx, ci, icon, state) })
+						return layout.Inset{Top: 2, Bottom: 2, Right: 12}.Layout(gtx, func(gtx C) D { return v.cardIcon(gtx, ci, tile, state) })
 					}),
 					layout.Flexed(1, func(gtx C) D {
 						return layout.Inset{Right: 16}.Layout(gtx, func(gtx C) D {
@@ -674,7 +674,7 @@ func scFooterIcon(state string) string {
 }
 
 // cardText is the rows' texts for invite ci in state.
-func (v *scInvites) cardText(ci core.ConnectInvite, state string, now time.Time) (left, when, icon, primary, secondary, foot, footText string) {
+func (v *scInvites) cardText(ci core.ConnectInvite, state string, now time.Time) (left, when, tile, primary, secondary, foot, footText string) {
 	d := v.d
 	when = scWhen(time.Unix(ci.DateCreated, 0), now)
 	ch := "#" + ci.ChannelName
@@ -696,17 +696,17 @@ func (v *scInvites) cardText(ci core.ConnectInvite, state string, now time.Time)
 					left = nsSC.T("{headerChannelCopy} {channel}:", "headerChannelCopy", nsSC.T("Invitation not sent to"), "channel", ch)
 				}
 			}
-			icon = "channel"
+			tile = "channel"
 		case ci.IsEmail():
-			left, icon = nsSC.T("Invited to direct message:"), "dm"
+			left, tile = nsSC.T("Invited to direct message:"), "dm"
 		case ci.Kind == "channel":
-			left, icon = nsSC.T("Created invite link to:"), "channel"
+			left, tile = nsSC.T("Created invite link to:"), "channel"
 		default:
-			left, icon = nsSC.T("Created invite link to:"), "dm"
+			left, tile = nsSC.T("Created invite link to:"), "dm"
 		}
 		switch {
 		case acc != nil && acc.UserName != "":
-			primary, secondary, icon = acc.UserName, acc.TeamName, "user:"+acc.UserID
+			primary, secondary, tile = acc.UserName, acc.TeamName, "user:"+acc.UserID
 		case ci.IsEmail():
 			primary, secondary = ci.RecipientEmail, expiry
 		case ci.Kind == "channel":
@@ -718,10 +718,10 @@ func (v *scInvites) cardText(ci core.ConnectInvite, state string, now time.Time)
 		inviter := scInviterName(&d.base, core.ActivityItem{Actor: ci.InviterID, Invite: &ci.ActivityInvite})
 		if ci.Kind == "channel" {
 			left = nsSC.T("{user} from {team} invited you to join:", "user", inviter, "team", ci.InvitingTeam)
-			primary, icon = ch, "team"
+			primary, tile = ch, "team"
 		} else {
 			left = nsSC.T("{user} from {team} invited you to join:", "user", inviter, "team", ci.InvitingTeam)
-			primary, icon = nsSC.T("Direct message"), "dm-received"
+			primary, tile = nsSC.T("Direct message"), "dm-received"
 		}
 		secondary = ci.Message
 		if secondary == "" {
@@ -754,19 +754,19 @@ func (v *scInvites) cardText(ci core.ConnectInvite, state string, now time.Time)
 // cardIcon is the card's 36px icon: an email invite's channel or DM tile
 // (#11a489 on #11a4891a; a received DM's #007a5a), the person who took it
 // up, the inviting team's avatar; grayscale-looking when inactive.
-func (v *scInvites) cardIcon(gtx C, ci core.ConnectInvite, icon, state string) D {
+func (v *scInvites) cardIcon(gtx C, ci core.ConnectInvite, tile, state string) D {
 	d := v.d
 	s := gtx.Dp(36)
 	sz := image.Pt(s, s)
 	inactive := state == "expired" || state == "revoked"
 	switch {
-	case strings.HasPrefix(icon, "user:"):
+	case strings.HasPrefix(tile, "user:"):
 		url := ""
-		if u, ok := d.user(strings.TrimPrefix(icon, "user:")); ok {
+		if u, ok := d.user(strings.TrimPrefix(tile, "user:")); ok {
 			url = u.Avatar
 		}
 		return dirImage(&d.base, gtx, url, sz, gtx.Dp(4))
-	case icon == "team":
+	case tile == "team":
 		t, _ := d.h.Core().ExternalTeamByID(ci.TeamID)
 		if t.ID == "" {
 			t = core.ExternalTeam{ID: ci.TeamID, Name: ci.InvitingTeam, Icon: ci.TeamIcon}
@@ -775,7 +775,7 @@ func (v *scInvites) cardIcon(gtx C, ci core.ConnectInvite, icon, state string) D
 	}
 	fg, bg := rgb(0x11a489), argb(0x1a11a489)
 	name := "shared-channel"
-	switch icon {
+	switch tile {
 	case "dm":
 		name = "comment"
 	case "dm-received":
