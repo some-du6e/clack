@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/key"
+
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -302,5 +305,112 @@ func TestFilesViewFiltersExcludeBotsCount(t *testing.T) {
 	}
 	if !h.Core().PrefBool("search_exclude_bots", false) {
 		t.Error("Clear Filters changed the pref")
+	}
+}
+
+// searchFiles types q into the browser's search (the debounce fires at
+// once) and returns the list's request.
+func searchFiles(t *testing.T, v *Files, e *vaEnv, fs *fakeslack.Server, q string) url.Values {
+	t.Helper()
+	n := len(fs.FilesBrowserSearches())
+	v.deb.set(q, time.Time{})
+	e.frame()
+	return lastFilesSearch(t, e, fs, n, filesAllTypes)
+}
+
+// Clearing the search (onResetSearch, t8): Most relevant goes back to
+// Recently viewed with no filters, but stays, listed and sent, while
+// advanced filters are set.
+func TestFilesViewFiltersSearchClear(t *testing.T) {
+	v, _, e, fs := filesView(t)
+	if p := searchFiles(t, v, e, fs, "plan"); p.Get("sort") != "score" {
+		t.Fatalf("search sort %q", p.Get("sort"))
+	}
+	p := searchFiles(t, v, e, fs, "")
+	if p.Get("sort") != "last_engaged" || v.sortBy != "" || v.sortLabel() != "Recently viewed" {
+		t.Errorf("no filters, cleared: sort %q, sortBy %q, label %q", p.Get("sort"), v.sortBy, v.sortLabel())
+	}
+	m := openFiltersModal(t, v, e)
+	pickDate(t, m, "Last 7 days")
+	m.Modal().Press("Done")
+	e.frame()
+	searchFiles(t, v, e, fs, "plan")
+	p = searchFiles(t, v, e, fs, "")
+	if p.Get("sort") != "score" || v.sortBy != "score" || v.sortLabel() != "Most relevant" {
+		t.Errorf("filters set, cleared: sort %q, sortBy %q, label %q", p.Get("sort"), v.sortBy, v.sortLabel())
+	}
+	if !strings.HasPrefix(p.Get("query"), "before:") {
+		t.Errorf("cleared query %q", p.Get("query"))
+	}
+}
+
+// A From set under All files stays under Created by you: the modal hides
+// it, counts it (aI) and Done keeps it (onSave's fromSelections).
+func TestFilesViewFiltersCreatedByYouKeepsFrom(t *testing.T) {
+	v, _, e, fs := filesView(t)
+	m := openFiltersModal(t, v, e)
+	pickFrom(t, v, e, m, filesFiltersPerson)
+	m.Modal().Press("Done")
+	e.frame()
+	v.segClicks[1].Click()
+	e.frame()
+	n := len(fs.FilesBrowserSearches())
+	m = openFiltersModal(t, v, e)
+	if m.Count() != 1 {
+		t.Errorf("count with the hidden From: %d", m.Count())
+	}
+	pickDate(t, m, "Last 7 days")
+	m.Modal().Press("Done")
+	now := time.Now()
+	self := "creator:<@" + fakeslack.SelfID + ">"
+	p := lastFilesSearch(t, e, fs, n, self)
+	want := "from:<@" + filesFiltersPerson + "> before:" + now.AddDate(0, 0, 1).Format("2006-01-02") + " after:" +
+		now.AddDate(0, 0, -7).Format("2006-01-02") + " type:lists type:quip type:documents " + self
+	if got := p.Get("query"); got != want {
+		t.Errorf("query\n got %q\nwant %q", got, want)
+	}
+	if got := v.filtersLabel(); got != "2 Filters" || v.adv.Count() != 2 {
+		t.Errorf("label %q, filters %+v", got, v.adv)
+	}
+}
+
+// A picked group DM reopens under the name its option row had (the
+// members, as getDisplayNameForChannel gives it), not its mpdm- name.
+func TestFilesViewFiltersGroupDMName(t *testing.T) {
+	v, h, e, _ := filesView(t)
+	const g = "G0FFMPIM001"
+	h.Core().S.PutConv(slack.Conversation{ID: g, Name: "mpdm-ada--grace--self-1", IsMPIM: true, IsGroup: true,
+		Members: []string{fakeslack.SelfID, "U0FAKE00001", "U0FAKE00002"}})
+	v.applyFilters(popups.FilesFilters{In: []string{g}}, 1)
+	e.frame()
+	m := openFiltersModal(t, v, e)
+	got := m.In().Labels()
+	if len(got) != 1 || strings.HasPrefix(got[0], "mpdm-") || !strings.Contains(got[0], "Ada") {
+		t.Errorf("group DM token %q", got)
+	}
+}
+
+// Escape with From's list open closes the list (MultiSelectInput's
+// onEscape stops the event); a second Escape closes the modal.
+func TestFilesViewFiltersEscapeClosesListFirst(t *testing.T) {
+	v, _, e, _ := filesView(t)
+	m := openFiltersModal(t, v, e)
+	m.From().Focus()
+	e.frame()
+	u, _ := v.h.Core().User(filesFiltersPerson)
+	m.From().Type(u.Name[:min(len(u.Name), 5)])
+	e.until(t, "From's list", func() bool { return m.From().Expanded() })
+	esc := func() {
+		e.r.Queue(key.Event{Name: key.NameEscape, State: key.Press}, key.Event{Name: key.NameEscape, State: key.Release})
+		e.frame()
+		e.frame()
+	}
+	esc()
+	if m.Modal().Dismissed() || m.From().Expanded() {
+		t.Fatalf("first Escape: modal dismissed %v, list open %v", m.Modal().Dismissed(), m.From().Expanded())
+	}
+	esc()
+	if !m.Modal().Dismissed() {
+		t.Error("second Escape left the modal open")
 	}
 }

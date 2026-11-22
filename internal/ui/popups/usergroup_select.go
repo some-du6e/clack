@@ -75,6 +75,9 @@ type ugSelect struct {
 	active   int
 	open     bool
 	focusReq bool
+	// escaped: Escape closed the list; it stays closed while the input
+	// keeps the focus, until typing, ↓ or a click opens it again
+	escaped bool
 }
 
 // ugOption is one option: a member or a channel.
@@ -105,6 +108,15 @@ func (s *ugSelect) IDs() []string {
 	out := make([]string, len(s.picked))
 	for i, o := range s.picked {
 		out[i] = o.ID
+	}
+	return out
+}
+
+// Labels are the picked options' labels, in order (tests).
+func (s *ugSelect) Labels() []string {
+	out := make([]string, len(s.picked))
+	for i, o := range s.picked {
+		out[i] = o.Label
 	}
 	return out
 }
@@ -147,7 +159,7 @@ func (s *ugSelect) notify() {
 func (s *ugSelect) Type(q string) {
 	s.ed.SetText(q)
 	s.q = q
-	s.open = true
+	s.open, s.escaped = true, false
 	s.query(q)
 }
 
@@ -249,12 +261,12 @@ func (s *ugSelect) events(gtx layout.Context) {
 				s.active--
 			}
 		case key.NameDownArrow:
-			s.open = true
+			s.open, s.escaped = true, false
 			if s.active < len(opts)-1 {
 				s.active++
 			}
 		case key.NameEscape:
-			s.open = false
+			s.open, s.escaped = false, true
 		case key.NameDeleteBackward, key.NameDeleteForward:
 			// MultiSelectInput's onBackspace: no token selected selects the
 			// last; else it goes and the one before it is selected (none
@@ -283,7 +295,7 @@ func (s *ugSelect) events(gtx layout.Context) {
 		switch ev.(type) {
 		case widget.ChangeEvent:
 			if t := s.ed.Text(); t != s.q {
-				s.q, s.sel, s.open = t, -1, true
+				s.q, s.sel, s.open, s.escaped = t, -1, true, false
 				s.query(t)
 			}
 		case widget.SubmitEvent:
@@ -314,20 +326,36 @@ func (s *ugSelect) events(gtx layout.Context) {
 	}
 	if s.boxClk.Clicked(gtx) {
 		gtx.Execute(key.FocusCmd{Tag: &s.ed})
-		s.open = true
+		s.open, s.escaped = true, false
 	}
 	pressed := s.boxClk.Pressed()
 	for i := range s.optClk {
 		pressed = pressed || s.optClk[i].Pressed()
 	}
 	if !focused && !pressed {
-		s.open = false
-	} else if focused && !s.open && (s.q != "" || s.allowEmpty) {
+		s.open, s.escaped = false, false
+	} else if focused && !s.open && !s.escaped && (s.q != "" || s.allowEmpty) {
 		s.open = true
 	}
 	if s.open && s.allowEmpty && s.loaded != s.q && s.gen == 0 {
 		s.query(s.q)
 	}
+}
+
+// Expanded reports whether the options list shows (selectState
+// isExpanded, as drawOptions draws it).
+func (s *ugSelect) Expanded() bool {
+	return s.open && !(len(s.Options()) == 0 && s.loaded == s.q && strings.TrimSpace(s.q) == "")
+}
+
+// CloseList closes the options list (MultiSelectInput's onEscape);
+// false when it wasn't open.
+func (s *ugSelect) CloseList() bool {
+	if !s.Expanded() {
+		return false
+	}
+	s.open, s.escaped = false, true
+	return true
 }
 
 // rmPressed reports token i's remove icon took the press.
