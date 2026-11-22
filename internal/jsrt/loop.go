@@ -43,6 +43,13 @@ type Runtime struct {
 	// ticks with the clock interrupt on Windows (0.5-15.6 ms), so two
 	// tasks queued in one tick had equal stamps and the later went first
 	enqN atomic.Uint64
+	// seenN is enqN of the newest task queued that JS can see run: every
+	// task but a handle release's (releaseLater). A move joins its queued
+	// task while that task is the newest seen (postMove): a release the
+	// collector's cleanups queue between two moves runs no JS and sees no
+	// event, and counting it split the moves in two (train-163's push ci
+	// 45025576198, TestQueuedRectsAndMovesCoalesce: 2 mousemoves)
+	seenN atomic.Uint64
 	// ordQ are the in-order tasks (PostInOrder), from ordAt, in their
 	// order (mu); ordN counts them, read between tasks without the lock.
 	// They run ahead of the plain queue (runOrdered), and a user-blocking
@@ -402,6 +409,9 @@ func (r *Runtime) enqueue(t task) uint64 {
 				t.root, t.chainSeq = monoNow(), n // the user's action: what it starts continues on its lane (chainLane)
 			}
 			t.seq = n
+			if t.kind != "release" {
+				r.seenN.Store(n)
+			}
 			*q = append(*q, t) // room: no allocation
 			switch {
 			case t.urgent:
