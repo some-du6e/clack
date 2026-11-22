@@ -3500,3 +3500,31 @@ jobs:
             grep -E -- '^\s*--- FAIL|_test.go:[0-9]+:' "$RUNNER_TEMP/$f.log" | head -20
           done
           exit $rc
+
+  # lost-click (2026-11-22, the lost-click sweep): TestJoinBanner's close
+  # click waits for this visit's mount (it clicked state a later mount
+  # reset, dm-slugs-flake's push ci 44975471550), and a reaction pill
+  # pressed while another emoji lands keeps its click (pills kept by
+  # emoji, as Slack keys its Reaction elements). COUNT runs each.
+  # Dispatch with only=lost-click.
+  lost-click:
+    if: ${{ !inputs.only || startsWith('lost-click', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the join banner's close and a pill's click, COUNT runs each
+        run: |
+          set +e
+          rc=0
+          xvfb-run -a go test -count="$COUNT" -timeout 20m -run '^TestJoinBanner$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 10m -run '^TestReactionPillClickSurvivesOtherReactions$' ./internal/ui/messages || rc=1
+          exit $rc
