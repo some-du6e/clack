@@ -40,59 +40,75 @@ if [ ${#present[@]} -gt 0 ]; then
 		rc=1
 	fi
 fi
-# packages by module (third_party/* are modules of their own) and GOOS
+# packages by GOOS, as import paths of the main module (third_party/*
+# are modules of their own, but the main module's replace is what builds
+# them: vetting one alone took its own go.mod's other typesetting)
 declare -A linux=() windows=() darwin=()
+modpath() { # dir -> import path, through the module the dir is in
+	local d=$1 m
+	for m in third_party/gioui.org third_party/typesetting third_party/rnnoise-go; do
+		case $d/ in "$m"/*)
+			local mp
+			mp=$(awk '/^module /{print $2; exit}' "$m/go.mod")
+			local rel=${d#"$m"}
+			echo "$mp${rel}"
+			return
+			;;
+		esac
+	done
+	echo "./$d"
+}
 for f in "${files[@]}"; do
 	d=$(dirname "$f")
 	[ -d "$d" ] || continue
-	mod=.
-	for m in third_party/gioui.org third_party/typesetting third_party/rnnoise-go; do
-		case $d/ in "$m"/*) mod=$m ;; esac
-	done
-	rel=${d#"$mod"}
-	rel=./${rel#/}
-	[ "$rel" = ./ ] && rel=.
-	key="$mod|$rel"
+	p=$(modpath "$d")
 	case $f in
-	*_windows.go | *_windows_test.go) windows[$key]=1 ;;
-	*_darwin.go | *_darwin_test.go) darwin[$key]=1 ;;
-	*) linux[$key]=1 ;;
+	*_windows.go | *_windows_test.go) windows[$p]=1 ;;
+	*_darwin.go | *_darwin_test.go) darwin[$p]=1 ;;
+	*) linux[$p]=1 ;;
 	esac
 done
-vet() { # vet GOOS ENV... -- keys...
-	local goos=$1
-	shift
+# a package with no files for GOOS (build constraints): nothing to vet there
+hasfiles() { # GOOS pkg
+	local n
+	n=$(GOOS=$1 go list -e -f '{{len .GoFiles}}{{len .CgoFiles}}{{len .TestGoFiles}}{{len .XTestGoFiles}}' "$2" 2>/dev/null)
+	[ -n "$n" ] && [ "$n" != 0000 ]
+}
+vet() { # vet GOOS warn ENV... -- pkgs...
+	local goos=$1 warn=$2
+	shift 2
 	local envs=()
 	while [ "$1" != -- ]; do
 		envs+=("$1")
 		shift
 	done
 	shift
-	declare -A bymod=()
-	local k
-	for k in "$@"; do
-		bymod[${k%%|*}]+=" ${k#*|}"
+	local pkgs=() p
+	for p in "$@"; do
+		hasfiles "$goos" "$p" && pkgs+=("$p")
 	done
-	local m
-	for m in "${!bymod[@]}"; do
-		echo "prepush: go vet ($goos) in $m:${bymod[$m]}"
-		# shellcheck disable=SC2086
-		if ! (cd "$m" && env GOOS="$goos" "${envs[@]}" go vet ${bymod[$m]}); then
+	[ ${#pkgs[@]} -gt 0 ] || return 0
+	echo "prepush: go vet ($goos): ${pkgs[*]}"
+	if ! env GOOS="$goos" "${envs[@]}" go vet "${pkgs[@]}"; then
+		if [ "$warn" = warn ]; then
+			echo "prepush: the $goos vet above needs a $goos cgo toolchain this machine lacks: a warning only (CI's macos jobs build it)"
+		else
 			rc=1
 		fi
-	done
+	fi
 }
-[ ${#linux[@]} -gt 0 ] && vet linux CGO_ENABLED=1 -- "${!linux[@]}"
+[ ${#linux[@]} -gt 0 ] && vet linux fail CGO_ENABLED=1 -- "${!linux[@]}"
 if [ ${#windows[@]} -gt 0 ]; then
 	if command -v x86_64-w64-mingw32-gcc >/dev/null; then
-		vet windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc -- "${!windows[@]}"
+		vet windows fail GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc -- "${!windows[@]}"
 	else
 		echo "prepush: no x86_64-w64-mingw32-gcc: the windows vet skips cgo files"
-		vet windows GOARCH=amd64 CGO_ENABLED=0 -- "${!windows[@]}"
+		vet windows fail GOARCH=amd64 CGO_ENABLED=0 -- "${!windows[@]}"
 	fi
 fi
-# no darwin cgo toolchain here: the darwin vet skips cgo files (CI's macos jobs build them)
-[ ${#darwin[@]} -gt 0 ] && vet darwin GOARCH=arm64 CGO_ENABLED=0 -- "${!darwin[@]}"
+# no darwin cgo toolchain here: Gio's packages need cgo on darwin, so the
+# darwin vet only warns
+[ ${#darwin[@]} -gt 0 ] && vet darwin warn GOARCH=arm64 CGO_ENABLED=0 -- "${!darwin[@]}"
 if [ $rc -eq 0 ]; then
 	echo "prepush: gofmt and go vet clean on ${#files[@]} changed Go files"
 fi
