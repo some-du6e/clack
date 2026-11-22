@@ -931,7 +931,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 			m := &p.msgs[i]
 			name, av := srAuthor(p.h, m)
 			r := srRow{kind: srRMsg, id: m.Channel + "/" + m.TS, msg: m, name: name, avatar: av,
-				when: srShortDay(tsTime(m.TS), now), segs: srHighlight(srFlatten(srBody(m)), terms), plain: !on}
+				when: srShortDay(tsTime(m.TS), now), segs: srRunSegs(srBodyRuns(p.h, m), terms, true), plain: !on}
 			if on {
 				r.where = p.srQuickWhere(m)
 			}
@@ -2580,10 +2580,195 @@ func srAvatarNative(gtx layout.Context, h Host, m *core.Message, url string, siz
 // srBody is a message's plain text (the unsupported-block card adds
 // none: search previews suppress it).
 func srBody(m *core.Message) string {
-	if s := richtext.SearchText(m.Doc); strings.TrimSpace(s) != "" {
+	if s := richtext.SearchText(richtext.Doc{Blocks: srBodyBlocks(m.Doc.Blocks)}); strings.TrimSpace(s) != "" {
 		return s
 	}
 	return m.Text
+}
+
+// srBodyBlocks are a message's body blocks: not its attachments (link
+// unfurls, shared messages) or files. Slack's search rows draw the text
+// (the server's extract of it); the result card draws matched
+// attachments and files apart (search_card_rich.go). They used to be
+// flattened into the text (an X unfurl's author and post under the
+// message).
+func srBodyBlocks(bs []richtext.Block) []richtext.Block {
+	var out []richtext.Block
+	for _, b := range bs {
+		switch {
+		case b.Kind == richtext.FileBlock, b.Kind == richtext.FileStatus:
+		case b.Kind == richtext.AttachmentBlock && b.Att != nil && b.Att.Huddle == nil:
+		default:
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// srRun is a piece of a row's text: plain text (with its newlines) or a
+// mention (mention: srMentionOther, or srMentionSelf for the viewer and
+// @here-style broadcasts), which draws as Slack's mention slug
+// (c-member_slug--mention) as the Mrkdwn the rows render does.
+type srRun struct {
+	text    string
+	mention uint8
+}
+
+const (
+	srMentionNone uint8 = iota
+	srMentionOther
+	srMentionSelf
+)
+
+// srBodyRuns are m's body (srBodyBlocks) as text and mention runs, or
+// its raw text when the body has none.
+func srBodyRuns(h Host, m *core.Message) []srRun {
+	self := ""
+	if c := h.Core(); c != nil {
+		self = c.Self().ID
+	}
+	var out []srRun
+	var buf strings.Builder
+	flush := func() {
+		if buf.Len() > 0 {
+			out = append(out, srRun{text: buf.String()})
+			buf.Reset()
+		}
+	}
+	spans := func(ss []richtext.Span) {
+		for _, sp := range ss {
+			switch sp.Kind {
+			case richtext.Break:
+				buf.WriteByte('\n')
+			case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+				flush()
+				k := srMentionOther
+				if sp.Kind == richtext.Broadcast || (sp.Kind == richtext.User && sp.ID == self && self != "") {
+					k = srMentionSelf
+				}
+				out = append(out, srRun{text: sp.Text, mention: k})
+			case richtext.InlineImage:
+			default:
+				buf.WriteString(sp.Text)
+			}
+		}
+	}
+	for i, b := range srBodyBlocks(m.Doc.Blocks) {
+		if i > 0 {
+			buf.WriteByte('\n')
+		}
+		switch b.Kind {
+		case richtext.Paragraph, richtext.Quote, richtext.Preformatted, richtext.Header, richtext.Section, richtext.Context,
+			richtext.RichHeader:
+			spans(b.Spans)
+		case richtext.List:
+			for j, it := range b.Items {
+				if j > 0 {
+					buf.WriteByte('\n')
+				}
+				spans(it)
+			}
+		default:
+			buf.WriteString(richtext.PlainText(richtext.Doc{Blocks: []richtext.Block{b}}))
+		}
+	}
+	flush()
+	empty := true
+	for _, r := range out {
+		if strings.TrimSpace(r.text) != "" {
+			empty = false
+			break
+		}
+	}
+	if empty {
+		return []srRun{{text: m.Text}}
+	}
+	return out
+}
+
+// srRunSegs are runs as highlighted segments: the text runs' terms
+// highlighted, the mentions whole. flat joins the lines with " … " as
+// srFlatten does (blank lines dropped), else the text keeps its lines,
+// trimmed at both ends.
+func srRunSegs(runs []srRun, terms []string, flat bool) []srSeg {
+	var out []srSeg
+	text := func(s string) {
+		if s != "" {
+			out = append(out, srHighlight(s, terms)...)
+		}
+	}
+	if !flat {
+		for i, r := range runs {
+			s := r.text
+			if i == 0 {
+				s = strings.TrimLeft(s, " \t\r\n")
+			}
+			if i == len(runs)-1 {
+				s = strings.TrimRight(s, " \t\r\n")
+			}
+			if r.mention != srMentionNone {
+				out = append(out, srSeg{Text: s, Mention: r.mention})
+				continue
+			}
+			text(s)
+		}
+		return out
+	}
+	// flat: lines of pieces, empty ones dropped
+	type piece struct {
+		s       string
+		mention uint8
+	}
+	var lines [][]piece
+	cur := []piece{}
+	for _, r := range runs {
+		if r.mention != srMentionNone {
+			cur = append(cur, piece{r.text, r.mention})
+			continue
+		}
+		parts := strings.Split(r.text, "\n")
+		for j, p := range parts {
+			if j > 0 {
+				lines = append(lines, cur)
+				cur = []piece{}
+			}
+			if p != "" {
+				cur = append(cur, piece{p, srMentionNone})
+			}
+		}
+	}
+	lines = append(lines, cur)
+	first := true
+	for _, ln := range lines {
+		// trim the line's ends
+		for len(ln) > 0 && ln[0].mention == srMentionNone && strings.TrimSpace(ln[0].s) == "" {
+			ln = ln[1:]
+		}
+		for len(ln) > 0 && ln[len(ln)-1].mention == srMentionNone && strings.TrimSpace(ln[len(ln)-1].s) == "" {
+			ln = ln[:len(ln)-1]
+		}
+		if len(ln) == 0 {
+			continue
+		}
+		if ln[0].mention == srMentionNone {
+			ln[0].s = strings.TrimLeft(ln[0].s, " \t\r")
+		}
+		if l := len(ln) - 1; ln[l].mention == srMentionNone {
+			ln[l].s = strings.TrimRight(ln[l].s, " \t\r")
+		}
+		if !first {
+			out = append(out, srSeg{Text: " … "})
+		}
+		first = false
+		for _, p := range ln {
+			if p.mention != srMentionNone {
+				out = append(out, srSeg{Text: p.s, Mention: p.mention})
+				continue
+			}
+			text(p.s)
+		}
+	}
+	return out
 }
 
 // srAuthor returns a message's display name and avatar.
@@ -2726,4 +2911,13 @@ func srShowResultsFor() string {
 		t += " "
 	}
 	return t
+}
+
+// srSegsText is segs' text joined.
+func srSegsText(segs []srSeg) string {
+	var b strings.Builder
+	for _, s := range segs {
+		b.WriteString(s.Text)
+	}
+	return b.String()
 }

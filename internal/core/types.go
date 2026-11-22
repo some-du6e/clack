@@ -32,8 +32,11 @@ type Message struct {
 	// replied in the thread) and the index of the first block that held a
 	// highlight marker (0 when none), compactCardBlocks' start
 	// (exp_wave7.go).
-	RequestorReplied      bool
-	SearchHitBlock        int
+	RequestorReplied bool
+	SearchHitBlock   int
+	// SearchMatches: which attachments and files held a match (search
+	// results only, nil elsewhere; search_matches.go).
+	SearchMatches         *SearchMatches
 	ClientMsgID           string
 	PinnedBy              string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned bool

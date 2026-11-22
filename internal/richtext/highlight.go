@@ -225,6 +225,50 @@ func highlightBlock(b *Block, ws [][]rune) {
 	}
 }
 
+// HighlightedCopy returns blocks with words marked as HighlightDoc marks
+// them, copying what it changes: blocks themselves stay as they were (the
+// search results card highlights the query in a message the channel view
+// also draws).
+func HighlightedCopy(blocks []Block, words []string) []Block {
+	ws := prepWords(words)
+	if len(ws) == 0 || len(blocks) == 0 {
+		return blocks
+	}
+	out := make([]Block, len(blocks))
+	for i := range blocks {
+		out[i] = highlightCopy(blocks[i], ws)
+	}
+	return out
+}
+
+func highlightCopy(b Block, ws [][]rune) Block {
+	switch b.Kind {
+	case Paragraph, Quote, Preformatted, Header, Section, Context:
+		b.Spans = highlightSpans(b.Spans, ws)
+	case List:
+		items := make([][]Span, len(b.Items))
+		for i := range b.Items {
+			items[i] = highlightSpans(b.Items[i], ws)
+		}
+		b.Items = items
+	}
+	if len(b.Fields) > 0 {
+		fs := make([][]Span, len(b.Fields))
+		for i := range b.Fields {
+			fs[i] = highlightSpans(b.Fields[i], ws)
+		}
+		b.Fields = fs
+	}
+	if len(b.Children) > 0 {
+		cs := make([]Block, len(b.Children))
+		for i := range b.Children {
+			cs[i] = highlightCopy(b.Children[i], ws)
+		}
+		b.Children = cs
+	}
+	return b
+}
+
 // highlightSpans is processChunk + the split: text and links contribute
 // their text, a line break "\n", anything else (mentions, emoji) one
 // space; matched runs of Text and Link spans get Style Highlight.

@@ -640,7 +640,11 @@ func actMsgPreview(gtx layout.Context, h Host, m core.Message, boxed bool) layou
 	innerW := maxInt(1, w-padL-padR)
 	name, av := actAuthor(h, m)
 	when := dayTime(tsTime(m.TS), time.Now())
-	body := actMsgText(m)
+	// the message's text with its mentions as slugs, not its attachments
+	// or files flattened into it (srBodyRuns; the 2026-11-22 relatives of
+	// the search card's fix)
+	segs := srRunSegs(srBodyRuns(h, &m), nil, false)
+	body := strings.TrimSpace(srSegsText(segs))
 
 	call, d := record(loose(gtx, image.Pt(innerW, 1<<20)), func(gtx layout.Context) layout.Dimensions {
 		avPx, gap := dp(gtx, 20), dp(gtx, 8)
@@ -662,7 +666,19 @@ func actMsgPreview(gtx layout.Context, h Host, m core.Message, boxed bool) layou
 			return layout.Dimensions{Size: image.Pt(innerW, y)}
 		}
 		bc, bd := record(loose(gtx, image.Pt(tw, 1<<20)), func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, body, 4)
+			lh := dp(gtx, 22)
+			ell := textW(gtx, th, 15, theme.Regular, "…")
+			toks, lines, over := srWrapFit(gtx, th, segs, tw, 4, ell)
+			srDrawToks(gtx, th, cl, toks, lh, cl.Fg)
+			if over {
+				last := lines - 1
+				at(gtx, image.Pt(srEndX(toks, last), last*lh), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+						return text(gtx, th, 15, theme.Regular, cl.Fg, "…")
+					})
+				})
+			}
+			return layout.Dimensions{Size: image.Pt(tw, lines*lh)}
 		})
 		macroAt(gtx, bc, image.Pt(x, y))
 		return layout.Dimensions{Size: image.Pt(innerW, y+bd.Size.Y)}

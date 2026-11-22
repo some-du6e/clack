@@ -41,6 +41,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -50,10 +51,11 @@ import (
 
 // srTok is a placed word or space run.
 type srTok struct {
-	s    string
-	hit  bool
-	x, y int // y is the line index
-	w    int
+	s       string
+	hit     bool
+	mention uint8 // a mention slug's (srSeg.Mention)
+	x, y    int   // y is the line index
+	w       int
 }
 
 // srSplitWords splits s into word runs, space runs and "\n" tokens,
@@ -102,7 +104,11 @@ func srWrap(gtx layout.Context, th *theme.Theme, segs []srSeg, width, maxLines, 
 	}
 	var words []string
 	for _, sg := range segs {
-		words = srSplitWords(sg.Text, words[:0])
+		if sg.Mention != srMentionNone {
+			words = append(words[:0], sg.Text) // a slug never breaks
+		} else {
+			words = srSplitWords(sg.Text, words[:0])
+		}
 		for _, wd := range words {
 			if wd == "\n" {
 				line++
@@ -132,7 +138,7 @@ func srWrap(gtx layout.Context, th *theme.Theme, segs []srSeg, width, maxLines, 
 				}
 				if pw > lim {
 					// a word wider than the line: clip it (ellipsized)
-					toks = append(toks, srTok{s: wd, hit: sg.Hit, y: line, w: lim})
+					toks = append(toks, srTok{s: wd, hit: sg.Hit, mention: sg.Mention, y: line, w: lim})
 					x = lim
 					if maxLines > 0 && line == maxLines-1 {
 						return toks, maxLines, true
@@ -140,7 +146,7 @@ func srWrap(gtx layout.Context, th *theme.Theme, segs []srSeg, width, maxLines, 
 					continue
 				}
 			}
-			toks = append(toks, srTok{s: wd, hit: sg.Hit, x: x, y: line, w: pw})
+			toks = append(toks, srTok{s: wd, hit: sg.Hit, mention: sg.Mention, x: x, y: line, w: pw})
 			x += pw
 		}
 	}
@@ -169,18 +175,36 @@ func srEndX(toks []srTok, line int) int {
 }
 
 // srDrawToks draws placed tokens at the origin, lines lh px apart, with
-// the search highlight behind hits.
+// the search highlight behind hits and mentions as Slack's mention slug
+// (c-member_slug--mention: the mention colours on a radius 3 background;
+// the viewer's own and broadcasts in the self-mention yellow).
 func srDrawToks(gtx layout.Context, th *theme.Theme, cl *Colors, toks []srTok, lh int, fg color.NRGBA) {
+	var pal *richview.Palette
 	for i := range toks {
 		t := toks[i]
 		y := t.y * lh
-		if t.hit {
+		col := fg
+		if t.mention != srMentionNone {
+			if pal == nil {
+				p := richview.LightPalette()
+				if th != nil && th.Dark {
+					p = richview.DarkPalette()
+				}
+				pal = &p
+			}
+			bg, tc := pal.MentionBg, pal.MentionText
+			if t.mention == srMentionSelf {
+				bg, tc = pal.SelfMentionBg, pal.SelfMentionText
+			}
+			rrect(gtx, image.Rect(t.x, y+dp(gtx, 1), t.x+t.w, y+lh-dp(gtx, 1)), dp(gtx, 3), bg)
+			col = tc
+		} else if t.hit {
 			fill(gtx, image.Rect(t.x, y+dp(gtx, 1), t.x+t.w, y+lh-dp(gtx, 1)), cl.MatchBg)
 		}
 		at(gtx, image.Pt(t.x, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(t.w+dp(gtx, 2), lh)}
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, fg, t.s)
+				return text(gtx, th, 15, theme.Regular, col, t.s)
 			})
 		})
 	}
@@ -257,7 +281,10 @@ type srCard struct {
 	name, avatar, when string
 	where              srWhere
 	flat, full         []srSeg
-	ovText             string // a plugin's text the tokens came from (overText)
+	ovText             string       // a plugin's text the tokens came from (overText)
+	ovDoc              richtext.Doc // ovText's document
+	rich               srCardRich   // the rich body, attachments and files (search_card_rich.go)
+	laid               srRichParts  // their last frame's layout
 	expanded           bool
 	click, more, chip  widget.Clickable
 	toks               []srTok
@@ -270,14 +297,11 @@ type srCard struct {
 	// (SearchResult: BaseAvatar showCard at 36px, MessageSender)
 	avHov, nameHov hovercard.Trigger
 
-	// the density card (srp_card_explore, search_card.go): the clamped
-	// body (dense; denseOwn without a plugin's text) wrapped at dW, the
+	// the density card (search_card.go, search_card_rich.go): what
+	// renderBlocks needs (dense; denseOwn without a plugin's text), the
 	// count pills and their tooltips, the attachments count, the
 	// attachments pill (card coords, last frame) and the viewer's reply
 	dense, denseOwn       srDense
-	dToks                 []srTok
-	dLines, dW            int
-	dOver, dExp           bool
 	reacts, atts          widget.Clickable
 	tipReplies, tipReacts TipState
 	attN                  int
@@ -296,10 +320,14 @@ var srBarShadow = linearAlpha(rgba(0x000000, .08), rgb(0xffffff))
 
 // SearchView is the full search results page.
 type SearchView struct {
-	h      Host
-	q      srQuery
-	tab    int
-	sortBy string // score | timestamp | oldest
+	h     Host
+	typed string // the query the page opened with (the title's)
+	// the cards' rich style without the ui root's (srRichStyle)
+	richSt   *richview.Style
+	richDark bool
+	q        srQuery
+	tab      int
+	sortBy   string // score | timestamp | oldest
 	// sortState is the messages module's sortForcedToRecent and the
 	// window's disableSortOverride (srSortState)
 	sortState srSortState
@@ -395,7 +423,7 @@ func NewSearchView(h Host, query string) *SearchView {
 		}
 	}
 	srRecordQuery(query)
-	v := &SearchView{h: h, q: srParse(query), tab: tab, sortBy: DefaultSearchSort(h.Core()), menuCard: -1, sess: core.NewSearchSession()}
+	v := &SearchView{h: h, typed: query, q: srParse(query), tab: tab, sortBy: DefaultSearchSort(h.Core()), menuCard: -1, sess: core.NewSearchSession()}
 	for t := range v.tabSort {
 		v.tabSort[t] = srDefaultTabSort(h.Core(), t)
 	}
@@ -651,14 +679,14 @@ func (v *SearchView) addMessages(res core.SearchResult, page int) {
 	for i := range res.Messages {
 		m := &res.Messages[i]
 		name, av := srAuthor(v.h, m)
-		body := srBody(m)
-		dense := srDenseOf(v.h, m, terms)
+		runs := srBodyRuns(v.h, m)
+		dense := srDenseOf(m)
 		v.cards = append(v.cards, srCard{
 			name: name, avatar: av, when: dayTime(tsTime(m.TS), now),
 			where: srWhereOf(v.h, v.convs, m),
-			flat:  srHighlight(srFlatten(body), terms),
-			full:  srHighlight(strings.TrimSpace(body), terms),
-			dense: dense, denseOwn: dense, dW: -1,
+			flat:  srRunSegs(runs, terms, true),
+			full:  srRunSegs(runs, terms, false),
+			dense: dense, denseOwn: dense,
 			attN: srAttachmentCount(m),
 		})
 	}
@@ -1025,6 +1053,9 @@ func (v *SearchView) handle(gtx layout.Context) {
 	case srTabMessages, srTabDMs:
 		for i := range v.cards {
 			c := &v.cards[i]
+			if c.rich.moreAtt.Clicked(gtx) { // the attachments' Show more expands the card too
+				c.expanded = true
+			}
 			if c.more.Clicked(gtx) {
 				c.expanded = !c.expanded
 			}
@@ -1261,11 +1292,12 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: sz}
 }
 
+// title is SearchTitle: "Search" without a query, else "Results for:"
+// and the query as Slack displays it (srTitleQuery: members as @name,
+// channels as #name, modifiers with theirs), the typed query, not the
+// filters the pills add (Slack keeps those in the query filter).
 func (v *SearchView) title(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
-	q := v.q.Text()
-	if q == "" {
-		q = v.q.String()
-	}
+	q := srTitleQuery(v.h, v.typed)
 	h := dp(gtx, 26)
 	if q == "" {
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
@@ -1668,7 +1700,8 @@ func (v *SearchView) overText(i int, over slackc.Props) {
 		return
 	}
 	c.ovText = t
-	body := srBody(m)
+	runs := srBodyRuns(v.h, m)
+	c.ovDoc = richtext.Doc{}
 	if t != "" {
 		mm := *m
 		mm.Text, mm.Doc = t, richtext.Doc{}
@@ -1679,18 +1712,18 @@ func (v *SearchView) overText(i int, over slackc.Props) {
 			}
 			mm.Doc = richtext.FromMessage(app.S, &slack.Message{Type: "message", TS: m.TS, User: m.User, Text: t, Blocks: raw})
 		}
-		body = srBody(&mm)
+		runs = srBodyRuns(v.h, &mm)
+		c.ovDoc = mm.Doc
 	}
 	terms := v.q.Highlights()
-	c.flat, c.full = srHighlight(srFlatten(body), terms), srHighlight(strings.TrimSpace(body), terms)
+	c.flat, c.full = srRunSegs(runs, terms, true), srRunSegs(runs, terms, false)
 	c.tokW = -1 // wrap again
 	// the density body shows the plugin's text whole (compactCardBlocks
 	// keeps it: it has no blocks of its own), its own text again after
 	c.dense = c.denseOwn
 	if t != "" {
-		c.dense.segs = c.full
+		c.dense.heur = false
 	}
-	c.dW = -1
 }
 
 func (a srCardArgs) resultProps() slackc.Props {
@@ -1732,8 +1765,12 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}
 	lh := dp(gtx, 22)
 	explore := srExplore(v.h)
-	dense := explore && c.dense.on
-	if !dense && (c.tokW != bw || c.tokExp != c.expanded) {
+	var rich srRichParts
+	if explore { // the density card's rich body (search_card_rich.go)
+		rich = v.srRichMeasure(gtx, th, i, bw, lh)
+		c.laid = rich
+	}
+	if !explore && (c.tokW != bw || c.tokExp != c.expanded) {
 		c.tokW, c.tokExp = bw, c.expanded
 		if c.expanded {
 			c.toks, c.lines, c.over = srWrapFit(gtx, th, c.full, bw, 0, 0)
@@ -1751,8 +1788,8 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		v.srAskViewerReply(i)
 	}
 	h := bodyY + lines*lh
-	if dense {
-		h = bodyY + v.srDenseHeight(gtx, th, c, bw, lh)
+	if explore {
+		h = bodyY + rich.h
 	} else if c.expanded {
 		h += dp(gtx, 20) // "Show less"
 	}
@@ -1809,8 +1846,8 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		return d
 	})
 	srDrawWhere(gtx, v.h, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH, bg)
-	if dense {
-		y := bodyY + v.srDenseBody(gtx, th, cl, c, tx, bodyY, bw, lh, bg)
+	if explore {
+		y := bodyY + v.srRichDraw(gtx, th, cl, c, rich, tx, bodyY, bw, lh, bg)
 		v.srDrawPills(gtx, th, cl, c, m, pills, tx, y, bw)
 		if hovered {
 			v.hoverBar(gtx, th, cl, c, w)
