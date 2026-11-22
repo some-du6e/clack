@@ -23,6 +23,7 @@
 #include <math.h>
 #include <os/lock.h>
 #include <stdatomic.h>
+#include <string.h>
 #include <time.h>
 
 #include "_cgo_export.h"
@@ -37,6 +38,36 @@ void clack_avf_live(int32_t *out) {
 }
 
 static int64_t nowNS(void) { return (int64_t)clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
+
+// historyOn (tests, clack_avf_history): players made while it's on keep a
+// history of what Clack asked and what AVPlayer did (clack_avf_debug).
+static _Atomic int historyOn;
+
+void clack_avf_history(int on) { atomic_store(&historyOn, on); }
+
+static NSString *tcName(AVPlayerTimeControlStatus s) {
+	switch (s) {
+	case AVPlayerTimeControlStatusPaused:
+		return @"paused";
+	case AVPlayerTimeControlStatusWaitingToPlayAtSpecifiedRate:
+		return @"waiting";
+	case AVPlayerTimeControlStatusPlaying:
+		return @"playing";
+	}
+	return [NSString stringWithFormat:@"%ld", (long)s];
+}
+
+static NSString *oneLine(id o) {
+	return [[o description] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+}
+
+// NOTE adds a line to the player's history, when it keeps one.
+#define NOTE(...)                                                                  \
+	do {                                                                           \
+		if (self->_hist != nil) {                                                  \
+			[self note:[NSString stringWithFormat:__VA_ARGS__]];                   \
+		}                                                                          \
+	} while (0)
 
 // clackEntry is a frame: its pixel buffer and its Metal texture.
 typedef struct {
@@ -138,6 +169,14 @@ static int mapError(NSError *e) {
 	int64_t _lastStateNS;
 	_Atomic int64_t _pulls, _frames;
 	_Atomic uint32_t _pbW, _pbH;
+	// the history (historyOn), the queue's: its lines, the AVPlayer state
+	// check noted last, and where the position stood still since when
+	NSMutableArray<NSString *> *_hist;
+	int64_t _bornNS, _stillSinceNS;
+	NSString *_lastKey;
+	double _stillAt;
+	BOOL _stillNoted;
+	id _stallObs, _errLogObs, _jumpObs, _rateObs;
 }
 
 - (instancetype)initWithHandle:(uintptr_t)h total:(int64_t)total seekable:(BOOL)seekable uti:(NSString *)uti url:(NSURL *)url drawW:(int)w drawH:(int)hh {
@@ -159,6 +198,11 @@ static int mapError(NSError *e) {
 	_lastStatus = AVPlayerItemStatusUnknown;
 	_lock = OS_UNFAIR_LOCK_INIT;
 	atomic_store(&_lastAsk, nowNS());
+	_bornNS = nowNS();
+	_stillAt = -1;
+	if (atomic_load(&historyOn)) {
+		_hist = [NSMutableArray array];
+	}
 	_q = dispatch_queue_create("club.getclack.media", DISPATCH_QUEUE_SERIAL);
 	_opq = [[NSOperationQueue alloc] init];
 	_opq.underlyingQueue = _q;
@@ -200,7 +244,140 @@ static int mapError(NSError *e) {
 	                       usingBlock:^(NSNotification *n) {
 		                       [w failedWith:n.userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey]];
 	                       }];
+	if (_hist != nil) {
+		// what else AVFoundation tells, for the history (the rate change's
+		// name as a string: its constant is macOS 12's). Each runs on the
+		// posting thread and notes on the queue later: AVPlayer posts its
+		// rate change inside [_player play], on the queue, and a center
+		// observer on _opq makes the poster wait for the queue it holds (a
+		// deadlock that wedged AVFoundation for the whole process).
+		dispatch_queue_t q = _q;
+		void (^later)(NSString *) = ^(NSString *what) {
+			dispatch_async(q, ^{
+				[w note:what];
+			});
+		};
+		_stallObs = [nc addObserverForName:AVPlayerItemPlaybackStalledNotification
+		                            object:_item
+		                             queue:nil
+		                        usingBlock:^(NSNotification *n) {
+			                        later(@"AVPlayerItemPlaybackStalled");
+		                        }];
+		_errLogObs = [nc addObserverForName:AVPlayerItemNewErrorLogEntryNotification
+		                             object:_item
+		                              queue:nil
+		                         usingBlock:^(NSNotification *n) {
+			                         dispatch_async(q, ^{
+				                         [w noteErrorLog];
+			                         });
+		                         }];
+		_jumpObs = [nc addObserverForName:AVPlayerItemTimeJumpedNotification
+		                           object:_item
+		                            queue:nil
+		                       usingBlock:^(NSNotification *n) {
+			                       later(@"AVPlayerItemTimeJumped");
+		                       }];
+		_rateObs = [nc addObserverForName:@"AVPlayerRateDidChangeNotification"
+		                           object:_player
+		                            queue:nil
+		                       usingBlock:^(NSNotification *n) {
+			                       later([NSString stringWithFormat:@"AVPlayerRateDidChange %@", oneLine(n.userInfo)]);
+		                       }];
+		NOTE(@"set up: waits to minimize stalling %d, pitch %@", _player.automaticallyWaitsToMinimizeStalling, _item.audioTimePitchAlgorithm);
+	}
 	[self updateTimers];
+}
+
+// avSummary is AVPlayer's state now, for the history: its rate, its
+// timeControlStatus and reasonForWaitingToPlay, its position, the item's
+// timebase (the clock the position runs on), the item's buffer flags and
+// the time ranges it has loaded.
+- (NSString *)avSummary {
+	if (_player == nil || _item == nil) {
+		return @"no AVPlayer";
+	}
+	CMTime t = _player.currentTime;
+	double tbRate = -1, tbAt = -1;
+	CMTimebaseRef tb = _item.timebase;
+	if (tb != NULL) {
+		tbRate = CMTimebaseGetRate(tb);
+		CMTime x = CMTimebaseGetTime(tb);
+		tbAt = CMTIME_IS_NUMERIC(x) ? CMTimeGetSeconds(x) : -1;
+	}
+	NSMutableString *loaded = [NSMutableString string];
+	for (NSValue *v in _item.loadedTimeRanges) {
+		CMTimeRange r = v.CMTimeRangeValue;
+		[loaded appendFormat:@" %.3f+%.3f", CMTimeGetSeconds(r.start), CMTimeGetSeconds(r.duration)];
+	}
+	NSString *why = _player.reasonForWaitingToPlay;
+	return [NSString stringWithFormat:@"rate %.2f, timeControlStatus %@, reasonForWaitingToPlay %@, at %.3f; timebase rate %.2f at %.3f; item status %ld, likelyToKeepUp %d, bufferEmpty %d, bufferFull %d, loaded%@",
+	                                  _player.rate, tcName(_player.timeControlStatus), why != nil ? why : @"-", CMTIME_IS_NUMERIC(t) ? CMTimeGetSeconds(t) : -1.0,
+	                                  tbRate, tbAt, (long)_item.status, _item.playbackLikelyToKeepUp, _item.playbackBufferEmpty, _item.playbackBufferFull,
+	                                  loaded.length > 0 ? loaded : @" nothing"];
+}
+
+// note adds a line to the history: what happened, and AVPlayer's state
+// then. The last 160 lines are kept.
+- (void)note:(NSString *)what {
+	if (_hist == nil) {
+		return;
+	}
+	[_hist addObject:[NSString stringWithFormat:@"%8.1f ms %@: %@", (double)(nowNS() - _bornNS) / 1e6, what, [self avSummary]]];
+	if (_hist.count > 160) {
+		[_hist removeObjectAtIndex:0];
+	}
+}
+
+// noteChanges notes each change of AVPlayer's state check sees, and a
+// position that stood still for a second while Clack wanted it to play.
+- (void)noteChanges {
+	CMTimebaseRef tb = _item.timebase;
+	NSString *why = _player.reasonForWaitingToPlay;
+	NSString *key = [NSString stringWithFormat:@"%.2f %ld %@ %d %d %d %ld %.2f", _player.rate, (long)_player.timeControlStatus, why != nil ? why : @"-",
+	                                           _item.playbackLikelyToKeepUp, _item.playbackBufferEmpty, _item.playbackBufferFull, (long)_item.status,
+	                                           tb != NULL ? CMTimebaseGetRate(tb) : -1.0];
+	if (_lastKey == nil || ![key isEqualToString:_lastKey]) {
+		_lastKey = key;
+		[self note:@"AVPlayer changed"];
+	}
+	CMTime t = _player.currentTime;
+	double at = CMTIME_IS_NUMERIC(t) ? CMTimeGetSeconds(t) : -1;
+	if (!_wantPlay || _ended || at != _stillAt) {
+		_stillAt = at;
+		_stillSinceNS = nowNS();
+		_stillNoted = NO;
+	} else if (!_stillNoted && nowNS() - _stillSinceNS > 1000000000) {
+		_stillNoted = YES;
+		[self note:@"the position stood still for 1 s while Clack wants it to play"];
+	}
+}
+
+- (void)noteErrorLog {
+	if (_closed || _hist == nil) {
+		return;
+	}
+	AVPlayerItemErrorLogEvent *e = _item.errorLog.events.lastObject;
+	NOTE(@"AVPlayerItemNewErrorLogEntry %@ %ld %@", e.errorDomain, (long)e.errorStatusCode, e.errorComment);
+}
+
+// debugText is the history and the state now (clack_avf_debug).
+- (NSString *)debugText {
+	NSMutableString *s = [NSMutableString string];
+	double dr = -1;
+	if (@available(macOS 13.0, *)) {
+		if (_player != nil) {
+			dr = _player.defaultRate;
+		}
+	}
+	[s appendFormat:@"Clack: wantPlay %d, ended %d, seekPending %d, rate %.2f, watch %d, closed %d; AVPlayer defaultRate %.2f, now %@\n", _wantPlay, _ended, _seekPending, _rate,
+	                _watch != nil, _closed, dr, [self avSummary]];
+	if (_hist == nil) {
+		[s appendString:@"(no history: clack_avf_history was off when the player was made)\n"];
+	}
+	for (NSString *l in _hist) {
+		[s appendFormat:@"  %@\n", l];
+	}
+	return s;
 }
 
 - (void)observeValueForKeyPath:(NSString *)kp ofObject:(id)o change:(NSDictionary *)c context:(void *)ctx {
@@ -305,6 +482,9 @@ static int mapError(NSError *e) {
 		if (_wantPlay && nowNS() - _lastStateNS > 250000000) {
 			[self emit:CLACK_AV_STATE];
 		}
+		if (_hist != nil) {
+			[self noteChanges];
+		}
 	}
 	[self updateTimers];
 }
@@ -384,8 +564,10 @@ static int mapError(NSError *e) {
 	}
 	_player.preventsDisplaySleepDuringVideoPlayback = YES;
 	[_player play];
+	NOTE(@"play (restart %d)", restart);
 	if (_rate != 1) {
 		_player.rate = (float)_rate;
+		NOTE(@"play: the rate set to %.2f", _rate);
 	}
 	_lastTime = -1;
 	[self emit:CLACK_AV_PLAY];
@@ -398,6 +580,7 @@ static int mapError(NSError *e) {
 	}
 	_wantPlay = NO;
 	[_player pause];
+	NOTE(@"pause");
 	_player.preventsDisplaySleepDuringVideoPlayback = NO;
 	[self emit:CLACK_AV_PAUSE];
 	[self updateTimers];
@@ -415,6 +598,7 @@ static int mapError(NSError *e) {
 	_seekPending = YES;
 	_ended = NO;
 	_seekTarget = t;
+	NOTE(@"seek to %.3f", t);
 	[self emit:CLACK_AV_SEEKING];
 	__weak ClackAVPlayer *w = self;
 	[_player seekToTime:CMTimeMakeWithSeconds(t, 90000)
@@ -456,6 +640,7 @@ static int mapError(NSError *e) {
 		return;
 	}
 	_seekPending = NO;
+	NOTE(@"seeked (finished %d)", finished);
 	if (finished) {
 		if (![self frameAt:_seekTarget]) {
 			[self wantFrameAt:_seekTarget]; // not pulled while it ran
@@ -478,6 +663,7 @@ static int mapError(NSError *e) {
 	}
 	_ended = YES;
 	_wantPlay = NO;
+	NOTE(@"the end");
 	_player.preventsDisplaySleepDuringVideoPlayback = NO;
 	[self emit:CLACK_AV_PAUSE];
 	[self emit:CLACK_AV_ENDED];
@@ -742,6 +928,12 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 		NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
 		[nc removeObserver:_endObs];
 		[nc removeObserver:_failObs];
+		if (_hist != nil) {
+			[nc removeObserver:_stallObs];
+			[nc removeObserver:_errLogObs];
+			[nc removeObserver:_jumpObs];
+			[nc removeObserver:_rateObs];
+		}
 		[_player pause];
 		if (_output != nil) {
 			[_item removeOutput:_output];
@@ -817,6 +1009,7 @@ static dispatch_source_t timerOn(dispatch_queue_t q, int64_t every, dispatch_blo
 	if (_player != nil && _wantPlay) {
 		_player.rate = (float)r;
 	}
+	NOTE(@"rate %.2f (playing wanted %d)", r, _wantPlay);
 }
 - (void)setDrawW:(int)w h:(int)h {
 	_drawW = w;
@@ -911,6 +1104,26 @@ void clack_avf_finish(void *p, uint64_t req, int failed) { [P(p) finish:req fail
 void clack_avf_counts(void *p, int64_t *pulls, int64_t *frames, uint32_t *w, uint32_t *h) { [P(p) counts:pulls frames:frames w:w h:h]; }
 
 int clack_avf_watching(void *p) { return [P(p) watching] ? 1 : 0; }
+
+// clack_avf_debug is the player's history and its state now (tests),
+// read on its queue, malloc'd: the caller frees it. A queue that doesn't
+// run it within 2 s says so instead.
+char *clack_avf_debug(void *p) {
+	@autoreleasepool {
+		ClackAVPlayer *o = P(p);
+		__block NSString *text = nil;
+		dispatch_semaphore_t done = dispatch_semaphore_create(0);
+		dispatch_async([o queue], ^{
+			text = [o debugText];
+			dispatch_semaphore_signal(done);
+		});
+		if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 2 * (int64_t)NSEC_PER_SEC)) != 0) {
+			return strdup("the player's queue ran nothing for 2 s");
+		}
+		const char *c = text.UTF8String;
+		return strdup(c != NULL ? c : "");
+	}
+}
 
 // clack_avf_close ends the player: its queue lets go of everything, then
 // of the object itself (the reference clack_avf_new handed out).

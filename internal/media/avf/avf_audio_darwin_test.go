@@ -34,6 +34,7 @@ type audioRig struct {
 
 func newAudioRig(t *testing.T, fx mediatest.AudioFixture) *audioRig {
 	t.Helper()
+	history(true) // a failure logs what AVPlayer did (debug)
 	id := fmt.Sprintf("FAVA%d", rigN.Add(1))
 	src, _ := mediatest.Source(id, fx.Data, false)
 	src.Mime, src.Ext = fx.Mime, fx.Ext
@@ -62,22 +63,34 @@ func newAudioRig(t *testing.T, fx mediatest.AudioFixture) *audioRig {
 	return r
 }
 
-// wait is the next event of kind k within d; an error fails the test.
+// wait is the next event of kind k within d; an error fails the test, and
+// so does a timeout, with AVPlayer's history and its state then (its rate,
+// timeControlStatus and reasonForWaitingToPlay).
 func (r *audioRig) wait(k media.EventKind, within time.Duration) media.Event {
 	r.t.Helper()
+	ev, err := r.await(k, within)
+	if err != nil {
+		r.t.Fatalf("%v; events %v; state %+v\nAVPlayer: %s", err, r.kinds(), r.p.State(), r.p.debug())
+	}
+	return ev
+}
+
+// await is the next event of kind k within d, or why not: an error event,
+// or the time running out.
+func (r *audioRig) await(k media.EventKind, within time.Duration) (media.Event, error) {
 	tm := time.NewTimer(within)
 	defer tm.Stop()
 	for {
 		select {
 		case ev := <-r.evC:
 			if ev.Kind == k {
-				return ev
+				return ev, nil
 			}
 			if ev.Kind == media.Error {
-				r.t.Fatalf("error %d waiting for %v; events %v", ev.State.Err, k, r.kinds())
+				return ev, fmt.Errorf("error %d waiting for %v", ev.State.Err, k)
 			}
 		case <-tm.C:
-			r.t.Fatalf("no %v within %v; events %v; state %+v", k, within, r.kinds(), r.p.State())
+			return media.Event{}, fmt.Errorf("no %v within %v", k, within)
 		}
 	}
 }

@@ -719,6 +719,24 @@ func clackAVFCancel(h C.uintptr_t, req C.uint64_t) {
 // audio item has none).
 func watchingOf(obj unsafe.Pointer) bool { return C.clack_avf_watching(obj) != 0 }
 
+// history turns on, for the players made from now on, a history of what
+// Clack asked and what AVPlayer did (tests: debug reads it).
+func history(on bool) { C.clack_avf_history(b2i(on)) }
+
+// debug is the player's history and AVPlayer's state now (tests): its
+// rate, timeControlStatus, reasonForWaitingToPlay, position, the item's
+// timebase and buffer.
+func (p *player) debug() string {
+	p.objMu.RLock()
+	defer p.objMu.RUnlock()
+	if p.obj == nil {
+		return "(no AVPlayer: not made yet, or closed)"
+	}
+	c := C.clack_avf_debug(p.obj)
+	defer C.free(unsafe.Pointer(c))
+	return C.GoString(c)
+}
+
 // live is the Objective-C side's live objects: players, pixel buffers,
 // textures, data requests.
 func live() [4]int32 {
