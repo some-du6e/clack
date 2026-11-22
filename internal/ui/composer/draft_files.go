@@ -53,6 +53,21 @@ func attachmentsFor(key string, h Host) *attachments {
 	return a
 }
 
+// ForgetCore drops what the package keeps of a finished session: its
+// conversations' attachments (attStore: each holds its Host and core, and
+// a later session starts afresh anyway). Each kept the session reachable
+// after a sign-out or a switch; in internal/ui's tests, most finished
+// tests' Apps (ci-speed-3, a heap dump's commonest root).
+func ForgetCore(c *core.App) {
+	attStore.Lock()
+	defer attStore.Unlock()
+	for k, a := range attStore.m {
+		if a.core == c {
+			delete(attStore.m, k)
+		}
+	}
+}
+
 // storedFiles reports whether key's conversation has files attached
 // (HasDraft).
 func storedFiles(key string) bool {

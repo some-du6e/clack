@@ -63,7 +63,7 @@ type threadsAuditState struct {
 	locked   map[string]bool // root -> is_locked set by PushThreadLocked
 }
 
-var threadsAuditStates sync.Map // *Server -> *threadsAuditState
+var threadsAuditStates = newPerServer() // *Server -> *threadsAuditState
 
 func (s *Server) threadsAudit() *threadsAuditState {
 	v, _ := threadsAuditStates.LoadOrStore(s, &threadsAuditState{lastRead: map[string]string{

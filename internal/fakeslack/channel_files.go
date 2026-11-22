@@ -77,7 +77,7 @@ type channelFilesLog struct {
 	links []url.Values
 }
 
-var channelFilesLogs sync.Map // *Server -> *channelFilesLog
+var channelFilesLogs = newPerServer() // *Server -> *channelFilesLog
 
 func (s *Server) cflog() *channelFilesLog {
 	v, _ := channelFilesLogs.LoadOrStore(s, &channelFilesLog{})

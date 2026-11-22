@@ -40,6 +40,9 @@ func (s *Store) snippets() *snippetState {
 		return v.(*snippetState)
 	}
 	v, _ := snippetsOf.LoadOrStore(s, &snippetState{exp: map[string]uint8{}, content: map[string]snippetContent{}})
+	if s.released.Load() { // Release ran meanwhile, or before
+		snippetsOf.CompareAndDelete(s, v)
+	}
 	return v.(*snippetState)
 }
 

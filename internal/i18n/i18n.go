@@ -2,6 +2,7 @@ package i18n
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,7 +25,7 @@ var (
 	gen     atomic.Uint64
 	wanted  atomic.Value // string: the locale asked for (may still be loading)
 	mu      sync.Mutex   // SetLocale and listeners
-	onDone  []func()
+	onDone  []*func()
 	loadSeq uint64
 	// DefaultLoader loads bundles for SetLocale.
 	DefaultLoader = &Loader{CacheDir: DefaultCacheDir()}
@@ -47,11 +48,19 @@ func Wanted() string { return wanted.Load().(string) }
 func Gen() uint64 { return gen.Load() }
 
 // OnChange registers f to run (on the loading goroutine) after the
-// active locale changes. The UI passes its Invalidate.
-func OnChange(f func()) {
+// active locale changes, until stop. The UI passes its Invalidate; a
+// finished App's release stops it (the list kept every App's f, and with
+// it the App: internal/ui's tests make hundreds).
+func OnChange(f func()) (stop func()) {
+	p := &f
 	mu.Lock()
-	onDone = append(onDone, f)
+	onDone = append(onDone, p)
 	mu.Unlock()
+	return func() {
+		mu.Lock()
+		onDone = slices.DeleteFunc(onDone, func(q *func()) bool { return q == p })
+		mu.Unlock()
+	}
 }
 
 // Use makes c the active catalog at once (nil with locale en-US: the
@@ -69,10 +78,10 @@ func install(locale string, c *Catalog) {
 	cur.Store(&state{locale: locale, cat: c, msgs: map[msgKey]*Message{}})
 	gen.Add(1)
 	mu.Lock()
-	fs := append([]func(){}, onDone...)
+	fs := append([]*func(){}, onDone...)
 	mu.Unlock()
 	for _, f := range fs {
-		f()
+		(*f)()
 	}
 }
 

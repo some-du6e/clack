@@ -112,7 +112,7 @@ type ugEdits struct {
 	ownSet bool
 }
 
-var ugEditIndex sync.Map // *Server → *ugEdits
+var ugEditIndex = newPerServer() // *Server → *ugEdits
 
 func (s *Server) ugEdits() *ugEdits {
 	v, _ := ugEditIndex.LoadOrStore(s, &ugEdits{m: map[string]*ugState{}})

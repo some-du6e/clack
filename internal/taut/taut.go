@@ -310,6 +310,8 @@ func (t *Taut) Close() error {
 	if !t.closed.CompareAndSwap(false, true) {
 		return nil
 	}
+	defer huddles.Delete(t) // its huddle state beside it (huddle.go)
+	defer t.closeSubscribers()
 	t.startOnce.Do(func() { close(t.startDone) }) // never started (DeferStart): nothing waits for it
 	ctx, cancel := context.WithTimeout(context.Background(), t.opts.LifecycleTimeout+time.Second)
 	defer cancel()
@@ -525,8 +527,13 @@ func (t *Taut) Subscribe() (<-chan struct{}, func()) {
 	t.changeCh[c] = struct{}{}
 	t.changeMu.Unlock()
 	return c, func() {
+		// whoever takes c out closes it (changed sends under changeMu): its
+		// range loop ends whether stop or Close comes first
 		t.changeMu.Lock()
-		delete(t.changeCh, c)
+		if _, live := t.changeCh[c]; live {
+			delete(t.changeCh, c)
+			close(c)
+		}
 		t.changeMu.Unlock()
 	}
 }
@@ -536,6 +543,18 @@ func (t *Taut) Subscribe() (<-chan struct{}, func()) {
 // stopped or set up). A reader that keeps what it read of them (the
 // plugin library's install states) reads again when it moves.
 func (t *Taut) PluginsGen() uint64 { return t.pluginsGen.Load() }
+
+// closeSubscribers closes every Subscribe channel (their range loops
+// end) and keeps no more: Close's, the Taut is done. Their goroutines kept
+// it, and the App they repainted, reachable for good (ci-speed-3).
+func (t *Taut) closeSubscribers() {
+	t.changeMu.Lock()
+	defer t.changeMu.Unlock()
+	for c := range t.changeCh {
+		close(c)
+	}
+	clear(t.changeCh)
+}
 
 func (t *Taut) changed() {
 	t.changeMu.Lock()

@@ -53,14 +53,13 @@ const (
 	ExpWORefreshTimestamp  = "work_objects_refresh_timestamp"
 	ExpWOCommentSync       = "wo_comment_sync_client_xp"
 	ExpWOEmbeddedPreview   = "work_objects_embedded_preview"
-	ExpWOSearch            = "work_objects_message_search_xp_v2"
 	ExpWOVideoPreviews     = "third_party_integrations_video_previews"
 	woRefreshTimeout       = 10 * time.Second
 	woRefreshErrorShownFor = 2 * time.Second
 )
 
 func init() {
-	for _, n := range []string{ExpWORearrangement, ExpWORefreshTimestamp, ExpWOCommentSync, ExpWOEmbeddedPreview, ExpWOSearch, ExpWOVideoPreviews} {
+	for _, n := range []string{ExpWORearrangement, ExpWORefreshTimestamp, ExpWOCommentSync, ExpWOEmbeddedPreview, ExpWOVideoPreviews} {
 		experimentReads[n] = on
 		// as experiments.getByUser had them on 2026-11-10 (docs/EXPERIMENTS.md)
 		defaultExperimentGroups[n] = "on"
@@ -68,7 +67,10 @@ func init() {
 }
 
 // WorkObjectFlags are the work object experiments, as the cards read
-// them ("on" === getGroupForUser).
+// them ("on" === getGroupForUser). Search, work objects on the search
+// results page, was work_objects_message_search_xp_v2 until Slack dropped
+// it and kept its on path (a1VH, Ngxf; build 8f19be21ed7e, the 2026-11-21
+// drift): it is always on.
 type WorkObjectFlags struct {
 	Rearrange, RefreshTimestamp, CommentSync, EmbeddedPreview, Search, VideoPreviews bool
 }
@@ -80,7 +82,7 @@ func (a *App) WorkObjectFlags() WorkObjectFlags {
 		RefreshTimestamp: a.Experiment(ExpWORefreshTimestamp) == "on",
 		CommentSync:      a.Experiment(ExpWOCommentSync) == "on",
 		EmbeddedPreview:  a.Experiment(ExpWOEmbeddedPreview) == "on",
-		Search:           a.Experiment(ExpWOSearch) == "on",
+		Search:           true,
 		VideoPreviews:    a.Experiment(ExpWOVideoPreviews) == "on",
 	}
 }
@@ -158,7 +160,7 @@ type woStore struct {
 
 // woStates holds each App's work object store (kept off the App struct,
 // as lists.go keeps its state, so parallel branches don't collide on it).
-var woStates sync.Map
+var woStates = newPerApp() // *App → its state
 
 func (a *App) wo() *woStore {
 	if v, ok := woStates.Load(a); ok {

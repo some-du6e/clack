@@ -53,6 +53,9 @@ type Timeline struct {
 }
 
 type Store struct {
+	// released: Release ran; the package's maps keyed by *Store keep it
+	// no more (a late reader gets state kept nowhere)
+	released    atomic.Bool
 	mu          sync.RWMutex
 	Self        slack.User
 	TeamID      string

@@ -109,6 +109,13 @@ func TestPrefsAuditAppliedRoundTripB(t *testing.T) {
 	waitFor(t, a, "smart symbols off", func() bool { v, _ := fs.Pref("disable_smart_symbols"); return v == true && !composer.SmartSymbols(ca) })
 	p.setPref("disable_smart_symbols", false)
 	waitFor(t, a, "smart symbols on", func() bool { return composer.SmartSymbols(ca) })
+	// the pref alone decides: Slack dropped composer_smart_symbols (2026-11-21
+	// drift), so the old gate forced off changes nothing
+	ca.SetExperimentGroup("composer_smart_symbols", "off")
+	if !composer.SmartSymbols(ca) {
+		t.Error("composer_smart_symbols forced off turned smart symbols off")
+	}
+	ca.ClearExperimentGroup("composer_smart_symbols")
 
 	// Advanced > Exclude these channels from search results
 	m := a.model()

@@ -144,7 +144,7 @@ type folderUploads struct {
 	seq atomic.Int64
 }
 
-var folderUploadIndex sync.Map // *App → *folderUploads
+var folderUploadIndex = newPerApp() // *App → *folderUploads
 
 func (a *App) folderUploads() *folderUploads {
 	v, _ := folderUploadIndex.LoadOrStore(a, &folderUploads{m: map[string][]PendingFolderFile{}})

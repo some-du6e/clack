@@ -207,20 +207,16 @@ func menuLabels(m []MenuItem) string {
 	return strings.Join(ls, ",")
 }
 
-// canvas_blockquote_layout moves the blockquote out of the block-style
-// menus into a button of its own and the insert menu.
+// The blockquote is a button of its own and an Insert menu item, out of
+// the block-style menus, for everyone: Slack dropped
+// canvas_blockquote_layout and kept that layout (build 8f19be21ed7e, the
+// 2026-11-21 drift), so forcing the old gate off changes nothing.
 func TestEditBlockquoteLayoutToolbars(t *testing.T) {
-	if got := formatKeys(selectionMenuFor(true)); got != "para,h1,h2,h3,,check,numbered,bullet,,codeblock" {
-		t.Errorf("block-style menu, on: %s", got)
+	if got := formatKeys(selectionMenu); got != "para,h1,h2,h3,,check,numbered,bullet,,codeblock" {
+		t.Errorf("block-style menu: %s", got)
 	}
-	if got := formatKeys(selectionMenuFor(false)); got != "para,h1,h2,h3,,check,numbered,bullet,,codeblock,quote" {
-		t.Errorf("block-style menu, off: %s", got)
-	}
-	if got := formatKeys(formattingMenuFor(true)); got != "codeblock,bullet,numbered,check,,h3,h2,h1,para" {
-		t.Errorf("formatting menu, on: %s", got)
-	}
-	if got := formatKeys(formattingMenuFor(false)); got != "quote,codeblock,,bullet,numbered,check,,h3,h2,h1,para" {
-		t.Errorf("formatting menu, off: %s", got)
+	if got := formatKeys(formattingMenu); got != "codeblock,bullet,numbered,check,,h3,h2,h1,para" {
+		t.Errorf("formatting menu: %s", got)
 	}
 	groups := func(gs [][]selButton) string {
 		var out []string
@@ -233,11 +229,8 @@ func TestEditBlockquoteLayoutToolbars(t *testing.T) {
 		}
 		return strings.Join(out, " | ")
 	}
-	if got := groups(selGroupsFor(true)); got != "menu | bold italic underline strike | bqlayout | code | link callout" {
-		t.Errorf("floating bar, on: %s", got)
-	}
-	if got := groups(selGroupsFor(false)); got != "menu | bold italic underline strike | code | link callout" {
-		t.Errorf("floating bar, off: %s", got)
+	if got := groups(selGroups); got != "menu | bold italic underline strike | bqlayout | code | link callout" {
+		t.Errorf("floating bar: %s", got)
 	}
 
 	h, fs := newEnv(t, false)
@@ -249,7 +242,7 @@ func TestEditBlockquoteLayoutToolbars(t *testing.T) {
 	frames(s, v, 5)
 	v.edit.openInsertMenu(v)
 	if got := menuLabels(menu); got != "Divider,─,Date,Profile,Callout,Blockquote,Canvas,Image,File" {
-		t.Errorf("insert menu, on: %s", got)
+		t.Errorf("insert menu: %s", got)
 	}
 
 	// the floating bar's button quotes the block, and unquotes it
@@ -292,12 +285,12 @@ func TestEditBlockquoteLayoutToolbars(t *testing.T) {
 		t.Errorf("saved %q", md)
 	}
 
-	// off: the insert menu has no Blockquote
+	// the dropped gate forced off: the same insert menu
 	h.a.SetExperimentGroup("canvas_blockquote_layout", "off")
 	frames(s, v, 2)
 	v.edit.openInsertMenu(v)
-	if got := menuLabels(menu); got != "Divider,─,Date,Profile,Callout,Canvas,Image,File" {
-		t.Errorf("insert menu, off: %s", got)
+	if got := menuLabels(menu); got != "Divider,─,Date,Profile,Callout,Blockquote,Canvas,Image,File" {
+		t.Errorf("insert menu, canvas_blockquote_layout forced off: %s", got)
 	}
 }
 

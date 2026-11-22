@@ -249,7 +249,7 @@ type Interactive struct {
 	feedback map[string][]string
 }
 
-var interactiveIndex sync.Map // *App → *Interactive
+var interactiveIndex = newPerApp() // *App → *Interactive
 
 // Interactive returns the App's interaction service (created on first
 // use; it starts listening for view and ephemeral events right away).
@@ -281,16 +281,38 @@ func (ix *Interactive) start() {
 func (ix *Interactive) Subscribe() (<-chan ViewEvent, func()) {
 	c := make(chan ViewEvent, 64)
 	ix.mu.Lock()
+	if ix.a.released.Load() { // Release closed the others: nothing would close it
+		ix.mu.Unlock()
+		close(c)
+		return c, func() {}
+	}
 	ix.subs[c] = struct{}{}
 	ix.mu.Unlock()
 	var once sync.Once
 	return c, func() {
 		once.Do(func() {
+			// whoever takes c out closes it (emit sends under ix.mu): a
+			// stop before Release used to leave blockkit's range loop, and
+			// the App it posts to, waiting for good (ci-speed-3)
 			ix.mu.Lock()
-			delete(ix.subs, c)
+			if _, live := ix.subs[c]; live {
+				delete(ix.subs, c)
+				close(c)
+			}
 			ix.mu.Unlock()
 		})
 	}
+}
+
+// closeSubs closes every subscriber's channel (their range loops end):
+// the App is done (Release). A stop after it finds nothing to close.
+func (ix *Interactive) closeSubs() {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	for c := range ix.subs {
+		close(c)
+	}
+	ix.subs = map[chan ViewEvent]struct{}{}
 }
 
 func (ix *Interactive) emit(e ViewEvent) {

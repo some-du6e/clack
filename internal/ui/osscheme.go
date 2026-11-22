@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +30,7 @@ var osSchemeCh = make(chan struct{}, 1)
 
 var osSchemeSubs struct {
 	sync.Mutex
-	fns   []func()
+	fns   []*func()
 	start sync.Once
 }
 
@@ -62,19 +63,22 @@ func setOSScheme(dark bool) {
 }
 
 // onOSScheme calls f (off the UI goroutine) whenever the OS scheme changes,
-// and starts the platform watcher on first use.
-func onOSScheme(f func()) {
+// until stop, and starts the platform watcher on first use. A finished
+// App's release stops its f (the list kept every App's, and with it the
+// App).
+func onOSScheme(f func()) (stop func()) {
+	p := &f
 	osSchemeSubs.Lock()
-	osSchemeSubs.fns = append(osSchemeSubs.fns, f)
+	osSchemeSubs.fns = append(osSchemeSubs.fns, p)
 	osSchemeSubs.Unlock()
 	osSchemeSubs.start.Do(func() {
 		go func() {
 			for range osSchemeCh {
 				osSchemeSubs.Lock()
-				fns := append([]func(){}, osSchemeSubs.fns...)
+				fns := append([]*func(){}, osSchemeSubs.fns...)
 				osSchemeSubs.Unlock()
 				for _, f := range fns {
-					f()
+					(*f)()
 				}
 			}
 		}()
@@ -82,6 +86,11 @@ func onOSScheme(f func()) {
 	})
 	if _, ok := osSchemeDark(); ok {
 		f() // a value from before f subscribed
+	}
+	return func() {
+		osSchemeSubs.Lock()
+		osSchemeSubs.fns = slices.DeleteFunc(osSchemeSubs.fns, func(q *func()) bool { return q == p })
+		osSchemeSubs.Unlock()
 	}
 }
 

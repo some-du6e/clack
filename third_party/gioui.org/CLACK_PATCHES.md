@@ -65,7 +65,11 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gpu/headless/clack_size_test.go`, `gpu/headless/clack_rollback_test.go`,
 `io/input/clack_bounds.go`, `io/input/clack_bounds_test.go`,
 `app/clack_startup.go`, `io/input/clack_follow.go`,
-`io/input/clack_follow_test.go` and
+`io/input/clack_follow_test.go`,
+`internal/clickrule/clickrule.go`, `gesture/clack_dblclick*.go`,
+`gesture/clack_clickrun_test.go`, `gesture/gesture_test.go`,
+`app/clack_dblclick*.go`, `app/internal/windows/clack_dblclick.go`,
+`app/clack_titlebar_darwin_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -2405,6 +2409,103 @@ again: one period alone, an on period over a minute, a negative one, both
 `ClackXSettings` reads its property byte for byte, again after it changes,
 and nothing once the manager is gone); `internal/ui` `TestXSettingsBlink`
 and `TestCaretBlinkWatcherX11`. Not in `UPSTREAM.patch`.
+
+## 48. gesture, io/pointer, app: a run of clicks counts by the platform's rule, as Chromium's does
+
+`internal/clickrule/clickrule.go` (new: `Rule`, `Tap`, `PxPerDp`),
+`gesture/gesture.go` (`Click`, `Click.Update`), `gesture/clack_dblclick.go`
+(`ClickRun`, `DoubleClickTime`), `io/pointer/pointer.go` (`Event.Clicks`),
+`app/os_macos.go` (`gio_onMouse`), `app/window.go` (the window's px per dp
+for the tap rule), `app/clack_dblclick_windows.go`,
+`app/internal/windows/clack_dblclick.go`, `app/clack_dblclick_macos.go`.
+
+Upstream makes a press the next click of a run (`NumClicks` 2, 3, …) when
+it comes less than a fixed 200 ms after the last press, wherever it lands.
+Chromium, Slack's desktop app, counts by the platform, and most double
+clicks are slower than 200 ms: on Windows, whose default is 500 ms, two
+clicks 300 ms apart were two single clicks in Clack. The composer's +
+opened and closed its menu instead of running the file chooser (Karim,
+2026-11-17), and a double click on a word placed the caret.
+
+`Click` now counts each press by `clickrule.Current()`, which package app
+sets for its backend in an init:
+
+- Windows: Blink's `WebMouseEventBuilder::Build`
+  (`ui/events/blink/web_input_event_builders_win.cc`), where Chrome's
+  pages get their click counts. A press no later than `GetDoubleClickTime()`
+  after the last, and within half of `SM_CXDOUBLECLK` and `SM_CYDOUBLECLK`
+  of the run's first press, counts on, with no cap. A move or a leave out
+  of that box ends the run, so on Windows `Click` also asks for `Move` and
+  `Drag`. Chromium reads both settings on every event, and so does `Read`
+  on every press: a change in the Mouse settings applies to the next click.
+- macOS: Chromium takes AppKit's count (`[event clickCount]`,
+  `components/input/web_input_event_builders_mac.mm`), so `gio_onMouse`
+  passes it on in the new `pointer.Event.Clicks` and `Click` uses it as
+  is: AppKit's own time and distance, run across widgets as Chromium's is.
+  A press without it (a test's) counts on within
+  `NSEvent.doubleClickInterval`, read on every press, and 2 px.
+- X11, Wayland and the rest: `ui::MouseEvent::GetRepeatCount` and
+  `IsRepeatedClickEvent` (`ui/events/event.cc`), which every native mouse
+  event of Chromium's Linux backends goes through (`InitializeNative`):
+  500 ms (`kDoubleClickTimeMs`; Chromium doesn't read GTK's
+  gtk-double-click-time or XSETTINGS' Net/DoubleClickTime, and neither
+  does this), 2 px either way of the last press (`kDoubleClickWidth`,
+  `kDoubleClickHeight` 4), the same flags, so a press with other
+  modifiers starts over, and a fourth quick click is a single again
+  (`SetClickCount` stops at 3 and its triple-click flag makes the next
+  press's flags differ).
+
+A touch, or a pen (Gio reports both as `pointer.Touch`), counts by its own
+rule on every platform, `clickrule.Tap`, which the mouse's settings don't
+touch: Chromium's gesture detector (`ui/events/gesture_detection`
+`GestureDetector::IsRepeatedTap` and its single tap repeat count, with
+`GestureConfigurationAura`'s values from `gesture_configuration.h`). A press
+no later than 400 ms (`double_tap_timeout_in_ms`) after the last tap's
+release and nearer than 20 dp (`max_distance_between_taps_for_double_tap`,
+plus the detector's .05 epsilon) to that tap's press counts on, if that tap
+stayed within 15 dp (`max_touch_move_in_pixels_for_click`) of where it went
+down; the count goes 1, 2, 3 and round again (`max_tap_count`), and
+modifiers don't count. The first version counted taps by the mouse's rule:
+on Windows a second tap had to land within 2 px of the first, and the
+router's Leave after every touch release went through the box check, so a
+finger lifting a few px from where it went down ended the run; a double tap
+on a word in the composer placed the caret (composer-plus-dblclick review,
+2026-11-22). Distances are dp in the window's scale: `app.Window` keeps its
+px per dp in its router's values (patch 15, `clickrule.PxPerDp`); a router
+without one (a test's) counts 1.
+
+`ClickRun` is the counting, exported for widgets that read their own
+pointer events: `Click` gives it its presses, releases, cancels, moves and
+leaves, and a widget that drags (Clack's column resizer, the video
+picture-in-picture's handles) also gives it its drags (`Dragged`). A drag
+past the platform's slop from the press (a tap's: 15 dp) ends the run, so
+the press after it is a single click however soon and near it comes; in
+Chromium a double click can't follow a drag either (Windows ends the run
+when the pointer leaves its box, Linux and AppKit count only a press near
+the last). The handles' first version counted any press within the
+double-click time of the last as a double click, and with a slow setting a
+handle taken again after a drag snapped back to its default width.
+
+Presses at the same time still count on: Chromium skips those as one
+native event processed twice, but in Gio they're a test's, and upstream
+counted them. `gesture.DoubleClickTime()` is the platform's interval now,
+for code that counts clicks itself (Clack's link clicks in richview, its
+plugin DOM's dblclick in slackc and the composer's seeded click; richview
+and slackc have stock-Gio shims,
+`gio_patch48*.go`). Tests: `gesture` `TestMouseClicks`,
+`TestClackClickRuleDefault`, `TestClackClickRuleWindows` (the rule read
+again after the setting changes), `TestClackClickOSCount`,
+`TestClackClickTaps` (taps under the Windows and Linux mouse rules: 6 and
+19 px apart, lifting 6 px, 400 and 410 ms after the release, the fourth a
+single, a mouse click after a tap), `TestClackClickTapScale` (the router's
+px per dp), `TestClackClickRunDrag` (jitter inside the slop, a drag past
+it, AppKit's count after a drag, a tap's drag); in Clack,
+`TestResizerDragEndsDoubleClick` and `TestPipDragEndsDoubleClick`; on real
+windows, `TestClackDoubleClickWindows` (SendInput clicks 400 ms apart at
+`SetDoubleClickTime` 500 and 300; `CLACK_WINDOWS_DBLCLICK_TESTS`, ci's
+windows-applog job) and `TestClackClickCountMac` (AppKit's counts through
+`gio_onMouse`; `CLACK_MACOS_WINDOW_TESTS`, ci's macos job, with a click
+area added to the title bar tests' window).
 
 ## 49. io/input: every handler caught up with where the pointer is
 

@@ -13,45 +13,30 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 )
 
-// ExpSrpCardExplore is srp_card_explore: boot-shared `+zqw`
-// isSrpCardExploreExperimentEnabled ("on" === getGroupForUser), read
-// through `+zqw` Ui by SearchResult (boot-shared Wzwx
-// experimentSrpCardExploreGroupOn) and SearchReactionsTooltip.
-const ExpSrpCardExplore = "srp_card_explore"
-
 // ExpPersistentTSDogfood is persistent_ts_dogfood: client-boot WkcD
 // isTsDogfoodUser, which lets `+zqw` Ui read the employees' density
 // switcher pref (search-view UK4f SearchResultsCardDensitySwitcher).
 const ExpPersistentTSDogfood = "persistent_ts_dogfood"
 
-// wave7Reads join experimentReads (TestExperimentReadsListed); their
-// defaults are the account's groups (TestDefaultExperimentsMatchAccount;
-// persistent_ts_dogfood isn't assigned).
+// wave7Reads join experimentReads (TestExperimentReadsListed);
+// persistent_ts_dogfood isn't assigned, so it has no default.
 var wave7Reads = map[string][]string{
-	ExpSrpCardExplore: on, ExpPersistentTSDogfood: on,
-}
-
-var wave7Defaults = map[string]string{
-	ExpSrpCardExplore: "on",
+	ExpPersistentTSDogfood: on,
 }
 
 func init() {
 	for name, groups := range wave7Reads {
 		experimentReads[name] = groups
 	}
-	for name, g := range wave7Defaults {
-		defaultExperimentGroups[name] = g
-	}
 }
 
-// SearchCardExplore is `+zqw` Ui: srp_card_explore on, and unless the
-// viewer is a dogfood user who picked the "original" density
+// SearchCardExplore is FvhF Ui (was `+zqw`): unless the viewer is a
+// dogfood user who picked the "original" density
 // (search_results_card_density), the results draw the density card
-// (popups/search_card.go).
+// (popups/search_card.go). It used to need srp_card_explore on too; Slack
+// dropped that experiment and kept its on path (build 8f19be21ed7e, the
+// 2026-11-21 drift).
 func (a *App) SearchCardExplore() bool {
-	if a.Experiment(ExpSrpCardExplore) != "on" {
-		return false
-	}
 	return a.Experiment(ExpPersistentTSDogfood) != "on" || a.PrefString("search_results_card_density") != "original"
 }
 

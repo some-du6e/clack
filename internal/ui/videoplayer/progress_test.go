@@ -55,7 +55,7 @@ func TestPlayerStartsAtServerProgress(t *testing.T) {
 	f.MediaOffsetMS = 1500
 	layoutAt(c, r, f, image.Pt(480, 270))
 	click(c, r, f)
-	waitFor(t, "playing", 10*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
+	waitForTile(t, c, r, f, "playing", 10*time.Second, func() bool { st := state(t, c, r, f); return st.Playing && !st.Loading })
 	if p := state(t, c, r, f).Player.State().Pos; p < 1400*time.Millisecond || p > 2300*time.Millisecond {
 		t.Errorf("the first player starts at %v, want media_progress's 1.5 s", p)
 	}
@@ -63,7 +63,7 @@ func TestPlayerStartsAtServerProgress(t *testing.T) {
 	w.MediaOffsetMS, w.MediaWatched = 1500, true
 	layoutAt(c, r, w, image.Pt(480, 270))
 	click(c, r, w)
-	waitFor(t, "playing", 10*time.Second, func() bool { st := state(t, c, r, w); return st.Playing && !st.Loading })
+	waitForTile(t, c, r, w, "playing", 10*time.Second, func() bool { st := state(t, c, r, w); return st.Playing && !st.Loading })
 	if p := state(t, c, r, w).Player.State().Pos; p > 700*time.Millisecond {
 		t.Errorf("a watched file's player starts at %v, want 0", p)
 	}

@@ -1,6 +1,6 @@
 package core
 
-// Wave 7 (exp_wave7.go): srp_card_explore's gate (`+zqw` Ui), the search
+// Wave 7 (exp_wave7.go): the density card's gate (FvhF Ui), the search
 // answer's requestor_replied and first highlighted block, and
 // SearchRepliesAction's fetch of the viewer's latest reply. Fake Slack
 // only.
@@ -16,17 +16,14 @@ import (
 
 func TestSearchCardExploreGate(t *testing.T) {
 	a, _ := canvasApp(t)
-	// the account's group (fakeslack serves it): on
-	if g := a.Experiment(ExpSrpCardExplore); g != "on" || !a.SearchCardExplore() {
-		t.Fatalf("srp_card_explore %q: SearchCardExplore %v, want on and true", g, a.SearchCardExplore())
-	}
-	for _, g := range []string{"control", "off", ""} {
-		a.SetExperimentGroup(ExpSrpCardExplore, g)
-		if a.SearchCardExplore() {
-			t.Errorf("srp_card_explore %q: the density card", g)
+	// every group of the dropped srp_card_explore (the 2026-11-21 drift)
+	for _, g := range []string{"on", "control", "off", ""} {
+		a.SetExperimentGroup("srp_card_explore", g)
+		if !a.SearchCardExplore() {
+			t.Errorf("srp_card_explore %q: no density card", g)
 		}
 	}
-	a.ClearExperimentGroup(ExpSrpCardExplore)
+	a.ClearExperimentGroup("srp_card_explore")
 	// a dogfood user keeps it unless they picked "original"
 	a.SetExperimentGroup(ExpPersistentTSDogfood, "on")
 	if !a.SearchCardExplore() {

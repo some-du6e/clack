@@ -63,7 +63,7 @@ type woState struct {
 	comments  map[string][]map[string]any
 }
 
-var woStores sync.Map
+var woStores = newPerServer() // *Server -> its state
 
 func (s *Server) wo() *woState {
 	if v, ok := woStores.Load(s); ok {

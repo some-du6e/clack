@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -82,7 +83,7 @@ func (e *perfEnv) sidebarDrag(x int) {
 	e.r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: to})
 	e.frame()
 	e.frame()
-	a.sidebar.rz.lastPress = time.Time{} // the next press is no double click
+	a.sidebar.rz.click = gesture.ClickRun{} // the next press is no double click
 }
 
 // The resizer: a dragged width is "manual" and kept in ui.json, a drag

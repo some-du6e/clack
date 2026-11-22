@@ -160,6 +160,20 @@ name: flake-check
 #                                            fails every run)
 #   TestDetailsCallButtonLikeSlack,          the same read against the call
 #   TestDetailsCallMenuStartsCall (ui/views) tooltip's name
+# and dm-slugs-flake's (2026-11-22: composer-plus-dblclick's push ci,
+# linux-test 3/4; the race forced every run):
+#   TestDMMessageSlugsLikeSlack (ui)         the second link's sender was
+#                                            picked while the launch
+#                                            channel's header read of its
+#                                            members (edge users/list, sent
+#                                            as waitReady returns) was out;
+#                                            its answer named them with
+#                                            their users/info held, and the
+#                                            pill read their name, not
+#                                            "Unknown author". The test
+#                                            holds that read 300 ms and
+#                                            picks after it (the old order
+#                                            fails every run)
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -471,6 +485,51 @@ jobs:
   # TestSpellcheckNeverBlocksFrame (composer) timed frames on a shared
   # runner. COUNT runs each, as loaded runners ran them: core under -race,
   # composer on one CPU, ui in four processes at once
+  # internal/ui's memory: the test binary alone, its peak (runner-load.sh),
+  # and what it still holds after its last test, collected: the live heap,
+  # the goroutines still running and the heap profile's top
+  # (CLACK_TEST_HEAP_REPORT, endrun_test.go). Once a run, whatever count
+  # says. ci-speed-3: every test's session stayed reachable, 9 GB live by
+  # the end, 15.7 of the runner's 16 GB at the peak.
+  ui-heap:
+    if: ${{ !inputs.only || startsWith('ui-heap', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: internal/ui alone, its peak and what it holds at its end
+        run: |
+          .github/scripts/runner-load.sh 60 & rl=$!
+          trap 'kill $rl 2>/dev/null' EXIT
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+          cd internal/ui
+          rc=0
+          start=$(date +%s)
+          CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" CLACK_RETAIN_DUMP=1 \
+            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
+          echo "internal/ui: exit $rc after $(( $(date +%s) - start )) s"
+          grep -E -- '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/ui.log" | head -20 || true
+          grep -A 40 -- '--- FAIL: TestFinishedSessionIsCollected' "$RUNNER_TEMP/ui.log" | head -60 || true
+          head -1 "$RUNNER_TEMP/heap-report.txt" || true
+          sed -n 2,200p "$RUNNER_TEMP/heap-report.txt" || true
+          [ -f "$RUNNER_TEMP/heap.pprof" ] && go tool pprof -sample_index=inuse_space -top -nodecount=25 "$RUNNER_TEMP/ui.test" "$RUNNER_TEMP/heap.pprof" 2>&1 | head -35
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: ui-heap
+          path: |
+            ${{ runner.temp }}/heap-report.txt
+            ${{ runner.temp }}/heap.pprof
+            ${{ runner.temp }}/ui.log
   flakes-1121:
     if: ${{ !inputs.only || startsWith('flakes-1121', inputs.only) }}
     runs-on: ubuntu-latest
@@ -3499,6 +3558,112 @@ jobs:
             echo "== $f: $(grep -c -- '^--- FAIL' "$RUNNER_TEMP/$f.log") of $COUNT failed"
             grep -E -- '^\s*--- FAIL|_test.go:[0-9]+:' "$RUNNER_TEMP/$f.log" | head -20
           done
+          exit $rc
+
+
+  # dm-slugs-load (2026-11-22): TestDMMessageSlugsLikeSlack under CPU
+  # burners, two per core, as on the loaded runner where it flaked
+  # (composer-plus-dblclick's push ci, linux-test 3/4). The test picks the
+  # second link's sender after the launch channel's header read of its
+  # members (edge users/list), which it holds 300 ms: picked while that
+  # read was out, the sender was one of the members it brings, and the
+  # pill read their name with their users/info held. Dispatch with
+  # only=dm-slugs-load.
+  dm-slugs-load:
+    if: ${{ !inputs.only || startsWith('dm-slugs-load', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: build the test binary before the burners start"
+        run: go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+      - name: "ui: TestDMMessageSlugsLikeSlack under CPU burners, COUNT runs"
+        env:
+          TEST: TestDMMessageSlugsLikeSlack
+          PKG: ./internal/ui
+        run: |
+          burners=()
+          for _ in $(seq $(( $(nproc) * 2 ))); do sh -c 'while :; do :; done' & burners+=("$!"); done
+          echo "$(nproc) cores, ${#burners[@]} burners"
+          set +e
+          xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+          rc=$?
+          kill "${burners[@]}"
+          exit $rc
+
+
+  # Gio patch 48 (third_party/gioui.org/CLACK_PATCHES.md): a run of clicks
+  # counts by the platform's rule, Chromium's, not a fixed 200 ms. The
+  # gesture rules everywhere; on Windows SendInput clicks 400 ms apart at
+  # SetDoubleClickTime 500 and 300; on macOS AppKit's own counts through a
+  # real window; on Linux the composer's double clicks (the +'s file
+  # chooser at 300 ms, a word at 400 ms), the +'s open state and the
+  # handles' double clicks after a drag. Taps by Chromium's gesture
+  # detector, in the gesture step everywhere.
+  dblclick:
+    if: ${{ !inputs.only || startsWith('dblclick', inputs.only) }}
+    name: "dblclick (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "gesture's click counts, every run counted"
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          TEST: (TestMouseClicks|TestClackClick.*)
+          PKG: gioui.org/gesture
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "TestClackDoubleClickWindows (SendInput), every run counted"
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_DBLCLICK_TESTS: "1"
+          TEST: TestClackDoubleClickWindows
+          PKG: gioui.org/app
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "TestClackClickCountMac (AppKit), every run counted"
+        if: ${{ !cancelled() && runner.os == 'macOS' }}
+        shell: bash
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+          TEST: TestClackClickCountMac
+          PKG: gioui.org/app
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "the composer's double clicks and open +"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: go test -v -count=$COUNT -timeout 30m -run '^(TestPlusDoubleClick.*|TestEditorDoubleClickAt400ms|TestPlusOpenState)$' ./internal/ui/composer
+      # a drag ends the click run on the column edges and the mini player's
+      # handles (gesture.ClickRun), and a null can_upload_files allows
+      - name: "the handles' double clicks after a drag, the null upload pref"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          rc=0
+          go test -v -count=$COUNT -timeout 30m -run '^(TestResizerDragEndsDoubleClick|TestPipDragEndsDoubleClick)$' ./internal/ui || rc=1
+          go test -v -count=$COUNT -timeout 10m -run '^TestSlackConnectNullPrefAllowsUploads$' ./internal/core || rc=1
           exit $rc
 
   # karim-1118 (2026-11-18): a restored draft's attachment card drew its

@@ -270,7 +270,7 @@ type srCard struct {
 	// (SearchResult: BaseAvatar showCard at 36px, MessageSender)
 	avHov, nameHov hovercard.Trigger
 
-	// the density card (srp_card_explore, search_card.go): the clamped
+	// the density card (core.SearchCardExplore, search_card.go): the clamped
 	// body (dense; denseOwn without a plugin's text) wrapped at dW, the
 	// count pills and their tooltips, the attachments count, the
 	// attachments pill (card coords, last frame) and the viewer's reply
@@ -321,8 +321,9 @@ type SearchView struct {
 	err     string
 	sess    core.SearchSession // one per query: every module call shares it
 	exact   bool               // More > Exact matches only (search_exact_matches_only)
-	// exclArch is More > Exclude archived (channel_type exclude_archived),
-	// shown with search_explore_freshness_signals on
+	// exclArch is channel_type exclude_archived. Nothing sets it since
+	// More lost Exclude archived (search_view_filters.go); kept for the
+	// saved filters' plumbing
 	exclArch bool
 	visible  []string // the filters the row shows as pills (srFSources first), last frame
 	// tabSort is the Files, Canvases, Channels and People tabs' Sort
