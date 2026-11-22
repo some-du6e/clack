@@ -72,9 +72,11 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 	scrolled := time.Now()
 	for {
 		e.frame()
-		if time.Since(scrolled) > 500*time.Millisecond {
-			// the reply is under the root's tall chart: down the pane
-			e.scroll(image.Pt(e.size.X-160, e.size.Y/2), 300)
+		if time.Since(scrolled) > 300*time.Millisecond {
+			// the reply is under the root's tall chart: the pane to its end
+			if tv := e.threadView(ch, ts); tv != nil {
+				tv.ScrollToBottom()
+			}
 			scrolled = time.Now()
 		}
 		charts := 0
@@ -125,8 +127,8 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 		t.Fatalf("page %d of %d, want 0 of 22", p, n)
 	}
 	next := tr.Buttons["next"]
-	if next.Empty() || !next.In(image.Rectangle{Max: e.size}) {
-		t.Fatalf("the table's next button at %v, off the %v window", next, e.size)
+	if lr := e.threadView(ch, ts).ListRect(); next.Empty() || !next.In(lr) {
+		t.Fatalf("the table's next button at %v, outside the thread's list %v", next, lr)
 	}
 	// router coordinates, as files_click_test's tiles; the pointer over it
 	// first: it hovers the button

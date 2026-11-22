@@ -5063,7 +5063,7 @@ jobs:
       - name: data blocks (diagnostic)
         run: |
           set +e
-          for p in ./internal/ui/blockkit ./internal/ui/messages ./internal/ui/views ./internal/ui/popups ./internal/ui/richview ./internal/ui; do
+          for p in ./internal/richtext ./internal/ui; do
             go vet "$p" > "$RUNNER_TEMP/vet.txt" 2>&1; echo "vet $p exit $?"; head -20 "$RUNNER_TEMP/vet.txt"
           done
           run() {
@@ -5080,13 +5080,13 @@ jobs:
           xvfb-run -a sh -c 'go test -count=1 ./internal/ui/richview > "$RUNNER_TEMP/richview.txt" 2>&1; echo "== richview exit $?"'
           grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/richview.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/richview.txt" | head -60
           run blockkit ./internal/ui/blockkit
-          xvfb-run -a sh -c 'go test -count=1 ./internal/ui/popups > "$RUNNER_TEMP/popups.txt" 2>&1; echo "== popups exit $?"'
+          [ -n "$FULL" ] && xvfb-run -a sh -c 'go test -count=1 ./internal/ui/popups > "$RUNNER_TEMP/popups.txt" 2>&1; echo "== popups exit $?"'
           grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/popups.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/popups.txt" | head -60
-          xvfb-run -a sh -c 'go test -count=1 ./internal/ui/views > "$RUNNER_TEMP/views.txt" 2>&1; echo "== views exit $?"'
+          [ -n "$FULL" ] && xvfb-run -a sh -c 'go test -count=1 ./internal/ui/views > "$RUNNER_TEMP/views.txt" 2>&1; echo "== views exit $?"'
           grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/views.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/views.txt" | head -60
-          xvfb-run -a sh -c 'go test -count=1 -timeout 20m ./internal/ui/messages > "$RUNNER_TEMP/messages.txt" 2>&1; echo "== messages exit $?"'
+          [ -n "$FULL" ] && xvfb-run -a sh -c 'go test -count=1 -timeout 20m ./internal/ui/messages > "$RUNNER_TEMP/messages.txt" 2>&1; echo "== messages exit $?"'
           grep -E '^(--- FAIL|FAIL|ok|panic)' "$RUNNER_TEMP/messages.txt" | head -40; grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/messages.txt" | head -60
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestDataBlocksChannelAndThread$|TestBlockKitGallery$|TestBlockKitSurfaces$' ./internal/ui > "$RUNNER_TEMP/ui.txt" 2>&1
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestDataBlocksChannelAndThread$' ./internal/ui > "$RUNNER_TEMP/ui.txt" 2>&1
           echo "== ui exit $?"
           grep -E '^(--- FAIL|FAIL|ok|PASS|panic)' "$RUNNER_TEMP/ui.txt" | head -20
           grep -E '^\s+\S+_test.go:[0-9]+:' "$RUNNER_TEMP/ui.txt" | head -40

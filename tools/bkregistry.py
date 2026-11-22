@@ -13,6 +13,8 @@ and writes internal/richtext/testdata/slack_block_types.json:
   renderables  every type the chunk registers a SUI renderable for
                (`type:"X",component:()=>`): blocks, elements, the rich_text
                pieces and their inline elements share one map
+  data_table_cells  the cell types DataTableBlock's renderCellContent draws
+  chart_types  the chart types data_visualization's isSupportedChart takes
   slack_ts     slack.ts's block types and element types
 
 usage: python3 -B -I tools/bkregistry.py BUILD BOOT_SHARED_JS BLOCKS_TS ELEMENTS_TS > out.json
@@ -68,10 +70,16 @@ def main():
     build, chunk, blocks_ts, elements_ts = sys.argv[1:5]
     src = open(chunk, encoding="utf-8", errors="replace").read()
     renderables = sorted(set(RENDERABLE.findall(src)))
+    cells = re.search(r"function renderCellContent\(.{0,800}", src)
+    cell_types = sorted(set(re.findall(r'case"([a-z_]+)"', cells.group(0)))) if cells else []
+    charts = re.search(r'function isCartesianChart\(e\)\{return(.*?)\}function isSupportedChart\(e\)\{return(.*?)\}', src)
+    chart_types = sorted(set(re.findall(r'"([a-z_]+)"===e\.type', charts.group(1) + charts.group(2)))) if charts else []
     out = {
         "build": build,
         "chunk": os.path.basename(chunk),
         "renderables": renderables,
+        "data_table_cells": cell_types,
+        "chart_types": chart_types,
         "slack_ts": {
             "blocks": ts_types(blocks_ts, SLACK_TYPES_BLOCKS),
             "elements": ts_types(elements_ts, SLACK_TYPES_ELEMENTS),

@@ -203,6 +203,9 @@ type builder struct {
 	// missing: a block Slack draws but Clack can't yet drew nothing (the
 	// message text then stands in, FromMessageIn)
 	missing bool
+	// undrawn are the types Slack has a renderable for that reached no
+	// renderer of Clack's (the coverage guard reads it)
+	undrawn []string
 	// notify converts for a notification's text (NotificationMessageText): a
 	// type with no renderable adds nothing, with no fallback chain
 	notify bool
@@ -629,6 +632,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 	}
 	// a type Slack draws that Clack doesn't yet: its text object, if any
 	// (docs/BLOCKKIT-COVERAGE.md)
+	c.undrawn = append(c.undrawn, b.Type)
 	if t := b.textObj(); t != nil {
 		return append(out, c.textBlocks(t)...)
 	}
@@ -1036,6 +1040,7 @@ func init() {
 // else the text, else nothing.
 func (c *builder) unknownInline(e *bk, m brMode) []Span {
 	if messageRenderables[e.Type] {
+		c.undrawn = append(c.undrawn, e.Type)
 		if e.Type != "citation" || e.Details != nil && (len(e.Details.CitationType) > 0 || len(e.Details.CitationTypeCamel) > 0) {
 			return unknownElement(e.textString(), e.URL)
 		}

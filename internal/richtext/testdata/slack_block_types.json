@@ -111,6 +111,19 @@
   "workflow_mention",
   "workflowtoken"
  ],
+ "data_table_cells": [
+  "action_cell",
+  "cell_text",
+  "raw_number",
+  "raw_text",
+  "rich_text"
+ ],
+ "chart_types": [
+  "area",
+  "bar",
+  "line",
+  "pie"
+ ],
  "slack_ts": {
   "blocks": [
    "actions",
