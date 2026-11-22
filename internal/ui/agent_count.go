@@ -12,6 +12,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/logtag"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -81,7 +82,7 @@ func (a *App) agentAppsOf(ch string, count int, fetch bool) *agentApps {
 			a.Post(func() {
 				st.loading, st.done = false, true
 				if err != nil {
-					log.Printf("ui: agents and apps %s: %v", ch, err)
+					log.Printf("ui: agents and apps %s: %v", logtag.ID(ch), err)
 					return
 				}
 				st.ids, st.activeAt = ids, time.Time{}

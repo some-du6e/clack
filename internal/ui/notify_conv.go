@@ -267,7 +267,7 @@ func (b *backend) noteSpanText(s richtext.Span) (string, bool) {
 }
 
 // noteNames is the resolver a notification's text is converted with
-// (NotificationText): getContentForNotification runs after
+// (NotificationMessageText): getContentForNotification runs after
 // ensureModelsArePresent and asks for no one. It names a member the way
 // noteSpanText writes the mention (userToText), so a mention reads the
 // same whether the toast's body comes from the blocks or from the text.

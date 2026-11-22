@@ -256,9 +256,11 @@ func (s *Store) EvictMessagesStats(in EvictInput) ([]Evicted, EvictStats) {
 			keep := dropTS(th, ts)
 			if len(keep) == 0 || len(keep) == 1 && keep[0].TS == thread {
 				delete(s.threads, key)
+				s.threadHistDropLocked(key) // thread_slices.go
 				out = append(out, Evicted{Channel: ch, Thread: thread, Whole: true})
 			} else {
 				s.threads[key] = keep
+				s.removeCachedReplyLocked(key, ts) // removeCachedReplyTimestamps (thread_slices.go)
 				out = append(out, Evicted{Channel: ch, Thread: thread, Oldest: keep[0].TS})
 			}
 			continue
@@ -268,9 +270,11 @@ func (s *Store) EvictMessagesStats(in EvictInput) ([]Evicted, EvictStats) {
 		if len(keep) == 0 {
 			// evictUncountedChannelHistories: the history starts over
 			delete(s.timelines, ch)
+			s.keepHeldWindowsLocked(ch) // a window a list shows stays (HoldWindow)
 			for k := range s.threads {
 				if strings.HasPrefix(k, ch+"/") && !in.Keep[k] {
 					delete(s.threads, k)
+					s.threadHistDropLocked(k) // thread_slices.go
 				}
 			}
 			out = append(out, Evicted{Channel: ch, Whole: true})

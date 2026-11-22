@@ -39,7 +39,7 @@ type Slug struct {
 	Name      string // channel / user name (channel, user)
 	ChannelID string // message
 	AuthorID  string // message
-	ThreadTS  string // message: the thread it is in, if a reply
+	ThreadTS  string // message: its thread_ts (a reply's thread, a thread parent's own ts)
 	IsIM      bool   // channel: a DM or group DM (Slack drops the "#")
 	IsMPIM    bool
 
@@ -110,7 +110,7 @@ func (a *App) CachedSlug(u string) (Slug, bool) {
 		return Slug{}, false
 	}
 	thread := pl.ThreadTS
-	if thread == "" && m.ThreadTS != "" && m.ThreadTS != m.TS {
+	if thread == "" { // getMessageThreadTs (KwXc hydrateMessageSlugData): a parent's own ts too
 		thread = m.ThreadTS
 	}
 	return Slug{Type: "message", ID: pl.TS, ChannelID: pl.ChannelID, AuthorID: m.User, ThreadTS: thread}, true
@@ -153,9 +153,10 @@ func (a *App) SlugifyURLs(ctx context.Context, urls []string, channel string) (m
 			if m := s.Message; m != nil {
 				sl.ID = firstNonEmpty(sl.ID, m.TS)
 				sl.AuthorID = firstNonEmpty(sl.AuthorID, m.User)
-				if m.ThreadTS != "" && m.ThreadTS != m.TS {
-					sl.ThreadTS = m.ThreadTS
-				}
+				// getMessageThreadTs (KwXc hydrateMessageSlugData): a
+				// thread's parent keeps its own ts, so the pill opens the
+				// thread (p9lB MessageMention's jump)
+				sl.ThreadTS = m.ThreadTS
 			}
 			if pl, ok := ParsePermalink(u); ok && sl.ThreadTS == "" {
 				sl.ThreadTS = pl.ThreadTS

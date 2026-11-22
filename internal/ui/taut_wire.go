@@ -581,6 +581,40 @@ func deepLinkRoute(uri string) (route, user string, ok bool) {
 	return "", "", false
 }
 
+// deepLinkMessage is handleParsedDeepLink's "channel" command with a
+// message or a thread (slack://channel?team=T&id=C&message=ts
+// [&thread_ts=ts]; boot-render VxbD, build 2c0d02ca130f): jumpToMessage
+// ({channelId, ts: message, threadTs: thread_ts}), which finds the
+// thread when only the message is named; a thread alone is toThread
+// with highlightRoot; message "latest" with a thread is its latest reply
+// (cdTA Mz, jumpLatest). Both in formatMessageTimestamp's forms. ok is
+// false for any other link, and for an id or a timestamp that doesn't
+// look like Slack's (the channel alone goes to deepLinkRoute).
+func deepLinkMessage(uri string) (ch, ts, thread string, latest, ok bool) {
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "slack" || u.Host != "channel" {
+		return "", "", "", false, false
+	}
+	q := u.Query()
+	ch = q.Get("id")
+	if !slackIDRE.MatchString(ch) || !strings.ContainsAny(ch[:1], "CDG") {
+		return "", "", "", false, false
+	}
+	m := q.Get("message")
+	if m != "" && m != "latest" {
+		if ts = slackTimestamp(m); ts == "" {
+			return "", "", "", false, false
+		}
+	}
+	if t := q.Get("thread_ts"); t != "" {
+		if thread = slackTimestamp(t); thread == "" {
+			return "", "", "", false, false
+		}
+	}
+	latest = m == "latest" && thread != ""
+	return ch, ts, thread, latest, ts != "" || thread != ""
+}
+
 var (
 	slackIDRE = regexp.MustCompile(`^[A-Z][A-Z0-9]{2,24}$`)
 	slackTSRE = regexp.MustCompile(`^[0-9]{1,12}\.[0-9]{1,8}$`)

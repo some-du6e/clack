@@ -142,12 +142,29 @@ func TestOwnSendJumpsToNewest(t *testing.T) {
 		e.until("the channel's history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
 		e.settle(800 * time.Millisecond)
 		v := e.ownSendList(ch)
-		line := false
-		for _, r := range v.VisibleRows() {
-			line = line || r.Key == "unread"
+		if !v.AtBottom() {
+			t.Fatal("#unreads-launch didn't open at its newest message (Mark as read's default prefs)")
 		}
-		if !line || v.AtBottom() {
-			t.Fatalf("#unreads-launch didn't open at its unread line (the line on screen %v, at the newest %v)", line, v.AtBottom())
+		// the reader goes up to the unread line
+		line := func() bool {
+			for _, r := range v.VisibleRows() {
+				if r.Key == "unread" {
+					return true
+				}
+			}
+			return false
+		}
+		for dl := time.Now().Add(10 * time.Second); !line(); {
+			if time.Now().After(dl) {
+				t.Fatal("wheeling up never brought #unreads-launch's unread line into view")
+			}
+			e.scroll(e.listPoint(), -300)
+			e.frame()
+			time.Sleep(10 * time.Millisecond)
+		}
+		e.settle(300 * time.Millisecond)
+		if v.AtBottom() {
+			t.Fatal("the unread line in view, and the list at its newest")
 		}
 		e.sendOwn(t, ch, "sent from the unread line")
 	})
