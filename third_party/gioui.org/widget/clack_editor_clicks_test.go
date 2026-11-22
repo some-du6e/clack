@@ -104,9 +104,13 @@ func TestClackEditorDoubleClickWord(t *testing.T) {
 	if got := c.selected(); got != "hello" {
 		t.Errorf("a double click on \"hello,\" selected %q, want \"hello\" (the comma is a word of its own)", got)
 	}
-	c.send(edClicks(c.at(5), 2)...)
+	// the comma's left: the caret goes before it, and the word on that
+	// boundary is the next (Blink's kNextWordIfOnBoundary); its right
+	// half's caret is after it, before the space
+	a := c.e.text.closestToRune(5)
+	c.send(edClicks(f32.Pt(float32(a.x.Round())+.4, float32(a.y-a.ascent.Ceil()/2)), 2)...)
 	if got := c.selected(); got != "," {
-		t.Errorf("a double click on the comma selected %q, want \",\"", got)
+		t.Errorf("a double click on the comma's left selected %q, want \",\"", got)
 	}
 }
 

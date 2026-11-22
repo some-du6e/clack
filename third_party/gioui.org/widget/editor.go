@@ -101,6 +101,11 @@ type Editor struct {
 	// then extends by that granule, keeping it
 	clackGran        uint8
 	clackLo, clackHi int
+	// the mouse presses the clicker and the dragger have read: the
+	// dragger's events come after the clicker's in an Update, so a
+	// double click in one frame reads the first press's release after
+	// the second press, and that release mustn't end the second's drag
+	clackPresses, clackDragPresses int
 
 	clicker gesture.Click
 
@@ -333,6 +338,9 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
 		switch {
 		case evt.Kind == gesture.KindPress && evt.Source == pointer.Mouse,
 			evt.Kind == gesture.KindClick && evt.Source != pointer.Mouse:
+			if evt.Source == pointer.Mouse {
+				e.clackPresses++
+			}
 			prevCaretPos, _ := e.text.Selection()
 			e.blinkStart = gtx.Now
 			e.text.MoveCoord(image.Point{
@@ -378,7 +386,13 @@ func (e *Editor) processPointerEvent(gtx layout.Context, ev event.Event) (Editor
 	case pointer.Event:
 		release := false
 		switch {
+		case evt.Kind == pointer.Press && evt.Source == pointer.Mouse:
+			e.clackDragPresses++
+			e.clackPresses = max(e.clackPresses, e.clackDragPresses)
 		case evt.Kind == pointer.Release && evt.Source == pointer.Mouse:
+			if e.clackDragPresses < e.clackPresses {
+				break // an earlier press's release (Clack patch 48)
+			}
 			release = true
 			fallthrough
 		case evt.Kind == pointer.Drag && evt.Source == pointer.Mouse:
