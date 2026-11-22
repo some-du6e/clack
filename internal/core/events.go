@@ -159,29 +159,8 @@ func (a *App) handle(ev slack.Event) {
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
 		if e.User.ID != "" {
-			// Seen: when a view last read the member (store.MemberAccessed:
-			// a row its sender, a mention its member, as they draw), so the
-			// views know whether one draws them now. One the store didn't
-			// hold, or no view read, draws nowhere (a row that wants it
-			// draws the unknown stub, and its fetch's "names" follows), as
-			// most of a large workspace's profile changes are. The event is
-			// read without a lookup, which would count as a view's.
-			seen := a.S.MemberAccessed(e.User.ID)
-			// what message Docs read of the member, against both the last
-			// event's and the stored copy's (a status or huddle change
-			// converts no message again; a name stored anew since without
-			// an event, an older answer stored after it included, does)
-			before, had := a.S.RawUser(e.User.ID)
-			var beforeFP uint64
-			if had && before != nil {
-				beforeFP = userDocFP(before)
-			}
-			a.S.PutUsers([]slack.User{e.User})
-			if su, ok := a.S.RawUser(e.User.ID); ok {
-				u := a.userOf(su)
-				same := a.noteUserDoc(su) && had && beforeFP == userDocFP(su)
-				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: same})
-			}
+			a.putUserLive(e.User)
+			a.membersFetched([]string{e.User.ID}) // the member as it is now (member_fresh.go)
 		}
 	case "team_icon_change":
 		a.onTeamIconChange(ev.Raw)
@@ -1207,4 +1186,31 @@ func keepFiles(m, old *slack.Message) {
 		}
 	}
 	m.Files = fs
+}
+
+// putUserLive stores a member's new copy (user_change, a refetch that
+// found it changed) and tells the views: a "user" event. Seen is when a
+// view last read the member (store.MemberAccessed: a row its sender, a
+// mention its member, as they draw), so the views know whether one draws
+// them now; one the store didn't hold, or no view read, draws nowhere (a
+// row that wants it draws the unknown stub, and its fetch's "names"
+// follows), as most of a large workspace's profile changes are. The
+// member is read without a lookup, which would count as a view's.
+func (a *App) putUserLive(nu slack.User) {
+	seen := a.S.MemberAccessed(nu.ID)
+	// what message Docs read of the member, against both the last
+	// event's and the stored copy's (a status or huddle change converts
+	// no message again; a name stored anew since without an event, an
+	// older answer stored after it included, does)
+	before, had := a.S.RawUser(nu.ID)
+	var beforeFP uint64
+	if had && before != nil {
+		beforeFP = userDocFP(before)
+	}
+	a.S.PutUsers([]slack.User{nu})
+	if su, ok := a.S.RawUser(nu.ID); ok {
+		u := a.userOf(su)
+		same := a.noteUserDoc(su) && had && beforeFP == userDocFP(su)
+		a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: same})
+	}
 }

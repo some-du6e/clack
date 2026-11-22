@@ -182,6 +182,9 @@ type Store struct {
 	// emojiPartial: the emoji map is the boot data's few only
 	emojiPartial atomic.Bool
 
+	// memberHit is told of every lookup that found a member the store
+	// holds and every TouchMember of one (SetMemberHit)
+	memberHit  atomic.Pointer[func(id string)]
 	missMu     sync.Mutex
 	missSeen   map[string]bool
 	missing    []string // "c"+id | "b"+id
@@ -718,7 +721,30 @@ func (s *Store) User(id string) (*slack.User, bool) {
 	u, known := s.lookupLocked(id, now)
 	s.mu.RUnlock()
 	s.afterLookup(id, known)
+	if u != nil {
+		s.noteMemberHit(id)
+	}
 	return u, u != nil
+}
+
+// SetMemberHit sets what every getMemberById that finds a member is
+// told, after the store's lock is let go: a lookup hit (User) and a view's
+// TouchMember of a member the store holds. Core's member freshness
+// (Slack's maybeRefetch from getMemberById, core/member_fresh.go) checks
+// there whether the member is due to be fetched again. f must be cheap:
+// rows touch their senders on every frame they draw.
+func (s *Store) SetMemberHit(f func(id string)) {
+	if f == nil {
+		s.memberHit.Store(nil)
+		return
+	}
+	s.memberHit.Store(&f)
+}
+
+func (s *Store) noteMemberHit(id string) {
+	if f := s.memberHit.Load(); f != nil {
+		(*f)(id)
+	}
 }
 
 // RawUser is getRawMemberById: the member if the store holds it, without

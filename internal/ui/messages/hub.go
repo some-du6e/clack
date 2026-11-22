@@ -309,6 +309,20 @@ func (hb *hub) drawsMember(ev core.Event) bool {
 	return frame.IsZero() || seen.UnixMilli() >= frame.UnixMilli()
 }
 
+// readMember reports whether a view has read ev's member since the
+// store last stored it fresh (store.MemberAccessed): a row may hold what
+// it resolved from it.
+func (hb *hub) readMember(ev core.Event) bool {
+	if !ev.Seen.IsZero() {
+		return true
+	}
+	id := ev.UserID
+	if id == "" && ev.User != nil {
+		id = ev.User.ID
+	}
+	return id != "" && hb.app != nil && hb.app.S != nil && !hb.app.S.MemberAccessed(id).IsZero()
+}
+
 // redraws reports whether ev's change to the models shows: a
 // conversation's in a list on screen (the 40 models kept for lists left
 // earlier take a busy workspace's messages, edits and reactions too, many
@@ -1506,6 +1520,18 @@ func (hb *hub) apply(ev core.Event) bool {
 		// senders, so drawsMember never saw them read
 		re := hb.reconvert(ev)
 		if ev.Type == "user" && !hb.drawsMember(ev) {
+			// not on screen now: nothing to draw, but a row that drew the
+			// member before (one scrolled away, a list left open in
+			// another conversation) resolved it then and keeps what it
+			// resolved until usersRev moves, so it must move for any
+			// member a row has read (Karim, α.143: a thread broadcast kept
+			// a sender's old picture beside a newer message with the new
+			// one). The rows read it again when they next draw.
+			if hb.readMember(ev) {
+				hb.mu.Lock()
+				hb.userRv++
+				hb.mu.Unlock()
+			}
 			return re
 		}
 		hb.mu.Lock()
