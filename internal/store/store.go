@@ -143,6 +143,7 @@ type Store struct {
 	names       map[string]string
 	prefsCached bool
 	experiments map[string]string                 // the last experiments.getByUser groups (diskCache.Experiments)
+	entPrefs    json.RawMessage                   // the last enterprise.prefs.get answer (diskCache.EnterprisePrefs)
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
@@ -2119,6 +2120,10 @@ type diskCache struct {
 	// persistenceEnabled), so checks read the account's groups before the
 	// call answers again.
 	Experiments map[string]string `json:"experiments,omitempty"`
+	// EnterprisePrefs is the last enterprise.prefs.get answer as Slack
+	// sent it: its enterprisePrefs store is persisted (TI4y,
+	// persistenceEnabled), so the org's prefs hold from the first frame.
+	EnterprisePrefs json.RawMessage `json:"enterprise_prefs,omitempty"`
 	// NotificationsMaxTS is the notifications store's maxTs, which Slack
 	// persists too (storeKey "notifications", persistenceEnabled;
 	// notifications_maxts.go)
@@ -2160,6 +2165,24 @@ func (s *Store) SetExperimentGroups(g map[string]string) {
 	s.experiments = cp
 	s.mu.Unlock()
 	s.gen.Add(1)
+}
+
+// SetEnterprisePrefs keeps enterprise.prefs.get's answer for the disk
+// cache.
+func (s *Store) SetEnterprisePrefs(raw json.RawMessage) {
+	cp := append(json.RawMessage(nil), raw...)
+	s.mu.Lock()
+	s.entPrefs = cp
+	s.mu.Unlock()
+	s.gen.Add(1)
+}
+
+// CachedEnterprisePrefs returns the enterprise.prefs.get answer the disk
+// cache (or the last SetEnterprisePrefs) holds, nil when there is none.
+func (s *Store) CachedEnterprisePrefs() json.RawMessage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append(json.RawMessage(nil), s.entPrefs...)
 }
 
 // CachedExperimentGroups returns the experiment groups the disk cache (or
@@ -2459,6 +2482,9 @@ func (s *Store) installCacheBase(d *diskCache, users []*slack.User) {
 	if d.Experiments != nil {
 		s.experiments = d.Experiments
 	}
+	if len(d.EnterprisePrefs) > 0 {
+		s.entPrefs = d.EnterprisePrefs
+	}
 	s.mu.Unlock()
 	if d.Prefs != nil {
 		muted := map[string]bool{}
@@ -2595,6 +2621,7 @@ func (s *Store) SaveCache() error {
 	if s.experiments != nil {
 		d.Experiments = s.experiments // replaced whole, never changed in place
 	}
+	d.EnterprisePrefs = s.entPrefs // replaced whole too
 	d.NotificationsMaxTS = s.notesMaxTS
 	// the stored users are never changed in place (PutUsers replaces
 	// them), so they're written after the lock is let go: the viewer, the

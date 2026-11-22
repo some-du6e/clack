@@ -33,6 +33,7 @@ type draftRaw struct {
 	IsSent        bool            `json:"is_sent"`
 	IsDeleted     bool            `json:"is_deleted"`
 	FromComposer  bool            `json:"is_from_composer"`
+	DateStashed   int64           `json:"date_stashed"` // ms; set on a draft saved from the composer ("Save as draft")
 	FileIDs       []string        `json:"file_ids"`
 	Files         []slack.File    `json:"files"`       // the file objects behind FileIDs
 	Attachments   json.RawMessage `json:"attachments"` // the composer's GIFs, as saved
@@ -47,7 +48,8 @@ type draftDest struct {
 
 func (a *App) draftOf(d *draftRaw) Draft {
 	v := Draft{ID: d.ID, ClientMsgID: d.ClientMsgID, Blocks: d.Blocks, DateCreated: d.DateCreated, DateScheduled: d.DateScheduled,
-		LastUpdated: d.LastUpdatedTS, Files: len(d.FileIDs), FileIDs: d.FileIDs, FromComposer: d.FromComposer, Attachments: d.Attachments}
+		LastUpdated: d.LastUpdatedTS, Files: len(d.FileIDs), FileIDs: d.FileIDs, FromComposer: d.FromComposer, DateStashed: d.DateStashed,
+		Attachments: d.Attachments}
 	v.Doc = richtext.FromMessage(a.S, &slack.Message{Blocks: d.Blocks})
 	v.Text = richtext.PlainText(v.Doc)
 	if len(d.Destinations) > 0 {
@@ -199,7 +201,11 @@ func (a *App) DraftsGen() uint64 {
 // DraftFor is the unsent, unscheduled draft for a conversation (threadTS
 // "") or a thread, as last seen: what Slack's composer restores, text and
 // attached files, when it opens there. A DM draft addressed by user ids
-// only matches that DM. The newest wins.
+// only matches that DM. The newest wins. A composer draft (one saved with
+// the composer's "Save as draft", is_from_composer) is no conversation's
+// attached draft: Slack keys it by its client_msg_id, not its destination
+// (HOmS getDraftClientIdFromServerDraft), so the composer never restores
+// it; it's in DraftsFor's list.
 func (a *App) DraftFor(ch, threadTS string) (Draft, bool) {
 	dmUser := ""
 	if c, ok := a.S.Conv(ch); ok && c.IsIM {
@@ -210,7 +216,7 @@ func (a *App) DraftFor(ch, threadTS string) (Draft, bool) {
 	var best Draft
 	found := false
 	for _, d := range a.drafts.byID {
-		if d.DateScheduled != 0 || d.ThreadTS != threadTS {
+		if d.DateScheduled != 0 || d.ThreadTS != threadTS || d.FromComposer {
 			continue
 		}
 		if d.Channel != ch && !(d.Channel == "" && dmUser != "" && len(d.Users) == 1 && d.Users[0] == dmUser) {
@@ -228,6 +234,56 @@ func draftNewer(a, b Draft) bool {
 		return a.LastUpdated > b.LastUpdated
 	}
 	return a.DateCreated > b.DateCreated
+}
+
+// DraftsFor is getDraftsByDestinationIdSortedByRecency (boot-shared 4gFp
+// _): the drafts the composer's DraftManagementButton counts and lists for
+// a conversation (threadTS "") or a thread, as last seen. They are the
+// unscheduled drafts addressed there that have something in them (text
+// past whitespace, or files: Kz4W draftHasContent), newest first
+// (getDraftLastUpdatedTs). A conversation's list leaves out drafts with a
+// thread among their destinations. A DM's takes in the drafts addressed
+// to its person by user id, and so does a thread's in that DM, as
+// Slack's member-addressed positions join every list of the DM. Attached
+// and composer drafts both count.
+func (a *App) DraftsFor(ch, threadTS string) []Draft {
+	if ch == "" {
+		return nil
+	}
+	dmUser := ""
+	if c, ok := a.S.Conv(ch); ok && c.IsIM {
+		dmUser = c.User
+	}
+	a.mu.Lock()
+	var out []Draft
+	for _, d := range a.drafts.byID {
+		if d.DateScheduled != 0 || !draftHasContent(d) {
+			continue
+		}
+		byUser := d.Channel == "" && dmUser != "" && len(d.Users) == 1 && d.Users[0] == dmUser
+		switch {
+		case threadTS == "" && d.ThreadTS != "":
+			continue
+		case byUser:
+		case d.Channel != ch || d.ThreadTS != threadTS:
+			continue
+		}
+		out = append(out, d)
+	}
+	a.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LastUpdated != out[j].LastUpdated || out[i].DateCreated != out[j].DateCreated {
+			return draftNewer(out[i], out[j])
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// draftHasContent is Kz4W draftHasContent: text that isn't only
+// whitespace, or a file.
+func draftHasContent(d Draft) bool {
+	return strings.TrimSpace(d.Text) != "" || d.Files > 0 || len(d.FileIDs) > 0
 }
 
 // Drafts lists unsent drafts, including scheduled ones (DateScheduled > 0).
@@ -302,6 +358,12 @@ func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Dra
 	}
 	p := url.Values{"blocks": {string(blocks)}, "destinations": {string(dest)}, "file_ids": {string(files)},
 		"attachments": {atts}, "is_from_composer": {"false"}}
+	if o.DateStashed > 0 {
+		// the composer's "Save as draft" (stashDraft): a composer draft,
+		// stashed then (createDraftApi / updateDraftApi send both)
+		p.Set("is_from_composer", "true")
+		p.Set("date_stashed", strconv.FormatInt(o.DateStashed, 10))
+	}
 	var res struct {
 		Draft draftRaw `json:"draft"`
 	}
@@ -340,6 +402,9 @@ func (a *App) savedDraft(r *draftRaw, o DraftOpts) Draft {
 	}
 	if r.FileIDs == nil && len(r.Files) == 0 {
 		r.FileIDs = append([]string{}, o.FileIDs...)
+	}
+	if o.DateStashed > 0 && r.DateStashed == 0 {
+		r.FromComposer, r.DateStashed = true, o.DateStashed
 	}
 	d := a.draftOf(r)
 	a.putDraft(d)

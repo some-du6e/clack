@@ -242,6 +242,7 @@ func OpenUserGroupMembers(h Host, g core.Usergroup) *UserGroupMembersModal {
 		Buttons:    []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, d.save},
 		Border:     true, // p-user_group_member_management__dialog_body's bottom border
 		FocusStops: func() []event.Tag { return []event.Tag{&d.sel.ed} },
+		OnEscape:   ugEscape(d.sel), // MultiSelectInput onEscape: the list first
 	}).OldDialog()
 	d.fetch()
 	h.ShowOverlay(d)
@@ -474,6 +475,7 @@ func OpenUserGroupEdit(h Host, g core.UsergroupProfile, focus string) *UserGroup
 		FocusStops: func() []event.Tag {
 			return []event.Tag{&e.name, &e.handle, &e.purpose, &e.chans.ed, &e.sectionClk}
 		},
+		OnEscape: ugEscape(e.chans), // MultiSelectInput onEscape: the list first
 		CloseGuard: func() bool { // getShouldShowSpeedBump: always, see above
 			e.bump = true
 			return false

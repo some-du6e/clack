@@ -6,6 +6,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/color"
 	"log"
@@ -309,6 +310,7 @@ type App struct {
 	jump             jumpKey                    // what the jump list was last made from
 	resetPending     bool                       // a reset-window waits for the window
 	quitting         atomic.Bool                // Quit: the next close isn't runFromTray's (Slack's app.isQuitting)
+	exitWhy          atomic.Pointer[string]     // why Run is ending, for the exit line (ExitReason)
 	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
 	winPlace         bool                       // Gio places the window here (Windows, macOS): mainWindowSettings keeps its bounds (winbounds.go)
 	winSaveDue       bool                       // mainWindowSettings changed since ui.json was last written
@@ -604,6 +606,9 @@ func (a *App) Run() error {
 		nativemenu.NoteEvent(ev) // the window's HWND / NSView for native context menus
 		switch e := ev.(type) {
 		case app.DestroyEvent:
+			if e.Err != nil {
+				a.noteExit(fmt.Sprintf("the window ended with an error: %v", e.Err))
+			}
 			wd.end()
 			wd.stop()
 			a.closeVideos()   // no sound after the window is gone (video.go)
@@ -611,16 +616,19 @@ func (a *App) Run() error {
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
 			}
+			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
+				a.savePrefs()
+			}
+			// ui.json before the stop's wait: Windows ending the session
+			// gives the quit 3 s (cmd/clack's OnSessionEnd)
+			a.flushPrefs()
 			if a.data != nil {
 				select { // plugins' stop hooks, the metadata cache
 				case <-a.data.stop():
 				case <-time.After(5 * time.Second):
 				}
 			}
-			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
-				a.savePrefs()
-			}
-			a.flushPrefs() // the window is gone: nothing waits on this
+			a.flushPrefs() // what the stop changed; the window is gone: nothing waits on this
 			return e.Err
 		case *app.ClosingEvent:
 			// the close button, Alt+F4: Slack's MAIN_WINDOW_CLOSE keeps the

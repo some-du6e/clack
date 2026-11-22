@@ -26,6 +26,11 @@ on:
       - "internal/core/writes.go"
       - "internal/core/manage.go"
       - "internal/fakeslack/files.go"
+      - "internal/fakeslack/emails.go"
+      - "internal/richtext/emailhtml.go"
+      - "internal/ui/richview/email.go"
+      - "internal/ui/email_pane.go"
+      - "internal/ui/email_files_test.go"
       - "internal/fakeslack/drafts.go"
       - "internal/ui/richview/cards.go"
       - "internal/ui/richview/blocks.go"
@@ -40,6 +45,11 @@ on:
       - "internal/ui/drop_overlay.go"
       - "internal/ui/drop_overlay_test.go"
       - "internal/ui/composer/taut.go"
+      - "internal/ui/richview/textfile_test.go"
+      - "internal/ui/views/files.go"
+      - "internal/ui/views/files_svgicon_test.go"
+      - "internal/ui/popups/search_rows.go"
+      - "internal/ui/popups/search_svgicon_test.go"
       - "internal/ui/popups/files_filters.go"
       - "internal/ui/views/files_filters_test.go"
       - ".github/workflows/files-shots.yml"
@@ -79,19 +89,20 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: geometry, uploads and the file menu
         run: |
-          go test -count=1 -v -run 'TestFileImage|TestMediaGallery|TestGalleryPair|TestGalleryBox|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippet|TestPillowGrid|TestFileActions|TestGalleryExpandStillOpens|TestStillPlayButtonAndExpand|TestFileCardSectionButton' ./internal/ui/richview/
-          go test -count=1 -v -run 'TestTruncateHTML|TestParseCodeMirror|TestSnippetFields|TestFiles$' ./internal/richtext/
+          go test -count=1 -v -run 'TestFileImage|TestMediaGallery|TestGalleryPair|TestGalleryBox|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippet|TestPillowGrid|TestFileActions|TestGalleryExpandStillOpens|TestStillPlayButtonAndExpand|TestFileCardSectionButton|TestEmailFile|TestTextFileCards' ./internal/ui/richview/
+          go test -count=1 -v -run 'TestTruncateHTML|TestParseCodeMirror|TestSnippetFields|TestFiles$|TestEmailFields|TestEmailBlocks' ./internal/richtext/
           go test -count=1 -v -run 'TestUploadProgressAndPrepared|TestUploadForInput|TestDraftFiles|TestExpandSnippet|TestSnippetDisplayCut' ./internal/core/
-          go test -count=1 -v -run 'TestFileMenuLaterAndDelete|TestContextMenuShapes' ./internal/ui/popups/
+          go test -count=1 -v -run 'TestFileMenuLaterAndDelete|TestContextMenuShapes|TestSearchFileTileSvgIcons' ./internal/ui/popups/
+          go test -count=1 -v -run 'TestFileTileSvgIcons' ./internal/ui/views/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$|TestFileSnippetExpand$|TestFileDrop|TestDropSubtitle|TestDropTiming' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$|TestFileSnippetExpand$|TestFileDrop|TestDropSubtitle|TestDropTiming|TestEmailInbox$' ./internal/ui/
       - name: screenshots
         env:
           FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FILES_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 13m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 13m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$|TestEmailShots$' ./internal/ui/
           # the Files browser's Filters modal (docs/FILES-AUDIT.md)
           xvfb-run -a go test -count=1 -v -run 'TestFilesViewFiltersShots$' ./internal/ui/views/
           ls -la "$FILES_SHOTS_DIR"

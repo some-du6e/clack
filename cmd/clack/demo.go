@@ -250,7 +250,10 @@ func demoMain(args []string, stdout, stderr io.Writer) int {
 		}
 		os.Exit(code)
 	}()
-	for range app.Events { // macOS: keep the main thread's event loop; links are ignored in the demo
+	for e := range app.Events { // macOS: keep the main thread's event loop; links are ignored in the demo
+		if _, ok := e.(app.TerminateEvent); ok { // macOS asked to quit (Gio patch 58)
+			go os.Exit(0)
+		}
 	}
 	return 0
 }

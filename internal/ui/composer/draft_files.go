@@ -60,12 +60,14 @@ func attachmentsFor(key string, h Host) *attachments {
 // tests' Apps (ci-speed-3, a heap dump's commonest root).
 func ForgetCore(c *core.App) {
 	attStore.Lock()
-	defer attStore.Unlock()
 	for k, a := range attStore.m {
 		if a.core == c {
 			delete(attStore.m, k)
 		}
 	}
+	attStore.Unlock()
+	forgetLive(c)  // its open composers (liveComposers)
+	forgetLater(c) // what it queued for the UI (restoreQ)
 }
 
 // storedFiles reports whether key's conversation has files attached
@@ -122,6 +124,7 @@ func (a *attachments) restoreFiles(fs []core.DraftFile) {
 		}
 	}
 	added := false
+	var load []*attChip
 	for _, f := range fs {
 		if f.ID == "" || have[f.ID] || len(a.chips) >= attMaxFiles {
 			continue
@@ -130,14 +133,26 @@ func (a *attachments) restoreFiles(fs []core.DraftFile) {
 		title := firstNonEmpty(f.Title, name)
 		c := &attChip{id: int(attNextID.Add(1)), name: name, title: title, kind: attKindOf(name, nil), thumbURL: f.Thumb,
 			prepared: &core.PreparedUpload{ID: f.ID, Name: name, Title: title, Size: f.Size}}
+		if f.PrettyType != "" {
+			c.kind.Label = f.PrettyType // PendingFile's getFileTypeDescription
+		}
 		if f.Thumb != "" {
 			c.kind.Image = true // Slack made a thumbnail: draw it like the image it is
+		}
+		if f.Name == "" && f.Title == "" {
+			// the draft named the file by id alone: the store has no
+			// file to show yet (draft_meta.go)
+			c.loading = true
+			load = append(load, c)
 		}
 		a.chips = append(a.chips, c)
 		have[f.ID] = true
 		added = true
 	}
 	a.mu.Unlock()
+	for _, c := range load {
+		go a.loadMeta(c)
+	}
 	if added {
 		a.h.Invalidate()
 		pendingChanged()

@@ -371,6 +371,61 @@ jobs:
           # lets its frame texture go; XSETTINGS from a real settings manager
           xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop|TestUnmappedStopsFramesX11|TestClackXSettingsX11' gioui.org/app
           xvfb-run -a -s "-screen 0 1280x1024x24" go test -count=1 -v -timeout 5m -run '^TestFrameEventAskedX11$' gioui.org/app
+          # patch 59: a window whose X server goes away says so first (its own private Xvfb)
+          go test -count=1 -v -timeout 3m -run '^TestX11ConnectionLost$' gioui.org/app
+      # Signals and Clack's exit line (review of karim-1118), the real
+      # binary on X11: under nohup a SIGHUP stays ignored (Notify would
+      # have made it quit Clack), and a SIGTERM ends Clack by its own quit,
+      # status 0, with "exit: signal: terminated" in clack.log and in its
+      # run record.
+      - name: Clack's signals and exit line on X11 (and when the X server goes)
+        if: ${{ !cancelled() }}
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          mkdir -p build && go build -o build/clack-signals ./cmd/clack || exit 1
+          Xvfb :93 -nolisten tcp -screen 0 1280x800x24 & xvfb=$!
+          for i in $(seq 1 40); do [ -S /tmp/.X11-unix/X93 ] && break; sleep 0.25; done
+          home="$RUNNER_TEMP/clack-sig-home"; logs="$RUNNER_TEMP/clack-sig-logs"
+          mkdir -p "$home" "$logs"
+          env -u WAYLAND_DISPLAY DISPLAY=:93 CLACK_HOME="$home" CLACK_LOG_DIR="$logs" CLACK_TIMING=1 nohup ./build/clack-signals > "$RUNNER_TEMP/clack-sig.out" 2>&1 &
+          pid=$!
+          for i in $(seq 1 240); do grep -q 'timing: main ready' "$logs/clack.log" 2>/dev/null && break; sleep 0.5; done
+          sleep 2
+          rc=0
+          kill -HUP $pid; sleep 3
+          if ! kill -0 $pid 2>/dev/null; then echo "a SIGHUP under nohup ended Clack"; rc=1; fi
+          kill -TERM $pid
+          for i in $(seq 1 60); do kill -0 $pid 2>/dev/null || break; sleep 0.5; done
+          if kill -0 $pid 2>/dev/null; then echo "Clack still runs 30 s after SIGTERM"; kill -9 $pid; rc=1; fi
+          wait $pid; code=$?
+          kill $xvfb
+          tail -40 "$logs/clack.log"
+          cat "$logs"/lastrun-*.txt
+          grep -F 'exit: signal: hangup' "$logs/clack.log" && { echo "SIGHUP was taken"; rc=1; }
+          grep -F 'exit: signal: terminated' "$logs/clack.log" || { echo "no exit line for SIGTERM"; rc=1; }
+          grep -F ': signal: terminated' "$logs"/lastrun-*.txt || { echo "no reason in the run record"; rc=1; }
+          [ "$code" = 0 ] || { echo "exit status $code"; rc=1; }
+          # the X server goes (Gio patch 59): the exit line, then Xlib's exit 1
+          Xvfb :94 -nolisten tcp -screen 0 1280x800x24 & xvfb2=$!
+          for i in $(seq 1 40); do [ -S /tmp/.X11-unix/X94 ] && break; sleep 0.25; done
+          home2="$RUNNER_TEMP/clack-x-home"; logs2="$RUNNER_TEMP/clack-x-logs"
+          mkdir -p "$home2" "$logs2"
+          env -u WAYLAND_DISPLAY DISPLAY=:94 CLACK_HOME="$home2" CLACK_LOG_DIR="$logs2" CLACK_TIMING=1 ./build/clack-signals > "$RUNNER_TEMP/clack-x.out" 2>&1 &
+          pid2=$!
+          for i in $(seq 1 240); do grep -q 'timing: main ready' "$logs2/clack.log" 2>/dev/null && break; sleep 0.5; done
+          sleep 2
+          kill -9 $xvfb2
+          for i in $(seq 1 60); do kill -0 $pid2 2>/dev/null || break; sleep 0.5; done
+          if kill -0 $pid2 2>/dev/null; then echo "Clack still runs 30 s after its X server went"; kill -9 $pid2; rc=1; fi
+          wait $pid2; code2=$?
+          tail -20 "$logs2/clack.log"; tail -5 "$RUNNER_TEMP/clack-x.out"
+          grep -F "exit: the X server's connection broke" "$logs2/clack.log" || { echo "no exit line when the X server went"; rc=1; }
+          grep -F "the X server's connection broke" "$logs2"/lastrun-*.txt || { echo "no reason in the run record when the X server went"; rc=1; }
+          [ "$code2" = 1 ] || { echo "exit status $code2 after the X server went, want 1 (Xlib's)"; rc=1; }
+          exit $rc
       - name: pixel tests (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -882,6 +937,7 @@ jobs:
             Wait-Log 'desktop: another launch handed over a slack:// sign-in link' 'the running Clack getting the link'
             Wait-Log 'sign-in: a sign-in link came from outside Clack; signing in with it' 'the sign-in card taking it'
             Wait-Log "sign-in: couldn't read the team and token from the sign-in link" 'the sign-in attempt (the fake link stops it there)'
+            Wait-Log 'exit: handed this launch to the Clack already running' 'the launch that handed over saying why it ended'
             if ($p.HasExited) { throw "the first Clack exited ($($p.ExitCode))" }
             # the window's Clack processes: not the introduction's renderer
             # (Clack.exe intro-preview, which the first run's intro starts)
@@ -892,7 +948,9 @@ jobs:
             if (Select-String -Path $log -SimpleMatch -Pattern 'magic-login/xyz' -Quiet) { throw 'the sign-in link is in the log' }
           } finally { Stop-Clack $p }
 
-          # 3. Another app takes the legacy key (as Slack desktop does at its start): Clack's next start leaves it
+          # 3. Another app takes the legacy key (as Slack desktop does at its start): Clack's next start leaves it.
+          # The Clack before it was killed (Stop-Process), so this start says that run ended without saying why;
+          # closing this one's window (the sign-in screen: a quit) leaves its reason, which the next start logs.
           $other = Join-Path $env:SystemRoot 'System32\cmd.exe'
           $otherCmd = "`"$other`" /c exit `"%1`""
           Set-ItemProperty -Path 'HKCU:\Software\Classes\slack\shell\open\command' -Name '(default)' -Value $otherCmd
@@ -900,9 +958,20 @@ jobs:
           $p = Start-Process -PassThru -FilePath $exe
           try {
             Wait-Log 'has the default, so Windows asks which app to use' 'the registration beside another app'
+            Wait-Log 'applog: previous run ended without saying why' 'the start after a killed Clack'
             Assert-Reg 'HKCU\Software\Classes\slack\shell\open\command' '' $otherCmd
             Assert-Reg 'HKCU\Software\Classes\Clack.slack\shell\open\command' '' $cmd
             Assert-Reg 'HKCU\Software\RegisteredApplications' 'Clack' 'Software\Clack\Capabilities'
+            for ($i = 0; $i -lt 120 -and $p.MainWindowHandle -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 250; $p.Refresh() }
+            if (-not $p.CloseMainWindow()) { throw 'no window to close' }
+            if (-not $p.WaitForExit(60000)) { throw 'the close on the sign-in screen did not end Clack' }
+            Wait-Log 'exit: the window closed while signed out' 'the exit line of a close on the sign-in screen'
+          } finally { Stop-Clack $p }
+          Mark-Log
+          $p = Start-Process -PassThru -FilePath $exe
+          try {
+            Wait-Log ': the window closed while signed out' 'the start after it naming how the last run ended'
+            Get-Content $log | Select-Object -Skip $script:mark | Select-String -SimpleMatch 'applog: previous run' | ForEach-Object { $_.Line }
           } finally { Stop-Clack $p }
 
           # 4. -unregister-url-handler removes Clack's keys and leaves the other app's
@@ -967,7 +1036,7 @@ jobs:
         run: |
           rc=0
           go test -count=1 -v -timeout 10m -run 'TestHideAndRaise|TestHideWithoutDriver|TestCaretBlinkFromOS|TestOptionKeepsHiddenAndMinimized|TestInvalidateWhileHandling' gioui.org/app || rc=1
-          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop || rc=1
+          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16|TestTraySessionEnd' ./internal/desktop || rc=1
           go test -count=1 -v -timeout 12m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui || rc=1
           exit $rc
 
@@ -1514,12 +1583,54 @@ jobs:
           set +e
           sw_vers
           # and patch 47: the caret's blink period from the user defaults;
-          # patch 48: AppKit's click counts through a real window
-          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac|TestClackClickCountMac' gioui.org/app
+          # patch 48: AppKit's click counts through a real window; patch 58:
+          # AppKit's terminate: asks the program (TerminateEvent)
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac|TestClackClickCountMac|TestTerminateEventMac' gioui.org/app
           gio=$?
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?
           exit $((gio | ui))
+      # Gio patch 58 (review of karim-1118: the Dock's Quit, log out,
+      # restart and a quit Apple Event ended Clack with no exit line). A
+      # signed-out Clack.app with a bundle id of its own, its own
+      # CLACK_HOME and log directory, is quit as the Dock quits it (a quit
+      # Apple Event; NSRunningApplication's terminate if osascript may not
+      # send one): it ends by itself, status 0, with the exit line in
+      # clack.log and the reason in its run record, not the 10 s fallback.
+      - name: macOS quit Apple Event (Gio patch 58)
+        if: ${{ !cancelled() }}
+        run: |
+          set +e
+          mkdir -p build && go build -o build/clack-quit ./cmd/clack || exit 1
+          app="$GITHUB_WORKSPACE/build/quit/Clack.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp build/clack-quit "$app/Contents/MacOS/clack"
+          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
+          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.some-du6e.clack.probe-quit" "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
+          home="$RUNNER_TEMP/clack-quit-home"; logs="$RUNNER_TEMP/clack-quit-logs"
+          mkdir -p "$home" "$logs"
+          CLACK_HOME="$home" CLACK_LOG_DIR="$logs" CLACK_TIMING=1 "$app/Contents/MacOS/clack" > "$RUNNER_TEMP/clack-quit.out" 2>&1 &
+          pid=$!
+          for i in $(seq 1 240); do grep -q 'timing: main ready' "$logs/clack.log" 2>/dev/null && break; sleep 0.5; done
+          sleep 3 # the window and AppKit's run loop
+          rc=0
+          if ! osascript -e 'tell application id "io.github.some-du6e.clack.probe-quit" to quit'; then
+            echo "osascript couldn't send the quit Apple Event; NSRunningApplication's terminate instead"
+            printf 'import AppKit\nprint(NSRunningApplication(processIdentifier: %s)?.terminate() ?? false)\n' "$pid" | swift -
+          fi
+          for i in $(seq 1 60); do kill -0 $pid 2>/dev/null || break; sleep 0.5; done
+          if kill -0 $pid 2>/dev/null; then echo "Clack still runs 30 s after the quit"; kill -9 $pid; rc=1; fi
+          wait $pid; code=$?
+          tail -40 "$logs/clack.log"
+          cat "$logs"/lastrun-*.txt
+          grep -F 'exit: macOS asked Clack to quit' "$logs/clack.log" || { echo "no exit line for the quit"; rc=1; }
+          grep -F "didn't close within 10 s" "$logs/clack.log" && { echo "the 10 s fallback ended it"; rc=1; }
+          grep -F ': macOS asked Clack to quit' "$logs"/lastrun-*.txt || { echo "no reason in the run record"; rc=1; }
+          [ "$code" = 0 ] || { echo "exit status $code"; rc=1; }
+          exit $rc
       # Gio patch 32 (Karim's freezes after his Mac woke, 2026-11-16: the
       # main thread in -[CAMetalLayer nextDrawable] for seconds, minutes
       # while the screens slept). An occluded window (an opaque window over

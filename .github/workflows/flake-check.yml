@@ -3793,3 +3793,191 @@ jobs:
           TEST: TestReplyUnreadMarkInTheReplysFrame
           PKG: ./internal/ui
         run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
+
+  # tb-click (thread-header-hover, 2026-11-22; Karim α.136: "i click and
+  # it disappears as if you are not hovering it", and Reply in thread
+  # lost under their plugins): the message actions bar clicked as a hand
+  # does (the press and the release ~100 ms apart, in frames of their
+  # own), with no plugin, a plugin wrapping MessageActions and
+  # MessageActionButtonReaction, one re-rendering them on every mousedown
+  # and mouseup, and Taut's OwlMode itself: each action runs, the row stays
+  # hovered with its bar, the emoji picker and the More actions menu hold
+  # it (Slack's setPopoverHold); and the thread header's channel name links
+  # with the pane's slice away from the root. Dispatch with only=tb-click.
+  tb-click:
+    if: ${{ !inputs.only || startsWith('tb-click', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40 # budget, min (new job: no p95 yet)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+      - name: build Taut's OwlMode (the reviewed TAUT_PIN; GPLv3, never committed)
+        env:
+          TAUT_PIN: 6fe5123e3b4cffaa16c6dda71291ad5d82cdad37
+        run: |
+          git clone -q https://github.com/jeremy46231/taut /tmp/taut
+          git -C /tmp/taut checkout -q "$TAUT_PIN"
+          cd /tmp/taut && npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
+          npm run -s build:user-plugin -- plugins/OwlMode.tsx "$GITHUB_WORKSPACE/dist/taut-plugins/OwlMode.js"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # this job runs third-party code; never share its Go cache
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the bar's clicks and the header's link, COUNT runs
+        env:
+          TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins
+        run: |
+          xvfb-run -a go test -count="$COUNT" -v -timeout 30m -run '^(TestToolbarClicksKeepHover|TestThreadHeaderLinkAwayFromRoot)$' ./internal/ui
+
+
+  # karim-1118 (2026-11-18): a restored draft's attachment card drew its
+  # file's id ("F0CJB175J10") over "File". The composer fetches a draft's
+  # file it knows by id alone (files.info, Slack's unknown fetch) with
+  # Slack's loading bars and retry, and logs a failed load by hashed id.
+  # Dispatch with only=karim-1118-drafts.
+  karim-1118-drafts:
+    if: ${{ !inputs.only || startsWith('karim-1118-drafts', inputs.only) }}
+    name: "karim-1118 the draft file card's fetch (composer)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "TestDraftFileArrivesLate, TestDraftFileInfoFails, TestDraftFileRetriesTimeouts, COUNT runs"
+        run: go test -count=$COUNT -v -timeout 20m -run '^(TestDraftFileArrivesLate|TestDraftFileInfoFails|TestDraftFileRetriesTimeouts|TestDraftFromAnotherDevice)$' ./internal/ui/composer
+
+  # Preferences > Plugins > Plugin library scrolled by mouse-wheel notches
+  # (Karim, α.112 on Windows: "laggy?", "it feels capped"): each frame's
+  # cost, the frames a notch gets at 60 Hz, the rows a frame lays out, the
+  # install-state lookups, the GPU's whole and partial frame and a CPU
+  # profile (TestPrefsLibraryScrollCost), on WARP and llvmpipe. Dispatch
+  # with only=karim-1118-r3 (this job and karim-1118-r3-composer).
+  karim-1118-r3-scroll:
+    if: ${{ !inputs.only || startsWith('karim-1118-r3-scroll', inputs.only) }}
+    name: "the plugin library's scroll (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the plugin library scrolled (TestPrefsLibraryScrollCost), then its CPU profile
+        shell: bash
+        env:
+          CLACK_GPU_COST: "1"
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_GPU_COST_SHOTS: ${{ runner.temp }}/scroll-shots
+          CLACK_SCROLL_PROFILE: ${{ runner.temp }}/scroll-prof
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          RUNS: ${{ inputs.count || '1' }}
+        run: |
+          set +e
+          mkdir -p "$CLACK_GPU_COST_SHOTS" "$CLACK_SCROLL_PROFILE"
+          if [ "$RUNNER_OS" = Linux ]; then x=(xvfb-run -a); else x=(); fi
+          if [ "$RUNNER_OS" = Windows ]; then export CGO_ENABLED=0; fi
+          "${x[@]}" go test -count="$RUNS" -v -timeout 40m -run '^TestPrefsLibraryScrollCost$' ./internal/ui
+          rc=$?
+          go tool pprof -top -nodecount=45 "$CLACK_SCROLL_PROFILE/prefs-library-scroll.cpu.pprof"
+          go tool pprof -top -cum -nodecount=70 "$CLACK_SCROLL_PROFILE/prefs-library-scroll.cpu.pprof"
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: prefs-scroll-${{ runner.os }}
+          path: |
+            ${{ runner.temp }}/scroll-shots
+            ${{ runner.temp }}/scroll-prof
+
+  # The composer's bottom right (Karim, α.112 on Windows: "this is maybe
+  # missing smth"): Slack's drafts button left of the send button under
+  # draft_management_in_composer, and the hint bar's formatting tip past
+  # two characters, its fade, its click and the offline notice
+  # (TestDraftManagementButton, TestHintBarLikeSlack, COUNT runs), then
+  # their shots (TestDraftsButtonShots, llvmpipe). Dispatch with
+  # only=karim-1118-r3.
+  karim-1118-r3-composer:
+    if: ${{ !inputs.only || startsWith('karim-1118-r3-composer', inputs.only) }}
+    name: "the composer's drafts button and hint bar"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the drafts button and the hint bar, COUNT runs, then their shots
+        env:
+          COMPOSER_AUDIT_SHOTS_DIR: ${{ runner.temp }}/composer-shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 20m -run '^(TestDraftManagementButton|TestHintBarLikeSlack)$' ./internal/ui/composer || rc=1
+          mkdir -p "$COMPOSER_AUDIT_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run '^TestDraftsButtonShots$' ./internal/ui/composer || rc=1
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: composer-drafts-shots
+          path: ${{ runner.temp }}/composer-shots
+
+  # karim-1118's review (2026-11-22): "Save as draft" and picking a draft
+  # with Slack unreachable keep the composer's text, a thread draft brings
+  # its own broadcast, EmailBlocks' work is linear and capped (breaks and
+  # list items too), HTML's implied end tags and a cap that still hides a
+  # style sheet, links in any case and an unclosed <head>, and an email's
+  # links open no URL card. COUNT runs. Dispatch with only=karim-1118.
+  karim-1118-r4-review:
+    if: ${{ !inputs.only || startsWith('karim-1118-r4-review', inputs.only) }}
+    name: "karim-1118 the review's fixes (drafts offline, email bounds)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: the drafts offline, the email converter's bounds, the email links
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 15m -run '^(TestSaveAsDraftKeepsTextWhenTheSaveFails|TestPickDraftSavesTheTextFirst|TestPickThreadDraftTakesItsBroadcast|TestDraftManagementButton)$' ./internal/ui/composer || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBlocks|TestEmailFields)' ./internal/richtext || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestEmailBodyLinksOpenNoURLCard|TestEmailFile|TestEmailLegacy|TestEmailRecipients)' ./internal/ui/richview || rc=1
+          exit $rc

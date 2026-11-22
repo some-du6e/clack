@@ -837,6 +837,7 @@ type Draft struct {
 	FileIDs               []string
 	FileInfo              []DraftFile // the attached files as drafts.list describes them (by FileIDs order when known)
 	FromComposer          bool        // is_from_composer
+	DateStashed           int64       // date_stashed (ms): when the composer's "Save as draft" saved it
 	// Attachments are the draft's message attachments (the composer's GIFs).
 	Attachments json.RawMessage
 }
@@ -859,6 +860,9 @@ type DraftOpts struct {
 	Blocks                json.RawMessage
 	FileIDs               []string
 	DateScheduled         int64 // set when editing a scheduled draft (keeps it scheduled)
+	// DateStashed (ms) saves a composer draft (is_from_composer, with
+	// date_stashed): the composer's "Save as draft"
+	DateStashed int64
 	// Attachments are the draft's message attachments (drafts.create's
 	// attachments: the composer's GIFs); nil sends "[]".
 	Attachments json.RawMessage

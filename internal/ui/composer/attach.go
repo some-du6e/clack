@@ -117,6 +117,11 @@ type attChip struct {
 	kind  attKind
 	// thumbURL is Slack's thumbnail of a restored file (draft_files.go).
 	thumbURL string
+	// loading: a restored file the draft named by id alone, whose
+	// files.info is out (Slack's unknown file: MissingText bars over an
+	// exception tile); gone: it never came (a non-existent file: "This
+	// file was deleted."). Guarded by attachments.mu (draft_meta.go).
+	loading, gone bool
 
 	// pf is the eager upload as Slack's send sees it (its uploadPromise):
 	// the placeholder draws it and the share waits for it. nil for files
@@ -504,13 +509,9 @@ func attCleanName(name string) string {
 // toast shows s from any goroutine (via the composer's UI queue).
 func (a *attachments) toast(s string) { a.later(func() { a.h.Toast(s) }) }
 
-// later runs f on the UI goroutine at the next composer Layout.
-func (a *attachments) later(f func()) {
-	restoreQ.Lock()
-	restoreQ.fns = append(restoreQ.fns, f)
-	restoreQ.Unlock()
-	a.h.Invalidate()
-}
+// later runs f on the UI goroutine at the next composer Layout, while the
+// files' session lasts (laterFor).
+func (a *attachments) later(f func()) { laterFor(a.core, a.h, f) }
 
 // ---- file types ----
 
@@ -1273,6 +1274,8 @@ type attView struct {
 	failed    bool
 	asImage   bool
 	size      int64 // bytes (or Slack's size of a restored file)
+	// loading and gone are the chip's (draft_meta.go)
+	loading, gone bool
 }
 
 // Layout draws the file gallery (zero size when empty): Slack's
@@ -1295,7 +1298,8 @@ func (a *attachments) Layout(gtx layout.Context) layout.Dimensions {
 		}
 		views[i] = attView{c: c, name: c.name, title: c.title, thumb: c.thumb, thumbPx: c.thumbPx,
 			preparing: c.preparing, failed: c.prepErr != nil && c.prepared == nil,
-			asImage: c.kind.Image && !c.thumbBad, size: c.size()}
+			asImage: c.kind.Image && !c.thumbBad && !c.loading && !c.gone, size: c.size(),
+			loading: c.loading, gone: c.gone}
 	}
 	a.mu.Unlock()
 
@@ -1425,6 +1429,9 @@ func (a *attachments) layoutChip(gtx layout.Context, v attView, sz image.Point) 
 		slackc.Component(gtx, "FileFieldset", attItem{a: a, v: v, sz: sz}, attItem.fieldsetProps, attItem.layoutFieldset)
 	}
 	tip := v.title
+	if v.loading { // nothing to name yet: no id in a tooltip either
+		tip = ""
+	}
 	if onBtn {
 		tip = attRemoveTip(v.name) // RemoveFileButton's tooltip
 	}
@@ -1511,6 +1518,10 @@ func (a *attachments) drawCard(gtx layout.Context, th *theme.Theme, v attView, r
 	strokeRRect(gtx, r, rad, max(1, gtx.Dp(1)), th.C.Border)
 	pad := gtx.Dp(11)
 	tile := gtx.Dp(40)
+	if v.loading || v.gone {
+		a.drawMetaCard(gtx, th, v, pad, tile, r)
+		return
+	}
 	fillRRect(gtx, image.Rect(pad, pad, pad+tile, pad+tile), gtx.Dp(8), rgb(k.Color))
 	ic := gtx.Dp(22)
 	offset(gtx, pad+(tile-ic)/2, pad+(tile-ic)/2, func(gtx layout.Context) layout.Dimensions {

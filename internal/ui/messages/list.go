@@ -239,6 +239,7 @@ type listState struct {
 	tbSize  image.Point
 	tbAt    int             // tbRow's MessageActions position (actionsAt)
 	tbHov   int             // hovered toolbar button, -1 none
+	tbHold  toolbarHold     // the popover a toolbar button opened, holding its row's hover
 	tbBtns  []int           // the buttons tbRow's toolbar has, in order (actions_rules.go)
 	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
 	tbQAs   [tbCount]string // … and data-qa
@@ -1224,6 +1225,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		if i, ok := s.sel.keyIdx[key]; ok && key != "" {
 			s.hoverIdx = i
 		}
+	}
+	if i, ok := s.tbHold.row(s); ok {
+		s.hoverIdx = i // a popover the row's toolbar opened holds its hover
 	}
 	if k := s.kbIndex(); k >= 0 {
 		s.hoverIdx = k // the keyboard-selected message draws as hovered
@@ -2245,7 +2249,9 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		switch i {
 		case tbAddReact:
 			_ = rc
-			h.ShowOverlay(popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil))
+			o := popups.NewReactionPicker(h, anchor, m.Channel, m.TS, m.ThreadTS, nil)
+			s.holdHover(o)
+			h.ShowOverlay(o)
 		case tbReply:
 			// RwAt.onComment: the comment thunk with threadTs =
 			// msg.thread_ts, so the key is the thread's even for a
@@ -2276,13 +2282,15 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			if s.thread {
 				where = popups.InThread
 			}
-			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
+			o := popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
 				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
 				Where:   where,
 				Trigger: trigger,
-			}))
+			})
+			s.holdHover(o) // onMoreActionsMenuOpen: onPopoverOpen
+			h.ShowOverlay(o)
 		}
 	}
 	hov := btn.Hovered()
