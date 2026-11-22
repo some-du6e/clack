@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"gioui.org/op"
-	"gioui.org/op/clip"
 	"gioui.org/text"
 	"gioui.org/unit"
 
@@ -425,8 +424,9 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 	e.at = gtx.Now
 	b.notePress(gtx, e)
 	if maxLines <= 0 {
+		rec := op.Record(gtx.Ops)
 		d := e.v.Layout(gtx, b.style(), hostHandler{b.h})
-		bodyArea(gtx, &e.ctx, d.Size)
+		bodyParent(gtx, &e.ctx, d.Size, rec.Stop())
 		return d
 	}
 	lh := 22
@@ -444,10 +444,7 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 			d.Baseline = max(0, d.Size.Y-top)
 		}
 	}
-	st := clip.Rect{Max: d.Size}.Push(gtx.Ops)
-	call.Add(gtx.Ops)
-	st.Pop()
-	bodyArea(gtx, &e.ctx, d.Size)
+	bodyParent(gtx, &e.ctx, d.Size, call) // clipped to the lines shown
 	return d
 }
 

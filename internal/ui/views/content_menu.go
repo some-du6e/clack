@@ -7,6 +7,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -21,7 +22,7 @@ import (
 // the channel's list opens there (popups.ContentMenu): the desktop
 // shell's image and link menus, a mention's, a file's, a v3 card's, a
 // code block's; anywhere else the message's own actions menu. Each body
-// sees its presses through a pass-through tag (bodyArea); the view's
+// sees its presses through a pass-through tag (bodyParent); the view's
 // message decides after its body laid out (contentMenu).
 
 // bodyTag is a message body's context-press target.
@@ -47,12 +48,17 @@ func (b *base) notePress(gtx C, e *richEntry) {
 	}
 }
 
-// bodyArea registers tag over a body of size, passing presses on to the
-// message under it.
-func bodyArea(gtx C, tag *bodyTag, size image.Point) {
+// bodyParent draws the body (call, laid out at size) inside its tag's
+// area: the tag is the body's parent, so the body's own areas are hit
+// first and keep their cursors (richview's text I-beam, its links'
+// hand), and the tag, pass-through, still sees every press on the body
+// without taking it from what is under it.
+func bodyParent(gtx C, tag *bodyTag, size image.Point, call op.CallOp) {
 	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
-	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	pass := pointer.PassOp{}.Push(gtx.Ops)
 	event.Op(gtx.Ops, tag)
+	pass.Pop()
+	call.Add(gtx.Ops)
 }
 
 // contentMenu is the menu for this frame's context press on m's body, at

@@ -1677,12 +1677,15 @@ func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 	if hovered {
 		fill(gtx, r, cs.Background(v.msgHover()))
 	}
-	call.Add(gtx.Ops)
+	// the row's hover and right-click target are the content's parent:
+	// every area the content pushed (the body's links and images, the
+	// reactions) is hit first, and the row stays hovered over them, as
+	// :hover on the message's element does (a sibling on top would take
+	// the pointer from all of them)
 	st := clip.Rect(r).Push(gtx.Ops)
 	hv.Add(gtx.Ops)
-	pass := pointer.PassOp{}.Push(gtx.Ops)
 	event.Op(gtx.Ops, &s.ctx)
-	pass.Pop()
+	call.Add(gtx.Ops)
 	st.Pop()
 	return d
 }
