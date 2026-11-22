@@ -98,8 +98,8 @@ func TestDataTableLayout(t *testing.T) {
 		t.Errorf("prev %v (none on the first page), next %v (20px at y 332)", pr, nx)
 	}
 	c := findFrag(t, &v.d, "Full")
-	if int(c.x) != 8 {
-		t.Errorf("caption at x %.0f, want 8", c.x)
+	if int(c.x) != 4 || c.top != 4+8+4 {
+		t.Errorf("caption at (%.0f, %d), want (4, 16): the header's padding 8px 4px, centred on the buttons", c.x, c.top)
 	}
 	if h := findFrag(t, &v.d, "Rank"); int(h.x) != 16 || h.top < 54 || h.bot > 82 {
 		t.Errorf("Rank header at x %.0f y %d–%d, want 16 inside the 28px button", h.x, h.top, h.bot)
@@ -316,12 +316,23 @@ func TestDataVizLayout(t *testing.T) {
 			t.Errorf("dark %v: first series %v, want %v", dark, c.pal.Series[0], want)
 		}
 		lay := v.ChartLayout(0)
-		if len(lay.Bars) != 4 || lay.Bars[2].Y >= lay.Bars[0].Y {
-			t.Errorf("dark %v: bars %+v (Taut's the tallest)", dark, lay.Bars)
+		// bars grow up from the axis (a negative height, as zrender's rects)
+		if len(lay.Bars) != 4 || lay.Bars[2].H >= lay.Bars[1].H || lay.Bars[1].H >= lay.Bars[0].H || lay.Bars[3].H <= lay.Bars[0].H {
+			t.Errorf("dark %v: bars %+v (Taut's the tallest, Clack's the shortest)", dark, lay.Bars)
 		}
-		for _, s := range []string{"Slack", "Clack", "client", "time"} {
-			findFrag(t, &v.d, s)
+		// the axis labels are painted with the chart; the x axis label and
+		// the legend are text
+		labels := map[string]bool{}
+		for _, lb := range lay.Labels {
+			labels[lb.Text] = true
 		}
+		for _, s := range []string{"Slack", "Slick", "Taut", "Clack", "0", "1,000", "2,000", "3,000"} {
+			if !labels[s] {
+				t.Errorf("dark %v: no axis label %q in %v", dark, s, labels)
+			}
+		}
+		findFrag(t, &v.d, "client")
+		findFrag(t, &v.d, "window")
 		// the legend's swatch: a 10px circle in the series' colour
 		var sw *box
 		for i := range v.d.boxes {
@@ -368,8 +379,9 @@ func TestDataVizHoverAndMenu(t *testing.T) {
 			more = r.R
 		}
 	}
-	if more.Empty() || more.Max.X != 624-16 || more.Min.Y != 8+16 {
-		t.Fatalf("More actions at %v, want top 16, right 16 over the card", more)
+	// the group at top 16px, right 16px over the card; the button 4px in
+	if more.Empty() || more.Max.X != 624-16-4 || more.Min.Y != 8+16+4 || more.Dx() != 32 {
+		t.Fatalf("More actions at %v, want the 32px button in its group at top 16, right 16", more)
 	}
 	hs.clickRect(more, time.Second)
 	if len(h.charts) != 1 || h.charts[0] == nil || h.charts[0].Title != "startup loading time" {
@@ -379,5 +391,35 @@ func TestDataVizHoverAndMenu(t *testing.T) {
 	hs.send(pointer.Event{Kind: pointer.Leave, Source: pointer.Mouse, Position: f32.Pt(-1, -1)})
 	if ci, _ := hs.v.ChartHover(); ci != -1 {
 		t.Errorf("after leaving: chart %d hovered", ci)
+	}
+}
+
+// The filter is Slack's FuzzyMatcher at word boundaries (fuzzyLimit 3),
+// not a substring search; with nothing left the table draws "No results
+// found." as tall as its header row and a page.
+func TestDataTableFilter(t *testing.T) {
+	st := newTestStyle()
+	d := kitDoc(t, `[`+boardTable(110, "")+`]`)
+	dt := d.Blocks[0].DataTable
+	c := NewTableControl(dt, nil)
+	c.SetFilter("member 10")
+	var got []string
+	for _, r := range computeDTView(dt, c.st, true).rows {
+		got = append(got, r[0].Sort)
+	}
+	if strings.Join(got, ",") != "10,100,101,102,103,104,105,106,107,108,109" {
+		t.Errorf(`"member 10" matches %q`, got)
+	}
+	h0 := layoutAt(st, d, Options{}, 700).d.size.Y
+	c.SetFilter("ember") // inside a word: no match
+	v := New(d, Options{})
+	v.SetTableControl(dt, c)
+	v.relayout(st, 700, 1, 1)
+	if vw := computeDTView(dt, c.st, false); !vw.empty || vw.paginate {
+		t.Errorf("mid-word filter: %d rows (empty %v)", len(vw.rows), vw.empty)
+	}
+	findFrag(t, &v.d, "results")
+	if v.d.size.Y != h0 {
+		t.Errorf("empty filter: height %d, want %d", v.d.size.Y, h0)
 	}
 }

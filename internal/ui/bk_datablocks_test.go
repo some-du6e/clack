@@ -65,8 +65,14 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 	var tbl *messages.DataBlockRect
 	var seen string
 	dl := time.Now().Add(30 * time.Second)
+	scrolled := time.Now()
 	for {
 		e.frame()
+		if time.Since(scrolled) > 500*time.Millisecond {
+			// the reply is under the root's tall chart: down the pane
+			e.scroll(image.Pt(e.size.X-160, e.size.Y/2), 300)
+			scrolled = time.Now()
+		}
 		charts := 0
 		tbl = nil
 		var sb strings.Builder
@@ -79,7 +85,7 @@ func TestDataBlocksChannelAndThread(t *testing.T) {
 			}
 		}
 		seen = sb.String()
-		if charts == 1 && tbl != nil {
+		if charts <= 1 && tbl != nil && len(tbl.Tables[0].Rows) == 5 {
 			break
 		}
 		if time.Now().After(dl) {

@@ -13,6 +13,10 @@ import (
 
 func init() { RegisterGallery("15-datatable", galleryDataTable) }
 
+// SlackDataTableExample is the Block Kit reference's data_table example
+// (docs.slack.dev/reference/block-kit/blocks/data-table-block).
+const SlackDataTableExample = `{"type":"data_table","caption":"A Fabulous Table","rows":[[{"type":"raw_text","text":"Name"},{"type":"raw_text","text":"Department"},{"type":"raw_text","text":"Badge"}],[{"type":"raw_text","text":"Data Refinement Department"},{"type":"raw_text","text":"MDR"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Blue","style":{"bold":true}}]}]}],[{"type":"raw_text","text":"Art Sourcing Department"},{"type":"raw_text","text":"O&D"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Green"},{"type":"text","text":"review","style":{"italic":true}}]}]}],[{"type":"raw_text","text":"Wellness Department"},{"type":"raw_text","text":"Wellness Center"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Limited","style":{"bold":true}}]}]}]]}`
+
 // GalleryDataTableBoard is the leaderboard table's block_id, and
 // GalleryDataVizBoard its chart's.
 const (
@@ -31,7 +35,9 @@ func galleryDataTable(e GalleryEnv) []GalleryMessage {
 			[{"type":"raw_text","text":"Service"},{"type":"raw_text","text":"Owner"},{"type":"raw_text","text":"Builds"},{"type":"raw_text","text":"Status"},{"type":"raw_text","text":"Action"}],
 			[{"type":"raw_text","text":"api"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"user","user_id":"` + e.Users[0] + `"}]}]},{"type":"raw_number","value":42,"text":"42"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"emoji","name":"white_check_mark"},{"type":"text","text":" passing","style":{"bold":true}}]}]},{"type":"action_cell","element":{"type":"button","action_id":"dt_redeploy_api","text":{"type":"plain_text","text":"Redeploy"},"value":"api"}}],
 			[{"type":"raw_text","text":"a service whose name is far too long to fit in its column"},{"type":"raw_text","text":"nobody"},{"type":"raw_number","value":7,"text":"7"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"link","url":"https://example.com/runs/7","text":"failing"}]}]},null],
-			[{"type":"cell_text","text":"web"},{"type":"raw_text","text":""},{"type":"raw_number","value":1250,"text":"1,250"},{"type":"raw_text","text":"queued"},{"type":"action_cell","element":{"type":"button","action_id":"dt_redeploy_web","text":{"type":"plain_text","text":"Redeploy"},"value":"web","style":"primary"}}]]}]`},
+			[{"type":"cell_text","text":"web"},{"type":"raw_text","text":""},{"type":"raw_number","value":1250,"text":"1,250"},{"type":"raw_text","text":"queued"},{"type":"action_cell","element":{"type":"button","action_id":"dt_redeploy_web","text":{"type":"plain_text","text":"Redeploy"},"value":"web","style":"primary"},"fallback":{"type":"raw_text","text":"Open"}}]]}]`},
+		// Slack's example (the Block Kit reference's data table block)
+		{Name: "datatable/slack example", Text: "A Fabulous Table", Blocks: `[` + SlackDataTableExample + `]`},
 		{Name: "datatable/short", Text: "a short table", Blocks: `[{"type":"data_table","rows":[[{"type":"raw_text","text":"Key"},{"type":"raw_text","text":"Value"}],[{"type":"raw_text","text":"region"},{"type":"raw_text","text":"us-east-1"}],[{"type":"raw_text","text":"replicas"},{"type":"raw_number","value":3,"text":"3"}]]}]`},
 		{Name: "datatable/page size 3", Text: "Queue", Blocks: `[{"type":"data_table","block_id":"dtpage3","caption":"Queue","page_size":3,"rows":[` + boardRows(7) + `]}]`},
 		{Name: "datatable/many columns", Text: "Quarterly numbers", Blocks: `[{"type":"data_table","block_id":"dtwide","caption":"Quarterly numbers","rows":[` + wideRows(9, 4) + `]}]`},

@@ -37,8 +37,9 @@ package richview
 //
 // A render that throws draws the surface's errorFallback, as a chart's
 // (dataviz.go). Left out: the sideways scroll (a table wider than its pane
-// draws its columns narrower than 120px here), the filter, the expand-cell
-// popover and the caption's and header cells' truncation tooltips.
+// draws its columns narrower than 120px here), the header's filter field
+// (Search table opens the fullscreen view's), the expand-cell popover and
+// the caption's and header cells' truncation tooltips.
 
 import (
 	"image"
@@ -52,6 +53,7 @@ import (
 
 	"gioui.org/font"
 
+	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
@@ -317,29 +319,20 @@ func utf16Compare(a, b string) int {
 	return 0
 }
 
-// filterDTRows is filterRows: the rows with a cell whose text matches s.
+// filterDTRows is filterRows: the rows with a cell whose text Slack's
+// FuzzyMatcher (fuzzyLimit 3) scores 3 or less for s.
 func filterDTRows(rows [][]richtext.DTCell, s string) [][]richtext.DTCell {
+	m := acrank.NewMatcher(s, acrank.MatcherOpts{FuzzyLimit: 3})
 	var out [][]richtext.DTCell
 	for _, r := range rows {
 		for i := range r {
-			if r[i].Sort != "" && fuzzyMatch(s, r[i].Sort) {
+			if r[i].Sort != "" && m.NormalizeAndScore(r[i].Sort) <= 3 {
 				out = append(out, r)
 				break
 			}
 		}
 	}
 	return out
-}
-
-// fuzzyMatch reports whether text contains query, case and accents
-// folded (the filter's matcher, with fuzzyLimit 3, scores an exact
-// substring 0).
-func fuzzyMatch(query, text string) bool {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
-		return true
-	}
-	return strings.Contains(strings.ToLower(text), q)
 }
 
 // ---- layout ----

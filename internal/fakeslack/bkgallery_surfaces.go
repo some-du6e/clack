@@ -331,6 +331,11 @@ func surfHome(n int) map[string]any {
 				"accessory": map[string]any{"type": "button", "action_id": "surf_open_modal", "text": pt("File a ticket")}},
 			map[string]any{"type": "divider", "block_id": "d"},
 			map[string]any{"type": "context", "block_id": "c", "elements": []any{md("Published with views.publish")}},
+			// a view's data blocks: the full width (no 800px cap), no errorFallback
+			json.RawMessage(`{"type":"data_table","block_id":"homedt","caption":"Open tickets","rows":[[{"type":"raw_text","text":"Ticket"},{"type":"raw_text","text":"Owner"},{"type":"raw_text","text":"Age (days)"}],` +
+				`[{"type":"raw_text","text":"TCK-40"},{"type":"raw_text","text":"ops"},{"type":"raw_number","value":3,"text":"3"}],` +
+				`[{"type":"raw_text","text":"TCK-41"},{"type":"raw_text","text":"web"},{"type":"raw_number","value":12,"text":"12"}]]}`),
+			json.RawMessage(`{"type":"data_visualization","block_id":"homeviz","title":"Tickets by team","chart":{"type":"pie","segments":[{"label":"ops","value":5},{"label":"web","value":3},{"label":"api","value":2}]}}`),
 		}}
 }
 

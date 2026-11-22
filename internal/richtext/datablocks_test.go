@@ -98,6 +98,23 @@ func boardTable(n int, extra string) string {
 	return b.String()
 }
 
+// The Block Kit reference's example.
+const slackTableExample = `{"type":"data_table","caption":"A Fabulous Table","rows":[[{"type":"raw_text","text":"Name"},{"type":"raw_text","text":"Department"},{"type":"raw_text","text":"Badge"}],[{"type":"raw_text","text":"Data Refinement Department"},{"type":"raw_text","text":"MDR"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Blue","style":{"bold":true}}]}]}],[{"type":"raw_text","text":"Art Sourcing Department"},{"type":"raw_text","text":"O&D"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Green"},{"type":"text","text":"review","style":{"italic":true}}]}]}],[{"type":"raw_text","text":"Wellness Department"},{"type":"raw_text","text":"Wellness Center"},{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Limited","style":{"bold":true}}]}]}]]}`
+
+func TestDataTableDecodesSlacksExample(t *testing.T) {
+	d := blocksMsg(t, `[`+slackTableExample+`]`)
+	dt := d.Blocks[0].DataTable
+	if dt == nil || dt.Err || dt.Cols != 3 || len(dt.Body) != 3 || dt.Caption != "A Fabulous Table" {
+		t.Fatalf("example: %+v", dt)
+	}
+	if c := dt.Body[1][2]; c.Kind != DTRich || c.Sort != "Greenreview" || len(c.Spans) != 2 || c.Spans[1].Style&Italic == 0 {
+		t.Errorf("Green review cell %+v", c)
+	}
+	if got, want := dt.TSV(), "Name\tDepartment\tBadge\nData Refinement Department\tMDR\tBlue\nArt Sourcing Department\tO&D\tGreenreview\nWellness Department\tWellness Center\tLimited"; got != want {
+		t.Errorf("TSV %q, want %q", got, want)
+	}
+}
+
 func TestDataTableDecode(t *testing.T) {
 	d := blocksMsg(t, `[`+boardTable(110, "")+`]`)
 	if len(d.Blocks) != 1 || d.Blocks[0].Kind != DataTableBlock {
