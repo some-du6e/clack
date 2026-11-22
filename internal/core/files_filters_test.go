@@ -131,12 +131,17 @@ func TestFilesViewQueryLongPaste(t *testing.T) {
 		b.WriteString(unit)
 		n++
 	}
-	// the tokenizing alone (round 2's quadratic one took 1.02 s for this
-	// on a CI runner)
-	t0 := time.Now()
-	filesQuery(t.Context(), FilesOpts{Query: b.String()}, a.S.SelfID(), newFilesLookup(a))
-	if d := time.Since(t0); d > 250*time.Millisecond {
-		t.Errorf("tokenizing a %d-byte query took %v", b.Len(), d)
+	// the tokenizing alone, the fastest of three (full-test runs packages
+	// side by side; round 2's quadratic one took 1.02 s for this on an
+	// idle CI runner)
+	best := time.Hour
+	for range 3 {
+		t0 := time.Now()
+		filesQuery(t.Context(), FilesOpts{Query: b.String()}, a.S.SelfID(), newFilesLookup(a))
+		best = min(best, time.Since(t0))
+	}
+	if best > 250*time.Millisecond {
+		t.Errorf("tokenizing a %d-byte query took %v (fastest of 3)", b.Len(), best)
 	}
 	if _, err := a.Files(t.Context(), FilesOpts{Query: b.String()}); err != nil {
 		t.Fatal(err)
