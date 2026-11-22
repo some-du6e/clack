@@ -641,6 +641,24 @@ func (v *Activity) actMenuOpen(at image.Point, it core.ActivityItem, key string,
 	ph.ShowOverlay(popups.NewMenu(ph, at, items))
 }
 
+// actMenuAt opens the item's menu from its More actions button (anchor,
+// window coordinates): Slack's ActionsOverflowMenu, position
+// bottom-right, offsetY 6, width 300px. It returns the menu, nil when
+// there is none.
+func (v *Activity) actMenuAt(anchor image.Rectangle, it core.ActivityItem, key string, unread bool) interface{ Dismissed() bool } {
+	ph, ok := v.h.(popups.Host)
+	if !ok {
+		return nil
+	}
+	items := v.itemMenu(ph, it, key, unread)
+	if len(items) == 0 {
+		return nil
+	}
+	m := popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: anchor, Popover: "bottom-right", OffsetY: 6, Width: 300})
+	ph.ShowOverlay(m)
+	return m
+}
+
 // itemMenu builds getActivityItemMenuTemplate's rows for the activity
 // inbox (not the DMs tab; activity_inbox on), in Slack's groups (gantry
 // boot-render wrqs, renderMenuPlaceholderItem):

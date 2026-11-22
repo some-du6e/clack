@@ -176,10 +176,15 @@ type actRow struct {
 	check widget.Clickable // the triage row's checkbox (RowCheckbox)
 	bar   widget.Clickable // hover area of the action bar
 	btns  [actBtnCount]widget.Clickable
-	ctx   struct{} // the row's context-menu press target
-	d     actDesc
-	built bool
-	gen   uint64 // i18n.Gen d was described in
+	// btnTips are the buttons' tooltips (MessageActionButton's label);
+	// menu is the More actions menu the bar opened, which holds the bar
+	// up while it is open (ActionsOverflowMenu's setActionsVisible)
+	btnTips [actBtnCount]popups.TipState
+	menu    interface{ Dismissed() bool }
+	ctx     struct{} // the row's context-menu press target
+	d       actDesc
+	built   bool
+	gen     uint64 // i18n.Gen d was described in
 
 	// This frame's row context, read by the Slack boundaries
 	// (ActivityItem and its parts) through method expressions.
@@ -2334,7 +2339,9 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		case actBtnRestore:
 			v.unclear(it, key)
 		case actBtnMore:
-			v.actMenuOpen(v.pointerAt(), *it, key, unread)
+			// ActionsOverflowMenu: a 300px menu at the button's
+			// bottom-right, 6px below it, holding the bar up while open
+			r.menu = v.actMenuAt(v.btnRect(gtx, &r.btns[b]), *it, key, unread)
 		case actBtnComplete:
 			v.markComplete(it)
 		case actBtnReschedule:
@@ -2425,7 +2432,10 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			break
 		}
 	}
-	if (sel || focused || r.click.Hovered() || r.bar.Hovered()) && !v.underSticky(gtx, i) {
+	if r.menu != nil && r.menu.Dismissed() {
+		r.menu = nil // onPopoverClose: setActionsVisible(false)
+	}
+	if (sel || focused || r.click.Hovered() || r.bar.Hovered() || r.menu != nil) && !v.underSticky(gtx, i) {
 		// activity_multi_line_row_content__actions_toggle, inside the
 		// content box (the container's 12px padding): top 2px,
 		// translateY(-100%), above the row; --firstEntry (the row after
@@ -3792,10 +3802,10 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y, right int) {
 						return D{Size: image.Pt(d.Size.X+gtx.Dp(12), d.Size.Y)}
 					case actBtnReschedule:
 						if _, loading, _ := v.reminderSaved(r.it); loading {
-							return v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, v.p.Muted) // isDisabled
+							return v.actActionBtn(gtx, r, b, icon, true) // isDisabled
 						}
 					}
-					return v.iconButton(gtx, &r.btns[b], icons.Slack(icon), 32, 18, v.p.Text)
+					return v.actActionBtn(gtx, r, b, icon, false)
 				}))
 			}
 			row(g, layout.Middle, ch...)
@@ -3804,10 +3814,65 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y, right int) {
 	})
 }
 
+// actActionBtn is one of the bar's MessageActionButtons
+// (.c-message_actions__button: 32px, radius 8, 18px icon): the icon in
+// foreground_max_solid, on hover in primary_foreground over
+// foreground_min at 4%, as a channel's toolbar buttons; disabled
+// foreground_mid at 30% and no hover. Its tooltip is its label, above it.
+// It has no pressed or open look (Slack's has none: :active only lifts
+// its z-index).
+func (v *Activity) actActionBtn(gtx C, r *actRow, b actBtn, icon string, disabled bool) D {
+	c := &r.btns[b]
+	fg, hfg, hbg := rgb(0x616061), rgb(0x1d1c1d), argb(0x0a1d1c1d)
+	if v.th.Dark {
+		fg, hfg, hbg = rgb(0xababad), rgb(0xd1d2d3), argb(0x0ae8e8e8)
+	}
+	if disabled {
+		fg = argb(0x4d1d1c1d)
+		if v.th.Dark {
+			fg = argb(0x4de8e8e8)
+		}
+	}
+	d := c.Layout(gtx, func(gtx C) D {
+		s := gtx.Dp(32)
+		col := fg
+		if !disabled {
+			pointerCursor(gtx)
+			if c.Hovered() {
+				rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), hbg)
+				col = hfg
+			}
+		}
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(s, s))
+		layout.Center.Layout(g, func(gtx C) D { return v.icon(gtx, icons.Slack(icon), 18, col) })
+		return D{Size: image.Pt(s, s)}
+	})
+	_, label := actBtnIcon(b)
+	popups.Tooltip(gtx, v.th, &r.btnTips[b], c.Hovered() && r.menu == nil, d.Size, popups.Above, label, "")
+	return d
+}
+
+// btnRect is c's 32px button in window coordinates, from its last press
+// (the pointer, less where on the button it was).
+func (v *Activity) btnRect(gtx C, c *widget.Clickable) image.Rectangle {
+	at := v.pointerAt()
+	if h := c.History(); len(h) > 0 {
+		at = at.Sub(h[len(h)-1].Position)
+	}
+	s := gtx.Dp(32)
+	return image.Rectangle{Min: at, Max: at.Add(image.Pt(s, s))}
+}
+
 // pointerAt is where the pointer is, for menus opened from a press.
 func (v *Activity) pointerAt() image.Point {
 	if pp, ok := v.h.(interface{ PointerPos() image.Point }); ok {
 		return pp.PointerPos()
+	}
+	if theme.WindowPointer != nil { // the ui root's, for a host without one
+		if p, ok := theme.WindowPointer(); ok {
+			return p
+		}
 	}
 	return image.Point{}
 }
