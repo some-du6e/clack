@@ -285,7 +285,8 @@ func (a *App) List(ctx context.Context, id string) (*ListDoc, error) {
 		c := old.Clone()
 		st.mu.Unlock()
 		a.listRefetch(id)
-		return c, nil
+		_ = c
+		return d.Clone(), nil
 	}
 	if old := st.docs[id]; old != nil {
 		d.PinnedViews = old.PinnedViews

@@ -1331,7 +1331,7 @@ func (b *backend) opened(ch string) {
 		}
 		a.Post(func() {
 			b.headerAnswered++
-			if gen < b.headerLanded[ch] {
+			if b.headerGen[ch] != gen {
 				return // a newer read of this header landed: its answer wins
 			}
 			if err == nil {
