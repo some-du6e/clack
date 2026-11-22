@@ -673,15 +673,6 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_KEY_TESTS: "1"
         run: go test -count=1 -v -timeout 5m -run 'TestWinKeyText' gioui.org/app
-      # Gio patch 48: SendInput clicks 400 ms apart are a double click by the
-      # Mouse settings' double-click time (500 ms), two clicks once
-      # SetDoubleClickTime makes it 300 ms (read again on every press)
-      - name: double clicks by GetDoubleClickTime (SendInput)
-        if: ${{ !cancelled() }}
-        env:
-          CGO_ENABLED: "0"
-          CLACK_WINDOWS_DBLCLICK_TESTS: "1"
-        run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
       # Karim's 2026-11-12 report came from Windows (gap-w29): the thread
       # pane's reply box 12px under the last reply, laid out with the
       # Windows build's fonts and text shaping on internal/fakeslack (no
@@ -787,6 +778,17 @@ jobs:
             "$RUNNER_TEMP/ui-bounds.test.exe" -test.v -test.count=1 -test.timeout 6m -test.run "^$t\$" || rc=1
           done
           exit $rc
+      # Gio patch 48: SendInput clicks 400 ms apart are a double click by the
+      # Mouse settings' double-click time (500 ms), two clicks once
+      # SetDoubleClickTime makes it 300 ms (read again on every press). Last
+      # in the job: a step without a step-starts.json record in front of
+      # recorded ones drops theirs (budget-check.py)
+      - name: double clicks by GetDoubleClickTime (SendInput)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_DBLCLICK_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
 
   # Clack's slack:// registration and the single-instance hand-off, close to
   # the tray, the tray's states and menu, the jump list, Focus Assist,
