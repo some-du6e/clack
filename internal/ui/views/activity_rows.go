@@ -227,7 +227,9 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 	case "thread_v2", "dm", "channel", "bot_dm_bundle":
 		if d, ok := c.DraftFor(it.Channel, it.ThreadTS); ok && (strings.TrimSpace(d.Text) != "" || d.Files > 0) {
 			tip := nsActivity.T("Draft")
-			if t := actTrunc(oneLine(actMrkdwnPlain(c, d.Text)), 60); t != "" {
+			// d.Text is already the plain text of the draft's document (not
+			// mrkdwn, as a message's text is)
+			if t := actTrunc(oneLine(d.Text), 60); t != "" {
 				tip = nsActivity.T(`Draft: "{message}"`, "message", t)
 			}
 			return actMark{"edit-filled", tip}, true
@@ -1652,7 +1654,7 @@ func (v *Activity) afterChannelAccept(ph popups.Host, inv core.ActivityInvite, i
 	}, func() {})
 }
 
-// actMrkdwnPlain is a message's or draft's mrkdwn as the badges' tooltips
+// actMrkdwnPlain is a message's mrkdwn as the badges' tooltips
 // show it (their Mrkdwn): mentions and channel links as @name and #name,
 // not the raw <@U…> and <#C…> tokens, emoji as their text.
 func actMrkdwnPlain(c *core.App, s string) string {

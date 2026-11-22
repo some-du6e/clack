@@ -2620,70 +2620,255 @@ const (
 	srMentionSelf
 )
 
-// srBodyRuns are m's body (srBodyBlocks) as text and mention runs, or
-// its raw text when the body has none.
+// srBodyRuns are m's text line (the quick message rows, Search in channel,
+// the original-density card) as text and mention runs: its body
+// (srBodyBlocks) as the plain text path writes it, less the "can't be
+// fully displayed" card (search previews suppress it, richtext.SearchText);
+// when that says nothing (a caption-less upload, an attachment-only bot
+// post), its files and attachments; when they say nothing either, its
+// text read as mrkdwn.
 func srBodyRuns(h Host, m *core.Message) []srRun {
-	self := ""
-	if c := h.Core(); c != nil {
-		self = c.Self().ID
+	w := srNewRunWriter(h, false)
+	w.blocks(srBodyBlocks(m.Doc.Blocks))
+	if !w.says() {
+		w.out = nil
+		w.blocks(srRestBlocks(m.Doc.Blocks))
 	}
-	var out []srRun
-	var buf strings.Builder
-	flush := func() {
-		if buf.Len() > 0 {
-			out = append(out, srRun{text: buf.String()})
-			buf.Reset()
-		}
-	}
-	spans := func(ss []richtext.Span) {
-		for _, sp := range ss {
-			switch sp.Kind {
-			case richtext.Break:
-				buf.WriteByte('\n')
-			case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
-				flush()
-				k := srMentionOther
-				if sp.Kind == richtext.Broadcast || (sp.Kind == richtext.User && sp.ID == self && self != "") {
-					k = srMentionSelf
-				}
-				out = append(out, srRun{text: sp.Text, mention: k})
-			case richtext.InlineImage:
-			default:
-				buf.WriteString(sp.Text)
-			}
-		}
-	}
-	for i, b := range srBodyBlocks(m.Doc.Blocks) {
-		if i > 0 {
-			buf.WriteByte('\n')
-		}
-		switch b.Kind {
-		case richtext.Paragraph, richtext.Quote, richtext.Preformatted, richtext.Header, richtext.Section, richtext.Context,
-			richtext.RichHeader:
-			spans(b.Spans)
-		case richtext.List:
-			for j, it := range b.Items {
-				if j > 0 {
-					buf.WriteByte('\n')
-				}
-				spans(it)
-			}
+	return w.done(h, m)
+}
+
+// srPreviewRuns are the dialogs' message preview (Forward, Share file,
+// Delete, Unsend, Remove from channel) as runs: the whole message as the
+// plain text path writes it, its files and attachments after its text,
+// as ShareDialogPreview draws the message as its unfurl (8DKN, CDN build
+// a09b625d90aa: the text, filesOnMessage, the attachments as children);
+// its text read as mrkdwn when nothing in it says anything.
+func srPreviewRuns(h Host, m *core.Message) []srRun {
+	w := srNewRunWriter(h, true)
+	w.blocks(m.Doc.Blocks)
+	return w.done(h, m)
+}
+
+// srRestBlocks are the blocks srBodyBlocks leaves out: files, their
+// upload status and attachments, in the message's order.
+func srRestBlocks(bs []richtext.Block) []richtext.Block {
+	var out []richtext.Block
+	for _, b := range bs {
+		switch {
+		case b.Kind == richtext.FileBlock, b.Kind == richtext.FileStatus:
+		case b.Kind == richtext.AttachmentBlock && b.Att != nil && b.Att.Huddle == nil:
 		default:
-			buf.WriteString(richtext.PlainText(richtext.Doc{Blocks: []richtext.Block{b}}))
+			continue
 		}
-	}
-	flush()
-	empty := true
-	for _, r := range out {
-		if strings.TrimSpace(r.text) != "" {
-			empty = false
-			break
-		}
-	}
-	if empty {
-		return []srRun{{text: m.Text}}
+		out = append(out, b)
 	}
 	return out
+}
+
+// srRunWriter writes blocks as runs the way richtext.PlainText writes
+// them as text: a line per block, empty ones skipped, a quote's lines
+// after "> ", list items after "• " or "1. ", table cells joined by tabs,
+// a file's title or name, an attachment's pretext, title, text, fields
+// and children; mentions are mention runs.
+type srRunWriter struct {
+	self  string
+	cards bool // write the unsupported-block card's text (SearchText drops it)
+	out   []srRun
+}
+
+func srNewRunWriter(h Host, cards bool) *srRunWriter {
+	w := &srRunWriter{cards: cards}
+	if c := h.Core(); c != nil {
+		w.self = c.Self().ID
+	}
+	return w
+}
+
+// srAddText appends s to runs as text.
+func srAddText(runs []srRun, s string) []srRun {
+	if s == "" {
+		return runs
+	}
+	if n := len(runs); n > 0 && runs[n-1].mention == srMentionNone {
+		runs[n-1].text += s
+		return runs
+	}
+	return append(runs, srRun{text: s})
+}
+
+// spans are ss as runs, as spansText writes them: a line break "\n",
+// inline images nothing, mentions their slugs.
+func (w *srRunWriter) spans(ss []richtext.Span) []srRun {
+	var out []srRun
+	for _, sp := range ss {
+		switch sp.Kind {
+		case richtext.Break:
+			out = srAddText(out, "\n")
+		case richtext.InlineImage:
+		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+			k := srMentionOther
+			if sp.Kind == richtext.Broadcast || (sp.Kind == richtext.User && sp.ID == w.self && w.self != "") {
+				k = srMentionSelf
+			}
+			out = append(out, srRun{text: sp.Text, mention: k})
+		default:
+			out = srAddText(out, sp.Text)
+		}
+	}
+	return out
+}
+
+func (w *srRunWriter) add(rs []srRun) {
+	for _, r := range rs {
+		if r.mention != srMentionNone {
+			w.out = append(w.out, r)
+		} else {
+			w.out = srAddText(w.out, r.text)
+		}
+	}
+}
+
+// line writes rs and a newline, unless rs is empty (PlainText's line).
+func (w *srRunWriter) line(rs []srRun) {
+	if len(rs) == 0 {
+		return
+	}
+	w.add(rs)
+	w.out = srAddText(w.out, "\n")
+}
+
+// srRunLines splits runs at the newlines in their text.
+func srRunLines(rs []srRun) [][]srRun {
+	lines := [][]srRun{nil}
+	for _, r := range rs {
+		if r.mention != srMentionNone {
+			lines[len(lines)-1] = append(lines[len(lines)-1], r)
+			continue
+		}
+		for j, part := range strings.Split(r.text, "\n") {
+			if j > 0 {
+				lines = append(lines, nil)
+			}
+			lines[len(lines)-1] = srAddText(lines[len(lines)-1], part)
+		}
+	}
+	return lines
+}
+
+func (w *srRunWriter) blocks(bs []richtext.Block) {
+	for i := range bs {
+		w.block(&bs[i])
+	}
+}
+
+func (w *srRunWriter) block(b *richtext.Block) {
+	switch b.Kind {
+	case richtext.UnknownBlock:
+		if w.cards {
+			w.line(w.spans(b.Spans))
+		}
+	case richtext.Quote:
+		for _, ln := range srRunLines(w.spans(b.Spans)) {
+			w.out = srAddText(w.out, "> ")
+			w.add(ln)
+			w.out = srAddText(w.out, "\n")
+		}
+	case richtext.List:
+		for i, it := range b.Items {
+			bullet := "• "
+			if b.Ordered {
+				bullet = strconv.Itoa(richtext.ListNumber(b, i)) + ". "
+			}
+			w.out = srAddText(w.out, strings.Repeat("    ", b.Indent)+bullet)
+			w.add(w.spans(it))
+			w.out = srAddText(w.out, "\n")
+		}
+	case richtext.Table:
+		for _, row := range b.Rows {
+			var cells []srRun
+			for j, cell := range row {
+				if j > 0 {
+					cells = srAddText(cells, "\t")
+				}
+				for _, r := range w.spans(cell) {
+					if r.mention == srMentionNone {
+						cells = srAddText(cells, strings.ReplaceAll(r.text, "\n", " "))
+					} else {
+						cells = append(cells, r)
+					}
+				}
+			}
+			// trailing empty cells add nothing (PlainText trims them)
+			if n := len(cells); n > 0 && cells[n-1].mention == srMentionNone {
+				if cells[n-1].text = strings.TrimRight(cells[n-1].text, "\t"); cells[n-1].text == "" {
+					cells = cells[:n-1]
+				}
+			}
+			w.line(cells)
+		}
+	case richtext.Divider, richtext.Actions:
+	case richtext.ImageBlock:
+		if img := b.Image; img != nil {
+			w.line(srAddText(nil, firstNonEmptyStr(img.Title, img.Alt)))
+		}
+	case richtext.FileBlock:
+		if f := b.File; f != nil {
+			w.line(srAddText(nil, firstNonEmptyStr(f.Title, f.Name)))
+		}
+	case richtext.CallBlock:
+		if c := b.Call; c != nil {
+			w.line(srAddText(nil, c.Title))
+			w.line(srAddText(nil, c.Status))
+		}
+	case richtext.AttachmentBlock:
+		if a := b.Att; a != nil {
+			w.line(w.spans(a.Pretext))
+			if a.IsShare {
+				w.line(srAddText(nil, a.AuthorName))
+			}
+			w.line(w.spans(a.Title))
+			w.blocks(a.Text)
+		}
+		for _, f := range b.Fields {
+			w.line(w.spans(f))
+		}
+		w.blocks(b.Children)
+	default: // Paragraph, Preformatted, Header, Context, Section, Tombstone…
+		w.line(w.spans(b.Spans))
+		w.blocks(b.Children)
+		for _, f := range b.Fields {
+			w.line(w.spans(f))
+		}
+	}
+}
+
+// says reports whether the runs hold a mention or any text but spaces.
+func (w *srRunWriter) says() bool {
+	for _, r := range w.out {
+		if r.mention != srMentionNone || strings.TrimSpace(r.text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// done is the runs written, or m's text read as mrkdwn when they say
+// nothing (a block that draws nothing here), so a raw <@U…> or <url|label>
+// token never shows; m's text as it is without a resolver.
+func (w *srRunWriter) done(h Host, m *core.Message) []srRun {
+	if !w.says() && strings.TrimSpace(m.Text) != "" {
+		w.out = nil
+		if c := h.Core(); c != nil && c.S != nil {
+			w.blocks(richtext.FromMrkdwn(c.S, m.Text))
+		}
+		if !w.says() {
+			return []srRun{{text: m.Text}}
+		}
+	}
+	if n := len(w.out); n > 0 && w.out[n-1].mention == srMentionNone {
+		w.out[n-1].text = strings.TrimRight(w.out[n-1].text, "\n")
+	}
+	return w.out
 }
 
 // srRunSegs are runs as highlighted segments: the text runs' terms

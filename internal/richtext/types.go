@@ -355,8 +355,12 @@ type Attachment struct {
 	// Hidden is attachment.hidden.
 	// Legacy: made from a message's attachments array (not a video or
 	// call block, a huddle card or a file).
-	Legacy      bool
-	ID          string
+	Legacy bool
+	ID     string
+	// Index is the attachment's place in the message's attachments array
+	// (the search answer's order: core.AttachmentKey keys an attachment
+	// without an id by it).
+	Index       int
 	OriginalURL string
 	ServiceURL  string
 	VideoHTML   bool

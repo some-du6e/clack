@@ -328,9 +328,10 @@ func TestSearchTitleDisplaysQuery(t *testing.T) {
 }
 
 // A quick message row's text (SuggestionQuickMessage: the extract of the
-// message's text through Mrkdwn), as the share dialog's preview draws it
-// too: the text with its mentions as slugs, never its attachments (an X
-// unfurl's author and post) flattened into it.
+// message's text through Mrkdwn): the text with its mentions as slugs,
+// never its attachments (an X unfurl's author and post) flattened into
+// it. (The dialogs' preview draws them after the text, as Slack's
+// ShareDialogPreview does: TestSearchBodyTextFallbacks.)
 func TestSearchRowTextLikeSlack(t *testing.T) {
 	e := srNewEnv(t, false)
 	app := e.h.a

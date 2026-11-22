@@ -17,10 +17,10 @@ package popups
 //     no Show less. A message without blocks (renderText) is drawn the
 //     same way here: Clack keeps no search extracts, which Slack's
 //     renderText would show instead.
-//   - The query's words are highlighted as keywords are
-//     (c-mrkdwn__highlight, surf-hgl-3). Slack marks the runs the server
-//     put highlight markers around; Clack strips those and matches the
-//     query's words with Slack's keyword rules.
+//   - The query's words are highlighted (c-mrkdwn__highlight,
+//     surf-hgl-3). Slack marks the runs the server put highlight markers
+//     around; Clack strips those and marks what the results rows mark
+//     (srHighlight: the words a term starts, a wildcard term's stem).
 //   - renderVisibleAttachmentsGrid, renderAttachments, renderMediaFiles,
 //     renderAudioFiles: only the attachments and files holding a match
 //     (core.SearchMatches: attachmentHasSearchMatch, fileHasSearchMatch),
@@ -44,6 +44,7 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"gioui.org/f32"
 	"gioui.org/layout"
@@ -100,25 +101,28 @@ func srRichDocs(doc richtext.Doc, sm *core.SearchMatches, compact bool) (body, e
 			body = append(body, b)
 		}
 	}
-	attMatch := func(k int, a *richtext.Attachment) bool {
-		return sm != nil && sm.Attachments[core.AttachmentKey(a.ID, k)]
+	// keyed by the attachment's index in the answer's attachments
+	// (core.searchMatches), which counts what isn't an attachment block
+	// here: an agent channel unfurl, an attachment that draws nothing
+	attMatch := func(a *richtext.Attachment) bool {
+		return sm != nil && sm.Attachments[core.AttachmentKey(a.ID, a.Index)]
 	}
 	fileMatch := func(f *richtext.File) bool { return sm != nil && sm.Files[f.ID] }
 	matched := false
-	for k, b := range atts {
-		matched = matched || attMatch(k, b.Att)
+	for _, b := range atts {
+		matched = matched || attMatch(b.Att)
 	}
 	for _, b := range files {
 		matched = matched || fileMatch(b.File)
 	}
 	none := len(body) == 0 && !matched // hasNoVisibleContent
 	var shown []richtext.Block
-	for k, b := range atts {
+	for _, b := range atts {
 		a := b.Att
 		switch {
 		case a.Hidden:
-		case (a.IsShare || a.MsgCard) && !attMatch(k, a): // a forwarded message only with a match
-		case none || attMatch(k, a):
+		case (a.IsShare || a.MsgCard) && !attMatch(a): // a forwarded message only with a match
+		case none || attMatch(a):
 			shown = append(shown, b)
 		}
 	}
@@ -192,12 +196,34 @@ func (v *SearchView) srRichOf(i int) *srCardRich {
 	if len(body) > 0 {
 		bo := o
 		bo.Edited = m.DisplaysEdited()
-		r.body = richview.New(richtext.Doc{Blocks: richtext.HighlightedCopy(body, terms)}, bo)
+		r.body = richview.New(richtext.Doc{Blocks: srHighlightCopy(body, terms)}, bo)
 	}
 	if len(extra) > 0 {
-		r.extra = richview.New(richtext.Doc{Blocks: richtext.HighlightedCopy(extra, terms)}, o)
+		r.extra = richview.New(richtext.Doc{Blocks: srHighlightCopy(extra, terms)}, o)
 	}
 	return r
+}
+
+// srHighlightCopy is blocks with the query's terms marked as srHighlight
+// marks them in the rows (a word a term starts, as Slack highlights
+// "annoying" for "ann"; a wildcard term's stem; a phrase anywhere),
+// copying what it changes.
+func srHighlightCopy(blocks []richtext.Block, terms []string) []richtext.Block {
+	if len(terms) == 0 {
+		return blocks
+	}
+	return richtext.HighlightedCopy(blocks, func(text []rune) []richtext.Match {
+		var out []richtext.Match
+		at := 0
+		for _, sg := range srHighlight(string(text), terms) {
+			n := utf8.RuneCountInString(sg.Text)
+			if sg.Hit {
+				out = append(out, richtext.Match{Index: at, Length: n})
+			}
+			at += n
+		}
+		return out
+	})
 }
 
 // srRichStyle is the message rows' rich style (RichStyle), else one of
@@ -225,7 +251,7 @@ func (v *SearchView) srRichMeasure(gtx layout.Context, th *theme.Theme, i, bw, l
 	c := &v.cards[i]
 	r := v.srRichOf(i)
 	st := v.srRichStyle(th)
-	hd := srCardHandler{srWOHandler{v}}
+	hd := srCardHandler{srWOHandler{v}, i}
 	clamp := dp(gtx, srClampDp)
 	var p srRichParts
 	if r.body != nil {
@@ -327,9 +353,26 @@ func srShowMore(gtx layout.Context, th *theme.Theme, cl *Colors, more *widget.Cl
 	})
 }
 
-// srCardHandler routes a card's rich content clicks: as a work object
-// card's, and a file opens its permalink in the lightbox.
-type srCardHandler struct{ srWOHandler }
+// srCardHandler routes card i's rich content clicks: as a work object
+// card's, a file opens its permalink in the lightbox, and a click on the
+// text opens the message.
+type srCardHandler struct {
+	srWOHandler
+	i int
+}
+
+// PlainClick is a click on the card's text or between it, not on a link,
+// mention or button: SearchResult's onClick opens the message for it, as
+// the card's own click target does (the text is drawn over that target
+// and takes its presses).
+func (h srCardHandler) PlainClick() {
+	if h.i >= len(h.v.msgs) {
+		return
+	}
+	m := h.v.msgs[h.i]
+	RecordRecentConversation(m.Channel)
+	openResult(h.v.h, m)
+}
 
 func (h srCardHandler) OpenFile(f *richtext.File) {
 	if f == nil {

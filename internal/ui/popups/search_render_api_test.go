@@ -32,5 +32,13 @@ func scAttMatched(m *core.Message, key string) bool {
 // the fold is never laid out by the list).
 func scBuild(v *SearchView, i int) { v.srRichOf(i) }
 
-// scRowSegs are a quick message row's (and a share preview's) segments.
+// scRowSegs are a quick message row's segments.
 func scRowSegs(h Host, m *core.Message) []srSeg { return srRunSegs(srBodyRuns(h, m), nil, true) }
+
+// scCardHovered is card i's hover (its background and hover bar) as
+// cardNative worked it out last frame.
+func scCardHovered(v *SearchView, i int) bool { return v.cards[i].hov }
+
+// scPreviewSegs are the dialogs' message preview's segments
+// (actMsgPreview).
+func scPreviewSegs(h Host, m *core.Message) []srSeg { return actPreviewSegs(h, m) }

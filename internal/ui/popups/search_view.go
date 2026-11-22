@@ -287,6 +287,7 @@ type srCard struct {
 	laid               srRichParts  // their last frame's layout
 	expanded           bool
 	click, more, chip  widget.Clickable
+	hov                bool // hovered, last frame: its background and hover bar
 	toks               []srTok
 	tokW               int
 	tokExp             bool
@@ -454,9 +455,31 @@ func (v *SearchView) Query() string { return v.q.String() }
 
 func (v *SearchView) setQuery(q srQuery) {
 	v.q = q
+	v.typed = srTypedLeft(v.typed, q)
 	srRecordQuery(q.String())
 	v.sess = core.NewSearchSession() // a new query is a new search session
 	v.search(1)
+}
+
+// srTypedLeft is the typed query less the modifiers q no longer has (a
+// pill's menu clearing a typed one, "Search without filters"): the title
+// shows what's left of what was typed, never the filters a pill adds
+// (Slack keeps those in the query filter).
+func srTypedLeft(typed string, q srQuery) string {
+	toks := srTokens(typed)
+	out := toks[:0:0]
+	for _, t := range toks {
+		if p := srParse(t); len(p.Mods) == 1 && !slices.ContainsFunc(q.Mods, func(m srMod) bool {
+			return m.Key == p.Mods[0].Key && m.Neg == p.Mods[0].Neg && strings.EqualFold(m.Val, p.Mods[0].Val)
+		}) {
+			continue
+		}
+		out = append(out, t)
+	}
+	if len(out) == len(toks) {
+		return typed
+	}
+	return strings.Join(out, " ")
 }
 
 func (v *SearchView) setTab(t int) {
@@ -1803,9 +1826,14 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	sz := image.Pt(w, h)
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 12)
+	// the rich body and attachments are drawn over the card's click
+	// target and take the pointer there (SearchResult's onMouseMove is on
+	// the card's root: the text keeps it hovered)
+	overRich := explore && (c.rich.body != nil && c.rich.body.Pointer() || c.rich.extra != nil && c.rich.extra.Pointer())
 	hovered := c.click.Hovered() || c.more.Hovered() || c.chip.Hovered() || c.bar.Hovered() ||
-		c.reacts.Hovered() || c.atts.Hovered() ||
+		c.reacts.Hovered() || c.atts.Hovered() || overRich ||
 		c.fwd.Hovered() || c.jump.Hovered() || c.kebab.Hovered() || v.menuCard == i
+	c.hov = hovered
 	bg := cl.Bg
 	if hovered {
 		bg = cl.BgHover

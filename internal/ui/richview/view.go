@@ -1432,6 +1432,11 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 						}
 					}
 				}
+				if pc, ok := h.(PlainClicker); ok && v.press < 0 && v.tapCount == 1 && !e.Modifiers.Contain(key.ModShift) {
+					if d := e.Position.Sub(v.pressPos); d.X*d.X+d.Y*d.Y <= 16 {
+						pc.PlainClick()
+					}
+				}
 				v.press = -1
 			}
 		}

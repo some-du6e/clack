@@ -170,17 +170,17 @@ func TestAttachments(t *testing.T) {
 			Footer: []Span{tx("foot "), user("U1", "@alice")}, FooterIcon: "https://i.test/f.png", TS: 1700000000},
 			Fields:     [][]Span{{st("F1", Bold), br(), tx("v1")}, {st("F2", Bold), br(), st("v2", Bold)}},
 			FieldShort: []bool{true, false}},
-		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, ServiceName: "Example", ServiceIcon: "https://ex.test/fav.ico", FromURL: "https://ex.test/page",
+		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 1, ServiceName: "Example", ServiceIcon: "https://ex.test/fav.ico", FromURL: "https://ex.test/page",
 			IsUnfurl: true, Title: []Span{tx("Page")}, TitleLink: "https://ex.test/page", Text: []Block{para(tx("desc"))},
 			Thumb: &Image{URL: "https://ex.test/t.png", W: 100, H: 80}, AuthorName: "Writer", AuthorSubname: "@writer"}},
-		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Color: "#3AA3E3", Title: []Span{tx("Bad link")}}},
-		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Text: []Block{para(tx("only "), st("fb", Bold))}}},
-		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Text: []Block{para(tx("pick one"))}}, Buttons: []Button{
+		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 2, Color: "#3AA3E3", Title: []Span{tx("Bad link")}}},
+		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 3, Text: []Block{para(tx("only "), st("fb", Bold))}}},
+		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 5, Text: []Block{para(tx("pick one"))}}, Buttons: []Button{ // the {} before it draws nothing
 			{Kind: "button", Text: "OK", Style: "primary", ActionID: "ok", Value: "1"},
 			{Kind: "select", Text: "Pick", ActionID: "2"},
 		}},
-		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Text: []Block{para(tx("plain *not bold* "), user("U1", "@alice"))}}},
-		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Kit: true, Title: []Span{tx("App")}, Text: []Block{{Kind: Section, Kit: true, Spans: []Span{tx("app "), st("block", Bold)}}}},
+		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 6, Text: []Block{para(tx("plain *not bold* "), user("U1", "@alice"))}}},
+		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 7, Kit: true, Title: []Span{tx("App")}, Text: []Block{{Kind: Section, Kit: true, Spans: []Span{tx("app "), st("block", Bold)}}}},
 			Children: []Block{{Kind: FileBlock, File: &File{ID: "F1", Name: "n.txt", Mime: "text/plain", URL: "https://files.slack.com/files-pri/T1-F1/n.txt"}}}},
 	}
 	if len(d.Blocks) != len(want) {
@@ -207,7 +207,7 @@ func TestSharedMessage(t *testing.T) {
 			ShareChannel: "general", ShareChannelID: "C1", FromURL: "https://ws.slack.com/archives/C1/p1700000000000100", TS: 1700000000,
 			MsgTS: "1700000000.000100", // the shared message's ts as sent (plugins key on it)
 			Text:  []Block{para(tx("shared text"))}}},
-		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, IsShare: true, MsgCard: true, AuthorName: "bob", ShareChannel: "random", ShareChannelID: "C2",
+		{Kind: AttachmentBlock, Att: &Attachment{Legacy: true, Index: 1, IsShare: true, MsgCard: true, AuthorName: "bob", ShareChannel: "random", ShareChannelID: "C2",
 			Text:    []Block{para(tx("unfurled "), st("msg", Bold))},
 			Context: []Span{tx("Posted in "), {Kind: Channel, Text: "random", ID: "C2"}}},
 			Children: []Block{tombstone("This file was deleted.")}},

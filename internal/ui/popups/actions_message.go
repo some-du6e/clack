@@ -609,6 +609,13 @@ func actMsgText(m core.Message) string {
 	return m.Text
 }
 
+// actPreviewSegs are actMsgPreview's text: the message, its files and
+// attachments after its text, with mentions as mention slugs and no raw
+// tokens (srPreviewRuns), its lines kept.
+func actPreviewSegs(h Host, m *core.Message) []srSeg {
+	return srRunSegs(srPreviewRuns(h, m), nil, false)
+}
+
 // actAuthor resolves the display name and avatar URL of m's author.
 func actAuthor(h Host, m core.Message) (name, av string) {
 	name, av = m.Name, m.Avatar
@@ -640,10 +647,7 @@ func actMsgPreview(gtx layout.Context, h Host, m core.Message, boxed bool) layou
 	innerW := maxInt(1, w-padL-padR)
 	name, av := actAuthor(h, m)
 	when := dayTime(tsTime(m.TS), time.Now())
-	// the message's text with its mentions as slugs, not its attachments
-	// or files flattened into it (srBodyRuns; the 2026-11-22 relatives of
-	// the search card's fix)
-	segs := srRunSegs(srBodyRuns(h, &m), nil, false)
+	segs := actPreviewSegs(h, &m)
 	body := strings.TrimSpace(srSegsText(segs))
 
 	call, d := record(loose(gtx, image.Pt(innerW, 1<<20)), func(gtx layout.Context) layout.Dimensions {
