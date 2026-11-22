@@ -171,6 +171,20 @@ func (s *Store) SetThreadState(hasUnreads *bool, mentions *int, byChannel map[st
 	return changed
 }
 
+// SetThreadsStateSince is the Threads view's answer's state (getView's
+// has_unreads and mention_count) for a request that went out at Seq since:
+// an update_thread_state taken after that is newer and stays. It reports
+// whether the answer's state went in.
+func (s *Store) SetThreadsStateSince(hasUnreads bool, mentions int, since uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jr.threads > since {
+		return false
+	}
+	s.ThreadsUnread, s.ThreadMentions = hasUnreads, mentions
+	return true
+}
+
 // dmUnreadCount is client-boot mtwS applyCountsToChannels' rule for an IM
 // or a group DM in a client.counts answer: its unread count is
 // mention_count || has_unreads, and that count is an unmuted one's badge

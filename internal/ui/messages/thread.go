@@ -111,11 +111,13 @@ func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 }
 
 // Reopen is the pane showing the thread again (Slack mounts a new
-// ThreadsFlexpane): the "New" marker is decided afresh from the
-// subscription's lastRead, and the reading position is kept, as Slack
-// restores the scrollmark it saved on close (maybeSaveThreadScrollmarks),
-// except in a public channel the viewer isn't in, where it saves none
-// and the pane opens at its start position again. The thread leaves
+// ThreadsFlexpane, or a new thread list after a thread switch): the "New"
+// marker is decided afresh from the subscription's lastRead, and the
+// reading position is kept, as Slack restores the scrollmark it saved on
+// close (maybeSaveThreadScrollmarks), except in a public channel the
+// viewer isn't in, where it saves none and the pane opens at its start
+// position again, as it does after a thread switch, which saves none
+// (CloseThread; the start picked again, repickThread). The thread leaves
 // ThreadsMarkedUnread, as the pane's componentDidMount and a thread switch
 // (componentDidUpdate) call removeThreadFromManuallyMarkedUnreadArray:
 // showing it is reading it.
@@ -123,8 +125,9 @@ func (v *ThreadView) Reopen() {
 	v.s.thrOpening = true // a new pane: a jump starts it at getThreadStartPosition's message
 	v.closeFind(false)    // ThreadSearchBar unmounts with the pane
 	v.s.thr = threadRead{}
-	v.s.rootHandedOn = false // opened with a reply's ts again: hand on again (ReplyRootRedirector)
-	v.s.snap.rev = 0         // rebuild the rows with the new marker
+	v.s.rootHandedOn = false   // opened with a reply's ts again: hand on again (ReplyRootRedirector)
+	v.s.snap.rev = 0           // rebuild the rows with the new marker
+	v.s.hb.repickThread(v.s.m) // a list mounting after a thread switch: getThreadStartTs again
 	if app := v.h.Core(); app != nil {
 		app.ForgetThreadMarkedUnread(v.ch, v.ts)
 		if cv, ok := app.Conv(v.ch); ok && cv.Kind == "channel" && cv.Preview {

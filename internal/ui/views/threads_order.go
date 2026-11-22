@@ -864,3 +864,14 @@ func (v *Threads) Settled() bool {
 	_, ok, _ := v.data.get()
 	return ok && !v.data.busy()
 }
+
+// Listed is the threads the view lists, in order (channel/root), and
+// where its list is scrolled to: what opening a thread beside the view
+// leaves as it was (tests).
+func (v *Threads) Listed() (keys []string, first, offset int) {
+	page, _, _ := v.data.get()
+	for i := range page.items {
+		keys = append(keys, page.items[i].key)
+	}
+	return keys, v.list.Position.First, v.list.Position.Offset
+}

@@ -418,6 +418,16 @@ func utiFor(mime, ext string) string {
 		return "com.apple.quicktime-movie"
 	case ext == "m4v" || mime == "video/x-m4v":
 		return "com.apple.m4v-video"
+	// a message's audio player's files (Slack's m4a, mp3 and wav, and
+	// the aac renditions it makes of them)
+	case ext == "m4a" || mime == "audio/mp4" || mime == "audio/x-m4a":
+		return "com.apple.m4a-audio"
+	case ext == "mp3" || mime == "audio/mpeg":
+		return "public.mp3"
+	case ext == "wav" || mime == "audio/wav" || mime == "audio/x-wav" || mime == "audio/vnd.wave":
+		return "com.microsoft.waveform-audio"
+	case ext == "aac" || mime == "audio/aac":
+		return "public.aac-audio"
 	}
 	return "public.mpeg-4"
 }
@@ -703,6 +713,28 @@ func clackAVFCancel(h C.uintptr_t, req C.uint64_t) {
 		}
 		p.mu.Unlock()
 	}
+}
+
+// watchingOf is whether obj's state watch timer runs (tests: a paused
+// audio item has none).
+func watchingOf(obj unsafe.Pointer) bool { return C.clack_avf_watching(obj) != 0 }
+
+// history turns on, for the players made from now on, a history of what
+// Clack asked and what AVPlayer did (tests: debug reads it).
+func history(on bool) { C.clack_avf_history(b2i(on)) }
+
+// debug is the player's history and AVPlayer's state now (tests): its
+// rate, timeControlStatus, reasonForWaitingToPlay, position, the item's
+// timebase and buffer.
+func (p *player) debug() string {
+	p.objMu.RLock()
+	defer p.objMu.RUnlock()
+	if p.obj == nil {
+		return "(no AVPlayer: not made yet, or closed)"
+	}
+	c := C.clack_avf_debug(p.obj)
+	defer C.free(unsafe.Pointer(c))
+	return C.GoString(c)
 }
 
 // live is the Objective-C side's live objects: players, pixel buffers,
