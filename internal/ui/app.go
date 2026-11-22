@@ -401,9 +401,8 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
-	a.initInspect()     // gated: CLACK_INSPECT=1, ui.json's inspect_tool or the Konami code (inspect_wire.go)
-	a.startDownloads()  // downloads.go
-	a.startShellMenus() // shell_menus.go
+	a.initInspect()    // gated: CLACK_INSPECT=1, ui.json's inspect_tool or the Konami code (inspect_wire.go)
+	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
 	// the composer's floating formatting bar keeps inside the window

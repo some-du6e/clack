@@ -60,7 +60,11 @@ type ctxPress struct {
 func (s *listState) contextMenu(h Host, origin image.Point) {
 	p := s.ctx
 	s.ctx = ctxPress{}
-	if !p.ok || p.taken {
+	if !p.ok {
+		return
+	}
+	defer s.clearPillParts() // a press's parts are its own (reaction_menu.go)
+	if p.taken {
 		return
 	}
 	i := s.itemAt(p.pos)

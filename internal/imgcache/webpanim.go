@@ -502,3 +502,28 @@ func (d *gifDecoder) drawWebP(f *gifFrame, m image.Image) {
 	}
 	draw.Draw(d.canvas, r, m, mb.Min.Add(r.Min.Sub(f.r.Min)), op)
 }
+
+// firstWebPFrame is an animated WebP's first frame on its canvas, composed
+// as playback composes it (the still its decode draws first): what a copy
+// of the image takes, as Chromium's copyImageAt copies the frame shown.
+// The canvas is within maxPixels and maxSide; everything is charged to b.
+func firstWebPFrame(data []byte, maxPixels, maxSide int, b *budget.Budget) (image.Image, error) {
+	ix, err := indexAnim(data, b)
+	if err != nil {
+		return nil, budgetErr(err)
+	}
+	if ix.w <= 0 || ix.h <= 0 || ix.w > maxSide || ix.h > maxSide || ix.w*ix.h > maxPixels {
+		return nil, ErrTooBig
+	}
+	d, err := newGIFDecoder(ix, data, b)
+	if err != nil {
+		return nil, budgetErr(err)
+	}
+	if _, err := d.compose(); err != nil {
+		return nil, budgetErr(err)
+	}
+	if d.werr != nil {
+		return nil, budgetErr(d.werr)
+	}
+	return d.canvas, nil
+}

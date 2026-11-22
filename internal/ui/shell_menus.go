@@ -1,20 +1,20 @@
 package ui
 
-import (
-	"gioui.org/app"
+import "gioui.org/app"
 
-	"github.com/some-du6e/clack/internal/ui/popups"
-)
+// The window's full screen for the desktop shell's context menus (Copy
+// Image, Copy Link…), which Slack ends with "Exit Full Screen" while the
+// window is full screen (addToggleFullScreen): popups.ShellWindow, read
+// from the Host each menu gets, so every App answers for its own window
+// and nothing outlives it. Both run on the UI goroutine, where the menus
+// are built and clicked.
 
-// startShellMenus hands popups the window's full screen for the desktop
-// shell's context menus (Copy Image, Copy Link…), which Slack ends with
-// "Exit Full Screen" while the window is full screen (addToggleFullScreen).
-// Both run on the UI goroutine, where the menus are built and clicked.
-func (a *App) startShellMenus() {
-	popups.ShellFullScreen = func() bool { return a.winMode == app.Fullscreen }
-	popups.ShellExitFullScreen = func() {
-		if a.win != nil {
-			a.win.Option(app.Windowed.Option())
-		}
+// ShellFullScreen reports whether the window is full screen.
+func (a *App) ShellFullScreen() bool { return a.winMode == app.Fullscreen }
+
+// ExitShellFullScreen leaves full screen.
+func (a *App) ExitShellFullScreen() {
+	if a.win != nil {
+		a.win.Option(app.Windowed.Option())
 	}
 }

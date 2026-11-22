@@ -283,6 +283,19 @@ type reactPill struct {
 	// count's text; none when a plugin's children drew the pill
 	emojiAt []pillEmoji
 	countAt image.Rectangle
+	// the children a plugin's tree drew (a patched Reaction or
+	// ReactionBar): a right-click tag over each emoji and the count, and
+	// what the last context press there was on (reaction_menu.go)
+	emojiTags map[string]*ctxTag
+	countTag  ctxTag
+	ctxPart   pillPart
+}
+
+// pillPart is the part of a plugin-drawn pill a context press was on.
+type pillPart struct {
+	on    bool
+	count bool   // the count, else an emoji
+	url   string // the emoji's image
 }
 
 // pillEmoji is one emoji image in a reaction pill.
@@ -3037,7 +3050,33 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 			}
 		}
 	}
-	return pl.emoji(gtx, re)
+	if pl.emojiTags == nil {
+		pl.emojiTags = map[string]*ctxTag{}
+	}
+	tag := pl.emojiTags[re.Name]
+	if tag == nil {
+		tag = new(ctxTag)
+		pl.emojiTags[re.Name] = tag
+	}
+	pl.notePart(gtx, tag, pillPart{on: true, url: pl.emojiURL(re)})
+	d := pl.emoji(gtx, re)
+	contextArea(gtx, tag, d.Size)
+	return d
+}
+
+// notePart records a context press on a plugin-drawn pill's part (tag)
+// for the list's menu, which the press reaches too (contextArea passes it
+// on).
+func (pl *reactPill) notePart(gtx layout.Context, tag *ctxTag, part pillPart) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
+		if !ok {
+			return
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			pl.ctxPart = part
+		}
+	}
 }
 
 // layoutTruncation is the pill's "…" after ten emoji
@@ -3100,7 +3139,10 @@ func (pl *reactPill) emoji(gtx layout.Context, re *core.Reaction) layout.Dimensi
 // text (OwlMode's reacted pill: content-pry), as the native count takes
 // it from the pill.
 func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dimensions {
-	return pillLine(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
+	pl.notePart(gtx, &pl.countTag, pillPart{on: true, count: true})
+	d := pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0))
+	contextArea(gtx, &pl.countTag, d.Size)
+	return pillLine(d, dp(gtx, 16))
 }
 
 // ReactionDrawnHook, when set (tests: a reaction's frame,

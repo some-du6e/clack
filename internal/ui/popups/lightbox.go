@@ -1176,5 +1176,9 @@ func (lb *Lightbox) imageMenu(at image.Point) {
 	if !it.hosted() {
 		src = it.windowURL()
 	}
-	lb.h.ShowOverlay(NewImageMenuFrom(lb.h, at, shown, src, it.hosted()))
+	alt := "" // the thumbnail the viewer shows when the original can't be
+	if it.img.URL != shown {
+		alt = it.img.URL
+	}
+	lb.h.ShowOverlay(NewImageMenuFrom(lb.h, at, shown, src, alt, it.hosted()))
 }

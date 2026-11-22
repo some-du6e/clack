@@ -26,6 +26,21 @@ import (
 // (item i), when p is on one of r's reaction pills: handled is false
 // when it isn't, and o is nil when Slack opens no menu there.
 func (s *listState) reactionMenu(h Host, r *row, i int, p f32.Point, at image.Point) (o popups.Overlay, handled bool) {
+	// a plugin's tree drew the pill: its emoji and count told their own
+	// tags about the press
+	for k := range r.pills {
+		part := r.pills[k].ctxPart
+		if !part.on {
+			continue
+		}
+		for j := range r.pills {
+			r.pills[j].ctxPart = pillPart{}
+		}
+		if part.count || part.url == "" {
+			return nil, true
+		}
+		return popups.NewImageMenu(h, at, part.url, false), true
+	}
 	pt := image.Pt(int(p.X), int(p.Y)-s.pos[i]) // row-local, as reactRects
 	for k, rect := range r.reactRects {
 		if k >= len(r.pills) || !pt.In(rect) {
@@ -44,4 +59,16 @@ func (s *listState) reactionMenu(h Host, r *row, i int, p f32.Point, at image.Po
 		return s.messageMenu(h, r, at), true
 	}
 	return nil, false
+}
+
+// clearPillParts forgets the parts the last context press was on, once
+// the list has answered it (or not: another row's menu, a taken press).
+func (s *listState) clearPillParts() {
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if r := s.rows[s.items[i].key]; r != nil {
+			for k := range r.pills {
+				r.pills[k].ctxPart = pillPart{}
+			}
+		}
+	}
 }

@@ -24,36 +24,52 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The desktop shell's image and link menus (Slack 4.53.276
+// fsHost is a Host whose window may be full screen (popups.ShellWindow,
+// as the ui root implements it per App).
+type fsHost struct {
+	*tzHost
+	full  bool
+	exits int
+}
+
+func (h *fsHost) ShellFullScreen() bool { return h.full }
+func (h *fsHost) ExitShellFullScreen()  { h.exits++ }
+
+// The desktop shell's image, link and code menus (Slack 4.53.276
 // main.bundle.cjs, the same in the macOS, Windows and Linux builds) end
 // with addToggleFullScreen: a separator and "Exit Full Screen" while the
-// window is full screen, nothing otherwise.
+// window is full screen, nothing otherwise. Each menu asks its own
+// window (the Host it opens over), so two windows at once answer apart.
 func TestShellMenusExitFullScreen(t *testing.T) {
-	h := &tzHost{th: theme.New(false)}
 	at := image.Pt(10, 10)
-	full, exited := false, 0
-	setShellFullScreen(func() bool { return full }, func() { exited++ })
-	t.Cleanup(func() { setShellFullScreen(nil, nil) })
-	if got := ctxLabels(NewImageMenu(h, at, "https://example.com/a.png", false)); got != "Copy Image|Copy Image URL" {
+	full := &fsHost{tzHost: &tzHost{th: theme.New(false)}, full: true}
+	windowed := &fsHost{tzHost: &tzHost{th: theme.New(false)}}
+	if got := ctxLabels(NewImageMenu(windowed, at, "https://example.com/a.png", false)); got != "Copy Image|Copy Image URL" {
 		t.Errorf("windowed image menu %q", got)
 	}
-	full = true
-	m := NewImageMenu(h, at, "https://example.com/a.png", false)
+	m := NewImageMenu(full, at, "https://example.com/a.png", false)
 	if got := ctxLabels(m); got != "Copy Image|Copy Image URL|-|Exit Full Screen" {
 		t.Fatalf("full screen image menu %q", got)
 	}
 	m.Items()[3].Do()
-	if exited != 1 {
-		t.Errorf("Exit Full Screen left full screen %d times", exited)
+	if full.exits != 1 || windowed.exits != 0 {
+		t.Errorf("Exit Full Screen left full screen %d times (the other window %d)", full.exits, windowed.exits)
 	}
-	if got := ctxLabels(NewLinkMenu(h, at, LinkMenu{URL: "https://example.com/", Image: "https://example.com/a.png"})); got != "Copy Link|Open Link|-|Copy Image|Copy Image URL|-|Exit Full Screen" {
+	if got := ctxLabels(NewLinkMenu(full, at, LinkMenu{URL: "https://example.com/", Image: "https://example.com/a.png"})); got != "Copy Link|Open Link|-|Copy Image|Copy Image URL|-|Exit Full Screen" {
 		t.Errorf("full screen link menu %q", got)
+	}
+	if got := ctxLabels(NewCodeMenu(full, at, "x := 1", false)); got != "Copy this code|-|Exit Full Screen" {
+		t.Errorf("full screen code menu %q", got)
+	}
+	if got := ctxLabels(NewLinkMenu(windowed, at, LinkMenu{URL: "https://example.com/"})); got != "Copy Link|Open Link" {
+		t.Errorf("windowed link menu %q", got)
 	}
 }
 
@@ -243,4 +259,96 @@ func fetchPNG(t *testing.T, u string) image.Image {
 		t.Fatal(err)
 	}
 	return img
+}
+
+// copyCatch replaces the clipboard write with one that records the image
+// (and the download with fetch, when it isn't nil).
+func copyCatch(t *testing.T, fetch func(string) ([]byte, error)) func() image.Image {
+	t.Helper()
+	var mu sync.Mutex
+	var got image.Image
+	prevF, prevW := copyFetch, copyWrite
+	t.Cleanup(func() { copyFetch, copyWrite = prevF, prevW })
+	if fetch != nil {
+		copyFetch = func(_ context.Context, _ Host, u string, _ bool) ([]byte, error) { return fetch(u) }
+	}
+	copyWrite = func(_ context.Context, img image.Image, _ func(int64) error) error {
+		mu.Lock()
+		got = img
+		mu.Unlock()
+		return nil
+	}
+	return func() image.Image {
+		mu.Lock()
+		defer mu.Unlock()
+		return got
+	}
+}
+
+// waitCopy pumps popups until the copy wrote an image or toasted.
+func waitCopy(t *testing.T, h *tzHost, got func() image.Image) image.Image {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		Pump()
+		if g := got(); g != nil {
+			return g
+		}
+		if ts := h.toastList(); len(ts) > 0 {
+			t.Fatalf("Copy Image toasted %q", ts)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Copy Image wrote nothing")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func pngOf(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// The viewer shows a file's thumbnail when the original can't be decoded,
+// and Copy Image copies that thumbnail then (copyImage's stand-in), not
+// a failure.
+func TestLightboxCopyImageThumbFallback(t *testing.T) {
+	file := &richtext.File{ID: "F0TEST0002", Name: "photo.png", Title: "photo.png", Mime: "image/png", IsImage: true,
+		URL: "https://files.slack.com/files-pri/T1-F0TEST0002/photo.png", Permalink: "https://fake.slack.com/files/U1/F0TEST0002/photo.png",
+		Thumb: &richtext.Image{URL: "https://files.slack.com/files-tmb/T1-F0TEST0002-abc/photo_360.png", W: 360, H: 240, Proxy: true}}
+	fm := core.Message{Channel: "C1", TS: "1762700000.000400", Doc: richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.FileBlock, File: file}}}}
+	e := newLBEnv(t, *file.Thumb, fm)
+	thumb := pngOf(t, 36, 24)
+	got := copyCatch(t, func(u string) ([]byte, error) {
+		if u == file.Thumb.URL {
+			return thumb, nil
+		}
+		return []byte("not an image"), nil
+	})
+	e.rightClickMiddle()
+	ms := e.menus()
+	if len(ms) != 1 {
+		t.Fatalf("%d menus", len(ms))
+	}
+	ms[0].Items()[0].Do()
+	if img := waitCopy(t, e.h, got); img.Bounds().Size() != image.Pt(36, 24) {
+		t.Errorf("Copy Image copied a %v image, want the 36x24 thumbnail", img.Bounds().Size())
+	}
+}
+
+// A file being uploaded draws from its own bytes (localimg, Slack's blob:
+// URL): Copy Image copies them.
+func TestCopyImageLocal(t *testing.T) {
+	u := localimg.Put(pngOf(t, 20, 10))
+	t.Cleanup(func() { localimg.Drop(u) })
+	h := &tzHost{th: theme.New(false)}
+	got := copyCatch(t, nil)
+	NewImageMenu(h, image.Pt(10, 10), u, false).Items()[0].Do()
+	if img := waitCopy(t, h, got); img.Bounds().Size() != image.Pt(20, 10) {
+		t.Errorf("Copy Image copied a %v image, want the 20x10 upload", img.Bounds().Size())
+	}
 }
