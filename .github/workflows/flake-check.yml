@@ -1531,6 +1531,41 @@ jobs:
   # occlusion tests, each $COUNT times in one process (TestMain runs
   # app.Main): AppKit's occlusion reports, the layer's one-second drawable
   # timeout and the display link's restarts all have timing in them.
+  # The message audio player on AVFoundation (internal/media/avf's audio
+  # tests), COUNT times each. TestAVFAudioReplaysAt2x replays at 2x after
+  # the end and after a pause and a seek, which stalled while play started
+  # AVPlayer with play and then the rate (train-163, train-164). A proof
+  # run (expect_fail) runs the replay test alone. Dispatch only, with
+  # only=avf-audio: macos-idle runs these once on every push.
+  avf-audio:
+    if: ${{ inputs.only != '' && startsWith('avf-audio', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/expect-fail
+        with:
+          tests: ${{ inputs.expect_fail }}
+          leg: ${{ github.job }}-${{ strategy.job-index }}
+      - name: TestAVFAudioReplaysAt2x
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count="$COUNT" -v -timeout 12m -run '^TestAVFAudioReplaysAt2x$' ./internal/media/avf
+      - name: the other audio tests
+        if: ${{ !cancelled() && inputs.expect_fail == '' }}
+        env:
+          CLACK_MEDIA_TESTS: "1"
+        run: go test -count="$COUNT" -v -timeout 12m -run '^(TestAVFPlaysAudio|TestAVFAudioSeekAndRate|TestAVFOpusClipPlays)$' ./internal/media/avf
+      - if: ${{ always() && env.XF_ID }}
+        uses: ./.github/actions/expect-fail-report
+
   mac-wake:
     if: ${{ !inputs.only || startsWith('mac-wake', inputs.only) }}
     runs-on: macos-latest
@@ -5010,6 +5045,7 @@ jobs:
   expect-fail:
     needs:
       - go
+      - avf-audio
       - race-video
       - members
       - members-tab
