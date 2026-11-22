@@ -460,6 +460,19 @@ func (a *App) Unsave(ctx context.Context, ch, ts string) error {
 	return nil
 }
 
+// ClearSaved is clearSavedItemImmediately's saved.delete (boot-shared
+// PxoD): saved_not_found, an item already cleared elsewhere, counts as
+// cleared, as Slack's catch skips it (_.RF.SavedNotFound).
+func (a *App) ClearSaved(ctx context.Context, ch, ts string) error {
+	if err := a.Unsave(ctx, ch, ts); err != nil {
+		if !isCode(err, "saved_not_found") {
+			return err
+		}
+		a.markSaved(ch, ts, false)
+	}
+	return nil
+}
+
 // UpdateSaved marks a saved item completed/archived or changes its due date.
 func (a *App) UpdateSaved(ctx context.Context, ch, ts string, u SavedUpdate) error {
 	p := savedParams(ch, ts)

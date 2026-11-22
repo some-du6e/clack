@@ -83,6 +83,12 @@ func typingHub(a *core.App) *typingState {
 		for ev := range evs {
 			s.apply(ev)
 		}
+		// core closed the events: the App was released, its typing goes
+		typingHubs.Lock()
+		if typingHubs.m[a] == s {
+			delete(typingHubs.m, a)
+		}
+		typingHubs.Unlock()
 	}()
 	return s
 }

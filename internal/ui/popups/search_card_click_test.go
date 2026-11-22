@@ -47,7 +47,7 @@ func TestSearchCardTextClickOpensMessage(t *testing.T) {
 	t.Cleanup(func() { e.fs.SetHook(nil) })
 	h := &openerHost{tzHost: e.h}
 	if !srExplore(h) {
-		t.Fatal("the density card (srp_card_explore) is off in fakeslack")
+		t.Fatal("no density card")
 	}
 	v := NewSearchView(h, word)
 	v.SetOrigin(image.Pt(0, 0))

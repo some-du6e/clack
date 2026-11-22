@@ -1,9 +1,10 @@
 package popups
 
 // The search results' density card: SearchResult (boot-shared Wzwx, build
-// c07ab895506f) with experimentSrpCardExploreGroupOn, which `+zqw` Ui
-// sets with srp_card_explore on (core.SearchCardExplore). The account is
-// "on". In that group:
+// c07ab895506f) with experimentSrpCardExploreGroupOn, which FvhF Ui sets
+// (core.SearchCardExplore) for everyone but a dogfood user who picked the
+// "original" density: Slack dropped the srp_card_explore experiment that
+// also gated it (the 2026-11-21 drift). With it:
 //
 //   - renderBlocks (a message with blocks) wraps the body in
 //     SearchMessageClampedBody: .c-search_message__body--card_clamp

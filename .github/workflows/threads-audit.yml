@@ -20,6 +20,8 @@ on:
       - "internal/ui/richview/blocks.go"
       - "internal/ui/messages/reply_bar.go"
       - "internal/ui/messages/list.go"
+      - "internal/ui/messages/toolbar_hold.go"
+      - "internal/ui/toolbar_click_test.go"
       - "internal/ui/messages/row.go"
       - "internal/ui/messages/util.go"
       - "internal/ui/secondary.go"
@@ -84,6 +86,8 @@ jobs:
         run: |
           mkdir -p "$THREADS_AUDIT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestThreadsAudit' ./internal/ui
+          # the message actions bar clicked as a hand does: the row stays hovered (thread-header-hover)
+          xvfb-run -a go test -count=1 -v -run '^TestToolbarClicksKeepHover$' ./internal/ui
           # Block Kit in the thread pane next to the channel (bk-vote-*)
           CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -run 'TestThreadsAuditBlockKit|TestThreadsAuditStatesShots' ./internal/ui/messages
           ls -la "$THREADS_AUDIT_SHOTS_DIR"

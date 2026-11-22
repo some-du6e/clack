@@ -202,16 +202,15 @@ jobs:
         # runner-load.sh logs the runner's memory and load each minute (two
         # full-test jobs lost their runner on 2026-11-21 with no word on why:
         # it showed the suite at 15.7 of the runner's 16 GB, ui.test's live
-        # heap ~9 GB by its end, every test's App kept). GOMEMLIMIT: the GC
-        # keeps each test binary under 11 GiB until the ui tests stop
-        # keeping them. Not lower: under ui.test's live heap the GC runs back
-        # to back at half the CPU (7 GiB: TestJoinBanner's 10 s wait ran
-        # out, run 44939446171)
+        # heap ~9 GB by its end, every test's App kept). The ui tests let
+        # each finished App go since ci-speed-3 (TestFinishedSessionIsCollected
+        # guards it), so the GOMEMLIMIT=11GiB stopgap went: docs/CI-SPEED.md
+        # has the peaks
         run: |
           .github/scripts/dump-before-budget.sh 35 & wd=$!
           .github/scripts/runner-load.sh 60 & rl=$!
           trap 'kill $wd $rl 2>/dev/null' EXIT
-          GOMEMLIMIT=11GiB go test -timeout 30m ./...
+          go test -timeout 30m ./...
 
   # Report-only (docs/PARITY.md): tools/parity.py runs the Slack-parity
   # tests (tools/parity_checks.json) against Slack's committed output and
@@ -348,6 +347,12 @@ jobs:
       - name: Gio hidden title bar hit test (vendored gioui.org/app)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption|TestTitlebarDoubleClickAction' gioui.org/app
+      # Gio patch 48: a run of clicks counts by the platform's rule, as
+      # Chromium's does (500 ms and 2 px here; the Windows and macOS rules
+      # with their settings stood in), not a fixed 200 ms
+      - name: Gio click counts (vendored gioui.org/gesture)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestMouseClicks|TestClackClick' gioui.org/gesture
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave).
       # Gio patch 35: on the X11 window, a frame only Window.Invalidate
@@ -772,6 +777,17 @@ jobs:
             "$RUNNER_TEMP/ui-bounds.test.exe" -test.v -test.count=1 -test.timeout 6m -test.run "^$t\$" || rc=1
           done
           exit $rc
+      # Gio patch 48: SendInput clicks 400 ms apart are a double click by the
+      # Mouse settings' double-click time (500 ms), two clicks once
+      # SetDoubleClickTime makes it 300 ms (read again on every press). Last
+      # in the job: a step without a step-starts.json record in front of
+      # recorded ones drops theirs (budget-check.py)
+      - name: double clicks by GetDoubleClickTime (SendInput)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_DBLCLICK_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run '^TestClackDoubleClickWindows$' gioui.org/app
 
   # Clack's slack:// registration and the single-instance hand-off, close to
   # the tray, the tray's states and menu, the jump list, Focus Assist,
@@ -1497,8 +1513,9 @@ jobs:
         run: |
           set +e
           sw_vers
-          # and patch 47: the caret's blink period from the user defaults
-          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac' gioui.org/app
+          # and patch 47: the caret's blink period from the user defaults;
+          # patch 48: AppKit's click counts through a real window
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestMacCloseDestroys|TestHideLeavesFullscreenMac|TestCaretBlinkFromOSMac|TestClackClickCountMac' gioui.org/app
           gio=$?
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?

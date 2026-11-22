@@ -1,10 +1,12 @@
 package ui
 
 // The canvas and list headers' FileSectionDropdownButton as the shell
-// wires it (file_section_button.go): off, no button; on, the face follows
-// the file's collection and the menu is FileSectionMoveToMenu (Move to…,
-// the collections with the current one checked, Create section, Remove
-// from {name}); a channel tab's "Move to section" ▸ carries the same rows.
+// wires it (file_section_button.go), in every group (Slack dropped
+// custom_file_sections and kept its on path: the 2026-11-21 drift): the
+// face follows the file's collection and the menu is FileSectionMoveToMenu
+// (Move to…, the collections with the current one checked, Create
+// section, Remove from {name}); a channel tab's "Move to section" ▸
+// carries the same rows.
 
 import (
 	"context"
@@ -27,15 +29,9 @@ func TestFileSectionHeaderWiring(t *testing.T) {
 	e.waitReady()
 	a := e.a
 	c := a.Core()
-	if _, _, ok := a.fileSectionButton(fakeslack.CanvasShared); ok {
-		t.Error("custom_file_sections unassigned (fakeslack): the button shows")
-	}
-	if items := a.fileSectionItems(core.File{ID: fakeslack.CanvasShared, IsCanvas: true}, "canvas_header"); len(items) != 0 {
-		t.Errorf("off: menu rows %d", len(items))
-	}
+	c.SetExperimentGroup("custom_file_sections", "off") // the dropped gate: no change
 	launch := fs.AddFileCollection("Launch", ":rocket:", fakeslack.CanvasShared)
-	c.SetExperimentGroup("custom_file_sections", "on")
-	if err := c.FetchFileCollections(context.Background()); err != nil {
+	if err := c.ForceFetchFileCollections(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	look, _, ok := a.fileSectionButton(fakeslack.CanvasShared)

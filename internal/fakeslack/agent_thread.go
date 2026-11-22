@@ -52,7 +52,7 @@ type agentDMState struct {
 	reads int             // conversations.replies answers read
 }
 
-var agentDMStates sync.Map // *Server → *agentDMState
+var agentDMStates = newPerServer() // *Server → *agentDMState
 
 func (s *Server) agentDM() *agentDMState {
 	v, _ := agentDMStates.LoadOrStore(s, &agentDMState{})

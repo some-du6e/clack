@@ -315,27 +315,30 @@ type App struct {
 	winOpened        image.Rectangle            // where mainWindowPlace opened the window (logs, tests)
 	hideHook         func() bool                // tests: replaces Window.Hide (runfromtray.go)
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
-	update           updateState                // "Update available" banner
-	updatesOff       atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
-	updNow           chan struct{}              // Check now → updateLoop (cap 1)
-	updWake          chan struct{}              // focus came back: is a check due? (cap 1)
-	updProgressEvery time.Duration              // tests: the progress throttle (default updateProgressEvery)
-	hud              *huddleui.Controller       // the native huddle (huddle_wire.go)
-	hudOrigin        map[string]*originTracker  // headers' huddle buttons by channel (caret menus)
-	ccStopping       map[string]bool            // code channels whose agent is being stopped (codechannel.go)
-	ccPending        map[string]bool            // context bar actions in flight, "channel:key"
-	starOrigin       map[string]*originTracker  // headers' star buttons by channel (the Move to… menu)
-	skipBody         int                        // tests: frames drawViewBody leaves the body out
-	skipAt           time.Time                  // tests: the frame being skipped
-	noKeepBody       bool                       // tests: no keepBody (KeepFocus alone)
-	body             bodyDraw                   // the primary body's last live draw (keepBody)
-	standIn          bool                       // keepBody's draw is running
-	standIns         int                        // keepBody draws so far
-	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
-	shownConvos      shownConvos                // the conversations the last frame showed (composer_release.go)
-	sw               startupWatch               // the startup timeline (startup.go)
-	rv               revealState                // the cover until the window is ready (reveal.go)
-	panelOrigin      image.Point                // the primary panel's window origin this frame
+	invalDone        chan struct{}              // closed by release: invalidator returns
+	invalStop        sync.Once
+	unhooks          unhooks                   // the process-wide listeners New and Run registered: release removes them
+	update           updateState               // "Update available" banner
+	updatesOff       atomic.Bool               // prefs.NoUpdateCheck, for updateLoop
+	updNow           chan struct{}             // Check now → updateLoop (cap 1)
+	updWake          chan struct{}             // focus came back: is a check due? (cap 1)
+	updProgressEvery time.Duration             // tests: the progress throttle (default updateProgressEvery)
+	hud              *huddleui.Controller      // the native huddle (huddle_wire.go)
+	hudOrigin        map[string]*originTracker // headers' huddle buttons by channel (caret menus)
+	ccStopping       map[string]bool           // code channels whose agent is being stopped (codechannel.go)
+	ccPending        map[string]bool           // context bar actions in flight, "channel:key"
+	starOrigin       map[string]*originTracker // headers' star buttons by channel (the Move to… menu)
+	skipBody         int                       // tests: frames drawViewBody leaves the body out
+	skipAt           time.Time                 // tests: the frame being skipped
+	noKeepBody       bool                      // tests: no keepBody (KeepFocus alone)
+	body             bodyDraw                  // the primary body's last live draw (keepBody)
+	standIn          bool                      // keepBody's draw is running
+	standIns         int                       // keepBody draws so far
+	missedFrameLog   focusLog                  // the missed-frame log line (focus_log.go)
+	shownConvos      shownConvos               // the conversations the last frame showed (composer_release.go)
+	sw               startupWatch              // the startup timeline (startup.go)
+	rv               revealState               // the cover until the window is ready (reveal.go)
+	panelOrigin      image.Point               // the primary panel's window origin this frame
 
 	// quiet frames (quiet.go): an Invalidate since the last frame (layout
 	// to do), an animation repaint since then, what the last full frame
@@ -386,14 +389,15 @@ func New(opts Options, images *imgcache.Cache) *App {
 		opts.Started = time.Now()
 	}
 	a := &App{
-		opts:    opts,
-		th:      theme.Bare(opts.Dark),
-		images:  images,
-		clicks:  clickables{},
-		views:   map[Route]View{},
-		inval:   make(chan struct{}, 1),
-		updNow:  make(chan struct{}, 1),
-		updWake: make(chan struct{}, 1),
+		opts:      opts,
+		th:        theme.Bare(opts.Dark),
+		images:    images,
+		clicks:    clickables{},
+		views:     map[Route]View{},
+		inval:     make(chan struct{}, 1),
+		invalDone: make(chan struct{}),
+		updNow:    make(chan struct{}, 1),
+		updWake:   make(chan struct{}, 1),
 	}
 	go a.invalidator()
 	theme.SetPrimary(a.th) // the text model follows this window's mode (theme/textgamma.go)
@@ -495,9 +499,14 @@ var invalidateHook func(*App)
 // invalidator forwards Invalidate requests to the window from a goroutine that
 // is never the main thread (see Invalidate).
 func (a *App) invalidator() {
-	for range a.inval {
-		if w := a.winLive.Load(); w != nil {
-			w.Invalidate()
+	for {
+		select {
+		case <-a.inval:
+			if w := a.winLive.Load(); w != nil {
+				w.Invalidate()
+			}
+		case <-a.invalDone: // release: the App is done
+			return
 		}
 	}
 }

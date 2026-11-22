@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,6 +32,13 @@ const flushDelay = 500 * time.Millisecond
 type dataStore struct {
 	dir string
 
+	// flushMu: one flush at a time, its writes included. A flush used to
+	// take the dirty set under mu and write it after: Close's final flush,
+	// finding nothing left, returned while the debounce timer's was still
+	// writing (a test's TempDir cleanup then failed "directory not empty",
+	// train-138's TestPatchedReactionPillLikeNative/dark/cls), and an
+	// older flush's rename could land over a newer one's.
+	flushMu sync.Mutex
 	mu      sync.Mutex
 	ns      map[string]map[string]string // namespace → key → value
 	loaded  map[string]bool
@@ -237,6 +245,8 @@ func (d *dataStore) schedule() {
 }
 
 func (d *dataStore) flush() error {
+	d.flushMu.Lock()
+	defer d.flushMu.Unlock()
 	d.mu.Lock()
 	if d.timer != nil {
 		d.timer.Stop()
@@ -259,6 +269,9 @@ func (d *dataStore) flush() error {
 		d.secDirt = false
 	}
 	d.mu.Unlock()
+	if h := dataFlushHook.Load(); h != nil {
+		(*h)()
+	}
 	var errs []error
 	for _, j := range jobs {
 		if err := writeFileAtomic(j.path, j.data, j.mode); err != nil {
@@ -267,6 +280,10 @@ func (d *dataStore) flush() error {
 	}
 	return errors.Join(errs...)
 }
+
+// dataFlushHook, set by tests, runs in each flush between taking the dirty
+// data and writing it.
+var dataFlushHook atomic.Pointer[func()]
 
 // writeFileAtomic writes path through a fresh O_EXCL temp file renamed over
 // it: a symlink planted at path (or at a guessable temp name) is replaced,

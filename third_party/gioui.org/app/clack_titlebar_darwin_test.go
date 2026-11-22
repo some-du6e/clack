@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"gioui.org/app/cocoatest"
+	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/io/system"
@@ -59,6 +60,9 @@ type macTestWindow struct {
 	// caret's blink or an animation does (Clack patch, CLACK_PATCHES.md
 	// §32).
 	animate atomic.Bool
+	// clicks gets each click's NumClicks from a gesture.Click over the
+	// content under the band (Clack patch 48, clack_dblclick_darwin_test.go)
+	clicks chan int
 }
 
 // newMacTestWindow opens a Gio window with a hidden title bar and the
@@ -73,13 +77,14 @@ func newMacTestWindow(t *testing.T, abort func() bool, opts ...Option) *macTestW
 // unless they hide it).
 func newMacTestWindowWith(t *testing.T, abort func() bool, opts ...Option) *macTestWindow {
 	t.Helper()
-	h := &macTestWindow{w: new(Window), closing: make(chan *ClosingEvent, 4), done: make(chan struct{})}
+	h := &macTestWindow{w: new(Window), closing: make(chan *ClosingEvent, 4), done: make(chan struct{}), clicks: make(chan int, 16)}
 	h.w.Option(append([]Option{Title("Clack title bar test"), Size(macTestW, macTestH)}, opts...)...)
 	views := make(chan uintptr, 1)
 	widget := new(int)
 	go func() {
 		defer close(h.done)
 		var ops op.Ops
+		var click gesture.Click
 		for {
 			switch e := h.w.Event().(type) {
 			case AppKitViewEvent:
@@ -106,7 +111,22 @@ func newMacTestWindowWith(t *testing.T, abort func() bool, opts ...Option) *macT
 						}
 					}
 				}
+				for {
+					ce, ok := click.Update(gtx.Source)
+					if !ok {
+						break
+					}
+					if ce.Kind == gesture.KindClick {
+						select {
+						case h.clicks <- ce.NumClicks:
+						default:
+						}
+					}
+				}
 				band := gtx.Dp(macBandH)
+				ca := clip.Rect{Min: image.Pt(0, band), Max: e.Size}.Push(gtx.Ops)
+				click.Add(gtx.Ops)
+				ca.Pop()
 				area := clip.Rect{Max: image.Pt(e.Size.X, band)}.Push(gtx.Ops)
 				system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
 				area.Pop()
