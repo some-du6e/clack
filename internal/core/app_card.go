@@ -423,6 +423,44 @@ func (a *App) botHomeTeam(botID, userID string) string {
 	return teamIDFromBotAppUser(u, cur)
 }
 
+// SenderBot is the bot a message's sender stands for, beside its member:
+// Emf2 maybeGetBotAndMemberByIds' bot, which MessageSender hands
+// BaseMessageSender as botId and both its hover card (ProfileHoverTrigger
+// serviceId) and its click (openProfile serviceId) ask for. The message's
+// bot_id when the store holds that bot; else the member's own bot
+// (getBotIdFromMember: an app or bot member's profile.bot_id) when it's
+// another one and the store holds it; else the message's bot_profile;
+// else whichever was tried last. An unknown bot is asked for (bots.info),
+// as getBotById does. A message posted with a bot that's gone (an app
+// reinstalled under a new bot) stands for its member's live bot; a bot
+// user posting with a newer bot than its profile names, for the newer.
+func (a *App) SenderBot(user, bot string, bp *BotProfile) string {
+	held := func(id string) bool {
+		if id == "" {
+			return false
+		}
+		if _, ok := a.S.Bot(id); ok {
+			return true
+		}
+		if !a.S.BotNonexistent(id) {
+			a.S.NoteMissingBot(id)
+		}
+		return false
+	}
+	c, ok := bot, held(bot)
+	if !ok && user != "" {
+		if u, found := a.S.User(user); found && (u.IsBot || u.IsAppUser || u.ID == "USLACK") && !u.Deleted {
+			if mb := u.Profile.BotID; mb != "" && mb != bot {
+				c, ok = mb, held(mb)
+			}
+		}
+	}
+	if !ok && bp != nil && bp.ID != "" {
+		c = bp.ID
+	}
+	return c
+}
+
 // teamIDFromBotAppUser is rIIG getTeamIdFromBotAppUser: the member's
 // workspace when its team_id is one; the viewer's for no member, one with
 // neither a team_id nor enterprise_user, Slackbot, the system user, or a

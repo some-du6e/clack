@@ -1510,8 +1510,8 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	url = st.BackgroundImage(url)
 	r.avDrawn = url
 	// Clicked before Layout: Clickable.Layout consumes pending clicks.
-	if ctxclick.Clicked(gtx, &r.avatarBtn) && r.m.User != "" {
-		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
+	if ctxclick.Clicked(gtx, &r.avatarBtn) {
+		r.openSender(rc)
 	}
 	size := image.Pt(s, s)
 	gtx.Constraints = layout.Exact(size)
@@ -2129,8 +2129,8 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		return layout.Dimensions{}
 	}
 	span := r.custom || r.hmName // not interactive: a span, no button (custom_response.go, huddle_msg.go)
-	if ctxclick.Clicked(gtx, &r.nameBtn) && r.m.User != "" && !span {
-		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
+	if ctxclick.Clicked(gtx, &r.nameBtn) && !span {
+		r.openSender(rc)
 	}
 	var bs slackc.Styled
 	if span {
@@ -2276,6 +2276,11 @@ func (r *row) hoverBot() string {
 	if r.custom {
 		return ""
 	}
+	if r.rc != nil && r.rc.h != nil {
+		if app := r.rc.h.Core(); app != nil {
+			return app.SenderBot(r.m.User, r.m.BotID, r.m.BotProfile) // Od's bot (core app_card.go)
+		}
+	}
 	if r.m.BotID != "" {
 		return r.m.BotID
 	}
@@ -2283,6 +2288,30 @@ func (r *row) hoverBot() string {
 		return bp.ID
 	}
 	return ""
+}
+
+// SenderOpener is optional on a Host: BaseMessageSender's click with the
+// sender's member and its bot (the one its hover card asks for), which
+// opens the member's profile, or App details for that bot when the member
+// is an app's or there's no member.
+type SenderOpener interface {
+	OpenSender(anchor image.Point, userID, botID string)
+}
+
+// openSender is the sender's name and avatar click (BaseMessageSender
+// onClick: openProfile with memberId and serviceId, the same bot the
+// hover card opens).
+func (r *row) openSender(rc *rowCtx) {
+	user := r.m.User // a custom response's avatar opens its member too (its bot is none: hoverBot)
+	if so, ok := rc.h.(SenderOpener); ok {
+		if bot := r.hoverBot(); user != "" || bot != "" {
+			so.OpenSender(rc.origin(image.Point{}), user, bot)
+		}
+		return
+	}
+	if user != "" {
+		rc.h.OpenProfile(rc.origin(image.Point{}), user)
+	}
 }
 
 // layoutTimestamp is the header's Timestamp ("3:04 PM").

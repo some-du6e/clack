@@ -1854,7 +1854,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	}
 	at(gtx, image.Pt(padL, padT+dp(gtx, 2)), func(gtx layout.Context) layout.Dimensions {
 		d := srAvatar(gtx, v.h, m, avURL, 36, rp)
-		c.avHov.LayoutBot(gtx, m.User, srHoverBot(m), d.Size)
+		c.avHov.LayoutBot(gtx, m.User, srHoverBot(v.h, m), d.Size)
 		return d
 	})
 	right := w - padR
@@ -1872,7 +1872,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		d := vcenter(gtx, nameH, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 15, theme.Black, cl.Fg, name)
 		})
-		c.nameHov.LayoutBot(gtx, m.User, srHoverBot(m), d.Size)
+		c.nameHov.LayoutBot(gtx, m.User, srHoverBot(v.h, m), d.Size)
 		return d
 	})
 	srDrawWhere(gtx, v.h, c.where, tx+d.Size.X+dp(gtx, 4), padT, right, nameH, bg)
@@ -2306,11 +2306,12 @@ func (v *SearchView) replyChip(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	})
 }
 
-// srHoverBot is the bot a result's sender opens AppHoverCard for when the
-// message has no user.
-func srHoverBot(m *core.Message) string {
-	if m.User != "" {
-		return ""
+// srHoverBot is the bot a result's sender opens AppHoverCard for with its
+// member: the message row's (core.App.SenderBot, Emf2's bot), with or
+// without a user.
+func srHoverBot(h Host, m *core.Message) string {
+	if app := h.Core(); app != nil {
+		return app.SenderBot(m.User, m.BotID, m.BotProfile)
 	}
 	if m.BotID != "" {
 		return m.BotID
