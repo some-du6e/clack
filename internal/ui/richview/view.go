@@ -30,8 +30,12 @@ import (
 // across frames; the layout is cached until the doc, the width, the scale
 // or the Style generation changes.
 type View struct {
-	doc  richtext.Doc
-	opts Options
+	// hitImgs is the last Layout's image cache, for HitAt (an
+	// AttachmentImage's PlayPauseAnimations turns on once its image
+	// decodes as an animation)
+	hitImgs Images
+	doc     richtext.Doc
+	opts    Options
 	// under is the opaque fill the View sits on when it isn't its
 	// palette's panel (SetUnder): the boxes' see-through fills (box.see)
 	// composite over it
@@ -285,6 +289,9 @@ func (v *View) selRange() (int32, int32) {
 // Layout draws the doc at the constraints' max width and returns its size.
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
 	v.dark = st != nil && st.Palette.Dark
+	if st != nil {
+		v.hitImgs = st.Images
+	}
 	w := gtx.Constraints.Max.X
 	if v.opts.MaxWidth > 0 {
 		if mw := gtx.Dp(dpUnit(v.opts.MaxWidth)); mw < w {

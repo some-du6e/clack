@@ -309,6 +309,30 @@ type reactPill struct {
 	ptTag  int
 	pt     f32.Point
 	ptSize image.Point
+	// the native pill's parts as content laid them out last, in the
+	// pill's coordinates (reaction_menu.go): each emoji's <img> and the
+	// count's text; none when a plugin's children drew the pill
+	emojiAt []pillEmoji
+	countAt image.Rectangle
+	// the children a plugin's tree drew (a patched Reaction or
+	// ReactionBar): a right-click tag over each emoji and the count, and
+	// what the last context press there was on (reaction_menu.go)
+	emojiTags map[string]*ctxTag
+	countTag  ctxTag
+	ctxPart   pillPart
+}
+
+// pillPart is the part of a plugin-drawn pill a context press was on.
+type pillPart struct {
+	on    bool
+	count bool   // the count, else an emoji
+	url   string // the emoji's image
+}
+
+// pillEmoji is one emoji image in a reaction pill.
+type pillEmoji struct {
+	r   image.Rectangle
+	url string
 }
 
 // rowCtx carries per-frame inputs to a row layout.
@@ -3048,9 +3072,11 @@ func (pl *reactPill) layoutButton(gtx layout.Context, p slackc.Props) layout.Dim
 	}
 	r := pl.r
 	rc := r.rc
-	if pl.btn.Clicked(gtx) && rc.onReactGroup != nil {
+	// a macOS Ctrl+click is the pill's context click, not a toggle
+	if ctxclick.Clicked(gtx, &pl.btn) && rc.onReactGroup != nil {
 		rc.onReactGroup(r, r.groups[pl.i].name) // handleReactionClick (reaction_groups.go)
 	}
+	pl.emojiAt, pl.countAt = pl.emojiAt[:0], image.Rectangle{}
 	var mods uint64
 	if pl.reacted() {
 		mods = 1
@@ -3141,19 +3167,24 @@ func (pl *reactPill) content(gtx layout.Context, st slackc.Styled) layout.Dimens
 	gap := dp(gtx, 4)
 	g := &pl.r.groups[pl.i]
 	x := 0
+	// the content sits 8px in from the pill's left (layoutButton)
+	in := image.Pt(dp(gtx, 8), 0)
 	for k, i := range g.idx {
 		if k == reactEmojiMax {
 			break
 		}
 		re := &pl.r.m.Reactions[i]
 		at(gtx, x, (ph-es)/2, func(gtx layout.Context) layout.Dimensions { return pl.emoji(gtx, re) })
+		pl.emojiAt = append(pl.emojiAt, pillEmoji{r: image.Rect(x, (ph-es)/2, x+es, (ph-es)/2+es).Add(in), url: pl.emojiURL(re)})
 		x += es + gap
 	}
 	if len(g.idx) > reactEmojiMax {
 		d := at(gtx, x, (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return pl.truncation(gtx, st) })
 		x += d.Size.X + gap
 	}
-	d := at(gtx, x, (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return pl.count(gtx, st) })
+	cy := (ph - dp(gtx, 16)) / 2
+	d := at(gtx, x, cy, func(gtx layout.Context) layout.Dimensions { return pl.count(gtx, st) })
+	pl.countAt = image.Rect(x, cy, x+d.Size.X, cy+d.Size.Y).Add(in)
 	return layout.Dimensions{Size: image.Pt(x+d.Size.X, ph)}
 }
 
@@ -3174,7 +3205,33 @@ func (pl *reactPill) layoutEmoji(gtx layout.Context, p slackc.Props) layout.Dime
 			}
 		}
 	}
-	return pl.emoji(gtx, re)
+	if pl.emojiTags == nil {
+		pl.emojiTags = map[string]*ctxTag{}
+	}
+	tag := pl.emojiTags[re.Name]
+	if tag == nil {
+		tag = new(ctxTag)
+		pl.emojiTags[re.Name] = tag
+	}
+	pl.notePart(gtx, tag, pillPart{on: true, url: pl.emojiURL(re)})
+	d := pl.emoji(gtx, re)
+	contextArea(gtx, tag, d.Size)
+	return d
+}
+
+// notePart records a context press on a plugin-drawn pill's part (tag)
+// for the list's menu, which the press reaches too (contextArea passes it
+// on).
+func (pl *reactPill) notePart(gtx layout.Context, tag *ctxTag, part pillPart) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
+		if !ok {
+			return
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			pl.ctxPart = part
+		}
+	}
 }
 
 // layoutTruncation is the pill's "…" after ten emoji
@@ -3205,6 +3262,16 @@ func (pl *reactPill) truncation(gtx layout.Context, st slackc.Styled) layout.Dim
 	return label(gtx, rc.th, cs, "\u2026")
 }
 
+// emojiURL is the image re's emoji draws: its custom emoji's, else the
+// standard emoji's on Slack's CDN.
+func (pl *reactPill) emojiURL(re *core.Reaction) string {
+	if re.URL != "" || pl.r.rc.h.Core() == nil {
+		return re.URL
+	}
+	u, _, _ := pl.r.rc.h.Core().Emoji(re.Name)
+	return u
+}
+
 // emoji draws re's emoji (its alt text while the image loads).
 func (pl *reactPill) emoji(gtx layout.Context, re *core.Reaction) layout.Dimensions {
 	rc := pl.r.rc
@@ -3233,7 +3300,10 @@ func (pl *reactPill) layoutCount(gtx layout.Context, _ slackc.Props) layout.Dime
 	if pl.group() == nil {
 		return layout.Dimensions{}
 	}
-	return pillLine(pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0)), dp(gtx, 16))
+	pl.notePart(gtx, &pl.countTag, pillPart{on: true, count: true})
+	d := pl.count(gtx, slackc.CurrentScope().Child(reactionCountClass, 0))
+	contextArea(gtx, &pl.countTag, d.Size)
+	return pillLine(d, dp(gtx, 16))
 }
 
 // ReactionDrawnHook, when set (tests: a reaction's frame,

@@ -5,6 +5,8 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -261,7 +263,8 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	media := func() {
 		if a.Image != nil && !a.Legacy {
 			cy += l.dp(6)
-			tg := l.d.addTarget(target{kind: tImage, img: a.Image})
+			// AttachmentImage's <a href>: externalSourceUrl || url
+			tg := l.d.addTarget(target{kind: tImage, img: a.Image, href: firstNonEmpty(externalSourceURL(a), a.Image.URL)})
 			row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
 			l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
 		} else if a.Image != nil && mediaExpanded() {
@@ -1337,3 +1340,60 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
 	return h
 }
+
+// externalSourceURL is getExternalSourceUrl (Dv89 uN), AttachmentMedia's
+// externalSourceUrl: title_link, original_url or app_unfurl_url, else a
+// from_url that isn't on a Slack host (isValidSlackPermalinkHostName,
+// mMpZ: an apex domain of Slack's, /bpz isSlackUrl), with a query that
+// only escapes its ampersands unescaped.
+func externalSourceURL(a *richtext.Attachment) string {
+	t := firstNonEmpty(a.TitleLink, a.OriginalURL, a.AppUnfurlURL)
+	if t == "" && a.FromURL != "" {
+		if u, err := url.Parse(a.FromURL); err == nil && !slackPermalinkHost(u.Hostname()) {
+			t = a.FromURL
+		}
+	}
+	_, q, _ := strings.Cut(t, "?")
+	q, _, _ = strings.Cut(q, "?") // split("?")[1]
+	if strings.Contains(q, "&amp;") && !ampNotEscaped(q) {
+		t = lodashUnescape.Replace(t)
+	}
+	return t
+}
+
+// lodashUnescape is lodash's unescape (L7LR): the five entities escape
+// writes, nothing else.
+var lodashUnescape = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", `"`, "&#39;", "'")
+
+// ampNotEscaped is /&(?!amp;)/: an "&" that doesn't start "&amp;".
+func ampNotEscaped(q string) bool {
+	for i := 0; i < len(q); i++ {
+		if q[i] == '&' && !strings.HasPrefix(q[i:], "&amp;") {
+			return true
+		}
+	}
+	return false
+}
+
+// slackApexDomains are /bpz's S: Slack's commercial, dev, GovSlack and
+// military apex domains.
+var slackApexDomains = [...]string{"slack.com", "slack-dev.com", "slack-gov.com", "slack-gov-dev.com", "slack.mil", "slack-mil-dev.com"}
+
+// slackPermalinkHost is isValidSlackPermalinkHostName (mMpZ): host's apex
+// domain (its last two labels) is Slack's and host is a workspace host
+// (one label before the apex, or the enterprise/staging/dev/qa forms).
+func slackPermalinkHost(host string) bool {
+	host = strings.ToLower(host)
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	apex := strings.Join(labels[len(labels)-2:], ".")
+	ok := false
+	for _, d := range slackApexDomains {
+		ok = ok || d == apex
+	}
+	return ok && slackPermalinkHostRe.MatchString(host)
+}
+
+var slackPermalinkHostRe = regexp.MustCompile(`^[^.]*\.?(((enterprise\.)?(staging|staging-master|staging-sandbox|dev\d*|qa\d*)|enterprise)\.)?[^.]+\.[^.]+$`)

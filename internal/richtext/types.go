@@ -332,6 +332,9 @@ type Attachment struct {
 	AuthorSubname  string // e.g. "@handle" next to the author name in unfurls
 	ShareChannelID string // shared message's channel id
 	VideoURL       string // video block: the playable/embeddable URL
+	// AppUnfurlURL is app_unfurl_url: an app's unfurl, the link
+	// getExternalSourceUrl falls back to after title_link and original_url.
+	AppUnfurlURL string
 
 	// MsgCard is a message permalink unfurl (is_msg_unfurl) drawn as
 	// Slack's MessageAttachmentSlackMessageCard: 36px avatar, author,

@@ -1373,6 +1373,7 @@ func (c *Composer) submit() {
 
 	if c.edit != nil {
 		m := c.edit
+		blocks := withKeptBlocks(blocks, m.Blocks) // saveMessageEdit keeps the message's other blocks (edit_blocks.go)
 		if then := c.SaveEditThen; then != nil {
 			// the edit's thunks and transforms are the user's: queued now,
 			// on the UI goroutine (taut.UserAction, DispatchThen), so a
@@ -1402,6 +1403,17 @@ func (c *Composer) submit() {
 			}
 		}()
 		c.finishEdit()
+		return
+	}
+
+	// handleSlashCommand's parseEditLastMessageCommand, ahead of every
+	// command: "/s/old/new" edits the viewer's last message here and is
+	// neither sent nor run (edit_last.go). The draft goes now; a failure
+	// puts it back (sendDraftMessage's restoreDraftOnFailure).
+	if cmd, ok := editLastFromDoc(doc); ok {
+		c.cmdPick = core.Command{}
+		c.clearAfterSend()
+		c.editLast(cmd, d)
 		return
 	}
 
@@ -1969,7 +1981,7 @@ func (c *Composer) editFilesChanged() bool {
 // the message as it was (Slack restores the edit).
 func (c *Composer) saveEditWithFiles(doc *Doc) {
 	m := c.edit
-	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
+	text, blocks := doc.Mrkdwn(), withKeptBlocks(doc.RichTextBlocks(), m.Blocks)
 	files := c.att.takeForEdit()
 	save, api := c.SaveEdit, c.api
 	go func() {

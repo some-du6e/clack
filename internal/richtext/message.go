@@ -715,6 +715,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 	} else {
 		att.IsUnfurl = a.ServiceName != "" || a.FromURL != "" || a.OriginalURL != ""
 		att.OriginalURL = SafeURL(a.OriginalURL)
+		att.AppUnfurlURL = SafeURL(a.AppUnfurlURL)
 		att.ServiceURL = SafeURL(a.ServiceURL)
 		att.VideoHTML, att.AudioHTML, att.OtherHTML = a.VideoHTML != "", a.AudioHTML != "", a.OtherHTML != ""
 		att.AudioHTMLCode, att.AudioHTMLHeight = a.AudioHTML, a.AudioHTMLH
