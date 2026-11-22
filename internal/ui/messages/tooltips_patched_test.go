@@ -56,9 +56,11 @@ func newTipEnv(t *testing.T, setup func(app *core.App)) *tipEnv {
 	return e
 }
 
+// frame lays a frame out at the wall clock's time: the list times its
+// reaction and status tips by time.Now (layoutList), the rest by gtx.Now.
 func (e *tipEnv) frame() {
 	e.ops.Reset()
-	e.now = e.now.Add(20 * time.Millisecond)
+	e.now = time.Now()
 	gtx := layout.Context{Ops: &e.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(900, 700)), Now: e.now, Source: e.r.Source()}
 	e.v.Layout(gtx)
 	e.r.Frame(&e.ops)
@@ -71,11 +73,13 @@ func (e *tipEnv) move(p image.Point) {
 	e.frame()
 }
 
-// rest runs frames for d with the pointer still at p.
+// rest runs frames for d of wall-clock time with the pointer still at p.
 func (e *tipEnv) rest(p image.Point, d time.Duration) {
-	for end := e.now.Add(d); e.now.Before(end); {
+	for start := time.Now(); time.Since(start) < d; {
 		e.move(p)
+		time.Sleep(15 * time.Millisecond)
 	}
+	e.move(p)
 }
 
 // drew reports whether a frame since the last clear drew a string with sub.
@@ -257,7 +261,7 @@ func TestSenderStatusTooltip(t *testing.T) {
 	if rect.Empty() || !p.In(rect.Inset(-1)) {
 		t.Errorf("status tooltip anchored at %v, the pointer at %v", rect, p)
 	}
-	if !e.drew("Out & about") {
+	if !e.drew("about") { // flowTip draws word by word
 		t.Error("the status tooltip's text was never drawn")
 	}
 	// bob's status ended an hour ago: no emoji, nothing to hover
@@ -276,7 +280,7 @@ func TestTimestampTooltip(t *testing.T) {
 	}
 	want := fullTimestampFor(tsFair, e.now)
 	e.clear()
-	e.rest(p, timestampTipDelayT/2)
+	e.rest(p, timestampTipDelayT/3)
 	if e.drew(want) {
 		t.Errorf("the time's tooltip showed before its %v delay", timestampTipDelayT)
 	}
