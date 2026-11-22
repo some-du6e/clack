@@ -44,11 +44,13 @@ func TestDisplaysMac(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
 	}
-	// Displays and NSScreen are two reads, and the runner's Dock moves the
-	// visible frame between them (image-context-menu's push ci 44990293041:
-	// a work area 706 points down against NSScreen's 705; TestBoundsMac in
-	// the same run read 708). Compare a read of Displays taken between two
-	// NSScreen reads that agree: the screens held still across it.
+	// Displays and NSScreen are two reads, and the runner's Dock may move
+	// the visible frame between them: compare a read of Displays taken
+	// between two NSScreen reads that agree. The steady misses (a work
+	// area 706 points down against NSScreen's 705, image-context-menu's
+	// push ci 44990293041; 708 against 706, train-169's 45045823814) were
+	// the launch's screens, which this first call of the process got
+	// (TestDisplaysMacAfterLaunchReadsLive).
 	screens := func() []cocoatest.Screen {
 		var ss []cocoatest.Screen
 		cocoatest.OnMain(func() { ss = cocoatest.Screens() })
@@ -80,6 +82,46 @@ func TestDisplaysMac(t *testing.T) {
 	if p := ds[0].Bounds.Min; p != (image.Point{}) {
 		t.Errorf("the primary screen's top left is %v, want the origin", p)
 	}
+}
+
+// After the launch Displays reads NSScreen afresh, on the main thread,
+// whenever it's called: held, the main thread holds the call, which then
+// gives the screens as they are. The launch's own screens (CLACK_PATCHES.md
+// §56) went to the process's first call however late it came, without the
+// main thread: TestDisplaysMac read the runner's Dock as it was at the
+// launch (a work area to 708 against NSScreen's 706, train-169's push ci
+// 45045823814). Run alone, this is the process's first call.
+func TestDisplaysMacAfterLaunchReadsLive(t *testing.T) {
+	if !macWindowTestsEnabled() {
+		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
+	}
+	held, release := make(chan struct{}), make(chan struct{})
+	go cocoatest.OnMain(func() {
+		close(held)
+		<-release
+	})
+	<-held
+	got := make(chan []Display, 1)
+	go func() { got <- Displays() }()
+	select {
+	case ds := <-got:
+		close(release)
+		t.Fatalf("Displays answered %+v with the main thread held: not NSScreen now (the launch's screens)", ds)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	var ds []Display
+	select {
+	case ds = <-got:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Displays never answered once the main thread was free")
+	}
+	var ss []cocoatest.Screen
+	cocoatest.OnMain(func() { ss = cocoatest.Screens() })
+	if len(ds) == 0 || len(ds) != len(ss) {
+		t.Fatalf("%d displays, NSScreen has %d", len(ds), len(ss))
+	}
+	t.Logf("displays %+v; NSScreen %+v", ds, ss)
 }
 
 // Bounds on macOS: the window opens at the frame asked for (points from
