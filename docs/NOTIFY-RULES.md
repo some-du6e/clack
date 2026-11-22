@@ -168,3 +168,30 @@ whom it sends one to. Clack ✓ (thread-reply-toast rounds 1–3).
 - **Badge, sidebar bold and mention badge, the Threads link, Activity's
   unread**: notify-relatives part 3 (same frame as the message, cleared
   when read anywhere).
+
+## 8. Windows: why a toast Clack sent doesn't show
+
+The decision line's `notify: show` is the rules'. What Windows does with
+the toast after that is logged by ui/notify_windows.go with the same tags,
+read from Windows itself (internal/desktop focusassist_windows.go,
+notifystate_windows.go). Slack desktop asks the toast notifier's setting
+before a toast and Focus Assist before a sound (checkNotificationState,
+main.bundle.cjs 4.53.276 win32: "Suppressing notification display due to
+Windows toast notifications being disabled or FocusAssist being active").
+
+| Windows' reason | What Windows does | clack.log |
+|---|---|---|
+| Clack's notifications off (Settings > System > Notifications > Clack) | takes the toast, never shows it | `notify: Windows has Clack's notifications off (…): the toast for … won't show`, from the registry's `Notifications\Settings\<app id>` `Enabled` 0, since `ToastNotifier.Setting` fails for Clack's unpackaged app id (0x80070490) |
+| Every app's notifications off | the same | `notify: Windows has every app's notifications off (…)`, from `PushNotifications` `ToastEnabled` 0 |
+| A group policy, the manifest | the same | `notify: Windows has Clack's toasts off (off by a group policy)`, when `ToastNotifier.Setting` answers |
+| Focus Assist or Do not disturb: alarms only, or priority only without Clack on its list, by hand or by its automatic rules | sends the toast to the notification center without a banner | `notify: Focus Assist is on (alarms only): …` |
+| The shell holding banners: an app or a game full screen, presentation mode, the screen locked, the quiet hour after a first sign-in, a Store app full screen | the same | `notify: Windows holds notification banners now (an app is full screen): …`, from SHQueryUserNotificationState |
+| The app in focus | shows the app its own toasts | nothing from Windows; Clack's rules hold them (`notify: skip 16`) |
+| A burst | shows the banners one after another | `notify: N toasts in 10s, the one for … last: …` |
+| Shown, then gone | | `notify: the toast for … left the screen after 6s: its banner timed out (…)`, or closed, or taken back by Clack |
+| Refused | | `notify: Windows didn't show the toast for …: <HRESULT>` (its Failed event), `notify: the toast for … didn't go to Windows: …` |
+| Clack's app id not registered | keeps the toast in its history only | `notify: registering Clack's app id for toasts: …` |
+
+Clack's own notification settings, as Windows keeps them, are listed
+whenever they change: `notify: Windows' notification settings for Clack:
+Enabled=1 ShowInActionCenter=1 …`.
