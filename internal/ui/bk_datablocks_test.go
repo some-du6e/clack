@@ -8,7 +8,6 @@ package ui
 
 import (
 	"fmt"
-	"image"
 	"strings"
 	"testing"
 	"time"
