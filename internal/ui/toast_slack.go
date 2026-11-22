@@ -76,6 +76,13 @@ func (a *App) ToastParts(parts []i18n.Part, icon string, iconCol color.NRGBA, d 
 	a.Invalidate()
 }
 
+// ToastPartsThen is ToastParts (no icon) that runs gone once its time is
+// up, as Slack's Toast calls onCloseComplete after it fades.
+func (a *App) ToastPartsThen(parts []i18n.Part, d time.Duration, gone func()) {
+	a.ToastParts(parts, "", color.NRGBA{}, d)
+	a.toast.gone = gone
+}
+
 // ToastLink is ToastParts whose <link> run (Slack's Link with an onClick,
 // as AddOrMoveToFolderMenuItems' "Moved {fileName} to folder
 // <link>{folderName}</link>") opens href: a slack:// link navigates.

@@ -1286,6 +1286,9 @@ type toastState struct {
 	// rect is the toast as last drawn (window coords): its box in the
 	// inspect tool's record
 	rect image.Rectangle
+	// gone runs once when the toast's time is up (Slack's Toast
+	// onCloseComplete: the emoji pack InstallToast badges the composer)
+	gone func()
 }
 
 // Toast shows a short message at the bottom of the window.
@@ -1323,6 +1326,10 @@ func (a *App) layoutToast(gtx layout.Context) {
 	now := time.Now()
 	if now.After(a.toast.until) {
 		a.toast.text = ""
+		if g := a.toast.gone; g != nil {
+			a.toast.gone = nil
+			g()
+		}
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{At: a.toast.until})
