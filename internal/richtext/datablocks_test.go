@@ -49,6 +49,9 @@ func TestDataVizDecodesSlacksExamples(t *testing.T) {
 		}
 	}
 	d := blocksMsg(t, `[`+startupViz+`]`)
+	if d.Blocks[0].DataViz == nil {
+		t.Fatalf("not a chart: %+v", d.Blocks)
+	}
 	if dv := d.Blocks[0].DataViz; dv.BlockID != "viz-bar-single" || dv.Chart.XLabel != "client" || dv.Chart.YLabel != "time to window (ms)" ||
 		strings.Join(dv.Chart.Categories, ",") != "Slack,Slick,Taut,Clack" {
 		t.Errorf("startup chart %+v", dv)
@@ -103,8 +106,8 @@ const slackTableExample = `{"type":"data_table","caption":"A Fabulous Table","ro
 
 func TestDataTableDecodesSlacksExample(t *testing.T) {
 	d := blocksMsg(t, `[`+slackTableExample+`]`)
-	dt := d.Blocks[0].DataTable
-	if dt == nil || dt.Err || dt.Cols != 3 || len(dt.Body) != 3 || dt.Caption != "A Fabulous Table" {
+	dt := tableOf(t, d, 0)
+	if dt.Err || dt.Cols != 3 || len(dt.Body) != 3 || dt.Caption != "A Fabulous Table" {
 		t.Fatalf("example: %+v", dt)
 	}
 	if c := dt.Body[1][2]; c.Kind != DTRich || c.Sort != "Greenreview" || len(c.Spans) != 2 || c.Spans[1].Style&Italic == 0 {
@@ -120,7 +123,7 @@ func TestDataTableDecode(t *testing.T) {
 	if len(d.Blocks) != 1 || d.Blocks[0].Kind != DataTableBlock {
 		t.Fatalf("blocks %+v", d.Blocks)
 	}
-	dt := d.Blocks[0].DataTable
+	dt := tableOf(t, d, 0)
 	if dt.Err || dt.Cols != 3 || len(dt.Body) != 110 || dt.Caption != "Full points leaderboard" || dt.Label != dt.Caption ||
 		dt.PageSize != 5 || dt.RowHeader != 0 || dt.Salesforce || dt.BlockID != "dtlb1" {
 		t.Fatalf("table: err %v cols %d rows %d caption %q page %v", dt.Err, dt.Cols, len(dt.Body), dt.Caption, dt.PageSize)
@@ -136,6 +139,15 @@ func TestDataTableDecode(t *testing.T) {
 	}
 }
 
+// tableOf is d's block i as a data_table (fatal when it isn't one).
+func tableOf(t *testing.T, d *Doc, i int) *DataTable {
+	t.Helper()
+	if i >= len(d.Blocks) || d.Blocks[i].Kind != DataTableBlock || d.Blocks[i].DataTable == nil {
+		t.Fatalf("block %d isn't a data_table: %+v", i, d.Blocks)
+	}
+	return d.Blocks[i].DataTable
+}
+
 // Each cell type as renderCellContent, getCellSortValue,
 // convertTableBlockToTsv and convertTableCellToPlainText read it.
 func TestDataTableCells(t *testing.T) {
@@ -145,7 +157,7 @@ func TestDataTableCells(t *testing.T) {
 		 {"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"bold","style":{"bold":true}},{"type":"text","text":" and "},{"type":"link","url":"https://example.com","text":"a link"}]}]},
 		 {"type":"action_cell","element":{"type":"button","action_id":"go","text":{"type":"plain_text","text":"Go"},"value":"v"}},
 		 null,{"type":"mystery","text":"m"}]]}]`)
-	dt := d.Blocks[0].DataTable
+	dt := tableOf(t, d, 0)
 	if dt.Err {
 		t.Fatal("the render throws")
 	}
@@ -207,7 +219,7 @@ func TestDataTableErrors(t *testing.T) {
 		}
 	}
 	d := blocksMsg(t, `[{"type":"data_table","caption":7,"page_size":"2","is_salesforce":"no","rows":[[{"type":"raw_text","text":"n"}],[{"type":"raw_number","value":"1","text":1}]]}]`)
-	if dt := d.Blocks[0].DataTable; dt.Caption != "7" || dt.PageSize != 5 || !dt.Salesforce || dt.Body[0][0].Text != "1" || dt.Body[0][0].NumberOK {
+	if dt := tableOf(t, d, 0); dt.Caption != "7" || dt.PageSize != 5 || !dt.Salesforce || dt.Body[0][0].Text != "1" || dt.Body[0][0].NumberOK {
 		t.Errorf("mistyped fields read as %+v", dt)
 	}
 }

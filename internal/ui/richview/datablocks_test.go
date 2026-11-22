@@ -52,6 +52,16 @@ func dtCenter(r image.Rectangle) f32.Point {
 	return f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
 }
 
+// oneTable is v's only data_table (fatal otherwise).
+func oneTable(t *testing.T, v *View) DataTableRect {
+	t.Helper()
+	ts := v.DataTableRects()
+	if len(ts) != 1 {
+		t.Fatalf("%d data_tables laid out, want 1", len(ts))
+	}
+	return ts[0]
+}
+
 // clickRect clicks r's centre at time at.
 func (hs *harness) clickRect(r image.Rectangle, at time.Duration) {
 	p := dtCenter(r)
@@ -121,10 +131,10 @@ func TestDataTableLayout(t *testing.T) {
 		t.Errorf("body border %+v", body)
 	}
 	// a modal or App Home: the full width; a message: at most 800px
-	if w := layoutAt(st, kitDoc(t, `[`+boardTable(3, "")+`]`), Options{}, 1000).DataTableRects()[0].Buttons["more"].Max.X; w != 800-4-1 {
+	if w := oneTable(t, layoutAt(st, kitDoc(t, `[`+boardTable(3, "")+`]`), Options{}, 1000)).Buttons["more"].Max.X; w != 800-4-1 {
 		t.Errorf("message at 1000px: More actions ends at %d, want 795 (800px max)", w)
 	}
-	if w := layoutAt(st, kitDoc(t, `[`+boardTable(3, "")+`]`), Options{FillBlocks: true}, 1000).DataTableRects()[0].Buttons["more"].Max.X; w != 1000-4-1 {
+	if w := oneTable(t, layoutAt(st, kitDoc(t, `[`+boardTable(3, "")+`]`), Options{FillBlocks: true}, 1000)).Buttons["more"].Max.X; w != 1000-4-1 {
 		t.Errorf("view at 1000px: More actions ends at %d, want 995", w)
 	}
 }
@@ -136,7 +146,7 @@ func TestDataTablePaging(t *testing.T) {
 	hs := newHarness(kitDoc(t, `[`+boardTable(110, "")+`]`), h)
 	hs.w = 700
 	hs.frame()
-	tbl := hs.v.DataTableRects()[0]
+	tbl := oneTable(t, hs.v)
 	dt := tbl.Block
 	if p, n := hs.v.DataTablePage(dt); p != 0 || n != 22 {
 		t.Fatalf("page %d of %d, want 0 of 22", p, n)
@@ -145,12 +155,12 @@ func TestDataTablePaging(t *testing.T) {
 	if got := hs.v.DataTableRows(dt); strings.Join(got, ",") != "6,7,8,9,10" {
 		t.Errorf("after next: %q", got)
 	}
-	hs.clickRect(hs.v.DataTableRects()[0].Buttons["page:5"], time.Second)
+	hs.clickRect(oneTable(t, hs.v).Buttons["page:5"], time.Second)
 	if got := hs.v.DataTableRows(dt); strings.Join(got, ",") != "21,22,23,24,25" {
 		t.Errorf("page 5: %q", got)
 	}
 	// the range follows the page: 3..7 around page 5
-	tbl = hs.v.DataTableRects()[0]
+	tbl = oneTable(t, hs.v)
 	if _, ok := tbl.Buttons["page:7"]; !ok {
 		t.Errorf("page 5 shows no page 7 button: %v", tbl.Buttons)
 	}
@@ -167,14 +177,14 @@ func TestDataTablePaging(t *testing.T) {
 	hs.w = 700
 	hs.frame()
 	h0 := hs.v.d.size.Y
-	dt = hs.v.DataTableRects()[0].Block
-	hs.clickRect(hs.v.DataTableRects()[0].Buttons["page:3"], 0)
+	dt = oneTable(t, hs.v).Block
+	hs.clickRect(oneTable(t, hs.v).Buttons["page:3"], 0)
 	if got := hs.v.DataTableRows(dt); strings.Join(got, ",") != "7" || hs.v.d.size.Y != h0 {
 		t.Errorf("last page %q at height %d, want [7] at %d", got, hs.v.d.size.Y, h0)
 	}
 	// one page: the footer's pagination is hidden, the row keeps its 32px
 	v := layoutAt(newTestStyle(), kitDoc(t, `[`+boardTable(5, "")+`]`), Options{}, 700)
-	if b := v.DataTableRects()[0].Buttons; len(b) != 6 { // more, view, search, three sorts
+	if b := oneTable(t, v).Buttons; len(b) != 6 { // more, view, search, three sorts
 		t.Errorf("one page: buttons %v", b)
 	}
 	if got, want := v.d.size.Y, 4+46+36+5*48+4+4; got != want {
@@ -189,7 +199,7 @@ func TestDataTableSort(t *testing.T) {
 	hs := newHarness(kitDoc(t, `[`+boardTable(110, "")+`]`), h)
 	hs.w = 700
 	hs.frame()
-	tbl := hs.v.DataTableRects()[0]
+	tbl := oneTable(t, hs.v)
 	for i, id := range []string{"more", "view", "search", "sort:2"} {
 		hs.clickRect(tbl.Buttons[id], time.Duration(i)*time.Second)
 	}
@@ -220,6 +230,9 @@ func TestDataTableSort(t *testing.T) {
 		[{"type":"raw_text","text":"b"},{"type":"raw_number","value":42,"text":"42"}],
 		[{"type":"raw_text","text":""},{"type":"raw_number","value":7,"text":"7"}],
 		[{"type":"raw_text","text":"a"},{"type":"raw_number","value":1250,"text":"1,250"}]]}]`)
+	if len(nd.Blocks) != 1 || nd.Blocks[0].DataTable == nil {
+		t.Fatalf("not a data_table: %+v", nd.Blocks)
+	}
 	dt := nd.Blocks[0].DataTable
 	for _, c := range []struct {
 		col  int
@@ -400,6 +413,9 @@ func TestDataVizHoverAndMenu(t *testing.T) {
 func TestDataTableFilter(t *testing.T) {
 	st := newTestStyle()
 	d := kitDoc(t, `[`+boardTable(110, "")+`]`)
+	if len(d.Blocks) != 1 || d.Blocks[0].DataTable == nil {
+		t.Fatalf("not a data_table: %+v", d.Blocks)
+	}
 	dt := d.Blocks[0].DataTable
 	c := NewTableControl(dt, nil)
 	c.SetFilter("member 10")
