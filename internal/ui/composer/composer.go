@@ -549,8 +549,8 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	dims := c.layoutBoundary(gtx)
 	if live {
 		c.ui.endFrame()
-		c.boxSize = dims.Size
 	}
+	c.boxSize = dims.Size
 
 	// Autocomplete after the editor laid out, anchored at the trigger,
 	// with what plugins changed on TextyAutocomplete.

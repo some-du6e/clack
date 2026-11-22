@@ -24,15 +24,75 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
-// voiceMic is a synthetic microphone with a voice's shape: a 140 Hz
-// buzz and its harmonics under a syllable-rate envelope, in 20 ms chunks
-// at real time.
+// voiceMic is a synthetic microphone that sounds enough like speech for
+// the recorder's noise suppression to keep it: internal/huddle's
+// synthSpeech (TestMicNoiseSuppression's), a glottal pulse train gliding
+// 100 to 150 Hz through a vowel's three formants, 250 ms syllables with
+// gaps, at -20 dBFS; looped in 20 ms chunks at real time.
 type voiceMic struct {
 	stop chan struct{}
 	once sync.Once
 }
 
 func newVoiceMic() huddle.Device { return &voiceMic{stop: make(chan struct{})} }
+
+var voicePCM = func() []int16 {
+	const rate = 48000
+	n := 6 * rate
+	pcm, on := make([]float64, n), make([]bool, n)
+	vowels := [][3]float64{{730, 1090, 2440}, {270, 2290, 3010}, {530, 1840, 2480}, {300, 870, 2240}, {660, 1720, 2410}}
+	type res struct{ a1, a2, b, y1, y2 float64 }
+	mk := func(f, bw float64) res {
+		r := math.Exp(-math.Pi * bw / rate)
+		th := 2 * math.Pi * f / rate
+		return res{a1: 2 * r * math.Cos(th), a2: -r * r, b: 1 - r}
+	}
+	var rs [3]res
+	phase, t, syl := 0.0, 0, 0
+	for t < n {
+		v := vowels[syl%len(vowels)]
+		for k := range rs {
+			rs[k] = mk(v[k], 80+40*float64(k))
+		}
+		sylLen := rate / 4
+		for i := 0; i < sylLen && t < n; i, t = i+1, t+1 {
+			env := math.Sin(math.Pi * float64(i) / float64(sylLen))
+			phase += (100 + 50*float64(i)/float64(sylLen)) / rate
+			x := 0.0
+			if phase >= 1 {
+				phase--
+				x = 1
+			}
+			for k := range rs {
+				r := &rs[k]
+				y := r.b*x + r.a1*r.y1 + r.a2*r.y2
+				r.y2, r.y1 = r.y1, y
+				x = y
+			}
+			pcm[t], on[t] = x*env, true
+		}
+		gap := rate * 12 / 100
+		if syl%4 == 3 {
+			gap = rate * 6 / 10
+		}
+		t += gap
+		syl++
+	}
+	var s float64
+	var c int
+	for i, v := range pcm {
+		if on[i] {
+			s += v * v
+			c++
+		}
+	}
+	scale := math.Pow(10, -20.0/20) * 32768 / math.Sqrt(s/float64(c))
+	out := make([]int16, n)
+	for i, v := range pcm {
+		out[i] = int16(math.Max(-32768, math.Min(32767, v*scale)))
+	}
+	return out
+}()
 
 func (d *voiceMic) Start(capture func([]int16), _ func([]int16)) error {
 	go func() {
@@ -47,13 +107,7 @@ func (d *voiceMic) Start(capture func([]int16), _ func([]int16)) error {
 			case <-t.C:
 			}
 			for i := range buf {
-				ts := float64(n) / 48000
-				env := math.Max(0, math.Sin(2*math.Pi*2.3*ts)) * (0.6 + 0.4*math.Sin(2*math.Pi*0.37*ts))
-				v := 0.0
-				for k := 1; k <= 12; k++ {
-					v += math.Sin(2*math.Pi*140*float64(k)*ts) / float64(k)
-				}
-				buf[i] = int16(env * 0.35 * 32767 * v / 3)
+				buf[i] = voicePCM[n%len(voicePCM)]
 				n++
 			}
 			if capture != nil {
@@ -110,6 +164,9 @@ func TestAudioClipShots(t *testing.T) {
 				c := New(host, ch, "")
 				t.Cleanup(c.Close)
 				c.Origin = image.Pt(0, 200*scale)
+				if state == "pending" { // the attachment row: room for the whole box
+					c.Origin = image.Pt(0, 100*scale)
+				}
 				var ops op.Ops
 				frame := func() {
 					ops.Reset()
