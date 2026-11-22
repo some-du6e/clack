@@ -73,9 +73,12 @@ func (c *Controller) autoDockLocked() bool {
 	return prefBool(raw)
 }
 
-// docksLocked is whether t's video docks on scroll or navigation.
+// docksLocked is whether t's video docks on scroll or navigation. An
+// audio file never does: Slack's MessageFilePreview gives FileAudio no
+// onOpenMiniPlayer, so its player plays on scrolled away and stops with
+// its message, as a video does without clips_pip.
 func (c *Controller) docksLocked(t *tile) bool {
-	return t.h != nil && t.playing && t.inline() && !t.inPip && c.PipOn() && c.autoDockLocked()
+	return t.h != nil && t.playing && t.inline() && !t.inPip && t.au == nil && (t.f == nil || !t.f.IsAudio) && c.PipOn() && c.autoDockLocked()
 }
 
 // dockLocked docks t's video (openPip from an inline player), playing

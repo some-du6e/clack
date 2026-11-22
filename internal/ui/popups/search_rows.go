@@ -218,7 +218,7 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 	bw := border1(gtx)
 	cardH := 2*bw + dp(gtx, 68)
 	sz := image.Pt(cw, cardH)
-	hover := v.rows[i].Hovered()
+	hover := v.row(f.ID).Hovered()
 	at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
 		r := image.Rectangle{Max: sz}
 		rad := dp(gtx, 8)
@@ -234,7 +234,7 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 		rrect(gtx, r.Inset(bw), max(0, rad-bw), inner)
 		g := gtx
 		g.Constraints = layout.Exact(sz)
-		v.rows[i].Layout(g, func(gtx layout.Context) layout.Dimensions {
+		v.row(f.ID).Layout(g, func(gtx layout.Context) layout.Dimensions {
 			pointerCursor(gtx, sz)
 			return layout.Dimensions{Size: sz}
 		})
@@ -651,14 +651,14 @@ func (v *SearchView) chanButtons(gtx layout.Context, th *theme.Theme, i, right i
 func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i, px, cw int) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{}
 	ch := v.chans[i]
-	ui := &v.chanUI[i]
+	ui := v.chanUIOf(ch.ID)
 	n := len(v.chans)
 	bw := border1(gtx)
 	h := srChanRowH(gtx, i, n)
 	s := v.chanState(ch)
 	actions := s.inaction == ""
-	onButtons := actions && (ui.open.Hovered() || v.btns[i].Hovered() || ui.caret.Hovered())
-	hover := v.rows[i].Hovered() || onButtons || ui.inact.Hovered()
+	onButtons := actions && (ui.open.Hovered() || v.btn(ch.ID).Hovered() || ui.caret.Hovered())
+	hover := v.row(ch.ID).Hovered() || onButtons || ui.inact.Hovered()
 	at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
 		rad := dp(gtx, 8)
 		var tr, br int
@@ -687,7 +687,7 @@ func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 		rrectCorners(gtx, in, max(0, tr-bw), max(0, tr-bw), max(0, br-bw), max(0, br-bw), fillCol)
 		g := gtx
 		g.Constraints = layout.Exact(box.Size())
-		v.rows[i].Layout(g, func(gtx layout.Context) layout.Dimensions {
+		v.row(ch.ID).Layout(g, func(gtx layout.Context) layout.Dimensions {
 			pointerCursor(gtx, box.Size())
 			return layout.Dimensions{Size: box.Size()}
 		})
@@ -695,7 +695,7 @@ func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 		w := cw - 2*x0
 		v.chanEntity(gtx, th, cl, ch, s, ui, x0, y0, w, hover && !onButtons)
 		if hover && actions {
-			label := s.joinLabel(ch.IsMember, v.btns[i].Hovered())
+			label := s.joinLabel(ch.IsMember, v.btn(ch.ID).Hovered())
 			b := v.chanButtons(gtx, th, i, cw, s, label)
 			ui.caretR = b.caret
 			at(gtx, b.open.Min, func(gtx layout.Context) layout.Dimensions {
@@ -708,7 +708,7 @@ func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 			}
 			at(gtx, b.join.Min, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Exact(b.join.Size())
-				return buttonGrp(gtx, th, &v.btns[i], BtnOutline, BtnMedium, label, "", 0, false, grp)
+				return buttonGrp(gtx, th, v.btn(ch.ID), BtnOutline, BtnMedium, label, "", 0, false, grp)
 			})
 			if s.temp {
 				at(gtx, b.caret.Min, func(gtx layout.Context) layout.Dimensions {
@@ -911,43 +911,61 @@ func clipRRectCorners(gtx layout.Context, r image.Rectangle, nw, ne, se, sw int)
 // open the channel, Join / Leave change the membership, the caret opens
 // "Join…".
 func (v *SearchView) handleChannels(gtx layout.Context) {
-	for i := range v.chans {
-		if i >= len(v.chanUI) {
-			break
-		}
+	// bounded by the live results, one row's action a frame
+	for i := 0; i < len(v.chans); i++ {
 		ch := v.chans[i]
-		ui := &v.chanUI[i]
-		if v.rows[i].Clicked(gtx) || ui.open.Clicked(gtx) {
+		ui := v.chanUIOf(ch.ID)
+		if v.row(ch.ID).Clicked(gtx) || ui.open.Clicked(gtx) {
 			// ChannelListItem's navigate; openChannelResultInHome
 			RecordRecentConversation(ch.ID)
 			v.h.Navigate("c/" + ch.ID)
+			return
 		}
 		_ = ui.inact.Clicked(gtx) // onInteractionButtonClick: nothing
-		if v.btns[i].Clicked(gtx) && !ui.busy {
+		if v.btn(ch.ID).Clicked(gtx) && !ui.busy {
 			s := v.chanState(ch)
 			switch {
 			case ch.IsMember && s.canLeave:
-				v.leaveChannel(i)
+				v.leaveChannel(ch.ID)
 			case !ch.IsMember:
-				v.joinChannel(i, "")
+				v.joinChannel(ch.ID, "")
 			}
+			return
 		}
 		if ui.caret.Clicked(gtx) && !ui.busy {
 			v.joinMenu(gtx, i)
+			return
 		}
 	}
 }
 
+// chanIndex is channel id's place in the results, -1 when it isn't
+// listed (a page or a new search landed).
+func (v *SearchView) chanIndex(id string) int {
+	for i := range v.chans {
+		if v.chans[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
 // joinMenu is renderJoinMenu at the caret (position BottomRight).
 func (v *SearchView) joinMenu(gtx layout.Context, i int) {
+	if i < 0 || i >= len(v.chans) {
+		return
+	}
 	y, ok := v.srChanRowY(gtx, i)
-	ui := &v.chanUI[i]
+	ui := v.chanUIOf(v.chans[i].ID)
 	if !ok || ui.caretR.Empty() {
 		return
 	}
 	px := v.padX(gtx, gtx.Constraints.Max.X)
 	anchor := v.win(gtx, ui.caretR.Add(image.Pt(px, y)))
-	join := func(d core.TempJoin) func() { return func() { v.joinChannel(i, d) } }
+	// the menu's rows join the channel the caret was on, by its id: a page
+	// landing while the menu is open moves another channel to i
+	id := v.chans[i].ID
+	join := func(d core.TempJoin) func() { return func() { v.joinChannel(id, d) } }
 	items := []MenuItem{
 		MenuItem{Header: "Join…"}.In(nsSearch),
 		MenuItem{Label: "Just for today", Do: join(core.TempToday)}.In(nsSearch),
@@ -960,24 +978,26 @@ func (v *SearchView) joinMenu(gtx layout.Context, i int) {
 // joinChannel is onClickJoin (joinChannelWithRetryToast, reason
 // search_channel_view; d "" for a lasting join): on failure the
 // "Couldn’t join {channelName}." toast.
-func (v *SearchView) joinChannel(i int, d core.TempJoin) {
+func (v *SearchView) joinChannel(id string, d core.TempJoin) {
 	c := v.h.Core()
-	if c == nil || i >= len(v.chans) {
+	i := v.chanIndex(id)
+	if c == nil || i < 0 {
 		return
 	}
 	ch := v.chans[i]
-	id, seq := ch.ID, v.seq
-	v.chanUI[i].busy = true
+	seq := v.seq
+	v.chanUIOf(id).busy = true
 	run(v.h, func(ctx context.Context) (core.Conv, error) {
 		if d != "" {
 			return c.JoinFor(ctx, id, d)
 		}
 		return c.Join(ctx, id)
 	}, func(_ core.Conv, err error) {
-		if seq != v.seq || i >= len(v.chans) || v.chans[i].ID != id {
+		i := v.chanIndex(id)
+		if seq != v.seq || i < 0 {
 			return
 		}
-		v.chanUI[i].busy = false
+		v.chanUIOf(id).busy = false
 		if err != nil {
 			v.h.Toast(nsSearch.T("Couldn’t join {channelName}.", "channelName", "#"+ch.Name) + " " +
 				nsSearch.T("This could be a connection issue, or just a little blip."))
@@ -990,20 +1010,22 @@ func (v *SearchView) joinChannel(i int, d core.TempJoin) {
 
 // leaveChannel is onClickLeave: conversations.leave, and on failure the
 // "Couldn’t leave {channelName}." toast.
-func (v *SearchView) leaveChannel(i int) {
+func (v *SearchView) leaveChannel(id string) {
 	c := v.h.Core()
-	if c == nil || i >= len(v.chans) {
+	i := v.chanIndex(id)
+	if c == nil || i < 0 {
 		return
 	}
 	ch := v.chans[i]
-	id, seq := ch.ID, v.seq
-	v.chanUI[i].busy = true
+	seq := v.seq
+	v.chanUIOf(id).busy = true
 	run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.Leave(ctx, id) },
 		func(_ struct{}, err error) {
-			if seq != v.seq || i >= len(v.chans) || v.chans[i].ID != id {
+			i := v.chanIndex(id)
+			if seq != v.seq || i < 0 {
 				return
 			}
-			v.chanUI[i].busy = false
+			v.chanUIOf(id).busy = false
 			if err != nil {
 				v.h.Toast(nsSearch.T("Couldn’t leave {channelName}.", "channelName", "#"+ch.Name) + " " +
 					nsSearch.T("This could be a connection issue, or just a little blip."))
@@ -1093,14 +1115,14 @@ func (v *SearchView) personCard(gtx layout.Context, th *theme.Theme, cl *Colors,
 	bg := tokBasePry.of(th)
 	cardRing(gtx, r, rad, theme.Over(srTokFgLow13.of(th), bg), bg)
 	rrect(gtx, r, rad, bg)
-	if v.rows[i].Hovered() {
+	if v.row(u.ID).Hovered() {
 		rrect(gtx, r, rad, theme.Over(srTokSurfPry.of(th), bg))
 	}
 	cs := clipRRect(gtx, r, rad)
 	defer cs.Pop()
 	g := gtx
 	g.Constraints = layout.Exact(sz)
-	v.rows[i].Layout(g, func(gtx layout.Context) layout.Dimensions {
+	v.row(u.ID).Layout(g, func(gtx layout.Context) layout.Dimensions {
 		pointerCursor(gtx, sz)
 		return layout.Dimensions{Size: sz}
 	})
@@ -1198,9 +1220,10 @@ func srBanner(gtx layout.Context, th *theme.Theme, label string, deact bool, w i
 // handlePeople opens a clicked card's member profile (onCellClick:
 // navigate to the profile).
 func (v *SearchView) handlePeople(gtx layout.Context) {
-	for i := range v.people {
-		if v.rows[i].Clicked(gtx) {
+	for i := 0; i < len(v.people); i++ {
+		if v.row(v.people[i].ID).Clicked(gtx) {
 			pfOpenFull(v.h, v.people[i].ID)
+			return
 		}
 	}
 }

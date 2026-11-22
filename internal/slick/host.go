@@ -91,6 +91,17 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		return true, nil
 	})
 
+	// main.notifications.filter: how many predicates there are, so a
+	// toast asks the chain only while one is (notify.go)
+	sync("notificationFilters", func(a []json.RawMessage) (any, error) {
+		var n int32
+		if len(a) > 0 {
+			_ = json.Unmarshal(a[0], &n)
+		}
+		s.noteFilters.Store(n)
+		return nil, nil
+	})
+
 	// api.settings.panel: the plugins with a panel on their Preferences page
 	sync("panels", func(a []json.RawMessage) (any, error) {
 		var ids []string

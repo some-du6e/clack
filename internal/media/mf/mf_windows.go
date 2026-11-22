@@ -82,6 +82,14 @@ type backend struct{}
 
 func (backend) Name() string { return "mediafoundation" }
 
+// Takes is media.Taker's: every source but an audio file, which Go audio
+// plays (internal/media/goaudio, decoding AAC with Media Foundation's
+// source reader, out of its own sink). An audio file's Media Engine has
+// its audio renderer and nothing else to play: on a machine with no
+// audio output (the runners) it fails before its metadata, made muted or
+// not.
+func (backend) Takes(src media.Source) bool { return !media.IsAudio(src) }
+
 // Available is nil once mfplat.dll is loaded and MFStartup answered
 // (Windows N without the Media Feature Pack has no mfplat.dll).
 func (backend) Available() error {
@@ -191,10 +199,11 @@ var delayFirstTransfer atomic.Int64
 var forceAudioRenderer atomic.Bool
 
 // The tests' hooks, set before any player is made: each of the demuxer's
-// reads as it ends (the file's id, where, the bytes it got), and each of
-// the engine's events as it comes (codes below 1000 are HTML5's).
+// reads as it ends (the file's id, where, the bytes it got, when the
+// engine asked for it), and each of the engine's events as it comes
+// (codes below 1000 are HTML5's).
 var (
-	testRead  func(id string, off int64, n int)
+	testRead  func(id string, off int64, n int, asked time.Time)
 	testEvent func(id string, code uint32)
 )
 
@@ -1137,9 +1146,10 @@ func clackMFRead(h C.uintptr_t, req unsafe.Pointer, pb unsafe.Pointer, cb C.ulon
 			C.clack_me_read_done(req, 0, eAbort)
 			return
 		}
+		asked := time.Now()
 		n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
 		if testRead != nil {
-			testRead(p.src.FileID, int64(off), n)
+			testRead(p.src.FileID, int64(off), n, asked)
 		}
 		hr := C.int32_t(0)
 		if err != nil && n == 0 {
@@ -1158,9 +1168,10 @@ func clackMFReadSync(h C.uintptr_t, pb unsafe.Pointer, cb C.ulong, off C.longlon
 	if p == nil {
 		return -1
 	}
+	asked := time.Now()
 	n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
 	if testRead != nil {
-		testRead(p.src.FileID, int64(off), n)
+		testRead(p.src.FileID, int64(off), n, asked)
 	}
 	if err != nil && n == 0 {
 		return -1

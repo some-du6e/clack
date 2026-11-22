@@ -446,6 +446,29 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 	}
 }
 
+// OpenAudioClipMenu is the audio player's More actions
+// (videoplayer.AudioMenuOpener): AudioClipOverflowMenu under the ⋮.
+func (r *richHandler) OpenAudioClipMenu(f *richtext.File, win, view image.Rectangle, onClose func()) bool {
+	ph, ok := r.h.(popups.Host)
+	if !ok || r.m == nil || f == nil {
+		return false
+	}
+	btn := win
+	if btn.Empty() {
+		btn = view
+		if r.anchor != nil {
+			min := r.anchor(view.Min)
+			btn = image.Rectangle{Min: min, Max: min.Add(view.Size())}
+		}
+	}
+	mn := popups.NewAudioClipMenuClosing(ph, btn, *r.m, f, onClose)
+	if mn == nil {
+		return false
+	}
+	ph.ShowOverlay(mn)
+	return true
+}
+
 // OpenEmailLink is a link in an email's body (richview.EmailLinkHandler):
 // the Host's Open Link confirmation (EmailIframe's openLinkRedirectModal),
 // else the link.
