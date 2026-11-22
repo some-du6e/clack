@@ -57,7 +57,9 @@ type manageState struct {
 	deleted   map[string]bool
 }
 
-var manageStates sync.Map // *Server → *manageState
+// *Server → *manageState. A perServer map, so forget drops a closed
+// Server: as a bare sync.Map it kept every test's Server (permapguard)
+var manageStates = newPerServer()
 
 func (s *Server) manage() *manageState {
 	v, _ := manageStates.LoadOrStore(s, &manageState{retention: map[string]ChannelRetention{}, deleted: map[string]bool{}})

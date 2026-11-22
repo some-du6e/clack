@@ -132,6 +132,7 @@ type row struct {
 	richRaw  []byte // the msg.blocks allRich was read from
 
 	nameBtn, avatarBtn widget.Clickable
+	askBot             func() string     // askedBotFn's
 	nameHov, avatarHov hovercard.Trigger // Slack's ProfileHoverTrigger on both
 	nameCtx, avatarCtx ctxTag            // right-click → the member context menu
 	threadBtn          widget.Clickable
@@ -656,7 +657,7 @@ func (r *row) resolve(rc *rowCtx) {
 	coreName := ""
 	r.badge = ""
 	if rc.h.Core() != nil {
-		r.badge = rc.h.Core().SenderBadge(m.User, m.BotID)
+		r.badge = rc.h.Core().SenderBadgeBP(m.User, m.BotID, m.BotProfile)
 	} else if r.bot {
 		r.badge = core.BadgeApp
 	}
@@ -1561,7 +1562,7 @@ func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) lay
 		return layout.Dimensions{Size: size}
 	})
 	contextArea(gtx, &r.avatarCtx, d.Size)
-	r.avatarHov.LayoutBot(gtx, r.hoverUser(), r.hoverBot(), d.Size)
+	r.avatarHov.LayoutBotFn(gtx, r.hoverUser(), r.askedBotFn(), d.Size)
 	return d
 }
 
@@ -2288,7 +2289,7 @@ func (r *row) nameButton(gtx layout.Context, bs slackc.Styled) layout.Dimensions
 		return d
 	})
 	contextArea(gtx, &r.nameCtx, d.Size)
-	r.nameHov.LayoutBot(gtx, r.hoverUser(), r.hoverBot(), d.Size)
+	r.nameHov.LayoutBotFn(gtx, r.hoverUser(), r.askedBotFn(), d.Size)
 	return d
 }
 
@@ -2310,12 +2311,30 @@ func (r *row) hoverUser() string {
 // human's card is the member's either way (useProfileHoverApp: no app for
 // a human).
 func (r *row) hoverBot() string {
+	return r.senderBot(r.nameHov.Hovered() || r.avatarHov.Hovered())
+}
+
+// askedBot is the sender's bot as its hover trigger reports it, while
+// the pointer is on the trigger (hovercard.LayoutBotFn): asking.
+func (r *row) askedBot() string { return r.senderBot(true) }
+
+// askedBotFn is askedBot as a func made once per row, not per frame.
+func (r *row) askedBotFn() func() string {
+	if r.askBot == nil {
+		r.askBot = r.askedBot
+	}
+	return r.askBot
+}
+
+// senderBot is hoverBot; ask (the sender's trigger or click in use) lets
+// core ask bots.info for a bot the pick waits on (core.App.SenderBot).
+func (r *row) senderBot(ask bool) string {
 	if r.custom {
 		return ""
 	}
 	if r.rc != nil && r.rc.h != nil {
 		if app := r.rc.h.Core(); app != nil {
-			return app.SenderBot(r.m.User, r.m.BotID, r.m.BotProfile) // Od's bot (core app_card.go)
+			return app.SenderBot(&r.m, ask) // Od's bot (core app_card.go)
 		}
 	}
 	if r.m.BotID != "" {
@@ -2341,7 +2360,7 @@ type SenderOpener interface {
 func (r *row) openSender(rc *rowCtx) {
 	user := r.m.User // a custom response's avatar opens its member too (its bot is none: hoverBot)
 	if so, ok := rc.h.(SenderOpener); ok {
-		if bot := r.hoverBot(); user != "" || bot != "" {
+		if bot := r.senderBot(true); user != "" || bot != "" {
 			so.OpenSender(rc.origin(image.Point{}), user, bot)
 		}
 		return

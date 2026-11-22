@@ -15,8 +15,9 @@
 //
 // A build or vet error never reaches it (go test stops first), so it fails
 // the step as before. Binaries a job runs itself (go test -c, then the
-// binary) aren't judged: their listed failures fail the step, never a
-// false pass.
+// binary) are judged only when the step runs them as
+// ${XF_BIN:+"$XF_BIN"} pkg.test args, from the package's directory; the
+// rest aren't: their listed failures fail the step, never a false pass.
 package main
 
 import (

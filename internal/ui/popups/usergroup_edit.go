@@ -423,6 +423,7 @@ type UserGroupEditModal struct {
 	noUsers     bool // displayNoMemberError
 	reqEmpty    bool // requiredFieldsEmpty, set by the members step
 	cancel      *ModalButton
+	details     ugDetails // detailsFormValues, from Next
 }
 
 // OpenUserGroupEdit opens Edit User Group for g; focus "channels" puts

@@ -111,7 +111,7 @@ func TestSearchRowsFiles(t *testing.T) {
 	}
 	px := v.padX(srTestGtx(), d.size.X)
 	srMoveTo(d, px+300, v.listY+30)
-	if !v.rows[0].Hovered() {
+	if !v.row(f.ID).Hovered() {
 		t.Fatal("the card isn't hovered")
 	}
 	x = srJoined(d.scan())

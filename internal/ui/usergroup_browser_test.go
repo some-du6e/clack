@@ -68,6 +68,19 @@ func TestUserGroupBrowserLikeSlack(t *testing.T) {
 		prev = n
 	}
 
+	// a viewer who may create groups: Create User Group and, on the first
+	// visit, the banner, whose pref the visit writes (it unmounts on the
+	// first refetch below)
+	if !v.CreateGroupShown() {
+		t.Error("no Create User Group for a viewer with CREATE_USER_GROUPS")
+	}
+	e.until("the banner", 10*time.Second, func() bool { return v.GroupsHero() })
+	e.shot("usergroup-browser-light")
+	e.until("the seen pref", 10*time.Second, func() bool {
+		p, ok := fs.Pref("browsers_seen_initial_user_groups_education")
+		return ok && p == true
+	})
+
 	// Load More: the next 50 from next_cursor_mark, after the first
 	v.LoadMoreGroups()
 	e.until("the second page", 20*time.Second, func() bool {
@@ -98,17 +111,9 @@ func TestUserGroupBrowserLikeSlack(t *testing.T) {
 		t.Errorf("Most members starts with a %d-member group", n)
 	}
 
-	// a viewer who may create groups: Create User Group and, on the first
-	// visit, the banner, whose pref the visit writes
-	if !v.CreateGroupShown() {
-		t.Error("no Create User Group for a viewer with CREATE_USER_GROUPS")
+	if v.GroupsHero() {
+		t.Error("the banner is back after Load More and a sort (it unmounted, and the pref is seen)")
 	}
-	e.until("the banner", 10*time.Second, func() bool { return v.GroupsHero() })
-	e.shot("usergroup-browser-light")
-	e.until("the seen pref", 10*time.Second, func() bool {
-		p, ok := fs.Pref("browsers_seen_initial_user_groups_education")
-		return ok && p == true
-	})
 	e.a.Navigate("activity")
 	e.settle(200 * time.Millisecond)
 	e.a.Navigate("directories")

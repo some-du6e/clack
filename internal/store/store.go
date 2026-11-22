@@ -143,6 +143,7 @@ type Store struct {
 	names       map[string]string
 	prefsCached bool
 	experiments map[string]string                 // the last experiments.getByUser groups (diskCache.Experiments)
+	features    map[string]bool                   // the last features.access.policies.list answer (diskCache.Features)
 	entPrefs    json.RawMessage                   // the last enterprise.prefs.get answer (diskCache.EnterprisePrefs)
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
@@ -1230,6 +1231,26 @@ func (s *Store) putExtConvLocked(c slack.Conversation) {
 	}
 }
 
+// AddExtConv remembers c as PutExtConv does unless the store already
+// holds it (in the sidebar, or outside it with a name): a copy fetched
+// earlier never replaces what a later change stored (a leave's
+// is_member false). It reports whether it stored c.
+func (s *Store) AddExtConv(c slack.Conversation) bool {
+	if c.ID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.Convs[c.ID]; ok {
+		return false
+	}
+	if x, ok := s.ext[c.ID]; ok && x.Name != "" {
+		return false
+	}
+	s.putExtConvLocked(c)
+	return true
+}
+
 // ExtConv returns a non-sidebar conversation.
 func (s *Store) ExtConv(id string) (*slack.Conversation, bool) {
 	s.mu.RLock()
@@ -2121,6 +2142,11 @@ type diskCache struct {
 	// persistenceEnabled), so checks read the account's groups before the
 	// call answers again.
 	Experiments map[string]string `json:"experiments,omitempty"`
+	// Features is the last features.access.policies.list answer, name ->
+	// is_enabled: Slack's featureAccess store is persisted too (zxoU,
+	// persistenceEnabled), so a warm launch draws what the features allow
+	// (Directories' User Groups tab) before the call answers again.
+	Features map[string]bool `json:"features,omitempty"`
 	// EnterprisePrefs is the last enterprise.prefs.get answer as Slack
 	// sent it: its enterprisePrefs store is persisted (TI4y,
 	// persistenceEnabled), so the org's prefs hold from the first frame.
@@ -2196,6 +2222,45 @@ func (s *Store) CachedExperimentGroups() map[string]string {
 	}
 	out := make(map[string]string, len(s.experiments))
 	for k, v := range s.experiments {
+		out[k] = v
+	}
+	return out
+}
+
+// SetFeatureAccess keeps features.access.policies.list's answer (name ->
+// is_enabled) for the disk cache.
+func (s *Store) SetFeatureAccess(on map[string]bool) {
+	cp := make(map[string]bool, len(on))
+	for k, v := range on {
+		cp[k] = v
+	}
+	s.mu.Lock()
+	s.features = cp
+	s.mu.Unlock()
+	s.gen.Add(1)
+}
+
+// CachedFeatureAccess is the feature answer the disk cache (or the last
+// SetFeatureAccess) holds: ok false when there is none.
+func (s *Store) CachedFeatureAccess(name string) (on, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.features == nil {
+		return false, false
+	}
+	return s.features[name], true
+}
+
+// CachedFeatures is the whole persisted feature answer (a copy; nil when
+// there is none).
+func (s *Store) CachedFeatures() map[string]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.features == nil {
+		return nil
+	}
+	out := make(map[string]bool, len(s.features))
+	for k, v := range s.features {
 		out[k] = v
 	}
 	return out
@@ -2296,6 +2361,29 @@ func (s *Store) SetGroupChannels(id string, ids []string) {
 	if !had || !slices.Equal(old, ids) {
 		s.ugGen.Add(1)
 	}
+}
+
+// MergeUsergroup is upsertEntity for a group (JJAw: {...stored,
+// ...answer}): set gets the stored record (or one with only the id) and
+// writes the answer's fields over it, so the fields the answer leaves out
+// stay as they were; then PutUsergroup.
+func (s *Store) MergeUsergroup(id string, set func(g *slack.Usergroup)) slack.Usergroup {
+	if id == "" {
+		return slack.Usergroup{}
+	}
+	g := slack.Usergroup{ID: id}
+	s.mu.RLock()
+	for i := range s.Groups {
+		if s.Groups[i].ID == id {
+			g = s.Groups[i]
+			break
+		}
+	}
+	s.mu.RUnlock()
+	set(&g)
+	g.ID = id
+	s.PutUsergroup(g)
+	return g
 }
 
 // PutUsergroup is bulkAddGroups for one group (subteam_updated,
@@ -2483,6 +2571,9 @@ func (s *Store) installCacheBase(d *diskCache, users []*slack.User) {
 	if d.Experiments != nil {
 		s.experiments = d.Experiments
 	}
+	if d.Features != nil {
+		s.features = d.Features
+	}
 	if len(d.EnterprisePrefs) > 0 {
 		s.entPrefs = d.EnterprisePrefs
 	}
@@ -2621,6 +2712,9 @@ func (s *Store) SaveCache() error {
 	}
 	if s.experiments != nil {
 		d.Experiments = s.experiments // replaced whole, never changed in place
+	}
+	if s.features != nil {
+		d.Features = s.features // replaced whole too
 	}
 	d.EnterprisePrefs = s.entPrefs // replaced whole too
 	d.NotificationsMaxTS = s.notesMaxTS

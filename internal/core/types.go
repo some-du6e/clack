@@ -155,7 +155,7 @@ type BotProfile struct {
 	Icon                            string      // best icon URL
 	Icons                           SenderIcons // bot_profile.icons as sent
 	Deleted                         bool
-	Workflow                        bool // is_workflow_bot: a workflow's keyword counts (shouldIgnoreHighlightWords)
+	Workflow                        bool // is_workflow_bot: a Workflow Builder bot (badged WORKFLOW), whose keywords count (shouldIgnoreHighlightWords)
 }
 
 type Reaction struct {

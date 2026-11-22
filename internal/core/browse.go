@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/url"
 	"sort"
@@ -961,7 +962,14 @@ func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) (UsergroupP
 			p.Set("search_only_team", o.Team)
 		}
 		if err := a.C.Call(ctx, "search.team", p, &res); err != nil {
-			return UsergroupPage{}, err
+			// fetchPaginatedUserGroupsWithQuery's catch: only a cancelled
+			// fetch fails; any other error is logged and answers an empty
+			// page ({items: [], num_found: 0}), the browser's "No results"
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+				return UsergroupPage{}, err
+			}
+			log.Printf("user groups: search.team: %v", err)
+			return UsergroupPage{Groups: []Usergroup{}}, nil
 		}
 		res.Usergroups = res.Items
 	}
@@ -970,22 +978,22 @@ func (a *App) SearchUsergroups(ctx context.Context, o UsergroupOpts) (UsergroupP
 		out.Total = len(res.Usergroups) // userGroupsForSearcher: num_found ?? the page's length
 	}
 	for _, r := range res.Usergroups {
-		g := r.usergroup()
-		if g.ID == "" {
+		if r.ID == "" {
 			continue
 		}
-		a.S.PutUsergroup(g)
-		out.Groups = append(out.Groups, usergroupOf(g))
-	}
-	if out.Next == o.Cursor {
-		out.Next = "" // the same cursor again: nothing more
+		out.Groups = append(out.Groups, usergroupOf(a.S.MergeUsergroup(r.ID, r.over)))
 	}
 	return out, nil
 }
 
 // usergroupRaw is a group as usergroups.search, search.team and
-// usergroups.create carry it (user_count a number or a numeric string).
+// usergroups.create carry it (user_count a number or a numeric string),
+// with the keys it had: upsertEntity merges an answer over the stored
+// group ({...stored, ...answer}), so a key an answer leaves out (off a
+// grid search.team's items may lack team_id, auto_type, is_section,
+// date_update) keeps the stored value.
 type usergroupRaw struct {
+	has         map[string]bool
 	ID          string          `json:"id"`
 	Handle      string          `json:"handle"`
 	Name        string          `json:"name"`
@@ -998,9 +1006,43 @@ type usergroupRaw struct {
 	IsSection   bool            `json:"is_section"`
 }
 
-func (r usergroupRaw) usergroup() slack.Usergroup {
-	return slack.Usergroup{ID: r.ID, Handle: r.Handle, Name: r.Name, Description: r.Description, UserCount: int(looseInt(r.UserCount)),
-		DateDelete: r.DateDelete, DateUpdate: r.DateUpdate, TeamID: r.TeamID, AutoType: r.AutoType, IsSection: r.IsSection}
+func (r *usergroupRaw) UnmarshalJSON(b []byte) error {
+	type plain usergroupRaw
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err != nil {
+		return err
+	}
+	*r = usergroupRaw(p)
+	r.has = make(map[string]bool, len(keys))
+	for k := range keys {
+		r.has[k] = true
+	}
+	return nil
+}
+
+// over writes the answer's keys over g (MergeUsergroup's set).
+func (r usergroupRaw) over(g *slack.Usergroup) {
+	for k, set := range map[string]func(){
+		"handle":      func() { g.Handle = r.Handle },
+		"name":        func() { g.Name = r.Name },
+		"description": func() { g.Description = r.Description },
+		"date_delete": func() { g.DateDelete = r.DateDelete },
+		"date_update": func() { g.DateUpdate = r.DateUpdate },
+		"team_id":     func() { g.TeamID = r.TeamID },
+		"auto_type":   func() { g.AutoType = r.AutoType },
+		"is_section":  func() { g.IsSection = r.IsSection },
+	} {
+		if r.has[k] {
+			set()
+		}
+	}
+	// upsertEntity's user_count is parseInt(user_count) || 0 whether or not
+	// the answer has the key
+	g.UserCount = int(looseInt(r.UserCount))
 }
 
 // ---- channel tab bar ----

@@ -664,7 +664,14 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 				recs = append(recs, r)
 			}
 		}
-		return ok("records", recs, "response_metadata", map[string]any{"next_cursor": ""}), true
+		// encoded now, under the lock: the records share their fields
+		// with the list, so an answer held (Fault.ReplyDelay) and encoded
+		// later showed edits made after the request, as Slack's never does
+		raw, err := json.Marshal(recs)
+		if err != nil {
+			return map[string]any{"ok": false, "error": "internal_error"}, true
+		}
+		return ok("records", json.RawMessage(raw), "response_metadata", map[string]any{"next_cursor": ""}), true
 	case "lists.cells.update":
 		var cells []map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(f.Get("cells")), &cells); err != nil || len(cells) == 0 {

@@ -177,10 +177,13 @@ func otherFormat(f uint32) uint32 {
 // format fallback).
 var forceTransferFailures atomic.Int32
 
-// delayFirstTransfer holds a player's first transfer until this long
-// (nanoseconds) after its loadeddata (tests: a runner's first frame that
-// came 1 to 1.65 s after the engine played, so the clock ran through the
-// video's first second with nothing drawn).
+// delayFirstTransfer holds a player's first transfer until its clock is
+// this far in (nanoseconds; tests: a runner's first frame that came 1 to
+// 1.65 s after the engine played, so the clock ran through the video's
+// first second with nothing drawn). By the clock, not a time after
+// loadeddata: in a cold process the engine plays a while after its data,
+// and a fixed delay left the first frame short of the second it was to
+// miss.
 var delayFirstTransfer atomic.Int64
 
 // forceAudioRenderer makes engines with their audio renderer even where
@@ -188,10 +191,11 @@ var delayFirstTransfer atomic.Int64
 var forceAudioRenderer atomic.Bool
 
 // The tests' hooks, set before any player is made: each of the demuxer's
-// reads as it ends (the file's id, where, the bytes it got), and each of
-// the engine's events as it comes (codes below 1000 are HTML5's).
+// reads as it ends (the file's id, where, the bytes it got, when the
+// engine asked for it), and each of the engine's events as it comes
+// (codes below 1000 are HTML5's).
 var (
-	testRead  func(id string, off int64, n int)
+	testRead  func(id string, off int64, n int, asked time.Time)
 	testEvent func(id string, code uint32)
 )
 
@@ -794,7 +798,7 @@ func (p *player) tick() {
 	if time.Since(p.lastRefresh) > media.TimeUpdateEvery {
 		p.refresh()
 	}
-	if d := delayFirstTransfer.Load(); d > 0 && p.okTransfers == 0 && !p.tData.IsZero() && time.Since(p.tData) < time.Duration(d) {
+	if d := delayFirstTransfer.Load(); d > 0 && p.okTransfers == 0 && !p.tData.IsZero() && p.State().Pos < time.Duration(d) {
 		return
 	}
 	var hr C.int32_t
@@ -1134,9 +1138,10 @@ func clackMFRead(h C.uintptr_t, req unsafe.Pointer, pb unsafe.Pointer, cb C.ulon
 			C.clack_me_read_done(req, 0, eAbort)
 			return
 		}
+		asked := time.Now()
 		n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
 		if testRead != nil {
-			testRead(p.src.FileID, int64(off), n)
+			testRead(p.src.FileID, int64(off), n, asked)
 		}
 		hr := C.int32_t(0)
 		if err != nil && n == 0 {
@@ -1155,9 +1160,10 @@ func clackMFReadSync(h C.uintptr_t, pb unsafe.Pointer, cb C.ulong, off C.longlon
 	if p == nil {
 		return -1
 	}
+	asked := time.Now()
 	n, err := p.readFull(unsafe.Slice((*byte)(pb), int(cb)), int64(off))
 	if testRead != nil {
-		testRead(p.src.FileID, int64(off), n)
+		testRead(p.src.FileID, int64(off), n, asked)
 	}
 	if err != nil && n == 0 {
 		return -1

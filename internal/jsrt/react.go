@@ -160,8 +160,8 @@ func (r *Runtime) postMove(target int, ev []byte) {
 	k := moveKey{target, typ}
 	merge := coalescedEvents[typ]
 	r.movesMu.Lock()
-	if q := r.movesQ[k]; merge && q != nil && q.seq != 0 && q.seq == r.enqN.Load() {
-		q.ev = ev // its task is still the newest queued: nothing came between
+	if q := r.movesQ[k]; merge && q != nil && q.seq != 0 && q.seq == r.seenN.Load() {
+		q.ev = ev // its task is still the newest queued: nothing came between (but handle releases, seenN)
 		r.movesMu.Unlock()
 		return
 	}

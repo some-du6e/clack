@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,10 +37,20 @@ func need(t *testing.T, err error) {
 	t.Skip(err)
 }
 
-// read is one of the demuxer's reads: where, and the bytes it got.
+// read is one of the demuxer's reads: where, the bytes it got, and when
+// the engine asked for it and had it (ms after the player was made). The
+// times say where a slow load went: TestMFColdStart's 12.9 s on
+// windows-idle (train-161's push ci 45018881337) was between the engine's
+// loadstart and its durationchange, three reads, and nothing then told
+// whether they or the engine's own start were slow.
 type read struct {
-	off int64
-	n   int
+	off         int64
+	n           int
+	asked, done int64
+}
+
+func (r read) String() string {
+	return fmt.Sprintf("{%d+%d asked@%d done@%d}", r.off, r.n, r.asked, r.done)
 }
 
 // The demuxer's reads and the engine's events by file, from the hooks
@@ -53,10 +64,11 @@ var (
 
 func init() {
 	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	testRead = func(id string, off int64, n int) {
+	testRead = func(id string, off int64, n int, asked time.Time) {
 		hookMu.Lock()
 		defer hookMu.Unlock()
-		reads[id] = append(reads[id], read{off, n})
+		b := born[id]
+		reads[id] = append(reads[id], read{off, n, asked.Sub(b).Milliseconds(), time.Since(b).Milliseconds()})
 	}
 	testEvent = func(id string, code uint32) {
 		hookMu.Lock()
@@ -139,7 +151,12 @@ func newRig(t *testing.T, data []byte, whole bool, size image.Point, setup ...fu
 	}()
 	t.Cleanup(func() {
 		if t.Failed() {
-			t.Logf("%s: the engine's events %s; the demuxer's reads %v", id, traceOf(id), readsOf(id))
+			// enough to say why without the run: the engine's events and
+			// reads, the player's (HTML) events, its state and its counters
+			// (TestMFSeekAndPause failed 1 run in 25 with only its FAIL line
+			// kept, flakes-1122)
+			t.Logf("%s: the engine's events %s; the demuxer's reads %v; the player's events %v; state %+v; stats %+v; the last frames' pts %v, %v",
+				id, traceOf(id), readsOf(id), r.kinds(), r.p.State(), r.p.Stats(), time.Duration(r.p.prevPts.Load()), time.Duration(r.p.framePts.Load()))
 		}
 		r.p.Close()
 		select {
@@ -292,6 +309,7 @@ func checkColors(t *testing.T, samples []sample) {
 			sampleTrace(t, samples)
 		}
 	}()
+	clockTracks(t, samples)
 	from := samples[0].at // where the clock was when the first frame was drawn
 	for i, w := range colorWindows {
 		n, bad := 0, 0
@@ -317,6 +335,26 @@ func checkColors(t *testing.T, samples []sample) {
 			t.Errorf("second %d: %d frames drawn, want several (the first frame drawn at %v)", i+1, n, from)
 		}
 		t.Logf("second %d: %d frames drawn, %d off", i+1, n, bad)
+	}
+}
+
+// clockTracks fails if the clock didn't follow the frames: it must move
+// on through the playback, and when a frame is drawn stand near that
+// frame's own time (the median of the samples, 400 ms at most). The
+// checks place frames by their own time, so without this a clock stuck
+// at 0 would pass (round 2's review of mf-first-frame).
+func clockTracks(t *testing.T, samples []sample) {
+	t.Helper()
+	if d := samples[len(samples)-1].at - samples[0].at; d < time.Second {
+		t.Errorf("the clock moved %v over the playback's drawn frames, want a second at least", d)
+	}
+	gaps := make([]time.Duration, len(samples))
+	for i, s := range samples {
+		gaps[i] = absDur(s.at - s.pts)
+	}
+	slices.Sort(gaps)
+	if m := gaps[len(gaps)/2]; m > 400*time.Millisecond {
+		t.Errorf("the clock stood %v from the drawn frames' times (median), want 400 ms at most", m)
 	}
 }
 
@@ -364,8 +402,8 @@ func TestMFColdStart(t *testing.T) {
 		t.Fatalf("loadedmetadata with no engine made; the engine's events %s", traceOf(r.id))
 	}
 	took := at.Sub(opened)
-	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s",
-		took, opened.Sub(t0), audio, traceOf(r.id))
+	t.Logf("loadedmetadata %v after the engine was made; the platform's start (window, device, MFStartup, the audio check) %v before it (audio: %s); the engine's events %s; the demuxer's reads %v",
+		took, opened.Sub(t0), audio, traceOf(r.id), readsOf(r.id))
 	if took > 10*time.Second {
 		t.Errorf("loadedmetadata %v after the engine was made, want under 10 s", took)
 	}
@@ -409,9 +447,9 @@ func TestMFLateFirstTransfer(t *testing.T) {
 			if len(samples) == 0 {
 				t.Fatal("no frame drawn")
 			}
-			// the hook held the first transfer while the clock ran
-			if samples[0].at < time.Second {
-				t.Fatalf("the first frame drawn is at %v: the hook didn't hold it past the first second", samples[0].at)
+			// the hook held the first transfer until the clock was 1.5 s in
+			if samples[0].at < 1500*time.Millisecond {
+				t.Fatalf("the first frame drawn is at %v: the hook didn't hold it to 1.5 s", samples[0].at)
 			}
 			t.Logf("first frame %v after Play, at %v; %d frames drawn", first, samples[0].at, len(samples))
 			if c.format == "" {
@@ -478,9 +516,10 @@ func TestMFPlaysFixture(t *testing.T) {
 	}
 }
 
-// A seek while paused fires seeking and seeked and shows the frame there,
-// light grey, within 500 ms; paused, 2 s of the window drawing cost no
-// transfer and no repaint.
+// A seek while paused fires seeking and seeked, the engine's seek within
+// 2 s of Seek, and shows the frame there, light grey, within 250 ms of
+// seeked; paused, 2 s of the window drawing cost no transfer and no
+// repaint.
 func TestMFSeekAndPause(t *testing.T) {
 	r := newRig(t, mediatest.GreyGreyRed, false, image.Pt(320, 180))
 	r.draw()
@@ -491,18 +530,37 @@ func TestMFSeekAndPause(t *testing.T) {
 	t0 := time.Now()
 	r.p.Seek(1500 * time.Millisecond)
 	sk := r.wait(media.Seeked, 5*time.Second)
+	// the budget is Clack's part, from the engine's seeked to the frame
+	// drawn: the engine's own seek (decoding up to 1.5 s from the
+	// keyframe) is the runner's, 513 ms of a 514 ms seek on a slow one
+	// (patched-tooltips' push ci 44997553108: seeking@2191 ms, seeked@2704)
+	seeked := time.Now()
+	// the engine's part gets a loose bound of its own: a seek that hangs
+	// is a bug however slow the runner (513 ms on the slowest seen)
+	if d := seeked.Sub(t0); d > 2*time.Second {
+		t.Errorf("seeked %v after Seek(1.5 s), want within 2 s", d)
+	}
+	// drawn is its own flag: at is 0 when the frame is there at the first
+	// draw, within one tick of Windows' monotonic clock (0.5-15.6 ms):
+	// "light grey 0s after seeked" with {192 192 192} drawn failed as never
+	// drawn (fl1122-s-win 45031306261, flakes-1122b's push ci 45034453742;
+	// TestMFSeekAndPause's 1 in 25, flakes-1122)
 	var at time.Duration
-	for time.Since(t0) < 2*time.Second {
-		if c := r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
-			at = time.Since(t0)
+	var c color.RGBA
+	drawn := false
+	for time.Since(seeked) < 2*time.Second {
+		if c = r.draw(); mediatest.Matches(1500*time.Millisecond, c) {
+			at, drawn = time.Since(seeked), true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if at == 0 || at > 500*time.Millisecond {
-		t.Errorf("light grey %v after Seek(1.5 s) (seeked at %v), want within 500 ms", at, sk.State.Pos)
+	if !drawn {
+		t.Errorf("no light grey within 2 s of seeked (Seek(1.5 s) %v before; seeked at %v): %v drawn", seeked.Sub(t0), sk.State.Pos, c)
+	} else if at > 250*time.Millisecond {
+		t.Errorf("light grey %v after seeked (Seek(1.5 s) %v before; seeked at %v), want within 250 ms", at, seeked.Sub(t0), sk.State.Pos)
 	}
-	t.Logf("seeked to %v; light grey drawn %v after the seek", sk.State.Pos, at)
+	t.Logf("seeked to %v; light grey drawn %v after seeked, %v after Seek (the engine's seek %v)", sk.State.Pos, at, seeked.Sub(t0)+at, seeked.Sub(t0))
 	time.Sleep(300 * time.Millisecond)
 	st0, n0 := r.p.Stats(), r.ready.Load()
 	for t1 := time.Now(); time.Since(t1) < 2*time.Second; time.Sleep(30 * time.Millisecond) {
@@ -724,6 +782,7 @@ func checkRGBA(t *testing.T, samples []sample) {
 			sampleTrace(t, samples)
 		}
 	}()
+	clockTracks(t, samples)
 	from := samples[0].at // where the clock was when the first frame was drawn
 	var by [3][]sample
 	for _, s := range samples {
