@@ -351,8 +351,8 @@ func TestPluginsPrefsShots(t *testing.T) {
 		pp.lib.bench = &pluginbench.Data{Schema: 1, Plugins: []pluginbench.Plugin{{
 			Name: "Clear URLs", Winner: pluginlib.Slick, Reason: "works fully, 3.9x faster to load, 1.5x less JS memory",
 			Variants: []pluginbench.Variant{
-				{System: pluginlib.Taut, ID: clear.Entries[0].ID, SHA256: clear.Entries[0].SHA256},
-				{System: pluginlib.Slick, ID: clear.Entries[1].ID, SHA256: clear.Entries[1].SHA256},
+				{System: pluginlib.Taut, ID: clear.Entries[0].ID, SHA256: clear.Entries[0].SHA256, Checks: []pluginbench.Check{{Name: "tracking parameters removed", Pass: true}}},
+				{System: pluginlib.Slick, ID: clear.Entries[1].ID, SHA256: clear.Entries[1].SHA256, Checks: []pluginbench.Check{{Name: "tracking parameters removed", Pass: true}}},
 			},
 		}}}
 		if act := pp.lib.action(clear); act.label != "Install" || act.menu == nil {

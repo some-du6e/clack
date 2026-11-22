@@ -83,15 +83,17 @@ func main() {
 		}
 	}
 	for _, p := range cur.Plugins {
-		if o := findPlugin(&old, p.Name); o != nil && o.Winner != p.Winner {
+		if o := findPlugin(&old, &p); o != nil && o.Winner != p.Winner {
 			fmt.Printf("note: %s winner changed %s -> %s (%s)\n", p.Name, o.Winner, p.Winner, p.Reason)
 		}
 	}
 }
 
-func findPlugin(d *pluginbench.Data, name string) *pluginbench.Plugin {
+// findPlugin is d's result for p's plugin: the same variants' systems and
+// ids (pluginbench.Plugin.Same), whatever its display name.
+func findPlugin(d *pluginbench.Data, p *pluginbench.Plugin) *pluginbench.Plugin {
 	for i := range d.Plugins {
-		if d.Plugins[i].Name == name {
+		if d.Plugins[i].Same(p) {
 			return &d.Plugins[i]
 		}
 	}
@@ -124,7 +126,7 @@ func collect(dir string) (*pluginbench.Data, error) {
 		for _, s := range r.Sources {
 			srcs[s] = true
 		}
-		if findPlugin(d, r.Name) == nil {
+		if findPlugin(d, &r.Plugin) == nil {
 			d.Plugins = append(d.Plugins, r.Plugin)
 		}
 		return nil
@@ -238,7 +240,10 @@ The winner: a variant that loads beats one that doesn't; one that doesn't
 re-render while idle beats one that does; more passing checks beat fewer;
 no console errors beats some. Between variants that work the same, the
 cheaper one wins on the costs above, each compared only past a noise
-floor; a tie goes to the smaller bundle. The CI workflow
+floor; a tie goes to the smaller bundle. A pair with no behaviour check on
+either side is decided on costs alone, which can't tell a version that
+does nothing in Clack from one that works: its reason says "no behaviour
+checks", and the Library recommends neither (Install asks which). The CI workflow
 (` + "`.github/workflows/plugin-bench.yml`" + `) re-runs the bench and fails
 when a committed winner regresses (stops loading, starts re-rendering,
 passes fewer checks, or loses on correctness).

@@ -1,6 +1,9 @@
 package pluginbench
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Decide's rules on synthetic measurements.
 func TestDecide(t *testing.T) {
@@ -33,6 +36,41 @@ func TestDecide(t *testing.T) {
 	Decide(&cur.Plugins[0])
 	if regs := Regressions(old, cur); len(regs) != 1 {
 		t.Errorf("regressions %v", regs)
+	}
+}
+
+// Without a behaviour check on either variant the bench can only weigh
+// costs, which can't tell a version that does nothing from one that works
+// (Bring Back Slackbot did nothing in Clack and won on frame cost): the
+// reason says so, never "works fully", and the pick isn't Checked, so the
+// Library doesn't recommend it. One check on either side makes it Checked.
+func TestDecideWithoutChecks(t *testing.T) {
+	bare := func(sys, id string, init float64, size int64) Variant {
+		return Variant{System: sys, ID: id, Loaded: true, InitMS: init, IdleSeconds: 3, Size: size}
+	}
+	for _, c := range []struct {
+		name   string
+		t, s   Variant
+		winner string
+		reason string
+	}{
+		{"faster", bare("taut", "A", 30, 1000), bare("slick", "A", 90, 1000), "taut", "no behaviour checks, both load, 3.0x faster to load"},
+		{"noise", bare("taut", "B", 30, 20480), bare("slick", "B", 31, 10240), "slick", "no behaviour checks, both load; costs within noise, smaller bundle (10.0 KB vs 20.0 KB)"},
+	} {
+		p := Plugin{Name: c.name, Variants: []Variant{c.t, c.s}}
+		Decide(&p)
+		if p.Winner != c.winner || p.Reason != c.reason {
+			t.Errorf("%s: %s (%s), want %s (%s)", c.name, p.Winner, p.Reason, c.winner, c.reason)
+		}
+		d := &Data{Plugins: []Plugin{p}}
+		pk, ok := d.For([]Entry{{System: "taut", ID: c.t.ID}, {System: "slick", ID: c.s.ID}})
+		if !ok || pickChecked(pk) {
+			t.Errorf("%s: For = %+v %v, want a pick that isn't Checked", c.name, pk, ok)
+		}
+		d.Plugins[0].Variants[1].Checks = []Check{{Name: "does its thing", Pass: true}}
+		if pk, _ := d.For([]Entry{{System: "taut", ID: c.t.ID}, {System: "slick", ID: c.s.ID}}); !pickChecked(pk) {
+			t.Errorf("%s: a check on one variant, and the pick isn't Checked", c.name)
+		}
 	}
 }
 
@@ -94,5 +132,25 @@ func TestKeep(t *testing.T) {
 	// the kept plugins are the committed ones: nothing regressed
 	if regs := Regressions(old, cur); len(regs) != 0 {
 		t.Errorf("regressions %v", regs)
+	}
+
+	// a plugin is the same one by its variants' ids, whatever it's called:
+	// the run's Custom Slackbot is the committed Bring Back Slackbot (the
+	// Library named the row after its Taut entry then), not a second plugin
+	ids := func(t, s string) []Variant { return []Variant{{System: "taut", ID: t}, {System: "slick", ID: s}} }
+	old = &Data{Run: "https://example.com/runs/1", Plugins: []Plugin{
+		{Name: "Bring Back Slackbot", Winner: "taut", Variants: ids("BringBackSlackbot", "CustomSlackbot")},
+		{Name: "Who Reacted", Winner: "taut", Variants: ids("WhoReacted", "WhoReacted")},
+	}}
+	cur = &Data{Run: "https://example.com/runs/3", Plugins: []Plugin{
+		{Name: "Custom Slackbot", Winner: "slick", Variants: ids("BringBackSlackbot", "CustomSlackbot")},
+	}}
+	cur.Keep(old)
+	got = nil
+	for _, p := range cur.Plugins {
+		got = append(got, p.Name+"="+p.Winner+"@"+p.Run)
+	}
+	if want := "Custom Slackbot=slick@ Who Reacted=taut@https://example.com/runs/1"; strings.Join(got, " ") != want {
+		t.Errorf("kept %q, want %q", strings.Join(got, " "), want)
 	}
 }

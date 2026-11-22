@@ -29,7 +29,7 @@ import (
 // Taut and Slick plugin from the Clack repo's `plugins` release
 // (internal/pluginlib), each built unmodified by its project's own build,
 // with one-click install and update. A plugin both systems have is one row
-// with both tags, under one name or names of their own (libraryPairs,
+// with both tags, under one name or names of their own (pluginlib.Pairs,
 // docs/PLUGINS.md's pair table); Install installs the variant the plugin
 // bench picked (internal/pluginbench, docs/PLUGIN-BENCH.md), the row says
 // which, and the chevron beside Install offers both, the pick first with
@@ -377,23 +377,10 @@ func libNameKey(name string) string {
 	return b.String()
 }
 
-// libraryPairs are the ids of plugins both systems ship that are one
-// Library row whatever their names: the plugin bench's (bench.json) and
-// those read from both sources (pluginlib.Pairs, docs/PLUGINS.md).
-func libraryPairs() []pluginlib.Pair {
-	out := pluginlib.Pairs()
-	d := pluginbench.Load()
-	for i := range d.Plugins {
-		if t, s := d.Plugins[i].Variant(pluginlib.Taut), d.Plugins[i].Variant(pluginlib.Slick); t != nil && s != nil {
-			out = append(out, pluginlib.Pair{Taut: t.ID, Slick: s.ID})
-		}
-	}
-	return out
-}
-
 // libraryGroups lists each plugin once: entries with the same name share a
-// row, and so do a pair's (libraryPairs), filed under its Taut entry's
-// category when the two differ.
+// row, and so do the ids of a plugin with a name of its own in each system
+// (pluginlib.Pairs, docs/PLUGINS.md's pair table: the one source of
+// pairs; bench.json follows it, TestBenchPairsAreLibraryRows).
 func libraryGroups(entries []pluginlib.Entry) []libGroup {
 	// entries join by name and by pair, each row at its earliest entry
 	root := make([]int, len(entries))
@@ -422,7 +409,7 @@ func libraryGroups(entries []pluginlib.Entry) []libGroup {
 		}
 		byID[libKey(e)] = i
 	}
-	for _, p := range libraryPairs() {
+	for _, p := range pluginlib.Pairs() {
 		i, ok := byID[pluginlib.Taut+"/"+p.Taut]
 		j, ok2 := byID[pluginlib.Slick+"/"+p.Slick]
 		if ok && ok2 {
@@ -631,6 +618,20 @@ func (v *libraryPage) face(g libGroup) (pluginlib.Entry, rowPick) {
 		return w, pickBench
 	}
 	return g.first(), pickAsks
+}
+
+// home is the version a row shows before either is installed: the one
+// Install installs (the bench's pick, or the only running system's), else
+// its Taut entry. The row is filed and sorted as it (cards).
+func (v *libraryPage) home(g libGroup) pluginlib.Entry {
+	cs := v.installChoices(g)
+	if len(cs) == 1 {
+		return cs[0]
+	}
+	if w, _, ok := v.benchPick(cs); ok {
+		return w
+	}
+	return g.first()
 }
 
 // rowCompat is how a row's plugin works in Clack: its face's, or while
@@ -843,37 +844,45 @@ type libCard struct {
 
 // cards are the rows the chip and the search words leave, by category
 // (a search's best matches first within one), and the empty state's
-// text when none are left ("" while the index loads).
+// text when none are left ("" while the index loads). A row is filed and
+// sorted as the version it shows before either is installed (home: the
+// bench's pick, else its Taut entry), under that version's category by its
+// name, as a plugin in one system is. Installing the other version renames
+// the row where it is rather than moving it away from the click. No
+// upstream lists both systems' plugins to follow: Taut's list and Slick's
+// each hold their own.
 func (v *libraryPage) cards(words []string) (cards []libCard, empty string) {
 	if v.ix == nil {
 		return nil, ""
 	}
-	var group []libGroup
-	label, shown := "", 0
-	flush := func() {
-		if len(group) == 0 {
-			return
+	type shownRow struct {
+		g    libGroup
+		face pluginlib.Entry // its home
+	}
+	var rows []shownRow
+	for _, g := range v.allGroups() {
+		if v.matches(g, words) {
+			rows = append(rows, shownRow{g, v.home(g)})
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if ci, cj := categoryRank(libCategory(rows[i].face).Key), categoryRank(libCategory(rows[j].face).Key); ci != cj {
+			return ci < cj
+		}
+		return strings.ToLower(orStr(rows[i].face.Name, rows[i].face.ID)) < strings.ToLower(orStr(rows[j].face.Name, rows[j].face.ID))
+	})
+	for i := 0; i < len(rows); {
+		c := libCategory(rows[i].face)
+		var group []libGroup
+		for ; i < len(rows) && libCategory(rows[i].face).Key == c.Key; i++ {
+			group = append(group, rows[i].g)
 		}
 		if len(words) > 0 { // a search: the best matches of a category first
-			group = rankGroups(group, words, nil)
+			group = v.rank(group, words, nil)
 		}
-		c := libCategory(group[0].first())
 		cards = append(cards, libCard{label: c.Label, icon: c.Icon, rows: group})
-		group = nil
 	}
-	for _, g := range v.allGroups() {
-		if !v.matches(g, words) {
-			continue
-		}
-		if l := libCategory(g.first()).Key; l != label {
-			flush()
-			label = l
-		}
-		group = append(group, g)
-		shown++
-	}
-	flush()
-	if shown == 0 {
+	if len(rows) == 0 {
 		if len(words) > 0 {
 			return nil, "No plugins match \u201c" + strings.Join(words, " ") + "\u201d."
 		}
@@ -912,13 +921,27 @@ func (v *libraryPage) action(g libGroup) libAction {
 				v.installEntry(e, true)
 			}
 		}}
+	case len(installed) > 1: // both versions: the chevron reaches either one's settings
+		e := installed[0]
+		return libAction{label: "Settings", kind: popups.BtnOutline, do: func() { v.openSettings(e) },
+			menu: func() { v.a.menu(v.a.PointerPos(), v.settingsMenu(installed)) }}
 	case len(installed) > 0:
 		e := installed[0]
-		return libAction{label: "Settings", kind: popups.BtnOutline, do: func() {
-			if h, ok := v.host(e.System); ok && h.open != nil {
-				h.open(e.ID)
+		act := libAction{label: "Settings", kind: popups.BtnOutline, do: func() { v.openSettings(e) }}
+		// a version that does nothing in Clack keeps the other one offered
+		// (nothing swaps it: installing the other is the user's pick)
+		if pluginlib.CompatOf(e.System, e.ID).Status == pluginlib.CompatBroken {
+			var others []pluginlib.Entry
+			for _, c := range v.installChoices(g) {
+				if c.System != e.System {
+					others = append(others, c)
+				}
 			}
-		}}
+			if len(others) > 0 {
+				act.menu = func() { v.a.menu(v.a.PointerPos(), v.installMenuFor(others, e)) }
+			}
+		}
+		return act
 	}
 	choices := v.installChoices(g)
 	if len(choices) < 2 {
@@ -935,8 +958,27 @@ func (v *libraryPage) action(g libGroup) libAction {
 	return libAction{label: "Install…", kind: popups.BtnPrimary, do: menu}
 }
 
+// openSettings shows an installed entry's settings, in its system's page.
+func (v *libraryPage) openSettings(e pluginlib.Entry) {
+	if h, ok := v.host(e.System); ok && h.open != nil {
+		h.open(e.ID)
+	}
+}
+
+// settingsMenu is "Settings for" each of a row's installed versions.
+func (v *libraryPage) settingsMenu(installed []pluginlib.Entry) []MenuItem {
+	items := []MenuItem{{Label: "Settings for", Disabled: true}}
+	for _, e := range installed {
+		items = append(items, MenuItem{Label: systemName(e.System),
+			Subtitle: systemName(e.System) + "'s version, \u201c" + orStr(e.Name, e.ID) + "\u201d", Do: func() { v.openSettings(e) }})
+	}
+	return items
+}
+
 // benchPick is the variant of choices the plugin bench picked, with its
-// reason (ok false without bench data for this plugin).
+// reason. ok is false without bench data for this plugin, and with data
+// that checked nothing it does (Pick.Checked): costs alone can't tell a
+// version that does nothing in Clack from one that works, so Install asks.
 func (v *libraryPage) benchPick(choices []pluginlib.Entry) (pluginlib.Entry, pluginbench.Pick, bool) {
 	d := v.bench
 	if d == nil {
@@ -947,7 +989,7 @@ func (v *libraryPage) benchPick(choices []pluginlib.Entry) (pluginlib.Entry, plu
 		es[i] = pluginbench.Entry{System: e.System, ID: e.ID, SHA256: e.SHA256}
 	}
 	p, ok := d.For(es)
-	if !ok {
+	if !ok || !p.Checked {
 		return pluginlib.Entry{}, p, false
 	}
 	for _, e := range choices {
@@ -959,24 +1001,35 @@ func (v *libraryPage) benchPick(choices []pluginlib.Entry) (pluginlib.Entry, plu
 }
 
 // installMenu is "Install for": the bench's pick first, marked
-// "(recommended)" with its reason, then the other system, named when its
-// version's name isn't the row's ("Slick's version, “No Track”").
+// "(recommended)" with its reason, then the other system: how it works in
+// Clack when that's short of all it does, else named when its version's
+// name isn't the row's ("Slick's version, “No Track”").
 func (v *libraryPage) installMenu(choices []pluginlib.Entry) []MenuItem {
-	items := []MenuItem{{Label: "Install for", Disabled: true}}
 	if len(choices) == 0 {
-		return items
+		return []MenuItem{{Label: "Install for", Disabled: true}}
 	}
+	title := choices[0] // the row's face (face): the pick, else the Taut entry
+	if w, _, ok := v.benchPick(choices); ok {
+		title = w
+	}
+	return v.installMenuFor(choices, title)
+}
+
+// installMenuFor is installMenu for a row whose face is title.
+func (v *libraryPage) installMenuFor(choices []pluginlib.Entry, title pluginlib.Entry) []MenuItem {
+	items := []MenuItem{{Label: "Install for", Disabled: true}}
 	order := append([]pluginlib.Entry(nil), choices...)
 	w, pick, ok := v.benchPick(choices)
-	title := choices[0] // the row's face (face): the pick, else the Taut entry
 	if ok {
-		title = w
 		sort.SliceStable(order, func(i, j int) bool { return order[i].System == w.System && order[j].System != w.System })
 	}
 	for _, e := range order {
 		it := MenuItem{Label: systemName(e.System), Subtitle: systemBlurb(e.System), Do: func() { v.installEntry(e, false) }}
 		if n := orStr(e.Name, e.ID); libNameKey(n) != libNameKey(orStr(title.Name, title.ID)) {
 			it.Subtitle = systemName(e.System) + "'s version, \u201c" + n + "\u201d"
+		}
+		if c := pluginlib.CompatOf(e.System, e.ID); c.Line != "" {
+			it.Subtitle = c.Line
 		}
 		if ok && e.System == w.System {
 			it.Label += " (recommended)"

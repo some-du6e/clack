@@ -172,42 +172,40 @@ return { id: "NoTrack", capabilities: [] };
 		t.Fatalf("No Tracking (Taut) and No Track (Slick) aren't one row: %s and %s", desc(nt), desc(rowOf(pluginlib.Slick, "NoTrack")))
 	}
 
-	// Install installs the bench's pick, and the row says so: its name and
-	// description are the pick's, and a line names the other version
-	pick, ok := pluginbench.Load().For([]pluginbench.Entry{{System: pluginlib.Taut, ID: "NoTrack"}, {System: pluginlib.Slick, ID: "NoTrack"}})
-	if !ok {
-		t.Fatal("bench.json has no result for No Tracking / No Track (plugin-bench, only=No Tracking)")
-	}
-	var winner, other pluginlib.Entry
-	for _, e := range nt.Entries {
-		if e.System == pick.Winner {
-			winner = e
-		} else {
-			other = e
+	// No Tracking / No Track: the bench checked nothing either version does
+	// (costs only), so the Library recommends neither: Install asks which,
+	// and the row says so and names the other version
+	entry := func(g libGroup, sys string) pluginlib.Entry {
+		for _, e := range g.Entries {
+			if e.System == sys {
+				return e
+			}
 		}
+		t.Fatalf("row %s has no %s entry", desc(g), sys)
+		return pluginlib.Entry{}
 	}
-	if winner.ID == "" || other.ID == "" {
-		t.Fatalf("the bench's pick %q isn't one of the row's systems", pick.Winner)
+	tautNT, slickNT := entry(nt, pluginlib.Taut), entry(nt, pluginlib.Slick)
+	if act := lp.action(nt); act.label != "Install…" || act.menu != nil {
+		t.Errorf("No Tracking / No Track, costs only: %q (menu %v), want Install… asking which", act.label, act.menu != nil)
 	}
-	if act := lp.action(nt); act.label != "Install" || act.menu == nil {
-		t.Errorf("No Tracking / No Track with bench data: %q (menu %v), want Install and its chevron", act.label, act.menu != nil)
-	}
-	alias := " In " + systemName(other.System) + " it's \u201c" + other.Name + "\u201d."
-	want := "Install adds " + systemName(winner.System) + "'s version (recommended)." + alias
-	if face, line := libFace(lp, nt); face.System != winner.System || line != want {
-		t.Errorf("the row shows %s's %q with %q, want %s's %q with %q", face.System, face.Name, line, winner.System, winner.Name, want)
+	ask := "Install asks which: Taut's version or Slick's. In Slick it's “No Track”."
+	if face, line := libFace(lp, nt); face.System != pluginlib.Taut || line != ask {
+		t.Errorf("the row shows %s's %q with %q, want Taut's %q with %q", face.System, face.Name, line, tautNT.Name, ask)
 	}
 	seen := drawn()
-	if !seen[winner.Name] || !seen[want] {
-		t.Errorf("the list didn't draw the row's name %q and %q", winner.Name, want)
+	if !seen[tautNT.Name] || !seen[ask] {
+		t.Errorf("the list didn't draw the row's name %q and %q", tautNT.Name, ask)
 	}
-	if seen[other.Name] || seen[plainMrkdwn(other.Description)] {
-		t.Errorf("the list drew %q or %q on its own: a second row for the other version", other.Name, other.Description)
+	if seen[slickNT.Name] || seen[plainMrkdwn(slickNT.Description)] {
+		t.Errorf("the list drew %q or %q on its own: a second row for the other version", slickNT.Name, slickNT.Description)
 	}
-	items := lp.installMenu(lp.installChoices(nt))
-	if len(items) != 3 || items[1].Label != systemName(winner.System)+" (recommended)" || items[2].Label != systemName(other.System) ||
-		items[2].Subtitle != systemName(other.System)+"'s version, \u201c"+other.Name+"\u201d" {
-		t.Errorf("Install for: %+v, want the pick, recommended, then %s's version named", items, systemName(other.System))
+	menu := lp.installMenu(lp.installChoices(nt))
+	if len(menu) != 3 || menu[1].Label != "Taut" || menu[2].Label != "Slick" || menu[2].Subtitle != "Slick's version, “No Track”" {
+		t.Fatalf("Install for: %+v, want Taut's version, then Slick's named, neither recommended", menu)
+	}
+	ntIDs := []pluginbench.Entry{{System: pluginlib.Taut, ID: "NoTrack"}, {System: pluginlib.Slick, ID: "NoTrack"}}
+	if pick, ok := pluginbench.Load().For(ntIDs); !ok || benchChecked(pick) {
+		t.Errorf("bench.json's No Tracking / No Track: %+v (data %v), want costs only, as this test's asked-about pair", pick, ok)
 	}
 
 	installedIn := func(sys string) bool {
@@ -229,6 +227,15 @@ return { id: "NoTrack", capabilities: [] };
 			t.Fatal(err)
 		}
 	}
+	install := func(what string, do func(), e pluginlib.Entry) {
+		t.Helper()
+		delete(lp.status, libKey(e))
+		do()
+		wait(what, func() bool { return lp.status[libKey(e)] != "" })
+		if lp.failed[libKey(e)] {
+			t.Fatalf("%s: %q", what, lp.status[libKey(e)])
+		}
+	}
 	// installed, whichever version: the row shows that one and its Settings
 	installedRow := func(e, o pluginlib.Entry) {
 		t.Helper()
@@ -238,7 +245,7 @@ return { id: "NoTrack", capabilities: [] };
 		if act := lp.action(nt); act.label != "Settings" {
 			t.Errorf("with %s's version installed the row says %q, want Settings", e.System, act.label)
 		}
-		want := systemName(e.System) + "'s version is installed. In " + systemName(o.System) + " it's \u201c" + o.Name + "\u201d."
+		want := systemName(e.System) + "'s version is installed. In " + systemName(o.System) + " it's “" + o.Name + "”."
 		if face, line := libFace(lp, nt); face.System != e.System || line != want {
 			t.Errorf("installed: the row shows %s's %q with %q, want %s's %q with %q", face.System, face.Name, line, e.System, e.Name, want)
 		}
@@ -252,36 +259,135 @@ return { id: "NoTrack", capabilities: [] };
 			t.Errorf("installed %s's: drawn %q %v, %q %v, %q %v; want the first two only", e.System, e.Name, seen[e.Name], want, seen[want], o.Name, seen[o.Name])
 		}
 	}
-	lp.action(nt).do() // Install: the pick
-	wait("Install", func() bool { return lp.status[libKey(winner)] != "" })
-	if lp.failed[libKey(winner)] {
-		t.Fatalf("Install: %q", lp.status[libKey(winner)])
-	}
-	installedRow(winner, other)
+	install("Install for > Taut", menu[1].Do, tautNT)
+	installedRow(tautNT, slickNT)
 
-	// the other version, picked from Install's menu once the pick is gone,
-	// is the row's: nothing swaps it back
-	remove(winner.System)
-	wait("the removal", func() bool { return lp.action(nt).label == "Install" })
-	var alt *MenuItem
-	menu := lp.installMenu(lp.installChoices(nt))
-	for i := range menu {
-		if menu[i].Label == systemName(other.System) {
-			alt = &menu[i]
-		}
+	// the other version, picked from Install's menu once Taut's is gone, is
+	// the row's: nothing swaps it back
+	remove(pluginlib.Taut)
+	wait("the removal", func() bool { return lp.action(nt).label == "Install…" })
+	menu = lp.installMenu(lp.installChoices(nt))
+	if len(menu) != 3 || menu[2].Label != "Slick" || menu[2].Do == nil {
+		t.Fatalf("Install for after the removal: %+v", menu)
 	}
-	if alt == nil || alt.Do == nil {
-		t.Fatalf("Install for has no %s item", systemName(other.System))
-	}
-	alt.Do()
-	wait("the other version's install", func() bool { return lp.status[libKey(other)] != "" })
-	if lp.failed[libKey(other)] {
-		t.Fatalf("the other version's install: %q", lp.status[libKey(other)])
-	}
+	install("Install for > Slick", menu[2].Do, slickNT)
 	for end := time.Now().Add(300 * time.Millisecond); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
 		r.frame(dialog)
 	}
-	installedRow(other, winner)
+	installedRow(slickNT, tautNT)
+
+	// both versions installed (someone who had both before the rows
+	// merged): Settings opens the first, and the chevron reaches either
+	// one's settings
+	install("Taut's version as well", func() { lp.installEntry(tautNT, false) }, tautNT)
+	if act := lp.action(nt); act.label != "Settings" || act.menu == nil {
+		t.Errorf("both versions installed: %q (menu %v), want Settings and a chevron", act.label, act.menu != nil)
+	}
+	both := "Both versions are installed. In Slick it's “No Track”."
+	if _, line := libFace(lp, nt); line != both {
+		t.Errorf("both installed: %q, want %q", line, both)
+	}
+	installed, _ := lp.groupStates(nt)
+	sets := libSettingsMenu(lp, installed)
+	if len(sets) != 3 || sets[0].Label != "Settings for" || sets[1].Label != "Taut" || sets[2].Label != "Slick" {
+		t.Fatalf("both installed, the chevron: %+v, want Settings for Taut's and Slick's", sets)
+	}
+	sets[1].Do()
+	if pm.section != pluginsTabID || pm.taut.screen != "plugin" || pm.taut.plugin != "NoTrack" {
+		t.Errorf("Settings for > Taut: section %q screen %q plugin %q", pm.section, pm.taut.screen, pm.taut.plugin)
+	}
+	r.frame(dialog)
+	sets[2].Do()
+	r.frame(dialog)
+	if pm.section != pluginsTabID || pm.plugins.s.open != "NoTrack" {
+		t.Errorf("Settings for > Slick: section %q open %q", pm.section, pm.plugins.s.open)
+	}
+	pm.plugins.s.open = ""
+	pm.selectTab(libraryTabID)
+	r.frame(dialog)
+
+	// Bring Back Slackbot / Custom Slackbot: the bench checked what each does
+	// (a custom response drawn with the plugin's avatar). Taut's does nothing
+	// in Clack, so Install installs Slick's, recommended; Taut's stays in the
+	// menu with how it works in Clack, and the row is filed and sorted as
+	// the version it shows, Custom Slackbot
+	bb := rowOf(pluginlib.Taut, "BringBackSlackbot")
+	bpick, ok := pluginbench.Load().For([]pluginbench.Entry{{System: pluginlib.Taut, ID: "BringBackSlackbot"}, {System: pluginlib.Slick, ID: "CustomSlackbot"}})
+	if !ok || !benchChecked(bpick) || bpick.Winner != pluginlib.Slick {
+		t.Errorf("bench.json's Bring Back Slackbot / Custom Slackbot: %+v (data %v), want Slick's version, picked on a behaviour check", bpick, ok)
+	}
+	if act := lp.action(bb); act.label != "Install" || act.menu == nil {
+		t.Errorf("Bring Back Slackbot / Custom Slackbot: %q (menu %v), want Install and its chevron", act.label, act.menu != nil)
+	}
+	recommend := "Install adds Slick's version (recommended). In Taut it's “Bring Back Slackbot”."
+	if face, line := libFace(lp, bb); face.ID != "CustomSlackbot" || line != recommend {
+		t.Errorf("the row shows %s/%s with %q, want Slick's Custom Slackbot with %q", face.System, face.ID, line, recommend)
+	}
+	dead := pluginlib.CompatOf(pluginlib.Taut, "BringBackSlackbot")
+	if bm := lp.installMenu(lp.installChoices(bb)); len(bm) != 3 || bm[1].Label != "Slick (recommended)" || bm[2].Label != "Taut" ||
+		dead.Status != pluginlib.CompatBroken || bm[2].Subtitle != dead.Line {
+		t.Errorf("Install for: %+v, want Slick's recommended, then Taut's saying %q", bm, dead.Line)
+	}
+	cards, _ := lp.cards(nil)
+	filed := false
+	for _, c := range cards {
+		for i, g := range c.rows {
+			if !has(g, pluginlib.Taut, "BringBackSlackbot") {
+				continue
+			}
+			filed = true
+			face, _ := libFace(lp, g)
+			if c.label != libCategory(face).Label {
+				t.Errorf("Custom Slackbot's row is under %q, want its own category %q", c.label, libCategory(face).Label)
+			}
+			for _, j := range []int{i - 1, i + 1} {
+				if j < 0 || j >= len(c.rows) {
+					continue
+				}
+				nb, _ := libFace(lp, c.rows[j])
+				if a, b := strings.ToLower(face.Name), strings.ToLower(nb.Name); (j < i) != (b < a) {
+					t.Errorf("%q is filed next to %q out of name order", face.Name, nb.Name)
+				}
+			}
+		}
+	}
+	if !filed {
+		t.Error("the cards have no Bring Back Slackbot / Custom Slackbot row")
+	}
+	seen = drawn()
+	if !seen["Custom Slackbot"] || !seen[recommend] || seen["Bring Back Slackbot"] {
+		t.Errorf("drawn Custom Slackbot %v, %q %v, Bring Back Slackbot %v: want the row as Slick's version", seen["Custom Slackbot"], recommend, seen[recommend], seen["Bring Back Slackbot"])
+	}
+
+	// the plugins page's search suggests that row too, and the suggestion
+	// asks which version (it has no chevron): Install…, the pick first
+	pm.plugins.setMode("installed")
+	pm.plugins.s.query.SetText("slackbot")
+	wait("the suggestions", func() bool {
+		for _, g := range lp.suggest([]string{"slackbot"}) {
+			if has(g, pluginlib.Slick, "CustomSlackbot") {
+				return true
+			}
+		}
+		return false
+	})
+	if act := libSuggestAction(lp, bb); act.label != "Install…" || act.do == nil {
+		t.Errorf("the suggestion's button: %q, want Install… opening Install for", act.label)
+	}
+	{
+		var mu sync.Mutex
+		got := map[string]bool{}
+		prev := theme.DrawHook
+		theme.DrawHook = func(s string) { mu.Lock(); got[s] = true; mu.Unlock() }
+		r.frame(dialog)
+		theme.DrawHook = prev
+		if !got["Custom Slackbot"] || !got["Install…"] {
+			t.Errorf("the suggestions drew Custom Slackbot %v, Install… %v", got["Custom Slackbot"], got["Install…"])
+		}
+	}
+	pm.plugins.s.query.SetText("")
+	pm.plugins.setMode("browse")
+	r.frame(dialog)
 
 	// search finds the one row by either version's name or description,
 	// and the Taut, Slick and Installed chips list it, under one category
@@ -306,7 +412,7 @@ return { id: "NoTrack", capabilities: [] };
 		{"Anonymise", pluginlib.Taut, "AnonymizeFilenames"}, {"Anonymize", pluginlib.Slick, "AnonymiseFileNames"},
 		{"Not Shit Markdown", pluginlib.Taut, "RealMarkdown"}, {"Real Markdown", pluginlib.Slick, "NotShitMarkdown"},
 		{"HCA", pluginlib.Taut, "IdvStatus"}, {"Private Channel Mapper", pluginlib.Taut, "PrivateChannel"},
-		{"Custom Slackbot", pluginlib.Taut, "BringBackSlackbot"},
+		{"Bring Back", pluginlib.Slick, "CustomSlackbot"},
 	} {
 		cards, _ := lp.cards(strings.Fields(strings.ToLower(c.q)))
 		found := false
@@ -321,8 +427,8 @@ return { id: "NoTrack", capabilities: [] };
 	}
 	pm.plugins.s.query.SetText("No Track") // the page's own search, drawn
 	seen = drawn()
-	if !seen[other.Name] || seen[winner.Name] {
-		t.Errorf("searching \"No Track\": drawn %q %v, %q %v, want the row's name only", other.Name, seen[other.Name], winner.Name, seen[winner.Name])
+	if !seen[tautNT.Name] || seen[slickNT.Name] {
+		t.Errorf("searching \"No Track\": drawn %q %v, %q %v, want the row's name only", tautNT.Name, seen[tautNT.Name], slickNT.Name, seen[slickNT.Name])
 	}
 	pm.plugins.s.query.SetText("")
 	for _, f := range []string{pluginlib.Taut, pluginlib.Slick, "installed", "all"} {
@@ -357,6 +463,45 @@ return { id: "NoTrack", capabilities: [] };
 		}
 		if !seen[face.Name] || face.Description != "" && !seen[plainMrkdwn(face.Description)] {
 			t.Errorf("%s: its name %q or description isn't drawn", k, face.Name)
+		}
+	}
+}
+
+// TestBenchPairsAreLibraryRows: the Library's pairs have one source,
+// pluginlib's (pairs.go, docs/PLUGINS.md) plus one name in both systems;
+// bench.json follows them and never pairs anything itself. Every plugin
+// the bench has results for is one row of the published Library.
+func TestBenchPairsAreLibraryRows(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "plugin-library-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ix pluginlib.Index
+	if err := json.Unmarshal(b, &ix); err != nil {
+		t.Fatal(err)
+	}
+	groups := libraryGroups(libraryEntries(&ix))
+	row := func(sys, id string) int {
+		for i, g := range groups {
+			for _, e := range g.Entries {
+				if e.System == sys && e.ID == id {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	d := pluginbench.Load()
+	if len(d.Plugins) < 31 {
+		t.Fatalf("bench.json has %d plugins", len(d.Plugins))
+	}
+	for _, p := range d.Plugins {
+		tv, sv := p.Variant(pluginlib.Taut), p.Variant(pluginlib.Slick)
+		if tv == nil || sv == nil {
+			continue
+		}
+		if i, j := row(pluginlib.Taut, tv.ID), row(pluginlib.Slick, sv.ID); i < 0 || i != j {
+			t.Errorf("bench.json's %s (taut %s, slick %s) isn't one Library row (rows %d, %d): list it in pluginlib's pairs or drop it", p.Name, tv.ID, sv.ID, i, j)
 		}
 	}
 }

@@ -4917,9 +4917,10 @@ jobs:
   # were two Library rows): a plugin both systems ship is one row under
   # either version's name (docs/PLUGINS.md's pair table), over the
   # published Library's metadata, through Preferences > Plugins > Browse;
-  # the doc table and pluginlib's pairs agree; a bench run limited to some
-  # plugins keeps the rest of the data. COUNT runs each. Dispatch with
-  # only=library-dupes.
+  # a pick from costs alone isn't recommended, and Bring Back Slackbot's
+  # dead version isn't; the doc table, pluginlib's pairs and bench.json
+  # agree; a bench run limited to some plugins keeps the rest of the data,
+  # matched by id. COUNT runs each. Dispatch with only=library-dupes.
   library-dupes:
     if: ${{ !inputs.only || startsWith('library-dupes', inputs.only) }}
     runs-on: ubuntu-latest
@@ -4942,9 +4943,9 @@ jobs:
         run: |
           set +e
           rc=0
-          go test -count="$COUNT" -timeout 20m -run '^(TestLibraryOneRowPerPlugin|TestLibraryBenchPick|TestLibraryMergesTautAndSlick)$' ./internal/ui || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^TestPairsMatchDocs$' ./internal/pluginlib || rc=1
-          go test -count="$COUNT" -timeout 5m -run '^TestKeep$' ./internal/pluginbench || rc=1
+          go test -count="$COUNT" -timeout 20m -run '^(TestLibraryOneRowPerPlugin|TestLibraryBenchPick|TestLibraryMergesTautAndSlick|TestBenchPairsAreLibraryRows|TestPluginSuggestionsRank)$' ./internal/ui || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestPairsMatchDocs|TestCompatMatchesDocs)$' ./internal/pluginlib || rc=1
+          go test -count="$COUNT" -timeout 5m -run '^(TestKeep|TestDecide|TestDecideWithoutChecks|TestEmbedded)$' ./internal/pluginbench || rc=1
           exit $rc
       - if: ${{ always() && env.XF_ID }}
         uses: ./.github/actions/expect-fail-report
