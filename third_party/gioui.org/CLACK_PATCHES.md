@@ -2456,8 +2456,9 @@ Presses at the same time still count on: Chromium skips those as one
 native event processed twice, but in Gio they're a test's, and upstream
 counted them. `gesture.DoubleClickTime()` is the platform's interval now,
 for code that counts clicks itself (Clack's link clicks in richview, its
-plugin DOM's dblclick in slackc, the column resizer and the composer's
-seeded click; richview and slackc have stock-Gio shims,
+plugin DOM's dblclick in slackc, the column resizer, the video
+picture-in-picture's resize handles and the composer's seeded click;
+richview and slackc have stock-Gio shims,
 `gio_patch48*.go`). Tests: `gesture` `TestMouseClicks`,
 `TestClackClickRuleDefault`, `TestClackClickRuleWindows` (the rule read
 again after the setting changes), `TestClackClickOSCount`; on real

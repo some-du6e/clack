@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -419,7 +420,7 @@ func (a *App) pipInput(gtx layout.Context, v *videoplayer.Controller, p *pipUI, 
 				if pe.Buttons != pointer.ButtonPrimary {
 					continue
 				}
-				if !p.lastEdge.IsZero() && gtx.Now.Sub(p.lastEdge) < 500*time.Millisecond { // onDoubleClick: back to the default
+				if !p.lastEdge.IsZero() && gtx.Now.Sub(p.lastEdge) <= gesture.DoubleClickTime() { // onDoubleClick, the platform's double click (Gio patch 48): back to the default
 					v.SetPipWidth(0)
 					p.lastEdge, p.edge = time.Time{}, ""
 					continue
