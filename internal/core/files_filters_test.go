@@ -57,3 +57,46 @@ func TestFilesViewAdvancedFiltersQuery(t *testing.T) {
 		t.Errorf("params %v", p)
 	}
 }
+
+// The typed query goes through Slack's tokenizer first (pYM5
+// tokenListFromString): a typed token of a filter's kind stays only when
+// the filter holds the same value, mentions resolve to ids, unknown names
+// stay as typed, and words join with one space. Expected values are
+// Slack's: nzlP over pYM5's rawTokensFromString / tokenListFromString and
+// the tokens' fromString, run in node on the same store (testApp: U1
+// alice, U2 bob, C1 general, USELF me).
+func TestFilesViewTypedTokensQuery(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["search.modules.files"] = `{"ok":true,"items":[],"pagination":{"total_count":0,"page":1,"page_count":1}}`
+	lists := []string{"lists"}
+	for _, c := range []struct {
+		name string
+		o    FilesOpts
+		want string
+	}{
+		// a typed date of a kind the filters set gives way to theirs
+		{"typed-before-with-date", FilesOpts{Types: lists, Query: "plan before:2026-01-01", Before: "2026-11-22", After: "2026-11-14"},
+			"plan before:2026-11-22 after:2026-11-14 type:lists"},
+		{"typed-before-same", FilesOpts{Types: lists, Query: "before:2026-11-22 plan", Before: "2026-11-22", After: "2026-11-14"},
+			"before:2026-11-22 plan after:2026-11-14 type:lists"},
+		// every pass runs, so a known person typed with no From is dropped
+		{"typed-from-no-filter", FilesOpts{Types: lists, Query: "from:@alice report"}, "report type:lists"},
+		{"typed-from-unknown", FilesOpts{Types: lists, Query: "from:@nobody report"}, "from:@nobody report type:lists"},
+		{"typed-from-kept", FilesOpts{Types: lists, Query: "from:<@U1> report", From: []string{"U1", "U2"}},
+			"from:<@U1> report from:<@U2> type:lists"},
+		{"typed-in", FilesOpts{Types: lists, Query: "in:#general in:#nowhere notes", In: []string{"C1"}},
+			"in:<#C1|general> notes type:lists"},
+		{"typed-type-has-is", FilesOpts{Types: []string{"lists", "quip"}, Query: "type:pdfs type:lists has:link is:thread is:bogus -has:star"},
+			"type:lists is:bogus -has:star type:quip"},
+		{"mentions-phrases", FilesOpts{Types: lists, Query: `@alice   "q3 plan" <#C1> x  y`}, `<@U1> "q3 plan" <#C1|general> x y type:lists`},
+		{"creator-me", FilesOpts{Mine: true, Query: "creator:me draft"}, "creator:<@USELF> draft type:lists type:quip type:documents"},
+		{"empty-values", FilesOpts{Types: lists, Query: "from: in: before: to:@alice"}, "from: in: before: to:@alice type:lists"},
+	} {
+		if _, err := a.Files(t.Context(), c.o); err != nil {
+			t.Fatal(err)
+		}
+		if got := formVal(f.last("search.modules.files"), "query"); got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
+		}
+	}
+}

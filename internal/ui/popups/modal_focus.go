@@ -147,6 +147,10 @@ func (m *Modal) keys(gtx layout.Context) bool {
 		}
 		switch ke.Name {
 		case key.NameEscape:
+			if m.o.OnEscape != nil && m.o.OnEscape() {
+				m.h.Invalidate()
+				continue
+			}
 			m.Dismiss()
 			return true
 		case key.NameTab:
