@@ -661,7 +661,7 @@ func (e *scExternal) recordBanner(gtx C, hub core.SCHub, has bool, w int) (op.Ca
 	m := op.Record(gtx.Ops)
 	cw := min(w, gtx.Dp(960)+2*gtx.Dp(16))
 	x := (w - cw) / 2
-	defer op.Offset(image.Pt(x, 0)).Push(gtx.Ops).Pop()
+	off := op.Offset(image.Pt(x, 0)).Push(gtx.Ops) // popped before Stop: a stack op may not cross the macro
 	g := gtx
 	g.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, math.MaxInt32/2)}
 	dd := layout.Inset{Left: 16, Right: 16}.Layout(g, func(gtx C) D {
@@ -716,6 +716,7 @@ func (e *scExternal) recordBanner(gtx C, hub core.SCHub, has bool, w int) (op.Ca
 			d.iconButton(gtx, &e.bannerX, "close", 36, 20, d.p.Sec)
 		}()
 	}
+	off.Pop()
 	return m.Stop(), image.Pt(cw, dd.Size.Y)
 }
 
