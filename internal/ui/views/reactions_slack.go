@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -14,8 +15,10 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // A message's reactions in these views are Slack's ReactionBar, as in a
@@ -268,11 +271,75 @@ type actReact struct {
 
 // actReaction is one reaction of m.
 func (b *base) actReaction(gtx C, m *core.Message, r *core.Reaction) D {
+	key := "message-" + m.TS + "-" + m.Channel
 	if !slackc.Patched("Reaction") && !slackc.Patched("UnstyledButton") {
-		return b.actPill(gtx, r)
+		d := b.actPill(gtx, r)
+		b.reactTip(gtx, key, r, d.Size)
+		return d
 	}
-	a := &actReact{b: b, r: r, key: "message-" + m.TS + "-" + m.Channel}
+	a := &actReact{b: b, r: r, key: key}
 	return slackc.Component(gtx, "Reaction", a, (*actReact).props, (*actReact).layout)
+}
+
+// pillTip is a pill's ReactionTip trigger: its own pointer handler,
+// which any Leave or Cancel ends (whatever pointer: a handler made again
+// starts with a Cancel of pointer 0, and on Windows the mouse is 1).
+type pillTip struct {
+	tag   int
+	hov   bool
+	since time.Time
+	org   theme.TipOrigin
+}
+
+// reactTip is reaction r's ReactionTip, as a channel's pills have it
+// (messages.ReactionTooltip): over the pill (size, at the current
+// offset), after ReactionTipDelay, deferred above the view. Every pill
+// gets it, the native one and the one a plugin's Reaction or ReactionBar
+// tree drew (actReact.layout).
+func (b *base) reactTip(gtx C, key string, r *core.Reaction, size image.Point) {
+	k := key + ":" + r.Name
+	if b.pillTips == nil || len(b.pillTips) > 2000 {
+		b.pillTips = map[string]*pillTip{}
+	}
+	t := b.pillTips[k]
+	if t == nil {
+		t = new(pillTip)
+		b.pillTips[k] = t
+	}
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &t.tag, Kinds: pointer.Enter | pointer.Leave | pointer.Cancel})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok {
+			if e.Kind == pointer.Enter && !t.hov {
+				t.since = gtx.Now
+			}
+			t.hov = e.Kind == pointer.Enter
+		}
+	}
+	rect := image.Rectangle{Max: size}
+	t.org.Track(gtx, rect)
+	a := clip.Rect(rect).Push(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &t.tag)
+	pass.Pop()
+	a.Pop()
+	if !t.hov || size.X <= 0 {
+		return
+	}
+	if wait := t.since.Add(messages.ReactionTipDelay); gtx.Now.Before(wait) {
+		gtx.Execute(op.InvalidateCmd{At: wait})
+		return
+	}
+	self := ""
+	if c := b.h.Core(); c != nil {
+		self = c.Self().ID
+	}
+	tip := messages.NewReactionTooltip(b.h, r, self)
+	m := op.Record(gtx.Ops)
+	tip.Draw(gtx, b.h, rect, t.org.Bounds())
+	op.Defer(gtx.Ops, m.Stop())
 }
 
 func (a *actReact) props() slackc.Props {
@@ -311,13 +378,18 @@ func (a *actReact) buttonProps() slackc.Props {
 		}}
 }
 
-// layout is Reaction's native: the button its tree rendered, or the pill.
+// layout is Reaction's native: the button its tree rendered, or the pill,
+// with the pill's ReactionTip.
 func (a *actReact) layout(gtx C, p slackc.Props) D {
+	var d D
 	if e, ok := slackc.PropChildren(p); ok {
-		return slackc.LayoutElement(gtx, e)
+		d = slackc.LayoutElement(gtx, e)
+	} else {
+		// the pill draws its box itself (slackc.ComponentBox, as ChildBox)
+		d = slackc.ComponentBox(gtx, "UnstyledButton", a, (*actReact).buttonProps, (*actReact).layoutButton)
 	}
-	// the pill draws its box itself (slackc.ComponentBox, as ChildBox)
-	return slackc.ComponentBox(gtx, "UnstyledButton", a, (*actReact).buttonProps, (*actReact).layoutButton)
+	a.b.reactTip(gtx, a.key, a.r, d.Size)
+	return d
 }
 
 // layoutButton is the pill (.c-reaction, --reacted for the viewer's

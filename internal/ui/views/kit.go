@@ -342,6 +342,8 @@ type base struct {
 	addBtns map[string]*widget.Clickable
 	// addTips are their "Add reaction…" tooltips (ReactionAddButton's)
 	addTips map[string]*popups.TipState
+	// pillTips are the reaction pills' ReactionTips (reactions_slack.go)
+	pillTips map[string]*pillTip
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
 	// vers caches msgVer per message copy (msgVerOf); vsrc is the

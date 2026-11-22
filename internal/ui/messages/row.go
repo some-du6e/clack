@@ -3702,7 +3702,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 // "さんが :tada: でリアクションしました" after it. The viewer alone reads
 // "You (click to remove)" (showClickToRemove). The runs are marked with
 // tipSubOn/tipSubOff (i18n.go).
-func reactionTip(h Host, re *core.Reaction, selfID string) string {
+func reactionTip(h TipHost, re *core.Reaction, selfID string) string {
 	return reactionTipLine(h, re, selfID, false)
 }
 
@@ -3710,7 +3710,7 @@ func reactionTip(h Host, re *core.Reaction, selfID string) string {
 // ReactionTip's E (the group's count past 50 over several reactions):
 // only the first ten users, and "others" once the reaction's count passes
 // 10.
-func reactionTipLine(h Host, re *core.Reaction, selfID string, cut bool) string {
+func reactionTipLine(h TipHost, re *core.Reaction, selfID string, cut bool) string {
 	emoji := ":" + re.Name + ":"
 	users, over := re.Users, re.Count > 50
 	if cut {
