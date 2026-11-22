@@ -429,8 +429,11 @@ func TestThreadsAuditOpenFromToast(t *testing.T) {
 // list mounts afresh and starts at getThreadStartPosition again: a thread
 // switch saves no scrollmark (componentDidUpdate only clears the new
 // thread's; maybeSaveThreadScrollmarks runs as the pane unmounts). The
-// thread was marked read as it showed, to the newest reply it held, so it
-// starts there, at its end, and never at its root.
+// thread was marked read as it showed, to the newest reply it held, so the
+// new list starts at that reply (bracketed at the end of what it holds):
+// the first frame shows it, and no frame the root. (The page after it
+// then lands under the reader: the anchor dropped at the start's scroll
+// echo, and AnchorLayout.setKeys keeps the row at the top.)
 func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 	x := openTopEnv(t)
 	x.root = fakeslack.ThreadOpenUnread
@@ -465,9 +468,15 @@ func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 	x.paneStart("the other thread", otStart{key: fakeslack.ThreadOpenReply(x.root, 10), y: x.px(100)}, 500*time.Millisecond)
 	// the first again, from its reply bar
 	x.root = first
+	read := ""
+	for _, m := range x.fs.ThreadOpenMarks() {
+		if m.ThreadTS == x.root {
+			read = m.TS // the reply the pane marked it read to
+		}
+	}
 	x.click(x.replyBar())
-	newest := fakeslack.ThreadOpenReply(x.root, fakeslack.ThreadOpenReplies-1)
 	dl := time.Now().Add(20 * time.Second)
+	var since time.Time
 	for {
 		x.frame()
 		got := x.paneTops()
@@ -475,12 +484,18 @@ func TestThreadsAuditOpenAgainAfterAnother(t *testing.T) {
 			if _, ok := got[x.root]; ok {
 				t.Fatalf("opened again after another thread, the pane drew the thread from its root (%s); Slack's list mounts afresh at the reply it was read to", x.drawnTops(got))
 			}
-			if _, ok := got[newest]; ok {
-				break
+			if since.IsZero() {
+				if _, ok := got[read]; !ok {
+					t.Fatalf("opened again after another thread, the first frame that drew the thread drew it without %s, the reply it was read to, where Slack's new list starts (%s)", x.otLabel(read), x.drawnTops(got))
+				}
+				since = time.Now()
+			}
+			if time.Since(since) >= 1500*time.Millisecond {
+				return
 			}
 		}
 		if time.Now().After(dl) {
-			t.Fatalf("opened again after another thread, the pane never came to the newest reply (%s)", x.drawnTops(got))
+			t.Fatalf("opened again after another thread, the pane never drew the thread (%s)", x.drawnTops(got))
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
