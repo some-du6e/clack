@@ -30,6 +30,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -171,7 +172,7 @@ func TestAppHoverCardShowsWithTheAppProfile(t *testing.T) {
 	free := func() { once.Do(func() { close(release) }) }
 	t.Cleanup(free)
 	fs.SetHook(func(method string, f url.Values) (any, bool) {
-		if method == "users.info" {
+		if method == "users.info" || strings.HasSuffix(method, "users/info") { // the edge read EnsureUsers makes
 			<-release
 		}
 		return nil, false
