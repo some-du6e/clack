@@ -77,6 +77,12 @@ type row struct {
 	rv      *richview.View
 	handler richHandler
 	drawn   time.Time // last frame the row was laid out (sweepRows)
+	// hlDrawn: the jump highlight's strength the row last painted (0..1,
+	// highlightAlpha), for SenderView
+	hlDrawn float32
+	// under is the row's fill as last painted (paintRowFill), opaque: its
+	// see-through fills blend over it (seeFill, richview's SetUnder)
+	under color.NRGBA
 
 	// find in thread (thread_find.go): the query the body marks
 	// (findInThreadHighlightWords) and whether the row is the current
@@ -1091,11 +1097,14 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 			r.resolve(rc)
 		}
 	}
+	// MessageBackground wraps every row (Message's first child, b5pm), so
+	// a tombstone and a canvas comment root get its fill too: the hover and
+	// the jump highlight
 	if r.m.Tombstone {
-		return r.tombstoneLayout(gtx, rc)
+		return r.withRowFill(gtx, rc, func(gtx layout.Context) layout.Dimensions { return r.tombstoneLayout(gtx, rc) })
 	}
 	if rc.parent && rc.thread && r.m.IsCommentRoot() { // ThreadRootCanvas (thread_comment.go)
-		return r.commentRootLayout(gtx, rc)
+		return r.withRowFill(gtx, rc, func(gtx layout.Context) layout.Dimensions { return r.commentRootLayout(gtx, rc) })
 	}
 	if r.m.System && (!rc.parent || huddleSubtype(r.m.Subtype)) && !r.hiddenSystem(rc) {
 		// ThreadRootGeneric draws a huddle root as a redesigned system
@@ -1137,56 +1146,18 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		return layout.Dimensions{}
 	}
 
-	// Record content first; the background depends on the height.
-	rec := op.Record(gtx.Ops)
-	var opac paint.OpacityStack
-	dim := r.dimPending()
-	if dim {
-		opac = paint.PushOpacity(gtx.Ops, 0.5)
-	}
-	y := dp(gtx, padTop) - dp(gtx, 4)
-
-	// MessageLabels (boot-shared meLQ) draws one primary label: ephemeral,
-	// then a broadcast, then pinned, then Later (a saved message that
-	// isn't completed or archived, actions_rules.go laterLabelFor), then a
-	// custom response. Message (the channel row), ThreadRoot and
-	// ThreadReplyGeneric all wrap the row in it, so the thread pane shows
-	// pinned labels too; only ThreadReplyGeneric passes showBroadcast. A
-	// custom response gets no label line ("custom_response" ===
-	// primaryLabelType renders none), only the row's tint.
+	// The background first (the content's see-through fills blend over it:
+	// prepareUnder), then the content, recorded: the fill depends on its
+	// height. MessageLabels (boot-shared meLQ) draws one primary label:
+	// ephemeral, then a broadcast, then pinned, then Later (a saved message
+	// that isn't completed or archived, actions_rules.go laterLabelFor),
+	// then a custom response.
 	eph := ephemeral(rc, m)
 	broadcast := rc.thread && !rc.parent && m.Broadcast
-	var later bool
-	switch {
-	case eph:
-		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
-	case broadcast:
-		y += r.broadcastLabel(gtx, rc, y)
-	case m.Pinned:
-		y += r.labelRuns(gtx, rc, y, "pin", r.pinnedRuns(gtx, rc, nil)...)
-	default:
-		if ll, ok := laterLabelFor(rc.h.Core(), m, rc.now); ok {
-			later = true
-			y += r.laterLabelLine(gtx, rc, y, ll)
-		}
+	ll, later := laterLabel{}, false
+	if !eph && !broadcast && !m.Pinned {
+		ll, later = laterLabelFor(rc.h.Core(), m, rc.now)
 	}
-	r.col = image.Pt(cx, y)
-	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
-		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
-	})
-	y += g.Size.Y
-	if dim {
-		opac.Pop()
-	}
-	content := rec.Stop()
-
-	h := y + dp(gtx, mt.padBottom) - dp(gtx, 8)
-	if rc.header && !rc.noAvatar() {
-		if mh := dp(gtx, padTop) + dp(gtx, mt.avatar) + dp(gtx, mt.padBottom); h < mh {
-			h = mh
-		}
-	}
-	size := image.Pt(w, h)
 	bg := c.Bg
 	bg.A = 0
 	switch {
@@ -1209,6 +1180,50 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		bg = c.Hover
 	}
 	bg = st.Background(bg)
+	r.prepareUnder(bg)
+
+	rec := op.Record(gtx.Ops)
+	var opac paint.OpacityStack
+	dim := r.dimPending()
+	if dim {
+		opac = paint.PushOpacity(gtx.Ops, 0.5)
+	}
+	y := dp(gtx, padTop) - dp(gtx, 4)
+
+	// Message (the channel row), ThreadRoot and ThreadReplyGeneric all wrap
+	// the row in MessageLabels, so the thread pane shows pinned labels too;
+	// only ThreadReplyGeneric passes showBroadcast. A custom response gets
+	// no label line ("custom_response" === primaryLabelType renders none),
+	// only the row's tint.
+	switch {
+	case eph:
+		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
+	case broadcast:
+		y += r.broadcastLabel(gtx, rc, y)
+	case m.Pinned:
+		y += r.labelRuns(gtx, rc, y, "pin", r.pinnedRuns(gtx, rc, nil)...)
+	default:
+		if later {
+			y += r.laterLabelLine(gtx, rc, y, ll)
+		}
+	}
+	r.col = image.Pt(cx, y)
+	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
+		return slackc.Component(gtx, "ProgressiveDisclosureSuccessCoachmarkWrapper", r, (*row).coachmarkProps, (*row).layoutCoachmark)
+	})
+	y += g.Size.Y
+	if dim {
+		opac.Pop()
+	}
+	content := rec.Stop()
+
+	h := y + dp(gtx, mt.padBottom) - dp(gtx, 8)
+	if rc.header && !rc.noAvatar() {
+		if mh := dp(gtx, padTop) + dp(gtx, mt.avatar) + dp(gtx, mt.padBottom); h < mh {
+			h = mh
+		}
+	}
+	size := image.Pt(w, h)
 	r.height, r.bgDrawn = h, bg
 	if st.Active() {
 		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.paintBackground(gtx, content, size, bg) })
@@ -1217,19 +1232,96 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 }
 
 func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.Point, bg color.NRGBA) layout.Dimensions {
-	fill(gtx.Ops, image.Rectangle{Max: size}, bg)
-	if hl := r.rc.highlight; hl > 0 {
-		c := r.rc.c.Highlight
-		c.A = uint8(float32(c.A) * hl)
-		fill(gtx.Ops, image.Rectangle{Max: size}, c)
-	}
-	if fl := r.rc.findFlash; fl > 0 {
-		c := r.rc.c.ActiveThread
-		c.A = uint8(float32(c.A) * fl)
-		fill(gtx.Ops, image.Rectangle{Max: size}, c)
-	}
+	r.paintRowFill(gtx, size, bg)
 	content.Add(gtx.Ops)
 	return layout.Dimensions{Size: size}
+}
+
+// paintRowFill is MessageBackground's fill over a row of size: its own
+// background bg (transparent for none), the jump highlight over it
+// (c-message_kit__background--highlight: CSS animates the row's background
+// to #f2c74433 and back, so each frame is the sRGB mix of the two, painted
+// solid: Gio's linear-light blend of a scaled alpha drifts from it
+// mid-fade, most on dark rows), then thread find's flash. Every row layout
+// paints it, whatever it draws on top (a message, a tombstone, a system
+// message, a huddle or canvas comment root).
+func (r *row) paintRowFill(gtx layout.Context, size image.Point, bg color.NRGBA) {
+	r.hlDrawn = r.rc.highlight
+	if bg.A > 0 || r.rc.highlight > 0 {
+		fill(gtx.Ops, image.Rectangle{Max: size}, r.fillOf(bg))
+	}
+	if fl := r.rc.findFlash; fl > 0 {
+		f := r.rc.c.ActiveThread
+		f.A = uint8(float32(f.A) * fl)
+		fill(gtx.Ops, image.Rectangle{Max: size}, f)
+	}
+}
+
+// fillOf is the opaque fill paintRowFill paints for the row's own
+// background bg: bg (the pane when transparent), mixed with the jump
+// highlight in sRGB.
+func (r *row) fillOf(bg color.NRGBA) color.NRGBA {
+	c := r.rc.c
+	under := c.Bg
+	switch {
+	case bg.A == 255:
+		under = bg
+	case bg.A > 0:
+		under = richview.Over(bg, c.Bg)
+	}
+	if hl := r.rc.highlight; hl > 0 {
+		return srgbMix(under, c.Highlight, hl)
+	}
+	return under
+}
+
+// prepareUnder notes the fill the row paints this frame under its content
+// (fillOf) before the content is laid out, so its see-through fills (code
+// and mentions in the body, reaction pills, badges) blend over it: Slack's
+// rgba fills show the row's background through them.
+func (r *row) prepareUnder(bg color.NRGBA) {
+	r.under = r.fillOf(bg)
+	if r.rv != nil {
+		u := r.under
+		if u == r.rc.c.Bg {
+			u = color.NRGBA{} // the pane: the palette's own blend
+		}
+		r.rv.SetUnder(u)
+	}
+}
+
+// withRowFill lays out f, a row layout that paints no background of its
+// own, over the row's fill (paintRowFill): the hover, then the highlight.
+func (r *row) withRowFill(gtx layout.Context, rc *rowCtx, f layout.Widget) layout.Dimensions {
+	var bg color.NRGBA
+	if rc.hovered {
+		bg = rc.c.Hover
+	}
+	r.prepareUnder(bg)
+	rec := op.Record(gtx.Ops)
+	d := f(gtx)
+	call := rec.Stop()
+	r.paintRowFill(gtx, d.Size, bg)
+	call.Add(gtx.Ops)
+	return d
+}
+
+// seeFill is fill x (one of c's, pre-blended over the pane) with raw, the
+// rgba it's blended from (c.raw; zero for an opaque one), over the row's
+// fill instead, when the row has one of its own (its hover, its jump
+// highlight): Slack's rgba reaction pills and badges show the row's
+// background through them.
+func (r *row) seeFill(c *colors, x, raw color.NRGBA) color.NRGBA {
+	if r.under.A != 255 || r.under == c.Bg || raw.A == 0 {
+		return x
+	}
+	return richview.Over(raw, r.under)
+}
+
+// srgbMix is a and b mixed in sRGB, t of b (opaque).
+func srgbMix(a, b color.NRGBA, t float32) color.NRGBA {
+	m := func(x, y uint8) uint8 { return uint8(float32(x)*(1-t) + float32(y)*t + 0.5) }
+	return color.NRGBA{R: m(a.R, b.R), G: m(a.G, b.G), B: m(a.B, b.B), A: 255}
 }
 
 // layoutGutter is the gutter memo (filter-matched by its source marker
@@ -2021,7 +2113,7 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 		bw := sz.X + dp(gtx, 6)
 		bh := dp(gtx, 14)
 		top := baseline - dp(gtx, 11)
-		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), c.BadgeBg)
+		rrect(gtx.Ops, image.Rect(xx, top, xx+bw, top+bh), dp(gtx, 2), r.seeFill(c, c.BadgeBg, c.raw.BadgeBg))
 		at(gtx, xx+dp(gtx, 3), top+(bh-sz.Y)/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, s, badge) })
 		xx += bw
 	}
@@ -2660,12 +2752,12 @@ func (r *row) expandButton(gtx layout.Context, kind, hidden int, sel bool) layou
 		rad := ph / 2
 		switch {
 		case sel:
-			rrect(gtx.Ops, rr, rad, c.ReactSelfBg)
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg))
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 		case r.reactExpand.Hovered():
 			border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 		default:
-			rrect(gtx.Ops, rr, rad, c.ReactBg)
+			rrect(gtx.Ops, rr, rad, r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		at(gtx, dp(gtx, 8), (ph-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
 		return layout.Dimensions{Size: size}
@@ -2755,7 +2847,7 @@ func (r *row) addButton(gtx layout.Context, st slackc.Styled, size image.Point) 
 			}
 			col = rgb(0xecb22e)
 		} else if !st.Has("background-color") { // a rule's fill WrapRounded paints, once
-			rrect(gtx.Ops, rr, ph/2, c.ReactBg)
+			rrect(gtx.Ops, rr, ph/2, r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		col = st.Color(col)
 		is := dp(gtx, 18)
@@ -2870,7 +2962,7 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
 		case self:
-			fill(c.ReactSelfBg)
+			fill(pl.r.seeFill(c, c.ReactSelfBg, c.raw.ReactSelfBg))
 			if ring {
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactSelfBorder)
 			}
@@ -2880,7 +2972,7 @@ func (pl *reactPill) pill(gtx layout.Context, st slackc.Styled, content op.CallO
 				border(gtx.Ops, rr, rad, dp(gtx, 1), c.ReactHoverBorder)
 			}
 		default:
-			fill(c.ReactBg)
+			fill(pl.r.seeFill(c, c.ReactBg, c.raw.ReactBg))
 		}
 		t := op.Offset(image.Pt(dp(gtx, 8), cy)).Push(gtx.Ops)
 		content.Add(gtx.Ops)
@@ -3054,6 +3146,11 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	o.Compact = true
 	r.rv.SetOptions(o)
 	c := rc.c
+	var sysBg color.NRGBA // MessageBackground's own: the hover
+	if rc.hovered {
+		sysBg = c.Hover
+	}
+	r.prepareUnder(sysBg)
 	m := &r.m
 	w := gtx.Constraints.Max.X
 	padX := dp(gtx, rc.padX())
@@ -3113,9 +3210,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	}
 	content := rec.Stop()
 	h := y + dp(gtx, 8)
-	if rc.hovered {
-		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
-	}
+	r.paintRowFill(gtx, image.Pt(w, h), sysBg) // MessageBackground's: the hover, the jump highlight
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
@@ -3176,6 +3271,11 @@ func (r *row) systemHideLink(gtx layout.Context, x, y int) int {
 // sender and time line over the text (it hides it only for "light").
 func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	c := rc.c
+	var sysBg color.NRGBA // MessageBackground's own: the hover
+	if rc.hovered {
+		sysBg = c.Hover
+	}
+	r.prepareUnder(sysBg)
 	m := &r.m
 	w := gtx.Constraints.Max.X
 	padX := dp(gtx, rc.padX())
@@ -3224,9 +3324,7 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	}
 	content := rec.Stop()
 	h := y
-	if rc.hovered {
-		fill(gtx.Ops, image.Rect(0, 0, w, h), c.Hover)
-	}
+	r.paintRowFill(gtx, image.Pt(w, h), sysBg) // MessageBackground's: the hover, the jump highlight
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
@@ -3264,10 +3362,11 @@ func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions 
 	top := dp(gtx, mt.padTop)
 	av := dp(gtx, mt.avatar)
 	sq := image.Rect(padX, top, padX+av, top+av)
-	rrect(gtx.Ops, sq, dp(gtx, 8), c.BadgeBg)
+	sqFill := r.seeFill(c, c.TombBg, c.raw.TombBg)
+	rrect(gtx.Ops, sq, dp(gtx, 8), sqFill)
 	is := dp(gtx, 20)
 	at(gtx, padX+(av-is)/2, top+(av-is)/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("trash")(gtx, unit.Dp(20), c.Text2)
+		return icons.Get("trash")(gtx, unit.Dp(20), richview.Over(c.TombGlyph, sqFill))
 	})
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
 	// .c-message_kit__tombstone__right { margin: -4px 0 }; its

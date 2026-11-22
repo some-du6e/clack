@@ -3042,3 +3042,365 @@ jobs:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_TOAST_TESTS: "1"
         run: go test -count=$COUNT -v -timeout 25m -run '^(TestWindowsToastSystemDM|TestSystemDMToastLikeSlack)$' ./internal/ui
+
+
+  # thread-load: a thread of 1,078,423 synthetic replies (Karim, 2026-11-20:
+  # "make this thread load really fucking fast") opens and pages the way
+  # Slack's thread pane does: the store's slices against Slack's own
+  # reducer (TestThreadHistoryLikeSlack), core's requests (one page of 28
+  # from the root, two around a reply, loadPre and loadPost), and the pane
+  # opened through the permalink, from the channel and from Activity, then
+  # scrolled through older pages (time to the first replies, requests,
+  # heap, frames), and after a slow connect a thread at its end goes stale
+  # with the channels and its read past the old end joins what the socket
+  # brought. Dispatch with only=thread-load.
+  thread-load:
+    if: ${{ !inputs.only || startsWith('thread-load', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "store, core and ui: the huge thread's pages, COUNT runs (one verbose)"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadHistoryLikeSlack|TestThreadPageKeepsRootOutOfSlice|TestResetReachedEndCoversThreads)$' ./internal/store || rc=1
+          go test -count=$COUNT -v -timeout 15m -run '^(TestThreadOpensLikeSlack|TestThreadNewestPageLikeSlack|TestSocketGapThreadAtItsEnd)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadPaneAfterSlowConnect|TestThreadLoadingRepliesRow)$' ./internal/ui/messages || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 20m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run '^TestHugeThreadLoadsLikeSlack$' ./internal/ui || rc=1
+          exit $rc
+
+  # threads-ship (2026-11-21): the review of thread-load-speed's blockers
+  # (wf_15e6e96d-4f5): a List item's comments page like the thread pane,
+  # a poll with the socket away refreshes the pane's rows, a pane closed
+  # or hidden while it pages starts over as a pane mounted afresh (its
+  # scrollmark by message), a followed thread opens at its last read with
+  # no window holding its root, Mod+Z and Up read the newest slice, the
+  # reply box stays through a slow connect, and find in thread lands a
+  # result outside the slice. Dispatch with only=thread-load (or
+  # only=thread-load-ship for these alone).
+  thread-load-ship:
+    if: ${{ !inputs.only || startsWith('thread-load-ship', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core, messages, listview and ui: the threads-ship blockers, COUNT runs"
+        run: |
+          set +e
+          rc=0
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadStartTsFollowedWithoutRoot|TestThreadPollRefreshesPaneRows)$' ./internal/core || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^(TestThreadReplyBoxStaysAfterSlowConnect|TestFindInThreadNewerResultLands|TestFindInThreadClosedStopsReading)$' ./internal/ui/messages || rc=1
+          go test -count=$COUNT -v -timeout 10m -run '^TestItemCommentsPageLikeSlack$' ./internal/ui/listview || rc=1
+          xvfb-run -a go test -count=$COUNT -v -timeout 25m -run '^(TestThreadPaneClosedWhilePageLoads|TestThreadPaneHiddenAndShownKeepsPaging|TestThreadReopenAfterJumpStartsAtItsStart|TestThreadPaneRefreshesAtPoll|TestUndoAndEditLastReadTheNewestSlice)$' ./internal/ui || rc=1
+          exit $rc
+
+  # thread-open-root (2026-11-17, round 2 2026-11-18): a thread pane never
+  # shows a reply as its root (Karim, α.105: a link to a reply in a bot's
+  # digest of active threads opened the reply alone, as the root), and the
+  # rest of Slack's jumpToMessage: a reply's permalink with and without
+  # thread_ts, a thread parent's link (openThreadForRootMessage; not in a
+  # bot's DM), message_mention pills, the window around an old message
+  # (two conversations.history calls), the split view's back stack and
+  # reply, the reply route's history entry, one replies fetch per
+  # hand-over, thread-only and latest-reply links, slack:// links in
+  # messages, foreign workspaces, deep links, OpenThread, the pane's
+  # hand-over, a followed thread's toast, the log's tags; the pane's
+  # hand-over on each open and the highlight's keyframes (messages), row
+  # and surface links, search results and Activity's Open in home, the
+  # lookups (core). Round 3 adds the jump's anchor line (Karim, α.108:
+  # links highlighted a message without scrolling to it; Gio patch 50) and
+  # an archived channel's tombstone thread paging up (Karim: "i cant scroll
+  # up from this thread"). Round 4: Slack's general anchoring, thread pane
+  # starts, jumps to a ts no row holds, windows kept while shown. One
+  # verbose run, then COUNT. Dispatch:
+  # only=thread-open-root.
+  thread-open-root:
+    if: ${{ !inputs.only || startsWith('thread-open-root', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      TESTS: '^(TestReplyPermalinkOpensParentThread|TestReplyPermalinkWithoutThreadOpensParentThread|TestThreadPaneNeverShowsReplyAsRoot|TestDeepLinkToReplyOpensParentThread|TestFollowedThreadToastOpensParentThread|TestReplyPermalinkSplitClickOpensInSplit|TestParentLinkOpensItsThread|TestMessageMentionPillOpensThread|TestPermalinkLoadsAroundOldMessage|TestSplitViewLinkKeepsBackStack|TestReplyRouteLeavesNoHistory|TestReplyRootedPaneFetchesThreadOnce|TestThreadOnlyLinksOpenTheThread|TestForeignWorkspaceLinkOpensBrowser|TestNavigationLogsTagIDs|TestJumpWindowIsTheListsOwn|TestJumpWindowPagesWithinItself|TestJumpWindowTakesLiveChanges|TestEnteringConversationAfterJump|TestColdJumpLoadsOnlyTheWindow|TestColdJumpRefreshedBeforeFirstFrame|TestHandOverHighlightsRootAfterWindow|TestFollowLinkOpensSlackLinksInClient|TestTopicCardLinksFollowSlackLinks|TestJumpToLoadedMessageOnAnchorLine|TestJumpToLateMessageOnAnchorLine|TestJumpHoldsThroughRowsGrowingAbove|TestJumpToReplyOnAnchorLine|TestArchivedTombstoneWindowPagesOlder|TestArchivedTombstoneThreadScrollsUp|TestJumpWindowKeepsReactionsAfterOtherJumps|TestWindowNewerFailureDoesNotBlockOlder|TestJumpWindowEndStaysPut|TestAnchorLineKeepsRowAfterScroll|TestNewMessageNearEndSticks|TestJumpToMissingMessageLandsOnNext|TestJumpToMissingInWindowDoesNotClimb|TestThreadReHighlightScrollsLazilyToTop|TestHighlightRootFromElsewhereAnchors|TestEnteringWithUnreadsShowsNewest|TestHighlightRootRouteKeepsWindow|TestPageKeysScrollTheList|TestArchivedTombstoneJumpScrollsBothWays|TestHoverToolbarJumpFromActivity|TestFlashEndsWhenRowLeaves|TestJumpWindowLastPageStaysPut|TestUnreadConversationOpensAtNewest|TestOwnSendJumpsToNewest|TestNewMessageNearEndSticksDarkClean|TestEmptyComposerPageKeys|TestSharedMessageOpensItsReply)$'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: ui (links, deep links, panes and toasts open a message's thread as Slack's jumpToMessage does)
+        run: |
+          go test -count=1 -v -timeout 45m -run "$TESTS" ./internal/ui
+          go test -count=$COUNT -timeout 120m -run "$TESTS" ./internal/ui
+      - name: messages, views, popups, blockkit (the pane's hand-over, the highlight, row and surface links, search, Activity)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=1 -v -run '^(TestReplyRootedPaneHandsOnEachOpen|TestJumpHighlightKeyframes|TestHandOverWaitsForReadAfterJoin|TestChannelNameArrivesBetweenFrames|TestEveryRowFlashes|TestRepeatJumpKeepsFlash|TestFlashTintsSeeThroughFills|TestWindowSwitchCountsFromItsModel|TestWindowLoadTakesUpdateWhileOut|TestWindowMostRecentLeavesWindow|TestWindowDownArrowOntoLastMessage|TestWindowFocusNewestLeavesWindow|TestWindowDateJumpPastItsEnd|TestListCacheKeepsShownWindow|TestDrawnWindowTakenBack|TestInjectedMessagesStayInTheirSlice|TestWindowPageKeepsLiveChanges|TestRenameDuringWindowPage|TestLiveReadsWindow|TestWindowEndKeyLeavesWindow|TestPageUpMovesAPageLess21|TestPageKeyTakesTheDOMNames|TestNewMessageAfterPageUpKeepsPlace|TestShrinkingNearEndKeepsToIt|TestDeletedLineRowKeepsNextInPlace|TestEndStopsTheWheelCurve|TestPluginJumpStartsAFlash|TestTombstoneSquareLikeSlack|TestWindowRowsDrawPluginViews)$' ./internal/ui/messages
+          go test -count=$COUNT -run '^(TestReplyRootedPaneHandsOnEachOpen|TestJumpHighlightKeyframes|TestHandOverWaitsForReadAfterJoin|TestChannelNameArrivesBetweenFrames|TestEveryRowFlashes|TestRepeatJumpKeepsFlash|TestFlashTintsSeeThroughFills|TestWindowSwitchCountsFromItsModel|TestWindowLoadTakesUpdateWhileOut|TestWindowMostRecentLeavesWindow|TestWindowDownArrowOntoLastMessage|TestWindowFocusNewestLeavesWindow|TestWindowDateJumpPastItsEnd|TestListCacheKeepsShownWindow|TestDrawnWindowTakenBack|TestInjectedMessagesStayInTheirSlice|TestWindowPageKeepsLiveChanges|TestRenameDuringWindowPage|TestLiveReadsWindow|TestWindowEndKeyLeavesWindow|TestPageUpMovesAPageLess21|TestPageKeyTakesTheDOMNames|TestNewMessageAfterPageUpKeepsPlace|TestShrinkingNearEndKeepsToIt|TestDeletedLineRowKeepsNextInPlace|TestEndStopsTheWheelCurve|TestPluginJumpStartsAFlash|TestTombstoneSquareLikeSlack|TestWindowRowsDrawPluginViews)$' ./internal/ui/messages
+          go test -count=$COUNT -v -run '^(TestRowLinksFollowSlackLinks|TestActivityOpenInHomeOpensAtReply)$' ./internal/ui/views
+          go test -count=$COUNT -v -run '^TestSearchResultOpensReplyAtReply$' ./internal/ui/popups
+          go test -count=$COUNT -v -run '^TestSurfaceLinksFollowSlackLinks$' ./internal/ui/blockkit
+          go test -count=$COUNT -v -run '^(TestTopicLinksFollowSlackLinks|TestSearchCardForeignPermalinkOpensBrowser)$' ./internal/ui/popups
+          go test -count=$COUNT -v -run '^TestCanvasLinksFollowSlackLinks$' ./internal/ui/canvasview
+          go test -count=$COUNT -v -run '^(TestSeeThroughFillsOverUnder|TestOpaqueFillsStayOverUnder)$' ./internal/ui/richview
+          go test -count=$COUNT -v -run '^(TestMirrorHoldsJumpWindows|TestFetchedMessageMarkedOnce)$' ./internal/taut
+          go test -count=$COUNT -v -run '^TestEmptyInputHandsPageKeysToList$' ./internal/ui/composer
+          go test -count=$COUNT -v -run '^TestPluginLinksFollowSlackLinks$' ./internal/ui/slackc
+      - name: the lookups and the log's tags (core, logtag, ui)
+        if: ${{ !cancelled() }}
+        run: |
+          go test -count=$COUNT -v -run '^(TestReplyThread|TestCachedSlugKeepsParentThread|TestReplyThreadOpenRoot|TestReplyThreadSingleFlight|TestHistoryAround|TestRepliesForReplyKeyedByParent|TestLatestReply|TestReplyThreadForgetsChangedMessages)$' ./internal/core
+          go test -count=$COUNT -v -run '^(TestWindowsAreSlices|TestWindowReadsMergeLive|TestHeldWindowsStay|TestWindowReachingNewestIsAnEpoch)$' ./internal/store
+          go test -count=$COUNT -v -run '^TestID$' ./internal/logtag
+          go test -count=$COUNT -run '^(TestDeepLinkMessage|TestNavLogTags)$' ./internal/ui
+      - name: gio (patch 50, List.ScrollDelta)
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestListScrollDelta|TestListStopScroll)$' gioui.org/layout
+
+  # jump-reactions: reactions on a jump window's messages draw after the
+  # list left the conversation for old messages elsewhere and came back to
+  # the window it kept (edit-latency's reactions round, thread-open-root's
+  # review: core dropped the shown window past 8, and reactions found no
+  # message). Dispatch with only=jump-reactions.
+  jump-reactions:
+    if: ${{ !inputs.only || startsWith('jump-reactions', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: reactions on a jump window after leaving it (one verbose run, then COUNT)"
+        env:
+          CLACK_LATENCY_TESTS: "1"
+        run: |
+          rc=0
+          xvfb-run -a go test -count=1 -v -timeout 15m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 30m -run '^TestJumpWindowReactionsAfterLeaving$' ./internal/ui || rc=1
+          exit $rc
+
+  # msg-latency-3: the socket events' lookups run off the event pump
+  # (core pump_later.go): users.prefs after a pref_change or a
+  # search_frecency/search_recents, the sections reread, conversations.info
+  # after a self-join, a channel_joined, a group DM's conversion or a
+  # message in a conversation core doesn't know, dnd.info after the
+  # viewer's dnd_updated, a saved message's messages.list and an assistant
+  # status's bot's users/info. A message right behind one draws in the next
+  # frame; a held conversation's messages, edits and deletions keep the
+  # socket's order. Dispatch with only=pump-lookups.
+  pump-lookups:
+    if: ${{ !inputs.only || startsWith('pump-lookups', inputs.only) }}
+    runs-on: ubuntu-latest
+    env:
+      CORE_TESTS: '^(TestSocketLookupsLeaveThePump|TestPrefChangeValueAppliesAtOnce|TestHeldReplyDeletionWaitsForIt|TestHeldMessagesKeepTheirOrder|TestHeldDMDoesntWaitForPrefs|TestNewGroupDMsFirstMessageBadges|TestSectionRereadsTakeTheNewest|TestLeftChannelStaysLeft|TestOlderDNDAnswerGivesWay|TestSavedStateBeforeItsLookup|TestRemovesNotTakenByReactions)$'
+      UI_TESTS: '^(TestMessageBehindLookupLatency|TestPreviewFooterChannelCreatedElsewhere)$'
+      CLACK_LATENCY_TESTS: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: core, ui (one verbose run, then COUNT)
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 10m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=1 -v -timeout 15m -run "$UI_TESTS" ./internal/ui || rc=1
+          go test -count=$COUNT -timeout 20m -run "$CORE_TESTS" ./internal/core || rc=1
+          xvfb-run -a go test -count=$COUNT -timeout 40m -run "$UI_TESTS" ./internal/ui || rc=1
+          exit $rc
+      - name: core, -race
+        run: go test -race -count=1 -timeout 15m -run "$CORE_TESTS" ./internal/core
+
+
+  # launch-speed (Karim, 2026-11-21: "Make launching the app take less
+  # than a Mac app bounce"): Clack launched the way a user launches it,
+  # against fakeslackd, cold, warm and with the OS's file cache purged
+  # (.github/perf/launch.py). macOS: the bundle as release.yml makes it
+  # (a perfharness build: it accepts the loopback fake), through
+  # LaunchServices; Linux on Xvfb and Windows for reference. Each run's
+  # startup timeline counts from the process's exec. Only when asked
+  # (only=launch-speed, or one OS: launch-speed-mac, -linux, -windows).
+  launch-speed-mac:
+    if: ${{ inputs.only != '' && startsWith('launch-speed-mac', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Clack.app (perfharness, made and signed as release.yml makes it) and fakeslackd
+        run: |
+          set -eu
+          sw_vers; sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize
+          app="$RUNNER_TEMP/launch/Clack.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          CGO_ENABLED=1 go build -tags perfharness -trimpath -ldflags="-s -w" -o "$app/Contents/MacOS/clack" ./cmd/clack
+          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
+          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
+          codesign --verify --deep --strict "$app"
+          ls -la "$app/Contents/MacOS"
+          go build -o "$RUNNER_TEMP/launch/fakeslackd" ./internal/fakeslack/fakeslackd
+      - name: plugins (the Library's ChatTabs and five Taut plugins)
+        run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
+      - name: launch timeline (cold, warm x5, purged x2, inits, CPU profile, the Dock)
+        run: python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.app" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --purged 2 --extra --screenshot --theme --label macOS
+      - name: the CPU profile's top (the first 3 s of a warm start)
+        if: ${{ !cancelled() }}
+        run: |
+          f="$RUNNER_TEMP/launch/out/cpu-warm.pprof"
+          [ -s "$f" ] && go tool pprof -top -nodecount=70 "$f" 2>&1 | head -85
+          true
+      # after the launches, so its film and the swift compile don't slow them
+      - name: one bounce of the Dock's launch animation (bounce.sh, the budget's yardstick)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: .github/perf/bounce.sh "$RUNNER_TEMP/launch/out/bounce"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: launch-mac
+          path: ${{ runner.temp }}/launch/out
+
+
+  # ci's macos launch budget alone (.github/perf/launch-budget.sh), for a
+  # quick round or a red run on an old commit: only=launch-budget
+  launch-budget:
+    if: ${{ inputs.only != '' && startsWith('launch-budget', inputs.only) }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: launch budget (Clack.app through LaunchServices, within one Dock bounce)
+        run: .github/perf/launch-budget.sh "$RUNNER_TEMP/launch"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: launch-budget
+          path: ${{ runner.temp }}/launch/out
+
+  launch-speed-linux:
+    if: ${{ inputs.only != '' && startsWith('launch-speed-linux', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps, Xvfb
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: clack (perfharness) and fakeslackd
+        run: |
+          set -eu
+          nproc; free -m | head -2
+          mkdir -p "$RUNNER_TEMP/launch"
+          CGO_ENABLED=1 go build -tags perfharness -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/launch/clack" ./cmd/clack
+          go build -o "$RUNNER_TEMP/launch/fakeslackd" ./internal/fakeslack/fakeslackd
+      - name: plugins (the Library's ChatTabs and five Taut plugins)
+        run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
+      - name: launch timeline (cold, warm x5, purged x2, inits, CPU profile)
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          Xvfb :98 -screen 0 1440x900x24 > /dev/null 2>&1 &
+          for i in $(seq 1 50); do [ -e /tmp/.X11-unix/X98 ] && break; sleep 0.1; done
+          DISPLAY=:98 python3 -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/clack" --fake "$RUNNER_TEMP/launch/fakeslackd" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --purged 2 --extra --theme --label "Linux (Xvfb, llvmpipe)"
+      - name: the CPU profile's top (the first 3 s of a warm start)
+        if: ${{ !cancelled() }}
+        run: |
+          f="$RUNNER_TEMP/launch/out/cpu-warm.pprof"
+          [ -s "$f" ] && go tool pprof -top -nodecount=50 "$f" 2>&1 | head -65
+          true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: launch-linux
+          path: ${{ runner.temp }}/launch/out
+
+  launch-speed-windows:
+    if: ${{ inputs.only != '' && startsWith('launch-speed-windows', inputs.only) }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Clack.exe (perfharness) and fakeslackd
+        shell: bash
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/launch"
+          go env CGO_ENABLED CC
+          go build -tags perfharness -trimpath -ldflags="-s -w -H windowsgui" -o "$RUNNER_TEMP/launch/Clack.exe" ./cmd/clack
+          go build -o "$RUNNER_TEMP/launch/fakeslackd.exe" ./internal/fakeslack/fakeslackd
+      - name: plugins (the Library's ChatTabs and five Taut plugins)
+        shell: bash
+        run: .github/perf/launch-library.sh "$RUNNER_TEMP/launch/library"
+      - name: launch timeline (cold, warm x5, inits, CPU profile)
+        shell: bash
+        run: python -I .github/perf/launch.py --app "$RUNNER_TEMP/launch/Clack.exe" --fake "$RUNNER_TEMP/launch/fakeslackd.exe" --out "$RUNNER_TEMP/launch/out" --library "$RUNNER_TEMP/launch/library" --warm 5 --extra --theme --label Windows
+      - name: the CPU profile's top (the first 3 s of a warm start)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          f="$RUNNER_TEMP/launch/out/cpu-warm.pprof"
+          [ -s "$f" ] && go tool pprof -top -nodecount=50 "$f" 2>&1 | head -65
+          true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: launch-windows
+          path: ${{ runner.temp }}/launch/out

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/some-du6e/clack/internal/logtag"
 )
 
 // ExperimentGroups returns the viewer's experiment assignments
@@ -273,7 +275,7 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ms
 		mu.Lock()
 		defer mu.Unlock()
 		if err != nil {
-			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, strings.Join(chans, " "))
+			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, logtag.IDs(chans))
 			errs = append(errs, err)
 			return
 		}

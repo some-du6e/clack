@@ -267,10 +267,13 @@ func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 			a.Raise()
 		}
 	}
+	logActivation(act)
 	switch act.Type {
 	case "notification":
 		raise()
-		a.notificationClicked(act.Channel, act.MessageID, act.ThreadTS, act.NotificationID)
+		a.withVia("a notification's click", func() {
+			a.notificationClicked(act.Channel, act.MessageID, act.ThreadTS, act.NotificationID)
+		})
 	case "reply":
 		a.replyFromNotification(act)
 	case "action":
@@ -284,6 +287,28 @@ func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 		if isSlackURI(act.LaunchURI) {
 			a.OpenURL(act.LaunchURI)
 		}
+	}
+}
+
+// logActivation is clack.log's line for what the user did with one of
+// Clack's notifications (navlog.go: ids as tags, never the text): what
+// the payload named, the message, its thread and its id's type, or the
+// button.
+func logActivation(act toastActivation) {
+	switch act.Type {
+	case "notification", "reply":
+		_, typ, _, _ := parseNotificationID(act.NotificationID)
+		msg := logTag(act.MessageID)
+		if strings.HasPrefix(act.MessageID, "huddle") {
+			msg = "huddle" // a huddle notification's tag, which names its conversation
+		}
+		what := "clicked"
+		if act.Type == "reply" {
+			what = "replied to" // the text isn't logged
+		}
+		log.Printf("notify: %s a notification: %s %s thread %s (id type %q)", what, logTag(act.Channel), msg, logTag(act.ThreadTS), typ)
+	case "action":
+		log.Printf("notify: a notification's button %d (a link: %t)", act.Index, isSlackURI(act.LaunchURI))
 	}
 }
 
@@ -331,7 +356,7 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 			return
 		}
 	}
-	a.jumpToMessage(ch, ts, thread)
+	a.jumpMessage(ch, ts, thread, lookupStore, false) // the payload has a reply's thread_ts: the store only
 }
 
 // replyFromNotification is delegate_replyToNotification (boot-render): the

@@ -109,6 +109,8 @@ jobs:
           go test -c -o /dev/null gioui.org/app gioui.org/gesture gioui.org/gpu/headless gioui.org/io/input
           GOARCH=amd64 go test -c -o /dev/null ./internal/jsrt
           go build -trimpath -ldflags="-s -w" -o /dev/null ./cmd/clack
+          # ci's macos launch budget (.github/perf/launch-budget.sh)
+          go build -tags perfharness -trimpath -ldflags="-s -w" -o /dev/null ./cmd/clack
       - name: sizes
         env:
           MOD: ${{ steps.key.outputs.mod }}

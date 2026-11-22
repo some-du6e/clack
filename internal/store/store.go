@@ -10,6 +10,7 @@ package store
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"math"
@@ -65,7 +66,10 @@ type Store struct {
 	Usergroups  map[string]string
 	Presence    map[string]string
 	timelines   map[string]*Timeline
+	windows     map[string][]*Window       // a conversation's stretches apart from its timeline (windows.go)
+	windowHolds map[string]map[string]int  // the windows lists show, by a ts each holds (HoldWindow)
 	threads     map[string][]slack.Message // key channel/ts
+	threadHist  map[string]*threadHist     // key channel/ts: the threads' history slices (thread_slices.go)
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
@@ -165,6 +169,12 @@ type Store struct {
 	savedEmo  uint64
 	emojiAt   time.Time // when the cached emoji map was fetched (emoji.list)
 	emojiAtMu sync.Mutex
+
+	// cachePending: LoadCacheBase installed meta.json's first part and its
+	// rest hasn't run: SaveCache writes nothing meanwhile
+	cachePending atomic.Bool
+	// emojiPartial: the emoji map is the boot data's few only
+	emojiPartial atomic.Bool
 
 	missMu     sync.Mutex
 	missSeen   map[string]bool
@@ -1196,6 +1206,12 @@ func (s *Store) PutExtConv(c slack.Conversation) {
 		return
 	}
 	s.mu.Lock()
+	s.putExtConvLocked(c)
+	s.mu.Unlock()
+}
+
+// putExtConvLocked is PutExtConv's body (s.mu held).
+func (s *Store) putExtConvLocked(c slack.Conversation) {
 	if s.ext == nil {
 		s.ext = map[string]*slack.Conversation{}
 	}
@@ -1207,7 +1223,6 @@ func (s *Store) PutExtConv(c slack.Conversation) {
 		s.names[c.ID] = c.Name
 		s.gen.Add(1)
 	}
-	s.mu.Unlock()
 }
 
 // ExtConv returns a non-sidebar conversation.
@@ -1401,7 +1416,8 @@ func (s *Store) TimelineIDs() []string {
 	return ids
 }
 
-// SetLatest replaces the newest window (from a fresh history fetch).
+// SetLatest replaces the newest window (from a fresh history fetch); a
+// window it now meets joins it (windows.go).
 func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 	SortAsc(msgs)
 	s.mu.Lock()
@@ -1412,6 +1428,7 @@ func (s *Store) SetLatest(ch string, msgs []slack.Message, hasMore bool) {
 		t.Epoch = s.newEpochLocked()
 	}
 	s.timelines[ch] = t
+	s.absorbWindowsLocked(ch)
 	s.mu.Unlock()
 }
 
@@ -1445,6 +1462,7 @@ func (s *Store) PrependOlderSince(ch string, msgs []slack.Message, hasMore bool,
 	if len(t.Msgs) > 5000 {
 		t.Msgs = t.Msgs[len(t.Msgs)-5000:]
 	}
+	s.absorbWindowsLocked(ch) // the timeline grew back to a window: they're one (Slack's slices merge as they meet)
 	return msgs
 }
 
@@ -1538,6 +1556,12 @@ func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Messa
 			}
 		}
 	}
+	if m := s.windowMsgLocked(ch, func(m *slack.Message) bool { return m.TS == ts }); m != nil {
+		f(m)
+		if !found {
+			out, found = *m, true
+		}
+	}
 	for k, th := range s.threads {
 		if !strings.HasPrefix(k, ch+"/") {
 			continue
@@ -1584,6 +1608,7 @@ func (s *Store) removeLocked(ch, ts string) {
 			}
 		}
 	}
+	s.removeWindowMsgLocked(ch, ts)
 	for k, th := range s.threads {
 		if !strings.HasPrefix(k, ch+"/") {
 			continue
@@ -1591,6 +1616,7 @@ func (s *Store) removeLocked(ch, ts string) {
 		for i := range th {
 			if th[i].TS == ts {
 				s.threads[k] = append(th[:i], th[i+1:]...)
+				s.removeTimestampLocked(k, ts) // its history's removeTimestamp (thread_slices.go)
 				break
 			}
 		}
@@ -1634,6 +1660,9 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 			}
 		}
 	}
+	if m := s.windowMsgLocked(ch, match); m != nil {
+		return m
+	}
 	pre := ch + "/"
 	for k, th := range s.threads {
 		if strings.HasPrefix(k, pre) {
@@ -1648,12 +1677,13 @@ func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
 }
 
 // MessageKeys is every ts and client_msg_id among ch's cached messages
-// (timeline, threads and the messages fetched by id), in one pass: what
-// the plugins' messages slice holds of core's (taut's injected check). The
-// slice holds the fetched copies, as Slack's one messages store does, and
-// none of them is a message a plugin injected: a conversation's list draws
-// its history (Slack's channelHistory), which a message fetched by id
-// never joins.
+// (timeline, a jump's windows, threads and the messages fetched by id), in
+// one pass: what the plugins' messages slice holds of core's (taut's
+// injected check). The slice holds the windows' messages and the fetched
+// copies, as Slack's one messages store does, and none of them is a
+// message a plugin injected: a conversation's list draws its history
+// (Slack's channelHistory, the windows' slices with it), which a message
+// fetched by id never joins.
 func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1667,6 +1697,11 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			add(&t.Msgs[i])
+		}
+	}
+	for _, w := range s.windows[ch] {
+		for i := range w.Msgs {
+			add(&w.Msgs[i])
 		}
 	}
 	pre := ch + "/"
@@ -1687,8 +1722,9 @@ func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
 type MsgKey struct{ TS, CID string }
 
 // Held reports, for each key, whether the store caches a message of ch
-// with its ts (or client_msg_id) in the timeline, a thread or the messages
-// fetched by id (MessageKeys' set: taut's injected check): Holds for many
+// with its ts (or client_msg_id) in the timeline, a jump's window, a
+// thread or the messages fetched by id (MessageKeys' set: taut's injected
+// check): Holds for many
 // at once, one pass over the store under one read lock (Holds per message
 // scanned the timeline and every cached thread once each).
 func (s *Store) Held(ch string, keys []MsgKey) []bool {
@@ -1719,6 +1755,11 @@ func (s *Store) Held(ch string, keys []MsgKey) []bool {
 	if t := s.timelines[ch]; t != nil {
 		for i := range t.Msgs {
 			mark(&t.Msgs[i])
+		}
+	}
+	for _, w := range s.windows[ch] { // a jump's windows, which Holds reads too
+		for i := range w.Msgs {
+			mark(&w.Msgs[i])
 		}
 	}
 	pre := ch + "/"
@@ -1812,6 +1853,7 @@ func (s *Store) SetThread(ch, ts string, msgs []slack.Message) {
 	SortAsc(msgs)
 	s.mu.Lock()
 	s.threads[ch+"/"+ts] = msgs
+	s.setThreadWholeLocked(ch+"/"+ts, msgs) // the whole thread: one slice, both ends (thread_slices.go)
 	s.mu.Unlock()
 }
 
@@ -1852,6 +1894,9 @@ func (s *Store) addReplyLocked(ch string, m slack.Message) {
 			SortAsc(th)
 		}
 		s.threads[key] = th
+		if !replaced {
+			s.liveReplyLocked(key, m.TS) // its history's addTimestamps (thread_slices.go)
+		}
 	}
 }
 
@@ -1919,15 +1964,52 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 		return *e
 	}
 	e.HasUnreads = true
-	c := s.Convs[ch]
-	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
-	if isDM && c != nil && c.IsMPIM && s.Muted[ch] {
-		isDM = false // a muted group DM badges on mentions only (Slack's unreadHighlightCnt)
-	}
-	if mentionsSelf || isDM {
+	if mentionsSelf || s.countsAsDMLocked(ch) {
 		e.MentionCount++
 	}
 	return *e
+}
+
+// countsAsDMLocked reports whether NoteMessage counts every message from
+// others in ch as a mention, the way Slack badges a DM: an IM, or a group
+// DM that isn't muted (a muted one badges on mentions only: Slack's
+// unreadHighlightCnt). s.mu held.
+func (s *Store) countsAsDMLocked(ch string) bool {
+	c := s.Convs[ch]
+	isDM := c != nil && (c.IsIM || c.IsMPIM) || strings.HasPrefix(ch, "D")
+	if isDM && c != nil && c.IsMPIM && s.Muted[ch] {
+		isDM = false
+	}
+	return isDM
+}
+
+// CountsAsDM is countsAsDMLocked for the conversation as the store holds it
+// now.
+func (s *Store) CountsAsDM(ch string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.countsAsDMLocked(ch)
+}
+
+// NoteLateDM is NoteMessage's DM rule for message m of ch, counted before
+// the store knew ch (core held the message for its conversations.info):
+// one mention more once ch turns out to be an IM or a group DM, unless the
+// viewer read past it meanwhile or it is the viewer's own.
+func (s *Store) NoteLateDM(ch string, m *slack.Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.Counts[ch]
+	if !ok || !e.HasUnreads || !s.countsAsDMLocked(ch) {
+		return
+	}
+	if self := s.Self.ID; m.User == self && self != "" {
+		return
+	}
+	if e.LastRead != "" && !TSLess(e.LastRead, m.TS) {
+		return
+	}
+	s.noteMessageLocked(ch) // newer than a counts answer still out, as NoteMessage's
+	e.MentionCount++
 }
 
 // ---- disk cache (metadata only) ----
@@ -2035,7 +2117,6 @@ func (s *Store) HasCachedPrefs() bool {
 	return s.prefsCached
 }
 
-// SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
 // SetMyUsergroups replaces the viewer's user groups
 // (bulkSetUserGroupMembership).
 func (s *Store) SetMyUsergroups(ids []string) (changed bool) {
@@ -2190,12 +2271,14 @@ func (s *Store) InUsergroup(id string) bool {
 	return s.MyGroups[id]
 }
 
-func (s *Store) SetUsergroups(gs []slack.Usergroup) {
+// SetUsergroups installs usergroups (for <!subteam^> names and
+// autocomplete) and reports whether they changed.
+func (s *Store) SetUsergroups(gs []slack.Usergroup) (changed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.groupsLoaded = true
 	if s.sameGroups(gs) {
-		return // the usual refresh: nothing to install or save
+		return false // the usual refresh: nothing to install or save
 	}
 	s.Groups = s.Groups[:0]
 	for _, g := range gs {
@@ -2207,37 +2290,76 @@ func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 	}
 	s.gen.Add(1)
 	s.ugGen.Add(1)
+	return true
 }
 
 func (s *Store) LoadCache() {
-	if s.cacheDir == "" || s.dropped.Load() {
-		return
+	if rest := s.LoadCacheBase(); rest != nil {
+		rest()
 	}
+}
+
+// LoadCacheBase reads and installs the part of meta.json a launch's first
+// frame reads: the users, the prefs, the channel names, the bots and the
+// experiments (metaLayout). The returned rest reads and installs the
+// custom emoji and the user groups (6.6 MB and 0.4 MB on Hack Club), once
+// (nil: no cache, or none of it loaded). Until rest has run SaveCache
+// writes nothing, as a save then would lose what rest installs. A file
+// whose first part is cut short loads nothing; one cut inside the rest
+// keeps its first part (Boot fetches the emoji then: the map is empty).
+func (s *Store) LoadCacheBase() (rest func()) {
+	if s.cacheDir == "" || s.dropped.Load() {
+		return nil
+	}
+	t0 := time.Now()
 	f, err := os.Open(filepath.Join(s.cacheDir, "meta.json"))
 	if err != nil {
-		return
+		return nil
 	}
 	var d diskCache
 	var users []*slack.User
-	err = readDiskCache(bufio.NewReaderSize(f, 64<<10), &d, func(u *slack.User) { users = append(users, u) })
-	f.Close()
-	if err != nil {
-		return
+	m := newMetaDecoder(bufio.NewReaderSize(f, 64<<10), &d, func(u *slack.User) { users = append(users, u) })
+	if err := m.base(); err != nil {
+		f.Close()
+		return nil
 	}
+	s.cachePending.Store(true)
+	s.installCacheBase(&d, users)
+	gen := s.gen.Load() // what the store holds now is what is on disk, so far
+	tBase := time.Since(t0)
+	return func() {
+		defer s.cachePending.Store(false)
+		t1 := time.Now()
+		err := m.rest()
+		f.Close()
+		if err != nil || s.dropped.Load() {
+			return // the first part stays; the next save writes the store whole
+		}
+		packed := len(d.EmojiPacked)
+		s.installCacheRest(&d)
+		s.saveMu.Lock()
+		if s.gen.Load() == gen || !s.saved { // nothing else changed between the parts
+			s.saved, s.savedGen, s.savedEmo = true, s.gen.Load(), s.CustomEmoji.Version()
+		}
+		s.saveMu.Unlock()
+		if f := cacheLoadLog; f != nil {
+			f(fmt.Sprintf("cache: meta.json (layout %d) %d users, prefs and names in %s; %d emoji (%.1f MB packed) and %d user groups in %s",
+				m.layout, len(users), tBase.Round(time.Millisecond), s.CustomEmoji.Len(), float64(packed)/(1<<20), len(d.Usergroups),
+				time.Since(t1).Round(time.Millisecond)))
+		}
+	}
+}
+
+// cacheLoadLog hears LoadCacheBase's timing line (core logs it as a debug
+// line: the startup timeline's cache-read detail).
+var cacheLoadLog func(string)
+
+// SetCacheLoadLog sets cacheLoadLog (core, before Boot).
+func SetCacheLoadLog(f func(string)) { cacheLoadLog = f }
+
+// installCacheBase installs LoadCacheBase's part.
+func (s *Store) installCacheBase(d *diskCache, users []*slack.User) {
 	s.putUserPtrs(users, d.UserSeen)
-	if d.EmojiPacked != "" {
-		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
-	} else if len(d.Emoji) > 0 {
-		s.CustomEmoji.Set(d.Emoji)
-	}
-	if d.EmojiAt > 0 {
-		s.emojiAtMu.Lock()
-		s.emojiAt = time.Unix(d.EmojiAt, 0)
-		s.emojiAtMu.Unlock()
-	}
-	if len(d.Usergroups) > 0 {
-		s.SetUsergroups(d.Usergroups)
-	}
 	s.mu.Lock()
 	if len(d.Names) > 0 {
 		if s.names == nil {
@@ -2281,16 +2403,33 @@ func (s *Store) LoadCache() {
 		s.prefsCached = true
 		s.mu.Unlock()
 	}
-	// what was just read is what is on disk
-	s.saveMu.Lock()
-	s.saved, s.savedGen, s.savedEmo = true, s.gen.Load(), s.CustomEmoji.Version()
-	s.saveMu.Unlock()
+}
+
+// installCacheRest installs the rest's part: the custom emoji (over the
+// boot data's few, InstallBootEmoji) and the user groups.
+func (s *Store) installCacheRest(d *diskCache) {
+	if d.EmojiPacked != "" {
+		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
+		s.emojiPartial.Store(false)
+	} else if len(d.Emoji) > 0 {
+		s.CustomEmoji.Set(d.Emoji)
+		s.emojiPartial.Store(false)
+	}
+	if d.EmojiAt > 0 {
+		s.emojiAtMu.Lock()
+		s.emojiAt = time.Unix(d.EmojiAt, 0)
+		s.emojiAtMu.Unlock()
+	}
+	if len(d.Usergroups) > 0 {
+		s.SetUsergroups(d.Usergroups)
+	}
 }
 
 // SetEmojiList installs a fresh emoji.list result, compacted the way the
 // disk cache stores it (see diskCache.EmojiPacked), and stamps its age.
 func (s *Store) SetEmojiList(m map[string]string) {
 	s.CustomEmoji.Set(unpackEmoji(packEmoji(m)))
+	s.emojiPartial.Store(false)
 	s.emojiAtMu.Lock()
 	s.emojiAt = time.Now()
 	s.emojiAtMu.Unlock()
@@ -2301,6 +2440,7 @@ func (s *Store) SetEmojiList(m map[string]string) {
 // share the one string.
 func (s *Store) SetEmojiPacked(p string) {
 	s.CustomEmoji.Set(unpackEmoji(p))
+	s.emojiPartial.Store(false)
 	s.emojiAtMu.Lock()
 	s.emojiAt = time.Now()
 	s.emojiAtMu.Unlock()
@@ -2357,8 +2497,8 @@ func unpackEmoji(p string) map[string]string {
 }
 
 func (s *Store) SaveCache() error {
-	if s.cacheDir == "" {
-		return nil
+	if s.cacheDir == "" || s.cachePending.Load() {
+		return nil // pending: the emoji and the user groups aren't in yet (LoadCacheBase)
 	}
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()

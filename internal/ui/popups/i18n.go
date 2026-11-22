@@ -83,6 +83,11 @@ var (
 	// (client: Huddles, Drafts & sent, Activity, …), the sidebar's Threads
 	// and Directories
 	nsPage = i18n.NewChain("client", "channel_sidebar")
+	// the Files browser's Filters modal: BaseAdvancedSearchModal and
+	// AdvancedSearchSelect (advanced-search), useUnifiedFilesFilters'
+	// "Done" (browsers)
+	nsAdvSearch = i18n.NS("advanced-search")
+	nsBrowsers  = i18n.NS("browsers")
 )
 
 // In is it as a row of Slack's own text in the I18n namespace ns: the

@@ -237,7 +237,19 @@ func TestThreadLoadingRepliesRow(t *testing.T) {
 	if !tv.HidesComposer() {
 		t.Error("the reply box shows while the replies load")
 	}
+	// loaded, its slice from the root short of the thread's end
+	// (thread_load.go): the "loading-end" row still, and no reply box
 	s.snap.loaded = true
+	s.snap.th.reachedStart = true
+	s.build(host, time.Now())
+	if n := len(s.items); n == 0 || s.items[n-1].kind != itLoading || s.items[0].kind == itLoading {
+		t.Errorf("a slice short of the end: items %+v, want the loading row last and none first", s.items)
+	}
+	if !tv.HidesComposer() {
+		t.Error("the reply box shows over a slice short of the thread's end")
+	}
+	// the whole thread: both ends reached
+	s.snap.th.reachedEnd = true
 	s.build(host, time.Now())
 	for _, it := range s.items {
 		if it.kind == itLoading {

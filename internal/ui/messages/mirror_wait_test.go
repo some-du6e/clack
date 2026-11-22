@@ -104,7 +104,7 @@ func holdFirstLoad(t *testing.T, ch string) (reached <-chan struct{}, release fu
 	r, gate := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	f := func(m *model) {
-		if m.ch == ch && m.threadTS == "" {
+		if m.ch == ch && m.threadTS == "" && !m.win {
 			once.Do(func() { close(r) })
 			<-gate
 		}

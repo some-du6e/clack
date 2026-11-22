@@ -237,7 +237,7 @@ func (r *row) huddleJoinButton(gtx layout.Context, rc *rowCtx, hm huddleMsg, p i
 // content-imp when you missed it (--missed).
 func (r *row) layoutHuddleAvatar(gtx layout.Context, rc *rowCtx, s int) layout.Dimensions {
 	c := rc.c
-	bg, fg := c.HuddleTile, c.Muted70
+	bg, fg := r.seeFill(c, c.HuddleTile, c.raw.HuddleTile), c.Muted70 // the tile shows the row's fill through it
 	switch r.hm.act {
 	case "active", "inactive-but-live":
 		bg, fg = c.HuddleTileLive, rgb(0xffffff)

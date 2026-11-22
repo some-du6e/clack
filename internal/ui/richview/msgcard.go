@@ -57,15 +57,17 @@ func (l *lay) addIcon(name string, px int, k faceKey, col color.NRGBA, dc, tg in
 func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
 	p := &l.st.Palette
 	txt, lock, pre, off := l.slugLabel(sp)
-	bg, fg := p.MentionBg, p.MentionText
+	bg, fg, see := p.MentionBg, p.MentionText, p.raw.MentionBg
 	var tg int16 = -1
 	if off {
-		bg, fg = rgba(p.Text.R, p.Text.G, p.Text.B, 0.06), p.Text
-	} else if sp.URL != "" {
-		tg = l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true})
+		bg, fg, see = rgba(p.Text.R, p.Text.G, p.Text.B, 0.06), p.Text, color.NRGBA{} // drawn translucent
+	} else if sp.URL != "" || sp.Chan != "" && sp.ID != "" {
+		// MessageMention's click: jumpToMessage with the element's own
+		// channel_id, message_ts and thread_ts (p9lB)
+		tg = l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, id: sp.ID, msgCh: sp.Chan, msgThread: sp.ThreadTS})
 	}
 	pad, padV := l.dpf(2), l.dpf(1)
-	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: off, part: pt})
+	l.decos = append(l.decos, deco{kind: 1, bg: bg, see: see, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, self: off, part: pt})
 	dc := int16(len(l.decos) - 1)
 	ip := fs.size
 	l.addOpen(pad, dc, k)
@@ -91,9 +93,9 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 // click opens the URL.
 func (l *lay) truncatedLink(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
 	p := &l.st.Palette
-	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, urlCard: true})
+	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, urlCard: true, mrkdwn: true})
 	pad, padV := l.dpf(2), l.dpf(1)
-	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
+	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, see: p.raw.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
 	dc := int16(len(l.decos) - 1)
 	l.addOpen(pad, dc, k)
 	l.addIcon("link", fs.size, k, p.MentionText, dc, tg)

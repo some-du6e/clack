@@ -68,12 +68,14 @@ func TestFetchedMessageStaysOutOfTheList(t *testing.T) {
 		}
 	}
 
-	// a jump to it pages back through the history to its place
+	// a jump to it reads the history to its place: the window around it
+	// (Slack's channelHistory slice: conversations.history around the
+	// message), or pages back to it, never the fetched copy placed at once
 	v.Highlight(oldTS)
-	until(t, 30*time.Second, "the list paging back to the message", frame, func() bool {
+	until(t, 30*time.Second, "the list reading the history to the message", frame, func() bool {
 		return modelHas(v, oldTS, func(*core.Message) bool { return true }) && drawsTS(v, oldTS)
 	})
-	if v.s.jumpPages == 0 {
-		t.Error("the jump placed the message without paging back")
+	if !v.InWindow() && v.s.jumpPages == 0 {
+		t.Error("the jump placed the message without reading the history to it (no window around it, no page back)")
 	}
 }

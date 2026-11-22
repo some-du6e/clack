@@ -33,6 +33,7 @@ type bk struct {
 	TabID       string          `json:"tab_id"`     // channel: a channel-tab slug
 	FromLLM     bool            `json:"from_llm"`   // channel: written by an LLM (no tab slug)
 	MessageTS   string          `json:"message_ts"` // message_mention
+	ThreadTS    string          `json:"thread_ts"`  // message_mention: the message's thread_ts
 	SectionID   string          `json:"section_id"` // canvas: a canvas-section link
 	HideTitle   bool            `json:"hide_title"` // canvas
 	RecordID    string          `json:"record_id"`  // list_record: an item link

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
@@ -186,6 +187,13 @@ func Flatten(menus []Menu) []*Item {
 	}
 	return out
 }
+
+var installedHook atomic.Pointer[func(took time.Duration)]
+
+// OnInstalled makes f hear, as each Install ends on AppKit's main thread,
+// what it took there (macOS: the startup timeline's menu-bar point). f
+// runs on the main thread: it must not block.
+func OnInstalled(f func(took time.Duration)) { installedHook.Store(&f) }
 
 // Install replaces the menu bar with menus (macOS; a no-op elsewhere).
 // onRecent runs, on its own goroutine, with the Route of the State.Recent

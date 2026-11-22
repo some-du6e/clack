@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -50,11 +51,14 @@ import (
 //     header cache's (core header_cache.go), or none if it hasn't the
 //     channel (Slack renders whatever its persisted store has), else its
 //     reads;
-//   - the plugins enabled at start registered and their first renders
-//     delivered: Taut patches Slack's components before its first render,
-//     and those patches render synchronously with Slack's React; Clack's
-//     plugins render on their own thread, so the placeholder waits until
-//     their deliveries go quiet (pluginQuiet).
+//   - on a cold start, the plugins enabled at start registered and their
+//     first renders delivered: Taut patches Slack's components before its
+//     first render, and those patches render synchronously with Slack's
+//     React; Clack's plugins render on their own thread, so the
+//     placeholder waits until their deliveries go quiet (pluginQuiet). A
+//     warm start doesn't wait: the slots the plugins' trees took last
+//     session stay reserved until their first trees come (slackc
+//     reserve.go), so they fill space that was already there.
 //
 // Messages and images don't hold it (Slack shows its loading states).
 // pluginCap bounds the plugin/header wait after boot. Only the real
@@ -67,6 +71,9 @@ const (
 	// client renders and late plugin output takes the slot reserved for it
 	// (pluginslots.go), so nothing shifts.
 	pluginCap = 100 * time.Millisecond
+	// sheetsCap bounds a warm start's wait for the plugin runtimes'
+	// Go-only setup (the user CSS, the Slick theme): ms when all is well.
+	sheetsCap = time.Second
 )
 
 type revealState struct {
@@ -106,6 +113,27 @@ func (a *App) revealBlocker(now time.Time) string {
 	if a.rv.dataAt.IsZero() {
 		a.rv.dataAt = now
 		applog.Mark("data-ready", "")
+	}
+	if !b.warmAt.IsZero() {
+		// A warm start shows the last session's client at once, as
+		// Slack's renders straight from its persisted store, in its
+		// theme: taut.New and slick.New install the user CSS and the
+		// Slick theme (Go only, ms after the start), and a client frame
+		// before them would be repainted whole (sheetsCap bounds it).
+		if b.tautStarting && now.Sub(a.rv.dataAt) <= sheetsCap {
+			return "plugin styles"
+		}
+		// The plugins' chrome: when this frame drew a component last
+		// session's plugins patched, outside a slot kept for its tree
+		// (slackc expect.go), or they styled the page themselves, the
+		// launch waits for them up to pluginCap, as a cold start does
+		// (their trees and sheets would come a moment after the client).
+		// Otherwise nothing of theirs is on screen yet: the slots their
+		// trees took stay reserved (slackc reserve.go), and the client
+		// shows now.
+		if !slackc.ExpectedDrawn() && !a.prefs.PluginStyled {
+			return ""
+		}
 	}
 	if now.Sub(a.rv.dataAt) > pluginCap {
 		return ""
@@ -148,6 +176,7 @@ func (a *App) revealFrame() bool {
 	blk := a.revealBlocker(now)
 	if blk == "" {
 		a.rv.done = true
+		slackc.SetExpected(nil) // the client is up: nothing more to watch for (expect.go)
 		why := "ready"
 		if !a.rv.dataAt.IsZero() && now.Sub(a.rv.dataAt) > pluginCap {
 			why = "cap, was waiting for " + a.rv.blocker
@@ -277,6 +306,15 @@ func (a *App) settlePluginSlots(b *backend) {
 	}
 	var ver uint64
 	save := func() {
+		// what the plugins showed, for the next launch's reveal and its
+		// plugins' start (prefs.PluginPatched, PluginStyled)
+		if a.data == b {
+			names, styled := slackc.PatchedNames(), b.pluginStyled.Load()
+			if !slices.Equal(names, a.prefs.PluginPatched) || styled != a.prefs.PluginStyled {
+				a.prefs.PluginPatched, a.prefs.PluginStyled = names, styled
+				a.savePrefsSoon()
+			}
+		}
 		freed := slackc.UnreserveAll()
 		m, v := slackc.Learned()
 		if v == ver && v != 0 && !freed {
