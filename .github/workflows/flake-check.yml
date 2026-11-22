@@ -477,6 +477,59 @@ jobs:
       - name: core, slow runner (one CPU)
         if: ${{ !cancelled() }}
         run: go test -cpu 1 -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
+
+  # 2026-11-21's flakes, fixed on ci-speed: TestWarmWindowWritesSurviveBoot
+  # (core) wrote before Boot's sections call reached the fake, so
+  # MoveToSection's own reread was the call held; TestRailPeekDMsRowMenu
+  # (ui) could end its 60 ms wait before the peek's throttled check ran;
+  # TestSpellcheckNeverBlocksFrame (composer) timed frames on a shared
+  # runner. COUNT runs each, as loaded runners ran them: core under -race,
+  # composer on one CPU, ui in four processes at once
+  # internal/ui's memory: the test binary alone, its peak (runner-load.sh),
+  # and what it still holds after its last test, collected: the live heap,
+  # the goroutines still running and the heap profile's top
+  # (CLACK_TEST_HEAP_REPORT, endrun_test.go). Once a run, whatever count
+  # says. ci-speed-3: every test's session stayed reachable, 9 GB live by
+  # the end, 15.7 of the runner's 16 GB at the peak.
+  ui-heap:
+    if: ${{ !inputs.only || startsWith('ui-heap', inputs.only) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: internal/ui alone, its peak and what it holds at its end
+        run: |
+          .github/scripts/runner-load.sh 60 & rl=$!
+          trap 'kill $rl 2>/dev/null' EXIT
+          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
+          cd internal/ui
+          rc=0
+          start=$(date +%s)
+          CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" CLACK_RETAIN_DUMP=1 \
+            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
+          echo "internal/ui: exit $rc after $(( $(date +%s) - start )) s"
+          grep -E -- '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/ui.log" | head -20 || true
+          grep -A 40 -- '--- FAIL: TestFinishedSessionIsCollected' "$RUNNER_TEMP/ui.log" | head -60 || true
+          head -1 "$RUNNER_TEMP/heap-report.txt" || true
+          sed -n 2,200p "$RUNNER_TEMP/heap-report.txt" || true
+          [ -f "$RUNNER_TEMP/heap.pprof" ] && go tool pprof -sample_index=inuse_space -top -nodecount=25 "$RUNNER_TEMP/ui.test" "$RUNNER_TEMP/heap.pprof" 2>&1 | head -35
+          exit $rc
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: ui-heap
+          path: |
+            ${{ runner.temp }}/heap-report.txt
+            ${{ runner.temp }}/heap.pprof
+            ${{ runner.temp }}/ui.log
   flakes-1121:
     if: ${{ !inputs.only || startsWith('flakes-1121', inputs.only) }}
     runs-on: ubuntu-latest
@@ -3426,127 +3479,6 @@ jobs:
           name: launch-windows
           path: ${{ runner.temp }}/launch/out
 
-  # thread-reply-toast (2026-11-22): a reply by someone else in a thread
-  # the viewer started toasts and makes an Activity item, as Slack's does
-  # (Karim on Clack for Windows: "istg i did not get this notif in
-  # windows"). Over the socket, as the server tells the thread's follower:
-  # the reply's message events, the desktop_notification Slack's client
-  # toasts a reply without a mention from, and the thread's thread_v2
-  # bundle, in both orders and with the thread open in a window without
-  # the focus. Round 2: the reply's desktop_notification waits behind its
-  # conversation's held messages (core and ui), each decision logs Slack's
-  # reason, a desktop_notification ahead of its message is dropped (19),
-  # plugins' showNotification gets Slack's arguments, and update_thread_state
-  # moves the Unread mark at once. Dispatch with only=thread-reply-toast.
-  thread-reply-toast:
-    if: ${{ !inputs.only || startsWith('thread-reply-toast', inputs.only) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "ui: a reply in the viewer's own thread toasts and reaches Activity (COUNT runs)"
-        env:
-          TEST: TestReplyInOwnThreadToastsAndShowsInActivity
-          PKG: ./internal/ui
-        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - name: "core: a held conversation's desktop_notification and dnd_override wait behind its messages (COUNT runs)"
-        if: ${{ !cancelled() }}
-        env:
-          TEST: TestDesktopNotificationWaitsBehindHeldConversation
-          PKG: ./internal/core
-        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - name: "core: update_thread_state moves the threads' unread state at once (COUNT runs)"
-        if: ${{ !cancelled() }}
-        env:
-          TEST: TestUpdateThreadStateAtOnce
-          PKG: ./internal/core
-        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - name: "ui: a followed reply in a held group DM toasts after the message before it (COUNT runs)"
-        if: ${{ !cancelled() }}
-        env:
-          TEST: TestFollowedReplyBehindAHeldConversation
-          PKG: ./internal/ui
-        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - name: "ui: each notification decision logs Slack's reason, ids only (COUNT runs)"
-        if: ${{ !cancelled() }}
-        env:
-          TEST: TestNotifyDecisionLogLikeSlack
-          PKG: ./internal/ui
-        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - name: "ui: a desktop_notification ahead of its message is dropped, 19 (COUNT runs)"
-        if: ${{ !cancelled() }}
-        env:
-          TEST: TestFollowedReplyNotificationAheadOfItsMessage
-          PKG: ./internal/ui
-        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-      - name: "ui: plugins' showNotification gets Slack's arguments (COUNT runs)"
-        if: ${{ !cancelled() }}
-        env:
-          TEST: TestFollowedReplyNotificationArgsLikeSlack
-          PKG: ./internal/ui
-        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
-
-
-  # 2026-11-21's flakes, fixed on ci-speed: TestWarmWindowWritesSurviveBoot
-  # (core) wrote before Boot's sections call reached the fake, so
-  # MoveToSection's own reread was the call held; TestRailPeekDMsRowMenu
-  # (ui) could end its 60 ms wait before the peek's throttled check ran;
-  # TestSpellcheckNeverBlocksFrame (composer) timed frames on a shared
-  # runner. COUNT runs each, as loaded runners ran them: core under -race,
-  # composer on one CPU, ui in four processes at once
-  # internal/ui's memory: the test binary alone, its peak (runner-load.sh),
-  # and what it still holds after its last test, collected: the live heap,
-  # the goroutines still running and the heap profile's top
-  # (CLACK_TEST_HEAP_REPORT, endrun_test.go). Once a run, whatever count
-  # says. ci-speed-3: every test's session stayed reachable, 9 GB live by
-  # the end, 15.7 of the runner's 16 GB at the peak.
-  ui-heap:
-    if: ${{ !inputs.only || startsWith('ui-heap', inputs.only) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: gio deps
-        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: internal/ui alone, its peak and what it holds at its end
-        run: |
-          .github/scripts/runner-load.sh 60 & rl=$!
-          trap 'kill $rl 2>/dev/null' EXIT
-          go test -c -o "$RUNNER_TEMP/ui.test" ./internal/ui
-          cd internal/ui
-          rc=0
-          start=$(date +%s)
-          CLACK_TEST_HEAP_REPORT="$RUNNER_TEMP/heap-report.txt" CLACK_TEST_HEAP_PROFILE="$RUNNER_TEMP/heap.pprof" CLACK_RETAIN_DUMP=1 \
-            "$RUNNER_TEMP/ui.test" -test.paniconexit0 -test.count=1 -test.timeout 35m > "$RUNNER_TEMP/ui.log" 2>&1 || rc=$?
-          echo "internal/ui: exit $rc after $(( $(date +%s) - start )) s"
-          grep -E -- '^(--- FAIL|FAIL|ok|PASS)' "$RUNNER_TEMP/ui.log" | head -20 || true
-          grep -A 40 -- '--- FAIL: TestFinishedSessionIsCollected' "$RUNNER_TEMP/ui.log" | head -60 || true
-          head -1 "$RUNNER_TEMP/heap-report.txt" || true
-          sed -n 2,200p "$RUNNER_TEMP/heap-report.txt" || true
-          [ -f "$RUNNER_TEMP/heap.pprof" ] && go tool pprof -sample_index=inuse_space -top -nodecount=25 "$RUNNER_TEMP/ui.test" "$RUNNER_TEMP/heap.pprof" 2>&1 | head -35
-          exit $rc
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ always() }}
-        with:
-          name: ui-heap
-          path: |
-            ${{ runner.temp }}/heap-report.txt
-            ${{ runner.temp }}/heap.pprof
-            ${{ runner.temp }}/ui.log
-
 
   # preview-footer-race (2026-11-21): a ResolveConv joining another
   # caller's conversations.info read the store before the owner stored the
@@ -3734,3 +3666,70 @@ jobs:
           go test -v -count=$COUNT -timeout 10m -run '^TestSlackConnectNullPrefAllowsUploads$' ./internal/core || rc=1
           exit $rc
 
+
+  # thread-reply-toast (2026-11-22): a reply by someone else in a thread
+  # the viewer started toasts and makes an Activity item, as Slack's does
+  # (Karim on Clack for Windows: "istg i did not get this notif in
+  # windows"). Over the socket, as the server tells the thread's follower:
+  # the reply's message events, the desktop_notification Slack's client
+  # toasts a reply without a mention from, and the thread's thread_v2
+  # bundle, in both orders and with the thread open in a window without
+  # the focus. Round 2: the reply's desktop_notification waits behind its
+  # conversation's held messages (core and ui), each decision logs Slack's
+  # reason, a desktop_notification ahead of its message is dropped (19),
+  # plugins' showNotification gets Slack's arguments, and update_thread_state
+  # moves the Unread mark at once. Dispatch with only=thread-reply-toast.
+  thread-reply-toast:
+    if: ${{ !inputs.only || startsWith('thread-reply-toast', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "ui: a reply in the viewer's own thread toasts and reaches Activity (COUNT runs)"
+        env:
+          TEST: TestReplyInOwnThreadToastsAndShowsInActivity
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: a held conversation's desktop_notification and dnd_override wait behind its messages (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestDesktopNotificationWaitsBehindHeldConversation
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "core: update_thread_state moves the threads' unread state at once (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestUpdateThreadStateAtOnce
+          PKG: ./internal/core
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: a followed reply in a held group DM toasts after the message before it (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestFollowedReplyBehindAHeldConversation
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: each notification decision logs Slack's reason, ids only (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestNotifyDecisionLogLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: a desktop_notification ahead of its message is dropped, 19 (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestFollowedReplyNotificationAheadOfItsMessage
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: "ui: plugins' showNotification gets Slack's arguments (COUNT runs)"
+        if: ${{ !cancelled() }}
+        env:
+          TEST: TestFollowedReplyNotificationArgsLikeSlack
+          PKG: ./internal/ui
+        run: xvfb-run -a sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
