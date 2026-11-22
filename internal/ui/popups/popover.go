@@ -237,6 +237,11 @@ type TipState struct {
 	// Texty is a TextyTooltip Popover (Texty's mouseover opens it): no
 	// delay, allowance 0 and no tryOppositePosition (theme.TextyTip).
 	Texty bool
+	// Wake, when set, asks the owner for the frame at the end of the hover
+	// delay (now is the frame's clock) instead of executing an
+	// op.InvalidateCmd mid-layout, which replays later handlers' unread
+	// input in Gio's router.
+	Wake func(now, at time.Time)
 	// org is the target's window origin, so the tooltip keeps inside the
 	// window (theme.PlaceTooltip); last is where it was drawn (tests).
 	org  theme.TipOrigin
@@ -323,7 +328,11 @@ func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool
 		st.since = gtx.Now
 	}
 	if wait := st.since.Add(st.delay()); gtx.Now.Before(wait) {
-		gtx.Execute(op.InvalidateCmd{At: wait})
+		if st.Wake != nil {
+			st.Wake(gtx.Now, wait)
+		} else {
+			gtx.Execute(op.InvalidateCmd{At: wait})
+		}
 		return
 	}
 	call, d := record(gtx, box)
